@@ -1,5 +1,15 @@
 # @tsrx/solid-runtime
 
+## 0.1.2
+
+### Patch Changes
+
+- Republish the TSRX runtime packages from the dedicated TSRX repository so their
+  npm metadata and provenance identify `tsrx-org/tsrx`.
+
+- Updated dependencies:
+  - @tsrx/runtime@0.1.2
+
 ## 0.1.1
 
 ### Patch Changes
