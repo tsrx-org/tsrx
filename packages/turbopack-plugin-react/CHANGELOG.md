@@ -1,5 +1,12 @@
 # @tsrx/turbopack-plugin-react
 
+## 0.1.85
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/react@0.2.62
+
 ## 0.1.84
 
 ### Patch Changes

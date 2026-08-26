@@ -1,5 +1,15 @@
 # @tsrx/core
 
+## 0.1.62
+
+### Patch Changes
+
+- [#4](https://github.com/tsrx-org/tsrx/pull/4)
+  [`6c34d7d`](https://github.com/tsrx-org/tsrx/commit/6c34d7d44dc5bc12b76f0b4687357419fa9c4190)
+  Thanks [@trueadm](https://github.com/trueadm)! - Avoid failing virtual
+  TypeScript generation when a computed object method's bracket positions are
+  absent from the printer source map.
+
 ## 0.1.61
 
 ### Patch Changes
