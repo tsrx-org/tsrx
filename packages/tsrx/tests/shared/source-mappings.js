@@ -54,6 +54,11 @@ function F(props: { n: number }) @{
 			expect_maps(`function F(props: { k: string }) @{
 	const merge = (current: object) => ({ ...current, [props.k]: '' });
 }`));
+		it('computed object method', () =>
+			expect_maps(`const method = 'read';
+function C() @{
+	const value = { [method]() { return 'ok'; } };
+}`));
 		// AssignmentPattern spans reaching into marker-less literal tokens.
 		it('parameter default array literal', () =>
 			expect_maps(`function parse(points = []) {
