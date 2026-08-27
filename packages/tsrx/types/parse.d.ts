@@ -86,6 +86,11 @@ export namespace Parse {
 		parenthesizedAssign: number;
 		parenthesizedBind: number;
 		doubleProto: number;
+		/**
+		 * TSRX extension: position of a pending `&{…}`/`&[…]` lazy binding
+		 * pattern parsed in expression position, set only by TSRXPlugin.
+		 */
+		lazyBindingPos?: number;
 	}
 
 	/**

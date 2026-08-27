@@ -3190,14 +3190,43 @@ foo();`;
 		expect(arrow.typeParameters?.type).toBe('TSTypeParameterDeclaration');
 	});
 
-	it('keeps lazy binding patterns out of non-arrow expression positions', () => {
+	it('keeps lazy binding patterns out of expression positions', () => {
 		expect(() => parseModule(`const value = (&{ name });`, 'App.tsrx')).toThrow(
-			/Lazy binding patterns are only valid as arrow parameters/,
+			/Lazy binding patterns are only valid as binding or assignment targets/,
 		);
-		expect(() => parseModule(`const value = &{ name };`, 'App.tsrx')).toThrow(/Unexpected token/);
+		expect(() => parseModule(`const value = &{ name };`, 'App.tsrx')).toThrow(
+			/Lazy binding patterns are only valid as binding or assignment targets/,
+		);
+		expect(() => parseModule(`foo(&{ name });`, 'App.tsrx')).toThrow(
+			/Lazy binding patterns are only valid as binding or assignment targets/,
+		);
+		expect(() => parseModule(`for (&{ name }; done; step);`, 'App.tsrx')).toThrow(
+			/Lazy binding patterns are only valid as binding or assignment targets/,
+		);
 		expect(() => parseModule(`const value = (& { name }) => name;`, 'App.tsrx')).toThrow(
 			/Unexpected token/,
 		);
+	});
+
+	it('parses lazy binding patterns nested in destructuring assignment targets', () => {
+		// Statement-level lazy destructuring assignment (dedicated branch).
+		expect(() => parseModule(`&{ name } = obj;`, 'App.tsrx')).not.toThrow();
+
+		const ast = parseModule(`[&{ name }] = pairs;`, 'App.tsrx');
+		const statement = firstStatement(ast, 'ExpressionStatement');
+		const assignment = as_type(statement.expression, 'AssignmentExpression');
+		const target = as_type(assignment.left, 'ArrayPattern');
+		expect(as_type(target.elements[0], 'ObjectPattern').lazy).toBe(true);
+	});
+
+	it('parses lazy binding patterns as for-of and for-in loop targets', () => {
+		const for_of = parseModule(`for (&{ name } of items);`, 'App.tsrx');
+		const of_statement = firstStatement(for_of, 'ForOfStatement');
+		expect(as_type(of_statement.left, 'ObjectPattern').lazy).toBe(true);
+
+		const for_in = parseModule(`for (&[key] in table);`, 'App.tsrx');
+		const in_statement = firstStatement(for_in, 'ForInStatement');
+		expect(as_type(in_statement.left, 'ArrayPattern').lazy).toBe(true);
 	});
 
 	it('parses a function declaration whose whole body is a `@{ }` block', () => {

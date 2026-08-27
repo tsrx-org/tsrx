@@ -109,6 +109,18 @@ function get_argument_clash_reported_names(check_clashes) {
 }
 
 /**
+ * The position of a pending `&{…}`/`&[…]` lazy binding pattern recorded on a
+ * DestructuringErrors context, or -1. Acorn's DestructuringErrors class knows
+ * nothing about the field, so absence means none was recorded.
+ *
+ * @param {Parse.DestructuringErrors | undefined | null} refDestructuringErrors
+ * @returns {number}
+ */
+function get_lazy_binding_pos(refDestructuringErrors) {
+	return refDestructuringErrors?.lazyBindingPos ?? -1;
+}
+
+/**
  * A `<` opens a tag only when the character after it can begin one: `/` for a
  * closing tag, `>` for a fragment, `{` for a dynamic tag, or an element or
  * component name start. Any other character, or end of input, leaves the `<`
@@ -315,8 +327,6 @@ export function TSRXPlugin(config) {
 			#closingNativeTemplateNode = false;
 			#readingJSXControlFlowDirectiveKeyword = false;
 			#readingJSXControlFlowHeader = false;
-			/** @type {(AST.ObjectPattern | AST.ArrayPattern)[][]} */
-			#potentialLazyArrowPatterns = [];
 
 			/**
 			 * @type {Parse.Parser['finishNode']}
@@ -1517,18 +1527,24 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['parseExprAtom']}
 			 */
 			parseExprAtom(refDestructuringErrors, forInit, forNew) {
-				const lazy_arrow_patterns = this.#potentialLazyArrowPatterns.at(-1);
+				// A `&{…}`/`&[…]` lazy binding pattern is only meaningful where the
+				// expression may still turn out to be a binding or assignment target —
+				// an arrow parameter list, a destructuring assignment target, or a
+				// for–of/for–in loop target. Those are exactly the positions Acorn
+				// parses with a DestructuringErrors context, so parse the pattern there
+				// and record it as a pending error the same way Acorn treats `{a = b}`
+				// shorthand: pattern conversion accepts the node as-is, while contexts
+				// that remain expressions raise in checkExpressionErrors.
 				if (
-					lazy_arrow_patterns &&
+					refDestructuringErrors &&
 					this.type === tt.bitwiseAND &&
 					(this.input.charCodeAt(this.end) === CharCode.openBrace ||
 						this.input.charCodeAt(this.end) === CharCode.openBracket)
 				) {
-					const pattern = /** @type {AST.ObjectPattern | AST.ArrayPattern} */ (
-						this.parseBindingAtom()
-					);
-					lazy_arrow_patterns.push(pattern);
-					return /** @type {AST.Expression} */ (/** @type {unknown} */ (pattern));
+					if (get_lazy_binding_pos(refDestructuringErrors) < 0) {
+						refDestructuringErrors.lazyBindingPos = this.start;
+					}
+					return /** @type {AST.Expression} */ (/** @type {unknown} */ (this.parseBindingAtom()));
 				}
 				// A token already consumed as JSX text (a script-mode element child) must
 				// stay text even when it happens to begin at an `@` — otherwise whether
@@ -3240,16 +3256,7 @@ export function TSRXPlugin(config) {
 			 */
 			parseParenAndDistinguishExpression(canBeArrow, forInit) {
 				const startPos = this.start;
-				const lazy_arrow_patterns = canBeArrow ? [] : null;
-				if (lazy_arrow_patterns) this.#potentialLazyArrowPatterns.push(lazy_arrow_patterns);
-				let expr;
-				try {
-					expr = super.parseParenAndDistinguishExpression(canBeArrow, forInit);
-				} finally {
-					if (lazy_arrow_patterns) this.#potentialLazyArrowPatterns.pop();
-				}
-
-				if (lazy_arrow_patterns) this.#validateLazyArrowPatterns(expr, lazy_arrow_patterns);
+				const expr = super.parseParenAndDistinguishExpression(canBeArrow, forInit);
 
 				// If the expression's start position is after the opening paren,
 				// it means it was wrapped in parentheses. Mark it in metadata.
@@ -3262,76 +3269,23 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Acorn parses `async (x) => …` through its call-subscript lane rather
-			 * than `parseParenAndDistinguishExpression`, so expose the same lazy
-			 * binding candidate context around that parameter list.
+			 * A recorded lazy binding pattern that never became a binding or
+			 * assignment target is a pending error, exactly like `{a = b}` shorthand
+			 * outside a destructuring pattern. Acorn calls this in every context that
+			 * stayed an expression (parenthesized expressions, call arguments, plain
+			 * assignments' right-hand sides, …).
 			 *
-			 * @type {Parse.Parser['parseSubscript']}
+			 * @type {Parse.Parser['checkExpressionErrors']}
 			 */
-			parseSubscript(base, startPos, startLoc, noCalls, maybeAsyncArrow, optionalChained, forInit) {
-				const lazy_arrow_patterns = maybeAsyncArrow && this.type === tt.parenL ? [] : null;
-				if (lazy_arrow_patterns) this.#potentialLazyArrowPatterns.push(lazy_arrow_patterns);
-				let expression;
-				try {
-					expression = super.parseSubscript(
-						base,
-						startPos,
-						startLoc,
-						noCalls,
-						maybeAsyncArrow,
-						optionalChained,
-						forInit,
-					);
-				} finally {
-					if (lazy_arrow_patterns) this.#potentialLazyArrowPatterns.pop();
-				}
-				if (lazy_arrow_patterns) this.#validateLazyArrowPatterns(expression, lazy_arrow_patterns);
-				return expression;
-			}
-
-			/**
-			 * @param {AST.Expression} expression
-			 * @param {(AST.ObjectPattern | AST.ArrayPattern)[]} patterns
-			 */
-			#validateLazyArrowPatterns(expression, patterns) {
-				const misplaced = patterns.find(
-					(pattern) =>
-						expression.type !== 'ArrowFunctionExpression' ||
-						!expression.params.some((param) => this.#bindingPatternContains(param, pattern)),
+			checkExpressionErrors(refDestructuringErrors, andThrow) {
+				const lazy_binding_pos = get_lazy_binding_pos(refDestructuringErrors);
+				if (lazy_binding_pos < 0)
+					return super.checkExpressionErrors(refDestructuringErrors, andThrow);
+				if (!andThrow) return true;
+				this.raise(
+					lazy_binding_pos,
+					'Lazy binding patterns are only valid as binding or assignment targets',
 				);
-				if (misplaced) {
-					this.raise(
-						/** @type {number} */ (misplaced.start) - 1,
-						'Lazy binding patterns are only valid as arrow parameters in this context',
-					);
-				}
-			}
-
-			/**
-			 * @param {AST.Pattern | AST.AssignmentProperty} pattern
-			 * @param {AST.ObjectPattern | AST.ArrayPattern} target
-			 * @returns {boolean}
-			 */
-			#bindingPatternContains(pattern, target) {
-				if (pattern === target) return true;
-				switch (pattern.type) {
-					case 'AssignmentPattern':
-						return this.#bindingPatternContains(pattern.left, target);
-					case 'RestElement':
-						return this.#bindingPatternContains(pattern.argument, target);
-					case 'ObjectPattern':
-						return pattern.properties.some((property) =>
-							this.#bindingPatternContains(property, target),
-						);
-					case 'Property':
-						return this.#bindingPatternContains(/** @type {AST.Pattern} */ (pattern.value), target);
-					case 'ArrayPattern':
-						return pattern.elements.some(
-							(element) => element && this.#bindingPatternContains(element, target),
-						);
-					default:
-						return false;
-				}
 			}
 
 			/**

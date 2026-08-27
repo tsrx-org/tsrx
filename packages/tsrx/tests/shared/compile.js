@@ -727,6 +727,24 @@ export function runSharedNestedLazyDestructuringTests({ compile, name }) {
 			expect(code).toContain('const first = async (__lazy0: [number]) => __lazy0[0]');
 		});
 
+		it('transforms bare lazy object patterns as @for loop targets', () => {
+			const { code } = compile(
+				`export function App(props) @{
+					<ul>
+						@for (&{ id, label } of props.items) {
+							<li>{label}</li>
+						}
+					</ul>
+				}`,
+				'App.tsrx',
+			);
+
+			// The @for target becomes the iteration callback's parameter, so the
+			// bare lazy pattern rides the lazy-parameter transform.
+			expect(code).toContain('(__lazy0)');
+			expect(code).toContain('__lazy0.label');
+		});
+
 		it('transforms nested lazy object inside lazy object in component params', () => {
 			const { code } = compile(
 				`export function App(&{ outer: &{ inner } }: { outer: { inner: number } }) @{
