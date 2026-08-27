@@ -3342,21 +3342,57 @@ export function TSRXPlugin(config) {
 			/**
 			 * A recorded lazy binding pattern that never became a binding or
 			 * assignment target is a pending error, exactly like `{a = b}` shorthand
-			 * outside a destructuring pattern. Acorn calls this in every context that
-			 * stayed an expression (parenthesized expressions, call arguments, plain
-			 * assignments' right-hand sides, …).
+			 * outside a destructuring pattern. Acorn calls the throwing form at every
+			 * boundary where a context definitively stayed an expression
+			 * (parenthesized expressions, call arguments, plain assignments'
+			 * right-hand sides, …) — that is where the record is enforced.
+			 *
+			 * The non-throwing form is deliberately left untouched: Acorn uses it in
+			 * parseExprOps/parseMaybeConditional to stop parsing operators early, and
+			 * returning true there would cut the pattern off from the `as` /
+			 * `satisfies` operator lane before toAssignable can accept the wrapped
+			 * target (`[&{ a } as T] = arr`). Every path that keeps a stale record
+			 * still ends in a throwing check.
 			 *
 			 * @type {Parse.Parser['checkExpressionErrors']}
 			 */
 			checkExpressionErrors(refDestructuringErrors, andThrow) {
-				const lazy_binding_pos = get_lazy_binding_pos(refDestructuringErrors);
-				if (lazy_binding_pos < 0)
-					return super.checkExpressionErrors(refDestructuringErrors, andThrow);
-				if (!andThrow) return true;
-				this.raise(
-					lazy_binding_pos,
-					'Lazy binding patterns are only valid as binding or assignment targets',
-				);
+				if (andThrow) {
+					const lazy_binding_pos = get_lazy_binding_pos(refDestructuringErrors);
+					if (lazy_binding_pos >= 0) {
+						this.raise(
+							lazy_binding_pos,
+							'Lazy binding patterns are only valid as binding or assignment targets',
+						);
+					}
+				}
+				return super.checkExpressionErrors(refDestructuringErrors, andThrow);
+			}
+
+			/**
+			 * acorn-typescript unwraps TS expression wrappers in checkLValSimple,
+			 * which is only right for simple targets (`[b as any] = arr`). A wrapped
+			 * destructuring pattern (`[&{ a } as T] = arr`) reaches checkLValPattern
+			 * still wrapped — toAssignableList ignores return values, so the wrapper
+			 * survives conversion — and would fall through to checkLValSimple's
+			 * "Assigning to rvalue". Unwrap here so wrapped patterns take the
+			 * pattern lane.
+			 *
+			 * @type {Parse.Parser['checkLValPattern']}
+			 */
+			checkLValPattern(expr, bindingType, checkClashes) {
+				let node = expr;
+				while (
+					node.type === 'TSNonNullExpression' ||
+					node.type === 'TSAsExpression' ||
+					node.type === 'TSSatisfiesExpression' ||
+					node.type === 'TSTypeAssertion'
+				) {
+					node = /** @type {AST.Node} */ (
+						/** @type {{ expression: AST.Node }} */ (/** @type {unknown} */ (node)).expression
+					);
+				}
+				return super.checkLValPattern(node, bindingType, checkClashes);
 			}
 
 			/**
