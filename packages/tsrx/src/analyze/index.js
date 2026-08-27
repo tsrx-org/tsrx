@@ -6,7 +6,7 @@
 import { walk } from 'zimmerframe';
 import {
 	is_code_block_function_body,
-	is_statement_position,
+	is_direct_statement_position,
 	is_tsrx_render_output_node,
 } from '../utils/ast.js';
 import { validate_forgotten_statement_container } from './validation.js';
@@ -57,7 +57,7 @@ function is_free_floating_template(node, path) {
 			return true;
 		}
 
-		if (is_statement_position(parent, child)) {
+		if (is_direct_statement_position(parent, child)) {
 			return true;
 		}
 

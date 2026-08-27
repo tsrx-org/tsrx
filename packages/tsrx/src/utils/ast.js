@@ -191,6 +191,28 @@ export function is_statement_position(parent, child) {
 }
 
 /**
+ * The constant-time statement-position check for callers that already know
+ * `child` is a direct child of `parent`.
+ *
+ * @param {AST.Node} parent
+ * @param {AST.Node} child
+ * @returns {boolean}
+ */
+export function is_direct_statement_position(parent, child) {
+	switch (parent.type) {
+		case 'Program':
+		case 'BlockStatement':
+			return true;
+		case 'SwitchCase':
+			return parent.test !== child;
+		case 'JSXCodeBlock':
+			return parent.render !== child;
+		default:
+			return is_statement_position(parent, child);
+	}
+}
+
+/**
  * Returns the closest native TSRX function in an ancestry path. By default,
  * function and class boundaries stop the search so callers only match direct
  * native TSRX function body/control-flow nodes.

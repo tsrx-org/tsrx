@@ -2,8 +2,14 @@
 /** @import { CompileError, TSRXAnalysisOptions } from '../../types/index' */
 
 import { describe, expect, it } from 'vitest';
-import { analyzeTsrx, DIAGNOSTIC_CODES, parseModule } from '../../src/index.js';
+import {
+	analyzeTsrx,
+	DIAGNOSTIC_CODES,
+	isStatementPosition,
+	parseModule,
+} from '../../src/index.js';
 import { TSRX_FORGOTTEN_STATEMENT_CONTAINER_ERROR } from '../../src/analyze/validation.js';
+import { is_direct_statement_position } from '../../src/utils/ast.js';
 
 const filename = 'App.tsrx';
 
@@ -39,6 +45,44 @@ function forgotten_output_errors(result) {
 }
 
 describe('target-neutral TSRX analysis', () => {
+	describe('statement positions', () => {
+		it('distinguishes statement arrays from sibling value slots', () => {
+			/** @param {object} value */
+			const as_node = (value) => /** @type {AST.Node} */ (/** @type {unknown} */ (value));
+			const statement = as_node({ type: 'EmptyStatement' });
+			const value = as_node({ type: 'Identifier', name: 'value' });
+			const unrelated = as_node({ type: 'Identifier', name: 'unrelated' });
+			const program = as_node({ type: 'Program', body: [statement] });
+			const block = as_node({ type: 'BlockStatement', body: [statement] });
+			const switch_case = as_node({
+				type: 'SwitchCase',
+				test: value,
+				consequent: [statement],
+			});
+			const code_block = as_node({ type: 'JSXCodeBlock', body: [statement], render: value });
+
+			/** @type {Array<[string, AST.Node, AST.Node, boolean]>} */
+			const cases = [
+				['program body', program, statement, true],
+				['block body', block, statement, true],
+				['switch consequent', switch_case, statement, true],
+				['switch test', switch_case, value, false],
+				['code-block setup', code_block, statement, true],
+				['code-block render', code_block, value, false],
+			];
+
+			for (const [label, parent, child, expected] of cases) {
+				expect(isStatementPosition(parent, child), label).toBe(expected);
+				expect(is_direct_statement_position(parent, child), `${label} direct`).toBe(expected);
+			}
+
+			expect(isStatementPosition(program, unrelated), 'unrelated program child').toBe(false);
+			expect(isStatementPosition(block, unrelated), 'unrelated block child').toBe(false);
+			expect(isStatementPosition(switch_case, unrelated), 'unrelated switch child').toBe(false);
+			expect(isStatementPosition(code_block, unrelated), 'unrelated code-block child').toBe(false);
+		});
+	});
+
 	describe('unused template output', () => {
 		it('reports free-floating output in every ordinary function form', () => {
 			const result = analyze(
