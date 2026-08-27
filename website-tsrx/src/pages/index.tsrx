@@ -224,7 +224,12 @@ export const IndexPage = () => @{
 						repositories, so the language can be adopted seriously instead of treated like a
 						compiler experiment. Install the
 						{' '}
-						<a href="https://zed.dev/extensions/tsrx" target="_blank" rel="noopener noreferrer">
+						<a
+							class="supporting-link"
+							href="https://zed.dev/extensions/tsrx"
+							target="_blank"
+							rel="noopener noreferrer"
+						>
 							TSRX extension for Zed
 						</a>
 						{' '}
