@@ -120,6 +120,16 @@ function get_lazy_binding_pos(refDestructuringErrors) {
 	return refDestructuringErrors?.lazyBindingPos ?? -1;
 }
 
+/** @type {ReadonlySet<string>} */
+const lazy_target_wrapper_types = new Set([
+	'ParenthesizedExpression',
+	'TSAsExpression',
+	'TSSatisfiesExpression',
+	'TSNonNullExpression',
+	'TSTypeAssertion',
+	'TSTypeCastExpression',
+]);
+
 /**
  * Whether the lazy binding pattern recorded at `pos` (the position of its `&`,
  * one character before the pattern node) sits in a pattern-forming position of
@@ -140,6 +150,17 @@ function pattern_position_contains_lazy(node, pos) {
 		/** @type {number} */ (node.start) === pos + 1
 	) {
 		return true;
+	}
+	// Parentheses and the TypeScript expression wrappers acorn-typescript's
+	// toAssignable unwraps when converting a target (`[&{ a }!] = arr`) — the
+	// wrapped node stays in a pattern-forming position. TSTypeCastExpression is
+	// internal to acorn-typescript, hence the string set rather than switch
+	// cases over the ESTree union.
+	if (lazy_target_wrapper_types.has(node.type)) {
+		return pattern_position_contains_lazy(
+			/** @type {{ expression: AST.Node }} */ (/** @type {unknown} */ (node)).expression,
+			pos,
+		);
 	}
 	switch (node.type) {
 		case 'ObjectExpression':
@@ -164,8 +185,6 @@ function pattern_position_contains_lazy(node, pos) {
 		case 'SpreadElement':
 		case 'RestElement':
 			return pattern_position_contains_lazy(node.argument, pos);
-		case 'ParenthesizedExpression':
-			return pattern_position_contains_lazy(node.expression, pos);
 		default:
 			return false;
 	}

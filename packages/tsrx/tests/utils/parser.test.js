@@ -3254,6 +3254,16 @@ foo();`;
 		);
 	});
 
+	it('sees lazy binding patterns through TypeScript wrappers in assignment targets', () => {
+		// Non-null assertions are unwrapped by toAssignable, so the wrapped lazy
+		// pattern is still in a pattern-forming position…
+		expect(() => parseModule(`([&{ a }!] = arr);`, 'App.tsrx')).not.toThrow();
+		// …but a wrapper feeding a member access is still an expression use.
+		expect(() => parseModule(`(&{ a }!.b = x);`, 'App.tsrx')).toThrow(
+			/Lazy binding patterns are only valid as binding or assignment targets/,
+		);
+	});
+
 	it('parses lazy binding patterns as for-of and for-in loop targets', () => {
 		const for_of = parseModule(`for (&{ name } of items);`, 'App.tsrx');
 		const of_statement = firstStatement(for_of, 'ForOfStatement');
