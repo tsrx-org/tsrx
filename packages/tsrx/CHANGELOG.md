@@ -1,5 +1,24 @@
 # @tsrx/core
 
+## 0.1.63
+
+### Patch Changes
+
+- [#11](https://github.com/tsrx-org/tsrx/pull/11)
+  [`decbe8f`](https://github.com/tsrx-org/tsrx/commit/decbe8fe82a1403e41a6dc020840c61aae719f13)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Allow lazy binding patterns
+  anywhere a destructuring pattern is valid: nested inside destructuring
+  assignment targets (`[&{ name }] = pairs`) and as `for`–`of` / `for`–`in` /
+  `@for` loop targets (`@for (&{ label } of items)`). Lazy patterns in plain
+  expression positions now report a descriptive error instead of a generic
+  unexpected-token failure.
+
+- [#9](https://github.com/tsrx-org/tsrx/pull/9)
+  [`cab7e94`](https://github.com/tsrx-org/tsrx/commit/cab7e94e000801d951b44cc1258e64d87f10e742)
+  Thanks [@ryansolid](https://github.com/ryansolid)! - Support lazy object and
+  array binding patterns in synchronous and asynchronous arrow function
+  parameters.
+
 ## 0.1.62
 
 ### Patch Changes

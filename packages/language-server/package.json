@@ -1,6 +1,6 @@
 {
   "name": "@tsrx/language-server",
-  "version": "0.3.127",
+  "version": "0.3.128",
   "description": "Language Server Protocol implementation for TSRX",
   "main": "dist/server.js",
   "types": "types/server.d.ts",

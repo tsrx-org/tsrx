@@ -1,6 +1,6 @@
 {
   "name": "@tsrx/eslint-plugin",
-  "version": "0.3.127",
+  "version": "0.3.128",
   "description": "ESLint plugin for TSRX",
   "type": "module",
   "main": "src/index.ts",
