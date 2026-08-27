@@ -62,3 +62,6 @@ temp/
 
 # Generated optimization audit artifacts
 /docs/ce-optimize/
+
+# Local planning artifacts
+/docs/plans/
