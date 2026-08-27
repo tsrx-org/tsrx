@@ -121,6 +121,57 @@ function get_lazy_binding_pos(refDestructuringErrors) {
 }
 
 /**
+ * Whether the lazy binding pattern recorded at `pos` (the position of its `&`,
+ * one character before the pattern node) sits in a pattern-forming position of
+ * `node` — a slot that toAssignable converts into a binding or assignment
+ * target. A lazy pattern reached only through an expression position (for
+ * example as a member expression's object in `&{ a }.b = x`) is an expression
+ * use and must keep its pending error. `node` is the pre-conversion tree, so
+ * both the expression and pattern spellings of each slot appear here.
+ *
+ * @param {AST.Node | null | undefined} node
+ * @param {number} pos
+ * @returns {boolean}
+ */
+function pattern_position_contains_lazy(node, pos) {
+	if (!node || typeof node !== 'object') return false;
+	if (
+		/** @type {AST.ObjectPattern | AST.ArrayPattern} */ (node).lazy &&
+		/** @type {number} */ (node.start) === pos + 1
+	) {
+		return true;
+	}
+	switch (node.type) {
+		case 'ObjectExpression':
+		case 'ObjectPattern':
+			return node.properties.some((property) =>
+				pattern_position_contains_lazy(
+					property.type === 'Property'
+						? /** @type {AST.Node} */ (property.value)
+						: property.argument,
+					pos,
+				),
+			);
+		case 'ArrayExpression':
+		case 'ArrayPattern':
+			return node.elements.some(
+				(element) => element && pattern_position_contains_lazy(element, pos),
+			);
+		case 'AssignmentExpression':
+			return node.operator === '=' && pattern_position_contains_lazy(node.left, pos);
+		case 'AssignmentPattern':
+			return pattern_position_contains_lazy(node.left, pos);
+		case 'SpreadElement':
+		case 'RestElement':
+			return pattern_position_contains_lazy(node.argument, pos);
+		case 'ParenthesizedExpression':
+			return pattern_position_contains_lazy(node.expression, pos);
+		default:
+			return false;
+	}
+}
+
+/**
  * A `<` opens a tag only when the character after it can begin one: `/` for a
  * closing tag, `>` for a fragment, `{` for a dynamic tag, or an element or
  * component name start. Any other character, or end of input, leaves the `<`
@@ -3302,14 +3353,10 @@ export function TSRXPlugin(config) {
 			 */
 			toAssignable(node, isBinding, refDestructuringErrors, preserveTypeScriptWrapper) {
 				const lazy_binding_pos = get_lazy_binding_pos(refDestructuringErrors);
-				// The recorded position is the pattern's `&`, which sits one character
-				// BEFORE the pattern node itself (parseBindingAtom consumes the `&`
-				// before starting the node) — hence `node.start - 1`: an `&` directly
-				// before `node` can only be `node`'s own ampersand.
-				if (
-					lazy_binding_pos >= /** @type {number} */ (node.start) - 1 &&
-					lazy_binding_pos < /** @type {number} */ (node.end)
-				) {
+				// Only a pattern-forming position resolves the record: a lazy pattern
+				// that is merely inside the target's span but reached through an
+				// expression position (`&{ a }.b = x`) is still an expression use.
+				if (lazy_binding_pos >= 0 && pattern_position_contains_lazy(node, lazy_binding_pos)) {
 					/** @type {Parse.DestructuringErrors} */ (refDestructuringErrors).lazyBindingPos = -1;
 				}
 				return super.toAssignable(

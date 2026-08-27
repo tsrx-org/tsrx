@@ -3240,6 +3240,20 @@ foo();`;
 		);
 	});
 
+	it('keeps lazy binding patterns out of expression positions inside assignment targets', () => {
+		// Inside the target's span but reached through an expression position (a
+		// member expression's object) — an expression use, not a pattern slot.
+		expect(() => parseModule(`(&{ a }.b = x);`, 'App.tsrx')).toThrow(
+			/Lazy binding patterns are only valid as binding or assignment targets/,
+		);
+		expect(() => parseModule(`([&{ a }.b] = arr);`, 'App.tsrx')).toThrow(
+			/Lazy binding patterns are only valid as binding or assignment targets/,
+		);
+		expect(() => parseModule(`({ k: &{ a }.b } = obj);`, 'App.tsrx')).toThrow(
+			/Lazy binding patterns are only valid as binding or assignment targets/,
+		);
+	});
+
 	it('parses lazy binding patterns as for-of and for-in loop targets', () => {
 		const for_of = parseModule(`for (&{ name } of items);`, 'App.tsrx');
 		const of_statement = firstStatement(for_of, 'ForOfStatement');
