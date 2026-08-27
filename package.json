@@ -52,5 +52,10 @@
     "vite-plugin-solid": "3.0.0-next.5",
     "vitest": "catalog:default",
     "wait-on": "catalog:default"
+  },
+  "pnpm": {
+    "overrides": {
+      "seroval": "1.5.3"
+    }
   }
 }
