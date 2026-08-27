@@ -708,6 +708,25 @@ export function runSharedTsxExpressionTsrxTests({ compile, name, classAttrName }
  */
 export function runSharedNestedLazyDestructuringTests({ compile, name }) {
 	describe(`[${name}] nested lazy destructuring`, () => {
+		it('transforms typed lazy object parameters in arrow components', () => {
+			const { code } = compile(
+				`export const App = (&{ name }: Props) => <div>{name}</div>;`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('(__lazy0: Props) =>');
+			expect(code).toContain('__lazy0.name');
+		});
+
+		it('transforms lazy array parameters in async arrows', () => {
+			const { code } = compile(
+				`export const first = async (&[value]: [number]) => value;`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('const first = async (__lazy0: [number]) => __lazy0[0]');
+		});
+
 		it('transforms nested lazy object inside lazy object in component params', () => {
 			const { code } = compile(
 				`export function App(&{ outer: &{ inner } }: { outer: { inner: number } }) @{

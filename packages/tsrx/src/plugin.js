@@ -314,6 +314,8 @@ export function TSRXPlugin(config) {
 			#closingNativeTemplateNode = false;
 			#readingJSXControlFlowDirectiveKeyword = false;
 			#readingJSXControlFlowHeader = false;
+			/** @type {(AST.ObjectPattern | AST.ArrayPattern)[][]} */
+			#potentialLazyArrowPatterns = [];
 
 			/**
 			 * @type {Parse.Parser['finishNode']}
@@ -1514,6 +1516,19 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['parseExprAtom']}
 			 */
 			parseExprAtom(refDestructuringErrors, forInit, forNew) {
+				const lazy_arrow_patterns = this.#potentialLazyArrowPatterns.at(-1);
+				if (
+					lazy_arrow_patterns &&
+					this.type === tt.bitwiseAND &&
+					(this.input.charCodeAt(this.end) === CharCode.openBrace ||
+						this.input.charCodeAt(this.end) === CharCode.openBracket)
+				) {
+					const pattern = /** @type {AST.ObjectPattern | AST.ArrayPattern} */ (
+						this.parseBindingAtom()
+					);
+					lazy_arrow_patterns.push(pattern);
+					return /** @type {AST.Expression} */ (/** @type {unknown} */ (pattern));
+				}
 				// A token already consumed as JSX text (a script-mode element child) must
 				// stay text even when it happens to begin at an `@` — otherwise whether
 				// `@if` parses as a directive would depend on leading whitespace.
@@ -3224,7 +3239,16 @@ export function TSRXPlugin(config) {
 			 */
 			parseParenAndDistinguishExpression(canBeArrow, forInit) {
 				const startPos = this.start;
-				const expr = super.parseParenAndDistinguishExpression(canBeArrow, forInit);
+				const lazy_arrow_patterns = canBeArrow ? [] : null;
+				if (lazy_arrow_patterns) this.#potentialLazyArrowPatterns.push(lazy_arrow_patterns);
+				let expr;
+				try {
+					expr = super.parseParenAndDistinguishExpression(canBeArrow, forInit);
+				} finally {
+					if (lazy_arrow_patterns) this.#potentialLazyArrowPatterns.pop();
+				}
+
+				if (lazy_arrow_patterns) this.#validateLazyArrowPatterns(expr, lazy_arrow_patterns);
 
 				// If the expression's start position is after the opening paren,
 				// it means it was wrapped in parentheses. Mark it in metadata.
@@ -3234,6 +3258,79 @@ export function TSRXPlugin(config) {
 				}
 
 				return expr;
+			}
+
+			/**
+			 * Acorn parses `async (x) => …` through its call-subscript lane rather
+			 * than `parseParenAndDistinguishExpression`, so expose the same lazy
+			 * binding candidate context around that parameter list.
+			 *
+			 * @type {Parse.Parser['parseSubscript']}
+			 */
+			parseSubscript(base, startPos, startLoc, noCalls, maybeAsyncArrow, optionalChained, forInit) {
+				const lazy_arrow_patterns = maybeAsyncArrow && this.type === tt.parenL ? [] : null;
+				if (lazy_arrow_patterns) this.#potentialLazyArrowPatterns.push(lazy_arrow_patterns);
+				let expression;
+				try {
+					expression = super.parseSubscript(
+						base,
+						startPos,
+						startLoc,
+						noCalls,
+						maybeAsyncArrow,
+						optionalChained,
+						forInit,
+					);
+				} finally {
+					if (lazy_arrow_patterns) this.#potentialLazyArrowPatterns.pop();
+				}
+				if (lazy_arrow_patterns) this.#validateLazyArrowPatterns(expression, lazy_arrow_patterns);
+				return expression;
+			}
+
+			/**
+			 * @param {AST.Expression} expression
+			 * @param {(AST.ObjectPattern | AST.ArrayPattern)[]} patterns
+			 */
+			#validateLazyArrowPatterns(expression, patterns) {
+				const misplaced = patterns.find(
+					(pattern) =>
+						expression.type !== 'ArrowFunctionExpression' ||
+						!expression.params.some((param) => this.#bindingPatternContains(param, pattern)),
+				);
+				if (misplaced) {
+					this.raise(
+						/** @type {number} */ (misplaced.start) - 1,
+						'Lazy binding patterns are only valid as arrow parameters in this context',
+					);
+				}
+			}
+
+			/**
+			 * @param {AST.Pattern | AST.AssignmentProperty} pattern
+			 * @param {AST.ObjectPattern | AST.ArrayPattern} target
+			 * @returns {boolean}
+			 */
+			#bindingPatternContains(pattern, target) {
+				if (pattern === target) return true;
+				switch (pattern.type) {
+					case 'AssignmentPattern':
+						return this.#bindingPatternContains(pattern.left, target);
+					case 'RestElement':
+						return this.#bindingPatternContains(pattern.argument, target);
+					case 'ObjectPattern':
+						return pattern.properties.some((property) =>
+							this.#bindingPatternContains(property, target),
+						);
+					case 'Property':
+						return this.#bindingPatternContains(/** @type {AST.Pattern} */ (pattern.value), target);
+					case 'ArrayPattern':
+						return pattern.elements.some(
+							(element) => element && this.#bindingPatternContains(element, target),
+						);
+					default:
+						return false;
+				}
 			}
 
 			/**

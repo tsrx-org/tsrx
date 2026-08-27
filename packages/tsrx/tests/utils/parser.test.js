@@ -3148,6 +3148,58 @@ foo();`;
 		]);
 	});
 
+	it('parses a typed lazy object pattern in an arrow component parameter', () => {
+		const ast = parseModule(
+			`const Something = (&{ name, title = name }: Props) => @{
+				<h1>{title}</h1>
+			};`,
+			'App.tsrx',
+		);
+		const arrow = as_type(
+			declaratorInit(firstStatement(ast, 'VariableDeclaration')),
+			'ArrowFunctionExpression',
+		);
+		const pattern = as_type(arrow.params[0], 'ObjectPattern');
+		expect(pattern.lazy).toBe(true);
+		expect(pattern.typeAnnotation?.typeAnnotation.type).toBe('TSTypeReference');
+		expect(arrow.body.type).toBe('JSXCodeBlock');
+	});
+
+	it('parses lazy array patterns in async and multi-parameter arrows', () => {
+		const ast = parseModule(
+			`const select = async (prefix: string, &[first, ...rest]: Items = items) =>
+				[prefix, first, rest];`,
+			'App.tsrx',
+		);
+		const arrow = as_type(
+			declaratorInit(firstStatement(ast, 'VariableDeclaration')),
+			'ArrowFunctionExpression',
+		);
+		expect(arrow.async).toBe(true);
+		const parameter = as_type(arrow.params[1], 'AssignmentPattern');
+		expect(as_type(parameter.left, 'ArrayPattern').lazy).toBe(true);
+	});
+
+	it('parses lazy patterns in generic arrow parameters', () => {
+		const ast = parseModule(`const select = <T,>(&{ value }: { value: T }) => value;`, 'App.tsrx');
+		const arrow = as_type(
+			declaratorInit(firstStatement(ast, 'VariableDeclaration')),
+			'ArrowFunctionExpression',
+		);
+		expect(as_type(arrow.params[0], 'ObjectPattern').lazy).toBe(true);
+		expect(arrow.typeParameters?.type).toBe('TSTypeParameterDeclaration');
+	});
+
+	it('keeps lazy binding patterns out of non-arrow expression positions', () => {
+		expect(() => parseModule(`const value = (&{ name });`, 'App.tsrx')).toThrow(
+			/Lazy binding patterns are only valid as arrow parameters/,
+		);
+		expect(() => parseModule(`const value = &{ name };`, 'App.tsrx')).toThrow(/Unexpected token/);
+		expect(() => parseModule(`const value = (& { name }) => name;`, 'App.tsrx')).toThrow(
+			/Unexpected token/,
+		);
+	});
+
 	it('parses a function declaration whose whole body is a `@{ }` block', () => {
 		const ast = parseModule(
 			`function Something() @{
