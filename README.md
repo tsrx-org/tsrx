@@ -103,8 +103,10 @@ TypeScript, language-server, and editor tooling.
 Install the
 [TSRX Syntax for VS Code](https://marketplace.visualstudio.com/items?itemName=TSRX.tsrx-vscode-plugin)
 for syntax highlighting, diagnostics, navigation, completions, formatting, and
-TypeScript integration. Integrations for Zed, Neovim, IntelliJ, and Sublime Text
-are also maintained here.
+TypeScript integration. The
+[TSRX extension for Zed](https://zed.dev/extensions/tsrx) is available from the
+Zed Extension Marketplace. Integrations for Neovim, IntelliJ, and Sublime Text are
+also maintained here.
 
 ## Learn and contribute
 

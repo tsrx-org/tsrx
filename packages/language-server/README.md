@@ -33,7 +33,9 @@ npx @tsrx/language-server --stdio
 Configure your editor's LSP client for `*.tsrx` files with the language ID `tsrx`.
 VS Code users can install the
 [TSRX Syntax for VS Code](https://marketplace.visualstudio.com/items?itemName=TSRX.tsrx-vscode-plugin),
-which bundles and starts this server automatically.
+which bundles and starts this server automatically. Zed users can install the
+[TSRX extension for Zed](https://zed.dev/extensions/tsrx), which also starts this
+server automatically.
 
 See the [TSRX documentation](https://tsrx.dev/) and
 [`@tsrx/typescript-plugin`](../typescript-plugin/README.md) for target compiler

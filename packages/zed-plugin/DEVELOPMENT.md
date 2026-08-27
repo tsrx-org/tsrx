@@ -1,24 +1,45 @@
 # Zed Extension Development Guide
 
-## Building the Extension
+## Staging and Building the Extension
 
 1. **Install Rust toolchain** with WebAssembly target:
 
    ```bash
-   rustup target add wasm32-wasip1
+   rustup target add wasm32-wasip2
    ```
 
-2. **Build the extension**:
+2. **Stage the extension outside the repository** from the repository root:
 
    ```bash
-   cargo build --target wasm32-wasip1 --release
+   pnpm zed:stage-dev
    ```
 
-3. **Install as dev extension** in Zed:
+3. **Install the staged dev extension** in Zed:
    - Open Zed
    - Press `Cmd/Ctrl + Shift + P`
    - Run "zed: install dev extension"
-   - Select this directory (`packages/zed-plugin`)
+   - Select the staging directory printed by `pnpm zed:stage-dev`
+
+Zed installs a development extension as a link to the selected directory and
+writes `target/`, `extension.wasm`, and its grammar checkout there. The TSRX
+grammar points at this monorepo and uses `path = "grammars/tree-sitter"`; Zed
+checks out the repository before applying that path. Staging therefore prevents a
+generated copy of the monorepo from appearing inside `packages/zed-plugin`.
+
+After changing extension source, rerun `pnpm zed:stage-dev` and then run **zed:
+rebuild dev extension** in Zed. The staging command preserves build output in the
+staged directory while replacing its source files.
+
+Once Zed is linked to the staged directory, remove artifacts from an older direct
+installation with:
+
+```bash
+pnpm zed:clean-worktree
+```
+
+Do not run the cleanup while Zed is still linked directly to
+`packages/zed-plugin`, because the compiled WebAssembly files are required when
+the extension loads. Set `TSRX_ZED_DEV_DIR` to use a custom staging directory.
 
 ## Testing
 
@@ -139,11 +160,12 @@ npm install --save-dev @tsrx/language-server
 ### Extension won't build
 
 1. Ensure Rust toolchain is installed: `rustc --version`
-2. Ensure wasm32-wasip1 target is installed: `rustup target list --installed`
+2. Ensure wasm32-wasip2 target is installed: `rustup target list --installed`
 3. Check Cargo.toml has correct `zed_extension_api` version
 
 ## Resources
 
+- [TSRX in the Zed Extension Marketplace](https://zed.dev/extensions/tsrx)
 - [Zed Extensions Docs](https://zed.dev/docs/extensions)
 - [Language Extensions Guide](https://zed.dev/docs/extensions/languages)
 - [Extension API Reference](https://docs.rs/zed_extension_api/latest/)

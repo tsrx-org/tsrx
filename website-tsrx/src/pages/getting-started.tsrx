@@ -297,6 +297,7 @@ const NAV_GROUPS = [
 			{ id: 'eslint', label: 'ESLint' },
 			{ id: 'typescript-plugin', label: 'TypeScript plugin' },
 			{ id: 'vscode', label: 'VS Code' },
+			{ id: 'zed', label: 'Zed' },
 			{ id: 'mcp', label: 'MCP' },
 		],
 	},
@@ -918,6 +919,35 @@ export function GettingStartedPage() @{
 								<code class="inline-code">.tsrx</code>
 								file should give you syntax highlighting, diagnostics, go-to-definition, formatting,
 								and the rest of the normal editor loop without extra manual setup.
+							</p>
+						</section>
+
+						<section class="doc-section" id="zed">
+							<h2 class="section-heading">Zed</h2>
+							<p class="section-body">
+								Install the
+								{' '}
+								<a
+									class="inline-link"
+									href="https://zed.dev/extensions/tsrx"
+									target="_blank"
+									rel="noopener noreferrer"
+								>TSRX extension for Zed</a>
+								{' '}
+								from the Zed Extension Marketplace for syntax highlighting and language-server
+								support. Open Zed's Extensions view and search for
+								{' '}
+								<code class="inline-code">TSRX</code>
+								{' '}
+								to install it.
+							</p>
+							<p class="section-body">
+								The extension uses a project-local
+								{' '}
+								<code class="inline-code">@tsrx/language-server</code>
+								{' '}
+								when available and otherwise downloads its pinned language-server version
+								automatically.
 							</p>
 						</section>
 

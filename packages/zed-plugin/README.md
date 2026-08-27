@@ -7,9 +7,10 @@ compiler targets.
 
 ## Installation
 
-### From Zed Extensions
+### From the Zed Extension Marketplace
 
-Once published to the Zed extensions registry:
+The [TSRX extension](https://zed.dev/extensions/tsrx) is available in the Zed
+Extension Marketplace:
 
 1. Open Zed
 2. Press `Cmd/Ctrl + Shift + X` to open extensions
@@ -19,14 +20,36 @@ Once published to the Zed extensions registry:
 ### Development Installation
 
 1. Clone this repository
-2. Install Rust with the wasm32-wasip1 target:
+2. Install Rust with the WebAssembly target used by Zed:
+
    ```bash
-   rustup target add wasm32-wasip1
+   rustup target add wasm32-wasip2
    ```
-3. Open Zed
-4. Press `Cmd/Ctrl + Shift + P`
-5. Run "zed: install dev extension"
-6. Select the `packages/zed-plugin` directory
+
+3. From the repository root, stage the extension outside the working tree:
+
+   ```bash
+   pnpm zed:stage-dev
+   ```
+
+4. Open Zed and run **zed: install dev extension** from the command palette
+5. Select the staging directory printed by the command
+
+Do not select `packages/zed-plugin` directly. Zed writes its Cargo output,
+compiled WebAssembly, and a checkout of the configured grammar repository into the
+selected extension directory. Staging keeps those generated files out of this
+repository.
+
+After changing the extension source, run `pnpm zed:stage-dev` again and then run
+**zed: rebuild dev extension** in Zed. Once Zed is using the staged directory,
+remove artifacts left by an older direct installation with:
+
+```bash
+pnpm zed:clean-worktree
+```
+
+Set `TSRX_ZED_DEV_DIR` to override the platform-specific cache directory used for
+staging.
 
 ## Language Server Setup
 

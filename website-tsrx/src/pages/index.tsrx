@@ -222,8 +222,14 @@ export const IndexPage = () => @{
 						TSRX ships with a language server for editor diagnostics, navigation, and completion.
 						Prettier and ESLint plugins keep formatting and linting consistent inside existing
 						repositories, so the language can be adopted seriously instead of treated like a
-						compiler experiment. Plus support for many IDEs and editors including VS Code, Zed,
-						Neovim, IntelliJ and Sublime.
+						compiler experiment. Install the
+						{' '}
+						<a href="https://zed.dev/extensions/tsrx" target="_blank" rel="noopener noreferrer">
+							TSRX extension for Zed
+						</a>
+						{' '}
+						from the Zed Extension Marketplace. Integrations for VS Code, Neovim, IntelliJ, and
+						Sublime are also maintained here.
 					</p>
 					<p class="section-body">
 						It interoperates with existing TypeScript and TSX codebases rather than demanding a full
