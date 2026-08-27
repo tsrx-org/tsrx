@@ -288,6 +288,7 @@ export function TSRXPlugin(config) {
 			#errors = undefined;
 			/** @type {string | null} */
 			#filename = null;
+			/** @type {WeakMap<object, { names: Set<string>, lexicalLength: number, varLength: number }>} */
 			#localExportNamesByScope = new WeakMap();
 			#functionBodyDepth = 0;
 			#allowExpressionContainerTrailingSemicolon = false;
@@ -3300,31 +3301,7 @@ export function TSRXPlugin(config) {
 				if (this.hasImport(name)) return;
 				// Check all scopes in the scope stack, not just the top-level scope
 				for (let i = this.scopeStack.length - 1; i >= 0; i--) {
-					const scope = this.scopeStack[i];
-					let cached = this.#localExportNamesByScope.get(scope);
-					if (
-						!cached ||
-						cached.lexicalLength > scope.lexical.length ||
-						cached.varLength > scope.var.length
-					) {
-						cached = {
-							names: new Set(),
-							lexicalLength: 0,
-							varLength: 0,
-						};
-						this.#localExportNamesByScope.set(scope, cached);
-					}
-
-					for (let j = cached.lexicalLength; j < scope.lexical.length; j++) {
-						cached.names.add(scope.lexical[j]);
-					}
-					for (let j = cached.varLength; j < scope.var.length; j++) {
-						cached.names.add(scope.var[j]);
-					}
-					cached.lexicalLength = scope.lexical.length;
-					cached.varLength = scope.var.length;
-
-					if (cached.names.has(name)) {
+					if (this.#scopeDeclaredNames(this.scopeStack[i]).has(name)) {
 						// Found in a scope, remove from undefinedExports if it was added
 						delete this.undefinedExports[name];
 						return;
@@ -3332,6 +3309,32 @@ export function TSRXPlugin(config) {
 				}
 				// Not found in any scope, add to undefinedExports for later error
 				this.undefinedExports[name] = id;
+			}
+
+			/**
+			 * The names declared in `scope`, as a cached Set. Acorn only ever
+			 * appends to a scope's `lexical` and `var` arrays during the scope's
+			 * lifetime, so syncing from the last-seen lengths is enough to keep the
+			 * Set current.
+			 *
+			 * @param {{ lexical: string[], var: string[] }} scope
+			 * @returns {Set<string>}
+			 */
+			#scopeDeclaredNames(scope) {
+				let cached = this.#localExportNamesByScope.get(scope);
+				if (!cached) {
+					cached = { names: new Set(), lexicalLength: 0, varLength: 0 };
+					this.#localExportNamesByScope.set(scope, cached);
+				}
+				for (let i = cached.lexicalLength; i < scope.lexical.length; i++) {
+					cached.names.add(scope.lexical[i]);
+				}
+				for (let i = cached.varLength; i < scope.var.length; i++) {
+					cached.names.add(scope.var[i]);
+				}
+				cached.lexicalLength = scope.lexical.length;
+				cached.varLength = scope.var.length;
+				return cached.names;
 			}
 
 			/** @type {Parse.Parser['parseForStatement']} */
