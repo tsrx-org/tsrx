@@ -373,11 +373,9 @@ export function SpecificationPage() @{
 						<a href="https://discord.gg/HCYpT5QHQR" target="_blank" rel="noopener noreferrer">
 							Discord
 						</a>
-						<a
-							href="https://github.com/tsrx-org/tsrx/tree/main/packages/tsrx"
-							target="_blank"
-							rel="noopener noreferrer"
-						>GitHub</a>
+						<a href="https://github.com/tsrx-org/tsrx" target="_blank" rel="noopener noreferrer">
+							GitHub
+						</a>
 						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a>
 					</nav>
 				</header>
