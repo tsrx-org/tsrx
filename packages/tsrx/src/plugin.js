@@ -3290,6 +3290,37 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Converting a node into an assignment target resolves any lazy binding
+			 * pattern recorded inside it — the pattern landed in a valid position,
+			 * so its pending error must not outlive the conversion (e.g.
+			 * `({ pair: &{ a } } = obj)` would otherwise still raise when the
+			 * enclosing parenthesized expression runs checkExpressionErrors). This
+			 * mirrors how Acorn resets `shorthandAssign` once the shorthand ends up
+			 * inside a converted left-hand side.
+			 *
+			 * @type {Parse.Parser['toAssignable']}
+			 */
+			toAssignable(node, isBinding, refDestructuringErrors, preserveTypeScriptWrapper) {
+				const lazy_binding_pos = get_lazy_binding_pos(refDestructuringErrors);
+				// The recorded position is the pattern's `&`, which sits one character
+				// BEFORE the pattern node itself (parseBindingAtom consumes the `&`
+				// before starting the node) — hence `node.start - 1`: an `&` directly
+				// before `node` can only be `node`'s own ampersand.
+				if (
+					lazy_binding_pos >= /** @type {number} */ (node.start) - 1 &&
+					lazy_binding_pos < /** @type {number} */ (node.end)
+				) {
+					/** @type {Parse.DestructuringErrors} */ (refDestructuringErrors).lazyBindingPos = -1;
+				}
+				return super.toAssignable(
+					node,
+					isBinding,
+					refDestructuringErrors,
+					preserveTypeScriptWrapper,
+				);
+			}
+
+			/**
 			 * Override checkLocalExport to check all scopes in the scope stack.
 			 * This is needed because submodules create nested scopes, but exports
 			 * from within submodules should still be valid if the identifier is

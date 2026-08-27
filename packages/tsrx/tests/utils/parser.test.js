@@ -3219,6 +3219,27 @@ foo();`;
 		expect(as_type(target.elements[0], 'ObjectPattern').lazy).toBe(true);
 	});
 
+	it('parses lazy binding patterns in parenthesized destructuring assignments', () => {
+		// Object-rooted targets can only be written parenthesized (a bare `{`
+		// starts a block), so the pending lazy record must be cleared when the
+		// target converts — otherwise the enclosing parenthesized expression
+		// would reject it in checkExpressionErrors.
+		const ast = parseModule(`({ pair: &{ a } } = obj);`, 'App.tsrx');
+		const statement = firstStatement(ast, 'ExpressionStatement');
+		const assignment = as_type(statement.expression, 'AssignmentExpression');
+		const target = as_type(assignment.left, 'ObjectPattern');
+		const pair = as_type(target.properties[0], 'Property');
+		expect(as_type(pair.value, 'ObjectPattern').lazy).toBe(true);
+
+		expect(() => parseModule(`(&{ name } = obj);`, 'App.tsrx')).not.toThrow();
+		expect(() => parseModule(`foo([&{ a }] = pairs);`, 'App.tsrx')).not.toThrow();
+		// A lazy pattern that is not part of the converted assignment target
+		// still raises.
+		expect(() => parseModule(`(&{ name }, other = 1);`, 'App.tsrx')).toThrow(
+			/Lazy binding patterns are only valid as binding or assignment targets/,
+		);
+	});
+
 	it('parses lazy binding patterns as for-of and for-in loop targets', () => {
 		const for_of = parseModule(`for (&{ name } of items);`, 'App.tsrx');
 		const of_statement = firstStatement(for_of, 'ForOfStatement');

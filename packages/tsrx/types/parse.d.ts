@@ -1610,11 +1610,13 @@ export namespace Parse {
 		 * @param node Expression to convert
 		 * @param isBinding Whether binding pattern
 		 * @param refDestructuringErrors Error collector
+		 * @param preserveTypeScriptWrapper Keep TS wrapper nodes (acorn-typescript extension)
 		 */
 		toAssignable(
 			node: AST.Node,
 			isBinding?: boolean,
 			refDestructuringErrors?: DestructuringErrors,
+			preserveTypeScriptWrapper?: boolean,
 		): AST.Pattern;
 
 		/**
