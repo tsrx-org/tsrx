@@ -60,6 +60,6 @@ temp/
 # differential test rig precompile cache
 **/.react-cache/
 
-# Generated Compound Engineering artifacts
-/docs/ce-optimize/
+# Agent-generated plans are local working artifacts, not repository content.
+/plans/
 /docs/plans/
