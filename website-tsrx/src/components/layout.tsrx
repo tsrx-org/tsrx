@@ -267,6 +267,47 @@ export function Layout({ children }: { children: any }) @{
 			}
 
 			@media (max-width: 720px) {
+				:global(.masthead) {
+					padding: 0.75rem 0 1rem;
+					align-items: flex-start;
+					gap: 0.85rem;
+				}
+
+				:global(.brand-lockup) {
+					width: 100%;
+					justify-content: center;
+				}
+
+				:global(.masthead-nav) {
+					display: flex;
+					width: 100%;
+					flex-wrap: wrap;
+					justify-content: center;
+					gap: 0.5rem;
+					font-size: 0.82rem;
+				}
+
+				:global(.masthead-nav a) {
+					display: inline-flex;
+					align-items: center;
+					min-height: 2rem;
+					padding: 0.35rem 0.7rem;
+					border: 1px solid rgba(94, 44, 255, 0.1);
+					border-radius: 999px;
+					background: rgba(94, 44, 255, 0.06);
+					line-height: 1.1;
+				}
+
+				:global(.masthead-nav a[aria-current='page']) {
+					background: rgba(94, 44, 255, 0.12);
+					border-color: rgba(94, 44, 255, 0.18);
+				}
+
+				:global(.header-logo) {
+					width: 3.6rem;
+					height: 3.6rem;
+				}
+
 				:global(.code-block) {
 					padding: 1rem 0.75rem;
 					font-size: 0.75rem;
