@@ -576,47 +576,6 @@ export const IndexPage = () => @{
 					padding: 0.5rem 0 2rem;
 				}
 
-				.masthead {
-					padding: 0.75rem 0 1rem;
-					align-items: flex-start;
-					gap: 0.85rem;
-				}
-
-				.brand-lockup {
-					width: 100%;
-					justify-content: center;
-				}
-
-				.masthead-nav {
-					display: flex;
-					width: 100%;
-					flex-wrap: wrap;
-					justify-content: center;
-					gap: 0.5rem;
-					font-size: 0.82rem;
-				}
-
-				.masthead-nav a {
-					display: inline-flex;
-					align-items: center;
-					min-height: 2rem;
-					padding: 0.35rem 0.7rem;
-					border: 1px solid rgba(94, 44, 255, 0.1);
-					border-radius: 999px;
-					background: rgba(94, 44, 255, 0.06);
-					line-height: 1.1;
-				}
-
-				.masthead-nav a[aria-current='page'] {
-					background: rgba(94, 44, 255, 0.12);
-					border-color: rgba(94, 44, 255, 0.18);
-				}
-
-				.header-logo {
-					width: 3.6rem;
-					height: 3.6rem;
-				}
-
 				.hero {
 					padding: 1.5rem 0 1.5rem;
 				}

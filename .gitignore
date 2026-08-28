@@ -60,8 +60,6 @@ temp/
 # differential test rig precompile cache
 **/.react-cache/
 
-# Generated optimization audit artifacts
-/docs/ce-optimize/
-
-# Local planning artifacts
+# Agent-generated plans are local working artifacts, not repository content.
+/plans/
 /docs/plans/

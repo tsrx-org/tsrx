@@ -1,19 +1,16 @@
 /**
  * @import { PostProcessingChanges, LineOffsets } from '../types/index.js';
  * @import * as AST from 'estree';
- * @import {
- *   CodeMapping,
- *   CodePosition,
- *   CodeToGeneratedMap,
- *   GeneratedToSourceMap,
- *   SourceLineGeneratedMap,
- *   SourceLineGeneratedPosition,
- * } from '../types/index.js';
+ * @import { CodeMapping, CodePosition } from '../types/index.js';
  * @import { CodeMapping as VolarCodeMapping } from '@volar/language-core';
  * @import { RawSourceMap } from 'source-map';
  */
 
 import { decode } from '@jridgewell/sourcemap-codec';
+
+/** @typedef {Pick<CodePosition, 'line' | 'column'>} GeneratedPosition */
+/** @typedef {Map<string, GeneratedPosition[]>} SourceToGeneratedMap */
+/** @typedef {Map<number, Array<{ column: number, position: GeneratedPosition }>>} SourceLineGeneratedMap */
 
 /** @type {VolarCodeMapping['data']} */
 export const mapping_data = {
@@ -102,21 +99,19 @@ export const offset_to_line_col = (offset, line_offsets) => {
  * @param {RawSourceMap} source_map - The source map object from esrap (v3 format)
  * @param {PostProcessingChanges} post_processing_changes - Optional post-processing changes to apply
  * @param {LineOffsets} line_offsets - Pre-computed line offsets array
- * @param {string} generated_code - The final generated code (after post-processing)
+ * @param {string} _generated_code - Retained positional slot for existing internal callers
  * @param {boolean} [include_source_line_generated_map] - Whether to build the optional source-line predecessor lookup
- * @returns {[CodeToGeneratedMap, GeneratedToSourceMap, SourceLineGeneratedMap | null]} Tuple of [source-to-generated map, generated-to-source map, source-line generated map]
+ * @returns {[SourceToGeneratedMap, null, SourceLineGeneratedMap | null]} Tuple of [source-to-generated map, unused reverse-map slot, source-line generated map]
  */
 export function build_src_to_gen_map(
 	source_map,
 	post_processing_changes,
 	line_offsets,
-	generated_code,
+	_generated_code,
 	include_source_line_generated_map = false,
 ) {
-	/** @type {CodeToGeneratedMap} */
+	/** @type {SourceToGeneratedMap} */
 	const map = new Map();
-	/** @type {GeneratedToSourceMap} */
-	const reverse_map = new Map();
 	/** @type {SourceLineGeneratedMap | null} */
 	const source_line_generated_map = include_source_line_generated_map ? new Map() : null;
 
@@ -172,81 +167,41 @@ export function build_src_to_gen_map(
 	}
 
 	// Now build the map using adjusted positions
-	for (let line_idx = 0; line_idx < adjusted_segments.length; line_idx++) {
-		const line_segments = adjusted_segments[line_idx];
-
-		for (let seg_idx = 0; seg_idx < line_segments.length; seg_idx++) {
-			const segment = line_segments[seg_idx];
+	for (const line_segments of adjusted_segments) {
+		for (const segment of line_segments) {
 			const line = segment.line;
 			const column = segment.column;
-
-			// Determine end position using next segment
-			let end_line = line;
-			let end_column = column;
-
-			// Look for next segment to determine end position
-			if (seg_idx + 1 < line_segments.length) {
-				// Next segment on same line
-				const next_segment = line_segments[seg_idx + 1];
-				end_line = next_segment.line;
-				end_column = next_segment.column;
-			} else if (
-				line_idx + 1 < adjusted_segments.length &&
-				adjusted_segments[line_idx + 1].length > 0
-			) {
-				// Look at first segment of next line
-				const next_segment = adjusted_segments[line_idx + 1][0];
-				end_line = next_segment.line;
-				end_column = next_segment.column;
-			}
-
-			// Extract code snippet
-			const start_offset = line_col_to_byte_offset(line, column);
-			const end_offset = line_col_to_byte_offset(end_line, end_column);
-			const code_snippet = generated_code.slice(start_offset, end_offset);
 
 			// Create key from source position (1-indexed line, 0-indexed column)
 			segment.sourceLine += 1;
 			const key = `${segment.sourceLine}:${segment.sourceColumn}`;
 
-			// Store adjusted generated position with code snippet
-			const gen_pos = { line, column, end_line, end_column, code: code_snippet, metadata: {} };
+			const gen_pos = { line, column };
 
 			if (!map.has(key)) {
 				map.set(key, []);
 			}
-			/** @type {CodePosition[]} */ (map.get(key)).push(gen_pos);
+			/** @type {GeneratedPosition[]} */ (map.get(key)).push(gen_pos);
 			if (source_line_generated_map) {
 				if (!source_line_generated_map.has(segment.sourceLine)) {
 					source_line_generated_map.set(segment.sourceLine, []);
 				}
-				/** @type {SourceLineGeneratedPosition[]} */ (
+				/** @type {Array<{ column: number, position: GeneratedPosition }>} */ (
 					source_line_generated_map.get(segment.sourceLine)
 				).push({ column: segment.sourceColumn, position: gen_pos });
 			}
-
-			// Store reverse mapping (generated to source)
-			const gen_key = `${gen_pos.line}:${gen_pos.column}`;
-
-			if (!reverse_map.has(gen_key)) {
-				reverse_map.set(gen_key, []);
-			}
-			reverse_map.get(gen_key)?.push({
-				line: segment.sourceLine,
-				column: segment.sourceColumn,
-			});
 		}
 	}
 
-	return [map, reverse_map, source_line_generated_map];
+	return [map, null, source_line_generated_map];
 }
 
 /**
  * Look up generated position for a given source position if it exists
  * @param {number} src_line - 1-based line number in source
  * @param {number} src_column - 0-based column number in source
- * @param {CodeToGeneratedMap} src_to_gen_map - Lookup map
- * @returns {CodePosition | Error} Generated position
+ * @param {SourceToGeneratedMap} src_to_gen_map - Lookup map
+ * @returns {GeneratedPosition | Error} Generated position
  */
 function maybe_get_generated_position(src_line, src_column, src_to_gen_map) {
 	const key = `${src_line}:${src_column}`;
@@ -264,8 +219,8 @@ function maybe_get_generated_position(src_line, src_column, src_to_gen_map) {
  * Look up generated position for a given source position
  * @param {number} src_line - 1-based line number in source
  * @param {number} src_column - 0-based column number in source
- * @param {CodeToGeneratedMap} src_to_gen_map - Lookup map
- * @returns {CodePosition} Generated position
+ * @param {SourceToGeneratedMap} src_to_gen_map - Lookup map
+ * @returns {GeneratedPosition} Generated position
  */
 export function get_generated_position(src_line, src_column, src_to_gen_map) {
 	const maybe_position = maybe_get_generated_position(src_line, src_column, src_to_gen_map);
@@ -332,7 +287,7 @@ export function find_exact_mapping(mappings, source_offset, generated_offset, le
  * DO NOT EXPORT THIS FUNCTION!
  * THE FIX NEEDS TO HAPPEN IN THE TRANSFORMER, SEGMENTS OR PARSER
  * @param {AST.Node | AST.NodeWithLocation} node
- * @param {CodeToGeneratedMap} src_to_gen_map
+ * @param {SourceToGeneratedMap} src_to_gen_map
  * @param {number[]} gen_line_offsets
  * @param {Partial<VolarCodeMapping['data']>} [filtered_data]
  * @param {number} [src_max_len]
@@ -379,7 +334,7 @@ function __maybe_get_mapping_from_node(
 
 /**
  * @param {AST.Node | AST.NodeWithLocation} node
- * @param {CodeToGeneratedMap} src_to_gen_map
+ * @param {SourceToGeneratedMap} src_to_gen_map
  * @param {number[]} gen_line_offsets
  * @param {Partial<VolarCodeMapping['data']>} [filtered_data]
  * @param {number} [src_max_len]
