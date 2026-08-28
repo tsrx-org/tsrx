@@ -62,3 +62,4 @@ temp/
 
 # Agent-generated plans are local working artifacts, not repository content.
 /plans/
+/docs/plans/
