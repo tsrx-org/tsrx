@@ -49,6 +49,60 @@ const CharCode = Object.freeze({
 	closeBrace: 125,
 });
 
+/** @type {WeakMap<Parse.Parser, number[]>} */
+const parser_line_starts = new WeakMap();
+
+/**
+ * Resolve an offset without rescanning the source from the beginning on every
+ * TSRX tokenizer rewind. Acorn's `getLineInfo` is linear in the offset; the
+ * parser calls this path often enough that large modules otherwise pay a
+ * quadratic location-tracking cost.
+ *
+ * @param {Parse.Parser} parser
+ * @param {number} offset
+ * @returns {acorn.Position}
+ */
+function get_line_info(parser, offset) {
+	let starts = parser_line_starts.get(parser);
+	if (starts === undefined) {
+		starts = [0];
+		for (let i = 0; i < parser.input.length; i++) {
+			const ch = parser.input.charCodeAt(i);
+			if (ch === CharCode.carriageReturn && parser.input.charCodeAt(i + 1) === CharCode.lineFeed) {
+				i++;
+				starts.push(i + 1);
+			} else if (
+				ch === CharCode.lineFeed ||
+				ch === CharCode.carriageReturn ||
+				ch === 0x2028 ||
+				ch === 0x2029
+			) {
+				starts.push(i + 1);
+			}
+		}
+		parser_line_starts.set(parser, starts);
+	}
+
+	let low = 0;
+	let high = starts.length;
+	while (low + 1 < high) {
+		const middle = (low + high) >>> 1;
+		if (starts[middle] <= offset) low = middle;
+		else high = middle;
+	}
+	// `getLineInfo(input, offset)` treats a CR as a complete line break when
+	// `offset` points at the LF of a CRLF pair, even though later offsets treat
+	// the pair as one terminator. Preserve that boundary behavior exactly.
+	if (
+		offset > 0 &&
+		parser.input.charCodeAt(offset) === CharCode.lineFeed &&
+		parser.input.charCodeAt(offset - 1) === CharCode.carriageReturn
+	) {
+		return new acorn.Position(low + 2, 0);
+	}
+	return new acorn.Position(low + 1, offset - starts[low]);
+}
+
 // Transparent wrappers to look through when validating a dynamic tag
 // expression (`<{expr}>`), and syntax that disqualifies one outright.
 const DYNAMIC_TAG_WRAPPER_TYPES = new Set([
@@ -709,12 +763,12 @@ export function TSRXPlugin(config) {
 					}
 					if (this.#isTemplateBlockCommentStart(index)) {
 						const comment_start = index;
-						const comment_start_loc = acorn.getLineInfo(this.input, comment_start);
+						const comment_start_loc = get_line_info(this, comment_start);
 						const close = this.input.indexOf('*/', index + 2);
 						const value_end = close === -1 ? this.input.length : close;
 						index = close === -1 ? this.input.length : close + 2;
 						if (this.options.onComment && comment_start >= token_end) {
-							const comment_end_loc = acorn.getLineInfo(this.input, index);
+							const comment_end_loc = get_line_info(this, index);
 							this.options.onComment(
 								true,
 								this.input.slice(comment_start + 2, value_end),
@@ -741,7 +795,7 @@ export function TSRXPlugin(config) {
 					index++;
 				}
 
-				const endLoc = acorn.getLineInfo(this.input, index);
+				const endLoc = get_line_info(this, index);
 				const node = /** @type {ESTreeJSX.JSXText} */ (this.startNodeAt(start, this.startLoc));
 				node.value = value;
 				node.raw = this.input.slice(start, index);
@@ -793,7 +847,7 @@ export function TSRXPlugin(config) {
 					}
 				}
 				if (!has_newline) return;
-				const loc = acorn.getLineInfo(this.input, index);
+				const loc = get_line_info(this, index);
 				this.start = index;
 				this.startLoc = new acorn.Position(loc.line, loc.column);
 				if (this.pos <= index) {
@@ -822,8 +876,8 @@ export function TSRXPlugin(config) {
 					this.input.slice(start + 2, end),
 					start,
 					end,
-					acorn.getLineInfo(this.input, start),
-					acorn.getLineInfo(this.input, end),
+					get_line_info(this, start),
+					get_line_info(this, end),
 					metadata,
 				);
 			}
@@ -936,7 +990,7 @@ export function TSRXPlugin(config) {
 				}
 				this.pos = start;
 				this.start = start;
-				this.startLoc = acorn.getLineInfo(this.input, start);
+				this.startLoc = get_line_info(this, start);
 				this.exprAllowed = true;
 				this.#suppressTemplateRawTextToken = true;
 				this.next();
@@ -1031,7 +1085,7 @@ export function TSRXPlugin(config) {
 					index++;
 				}
 
-				const endLoc = acorn.getLineInfo(this.input, index);
+				const endLoc = get_line_info(this, index);
 				const node = /** @type {ESTreeJSX.JSXText} */ (this.startNodeAt(start, this.startLoc));
 				node.value = this.input.slice(start, index);
 				node.raw = node.value;
@@ -1195,7 +1249,7 @@ export function TSRXPlugin(config) {
 				const start = this.pos;
 				const index = this.#templateRawTextEnd(start);
 
-				const endLoc = acorn.getLineInfo(this.input, index);
+				const endLoc = get_line_info(this, index);
 				const value = this.input.slice(start, index);
 				if (value.match(regex_newline_characters)) {
 					this.curLine = endLoc.line;
@@ -1394,7 +1448,7 @@ export function TSRXPlugin(config) {
 				let node;
 				try {
 					if (this.type === tstt.jsxText || this.type === tstt.jsxName) {
-						const loc = acorn.getLineInfo(this.input, this.start);
+						const loc = get_line_info(this, this.start);
 						this.pos = this.start;
 						this.curLine = loc.line;
 						this.lineStart = this.start - loc.column;
@@ -1429,7 +1483,7 @@ export function TSRXPlugin(config) {
 				// (a preceding setup statement's context restore can strip the JSX tag
 				// contexts the trailing `<`/`@` token first pushed).
 				if (this.start !== at_index) {
-					const loc = acorn.getLineInfo(this.input, at_index);
+					const loc = get_line_info(this, at_index);
 					this.pos = at_index;
 					this.start = at_index;
 					this.startLoc = new acorn.Position(loc.line, loc.column);
@@ -1541,7 +1595,7 @@ export function TSRXPlugin(config) {
 				if (this.curContext() !== b_stat) {
 					this.context.push(b_stat);
 				}
-				const braceLoc = acorn.getLineInfo(this.input, braceStart);
+				const braceLoc = get_line_info(this, braceStart);
 				this.pos = braceStart;
 				this.start = braceStart;
 				this.startLoc = new acorn.Position(braceLoc.line, braceLoc.column);
@@ -1681,7 +1735,7 @@ export function TSRXPlugin(config) {
 				const keywordStart = start + 1;
 				this.pos = keywordStart;
 				this.start = keywordStart;
-				this.startLoc = acorn.getLineInfo(this.input, keywordStart);
+				this.startLoc = get_line_info(this, keywordStart);
 				this.curLine = this.startLoc.line;
 				this.lineStart = keywordStart - this.startLoc.column;
 				this.#filterTemplateScriptContexts();
@@ -1814,13 +1868,13 @@ export function TSRXPlugin(config) {
 					start: keywordStart,
 					end: keywordEnd,
 					loc: {
-						start: acorn.getLineInfo(this.input, keywordStart),
-						end: acorn.getLineInfo(this.input, keywordEnd),
+						start: get_line_info(this, keywordStart),
+						end: get_line_info(this, keywordEnd),
 					},
 				};
 				this.pos = wordStart;
 				this.start = wordStart;
-				this.startLoc = acorn.getLineInfo(this.input, wordStart);
+				this.startLoc = get_line_info(this, wordStart);
 				this.curLine = this.startLoc.line;
 				this.lineStart = wordStart - this.startLoc.column;
 				this.#filterTemplateScriptContexts();
@@ -1856,7 +1910,7 @@ export function TSRXPlugin(config) {
 
 				this.pos = wordStart;
 				this.start = wordStart;
-				this.startLoc = acorn.getLineInfo(this.input, wordStart);
+				this.startLoc = get_line_info(this, wordStart);
 				this.curLine = this.startLoc.line;
 				this.lineStart = wordStart - this.startLoc.column;
 				this.#filterTemplateScriptContexts();
@@ -2211,12 +2265,12 @@ export function TSRXPlugin(config) {
 
 				if (relativeCloseStart !== -1) {
 					const closingStart = contentStart + content.length;
-					const closingLineInfo = acorn.getLineInfo(this.input, closingStart);
+					const closingLineInfo = get_line_info(this, closingStart);
 					const closingStartLoc = new acorn.Position(closingLineInfo.line, closingLineInfo.column);
 					const nameStart = closingStart + 2;
 					const nameEnd = nameStart + tagName.length;
-					const nameStartInfo = acorn.getLineInfo(this.input, nameStart);
-					const nameEndInfo = acorn.getLineInfo(this.input, nameEnd);
+					const nameStartInfo = get_line_info(this, nameStart);
+					const nameEndInfo = get_line_info(this, nameEnd);
 					const name = /** @type {ESTreeJSX.JSXIdentifier} */ (
 						this.startNodeAt(
 							nameStart,
@@ -2231,7 +2285,7 @@ export function TSRXPlugin(config) {
 						new acorn.Position(nameEndInfo.line, nameEndInfo.column),
 					);
 					const closingEnd = closingStart + closeTag.length;
-					const closingEndInfo = acorn.getLineInfo(this.input, closingEnd);
+					const closingEndInfo = get_line_info(this, closingEnd);
 					const closingElement =
 						/** @type {ESTreeJSX.TSRXJSXClosingElement & AST.NodeWithLocation} */ (
 							this.startNodeAt(closingStart, closingStartLoc)
@@ -2337,14 +2391,14 @@ export function TSRXPlugin(config) {
 				node.children = [];
 
 				if (content.length > 0) {
-					const bodyStartInfo = acorn.getLineInfo(this.input, open.end);
+					const bodyStartInfo = get_line_info(this, open.end);
 					const text = /** @type {ESTreeJSX.JSXText} */ (
 						this.startNodeAt(open.end, new acorn.Position(bodyStartInfo.line, bodyStartInfo.column))
 					);
 					text.value = content;
 					text.raw = content;
 					const bodyEnd = open.end + content.length;
-					const bodyEndInfo = acorn.getLineInfo(this.input, bodyEnd);
+					const bodyEndInfo = get_line_info(this, bodyEnd);
 					this.finishNodeAt(
 						text,
 						'JSXText',
@@ -2625,8 +2679,8 @@ export function TSRXPlugin(config) {
 			#report_recoverable_error_range(position, end, message, code) {
 				const start = Math.max(0, Math.min(position, this.input.length));
 				const range_end = Math.max(start, Math.min(end, this.input.length));
-				const start_loc = acorn.getLineInfo(this.input, start);
-				const end_loc = acorn.getLineInfo(this.input, range_end);
+				const start_loc = get_line_info(this, start);
+				const end_loc = get_line_info(this, range_end);
 
 				error(
 					message,
@@ -3026,7 +3080,7 @@ export function TSRXPlugin(config) {
 					this.input.charCodeAt(this.pos - 1) === CharCode.equals
 				) {
 					const start = this.pos - 1;
-					const loc = acorn.getLineInfo(this.input, start);
+					const loc = get_line_info(this, start);
 					this.start = start;
 					this.startLoc = loc;
 					this.pos++;
@@ -3078,7 +3132,7 @@ export function TSRXPlugin(config) {
 					this.input.charCodeAt(this.pos - 1) === CharCode.equals
 				) {
 					const start = this.pos - 1;
-					const loc = acorn.getLineInfo(this.input, start);
+					const loc = get_line_info(this, start);
 					this.start = start;
 					this.startLoc = loc;
 					this.pos++;
@@ -3823,8 +3877,8 @@ export function TSRXPlugin(config) {
 						}
 						const brace_start = skip_whitespace_from(this.input, name_end);
 						if (this.input.charCodeAt(brace_start) === CharCode.closeBrace) {
-							const name_start_loc = acorn.getLineInfo(this.input, name_start);
-							const name_end_loc = acorn.getLineInfo(this.input, name_end);
+							const name_start_loc = get_line_info(this, name_start);
+							const name_end_loc = get_line_info(this, name_end);
 							const name_value = this.input.slice(name_start, name_end);
 							const id = /** @type {ESTreeJSX.JSXIdentifier} */ (
 								this.startNodeAt(name_start, name_start_loc)
@@ -3844,14 +3898,14 @@ export function TSRXPlugin(config) {
 								expression,
 								'JSXExpressionContainer',
 								brace_start + 1,
-								acorn.getLineInfo(this.input, brace_start + 1),
+								get_line_info(this, brace_start + 1),
 							);
 							/** @type {ESTreeJSX.JSXAttribute} */ (node).name = id;
 							/** @type {ESTreeJSX.JSXAttribute} */ (node).value = expression;
 							/** @type {ESTreeJSX.JSXAttribute} */ (node).shorthand = true;
 
 							const end = brace_start + 1;
-							const endLoc = acorn.getLineInfo(this.input, end);
+							const endLoc = get_line_info(this, end);
 							this.pos = end;
 							this.curLine = endLoc.line;
 							this.lineStart = end - endLoc.column;
@@ -4104,7 +4158,7 @@ export function TSRXPlugin(config) {
 							if (this.input.charCodeAt(paramStart) === CharCode.openParen) {
 								this.pos = paramStart;
 								this.start = paramStart;
-								this.startLoc = acorn.getLineInfo(this.input, paramStart);
+								this.startLoc = get_line_info(this, paramStart);
 								this.curLine = this.startLoc.line;
 								this.lineStart = paramStart - this.startLoc.column;
 								this.#filterTemplateScriptContexts();
@@ -4274,7 +4328,7 @@ export function TSRXPlugin(config) {
 						this.input.charCodeAt(index + 1) === CharCode.greaterThan &&
 						this.context.includes(tstc.tc_expr)
 					) {
-						const loc = acorn.getLineInfo(this.input, index);
+						const loc = get_line_info(this, index);
 						this.pos = index;
 						this.start = index;
 						this.startLoc = loc;
@@ -4467,7 +4521,7 @@ export function TSRXPlugin(config) {
 								!this.#shouldReadTemplateRawTextToken()
 							) {
 								const start = this.pos - 1;
-								const loc = acorn.getLineInfo(this.input, start);
+								const loc = get_line_info(this, start);
 								this.start = start;
 								this.startLoc = loc;
 								this.pos++;
@@ -4818,7 +4872,7 @@ export function TSRXPlugin(config) {
 						);
 						text_node.value = ws_value;
 						text_node.raw = ws_value;
-						const loc = acorn.getLineInfo(this.input, at_index);
+						const loc = get_line_info(this, at_index);
 						const at_position = new acorn.Position(loc.line, loc.column);
 						this.finishNodeAt(text_node, 'JSXText', at_index, at_position);
 						if (this.#shouldKeepTemplateTextNode(text_node)) {
@@ -4928,7 +4982,7 @@ export function TSRXPlugin(config) {
 						this.start > blockEnd &&
 						/^\s*$/.test(this.input.slice(blockEnd, this.start))
 					) {
-						const loc = acorn.getLineInfo(this.input, blockEnd);
+						const loc = get_line_info(this, blockEnd);
 						this.pos = blockEnd;
 						this.start = blockEnd;
 						this.startLoc = new acorn.Position(loc.line, loc.column);

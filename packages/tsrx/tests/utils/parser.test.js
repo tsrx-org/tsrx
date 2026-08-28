@@ -4,7 +4,7 @@
 /** @import * as ESTreeJSX from 'estree-jsx' */
 
 import { describe, expect, it } from 'vitest';
-import { parseModule } from '../../src/index.js';
+import { acorn, parseModule } from '../../src/index.js';
 import { node_children } from '../../src/utils/ast.js';
 import { as_type, assert_type } from '../shared/node-types.js';
 
@@ -3643,6 +3643,34 @@ foo();`;
 			true,
 		);
 		expect(messages.some((m) => m.startsWith('10:') && /single node/.test(m))).toBe(true);
+	});
+
+	it('keeps shorthand attribute locations aligned across every JavaScript line terminator', () => {
+		const source =
+			'export function App() @{\r\n' +
+			'\tconst first = 1;\r' +
+			'\tconst second = 2;\u2028' +
+			'\tconst total = first + second;\u2029' +
+			'\t<main {total} />\n' +
+			'}';
+		const ast = parseModule(source, 'App.tsrx');
+		const shorthand = find_first(
+			ast,
+			(node) => node.type === 'JSXAttribute' && node.shorthand === true,
+		);
+		assert_type(shorthand, 'JSXAttribute');
+		const located = [
+			shorthand,
+			shorthand.name,
+			as_type(shorthand.value, 'JSXExpressionContainer'),
+			as_type(as_type(shorthand.value, 'JSXExpressionContainer').expression, 'Identifier'),
+		];
+		for (const node of located) {
+			expect(node.loc?.start, `${node.type} start`).toEqual(
+				acorn.getLineInfo(source, found(node.start)),
+			);
+			expect(node.loc?.end, `${node.type} end`).toEqual(acorn.getLineInfo(source, found(node.end)));
+		}
 	});
 
 	it('parses a code-only `@{ }` block (no render) as a function body', () => {
