@@ -1474,6 +1474,48 @@ export function runSharedSwitchHelperHoistingTests({
 					}
 				}
 			}`;
+		const helper_capture_source = `export function App({ status }: { status: string }) @{
+				const early = 'early';
+				const property_label = 'unused';
+				const member_label = 'unused';
+				const attribute_label = 'unused';
+				const jsx_member_label = 'unused';
+				const local_shadow = 'outer';
+				const unused0 = 0;
+				const unused1 = 1;
+				const unused2 = 2;
+				const unused3 = 3;
+				const unused4 = 4;
+				const unused5 = 5;
+				const unused6 = 6;
+				const unused7 = 7;
+				const late = 'late';
+				@switch (status) {
+					@case "active": {
+						const local_shadow = 'inner';
+						const record = { property_label: 1 };
+						const Local = { jsx_member_label: () => <span /> };
+						const label = useMemo(
+							() => late + early + local_shadow + record.member_label,
+							[],
+						);
+						<Local.jsx_member_label attribute_label={label} />
+					}
+					@default: {
+						<span>{'idle'}</span>
+					}
+				}
+			}`;
+
+		function expect_ordered_helper_capture(code, local_helper) {
+			const helper_name = local_helper ? 'StatementBodyHook1' : 'App__StatementBodyHook1';
+			const helper_signature = local_helper
+				? new RegExp(`function ${helper_name}\\(\\s*\\{ early, late \\}:`)
+				: new RegExp(`function ${helper_name}\\(\\{ early, late \\}\\)`);
+
+			expect(code).toMatch(helper_signature);
+			expect(code).toContain(`<${helper_name} early={early} late={late} />`);
+		}
 
 		it('lifts hook-bearing case bodies in the client transform', () => {
 			const { code } = compile(switch_source, 'App.tsrx');
@@ -1523,6 +1565,18 @@ export function runSharedSwitchHelperHoistingTests({
 			// No top-level helper declarations in either lifted shape.
 			expect(code).not.toMatch(/^function App__StatementBodyHook\d+\(\)/m);
 			expect(code).not.toMatch(/^const App__StatementBodyHook\d+ = defineVaporComponent\(/m);
+		});
+
+		it('captures only outer references in available-binding order for client helpers', () => {
+			const { code } = compile(helper_capture_source, 'App.tsrx');
+
+			expect_ordered_helper_capture(code, false);
+		});
+
+		it('captures only outer references in available-binding order for typeOnly helpers', () => {
+			const { code } = compile_to_volar_mappings(helper_capture_source, 'App.tsrx');
+
+			expect_ordered_helper_capture(code, true);
 		});
 	});
 }
