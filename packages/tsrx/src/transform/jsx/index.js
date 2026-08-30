@@ -7,7 +7,7 @@ import { print } from 'esrap';
 import { error } from '../../errors.js';
 import { is_template_value_position } from '../../analyze/validation.js';
 import { analyze_css } from '../../analyze/css-analyze.js';
-import { prune_css } from '../../analyze/prune.js';
+import { prune_css_elements } from '../../analyze/prune.js';
 import {
 	in_jsx_child_context,
 	is_empty_jsx_fragment,
@@ -1109,9 +1109,7 @@ function apply_css_definition_metadata(
 	const elements = collect_css_prunable_elements(node_children(component), [], transform_context);
 
 	const prune = () => {
-		for (const element of elements) {
-			prune_css(css, element, style_classes, top_scoped_classes, region_hash);
-		}
+		prune_css_elements(css, elements, style_classes, top_scoped_classes, region_hash);
 	};
 
 	prune();
@@ -2361,7 +2359,7 @@ function prepare_tsrx_fragment_styles(node, transform_context) {
 	for (const sheet of sheets) {
 		const region_hash = sheet.hash;
 		sheet.hash = css.hash;
-		// `prune_css` inside marks the matching selectors as used/scoped; selectors
+		// CSS pruning marks the matching selectors as used/scoped; selectors
 		// that match no element render commented out, matching target behavior.
 		apply_css_definition_metadata(
 			node,

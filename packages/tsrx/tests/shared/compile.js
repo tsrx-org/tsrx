@@ -3893,6 +3893,28 @@ export function optionalFn(bar: string, baz?: string) {
 			expect(count_substring(code, `${generatedClassAttrName}="card ${cssHash}"`)).toBe(2);
 		});
 
+		it('applies selector metadata to every matching element', () => {
+			const { code, css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<div ${generatedClassAttrName}="card">{'First'}</div>
+						<section>
+							<div ${generatedClassAttrName}="card">{'Second'}</div>
+						</section>
+
+						<style>
+							.card { color: red; }
+						</style>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(count_substring(code, `${generatedClassAttrName}="card ${cssHash}"`)).toBe(2);
+			expect(css).toContain(`.card.${cssHash}`);
+			expect(css).not.toContain('(unused)');
+		});
+
 		it('applies the scope hash inside fragment shorthand', () => {
 			const { code, css, cssHash } = compile(
 				`function Card() @{

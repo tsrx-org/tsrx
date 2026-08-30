@@ -11,7 +11,7 @@ const FORWARD = 0;
 /** @type {CssPruneDirection} */
 const BACKWARD = 1;
 
-// this will be set for every prune_css call
+// this will be set for every pruning pass
 // since the code is synchronous, this is safe
 /** @type {string} */
 let css_hash;
@@ -1107,13 +1107,21 @@ function rule_has_animation(rule) {
 
 /**
  * @param {AST.CSS.StyleSheet} css
- * @param {AST.TSRXElementNode} element
+ * @param {AST.TSRXElementNode[]} elements
  * @param {StyleClasses} styleClasses
  * @param {TopScopedClasses} topScopedClasses
  * @param {string} [regionHash]
  * @return {void}
  */
-export function prune_css(css, element, styleClasses, topScopedClasses, regionHash = css.hash) {
+export function prune_css_elements(
+	css,
+	elements,
+	styleClasses,
+	topScopedClasses,
+	regionHash = css.hash,
+) {
+	if (elements.length === 0) return;
+
 	css_hash = css.hash;
 	css_region_hash = regionHash;
 	style_identifier_classes = styleClasses;
@@ -1130,10 +1138,16 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
 		},
 		ComplexSelector(node, context) {
 			const selectors = get_relative_selectors(node);
-
 			const rule = /** @type {AST.CSS.Rule} */ (node.metadata.rule);
 
-			if (apply_selector(selectors, rule, element, BACKWARD) || rule_has_animation(rule)) {
+			let used = rule_has_animation(rule);
+			for (const element of elements) {
+				if (apply_selector(selectors, rule, element, BACKWARD)) {
+					used = true;
+				}
+			}
+
+			if (used) {
 				node.metadata.used = true;
 			}
 
@@ -1180,4 +1194,16 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
 	};
 
 	walk(css, null, visitors);
+}
+
+/**
+ * @param {AST.CSS.StyleSheet} css
+ * @param {AST.TSRXElementNode} element
+ * @param {StyleClasses} styleClasses
+ * @param {TopScopedClasses} topScopedClasses
+ * @param {string} [regionHash]
+ * @return {void}
+ */
+export function prune_css(css, element, styleClasses, topScopedClasses, regionHash = css.hash) {
+	prune_css_elements(css, [element], styleClasses, topScopedClasses, regionHash);
 }
