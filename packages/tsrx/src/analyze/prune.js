@@ -1140,14 +1140,14 @@ export function prune_css_elements(
 			const selectors = get_relative_selectors(node);
 			const rule = /** @type {AST.CSS.Rule} */ (node.metadata.rule);
 
-			let used = rule_has_animation(rule);
+			let used = false;
 			for (const element of elements) {
 				if (apply_selector(selectors, rule, element, BACKWARD)) {
 					used = true;
 				}
 			}
 
-			if (used) {
+			if (used || rule_has_animation(rule)) {
 				node.metadata.used = true;
 			}
 
