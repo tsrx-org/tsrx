@@ -1507,6 +1507,10 @@ export function runSharedSwitchHelperHoistingTests({
 				}
 			}`;
 
+		/**
+		 * @param {string} code
+		 * @param {boolean} local_helper
+		 */
 		function expect_ordered_helper_capture(code, local_helper) {
 			const helper_name = local_helper ? 'StatementBodyHook1' : 'App__StatementBodyHook1';
 			const helper_signature = local_helper

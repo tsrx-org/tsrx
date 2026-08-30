@@ -3084,27 +3084,35 @@ function collect_pattern_bindings(pattern, bindings) {
 /**
  * Check if a node references any of the given scope bindings.
  * Used to determine if a JSX element is static and can be hoisted to module level.
+ * When a result set is provided, records every referenced binding instead of
+ * stopping after the first match.
  *
  * @param {AST.Node | null | undefined} node
  * @param {Map<string, AST.Identifier>} scope_bindings
+ * @param {Set<string>} [referenced_bindings]
  * @returns {boolean}
  */
-function references_scope_bindings(node, scope_bindings) {
+function references_scope_bindings(node, scope_bindings, referenced_bindings) {
 	if (!node) return false;
 	if (scope_bindings.size === 0) return false;
 
 	if (node.type === 'Identifier') {
-		return scope_bindings.has(node.name);
+		const references_binding = scope_bindings.has(node.name);
+		if (references_binding) referenced_bindings?.add(node.name);
+		return references_binding;
 	}
 
 	// JSXIdentifier is a variable reference when capitalized (tag name like <MyComponent />)
 	// or when it's the object of a JSXMemberExpression (e.g. ui in <ui.Button />)
 	if (node.type === 'JSXIdentifier') {
-		return scope_bindings.has(node.name);
+		const references_binding = scope_bindings.has(node.name);
+		if (references_binding) referenced_bindings?.add(node.name);
+		return references_binding;
 	}
 
 	// Not `child_nodes`: several keys are labels rather than references and must
 	// be skipped based on the owning node's type.
+	let references_binding = false;
 	const entries = /** @type {AST.TraversableAstNode} */ (node);
 	for (const key of Object.keys(entries)) {
 		if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
@@ -3123,16 +3131,25 @@ function references_scope_bindings(node, scope_bindings) {
 
 		const value = entries[key];
 		if (Array.isArray(value)) {
-			if (
-				value.some((item) => is_ast_node(item) && references_scope_bindings(item, scope_bindings))
-			)
-				return true;
-		} else if (is_ast_node(value) && references_scope_bindings(value, scope_bindings)) {
-			return true;
+			for (const item of value) {
+				if (
+					is_ast_node(item) &&
+					references_scope_bindings(item, scope_bindings, referenced_bindings)
+				) {
+					if (!referenced_bindings) return true;
+					references_binding = true;
+				}
+			}
+		} else if (
+			is_ast_node(value) &&
+			references_scope_bindings(value, scope_bindings, referenced_bindings)
+		) {
+			if (!referenced_bindings) return true;
+			references_binding = true;
 		}
 	}
 
-	return false;
+	return references_binding;
 }
 
 /**
@@ -4081,18 +4098,25 @@ function get_referenced_helper_bindings(body_nodes, available_bindings) {
 	const helper_bindings = [];
 	/** @type {Map<string, AST.Identifier>} */
 	const local_bindings = new Map();
+	/** @type {Map<string, AST.Identifier>} */
+	const candidate_bindings = new Map();
+	/** @type {Set<string>} */
+	const referenced_bindings = new Set();
 
 	for (const node of body_nodes) {
 		collect_statement_bindings(node, local_bindings);
 	}
 
 	for (const [name, binding] of available_bindings) {
-		if (local_bindings.has(name)) continue;
+		if (!local_bindings.has(name)) candidate_bindings.set(name, binding);
+	}
 
-		const scope = new Map([[name, binding]]);
-		if (body_nodes.some((node) => references_scope_bindings(node, scope))) {
-			helper_bindings.push(binding);
-		}
+	for (const node of body_nodes) {
+		references_scope_bindings(node, candidate_bindings, referenced_bindings);
+	}
+
+	for (const [name, binding] of available_bindings) {
+		if (referenced_bindings.has(name)) helper_bindings.push(binding);
 	}
 
 	return helper_bindings;
