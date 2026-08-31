@@ -5373,27 +5373,15 @@ export function TSRXPlugin(config) {
 			parseBlock(createNewLexicalScope, node, exitStrict) {
 				const parent = this.#path.at(-1);
 
-				// A control-flow directive's own body-parsing (see
-				// `#parseTemplateControlFlowBlock`) deliberately empties `#path`
-				// while parsing its `{ … }` body, so the body tokenizes as code
-				// instead of JSX text. When a `@for` sits directly inside an `@if`
-				// branch, `#path` is therefore empty by the time we get here for
-				// the `@for`'s own body, so `#isNativeTemplateNode(undefined)` is
-				// `false` — even though `#templateControlFlowBlockDepth` correctly
-				// signals "we're inside a template control-flow directive's body".
-				// The `parent`-based check below used to gate on both conditions,
-				// so it was skipped, and the `@for`'s body fell through to plain
-				// acorn statement parsing. That parser wraps any nested
-				// control-flow directive it finds (`@if`, `@for`, `@switch`) in a
-				// bare `ExpressionStatement` around a synthetic JSXFragment
-				// (the directive's own value-position render output) instead of
-				// producing a proper `JSXIfExpression`/`JSXForExpression`/etc.
-				// `#templateControlFlowBlockDepth` alone is a safe, sufficient
-				// condition here: it's exclusively and tightly scoped (set/reset in
-				// a `finally`) to exactly the window where a `@for`'s own
-				// header+body (or `@empty` clause) is being parsed, so there's no
-				// plain-JS-`for`-loop false-positive risk from dropping the
-				// `#isNativeTemplateNode(parent)` half of the check.
+				// `#templateControlFlowBlockDepth` alone decides here — don't also
+				// require `#isNativeTemplateNode(parent)`: a directive body's own
+				// parsing (`#parseTemplateControlFlowBlock`) empties `#path`, so for
+				// a `@for` nested inside another directive's branch, `parent` is
+				// `undefined` and that check would skip this redirect, dropping the
+				// `@for`'s body into plain statement parsing (nested directives then
+				// land in expression position instead of template position). The
+				// depth counter is set only around a `@for`'s own header+body and
+				// `@empty` clause, so plain JS `for` loops can't false-positive.
 				if (this.#templateControlFlowBlockDepth > 0) {
 					this.#templateControlFlowBlockDepth--;
 					try {
