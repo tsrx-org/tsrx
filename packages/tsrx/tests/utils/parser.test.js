@@ -2683,6 +2683,140 @@ foo();`;
 		);
 	});
 
+	it('parses a nested @for whose body contains an @if/@else, both nested inside an outer @if', () => {
+		// Regression test: an `@if` directly containing an `@for`, whose own
+		// body contains another control-flow directive (`@if`, `@if`/`@else`,
+		// or a nested `@for`), previously fell through to plain statement
+		// parsing for the `@for`'s body instead of the TSRX-aware control-flow
+		// block parser. The inner directive was misparsed as a bare
+		// `ExpressionStatement` wrapping a synthetic JSXFragment rather than a
+		// proper `JSXIfExpression` — printers with no `JSXFragment` visitor
+		// (such as esrap's `ts` language, used by SSR-target output) then fail
+		// with "Not implemented: JSXFragment" when serializing that node.
+		const returned = getReturned(`function App() { return <div>
+			@if (a) {
+				@for (const item of items) {
+					@if (item.ok) {
+						<span>{item.name}</span>
+					} @else {
+						<span>skip</span>
+					}
+				}
+			} @else {
+				<span>empty</span>
+			}
+		</div>; }`);
+
+		const outerIf = node_children(returned).find((child) => child.type === 'JSXIfExpression');
+		assert_found(outerIf);
+
+		const forExpr = blockBody(outerIf.consequent).find(
+			(child) => /** @type {AST.Node} */ (child).type === 'JSXForExpression',
+		);
+		assert_found(forExpr);
+		const forDirective = as_type(forExpr, 'JSXForExpression');
+		expect(forDirective.statementType).toBe('ForOfStatement');
+
+		const innerIf = blockBody(forDirective.body).find(
+			(child) => /** @type {AST.Node} */ (child).type === 'JSXIfExpression',
+		);
+		assert_found(innerIf);
+		const innerIfDirective = as_type(innerIf, 'JSXIfExpression');
+		expect(blockBody(innerIfDirective.consequent)[0]?.type).toBe('JSXElement');
+		expect(blockBody(innerIfDirective.alternate)[0]?.type).toBe('JSXElement');
+	});
+
+	it('keeps a plain JS for loop inside an @if body as an ordinary statement', () => {
+		// Guards the invariant `parseBlock` relies on when redirecting on
+		// `#templateControlFlowBlockDepth` alone: the counter is set only for
+		// `@for`, so a plain `for` loop in a directive body must fall through
+		// to ordinary statement parsing, not become a directive or have its
+		// body treated as a template control-flow block.
+		const returned = getReturned(`function App() { return <div>
+			@if (a) {
+				let total = 0;
+				for (const n of nums) { total += n; }
+				<span>{total}</span>
+			}
+		</div>; }`);
+
+		const directive = node_children(returned).find((child) => child.type === 'JSXIfExpression');
+		assert_found(directive);
+		const body = blockBody(as_type(directive, 'JSXIfExpression').consequent);
+		const loop = as_type(
+			body.find((child) => /** @type {AST.Node} */ (child).type === 'ForOfStatement'),
+			'ForOfStatement',
+		);
+		const loopBody = as_type(loop.body, 'BlockStatement');
+		expect(loopBody.metadata?.native_tsrx_template_block).toBeUndefined();
+		expect(loopBody.body[0]?.type).toBe('ExpressionStatement');
+	});
+
+	it('parses a function body inside an @for header nested in an @if as plain code', () => {
+		// `#templateControlFlowBlockDepth` is held for the whole `@for`
+		// statement, header included, so an arrow body in the header reaches
+		// `parseBlock` while the counter is positive and takes the
+		// template-control-flow redirect. That routing must stay tolerable:
+		// the arrow's body parses as ordinary statements and the `@for` still
+		// gets its right-hand side and body.
+		const returned = getReturned(`function App() { return <div>
+			@if (show) {
+				@for (const item of items.filter((x) => { return x.keep; })) {
+					<span>{item.name}</span>
+				}
+			}
+		</div>; }`);
+
+		const outerIf = node_children(returned).find((child) => child.type === 'JSXIfExpression');
+		assert_found(outerIf);
+		const forExpr = blockBody(as_type(outerIf, 'JSXIfExpression').consequent).find(
+			(child) => /** @type {AST.Node} */ (child).type === 'JSXForExpression',
+		);
+		const forDirective = as_type(forExpr, 'JSXForExpression');
+		expect(forDirective.statementType).toBe('ForOfStatement');
+
+		const arrow = find_first(forDirective, (node) => node.type === 'ArrowFunctionExpression');
+		assert_found(arrow);
+		const arrowBody = as_type(
+			/** @type {AST.ArrowFunctionExpression} */ (arrow).body,
+			'BlockStatement',
+		);
+		expect(arrowBody.body.map((child) => child.type)).toEqual(['ReturnStatement']);
+
+		expect(blockBody(forDirective.body)[0]?.type).toBe('JSXElement');
+	});
+
+	it('parses a directive inside an @empty clause of an @for nested in an @if', () => {
+		// The `@empty` clause redirects through a second, independent
+		// `#templateControlFlowBlockDepth` increment (separate from the one
+		// around the `@for` header+body), so it needs its own regression
+		// coverage for the nested-in-@if shape.
+		const returned = getReturned(`function App() { return <div>
+			@if (show) {
+				@for (const item of items) {
+					<span>{item}</span>
+				} @empty {
+					@if (fallback) {
+						<b>none</b>
+					}
+				}
+			}
+		</div>; }`);
+
+		const outerIf = node_children(returned).find((child) => child.type === 'JSXIfExpression');
+		assert_found(outerIf);
+		const forExpr = blockBody(as_type(outerIf, 'JSXIfExpression').consequent).find(
+			(child) => /** @type {AST.Node} */ (child).type === 'JSXForExpression',
+		);
+		const forDirective = as_type(forExpr, 'JSXForExpression');
+
+		const emptyIf = blockBody(forDirective.empty).find(
+			(child) => /** @type {AST.Node} */ (child).type === 'JSXIfExpression',
+		);
+		assert_found(emptyIf);
+		expect(blockBody(as_type(emptyIf, 'JSXIfExpression').consequent)[0]?.type).toBe('JSXElement');
+	});
+
 	it('parses @else if as a chained JSXIfExpression alternate', () => {
 		const returned = getReturned(`function App() { return <div>
 				@if (status === 'loading') {

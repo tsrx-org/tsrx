@@ -5373,7 +5373,16 @@ export function TSRXPlugin(config) {
 			parseBlock(createNewLexicalScope, node, exitStrict) {
 				const parent = this.#path.at(-1);
 
-				if (this.#isNativeTemplateNode(parent) && this.#templateControlFlowBlockDepth > 0) {
+				// `#templateControlFlowBlockDepth` alone decides here — don't also
+				// require `#isNativeTemplateNode(parent)`: a directive body's own
+				// parsing (`#parseTemplateControlFlowBlock`) empties `#path`, so for
+				// a `@for` nested inside another directive's branch, `parent` is
+				// `undefined` and that check would skip this redirect, dropping the
+				// `@for`'s body into plain statement parsing (nested directives then
+				// land in expression position instead of template position). The
+				// depth counter is set only around a `@for`'s own header+body and
+				// `@empty` clause, so plain JS `for` loops can't false-positive.
+				if (this.#templateControlFlowBlockDepth > 0) {
 					this.#templateControlFlowBlockDepth--;
 					try {
 						return this.#parseTemplateControlFlowBlock(createNewLexicalScope, node, exitStrict);
