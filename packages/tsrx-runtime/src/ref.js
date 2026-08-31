@@ -162,14 +162,23 @@ export function create_ref_prop(get_ref_value, set_ref_value) {
  * @returns {RefValue<T>} the single surviving ref, or a callback applying all
  */
 export function merge_ref_props(...refs) {
-	const filtered = refs.filter((ref) => ref != null);
-
-	if (filtered.length === 0) {
-		return undefined;
-	}
-
-	if (filtered.length === 1) {
-		return filtered[0];
+	if (refs.length <= 2) {
+		const first = refs[0];
+		const second = refs[1];
+		if (first == null) {
+			return second ?? undefined;
+		}
+		if (second == null) {
+			return first;
+		}
+	} else {
+		refs = refs.filter((ref) => ref != null);
+		if (refs.length === 0) {
+			return undefined;
+		}
+		if (refs.length === 1) {
+			return refs[0];
+		}
 	}
 
 	/**
@@ -180,7 +189,7 @@ export function merge_ref_props(...refs) {
 		/** @type {Array<() => void>} */
 		const cleanups = [];
 
-		for (const ref of filtered) {
+		for (const ref of refs) {
 			const cleanup = apply_ref_value(ref, node);
 			if (typeof cleanup === 'function') {
 				cleanups.push(cleanup);

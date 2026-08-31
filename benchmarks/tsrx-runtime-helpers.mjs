@@ -10,20 +10,28 @@ const groups = number_option(options, 'groups', 9, 9);
 const iterations = number_option(options, 'iterations', 25_000, 1);
 const assertion = options.assert;
 
-const baseline_runtime = await load_runtime(baseline_root);
-const candidate_runtime = await load_runtime(candidate_root);
+const baseline_runtime = await load_runtime(baseline_root, 'baseline-first-a');
+const candidate_runtime = await load_runtime(candidate_root, 'baseline-first-a');
+const candidate_runtime_alternate = await load_runtime(candidate_root, 'candidate-first-b');
+const baseline_runtime_alternate = await load_runtime(baseline_root, 'candidate-first-b');
 
 assert_runtime_semantics(baseline_runtime);
 assert_runtime_semantics(candidate_runtime);
+assert_runtime_semantics(candidate_runtime_alternate);
+assert_runtime_semantics(baseline_runtime_alternate);
 
 const baseline_cases = create_runtime_cases(baseline_runtime);
 const candidate_cases = create_runtime_cases(candidate_runtime);
+const baseline_cases_alternate = create_runtime_cases(baseline_runtime_alternate);
+const candidate_cases_alternate = create_runtime_cases(candidate_runtime_alternate);
 const control_cases = create_control_cases();
 
 console.log(`Node ${process.version}`);
 console.log(`baseline: ${baseline_root}`);
 console.log(`candidate: ${candidate_root}`);
-console.log(`groups: ${groups} (alternating order), iterations: ${iterations}`);
+console.log(
+	`groups: ${groups} (alternating order), iterations: ${iterations}, interleave chunk: ${Math.min(25_000, iterations)}`,
+);
 
 console.log('\nBaseline workload decomposition');
 for (const profile of [
@@ -58,7 +66,14 @@ assert.equal(
 console.log('\nBaseline versus candidate');
 const comparisons = new Map();
 for (const [name, baseline_case] of Object.entries(baseline_cases)) {
-	const result = compare_pair(baseline_case, candidate_cases[name], iterations, groups);
+	const result = compare_pair(
+		baseline_case,
+		candidate_cases[name],
+		iterations,
+		groups,
+		baseline_cases_alternate[name],
+		candidate_cases_alternate[name],
+	);
 	comparisons.set(name, result);
 	print_comparison(name, result);
 }
@@ -117,10 +132,10 @@ function number_option(parsed, name, fallback, minimum) {
 /**
  * @param {string} repo_root
  */
-async function load_runtime(repo_root) {
+async function load_runtime(repo_root, instance) {
 	const runtime_root = path.join(repo_root, 'packages/tsrx-runtime/src');
-	const ref_url = pathToFileURL(path.join(runtime_root, 'ref.js')).href;
-	const iterable_url = pathToFileURL(path.join(runtime_root, 'iterable.js')).href;
+	const ref_url = `${pathToFileURL(path.join(runtime_root, 'ref.js')).href}?benchmark=${instance}`;
+	const iterable_url = `${pathToFileURL(path.join(runtime_root, 'iterable.js')).href}?benchmark=${instance}`;
 	const [ref, iterable] = await Promise.all([import(ref_url), import(iterable_url)]);
 	return { ...ref, ...iterable };
 }
@@ -305,15 +320,101 @@ function array_row(item, index, is_last) {
  * @param {() => number} fn
  * @param {number} iterations_per_group
  */
-function run_group(fn, iterations_per_group) {
+function run_chunk(fn, chunk_iterations) {
 	let checksum = 0;
 	const start = performance.now();
-	for (let index = 0; index < iterations_per_group; index++) {
+	for (let index = 0; index < chunk_iterations; index++) {
 		checksum += fn();
 	}
 	const duration = performance.now() - start;
 	assert.ok(Number.isFinite(checksum));
-	return (iterations_per_group * 1000) / duration;
+	return duration;
+}
+
+/**
+ * Interleave short timed chunks so a scheduler or thermal shift affects both
+ * sides of a group instead of an entire baseline or candidate sample.
+ *
+ * @param {() => number} baseline
+ * @param {() => number} candidate
+ * @param {number} iterations_per_group
+ * @param {boolean} baseline_first
+ */
+function run_group_pair(baseline, candidate, iterations_per_group, baseline_first) {
+	let baseline_duration = 0;
+	let candidate_duration = 0;
+	const chunk_size = Math.min(25_000, iterations_per_group);
+
+	for (let offset = 0; offset < iterations_per_group; offset += chunk_size) {
+		const chunk_iterations = Math.min(chunk_size, iterations_per_group - offset);
+		if (baseline_first) {
+			baseline_duration += run_chunk(baseline, chunk_iterations);
+			candidate_duration += run_chunk(candidate, chunk_iterations);
+		} else {
+			candidate_duration += run_chunk(candidate, chunk_iterations);
+			baseline_duration += run_chunk(baseline, chunk_iterations);
+		}
+	}
+
+	return {
+		baseline: (iterations_per_group * 1000) / baseline_duration,
+		candidate: (iterations_per_group * 1000) / candidate_duration,
+	};
+}
+
+/**
+ * @param {() => number} baseline
+ * @param {() => number} candidate
+ * @param {number} iterations_per_group
+ * @param {number} sample_groups
+ * @param {() => number} [alternate_baseline]
+ * @param {() => number} [alternate_candidate]
+ */
+function compare_pair(
+	baseline,
+	candidate,
+	iterations_per_group,
+	sample_groups,
+	alternate_baseline = baseline,
+	alternate_candidate = candidate,
+) {
+	const primary = compare_variant(baseline, candidate, iterations_per_group, sample_groups);
+	if (alternate_baseline === baseline && alternate_candidate === candidate) {
+		return primary;
+	}
+
+	const alternate = compare_variant(
+		alternate_baseline,
+		alternate_candidate,
+		iterations_per_group,
+		sample_groups,
+	);
+	const baseline_median = median([primary.baseline.median, alternate.baseline.median]);
+	const candidate_median = median([primary.candidate.median, alternate.candidate.median]);
+	const baseline_relative_mad = Math.max(
+		primary.baseline.mad / primary.baseline.median,
+		alternate.baseline.mad / alternate.baseline.median,
+	);
+	const candidate_relative_mad = Math.max(
+		primary.candidate.mad / primary.candidate.median,
+		alternate.candidate.mad / alternate.candidate.median,
+	);
+
+	return {
+		baseline: {
+			median: baseline_median,
+			mad: baseline_median * baseline_relative_mad,
+		},
+		candidate: {
+			median: candidate_median,
+			mad: candidate_median * candidate_relative_mad,
+		},
+		improvement: median([primary.improvement, alternate.improvement]),
+		threshold: Math.max(primary.threshold, alternate.threshold),
+		accepted: primary.accepted && alternate.accepted,
+		regressed: primary.regressed && alternate.regressed,
+		variants: [primary, alternate],
+	};
 }
 
 /**
@@ -322,7 +423,7 @@ function run_group(fn, iterations_per_group) {
  * @param {number} iterations_per_group
  * @param {number} sample_groups
  */
-function compare_pair(baseline, candidate, iterations_per_group, sample_groups) {
+function compare_variant(baseline, candidate, iterations_per_group, sample_groups) {
 	for (let index = 0; index < Math.max(2_000, Math.floor(iterations_per_group / 5)); index++) {
 		baseline();
 		candidate();
@@ -331,13 +432,9 @@ function compare_pair(baseline, candidate, iterations_per_group, sample_groups) 
 	const baseline_samples = [];
 	const candidate_samples = [];
 	for (let group = 0; group < sample_groups; group++) {
-		if (group % 2 === 0) {
-			baseline_samples.push(run_group(baseline, iterations_per_group));
-			candidate_samples.push(run_group(candidate, iterations_per_group));
-		} else {
-			candidate_samples.push(run_group(candidate, iterations_per_group));
-			baseline_samples.push(run_group(baseline, iterations_per_group));
-		}
+		const sample = run_group_pair(baseline, candidate, iterations_per_group, group % 2 === 0);
+		baseline_samples.push(sample.baseline);
+		candidate_samples.push(sample.candidate);
 	}
 
 	const baseline_distribution = distribution(baseline_samples);
@@ -377,8 +474,11 @@ function median(values) {
 }
 
 function print_comparison(name, result) {
+	const variant_changes = result.variants
+		? `, cross-over ${result.variants.map((variant) => `${format_percent(variant.improvement)}/${format_percent(variant.threshold)}`).join(' and ')}`
+		: '';
 	console.log(
-		`${name}: baseline ${format_number(result.baseline.median)} ops/s ±${format_percent(result.baseline.mad / result.baseline.median)}, candidate ${format_number(result.candidate.median)} ops/s ±${format_percent(result.candidate.mad / result.candidate.median)}, change ${format_percent(result.improvement)}, gate ${format_percent(result.threshold)}${result.accepted ? ' ACCEPT' : result.regressed ? ' REGRESSION' : ''}`,
+		`${name}: baseline ${format_number(result.baseline.median)} ops/s ±${format_percent(result.baseline.mad / result.baseline.median)}, candidate ${format_number(result.candidate.median)} ops/s ±${format_percent(result.candidate.mad / result.candidate.median)}, change ${format_percent(result.improvement)}, gate ${format_percent(result.threshold)}${variant_changes}${result.accepted ? ' ACCEPT' : result.regressed ? ' REGRESSION' : ''}`,
 	);
 }
 

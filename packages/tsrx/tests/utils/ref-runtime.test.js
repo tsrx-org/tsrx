@@ -1,7 +1,12 @@
 /** @import { MergeableRef } from '../../types/runtime/ref' */
 
 import { describe, expect, it } from 'vitest';
-import { create_ref_prop, mergeRefs } from '../../src/runtime/ref.js';
+import {
+	create_ref_prop,
+	merge_ref_props,
+	mergeRefs,
+	normalize_spread_props,
+} from '../../src/runtime/ref.js';
 
 describe('ref runtime helpers', () => {
 	it('clears mutable ref props on unmount without treating DOM-like values as ref objects', () => {
@@ -125,5 +130,131 @@ describe('ref runtime helpers', () => {
 		expect(inherited_ref_shape.value).toBe('inherited');
 		expect(Object.prototype.hasOwnProperty.call(inherited_ref_shape, 'current')).toBe(false);
 		expect(Object.prototype.hasOwnProperty.call(inherited_ref_shape, 'value')).toBe(false);
+	});
+
+	it('keeps nullish filtering, single-ref identity, and merged cleanup order', () => {
+		const events = [];
+		const node = {};
+		const first = (value) => {
+			events.push(['first', value]);
+			return () => events.push(['first cleanup']);
+		};
+		const second = (value) => {
+			events.push(['second', value]);
+			return () => events.push(['second cleanup']);
+		};
+
+		expect(merge_ref_props(null, undefined)).toBeUndefined();
+		expect(merge_ref_props(null, first, undefined)).toBe(first);
+
+		const merged = merge_ref_props(null, first, undefined, second, null);
+		const cleanup = merged(node);
+		expect(events).toEqual([
+			['first', node],
+			['second', node],
+		]);
+
+		cleanup();
+		expect(events).toEqual([
+			['first', node],
+			['second', node],
+			['first cleanup'],
+			['second cleanup'],
+		]);
+	});
+});
+
+describe('spread ref normalization', () => {
+	it('returns ordinary spreads unchanged after reading each enumerable value once', () => {
+		const reads = [];
+		const symbol = Symbol('spread');
+		const props = {
+			get first() {
+				reads.push('first');
+				return 1;
+			},
+			get second() {
+				reads.push('second');
+				return 2;
+			},
+			get [symbol]() {
+				reads.push('symbol');
+				return 3;
+			},
+		};
+		Object.defineProperty(props, 'hidden', {
+			enumerable: false,
+			get() {
+				reads.push('hidden');
+				return 4;
+			},
+		});
+
+		const normalized = normalize_spread_props(props);
+
+		expect(normalized).toBe(props);
+		expect(reads).toEqual(['first', 'second', 'symbol']);
+		expect(normalized[symbol]).toBe(3);
+	});
+
+	it('extracts branded refs while preserving props, symbols, and cleanup order', () => {
+		const events = [];
+		const symbol = Symbol('spread');
+		const node = {};
+		const existing_ref = (value) => {
+			events.push(['existing', value]);
+			return () => events.push(['existing cleanup']);
+		};
+		const branded_ref = create_ref_prop(() => (value) => {
+			events.push(['branded', value]);
+			return () => events.push(['branded cleanup']);
+		});
+		const outer_ref = (value) => {
+			events.push(['outer', value]);
+			return () => events.push(['outer cleanup']);
+		};
+		const props = {
+			get id() {
+				events.push(['read id']);
+				return 'field';
+			},
+			ref: existing_ref,
+			forwarded: branded_ref,
+			[symbol]: 'symbol value',
+		};
+
+		const normalized = normalize_spread_props(props, outer_ref);
+
+		expect(normalized === props).toBe(false);
+		expect(Object.getOwnPropertyDescriptor(normalized, 'id')).toMatchObject({
+			value: 'field',
+			enumerable: true,
+		});
+		expect(normalized).not.toHaveProperty('forwarded');
+		expect(normalized[symbol]).toBe('symbol value');
+		expect(events).toEqual([['read id']]);
+
+		const cleanup = normalized.ref(node);
+		expect(events).toEqual([['read id'], ['existing', node], ['branded', node], ['outer', node]]);
+
+		cleanup();
+		expect(events).toEqual([
+			['read id'],
+			['existing', node],
+			['branded', node],
+			['outer', node],
+			['existing cleanup'],
+			['branded cleanup'],
+			['outer cleanup'],
+		]);
+	});
+
+	it('preserves nullish spreads and appends a single outer ref without wrapping it', () => {
+		const outer_ref = () => {};
+		const props = { id: 'field' };
+
+		expect(normalize_spread_props(null)).toBeNull();
+		expect(normalize_spread_props(undefined)).toBeUndefined();
+		expect(normalize_spread_props(props, outer_ref)).toEqual({ id: 'field', ref: outer_ref });
 	});
 });
