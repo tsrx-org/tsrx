@@ -133,21 +133,31 @@ describe('ref runtime helpers', () => {
 	});
 
 	it('keeps nullish filtering, single-ref identity, and merged cleanup order', () => {
+		/** @type {Array<unknown>} */
 		const events = [];
 		const node = {};
+		/** @param {object | null} value */
 		const first = (value) => {
 			events.push(['first', value]);
-			return () => events.push(['first cleanup']);
+			return () => {
+				events.push(['first cleanup']);
+			};
 		};
+		/** @param {object | null} value */
 		const second = (value) => {
 			events.push(['second', value]);
-			return () => events.push(['second cleanup']);
+			return () => {
+				events.push(['second cleanup']);
+			};
 		};
 
 		expect(merge_ref_props(null, undefined)).toBeUndefined();
 		expect(merge_ref_props(null, first, undefined)).toBe(first);
 
 		const merged = merge_ref_props(null, first, undefined, second, null);
+		if (typeof merged !== 'function') {
+			throw new TypeError('Expected multiple refs to produce a callback');
+		}
 		const cleanup = merged(node);
 		expect(events).toEqual([
 			['first', node],
@@ -166,6 +176,7 @@ describe('ref runtime helpers', () => {
 
 describe('spread ref normalization', () => {
 	it('returns ordinary spreads unchanged after reading each enumerable value once', () => {
+		/** @type {string[]} */
 		const reads = [];
 		const symbol = Symbol('spread');
 		const props = {
@@ -194,24 +205,35 @@ describe('spread ref normalization', () => {
 
 		expect(normalized).toBe(props);
 		expect(reads).toEqual(['first', 'second', 'symbol']);
-		expect(normalized[symbol]).toBe(3);
+		expect(/** @type {Record<PropertyKey, unknown>} */ (normalized)[symbol]).toBe(3);
 	});
 
 	it('extracts branded refs while preserving props, symbols, and cleanup order', () => {
+		/** @type {Array<unknown>} */
 		const events = [];
 		const symbol = Symbol('spread');
 		const node = {};
+		/** @param {object | null} value */
 		const existing_ref = (value) => {
 			events.push(['existing', value]);
-			return () => events.push(['existing cleanup']);
+			return () => {
+				events.push(['existing cleanup']);
+			};
 		};
-		const branded_ref = create_ref_prop(() => (value) => {
+		/** @param {object | null} value */
+		const branded_callback = (value) => {
 			events.push(['branded', value]);
-			return () => events.push(['branded cleanup']);
-		});
+			return () => {
+				events.push(['branded cleanup']);
+			};
+		};
+		const branded_ref = create_ref_prop(() => branded_callback);
+		/** @param {object | null} value */
 		const outer_ref = (value) => {
 			events.push(['outer', value]);
-			return () => events.push(['outer cleanup']);
+			return () => {
+				events.push(['outer cleanup']);
+			};
 		};
 		const props = {
 			get id() {
@@ -224,17 +246,21 @@ describe('spread ref normalization', () => {
 		};
 
 		const normalized = normalize_spread_props(props, outer_ref);
+		const normalized_props =
+			/** @type {Record<PropertyKey, unknown> & {
+			 * ref: (node: object) => () => void
+			 * }} */ (normalized);
 
 		expect(normalized === props).toBe(false);
-		expect(Object.getOwnPropertyDescriptor(normalized, 'id')).toMatchObject({
+		expect(Object.getOwnPropertyDescriptor(normalized_props, 'id')).toMatchObject({
 			value: 'field',
 			enumerable: true,
 		});
-		expect(normalized).not.toHaveProperty('forwarded');
-		expect(normalized[symbol]).toBe('symbol value');
+		expect(normalized_props).not.toHaveProperty('forwarded');
+		expect(normalized_props[symbol]).toBe('symbol value');
 		expect(events).toEqual([['read id']]);
 
-		const cleanup = normalized.ref(node);
+		const cleanup = normalized_props.ref(node);
 		expect(events).toEqual([['read id'], ['existing', node], ['branded', node], ['outer', node]]);
 
 		cleanup();
