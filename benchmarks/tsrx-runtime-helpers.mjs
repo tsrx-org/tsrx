@@ -131,6 +131,7 @@ function number_option(parsed, name, fallback, minimum) {
 
 /**
  * @param {string} repo_root
+ * @param {string} instance
  */
 async function load_runtime(repo_root, instance) {
 	const runtime_root = path.join(repo_root, 'packages/tsrx-runtime/src');
@@ -412,7 +413,7 @@ function compare_pair(
 		improvement: median([primary.improvement, alternate.improvement]),
 		threshold: Math.max(primary.threshold, alternate.threshold),
 		accepted: primary.accepted && alternate.accepted,
-		regressed: primary.regressed && alternate.regressed,
+		regressed: primary.regressed || alternate.regressed,
 		variants: [primary, alternate],
 	};
 }
