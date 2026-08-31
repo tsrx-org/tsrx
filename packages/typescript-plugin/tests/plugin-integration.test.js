@@ -228,6 +228,43 @@ function token_mapping(sourceStart, sourceLength, generatedStart, generatedLengt
 	};
 }
 
+/**
+ * Reference implementation for the source-range fallback. Keep this deliberately
+ * linear so indexed implementations can be checked against the original behavior.
+ * @param {import('@tsrx/core/types').CodeMapping[]} mappings
+ * @param {number} start
+ * @param {number} end
+ * @returns {[number, number] | null}
+ */
+function linear_generated_range(mappings, start, end) {
+	let first = null;
+	let last = null;
+	for (const mapping of mappings) {
+		const source_start = mapping.sourceOffsets[0];
+		const source_end = source_start + mapping.lengths[0];
+		if (source_end <= start || source_start >= end) {
+			continue;
+		}
+		if (!first || source_start < first.sourceOffsets[0]) {
+			first = mapping;
+		}
+		if (!last || source_end > last.sourceOffsets[0] + last.lengths[0]) {
+			last = mapping;
+		}
+	}
+	if (!first || !last) {
+		return null;
+	}
+
+	const generated_start =
+		first.generatedOffsets[0] +
+		Math.min(Math.max(start - first.sourceOffsets[0], 0), first.generatedLengths[0]);
+	const generated_end =
+		last.generatedOffsets[0] +
+		Math.min(Math.max(end - last.sourceOffsets[0], 0), last.generatedLengths[0]);
+	return [generated_start, Math.max(generated_end, generated_start + 1)];
+}
+
 describe('typescript-plugin language plugin integration', () => {
 	beforeEach(() => {
 		_reset_for_test();
@@ -831,6 +868,37 @@ describe('typescript-plugin language plugin integration', () => {
 		// A range that overlaps no token at all stays unresolved (the caller then
 		// falls back to the source map).
 		expect(virtual_code.findGeneratedRangeBySourceRange(0, 5)).toBeNull();
+	});
+
+	it('matches the linear source-range fallback for unordered and nested mappings', () => {
+		const plugin = create_plugin();
+		const workspace = create_fixture_workspace('ripple-only');
+		const file_name = path.join(workspace, 'src', 'App.tsrx');
+		const virtual_code = create_virtual_code(plugin, file_name, '<div/>');
+		const mappings = [
+			token_mapping(12, 8, 212, 8),
+			token_mapping(4, 6, 104, 6),
+			token_mapping(4, 2, 304, 2),
+			token_mapping(1, 19, 401, 19),
+			token_mapping(15, 5, 515, 5),
+			token_mapping(9, 0, 609, 1),
+		];
+		virtual_code.mappings = mappings;
+
+		for (const [start, end] of [
+			[0, 1],
+			[1, 2],
+			[3, 5],
+			[6, 10],
+			[10, 15],
+			[14, 20],
+			[20, 21],
+			[0, 25],
+		]) {
+			expect(virtual_code.findGeneratedRangeBySourceRange(start, end)).toEqual(
+				linear_generated_range(mappings, start, end),
+			);
+		}
 	});
 
 	it('returns undefined for non-tsrx files before compiler resolution', () => {
