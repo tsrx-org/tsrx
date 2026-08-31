@@ -5,6 +5,7 @@
 /** @typedef {{ compile?: (source: string, filename: string, options?: { loose?: boolean }) => TSRXCompileResult, compile_to_volar_mappings(source: string, filename: string, options?: { loose?: boolean }): VolarMappingsResult }} TSRXCompilerModule */
 
 /** @typedef {Map<string, CodeMapping>} CachedMappings */
+/** @typedef {{ mapping: CodeMapping, sourceStart: number, sourceEnd: number, originalIndex: number, prefixMaxEnd: number }[]} SourceRangeIndex */
 /** @typedef {import('typescript').CompilerOptions} CompilerOptions */
 /** @typedef {import('@volar/language-core').IScriptSnapshot} IScriptSnapshot */
 /** @typedef {import('@volar/language-core').VirtualCode} VirtualCode */
@@ -252,6 +253,10 @@ export class TSRXVirtualCode {
 	#mappingGenToSource = null;
 	/** @type {CachedMappings | null} */
 	#mappingSourceToGen = null;
+	/** @type {SourceRangeIndex | null} */
+	#sourceRangeIndex = null;
+	/** @type {number} */
+	#sourceRangeLookupCount = 0;
 
 	/**
 	 * @param {string} file_name
@@ -290,6 +295,8 @@ export class TSRXVirtualCode {
 		// Only clear mapping index - don't update snapshot/originalCode yet
 		this.#mappingGenToSource = null;
 		this.#mappingSourceToGen = null;
+		this.#sourceRangeIndex = null;
+		this.#sourceRangeLookupCount = 0;
 
 		this.fatalErrors = [];
 		this.usageErrors = [];
@@ -558,40 +565,134 @@ export class TSRXVirtualCode {
 	 *   token overlaps the range
 	 */
 	findGeneratedRangeBySourceRange(start, end) {
-		/** @type {CodeMapping | null} */
-		let first = null;
-		/** @type {CodeMapping | null} */
-		let last = null;
-		for (let i = 0; i < this.mappings.length; i++) {
-			const mapping = this.mappings[i];
-			const sourceStart = mapping.sourceOffsets[0];
-			const sourceEnd = sourceStart + mapping.lengths[0];
-			// Skip tokens that do not overlap the half-open range [start, end).
-			if (sourceEnd <= start || sourceStart >= end) {
-				continue;
-			}
-			if (!first || sourceStart < first.sourceOffsets[0]) {
-				first = mapping;
-			}
-			if (!last || sourceEnd > last.sourceOffsets[0] + last.lengths[0]) {
-				last = mapping;
-			}
-		}
-		if (!first || !last) {
-			return null;
+		// A one-off lookup is cheaper as a linear scan. Compile-error publication
+		// calls this repeatedly, so build the reusable index only after the first
+		// fallback query and keep the single-query path allocation-free.
+		if (this.#sourceRangeLookupCount++ === 0) {
+			return find_generated_range_linearly(this.mappings, start, end);
 		}
 
-		// Offset into the first/last token, clamped so an endpoint that lands
-		// before/after the token (an unmapped keyword or punctuation) snaps to the
-		// token edge rather than escaping its generated span.
-		const generated_start =
-			first.generatedOffsets[0] +
-			clamp_offset(start - first.sourceOffsets[0], first.generatedLengths[0]);
-		const generated_end =
-			last.generatedOffsets[0] +
-			clamp_offset(end - last.sourceOffsets[0], last.generatedLengths[0]);
-		return [generated_start, Math.max(generated_end, generated_start + 1)];
+		if (!this.#sourceRangeIndex) {
+			const index = new Array(this.mappings.length);
+			for (let i = 0; i < this.mappings.length; i++) {
+				const mapping = this.mappings[i];
+				const sourceStart = mapping.sourceOffsets[0];
+				index[i] = {
+					mapping,
+					sourceStart,
+					sourceEnd: sourceStart + mapping.lengths[0],
+					originalIndex: i,
+					prefixMaxEnd: 0,
+				};
+			}
+			index.sort((a, b) => a.sourceStart - b.sourceStart || a.originalIndex - b.originalIndex);
+
+			let prefixMaxEnd = -Infinity;
+			for (const entry of index) {
+				prefixMaxEnd = Math.max(prefixMaxEnd, entry.sourceEnd);
+				entry.prefixMaxEnd = prefixMaxEnd;
+			}
+			this.#sourceRangeIndex = index;
+		}
+
+		const index = this.#sourceRangeIndex;
+		let low = 0;
+		let high = index.length;
+		while (low < high) {
+			const middle = (low + high) >>> 1;
+			if (index[middle].prefixMaxEnd <= start) {
+				low = middle + 1;
+			} else {
+				high = middle;
+			}
+		}
+
+		/** @type {CodeMapping | null} */
+		let first = null;
+		let firstStart = Infinity;
+		let firstIndex = Infinity;
+		/** @type {CodeMapping | null} */
+		let last = null;
+		let lastEnd = -Infinity;
+		let lastIndex = Infinity;
+		for (let i = low; i < index.length; i++) {
+			const entry = index[i];
+			if (entry.sourceStart >= end) {
+				break;
+			}
+			if (entry.sourceEnd <= start) {
+				continue;
+			}
+			if (
+				entry.sourceStart < firstStart ||
+				(entry.sourceStart === firstStart && entry.originalIndex < firstIndex)
+			) {
+				first = entry.mapping;
+				firstStart = entry.sourceStart;
+				firstIndex = entry.originalIndex;
+			}
+			if (
+				entry.sourceEnd > lastEnd ||
+				(entry.sourceEnd === lastEnd && entry.originalIndex < lastIndex)
+			) {
+				last = entry.mapping;
+				lastEnd = entry.sourceEnd;
+				lastIndex = entry.originalIndex;
+			}
+		}
+		return generated_range_from_mappings(first, last, start, end);
 	}
+}
+
+/**
+ * @param {CodeMapping[]} mappings
+ * @param {number} start
+ * @param {number} end
+ * @returns {[number, number] | null}
+ */
+function find_generated_range_linearly(mappings, start, end) {
+	/** @type {CodeMapping | null} */
+	let first = null;
+	/** @type {CodeMapping | null} */
+	let last = null;
+	for (let i = 0; i < mappings.length; i++) {
+		const mapping = mappings[i];
+		const sourceStart = mapping.sourceOffsets[0];
+		const sourceEnd = sourceStart + mapping.lengths[0];
+		if (sourceEnd <= start || sourceStart >= end) {
+			continue;
+		}
+		if (!first || sourceStart < first.sourceOffsets[0]) {
+			first = mapping;
+		}
+		if (!last || sourceEnd > last.sourceOffsets[0] + last.lengths[0]) {
+			last = mapping;
+		}
+	}
+	return generated_range_from_mappings(first, last, start, end);
+}
+
+/**
+ * @param {CodeMapping | null} first
+ * @param {CodeMapping | null} last
+ * @param {number} start
+ * @param {number} end
+ * @returns {[number, number] | null}
+ */
+function generated_range_from_mappings(first, last, start, end) {
+	if (!first || !last) {
+		return null;
+	}
+
+	// Offset into the first/last token, clamped so an endpoint that lands
+	// before/after the token (an unmapped keyword or punctuation) snaps to the
+	// token edge rather than escaping its generated span.
+	const generated_start =
+		first.generatedOffsets[0] +
+		clamp_offset(start - first.sourceOffsets[0], first.generatedLengths[0]);
+	const generated_end =
+		last.generatedOffsets[0] + clamp_offset(end - last.sourceOffsets[0], last.generatedLengths[0]);
+	return [generated_start, Math.max(generated_end, generated_start + 1)];
 }
 
 /**

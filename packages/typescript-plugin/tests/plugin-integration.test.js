@@ -899,6 +899,76 @@ describe('typescript-plugin language plugin integration', () => {
 				linear_generated_range(mappings, start, end),
 			);
 		}
+
+		let random_state = 0x5eed1234;
+		const random = () => {
+			random_state = (Math.imul(random_state, 1664525) + 1013904223) >>> 0;
+			return random_state;
+		};
+		const random_mappings = Array.from({ length: 128 }, (_, index) => {
+			const source_start = random() % 500;
+			return token_mapping(source_start, random() % 40, index * 7, (random() % 12) + 1);
+		});
+		const random_virtual_code = create_virtual_code(plugin, file_name, '<main/>');
+		random_virtual_code.mappings = random_mappings;
+		for (let index = 0; index < 200; index++) {
+			const start = random() % 520;
+			const end = start + (random() % 50) + 1;
+			expect(random_virtual_code.findGeneratedRangeBySourceRange(start, end)).toEqual(
+				linear_generated_range(random_mappings, start, end),
+			);
+		}
+	});
+
+	it('reuses indexed source ranges after repeated fallback lookups', () => {
+		const plugin = create_plugin();
+		const workspace = create_fixture_workspace('ripple-only');
+		const file_name = path.join(workspace, 'src', 'App.tsrx');
+		const virtual_code = create_virtual_code(plugin, file_name, '<div/>');
+		const mappings = Array.from({ length: 100 }, (_, index) =>
+			token_mapping(index * 4, 2, index * 5, 2),
+		);
+		let mapping_reads = 0;
+		virtual_code.mappings = new Proxy(mappings, {
+			get(target, property, receiver) {
+				if (typeof property === 'string' && /^\d+$/.test(property)) {
+					mapping_reads++;
+				}
+				return Reflect.get(target, property, receiver);
+			},
+		});
+
+		virtual_code.findGeneratedRangeBySourceRange(4, 7);
+		virtual_code.findGeneratedRangeBySourceRange(40, 43);
+		mapping_reads = 0;
+		expect(virtual_code.findGeneratedRangeBySourceRange(360, 363)).toEqual([450, 452]);
+		expect(mapping_reads).toBeLessThan(10);
+	});
+
+	it('invalidates indexed source ranges when virtual code updates', () => {
+		let mappings = [token_mapping(4, 2, 40, 2), token_mapping(12, 2, 120, 2)];
+		const compiler = {
+			/** @param {string} source */
+			compile_to_volar_mappings(source) {
+				return {
+					code: source,
+					mappings,
+					errors: [],
+					cssMappings: [],
+					scriptMappings: [],
+					sourceAst: /** @type {any} */ (null),
+				};
+			},
+		};
+		const virtual_code = new TSRXVirtualCode('App.tsrx', create_snapshot('<div/>'), compiler);
+		virtual_code.findGeneratedRangeBySourceRange(3, 7);
+		expect(virtual_code.findGeneratedRangeBySourceRange(11, 15)).toEqual([120, 122]);
+
+		mappings = [token_mapping(12, 2, 912, 2)];
+		virtual_code.update(create_snapshot('<main/>'));
+
+		expect(virtual_code.findGeneratedRangeBySourceRange(3, 7)).toBeNull();
+		expect(virtual_code.findGeneratedRangeBySourceRange(11, 15)).toEqual([912, 914]);
 	});
 
 	it('returns undefined for non-tsrx files before compiler resolution', () => {
