@@ -2711,18 +2711,19 @@ foo();`;
 		assert_found(outerIf);
 
 		const forExpr = blockBody(outerIf.consequent).find(
-			(child) => child.type === 'JSXForExpression',
+			(child) => /** @type {AST.Node} */ (child).type === 'JSXForExpression',
 		);
 		assert_found(forExpr);
-		expect(as_type(forExpr, 'JSXForExpression').statementType).toBe('ForOfStatement');
+		const forDirective = as_type(forExpr, 'JSXForExpression');
+		expect(forDirective.statementType).toBe('ForOfStatement');
 
-		const innerIf = blockBody(as_type(forExpr, 'JSXForExpression').body).find(
-			(child) => child.type === 'JSXIfExpression',
+		const innerIf = blockBody(forDirective.body).find(
+			(child) => /** @type {AST.Node} */ (child).type === 'JSXIfExpression',
 		);
 		assert_found(innerIf);
-		expect(innerIf.type).toBe('JSXIfExpression');
-		expect(blockBody(innerIf.consequent)[0]?.type).toBe('JSXElement');
-		expect(blockBody(innerIf.alternate)[0]?.type).toBe('JSXElement');
+		const innerIfDirective = as_type(innerIf, 'JSXIfExpression');
+		expect(blockBody(innerIfDirective.consequent)[0]?.type).toBe('JSXElement');
+		expect(blockBody(innerIfDirective.alternate)[0]?.type).toBe('JSXElement');
 	});
 
 	it('parses @else if as a chained JSXIfExpression alternate', () => {
