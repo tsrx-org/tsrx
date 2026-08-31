@@ -152,9 +152,10 @@ describe('ref runtime helpers', () => {
 		};
 
 		expect(merge_ref_props(null, undefined)).toBeUndefined();
-		expect(merge_ref_props(null, first, undefined)).toBe(first);
+		expect(merge_ref_props(null, first)).toBe(first);
+		expect(merge_ref_props(first, null)).toBe(first);
 
-		const merged = merge_ref_props(null, first, undefined, second, null);
+		const merged = merge_ref_props(first, second);
 		if (typeof merged !== 'function') {
 			throw new TypeError('Expected multiple refs to produce a callback');
 		}
