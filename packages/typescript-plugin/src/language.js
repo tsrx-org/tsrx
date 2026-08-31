@@ -255,8 +255,8 @@ export class TSRXVirtualCode {
 	#mappingSourceToGen = null;
 	/** @type {SourceRangeIndex | null} */
 	#sourceRangeIndex = null;
-	/** @type {number} */
-	#sourceRangeLookupCount = 0;
+	/** @type {boolean} */
+	#hasSourceRangeLookup = false;
 
 	/**
 	 * @param {string} file_name
@@ -296,7 +296,7 @@ export class TSRXVirtualCode {
 		this.#mappingGenToSource = null;
 		this.#mappingSourceToGen = null;
 		this.#sourceRangeIndex = null;
-		this.#sourceRangeLookupCount = 0;
+		this.#hasSourceRangeLookup = false;
 
 		this.fatalErrors = [];
 		this.usageErrors = [];
@@ -523,6 +523,33 @@ export class TSRXVirtualCode {
 		}
 	}
 
+	#buildSourceRangeIndex() {
+		if (this.#sourceRangeIndex) {
+			return;
+		}
+
+		const index = new Array(this.mappings.length);
+		for (let i = 0; i < this.mappings.length; i++) {
+			const mapping = this.mappings[i];
+			const sourceStart = mapping.sourceOffsets[0];
+			index[i] = {
+				mapping,
+				sourceStart,
+				sourceEnd: sourceStart + mapping.lengths[0],
+				originalIndex: i,
+				prefixMaxEnd: 0,
+			};
+		}
+		index.sort((a, b) => a.sourceStart - b.sourceStart || a.originalIndex - b.originalIndex);
+
+		let prefixMaxEnd = -Infinity;
+		for (const entry of index) {
+			prefixMaxEnd = Math.max(prefixMaxEnd, entry.sourceEnd);
+			entry.prefixMaxEnd = prefixMaxEnd;
+		}
+		this.#sourceRangeIndex = index;
+	}
+
 	/**
 	 * Find mapping by generated range
 	 * @param {number} start - The start offset of the range
@@ -568,34 +595,13 @@ export class TSRXVirtualCode {
 		// A one-off lookup is cheaper as a linear scan. Compile-error publication
 		// calls this repeatedly, so build the reusable index only after the first
 		// fallback query and keep the single-query path allocation-free.
-		if (this.#sourceRangeLookupCount++ === 0) {
+		if (!this.#hasSourceRangeLookup) {
+			this.#hasSourceRangeLookup = true;
 			return find_generated_range_linearly(this.mappings, start, end);
 		}
 
-		if (!this.#sourceRangeIndex) {
-			const index = new Array(this.mappings.length);
-			for (let i = 0; i < this.mappings.length; i++) {
-				const mapping = this.mappings[i];
-				const sourceStart = mapping.sourceOffsets[0];
-				index[i] = {
-					mapping,
-					sourceStart,
-					sourceEnd: sourceStart + mapping.lengths[0],
-					originalIndex: i,
-					prefixMaxEnd: 0,
-				};
-			}
-			index.sort((a, b) => a.sourceStart - b.sourceStart || a.originalIndex - b.originalIndex);
-
-			let prefixMaxEnd = -Infinity;
-			for (const entry of index) {
-				prefixMaxEnd = Math.max(prefixMaxEnd, entry.sourceEnd);
-				entry.prefixMaxEnd = prefixMaxEnd;
-			}
-			this.#sourceRangeIndex = index;
-		}
-
-		const index = this.#sourceRangeIndex;
+		this.#buildSourceRangeIndex();
+		const index = /** @type {SourceRangeIndex} */ (this.#sourceRangeIndex);
 		let low = 0;
 		let high = index.length;
 		while (low < high) {
