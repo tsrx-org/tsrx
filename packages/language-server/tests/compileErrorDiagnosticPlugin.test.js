@@ -4,7 +4,10 @@ import { URI } from 'vscode-uri';
 import { createCompileErrorDiagnosticPlugin } from '../src/compileErrorDiagnosticPlugin.js';
 
 describe('compile error diagnostic plugin', () => {
-	it('preserves exact, overlapping, and unmapped usage-error ranges', () => {
+	it('preserves exact, overlapping, and unmapped usage-error ranges', async () => {
+		// utils.js initializes its core helpers through a dynamic import. Await the
+		// same module so Vitest cannot tear down this test environment first.
+		await import('@tsrx/core');
 		const document = TextDocument.create('file:///App.tsrx', 'tsrx', 1, 'x'.repeat(100));
 		const source_uri = URI.parse(document.uri);
 		const find_exact = vi.fn((start, end) =>
