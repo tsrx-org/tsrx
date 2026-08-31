@@ -5373,7 +5373,28 @@ export function TSRXPlugin(config) {
 			parseBlock(createNewLexicalScope, node, exitStrict) {
 				const parent = this.#path.at(-1);
 
-				if (this.#isNativeTemplateNode(parent) && this.#templateControlFlowBlockDepth > 0) {
+				// A control-flow directive's own body-parsing (see
+				// `#parseTemplateControlFlowBlock`) deliberately empties `#path`
+				// while parsing its `{ … }` body, so the body tokenizes as code
+				// instead of JSX text. When a `@for` sits directly inside an `@if`
+				// branch, `#path` is therefore empty by the time we get here for
+				// the `@for`'s own body, so `#isNativeTemplateNode(undefined)` is
+				// `false` — even though `#templateControlFlowBlockDepth` correctly
+				// signals "we're inside a template control-flow directive's body".
+				// The `parent`-based check below used to gate on both conditions,
+				// so it was skipped, and the `@for`'s body fell through to plain
+				// acorn statement parsing. That parser wraps any nested
+				// control-flow directive it finds (`@if`, `@for`, `@switch`) in a
+				// bare `ExpressionStatement` around a synthetic JSXFragment
+				// (the directive's own value-position render output) instead of
+				// producing a proper `JSXIfExpression`/`JSXForExpression`/etc.
+				// `#templateControlFlowBlockDepth` alone is a safe, sufficient
+				// condition here: it's exclusively and tightly scoped (set/reset in
+				// a `finally`) to exactly the window where a `@for`'s own
+				// header+body (or `@empty` clause) is being parsed, so there's no
+				// plain-JS-`for`-loop false-positive risk from dropping the
+				// `#isNativeTemplateNode(parent)` half of the check.
+				if (this.#templateControlFlowBlockDepth > 0) {
 					this.#templateControlFlowBlockDepth--;
 					try {
 						return this.#parseTemplateControlFlowBlock(createNewLexicalScope, node, exitStrict);

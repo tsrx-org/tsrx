@@ -2683,6 +2683,48 @@ foo();`;
 		);
 	});
 
+	it('parses a nested @for whose body contains an @if/@else, both nested inside an outer @if', () => {
+		// Regression test: an `@if` directly containing an `@for`, whose own
+		// body contains another control-flow directive (`@if`, `@if`/`@else`,
+		// or a nested `@for`), previously fell through to plain statement
+		// parsing for the `@for`'s body instead of the TSRX-aware control-flow
+		// block parser. The inner directive was misparsed as a bare
+		// `ExpressionStatement` wrapping a synthetic JSXFragment rather than a
+		// proper `JSXIfExpression` — printers with no `JSXFragment` visitor
+		// (such as esrap's `ts` language, used by SSR-target output) then fail
+		// with "Not implemented: JSXFragment" when serializing that node.
+		const returned = getReturned(`function App() { return <div>
+			@if (a) {
+				@for (const item of items) {
+					@if (item.ok) {
+						<span>{item.name}</span>
+					} @else {
+						<span>skip</span>
+					}
+				}
+			} @else {
+				<span>empty</span>
+			}
+		</div>; }`);
+
+		const outerIf = node_children(returned).find((child) => child.type === 'JSXIfExpression');
+		assert_found(outerIf);
+
+		const forExpr = blockBody(outerIf.consequent).find(
+			(child) => child.type === 'JSXForExpression',
+		);
+		assert_found(forExpr);
+		expect(as_type(forExpr, 'JSXForExpression').statementType).toBe('ForOfStatement');
+
+		const innerIf = blockBody(as_type(forExpr, 'JSXForExpression').body).find(
+			(child) => child.type === 'JSXIfExpression',
+		);
+		assert_found(innerIf);
+		expect(innerIf.type).toBe('JSXIfExpression');
+		expect(blockBody(innerIf.consequent)[0]?.type).toBe('JSXElement');
+		expect(blockBody(innerIf.alternate)[0]?.type).toBe('JSXElement');
+	});
+
 	it('parses @else if as a chained JSXIfExpression alternate', () => {
 		const returned = getReturned(`function App() { return <div>
 				@if (status === 'loading') {
