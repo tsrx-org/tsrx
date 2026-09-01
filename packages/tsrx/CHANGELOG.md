@@ -1,5 +1,54 @@
 # @tsrx/core
 
+## 0.1.64
+
+### Patch Changes
+
+- [#31](https://github.com/tsrx-org/tsrx/pull/31)
+  [`d22e79e`](https://github.com/tsrx-org/tsrx/commit/d22e79e1142c1ce55b893c56e20451ab0401be92)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Speed up hook-helper
+  binding discovery by collecting referenced bindings in one helper-body
+  traversal.
+
+- [#20](https://github.com/tsrx-org/tsrx/pull/20)
+  [`c21eb24`](https://github.com/tsrx-org/tsrx/commit/c21eb242086efb49bfb39f3013d533c22cb748de)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Cache parser line-start
+  offsets to make location lookups substantially faster in large TSRX modules.
+
+- [#39](https://github.com/tsrx-org/tsrx/pull/39)
+  [`09e6adf`](https://github.com/tsrx-org/tsrx/commit/09e6adfa932838c6542b2205846536dd98cbb889)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Preserve lazy loop
+  bindings across type-only output, `var` source ordering, computed keys, and
+  default values.
+
+- [#37](https://github.com/tsrx-org/tsrx/pull/37)
+  [`e1a610a`](https://github.com/tsrx-org/tsrx/commit/e1a610ab16aeda0b6d6d98454609273bb3edc1e8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Lower lazy
+  destructuring in JavaScript loop headers and report unsupported lazy assignment
+  positions with a target-neutral diagnostic.
+
+- [#33](https://github.com/tsrx-org/tsrx/pull/33)
+  [`d23290e`](https://github.com/tsrx-org/tsrx/commit/d23290e3aba3ed52e620571e26180bb8561f0fd1)
+  Thanks [@chenzylab](https://github.com/chenzylab)! - Fix `@for` misparsing its
+  own body when nested directly inside an `@if` branch and containing another
+  control-flow directive (`@if`, `@if`/`@else`, or a nested `@for`). `parseBlock`
+  previously gated the TSRX-aware control-flow block parser on both
+  `#isNativeTemplateNode(parent)` and `#templateControlFlowBlockDepth > 0`, but an
+  `@if`'s own body-parsing empties the parser's internal path stack while
+  tokenizing its body as code, so `#isNativeTemplateNode` saw an empty stack and
+  returned `false` even though `#templateControlFlowBlockDepth` correctly signaled
+  the nested `@for`'s body. The `@for`'s body then fell through to plain statement
+  parsing, which wrapped the inner directive in a bare `ExpressionStatement`
+  around a synthetic JSXFragment instead of producing a proper
+  `JSXIfExpression`/`JSXForExpression`/etc. Printers with no `JSXFragment` visitor
+  (such as esrap's `ts` language, used for Ripple's SSR-target output) then failed
+  with `Not implemented: JSXFragment` when serializing that node; other
+  JSX-runtime targets were unaffected since they don't route through that printer.
+
+- Updated dependencies
+  [[`544ae9a`](https://github.com/tsrx-org/tsrx/commit/544ae9a51f17a39e66cf0eceea862f8b30307047)]:
+  - @tsrx/runtime@0.1.3
+
 ## 0.1.63
 
 ### Patch Changes

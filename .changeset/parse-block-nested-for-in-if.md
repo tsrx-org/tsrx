@@ -1,5 +1,0 @@
----
-"@tsrx/core": patch
----
-
-Fix `@for` misparsing its own body when nested directly inside an `@if` branch and containing another control-flow directive (`@if`, `@if`/`@else`, or a nested `@for`). `parseBlock` previously gated the TSRX-aware control-flow block parser on both `#isNativeTemplateNode(parent)` and `#templateControlFlowBlockDepth > 0`, but an `@if`'s own body-parsing empties the parser's internal path stack while tokenizing its body as code, so `#isNativeTemplateNode` saw an empty stack and returned `false` even though `#templateControlFlowBlockDepth` correctly signaled the nested `@for`'s body. The `@for`'s body then fell through to plain statement parsing, which wrapped the inner directive in a bare `ExpressionStatement` around a synthetic JSXFragment instead of producing a proper `JSXIfExpression`/`JSXForExpression`/etc. Printers with no `JSXFragment` visitor (such as esrap's `ts` language, used for Ripple's SSR-target output) then failed with `Not implemented: JSXFragment` when serializing that node; other JSX-runtime targets were unaffected since they don't route through that printer.

@@ -1,5 +1,18 @@
 # @tsrx/language-server
 
+## 0.3.129
+
+### Patch Changes
+
+- Updated dependencies
+  [[`d22e79e`](https://github.com/tsrx-org/tsrx/commit/d22e79e1142c1ce55b893c56e20451ab0401be92),
+  [`c21eb24`](https://github.com/tsrx-org/tsrx/commit/c21eb242086efb49bfb39f3013d533c22cb748de),
+  [`09e6adf`](https://github.com/tsrx-org/tsrx/commit/09e6adfa932838c6542b2205846536dd98cbb889),
+  [`e1a610a`](https://github.com/tsrx-org/tsrx/commit/e1a610ab16aeda0b6d6d98454609273bb3edc1e8),
+  [`d23290e`](https://github.com/tsrx-org/tsrx/commit/d23290e3aba3ed52e620571e26180bb8561f0fd1)]:
+  - @tsrx/core@0.1.64
+  - @tsrx/typescript-plugin@0.3.129
+
 ## 0.3.128
 
 ### Patch Changes
