@@ -7,8 +7,6 @@ build/
 !**/src/test/**/build/
 .kotlin
 
-src/main/resources/textmate/
-
 ### IntelliJ IDEA ###
 .idea/modules.xml
 .idea/jarRepositories.xml
@@ -45,3 +43,12 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+*.log
+
+### TSRX JetBrains standalone ###
+# Keep generated TextMate in standalone (unlike monorepo)
+!src/main/resources/textmate/
+!src/main/resources/textmate/Syntaxes/
+!src/main/resources/textmate/Syntaxes/tsrx.tmLanguage.json
+!src/main/resources/textmate/info.plist
+.idea

@@ -1,6 +1,6 @@
 package dev.tsrx.intellij_plugin
 
-import com.intellij.ide.plugins.PluginManagerCore
+import com.intellij.ide.plugins.PluginManager
 import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.extensions.PluginId
@@ -20,14 +20,14 @@ class TsrxTextMateBundleProvider : TextMateBundleProvider {
 
 	private fun ensureBundleAvailable(): Path? {
 		cachedBundle?.let { cached ->
-			if (Files.isDirectory(cached)) {
+			if (Files.isDirectory(cached) && isValidBundle(cached)) {
 				return cached
 			}
 		}
 
 		synchronized(lock) {
 			cachedBundle?.let { cached ->
-				if (Files.isDirectory(cached)) {
+				if (Files.isDirectory(cached) && isValidBundle(cached)) {
 					return cached
 				}
 			}
@@ -39,19 +39,28 @@ class TsrxTextMateBundleProvider : TextMateBundleProvider {
 
 			if (Files.isDirectory(bundleDir) && Files.isRegularFile(versionFile)) {
 				val recorded = runCatching { Files.readString(versionFile) }.getOrNull()
-				if (recorded == pluginVersion) {
+				if (recorded == pluginVersion && isValidBundle(bundleDir)) {
 					cachedBundle = bundleDir
 					return bundleDir
 				}
 			}
 
 			if (Files.exists(bundleDir)) {
-				deleteRecursively(bundleDir)
+				runCatching { deleteRecursively(bundleDir) }
 			}
 
 			val extracted = extractBundle(bundleDir)
 			if (!extracted) {
-				LOG.warn("Failed to extract TSRX TextMate bundle")
+				LOG.warn(
+					"Failed to extract TSRX TextMate bundle. Expected resource `$BUNDLE_RESOURCE_ROOT` " +
+						"missing from plugin classpath. Run `pnpm regenerate-textmate` from repo root before building."
+				)
+				diagnoseMissingResource()
+				return null
+			}
+
+			if (!isValidBundle(bundleDir)) {
+				LOG.warn("TSRX TextMate bundle extracted but grammar missing at $bundleDir/Syntaxes/tsrx.tmLanguage.json")
 				return null
 			}
 
@@ -65,13 +74,36 @@ class TsrxTextMateBundleProvider : TextMateBundleProvider {
 		}
 	}
 
+	private fun isValidBundle(bundleDir: Path): Boolean {
+		// Grammar is stored as JSON; validate presence to avoid caching broken bundles
+		return Files.isRegularFile(bundleDir.resolve("Syntaxes/tsrx.tmLanguage.json")) ||
+			Files.isRegularFile(bundleDir.resolve("Syntaxes/tsrx.tmLanguage"))
+	}
+
+	private fun diagnoseMissingResource() {
+		// Extra diagnostic: try alternative resource path that would exist if bundle was partially packaged
+		val alt = javaClass.classLoader.getResource("$BUNDLE_RESOURCE_ROOT/Syntaxes/tsrx.tmLanguage.json")
+		if (alt == null) {
+			LOG.warn("TSRX TextMate resource `$BUNDLE_RESOURCE_ROOT/Syntaxes/tsrx.tmLanguage.json` not found in classpath")
+		} else {
+			LOG.info("TSRX TextMate alternative resource found at $alt but bundle root `$BUNDLE_RESOURCE_ROOT` was not resolvable as directory/jar root")
+		}
+	}
+
 	private fun extractBundle(target: Path): Boolean {
-		val resourceUrl = javaClass.classLoader.getResource(BUNDLE_RESOURCE_ROOT) ?: return false
+		val resourceUrl = javaClass.classLoader.getResource(BUNDLE_RESOURCE_ROOT)
+		if (resourceUrl == null) {
+			LOG.warn("TSRX TextMate bundle resource `$BUNDLE_RESOURCE_ROOT` not found in classpath")
+			return false
+		}
 
 		return when (resourceUrl.protocol) {
 			"file" -> copyDirectory(Paths.get(resourceUrl.toURI()), target)
 			"jar" -> copyFromJar(resourceUrl, target)
-			else -> false
+			else -> {
+				LOG.warn("Unsupported protocol for TSRX bundle resource: ${resourceUrl.protocol} ($resourceUrl)")
+				false
+			}
 		}
 	}
 
@@ -126,7 +158,7 @@ class TsrxTextMateBundleProvider : TextMateBundleProvider {
 	}
 
 	private fun pluginVersion(): String {
-		val descriptor = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID))
+		val descriptor = PluginManager.getInstance().findEnabledPlugin(PluginId.getId(PLUGIN_ID))
 		return descriptor?.version ?: "dev"
 	}
 

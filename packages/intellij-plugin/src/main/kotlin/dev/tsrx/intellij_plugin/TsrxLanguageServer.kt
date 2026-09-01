@@ -104,21 +104,14 @@ internal object TsrxLanguageServer {
 	}
 
 	private fun resolveInstalledBinary(installDir: Path): Path? {
-		val bin = installDir.resolve(
-			"node_modules",
-			".bin",
-			if (SystemInfo.isWindows) "$LSP_BIN.cmd" else LSP_BIN
-		)
+		val bin = installDir.resolve("node_modules").resolve(".bin")
+			.resolve(if (SystemInfo.isWindows) "$LSP_BIN.cmd" else LSP_BIN)
 		return if (Files.exists(bin)) bin else null
 	}
 
 	private fun installedVersion(installDir: Path): String? {
-		val packageJson = installDir.resolve(
-			"node_modules",
-			"@tsrx",
-			"language-server",
-			"package.json",
-		)
+		val packageJson = installDir.resolve("node_modules").resolve("@tsrx").resolve("language-server")
+			.resolve("package.json")
 		if (!Files.isRegularFile(packageJson)) {
 			return null
 		}
