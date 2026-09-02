@@ -22,21 +22,14 @@ const __filename = fileURLToPath(import.meta.url);
 const rootDir = path.join(path.dirname(__filename), '..');
 
 const sourceJson = path.join(rootDir, 'grammars/textmate/tsrx.tmLanguage.json');
-const sourcePlist = path.join(rootDir, 'grammars/textmate/info.plist');
 const assetBundleGrammar = path.join(rootDir, 'assets/TSRX.tmbundle/Syntaxes/tsrx.tmLanguage');
 
-const jsonTargetFiles = [
-	'packages/vscode-plugin/syntaxes/tsrx.tmLanguage.json',
-	'packages/intellij-plugin/src/main/resources/textmate/Syntaxes/tsrx.tmLanguage.json',
-];
-
-const plistTargetFiles = ['packages/intellij-plugin/src/main/resources/textmate/info.plist'];
+const jsonTargetFiles = ['packages/vscode-plugin/syntaxes/tsrx.tmLanguage.json'];
 
 const main = async () => {
 	console.log('Copying TextMate grammar files...\n');
 
 	await writeTargets(jsonTargetFiles, sourceJson);
-	await writeTargets(plistTargetFiles, sourcePlist);
 	await writeAssetBundleGrammar(sourceJson, assetBundleGrammar);
 
 	console.log('\nTextMate grammar regeneration complete.');

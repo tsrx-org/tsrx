@@ -105,8 +105,10 @@ Install the
 for syntax highlighting, diagnostics, navigation, completions, formatting, and
 TypeScript integration. The
 [TSRX extension for Zed](https://zed.dev/extensions/tsrx) is available from the
-Zed Extension Marketplace. Integrations for Neovim, IntelliJ, and Sublime Text are
-also maintained here.
+Zed Extension Marketplace. The
+[TSRX plugin for JetBrains IDEs](https://plugins.jetbrains.com/plugin/33991-tsrx)
+has been submitted to JetBrains Marketplace and is under review. Integrations for
+Neovim and Sublime Text are also maintained here.
 
 ## Learn and contribute
 

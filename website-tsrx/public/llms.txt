@@ -968,6 +968,7 @@ const List = <T,>({ items, render }: Props<T>) =>
 - **Getting Started**: https://tsrx.dev/getting-started
 - **Playground**: https://tsrx.dev/playground
 - **Zed Extension Marketplace**: https://zed.dev/extensions/tsrx
+- **JetBrains Marketplace**: https://plugins.jetbrains.com/plugin/33991-tsrx
 - **Source**: https://github.com/tsrx-org/tsrx
 - **Ripple target (runtime APIs)**: https://www.ripple-ts.com/llms.txt
 - **Octane target (runtime and build tools)**: https://octanejs.dev/llms.txt

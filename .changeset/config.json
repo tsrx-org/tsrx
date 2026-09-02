@@ -18,10 +18,13 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
+  "privatePackages": {
+    "version": true,
+    "tag": false
+  },
   "ignore": [
     "@tsrx/tree-sitter",
     "@tsrx/nvim-plugin",
-    "@tsrx/intellij-plugin",
     "@tsrx/sublime-text-plugin",
     "@tsrx/react-playground",
     "@tsrx/solid-playground",

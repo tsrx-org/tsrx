@@ -233,8 +233,19 @@ export const IndexPage = () => @{
 							TSRX extension for Zed
 						</a>
 						{' '}
-						from the Zed Extension Marketplace. Integrations for VS Code, Neovim, IntelliJ, and
-						Sublime are also maintained here.
+						from the Zed Extension Marketplace. The
+						{' '}
+						<a
+							class="supporting-link"
+							href="https://plugins.jetbrains.com/plugin/33991-tsrx"
+							target="_blank"
+							rel="noopener noreferrer"
+						>
+							TSRX plugin for JetBrains IDEs
+						</a>
+						{' '}
+						has been submitted to JetBrains Marketplace and is under review. Integrations for VS
+						Code, Neovim, and Sublime are also maintained here.
 					</p>
 					<p class="section-body">
 						It interoperates with existing TypeScript and TSX codebases rather than demanding a full

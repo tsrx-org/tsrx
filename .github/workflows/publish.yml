@@ -5,9 +5,6 @@ on:
     branches:
       - main
 
-concurrency:
-  group: npm-publish
-
 permissions: {}
 
 jobs:
@@ -21,6 +18,13 @@ jobs:
       id-token: write
     name: Publish
     runs-on: ubuntu-latest
+    concurrency:
+      group: npm-publish
+      cancel-in-progress: false
+    outputs:
+      intellij-version-changed: ${{ steps.intellij.outputs.changed }}
+      zed-version-changed: ${{ steps.zed.outputs.changed }}
+      zed-tag: ${{ steps.zed.outputs.tag }}
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
@@ -43,6 +47,26 @@ jobs:
 
       - name: Disallow major and minor bumps in changesets
         run: pnpm changeset:check
+
+      - name: Detect IntelliJ plugin release
+        id: intellij
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          previous_version="$(git show "${BEFORE_SHA}:packages/intellij-plugin/package.json" | jq -r .version)"
+          version="$(jq -r .version packages/intellij-plugin/package.json)"
+
+          if [ -z "$previous_version" ] || [ -z "$version" ]; then
+            echo "Could not determine the previous and current IntelliJ plugin versions." >&2
+            exit 1
+          fi
+
+          if [ "$previous_version" = "$version" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Detect Zed extension release
         id: zed
@@ -67,15 +91,6 @@ jobs:
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "tag=@tsrx/zed-plugin@$version" >> "$GITHUB_OUTPUT"
 
-      - name: Validate Zed publishing credential
-        if: steps.zed.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.ZED_EXTENSION_TOKEN }}
-        run: |
-          test -n "$GH_TOKEN" || { echo "Missing repository secret: ZED_EXTENSION_TOKEN" >&2; exit 1; }
-          test "$(gh api user --jq .login)" = "leonidaz" || { echo "ZED_EXTENSION_TOKEN must belong to leonidaz" >&2; exit 1; }
-          test "$(gh api repos/leonidaz/extensions --jq '.permissions.push')" = "true" || { echo "ZED_EXTENSION_TOKEN cannot push to leonidaz/extensions" >&2; exit 1; }
-
       - name: Publish to npm
         id: changesets
         uses: changesets/action@v1
@@ -87,10 +102,35 @@ jobs:
           # keep for now just in case
           NPM_CONFIG_PROVENANCE: true
 
-      - name: Tag Zed extension release
-        if: steps.zed.outputs.changed == 'true'
+  publish-zed:
+    name: Publish Zed extension
+    needs: publish
+    if: >-
+      needs.publish.result == 'success' &&
+      needs.publish.outputs.zed-version-changed == 'true'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    concurrency:
+      group: zed-publish
+      cancel-in-progress: false
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate Zed publishing credential
         env:
-          ZED_TAG: ${{ steps.zed.outputs.tag }}
+          GH_TOKEN: ${{ secrets.ZED_EXTENSION_TOKEN }}
+        run: |
+          test -n "$GH_TOKEN" || { echo "Missing repository secret: ZED_EXTENSION_TOKEN" >&2; exit 1; }
+          test "$(gh api user --jq .login)" = "leonidaz" || { echo "ZED_EXTENSION_TOKEN must belong to leonidaz" >&2; exit 1; }
+          test "$(gh api repos/leonidaz/extensions --jq '.permissions.push')" = "true" || { echo "ZED_EXTENSION_TOKEN cannot push to leonidaz/extensions" >&2; exit 1; }
+
+      - name: Tag Zed extension release
+        env:
+          ZED_TAG: ${{ needs.publish.outputs.zed-tag }}
         run: |
           if git show-ref --verify --quiet "refs/tags/$ZED_TAG"; then
             tagged_sha="$(git rev-list -n 1 "$ZED_TAG")"
@@ -105,7 +145,6 @@ jobs:
           git push origin "refs/tags/$ZED_TAG"
 
       - name: Submit Zed extension update
-        if: steps.zed.outputs.changed == 'true'
         # This action updates the registry version and submodule commit, but not
         # the submodule URL. The one-time source migration in
         # zed-industries/extensions#7328 must merge before the next Zed version
@@ -114,8 +153,99 @@ jobs:
         with:
           extension-name: tsrx
           push-to: leonidaz/extensions
-          tag: ${{ steps.zed.outputs.tag }}
+          tag: ${{ needs.publish.outputs.zed-tag }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           # Classic PAT owned by leonidaz with repo and workflow scopes.
           COMMITTER_TOKEN: ${{ secrets.ZED_EXTENSION_TOKEN }}
+
+  publish-intellij-plugin:
+    name: Publish IntelliJ plugin
+    needs: publish
+    if: >-
+      needs.publish.result == 'success' &&
+      needs.publish.outputs.intellij-version-changed == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    environment: jetbrains-marketplace
+    concurrency:
+      group: intellij-plugin-publish
+      cancel-in-progress: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Setup Java 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
+
+      - name: Verify synchronized versions
+        run: node scripts/sync-intellij-plugin-version.js --check
+
+      - name: Verify the published language-server package
+        run: node packages/intellij-plugin/scripts/verify-language-server-release.mjs
+
+      - name: Test, build, and verify the plugin
+        run: >-
+          packages/intellij-plugin/gradlew -p packages/intellij-plugin
+          test verifyPluginProjectConfiguration buildPlugin verifyPluginStructure verifyPlugin
+
+      - name: Validate signing credentials
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: |
+          for required in CERTIFICATE_CHAIN PRIVATE_KEY PRIVATE_KEY_PASSWORD; do
+            if [[ -z "${!required}" ]]; then
+              echo "Missing jetbrains-marketplace secret: $required" >&2
+              exit 1
+            fi
+          done
+
+      - name: Sign plugin archive
+        id: sign
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: packages/intellij-plugin/gradlew -p packages/intellij-plugin signPlugin
+
+      - name: Validate Marketplace credential
+        env:
+          PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_PUBLISH_TOKEN }}
+        run: |
+          test -n "$PUBLISH_TOKEN" || {
+            echo "Missing jetbrains-marketplace secret: JETBRAINS_MARKETPLACE_PUBLISH_TOKEN" >&2
+            exit 1
+          }
+
+      - name: Publish Marketplace update
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+          PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_PUBLISH_TOKEN }}
+        run: packages/intellij-plugin/gradlew -p packages/intellij-plugin publishPlugin
+
+      - name: Upload signed plugin archive
+        if: always() && steps.sign.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: intellij-plugin-signed-${{ github.sha }}
+          path: packages/intellij-plugin/build/distributions/*-signed.zip
+          if-no-files-found: error
+          retention-days: 30
