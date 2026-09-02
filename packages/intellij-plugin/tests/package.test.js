@@ -167,7 +167,6 @@ describe('@tsrx/intellij-plugin release contract', () => {
 		expect(workflow).toContain("contains(github.event.head_commit.message, 'Version Packages')");
 		expect(workflow).toContain('packages/intellij-plugin/package.json');
 		expect(workflow).toContain('intellij-version-changed: ${{ steps.intellij.outputs.changed }}');
-		expect(workflow).toContain('intellij-version: ${{ steps.intellij.outputs.version }}');
 		expect(workflow_header).not.toContain('concurrency:');
 		expect(publish_job).toContain('group: npm-publish');
 		expect(publish_job).not.toContain('Submit Zed extension update');
@@ -177,7 +176,6 @@ describe('@tsrx/intellij-plugin release contract', () => {
 		expect(intellij_job).toContain("needs.publish.result == 'success'");
 		expect(intellij_job).toContain("needs.publish.outputs.intellij-version-changed == 'true'");
 		expect(intellij_job).toContain('uses: ./.github/workflows/publish-intellij-plugin.yml');
-		expect(intellij_job).toContain('version: ${{ needs.publish.outputs.intellij-version }}');
 		expect(intellij_job).toContain('secrets.JETBRAINS_MARKETPLACE_CERTIFICATE_CHAIN');
 		expect(intellij_job).toContain('secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY');
 		expect(intellij_job).toContain('secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD');
@@ -189,7 +187,12 @@ describe('@tsrx/intellij-plugin release contract', () => {
 		expect(intellij_workflow).toContain('workflow_call:');
 		expect(intellij_workflow).toContain('workflow_dispatch:');
 		expect(intellij_workflow).toContain("github.ref == 'refs/heads/main'");
-		expect(intellij_workflow).toContain('EXPECTED_VERSION: ${{ inputs.version }}');
+		expect(intellij_workflow).toContain("if: inputs.source_sha != ''");
+		expect(intellij_workflow).toContain('ref: ${{ inputs.source_sha || github.sha }}');
+		expect(intellij_workflow).toContain('git merge-base --is-ancestor');
+		expect(intellij_workflow).toContain(
+			"require('./packages/intellij-plugin/package.json').version",
+		);
 		expect(intellij_workflow.match(/^    runs-on:/gm)).toHaveLength(1);
 		expect(intellij_workflow).toContain('environment: jetbrains-marketplace');
 		expect(intellij_workflow).toContain('group: intellij-plugin-publish');

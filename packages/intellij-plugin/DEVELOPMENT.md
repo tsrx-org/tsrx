@@ -60,16 +60,24 @@ update. The initial `0.0.82` submission was uploaded manually; the workflow is
 only responsible for later versions. It always retains the signed ZIP when signing
 succeeds, including when Marketplace rejects the upload.
 
-For a Marketplace-only retry, manually dispatch the dedicated workflow with the
-version currently committed on `main`:
+For a Marketplace-only retry of the current `main` commit, manually dispatch the
+dedicated workflow without additional inputs:
+
+```sh
+gh workflow run publish-intellij-plugin.yml --repo tsrx-org/tsrx --ref main
+```
+
+To retry an older release after `main` has advanced, pass the full SHA of its
+Version Packages commit:
 
 ```sh
 gh workflow run publish-intellij-plugin.yml --repo tsrx-org/tsrx --ref main \
-  -f version="$(node -p "require('./packages/intellij-plugin/package.json').version")"
+  -f source_sha=2f97ab4215878d6da9ef61d4c9475272ba680de0
 ```
 
-This path does not invoke the npm or Zed publishing jobs. The expected-version
-input must exactly match `packages/intellij-plugin/package.json` on `main`.
+This path does not invoke the npm or Zed publishing jobs. The workflow accepts
+only commits contained in `main` and derives the plugin version from the selected
+commit's `packages/intellij-plugin/package.json`.
 
 Configure `JETBRAINS_MARKETPLACE_CERTIFICATE_CHAIN`,
 `JETBRAINS_MARKETPLACE_PRIVATE_KEY`, `JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD`,

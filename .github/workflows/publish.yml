@@ -23,7 +23,6 @@ jobs:
       cancel-in-progress: false
     outputs:
       intellij-version-changed: ${{ steps.intellij.outputs.changed }}
-      intellij-version: ${{ steps.intellij.outputs.version }}
       zed-version-changed: ${{ steps.zed.outputs.changed }}
       zed-tag: ${{ steps.zed.outputs.tag }}
     steps:
@@ -61,8 +60,6 @@ jobs:
             echo "Could not determine the previous and current IntelliJ plugin versions." >&2
             exit 1
           fi
-
-          echo "version=$version" >> "$GITHUB_OUTPUT"
 
           if [ "$previous_version" = "$version" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -171,8 +168,6 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/publish-intellij-plugin.yml
-    with:
-      version: ${{ needs.publish.outputs.intellij-version }}
     secrets:
       JETBRAINS_MARKETPLACE_CERTIFICATE_CHAIN: ${{ secrets.JETBRAINS_MARKETPLACE_CERTIFICATE_CHAIN }}
       JETBRAINS_MARKETPLACE_PRIVATE_KEY: ${{ secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY }}

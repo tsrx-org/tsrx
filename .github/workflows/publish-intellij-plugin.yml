@@ -3,9 +3,9 @@ name: Publish IntelliJ Plugin
 on:
   workflow_call:
     inputs:
-      version:
-        description: Expected IntelliJ plugin version
-        required: true
+      source_sha:
+        description: Commit on main to publish; defaults to the triggering commit
+        required: false
         type: string
     secrets:
       JETBRAINS_MARKETPLACE_CERTIFICATE_CHAIN:
@@ -18,9 +18,9 @@ on:
         required: true
   workflow_dispatch:
     inputs:
-      version:
-        description: IntelliJ plugin version to publish from main
-        required: true
+      source_sha:
+        description: Full commit SHA on main to publish; leave blank for current main
+        required: false
         type: string
 
 permissions: {}
@@ -39,10 +39,33 @@ jobs:
       group: intellij-plugin-publish
       cancel-in-progress: false
     steps:
+      - name: Validate source selector
+        if: inputs.source_sha != ''
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "source_sha must be a full 40-character commit SHA." >&2
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          fetch-depth: 0
           persist-credentials: false
+          ref: ${{ inputs.source_sha || github.sha }}
+
+      - name: Validate source commit
+        id: source
+        run: |
+          source_sha="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse origin/main)"
+          if ! git merge-base --is-ancestor "$source_sha" "$main_sha"; then
+            echo "$source_sha is not a commit on main." >&2
+            exit 1
+          fi
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -58,15 +81,12 @@ jobs:
       - name: Setup Gradle cache
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
 
-      - name: Validate requested plugin version
-        env:
-          EXPECTED_VERSION: ${{ inputs.version }}
+      - name: Resolve plugin release
+        id: release
         run: |
           version="$(node -p "require('./packages/intellij-plugin/package.json').version")"
-          if [[ "$version" != "$EXPECTED_VERSION" ]]; then
-            echo "Requested IntelliJ plugin version $EXPECTED_VERSION, but main contains $version." >&2
-            exit 1
-          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Publishing IntelliJ plugin $version from ${{ steps.source.outputs.sha }}." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify synchronized versions
         run: node scripts/sync-intellij-plugin-version.js --check
@@ -121,7 +141,7 @@ jobs:
         if: always() && steps.sign.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: intellij-plugin-signed-${{ github.sha }}
+          name: intellij-plugin-${{ steps.release.outputs.version }}-signed-${{ steps.source.outputs.sha }}
           path: packages/intellij-plugin/build/distributions/*-signed.zip
           if-no-files-found: error
           retention-days: 30
