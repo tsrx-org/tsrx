@@ -325,7 +325,7 @@ describe('spread ref normalization', () => {
 			expect(Reflect.ownKeys(/** @type {object} */ (setter_receiver))).toEqual(['first', 'last']);
 			expect(Object.prototype.hasOwnProperty.call(setter_receiver, setter_key)).toBe(false);
 		} finally {
-			delete Object.prototype[setter_key];
+			delete (/** @type {Record<PropertyKey, unknown>} */ (Object.prototype)[setter_key]);
 		}
 	});
 
@@ -522,7 +522,7 @@ describe('spread ref normalization', () => {
 		const node = {};
 		const branded_ref = create_ref_prop(() => {
 			ref_events.push(['resolve branded']);
-			return (value) => {
+			return /** @param {object | null} value */ (value) => {
 				ref_events.push(['branded', value]);
 				return () => ref_events.push(['branded cleanup']);
 			};
@@ -568,7 +568,7 @@ describe('spread ref normalization', () => {
 			 * }} */ (normalize_spread_props_for_ref_attr(props, outer_ref));
 
 		expect(events).toEqual(['ownKeys', 'descriptor:id', 'get:id']);
-		expect(normalized === props).toBe(false);
+		expect(normalized).not.toBe(props);
 		expect(normalized.id).toBe('outer');
 		expect(normalized.ref).toBe(outer_ref);
 		expect_explicit_ref_descriptor(normalized, outer_ref);
