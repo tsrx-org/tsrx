@@ -792,11 +792,22 @@ export function createJsxTransform(platform) {
 				// What is left is the type-only stand-in (kept for editor mappings)
 				// or a block outside any scope, which is already reported.
 				const stand_in = state.typeOnly ? type_only_style(node) : node;
-				return b.jsx_element(
+				const element = b.jsx_element(
 					/** @type {ESTreeJSX.JSXElement} */ ({ ...stand_in, type: 'JSXElement', children: [] }),
 					stand_in.openingElement?.attributes ?? [],
 					[],
 				);
+				// A stand-in in a statement slot (a `<style>` sibling of the output
+				// node) prints as an expression statement; two in a row would parse as
+				// adjacent JSX (TS2657), so each is its own `void` expression.
+				const parent = path.at(-1);
+				const in_statement_slot =
+					parent?.type === 'JSXCodeBlock' ||
+					parent?.type === 'BlockStatement' ||
+					parent?.type === 'SwitchCase' ||
+					parent?.type === 'Program' ||
+					parent?.type === 'ExpressionStatement';
+				return state.typeOnly && in_statement_slot ? b.unary('void', element) : element;
 			},
 
 			JSXCodeBlock: transform_jsx_code_block,
