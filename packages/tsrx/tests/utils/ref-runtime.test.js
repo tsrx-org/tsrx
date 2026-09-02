@@ -282,6 +282,53 @@ describe('spread ref normalization', () => {
 		expect(events).toEqual(['get:Symbol(spread)', 'getter:Symbol(spread)']);
 	});
 
+	it('preserves inherited assignment side effects before returning an ordinary spread unchanged', () => {
+		/** @type {Array<unknown>} */
+		const events = [];
+		const setter_key = Symbol('temporary spread assignment');
+		/** @type {object | undefined} */
+		let setter_receiver;
+		const props = {
+			get first() {
+				events.push('get:first');
+				return 'first value';
+			},
+			get [setter_key]() {
+				events.push('get:symbol');
+				Object.defineProperty(Object.prototype, setter_key, {
+					configurable: true,
+					set(value) {
+						setter_receiver = this;
+						events.push(['set:symbol', value, Reflect.ownKeys(this)]);
+					},
+				});
+				return 'symbol value';
+			},
+			get last() {
+				events.push('get:last');
+				return 'last value';
+			},
+		};
+
+		try {
+			const normalized = normalize_spread_props(props);
+
+			expect(normalized).toBe(props);
+			expect(events).toEqual([
+				'get:first',
+				'get:last',
+				'get:symbol',
+				['set:symbol', 'symbol value', ['first', 'last']],
+			]);
+			expect(setter_receiver).not.toBe(props);
+			expect(Object.getPrototypeOf(setter_receiver)).toBe(Object.prototype);
+			expect(Reflect.ownKeys(/** @type {object} */ (setter_receiver))).toEqual(['first', 'last']);
+			expect(Object.prototype.hasOwnProperty.call(setter_receiver, setter_key)).toBe(false);
+		} finally {
+			delete Object.prototype[setter_key];
+		}
+	});
+
 	it('propagates own-key, descriptor, and getter failures at their observation point', () => {
 		const own_keys_error = new RangeError('own keys failed');
 		/** @type {string[]} */
