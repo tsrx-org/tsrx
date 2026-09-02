@@ -9,10 +9,11 @@ const MESSAGE =
 function is_template_output_statement(node: AnyNode | null | undefined): boolean {
 	if (!node) return false;
 
+	// Scoped `<style>` blocks are non-output siblings of the single output
+	// node, so they never count as the template output themselves.
 	if (
 		node.type === ('JSXElement' as string) ||
 		node.type === ('JSXFragment' as string) ||
-		node.type === ('JSXStyleElement' as string) ||
 		node.type === ('JSXIfExpression' as string) ||
 		node.type === ('JSXForExpression' as string) ||
 		node.type === ('JSXSwitchExpression' as string) ||
@@ -27,8 +28,14 @@ function is_template_output_statement(node: AnyNode | null | undefined): boolean
 	);
 }
 
+function is_style_block(node: AnyNode | null | undefined): boolean {
+	if (!node) return false;
+	if (node.type === ('JSXStyleElement' as string)) return true;
+	return node.type === 'ExpressionStatement' && is_style_block((node as AnyNode).expression);
+}
+
 function is_ignored_statement(node: AnyNode | null | undefined): boolean {
-	return !node || node.type === 'EmptyStatement';
+	return !node || node.type === 'EmptyStatement' || is_style_block(node);
 }
 
 function get_forgotten_output_statement(node: AST.Node): AnyNode | null {

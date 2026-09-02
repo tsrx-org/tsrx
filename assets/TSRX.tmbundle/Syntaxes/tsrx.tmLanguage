@@ -5840,7 +5840,7 @@
 		<key>jsx-tag-style</key>
 		<dict>
 			<key>begin</key>
-			<string>(&lt;)\s*(style)\b(?![^&gt;]*/&gt;)(?=[^&gt;]*&gt;)</string>
+			<string>(&lt;)\s*(style)\b(?=[\s/&gt;])</string>
 			<key>beginCaptures</key>
 			<dict>
 				<key>1</key>
@@ -5855,20 +5855,25 @@
 				</dict>
 			</dict>
 			<key>end</key>
-			<string>(&lt;/)(style)(&gt;)</string>
+			<string>(/&gt;)|(&lt;/)(style)(&gt;)</string>
 			<key>endCaptures</key>
 			<dict>
 				<key>1</key>
 				<dict>
 					<key>name</key>
-					<string>punctuation.definition.tag.begin.js</string>
+					<string>punctuation.definition.tag.end.js</string>
 				</dict>
 				<key>2</key>
 				<dict>
 					<key>name</key>
-					<string>entity.name.tag.js</string>
+					<string>punctuation.definition.tag.begin.js</string>
 				</dict>
 				<key>3</key>
+				<dict>
+					<key>name</key>
+					<string>entity.name.tag.js</string>
+				</dict>
+				<key>4</key>
 				<dict>
 					<key>name</key>
 					<string>punctuation.definition.tag.end.js</string>
@@ -5903,9 +5908,9 @@
 				</dict>
 				<dict>
 					<key>begin</key>
-					<string>(?&lt;=&lt;style)(?![^&gt;]*/&gt;)</string>
+					<string>(?&lt;=style)(?=[\s/&gt;])</string>
 					<key>end</key>
-					<string>(?=&gt;)</string>
+					<string>(?=/?&gt;)</string>
 					<key>patterns</key>
 					<array>
 						<dict>
@@ -5919,9 +5924,9 @@
 		<key>jsx-tag-style-in-expression</key>
 		<dict>
 			<key>begin</key>
-			<string>(?&lt;!\+\+|--)(?&lt;=[({\[,?=&gt;:*]|&amp;&amp;|\|\||\?|\*\/|^await|[^\._$[:alnum:]]await|^return|[^\._$[:alnum:]]return|^default|[^\._$[:alnum:]]default|^yield|[^\._$[:alnum:]]yield|^)\s*(?=(&lt;)\s*(style)\b(?![^&gt;]*/&gt;)(?=[^&gt;]*&gt;))</string>
+			<string>(?&lt;!\+\+|--)(?&lt;=[({\[,?=&gt;:*]|&amp;&amp;|\|\||\?|\*\/|^await|[^\._$[:alnum:]]await|^return|[^\._$[:alnum:]]return|^default|[^\._$[:alnum:]]default|^yield|[^\._$[:alnum:]]yield|^)\s*(?=(&lt;)\s*(style)\b(?=[\s/&gt;]))</string>
 			<key>end</key>
-			<string>(?!(&lt;)\s*(style)\b(?![^&gt;]*/&gt;)(?=[^&gt;]*&gt;))</string>
+			<string>(?!(&lt;)\s*(style)\b(?=[\s/&gt;]))</string>
 			<key>patterns</key>
 			<array>
 				<dict>

@@ -288,6 +288,52 @@ function contrast_ratio(foreground, background) {
 }
 
 /**
+ * Matches one `<style>` block. Group 1 is the attribute text; group 2 is the CSS
+ * body, or `undefined` for a self-closed `<style apply={theme} />` block, which
+ * has no body. The attribute pattern lets a `>` sit inside a quoted value or an
+ * `{...}` expression container (one level of nesting), so
+ * `apply={cond ? a : b}` and `apply={(x) => y}` do not end the tag early, and a
+ * self-closed block can never swallow a later bodied block.
+ */
+const STYLE_BLOCK_PATTERN =
+	/<style\b((?:[^>"'{}/]|"[^"]*"|'[^']*'|\{(?:[^{}]|\{[^{}]*\})*\})*)(?:\/>|>([\s\S]*?)<\/style>)/g;
+
+/**
+ * @typedef {{
+ *   raw: string,
+ *   index: number,
+ *   attrs: string,
+ *   css: string | undefined,
+ *   apply: string | null,
+ *   exported: boolean,
+ * }} StyleBlock
+ */
+
+/**
+ * Scans TSRX source for every `<style>` block: bodied blocks, self-closed
+ * `<style apply={…} />` blocks (recognised as style usage even though they carry
+ * no CSS), and assigned blocks (`export const theme = <style>…</style>`).
+ *
+ * @param {string} code
+ * @returns {StyleBlock[]}
+ */
+function scan_style_blocks(code) {
+	return [...code.matchAll(STYLE_BLOCK_PATTERN)].map((match) => {
+		const attrs = match[1] ?? '';
+		const apply = attrs.match(/\bapply\s*=\s*\{((?:[^{}]|\{[^{}]*\})*)\}/)?.[1]?.trim() ?? null;
+		const preceding = code.slice(Math.max(0, match.index - 120), match.index);
+		return {
+			raw: match[0],
+			index: match.index,
+			attrs,
+			css: match[2],
+			apply,
+			exported: /\bexport\s+(?:const|let|var)\s+[\w$]+\s*=\s*$/.test(preceding),
+		};
+	});
+}
+
+/**
  * Reviews TSRX scoped style authoring for patterns that commonly produce invalid
  * CSS, missing root styling, or preventable contrast failures.
  *
@@ -298,7 +344,7 @@ export function review_tsrx_styles(input) {
 	const target = normalize_target(input.target);
 	/** @type {AuthoringIssue[]} */
 	const issues = [];
-	const style_blocks = [...input.code.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)];
+	const style_blocks = scan_style_blocks(input.code);
 
 	if (style_blocks.length === 0) {
 		issues.push({
@@ -314,8 +360,27 @@ export function review_tsrx_styles(input) {
 		});
 	}
 
-	for (const style_match of style_blocks) {
-		const css = style_match[1] ?? '';
+	for (const block of style_blocks) {
+		if (block.exported || block.apply !== null) {
+			issues.push({
+				kind: 'style-theme',
+				severity: 'info',
+				title: block.exported ? 'Exported style block is a theme' : 'Style block applies a theme',
+				message: block.exported
+					? 'An exported <style> block compiles as a theme: it exposes $class plus one property per class name, and other scopes compose it with <style apply={theme} /> or <style apply={theme}>...</style>.'
+					: `This block applies ${block.apply}. An applied binding must be a theme declared before use; its rules join this scope, and its own $class and class names stay reachable through the binding.`,
+				snippet: line_snippet(block.raw),
+				recommendation: block.exported
+					? 'Keep shared, reusable rules in the theme and apply it where needed instead of duplicating CSS across components.'
+					: 'Reference theme classes through the theme binding rather than restating them, and keep scope-specific overrides in this block.',
+				documentation: ['tsrx://docs/style-and-server.md'],
+			});
+		}
+
+		// A self-closed `<style apply={…} />` block has no CSS body to review.
+		if (block.css === undefined) continue;
+
+		const css = block.css;
 		if (/^\s*\{/.test(css)) {
 			issues.push({
 				kind: 'style-expression-body',
@@ -323,7 +388,7 @@ export function review_tsrx_styles(input) {
 				title: 'Write CSS directly inside <style>',
 				message:
 					'A TSRX <style> block should contain CSS text, not a JavaScript template literal expression.',
-				snippet: line_snippet(style_match[0]),
+				snippet: line_snippet(block.raw),
 				recommendation: 'Replace <style>{`...`}</style> with <style> ...CSS... </style>.',
 				documentation: ['tsrx://docs/style-and-server.md'],
 			});
@@ -422,8 +487,8 @@ export function review_tsrx_components(input) {
 	const body_lines = get_component_body_line_count(input.code);
 	const control_flow_count = (input.code.match(/\b(if|for|switch)\s*\(/g) ?? []).length;
 	const element_count = (input.code.match(/<[a-z][\w.-]*(\s|>|\/)/g) ?? []).length;
-	const style_line_count = [...input.code.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)].reduce(
-		(total, match) => total + (match[1] ?? '').split('\n').length,
+	const style_line_count = scan_style_blocks(input.code).reduce(
+		(total, block) => total + (block.css ?? '').split('\n').length,
 		0,
 	);
 

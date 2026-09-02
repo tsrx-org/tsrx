@@ -2524,10 +2524,6 @@
           {
             "type": "script_element",
             "named": true
-          },
-          {
-            "type": "style_element",
-            "named": true
           }
         ]
       }
@@ -2589,10 +2585,6 @@
           },
           {
             "type": "script_element",
-            "named": true
-          },
-          {
-            "type": "style_element",
             "named": true
           }
         ]
@@ -2880,10 +2872,6 @@
           {
             "type": "script_element",
             "named": true
-          },
-          {
-            "type": "style_element",
-            "named": true
           }
         ]
       }
@@ -3076,10 +3064,6 @@
           {
             "type": "script_element",
             "named": true
-          },
-          {
-            "type": "style_element",
-            "named": true
           }
         ]
       },
@@ -3233,6 +3217,10 @@
           },
           {
             "type": "string",
+            "named": true
+          },
+          {
+            "type": "style_element",
             "named": true
           },
           {
@@ -3433,10 +3421,6 @@
           {
             "type": "script_element",
             "named": true
-          },
-          {
-            "type": "style_element",
-            "named": true
           }
         ]
       },
@@ -3590,6 +3574,10 @@
           },
           {
             "type": "string",
+            "named": true
+          },
+          {
+            "type": "style_element",
             "named": true
           },
           {

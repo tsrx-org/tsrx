@@ -1086,6 +1086,9 @@ importers:
       ovsx:
         specifier: catalog:default
         version: 0.10.12(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
+      shiki:
+        specifier: 'catalog:'
+        version: 4.0.1
       tsdown:
         specifier: catalog:default
         version: 0.22.0(@typescript/native-preview@7.0.0-dev.20260707.2)(typescript@5.9.3)

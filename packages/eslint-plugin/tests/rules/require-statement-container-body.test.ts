@@ -59,6 +59,74 @@ ruleTester.run('require-statement-container-body', rule, {
 				}
 			`,
 		},
+		{
+			code: `
+				export function UserBadge({ user }: UserBadgeProps): JSX.Element @{
+					const initials = user.name.slice(0, 2).toUpperCase();
+					<style>
+						button { color: red; }
+					</style>
+					<button title={user.name}>{initials}</button>
+				}
+			`,
+		},
+		{
+			code: `
+				export function UserBadge({ user }: UserBadgeProps): JSX.Element @{
+					const initials = user.name.slice(0, 2).toUpperCase();
+					<button title={user.name}>{initials}</button>
+					<style>
+						button { color: red; }
+					</style>
+				}
+			`,
+		},
+		{
+			code: `
+				const theme = <style>button { color: red; }</style>;
+				export function UserBadge({ user }: UserBadgeProps): JSX.Element @{
+					const initials = user.name.slice(0, 2).toUpperCase();
+					<style apply={theme} />
+					<button title={user.name}>{initials}</button>
+				}
+			`,
+		},
+		{
+			code: `
+				export function UserBadge({ user }: UserBadgeProps): JSX.Element @{
+					const initials = user.name.slice(0, 2).toUpperCase();
+					@if (user) {
+						<style>
+							button { color: red; }
+						</style>
+						<button title={user.name}>{initials}</button>
+					}
+				}
+			`,
+		},
+		{
+			code: `
+				export function UserBadge({ user }: UserBadgeProps): JSX.Element @{
+					const initials = user.name.slice(0, 2).toUpperCase();
+					console.log(initials);
+					<style>
+						button { color: red; }
+					</style>
+				}
+			`,
+		},
+		{
+			// A plain block with only style blocks has no template output to report.
+			code: `
+				export function UserBadge({ user }: UserBadgeProps): JSX.Element {
+					const initials = user.name.slice(0, 2).toUpperCase();
+					console.log(initials);
+					<style>
+						button { color: red; }
+					</style>
+				}
+			`,
+		},
 	],
 	invalid: [
 		{
@@ -104,6 +172,54 @@ ruleTester.run('require-statement-container-body', rule, {
 
 					<button title={user.name}>{initials}</button>
 				};
+			`,
+			errors: [
+				{
+					messageId: 'requireStatementContainerBody',
+				},
+			],
+		},
+		{
+			code: `
+				export function UserBadge({ user }: UserBadgeProps): JSX.Element {
+					const initials = user.name.slice(0, 2).toUpperCase();
+					<style>
+						button { color: red; }
+					</style>
+					<button title={user.name}>{initials}</button>
+				}
+			`,
+			output: `
+				export function UserBadge({ user }: UserBadgeProps): JSX.Element @{
+					const initials = user.name.slice(0, 2).toUpperCase();
+					<style>
+						button { color: red; }
+					</style>
+					<button title={user.name}>{initials}</button>
+				}
+			`,
+			errors: [
+				{
+					messageId: 'requireStatementContainerBody',
+				},
+			],
+		},
+		{
+			code: `
+				const theme = <style>button { color: red; }</style>;
+				export function UserBadge({ user }: UserBadgeProps): JSX.Element {
+					const initials = user.name.slice(0, 2).toUpperCase();
+					<button title={user.name}>{initials}</button>;
+					<style apply={theme} />;
+				}
+			`,
+			output: `
+				const theme = <style>button { color: red; }</style>;
+				export function UserBadge({ user }: UserBadgeProps): JSX.Element @{
+					const initials = user.name.slice(0, 2).toUpperCase();
+					<button title={user.name}>{initials}</button>;
+					<style apply={theme} />;
+				}
 			`,
 			errors: [
 				{

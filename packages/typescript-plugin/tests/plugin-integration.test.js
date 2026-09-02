@@ -1,7 +1,11 @@
 import path from 'path';
 import fs from 'fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup_fixture_workspaces, create_fixture_workspace } from './workspace-fixtures.js';
+import {
+	COMPILE_FAILURE_MARKER,
+	cleanup_fixture_workspaces,
+	create_fixture_workspace,
+} from './workspace-fixtures.js';
 import * as ts from 'typescript';
 import {
 	getTsrxLanguagePlugin,
@@ -847,5 +851,141 @@ describe('typescript-plugin language plugin integration', () => {
 				create_snapshot('<div>Hello</div>'),
 			),
 		).toBeUndefined();
+	});
+
+	describe('embedded CSS regions', () => {
+		/**
+		 * One CSS region as the plugin exposes it: the embedded id, the region's
+		 * source offset, and the CSS text the embedded document serves.
+		 * @param {TSRXVirtualCode} virtual_code
+		 */
+		function css_regions(virtual_code) {
+			return (virtual_code.embeddedCodes ?? [])
+				.filter((embedded) => embedded.languageId === 'css')
+				.map((embedded) => ({
+					id: embedded.id,
+					start: embedded.mappings[0].sourceOffsets[0],
+					css: embedded.snapshot.getText(0, embedded.snapshot.getLength()),
+				}));
+		}
+
+		/**
+		 * Compile `source` twice: once normally (regions come from the compiler's
+		 * `cssMappings`) and once with the compile-failure marker appended (the
+		 * compiler throws and the plugin falls back to regex extraction over the raw
+		 * source). Both must expose the same regions, and every region must map onto
+		 * exactly the CSS text at its source offset.
+		 * @param {string} source
+		 */
+		function compile_both_ways(source) {
+			const plugin = create_plugin();
+			const workspace = create_fixture_workspace('react-only');
+			const compiled = create_virtual_code(plugin, path.join(workspace, 'src', 'App.tsrx'), source);
+			const failing_source = `${source}\n${COMPILE_FAILURE_MARKER}\n`;
+			const fallback = create_virtual_code(
+				plugin,
+				path.join(workspace, 'src', 'Broken.tsrx'),
+				failing_source,
+			);
+
+			expect(compiled.fatalErrors).toEqual([]);
+			expect(compiled.generatedCode).toContain('compiler:react');
+			expect(fallback.fatalErrors).toHaveLength(1);
+			// The fallback serves the raw source back as the "generated" code.
+			expect(fallback.generatedCode).toBe(failing_source);
+
+			const compiled_regions = css_regions(compiled);
+			const fallback_regions = css_regions(fallback);
+			expect(fallback_regions).toEqual(compiled_regions);
+			for (const region of compiled_regions) {
+				expect(source.slice(region.start, region.start + region.css.length)).toBe(region.css);
+			}
+			return compiled_regions;
+		}
+
+		it('yields no region for a self-closed apply block and keeps a later bodied block', () => {
+			const regions = compile_both_ways(
+				[
+					"import { theme } from './theme.tsrx';",
+					'export function App() @{',
+					'\t<style apply={theme} />',
+					'\t<style>.card { color: red; }</style>',
+					'\t<div class="card" />',
+					'}',
+				].join('\n'),
+			);
+
+			expect(regions).toEqual([
+				{ id: 'style_0', start: expect.any(Number), css: '.card { color: red; }' },
+			]);
+		});
+
+		it('yields no region for a self-closed block applying a theme list', () => {
+			const regions = compile_both_ways(
+				['export function App() @{', '\t<style apply={[base, accent]} />', '\t<div />', '}'].join(
+					'\n',
+				),
+			);
+
+			expect(regions).toEqual([]);
+		});
+
+		it('does not end the opening tag at a `>` inside the apply expression', () => {
+			const regions = compile_both_ways(
+				[
+					'export function App({ dark }) @{',
+					'\t<style apply={dark ? night : day}>.title { font-weight: 700; }</style>',
+					'\t<style apply={(t) => t} />',
+					'\t<style>.body { margin: 0; }</style>',
+					'\t<h1 class="title" />',
+					'}',
+				].join('\n'),
+			);
+
+			expect(regions).toEqual([
+				{ id: 'style_0', start: expect.any(Number), css: '.title { font-weight: 700; }' },
+				{ id: 'style_1', start: expect.any(Number), css: '.body { margin: 0; }' },
+			]);
+		});
+
+		it('exposes one region per bodied block when a scope has several', () => {
+			const regions = compile_both_ways(
+				[
+					'export function App() @{',
+					'\t<style>.a { color: red; }</style>',
+					'\t<style lang="css">\n\t\t.b { color: blue; }\n\t</style>',
+					'\t<div class="a b" />',
+					'}',
+				].join('\n'),
+			);
+
+			expect(regions).toEqual([
+				{ id: 'style_0', start: expect.any(Number), css: '.a { color: red; }' },
+				{ id: 'style_1', start: expect.any(Number), css: '\n\t\t.b { color: blue; }\n\t' },
+			]);
+		});
+
+		it('exposes a block inside a nested @{} scope alongside the outer block', () => {
+			const regions = compile_both_ways(
+				[
+					'export function App() @{',
+					'\tconst items = [1, 2];',
+					'\t@{',
+					'\t\tconst first = items[0];',
+					'\t\t<style>.inner { color: green; }</style>',
+					'\t\t<span class="inner">{first}</span>',
+					'\t}',
+					'\t<style>.outer { color: black; }</style>',
+					'\t<main class="outer" />',
+					'}',
+				].join('\n'),
+			);
+
+			expect(regions).toEqual([
+				{ id: 'style_0', start: expect.any(Number), css: '.inner { color: green; }' },
+				{ id: 'style_1', start: expect.any(Number), css: '.outer { color: black; }' },
+			]);
+			expect(regions[0].start).toBeLessThan(regions[1].start);
+		});
 	});
 });
