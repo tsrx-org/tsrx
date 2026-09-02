@@ -66,7 +66,9 @@
     "./test-harness/dep-scan": "./tests/shared/dep-scan.js",
     "./test-harness/runtime/*": "./tests/shared/runtime/*.js",
     "./test-harness/runtime/*.js": "./tests/shared/runtime/*.js",
-    "./test-harness/runtime/*.tsrx": "./tests/shared/runtime/*.tsrx"
+    "./test-harness/runtime/*.tsrx": "./tests/shared/runtime/*.tsrx",
+    "./test-harness/scoped-styles-fixtures": "./tests/shared/scoped-styles-fixtures.js",
+    "./test-harness/style-syntax": "./tests/utils/fixtures/style-syntax.js"
   },
   "dependencies": {
     "@tsrx/runtime": "workspace:*",
@@ -92,6 +94,9 @@
   },
   "files": [
     "src",
-    "types"
+    "types",
+    "tests/fixtures/scoped-styles",
+    "tests/shared/scoped-styles-fixtures.js",
+    "tests/utils/fixtures/style-syntax.js"
   ]
 }
