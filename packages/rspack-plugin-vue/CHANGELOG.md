@@ -1,5 +1,12 @@
 # @tsrx/rspack-plugin-vue
 
+## 0.0.77
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/vue@0.1.65
+
 ## 0.0.76
 
 ### Patch Changes

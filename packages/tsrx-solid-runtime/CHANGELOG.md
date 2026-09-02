@@ -1,5 +1,13 @@
 # @tsrx/solid-runtime
 
+## 0.1.4
+
+### Patch Changes
+
+- Updated dependencies
+  [[`f16c113`](https://github.com/tsrx-org/tsrx/commit/f16c1138d1ac9969afe39696ebf9b41579bb27c5)]:
+  - @tsrx/runtime@0.1.4
+
 ## 0.1.3
 
 ### Patch Changes

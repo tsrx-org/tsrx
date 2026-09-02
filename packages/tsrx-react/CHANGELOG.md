@@ -1,5 +1,13 @@
 # @tsrx/react
 
+## 0.2.65
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/core@0.1.65
+  - @tsrx/react-runtime@0.1.4
+
 ## 0.2.64
 
 ### Patch Changes
