@@ -16,4 +16,13 @@ internal class TsrxLspServerDescriptor(
 		serverInfo.root?.let { commandLine.withWorkDirectory(it.toFile()) }
 		return commandLine
 	}
+
+	// LSP features (Go to Definition via textDocument/definition, Find Usages via
+	// textDocument/references) are enabled by default since 2023.2/2024.2.
+	// Explicit customization is not required for webstorm 2025.2.4 target.
+	// If fine-tuning is needed, override lspCustomization:
+	//   override val lspCustomization = LspCustomization().apply {
+	//     goToDefinitionCustomizer = LspGoToDefinitionSupport()
+	//     findReferencesCustomizer = LspFindReferencesSupport()
+	//   }
 }

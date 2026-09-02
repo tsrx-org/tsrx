@@ -8,17 +8,29 @@
 	<name>TSRX</name>
 
 	<!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
-	<vendor url="https://github.com/tsrx-org/tsrx">TSRX</vendor>
+	<vendor url="https://github.com/tsrx-org/tsrx" email="hello@tsrx.dev">TSRX</vendor>
 
 	<!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
 			 Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
 	<description><![CDATA[
-	TSRX language support for IntelliJ-based IDEs. Provides TextMate-based syntax highlighting for .tsrx files and
-		integrates with the TSRX language server for diagnostics, completion, and navigation.
+TSRX — TypeScript Render Extensions for .tsrx files. A TSX superset with declarative control flow for React, Solid, Vue, Preact, Ripple & Octane.<br/>
+<p>Works in <b>IntelliJ IDEA, WebStorm, PyCharm and PhpStorm (2025.2+)</b> — same .tsrx grammar everywhere.</p>
+<p>Provides:</p>
+<ul>
+  <li>Syntax highlighting via TextMate (<code>source.tsrx</code>) — TSX-like plus <code>@if/@else</code>, <code>@for/@empty</code>, <code>@switch/@case/@default</code>, <code>@try/@pending/@catch</code>, <code>@{}</code> statement containers, <code>&lt;style&gt;</code> scoped CSS, <code>{prop}</code> shorthand and <code>&lt;{expr}&gt;</code> dynamic tags</li>
+  <li>Language Server (<code>@tsrx/language-server</code>) — diagnostics, completion, hover, Go to Definition, Find Usages, document symbols, auto-closing tags</li>
+  <li>Status bar TSRX icon for Language Services, <em>New File → TSRX File</em> template, braces & comments</li>
+  <li>Emmet abbreviations (<code>div&gt;ul&gt;li*3</code> → <code>Tab</code>) and HTML tag handling (auto-close, sync editing) in <code>.tsrx</code> files</li>
+  <li>Code folding — collapse tags (<code>&lt;div class="test"&gt;...&lt;/div&gt;</code>), <code>@if/@for/@switch/@try</code> blocks, braces and import groups</li>
+  <li>Reformat Code — indent tags/braces like TSX in <code>.tsrx</code> files (<code>Code → Reformat Code</code>)</li>
+</ul>
+<p>Requirements: Node.js 22+ on PATH and project with <code>@tsrx/typescript-plugin</code> in <code>tsconfig.json</code>. The LSP auto-installs if missing.</p>
+<p>Links: <a href="https://tsrx.dev">tsrx.dev</a> · <a href="https://github.com/tsrx-org/tsrx">GitHub</a> · <a href="https://github.com/tsrx-org/tsrx/issues">Issues</a></p>
     ]]></description>
 
 	<!-- Product and plugin compatibility requirements.
 			 Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+	<depends>com.intellij.modules.platform</depends>
 	<depends>org.jetbrains.plugins.textmate</depends>
 	<depends optional="true" config-file="tsrx-lsp.xml">com.intellij.modules.lsp</depends>
 	<!-- Extensions defined by the plugin.
@@ -26,12 +38,29 @@
 	<extensions defaultExtensionNs="com.intellij">
 		<fileType name="TSRX" implementationClass="dev.tsrx.intellij_plugin.TsrxFileType" fieldName="INSTANCE"
 					 language="TSRX" extensions="tsrx"/>
+		<lang.parserDefinition language="TSRX" implementationClass="dev.tsrx.intellij_plugin.TsrxParserDefinition"/>
 		<lang.commenter language="TSRX" implementationClass="dev.tsrx.intellij_plugin.TsrxCommenter"/>
+		<lang.braceMatcher language="TSRX" implementationClass="dev.tsrx.intellij_plugin.TsrxBraceMatcher"/>
+		<lang.findUsagesProvider language="TSRX" implementationClass="dev.tsrx.intellij_plugin.TsrxFindUsagesProvider"/>
+		<gotoDeclarationHandler implementation="dev.tsrx.intellij_plugin.TsrxGotoDeclarationHandler" order="first"/>
 		<lang.syntaxHighlighterFactory language="TSRX"
 									 implementationClass="org.jetbrains.plugins.textmate.language.syntax.highlighting.TextMateSyntaxHighlighterFactory"/>
 		<editorHighlighterProvider filetype="TSRX"
 								 implementationClass="org.jetbrains.plugins.textmate.language.syntax.highlighting.TextMateEditorHighlighterProvider"/>
 		<textmate.bundleProvider implementation="dev.tsrx.intellij_plugin.TsrxTextMateBundleProvider"/>
 		<notificationGroup id="TSRX" displayType="BALLOON" isLogByDefault="true"/>
+		<internalFileTemplate name="TSRX File"/>
+		<spellchecker.bundledDictionaryProvider
+			implementationClass="dev.tsrx.intellij_plugin.TsrxBundledDictionaryProvider"/>
+		<xml.zenCodingGenerator implementation="dev.tsrx.intellij_plugin.TsrxEmmetGenerator"/>
+		<xml.extension implementation="dev.tsrx.intellij_plugin.TsrxXmlExtension"/>
+		<lang.foldingBuilder language="TSRX" implementationClass="dev.tsrx.intellij_plugin.TsrxFoldingBuilder"/>
+		<formattingService implementation="dev.tsrx.intellij_plugin.TsrxFormattingService"/>
 	</extensions>
+	<actions>
+		<action id="NewTsrxFile" class="dev.tsrx.intellij_plugin.NewTsrxFileAction"
+				text="TSRX File" description="Create new TSRX file" icon="/icons/tsrx.svg">
+			<add-to-group group-id="NewGroup" anchor="last"/>
+		</action>
+	</actions>
 </idea-plugin>
