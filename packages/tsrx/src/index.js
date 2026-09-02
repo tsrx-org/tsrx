@@ -279,4 +279,18 @@ export {
 	validate_forgotten_statement_container as validateForgottenStatementContainer,
 	validate_nesting as validateNesting,
 	is_template_value_position as isTemplateValuePosition,
+	TSRX_STYLE_APPLY_VALUE_ERROR,
+	TSRX_STYLE_APPLY_DUPLICATE_ERROR,
+	TSRX_STYLE_APPLY_UNSUPPORTED_HOST_ERROR,
+	TSRX_STYLE_RESERVED_CLASS_KEY_ERROR,
+	TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR,
+	TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
+	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
+	tsrx_style_apply_target_error as tsrxStyleApplyTargetError,
+	tsrx_style_apply_before_declaration_error as tsrxStyleApplyBeforeDeclarationError,
+	tsrx_style_unknown_attribute_error as tsrxStyleUnknownAttributeError,
 } from './analyze/validation.js';
+export {
+	analyze_styles as analyzeStyles,
+	is_standalone_style_position as isStandaloneStylePosition,
+} from './analyze/style-analyze.js';

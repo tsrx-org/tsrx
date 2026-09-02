@@ -32,6 +32,44 @@ export const TSRX_FORGOTTEN_STATEMENT_CONTAINER_ERROR =
 	"This TSRX template output is unused. Return it, assign it to a value that is rendered, or make it part of the rendered output of a function '@{...}' body.";
 export const TSRX_UNSUPPORTED_LAZY_ASSIGNMENT_POSITION_ERROR =
 	'Lazy destructuring assignments require a directly lazy target as a standalone statement inside a program, block, TSRX code block, or switch case.';
+export const TSRX_STYLE_APPLY_VALUE_ERROR =
+	"The 'apply' attribute of a <style> block requires an expression value: apply={theme} or apply={[a, b]}.";
+export const TSRX_STYLE_APPLY_DUPLICATE_ERROR =
+	"A <style> block accepts a single 'apply' attribute; pass several themes as an array: apply={[a, b]}.";
+export const TSRX_STYLE_APPLY_UNSUPPORTED_HOST_ERROR =
+	"The 'apply' attribute is only supported on scoped <style> blocks, not on <head> styles or resource styles.";
+export const TSRX_STYLE_RESERVED_CLASS_KEY_ERROR =
+	"'$class' is reserved on assigned <style> blocks for the block's scope hash; rename the '.$class' selector.";
+export const TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR =
+	'A standalone <style> block is only allowed inside a template scope. At module scope assign it: const theme = <style>…</style>.';
+export const TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR =
+	'A :global selector cannot be inside a pseudoclass.';
+export const TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR =
+	':global(...) can be at the start or end of a selector sequence, but not in the middle.';
+
+/**
+ * @param {string} name
+ * @returns {string}
+ */
+export function tsrx_style_apply_target_error(name) {
+	return `'${name}' is not a style block. An 'apply' target must be a variable, import, or member holding an assigned <style> block.`;
+}
+
+/**
+ * @param {string} name
+ * @returns {string}
+ */
+export function tsrx_style_apply_before_declaration_error(name) {
+	return `'${name}' is applied before its declaration. Declare the style block before the block that applies it.`;
+}
+
+/**
+ * @param {string} name
+ * @returns {string}
+ */
+export function tsrx_style_unknown_attribute_error(name) {
+	return `Unknown <style> attribute '${name}'. Scoped style blocks accept 'ref' and 'apply'.`;
+}
 
 const invalid_nestings = {
 	// <p> cannot contain block-level elements
@@ -433,4 +471,19 @@ export function validate_nesting(element, context, errors) {
 			}
 		}
 	}
+}
+
+/**
+ * Report a style diagnostic through the shared error channel so editors get
+ * positions and `@tsrx-ignore` applies.
+ *
+ * @param {string} message
+ * @param {string} code
+ * @param {AST.Node} node
+ * @param {string | null} filename
+ * @param {CompileError[] | undefined} errors
+ * @param {AST.CommentWithLocation[] | undefined} comments
+ */
+export function validate_style(message, code, node, filename, errors, comments) {
+	error(message, filename, node, errors, comments, code);
 }

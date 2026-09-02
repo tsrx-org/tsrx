@@ -65,6 +65,19 @@ here and keeps package docs focused on the core parser API.
 - **AST utilities** — pattern walkers, identifier extraction, builders, location
   helpers, obfuscation helpers.
 - **CSS support** — `parseStyle`, `analyzeCss`, `renderStylesheets`.
+- **Scoped styles** — `analyzeTsrx` resolves every `<style>` block: standalone
+  blocks scope the template they sit in (nested `@{ … }` and control-flow bodies
+  are scopes of their own), assigned blocks (`const theme = <style>…</style>`) are
+  classified as `theme` (exported or applied) or `class-map`, and `apply` targets
+  are resolved through real bindings with declared-before-use enforced. Results
+  ride on each block's `metadata` (`styleKind`, `styleApplies`, `styleApplied`,
+  `styleExported`) and on `program.metadata.styles`, and the analysis result
+  exposes `scopes`. Target compilers use `prepareStylesheetForRender(sheet, mode)`
+  with `mode: 'scope' | 'class-map' | 'theme'` (a boolean still means
+  `class-map`/`scope`) and `createStyleClassMapFromStylesheet(sheet, options)`,
+  whose object starts with `$class` and accepts `{ applied }` for composed themes.
+  Style diagnostics use the `STYLE_*` and `CSS_GLOBAL_PLACEMENT` codes in
+  `DIAGNOSTIC_CODES`.
 - **HTML helpers** — `isVoidElement`, `isBooleanAttribute`, `isDomProperty`,
   `validateNesting`.
 - **Event helpers** — delegated-event utilities, event-name normalization.

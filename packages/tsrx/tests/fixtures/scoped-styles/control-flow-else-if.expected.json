@@ -1,0 +1,12 @@
+{
+  "knownFailure": "An `@else if` body is not collected as a style scope: its block is dropped from the CSS and cssHash, `e2 elif` carries only the root hash, and an empty `<style></style>` is left in the generated code.",
+  "elements": {
+    "e0 root": ["root"],
+    "e1": ["root"],
+    "e2 elif": ["root", "elif"],
+    "e3": ["root"]
+  },
+  "cssOrder": ["root", "elif"],
+  "pruned": [],
+  "classMaps": {}
+}

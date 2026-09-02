@@ -1541,6 +1541,14 @@ export function TSRXPlugin(config) {
 					}
 					if (this.#atRenderNodeStart()) {
 						const render_node = this.#parseCodeBlockRenderNode();
+						// A `<style>` block is not rendered output: any number may sit
+						// before or after the single output node (or stand alone) inside a
+						// `@{ … }` body and a directive body. They stay in the flat list in
+						// source order so the transform collects them per scope.
+						if (render_node.type === 'JSXStyleElement') {
+							flat.push(render_node);
+							continue;
+						}
 						if (render_seen) {
 							this.#report_recoverable_error_range(
 								/** @type {number} */ (render_node.start),
@@ -1616,10 +1624,18 @@ export function TSRXPlugin(config) {
 					this.#path = enclosing_path;
 				}
 
-				const last = flat[flat.length - 1];
-				if (is_tsrx_render_output_node(last)) {
-					node.render = last;
-					node.body = /** @type {AST.Statement[]} */ (flat.slice(0, -1));
+				// `<style>` blocks may follow the output node (see #parseCodeBlockBody),
+				// so the render slot is the single non-style output node wherever it
+				// sits; everything else (setup statements and style blocks) stays in
+				// `body` in source order.
+				const render_index = flat.findLastIndex(
+					(item) => is_tsrx_render_output_node(item) && item.type !== 'JSXStyleElement',
+				);
+				if (render_index !== -1) {
+					node.render = flat[render_index];
+					node.body = /** @type {AST.Statement[]} */ (
+						flat.filter((_, index) => index !== render_index)
+					);
 				} else {
 					node.body = /** @type {AST.Statement[]} */ (flat);
 				}
@@ -2248,9 +2264,12 @@ export function TSRXPlugin(config) {
 			 * @param {ESTreeJSX.TSRXJSXOpeningElement & AST.NodeWithLocation} open
 			 * @param {AST.JSXStyleElement | AST.TSRXJSXElement} node
 			 * @param {'style' | 'script'} tagName
+			 * @param {number} [contextDepth] tokenizer context depth to restore before
+			 *   reading the token after the closing tag when the element sits outside
+			 *   a template (see parseElement)
 			 * @returns {string} The raw body text
 			 */
-			#parseRawTextElement(open, node, tagName) {
+			#parseRawTextElement(open, node, tagName, contextDepth) {
 				const closeTag = `</${tagName}>`;
 				const contentStart = open.end;
 				const input = this.input.slice(contentStart);
@@ -2318,6 +2337,14 @@ export function TSRXPlugin(config) {
 						}
 					}
 					if (!insideTemplate && this.#path.at(-1) === node) {
+						// Outside a template (a `@{ … }` body, a `@case` body, a statement),
+						// the element must leave the tokenizer context exactly where it
+						// began — like a balanced element does after its closing tag — so
+						// the following `}`, `@case`, or sibling tokenizes as code, not as
+						// JSX text of a children context this element's `<` opened.
+						if (contextDepth !== undefined && this.context.length > contextDepth) {
+							this.context.length = contextDepth;
+						}
 						this.#path.pop();
 						try {
 							this.next();
@@ -2342,15 +2369,16 @@ export function TSRXPlugin(config) {
 			 * @param {ESTreeJSX.TSRXJSXOpeningElement & AST.NodeWithLocation} open
 			 * @param {AST.JSXStyleElement} node
 			 * @param {boolean} insideHead
+			 * @param {number} [contextDepth] see #parseRawTextElement
 			 */
-			#parseStyleElement(open, node, insideHead) {
+			#parseStyleElement(open, node, insideHead, contextDepth) {
 				const filename = this.#filename;
 				if (!filename) {
 					throw new Error(
 						'<style> elements require a filename: pass one to parse so style scope hashes are unique per file.',
 					);
 				}
-				const content = this.#parseRawTextElement(open, node, 'style');
+				const content = this.#parseRawTextElement(open, node, 'style', contextDepth);
 				const parsedCss = parse_style(
 					content,
 					{
@@ -2384,9 +2412,10 @@ export function TSRXPlugin(config) {
 			 *
 			 * @param {ESTreeJSX.TSRXJSXOpeningElement & AST.NodeWithLocation} open
 			 * @param {AST.TSRXJSXElement} node
+			 * @param {number} [contextDepth] see #parseRawTextElement
 			 */
-			#parseScriptElement(open, node) {
-				const content = this.#parseRawTextElement(open, node, 'script');
+			#parseScriptElement(open, node, contextDepth) {
+				const content = this.#parseRawTextElement(open, node, 'script', contextDepth);
 				node.content = content;
 				node.children = [];
 
@@ -4792,12 +4821,28 @@ export function TSRXPlugin(config) {
 				this.#path.push(node);
 
 				if (!is_fragment && open.selfClosing) {
+					if (is_style) {
+						// `<style apply={theme} />` has no CSS body and no scope hash of
+						// its own; it only contributes its `apply` targets to the scope.
+						const style = /** @type {AST.JSXStyleElement} */ (node);
+						style.css = '';
+						style.children = [];
+					}
 					this.#path.pop();
 				} else if (is_style) {
-					this.#parseStyleElement(open, /** @type {AST.JSXStyleElement} */ (node), !!inside_head);
+					this.#parseStyleElement(
+						open,
+						/** @type {AST.JSXStyleElement} */ (node),
+						!!inside_head,
+						pre_element_context_depth,
+					);
 					this.#path.pop();
 				} else if (is_script) {
-					this.#parseScriptElement(open, /** @type {AST.TSRXJSXElement} */ (node));
+					this.#parseScriptElement(
+						open,
+						/** @type {AST.TSRXJSXElement} */ (node),
+						pre_element_context_depth,
+					);
 					this.#path.pop();
 				} else {
 					this.#parseNativeTemplateBody(node, /** @type {AST.Node[]} */ (node.children), {

@@ -154,6 +154,22 @@ export interface BaseNodeMetaData {
 	delegated?: boolean;
 	returned_tsrx_return?: AST.ReturnStatement;
 	styleScopeHash?: string;
+	/** Resolved `apply` entries of a `<style>` block (set by the style analyzer). */
+	styleApplies?: StyleApplyResolution[];
+	/** An assigned block is the target of some `apply` in its module. */
+	styleApplied?: boolean;
+	/** An assigned block is exported from its module. */
+	styleExported?: boolean;
+	/** How an assigned block renders: `theme` keeps every selector, `class-map` prunes (D4/D5). */
+	styleKind?: 'theme' | 'class-map';
+	/** The transform's style pre-pass already rendered this assigned block's sheet. */
+	tsrx_style_prepared?: boolean;
+	/** Resolved `$class` parts of a block's applied themes (literals or `theme.$class` reads). */
+	tsrx_style_class_parts?: Array<string | AST.Expression>;
+	/** Style `ref` setup statements for a scope whose root is this native fragment/element. */
+	tsrx_style_ref_statements?: AST.Statement[];
+	/** Accumulated scope classes of an element (see transform/scoping.js). */
+	tsrx_scope_class?: ScopeClassParts;
 	css?: {
 		scopedClasses: TopScopedClasses;
 		hash: string;
@@ -452,6 +468,7 @@ declare module 'estree' {
 
 	interface JSXCodeBlock extends AST.BaseExpression {
 		type: 'JSXCodeBlock';
+		/** Setup statements plus any `<style>` siblings of the output node (D3), in source order. */
 		body: AST.Statement[];
 		render: AST.Node | null;
 		metadata: BaseNodeMetaData;
@@ -460,6 +477,10 @@ declare module 'estree' {
 
 	interface JSXStyleElement extends Omit<AST.TSRXJSXElement, 'type' | 'children'> {
 		type: 'JSXStyleElement';
+		/**
+		 * The parsed body, or empty for a self-closed `<style apply={…} />`
+		 * (`openingElement.selfClosing`), which has no CSS and no scope hash.
+		 */
 		children: AST.CSS.StyleSheet[];
 		css?: string;
 		unclosed?: boolean;
@@ -1537,6 +1558,57 @@ export interface TSRXAnalysisResult {
 	ast: AST.Program;
 	errors: CompileError[];
 	comments: AST.CommentWithLocation[];
+	/** Module scope built by `createScopes` for the same program. */
+	scope: ScopeInterface;
+	scopes: Map<AST.Node, ScopeInterface>;
+	styles: StyleAnalysis;
+}
+
+/**
+ * One resolved entry of a `<style apply={…}>` attribute. Holds AST nodes only
+ * (no bindings, whose reference paths point back up the tree) so the analyzed
+ * program stays acyclic for consumers that clone or serialize it.
+ */
+export interface StyleApplyResolution {
+	/** The authored entry (an identifier or member expression). */
+	expression: AST.Expression;
+	/** The same-module assigned block the entry names, or `null` for an import (runtime `$class`). */
+	target: AST.JSXStyleElement | null;
+	/** Whether the entry resolves to a same-module block or to an import. */
+	kind: 'local' | 'import';
+}
+
+/** Module-level summary produced by the style analyzer (`program.metadata.styles`). */
+export interface StyleAnalysis {
+	/** `const theme = <style>…</style>` blocks, in source order. */
+	assigned: AST.JSXStyleElement[];
+	/** Blocks that scope the template they sit in, in source order. */
+	standalone: AST.JSXStyleElement[];
+}
+
+/** Options for the class map object built for an assigned or `ref`-exposed style block. */
+export interface StyleClassMapOptions {
+	/** `$class` parts of applied themes, in order: literals for static classes, expressions for runtime reads. */
+	applied?: Array<string | AST.Expression>;
+	/** Override the own hash (`null` for a body-less `<style apply />`). */
+	hash?: string | null;
+}
+
+/** How `prepareStylesheetForRender` treats a sheet's selectors (D4). */
+export type StyleRenderMode = 'scope' | 'class-map' | 'theme';
+
+/**
+ * The classes a scope pre-pass stamped on one element, kept apart from the
+ * authored value so nested scopes append to one attribute value instead of
+ * nesting template literals: `base statics… applies…`.
+ */
+export interface ScopeClassParts {
+	/** The authored class value, if any. */
+	base: AST.Expression | null;
+	/** Scope hashes, outermost first. */
+	hashes: string[];
+	/** Applied theme classes: literals when statically known, else `theme.$class` reads. */
+	applied: Array<string | AST.Expression>;
 }
 
 /**

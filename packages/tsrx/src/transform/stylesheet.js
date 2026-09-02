@@ -543,6 +543,7 @@ export function render_css_result(stylesheets, minify = false) {
 	}
 	return {
 		css: render_stylesheets(stylesheets, minify),
-		cssHash: stylesheets.map((s) => s.hash).join(' '),
+		// One hash per scope: every sheet of a scope carries the scope's hash.
+		cssHash: [...new Set(stylesheets.map((s) => s.hash))].join(' '),
 	};
 }

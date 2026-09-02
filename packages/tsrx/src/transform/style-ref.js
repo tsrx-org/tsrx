@@ -1,6 +1,6 @@
 /** @import * as AST from 'estree' */
 /** @import * as ESTreeJSX from 'estree-jsx' */
-/** @import { ClassMapCollectionState, StyleRefOptions, TopScopedClasses, Visitors } from '../../types/index' */
+/** @import { ClassMapCollectionState, StyleClassMapOptions, StyleRefOptions, TopScopedClasses, Visitors } from '../../types/index' */
 
 import { walk } from 'zimmerframe';
 import * as b from '../utils/builders.js';
@@ -14,40 +14,95 @@ import { clone_ast_node, clone_identifier } from './jsx/ast-builders.js';
 const regex_backslash_and_following_character = /\\(.)/g;
 
 /**
- * @param {AST.Node} component
- * @param {AST.CSS.StyleSheet} css
+ * @param {AST.Node} component the node whose metadata carries the scope's `topScopedClasses`
+ * @param {AST.CSS.StyleSheet | null} css
+ * @param {StyleClassMapOptions} [options]
  * @returns {AST.ObjectExpression}
  */
-export function create_style_class_map(component, css) {
+export function create_style_class_map(component, css, options = {}) {
 	return build_style_class_map(
-		component.metadata?.topScopedClasses ?? collect_style_class_map_entries(css),
-		css.hash,
+		component.metadata?.topScopedClasses ??
+			(css ? collect_style_class_map_entries(css) : new Map()),
+		options.hash ?? css?.hash ?? null,
+		options,
 	);
 }
 
 /**
  * @param {AST.CSS.StyleSheet} css
+ * @param {StyleClassMapOptions} [options]
  * @returns {AST.ObjectExpression}
  */
-export function create_style_class_map_from_stylesheet(css) {
-	return build_style_class_map(collect_style_class_map_entries(css), css.hash);
+export function create_style_class_map_from_stylesheet(css, options = {}) {
+	return build_style_class_map(collect_style_class_map_entries(css), css.hash, options);
 }
 
 /**
- * `{ foo: 'hash foo', … }` for every class the style expression exposes.
+ * `{ $class: '<applied…> <hash>', foo: 'hash foo', … }` for every class the
+ * style expression exposes. `$class` comes first and is the block's own scope
+ * hash preceded by the `$class` of every applied theme (D6): adjacent static
+ * parts fold into one literal, runtime parts join with `+`.
  *
  * @param {TopScopedClasses} top_scoped_classes
  * @param {string | null} hash
+ * @param {StyleClassMapOptions} [options]
  * @returns {AST.ObjectExpression}
  */
-function build_style_class_map(top_scoped_classes, hash) {
+export function build_style_class_map(top_scoped_classes, hash, options = {}) {
 	const class_names = [...top_scoped_classes.keys()].sort();
+	/** @type {Array<string | AST.Expression>} */
+	const parts = [...(options.applied ?? [])];
+	if (hash) parts.push(hash);
 
-	return b.object(
-		class_names.map((class_name) =>
+	return b.object([
+		b.prop('init', b.literal('$class'), build_class_expression(parts)),
+		...class_names.map((class_name) =>
 			b.prop('init', b.literal(class_name), b.literal(hash ? `${hash} ${class_name}` : class_name)),
 		),
-	);
+	]);
+}
+
+/**
+ * Join class parts into one expression: a literal when every part is
+ * static, else a `+` chain with static runs folded together.
+ *
+ * @param {Array<string | AST.Expression>} parts
+ * @returns {AST.Expression}
+ */
+function build_class_expression(parts) {
+	/** @type {AST.Expression | null} */
+	let result = null;
+	let pending = '';
+	/** @param {AST.Expression} expression */
+	const append = (expression) => {
+		result = result ? b.binary('+', result, expression) : expression;
+	};
+	for (const part of parts) {
+		if (typeof part === 'string') {
+			pending = pending ? `${pending} ${part}` : part;
+			continue;
+		}
+		if (result) {
+			append(b.literal(pending ? ` ${pending} ` : ' '));
+		} else if (pending) {
+			append(b.literal(`${pending} `));
+		}
+		pending = '';
+		append(clone_ast_node(part, false));
+	}
+	if (!result) return b.literal(pending);
+	if (pending) append(b.literal(` ${pending}`));
+	return result;
+}
+
+/**
+ * The class names an assigned block's class map exposes, in source order.
+ *
+ * @param {AST.CSS.StyleSheet} css
+ * @returns {string[]}
+ */
+export function get_style_class_map_names(css) {
+	return [...collect_style_class_map_entries(css).keys()];
 }
 
 /**

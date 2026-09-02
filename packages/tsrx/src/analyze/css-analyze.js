@@ -1,6 +1,12 @@
 /** @import * as AST from 'estree' */
 
 import { walk } from 'zimmerframe';
+import { error } from '../errors.js';
+import { DIAGNOSTIC_CODES } from '../diagnostics.js';
+import {
+	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
+	TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
+} from './validation.js';
 
 /**
  * True if is `:global` without arguments
@@ -98,7 +104,14 @@ export function analyze_css(css) {
 						is_nested &&
 						!(/** @type {AST.CSS.PseudoClassSelector} */ (global.selectors[0]).args)
 					) {
-						throw new Error(`A :global selector cannot be inside a pseudoclass.`);
+						error(
+							TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
+							null,
+							/** @type {AST.Node} */ (/** @type {unknown} */ (global)),
+							undefined,
+							undefined,
+							DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT,
+						);
 					}
 
 					const idx = node.children.indexOf(global);
@@ -107,8 +120,13 @@ export function analyze_css(css) {
 						// ensure `:global(...)` is not used in the middle of a selector (but multiple `global(...)` in sequence are ok)
 						for (let i = idx + 1; i < node.children.length; i++) {
 							if (!is_global(node.children[i])) {
-								throw new Error(
-									`:global(...) can be at the start or end of a selector sequence, but not in the middle.`,
+								error(
+									TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
+									null,
+									/** @type {AST.Node} */ (/** @type {unknown} */ (global)),
+									undefined,
+									undefined,
+									DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT,
 								);
 							}
 						}

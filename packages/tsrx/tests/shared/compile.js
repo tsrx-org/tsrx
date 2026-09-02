@@ -1,6 +1,7 @@
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { DIAGNOSTIC_CODES } from '../../src/diagnostics.js';
+import { runSharedScopedStyleTests } from './scoped-styles.js';
 import { createLazyContext, parseModule, preallocateLazyIds } from '../../src/index.js';
 
 /** @import { CompileDiagnosticsHarness, CompileHarness } from '../../types/index' */
@@ -2460,6 +2461,7 @@ export function runSharedCompileTests({
 			: '{ class: className }: { class?: string }';
 
 	runSharedComponentLoopControlFlowTests({ compile, name });
+	runSharedScopedStyleTests({ compile, name, classAttrName, generatedClassAttrName });
 	runSharedNestedLazyDestructuringTests({ compile, name });
 	runSharedLazyLoopTests({ compile, name });
 	runSharedLazyScopeNestingTests({ compile, name });
