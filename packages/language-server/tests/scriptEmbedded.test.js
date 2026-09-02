@@ -20,9 +20,11 @@ beforeEach(() => {
  * plugin instance so tests can inspect embedded codes and drive the plugin's
  * `typescript.getExtraServiceScripts` hook directly.
  * @param {string} source
+ * @param {string} [fixture_name] `react/App.tsrx` selects the workspace `@tsrx/react` compiler
+ *   through `tests/fixtures/react/tsconfig.json`.
  */
-function create_virtual_code(source) {
-	const uri = URI.file(path.join(fixture_dir, 'App.tsrx'));
+function create_virtual_code(source, fixture_name = 'App.tsrx') {
+	const uri = URI.file(path.join(fixture_dir, fixture_name));
 	const scripts = createUriMap();
 	const plugin = getTsrxLanguagePlugin();
 	const language = createLanguage([plugin], scripts, () => {});
@@ -165,5 +167,104 @@ function App() @{
 		const ts_codes = embedded_of(root, 'typescript');
 		expect(ts_codes).toHaveLength(1);
 		expect(ts_codes[0].snapshot.getText(0, ts_codes[0].snapshot.getLength())).toBe('const x = 1;');
+	});
+});
+
+describe('embedded <style> virtual codes (lexically scoped style blocks)', () => {
+	// These compile through the workspace `@tsrx/react` compiler (see `tests/fixtures/react/`):
+	// the installed `@tsrx/ripple` package predates scoped style blocks and `apply`.
+	const REACT = 'react/App.tsrx';
+
+	/** @param {import('@volar/language-core').VirtualCode[]} codes */
+	const css_texts = (codes) =>
+		codes.map((code) => code.snapshot.getText(0, code.snapshot.getLength()));
+
+	it('creates one CSS embedded code per block with distinct scope-hash ids for two blocks in one scope', () => {
+		const { root } = create_virtual_code(
+			`export function App() @{
+	<>
+		<style>.a { color: red; }</style>
+		<div class="a">{'a'}</div>
+		<style>.b { margin: 0; }</style>
+	</>
+}`,
+			REACT,
+		);
+		expect(root?.fatalErrors).toEqual([]);
+		const css_codes = embedded_of(root, 'css');
+		expect(css_texts(css_codes)).toEqual(['.a { color: red; }', '.b { margin: 0; }']);
+		for (const code of css_codes) {
+			expect(code.id).toMatch(/^style-tsrx-[0-9a-f]+$/);
+		}
+		expect(new Set(css_codes.map((code) => code.id)).size).toBe(2);
+	});
+
+	it('adds a third CSS embedded code for a block nested in a @{ } code block', () => {
+		const { root } = create_virtual_code(
+			`export function App() @{
+	<>
+		<style>.a { color: red; }</style>
+		<div class="a">{'a'}</div>
+		<style>.b { margin: 0; }</style>
+		@{
+			<>
+				<style>.c { padding: 0; }</style>
+				<p class="c">{'c'}</p>
+			</>
+		}
+	</>
+}`,
+			REACT,
+		);
+		expect(root?.fatalErrors).toEqual([]);
+		const css_codes = embedded_of(root, 'css');
+		expect(css_texts(css_codes)).toEqual([
+			'.a { color: red; }',
+			'.b { margin: 0; }',
+			'.c { padding: 0; }',
+		]);
+		expect(new Set(css_codes.map((code) => code.id)).size).toBe(3);
+	});
+
+	it('emits no CSS embedded code for a self-closed <style apply={…} /> and does not swallow a later block', () => {
+		const { root } = create_virtual_code(
+			`const theme = <style>.a { color: red; }</style>;
+export function App() @{
+	<>
+		<style apply={theme} />
+		<div class="b">{'b'}</div>
+		<style>.b { margin: 0; }</style>
+	</>
+}`,
+			REACT,
+		);
+		expect(root?.fatalErrors).toEqual([]);
+		expect(root?.usageErrors).toEqual([]);
+		const css_codes = embedded_of(root, 'css');
+		// One for the assigned block, one for the later bodied block, none for the self-closed apply.
+		expect(css_texts(css_codes)).toEqual(['.a { color: red; }', '.b { margin: 0; }']);
+		expect(new Set(css_codes.map((code) => code.id)).size).toBe(2);
+		// Each embedded CSS region points at its own body in the source.
+		const source_offsets = css_codes.map((code) => code.mappings[0].sourceOffsets[0]);
+		expect(source_offsets[0]).toBeLessThan(source_offsets[1]);
+	});
+
+	it('emits exactly one CSS embedded code for a scoped apply block with a body', () => {
+		const { root } = create_virtual_code(
+			`const theme = <style>.a { color: red; }</style>;
+export function App() @{
+	<>
+		<style apply={theme}>.b { margin: 0; }</style>
+		<div class="b">{'b'}</div>
+	</>
+}`,
+			REACT,
+		);
+		expect(root?.fatalErrors).toEqual([]);
+		expect(root?.usageErrors).toEqual([]);
+		expect(css_texts(embedded_of(root, 'css'))).toEqual([
+			'.a { color: red; }',
+			'.b { margin: 0; }',
+		]);
 	});
 });

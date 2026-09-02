@@ -373,6 +373,37 @@ const TSRX_SNIPPETS = [
 ];
 
 /**
+ * Target-neutral `<style>` block snippets. Scoped `<style>` blocks, `$class`, and `apply` are
+ * shared TSRX syntax lowered by every target, so these are offered in every `.tsrx` file. They
+ * live outside `TSRX_SNIPPETS` because they are not `@`-directives: they are offered when the
+ * user types `<` (or `<sty…`) in a template, anchored at the `<` like the `@` path anchors at `@`.
+ */
+const STYLE_SNIPPETS = [
+	{
+		label: '<style>',
+		filterText: 'style',
+		kind: CompletionItemKind.Snippet,
+		detail: 'Scoped style block',
+		documentation:
+			'A lexically scoped `<style>` block. Its class selectors apply to the elements of the enclosing template scope; assign it (`const theme = <style>…</style>`) to reuse its classes as `theme.card` and apply it elsewhere with `<style apply={theme} />`.',
+		insertText: '<style>\n\t$0\n</style>',
+		insertTextFormat: InsertTextFormat.Snippet,
+		sortText: '0-style',
+	},
+	{
+		label: '<style apply={…} />',
+		filterText: 'style apply',
+		kind: CompletionItemKind.Snippet,
+		detail: 'Apply an assigned style block',
+		documentation:
+			'Stamp the classes of an assigned `<style>` block onto the enclosing template scope. `apply` takes a style block (`{theme}`) or an array of them (`{[base, theme]}`); a self-closing block has no CSS of its own.',
+		insertText: '<style apply={${1:theme}} />',
+		insertTextFormat: InsertTextFormat.Snippet,
+		sortText: '0-style-apply',
+	},
+];
+
+/**
  * Ripple-runtime-only snippets: reactivity primitives (`track`/`effect`/`untrack`)
  * and server modules. These reference the `ripple` runtime API, so they are only
  * offered when the file is compiled by the Ripple target (see `is_ripple_target_file`).
@@ -475,6 +506,27 @@ const RIPPLE_IMPORTS = [
 	// 	sortText: '0-import-types',
 	// },
 ];
+
+/**
+ * Whether the line before the cursor ends in a `<` that starts a tag (`<`, `<sty`) rather than a
+ * comparison operator (`a <`, `if (x <`). A tag `<` is at the start of the line or follows
+ * punctuation that cannot end an operand (`>`, `{`, `(`, `,`, `;`, `=`, `?`, `:`, `&`, `|`, `!`,
+ * `[`) or an expression keyword (`return <`).
+ * @param {string} line - Line text up to the cursor
+ * @returns {boolean}
+ */
+export function isTagStart(line) {
+	const match = line.match(/<(\w*)$/);
+	if (!match) {
+		return false;
+	}
+	const before = line.slice(0, match.index).trimEnd();
+	return (
+		before === '' ||
+		/[>{(,;=?:&|!\[]$/.test(before) ||
+		/\b(?:return|yield|await|case|else|do|in|of|typeof|void)$/.test(before)
+	);
+}
 
 /**
  * @returns {LanguageServicePlugin}
@@ -594,6 +646,26 @@ export function createCompletionPlugin() {
 						return { items, isIncomplete: false };
 					}
 
+					// `<style>` snippets when typing `<` (or `<sty…`) at a template position. Like the
+					// `@` path, anchor a textEdit at the `<` and carry a `<`-prefixed filterText so the
+					// typed `<` is replaced rather than doubled and `<st` still matches `<style`.
+					const tagStartMatch = isTagStart(line) ? line.match(/<(\w*)$/) : null;
+					if (tagStartMatch) {
+						const typed = `<${tagStartMatch[1]}`;
+						const replaceRange = {
+							start: { line: position.line, character: position.character - typed.length },
+							end: position,
+						};
+
+						for (const snippet of STYLE_SNIPPETS) {
+							items.push({
+								...snippet,
+								filterText: `<${snippet.filterText}`,
+								textEdit: { range: replaceRange, newText: snippet.insertText },
+							});
+						}
+					}
+
 					// RippleMap/RippleSet completions when typing R, M... (Ripple runtime only).
 					// Also detects if 'new' is already typed before it to avoid duplicating
 					const trackedMatch = is_ripple && line.match(/(new\s+)?[R,M]([\w\.]*)$/);
@@ -650,6 +722,11 @@ export function createCompletionPlugin() {
 					// (track/effect/untrack/module server) are only added for Ripple files, so
 					// React/Solid/Preact/Vue `.tsrx` files don't see APIs they can't use.
 					items.push(COMPONENT_SNIPPET, ...TSRX_SNIPPETS);
+					if (!tagStartMatch) {
+						// Not already offered with a `<`-anchored textEdit above: surface the `<style>`
+						// snippets by name (`sty…`) so they are discoverable without typing `<` first.
+						items.push(...STYLE_SNIPPETS);
+					}
 					if (is_ripple) {
 						items.push(...RIPPLE_API_SNIPPETS);
 					}
