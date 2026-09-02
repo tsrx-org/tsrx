@@ -1,6 +1,6 @@
 {
   "name": "@tsrx/eslint-parser",
-  "version": "0.3.129",
+  "version": "0.3.130",
   "description": "ESLint parser for TSRX (.tsrx files)",
   "type": "module",
   "main": "src/index.ts",
