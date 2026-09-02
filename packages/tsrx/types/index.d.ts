@@ -189,6 +189,8 @@ export interface BaseNodeMetaData {
 	/** The current var scope contains a lazy `var` binding in a JavaScript loop header. */
 	has_lazy_var_loop_descendants?: boolean;
 	disable_verification?: boolean;
+	/** Map this synthesized identifier's borrowed source span for diagnostics only (no hover/navigation). */
+	verify_only?: boolean;
 	/** Identifiers whose source ranges also map to this generated identifier. */
 	extra_source_mappings?: Array<(AST.Identifier | AST.PrivateIdentifier) & AST.NodeWithLocation>;
 	generated_setup_declarations?: AST.Statement[];

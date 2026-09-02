@@ -784,14 +784,24 @@ function strip(node, own, state) {
 
 /**
  * The synthesized `$class` read of a type-only `apply` target borrows the
- * target's position, so a TypeScript error on it (the target is not a style
- * object) lands on the authored identifier rather than on the closing brace.
+ * target's position for verification only, so a TypeScript error on it (the
+ * target is not a style object) lands on the authored identifier rather than
+ * on the closing brace, while hover and navigation on that identifier stay
+ * the target's own.
  *
  * @param {AST.Node} target
- * @returns {AST.NodeWithLocation | undefined}
+ * @returns {AST.Identifier}
  */
-function type_only_apply_loc(target) {
-	return has_location(target) ? target : undefined;
+function type_only_class_read(target) {
+	const id = b.id('$class', has_location(target) ? target : undefined);
+	if (has_location(target)) {
+		id.metadata = {
+			...id.metadata,
+			verify_only: true,
+			source_length: target.end - target.start,
+		};
+	}
+	return id;
 }
 
 /**
@@ -820,14 +830,16 @@ export function type_only_style(block) {
 				? b.array(
 						expression.elements.map((element) =>
 							element && element.type !== 'SpreadElement'
-								? b.member(clone_ast_node(element), b.id('$class', type_only_apply_loc(element)))
+								? b.member(clone_ast_node(element), type_only_class_read(element))
 								: element,
 						),
 					)
-				: b.member(clone_ast_node(expression), b.id('$class', type_only_apply_loc(expression)));
+				: b.member(clone_ast_node(expression), type_only_class_read(expression));
+		// The renamed attribute is synthesized text: leave it unmapped so the
+		// authored `apply` token serves no misleading hover.
 		return {
 			...attr,
-			name: { ...attr.name, name: 'data-tsrx-apply' },
+			name: b.jsx_id('data-tsrx-apply'),
 			value: { ...attr.value, expression: value },
 		};
 	});
