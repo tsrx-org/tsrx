@@ -220,11 +220,10 @@ export function normalize_spread_props(props, ...outer_refs) {
 	}
 
 	const source = /** @type {SpreadProps} */ (props);
-	/** @type {Array<RefValue<Element>>} */
-	const refs = [];
+	/** @type {Array<RefValue<Element>> | undefined} */
+	let refs;
 	/** @type {SpreadProps} */
 	const next = {};
-	let changed = false;
 	let existing_ref;
 
 	for (const key of Reflect.ownKeys(source)) {
@@ -237,8 +236,11 @@ export function normalize_spread_props(props, ...outer_refs) {
 
 		if (key === 'ref') {
 			if (is_ref_prop(value)) {
-				refs.push(value);
-				changed = true;
+				if (refs === undefined) {
+					refs = [value];
+				} else {
+					refs.push(value);
+				}
 			} else {
 				existing_ref = /** @type {RefValue<Element>} */ (value);
 			}
@@ -246,19 +248,25 @@ export function normalize_spread_props(props, ...outer_refs) {
 		}
 
 		if (is_ref_prop(value)) {
-			refs.push(value);
-			changed = true;
+			if (refs === undefined) {
+				refs = [value];
+			} else {
+				refs.push(value);
+			}
 			continue;
 		}
 
 		next[key] = value;
 	}
 
-	if (!changed && outer_refs.length === 0) {
+	if (refs === undefined && outer_refs.length === 0) {
 		return source;
 	}
 
-	const merged_ref = merge_ref_props(existing_ref, ...refs, ...outer_refs);
+	const merged_ref =
+		refs === undefined
+			? merge_ref_props(existing_ref, ...outer_refs)
+			: merge_ref_props(existing_ref, ...refs, ...outer_refs);
 	if (merged_ref !== undefined) {
 		next.ref = merged_ref;
 	}
