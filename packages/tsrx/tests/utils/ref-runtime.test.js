@@ -6,6 +6,7 @@ import {
 	merge_ref_props,
 	mergeRefs,
 	normalize_spread_props,
+	normalize_spread_props_for_ref_attr,
 } from '../../src/runtime/ref.js';
 
 describe('ref runtime helpers', () => {
@@ -176,37 +177,423 @@ describe('ref runtime helpers', () => {
 });
 
 describe('spread ref normalization', () => {
-	it('returns ordinary spreads unchanged after reading each enumerable value once', () => {
+	/**
+	 * @param {PropertyKey} key
+	 */
+	function label_key(key) {
+		return typeof key === 'symbol' ? key.toString() : key;
+	}
+
+	/**
+	 * @template {object} T
+	 * @param {T} target
+	 * @param {string[]} events
+	 * @returns {T}
+	 */
+	function observe_props(target, events) {
+		return new Proxy(target, {
+			ownKeys(value) {
+				events.push('ownKeys');
+				return Reflect.ownKeys(value);
+			},
+			getOwnPropertyDescriptor(value, key) {
+				events.push(`descriptor:${label_key(key)}`);
+				return Reflect.getOwnPropertyDescriptor(value, key);
+			},
+			get(value, key, receiver) {
+				events.push(`get:${label_key(key)}`);
+				return Reflect.get(value, key, receiver);
+			},
+		});
+	}
+
+	/**
+	 * @param {() => unknown} run
+	 * @returns {unknown}
+	 */
+	function capture_error(run) {
+		try {
+			run();
+		} catch (error) {
+			return error;
+		}
+		throw new Error('Expected callback to throw');
+	}
+
+	/**
+	 * @param {object} props
+	 * @param {unknown} ref
+	 */
+	function expect_explicit_ref_descriptor(props, ref) {
+		expect(Object.getOwnPropertyDescriptor(props, 'ref')).toEqual({
+			value: ref,
+			enumerable: false,
+			configurable: true,
+			writable: true,
+		});
+	}
+
+	it('returns ordinary spreads unchanged after observing enumerable keys exactly once in own-key order', () => {
 		/** @type {string[]} */
-		const reads = [];
+		const events = [];
 		const symbol = Symbol('spread');
-		const props = {
+		const target = {
 			get first() {
-				reads.push('first');
+				events.push('getter:first');
 				return 1;
 			},
 			get second() {
-				reads.push('second');
+				events.push('getter:second');
 				return 2;
 			},
 			get [symbol]() {
-				reads.push('symbol');
+				events.push('getter:Symbol(spread)');
 				return 3;
 			},
 		};
-		Object.defineProperty(props, 'hidden', {
+		Object.defineProperty(target, 'hidden', {
 			enumerable: false,
 			get() {
-				reads.push('hidden');
+				events.push('getter:hidden');
 				return 4;
 			},
 		});
+		const props = observe_props(target, events);
 
 		const normalized = normalize_spread_props(props);
 
-		expect(normalized).toBe(props);
-		expect(reads).toEqual(['first', 'second', 'symbol']);
+		expect(normalized === props).toBe(true);
+		expect(events).toEqual([
+			'ownKeys',
+			'descriptor:first',
+			'get:first',
+			'getter:first',
+			'descriptor:second',
+			'get:second',
+			'getter:second',
+			'descriptor:hidden',
+			'descriptor:Symbol(spread)',
+			'get:Symbol(spread)',
+			'getter:Symbol(spread)',
+		]);
+
+		events.length = 0;
 		expect(/** @type {Record<PropertyKey, unknown>} */ (normalized)[symbol]).toBe(3);
+		expect(events).toEqual(['get:Symbol(spread)', 'getter:Symbol(spread)']);
+	});
+
+	it('propagates own-key, descriptor, and getter failures at their observation point', () => {
+		const own_keys_error = new RangeError('own keys failed');
+		/** @type {string[]} */
+		const own_keys_events = [];
+		const own_keys_thrown = capture_error(() =>
+			normalize_spread_props(
+				new Proxy(
+					{},
+					{
+						ownKeys() {
+							own_keys_events.push('ownKeys');
+							throw own_keys_error;
+						},
+					},
+				),
+			),
+		);
+		expect(own_keys_thrown).toBe(own_keys_error);
+		expect(own_keys_events).toEqual(['ownKeys']);
+
+		const descriptor_error = new SyntaxError('descriptor failed');
+		/** @type {string[]} */
+		const descriptor_events = [];
+		const descriptor_thrown = capture_error(() =>
+			normalize_spread_props(
+				new Proxy(
+					{ first: 1, second: 2 },
+					{
+						ownKeys(target) {
+							descriptor_events.push('ownKeys');
+							return Reflect.ownKeys(target);
+						},
+						getOwnPropertyDescriptor(target, key) {
+							descriptor_events.push(`descriptor:${String(key)}`);
+							if (key === 'second') throw descriptor_error;
+							return Reflect.getOwnPropertyDescriptor(target, key);
+						},
+						get(target, key, receiver) {
+							descriptor_events.push(`get:${String(key)}`);
+							return Reflect.get(target, key, receiver);
+						},
+					},
+				),
+			),
+		);
+		expect(descriptor_thrown).toBe(descriptor_error);
+		expect(descriptor_events).toEqual([
+			'ownKeys',
+			'descriptor:first',
+			'get:first',
+			'descriptor:second',
+		]);
+
+		const getter_error = new TypeError('getter failed');
+		/** @type {string[]} */
+		const getter_events = [];
+		const getter_target = {
+			first: 1,
+			get second() {
+				getter_events.push('getter:second');
+				throw getter_error;
+			},
+			third: 3,
+		};
+		const getter_thrown = capture_error(() =>
+			normalize_spread_props(observe_props(getter_target, getter_events)),
+		);
+		expect(getter_thrown).toBe(getter_error);
+		expect(getter_events).toEqual([
+			'ownKeys',
+			'descriptor:first',
+			'get:first',
+			'descriptor:second',
+			'get:second',
+			'getter:second',
+		]);
+	});
+
+	it('keeps explicit no-ref spreads at source identity with no hidden source writes', () => {
+		/** @type {string[]} */
+		const events = [];
+		const target = { id: 'plain' };
+		Object.defineProperty(target, 'hidden', {
+			enumerable: false,
+			get() {
+				events.push('getter:hidden');
+				return 'unobserved';
+			},
+		});
+		Object.freeze(target);
+		const props = observe_props(target, events);
+
+		const normalized = normalize_spread_props_for_ref_attr(props);
+
+		expect(normalized === props).toBe(true);
+		expect(events).toEqual([
+			'ownKeys',
+			'descriptor:id',
+			'get:id',
+			'descriptor:hidden',
+			'descriptor:ref',
+		]);
+		expect(Reflect.ownKeys(target)).toEqual(['id', 'hidden']);
+	});
+
+	it('preserves explicit ordinary-ref reads, source state, and the selected ref value', () => {
+		/** @type {string[]} */
+		const events = [];
+		/** @type {Array<unknown>} */
+		const ref_events = [];
+		const node = {};
+		const refs = [
+			/** @param {object | null} value */
+			(value) => {
+				ref_events.push(['first', value]);
+			},
+			/** @param {object | null} value */
+			(value) => {
+				ref_events.push(['second', value]);
+				return () => ref_events.push(['second cleanup']);
+			},
+			/** @param {object | null} value */
+			(value) => {
+				ref_events.push(['third', value]);
+			},
+		];
+		let ref_reads = 0;
+		const target = {};
+		Object.defineProperties(target, {
+			id: {
+				enumerable: true,
+				get() {
+					events.push('getter:id');
+					return 'ordinary';
+				},
+			},
+			ref: {
+				enumerable: true,
+				get() {
+					ref_reads += 1;
+					events.push(`getter:ref:${ref_reads}`);
+					return refs[ref_reads - 1];
+				},
+			},
+		});
+		Object.freeze(target);
+		const original_ref_descriptor = Reflect.getOwnPropertyDescriptor(target, 'ref');
+		const props = observe_props(target, events);
+
+		const normalized =
+			/** @type {Record<PropertyKey, unknown> & {
+			 * ref: (node: object) => () => void
+			 * }} */ (normalize_spread_props_for_ref_attr(props));
+
+		expect(events).toEqual([
+			'ownKeys',
+			'descriptor:id',
+			'get:id',
+			'getter:id',
+			'descriptor:ref',
+			'get:ref',
+			'getter:ref:1',
+			'descriptor:ref',
+			'get:ref',
+			'getter:ref:2',
+			'ownKeys',
+			'descriptor:id',
+			'get:id',
+			'getter:id',
+			'descriptor:ref',
+			'get:ref',
+			'getter:ref:3',
+		]);
+		expect(normalized === props).toBe(false);
+		expect(normalized.id).toBe('ordinary');
+		expect(normalized.ref).toBe(refs[1]);
+		expect_explicit_ref_descriptor(normalized, refs[1]);
+		expect(Reflect.getOwnPropertyDescriptor(target, 'ref')).toEqual(original_ref_descriptor);
+
+		const cleanup = normalized.ref(node);
+		expect(ref_events).toEqual([['second', node]]);
+		cleanup();
+		expect(ref_events).toEqual([['second', node], ['second cleanup']]);
+	});
+
+	it('preserves explicit compiler-branded ref reads and source state', () => {
+		/** @type {string[]} */
+		const events = [];
+		/** @type {Array<unknown>} */
+		const ref_events = [];
+		const node = {};
+		const branded_ref = create_ref_prop(() => {
+			ref_events.push(['resolve branded']);
+			return (value) => {
+				ref_events.push(['branded', value]);
+				return () => ref_events.push(['branded cleanup']);
+			};
+		});
+		const target = Object.freeze({ id: 'branded', ref: branded_ref });
+		const props = observe_props(target, events);
+
+		const normalized =
+			/** @type {Record<PropertyKey, unknown> & {
+			 * ref: (node: object) => () => void
+			 * }} */ (normalize_spread_props_for_ref_attr(props));
+
+		expect(events).toEqual(['ownKeys', 'descriptor:id', 'get:id', 'descriptor:ref', 'get:ref']);
+		expect(normalized === props).toBe(false);
+		expect(normalized.id).toBe('branded');
+		expect(normalized.ref).toBe(branded_ref);
+		expect_explicit_ref_descriptor(normalized, branded_ref);
+		expect(target.ref).toBe(branded_ref);
+
+		const cleanup = normalized.ref(node);
+		expect(ref_events).toEqual([['resolve branded'], ['branded', node]]);
+		cleanup();
+		expect(ref_events).toEqual([['resolve branded'], ['branded', node], ['branded cleanup']]);
+	});
+
+	it('preserves explicit outer-ref reads and source state', () => {
+		/** @type {string[]} */
+		const events = [];
+		/** @type {Array<unknown>} */
+		const ref_events = [];
+		const node = {};
+		const target = Object.freeze({ id: 'outer' });
+		const props = observe_props(target, events);
+		/** @param {object | null} value */
+		const outer_ref = (value) => {
+			ref_events.push(['outer', value]);
+			return () => ref_events.push(['outer cleanup']);
+		};
+
+		const normalized =
+			/** @type {Record<PropertyKey, unknown> & {
+			 * ref: (node: object) => () => void
+			 * }} */ (normalize_spread_props_for_ref_attr(props, outer_ref));
+
+		expect(events).toEqual(['ownKeys', 'descriptor:id', 'get:id']);
+		expect(normalized === props).toBe(false);
+		expect(normalized.id).toBe('outer');
+		expect(normalized.ref).toBe(outer_ref);
+		expect_explicit_ref_descriptor(normalized, outer_ref);
+		expect(Reflect.ownKeys(target)).toEqual(['id']);
+
+		const cleanup = normalized.ref(node);
+		expect(ref_events).toEqual([['outer', node]]);
+		cleanup();
+		expect(ref_events).toEqual([['outer', node], ['outer cleanup']]);
+	});
+
+	it('propagates explicit-ref descriptor and getter failures on the same pass', () => {
+		const descriptor_error = new EvalError('explicit descriptor failed');
+		/** @type {string[]} */
+		const descriptor_events = [];
+		let descriptor_reads = 0;
+		const descriptor_thrown = capture_error(() =>
+			normalize_spread_props_for_ref_attr(
+				new Proxy(
+					{ ref() {} },
+					{
+						ownKeys(target) {
+							descriptor_events.push('ownKeys');
+							return Reflect.ownKeys(target);
+						},
+						getOwnPropertyDescriptor(target, key) {
+							descriptor_reads += 1;
+							descriptor_events.push(`descriptor:${String(key)}:${descriptor_reads}`);
+							if (descriptor_reads === 2) throw descriptor_error;
+							return Reflect.getOwnPropertyDescriptor(target, key);
+						},
+						get(target, key, receiver) {
+							descriptor_events.push(`get:${String(key)}`);
+							return Reflect.get(target, key, receiver);
+						},
+					},
+				),
+			),
+		);
+		expect(descriptor_thrown).toBe(descriptor_error);
+		expect(descriptor_events).toEqual([
+			'ownKeys',
+			'descriptor:ref:1',
+			'get:ref',
+			'descriptor:ref:2',
+		]);
+
+		const getter_error = new URIError('explicit getter failed');
+		/** @type {string[]} */
+		const getter_events = [];
+		let getter_reads = 0;
+		const getter_target = {
+			get ref() {
+				getter_reads += 1;
+				getter_events.push(`getter:ref:${getter_reads}`);
+				if (getter_reads === 2) throw getter_error;
+				return () => {};
+			},
+		};
+		const getter_thrown = capture_error(() =>
+			normalize_spread_props_for_ref_attr(observe_props(getter_target, getter_events)),
+		);
+		expect(getter_thrown).toBe(getter_error);
+		expect(getter_events).toEqual([
+			'ownKeys',
+			'descriptor:ref',
+			'get:ref',
+			'getter:ref:1',
+			'descriptor:ref',
+			'get:ref',
+			'getter:ref:2',
+		]);
 	});
 
 	it('extracts branded refs while preserving props, symbols, and cleanup order', () => {
@@ -246,7 +633,7 @@ describe('spread ref normalization', () => {
 			[symbol]: 'symbol value',
 		};
 
-		const normalized = normalize_spread_props(props, outer_ref);
+		const normalized = normalize_spread_props_for_ref_attr(props, outer_ref);
 		const normalized_props =
 			/** @type {Record<PropertyKey, unknown> & {
 			 * ref: (node: object) => () => void
@@ -259,6 +646,8 @@ describe('spread ref normalization', () => {
 		});
 		expect(normalized_props).not.toHaveProperty('forwarded');
 		expect(normalized_props[symbol]).toBe('symbol value');
+		expect_explicit_ref_descriptor(normalized_props, normalized_props.ref);
+		expect({ ...normalized_props }).toEqual({ id: 'field', [symbol]: 'symbol value' });
 		expect(events).toEqual([['read id']]);
 
 		const cleanup = normalized_props.ref(node);
@@ -282,6 +671,8 @@ describe('spread ref normalization', () => {
 
 		expect(normalize_spread_props(null)).toBeNull();
 		expect(normalize_spread_props(undefined)).toBeUndefined();
+		expect(normalize_spread_props_for_ref_attr(null, outer_ref)).toBeNull();
+		expect(normalize_spread_props_for_ref_attr(undefined, outer_ref)).toBeUndefined();
 		expect(normalize_spread_props(props, outer_ref)).toEqual({ id: 'field', ref: outer_ref });
 	});
 });
