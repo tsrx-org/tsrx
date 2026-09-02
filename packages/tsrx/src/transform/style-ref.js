@@ -73,12 +73,18 @@ function build_class_expression(parts) {
 	/** @type {AST.Expression | null} */
 	let result = null;
 	let pending = '';
+	/** @type {Set<string>} */
+	const seen = new Set();
 	/** @param {AST.Expression} expression */
 	const append = (expression) => {
 		result = result ? b.binary('+', result, expression) : expression;
 	};
 	for (const part of parts) {
 		if (typeof part === 'string') {
+			// Statically known hashes appear once even when applied through
+			// several themes (D12, static dedupe).
+			if (seen.has(part)) continue;
+			seen.add(part);
 			pending = pending ? `${pending} ${part}` : part;
 			continue;
 		}

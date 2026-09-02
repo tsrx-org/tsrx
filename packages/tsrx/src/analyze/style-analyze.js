@@ -116,7 +116,17 @@ export function is_template_statement_list_style(path) {
 	if (parent.type === 'SwitchCase') return grandparent?.type === 'JSXSwitchExpression';
 	if (parent.type === 'BlockStatement' && grandparent) {
 		if (is_template_directive(grandparent)) return true;
-		return grandparent.type === 'CatchClause' && path.at(-3)?.type === 'JSXTryExpression';
+		if (grandparent.type === 'CatchClause') return path.at(-3)?.type === 'JSXTryExpression';
+		// `@else if (…) { … }` chains parse as plain `IfStatement` alternates of
+		// the `@if` directive.
+		let depth = path.length - 2;
+		while (
+			path[depth]?.type === 'IfStatement' &&
+			/** @type {{ alternate?: AST.Node | null }} */ (path[depth - 1])?.alternate === path[depth]
+		) {
+			depth -= 1;
+			if (path[depth]?.type === 'JSXIfExpression') return true;
+		}
 	}
 	return false;
 }

@@ -1,5 +1,4 @@
 {
-  "knownFailure": "The RFC says the compiler drops statically resolvable repeats in a diamond, but `pair.$class` currently lists `base` twice ('<base> <base> <accent> <pair>').",
   "elements": {},
   "cssOrder": ["base", "accent", "pair"],
   "pruned": [],

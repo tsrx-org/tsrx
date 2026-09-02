@@ -5,8 +5,12 @@ export function Panel() @{
 	<>
 		<style apply={theme}>
 			/* scope A; also attaches theme.$class to the scope */
-			.scopeA { --label: scopeA; }
-			div { color: black; }
+			.scopeA {
+				--label: scopeA;
+			}
+			div {
+				color: black;
+			}
 		</style>
 
 		<span class={theme.dark}>Purple</span>
@@ -14,8 +18,12 @@ export function Panel() @{
 
 		<style>
 			/* still scope A, so the same hash */
-			.scopeA { --label: scopeA; }
-			p { margin: 0; }
+			.scopeA {
+				--label: scopeA;
+			}
+			p {
+				margin: 0;
+			}
 		</style>
 		<p class="p1">No margin</p>
 
@@ -23,8 +31,12 @@ export function Panel() @{
 			<>
 				<style>
 					/* scope B, nested inside A */
-					.scopeB { --label: scopeB; }
-					div { font-weight: bold; }
+					.scopeB {
+						--label: scopeB;
+					}
+					div {
+						font-weight: bold;
+					}
 				</style>
 				<div class="d2 scopeB">Black and bold: A and B both reach here</div>
 				<p class="p2">No margin: A reaches here too</p>

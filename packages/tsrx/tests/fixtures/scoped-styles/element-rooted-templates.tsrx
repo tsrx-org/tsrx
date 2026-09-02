@@ -2,8 +2,12 @@
 // at module scope and inside a component body alike.
 const card = <div class="card-root card">
 	<style>
-		.card { --label: card; }
-		p { margin: 0; }
+		.card {
+			--label: card;
+		}
+		p {
+			margin: 0;
+		}
 	</style>
 	<p class="card-text">{'card'}</p>
 </div>;
@@ -11,8 +15,12 @@ const card = <div class="card-root card">
 export function Templates() @{
 	const chip = <span class="chip-root chip">
 		<style>
-			.chip { --label: chip; }
-			b { font-weight: bold; }
+			.chip {
+				--label: chip;
+			}
+			b {
+				font-weight: bold;
+			}
 		</style>
 		<b class="chip-text">{'chip'}</b>
 	</span>;

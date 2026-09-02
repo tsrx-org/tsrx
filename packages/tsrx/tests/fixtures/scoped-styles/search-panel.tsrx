@@ -8,9 +8,14 @@ export function SearchPanel({
 }) @{
 	<>
 		<style>
-			.panel { --label: panel; }
+			.panel {
+				--label: panel;
+			}
 			/* reaches both lists: this scope and the nested one */
-			li { list-style: none; padding: 0.25rem 0.5rem; }
+			li {
+				list-style: none;
+				padding: 0.25rem 0.5rem;
+			}
 		</style>
 
 		<ul class="filters panel">
@@ -23,9 +28,14 @@ export function SearchPanel({
 			const top = results.slice(0, 10);
 			<>
 				<style>
-					.results { --label: results; }
+					.results {
+						--label: results;
+					}
 					/* reaches only this scope's list, and wins here */
-					li { padding: 0.75rem 0; border-bottom: 1px solid gray; }
+					li {
+						padding: 0.75rem 0;
+						border-bottom: 1px solid gray;
+					}
 				</style>
 				<ul class="list results">
 					@for (const r of top) {

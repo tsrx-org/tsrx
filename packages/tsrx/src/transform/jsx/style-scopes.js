@@ -295,7 +295,11 @@ function process_directive(node, state) {
 				? child
 				: { ...child, consequent: /** @type {AST.Statement[]} */ (consequent) };
 		}
-		if (key === 'alternate' && is_template_directive(child)) return process_directive(child, state);
+		// `@else if (…) { … }` parses as a plain `IfStatement` alternate; its
+		// bodies are branch scopes like the directive's own.
+		if (key === 'alternate' && (is_template_directive(child) || child.type === 'IfStatement')) {
+			return process_directive(/** @type {AST.JSXTemplateDirective} */ (child), state);
+		}
 		return descend(child, state, 'expression');
 	});
 }
@@ -635,7 +639,11 @@ export function resolve_style_applies(block, state) {
 	for (const resolution of block.metadata.styleApplies ?? []) {
 		const static_class = resolution.target ? static_style_class(resolution.target, state) : null;
 		if (static_class !== null) {
-			if (static_class !== '') parts.push(static_class);
+			// One entry per hash so a diamond (`a` applied directly and through
+			// `b`) stamps each hash once (D12, static dedupe).
+			for (const hash of static_class.split(' ')) {
+				if (hash && !parts.includes(hash)) parts.push(hash);
+			}
 			continue;
 		}
 		parts.push(
@@ -667,11 +675,13 @@ export function static_style_class(block, state) {
 			result = null;
 			break;
 		}
-		if (applied !== '') parts.push(applied);
+		for (const hash of applied.split(' ')) {
+			if (hash && !parts.includes(hash)) parts.push(hash);
+		}
 	}
 	if (result !== null) {
 		const sheet = get_style_element_stylesheet(block);
-		if (sheet) parts.push(sheet.hash);
+		if (sheet && !parts.includes(sheet.hash)) parts.push(sheet.hash);
 		result = parts.join(' ');
 	}
 	state.static_classes.set(block, result);
