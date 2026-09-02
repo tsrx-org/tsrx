@@ -22,7 +22,7 @@ await Bun.build({
 ```
 
 The plugin compiles `.tsrx` modules with `@tsrx/preact`, runs Bun's TSX transform
-for Preact's automatic JSX runtime, and emits component-local `<style>` blocks as
+for Preact's automatic JSX runtime, and emits lexically scoped `<style>` blocks as
 virtual CSS modules.
 
 For `bun:test`, register it from a preload:

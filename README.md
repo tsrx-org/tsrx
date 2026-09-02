@@ -17,8 +17,8 @@
 
 TSRX (TypeScript Render Extensions) is a TypeScript language extension for
 building declarative user interfaces. It keeps TypeScript setup, JSX-shaped
-structure, template control flow, and scoped styles together in `.tsrx` files,
-then compiles that source into idiomatic output for the runtime you choose.
+structure, template control flow, and lexically scoped styles together in `.tsrx`
+files, then compiles that source into idiomatic output for the runtime you choose.
 
 **[Documentation](https://tsrx.dev/)** · **[Features](https://tsrx.dev/features)**
 · **[Specification](https://tsrx.dev/specification)** ·
@@ -31,7 +31,8 @@ then compiles that source into idiomatic output for the runtime you choose.
 
 A component is an ordinary TypeScript function. A statement container (`@{ ... }`)
 lets local setup live beside the template that uses it, while template directives
-provide declarative control flow.
+provide declarative control flow. A `<style>` block styles the lexical template
+scope it sits in, so the rules below apply to this fragment's `<ul>`.
 
 ```tsx
 type Todo = {
@@ -70,7 +71,8 @@ export function TodoList({ items }: { items: Todo[] }) @{
   scope.
 - Template-native `@if`, `@for`, `@switch`, and `@try` control flow.
 - Lazy object and array destructuring with `&{ ... }` and `&[ ... ]`.
-- Component-scoped `<style>` blocks with automatic class hashing.
+- Lexically scoped `<style>` blocks with automatic class hashing, plus assignable
+  style themes that expose `$class` and compose through `<style apply={theme} />`.
 - Language-server, TypeScript, Prettier, ESLint, and editor integrations.
 
 See the [features guide](https://tsrx.dev/features) for examples and the

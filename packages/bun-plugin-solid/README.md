@@ -23,7 +23,7 @@ await Bun.build({
 ```
 
 The plugin compiles `.tsrx` modules with `@tsrx/solid`, runs Solid's JSX transform
-through Babel, and emits component-local `<style>` blocks as virtual CSS modules.
+through Babel, and emits lexically scoped `<style>` blocks as virtual CSS modules.
 
 For `bun:test`, register it from a preload:
 

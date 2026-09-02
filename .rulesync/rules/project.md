@@ -67,6 +67,13 @@ dependencies, not workspace packages.
 - Use `@if`, `@for`, `@switch`, and `@try` for template control flow.
 - A template scope with setup statements finishes with one output node. Wrap text,
   expression containers, or sibling outputs in a fragment.
+- `<style>` blocks are lexically scoped, not component-scoped. A scope may hold
+  several `<style>` blocks, and nested `@{ ... }` and control-flow bodies are
+  style scopes of their own.
+- Assigned blocks (`const theme = <style>...</style>`) expose `$class` and one key
+  per class; `<style apply={theme} />` applies a theme to a scope,
+  `apply={[a, b]}` composes, and a theme must be declared before the block that
+  applies it.
 - Target-specific behavior must be selected through the consumer compiler. In
   particular, Ripple API completions must only appear for the Ripple target.
 - Use `pnpm` and match the conventions of the package being changed.

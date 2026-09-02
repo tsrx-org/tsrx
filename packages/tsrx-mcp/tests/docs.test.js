@@ -74,6 +74,56 @@ describe('@tsrx/mcp documentation index', () => {
 		expect(content).toContain('does not expose an Octane target');
 	});
 
+	it('documents lexically scoped style blocks, $class, and apply', () => {
+		for (const query of ['scoped css', '$class', 'apply', 'themes', 'style diagnostics']) {
+			expect(find_similar_documentation_sections(query).map((section) => section.slug)).toContain(
+				'style-and-server',
+			);
+		}
+
+		const content = find_documentation_section('style-and-server')?.content ?? '';
+
+		// Grammar extracted from the specification.
+		expect(content).toContain('<style JSXAttributesopt> CSSSource </style>');
+		expect(content).toContain('<style JSXAttributesopt />');
+		expect(content).toContain('StyleApplyValue :');
+		expect(content).toContain('StyleApplyTarget . IdentifierName');
+
+		// Scope model.
+		expect(content).toContain('nearest template scope');
+		expect(content).toContain('share one hash');
+		expect(content).toContain('outermost first');
+		expect(content).toContain('ships unconditionally');
+		expect(content).toContain('A standalone block at module scope is an error');
+
+		// $class, themes, and apply.
+		expect(content).toContain('`$class`');
+		expect(content).toContain('<style apply={theme} />');
+		expect(content).toContain('class={theme.$class}');
+		expect(content).toContain('is a theme and keeps every selector');
+		expect(content).toContain('declared before the applying block');
+
+		// Static constraints with their diagnostic codes.
+		for (const code of [
+			'tsrx-style-standalone-at-module-scope',
+			'tsrx-style-unknown-attribute',
+			'tsrx-style-apply-value',
+			'tsrx-style-apply-duplicate',
+			'tsrx-style-apply-unsupported-host',
+			'tsrx-style-apply-target',
+			'tsrx-style-apply-before-declaration',
+			'tsrx-style-reserved-class-key',
+			'tsrx-css-global-placement',
+		]) {
+			expect(content).toContain(code);
+		}
+
+		// Precedence rules.
+		expect(content).toContain('Outer before inner');
+		expect(content).toContain('Applied before applier');
+		expect(content).toContain('Source order within a scope');
+	});
+
 	it('documents direct runtime dependencies for every standalone target runtime', () => {
 		const content = find_documentation_section('target-integration')?.content ?? '';
 

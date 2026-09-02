@@ -55,6 +55,18 @@ export async function generate_docs_index() {
 	);
 	const lazy_grammar = extract_string_array_constant('LAZY_GRAMMAR', specification_source);
 	const style_grammar = extract_string_array_constant('STYLE_GRAMMAR', specification_source);
+	const style_scope_example = extract_string_array_constant(
+		'STYLE_SCOPE_EXAMPLE',
+		specification_source,
+	);
+	const style_theme_example = extract_string_array_constant(
+		'STYLE_THEME_EXAMPLE',
+		specification_source,
+	);
+	const style_static_constraints = extract_string_array_constant(
+		'STYLE_STATIC_CONSTRAINTS',
+		specification_source,
+	);
 	const server_extension_grammar = extract_string_array_constant(
 		'SERVER_EXTENSION_GRAMMAR',
 		specification_source,
@@ -224,22 +236,22 @@ Source: website-tsrx/src/pages/specification.tsrx#lazy`,
 			slug: 'style-and-server',
 			title: 'Style and Server Extensions',
 			use_cases:
-				'style expressions, scoped css, module server, submodule imports, compile-time identifiers, ripple server modules, octane rpc, server functions',
+				'style expressions, scoped css, scoped style blocks, lexical style scope, $class, apply, themes, class maps, style diagnostics, module server, submodule imports, compile-time identifiers, ripple server modules, octane rpc, server functions',
 			content: `# Style and Server Extensions
 
-Assign a \`<style>\` expression to expose scoped CSS class names declared in the current module.
+A \`<style>\` block written as template content is a standalone block. It belongs to the nearest template scope (a component \`@{ ... }\` body, a nested \`@{ ... }\` block, a control-flow body, or an assigned element or fragment) and styles that scope and every scope nested inside it, never anything outside. Several blocks in one scope share one hash, and they may sit before or after the scope's single output node. Elements carry the hash of every enclosing scope, outermost first. CSS inside a control-flow body ships unconditionally; only the class stamping follows the branch. A standalone block at module scope is an error: assign it instead.
 
 \`\`\`tsx
-const styles = <style>
-  .card { padding: 1rem; }
-</style>;
-
-export function ChildCard() @{
-  <>
-  <Child class={styles.card} />
-  </>
-}
+${style_scope_example}
 \`\`\`
+
+Assign a \`<style>\` block to get an object: \`$class\` (the block's hash, preceded by the \`$class\` of every block it applies) plus one property per class name (\`styles.card\`). An assigned block that is exported or applied is a theme and keeps every selector; otherwise it is a class map and keeps only its class selectors. \`<style apply={theme} />\` stamps \`theme.$class\` on a whole scope, \`<style apply={theme}>...</style>\` also overrides it locally, and \`class={theme.$class}\` attaches it to one element. \`apply\` takes an identifier, a member expression, or an array of those, and every target must be an assigned block that is imported or declared before the applying block.
+
+\`\`\`tsx
+${style_theme_example}
+\`\`\`
+
+Precedence is document order. Outer before inner: a scope's sheets come before its nested scopes' sheets. Applied before applier: an applied block's CSS always precedes the applying scope's CSS. Source order within a scope: the later block wins.
 
 \`module server { ... }\` declares an explicit server-oriented submodule in the Ripple and Octane host profiles. Ripple exposes proposal-aligned imports such as \`import { load } from server\`; Octane uses the file-local module specifier \`import { load } from 'server'\` for RPC imports. Transport, serialization, and runtime behavior remain target-defined.
 
@@ -253,6 +265,12 @@ Specification grammar:
 ${style_grammar}
 
 ${server_extension_grammar}
+\`\`\`
+
+Static constraints on style blocks, with their diagnostic codes:
+
+\`\`\`text
+${style_static_constraints}
 \`\`\`
 
 The identifier-source import production describes Ripple's proposal-aligned form. Octane's quoted \`'server'\` specifier uses the ordinary TypeScript import grammar.

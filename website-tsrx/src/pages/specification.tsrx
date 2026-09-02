@@ -86,11 +86,23 @@ const TEMPLATE_EXPRESSION_GRAMMAR = [
 	'  { AssignmentExpression }',
 	'',
 	'JSXCodeBlock :',
-	'  @{ StatementListItemListopt TemplateOutput }',
+	'  @{ TemplateSetupListopt TemplateOutput JSXStyleElementListopt }',
+	'',
+	'TemplateSetupList :',
+	'  TemplateSetupItem',
+	'  TemplateSetupList TemplateSetupItem',
+	'',
+	'TemplateSetupItem :',
+	'  StatementListItem',
+	'  JSXStyleElement',
+	'',
+	'JSXStyleElementList :',
+	'  JSXStyleElement',
+	'  JSXStyleElementList JSXStyleElement',
 	'',
 	'TemplateBlock :',
 	'  { TemplateChildrenopt }',
-	'  { StatementListItemList TemplateOutput }',
+	'  { TemplateSetupList TemplateOutput JSXStyleElementListopt }',
 	'',
 	'JSXIfExpression :',
 	'  @if ( Expression ) TemplateBlock',
@@ -130,6 +142,120 @@ const LAZY_LOOP_EXAMPLES = [
 const STYLE_GRAMMAR = [
 	'JSXStyleElement :',
 	'  <style JSXAttributesopt> CSSSource </style>',
+	'  <style JSXAttributesopt />',
+	'',
+	'StyleApplyValue :',
+	'  { StyleApplyTarget }',
+	'  { [ StyleApplyTargetListopt ] }',
+	'',
+	'StyleApplyTargetList :',
+	'  StyleApplyTarget',
+	'  StyleApplyTargetList , StyleApplyTarget',
+	'',
+	'StyleApplyTarget :',
+	'  IdentifierReference',
+	'  StyleApplyTarget . IdentifierName',
+].join('\n');
+
+const STYLE_SCOPE_EXAMPLE = [
+	'export function Panel() @{',
+	'  <>',
+	'    <style>',
+	'      /* scope A: the fragment and its setup statements */',
+	'      div { color: black; }',
+	'    </style>',
+	'    <div>Black</div>',
+	'',
+	'    <style>',
+	'      /* still scope A: shares the hash of the first block */',
+	'      p { margin: 0; }',
+	'    </style>',
+	'    <p>No margin</p>',
+	'',
+	'    @{',
+	'      <>',
+	'        <style>',
+	'          /* scope B, nested in A: emitted after both sheets of A */',
+	'          div { font-weight: bold; }',
+	'        </style>',
+	'        <div>Black and bold: A and B both reach here</div>',
+	'      </>',
+	'    }',
+	'  </>',
+	'}',
+	'',
+	'// Stamped classes: the outer div and p carry "<A>"; the nested div carries "<A> <B>".',
+	'// Emitted CSS order: div.<A>, p.<A>, div.<B>.',
+].join('\n');
+
+const STYLE_THEME_EXAMPLE = [
+	'// theme.tsrx',
+	'export const base = <style>',
+	'  div { font-family: system-ui; }',
+	'  .muted { color: gray; }',
+	'</style>;',
+	'// base is { $class: "<base>", muted: "<base> muted" }',
+	'',
+	'export const theme = <style apply={base}>',
+	'  div { color: green; }',
+	'  .dark { color: purple; }',
+	'</style>;',
+	'// theme.$class is "<base> <theme>"; theme.dark is "<theme> dark"',
+	'',
+	'// panel.tsrx',
+	'import { theme } from "./theme.tsrx";',
+	'',
+	'export function Panel() @{',
+	'  <>',
+	'    <style apply={theme}>',
+	'      /* scope A; every element of A also carries theme.$class */',
+	'      div { color: black; }',
+	'    </style>',
+	'    <span class={theme.dark}>Purple</span>',
+	'    <div>Black: the local rule follows the sheet of theme</div>',
+	'    @{',
+	'      <>',
+	'        <style>div { font-weight: bold; }</style>',
+	'        <div>Carries "<A> <B> " + theme.$class</div>',
+	'      </>',
+	'    }',
+	'  </>',
+	'}',
+	'// Emitted CSS order: base, theme (theme.tsrx); then scope A, scope B (panel.tsrx).',
+].join('\n');
+
+const STYLE_STATIC_CONSTRAINTS = [
+	'tsrx-style-standalone-at-module-scope',
+	'  A standalone <style> block must sit inside a template scope. At module scope',
+	'  assign it: const theme = <style>...</style>.',
+	'tsrx-style-unknown-attribute',
+	'  A scoped <style> block admits only the attributes ref and apply. Head styles',
+	'  and resource styles (href) admit any attribute.',
+	'tsrx-style-apply-value',
+	'  apply requires an expression container: apply={theme} or apply={[a, b]}.',
+	'  A bare attribute, a string value, or an empty container is an error.',
+	'tsrx-style-apply-duplicate',
+	'  A <style> block carries at most one apply attribute; pass several targets',
+	'  as an array.',
+	'tsrx-style-apply-unsupported-host',
+	'  apply is not admitted on a <head> style or on a resource style.',
+	'tsrx-style-apply-target',
+	'  Every apply entry is an identifier or non-computed member chain that resolves',
+	'  by lexical scoping to an assigned <style> block: a binding initialized with a',
+	'  block, an import, or a member of an import or of a module-local object literal',
+	'  whose property holds a block. Calls, conditionals, spreads, and holes are errors.',
+	'tsrx-style-apply-before-declaration',
+	'  A same-module target must be declared before the block that applies it, by',
+	'  source position; stricter than the temporal dead zone because same-module CSS',
+	'  is emitted in lexical order.',
+	'tsrx-style-reserved-class-key',
+	'  An assigned block must not declare a class selector named $class.',
+	'tsrx-css-global-placement',
+	'  :global(...) may begin or end a selector sequence but not sit in its middle,',
+	'  and a bare :global must not be nested inside another pseudo-class.',
+	'',
+	'Emission order (normative): outer scope before inner scope; applied block',
+	'before the block that applies it; source order within one scope, later wins.',
 ].join('\n');
 
 const DYNAMIC_TAG_GRAMMAR = [
@@ -178,6 +304,7 @@ const AST_NODE_MAPPING = [
 	'JSXAttributeName JSXAttributeInitializeropt -> JSXAttribute',
 	'{ ... AssignmentExpression } in attribute position -> JSXSpreadAttribute',
 	'<style> CSSSource </style> -> JSXStyleElement',
+	'<style JSXAttributesopt /> -> JSXStyleElement with a self-closing opening element and no StyleSheet child',
 	'@if -> JSXIfExpression',
 	'@for -> JSXForExpression',
 	'@switch -> JSXSwitchExpression',
@@ -276,6 +403,23 @@ const TSRX_EXTENSION_AST_SHAPE = [
 	'  closingElement: JSXClosingElement | null;',
 	'  children: StyleSheet[];',
 	'  css?: string;',
+	'  metadata?: {',
+	'    native_tsrx?: true;',
+	'    styleScopeHash?: string;',
+	'    styleKind?: \'theme\' | \'class-map\';',
+	'    styleApplies?: StyleApplyResolution[];',
+	'  };',
+	'}',
+	'',
+	'interface StyleApplyResolution {',
+	'  expression: Identifier | MemberExpression;',
+	'  target: JSXStyleElement | null;',
+	'  kind: \'local\' | \'import\';',
+	'}',
+	'',
+	'interface ProgramStyleMetadata {',
+	'  assigned: JSXStyleElement[];',
+	'  standalone: JSXStyleElement[];',
 	'}',
 	'',
 	'interface JSXIfExpression {',
@@ -428,8 +572,9 @@ export function SpecificationPage() @{
 								<p class="status-chip">First-edition scope</p>
 								<p class="section-body compact">
 									The current draft fixes the syntax and early-error surface for JSX-shaped TSRX
-									values, JSX statement containers, template control flow, lazy destructuring, raw
-									style elements, and proposal-aligned submodule declarations.
+									values, JSX statement containers, template control flow, lazy destructuring,
+									lexically scoped style blocks with themes and apply, and proposal-aligned
+									submodule declarations.
 								</p>
 							</div>
 						</section>
@@ -440,8 +585,8 @@ export function SpecificationPage() @{
 								TSRX is a TypeScript-compatible syntax extension to ECMAScript for authoring
 								component-oriented user interface programs. It extends the TypeScript source
 								language with JSX-shaped template values, JSX statement containers, template
-								control-flow directives, lazy destructuring patterns, raw style elements, and style
-								identifiers.
+								control-flow directives, lazy destructuring patterns, lexically scoped style
+								elements, and style identifiers.
 							</p>
 							<p class="section-body">
 								This specification defines the syntax of TSRX and the static constraints that a
@@ -596,7 +741,9 @@ export function SpecificationPage() @{
 								. A statement container places setup statements first and then exactly one output
 								node: a JSX element, JSX fragment, or JSX control-flow expression. If the output
 								needs text, expression containers, or multiple siblings after setup, wrap them in a
-								JSX fragment.
+								JSX fragment. Standalone style elements are not output nodes: any number may sit
+								among the setup statements or after the output node, and they scope the container
+								(4.6).
 							</p>
 							<p class="section-body">
 								Control-flow block bodies follow the same structural rule as statement containers:
@@ -787,13 +934,178 @@ export function SpecificationPage() @{
 						<section class="doc-section" id="style">
 							<h2 class="section-heading">4.6 Style Elements and Style Identifiers</h2>
 							<p class="section-body">
-								The syntax of raw style elements is part of core TSRX. The host is responsible for
-								the meaning of selector scoping, generated class names, selector eligibility, style
-								expression class maps, and stylesheet registration.
+								The syntax of style elements, where a style block may be placed, the lexical scope a
+								standalone block styles, the value an assigned block evaluates to, the meaning of
+								the
+								<code class="inline-code">apply</code>
+								attribute, and the order in which a module's stylesheets are emitted are part of
+								core TSRX. The host is responsible for the text of generated hashes, the name of the
+								class attribute it stamps, selector rewriting, stylesheet registration, and for
+								injecting a module's CSS before the CSS of every module that imports it.
 							</p>
 							<pre class="code-block plain">
 								<code>{STYLE_GRAMMAR}</code>
 							</pre>
+							<p class="section-body">
+								A style body is captured as raw CSS text. A self-closing style element has no body,
+								no stylesheet, and no hash of its own; it exists to carry an
+								<code class="inline-code">apply</code>
+								attribute. A scoped style block admits exactly two attributes:
+								<code class="inline-code">ref</code>
+								, whose value receives the class-map object of the block's scope (4.6.3), and
+								<code class="inline-code">apply</code>
+								, whose value must be a StyleApplyValue. Style elements inside a
+								<code class="inline-code">{'<head>'}</code>
+								element and style elements carrying an
+								<code class="inline-code">href</code>
+								attribute (resource styles) are outside the scope model of this section: they admit
+								any attribute, are not scoped, and do not admit
+								<code class="inline-code">apply</code>
+								.
+							</p>
+							<h3 class="appendix-heading">4.6.1 Standalone and assigned blocks</h3>
+							<p class="section-body">
+								A style element is standalone when it is template content: a child of a native
+								element or fragment, or an item of the statement list of a JSXCodeBlock or of a
+								control-flow body. Any number of standalone blocks may appear in one such list,
+								before or after the single output node; a code block still renders at most one
+								non-style output node. A style element in any other position is assigned: a variable
+								initializer, an object property value, a default export, or any other expression
+								value. Assigned blocks are legal wherever a JavaScript expression is legal,
+								including module scope, function bodies, and nested code blocks. A standalone block
+								at module scope is an early error (5.1).
+							</p>
+							<h3 class="appendix-heading">4.6.2 Template scopes</h3>
+							<p class="section-body">
+								A template scope is a statement list together with the template it renders: the body
+								of a JSXCodeBlock; each branch body of a control-flow expression, that is every
+								<code class="inline-code">@if</code>
+								branch, the
+								<code class="inline-code">@for</code>
+								body and its
+								<code class="inline-code">@empty</code>
+								block, every
+								<code class="inline-code">@case</code>
+								and
+								<code class="inline-code">@default</code>
+								body, and the
+								<code class="inline-code">@try</code>
+								,
+								<code class="inline-code">@pending</code>
+								, and
+								<code class="inline-code">@catch</code>
+								blocks; or a native element or fragment in expression position, such as an assigned
+								template, a returned fragment, or a template passed as a prop. A standalone block
+								belongs to the nearest enclosing template scope. Its selectors reach the native
+								elements of that scope and of every scope nested inside it, and never an element
+								outside it.
+							</p>
+							<p class="section-body">
+								All standalone blocks of one scope share one scope hash: the position-derived hash
+								of the first block in source order that has a body. The implementation stamps the
+								scope hash on every native element in the scope and in all nested scopes, so an
+								element carries the hash of every enclosing scope, outermost first. A composite
+								component element receives no classes of its own, although native elements written
+								as its children still belong to the scope, and stamping stops at function
+								boundaries. A scope whose blocks are all self-closing has no hash of its own.
+							</p>
+							<pre class="code-block plain">
+								<code>{STYLE_SCOPE_EXAMPLE}</code>
+							</pre>
+							<p class="section-body">
+								Pruning is per scope: a selector of a standalone block that matches no element the
+								block reaches is unused. Control-flow bodies are scopes like any other. Their blocks
+								are stamped only on the elements of their own branch, but their CSS is static and is
+								emitted whether or not the branch ever renders.
+							</p>
+							<h3 class="appendix-heading">
+								4.6.3 Assigned blocks, $class, themes, and class maps
+							</h3>
+							<p class="section-body">
+								An assigned block evaluates to an object. Its first property is
+								<code class="inline-code">$class</code>
+								, a string, followed by one property for every class selector that stands alone as a
+								complete selector in the block; the value of such a property is the block's hash, a
+								space, and the class name. A class selector named
+								<code class="inline-code">$class</code>
+								in an assigned block is an early error.
+							</p>
+							<p class="section-body">
+								An assigned block is a theme when it is exported from its module or is the target of
+								any
+								<code class="inline-code">apply</code>
+								in its module; otherwise it is a class map. A theme keeps every selector, each
+								scoped under the block's hash. A class map keeps only the class selectors its object
+								exposes; every other selector is pruned as unused.
+							</p>
+							<p class="section-body">
+								<code class="inline-code">$class</code>
+								is the space-separated concatenation of the
+								<code class="inline-code">$class</code>
+								of every applied block, in
+								<code class="inline-code">apply</code>
+								order, followed by the block's own hash. A block without a body exposes
+								<code class="inline-code">$class</code>
+								only and contributes no hash. A repeated hash in a class list has no CSS effect, and
+								an implementation may drop repeats it can resolve statically. A same-module target
+								whose
+								<code class="inline-code">$class</code>
+								is fully static may be inlined as a string literal; an imported target is a runtime
+								read of its
+								<code class="inline-code">$class</code>
+								property.
+							</p>
+							<pre class="code-block plain">
+								<code>{STYLE_THEME_EXAMPLE}</code>
+							</pre>
+							<h3 class="appendix-heading">4.6.4 apply</h3>
+							<p class="section-body">
+								<code class="inline-code">apply</code>
+								on a standalone block attaches the
+								<code class="inline-code">$class</code>
+								of each listed block to every element the block's scope reaches, after every
+								enclosing scope hash, outer scopes' entries first and each scope's entries in source
+								order.
+								<code class="inline-code">apply</code>
+								on an assigned block merges into that block's
+								<code class="inline-code">$class</code>
+								. Each entry resolves with ordinary lexical scoping from the position of the style
+								element and must name an assigned block: a binding whose initializer is a style
+								element, an import, or a non-computed member chain rooted at an import or at a
+								module-local object literal whose named property holds a style element. Any other
+								entry, including a call, a conditional, a spread element, or an array hole, is an
+								early error.
+							</p>
+							<p class="section-body">
+								A same-module target must be declared before the block that applies it, by source
+								position. This is deliberately stricter than the ECMAScript temporal dead zone:
+								same-module CSS is emitted in lexical order, so a target declared after its applier
+								would win the cascade instead of losing it. Imports are hoisted and always satisfy
+								the rule.
+							</p>
+							<h3 class="appendix-heading">4.6.5 Emission order and precedence</h3>
+							<p class="section-body">
+								Every generated hash is a single class, so all scoped rules have equal specificity
+								and document order decides. A conforming implementation emits a module's stylesheets
+								in lexical pre-order, and the following rules are normative.
+							</p>
+							<ul class="spec-list">
+								<li>
+									Outer before inner. A scope's sheets form one contiguous group in source order,
+									placed where the scope's first block sits and before the groups of the scopes
+									nested inside it, even when one of its blocks is written after a nested scope.
+									Sibling scopes emit in source order, and an assigned block emits at its
+									declaration position.
+								</li>
+								<li>
+									Applied before applier. A same-module target precedes the block that applies it
+									because it must be declared first, and a host must inject an imported module's CSS
+									before the CSS of the module that imports it. The array position of an
+									<code class="inline-code">apply</code>
+									entry decides which classes are stamped, not their precedence.
+								</li>
+								<li>Source order within a scope. Of two blocks in one scope, the later wins.</li>
+							</ul>
 						</section>
 
 						<section class="doc-section" id="server-profile">
@@ -878,6 +1190,93 @@ export function SpecificationPage() @{
 									TSRX template children must not appear outside a JSXElement or JSXFragment body.
 								</li>
 							</ul>
+							<h3 class="appendix-heading">5.1 Style blocks</h3>
+							<p class="section-body">
+								The following static constraints apply to style elements (4.6). Each is reported
+								with the diagnostic code shown. None of them changes the parse, and a
+								diagnostic-collecting implementation may still produce best-effort output, but that
+								output is not conforming TSRX.
+							</p>
+							<ul class="spec-list">
+								<li>
+									A standalone style block must sit inside a template scope. A standalone block at
+									module scope is
+									<code class="inline-code">tsrx-style-standalone-at-module-scope</code>
+									.
+								</li>
+								<li>
+									A scoped style block admits only the attributes
+									<code class="inline-code">ref</code>
+									and
+									<code class="inline-code">apply</code>
+									; any other attribute is
+									<code class="inline-code">tsrx-style-unknown-attribute</code>
+									. Head styles and resource styles admit any attribute.
+								</li>
+								<li>
+									<code class="inline-code">apply</code>
+									requires an expression container, written
+									<code class="inline-code">{'apply={theme}'}</code>
+									or
+									<code class="inline-code">{'apply={[a, b]}'}</code>
+									. A bare attribute, a string value, or an empty container is
+									<code class="inline-code">tsrx-style-apply-value</code>
+									.
+								</li>
+								<li>
+									A style element carries at most one
+									<code class="inline-code">apply</code>
+									attribute; each further one is
+									<code class="inline-code">tsrx-style-apply-duplicate</code>
+									and is ignored.
+								</li>
+								<li>
+									<code class="inline-code">apply</code>
+									on a head style or a resource style is
+									<code class="inline-code">tsrx-style-apply-unsupported-host</code>
+									.
+								</li>
+								<li>
+									Every
+									<code class="inline-code">apply</code>
+									entry must be an identifier or non-computed member chain that resolves, by lexical
+									scoping, to an assigned style block, to an import, or to a member of an import or
+									of a module-local object literal whose property holds a style block. Any other
+									entry is
+									<code class="inline-code">tsrx-style-apply-target</code>
+									. Shadowing counts: a binding that hides a style block with another value is not a
+									target.
+								</li>
+								<li>
+									A same-module target declared after the block that applies it is
+									<code class="inline-code">tsrx-style-apply-before-declaration</code>
+									, reported at the entry.
+								</li>
+								<li>
+									An assigned block whose stylesheet declares a class selector named
+									<code class="inline-code">$class</code>
+									is
+									<code class="inline-code">tsrx-style-reserved-class-key</code>
+									.
+								</li>
+								<li>
+									Within a style body,
+									<code class="inline-code">:global(...)</code>
+									may begin or end a selector sequence but not sit in its middle, and a bare
+									<code class="inline-code">:global</code>
+									must not be nested inside another pseudo-class; both are
+									<code class="inline-code">tsrx-css-global-placement</code>
+									.
+								</li>
+							</ul>
+							<p class="section-body">
+								The precedence rules of 4.6.5 are constraints on the emitted stylesheets: outer
+								before inner, applied before applier, and source order within a scope. An
+								implementation that emits sheets in any other order does not conform.
+							</p>
+							<pre class="code-block plain">
+								<code>{STYLE_STATIC_CONSTRAINTS}</code>
+							</pre>
 						</section>
 
 						<section class="doc-section" id="host-defined">
@@ -891,7 +1290,20 @@ export function SpecificationPage() @{
 							<ul class="spec-list">
 								<li>How functions returning TSRX lower into executable host code.</li>
 								<li>How lazy destructuring is realized at runtime.</li>
-								<li>How style expressions expose generated or scoped class names.</li>
+								<li>
+									The text of generated scope hashes, the name of the stamped class attribute, and
+									how hashed selectors are rewritten.
+								</li>
+								<li>
+									How stylesheets are registered and injected, provided that a module's CSS precedes
+									the CSS of every module that imports it and that sheets keep the emission order of
+									4.6.5.
+								</li>
+								<li>
+									How the object of an assigned block and the value handed to a style
+									<code class="inline-code">ref</code>
+									are delivered at runtime.
+								</li>
 								<li>
 									How the dynamic tag syntax
 									<code class="inline-code">{'<{expression}>'}</code>
@@ -960,8 +1372,11 @@ export function SpecificationPage() @{
 									ordinary statement nodes directly in JSXElement or JSXFragment children.
 								</li>
 								<li>
-									Raw style elements inside a returned TSRX template carry parsed stylesheet
-									metadata for downstream analysis and target-specific style emission.
+									A style element with a body carries a parsed StyleSheet child and
+									<code class="inline-code">metadata.styleScopeHash</code>
+									, the position-derived hash of that block. Head styles and self-closing blocks
+									carry no hash. A standalone block is emitted under the hash of its scope (4.6.2),
+									which the transform takes from the scope's first bodied block.
 								</li>
 								<li>
 									Default exports are represented through the ordinary ESTree
@@ -969,7 +1384,14 @@ export function SpecificationPage() @{
 								</li>
 								<li>
 									Implementation metadata may additionally record topScopedClasses for downstream
-									style-ref analysis.
+									style-ref analysis. The style analyzer records
+									<code class="inline-code">metadata.styleKind</code>
+									(theme or class-map) on assigned blocks and
+									<code class="inline-code">metadata.styleApplies</code>
+									on every style element, and summarizes the module's assigned and standalone
+									blocks, in source order, on
+									<code class="inline-code">program.metadata.styles</code>
+									.
 								</li>
 							</ul>
 							<h3 class="appendix-heading">A.3 Template and attribute nodes</h3>
@@ -1016,12 +1438,11 @@ export function SpecificationPage() @{
 									carried by the attribute form.
 								</li>
 								<li>
-									Current implementations may additionally attach style-element-specific details
-									such as captured stylesheet source text or styleScopeHash when the element is a
-									raw
+									A
 									<code class="inline-code">{'<style>'}</code>
-									tag, but those details are not part of the general JSXElement shape described
-									here.
+									tag is a JSXStyleElement rather than a JSXElement. Its captured stylesheet source
+									text and its styleScopeHash, styleKind, and styleApplies metadata are described in
+									A.5 and are not part of the general JSXElement shape described here.
 								</li>
 							</ul>
 							<h3 class="appendix-heading">A.4 Expression value nodes</h3>
@@ -1069,7 +1490,18 @@ export function SpecificationPage() @{
 								<li>
 									<code class="inline-code">JSXCodeBlock</code>
 									is a template child and expression value, not a general ECMAScript statement node.
-									Its render field is the one node produced by the container after setup.
+									Its render field is the one node produced by the container after setup; standalone
+									style elements stay in body, in source order, whether they precede or follow the
+									output.
+								</li>
+								<li>
+									A bodied
+									<code class="inline-code">JSXStyleElement</code>
+									holds exactly one StyleSheet child and carries styleScopeHash unless it sits in a
+									head element. A self-closing style element has an empty children array and an
+									empty css string. styleKind is set on assigned blocks only; styleApplies is set on
+									every style element and is empty when the element has no apply attribute. The
+									analyzed Program carries a ProgramStyleMetadata object as metadata.styles.
 								</li>
 							</ul>
 							<h3 class="appendix-heading">A.6 Submodules, special identifiers, and stylesheets</h3>
@@ -1101,9 +1533,10 @@ export function SpecificationPage() @{
 									stubs.
 								</li>
 								<li>
-									CSSStyleSheet metadata is attached to raw style elements in returned TSRX
-									templates and stores both the original stylesheet source text and the stable hash
-									used by current host implementations for scoping.
+									A StyleSheet child is attached to every style element with a body, wherever it
+									sits, and stores the original source text and the position-derived hash.
+									Standalone blocks of one scope are emitted under the scope's hash; assigned blocks
+									are emitted under their own.
 								</li>
 							</ul>
 							<p class="section-body">

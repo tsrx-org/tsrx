@@ -23,7 +23,7 @@ await Bun.build({
 
 The plugin compiles `.tsrx` modules with `@tsrx/vue`, runs the downstream
 `vue-jsx-vapor` transform, strips the remaining TypeScript syntax with Bun, and
-emits component-local `<style>` blocks as virtual CSS modules.
+emits lexically scoped `<style>` blocks as virtual CSS modules.
 
 For `bun:test`, register it from a preload:
 

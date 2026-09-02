@@ -228,68 +228,155 @@ export function Panel({ as = 'section', item, expanded }: PanelProps) @{
 );
 
 const SCOPED_STYLES_HTML = highlight_tsrx(
-	`function Card() @{
+	`function Panel() @{
   <>
-    <div class="card">
-      <h2>Scoped title</h2>
-      <p>Styles here won't leak out.</p>
-    </div>
+    <style>
+      /* scope A */
+      div { color: black; }
+    </style>
+    <div class="outer">Black</div>
+
+    @{
+      <>
+        <style>
+          /* scope B, nested inside A */
+          div { font-weight: bold; }
+        </style>
+        <div class="inner">Black and bold</div>
+      </>
+    }
 
     <style>
-      .card {
-        padding: 1.5rem;
-        border: 1px solid #ddd;
-      }
-
-      h2 { color: #333; }
+      /* still scope A: shares the first block's hash */
+      p { margin: 0; }
     </style>
+    <p>No margin</p>
   </>
 }`,
 );
 
-const STYLE_COMPOSITION_HTML = highlight_tsrx(
-	`function Badge({ class: className }: { class?: string }) @{
+const CONTROL_FLOW_STYLES_HTML = highlight_tsrx(
+	`function Status({ ready }: { ready: boolean }) @{
   <>
-    <span class={'badge ' + (className ?? '')}>New</span>
-
     <style>
-      .badge { padding: 0.25rem 0.5rem; }
+      .status { padding: 0.5rem; }
     </style>
+    <section class="status">
+      @if (ready) {
+        <style>
+          .ok { color: green; }
+        </style>
+        <p class="ok">Ready</p>
+      } @else {
+        <style>
+          .wait { color: gray; }
+        </style>
+        <p class="wait">Waiting</p>
+      }
+    </section>
   </>
+}`,
+);
+
+const THEME_CLASS_HTML = highlight_tsrx(
+	`export const theme = <style>
+  div { color: green; }
+  .dark { color: purple; }
+</style>;
+
+// theme.$class -> 'tsrx-1a2b3c4d'
+// theme.dark   -> 'tsrx-1a2b3c4d dark'
+
+function Badge({ class: className }: { class?: string }) @{
+  <span class={'badge ' + (className ?? '')}>New</span>
 }
 
 function App() @{
-  const styles = <style>
-    .highlight { background: #e8f5e9; color: #2e7d32; }
-  </style>;
-
   <>
     // Ripple, Preact, Solid, and Vue component props:
-    <Badge class={styles.highlight} />
+    <Badge class={theme.dark} />
 
     // React component props:
-    // <Badge className={styles.highlight} />
+    // <Badge className={theme.dark} />
   </>
 }`,
 );
 
-const MODULE_STYLE_COMPOSITION_HTML = highlight_tsrx(
-	`const articleStyles = <style>
-  .card { padding: 1rem; }
-  .title { font-weight: 700; }
+const STYLE_APPLY_HTML = highlight_tsrx(
+	`import { theme } from './theme.tsrx';
+
+export function Panel() @{
+  <>
+    <style apply={theme}>
+      /* scope A; also stamps theme.$class on every element of A */
+      div { color: black; }
+    </style>
+
+    <span class={theme.dark}>Purple</span>
+    <div>Black: the local rule beats the theme's green</div>
+
+    @{
+      <>
+        <style>
+          /* scope B, nested inside A */
+          div { font-weight: bold; }
+        </style>
+        <div>Black and bold: A, B, and the theme all reach here</div>
+      </>
+    }
+  </>
+}
+
+export function Card() @{
+  // Self-closed: applies the theme, declares no rules of its own.
+  <style apply={theme} />
+  <article>
+    <h2>Green system-ui</h2>
+  </article>
+}`,
+);
+
+const THEME_COMPOSITION_HTML = highlight_tsrx(
+	`// theme.tsrx
+const base = <style>
+  div { font-family: system-ui; }
 </style>;
 
-export function ArticleCard({ title }: { title: string }) @{
-  // Ripple, Preact, Solid, and Vue host elements:
-  <article class={articleStyles.card}>
-    <h2 class={articleStyles.title}>{title}</h2>
-  </article>
+export const accent = <style apply={base}>
+  div { color: blue; }
+</style>;
 
-  // React host elements:
-  // <article className={articleStyles.card}>
-  //   <h2 className={articleStyles.title}>{title}</h2>
-  // </article>
+// accent.$class -> base's hash, then accent's own hash
+
+const spacing = <style>
+  p { margin: 0; }
+</style>;
+
+// A self-closed assigned block bundles themes without CSS of its own.
+export const bundle = <style apply={[spacing, accent]} />;
+
+export function Composed() @{
+  <style apply={[spacing, accent]} />
+  <div>
+    <p>Blue system-ui, no margin</p>
+  </div>
 }`,
+);
+
+const STYLE_LAYER_HTML = highlight_tsrx(
+	`function Card() @{
+  <>
+    <style>
+      @layer components {
+        .card { padding: 1rem; }
+      }
+    </style>
+    <div class="card">Layered</div>
+  </>
+}
+
+// Emitted CSS keeps the layer and scopes the selector inside it:
+// @layer components { .card.tsrx-1a2b3c4d { padding: 1rem; } }`,
 );
 
 const LAZY_PROPS_HTML = highlight_tsrx(
@@ -767,15 +854,74 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="scoped-styles">
 							<h2 class="section-heading">Scoped styles</h2>
 							<p class="section-body">
-								Each returned TSRX template can include a
+								A TSRX template can include
 								<code class="inline-code">{'<style>'}</code>
-								block. Styles are automatically scoped — the compiler rewrites selectors with a
-								unique hash so they only apply to elements inside the component fragment that
-								defines them. A parent's scoped styles will not leak into child components.
+								blocks. The compiler rewrites every selector with a hash and stamps that hash on the
+								elements the block reaches, so rules only apply inside the template that declares
+								them and never leak into child components.
+							</p>
+							<p class="section-body">
+								Styles are scoped lexically. A style scope is a statement list plus the template it
+								renders: the body of a
+								<code class="inline-code">{'@{ ... }'}</code>
+								block, each body of an
+								<code class="inline-code">@if</code>
+								,
+								<code class="inline-code">@for</code>
+								,
+								<code class="inline-code">@switch</code>
+								, or
+								<code class="inline-code">@try</code>
+								, or a native element or fragment used as a value. A block can be a child of the
+								output element or fragment, or sit beside the output node as a setup sibling.
+								Several blocks written in one scope share one hash; a nested scope gets a hash of
+								its own.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={SCOPED_STYLES_HTML} />
 							</pre>
+							<p class="section-body">
+								Every element carries the hash of each enclosing scope, outer first: the outer
+								<code class="inline-code">div</code>
+								is stamped with scope A, the nested
+								<code class="inline-code">div</code>
+								with A and B, and the trailing
+								<code class="inline-code">p</code>
+								with A. Outer rules therefore reach into nested scopes, while inner rules never
+								reach out. Stamping stops at function boundaries, so elements returned from a
+								callback such as
+								<code class="inline-code">{'items.map((item) => <li />)'}</code>
+								are not part of the scope.
+							</p>
+							<p class="section-body">
+								Precedence follows the source. CSS is emitted in lexical order: outer scopes come
+								before the scopes nested in them (even when the nested scope is written first), a
+								scope's blocks emit together as one group in source order, sibling scopes follow
+								source order, and an applied theme comes before the block that applies it. At equal
+								specificity the rule emitted last wins, so the nested block above makes its
+								<code class="inline-code">div</code>
+								bold without disturbing the color the outer block set.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={CONTROL_FLOW_STYLES_HTML} />
+							</pre>
+							<p class="section-body">
+								Control-flow bodies are scopes too, with one caveat: the CSS of a block inside an
+								<code class="inline-code">@if</code>
+								,
+								<code class="inline-code">@for</code>
+								,
+								<code class="inline-code">@switch</code>
+								, or
+								<code class="inline-code">@try</code>
+								body is always emitted, whichever branch renders. Only the class stamping follows
+								the branch. Selectors that match nothing the block can reach are dropped from the
+								output as
+								<code class="inline-code">
+									/* (unused) */
+								</code>
+								comments.
+							</p>
 							<p class="section-body">
 								To escape scoping and apply styles globally, wrap a selector in
 								<code class="inline-code">:global()</code>
@@ -794,35 +940,79 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="style-composition">
 							<h2 class="section-heading">Style composition</h2>
 							<p class="section-body">
-								Because scoped styles don't cross component boundaries, assigning a
+								Assigning a
 								<code class="inline-code">{'<style>'}</code>
-								expression to a variable exposes a class map for passing scoped class names to child
-								components as props.
-								<code class="inline-code">styles.highlight</code>
-								contains both the scope hash and the class name, which the child applies via its
+								expression to a variable turns it into a theme object instead of a scoped block. The
+								object exposes
+								<code class="inline-code">$class</code>
+								, the block's own scope hash, plus one key per class selector whose value is the
+								hash and the class name together. Pass those strings to child components as props
+								through
 								<code class="inline-code">class</code>
-								prop. React components use
+								, or
 								<code class="inline-code">className</code>
-								instead, matching React's normal prop names.
+								for React components. The block can live at module scope or inside a component body.
 							</p>
 							<pre class="code-block">
-								<code innerHTML={STYLE_COMPOSITION_HTML} />
+								<code innerHTML={THEME_CLASS_HTML} />
 							</pre>
 							<p class="section-body">
-								You can also create the style expression at module scope and reference the generated
-								class map from any component in the file. This gives teams moving from StyleX-like
-								patterns a declarative, reusable class map without putting the
-								<code class="inline-code">{'<style>'}</code>
-								block inside the returned template.
+								A block that is exported or applied is a theme and keeps every selector, element and
+								descendant selectors included. A local block that is neither exported nor applied
+								keeps only its standalone class selectors; the rest are pruned because no element
+								can carry its hash.
+							</p>
+							<p class="section-body">
+								<code class="inline-code">{'<style apply={theme} />'}</code>
+								stamps the theme's
+								<code class="inline-code">$class</code>
+								on every element of the scope it sits in, so the theme's element and descendant
+								rules reach those elements as if the theme had been written there. A self-closed
+								apply adds no hash of its own;
+								<code class="inline-code">{'<style apply={theme}>...</style>'}</code>
+								does both, applying the theme and declaring a scoped block in one go.
 							</p>
 							<pre class="code-block">
-								<code innerHTML={MODULE_STYLE_COMPOSITION_HTML} />
+								<code innerHTML={STYLE_APPLY_HTML} />
 							</pre>
 							<p class="section-body">
-								Classes exposed on the map come from standalone selectors in the
-								<code class="inline-code">{'<style>'}</code>
-								block. Classes that only appear in compound or descendant selectors are not exported
-								on the map.
+								The local rule wins. A theme's CSS is emitted before the block that applies it, and
+								a theme must be declared before any block that applies it, so a rule written in the
+								applying scope beats the theme's rule at equal specificity: the
+								<code class="inline-code">div</code>
+								above is black, not green. Same-module themes are inlined as string literals;
+								imported themes are read at runtime through
+								<code class="inline-code">theme.$class</code>
+								.
+							</p>
+							<p class="section-body">
+								Themes compose. A theme can apply another theme, and
+								<code class="inline-code">{'apply={[a, b]}'}</code>
+								applies several in order. The resulting
+								<code class="inline-code">$class</code>
+								lists the applied themes' classes first and the block's own hash last, so a composed
+								theme reaches an element with everything it was built from.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={THEME_COMPOSITION_HTML} />
+							</pre>
+							<p class="section-body">
+								Cascade layers pass through.
+								<code class="inline-code">@layer</code>
+								rules inside a block are kept as written, and the selectors inside them are still
+								scoped, so a codebase that already orders its layers can keep doing so.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={STYLE_LAYER_HTML} />
+							</pre>
+							<p class="section-body muted">
+								Why not build scoping on
+								<code class="inline-code">@layer</code>
+								? Layers order rules globally: every participant has to agree on layer names and
+								declare their order up front, and a layer cannot be attached to one subtree of
+								elements. Lexical scoping gives an order you can read off the file, and
+								<code class="inline-code">apply</code>
+								stamps classes, so a theme reaches exactly the elements of one scope.
 							</p>
 						</section>
 					</main>
