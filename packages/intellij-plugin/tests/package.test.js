@@ -177,8 +177,14 @@ describe('@tsrx/intellij-plugin release contract', () => {
 		expect(intellij_job).toContain('verify-language-server-release.mjs');
 		expect(intellij_job).toContain('signPlugin');
 		expect(intellij_job).toContain('publishPlugin');
+		expect(intellij_job).toContain('secrets.JETBRAINS_MARKETPLACE_CERTIFICATE_CHAIN');
+		expect(intellij_job).toContain('secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY');
+		expect(intellij_job).toContain('secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD');
 		expect(intellij_job).toContain('secrets.JETBRAINS_MARKETPLACE_PUBLISH_TOKEN');
 		expect(intellij_job).toContain('Upload signed plugin archive');
+		expect(intellij_job).not.toContain('secrets.CERTIFICATE_CHAIN');
+		expect(intellij_job).not.toContain('secrets.PRIVATE_KEY');
+		expect(intellij_job).not.toContain('secrets.PRIVATE_KEY_PASSWORD');
 		expect(intellij_job).not.toContain('secrets.PUBLISH_TOKEN');
 		expect(intellij_job).not.toContain('verify-marketplace-state.mjs');
 		expect(intellij_job).not.toContain('steps.marketplace.outputs');
