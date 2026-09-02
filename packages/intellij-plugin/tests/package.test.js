@@ -150,8 +150,12 @@ describe('@tsrx/intellij-plugin release contract', () => {
 		expect(gradle).not.toContain('advertisedProductTypes');
 	});
 
-	it('publishes in one Changesets-gated job after npm publication', () => {
+	it('publishes through an isolated reusable workflow after npm publication', () => {
 		const workflow = readFileSync(resolve(repository_dir, '.github/workflows/publish.yml'), 'utf8');
+		const intellij_workflow = readFileSync(
+			resolve(repository_dir, '.github/workflows/publish-intellij-plugin.yml'),
+			'utf8',
+		);
 		const publish_job_start = workflow.indexOf('  publish:');
 		const zed_job_start = workflow.indexOf('  publish-zed:');
 		const intellij_job_start = workflow.indexOf('  publish-intellij-plugin:');
@@ -160,10 +164,10 @@ describe('@tsrx/intellij-plugin release contract', () => {
 		const zed_job = workflow.slice(zed_job_start, intellij_job_start);
 		const intellij_job = workflow.slice(intellij_job_start);
 
-		expect(intellij_job.match(/^    runs-on:/gm)).toHaveLength(1);
 		expect(workflow).toContain("contains(github.event.head_commit.message, 'Version Packages')");
 		expect(workflow).toContain('packages/intellij-plugin/package.json');
 		expect(workflow).toContain('intellij-version-changed: ${{ steps.intellij.outputs.changed }}');
+		expect(workflow).toContain('intellij-version: ${{ steps.intellij.outputs.version }}');
 		expect(workflow_header).not.toContain('concurrency:');
 		expect(publish_job).toContain('group: npm-publish');
 		expect(publish_job).not.toContain('Submit Zed extension update');
@@ -172,23 +176,41 @@ describe('@tsrx/intellij-plugin release contract', () => {
 		expect(intellij_job).toContain('needs: publish');
 		expect(intellij_job).toContain("needs.publish.result == 'success'");
 		expect(intellij_job).toContain("needs.publish.outputs.intellij-version-changed == 'true'");
-		expect(intellij_job).toContain('environment: jetbrains-marketplace');
-		expect(intellij_job).toContain('group: intellij-plugin-publish');
-		expect(intellij_job).toContain('verify-language-server-release.mjs');
-		expect(intellij_job).toContain('signPlugin');
-		expect(intellij_job).toContain('publishPlugin');
+		expect(intellij_job).toContain('uses: ./.github/workflows/publish-intellij-plugin.yml');
+		expect(intellij_job).toContain('version: ${{ needs.publish.outputs.intellij-version }}');
 		expect(intellij_job).toContain('secrets.JETBRAINS_MARKETPLACE_CERTIFICATE_CHAIN');
 		expect(intellij_job).toContain('secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY');
 		expect(intellij_job).toContain('secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD');
 		expect(intellij_job).toContain('secrets.JETBRAINS_MARKETPLACE_PUBLISH_TOKEN');
-		expect(intellij_job).toContain('Upload signed plugin archive');
-		expect(intellij_job).not.toContain('secrets.CERTIFICATE_CHAIN');
-		expect(intellij_job).not.toContain('secrets.PRIVATE_KEY');
-		expect(intellij_job).not.toContain('secrets.PRIVATE_KEY_PASSWORD');
-		expect(intellij_job).not.toContain('secrets.PUBLISH_TOKEN');
-		expect(intellij_job).not.toContain('verify-marketplace-state.mjs');
-		expect(intellij_job).not.toContain('steps.marketplace.outputs');
+		expect(intellij_job).not.toContain('secrets: inherit');
+		expect(intellij_job).not.toContain('runs-on:');
 		expect(intellij_job).not.toMatch(/^\s*uses: (?!\.\/).*@v\d+/m);
+
+		expect(intellij_workflow).toContain('workflow_call:');
+		expect(intellij_workflow).toContain('workflow_dispatch:');
+		expect(intellij_workflow).toContain("github.ref == 'refs/heads/main'");
+		expect(intellij_workflow).toContain('EXPECTED_VERSION: ${{ inputs.version }}');
+		expect(intellij_workflow.match(/^    runs-on:/gm)).toHaveLength(1);
+		expect(intellij_workflow).toContain('environment: jetbrains-marketplace');
+		expect(intellij_workflow).toContain('group: intellij-plugin-publish');
+		expect(intellij_workflow).toContain('verify-language-server-release.mjs');
+		expect(intellij_workflow).toContain('signPlugin');
+		expect(intellij_workflow).toContain('publishPlugin');
+		expect(intellij_workflow).toContain('secrets.JETBRAINS_MARKETPLACE_CERTIFICATE_CHAIN');
+		expect(intellij_workflow).toContain('secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY');
+		expect(intellij_workflow).toContain('secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD');
+		expect(intellij_workflow).toContain('secrets.JETBRAINS_MARKETPLACE_PUBLISH_TOKEN');
+		expect(intellij_workflow).toContain('Upload signed plugin archive');
+		expect(intellij_workflow).not.toContain('changesets/action');
+		expect(intellij_workflow).not.toContain('publish-zed');
+		expect(intellij_workflow).not.toContain('ZED_EXTENSION_TOKEN');
+		expect(intellij_workflow).not.toContain('secrets.CERTIFICATE_CHAIN');
+		expect(intellij_workflow).not.toContain('secrets.PRIVATE_KEY');
+		expect(intellij_workflow).not.toContain('secrets.PRIVATE_KEY_PASSWORD');
+		expect(intellij_workflow).not.toContain('secrets.PUBLISH_TOKEN');
+		expect(intellij_workflow).not.toContain('verify-marketplace-state.mjs');
+		expect(intellij_workflow).not.toContain('steps.marketplace.outputs');
+		expect(intellij_workflow).not.toMatch(/^\s*uses: (?!\.\/).*@v\d+/m);
 	});
 
 	it('accepts only the exact published language-server package and launcher', () => {

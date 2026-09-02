@@ -1,0 +1,127 @@
+name: Publish IntelliJ Plugin
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Expected IntelliJ plugin version
+        required: true
+        type: string
+    secrets:
+      JETBRAINS_MARKETPLACE_CERTIFICATE_CHAIN:
+        required: true
+      JETBRAINS_MARKETPLACE_PRIVATE_KEY:
+        required: true
+      JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD:
+        required: true
+      JETBRAINS_MARKETPLACE_PUBLISH_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: IntelliJ plugin version to publish from main
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Build, sign, and publish
+    if: >-
+      github.repository == 'tsrx-org/tsrx' &&
+      github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    environment: jetbrains-marketplace
+    concurrency:
+      group: intellij-plugin-publish
+      cancel-in-progress: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Setup Java 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
+
+      - name: Validate requested plugin version
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          version="$(node -p "require('./packages/intellij-plugin/package.json').version")"
+          if [[ "$version" != "$EXPECTED_VERSION" ]]; then
+            echo "Requested IntelliJ plugin version $EXPECTED_VERSION, but main contains $version." >&2
+            exit 1
+          fi
+
+      - name: Verify synchronized versions
+        run: node scripts/sync-intellij-plugin-version.js --check
+
+      - name: Verify the published language-server package
+        run: node packages/intellij-plugin/scripts/verify-language-server-release.mjs
+
+      - name: Test, build, and verify the plugin
+        run: >-
+          packages/intellij-plugin/gradlew -p packages/intellij-plugin
+          test verifyPluginProjectConfiguration buildPlugin verifyPluginStructure verifyPlugin
+
+      - name: Validate signing credentials
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.JETBRAINS_MARKETPLACE_CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD }}
+        run: |
+          for required in CERTIFICATE_CHAIN PRIVATE_KEY PRIVATE_KEY_PASSWORD; do
+            if [[ -z "${!required}" ]]; then
+              echo "Missing JetBrains Marketplace secret: JETBRAINS_MARKETPLACE_$required" >&2
+              exit 1
+            fi
+          done
+
+      - name: Sign plugin archive
+        id: sign
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.JETBRAINS_MARKETPLACE_CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD }}
+        run: packages/intellij-plugin/gradlew -p packages/intellij-plugin signPlugin
+
+      - name: Validate Marketplace credential
+        env:
+          PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_PUBLISH_TOKEN }}
+        run: |
+          test -n "$PUBLISH_TOKEN" || {
+            echo "Missing JetBrains Marketplace secret: JETBRAINS_MARKETPLACE_PUBLISH_TOKEN" >&2
+            exit 1
+          }
+
+      - name: Publish Marketplace update
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.JETBRAINS_MARKETPLACE_CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD }}
+          PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_PUBLISH_TOKEN }}
+        run: packages/intellij-plugin/gradlew -p packages/intellij-plugin publishPlugin
+
+      - name: Upload signed plugin archive
+        if: always() && steps.sign.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: intellij-plugin-signed-${{ github.sha }}
+          path: packages/intellij-plugin/build/distributions/*-signed.zip
+          if-no-files-found: error
+          retention-days: 30

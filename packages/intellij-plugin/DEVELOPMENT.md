@@ -52,12 +52,24 @@ The plugin XML ID is `tsrx.intellij-plugin`. The deleted third-party listing use
 a different ID and is intentionally not reused.
 
 Changesets owns the plugin version. When the **Version Packages** commit changes
-`packages/intellij-plugin/package.json`, the conditional IntelliJ job in
-`.github/workflows/publish.yml` waits for the repository's npm publication job,
-then repeats the release checks, signs the archive, and publishes the update to
-Marketplace. The initial `0.0.82` submission was uploaded manually; the workflow
-is only responsible for later versions. It always retains the signed ZIP when
-signing succeeds, including when Marketplace rejects the upload.
+`packages/intellij-plugin/package.json`, `.github/workflows/publish.yml` waits for
+the repository's npm publication job, then calls the reusable
+`.github/workflows/publish-intellij-plugin.yml` workflow. The dedicated workflow
+repeats the release checks, signs the archive, and publishes the Marketplace
+update. The initial `0.0.82` submission was uploaded manually; the workflow is
+only responsible for later versions. It always retains the signed ZIP when signing
+succeeds, including when Marketplace rejects the upload.
+
+For a Marketplace-only retry, manually dispatch the dedicated workflow with the
+version currently committed on `main`:
+
+```sh
+gh workflow run publish-intellij-plugin.yml --repo tsrx-org/tsrx --ref main \
+  -f version="$(node -p "require('./packages/intellij-plugin/package.json').version")"
+```
+
+This path does not invoke the npm or Zed publishing jobs. The expected-version
+input must exactly match `packages/intellij-plugin/package.json` on `main`.
 
 Configure `JETBRAINS_MARKETPLACE_CERTIFICATE_CHAIN`,
 `JETBRAINS_MARKETPLACE_PRIVATE_KEY`, `JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD`,

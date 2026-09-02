@@ -9,6 +9,7 @@ on:
       - "scripts/regenerate-textmate.js"
       - "scripts/sync-intellij-plugin-version.js"
       - ".github/workflows/intellij-plugin.yml"
+      - ".github/workflows/publish-intellij-plugin.yml"
 
 permissions:
   contents: read
