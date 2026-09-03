@@ -714,22 +714,16 @@ const Dashboard = ({ user }: { user: User | null }) => @{
 
 ## Scoped Styles
 
-A TSRX template can include `<style>` blocks. The compiler rewrites every
-selector with a hash and stamps that hash on the elements the block reaches, so
-rules only apply inside the template that declares them. Parent styles do not
-leak into child components.
+A `<style>` block styles only the elements next to it and below it. The
+compiler rewrites every selector in the block to also require a hash class: a
+class it adds to each element the block reaches, so the block's selectors match
+only there. Rules never leak into child components.
 
 `<style>` blocks contain static CSS. TSRX template rules for JavaScript
 statements and expressions do not apply inside them, so do not put `{expr}`,
 `if`, `for`, or declarations in a style block. Use CSS custom properties for
 runtime values: set them on an element with `style={{ '--name': value }}` and
 read them from static CSS with `var(--name)`.
-
-Raw CSS in `<style>` is TSRX template syntax: a standalone block with CSS text
-must sit lexically inside a `@{ ... }` body or an `@if`/`@for`/`@switch`/`@try`
-body (at any depth); anywhere else it is the `tsrx-style-standalone-outside-template`
-error. In plain TSX, `<style>` is an ordinary element with an expression child,
-`<style>{css}</style>`, which the compiler never scopes, extracts, or stamps.
 
 ```tsrx
 const Card = ({ tone }: { tone: string }) => @{
@@ -757,35 +751,27 @@ written, so use `className` for React host elements and React component props.
 Other TSRX targets commonly use `class`. Scoped style blocks accept only the
 `ref` and `apply` attributes.
 
-### Style scopes
+### A block styles its siblings and everything below them
 
-Styles are scoped to siblings. A standalone block is a child of a native element
-or fragment, and that children list is its sibling scope: the block styles its
-siblings and everything below them, and sibling blocks share one hash.
+A standalone `<style>` block is a child of an element or fragment, and that
+children list is its sibling scope: the block styles the other children of the
+list and everything below them, and it never styles the element that contains
+it. To style an element, put the block and the element side by side in a
+fragment: `<><style>...</style><div /></>`.
 
-Scope rules:
-
-- A block styles the items beside it and everything below them; it never
-  styles the element that contains it. To style an element, make the block
-  and the element siblings in a fragment: `<><style>...</style><div /></>`.
-- A `@{ ... }` body and every `@if`, `@for`, `@switch`, or `@try` body (each
-  branch, `@else`, `@empty`, `@case`, `@default`, `@pending`, and `@catch`
-  body) render exactly one output node, and a `<style>` block is an output
-  node like any other: beside another output it is the multiple-outputs error,
-  and as the lone output it is `tsrx-style-standalone-needs-fragment`. Wrap
-  the block and its output in a fragment there.
-- Several `<style>` blocks in one children list share one hash. A nested list
-  that holds blocks is a nested scope with a hash of its own; two blocks among
-  an element's children share a hash, while a block in the enclosing fragment
-  and a block among that element's children do not.
-- Every element carries the hash of each enclosing scope, outer first. Outer
+- Sibling blocks share one hash class. A nested children list that holds blocks
+  is a nested scope with a hash class of its own: two blocks among an element's
+  children share a hash class, while a block in the enclosing fragment and a
+  block among that element's children do not.
+- Every element gets the hash class of each scope around it, outer first. Outer
   rules reach nested scopes; inner rules never reach out.
-- Stamping stops at function boundaries. Elements returned from a callback such
-  as `items.map((item) => <li />)` are not part of the scope.
+- Elements returned from a callback such as `items.map((item) => <li />)` are
+  outside the scope and get no hash class.
 - A standalone `<style>` block at module scope is an error; assign it to a
   variable there (`const theme = <style>...</style>;`).
-- Selectors that match nothing in the block's reach are dropped and emitted as
-  `/* (unused) ... */` comments.
+- A selector that matches nothing the block can reach, including a selector
+  that only matches the containing element, is removed as unused and left as a
+  `/* (unused) ... */` comment.
 
 ```tsrx
 export function Panel() @{
@@ -820,25 +806,77 @@ export function Panel() @{
 }
 ```
 
-With `A` and `B` as the two scope hashes, the compiled classes are `outer A`,
+With `A` and `B` as the two hash classes, the compiled classes are `outer A`,
 `A` on the `<section>`, `inner A B`, and `A` on the `<p>`.
 
-### Precedence
+### Put a block and its output in one fragment
 
-CSS is emitted in lexical order, and at equal specificity the rule emitted last
-wins:
+A `@{ ... }` body and every `@if`, `@for`, `@switch`, or `@try` branch (each
+`@else`, `@empty`, `@case`, `@default`, `@pending`, and `@catch` body too)
+render exactly one output node, and a `<style>` block counts as an output node.
+Beside another output it is the multiple-outputs error; as the only output it
+is `tsrx-style-standalone-needs-fragment` and styles nothing. Wrap the block
+and its output in a fragment.
 
-- Outer scopes emit before the scopes nested in them, even when the nested
+```tsrx
+function Note({ open }: { open: boolean }) @{
+	<div>
+		@if (open) {
+			// Error: two output nodes in one branch.
+			<style>
+				p {
+					color: red;
+				}
+			</style>
+			<p>Red</p>
+		}
+	</div>
+}
+
+function Note({ open }: { open: boolean }) @{
+	<div>
+		@if (open) {
+			// Works: one output node, a fragment holding the block and the <p>.
+			<>
+				<style>
+					p {
+						color: red;
+					}
+				</style>
+				<p>Red</p>
+			</>
+		}
+	</div>
+}
+```
+
+### Raw CSS needs a template around it
+
+Raw CSS in `<style>` is TSRX template syntax. A block with CSS in it must sit
+lexically inside a `@{ ... }` body or an `@if`/`@for`/`@switch`/`@try` body (at
+any depth); anywhere else it is the `tsrx-style-standalone-outside-template`
+error. In plain TSX, write `<style>{css}</style>`: an ordinary element with an
+expression child, which the compiler never scopes and never gives a hash class.
+
+### Later rules win
+
+CSS is output in source order, outer scopes first, and at equal specificity
+the rule output last wins:
+
+- Outer scopes come before the scopes nested in them, even when the nested
   scope is written first.
-- A scope's blocks emit together as one contiguous group, in source order.
-- Sibling scopes emit in source order.
-- An assigned block (`const theme = <style>...</style>;`) emits at its
+- A scope's blocks stay together as one group, in source order.
+- Sibling scopes follow source order.
+- An assigned block (`const theme = <style>...</style>;`) is output at its
   declaration.
-- An applied theme emits before the block that applies it.
+- An applied theme comes before the block that applies it.
 
-Control-flow caveat: the CSS of a block inside an `@if`, `@for`, `@switch`, or
-`@try` body is always emitted, whichever branch renders. Only the class
-stamping follows the branch.
+### A block in a branch styles only that branch
+
+A `<style>` block inside an `@if` or `@for` branch applies only to the elements
+that branch renders. Its CSS is still always part of the file's stylesheet,
+whether or not the branch ever renders, because CSS is static. Rules you want
+everywhere belong outside the branch.
 
 ```tsrx
 export function Status({ ready }: { ready: boolean }) @{
@@ -873,18 +911,24 @@ export function Status({ ready }: { ready: boolean }) @{
 }
 ```
 
-### Themes and `$class`
+`.status` sits outside the branches and reaches both of them. `.ok` matches
+only the `<p>` in the ready branch and `.wait` only the `<p>` in the other one,
+and both rules are in the stylesheet at all times.
 
-Assigning a `<style>` expression to a variable produces a theme object instead
-of a scoped block. The object has `$class`, the block's scope hash (preceded by
+### Assigning a block gives you a theme object
+
+Assigning a `<style>` expression to a variable produces an object instead of a
+scoped block. The object has `$class`, the block's own hash class (preceded by
 the classes of any applied themes), plus one key per class selector whose value
-is the hash and the class name together. Pass these strings to child components
-as props. `$class` is reserved: a block cannot declare a `.$class` selector.
+is the hash class and the class name together. Pass these strings to child
+components as props. `$class` is reserved: a block cannot declare a `.$class`
+selector.
 
-- A block that is exported, applied, or whose `$class` is read is a theme and
+- A block that is exported, applied, or whose `$class` is read is a theme. It
   keeps every selector, element and descendant selectors included.
-- A local block whose only reads are class entries (`styles.card`) keeps only
-  its standalone class selectors; the others are pruned.
+- A block that is only read through class entries (`styles.card`) is a class
+  map. It keeps only its standalone class selectors; the others are removed as
+  unused.
 - The block can live at module scope or inside a component body.
 
 ```tsrx
@@ -908,27 +952,27 @@ const Badge = ({ class: className }: { class?: string }) => (
 const App = () => <Badge class={theme.dark} />;
 ```
 
-### Applying themes
+### `apply` adds a theme to a whole scope
 
-`<style apply={theme} />` (self-closed) stamps the theme's `$class` on every
+`<style apply={theme} />` (self-closed) adds the theme's `$class` to every
 element of the scope it sits in, so the theme's element and descendant rules
-reach those elements as if the theme had been written there. A self-closed apply
-adds no hash of its own. `<style apply={theme}>...</style>` does both: it applies
-the theme and declares a scoped block for that scope.
+reach those elements as if the theme had been written there. A self-closed
+apply adds no hash class of its own. `<style apply={theme}>...</style>` does
+both: it applies the theme and declares a scoped block for that scope.
 
 - `apply={[a, b]}` applies several themes in order.
 - A theme can itself apply another theme (`const accent = <style apply={base}>`);
   its `$class` then lists the applied themes' classes first and its own hash
-  last.
+  class last.
 - `export const bundle = <style apply={[a, b]} />;` composes themes without CSS
   of its own; `bundle.$class` is the two themes' classes.
-- Same-module targets are inlined as string literals. Imported themes are read
-  at runtime through `theme.$class`.
+- A theme from the same module is written into the output as a string literal.
+  An imported theme is read at runtime through `theme.$class`.
 - A theme must be declared before the block that applies it (compile error
-  otherwise), and its CSS is emitted before the applier's, so the local rule
-  wins at equal specificity.
-- The stamped class list of an element is: authored classes, enclosing scope
-  hashes outer to inner, then the applied themes' classes.
+  otherwise), and its CSS comes before the CSS of the block that applies it, so
+  the local rule wins at equal specificity.
+- An element's class list is: its authored classes, the hash classes of the
+  scopes around it outer to inner, then the applied themes' classes.
 
 ```tsrx
 // theme.tsrx
@@ -991,11 +1035,11 @@ export function Card() @{
 ```
 
 Every element of `Panel` carries `A theme.$class`; the nested `div` carries
-`A B theme.$class`. The emitted CSS order is `base`, `theme`, scope A, scope B.
+`A B theme.$class`. The CSS order is `base`, `theme`, scope A, scope B.
 
-#### Opting elements in with `$class`
+#### Opt single elements in with `$class`
 
-`apply` stamps every element of a scope. To pick elements instead, put
+`apply` reaches every element of a scope. To pick elements instead, put
 `theme.$class` on them:
 
 - `class={theme.$class}` opts one element in: it matches the theme's element and
@@ -1005,7 +1049,7 @@ Every element of `Panel` carries `A theme.$class`; the nested `div` carries
   element selectors are kept; a block read only through class entries stays a
   class map.
 - Pass `theme.$class` to a child component through a prop to opt its elements
-  in; the child stamps it ahead of its own scope hash.
+  in; on the child's elements it comes before the child's own hash class.
 - `$class` and `apply` combine. Listing several themes' `$class` values on one
   element composes them there the way `apply={[a, b]}` does on a scope.
 
@@ -1048,11 +1092,13 @@ kept and scoped as `div.<hash>`. Only the opted-in `<div>` and `Card`'s
 `<article>` and `<h2>` match it; the `<p>` carries nothing from `theme`. Inside
 `Card`, the compiled class is `` `${parentClass} <card-hash>` ``.
 
-`@layer` rules inside a block pass through unchanged, and the selectors inside
+### Cascade layers pass through
+
+`@layer` rules inside a block are kept as written, and the selectors inside
 them are still scoped. TSRX does not build scoping on `@layer`: layers order
 rules globally and cannot be attached to one subtree of elements, while sibling
-scoping gives an order that can be read off the file and `apply` stamps
-classes on exactly the elements of one scope.
+scoping gives an order that can be read off the file and `apply` adds classes
+to exactly the elements of one scope.
 
 ## Target-specific behavior
 

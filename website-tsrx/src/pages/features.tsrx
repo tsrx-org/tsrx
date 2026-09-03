@@ -254,6 +254,34 @@ const SCOPED_STYLES_HTML = highlight_tsrx(
 }`,
 );
 
+const STYLE_FRAGMENT_HTML = highlight_tsrx(
+	`function Note({ open }: { open: boolean }) @{
+  <div>
+    @if (open) {
+      // Error: two output nodes in one branch.
+      <style>
+        p { color: red; }
+      </style>
+      <p>Red</p>
+    }
+  </div>
+}
+
+function Note({ open }: { open: boolean }) @{
+  <div>
+    @if (open) {
+      // Works: one output node, a fragment holding the block and the <p>.
+      <>
+        <style>
+          p { color: red; }
+        </style>
+        <p>Red</p>
+      </>
+    }
+  </div>
+}`,
+);
+
 const CONTROL_FLOW_STYLES_HTML = highlight_tsrx(
 	`function Status({ ready }: { ready: boolean }) @{
   <>
@@ -889,170 +917,209 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="scoped-styles">
 							<h2 class="section-heading">Scoped styles</h2>
 							<p class="section-body">
-								A TSRX template can include
+								A
 								<code class="inline-code">{'<style>'}</code>
-								blocks. The compiler rewrites every selector with a hash and stamps that hash on the
-								elements the block reaches, so rules only apply inside the template that declares
-								them and never leak into child components.
+								block styles only the elements next to it and below it. The compiler rewrites every
+								selector in the block to also require a hash class: a class it adds to each element
+								the block reaches, so the block's selectors match only there. Rules never leak into
+								child components.
 							</p>
+							<h3 class="subsection-heading">
+								A block styles its siblings and everything below them
+							</h3>
 							<p class="section-body">
-								Styles are scoped to siblings. A block is a child of an element or a fragment, and
-								that children list is its sibling scope: the block styles its siblings and
-								everything below them, and it never styles the element that contains it. To style an
-								element, make the block and the element siblings in a fragment. A
-								<code class="inline-code">{'@{ ... }'}</code>
-								body and every
-								<code class="inline-code">@if</code>
-								,
-								<code class="inline-code">@for</code>
-								,
-								<code class="inline-code">@switch</code>
-								, or
-								<code class="inline-code">@try</code>
-								body render exactly one output node, and a
+								A
 								<code class="inline-code">{'<style>'}</code>
-								block is an output node like any other, so wrap it with its output in a fragment
-								there. Several blocks written in one children list share one hash; a nested list
-								with blocks of its own is a nested scope with its own hash.
-							</p>
-							<p class="section-body">
-								Raw CSS in
-								<code class="inline-code">{'<style>'}</code>
-								is TSRX template syntax: a block with CSS text needs an enclosing
-								<code class="inline-code">{'@{ ... }'}</code>
-								body or control-flow body somewhere above it. In plain TSX,
-								<code class="inline-code">{'<style>'}</code>
-								is an ordinary element whose content is an expression child,
-								<code class="inline-code">{'<style>{css}</style>'}</code>
-								; the compiler leaves it untouched and never scopes or stamps it.
+								block is a child of an element or a fragment. It styles the other children of that
+								list and everything below them. It never styles the element that contains it. To
+								style an element, put the block and the element side by side in a fragment.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={SCOPED_STYLES_HTML} />
 							</pre>
 							<p class="section-body">
-								Every element carries the hash of each enclosing scope, outer first: the outer
-								<code class="inline-code">div</code>
-								, the
-								<code class="inline-code">section</code>
-								, and the trailing
+								Every element gets the hash class of each scope around it, outer first. The outer
+								<code class="inline-code">div</code>, the
+								<code class="inline-code">section</code>, and the trailing
 								<code class="inline-code">p</code>
-								are stamped with scope A, and the nested
+								get the hash class of scope A; the nested
 								<code class="inline-code">div</code>
-								with A and B. Outer rules therefore reach into nested scopes, while inner rules
-								never reach out, and a selector that only matches the containing element is pruned
-								as unused. Stamping stops at function boundaries, so elements returned from a
-								callback such as
+								gets A and B. Outer rules reach into nested scopes; inner rules never reach out.
+								Elements returned from a callback such as
 								<code class="inline-code">{'items.map((item) => <li />)'}</code>
-								are not part of the scope.
+								are outside the scope and get no hash class.
 							</p>
+							<h3 class="subsection-heading">Sibling blocks share one hash class</h3>
 							<p class="section-body">
-								Precedence follows the source. CSS is emitted in lexical order: outer scopes come
-								before the scopes nested in them (even when the nested scope is written first), a
-								scope's blocks emit together as one group in source order, sibling scopes follow
-								source order, and an applied theme comes before the block that applies it. At equal
-								specificity the rule emitted last wins, so the nested block above makes its
+								Several blocks in one children list share one hash class, so the
+								<code class="inline-code">{'p { margin: 0; }'}</code>
+								block above is part of scope A. A nested children list with blocks of its own is a
+								nested scope with its own hash class. A block can sit anywhere in its list; only the
+								list it sits in decides what it styles.
+							</p>
+							<h3 class="subsection-heading">Put a block and its output in one fragment</h3>
+							<p class="section-body">
+								A
+								<code class="inline-code">{'@{ ... }'}</code>
+								body and every
+								<code class="inline-code">@if</code>,
+								<code class="inline-code">@for</code>,
+								<code class="inline-code">@switch</code>, or
+								<code class="inline-code">@try</code>
+								branch render exactly one output node, and a
+								<code class="inline-code">{'<style>'}</code>
+								block counts as an output node. A block beside the output is an error, and a block
+								that is the only output styles nothing. Wrap the block and the output it styles in a
+								fragment.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={STYLE_FRAGMENT_HTML} />
+							</pre>
+							<h3 class="subsection-heading">Raw CSS needs a template around it</h3>
+							<p class="section-body">
+								Raw CSS in
+								<code class="inline-code">{'<style>'}</code>
+								is TSRX template syntax. A block with CSS in it needs a
+								<code class="inline-code">{'@{ ... }'}</code>
+								body or a control-flow branch somewhere above it. In plain TSX, write
+								<code class="inline-code">{'<style>{css}</style>'}</code>: that is an ordinary
+								element with an expression child. The compiler leaves it untouched, gives it no hash
+								class, and never scopes it.
+							</p>
+							<h3 class="subsection-heading">Later rules win</h3>
+							<p class="section-body">
+								CSS is output in source order, outer scopes first, and at equal specificity the rule
+								output last wins. Outer scopes come before the scopes nested in them, even when the
+								nested scope is written first. A scope's blocks stay together as one group, in
+								source order. Sibling scopes follow source order. An applied theme comes before the
+								block that applies it. In the first example, the nested block makes its
 								<code class="inline-code">div</code>
 								bold without disturbing the color the outer block set.
+							</p>
+							<h3 class="subsection-heading">A block in a branch styles only that branch</h3>
+							<p class="section-body">
+								A
+								<code class="inline-code">{'<style>'}</code>
+								block inside an
+								<code class="inline-code">@if</code>
+								or
+								<code class="inline-code">@for</code>
+								branch applies only to the elements that branch renders. Its CSS is still always
+								part of the file's stylesheet, whether or not the branch ever renders, because CSS
+								is static. Rules you want everywhere belong outside the branch.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={CONTROL_FLOW_STYLES_HTML} />
 							</pre>
 							<p class="section-body">
-								Control-flow bodies are scopes too, with one caveat: the CSS of a block inside an
-								<code class="inline-code">@if</code>
-								,
-								<code class="inline-code">@for</code>
-								,
-								<code class="inline-code">@switch</code>
-								, or
-								<code class="inline-code">@try</code>
-								body is always emitted, whichever branch renders. Only the class stamping follows
-								the branch. Selectors that match nothing the block can reach are dropped from the
-								output as
+								<code class="inline-code">.status</code>
+								sits outside the branches and reaches both of them.
+								<code class="inline-code">.ok</code>
+								matches only the
+								<code class="inline-code">p</code>
+								in the ready branch and
+								<code class="inline-code">.wait</code>
+								only the
+								<code class="inline-code">p</code>
+								in the other one, and both rules are in the stylesheet at all times.
+							</p>
+							<h3 class="subsection-heading">Unused selectors are removed</h3>
+							<p class="section-body">
+								A selector that matches nothing the block can reach is removed from the output and
+								left behind as a
 								<code class="inline-code">
 									/* (unused) */
 								</code>
-								comments.
+								comment. That includes a selector that only matches the element containing the
+								block: the block cannot reach it.
 							</p>
+							<h3 class="subsection-heading">Escape the scope with :global()</h3>
 							<p class="section-body">
-								To escape scoping and apply styles globally, wrap a selector in
-								<code class="inline-code">:global()</code>
-								. This lets you reach into child components or target elements outside the current
-								scope.
+								To apply a rule globally, wrap the selector in
+								<code class="inline-code">:global()</code>. This reaches into child components or
+								elements outside the current scope.
 							</p>
 							<p class="section-body muted">
 								React note: TSRX keeps authored attributes as written. Use
 								<code class="inline-code">className</code>
-								on React host elements and React component props, just like ordinary JSX.
-								Compiler-injected scoped style hashes still use React's
-								<code class="inline-code">className</code>
-								output when needed.
+								on React host elements and React component props, just like ordinary JSX. The hash
+								class the compiler adds still goes out through React's
+								<code class="inline-code">className</code>.
 							</p>
 						</section>
 						<section class="doc-section" id="style-composition">
 							<h2 class="section-heading">Style composition</h2>
 							<p class="section-body">
+								Assign a
+								<code class="inline-code">{'<style>'}</code>
+								block to a variable to get a theme you can hand to other scopes and components.
+							</p>
+							<h3 class="subsection-heading">Assigning a block gives you an object</h3>
+							<p class="section-body">
 								Assigning a
 								<code class="inline-code">{'<style>'}</code>
-								expression to a variable turns it into a theme object instead of a scoped block. The
-								object exposes
-								<code class="inline-code">$class</code>
-								, the block's own scope hash, plus one key per class selector whose value is the
-								hash and the class name together. Pass those strings to child components as props
-								through
-								<code class="inline-code">class</code>
-								, or
+								expression to a variable turns it into an object instead of a scoped block. The
+								object has
+								<code class="inline-code">$class</code>, the block's own hash class, plus one key
+								per class selector whose value is the hash class and the class name together. Pass
+								those strings to child components through
+								<code class="inline-code">class</code>, or
 								<code class="inline-code">className</code>
 								for React components. The block can live at module scope or inside a component body.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={THEME_CLASS_HTML} />
 							</pre>
+							<h3 class="subsection-heading">
+								A theme keeps every selector; a class map keeps only classes
+							</h3>
 							<p class="section-body">
 								A block that is exported, applied, or whose
 								<code class="inline-code">$class</code>
-								is read is a theme and keeps every selector, element and descendant selectors
-								included. A local block whose only reads are class entries such as
+								is read is a theme. It keeps every selector, element and descendant selectors
+								included. A block that is only read through class entries such as
 								<code class="inline-code">styles.card</code>
-								keeps only its standalone class selectors; the rest are pruned because no element
-								can carry its hash.
+								is a class map. It keeps only its standalone class selectors; the others are removed
+								as unused, because no element can get its hash class.
 							</p>
+							<h3 class="subsection-heading">apply adds a theme to a whole scope</h3>
 							<p class="section-body">
 								<code class="inline-code">{'<style apply={theme} />'}</code>
-								stamps the theme's
+								adds the theme's
 								<code class="inline-code">$class</code>
-								on every element of the scope it sits in, so the theme's element and descendant
+								to every element of the scope it sits in, so the theme's element and descendant
 								rules reach those elements as if the theme had been written there. A self-closed
-								apply adds no hash of its own;
+								apply adds no hash class of its own.
 								<code class="inline-code">{'<style apply={theme}>...</style>'}</code>
-								does both, applying the theme and declaring a scoped block in one go.
+								does both: it applies the theme and declares a scoped block in one go.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={STYLE_APPLY_HTML} />
 							</pre>
+							<h3 class="subsection-heading">The local rule wins</h3>
 							<p class="section-body">
-								The local rule wins. A theme's CSS is emitted before the block that applies it, and
-								a theme must be declared before any block that applies it, so a rule written in the
-								applying scope beats the theme's rule at equal specificity: the
+								A theme's CSS is output before the block that applies it, and a theme must be
+								declared before any block that applies it. So a rule written in the applying scope
+								beats the theme's rule at equal specificity: the
 								<code class="inline-code">div</code>
-								above is black, not green. Same-module themes are inlined as string literals;
-								imported themes are read at runtime through
-								<code class="inline-code">theme.$class</code>
-								.
+								above is black, not green. A theme from the same module is written into the output
+								as a string literal; an imported theme is read at runtime through
+								<code class="inline-code">theme.$class</code>.
 							</p>
+							<h3 class="subsection-heading">Themes compose</h3>
 							<p class="section-body">
-								Themes compose. A theme can apply another theme, and
+								A theme can apply another theme, and
 								<code class="inline-code">{'apply={[a, b]}'}</code>
 								applies several in order. The resulting
 								<code class="inline-code">$class</code>
-								lists the applied themes' classes first and the block's own hash last, so a composed
-								theme reaches an element with everything it was built from.
+								lists the applied themes' classes first and the block's own hash class last, so a
+								composed theme reaches an element with everything it was built from.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={THEME_COMPOSITION_HTML} />
 							</pre>
 							<h3 class="subsection-heading">
-								Opting elements in with
+								Opt single elements in with
 								<code class="inline-code">$class</code>
 							</h3>
 							<p class="section-body">
@@ -1064,7 +1131,7 @@ export const FeaturesPage = () => @{
 								anywhere in the module makes the block a theme, so its element and descendant rules
 								are kept, and only the elements that carry the class match them. The value is a
 								plain string, so a child component can take it through a prop and put it on its own
-								elements, where it lands ahead of the child's own scope hash.
+								elements, where it comes before the child's own hash class.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={THEME_OPT_IN_HTML} />
@@ -1075,14 +1142,14 @@ export const FeaturesPage = () => @{
 								when a theme should reach a handful of elements, or elements the parent does not
 								render itself, and
 								<code class="inline-code">apply</code>
-								when it should reach a whole scope. The two combine, and listing several themes'
+								when it should reach a whole scope. The two combine. Listing several themes'
 								<code class="inline-code">$class</code>
 								values on one element composes them there the way
 								<code class="inline-code">{'apply={[a, b]}'}</code>
 								composes them on a scope.
 							</p>
+							<h3 class="subsection-heading">Cascade layers pass through</h3>
 							<p class="section-body">
-								Cascade layers pass through.
 								<code class="inline-code">@layer</code>
 								rules inside a block are kept as written, and the selectors inside them are still
 								scoped, so a codebase that already orders its layers can keep doing so.
@@ -1092,12 +1159,12 @@ export const FeaturesPage = () => @{
 							</pre>
 							<p class="section-body muted">
 								Why not build scoping on
-								<code class="inline-code">@layer</code>
-								? Layers order rules globally: every participant has to agree on layer names and
-								declare their order up front, and a layer cannot be attached to one subtree of
-								elements. Sibling scoping gives an order you can read off the file, and
+								<code class="inline-code">@layer</code>? Layers order rules globally: every
+								participant has to agree on layer names and declare their order up front, and a
+								layer cannot be attached to one subtree of elements. Sibling scoping gives an order
+								you can read off the file, and
 								<code class="inline-code">apply</code>
-								stamps classes, so a theme reaches exactly the elements of one scope.
+								adds classes, so a theme reaches exactly the elements of one scope.
 							</p>
 						</section>
 					</main>

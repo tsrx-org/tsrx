@@ -32,8 +32,9 @@ files, then compiles that source into idiomatic output for the runtime you choos
 A component is an ordinary TypeScript function. A statement container (`@{ ... }`)
 lets local setup live beside the template that uses it, while template directives
 provide declarative control flow. A `<style>` block is scoped to its siblings: it
-styles the items beside it and everything below them, so the rules below apply to
-this fragment's `<ul>`.
+styles the elements beside it and everything below them, and nothing else. The
+compiler adds a hash class to those elements so the block's selectors match only
+there. Here the rules apply to this fragment's `<ul>`.
 
 ```tsx
 type Todo = {
@@ -72,10 +73,9 @@ export function TodoList({ items }: { items: Todo[] }) @{
   scope.
 - Template-native `@if`, `@for`, `@switch`, and `@try` control flow.
 - Lazy object and array destructuring with `&{ ... }` and `&[ ... ]`.
-- Sibling-scoped `<style>` blocks (a block styles its siblings and everything
-  below them; sibling blocks share one hash) with automatic class hashing, plus
-  assignable style themes that expose `$class` and compose through
-  `<style apply={theme} />`.
+- Sibling-scoped `<style>` blocks: a block styles its siblings and everything
+  below them, sibling blocks share one hash class, and assignable style themes
+  expose `$class` and compose through `<style apply={theme} />`.
 - Language-server, TypeScript, Prettier, ESLint, and editor integrations.
 
 See the [features guide](https://tsrx.dev/features) for examples and the

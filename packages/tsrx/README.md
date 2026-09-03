@@ -65,16 +65,18 @@ here and keeps package docs focused on the core parser API.
 - **AST utilities** — pattern walkers, identifier extraction, builders, location
   helpers, obfuscation helpers.
 - **CSS support** — `parseStyle`, `analyzeCss`, `renderStylesheets`.
-- **Scoped styles** — `analyzeTsrx` resolves every `<style>` block: standalone
-  blocks are children of an element or fragment and scope that children list,
-  styling the items beside them and everything below, never the containing element
-  (a block is an output node: as the lone output of a `@{ … }` or control-flow
-  body it is `STYLE_STANDALONE_NEEDS_FRAGMENT`; raw CSS is TSRX template syntax,
-  so a bodied block outside every `@{ … }`/control-flow body is
+- **Scoped styles** — `analyzeTsrx` resolves every `<style>` block. A standalone
+  block is a child of an element or fragment and is scoped to its siblings: it
+  styles the items beside it and everything below them, never the element that
+  contains it, and the compiler adds a hash class to those elements so the block's
+  selectors match only there. A block is an output node, so a block that is the
+  lone output of a `@{ … }` or control-flow body is
+  `STYLE_STANDALONE_NEEDS_FRAGMENT`. Raw CSS is TSRX template syntax, so a block
+  with CSS in it outside every `@{ … }`/control-flow body is
   `STYLE_STANDALONE_OUTSIDE_TEMPLATE`; plain-TSX `<style>{css}</style>` is an
-  ordinary element), assigned blocks (`const theme = <style>…</style>`) are
-  classified as `theme` (exported or applied) or `class-map`, and `apply` targets
-  are resolved through real bindings with declared-before-use enforced. Results
+  ordinary element. Assigned blocks (`const theme = <style>…</style>`) are
+  classified as `theme` (exported, applied, or `$class` read) or `class-map`, and
+  `apply` targets are resolved through real bindings, declared before use. Results
   ride on each block's `metadata` (`styleKind`, `styleApplies`, `styleApplied`,
   `styleExported`) and on `program.metadata.styles`, and the analysis result
   exposes `scopes`. Target compilers use `prepareStylesheetForRender(sheet, mode)`

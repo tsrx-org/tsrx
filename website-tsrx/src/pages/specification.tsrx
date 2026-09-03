@@ -973,69 +973,72 @@ export function SpecificationPage() @{
 								standalone block styles, the value an assigned block evaluates to, the meaning of
 								the
 								<code class="inline-code">apply</code>
-								attribute, and the order in which a module's stylesheets are emitted are part of
-								core TSRX. The host is responsible for the text of generated hashes, the name of the
-								class attribute it stamps, selector rewriting, stylesheet registration, and for
-								injecting a module's CSS before the CSS of every module that imports it.
+								attribute, and the order in which a module's stylesheets are output are part of core
+								TSRX. A conforming implementation rewrites every selector of a scoped block to
+								require a hash class: a class it adds to each element the block reaches, so that the
+								block's selectors match only there. The host is responsible for the text of
+								generated hash classes, the name of the class attribute it adds them to, selector
+								rewriting, stylesheet registration, and for injecting a module's CSS before the CSS
+								of every module that imports it.
 							</p>
 							<pre class="code-block plain">
 								<code>{STYLE_GRAMMAR}</code>
 							</pre>
 							<p class="section-body">
 								A style body is captured as raw CSS text. A self-closing style element has no body,
-								no stylesheet, and no hash of its own; it exists to carry an
+								no stylesheet, and no hash class of its own; it exists to carry an
 								<code class="inline-code">apply</code>
 								attribute. A scoped style block admits exactly two attributes:
-								<code class="inline-code">ref</code>
-								, whose value receives the class-map object of the block's scope (4.6.3), and
-								<code class="inline-code">apply</code>
-								, whose value must be a StyleApplyValue. Style elements inside a
+								<code class="inline-code">ref</code>, whose value receives the class-map object of
+								the block's scope (4.6.3), and
+								<code class="inline-code">apply</code>, whose value must be a StyleApplyValue. Style
+								elements inside a
 								<code class="inline-code">{'<head>'}</code>
 								element and style elements carrying an
 								<code class="inline-code">href</code>
 								attribute (resource styles) are outside the scope model of this section: they admit
 								any attribute, are not scoped, and do not admit
-								<code class="inline-code">apply</code>
-								.
+								<code class="inline-code">apply</code>.
 							</p>
-							<h3 class="appendix-heading">4.6.1 Standalone and assigned blocks</h3>
+							<h3 class="appendix-heading">4.6.1 A block is standalone or assigned</h3>
 							<p class="section-body">
-								A style element is standalone when it is template content: a child of a native
-								element or fragment, the output node of a JSXCodeBlock or of a control-flow body, or
-								a bare statement. Only the first placement is valid. A style element is an output
-								node like any other, so a block beside the output node of a JSXCodeBlock or a
-								control-flow body is the ordinary multiple-outputs error, and a block that is the
-								lone output of such a body, or a statement, is an early error (5.1): wrap it with
-								the output it styles in a fragment. Any number of standalone blocks may appear in
-								one children list. A style element in any other position is assigned: a variable
+								A style element is standalone when it is written as template content: a child of a
+								native element or fragment, the output node of a JSXCodeBlock or of a control-flow
+								body, or a bare statement. Only the first placement is valid. A style element is an
+								output node like any other. A block beside the output node of a JSXCodeBlock or a
+								control-flow body is the ordinary multiple-outputs error. A block that is the lone
+								output of such a body, or a statement, is an early error (5.1): wrap it with the
+								output it styles in a fragment. Any number of standalone blocks may appear in one
+								children list. A style element in any other position is assigned: a variable
 								initializer, an object property value, a default export, or any other expression
 								value. Assigned blocks are legal wherever a JavaScript expression is legal,
 								including module scope, function bodies, and nested code blocks. A standalone block
 								at module scope is an early error (5.1).
 							</p>
 							<p class="section-body">
-								Raw CSS in a style element is TSRX template syntax. A standalone block whose content
-								is CSS text must sit lexically inside a JSXCodeBlock body or a control-flow body, at
-								any depth of native elements, fragments, expression containers, callbacks, or
-								templates assigned inside such a body; anywhere else it is an early error (5.1).
-								Plain TSX keeps the TSX rule: a
+								Raw CSS in a style element is TSRX template syntax. A standalone block with CSS in
+								it must sit lexically inside a JSXCodeBlock body or a control-flow body, at any
+								depth of native elements, fragments, expression containers, callbacks, or templates
+								assigned inside such a body; anywhere else it is an early error (5.1). Plain TSX
+								keeps the TSX rule: a
 								<code class="inline-code">{'<style>'}</code>
 								element whose first child is an expression container, written
-								<code class="inline-code">{'<style>{css}</style>'}</code>
-								, is an ordinary JSXElement with no stylesheet, no scope, and no hash, and is never
-								stamped. Head styles and resource styles remain exempt.
+								<code class="inline-code">{'<style>{css}</style>'}</code>, is an ordinary JSXElement
+								with no stylesheet, no scope, and no hash class, and the implementation adds nothing
+								to it. Head styles and resource styles remain exempt.
 							</p>
-							<h3 class="appendix-heading">4.6.2 Sibling scopes</h3>
+							<h3 class="appendix-heading">
+								4.6.2 A block styles its siblings and everything below them
+							</h3>
 							<p class="section-body">
 								A standalone block is scoped to its siblings. A sibling scope is the children list
 								of a native element or fragment that holds at least one standalone block, and a
 								standalone block belongs to the children list it is written in. It styles the other
-								children of that list and their descendants: the block styles its siblings and
-								everything below them, and it never styles the element that contains it, nor any
-								ancestor. To style an element, make the block and the element siblings in a
-								fragment. Children lists nested in a scope that hold blocks are nested scopes,
-								whether they sit directly below or inside a nested JSXCodeBlock or a control-flow
-								body. Every
+								children of that list and their descendants, and it never styles the element that
+								contains it, nor any ancestor. To style an element, make the block and the element
+								siblings in a fragment. Children lists nested in a scope that hold blocks are nested
+								scopes, whether they sit directly below or inside a nested JSXCodeBlock or a
+								control-flow body. Every
 								<code class="inline-code">@if</code>
 								branch, the
 								<code class="inline-code">@for</code>
@@ -1046,45 +1049,47 @@ export function SpecificationPage() @{
 								and
 								<code class="inline-code">@default</code>
 								body, and the
-								<code class="inline-code">@try</code>
-								,
-								<code class="inline-code">@pending</code>
-								, and
+								<code class="inline-code">@try</code>,
+								<code class="inline-code">@pending</code>, and
 								<code class="inline-code">@catch</code>
 								blocks render one output node, and a fragment there is a scope of its own.
 							</p>
 							<p class="section-body">
-								Sibling blocks share one hash. All standalone blocks of one list share one scope
-								hash: the position-derived hash of the first block in source order that has a body.
-								Two blocks in one element's children list share a hash; a block in an enclosing
-								fragment and a block in that element's children list do not. The implementation
-								stamps the scope hash on every native element among the list's items and their
-								descendants, through nested scopes, so an element carries the hash of every
-								enclosing scope, outermost first. A composite component element receives no classes
-								of its own, although native elements written as its children still belong to the
-								scope, and stamping stops at function boundaries. A scope whose blocks are all
-								self-closing has no hash of its own.
+								Sibling blocks share one hash class. All standalone blocks of one list share one
+								scope hash: the position-derived hash of the first block in source order that has a
+								body. Two blocks in one element's children list share a hash class; a block in an
+								enclosing fragment and a block in that element's children list do not. The
+								implementation adds the scope's hash class to every native element among the list's
+								items and their descendants, through nested scopes, so an element carries the hash
+								class of every enclosing scope, outermost first. A composite component element
+								receives no classes of its own, although native elements written as its children
+								still belong to the scope, and no hash class is added past a function boundary. A
+								scope whose blocks are all self-closing has no hash class of its own.
 							</p>
 							<pre class="code-block plain">
 								<code>{STYLE_SCOPE_EXAMPLE}</code>
 							</pre>
 							<p class="section-body">
-								Pruning is per scope, against the list's other children and their subtrees: a
-								selector of a standalone block that matches no element the block reaches is unused,
-								including a selector that matches only the element containing the block. Fragments
-								in control-flow bodies are scopes like any other. Their blocks are stamped only on
-								the elements of their own branch, but their CSS is static and is emitted whether or
-								not the branch ever renders.
+								Unused selectors are removed per scope, against the list's other children and their
+								subtrees: a selector of a standalone block that matches no element the block reaches
+								is unused, including a selector that matches only the element containing the block.
+								A block inside an
+								<code class="inline-code">@if</code>
+								or
+								<code class="inline-code">@for</code>
+								branch styles only the elements that branch renders: its hash class is added only to
+								the elements of its own branch. Its CSS is still always part of the module's
+								stylesheet, whether or not the branch ever renders, because CSS is static.
 							</p>
 							<h3 class="appendix-heading">
-								4.6.3 Assigned blocks, $class, themes, and class maps
+								4.6.3 An assigned block evaluates to an object with $class
 							</h3>
 							<p class="section-body">
 								An assigned block evaluates to an object. Its first property is
-								<code class="inline-code">$class</code>
-								, a string, followed by one property for every class selector that stands alone as a
-								complete selector in the block; the value of such a property is the block's hash, a
-								space, and the class name. A class selector named
+								<code class="inline-code">$class</code>, a string, followed by one property for
+								every class selector that stands alone as a complete selector in the block; the
+								value of such a property is the block's hash class, a space, and the class name. A
+								class selector named
 								<code class="inline-code">$class</code>
 								in an assigned block is an early error.
 							</p>
@@ -1095,9 +1100,9 @@ export function SpecificationPage() @{
 								in its module, or has its
 								<code class="inline-code">$class</code>
 								property read anywhere in its module; otherwise it is a class map. A theme keeps
-								every selector, each scoped under the block's hash. A class map keeps only the class
-								selectors its object exposes; every other selector is pruned as unused. Reading a
-								class property such as
+								every selector, each scoped under the block's hash class. A class map keeps only the
+								class selectors its object exposes; every other selector is removed as unused.
+								Reading a class property such as
 								<code class="inline-code">styles.card</code>
 								does not make a block a theme.
 							</p>
@@ -1107,14 +1112,14 @@ export function SpecificationPage() @{
 								<code class="inline-code">$class</code>
 								of every applied block, in
 								<code class="inline-code">apply</code>
-								order, followed by the block's own hash. A block without a body exposes
+								order, followed by the block's own hash class. A block without a body exposes
 								<code class="inline-code">$class</code>
-								only and contributes no hash. A repeated hash in a class list has no CSS effect, and
-								an implementation may drop repeats it can resolve statically. A same-module target
-								whose
+								only and contributes no hash class. A repeated hash class in a class list has no CSS
+								effect, and an implementation may drop repeats it can resolve statically. A
+								same-module target whose
 								<code class="inline-code">$class</code>
-								is fully static may be inlined as a string literal; an imported target is a runtime
-								read of its
+								is fully static may be written into the output as a string literal; an imported
+								target is a runtime read of its
 								<code class="inline-code">$class</code>
 								property.
 							</p>
@@ -1128,11 +1133,11 @@ export function SpecificationPage() @{
 								applying scope does (4.6.4), and no other element is affected. The value is an
 								ordinary string, so it may be passed to a component as a prop and placed on that
 								component's elements; it is then an authored class of those elements and precedes
-								the hashes of their own enclosing scopes.
+								the hash classes of their own enclosing scopes.
 								<code class="inline-code">$class</code>
 								is the selective counterpart of
-								<code class="inline-code">apply</code>
-								, which stamps every element of a scope, and the two may be combined. Listing the
+								<code class="inline-code">apply</code>, which reaches every element of a scope, and
+								the two may be combined. Listing the
 								<code class="inline-code">$class</code>
 								of several themes on one element composes them there as
 								<code class="inline-code">{'apply={[a, b]}'}</code>
@@ -1141,51 +1146,56 @@ export function SpecificationPage() @{
 							<pre class="code-block plain">
 								<code>{STYLE_THEME_EXAMPLE}</code>
 							</pre>
-							<h3 class="appendix-heading">4.6.4 apply</h3>
+							<h3 class="appendix-heading">
+								4.6.4 apply adds a theme's $class to every element of a scope
+							</h3>
 							<p class="section-body">
 								<code class="inline-code">apply</code>
-								on a standalone block attaches the
+								on a standalone block adds the
 								<code class="inline-code">$class</code>
 								of each listed block to every element the block's scope reaches, after every
-								enclosing scope hash, outer scopes' entries first and each scope's entries in source
-								order.
+								enclosing scope's hash class, outer scopes' entries first and each scope's entries
+								in source order.
 								<code class="inline-code">apply</code>
 								on an assigned block merges into that block's
-								<code class="inline-code">$class</code>
-								. Each entry resolves with ordinary lexical scoping from the position of the style
-								element and must name an assigned block: a binding whose initializer is a style
-								element, an import, or a non-computed member chain rooted at an import or at a
-								module-local object literal whose named property holds a style element. Any other
-								entry, including a call, a conditional, a spread element, or an array hole, is an
-								early error.
+								<code class="inline-code">$class</code>. Each entry resolves with ordinary lexical
+								scoping from the position of the style element and must name an assigned block: a
+								binding whose initializer is a style element, an import, or a non-computed member
+								chain rooted at an import or at a module-local object literal whose named property
+								holds a style element. Any other entry, including a call, a conditional, a spread
+								element, or an array hole, is an early error.
 							</p>
 							<p class="section-body">
 								A same-module target must be declared before the block that applies it, by source
 								position. This is deliberately stricter than the ECMAScript temporal dead zone:
-								same-module CSS is emitted in lexical order, so a target declared after its applier
-								would win the cascade instead of losing it. Imports are hoisted and always satisfy
-								the rule.
+								same-module CSS is output in source order, so a target declared after the block that
+								applies it would win the cascade instead of losing it. Imports are moved to the top
+								of the module by the language, so they always satisfy the rule.
 							</p>
-							<h3 class="appendix-heading">4.6.5 Emission order and precedence</h3>
+							<h3 class="appendix-heading">
+								4.6.5 Later rules win: stylesheets are output in source order, outer first
+							</h3>
 							<p class="section-body">
-								Every generated hash is a single class, so all scoped rules have equal specificity
-								and document order decides. A conforming implementation emits a module's stylesheets
-								in lexical pre-order, and the following rules are normative.
+								Every generated hash class is a single class, so all scoped rules have equal
+								specificity and document order decides. A conforming implementation outputs a
+								module's stylesheets in source order, outer scopes first, and the following rules
+								are normative.
 							</p>
 							<ul class="spec-list">
 								<li>
 									Outer before inner. A scope's sheets form one contiguous group in source order,
 									placed where the scope's first block sits and before the groups of the scopes
 									nested inside it, even when one of its blocks is written after a nested scope.
-									Sibling scopes emit in source order, and an assigned block emits at its
+									Sibling scopes are output in source order, and an assigned block is output at its
 									declaration position.
 								</li>
 								<li>
-									Applied before applier. A same-module target precedes the block that applies it
-									because it must be declared first, and a host must inject an imported module's CSS
-									before the CSS of the module that imports it. The array position of an
+									Applied theme before the block that applies it. A same-module target precedes the
+									block that applies it because it must be declared first, and a host must inject an
+									imported module's CSS before the CSS of the module that imports it. The array
+									position of an
 									<code class="inline-code">apply</code>
-									entry decides which classes are stamped, not their precedence.
+									entry decides which classes are added, not their precedence.
 								</li>
 								<li>Source order within a scope. Of two blocks in one scope, the later wins.</li>
 							</ul>
@@ -1367,9 +1377,10 @@ export function SpecificationPage() @{
 								</li>
 							</ul>
 							<p class="section-body">
-								The precedence rules of 4.6.5 are constraints on the emitted stylesheets: outer
-								before inner, applied before applier, and source order within a scope. An
-								implementation that emits sheets in any other order does not conform.
+								The precedence rules of 4.6.5 are constraints on the output stylesheets: outer
+								before inner, applied theme before the block that applies it, and source order
+								within a scope. An implementation that outputs sheets in any other order does not
+								conform.
 							</p>
 							<pre class="code-block plain">
 								<code>{STYLE_STATIC_CONSTRAINTS}</code>

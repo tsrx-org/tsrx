@@ -99,9 +99,10 @@ describe('@tsrx/mcp documentation index', () => {
 		// Scope model.
 		expect(content).toContain('that children list is its sibling scope');
 		expect(content).toContain('never styles the element that contains it');
-		expect(content).toContain('share one hash');
-		expect(content).toContain('outermost first');
-		expect(content).toContain('ships unconditionally');
+		expect(content).toContain('require a hash class');
+		expect(content).toContain('share one hash class');
+		expect(content).toContain('outer first');
+		expect(content).toContain('always part of the file');
 		expect(content).toContain('A standalone block at module scope is an error');
 
 		// $class, themes, and apply.
@@ -132,7 +133,7 @@ describe('@tsrx/mcp documentation index', () => {
 
 		// Precedence rules.
 		expect(content).toContain('Outer before inner');
-		expect(content).toContain('Applied before applier');
+		expect(content).toContain('Applied theme before the block that applies it');
 		expect(content).toContain('Source order within a scope');
 	});
 
