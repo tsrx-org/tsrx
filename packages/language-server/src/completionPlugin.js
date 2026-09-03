@@ -385,7 +385,7 @@ const STYLE_SNIPPETS = [
 		kind: CompletionItemKind.Snippet,
 		detail: 'Scoped style block',
 		documentation:
-			'A lexically scoped `<style>` block. Its class selectors apply to the elements of the enclosing template scope; assign it (`const theme = <style>…</style>`) to reuse its classes as `theme.card` and apply it elsewhere with `<style apply={theme} />`.',
+			'A lexically scoped `<style>` block: a child of an element or fragment that styles the items beside it and everything below them, never the element that contains it (in a `@{ … }` or control-flow body, wrap it with its output in a fragment). Raw CSS here is TSRX template syntax, so it needs an enclosing `@{ … }` or control-flow body. Assign it (`const theme = <style>…</style>`) to reuse its classes as `theme.card` and apply it elsewhere with `<style apply={theme} />`.',
 		insertText: '<style>\n\t$0\n</style>',
 		insertTextFormat: InsertTextFormat.Snippet,
 		sortText: '0-style',
@@ -396,7 +396,7 @@ const STYLE_SNIPPETS = [
 		kind: CompletionItemKind.Snippet,
 		detail: 'Apply an assigned style block',
 		documentation:
-			'Stamp the classes of an assigned `<style>` block onto the enclosing template scope. `apply` takes a style block (`{theme}`) or an array of them (`{[base, theme]}`); a self-closing block has no CSS of its own.',
+			'Stamp the classes of an assigned `<style>` block onto the items beside this block and everything below them. `apply` takes a style block (`{theme}`) or an array of them (`{[base, theme]}`); a self-closing block has no CSS of its own.',
 		insertText: '<style apply={${1:theme}} />',
 		insertTextFormat: InsertTextFormat.Snippet,
 		sortText: '0-style-apply',

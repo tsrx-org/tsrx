@@ -17,8 +17,10 @@ describe('compile error diagnostic plugin — scoped style diagnostics', () => {
 	it('reports STYLE_APPLY_TARGET at the apply target identifier', async () => {
 		const { document, diagnostics } = await diagnostics_for(
 			`export function App() @{
-	<style apply={missing} />
-	<div>{'x'}</div>
+	<>
+		<style apply={missing} />
+		<div>{'x'}</div>
+	</>
 }`,
 		);
 
@@ -33,8 +35,10 @@ describe('compile error diagnostic plugin — scoped style diagnostics', () => {
 	it('reports STYLE_APPLY_BEFORE_DECLARATION at the apply target identifier', async () => {
 		const { document, diagnostics } = await diagnostics_for(
 			`export function App() @{
-	<style apply={later} />
-	<div>{'x'}</div>
+	<>
+		<style apply={later} />
+		<div>{'x'}</div>
+	</>
 }
 const later = <style>.a { color: red; }</style>;`,
 		);
@@ -50,8 +54,10 @@ const later = <style>.a { color: red; }</style>;`,
 		const { document, diagnostics } = await diagnostics_for(
 			`const themes = { dark: <style>.a { color: red; }</style> };
 export function App() @{
-	<style apply={themes.light} />
-	<div>{'x'}</div>
+	<>
+		<style apply={themes.light} />
+		<div>{'x'}</div>
+	</>
 }`,
 		);
 
@@ -64,8 +70,10 @@ export function App() @{
 		const { diagnostics } = await diagnostics_for(
 			`const theme = <style>.a { color: red; }</style>;
 export function App() @{
-	<style apply={theme} />
-	<div>{'x'}</div>
+	<>
+		<style apply={theme} />
+		<div>{'x'}</div>
+	</>
 }`,
 		);
 

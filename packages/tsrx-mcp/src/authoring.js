@@ -382,14 +382,17 @@ export function review_tsrx_styles(input) {
 
 		const css = block.css;
 		if (/^\s*\{/.test(css)) {
+			// `<style>{expr}</style>` is the ordinary TSX element: the compiler
+			// neither scopes nor extracts it, so it contributes no scoped styles.
 			issues.push({
 				kind: 'style-expression-body',
-				severity: 'error',
-				title: 'Write CSS directly inside <style>',
+				severity: 'warning',
+				title: 'This <style> is a plain element, not a scoped block',
 				message:
-					'A TSRX <style> block should contain CSS text, not a JavaScript template literal expression.',
+					'A <style> whose first child is an expression container is an ordinary TSX element: its content is not scoped, extracted, or hashed. Scoped TSRX blocks hold raw CSS text and sit inside a @{ ... } or control-flow body.',
 				snippet: line_snippet(block.raw),
-				recommendation: 'Replace <style>{`...`}</style> with <style> ...CSS... </style>.',
+				recommendation:
+					'To scope the rules, write CSS text directly inside <style> beside the elements it styles; keep <style>{css}</style> only for global CSS you inject yourself.',
 				documentation: ['tsrx://docs/style-and-server.md'],
 			});
 		}

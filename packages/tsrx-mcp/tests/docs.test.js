@@ -90,7 +90,7 @@ describe('@tsrx/mcp documentation index', () => {
 		expect(content).toContain('StyleApplyTarget . IdentifierName');
 
 		// Scope model.
-		expect(content).toContain('nearest template scope');
+		expect(content).toContain('never styles the element that contains it');
 		expect(content).toContain('share one hash');
 		expect(content).toContain('outermost first');
 		expect(content).toContain('ships unconditionally');
@@ -109,6 +109,7 @@ describe('@tsrx/mcp documentation index', () => {
 		// Static constraints with their diagnostic codes.
 		for (const code of [
 			'tsrx-style-standalone-at-module-scope',
+			'tsrx-style-standalone-outside-template',
 			'tsrx-style-unknown-attribute',
 			'tsrx-style-apply-value',
 			'tsrx-style-apply-duplicate',

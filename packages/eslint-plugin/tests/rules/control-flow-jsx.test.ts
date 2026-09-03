@@ -53,10 +53,12 @@ ruleTester.run('control-flow-jsx', rule, {
 				const App = () => @{
 					const items = ['Item 1', 'Item 2'];
 					@for (const item of items) {
-						<style>
-							div { color: red; }
-						</style>
-						<div>{item}</div>
+						<>
+							<style>
+								div { color: red; }
+							</style>
+							<div>{item}</div>
+						</>
 					}
 				};
 			`,
@@ -66,10 +68,12 @@ ruleTester.run('control-flow-jsx', rule, {
 				const App = () => @{
 					const items = ['Item 1', 'Item 2'];
 					@for (const item of items) {
-						<div>{item}</div>
-						<style>
-							div { color: red; }
-						</style>
+						<>
+							<div>{item}</div>
+							<style>
+								div { color: red; }
+							</style>
+						</>
 					}
 				};
 			`,
@@ -80,8 +84,10 @@ ruleTester.run('control-flow-jsx', rule, {
 				const App = () => @{
 					const items = ['Item 1', 'Item 2'];
 					@for (const item of items) {
-						<style apply={theme} />
-						<div>{item}</div>
+						<>
+							<style apply={theme} />
+							<div>{item}</div>
+						</>
 					}
 				};
 			`,
@@ -92,23 +98,13 @@ ruleTester.run('control-flow-jsx', rule, {
 					const items = ['Item 1', 'Item 2'];
 					@for (const item of items) {
 						@if (item) {
-							<style>
-								div { color: red; }
-							</style>
-							<div>{item}</div>
+							<>
+								<style>
+									div { color: red; }
+								</style>
+								<div>{item}</div>
+							</>
 						}
-					}
-				};
-			`,
-		},
-		{
-			code: `
-				const App = () => @{
-					const items = ['Item 1', 'Item 2'];
-					@for (const item of items) {
-						<style>
-							div { color: red; }
-						</style>
 					}
 				};
 			`,
