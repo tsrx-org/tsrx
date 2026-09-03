@@ -21,7 +21,7 @@ them all the way through to the compiled output.
 - **Declarative control flow**: `@if`, `@for`, `@switch`, and `@try` are JSX expressions whose bodies use `{...}` template blocks
 - **Structural output rules**: statement containers finish with one JSX element, fragment, or JSX control-flow expression
 - **Lazy prop destructuring**: `&{ ... }` and `&[ ... ]` preserve reactivity
-- **Scoped styles**: lexically scoped `<style>` blocks per template scope, theme objects with `$class`, and `<style apply={theme} />` composition
+- **Scoped styles**: sibling-scoped `<style>` blocks (a block styles its siblings and everything below them), theme objects with `$class`, and `<style apply={theme} />` composition
 - **TypeScript-first**: `.tsrx` is a superset of TypeScript; types flow through
 
 **Canonical compiler packages**: `@tsrx/core` (framework-agnostic
@@ -759,8 +759,9 @@ Other TSRX targets commonly use `class`. Scoped style blocks accept only the
 
 ### Style scopes
 
-Styles are scoped lexically. A standalone block is a child of a native element
-or fragment, and that children list is its scope.
+Styles are scoped to siblings. A standalone block is a child of a native element
+or fragment, and that children list is its sibling scope: the block styles its
+siblings and everything below them, and sibling blocks share one hash.
 
 Scope rules:
 
@@ -790,7 +791,7 @@ Scope rules:
 export function Panel() @{
 	<>
 		<style>
-			/* scope A: this fragment's children list */
+			/* sibling scope A: this fragment's children list */
 			div {
 				color: black;
 			}
@@ -799,8 +800,8 @@ export function Panel() @{
 
 		<section>
 			<style>
-				/* scope B: the section's children list, nested inside A.
-				   It styles the items beside it, never <section> itself. */
+				/* sibling scope B: the section's children list, nested inside A.
+				   It styles its siblings, never <section> itself. */
 				div {
 					font-weight: bold;
 				}
@@ -1049,7 +1050,7 @@ kept and scoped as `div.<hash>`. Only the opted-in `<div>` and `Card`'s
 
 `@layer` rules inside a block pass through unchanged, and the selectors inside
 them are still scoped. TSRX does not build scoping on `@layer`: layers order
-rules globally and cannot be attached to one subtree of elements, while lexical
+rules globally and cannot be attached to one subtree of elements, while sibling
 scoping gives an order that can be read off the file and `apply` stamps
 classes on exactly the elements of one scope.
 

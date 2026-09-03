@@ -170,7 +170,7 @@ function App() @{
 	});
 });
 
-describe('embedded <style> virtual codes (lexically scoped style blocks)', () => {
+describe('embedded <style> virtual codes (sibling-scoped style blocks)', () => {
 	// These compile through the workspace `@tsrx/react` compiler (see `tests/fixtures/react/`):
 	// the installed `@tsrx/ripple` package predates scoped style blocks and `apply`.
 	const REACT = 'react/App.tsrx';

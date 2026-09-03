@@ -1,5 +1,5 @@
 /**
- * Table-driven parser spec for the RFC "lexically scoped `<style>` blocks,
+ * Table-driven parser spec for the RFC "sibling-scoped `<style>` blocks,
  * `$class`, `apply`" syntax. It is replayed by `tests/utils/parser.test.js`
  * against the acorn parser and doubles as the porting spec for the Rust parser
  * (`oxc-tsrx`), so it is deliberately dependency-free: every case is plain

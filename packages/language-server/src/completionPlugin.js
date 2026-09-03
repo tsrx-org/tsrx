@@ -385,7 +385,7 @@ const STYLE_SNIPPETS = [
 		kind: CompletionItemKind.Snippet,
 		detail: 'Scoped style block',
 		documentation:
-			'A lexically scoped `<style>` block: a child of an element or fragment that styles the items beside it and everything below them, never the element that contains it (in a `@{ … }` or control-flow body, wrap it with its output in a fragment). Raw CSS here is TSRX template syntax, so it needs an enclosing `@{ … }` or control-flow body. Assign it (`const theme = <style>…</style>`) to reuse its classes as `theme.card` and apply it elsewhere with `<style apply={theme} />`.',
+			'A sibling-scoped `<style>` block: a child of an element or fragment that styles its siblings and everything below them, never the element that contains it; sibling blocks share one hash (in a `@{ … }` or control-flow body, wrap it with its output in a fragment). Raw CSS here is TSRX template syntax, so it needs an enclosing `@{ … }` or control-flow body. Assign it (`const theme = <style>…</style>`) to reuse its classes as `theme.card` and apply it elsewhere with `<style apply={theme} />`.',
 		insertText: '<style>\n\t$0\n</style>',
 		insertTextFormat: InsertTextFormat.Snippet,
 		sortText: '0-style',

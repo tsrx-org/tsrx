@@ -1,5 +1,5 @@
 /**
- * Fixture-driven conformance cases for lexically scoped `<style>` blocks,
+ * Fixture-driven conformance cases for sibling-scoped `<style>` blocks,
  * `$class`, and `apply` (RFC tsrx-org/RFCs#1). Every `.tsrx` file under
  * `tests/fixtures/scoped-styles/` compiles on every target that lowers
  * through `createJsxTransform`, and its sibling `.expected.json` states the

@@ -1,5 +1,5 @@
 /**
- * Shared cases for lexically scoped `<style>` blocks, `$class`, and `apply`
+ * Shared cases for sibling-scoped `<style>` blocks, `$class`, and `apply`
  * (RFC tsrx-org/RFCs#1). Every target that lowers through `createJsxTransform`
  * runs them; test names that pin a baseline defect reference the RFC problem
  * they fix.

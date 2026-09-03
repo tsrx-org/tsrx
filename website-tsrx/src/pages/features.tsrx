@@ -896,10 +896,10 @@ export const FeaturesPage = () => @{
 								them and never leak into child components.
 							</p>
 							<p class="section-body">
-								Styles are scoped lexically. A block is a child of an element or a fragment, and
-								that children list is its scope: the block styles the items beside it and everything
-								below them, and it never styles the element that contains it. To style an element,
-								make the block and the element siblings in a fragment. A
+								Styles are scoped to siblings. A block is a child of an element or a fragment, and
+								that children list is its sibling scope: the block styles its siblings and
+								everything below them, and it never styles the element that contains it. To style an
+								element, make the block and the element siblings in a fragment. A
 								<code class="inline-code">{'@{ ... }'}</code>
 								body and every
 								<code class="inline-code">@if</code>
@@ -1095,7 +1095,7 @@ export const FeaturesPage = () => @{
 								<code class="inline-code">@layer</code>
 								? Layers order rules globally: every participant has to agree on layer names and
 								declare their order up front, and a layer cannot be attached to one subtree of
-								elements. Lexical scoping gives an order you can read off the file, and
+								elements. Sibling scoping gives an order you can read off the file, and
 								<code class="inline-code">apply</code>
 								stamps classes, so a theme reaches exactly the elements of one scope.
 							</p>

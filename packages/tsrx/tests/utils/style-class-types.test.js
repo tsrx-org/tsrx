@@ -6,7 +6,7 @@ import { DIAGNOSTIC_CODES } from '../../src/diagnostics.js';
 import { compile, compile_to_volar_mappings } from '../../../tsrx-react/src/index.js';
 
 /**
- * Lexically scoped `<style>` blocks lower to plain object literals whose first
+ * Sibling-scoped `<style>` blocks lower to plain object literals whose first
  * property is `$class`, and a scoped `<style apply={theme} />` survives in the
  * type-only (editor) output as `<style data-tsrx-apply={theme.$class} />`.
  * These run the TypeScript checker over that generated code — the same thing

@@ -1,11 +1,11 @@
 # Scoped style conformance fixtures
 
-Target-neutral fixtures for lexically scoped `<style>` blocks, `$class`, and
-`apply` ([RFC tsrx-org/RFCs#1](https://github.com/tsrx-org/RFCs/discussions/1)).
-Each `<name>.tsrx` compiles as one module (imports are never resolved) and its
-sibling `<name>.expected.json` states what the output must contain. A subdirectory
-groups the modules of a multi-file example; every `.tsrx` inside is still compiled
-on its own.
+Target-neutral fixtures for sibling-scoped `<style>` blocks, `$class`, and `apply`
+([RFC tsrx-org/RFCs#1](https://github.com/tsrx-org/RFCs/discussions/1)). Each
+`<name>.tsrx` compiles as one module (imports are never resolved) and its sibling
+`<name>.expected.json` states what the output must contain. A subdirectory groups
+the modules of a multi-file example; every `.tsrx` inside is still compiled on its
+own.
 
 The TSRX runner lives in
 `packages/tsrx/tests/shared/scoped-styles-conformance.js`. Other compilers vendor

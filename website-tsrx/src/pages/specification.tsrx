@@ -161,7 +161,7 @@ const STYLE_SCOPE_EXAMPLE = [
 	'export function Panel() @{',
 	'  <>',
 	'    <style>',
-	'      /* scope A: the children list of this fragment */',
+	'      /* sibling scope A: the children list of this fragment */',
 	'      div { color: black; }',
 	'    </style>',
 	'    <div>Black</div>',
@@ -174,8 +174,8 @@ const STYLE_SCOPE_EXAMPLE = [
 	'',
 	'    <section>',
 	'      <style>',
-	'        /* scope B: the children list of <section>, nested in A. It styles',
-	'           the items beside it and everything below them, never <section>. */',
+	'        /* sibling scope B: the children list of <section>, nested in A. It',
+	'           styles its siblings and everything below them, never <section>. */',
 	'        div { font-weight: bold; }',
 	'      </style>',
 	'      <div>Black and bold: A and B both reach here</div>',
@@ -608,8 +608,8 @@ export function SpecificationPage() @{
 								<p class="section-body compact">
 									The current draft fixes the syntax and early-error surface for JSX-shaped TSRX
 									values, JSX statement containers, template control flow, lazy destructuring,
-									lexically scoped style blocks with themes and apply, and proposal-aligned
-									submodule declarations.
+									sibling-scoped style blocks with themes and apply, and proposal-aligned submodule
+									declarations.
 								</p>
 							</div>
 						</section>
@@ -620,8 +620,8 @@ export function SpecificationPage() @{
 								TSRX is a TypeScript-compatible syntax extension to ECMAScript for authoring
 								component-oriented user interface programs. It extends the TypeScript source
 								language with JSX-shaped template values, JSX statement containers, template
-								control-flow directives, lazy destructuring patterns, lexically scoped style
-								elements, and style identifiers.
+								control-flow directives, lazy destructuring patterns, sibling-scoped style elements,
+								and style identifiers.
 							</p>
 							<p class="section-body">
 								This specification defines the syntax of TSRX and the static constraints that a
@@ -969,7 +969,7 @@ export function SpecificationPage() @{
 						<section class="doc-section" id="style">
 							<h2 class="section-heading">4.6 Style Elements and Style Identifiers</h2>
 							<p class="section-body">
-								The syntax of style elements, where a style block may be placed, the lexical scope a
+								The syntax of style elements, where a style block may be placed, the sibling scope a
 								standalone block styles, the value an assigned block evaluates to, the meaning of
 								the
 								<code class="inline-code">apply</code>
@@ -1025,16 +1025,17 @@ export function SpecificationPage() @{
 								, is an ordinary JSXElement with no stylesheet, no scope, and no hash, and is never
 								stamped. Head styles and resource styles remain exempt.
 							</p>
-							<h3 class="appendix-heading">4.6.2 Template scopes</h3>
+							<h3 class="appendix-heading">4.6.2 Sibling scopes</h3>
 							<p class="section-body">
-								A scope is the children list of a native element or fragment that holds at least one
-								standalone block. A standalone block belongs to the children list it is written in.
-								It styles the other children of that list and their descendants: the block styles
-								the items beside it and everything below them, and it never styles the element that
-								contains it, nor any ancestor. To style an element, make the block and the element
-								siblings in a fragment. Children lists nested in a scope that hold blocks are nested
-								scopes, whether they sit directly below or inside a nested JSXCodeBlock or a
-								control-flow body. Every
+								A standalone block is scoped to its siblings. A sibling scope is the children list
+								of a native element or fragment that holds at least one standalone block, and a
+								standalone block belongs to the children list it is written in. It styles the other
+								children of that list and their descendants: the block styles its siblings and
+								everything below them, and it never styles the element that contains it, nor any
+								ancestor. To style an element, make the block and the element siblings in a
+								fragment. Children lists nested in a scope that hold blocks are nested scopes,
+								whether they sit directly below or inside a nested JSXCodeBlock or a control-flow
+								body. Every
 								<code class="inline-code">@if</code>
 								branch, the
 								<code class="inline-code">@for</code>
@@ -1053,15 +1054,16 @@ export function SpecificationPage() @{
 								blocks render one output node, and a fragment there is a scope of its own.
 							</p>
 							<p class="section-body">
-								All standalone blocks of one list share one scope hash: the position-derived hash of
-								the first block in source order that has a body. Two blocks in one element's
-								children list share a hash; a block in an enclosing fragment and a block in that
-								element's children list do not. The implementation stamps the scope hash on every
-								native element among the list's items and their descendants, through nested scopes,
-								so an element carries the hash of every enclosing scope, outermost first. A
-								composite component element receives no classes of its own, although native elements
-								written as its children still belong to the scope, and stamping stops at function
-								boundaries. A scope whose blocks are all self-closing has no hash of its own.
+								Sibling blocks share one hash. All standalone blocks of one list share one scope
+								hash: the position-derived hash of the first block in source order that has a body.
+								Two blocks in one element's children list share a hash; a block in an enclosing
+								fragment and a block in that element's children list do not. The implementation
+								stamps the scope hash on every native element among the list's items and their
+								descendants, through nested scopes, so an element carries the hash of every
+								enclosing scope, outermost first. A composite component element receives no classes
+								of its own, although native elements written as its children still belong to the
+								scope, and stamping stops at function boundaries. A scope whose blocks are all
+								self-closing has no hash of its own.
 							</p>
 							<pre class="code-block plain">
 								<code>{STYLE_SCOPE_EXAMPLE}</code>

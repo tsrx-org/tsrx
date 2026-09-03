@@ -74,8 +74,15 @@ describe('@tsrx/mcp documentation index', () => {
 		expect(content).toContain('does not expose an Octane target');
 	});
 
-	it('documents lexically scoped style blocks, $class, and apply', () => {
-		for (const query of ['scoped css', '$class', 'apply', 'themes', 'style diagnostics']) {
+	it('documents sibling-scoped style blocks, $class, and apply', () => {
+		for (const query of [
+			'scoped css',
+			'sibling scope',
+			'$class',
+			'apply',
+			'themes',
+			'style diagnostics',
+		]) {
 			expect(find_similar_documentation_sections(query).map((section) => section.slug)).toContain(
 				'style-and-server',
 			);
@@ -90,6 +97,7 @@ describe('@tsrx/mcp documentation index', () => {
 		expect(content).toContain('StyleApplyTarget . IdentifierName');
 
 		// Scope model.
+		expect(content).toContain('that children list is its sibling scope');
 		expect(content).toContain('never styles the element that contains it');
 		expect(content).toContain('share one hash');
 		expect(content).toContain('outermost first');
