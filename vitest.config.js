@@ -388,6 +388,15 @@ export default defineConfig({
 			},
 			{
 				test: {
+					name: 'intellij-plugin',
+					include: ['packages/intellij-plugin/tests/**/*.test.js'],
+					environment: 'node',
+					globals: true,
+				},
+				plugins: [],
+			},
+			{
+				test: {
 					name: 'tsrx-mcp',
 					include: ['packages/tsrx-mcp/tests/**/*.test.js'],
 					environment: 'node',

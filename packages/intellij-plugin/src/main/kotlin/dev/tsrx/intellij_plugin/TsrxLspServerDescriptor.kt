@@ -7,12 +7,16 @@ import com.intellij.platform.lsp.api.ProjectWideLspServerDescriptor
 
 internal class TsrxLspServerDescriptor(
 	project: Project,
-	private val serverInfo: TsrxLanguageServer.ServerInfo,
+	private val serverInfo: TsrxLanguageServerInfo,
 ) : ProjectWideLspServerDescriptor(project, "TSRX") {
 	override fun isSupportedFile(file: VirtualFile): Boolean = TsrxFileType.isTsrxFile(file)
 
 	override fun createCommandLine(): GeneralCommandLine {
-		val commandLine = GeneralCommandLine(serverInfo.binary.toString(), "--stdio")
+		val commandLine = createTsrxLauncherCommandLine(
+			serverInfo.binary,
+			listOf("--stdio"),
+			com.intellij.openapi.util.SystemInfo.isWindows,
+		)
 		serverInfo.root?.let { commandLine.withWorkDirectory(it.toFile()) }
 		return commandLine
 	}

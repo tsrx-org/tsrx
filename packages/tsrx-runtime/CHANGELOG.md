@@ -1,5 +1,14 @@
 # @tsrx/runtime
 
+## 0.1.4
+
+### Patch Changes
+
+- [#42](https://github.com/tsrx-org/tsrx/pull/42)
+  [`f16c113`](https://github.com/tsrx-org/tsrx/commit/f16c1138d1ac9969afe39696ebf9b41579bb27c5)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Avoid allocating a ref
+  accumulator when spread props contain no compiler-generated refs.
+
 ## 0.1.3
 
 ### Patch Changes

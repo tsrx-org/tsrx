@@ -2,6 +2,7 @@ package dev.tsrx.intellij_plugin
 
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.util.ExecUtil
+import com.intellij.ide.trustedProjects.TrustedProjects
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
@@ -13,290 +14,126 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.platform.lsp.api.LspServerManager
 import com.intellij.util.EnvironmentUtil
 import java.io.File
-import java.nio.file.Files
+import java.io.InputStream
 import java.nio.file.Path
 import java.nio.file.Paths
 
 internal object TsrxLanguageServer {
-	private const val LSP_PACKAGE = "@tsrx/language-server"
-	private const val LSP_BIN = "tsrx-language-server"
 	private const val LSP_VERSION_RESOURCE = "/lsp-version.txt"
-	private const val FALLBACK_VERSION = "0.3.125"
-	private val requiredVersion: String by lazy { readRequiredVersion() }
-	private val VERSION_PATTERN = Regex("\"version\"\\s*:\\s*\"([^\"]+)\"")
-	private val ROOT_MARKERS = listOf("package.json", "pnpm-workspace.yaml", ".git")
 	private val LOG = Logger.getInstance(TsrxLanguageServer::class.java)
-	private val installLock = Any()
-
-	@Volatile
-	private var installInProgress = false
-
-	data class ServerInfo(val binary: Path, val root: Path?)
-
-	private val executableExtension = if (SystemInfo.isWindows) ".cmd" else ""
-
-	fun resolveServer(project: Project, file: VirtualFile?): ServerInfo? {
-		val startDir = file?.parent?.path?.let { Paths.get(it) } ?: project.basePath?.let { Paths.get(it) }
-		val rootDir = findRoot(startDir) ?: startDir
-
-		val localBinary = findLocalBinary(startDir)
-		if (localBinary != null) {
-			return ServerInfo(localBinary, rootDir)
-		}
-
-		val globalBinary = findGlobalBinary()
-		if (globalBinary != null) {
-			return ServerInfo(globalBinary, rootDir)
-		}
-
-		val installDir = installDir()
-		val installedBinary = resolveInstalledBinary(installDir)
-		if (installedBinary != null && installedVersion(installDir) == requiredVersion) {
-			return ServerInfo(installedBinary, rootDir)
-		}
-
-		ensureInstallAsync(project, installDir)
-		return null
-	}
-
-	private fun findLocalBinary(startDir: Path?): Path? {
-		var current = startDir
-		while (current != null) {
-			val nodeModules = current.resolve("node_modules")
-			if (Files.isDirectory(nodeModules)) {
-				val binDir = nodeModules.resolve(".bin")
-				val bin = binDir.resolve("$LSP_BIN$executableExtension")
-				if (Files.exists(bin)) {
-					return bin
-				}
-			}
-			current = current.parent
-		}
-		return null
-	}
-
-	private fun findGlobalBinary(): Path? =
-		findExecutableInPath(LSP_BIN)
-
-	private fun findRoot(startDir: Path?): Path? {
-		var current = startDir
-		while (current != null) {
-			if (hasRootMarker(current)) {
-				return current
-			}
-			current = current.parent
-		}
-		return null
-	}
-
-	private fun hasRootMarker(dir: Path): Boolean {
-		for (marker in ROOT_MARKERS) {
-			val candidate = dir.resolve(marker)
-			if (Files.exists(candidate)) {
-				return true
-			}
-		}
-		return false
-	}
-
-	private fun installDir(): Path {
-		return Paths.get(PathManager.getSystemPath(), "tsrx-language-server")
-	}
-
-	private fun resolveInstalledBinary(installDir: Path): Path? {
-		val bin = installDir.resolve(
-			"node_modules",
-			".bin",
-			if (SystemInfo.isWindows) "$LSP_BIN.cmd" else LSP_BIN
+	private val requiredVersion: String by lazy { readRequiredVersion() }
+	private val resolver: TsrxLanguageServerResolver by lazy {
+		TsrxLanguageServerResolver(
+			isWindows = SystemInfo.isWindows,
+			pathValue = { EnvironmentUtil.getValue("PATH") },
+			pathSeparator = File.pathSeparatorChar,
 		)
-		return if (Files.exists(bin)) bin else null
+	}
+	private val installer: TsrxLanguageServerInstaller by lazy {
+		TsrxLanguageServerInstaller(resolver, TsrxCommandRunner(::runCommand))
+	}
+	private val installCoordinator: TsrxInstallCoordinator<Project> by lazy {
+		TsrxInstallCoordinator(
+			execute = { task -> ApplicationManager.getApplication().executeOnPooledThread(task) },
+			install = { version ->
+				installer.install(resolver.findExecutableInPath("npm"), managedRoot(), version)
+			},
+			isDisposed = Project::isDisposed,
+			onSuccess = { project, _ -> installationSucceeded(project) },
+			onFailure = { project, failure -> installationFailed(project, failure) },
+			onCallbackError = { _, exception ->
+				LOG.warn("Failed to complete TSRX language-server installation for a waiting project", exception)
+			},
+		)
 	}
 
-	private fun installedVersion(installDir: Path): String? {
-		val packageJson = installDir.resolve(
-			"node_modules",
-			"@tsrx",
-			"language-server",
-			"package.json",
-		)
-		if (!Files.isRegularFile(packageJson)) {
+	fun resolveServer(project: Project, file: VirtualFile?): TsrxLanguageServerInfo? {
+		if (!TrustedProjects.isProjectTrusted(project)) {
+			LOG.debug("Skipping TSRX language-server resolution for an untrusted project")
 			return null
 		}
-		return try {
-			val content = Files.readString(packageJson)
-			VERSION_PATTERN.find(content)?.groupValues?.getOrNull(1)
-		} catch (ex: Exception) {
-			LOG.warn("Failed to read TSRX language server version", ex)
-			null
+
+		val startDir = file?.parent?.path?.let(Paths::get) ?: project.basePath?.let(Paths::get)
+		val server = resolver.resolve(startDir, managedRoot(), requiredVersion)
+		if (server != null) {
+			LOG.debug("Resolved TSRX language server from ${server.source}")
+			return server
 		}
+
+		val started = installCoordinator.request(requiredVersion, project)
+		if (started) {
+			notify(
+				project,
+				NotificationType.INFORMATION,
+				"Installing ${TsrxLanguageServerResolver.LSP_PACKAGE}@$requiredVersion for language features...",
+			)
+		}
+		return null
 	}
 
-	private fun readRequiredVersion(): String {
-		val stream = TsrxLanguageServer::class.java.getResourceAsStream(LSP_VERSION_RESOURCE)
-		if (stream == null) {
-			LOG.warn("TSRX language server version resource not found: $LSP_VERSION_RESOURCE")
-			return FALLBACK_VERSION
-		}
-
-		return try {
-			val version = stream.bufferedReader(Charsets.UTF_8).use { reader ->
-				reader.readLine()?.trim().orEmpty()
-			}
-			version.ifBlank {
-				LOG.warn("TSRX language server version resource was empty: $LSP_VERSION_RESOURCE")
-				FALLBACK_VERSION
-			}
-		} catch (ex: Exception) {
-			LOG.warn("Failed to read TSRX language server version resource", ex)
-			FALLBACK_VERSION
-		}
+	private fun runCommand(command: TsrxProcessCommand): TsrxProcessOutput {
+		val commandLine = createTsrxLauncherCommandLine(
+			command.executable,
+			command.arguments,
+			SystemInfo.isWindows,
+		)
+		commandLine.withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE)
+		val output = ExecUtil.execAndGetOutput(commandLine)
+		return TsrxProcessOutput(output.exitCode, output.stdout, output.stderr)
 	}
 
-	private fun ensureInstallAsync(project: Project, installDir: Path) {
-		val required = requiredVersion
-		synchronized(installLock) {
-			if (installInProgress) {
-				return
-			}
-			if (resolveInstalledBinary(installDir) != null && installedVersion(installDir) == required) {
-				return
-			}
-			installInProgress = true
-		}
-
+	private fun installationSucceeded(project: Project) {
+		if (!TrustedProjects.isProjectTrusted(project)) return
 		notify(
 			project,
 			NotificationType.INFORMATION,
-			"TSRX",
-			"Installing $LSP_PACKAGE@$required for language features...",
+			"TSRX language server installed. Restarting language services...",
 		)
-
-		ApplicationManager.getApplication().executeOnPooledThread {
-			val success = installServer(project, installDir)
-			synchronized(installLock) {
-				installInProgress = false
-			}
-
-			if (success && !project.isDisposed) {
-				notify(
-					project,
-					NotificationType.INFORMATION,
-					"TSRX",
-					"TSRX language server installed. Restarting language services...",
-				)
-				LspServerManager.getInstance(project)
-					.stopAndRestartIfNeeded(TsrxLspServerSupportProvider::class.java)
-			}
-		}
+		LspServerManager.getInstance(project)
+			.stopAndRestartIfNeeded(TsrxLspServerSupportProvider::class.java)
 	}
 
-	private fun installServer(project: Project, installDir: Path): Boolean {
-		val required = requiredVersion
-		val npm = findExecutableInPath("npm")
-		if (npm == null) {
-			notify(
-				project,
-				NotificationType.ERROR,
-				"TSRX",
-				"npm was not found on PATH. Install Node.js 22+ to enable TSRX language features.",
-			)
-			return false
-		}
-
-		return try {
-			Files.createDirectories(installDir)
-			val commandLine = GeneralCommandLine(
-				npm.toString(),
-				"install",
-				"$LSP_PACKAGE@$required",
-				"--prefix",
-				installDir.toString(),
-				"--no-audit",
-				"--no-fund",
-			)
-			commandLine.withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE)
-			val output = ExecUtil.execAndGetOutput(commandLine)
-			if (output.exitCode != 0) {
-				notifyInstallError(project, output.stderr + output.stdout)
-				return false
-			}
-
-			val version = installedVersion(installDir) ?: "unknown"
-			if (version != required) {
-				notify(
-					project,
-					NotificationType.ERROR,
-					"TSRX",
-					"Installed $LSP_PACKAGE@$version but required $required.",
-				)
-				return false
-			}
-
-			if (resolveInstalledBinary(installDir) == null) {
-				notify(
-					project,
-					NotificationType.ERROR,
-					"TSRX",
-					"TSRX language server install succeeded but the binary was not found.",
-				)
-				return false
-			}
-
-			true
-		} catch (ex: Exception) {
-			LOG.warn("Failed to install TSRX language server", ex)
-			notifyInstallError(project, ex.message ?: "Unknown error")
-			false
-		}
-	}
-
-	private fun findExecutableInPath(name: String): Path? {
-		val pathValue = EnvironmentUtil.getValue("PATH") ?: return null
-		val candidates = if (SystemInfo.isWindows) {
-			listOf("$name.cmd", "$name.exe", "$name.bat", name)
+	private fun installationFailed(project: Project, failure: TsrxInstallResult.Failure) {
+		if (failure.cause != null) {
+			LOG.warn("TSRX language server installation failed", failure.cause)
+		} else if (failure.diagnosticDetails.isNotBlank()) {
+			LOG.warn("TSRX language server installation failed:\n${failure.diagnosticDetails}")
 		} else {
-			listOf(name)
+			LOG.warn("TSRX language server installation failed: ${failure.userMessage}")
 		}
-
-		for (entry in pathValue.split(File.pathSeparatorChar)) {
-			if (entry.isBlank()) {
-				continue
-			}
-			for (candidate in candidates) {
-				val path = Paths.get(entry, candidate)
-				if (Files.isRegularFile(path)) {
-					return path
-				}
-			}
+		if (!TrustedProjects.isProjectTrusted(project)) return
+		val safeDetails = notificationDetails(failure.diagnosticDetails)
+		val content = if (safeDetails.isBlank()) {
+			failure.userMessage
+		} else {
+			"${failure.userMessage}<br><br><pre>$safeDetails</pre>"
 		}
-
-		return null
+		notify(project, NotificationType.ERROR, content)
 	}
 
-	private fun notifyInstallError(project: Project, details: String) {
-		val trimmed = trimOutput(details)
-		val message = buildString {
-			append("npm install failed. ")
-			if (trimmed.isNotBlank()) {
-				append("\n\n")
-				append(trimmed)
-			}
+	private fun managedRoot(): Path =
+		Paths.get(PathManager.getSystemPath(), "tsrx-language-server")
+
+	private fun readRequiredVersion(): String {
+		return readRequiredLanguageServerVersion {
+			TsrxLanguageServer::class.java.getResourceAsStream(LSP_VERSION_RESOURCE)
 		}
-		notify(project, NotificationType.ERROR, "TSRX", message)
 	}
 
-	private fun trimOutput(output: String, maxLines: Int = 8): String {
-		val lines = output.lineSequence().filter { it.isNotBlank() }.toList()
-		return lines.takeLast(maxLines).joinToString("\n")
-	}
-
-	private fun notify(project: Project, type: NotificationType, title: String, content: String) {
-		if (project.isDisposed) {
-			return
-		}
+	private fun notify(project: Project, type: NotificationType, content: String) {
+		if (project.isDisposed) return
 		NotificationGroupManager.getInstance()
 			.getNotificationGroup("TSRX")
-			.createNotification(title, content, type)
+			.createNotification("TSRX", content, type)
 			.notify(project)
 	}
+}
+
+internal fun readRequiredLanguageServerVersion(openResource: () -> InputStream?): String {
+	val stream = requireNotNull(openResource()) {
+		"TSRX language server version resource not found: /lsp-version.txt"
+	}
+	val version = stream.bufferedReader(Charsets.UTF_8).use { it.readText().trim() }
+	require(version.isNotEmpty()) { "TSRX language server version resource is blank" }
+	return version
 }

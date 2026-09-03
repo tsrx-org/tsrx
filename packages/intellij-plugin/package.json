@@ -1,5 +1,15 @@
 {
   "name": "@tsrx/intellij-plugin",
+  "displayName": "TSRX for JetBrains IDEs",
+  "description": "TSRX language support for compatible IntelliJ-based IDEs",
   "private": true,
-  "version": "0.0.82"
+  "version": "0.0.83",
+  "author": "Dominic Gannaway",
+  "license": "MIT",
+  "homepage": "https://tsrx.dev/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tsrx-org/tsrx.git",
+    "directory": "packages/intellij-plugin"
+  }
 }

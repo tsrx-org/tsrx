@@ -1,7 +1,7 @@
 <!-- Plugin Configuration File: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
-<idea-plugin>
+<idea-plugin url="https://tsrx.dev/">
 	<!-- Unique identifier of the plugin. It should be FQN, cannot be changed between the plugin versions. -->
-	<id>dev.tsrx.intellij_plugin</id>
+	<id>tsrx.intellij-plugin</id>
 
 	<!-- Public plugin name should be written in Title Case.
 			 Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
@@ -13,14 +13,18 @@
 	<!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
 			 Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
 	<description><![CDATA[
-	TSRX language support for IntelliJ-based IDEs. Provides TextMate-based syntax highlighting for .tsrx files and
-		integrates with the TSRX language server for diagnostics, completion, and navigation.
+		<p>TSRX language support for IntelliJ-based IDEs.</p>
+		<p>All compatible IDEs receive the TSRX file type, commenting support, and TextMate syntax highlighting.
+		Supported commercial IDEs also integrate with the TSRX language server for diagnostics, completion,
+		navigation, and formatting.</p>
+		<p><a href="https://github.com/tsrx-org/tsrx">Source code</a>. Released under the MIT License.</p>
     ]]></description>
 
 	<!-- Product and plugin compatibility requirements.
 			 Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+	<depends>com.intellij.modules.platform</depends>
 	<depends>org.jetbrains.plugins.textmate</depends>
-	<depends optional="true" config-file="tsrx-lsp.xml">com.intellij.modules.lsp</depends>
+	<depends optional="true" config-file="tsrx-ultimate.xml">com.intellij.modules.ultimate</depends>
 	<!-- Extensions defined by the plugin.
 			 Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
 	<extensions defaultExtensionNs="com.intellij">

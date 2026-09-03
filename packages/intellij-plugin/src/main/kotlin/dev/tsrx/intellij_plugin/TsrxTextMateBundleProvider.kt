@@ -1,142 +1,134 @@
 package dev.tsrx.intellij_plugin
 
-import com.intellij.ide.plugins.PluginManagerCore
+import com.intellij.ide.plugins.PluginManager
 import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.extensions.PluginId
-import org.jetbrains.plugins.textmate.api.TextMateBundleProvider
-import java.net.JarURLConnection
+import java.net.URL
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
 import java.util.Comparator
+import java.util.UUID
+import org.jetbrains.plugins.textmate.api.TextMateBundleProvider
 
-class TsrxTextMateBundleProvider : TextMateBundleProvider {
+class TsrxTextMateBundleProvider internal constructor(
+	private val bundleCache: TsrxTextMateBundleCache,
+) : TextMateBundleProvider {
+	constructor() : this(defaultBundleCache())
+
 	override fun getBundles(): List<TextMateBundleProvider.PluginBundle> {
-		val bundlePath = ensureBundleAvailable() ?: return emptyList()
+		val bundlePath = bundleCache.ensureBundleAvailable()
+		if (bundlePath == null) {
+			LOG.warn("Failed to extract TSRX TextMate bundle")
+			return emptyList()
+		}
 		return listOf(TextMateBundleProvider.PluginBundle("TSRX", bundlePath))
 	}
 
-	private fun ensureBundleAvailable(): Path? {
-		cachedBundle?.let { cached ->
-			if (Files.isDirectory(cached)) {
-				return cached
-			}
-		}
+	companion object {
+		private const val BUNDLE_RESOURCE_ROOT = "textmate"
+		private val LOG = Logger.getInstance(TsrxTextMateBundleProvider::class.java)
 
-		synchronized(lock) {
-			cachedBundle?.let { cached ->
-				if (Files.isDirectory(cached)) {
-					return cached
-				}
-			}
+		private fun defaultBundleCache() = TsrxTextMateBundleCache(
+			cacheRoot = Paths.get(PathManager.getSystemPath(), "tsrx-textmate"),
+			resourceUrl = { relativePath ->
+				TsrxTextMateBundleProvider::class.java.classLoader
+					.getResource("$BUNDLE_RESOURCE_ROOT/$relativePath")
+			},
+			pluginVersion = {
+				PluginManager.getPluginByClass(TsrxTextMateBundleProvider::class.java)?.version ?: "dev"
+			},
+		)
+	}
+}
 
-			val cacheRoot = Paths.get(PathManager.getSystemPath(), "tsrx-textmate")
-			val bundleDir = cacheRoot.resolve("tsrx.tmbundle")
-			val versionFile = cacheRoot.resolve("version.txt")
-			val pluginVersion = pluginVersion()
+internal class TsrxTextMateBundleCache(
+	private val cacheRoot: Path,
+	private val resourceUrl: (String) -> URL?,
+	private val pluginVersion: () -> String,
+	private val uniqueId: () -> String = { UUID.randomUUID().toString() },
+) {
+	private val lock = Any()
 
-			if (Files.isDirectory(bundleDir) && Files.isRegularFile(versionFile)) {
-				val recorded = runCatching { Files.readString(versionFile) }.getOrNull()
-				if (recorded == pluginVersion) {
-					cachedBundle = bundleDir
-					return bundleDir
-				}
-			}
+	fun ensureBundleAvailable(): Path? = synchronized(lock) {
+		val bundleDir = cacheRoot.resolve("tsrx.tmbundle")
+		val versionFile = cacheRoot.resolve("version.txt")
+		val version = pluginVersion()
+		if (isCurrent(bundleDir, versionFile, version)) return bundleDir
 
-			if (Files.exists(bundleDir)) {
-				deleteRecursively(bundleDir)
-			}
-
-			val extracted = extractBundle(bundleDir)
-			if (!extracted) {
-				LOG.warn("Failed to extract TSRX TextMate bundle")
+		val staging = cacheRoot.resolve(".staging-${uniqueId()}")
+		return runCatching {
+			deleteRecursively(staging)
+			val extracted = extractBundle(staging)
+			if (!extracted || !isValidBundle(staging)) {
+				deleteRecursively(staging)
 				return null
 			}
-
-			runCatching {
-				Files.createDirectories(cacheRoot)
-				Files.writeString(versionFile, pluginVersion)
-			}
-
-			cachedBundle = bundleDir
-			return bundleDir
+			promote(staging, bundleDir)
+			Files.writeString(versionFile, version)
+			bundleDir
+		}.getOrElse {
+			runCatching { deleteRecursively(staging) }
+			null
 		}
 	}
 
-	private fun extractBundle(target: Path): Boolean {
-		val resourceUrl = javaClass.classLoader.getResource(BUNDLE_RESOURCE_ROOT) ?: return false
+	private fun isCurrent(bundleDir: Path, versionFile: Path, version: String): Boolean {
+		if (!isValidBundle(bundleDir) || !Files.isRegularFile(versionFile)) return false
+		return runCatching { Files.readString(versionFile) == version }.getOrDefault(false)
+	}
 
-		return when (resourceUrl.protocol) {
-			"file" -> copyDirectory(Paths.get(resourceUrl.toURI()), target)
-			"jar" -> copyFromJar(resourceUrl, target)
-			else -> false
+	private fun isValidBundle(directory: Path): Boolean =
+		Files.isDirectory(directory) &&
+			Files.isRegularFile(directory.resolve("info.plist")) &&
+			Files.isRegularFile(directory.resolve("Syntaxes/tsrx.tmLanguage.json"))
+
+	private fun extractBundle(target: Path): Boolean = runCatching {
+		for (relativePath in REQUIRED_RESOURCES) {
+			val source = resourceUrl(relativePath) ?: return false
+			val destination = target.resolve(relativePath)
+			Files.createDirectories(destination.parent)
+			source.openStream().use { input ->
+				Files.copy(input, destination, StandardCopyOption.REPLACE_EXISTING)
+			}
 		}
-	}
+		true
+	}.getOrDefault(false)
 
-	private fun copyDirectory(source: Path, target: Path): Boolean {
-		return runCatching {
-			Files.walk(source).use { stream ->
-				stream.forEach { path ->
-					val relative = source.relativize(path)
-					val destination = target.resolve(relative)
-					if (Files.isDirectory(path)) {
-						Files.createDirectories(destination)
-					} else {
-						Files.createDirectories(destination.parent)
-						Files.copy(path, destination, StandardCopyOption.REPLACE_EXISTING)
-					}
-				}
-			}
-			true
-		}.getOrElse { false }
-	}
-
-	private fun copyFromJar(resourceUrl: java.net.URL, target: Path): Boolean {
-		return runCatching {
-			val connection = resourceUrl.openConnection() as JarURLConnection
-			val entryRoot = connection.entryName.trimEnd('/')
-			connection.jarFile.use { jar ->
-				val entries = jar.entries()
-				while (entries.hasMoreElements()) {
-					val entry = entries.nextElement()
-					if (entry.isDirectory) {
-						continue
-					}
-					if (!entry.name.startsWith("$entryRoot/")) {
-						continue
-					}
-					val relative = entry.name.removePrefix("$entryRoot/")
-					val destination = target.resolve(relative)
-					Files.createDirectories(destination.parent)
-					jar.getInputStream(entry).use { input ->
-						Files.copy(input, destination, StandardCopyOption.REPLACE_EXISTING)
-					}
-				}
-			}
-			true
-		}.getOrElse { false }
-	}
-
-	private fun deleteRecursively(path: Path) {
-		Files.walk(path)
-			.sorted(Comparator.reverseOrder())
-			.forEach { Files.deleteIfExists(it) }
-	}
-
-	private fun pluginVersion(): String {
-		val descriptor = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID))
-		return descriptor?.version ?: "dev"
+	private fun promote(staging: Path, target: Path) {
+		Files.createDirectories(cacheRoot)
+		val backup = cacheRoot.resolve(".backup-${uniqueId()}")
+		if (Files.exists(target)) moveDirectory(target, backup)
+		try {
+			moveDirectory(staging, target)
+			deleteRecursively(backup)
+		} catch (exception: Exception) {
+			if (Files.exists(backup) && !Files.exists(target)) moveDirectory(backup, target)
+			throw exception
+		}
 	}
 
 	companion object {
-		private const val PLUGIN_ID = "dev.tsrx.intellij_plugin"
-		private const val BUNDLE_RESOURCE_ROOT = "textmate"
-		private val LOG = Logger.getInstance(TsrxTextMateBundleProvider::class.java)
-		private val lock = Any()
+		private val REQUIRED_RESOURCES = listOf(
+			"info.plist",
+			"Syntaxes/tsrx.tmLanguage.json",
+		)
+	}
+}
 
-		@Volatile
-		private var cachedBundle: Path? = null
+private fun moveDirectory(source: Path, target: Path) {
+	try {
+		Files.move(source, target, StandardCopyOption.ATOMIC_MOVE)
+	} catch (_: AtomicMoveNotSupportedException) {
+		Files.move(source, target)
+	}
+}
+
+private fun deleteRecursively(path: Path) {
+	if (!Files.exists(path)) return
+	Files.walk(path).use { paths ->
+		paths.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists)
 	}
 }
