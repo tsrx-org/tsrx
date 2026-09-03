@@ -868,10 +868,10 @@ the classes of any applied themes), plus one key per class selector whose value
 is the hash and the class name together. Pass these strings to child components
 as props. `$class` is reserved: a block cannot declare a `.$class` selector.
 
-- An exported or applied block is a theme and keeps every selector, element and
-  descendant selectors included.
-- A local block that is neither exported nor applied keeps only its standalone
-  class selectors; the others are pruned.
+- A block that is exported, applied, or whose `$class` is read is a theme and
+  keeps every selector, element and descendant selectors included.
+- A local block whose only reads are class entries (`styles.card`) keeps only
+  its standalone class selectors; the others are pruned.
 - The block can live at module scope or inside a component body.
 
 ```tsrx
@@ -977,6 +977,61 @@ export function Card() @{
 
 Every element of `Panel` carries `A theme.$class`; the nested `div` carries
 `A B theme.$class`. The emitted CSS order is `base`, `theme`, scope A, scope B.
+
+#### Opting elements in with `$class`
+
+`apply` stamps every element of a scope. To pick elements instead, put
+`theme.$class` on them:
+
+- `class={theme.$class}` opts one element in: it matches the theme's element and
+  descendant rules exactly as an element of an applying scope does, and no other
+  element is affected. `theme.card` stays `'<hash> card'`.
+- Reading `theme.$class` anywhere in the module makes the block a theme, so its
+  element selectors are kept; a block read only through class entries stays a
+  class map.
+- Pass `theme.$class` to a child component through a prop to opt its elements
+  in; the child stamps it ahead of its own scope hash.
+- `$class` and `apply` combine. Listing several themes' `$class` values on one
+  element composes them there the way `apply={[a, b]}` does on a scope.
+
+```tsrx
+function Card({ parentClass }: { parentClass: string }) @{
+	<>
+		<style>
+			.local {
+				padding: 0;
+			}
+		</style>
+		<article class={parentClass}>
+			<h2 class={parentClass}>Title</h2>
+		</article>
+	</>
+}
+
+export function App() @{
+	const theme = <style>
+		div {
+			color: blue;
+		}
+
+		.card {
+			color: red;
+		}
+	</style>;
+
+	<>
+		<Card parentClass={theme.$class} />
+		<div class={theme.$class}>Blue: opted in</div>
+		<div class={theme.card}>Red</div>
+		<p>Untouched</p>
+	</>
+}
+```
+
+`theme` is a theme because `theme.$class` is read, so `div { color: blue }` is
+kept and scoped as `div.<hash>`. Only the opted-in `<div>` and `Card`'s
+`<article>` and `<h2>` match it; the `<p>` carries nothing from `theme`. Inside
+`Card`, the compiled class is `` `${parentClass} <card-hash>` ``.
 
 `@layer` rules inside a block pass through unchanged, and the selectors inside
 them are still scoped. TSRX does not build scoping on `@layer`: layers order
@@ -1143,6 +1198,7 @@ const List = <T,>({ items, render }: Props<T>) =>
 | Cross-component class  | `<Child class={styles.foo} />`; React uses `className` |
 | Theme hash ($class)    | `const t = <style>...</style>;` then `t.$class`        |
 | Theme (apply)          | `<style apply={theme} />`, `apply={[a, b]}`            |
+| Theme opt-in ($class)  | `class={theme.$class}` on an element or a child prop   |
 | Dynamic element        | `<{tag} />` with a tracked/stateful `tag`              |
 
 ## Resources

@@ -100,6 +100,9 @@ describe('@tsrx/mcp documentation index', () => {
 		expect(content).toContain('`$class`');
 		expect(content).toContain('<style apply={theme} />');
 		expect(content).toContain('class={theme.$class}');
+		// Opting elements in with $class (the spec's STYLE_THEME_EXAMPLE card.tsrx section).
+		expect(content).toContain('<Card parentClass={palette.$class} />');
+		expect(content).toContain('palette.$class is read, so palette is a theme');
 		expect(content).toContain('is a theme and keeps every selector');
 		expect(content).toContain('declared before the applying block');
 

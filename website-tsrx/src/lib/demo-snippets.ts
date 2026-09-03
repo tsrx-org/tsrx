@@ -229,6 +229,44 @@ export function Panel() @{
 }`,
 	},
 	{
+		value: 'themes-class',
+		label: 'Theme opt-in with $class',
+		// Octane and Ripple pin an older @tsrx/core without `$class`/`apply`.
+		targets: ['react', 'preact', 'solid', 'vue'],
+		source: `function Card({ parentClass }: { parentClass: string }) @{
+  <>
+    <style>
+      .local {
+        padding: 0;
+      }
+    </style>
+    <article class={parentClass}>
+      <h2 class={parentClass}>Title</h2>
+    </article>
+  </>
+}
+
+export function App() @{
+  // Reading theme.$class makes the block a theme: div { ... } is kept.
+  const theme = <style>
+    div {
+      color: blue;
+    }
+
+    .card {
+      color: red;
+    }
+  </style>;
+
+  <>
+    <Card parentClass={theme.$class} />
+    <div class={theme.$class}>Blue: opted in</div>
+    <div class={theme.card}>Red: theme.card</div>
+    <p>Untouched</p>
+  </>
+}`,
+	},
+	{
 		value: 'octane-starter',
 		label: 'Octane starter',
 		targets: ['octane'],

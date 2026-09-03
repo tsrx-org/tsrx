@@ -222,6 +222,31 @@ const STYLE_THEME_EXAMPLE = [
 	'  </>',
 	'}',
 	'// Emitted CSS order: base, theme (theme.tsrx); then scope A, scope B (panel.tsrx).',
+	'',
+	'// card.tsrx: opting elements in with $class',
+	'function Card({ parentClass }: { parentClass: string }) @{',
+	'  <>',
+	'    <style>.local { padding: 0; }</style>',
+	'    <article class={parentClass}>',
+	'      <h2 class={parentClass}>Title</h2>',
+	'    </article>',
+	'  </>',
+	'}',
+	'',
+	'export function App() @{',
+	'  const palette = <style>',
+	'    div { color: blue; }',
+	'    .card { color: red; }',
+	'  </style>;',
+	'  <>',
+	'    <Card parentClass={palette.$class} />',
+	'    <div class={palette.$class}>Blue: carries palette.$class</div>',
+	'    <div class={palette.card}>Red: carries palette.card</div>',
+	'    <p>Untouched: carries nothing from palette</p>',
+	'  </>',
+	'}',
+	'// palette.$class is read, so palette is a theme and div { color: blue } is kept.',
+	'// <article> and <h2> carry palette.$class, then the hash of the scope of Card.',
 ].join('\n');
 
 const STYLE_STATIC_CONSTRAINTS = [
@@ -1031,12 +1056,17 @@ export function SpecificationPage() @{
 								in an assigned block is an early error.
 							</p>
 							<p class="section-body">
-								An assigned block is a theme when it is exported from its module or is the target of
+								An assigned block is a theme when it is exported from its module, is the target of
 								any
 								<code class="inline-code">apply</code>
-								in its module; otherwise it is a class map. A theme keeps every selector, each
-								scoped under the block's hash. A class map keeps only the class selectors its object
-								exposes; every other selector is pruned as unused.
+								in its module, or has its
+								<code class="inline-code">$class</code>
+								property read anywhere in its module; otherwise it is a class map. A theme keeps
+								every selector, each scoped under the block's hash. A class map keeps only the class
+								selectors its object exposes; every other selector is pruned as unused. Reading a
+								class property such as
+								<code class="inline-code">styles.card</code>
+								does not make a block a theme.
 							</p>
 							<p class="section-body">
 								<code class="inline-code">$class</code>
@@ -1054,6 +1084,26 @@ export function SpecificationPage() @{
 								read of its
 								<code class="inline-code">$class</code>
 								property.
+							</p>
+							<p class="section-body">
+								Reading
+								<code class="inline-code">$class</code>
+								opts elements into a theme one at a time. An element whose class attribute includes
+								a theme's
+								<code class="inline-code">$class</code>
+								matches the theme's element and descendant selectors exactly as an element of an
+								applying scope does (4.6.4), and no other element is affected. The value is an
+								ordinary string, so it may be passed to a component as a prop and placed on that
+								component's elements; it is then an authored class of those elements and precedes
+								the hashes of their own enclosing scopes.
+								<code class="inline-code">$class</code>
+								is the selective counterpart of
+								<code class="inline-code">apply</code>
+								, which stamps every element of a scope, and the two may be combined. Listing the
+								<code class="inline-code">$class</code>
+								of several themes on one element composes them there as
+								<code class="inline-code">{'apply={[a, b]}'}</code>
+								composes them on a scope.
 							</p>
 							<pre class="code-block plain">
 								<code>{STYLE_THEME_EXAMPLE}</code>
@@ -1385,8 +1435,14 @@ export function SpecificationPage() @{
 								<li>
 									Implementation metadata may additionally record topScopedClasses for downstream
 									style-ref analysis. The style analyzer records
+									<code class="inline-code">metadata.styleExported</code>
+									,
+									<code class="inline-code">metadata.styleApplied</code>
+									, and
+									<code class="inline-code">metadata.styleClassRead</code>
+									on assigned blocks, derives
 									<code class="inline-code">metadata.styleKind</code>
-									(theme or class-map) on assigned blocks and
+									from them (theme when any of the three is set, otherwise class-map), records
 									<code class="inline-code">metadata.styleApplies</code>
 									on every style element, and summarizes the module's assigned and standalone
 									blocks, in source order, on

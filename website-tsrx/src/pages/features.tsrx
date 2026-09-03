@@ -363,6 +363,36 @@ export function Composed() @{
 }`,
 );
 
+const THEME_OPT_IN_HTML = highlight_tsrx(
+	`function Card({ parentClass }: { parentClass: string }) @{
+  <>
+    <style>
+      .local { padding: 0; }
+    </style>
+    <article class={parentClass}>
+      <h2 class={parentClass}>Title</h2>
+    </article>
+  </>
+}
+
+export function App() @{
+  const theme = <style>
+    div { color: blue; }
+    .card { color: red; }
+  </style>;
+
+  <>
+    <Card parentClass={theme.$class} />
+    <div class={theme.$class}>Blue: opted in</div>
+    <div class={theme.card}>Red: theme.card</div>
+    <p>Untouched</p>
+  </>
+}
+
+// theme.$class is read, so theme keeps div { color: blue }.
+// Card's <article> and <h2> carry theme.$class, then Card's own scope hash.`,
+);
+
 const STYLE_LAYER_HTML = highlight_tsrx(
 	`function Card() @{
   <>
@@ -957,8 +987,11 @@ export const FeaturesPage = () => @{
 								<code innerHTML={THEME_CLASS_HTML} />
 							</pre>
 							<p class="section-body">
-								A block that is exported or applied is a theme and keeps every selector, element and
-								descendant selectors included. A local block that is neither exported nor applied
+								A block that is exported, applied, or whose
+								<code class="inline-code">$class</code>
+								is read is a theme and keeps every selector, element and descendant selectors
+								included. A local block whose only reads are class entries such as
+								<code class="inline-code">styles.card</code>
 								keeps only its standalone class selectors; the rest are pruned because no element
 								can carry its hash.
 							</p>
@@ -996,6 +1029,36 @@ export const FeaturesPage = () => @{
 							<pre class="code-block">
 								<code innerHTML={THEME_COMPOSITION_HTML} />
 							</pre>
+							<h3 class="subsection-heading">
+								Opting elements in with
+								<code class="inline-code">$class</code>
+							</h3>
+							<p class="section-body">
+								<code class="inline-code">apply</code>
+								is all or nothing for a scope. To pick elements instead, put
+								<code class="inline-code">theme.$class</code>
+								on them. Reading
+								<code class="inline-code">$class</code>
+								anywhere in the module makes the block a theme, so its element and descendant rules
+								are kept, and only the elements that carry the class match them. The value is a
+								plain string, so a child component can take it through a prop and put it on its own
+								elements, where it lands ahead of the child's own scope hash.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={THEME_OPT_IN_HTML} />
+							</pre>
+							<p class="section-body">
+								Prefer
+								<code class="inline-code">$class</code>
+								when a theme should reach a handful of elements, or elements the parent does not
+								render itself, and
+								<code class="inline-code">apply</code>
+								when it should reach a whole scope. The two combine, and listing several themes'
+								<code class="inline-code">$class</code>
+								values on one element composes them there the way
+								<code class="inline-code">{'apply={[a, b]}'}</code>
+								composes them on a scope.
+							</p>
 							<p class="section-body">
 								Cascade layers pass through.
 								<code class="inline-code">@layer</code>
@@ -1050,6 +1113,13 @@ export const FeaturesPage = () => @{
 				font-size: clamp(1.5rem, 3vw, 2rem);
 				line-height: 1.1;
 				letter-spacing: -0.03em;
+			}
+
+			.subsection-heading {
+				margin: 1.75rem 0 0.5rem;
+				font-size: clamp(1.1rem, 2vw, 1.35rem);
+				line-height: 1.2;
+				letter-spacing: -0.02em;
 			}
 
 			.section-body {
