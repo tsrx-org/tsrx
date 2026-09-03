@@ -66,8 +66,13 @@ here and keeps package docs focused on the core parser API.
   helpers, obfuscation helpers.
 - **CSS support** — `parseStyle`, `analyzeCss`, `renderStylesheets`.
 - **Scoped styles** — `analyzeTsrx` resolves every `<style>` block: standalone
-  blocks scope the template they sit in (nested `@{ … }` and control-flow bodies
-  are scopes of their own), assigned blocks (`const theme = <style>…</style>`) are
+  blocks are children of an element or fragment and scope that children list,
+  styling the items beside them and everything below, never the containing element
+  (a block is an output node: as the lone output of a `@{ … }` or control-flow
+  body it is `STYLE_STANDALONE_NEEDS_FRAGMENT`; raw CSS is TSRX template syntax,
+  so a bodied block outside every `@{ … }`/control-flow body is
+  `STYLE_STANDALONE_OUTSIDE_TEMPLATE`; plain-TSX `<style>{css}</style>` is an
+  ordinary element), assigned blocks (`const theme = <style>…</style>`) are
   classified as `theme` (exported or applied) or `class-map`, and `apply` targets
   are resolved through real bindings with declared-before-use enforced. Results
   ride on each block's `metadata` (`styleKind`, `styleApplies`, `styleApplied`,

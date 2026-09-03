@@ -26,13 +26,21 @@ import {
 	TSRX_STYLE_APPLY_VALUE_ERROR,
 	TSRX_STYLE_RESERVED_CLASS_KEY_ERROR,
 	TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR,
+	TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR,
+	TSRX_STYLE_STANDALONE_OUTSIDE_TEMPLATE_ERROR,
 	tsrx_style_apply_before_declaration_error,
 	tsrx_style_apply_target_error,
 	tsrx_style_unknown_attribute_error,
 	validate_style,
 } from './validation.js';
 
-/** @typedef {{ function_depth: number, template_depth: number }} StyleWalkState */
+/**
+ * `container_depth` counts the enclosing TSRX containers — `@{ … }` bodies
+ * and control-flow directives — where raw CSS in a standalone block is
+ * template syntax; native elements only bump `template_depth`.
+ *
+ * @typedef {{ function_depth: number, template_depth: number, container_depth: number }} StyleWalkState
+ */
 
 /**
  * `apply` sites resolve against ordinary JavaScript scoping, so the analyzer
@@ -76,8 +84,9 @@ function collect_exported_names(ast) {
 
 /**
  * A style block is standalone when it is template content rather than a value:
- * a child of a native element/fragment, a sibling in a `@{ … }` body or a
- * directive body (D3), or a bare statement.
+ * a child of a native element/fragment, the render output of a `@{ … }` body
+ * or a control-flow body, or a bare statement. Only the first placement is
+ * valid; the others are reported (5.1).
  *
  * @param {AST.Node[]} path
  * @returns {boolean}
@@ -98,37 +107,6 @@ export function is_standalone_style_position(path) {
 		default:
 			return false;
 	}
-}
-
-/**
- * Whether a `<style>` block sits in the statement list of a `@{ … }` body or
- * of an `@if`/`@for`/`@switch`/`@try` body, where D3 allows it as a non-output
- * sibling of the single rendered node.
- *
- * @param {AST.Node[]} path
- * @returns {boolean}
- */
-export function is_template_statement_list_style(path) {
-	const parent = path.at(-1);
-	const grandparent = path.at(-2);
-	if (!parent) return false;
-	if (parent.type === 'JSXCodeBlock') return true;
-	if (parent.type === 'SwitchCase') return grandparent?.type === 'JSXSwitchExpression';
-	if (parent.type === 'BlockStatement' && grandparent) {
-		if (is_template_directive(grandparent)) return true;
-		if (grandparent.type === 'CatchClause') return path.at(-3)?.type === 'JSXTryExpression';
-		// `@else if (…) { … }` chains parse as plain `IfStatement` alternates of
-		// the `@if` directive.
-		let depth = path.length - 2;
-		while (
-			path[depth]?.type === 'IfStatement' &&
-			/** @type {{ alternate?: AST.Node | null }} */ (path[depth - 1])?.alternate === path[depth]
-		) {
-			depth -= 1;
-			if (path[depth]?.type === 'JSXIfExpression') return true;
-		}
-	}
-	return false;
 }
 
 /**
@@ -314,18 +292,26 @@ export function analyze_styles(ast, scopes, state) {
 
 	walk(
 		/** @type {AST.Node} */ (ast),
-		/** @type {StyleWalkState} */ ({ function_depth: 0, template_depth: 0 }),
+		/** @type {StyleWalkState} */ ({ function_depth: 0, template_depth: 0, container_depth: 0 }),
 		/** @type {Visitors<AST.Node, StyleWalkState>} */ ({
 			_(node, { state: walk_state, next }) {
 				if (is_function_node(node)) {
 					next({ ...walk_state, function_depth: walk_state.function_depth + 1 });
 					return;
 				}
+				if (node.type === 'JSXCodeBlock' || is_template_directive(node)) {
+					// `@else if` chains and `@catch` clauses are children of the
+					// directive node, so one bump covers every branch body.
+					next({
+						...walk_state,
+						template_depth: walk_state.template_depth + 1,
+						container_depth: walk_state.container_depth + 1,
+					});
+					return;
+				}
 				if (
-					node.type === 'JSXCodeBlock' ||
-					is_template_directive(node) ||
-					((node.type === 'JSXElement' || node.type === 'JSXFragment') &&
-						node.metadata?.native_tsrx)
+					(node.type === 'JSXElement' || node.type === 'JSXFragment') &&
+					node.metadata?.native_tsrx
 				) {
 					next({ ...walk_state, template_depth: walk_state.template_depth + 1 });
 					return;
@@ -392,10 +378,32 @@ export function analyze_styles(ast, scopes, state) {
 
 				if (is_standalone) {
 					if (!inside_head && !is_resource) {
+						const parent = path.at(-1);
+						const in_children_list =
+							parent?.type === 'JSXElement' || parent?.type === 'JSXFragment';
 						if (walk_state.function_depth === 0 && walk_state.template_depth === 0) {
 							report(
 								TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR,
 								DIAGNOSTIC_CODES.STYLE_STANDALONE_AT_MODULE_SCOPE,
+								node,
+							);
+						} else if (!in_children_list) {
+							// A block is an output node: as the lone output of a `@{ … }` or
+							// control-flow body, or as a statement, it styles nothing. Beside
+							// another output it is already the parser's multiple-outputs error.
+							report(
+								TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR,
+								DIAGNOSTIC_CODES.STYLE_STANDALONE_NEEDS_FRAGMENT,
+								node,
+							);
+						} else if (walk_state.container_depth === 0 && !node.openingElement.selfClosing) {
+							// Raw CSS in `<style>` is TSRX template syntax: outside every
+							// `@{ … }` and control-flow body the file is plain TSX, where a
+							// `<style>` takes an expression child instead. A self-closing
+							// `<style apply={…} />` holds no CSS text and is ordinary JSX.
+							report(
+								TSRX_STYLE_STANDALONE_OUTSIDE_TEMPLATE_ERROR,
+								DIAGNOSTIC_CODES.STYLE_STANDALONE_OUTSIDE_TEMPLATE,
 								node,
 							);
 						}

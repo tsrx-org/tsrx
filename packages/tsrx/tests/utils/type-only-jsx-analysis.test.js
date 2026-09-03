@@ -75,29 +75,29 @@ function compile_source(source, type_only = true) {
 	return { ...transformed, ...result, errors };
 }
 
+// Raw CSS in `<style>` is TSRX template syntax, so the blocks sit in a `@{ … }`
+// body; both are items of the same fragment children list and share one scope.
 const SPLIT_STYLE_SOURCE =
-	'export function Split(props: { active: boolean }) {\n' +
-	'\treturn <>\n' +
+	'export function Split(props: { active: boolean }) @{\n' +
+	'\t<>\n' +
 	"\t\t<section class={['mailbox', { active: props.active }]}>{'hi'}</section>\n" +
 	'\t\t<style>\n' +
 	'\t\t\t.mailbox { color: rgb(10, 20, 30); }\n' +
 	'\t\t</style>\n' +
-	'\t\t<>\n' +
-	'\t\t\t<style>\n' +
-	'\t\t\t\t.active { background-color: rgb(40, 50, 60); }\n' +
-	'\t\t\t</style>\n' +
-	'\t\t</>\n' +
-	'\t</>;\n' +
+	'\t\t<style>\n' +
+	'\t\t\t.active { background-color: rgb(40, 50, 60); }\n' +
+	'\t\t</style>\n' +
+	'\t</>\n' +
 	'}\n';
 
 const SPLIT_STYLE_DEFINITION_SOURCE =
-	'export function Split() {\n' +
-	'\treturn <>\n' +
+	'export function Split() @{\n' +
+	'\t<>\n' +
 	'\t\t<section class="mailbox">one</section>\n' +
 	'\t\t<aside class="active">two</aside>\n' +
 	'\t\t<style>.mailbox { color: red; }</style>\n' +
 	'\t\t<style>.active { color: blue; }</style>\n' +
-	'\t</>;\n' +
+	'\t</>\n' +
 	'}\n';
 
 const REF_SPREAD_PROPS_TYPE =

@@ -1,23 +1,24 @@
 /**
  * Style scope pre-pass: the one place that decides which `<style>` blocks
- * belong to which template scope, in what order their CSS is emitted, and
- * which classes every element carries.
+ * belong to which scope, in what order their CSS is emitted, and which
+ * classes every element carries.
  *
- * A scope is a statement list plus the template it renders: the body of a
- * `@{ … }` block, the body of an `@if`/`@for`/`@switch`/`@try` branch, or a
- * native element/fragment in expression position (assigned templates,
- * returned fragments). A scope owns the standalone blocks written directly in
- * its list and inside its own native element subtree; nested scopes own their
- * own blocks. Every block of a scope shares the scope hash (the first bodied
- * block's position-derived hash), and every element in the scope's subtree —
- * nested scopes included — carries the hashes of all its enclosing scopes,
- * outer first, followed by the classes of every applied theme.
+ * A scope is the children list of a native element or fragment that holds at
+ * least one standalone block. A block styles the other children of its list
+ * and everything below them; it never styles the element that contains it,
+ * nor any ancestor. Every block of a scope shares the scope hash (the first
+ * bodied block's position-derived hash), and every element carries the hashes
+ * of all its enclosing scopes, outer first, followed by the classes of every
+ * applied theme. Children lists nested in a scope that hold blocks are nested
+ * scopes. Statement lists — `@{ … }` bodies and control-flow bodies — hold no
+ * standalone blocks (a block there is an output node, and the analyzer reports
+ * it); they are only searched for nested templates and assigned blocks.
  *
  * CSS is emitted in lexical pre-order: a scope's sheets form one contiguous
  * group placed where its first block sits, before the sheets of the scopes
  * and assigned blocks nested in it, after the assigned blocks declared before
- * it in the same list. Running once, before the target walker, makes this
- * order an invariant rather than a property of the walker's traversal.
+ * it. Running once, before the target walker, makes this order an invariant
+ * rather than a property of the walker's traversal.
  *
  * The pass is copy-on-write over the parsed AST: nodes it does not change are
  * returned as-is, and node metadata is shared with the parser nodes so later
@@ -62,7 +63,10 @@ import { set_node_path_metadata } from './helpers.js';
  *   ctx: TransformContext,
  *   class_attr_name: 'class' | 'className',
  *   static_classes: Map<AST.JSXStyleElement, string | null>,
- * }} StyleScopeState
+ *   ref_sink: AST.Statement[],
+ * }} StyleScopeState `ref_sink` collects the `<style ref>` setup statements
+ *   of children-list scopes until the nearest statement slot (the statement
+ *   list holding the template, or an expression-position root) places them.
  * @typedef {{ hash: string | null, applied: Array<string | AST.Expression>, ref_statements: AST.Statement[] }} ScopeStyles
  */
 
@@ -81,6 +85,7 @@ export function prepare_style_scopes(program, ctx) {
 		class_attr_name:
 			ctx.platform.jsx.classAttrName ?? (ctx.platform.jsx.rewriteClassAttr ? 'className' : 'class'),
 		static_classes: new Map(),
+		ref_sink: [],
 	};
 	// Module scope is not a template scope: a standalone block here is an
 	// analyzer error, and its statements are only searched for scopes.
@@ -118,8 +123,8 @@ function is_native_template_node(node) {
 }
 
 /**
- * A list item that renders: it is stamped with the scope's classes and may
- * host nested scopes. Setup statements are neither.
+ * A statement-list item that renders a template and may host nested scopes.
+ * Setup statements do not.
  *
  * @param {AST.Node} node
  * @returns {boolean}
@@ -222,9 +227,12 @@ function rewrite_children(node, state, map) {
 }
 
 /**
- * Template children of a native element that already belongs to a scope:
- * they are not new roots, but expression containers and attribute values
- * inside them are.
+ * A native element or fragment that already sits inside a scope. Its own
+ * children list is a scope when it holds standalone blocks: the blocks style
+ * the other children and their descendants — never the node itself — and are
+ * stripped (type-only output keeps emptied stand-ins so the editor can map
+ * the tags). Expression containers and attribute values inside are roots of
+ * their own.
  *
  * @template {AST.TSRXJSXElement | AST.TSRXJSXFragment} T
  * @param {T} node
@@ -232,51 +240,69 @@ function rewrite_children(node, state, map) {
  * @returns {T}
  */
 function descend_template_children(node, state) {
-	return rewrite_children(node, state, (child, key) => {
-		if (key === 'children') {
-			if (is_native_template_node(child)) return descend_template_children(child, state);
-			if (is_style_element(child)) return child;
-			return descend(child, state, 'statement');
+	const children = node_children(node);
+	const own = collect_own_blocks(children);
+	const scope = own.length > 0 ? prepare_scope(own, children, own[0], state) : null;
+	if (scope && scope.ref_statements.length > 0) {
+		state.ref_sink.push(...scope.ref_statements);
+	}
+
+	let out = rewrite_children(node, state, (child, key) =>
+		key === 'children' ? child : descend(child, state, 'expression'),
+	);
+
+	/** @type {AST.Node[]} */
+	const next_children = [];
+	let changed = false;
+	for (const child of /** @type {AST.Node[]} */ (node.children)) {
+		if (!is_ast_node(child)) {
+			next_children.push(child);
+			continue;
 		}
-		return descend(child, state, 'expression');
-	});
+		if (scope && is_style_element(child) && own.includes(child)) {
+			changed = true;
+			if (state.ctx.typeOnly) next_children.push(type_only_style(child));
+			continue;
+		}
+		const stamped = scope ? stamp(child, scope, state) : child;
+		const next = is_native_template_node(stamped)
+			? descend_template_children(stamped, state)
+			: is_style_element(stamped)
+				? stamped
+				: descend(stamped, state, 'statement');
+		if (next !== child) changed = true;
+		next_children.push(next);
+	}
+	if (changed) out = { ...out, children: next_children };
+	return out;
 }
 
 /**
- * `@{ … }`: the body statements and the render slot form one scope, in source
- * order (a `<style>` sibling may follow the output node).
+ * `@{ … }`: the setup statements are searched for nested templates and
+ * assigned blocks; the render slot holds the template. `ref` maps of the
+ * scopes inside the template are appended to the body, after the setup that
+ * declares their targets.
  *
  * @param {AST.JSXCodeBlock} node
  * @param {StyleScopeState} state
  * @returns {AST.JSXCodeBlock}
  */
 function process_code_block(node, state) {
-	const items = insert_in_source_order(node.body, node.render);
-	const { nodes, render } = process_list(items, state, node.render);
-	if (nodes === items && render === node.render) return node;
+	const body = map_list(node.body, (item) => descend(item, state, 'statement'));
+	if (!node.render) return body === node.body ? node : { ...node, body };
+	const { statements, result: render } = with_ref_sink(state, () =>
+		descend_list_item(/** @type {AST.Node} */ (node.render), state),
+	);
+	if (body === node.body && render === node.render && statements.length === 0) return node;
 	return {
 		...node,
-		body: /** @type {AST.Statement[]} */ (nodes.filter((item) => item !== render)),
+		body: /** @type {AST.Statement[]} */ ([...body, ...statements]),
 		render,
 	};
 }
 
 /**
- * @param {AST.Node[]} body
- * @param {AST.Node | null} render
- * @returns {AST.Node[]}
- */
-function insert_in_source_order(body, render) {
-	if (!render) return body;
-	const render_start = render.start;
-	if (render_start === undefined) return [...body, render];
-	const index = body.findIndex((item) => item.start !== undefined && item.start > render_start);
-	if (index === -1) return [...body, render];
-	return [...body.slice(0, index), render, ...body.slice(index)];
-}
-
-/**
- * Each branch body of a directive is a scope.
+ * Each branch body of a directive is a statement list holding one output node.
  *
  * @param {AST.JSXTemplateDirective} node
  * @param {StyleScopeState} state
@@ -290,13 +316,13 @@ function process_directive(node, state) {
 			return body === child.body ? child : { ...child, body };
 		}
 		if (child.type === 'SwitchCase') {
-			const consequent = process_list(child.consequent, state, null).nodes;
+			const consequent = process_statements(child.consequent, state);
 			return consequent === child.consequent
 				? child
 				: { ...child, consequent: /** @type {AST.Statement[]} */ (consequent) };
 		}
 		// `@else if (…) { … }` parses as a plain `IfStatement` alternate; its
-		// bodies are branch scopes like the directive's own.
+		// bodies are branch bodies like the directive's own.
 		if (key === 'alternate' && (is_template_directive(child) || child.type === 'IfStatement')) {
 			return process_directive(/** @type {AST.JSXTemplateDirective} */ (child), state);
 		}
@@ -310,12 +336,15 @@ function process_directive(node, state) {
  * @returns {AST.BlockStatement}
  */
 function process_block_body(block, state) {
-	const body = process_list(block.body, state, null).nodes;
+	const body = process_statements(block.body, state);
 	return body === block.body ? block : { ...block, body: /** @type {AST.Statement[]} */ (body) };
 }
 
 /**
- * A native element/fragment rooting a scope of its own.
+ * A native element/fragment in expression or statement position: its own
+ * children list is treated like any other, and the `ref` maps of the scopes
+ * inside it are left on its metadata because it has no statement slot of its
+ * own — the lowering that turns the root into statements picks them up.
  *
  * @template {AST.TSRXJSXElement | AST.TSRXJSXFragment} T
  * @param {T} node
@@ -323,88 +352,54 @@ function process_block_body(block, state) {
  * @returns {T}
  */
 function process_root(node, state) {
-	const own = collect_own_blocks([node]);
-	if (own.length === 0) return descend_template_children(node, state);
-
-	const scope = prepare_scope(own, [node], node, state);
-	let out = /** @type {T} */ (stamp(node, scope, state));
-	out = /** @type {T} */ (strip(out, own, state));
-	if (scope.ref_statements.length > 0) {
-		// Expression-position roots have no statement slot of their own; the
-		// lowering that turns the root into statements picks these up.
-		out.metadata.tsrx_style_ref_statements = scope.ref_statements;
+	const { statements, result: out } = with_ref_sink(state, () =>
+		descend_template_children(node, state),
+	);
+	if (statements.length > 0) {
+		const previous = out.metadata.tsrx_style_ref_statements ?? [];
+		out.metadata.tsrx_style_ref_statements = [...previous, ...statements];
 	}
-	return descend_template_children(out, state);
+	return out;
 }
 
 /**
- * One statement-list scope.
+ * Run `fn` with a fresh `ref` sink and return what it collected.
  *
- * @param {AST.Node[]} nodes source-ordered items: setup statements, style siblings, render items
+ * @template T
  * @param {StyleScopeState} state
- * @param {AST.Node | null} render_item the code block's render slot, tracked through the rewrite
- * @returns {{ nodes: AST.Node[], render: AST.Node | null }}
+ * @param {() => T} fn
+ * @returns {{ statements: AST.Statement[], result: T }}
  */
-function process_list(nodes, state, render_item) {
-	const own = collect_own_blocks(nodes);
-	const render_index = render_item ? nodes.indexOf(render_item) : -1;
-
-	if (own.length === 0) {
-		const out = map_list(nodes, (item) => descend_list_item(item, state));
-		return { nodes: out, render: render_index === -1 ? null : out[render_index] };
+function with_ref_sink(state, fn) {
+	const previous = state.ref_sink;
+	/** @type {AST.Statement[]} */
+	const statements = [];
+	state.ref_sink = statements;
+	try {
+		return { statements, result: fn() };
+	} finally {
+		state.ref_sink = previous;
 	}
-
-	const first_block_start = /** @type {number} */ (own[0].start);
-	const render_items = nodes.filter(is_render_item);
-	const holder = render_items[0] ?? own[0];
-	/** @type {AST.Node[][]} */
-	const out = nodes.map((item) => [item]);
-
-	// Setup statements ahead of the scope's first block emit first: an assigned
-	// theme declared there is applied by this scope and must precede its CSS.
-	for (let i = 0; i < nodes.length; i += 1) {
-		const item = nodes[i];
-		if (!is_render_item(item) && !is_style_element(item) && precedes(item, first_block_start)) {
-			out[i] = [descend(item, state, 'statement')];
-		}
-	}
-
-	const scope = prepare_scope(own, render_items, holder, state);
-
-	let ref_statements = scope.ref_statements;
-	for (let i = 0; i < nodes.length; i += 1) {
-		const item = nodes[i];
-		if (is_style_element(item)) {
-			out[i] = own.includes(item) ? (state.ctx.typeOnly ? [type_only_style(item)] : []) : [item];
-			continue;
-		}
-		if (is_render_item(item)) {
-			const stamped = strip(stamp(item, scope, state), own, state);
-			const processed = descend_list_item(stamped, state);
-			out[i] = ref_statements.length > 0 ? [...ref_statements, processed] : [processed];
-			ref_statements = [];
-			continue;
-		}
-		if (!precedes(item, first_block_start)) {
-			out[i] = [descend(item, state, 'statement')];
-		}
-	}
-	if (ref_statements.length > 0) {
-		// A scope with `ref` blocks and nothing rendered still exposes its map.
-		out.push(ref_statements);
-	}
-
-	const render = render_index === -1 ? null : (out[render_index].at(-1) ?? null);
-	return { nodes: out.flat(), render };
 }
 
 /**
- * @param {AST.Node} item
- * @param {number} position
- * @returns {boolean}
+ * A statement list holding setup statements and at most one output node:
+ * the `ref` maps of the scopes inside the output node surface in the slot
+ * before it.
+ *
+ * @param {AST.Node[]} nodes
+ * @param {StyleScopeState} state
+ * @returns {AST.Node[]}
  */
-function precedes(item, position) {
-	return item.end !== undefined && item.end <= position;
+function process_statements(nodes, state) {
+	/** @type {AST.Node[][]} */
+	const out = nodes.map((item) => {
+		if (!is_render_item(item)) return [descend(item, state, 'statement')];
+		const { statements, result } = with_ref_sink(state, () => descend_list_item(item, state));
+		return [...statements, result];
+	});
+	const changed = out.some((parts, i) => parts.length !== 1 || parts[0] !== nodes[i]);
+	return changed ? out.flat() : nodes;
 }
 
 /**
@@ -419,31 +414,25 @@ function descend_list_item(item, state) {
 }
 
 /**
- * The standalone blocks a scope owns: style items of its list and blocks
- * inside its native element subtrees. Nested scopes (code blocks, directive
- * bodies, expression containers, functions) keep their own.
+ * The standalone blocks a children list owns: its own style items, in source
+ * order. Blocks inside the items' subtrees belong to the lists they sit in.
  *
  * @param {AST.Node[]} nodes
- * @param {AST.JSXStyleElement[]} [blocks]
  * @returns {AST.JSXStyleElement[]}
  */
-export function collect_own_blocks(nodes, blocks = []) {
-	for (const node of nodes) {
-		if (is_style_element(node)) {
-			blocks.push(node);
-		} else if (is_native_template_node(node)) {
-			collect_own_blocks(node_children(node), blocks);
-		}
-	}
-	return blocks.sort((a, b) => /** @type {number} */ (a.start) - /** @type {number} */ (b.start));
+export function collect_own_blocks(nodes) {
+	return nodes
+		.filter(is_style_element)
+		.sort((a, b) => /** @type {number} */ (a.start) - /** @type {number} */ (b.start));
 }
 
 /**
  * Render a scope's sheets and compute what its elements carry.
  *
  * @param {AST.JSXStyleElement[]} own
- * @param {AST.Node[]} render_items
- * @param {AST.Node} holder the node whose metadata accumulates the scope's class map
+ * @param {AST.Node[]} render_items the list's items (and, through them, their subtrees)
+ * @param {AST.Node} holder the node whose metadata accumulates the scope's class
+ *   map: the scope's first block, so two scopes never share a map
  * @param {StyleScopeState} state
  * @returns {ScopeStyles}
  */
@@ -607,6 +596,8 @@ export function collect_css_prunable_elements(
 		return elements;
 	}
 
+	if (is_style_host_element(value)) return elements;
+
 	if (value.type === 'JSXElement' && value.metadata?.native_tsrx) {
 		if (!is_style_element(value)) {
 			set_node_path_metadata(value, path);
@@ -736,7 +727,7 @@ function stamp(node, scope, state) {
 function stamp_node(node, scope, state) {
 	if (!is_ast_node(node)) return node;
 	if (is_function_node(node) && node.metadata?.tsrx_dynamic_wrapper !== true) return node;
-	if (is_style_element(node)) return node;
+	if (is_style_element(node) || is_style_host_element(node)) return node;
 
 	// Composite components get no hash (their host elements belong to their own
 	// scope); parser-native dynamic tags (`<{expr}>`) render host elements.
@@ -754,32 +745,20 @@ function stamp_node(node, scope, state) {
 }
 
 /**
- * Remove the scope's own blocks from its native element subtrees. Type-only
- * output keeps them, emptied, so the editor can map the tag and its
- * attributes.
+ * `<style>{css}</style>` is an ordinary host element (Rule C): it holds no
+ * scoped CSS, so it is neither stamped nor matched by selectors, like a
+ * `<style>` block.
  *
- * @template {AST.Node} T
- * @param {T} node
- * @param {AST.JSXStyleElement[]} own
- * @param {StyleScopeState} state
- * @returns {T}
+ * @param {AST.Node} node
+ * @returns {boolean}
  */
-function strip(node, own, state) {
-	if (!is_native_template_node(node)) return node;
-	/** @type {AST.Node[]} */
-	const children = [];
-	let changed = false;
-	for (const child of node_children(node)) {
-		if (is_style_element(child) && own.includes(child)) {
-			changed = true;
-			if (state.ctx.typeOnly) children.push(type_only_style(child));
-			continue;
-		}
-		const next = strip(child, own, state);
-		if (next !== child) changed = true;
-		children.push(next);
-	}
-	return changed ? /** @type {T} */ ({ ...node, children }) : node;
+function is_style_host_element(node) {
+	return (
+		node.type === 'JSXElement' &&
+		!!node.metadata?.native_tsrx &&
+		node.openingElement.name.type === 'JSXIdentifier' &&
+		node.openingElement.name.name === 'style'
+	);
 }
 
 /**

@@ -72,9 +72,17 @@ function create_random(seed) {
 }
 
 /**
- * @typedef {{ id: number, blocks: number, children: Array<ScopeNode | number> }} ScopeNode
+ * @typedef {{
+ *   id: number,
+ *   kind: 'block' | 'element',
+ *   blocks: number,
+ *   children: Array<ScopeNode | number>,
+ * }} ScopeNode
  *   `children` holds nested scopes and element ids in source order; blocks
- *   are placed by `render_scope`.
+ *   are placed by `render_scope`. A `block` scope renders as a nested
+ *   `@{ <>…</> }`; an `element` scope renders as the children list of a
+ *   container `<div>`, which carries only the enclosing chain and never its
+ *   own scope's hash.
  */
 
 /**
@@ -85,6 +93,7 @@ function create_random(seed) {
  */
 function generate_scope(random, depth, counters) {
 	const id = counters.next_scope++;
+	const kind = depth > 0 && random() < 0.5 ? 'element' : 'block';
 	const blocks = Math.floor(random() * 4); // 0..3 blocks
 	/** @type {Array<ScopeNode | number>} */
 	const children = [];
@@ -102,7 +111,7 @@ function generate_scope(random, depth, counters) {
 	if (blocks > 0 && !children.some((child) => typeof child === 'number')) {
 		children.push(counters.next_element++);
 	}
-	return { id, blocks, children };
+	return { id, kind, blocks, children };
 }
 
 /**
@@ -127,6 +136,10 @@ function render_scope(scope, random, class_attr) {
 		}
 		if (typeof child === 'number') {
 			parts.push(`<div ${class_attr}="s${scope.id} e${child}">{'${child}'}</div>`);
+		} else if (child.kind === 'element') {
+			parts.push(
+				`<div ${class_attr}="c${child.id}">${render_scope(child, random, class_attr)}</div>`,
+			);
 		} else {
 			parts.push(`@{ <>${render_scope(child, random, class_attr)}</> }`);
 		}
@@ -144,8 +157,9 @@ function render_scope(scope, random, class_attr) {
  * @param {Map<number, string>} hashes scope id → hash
  * @param {Array<{ id: number, chain: string[] }>} elements
  * @param {number[]} order
+ * @param {Array<{ id: number, chain: string[] }>} containers element-kind scopes
  */
-function expected_tree(scope, chain, hashes, elements, order) {
+function expected_tree(scope, chain, hashes, elements, order, containers) {
 	const own_chain =
 		scope.blocks > 0 ? [...chain, /** @type {string} */ (hashes.get(scope.id))] : chain;
 	if (scope.blocks > 0) {
@@ -155,7 +169,10 @@ function expected_tree(scope, chain, hashes, elements, order) {
 		if (typeof child === 'number') {
 			elements.push({ id: child, chain: own_chain });
 		} else {
-			expected_tree(child, own_chain, hashes, elements, order);
+			// A container element is an item of this scope's list, not of the
+			// list it contains: it carries this scope's chain only.
+			if (child.kind === 'element') containers.push({ id: child.id, chain: own_chain });
+			expected_tree(child, own_chain, hashes, elements, order, containers);
 		}
 	}
 }
@@ -199,8 +216,10 @@ export function runSharedScopedStyleTests({
 					<>
 						<section ${attr}="outer">
 							@{
-								<style>.inner { color: blue; }</style>
-								<p ${attr}="inner">{'inner'}</p>
+								<>
+									<style>.inner { color: blue; }</style>
+									<p ${attr}="inner">{'inner'}</p>
+								</>
 							}
 						</section>
 						<style>.outer { color: red; }</style>
@@ -225,13 +244,17 @@ export function runSharedScopedStyleTests({
 						<style>.l1 { color: red; }</style>
 						<div ${attr}="l1">
 							@{
-								<style>.l2 { color: red; }</style>
-								<div ${attr}="l2">
-									@{
-										<style>.l3 { color: red; }</style>
-										<div ${attr}="l3">{'deep'}</div>
-									}
-								</div>
+								<>
+									<style>.l2 { color: red; }</style>
+									<div ${attr}="l2">
+										@{
+											<>
+												<style>.l3 { color: red; }</style>
+												<div ${attr}="l3">{'deep'}</div>
+											</>
+										}
+									</div>
+								</>
 							}
 						</div>
 					</>
@@ -248,35 +271,45 @@ export function runSharedScopedStyleTests({
 			expect(code).not.toContain('`${`');
 		});
 
-		it('rfc1-control-flow: directive bodies are scopes whose CSS ships unconditionally', () => {
+		it('rfc1-control-flow: fragments in directive bodies are scopes whose CSS ships unconditionally', () => {
 			const { code, css, cssHash } = compile(
 				`export function App({ ready, items, kind }: { ready: boolean, items: string[], kind: number }) @{
 					<>
 						<style>.root { color: red; }</style>
 						<div ${attr}="root">{'root'}</div>
 						@if (ready) {
-							<style>.yes { color: green; }</style>
-							<p ${attr}="yes">{'yes'}</p>
+							<>
+								<style>.yes { color: green; }</style>
+								<p ${attr}="yes">{'yes'}</p>
+							</>
 						} @else {
-							<style>.no { color: gray; }</style>
-							<p ${attr}="no">{'no'}</p>
+							<>
+								<style>.no { color: gray; }</style>
+								<p ${attr}="no">{'no'}</p>
+							</>
 						}
 						@for (const item of items) {
-							<style>.item { color: blue; }</style>
-							<li ${attr}="item">{item}</li>
+							<>
+								<style>.item { color: blue; }</style>
+								<li ${attr}="item">{item}</li>
+							</>
 						}
 						@switch (kind) {
 							@case 1: {
-								<style>.one { color: black; }</style>
-								<b ${attr}="one">{'one'}</b>
+								<>
+									<style>.one { color: black; }</style>
+									<b ${attr}="one">{'one'}</b>
+								</>
 							}
 							@default: {
 								<i ${attr}="other">{'other'}</i>
 							}
 						}
 						@try {
-							<style>.ok { color: teal; }</style>
-							<em ${attr}="ok">{'ok'}</em>
+							<>
+								<style>.ok { color: teal; }</style>
+								<em ${attr}="ok">{'ok'}</em>
+							</>
 						} @catch (error) {
 							<s ${attr}="err">{'err'}</s>
 						}
@@ -324,9 +357,11 @@ export function runSharedScopedStyleTests({
 		});
 
 		it('rfc1-problem4-element-rooted-assigned-template-keeps-css', () => {
+			// The block sits in the div's children list: it styles the children,
+			// never the div that contains it (A1 Rule A).
 			const { code, css, cssHash } = compile(
 				`export function App() @{
-					const card = <div ${attr}="card"><style>.card { color: red; }</style><p ${attr}="text">{'hi'}</p></div>;
+					const card = <div ${attr}="card"><style>.text { color: red; } .card { padding: 0; }</style><p ${attr}="text">{'hi'}</p></div>;
 					<>
 						{card}
 						<p ${attr}="outside">{'outside'}</p>
@@ -335,13 +370,157 @@ export function runSharedScopedStyleTests({
 				'App.tsrx',
 			);
 
-			const hash = hash_for_selector(css, 'card');
+			const hash = hash_for_selector(css, 'text');
 			expect(hashes_of(cssHash)).toEqual([hash]);
 			expect(css).toContain('color: red;');
+			expect(css).toContain('/* (unused) .card { padding: 0; }*/');
 			expect(code).not.toContain('<style');
-			expect(class_of(code, 'card')).toBe(`card ${hash}`);
+			expect(class_of(code, 'card')).toBe('card');
 			expect(class_of(code, 'text')).toBe(`text ${hash}`);
 			expect(class_of(code, 'outside')).toBe('outside');
+		});
+
+		it('a1-sibling-scope: a block styles the items beside it and below, never its container', () => {
+			const { code, css, cssHash } = compile(
+				`export function Status({ ready }: { ready: boolean }) @{
+					<>
+						<style>.status { padding: 0.5rem; }</style>
+						<section ${attr}="status">
+							<style>.title { font-weight: bold; } .status { margin: 0; }</style>
+							<h2 ${attr}="title">{'Status'}</h2>
+							@if (ready) {
+								<>
+									<style>.ok { color: green; }</style>
+									<p ${attr}="ok">{'Ready'}</p>
+								</>
+							} @else {
+								<>
+									<style>.wait { color: gray; }</style>
+									<p ${attr}="wait">{'Waiting'}</p>
+								</>
+							}
+						</section>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const a = hash_for_selector(css, 'status');
+			const b = hash_for_selector(css, 'title');
+			const c = hash_for_selector(css, 'ok');
+			const d = hash_for_selector(css, 'wait');
+			expect(new Set([a, b, c, d]).size).toBe(4);
+			expect(hashes_of(cssHash)).toEqual([a, b, c, d]);
+			expect(class_of(code, 'status')).toBe(`status ${a}`);
+			expect(class_of(code, 'title')).toBe(`title ${a} ${b}`);
+			expect(class_of(code, 'ok')).toBe(`ok ${a} ${b} ${c}`);
+			expect(class_of(code, 'wait')).toBe(`wait ${a} ${b} ${d}`);
+			// <section> is not an item of its own children list.
+			expect(css).toContain('/* (unused) .status { margin: 0; }*/');
+			expect(css.indexOf(`.status.${a}`)).toBeLessThan(css.indexOf(`.title.${b}`));
+			expect(css.indexOf(`.title.${b}`)).toBeLessThan(css.indexOf(`.ok.${c}`));
+			expect(css.indexOf(`.ok.${c}`)).toBeLessThan(css.indexOf(`.wait.${d}`));
+		});
+
+		it('a1-two-lists: a fragment nested in a fragment is a scope of its own', () => {
+			const { code, css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>.a { color: red; }</style>
+						<>
+							<style>.b { color: blue; }</style>
+							<div ${attr}="a b">{'x'}</div>
+						</>
+						<p ${attr}="outer">{'y'}</p>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const a = hash_for_selector(css, 'a');
+			const b = hash_for_selector(css, 'b');
+			expect(a).not.toBe(b);
+			expect(hashes_of(cssHash)).toEqual([a, b]);
+			expect(class_of(code, 'a')).toBe(`a b ${a} ${b}`);
+			expect(class_of(code, 'outer')).toBe(`outer ${a}`);
+		});
+
+		it('a1-needs-fragment: a lone block as the output of a @{} body is a coded error', () => {
+			const source = `export function App() @{ <style>.a { color: red; }</style> }`;
+
+			expect(compile(source, 'App.tsrx', { collect: true }).errors.map((e) => e.code)).toEqual([
+				DIAGNOSTIC_CODES.STYLE_STANDALONE_NEEDS_FRAGMENT,
+			]);
+			expect(() => compile(source, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: DIAGNOSTIC_CODES.STYLE_STANDALONE_NEEDS_FRAGMENT }),
+			);
+		});
+
+		it('a1-per-list-sharing: blocks share a hash per list, not per element subtree', () => {
+			const { code, css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>.outer { color: red; }</style>
+						<section ${attr}="outer">
+							<style>.one { color: blue; }</style>
+							<style>.two { color: green; }</style>
+							<p ${attr}="one two">{'x'}</p>
+						</section>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const outer = hash_for_selector(css, 'outer');
+			const inner = hash_for_selector(css, 'one');
+			expect(hash_for_selector(css, 'two')).toBe(inner);
+			expect(inner).not.toBe(outer);
+			expect(hashes_of(cssHash)).toEqual([outer, inner]);
+			expect(class_of(code, 'outer')).toBe(`outer ${outer}`);
+			expect(class_of(code, 'one')).toBe(`one two ${outer} ${inner}`);
+		});
+
+		it('a1-apply-in-children: apply on a children-list block reaches the siblings, not the container', () => {
+			const { code, css } = compile(
+				`const theme = <style>.t { color: red; }</style>;
+				export function App() @{
+					<section ${attr}="host">
+						<style apply={theme} />
+						<p ${attr}="inner">{'x'}</p>
+					</section>
+				}`,
+				'App.tsrx',
+			);
+
+			const theme = hash_for_selector(css, 't');
+			expect(class_of(code, 'host')).toBe('host');
+			expect(class_of(code, 'inner')).toBe(`inner ${theme}`);
+		});
+
+		it('c1-expression-child: <style>{css}</style> is an ordinary element with no CSS, hash, or stamp', () => {
+			for (const source of [
+				`export function App({ css }: { css: string }) { return <section><style>{css}</style><div ${attr}="d" /></section>; }`,
+				`export function App({ css }: { css: string }) @{
+					<section>
+						<style>{css}</style>
+						<style>.d { color: red; }</style>
+						<div ${attr}="d">{'d'}</div>
+					</section>
+				}`,
+			]) {
+				const { code, css, cssHash } = compile(source, 'App.tsrx');
+				expect(code).toContain('<style>{css}</style>');
+				expect(code).not.toMatch(/<style [^>]*class/);
+				if (source.includes('.d {')) {
+					const hash = hash_for_selector(css, 'd');
+					expect(hashes_of(cssHash)).toEqual([hash]);
+					expect(class_of(code, 'd')).toBe(`d ${hash}`);
+				} else {
+					expect(css).toBe('');
+					expect(cssHash).toBeNull();
+					expect(class_of(code, 'd')).toBe('d');
+				}
+			}
 		});
 
 		it('prunes an inner-scope selector that only matches outer elements', () => {
@@ -350,11 +529,13 @@ export function runSharedScopedStyleTests({
 					<>
 						<div ${attr}="outer">
 							@{
-								<style>
-									.inner { color: blue; }
-									.outer { color: red; }
-								</style>
-								<p ${attr}="inner">{'inner'}</p>
+								<>
+									<style>
+										.inner { color: blue; }
+										.outer { color: red; }
+									</style>
+									<p ${attr}="inner">{'inner'}</p>
+								</>
 							}
 						</div>
 					</>
@@ -408,7 +589,7 @@ export function runSharedScopedStyleTests({
 		it('drops a scope whose only block matches nothing without emitting a style element', () => {
 			const { code, css } = compile(
 				`export function App() @{
-					<style>.nothing { color: red; }</style>
+					<><style>.nothing { color: red; }</style></>
 				}`,
 				'App.tsrx',
 			);
@@ -539,13 +720,15 @@ export function runSharedScopedStyleTests({
 				</style>;
 
 				export function Panel() @{
-					<style apply={theme} />
 					<>
+						<style apply={theme} />
 						<span ${classAttrName}={theme.dark}>{'x'}</span>
 						<div ${attr}="outer">
 							@{
-								<style>div { font-weight: bold; }</style>
-								<div ${attr}="inner">{'y'}</div>
+								<>
+									<style>div { font-weight: bold; }</style>
+									<div ${attr}="inner">{'y'}</div>
+								</>
 							}
 						</div>
 						<style>div { color: purple; }</style>
@@ -616,8 +799,10 @@ export function runSharedScopedStyleTests({
 						<div ${attr}="a">{'a'}</div>
 						<p ${classAttrName}={active ? 'on' : 'off'}>
 							@{
-								<style>.n { color: blue; }</style>
-								<b ${attr}="n">{'n'}</b>
+								<>
+									<style>.n { color: blue; }</style>
+									<b ${attr}="n">{'n'}</b>
+								</>
 							}
 						</p>
 					</>
@@ -657,7 +842,7 @@ export function runSharedScopedStyleTests({
 					div { color: red; }
 					.x { color: blue; }
 				</style>;
-				export function App() @{ <style apply={theme} /> <div>{'a'}</div> }`,
+				export function App() @{ <><style apply={theme} /><div>{'a'}</div></> }`,
 				'App.tsrx',
 			);
 
@@ -846,7 +1031,7 @@ export function runSharedScopedStyleTests({
 
 		it('reports an unresolved apply target and still compiles', () => {
 			const result = compile(
-				`export function App() @{ <style apply={missing} /> <div>{'a'}</div> }`,
+				`export function App() @{ <><style apply={missing} /><div>{'a'}</div></> }`,
 				'App.tsrx',
 				{ collect: true },
 			);
@@ -859,7 +1044,7 @@ export function runSharedScopedStyleTests({
 
 		it('reports apply before declaration at the identifier', () => {
 			const result = compile(
-				`export function App() @{ <style apply={theme} /> <div>{'a'}</div> }
+				`export function App() @{ <><style apply={theme} /><div>{'a'}</div></> }
 				const theme = <style>div { color: red; }</style>;`,
 				'App.tsrx',
 				{ collect: true },
@@ -867,13 +1052,28 @@ export function runSharedScopedStyleTests({
 
 			expect(result.errors).toHaveLength(1);
 			expect(result.errors[0].code).toBe(DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION);
-			expect(result.errors[0].loc?.start).toEqual({ line: 1, column: 39 });
+			expect(result.errors[0].loc?.start).toEqual({ line: 1, column: 41 });
 		});
 
 		it('reports a standalone block at module scope', () => {
 			expect(codes(`<style>div { color: red; }</style>;`)).toEqual([
 				DIAGNOSTIC_CODES.STYLE_STANDALONE_AT_MODULE_SCOPE,
 			]);
+		});
+
+		it('b1-outside-template: reports a bodied standalone block outside every @{} and control-flow body', () => {
+			const source = `export function App() { return <section ${attr}="s"><style>.s { color: red; }</style><div ${attr}="s" /></section>; }`;
+
+			expect(codes(source)).toEqual([DIAGNOSTIC_CODES.STYLE_STANDALONE_OUTSIDE_TEMPLATE]);
+			expect(() => compile(source, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: DIAGNOSTIC_CODES.STYLE_STANDALONE_OUTSIDE_TEMPLATE }),
+			);
+			// The same block inside a control-flow body is TSRX template syntax.
+			expect(
+				codes(
+					`export function App({ x }: { x: boolean }) { return <section>@if (x) { <><style>.s { color: red; }</style><div ${attr}="s" /></> }</section>; }`,
+				),
+			).toEqual([]);
 		});
 
 		it('reports unknown style attributes', () => {
@@ -899,7 +1099,7 @@ export function runSharedScopedStyleTests({
 		it('throws the coded diagnostic outside collect mode', () => {
 			expect(() =>
 				compile(
-					`export function App() @{ <style apply={missing} /> <div>{'a'}</div> }`,
+					`export function App() @{ <><style apply={missing} /><div>{'a'}</div></> }`,
 					'App.tsrx',
 				),
 			).toThrow(expect.objectContaining({ code: DIAGNOSTIC_CODES.STYLE_APPLY_TARGET }));
@@ -929,7 +1129,9 @@ export function runSharedScopedStyleTests({
 				const elements = [];
 				/** @type {number[]} */
 				const order = [];
-				expected_tree(tree, [], hashes, elements, order);
+				/** @type {Array<{ id: number, chain: string[] }>} */
+				const containers = [];
+				expected_tree(tree, [], hashes, elements, order, containers);
 
 				// Sheet order: pre-order over scopes, each scope's blocks contiguous.
 				const emitted = [...css.matchAll(/\.s(\d+)\.tsrx-/g)].map((match) => Number(match[1]));
@@ -944,6 +1146,10 @@ export function runSharedScopedStyleTests({
 					expect(class_of(code, `s${scope_id} e${id}`)).toBe(
 						[`s${scope_id} e${id}`, ...chain].join(' '),
 					);
+				}
+				// A container element never carries the hash of the scope it holds.
+				for (const { id, chain } of containers) {
+					expect(class_of(code, `c${id}`)).toBe([`c${id}`, ...chain].join(' '));
 				}
 				expect(count_substring(code, '<style')).toBe(0);
 			},

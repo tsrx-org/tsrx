@@ -262,13 +262,13 @@ const x: string = bundle.$class;`,
 			const single = check_source(
 				compile_to_volar_mappings,
 				`const theme = <style>.dark { color: red; }</style>;
-export function App() @{ <style apply={theme} /> <div /> }`,
+export function App() @{ <><style apply={theme} /><div /></> }`,
 			);
 			const array = check_source(
 				compile_to_volar_mappings,
 				`const a = <style>.a { color: red; }</style>;
 const b = <style>.b { color: blue; }</style>;
-export function App() @{ <style apply={[a, b]} /> <div /> }`,
+export function App() @{ <><style apply={[a, b]} /><div /></> }`,
 			);
 
 			expect(single.errors).toEqual([]);
@@ -286,7 +286,7 @@ export function App() @{ <style apply={[a, b]} /> <div /> }`,
 			'reports a same-module apply target that is %s inside the apply value',
 			(_name, declaration, type_text) => {
 				const source = `${declaration}
-export function App() @{ <style apply={theme} /> <div /> }`;
+export function App() @{ <><style apply={theme} /><div /></> }`;
 				const { errors, diagnostics, mappings } = check_source(compile_to_volar_mappings, source);
 				const target = apply_target_range(source, 'theme');
 
@@ -322,7 +322,7 @@ export function App() @{ <style apply={theme} /> <div /> }`;
 		const APP_SOURCE = `import { base } from './base.js';
 export const theme = <style apply={base}>.x { color: red; }</style>;
 const x: string = theme.$class;
-export function App() @{ <style apply={theme} /> <div class={theme.x} /> }`;
+export function App() @{ <><style apply={theme} /><div class={theme.x} /></> }`;
 
 		it.each(OUTPUTS)(
 			'types theme.$class as string across modules in %s output',
@@ -351,7 +351,7 @@ export function App() @{ <style apply={theme} /> <div class={theme.x} /> }`;
 	describe('apply before declaration', () => {
 		it('reports the same identifier TypeScript flags as used before its declaration', () => {
 			const source =
-				'function App() @{ <style apply={theme} /> const theme = <style>div{}</style>; <div /> }';
+				'function App() @{ const view = <><style apply={theme} /><div /></>; const theme = <style>div{}</style>; <main>{view}</main> }';
 			const target = apply_target_range(source, 'theme');
 			const { errors, diagnostics, mappings } = check_source(compile_to_volar_mappings, source);
 
@@ -373,7 +373,7 @@ export function App() @{ <style apply={theme} /> <div class={theme.x} /> }`;
 		});
 
 		it('still reports a later module-scope block that TypeScript cannot see across the function boundary', () => {
-			const source = `function App() @{ <style apply={theme} /> <div /> }
+			const source = `function App() @{ <><style apply={theme} /><div /></> }
 const theme = <style>div{}</style>;`;
 			const target = apply_target_range(source, 'theme');
 			const { errors, diagnostics } = check_source(compile_to_volar_mappings, source);

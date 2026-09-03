@@ -11,6 +11,8 @@ import {
 	TSRX_STYLE_APPLY_VALUE_ERROR,
 	TSRX_STYLE_RESERVED_CLASS_KEY_ERROR,
 	TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR,
+	TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR,
+	TSRX_STYLE_STANDALONE_OUTSIDE_TEMPLATE_ERROR,
 	tsrx_style_apply_before_declaration_error,
 	tsrx_style_apply_target_error,
 	tsrx_style_unknown_attribute_error,
@@ -126,7 +128,7 @@ const theme = 'const t = <style>.a { color: red; }</style>;';
 describe('scoped style analysis', () => {
 	describe('apply value', () => {
 		it('reports a string apply value', () => {
-			const source = `${theme}\nfunction App() @{ <style apply="t">.b {}</style> <div /> }`;
+			const source = `${theme}\nfunction App() @{ <><style apply="t">.b {}</style><div /></> }`;
 
 			expect_single_error(
 				analyze(source),
@@ -137,7 +139,7 @@ describe('scoped style analysis', () => {
 		});
 
 		it('reports a bare apply attribute', () => {
-			const source = `${theme}\nfunction App() @{ <style apply>.b {}</style> <div /> }`;
+			const source = `${theme}\nfunction App() @{ <><style apply>.b {}</style><div /></> }`;
 			const result = analyze(source);
 
 			expect_single_error(
@@ -151,7 +153,7 @@ describe('scoped style analysis', () => {
 		});
 
 		it('accepts an expression value', () => {
-			const result = analyze(`${theme}\nfunction App() @{ <style apply={t} /> <div /> }`);
+			const result = analyze(`${theme}\nfunction App() @{ <><style apply={t} /><div /></> }`);
 
 			expect(style_errors(result)).toEqual([]);
 			expect(first_apply(result)).toHaveLength(1);
@@ -160,7 +162,7 @@ describe('scoped style analysis', () => {
 
 	describe('apply target', () => {
 		it('reports an unresolved name', () => {
-			const source = 'function App() @{ <style apply={missing} /> <div /> }';
+			const source = 'function App() @{ <><style apply={missing} /><div /></> }';
 
 			expect_single_error(
 				analyze(source),
@@ -172,10 +174,10 @@ describe('scoped style analysis', () => {
 
 		it('reports bindings that do not hold a style block', () => {
 			for (const [source, name] of [
-				['const t = 1;\nfunction App() @{ <style apply={t} /> <div /> }', 't'],
-				['function App(t) @{ <style apply={t} /> <div /> }', 't'],
-				['const t = <div />;\nfunction App() @{ <style apply={t} /> <div /> }', 't'],
-				['function t() {}\nfunction App() @{ <style apply={t} /> <div /> }', 't'],
+				['const t = 1;\nfunction App() @{ <><style apply={t} /><div /></> }', 't'],
+				['function App(t) @{ <><style apply={t} /><div /></> }', 't'],
+				['const t = <div />;\nfunction App() @{ <><style apply={t} /><div /></> }', 't'],
+				['function t() {}\nfunction App() @{ <><style apply={t} /><div /></> }', 't'],
 			]) {
 				expect_single_error(
 					analyze(source),
@@ -187,7 +189,7 @@ describe('scoped style analysis', () => {
 		});
 
 		it('reports spread elements and holes in an apply array', () => {
-			const spread = `${theme}\nfunction App() @{ <style apply={[t, ...rest]} /> <div /> }`;
+			const spread = `${theme}\nfunction App() @{ <><style apply={[t, ...rest]} /><div /></> }`;
 			const spread_result = analyze(spread);
 			expect_single_error(
 				spread_result,
@@ -198,7 +200,7 @@ describe('scoped style analysis', () => {
 			// The valid entry still resolves.
 			expect(first_apply(spread_result)).toHaveLength(1);
 
-			const hole = `${theme}\nfunction App() @{ <style apply={[t, , t]} /> <div /> }`;
+			const hole = `${theme}\nfunction App() @{ <><style apply={[t, , t]} /><div /></> }`;
 			const hole_result = analyze(hole);
 			expect_single_error(
 				hole_result,
@@ -212,15 +214,15 @@ describe('scoped style analysis', () => {
 		it('reports members that do not name a style block of a local object', () => {
 			for (const [source, name] of [
 				[
-					'const themes = { dark: <style>.a {}</style> };\nfunction App() @{ <style apply={themes.light} /> <div /> }',
+					'const themes = { dark: <style>.a {}</style> };\nfunction App() @{ <><style apply={themes.light} /><div /></> }',
 					'themes.light',
 				],
-				['const t = 1;\nfunction App() @{ <style apply={t.x} /> <div /> }', 't.x'],
+				['const t = 1;\nfunction App() @{ <><style apply={t.x} /><div /></> }', 't.x'],
 				[
-					'const t = <style>.a {}</style>;\nfunction App() @{ <style apply={t.x} /> <div /> }',
+					'const t = <style>.a {}</style>;\nfunction App() @{ <><style apply={t.x} /><div /></> }',
 					't.x',
 				],
-				['function App(props) @{ <style apply={props.theme} /> <div /> }', 'props.theme'],
+				['function App(props) @{ <><style apply={props.theme} /><div /></> }', 'props.theme'],
 			]) {
 				expect_single_error(
 					analyze(source),
@@ -233,12 +235,12 @@ describe('scoped style analysis', () => {
 
 		it('reports entries that are neither identifiers nor member chains', () => {
 			for (const [source, needle] of [
-				[`${theme}\nfunction App() @{ <style apply={t()} /> <div /> }`, 't()'],
+				[`${theme}\nfunction App() @{ <><style apply={t()} /><div /></> }`, 't()'],
 				[
-					"const themes = { dark: <style>.a {}</style> };\nfunction App() @{ <style apply={themes['dark']} /> <div /> }",
+					"const themes = { dark: <style>.a {}</style> };\nfunction App() @{ <><style apply={themes['dark']} /><div /></> }",
 					"themes['dark']",
 				],
-				[`${theme}\nfunction App() @{ <style apply={'t'} /> <div /> }`, "'t'"],
+				[`${theme}\nfunction App() @{ <><style apply={'t'} /><div /></> }`, "'t'"],
 			]) {
 				expect_single_error(
 					analyze(source),
@@ -251,11 +253,11 @@ describe('scoped style analysis', () => {
 
 		it('accepts local blocks, object property blocks, and imports', () => {
 			for (const source of [
-				`${theme}\nfunction App() @{ <style apply={t} /> <div /> }`,
-				'const themes = { dark: <style>.a {}</style> };\nfunction App() @{ <style apply={themes.dark} /> <div /> }',
-				"const themes = { 'dark': <style>.a {}</style> };\nfunction App() @{ <style apply={themes.dark} /> <div /> }",
-				"import { t } from './theme.tsrx';\nfunction App() @{ <style apply={t} /> <div /> }",
-				"import * as ns from './themes.tsrx';\nfunction App() @{ <style apply={ns.dark} /> <div /> }",
+				`${theme}\nfunction App() @{ <><style apply={t} /><div /></> }`,
+				'const themes = { dark: <style>.a {}</style> };\nfunction App() @{ <><style apply={themes.dark} /><div /></> }',
+				"const themes = { 'dark': <style>.a {}</style> };\nfunction App() @{ <><style apply={themes.dark} /><div /></> }",
+				"import { t } from './theme.tsrx';\nfunction App() @{ <><style apply={t} /><div /></> }",
+				"import * as ns from './themes.tsrx';\nfunction App() @{ <><style apply={ns.dark} /><div /></> }",
 			]) {
 				const result = analyze(source);
 
@@ -267,14 +269,14 @@ describe('scoped style analysis', () => {
 
 	describe('apply before declaration', () => {
 		it('reports a block applied before its declaration at the identifier', () => {
-			const source = `function App() @{\n\t<style apply={later} />\n\t<div />\n}\nconst later = <style>.a {}</style>;`;
+			const source = `function App() @{\n\t<>\n\t\t<style apply={later} />\n\t\t<div />\n\t</>\n}\nconst later = <style>.a {}</style>;`;
 			const result = analyze(source);
 
 			expect_single_error(
 				result,
 				DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
 				tsrx_style_apply_before_declaration_error('later'),
-				{ line: 2, column: 15 },
+				{ line: 3, column: 16 },
 			);
 			expect(first_apply(result)).toEqual([]);
 			// The unresolved entry does not mark the block as applied.
@@ -282,7 +284,7 @@ describe('scoped style analysis', () => {
 		});
 
 		it('reports a member applied before its object declaration', () => {
-			const source = `function App() @{ <style apply={themes.dark} /> <div /> }\nconst themes = { dark: <style>.a {}</style> };`;
+			const source = `function App() @{ <><style apply={themes.dark} /><div /></> }\nconst themes = { dark: <style>.a {}</style> };`;
 
 			expect_single_error(
 				analyze(source),
@@ -293,7 +295,7 @@ describe('scoped style analysis', () => {
 		});
 
 		it('accepts a block declared earlier in source order', () => {
-			const result = analyze(`${theme}\nfunction App() @{ <style apply={t} /> <div /> }`);
+			const result = analyze(`${theme}\nfunction App() @{ <><style apply={t} /><div /></> }`);
 
 			expect(style_errors(result)).toEqual([]);
 		});
@@ -301,7 +303,7 @@ describe('scoped style analysis', () => {
 
 	describe('duplicate apply', () => {
 		it('reports the second apply attribute and keeps the first', () => {
-			const source = `${theme}\nfunction App() @{ <style apply={t} apply={t} /> <div /> }`;
+			const source = `${theme}\nfunction App() @{ <><style apply={t} apply={t} /><div /></> }`;
 			const result = analyze(source);
 
 			expect_single_error(
@@ -315,7 +317,7 @@ describe('scoped style analysis', () => {
 
 		it('accepts several themes as one array', () => {
 			const result = analyze(
-				'const a = <style>.a {}</style>;\nconst b = <style>.b {}</style>;\nfunction App() @{ <style apply={[a, b]} /> <div /> }',
+				'const a = <style>.a {}</style>;\nconst b = <style>.b {}</style>;\nfunction App() @{ <><style apply={[a, b]} /><div /></> }',
 			);
 
 			expect(style_errors(result)).toEqual([]);
@@ -340,7 +342,7 @@ describe('scoped style analysis', () => {
 		});
 
 		it('reports apply on a resource style', () => {
-			const source = `${theme}\nfunction App() @{ <style href="theme.css" apply={t} /> <div /> }`;
+			const source = `${theme}\nfunction App() @{ <><style href="theme.css" apply={t} /><div /></> }`;
 
 			expect_single_error(
 				analyze(source),
@@ -387,7 +389,7 @@ describe('scoped style analysis', () => {
 
 		it('does not report standalone blocks or other class names', () => {
 			for (const source of [
-				'function App() @{ <style>.\\$class { color: red; }</style> <div /> }',
+				'function App() @{ <><style>.\\$class { color: red; }</style><div /></> }',
 				'const t = <style>.a { color: red; }</style>;',
 				'const t = <style>.class { color: red; }</style>;',
 			]) {
@@ -421,9 +423,8 @@ describe('scoped style analysis', () => {
 
 		it('accepts template-scope, assigned, head, and resource blocks', () => {
 			for (const source of [
-				'function App() @{ <style>.a {}</style> <div /> }',
+				'function App() @{ <><style>.a {}</style><div /></> }',
 				'function App() @{ <div><style>.a {}</style><span /></div> }',
-				'const view = <><style>.a {}</style><div /></>;',
 				'const t = <style>.a {}</style>;',
 				'<head><style>.a {}</style></head>;',
 				'<style href="theme.css" />;',
@@ -433,9 +434,219 @@ describe('scoped style analysis', () => {
 		});
 	});
 
+	describe('standalone block outside a template container', () => {
+		// Raw CSS in `<style>` is TSRX template syntax: a bodied standalone block
+		// needs an enclosing `@{ … }` body or a control-flow body, at any depth of
+		// native elements, fragments, expression containers, or callbacks. Plain
+		// TSX keeps the TSX rule (`<style>{css}</style>` is an ordinary element),
+		// and the bare module-level statement keeps its own code.
+		const CSS = '.a { color: red; }';
+
+		/** @type {Array<[string, string]>} */
+		const rejected = [
+			[
+				'plain-TSX return',
+				`function C() { return <section><style>${CSS}</style><div class="a" /></section>; }`,
+			],
+			[
+				'module-scope assigned element',
+				`export const card = <div><style>${CSS}</style><p /></div>;`,
+			],
+			[
+				'assigned element in a plain function body',
+				`function C() { const card = <div><style>${CSS}</style><p /></div>; return card; }`,
+			],
+			['module-scope assigned fragment', `const view = <><style>${CSS}</style><div /></>;`],
+			[
+				'concise arrow body',
+				`const C = () => <section><style>${CSS}</style><div class="a" /></section>;`,
+			],
+			[
+				'nested fragment in a plain-TSX return',
+				`function C() { return <><div /><><style>${CSS}</style><p /></></>; }`,
+			],
+		];
+
+		it.each(rejected)('reports %s at the block', (_name, source) => {
+			expect_single_error(
+				analyze(source),
+				DIAGNOSTIC_CODES.STYLE_STANDALONE_OUTSIDE_TEMPLATE,
+				TSRX_STYLE_STANDALONE_OUTSIDE_TEMPLATE_ERROR,
+				loc_of(source, '<style>'),
+			);
+		});
+
+		it('keeps the module-scope code for a bare statement', () => {
+			expect_single_error(
+				analyze(`<style>${CSS}</style>;`),
+				DIAGNOSTIC_CODES.STYLE_STANDALONE_AT_MODULE_SCOPE,
+				TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR,
+			);
+		});
+
+		/** @type {Array<[string, string]>} */
+		const accepted = [
+			['@{} body', `function C() @{ <><style>${CSS}</style><div /></> }`],
+			[
+				'assigned element inside a @{} body',
+				`function C() @{ const card = <div><style>${CSS}</style><p /></div>; <>{card}</> }`,
+			],
+			[
+				'@if body inside a plain-TSX return',
+				`function C(x) { return <section>@if (x) { <><style>${CSS}</style><p /></> }</section>; }`,
+			],
+			[
+				'@else if body inside a plain-TSX return',
+				`function C(x) { return <div>@if (x) { <b /> } @else if (!x) { <><style>${CSS}</style><i /></> }</div>; }`,
+			],
+			[
+				'@catch body inside a plain-TSX return',
+				`function C() { return <div>@try { <b /> } @catch (e) { <><style>${CSS}</style><i /></> }</div>; }`,
+			],
+			[
+				'@for body inside a plain-TSX return',
+				`function C(xs) { return <ul>@for (const x of xs) { <><style>${CSS}</style><li>{x}</li></> }</ul>; }`,
+			],
+			[
+				'@switch case inside a plain-TSX return',
+				`function C(k) { return <div>@switch (k) { @case 1: { <><style>${CSS}</style><b /></> } }</div>; }`,
+			],
+			[
+				'callback element lexically inside a @{} body',
+				`function C(items) @{ <ul>{items.map((i) => <li><style>${CSS}</style><b /></li>)}</ul> }`,
+			],
+			[
+				'nested element children inside a @{} body',
+				`function C() @{ <section><div><style>${CSS}</style><p /></div></section> }`,
+			],
+			['head style anywhere', `function C() { return <head><style>${CSS}</style></head>; }`],
+			[
+				'resource style anywhere',
+				`function C() { return <><style href="a.css" precedence="default" /><div /></>; }`,
+			],
+			[
+				'assigned block in a plain function',
+				`function C() { const theme = <style>${CSS}</style>; return theme; }`,
+			],
+			[
+				'self-closing apply block in plain TSX (no CSS text)',
+				`const t = <style>${CSS}</style>;\nfunction C() { return <><style apply={t} /><div /></>; }`,
+			],
+			[
+				'expression-child style element in plain TSX',
+				`function C(css) { return <section><style>{css}</style><div /></section>; }`,
+			],
+		];
+
+		it.each(accepted)('accepts %s', (_name, source) => {
+			expect(style_errors(analyze(source))).toEqual([]);
+		});
+
+		it('treats <style>{css}</style> as an ordinary element, not a style block', () => {
+			const result = analyze('function C(css) @{ <section><style>{css}</style><div /></section> }');
+
+			expect(result.errors).toEqual([]);
+			expect(result.styles.standalone).toEqual([]);
+			expect(result.styles.assigned).toEqual([]);
+		});
+	});
+
+	describe('standalone block in a statement slot', () => {
+		// A `<style>` block is an output node: as the lone output of a `@{ … }`
+		// body or a control-flow body, or as a statement, it styles nothing.
+		// (Beside another output node it is already the parser's multiple-outputs
+		// error.) The valid placement is inside a fragment or element.
+		const CSS = '.a { color: red; }';
+
+		/** @type {Array<[string, string]>} */
+		const rejected = [
+			['lone output of a @{} body', `function C() @{ <style>${CSS}</style> }`],
+			[
+				'lone self-closing apply output of a @{} body',
+				`${theme}\nfunction C() @{ <style apply={t} /> }`,
+			],
+			['lone output of an @if body', `function C(x) @{ @if (x) { <style>${CSS}</style> } }`],
+			[
+				'lone output of an @else body',
+				`function C(x) @{ @if (x) { <b /> } @else { <style>${CSS}</style> } }`,
+			],
+			[
+				'lone output of a @for body',
+				`function C(xs) @{ @for (const x of xs) { <style>${CSS}</style> } }`,
+			],
+			[
+				'lone output of a @switch case',
+				`function C(k) @{ @switch (k) { @case 1: { <style>${CSS}</style> } } }`,
+			],
+			[
+				'lone output of a @catch body',
+				`function C() @{ @try { <b /> } @catch (e) { <style>${CSS}</style> } }`,
+			],
+			[
+				'statement in a plain function body',
+				`function C() { <style>${CSS}</style>; return null; }`,
+			],
+			['statement in a nested block', `function C() @{ { <style>${CSS}</style>; } <div /> }`],
+		];
+
+		it.each(rejected)('reports the %s at the block', (_name, source) => {
+			const result = analyze(source);
+			const errors = errors_with_code(result, DIAGNOSTIC_CODES.STYLE_STANDALONE_NEEDS_FRAGMENT);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].message).toBe(TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR);
+			// The reported block is the standalone one (a source may declare a theme first).
+			expect(errors[0].loc?.start).toEqual(
+				loc_of(source, '<style', source.startsWith('const t') ? 1 : 0),
+			);
+			// One diagnostic per block: the outside-template rule does not stack.
+			expect(errors_with_code(result, DIAGNOSTIC_CODES.STYLE_STANDALONE_OUTSIDE_TEMPLATE)).toEqual(
+				[],
+			);
+		});
+
+		it('accepts the same blocks wrapped in a fragment with their output', () => {
+			const result = analyze(
+				`function App(ready, items, value) @{
+					<>
+						<style>.a {}</style>
+						@if (ready) {
+							<><style>.b {}</style><div /></>
+						} @else {
+							<><style>.c {}</style><span /></>
+						}
+					</>
+				}
+				function List(items) @{
+					@for (const item of items) {
+						<><style>.d {}</style><li>{item}</li></>
+					}
+				}
+				function Pick(value) @{
+					@switch (value) { @case 1: { <><style>.e {}</style><div /></> } @default: { <span /> } }
+				}
+				function Safe() @{
+					@try {
+						<><style>.f {}</style><div /></>
+					} @catch (error) {
+						<><style>.g {}</style><span /></>
+					}
+				}
+				function Nested() @{
+					<div>@{
+						<><style>.h {}</style><span /></>
+					}</div>
+				}`,
+			);
+
+			expect(result.errors).toEqual([]);
+			expect(result.styles.standalone).toHaveLength(8);
+		});
+	});
+
 	describe('unknown attributes', () => {
 		it('reports attributes other than ref and apply', () => {
-			const source = 'function App() @{ <style data-x="1" ref={r}>.a {}</style> <div /> }';
+			const source = 'function App() @{ <><style data-x="1" ref={r}>.a {}</style><div /></> }';
 
 			expect_single_error(
 				analyze(source),
@@ -446,7 +657,7 @@ describe('scoped style analysis', () => {
 		});
 
 		it('names namespaced attributes in full', () => {
-			const source = 'function App() @{ <style xml:lang="en">.a {}</style> <div /> }';
+			const source = 'function App() @{ <><style xml:lang="en">.a {}</style><div /></> }';
 
 			expect_single_error(
 				analyze(source),
@@ -458,7 +669,7 @@ describe('scoped style analysis', () => {
 
 		it('reports each unknown attribute once', () => {
 			const result = analyze(
-				'function App() @{ <style media="print" title="x">.a {}</style> <div /> }',
+				'function App() @{ <><style media="print" title="x">.a {}</style><div /></> }',
 			);
 			const errors = errors_with_code(result, DIAGNOSTIC_CODES.STYLE_UNKNOWN_ATTRIBUTE);
 
@@ -470,9 +681,9 @@ describe('scoped style analysis', () => {
 
 		it('accepts ref and apply, and any attribute on head or resource styles', () => {
 			for (const source of [
-				`${theme}\nfunction App() @{ <style ref={r} apply={t}>.b {}</style> <div /> }`,
+				`${theme}\nfunction App() @{ <><style ref={r} apply={t}>.b {}</style><div /></> }`,
 				'function App() @{ <head><style media="print">.a {}</style></head> }',
-				'function App() @{ <style href="theme.css" media="print" /> <div /> }',
+				'function App() @{ <><style href="theme.css" media="print" /><div /></> }',
 			]) {
 				expect(style_errors(analyze(source)), source).toEqual([]);
 			}
@@ -540,7 +751,7 @@ describe('scoped style analysis', () => {
 		});
 
 		it('marks a locally applied block as a theme', () => {
-			const result = analyze(`${theme}\nfunction App() @{ <style apply={t} /> <div /> }`);
+			const result = analyze(`${theme}\nfunction App() @{ <><style apply={t} /><div /></> }`);
 			const [block] = result.styles.assigned;
 
 			expect(block.metadata.styleKind).toBe('theme');
@@ -550,7 +761,7 @@ describe('scoped style analysis', () => {
 
 		it('marks every block applied through an array as a theme', () => {
 			const result = analyze(
-				'const a = <style>.a {}</style>;\nconst b = <style>.b {}</style>;\nconst c = <style>.c {}</style>;\nfunction App() @{ <style apply={[a, b]} /> <div /> }',
+				'const a = <style>.a {}</style>;\nconst b = <style>.b {}</style>;\nconst c = <style>.c {}</style>;\nfunction App() @{ <><style apply={[a, b]} /><div /></> }',
 			);
 			const [a, b, c] = result.styles.assigned;
 
@@ -561,7 +772,7 @@ describe('scoped style analysis', () => {
 
 		it('marks an exported and applied block as a theme once', () => {
 			const result = analyze(
-				'export const t = <style>.a {}</style>;\nfunction App() @{ <style apply={t} /> <div /> }',
+				'export const t = <style>.a {}</style>;\nfunction App() @{ <><style apply={t} /><div /></> }',
 			);
 			const [block] = result.styles.assigned;
 
@@ -588,7 +799,7 @@ describe('scoped style analysis', () => {
 
 		it('classifies object literal property blocks individually', () => {
 			const result = analyze(
-				"const themes = { dark: <style>.a {}</style>, 'light': <style>.b {}</style> };\nfunction App() @{ <style apply={themes.light} /> <div /> }",
+				"const themes = { dark: <style>.a {}</style>, 'light': <style>.b {}</style> };\nfunction App() @{ <><style apply={themes.light} /><div /></> }",
 			);
 			const [dark, light] = result.styles.assigned;
 
@@ -599,7 +810,7 @@ describe('scoped style analysis', () => {
 
 		it('does not classify standalone blocks', () => {
 			const result = analyze(
-				`${theme}\nfunction App() @{ <style apply={t}>.b {}</style> <div /> }`,
+				`${theme}\nfunction App() @{ <><style apply={t}>.b {}</style><div /></> }`,
 			);
 			const [standalone] = result.styles.standalone;
 
@@ -664,55 +875,55 @@ describe('scoped style analysis', () => {
 			{
 				placement: 'module scope',
 				site: 'nested scope',
-				source: `const t = ${t};\nfunction App() @{ <style apply={t} /> <div /> }`,
+				source: `const t = ${t};\nfunction App() @{ <><style apply={t} /><div /></> }`,
 				target: 0,
 			},
 			{
 				placement: 'module scope',
 				site: 'nested @{} scope',
-				source: `const t = ${t};\nfunction App() @{ <div>@{ <style apply={t} /> <span /> }</div> }`,
+				source: `const t = ${t};\nfunction App() @{ <div>@{ <><style apply={t} /><span /></> }</div> }`,
 				target: 0,
 			},
 			{
 				placement: 'module scope',
 				site: 'before declaration',
-				source: `function App() @{ <style apply={t} /> <div /> }\nconst t = ${t};`,
+				source: `function App() @{ <><style apply={t} /><div /></> }\nconst t = ${t};`,
 				code: DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
 			},
 			{
 				placement: 'module scope',
 				site: 'shadowed (value)',
-				source: `const t = ${t};\nfunction App() @{ const t = 1; <style apply={t} /> <div /> }`,
+				source: `const t = ${t};\nfunction App() @{ const t = 1; <><style apply={t} /><div /></> }`,
 				code: DIAGNOSTIC_CODES.STYLE_APPLY_TARGET,
 			},
 			{
 				placement: 'module scope',
 				site: 'shadowed (style)',
-				source: `const t = ${t};\nfunction App() @{ const t = <style>.b {}</style>; <style apply={t} /> <div /> }`,
+				source: `const t = ${t};\nfunction App() @{ const t = <style>.b {}</style>; <><style apply={t} /><div /></> }`,
 				target: 1,
 			},
 			{
 				placement: 'component body',
 				site: 'same scope',
-				source: `function App() @{ const t = ${t}; <style apply={t} /> <div /> }`,
+				source: `function App() @{ const t = ${t}; <><style apply={t} /><div /></> }`,
 				target: 0,
 			},
 			{
 				placement: 'component body',
 				site: 'nested @{} scope',
-				source: `function App() @{ const t = ${t}; <div>@{ <style apply={t} /> <span /> }</div> }`,
+				source: `function App() @{ const t = ${t}; <div>@{ <><style apply={t} /><span /></> }</div> }`,
 				target: 0,
 			},
 			{
 				placement: 'component body',
 				site: 'nested function',
-				source: `function App() @{ const t = ${t}; const Inner = () => @{ <style apply={t} /> <span /> }; <div>{Inner()}</div> }`,
+				source: `function App() @{ const t = ${t}; const Inner = () => @{ <><style apply={t} /><span /></> }; <div>{Inner()}</div> }`,
 				target: 0,
 			},
 			{
 				placement: 'component body',
 				site: 'sibling scope',
-				source: `function A() @{ const t = ${t}; <div /> }\nfunction B() @{ <style apply={t} /> <div /> }`,
+				source: `function A() @{ const t = ${t}; <div /> }\nfunction B() @{ <><style apply={t} /><div /></> }`,
 				code: DIAGNOSTIC_CODES.STYLE_APPLY_TARGET,
 			},
 			{
@@ -730,31 +941,31 @@ describe('scoped style analysis', () => {
 			{
 				placement: 'component body',
 				site: 'shadowed (value)',
-				source: `function App() @{ const t = ${t}; const Inner = () => @{ const t = 1; <style apply={t} /> <span /> }; <div>{Inner()}</div> }`,
+				source: `function App() @{ const t = ${t}; const Inner = () => @{ const t = 1; <><style apply={t} /><span /></> }; <div>{Inner()}</div> }`,
 				code: DIAGNOSTIC_CODES.STYLE_APPLY_TARGET,
 			},
 			{
 				placement: 'nested @{}',
 				site: 'same scope',
-				source: `function App() @{ <div>@{ const t = ${t}; <style apply={t} /> <span /> }</div> }`,
+				source: `function App() @{ <div>@{ const t = ${t}; <><style apply={t} /><span /></> }</div> }`,
 				target: 0,
 			},
 			{
 				placement: 'nested @{}',
 				site: 'nested scope',
-				source: `function App() @{ <div>@{ const t = ${t}; <section>@{ <style apply={t} /> <span /> }</section> }</div> }`,
+				source: `function App() @{ <div>@{ const t = ${t}; <section>@{ <><style apply={t} /><span /></> }</section> }</div> }`,
 				target: 0,
 			},
 			{
 				placement: 'nested @{}',
 				site: 'sibling @{} scope',
-				source: `function App() @{ <div>@{ const t = ${t}; <span /> }@{ <style apply={t} /> <em /> }</div> }`,
+				source: `function App() @{ <div>@{ const t = ${t}; <span /> }@{ <><style apply={t} /><em /></> }</div> }`,
 				code: DIAGNOSTIC_CODES.STYLE_APPLY_TARGET,
 			},
 			{
 				placement: 'nested @{}',
 				site: 'sibling function',
-				source: `function A() @{ <div>@{ const t = ${t}; <span /> }</div> }\nfunction B() @{ <style apply={t} /> <div /> }`,
+				source: `function A() @{ <div>@{ const t = ${t}; <span /> }</div> }\nfunction B() @{ <><style apply={t} /><div /></> }`,
 				code: DIAGNOSTIC_CODES.STYLE_APPLY_TARGET,
 			},
 			{
@@ -766,13 +977,13 @@ describe('scoped style analysis', () => {
 			{
 				placement: 'plain function body',
 				site: 'nested scope',
-				source: `function App() { const t = ${t}; const Inner = () => @{ <style apply={t} /> <div /> }; return Inner; }`,
+				source: `function App() { const t = ${t}; const Inner = () => @{ <><style apply={t} /><div /></> }; return Inner; }`,
 				target: 0,
 			},
 			{
 				placement: 'plain function body',
 				site: 'sibling scope',
-				source: `function A() { const t = ${t}; return t; }\nfunction B() @{ <style apply={t} /> <div /> }`,
+				source: `function A() { const t = ${t}; return t; }\nfunction B() @{ <><style apply={t} /><div /></> }`,
 				code: DIAGNOSTIC_CODES.STYLE_APPLY_TARGET,
 			},
 			{
@@ -790,13 +1001,13 @@ describe('scoped style analysis', () => {
 			{
 				placement: 'block statement',
 				site: 'nested scope',
-				source: `{ const t = ${t}; function App() @{ <style apply={t} /> <div /> } }`,
+				source: `{ const t = ${t}; function App() @{ <><style apply={t} /><div /></> } }`,
 				target: 0,
 			},
 			{
 				placement: 'block statement',
 				site: 'sibling scope',
-				source: `{ const t = ${t}; }\nfunction App() @{ <style apply={t} /> <div /> }`,
+				source: `{ const t = ${t}; }\nfunction App() @{ <><style apply={t} /><div /></> }`,
 				code: DIAGNOSTIC_CODES.STYLE_APPLY_TARGET,
 			},
 			{
@@ -808,32 +1019,32 @@ describe('scoped style analysis', () => {
 			{
 				placement: 'exported',
 				site: 'nested scope',
-				source: `export const t = ${t};\nfunction App() @{ <style apply={t} /> <div /> }`,
+				source: `export const t = ${t};\nfunction App() @{ <><style apply={t} /><div /></> }`,
 				target: 0,
 			},
 			{
 				placement: 'exported',
 				site: 'before declaration',
-				source: `function App() @{ <style apply={t} /> <div /> }\nexport const t = ${t};`,
+				source: `function App() @{ <><style apply={t} /><div /></> }\nexport const t = ${t};`,
 				code: DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
 			},
 			{
 				placement: 're-exported',
 				site: 'nested scope',
-				source: `const t = ${t};\nexport { t };\nfunction App() @{ <style apply={t} /> <div /> }`,
+				source: `const t = ${t};\nexport { t };\nfunction App() @{ <><style apply={t} /><div /></> }`,
 				target: 0,
 			},
 			{
 				placement: 're-exported',
 				site: 'before declaration',
-				source: `export { t };\nfunction App() @{ <style apply={t} /> <div /> }\nconst t = ${t};`,
+				source: `export { t };\nfunction App() @{ <><style apply={t} /><div /></> }\nconst t = ${t};`,
 				code: DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
 			},
 			{
 				placement: 'imported namespace',
 				site: 'nested scope',
 				source:
-					"import * as ns from './themes.tsrx';\nfunction App() @{ <style apply={ns.dark} /> <div /> }",
+					"import * as ns from './themes.tsrx';\nfunction App() @{ <><style apply={ns.dark} /><div /></> }",
 				target: null,
 				name: 'ns.dark',
 			},
@@ -841,7 +1052,7 @@ describe('scoped style analysis', () => {
 				placement: 'imported namespace',
 				site: 'before import',
 				source:
-					"function App() @{ <style apply={ns.dark} /> <div /> }\nimport * as ns from './themes.tsrx';",
+					"function App() @{ <><style apply={ns.dark} /><div /></> }\nimport * as ns from './themes.tsrx';",
 				target: null,
 				name: 'ns.dark',
 			},
@@ -849,7 +1060,7 @@ describe('scoped style analysis', () => {
 				placement: 'imported namespace',
 				site: 'shadowed (value)',
 				source:
-					"import * as ns from './themes.tsrx';\nfunction App() @{ const ns = {}; <style apply={ns.dark} /> <div /> }",
+					"import * as ns from './themes.tsrx';\nfunction App() @{ const ns = {}; <><style apply={ns.dark} /><div /></> }",
 				code: DIAGNOSTIC_CODES.STYLE_APPLY_TARGET,
 				name: 'ns.dark',
 			},
@@ -904,19 +1115,19 @@ describe('scoped style analysis', () => {
 		it('resolves named, default, and namespace imports to a null target', () => {
 			for (const [source, type] of [
 				[
-					"import { t } from './theme.tsrx';\nfunction App() @{ <style apply={t} /> <div /> }",
+					"import { t } from './theme.tsrx';\nfunction App() @{ <><style apply={t} /><div /></> }",
 					'Identifier',
 				],
 				[
-					"import t from './theme.tsrx';\nfunction App() @{ <style apply={t} /> <div /> }",
+					"import t from './theme.tsrx';\nfunction App() @{ <><style apply={t} /><div /></> }",
 					'Identifier',
 				],
 				[
-					"import * as ns from './themes.tsrx';\nfunction App() @{ <style apply={ns.dark} /> <div /> }",
+					"import * as ns from './themes.tsrx';\nfunction App() @{ <><style apply={ns.dark} /><div /></> }",
 					'MemberExpression',
 				],
 				[
-					"import * as ns from './themes.tsrx';\nfunction App() @{ <style apply={ns.themes.dark} /> <div /> }",
+					"import * as ns from './themes.tsrx';\nfunction App() @{ <><style apply={ns.themes.dark} /><div /></> }",
 					'MemberExpression',
 				],
 			]) {
@@ -934,7 +1145,7 @@ describe('scoped style analysis', () => {
 
 		it('mixes local and imported entries in one array in source order', () => {
 			const result = analyze(
-				"import { remote } from './theme.tsrx';\nconst a = <style>.a {}</style>;\nconst b = <style>.b {}</style>;\nfunction App() @{ <style apply={[a, remote, b]} /> <div /> }",
+				"import { remote } from './theme.tsrx';\nconst a = <style>.a {}</style>;\nconst b = <style>.b {}</style>;\nfunction App() @{ <><style apply={[a, remote, b]} /><div /></> }",
 			);
 			const [a, b] = result.styles.assigned;
 			const applies = first_apply(result);
@@ -947,7 +1158,7 @@ describe('scoped style analysis', () => {
 	describe('analysis result', () => {
 		it('lists assigned and standalone blocks in source order on program metadata', () => {
 			const result = analyze(
-				'const a = <style>.a {}</style>;\nfunction App() @{ <style>.s1 {}</style> <div><style>.s2 {}</style><span /></div> }\nconst b = { dark: <style>.b {}</style> };\nexport default <style>.c {}</style>;',
+				'const a = <style>.a {}</style>;\nfunction App() @{ <><style>.s1 {}</style><div><style>.s2 {}</style><span /></div></> }\nconst b = { dark: <style>.b {}</style> };\nexport default <style>.c {}</style>;',
 			);
 			const { assigned, standalone } = result.styles;
 
@@ -966,7 +1177,7 @@ describe('scoped style analysis', () => {
 		});
 
 		it('exposes the module scope and scope map', () => {
-			const result = analyze(`${theme}\nfunction App() @{ <style apply={t} /> <div /> }`);
+			const result = analyze(`${theme}\nfunction App() @{ <><style apply={t} /><div /></> }`);
 
 			expect(result.scopes).toBeInstanceOf(Map);
 			expect(result.scopes.get(result.ast)).toBe(result.scope);
@@ -975,7 +1186,7 @@ describe('scoped style analysis', () => {
 
 		it('stamps styleApplies on every style block', () => {
 			const result = analyze(
-				`${theme}\nfunction App() @{ <style>.s {}</style> <div /> }\nconst view = <><style apply={t} /><div /></>;`,
+				`${theme}\nfunction App() @{ <><style>.s {}</style><div /></> }\nconst view = <><style apply={t} /><div /></>;`,
 			);
 
 			for (const block of [...result.styles.assigned, ...result.styles.standalone]) {
@@ -984,67 +1195,25 @@ describe('scoped style analysis', () => {
 			expect(result.styles.standalone[0].metadata.styleApplies).toEqual([]);
 			expect(result.styles.standalone[1].metadata.styleApplies).toHaveLength(1);
 		});
-
-		it('does not report style siblings in @{} and directive bodies as unused output', () => {
-			const result = analyze(
-				`function App(ready, items, value) @{
-					<style>.a {}</style>
-					@if (ready) {
-						<style>.b {}</style>
-						<div />
-					} @else {
-						<style>.c {}</style>
-						<span />
-					}
-				}
-				function List(items) @{
-					@for (const item of items) {
-						<style>.d {}</style>
-						<li>{item}</li>
-					}
-				}
-				function Pick(value) @{
-					@switch (value) { @case 1: { <style>.e {}</style> <div /> } @default: { <span /> } }
-				}
-				function Safe() @{
-					@try {
-						<style>.f {}</style>
-						<div />
-					} @catch (error) {
-						<style>.g {}</style>
-						<span />
-					}
-				}
-				function Nested() @{
-					<div>@{
-						<style>.h {}</style>
-						<span />
-					}</div>
-				}`,
-			);
-
-			expect(result.errors).toEqual([]);
-			expect(result.styles.standalone).toHaveLength(8);
-		});
 	});
 
 	describe('strict analysis', () => {
 		it('throws a coded CompileError for every style diagnostic', () => {
 			for (const [source, code] of [
 				[
-					'function App() @{ <style apply={missing} /> <div /> }',
+					'function App() @{ <><style apply={missing} /><div /></> }',
 					DIAGNOSTIC_CODES.STYLE_APPLY_TARGET,
 				],
 				[
-					'function App() @{ <style apply={t} /> <div /> }\nconst t = <style>.a {}</style>;',
+					'function App() @{ <><style apply={t} /><div /></> }\nconst t = <style>.a {}</style>;',
 					DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
 				],
 				[
-					'function App() @{ <style apply>.a {}</style> <div /> }',
+					'function App() @{ <><style apply>.a {}</style><div /></> }',
 					DIAGNOSTIC_CODES.STYLE_APPLY_VALUE,
 				],
 				[
-					`${theme}\nfunction App() @{ <style apply={t} apply={t} /> <div /> }`,
+					`${theme}\nfunction App() @{ <><style apply={t} apply={t} /><div /></> }`,
 					DIAGNOSTIC_CODES.STYLE_APPLY_DUPLICATE,
 				],
 				[
@@ -1054,7 +1223,15 @@ describe('scoped style analysis', () => {
 				['const t = <style>.\\$class {}</style>;', DIAGNOSTIC_CODES.STYLE_RESERVED_CLASS_KEY],
 				['<style>.a {}</style>;', DIAGNOSTIC_CODES.STYLE_STANDALONE_AT_MODULE_SCOPE],
 				[
-					'function App() @{ <style media="print">.a {}</style> <div /> }',
+					'function App() { return <><style>.a {}</style><div /></>; }',
+					DIAGNOSTIC_CODES.STYLE_STANDALONE_OUTSIDE_TEMPLATE,
+				],
+				[
+					'function App() @{ <style>.a {}</style> }',
+					DIAGNOSTIC_CODES.STYLE_STANDALONE_NEEDS_FRAGMENT,
+				],
+				[
+					'function App() @{ <><style media="print">.a {}</style><div /></> }',
 					DIAGNOSTIC_CODES.STYLE_UNKNOWN_ATTRIBUTE,
 				],
 			]) {
@@ -1074,7 +1251,7 @@ describe('scoped style analysis', () => {
 		});
 
 		it('collects in editor and type-only analysis modes', () => {
-			const source = 'function App() @{ <style apply={missing} /> <div /> }';
+			const source = 'function App() @{ <><style apply={missing} /><div /></> }';
 
 			for (const options of [
 				{ collect: true },
@@ -1141,7 +1318,7 @@ describe('scoped style analysis', () => {
 		it('keeps a theme of an assigned block invisible to a sibling assigned block', () => {
 			const result = analyze(
 				`const first = @{ const theme = <style>.a {}</style>; <div /> };
-				const second = @{ <style apply={theme} /> <div /> };`,
+				const second = @{ <><style apply={theme} /><div /></> };`,
 			);
 
 			expect(style_errors(result).map((error) => error.code)).toEqual([
@@ -1153,7 +1330,7 @@ describe('scoped style analysis', () => {
 	describe('@tsrx-ignore', () => {
 		it('suppresses a style diagnostic on the next line', () => {
 			const result = analyze(
-				'function App() @{\n\t// @tsrx-ignore\n\t<style apply={missing} />\n\t<div />\n}',
+				'function App() @{\n\t<>\n\t\t// @tsrx-ignore\n\t\t<style apply={missing} />\n\t\t<div />\n\t</>\n}',
 			);
 
 			expect(result.errors).toEqual([]);
@@ -1162,7 +1339,7 @@ describe('scoped style analysis', () => {
 
 		it('suppresses with @tsrx-expect-error and reports elsewhere', () => {
 			const result = analyze(
-				'function App() @{\n\t// @tsrx-expect-error\n\t<style apply={missing} />\n\t<style apply={other} />\n\t<div />\n}',
+				'function App() @{\n\t<>\n\t\t// @tsrx-expect-error\n\t\t<style apply={missing} />\n\t\t<style apply={other} />\n\t\t<div />\n\t</>\n}',
 			);
 			const errors = style_errors(result);
 
@@ -1172,7 +1349,7 @@ describe('scoped style analysis', () => {
 
 		it('does not suppress from a comment that is not directly above', () => {
 			const result = analyze(
-				'function App() @{\n\t// @tsrx-ignore\n\n\t<style apply={missing} />\n\t<div />\n}',
+				'function App() @{\n\t<>\n\t\t// @tsrx-ignore\n\n\t\t<style apply={missing} />\n\t\t<div />\n\t</>\n}',
 			);
 
 			expect(style_errors(result)).toHaveLength(1);

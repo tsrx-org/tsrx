@@ -1680,9 +1680,19 @@ abc
 				case 'JSXStyleElement':
 					assert_style_shape(as_type(actual, 'JSXStyleElement'), shape);
 					break;
-				case 'JSXElement':
-					expect(openingName(as_type(actual, 'JSXElement')).name).toBe(shape.name);
+				case 'JSXElement': {
+					const element = as_type(actual, 'JSXElement');
+					expect(openingName(element).name).toBe(shape.name);
+					if (shape.children) {
+						assert_shapes(
+							element.children.filter(
+								(child) => child.type !== 'JSXText' || child.value.trim() !== '',
+							),
+							shape.children,
+						);
+					}
 					break;
+				}
 				case 'JSXFragment':
 					assert_shapes(as_type(actual, 'JSXFragment').children, shape.children);
 					break;

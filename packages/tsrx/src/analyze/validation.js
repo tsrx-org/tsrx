@@ -42,6 +42,10 @@ export const TSRX_STYLE_RESERVED_CLASS_KEY_ERROR =
 	"'$class' is reserved on assigned <style> blocks for the block's scope hash; rename the '.$class' selector.";
 export const TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR =
 	'A standalone <style> block is only allowed inside a template scope. At module scope assign it: const theme = <style>…</style>.';
+export const TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR =
+	'A standalone <style> block must be a child of an element or a fragment. Wrap it with the output it styles in a fragment: <><style>…</style><div>…</div></>.';
+export const TSRX_STYLE_STANDALONE_OUTSIDE_TEMPLATE_ERROR =
+	'A standalone <style> block with CSS text is TSRX template syntax and needs an enclosing @{ … } body or an @if/@for/@switch/@try body. In plain TSX give <style> an expression child instead: <style>{css}</style>. To declare a reusable block here, assign it: const theme = <style>…</style>.';
 export const TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR =
 	'A :global selector cannot be inside a pseudoclass.';
 export const TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR =

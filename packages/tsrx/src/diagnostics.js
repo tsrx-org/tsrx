@@ -20,6 +20,10 @@ export const DIAGNOSTIC_CODES = {
 	STYLE_RESERVED_CLASS_KEY: 'tsrx-style-reserved-class-key',
 	/** A standalone `<style>` block at module scope. */
 	STYLE_STANDALONE_AT_MODULE_SCOPE: 'tsrx-style-standalone-at-module-scope',
+	/** A standalone `<style>` block with CSS text outside any `@{ … }` or control-flow body. */
+	STYLE_STANDALONE_OUTSIDE_TEMPLATE: 'tsrx-style-standalone-outside-template',
+	/** A standalone `<style>` block in a statement slot: the lone output of a `@{ … }` or control-flow body, or a statement. */
+	STYLE_STANDALONE_NEEDS_FRAGMENT: 'tsrx-style-standalone-needs-fragment',
 	/** A `<style>` attribute other than `ref` and `apply`. */
 	STYLE_UNKNOWN_ATTRIBUTE: 'tsrx-style-unknown-attribute',
 	/** `:global` used where the scoping rules do not allow it. */

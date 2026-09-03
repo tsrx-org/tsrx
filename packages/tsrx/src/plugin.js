@@ -1541,14 +1541,6 @@ export function TSRXPlugin(config) {
 					}
 					if (this.#atRenderNodeStart()) {
 						const render_node = this.#parseCodeBlockRenderNode();
-						// A `<style>` block is not rendered output: any number may sit
-						// before or after the single output node (or stand alone) inside a
-						// `@{ … }` body and a directive body. They stay in the flat list in
-						// source order so the transform collects them per scope.
-						if (render_node.type === 'JSXStyleElement') {
-							flat.push(render_node);
-							continue;
-						}
 						if (render_seen) {
 							this.#report_recoverable_error_range(
 								/** @type {number} */ (render_node.start),
@@ -1624,18 +1616,10 @@ export function TSRXPlugin(config) {
 					this.#path = enclosing_path;
 				}
 
-				// `<style>` blocks may follow the output node (see #parseCodeBlockBody),
-				// so the render slot is the single non-style output node wherever it
-				// sits; everything else (setup statements and style blocks) stays in
-				// `body` in source order.
-				const render_index = flat.findLastIndex(
-					(item) => is_tsrx_render_output_node(item) && item.type !== 'JSXStyleElement',
-				);
-				if (render_index !== -1) {
-					node.render = flat[render_index];
-					node.body = /** @type {AST.Statement[]} */ (
-						flat.filter((_, index) => index !== render_index)
-					);
+				const last = flat[flat.length - 1];
+				if (is_tsrx_render_output_node(last)) {
+					node.render = last;
+					node.body = /** @type {AST.Statement[]} */ (flat.slice(0, -1));
 				} else {
 					node.body = /** @type {AST.Statement[]} */ (flat);
 				}
@@ -2363,6 +2347,19 @@ export function TSRXPlugin(config) {
 				}
 
 				return content;
+			}
+
+			/**
+			 * Whether the first non-whitespace character after an opening tag is
+			 * `{`: the element's children start with an expression container.
+			 *
+			 * @param {ESTreeJSX.TSRXJSXOpeningElement & AST.NodeWithLocation} open
+			 * @returns {boolean}
+			 */
+			#hasExpressionChildStart(open) {
+				if (open.selfClosing) return false;
+				const index = skip_whitespace_from(this.input, open.end);
+				return this.input.charCodeAt(index) === CharCode.openBrace;
 			}
 
 			/**
@@ -4769,7 +4766,10 @@ export function TSRXPlugin(config) {
 				}
 				const tag_name = open.name ? this.getElementName(open.name) : null;
 				const is_dynamic = this.#isDynamicJSXElementName(open.name);
-				const is_style = tag_name === 'style';
+				// `<style>` holds raw CSS text (a JSXStyleElement) unless its first
+				// child is an expression container: `<style>{css}</style>` is the
+				// ordinary TSX element, parsed like any other host element.
+				const is_style = tag_name === 'style' && !this.#hasExpressionChildStart(open);
 				const is_script = tag_name === 'script';
 				const inside_head = this.#path.findLast((n) => this.#isNativeElementNamed(n, 'head'));
 

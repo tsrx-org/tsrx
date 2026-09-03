@@ -16,7 +16,7 @@ import {
 	validate_unsupported_lazy_assignment_position,
 } from './validation.js';
 import { create_scopes, ScopeRoot } from '../scope.js';
-import { analyze_styles, is_template_statement_list_style } from './style-analyze.js';
+import { analyze_styles } from './style-analyze.js';
 
 /**
  * Find the first authored lazy pattern along an assignment target's binding
@@ -133,13 +133,6 @@ function visit_function(node, { next, state }) {
  */
 function visit_render_output(node, { next, path, state }) {
 	if (!is_tsrx_render_output_node(node)) {
-		next();
-		return;
-	}
-
-	// A `<style>` block is not rendered output: as a sibling in a `@{ … }` body
-	// or a directive body it contributes CSS to that scope (D3).
-	if (node.type === 'JSXStyleElement' && is_template_statement_list_style(path)) {
 		next();
 		return;
 	}
