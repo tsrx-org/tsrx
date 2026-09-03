@@ -28,7 +28,10 @@ export function tsrxSolid(options = {}) {
 	let root_dir = process.cwd();
 
 	const include_pattern = options.include ?? DEFAULT_TSRX_PATTERN;
-	const compile_options = { runtimeImports: options.runtimeImports };
+	const compile_options = {
+		runtimeImports: options.runtimeImports,
+		optimize: options.optimize,
+	};
 
 	/**
 	 * Decide whether a real (on-disk) path should be treated as a tsrx

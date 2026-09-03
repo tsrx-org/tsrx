@@ -84,7 +84,10 @@ function create_tsrx_vue_plugin(options) {
 	let rootDir = process.cwd();
 
 	const includePattern = options.include ?? DEFAULT_TSRX_PATTERN;
-	const compile_options = { runtimeImports: options.runtimeImports };
+	const compile_options = {
+		runtimeImports: options.runtimeImports,
+		optimize: options.optimize,
+	};
 
 	/**
 	 * @param {string} path
@@ -226,7 +229,7 @@ function create_tsrx_vue_plugin(options) {
  *
  * @param {(id: string) => boolean} isVirtual
  * @param {(id: string) => string} toRealPath
- * @param {{ runtimeImports?: RuntimeImportMode }} compile_options
+ * @param {{ runtimeImports?: RuntimeImportMode, optimize?: boolean }} compile_options
  * @returns {DepScanLoadPlugin}
  */
 function create_tsrx_vue_scan_plugin(isVirtual, toRealPath, compile_options) {

@@ -101,7 +101,7 @@ function prepend_css_import(code, resource_path) {
 /**
  * @typedef {{
  * 	resourcePath: string,
- * 	getOptions?: () => { runtimeImports?: RuntimeImportMode },
+ * 	getOptions?: () => { runtimeImports?: RuntimeImportMode, optimize?: boolean },
  * 	async: () => (err: unknown, output?: string | null, map?: unknown) => void,
  * }} LoaderContext
  */

@@ -5,6 +5,11 @@ export interface TsrxVueOptions {
 	/** Direct mode requires `@tsrx/vue-runtime` as a direct production dependency. */
 	runtimeImports?: RuntimeImportMode;
 	/**
+	 * Folds statically known expressions and removes the code they prove dead.
+	 * Off by default.
+	 */
+	optimize?: boolean;
+	/**
 	 * Regular expression matched against file paths to decide which modules
 	 * the plugin should compile as tsrx sources. Defaults to `/\.tsrx$/`.
 	 */

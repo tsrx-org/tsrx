@@ -112,6 +112,37 @@ For published components, keep the compiler and build integration in
 `runtimeImports: 'compiler'` mode remains appropriate for applications that own
 their TSRX compilation and install the target compiler package.
 
+### Dead-code elimination
+
+The compiler can fold statically known expressions and remove the code they
+prove dead. This is off by default. Pass `optimize: true` to a target compiler
+or to any of its Vite, Rspack, Turbopack, or Bun integrations:
+
+```js
+const result = compile(source, filename, { optimize: true });
+
+const vitePlugin = tsrxReact({ optimize: true });
+const rspackPlugin = new TsrxReactRspackPlugin({ optimize: true });
+const bunPlugin = tsrxReactBun({ optimize: true });
+const nextConfig = tsrxReactTurbopack({}, { optimize: true });
+```
+
+The pass runs on the target-neutral AST, so every target eliminates the same
+code. It does the following:
+
+- Folds literal expressions such as `2 + 3`, `!true`, and `` `a${1}b` ``.
+- Propagates a `const` that holds a literal and is never reassigned or mutated.
+- Drops `@if` and `@else if` branches whose test is provably false.
+- Selects the matching case of a `@switch` with a known discriminant.
+- Removes a `@for` over an empty iterable.
+- Removes statements that follow a `return`, `throw`, `break`, or `continue`.
+- Removes a declaration nothing reads when its initializer is side-effect free.
+
+Anything the pass cannot prove is left alone. A branch that declares a `var` or
+a function is never removed, because those names hoist out of it. Editor
+tooling never runs the pass, so hovers and diagnostics still match the authored
+source.
+
 ### Octane setup
 
 Octane is a compiler-first, React-compatible UI framework built on TSRX. It is

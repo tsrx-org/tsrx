@@ -50,12 +50,15 @@ const CSS_QUERY = '?tsrx-css&lang.css';
  * `jsx-runtime`. Per-component `<style>` blocks are emitted as virtual CSS
  * modules that are imported by the compiled JS output.
  *
- * @param {{ jsxImportSource?: string, runtimeImports?: RuntimeImportMode }} [options]
+ * @param {{ jsxImportSource?: string, runtimeImports?: RuntimeImportMode, optimize?: boolean }} [options]
  * @returns {TsrxReactPlugin}
  */
 export function tsrxReact(options = {}) {
 	const jsxImportSource = options.jsxImportSource ?? 'react';
-	const compile_options = { runtimeImports: options.runtimeImports };
+	const compile_options = {
+		runtimeImports: options.runtimeImports,
+		optimize: options.optimize,
+	};
 
 	/** @type {Map<string, string>} */
 	const css_cache = new Map();
@@ -151,7 +154,7 @@ export function tsrxReact(options = {}) {
 
 /**
  * @param {string} jsxImportSource
- * @param {{ runtimeImports?: RuntimeImportMode }} compile_options
+ * @param {{ runtimeImports?: RuntimeImportMode, optimize?: boolean }} compile_options
  * @returns {TsrxReactEnvironmentConfig}
  */
 function create_dep_scan_config(jsxImportSource, compile_options) {
@@ -175,7 +178,7 @@ function create_dep_scan_config(jsxImportSource, compile_options) {
 
 /**
  * @param {string} jsxImportSource
- * @param {{ runtimeImports?: RuntimeImportMode }} compile_options
+ * @param {{ runtimeImports?: RuntimeImportMode, optimize?: boolean }} compile_options
  * @returns {DepScanTransformPlugin}
  */
 function create_dep_scan_plugin(jsxImportSource, compile_options) {

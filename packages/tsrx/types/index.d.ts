@@ -2238,9 +2238,50 @@ export type RuntimeImportMode = 'compiler' | 'direct';
  * `suspenseSource`) intersect their own option type with this base when
  * declaring their `compile` export.
  */
+/**
+ * A value the optimizer can know at compile time.
+ * Object-like values are excluded.
+ * They have identity, so substituting one at two use sites would show up.
+ */
+export type StaticValue = string | number | boolean | bigint | null | undefined;
+
+/**
+ * The result of a static evaluation.
+ * The wrapper keeps an evaluated `undefined` distinct from "not knowable".
+ */
+export type StaticValueResult = { value: StaticValue } | null;
+
+/**
+ * Resolves an identifier to its compile-time value.
+ * Returns `null` when the pass cannot prove one.
+ */
+export type ResolveStaticIdentifier = (node: AST.Identifier) => StaticValueResult;
+
+export interface OptimizeOptions {
+	/**
+	 * Upper bound on optimization rounds.
+	 * One fold can expose the next, so the pass repeats until nothing changes.
+	 * This only bounds the loop.
+	 */
+	maxRounds?: number;
+}
+
+export interface OptimizeResult {
+	ast: AST.Program;
+}
+
 export interface BaseCompileOptions {
 	collect?: boolean;
 	loose?: boolean;
+	/**
+	 * Folds statically known expressions and removes the code they prove dead.
+	 * This covers `@if (false)` arms, statements after a `return`, and
+	 * constants nothing reads.
+	 * It is off by default.
+	 * The editor and Volar path never runs it, because those mappings have to
+	 * mirror the authored source.
+	 */
+	optimize?: boolean;
 	/**
 	 * Selects where generated runtime helper imports resolve from. The default
 	 * `'compiler'` mode preserves compiler-package compatibility subpaths;
@@ -2310,6 +2351,14 @@ export interface CompileHarness {
 	 * hashes. Defaults to `classAttrName`.
 	 */
 	generatedClassAttrName?: 'class' | 'className';
+}
+
+/** The per-target entry points the shared optimizer tests run against. */
+export interface OptimizeHarness {
+	compile: CompileFn;
+	compile_to_volar_mappings: VolarCompileFn;
+	/** The target's name, used in test titles. */
+	name: string;
 }
 
 /** The per-target entry points the shared source-mapping tests run against. */

@@ -24,12 +24,13 @@ const CSS_QUERY_PATTERN = /tsrx-css/;
  */
 export class TsrxReactRspackPlugin {
 	/**
-	 * @param {{ jsxImportSource?: string, runtimeImports?: RuntimeImportMode }} [options]
+	 * @param {{ jsxImportSource?: string, runtimeImports?: RuntimeImportMode, optimize?: boolean }} [options]
 	 */
 	constructor(options = {}) {
 		this.options = {
 			jsxImportSource: options.jsxImportSource ?? 'react',
 			runtimeImports: options.runtimeImports ?? 'compiler',
+			optimize: options.optimize,
 		};
 	}
 
@@ -86,6 +87,7 @@ export class TsrxReactRspackPlugin {
 						loader: JS_LOADER,
 						options: {
 							runtimeImports: this.options.runtimeImports,
+							optimize: this.options.optimize,
 						},
 					},
 				],
@@ -99,6 +101,7 @@ export class TsrxReactRspackPlugin {
 						loader: CSS_LOADER,
 						options: {
 							runtimeImports: this.options.runtimeImports,
+							optimize: this.options.optimize,
 						},
 					},
 				],

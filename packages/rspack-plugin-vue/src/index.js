@@ -27,12 +27,13 @@ const SOURCE_EXTENSION_PATTERN = /\.[cm]?[jt]sx?$/;
  */
 export class TsrxVueRspackPlugin {
 	/**
-	 * @param {{ vapor?: { macros?: boolean | object, compiler?: { runtimeModuleName?: string } }, runtimeImports?: RuntimeImportMode }} [options]
+	 * @param {{ vapor?: { macros?: boolean | object, compiler?: { runtimeModuleName?: string } }, runtimeImports?: RuntimeImportMode, optimize?: boolean }} [options]
 	 */
 	constructor(options = {}) {
 		this.options = {
 			vapor: options.vapor,
 			runtimeImports: options.runtimeImports ?? 'compiler',
+			optimize: options.optimize,
 		};
 	}
 
@@ -96,6 +97,7 @@ export class TsrxVueRspackPlugin {
 						loader: JS_LOADER,
 						options: {
 							runtimeImports: this.options.runtimeImports,
+							optimize: this.options.optimize,
 						},
 					},
 				],
@@ -109,6 +111,7 @@ export class TsrxVueRspackPlugin {
 						loader: CSS_LOADER,
 						options: {
 							runtimeImports: this.options.runtimeImports,
+							optimize: this.options.optimize,
 						},
 					},
 				],

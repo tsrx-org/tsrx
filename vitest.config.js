@@ -352,6 +352,15 @@ export default defineConfig({
 			},
 			{
 				test: {
+					name: 'tsrx-optimize',
+					include: ['packages/tsrx/tests/optimize/**/*.test.js'],
+					environment: 'node',
+					globals: true,
+				},
+				plugins: [],
+			},
+			{
+				test: {
 					name: 'tsrx-vite',
 					include: ['packages/tsrx/tests/vite/**/*.test.js'],
 					environment: 'node',

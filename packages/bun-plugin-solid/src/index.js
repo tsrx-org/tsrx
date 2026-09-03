@@ -21,6 +21,7 @@ const CSS_QUERY_PATTERN = /\?tsrx-css&lang\.css$/;
  * 	emitCss?: boolean,
  * 	solid?: object,
  * 	runtimeImports?: RuntimeImportMode,
+ * 	optimize?: boolean,
  * }} TsrxSolidBunPluginOptions
  */
 
@@ -101,7 +102,10 @@ async function transform_solid(source, file_path, solid_options) {
  */
 export function tsrxSolid(options = {}) {
 	const emit_css = options.emitCss ?? true;
-	const compile_options = { runtimeImports: options.runtimeImports };
+	const compile_options = {
+		runtimeImports: options.runtimeImports,
+		optimize: options.optimize,
+	};
 
 	/** @type {Map<string, string>} */
 	const css_cache = new Map();

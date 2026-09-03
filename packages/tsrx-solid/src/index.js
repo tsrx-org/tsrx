@@ -2,7 +2,13 @@
 /** @import { BaseCompileOptions, CompileError, CompileResult, ParseOptions, VolarMappingsResult } from '@tsrx/core/types' */
 /** @import { NonEmptyString } from '@tsrx/core/types/helpers' */
 
-import { analyzeTsrx, createVolarMappingsResult, dedupeMappings, parseModule } from '@tsrx/core';
+import {
+	analyzeTsrx,
+	createVolarMappingsResult,
+	dedupeMappings,
+	optimizeTsrx,
+	parseModule,
+} from '@tsrx/core';
 import { transform } from './transform.js';
 
 export { isRefProp } from './ref.js';
@@ -33,7 +39,7 @@ export function compile(source, filename, options) {
 	const errors = /** @type {CompileError[]} */ ([]);
 	const comments = /** @type {AST.CommentWithLocation[]} */ ([]);
 	const collect = !!(options?.collect || options?.loose);
-	const ast = parseModule(
+	let ast = parseModule(
 		source,
 		filename,
 		collect ? { collect: true, loose: !!options?.loose, errors, comments } : undefined,
@@ -43,6 +49,15 @@ export function compile(source, filename, options) {
 		filename,
 		collect ? { collect: true, loose: !!options?.loose, errors, comments } : undefined,
 	);
+
+	// Dead-code elimination runs on the target-neutral AST.
+	// Analysis has already seen the module as authored.
+	// Target lowering has not run yet.
+	// `compile_to_volar_mappings` skips this on purpose.
+	// Editor mappings have to line up with the source on screen.
+	if (options?.optimize) {
+		({ ast } = optimizeTsrx(ast, filename));
+	}
 	const { ast: _ast, ...result } = transform(
 		ast,
 		source,
