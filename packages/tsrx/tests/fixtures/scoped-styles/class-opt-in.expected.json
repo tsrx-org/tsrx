@@ -1,0 +1,13 @@
+{
+  "elements": {
+    "l1 local": ["local"],
+    "{parentClass}": ["local"],
+    "{theme.$class}": [],
+    "{theme.card}": []
+  },
+  "cssOrder": ["local", "theme"],
+  "pruned": [],
+  "classMaps": {
+    "theme": ["theme"]
+  }
+}
