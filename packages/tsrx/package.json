@@ -79,7 +79,6 @@
     "@types/estree": "catalog:default",
     "acorn": "catalog:default",
     "esrap": "catalog:default",
-    "is-reference": "catalog:default",
     "magic-string": "catalog:default",
     "zimmerframe": "catalog:default"
   },

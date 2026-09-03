@@ -647,9 +647,6 @@ importers:
       esrap:
         specifier: ^2.3.2
         version: 2.3.2(@typescript-eslint/types@8.56.1)
-      is-reference:
-        specifier: catalog:default
-        version: 3.0.3
       magic-string:
         specifier: catalog:default
         version: 0.30.21
