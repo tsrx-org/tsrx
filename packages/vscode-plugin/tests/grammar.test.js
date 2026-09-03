@@ -38,7 +38,8 @@ beforeAll(async () => {
  */
 function tokenize(code) {
 	const lines = highlighter.codeToTokensBase(code, {
-		lang: 'tsrx',
+		// The TSRX grammar is registered at runtime, not one of shiki's bundled ids.
+		lang: /** @type {import('shiki').BundledLanguage} */ (/** @type {unknown} */ ('tsrx')),
 		theme: 'nord',
 		includeExplanation: 'scopeName',
 	});
