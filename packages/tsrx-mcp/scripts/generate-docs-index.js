@@ -245,7 +245,7 @@ A \`<style>\` block written as template content is a standalone block. It belong
 ${style_scope_example}
 \`\`\`
 
-Assign a \`<style>\` block to get an object: \`$class\` (the block's hash, preceded by the \`$class\` of every block it applies) plus one property per class name (\`styles.card\`). An assigned block that is exported, applied, or whose `$class` is read is a theme and keeps every selector; otherwise it is a class map and keeps only its class selectors. \`<style apply={theme} />\` stamps \`theme.$class\` on a whole scope, \`<style apply={theme}>...</style>\` also overrides it locally, and \`class={theme.$class}\` attaches it to one element. \`apply\` takes an identifier, a member expression, or an array of those, and every target must be an assigned block that is imported or declared before the applying block.
+Assign a \`<style>\` block to get an object: \`$class\` (the block's hash, preceded by the \`$class\` of every block it applies) plus one property per class name (\`styles.card\`). An assigned block that is exported, applied, or whose \`$class\` is read is a theme and keeps every selector; otherwise it is a class map and keeps only its class selectors. \`<style apply={theme} />\` stamps \`theme.$class\` on a whole scope, \`<style apply={theme}>...</style>\` also overrides it locally, and \`class={theme.$class}\` attaches it to one element. \`apply\` takes an identifier, a member expression, or an array of those, and every target must be an assigned block that is imported or declared before the applying block.
 
 \`\`\`tsx
 ${style_theme_example}
