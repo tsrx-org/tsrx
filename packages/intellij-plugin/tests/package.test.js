@@ -122,8 +122,10 @@ describe('@tsrx/intellij-plugin release contract', () => {
 
 		expect(descriptor).toContain('<id>tsrx.intellij-plugin</id>');
 		expect(provider).toContain(
-			'PluginManager.getPluginByClass(TsrxTextMateBundleProvider::class.java)',
+			'TsrxTextMateBundleProvider::class.java.classLoader as? PluginAwareClassLoader',
 		);
+		expect(provider).toContain('?.pluginDescriptor');
+		expect(provider).not.toContain('PluginManager');
 		expect(provider).not.toContain('PluginManagerCore');
 		expect(ignored).toBe(
 			"tsrx.intellij-plugin::Package 'com\\.intellij\\.platform\\.lsp' is not found.*\n",
