@@ -161,7 +161,7 @@ const STYLE_SCOPE_EXAMPLE = [
 	'export function Panel() @{',
 	'  <>',
 	'    <style>',
-	'      /* scope A: the fragment and its setup statements */',
+	'      /* scope A: the children list of this fragment */',
 	'      div { color: black; }',
 	'    </style>',
 	'    <div>Black</div>',
@@ -172,19 +172,18 @@ const STYLE_SCOPE_EXAMPLE = [
 	'    </style>',
 	'    <p>No margin</p>',
 	'',
-	'    @{',
-	'      <>',
-	'        <style>',
-	'          /* scope B, nested in A: emitted after both sheets of A */',
-	'          div { font-weight: bold; }',
-	'        </style>',
-	'        <div>Black and bold: A and B both reach here</div>',
-	'      </>',
-	'    }',
+	'    <section>',
+	'      <style>',
+	'        /* scope B: the children list of <section>, nested in A. It styles',
+	'           the items beside it and everything below them, never <section>. */',
+	'        div { font-weight: bold; }',
+	'      </style>',
+	'      <div>Black and bold: A and B both reach here</div>',
+	'    </section>',
 	'  </>',
 	'}',
 	'',
-	'// Stamped classes: the outer div and p carry "<A>"; the nested div carries "<A> <B>".',
+	'// Stamped classes: the outer div, p, and section carry "<A>"; the nested div carries "<A> <B>".',
 	'// Emitted CSS order: div.<A>, p.<A>, div.<B>.',
 ].join('\n');
 
@@ -253,6 +252,16 @@ const STYLE_STATIC_CONSTRAINTS = [
 	'tsrx-style-standalone-at-module-scope',
 	'  A standalone <style> block must sit inside a template scope. At module scope',
 	'  assign it: const theme = <style>...</style>.',
+	'tsrx-style-standalone-needs-fragment',
+	'  A standalone <style> block must be a child of an element or a fragment. As the',
+	'  lone output of a @{ ... } body or a control-flow body, or as a statement, it',
+	'  styles nothing: wrap it with the output it styles in a fragment. Beside another',
+	'  output node it is the ordinary multiple-outputs error.',
+	'tsrx-style-standalone-outside-template',
+	'  Raw CSS in <style> is TSRX template syntax. A standalone block with CSS text',
+	'  must sit lexically inside a @{ ... } body or an @if/@for/@switch/@try body, at',
+	'  any depth. In plain TSX give <style> an expression child (<style>{css}</style>)',
+	'  or assign the block. Head styles and resource styles are exempt.',
 	'tsrx-style-unknown-attribute',
 	'  A scoped <style> block admits only the attributes ref and apply. Head styles',
 	'  and resource styles (href) admit any attribute.',
@@ -330,6 +339,7 @@ const AST_NODE_MAPPING = [
 	'{ ... AssignmentExpression } in attribute position -> JSXSpreadAttribute',
 	'<style> CSSSource </style> -> JSXStyleElement',
 	'<style JSXAttributesopt /> -> JSXStyleElement with a self-closing opening element and no StyleSheet child',
+	'<style> { AssignmentExpression } </style> -> JSXElement (an ordinary element whose children are expression containers)',
 	'@if -> JSXIfExpression',
 	'@for -> JSXForExpression',
 	'@switch -> JSXSwitchExpression',
@@ -991,19 +1001,40 @@ export function SpecificationPage() @{
 							<h3 class="appendix-heading">4.6.1 Standalone and assigned blocks</h3>
 							<p class="section-body">
 								A style element is standalone when it is template content: a child of a native
-								element or fragment, or an item of the statement list of a JSXCodeBlock or of a
-								control-flow body. Any number of standalone blocks may appear in one such list,
-								before or after the single output node; a code block still renders at most one
-								non-style output node. A style element in any other position is assigned: a variable
+								element or fragment, the output node of a JSXCodeBlock or of a control-flow body, or
+								a bare statement. Only the first placement is valid. A style element is an output
+								node like any other, so a block beside the output node of a JSXCodeBlock or a
+								control-flow body is the ordinary multiple-outputs error, and a block that is the
+								lone output of such a body, or a statement, is an early error (5.1): wrap it with
+								the output it styles in a fragment. Any number of standalone blocks may appear in
+								one children list. A style element in any other position is assigned: a variable
 								initializer, an object property value, a default export, or any other expression
 								value. Assigned blocks are legal wherever a JavaScript expression is legal,
 								including module scope, function bodies, and nested code blocks. A standalone block
 								at module scope is an early error (5.1).
 							</p>
+							<p class="section-body">
+								Raw CSS in a style element is TSRX template syntax. A standalone block whose content
+								is CSS text must sit lexically inside a JSXCodeBlock body or a control-flow body, at
+								any depth of native elements, fragments, expression containers, callbacks, or
+								templates assigned inside such a body; anywhere else it is an early error (5.1).
+								Plain TSX keeps the TSX rule: a
+								<code class="inline-code">{'<style>'}</code>
+								element whose first child is an expression container, written
+								<code class="inline-code">{'<style>{css}</style>'}</code>
+								, is an ordinary JSXElement with no stylesheet, no scope, and no hash, and is never
+								stamped. Head styles and resource styles remain exempt.
+							</p>
 							<h3 class="appendix-heading">4.6.2 Template scopes</h3>
 							<p class="section-body">
-								A template scope is a statement list together with the template it renders: the body
-								of a JSXCodeBlock; each branch body of a control-flow expression, that is every
+								A scope is the children list of a native element or fragment that holds at least one
+								standalone block. A standalone block belongs to the children list it is written in.
+								It styles the other children of that list and their descendants: the block styles
+								the items beside it and everything below them, and it never styles the element that
+								contains it, nor any ancestor. To style an element, make the block and the element
+								siblings in a fragment. Children lists nested in a scope that hold blocks are nested
+								scopes, whether they sit directly below or inside a nested JSXCodeBlock or a
+								control-flow body. Every
 								<code class="inline-code">@if</code>
 								branch, the
 								<code class="inline-code">@for</code>
@@ -1019,29 +1050,29 @@ export function SpecificationPage() @{
 								<code class="inline-code">@pending</code>
 								, and
 								<code class="inline-code">@catch</code>
-								blocks; or a native element or fragment in expression position, such as an assigned
-								template, a returned fragment, or a template passed as a prop. A standalone block
-								belongs to the nearest enclosing template scope. Its selectors reach the native
-								elements of that scope and of every scope nested inside it, and never an element
-								outside it.
+								blocks render one output node, and a fragment there is a scope of its own.
 							</p>
 							<p class="section-body">
-								All standalone blocks of one scope share one scope hash: the position-derived hash
-								of the first block in source order that has a body. The implementation stamps the
-								scope hash on every native element in the scope and in all nested scopes, so an
-								element carries the hash of every enclosing scope, outermost first. A composite
-								component element receives no classes of its own, although native elements written
-								as its children still belong to the scope, and stamping stops at function
+								All standalone blocks of one list share one scope hash: the position-derived hash of
+								the first block in source order that has a body. Two blocks in one element's
+								children list share a hash; a block in an enclosing fragment and a block in that
+								element's children list do not. The implementation stamps the scope hash on every
+								native element among the list's items and their descendants, through nested scopes,
+								so an element carries the hash of every enclosing scope, outermost first. A
+								composite component element receives no classes of its own, although native elements
+								written as its children still belong to the scope, and stamping stops at function
 								boundaries. A scope whose blocks are all self-closing has no hash of its own.
 							</p>
 							<pre class="code-block plain">
 								<code>{STYLE_SCOPE_EXAMPLE}</code>
 							</pre>
 							<p class="section-body">
-								Pruning is per scope: a selector of a standalone block that matches no element the
-								block reaches is unused. Control-flow bodies are scopes like any other. Their blocks
-								are stamped only on the elements of their own branch, but their CSS is static and is
-								emitted whether or not the branch ever renders.
+								Pruning is per scope, against the list's other children and their subtrees: a
+								selector of a standalone block that matches no element the block reaches is unused,
+								including a selector that matches only the element containing the block. Fragments
+								in control-flow bodies are scopes like any other. Their blocks are stamped only on
+								the elements of their own branch, but their CSS is static and is emitted whether or
+								not the branch ever renders.
 							</p>
 							<h3 class="appendix-heading">
 								4.6.3 Assigned blocks, $class, themes, and class maps
@@ -1253,6 +1284,20 @@ export function SpecificationPage() @{
 									module scope is
 									<code class="inline-code">tsrx-style-standalone-at-module-scope</code>
 									.
+								</li>
+								<li>
+									A standalone style block must be a child of a native element or fragment. A block
+									that is the lone output node of a JSXCodeBlock or a control-flow body, or a
+									statement, is
+									<code class="inline-code">tsrx-style-standalone-needs-fragment</code>
+									.
+								</li>
+								<li>
+									A standalone style block with CSS text must sit lexically inside a JSXCodeBlock
+									body or a control-flow body (4.6.1). Anywhere else, such as a plain TSX return or
+									an assigned template outside those bodies, it is
+									<code class="inline-code">tsrx-style-standalone-outside-template</code>
+									. Head styles, resource styles, and self-closing blocks are exempt.
 								</li>
 								<li>
 									A scoped style block admits only the attributes
@@ -1496,9 +1541,14 @@ export function SpecificationPage() @{
 								<li>
 									A
 									<code class="inline-code">{'<style>'}</code>
-									tag is a JSXStyleElement rather than a JSXElement. Its captured stylesheet source
-									text and its styleScopeHash, styleKind, and styleApplies metadata are described in
-									A.5 and are not part of the general JSXElement shape described here.
+									tag whose content is CSS text is a JSXStyleElement rather than a JSXElement. Its
+									captured stylesheet source text and its styleScopeHash, styleKind, and
+									styleApplies metadata are described in A.5 and are not part of the general
+									JSXElement shape described here. A
+									<code class="inline-code">{'<style>'}</code>
+									tag whose first non-whitespace child character is
+									<code class="inline-code">{'{'}</code>
+									is an ordinary JSXElement named style with expression-container children.
 								</li>
 							</ul>
 							<h3 class="appendix-heading">A.4 Expression value nodes</h3>

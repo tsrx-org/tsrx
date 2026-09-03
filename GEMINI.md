@@ -64,9 +64,14 @@ dependencies, not workspace packages.
 - Use `@if`, `@for`, `@switch`, and `@try` for template control flow.
 - A template scope with setup statements finishes with one output node. Wrap text,
   expression containers, or sibling outputs in a fragment.
-- `<style>` blocks are lexically scoped, not component-scoped. A scope may hold
-  several `<style>` blocks, and nested `@{ ... }` and control-flow bodies are
-  style scopes of their own.
+- `<style>` blocks are lexically scoped, not component-scoped. A standalone block
+  is a child of an element or fragment, and that children list is its scope: the
+  block styles the items beside it and everything below them, never the element
+  that contains it. A block is an output node, so in a `@{ ... }` or control-flow
+  body wrap it with its output in a fragment (`<><style>...</style><div /></>`);
+  never place it beside the output node. Raw CSS in `<style>` is TSRX template
+  syntax and needs an enclosing `@{ ... }` or control-flow body; in plain TSX
+  write `<style>{css}</style>`, an ordinary element.
 - Assigned blocks (`const theme = <style>...</style>`) expose `$class` and one key
   per class; `<style apply={theme} />` applies a theme to a scope,
   `class={theme.$class}` opts single elements in, `apply={[a, b]}` composes, and a

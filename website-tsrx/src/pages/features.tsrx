@@ -231,20 +231,19 @@ const SCOPED_STYLES_HTML = highlight_tsrx(
 	`function Panel() @{
   <>
     <style>
-      /* scope A */
+      /* scope A: this fragment's children list */
       div { color: black; }
     </style>
     <div class="outer">Black</div>
 
-    @{
-      <>
-        <style>
-          /* scope B, nested inside A */
-          div { font-weight: bold; }
-        </style>
-        <div class="inner">Black and bold</div>
-      </>
-    }
+    <section>
+      <style>
+        /* scope B: the section's children list, nested inside A.
+           It styles the items beside it, never <section> itself. */
+        div { font-weight: bold; }
+      </style>
+      <div class="inner">Black and bold</div>
+    </section>
 
     <style>
       /* still scope A: shares the first block's hash */
@@ -263,15 +262,19 @@ const CONTROL_FLOW_STYLES_HTML = highlight_tsrx(
     </style>
     <section class="status">
       @if (ready) {
-        <style>
-          .ok { color: green; }
-        </style>
-        <p class="ok">Ready</p>
+        <>
+          <style>
+            .ok { color: green; }
+          </style>
+          <p class="ok">Ready</p>
+        </>
       } @else {
-        <style>
-          .wait { color: gray; }
-        </style>
-        <p class="wait">Waiting</p>
+        <>
+          <style>
+            .wait { color: gray; }
+          </style>
+          <p class="wait">Waiting</p>
+        </>
       }
     </section>
   </>
@@ -328,11 +331,13 @@ export function Panel() @{
 }
 
 export function Card() @{
-  // Self-closed: applies the theme, declares no rules of its own.
-  <style apply={theme} />
-  <article>
-    <h2>Green system-ui</h2>
-  </article>
+  <>
+    // Self-closed: applies the theme, declares no rules of its own.
+    <style apply={theme} />
+    <article>
+      <h2>Green system-ui</h2>
+    </article>
+  </>
 }`,
 );
 
@@ -891,10 +896,12 @@ export const FeaturesPage = () => @{
 								them and never leak into child components.
 							</p>
 							<p class="section-body">
-								Styles are scoped lexically. A style scope is a statement list plus the template it
-								renders: the body of a
+								Styles are scoped lexically. A block is a child of an element or a fragment, and
+								that children list is its scope: the block styles the items beside it and everything
+								below them, and it never styles the element that contains it. To style an element,
+								make the block and the element siblings in a fragment. A
 								<code class="inline-code">{'@{ ... }'}</code>
-								block, each body of an
+								body and every
 								<code class="inline-code">@if</code>
 								,
 								<code class="inline-code">@for</code>
@@ -902,10 +909,22 @@ export const FeaturesPage = () => @{
 								<code class="inline-code">@switch</code>
 								, or
 								<code class="inline-code">@try</code>
-								, or a native element or fragment used as a value. A block can be a child of the
-								output element or fragment, or sit beside the output node as a setup sibling.
-								Several blocks written in one scope share one hash; a nested scope gets a hash of
-								its own.
+								body render exactly one output node, and a
+								<code class="inline-code">{'<style>'}</code>
+								block is an output node like any other, so wrap it with its output in a fragment
+								there. Several blocks written in one children list share one hash; a nested list
+								with blocks of its own is a nested scope with its own hash.
+							</p>
+							<p class="section-body">
+								Raw CSS in
+								<code class="inline-code">{'<style>'}</code>
+								is TSRX template syntax: a block with CSS text needs an enclosing
+								<code class="inline-code">{'@{ ... }'}</code>
+								body or control-flow body somewhere above it. In plain TSX,
+								<code class="inline-code">{'<style>'}</code>
+								is an ordinary element whose content is an expression child,
+								<code class="inline-code">{'<style>{css}</style>'}</code>
+								; the compiler leaves it untouched and never scopes or stamps it.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={SCOPED_STYLES_HTML} />
@@ -913,12 +932,15 @@ export const FeaturesPage = () => @{
 							<p class="section-body">
 								Every element carries the hash of each enclosing scope, outer first: the outer
 								<code class="inline-code">div</code>
-								is stamped with scope A, the nested
-								<code class="inline-code">div</code>
-								with A and B, and the trailing
+								, the
+								<code class="inline-code">section</code>
+								, and the trailing
 								<code class="inline-code">p</code>
-								with A. Outer rules therefore reach into nested scopes, while inner rules never
-								reach out. Stamping stops at function boundaries, so elements returned from a
+								are stamped with scope A, and the nested
+								<code class="inline-code">div</code>
+								with A and B. Outer rules therefore reach into nested scopes, while inner rules
+								never reach out, and a selector that only matches the containing element is pruned
+								as unused. Stamping stops at function boundaries, so elements returned from a
 								callback such as
 								<code class="inline-code">{'items.map((item) => <li />)'}</code>
 								are not part of the scope.

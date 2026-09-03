@@ -725,23 +725,31 @@ statements and expressions do not apply inside them, so do not put `{expr}`,
 runtime values: set them on an element with `style={{ '--name': value }}` and
 read them from static CSS with `var(--name)`.
 
-```tsrx
-const Card = ({ tone }: { tone: string }) => <>
-	<div class="card" style={{ '--card-tone': tone }}>
-		<h2>Scoped title</h2>
-		<p>Styles here won't leak out.</p>
-	</div>
-	<style>
-		.card {
-			padding: 1.5rem;
-			border: 1px solid var(--card-tone);
-		}
+Raw CSS in `<style>` is TSRX template syntax: a standalone block with CSS text
+must sit lexically inside a `@{ ... }` body or an `@if`/`@for`/`@switch`/`@try`
+body (at any depth); anywhere else it is the `tsrx-style-standalone-outside-template`
+error. In plain TSX, `<style>` is an ordinary element with an expression child,
+`<style>{css}</style>`, which the compiler never scopes, extracts, or stamps.
 
-		h2 {
-			color: #333;
-		}
-	</style>
-</>;
+```tsrx
+const Card = ({ tone }: { tone: string }) => @{
+	<>
+		<div class="card" style={{ '--card-tone': tone }}>
+			<h2>Scoped title</h2>
+			<p>Styles here won't leak out.</p>
+		</div>
+		<style>
+			.card {
+				padding: 1.5rem;
+				border: 1px solid var(--card-tone);
+			}
+
+			h2 {
+				color: #333;
+			}
+		</style>
+	</>
+};
 ```
 
 Use `:global(...)` to opt out of scoping. React keeps authored attributes as
@@ -751,23 +759,24 @@ Other TSRX targets commonly use `class`. Scoped style blocks accept only the
 
 ### Style scopes
 
-Styles are scoped lexically. A style scope is a statement list plus the template
-it renders:
-
-- the body of a `@{ ... }` block;
-- each body of an `@if`, `@for`, `@switch`, or `@try` (every branch, `@else`,
-  `@empty`, `@case`, `@default`, `@pending`, and `@catch` body is a scope of
-  its own);
-- a native element or fragment used as a value (an assigned template or a
-  returned fragment).
+Styles are scoped lexically. A standalone block is a child of a native element
+or fragment, and that children list is its scope.
 
 Scope rules:
 
-- A block may be a child of the scope's output element or fragment, or sit
-  beside the output node in a `@{ ... }` body or a directive body as a
-  non-output sibling.
-- Several `<style>` blocks in one scope share one hash. A nested scope gets a
-  hash of its own.
+- A block styles the items beside it and everything below them; it never
+  styles the element that contains it. To style an element, make the block
+  and the element siblings in a fragment: `<><style>...</style><div /></>`.
+- A `@{ ... }` body and every `@if`, `@for`, `@switch`, or `@try` body (each
+  branch, `@else`, `@empty`, `@case`, `@default`, `@pending`, and `@catch`
+  body) render exactly one output node, and a `<style>` block is an output
+  node like any other: beside another output it is the multiple-outputs error,
+  and as the lone output it is `tsrx-style-standalone-needs-fragment`. Wrap
+  the block and its output in a fragment there.
+- Several `<style>` blocks in one children list share one hash. A nested list
+  that holds blocks is a nested scope with a hash of its own; two blocks among
+  an element's children share a hash, while a block in the enclosing fragment
+  and a block among that element's children do not.
 - Every element carries the hash of each enclosing scope, outer first. Outer
   rules reach nested scopes; inner rules never reach out.
 - Stamping stops at function boundaries. Elements returned from a callback such
@@ -781,24 +790,23 @@ Scope rules:
 export function Panel() @{
 	<>
 		<style>
-			/* scope A */
+			/* scope A: this fragment's children list */
 			div {
 				color: black;
 			}
 		</style>
 		<div class="outer">Black</div>
 
-		@{
-			<>
-				<style>
-					/* scope B, nested inside A */
-					div {
-						font-weight: bold;
-					}
-				</style>
-				<div class="inner">Black and bold</div>
-			</>
-		}
+		<section>
+			<style>
+				/* scope B: the section's children list, nested inside A.
+				   It styles the items beside it, never <section> itself. */
+				div {
+					font-weight: bold;
+				}
+			</style>
+			<div class="inner">Black and bold</div>
+		</section>
 
 		<style>
 			/* still scope A: shares the first block's hash */
@@ -812,7 +820,7 @@ export function Panel() @{
 ```
 
 With `A` and `B` as the two scope hashes, the compiled classes are `outer A`,
-`inner A B`, and `A` on the `<p>`.
+`A` on the `<section>`, `inner A B`, and `A` on the `<p>`.
 
 ### Precedence
 
@@ -841,19 +849,23 @@ export function Status({ ready }: { ready: boolean }) @{
 		</style>
 		<section class="status">
 			@if (ready) {
-				<style>
-					.ok {
-						color: green;
-					}
-				</style>
-				<p class="ok">Ready</p>
+				<>
+					<style>
+						.ok {
+							color: green;
+						}
+					</style>
+					<p class="ok">Ready</p>
+				</>
 			} @else {
-				<style>
-					.wait {
-						color: gray;
-					}
-				</style>
-				<p class="wait">Waiting</p>
+				<>
+					<style>
+						.wait {
+							color: gray;
+						}
+					</style>
+					<p class="wait">Waiting</p>
+				</>
 			}
 		</section>
 	</>
@@ -967,11 +979,13 @@ export function Panel() @{
 }
 
 export function Card() @{
-	// Self-closed: applies the theme, declares no rules of its own.
-	<style apply={theme} />
-	<article>
-		<h2>Green system-ui</h2>
-	</article>
+	<>
+		// Self-closed: applies the theme, declares no rules of its own.
+		<style apply={theme} />
+		<article>
+			<h2>Green system-ui</h2>
+		</article>
+	</>
 }
 ```
 
@@ -1191,8 +1205,9 @@ const List = <T,>({ items, render }: Props<T>) =>
 | Error boundary         | `@try { <Child /> } @catch (e) { <Fallback /> }`        |
 | Async boundary         | `@try { <Child /> } @pending { <Loading /> }`           |
 | Guard exit             | `if (!user) { return null; }`                          |
-| Scoped style           | `<style> .x { ... } </style>`                          |
-| Nested scope style     | `@{ <><style>...</style><div /></> }` (own hash)       |
+| Scoped style           | `<style> .x { ... } </style>` (beside the elements)    |
+| Nested scope style     | `<div><style>...</style><p /></div>` (own hash, styles `p`) |
+| Plain TSX style        | `<style>{css}</style>` (ordinary element, not scoped)  |
 | Dynamic CSS value      | `style={{ '--tone': tone }}` + `var(--tone)`           |
 | Escape scoping         | `:global(.class)`                                      |
 | Cross-component class  | `<Child class={styles.foo} />`; React uses `className` |
