@@ -33,6 +33,32 @@ function is_removed(node) {
 }
 
 /**
+ * Slots whose visitor filters removal markers back out.
+ * A marker left anywhere else would stay in the tree and break it.
+ */
+const REMOVAL_CONTAINERS = new Set([
+	'Program',
+	'BlockStatement',
+	'StaticBlock',
+	'SwitchCase',
+	'JSXCodeBlock',
+	'JSXElement',
+	'JSXFragment',
+]);
+
+/**
+ * Reports whether the node at the end of `path` sits in a slot that can drop it.
+ * An unbraced `if` arm, a loop body, and a loop header are not such slots.
+ *
+ * @param {AST.Node[]} path
+ * @returns {boolean}
+ */
+function removal_is_handled(path) {
+	const parent = path.at(-1);
+	return !!parent && REMOVAL_CONTAINERS.has(parent.type);
+}
+
+/**
  * One fold can expose the next.
  * Replacing `flag` with `false` is what makes the `@if` above it dead.
  * So the pass repeats until a round changes nothing.
@@ -207,7 +233,9 @@ function is_droppable_when_unreachable(node) {
 /**
  * Reports whether dropping an initializer can be observed.
  * A statically evaluable expression is safe to drop.
- * So is a function or class literal, which touches nothing outside itself.
+ * So is a function literal, which touches nothing outside itself.
+ * A class literal is not, because evaluating it runs `extends`, static fields,
+ * static blocks, and computed static keys.
  *
  * @param {AST.Node} node
  * @param {ResolveStaticIdentifier} resolve
@@ -217,7 +245,6 @@ function is_pure_initializer(node, resolve) {
 	switch (unwrap_expression(node).type) {
 		case 'FunctionExpression':
 		case 'ArrowFunctionExpression':
-		case 'ClassExpression':
 			return true;
 		default:
 			return !!evaluate_expression(node, resolve);
@@ -655,6 +682,8 @@ function run_round(ast, filename) {
 		if (is_template_directive_node(visited)) {
 			const replacement = collapse_template_if(visited, resolve);
 			if (!replacement) return unchanged;
+			// A directive whose slot cannot drop it stays as authored.
+			if (is_removed(replacement) && !removal_is_handled(path)) return unchanged;
 			changed = true;
 			return replacement;
 		}
@@ -666,6 +695,11 @@ function run_round(ast, filename) {
 		if (!replacement) return unchanged;
 
 		changed = true;
+		// An unbraced arm, a loop body, and a label body all need a statement.
+		// An empty one is the smallest valid stand-in for the removed `if`.
+		if (is_removed(replacement) && !removal_is_handled(path)) {
+			return { type: 'EmptyStatement', metadata: { path: [] } };
+		}
 		return replacement;
 	}
 
@@ -690,16 +724,28 @@ function run_round(ast, filename) {
 
 	/**
 	 * @param {AST.Node} node
-	 * @param {{ next: () => AST.Node | undefined }} context
+	 * @param {{ next: () => AST.Node | undefined, path: AST.Node[] }} context
 	 * @returns {AST.Node | undefined}
 	 */
-	function visit_for(node, { next }) {
+	function visit_for(node, { next, path }) {
 		const visited = /** @type {AST.ForOfStatement} */ (next() ?? node);
-		if (!is_template_directive_node(visited)) return visited === node ? undefined : visited;
-		if (!is_empty_iterable(visited.right)) return visited === node ? undefined : visited;
-		if (contains_hoisted_declaration(visited.body)) {
-			return visited === node ? undefined : visited;
+		const unchanged = visited === node ? undefined : visited;
+
+		if (!is_template_directive_node(visited)) return unchanged;
+		if (!is_empty_iterable(visited.right)) return unchanged;
+		if (contains_hoisted_declaration(visited.body)) return unchanged;
+
+		// `@empty { … }` is the authored fallback for a loop that yields nothing.
+		// An empty iterable renders that clause, so the loop becomes its body.
+		const fallback = /** @type {{ empty?: AST.Node | null }} */ (visited).empty;
+		if (fallback) {
+			const child = branch_to_render_child(fallback);
+			if (!child) return unchanged;
+			changed = true;
+			return child;
 		}
+
+		if (!removal_is_handled(path)) return unchanged;
 
 		changed = true;
 		return removed_node;
@@ -714,7 +760,12 @@ function run_round(ast, filename) {
 		const visited = /** @type {AST.VariableDeclaration} */ (next() ?? node);
 		// `var` is hoisted, so removing it changes what other code sees.
 		// An exported name is public no matter how this module uses it.
-		if (visited.kind === 'var' || path.at(-1)?.type.startsWith('Export')) {
+		// A loop header is not a statement list, so its declaration has to stay.
+		if (
+			visited.kind === 'var' ||
+			path.at(-1)?.type.startsWith('Export') ||
+			!removal_is_handled(path)
+		) {
 			return visited === node ? undefined : visited;
 		}
 

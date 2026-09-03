@@ -190,6 +190,79 @@ export function runSharedOptimizeTests({ compile, compile_to_volar_mappings, nam
 			expect(code).not.toContain('dead');
 		});
 
+		it('renders the @empty clause when the iterable is empty', () => {
+			const code = compiled(
+				`export function App() @{
+					<ul>
+						@for (const item of []) {
+							<li class="row">{'rowbody'}</li>
+						} @empty {
+							<li class="none">{'emptybody'}</li>
+						}
+					</ul>
+				}`,
+				true,
+			);
+
+			expect(code).toContain('emptybody');
+			expect(code).not.toContain('rowbody');
+		});
+
+		it('keeps a loop header whose binding is never read', () => {
+			const code = compiled(
+				`export function count(items) {
+					let total = 0;
+					for (const entry of items) {
+						total += 1;
+					}
+					return total;
+				}`,
+				true,
+			);
+
+			expect(code).toContain('entry');
+		});
+
+		it('keeps an unused class whose evaluation has side effects', () => {
+			const code = compiled(
+				`export function App({ base, register }) @{
+					const Unused = class extends base() {
+						static field = register();
+					};
+					<span class="x">{'x'}</span>
+				}`,
+				true,
+			);
+
+			expect(code).toContain('Unused');
+		});
+
+		it('replaces a dead if in an unbraced arm with an empty statement', () => {
+			const code = compiled(
+				`export function run(ready) {
+					if (ready) if (false) dropped();
+					return ready;
+				}`,
+				true,
+			);
+
+			expect(code).not.toContain('dropped');
+			expect(code).toContain('if (ready)');
+		});
+
+		it('replaces a dead if in a loop body with an empty statement', () => {
+			const code = compiled(
+				`export function run(ready) {
+					while (ready) if (false) dropped();
+					return ready;
+				}`,
+				true,
+			);
+
+			expect(code).not.toContain('dropped');
+			expect(code).toContain('while (ready)');
+		});
+
 		it('removes statements that follow a return', () => {
 			const code = compiled(
 				`export function value() {
