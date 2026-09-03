@@ -1092,6 +1092,32 @@ describe('scoped style analysis', () => {
 		});
 	});
 
+	describe('$class reads', () => {
+		it('classifies a local block whose $class is read as a theme', () => {
+			const result = analyze(
+				`function App() @{
+					const theme = <style>div {} .card {}</style>;
+					<><div class={theme.$class} /><Child cls={theme['$class']} /></>
+				}`,
+			);
+			const [theme] = result.styles.assigned;
+			expect(theme.metadata.styleClassRead).toBe(true);
+			expect(theme.metadata.styleKind).toBe('theme');
+		});
+
+		it('keeps a local block a class map when only class entries are read', () => {
+			const result = analyze(
+				`function App() @{
+					const styles = <style>div {} .card {}</style>;
+					<div class={styles.card} />
+				}`,
+			);
+			const [styles] = result.styles.assigned;
+			expect(styles.metadata.styleClassRead).toBe(false);
+			expect(styles.metadata.styleKind).toBe('class-map');
+		});
+	});
+
 	describe('assigned @{} blocks', () => {
 		it('resolves a theme declared in the setup of an assigned code block', () => {
 			const result = analyze(

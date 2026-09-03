@@ -160,6 +160,8 @@ export interface BaseNodeMetaData {
 	styleApplied?: boolean;
 	/** An assigned block is exported from its module. */
 	styleExported?: boolean;
+	/** An assigned block's `$class` is read somewhere in its module (an element or a child prop opts into the theme). */
+	styleClassRead?: boolean;
 	/** How an assigned block renders: `theme` keeps every selector, `class-map` prunes (D4/D5). */
 	styleKind?: 'theme' | 'class-map';
 	/** The transform's style pre-pass already rendered this assigned block's sheet. */

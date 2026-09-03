@@ -209,6 +209,24 @@ function resolve_local_member(binding, expression) {
 }
 
 /**
+ * Whether any reference to the binding reads its `$class` property.
+ *
+ * @param {Binding | null} binding
+ * @returns {boolean}
+ */
+function is_class_read(binding) {
+	if (!binding) return false;
+	return binding.references.some(({ node, path }) => {
+		const parent = path.at(-1);
+		if (parent?.type !== 'MemberExpression' || parent.object !== node) return false;
+		if (parent.computed) {
+			return parent.property.type === 'Literal' && parent.property.value === '$class';
+		}
+		return parent.property.type === 'Identifier' && parent.property.name === '$class';
+	});
+}
+
+/**
  * Run the module-level style analysis. `scopes` comes from `create_scopes`
  * over the same program so target resolution uses real bindings.
  *
@@ -402,6 +420,12 @@ export function analyze_styles(ast, scopes, state) {
 						parent?.type === 'ExportDefaultDeclaration' ||
 						export_parent?.type === 'ExportNamedDeclaration' ||
 						(declared_name !== null && exported_names.has(declared_name));
+					// Reading `theme.$class` opts an element (or a child component's
+					// element, through a prop) into the block's whole stylesheet, so
+					// such a block is a theme: every selector stays, like `apply`.
+					node.metadata.styleClassRead =
+						declared_name !== null &&
+						is_class_read(nearest_scope(path, scopes)?.get(declared_name) ?? null);
 
 					const stylesheet = get_style_element_stylesheet(node);
 					if (stylesheet && get_style_class_map_names(stylesheet).includes('$class')) {
@@ -420,7 +444,9 @@ export function analyze_styles(ast, scopes, state) {
 
 	for (const node of assigned) {
 		node.metadata.styleKind =
-			node.metadata.styleExported || node.metadata.styleApplied ? 'theme' : 'class-map';
+			node.metadata.styleExported || node.metadata.styleApplied || node.metadata.styleClassRead
+				? 'theme'
+				: 'class-map';
 	}
 
 	/** @type {StyleAnalysis} */

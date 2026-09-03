@@ -762,6 +762,62 @@ export function runSharedScopedStyleTests({
 			expect(class_of(code, 'outer')).toBe(`outer ${outer}`);
 		});
 
+		it('rfc1-class-opt-in: reading theme.$class keeps every selector and applies only to opting elements', () => {
+			const { code, css, cssHash } = compile(
+				`function Card({ parentClass }: { parentClass: string }) @{
+					<>
+						<style>.local { padding: 0; }</style>
+						<article ${classAttrName}={parentClass}>
+							<h2 ${classAttrName}={parentClass}>{'title'}</h2>
+						</article>
+					</>
+				}
+				export function App() @{
+					const theme = <style>
+						div { color: blue; }
+						.card { color: red; }
+					</style>;
+					<>
+						<Card parentClass={theme.$class} />
+						<div ${classAttrName}={theme.$class}>{'opted in'}</div>
+						<div ${classAttrName}={theme.card}>{'card'}</div>
+						<p>{'untouched'}</p>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const local = hash_for_selector(css, 'local');
+			const theme = hashes_of(cssHash).find((hash) => hash !== local);
+			// Reading $class makes the local block a theme: no selector is pruned.
+			expect(css).not.toContain('(unused)');
+			expect(css).toContain(`div.${theme} { color: blue; }`);
+			expect(code).toContain(`'$class': '${theme}'`);
+			// Only the elements that read $class carry the theme hash; the
+			// untouched sibling and the class-map entry stay as authored.
+			expect(code).toContain(`${classAttrName}={theme.$class}`);
+			expect(code).toContain(`${classAttrName}={theme.card}`);
+			expect(code).toMatch(/<p>\{'untouched'\}<\/p>/);
+			// The child stamps the passed class ahead of its own scope hash.
+			expect(code).toContain(`<article ${classAttrName}={\`\${parentClass} ${local}\`}>`);
+			expect(code).toContain(`<h2 ${classAttrName}={\`\${parentClass} ${local}\`}>`);
+		});
+
+		it('keeps class-map pruning when only class entries of a local block are read', () => {
+			const { css } = compile(
+				`export function App() @{
+					const styles = <style>
+						div { color: blue; }
+						.card { color: red; }
+					</style>;
+					<div ${classAttrName}={styles.card}>{'card'}</div>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(css).toContain('/* (unused) div { color: blue; }*/');
+		});
+
 		it('includes $class in the class map handed to a style ref', () => {
 			const { code, cssHash } = compile(
 				`export function App() @{
