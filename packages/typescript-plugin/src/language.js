@@ -877,9 +877,13 @@ export const resolveConfig = (config) => {
 	);
 
 	if (normalizedLibs.size === 0) {
-		const host = ts.createCompilerHost(options);
-		const defaultLibFileName = host.getDefaultLibFileName(options).toLowerCase();
-		normalizedLibs.add(defaultLibFileName);
+		// `CompilerOptions.lib` takes bare lib names such as `lib.esnext.full.d.ts`.
+		// `CompilerHost#getDefaultLibFileName` returns an absolute path instead, which
+		// TypeScript cannot resolve as a lib entry (and lower-casing it also breaks the
+		// path on case-sensitive lookups), so the whole ES standard library silently
+		// dropped out of the checker — only the two DOM libs below survived.
+		const defaultLibFileName = normalizeLibName(ts.getDefaultLibFileName(options));
+		if (defaultLibFileName) normalizedLibs.add(defaultLibFileName);
 		normalizedLibs.add('lib.dom.d.ts');
 		normalizedLibs.add('lib.dom.iterable.d.ts');
 	}
