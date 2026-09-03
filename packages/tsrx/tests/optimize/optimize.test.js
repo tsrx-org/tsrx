@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { parseModule } from '../../src/index.js';
-import { evaluate_expression, value_to_node } from '../../src/optimize/evaluate.js';
+import {
+	evaluate_expression,
+	evaluate_truthiness,
+	value_to_node,
+} from '../../src/optimize/evaluate.js';
 import { optimize_tsrx } from '../../src/optimize/index.js';
 
 /** @import * as AST from 'estree' */
@@ -105,6 +109,38 @@ describe('static evaluation', () => {
 	it('reads the intrinsic globals', () => {
 		const ast = optimized(`export const flag = undefined === undefined;`);
 		expect(/** @type {any} */ (initializer(ast, 'flag')).value).toBe(true);
+	});
+});
+
+describe('truthiness evaluation', () => {
+	/**
+	 * @param {string} source
+	 * @returns {{ truthy: boolean, nullish: boolean, pure: boolean } | null}
+	 */
+	function truthiness(source) {
+		const ast = parseModule(`const value = ${source};`, 'App.tsrx');
+		return evaluate_truthiness(
+			/** @type {AST.Expression} */ (initializer(ast, 'value')),
+			() => null,
+		);
+	}
+
+	it('reads object-like literals as truthy', () => {
+		expect(truthiness('[]')).toEqual({ truthy: true, nullish: false, pure: true });
+		expect(truthiness('[compute()]')).toEqual({ truthy: true, nullish: false, pure: false });
+		expect(truthiness('{}')).toEqual({ truthy: true, nullish: false, pure: true });
+		expect(truthiness('() => 1')).toEqual({ truthy: true, nullish: false, pure: true });
+		expect(truthiness('/re/')).toEqual({ truthy: true, nullish: false, pure: true });
+	});
+
+	it('reads values it can evaluate outright', () => {
+		expect(truthiness('0')).toEqual({ truthy: false, nullish: false, pure: true });
+		expect(truthiness('null')).toEqual({ truthy: false, nullish: true, pure: true });
+	});
+
+	it('refuses expressions whose truthiness is unknown', () => {
+		expect(truthiness('compute()')).toBeNull();
+		expect(truthiness('source.value')).toBeNull();
 	});
 });
 

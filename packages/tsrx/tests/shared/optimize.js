@@ -190,6 +190,32 @@ export function runSharedOptimizeTests({ compile, compile_to_volar_mappings, nam
 			expect(code).not.toContain('dead');
 		});
 
+		it('picks the arm of a ternary whose test is always truthy', () => {
+			const code = compiled(
+				`export function pick(probe, hit, miss) {
+					return [probe()] ? hit() : miss();
+				}`,
+				true,
+			);
+
+			expect(code).toContain('probe()');
+			expect(code).toContain('hit()');
+			expect(code).not.toContain('miss()');
+		});
+
+		it('drops a side-effect free test instead of sequencing it', () => {
+			const code = compiled(
+				`export function pick(hit, miss) {
+					return [] ? hit() : miss();
+				}`,
+				true,
+			);
+
+			expect(code).toContain('hit()');
+			expect(code).not.toContain('miss()');
+			expect(code).not.toContain('[]');
+		});
+
 		it('renders the @empty clause when the iterable is empty', () => {
 			const code = compiled(
 				`export function App() @{

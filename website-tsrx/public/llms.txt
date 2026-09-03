@@ -132,6 +132,10 @@ code. It does the following:
 
 - Folds literal expressions such as `2 + 3`, `!true`, and `` `a${1}b` ``.
 - Propagates a `const` that holds a literal and is never reassigned or mutated.
+- Picks the arm of a `?:`, `&&`, `||`, or `??` whose test has a known
+  truthiness. An array, object, function, or regex literal is always truthy, so
+  `[b()] ? c() : d()` becomes `([b()], c())`. The test stays in a sequence
+  because it still has to run. A side-effect free test is dropped instead.
 - Drops `@if` and `@else if` branches whose test is provably false.
 - Selects the matching case of a `@switch` with a known discriminant.
 - Removes a `@for` over an empty iterable.

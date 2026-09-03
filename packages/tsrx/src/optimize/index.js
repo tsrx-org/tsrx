@@ -6,6 +6,7 @@ import * as b from '../utils/builders.js';
 import { analyze_constants } from './constants.js';
 import {
 	evaluate_expression,
+	evaluate_truthiness,
 	is_already_folded,
 	unwrap_expression,
 	value_to_node,
@@ -625,7 +626,65 @@ function run_round(ast, filename) {
 	 */
 	function fold_expression_visitor(node, { next }) {
 		const visited = next() ?? node;
-		return fold_expression(visited) ?? (visited === node ? undefined : visited);
+		return (
+			fold_expression(visited) ??
+			fold_by_truthiness(visited) ??
+			(visited === node ? undefined : visited)
+		);
+	}
+
+	/**
+	 * Picks the arm of a `?:` or a `&&` / `||` / `??` whose test has a known
+	 * truthiness but no known value.
+	 * `[b()] ? c() : d()` becomes `([b()], c())`, because an array literal is
+	 * always truthy and the call inside it still has to run.
+	 * A test that is also side-effect free is dropped instead of sequenced.
+	 *
+	 * @param {AST.Node} node
+	 * @returns {AST.Node | undefined}
+	 */
+	function fold_by_truthiness(node) {
+		/** @type {AST.Expression} */
+		let test;
+		/** @type {AST.Expression} */
+		let taken;
+		/** @type {boolean} */
+		let pure;
+
+		if (node.type === 'ConditionalExpression') {
+			const truthiness = evaluate_truthiness(node.test, resolve);
+			if (!truthiness) return undefined;
+			test = node.test;
+			pure = truthiness.pure;
+			taken = truthiness.truthy ? node.consequent : node.alternate;
+		} else if (node.type === 'LogicalExpression') {
+			const truthiness = evaluate_truthiness(node.left, resolve);
+			if (!truthiness) return undefined;
+			test = node.left;
+			pure = truthiness.pure;
+
+			switch (node.operator) {
+				case '&&':
+					taken = truthiness.truthy ? node.right : node.left;
+					break;
+				case '||':
+					taken = truthiness.truthy ? node.left : node.right;
+					break;
+				case '??':
+					taken = truthiness.nullish ? node.right : node.left;
+					break;
+				default:
+					return undefined;
+			}
+		} else {
+			return undefined;
+		}
+
+		changed = true;
+		// The operand that decides the result can also be the result. Sequencing
+		// it with itself would evaluate it twice.
+		if (taken === test || pure) return taken;
+		return b.sequence([test, taken]);
 	}
 
 	/**

@@ -26,5 +26,6 @@ Bun integration to turn it on. It is off by default.
 The pass folds statically known expressions and drops the code they prove dead.
 This covers `@if` branches with a false test, `@switch` cases that cannot match,
 `@for` over an empty iterable, statements after a `return`, and declarations
-nothing reads. Editor tooling never runs it, so hovers and diagnostics still
+nothing reads. It also picks the arm of a `?:`, `&&`, `||`, or `??` whose test
+is always truthy, keeping the test when it still has to run. Editor tooling never runs it, so hovers and diagnostics still
 match the authored source.

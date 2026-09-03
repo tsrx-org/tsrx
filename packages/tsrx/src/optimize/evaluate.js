@@ -246,6 +246,51 @@ export function evaluate_expression(node, resolve) {
 }
 
 /**
+ * Reports what a test position can tell about an expression the pass cannot
+ * evaluate to a value.
+ * An array, object, function, or regex literal is always truthy and non-nullish.
+ * `pure` says whether evaluating the expression can be skipped.
+ * An impure test still has to run, so callers keep it in a sequence.
+ * Returns `null` when truthiness is not decidable.
+ *
+ * @param {AST.Node | null | undefined} node
+ * @param {ResolveStaticIdentifier} resolve
+ * @returns {{ truthy: boolean, nullish: boolean, pure: boolean } | null}
+ */
+export function evaluate_truthiness(node, resolve) {
+	if (!node || typeof node !== 'object') return null;
+
+	const evaluated = evaluate_expression(node, resolve);
+	if (evaluated) {
+		return {
+			truthy: !!evaluated.value,
+			nullish: evaluated.value == null,
+			pure: true,
+		};
+	}
+
+	const expression = unwrap_expression(node);
+
+	switch (expression.type) {
+		case 'ArrayExpression':
+			return { truthy: true, nullish: false, pure: expression.elements.length === 0 };
+		case 'ObjectExpression':
+			return { truthy: true, nullish: false, pure: expression.properties.length === 0 };
+		case 'FunctionExpression':
+		case 'ArrowFunctionExpression':
+			return { truthy: true, nullish: false, pure: true };
+		case 'Literal':
+			// A regex literal is the one literal `evaluate_expression` refuses.
+			// It is an object, so it is always truthy.
+			return /** @type {{ regex?: unknown }} */ (expression).regex
+				? { truthy: true, nullish: false, pure: true }
+				: null;
+		default:
+			return null;
+	}
+}
+
+/**
  * Builds the smallest expression node that reproduces `value`.
  * Returns `null` when the value has no literal form.
  * `NaN` and `Infinity` would need a global reference.
