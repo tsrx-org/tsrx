@@ -226,7 +226,7 @@ const STYLE_THEME_EXAMPLE = [
 	'function Card({ parentClass }: { parentClass: string }) @{',
 	'  <>',
 	'    <style>.local { padding: 0; }</style>',
-	'    <article class={parentClass}>',
+	'    <article class={`local ${parentClass}`}>',
 	'      <h2 class={parentClass}>Title</h2>',
 	'    </article>',
 	'  </>',

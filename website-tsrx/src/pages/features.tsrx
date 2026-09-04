@@ -402,7 +402,7 @@ const THEME_OPT_IN_HTML = highlight_tsrx(
     <style>
       .local { padding: 0; }
     </style>
-    <article class={parentClass}>
+    <article class={\`local \${parentClass}\`}>
       <h2 class={parentClass}>Title</h2>
     </article>
   </>

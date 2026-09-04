@@ -12,7 +12,7 @@ function Card({ parentClass }: { parentClass: string }) @{
 				padding: 0;
 			}
 		</style>
-		<article class={parentClass}>
+		<article class={`local ${parentClass}`}>
 			<h2 class="l1 local">{'title'}</h2>
 		</article>
 	</>

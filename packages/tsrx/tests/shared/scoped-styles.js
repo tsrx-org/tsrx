@@ -952,7 +952,7 @@ export function runSharedScopedStyleTests({
 				`function Card({ parentClass }: { parentClass: string }) @{
 					<>
 						<style>.local { padding: 0; }</style>
-						<article ${classAttrName}={parentClass}>
+						<article ${classAttrName}={\`local \${parentClass}\`}>
 							<h2 ${classAttrName}={parentClass}>{'title'}</h2>
 						</article>
 					</>
@@ -984,7 +984,9 @@ export function runSharedScopedStyleTests({
 			expect(code).toContain(`${classAttrName}={theme.card}`);
 			expect(code).toMatch(/<p>\{'untouched'\}<\/p>/);
 			// The child stamps the passed class ahead of its own scope hash.
-			expect(code).toContain(`<article ${classAttrName}={\`\${parentClass} ${local}\`}>`);
+			expect(code).toContain(
+				`<article ${classAttrName}={\`\${\`local \${parentClass}\`} ${local}\`}>`,
+			);
 			expect(code).toContain(`<h2 ${classAttrName}={\`\${parentClass} ${local}\`}>`);
 		});
 

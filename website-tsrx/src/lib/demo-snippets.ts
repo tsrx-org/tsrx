@@ -240,7 +240,7 @@ export function Panel() @{
         padding: 0;
       }
     </style>
-    <article class={parentClass}>
+    <article class={\`local \${parentClass}\`}>
       <h2 class={parentClass}>Title</h2>
     </article>
   </>
