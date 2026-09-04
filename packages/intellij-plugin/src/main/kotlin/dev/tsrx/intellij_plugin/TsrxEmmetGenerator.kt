@@ -7,14 +7,14 @@ import com.intellij.lang.Language
 import com.intellij.psi.PsiElement
 
 /**
- * Emmet generator para archivos .tsrx
+ * Emmet generator for .tsrx files.
  *
- * Habilita expansión de abreviaturas tipo `div>ul>li*3` con Tab dentro de archivos TSRX.
- * Reusa la lógica de generación HTML de XmlZenCodingGeneratorImpl pero matchea TsrxLanguage
- * en lugar de XMLLanguage (que es lo que haría el generador built-in).
+ * Enables abbreviation expansion like `div>ul>li*3` with Tab inside TSRX files.
+ * Reuses the HTML generation logic from XmlZenCodingGeneratorImpl but matches TsrxLanguage
+ * instead of XMLLanguage (which is what the built-in generator would do).
  *
- * TextMate-only: la PSI de .tsrx es plana (FileElement sin XmlTag), por lo que HtmlTextContextType
- * siempre fallaría — este generador relaja el check de contexto a "¿es archivo .tsrx?".
+ * TextMate-only: the .tsrx PSI is flat (FileElement without XmlTag), so HtmlTextContextType
+ * would always fail — this generator relaxes the context check to "is it a .tsrx file?".
  */
 class TsrxEmmetGenerator : XmlZenCodingGeneratorImpl() {
 
@@ -23,7 +23,7 @@ class TsrxEmmetGenerator : XmlZenCodingGeneratorImpl() {
     }
 
     override fun isMyContext(element: PsiElement, expandPrimitive: Boolean): Boolean {
-        // Direct language check (más fiable para TextMate PSI)
+        // Direct language check (more reliable for TextMate PSI)
         if (element.language.isKindOf(TsrxLanguage) || element.language.id == "TSRX") {
             return true
         }
@@ -36,7 +36,7 @@ class TsrxEmmetGenerator : XmlZenCodingGeneratorImpl() {
         if (context != null && isMyContext(context, expandPrimitive)) {
             return true
         }
-        // Fallback: check file from callback (cubre casos donde context es null o es whitespace)
+        // Fallback: check file from callback (covers cases where context is null or is whitespace)
         val file = callback.file
         return isTsrxFile(file)
     }
@@ -49,8 +49,8 @@ class TsrxEmmetGenerator : XmlZenCodingGeneratorImpl() {
         return true
     }
 
-    // XmlZenCodingGeneratorImpl.getSuffix() ya retorna "html" — lo mantenemos
-    // para que filtros html/bem apliquen.
+    // XmlZenCodingGeneratorImpl.getSuffix() already returns "html" — we keep it
+    // so html/bem filters apply.
 
     private fun isTsrxFile(file: com.intellij.psi.PsiFile): Boolean {
         if (file.language.isKindOf(TsrxLanguage) || file.language.id == "TSRX") return true

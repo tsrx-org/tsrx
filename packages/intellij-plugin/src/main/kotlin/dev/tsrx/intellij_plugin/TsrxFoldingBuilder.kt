@@ -11,17 +11,17 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 
 /**
- * Code folding para archivos .tsrx
+ * Code folding for .tsrx files.
  *
- * TSRX es TextMate-only (PSI plana sin XmlTag/blocks), por lo que este builder no recorre el AST:
- * escanea el texto del documento en una pasada y emite FoldingDescriptor para:
- *  - Pares de tags `<tag ...> ... </tag>` (ignora self-closing y void elements)
- *  - Bloques balanceados `{ ... }` (@if/@for/@switch/@try/@{}, funciones, objetos)
- *  - Grupos contiguos de `import`
+ * TSRX is TextMate-only (flat PSI without XmlTag/blocks), so this builder does not traverse the AST:
+ * it scans the document text in a single pass and emits FoldingDescriptor for:
+ *  - Tag pairs `<tag ...> ... </tag>` (ignores self-closing and void elements)
+ *  - Balanced blocks `{ ... }` (@if/@for/@switch/@try/@{}, functions, objects)
+ *  - Contiguous `import` groups
  *
- * El `<` sólo se trata como apertura de tag cuando el carácter previo no es identificador,
- * para no confundir genéricos tipo `Array<string>` con markup. Los template literals
- * (backticks) preservan su contexto: `${...}` vuelve a modo código.
+ * `<` is only treated as a tag opening when the previous character is not an identifier,
+ * to avoid confusing generics like `Array<string>` with markup. Template literals
+ * (backticks) preserve their context: `${...}` switches back to code mode.
  */
 class TsrxFoldingBuilder : CustomFoldingBuilder(), DumbAware {
 

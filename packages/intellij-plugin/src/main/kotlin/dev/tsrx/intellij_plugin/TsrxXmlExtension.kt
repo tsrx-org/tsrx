@@ -4,9 +4,9 @@ import com.intellij.psi.PsiFile
 import com.intellij.xml.HtmlXmlExtension
 
 /**
- * Habilita comportamiento HTML/XML (auto-close tag, sync editing, etc.) en archivos .tsrx
- * Complementario a TsrxEmmetGenerator — Emmet usa ZenCodingGenerator, no HtmlXmlExtension,
- * pero este extension mejora la edición general de tags.
+ * Enables HTML/XML behavior (auto-close tag, sync editing, etc.) in .tsrx files.
+ * Complementary to TsrxEmmetGenerator — Emmet uses ZenCodingGenerator, not HtmlXmlExtension,
+ * but this extension improves general tag editing.
  */
 class TsrxXmlExtension : HtmlXmlExtension() {
     override fun isAvailable(file: PsiFile): Boolean {
