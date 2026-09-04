@@ -106,6 +106,69 @@ describe('iterable_array_from', function () {
 		expect(Object.hasOwn(copied, 1)).toBe(false);
 	});
 
+	it('copies non-iterable array-likes with slice index semantics', function () {
+		var like = { length: 3, 0: 'a', 1: 'b', 2: 'c' };
+
+		expect(iterable_array_from(like)).toEqual(['a', 'b', 'c']);
+		expect(iterable_array_from(like, 0)).toEqual(['a', 'b', 'c']);
+		expect(iterable_array_from(like, 1)).toEqual(['b', 'c']);
+		expect(iterable_array_from(like, 3)).toEqual([]);
+		expect(iterable_array_from(like, -1)).toEqual(['c']);
+		expect(iterable_array_from(like, 1.5)).toEqual(['b', 'c']);
+		expect(iterable_array_from(like, NaN)).toEqual(['a', 'b', 'c']);
+	});
+
+	it('materializes sparse array-like holes as own undefined entries', function () {
+		var sparse = { length: 3, 0: 1, 2: 3 };
+		var copied = iterable_array_from(sparse);
+
+		expect(copied).toEqual([1, undefined, 3]);
+		expect(1 in copied).toBe(true);
+		expect(Object.hasOwn(copied, 1)).toBe(true);
+	});
+
+	it('copies arguments and typed arrays with iterator skip semantics', function () {
+		var args = (function (a, b, c) {
+			return arguments;
+		})('a', 'b', 'c');
+
+		expect(iterable_array_from(args)).toEqual(['a', 'b', 'c']);
+		expect(iterable_array_from(args, 1)).toEqual(['b', 'c']);
+		expect(iterable_array_from(args, -1)).toEqual(['a', 'b', 'c']);
+		expect(iterable_array_from(args, 1.5)).toEqual(['c']);
+		expect(iterable_array_from(args, NaN)).toEqual(['a', 'b', 'c']);
+
+		var typed = new Uint8Array([4, 5, 6]);
+		expect(iterable_array_from(typed, 1)).toEqual([5, 6]);
+		expect(iterable_array_from(typed, -1)).toEqual([4, 5, 6]);
+		expect(iterable_array_from(typed, 1.5)).toEqual([6]);
+	});
+
+	it('walks strings by code point so surrogate pairs stay intact', function () {
+		expect(iterable_array_from('abc', 1)).toEqual(['b', 'c']);
+		expect(iterable_array_from('abc', -1)).toEqual(['a', 'b', 'c']);
+		expect(iterable_array_from('abc', 1.5)).toEqual(['c']);
+
+		expect(iterable_array_from('a😀b')).toEqual(['a', '😀', 'b']);
+		expect(iterable_array_from('a😀b', 1)).toEqual(['😀', 'b']);
+		expect(iterable_array_from('a😀b', 1.5)).toEqual(['b']);
+		expect(iterable_array_from('a😀b', -1)).toEqual(['a', '😀', 'b']);
+	});
+
+	it('still walks custom iterators even when the object also has length', function () {
+		var dual = {
+			length: 2,
+			0: 'a',
+			1: 'b',
+			[Symbol.iterator]: function* () {
+				yield 'x';
+			},
+		};
+
+		expect(iterable_array_from(dual)).toEqual(['x']);
+		expect(iterable_array_from(dual, 0)).toEqual(['x']);
+	});
+
 	it('still walks sets, iterators, and array-like values', function () {
 		expect(iterable_array_from(new Set([1, 2, 3]), 1)).toEqual([2, 3]);
 
