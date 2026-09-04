@@ -1,3 +1,5 @@
+import { highlight_tsrx } from '../lib/code-highlight.ts';
+
 // Code snippets (hand-highlighted, matching homepage code-block style)
 
 const INSTALL_HTML = [
@@ -267,6 +269,42 @@ const MCP_CLAUDE_CODE_HTML = [
 	'<span class="ln">1</span> <span class="fn">claude</span> <span class="prop">mcp</span> <span class="prop">add</span> <span class="str">tsrx</span> <span class="prop">--</span> <span class="fn">npx</span> <span class="str">-y</span> <span class="str">@tsrx/mcp</span>',
 ].join('\n');
 
+const REACT_APPLY_CLASS_HTML = highlight_tsrx(
+	`import { theme } from './theme.tsrx';
+
+export function Panel() @{
+  <>
+    <style apply={theme}>
+      /* Scope A; also stamps theme.$class on every element of A. */
+      div { color: black; }
+    </style>
+    <div>Black: the local rule beats the theme's green.</div>
+  </>
+}
+
+export function OptIn() @{
+  <div className={theme.$class}>Blue: opted in with $class</div>
+}`,
+);
+
+const APPLY_CLASS_HTML = highlight_tsrx(
+	`import { theme } from './theme.tsrx';
+
+export function Panel() @{
+  <>
+    <style apply={theme}>
+      /* Scope A; also stamps theme.$class on every element of A. */
+      div { color: black; }
+    </style>
+    <div>Black: the local rule beats the theme's green.</div>
+  </>
+}
+
+export function OptIn() @{
+  <div class={theme.$class}>Blue: opted in with $class</div>
+}`,
+);
+
 const NAV_GROUPS = [
 	{
 		heading: 'Frameworks',
@@ -402,8 +440,24 @@ export function GettingStartedPage() @{
 								<code class="inline-code">.tsrx</code>
 								file and import it from your existing JS, TS, or TSX code. The plugin compiles
 								<code class="inline-code">.tsrx</code>
-								modules into standard React components with scoped CSS.
+								modules into standard React components with sibling-scoped CSS.
 							</p>
+							<p class="section-body">
+								Assign a
+								<code class="inline-code">{'<style>'}</code>
+								block to get
+								<code class="inline-code">$class</code>, then
+								<code class="inline-code">{'<style apply={theme} />'}</code>
+								adds that class to every element of a scope. React keeps authored attributes as
+								written, so use
+								<code class="inline-code">className</code>
+								when you opt a single element in. See
+								<a href="/features#style-composition">Style composition</a>
+								for the full model.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={REACT_APPLY_CLASS_HTML} />
+							</pre>
 						</section>
 
 						<section class="doc-section" id="preact-vite">
@@ -419,7 +473,7 @@ export function GettingStartedPage() @{
 							<p class="section-body">
 								The plugin compiles
 								<code class="inline-code">.tsrx</code>
-								modules into standard Preact components.
+								modules into standard Preact components with sibling-scoped CSS.
 								<code class="inline-code">Suspense</code>
 								is imported from
 								<code class="inline-code">preact/compat</code>
@@ -429,6 +483,21 @@ export function GettingStartedPage() @{
 								<code class="inline-code">tsrxPreact()</code>
 								if you want to avoid pulling in the full compat layer.
 							</p>
+							<p class="section-body">
+								Assign a
+								<code class="inline-code">{'<style>'}</code>
+								block to get
+								<code class="inline-code">$class</code>, then
+								<code class="inline-code">{'<style apply={theme} />'}</code>
+								adds that class to every element of a scope. Use
+								<code class="inline-code">class</code>
+								when you opt a single element in. See
+								<a href="/features#style-composition">Style composition</a>
+								for the full model.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={APPLY_CLASS_HTML} />
+							</pre>
 						</section>
 
 						<section class="doc-section" id="preact-rspack">
@@ -555,6 +624,21 @@ export function GettingStartedPage() @{
 							<pre class="code-block">
 								<code innerHTML={SOLID_VITE_CONFIG_HTML} />
 							</pre>
+							<p class="section-body">
+								Sibling-scoped
+								<code class="inline-code">{'<style>'}</code>
+								blocks work the same as on the other targets. Assign a block to get
+								<code class="inline-code">$class</code>, then
+								<code class="inline-code">{'<style apply={theme} />'}</code>
+								adds that class to every element of a scope. Use
+								<code class="inline-code">class</code>
+								when you opt a single element in. See
+								<a href="/features#style-composition">Style composition</a>
+								for the full model.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={APPLY_CLASS_HTML} />
+							</pre>
 						</section>
 
 						<section class="doc-section" id="solid-rspack">
@@ -629,6 +713,21 @@ export function GettingStartedPage() @{
 								<code class="inline-code">tsconfig.json</code>
 								.
 							</p>
+							<p class="section-body">
+								Sibling-scoped
+								<code class="inline-code">{'<style>'}</code>
+								blocks work the same as on the other targets. Assign a block to get
+								<code class="inline-code">$class</code>, then
+								<code class="inline-code">{'<style apply={theme} />'}</code>
+								adds that class to every element of a scope. Use
+								<code class="inline-code">class</code>
+								when you opt a single element in. See
+								<a href="/features#style-composition">Style composition</a>
+								for the full model.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={APPLY_CLASS_HTML} />
+							</pre>
 						</section>
 
 						<section class="doc-section" id="vue-rspack">
