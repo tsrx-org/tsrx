@@ -48,14 +48,6 @@ import {
  */
 
 /**
- * `apply` sites resolve against ordinary JavaScript scoping, so the analyzer
- * looks the target up from the nearest enclosing scope of the style block.
- *
- * @param {AST.Node[]} path
- * @param {Map<AST.Node, ScopeInterface>} scopes
- * @returns {ScopeInterface | null}
- */
-/**
  * Whether `child` is the body of an `@if`/`@for`/`@switch`/`@try` branch
  * (including `@else`, `@empty`, `@case`, `@catch`, `@pending`, and `@finally`).
  *
@@ -115,6 +107,14 @@ function style_authors_css(node) {
 	return !node.openingElement.selfClosing || node.children.length > 0;
 }
 
+/**
+ * `apply` sites resolve against ordinary JavaScript scoping, so the analyzer
+ * looks the target up from the nearest enclosing scope of the style block.
+ *
+ * @param {AST.Node[]} path
+ * @param {Map<AST.Node, ScopeInterface>} scopes
+ * @returns {ScopeInterface | null}
+ */
 function nearest_scope(path, scopes) {
 	for (let i = path.length - 1; i >= 0; i -= 1) {
 		const scope = scopes.get(path[i]);
