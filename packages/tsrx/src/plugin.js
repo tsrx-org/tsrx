@@ -2344,6 +2344,16 @@ export function TSRXPlugin(config) {
 						`Unclosed tag '<${tagName}>'. Expected '${closeTag}' before end of template.`,
 					);
 					node.unclosed = true;
+					// Leave the tokenizer where the opening tag ended so siblings after
+					// an in-progress `<style>` / `<script>` keep parsing as template
+					// markup. Restoring the pre-element context matches a balanced
+					// raw-text element; without it leftover `tc_expr` can swallow `}`.
+					if (contextDepth !== undefined && this.context.length > contextDepth) {
+						this.context.length = contextDepth;
+					}
+					if (this.#loose) {
+						return '';
+					}
 				}
 
 				return content;

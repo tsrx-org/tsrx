@@ -1621,6 +1621,42 @@ abc
 		expect(node_children(returned.children[0]).map((child) => child.type)).toEqual(['StyleSheet']);
 	});
 
+	it('recovers an unclosed style in loose mode and keeps later siblings', function () {
+		const errors = [];
+		const ast = parseModule(
+			`export function App() @{
+				<>
+					<style>
+					<div />
+				</>
+			}`,
+			'App.tsrx',
+			{ loose: true, collect: true, errors },
+		);
+
+		assert_type(ast, 'Program');
+		expect(
+			errors
+				.map(function (error) {
+					return error.message;
+				})
+				.join('\n'),
+		).not.toContain('Expected identifier');
+
+		const fragment = find_first(ast, function (node) {
+			return node.type === 'JSXFragment';
+		});
+		assert_type(fragment, 'JSXFragment');
+		expect(
+			fragment.children.map(function (child) {
+				return child.type;
+			}),
+		).toEqual(['JSXStyleElement', 'JSXElement']);
+		expect(child(fragment, 0, 'JSXStyleElement').css).toBe('');
+		expect(child(fragment, 0, 'JSXStyleElement').unclosed).toBe(true);
+		expect(openingName(child(fragment, 1, 'JSXElement')).name).toBe('div');
+	});
+
 	it('parses module-scope style expressions followed by JavaScript statements', () => {
 		const source = `const styles = <style>
 			.card {
