@@ -1,33 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { parseModule } from '../../src/index.js';
-import {
-	evaluate_expression,
-	evaluate_truthiness,
-	value_to_node,
-} from '../../src/optimize/evaluate.js';
+import { evaluate_expression, evaluate_truthiness } from '../../src/optimize/evaluate.js';
+import { create_constant_resolver } from '../../src/optimize/constants.js';
 import { optimize_tsrx } from '../../src/optimize/index.js';
 
 /** @import * as AST from 'estree' */
 
 /**
- * Parse a module, run the pass over it, and hand back the optimized program.
+ * The initializer of `const <name> = …` anywhere in a program.
  *
- * @param {string} source
- * @returns {AST.Program}
- */
-function optimized(source) {
-	return optimize_tsrx(parseModule(source, 'App.tsrx'), 'App.tsrx').ast;
-}
-
-/**
- * The single expression of `const <name> = …` anywhere in a program.
- *
- * @param {AST.Program} ast
+ * @param {AST.Node} ast
  * @param {string} name
- * @returns {AST.Node | null}
+ * @returns {any}
  */
 function initializer(ast, name) {
-	/** @type {AST.Node | null} */
+	/** @type {any} */
 	let found = null;
 
 	/** @param {any} node */
@@ -62,7 +49,62 @@ function initializer(ast, name) {
  */
 function evaluate(source) {
 	const ast = parseModule(`const value = ${source};`, 'App.tsrx');
-	return evaluate_expression(/** @type {AST.Expression} */ (initializer(ast, 'value')), () => null);
+	return evaluate_expression(initializer(ast, 'value'), () => null);
+}
+
+/**
+ * Read the truthiness of a standalone expression.
+ *
+ * @param {string} source
+ * @returns {{ truthy: boolean, nullish: boolean, pure: boolean } | null}
+ */
+function truthiness(source) {
+	const ast = parseModule(`const value = ${source};`, 'App.tsrx');
+	return evaluate_truthiness(initializer(ast, 'value'), () => null);
+}
+
+/**
+ * Resolve a named constant the way the pass does when deciding a test.
+ *
+ * @param {string} source
+ * @param {string} name
+ * @returns {{ value: unknown } | null}
+ */
+function resolved(source, name) {
+	const ast = parseModule(source, 'App.tsrx');
+	const resolve = create_constant_resolver(ast, 'App.tsrx');
+
+	/** @type {any} */
+	let reference = null;
+
+	/** @param {any} node */
+	function visit(node) {
+		if (!node || typeof node !== 'object' || reference) return;
+
+		if (node.type === 'JSXExpressionContainer' && node.expression?.name === name) {
+			reference = node.expression;
+			return;
+		}
+
+		for (const key of Object.keys(node)) {
+			const child = node[key];
+			if (Array.isArray(child)) child.forEach(visit);
+			else if (child && typeof child === 'object') visit(child);
+		}
+	}
+
+	visit(ast);
+	return reference ? resolve(reference) : null;
+}
+
+/**
+ * Parse a module, run the pass over it, and hand back the optimized program.
+ *
+ * @param {string} source
+ * @returns {AST.Program}
+ */
+function optimized(source) {
+	return optimize_tsrx(parseModule(source, 'App.tsrx'), 'App.tsrx').ast;
 }
 
 describe('static evaluation', () => {
@@ -105,26 +147,9 @@ describe('static evaluation', () => {
 	it('refuses an operation that would throw at runtime', () => {
 		expect(evaluate('1n + 1')).toBeNull();
 	});
-
-	it('reads the intrinsic globals', () => {
-		const ast = optimized(`export const flag = undefined === undefined;`);
-		expect(/** @type {any} */ (initializer(ast, 'flag')).value).toBe(true);
-	});
 });
 
 describe('truthiness evaluation', () => {
-	/**
-	 * @param {string} source
-	 * @returns {{ truthy: boolean, nullish: boolean, pure: boolean } | null}
-	 */
-	function truthiness(source) {
-		const ast = parseModule(`const value = ${source};`, 'App.tsrx');
-		return evaluate_truthiness(
-			/** @type {AST.Expression} */ (initializer(ast, 'value')),
-			() => null,
-		);
-	}
-
 	it('reads object-like literals as truthy', () => {
 		expect(truthiness('[]')).toEqual({ truthy: true, nullish: false, pure: true });
 		expect(truthiness('[compute()]')).toEqual({ truthy: true, nullish: false, pure: false });
@@ -144,99 +169,100 @@ describe('truthiness evaluation', () => {
 	});
 });
 
-describe('value materialization', () => {
-	it('builds a literal for every representable value', () => {
-		expect(value_to_node('text')).toMatchObject({ type: 'Literal', value: 'text' });
-		expect(value_to_node(true)).toMatchObject({ type: 'Literal', value: true });
-		expect(value_to_node(null)).toMatchObject({ type: 'Literal', value: null });
-		expect(value_to_node(-3)).toMatchObject({ type: 'UnaryExpression', operator: '-' });
-		expect(value_to_node(undefined)).toMatchObject({ type: 'UnaryExpression', operator: 'void' });
+describe('constant resolution', () => {
+	it('resolves a chain of constants', () => {
+		const value = resolved(
+			`const base = 2;
+			const doubled = base * 2;
+			const total = doubled + 1;
+			export function App() @{
+				<span class="x">{total}</span>
+			}`,
+			'total',
+		);
+
+		expect(value).toEqual({ value: 5 });
 	});
 
-	it('refuses values with no literal form', () => {
-		expect(value_to_node(NaN)).toBeNull();
-		expect(value_to_node(Infinity)).toBeNull();
-		expect(value_to_node(-0)).toBeNull();
+	it('refuses a reassigned binding', () => {
+		const value = resolved(
+			`let count = 1;
+			count = 2;
+			export function App() @{
+				<span class="x">{count}</span>
+			}`,
+			'count',
+		);
+
+		expect(value).toBeNull();
+	});
+
+	it('refuses a mutated binding', () => {
+		const value = resolved(
+			`const config = { on: true };
+			config.on = false;
+			export function App() @{
+				<span class="x">{config}</span>
+			}`,
+			'config',
+		);
+
+		expect(value).toBeNull();
+	});
+
+	it('refuses a name shadowed by an inner binding', () => {
+		const value = resolved(
+			`const size = 1;
+			export function App({ size }) @{
+				<span class="x">{size}</span>
+			}`,
+			'size',
+		);
+
+		expect(value).toBeNull();
+	});
+
+	it('reads the intrinsic globals', () => {
+		const value = resolved(
+			`export function App() @{
+				<span class="x">{undefined}</span>
+			}`,
+			'undefined',
+		);
+
+		expect(value).toEqual({ value: undefined });
 	});
 });
 
 describe('optimize pass', () => {
-	it('propagates a constant through a chain of constants', () => {
+	it('leaves setup statements and plain JavaScript alone', () => {
 		const ast = optimized(`
-			const base = 2;
-			const doubled = base * 2;
-			export const total = doubled + 1;
-		`);
-
-		expect(/** @type {any} */ (initializer(ast, 'total')).value).toBe(5);
-	});
-
-	it('leaves a reassigned binding alone', () => {
-		const ast = optimized(`
-			let count = 1;
-			count = 2;
-			export const total = count + 1;
-		`);
-
-		expect(/** @type {any} */ (initializer(ast, 'total')).type).toBe('BinaryExpression');
-	});
-
-	it('leaves a mutated binding alone', () => {
-		const ast = optimized(`
-			const config = { on: true };
-			config.on = false;
-			export const state = config;
-		`);
-
-		expect(/** @type {any} */ (initializer(ast, 'state')).type).toBe('Identifier');
-	});
-
-	it('does not fold a shadowing declaration in an inner scope', () => {
-		const ast = optimized(`
-			const size = 1;
-			export function read(size) {
-				return size + 1;
+			const outside = 2 + 3;
+			export function App() @{
+				const inside = 2 + 3;
+				<span class="x">{inside}</span>
 			}
-			export const outer = size + 1;
 		`);
 
-		expect(/** @type {any} */ (initializer(ast, 'outer')).value).toBe(2);
-
-		const read = /** @type {any} */ (
-			ast.body.find((statement) => /** @type {any} */ (statement).declaration?.id?.name === 'read')
-		);
-		expect(read.declaration.body.body[0].argument.type).toBe('BinaryExpression');
+		expect(initializer(ast, 'outside').type).toBe('BinaryExpression');
+		expect(initializer(ast, 'inside').type).toBe('BinaryExpression');
 	});
 
-	it('keeps a shorthand property intact', () => {
+	it('settles when a collapse exposes another one', () => {
 		const ast = optimized(`
-			const x = 1;
-			export const wrapper = { x };
+			export function App({ label }) @{
+				@if (false) {
+					<b class="dead">{label}</b>
+				} @else {
+					@if (true) {
+						<i class="live">{label}</i>
+					}
+				}
+			}
 		`);
 
-		const property = /** @type {any} */ (initializer(ast, 'wrapper')).properties[0];
-		expect(property.shorthand).toBe(true);
-		expect(property.key.type).toBe('Identifier');
-	});
-
-	it('does not fold a non-computed member property', () => {
-		const ast = optimized(`
-			const key = 1;
-			export const read = source.key;
-		`);
-
-		expect(/** @type {any} */ (initializer(ast, 'read')).property.type).toBe('Identifier');
-	});
-
-	it('settles even when a fold exposes another one', () => {
-		const ast = optimized(`
-			const a = 1;
-			const b = a + 1;
-			const c = b + 1;
-			const d = c + 1;
-			export const total = d + 1;
-		`);
-
-		expect(/** @type {any} */ (initializer(ast, 'total')).value).toBe(5);
+		const render = /** @type {any} */ (ast.body[0]).declaration.body.render;
+		expect(render.type).toBe('JSXElement');
+		expect(render.openingElement.name.name).toBe('i');
 	});
 });

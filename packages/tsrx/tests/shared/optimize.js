@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * Shared coverage for the opt-in dead-code elimination pass.
- * Every target runs the same target-neutral pass, so the expectations here are
- * about what survives compilation rather than about generated syntax.
+ * The pass only rewrites the TSRX keyword directives, so these expectations are
+ * about which branches survive compilation and about what stays untouched.
  *
  * @param {OptimizeHarness} harness
  */
@@ -26,56 +26,30 @@ export function runSharedOptimizeTests({ compile, compile_to_volar_mappings, nam
 			const source = `export function App() @{
 				const flag = false;
 				@if (flag) {
-					<div class="dead">{'dead'}</div>
+					<div class="dead">{'deadtext'}</div>
 				} @else {
-					<div class="live">{'live'}</div>
+					<div class="live">{'livetext'}</div>
 				}
 			}`;
 
-			expect(compiled(source, false)).toContain('dead');
-			expect(compiled(source, true)).not.toContain('dead');
-		});
-
-		it('folds a constant into the expressions that read it', () => {
-			const code = compiled(
-				`export function App() @{
-					const count = 2 + 3;
-					<span class="total">{count * 2}</span>
-				}`,
-				true,
-			);
-
-			expect(code).toContain('10');
-			expect(code).not.toContain('count');
-		});
-
-		it('folds a template literal built from constants', () => {
-			const code = compiled(
-				`export function App() @{
-					const who = 'world';
-					<span class="greeting">{\`hello \${who}\`}</span>
-				}`,
-				true,
-			);
-
-			expect(code).toContain('hello world');
-			expect(code).not.toContain('who');
+			expect(compiled(source, false)).toContain('deadtext');
+			expect(compiled(source, true)).not.toContain('deadtext');
 		});
 
 		it('keeps the branch a constant test selects and drops the other', () => {
 			const code = compiled(
 				`export function App() @{
 					@if (1 > 2) {
-						<div class="dead">{'dead'}</div>
+						<div class="dead">{'deadtext'}</div>
 					} @else {
-						<div class="live">{'live'}</div>
+						<div class="live">{'livetext'}</div>
 					}
 				}`,
 				true,
 			);
 
-			expect(code).toContain('live');
-			expect(code).not.toContain('dead');
+			expect(code).toContain('livetext');
+			expect(code).not.toContain('deadtext');
 		});
 
 		it('drops a false branch of an @if that has no @else', () => {
@@ -83,51 +57,99 @@ export function runSharedOptimizeTests({ compile, compile_to_volar_mappings, nam
 				`export function App() @{
 					<ul>
 						@if (false) {
-							<li class="dead">{'dead'}</li>
+							<li class="dead">{'deadtext'}</li>
 						}
-						<li class="live">{'live'}</li>
+						<li class="live">{'livetext'}</li>
 					</ul>
 				}`,
 				true,
 			);
 
-			expect(code).toContain('live');
-			expect(code).not.toContain('dead');
+			expect(code).toContain('livetext');
+			expect(code).not.toContain('deadtext');
+		});
+
+		it('renders an empty fragment when the only output is removed', () => {
+			const code = compiled(
+				`export function App() @{
+					@if (false) {
+						<div class="dead">{'deadtext'}</div>
+					}
+				}`,
+				true,
+			);
+
+			expect(code).not.toContain('deadtext');
 		});
 
 		it('promotes a surviving @else if into the directive position', () => {
 			const code = compiled(
 				`export function App({ ready }) @{
 					@if (false) {
-						<div class="dead">{'dead'}</div>
+						<div class="dead">{'deadtext'}</div>
 					} @else if (ready) {
-						<div class="ready">{'ready'}</div>
+						<div class="ready">{'readytext'}</div>
 					} @else {
-						<div class="waiting">{'waiting'}</div>
+						<div class="waiting">{'waitingtext'}</div>
 					}
 				}`,
 				true,
 			);
 
-			expect(code).toContain('ready');
-			expect(code).toContain('waiting');
-			expect(code).not.toContain('dead');
+			expect(code).toContain('readytext');
+			expect(code).toContain('waitingtext');
+			expect(code).not.toContain('deadtext');
 		});
 
-		it('keeps a directive whose test it cannot evaluate', () => {
+		it('keeps a directive whose test it cannot decide', () => {
 			const code = compiled(
 				`export function App({ ready }) @{
 					@if (ready) {
-						<div class="yes">{'yes'}</div>
+						<div class="yes">{'yestext'}</div>
 					} @else {
-						<div class="no">{'no'}</div>
+						<div class="no">{'notext'}</div>
 					}
 				}`,
 				true,
 			);
 
-			expect(code).toContain('yes');
-			expect(code).toContain('no');
+			expect(code).toContain('yestext');
+			expect(code).toContain('notext');
+		});
+
+		it('keeps a directive whose test has side effects', () => {
+			const code = compiled(
+				`export function App({ probe }) @{
+					@if ([probe()]) {
+						<div class="yes">{'yestext'}</div>
+					} @else {
+						<div class="no">{'notext'}</div>
+					}
+				}`,
+				true,
+			);
+
+			expect(code).toContain('probe()');
+			expect(code).toContain('yestext');
+			expect(code).toContain('notext');
+		});
+
+		it('decides a directive test from a module constant', () => {
+			const code = compiled(
+				`const SHOW = false;
+				export function App({ label }) @{
+					<div class="wrap">
+						@if (SHOW) {
+							<b class="dead">{'deadtext'}</b>
+						}
+						<i class="live">{label}</i>
+					</div>
+				}`,
+				true,
+			);
+
+			expect(code).not.toContain('deadtext');
+			expect(code).toContain('const SHOW = false');
 		});
 
 		it('selects the matching case of a constant @switch', () => {
@@ -173,47 +195,40 @@ export function runSharedOptimizeTests({ compile, compile_to_volar_mappings, nam
 			expect(code).not.toContain('firstcase');
 		});
 
+		it('keeps a @switch whose discriminant it cannot read', () => {
+			const code = compiled(
+				`export function App({ mode }) @{
+					@switch (mode) {
+						@case 'a': {
+							<div class="alpha">{'alphacase'}</div>
+						}
+						@default: {
+							<div class="delta">{'deltacase'}</div>
+						}
+					}
+				}`,
+				true,
+			);
+
+			expect(code).toContain('alphacase');
+			expect(code).toContain('deltacase');
+		});
+
 		it('removes a @for over an empty iterable', () => {
 			const code = compiled(
 				`export function App() @{
 					<ul>
 						@for (const item of []) {
-							<li class="dead">{item}</li>
+							<li class="dead">{'rowtext'}</li>
 						}
-						<li class="live">{'live'}</li>
+						<li class="live">{'livetext'}</li>
 					</ul>
 				}`,
 				true,
 			);
 
-			expect(code).toContain('live');
-			expect(code).not.toContain('dead');
-		});
-
-		it('picks the arm of a ternary whose test is always truthy', () => {
-			const code = compiled(
-				`export function pick(probe, hit, miss) {
-					return [probe()] ? hit() : miss();
-				}`,
-				true,
-			);
-
-			expect(code).toContain('probe()');
-			expect(code).toContain('hit()');
-			expect(code).not.toContain('miss()');
-		});
-
-		it('drops a side-effect free test instead of sequencing it', () => {
-			const code = compiled(
-				`export function pick(hit, miss) {
-					return [] ? hit() : miss();
-				}`,
-				true,
-			);
-
-			expect(code).toContain('hit()');
-			expect(code).not.toContain('miss()');
-			expect(code).not.toContain('[]');
+			expect(code).toContain('livetext');
+			expect(code).not.toContain('rowtext');
 		});
 
 		it('renders the @empty clause when the iterable is empty', () => {
@@ -221,158 +236,121 @@ export function runSharedOptimizeTests({ compile, compile_to_volar_mappings, nam
 				`export function App() @{
 					<ul>
 						@for (const item of []) {
-							<li class="row">{'rowbody'}</li>
+							<li class="row">{'rowtext'}</li>
 						} @empty {
-							<li class="none">{'emptybody'}</li>
+							<li class="none">{'emptytext'}</li>
 						}
 					</ul>
 				}`,
 				true,
 			);
 
-			expect(code).toContain('emptybody');
-			expect(code).not.toContain('rowbody');
+			expect(code).toContain('emptytext');
+			expect(code).not.toContain('rowtext');
 		});
 
-		it('keeps a loop header whose binding is never read', () => {
+		it('optimizes a directive used directly as a function body', () => {
 			const code = compiled(
-				`export function count(items) {
-					let total = 0;
-					for (const entry of items) {
-						total += 1;
+				`export const Badge = ({ label }) => @if (false) {
+					<b class="dead">{'deadtext'}</b>
+				} @else {
+					<i class="live">{label}</i>
+				};`,
+				true,
+			);
+
+			expect(code).toContain('label');
+			expect(code).not.toContain('deadtext');
+		});
+
+		it('keeps a dead branch that declares a hoisted name', () => {
+			const code = compiled(
+				`export function App({ label }) @{
+					@if (false) {
+						function helper() {
+							return 1;
+						}
+						<b class="dead">{label}</b>
+					} @else {
+						<i class="live">{label}</i>
 					}
-					return total;
 				}`,
 				true,
 			);
 
-			expect(code).toContain('entry');
+			expect(code).toContain('helper');
 		});
 
-		it('keeps an unused class whose evaluation has side effects', () => {
-			const code = compiled(
-				`export function App({ base, register }) @{
-					const Unused = class extends base() {
-						static field = register();
-					};
-					<span class="x">{'x'}</span>
-				}`,
-				true,
-			);
-
-			expect(code).toContain('Unused');
-		});
-
-		it('replaces a dead if in an unbraced arm with an empty statement', () => {
-			const code = compiled(
-				`export function run(ready) {
-					if (ready) if (false) dropped();
-					return ready;
-				}`,
-				true,
-			);
-
-			expect(code).not.toContain('dropped');
-			expect(code).toContain('if (ready)');
-		});
-
-		it('replaces a dead if in a loop body with an empty statement', () => {
-			const code = compiled(
-				`export function run(ready) {
-					while (ready) if (false) dropped();
-					return ready;
-				}`,
-				true,
-			);
-
-			expect(code).not.toContain('dropped');
-			expect(code).toContain('while (ready)');
-		});
-
-		it('removes statements that follow a return', () => {
-			const code = compiled(
-				`export function value() {
-					return 1;
-					console.log('unreachable');
-				}`,
-				true,
-			);
-
-			expect(code).not.toContain('unreachable');
-		});
-
-		it('removes a binding nothing reads', () => {
+		it('leaves the setup statements of a block alone', () => {
 			const code = compiled(
 				`export function App() @{
-					const unused = 1 + 1;
-					<span class="x">{'x'}</span>
-				}`,
-				true,
-			);
-
-			expect(code).not.toContain('unused');
-		});
-
-		it('keeps a binding whose initializer has side effects', () => {
-			const code = compiled(
-				`export function App({ track }) @{
-					const unused = track();
-					<span class="x">{'x'}</span>
-				}`,
-				true,
-			);
-
-			expect(code).toContain('track()');
-		});
-
-		it('keeps an exported constant', () => {
-			const code = compiled(`export const VERSION = '1.0.0';`, true);
-
-			expect(code).toContain('VERSION');
-		});
-
-		it('keeps a constant a type refers to', () => {
-			const code = compiled(
-				`const LIMIT = 10;
-				type Limit = typeof LIMIT;
-				export function App({ max }: { max: Limit }) @{
-					<span class="max">{max}</span>
-				}`,
-				true,
-			);
-
-			expect(code).toContain('LIMIT');
-		});
-
-		it('keeps a branch that declares a hoisted name', () => {
-			const code = compiled(
-				`export function App() {
-					if (false) {
-						var hoisted = 1;
+					const flag = false;
+					const total = 2 + 3;
+					const untouched = 1 + 1;
+					@if (flag) {
+						<div class="dead">{'deadtext'}</div>
+					} @else {
+						<span class="total">{total}</span>
 					}
-					return typeof hoisted;
 				}`,
 				true,
 			);
 
-			expect(code).toContain('hoisted');
+			expect(code).not.toContain('deadtext');
+			expect(code).toContain('2 + 3');
+			expect(code).toContain('untouched');
+			expect(code).toContain('{total}');
+		});
+
+		it('leaves plain JavaScript alone', () => {
+			const code = compiled(
+				`export function plain() {
+					const flag = false;
+					const untouched = 1 + 1;
+					if (flag) {
+						deadcall();
+					} else {
+						livecall();
+					}
+					return 1;
+					aftercall();
+				}`,
+				true,
+			);
+
+			expect(code).toContain('untouched');
+			expect(code).toContain('deadcall');
+			expect(code).toContain('aftercall');
+		});
+
+		it('leaves expressions alone', () => {
+			const code = compiled(
+				`export function App({ probe, hit, miss }) @{
+					<span class="x">{[probe()] ? hit() : miss()}</span>
+				}`,
+				true,
+			);
+
+			expect(code).toContain('probe()');
+			expect(code).toContain('hit()');
+			expect(code).toContain('miss()');
 		});
 
 		it('does not run on the editor mapping path', () => {
 			const { code } = compile_to_volar_mappings(
 				`export function App() @{
 					@if (false) {
-						<div class="dead">{'dead'}</div>
+						<div class="dead">{'deadtext'}</div>
 					} @else {
-						<div class="live">{'live'}</div>
+						<div class="live">{'livetext'}</div>
 					}
 				}`,
 				'App.tsrx',
 				/** @type {any} */ ({ optimize: true }),
 			);
 
-			expect(code).toContain('dead');
-			expect(code).toContain('live');
+			expect(code).toContain('deadtext');
+			expect(code).toContain('livetext');
 		});
 	});
 }

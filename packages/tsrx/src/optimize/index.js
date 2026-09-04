@@ -1,21 +1,15 @@
 /** @import * as AST from 'estree' */
-/** @import { Binding, OptimizeOptions, OptimizeResult, ResolveStaticIdentifier, StaticValue } from '../../types/index' */
+/** @import { OptimizeOptions, OptimizeResult, ResolveStaticIdentifier, StaticValue } from '../../types/index' */
 
 import { walk } from 'zimmerframe';
 import * as b from '../utils/builders.js';
-import { analyze_constants } from './constants.js';
-import {
-	evaluate_expression,
-	evaluate_truthiness,
-	is_already_folded,
-	unwrap_expression,
-	value_to_node,
-} from './evaluate.js';
+import { create_constant_resolver } from './constants.js';
+import { evaluate_expression, evaluate_truthiness, unwrap_expression } from './evaluate.js';
 
 /**
- * Marker that stands in for a node the pass removed.
+ * Marker that stands in for a directive the pass removed.
  * zimmerframe can replace a node but cannot delete one.
- * So a visitor swaps a dead node for this marker.
+ * So a visitor swaps a dead directive for this marker.
  * The enclosing list then filters the markers out.
  */
 const REMOVED = 'TSRXRemovedNode';
@@ -49,7 +43,6 @@ const REMOVAL_CONTAINERS = new Set([
 
 /**
  * Reports whether the node at the end of `path` sits in a slot that can drop it.
- * An unbraced `if` arm, a loop body, and a loop header are not such slots.
  *
  * @param {AST.Node[]} path
  * @returns {boolean}
@@ -60,16 +53,14 @@ function removal_is_handled(path) {
 }
 
 /**
- * One fold can expose the next.
- * Replacing `flag` with `false` is what makes the `@if` above it dead.
- * So the pass repeats until a round changes nothing.
- * This cap only stops a bug from looping forever.
+ * One collapse can expose the next, so the pass repeats until a round changes
+ * nothing. This cap only stops a bug from looping forever.
  */
 const MAX_ROUNDS = 5;
 
 /**
  * Node kinds that can stand where a template renders a child.
- * A branch holding exactly one of these can replace its `@if`.
+ * A branch holding exactly one of these can replace its directive.
  * Any other branch keeps the directive and only loses its dead arm.
  *
  * @param {AST.Node | null | undefined} node
@@ -100,40 +91,6 @@ function is_render_child(node) {
 }
 
 /**
- * Identifier positions where a name is a value that can be substituted.
- * A shorthand property shares one node between its key and its value.
- * Folding it would rewrite the key too, so it is excluded.
- * The other excluded positions are names rather than reads.
- *
- * @param {AST.Identifier} node
- * @param {AST.Node[]} path
- * @returns {boolean}
- */
-function is_foldable_identifier_position(node, path) {
-	const parent = path.at(-1);
-	if (!parent) return false;
-
-	switch (parent.type) {
-		case 'Property':
-			return !parent.shorthand && parent.key !== node;
-		case 'MemberExpression':
-			return parent.computed || parent.property !== node;
-		case 'LabeledStatement':
-		case 'BreakStatement':
-		case 'ContinueStatement':
-		case 'ImportSpecifier':
-		case 'ImportDefaultSpecifier':
-		case 'ImportNamespaceSpecifier':
-		case 'ExportSpecifier':
-		case 'MethodDefinition':
-		case 'PropertyDefinition':
-			return false;
-		default:
-			return true;
-	}
-}
-
-/**
  * @param {AST.Node | null | undefined} node
  * @returns {boolean}
  */
@@ -142,6 +99,11 @@ function is_if_node(node) {
 }
 
 /**
+ * Reports whether a node is one of the TSRX keyword directives.
+ * These are `@if`, `@for`, `@switch`, and `@try`, in both their expression and
+ * retyped statement forms.
+ * The pass rewrites nothing else.
+ *
  * @param {AST.Node | null | undefined} node
  * @returns {boolean}
  */
@@ -195,114 +157,14 @@ function contains_hoisted_declaration(node) {
 }
 
 /**
- * Statement kinds that can be dropped once control cannot reach them.
- * Declarations are excluded on purpose.
- * They are either hoisted, or removed later by the unused-binding rule.
- * That rule checks that nothing refers to them, which is what makes it safe.
+ * Drops removal markers from a list.
  *
- * @param {AST.Node} node
- * @returns {boolean}
- */
-function is_droppable_when_unreachable(node) {
-	switch (node.type) {
-		case 'ExpressionStatement':
-		case 'IfStatement':
-		case 'BlockStatement':
-		case 'ReturnStatement':
-		case 'ThrowStatement':
-		case 'BreakStatement':
-		case 'ContinueStatement':
-		case 'DebuggerStatement':
-		case 'EmptyStatement':
-		case 'SwitchStatement':
-		case 'TryStatement':
-		case 'WhileStatement':
-		case 'DoWhileStatement':
-		case 'ForStatement':
-		case 'ForInStatement':
-		case 'ForOfStatement':
-		case 'LabeledStatement':
-		case 'WithStatement':
-			// A template directive is output, not control flow.
-			// Reachability alone is not a reason to drop one.
-			return !is_template_directive_node(node);
-		default:
-			return false;
-	}
-}
-
-/**
- * Reports whether dropping an initializer can be observed.
- * A statically evaluable expression is safe to drop.
- * So is a function literal, which touches nothing outside itself.
- * A class literal is not, because evaluating it runs `extends`, static fields,
- * static blocks, and computed static keys.
- *
- * @param {AST.Node} node
- * @param {ResolveStaticIdentifier} resolve
- * @returns {boolean}
- */
-function is_pure_initializer(node, resolve) {
-	switch (unwrap_expression(node).type) {
-		case 'FunctionExpression':
-		case 'ArrowFunctionExpression':
-			return true;
-		default:
-			return !!evaluate_expression(node, resolve);
-	}
-}
-
-/**
- * @param {AST.Node} node
- * @returns {boolean}
- */
-function is_terminator(node) {
-	return (
-		node.type === 'ReturnStatement' ||
-		node.type === 'ThrowStatement' ||
-		node.type === 'BreakStatement' ||
-		node.type === 'ContinueStatement'
-	);
-}
-
-/**
- * Drops removal markers.
- * Then drops whatever follows an unconditional jump.
- *
- * @param {AST.Node[]} body
+ * @param {AST.Node[]} list
  * @returns {AST.Node[] | null} The new list, or `null` when nothing changed.
  */
-function prune_statements(body) {
-	/** @type {AST.Node[]} */
-	const result = [];
-	let terminated = false;
-	let changed = false;
-
-	for (const statement of body) {
-		if (is_removed(statement)) {
-			changed = true;
-			continue;
-		}
-
-		if (terminated && is_droppable_when_unreachable(statement)) {
-			changed = true;
-			continue;
-		}
-
-		result.push(statement);
-		if (!terminated && is_terminator(statement)) terminated = true;
-	}
-
-	return changed ? result : null;
-}
-
-/**
- * @param {AST.Node[]} children
- * @returns {AST.Node[] | null}
- */
-function prune_children(children) {
-	if (!children.some(is_removed)) return null;
-	return children.filter((child) => !is_removed(child));
+function prune_removed(list) {
+	if (!list.some(is_removed)) return null;
+	return list.filter((node) => !is_removed(node));
 }
 
 /**
@@ -338,6 +200,22 @@ function empty_fragment(node) {
 }
 
 /**
+ * Decides a directive test that the pass can read without running it.
+ * A test with side effects is refused.
+ * Choosing a branch discards the test, and a directive has no expression slot
+ * left to keep those effects in.
+ *
+ * @param {AST.Node} test
+ * @param {ResolveStaticIdentifier} resolve
+ * @returns {boolean | null}
+ */
+function decide_test(test, resolve) {
+	const truthiness = evaluate_truthiness(test, resolve);
+	if (!truthiness || !truthiness.pure) return null;
+	return truthiness.truthy;
+}
+
+/**
  * Reports whether `node` is a link in an `@if` chain rather than its head.
  * Only the head carries the directive typing.
  * So the whole chain is collapsed from the head.
@@ -363,7 +241,7 @@ function is_template_if_chain_link(node, path) {
 }
 
 /**
- * Every link of an `@if` / `@else if` chain, head first.
+ * Every link of an `@if` and `@else if` chain, head first.
  *
  * @param {AST.IfStatement} head
  * @returns {AST.IfStatement[]}
@@ -379,11 +257,11 @@ function collect_if_chain(head) {
 }
 
 /**
- * Collapses a template `@if` chain against the tests it can evaluate.
+ * Collapses an `@if` chain against the tests it can decide.
  * A link whose test is provably false is dropped.
  * The first provably true test ends the chain, and its branch is the result.
  * A chain that reduces to one output node replaces the directive.
- * A chain that still has an unknown test is rebuilt from the surviving links.
+ * A chain that still has an undecided test is rebuilt from the links that stay.
  *
  * @param {AST.IfStatement} head
  * @param {ResolveStaticIdentifier} resolve
@@ -400,14 +278,14 @@ function collapse_template_if(head, resolve) {
 	let taken;
 
 	for (const link of links) {
-		const test = evaluate_expression(link.test, resolve);
+		const test = decide_test(link.test, resolve);
 
-		if (!test) {
+		if (test === null) {
 			kept.push(link);
 			continue;
 		}
 
-		if (test.value) {
+		if (test) {
 			taken = link.consequent;
 			break;
 		}
@@ -460,23 +338,6 @@ function collapse_template_if(head, resolve) {
 		type: head.type,
 		statementType: /** @type {any} */ (head).statementType,
 	};
-}
-
-/**
- * Collapse a plain `if` statement whose test is statically known.
- *
- * @param {AST.IfStatement} node
- * @param {StaticValue} test
- * @returns {AST.Node | null}
- */
-function collapse_if(node, test) {
-	const taken = test ? node.consequent : node.alternate;
-	const dropped = test ? node.alternate : node.consequent;
-
-	if (contains_hoisted_declaration(dropped)) return null;
-	// In statement position the branch is already a block.
-	// Keeping the block preserves its own `let` and `const` scope.
-	return taken ?? removed_node;
 }
 
 /**
@@ -542,28 +403,12 @@ function is_empty_iterable(node) {
  * @returns {{ ast: AST.Program, changed: boolean }}
  */
 function run_round(ast, filename) {
-	const { values, declarations, unused, resolve } = analyze_constants(ast, filename);
+	const resolve = create_constant_resolver(ast, filename);
 	let changed = false;
 
 	/**
-	 * @param {AST.Node} node
-	 * @returns {AST.Node | undefined}
-	 */
-	function fold_expression(node) {
-		const evaluated = evaluate_expression(node, resolve);
-		if (!evaluated || is_already_folded(node, evaluated.value)) return undefined;
-
-		const folded = value_to_node(
-			evaluated.value,
-			/** @type {AST.NodeWithLocation} */ (/** @type {unknown} */ (node)),
-		);
-		if (!folded) return undefined;
-
-		changed = true;
-		return folded;
-	}
-
-	/**
+	 * Removes the markers a collapsed directive left behind.
+	 *
 	 * @param {AST.Node} node
 	 * @param {{ next: () => AST.Node | undefined }} context
 	 * @returns {AST.Node | undefined}
@@ -574,117 +419,11 @@ function run_round(ast, filename) {
 		const list = visited[key];
 		if (!Array.isArray(list)) return visited === node ? undefined : visited;
 
-		const pruned = key === 'children' ? prune_children(list) : prune_statements(list);
+		const pruned = prune_removed(list);
 		if (!pruned) return visited === node ? undefined : visited;
 
 		changed = true;
 		return { ...visited, [key]: pruned };
-	}
-
-	/**
-	 * @param {AST.Identifier} node
-	 * @param {{ path: AST.Node[] }} context
-	 * @returns {AST.Node | undefined}
-	 */
-	function visit_identifier(node, { path }) {
-		if (!values.has(node) || declarations.has(node)) return undefined;
-		if (!is_foldable_identifier_position(node, path)) return undefined;
-		return fold_expression(node);
-	}
-
-	const visitors = {
-		Identifier: visit_identifier,
-
-		UnaryExpression: fold_expression_visitor,
-		BinaryExpression: fold_expression_visitor,
-		LogicalExpression: fold_expression_visitor,
-		ConditionalExpression: fold_expression_visitor,
-		TemplateLiteral: fold_expression_visitor,
-
-		Program: visit_list_container,
-		BlockStatement: visit_list_container,
-		StaticBlock: visit_list_container,
-		SwitchCase: visit_switch_case,
-		JSXElement: visit_list_container,
-		JSXFragment: visit_list_container,
-		JSXCodeBlock: visit_code_block,
-
-		IfStatement: visit_if,
-		JSXIfExpression: visit_if,
-		SwitchStatement: visit_switch,
-		JSXSwitchExpression: visit_switch,
-		ForOfStatement: visit_for,
-		JSXForExpression: visit_for,
-
-		VariableDeclaration: visit_variable_declaration,
-	};
-
-	/**
-	 * @param {AST.Node} node
-	 * @param {{ next: () => AST.Node | undefined }} context
-	 * @returns {AST.Node | undefined}
-	 */
-	function fold_expression_visitor(node, { next }) {
-		const visited = next() ?? node;
-		return (
-			fold_expression(visited) ??
-			fold_by_truthiness(visited) ??
-			(visited === node ? undefined : visited)
-		);
-	}
-
-	/**
-	 * Picks the arm of a `?:` or a `&&` / `||` / `??` whose test has a known
-	 * truthiness but no known value.
-	 * `[b()] ? c() : d()` becomes `([b()], c())`, because an array literal is
-	 * always truthy and the call inside it still has to run.
-	 * A test that is also side-effect free is dropped instead of sequenced.
-	 *
-	 * @param {AST.Node} node
-	 * @returns {AST.Node | undefined}
-	 */
-	function fold_by_truthiness(node) {
-		/** @type {AST.Expression} */
-		let test;
-		/** @type {AST.Expression} */
-		let taken;
-		/** @type {boolean} */
-		let pure;
-
-		if (node.type === 'ConditionalExpression') {
-			const truthiness = evaluate_truthiness(node.test, resolve);
-			if (!truthiness) return undefined;
-			test = node.test;
-			pure = truthiness.pure;
-			taken = truthiness.truthy ? node.consequent : node.alternate;
-		} else if (node.type === 'LogicalExpression') {
-			const truthiness = evaluate_truthiness(node.left, resolve);
-			if (!truthiness) return undefined;
-			test = node.left;
-			pure = truthiness.pure;
-
-			switch (node.operator) {
-				case '&&':
-					taken = truthiness.truthy ? node.right : node.left;
-					break;
-				case '||':
-					taken = truthiness.truthy ? node.left : node.right;
-					break;
-				case '??':
-					taken = truthiness.nullish ? node.right : node.left;
-					break;
-				default:
-					return undefined;
-			}
-		} else {
-			return undefined;
-		}
-
-		changed = true;
-		// The operand that decides the result can also be the result. Sequencing
-		// it with itself would evaluate it twice.
-		if (taken === test || pure) return taken;
-		return b.sequence([test, taken]);
 	}
 
 	/**
@@ -694,7 +433,7 @@ function run_round(ast, filename) {
 	 */
 	function visit_switch_case(node, { next }) {
 		const visited = /** @type {AST.SwitchCase} */ (next() ?? node);
-		const pruned = prune_statements(visited.consequent);
+		const pruned = prune_removed(visited.consequent);
 		if (!pruned) return visited === node ? undefined : visited;
 
 		changed = true;
@@ -708,7 +447,7 @@ function run_round(ast, filename) {
 	 */
 	function visit_code_block(node, { next }) {
 		const visited = /** @type {AST.JSXCodeBlock} */ (next() ?? node);
-		const pruned = visited.body ? prune_statements(visited.body) : null;
+		const pruned = visited.body ? prune_removed(visited.body) : null;
 		// A code block still has to render something.
 		// So an eliminated output becomes an empty fragment instead of nothing.
 		const render = is_removed(visited.render)
@@ -735,47 +474,37 @@ function run_round(ast, filename) {
 		const visited = /** @type {AST.IfStatement} */ (next() ?? node);
 		const unchanged = visited === node ? undefined : visited;
 
+		// A plain `if` is ordinary JavaScript, not a TSRX directive.
+		if (!is_template_directive_node(visited)) return unchanged;
 		// A chain link is collapsed by its head, never on its own.
 		if (chain_link) return unchanged;
 
-		if (is_template_directive_node(visited)) {
-			const replacement = collapse_template_if(visited, resolve);
-			if (!replacement) return unchanged;
-			// A directive whose slot cannot drop it stays as authored.
-			if (is_removed(replacement) && !removal_is_handled(path)) return unchanged;
-			changed = true;
-			return replacement;
-		}
-
-		const test = evaluate_expression(visited.test, resolve);
-		if (!test) return unchanged;
-
-		const replacement = collapse_if(visited, test.value);
+		const replacement = collapse_template_if(visited, resolve);
 		if (!replacement) return unchanged;
+		// A directive whose slot cannot drop it stays as authored.
+		if (is_removed(replacement) && !removal_is_handled(path)) return unchanged;
 
 		changed = true;
-		// An unbraced arm, a loop body, and a label body all need a statement.
-		// An empty one is the smallest valid stand-in for the removed `if`.
-		if (is_removed(replacement) && !removal_is_handled(path)) {
-			return { type: 'EmptyStatement', metadata: { path: [] } };
-		}
 		return replacement;
 	}
 
 	/**
 	 * @param {AST.Node} node
-	 * @param {{ next: () => AST.Node | undefined }} context
+	 * @param {{ next: () => AST.Node | undefined, path: AST.Node[] }} context
 	 * @returns {AST.Node | undefined}
 	 */
-	function visit_switch(node, { next }) {
+	function visit_switch(node, { next, path }) {
 		const visited = /** @type {AST.SwitchStatement} */ (next() ?? node);
-		if (!is_template_directive_node(visited)) return visited === node ? undefined : visited;
+		const unchanged = visited === node ? undefined : visited;
+
+		if (!is_template_directive_node(visited)) return unchanged;
 
 		const discriminant = evaluate_expression(visited.discriminant, resolve);
-		if (!discriminant) return visited === node ? undefined : visited;
+		if (!discriminant) return unchanged;
 
 		const replacement = collapse_switch(visited, discriminant.value, resolve);
-		if (!replacement) return visited === node ? undefined : visited;
+		if (!replacement) return unchanged;
+		if (is_removed(replacement) && !removal_is_handled(path)) return unchanged;
 
 		changed = true;
 		return replacement;
@@ -810,39 +539,22 @@ function run_round(ast, filename) {
 		return removed_node;
 	}
 
-	/**
-	 * @param {AST.VariableDeclaration} node
-	 * @param {{ next: () => AST.Node | undefined, path: AST.Node[] }} context
-	 * @returns {AST.Node | undefined}
-	 */
-	function visit_variable_declaration(node, { next, path }) {
-		const visited = /** @type {AST.VariableDeclaration} */ (next() ?? node);
-		// `var` is hoisted, so removing it changes what other code sees.
-		// An exported name is public no matter how this module uses it.
-		// A loop header is not a statement list, so its declaration has to stay.
-		if (
-			visited.kind === 'var' ||
-			path.at(-1)?.type.startsWith('Export') ||
-			!removal_is_handled(path)
-		) {
-			return visited === node ? undefined : visited;
-		}
+	const visitors = {
+		Program: visit_list_container,
+		BlockStatement: visit_list_container,
+		StaticBlock: visit_list_container,
+		SwitchCase: visit_switch_case,
+		JSXElement: visit_list_container,
+		JSXFragment: visit_list_container,
+		JSXCodeBlock: visit_code_block,
 
-		const kept = visited.declarations.filter((declarator) => {
-			if (declarator.id.type !== 'Identifier') return true;
-			const binding = declarations.get(declarator.id);
-			if (!binding || binding.kind !== 'normal' || !unused.has(binding)) return true;
-			// A name nothing reads is removable only if its initializer is pure.
-			return !!declarator.init && !is_pure_initializer(declarator.init, resolve);
-		});
-
-		if (kept.length === visited.declarations.length) {
-			return visited === node ? undefined : visited;
-		}
-
-		changed = true;
-		return kept.length === 0 ? removed_node : { ...visited, declarations: kept };
-	}
+		IfStatement: visit_if,
+		JSXIfExpression: visit_if,
+		SwitchStatement: visit_switch,
+		JSXSwitchExpression: visit_switch,
+		ForOfStatement: visit_for,
+		JSXForExpression: visit_for,
+	};
 
 	const next_ast = /** @type {AST.Program} */ (
 		walk(/** @type {AST.Node} */ (ast), null, /** @type {any} */ (visitors))
@@ -852,10 +564,11 @@ function run_round(ast, filename) {
 }
 
 /**
- * Folds statically known expressions and removes the code they prove dead.
- * The pass is target-neutral.
- * It runs on the parsed TSRX AST before any target transform.
- * Every target therefore gets the same eliminations.
+ * Removes the TSRX directives that a module's own constants prove dead.
+ * The pass only rewrites `@if`, `@else if`, `@switch`, and `@for`.
+ * It reads constants and decides a directive test to choose a branch.
+ * It never rewrites the code those values came from.
+ * Plain JavaScript, setup statements, and expressions stay as authored.
  * It is opt-in through the `optimize` compile option.
  * It must not run on the editor and Volar path.
  * Those mappings have to match the authored source one for one.

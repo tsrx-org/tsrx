@@ -6,6 +6,8 @@ import * as b from '../utils/builders.js';
 
 /**
  * Compile-time evaluation of expressions with no side effects.
+ * The optimizer reads values with this to decide a TSRX directive test.
+ * Nothing here rewrites code.
  * An expression is evaluated only when every operand is already known.
  * That way folding never reorders evaluation or drops a side effect.
  * Anything else returns `null`, which callers read as "leave this node alone".
@@ -288,79 +290,4 @@ export function evaluate_truthiness(node, resolve) {
 		default:
 			return null;
 	}
-}
-
-/**
- * Builds the smallest expression node that reproduces `value`.
- * Returns `null` when the value has no literal form.
- * `NaN` and `Infinity` would need a global reference.
- * `-0` is a signed zero the printer cannot round-trip.
- *
- * @param {StaticValue} value
- * @param {AST.NodeWithLocation} [loc_info]
- * @returns {AST.Expression | null}
- */
-export function value_to_node(value, loc_info) {
-	if (value === undefined) {
-		return b.set_location(b.unary('void', b.literal(0, '0')), loc_info);
-	}
-
-	if (value === null) return b.literal(null, 'null', loc_info);
-
-	switch (typeof value) {
-		case 'boolean':
-			return b.literal(value, String(value), loc_info);
-
-		case 'string':
-			return b.literal(value, JSON.stringify(value), loc_info);
-
-		case 'bigint':
-			return value < 0n
-				? b.set_location(b.unary('-', b.literal(-value, `${-value}n`)), loc_info)
-				: b.literal(value, `${value}n`, loc_info);
-
-		case 'number': {
-			if (!Number.isFinite(value) || Object.is(value, -0)) return null;
-			return value < 0
-				? b.set_location(b.unary('-', b.literal(-value, String(-value))), loc_info)
-				: b.literal(value, String(value), loc_info);
-		}
-
-		default:
-			return null;
-	}
-}
-
-/**
- * Reports whether `node` already spells `value` in its shortest form.
- * Replacing such a node would churn the AST without changing the output.
- *
- * @param {AST.Node} node
- * @param {StaticValue} value
- * @returns {boolean}
- */
-export function is_already_folded(node, value) {
-	if (node.type === 'Literal') {
-		return Object.is(node.value, value) && !(/** @type {{ regex?: unknown }} */ (node).regex);
-	}
-
-	if (
-		node.type === 'UnaryExpression' &&
-		node.operator === '-' &&
-		node.argument.type === 'Literal' &&
-		(typeof node.argument.value === 'number' || typeof node.argument.value === 'bigint')
-	) {
-		return Object.is(-node.argument.value, value);
-	}
-
-	if (
-		node.type === 'UnaryExpression' &&
-		node.operator === 'void' &&
-		node.argument.type === 'Literal' &&
-		node.argument.value === 0
-	) {
-		return value === undefined;
-	}
-
-	return false;
 }

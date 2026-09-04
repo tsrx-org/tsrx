@@ -114,9 +114,9 @@ their TSRX compilation and install the target compiler package.
 
 ### Dead-code elimination
 
-The compiler can fold statically known expressions and remove the code they
-prove dead. This is off by default. Pass `optimize: true` to a target compiler
-or to any of its Vite, Rspack, Turbopack, or Bun integrations:
+The compiler can remove TSRX control-flow branches that it can prove will never
+render. This is off by default. Pass `optimize: true` to a target compiler or to
+any of its Vite, Rspack, Turbopack, or Bun integrations:
 
 ```js
 const result = compile(source, filename, { optimize: true });
@@ -127,25 +127,45 @@ const bunPlugin = tsrxReactBun({ optimize: true });
 const nextConfig = tsrxReactTurbopack({}, { optimize: true });
 ```
 
-The pass runs on the target-neutral AST, so every target eliminates the same
-code. It does the following:
+The pass only rewrites the TSRX keyword directives. It runs on the
+target-neutral AST, so every target eliminates the same branches. It does the
+following:
 
-- Folds literal expressions such as `2 + 3`, `!true`, and `` `a${1}b` ``.
-- Propagates a `const` that holds a literal and is never reassigned or mutated.
-- Picks the arm of a `?:`, `&&`, `||`, or `??` whose test has a known
-  truthiness. An array, object, function, or regex literal is always truthy, so
-  `[b()] ? c() : d()` becomes `([b()], c())`. The test stays in a sequence
-  because it still has to run. A side-effect free test is dropped instead.
 - Drops `@if` and `@else if` branches whose test is provably false.
-- Selects the matching case of a `@switch` with a known discriminant.
-- Removes a `@for` over an empty iterable.
-- Removes statements that follow a `return`, `throw`, `break`, or `continue`.
-- Removes a declaration nothing reads when its initializer is side-effect free.
+- Keeps the branch a provably true test selects and drops the rest of the chain.
+- Selects the matching case of a `@switch` with a known discriminant, falling
+  back to `@default`.
+- Removes a `@for` over an empty iterable, or renders its `@empty` clause.
 
-Anything the pass cannot prove is left alone. A branch that declares a `var` or
-a function is never removed, because those names hoist out of it. Editor
-tooling never runs the pass, so hovers and diagnostics still match the authored
-source.
+To decide a test the pass reads constants from the module. A `const` counts when
+it holds a literal and is never reassigned or mutated, so `@if (SHOW)` can be
+decided from a `const SHOW = false` declared anywhere in the file.
+
+```tsrx
+const SHOW = false;
+
+export function App({ label }) @{
+	<div class="wrap">
+		@if (SHOW) {
+			<b>never rendered</b>
+		}
+		<i>{label}</i>
+	</div>
+}
+```
+
+Everything else stays as authored. The pass does not fold expressions, remove
+unused declarations, drop unreachable statements, or touch plain JavaScript.
+Reading a constant to decide a test never rewrites the declaration it came from.
+
+Anything the pass cannot prove is left alone:
+
+- A test with side effects is kept, because choosing a branch would discard
+  those effects.
+- A branch that declares a `var` or a function is kept, because those names
+  hoist out of it.
+- Editor tooling never runs the pass, so hovers and diagnostics still match the
+  authored source.
 
 ### Octane setup
 

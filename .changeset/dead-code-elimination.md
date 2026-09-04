@@ -19,13 +19,16 @@
 '@tsrx/bun-plugin-vue': patch
 ---
 
-Dead code can now be removed from compiled output.
-Pass `optimize: true` to a target compiler or to any Vite, Rspack, Turbopack, or
-Bun integration to turn it on. It is off by default.
+TSRX control-flow branches that can never render are now removed from compiled
+output. Pass `optimize: true` to a target compiler or to any Vite, Rspack,
+Turbopack, or Bun integration to turn it on. It is off by default.
 
-The pass folds statically known expressions and drops the code they prove dead.
-This covers `@if` branches with a false test, `@switch` cases that cannot match,
-`@for` over an empty iterable, statements after a `return`, and declarations
-nothing reads. It also picks the arm of a `?:`, `&&`, `||`, or `??` whose test
-is always truthy, keeping the test when it still has to run. Editor tooling never runs it, so hovers and diagnostics still
-match the authored source.
+The pass only rewrites the TSRX keyword directives. It drops `@if` and `@else if`
+branches with a provably false test, selects the matching case of a `@switch`
+with a known discriminant, and removes a `@for` over an empty iterable or renders
+its `@empty` clause instead.
+
+To decide a test it reads constants from the module, so `@if (SHOW)` can be
+decided from a `const SHOW = false`. It does not fold expressions, remove unused
+declarations, drop unreachable statements, or touch plain JavaScript. Editor
+tooling never runs it, so hovers and diagnostics still match the authored source.
