@@ -1,5 +1,17 @@
 # @tsrx/typescript-plugin
 
+## 0.3.131
+
+### Patch Changes
+
+- [#54](https://github.com/tsrx-org/tsrx/pull/54)
+  [`0023a55`](https://github.com/tsrx-org/tsrx/commit/0023a55f9fb8394c8af44d9623a5c978d7cb39d0)
+  Thanks [@brenelz](https://github.com/brenelz)! - Fix the language server
+  dropping the ES standard library when a project's `tsconfig.json` omits `lib`.
+  Omitted library configuration is now left unset so TypeScript selects the
+  target's default library through the active language-service host, while
+  explicit `lib: []` and `noLib` configurations retain their intended semantics.
+
 ## 0.3.130
 
 ### Patch Changes
