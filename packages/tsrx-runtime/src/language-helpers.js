@@ -87,9 +87,10 @@ function copy_from_offset(array_like, start, length) {
 
 /**
  * Indexed copy used when the source is already a length-bearing collection
- * whose iterator walks indexes (arguments, strings, typed arrays). Skip
- * comparison is `start < index` so negative, fractional, and `NaN` indexes
- * match the iterator path. Sparse holes become own `undefined` entries.
+ * whose iterator walks indexes (arguments, typed arrays). Skip comparison
+ * is `start < index` so negative, fractional, and `NaN` indexes match the
+ * iterator path. Sparse holes become own `undefined` entries. Strings stay
+ * on the iterator path so non-BMP code points are not split into surrogates.
  *
  * @template T
  * @param {ArrayLike<T>} array_like
@@ -139,11 +140,7 @@ function array_like_from_index(array_like, index) {
  * @returns {boolean}
  */
 function is_indexed_iterable(iterable, iterator) {
-	return (
-		iterator === array_prototype[Symbol.iterator] ||
-		iterator === String.prototype[Symbol.iterator] ||
-		ArrayBuffer.isView(iterable)
-	);
+	return iterator === array_prototype[Symbol.iterator] || ArrayBuffer.isView(iterable);
 }
 
 /**

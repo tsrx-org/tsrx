@@ -108,7 +108,7 @@ describe('iterable_array_from', function () {
 		expect(Object.hasOwn(copied, 1)).toBe(true);
 	});
 
-	it('copies arguments, strings, and typed arrays with iterator skip semantics', function () {
+	it('copies arguments and typed arrays with iterator skip semantics', function () {
 		var args = (function () {
 			return arguments;
 		})('a', 'b', 'c');
@@ -119,14 +119,21 @@ describe('iterable_array_from', function () {
 		expect(iterable_array_from(args, 1.5)).toEqual(['c']);
 		expect(iterable_array_from(args, NaN)).toEqual(['a', 'b', 'c']);
 
-		expect(iterable_array_from('abc', 1)).toEqual(['b', 'c']);
-		expect(iterable_array_from('abc', -1)).toEqual(['a', 'b', 'c']);
-		expect(iterable_array_from('abc', 1.5)).toEqual(['c']);
-
 		var typed = new Uint8Array([4, 5, 6]);
 		expect(iterable_array_from(typed, 1)).toEqual([5, 6]);
 		expect(iterable_array_from(typed, -1)).toEqual([4, 5, 6]);
 		expect(iterable_array_from(typed, 1.5)).toEqual([6]);
+	});
+
+	it('walks strings by code point so surrogate pairs stay intact', function () {
+		expect(iterable_array_from('abc', 1)).toEqual(['b', 'c']);
+		expect(iterable_array_from('abc', -1)).toEqual(['a', 'b', 'c']);
+		expect(iterable_array_from('abc', 1.5)).toEqual(['c']);
+
+		expect(iterable_array_from('a😀b')).toEqual(['a', '😀', 'b']);
+		expect(iterable_array_from('a😀b', 1)).toEqual(['😀', 'b']);
+		expect(iterable_array_from('a😀b', 1.5)).toEqual(['b']);
+		expect(iterable_array_from('a😀b', -1)).toEqual(['a', '😀', 'b']);
 	});
 
 	it('still walks custom iterators even when the object also has length', function () {
