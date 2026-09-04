@@ -370,6 +370,16 @@ const TSRX_SNIPPETS = [
 		insertTextFormat: InsertTextFormat.Snippet,
 		sortText: '0-pending',
 	},
+	{
+		label: '@finally',
+		kind: CompletionItemKind.Snippet,
+		detail: '@finally clause',
+		documentation:
+			'Always-visible output after an @try boundary. Template output, not JavaScript cleanup.',
+		insertText: '@finally {\n\t$0\n}',
+		insertTextFormat: InsertTextFormat.Snippet,
+		sortText: '0-finally',
+	},
 ];
 
 /**

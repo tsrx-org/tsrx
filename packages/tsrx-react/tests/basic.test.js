@@ -1261,7 +1261,7 @@ describe('@tsrx/react basic', () => {
 		expect(code).toContain('reset');
 	});
 
-	it('rejects finally clauses in component @try templates', () => {
+	it('rejects an unprefixed finally clause after @try', () => {
 		expect(() =>
 			compile(
 				`export function App() @{
@@ -1275,7 +1275,26 @@ describe('@tsrx/react basic', () => {
 				}`,
 				'App.tsrx',
 			),
-		).toThrow(/Unexpected token/);
+		).toThrow(/Expected `@finally` after `@try` block/);
+	});
+
+	it('lowers @finally beside the @try boundary', () => {
+		const { code } = compile(
+			`export function App() @{
+				@try {
+					<div>{'content'}</div>
+				} @catch (err) {
+					<p>{'error'}</p>
+				} @finally {
+					<i>{'done'}</i>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('TsrxErrorBoundary');
+		expect(code).toContain("'done'");
+		expect(code).not.toContain('@finally');
 	});
 
 	it('transforms try with use() inside for Suspense triggering', () => {

@@ -3017,7 +3017,8 @@ files = [...(files ?? []), ...dt.files];`;
 			const input = `function Foo() @{ @try {} @pending {} @catch {} }
 function Bar() @{ @try {} @catch {} }
 function Baz() { try {} catch {} finally {} }
-function Qux() { try {} catch {} }`;
+function Qux() { try {} catch {} }
+function Quux() @{ @try {} @catch {} @finally {} }`;
 			const expected = `function Foo() @{
   @try {
   } @pending {
@@ -3038,6 +3039,12 @@ function Baz() {
 function Qux() {
   try {
   } catch {
+  }
+}
+function Quux() @{
+  @try {
+  } @catch {
+  } @finally {
   }
 }`;
 			const result = await format(input);

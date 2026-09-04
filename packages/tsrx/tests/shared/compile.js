@@ -383,7 +383,7 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			}
 		});
 
-		it('rejects return statements inside @try/@catch/@pending blocks', () => {
+		it('rejects return statements inside @try/@catch/@pending/@finally blocks', () => {
 			for (const source of [
 				`function Test() @{
 					@try {
@@ -410,6 +410,15 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 				}`,
 				`function Test() @{
 					@try {
+						<div>{'ok'}</div>
+					} @catch (e) {
+						<div>{'err'}</div>
+					} @finally {
+						return <div>{'done'}</div>;
+					}
+				}`,
+				`function Test() @{
+					@try {
 						return;
 					} @catch (e) {
 						<div>{'err'}</div>
@@ -422,7 +431,7 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			}
 		});
 
-		it('allows @try/@catch/@pending blocks without return statements', () => {
+		it('allows @try/@catch/@pending/@finally blocks without return statements', () => {
 			const result = compile_to_volar_mappings(
 				`function Test() @{
 					@try {
@@ -431,6 +440,8 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 						<div>{'loading'}</div>
 					} @catch (e) {
 						<div>{'err'}</div>
+					} @finally {
+						<div>{'done'}</div>
 					}
 				}`,
 				'App.tsrx',
@@ -746,6 +757,26 @@ export function runSharedTsxExpressionTsrxTests({ compile, name, classAttrName }
 			expect(code).toContain('Failed');
 			expect(code).not.toContain('@try');
 			expect(code).not.toContain('@catch');
+			expect(code).not.toContain('JSXTryExpression');
+		});
+
+		it('lowers @finally as always-visible sibling output', () => {
+			const { code } = compile(
+				`function App() @{
+						@try {
+							<div />
+						} @catch (e) {
+							<span />
+						} @finally {
+							<i />
+						}
+					}`,
+				'App.tsrx',
+			);
+			expect(code).toContain('<div');
+			expect(code).toContain('<span');
+			expect(code).toContain('<i');
+			expect(code).not.toContain('@finally');
 			expect(code).not.toContain('JSXTryExpression');
 		});
 

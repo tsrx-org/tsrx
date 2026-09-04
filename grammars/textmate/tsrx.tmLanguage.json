@@ -507,7 +507,7 @@
           "name": "keyword.control.directive.tsrx"
         }
       },
-      "end": "(?<=\\})(?!\\s*@(pending|catch)(?![_$[:alnum:]])(?=\\s*(?:\\(|\\{|[^\\n{}]+\\{)))",
+      "end": "(?<=\\})(?!\\s*@(pending|catch|finally)(?![_$[:alnum:]])(?=\\s*(?:\\(|\\{|[^\\n{}]+\\{)))",
       "patterns": [
         {
           "include": "#tsrx-template-directive-block"
@@ -522,7 +522,7 @@
     },
     "tsrx-template-branch-directive": {
       "name": "meta.directive.branch.tsrx",
-      "begin": "(?:(@)(else|empty|pending|catch)|(else|catch))(?![_$[:alnum:]])(?=\\s*(?:\\(|\\{|[^\\n{}]+\\{))",
+      "begin": "(?:(@)(else|empty|pending|catch|finally)|(else|catch|finally))(?![_$[:alnum:]])(?=\\s*(?:\\(|\\{|[^\\n{}]+\\{))",
       "beginCaptures": {
         "1": {
           "name": "keyword.control.directive.tsrx"
@@ -6962,7 +6962,7 @@
       ]
     },
     "jsx-text": {
-      "match": "(?:(?![ \\t]*/\\*)(?![ \\t]*@(?:\\{|if|for|switch|try)(?![_$[:alnum:]]))(?![ \\t]*@(?:case|default)(?![_$[:alnum:]])(?=[^\\n{}]*:))(?![ \\t]*@(?:else|empty|pending|catch)(?![_$[:alnum:]])(?=[ \\t]*(?:\\(|\\{|[^\\n{}]+\\{)))(?:@(?!(?:\\{|if|for|switch|try|case|default|else|empty|pending|catch)(?![_$[:alnum:]]))|[^<>{}&@]))+"
+      "match": "(?:(?![ \\t]*/\\*)(?![ \\t]*@(?:\\{|if|for|switch|try)(?![_$[:alnum:]]))(?![ \\t]*@(?:case|default)(?![_$[:alnum:]])(?=[^\\n{}]*:))(?![ \\t]*@(?:else|empty|pending|catch|finally)(?![_$[:alnum:]])(?=[ \\t]*(?:\\(|\\{|[^\\n{}]+\\{)))(?:@(?!(?:\\{|if|for|switch|try|case|default|else|empty|pending|catch|finally)(?![_$[:alnum:]]))|[^<>{}&@]))+"
     },
     "jsx-code-text": {
       "match": "[^<>{}&]+"

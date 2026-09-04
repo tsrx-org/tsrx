@@ -583,6 +583,10 @@ describe('scoped style analysis', () => {
 				`function C() @{ @try { <b /> } @catch (e) { <style>${CSS}</style> } }`,
 			],
 			[
+				'lone output of a @finally body',
+				`function C() @{ @try { <b /> } @catch (e) { <i /> } @finally { <style>${CSS}</style> } }`,
+			],
+			[
 				'statement in a plain function body',
 				`function C() { <style>${CSS}</style>; return null; }`,
 			],

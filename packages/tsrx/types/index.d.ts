@@ -552,6 +552,7 @@ declare module 'estree' {
 		statementType: 'TryStatement';
 		block: AST.BlockStatement;
 		handler: AST.CatchClause | null;
+		/** `@finally { … }` template block; null when the clause is absent. */
 		finalizer: AST.BlockStatement | null;
 		pending?: AST.BlockStatement | null;
 		metadata: BaseNodeMetaData;
@@ -631,6 +632,8 @@ declare module 'estree' {
 		pendingKeyword?: AST.NodeWithLocation | null;
 		/** Span of the `@catch` keyword; only present when `handler` is. */
 		handlerKeyword?: AST.NodeWithLocation | null;
+		/** Span of the `@finally` keyword; only present when `finalizer` is. */
+		finallyKeyword?: AST.NodeWithLocation | null;
 	}
 
 	interface IfStatement {

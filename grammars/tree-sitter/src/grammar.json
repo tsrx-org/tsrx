@@ -3248,7 +3248,7 @@
       "members": [
         {
           "type": "STRING",
-          "value": "finally"
+          "value": "@finally"
         },
         {
           "type": "FIELD",

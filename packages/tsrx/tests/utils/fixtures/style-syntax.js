@@ -29,7 +29,7 @@
  * - `{ type: 'JSXIfExpression', consequent, alternate }`,
  *   `{ type: 'JSXForExpression', body, empty }`,
  *   `{ type: 'JSXSwitchExpression', cases: [{ test, consequent }] }`,
- *   `{ type: 'JSXTryExpression', block, pending, handler }`
+ *   `{ type: 'JSXTryExpression', block, pending, handler, finalizer }`
  *   where each clause is the statement list of its block (`null` when absent).
  * - Any other `{ type }` matches on `type` alone (e.g. a setup statement or a
  *   `JSXExpressionContainer` child).
@@ -60,6 +60,7 @@
  *   block: Shape[],
  *   pending: Shape[] | null,
  *   handler: Shape[] | null,
+ *   finalizer?: Shape[] | null,
  * }} TryShape
  * @typedef {{ type: 'VariableDeclaration' | 'ExpressionStatement' | 'JSXExpressionContainer' }} StatementShape
  * @typedef {StyleShape
@@ -448,6 +449,24 @@ export const STYLE_SYNTAX_CASES = [
 			],
 			handler: [
 				{ type: 'JSXFragment', children: [element('i'), style_self(['apply'], 'Identifier')] },
+			],
+		},
+	},
+	{
+		name: 'fragments holding style and output inside @try, @catch and @finally',
+		source: `function App() @{ @try { <><style apply={a} /><b /></> } @catch (e) { <><i /><style apply={c} /></> } @finally { <><style apply={f} /><em /></> } }`,
+		locate: (ast) => component_block(ast).render,
+		expected: {
+			type: 'JSXTryExpression',
+			block: [
+				{ type: 'JSXFragment', children: [style_self(['apply'], 'Identifier'), element('b')] },
+			],
+			pending: null,
+			handler: [
+				{ type: 'JSXFragment', children: [element('i'), style_self(['apply'], 'Identifier')] },
+			],
+			finalizer: [
+				{ type: 'JSXFragment', children: [style_self(['apply'], 'Identifier'), element('em')] },
 			],
 		},
 	},

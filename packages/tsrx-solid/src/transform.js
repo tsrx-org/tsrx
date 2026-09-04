@@ -1180,8 +1180,11 @@ function switch_statement_to_jsx_child(node, transform_context) {
 }
 
 /**
- * Transform an `@try { ... } @pending { ... } @catch (err, reset) { ... }` block
- * into Solid's `<Errored>` and/or `<Loading>` JSX elements.
+ * Transform an `@try { ... } @pending { ... } @catch (err, reset) { ... } @finally { ... }`
+ * block into Solid's `<Errored>` and/or `<Loading>` JSX elements.
+ *
+ * `@finally` always renders beside that boundary after `@pending` / `@catch`
+ * wrapping. It is template output, not JavaScript `try/finally` cleanup.
  *
  * @param {AST.TryStatement} node
  * @param {TransformContext} transform_context
@@ -1191,16 +1194,6 @@ function try_statement_to_jsx_child(node, transform_context) {
 	const pending = node.pending;
 	const handler = node.handler;
 	const finalizer = node.finalizer;
-
-	if (finalizer) {
-		error(
-			'Solid TSRX does not support JavaScript `try/finally` in component templates. `finally` is not part of TSRX control flow; move the try/finally into a function if you need cleanup logic.',
-			transform_context.filename,
-			finalizer,
-			transform_context.errors,
-			transform_context.comments,
-		);
-	}
 
 	if (!pending && !handler) {
 		error(
@@ -1259,7 +1252,12 @@ function try_statement_to_jsx_child(node, transform_context) {
 		);
 	}
 
-	return result;
+	if (!finalizer) {
+		return result;
+	}
+
+	const finally_content = body_to_jsx_child(finalizer.body || [], transform_context);
+	return b.jsx_fragment([jsx_child_wrap(result), jsx_child_wrap(iife_if_arrow(finally_content))]);
 }
 
 /**

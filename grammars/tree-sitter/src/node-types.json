@@ -5487,6 +5487,10 @@
     "named": false
   },
   {
+    "type": "@finally",
+    "named": false
+  },
+  {
     "type": "@pending",
     "named": false
   },

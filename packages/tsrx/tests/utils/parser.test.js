@@ -958,6 +958,11 @@ abc
 				`@try { <b>a</b> } @pending { <i>l</i> } @catch (e) { <u>e</u> }`,
 				'@catch',
 			],
+			[
+				'JSXTryExpression',
+				`@try { <b>a</b> } @catch (e) { <u>e</u> } @finally { <i>f</i> }`,
+				'@finally',
+			],
 		];
 		for (const [type, template, clause] of /** @type {Array<[NodeTypeName, string, string]>} */ (
 			cases
@@ -1730,6 +1735,9 @@ abc
 					assert_clause(directive.block, shape.block);
 					assert_clause(directive.pending, shape.pending);
 					assert_clause(directive.handler?.body, shape.handler);
+					if ('finalizer' in shape) {
+						assert_clause(directive.finalizer, shape.finalizer);
+					}
 					break;
 				}
 				default:
@@ -3150,6 +3158,18 @@ foo();`;
 				}
 			</div>; }`),
 		).toThrow(/Expected `@catch` after `@try` block/);
+
+		expect(() =>
+			getReturned(`function App() { return <div>
+				@try {
+					<AsyncThing />
+				} @catch (error) {
+					<>Failed</>
+				} finally {
+					<>Done</>
+				}
+			</div>; }`),
+		).toThrow(/Expected `@finally` after `@try` block/);
 	});
 
 	it('parses code-only @if bodies', () => {
@@ -3358,6 +3378,28 @@ foo();`;
 		expect(
 			as_type(node_children(blockBody(directive.handler?.body)[0])[0], 'JSXText').value,
 		).toContain('Failed');
+	});
+
+	it('parses @try/@catch/@finally as a JSXTryExpression with a finalizer', () => {
+		const returned = getReturned(`function App() { return <div>
+			@try {
+				<div />
+			} @catch (e) {
+				<span />
+			} @finally {
+				<i />
+			}
+		</div>; }`);
+
+		const directive = node_children(returned).find((child) => child.type === 'JSXTryExpression');
+		assert_type(directive, 'JSXTryExpression');
+		expect(directive.finalizer).not.toBeNull();
+		expect(blockBody(directive.finalizer)[0].type).toBe('JSXElement');
+		expect(openingName(as_type(blockBody(directive.finalizer)[0], 'JSXElement')).name).toBe('i');
+		expect(directive.finallyKeyword).toMatchObject({
+			start: expect.any(Number),
+			end: expect.any(Number),
+		});
 	});
 
 	it('parses code-only @try bodies', () => {

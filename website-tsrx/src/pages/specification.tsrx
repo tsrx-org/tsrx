@@ -123,6 +123,9 @@ const TEMPLATE_EXPRESSION_GRAMMAR = [
 	'JSXTryExpression :',
 	'  @try TemplateBlock @pending TemplateBlock',
 	'  @try TemplateBlock @catch ( CatchParameteropt ) TemplateBlock',
+	'  @try TemplateBlock @pending TemplateBlock @finally TemplateBlock',
+	'  @try TemplateBlock @catch ( CatchParameteropt ) TemplateBlock @finally TemplateBlock',
+	'  @try TemplateBlock @pending TemplateBlock @catch ( CatchParameteropt ) TemplateBlock @finally TemplateBlock',
 ].join('\n');
 
 const LAZY_GRAMMAR = [
@@ -1056,8 +1059,9 @@ export function SpecificationPage() @{
 								<code class="inline-code">@default</code>
 								body, and the
 								<code class="inline-code">@try</code>,
-								<code class="inline-code">@pending</code>, and
-								<code class="inline-code">@catch</code>
+								<code class="inline-code">@pending</code>,
+								<code class="inline-code">@catch</code>, and
+								<code class="inline-code">@finally</code>
 								blocks render one output node, and a fragment there is a scope of its own.
 							</p>
 							<p class="section-body">

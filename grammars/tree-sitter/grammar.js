@@ -717,7 +717,7 @@ module.exports = grammar({
 				),
 			),
 
-		jsx_finally_clause: ($) => seq('finally', field('body', $.jsx_template_block)),
+		jsx_finally_clause: ($) => seq('@finally', field('body', $.jsx_template_block)),
 
 		// Raw-text `<style>` element: the body is verbatim CSS, never template
 		// markup. The self-closing form (`<style apply={theme} />`) has no body.

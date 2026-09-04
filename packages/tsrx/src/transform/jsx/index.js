@@ -5213,13 +5213,14 @@ function switch_statement_to_jsx_child(node, transform_context) {
 }
 
 /**
- * Transform an `@try { ... } @pending { ... } @catch (err, reset) { ... }` block
- * into React `<TsrxErrorBoundary>` and/or `<Suspense>` JSX elements.
+ * Transform an `@try { ... } @pending { ... } @catch (err, reset) { ... } @finally { ... }`
+ * block into React `<TsrxErrorBoundary>` and/or `<Suspense>` JSX elements.
  *
  * - `@pending` → `<Suspense fallback={...}>`
  * - `@catch` → `<TsrxErrorBoundary fallback={(err, reset) => ...}>`
  * - both → ErrorBoundary wraps Suspense
- * - JavaScript `try/finally` is not part of component template control flow
+ * - `@finally` → always-visible sibling output after that boundary (template
+ *   output, not JavaScript `try/finally` cleanup)
  *
  * @param {AST.TryStatement} node
  * @param {TransformContext} transform_context
@@ -5229,16 +5230,6 @@ function try_statement_to_jsx_child(node, transform_context) {
 	const pending = node.pending;
 	const handler = node.handler;
 	const finalizer = node.finalizer;
-
-	if (finalizer) {
-		error(
-			`${transform_context.platform.name} TSRX does not support JavaScript \`try/finally\` in TSRX templates. \`finally\` is not part of TSRX control flow; move the try/finally into a function if you need cleanup logic.`,
-			transform_context.filename,
-			finalizer,
-			transform_context.errors,
-			transform_context.comments,
-		);
-	}
 
 	if (!pending && !handler) {
 		error(
@@ -5377,8 +5368,6 @@ function try_statement_to_jsx_child(node, transform_context) {
 					b.object([b.init('fallback', fallback_fn), b.init('content', boundary_content)]),
 				),
 			);
-
-			return result;
 		} else {
 			const fallback_name = stamp_directive_origin(
 				b.jsx_id('fallback'),
@@ -5405,15 +5394,36 @@ function try_statement_to_jsx_child(node, transform_context) {
 		}
 	}
 
-	// result is a JSXElement, but we need to return a JSXExpressionContainer
-	// for embedding in the parent component's render return
-	if (result.type === 'JSXElement') {
-		return to_jsx_expression_container(result);
+	return wrap_try_result_with_finalizer(result, finalizer, transform_context);
+}
+
+/**
+ * `@finally` always renders beside the `@try` boundary after `@pending` /
+ * `@catch` wrapping. Side-effect cleanup still belongs in a function; this
+ * slot is template output and must not be dropped.
+ *
+ * @param {ESTreeJSX.JSXRenderNode | AST.Expression} result
+ * @param {AST.BlockStatement | null | undefined} finalizer
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXExpressionContainer}
+ */
+function wrap_try_result_with_finalizer(result, finalizer, transform_context) {
+	/** @type {ESTreeJSX.JSXRenderNode} */
+	let child;
+	if (result.type === 'JSXExpressionContainer') {
+		child = result;
+	} else if (result.type === 'JSXElement' || result.type === 'JSXFragment') {
+		child = result;
+	} else {
+		child = to_jsx_expression_container(/** @type {AST.Expression} */ (result));
 	}
 
-	return result.type === 'JSXExpressionContainer'
-		? result
-		: to_jsx_expression_container(/** @type {AST.Expression} */ (result));
+	if (!finalizer) {
+		return child.type === 'JSXExpressionContainer' ? child : to_jsx_expression_container(child);
+	}
+
+	const finally_content = statement_body_to_jsx_child(finalizer.body || [], transform_context);
+	return to_jsx_expression_container(b.jsx_fragment([child, finally_content]));
 }
 
 /**

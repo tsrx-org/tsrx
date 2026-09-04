@@ -657,6 +657,44 @@ const App = () => <>
             close_tag: (jsx_closing_fragment)))))))
 
 ==================
+Try-Catch-Finally
+==================
+
+function App() @{
+  @try {
+    <div />
+  } @catch (e) {
+    <span />
+  } @finally {
+    <i />
+  }
+}
+
+---
+
+(program
+  (function_declaration
+    name: (identifier)
+    parameters: (formal_parameters)
+    body: (jsx_statement_container
+      children: (jsx_try_expression
+        body: (jsx_template_block
+          children: (jsx_self_closing_element
+            name: (jsx_non_namespaced_element_name
+              (identifier))))
+        handler: (jsx_catch_clause
+          parameter: (identifier)
+          body: (jsx_template_block
+            children: (jsx_self_closing_element
+              name: (jsx_non_namespaced_element_name
+                (identifier)))))
+        finalizer: (jsx_finally_clause
+          body: (jsx_template_block
+            children: (jsx_self_closing_element
+              name: (jsx_non_namespaced_element_name
+                (identifier)))))))))
+
+==================
 Statement Container Function Body
 ==================
 

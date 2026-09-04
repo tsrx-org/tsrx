@@ -664,7 +664,7 @@ Each `@case` and `@default` body is a `{...}` template block. Cases are
 isolated, do not fall through, and `break`/`return` are invalid inside an
 `@switch` case body.
 
-### `try` / `catch` / `pending`
+### `try` / `catch` / `pending` / `finally`
 
 ```tsrx
 const UserProfile = lazy(() => import('./UserProfile.tsrx'));
@@ -675,8 +675,15 @@ export const App = () => @try {
 	<p>Loading...</p>
 } @catch (e) {
 	<p>Something went wrong.</p>
+} @finally {
+	<footer>Always visible</footer>
 };
 ```
+
+`@try` still requires `@pending` and/or `@catch`. `@finally` is optional and
+comes last. Its body is template output that always renders beside the `@try`
+boundary after `@pending` / `@catch` wrapping — not JavaScript `try/finally`
+cleanup. Put side-effect cleanup in a function.
 
 The `catch` block also receives a `reset` function as its second argument.
 Calling `reset()` clears the error state and re-renders the children, which is
@@ -1348,6 +1355,7 @@ const List = <T,>({ items, render }: Props<T>) =>
 | Multi-branch           | `@switch (x) { @case 'a': { <A /> } }`                 |
 | Error boundary         | `@try { <Child /> } @catch (e) { <Fallback /> }`        |
 | Async boundary         | `@try { <Child /> } @pending { <Loading /> }`           |
+| Always-visible after `@try` | `@try { <Child /> } @catch (e) { <Fallback /> } @finally { <Footer /> }` |
 | Guard exit             | `if (!user) { return null; }`                          |
 | Scoped style           | `<style> .x { ... } </style>` (beside the elements)    |
 | Nested scope style     | `<div><style>...</style><p /></div>` (own hash, styles `p`) |

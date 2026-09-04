@@ -4140,11 +4140,11 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * `@try`/`@pending`/`@catch` blocks are template control-flow blocks like
-			 * `@if`/`@for`/`@switch`: `return` is not allowed inside them. A `return`
-			 * is only valid in the JS setup at the top of a `@{ … }` code block, never
-			 * inside a `@`-directive block. Report any direct `return` with the same
-			 * template-return diagnostic used elsewhere.
+			 * `@try`/`@pending`/`@catch`/`@finally` blocks are template control-flow
+			 * blocks like `@if`/`@for`/`@switch`: `return` is not allowed inside them.
+			 * A `return` is only valid in the JS setup at the top of a `@{ … }` code
+			 * block, never inside a `@`-directive block. Report any direct `return`
+			 * with the same template-return diagnostic used elsewhere.
 			 * @returns {AST.BlockStatement}
 			 */
 			#parseTemplateControlFlowReturnBlock(createNewLexicalScope = true) {
@@ -4248,7 +4248,15 @@ export function TSRXPlugin(config) {
 						} else if (this.#isUnprefixedDirectiveClauseContinuation('catch', ['{', '('])) {
 							this.raise(this.start, 'Expected `@catch` after `@try` block.');
 						}
-						node.finalizer = null;
+
+						if (this.#eatJSXDirectiveClauseKeyword('finally')) {
+							node.finallyKeyword = this.#lastClauseKeywordSpan;
+							node.finalizer = this.#parseTemplateControlFlowReturnBlock();
+						} else if (this.#isUnprefixedDirectiveClauseContinuation('finally', ['{'])) {
+							this.raise(this.start, 'Expected `@finally` after `@try` block.');
+						} else {
+							node.finalizer = null;
+						}
 
 						if (!node.handler && !node.pending) {
 							this.raise(

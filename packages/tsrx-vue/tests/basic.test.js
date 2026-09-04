@@ -891,7 +891,7 @@ describe('@tsrx/vue basic', () => {
 		).toBe(true);
 	});
 
-	it('rejects finally clauses in component @try templates', () => {
+	it('rejects an unprefixed finally clause after @try', () => {
 		expect(() =>
 			compile(
 				`function App() @{
@@ -905,7 +905,25 @@ describe('@tsrx/vue basic', () => {
 				}`,
 				'App.tsrx',
 			),
-		).toThrow(/Unexpected token/);
+		).toThrow(/Expected `@finally` after `@try` block/);
+	});
+
+	it('lowers @finally beside the @try boundary', () => {
+		const { code } = compile(
+			`function App() @{
+				@try {
+					<div>{'content'}</div>
+				} @catch (error) {
+					<div>{error.message}</div>
+				} @finally {
+					<i>{'done'}</i>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain("'done'");
+		expect(code).not.toContain('@finally');
 	});
 
 	it('rejects await in component bodies', () => {

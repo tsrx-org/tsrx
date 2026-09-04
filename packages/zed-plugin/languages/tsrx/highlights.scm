@@ -198,6 +198,9 @@
 (jsx_catch_clause
   "@catch" @keyword.control)
 
+(jsx_finally_clause
+  "@finally" @keyword.control)
+
 ; Types
 (type_identifier) @type
 (predefined_type) @type.builtin

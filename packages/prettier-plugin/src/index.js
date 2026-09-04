@@ -4424,7 +4424,7 @@ function printClassDeclaration(node, path, options, print) {
 }
 
 /**
- * Print a try statement (with TSRX pending block extension)
+ * Print a try statement (with TSRX pending / finally clause extensions)
  * @param {AST.TryStatement} node - The try statement node
  * @param {AstPath<AST.TryStatement>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
@@ -4472,7 +4472,7 @@ function printTryStatement(node, path, options, print, directive = false) {
 	}
 
 	if (node.finalizer) {
-		parts.push(' finally ');
+		parts.push(directive ? ' @finally ' : ' finally ');
 		parts.push(path.call(print, 'finalizer'));
 	}
 
