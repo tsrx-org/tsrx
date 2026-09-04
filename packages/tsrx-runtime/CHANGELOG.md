@@ -1,5 +1,14 @@
 # @tsrx/runtime
 
+## 0.1.3
+
+### Patch Changes
+
+- [#35](https://github.com/tsrx-org/tsrx/pull/35)
+  [`544ae9a`](https://github.com/tsrx-org/tsrx/commit/544ae9a51f17a39e66cf0eceea862f8b30307047)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Speed up the common
+  two-ref merge path without changing ref ordering or cleanup behavior.
+
 ## 0.1.2
 
 ### Patch Changes

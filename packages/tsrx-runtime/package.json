@@ -3,7 +3,7 @@
   "description": "Renderer-neutral runtime helpers for TSRX compiled output",
   "license": "MIT",
   "author": "Dominic Gannaway",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "publishConfig": {
     "access": "public"
