@@ -59,12 +59,17 @@ export function array_slice(array_like, ...args) {
 
 /**
  * Converts iterables, iterators, and array-like values to an array from an index.
+ *
  * @template T
  * @param {Iterable<T> | Iterator<T> | ArrayLike<T>} iterable
  * @param {number} [index]
  * @returns {T[]}
  */
 export function iterable_array_from(iterable, index = 0) {
+	if (is_array(iterable)) {
+		return iterable.slice(index);
+	}
+
 	/** @type {Iterator<T>} */
 	var iterator;
 	var iterable_prop = /** @type {Iterable<T>} */ (iterable)[Symbol.iterator];
