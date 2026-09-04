@@ -236,7 +236,7 @@ Source: website-tsrx/src/pages/specification.tsrx#lazy`,
 			slug: 'style-and-server',
 			title: 'Style and Server Extensions',
 			use_cases:
-				'style expressions, scoped css, scoped style blocks, sibling scope, sibling-scoped styles, $class, apply, themes, class maps, style diagnostics, module server, submodule imports, compile-time identifiers, ripple server modules, octane rpc, server functions',
+				'style expressions, scoped css, scoped style blocks, sibling scope, sibling-scoped styles, $class, apply, themes, class maps, :global, global selectors, unscoped selectors, escape scoping, third-party component styles, page-level styles, style diagnostics, module server, submodule imports, compile-time identifiers, ripple server modules, octane rpc, server functions',
 			content: `# Style and Server Extensions
 
 A \`<style>\` block written as template content is a standalone block. It is a child of an element or fragment, and that children list is its sibling scope: the block styles its siblings and everything below them, and it never styles the element that contains it. The compiler rewrites every selector in the block to require a hash class: a class it adds to each element the block reaches, so the selectors match only there. Sibling blocks share one hash class; a nested children list with blocks of its own gets a hash class of its own. Every element gets the hash class of each scope around it, outer first. A \`<style>\` block is an output node, so in a \`@{ ... }\` or control-flow body wrap it with its output in a fragment (\`<><style>...</style><div /></>\`); a lone block there is an error. A block inside an \`@if\` or \`@for\` branch styles only the elements that branch renders. Its CSS is still always part of the file's stylesheet, whether or not the branch ever renders, because CSS is static. Raw CSS in \`<style>\` is TSRX template syntax: a block with CSS in it outside every \`@{ ... }\` and control-flow body is an error; in plain TSX write \`<style>{css}</style>\`, an ordinary element. A standalone block at module scope is an error: assign it instead.
@@ -252,6 +252,19 @@ ${style_theme_example}
 \`\`\`
 
 Later rules win: CSS is output in source order, outer first. Outer before inner: a scope's sheets come before the sheets of the scopes nested in it. Applied theme before the block that applies it: an applied block's CSS always comes before the CSS of the block that applies it. Source order within a scope: the later block wins.
+
+\`:global(...)\` marks the wrapped part of a selector as unscoped: it gets no hash class, everything outside the parentheses is still scoped, and it may only start or end a selector (\`tsrx-css-global-placement\` otherwise). Bare \`:global(.toast)\` outputs \`.toast\`, a page-wide rule that matches anywhere on the page. Prefixed \`.card :global(.note)\` outputs \`.card.<hash> .note\`: only elements below the scoped \`.card\`, a child component's internals included, never upward. Leading \`:global(.theme-dark) .card\` outputs \`.theme-dark .card.<hash>\`, and compound \`.card:global(.is-open)\` outputs \`.card.<hash>.is-open\`. A scoped rule adds one hash class to its first compound only; later compounds get \`:where(.<hash>)\`, which adds no specificity. So a scoped \`.note.<hash>\` (0,2,0) beats a bare \`:global(.note)\` (0,1,0) from anywhere, a \`theme.$class\` or class-map rule carries its hash and beats a bare global too, and a prefixed \`.card.<hash> .note\` (0,3,0) beats a child's own \`.note.<hash>\`.
+
+Prefer passing \`theme.$class\` (or a class-map entry) as a prop over \`:global\` for a child you own: the dependency is a visible prop, the child decides which elements receive it, renaming a class inside the child cannot silently break the parent, and the hash keeps the rule on the elements that carry it. With \`:global\` the child has no say and cannot see who styles it. Never write a bare \`:global\` selector for anything but page-level elements.
+
+| I want to ... | Use ... |
+| --- | --- |
+| Style my own elements | A \`<style>\` block beside them; nothing global |
+| Let a child component pick up my styles | Pass \`theme.$class\` or \`theme.card\` as a prop |
+| Style a child I cannot change (third-party, rendered HTML) | \`.wrapper :global(.their-class)\`; scoped prefix first, keep it narrow |
+| React to page-level state | \`:global(.theme-dark) .card\` or \`:global([data-theme='dark']) .card\` |
+| Style my element with a class another library toggles | \`.card:global(.is-open)\` |
+| Page-wide rules (\`body\`, resets, fonts) | A \`.css\` file; a bare \`:global(body)\` works but hides a global sheet in a component |
 
 \`module server { ... }\` declares an explicit server-oriented submodule in the Ripple and Octane host profiles. Ripple exposes proposal-aligned imports such as \`import { load } from server\`; Octane uses the file-local module specifier \`import { load } from 'server'\` for RPC imports. Transport, serialization, and runtime behavior remain target-defined.
 

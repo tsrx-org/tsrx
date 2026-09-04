@@ -442,6 +442,61 @@ const STYLE_LAYER_HTML = highlight_tsrx(
 // @layer components { .card.tsrx-1a2b3c4d { padding: 1rem; } }`,
 );
 
+const GLOBAL_STYLES_HTML = highlight_tsrx(
+	`function Card({ html }: { html: string }) @{
+  <>
+    <style>
+      /* Bare: a page-wide rule. Matches anywhere on the page. */
+      :global(.toast) { position: fixed; }
+      /* → .toast */
+
+      /* Prefixed: only below your scoped .card, never above it. */
+      .card :global(.footnote) { font-size: 0.85em; }
+      /* → .card.tsrx-1a2b3c4d .footnote */
+
+      /* Leading: your element, when an ancestor carries the class. */
+      :global(.theme-dark) .card { background: black; }
+      /* → .theme-dark .card.tsrx-1a2b3c4d */
+
+      /* Compound: your element, with a class another library toggles. */
+      .card:global(.is-open) { border-color: blue; }
+      /* → .card.tsrx-1a2b3c4d.is-open */
+
+      /* Error tsrx-css-global-placement: :global in the middle. */
+      /* .card :global(.footnote) .title { } */
+    </style>
+    <div class="card" innerHTML={html} />
+  </>
+}`,
+);
+
+const GLOBAL_VS_CLASS_HTML = highlight_tsrx(
+	`// Preferred for a child you own: the child takes a class through a prop.
+function Note({ class: className }: { class?: string }) @{
+  <p class={'note ' + (className ?? '')}>...</p>
+}
+
+function Card() @{
+  const theme = <style>
+    .note { color: gray; }
+  </style>;
+  /* → .note.tsrx-1a2b3c4d; only elements carrying theme.note match */
+
+  <Note class={theme.note} />
+}
+
+// For a child you cannot change: a scoped prefix, then :global.
+function Article({ html }: { html: string }) @{
+  <>
+    <style>
+      .body :global(.footnote) { font-size: 0.85em; }
+      /* → .body.tsrx-5e6f7a8b .footnote */
+    </style>
+    <div class="body" innerHTML={html} />
+  </>
+}`,
+);
+
 const LAZY_PROPS_HTML = highlight_tsrx(
 	`function UserCard(&{ name, age }: { name: string; age: number }) {
   return <div>
@@ -1035,10 +1090,146 @@ export const FeaturesPage = () => @{
 							</p>
 							<h3 class="subsection-heading">Escape the scope with :global()</h3>
 							<p class="section-body">
-								To apply a rule globally, wrap the selector in
-								<code class="inline-code">:global()</code>. This reaches into child components or
-								elements outside the current scope.
+								<code class="inline-code">:global(...)</code>
+								marks the wrapped part of a selector as unscoped: it gets no hash class. Everything
+								outside the parentheses is still scoped, so where the
+								<code class="inline-code">:global</code>
+								sits decides how far the rule can reach.
 							</p>
+							<pre class="code-block">
+								<code innerHTML={GLOBAL_STYLES_HTML} />
+							</pre>
+							<p class="section-body">
+								A bare
+								<code class="inline-code">:global(.toast)</code>
+								is a plain page-wide rule. It matches anywhere: ancestors, siblings, other
+								components, exactly like a rule in a global stylesheet. A scoped prefix,
+								<code class="inline-code">.card :global(.footnote)</code>, reaches only elements
+								below your scoped
+								<code class="inline-code">.card</code>, a child component's internals included; it
+								can never climb up. A leading
+								<code class="inline-code">:global(.theme-dark) .card</code>
+								styles your own element only when an ancestor carries the class, and a compound
+								<code class="inline-code">.card:global(.is-open)</code>
+								styles your own element with a class another library toggles on it. A
+								<code class="inline-code">:global</code>
+								in the middle of a selector is the
+								<code class="inline-code">tsrx-css-global-placement</code>
+								error: it may only start or end a selector.
+							</p>
+							<h3 class="subsection-heading">Scoped rules beat bare global rules</h3>
+							<p class="section-body">
+								A scoped rule adds one hash class to its first compound only; later compounds get
+								<code class="inline-code">{':where(.<hash>)'}</code>, which adds no specificity, so
+								<code class="inline-code">.card .title</code>
+								becomes
+								<code class="inline-code">{'.card.<hash> .title:where(.<hash>)'}</code>. That makes
+								<code class="inline-code">:global</code>
+								predictable: a scoped
+								<code class="inline-code">.note</code>
+								(0,2,0) beats a bare
+								<code class="inline-code">:global(.note)</code>
+								(0,1,0) from anywhere on the page; a
+								<code class="inline-code">theme.$class</code>
+								or class-map rule carries its hash too, so it also beats a bare global; and a
+								prefixed
+								<code class="inline-code">.card :global(.note)</code>
+								(0,3,0) beats a child component's own
+								<code class="inline-code">.note</code>
+								rule (0,2,0). At equal specificity the later stylesheet in module order wins.
+							</p>
+							<h3 class="subsection-heading">Pass a class to a child instead of reaching in</h3>
+							<p class="section-body">
+								To let a child component pick up your styles, pass
+								<code class="inline-code">theme.$class</code>
+								or a class-map entry such as
+								<code class="inline-code">theme.note</code>
+								as a prop. The dependency is visible in code, the child decides which of its
+								elements receive it, renaming a class inside the child cannot silently break the
+								parent, and the hash keeps the rule on the elements that carry it. With
+								<code class="inline-code">:global</code>
+								the child has no say and cannot see who styles it. Keep
+								<code class="inline-code">:global</code>
+								for a child you cannot change: a third-party component, or rendered HTML and
+								markdown. Always put a scoped selector in front so the rule cannot reach ancestors
+								or unrelated components, and keep it narrow: it overrides the child's own rules by
+								specificity.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={GLOBAL_VS_CLASS_HTML} />
+							</pre>
+							<p class="section-body">
+								Page-wide rules such as
+								<code class="inline-code">body</code>, resets, and fonts belong in a
+								<code class="inline-code">.css</code>
+								file. A bare
+								<code class="inline-code">:global</code>
+								works, but it is a global stylesheet hidden inside a component. Never write a bare
+								<code class="inline-code">:global</code>
+								selector for anything but page-level elements.
+							</p>
+							<table class="decision-table">
+								<thead>
+									<tr>
+										<th>I want to ...</th>
+										<th>Use ...</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<td>Style my own elements</td>
+										<td>
+											A
+											<code class="inline-code">{'<style>'}</code>
+											block beside them; nothing global
+										</td>
+									</tr>
+									<tr>
+										<td>Let a child component pick up my styles</td>
+										<td>
+											Pass
+											<code class="inline-code">theme.$class</code>
+											or
+											<code class="inline-code">theme.card</code>
+											as a prop
+										</td>
+									</tr>
+									<tr>
+										<td>Style a child I cannot change (third-party component, rendered HTML)</td>
+										<td>
+											<code class="inline-code">.wrapper :global(.their-class)</code>; scoped prefix
+											first, keep it narrow
+										</td>
+									</tr>
+									<tr>
+										<td>React to page-level state</td>
+										<td>
+											<code class="inline-code">:global(.theme-dark) .card</code>
+											or
+											<code class="inline-code">{':global([data-theme=\'dark\']) .card'}</code>
+										</td>
+									</tr>
+									<tr>
+										<td>Style my element with a class another library toggles</td>
+										<td>
+											<code class="inline-code">.card:global(.is-open)</code>
+										</td>
+									</tr>
+									<tr>
+										<td>
+											Page-wide rules:
+											<code class="inline-code">body</code>, resets, fonts
+										</td>
+										<td>
+											A
+											<code class="inline-code">.css</code>
+											file; a bare
+											<code class="inline-code">:global(body)</code>
+											only for page-level elements
+										</td>
+									</tr>
+								</tbody>
+							</table>
 							<p class="section-body muted">
 								React note: TSRX keeps authored attributes as written. Use
 								<code class="inline-code">className</code>
@@ -1224,6 +1415,26 @@ export const FeaturesPage = () => @{
 			.section-body a:not(.cta-link) {
 				display: inline-block;
 				margin: 0 0.18em;
+			}
+
+			.decision-table {
+				width: 100%;
+				margin: 1rem 0 0;
+				border-collapse: collapse;
+				font-size: 0.98rem;
+				line-height: 1.6;
+				color: rgba(26, 22, 64, 0.76);
+			}
+			.decision-table th,
+			.decision-table td {
+				padding: 0.55rem 0.75rem;
+				border-bottom: 1px solid rgba(26, 22, 64, 0.12);
+				text-align: left;
+				vertical-align: top;
+			}
+			.decision-table th {
+				font-weight: 600;
+				color: rgba(26, 22, 64, 0.9);
 			}
 			.doc-section:first-child {
 				margin-top: 0.5rem;

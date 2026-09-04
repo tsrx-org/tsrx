@@ -73,6 +73,11 @@ dependencies, not workspace packages.
   per class; `<style apply={theme} />` applies a theme to a scope,
   `class={theme.$class}` opts single elements in, `apply={[a, b]}` composes, and a
   theme must be declared before the block that applies it.
+- `:global(...)` marks the wrapped part of a selector as unscoped and may only
+  start or end a selector. To style a child you own, pass `theme.$class` or a
+  class-map entry as a prop instead of `:global`; use `.wrapper :global(.their)`
+  (scoped prefix first) only for a child you cannot change, and a bare
+  `:global(...)` only for page-level elements.
 - Target-specific behavior must be selected through the consumer compiler. In
   particular, Ripple API completions must only appear for the Ripple target.
 - Use `pnpm` and match the conventions of the package being changed.

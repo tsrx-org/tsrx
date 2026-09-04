@@ -1021,6 +1021,64 @@ export function runSharedScopedStyleTests({
 		});
 	});
 
+	describe(`[${name}] :global selectors`, () => {
+		it('global-forms: :global leaves the wrapped part unscoped and scopes the rest of the selector', () => {
+			const { code, css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							:global(.toast) { position: fixed; }
+							.card :global(.note) { color: gray; }
+							:global(.theme-dark) .card { background: black; }
+							:global([data-theme='dark']) .card { color: white; }
+							.card:global(.is-open) { border-color: blue; }
+							.card :global(.a) :global(.b) { margin: 0; }
+							.card .title { font-weight: bold; }
+						</style>
+						<div ${attr}="card"><h2 ${attr}="title">{'t'}</h2></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const [hash] = hashes_of(cssHash);
+			expect(class_of(code, 'card')).toBe(`card ${hash}`);
+			// Bare: a page-wide rule with no hash at all.
+			expect(css).toContain('.toast { position: fixed; }');
+			expect(css).not.toContain(`.toast.${hash}`);
+			// Prefixed: the scoped compound keeps its hash, the global part gets none.
+			expect(css).toContain(`.card.${hash} .note { color: gray; }`);
+			// Leading: only the author's own element is scoped.
+			expect(css).toContain(`.theme-dark .card.${hash} { background: black; }`);
+			expect(css).toContain(`[data-theme='dark'] .card.${hash} { color: white; }`);
+			// Compound: the hash goes between the scoped class and the global one.
+			expect(css).toContain(`.card.${hash}.is-open { border-color: blue; }`);
+			// Several trailing :global parts chain.
+			expect(css).toContain(`.card.${hash} .a .b { margin: 0; }`);
+			// Specificity baseline: only the first compound carries the hash class;
+			// later compounds get :where(.<hash>), which adds none.
+			expect(css).toContain(`.card.${hash} .title:where(.${hash}) { font-weight: bold; }`);
+			expect(css).not.toContain('(unused)');
+		});
+
+		it('global-theme: a theme keeps bare and prefixed :global rules with its own hash', () => {
+			const { css, cssHash } = compile(
+				`export const theme = <style>
+					:global(body) { margin: 0; }
+					.card :global(.note) { color: gray; }
+					.card { color: blue; }
+				</style>;`,
+				'theme.tsrx',
+			);
+
+			const [hash] = hashes_of(cssHash);
+			expect(css).toContain('body { margin: 0; }');
+			expect(css).toContain(`.card.${hash} .note { color: gray; }`);
+			expect(css).toContain(`.card.${hash} { color: blue; }`);
+			expect(css).not.toContain('(unused)');
+		});
+	});
+
 	describe(`[${name}] style diagnostic codes`, () => {
 		/**
 		 * @param {string} source

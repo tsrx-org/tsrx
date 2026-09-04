@@ -137,6 +137,33 @@ describe('@tsrx/mcp documentation index', () => {
 		expect(content).toContain('Source order within a scope');
 	});
 
+	it('documents :global selectors and when to pass $class instead', () => {
+		for (const query of [':global', 'global selectors', 'escape scoping', 'third-party']) {
+			expect(find_similar_documentation_sections(query).map((section) => section.slug)).toContain(
+				'style-and-server',
+			);
+		}
+
+		const content = find_documentation_section('style-and-server')?.content ?? '';
+
+		// Forms and their output shapes.
+		expect(content).toContain('marks the wrapped part of a selector as unscoped');
+		expect(content).toContain('may only start or end a selector');
+		expect(content).toContain('`.card :global(.note)` outputs `.card.<hash> .note`');
+		expect(content).toContain('`:global(.theme-dark) .card` outputs `.theme-dark .card.<hash>`');
+		expect(content).toContain('`.card:global(.is-open)` outputs `.card.<hash>.is-open`');
+
+		// Specificity.
+		expect(content).toContain(':where(.<hash>)');
+		expect(content).toContain('(0,2,0) beats a bare `:global(.note)` (0,1,0)');
+
+		// Guidance and the decision table.
+		expect(content).toContain('Prefer passing `theme.$class`');
+		expect(content).toContain('Never write a bare `:global` selector');
+		expect(content).toContain('| I want to ... | Use ... |');
+		expect(content).toContain('`.wrapper :global(.their-class)`');
+	});
+
 	it('documents direct runtime dependencies for every standalone target runtime', () => {
 		const content = find_documentation_section('target-integration')?.content ?? '';
 

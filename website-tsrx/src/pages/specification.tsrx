@@ -979,7 +979,10 @@ export function SpecificationPage() @{
 								block's selectors match only there. The host is responsible for the text of
 								generated hash classes, the name of the class attribute it adds them to, selector
 								rewriting, stylesheet registration, and for injecting a module's CSS before the CSS
-								of every module that imports it.
+								of every module that imports it. Within a selector,
+								<code class="inline-code">:global(...)</code>
+								marks the wrapped part as unscoped, and it may appear only at the start or end of a
+								selector sequence (<code class="inline-code">tsrx-css-global-placement</code>).
 							</p>
 							<pre class="code-block plain">
 								<code>{STYLE_GRAMMAR}</code>

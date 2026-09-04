@@ -746,10 +746,11 @@ const Card = ({ tone }: { tone: string }) => @{
 };
 ```
 
-Use `:global(...)` to opt out of scoping. React keeps authored attributes as
-written, so use `className` for React host elements and React component props.
-Other TSRX targets commonly use `class`. Scoped style blocks accept only the
-`ref` and `apply` attributes.
+`:global(...)` marks part of a selector as unscoped; see "Escape the scope with
+`:global()`" below before using it. React keeps authored attributes as written,
+so use `className` for React host elements and React component props. Other
+TSRX targets commonly use `class`. Scoped style blocks accept only the `ref` and
+`apply` attributes.
 
 ### A block styles its siblings and everything below them
 
@@ -914,6 +915,81 @@ export function Status({ ready }: { ready: boolean }) @{
 `.status` sits outside the branches and reaches both of them. `.ok` matches
 only the `<p>` in the ready branch and `.wait` only the `<p>` in the other one,
 and both rules are in the stylesheet at all times.
+
+### Escape the scope with `:global()`
+
+`:global(...)` marks the wrapped part of a selector as unscoped: it gets no
+hash class. Everything outside the parentheses is still scoped, so where the
+`:global` sits decides how far the rule reaches:
+
+- Bare `:global(.toast)` -> `.toast`: a page-wide rule that matches anywhere
+  on the page (ancestors, siblings, other components), exactly like a rule in
+  a global stylesheet.
+- Prefixed `.card :global(.note)` -> `.card.<hash> .note`: only elements below
+  your scoped `.card`, a child component's internals included. It can never
+  climb up.
+- Leading `:global(.theme-dark) .card` -> `.theme-dark .card.<hash>`: your own
+  element, only when an ancestor carries the class.
+- Compound `.card:global(.is-open)` -> `.card.<hash>.is-open`: your own
+  element, with a class another library toggles on it.
+- `:global` in the middle of a selector (`.card :global(.x) .title`) is the
+  `tsrx-css-global-placement` error: it may only start or end a selector.
+
+Specificity: a scoped rule adds one hash class to its first compound only;
+later compounds get `:where(.<hash>)`, which adds none (`.card .title` ->
+`.card.<hash> .title:where(.<hash>)`). So a scoped `.note` (0,2,0) beats a
+bare `:global(.note)` (0,1,0) from anywhere on the page; a `theme.$class` or
+class-map rule carries its hash and also beats a bare global; a prefixed
+`.card :global(.note)` (0,3,0) beats a child component's own `.note` rule
+(0,2,0). At equal specificity the later stylesheet in module order wins.
+
+Prefer passing `theme.$class` (or a class-map entry such as `theme.note`) as a
+prop over `:global` for a child you own: the dependency is a visible prop, the
+child decides which of its elements receive it, renaming a class inside the
+child cannot silently break the parent, and the hash keeps the rule on the
+elements that carry it. With `:global` the child has no say and cannot see who
+styles it. Keep `:global` for a child you cannot change, always with a scoped
+selector in front so the rule cannot reach ancestors or unrelated components,
+and keep it narrow: it overrides the child's own rules by specificity. Never
+write a bare `:global` selector for anything but page-level elements.
+
+| I want to ...                                              | Use ...                                                                           |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Style my own elements                                      | A `<style>` block beside them; nothing global                                     |
+| Let a child component pick up my styles                    | Pass `theme.$class` or `theme.card` as a prop                                     |
+| Style a child I cannot change (third-party, rendered HTML) | `.wrapper :global(.their-class)`; scoped prefix first, keep it narrow             |
+| React to page-level state                                  | `:global(.theme-dark) .card` or `:global([data-theme='dark']) .card`              |
+| Style my element with a class another library toggles     | `.card:global(.is-open)`                                                          |
+| Page-wide rules (`body`, resets, fonts)                    | A `.css` file; a bare `:global(body)` works but hides a global sheet in a component |
+
+```tsrx
+function Note({ class: className }: { class?: string }) @{
+	<p class={'note ' + (className ?? '')}>...</p>
+}
+
+function Card() @{
+	// Preferred for a child you own: -> .note.<hash>
+	const theme = <style>
+		.note {
+			color: gray;
+		}
+	</style>;
+
+	<Note class={theme.note} />
+}
+
+function Article({ html }: { html: string }) @{
+	<>
+		<style>
+			/* For a child you cannot change: -> .body.<hash> .footnote */
+			.body :global(.footnote) {
+				font-size: 0.85em;
+			}
+		</style>
+		<div class="body" innerHTML={html} />
+	</>
+}
+```
 
 ### Assigning a block gives you a theme object
 
@@ -1256,7 +1332,9 @@ const List = <T,>({ items, render }: Props<T>) =>
 | Nested scope style     | `<div><style>...</style><p /></div>` (own hash, styles `p`) |
 | Plain TSX style        | `<style>{css}</style>` (ordinary element, not scoped)  |
 | Dynamic CSS value      | `style={{ '--tone': tone }}` + `var(--tone)`           |
-| Escape scoping         | `:global(.class)`                                      |
+| Unscoped child styles  | `.wrap :global(.their)` (scoped prefix first)          |
+| Page-level state       | `:global(.theme-dark) .card`                           |
+| Page-wide rule         | a `.css` file; bare `:global(body)` for page-level only |
 | Cross-component class  | `<Child class={styles.foo} />`; React uses `className` |
 | Theme hash ($class)    | `const t = <style>...</style>;` then `t.$class`        |
 | Theme (apply)          | `<style apply={theme} />`, `apply={[a, b]}`            |
