@@ -29,10 +29,28 @@ const vue_jsx_vapor_jsx_runtime_path = fileURLToPath(
 const tsrx_core_test_harness_runtime_dir = fileURLToPath(
 	new URL('./packages/tsrx/tests/shared/runtime/', import.meta.url),
 );
+const solid_scoped_styles_dir = fileURLToPath(
+	new URL('./packages/vite-plugin-solid/tests/fixtures/scoped-styles/', import.meta.url),
+);
+const vue_scoped_styles_dir = fileURLToPath(
+	new URL('./packages/vite-plugin-vue/tests/fixtures/scoped-styles/', import.meta.url),
+);
 const tsrx_core_test_harness_alias = [
 	{
 		find: /^@tsrx\/core\/test-harness\/runtime\/(.*)$/,
 		replacement: `${tsrx_core_test_harness_runtime_dir}$1`,
+	},
+];
+const solid_scoped_styles_alias = [
+	{
+		find: /^@tsrx\/vite-plugin-solid-test\/scoped-styles\/(.*)$/,
+		replacement: `${solid_scoped_styles_dir}$1`,
+	},
+];
+const vue_scoped_styles_alias = [
+	{
+		find: /^@tsrx\/vite-plugin-vue-test\/scoped-styles\/(.*)$/,
+		replacement: `${vue_scoped_styles_dir}$1`,
 	},
 ];
 
@@ -208,8 +226,11 @@ export default defineConfig({
 				},
 				plugins: [vue_runtime_dependency_resolver, vue_runtime_alias_plugin, tsrxVue()],
 				resolve: process.env.VITEST
-					? { conditions: ['browser'], alias: tsrx_core_test_harness_alias }
-					: { alias: tsrx_core_test_harness_alias },
+					? {
+							conditions: ['browser'],
+							alias: [...tsrx_core_test_harness_alias, ...vue_scoped_styles_alias],
+						}
+					: { alias: [...tsrx_core_test_harness_alias, ...vue_scoped_styles_alias] },
 				ssr: {
 					noExternal: ['vue', 'vue-jsx-vapor', '@tsrx/vue'],
 				},
@@ -302,7 +323,7 @@ export default defineConfig({
 				},
 				plugins: [solid_runtime_dependency_resolver, tsrxSolid(), solid()],
 				resolve: {
-					alias: tsrx_core_test_harness_alias,
+					alias: [...tsrx_core_test_harness_alias, ...solid_scoped_styles_alias],
 				},
 			},
 			{
