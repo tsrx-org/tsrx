@@ -1725,6 +1725,48 @@ abc
 		expect(span.loc.start.column).toBe(style.loc.end.column);
 	});
 
+	it('recovers when an unclosed style is immediately followed by a parent close', function () {
+		// `<style>` then `</div>` with no body: expect('>') has already
+		// tokenized the parent `</` and pushed its tag contexts. Recovery
+		// must not pop those frames (that used to read `/` as a regexp).
+		const source = 'export function App() @{ <div><style></div> }';
+		const errors = [];
+		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
+
+		assert_type(ast, 'Program');
+		expect(
+			errors
+				.map(function (error) {
+					return error.message;
+				})
+				.join('\n'),
+		).not.toContain('Expected identifier');
+		expect(
+			errors
+				.map(function (error) {
+					return error.message;
+				})
+				.join('\n'),
+		).not.toContain('Unterminated regular expression');
+
+		const div = find_first(ast, function (node) {
+			return (
+				node.type === 'JSXElement' &&
+				node.openingElement?.name?.type === 'JSXIdentifier' &&
+				node.openingElement.name.name === 'div'
+			);
+		});
+		assert_type(div, 'JSXElement');
+		expect(
+			div.children.map(function (child) {
+				return child.type;
+			}),
+		).toEqual(['JSXStyleElement']);
+		expect(child(div, 0, 'JSXStyleElement').unclosed).toBe(true);
+		expect(div.unclosed).toBeFalsy();
+		expect(div.closingElement).toBeTruthy();
+	});
+
 	it('parses module-scope style expressions followed by JavaScript statements', () => {
 		const source = `const styles = <style>
 			.card {

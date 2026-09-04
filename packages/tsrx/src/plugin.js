@@ -2240,6 +2240,31 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Drop this unclosed raw-text element's leftover children context without
+			 * touching parent or already-tokenized sibling/close-tag frames.
+			 *
+			 * `expect('>')` on the opening tag may already have read the next `<`
+			 * (a sibling or a parent `</…>`) and pushed that tag's `tc_expr` +
+			 * `tc_oTag`. Those frames sit on top; the leftover children context is
+			 * beneath them.
+			 */
+			#popUnclosedRawTextLeftoverContext() {
+				if (this.type === tstt.jsxTagStart) {
+					const leftover_index = this.context.length - 3;
+					if (leftover_index >= 0 && this.context[leftover_index] === tstc.tc_expr) {
+						this.context.splice(leftover_index, 1);
+					}
+					return;
+				}
+				if (this.curContext() === tstc.tc_oTag) {
+					this.context.pop();
+				}
+				if (this.curContext() === tstc.tc_expr) {
+					this.context.pop();
+				}
+			}
+
+			/**
 			 * Read a raw-text element body: capture everything between the opening `>`
 			 * and the literal `</tagName>` verbatim (never as template markup),
 			 * synthesize the closing element, and restore the tokenizer state past it.
@@ -2355,16 +2380,7 @@ export function TSRXPlugin(config) {
 						// as code, not leftover children `tc_expr`.
 						this.context.length = contextDepth;
 					} else if (insideTemplate) {
-						// Inside a template, pop only this element's leftover tag/children
-						// contexts. Rewinding to `contextDepth` would also drop parent
-						// template frames, so later siblings and the parent close would
-						// tokenize as JS.
-						if (this.curContext() === tstc.tc_oTag) {
-							this.context.pop();
-						}
-						if (this.curContext() === tstc.tc_expr) {
-							this.context.pop();
-						}
+						this.#popUnclosedRawTextLeftoverContext();
 					}
 					if (this.#loose) {
 						return '';
