@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { resolveConfig } from '../src/language.js';
@@ -29,32 +27,51 @@ function unresolved_global_types(options, source) {
 }
 
 describe('resolveConfig', () => {
-	it('fills in bare default lib names when `lib` is omitted', () => {
-		const { options } = resolveConfig({ options: { target: ts.ScriptTarget.ESNext } });
+	it('defaults the target while leaving lib selection to TypeScript', () => {
+		const { options } = resolveConfig({ options: { types: [] } });
 
-		expect(options.lib).toEqual(['lib.esnext.full.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts']);
+		expect(options.target).toBe(ts.ScriptTarget.ESNext);
+		expect(options.lib).toBeUndefined();
+		expect(ts.getDefaultLibFileName(options)).toBe('lib.esnext.full.d.ts');
 	});
 
-	it('derives the default lib from the configured target', () => {
-		const { options } = resolveConfig({ options: { target: ts.ScriptTarget.ES2020 } });
+	it('preserves explicitly configured libs', () => {
+		const libs = ['lib.es2022.d.ts', 'lib.dom.d.ts'];
+		const { options } = resolveConfig({ options: { lib: libs, types: [] } });
 
-		expect(options.lib?.[0]).toBe('lib.es2020.full.d.ts');
+		expect(options.lib).toEqual(libs);
 	});
 
-	it('never emits absolute paths or re-cased names as lib entries', () => {
-		const { options } = resolveConfig({ options: {} });
-		const lib_directory = path.dirname(ts.getDefaultLibFilePath(options));
+	it('preserves an explicitly empty lib list', () => {
+		const { options } = resolveConfig({ options: { lib: [], types: [] } });
 
-		for (const lib of options.lib ?? []) {
-			expect(path.isAbsolute(lib)).toBe(false);
-			expect(fs.existsSync(path.join(lib_directory, lib))).toBe(true);
-		}
+		expect(options.lib).toEqual([]);
 	});
 
-	it('keeps explicitly configured libs untouched', () => {
-		const { options } = resolveConfig({ options: { lib: ['lib.es2022.d.ts', 'DOM'] } });
+	it('does not synthesize lib when noLib is enabled', () => {
+		const { options } = resolveConfig({ options: { noLib: true, types: [] } });
 
-		expect(options.lib).toEqual(['lib.es2022.d.ts', 'lib.dom.d.ts']);
+		expect(options.noLib).toBe(true);
+		expect(options.lib).toBeUndefined();
+	});
+
+	it('allows TypeScript to load its valid ES5 default', () => {
+		const { options } = resolveConfig({
+			options: { target: ts.ScriptTarget.ES5, noEmit: true, types: [] },
+		});
+
+		expect(options.lib).toBeUndefined();
+		expect(
+			unresolved_global_types(
+				options,
+				[
+					'declare const a: Array<number>;',
+					'declare const f: Function;',
+					'declare const el: HTMLButtonElement;',
+					'export {};',
+				].join('\n'),
+			),
+		).toEqual([]);
 	});
 
 	it('leaves the ES standard library available to the checker', () => {

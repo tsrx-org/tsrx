@@ -860,35 +860,9 @@ export const resolveConfig = (config) => {
 		options.target = ts.ScriptTarget.ESNext;
 	}
 
-	/** @param {string} libName */
-	const normalizeLibName = (libName) => {
-		if (typeof libName !== 'string' || libName.length === 0) {
-			return undefined;
-		}
-		const trimmed = libName.trim();
-		if (trimmed.startsWith('lib.')) {
-			return trimmed.toLowerCase();
-		}
-		return `lib.${trimmed.toLowerCase().replace(/\s+/g, '').replace(/_/g, '.')}\.d.ts`;
-	};
-
-	const normalizedLibs = new Set(
-		(options.lib ?? []).map(normalizeLibName).filter((lib) => typeof lib === 'string'),
-	);
-
-	if (normalizedLibs.size === 0) {
-		// `CompilerOptions.lib` takes bare lib names such as `lib.esnext.full.d.ts`.
-		// `CompilerHost#getDefaultLibFileName` returns an absolute path instead, which
-		// TypeScript cannot resolve as a lib entry (and lower-casing it also breaks the
-		// path on case-sensitive lookups), so the whole ES standard library silently
-		// dropped out of the checker — only the two DOM libs below survived.
-		const defaultLibFileName = normalizeLibName(ts.getDefaultLibFileName(options));
-		if (defaultLibFileName) normalizedLibs.add(defaultLibFileName);
-		normalizedLibs.add('lib.dom.d.ts');
-		normalizedLibs.add('lib.dom.iterable.d.ts');
-	}
-
-	options.lib = [...normalizedLibs];
+	// Leave `lib` unchanged. When omitted, TypeScript selects the target's
+	// default library through the active language-service host. `lib: []`
+	// and `noLib` must retain their distinct TypeScript semantics.
 
 	// Default typeRoots: automatically discover @types like tsserver.
 	if (!options.types) {
