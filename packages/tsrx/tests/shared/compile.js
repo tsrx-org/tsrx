@@ -97,7 +97,11 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 }`;
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 
-			expect(result.errors.filter(function (error) { return error.type === 'fatal'; })).toEqual([]);
+			expect(
+				result.errors.filter(function (error) {
+					return error.type === 'fatal';
+				}),
+			).toEqual([]);
 			expect(
 				result.errors
 					.map(function (error) {
@@ -122,6 +126,7 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 
 			expect(is_mapped('App')).toBe(true);
 			expect(is_mapped('div')).toBe(true);
+			expect(result.code).toContain('<style></style>');
 			expect(virtual_parse_diagnostics(result.code)).toEqual([]);
 		});
 	});
