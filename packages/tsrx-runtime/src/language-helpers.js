@@ -58,13 +58,114 @@ export function array_slice(array_like, ...args) {
 }
 
 /**
+ * @param {unknown} value
+ * @returns {number}
+ */
+function to_length(value) {
+	var len = Number(value);
+	if (!Number.isFinite(len) || len <= 0) {
+		return 0;
+	}
+	return Math.min(Math.trunc(len), Number.MAX_SAFE_INTEGER);
+}
+
+/**
+ * @template T
+ * @param {ArrayLike<T>} array_like
+ * @param {number} start
+ * @param {number} length
+ * @returns {T[]}
+ */
+function copy_from_offset(array_like, start, length) {
+	var count = length - start;
+	var result = new Array(count);
+	for (var i = 0; i < count; i++) {
+		result[i] = array_like[start + i];
+	}
+	return result;
+}
+
+/**
+ * Indexed copy used when the source is already a length-bearing collection
+ * whose iterator walks indexes (arguments, strings, typed arrays). Skip
+ * comparison is `start < index` so negative, fractional, and `NaN` indexes
+ * match the iterator path. Sparse holes become own `undefined` entries.
+ *
+ * @template T
+ * @param {ArrayLike<T>} array_like
+ * @param {number} index
+ * @returns {T[]}
+ */
+function array_from_index(array_like, index) {
+	var length = array_like.length;
+	var start = 0;
+	while (start < length && start < index) {
+		start += 1;
+	}
+	return copy_from_offset(array_like, start, length);
+}
+
+/**
+ * Indexed copy matching `Array.from(array_like).slice(index)` for objects
+ * that are array-like but not iterable.
+ *
+ * @template T
+ * @param {ArrayLike<T>} array_like
+ * @param {number} index
+ * @returns {T[]}
+ */
+function array_like_from_index(array_like, index) {
+	var length = to_length(array_like.length);
+	var start = Number(index);
+	if (!Number.isFinite(start)) {
+		start = 0;
+	}
+	start = Math.trunc(start);
+	if (start < 0) {
+		start = Math.max(length + start, 0);
+	} else if (start > length) {
+		start = length;
+	}
+	return copy_from_offset(array_like, start, length);
+}
+
+/**
+ * True when `iterable` is a non-array indexed collection whose default
+ * iterator is the same as walking `0..length`. Arrays stay on the iterator
+ * path — that fast path is owned separately.
+ *
+ * @param {object} iterable
+ * @param {unknown} iterator
+ * @returns {boolean}
+ */
+function is_indexed_iterable(iterable, iterator) {
+	return (
+		iterator === array_prototype[Symbol.iterator] ||
+		iterator === String.prototype[Symbol.iterator] ||
+		ArrayBuffer.isView(iterable)
+	);
+}
+
+/**
  * Converts iterables, iterators, and array-like values to an array from an index.
+ * Non-array length-bearing values take an indexed fast path.
+ *
  * @template T
  * @param {Iterable<T> | Iterator<T> | ArrayLike<T>} iterable
  * @param {number} [index]
  * @returns {T[]}
  */
 export function iterable_array_from(iterable, index = 0) {
+	if (!is_array(iterable) && iterable != null && typeof iterable.length === 'number') {
+		var length_iter = /** @type {Iterable<T>} */ (iterable)[Symbol.iterator];
+		if (typeof length_iter !== 'function') {
+			return array_like_from_index(/** @type {ArrayLike<T>} */ (iterable), index);
+		}
+		if (is_indexed_iterable(iterable, length_iter)) {
+			return array_from_index(/** @type {ArrayLike<T>} */ (iterable), index);
+		}
+	}
+
 	/** @type {Iterator<T>} */
 	var iterator;
 	var iterable_prop = /** @type {Iterable<T>} */ (iterable)[Symbol.iterator];
@@ -74,7 +175,7 @@ export function iterable_array_from(iterable, index = 0) {
 	} else if (typeof (/** @type {Iterator<T>} */ (iterable).next) === 'function') {
 		iterator = Iterator.from(/** @type {Iterator<T>} */ (iterable));
 	} else {
-		return array_from(/** @type {ArrayLike<T>} */ (iterable)).slice(index);
+		return array_like_from_index(/** @type {ArrayLike<T>} */ (iterable), index);
 	}
 
 	var result = [];
