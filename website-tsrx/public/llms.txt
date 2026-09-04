@@ -920,7 +920,9 @@ and both rules are in the stylesheet at all times.
 
 `:global(...)` marks the wrapped part of a selector as unscoped: it gets no
 hash class. Everything outside the parentheses is still scoped, so where the
-`:global` sits decides how far the rule reaches:
+`:global` sits decides how far the rule reaches. The block form
+`:global { ... }` does the same for every rule inside it, and both forms work
+with CSS nesting:
 
 - Bare `:global(.toast)` -> `.toast`: a page-wide rule that matches anywhere
   on the page (ancestors, siblings, other components), exactly like a rule in
@@ -934,6 +936,15 @@ hash class. Everything outside the parentheses is still scoped, so where the
   element, with a class another library toggles on it.
 - `:global` in the middle of a selector (`.card :global(.x) .title`) is the
   `tsrx-css-global-placement` error: it may only start or end a selector.
+- Block `:global { .toast { ... } body { ... } }` -> `.toast { ... } body { ... }`:
+  the wrapper is dropped (left behind as a comment) and everything inside is
+  unscoped. Several page-wide rules at once.
+- Nested block `.card { :global { .note { ... } .tag { ... } } }` ->
+  `.card.<hash> { .note { ... } .tag { ... } }`: the same reach as the prefixed
+  form, with the scoped prefix written once. `.card { :global(.note) { ... } }`
+  is the same thing in selector form.
+- Plain nesting `.card { .note { ... } }` -> `.card.<hash> { .note.<hash> { ... } }`:
+  both parts scoped.
 
 Specificity: a scoped rule adds one hash class to its first compound only;
 later compounds get `:where(.<hash>)`, which adds none (`.card .title` ->
@@ -950,14 +961,16 @@ child cannot silently break the parent, and the hash keeps the rule on the
 elements that carry it. With `:global` the child has no say and cannot see who
 styles it. Keep `:global` for a child you cannot change, always with a scoped
 selector in front so the rule cannot reach ancestors or unrelated components,
-and keep it narrow: it overrides the child's own rules by specificity. Never
-write a bare `:global` selector for anything but page-level elements.
+and keep it narrow: it overrides the child's own rules by specificity. To style
+several of the child's classes, nest one `:global { ... }` block under your
+scoped selector. Never write a bare `:global` selector or a top-level
+`:global { ... }` block for anything but page-level elements.
 
 | I want to ...                                              | Use ...                                                                           |
 | ---------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Style my own elements                                      | A `<style>` block beside them; nothing global                                     |
 | Let a child component pick up my styles                    | Pass `theme.$class` or `theme.card` as a prop                                     |
-| Style a child I cannot change (third-party, rendered HTML) | `.wrapper :global(.their-class)`; scoped prefix first, keep it narrow             |
+| Style a child I cannot change (third-party, rendered HTML) | `.wrapper :global(.their-class)`, or `.wrapper { :global { ... } }` for several classes; scoped prefix first, keep it narrow |
 | React to page-level state                                  | `:global(.theme-dark) .card` or `:global([data-theme='dark']) .card`              |
 | Style my element with a class another library toggles     | `.card:global(.is-open)`                                                          |
 | Page-wide rules (`body`, resets, fonts)                    | A `.css` file; a bare `:global(body)` works but hides a global sheet in a component |
@@ -981,9 +994,17 @@ function Card() @{
 function Article({ html }: { html: string }) @{
 	<>
 		<style>
-			/* For a child you cannot change: -> .body.<hash> .footnote */
-			.body :global(.footnote) {
-				font-size: 0.85em;
+			/* For a child you cannot change: -> .body.<hash> { .footnote { ... } .caption { ... } } */
+			.body {
+				:global {
+					.footnote {
+						font-size: 0.85em;
+					}
+
+					.caption {
+						color: gray;
+					}
+				}
 			}
 		</style>
 		<div class="body" innerHTML={html} />
@@ -1332,7 +1353,7 @@ const List = <T,>({ items, render }: Props<T>) =>
 | Nested scope style     | `<div><style>...</style><p /></div>` (own hash, styles `p`) |
 | Plain TSX style        | `<style>{css}</style>` (ordinary element, not scoped)  |
 | Dynamic CSS value      | `style={{ '--tone': tone }}` + `var(--tone)`           |
-| Unscoped child styles  | `.wrap :global(.their)` (scoped prefix first)          |
+| Unscoped child styles  | `.wrap :global(.their)` or `.wrap { :global { ... } }`  |
 | Page-level state       | `:global(.theme-dark) .card`                           |
 | Page-wide rule         | a `.css` file; bare `:global(body)` for page-level only |
 | Cross-component class  | `<Child class={styles.foo} />`; React uses `className` |

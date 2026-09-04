@@ -152,6 +152,9 @@ describe('@tsrx/mcp documentation index', () => {
 		expect(content).toContain('`.card :global(.note)` outputs `.card.<hash> .note`');
 		expect(content).toContain('`:global(.theme-dark) .card` outputs `.theme-dark .card.<hash>`');
 		expect(content).toContain('`.card:global(.is-open)` outputs `.card.<hash>.is-open`');
+		expect(content).toContain('The block form `:global { .toast { ... } body { ... } }`');
+		expect(content).toContain('both output `.card.<hash> { .note { ... } }`');
+		expect(content).toContain('`.card.<hash> { .note.<hash> { ... } }`');
 
 		// Specificity.
 		expect(content).toContain(':where(.<hash>)');

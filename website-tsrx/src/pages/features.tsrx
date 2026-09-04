@@ -462,6 +462,26 @@ const GLOBAL_STYLES_HTML = highlight_tsrx(
       .card:global(.is-open) { border-color: blue; }
       /* → .card.tsrx-1a2b3c4d.is-open */
 
+      /* Block form: several page-wide rules at once. */
+      :global {
+        body { margin: 0; }
+        .toast { position: fixed; }
+      }
+      /* → body { … } .toast { … } */
+
+      /* Nested block: several classes below .card, prefix written once. */
+      .card {
+        :global {
+          .footnote { font-size: 0.85em; }
+          .caption { color: gray; }
+        }
+      }
+      /* → .card.tsrx-1a2b3c4d { .footnote { … } .caption { … } } */
+
+      /* Plain nesting, for contrast: both parts scoped. */
+      .card { .title { font-weight: bold; } }
+      /* → .card.tsrx-1a2b3c4d { .title.tsrx-1a2b3c4d { … } } */
+
       /* Error tsrx-css-global-placement: :global in the middle. */
       /* .card :global(.footnote) .title { } */
     </style>
@@ -485,12 +505,17 @@ function Card() @{
   <Note class={theme.note} />
 }
 
-// For a child you cannot change: a scoped prefix, then :global.
+// For a child you cannot change: a scoped prefix, then a :global block.
 function Article({ html }: { html: string }) @{
   <>
     <style>
-      .body :global(.footnote) { font-size: 0.85em; }
-      /* → .body.tsrx-5e6f7a8b .footnote */
+      .body {
+        :global {
+          .footnote { font-size: 0.85em; }
+          .caption { color: gray; }
+        }
+      }
+      /* → .body.tsrx-5e6f7a8b { .footnote { … } .caption { … } } */
     </style>
     <div class="body" innerHTML={html} />
   </>
@@ -1094,7 +1119,9 @@ export const FeaturesPage = () => @{
 								marks the wrapped part of a selector as unscoped: it gets no hash class. Everything
 								outside the parentheses is still scoped, so where the
 								<code class="inline-code">:global</code>
-								sits decides how far the rule can reach.
+								sits decides how far the rule can reach. The block form
+								<code class="inline-code">{':global { ... }'}</code>
+								does the same for every rule inside it, and both forms work with CSS nesting.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={GLOBAL_STYLES_HTML} />
@@ -1115,7 +1142,16 @@ export const FeaturesPage = () => @{
 								<code class="inline-code">:global</code>
 								in the middle of a selector is the
 								<code class="inline-code">tsrx-css-global-placement</code>
-								error: it may only start or end a selector.
+								error: it may only start or end a selector. A
+								<code class="inline-code">{':global { ... }'}</code>
+								block drops its wrapper, leaving a comment behind, and everything inside it is
+								unscoped: at the top level it is several page-wide rules at once, and nested under a
+								scoped rule such as
+								<code class="inline-code">.card</code>
+								it reaches only below that element, exactly like the prefixed
+								<code class="inline-code">.card :global(.footnote)</code>. Plain nesting without
+								<code class="inline-code">:global</code>
+								scopes both parts.
 							</p>
 							<h3 class="subsection-heading">Scoped rules beat bare global rules</h3>
 							<p class="section-body">
@@ -1153,7 +1189,9 @@ export const FeaturesPage = () => @{
 								for a child you cannot change: a third-party component, or rendered HTML and
 								markdown. Always put a scoped selector in front so the rule cannot reach ancestors
 								or unrelated components, and keep it narrow: it overrides the child's own rules by
-								specificity.
+								specificity. To style several of the child's classes, nest one
+								<code class="inline-code">{':global { ... }'}</code>
+								block under your scoped selector, so the prefix is written once.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={GLOBAL_VS_CLASS_HTML} />
@@ -1164,7 +1202,10 @@ export const FeaturesPage = () => @{
 								<code class="inline-code">.css</code>
 								file. A bare
 								<code class="inline-code">:global</code>
-								works, but it is a global stylesheet hidden inside a component. Never write a bare
+								selector or a top-level
+								<code class="inline-code">{':global { ... }'}</code>
+								block works, but it is a global stylesheet hidden inside a component. Never write a
+								bare
 								<code class="inline-code">:global</code>
 								selector for anything but page-level elements.
 							</p>
@@ -1197,8 +1238,9 @@ export const FeaturesPage = () => @{
 									<tr>
 										<td>Style a child I cannot change (third-party component, rendered HTML)</td>
 										<td>
-											<code class="inline-code">.wrapper :global(.their-class)</code>; scoped prefix
-											first, keep it narrow
+											<code class="inline-code">.wrapper :global(.their-class)</code>, or
+											<code class="inline-code">{'.wrapper { :global { ... } }'}</code>
+											for several classes; scoped prefix first, keep it narrow
 										</td>
 									</tr>
 									<tr>

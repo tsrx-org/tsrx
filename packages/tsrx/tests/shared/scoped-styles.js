@@ -1034,6 +1034,10 @@ export function runSharedScopedStyleTests({
 							.card:global(.is-open) { border-color: blue; }
 							.card :global(.a) :global(.b) { margin: 0; }
 							.card .title { font-weight: bold; }
+							:global { .banner { top: 0; } body { margin: 0; } }
+							.card { :global { .tag { color: blue; } .pill { color: green; } } }
+							.card { :global(.chip) { color: teal; } }
+							.card { .title { color: black; } }
 						</style>
 						<div ${attr}="card"><h2 ${attr}="title">{'t'}</h2></div>
 					</>
@@ -1043,6 +1047,7 @@ export function runSharedScopedStyleTests({
 
 			const [hash] = hashes_of(cssHash);
 			expect(class_of(code, 'card')).toBe(`card ${hash}`);
+			const plain_css = css.replace(/\/\*[^]*?\*\//g, '').replace(/\s+/g, ' ');
 			// Bare: a page-wide rule with no hash at all.
 			expect(css).toContain('.toast { position: fixed; }');
 			expect(css).not.toContain(`.toast.${hash}`);
@@ -1058,6 +1063,19 @@ export function runSharedScopedStyleTests({
 			// Specificity baseline: only the first compound carries the hash class;
 			// later compounds get :where(.<hash>), which adds none.
 			expect(css).toContain(`.card.${hash} .title:where(.${hash}) { font-weight: bold; }`);
+			// Block form: the wrapper is left behind as a comment and everything
+			// inside it is unscoped.
+			expect(css).toMatch(/\/\*\s*:global \{\s*\*\//);
+			expect(plain_css).toContain('.banner { top: 0; }');
+			expect(plain_css).toContain('body { margin: 0; }');
+			expect(css).not.toContain(`.banner.${hash}`);
+			// Nested under a scoped rule, both forms reach only below .card.
+			expect(plain_css).toContain(
+				`.card.${hash} { .tag { color: blue; } .pill { color: green; } }`,
+			);
+			expect(plain_css).toContain(`.card.${hash} { .chip { color: teal; } }`);
+			// Plain nesting scopes both parts.
+			expect(plain_css).toContain(`.card.${hash} { .title.${hash} { color: black; } }`);
 			expect(css).not.toContain('(unused)');
 		});
 
