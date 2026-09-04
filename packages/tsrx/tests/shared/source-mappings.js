@@ -261,6 +261,55 @@ function App({ tag }: { tag: string }) @{
 
 			expect(mapping?.data.completion).toBe(true);
 		});
+		it('maps recovered unclosed tags without an off-by-one close name', () => {
+			const source = `export function App() @{
+	<>
+		<span>
+		<div />
+	</>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const open_lt = source.indexOf('<span>');
+			const name_offset = open_lt + 1;
+			const generated_open = result.code.indexOf('<span>');
+			const generated_close = result.code.lastIndexOf('</span>');
+
+			expect(generated_open).toBeGreaterThan(-1);
+			expect(generated_close).toBeGreaterThan(generated_open);
+
+			const mapped_source = function (entry) {
+				return source.slice(entry.sourceOffsets[0], entry.sourceOffsets[0] + entry.lengths[0]);
+			};
+			const open_lt_mapping = result.mappings.find(function (entry) {
+				return (
+					entry.sourceOffsets[0] === open_lt &&
+					entry.lengths[0] === 1 &&
+					result.code[entry.generatedOffsets[0]] === '<'
+				);
+			});
+			const early_name_mapping = result.mappings.find(function (entry) {
+				return entry.sourceOffsets[0] === open_lt && entry.lengths[0] === 'span'.length;
+			});
+			const close_name_mappings = result.mappings.filter(function (entry) {
+				return (
+					entry.generatedOffsets[0] === generated_close + 2 &&
+					result.code.slice(
+						entry.generatedOffsets[0],
+						entry.generatedOffsets[0] + entry.generatedLengths[0],
+					) === 'span'
+				);
+			});
+
+			expect(open_lt_mapping, 'opening `<` should keep a mapping').toBeDefined();
+			expect(open_lt_mapping?.generatedOffsets[0]).toBe(generated_open);
+			expect(mapped_source(open_lt_mapping)).toBe('<');
+			expect(early_name_mapping, 'close name must not map to `<spa`').toBeUndefined();
+			expect(source.slice(name_offset, name_offset + 'span'.length)).toBe('span');
+			for (const mapping of close_name_mappings) {
+				expect(mapped_source(mapping)).toBe('span');
+				expect(mapping.sourceOffsets[0]).toBe(name_offset);
+			}
+		});
 		it('keeps DOM attribute completions when scoped styles are present', () => {
 			const source = `function C() @{
 	<>

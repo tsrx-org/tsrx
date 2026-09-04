@@ -3587,20 +3587,27 @@ function to_jsx_element(
 		? opening_element_node
 		: set_loc(opening_element_node, node.openingElement || node);
 
-	const closingElement = selfClosing
-		? null
-		: set_loc(
+	let closingElement = null;
+	if (!selfClosing) {
+		const authored_closing = node.closingElement;
+		if (authored_closing) {
+			// Clone from the actual closing name when there is one: a dynamic
+			// tag's closing expression (`</{Tag}>`) has its own source positions,
+			// which editor mappings need.
+			closingElement = set_loc(
 				b.jsx_closing_element(
-					// Clone from the actual closing name when there is one: a dynamic
-					// tag's closing expression (`</{Tag}>`) has its own source positions,
-					// which editor mappings need.
-					clone_jsx_name(
-						node.closingElement?.name ?? name,
-						node.closingElement?.name || node.closingElement || node,
-					),
+					clone_jsx_name(authored_closing.name ?? name, authored_closing.name || authored_closing),
 				),
-				node.closingElement || node,
+				authored_closing,
 			);
+		} else {
+			// Recovered unclosed tags have no authored close. Map the synthesized
+			// name to the opening name token so rename/hover land on `span`, not
+			// `<spa`, and leave the closing element itself unlocated so it does
+			// not steal the opening `<` mapping.
+			closingElement = b.jsx_closing_element(clone_jsx_name(name, source_opening.name));
+		}
+	}
 
 	const element = set_loc(b.jsx_element_fresh(openingElement, closingElement, children), node);
 	if (node.metadata?.dynamicElement === true) {
