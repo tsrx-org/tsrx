@@ -59,7 +59,11 @@ here and keeps package docs focused on the core parser API.
 - **`analyzeTsrx(ast, filename, options?)`** — run target-neutral semantic
   validation before framework analysis or transformation. Pass `collect: true`,
   `typeOnly: true`, or `to_ts: true` to collect non-fatal diagnostics for
-  editor/type-only output.
+  editor/type-only output. Pass `forbidStyleInControlFlow: true` to report a
+  `<style>` block that authors CSS inside an `@if` / `@for` / `@switch` / `@try`
+  body (`tsrx-style-in-control-flow`). That check is off by default; teams that
+  want the restriction can also enable the `tsrx/no-style-in-control-flow` ESLint
+  rule.
 - **Scope analysis** — `createScopes`, `Scope`, `ScopeRoot`, binding tracking
   (`import`, `prop`, `let`, `const`, `function`, `for_pattern`, …).
 - **AST utilities** — pattern walkers, identifier extraction, builders, location

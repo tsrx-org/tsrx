@@ -916,6 +916,12 @@ export function Status({ ready }: { ready: boolean }) @{
 only the `<p>` in the ready branch and `.wait` only the `<p>` in the other one,
 and both rules are in the stylesheet at all times.
 
+Teams that want to forbid CSS-authoring `<style>` blocks inside control-flow
+bodies can enable the opt-in `tsrx/no-style-in-control-flow` ESLint rule, or
+pass `forbidStyleInControlFlow: true` to `analyzeTsrx`. Both are off by
+default. A self-closing `<style apply={theme} />` inside a branch is still
+allowed.
+
 ### Escape the scope with `:global()`
 
 `:global(...)` marks the wrapped part of a selector as unscoped: it gets no

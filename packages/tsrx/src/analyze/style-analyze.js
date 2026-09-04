@@ -19,11 +19,16 @@
 import { walk } from 'zimmerframe';
 import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 import { get_style_class_map_names, get_style_element_stylesheet } from '../transform/style-ref.js';
-import { is_function_node, is_template_directive } from '../utils/ast.js';
+import {
+	is_function_node,
+	is_function_or_class_node,
+	is_template_directive,
+} from '../utils/ast.js';
 import {
 	TSRX_STYLE_APPLY_DUPLICATE_ERROR,
 	TSRX_STYLE_APPLY_UNSUPPORTED_HOST_ERROR,
 	TSRX_STYLE_APPLY_VALUE_ERROR,
+	TSRX_STYLE_IN_CONTROL_FLOW_ERROR,
 	TSRX_STYLE_RESERVED_CLASS_KEY_ERROR,
 	TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR,
 	TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR,
@@ -50,6 +55,66 @@ import {
  * @param {Map<AST.Node, ScopeInterface>} scopes
  * @returns {ScopeInterface | null}
  */
+/**
+ * Whether `child` is the body of an `@if`/`@for`/`@switch`/`@try` branch
+ * (including `@else`, `@empty`, `@case`, `@catch`, `@pending`, and `@finally`).
+ *
+ * @param {AST.Node} directive
+ * @param {AST.Node} child
+ * @returns {boolean}
+ */
+function is_directive_branch_body(directive, child) {
+	switch (directive.type) {
+		case 'JSXIfExpression':
+			return child === directive.consequent || child === directive.alternate;
+		case 'JSXForExpression':
+			return child === directive.body || child === directive.empty;
+		case 'JSXSwitchExpression':
+			return directive.cases.includes(child);
+		case 'JSXTryExpression':
+			return (
+				child === directive.block ||
+				child === directive.handler ||
+				child === directive.finalizer ||
+				child === directive.pending
+			);
+		default:
+			return false;
+	}
+}
+
+/**
+ * A `<style>` whose nearest function/class boundary still has a control-flow
+ * directive ancestor, reached through that directive's branch body.
+ *
+ * @param {AST.Node[]} path ancestors, nearest last (zimmerframe)
+ * @param {AST.JSXStyleElement} node
+ * @returns {boolean}
+ */
+function is_style_in_control_flow_branch(path, node) {
+	let child = /** @type {AST.Node} */ (node);
+	for (let i = path.length - 1; i >= 0; i -= 1) {
+		const ancestor = path[i];
+		if (is_function_or_class_node(ancestor)) return false;
+		if (is_template_directive(ancestor) && is_directive_branch_body(ancestor, child)) {
+			return true;
+		}
+		child = ancestor;
+	}
+	return false;
+}
+
+/**
+ * A bodied `<style>` authors CSS. A self-closing `<style apply={…} />` only
+ * stamps classes.
+ *
+ * @param {AST.JSXStyleElement} node
+ * @returns {boolean}
+ */
+function style_authors_css(node) {
+	return !node.openingElement.selfClosing || node.children.length > 0;
+}
+
 function nearest_scope(path, scopes) {
 	for (let i = path.length - 1; i >= 0; i -= 1) {
 		const scope = scopes.get(path[i]);
@@ -443,6 +508,16 @@ export function analyze_styles(ast, scopes, state) {
 							node,
 						);
 					}
+				}
+
+				if (
+					state.forbidStyleInControlFlow &&
+					style_authors_css(node) &&
+					!inside_head &&
+					!is_resource &&
+					is_style_in_control_flow_branch(path, node)
+				) {
+					report(TSRX_STYLE_IN_CONTROL_FLOW_ERROR, DIAGNOSTIC_CODES.STYLE_IN_CONTROL_FLOW, node);
 				}
 
 				next();

@@ -43,7 +43,32 @@ export default [...tsrx.configs.strict];
 - `tsrx/valid-for-of-key` validates identifiers used in TSRX loop keys.
 - `tsrx/no-lazy-destructuring-in-modules` prevents TSRX-only `&[]` and `&{}`
   syntax from leaking into ordinary TypeScript or JavaScript modules.
+- `tsrx/no-style-in-control-flow` is an opt-in rule that reports a `<style>` block
+  that authors CSS inside an `@if`, `@for`, `@switch`, or `@try` body. Enable it
+  when you want that restriction; recommended and strict leave it off.
 - `tsrx/no-return-in-component` is a deprecated no-op retained for compatibility.
+
+To forbid `<style>` CSS inside control-flow branches (the CSS still ships even
+when the branch does not render), turn the rule on yourself:
+
+```js
+// eslint.config.js
+import tsrx from '@tsrx/eslint-plugin';
+
+export default [
+  ...tsrx.configs.recommended,
+  {
+    files: ['**/*.tsrx'],
+    rules: {
+      'tsrx/no-style-in-control-flow': 'error',
+    },
+  },
+];
+```
+
+Self-closing `<style apply={theme} />` inside a branch is allowed: it stamps
+classes and does not author CSS. Assigned `const theme = <style>…</style>` belongs
+outside the branch.
 
 Target runtime rules do not belong in the shared recommended configuration. For
 example, Ripple-specific `track()` placement and DOM event guidance should be

@@ -1544,6 +1544,11 @@ export interface AnalyzeOptions extends ParseOptions, Pick<CompileOptions, 'mode
 export interface TSRXAnalysisOptions extends ParseOptions {
 	typeOnly?: boolean;
 	to_ts?: boolean;
+	/**
+	 * When true, report a `<style>` block that authors CSS inside an
+	 * `@if` / `@for` / `@switch` / `@try` branch body. Off by default.
+	 */
+	forbidStyleInControlFlow?: boolean;
 }
 
 /** Traversal state used by the target-neutral TSRX semantic analysis pass. */
@@ -1555,6 +1560,7 @@ export interface TSRXAnalysisState {
 	function: AST.Function | null;
 	function_body_is_code_block: boolean;
 	inside_template_output: boolean;
+	forbidStyleInControlFlow?: boolean;
 }
 
 /** Result of target-neutral TSRX semantic analysis. */

@@ -1103,6 +1103,19 @@ export const FeaturesPage = () => @{
 								<code class="inline-code">p</code>
 								in the other one, and both rules are in the stylesheet at all times.
 							</p>
+							<p class="section-body">
+								Teams that want to forbid CSS-authoring
+								<code class="inline-code">{'<style>'}</code>
+								blocks inside control-flow bodies can enable the opt-in
+								<code class="inline-code">tsrx/no-style-in-control-flow</code>
+								ESLint rule, or pass
+								<code class="inline-code">forbidStyleInControlFlow: true</code>
+								to
+								<code class="inline-code">analyzeTsrx</code>
+								. Both are off by default. A self-closing
+								<code class="inline-code">{'<style apply={theme} />'}</code>
+								inside a branch is still allowed: it stamps classes and does not author CSS.
+							</p>
 							<h3 class="subsection-heading">Unused selectors are removed</h3>
 							<p class="section-body">
 								A selector that matches nothing the block can reach is removed from the output and
