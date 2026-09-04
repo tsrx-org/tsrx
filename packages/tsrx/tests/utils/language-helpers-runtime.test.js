@@ -87,23 +87,23 @@ describe('language runtime helpers', () => {
 });
 
 describe('iterable_array_from', function () {
-	it('copies arrays from an index without dropping values or inventing holes', function () {
+	it('copies arrays from an index with slice semantics', function () {
 		expect(iterable_array_from(['a', 'b', 'c'])).toEqual(['a', 'b', 'c']);
 		expect(iterable_array_from(['a', 'b', 'c'], 0)).toEqual(['a', 'b', 'c']);
 		expect(iterable_array_from(['a', 'b', 'c'], 1)).toEqual(['b', 'c']);
 		expect(iterable_array_from(['a', 'b', 'c'], 3)).toEqual([]);
-		expect(iterable_array_from(['a', 'b', 'c'], -1)).toEqual(['a', 'b', 'c']);
-		expect(iterable_array_from(['a', 'b', 'c'], 1.5)).toEqual(['c']);
+		expect(iterable_array_from(['a', 'b', 'c'], -1)).toEqual(['c']);
+		expect(iterable_array_from(['a', 'b', 'c'], 1.5)).toEqual(['b', 'c']);
 		expect(iterable_array_from(['a', 'b', 'c'], NaN)).toEqual(['a', 'b', 'c']);
 	});
 
-	it('materializes sparse array holes as own undefined entries', function () {
+	it('keeps holes in holey arrays', function () {
 		const sparse = [1, , 3];
 		const copied = iterable_array_from(sparse);
 
 		expect(copied).toEqual([1, undefined, 3]);
-		expect(1 in copied).toBe(true);
-		expect(Object.hasOwn(copied, 1)).toBe(true);
+		expect(1 in copied).toBe(false);
+		expect(Object.hasOwn(copied, 1)).toBe(false);
 	});
 
 	it('still walks sets, iterators, and array-like values', function () {

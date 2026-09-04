@@ -58,32 +58,7 @@ export function array_slice(array_like, ...args) {
 }
 
 /**
- * Indexed copy used by {@link iterable_array_from} for arrays. Skip comparison
- * is `start < index` so negative, fractional, and `NaN` indexes match the
- * iterator path. Sparse holes become own `undefined` entries.
- *
- * @template T
- * @param {T[]} array
- * @param {number} index
- * @returns {T[]}
- */
-function array_from_index(array, index) {
-	var length = array.length;
-	var start = 0;
-	while (start < length && start < index) {
-		start += 1;
-	}
-	var count = length - start;
-	var result = new Array(count);
-	for (var i = 0; i < count; i++) {
-		result[i] = array[start + i];
-	}
-	return result;
-}
-
-/**
  * Converts iterables, iterators, and array-like values to an array from an index.
- * Arrays take an indexed fast path, matching `map_iterable`.
  *
  * @template T
  * @param {Iterable<T> | Iterator<T> | ArrayLike<T>} iterable
@@ -92,7 +67,7 @@ function array_from_index(array, index) {
  */
 export function iterable_array_from(iterable, index = 0) {
 	if (is_array(iterable)) {
-		return array_from_index(iterable, index);
+		return iterable.slice(index);
 	}
 
 	/** @type {Iterator<T>} */
