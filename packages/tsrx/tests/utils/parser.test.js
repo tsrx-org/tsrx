@@ -1657,6 +1657,74 @@ abc
 		expect(openingName(child(fragment, 1, 'JSXElement')).name).toBe('div');
 	});
 
+	it('keeps an unclosed style inside an element so later siblings stay JSX children', function () {
+		const errors = [];
+		const ast = parseModule(
+			`export function App() @{
+				<section>
+					<style>
+					<span />
+				</section>
+			}`,
+			'App.tsrx',
+			{ loose: true, collect: true, errors },
+		);
+
+		assert_type(ast, 'Program');
+		expect(
+			errors
+				.map(function (error) {
+					return error.message;
+				})
+				.join('\n'),
+		).not.toContain('Expected identifier');
+
+		const section = find_first(ast, function (node) {
+			return (
+				node.type === 'JSXElement' &&
+				node.openingElement?.name?.type === 'JSXIdentifier' &&
+				node.openingElement.name.name === 'section'
+			);
+		});
+		assert_type(section, 'JSXElement');
+		expect(
+			section.children.map(function (child) {
+				return child.type;
+			}),
+		).toEqual(['JSXStyleElement', 'JSXElement']);
+		expect(child(section, 0, 'JSXStyleElement').unclosed).toBe(true);
+		expect(openingName(child(section, 1, 'JSXElement')).name).toBe('span');
+		expect(section.unclosed).toBeFalsy();
+	});
+
+	it('keeps same-line siblings after an unclosed style on the opening-tag line', function () {
+		const source = `export function App() @{ <><style><span /></>
+}`;
+		const errors = [];
+		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
+
+		assert_type(ast, 'Program');
+		expect(
+			errors
+				.map(function (error) {
+					return error.message;
+				})
+				.join('\n'),
+		).not.toContain('Expected identifier');
+
+		const fragment = find_first(ast, function (node) {
+			return node.type === 'JSXFragment';
+		});
+		assert_type(fragment, 'JSXFragment');
+		const style = child(fragment, 0, 'JSXStyleElement');
+		const span = child(fragment, 1, 'JSXElement');
+		expect(style.unclosed).toBe(true);
+		expect(openingName(span).name).toBe('span');
+		expect(span.loc.start.line).toBe(style.loc.end.line);
+		expect(span.loc.start.column).toBeGreaterThanOrEqual(0);
+		expect(span.loc.start.column).toBe(style.loc.end.column);
+	});
+
 	it('parses module-scope style expressions followed by JavaScript statements', () => {
 		const source = `const styles = <style>
 			.card {

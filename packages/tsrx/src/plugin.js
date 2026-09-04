@@ -2260,13 +2260,12 @@ export function TSRXPlugin(config) {
 				const relativeCloseStart = input.indexOf(closeTag);
 				const content = relativeCloseStart === -1 ? input : input.slice(0, relativeCloseStart);
 
-				const newLines = content.match(regex_newline_characters)?.length;
-				if (newLines) {
-					this.curLine = open.loc.end.line + newLines;
-					this.lineStart = contentStart + content.lastIndexOf('\n') + 1;
-				}
-
 				if (relativeCloseStart !== -1) {
+					const newLines = content.match(regex_newline_characters)?.length;
+					if (newLines) {
+						this.curLine = open.loc.end.line + newLines;
+						this.lineStart = contentStart + content.lastIndexOf('\n') + 1;
+					}
 					const closingStart = contentStart + content.length;
 					const closingLineInfo = get_line_info(this, closingStart);
 					const closingStartLoc = new acorn.Position(closingLineInfo.line, closingLineInfo.column);
@@ -2344,12 +2343,28 @@ export function TSRXPlugin(config) {
 						`Unclosed tag '<${tagName}>'. Expected '${closeTag}' before end of template.`,
 					);
 					node.unclosed = true;
-					// Leave the tokenizer where the opening tag ended so siblings after
-					// an in-progress `<style>` / `<script>` keep parsing as template
-					// markup. Restoring the pre-element context matches a balanced
-					// raw-text element; without it leftover `tc_expr` can swallow `}`.
-					if (contextDepth !== undefined && this.context.length > contextDepth) {
+					// The body was not consumed. Keep line tracking at the opening tag
+					// so a later sibling on this line does not inherit an EOF column.
+					this.curLine = open.loc.end.line;
+					this.lineStart = open.end - open.loc.end.column;
+					const parent = this.#path.at(-2);
+					const insideTemplate = this.#isNativeTemplateNode(parent);
+					if (!insideTemplate && contextDepth !== undefined && this.context.length > contextDepth) {
+						// Outside a template, match a balanced raw-text element: unwind
+						// back to the pre-element depth so the following JS tokenizes
+						// as code, not leftover children `tc_expr`.
 						this.context.length = contextDepth;
+					} else if (insideTemplate) {
+						// Inside a template, pop only this element's leftover tag/children
+						// contexts. Rewinding to `contextDepth` would also drop parent
+						// template frames, so later siblings and the parent close would
+						// tokenize as JS.
+						if (this.curContext() === tstc.tc_oTag) {
+							this.context.pop();
+						}
+						if (this.curContext() === tstc.tc_expr) {
+							this.context.pop();
+						}
 					}
 					if (this.#loose) {
 						return '';
