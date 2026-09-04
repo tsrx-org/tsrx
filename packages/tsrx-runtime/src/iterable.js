@@ -34,6 +34,7 @@ export function map_iterable(iterable, fn, tail, empty) {
 	}
 
 	var index = 0;
+	/** @type {U[]} */
 	var result = [];
 	while (true) {
 		var next = iterator.next();
@@ -79,6 +80,7 @@ function map_sized(iterable, fn, tail, empty) {
 	var iterator = iterable[Symbol.iterator]();
 	var first = fn(/** @type {T} */ (iterator.next().value), 0, length === 1);
 	if (Array.isArray(first)) {
+		/** @type {U[]} */
 		var flat = [];
 		push_mapped(flat, first);
 		for (var i = 1; i < length; i++) {
@@ -122,6 +124,7 @@ function map_array(array, fn, tail, empty) {
 
 	var first = fn(array[0], 0, length === 1);
 	if (Array.isArray(first)) {
+		/** @type {U[]} */
 		var flat = [];
 		push_mapped(flat, first);
 		for (var i = 1; i < length; i++) {

@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { map_iterable } from '../../src/runtime/iterable.js';
 
 describe('map_iterable', function () {
+	/**
+	 * @param {unknown} item
+	 * @param {number} index
+	 * @param {boolean} is_last
+	 */
 	function text_fn(item, index, is_last) {
 		return String(item) + ':' + index + (is_last ? '!' : '');
 	}
