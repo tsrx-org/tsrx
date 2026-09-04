@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { exclude_prop_from_object } from '../../src/runtime/language-helpers.js';
+import {
+	exclude_prop_from_object,
+	iterable_array_from,
+} from '../../src/runtime/language-helpers.js';
 
 describe('language runtime helpers', () => {
 	it('excludes a prop while preserving live getter reads', () => {
@@ -80,5 +83,36 @@ describe('language runtime helpers', () => {
 	it('returns an empty object for nullish props', () => {
 		expect(exclude_prop_from_object(null, 'is')).toEqual({});
 		expect(exclude_prop_from_object(undefined, 'is')).toEqual({});
+	});
+});
+
+describe('iterable_array_from', function () {
+	it('copies arrays from an index without dropping values or inventing holes', function () {
+		expect(iterable_array_from(['a', 'b', 'c'])).toEqual(['a', 'b', 'c']);
+		expect(iterable_array_from(['a', 'b', 'c'], 0)).toEqual(['a', 'b', 'c']);
+		expect(iterable_array_from(['a', 'b', 'c'], 1)).toEqual(['b', 'c']);
+		expect(iterable_array_from(['a', 'b', 'c'], 3)).toEqual([]);
+		expect(iterable_array_from(['a', 'b', 'c'], -1)).toEqual(['a', 'b', 'c']);
+		expect(iterable_array_from(['a', 'b', 'c'], 1.5)).toEqual(['c']);
+		expect(iterable_array_from(['a', 'b', 'c'], NaN)).toEqual(['a', 'b', 'c']);
+	});
+
+	it('materializes sparse array holes as own undefined entries', function () {
+		const sparse = [1, , 3];
+		const copied = iterable_array_from(sparse);
+
+		expect(copied).toEqual([1, undefined, 3]);
+		expect(1 in copied).toBe(true);
+		expect(Object.hasOwn(copied, 1)).toBe(true);
+	});
+
+	it('still walks sets, iterators, and array-like values', function () {
+		expect(iterable_array_from(new Set([1, 2, 3]), 1)).toEqual([2, 3]);
+
+		const iterator = [4, 5, 6][Symbol.iterator]();
+		expect(iterable_array_from(iterator, 1)).toEqual([5, 6]);
+
+		const array_like = { length: 3, 0: 'x', 1: 'y', 2: 'z' };
+		expect(iterable_array_from(array_like, 1)).toEqual(['y', 'z']);
 	});
 });
