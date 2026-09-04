@@ -128,7 +128,7 @@ describe('iterable_array_from', function () {
 	});
 
 	it('copies arguments and typed arrays with iterator skip semantics', function () {
-		var args = (function () {
+		var args = (function (a, b, c) {
 			return arguments;
 		})('a', 'b', 'c');
 

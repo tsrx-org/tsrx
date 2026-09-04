@@ -157,7 +157,10 @@ export function iterable_array_from(iterable, index = 0) {
 		return iterable.slice(index);
 	}
 
-	if (iterable != null && typeof iterable.length === 'number') {
+	if (
+		iterable != null &&
+		typeof (/** @type {{ length?: unknown }} */ (iterable).length) === 'number'
+	) {
 		var length_iter = /** @type {Iterable<T>} */ (iterable)[Symbol.iterator];
 		if (typeof length_iter !== 'function') {
 			return array_like_from_index(/** @type {ArrayLike<T>} */ (iterable), index);
