@@ -42,12 +42,6 @@ export function collect_stylesheet_texts(): string[] {
 	return texts;
 }
 
-export function index_of_mark(texts: string[], mark: string): number {
-	return texts.findIndex(function has_mark(text: string) {
-		return text.includes(mark);
-	});
-}
-
 export function mark_position(texts: string[], mark: string): { sheet: number; at: number } {
 	for (let i = 0; i < texts.length; i += 1) {
 		const at = texts[i].indexOf(mark);
