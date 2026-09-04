@@ -127,6 +127,7 @@ export default defineConfig({
 					environment: 'jsdom',
 					setupFiles: ['packages/vite-plugin-preact/tests/setup.js'],
 					globals: true,
+					css: true,
 				},
 				plugins: [preact_runtime_dependency_resolver, tsrxPreact()],
 				resolve: {
@@ -203,6 +204,7 @@ export default defineConfig({
 					environment: 'jsdom',
 					setupFiles: ['packages/vite-plugin-vue/tests/setup.js'],
 					globals: true,
+					css: true,
 				},
 				plugins: [vue_runtime_dependency_resolver, vue_runtime_alias_plugin, tsrxVue()],
 				resolve: process.env.VITEST
@@ -273,6 +275,7 @@ export default defineConfig({
 					environment: 'jsdom',
 					setupFiles: ['packages/vite-plugin-react/tests/setup.js'],
 					globals: true,
+					css: true,
 				},
 				plugins: [react_runtime_dependency_resolver, tsrxReact()],
 				resolve: {
@@ -295,6 +298,7 @@ export default defineConfig({
 					environment: 'jsdom',
 					setupFiles: ['packages/vite-plugin-solid/tests/setup.js'],
 					globals: true,
+					css: true,
 				},
 				plugins: [solid_runtime_dependency_resolver, tsrxSolid(), solid()],
 				resolve: {
