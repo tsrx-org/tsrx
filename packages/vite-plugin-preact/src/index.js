@@ -122,10 +122,9 @@ export function tsrxPreact(options = {}) {
 			let source = tsx_code;
 			if (css) {
 				css_cache.set(id, css);
-				source = `import ${JSON.stringify(id + CSS_QUERY)};\n${tsx_code}`;
-				if (map && typeof map.mappings === 'string') {
-					map = { ...map, mappings: ';' + map.mappings };
-				}
+				// After existing imports so dependency sheets (imported themes)
+				// evaluate first and this module's rules win at equal specificity.
+				source = `${tsx_code}\nimport ${JSON.stringify(id + CSS_QUERY)};\n`;
 			} else {
 				css_cache.delete(id);
 			}
