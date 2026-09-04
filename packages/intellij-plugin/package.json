@@ -3,7 +3,7 @@
   "displayName": "TSRX for JetBrains IDEs",
   "description": "TSRX language support for compatible IntelliJ-based IDEs",
   "private": true,
-  "version": "0.0.83",
+  "version": "0.0.84",
   "author": "Dominic Gannaway",
   "license": "MIT",
   "homepage": "https://tsrx.dev/",
