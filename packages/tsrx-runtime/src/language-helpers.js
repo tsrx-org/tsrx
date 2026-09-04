@@ -132,8 +132,8 @@ function array_like_from_index(array_like, index) {
 
 /**
  * True when `iterable` is a non-array indexed collection whose default
- * iterator is the same as walking `0..length`. Arrays stay on the iterator
- * path — that fast path is owned separately.
+ * iterator is the same as walking `0..length`. Arrays use `slice` — that
+ * fast path is owned separately.
  *
  * @param {object} iterable
  * @param {unknown} iterator
@@ -145,7 +145,7 @@ function is_indexed_iterable(iterable, iterator) {
 
 /**
  * Converts iterables, iterators, and array-like values to an array from an index.
- * Non-array length-bearing values take an indexed fast path.
+ * Arrays use `slice`. Other length-bearing values take an indexed copy.
  *
  * @template T
  * @param {Iterable<T> | Iterator<T> | ArrayLike<T>} iterable
@@ -153,7 +153,11 @@ function is_indexed_iterable(iterable, iterator) {
  * @returns {T[]}
  */
 export function iterable_array_from(iterable, index = 0) {
-	if (!is_array(iterable) && iterable != null && typeof iterable.length === 'number') {
+	if (is_array(iterable)) {
+		return iterable.slice(index);
+	}
+
+	if (iterable != null && typeof iterable.length === 'number') {
 		var length_iter = /** @type {Iterable<T>} */ (iterable)[Symbol.iterator];
 		if (typeof length_iter !== 'function') {
 			return array_like_from_index(/** @type {ArrayLike<T>} */ (iterable), index);
