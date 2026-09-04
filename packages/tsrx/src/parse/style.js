@@ -111,9 +111,109 @@ class Parser {
 }
 
 /**
+ * Map a CSS-body offset to a file `line`/`column`. `start`/`end` stay relative
+ * to the style body so stylesheet rendering can index `source` directly; `loc`
+ * is file-relative.
+ *
+ * @param {string} content
+ * @param {number} source_line
+ * @param {number} source_column
+ * @returns {(offset: number) => { line: number, column: number }}
+ */
+function css_position_at(content, source_line, source_column) {
+	const starts = [0];
+	for (let i = 0; i < content.length; i++) {
+		const ch = content.charCodeAt(i);
+		if (ch === 13 && content.charCodeAt(i + 1) === 10) {
+			i += 1;
+			starts.push(i + 1);
+		} else if (ch === 10 || ch === 13 || ch === 0x2028 || ch === 0x2029) {
+			starts.push(i + 1);
+		}
+	}
+
+	/**
+	 * @param {number} offset
+	 */
+	function position_at(offset) {
+		let low = 0;
+		let high = starts.length;
+		while (low + 1 < high) {
+			const middle = (low + high) >>> 1;
+			if (starts[middle] <= offset) {
+				low = middle;
+			} else {
+				high = middle;
+			}
+		}
+
+		const column_in_content = offset - starts[low];
+		if (low === 0) {
+			return { line: source_line, column: source_column + column_in_content };
+		}
+
+		return { line: source_line + low, column: column_in_content };
+	}
+
+	return position_at;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {value is AST.CSS.Node}
+ */
+function is_css_node(value) {
+	return (
+		!!value &&
+		typeof value === 'object' &&
+		typeof /** @type {{ type?: unknown }} */ (value).type === 'string' &&
+		typeof /** @type {{ start?: unknown }} */ (value).start === 'number'
+	);
+}
+
+/**
+ * @param {AST.CSS.Node} node
+ * @param {(offset: number) => { line: number, column: number }} position_at
+ */
+function attach_css_locations(node, position_at) {
+	if (typeof node.start === 'number' && typeof node.end === 'number') {
+		node.loc = {
+			start: position_at(node.start),
+			end: position_at(node.end),
+		};
+	}
+
+	const entries = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (node));
+	for (const key of Object.keys(entries)) {
+		if (key === 'loc' || key === 'metadata' || key === 'source') {
+			continue;
+		}
+
+		const value = entries[key];
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				if (is_css_node(item)) {
+					attach_css_locations(item, position_at);
+				}
+			}
+		} else if (is_css_node(value)) {
+			attach_css_locations(value, position_at);
+		}
+	}
+}
+
+/**
  * @template {string} T
  * @param {string} content
- * @param {{ filename: NonEmptyString<T>, line: number, column: number }} location position of the `<style>` tag in the source file
+ * @param {{
+ *   filename: NonEmptyString<T>,
+ *   line: number,
+ *   column: number,
+ *   start?: number,
+ *   sourceLine?: number,
+ *   sourceColumn?: number,
+ * }} location position of the `<style>` tag (for hashing) and optional file
+ * origin of the style body (`start` / `sourceLine` / `sourceColumn`)
  * @param {{ loose?: boolean }} options
  * @returns {AST.CSS.StyleSheet}
  */
@@ -125,15 +225,25 @@ export function parse_style(content, location, options) {
 	// across files. The filename may be an absolute path, so this must be a
 	// pre-image-resistant hash to avoid leaking file structure into the bundle.
 	const hash_source = `${location.filename}:${location.line}:${location.column}:${content}`;
+	const source_start = location.start ?? 0;
+	const source_line = location.sourceLine ?? location.line;
+	const source_column = location.sourceColumn ?? location.column;
 
-	return {
+	/** @type {AST.CSS.StyleSheet} */
+	const stylesheet = {
 		source: content,
 		hash: `tsrx-${strong_hash(hash_source)}`,
 		type: 'StyleSheet',
 		children: read_body(parser),
 		start: 0,
 		end: content.length,
+		filename: location.filename,
+		sourceStart: source_start,
 	};
+
+	attach_css_locations(stylesheet, css_position_at(content, source_line, source_column));
+
+	return stylesheet;
 }
 
 /** @param {Parser} parser */

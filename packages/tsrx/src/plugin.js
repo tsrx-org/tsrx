@@ -2376,12 +2376,16 @@ export function TSRXPlugin(config) {
 					);
 				}
 				const content = this.#parseRawTextElement(open, node, 'style', contextDepth);
+				const bodyStartInfo = get_line_info(this, open.end);
 				const parsedCss = parse_style(
 					content,
 					{
 						filename,
 						line: open.loc.start.line,
 						column: open.loc.start.column,
+						start: open.end,
+						sourceLine: bodyStartInfo.line,
+						sourceColumn: bodyStartInfo.column,
 					},
 					{ loose: this.#loose },
 				);

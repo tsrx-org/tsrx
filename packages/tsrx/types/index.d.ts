@@ -790,6 +790,10 @@ declare module 'estree' {
 			children: Array<Atrule | Rule>;
 			source: string;
 			hash: string;
+			/** File that contained this `<style>` body, when parsed from a module. */
+			filename?: string;
+			/** File offset of `source[0]`. CSS `start`/`end` stay body-relative. */
+			sourceStart?: number;
 		}
 
 		export interface Atrule extends BaseNode {

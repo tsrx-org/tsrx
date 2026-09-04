@@ -1,4 +1,5 @@
 /** @import * as AST from 'estree' */
+/** @import { CompileError } from '../../types/index' */
 
 import { walk } from 'zimmerframe';
 import { error } from '../errors.js';
@@ -41,10 +42,38 @@ function is_global(relative_selector) {
 }
 
 /**
+ * @typedef {{
+ *   filename?: string | null,
+ *   errors?: CompileError[],
+ *   comments?: AST.CommentWithLocation[],
+ *   start?: number,
+ * }} AnalyzeCssOptions
+ */
+
+/**
+ * File-relative node for `error()`. CSS `start`/`end` are style-body offsets.
+ *
+ * @param {AST.CSS.Node} node
+ * @param {number} source_start
+ */
+function css_diagnostic_node(node, source_start) {
+	return {
+		start: (node.start ?? 0) + source_start,
+		end: (node.end ?? 0) + source_start,
+		loc: node.loc,
+	};
+}
+
+/**
  * Analyze CSS and set metadata for global selectors
  * @param {AST.CSS.Node} css - The CSS AST
+ * @param {AnalyzeCssOptions} [options]
  */
-export function analyze_css(css) {
+export function analyze_css(css, options = {}) {
+	const stylesheet = css.type === 'StyleSheet' ? /** @type {AST.CSS.StyleSheet} */ (css) : null;
+	const filename = options.filename ?? stylesheet?.filename ?? null;
+	const source_start = options.start ?? stylesheet?.sourceStart ?? 0;
+
 	walk(css, /** @type {{ rule: AST.CSS.Rule | null }} */ ({ rule: null }), {
 		Rule(node, context) {
 			node.metadata.parent_rule = context.state.rule;
@@ -106,10 +135,12 @@ export function analyze_css(css) {
 					) {
 						error(
 							TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
-							null,
-							/** @type {AST.Node} */ (/** @type {unknown} */ (global)),
-							undefined,
-							undefined,
+							filename,
+							/** @type {AST.Node} */ (
+								/** @type {unknown} */ (css_diagnostic_node(global, source_start))
+							),
+							options.errors,
+							options.comments,
 							DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT,
 						);
 					}
@@ -122,10 +153,12 @@ export function analyze_css(css) {
 							if (!is_global(node.children[i])) {
 								error(
 									TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
-									null,
-									/** @type {AST.Node} */ (/** @type {unknown} */ (global)),
-									undefined,
-									undefined,
+									filename,
+									/** @type {AST.Node} */ (
+										/** @type {unknown} */ (css_diagnostic_node(global, source_start))
+									),
+									options.errors,
+									options.comments,
 									DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT,
 								);
 							}
