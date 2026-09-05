@@ -192,10 +192,9 @@ function create_tsrx_vue_plugin(options) {
 
 			if (css) {
 				cssCache.set(realPath, css);
-				code = `import ${JSON.stringify(realPath + CSS_QUERY)};\n${code}`;
-				if (map && typeof map.mappings === 'string') {
-					map = { ...map, mappings: ';' + map.mappings };
-				}
+				// After existing imports so dependency sheets (imported themes)
+				// evaluate first and this module's rules win at equal specificity.
+				code = `${code}\nimport ${JSON.stringify(realPath + CSS_QUERY)};\n`;
 			} else {
 				cssCache.delete(realPath);
 			}
