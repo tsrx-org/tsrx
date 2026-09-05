@@ -1,5 +1,35 @@
 # @tsrx/runtime
 
+## 0.1.5
+
+### Patch Changes
+
+- [#66](https://github.com/tsrx-org/tsrx/pull/66)
+  [`de31ea4`](https://github.com/tsrx-org/tsrx/commit/de31ea41a346e072de42bef3b36716077c681ea8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Speed up
+  `iterable_array_from` for non-array length-bearing values by copying indexed
+  elements instead of walking the iterator protocol or allocating via
+  `Array.from().slice()`.
+
+- [#59](https://github.com/tsrx-org/tsrx/pull/59)
+  [`e3eaa41`](https://github.com/tsrx-org/tsrx/commit/e3eaa419915db5525829b3a401642c4ffcb16433)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Speed up
+  `iterable_array_from` for arrays by copying indexed elements instead of walking
+  the iterator protocol.
+
+- [#67](https://github.com/tsrx-org/tsrx/pull/67)
+  [`20ff7d5`](https://github.com/tsrx-org/tsrx/commit/20ff7d5ca7c03642e51280690f1e1c875bf75848)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Speed up `map_iterable`
+  for the common single-node `@for` body by preallocating after the first mapped
+  value, and use `Set`/`Map` size so `is_last` does not require peeking the next
+  iterator result.
+
+- [#69](https://github.com/tsrx-org/tsrx/pull/69)
+  [`ebab7e0`](https://github.com/tsrx-org/tsrx/commit/ebab7e06fc19b3fe596d6024ea98e75bcd8376a5)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Avoid allocating a
+  second array when merging three or more refs while preserving ref order,
+  identity, and cleanup behavior.
+
 ## 0.1.4
 
 ### Patch Changes

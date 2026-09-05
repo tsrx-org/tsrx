@@ -1,5 +1,66 @@
 # @tsrx/core
 
+## 0.1.66
+
+### Patch Changes
+
+- [#72](https://github.com/tsrx-org/tsrx/pull/72)
+  [`b11381d`](https://github.com/tsrx-org/tsrx/commit/b11381dc10e71e2dae176c6477c4a79113a5bede)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - `analyzeCss` now reports
+  `:global` placement errors with file-relative `pos`, `end`, and `loc` anchored
+  on the misplaced `:global` selector, and accepts
+  `{ filename, errors, comments }` to collect them instead of throwing.
+  `parseStyle` takes an optional `body` origin (the style body's file offset,
+  line, and column) and records it on the sheet as `sourceStart` and a
+  file-relative `loc`; CSS node `start` / `end` stay body-relative. Sheets
+  produced by `parseModule` carry the origin, so direct `analyzeCss` callers can
+  place editor diagnostics without going through `compile`.
+
+- [#53](https://github.com/tsrx-org/tsrx/pull/53)
+  [`8efcbc8`](https://github.com/tsrx-org/tsrx/commit/8efcbc85bc3910531715f51c9f592588c2464f4c)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Scope `<style>` blocks to
+  their siblings (a standalone block styles its siblings and everything below
+  them): several blocks per scope share one hash instead of erroring, fragments in
+  nested `@{ … }` and control-flow bodies are style scopes of their own,
+  element-rooted assigned templates now emit their CSS, exported or applied
+  assigned blocks keep every selector, every assigned block exposes `$class`,
+  `<style apply={theme} />` stamps a theme's classes on a scope, `cssHash` is
+  deduped per scope, and new `STYLE_*`/`CSS_GLOBAL_PLACEMENT` diagnostic codes
+  replace the raw style throws. Amendment A1: a standalone block is a child of an
+  element or fragment and that children list is its scope, so a block styles the
+  items beside it and everything below them and never the element that contains it
+  — a selector matching only the container is pruned; a block is an output node,
+  so beside the output node of a `@{ … }` or control-flow body it is the
+  multiple-outputs parser error and as the lone output there it is the new
+  `STYLE_STANDALONE_NEEDS_FRAGMENT` diagnostic; raw CSS in `<style>` is TSRX
+  template syntax, so a bodied standalone block outside every
+  `@{ … }`/control-flow body is the new `STYLE_STANDALONE_OUTSIDE_TEMPLATE`
+  diagnostic; and `<style>{css}</style>` parses as an ordinary `JSXElement` that
+  no target scopes, extracts, or stamps.
+
+- [#71](https://github.com/tsrx-org/tsrx/pull/71)
+  [`8f5d3f0`](https://github.com/tsrx-org/tsrx/commit/8f5d3f0ac3ddc2454a5e3051e5b3cfd1dc797022)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Recover an unclosed `<style>`
+  or `<script>` in loose (editor) mode instead of failing the whole file. Inside a
+  template the body runs up to the next tag start, so partial CSS reaches the
+  loose CSS parser, which no longer throws on it, and the siblings after it keep
+  their token mappings. Closing-tag auto-insert now keys off the typed `>` itself,
+  so it works for `<style apply={…}>` without the fatal-compile fallback.
+
+- [#53](https://github.com/tsrx-org/tsrx/pull/53)
+  [`8efcbc8`](https://github.com/tsrx-org/tsrx/commit/8efcbc85bc3910531715f51c9f592588c2464f4c)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Fix loose-mode Volar mappings
+  for recovered unclosed tags: the synthesized closing name now maps to the
+  opening tag name (`span`) instead of `<spa`, and the opening `<` keeps its
+  mapping.
+
+- Updated dependencies
+  [[`de31ea4`](https://github.com/tsrx-org/tsrx/commit/de31ea41a346e072de42bef3b36716077c681ea8),
+  [`e3eaa41`](https://github.com/tsrx-org/tsrx/commit/e3eaa419915db5525829b3a401642c4ffcb16433),
+  [`20ff7d5`](https://github.com/tsrx-org/tsrx/commit/20ff7d5ca7c03642e51280690f1e1c875bf75848),
+  [`ebab7e0`](https://github.com/tsrx-org/tsrx/commit/ebab7e06fc19b3fe596d6024ea98e75bcd8376a5)]:
+  - @tsrx/runtime@0.1.5
+
 ## 0.1.65
 
 ### Patch Changes

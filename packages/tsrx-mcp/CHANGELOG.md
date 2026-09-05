@@ -1,5 +1,29 @@
 # @tsrx/mcp
 
+## 0.0.92
+
+### Patch Changes
+
+- [#53](https://github.com/tsrx-org/tsrx/pull/53)
+  [`8efcbc8`](https://github.com/tsrx-org/tsrx/commit/8efcbc85bc3910531715f51c9f592588c2464f4c)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - `review_tsrx_styles`
+  recognizes self-closing `<style apply={…} />` blocks and reports exported or
+  applied blocks as themes, and the documentation index covers the scoped-style
+  sections of the specification, including the amended scope rule (a block styles
+  the items beside it, never the element that contains it), the
+  `tsrx-style-standalone-outside-template` diagnostic, and plain-TSX
+  `<style>{css}</style>`, which `review_tsrx_styles` now reports as an ordinary
+  element rather than an error.
+
+- Updated dependencies
+  [[`b11381d`](https://github.com/tsrx-org/tsrx/commit/b11381dc10e71e2dae176c6477c4a79113a5bede),
+  [`8efcbc8`](https://github.com/tsrx-org/tsrx/commit/8efcbc85bc3910531715f51c9f592588c2464f4c),
+  [`8efcbc8`](https://github.com/tsrx-org/tsrx/commit/8efcbc85bc3910531715f51c9f592588c2464f4c),
+  [`8f5d3f0`](https://github.com/tsrx-org/tsrx/commit/8f5d3f0ac3ddc2454a5e3051e5b3cfd1dc797022),
+  [`8efcbc8`](https://github.com/tsrx-org/tsrx/commit/8efcbc85bc3910531715f51c9f592588c2464f4c)]:
+  - @tsrx/core@0.1.66
+  - @tsrx/prettier-plugin@0.3.132
+
 ## 0.0.91
 
 ### Patch Changes
