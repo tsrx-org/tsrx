@@ -659,6 +659,13 @@ export function convert_source_map_to_mappings(
 					if (node.metadata?.disable_verification) {
 						token.mappingData = { ...mapping_data, verification: false };
 					}
+					// A synthesized identifier that borrows an authored span so
+					// diagnostics land on it (e.g. the `$class` read of a type-only
+					// `apply` target): map for verification only, so hover and
+					// navigation on the authored token are not polluted by it.
+					if (node.metadata?.verify_only) {
+						token.mappingData = mapping_data_verify_only;
+					}
 					// A generated identifier whose source span sits inside a string
 					// literal (e.g. a server-module lowering's namespace reference
 					// carrying the authored `'server'` import specifier): serve

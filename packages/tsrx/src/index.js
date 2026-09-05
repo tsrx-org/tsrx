@@ -186,6 +186,7 @@ export {
 	collect_style_ref_attributes as collectStyleRefAttributes,
 	create_style_class_map as createStyleClassMap,
 	create_style_class_map_from_stylesheet as createStyleClassMapFromStylesheet,
+	build_style_class_map as buildStyleClassMap,
 	create_style_ref_setup_statements as createStyleRefSetupStatements,
 	get_style_element_stylesheet as getStyleElementStylesheet,
 } from './transform/style-ref.js';
@@ -279,4 +280,20 @@ export {
 	validate_forgotten_statement_container as validateForgottenStatementContainer,
 	validate_nesting as validateNesting,
 	is_template_value_position as isTemplateValuePosition,
+	TSRX_STYLE_APPLY_VALUE_ERROR,
+	TSRX_STYLE_APPLY_DUPLICATE_ERROR,
+	TSRX_STYLE_APPLY_UNSUPPORTED_HOST_ERROR,
+	TSRX_STYLE_RESERVED_CLASS_KEY_ERROR,
+	TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR,
+	TSRX_STYLE_STANDALONE_OUTSIDE_TEMPLATE_ERROR,
+	TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR,
+	TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
+	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
+	tsrx_style_apply_target_error as tsrxStyleApplyTargetError,
+	tsrx_style_apply_before_declaration_error as tsrxStyleApplyBeforeDeclarationError,
+	tsrx_style_unknown_attribute_error as tsrxStyleUnknownAttributeError,
 } from './analyze/validation.js';
+export {
+	analyze_styles as analyzeStyles,
+	is_standalone_style_position as isStandaloneStylePosition,
+} from './analyze/style-analyze.js';

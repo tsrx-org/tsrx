@@ -58,7 +58,8 @@
     "@vscode/vsce": "catalog:default",
     "adm-zip": "catalog:default",
     "@types/adm-zip": "catalog:default",
-    "ovsx": "catalog:default"
+    "ovsx": "catalog:default",
+    "shiki": "catalog:"
   },
   "contributes": {
     "breakpoints": [

@@ -188,6 +188,85 @@ export function App() @{
 }`,
 	},
 	{
+		value: 'themes-apply',
+		label: 'Themes with apply',
+		// Octane and Ripple pin an older @tsrx/core without `$class`/`apply`.
+		targets: ['react', 'preact', 'solid', 'vue'],
+		source: `export const theme = <style>
+  div {
+    color: green;
+  }
+
+  .dark {
+    color: purple;
+  }
+</style>;
+
+export function Panel() @{
+  <>
+    <style apply={theme}>
+      /* Scope A; also stamps theme.$class on every element of A. */
+      div {
+        color: black;
+      }
+    </style>
+
+    <span class={theme.dark}>Purple</span>
+    <div>Black: the local rule beats the theme's green.</div>
+
+    @{
+      <>
+        <style>
+          /* Scope B, nested inside A. */
+          div {
+            font-weight: bold;
+          }
+        </style>
+        <div>Black and bold: A, B, and the theme all reach here.</div>
+      </>
+    }
+  </>
+}`,
+	},
+	{
+		value: 'themes-class',
+		label: 'Theme opt-in with $class',
+		// Octane and Ripple pin an older @tsrx/core without `$class`/`apply`.
+		targets: ['react', 'preact', 'solid', 'vue'],
+		source: `function Card({ parentClass }: { parentClass: string }) @{
+  <>
+    <style>
+      .local {
+        padding: 0;
+      }
+    </style>
+    <article class={\`local \${parentClass}\`}>
+      <h2 class={parentClass}>Title</h2>
+    </article>
+  </>
+}
+
+export function App() @{
+  // Reading theme.$class makes the block a theme: div { ... } is kept.
+  const theme = <style>
+    div {
+      color: blue;
+    }
+
+    .card {
+      color: red;
+    }
+  </style>;
+
+  <>
+    <Card parentClass={theme.$class} />
+    <div class={theme.$class}>Blue: opted in</div>
+    <div class={theme.card}>Red: theme.card</div>
+    <p>Untouched</p>
+  </>
+}`,
+	},
+	{
 		value: 'octane-starter',
 		label: 'Octane starter',
 		targets: ['octane'],

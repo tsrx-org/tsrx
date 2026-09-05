@@ -74,6 +74,99 @@ describe('@tsrx/mcp documentation index', () => {
 		expect(content).toContain('does not expose an Octane target');
 	});
 
+	it('documents sibling-scoped style blocks, $class, and apply', () => {
+		for (const query of [
+			'scoped css',
+			'sibling scope',
+			'$class',
+			'apply',
+			'themes',
+			'style diagnostics',
+		]) {
+			expect(find_similar_documentation_sections(query).map((section) => section.slug)).toContain(
+				'style-and-server',
+			);
+		}
+
+		const content = find_documentation_section('style-and-server')?.content ?? '';
+
+		// Grammar extracted from the specification.
+		expect(content).toContain('<style JSXAttributesopt> CSSSource </style>');
+		expect(content).toContain('<style JSXAttributesopt />');
+		expect(content).toContain('StyleApplyValue :');
+		expect(content).toContain('StyleApplyTarget . IdentifierName');
+
+		// Scope model.
+		expect(content).toContain('that children list is its sibling scope');
+		expect(content).toContain('never styles the element that contains it');
+		expect(content).toContain('require a hash class');
+		expect(content).toContain('share one hash class');
+		expect(content).toContain('outer first');
+		expect(content).toContain('always part of the file');
+		expect(content).toContain('A standalone block at module scope is an error');
+
+		// $class, themes, and apply.
+		expect(content).toContain('`$class`');
+		expect(content).toContain('<style apply={theme} />');
+		expect(content).toContain('class={theme.$class}');
+		// Opting elements in with $class (the spec's STYLE_THEME_EXAMPLE card.tsrx section).
+		expect(content).toContain('<Card parentClass={palette.$class} />');
+		expect(content).toContain('palette.$class is read, so palette is a theme');
+		expect(content).toContain('is a theme and keeps every selector');
+		expect(content).toContain('declared before the applying block');
+
+		// Static constraints with their diagnostic codes.
+		for (const code of [
+			'tsrx-style-standalone-at-module-scope',
+			'tsrx-style-standalone-outside-template',
+			'tsrx-style-unknown-attribute',
+			'tsrx-style-apply-value',
+			'tsrx-style-apply-duplicate',
+			'tsrx-style-apply-unsupported-host',
+			'tsrx-style-apply-target',
+			'tsrx-style-apply-before-declaration',
+			'tsrx-style-reserved-class-key',
+			'tsrx-css-global-placement',
+		]) {
+			expect(content).toContain(code);
+		}
+
+		// Precedence rules.
+		expect(content).toContain('Outer before inner');
+		expect(content).toContain('Applied theme before the block that applies it');
+		expect(content).toContain('Source order within a scope');
+	});
+
+	it('documents :global selectors and when to pass $class instead', () => {
+		for (const query of [':global', 'global selectors', 'escape scoping', 'third-party']) {
+			expect(find_similar_documentation_sections(query).map((section) => section.slug)).toContain(
+				'style-and-server',
+			);
+		}
+
+		const content = find_documentation_section('style-and-server')?.content ?? '';
+
+		// Forms and their output shapes.
+		expect(content).toContain('marks the wrapped part of a selector as unscoped');
+		expect(content).toContain('may only start or end a selector');
+		expect(content).toContain('`.card :global(.note)` outputs `.card.<hash> .note`');
+		expect(content).toContain('`:global(.theme-dark) .card` outputs `.theme-dark .card.<hash>`');
+		expect(content).toContain('`.card:global(.is-open)` outputs `.card.<hash>.is-open`');
+		expect(content).toContain('The block form `:global { .toast { ... } body { ... } }`');
+		expect(content).toContain('both output `.card.<hash> { .note { ... } }`');
+		expect(content).toContain('`.card.<hash> { .note.<hash> { ... } }`');
+
+		// Specificity.
+		expect(content).toContain(':where(.<hash>)');
+		expect(content).toContain('(0,2,0) beats a bare `:global(.note)` (0,1,0)');
+
+		// Guidance and the decision table.
+		expect(content).toContain('Prefer passing `theme.$class`');
+		expect(content).toContain('Never write a bare `:global` selector');
+		expect(content).toContain('| I want to ... | Use ... |');
+		expect(content).toContain('`.wrapper :global(.their-class)`');
+	});
+
 	it('documents direct runtime dependencies for every standalone target runtime', () => {
 		const content = find_documentation_section('target-integration')?.content ?? '';
 

@@ -1,0 +1,12 @@
+{
+  "elements": {
+    "card-root": [],
+    "card-text card": ["card"],
+    "chip-root": [],
+    "chip-text chip": ["chip"],
+    "outside": []
+  },
+  "cssOrder": ["card", "chip"],
+  "pruned": ["div"],
+  "classMaps": {}
+}

@@ -1,6 +1,8 @@
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { DIAGNOSTIC_CODES } from '../../src/diagnostics.js';
+import { runSharedScopedStyleTests } from './scoped-styles.js';
+import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformance.js';
 import { createLazyContext, parseModule, preallocateLazyIds } from '../../src/index.js';
 
 /** @import { CompileDiagnosticsHarness, CompileHarness } from '../../types/index' */
@@ -60,6 +62,29 @@ const UNSUPPORTED_LAZY_ASSIGNMENT_SOURCES = [
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] type-only style stand-ins`, () => {
+		it('keeps consecutive <style> siblings parseable as TSX', () => {
+			// Each stand-in is its own `void` expression statement; two adjacent
+			// JSX expression statements would otherwise parse as one (TS2657).
+			const { code, errors } = compile_to_volar_mappings(
+				`function App() @{
+					<style apply={theme} />
+					<style>.a { color: red; }</style>
+					<style>.b { color: blue; }</style>
+					<div class="a b" />
+				}
+				const theme = <style>.t {}</style>;`,
+				'App.tsrx',
+				{ loose: true },
+			);
+
+			expect(errors.filter((error) => error.type === 'fatal')).toEqual([]);
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+			expect(code).toContain('void <style data-tsrx-apply={theme.$class} />');
+			expect(code).toContain('void <style></style>');
+		});
+	});
+
 	describe(`[${name}] compile diagnostics`, () => {
 		it('collects unsupported lazy assignment positions in type-only output', () => {
 			for (const source of UNSUPPORTED_LAZY_ASSIGNMENT_SOURCES) {
@@ -2460,6 +2485,8 @@ export function runSharedCompileTests({
 			: '{ class: className }: { class?: string }';
 
 	runSharedComponentLoopControlFlowTests({ compile, name });
+	runSharedScopedStyleTests({ compile, name, classAttrName, generatedClassAttrName });
+	runSharedScopedStyleConformanceTests({ compile, name, classAttrName, generatedClassAttrName });
 	runSharedNestedLazyDestructuringTests({ compile, name });
 	runSharedLazyLoopTests({ compile, name });
 	runSharedLazyScopeNestingTests({ compile, name });

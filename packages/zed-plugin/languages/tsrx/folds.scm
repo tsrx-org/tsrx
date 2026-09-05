@@ -17,7 +17,7 @@
 (jsx_element) @fold
 (jsx_fragment) @fold
 
-; Fold style elements
+; Fold style elements (bodied and self-closing)
 (style_element) @fold
 
 ; Fold script elements

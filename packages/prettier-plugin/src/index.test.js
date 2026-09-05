@@ -7562,4 +7562,295 @@ class A {}
 class B {}`);
 		});
 	});
+
+	describe('scoped <style> blocks with apply', () => {
+		/**
+		 * Assert the input is already formatted and comes back byte-identical.
+		 * `format` also checks the second pass is a fixpoint, so every case here
+		 * doubles as an idempotence check.
+		 * @param {string} source
+		 */
+		const expectUnchanged = async (source) => {
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		};
+
+		it('formats a body-less <style apply={theme} /> inside a fragment', async () => {
+			const input = `export function App(){return <><style apply={theme} /><div>{"hi"}</div></>}`;
+			const expected = `export function App() {
+  return <>
+    <style apply={theme} />
+    <div>{"hi"}</div>
+  </>;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('formats a fragment holding <style apply={theme} /> and the output node in a @{} body', async () => {
+			const input = `export function App()@{<><style apply={theme} /><div>{"hi"}</div></>}`;
+			const expected = `export function App() @{
+  <>
+    <style apply={theme} />
+    <div>{"hi"}</div>
+  </>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('does not expand a body-less block into <style></style>', async () => {
+			// A lone block as the output of a @{} body parses (the analyzer
+			// reports it); the formatter keeps the self-closing form.
+			const result = await format(`export function Only()@{<style apply={theme} />}`);
+			expect(result).toBeWithNewline(`export function Only() @{
+  <style apply={theme} />
+}`);
+			expect(result).not.toContain('</style>');
+		});
+
+		it('keeps an explicitly empty <style apply={theme}></style> as authored', async () => {
+			await expectUnchanged(`export function App() @{
+  <>
+    <style apply={theme}></style>
+    <div>{"hi"}</div>
+  </>
+}`);
+		});
+
+		it('formats <style apply={[a, b]}> with a CSS body', async () => {
+			const input = `export function App()@{<><style apply={[a,b]}>div{color:red}</style><div>{"hi"}</div></>}`;
+			const expected = `export function App() @{
+  <>
+    <style apply={[a, b]}>
+      div {
+        color: red;
+      }
+    </style>
+    <div>{"hi"}</div>
+  </>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks a long apply list across lines like any other attribute', async () => {
+			const input = `export function App()@{<><style apply={[someVeryLongThemeName, anotherVeryLongThemeName, yetAnotherVeryLongThemeName]} /><div>{"hi"}</div></>}`;
+			const expected = `export function App() @{
+  <>
+    <style
+      apply={[
+        someVeryLongThemeName,
+        anotherVeryLongThemeName,
+        yetAnotherVeryLongThemeName,
+      ]}
+    />
+    <div>{"hi"}</div>
+  </>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('preserves other attributes such as ref alongside apply', async () => {
+			await expectUnchanged(`export function App() @{
+  <>
+    <style ref={x} apply={theme} />
+    <div>{"hi"}</div>
+  </>
+}`);
+		});
+
+		it('formats multiple <style> blocks in one fragment of a @{} body', async () => {
+			const input = `export function App()@{<><style>div{color:red}</style><style apply={theme} /><div>{"hi"}</div></>}`;
+			const expected = `export function App() @{
+  <>
+    <style>
+      div {
+        color: red;
+      }
+    </style>
+    <style apply={theme} />
+    <div>{"hi"}</div>
+  </>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('formats multiple <style> blocks in one fragment', async () => {
+			const input = `export function App(){return <><style apply={a} /><style apply={b}>p{margin:0}</style><p>{"x"}</p></>}`;
+			const expected = `export function App() {
+  return <>
+    <style apply={a} />
+    <style apply={b}>
+      p {
+        margin: 0;
+      }
+    </style>
+    <p>{"x"}</p>
+  </>;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('preserves authored blank lines between style blocks and their siblings', async () => {
+			const input = `export function App()@{<>
+<style apply={theme} />
+
+<style>div{color:red}</style>
+
+
+<div>{"hi"}</div></>}`;
+			const expected = `export function App() @{
+  <>
+    <style apply={theme} />
+
+    <style>
+      div {
+        color: red;
+      }
+    </style>
+
+    <div>{"hi"}</div>
+  </>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps a blank line between setup statements and the fragment holding a style block', async () => {
+			await expectUnchanged(`export function App() @{
+  const x = 1;
+
+  <>
+    <style apply={theme} />
+    <div>{"hi"}</div>
+  </>
+}`);
+		});
+
+		it('keeps a leading comment on a style block', async () => {
+			await expectUnchanged(`export function App() @{
+  <>
+    // theme
+    <style apply={theme} />
+    <div>{"hi"}</div>
+  </>
+}`);
+		});
+
+		it('formats a style block inside a fragment of a nested @{} block', async () => {
+			const input = `export function App()@{<div>@{<><style apply={inner} /><span>{"x"}</span></>}</div>}`;
+			const expected = `export function App() @{
+  <div>@{
+    <>
+      <style apply={inner} />
+      <span>{"x"}</span>
+    </>
+  }</div>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('formats style blocks in fragments of @if and @else bodies', async () => {
+			const input = `export function App()@{<div>@if(cond){<><style apply={a} /><span>{"x"}</span></>}@else{<><style apply={b} /><em>{"y"}</em></>}</div>}`;
+			const expected = `export function App() @{
+  <div>
+    @if (cond) {
+      <>
+        <style apply={a} />
+        <span>{"x"}</span>
+      </>
+    } @else {
+      <>
+        <style apply={b} />
+        <em>{"y"}</em>
+      </>
+    }
+  </div>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('formats style blocks in fragments of @for bodies', async () => {
+			const input = `export function App()@{<div>@for(const item of items){<><style apply={a} /><span>{item}</span></>}</div>}`;
+			const expected = `export function App() @{
+  <div>
+    @for (const item of items) {
+      <>
+        <style apply={a} />
+        <span>{item}</span>
+      </>
+    }
+  </div>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('formats style blocks in fragments of @switch case bodies', async () => {
+			const input = `export function App()@{<div>@switch(v){@case 1: {<><style apply={a} /><span>{"x"}</span></>}@default: {<><style apply={b} /><em>{"y"}</em></>}}</div>}`;
+			const expected = `export function App() @{
+  <div>
+    @switch (v) {
+      @case 1: {
+        <>
+          <style apply={a} />
+          <span>{"x"}</span>
+        </>
+      }
+      @default: {
+        <>
+          <style apply={b} />
+          <em>{"y"}</em>
+        </>
+      }
+    }
+  </div>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('formats style blocks in fragments of @try and @catch bodies', async () => {
+			const input = `export function App()@{<div>@try{<><style apply={a} /><span>{"x"}</span></>}@catch(e){<><style apply={b} /><em>{"err"}</em></>}</div>}`;
+			const expected = `export function App() @{
+  <div>
+    @try {
+      <>
+        <style apply={a} />
+        <span>{"x"}</span>
+      </>
+    } @catch (e) {
+      <>
+        <style apply={b} />
+        <em>{"err"}</em>
+      </>
+    }
+  </div>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('formats a module-scope body-less bundle export', async () => {
+			const result = await format(`export const bundle = <style apply={[a,b]} />;`);
+			expect(result).toBeWithNewline(`export const bundle = <style apply={[a, b]} />;`);
+		});
+
+		it('formats a module-scope assigned block with a CSS body', async () => {
+			const input = `const theme = <style apply={base}>div{color:red}</style>;`;
+			const expected = `const theme = <style apply={base}>
+  div {
+    color: red;
+  }
+</style>;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
 });

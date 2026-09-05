@@ -1,13 +1,12 @@
 /** @import * as AST from 'estree' */
 /** @import * as ESTreeJSX from 'estree-jsx' */
-/** @import { BaseNodeMetaData, FunctionMetaData, JsxHelperComponent, JsxHelperState, JsxPlatform, JsxStyleContext, JsxTransformContext as TransformContext, JsxTransformOptions, JsxTransformResult, JsxVisitorContext } from '@tsrx/core/types' */
+/** @import { BaseNodeMetaData, FunctionMetaData, JsxHelperComponent, JsxHelperState, JsxPlatform, JsxTransformContext as TransformContext, JsxTransformOptions, JsxTransformResult, JsxVisitorContext } from '@tsrx/core/types' */
 
 import { walk } from 'zimmerframe';
 import { print } from 'esrap';
 import { error } from '../../errors.js';
 import { is_template_value_position } from '../../analyze/validation.js';
 import { analyze_css } from '../../analyze/css-analyze.js';
-import { prune_css } from '../../analyze/prune.js';
 import {
 	in_jsx_child_context,
 	is_empty_jsx_fragment,
@@ -44,12 +43,11 @@ import {
 	find_first_top_level_await,
 	find_first_top_level_await_in_tsrx_function_body,
 } from '../await.js';
-import { prepare_stylesheet_for_render, annotate_with_hash, is_style_element } from '../scoping.js';
+import { prepare_stylesheet_for_render, is_style_element } from '../scoping.js';
+import { prepare_style_scopes, type_only_style } from './style-scopes.js';
 import {
-	collect_style_ref_attributes,
-	create_style_class_map,
+	build_style_class_map,
 	create_style_class_map_from_stylesheet,
-	create_style_ref_setup_statements,
 	get_style_element_stylesheet,
 } from '../style-ref.js';
 import {
@@ -635,6 +633,12 @@ export function createJsxTransform(platform) {
 			ast = lower_server_module_for_types(ast, platform.serverModule);
 		}
 
+		// Style scopes: which `<style>` blocks scope which template, CSS emission
+		// order, and the classes every element carries. Runs once, before any
+		// lowering, so order is an invariant of source structure (see
+		// style-scopes.js). Copy-on-write like the passes below.
+		ast = prepare_style_scopes(ast, transform_context);
+
 		// Both passes are copy-on-write over arbitrary property values, so they
 		// hand back the same shape they were given.
 		ast = /** @type {AST.Program} */ (expand_child_code_blocks(ast));
@@ -668,10 +672,7 @@ export function createJsxTransform(platform) {
 					return visit(create_native_tsrx_render_block(node, state), state);
 				}
 
-				const style_context = prepare_tsrx_fragment_styles(node, state);
-				const target = /** @type {AST.TSRXJSXElement | AST.TSRXJSXFragment} */ (
-					style_context?.fragment ?? next() ?? node
-				);
+				const target = /** @type {AST.TSRXJSXElement | AST.TSRXJSXFragment} */ (next() ?? node);
 				// An EMPTY fragment that is the sole expression of a `{ … }` container in a
 				// JSX child slot (`<b>{<></>}</b>`) must stay `<></>`: the container already
 				// supplies the `{}` wrapper, so lowering it to a bare `null` (the default
@@ -701,11 +702,7 @@ export function createJsxTransform(platform) {
 				) {
 					expression = wrap_lowered_value_in_fragment(expression, node);
 				}
-				for (const statement of create_tsrx_style_ref_setup_statements(
-					target,
-					style_context,
-					state,
-				)) {
+				for (const statement of take_style_ref_statements(target)) {
 					add_jsx_setup_declaration(expression, statement);
 				}
 				return wrap_jsx_setup_declarations(expression, in_jsx_child);
@@ -776,17 +773,41 @@ export function createJsxTransform(platform) {
 			JSXStyleElement(node, { path, state }) {
 				if (is_style_expression_position(path)) {
 					const stylesheet = get_style_element_stylesheet(node);
-					if (stylesheet) {
+					// The scope pre-pass renders assigned blocks at their declaration
+					// position; a block it did not reach (generated after it ran) is
+					// rendered here, at the end of the emission order.
+					if (stylesheet && !node.metadata.tsrx_style_prepared) {
+						node.metadata.tsrx_style_prepared = true;
 						analyze_css(stylesheet);
-						state.stylesheets.push(prepare_stylesheet_for_render(stylesheet, true));
-						return create_style_expression_value(node, stylesheet, state);
+						state.stylesheets.push(
+							prepare_stylesheet_for_render(
+								stylesheet,
+								node.metadata.styleKind === 'theme' ? 'theme' : 'class-map',
+							),
+						);
 					}
+					return create_style_expression_value(node, stylesheet, state);
 				}
-				return b.jsx_element(
-					/** @type {ESTreeJSX.JSXElement} */ ({ ...node, type: 'JSXElement', children: [] }),
-					node.openingElement?.attributes ?? [],
+				// A scoped block never reaches the output: the pre-pass strips it.
+				// What is left is the type-only stand-in (kept for editor mappings)
+				// or a block outside any scope, which is already reported.
+				const stand_in = state.typeOnly ? type_only_style(node) : node;
+				const element = b.jsx_element(
+					/** @type {ESTreeJSX.JSXElement} */ ({ ...stand_in, type: 'JSXElement', children: [] }),
+					stand_in.openingElement?.attributes ?? [],
 					[],
 				);
+				// A stand-in in a statement slot (a `<style>` sibling of the output
+				// node) prints as an expression statement; two in a row would parse as
+				// adjacent JSX (TS2657), so each is its own `void` expression.
+				const parent = path.at(-1);
+				const in_statement_slot =
+					parent?.type === 'JSXCodeBlock' ||
+					parent?.type === 'BlockStatement' ||
+					parent?.type === 'SwitchCase' ||
+					parent?.type === 'Program' ||
+					parent?.type === 'ExpressionStatement';
+				return state.typeOnly && in_statement_slot ? b.unary('void', element) : element;
 			},
 
 			JSXCodeBlock: transform_jsx_code_block,
@@ -1081,99 +1102,6 @@ function inject_dynamic_import(program, transform_context) {
 	program.body.unshift(
 		b.import_declaration([b.import_specifier('Dynamic', DYNAMIC_IMPORT_LOCAL)], source),
 	);
-}
-
-/**
- * Attach selector-location metadata used by editor definitions/hover before
- * the shared scoping pass mutates class attributes with the component hash.
- *
- * @param {AST.NativeTSRXNode} component
- * @param {AST.CSS.StyleSheet} css
- * @param {TransformContext} transform_context
- * @param {boolean} [export_top_scoped_classes]
- * @param {string} [region_hash]
- * @returns {void}
- */
-function apply_css_definition_metadata(
-	component,
-	css,
-	transform_context,
-	export_top_scoped_classes = false,
-	region_hash = css.hash,
-) {
-	analyze_css(css);
-
-	const metadata = component.metadata || (component.metadata = { path: [] });
-	const style_classes = metadata.styleClasses || (metadata.styleClasses = new Map());
-	const top_scoped_classes = metadata.topScopedClasses || new Map();
-	const elements = collect_css_prunable_elements(node_children(component), [], transform_context);
-
-	const prune = () => {
-		for (const element of elements) {
-			prune_css(css, element, style_classes, top_scoped_classes, region_hash);
-		}
-	};
-
-	prune();
-
-	if (export_top_scoped_classes) {
-		for (const [class_name, class_info] of top_scoped_classes) {
-			style_classes.set(class_name, class_info.selector ?? class_info);
-		}
-		prune();
-	}
-
-	if (top_scoped_classes.size > 0) {
-		metadata.topScopedClasses = top_scoped_classes;
-	}
-}
-
-/**
- * Pruning runs from the fragment visitor, before the walker has descended into
- * the subtree and stamped walker paths, so each collected element gets its
- * ancestor chain (`metadata.path`) here — descendant/sibling selector matching
- * in `prune_css` reads it.
- *
- * @param {AST.Node | AST.Node[]} value
- * @param {AST.TSRXJSXElement[]} [elements]
- * @param {TransformContext | null} [transform_context]
- * @param {AST.Node[]} [path]
- * @returns {AST.TSRXJSXElement[]}
- */
-function collect_css_prunable_elements(value, elements = [], transform_context = null, path = []) {
-	if (Array.isArray(value)) {
-		for (const child of value) {
-			collect_css_prunable_elements(child, elements, transform_context, path);
-		}
-		return elements;
-	}
-
-	if (
-		(value.type === 'FunctionDeclaration' ||
-			value.type === 'FunctionExpression' ||
-			value.type === 'ArrowFunctionExpression') &&
-		// Generated dynamic-tag wrappers are render-block closures, not user
-		// component boundaries — the element inside still belongs to this
-		// component's scoped CSS.
-		value.metadata?.tsrx_dynamic_wrapper !== true
-	) {
-		return elements;
-	}
-
-	if (value.type === 'JSXElement' && value.metadata?.native_tsrx) {
-		if (!is_style_element(value)) {
-			set_node_path_metadata(value, path);
-			elements.push(value);
-		}
-	}
-
-	const child_path = [...path, value];
-
-	for (const child of child_nodes(value, 'css')) {
-		collect_css_prunable_elements(child, elements, transform_context, child_path);
-	}
-
-	return elements;
 }
 
 /**
@@ -2318,112 +2246,20 @@ function node_contains_native_tsrx_template(node) {
 }
 
 /**
- * @param {AST.NativeTSRXNode} node
- * @param {boolean} allow_multiple
- * @returns {AST.CSS.StyleSheet[] | null}
- */
-function collect_tsrx_stylesheets(node, allow_multiple) {
-	/** @type {AST.CSS.StyleSheet[]} */
-	const styles = [];
-	collect_style_elements(node_children(node), styles);
-
-	if (styles.length === 0) return null;
-	if (styles.length > 1 && !allow_multiple) {
-		throw new Error('TSRX fragments can only have one style tag');
-	}
-
-	return styles;
-}
-
-/**
- * @param {AST.NativeTSRXNode} node
- * @param {TransformContext} transform_context
- * @returns {JsxStyleContext | null}
- */
-function prepare_tsrx_fragment_styles(node, transform_context) {
-	// Type-only output must stay analyzable: a throw here makes language hosts
-	// (tsrx-tsc, editors) fall back to presenting the RAW source as the virtual
-	// TSX, so every CSS brace in the file becomes a TSX parse error. Platforms
-	// whose runtime dialect allows one scope to split its CSS across several
-	// `<style>` tags are valid input here, and platforms that forbid it still
-	// report the rule through their own runtime compiler.
-	const sheets = collect_tsrx_stylesheets(node, transform_context.typeOnly);
-	if (!sheets) return null;
-
-	const css = sheets[0];
-	const style_refs = collect_style_ref_attributes(node);
-	// A component scope keeps ONE hash even when its CSS is split across
-	// several `<style>` tags: rebase every sheet onto the first sheet's hash
-	// before scoping, so selector rewriting and the DOM hash annotation below
-	// agree. `apply_css_definition_metadata` accumulates into the component's
-	// `styleClasses`/`topScopedClasses` metadata, so per-sheet calls compose
-	// into one class map for style refs.
-	for (const sheet of sheets) {
-		const region_hash = sheet.hash;
-		sheet.hash = css.hash;
-		// `prune_css` inside marks the matching selectors as used/scoped; selectors
-		// that match no element render commented out, matching target behavior.
-		apply_css_definition_metadata(
-			node,
-			sheet,
-			transform_context,
-			style_refs.length > 0,
-			region_hash,
-		);
-		transform_context.stylesheets.push(sheet);
-	}
-	const fragment = annotate_tsrx_with_hash(
-		node,
-		css.hash,
-		transform_context.platform.jsx.classAttrName ??
-			(transform_context.platform.jsx.rewriteClassAttr ? 'className' : 'class'),
-		transform_context.typeOnly,
-	);
-	return { css, style_refs, fragment };
-}
-
-/**
- * @template T
- * @param {AST.NativeTSRXNode} node
- * @param {TransformContext} transform_context
- * @param {(style_context: JsxStyleContext | null) => T} callback
- * @returns {T}
- */
-function with_tsrx_fragment_styles(node, transform_context, callback) {
-	const style_context = prepare_tsrx_fragment_styles(node, transform_context);
-	return callback(style_context);
-}
-
-/**
- * @param {AST.Node} fragment
- * @param {JsxStyleContext | null} style_context
- * @param {TransformContext} transform_context
- * @returns {AST.Statement[]}
- */
-function create_tsrx_style_ref_setup_statements(fragment, style_context, transform_context) {
-	if (!style_context || style_context.style_refs.length === 0) {
-		return [];
-	}
-
-	return create_style_ref_setup_statements(
-		style_context.style_refs,
-		create_style_class_map(fragment, style_context.css),
-		{
-			allowMutableRefTarget: transform_context.platform.jsx.multiRefStrategy === 'array',
-			createTempIdentifier: () =>
-				create_generated_identifier(create_style_ref_temp_name(transform_context)),
-		},
-	);
-}
-
-/**
+ * The object an assigned block evaluates to: `$class` (applied themes'
+ * classes, then the own hash) followed by one entry per exposed class. A
+ * body-less `<style apply={…} />` exposes `$class` only.
+ *
  * @param {AST.JSXStyleElement} node
- * @param {AST.CSS.StyleSheet} stylesheet
+ * @param {AST.CSS.StyleSheet | null} stylesheet
  * @param {TransformContext} transform_context
  * @returns {AST.Expression}
  */
 function create_style_expression_value(node, stylesheet, transform_context) {
-	const class_map = create_style_class_map_from_stylesheet(stylesheet);
+	const options = { applied: node.metadata.tsrx_style_class_parts ?? [] };
+	const class_map = stylesheet
+		? create_style_class_map_from_stylesheet(stylesheet, options)
+		: build_style_class_map(new Map(), null, options);
 	if (!transform_context.typeOnly) {
 		return class_map;
 	}
@@ -2437,7 +2273,7 @@ function create_style_expression_value(node, stylesheet, transform_context) {
  * @param {TransformContext} transform_context
  */
 function add_type_only_style_anchor(node, transform_context) {
-	const style_anchor = b.jsx_element(clone_ast_node(node, true), [], []);
+	const style_anchor = b.jsx_element(clone_ast_node(type_only_style(node), true), [], []);
 	disable_style_anchor_verification(style_anchor);
 
 	const anchor_id = create_generated_identifier(create_style_anchor_name(transform_context));
@@ -2472,177 +2308,6 @@ function disable_style_anchor_verification(element) {
 			disable_verification: true,
 		};
 	}
-}
-
-/**
- * @param {TransformContext} transform_context
- * @returns {string}
- */
-function create_style_ref_temp_name(transform_context) {
-	if (transform_context.helper_state) {
-		return create_helper_name(transform_context.helper_state, 'style_ref');
-	}
-
-	transform_context.local_statement_component_index += 1;
-	return `_tsrx_style_ref_${transform_context.local_statement_component_index}`;
-}
-
-/**
- * @param {AST.Node | AST.Node[] | null | undefined} node
- * @param {AST.CSS.StyleSheet[]} styles
- * @returns {void}
- */
-function collect_style_elements(node, styles) {
-	if (!node) return;
-
-	if (Array.isArray(node)) {
-		for (const child of node) {
-			collect_style_elements(child, styles);
-		}
-		return;
-	}
-
-	if (is_style_element(node)) {
-		const stylesheet = node.children?.find((child) => child.type === 'StyleSheet');
-		if (stylesheet) {
-			styles.push(stylesheet);
-		}
-		return;
-	}
-
-	if (is_function_or_class_boundary(node)) {
-		return;
-	}
-
-	if ((node.type === 'JSXElement' || node.type === 'JSXFragment') && node.metadata?.native_tsrx) {
-		collect_style_elements(node.children || [], styles);
-		return;
-	}
-
-	if (node.type === 'BlockStatement') {
-		collect_style_elements(node.body || [], styles);
-		return;
-	}
-
-	if (is_if_control_node(node)) {
-		collect_style_elements(node.consequent, styles);
-		collect_style_elements(node.alternate, styles);
-		return;
-	}
-
-	if (is_switch_control_node(node)) {
-		for (const switch_case of node.cases || []) {
-			collect_style_elements(switch_case.consequent || [], styles);
-		}
-		return;
-	}
-
-	if (is_try_control_node(node)) {
-		collect_style_elements(node.block, styles);
-		collect_style_elements(node.handler?.body, styles);
-		collect_style_elements(node.finalizer, styles);
-	}
-}
-
-/**
- * @template {AST.NativeTSRXNode} T
- * @param {T} node
- * @param {string} hash
- * @param {'class' | 'className'} jsx_class_attr_name
- * @param {boolean} preserve_style_elements
- * @returns {T}
- */
-function annotate_tsrx_with_hash(node, hash, jsx_class_attr_name, preserve_style_elements) {
-	// `annotate_with_hash` returns null for a `<style>` element it drops, so
-	// filter before the children go back on the node.
-	let children = node_children(node)
-		.map((statement) =>
-			annotate_with_hash(
-				clone_ast_node(statement),
-				hash,
-				jsx_class_attr_name,
-				preserve_style_elements,
-			),
-		)
-		.filter(is_ast_node);
-	if (!preserve_style_elements) {
-		children = strip_style_elements_from_list(children);
-	}
-	// Shallow copy with rewritten children; the spread preserves `node`'s type.
-	return /** @type {T} */ ({ ...node, children });
-}
-
-/**
- * Drop `<style>` elements from a child list, recursing into the nodes that
- * survive.
- *
- * @param {Array<AST.Node | null | undefined>} nodes
- * @returns {AST.Node[]}
- */
-function strip_style_elements_from_list(nodes) {
-	/** @type {AST.Node[]} */
-	const kept = [];
-	for (const child of nodes) {
-		if (is_style_element(child)) continue;
-		const stripped = strip_style_elements(child);
-		if (stripped) kept.push(stripped);
-	}
-	return kept;
-}
-
-/**
- * Strip `<style>` elements out of one node's render subtree, in place. Returns
- * `null` when the node itself is a `<style>` element and should be dropped, or
- * when there is no node — child lists can hold holes.
- *
- * @param {AST.Node | null | undefined} node
- * @returns {AST.Node | null}
- */
-function strip_style_elements(node) {
-	if (!node || is_style_element(node)) {
-		return null;
-	}
-
-	if (is_function_or_class_boundary(node)) {
-		return node;
-	}
-
-	if ((node.type === 'JSXElement' || node.type === 'JSXFragment') && node.metadata?.native_tsrx) {
-		node.children = strip_style_elements_from_list(node.children || []);
-		return node;
-	}
-
-	if (node.type === 'BlockStatement') {
-		node.body = /** @type {AST.Statement[]} */ (strip_style_elements_from_list(node.body || []));
-		return node;
-	}
-
-	if (is_if_control_node(node)) {
-		const consequent = strip_style_elements(node.consequent);
-		if (consequent) node.consequent = /** @type {AST.Statement} */ (consequent);
-		if (node.alternate) {
-			const alternate = strip_style_elements(node.alternate);
-			if (alternate) node.alternate = /** @type {AST.Statement} */ (alternate);
-		}
-		return node;
-	}
-
-	if (is_switch_control_node(node)) {
-		for (const switch_case of node.cases || []) {
-			switch_case.consequent = /** @type {AST.Statement[]} */ (
-				strip_style_elements_from_list(switch_case.consequent || [])
-			);
-		}
-		return node;
-	}
-
-	if (is_try_control_node(node)) {
-		strip_style_elements(node.block);
-		if (node.handler?.body) strip_style_elements(node.handler.body);
-		if (node.finalizer) strip_style_elements(node.finalizer);
-	}
-
-	return node;
 }
 
 /**
@@ -2708,15 +2373,28 @@ function create_native_tsrx_statement_list_block(block, transform_context) {
  * @returns {AST.Statement[]}
  */
 function create_native_tsrx_render_statements(fragment, transform_context) {
-	return with_tsrx_fragment_styles(fragment, transform_context, (style_context) => {
-		const target = style_context?.fragment ?? fragment;
-		const render_nodes =
-			target.type === 'JSXFragment' ? get_tsrx_render_children(target) : [target];
-		return [
-			...create_tsrx_style_ref_setup_statements(target, style_context, transform_context),
-			...build_render_statements(render_nodes, true, transform_context, fragment),
-		];
-	});
+	const render_nodes =
+		fragment.type === 'JSXFragment' ? get_tsrx_render_children(fragment) : [fragment];
+	return [
+		...take_style_ref_statements(fragment),
+		...build_render_statements(render_nodes, true, transform_context, fragment),
+	];
+}
+
+/**
+ * Style `ref` setup statements the scope pre-pass left on a scope rooted at
+ * a native fragment/element (see style-scopes.js), consumed once: the same
+ * fragment can reach both the return-statement lowering and the fragment
+ * visitor.
+ *
+ * @param {AST.Node} fragment
+ * @returns {AST.Statement[]}
+ */
+function take_style_ref_statements(fragment) {
+	const statements = fragment.metadata?.tsrx_style_ref_statements;
+	if (!statements) return [];
+	delete fragment.metadata.tsrx_style_ref_statements;
+	return statements;
 }
 
 /**
@@ -3909,20 +3587,27 @@ function to_jsx_element(
 		? opening_element_node
 		: set_loc(opening_element_node, node.openingElement || node);
 
-	const closingElement = selfClosing
-		? null
-		: set_loc(
+	let closingElement = null;
+	if (!selfClosing) {
+		const authored_closing = node.closingElement;
+		if (authored_closing) {
+			// Clone from the actual closing name when there is one: a dynamic
+			// tag's closing expression (`</{Tag}>`) has its own source positions,
+			// which editor mappings need.
+			closingElement = set_loc(
 				b.jsx_closing_element(
-					// Clone from the actual closing name when there is one: a dynamic
-					// tag's closing expression (`</{Tag}>`) has its own source positions,
-					// which editor mappings need.
-					clone_jsx_name(
-						node.closingElement?.name ?? name,
-						node.closingElement?.name || node.closingElement || node,
-					),
+					clone_jsx_name(authored_closing.name ?? name, authored_closing.name || authored_closing),
 				),
-				node.closingElement || node,
+				authored_closing,
 			);
+		} else {
+			// Recovered unclosed tags have no authored close. Map the synthesized
+			// name to the opening name token so rename/hover land on `span`, not
+			// `<spa`, and leave the closing element itself unlocated so it does
+			// not steal the opening `<` mapping.
+			closingElement = b.jsx_closing_element(clone_jsx_name(name, source_opening.name));
+		}
+	}
 
 	const element = set_loc(b.jsx_element_fresh(openingElement, closingElement, children), node);
 	if (node.metadata?.dynamicElement === true) {
@@ -4448,16 +4133,8 @@ function get_jsx_code_block_body_nodes(node, transform_context) {
 		return node.body || [];
 	}
 
-	if (is_native_tsrx_node(node.render)) {
-		const style_context = prepare_tsrx_fragment_styles(node.render, transform_context);
-		const render = style_context?.fragment ?? node.render;
-		return [
-			...(node.body || []),
-			...create_tsrx_style_ref_setup_statements(render, style_context, transform_context),
-			render,
-		];
-	}
-
+	// Scoped styles were collected, stamped, and stripped by the pre-pass;
+	// style `ref` setup statements already sit at the end of `body`.
 	return [...(node.body || []), node.render];
 }
 

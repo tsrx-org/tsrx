@@ -90,7 +90,9 @@ Add the generic config above to your Codex MCP configuration.
   before browser-based Axe validation, including missing button names, unlabeled
   form controls, and visible text accidentally wrapped in quote characters.
 - `review-tsrx-styles` - review function-local style usage for malformed style
-  blocks, broad selectors, root styling, and contrast risks.
+  blocks, broad selectors, root styling, and contrast risks; recognises
+  self-closed `<style apply={theme} />` blocks and notes exported or applied theme
+  blocks (which expose `$class`).
 - `review-tsrx-components` - review component structure and suggest extraction
   points when control flow, repeated templates, or styles become dense.
 - `validate-tsrx-file` - read a `.tsrx` file and run formatting, compilation, and
