@@ -20,10 +20,9 @@ export default {
 ```
 
 The plugin compiles `.tsrx` modules with `@tsrx/solid`, runs the final TypeScript
-
-- Solid JSX transform through `babel-loader` with `@babel/preset-typescript` and
-  `babel-preset-solid`, and emits sibling-scoped `<style>` blocks (each styles its
-  siblings and everything below them) through Rspack's built-in CSS module type.
+and Solid JSX transform through `babel-loader` with `@babel/preset-typescript` and
+`babel-preset-solid`, and emits sibling-scoped `<style>` blocks (each styles its
+siblings and everything below them) through Rspack's built-in CSS module type.
 
 It also pushes `.tsrx` into `resolve.extensions` and enables `experiments.css`
 when unset. In development mode it adds `solid-refresh/babel` unless you pass

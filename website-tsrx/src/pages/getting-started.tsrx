@@ -270,38 +270,52 @@ const MCP_CLAUDE_CODE_HTML = [
 ].join('\n');
 
 const REACT_APPLY_CLASS_HTML = highlight_tsrx(
-	`import { theme } from './theme.tsrx';
+	`// theme.tsrx
+export const theme = <style>
+  div { color: green; }
+</style>;
+// theme.$class -> the block's hash class
+
+// panel.tsrx
+import { theme } from './theme.tsrx';
 
 export function Panel() @{
   <>
     <style apply={theme}>
-      /* Scope A; also stamps theme.$class on every element of A. */
+      /* scope A; also stamps theme.$class on every element of A */
       div { color: black; }
     </style>
-    <div>Black: the local rule beats the theme's green.</div>
+    <div>Black: the local rule beats the theme's green</div>
   </>
 }
 
 export function OptIn() @{
-  <div className={theme.$class}>Blue: opted in with $class</div>
+  <div className={theme.$class}>Green: opted in with $class</div>
 }`,
 );
 
 const APPLY_CLASS_HTML = highlight_tsrx(
-	`import { theme } from './theme.tsrx';
+	`// theme.tsrx
+export const theme = <style>
+  div { color: green; }
+</style>;
+// theme.$class -> the block's hash class
+
+// panel.tsrx
+import { theme } from './theme.tsrx';
 
 export function Panel() @{
   <>
     <style apply={theme}>
-      /* Scope A; also stamps theme.$class on every element of A. */
+      /* scope A; also stamps theme.$class on every element of A */
       div { color: black; }
     </style>
-    <div>Black: the local rule beats the theme's green.</div>
+    <div>Black: the local rule beats the theme's green</div>
   </>
 }
 
 export function OptIn() @{
-  <div class={theme.$class}>Blue: opted in with $class</div>
+  <div class={theme.$class}>Green: opted in with $class</div>
 }`,
 );
 
@@ -443,15 +457,16 @@ export function GettingStartedPage() @{
 								modules into standard React components with sibling-scoped CSS.
 							</p>
 							<p class="section-body">
-								Assign a
+								Assigning a
 								<code class="inline-code">{'<style>'}</code>
-								block to get
-								<code class="inline-code">$class</code>, then
+								block to a variable gives you a theme with
+								<code class="inline-code">$class</code>, its hash class.
 								<code class="inline-code">{'<style apply={theme} />'}</code>
-								adds that class to every element of a scope. React keeps authored attributes as
+								adds that class to every element of the scope it sits in, and a rule written in that
+								scope beats the theme's at equal specificity. React keeps authored attributes as
 								written, so use
 								<code class="inline-code">className</code>
-								when you opt a single element in. See
+								to opt a single element in. See
 								<a href="/features#style-composition">Style composition</a>
 								for the full model.
 							</p>
@@ -484,14 +499,15 @@ export function GettingStartedPage() @{
 								if you want to avoid pulling in the full compat layer.
 							</p>
 							<p class="section-body">
-								Assign a
+								Assigning a
 								<code class="inline-code">{'<style>'}</code>
-								block to get
-								<code class="inline-code">$class</code>, then
+								block to a variable gives you a theme with
+								<code class="inline-code">$class</code>, its hash class.
 								<code class="inline-code">{'<style apply={theme} />'}</code>
-								adds that class to every element of a scope. Use
+								adds that class to every element of the scope it sits in, and a rule written in that
+								scope beats the theme's at equal specificity. Use
 								<code class="inline-code">class</code>
-								when you opt a single element in. See
+								to opt a single element in. See
 								<a href="/features#style-composition">Style composition</a>
 								for the full model.
 							</p>
@@ -627,12 +643,14 @@ export function GettingStartedPage() @{
 							<p class="section-body">
 								Sibling-scoped
 								<code class="inline-code">{'<style>'}</code>
-								blocks work the same as on the other targets. Assign a block to get
-								<code class="inline-code">$class</code>, then
+								blocks work the same as on the other targets. Assigning a block to a variable gives
+								you a theme with
+								<code class="inline-code">$class</code>, its hash class.
 								<code class="inline-code">{'<style apply={theme} />'}</code>
-								adds that class to every element of a scope. Use
+								adds that class to every element of the scope it sits in, and a rule written in that
+								scope beats the theme's at equal specificity. Use
 								<code class="inline-code">class</code>
-								when you opt a single element in. See
+								to opt a single element in. See
 								<a href="/features#style-composition">Style composition</a>
 								for the full model.
 							</p>
@@ -716,12 +734,14 @@ export function GettingStartedPage() @{
 							<p class="section-body">
 								Sibling-scoped
 								<code class="inline-code">{'<style>'}</code>
-								blocks work the same as on the other targets. Assign a block to get
-								<code class="inline-code">$class</code>, then
+								blocks work the same as on the other targets. Assigning a block to a variable gives
+								you a theme with
+								<code class="inline-code">$class</code>, its hash class.
 								<code class="inline-code">{'<style apply={theme} />'}</code>
-								adds that class to every element of a scope. Use
+								adds that class to every element of the scope it sits in, and a rule written in that
+								scope beats the theme's at equal specificity. Use
 								<code class="inline-code">class</code>
-								when you opt a single element in. See
+								to opt a single element in. See
 								<a href="/features#style-composition">Style composition</a>
 								for the full model.
 							</p>

@@ -5,4 +5,4 @@
 '@tsrx/vite-plugin-vue': patch
 ---
 
-Emit each module's virtual CSS import after its JavaScript imports so an imported theme's stylesheet is injected before the applying module's stylesheet.
+Emit each module's virtual CSS import after its JavaScript imports, so an imported theme's CSS comes before the CSS of the block that applies it and the local rule wins at equal specificity.
