@@ -41,6 +41,14 @@ describe('auto-insert plugin — <style> tags', () => {
 		expect(snippet).toBe('$0</style>');
 	});
 
+	it('closes a <style> tag that already has CSS typed after it', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<>\n\t\t<div />\n\t\t<style',
+			'\n\t\t\t.a { color: red; }\n\t</>\n}',
+		);
+		expect(snippet).toBe('$0</style>');
+	});
+
 	it('closes <style apply={…}> when the expression contains `>`', async () => {
 		const snippet = await auto_insert_after_gt(
 			'const a = <style>.a { color: red; }</style>;\nconst b = <style>.b { color: red; }</style>;\nexport function App(props) @{\n\t<>\n\t\t<div />\n\t\t<style apply={props.x > 1 ? a : b}',

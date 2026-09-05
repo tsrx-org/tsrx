@@ -7,7 +7,11 @@
 import * as acorn from 'acorn';
 import { isWhitespaceTextNode, BINDING_TYPES, DestructuringErrors } from './parse/index.js';
 import { parse_style } from './parse/style.js';
-import { regex_newline_characters, regex_not_whitespace } from './utils/patterns.js';
+import {
+	regex_newline_characters,
+	regex_not_whitespace,
+	regex_raw_text_next_tag_start,
+} from './utils/patterns.js';
 import { error } from './errors.js';
 import { DIAGNOSTIC_CODES } from './diagnostics.js';
 import { TSRX_RETURN_STATEMENT_ERROR } from './analyze/validation.js';
@@ -2245,6 +2249,14 @@ export function TSRXPlugin(config) {
 			 * synthesize the closing element, and restore the tokenizer state past it.
 			 * Shared by `<style>` and `<script>`.
 			 *
+			 * Without a closing tag the element is unclosed and the rest of the input
+			 * is its body, except that in loose mode inside a template the body stops
+			 * at the next tag start (`<x`, `</x>`, `</>`): while `<style>` is being
+			 * typed, partial CSS reaches the loose CSS parser, and the tokenizer
+			 * resumes at the following sibling or closing tag so the rest of the file
+			 * keeps its mappings. Outside a template only JS follows, with no marker to
+			 * resume at, so the body runs to the end of the input.
+			 *
 			 * @param {ESTreeJSX.TSRXJSXOpeningElement & AST.NodeWithLocation} open
 			 * @param {AST.JSXStyleElement | AST.TSRXJSXElement} node
 			 * @param {'style' | 'script'} tagName
@@ -2257,17 +2269,42 @@ export function TSRXPlugin(config) {
 				const closeTag = `</${tagName}>`;
 				const contentStart = open.end;
 				const input = this.input.slice(contentStart);
-				const relativeCloseStart = input.indexOf(closeTag);
-				const content = relativeCloseStart === -1 ? input : input.slice(0, relativeCloseStart);
+				const parent = this.#path.at(-2);
+				const insideTemplate = this.#isNativeTemplateNode(parent);
+				let relativeCloseStart = input.indexOf(closeTag);
+				const unclosed = relativeCloseStart === -1;
 
+				if (unclosed) {
+					this.#report_broken_markup_error(
+						open.end,
+						`Unclosed tag '<${tagName}>'. Expected '${closeTag}' before end of template.`,
+					);
+					node.unclosed = true;
+					relativeCloseStart = input.length;
+					if (!this.#loose) {
+						const newLines = input.match(regex_newline_characters)?.length;
+						if (newLines) {
+							this.curLine = open.loc.end.line + newLines;
+							this.lineStart = contentStart + input.lastIndexOf('\n') + 1;
+						}
+						return input;
+					}
+					if (insideTemplate) {
+						const nextTagStart = input.search(regex_raw_text_next_tag_start);
+						if (nextTagStart !== -1) relativeCloseStart = nextTagStart;
+					}
+				}
+
+				const content = input.slice(0, relativeCloseStart);
 				const newLines = content.match(regex_newline_characters)?.length;
 				if (newLines) {
 					this.curLine = open.loc.end.line + newLines;
 					this.lineStart = contentStart + content.lastIndexOf('\n') + 1;
 				}
 
-				if (relativeCloseStart !== -1) {
-					const closingStart = contentStart + content.length;
+				const closingStart = contentStart + content.length;
+				let closingEnd = closingStart;
+				if (!unclosed) {
 					const closingLineInfo = get_line_info(this, closingStart);
 					const closingStartLoc = new acorn.Position(closingLineInfo.line, closingLineInfo.column);
 					const nameStart = closingStart + 2;
@@ -2287,7 +2324,7 @@ export function TSRXPlugin(config) {
 						nameEnd,
 						new acorn.Position(nameEndInfo.line, nameEndInfo.column),
 					);
-					const closingEnd = closingStart + closeTag.length;
+					closingEnd = closingStart + closeTag.length;
 					const closingEndInfo = get_line_info(this, closingEnd);
 					const closingElement =
 						/** @type {ESTreeJSX.TSRXJSXClosingElement & AST.NodeWithLocation} */ (
@@ -2301,49 +2338,44 @@ export function TSRXPlugin(config) {
 						new acorn.Position(closingEndInfo.line, closingEndInfo.column),
 					);
 					node.closingElement = closingElement;
-					const parent = this.#path.at(-2);
-					const insideTemplate = this.#isNativeTemplateNode(parent);
-					if (this.curContext() === tstc.tc_expr && !insideTemplate) {
+				}
+
+				if (this.curContext() === tstc.tc_expr && !insideTemplate) {
+					this.context.pop();
+				}
+				this.exprAllowed = false;
+				this.pos = closingEnd;
+				const closingEndInfo = get_line_info(this, closingEnd);
+				this.curLine = closingEndInfo.line;
+				this.lineStart = closingEnd - closingEndInfo.column;
+				if (insideTemplate && relativeCloseStart === 0) {
+					// Acorn has already tokenized the adjacent tag start (this element's
+					// closing tag, or, when unclosed, the next sibling or parent close);
+					// the element resumes there manually, so drop the stale tag context.
+					if (this.curContext() === tstc.tc_oTag) {
 						this.context.pop();
 					}
-					this.exprAllowed = false;
-					this.pos = closingEnd;
-					this.curLine = closingEndInfo.line;
-					this.lineStart = closingEnd - closingEndInfo.column;
-					if (insideTemplate && relativeCloseStart === 0) {
-						// Acorn has already tokenized the adjacent closing tag; TSRX
-						// synthesizes that close manually, so drop the stale tag context.
-						if (this.curContext() === tstc.tc_oTag) {
-							this.context.pop();
-						}
-						if (this.curContext() === tstc.tc_expr) {
-							this.context.pop();
-						}
+					if (this.curContext() === tstc.tc_expr) {
+						this.context.pop();
 					}
-					if (!insideTemplate && this.#path.at(-1) === node) {
-						// Outside a template (a `@{ … }` body, a `@case` body, a statement),
-						// the element must leave the tokenizer context exactly where it
-						// began — like a balanced element does after its closing tag — so
-						// the following `}`, `@case`, or sibling tokenizes as code, not as
-						// JSX text of a children context this element's `<` opened.
-						if (contextDepth !== undefined && this.context.length > contextDepth) {
-							this.context.length = contextDepth;
-						}
-						this.#path.pop();
-						try {
-							this.next();
-						} finally {
-							this.#path.push(node);
-						}
-					} else {
+				}
+				if (!insideTemplate && this.#path.at(-1) === node) {
+					// Outside a template (a `@{ … }` body, a `@case` body, a statement),
+					// the element must leave the tokenizer context exactly where it
+					// began — like a balanced element does after its closing tag — so
+					// the following `}`, `@case`, or sibling tokenizes as code, not as
+					// JSX text of a children context this element's `<` opened.
+					if (contextDepth !== undefined && this.context.length > contextDepth) {
+						this.context.length = contextDepth;
+					}
+					this.#path.pop();
+					try {
 						this.next();
+					} finally {
+						this.#path.push(node);
 					}
 				} else {
-					this.#report_broken_markup_error(
-						open.end,
-						`Unclosed tag '<${tagName}>'. Expected '${closeTag}' before end of template.`,
-					);
-					node.unclosed = true;
+					this.next();
 				}
 
 				return content;
@@ -4887,11 +4919,30 @@ export function TSRXPlugin(config) {
 					}
 				}
 
-				if ((is_style || is_script) && /** @type {AST.JSXStyleElement} */ (node).closingElement) {
-					const closing = /** @type {ESTreeJSX.JSXClosingElement & AST.NodeWithLocation} */ (
-						/** @type {AST.JSXStyleElement} */ (node).closingElement
-					);
-					return this.finishNodeAt(node, node.type, closing.end, closing.loc.end);
+				if (is_style || is_script) {
+					const raw_text = /** @type {AST.JSXStyleElement} */ (node);
+					if (raw_text.closingElement) {
+						const closing = /** @type {ESTreeJSX.JSXClosingElement & AST.NodeWithLocation} */ (
+							raw_text.closingElement
+						);
+						return this.finishNodeAt(node, node.type, closing.end, closing.loc.end);
+					}
+					if (raw_text.unclosed && this.#loose) {
+						// Loose recovery captured a body without a closing tag: the element
+						// ends where its body ends, not at whatever token was read next.
+						const script = /** @type {AST.TSRXJSXElement} */ (/** @type {unknown} */ (node));
+						const body = (is_style ? raw_text.css : script.content) ?? '';
+						const body_end =
+							/** @type {ESTreeJSX.TSRXJSXOpeningElement & AST.NodeWithLocation} */ (open).end +
+							body.length;
+						const body_end_info = get_line_info(this, body_end);
+						return this.finishNodeAt(
+							node,
+							node.type,
+							body_end,
+							new acorn.Position(body_end_info.line, body_end_info.column),
+						);
+					}
 				}
 
 				return this.finishNode(node, node.type);

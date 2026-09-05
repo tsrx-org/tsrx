@@ -71,9 +71,16 @@ export function createAutoInsertPlugin() {
 						return null;
 					}
 
-					// Map position back to source
+					// Map position back to source. The selection sits right after the typed
+					// `>`, and Volar maps it through completion-enabled mappings only, which
+					// the `>` token mapping is. `lastChange.rangeOffset` is instead mapped
+					// through the first mapping covering it, which for a style block can be
+					// the verify-only element mapping whose generated text differs from the
+					// source (`<style apply={…}>` prints as `<style data-tsrx-apply={…}>`),
+					// landing the change offset off the `>` token. Key the lookup on the
+					// selection.
 					const offset = document.offsetAt(position);
-					const mapping = virtualCode.findMappingByGeneratedRange(lastChange.rangeOffset, offset);
+					const mapping = virtualCode.findMappingByGeneratedRange(offset - 1, offset);
 
 					/** @type {number} */
 					let sourceOffset;
@@ -87,11 +94,11 @@ export function createAutoInsertPlugin() {
 						virtualCode.generatedCode === virtualCode.originalCode
 					) {
 						// Fatal-compile fallback: the raw source is served as the generated code under a
-						// single whole-file mapping, so offsets coincide. This is the normal state right
-						// after typing `<style>` — an unclosed style block is a fatal parse error (the
-						// CSS parser sees the rest of the file) — and it is exactly when the closing tag
+						// single whole-file mapping, so offsets coincide. Loose-mode recovery keeps token
+						// mappings for in-progress markup (an unclosed `<style>` included), but a file
+						// can still fail to parse mid-edit, and that is often exactly when a closing tag
 						// needs inserting, so keep going without token mappings.
-						sourceOffset = lastChange.rangeOffset;
+						sourceOffset = offset - 1;
 						isFallback = true;
 					} else {
 						return null;

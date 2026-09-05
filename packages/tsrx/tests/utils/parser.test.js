@@ -1621,6 +1621,256 @@ abc
 		expect(node_children(returned.children[0]).map((child) => child.type)).toEqual(['StyleSheet']);
 	});
 
+	it('recovers an unclosed style in loose mode and keeps later siblings', function () {
+		/** @type {CompileError[]} */
+		const errors = [];
+		const ast = parseModule(
+			`export function App() @{
+				<>
+					<style>
+					<div />
+				</>
+			}`,
+			'App.tsrx',
+			{ loose: true, collect: true, errors },
+		);
+
+		assert_type(ast, 'Program');
+		expect(
+			errors
+				.map(function (error) {
+					return error.message;
+				})
+				.join('\n'),
+		).not.toContain('Expected identifier');
+
+		const fragment = find_first(ast, function (node) {
+			return node.type === 'JSXFragment';
+		});
+		assert_type(fragment, 'JSXFragment');
+		expect(
+			fragment.children.map(function (child) {
+				return child.type;
+			}),
+		).toEqual(['JSXStyleElement', 'JSXElement']);
+		const style = child(fragment, 0, 'JSXStyleElement');
+		expect(style.css?.trim()).toBe('');
+		expect(style.unclosed).toBe(true);
+		expect(style.closingElement).toBeNull();
+		expect(openingName(child(fragment, 1, 'JSXElement')).name).toBe('div');
+	});
+
+	it('captures partial CSS after an unclosed style up to the next sibling', function () {
+		const source = `export function App() @{
+	<>
+		<style>
+			.foo { color: red; }
+			.bar {
+		<div />
+	</>
+}`;
+		/** @type {CompileError[]} */
+		const errors = [];
+		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
+
+		assert_type(ast, 'Program');
+		expect(errors).toEqual([]);
+
+		const fragment = find_first(ast, function (node) {
+			return node.type === 'JSXFragment';
+		});
+		assert_type(fragment, 'JSXFragment');
+		expect(
+			fragment.children.map(function (child) {
+				return child.type;
+			}),
+		).toEqual(['JSXStyleElement', 'JSXElement']);
+
+		const style = child(fragment, 0, 'JSXStyleElement');
+		expect(style.unclosed).toBe(true);
+		expect(style.css).toBe('\n\t\t\t.foo { color: red; }\n\t\t\t.bar {\n\t\t');
+		expect(style.end).toBe(source.indexOf('<div />'));
+		expect(style.loc?.end.line).toBe(6);
+		expect(style.loc?.end.column).toBe(2);
+		const sheet = /** @type {{ type: string; children: Array<{ type: string }> }} */ (
+			style.children[0]
+		);
+		expect(sheet.type).toBe('StyleSheet');
+		expect(sheet.children.map((rule) => rule.type)).toEqual(['Rule']);
+
+		const div = child(fragment, 1, 'JSXElement');
+		expect(openingName(div).name).toBe('div');
+		expect(div.loc?.start.line).toBe(6);
+		expect(div.loc?.start.column).toBe(2);
+	});
+
+	it('captures the rest of the file after an unclosed module-scope style', function () {
+		const source = `const theme = <style>
+	.card { color: red; }
+export function App() @{ <div /> }`;
+		/** @type {CompileError[]} */
+		const errors = [];
+		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
+
+		assert_type(ast, 'Program');
+		expect(errors).toEqual([]);
+		expect(ast.body.map((statement) => statement.type)).toEqual(['VariableDeclaration']);
+
+		const style = find_first(ast, function (node) {
+			return node.type === 'JSXStyleElement';
+		});
+		assert_type(style, 'JSXStyleElement');
+		expect(style.unclosed).toBe(true);
+		expect(style.css).toBe(source.slice(source.indexOf('>') + 1));
+		expect(style.end).toBe(source.length);
+	});
+
+	it('recovers an unclosed script in loose mode and keeps later siblings', function () {
+		const source = `export function App() @{
+	<>
+		<script>
+			console.log(1);
+		<div />
+	</>
+}`;
+		/** @type {CompileError[]} */
+		const errors = [];
+		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
+
+		assert_type(ast, 'Program');
+		expect(errors).toEqual([]);
+
+		const fragment = find_first(ast, function (node) {
+			return node.type === 'JSXFragment';
+		});
+		assert_type(fragment, 'JSXFragment');
+		expect(
+			fragment.children.map(function (child) {
+				return child.type;
+			}),
+		).toEqual(['JSXElement', 'JSXElement']);
+
+		const script = child(fragment, 0, 'JSXElement');
+		expect(openingName(script).name).toBe('script');
+		expect(script.unclosed).toBe(true);
+		expect(script.content).toBe('\n\t\t\tconsole.log(1);\n\t\t');
+		expect(script.end).toBe(source.indexOf('<div />'));
+		expect(openingName(child(fragment, 1, 'JSXElement')).name).toBe('div');
+	});
+
+	it('keeps an unclosed style inside an element so later siblings stay JSX children', function () {
+		/** @type {CompileError[]} */
+		const errors = [];
+		const ast = parseModule(
+			`export function App() @{
+				<section>
+					<style>
+					<span />
+				</section>
+			}`,
+			'App.tsrx',
+			{ loose: true, collect: true, errors },
+		);
+
+		assert_type(ast, 'Program');
+		expect(
+			errors
+				.map(function (error) {
+					return error.message;
+				})
+				.join('\n'),
+		).not.toContain('Expected identifier');
+
+		const section = find_first(ast, function (node) {
+			return (
+				node.type === 'JSXElement' &&
+				node.openingElement?.name?.type === 'JSXIdentifier' &&
+				node.openingElement.name.name === 'section'
+			);
+		});
+		assert_type(section, 'JSXElement');
+		expect(
+			section.children.map(function (child) {
+				return child.type;
+			}),
+		).toEqual(['JSXStyleElement', 'JSXElement']);
+		expect(child(section, 0, 'JSXStyleElement').unclosed).toBe(true);
+		expect(openingName(child(section, 1, 'JSXElement')).name).toBe('span');
+		expect(section.unclosed).toBeFalsy();
+	});
+
+	it('keeps same-line siblings after an unclosed style on the opening-tag line', function () {
+		const source = `export function App() @{ <><style><span /></>
+}`;
+		/** @type {CompileError[]} */
+		const errors = [];
+		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
+
+		assert_type(ast, 'Program');
+		expect(
+			errors
+				.map(function (error) {
+					return error.message;
+				})
+				.join('\n'),
+		).not.toContain('Expected identifier');
+
+		const fragment = find_first(ast, function (node) {
+			return node.type === 'JSXFragment';
+		});
+		assert_type(fragment, 'JSXFragment');
+		const style = child(fragment, 0, 'JSXStyleElement');
+		const span = child(fragment, 1, 'JSXElement');
+		expect(style.unclosed).toBe(true);
+		expect(openingName(span).name).toBe('span');
+		expect(span.loc?.start.line).toBe(style.loc?.end.line);
+		expect(span.loc?.start.column).toBeGreaterThanOrEqual(0);
+		expect(span.loc?.start.column).toBe(style.loc?.end.column);
+	});
+
+	it('recovers when an unclosed style is immediately followed by a parent close', function () {
+		// `<style>` then `</div>` with no body: expect('>') has already
+		// tokenized the parent `</` and pushed its tag contexts. Recovery
+		// must not pop those frames (that used to read `/` as a regexp).
+		const source = 'export function App() @{ <div><style></div> }';
+		/** @type {CompileError[]} */
+		const errors = [];
+		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
+
+		assert_type(ast, 'Program');
+		expect(
+			errors
+				.map(function (error) {
+					return error.message;
+				})
+				.join('\n'),
+		).not.toContain('Expected identifier');
+		expect(
+			errors
+				.map(function (error) {
+					return error.message;
+				})
+				.join('\n'),
+		).not.toContain('Unterminated regular expression');
+
+		const div = find_first(ast, function (node) {
+			return (
+				node.type === 'JSXElement' &&
+				node.openingElement?.name?.type === 'JSXIdentifier' &&
+				node.openingElement.name.name === 'div'
+			);
+		});
+		assert_type(div, 'JSXElement');
+		expect(
+			div.children.map(function (child) {
+				return child.type;
+			}),
+		).toEqual(['JSXStyleElement']);
+		expect(child(div, 0, 'JSXStyleElement').unclosed).toBe(true);
+		expect(div.unclosed).toBeFalsy();
+		expect(div.closingElement).toBeTruthy();
+	});
+
 	it('parses module-scope style expressions followed by JavaScript statements', () => {
 		const source = `const styles = <style>
 			.card {

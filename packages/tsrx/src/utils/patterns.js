@@ -14,6 +14,8 @@ export const regex_only_whitespaces = /^[ \t\n\r\f]+$/;
 
 export const regex_newline_characters = /\n/g;
 export const regex_not_newline_characters = /[^\n]/g;
+/** The next `<` that opens a tag (`<x`, `</x>`, `</>`), skipping a `<` inside CSS text such as `content: "<"` or `<!--`. */
+export const regex_raw_text_next_tag_start = /<(?=[A-Za-z/>])/;
 
 export const regex_is_valid_identifier = /^[a-zA-Z_$][a-zA-Z_$0-9]*$/;
 // used in replace all to remove all invalid chars from a literal identifier

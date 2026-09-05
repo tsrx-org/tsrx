@@ -158,10 +158,15 @@ function visit_source_ast(ast, src_line_offsets, { regions, css_element_info, sc
 				).loc;
 				const cssStart = loc_to_offset(openLoc.end.line, openLoc.end.column, src_line_offsets);
 
-				const closeLoc = /** @type {ESTreeJSX.JSXClosingElement & AST.NodeWithLocation} */ (
-					node.closingElement
-				).loc;
-				const cssEnd = loc_to_offset(closeLoc.start.line, closeLoc.start.column, src_line_offsets);
+				const closeLoc =
+					/** @type {(ESTreeJSX.JSXClosingElement & AST.NodeWithLocation) | null} */ (
+						node.closingElement
+					)?.loc;
+				// An unclosed block recovered in loose mode has no closing tag; its
+				// body ends where the captured CSS ends.
+				const cssEnd = closeLoc
+					? loc_to_offset(closeLoc.start.line, closeLoc.start.column, src_line_offsets)
+					: cssStart + node.css.length;
 
 				regions.push({
 					start: cssStart,

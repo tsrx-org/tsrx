@@ -822,9 +822,21 @@ export function type_only_style(block) {
 			value: { ...attr.value, expression: value },
 		};
 	});
+	// An unclosed `<style>` has no closing element. The stand-in still has to
+	// be valid TSX or the virtual file loses every mapping after the tag.
+	// Self-closing apply tags already print as `<style … />` — leave those.
+	const closingElement =
+		block.closingElement ??
+		(block.openingElement.selfClosing
+			? null
+			: b.jsx_closing_element(
+					clone_ast_node(block.openingElement.name),
+					has_location(block.openingElement) ? block.openingElement : undefined,
+				));
 	return {
 		...block,
 		children: [],
 		openingElement: { ...block.openingElement, attributes },
+		closingElement,
 	};
 }

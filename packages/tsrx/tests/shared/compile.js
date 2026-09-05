@@ -83,6 +83,89 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			expect(code).toContain('void <style data-tsrx-apply={theme.$class} />');
 			expect(code).toContain('void <style></style>');
 		});
+
+		it('recovers an unclosed <style> in loose type-only compile without losing mappings', function () {
+			// While typing `<style>` there is no `</style>` yet. The raw-text path
+			// used to feed the rest of the file to the CSS parser, which threw
+			// `Expected identifier` and collapsed every token mapping to a
+			// whole-file 1:1 fallback. An unclosed `<span>` already recovered.
+			const source = `export function App() @{
+	<>
+		<style>
+		<div />
+	</>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+			expect(
+				result.errors.filter(function (error) {
+					return error.type === 'fatal';
+				}),
+			).toEqual([]);
+			expect(
+				result.errors
+					.map(function (error) {
+						return error.message;
+					})
+					.join('\n'),
+			).not.toContain('Expected identifier');
+			expect(result.mappings.length).toBeGreaterThan(1);
+
+			const whole_file = result.mappings.find(function (mapping) {
+				return mapping.sourceOffsets[0] === 0 && mapping.lengths[0] === source.length;
+			});
+			expect(whole_file).toBeUndefined();
+
+			/** @param {string} token */
+			function is_mapped(token) {
+				const offset = source.indexOf(token);
+				return result.mappings.some(function (mapping) {
+					const start = mapping.sourceOffsets[0];
+					return offset >= start && offset < start + mapping.lengths[0];
+				});
+			}
+
+			expect(is_mapped('App')).toBe(true);
+			expect(is_mapped('div')).toBe(true);
+			expect(result.code).toContain('<style></style>');
+			expect(virtual_parse_diagnostics(result.code)).toEqual([]);
+		});
+
+		it('keeps partial CSS after an unclosed <style> out of the template in loose type-only compile', function () {
+			// Without auto-insert the CSS gets typed before the closing tag exists.
+			// The body up to the next tag start is the style's CSS, so it never
+			// tokenizes as JSX, and the sibling after it keeps its mapping.
+			const source = `export function App() @{
+	<>
+		<style>
+			.foo { color: red; }
+			.bar {
+		<div />
+	</>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+			expect(
+				result.errors.filter(function (error) {
+					return error.type === 'fatal';
+				}),
+			).toEqual([]);
+
+			/** @param {string} token */
+			function is_mapped(token) {
+				const offset = source.indexOf(token);
+				return result.mappings.some(function (mapping) {
+					const start = mapping.sourceOffsets[0];
+					return offset >= start && offset < start + mapping.lengths[0];
+				});
+			}
+
+			expect(is_mapped('App')).toBe(true);
+			expect(is_mapped('div')).toBe(true);
+			expect(result.code).not.toContain('.foo');
+			expect(result.code).toContain('<style></style>');
+			expect(virtual_parse_diagnostics(result.code)).toEqual([]);
+		});
 	});
 
 	describe(`[${name}] compile diagnostics`, () => {
