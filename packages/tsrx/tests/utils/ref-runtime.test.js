@@ -174,6 +174,160 @@ describe('ref runtime helpers', () => {
 			['second cleanup'],
 		]);
 	});
+
+	it.each([0, 1, 2, 3, 4, 5, 6, 7, 8])(
+		'preserves all-nullish results and surviving ref identity with %i arguments',
+		(length) => {
+			const nullish_refs = Array.from({ length }, (_, index) => (index % 2 ? null : undefined));
+			const callback = () => {};
+			const survivors = [callback, { current: null }, { value: null }, [callback]];
+
+			expect(merge_ref_props(...nullish_refs)).toBeUndefined();
+			for (const survivor of survivors) {
+				for (let index = 0; index < length; index++) {
+					const refs = [
+						...nullish_refs.slice(0, index),
+						survivor,
+						...nullish_refs.slice(index + 1),
+					];
+					const original_refs = refs.slice();
+
+					expect(merge_ref_props(...refs)).toBe(survivor);
+					expect(refs).toEqual(original_refs);
+				}
+			}
+		},
+	);
+
+	it.each([3, 4, 5, 6, 7, 8])(
+		'preserves callback cleanup and null fallback across repeated invocations with %i arguments',
+		(length) => {
+			/** @type {Array<unknown>} */
+			const events = [];
+			/** @param {object | null} node */
+			const legacy = (node) => {
+				events.push(['legacy', node]);
+			};
+			/** @param {object | null} node */
+			const custom = (node) => {
+				events.push(['custom', node]);
+				return () => events.push(['custom cleanup', node]);
+			};
+			const refs = [null, legacy, ...Array(length - 3).fill(undefined), custom];
+			const original_refs = refs.slice();
+			const merged = merge_ref_props(...refs);
+			if (typeof merged !== 'function') {
+				throw new TypeError('Expected multiple refs to produce a callback');
+			}
+			expect(events).toEqual([]);
+			expect(refs).toEqual(original_refs);
+
+			for (const node of [{ id: 'first' }, { id: 'second' }, null]) {
+				events.length = 0;
+				const cleanup = merged(node);
+				expect(events).toEqual([
+					['legacy', node],
+					['custom', node],
+				]);
+				expect(typeof cleanup).toBe('function');
+
+				cleanup?.();
+				expect(events).toEqual([
+					['legacy', node],
+					['custom', node],
+					...(node === null ? [] : [['legacy', null]]),
+					['custom cleanup', node],
+				]);
+			}
+		},
+	);
+
+	it('preserves object-ref assignment and cleanup order among eight mixed refs', () => {
+		/** @type {Array<unknown>} */
+		const events = [];
+		const node = {};
+		/** @type {{ current: object | null }} */
+		const current_ref = { current: null };
+		/** @type {{ value: object | null }} */
+		const value_ref = { value: null };
+		const first = () => {
+			events.push(['first', current_ref.current, value_ref.value]);
+			return () => events.push(['first cleanup', current_ref.current, value_ref.value]);
+		};
+		const last = () => {
+			events.push(['last', current_ref.current, value_ref.value]);
+			return () => events.push(['last cleanup', current_ref.current, value_ref.value]);
+		};
+		const merged = merge_ref_props(
+			null,
+			first,
+			undefined,
+			current_ref,
+			null,
+			value_ref,
+			last,
+			null,
+		);
+		if (typeof merged !== 'function') {
+			throw new TypeError('Expected multiple refs to produce a callback');
+		}
+
+		const cleanup = merged(node);
+		expect(events).toEqual([
+			['first', null, null],
+			['last', node, node],
+		]);
+		cleanup?.();
+		expect(events).toEqual([
+			['first', null, null],
+			['last', node, node],
+			['first cleanup', node, node],
+			['last cleanup', null, null],
+		]);
+		expect(current_ref.current).toBeNull();
+		expect(value_ref.value).toBeNull();
+	});
+
+	it.each(['callback', 'cleanup'])(
+		'stops merged refs at a thrown %s in the original order',
+		(phase) => {
+			/** @type {string[]} */
+			const events = [];
+			const error = new Error(`failed ${phase}`);
+			/** @param {object | null} _node */
+			const first = (_node) => {
+				events.push('first');
+				return () => events.push('first cleanup');
+			};
+			/** @param {object | null} _node */
+			const second = (_node) => {
+				events.push('second');
+				if (phase === 'callback') throw error;
+				return () => {
+					events.push('second cleanup');
+					throw error;
+				};
+			};
+			/** @param {object | null} _node */
+			const third = (_node) => {
+				events.push('third');
+				return () => events.push('third cleanup');
+			};
+			const merged = merge_ref_props(null, first, undefined, second, third);
+			if (typeof merged !== 'function') {
+				throw new TypeError('Expected multiple refs to produce a callback');
+			}
+
+			if (phase === 'callback') {
+				expect(() => merged({})).toThrow(error);
+				expect(events).toEqual(['first', 'second']);
+			} else {
+				const cleanup = merged({});
+				expect(cleanup).toThrow(error);
+				expect(events).toEqual(['first', 'second', 'third', 'first cleanup', 'second cleanup']);
+			}
+		},
+	);
 });
 
 describe('spread ref normalization', () => {

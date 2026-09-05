@@ -172,12 +172,21 @@ export function merge_ref_props(...refs) {
 			return first;
 		}
 	} else {
-		refs = refs.filter((ref) => ref != null);
-		if (refs.length === 0) {
+		let count = 0;
+		for (let index = 0; index < refs.length; index++) {
+			const ref = refs[index];
+			if (ref != null) {
+				refs[count++] = ref;
+			}
+		}
+		if (count === 0) {
 			return undefined;
 		}
-		if (refs.length === 1) {
+		if (count === 1) {
 			return refs[0];
+		}
+		if (count !== refs.length) {
+			refs.length = count;
 		}
 	}
 
