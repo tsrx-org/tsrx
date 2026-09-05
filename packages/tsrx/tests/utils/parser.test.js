@@ -1704,6 +1704,67 @@ abc
 		expect(div.loc?.start.column).toBe(2);
 	});
 
+	it('stops the unclosed style body at a dynamic tag start', function () {
+		const source = `const Tag = 'b';
+export function App() @{
+	<>
+		<style>
+			.foo { color: red; }
+		<{Tag} />
+	</>
+}`;
+		/** @type {CompileError[]} */
+		const errors = [];
+		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
+
+		assert_type(ast, 'Program');
+		expect(errors).toEqual([]);
+
+		const fragment = find_first(ast, function (node) {
+			return node.type === 'JSXFragment';
+		});
+		assert_type(fragment, 'JSXFragment');
+		expect(
+			fragment.children.map(function (child) {
+				return child.type;
+			}),
+		).toEqual(['JSXStyleElement', 'JSXElement']);
+		expect(child(fragment, 0, 'JSXStyleElement').css).toBe('\n\t\t\t.foo { color: red; }\n\t\t');
+		expect(child(fragment, 1, 'JSXElement').isDynamic).toBe(true);
+	});
+
+	it('keeps a `<` inside CSS text in the unclosed style body', function () {
+		const source = `export function App() @{
+	<>
+		<style>
+			.foo::before { content: "<"; }
+			/* < is not a tag */
+		<div />
+	</>
+}`;
+		/** @type {CompileError[]} */
+		const errors = [];
+		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
+
+		assert_type(ast, 'Program');
+		expect(errors).toEqual([]);
+
+		const fragment = find_first(ast, function (node) {
+			return node.type === 'JSXFragment';
+		});
+		assert_type(fragment, 'JSXFragment');
+		expect(
+			fragment.children.map(function (child) {
+				return child.type;
+			}),
+		).toEqual(['JSXStyleElement', 'JSXElement']);
+		const style = child(fragment, 0, 'JSXStyleElement');
+		expect(style.css).toContain('content: "<";');
+		expect(style.css).toContain('/* < is not a tag */');
+		expect(style.end).toBe(source.indexOf('<div />'));
+		expect(openingName(child(fragment, 1, 'JSXElement')).name).toBe('div');
+	});
+
 	it('captures the rest of the file after an unclosed module-scope style', function () {
 		const source = `const theme = <style>
 	.card { color: red; }

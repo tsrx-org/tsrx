@@ -7,11 +7,7 @@
 import * as acorn from 'acorn';
 import { isWhitespaceTextNode, BINDING_TYPES, DestructuringErrors } from './parse/index.js';
 import { parse_style } from './parse/style.js';
-import {
-	regex_newline_characters,
-	regex_not_whitespace,
-	regex_raw_text_next_tag_start,
-} from './utils/patterns.js';
+import { regex_newline_characters, regex_not_whitespace } from './utils/patterns.js';
 import { error } from './errors.js';
 import { DIAGNOSTIC_CODES } from './diagnostics.js';
 import { TSRX_RETURN_STATEMENT_ERROR } from './analyze/validation.js';
@@ -2290,8 +2286,12 @@ export function TSRXPlugin(config) {
 						return input;
 					}
 					if (insideTemplate) {
-						const nextTagStart = input.search(regex_raw_text_next_tag_start);
-						if (nextTagStart !== -1) relativeCloseStart = nextTagStart;
+						// A `<` inside CSS text (`content: "<"`, `<!--`) is not a tag start.
+						let lt = input.indexOf('<');
+						while (lt !== -1 && !can_start_tag_after_lt(input, lt)) {
+							lt = input.indexOf('<', lt + 1);
+						}
+						if (lt !== -1) relativeCloseStart = lt;
 					}
 				}
 

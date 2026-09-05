@@ -24,6 +24,24 @@ describe('parseStyle loose recovery', function () {
 		expect(sheet.children[0].type).toBe('Rule');
 	});
 
+	it('keeps the rules parsed before an unclosed comment', function () {
+		const sheet = parseStyle('.foo { color: red; }\n/* typing a comment', LOCATION, {
+			loose: true,
+		});
+
+		expect(sheet.children).toHaveLength(1);
+		expect(sheet.children[0].type).toBe('Rule');
+	});
+
+	it.each(['/* comment', '<!-- comment', '.foo { color: red; } <!--', '.foo { /* comment'])(
+		'does not throw on an unclosed comment %j',
+		function (css) {
+			expect(function () {
+				parseStyle(css, LOCATION, { loose: true });
+			}).not.toThrow();
+		},
+	);
+
 	it.each([
 		'.foo {',
 		'.foo { color',

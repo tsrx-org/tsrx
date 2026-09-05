@@ -24,6 +24,119 @@ async function auto_insert_after_gt(before, after = '') {
 	});
 }
 
+describe('auto-insert plugin — element tags', () => {
+	it('closes <div> typed as the only template output', async () => {
+		const snippet = await auto_insert_after_gt('export function App() @{\n\t<div', '\n}');
+		expect(snippet).toBe('$0</div>');
+	});
+
+	it('closes <div> typed before existing siblings', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<>\n\t\t<div',
+			'\n\t\t<span />\n\t</>\n}',
+		);
+		expect(snippet).toBe('$0</div>');
+	});
+
+	it('closes a tag nested inside an element', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<section>\n\t\t<p',
+			'\n\t</section>\n}',
+		);
+		expect(snippet).toBe('$0</p>');
+	});
+
+	it('closes a tag with attributes', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<>\n\t\t<div class="card" id="main"',
+			'\n\t</>\n}',
+		);
+		expect(snippet).toBe('$0</div>');
+	});
+
+	it('closes a tag whose attribute expression contains `>`', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App(props) @{\n\t<>\n\t\t<div hidden={props.count > 1}',
+			'\n\t</>\n}',
+		);
+		expect(snippet).toBe('$0</div>');
+	});
+
+	it('closes a component tag', async () => {
+		const snippet = await auto_insert_after_gt(
+			'function Card() @{ <div /> }\nexport function App() @{\n\t<>\n\t\t<Card',
+			'\n\t</>\n}',
+		);
+		expect(snippet).toBe('$0</Card>');
+	});
+
+	it('closes a member-expression component tag', async () => {
+		const snippet = await auto_insert_after_gt(
+			'const UI = { Item() @{ <div /> } };\nexport function App() @{\n\t<>\n\t\t<UI.Item',
+			'\n\t</>\n}',
+		);
+		expect(snippet).toBe('$0</UI.Item>');
+	});
+
+	it('closes a tag inside a control-flow body', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App(props) @{\n\t<>\n\t\t@if (props.open) {\n\t\t\t<div',
+			'\n\t\t}\n\t</>\n}',
+		);
+		expect(snippet).toBe('$0</div>');
+	});
+
+	it('closes a tag inside a plain TSX return', async () => {
+		const snippet = await auto_insert_after_gt('export function App() {\n\treturn <div', ';\n}');
+		expect(snippet).toBe('$0</div>');
+	});
+
+	it('closes a tag typed at the end of the file', async () => {
+		const snippet = await auto_insert_after_gt('export function App() @{\n\t<>\n\t\t<div');
+		expect(snippet).toBe('$0</div>');
+	});
+
+	it('does not close a void element', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<>\n\t\t<input',
+			'\n\t</>\n}',
+		);
+		expect(snippet).toBeFalsy();
+	});
+
+	it('does not close a self-closed tag', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<>\n\t\t<div /',
+			'\n\t</>\n}',
+		);
+		expect(snippet).toBeFalsy();
+	});
+
+	it('does not close a tag that already has its closing tag', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<>\n\t\t<div',
+			'</div>\n\t</>\n}',
+		);
+		expect(snippet).toBeFalsy();
+	});
+
+	it('does not close a tag when the `>` is typed inside an attribute expression', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App(props) @{\n\t<>\n\t\t<div hidden={props.count ',
+			' 1}></div>\n\t</>\n}',
+		);
+		expect(snippet).toBeFalsy();
+	});
+
+	it('does not close on a `>` typed as a comparison in script code', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App(props) @{\n\tconst big = props.count ',
+			' 1;\n\t<div />\n}',
+		);
+		expect(snippet).toBeFalsy();
+	});
+});
+
 describe('auto-insert plugin — <style> tags', () => {
 	it('closes a plain element tag', async () => {
 		const snippet = await auto_insert_after_gt(

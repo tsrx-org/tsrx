@@ -163,13 +163,13 @@ function read_body(parser) {
 	const children = [];
 
 	while (parser.index < parser.template.length) {
-		allow_comment_or_whitespace(parser);
-
-		if (parser.index >= parser.template.length) {
-			break;
-		}
-
 		try {
+			allow_comment_or_whitespace(parser);
+
+			if (parser.index >= parser.template.length) {
+				break;
+			}
+
 			if (parser.match('@')) {
 				children.push(read_at_rule(parser));
 			} else {
@@ -179,9 +179,9 @@ function read_body(parser) {
 			if (!parser.loose) {
 				throw error;
 			}
-			// Partial CSS while typing (`.foo {`), or whatever follows an unclosed
-			// module-scope `<style>`, must not take the whole file down in loose
-			// mode: keep the rules parsed so far and drop the rest.
+			// Partial CSS while typing (`.foo {`, `/*`), or whatever follows an
+			// unclosed module-scope `<style>`, must not take the whole file down in
+			// loose mode: keep the rules parsed so far and drop the rest.
 			break;
 		}
 	}
