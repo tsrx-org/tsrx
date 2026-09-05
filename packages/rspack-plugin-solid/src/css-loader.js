@@ -7,7 +7,7 @@ import { compile } from '@tsrx/solid';
 /**
  * Re-runs the `@tsrx/solid` compiler against the `.tsrx` source to extract
  * the scoped CSS emitted by its `<style>` block. Invoked when rspack resolves
- * the sibling `?tsrx-css&lang.css` import prepended by the JS loader.
+ * the sibling `?tsrx-css&lang.css` import emitted by the JS loader.
  *
  * @this {LoaderContext<{ runtimeImports?: RuntimeImportMode }>}
  * @param {string} source

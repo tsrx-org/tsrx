@@ -13,7 +13,7 @@ import { compile } from '@tsrx/react';
 /**
  * Re-runs the `@tsrx/react` compiler against the `.tsrx` source to extract
  * the scoped CSS emitted by its `<style>` block. Invoked when Turbopack
- * resolves the sibling `?tsrx-css&lang.css` import prepended by the JS loader.
+ * resolves the sibling `?tsrx-css&lang.css` import emitted by the JS loader.
  *
  * @this {LoaderContext}
  * @param {string} source

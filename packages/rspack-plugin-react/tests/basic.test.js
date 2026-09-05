@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -35,9 +35,11 @@ function createLoaderContext(resourcePath) {
 }
 
 describe('@tsrx/rspack-plugin-react js-loader', () => {
-	it('prepends a virtual css import when a style block exists', async () => {
+	it('appends a virtual css import after the module imports when a style block exists', async () => {
 		const id = '/virtual/App.tsrx';
-		const source = `export function App() @{
+		const source = `import './reset.css';
+
+			export function App() @{
 			<>
 			<div>{'Hello world'}</div>
 
@@ -55,10 +57,12 @@ describe('@tsrx/rspack-plugin-react js-loader', () => {
 
 		expect(err).toBeNull();
 		expect(output).toContain(`${id}?tsrx-css&lang.css`);
-		expect(map).toBeUndefined();
+		expect(output.indexOf('./reset.css')).toBeGreaterThan(-1);
+		expect(output.indexOf('./reset.css')).toBeLessThan(output.indexOf('tsrx-css'));
+		expect(map).toBeTruthy();
 	});
 
-	it('does not prepend a virtual css import when no style block exists', async () => {
+	it('does not append a virtual css import when no style block exists', async () => {
 		const id = '/virtual/App.tsrx';
 		const source = `export function App() @{
 			<div>{'Hello world'}</div>
@@ -172,6 +176,75 @@ describe('@tsrx/rspack-plugin-react plugin', () => {
 
 		expect(compiler.options.experiments.css).toBe(false);
 		expect(compiler.options.experiments.deferImport).toBe(false);
+	});
+
+	it('emits an imported theme before the module that applies it in a Rspack 2 bundle', async () => {
+		const package_root = fileURLToPath(new URL('..', import.meta.url));
+		const output_path = mkdtempSync(path.join(tmpdir(), 'tsrx-rspack-apply-'));
+		const virtual_root = 'tests/virtual-apply';
+		const modules = {
+			[`${virtual_root}/entry.tsrx`]: `
+				export { Panel } from './panel.tsrx';
+			`,
+			[`${virtual_root}/theme.tsrx`]: `
+				export const theme = <style>
+					div {
+						--tsrx-theme-mark: theme;
+						color: green;
+					}
+				</style>;
+			`,
+			[`${virtual_root}/panel.tsrx`]: `
+				import { theme } from './theme.tsrx';
+
+				export function Panel() @{
+					<>
+						<style apply={theme}>
+							div {
+								--tsrx-applier-mark: applier;
+								color: black;
+							}
+						</style>
+						<div>{'Black: the local rule beats the theme'}</div>
+					</>
+				}
+			`,
+		};
+
+		try {
+			await new Promise((resolve, reject) => {
+				rspack(
+					{
+						context: package_root,
+						mode: 'development',
+						target: 'web',
+						entry: `./${virtual_root}/entry.tsrx`,
+						devtool: false,
+						optimization: { minimize: false },
+						output: { path: output_path, filename: 'main.js' },
+						plugins: [new experiments.VirtualModulesPlugin(modules), new TsrxReactRspackPlugin()],
+					},
+					(error, stats) => {
+						if (error) {
+							reject(error);
+						} else if (stats?.hasErrors()) {
+							reject(new Error(stats.toString({ all: false, errors: true })));
+						} else {
+							resolve(undefined);
+						}
+					},
+				);
+			});
+
+			const css = readFileSync(path.join(output_path, 'main.css'), 'utf8');
+			const theme_at = css.indexOf('--tsrx-theme-mark');
+			const applier_at = css.indexOf('--tsrx-applier-mark');
+			expect(theme_at).toBeGreaterThan(-1);
+			expect(applier_at).toBeGreaterThan(-1);
+			expect(theme_at).toBeLessThan(applier_at);
+		} finally {
+			rmSync(output_path, { recursive: true, force: true });
+		}
 	});
 
 	it('keeps static and dynamic deferred imports lazy in a Rspack 2 bundle', async () => {

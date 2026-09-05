@@ -125,7 +125,9 @@ describe('@tsrx/bun-plugin-react', () => {
 			const file_path = path.join(dir, 'App.tsrx');
 			await writeFile(
 				file_path,
-				`export function App() @{
+				`import './reset.css';
+
+					export function App() @{
 					<>
 					<div className="div">{'Hello world'}</div>
 
@@ -147,6 +149,10 @@ describe('@tsrx/bun-plugin-react', () => {
 			expect(transformed?.loader).toBe('js');
 			expect(transformed?.contents).toContain('// transformed');
 			expect(transformed?.contents).toContain(css_id);
+			expect(String(transformed?.contents).indexOf('./reset.css')).toBeGreaterThan(-1);
+			expect(String(transformed?.contents).indexOf('./reset.css')).toBeLessThan(
+				String(transformed?.contents).indexOf(css_id),
+			);
 			expect(css.loader).toBe('css');
 			expect(css.contents).toContain('.div.');
 			expect(css.contents).toContain('color: red;');
