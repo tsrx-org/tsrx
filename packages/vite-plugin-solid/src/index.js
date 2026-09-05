@@ -150,14 +150,9 @@ export function tsrxSolid(options = {}) {
 
 			if (css) {
 				css_cache.set(real_path, css);
-				code = `import ${JSON.stringify(real_path + CSS_QUERY)};\n${code}`;
-				// The prepended import adds one line to the generated output;
-				// shift every mapping down by one line so source positions stay
-				// aligned. In VLQ source maps, each `;` separates generated
-				// lines, so prefixing one `;` offsets all mappings by one line.
-				if (map && typeof map.mappings === 'string') {
-					map = { ...map, mappings: ';' + map.mappings };
-				}
+				// After existing imports so dependency sheets (imported themes)
+				// evaluate first and this module's rules win at equal specificity.
+				code = `${code}\nimport ${JSON.stringify(real_path + CSS_QUERY)};\n`;
 			} else {
 				css_cache.delete(real_path);
 			}

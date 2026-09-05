@@ -228,67 +228,297 @@ export function Panel({ as = 'section', item, expanded }: PanelProps) @{
 );
 
 const SCOPED_STYLES_HTML = highlight_tsrx(
-	`function Card() @{
+	`function Panel() @{
   <>
-    <div class="card">
-      <h2>Scoped title</h2>
-      <p>Styles here won't leak out.</p>
-    </div>
+    <style>
+      /* scope A: this fragment's children list */
+      div { color: black; }
+    </style>
+    <div class="outer">Black</div>
+
+    <section>
+      <style>
+        /* scope B: the section's children list, nested inside A.
+           It styles the items beside it, never <section> itself. */
+        div { font-weight: bold; }
+      </style>
+      <div class="inner">Black and bold</div>
+    </section>
 
     <style>
-      .card {
-        padding: 1.5rem;
-        border: 1px solid #ddd;
-      }
-
-      h2 { color: #333; }
+      /* still scope A: shares the first block's hash */
+      p { margin: 0; }
     </style>
+    <p>No margin</p>
   </>
 }`,
 );
 
-const STYLE_COMPOSITION_HTML = highlight_tsrx(
-	`function Badge({ class: className }: { class?: string }) @{
-  <>
-    <span class={'badge ' + (className ?? '')}>New</span>
+const STYLE_FRAGMENT_HTML = highlight_tsrx(
+	`function Note({ open }: { open: boolean }) @{
+  <div>
+    @if (open) {
+      // Error: two output nodes in one branch.
+      <style>
+        p { color: red; }
+      </style>
+      <p>Red</p>
+    }
+  </div>
+}
 
+function Note({ open }: { open: boolean }) @{
+  <div>
+    @if (open) {
+      // Works: one output node, a fragment holding the block and the <p>.
+      <>
+        <style>
+          p { color: red; }
+        </style>
+        <p>Red</p>
+      </>
+    }
+  </div>
+}`,
+);
+
+const CONTROL_FLOW_STYLES_HTML = highlight_tsrx(
+	`function Status({ ready }: { ready: boolean }) @{
+  <>
     <style>
-      .badge { padding: 0.25rem 0.5rem; }
+      .status { padding: 0.5rem; }
     </style>
+    <section class="status">
+      @if (ready) {
+        <>
+          <style>
+            .ok { color: green; }
+          </style>
+          <p class="ok">Ready</p>
+        </>
+      } @else {
+        <>
+          <style>
+            .wait { color: gray; }
+          </style>
+          <p class="wait">Waiting</p>
+        </>
+      }
+    </section>
   </>
+}`,
+);
+
+const THEME_CLASS_HTML = highlight_tsrx(
+	`export const theme = <style>
+  div { color: green; }
+  .dark { color: purple; }
+</style>;
+
+// theme.$class -> 'tsrx-1a2b3c4d'
+// theme.dark   -> 'tsrx-1a2b3c4d dark'
+
+function Badge({ class: className }: { class?: string }) @{
+  <span class={'badge ' + (className ?? '')}>New</span>
 }
 
 function App() @{
-  const styles = <style>
-    .highlight { background: #e8f5e9; color: #2e7d32; }
-  </style>;
-
   <>
     // Ripple, Preact, Solid, and Vue component props:
-    <Badge class={styles.highlight} />
+    <Badge class={theme.dark} />
 
     // React component props:
-    // <Badge className={styles.highlight} />
+    // <Badge className={theme.dark} />
   </>
 }`,
 );
 
-const MODULE_STYLE_COMPOSITION_HTML = highlight_tsrx(
-	`const articleStyles = <style>
-  .card { padding: 1rem; }
-  .title { font-weight: 700; }
+const STYLE_APPLY_HTML = highlight_tsrx(
+	`import { theme } from './theme.tsrx';
+
+export function Panel() @{
+  <>
+    <style apply={theme}>
+      /* scope A; also stamps theme.$class on every element of A */
+      div { color: black; }
+    </style>
+
+    <span class={theme.dark}>Purple</span>
+    <div>Black: the local rule beats the theme's green</div>
+
+    @{
+      <>
+        <style>
+          /* scope B, nested inside A */
+          div { font-weight: bold; }
+        </style>
+        <div>Black and bold: A, B, and the theme all reach here</div>
+      </>
+    }
+  </>
+}
+
+export function Card() @{
+  <>
+    // Self-closed: applies the theme, declares no rules of its own.
+    <style apply={theme} />
+    <article>
+      <h2>Green system-ui</h2>
+    </article>
+  </>
+}`,
+);
+
+const THEME_COMPOSITION_HTML = highlight_tsrx(
+	`// theme.tsrx
+const base = <style>
+  div { font-family: system-ui; }
 </style>;
 
-export function ArticleCard({ title }: { title: string }) @{
-  // Ripple, Preact, Solid, and Vue host elements:
-  <article class={articleStyles.card}>
-    <h2 class={articleStyles.title}>{title}</h2>
-  </article>
+export const accent = <style apply={base}>
+  div { color: blue; }
+</style>;
 
-  // React host elements:
-  // <article className={articleStyles.card}>
-  //   <h2 className={articleStyles.title}>{title}</h2>
-  // </article>
+// accent.$class -> base's hash, then accent's own hash
+
+const spacing = <style>
+  p { margin: 0; }
+</style>;
+
+// A self-closed assigned block bundles themes without CSS of its own.
+export const bundle = <style apply={[spacing, accent]} />;
+
+export function Composed() @{
+  <style apply={[spacing, accent]} />
+  <div>
+    <p>Blue system-ui, no margin</p>
+  </div>
+}`,
+);
+
+const THEME_OPT_IN_HTML = highlight_tsrx(
+	`function Card({ parentClass }: { parentClass: string }) @{
+  <>
+    <style>
+      .local { padding: 0; }
+    </style>
+    <article class={\`local \${parentClass}\`}>
+      <h2 class={parentClass}>Title</h2>
+    </article>
+  </>
+}
+
+export function App() @{
+  const theme = <style>
+    div { color: blue; }
+    .card { color: red; }
+  </style>;
+
+  <>
+    <Card parentClass={theme.$class} />
+    <div class={theme.$class}>Blue: opted in</div>
+    <div class={theme.card}>Red: theme.card</div>
+    <p>Untouched</p>
+  </>
+}
+
+// theme.$class is read, so theme keeps div { color: blue }.
+// Card's <article> and <h2> carry theme.$class, then Card's own scope hash.`,
+);
+
+const STYLE_LAYER_HTML = highlight_tsrx(
+	`function Card() @{
+  <>
+    <style>
+      @layer components {
+        .card { padding: 1rem; }
+      }
+    </style>
+    <div class="card">Layered</div>
+  </>
+}
+
+// Emitted CSS keeps the layer and scopes the selector inside it:
+// @layer components { .card.tsrx-1a2b3c4d { padding: 1rem; } }`,
+);
+
+const GLOBAL_STYLES_HTML = highlight_tsrx(
+	`function Card({ html }: { html: string }) @{
+  <>
+    <style>
+      /* Bare: a page-wide rule. Matches anywhere on the page. */
+      :global(.toast) { position: fixed; }
+      /* → .toast */
+
+      /* Prefixed: only below your scoped .card, never above it. */
+      .card :global(.footnote) { font-size: 0.85em; }
+      /* → .card.tsrx-1a2b3c4d .footnote */
+
+      /* Leading: your element, when an ancestor carries the class. */
+      :global(.theme-dark) .card { background: black; }
+      /* → .theme-dark .card.tsrx-1a2b3c4d */
+
+      /* Compound: your element, with a class another library toggles. */
+      .card:global(.is-open) { border-color: blue; }
+      /* → .card.tsrx-1a2b3c4d.is-open */
+
+      /* Block form: several page-wide rules at once. */
+      :global {
+        body { margin: 0; }
+        .toast { position: fixed; }
+      }
+      /* → body { … } .toast { … } */
+
+      /* Nested block: several classes below .card, prefix written once. */
+      .card {
+        :global {
+          .footnote { font-size: 0.85em; }
+          .caption { color: gray; }
+        }
+      }
+      /* → .card.tsrx-1a2b3c4d { .footnote { … } .caption { … } } */
+
+      /* Plain nesting, for contrast: both parts scoped. */
+      .card { .title { font-weight: bold; } }
+      /* → .card.tsrx-1a2b3c4d { .title.tsrx-1a2b3c4d { … } } */
+
+      /* Error tsrx-css-global-placement: :global in the middle. */
+      /* .card :global(.footnote) .title { } */
+    </style>
+    <div class="card" innerHTML={html} />
+  </>
+}`,
+);
+
+const GLOBAL_VS_CLASS_HTML = highlight_tsrx(
+	`// Preferred for a child you own: the child takes a class through a prop.
+function Note({ class: className }: { class?: string }) @{
+  <p class={'note ' + (className ?? '')}>...</p>
+}
+
+function Card() @{
+  const theme = <style>
+    .note { color: gray; }
+  </style>;
+  /* → .note.tsrx-1a2b3c4d; only elements carrying theme.note match */
+
+  <Note class={theme.note} />
+}
+
+// For a child you cannot change: a scoped prefix, then a :global block.
+function Article({ html }: { html: string }) @{
+  <>
+    <style>
+      .body {
+        :global {
+          .footnote { font-size: 0.85em; }
+          .caption { color: gray; }
+        }
+      }
+      /* → .body.tsrx-5e6f7a8b { .footnote { … } .caption { … } } */
+    </style>
+    <div class="body" innerHTML={html} />
+  </>
 }`,
 );
 
@@ -767,62 +997,407 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="scoped-styles">
 							<h2 class="section-heading">Scoped styles</h2>
 							<p class="section-body">
-								Each returned TSRX template can include a
+								A
 								<code class="inline-code">{'<style>'}</code>
-								block. Styles are automatically scoped — the compiler rewrites selectors with a
-								unique hash so they only apply to elements inside the component fragment that
-								defines them. A parent's scoped styles will not leak into child components.
+								block styles only the elements next to it and below it. The compiler rewrites every
+								selector in the block to also require a hash class: a class it adds to each element
+								the block reaches, so the block's selectors match only there. Rules never leak into
+								child components.
+							</p>
+							<h3 class="subsection-heading">
+								A block styles its siblings and everything below them
+							</h3>
+							<p class="section-body">
+								A
+								<code class="inline-code">{'<style>'}</code>
+								block is a child of an element or a fragment. It styles the other children of that
+								list and everything below them. It never styles the element that contains it. To
+								style an element, put the block and the element side by side in a fragment.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={SCOPED_STYLES_HTML} />
 							</pre>
 							<p class="section-body">
-								To escape scoping and apply styles globally, wrap a selector in
-								<code class="inline-code">:global()</code>
-								. This lets you reach into child components or target elements outside the current
-								scope.
+								Every element gets the hash class of each scope around it, outer first. The outer
+								<code class="inline-code">div</code>, the
+								<code class="inline-code">section</code>, and the trailing
+								<code class="inline-code">p</code>
+								get the hash class of scope A; the nested
+								<code class="inline-code">div</code>
+								gets A and B. Outer rules reach into nested scopes; inner rules never reach out.
+								Elements returned from a callback such as
+								<code class="inline-code">{'items.map((item) => <li />)'}</code>
+								are outside the scope and get no hash class.
 							</p>
+							<h3 class="subsection-heading">Sibling blocks share one hash class</h3>
+							<p class="section-body">
+								Several blocks in one children list share one hash class, so the
+								<code class="inline-code">{'p { margin: 0; }'}</code>
+								block above is part of scope A. A nested children list with blocks of its own is a
+								nested scope with its own hash class. A block can sit anywhere in its list; only the
+								list it sits in decides what it styles.
+							</p>
+							<h3 class="subsection-heading">Put a block and its output in one fragment</h3>
+							<p class="section-body">
+								A
+								<code class="inline-code">{'@{ ... }'}</code>
+								body and every
+								<code class="inline-code">@if</code>,
+								<code class="inline-code">@for</code>,
+								<code class="inline-code">@switch</code>, or
+								<code class="inline-code">@try</code>
+								branch render exactly one output node, and a
+								<code class="inline-code">{'<style>'}</code>
+								block counts as an output node. A block beside the output is an error, and a block
+								that is the only output styles nothing. Wrap the block and the output it styles in a
+								fragment.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={STYLE_FRAGMENT_HTML} />
+							</pre>
+							<h3 class="subsection-heading">Raw CSS needs a template around it</h3>
+							<p class="section-body">
+								Raw CSS in
+								<code class="inline-code">{'<style>'}</code>
+								is TSRX template syntax. A block with CSS in it needs a
+								<code class="inline-code">{'@{ ... }'}</code>
+								body or a control-flow branch somewhere above it. In plain TSX, write
+								<code class="inline-code">{'<style>{css}</style>'}</code>: that is an ordinary
+								element with an expression child. The compiler leaves it untouched, gives it no hash
+								class, and never scopes it.
+							</p>
+							<h3 class="subsection-heading">Later rules win</h3>
+							<p class="section-body">
+								CSS is output in source order, outer scopes first, and at equal specificity the rule
+								output last wins. Outer scopes come before the scopes nested in them, even when the
+								nested scope is written first. A scope's blocks stay together as one group, in
+								source order. Sibling scopes follow source order. An applied theme comes before the
+								block that applies it. In the first example, the nested block makes its
+								<code class="inline-code">div</code>
+								bold without disturbing the color the outer block set.
+							</p>
+							<h3 class="subsection-heading">A block in a branch styles only that branch</h3>
+							<p class="section-body">
+								A
+								<code class="inline-code">{'<style>'}</code>
+								block inside an
+								<code class="inline-code">@if</code>
+								or
+								<code class="inline-code">@for</code>
+								branch applies only to the elements that branch renders. Its CSS is still always
+								part of the file's stylesheet, whether or not the branch ever renders, because CSS
+								is static. Rules you want everywhere belong outside the branch.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={CONTROL_FLOW_STYLES_HTML} />
+							</pre>
+							<p class="section-body">
+								<code class="inline-code">.status</code>
+								sits outside the branches and reaches both of them.
+								<code class="inline-code">.ok</code>
+								matches only the
+								<code class="inline-code">p</code>
+								in the ready branch and
+								<code class="inline-code">.wait</code>
+								only the
+								<code class="inline-code">p</code>
+								in the other one, and both rules are in the stylesheet at all times.
+							</p>
+							<h3 class="subsection-heading">Unused selectors are removed</h3>
+							<p class="section-body">
+								A selector that matches nothing the block can reach is removed from the output and
+								left behind as a
+								<code class="inline-code">
+									/* (unused) */
+								</code>
+								comment. That includes a selector that only matches the element containing the
+								block: the block cannot reach it.
+							</p>
+							<h3 class="subsection-heading">Escape the scope with :global()</h3>
+							<p class="section-body">
+								<code class="inline-code">:global(...)</code>
+								marks the wrapped part of a selector as unscoped: it gets no hash class. Everything
+								outside the parentheses is still scoped, so where the
+								<code class="inline-code">:global</code>
+								sits decides how far the rule can reach. The block form
+								<code class="inline-code">{':global { ... }'}</code>
+								does the same for every rule inside it, and both forms work with CSS nesting.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={GLOBAL_STYLES_HTML} />
+							</pre>
+							<p class="section-body">
+								A bare
+								<code class="inline-code">:global(.toast)</code>
+								is a plain page-wide rule. It matches anywhere: ancestors, siblings, other
+								components, exactly like a rule in a global stylesheet. A scoped prefix,
+								<code class="inline-code">.card :global(.footnote)</code>, reaches only elements
+								below your scoped
+								<code class="inline-code">.card</code>, a child component's internals included; it
+								can never climb up. A leading
+								<code class="inline-code">:global(.theme-dark) .card</code>
+								styles your own element only when an ancestor carries the class, and a compound
+								<code class="inline-code">.card:global(.is-open)</code>
+								styles your own element with a class another library toggles on it. A
+								<code class="inline-code">:global</code>
+								in the middle of a selector is the
+								<code class="inline-code">tsrx-css-global-placement</code>
+								error: it may only start or end a selector. A
+								<code class="inline-code">{':global { ... }'}</code>
+								block drops its wrapper, leaving a comment behind, and everything inside it is
+								unscoped: at the top level it is several page-wide rules at once, and nested under a
+								scoped rule such as
+								<code class="inline-code">.card</code>
+								it reaches only below that element, exactly like the prefixed
+								<code class="inline-code">.card :global(.footnote)</code>. Plain nesting without
+								<code class="inline-code">:global</code>
+								scopes both parts.
+							</p>
+							<h3 class="subsection-heading">Scoped rules beat bare global rules</h3>
+							<p class="section-body">
+								A scoped rule adds one hash class to its first compound only; later compounds get
+								<code class="inline-code">{':where(.<hash>)'}</code>, which adds no specificity, so
+								<code class="inline-code">.card .title</code>
+								becomes
+								<code class="inline-code">{'.card.<hash> .title:where(.<hash>)'}</code>. That makes
+								<code class="inline-code">:global</code>
+								predictable: a scoped
+								<code class="inline-code">.note</code>
+								(0,2,0) beats a bare
+								<code class="inline-code">:global(.note)</code>
+								(0,1,0) from anywhere on the page; a
+								<code class="inline-code">theme.$class</code>
+								or class-map rule carries its hash too, so it also beats a bare global; and a
+								prefixed
+								<code class="inline-code">.card :global(.note)</code>
+								(0,3,0) beats a child component's own
+								<code class="inline-code">.note</code>
+								rule (0,2,0). At equal specificity the later stylesheet in module order wins.
+							</p>
+							<h3 class="subsection-heading">Pass a class to a child instead of reaching in</h3>
+							<p class="section-body">
+								To let a child component pick up your styles, pass
+								<code class="inline-code">theme.$class</code>
+								or a class-map entry such as
+								<code class="inline-code">theme.note</code>
+								as a prop. The dependency is visible in code, the child decides which of its
+								elements receive it, renaming a class inside the child cannot silently break the
+								parent, and the hash keeps the rule on the elements that carry it. With
+								<code class="inline-code">:global</code>
+								the child has no say and cannot see who styles it. Keep
+								<code class="inline-code">:global</code>
+								for a child you cannot change: a third-party component, or rendered HTML and
+								markdown. Always put a scoped selector in front so the rule cannot reach ancestors
+								or unrelated components, and keep it narrow: it overrides the child's own rules by
+								specificity. To style several of the child's classes, nest one
+								<code class="inline-code">{':global { ... }'}</code>
+								block under your scoped selector, so the prefix is written once.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={GLOBAL_VS_CLASS_HTML} />
+							</pre>
+							<p class="section-body">
+								Page-wide rules such as
+								<code class="inline-code">body</code>, resets, and fonts belong in a
+								<code class="inline-code">.css</code>
+								file. A bare
+								<code class="inline-code">:global</code>
+								selector or a top-level
+								<code class="inline-code">{':global { ... }'}</code>
+								block works, but it is a global stylesheet hidden inside a component. Never write a
+								bare
+								<code class="inline-code">:global</code>
+								selector for anything but page-level elements.
+							</p>
+							<table class="decision-table">
+								<thead>
+									<tr>
+										<th>I want to ...</th>
+										<th>Use ...</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<td>Style my own elements</td>
+										<td>
+											A
+											<code class="inline-code">{'<style>'}</code>
+											block beside them; nothing global
+										</td>
+									</tr>
+									<tr>
+										<td>Let a child component pick up my styles</td>
+										<td>
+											Pass
+											<code class="inline-code">theme.$class</code>
+											or
+											<code class="inline-code">theme.card</code>
+											as a prop
+										</td>
+									</tr>
+									<tr>
+										<td>Style a child I cannot change (third-party component, rendered HTML)</td>
+										<td>
+											<code class="inline-code">.wrapper :global(.their-class)</code>, or
+											<code class="inline-code">{'.wrapper { :global { ... } }'}</code>
+											for several classes; scoped prefix first, keep it narrow
+										</td>
+									</tr>
+									<tr>
+										<td>React to page-level state</td>
+										<td>
+											<code class="inline-code">:global(.theme-dark) .card</code>
+											or
+											<code class="inline-code">{':global([data-theme=\'dark\']) .card'}</code>
+										</td>
+									</tr>
+									<tr>
+										<td>Style my element with a class another library toggles</td>
+										<td>
+											<code class="inline-code">.card:global(.is-open)</code>
+										</td>
+									</tr>
+									<tr>
+										<td>
+											Page-wide rules:
+											<code class="inline-code">body</code>, resets, fonts
+										</td>
+										<td>
+											A
+											<code class="inline-code">.css</code>
+											file; a bare
+											<code class="inline-code">:global(body)</code>
+											only for page-level elements
+										</td>
+									</tr>
+								</tbody>
+							</table>
 							<p class="section-body muted">
 								React note: TSRX keeps authored attributes as written. Use
 								<code class="inline-code">className</code>
-								on React host elements and React component props, just like ordinary JSX.
-								Compiler-injected scoped style hashes still use React's
-								<code class="inline-code">className</code>
-								output when needed.
+								on React host elements and React component props, just like ordinary JSX. The hash
+								class the compiler adds still goes out through React's
+								<code class="inline-code">className</code>.
 							</p>
 						</section>
 						<section class="doc-section" id="style-composition">
 							<h2 class="section-heading">Style composition</h2>
 							<p class="section-body">
-								Because scoped styles don't cross component boundaries, assigning a
+								Assign a
 								<code class="inline-code">{'<style>'}</code>
-								expression to a variable exposes a class map for passing scoped class names to child
-								components as props.
-								<code class="inline-code">styles.highlight</code>
-								contains both the scope hash and the class name, which the child applies via its
-								<code class="inline-code">class</code>
-								prop. React components use
+								block to a variable to get a theme you can hand to other scopes and components.
+							</p>
+							<h3 class="subsection-heading">Assigning a block gives you an object</h3>
+							<p class="section-body">
+								Assigning a
+								<code class="inline-code">{'<style>'}</code>
+								expression to a variable turns it into an object instead of a scoped block. The
+								object has
+								<code class="inline-code">$class</code>, the block's own hash class, plus one key
+								per class selector whose value is the hash class and the class name together. Pass
+								those strings to child components through
+								<code class="inline-code">class</code>, or
 								<code class="inline-code">className</code>
-								instead, matching React's normal prop names.
+								for React components. The block can live at module scope or inside a component body.
 							</p>
 							<pre class="code-block">
-								<code innerHTML={STYLE_COMPOSITION_HTML} />
+								<code innerHTML={THEME_CLASS_HTML} />
 							</pre>
+							<h3 class="subsection-heading">
+								A theme keeps every selector; a class map keeps only classes
+							</h3>
 							<p class="section-body">
-								You can also create the style expression at module scope and reference the generated
-								class map from any component in the file. This gives teams moving from StyleX-like
-								patterns a declarative, reusable class map without putting the
-								<code class="inline-code">{'<style>'}</code>
-								block inside the returned template.
+								A block that is exported, applied, or whose
+								<code class="inline-code">$class</code>
+								is read is a theme. It keeps every selector, element and descendant selectors
+								included. A block that is only read through class entries such as
+								<code class="inline-code">styles.card</code>
+								is a class map. It keeps only its standalone class selectors; the others are removed
+								as unused, because no element can get its hash class.
+							</p>
+							<h3 class="subsection-heading">apply adds a theme to a whole scope</h3>
+							<p class="section-body">
+								<code class="inline-code">{'<style apply={theme} />'}</code>
+								adds the theme's
+								<code class="inline-code">$class</code>
+								to every element of the scope it sits in, so the theme's element and descendant
+								rules reach those elements as if the theme had been written there. A self-closed
+								apply adds no hash class of its own.
+								<code class="inline-code">{'<style apply={theme}>...</style>'}</code>
+								does both: it applies the theme and declares a scoped block in one go.
 							</p>
 							<pre class="code-block">
-								<code innerHTML={MODULE_STYLE_COMPOSITION_HTML} />
+								<code innerHTML={STYLE_APPLY_HTML} />
+							</pre>
+							<h3 class="subsection-heading">The local rule wins</h3>
+							<p class="section-body">
+								A theme's CSS is output before the block that applies it, and a theme must be
+								declared before any block that applies it. So a rule written in the applying scope
+								beats the theme's rule at equal specificity: the
+								<code class="inline-code">div</code>
+								above is black, not green. A theme from the same module is written into the output
+								as a string literal; an imported theme is read at runtime through
+								<code class="inline-code">theme.$class</code>.
+							</p>
+							<h3 class="subsection-heading">Themes compose</h3>
+							<p class="section-body">
+								A theme can apply another theme, and
+								<code class="inline-code">{'apply={[a, b]}'}</code>
+								applies several in order. The resulting
+								<code class="inline-code">$class</code>
+								lists the applied themes' classes first and the block's own hash class last, so a
+								composed theme reaches an element with everything it was built from.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={THEME_COMPOSITION_HTML} />
+							</pre>
+							<h3 class="subsection-heading">
+								Opt single elements in with
+								<code class="inline-code">$class</code>
+							</h3>
+							<p class="section-body">
+								<code class="inline-code">apply</code>
+								is all or nothing for a scope. To pick elements instead, put
+								<code class="inline-code">theme.$class</code>
+								on them. Reading
+								<code class="inline-code">$class</code>
+								anywhere in the module makes the block a theme, so its element and descendant rules
+								are kept, and only the elements that carry the class match them. The value is a
+								plain string, so a child component can take it through a prop and put it on its own
+								elements, where it comes before the child's own hash class.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={THEME_OPT_IN_HTML} />
 							</pre>
 							<p class="section-body">
-								Classes exposed on the map come from standalone selectors in the
-								<code class="inline-code">{'<style>'}</code>
-								block. Classes that only appear in compound or descendant selectors are not exported
-								on the map.
+								Prefer
+								<code class="inline-code">$class</code>
+								when a theme should reach a handful of elements, or elements the parent does not
+								render itself, and
+								<code class="inline-code">apply</code>
+								when it should reach a whole scope. The two combine. Listing several themes'
+								<code class="inline-code">$class</code>
+								values on one element composes them there the way
+								<code class="inline-code">{'apply={[a, b]}'}</code>
+								composes them on a scope.
+							</p>
+							<h3 class="subsection-heading">Cascade layers pass through</h3>
+							<p class="section-body">
+								<code class="inline-code">@layer</code>
+								rules inside a block are kept as written, and the selectors inside them are still
+								scoped, so a codebase that already orders its layers can keep doing so.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={STYLE_LAYER_HTML} />
+							</pre>
+							<p class="section-body muted">
+								Why not build scoping on
+								<code class="inline-code">@layer</code>? Layers order rules globally: every
+								participant has to agree on layer names and declare their order up front, and a
+								layer cannot be attached to one subtree of elements. Sibling scoping gives an order
+								you can read off the file, and
+								<code class="inline-code">apply</code>
+								adds classes, so a theme reaches exactly the elements of one scope.
 							</p>
 						</section>
 					</main>
@@ -862,6 +1437,13 @@ export const FeaturesPage = () => @{
 				letter-spacing: -0.03em;
 			}
 
+			.subsection-heading {
+				margin: 1.75rem 0 0.5rem;
+				font-size: clamp(1.1rem, 2vw, 1.35rem);
+				line-height: 1.2;
+				letter-spacing: -0.02em;
+			}
+
 			.section-body {
 				margin: 0.5rem 0 0;
 				font-size: 1.05rem;
@@ -875,6 +1457,26 @@ export const FeaturesPage = () => @{
 			.section-body a:not(.cta-link) {
 				display: inline-block;
 				margin: 0 0.18em;
+			}
+
+			.decision-table {
+				width: 100%;
+				margin: 1rem 0 0;
+				border-collapse: collapse;
+				font-size: 0.98rem;
+				line-height: 1.6;
+				color: rgba(26, 22, 64, 0.76);
+			}
+			.decision-table th,
+			.decision-table td {
+				padding: 0.55rem 0.75rem;
+				border-bottom: 1px solid rgba(26, 22, 64, 0.12);
+				text-align: left;
+				vertical-align: top;
+			}
+			.decision-table th {
+				font-weight: 600;
+				color: rgba(26, 22, 64, 0.9);
 			}
 			.doc-section:first-child {
 				margin-top: 0.5rem;

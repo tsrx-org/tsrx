@@ -72,6 +72,91 @@ describe('@tsrx/mcp authoring reviews', () => {
 		);
 	});
 
+	it('treats a self-closed apply block as style usage', () => {
+		const result = review_tsrx_styles({
+			target: 'react',
+			filename: 'App.tsrx',
+			code: `import { theme } from './theme.tsrx';
+			export function App() @{
+				<style apply={theme} />
+				<main class="app-shell">{'Daily Flow'}</main>
+			}`,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(result.issues.map((issue) => issue.kind)).not.toContain('missing-style-block');
+		expect(result.issues).toEqual([
+			expect.objectContaining({
+				kind: 'style-theme',
+				severity: 'info',
+				snippet: '<style apply={theme} />',
+			}),
+		]);
+		expect(result.issues[0].message).toContain('theme');
+		expect(result.issues[0].message).toContain('$class');
+	});
+
+	it('does not let a self-closed block swallow a later bodied block', () => {
+		const result = review_tsrx_styles({
+			target: 'react',
+			filename: 'App.tsrx',
+			code: `export function App({ dark }) @{
+				<style apply={dark ? night : day} />
+				<style apply={(t) => t}>
+					.title { font-weight: 700; }
+				</style>
+				<style>
+					* { box-sizing: border-box; }
+				</style>
+				<h1 class="title">{'Daily Flow'}</h1>
+			}`,
+		});
+
+		const kinds = result.issues.map((issue) => issue.kind);
+		expect(kinds).not.toContain('missing-style-block');
+		expect(kinds).not.toContain('style-expression-body');
+		// The universal selector lives in the third (bodied, un-applied) block; it
+		// is only found if the two apply blocks were delimited correctly.
+		expect(kinds.filter((kind) => kind === 'universal-selector')).toHaveLength(1);
+		expect(kinds.filter((kind) => kind === 'style-theme')).toHaveLength(2);
+		expect(result.issues.find((issue) => issue.kind === 'style-theme')?.message).toContain(
+			'dark ? night : day',
+		);
+	});
+
+	it('describes an exported style block as a theme exposing $class', () => {
+		const result = review_tsrx_styles({
+			target: 'react',
+			filename: 'theme.tsrx',
+			code: `export const theme = <style>
+				.card { padding: 1rem; }
+			</style>;`,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(result.issues).toEqual([
+			expect.objectContaining({
+				kind: 'style-theme',
+				severity: 'info',
+				title: 'Exported style block is a theme',
+			}),
+		]);
+		expect(result.issues[0].message).toContain('$class');
+	});
+
+	it('does not report a plain assigned class map as a theme', () => {
+		const result = review_tsrx_styles({
+			target: 'react',
+			filename: 'App.tsrx',
+			code: `const classes = <style>
+				.card { padding: 1rem; }
+			</style>;
+			export function App() { return <div class={classes.card} />; }`,
+		});
+
+		expect(result.issues).toEqual([]);
+	});
+
 	it('recommends component extraction for dense generated components', () => {
 		const repeated_items = Array.from(
 			{ length: 18 },

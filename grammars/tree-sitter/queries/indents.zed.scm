@@ -14,7 +14,7 @@
   (formal_parameters ")" @end)
   (parenthesized_expression ")" @end)
   (jsx_expression "}" @end)
-  (style_element "</style>" @end)
+  (style_element ["</style>" "/>"] @end)
   (script_element "</" @end)
   (jsx_statement_container "}" @end)
   (module_body "}" @end)

@@ -118,7 +118,36 @@ describe('@tsrx/turbopack-plugin-react loader', () => {
 		expect(err).toBeNull();
 		expect(output).toContain('import "/virtual/App.tsrx?tsrx-css&lang.css";');
 		expect(output).toContain('export function App()');
-		expect(map).toBeUndefined();
+		expect(map).toBeTruthy();
+	});
+
+	it('places the injected CSS import after the module imports', async () => {
+		const { context, promise } = create_loader_context('/virtual/App.tsrx');
+
+		tsrx_react_turbopack_loader.call(
+			context,
+			`import './reset.css';
+
+			export function App() @{
+				<>
+				<div>{'Hello world'}</div>
+
+				<style>
+					div {
+						color: red;
+					}
+				</style>
+				</>
+			}`,
+		);
+
+		const { err, output } = await promise;
+
+		expect(err).toBeNull();
+		expect(output.indexOf('./reset.css')).toBeGreaterThan(-1);
+		expect(output.indexOf('./reset.css')).toBeLessThan(
+			output.indexOf('import "/virtual/App.tsrx?tsrx-css&lang.css";'),
+		);
 	});
 
 	it('keeps top-level directives ahead of injected CSS imports', async () => {

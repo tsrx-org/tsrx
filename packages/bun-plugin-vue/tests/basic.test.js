@@ -138,7 +138,9 @@ describe('@tsrx/bun-plugin-vue', () => {
 			const file_path = path.join(dir, 'App.tsrx');
 			await writeFile(
 				file_path,
-				`export function App() @{
+				`import './reset.css';
+
+					export function App() @{
 					<>
 						<div class="div">{'Hello world'}</div>
 
@@ -162,6 +164,10 @@ describe('@tsrx/bun-plugin-vue', () => {
 			expect(transformed?.contents).toContain('defineVaporComponent');
 			expect(transformed?.contents).toContain('template as _template');
 			expect(transformed?.contents).toContain(css_id);
+			expect(String(transformed?.contents).indexOf('./reset.css')).toBeGreaterThan(-1);
+			expect(String(transformed?.contents).indexOf('./reset.css')).toBeLessThan(
+				String(transformed?.contents).indexOf(css_id),
+			);
 			expect(transformed?.contents).not.toContain('return <div>');
 			expect(css.loader).toBe('css');
 			expect(css.contents).toContain('.div.');

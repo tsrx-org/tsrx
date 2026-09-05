@@ -48,6 +48,13 @@ function normalize_tsrx_ast_for_eslint(ast: any): void {
 		if (seen.has(node)) return;
 		seen.add(node);
 
+		// `<style apply={...} />` resolutions hold scope bindings whose reference
+		// paths point back at AST ancestors. ESLint rules do not use them, and the
+		// cycles break consumers that deep-clone or serialize the AST (RuleTester).
+		if (node.type === 'JSXStyleElement' && node.metadata?.styleApplies) {
+			delete node.metadata.styleApplies;
+		}
+
 		for (const key of Object.keys(node)) {
 			if (key === 'parent' || key === 'loc' || key === 'range') continue;
 			const value = node[key];

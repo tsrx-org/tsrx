@@ -330,6 +330,237 @@ const styles = <style>
         (style_element
           (raw_text))))))
 
+====================================
+Style Element Self Closing With Apply
+====================================
+
+function App() @{
+  <style apply={theme} />
+  <div />
+}
+
+---
+
+(program
+  (function_declaration
+    (identifier)
+    (formal_parameters)
+    (jsx_statement_container
+      (style_element
+        (jsx_attribute
+          (identifier)
+          (jsx_expression
+            (component_statement
+              (expression_statement
+                (identifier))))))
+      (jsx_self_closing_element
+        (jsx_non_namespaced_element_name
+          (identifier))))))
+
+===============================
+Style Element Apply Array
+===============================
+
+function App() @{
+  <style apply={[base, theme]} />
+  <div />
+}
+
+---
+
+(program
+  (function_declaration
+    (identifier)
+    (formal_parameters)
+    (jsx_statement_container
+      (style_element
+        (jsx_attribute
+          (identifier)
+          (jsx_expression
+            (component_statement
+              (expression_statement
+                (array
+                  (identifier)
+                  (identifier)))))))
+      (jsx_self_closing_element
+        (jsx_non_namespaced_element_name
+          (identifier))))))
+
+=====================================
+Style Element Body With Attributes
+=====================================
+
+function App() @{
+  <style apply={theme} data-scope="card">
+    .card { color: red; }
+  </style>
+  <div />
+}
+
+---
+
+(program
+  (function_declaration
+    (identifier)
+    (formal_parameters)
+    (jsx_statement_container
+      (style_element
+        (jsx_attribute
+          (identifier)
+          (jsx_expression
+            (component_statement
+              (expression_statement
+                (identifier)))))
+        (jsx_attribute
+          (jsx_hyphenated_name
+            (identifier)
+            (identifier))
+          (string))
+        (raw_text))
+      (jsx_self_closing_element
+        (jsx_non_namespaced_element_name
+          (identifier))))))
+
+=====================================
+Multiple Style Elements In Fragment
+=====================================
+
+function App() @{
+  <>
+    <style>.a { color: red; }</style>
+    <style apply={theme} />
+    <div />
+  </>
+}
+
+---
+
+(program
+  (function_declaration
+    (identifier)
+    (formal_parameters)
+    (jsx_statement_container
+      (jsx_fragment
+        (jsx_opening_fragment)
+        (jsx_text)
+        (style_element
+          (raw_text))
+        (jsx_text)
+        (style_element
+          (jsx_attribute
+            (identifier)
+            (jsx_expression
+              (component_statement
+                (expression_statement
+                  (identifier))))))
+        (jsx_text)
+        (jsx_self_closing_element
+          (jsx_non_namespaced_element_name
+            (identifier)))
+        (jsx_text)
+        (jsx_closing_fragment)))))
+
+============================================
+Style Siblings Around Statement Container Output
+============================================
+
+function App() @{
+  const x = 1;
+  <style>.a { color: red; }</style>
+  <div>{x}</div>
+  <style apply={theme} />
+}
+
+---
+
+(program
+  (function_declaration
+    (identifier)
+    (formal_parameters)
+    (jsx_statement_container
+      (variable_declaration
+        (variable_declarator
+          (identifier)
+          (initializer
+            (number))))
+      (style_element
+        (raw_text))
+      (jsx_element
+        (jsx_opening_element
+          (jsx_element_name
+            (identifier)))
+        (jsx_expression
+          (component_statement
+            (expression_statement
+              (identifier))))
+        (jsx_closing_element
+          (jsx_element_name
+            (identifier))))
+      (style_element
+        (jsx_attribute
+          (identifier)
+          (jsx_expression
+            (component_statement
+              (expression_statement
+                (identifier)))))))))
+
+===================================
+Style Siblings Inside If Body
+===================================
+
+function App() @{
+  <div>
+    @if (open) {
+      <style apply={theme} />
+      <span />
+      <style>span { color: red; }</style>
+    } @else {
+      <style apply={fallback} />
+    }
+  </div>
+}
+
+---
+
+(program
+  (function_declaration
+    (identifier)
+    (formal_parameters)
+    (jsx_statement_container
+      (jsx_element
+        (jsx_opening_element
+          (jsx_element_name
+            (identifier)))
+        (jsx_if_expression
+          (parenthesized_expression
+            (identifier))
+          (jsx_template_block
+            (style_element
+              (jsx_attribute
+                (identifier)
+                (jsx_expression
+                  (component_statement
+                    (expression_statement
+                      (identifier))))))
+            (jsx_self_closing_element
+              (jsx_non_namespaced_element_name
+                (identifier)))
+            (style_element
+              (raw_text)))
+          (jsx_else_clause
+            (jsx_template_block
+              (style_element
+                (jsx_attribute
+                  (identifier)
+                  (jsx_expression
+                    (component_statement
+                      (expression_statement
+                        (identifier)))))))))
+        (jsx_text)
+        (jsx_closing_element
+          (jsx_element_name
+            (identifier)))))))
+
 ============================
 Function Return Native Markup
 ============================

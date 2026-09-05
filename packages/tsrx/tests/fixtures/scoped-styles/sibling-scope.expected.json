@@ -1,0 +1,11 @@
+{
+  "elements": {
+    "status": ["status"],
+    "title": ["status", "title"],
+    "ok": ["status", "title", "ok"],
+    "wait": ["status", "title", "wait"]
+  },
+  "cssOrder": ["status", "title", "ok", "wait"],
+  "pruned": [".status"],
+  "classMaps": {}
+}

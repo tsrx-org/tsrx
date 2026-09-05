@@ -7,7 +7,7 @@
 
 /** @import * as AST from 'estree' */
 /** @import * as ESTreeJSX from 'estree-jsx' */
-/** @import { Visitors } from '../../types/index' */
+/** @import { ScopeClassParts, StyleRenderMode, Visitors } from '../../types/index' */
 
 import { walk } from 'zimmerframe';
 import * as b from '../utils/builders.js';
@@ -18,27 +18,35 @@ export { is_style_element };
 
 /**
  * Mark selectors inside the stylesheet as "used" so `renderStylesheets` does
- * not comment them out.
+ * not comment them out, per render mode (D4):
  *
- * For a free-standing `<style>` block every selector is marked: we skip
- * selector-pruning because component boundaries can be dynamic — any selector
- * authored inside the component's `<style>` block is considered intentional.
+ * - `scope`: a free-standing `<style>` block. Every selector is marked; we
+ *   skip selector-pruning because component boundaries can be dynamic — any
+ *   selector authored inside a scope's `<style>` block is considered
+ *   intentional.
+ * - `class-map`: a block assigned to a local, unexported, unapplied variable.
+ *   The only selectors reachable through the generated class map are
+ *   standalone class selectors — scoped (`.x`) or global-wrapped
+ *   (`:global(.x)`). Anything else at the top level — element selectors,
+ *   compound selectors, descendant chains, global tag selectors — never ends
+ *   up in the class map and is marked unused for `renderStylesheets` to
+ *   comment out. Selectors of nested rules ride along with their parent: they
+ *   apply where the parent's class matched, and the whole rule is pruned when
+ *   the parent itself is unreachable.
+ * - `theme`: an exported or applied block (D5). Every selector is kept and
+ *   hash-scoped, because appliers stamp `$class` on arbitrary elements.
  *
- * When the `<style>` block is assigned to a variable (`is_style_expression`),
- * the only selectors reachable through the generated class map are standalone
- * class selectors — scoped (`.x`) or global-wrapped (`:global(.x)`). Anything
- * else at the top level — element selectors, compound selectors, descendant
- * chains, global tag selectors — never ends up in the class map and is marked
- * unused for `renderStylesheets` to comment out. Selectors of nested rules ride
- * along with their parent: they apply where the parent's class matched, and the
- * whole rule is pruned when the parent itself is unreachable.
+ * The boolean form (`true` → `class-map`, `false` → `scope`) is kept for one
+ * release for consumers compiled against the previous signature.
  *
  * @param {AST.CSS.StyleSheet} stylesheet
- * @param {boolean} [is_style_expression]
+ * @param {StyleRenderMode | boolean} [mode]
  * @returns {AST.CSS.StyleSheet}
  */
-export function prepare_stylesheet_for_render(stylesheet, is_style_expression = false) {
-	if (is_style_expression) {
+export function prepare_stylesheet_for_render(stylesheet, mode = 'scope') {
+	const render_mode = mode === true ? 'class-map' : mode === false ? 'scope' : mode;
+	const is_class_map = render_mode === 'class-map';
+	if (is_class_map) {
 		mark_class_map_selectors(stylesheet);
 	}
 	walk(
@@ -47,7 +55,7 @@ export function prepare_stylesheet_for_render(stylesheet, is_style_expression = 
 		/** @type {Visitors<AST.CSS.Node, null>} */ ({
 			_(node, { next, path }) {
 				if (node.type === 'ComplexSelector') {
-					if (is_style_expression && is_unreachable_via_class_map(node, path)) {
+					if (is_class_map && is_unreachable_via_class_map(node, path)) {
 						// Not in the generated class map. The analyzer pre-marks global
 						// selectors as used, so reset, and leave the subtree untouched —
 						// no `scoped` marks that would splice the hash into pruned output.
@@ -149,7 +157,7 @@ export function annotate_with_hash(
 	if (node.type === 'JSXElement') {
 		const element = /** @type {AST.TSRXJSXElement} */ (node);
 		if (!is_composite_jsx_element(element) || element.metadata?.dynamicElement) {
-			add_hash_class_to_jsx_element(element, hash, jsx_class_attr_name);
+			add_hash_class(element, hash, jsx_class_attr_name);
 		}
 		element.children = element.children
 			.map((child) => annotate_with_hash(child, hash, jsx_class_attr_name, preserve_style_elements))
@@ -221,23 +229,120 @@ function is_class_attribute(attr) {
 }
 
 /**
- * Merge the hash into an existing class attribute value. Returns `false` when
- * the value is not a string literal, so the caller must wrap it instead.
+ * The authored class value of an attribute as an expression, or `null` when
+ * the attribute has no usable value (`<div class>`, `class={}`).
  *
- * @param {ESTreeJSX.JSXAttribute['value'] | AST.Expression | ESTreeJSX.JSXEmptyExpression} value
- * @param {string} hash
- * @returns {boolean} whether the hash was merged into the literal in place
+ * @param {ESTreeJSX.JSXAttribute | undefined} attr
+ * @returns {AST.Expression | null}
  */
-function merge_hash_into_literal(value, hash) {
-	if (value?.type !== 'Literal' || typeof value.value !== 'string') return false;
-	const merged = `${value.value} ${hash}`;
-	value.value = merged;
-	value.raw = JSON.stringify(merged);
-	return true;
+function class_attribute_base(attr) {
+	const value = attr?.value;
+	if (!value) return null;
+	const expression = value.type === 'JSXExpressionContainer' ? value.expression : value;
+	if (expression.type === 'JSXEmptyExpression') return null;
+	return /** @type {AST.Expression} */ (expression);
 }
 
 /**
- * Ensure the element carries a class attribute containing the scoping hash.
+ * Build one attribute value from the accumulated parts — `authored hashes…
+ * applied…` — as a single string literal when everything is static,
+ * otherwise as one template literal (never a template literal nested in
+ * another across repeated stamping).
+ *
+ * @param {ScopeClassParts} parts
+ * @returns {AST.Expression}
+ */
+function build_scope_class_value(parts) {
+	const { base, hashes, applied } = parts;
+	const base_literal = base?.type === 'Literal' && typeof base.value === 'string' ? base : null;
+	/** @type {Array<string | AST.Expression>} */
+	const sequence = [];
+	if (base_literal) sequence.push(/** @type {string} */ (base_literal.value));
+	else if (base) sequence.push(base);
+	sequence.push(...hashes, ...applied);
+
+	/** @type {AST.TemplateElement[]} */
+	const quasis = [];
+	/** @type {AST.Expression[]} */
+	const expressions = [];
+	/** @type {string} */
+	let text = '';
+	for (const part of sequence) {
+		if (typeof part === 'string') {
+			if (part) text = text ? `${text} ${part}` : part;
+			continue;
+		}
+		const between = expressions.length > 0;
+		quasis.push(b.quasi(text ? (between ? ` ${text} ` : `${text} `) : between ? ' ' : '', false));
+		expressions.push(part);
+		text = '';
+	}
+
+	if (expressions.length === 0) {
+		// Keep the authored literal's position so editor mappings survive.
+		return base_literal
+			? { ...base_literal, value: text, raw: JSON.stringify(text) }
+			: b.literal(text, JSON.stringify(text));
+	}
+	quasis.push(b.quasi(text ? ` ${text}` : '', true));
+	return b.template(quasis, expressions);
+}
+
+/**
+ * Stamp a scope's classes on an element, copy-on-write. The parts live on the
+ * element's (shared) metadata so an enclosing scope's stamp and a nested
+ * scope's stamp accumulate into one value: `authored hashes… applied…`, with
+ * every applied theme after every scope hash regardless of which scope
+ * applied it.
+ *
+ * @template {AST.TSRXJSXElement} T
+ * @param {T} element
+ * @param {string[]} hashes scope hashes to add
+ * @param {Array<string | AST.Expression>} applied theme classes: literals or `theme.$class` reads
+ * @param {'class' | 'className'} [class_attr_name='class']
+ * @returns {T}
+ */
+export function add_scope_classes(element, hashes, applied, class_attr_name = 'class') {
+	if (hashes.length === 0 && applied.length === 0) return element;
+	const attrs = element.openingElement.attributes ?? [];
+	const index = attrs.findIndex(is_class_attribute);
+	const existing = index === -1 ? undefined : /** @type {ESTreeJSX.JSXAttribute} */ (attrs[index]);
+	const metadata = element.metadata || (element.metadata = { path: [] });
+	const parts =
+		metadata.tsrx_scope_class ||
+		(metadata.tsrx_scope_class = {
+			base: class_attribute_base(existing),
+			hashes: [],
+			applied: [],
+		});
+	for (const hash of hashes) {
+		if (!parts.hashes.includes(hash)) parts.hashes.push(hash);
+	}
+	for (const part of applied) {
+		if (typeof part !== 'string' || !parts.applied.includes(part)) parts.applied.push(part);
+	}
+
+	const value = build_scope_class_value(parts);
+	const attr_value =
+		value.type === 'Literal' && typeof value.value === 'string'
+			? value
+			: b.jsx_expression_container(value);
+	const next_attrs = attrs.slice();
+	if (existing) {
+		next_attrs[index] = { ...existing, value: attr_value };
+	} else {
+		next_attrs.push(b.jsx_attribute(b.jsx_id(class_attr_name), attr_value));
+	}
+	return {
+		...element,
+		openingElement: { ...element.openingElement, attributes: next_attrs },
+	};
+}
+
+/**
+ * Ensure the element carries a class attribute containing the scoping hash,
+ * in place. Kept for consumers that stamp one hash at a time; the scope
+ * pre-pass uses {@link add_scope_classes}.
  *
  * @param {AST.TSRXJSXElement} element
  * @param {string} hash
@@ -245,61 +350,6 @@ function merge_hash_into_literal(value, hash) {
  * @returns {void}
  */
 export function add_hash_class(element, hash, class_attr_name = 'class') {
-	const attrs = element.openingElement.attributes;
-	const existing = attrs.find(is_class_attribute);
-
-	if (!existing) {
-		attrs.push(b.jsx_attribute(b.jsx_id(class_attr_name), b.literal(hash)));
-		return;
-	}
-
-	const value =
-		existing.value?.type === 'JSXExpressionContainer' ? existing.value.expression : existing.value;
-	if (!value || value.type === 'JSXEmptyExpression') {
-		existing.value = b.literal(hash, JSON.stringify(hash));
-		return;
-	}
-
-	if (merge_hash_into_literal(value, hash)) return;
-
-	// Dynamic expression. Concatenate at runtime via template literal.
-	existing.value = b.jsx_expression_container(
-		b.template([b.quasi('', false), b.quasi(` ${hash}`, true)], [value]),
-	);
-}
-
-/**
- * @param {AST.TSRXJSXElement} element
- * @param {string} hash
- * @param {'class' | 'className'} jsx_class_attr_name
- * @returns {void}
- */
-function add_hash_class_to_jsx_element(element, hash, jsx_class_attr_name) {
-	const attrs = (element.openingElement.attributes ??= []);
-	const existing = attrs.find(is_class_attribute);
-
-	if (!existing) {
-		attrs.push(
-			b.jsx_attribute(b.jsx_id(jsx_class_attr_name), b.literal(hash, JSON.stringify(hash))),
-		);
-		return;
-	}
-
-	const value = existing.value;
-	if (!value) {
-		existing.value = b.literal(hash, JSON.stringify(hash));
-		return;
-	}
-
-	if (merge_hash_into_literal(value, hash)) return;
-
-	const expression = value.type === 'JSXExpressionContainer' ? value.expression : value;
-	if (expression.type === 'JSXEmptyExpression') {
-		existing.value = b.literal(hash, JSON.stringify(hash));
-		return;
-	}
-
-	existing.value = b.jsx_expression_container(
-		b.template([b.quasi('', false), b.quasi(` ${hash}`, true)], [expression]),
-	);
+	const stamped = add_scope_classes(element, [hash], [], class_attr_name);
+	element.openingElement = stamped.openingElement;
 }

@@ -1,6 +1,14 @@
 /** @import * as AST from 'estree' */
+/** @import { CompileError } from '../../types/index' */
 
 import { walk } from 'zimmerframe';
+import { error } from '../errors.js';
+import { DIAGNOSTIC_CODES } from '../diagnostics.js';
+import { css_node_source_position } from '../parse/style.js';
+import {
+	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
+	TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
+} from './validation.js';
 
 /**
  * True if is `:global` without arguments
@@ -35,10 +43,41 @@ function is_global(relative_selector) {
 }
 
 /**
- * Analyze CSS and set metadata for global selectors
+ * Analyze CSS and set metadata for global selectors.
+ *
+ * `:global` placement problems are reported through `error()` with the
+ * `CSS_GLOBAL_PLACEMENT` code: pushed onto `errors` when given (and skipped
+ * over a suppressing comment when `comments` is given too), thrown otherwise.
+ * When `css` is a sheet parsed with a `body` origin (every sheet `parseModule`
+ * produces), the diagnostic carries file-relative `pos` / `end` / `loc`; the
+ * `fileName` defaults to the sheet's.
+ *
  * @param {AST.CSS.Node} css - The CSS AST
+ * @param {{
+ *   filename?: string | null,
+ *   errors?: CompileError[],
+ *   comments?: AST.CommentWithLocation[],
+ * }} [options]
  */
-export function analyze_css(css) {
+export function analyze_css(css, options = {}) {
+	const sheet = css.type === 'StyleSheet' ? css : null;
+	const filename = options.filename ?? sheet?.filename ?? null;
+
+	/**
+	 * @param {string} message
+	 * @param {AST.CSS.Node} node
+	 */
+	function report(message, node) {
+		error(
+			message,
+			filename,
+			css_node_source_position(sheet, node),
+			options.errors,
+			options.comments,
+			DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT,
+		);
+	}
+
 	walk(css, /** @type {{ rule: AST.CSS.Rule | null }} */ ({ rule: null }), {
 		Rule(node, context) {
 			node.metadata.parent_rule = context.state.rule;
@@ -98,7 +137,7 @@ export function analyze_css(css) {
 						is_nested &&
 						!(/** @type {AST.CSS.PseudoClassSelector} */ (global.selectors[0]).args)
 					) {
-						throw new Error(`A :global selector cannot be inside a pseudoclass.`);
+						report(TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR, global.selectors[0]);
 					}
 
 					const idx = node.children.indexOf(global);
@@ -107,9 +146,8 @@ export function analyze_css(css) {
 						// ensure `:global(...)` is not used in the middle of a selector (but multiple `global(...)` in sequence are ok)
 						for (let i = idx + 1; i < node.children.length; i++) {
 							if (!is_global(node.children[i])) {
-								throw new Error(
-									`:global(...) can be at the start or end of a selector sequence, but not in the middle.`,
-								);
+								report(TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR, first);
+								break;
 							}
 						}
 					}

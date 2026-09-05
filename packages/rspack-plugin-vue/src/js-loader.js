@@ -6,7 +6,7 @@ import { compile } from '@tsrx/vue';
 
 /**
  * Compiles `.tsrx` source to Vue-flavoured TSX and, when a `<style>` block is
- * present, prepends an `import` to the sibling virtual CSS module so rspack can
+ * present, appends an `import` of the sibling virtual CSS module so rspack can
  * include the styles in the asset graph.
  *
  * @this {LoaderContext<{ runtimeImports?: RuntimeImportMode }>}
@@ -21,15 +21,16 @@ export default function jsLoader(source) {
 		const { code, map, css } = compile(source, resourcePath, this.getOptions?.());
 
 		let output = code;
-		/** @type {typeof map | null} */
-		let output_map = map;
 		if (css) {
+			// The import goes after the module's own imports so the stylesheets of
+			// imported themes are added to the asset graph first and a rule in the
+			// applying module wins at equal specificity. Nothing above it moves, so
+			// the compiler's source map still applies.
 			const cssImport = `${resourcePath}?tsrx-css&lang.css`;
-			output = `import ${JSON.stringify(cssImport)};\n${code}`;
-			output_map = null;
+			output = `${code}\nimport ${JSON.stringify(cssImport)};\n`;
 		}
 
-		callback(null, output, /** @type {any} */ (output_map ?? undefined));
+		callback(null, output, /** @type {any} */ (map ?? undefined));
 	} catch (/** @type {any} */ err) {
 		callback(err);
 	}

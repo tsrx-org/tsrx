@@ -75,29 +75,29 @@ function compile_source(source, type_only = true) {
 	return { ...transformed, ...result, errors };
 }
 
+// Raw CSS in `<style>` is TSRX template syntax, so the blocks sit in a `@{ … }`
+// body; both are items of the same fragment children list and share one scope.
 const SPLIT_STYLE_SOURCE =
-	'export function Split(props: { active: boolean }) {\n' +
-	'\treturn <>\n' +
+	'export function Split(props: { active: boolean }) @{\n' +
+	'\t<>\n' +
 	"\t\t<section class={['mailbox', { active: props.active }]}>{'hi'}</section>\n" +
 	'\t\t<style>\n' +
 	'\t\t\t.mailbox { color: rgb(10, 20, 30); }\n' +
 	'\t\t</style>\n' +
-	'\t\t<>\n' +
-	'\t\t\t<style>\n' +
-	'\t\t\t\t.active { background-color: rgb(40, 50, 60); }\n' +
-	'\t\t\t</style>\n' +
-	'\t\t</>\n' +
-	'\t</>;\n' +
+	'\t\t<style>\n' +
+	'\t\t\t.active { background-color: rgb(40, 50, 60); }\n' +
+	'\t\t</style>\n' +
+	'\t</>\n' +
 	'}\n';
 
 const SPLIT_STYLE_DEFINITION_SOURCE =
-	'export function Split() {\n' +
-	'\treturn <>\n' +
+	'export function Split() @{\n' +
+	'\t<>\n' +
 	'\t\t<section class="mailbox">one</section>\n' +
 	'\t\t<aside class="active">two</aside>\n' +
 	'\t\t<style>.mailbox { color: red; }</style>\n' +
 	'\t\t<style>.active { color: blue; }</style>\n' +
-	'\t</>;\n' +
+	'\t</>\n' +
 	'}\n';
 
 const REF_SPREAD_PROPS_TYPE =
@@ -182,7 +182,7 @@ function ref_spread_modules() {
 }
 
 describe('type-only JSX analysis', () => {
-	it('keeps multiple scoped style blocks analyzable without changing runtime validation', () => {
+	it('keeps multiple scoped style blocks analyzable and compiles them as one scope', () => {
 		const result = compile_source(SPLIT_STYLE_SOURCE);
 		expect(result.errors).toEqual([]);
 		expect(result.cssMappings).toHaveLength(2);
@@ -190,9 +190,11 @@ describe('type-only JSX analysis', () => {
 		expect(result.code).not.toContain('rgb(10, 20, 30)');
 		expect(result.code).not.toContain('rgb(40, 50, 60)');
 
-		expect(() => compile_source(SPLIT_STYLE_SOURCE, false)).toThrow(
-			'TSRX fragments can only have one style tag',
-		);
+		// Several blocks in one scope share the scope hash (RFC: multiple
+		// blocks per scope); the former "one style tag" error is gone.
+		const runtime = compile_source(SPLIT_STYLE_SOURCE, false);
+		expect(runtime.errors).toEqual([]);
+		expect(runtime.cssHash?.split(' ')).toHaveLength(1);
 	});
 
 	it('maps classes to the split style block that defines them', () => {

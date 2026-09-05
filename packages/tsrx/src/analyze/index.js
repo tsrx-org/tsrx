@@ -15,6 +15,8 @@ import {
 	validate_forgotten_statement_container,
 	validate_unsupported_lazy_assignment_position,
 } from './validation.js';
+import { create_scopes, ScopeRoot } from '../scope.js';
+import { analyze_styles } from './style-analyze.js';
 
 /**
  * Find the first authored lazy pattern along an assignment target's binding
@@ -220,5 +222,16 @@ export function analyze_tsrx(ast, filename, options = {}) {
 
 	walk(ast, state, visitors);
 
-	return { ast, errors, comments };
+	// Style `apply` targets resolve through real bindings. Scope diagnostics
+	// (duplicate declarations, reserved names) stay with the compilers that
+	// already report them, so this run collects into a private list.
+	const { scope, scopes } = create_scopes(ast, new ScopeRoot(), null, {
+		filename: /** @type {string} */ (filename ?? null),
+		collect: true,
+		errors: [],
+		comments,
+	});
+	const styles = analyze_styles(ast, scopes, state);
+
+	return { ast, errors, comments, scope, scopes, styles };
 }

@@ -6608,7 +6608,7 @@
     },
     "jsx-tag-style": {
       "name": "style.tag.js",
-      "begin": "(<)\\s*(style)\\b(?![^>]*/>)(?=[^>]*>)",
+      "begin": "(<)\\s*(style)\\b(?=[\\s/>])",
       "beginCaptures": {
         "1": {
           "name": "punctuation.definition.tag.begin.js"
@@ -6617,15 +6617,18 @@
           "name": "entity.name.tag.js"
         }
       },
-      "end": "(</)(style)(>)",
+      "end": "(/>)|(</)(style)(>)",
       "endCaptures": {
         "1": {
-          "name": "punctuation.definition.tag.begin.js"
+          "name": "punctuation.definition.tag.end.js"
         },
         "2": {
-          "name": "entity.name.tag.js"
+          "name": "punctuation.definition.tag.begin.js"
         },
         "3": {
+          "name": "entity.name.tag.js"
+        },
+        "4": {
           "name": "punctuation.definition.tag.end.js"
         }
       },
@@ -6646,8 +6649,8 @@
           ]
         },
         {
-          "begin": "(?<=<style)(?![^>]*/>)",
-          "end": "(?=>)",
+          "begin": "(?<=style)(?=[\\s/>])",
+          "end": "(?=/?>)",
           "patterns": [
             {
               "include": "#jsx-tag-attributes"
@@ -6707,8 +6710,8 @@
       ]
     },
     "jsx-tag-style-in-expression": {
-      "begin": "(?<!\\+\\+|--)(?<=[({\\[,?=>:*]|&&|\\|\\||\\?|\\*\\/|^await|[^\\._$[:alnum:]]await|^return|[^\\._$[:alnum:]]return|^default|[^\\._$[:alnum:]]default|^yield|[^\\._$[:alnum:]]yield|^)\\s*(?=(<)\\s*(style)\\b(?![^>]*/>)(?=[^>]*>))",
-      "end": "(?!(<)\\s*(style)\\b(?![^>]*/>)(?=[^>]*>))",
+      "begin": "(?<!\\+\\+|--)(?<=[({\\[,?=>:*]|&&|\\|\\||\\?|\\*\\/|^await|[^\\._$[:alnum:]]await|^return|[^\\._$[:alnum:]]return|^default|[^\\._$[:alnum:]]default|^yield|[^\\._$[:alnum:]]yield|^)\\s*(?=(<)\\s*(style)\\b(?=[\\s/>]))",
+      "end": "(?!(<)\\s*(style)\\b(?=[\\s/>]))",
       "patterns": [
         {
           "include": "#jsx-tag-style"

@@ -127,7 +127,9 @@ export function tsrxReact(options = {}) {
 					let output = code;
 					if (emit_css && css) {
 						css_cache.set(css_id, css);
-						output = `import ${JSON.stringify(css_id)};\n${code}`;
+						// After the module's own imports so imported themes' sheets load first
+						// and a rule in the applying module wins at equal specificity.
+						output = `${code}\nimport ${JSON.stringify(css_id)};\n`;
 					} else {
 						css_cache.delete(css_id);
 					}

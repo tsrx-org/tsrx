@@ -11,7 +11,7 @@
  @import * as AST from 'estree';
  */
 
-import is_reference from 'is-reference';
+import { is_reference } from './utils/is-reference.js';
 import { extract_identifiers, object, unwrap_pattern } from './utils/ast.js';
 import { walk } from 'zimmerframe';
 import { is_reserved } from './utils.js';

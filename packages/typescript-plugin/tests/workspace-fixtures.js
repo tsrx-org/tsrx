@@ -2,179 +2,127 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+/**
+ * A source containing this marker makes every compiler stub throw, the way a
+ * real target compiler does on a fatal parse error. Tests use it to exercise the
+ * plugin's raw-source fallback path (regex-extracted `<style>` / `<script>`
+ * regions) without depending on a real parser.
+ */
+export const COMPILE_FAILURE_MARKER = '/* @tsrx-stub: compile-failure */';
+
+// Shared prelude for every compiler stub. Stubs don't parse TSRX, but they do
+// mirror the parts of the `compile_to_volar_mappings` contract the plugin relies
+// on for embedded CSS: `cssMappings` carries one entry per *bodied* `<style>`
+// block in source order, and a self-closed `<style apply={…} />` block (no CSS
+// body) produces none. The opening tag is scanned so a `>` inside quotes or
+// inside an `{…}` expression container does not end it.
+const STUB_PRELUDE = `
+const COMPILE_FAILURE_MARKER = ${JSON.stringify(COMPILE_FAILURE_MARKER)};
+
+function collect_css_mappings(source) {
+	const mappings = [];
+	let from = 0;
+	while (true) {
+		const start = source.indexOf('<style', from);
+		if (start === -1) break;
+		let i = start + '<style'.length;
+		let depth = 0;
+		let quote = null;
+		for (; i < source.length; i++) {
+			const ch = source[i];
+			if (quote) {
+				if (ch === quote) quote = null;
+			} else if (ch === '"' || ch === "'") {
+				quote = ch;
+			} else if (ch === '{') {
+				depth++;
+			} else if (ch === '}') {
+				depth--;
+			} else if (ch === '>' && depth === 0) {
+				break;
+			}
+		}
+		if (i >= source.length) break;
+		const open_end = i + 1;
+		if (source[i - 1] === '/') {
+			// Self-closed block: no CSS body, no mapping.
+			from = open_end;
+			continue;
+		}
+		const close = source.indexOf('</style>', open_end);
+		if (close === -1) break;
+		const content = source.slice(open_end, close);
+		mappings.push({
+			sourceOffsets: [open_end],
+			generatedOffsets: [0],
+			lengths: [content.length],
+			generatedLengths: [content.length],
+			data: {
+				verification: true,
+				completion: true,
+				semantic: true,
+				navigation: true,
+				structure: true,
+				format: false,
+				customData: { content, embeddedId: 'style_' + mappings.length },
+			},
+		});
+		from = close + '</style>'.length;
+	}
+	return mappings;
+}
+`;
+
+/**
+ * @param {string} marker - `compiler:<marker>` comment stamped into the output
+ * @param {string} [export_name] - name of the exported compile function
+ */
+function compiler_stub(marker, export_name = 'compile_to_volar_mappings') {
+	return `${STUB_PRELUDE}
+module.exports = {
+	${export_name}(source, filename) {
+		if (source.includes(COMPILE_FAILURE_MARKER)) {
+			throw new Error('compile failure requested by fixture source');
+		}
+		const code = \`/* compiler:${marker} */\\nexport const filename = \${JSON.stringify(filename)};\\nexport default \${JSON.stringify(source)};\`;
+		return {
+			code,
+			mappings: [
+				{
+					sourceOffsets: [0],
+					generatedOffsets: [0],
+					lengths: [source.length],
+					generatedLengths: [source.length],
+					data: {
+						verification: false,
+						completion: true,
+						semantic: true,
+						navigation: true,
+						structure: true,
+						format: true,
+						customData: {},
+					},
+				},
+			],
+			cssMappings: collect_css_mappings(source),
+			errors: [],
+		};
+	},
+};
+`;
+}
+
 const COMPILER_STUBS = {
-	ripple: `module.exports = {
-	compile_to_volar_mappings(source, filename) {
-		const code = \`/* compiler:ripple */\\nexport const filename = \${JSON.stringify(filename)};\\nexport default \${JSON.stringify(source)};\`;
-		return {
-			code,
-			mappings: [
-				{
-					sourceOffsets: [0],
-					generatedOffsets: [0],
-					lengths: [source.length],
-					generatedLengths: [source.length],
-					data: {
-						verification: false,
-						completion: true,
-						semantic: true,
-						navigation: true,
-						structure: true,
-						format: true,
-						customData: {},
-					},
-				},
-			],
-			cssMappings: [],
-			errors: [],
-		};
-	},
-};
-`,
-	react: `module.exports = {
-	compile_to_volar_mappings(source, filename) {
-		const code = \`/* compiler:react */\\nexport const filename = \${JSON.stringify(filename)};\\nexport default \${JSON.stringify(source)};\`;
-		return {
-			code,
-			mappings: [
-				{
-					sourceOffsets: [0],
-					generatedOffsets: [0],
-					lengths: [source.length],
-					generatedLengths: [source.length],
-					data: {
-						verification: false,
-						completion: true,
-						semantic: true,
-						navigation: true,
-						structure: true,
-						format: true,
-						customData: {},
-					},
-				},
-			],
-			cssMappings: [],
-			errors: [],
-		};
-	},
-};
-`,
-	solid: `module.exports = {
-	compile_to_volar_mappings(source, filename) {
-		const code = \`/* compiler:solid */\\nexport const filename = \${JSON.stringify(filename)};\\nexport default \${JSON.stringify(source)};\`;
-		return {
-			code,
-			mappings: [
-				{
-					sourceOffsets: [0],
-					generatedOffsets: [0],
-					lengths: [source.length],
-					generatedLengths: [source.length],
-					data: {
-						verification: false,
-						completion: true,
-						semantic: true,
-						navigation: true,
-						structure: true,
-						format: true,
-						customData: {},
-					},
-				},
-			],
-			cssMappings: [],
-			errors: [],
-		};
-	},
-};
-`,
-	preact: `module.exports = {
-	compile_to_volar_mappings(source, filename) {
-		const code = \`/* compiler:preact */\\nexport const filename = \${JSON.stringify(filename)};\\nexport default \${JSON.stringify(source)};\`;
-		return {
-			code,
-			mappings: [
-				{
-					sourceOffsets: [0],
-					generatedOffsets: [0],
-					lengths: [source.length],
-					generatedLengths: [source.length],
-					data: {
-						verification: false,
-						completion: true,
-						semantic: true,
-						navigation: true,
-						structure: true,
-						format: true,
-						customData: {},
-					},
-				},
-			],
-			cssMappings: [],
-			errors: [],
-		};
-	},
-};
-`,
+	ripple: compiler_stub('ripple'),
+	react: compiler_stub('react'),
+	solid: compiler_stub('solid'),
+	preact: compiler_stub('preact'),
 	// Octane ships its compiler inside the `octane` package under
 	// `<layout>/compiler/volar.js` and exports the contract under a camelCase name
 	// — this stub mirrors the real published shape so the tests cover the
 	// plugin's entry-path override AND its module-shape normalization.
-	octane: `module.exports = {
-	compileToVolarMappings(source, filename) {
-		const code = \`/* compiler:octane */\\nexport const filename = \${JSON.stringify(filename)};\\nexport default \${JSON.stringify(source)};\`;
-		return {
-			code,
-			mappings: [
-				{
-					sourceOffsets: [0],
-					generatedOffsets: [0],
-					lengths: [source.length],
-					generatedLengths: [source.length],
-					data: {
-						verification: false,
-						completion: true,
-						semantic: true,
-						navigation: true,
-						structure: true,
-						format: true,
-						customData: {},
-					},
-				},
-			],
-			cssMappings: [],
-			errors: [],
-		};
-	},
-};
-`,
-	vue: `module.exports = {
-	compile_to_volar_mappings(source, filename) {
-		const code = \`/* compiler:vue */\\nexport const filename = \${JSON.stringify(filename)};\\nexport default \${JSON.stringify(source)};\`;
-		return {
-			code,
-			mappings: [
-				{
-					sourceOffsets: [0],
-					generatedOffsets: [0],
-					lengths: [source.length],
-					generatedLengths: [source.length],
-					data: {
-						verification: false,
-						completion: true,
-						semantic: true,
-						navigation: true,
-						structure: true,
-						format: true,
-						customData: {},
-					},
-				},
-			],
-			cssMappings: [],
-			errors: [],
-		};
-	},
-};
-`,
+	octane: compiler_stub('octane', 'compileToVolarMappings'),
+	vue: compiler_stub('vue'),
 };
 
 // prettier-ignore

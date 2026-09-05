@@ -11,6 +11,27 @@ import { format } from 'prettier';
 const MAX_SOURCE_LENGTH = 12000;
 const VALID_TARGETS = ['octane', 'react', 'preact', 'ripple', 'solid', 'vue'] as const;
 
+/**
+ * Octane inlines every stylesheet as an `_$injectStyle(hash, css)` call instead
+ * of returning `css` beside the code. Both arguments are plain string literals.
+ */
+const OCTANE_INJECT_STYLE_PATTERN =
+	/_\$injectStyle\(\s*(?:"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*')\s*,\s*("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*')\s*\)/g;
+const STRING_ESCAPE_PATTERN =
+	/\\(?:u\{([0-9a-fA-F]+)\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|\r\n|([\s\S]))/g;
+const SIMPLE_ESCAPES: Record<string, string> = {
+	n: '\n',
+	r: '\r',
+	t: '\t',
+	b: '\b',
+	f: '\f',
+	v: '\v',
+	0: '\0',
+	'\n': '',
+	'\u2028': '',
+	'\u2029': '',
+};
+
 type CompileTarget = (typeof VALID_TARGETS)[number];
 
 function is_valid_target(target: string): target is CompileTarget {
@@ -61,6 +82,38 @@ async function format_css(css: string) {
 }
 
 /**
+ * Decode a JavaScript string literal token, quotes included.
+ *
+ * @param {string} literal
+ * @returns {string}
+ */
+function decode_string_literal(literal: string) {
+	return literal
+		.slice(1, -1)
+		.replace(STRING_ESCAPE_PATTERN, (_match, code_point, utf16, hex, char) => {
+			if (code_point !== undefined) return String.fromCodePoint(parseInt(code_point, 16));
+			if (utf16 !== undefined) return String.fromCharCode(parseInt(utf16, 16));
+			if (hex !== undefined) return String.fromCharCode(parseInt(hex, 16));
+			if (char === undefined) return '';
+			return SIMPLE_ESCAPES[char] ?? char;
+		});
+}
+
+/**
+ * The stylesheets Octane inlined into `code`, in injection order.
+ *
+ * @param {string} code
+ * @returns {string}
+ */
+function extract_octane_css(code: string) {
+	const sheets: string[] = [];
+	for (const match of code.matchAll(OCTANE_INJECT_STYLE_PATTERN)) {
+		sheets.push(decode_string_literal(match[1]));
+	}
+	return sheets.join('\n');
+}
+
+/**
  * @param {string} target
  * @param {string} source
  */
@@ -72,7 +125,7 @@ async function compile_target(target: CompileTarget, source: string) {
 			target,
 			output: {
 				code: await format_js(octane_result.code),
-				css: '',
+				css: await format_css(extract_octane_css(octane_result.code)),
 			},
 		};
 	}

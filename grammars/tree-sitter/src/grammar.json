@@ -2132,6 +2132,14 @@
       "type": "CHOICE",
       "members": [
         {
+          "type": "PREC",
+          "value": 2,
+          "content": {
+            "type": "SYMBOL",
+            "name": "style_element"
+          }
+        },
+        {
           "type": "SYMBOL",
           "name": "export_statement"
         },
@@ -2399,18 +2407,18 @@
           "value": 2,
           "content": {
             "type": "SYMBOL",
-            "name": "style_element"
-          }
-        },
-        {
-          "type": "PREC",
-          "value": 2,
-          "content": {
-            "type": "SYMBOL",
             "name": "script_element"
           }
         }
       ]
+    },
+    "_jsx_statement_container_trailing_style": {
+      "type": "FIELD",
+      "name": "statement",
+      "content": {
+        "type": "SYMBOL",
+        "name": "style_element"
+      }
     },
     "jsx_statement_container": {
       "type": "SEQ",
@@ -2434,12 +2442,24 @@
           "type": "CHOICE",
           "members": [
             {
-              "type": "FIELD",
-              "name": "children",
-              "content": {
-                "type": "SYMBOL",
-                "name": "_jsx_statement_container_output"
-              }
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "FIELD",
+                  "name": "children",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_jsx_statement_container_output"
+                  }
+                },
+                {
+                  "type": "REPEAT",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_jsx_statement_container_trailing_style"
+                  }
+                }
+              ]
             },
             {
               "type": "BLANK"
@@ -2474,12 +2494,24 @@
           "type": "CHOICE",
           "members": [
             {
-              "type": "FIELD",
-              "name": "children",
-              "content": {
-                "type": "SYMBOL",
-                "name": "_jsx_statement_container_output"
-              }
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "FIELD",
+                  "name": "children",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_jsx_statement_container_output"
+                  }
+                },
+                {
+                  "type": "REPEAT",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_jsx_statement_container_trailing_style"
+                  }
+                }
+              ]
             },
             {
               "type": "BLANK"
@@ -3246,29 +3278,43 @@
             }
           },
           {
-            "type": "STRING",
-            "value": ">"
-          },
-          {
             "type": "CHOICE",
             "members": [
               {
-                "type": "ALIAS",
-                "content": {
-                  "type": "SYMBOL",
-                  "name": "_style_content"
-                },
-                "named": true,
-                "value": "raw_text"
+                "type": "STRING",
+                "value": "/>"
               },
               {
-                "type": "BLANK"
+                "type": "SEQ",
+                "members": [
+                  {
+                    "type": "STRING",
+                    "value": ">"
+                  },
+                  {
+                    "type": "CHOICE",
+                    "members": [
+                      {
+                        "type": "ALIAS",
+                        "content": {
+                          "type": "SYMBOL",
+                          "name": "_style_content"
+                        },
+                        "named": true,
+                        "value": "raw_text"
+                      },
+                      {
+                        "type": "BLANK"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "STRING",
+                    "value": "</style>"
+                  }
+                ]
               }
             ]
-          },
-          {
-            "type": "STRING",
-            "value": "</style>"
           }
         ]
       }
@@ -9489,7 +9535,8 @@
     "_jsx_child",
     "_jsx_attribute_value",
     "_jsx_statement_container_statement",
-    "_jsx_statement_container_output"
+    "_jsx_statement_container_output",
+    "_jsx_statement_container_trailing_style"
   ],
   "supertypes": [
     "statement",

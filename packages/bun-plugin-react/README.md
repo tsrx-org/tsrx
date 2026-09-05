@@ -22,8 +22,8 @@ await Bun.build({
 ```
 
 The plugin compiles `.tsrx` modules with `@tsrx/react`, runs Bun's TSX transform
-for React's automatic JSX runtime, and emits component-local `<style>` blocks as
-virtual CSS modules.
+for React's automatic JSX runtime, and emits sibling-scoped `<style>` blocks (each
+styles its siblings and everything below them) as virtual CSS modules.
 
 For `bun:test`, register it from a preload:
 
