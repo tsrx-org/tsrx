@@ -2,7 +2,13 @@
 /** @import { CompileError, TSRXAnalysisOptions } from '../../types/index' */
 
 import { describe, expect, it } from 'vitest';
-import { analyzeCss, analyzeTsrx, DIAGNOSTIC_CODES, parseModule } from '../../src/index.js';
+import {
+	analyzeCss,
+	analyzeTsrx,
+	DIAGNOSTIC_CODES,
+	parseModule,
+	parseStyle,
+} from '../../src/index.js';
 import {
 	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
 	TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
@@ -691,12 +697,64 @@ describe('scoped style analysis', () => {
 	});
 
 	describe(':global placement', () => {
-		/** @param {string} css */
-		function parse_stylesheet(css) {
-			const ast = parseModule(`const t = <style>${css}</style>;`, filename);
+		const style_open = '<style>';
+
+		/**
+		 * @param {string} source
+		 * @param {number} index
+		 */
+		function loc_at(source, index) {
+			const before = source.slice(0, index);
+			return {
+				line: before.split('\n').length,
+				column: index - (before.lastIndexOf('\n') + 1),
+			};
+		}
+
+		/**
+		 * @param {string} source
+		 * @returns {AST.CSS.StyleSheet}
+		 */
+		function parse_stylesheet_from(source) {
+			const ast = parseModule(source, filename);
 			const declaration = /** @type {AST.VariableDeclaration} */ (ast.body[0]);
 			const style = /** @type {AST.JSXStyleElement} */ (declaration.declarations[0].init);
 			return style.children[0];
+		}
+
+		/** @param {string} css */
+		function parse_stylesheet(css) {
+			return parse_stylesheet_from(`const t = ${style_open}${css}</style>;`);
+		}
+
+		/**
+		 * @param {string} source
+		 * @param {AST.CSS.StyleSheet} sheet
+		 * @param {string} message
+		 */
+		function expect_file_relative_global_error(source, sheet, message) {
+			let thrown = /** @type {CompileError | null} */ (null);
+			try {
+				analyzeCss(sheet);
+			} catch (error) {
+				thrown = /** @type {CompileError} */ (error);
+			}
+
+			const css_start = source.indexOf(style_open) + style_open.length;
+			const css_end = source.indexOf('</style>', css_start);
+
+			expect(thrown?.code, source).toBe(DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT);
+			expect(thrown?.message, source).toBe(message);
+			expect(thrown?.fileName, source).toBe(filename);
+			expect(thrown?.pos, source).toBeGreaterThanOrEqual(css_start);
+			expect(thrown?.end, source).toBeLessThanOrEqual(css_end);
+			expect(source.slice(thrown?.pos, thrown?.end), source).toContain(':global');
+			expect(thrown?.loc, source).toEqual({
+				start: loc_at(source, /** @type {number} */ (thrown?.pos)),
+				end: loc_at(source, /** @type {number} */ (thrown?.end)),
+			});
+
+			return thrown;
 		}
 
 		it('reports misplaced :global with a coded error', () => {
@@ -705,16 +763,42 @@ describe('scoped style analysis', () => {
 				[':not(:global) { color: red; }', TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR],
 				[':is(:global .a) { color: red; }', TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR],
 			]) {
-				let thrown = /** @type {CompileError | null} */ (null);
-				try {
-					analyzeCss(parse_stylesheet(css));
-				} catch (error) {
-					thrown = /** @type {CompileError} */ (error);
-				}
-
-				expect(thrown?.code, css).toBe(DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT);
-				expect(thrown?.message, css).toBe(message);
+				const source = `const t = ${style_open}${css}</style>;`;
+				expect_file_relative_global_error(source, parse_stylesheet_from(source), message);
 			}
+		});
+
+		it('reports file-relative positions for a direct analyzeCss caller', () => {
+			const source = `const theme = ${style_open}
+	.a :global(.b) .c { color: red; }
+</style>;`;
+			expect_file_relative_global_error(
+				source,
+				parse_stylesheet_from(source),
+				TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
+			);
+		});
+
+		it('reports file-relative positions from parseStyle origin', () => {
+			const prefix = `const t = ${style_open}`;
+			const css = '.a :global(.b) .c { color: red; }';
+			const source = `${prefix}${css}</style>;`;
+			const sheet = parseStyle(
+				css,
+				{
+					filename,
+					line: 1,
+					column: 'const t = '.length,
+					start: prefix.length,
+					sourceLine: 1,
+					sourceColumn: prefix.length,
+				},
+				{ loose: false },
+			);
+
+			expect(sheet.start).toBe(0);
+			expect(sheet.sourceStart).toBe(prefix.length);
+			expect_file_relative_global_error(source, sheet, TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR);
 		});
 
 		it('accepts :global(...) at the start or end of a selector', () => {
