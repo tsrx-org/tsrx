@@ -2,7 +2,13 @@
 /** @import { CompileError, TSRXAnalysisOptions } from '../../types/index' */
 
 import { describe, expect, it } from 'vitest';
-import { analyzeCss, analyzeTsrx, DIAGNOSTIC_CODES, parseModule } from '../../src/index.js';
+import {
+	analyzeCss,
+	analyzeTsrx,
+	DIAGNOSTIC_CODES,
+	parseModule,
+	parseStyle,
+} from '../../src/index.js';
 import {
 	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
 	TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
@@ -691,12 +697,62 @@ describe('scoped style analysis', () => {
 	});
 
 	describe(':global placement', () => {
-		/** @param {string} css */
-		function parse_stylesheet(css) {
-			const ast = parseModule(`const t = <style>${css}</style>;`, filename);
+		/**
+		 * @param {string} source
+		 * @returns {AST.CSS.StyleSheet}
+		 */
+		function first_stylesheet(source) {
+			const ast = parseModule(source, filename);
 			const declaration = /** @type {AST.VariableDeclaration} */ (ast.body[0]);
 			const style = /** @type {AST.JSXStyleElement} */ (declaration.declarations[0].init);
 			return style.children[0];
+		}
+
+		/** @param {string} css */
+		function parse_stylesheet(css) {
+			return first_stylesheet(`const t = <style>${css}</style>;`);
+		}
+
+		/**
+		 * @param {string} source
+		 * @param {number} offset
+		 */
+		function loc_at(source, offset) {
+			const before = source.slice(0, offset);
+			return { line: before.split('\n').length, column: offset - (before.lastIndexOf('\n') + 1) };
+		}
+
+		/**
+		 * @param {AST.CSS.Node} sheet
+		 * @param {Parameters<typeof analyzeCss>[1]} [options]
+		 */
+		function analyze_thrown(sheet, options) {
+			try {
+				analyzeCss(sheet, options);
+			} catch (error) {
+				return /** @type {CompileError} */ (error);
+			}
+			return null;
+		}
+
+		/**
+		 * The error's `pos` / `end` are file offsets covering `:global...` in
+		 * `source`, and `loc` is the matching file-relative line / column.
+		 *
+		 * @param {CompileError | null} thrown
+		 * @param {string} source
+		 * @param {string} selector
+		 */
+		function expect_anchored_on(thrown, source, selector) {
+			const pos = source.indexOf(selector);
+			expect(pos, selector).not.toBe(-1);
+			expect(thrown?.fileName, source).toBe(filename);
+			expect(thrown?.pos, source).toBe(pos);
+			expect(thrown?.end, source).toBe(pos + selector.length);
+			expect(thrown?.loc, source).toEqual({
+				start: loc_at(source, pos),
+				end: loc_at(source, pos + selector.length),
+			});
 		}
 
 		it('reports misplaced :global with a coded error', () => {
@@ -705,16 +761,106 @@ describe('scoped style analysis', () => {
 				[':not(:global) { color: red; }', TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR],
 				[':is(:global .a) { color: red; }', TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR],
 			]) {
-				let thrown = /** @type {CompileError | null} */ (null);
-				try {
-					analyzeCss(parse_stylesheet(css));
-				} catch (error) {
-					thrown = /** @type {CompileError} */ (error);
-				}
+				const thrown = analyze_thrown(parse_stylesheet(css));
 
 				expect(thrown?.code, css).toBe(DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT);
 				expect(thrown?.message, css).toBe(message);
 			}
+		});
+
+		it('anchors the error on :global with file-relative offsets and loc', () => {
+			for (const [css, selector] of [
+				['.a :global(.b) .c { color: red; }', ':global(.b)'],
+				[':not(:global) { color: red; }', ':global'],
+				[':is(:global .a) { color: red; }', ':global'],
+			]) {
+				const source = `const t = <style>${css}</style>;`;
+				expect_anchored_on(analyze_thrown(first_stylesheet(source)), source, selector);
+			}
+		});
+
+		it('maps positions across lines and past leading whitespace', () => {
+			const source = `const theme = <style>
+	.x { color: blue; }
+	.a
+		:global(.b) .c { color: red; }
+</style>;`;
+			const thrown = analyze_thrown(first_stylesheet(source));
+
+			expect_anchored_on(thrown, source, ':global(.b)');
+			expect(thrown?.loc?.start).toEqual({ line: 4, column: 2 });
+		});
+
+		it('collects into errors and defaults fileName from the sheet', () => {
+			/** @type {CompileError[]} */
+			const errors = [];
+			const source = `const t = <style>
+	.a :global(.b) .c { color: red; }
+	.d :global(.e) .f { color: red; }
+</style>;`;
+
+			expect(() => analyzeCss(first_stylesheet(source), { errors })).not.toThrow();
+			expect(errors.map((error) => error.code)).toEqual([
+				DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT,
+				DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT,
+			]);
+			expect(errors.map((error) => error.type)).toEqual(['usage', 'usage']);
+			expect_anchored_on(errors[0], source, ':global(.b)');
+			expect_anchored_on(errors[1], source, ':global(.e)');
+		});
+
+		it('takes the filename from options over the sheet', () => {
+			const thrown = analyze_thrown(parse_stylesheet('.a :global(.b) .c {}'), {
+				filename: 'Other.tsrx',
+			});
+
+			expect(thrown?.fileName).toBe('Other.tsrx');
+		});
+
+		it('reports one middle-placement error per selector', () => {
+			/** @type {CompileError[]} */
+			const errors = [];
+
+			analyzeCss(parse_stylesheet('.a :global(.b) .c .d .e { color: red; }'), { errors });
+
+			expect(errors).toHaveLength(1);
+		});
+
+		it('positions a sheet parsed directly with a body origin', () => {
+			const prefix = 'const t = <style>';
+			const css = '.a :global(.b) .c { color: red; }';
+			const source = `${prefix}${css}</style>;`;
+			const sheet = parseStyle(
+				css,
+				{
+					filename,
+					line: 1,
+					column: 'const t = '.length,
+					body: { start: prefix.length, line: 1, column: prefix.length },
+				},
+				{},
+			);
+
+			expect(sheet.start).toBe(0);
+			expect(sheet.end).toBe(css.length);
+			expect(sheet.sourceStart).toBe(prefix.length);
+			expect(sheet.loc).toEqual({
+				start: { line: 1, column: prefix.length },
+				end: { line: 1, column: prefix.length + css.length },
+			});
+			expect_anchored_on(analyze_thrown(sheet), source, ':global(.b)');
+		});
+
+		it('keeps body-relative positions on a sheet parsed without an origin', () => {
+			const css = '.a :global(.b) .c { color: red; }';
+			const sheet = parseStyle(css, { filename, line: 1, column: 0 }, {});
+			const thrown = analyze_thrown(sheet);
+
+			expect(sheet.sourceStart).toBeUndefined();
+			expect(sheet.loc).toBeUndefined();
+			expect(thrown?.fileName).toBe(filename);
+			expect(thrown?.pos).toBe(css.indexOf(':global'));
+			expect(thrown?.loc).toBeUndefined();
 		});
 
 		it('accepts :global(...) at the start or end of a selector', () => {

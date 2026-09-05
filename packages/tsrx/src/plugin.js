@@ -2408,12 +2408,14 @@ export function TSRXPlugin(config) {
 					);
 				}
 				const content = this.#parseRawTextElement(open, node, 'style', contextDepth);
+				const bodyLoc = get_line_info(this, open.end);
 				const parsedCss = parse_style(
 					content,
 					{
 						filename,
 						line: open.loc.start.line,
 						column: open.loc.start.column,
+						body: { start: open.end, line: bodyLoc.line, column: bodyLoc.column },
 					},
 					{ loose: this.#loose },
 				);

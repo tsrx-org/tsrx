@@ -113,7 +113,15 @@ class Parser {
 /**
  * @template {string} T
  * @param {string} content
- * @param {{ filename: NonEmptyString<T>, line: number, column: number }} location position of the `<style>` tag in the source file
+ * @param {{
+ *   filename: NonEmptyString<T>,
+ *   line: number,
+ *   column: number,
+ *   body?: { start: number, line: number, column: number },
+ * }} location position of the `<style>` tag in the source file, and optionally
+ * `body`, the file offset and 1-based line / 0-based column of the style body's
+ * first character. With `body`, the sheet records `sourceStart` and a
+ * file-relative `loc`, and diagnostics on its nodes carry file positions.
  * @param {{ loose?: boolean }} options
  * @returns {AST.CSS.StyleSheet}
  */
@@ -126,14 +134,82 @@ export function parse_style(content, location, options) {
 	// pre-image-resistant hash to avoid leaking file structure into the bundle.
 	const hash_source = `${location.filename}:${location.line}:${location.column}:${content}`;
 
-	return {
+	/** @type {AST.CSS.StyleSheet} */
+	const sheet = {
 		source: content,
 		hash: `tsrx-${strong_hash(hash_source)}`,
 		type: 'StyleSheet',
 		children: read_body(parser),
 		start: 0,
 		end: content.length,
+		filename: location.filename,
 	};
+
+	if (location.body) {
+		sheet.sourceStart = location.body.start;
+		sheet.loc = {
+			start: { line: location.body.line, column: location.body.column },
+			end: css_position(sheet, content.length, location.body),
+		};
+	}
+
+	return sheet;
+}
+
+/**
+ * Map a style-body offset to a file line / column, given the file position of
+ * the body's first character.
+ *
+ * @param {AST.CSS.StyleSheet} sheet
+ * @param {number} offset
+ * @param {{ line: number, column: number }} origin
+ * @returns {{ line: number, column: number }}
+ */
+function css_position(sheet, offset, origin) {
+	const source = sheet.source;
+	let line = origin.line;
+	let line_start = -1;
+	for (let i = 0; i < offset; i++) {
+		const ch = source.charCodeAt(i);
+		if (ch === 13 && source.charCodeAt(i + 1) === 10) {
+			i++;
+		} else if (ch !== 10 && ch !== 13 && ch !== 0x2028 && ch !== 0x2029) {
+			continue;
+		}
+		line++;
+		line_start = i;
+	}
+	return {
+		line,
+		column: line_start === -1 ? origin.column + offset : offset - line_start - 1,
+	};
+}
+
+/**
+ * The file-relative `start` / `end` / `loc` of a CSS node in a sheet parsed
+ * with a `body` origin; the node itself when the sheet has none. CSS node
+ * offsets are relative to the style body, so this is what a diagnostic on a
+ * CSS node has to be anchored on.
+ *
+ * @param {AST.CSS.StyleSheet | null | undefined} sheet
+ * @param {AST.CSS.Node} node
+ * @returns {AST.Node | AST.NodeWithLocation}
+ */
+export function css_node_source_position(sheet, node) {
+	if (sheet?.sourceStart === undefined || !sheet.loc) {
+		return /** @type {AST.Node} */ (/** @type {unknown} */ (node));
+	}
+	const origin = sheet.loc.start;
+	return /** @type {AST.NodeWithLocation} */ (
+		/** @type {unknown} */ ({
+			start: node.start + sheet.sourceStart,
+			end: node.end + sheet.sourceStart,
+			loc: {
+				start: css_position(sheet, node.start, origin),
+				end: css_position(sheet, node.end, origin),
+			},
+		})
+	);
 }
 
 /** @param {Parser} parser */

@@ -780,6 +780,7 @@ declare module 'estree' {
 
 	export namespace CSS {
 		export interface BaseNode extends AST.NodeWithMaybeComments {
+			/** Offset into the style body (`StyleSheet.source`), not the file. */
 			start: number;
 			end: number;
 			loc?: AST.SourceLocation;
@@ -790,6 +791,14 @@ declare module 'estree' {
 			children: Array<Atrule | Rule>;
 			source: string;
 			hash: string;
+			/** The file the `<style>` body was parsed from. */
+			filename?: string;
+			/**
+			 * File offset of `source[0]`, set when the sheet was parsed with a body
+			 * origin (every sheet `parseModule` produces). `start` / `end` stay
+			 * body-relative; `loc` is then the body's file-relative location.
+			 */
+			sourceStart?: number;
 		}
 
 		export interface Atrule extends BaseNode {

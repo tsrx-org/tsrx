@@ -64,7 +64,12 @@ here and keeps package docs focused on the core parser API.
   (`import`, `prop`, `let`, `const`, `function`, `for_pattern`, …).
 - **AST utilities** — pattern walkers, identifier extraction, builders, location
   helpers, obfuscation helpers.
-- **CSS support** — `parseStyle`, `analyzeCss`, `renderStylesheets`.
+- **CSS support** — `parseStyle`, `analyzeCss`, `renderStylesheets`. CSS node
+  offsets are relative to the style body; a sheet parsed with a `body` origin
+  (every sheet `parseModule` produces) records `sourceStart` and a file-relative
+  `loc`, and `analyzeCss` anchors its `:global` placement diagnostics on the
+  selector with file-relative positions. Pass `{ errors, comments }` to collect
+  them instead of throwing.
 - **Scoped styles** — `analyzeTsrx` resolves every `<style>` block. A standalone
   block is a child of an element or fragment and is scoped to its siblings: it
   styles the items beside it and everything below them, never the element that

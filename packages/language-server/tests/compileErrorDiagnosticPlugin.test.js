@@ -66,6 +66,29 @@ export function App() @{
 		expect(document.getText(diagnostics[0].range)).toBe('themes.light');
 	});
 
+	it('reports CSS_GLOBAL_PLACEMENT on the style block that holds the :global', async () => {
+		// The type-only output has no tokens inside a CSS body, so the transform
+		// anchors the block's diagnostic on the `<style>` element (the mapped
+		// stand-in), not on the selector.
+		const { document, diagnostics } = await diagnostics_for(
+			`export function App() @{
+	<>
+		<style>
+			.a :global(.b) .c { color: red; }
+		</style>
+		<div>{'x'}</div>
+	</>
+}`,
+		);
+
+		expect(diagnostics).toHaveLength(1);
+		const [diagnostic] = diagnostics;
+		expect(diagnostic.code).toBe('tsrx-css-global-placement');
+		expect(document.getText(diagnostic.range)).toBe(
+			'<style>\n\t\t\t.a :global(.b) .c { color: red; }\n\t\t</style>',
+		);
+	});
+
 	it('reports nothing for a valid apply', async () => {
 		const { diagnostics } = await diagnostics_for(
 			`const theme = <style>.a { color: red; }</style>;
