@@ -1,5 +1,20 @@
 # @tsrx/rspack-plugin-react
 
+## 0.0.92
+
+### Patch Changes
+
+- [#70](https://github.com/tsrx-org/tsrx/pull/70)
+  [`4d01eeb`](https://github.com/tsrx-org/tsrx/commit/4d01eeb0a63c3f37de7d849593e7290001e0e780)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Emit each module's virtual
+  CSS import after its JavaScript imports, so an imported theme's CSS comes before
+  the CSS of the block that applies it and the local rule wins at equal
+  specificity. The Rspack and Turbopack loaders now keep the compiler's source map
+  when a module has styles, since nothing above the import moves.
+
+- Updated dependencies []:
+  - @tsrx/react@0.2.66
+
 ## 0.0.91
 
 ### Patch Changes

@@ -1,5 +1,15 @@
 # @tsrx/intellij-plugin
 
+## 0.0.85
+
+### Patch Changes
+
+- [#53](https://github.com/tsrx-org/tsrx/pull/53)
+  [`8efcbc8`](https://github.com/tsrx-org/tsrx/commit/8efcbc85bc3910531715f51c9f592588c2464f4c)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Highlight self-closing
+  `<style apply={…} />` blocks and `<style>` blocks in every template position
+  (bundled TextMate grammar regenerated).
+
 ## 0.0.84
 
 ### Patch Changes

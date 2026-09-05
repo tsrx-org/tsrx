@@ -3,7 +3,7 @@
   "displayName": "TSRX Syntax for VS Code",
   "publisher": "TSRX",
   "description": "TSRX JavaScript/TypeScript language support",
-  "version": "2.0.81",
+  "version": "2.0.82",
   "private": true,
   "author": "Dominic Gannaway",
   "license": "MIT",

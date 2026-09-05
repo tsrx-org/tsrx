@@ -1,5 +1,22 @@
 # @tsrx/runtime
 
+## 0.1.5
+
+### Patch Changes
+
+- [#66](https://github.com/tsrx-org/tsrx/pull/66)
+  [`de31ea4`](https://github.com/tsrx-org/tsrx/commit/de31ea41a346e072de42bef3b36716077c681ea8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Speed up
+  `iterable_array_from` for non-array length-bearing values by copying indexed
+  elements instead of walking the iterator protocol or allocating via
+  `Array.from().slice()`.
+
+- [#59](https://github.com/tsrx-org/tsrx/pull/59)
+  [`e3eaa41`](https://github.com/tsrx-org/tsrx/commit/e3eaa419915db5525829b3a401642c4ffcb16433)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Speed up
+  `iterable_array_from` for arrays by copying indexed elements instead of walking
+  the iterator protocol.
+
 ## 0.1.4
 
 ### Patch Changes
