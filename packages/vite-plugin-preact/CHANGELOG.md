@@ -1,5 +1,22 @@
 # @tsrx/vite-plugin-preact
 
+## 0.0.91
+
+### Patch Changes
+
+- [#63](https://github.com/tsrx-org/tsrx/pull/63)
+  [`1009f58`](https://github.com/tsrx-org/tsrx/commit/1009f58593436806e431c119a9fe6678588e32cc)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Emit each module's
+  virtual CSS import after its JavaScript imports, so an imported theme's CSS
+  comes before the CSS of the block that applies it and the local rule wins at
+  equal specificity.
+
+- Updated dependencies
+  [[`8efcbc8`](https://github.com/tsrx-org/tsrx/commit/8efcbc85bc3910531715f51c9f592588c2464f4c),
+  [`8efcbc8`](https://github.com/tsrx-org/tsrx/commit/8efcbc85bc3910531715f51c9f592588c2464f4c)]:
+  - @tsrx/core@0.1.66
+  - @tsrx/preact@0.1.66
+
 ## 0.0.90
 
 ### Patch Changes

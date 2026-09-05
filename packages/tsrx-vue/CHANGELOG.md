@@ -1,5 +1,15 @@
 # @tsrx/vue
 
+## 0.1.66
+
+### Patch Changes
+
+- Updated dependencies
+  [[`8efcbc8`](https://github.com/tsrx-org/tsrx/commit/8efcbc85bc3910531715f51c9f592588c2464f4c),
+  [`8efcbc8`](https://github.com/tsrx-org/tsrx/commit/8efcbc85bc3910531715f51c9f592588c2464f4c)]:
+  - @tsrx/core@0.1.66
+  - @tsrx/vue-runtime@0.1.5
+
 ## 0.1.65
 
 ### Patch Changes
