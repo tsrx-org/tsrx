@@ -36,9 +36,11 @@ function createLoaderContext(resourcePath, options = {}) {
 }
 
 describe('@tsrx/rspack-plugin-vue js-loader', () => {
-	it('prepends a virtual css import when a style block exists', async () => {
+	it('appends a virtual css import after the module imports when a style block exists', async () => {
 		const id = '/virtual/App.tsrx';
-		const source = `export function App() @{
+		const source = `import './reset.css';
+
+			export function App() @{
 			<>
 				<div>{'Hello world'}</div>
 
@@ -57,7 +59,9 @@ describe('@tsrx/rspack-plugin-vue js-loader', () => {
 		expect(err).toBeNull();
 		expect(output).toContain(`${id}?tsrx-css&lang.css`);
 		expect(output).toContain('defineVaporComponent');
-		expect(map).toBeUndefined();
+		expect(output.indexOf('./reset.css')).toBeGreaterThan(-1);
+		expect(output.indexOf('./reset.css')).toBeLessThan(output.indexOf('tsrx-css'));
+		expect(map).toBeTruthy();
 	});
 
 	it('returns compiled TSX and a sourcemap when no style block exists', async () => {
