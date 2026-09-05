@@ -9,7 +9,7 @@ import {
 	offset_to_line_col,
 } from '../../src/source-map-utils.js';
 
-/** @import { SourceMappingHarness } from '../../types/index' */
+/** @import { CodeMapping, SourceMappingHarness } from '../../types/index' */
 
 /**
  * Tests for `compile_to_volar_mappings`
@@ -277,7 +277,9 @@ function App({ tag }: { tag: string }) @{
 			expect(generated_open).toBeGreaterThan(-1);
 			expect(generated_close).toBeGreaterThan(generated_open);
 
+			/** @param {CodeMapping | undefined} entry */
 			const mapped_source = function (entry) {
+				if (!entry) return undefined;
 				return source.slice(entry.sourceOffsets[0], entry.sourceOffsets[0] + entry.lengths[0]);
 			};
 			const open_lt_mapping = result.mappings.find(function (entry) {
