@@ -10,6 +10,7 @@ import {
 	TSRX_STYLE_APPLY_UNSUPPORTED_HOST_ERROR,
 	TSRX_STYLE_APPLY_VALUE_ERROR,
 	TSRX_STYLE_RESERVED_CLASS_KEY_ERROR,
+	TSRX_STYLE_IN_CONTROL_FLOW_ERROR,
 	TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR,
 	TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR,
 	TSRX_STYLE_STANDALONE_OUTSIDE_TEMPLATE_ERROR,
@@ -641,6 +642,108 @@ describe('scoped style analysis', () => {
 
 			expect(result.errors).toEqual([]);
 			expect(result.styles.standalone).toHaveLength(8);
+		});
+	});
+
+	describe('forbidStyleInControlFlow', () => {
+		it('is off by default and leaves CSS in a branch valid', () => {
+			const source = `function App(ready) @{
+				<section>
+					@if (ready) {
+						<><style>.ok { color: green; }</style><p class="ok">Ready</p></>
+					}
+				</section>
+			}`;
+
+			expect(style_errors(analyze(source))).toEqual([]);
+			expect(
+				style_errors(analyze(source, { collect: true, forbidStyleInControlFlow: false })),
+			).toEqual([]);
+		});
+
+		it('reports a CSS-authoring block in each control-flow body when enabled', () => {
+			/** @type {Array<[string, string]>} */
+			const rejected = [
+				[
+					'@if body',
+					`function App(ready) @{ <section>@if (ready) { <><style>.ok {}</style><p /></> } </section> }`,
+				],
+				[
+					'@else body',
+					`function App(ready) @{ @if (ready) { <p /> } @else { <><style>.wait {}</style><p /></> } }`,
+				],
+				[
+					'@for body',
+					`function App(items) @{ @for (const item of items) { <><style>.row {}</style><div>{item}</div></> } }`,
+				],
+				[
+					'@empty body',
+					`function App(items) @{ @for (const item of items) { <div>{item}</div> } @empty { <><style>.empty {}</style><p /></> } }`,
+				],
+				[
+					'@switch case',
+					`function App(value) @{ @switch (value) { @case 1: { <><style>.one {}</style><span /></> } } }`,
+				],
+				[
+					'@try body',
+					`function App() @{ @try { <><style>.ok {}</style><div /></> } @catch (error) { <p /> } }`,
+				],
+				[
+					'@catch body',
+					`function App() @{ @try { <div /> } @catch (error) { <><style>.err {}</style><p /></> } }`,
+				],
+				[
+					'assigned block in an @if body',
+					`function App(ready) @{ @if (ready) { const theme = <style>.ok {}</style>; <><style apply={theme} /><p /></> } }`,
+				],
+			];
+
+			for (const [_name, source] of rejected) {
+				const result = analyze(source, { collect: true, forbidStyleInControlFlow: true });
+				const errors = errors_with_code(result, DIAGNOSTIC_CODES.STYLE_IN_CONTROL_FLOW);
+
+				expect(errors, _name).toHaveLength(1);
+				expect(errors[0].message).toBe(TSRX_STYLE_IN_CONTROL_FLOW_ERROR);
+			}
+		});
+
+		it('does not report apply-only styles or CSS outside a branch', () => {
+			const source = `const theme = <style>.ok { color: green; }</style>;
+			function App(ready) @{
+				<>
+					<style>.status { padding: 0.5rem; }</style>
+					<section class="status">
+						@if (ready) {
+							<><style apply={theme} /><p class="ok">Ready</p></>
+						}
+					</section>
+				</>
+			}`;
+
+			expect(
+				errors_with_code(
+					analyze(source, { collect: true, forbidStyleInControlFlow: true }),
+					DIAGNOSTIC_CODES.STYLE_IN_CONTROL_FLOW,
+				),
+			).toEqual([]);
+		});
+
+		it('does not report a style that belongs to a nested function inside a branch', () => {
+			const source = `function App(ready) @{
+				@if (ready) {
+					const Inner = function Inner() @{
+						<><style>.ok {}</style><p class="ok">Ready</p></>
+					};
+					<Inner />
+				}
+			}`;
+
+			expect(
+				errors_with_code(
+					analyze(source, { collect: true, forbidStyleInControlFlow: true }),
+					DIAGNOSTIC_CODES.STYLE_IN_CONTROL_FLOW,
+				),
+			).toEqual([]);
 		});
 	});
 

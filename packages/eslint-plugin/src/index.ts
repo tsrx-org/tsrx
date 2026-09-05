@@ -2,6 +2,7 @@ import { createRequire } from 'module';
 import noReturnInComponent from './rules/no-return-in-component.js';
 import controlFlowJsx from './rules/control-flow-jsx.js';
 import noLazyDestructuringInModules from './rules/no-lazy-destructuring-in-modules.js';
+import noStyleInControlFlow from './rules/no-style-in-control-flow.js';
 import validForOfKey from './rules/valid-for-of-key.js';
 import requireStatementContainerBody from './rules/require-statement-container-body.js';
 
@@ -14,6 +15,7 @@ const plugin = {
 		'no-return-in-component': noReturnInComponent,
 		'control-flow-jsx': controlFlowJsx,
 		'no-lazy-destructuring-in-modules': noLazyDestructuringInModules,
+		'no-style-in-control-flow': noStyleInControlFlow,
 		'valid-for-of-key': validForOfKey,
 		'require-statement-container-body': requireStatementContainerBody,
 	},

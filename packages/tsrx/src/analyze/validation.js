@@ -46,6 +46,8 @@ export const TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR =
 	'A standalone <style> block must be a child of an element or a fragment. Wrap it with the output it styles in a fragment: <><style>…</style><div>…</div></>.';
 export const TSRX_STYLE_STANDALONE_OUTSIDE_TEMPLATE_ERROR =
 	'A standalone <style> block with CSS text is TSRX template syntax and needs an enclosing @{ … } body or an @if/@for/@switch/@try body. In plain TSX give <style> an expression child instead: <style>{css}</style>. To declare a reusable block here, assign it: const theme = <style>…</style>.';
+export const TSRX_STYLE_IN_CONTROL_FLOW_ERROR =
+	'Do not put a <style> block inside an @if, @for, @switch, or @try body. CSS is emitted unconditionally; only class stamping follows the branch. Move the block outside the branch, or apply an assigned theme with <style apply={theme} />.';
 export const TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR =
 	'A :global selector cannot be inside a pseudoclass.';
 export const TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR =

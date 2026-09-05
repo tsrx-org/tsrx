@@ -218,6 +218,7 @@ export function analyze_tsrx(ast, filename, options = {}) {
 		function: null,
 		function_body_is_code_block: false,
 		inside_template_output: false,
+		forbidStyleInControlFlow: !!options.forbidStyleInControlFlow,
 	};
 
 	walk(ast, state, visitors);
