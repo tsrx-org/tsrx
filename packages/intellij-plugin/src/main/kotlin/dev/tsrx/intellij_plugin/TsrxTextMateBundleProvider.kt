@@ -1,6 +1,6 @@
 package dev.tsrx.intellij_plugin
 
-import com.intellij.ide.plugins.PluginManager
+import com.intellij.ide.plugins.cl.PluginAwareClassLoader
 import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.diagnostic.Logger
 import java.net.URL
@@ -38,7 +38,10 @@ class TsrxTextMateBundleProvider internal constructor(
 					.getResource("$BUNDLE_RESOURCE_ROOT/$relativePath")
 			},
 			pluginVersion = {
-				PluginManager.getPluginByClass(TsrxTextMateBundleProvider::class.java)?.version ?: "dev"
+				(TsrxTextMateBundleProvider::class.java.classLoader as? PluginAwareClassLoader)
+					?.pluginDescriptor
+					?.version
+					?: "dev"
 			},
 		)
 	}
