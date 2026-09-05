@@ -2240,6 +2240,31 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Drop this unclosed raw-text element's leftover children context without
+			 * touching parent or already-tokenized sibling/close-tag frames.
+			 *
+			 * `expect('>')` on the opening tag may already have read the next `<`
+			 * (a sibling or a parent `</…>`) and pushed that tag's `tc_expr` +
+			 * `tc_oTag`. Those frames sit on top; the leftover children context is
+			 * beneath them.
+			 */
+			#popUnclosedRawTextLeftoverContext() {
+				if (this.type === tstt.jsxTagStart) {
+					const leftover_index = this.context.length - 3;
+					if (leftover_index >= 0 && this.context[leftover_index] === tstc.tc_expr) {
+						this.context.splice(leftover_index, 1);
+					}
+					return;
+				}
+				if (this.curContext() === tstc.tc_oTag) {
+					this.context.pop();
+				}
+				if (this.curContext() === tstc.tc_expr) {
+					this.context.pop();
+				}
+			}
+
+			/**
 			 * Read a raw-text element body: capture everything between the opening `>`
 			 * and the literal `</tagName>` verbatim (never as template markup),
 			 * synthesize the closing element, and restore the tokenizer state past it.
@@ -2260,13 +2285,12 @@ export function TSRXPlugin(config) {
 				const relativeCloseStart = input.indexOf(closeTag);
 				const content = relativeCloseStart === -1 ? input : input.slice(0, relativeCloseStart);
 
-				const newLines = content.match(regex_newline_characters)?.length;
-				if (newLines) {
-					this.curLine = open.loc.end.line + newLines;
-					this.lineStart = contentStart + content.lastIndexOf('\n') + 1;
-				}
-
 				if (relativeCloseStart !== -1) {
+					const newLines = content.match(regex_newline_characters)?.length;
+					if (newLines) {
+						this.curLine = open.loc.end.line + newLines;
+						this.lineStart = contentStart + content.lastIndexOf('\n') + 1;
+					}
 					const closingStart = contentStart + content.length;
 					const closingLineInfo = get_line_info(this, closingStart);
 					const closingStartLoc = new acorn.Position(closingLineInfo.line, closingLineInfo.column);
@@ -2344,6 +2368,23 @@ export function TSRXPlugin(config) {
 						`Unclosed tag '<${tagName}>'. Expected '${closeTag}' before end of template.`,
 					);
 					node.unclosed = true;
+					// The body was not consumed. Keep line tracking at the opening tag
+					// so a later sibling on this line does not inherit an EOF column.
+					this.curLine = open.loc.end.line;
+					this.lineStart = open.end - open.loc.end.column;
+					const parent = this.#path.at(-2);
+					const insideTemplate = this.#isNativeTemplateNode(parent);
+					if (!insideTemplate && contextDepth !== undefined && this.context.length > contextDepth) {
+						// Outside a template, match a balanced raw-text element: unwind
+						// back to the pre-element depth so the following JS tokenizes
+						// as code, not leftover children `tc_expr`.
+						this.context.length = contextDepth;
+					} else if (insideTemplate) {
+						this.#popUnclosedRawTextLeftoverContext();
+					}
+					if (this.#loose) {
+						return '';
+					}
 				}
 
 				return content;

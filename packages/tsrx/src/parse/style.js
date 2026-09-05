@@ -165,10 +165,23 @@ function read_body(parser) {
 	while (parser.index < parser.template.length) {
 		allow_comment_or_whitespace(parser);
 
-		if (parser.match('@')) {
-			children.push(read_at_rule(parser));
-		} else {
-			children.push(read_rule(parser));
+		if (parser.index >= parser.template.length) {
+			break;
+		}
+
+		try {
+			if (parser.match('@')) {
+				children.push(read_at_rule(parser));
+			} else {
+				children.push(read_rule(parser));
+			}
+		} catch (error) {
+			if (!parser.loose) {
+				throw error;
+			}
+			// Partial CSS while typing (`<style>.foo`, leftover JSX after an
+			// unclosed `<style>`) must stay a collected diagnostic, not a throw.
+			break;
 		}
 	}
 
