@@ -50,6 +50,7 @@ const CSS_QUERY = '?tsrx-css&lang.css';
  *   jsxImportSource?: string,
  *   suspenseSource?: string,
  *   runtimeImports?: RuntimeImportMode,
+ *   optimize?: boolean,
  * }} [options]
  * @returns {TsrxPreactPlugin}
  */
@@ -58,6 +59,7 @@ export function tsrxPreact(options = {}) {
 	const compile_options = {
 		suspenseSource: options.suspenseSource,
 		runtimeImports: options.runtimeImports,
+		optimize: options.optimize,
 	};
 
 	/** @type {Map<string, string>} */
@@ -164,7 +166,7 @@ export function tsrxPreact(options = {}) {
 
 /**
  * @param {string} jsxImportSource
- * @param {{ suspenseSource?: string, runtimeImports?: RuntimeImportMode }} compile_options
+ * @param {{ suspenseSource?: string, runtimeImports?: RuntimeImportMode, optimize?: boolean }} compile_options
  * @returns {DepScanTransformPlugin}
  */
 function create_dep_scan_plugin(jsxImportSource, compile_options) {

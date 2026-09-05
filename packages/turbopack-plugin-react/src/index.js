@@ -25,7 +25,7 @@ const CSS_QUERY = '?tsrx-css&lang.css';
  */
 
 /**
- * @typedef {{ runtimeImports?: RuntimeImportMode }} TsrxReactTurbopackOptions
+ * @typedef {{ runtimeImports?: RuntimeImportMode, optimize?: boolean }} TsrxReactTurbopackOptions
  */
 
 /**
@@ -65,7 +65,8 @@ export function create_tsrx_react_turbopack_css_rule(options = {}) {
  * @returns {string | { loader: string, options: TsrxReactTurbopackOptions }}
  */
 function with_loader_options(loader, options) {
-	return options.runtimeImports === undefined ? loader : { loader, options };
+	const has_options = options.runtimeImports !== undefined || options.optimize !== undefined;
+	return has_options ? { loader, options } : loader;
 }
 
 /**

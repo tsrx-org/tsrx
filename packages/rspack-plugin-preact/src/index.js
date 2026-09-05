@@ -24,13 +24,14 @@ const CSS_QUERY_PATTERN = /tsrx-css/;
  */
 export class TsrxPreactRspackPlugin {
 	/**
-	 * @param {{ jsxImportSource?: string, suspenseSource?: string, runtimeImports?: RuntimeImportMode }} [options]
+	 * @param {{ jsxImportSource?: string, suspenseSource?: string, runtimeImports?: RuntimeImportMode, optimize?: boolean }} [options]
 	 */
 	constructor(options = {}) {
 		this.options = {
 			jsxImportSource: options.jsxImportSource ?? 'preact',
 			suspenseSource: options.suspenseSource,
 			runtimeImports: options.runtimeImports ?? 'compiler',
+			optimize: options.optimize,
 		};
 	}
 
@@ -88,6 +89,7 @@ export class TsrxPreactRspackPlugin {
 						options: {
 							suspenseSource: this.options.suspenseSource,
 							runtimeImports: this.options.runtimeImports,
+							optimize: this.options.optimize,
 						},
 					},
 				],
@@ -102,6 +104,7 @@ export class TsrxPreactRspackPlugin {
 						options: {
 							suspenseSource: this.options.suspenseSource,
 							runtimeImports: this.options.runtimeImports,
+							optimize: this.options.optimize,
 						},
 					},
 				],

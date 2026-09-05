@@ -9,7 +9,7 @@ import { compile } from '@tsrx/vue';
  * present, prepends an `import` to the sibling virtual CSS module so rspack can
  * include the styles in the asset graph.
  *
- * @this {LoaderContext<{ runtimeImports?: RuntimeImportMode }>}
+ * @this {LoaderContext<{ runtimeImports?: RuntimeImportMode, optimize?: boolean }>}
  * @param {string} source
  * @returns {void}
  */

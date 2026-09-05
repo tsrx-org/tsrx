@@ -101,6 +101,9 @@ export {
 // Shared TSRX semantic analysis
 export { analyze_tsrx as analyzeTsrx } from './analyze/index.js';
 
+// Shared TSRX dead-code elimination
+export { optimize_tsrx as optimizeTsrx } from './optimize/index.js';
+
 // Builders (namespace re-export — members mirror AST node kinds)
 export * as builders from './utils/builders.js';
 

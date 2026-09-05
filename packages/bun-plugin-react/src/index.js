@@ -15,6 +15,7 @@ const CSS_QUERY_PATTERN = /\?tsrx-css&lang\.css$/;
  * 	jsxImportSource?: string,
  * 	emitCss?: boolean,
  * 	runtimeImports?: RuntimeImportMode,
+ * 	optimize?: boolean,
  * }} TsrxReactBunPluginOptions
  */
 
@@ -92,7 +93,10 @@ function create_transpiler(jsx_import_source, target) {
 export function tsrxReact(options = {}) {
 	const jsx_import_source = options.jsxImportSource ?? 'react';
 	const emit_css = options.emitCss ?? true;
-	const compile_options = { runtimeImports: options.runtimeImports };
+	const compile_options = {
+		runtimeImports: options.runtimeImports,
+		optimize: options.optimize,
+	};
 
 	/** @type {Map<string, string>} */
 	const css_cache = new Map();
