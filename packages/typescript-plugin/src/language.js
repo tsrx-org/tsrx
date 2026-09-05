@@ -624,24 +624,39 @@ function logTSRXErrors(file_name, errors) {
 }
 
 /**
- * Extract CSS content from <style>...</style> tags in source code
+ * Extract raw CSS content from `<style>...</style>` tags in source code, used as a
+ * fallback for CSS intellisense while the file has a fatal compile error (no AST
+ * available — the normal path derives regions from the compiler's `cssMappings`
+ * instead). Parallels {@link extractScriptFromSource}.
+ * The opening-tag pattern is attribute-aware: a `>` inside a quoted value or an
+ * `{...}` expression container (one level of nesting) does not end the tag, so
+ * `apply={cond ? a : b}` and `apply={(x) => y}` are handled. It refuses to match
+ * self-closing `<style apply={theme} />` blocks (the `/` before `>` must not close
+ * the tag): they carry no CSS body, so — like the compiler's `cssMappings` — they
+ * yield no region and can't swallow a later bodied block. One region is produced
+ * per bodied block, in source order, whether the blocks share a scope or sit in
+ * nested `@{ ... }` / control-flow bodies.
  * @param {string} code - The source code to extract CSS from
  * @returns {VirtualCode[]} Array of embedded CSS virtual codes
  */
 function extractCssFromSource(code) {
 	/** @type {VirtualCode[]} */
 	const embeddedCodes = [];
-	const styleRegex = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
+	const styleRegex =
+		/<style\b((?:[^>"'{}/]|"[^"]*"|'[^']*'|\{(?:[^{}]|\{[^{}]*\})*\}|\/(?!>))*)>([\s\S]*?)<\/style>/gi;
 	let match;
 	let index = 0;
 
 	while ((match = styleRegex.exec(code)) !== null) {
-		const fullMatch = match[0];
-		const cssContent = match[1];
+		const attrs = match[1];
+		const cssContent = match[2];
 		const styleTagStart = match.index;
-		const openTagEnd = fullMatch.indexOf('>') + 1;
+		// `<style` + attrs + `>`; attrs may contain a quoted or braced `>`, so derive
+		// the opening tag's end from the match structure rather than searching for `>`.
+		const openTagEnd = '<style'.length + attrs.length + 1;
 		const cssStart = styleTagStart + openTagEnd;
 		const cssLength = cssContent.length;
+		const id = `style_${index}`;
 
 		log(`Extracted CSS region ${index}: offset ${cssStart}, length ${cssLength}`);
 
@@ -660,22 +675,12 @@ function extractCssFromSource(code) {
 				format: false,
 				customData: {
 					content: cssContent,
-					embeddedId: `style_${index}`,
+					embeddedId: id,
 				},
 			},
 		};
 
-		embeddedCodes.push({
-			id: `style_${index}`,
-			languageId: 'css',
-			snapshot: {
-				getText: (start, end) => cssContent.substring(start, end),
-				getLength: () => cssLength,
-				getChangeRange: () => undefined,
-			},
-			mappings: [mapping],
-			embeddedCodes: [],
-		});
+		embeddedCodes.push(create_embedded_code_from_mapping(mapping, 'css'));
 
 		index++;
 	}

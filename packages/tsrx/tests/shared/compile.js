@@ -1,6 +1,8 @@
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { DIAGNOSTIC_CODES } from '../../src/diagnostics.js';
+import { runSharedScopedStyleTests } from './scoped-styles.js';
+import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformance.js';
 import { createLazyContext, parseModule, preallocateLazyIds } from '../../src/index.js';
 
 /** @import { CompileDiagnosticsHarness, CompileHarness } from '../../types/index' */
@@ -60,6 +62,112 @@ const UNSUPPORTED_LAZY_ASSIGNMENT_SOURCES = [
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] type-only style stand-ins`, () => {
+		it('keeps consecutive <style> siblings parseable as TSX', () => {
+			// Each stand-in is its own `void` expression statement; two adjacent
+			// JSX expression statements would otherwise parse as one (TS2657).
+			const { code, errors } = compile_to_volar_mappings(
+				`function App() @{
+					<style apply={theme} />
+					<style>.a { color: red; }</style>
+					<style>.b { color: blue; }</style>
+					<div class="a b" />
+				}
+				const theme = <style>.t {}</style>;`,
+				'App.tsrx',
+				{ loose: true },
+			);
+
+			expect(errors.filter((error) => error.type === 'fatal')).toEqual([]);
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+			expect(code).toContain('void <style data-tsrx-apply={theme.$class} />');
+			expect(code).toContain('void <style></style>');
+		});
+
+		it('recovers an unclosed <style> in loose type-only compile without losing mappings', function () {
+			// While typing `<style>` there is no `</style>` yet. The raw-text path
+			// used to feed the rest of the file to the CSS parser, which threw
+			// `Expected identifier` and collapsed every token mapping to a
+			// whole-file 1:1 fallback. An unclosed `<span>` already recovered.
+			const source = `export function App() @{
+	<>
+		<style>
+		<div />
+	</>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+			expect(
+				result.errors.filter(function (error) {
+					return error.type === 'fatal';
+				}),
+			).toEqual([]);
+			expect(
+				result.errors
+					.map(function (error) {
+						return error.message;
+					})
+					.join('\n'),
+			).not.toContain('Expected identifier');
+			expect(result.mappings.length).toBeGreaterThan(1);
+
+			const whole_file = result.mappings.find(function (mapping) {
+				return mapping.sourceOffsets[0] === 0 && mapping.lengths[0] === source.length;
+			});
+			expect(whole_file).toBeUndefined();
+
+			/** @param {string} token */
+			function is_mapped(token) {
+				const offset = source.indexOf(token);
+				return result.mappings.some(function (mapping) {
+					const start = mapping.sourceOffsets[0];
+					return offset >= start && offset < start + mapping.lengths[0];
+				});
+			}
+
+			expect(is_mapped('App')).toBe(true);
+			expect(is_mapped('div')).toBe(true);
+			expect(result.code).toContain('<style></style>');
+			expect(virtual_parse_diagnostics(result.code)).toEqual([]);
+		});
+
+		it('keeps partial CSS after an unclosed <style> out of the template in loose type-only compile', function () {
+			// Without auto-insert the CSS gets typed before the closing tag exists.
+			// The body up to the next tag start is the style's CSS, so it never
+			// tokenizes as JSX, and the sibling after it keeps its mapping.
+			const source = `export function App() @{
+	<>
+		<style>
+			.foo { color: red; }
+			.bar {
+		<div />
+	</>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+			expect(
+				result.errors.filter(function (error) {
+					return error.type === 'fatal';
+				}),
+			).toEqual([]);
+
+			/** @param {string} token */
+			function is_mapped(token) {
+				const offset = source.indexOf(token);
+				return result.mappings.some(function (mapping) {
+					const start = mapping.sourceOffsets[0];
+					return offset >= start && offset < start + mapping.lengths[0];
+				});
+			}
+
+			expect(is_mapped('App')).toBe(true);
+			expect(is_mapped('div')).toBe(true);
+			expect(result.code).not.toContain('.foo');
+			expect(result.code).toContain('<style></style>');
+			expect(virtual_parse_diagnostics(result.code)).toEqual([]);
+		});
+	});
+
 	describe(`[${name}] compile diagnostics`, () => {
 		it('collects unsupported lazy assignment positions in type-only output', () => {
 			for (const source of UNSUPPORTED_LAZY_ASSIGNMENT_SOURCES) {
@@ -2460,6 +2568,8 @@ export function runSharedCompileTests({
 			: '{ class: className }: { class?: string }';
 
 	runSharedComponentLoopControlFlowTests({ compile, name });
+	runSharedScopedStyleTests({ compile, name, classAttrName, generatedClassAttrName });
+	runSharedScopedStyleConformanceTests({ compile, name, classAttrName, generatedClassAttrName });
 	runSharedNestedLazyDestructuringTests({ compile, name });
 	runSharedLazyLoopTests({ compile, name });
 	runSharedLazyScopeNestingTests({ compile, name });

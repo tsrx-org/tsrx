@@ -132,14 +132,20 @@
 
 ; Leave jsx_text uncaptured so text children use the editor's regular text color.
 
-; Style elements
+; Style elements. `<style` and `</style>` are single tokens; the self-closing
+; form (`<style apply={theme} />`) has no body. The raw CSS body is left
+; uncaptured so the CSS injection colors it.
 (style_element
-  "<style" @tag
-  ">" @tag.delimiter
-  "</style>" @tag)
+  [
+    "<style"
+    "</style>"
+  ] @tag)
 
 (style_element
-  (raw_text) @string.special)
+  [
+    ">"
+    "/>"
+  ] @tag.delimiter)
 
 ; Script elements. The `script` tag name and the surrounding punctuation are
 ; separate tokens (unlike style's single `<style` token); the raw JS/TS body is

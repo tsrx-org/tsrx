@@ -29,9 +29,11 @@ function createLoaderContext(resourcePath) {
 }
 
 describe('@tsrx/rspack-plugin-solid js-loader', () => {
-	it('prepends a virtual css import when a style block exists', async () => {
+	it('appends a virtual css import after the module imports when a style block exists', async () => {
 		const id = '/virtual/App.tsrx';
-		const source = `export function App() { return <>
+		const source = `import './reset.css';
+
+			export function App() @{ <>
 			<div>{'Hello world'}</div>
 
 			<style>
@@ -39,7 +41,7 @@ describe('@tsrx/rspack-plugin-solid js-loader', () => {
 					color: red;
 				}
 			</style>
-		</>; }`;
+		</> }`;
 
 		const { context, promise } = createLoaderContext(id);
 		jsLoader.call(context, source);
@@ -47,14 +49,16 @@ describe('@tsrx/rspack-plugin-solid js-loader', () => {
 
 		expect(err).toBeNull();
 		expect(output).toContain(`${id}?tsrx-css&lang.css`);
-		expect(map).toBeUndefined();
+		expect(output.indexOf('./reset.css')).toBeGreaterThan(-1);
+		expect(output.indexOf('./reset.css')).toBeLessThan(output.indexOf('tsrx-css'));
+		expect(map).toBeTruthy();
 	});
 
-	it('does not prepend a virtual css import when no style block exists', async () => {
+	it('does not append a virtual css import when no style block exists', async () => {
 		const id = '/virtual/App.tsrx';
-		const source = `export function App({ name }: { name: string }) { return <>
+		const source = `export function App({ name }: { name: string }) @{ <>
 			<div>{name}</div>
-		</>; }`;
+		</> }`;
 
 		const { context, promise } = createLoaderContext(id);
 		jsLoader.call(context, source);
@@ -70,7 +74,7 @@ describe('@tsrx/rspack-plugin-solid js-loader', () => {
 describe('@tsrx/rspack-plugin-solid css-loader', () => {
 	it('returns the compiled scoped css text', async () => {
 		const id = '/virtual/App.tsrx';
-		const source = `export function App() { return <>
+		const source = `export function App() @{ <>
 			<div class="div">{'Hello world'}</div>
 
 			<style>
@@ -78,7 +82,7 @@ describe('@tsrx/rspack-plugin-solid css-loader', () => {
 					color: red;
 				}
 			</style>
-		</>; }`;
+		</> }`;
 
 		const { context, promise } = createLoaderContext(id);
 		cssLoader.call(context, source);
@@ -91,9 +95,9 @@ describe('@tsrx/rspack-plugin-solid css-loader', () => {
 
 	it('returns an empty string when no style block exists', async () => {
 		const id = '/virtual/App.tsrx';
-		const source = `export function App() { return <>
+		const source = `export function App() @{ <>
 			<div>{'Hello world'}</div>
-		</>; }`;
+		</> }`;
 
 		const { context, promise } = createLoaderContext(id);
 		cssLoader.call(context, source);

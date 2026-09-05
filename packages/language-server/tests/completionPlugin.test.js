@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { create_completion_harness } from './setup.js';
+import { isTagStart } from '../src/completionPlugin.js';
 
 const find = (items, label) => (items ?? []).find((item) => item.label === label);
 
@@ -137,5 +138,80 @@ describe('completion plugin — function component snippet', () => {
 		const item = find(result.items, 'function Component(props) @{ }');
 		expect(item).toBeDefined();
 		expect(item.filterText).toMatch(/^@/);
+	});
+});
+
+describe('completion plugin — <style> block snippets', () => {
+	// A `<` typed as fragment text (`<>\n\t\t<\n\t</>`) compiles to JSX text with no completion
+	// mapping, so Volar never asks the plugin there; these cases type the `<` at a statement
+	// position in the component body, where the (transiently broken) file keeps a completion
+	// mapping.
+	it('offers `<style>` and `<style apply={…} />` when typing `<` in a template', async () => {
+		const source = 'export function App() @{\n\t<div />\n\t<\n}';
+		const { service, uri } = create_completion_harness(source, 'react/App.tsrx');
+
+		const result = await service.getCompletionItems(
+			uri,
+			{ line: 2, character: 2 },
+			{ triggerKind: 2, triggerCharacter: '<' },
+		);
+
+		const style_item = find(result.items, '<style>');
+		const apply_item = find(result.items, '<style apply={…} />');
+		expect(style_item).toBeDefined();
+		expect(apply_item).toBeDefined();
+
+		// Anchored at the typed `<` (like `@`-directives at `@`) so the `<` is replaced, not
+		// doubled, and the `<`-prefixed filterText keeps `<st` matching `<style`.
+		for (const item of [style_item, apply_item]) {
+			expect(item.filterText).toMatch(/^<style/);
+			expect(item.textEdit?.range).toEqual({
+				start: { line: 2, character: 1 },
+				end: { line: 2, character: 2 },
+			});
+			expect(item.textEdit?.newText).toMatch(/^<style/);
+		}
+		expect(apply_item.textEdit?.newText).toBe('<style apply={${1:theme}} />');
+	});
+
+	it('keeps offering the style snippets once more is typed (`<sty`)', async () => {
+		const source = 'export function App() @{\n\t<div />\n\t<sty\n}';
+		const { service, uri } = create_completion_harness(source, 'react/App.tsrx');
+
+		const result = await service.getCompletionItems(
+			uri,
+			{ line: 2, character: 5 },
+			{ triggerKind: 1 },
+		);
+
+		const style_item = find(result.items, '<style>');
+		expect(style_item).toBeDefined();
+		expect(style_item.textEdit?.range.start).toEqual({ line: 2, character: 1 });
+	});
+
+	it('offers the style snippets by name without a typed `<` (`sty`)', async () => {
+		const source = 'export function App() @{\n\tsty\n\t<div />\n}';
+		const { service, uri } = create_completion_harness(source, 'react/App.tsrx');
+
+		const result = await service.getCompletionItems(
+			uri,
+			{ line: 1, character: 4 },
+			{ triggerKind: 1 },
+		);
+
+		const style_item = find(result.items, '<style>');
+		expect(style_item).toBeDefined();
+		expect(style_item.filterText).toBe('style');
+		expect(style_item.textEdit).toBeUndefined();
+		expect(find(result.items, '<style apply={…} />')).toBeDefined();
+	});
+
+	it('does not treat a comparison `<` as a tag start', () => {
+		for (const line of ['<', '\t<', '\t<sty', 'return <', '{<', '(<', '<div /> <', 'const x = <']) {
+			expect(isTagStart(line), JSON.stringify(line)).toBe(true);
+		}
+		for (const line of ['a <', 'if (x <', 'items.length <', 'a < b', 'x <= y', '\tsty', 'x <y']) {
+			expect(isTagStart(line), JSON.stringify(line)).toBe(false);
+		}
 	});
 });

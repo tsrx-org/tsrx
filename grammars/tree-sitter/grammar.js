@@ -48,6 +48,7 @@ module.exports = grammar({
 		$._jsx_attribute_value,
 		$._jsx_statement_container_statement,
 		$._jsx_statement_container_output,
+		$._jsx_statement_container_trailing_style,
 	],
 
 	word: ($) => $.identifier,
@@ -464,8 +465,12 @@ module.exports = grammar({
 				$.empty_statement,
 			),
 
+		// `<style>` blocks are setup statements of the enclosing template scope, so
+		// they may sit anywhere among the statements before the output node (and,
+		// via `_jsx_statement_container_trailing_style`, after it).
 		_jsx_statement_container_statement: ($) =>
 			choice(
+				prec(2, $.style_element),
 				$.export_statement,
 				$.import_statement,
 				$.declaration,
@@ -528,6 +533,11 @@ module.exports = grammar({
 				$._semicolon,
 			),
 
+		// The single output node of a template scope. `<style>` is deliberately
+		// absent here: a style block is a statement of the scope, so a block that
+		// stands alone (or before the output node) is parsed through
+		// `_jsx_statement_container_statement`, and blocks after the output node
+		// through `_jsx_statement_container_trailing_style`.
 		_jsx_statement_container_output: ($) =>
 			choice(
 				$.jsx_element,
@@ -538,15 +548,21 @@ module.exports = grammar({
 				$.jsx_for_expression,
 				$.jsx_switch_expression,
 				$.jsx_try_expression,
-				prec(2, $.style_element),
 				prec(2, $.script_element),
 			),
+
+		_jsx_statement_container_trailing_style: ($) => field('statement', $.style_element),
 
 		jsx_statement_container: ($) =>
 			seq(
 				'@{',
 				repeat(field('statement', $._jsx_statement_container_statement)),
-				optional(field('children', $._jsx_statement_container_output)),
+				optional(
+					seq(
+						field('children', $._jsx_statement_container_output),
+						repeat($._jsx_statement_container_trailing_style),
+					),
+				),
 				'}',
 			),
 
@@ -554,7 +570,12 @@ module.exports = grammar({
 			seq(
 				'{',
 				repeat(field('statement', $._jsx_statement_container_statement)),
-				optional(field('children', $._jsx_statement_container_output)),
+				optional(
+					seq(
+						field('children', $._jsx_statement_container_output),
+						repeat($._jsx_statement_container_trailing_style),
+					),
+				),
 				'}',
 			),
 
@@ -698,15 +719,15 @@ module.exports = grammar({
 
 		jsx_finally_clause: ($) => seq('finally', field('body', $.jsx_template_block)),
 
+		// Raw-text `<style>` element: the body is verbatim CSS, never template
+		// markup. The self-closing form (`<style apply={theme} />`) has no body.
 		style_element: ($) =>
 			prec(
 				1,
 				seq(
 					'<style',
 					repeat($._jsx_attribute),
-					'>',
-					optional(alias($._style_content, $.raw_text)),
-					'</style>',
+					choice('/>', seq('>', optional(alias($._style_content, $.raw_text)), '</style>')),
 				),
 			),
 

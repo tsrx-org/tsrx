@@ -77,7 +77,9 @@ describe('@tsrx/bun-plugin-solid', () => {
 			const file_path = path.join(dir, 'App.tsrx');
 			await writeFile(
 				file_path,
-				`export function App({ name }: { name: string }) { return <>
+				`import './reset.css';
+
+				export function App({ name }: { name: string }) @{ <>
 					<div class="div">{name}</div>
 
 					<style>
@@ -85,7 +87,7 @@ describe('@tsrx/bun-plugin-solid', () => {
 							color: red;
 						}
 					</style>
-				</>; }`,
+				</> }`,
 			);
 
 			const hooks = setup_plugin(undefined, { target: 'browser', root: dir });
@@ -99,6 +101,10 @@ describe('@tsrx/bun-plugin-solid', () => {
 			expect(transformed?.contents).toContain('template as _$template');
 			expect(transformed?.contents).toContain('insert as _$insert');
 			expect(transformed?.contents).toContain(css_id);
+			expect(String(transformed?.contents).indexOf('./reset.css')).toBeGreaterThan(-1);
+			expect(String(transformed?.contents).indexOf('./reset.css')).toBeLessThan(
+				String(transformed?.contents).indexOf(css_id),
+			);
 			expect(transformed?.contents).not.toContain('{ name }: { name: string }');
 			expect(css.loader).toBe('css');
 			expect(css.contents).toContain('.div.');
@@ -114,9 +120,9 @@ describe('@tsrx/bun-plugin-solid', () => {
 			const file_path = path.join(dir, 'App.tsrx');
 			await writeFile(
 				file_path,
-				`export function App({ name }: { name: string }) { return <>
+				`export function App({ name }: { name: string }) @{ <>
 					<div>{name}</div>
-				</>; }`,
+				</> }`,
 			);
 
 			const hooks = setup_plugin({ solid: { moduleName: 'custom-solid-web' } });
@@ -135,13 +141,13 @@ describe('@tsrx/bun-plugin-solid', () => {
 			const file_path = path.join(dir, 'App.tsrx');
 			await writeFile(
 				file_path,
-				`export function App() { return <>
+				`export function App() @{ <>
 					<div>{'Hello world'}</div>
 
 					<style>
 						.div { color: red; }
 					</style>
-				</>; }`,
+				</> }`,
 			);
 
 			const hooks = setup_plugin({ emitCss: false });

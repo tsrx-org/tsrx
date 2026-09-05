@@ -26,9 +26,9 @@
   "}"
   "]"
   ")"
-  "</style>"
 ] @outdent
 
+(style_element ["</style>" "/>"] @outdent)
 (script_element "</" @outdent)
 
 (jsx_closing_element) @outdent

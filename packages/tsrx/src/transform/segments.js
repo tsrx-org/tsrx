@@ -158,10 +158,15 @@ function visit_source_ast(ast, src_line_offsets, { regions, css_element_info, sc
 				).loc;
 				const cssStart = loc_to_offset(openLoc.end.line, openLoc.end.column, src_line_offsets);
 
-				const closeLoc = /** @type {ESTreeJSX.JSXClosingElement & AST.NodeWithLocation} */ (
-					node.closingElement
-				).loc;
-				const cssEnd = loc_to_offset(closeLoc.start.line, closeLoc.start.column, src_line_offsets);
+				const closeLoc =
+					/** @type {(ESTreeJSX.JSXClosingElement & AST.NodeWithLocation) | null} */ (
+						node.closingElement
+					)?.loc;
+				// An unclosed block recovered in loose mode has no closing tag; its
+				// body ends where the captured CSS ends.
+				const cssEnd = closeLoc
+					? loc_to_offset(closeLoc.start.line, closeLoc.start.column, src_line_offsets)
+					: cssStart + node.css.length;
 
 				regions.push({
 					start: cssStart,
@@ -658,6 +663,13 @@ export function convert_source_map_to_mappings(
 					}
 					if (node.metadata?.disable_verification) {
 						token.mappingData = { ...mapping_data, verification: false };
+					}
+					// A synthesized identifier that borrows an authored span so
+					// diagnostics land on it (e.g. the `$class` read of a type-only
+					// `apply` target): map for verification only, so hover and
+					// navigation on the authored token are not polluted by it.
+					if (node.metadata?.verify_only) {
+						token.mappingData = mapping_data_verify_only;
 					}
 					// A generated identifier whose source span sits inside a string
 					// literal (e.g. a server-module lowering's namespace reference

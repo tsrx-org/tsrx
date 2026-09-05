@@ -14,7 +14,7 @@
   (formal_parameters ")" @indent.end)
   (parenthesized_expression ")" @indent.end)
   (jsx_expression "}" @indent.end)
-  (style_element "</style>" @indent.end)
+  (style_element ["</style>" "/>"] @indent.end)
   (script_element "</" @indent.end)
   (jsx_statement_container "}" @indent.end)
   (module_body "}" @indent.end)
@@ -42,11 +42,11 @@
   "}"
   "]"
   ")"
-  "</style>"
   (jsx_closing_element)
   (jsx_closing_fragment)
 ] @indent.branch
 
+(style_element ["</style>" "/>"] @indent.branch)
 (script_element "</" @indent.branch)
 
 (jsx_self_closing_element "/>" @indent.branch)
