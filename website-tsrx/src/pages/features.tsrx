@@ -522,6 +522,41 @@ function Article({ html }: { html: string }) @{
 }`,
 );
 
+const GLOBAL_KEYFRAMES_HTML = highlight_tsrx(
+	`function App() @{
+  <>
+    <div class="parent"><Child /></div>
+
+    <style>
+      /* Scoped: the compiler renames slideIn and its references here. */
+      @keyframes slideIn {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(0); }
+      }
+
+      /* Global: emitted as fadeIn, usable from other components. */
+      @keyframes -global-fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+
+      .parent { animation: slideIn 1s; }
+    </style>
+  </>
+}
+
+function Child() @{
+  <>
+    <div class="child">Child content</div>
+
+    <style>
+      /* Reference the global name without the -global- prefix. */
+      .child { animation: fadeIn 1s; }
+    </style>
+  </>
+}`,
+);
+
 const LAZY_PROPS_HTML = highlight_tsrx(
 	`function UserCard(&{ name, age }: { name: string; age: number }) {
   return <div>
@@ -1272,6 +1307,34 @@ export const FeaturesPage = () => @{
 									</tr>
 								</tbody>
 							</table>
+							<h3 class="subsection-heading" id="global-keyframes">Global Keyframes</h3>
+							<p class="section-body">
+								Keyframes are scoped by default: the compiler adds the style block's hash to each
+								animation name and rewrites matching
+								<code class="inline-code">animation</code>
+								and
+								<code class="inline-code">animation-name</code>
+								references in that block. To share keyframes across components, prefix the name in
+								the declaration with
+								<code class="inline-code">-global-</code>.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={GLOBAL_KEYFRAMES_HTML} />
+							</pre>
+							<p class="section-body">
+								The compiler emits
+								<code class="inline-code">@keyframes -global-fadeIn</code>
+								as
+								<code class="inline-code">@keyframes fadeIn</code>, without a hash. Other style
+								blocks can use
+								<code class="inline-code">animation: fadeIn 1s</code>
+								or
+								<code class="inline-code">animation-name: fadeIn</code>
+								once the defining stylesheet is loaded. Only the keyframe name is global; selectors
+								such as
+								<code class="inline-code">.child</code>
+								remain sibling-scoped.
+							</p>
 							<p class="section-body muted">
 								React note: TSRX keeps authored attributes as written. Use
 								<code class="inline-code">className</code>

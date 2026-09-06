@@ -991,6 +991,27 @@ export function SpecificationPage() @{
 								<code>{STYLE_GRAMMAR}</code>
 							</pre>
 							<p class="section-body">
+								Keyframe names in a scoped style block are scoped by default. The implementation
+								renames each local
+								<code class="inline-code">@keyframes</code>
+								declaration using the block's hash and rewrites matching names in
+								<code class="inline-code">animation</code>
+								and
+								<code class="inline-code">animation-name</code>
+								declarations within that block. A keyframe name beginning with
+								<code class="inline-code">-global-</code>
+								is emitted with that prefix removed and no hash added: for example,
+								<code class="inline-code">@keyframes -global-fadeIn</code>
+								becomes
+								<code class="inline-code">@keyframes fadeIn</code>. References use the unprefixed
+								name, including in other components or style blocks once the defining stylesheet is
+								loaded. Keyframes declared inside a
+								<code class="inline-code">{':global { ... }'}</code>
+								block also retain unscoped names. These rules apply to vendor-prefixed keyframe
+								at-rules and animation properties as well. Making a keyframe name global does not
+								change the scope of selectors that reference it.
+							</p>
+							<p class="section-body">
 								A style body is captured as raw CSS text. A self-closing style element has no body,
 								no stylesheet, and no hash class of its own; it exists to carry an
 								<code class="inline-code">apply</code>

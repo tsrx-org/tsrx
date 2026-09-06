@@ -1012,6 +1012,53 @@ function Article({ html }: { html: string }) @{
 }
 ```
 
+### Global Keyframes
+
+Keyframes are scoped by default: the compiler renames each local `@keyframes`
+declaration using the style block's hash and rewrites matching `animation` and
+`animation-name` references in that block. To share keyframes across components,
+prefix the declared name with `-global-`. The compiler removes the prefix and
+adds no hash; references use the name without the prefix.
+
+```tsrx
+function App() @{
+	<>
+		<div class="parent"><Child /></div>
+		<style>
+			/* Scoped: renamed along with its references in this block. */
+			@keyframes slideIn {
+				from { transform: translateX(-100%); }
+				to { transform: translateX(0); }
+			}
+
+			/* Global: emitted as fadeIn, without a hash. */
+			@keyframes -global-fadeIn {
+				from { opacity: 0; }
+				to { opacity: 1; }
+			}
+
+			.parent { animation: slideIn 1s; }
+		</style>
+	</>
+}
+
+function Child() @{
+	<>
+		<div class="child">Child content</div>
+		<style>
+			.child { animation: fadeIn 1s; }
+		</style>
+	</>
+}
+```
+
+Other style blocks can use `animation: fadeIn 1s` or `animation-name: fadeIn`
+once the defining stylesheet is loaded. Only the keyframe name is global;
+selectors such as `.child` remain sibling-scoped. Keyframes inside a
+`:global { ... }` block also retain unscoped names. These rules also apply to
+vendor-prefixed keyframe at-rules and animation properties. For React, use
+`className` instead of `class` on host elements.
+
 ### Assigning a block gives you a theme object
 
 Assigning a `<style>` expression to a variable produces an object instead of a
