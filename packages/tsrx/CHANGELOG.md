@@ -1,5 +1,21 @@
 # @tsrx/core
 
+## 0.1.67
+
+### Patch Changes
+
+- [#73](https://github.com/tsrx-org/tsrx/pull/73)
+  [`5369440`](https://github.com/tsrx-org/tsrx/commit/53694402cbc21c4195c201a4e4a70d32e212a9c2)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Keep sibling-combinator rules
+  (`.a + .b`, `.a ~ .c`) whose elements sit at the top of a style scope or of a
+  control-flow branch fragment. Pruning looked for siblings only under the nearest
+  ancestor _element_, so items of a scope's root list — which has no element
+  parent by design — and items of a branch fragment had no siblings and their
+  rules were commented out as unused. `prune_css` now reads the element's actual
+  children list (element or fragment), and the scope pre-pass seeds each scope's
+  paths with a root fragment (`createScopeRoot`, exported for consumer compilers)
+  that ancestor combinators still never match.
+
 ## 0.1.66
 
 ### Patch Changes
