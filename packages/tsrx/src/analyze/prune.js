@@ -422,17 +422,13 @@ function can_render_dynamic_content(element, check_classes = false) {
 function get_possible_element_siblings(node, direction, adjacent_only) {
 	/** @type {Map<AST.TSRXJSXElement, boolean>} */
 	const siblings = new Map();
-	const parent = get_element_parent(node);
+	const container = get_sibling_container(node);
 
-	if (!parent) {
+	if (container === null) {
 		return siblings;
 	}
 
-	// Get the container that holds the siblings
-	const container = node_children(parent);
 	const node_index = container.indexOf(node);
-
-	if (node_index === -1) return siblings;
 
 	// Determine which siblings to check based on direction
 	let start, end, step;
@@ -532,9 +528,8 @@ function apply_combinator(relative_selector, rest_selectors, rule, node, directi
 								sibling_matched = true;
 							} else {
 								// Check if there are any elements after this component that could match the remaining selectors
-								const parent = get_element_parent(node);
-								if (parent) {
-									const container = node_children(parent);
+								const container = get_sibling_container(node);
+								if (container !== null) {
 									const component_index = container.indexOf(possible_sibling);
 
 									// For adjacent combinator, only check immediate next element
@@ -578,6 +573,38 @@ function apply_combinator(relative_selector, rest_selectors, rule, node, directi
 			return true;
 	}
 }
+/**
+ * The children list an element sits in — that of the nearest ancestor on its
+ * path whose children include it, which is its parent element, a fragment
+ * (an authored `<>…</>`, a control-flow branch's output, or the synthetic
+ * root of a style scope), or `null` when the element has no container.
+ *
+ * Sibling combinators (`+`, `~`) read this list. Ancestor combinators keep
+ * using {@link get_element_parent}: a fragment is not an element, and a
+ * scope's root fragment stands for the container that a scoped block never
+ * styles.
+ *
+ * @param {AST.TSRXElementNode} node
+ * @returns {AST.Node[] | null}
+ */
+function get_sibling_container(node) {
+	const path = node.metadata?.path;
+	if (!path || !path.length) {
+		return null;
+	}
+
+	let i = path.length;
+
+	while (i--) {
+		const children = node_children(path[i]);
+		if (children.includes(node)) {
+			return children;
+		}
+	}
+
+	return null;
+}
+
 /**
  * @param {AST.TSRXElementNode} node
  * @returns {AST.TSRXJSXElement | null}

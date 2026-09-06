@@ -1,0 +1,16 @@
+{
+  "elements": {
+    "a scope": ["scope"],
+    "b": ["scope"],
+    "c": ["scope"],
+    "wrap": ["scope"],
+    "x": ["scope"],
+    "y": ["scope"],
+    "d": ["scope"],
+    "e": ["scope"],
+    "g": ["scope"]
+  },
+  "cssOrder": ["scope"],
+  "pruned": [".f + .g"],
+  "classMaps": {}
+}

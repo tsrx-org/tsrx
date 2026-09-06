@@ -446,7 +446,9 @@ function prepare_scope(own, render_items, holder, state) {
 	}
 	const hash = sheets.length > 0 ? sheets[0][1].hash : null;
 	const refs = collect_style_ref_attributes(own);
-	const elements = collect_css_prunable_elements(render_items, [], ctx);
+	const elements = collect_css_prunable_elements(render_items, [], ctx, [
+		create_scope_root(render_items),
+	]);
 
 	/** @type {AST.CSS.StyleSheet | null} */
 	let first_sheet = null;
@@ -567,11 +569,33 @@ export function apply_css_definition_metadata(
 }
 
 /**
+ * The root of a scope's ancestor paths: a fragment holding the list's items,
+ * so `prune_css` can find the siblings of a top-level item for `+` and `~`
+ * combinators. It is not an element, so ancestor combinators never match it —
+ * the container of a scope is exactly what a scoped block does not style.
+ *
+ * @param {AST.Node[]} items
+ * @returns {AST.Node}
+ */
+export function create_scope_root(items) {
+	return /** @type {AST.Node} */ (
+		/** @type {unknown} */ ({
+			type: 'JSXFragment',
+			openingFragment: { type: 'JSXOpeningFragment' },
+			closingFragment: { type: 'JSXClosingFragment' },
+			children: items,
+			metadata: { path: [] },
+		})
+	);
+}
+
+/**
  * Pruning runs before the walker stamps paths onto template nodes, so each
  * collected element gets its ancestor chain (`metadata.path`) here —
  * descendant/sibling selector matching in `prune_css` reads it. The scope's
  * own elements and those of nested scopes are collected; a component
- * boundary stops the walk.
+ * boundary stops the walk. Callers that collect a scope's items themselves
+ * should seed `path` with {@link create_scope_root} for the same reason.
  *
  * @param {AST.Node | AST.Node[]} value
  * @param {AST.TSRXJSXElement[]} [elements]
