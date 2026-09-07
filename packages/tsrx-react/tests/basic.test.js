@@ -5,6 +5,7 @@ import {
 	runSharedCompileTests,
 	runSharedTsxExpressionTsrxTests,
 } from '@tsrx/core/test-harness/compile';
+import { runSharedOptimizeTests } from '@tsrx/core/test-harness/optimize';
 import { runSharedSourceMappingTests } from '@tsrx/core/test-harness/source-mappings';
 import { compile, compile_to_volar_mappings } from '../src/index.js';
 import { find_exact_mapping } from '../../tsrx/src/source-map-utils.js';
@@ -15,6 +16,8 @@ runSharedSourceMappingTests({
 	name: 'react',
 	rejectsComponentAwait: false,
 });
+
+runSharedOptimizeTests({ compile, compile_to_volar_mappings, name: 'react' });
 
 describe('@tsrx/react direct runtime imports', () => {
 	it('emits target runtime package imports for every runtime helper surface', () => {

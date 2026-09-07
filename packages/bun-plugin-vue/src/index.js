@@ -27,6 +27,7 @@ const DEFAULT_VAPOR_OPTIONS = {
  * 	exclude?: RegExp | RegExp[],
  * 	emitCss?: boolean,
  * 	runtimeImports?: RuntimeImportMode,
+ * 	optimize?: boolean,
  * 	vapor?: {
  * 		macros?: boolean | object,
  * 		compiler?: { runtimeModuleName?: string },
@@ -130,7 +131,10 @@ function resolve_vapor_options(options) {
 export function tsrxVue(options = {}) {
 	const emit_css = options.emitCss ?? true;
 	const vapor_options = resolve_vapor_options(options.vapor);
-	const compile_options = { runtimeImports: options.runtimeImports };
+	const compile_options = {
+		runtimeImports: options.runtimeImports,
+		optimize: options.optimize,
+	};
 
 	/** @type {Map<string, string>} */
 	const css_cache = new Map();

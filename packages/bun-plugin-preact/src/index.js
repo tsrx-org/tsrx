@@ -15,6 +15,7 @@ const CSS_QUERY_PATTERN = /\?tsrx-css&lang\.css$/;
  * 	jsxImportSource?: string,
  * 	suspenseSource?: string,
  * 	runtimeImports?: RuntimeImportMode,
+ * 	optimize?: boolean,
  * 	emitCss?: boolean,
  * }} TsrxPreactBunPluginOptions
  */
@@ -96,6 +97,7 @@ export function tsrxPreact(options = {}) {
 	const compile_options = {
 		suspenseSource: options.suspenseSource,
 		runtimeImports: options.runtimeImports,
+		optimize: options.optimize,
 	};
 
 	/** @type {Map<string, string>} */

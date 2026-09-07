@@ -8,6 +8,7 @@ import {
 	runSharedSwitchHelperHoistingTests,
 	runSharedTsxExpressionTsrxTests,
 } from '@tsrx/core/test-harness/compile';
+import { runSharedOptimizeTests } from '@tsrx/core/test-harness/optimize';
 import { runSharedSourceMappingTests } from '@tsrx/core/test-harness/source-mappings';
 import { compile, compile_to_volar_mappings } from '../src/index.js';
 
@@ -17,6 +18,8 @@ runSharedSourceMappingTests({
 	name: 'vue',
 	rejectsComponentAwait: true,
 });
+
+runSharedOptimizeTests({ compile, compile_to_volar_mappings, name: 'vue' });
 
 describe('@tsrx/vue direct runtime imports', () => {
 	it('emits target runtime package imports for error boundaries and refs', () => {

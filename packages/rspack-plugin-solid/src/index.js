@@ -30,12 +30,13 @@ const CSS_QUERY_PATTERN = /tsrx-css/;
  */
 export class TsrxSolidRspackPlugin {
 	/**
-	 * @param {{ hot?: boolean, runtimeImports?: RuntimeImportMode }} [options]
+	 * @param {{ hot?: boolean, runtimeImports?: RuntimeImportMode, optimize?: boolean }} [options]
 	 */
 	constructor(options = {}) {
 		this.options = {
 			hot: options.hot,
 			runtimeImports: options.runtimeImports ?? 'compiler',
+			optimize: options.optimize,
 		};
 	}
 
@@ -96,6 +97,7 @@ export class TsrxSolidRspackPlugin {
 						loader: JS_LOADER,
 						options: {
 							runtimeImports: this.options.runtimeImports,
+							optimize: this.options.optimize,
 						},
 					},
 				],
@@ -109,6 +111,7 @@ export class TsrxSolidRspackPlugin {
 						loader: CSS_LOADER,
 						options: {
 							runtimeImports: this.options.runtimeImports,
+							optimize: this.options.optimize,
 						},
 					},
 				],

@@ -63,6 +63,7 @@
     },
     "./test-harness/source-mappings": "./tests/shared/source-mappings.js",
     "./test-harness/compile": "./tests/shared/compile.js",
+    "./test-harness/optimize": "./tests/shared/optimize.js",
     "./test-harness/dep-scan": "./tests/shared/dep-scan.js",
     "./test-harness/runtime/*": "./tests/shared/runtime/*.js",
     "./test-harness/runtime/*.js": "./tests/shared/runtime/*.js",
