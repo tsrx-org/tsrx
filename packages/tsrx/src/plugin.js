@@ -2886,8 +2886,14 @@ export function TSRXPlugin(config) {
 			 * @param {AST.TSTypeParameterDeclaration} node
 			 */
 			reportReservedArrowTypeParam(node) {
-				// Allow <T>() => {} syntax without requiring trailing comma
-				if (this.#collect && node.params.length === 1 && node.extra?.trailingComma === undefined) {
+				// Constraints and defaults already disambiguate a generic arrow from JSX.
+				if (
+					this.#collect &&
+					node.params.length === 1 &&
+					node.extra?.trailingComma === undefined &&
+					!node.params[0].constraint &&
+					!node.params[0].default
+				) {
 					error(
 						'This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma, as in `<T,>() => ...`.',
 						this.#filename,

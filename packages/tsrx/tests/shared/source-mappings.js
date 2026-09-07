@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import { builders as b, identifier_to_jsx_name, parseModule } from '@tsrx/core';
 import { assert_type } from './node-types.js';
 import {
@@ -21,6 +21,57 @@ export function runSharedSourceMappingTests({
 	name,
 	rejectsComponentAwait,
 }) {
+	describe(`[${name}] shared TypeScript editor diagnostics`, () => {
+		it.each(['Value extends { id: string }', 'Value = string', 'Value,'])(
+			'accepts an unambiguous generic arrow (%s)',
+			(parameter) => {
+				const source = `export const identity = <${parameter}>(value: Value) => value;`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				expect(result.errors).toEqual([]);
+			},
+		);
+
+		it('retains the trailing-comma diagnostic for an ambiguous generic arrow', () => {
+			const result = compile_to_volar_mappings(
+				'export const identity = <Value>(value: Value) => value;',
+				'App.tsrx',
+				{ loose: true },
+			);
+			expect(result.errors.map((error) => error.message)).toEqual([
+				expect.stringContaining('trailing comma'),
+			]);
+		});
+
+		it.each([' ', '\n\t'])(
+			'maps the whole typed destructuring default with whitespace %j',
+			(whitespace) => {
+				const source = `const EMPTY_ARRAY: readonly unknown[] = [];
+export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: string[] }) {
+	return <span>{items.join(',')}</span>;
+}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				expect(result.errors).toEqual([]);
+				const start = source.indexOf('items =');
+				const end = source.indexOf('[]', start) + 2;
+				const mapping = result.mappings.find((mapping) =>
+					mapping.sourceOffsets.some(
+						(offset, index) => offset === start && mapping.lengths[index] === end - start,
+					),
+				);
+				assert(mapping, 'The whole typed default must retain its diagnostic mapping');
+				expect(mapping.data.verification).toBe(true);
+				const index = mapping.sourceOffsets.indexOf(start);
+				const generated_start = mapping.generatedOffsets[index];
+				const generated_length = mapping.generatedLengths?.[index] ?? mapping.lengths[index];
+				expect(
+					result.code
+						.slice(generated_start, generated_start + generated_length)
+						.replace(/\s+/g, ' '),
+				).toBe(source.slice(start, end).replace(/\s+/g, ' '));
+			},
+		);
+	});
+
 	describe(`[${name}] source mappings do not crash for`, () => {
 		/**
 		 * @param {string} source

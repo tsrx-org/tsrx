@@ -309,6 +309,9 @@ const TOOLING_LOCATION_WRAPPED_NODE_TYPES = new Set([
 	'ExportDefaultDeclaration',
 	'ExportAllDeclaration',
 	'TSPropertySignature',
+	// Whole defaults own diagnostics that can extend beyond the last mapped
+	// token of a type assertion, such as `items = EMPTY_ARRAY as string[]`.
+	'AssignmentPattern',
 ]);
 
 // Be careful when adding visitors that are already defined in `wrappers`.
