@@ -35,7 +35,7 @@ describe('map_iterable', function () {
 		).toEqual(['a:0', 'b', 'b', 'c:2!']);
 	});
 
-	it('maps sets and maps with size-based is_last', function () {
+	it('maps sets and maps with is_last on the final entry', function () {
 		expect(map_iterable(new Set(['a', 'b']), text_fn)).toEqual(['a:0', 'b:1!']);
 		expect(
 			map_iterable(
@@ -46,6 +46,104 @@ describe('map_iterable', function () {
 				text_fn,
 			),
 		).toEqual(['k,v:0', 'k2,v2:1!']);
+	});
+
+	it('tolerates clearing a set or map from a callback', function () {
+		var set = new Set([1, 2]);
+		expect(
+			map_iterable(set, function (item) {
+				set.clear();
+				return item;
+			}),
+		).toEqual([1, 2]);
+
+		var map = new Map([
+			[1, 'a'],
+			[2, 'b'],
+		]);
+		expect(
+			map_iterable(map, function (entry) {
+				map.clear();
+				return entry[0];
+			}),
+		).toEqual([1, 2]);
+	});
+
+	it('visits entries added to a set or map during iteration', function () {
+		var set = new Set([1, 2]);
+		expect(
+			map_iterable(set, function (item, index, is_last) {
+				set.add(3);
+				return [item, index, is_last];
+			}),
+		).toEqual([1, 0, false, 2, 1, false, 3, 2, true]);
+
+		var map = new Map([
+			[1, 'a'],
+			[2, 'b'],
+		]);
+		expect(
+			map_iterable(map, function (entry, index, is_last) {
+				map.set(3, 'c');
+				return [entry[0], index, is_last];
+			}),
+		).toEqual([1, 0, false, 2, 1, false, 3, 2, true]);
+	});
+
+	it('skips entries deleted from a set or map before they are visited', function () {
+		var set = new Set([1, 2, 3, 4]);
+		expect(
+			map_iterable(set, function (item, index, is_last) {
+				if (item === 1) {
+					set.delete(3);
+				}
+				return [item, index, is_last];
+			}),
+		).toEqual([1, 0, false, 2, 1, false, 4, 2, true]);
+
+		var map = new Map([
+			[1, 'a'],
+			[2, 'b'],
+			[3, 'c'],
+		]);
+		expect(
+			map_iterable(map, function (entry, index, is_last) {
+				if (entry[0] === 1) {
+					map.delete(3);
+				}
+				return [entry[0], index, is_last];
+			}),
+		).toEqual([1, 0, false, 2, 1, true]);
+	});
+
+	it('keeps tails after a mutated set and never calls fn for an emptied one', function () {
+		var set = new Set(['a', 'b']);
+		expect(
+			map_iterable(
+				set,
+				function (item, index, is_last) {
+					set.delete('b');
+					return text_fn(item, index, is_last);
+				},
+				function () {
+					return 'tail';
+				},
+			),
+		).toEqual(['a:0', 'b:1!', 'tail']);
+
+		var single = new Set(['only']);
+		expect(
+			map_iterable(
+				single,
+				function (item, index, is_last) {
+					single.clear();
+					return text_fn(item, index, is_last);
+				},
+				function () {
+					return ['t', 'u'];
+				},
+			),
+		).toEqual(['only:0!', 't', 'u']);
 	});
 
 	it('still walks custom iterators that also have size', function () {
