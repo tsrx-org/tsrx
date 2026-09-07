@@ -1,5 +1,14 @@
 # @tsrx/react-runtime
 
+## 0.1.6
+
+### Patch Changes
+
+- Updated dependencies
+  [[`4d8bc9b`](https://github.com/tsrx-org/tsrx/commit/4d8bc9b8ef0b401f4fb0b4186368fdc8895804b2),
+  [`8cf6514`](https://github.com/tsrx-org/tsrx/commit/8cf6514f6fecc04e8fb5b9c37c92424f3f8e3532)]:
+  - @tsrx/runtime@0.1.6
+
 ## 0.1.5
 
 ### Patch Changes

@@ -1,5 +1,26 @@
 # @tsrx/runtime
 
+## 0.1.6
+
+### Patch Changes
+
+- [#88](https://github.com/tsrx-org/tsrx/pull/88)
+  [`4d8bc9b`](https://github.com/tsrx-org/tsrx/commit/4d8bc9b8ef0b401f4fb0b4186368fdc8895804b2)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Speed up `map_iterable` for
+  `Set`, `Map`, and other non-array iterables by walking them with `for...of` one
+  item behind, storing single-node results without a helper call, and
+  preallocating the result from a real `Set` or `Map` size. The size is only a
+  capacity hint, so `is_last` and callbacks that mutate the collection behave
+  exactly as before. As a side effect of `for...of`, a generator source is now
+  closed when the callback throws.
+
+- [#86](https://github.com/tsrx-org/tsrx/pull/86)
+  [`8cf6514`](https://github.com/tsrx-org/tsrx/commit/8cf6514f6fecc04e8fb5b9c37c92424f3f8e3532)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Fix `map_iterable` passing
+  `undefined` items, skipping added entries, and reporting `is_last` early when a
+  callback mutates the `Set` or `Map` being iterated. `Set` and `Map` walk the
+  peek-ahead iterator path again; arrays keep the preallocated fast path.
+
 ## 0.1.5
 
 ### Patch Changes
