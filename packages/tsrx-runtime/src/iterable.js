@@ -12,35 +12,94 @@ export function map_iterable(iterable, fn, tail, empty) {
 		return map_array(iterable, fn, tail, empty);
 	}
 
-	/** @type {Iterator<T>} */
-	var iterator;
+	/** @type {Iterable<T>} */
+	var source;
 	var iterable_prop = /** @type {Iterable<T>} */ (iterable)[Symbol.iterator];
 
 	if (typeof iterable_prop === 'function') {
-		iterator = iterable_prop.call(iterable);
+		source = /** @type {Iterable<T>} */ (iterable);
 	} else if (typeof (/** @type {Iterator<T>} */ (iterable).next) === 'function') {
-		iterator = Iterator.from(iterable);
+		source = Iterator.from(/** @type {Iterator<T>} */ (iterable));
 	} else {
 		throw new TypeError('The loop target has to be an Iterable');
 	}
 
-	var current = iterator.next();
-	if (current.done) {
+	// A real Set or Map preallocates the result from its size. The size is only a
+	// capacity hint: `is_last` still comes from the walk itself, so callbacks that
+	// add or remove entries keep the same semantics as any other iterable.
+	var capacity = 0;
+	if (
+		iterable_prop === Set.prototype[Symbol.iterator] ||
+		iterable_prop === Map.prototype[Symbol.iterator]
+	) {
+		var size = /** @type {Set<T> | Map<unknown, unknown>} */ (iterable).size;
+		if (typeof size === 'number' && size > 0) {
+			capacity = size;
+		}
+	}
+
+	/** @type {U[]} */
+	var result = capacity > 0 ? new Array(capacity) : [];
+	var count = 0;
+	var index = 0;
+	var has_previous = false;
+	/** @type {T | undefined} */
+	var previous;
+
+	// `for...of` lets engines skip the per-item iterator result object, and
+	// running one item behind keeps the peek-ahead contract: `fn` sees an item
+	// only after the next one has been pulled, so `is_last` is exact.
+	for (var item of source) {
+		if (has_previous) {
+			count = write_mapped(
+				result,
+				capacity,
+				count,
+				fn(/** @type {T} */ (previous), index++, false),
+			);
+		}
+		previous = item;
+		has_previous = true;
+	}
+
+	if (!has_previous) {
 		return finish_empty(empty);
 	}
 
-	var index = 0;
-	/** @type {U[]} */
-	var result = [];
-	while (true) {
-		var next = iterator.next();
-		push_mapped(result, fn(current.value, index++, !!next.done));
-		if (next.done) {
-			break;
-		}
-		current = next;
+	count = write_mapped(result, capacity, count, fn(/** @type {T} */ (previous), index, true));
+	if (count < capacity) {
+		result.length = count;
 	}
 	return finish_tail(result, tail);
+}
+
+/**
+ * Stores one mapped value. Slots below `capacity` are preallocated and written by
+ * index; anything past them is pushed. A fragment result truncates the unused
+ * slots and pushes, after which the returned count equals `capacity` so later
+ * values push as well.
+ *
+ * @template U
+ * @param {U[]} result
+ * @param {number} capacity
+ * @param {number} count
+ * @param {U | U[]} value
+ * @returns {number}
+ */
+function write_mapped(result, capacity, count, value) {
+	if (Array.isArray(value)) {
+		if (count < capacity) {
+			result.length = count;
+		}
+		push_mapped(result, value);
+		return capacity;
+	}
+	if (count < capacity) {
+		result[count] = value;
+		return count + 1;
+	}
+	result.push(value);
+	return count;
 }
 
 /**

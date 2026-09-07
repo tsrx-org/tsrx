@@ -146,6 +146,103 @@ describe('map_iterable', function () {
 		).toEqual(['only:0!', 't', 'u']);
 	});
 
+	it('trims the preallocated result when a set or map shrinks mid-walk', function () {
+		var set = new Set([1, 2, 3, 4]);
+		var result = map_iterable(set, function (item) {
+			if (item === 1) {
+				set.delete(3);
+			}
+			return item;
+		});
+		expect(result).toStrictEqual([1, 2, 4]);
+		expect(result.length).toBe(3);
+		expect(Object.keys(result)).toStrictEqual(['0', '1', '2']);
+
+		var map = new Map([
+			[1, 'a'],
+			[2, 'b'],
+			[3, 'c'],
+		]);
+		var mapped = map_iterable(map, function (entry) {
+			map.clear();
+			return entry[1];
+		});
+		expect(mapped).toStrictEqual(['a', 'b']);
+		expect(mapped.length).toBe(2);
+	});
+
+	it('grows past the preallocated result when a set gains entries mid-walk', function () {
+		var set = new Set([1, 2]);
+		var result = map_iterable(set, function (item) {
+			if (item < 10) {
+				set.add(item + 10);
+			}
+			return item;
+		});
+		expect(result).toStrictEqual([1, 2, 11, 12]);
+		expect(result.length).toBe(4);
+	});
+
+	it('flattens fragments returned mid-walk over a preallocated set', function () {
+		expect(
+			map_iterable(new Set(['a', 'b', 'c', 'd']), function (item, index, is_last) {
+				if (index === 1) {
+					return [item, item];
+				}
+				return text_fn(item, index, is_last);
+			}),
+		).toStrictEqual(['a:0', 'b', 'b', 'c:2', 'd:3!']);
+
+		expect(
+			map_iterable(new Set(['a', 'b', 'c']), function (item, index, is_last) {
+				if (is_last) {
+					return [item, item];
+				}
+				return text_fn(item, index, is_last);
+			}),
+		).toStrictEqual(['a:0', 'b:1', 'c', 'c']);
+
+		expect(
+			map_iterable(new Set(['a', 'b', 'c']), function (item, index, is_last) {
+				if (index === 1) {
+					return [];
+				}
+				return text_fn(item, index, is_last);
+			}),
+		).toStrictEqual(['a:0', 'c:2!']);
+	});
+
+	it('preallocates for set subclasses and keeps undefined results', function () {
+		var Tagged = class extends Set {};
+		expect(map_iterable(new Tagged(['a', 'b']), text_fn)).toStrictEqual(['a:0', 'b:1!']);
+
+		var result = map_iterable(new Set([1, 2, 3]), function () {
+			return undefined;
+		});
+		expect(result.length).toBe(3);
+		expect(Object.keys(result)).toStrictEqual(['0', '1', '2']);
+	});
+
+	it('closes a generator when the callback throws', function () {
+		var closed = false;
+		var source = (function* () {
+			try {
+				yield 'a';
+				yield 'b';
+				yield 'c';
+			} finally {
+				closed = true;
+			}
+		})();
+
+		expect(function () {
+			map_iterable(source, function () {
+				throw new Error('boom');
+			});
+		}).toThrow('boom');
+		expect(closed).toBe(true);
+	});
+
 	it('still walks custom iterators that also have size', function () {
 		var dual = {
 			size: 2,
