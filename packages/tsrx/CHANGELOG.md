@@ -1,5 +1,18 @@
 # @tsrx/core
 
+## 0.1.69
+
+### Patch Changes
+
+- [#89](https://github.com/tsrx-org/tsrx/pull/89)
+  [`ebba2e4`](https://github.com/tsrx-org/tsrx/commit/ebba2e4a249860242b9a25bccd2c2607c623a288)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Fix shared editor diagnostics
+  for React, Preact, Solid, Vue, and other consumers of the core tooling pipeline.
+  Generic arrows with a constrained or defaulted type parameter no longer produce
+  a false trailing-comma error. Typed destructuring defaults retain their full
+  diagnostic mapping, including when a multiline default ends in an array type
+  assertion, instead of crashing source mapping generation.
+
 ## 0.1.68
 
 ### Patch Changes
