@@ -1,5 +1,14 @@
 # @tsrx/runtime
 
+## 0.1.7
+
+### Patch Changes
+
+- [#93](https://github.com/tsrx-org/tsrx/pull/93)
+  [`6908ee3`](https://github.com/tsrx-org/tsrx/commit/6908ee3496562e3c989f2f360cc8a848c2e5ff50)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Export
+  `property_is_enumerable` from the language helpers module.
+
 ## 0.1.6
 
 ### Patch Changes

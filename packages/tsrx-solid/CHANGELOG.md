@@ -1,5 +1,13 @@
 # @tsrx/solid
 
+## 0.1.70
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/core@0.1.70
+  - @tsrx/solid-runtime@0.1.7
+
 ## 0.1.69
 
 ### Patch Changes

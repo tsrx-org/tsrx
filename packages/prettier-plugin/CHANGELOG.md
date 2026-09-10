@@ -1,5 +1,12 @@
 # @tsrx/prettier-plugin
 
+## 0.3.136
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/core@0.1.70
+
 ## 0.3.135
 
 ### Patch Changes

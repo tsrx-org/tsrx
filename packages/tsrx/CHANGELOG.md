@@ -1,5 +1,13 @@
 # @tsrx/core
 
+## 0.1.70
+
+### Patch Changes
+
+- Updated dependencies
+  [[`6908ee3`](https://github.com/tsrx-org/tsrx/commit/6908ee3496562e3c989f2f360cc8a848c2e5ff50)]:
+  - @tsrx/runtime@0.1.7
+
 ## 0.1.69
 
 ### Patch Changes
