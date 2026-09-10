@@ -12,6 +12,7 @@ export const structured_clone: typeof structuredClone;
 export const object_prototype: typeof Object.prototype;
 export const array_prototype: typeof Array.prototype;
 export const has_own_property: typeof Object.prototype.hasOwnProperty;
+export const property_is_enumerable: typeof Object.prototype.propertyIsEnumerable;
 
 export function has_prototype_accessor(value: object, key: PropertyKey): boolean;
 export function array_slice<T>(array_like: ArrayLike<T>, ...args: number[]): T[];

@@ -26,6 +26,8 @@ export var object_prototype = Object.prototype;
 export var array_prototype = Array.prototype;
 /** @type {typeof Object.prototype.hasOwnProperty} */
 export var has_own_property = object_prototype.hasOwnProperty;
+/** @type {typeof Object.prototype.propertyIsEnumerable} */
+export var property_is_enumerable = object_prototype.propertyIsEnumerable;
 
 /**
  * @param {object} value
