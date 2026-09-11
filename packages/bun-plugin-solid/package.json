@@ -25,6 +25,7 @@
   "dependencies": {
     "@babel/core": "catalog:default",
     "@babel/preset-typescript": "catalog:default",
+    "@tsrx/core": "workspace:*",
     "@tsrx/solid": "workspace:*",
     "babel-preset-solid": "catalog:default"
   },

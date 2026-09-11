@@ -16,7 +16,6 @@ import {
 	_reset_for_test,
 } from '../src/language.js';
 import { resolve_consumer_compiler_for_file } from '../src/consumer-compiler.js';
-import * as reactCompiler from '../../tsrx-react/src/index.js';
 
 /** @import {WORKSPACE_CONFIGS} from './workspace-fixtures.js' */
 /** @typedef {keyof typeof WORKSPACE_CONFIGS} WorkspaceName */
@@ -54,9 +53,10 @@ function create_snapshot(source) {
  */
 function create_edit_snapshot(source, previous, change_range) {
 	return {
-		getText: (start, end) => source.slice(start, end),
+		getText: (/** @type {number} */ start, /** @type {number} */ end) => source.slice(start, end),
 		getLength: () => source.length,
-		getChangeRange: (old_snapshot) => (old_snapshot === previous ? change_range : undefined),
+		getChangeRange: (/** @type {import('typescript').IScriptSnapshot} */ old_snapshot) =>
+			old_snapshot === previous ? change_range : undefined,
 	};
 }
 
@@ -282,11 +282,36 @@ describe('typescript-plugin language plugin integration', () => {
 	it('keeps platform typing and selection in dot-completion compilation', () => {
 		const source = 'export const active = import.meta.env.platform';
 		const initial_snapshot = create_snapshot(source);
+		/** @type {boolean[]} */
 		const required_values = [];
+		const compiler = /** @type {any} */ ({
+			compile_to_volar_mappings(
+				/** @type {string} */ code,
+				/** @type {string} */ _filename,
+				/** @type {{ platform?: string }} */ options,
+			) {
+				return {
+					code: `${code}\nexport {};\ndeclare global { interface ImportMetaEnv { readonly platform: string & { readonly ios: ${options.platform === 'ios'} } } interface ImportMeta { readonly [key: \`env\${string}\`]: ImportMetaEnv } }`,
+					mappings: [
+						{
+							sourceOffsets: [0],
+							generatedOffsets: [0],
+							lengths: [code.length],
+							generatedLengths: [code.length],
+							data: { completion: true, verification: true, customData: {} },
+						},
+					],
+					cssMappings: [],
+					scriptMappings: [],
+					errors: [],
+					sourceAst: null,
+				};
+			},
+		});
 		const virtual_code = new TSRXVirtualCode(
 			'/virtual/App.tsrx',
 			initial_snapshot,
-			reactCompiler,
+			compiler,
 			(required) => {
 				required_values.push(required);
 				return 'ios';

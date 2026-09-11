@@ -1,6 +1,9 @@
 import type { Platform, RuntimeImportMode } from '@tsrx/react';
 
 export interface NextTurbopackConfig {
+	typescript?: {
+		tsconfigPath?: string;
+	};
 	turbopack?: {
 		root?: string;
 		rules?: Record<string, unknown>;
@@ -14,8 +17,10 @@ export interface NextTurbopackConfig {
 export interface TsrxReactTurbopackOptions {
 	/** Direct mode requires `@tsrx/react-runtime` as a direct production dependency. */
 	runtimeImports?: RuntimeImportMode;
-	/** Must match `tsrx.platform` in the active tsconfig. */
+	/** Optional override; inferred from tsconfig by default and must agree when both exist. */
 	platform?: Platform;
+	/** Optional tsconfig path override, resolved from the Turbopack project root. */
+	tsconfig?: string;
 }
 
 export interface TsrxReactTurbopackLoader {

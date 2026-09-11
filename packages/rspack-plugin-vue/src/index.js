@@ -3,7 +3,8 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPlatformDefinitions, mergePlatformDefinitions, validatePlatform } from '@tsrx/vue';
+import { createPlatformDefinitions, mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
+import { resolveBuildPlatform } from '@tsrx/core/config';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,10 +50,11 @@ export class TsrxVueRspackPlugin {
 	 * @param {{ vapor?: { macros?: boolean | object, compiler?: { runtimeModuleName?: string } }, runtimeImports?: RuntimeImportMode, platform?: Platform }} [options]
 	 */
 	constructor(options = {}) {
+		this.explicit_platform = validatePlatform(options.platform);
 		this.options = {
 			vapor: options.vapor,
 			runtimeImports: options.runtimeImports ?? 'compiler',
-			platform: validatePlatform(options.platform),
+			platform: this.explicit_platform,
 		};
 	}
 
@@ -61,6 +63,15 @@ export class TsrxVueRspackPlugin {
 	 * @returns {void}
 	 */
 	apply(compiler) {
+		const compiler_options = /** @type {any} */ (compiler).options;
+		const resolve_tsconfig = compiler_options.resolve?.tsConfig;
+		this.options.platform = resolveBuildPlatform({
+			root: /** @type {any} */ (compiler).context ?? process.cwd(),
+			tsconfig:
+				typeof resolve_tsconfig === 'string' ? resolve_tsconfig : resolve_tsconfig?.configFile,
+			platform: this.explicit_platform,
+			integration: '@tsrx/rspack-plugin-vue',
+		});
 		apply_platform_definitions(compiler, this.options.platform);
 		const resolve = compiler.options.resolve;
 		if (resolve.extensions && !resolve.extensions.includes('.tsrx')) {

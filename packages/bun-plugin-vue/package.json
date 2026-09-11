@@ -23,6 +23,7 @@
     "test": "pnpm -w test --project bun-plugin-vue"
   },
   "dependencies": {
+    "@tsrx/core": "workspace:*",
     "@tsrx/vue": "workspace:*"
   },
   "peerDependencies": {

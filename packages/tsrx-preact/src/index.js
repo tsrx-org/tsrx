@@ -16,12 +16,6 @@ import { DEFAULT_SUSPENSE_SOURCE, transform } from './transform.js';
 
 export { DEFAULT_SUSPENSE_SOURCE };
 export { isRefProp } from './ref.js';
-export {
-	createPlatformDefinitions,
-	mergePlatformDefinitions,
-	replacePlatformFlags,
-	validatePlatform,
-} from '@tsrx/core';
 
 /**
  * Parse tsrx-preact source code to an ESTree AST.

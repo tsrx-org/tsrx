@@ -22,6 +22,7 @@
   "dependencies": {
     "@babel/core": "^7.29.0",
     "@babel/preset-typescript": "^7.28.5",
+    "@tsrx/core": "workspace:*",
     "@tsrx/solid": "workspace:*",
     "babel-loader": "^10.1.1",
     "babel-preset-solid": "catalog:default",

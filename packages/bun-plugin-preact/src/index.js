@@ -2,7 +2,9 @@
 /** @import { Platform, RuntimeImportMode } from '@tsrx/preact' */
 
 import { readFile } from 'node:fs/promises';
-import { compile, mergePlatformDefinitions, validatePlatform } from '@tsrx/preact';
+import { compile } from '@tsrx/preact';
+import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
+import { resolveBuildPlatform } from '@tsrx/core/config';
 
 const DEFAULT_INCLUDE = /\.tsrx$/;
 const CSS_QUERY = '?tsrx-css&lang.css';
@@ -92,14 +94,9 @@ function create_transpiler(jsx_import_source, target) {
  * @returns {BunPlugin}
  */
 export function tsrxPreact(options = {}) {
-	const platform = validatePlatform(options.platform);
+	const explicit_platform = validatePlatform(options.platform);
 	const jsx_import_source = options.jsxImportSource ?? 'preact';
 	const emit_css = options.emitCss ?? true;
-	const compile_options = {
-		suspenseSource: options.suspenseSource,
-		runtimeImports: options.runtimeImports,
-		platform,
-	};
 
 	/** @type {Map<string, string>} */
 	const css_cache = new Map();
@@ -111,6 +108,17 @@ export function tsrxPreact(options = {}) {
 			// build.config is only present for Bun.build(); runtime registration
 			// via Bun.plugin(), including bun:test preloads, does not provide it.
 			const build_config = build.config ?? {};
+			const platform = resolveBuildPlatform({
+				root: build_config.root ?? process.cwd(),
+				tsconfig: typeof build_config.tsconfig === 'string' ? build_config.tsconfig : undefined,
+				platform: explicit_platform,
+				integration: '@tsrx/bun-plugin-preact',
+			});
+			const compile_options = {
+				suspenseSource: options.suspenseSource,
+				runtimeImports: options.runtimeImports,
+				platform,
+			};
 			if (platform !== undefined && build.config) {
 				build.config.define = /** @type {Record<string, string>} */ (
 					mergePlatformDefinitions(build.config.define, platform, {

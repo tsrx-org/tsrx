@@ -8,7 +8,7 @@ export interface TsrxPreactBunPluginOptions {
 	suspenseSource?: string;
 	/** Direct mode requires `@tsrx/preact-runtime` as a direct production dependency. */
 	runtimeImports?: RuntimeImportMode;
-	/** Must match `tsrx.platform` in the active tsconfig. */
+	/** Optional override; inferred from tsconfig by default and must agree when both exist. */
 	platform?: Platform;
 	emitCss?: boolean;
 }

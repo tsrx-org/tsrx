@@ -34,7 +34,9 @@
  */
 
 import { transformWithOxc } from 'vite';
-import { compile, mergePlatformDefinitions, validatePlatform } from '@tsrx/preact';
+import { compile } from '@tsrx/preact';
+import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
+import { resolveBuildPlatform } from '@tsrx/core/config';
 import { createDepScanTransformPlugin } from '@tsrx/core/vite/dep-scan';
 
 const TSRX_EXTENSION_PATTERN = /\.tsrx$/;
@@ -51,17 +53,32 @@ const CSS_QUERY = '?tsrx-css&lang.css';
  *   suspenseSource?: string,
  *   runtimeImports?: RuntimeImportMode,
  *   platform?: Platform,
+ *   tsconfig?: string,
  * }} [options]
  * @returns {TsrxPreactPlugin}
  */
 export function tsrxPreact(options = {}) {
-	const platform = validatePlatform(options.platform);
+	const explicit_platform = validatePlatform(options.platform);
+	let platform = explicit_platform;
 	const jsxImportSource = options.jsxImportSource ?? 'preact';
 	const compile_options = {
 		suspenseSource: options.suspenseSource,
 		runtimeImports: options.runtimeImports,
 		platform,
 	};
+
+	/** @param {import('vite').UserConfig} config */
+	function resolve_platform(config) {
+		platform = resolveBuildPlatform({
+			root: config.root ?? process.cwd(),
+			tsconfig:
+				options.tsconfig ??
+				/** @type {{ tsconfig?: string }} */ (/** @type {unknown} */ (config)).tsconfig,
+			platform: explicit_platform,
+			integration: '@tsrx/vite-plugin-preact',
+		});
+		compile_options.platform = platform;
+	}
 
 	/** @type {Map<string, string>} */
 	const css_cache = new Map();
@@ -85,6 +102,7 @@ export function tsrxPreact(options = {}) {
 		enforce: 'pre',
 
 		config(config = /** @type {import('vite').UserConfig} */ ({})) {
+			resolve_platform(config);
 			return {
 				...(platform === undefined
 					? {}

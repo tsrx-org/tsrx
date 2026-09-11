@@ -22,4 +22,4 @@
 '@tsrx/vscode-plugin': patch
 ---
 
-Add validated web, iOS, and Android compile-time platform flags, early ordinary-if specialization for TSRX source and virtual TypeScript, and matching definitions across every in-repo Vite, Rspack, Turbopack, and Bun integration.
+Add validated web, iOS, and Android compile-time platform flags, early ordinary-if specialization for TSRX source and virtual TypeScript, automatic inherited-tsconfig resolution, and matching definitions across every in-repo Vite, Rspack, Turbopack, and Bun integration.

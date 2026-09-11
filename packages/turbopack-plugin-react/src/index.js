@@ -2,7 +2,8 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validatePlatform } from '@tsrx/react';
+import { validatePlatform } from '@tsrx/core';
+import { resolveBuildPlatform } from '@tsrx/core/config';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,12 +33,13 @@ const PLATFORM_SOURCE_GLOBS = [
  * 		resolveExtensions?: string[],
  * 		debugIds?: boolean,
  * 	},
+ * 	typescript?: { tsconfigPath?: string },
  * 	[key: string]: any,
  * }} NextTurbopackConfig
  */
 
 /**
- * @typedef {{ runtimeImports?: RuntimeImportMode, platform?: Platform }} TsrxReactTurbopackOptions
+ * @typedef {{ runtimeImports?: RuntimeImportMode, platform?: Platform, tsconfig?: string }} TsrxReactTurbopackOptions
  */
 
 /** @param {TsrxReactTurbopackOptions} options @returns {TsrxReactTurbopackOptions} */
@@ -145,6 +147,12 @@ function merge_tsrx_rule(existing_rule, options) {
 export function tsrxReactTurbopack(next_config = {}, options = {}) {
 	options = normalize_options(options);
 	const turbopack = next_config.turbopack ?? {};
+	options.platform = resolveBuildPlatform({
+		root: turbopack.root ?? process.cwd(),
+		tsconfig: options.tsconfig ?? next_config.typescript?.tsconfigPath,
+		platform: options.platform,
+		integration: '@tsrx/turbopack-plugin-react',
+	});
 	const rules = { ...(turbopack.rules ?? {}) };
 	rules['*.tsrx'] = merge_tsrx_rule(rules['*.tsrx'], options);
 	if (options.platform !== undefined) {

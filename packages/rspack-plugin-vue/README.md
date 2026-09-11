@@ -15,7 +15,7 @@ pnpm add -D @tsrx/rspack-plugin-vue
 import { TsrxVueRspackPlugin } from '@tsrx/rspack-plugin-vue';
 
 export default {
-  plugins: [new TsrxVueRspackPlugin({ platform: 'web' })],
+  plugins: [new TsrxVueRspackPlugin()],
 };
 ```
 
@@ -33,9 +33,10 @@ when unset. Editor typechecking should set `jsxImportSource: 'vue-jsx-vapor'`.
   macros and uses `runtimeModuleName: 'vue-jsx-vapor'`.
 - `runtimeImports`: helper import mode (`'compiler'` by default, or `'direct'` for
   standalone runtime imports).
-- `platform`: optional compile-time platform (`'web'`, `'ios'`, or `'android'`).
-  Set the same `tsrx.platform` value in the active tsconfig. The plugin defines
-  all three exact flags and rejects conflicting Rspack definitions.
+- `platform`: optional override/fallback for the compile-time platform. Normally
+  the plugin reads `tsrx.platform` from the project tsconfig (including
+  `resolve.tsConfig` and `extends`). An override must match tsconfig. The plugin
+  defines all three exact flags and rejects conflicting Rspack definitions.
 
 When using `runtimeImports: 'direct'`, install the runtime as a direct production
 dependency of the package that owns the compiled modules:

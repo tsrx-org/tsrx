@@ -119,8 +119,7 @@ Neovim and Sublime Text are also maintained here.
 
 ## Platform-specific source
 
-Select `"web"`, `"ios"`, or `"android"` in the active TypeScript project and pass
-the same value to the target's build integration:
+Select `"web"`, `"ios"`, or `"android"` in the active TypeScript project:
 
 ```json
 {
@@ -132,7 +131,7 @@ the same value to the target's build integration:
 ```
 
 ```ts
-tsrxReact({ platform: 'ios' });
+tsrxReact(); // reads tsrx.platform from the project tsconfig
 ```
 
 All three exact flags are available: `import.meta.env.platform.web`, `.ios`, and
@@ -143,8 +142,9 @@ of diagnostics and build output. Template `@if` remains runtime control flow; us
 an ordinary `if` when inactive content must be excluded early.
 
 There is no implicit web default. A recognized flag without a platform, or any
-platform value other than the three exact strings above, is an error. Keep the
-tsconfig and builder values identical.
+platform value other than the three exact strings above, is an error. An explicit
+builder `platform` option remains available as an override/fallback, but it must
+match tsconfig when both are present.
 
 ## Learn and contribute
 

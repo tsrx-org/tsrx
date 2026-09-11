@@ -20,6 +20,7 @@
     }
   },
   "dependencies": {
+    "@tsrx/core": "workspace:*",
     "@tsrx/preact": "workspace:*"
   },
   "peerDependencies": {

@@ -15,7 +15,7 @@ pnpm add -D @tsrx/rspack-plugin-solid
 import { TsrxSolidRspackPlugin } from '@tsrx/rspack-plugin-solid';
 
 export default {
-  plugins: [new TsrxSolidRspackPlugin({ platform: 'web' })],
+  plugins: [new TsrxSolidRspackPlugin()],
 };
 ```
 
@@ -34,9 +34,10 @@ when unset. In development mode it adds `solid-refresh/babel` unless you pass
   `true` unless Rspack is running in production mode.
 - `runtimeImports`: helper import mode (`'compiler'` by default, or `'direct'` for
   standalone runtime imports).
-- `platform`: optional compile-time platform (`'web'`, `'ios'`, or `'android'`).
-  Set the same `tsrx.platform` value in the active tsconfig. The plugin defines
-  all three exact flags and rejects conflicting Rspack definitions.
+- `platform`: optional override/fallback for the compile-time platform. Normally
+  the plugin reads `tsrx.platform` from the project tsconfig (including
+  `resolve.tsConfig` and `extends`). An override must match tsconfig. The plugin
+  defines all three exact flags and rejects conflicting Rspack definitions.
 
 When using `runtimeImports: 'direct'`, install the runtime as a direct production
 dependency of the package that owns the compiled modules:

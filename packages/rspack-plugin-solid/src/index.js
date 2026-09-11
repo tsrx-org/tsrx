@@ -4,7 +4,8 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPlatformDefinitions, mergePlatformDefinitions, validatePlatform } from '@tsrx/solid';
+import { createPlatformDefinitions, mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
+import { resolveBuildPlatform } from '@tsrx/core/config';
 
 const require = createRequire(import.meta.url);
 
@@ -52,10 +53,11 @@ export class TsrxSolidRspackPlugin {
 	 * @param {{ hot?: boolean, runtimeImports?: RuntimeImportMode, platform?: Platform }} [options]
 	 */
 	constructor(options = {}) {
+		this.explicit_platform = validatePlatform(options.platform);
 		this.options = {
 			hot: options.hot,
 			runtimeImports: options.runtimeImports ?? 'compiler',
-			platform: validatePlatform(options.platform),
+			platform: this.explicit_platform,
 		};
 	}
 
@@ -64,6 +66,15 @@ export class TsrxSolidRspackPlugin {
 	 * @returns {void}
 	 */
 	apply(compiler) {
+		const compiler_options = /** @type {any} */ (compiler).options;
+		const resolve_tsconfig = compiler_options.resolve?.tsConfig;
+		this.options.platform = resolveBuildPlatform({
+			root: /** @type {any} */ (compiler).context ?? process.cwd(),
+			tsconfig:
+				typeof resolve_tsconfig === 'string' ? resolve_tsconfig : resolve_tsconfig?.configFile,
+			platform: this.explicit_platform,
+			integration: '@tsrx/rspack-plugin-solid',
+		});
 		const hot = this.options.hot ?? compiler.options.mode !== 'production';
 		apply_platform_definitions(compiler, this.options.platform);
 

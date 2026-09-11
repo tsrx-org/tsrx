@@ -23,6 +23,7 @@
     "test": "pnpm -w test --project bun-plugin-preact"
   },
   "dependencies": {
+    "@tsrx/core": "workspace:*",
     "@tsrx/preact": "workspace:*"
   },
   "peerDependencies": {

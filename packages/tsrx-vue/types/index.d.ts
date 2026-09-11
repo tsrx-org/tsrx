@@ -2,12 +2,6 @@ import type { Program } from 'estree';
 import type { BaseCompileOptions, CompileFn, ParseOptions, VolarCompileFn } from '@tsrx/core/types';
 
 export type { Platform, RuntimeImportMode, TsrxPlatformFlags } from '@tsrx/core/types';
-export {
-	createPlatformDefinitions,
-	mergePlatformDefinitions,
-	replacePlatformFlags,
-	validatePlatform,
-} from '@tsrx/core/types';
 
 export function parse(source: string, filename?: string, options?: ParseOptions): Program;
 

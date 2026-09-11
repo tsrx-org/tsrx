@@ -17,7 +17,7 @@ await Bun.build({
   entrypoints: ['./src/App.tsrx'],
   outdir: './dist',
   target: 'browser',
-  plugins: [tsrxPreact({ platform: 'web' })],
+  plugins: [tsrxPreact()],
 });
 ```
 
@@ -39,9 +39,10 @@ Bun.plugin(tsrxPreact());
 - `suspenseSource`: module used by the compiler for Suspense imports.
 - `runtimeImports`: helper import mode (`'compiler'` by default, or `'direct'` for
   standalone runtime imports).
-- `platform`: optional compile-time platform (`'web'`, `'ios'`, or `'android'`).
-  Set the same `tsrx.platform` value in the active tsconfig. For `Bun.build`, the
-  plugin defines all three exact flags and rejects conflicting definitions.
+- `platform`: optional override/fallback for the compile-time platform. Normally
+  the plugin reads `tsrx.platform` from Bun's selected/nearest tsconfig, including
+  `extends`. An override must match tsconfig. For `Bun.build`, all three exact
+  flags are defined and conflicting definitions are rejected.
 - `emitCss`: whether to emit virtual CSS imports (default: `true`).
 - `include`, `exclude`: regex filters for source files.
 

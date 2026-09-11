@@ -23,6 +23,7 @@
     "test": "pnpm -w test --project bun-plugin-react"
   },
   "dependencies": {
+    "@tsrx/core": "workspace:*",
     "@tsrx/react": "workspace:*"
   },
   "peerDependencies": {

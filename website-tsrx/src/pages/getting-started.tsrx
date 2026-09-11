@@ -836,10 +836,12 @@ export function GettingStartedPage() @{
 								<code class="inline-code">ios</code>
 								, or
 								<code class="inline-code">android</code>
-								in the active TypeScript project. Pass the same
+								in the active TypeScript project. The Vite, Rspack, Bun, and available React
+								Turbopack integrations read that inherited tsconfig setting automatically. Their
+								explicit
 								<code class="inline-code">platform</code>
-								option to your Vite, Rspack, Bun, or available React Turbopack integration. There is
-								no implicit web default.
+								option is only an override/fallback and must agree with tsconfig. There is no
+								implicit web default.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={PLATFORM_TSCONFIG_HTML} />

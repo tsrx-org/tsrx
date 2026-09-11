@@ -122,22 +122,29 @@ builders still replace exact flags in their remaining output. Use an ordinary
 exact-flag `if` when platform-only types, dependencies, scripts, or styles must
 be excluded before TSRX/TypeScript analysis.
 
-Pass the same platform to the build integration so ordinary `.ts`, `.tsx`, and
-JavaScript modules receive matching compile-time constants:
+In-repo build integrations read the same inherited tsconfig automatically, so
+ordinary `.ts`, `.tsx`, and JavaScript modules receive matching compile-time
+constants without repeating the selection:
 
 ```js
-tsrxReact({ platform: 'ios' });
-new TsrxReactRspackPlugin({ platform: 'ios' });
-tsrxReactBun({ platform: 'ios' });
-tsrxReactTurbopack({}, { platform: 'ios' });
+tsrxReact();
+new TsrxReactRspackPlugin();
+tsrxReactBun();
+tsrxReactTurbopack({});
 ```
+
+For a non-default project config, use the Vite plugin's `tsconfig` option,
+Rspack's `resolve.tsConfig`, Bun's `build.tsconfig`, or Next's
+`typescript.tsconfigPath`. Paths are resolved from the corresponding builder
+root.
 
 Vite, Rspack, Bun, and the available React Turbopack integration support the
 option. The same option is available for every React, Preact, Solid, and Vue
-integration that exists. Vite, Rspack, and Bun reject conflicting user-provided
-definitions. Omitting the platform remains valid until a recognized flag is
-used; using a flag without configuration, or supplying any other value, is an
-actionable error.
+integration that exists. An explicit builder `platform` remains available as an
+override/fallback, but it must agree with tsconfig when both exist. Vite, Rspack,
+and Bun reject conflicting user-provided definitions. Omitting the platform
+remains valid until a recognized flag is used; using a flag without
+configuration, or supplying any other value, is an actionable error.
 
 ### Runtime helper imports
 

@@ -3,7 +3,8 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPlatformDefinitions, mergePlatformDefinitions, validatePlatform } from '@tsrx/react';
+import { createPlatformDefinitions, mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
+import { resolveBuildPlatform } from '@tsrx/core/config';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,10 +49,11 @@ export class TsrxReactRspackPlugin {
 	 * @param {{ jsxImportSource?: string, runtimeImports?: RuntimeImportMode, platform?: Platform }} [options]
 	 */
 	constructor(options = {}) {
+		this.explicit_platform = validatePlatform(options.platform);
 		this.options = {
 			jsxImportSource: options.jsxImportSource ?? 'react',
 			runtimeImports: options.runtimeImports ?? 'compiler',
-			platform: validatePlatform(options.platform),
+			platform: this.explicit_platform,
 		};
 	}
 
@@ -60,6 +62,15 @@ export class TsrxReactRspackPlugin {
 	 * @returns {void}
 	 */
 	apply(compiler) {
+		const compiler_options = /** @type {any} */ (compiler).options;
+		const resolve_tsconfig = compiler_options.resolve?.tsConfig;
+		this.options.platform = resolveBuildPlatform({
+			root: /** @type {any} */ (compiler).context ?? process.cwd(),
+			tsconfig:
+				typeof resolve_tsconfig === 'string' ? resolve_tsconfig : resolve_tsconfig?.configFile,
+			platform: this.explicit_platform,
+			integration: '@tsrx/rspack-plugin-react',
+		});
 		const { jsxImportSource } = this.options;
 		apply_platform_definitions(compiler, this.options.platform);
 

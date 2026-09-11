@@ -14,12 +14,6 @@ import {
 import { transform } from './transform.js';
 
 export { isRefProp } from './ref.js';
-export {
-	createPlatformDefinitions,
-	mergePlatformDefinitions,
-	replacePlatformFlags,
-	validatePlatform,
-} from '@tsrx/core';
 
 /**
  * Parse tsrx-react source code to an ESTree AST.

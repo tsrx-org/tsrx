@@ -1,6 +1,6 @@
 /** @import { Platform } from '@tsrx/react' */
 
-import { replacePlatformFlags } from '@tsrx/react';
+import { replacePlatformFlags } from '@tsrx/core';
 
 /**
  * @typedef {{

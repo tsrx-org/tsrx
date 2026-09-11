@@ -3,7 +3,9 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve as path_resolve, isAbsolute } from 'node:path';
-import { compile, mergePlatformDefinitions, validatePlatform } from '@tsrx/solid';
+import { compile } from '@tsrx/solid';
+import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
+import { resolveBuildPlatform } from '@tsrx/core/config';
 import { createDepScanLoadPlugin } from '@tsrx/core/vite/dep-scan';
 
 const DEFAULT_TSRX_PATTERN = /\.tsrx$/;
@@ -21,7 +23,8 @@ const CSS_QUERY = '?tsrx-solid-css&lang.css';
  * @returns {Plugin}
  */
 export function tsrxSolid(options = {}) {
-	const platform = validatePlatform(options.platform);
+	const explicit_platform = validatePlatform(options.platform);
+	let platform = explicit_platform;
 	/** @type {Map<string, string>} */
 	const css_cache = new Map();
 
@@ -30,6 +33,19 @@ export function tsrxSolid(options = {}) {
 
 	const include_pattern = options.include ?? DEFAULT_TSRX_PATTERN;
 	const compile_options = { runtimeImports: options.runtimeImports, platform };
+
+	/** @param {import('vite').UserConfig} config */
+	function resolve_platform(config) {
+		platform = resolveBuildPlatform({
+			root: config.root ?? process.cwd(),
+			tsconfig:
+				options.tsconfig ??
+				/** @type {{ tsconfig?: string }} */ (/** @type {unknown} */ (config)).tsconfig,
+			platform: explicit_platform,
+			integration: '@tsrx/vite-plugin-solid',
+		});
+		compile_options.platform = platform;
+	}
 
 	/**
 	 * Decide whether a real (on-disk) path should be treated as a tsrx
@@ -78,6 +94,7 @@ export function tsrxSolid(options = {}) {
 		enforce: 'pre',
 
 		config(config = /** @type {import('vite').UserConfig} */ ({})) {
+			resolve_platform(config);
 			return {
 				...(platform === undefined
 					? {}

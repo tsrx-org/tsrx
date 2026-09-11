@@ -4,7 +4,7 @@ import type { Platform, RuntimeImportMode } from '@tsrx/react';
 export interface TsrxReactBunPluginOptions {
 	/** Direct mode requires `@tsrx/react-runtime` as a direct production dependency. */
 	runtimeImports?: RuntimeImportMode;
-	/** Must match `tsrx.platform` in the active tsconfig. */
+	/** Optional override; inferred from tsconfig by default and must agree when both exist. */
 	platform?: Platform;
 	include?: RegExp;
 	exclude?: RegExp | RegExp[];

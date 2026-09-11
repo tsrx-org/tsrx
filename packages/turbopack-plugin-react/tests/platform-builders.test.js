@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { tsrxReact as viteReact } from '../../vite-plugin-react/src/index.js';
 import { tsrxPreact as vitePreact } from '../../vite-plugin-preact/src/index.js';
 import { tsrxSolid as viteSolid } from '../../vite-plugin-solid/src/index.js';
@@ -20,15 +23,16 @@ const IOS_DEFINITIONS = {
 	'import.meta.env.platform.android': false,
 };
 
-/** @param {import('vite').Plugin} plugin */
-function call_vite_config(plugin) {
+/** @param {import('vite').Plugin} plugin @param {import('vite').UserConfig} [config] */
+function call_vite_config(plugin, config = {}) {
 	const hook = typeof plugin.config === 'function' ? plugin.config : plugin.config?.handler;
 	if (!hook) throw new Error(`${plugin.name} has no config hook`);
-	return hook.call(
-		/** @type {any} */ ({}),
-		{},
-		{ command: 'build', mode: 'production', isSsrBuild: false, isPreview: false },
-	);
+	return hook.call(/** @type {any} */ ({}), config, {
+		command: 'build',
+		mode: 'production',
+		isSsrBuild: false,
+		isPreview: false,
+	});
 }
 
 /** @param {ReturnType<typeof viteVue>} plugins */
@@ -38,8 +42,8 @@ function get_vue_vite_plugin(plugins) {
 	return plugin;
 }
 
-/** @param {{ apply(compiler: any): void }} plugin */
-function apply_rspack_plugin(plugin) {
+/** @param {{ apply(compiler: any): void }} plugin @param {{ root?: string, tsconfig?: string }} [config] */
+function apply_rspack_plugin(plugin, config = {}) {
 	const applied_definitions = [];
 	class DefinePlugin {
 		/** @param {Record<string, boolean>} definitions */
@@ -52,12 +56,16 @@ function apply_rspack_plugin(plugin) {
 		}
 	}
 	const compiler = {
+		context: config.root,
 		webpack: { DefinePlugin },
 		options: {
 			mode: 'development',
 			plugins: [],
 			module: { rules: [] },
-			resolve: { extensions: [] },
+			resolve: {
+				extensions: [],
+				...(config.tsconfig ? { tsConfig: config.tsconfig } : {}),
+			},
 			experiments: {},
 		},
 	};
@@ -65,10 +73,10 @@ function apply_rspack_plugin(plugin) {
 	return { compiler, applied_definitions };
 }
 
-/** @param {import('bun').BunPlugin} plugin @param {Record<string, string>} [define] */
-function setup_bun_plugin(plugin, define) {
+/** @param {import('bun').BunPlugin} plugin @param {{ root?: string, tsconfig?: string, define?: Record<string, string> }} [config] */
+function setup_bun_plugin(plugin, config = {}) {
 	const build = {
-		config: { entrypoints: [], plugins: [], define },
+		config: { entrypoints: [], plugins: [], ...config },
 		onResolve() {
 			return build;
 		},
@@ -81,6 +89,100 @@ function setup_bun_plugin(plugin, define) {
 }
 
 describe('platform options across build integrations', () => {
+	it('infers the inherited tsconfig platform in every builder', () => {
+		const root = mkdtempSync(path.join(os.tmpdir(), 'tsrx-platform-builders-'));
+		try {
+			writeFileSync(
+				path.join(root, 'base.json'),
+				JSON.stringify({ tsrx: { compiler: '@tsrx/react', platform: 'ios' } }),
+			);
+			writeFileSync(
+				path.join(root, 'tsconfig.json'),
+				JSON.stringify({ extends: './base.json', tsrx: { compiler: '@tsrx/react' } }),
+			);
+
+			for (const create_plugin of [
+				() => viteReact(),
+				() => vitePreact(),
+				() => viteSolid(),
+				() => get_vue_vite_plugin(viteVue()),
+			]) {
+				expect(call_vite_config(create_plugin(), { root })?.define).toEqual(IOS_DEFINITIONS);
+			}
+
+			for (const [create_plugin, rule_index] of [
+				[() => new TsrxReactRspackPlugin(), 0],
+				[() => new TsrxPreactRspackPlugin(), 0],
+				[() => new TsrxSolidRspackPlugin(), 0],
+				[() => new TsrxVueRspackPlugin(), 1],
+			]) {
+				const { compiler, applied_definitions } = apply_rspack_plugin(create_plugin(), { root });
+				expect(applied_definitions).toEqual([IOS_DEFINITIONS]);
+				expect(compiler.options.module.rules[rule_index].use.at(-1).options.platform).toBe('ios');
+			}
+
+			for (const create_plugin of [
+				() => bunReact(),
+				() => bunPreact(),
+				() => bunSolid(),
+				() => bunVue(),
+			]) {
+				expect(setup_bun_plugin(create_plugin(), { root }).define).toEqual({
+					'import.meta.env.platform.web': 'false',
+					'import.meta.env.platform.ios': 'true',
+					'import.meta.env.platform.android': 'false',
+				});
+			}
+
+			const turbopack = tsrxReactTurbopack({ turbopack: { root } });
+			expect(turbopack.turbopack.rules['*.tsrx'][0].loaders[0]).toMatchObject({
+				options: { platform: 'ios' },
+			});
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("honors each builder's selected tsconfig path", () => {
+		const root = mkdtempSync(path.join(os.tmpdir(), 'tsrx-platform-config-paths-'));
+		try {
+			writeFileSync(
+				path.join(root, 'tsconfig.json'),
+				JSON.stringify({ tsrx: { platform: 'web' } }),
+			);
+			writeFileSync(
+				path.join(root, 'tsconfig.native.json'),
+				JSON.stringify({ tsrx: { platform: 'ios' } }),
+			);
+
+			expect(
+				call_vite_config(viteReact({ tsconfig: 'tsconfig.native.json' }), { root })?.define,
+			).toEqual(IOS_DEFINITIONS);
+			expect(
+				apply_rspack_plugin(new TsrxReactRspackPlugin(), {
+					root,
+					tsconfig: 'tsconfig.native.json',
+				}).applied_definitions,
+			).toEqual([IOS_DEFINITIONS]);
+			expect(
+				setup_bun_plugin(bunReact(), { root, tsconfig: 'tsconfig.native.json' }).define,
+			).toEqual({
+				'import.meta.env.platform.web': 'false',
+				'import.meta.env.platform.ios': 'true',
+				'import.meta.env.platform.android': 'false',
+			});
+			const next_config = tsrxReactTurbopack({
+				turbopack: { root },
+				typescript: { tsconfigPath: 'tsconfig.native.json' },
+			});
+			expect(next_config.turbopack.rules['*.tsrx'][0].loaders[0]).toMatchObject({
+				options: { platform: 'ios' },
+			});
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it.each([
 		['React', () => viteReact({ platform: 'ios' })],
 		['Preact', () => vitePreact({ platform: 'ios' })],
@@ -148,7 +250,7 @@ describe('platform options across build integrations', () => {
 	it('reports conflicting Bun definitions', () => {
 		expect(() =>
 			setup_bun_plugin(bunReact({ platform: 'ios' }), {
-				'import.meta.env.platform.ios': 'false',
+				define: { 'import.meta.env.platform.ios': 'false' },
 			}),
 		).toThrow(/Conflicting Bun definition/);
 	});

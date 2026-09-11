@@ -5,7 +5,7 @@ export interface TsrxSolidRspackPluginOptions {
 	hot?: boolean;
 	/** Direct mode requires `@tsrx/solid-runtime` as a direct production dependency. */
 	runtimeImports?: RuntimeImportMode;
-	/** Must match `tsrx.platform` in the active tsconfig. */
+	/** Optional override; inferred from tsconfig by default and must agree when both exist. */
 	platform?: Platform;
 }
 
