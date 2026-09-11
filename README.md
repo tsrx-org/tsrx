@@ -131,7 +131,7 @@ Select `"web"`, `"ios"`, or `"android"` in the active TypeScript project:
 ```
 
 ```ts
-tsrxReact(); // reads tsrx.platform from the project tsconfig
+tsrxReact(); // reads tsrx.platform through extends/project references
 ```
 
 All three exact flags are available: `import.meta.env.platform.web`, `.ios`, and

@@ -56,6 +56,41 @@ describe('build platform resolution', () => {
 		expect(resolveBuildPlatform({ root: directory })).toBe('android');
 	});
 
+	it('finds the platform in a referenced active application config', () => {
+		write_config('configs/base.json', { tsrx: { platform: 'ios' } });
+		write_config('tsconfig.app.json', {
+			extends: './configs/base.json',
+			tsrx: { compiler: '@tsrx/react' },
+		});
+		write_config('tsconfig.node.json', { compilerOptions: { types: ['node'] } });
+		write_config('tsconfig.json', {
+			files: [],
+			references: [{ path: './tsconfig.app.json' }, { path: './tsconfig.node.json' }],
+		});
+
+		expect(resolveBuildPlatform({ root: directory })).toBe('ios');
+	});
+
+	it('follows nested directory project references', () => {
+		write_config('apps/native/tsconfig.json', { tsrx: { platform: 'android' } });
+		write_config('apps/tsconfig.json', { references: [{ path: './native' }] });
+		write_config('tsconfig.json', { references: [{ path: './apps' }] });
+
+		expect(resolveBuildPlatform({ root: directory })).toBe('android');
+	});
+
+	it('rejects ambiguous platforms from referenced projects', () => {
+		write_config('tsconfig.web.json', { tsrx: { platform: 'web' } });
+		write_config('tsconfig.native.json', { tsrx: { platform: 'android' } });
+		write_config('tsconfig.json', {
+			references: [{ path: './tsconfig.web.json' }, { path: './tsconfig.native.json' }],
+		});
+
+		expect(() => resolveBuildPlatform({ root: directory })).toThrow(
+			/referenced TypeScript projects select multiple TSRX platforms/i,
+		);
+	});
+
 	it('honors an explicit custom tsconfig path', () => {
 		write_config('tsconfig.json', { tsrx: { platform: 'web' } });
 		write_config('configs/tsconfig.native.json', { tsrx: { platform: 'android' } });

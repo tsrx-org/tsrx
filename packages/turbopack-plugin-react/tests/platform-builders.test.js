@@ -90,7 +90,7 @@ function setup_bun_plugin(plugin, config = {}) {
 }
 
 describe('platform options across build integrations', () => {
-	it('infers the inherited tsconfig platform in every builder', () => {
+	it('infers an inherited platform from a referenced app config in every builder', () => {
 		const root = mkdtempSync(path.join(os.tmpdir(), 'tsrx-platform-builders-'));
 		try {
 			writeFileSync(
@@ -98,8 +98,19 @@ describe('platform options across build integrations', () => {
 				JSON.stringify({ tsrx: { compiler: '@tsrx/react', platform: 'ios' } }),
 			);
 			writeFileSync(
-				path.join(root, 'tsconfig.json'),
+				path.join(root, 'tsconfig.app.json'),
 				JSON.stringify({ extends: './base.json', tsrx: { compiler: '@tsrx/react' } }),
+			);
+			writeFileSync(
+				path.join(root, 'tsconfig.node.json'),
+				JSON.stringify({ compilerOptions: { types: ['node'] } }),
+			);
+			writeFileSync(
+				path.join(root, 'tsconfig.json'),
+				JSON.stringify({
+					files: [],
+					references: [{ path: './tsconfig.app.json' }, { path: './tsconfig.node.json' }],
+				}),
 			);
 
 			for (const create_plugin of [

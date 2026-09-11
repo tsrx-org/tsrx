@@ -122,9 +122,9 @@ builders still replace exact flags in their remaining output. Use an ordinary
 exact-flag `if` when platform-only types, dependencies, scripts, or styles must
 be excluded before TSRX/TypeScript analysis.
 
-In-repo build integrations read the same inherited tsconfig automatically, so
-ordinary `.ts`, `.tsx`, and JavaScript modules receive matching compile-time
-constants without repeating the selection:
+In-repo build integrations read the same inherited or project-referenced
+tsconfig automatically, so ordinary `.ts`, `.tsx`, and JavaScript modules
+receive matching compile-time constants without repeating the selection:
 
 ```js
 tsrxReact();

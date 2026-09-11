@@ -837,8 +837,8 @@ export function GettingStartedPage() @{
 								, or
 								<code class="inline-code">android</code>
 								in the active TypeScript project. The Vite, Rspack, Bun, and available React
-								Turbopack integrations read that inherited tsconfig setting automatically. Their
-								explicit
+								Turbopack integrations read that inherited or project-referenced tsconfig setting
+								automatically. Their explicit
 								<code class="inline-code">platform</code>
 								option is only an override/fallback and must agree with tsconfig. There is no
 								implicit web default.

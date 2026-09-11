@@ -1,7 +1,7 @@
 import type { Platform } from './index';
 
 export interface BuildPlatformResolutionOptions {
-	/** Project root used to find the nearest tsconfig. Defaults to `process.cwd()`. */
+	/** Project root used to find the nearest tsconfig and referenced projects. */
 	root?: string;
 	/** Explicit tsconfig path, resolved relative to `root`. */
 	tsconfig?: string;

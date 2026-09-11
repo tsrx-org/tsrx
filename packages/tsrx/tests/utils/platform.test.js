@@ -1,4 +1,4 @@
-import { encode } from '@jridgewell/sourcemap-codec';
+import { decode, encode } from '@jridgewell/sourcemap-codec';
 import { describe, expect, it } from 'vitest';
 import {
 	createPlatformDefinitions,
@@ -91,7 +91,7 @@ describe('platform specialization', () => {
 			sources: ['App.tsrx'],
 			sourcesContent: [original],
 			names: [],
-			mappings: encode([[[0, 0, 0, 0]]]),
+			mappings: encode([[[0, 0, 3, 5]]]),
 		};
 
 		const result = replacePlatformFlags(intermediate, 'App.tsrx', 'android', incoming);
@@ -99,5 +99,10 @@ describe('platform specialization', () => {
 		expect(result.code).toContain('const active = true;');
 		expect(result.map.sources).toEqual(['App.tsrx']);
 		expect(result.map.sourcesContent).toEqual([original]);
+		expect(
+			decode(result.map.mappings)
+				.flat()
+				.some((segment) => segment.length >= 4 && segment[2] === 3 && segment[3] === 5),
+		).toBe(true);
 	});
 });
