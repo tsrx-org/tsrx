@@ -496,6 +496,11 @@ function assignmentExpressionNeedsParens(node, parent) {
 		return true;
 	}
 
+	// `({ a } = obj);` — without the parentheses the statement starts with a block.
+	if (parent.type === 'ExpressionStatement') {
+		return node.left.type === 'ObjectPattern';
+	}
+
 	if (parent.type === 'ConditionalExpression') {
 		return parent.test === node;
 	}

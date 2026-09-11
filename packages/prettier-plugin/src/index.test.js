@@ -1610,6 +1610,34 @@ async function load() {
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('keeps the parentheses of an object destructuring assignment statement', async () => {
+			const input = `function swap() {
+  ({ other } = { other: 'y' });
+  [label] = ['b'];
+  ({ other } = source).other;
+}
+export function Pair() @{
+  const swap = () => {
+    ({ other } = { other: 'y' });
+  };
+  <span onClick={swap}>{other}</span>
+}`;
+			const expected = `function swap() {
+  ({ other } = { other: 'y' });
+  [label] = ['b'];
+  ({ other } = source).other;
+}
+export function Pair() @{
+  const swap = () => {
+    ({ other } = { other: 'y' });
+  };
+  <span onClick={swap}>{other}</span>
+}`;
+
+			const result = await format(input, { singleQuote: true });
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should not change formatting for function object properties and properties in square brackets', async () => {
 			const expected = `export function App() {
   const SYMBOL_PROP = Symbol();
