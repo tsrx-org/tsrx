@@ -17,9 +17,10 @@ import { replacePlatformFlags } from '@tsrx/core';
  *
  * @this {LoaderContext}
  * @param {string} source
+ * @param {import('source-map').RawSourceMap | string | undefined} [input_map]
  * @returns {void}
  */
-export default function tsrx_react_turbopack_platform_loader(source) {
+export default function tsrx_react_turbopack_platform_loader(source, input_map) {
 	const callback = this.async();
 
 	try {
@@ -27,6 +28,7 @@ export default function tsrx_react_turbopack_platform_loader(source) {
 			source,
 			this.resourcePath,
 			this.getOptions?.().platform,
+			input_map,
 		);
 		callback(null, code, map);
 	} catch (/** @type {any} */ error) {

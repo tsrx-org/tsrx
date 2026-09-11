@@ -15,15 +15,28 @@ const CSS_LOADER = path.join(__dirname, 'css-loader.js');
 const TSRX_EXTENSION_PATTERN = /\.tsrx$/;
 const CSS_QUERY_PATTERN = /tsrx-css/;
 
+/** @param {any} plugin @returns {Record<string, unknown> | undefined} */
+function get_define_plugin_definitions(plugin) {
+	if (plugin == null || typeof plugin !== 'object') return undefined;
+	if ((plugin.name ?? plugin.constructor?.name) !== 'DefinePlugin') return undefined;
+	if (plugin.definitions && typeof plugin.definitions === 'object') return plugin.definitions;
+	if (Array.isArray(plugin._args) && plugin._args[0] && typeof plugin._args[0] === 'object') {
+		return plugin._args[0];
+	}
+	if (plugin.options && typeof plugin.options === 'object' && !Array.isArray(plugin.options)) {
+		return plugin.options;
+	}
+	return undefined;
+}
+
 /** @param {Compiler} compiler @param {Platform | undefined} platform */
 function apply_platform_definitions(compiler, platform) {
 	if (platform === undefined) return;
 
 	const compiler_with_definitions = /** @type {any} */ (compiler);
 	for (const plugin of compiler_with_definitions.options.plugins ?? []) {
-		if (plugin?.name !== 'DefinePlugin' || !Array.isArray(plugin._args)) continue;
-		const definitions = plugin._args[0];
-		if (definitions && typeof definitions === 'object') {
+		const definitions = get_define_plugin_definitions(plugin);
+		if (definitions) {
 			mergePlatformDefinitions(definitions, platform, { integration: 'Rspack' });
 		}
 	}

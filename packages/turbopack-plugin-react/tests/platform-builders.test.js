@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { compile } from '@tsrx/react';
 import { tsrxReact as viteReact } from '../../vite-plugin-react/src/index.js';
 import { tsrxPreact as vitePreact } from '../../vite-plugin-preact/src/index.js';
 import { tsrxSolid as viteSolid } from '../../vite-plugin-solid/src/index.js';
@@ -215,12 +216,21 @@ describe('platform options across build integrations', () => {
 		expect(compiler.options.module.rules[rule_index].use.at(-1).options.platform).toBe('ios');
 	});
 
-	it('reports conflicting Rspack definitions', () => {
+	it.each([
+		['Rspack _args', { name: 'DefinePlugin', _args: [{ 'import.meta.env.platform.web': true }] }],
+		[
+			'webpack definitions',
+			{ name: 'DefinePlugin', definitions: { 'import.meta.env.platform.web': true } },
+		],
+		['plugin options', { name: 'DefinePlugin', options: { 'import.meta.env.platform.web': true } }],
+		[
+			'constructor name',
+			new (class DefinePlugin {
+				definitions = { 'import.meta.env.platform.web': true };
+			})(),
+		],
+	])('reports conflicting Rspack definitions from %s', (_, conflict) => {
 		const plugin = new TsrxReactRspackPlugin({ platform: 'ios' });
-		const conflict = {
-			name: 'DefinePlugin',
-			_args: [{ 'import.meta.env.platform.web': true }],
-		};
 		const compiler = {
 			options: {
 				plugins: [conflict],
@@ -270,6 +280,13 @@ describe('platform options across build integrations', () => {
 	});
 
 	it('replaces exact flags in Turbopack ordinary modules', async () => {
+		const input_map = {
+			version: 3,
+			sources: ['/original/example.ts'],
+			sourcesContent: ['export const flags = ORIGINAL;'],
+			names: [],
+			mappings: 'AAAA',
+		};
 		const transformed = await new Promise((resolve) => {
 			turbopackPlatformLoader.call(
 				{
@@ -278,11 +295,60 @@ describe('platform options across build integrations', () => {
 					async: () => (error, output, map) => resolve({ error, output, map }),
 				},
 				'export const flags = [import.meta.env.platform.web, import.meta.env.platform.ios];',
+				input_map,
 			);
 		});
 
 		expect(transformed).toMatchObject({ error: null });
 		expect(transformed.output).toContain('[false, true]');
 		expect(transformed.map).toBeTruthy();
+		expect(transformed.map.sources).toEqual(['/original/example.ts']);
+		expect(transformed.map.sourcesContent).toEqual(['export const flags = ORIGINAL;']);
+	});
+
+	it('preserves the TSRX compile map when no runtime flags remain', async () => {
+		const source = `export function App() @{
+			<div>{'Hello world'}</div>
+		}`;
+		const compiled = compile(source, '/virtual/App.tsrx', { platform: 'ios' });
+		const transformed = await new Promise((resolve) => {
+			turbopackPlatformLoader.call(
+				{
+					resourcePath: '/virtual/App.tsrx',
+					getOptions: () => ({ platform: 'ios' }),
+					async: () => (error, output, map) => resolve({ error, output, map }),
+				},
+				compiled.code,
+				compiled.map,
+			);
+		});
+
+		expect(transformed.error).toBeNull();
+		expect(transformed.output).toBe(compiled.code);
+		expect(transformed.map).toBe(compiled.map);
+		expect(transformed.map.sourcesContent?.[0]).toBe(source);
+	});
+
+	it('composes the TSRX compile map when runtime flags are rewritten', async () => {
+		const source = `export function App() @{
+			<div>{import.meta.env.platform.ios ? 'ios' : 'other'}</div>
+		}`;
+		const compiled = compile(source, '/virtual/App.tsrx', { platform: 'ios' });
+		const transformed = await new Promise((resolve) => {
+			turbopackPlatformLoader.call(
+				{
+					resourcePath: '/virtual/App.tsrx',
+					getOptions: () => ({ platform: 'ios' }),
+					async: () => (error, output, map) => resolve({ error, output, map }),
+				},
+				compiled.code,
+				compiled.map,
+			);
+		});
+
+		expect(transformed.error).toBeNull();
+		expect(transformed.output).toContain("true ? 'ios' : 'other'");
+		expect(transformed.map.sourcesContent?.[0]).toBe(source);
+		expect(transformed.map.sourcesContent?.[0]).not.toBe(compiled.code);
 	});
 });

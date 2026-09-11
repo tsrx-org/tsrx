@@ -2395,6 +2395,7 @@ export function replacePlatformFlags(
 	source: string,
 	filename: string,
 	platform: unknown,
+	inputMap?: import('source-map').RawSourceMap | string | null,
 ): { code: string; map: import('source-map').RawSourceMap };
 
 /**

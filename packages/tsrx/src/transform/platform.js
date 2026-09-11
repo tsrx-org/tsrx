@@ -2,6 +2,7 @@
 /** @import { CompileError, Platform, PlatformSpecializationOptions } from '../../types/index' */
 
 import MagicString from 'magic-string';
+import { decode, encode } from '@jridgewell/sourcemap-codec';
 import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 import { error } from '../errors.js';
 import { parse_module } from '../parse/parse-module.js';
@@ -327,6 +328,106 @@ declare global {
 }
 
 /**
+ * @param {unknown} map
+ * @returns {import('source-map').RawSourceMap | undefined}
+ */
+function normalize_source_map(map) {
+	if (map == null) return undefined;
+	const parsed = typeof map === 'string' ? JSON.parse(map) : map;
+	return parsed && typeof parsed === 'object' && typeof parsed.mappings === 'string'
+		? /** @type {import('source-map').RawSourceMap} */ (parsed)
+		: undefined;
+}
+
+/**
+ * Compose the high-resolution follow-up map through an incoming loader map.
+ *
+ * @param {import('source-map').RawSourceMap} input_map
+ * @param {import('source-map').RawSourceMap} output_map
+ * @returns {import('source-map').RawSourceMap}
+ */
+function compose_source_maps(input_map, output_map) {
+	const input_lines = decode(input_map.mappings);
+	const output_lines = decode(output_map.mappings);
+
+	/**
+	 * Trace an intermediate generated position through the prior map with the
+	 * source-map spec's greatest-lower-bound lookup.
+	 *
+	 * @param {number} line
+	 * @param {number} column
+	 * @returns {[number, number, number, number] | [number, number, number, number, number] | null}
+	 */
+	function trace(line, column) {
+		const segments = input_lines[line];
+		if (!segments?.length) return null;
+
+		let low = 0;
+		let high = segments.length - 1;
+		let found = -1;
+		while (low <= high) {
+			const middle = (low + high) >> 1;
+			if (segments[middle][0] <= column) {
+				found = middle;
+				low = middle + 1;
+			} else {
+				high = middle - 1;
+			}
+		}
+		if (found < 0 || segments[found].length < 4) return null;
+
+		const segment = segments[found];
+		return segment.length > 4
+			? [
+					column,
+					/** @type {number} */ (segment[1]),
+					/** @type {number} */ (segment[2]),
+					/** @type {number} */ (segment[3]),
+					/** @type {number} */ (segment[4]),
+				]
+			: [
+					column,
+					/** @type {number} */ (segment[1]),
+					/** @type {number} */ (segment[2]),
+					/** @type {number} */ (segment[3]),
+				];
+	}
+
+	/** @type {Array<Array<[number] | [number, number, number, number] | [number, number, number, number, number]>>} */
+	const composed = [];
+	for (const output_line of output_lines) {
+		/** @type {Array<[number] | [number, number, number, number] | [number, number, number, number, number]>} */
+		const composed_line = [];
+		for (const output_segment of output_line) {
+			if (output_segment.length < 4) {
+				composed_line.push([output_segment[0]]);
+				continue;
+			}
+
+			const traced = trace(
+				/** @type {number} */ (output_segment[2]),
+				/** @type {number} */ (output_segment[3]),
+			);
+			if (!traced) {
+				// Break any preceding mapping rather than allowing it to bleed across
+				// generated text that has no origin in the incoming map.
+				composed_line.push([output_segment[0]]);
+				continue;
+			}
+			traced[0] = output_segment[0];
+			composed_line.push(traced);
+		}
+		composed.push(composed_line);
+	}
+
+	return {
+		...input_map,
+		file: output_map.file ?? input_map.file,
+		mappings: encode(composed),
+	};
+}
+
+/**
  * Replace exact platform flag expressions in a JavaScript/TypeScript module.
  * This is used by integrations without a native `define` facility. It does not
  * perform dead-code elimination; the downstream bundler sees literal booleans
@@ -335,14 +436,16 @@ declare global {
  * @param {string} source
  * @param {string} filename
  * @param {unknown} platform_value
+ * @param {import('source-map').RawSourceMap | string | null} [input_map]
  * @returns {{ code: string, map: import('source-map').RawSourceMap }}
  */
-export function replace_platform_flags(source, filename, platform_value) {
+export function replace_platform_flags(source, filename, platform_value, input_map) {
 	const platform = validate_platform(platform_value);
 	if (platform === undefined) {
 		throw new TypeError('Replacing TSRX platform flags requires a configured platform.');
 	}
 
+	const incoming = normalize_source_map(input_map);
 	const ast = parse_module(source, filename);
 	const output = new MagicString(source);
 
@@ -358,8 +461,13 @@ export function replace_platform_flags(source, filename, platform_value) {
 	}
 
 	visit(ast);
+	if (!output.hasChanged() && incoming) {
+		return { code: source, map: incoming };
+	}
+
+	const map = output.generateMap({ source: filename, includeContent: true, hires: true });
 	return {
 		code: output.toString(),
-		map: output.generateMap({ source: filename, includeContent: true, hires: true }),
+		map: incoming ? compose_source_maps(incoming, map) : map,
 	};
 }

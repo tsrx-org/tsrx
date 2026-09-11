@@ -1,3 +1,4 @@
+import { encode } from '@jridgewell/sourcemap-codec';
 import { describe, expect, it } from 'vitest';
 import {
 	createPlatformDefinitions,
@@ -61,5 +62,42 @@ describe('platform specialization', () => {
 		expect(result.code).toContain("'import.meta.env.platform.ios'");
 		expect(result.code).toContain('const active = true;');
 		expect(result.map.sources).toEqual(['flags.ts']);
+		expect(result.map.sourcesContent?.[0]).toBe(source);
+	});
+
+	it('preserves an incoming map when there is nothing to rewrite', () => {
+		const source = 'export const ready = true;';
+		const incoming = {
+			version: 3,
+			file: 'App.js',
+			sources: ['App.tsrx'],
+			sourcesContent: ['export function App() @{ true }'],
+			names: [],
+			mappings: 'AAAA',
+		};
+
+		const result = replacePlatformFlags(source, 'App.tsrx', 'web', incoming);
+
+		expect(result.code).toBe(source);
+		expect(result.map).toBe(incoming);
+	});
+
+	it('composes rewritten output through an incoming compile map', () => {
+		const intermediate = 'const active = import.meta.env.platform.android;\n';
+		const original = 'const active = PLATFORM_FLAG;\n';
+		const incoming = {
+			version: 3,
+			file: 'App.js',
+			sources: ['App.tsrx'],
+			sourcesContent: [original],
+			names: [],
+			mappings: encode([[[0, 0, 0, 0]]]),
+		};
+
+		const result = replacePlatformFlags(intermediate, 'App.tsrx', 'android', incoming);
+
+		expect(result.code).toContain('const active = true;');
+		expect(result.map.sources).toEqual(['App.tsrx']);
+		expect(result.map.sourcesContent).toEqual([original]);
 	});
 });
