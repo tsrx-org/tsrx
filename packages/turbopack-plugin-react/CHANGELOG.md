@@ -1,5 +1,22 @@
 # @tsrx/turbopack-plugin-react
 
+## 0.1.94
+
+### Patch Changes
+
+- [#98](https://github.com/tsrx-org/tsrx/pull/98)
+  [`727d17f`](https://github.com/tsrx-org/tsrx/commit/727d17f1e535f68dc5e4478920f2de7ab71a3822)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Add validated web, iOS, and
+  Android compile-time platform flags, early ordinary-if specialization for TSRX
+  source and virtual TypeScript, automatic inherited/project-referenced tsconfig
+  resolution, and matching definitions across every in-repo Vite, Rspack,
+  Turbopack, and Bun integration, with conflict checks and chained source maps.
+
+- Updated dependencies
+  [[`727d17f`](https://github.com/tsrx-org/tsrx/commit/727d17f1e535f68dc5e4478920f2de7ab71a3822)]:
+  - @tsrx/core@0.1.71
+  - @tsrx/react@0.2.71
+
 ## 0.1.93
 
 ### Patch Changes
