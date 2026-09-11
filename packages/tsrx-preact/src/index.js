@@ -3,11 +3,25 @@
 /** @import { NonEmptyString } from '@tsrx/core/types/helpers' */
 /** @import { CompileOptions } from '../types/index' */
 
-import { analyzeTsrx, createVolarMappingsResult, dedupeMappings, parseModule } from '@tsrx/core';
+import {
+	analyzeTsrx,
+	createVolarMappingsResult,
+	dedupeMappings,
+	hasPlatformNamespace,
+	parseModule,
+	specializePlatform,
+	withPlatformTypes,
+} from '@tsrx/core';
 import { DEFAULT_SUSPENSE_SOURCE, transform } from './transform.js';
 
 export { DEFAULT_SUSPENSE_SOURCE };
 export { isRefProp } from './ref.js';
+export {
+	createPlatformDefinitions,
+	mergePlatformDefinitions,
+	replacePlatformFlags,
+	validatePlatform,
+} from '@tsrx/core';
 
 /**
  * Parse tsrx-preact source code to an ESTree AST.
@@ -35,10 +49,16 @@ export function compile(source, filename, compile_options) {
 	const errors = /** @type {CompileError[]} */ ([]);
 	const comments = /** @type {AST.CommentWithLocation[]} */ ([]);
 	const collect = !!(compile_options?.collect || compile_options?.loose);
-	const ast = parseModule(
+	let ast = parseModule(
 		source,
 		filename,
 		collect ? { collect: true, loose: !!compile_options?.loose, errors, comments } : undefined,
+	);
+	ast = specializePlatform(
+		ast,
+		compile_options?.platform,
+		filename,
+		collect ? { errors, comments } : undefined,
 	);
 	analyzeTsrx(
 		ast,
@@ -75,7 +95,7 @@ export function compile(source, filename, compile_options) {
 export function compile_to_volar_mappings(source, filename, options) {
 	const errors = /** @type {CompileError[]} */ ([]);
 	const comments = /** @type {AST.CommentWithLocation[]} */ ([]);
-	const ast = parseModule(source, filename, {
+	let ast = parseModule(source, filename, {
 		...options,
 		collect: true,
 		loose: !!options?.loose,
@@ -84,6 +104,8 @@ export function compile_to_volar_mappings(source, filename, options) {
 		errors,
 		comments,
 	});
+	const uses_platform_flags = hasPlatformNamespace(ast);
+	ast = specializePlatform(ast, options?.platform, filename, { errors, comments });
 	analyzeTsrx(ast, filename, {
 		collect: true,
 		loose: !!options?.loose,
@@ -108,8 +130,9 @@ export function compile_to_volar_mappings(source, filename, options) {
 		errors,
 	});
 
-	return {
+	const deduped = {
 		...result,
 		mappings: dedupeMappings(result.mappings),
 	};
+	return uses_platform_flags ? withPlatformTypes(deduped, options?.platform) : deduped;
 }

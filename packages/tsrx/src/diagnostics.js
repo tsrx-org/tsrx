@@ -1,4 +1,6 @@
 export const DIAGNOSTIC_CODES = {
+	/** A recognized `import.meta.env.platform.*` flag is used without a selected platform. */
+	PLATFORM_REQUIRED: 'tsrx-platform-required',
 	JSX_EXPRESSION_VALUE: 'tsrx-jsx-expression-value',
 	UNCLOSED_TAG: 'tsrx-unclosed-tag',
 	MISMATCHED_CLOSING_TAG: 'tsrx-mismatched-closing-tag',

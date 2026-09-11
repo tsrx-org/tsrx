@@ -44,6 +44,34 @@ function virtual_parse_diagnostics(code) {
 		.parseDiagnostics;
 }
 
+/** @param {string} code @returns {readonly ts.Diagnostic[]} */
+function virtual_semantic_diagnostics(code) {
+	const file_name = '/virtual-platform.tsx';
+	const options = {
+		target: ts.ScriptTarget.ESNext,
+		module: ts.ModuleKind.ESNext,
+		noEmit: true,
+		noLib: true,
+	};
+	const source_file = ts.createSourceFile(
+		file_name,
+		code,
+		ts.ScriptTarget.Latest,
+		true,
+		ts.ScriptKind.TSX,
+	);
+	const base_host = ts.createCompilerHost(options);
+	const host = {
+		...base_host,
+		fileExists: (/** @type {string} */ name) => name === file_name,
+		readFile: (/** @type {string} */ name) => (name === file_name ? code : undefined),
+		getSourceFile: (/** @type {string} */ name) => (name === file_name ? source_file : undefined),
+		getCurrentDirectory: () => '/',
+	};
+	const program = ts.createProgram([file_name], options, host);
+	return program.getSemanticDiagnostics(source_file);
+}
+
 const TSRX_TEMPLATE_RETURN_ERROR =
 	'Return statements are not allowed inside TSRX templates. Move the return before the TSRX return value, or use conditional rendering instead.';
 
@@ -62,6 +90,22 @@ const UNSUPPORTED_LAZY_ASSIGNMENT_SOURCES = [
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] platform flag virtual types`, () => {
+		it('types every retained flag with the selected boolean literal', () => {
+			const result = compile_to_volar_mappings(
+				`export const web: false = import.meta.env.platform.web;
+				export const ios: true = import.meta.env.platform.ios;
+				export const android: false = import.meta.env.platform.android;`,
+				'App.tsrx',
+				{ platform: 'ios' },
+			);
+
+			expect(result.errors).toEqual([]);
+			expect(virtual_parse_diagnostics(result.code)).toEqual([]);
+			expect(virtual_semantic_diagnostics(result.code)).toEqual([]);
+		});
+	});
+
 	describe(`[${name}] type-only style stand-ins`, () => {
 		it('keeps consecutive <style> siblings parseable as TSX', () => {
 			// Each stand-in is its own `void` expression statement; two adjacent
@@ -2567,6 +2611,8 @@ export function runSharedCompileTests({
 			? '{ className }: { className?: string }'
 			: '{ class: className }: { class?: string }';
 
+	runSharedPlatformTests({ compile, name });
+
 	runSharedComponentLoopControlFlowTests({ compile, name });
 	runSharedScopedStyleTests({ compile, name, classAttrName, generatedClassAttrName });
 	runSharedScopedStyleConformanceTests({ compile, name, classAttrName, generatedClassAttrName });
@@ -4867,6 +4913,141 @@ export function optionalFn(bar: string, baz?: string) {
 			});
 		},
 	);
+}
+
+/**
+ * Compile-time platform specialization shared by every built-in JSX target.
+ *
+ * @param {Pick<CompileHarness, 'compile' | 'name'>} harness
+ */
+function runSharedPlatformTests({ compile, name }) {
+	describe(`[${name}] compile-time platform flags`, () => {
+		it.each([
+			['web', 'selected_web'],
+			['ios', 'selected_ios'],
+			['android', 'selected_android'],
+		])('selects the %s branch before target lowering', (platform, selected) => {
+			const { code } = compile(
+				`if (import.meta.env.platform.web) {
+					const selected_web = 'selected_web';
+				} else if (import.meta.env.platform.ios) {
+					const selected_ios = 'selected_ios';
+				} else {
+					const selected_android = 'selected_android';
+				}`,
+				'App.tsrx',
+				{ platform: /** @type {import('../../types/index').Platform} */ (platform) },
+			);
+
+			expect(code).toContain(selected);
+			for (const discarded of ['selected_web', 'selected_ios', 'selected_android']) {
+				if (discarded !== selected) expect(code).not.toContain(discarded);
+			}
+			expect(code).not.toContain('import.meta.env.platform');
+		});
+
+		it('specializes nested guards and retains selected lexical blocks', () => {
+			const { code } = compile(
+				`if (import.meta.env.platform.ios) {
+					const outer = 'ios_outer';
+					if (import.meta.env.platform.ios) {
+						const inner = outer;
+						consume(inner);
+					}
+				} else {
+					consume('not_ios');
+				}`,
+				'App.tsrx',
+				{ platform: 'ios' },
+			);
+
+			expect(code).toContain("const outer = 'ios_outer'");
+			expect(code).toContain('const inner = outer');
+			expect(code).toMatch(/\{[\s\S]*const outer[\s\S]*\{[\s\S]*const inner/);
+			expect(code).not.toContain('not_ios');
+		});
+
+		it('drops inactive imports and scoped CSS before dependency/style analysis', () => {
+			const { code, css } = compile(
+				`if (import.meta.env.platform.web) {
+					import('./missing-web-only');
+					function PlatformView() @{ <>
+						<style>.web-only { color: red; }</style>
+						<div class="web-only" />
+					</> }
+				} else {
+					function PlatformView() @{ <>
+						<style>.native-only { color: blue; }</style>
+						<div class="native-only" />
+					</> }
+				}`,
+				'App.tsrx',
+				{ platform: 'android' },
+			);
+
+			expect(code).not.toContain('missing-web-only');
+			expect(code).not.toContain('web-only');
+			expect(code).toContain('native-only');
+			expect(css).not.toContain('web-only');
+			expect(css).toContain('native-only');
+		});
+
+		it('does not semantically analyze an inactive TSRX branch', () => {
+			expect(() =>
+				compile(
+					`if (import.meta.env.platform.web) {
+						function InvalidOnlyOnWeb() @{
+							<style>.invalid-lone-output { color: red; }</style>
+						}
+					} else {
+						const selected_native = true;
+					}`,
+					'App.tsrx',
+					{ platform: 'android' },
+				),
+			).not.toThrow();
+		});
+
+		it('keeps @if as runtime template control flow', () => {
+			const { code } = compile(
+				`function App() @{
+					@if (import.meta.env.platform.web) {
+						<div>{'web'}</div>
+					} @else {
+						<div>{'native'}</div>
+					}
+				}`,
+				'App.tsrx',
+				{ platform: 'web' },
+			);
+
+			expect(code).toContain('import.meta.env.platform.web');
+			expect(code).toContain('web');
+			expect(code).toContain('native');
+		});
+
+		it('requires configuration when a recognized flag is used', () => {
+			expect(() => compile('if (import.meta.env.platform.web) { consume(); }', 'App.tsrx')).toThrow(
+				/requires a configured TSRX platform/,
+			);
+
+			const result = compile('if (import.meta.env.platform.web) { consume(); }', 'App.tsrx', {
+				collect: true,
+			});
+			expect(diagnostic_codes(result)).toContain(DIAGNOSTIC_CODES.PLATFORM_REQUIRED);
+		});
+
+		it.each(['windows', null, true, 1, [], {}])(
+			'rejects invalid platform option %j',
+			(platform) => {
+				expect(() =>
+					compile('const value = 1;', 'App.tsrx', {
+						platform: /** @type {any} */ (platform),
+					}),
+				).toThrow(/Invalid TSRX platform/);
+			},
+		);
+	});
 }
 
 /**

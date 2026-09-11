@@ -1,9 +1,9 @@
 /** @import { BunPlugin } from 'bun' */
-/** @import { RuntimeImportMode } from '@tsrx/solid' */
+/** @import { Platform, RuntimeImportMode } from '@tsrx/solid' */
 
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { compile } from '@tsrx/solid';
+import { compile, mergePlatformDefinitions, validatePlatform } from '@tsrx/solid';
 
 const require = createRequire(import.meta.url);
 const { transformAsync } = require('@babel/core');
@@ -21,6 +21,7 @@ const CSS_QUERY_PATTERN = /\?tsrx-css&lang\.css$/;
  * 	emitCss?: boolean,
  * 	solid?: object,
  * 	runtimeImports?: RuntimeImportMode,
+ * 	platform?: Platform,
  * }} TsrxSolidBunPluginOptions
  */
 
@@ -100,8 +101,9 @@ async function transform_solid(source, file_path, solid_options) {
  * @returns {BunPlugin}
  */
 export function tsrxSolid(options = {}) {
+	const platform = validatePlatform(options.platform);
 	const emit_css = options.emitCss ?? true;
-	const compile_options = { runtimeImports: options.runtimeImports };
+	const compile_options = { runtimeImports: options.runtimeImports, platform };
 
 	/** @type {Map<string, string>} */
 	const css_cache = new Map();
@@ -110,6 +112,14 @@ export function tsrxSolid(options = {}) {
 		name: '@tsrx/bun-plugin-solid',
 
 		setup(build) {
+			if (platform !== undefined && build.config) {
+				build.config.define = /** @type {Record<string, string>} */ (
+					mergePlatformDefinitions(build.config.define, platform, {
+						integration: 'Bun',
+						serialize: true,
+					})
+				);
+			}
 			build.onResolve({ filter: CSS_QUERY_PATTERN }, (args) => ({
 				path: args.path,
 			}));

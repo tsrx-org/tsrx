@@ -80,11 +80,11 @@ function collect_css_mappings(source) {
 function compiler_stub(marker, export_name = 'compile_to_volar_mappings') {
 	return `${STUB_PRELUDE}
 module.exports = {
-	${export_name}(source, filename) {
+	${export_name}(source, filename, options = {}) {
 		if (source.includes(COMPILE_FAILURE_MARKER)) {
 			throw new Error('compile failure requested by fixture source');
 		}
-		const code = \`/* compiler:${marker} */\\nexport const filename = \${JSON.stringify(filename)};\\nexport default \${JSON.stringify(source)};\`;
+		const code = \`/* compiler:${marker} */\\nexport const filename = \${JSON.stringify(filename)};\\nexport const platform = \${JSON.stringify(options.platform)};\\nexport default \${JSON.stringify(source)};\`;
 		return {
 			code,
 			mappings: [

@@ -1,6 +1,6 @@
 /** @import { Plugin } from 'vite' */
 /** @import { DepScanTransformPlugin } from '@tsrx/core/types/vite/dep-scan' */
-/** @import { RuntimeImportMode } from '@tsrx/preact' */
+/** @import { Platform, RuntimeImportMode } from '@tsrx/preact' */
 
 /**
  * @typedef {{ code: string, map: unknown }} TsrxPreactTransformResult
@@ -34,7 +34,7 @@
  */
 
 import { transformWithOxc } from 'vite';
-import { compile } from '@tsrx/preact';
+import { compile, mergePlatformDefinitions, validatePlatform } from '@tsrx/preact';
 import { createDepScanTransformPlugin } from '@tsrx/core/vite/dep-scan';
 
 const TSRX_EXTENSION_PATTERN = /\.tsrx$/;
@@ -50,14 +50,17 @@ const CSS_QUERY = '?tsrx-css&lang.css';
  *   jsxImportSource?: string,
  *   suspenseSource?: string,
  *   runtimeImports?: RuntimeImportMode,
+ *   platform?: Platform,
  * }} [options]
  * @returns {TsrxPreactPlugin}
  */
 export function tsrxPreact(options = {}) {
+	const platform = validatePlatform(options.platform);
 	const jsxImportSource = options.jsxImportSource ?? 'preact';
 	const compile_options = {
 		suspenseSource: options.suspenseSource,
 		runtimeImports: options.runtimeImports,
+		platform,
 	};
 
 	/** @type {Map<string, string>} */
@@ -81,8 +84,15 @@ export function tsrxPreact(options = {}) {
 		name: '@tsrx/vite-plugin-preact',
 		enforce: 'pre',
 
-		config() {
+		config(config = /** @type {import('vite').UserConfig} */ ({})) {
 			return {
+				...(platform === undefined
+					? {}
+					: {
+							define: mergePlatformDefinitions(config.define, platform, {
+								integration: 'Vite',
+							}),
+						}),
 				optimizeDeps: {
 					// The scanner externalizes anything that is not a known JS
 					// type unless its extension is listed here, so without this
@@ -98,6 +108,15 @@ export function tsrxPreact(options = {}) {
 						plugins: [create_dep_scan_plugin(jsxImportSource, compile_options)],
 					},
 				},
+			};
+		},
+
+		configEnvironment(name, config = /** @type {import('vite').EnvironmentOptions} */ ({})) {
+			if (platform === undefined) return;
+			return {
+				define: mergePlatformDefinitions(config.define, platform, {
+					integration: `Vite environment ${JSON.stringify(name)}`,
+				}),
 			};
 		},
 
@@ -163,7 +182,7 @@ export function tsrxPreact(options = {}) {
 
 /**
  * @param {string} jsxImportSource
- * @param {{ suspenseSource?: string, runtimeImports?: RuntimeImportMode }} compile_options
+ * @param {{ suspenseSource?: string, runtimeImports?: RuntimeImportMode, platform?: Platform }} compile_options
  * @returns {DepScanTransformPlugin}
  */
 function create_dep_scan_plugin(jsxImportSource, compile_options) {

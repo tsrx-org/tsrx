@@ -1,4 +1,5 @@
 /** @typedef {{actual_type: string, actual_value: string}} InvalidConfigValueDetails */
+/** @typedef {'web' | 'ios' | 'android'} Platform */
 /**
  * @typedef {
  * 	| {state: 'absent'}
@@ -8,11 +9,20 @@
  */
 
 /**
+ * @typedef {
+ * 	| {state: 'absent'}
+ * 	| {state: 'declared', value: Platform}
+ * 	| ({state: 'invalid', target: 'tsrx' | 'platform'} & InvalidConfigValueDetails)
+ * } PlatformDeclaration
+ */
+
+/**
  * @typedef {object} CompilerResolutionOptions
  * @property {typeof import('typescript')} [ts]
  * @property {string} [configFileName]
  * @property {import('./tsconfig-resolution.js').TsconfigHost} [configHost]
  * @property {Set<string>} [dependencies]
+ * @property {boolean} [requirePlatformResolution]
  */
 
 /**
@@ -113,6 +123,32 @@ function get_compiler_declaration(config) {
 		return { state: 'declared', value: compiler.trim() };
 	}
 	return { state: 'invalid', target: 'compiler', ...describe_config_value(compiler) };
+}
+
+/**
+ * @param {unknown} config
+ * @returns {PlatformDeclaration}
+ */
+function get_platform_declaration(config) {
+	const tsrx_result = get_own_config_value(config, ['tsrx']);
+	if (tsrx_result.state === 'absent') {
+		return { state: 'absent' };
+	}
+
+	const tsrx_value = tsrx_result.value;
+	if (tsrx_value === null || typeof tsrx_value !== 'object' || Array.isArray(tsrx_value)) {
+		return { state: 'invalid', target: 'tsrx', ...describe_config_value(tsrx_value) };
+	}
+	const platform_result = get_own_config_value(tsrx_value, ['platform']);
+	if (platform_result.state === 'absent') {
+		return { state: 'absent' };
+	}
+
+	const platform = platform_result.value;
+	if (platform === 'web' || platform === 'ios' || platform === 'android') {
+		return { state: 'declared', value: platform };
+	}
+	return { state: 'invalid', target: 'platform', ...describe_config_value(platform) };
 }
 
 /**
@@ -393,6 +429,104 @@ export function resolve_consumer_compiler_for_file(normalized_file_name, options
 		);
 	}
 	return undefined;
+}
+
+/**
+ * Resolve the compile-time platform selected by the active TypeScript project.
+ * The same inheritance graph and dependency tracking as compiler selection are
+ * used so nested projects and config edits cannot silently drift.
+ *
+ * @param {string} normalized_file_name
+ * @param {CompilerResolutionOptions} [options]
+ * @returns {Platform | undefined}
+ */
+export function resolve_consumer_platform_for_file(normalized_file_name, options = {}) {
+	const typescript = options.ts ?? ts;
+	const config_host = options.configHost ?? typescript.sys;
+	const host_cache = get_config_host_cache(config_host);
+	const root_config_path =
+		options.configFileName ??
+		get_nearest_root_tsconfig(path.dirname(normalized_file_name), config_host, host_cache);
+	if (root_config_path === null) {
+		return undefined;
+	}
+
+	const resolved_layers = get_tsconfig_layers(
+		typescript,
+		config_host,
+		root_config_path,
+		host_cache,
+	);
+	for (const dependency of resolved_layers.dependencies) {
+		options.dependencies?.add(dependency);
+	}
+
+	const unreadable_layer = resolved_layers.layers.find((layer) => layer.raw_source === undefined);
+	if (unreadable_layer) {
+		const message = `Unable to read tsconfig layer while resolving TSRX platform: ${unreadable_layer.path}`;
+		logError(message);
+		throw new Error(message);
+	}
+
+	const malformed_layers = resolved_layers.layers.filter(
+		(layer) => layer.parse_diagnostics.length > 0,
+	);
+	if (malformed_layers.length > 0) {
+		const has_tsrx_intent = resolved_layers.layers.some((layer) => {
+			if (get_own_config_value(layer.config, ['tsrx']).state === 'found') return true;
+			return (
+				layer.parse_diagnostics.length > 0 &&
+				layer.raw_source !== undefined &&
+				tsrx_key_pattern.test(layer.raw_source)
+			);
+		});
+		if (!has_tsrx_intent) return undefined;
+
+		const layer = malformed_layers[0];
+		const detail = typescript.flattenDiagnosticMessageText(
+			layer.parse_diagnostics[0].messageText,
+			'\n',
+		);
+		const message = `Unable to parse tsconfig layer while resolving TSRX platform: ${layer.path}: ${detail}`;
+		logError(message);
+		throw new Error(message);
+	}
+
+	const declaration = resolve_inherited_config_value(resolved_layers.layers, (layer) =>
+		get_platform_declaration(layer.config),
+	);
+	if (declaration.state === 'invalid') {
+		const expected =
+			declaration.target === 'platform' ? ' Expected "web", "ios", or "android".' : '';
+		const message = `Invalid TSRX ${declaration.target} declaration: ${declaration.actual_type} ${declaration.actual_value} in ${declaration.config_path}.${expected}`;
+		logError(message);
+		throw new TypeError(message);
+	}
+
+	const effective_extends_failures = resolved_layers.extends_failures.filter(
+		(failure) =>
+			declaration.state !== 'declared' ||
+			!is_extends_failure_overridden(resolved_layers.layers, failure, declaration.config_path),
+	);
+	if (effective_extends_failures.length > 0) {
+		// An unresolved lower-precedence config must not break a file that does not
+		// use platform flags. Known declarations are still validated above. When a
+		// flag is present, the caller requests a complete graph so an unknown base
+		// cannot silently choose the wrong branch.
+		if (!options.requirePlatformResolution) {
+			return declaration.state === 'declared' ? declaration.value : undefined;
+		}
+		const failure = effective_extends_failures[0];
+		const detail =
+			failure.diagnostics.length > 0
+				? `: ${typescript.flattenDiagnosticMessageText(failure.diagnostics[0].messageText, '\n')}`
+				: '';
+		const message = `Unable to resolve tsconfig extends entry ${JSON.stringify(failure.extends_value)} in ${failure.config_path} while resolving TSRX platform${detail}`;
+		logError(message);
+		throw new Error(message);
+	}
+
+	return declaration.state === 'declared' ? declaration.value : undefined;
 }
 
 /** Drop all filesystem-derived consumer compiler resolution state. */

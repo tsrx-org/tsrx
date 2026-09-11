@@ -17,7 +17,7 @@ await Bun.build({
   entrypoints: ['./src/App.tsrx'],
   outdir: './dist',
   target: 'browser',
-  plugins: [tsrxReact()],
+  plugins: [tsrxReact({ platform: 'web' })],
 });
 ```
 
@@ -38,6 +38,9 @@ Bun.plugin(tsrxReact());
 - `jsxImportSource`: automatic JSX runtime import source (default: `'react'`).
 - `runtimeImports`: helper import mode (`'compiler'` by default, or `'direct'` for
   standalone runtime imports).
+- `platform`: optional compile-time platform (`'web'`, `'ios'`, or `'android'`).
+  Set the same `tsrx.platform` value in the active tsconfig. For `Bun.build`, the
+  plugin defines all three exact flags and rejects conflicting definitions.
 - `emitCss`: whether to emit virtual CSS imports (default: `true`).
 - `include`, `exclude`: regex filters for source files.
 

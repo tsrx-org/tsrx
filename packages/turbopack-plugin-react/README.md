@@ -14,9 +14,7 @@ pnpm add -D @tsrx/turbopack-plugin-react next
 ```ts
 import tsrxReactTurbopack from '@tsrx/turbopack-plugin-react';
 
-export default tsrxReactTurbopack({
-  reactStrictMode: true,
-});
+export default tsrxReactTurbopack({ reactStrictMode: true }, { platform: 'web' });
 ```
 
 The helper installs Turbopack rules that compile `.tsrx` modules with
@@ -33,6 +31,10 @@ Pass Next.js config as the first argument. The second argument is optional:
 
 - `runtimeImports`: helper import mode (`'compiler'` by default, or `'direct'` for
   standalone runtime imports).
+- `platform`: optional compile-time platform (`'web'`, `'ios'`, or `'android'`).
+  Set the same `tsrx.platform` value in the active tsconfig. The helper installs
+  replacement rules for all three exact flags in both TSRX output and ordinary
+  application JavaScript/TypeScript modules.
 
 ```ts
 export default tsrxReactTurbopack({}, { runtimeImports: 'direct' });

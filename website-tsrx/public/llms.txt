@@ -69,6 +69,76 @@ npm install octane @octanejs/vite-plugin
 Vue's Vite setup should use `tsrxVue()` from `@tsrx/vite-plugin-vue`,
 and editor/typecheck configs should set `jsxImportSource: 'vue-jsx-vapor'`.
 
+### Compile-time platform flags
+
+Shared source can select one of three exact platforms through the active
+TypeScript project:
+
+```json
+{
+	"tsrx": {
+		"compiler": "@tsrx/react",
+		"platform": "ios"
+	},
+	"compilerOptions": {
+		"lib": ["ES2022"],
+		"types": ["my-native-host-types"]
+	}
+}
+```
+
+The only accepted values are `"web"`, `"ios"`, and `"android"`. There is no
+default. When configured, all three boolean properties exist and exactly one is
+true:
+
+```ts
+import.meta.env.platform.web;
+import.meta.env.platform.ios;
+import.meta.env.platform.android;
+```
+
+An ordinary `if` whose complete test is one of those exact paths is specialized
+immediately after parsing. TSRX parses every branch for syntax, then performs
+semantic analysis, style extraction, target lowering, source mapping, and
+virtual TypeScript generation only on the selected AST. This removes inactive
+platform code, guarded dynamic imports, embedded script regions, and scoped CSS
+before they can affect diagnostics or output. The retained statement keeps its
+original lexical block and source location.
+
+```tsx
+if (import.meta.env.platform.web) {
+	window.addEventListener('resize', onResize);
+} else if (import.meta.env.platform.ios) {
+	iosHost.subscribe(onResize);
+} else {
+	androidHost.subscribe(onResize);
+}
+```
+
+Template `@if` deliberately remains runtime control flow in this version, and
+expressions such as `!import.meta.env.platform.web` or
+`import.meta.env.platform.web === true` are not specialized by TSRX. Supported
+builders still replace exact flags in their remaining output. Use an ordinary
+exact-flag `if` when platform-only types, dependencies, scripts, or styles must
+be excluded before TSRX/TypeScript analysis.
+
+Pass the same platform to the build integration so ordinary `.ts`, `.tsx`, and
+JavaScript modules receive matching compile-time constants:
+
+```js
+tsrxReact({ platform: 'ios' });
+new TsrxReactRspackPlugin({ platform: 'ios' });
+tsrxReactBun({ platform: 'ios' });
+tsrxReactTurbopack({}, { platform: 'ios' });
+```
+
+Vite, Rspack, Bun, and the available React Turbopack integration support the
+option. The same option is available for every React, Preact, Solid, and Vue
+integration that exists. Vite, Rspack, and Bun reject conflicting user-provided
+definitions. Omitting the platform remains valid until a recognized flag is
+used; using a flag without configuration, or supplying any other value, is an
+actionable error.
+
 ### Runtime helper imports
 
 Compiler output uses compiler-package helper subpaths by default, so applications

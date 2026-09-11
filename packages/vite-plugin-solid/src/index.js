@@ -3,7 +3,7 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve as path_resolve, isAbsolute } from 'node:path';
-import { compile } from '@tsrx/solid';
+import { compile, mergePlatformDefinitions, validatePlatform } from '@tsrx/solid';
 import { createDepScanLoadPlugin } from '@tsrx/core/vite/dep-scan';
 
 const DEFAULT_TSRX_PATTERN = /\.tsrx$/;
@@ -21,6 +21,7 @@ const CSS_QUERY = '?tsrx-solid-css&lang.css';
  * @returns {Plugin}
  */
 export function tsrxSolid(options = {}) {
+	const platform = validatePlatform(options.platform);
 	/** @type {Map<string, string>} */
 	const css_cache = new Map();
 
@@ -28,7 +29,7 @@ export function tsrxSolid(options = {}) {
 	let root_dir = process.cwd();
 
 	const include_pattern = options.include ?? DEFAULT_TSRX_PATTERN;
-	const compile_options = { runtimeImports: options.runtimeImports };
+	const compile_options = { runtimeImports: options.runtimeImports, platform };
 
 	/**
 	 * Decide whether a real (on-disk) path should be treated as a tsrx
@@ -76,8 +77,15 @@ export function tsrxSolid(options = {}) {
 		name: '@tsrx/vite-plugin-solid',
 		enforce: 'pre',
 
-		config() {
+		config(config = /** @type {import('vite').UserConfig} */ ({})) {
 			return {
+				...(platform === undefined
+					? {}
+					: {
+							define: mergePlatformDefinitions(config.define, platform, {
+								integration: 'Vite',
+							}),
+						}),
 				optimizeDeps: {
 					rolldownOptions: {
 						// The scan runs its own jsx transform over the tsx the
@@ -98,6 +106,15 @@ export function tsrxSolid(options = {}) {
 						],
 					},
 				},
+			};
+		},
+
+		configEnvironment(name, config = /** @type {import('vite').EnvironmentOptions} */ ({})) {
+			if (platform === undefined) return;
+			return {
+				define: mergePlatformDefinitions(config.define, platform, {
+					integration: `Vite environment ${JSON.stringify(name)}`,
+				}),
 			};
 		},
 

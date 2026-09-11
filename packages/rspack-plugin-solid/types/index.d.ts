@@ -1,15 +1,17 @@
 import type { Compiler, RspackPluginInstance } from '@rspack/core';
-import type { RuntimeImportMode } from '@tsrx/solid';
+import type { Platform, RuntimeImportMode } from '@tsrx/solid';
 
 export interface TsrxSolidRspackPluginOptions {
 	hot?: boolean;
 	/** Direct mode requires `@tsrx/solid-runtime` as a direct production dependency. */
 	runtimeImports?: RuntimeImportMode;
+	/** Must match `tsrx.platform` in the active tsconfig. */
+	platform?: Platform;
 }
 
 export declare class TsrxSolidRspackPlugin implements RspackPluginInstance {
 	constructor(options?: TsrxSolidRspackPluginOptions);
-	options: Pick<TsrxSolidRspackPluginOptions, 'hot'> &
+	options: Pick<TsrxSolidRspackPluginOptions, 'hot' | 'platform'> &
 		Required<Pick<TsrxSolidRspackPluginOptions, 'runtimeImports'>>;
 	apply(compiler: Compiler): void;
 }

@@ -1,8 +1,8 @@
 /** @import { BunPlugin, Target, Transpiler } from 'bun' */
-/** @import { RuntimeImportMode } from '@tsrx/react' */
+/** @import { Platform, RuntimeImportMode } from '@tsrx/react' */
 
 import { readFile } from 'node:fs/promises';
-import { compile } from '@tsrx/react';
+import { compile, mergePlatformDefinitions, validatePlatform } from '@tsrx/react';
 
 const DEFAULT_INCLUDE = /\.tsrx$/;
 const CSS_QUERY = '?tsrx-css&lang.css';
@@ -15,6 +15,7 @@ const CSS_QUERY_PATTERN = /\?tsrx-css&lang\.css$/;
  * 	jsxImportSource?: string,
  * 	emitCss?: boolean,
  * 	runtimeImports?: RuntimeImportMode,
+ * 	platform?: Platform,
  * }} TsrxReactBunPluginOptions
  */
 
@@ -90,9 +91,10 @@ function create_transpiler(jsx_import_source, target) {
  * @returns {BunPlugin}
  */
 export function tsrxReact(options = {}) {
+	const platform = validatePlatform(options.platform);
 	const jsx_import_source = options.jsxImportSource ?? 'react';
 	const emit_css = options.emitCss ?? true;
-	const compile_options = { runtimeImports: options.runtimeImports };
+	const compile_options = { runtimeImports: options.runtimeImports, platform };
 
 	/** @type {Map<string, string>} */
 	const css_cache = new Map();
@@ -104,6 +106,14 @@ export function tsrxReact(options = {}) {
 			// build.config is only present for Bun.build(); runtime registration
 			// via Bun.plugin(), including bun:test preloads, does not provide it.
 			const build_config = build.config ?? {};
+			if (platform !== undefined && build.config) {
+				build.config.define = /** @type {Record<string, string>} */ (
+					mergePlatformDefinitions(build.config.define, platform, {
+						integration: 'Bun',
+						serialize: true,
+					})
+				);
+			}
 			const transpiler = create_transpiler(jsx_import_source, build_config.target);
 
 			build.onResolve({ filter: CSS_QUERY_PATTERN }, (args) => ({

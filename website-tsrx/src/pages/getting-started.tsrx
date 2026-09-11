@@ -319,6 +319,25 @@ export function OptIn() @{
 }`,
 );
 
+const PLATFORM_TSCONFIG_HTML = [
+	'<span class="ln">1</span> <span class="br">{</span>',
+	'<span class="ln">2</span>   <span class="attr">"tsrx"</span>: <span class="br">{</span>',
+	'<span class="ln">3</span>     <span class="attr">"compiler"</span>: <span class="str">"@tsrx/react"</span>,',
+	'<span class="ln">4</span>     <span class="attr">"platform"</span>: <span class="str">"ios"</span>',
+	'<span class="ln">5</span>   <span class="br">}</span>',
+	'<span class="ln">6</span> <span class="br">}</span>',
+].join('\n');
+
+const PLATFORM_GUARD_HTML = highlight_tsrx(
+	`if (import.meta.env.platform.web) {
+  window.addEventListener('resize', onResize);
+} else if (import.meta.env.platform.ios) {
+  iosHost.subscribe(onResize);
+} else {
+  androidHost.subscribe(onResize);
+}`,
+);
+
 const NAV_GROUPS = [
 	{
 		heading: 'Frameworks',
@@ -336,6 +355,7 @@ const NAV_GROUPS = [
 			{ id: 'vue-vite', label: 'Vue + Vite' },
 			{ id: 'vue-rspack', label: 'Vue + Rspack' },
 			{ id: 'vue-bun', label: 'Vue + Bun' },
+			{ id: 'platform-flags', label: 'Platform flags' },
 			{ id: 'direct-runtime-imports', label: 'Direct runtime imports' },
 			{ id: 'ripple', label: 'Ripple' },
 			{ id: 'octane', label: 'Octane' },
@@ -803,6 +823,46 @@ export function GettingStartedPage() @{
 								in your
 								<code class="inline-code">tsconfig.json</code>
 								.
+							</p>
+						</section>
+
+						<section class="doc-section" id="platform-flags">
+							<p class="section-kicker">Shared source</p>
+							<h2 class="section-heading">Compile-time platform flags</h2>
+							<p class="section-body">
+								Select exactly one of
+								<code class="inline-code">web</code>
+								,
+								<code class="inline-code">ios</code>
+								, or
+								<code class="inline-code">android</code>
+								in the active TypeScript project. Pass the same
+								<code class="inline-code">platform</code>
+								option to your Vite, Rspack, Bun, or available React Turbopack integration. There is
+								no implicit web default.
+							</p>
+							<pre class="code-block">
+								<code innerHTML={PLATFORM_TSCONFIG_HTML} />
+							</pre>
+							<pre class="code-block">
+								<code innerHTML={PLATFORM_GUARD_HTML} />
+							</pre>
+							<p class="section-body">
+								An ordinary
+								<code class="inline-code">if</code>
+								whose whole test is one exact flag is selected before TSRX analyzes styles,
+								dependencies, or target output. The inactive branch therefore contributes no
+								diagnostics, generated code, dynamic imports, embedded scripts, source mappings, or
+								CSS. All branches are still parsed for syntax.
+							</p>
+							<p class="section-body">
+								Template
+								<code class="inline-code">@if</code>
+								remains runtime control flow. Use an ordinary exact-flag
+								<code class="inline-code">if</code>
+								when platform-only code or styles must disappear before type checking and CSS
+								extraction. A recognized flag without configuration—or any other platform value—is
+								an error.
 							</p>
 						</section>
 

@@ -79,6 +79,32 @@ export interface CompileError extends Error {
 	type: 'fatal' | 'usage';
 }
 
+/** Platform selected for compile-time `import.meta.env.platform` flags. */
+export type Platform = 'web' | 'ios' | 'android';
+
+/** The three compile-time flags exposed to TSRX and bundler-authored modules. */
+export interface TsrxPlatformFlags {
+	readonly web: boolean;
+	readonly ios: boolean;
+	readonly android: boolean;
+}
+
+declare global {
+	interface ImportMetaEnv {
+		/**
+		 * Intersecting with `string` remains compatible with hosts such as Bun that
+		 * constrain every ImportMetaEnv value through a string index signature,
+		 * while preserving typed access to the three nested flags.
+		 */
+		readonly platform: TsrxPlatformFlags & string;
+	}
+
+	interface ImportMeta {
+		/** Supplies `env` when the host has no explicit property without redeclaring it. */
+		readonly [key: `env${string}`]: ImportMetaEnv;
+	}
+}
+
 /**
  * Compilation options
  */
@@ -2326,6 +2352,8 @@ export type RuntimeImportMode = 'compiler' | 'direct';
 export interface BaseCompileOptions {
 	collect?: boolean;
 	loose?: boolean;
+	/** Selects the compile-time platform branch. No platform is implied when omitted. */
+	platform?: Platform;
 	/**
 	 * Selects where generated runtime helper imports resolve from. The default
 	 * `'compiler'` mode preserves compiler-package compatibility subpaths;
@@ -2334,6 +2362,40 @@ export interface BaseCompileOptions {
 	 */
 	runtimeImports?: RuntimeImportMode;
 }
+
+export interface PlatformSpecializationOptions {
+	errors?: CompileError[];
+	comments?: AST.CommentWithLocation[];
+}
+
+export const PLATFORMS: readonly ['web', 'ios', 'android'];
+export function validatePlatform(platform: unknown, optionName?: string): Platform | undefined;
+export function getPlatformFlag(node: AST.Node | null | undefined): Platform | null;
+export function hasPlatformFlag(node: AST.Node): boolean;
+export function hasPlatformNamespace(node: AST.Node): boolean;
+export function specializePlatform(
+	ast: AST.Program,
+	platform: unknown,
+	filename?: string | null,
+	options?: PlatformSpecializationOptions,
+): AST.Program;
+export function createPlatformDefinitions(
+	platform: unknown,
+): Record<`import.meta.env.platform.${Platform}`, boolean>;
+export function mergePlatformDefinitions(
+	definitions: Record<string, unknown> | undefined,
+	platform: unknown,
+	options?: { integration?: string; serialize?: boolean },
+): Record<string, unknown>;
+export function withPlatformTypes(
+	result: VolarMappingsResult,
+	platform: unknown,
+): VolarMappingsResult;
+export function replacePlatformFlags(
+	source: string,
+	filename: string,
+	platform: unknown,
+): { code: string; map: import('source-map').RawSourceMap };
 
 /**
  * Shared `compile` signature for every TSRX target package. Per-target
@@ -2358,7 +2420,7 @@ export type CompileFn<
  *   Defaults to {@link ParseOptions}; targets may intersect their own option
  *   type to add e.g. `suspenseSource`.
  */
-export type VolarCompileFn<TOptions = ParseOptions> = (
+export type VolarCompileFn<TOptions = ParseOptions & BaseCompileOptions> = (
 	source: string,
 	filename?: string,
 	options?: TOptions,

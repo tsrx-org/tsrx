@@ -1,5 +1,5 @@
 import type { BunPlugin } from 'bun';
-import type { RuntimeImportMode } from '@tsrx/preact';
+import type { Platform, RuntimeImportMode } from '@tsrx/preact';
 
 export interface TsrxPreactBunPluginOptions {
 	include?: RegExp;
@@ -8,6 +8,8 @@ export interface TsrxPreactBunPluginOptions {
 	suspenseSource?: string;
 	/** Direct mode requires `@tsrx/preact-runtime` as a direct production dependency. */
 	runtimeImports?: RuntimeImportMode;
+	/** Must match `tsrx.platform` in the active tsconfig. */
+	platform?: Platform;
 	emitCss?: boolean;
 }
 

@@ -1,9 +1,10 @@
 /** @import { Compiler, RspackPluginInstance } from '@rspack/core' */
-/** @import { RuntimeImportMode } from '@tsrx/solid' */
+/** @import { Platform, RuntimeImportMode } from '@tsrx/solid' */
 
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createPlatformDefinitions, mergePlatformDefinitions, validatePlatform } from '@tsrx/solid';
 
 const require = createRequire(import.meta.url);
 
@@ -20,6 +21,24 @@ const SOLID_REFRESH_BABEL = require.resolve('solid-refresh/babel');
 const TSRX_EXTENSION_PATTERN = /\.tsrx$/;
 const CSS_QUERY_PATTERN = /tsrx-css/;
 
+/** @param {Compiler} compiler @param {Platform | undefined} platform */
+function apply_platform_definitions(compiler, platform) {
+	if (platform === undefined) return;
+	const compiler_with_definitions = /** @type {any} */ (compiler);
+	for (const plugin of compiler_with_definitions.options.plugins ?? []) {
+		if (plugin?.name !== 'DefinePlugin' || !Array.isArray(plugin._args)) continue;
+		const definitions = plugin._args[0];
+		if (definitions && typeof definitions === 'object') {
+			mergePlatformDefinitions(definitions, platform, { integration: 'Rspack' });
+		}
+	}
+	const DefinePlugin = compiler_with_definitions.webpack?.DefinePlugin;
+	if (typeof DefinePlugin !== 'function') {
+		throw new Error('Rspack compiler does not expose DefinePlugin for TSRX platform flags.');
+	}
+	new DefinePlugin(createPlatformDefinitions(platform)).apply(compiler);
+}
+
 /**
  * Rspack plugin for `.tsrx` files that compiles them via `@tsrx/solid` and
  * then delegates the final TSX + JSX transform to `babel-loader` with Solid's
@@ -30,12 +49,13 @@ const CSS_QUERY_PATTERN = /tsrx-css/;
  */
 export class TsrxSolidRspackPlugin {
 	/**
-	 * @param {{ hot?: boolean, runtimeImports?: RuntimeImportMode }} [options]
+	 * @param {{ hot?: boolean, runtimeImports?: RuntimeImportMode, platform?: Platform }} [options]
 	 */
 	constructor(options = {}) {
 		this.options = {
 			hot: options.hot,
 			runtimeImports: options.runtimeImports ?? 'compiler',
+			platform: validatePlatform(options.platform),
 		};
 	}
 
@@ -45,6 +65,7 @@ export class TsrxSolidRspackPlugin {
 	 */
 	apply(compiler) {
 		const hot = this.options.hot ?? compiler.options.mode !== 'production';
+		apply_platform_definitions(compiler, this.options.platform);
 
 		const resolve = compiler.options.resolve;
 		if (resolve.extensions && !resolve.extensions.includes('.tsrx')) {
@@ -96,6 +117,7 @@ export class TsrxSolidRspackPlugin {
 						loader: JS_LOADER,
 						options: {
 							runtimeImports: this.options.runtimeImports,
+							platform: this.options.platform,
 						},
 					},
 				],
@@ -109,6 +131,7 @@ export class TsrxSolidRspackPlugin {
 						loader: CSS_LOADER,
 						options: {
 							runtimeImports: this.options.runtimeImports,
+							platform: this.options.platform,
 						},
 					},
 				],

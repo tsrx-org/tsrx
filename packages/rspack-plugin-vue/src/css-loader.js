@@ -1,6 +1,6 @@
 /** @import { LoaderContext } from '@rspack/core' */
 
-/** @import { RuntimeImportMode } from '@tsrx/vue' */
+/** @import { Platform, RuntimeImportMode } from '@tsrx/vue' */
 
 import { compile } from '@tsrx/vue';
 
@@ -9,7 +9,7 @@ import { compile } from '@tsrx/vue';
  * scoped CSS emitted by its `<style>` block. Invoked when rspack resolves the
  * sibling `?tsrx-css&lang.css` import emitted by the JS loader.
  *
- * @this {LoaderContext<{ runtimeImports?: RuntimeImportMode }>}
+ * @this {LoaderContext<{ runtimeImports?: RuntimeImportMode, platform?: Platform }>}
  * @param {string} source
  * @returns {void}
  */

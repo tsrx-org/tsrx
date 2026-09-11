@@ -21,6 +21,56 @@ export function runSharedSourceMappingTests({
 	name,
 	rejectsComponentAwait,
 }) {
+	describe(`[${name}] platform-specialized source mappings`, () => {
+		it('maps only the selected branch and keeps its authored block location', () => {
+			const source = `if (import.meta.env.platform.web) {
+	const inactive_web_value = window.innerWidth;
+} else {
+	const active_native_value = nativeHost.width;
+	consume(active_native_value);
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', {
+				loose: true,
+				platform: 'ios',
+			});
+			const inactive_start = source.indexOf('inactive_web_value');
+			const inactive_end = source.indexOf('}', inactive_start);
+			const selected_block_start = source.indexOf('{', source.indexOf('else'));
+
+			expect(result.code).not.toContain('inactive_web_value');
+			expect(result.code).toContain('active_native_value');
+			expect(result.sourceAst.body[0].type).toBe('BlockStatement');
+			expect(result.sourceAst.body[0].start).toBe(selected_block_start);
+			expect(
+				result.mappings.some((mapping) => {
+					const start = mapping.sourceOffsets[0];
+					return start >= inactive_start && start < inactive_end;
+				}),
+			).toBe(false);
+		});
+
+		it('omits embedded CSS and script regions from the discarded branch', () => {
+			const source = `if (import.meta.env.platform.web) {
+	function Web() @{ <><style>.web-only { color: red; }</style><script>const webScript = 1;</script><div class="web-only" /></> }
+} else {
+	function Native() @{ <><style>.native-only { color: blue; }</style><script>const nativeScript = 1;</script><div class="native-only" /></> }
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', {
+				loose: true,
+				platform: 'android',
+			});
+			const css_contents = result.cssMappings.map((mapping) => mapping.data.customData.content);
+
+			expect(css_contents.join('\n')).not.toContain('web-only');
+			expect(css_contents.join('\n')).toContain('native-only');
+			const script_contents = result.scriptMappings.map(
+				(mapping) => mapping.data.customData.content,
+			);
+			expect(script_contents.join('\n')).not.toContain('webScript');
+			expect(script_contents.join('\n')).toContain('nativeScript');
+		});
+	});
+
 	describe(`[${name}] shared TypeScript editor diagnostics`, () => {
 		it.each(['Value extends { id: string }', 'Value = string', 'Value,'])(
 			'accepts an unambiguous generic arrow (%s)',

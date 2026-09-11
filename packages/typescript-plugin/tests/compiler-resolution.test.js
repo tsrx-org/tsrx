@@ -13,6 +13,7 @@ const {
 	COMPILER_CANDIDATES,
 	TSRX_EXTENSIONS,
 	invalidateCompilerResolutionCaches,
+	source_uses_platform_flag,
 	_reset_for_test,
 } = require('../src/language.js');
 
@@ -83,6 +84,19 @@ describe('typescript-plugin compiler resolution', () => {
 			['', false],
 		])('returns %j for %j', (file_name, expected) => {
 			expect(is_tsrx_file(file_name)).toBe(expected);
+		});
+	});
+
+	describe('platform flag source detection', () => {
+		it.each([
+			['if (import.meta.env.platform.web) {}', true],
+			['const value = import /* comment */ . meta.env.platform.ios;', true],
+			['// import.meta.env.platform.android\nconst value = 1;', false],
+			["const value = 'import.meta.env.platform.web';", false],
+			['if (import.meta.env.platform["web"]) {}', false],
+			['if (other.import.meta.env.platform.web) {}', false],
+		])('returns %j for %j', (source, expected) => {
+			expect(source_uses_platform_flag(source)).toBe(expected);
 		});
 	});
 

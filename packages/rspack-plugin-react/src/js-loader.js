@@ -1,6 +1,6 @@
 /** @import { LoaderContext } from '@rspack/core' */
 
-/** @import { RuntimeImportMode } from '@tsrx/react' */
+/** @import { Platform, RuntimeImportMode } from '@tsrx/react' */
 
 import { compile } from '@tsrx/react';
 
@@ -9,7 +9,7 @@ import { compile } from '@tsrx/react';
  * appends an `import` of the sibling virtual CSS module so rspack can
  * include the styles in the asset graph.
  *
- * @this {LoaderContext<{ runtimeImports?: RuntimeImportMode }>}
+ * @this {LoaderContext<{ runtimeImports?: RuntimeImportMode, platform?: Platform }>}
  * @param {string} source
  * @returns {void}
  */

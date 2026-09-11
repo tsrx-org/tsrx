@@ -17,7 +17,7 @@ await Bun.build({
   entrypoints: ['./src/App.tsrx'],
   outdir: './dist',
   target: 'browser',
-  plugins: [tsrxVue()],
+  plugins: [tsrxVue({ platform: 'web' })],
 });
 ```
 
@@ -39,6 +39,9 @@ Bun.plugin(tsrxVue());
 - `vapor`: options forwarded to `vue-jsx-vapor`.
 - `runtimeImports`: helper import mode (`'compiler'` by default, or `'direct'` for
   standalone runtime imports).
+- `platform`: optional compile-time platform (`'web'`, `'ios'`, or `'android'`).
+  Set the same `tsrx.platform` value in the active tsconfig. For `Bun.build`, the
+  plugin defines all three exact flags and rejects conflicting definitions.
 - `emitCss`: whether to emit virtual CSS imports (default: `true`).
 - `include`, `exclude`: regex filters for source files.
 

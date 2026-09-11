@@ -150,6 +150,18 @@ export { normalize_css_property_name as normalizeCssPropertyName } from './utils
 export { escape, escape_script as escapeScript } from './utils/escaping.js';
 
 // Transform
+export {
+	PLATFORMS,
+	create_platform_definitions as createPlatformDefinitions,
+	get_platform_flag as getPlatformFlag,
+	has_platform_flag as hasPlatformFlag,
+	has_platform_namespace as hasPlatformNamespace,
+	merge_platform_definitions as mergePlatformDefinitions,
+	replace_platform_flags as replacePlatformFlags,
+	specialize_platform as specializePlatform,
+	validate_platform as validatePlatform,
+	with_platform_types as withPlatformTypes,
+} from './transform/platform.js';
 export { with_deferred_imports as withDeferredImports } from './transform/imports.js';
 export {
 	add_jsx_setup_declaration as addJsxSetupDeclaration,

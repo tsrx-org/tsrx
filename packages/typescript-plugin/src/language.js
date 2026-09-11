@@ -2,7 +2,7 @@
 /** @import {CompileError, VolarMappingsResult, CodeMapping} from '@tsrx/core/types' */
 
 /** @typedef {{ code?: string, errors?: CompileError[] }} TSRXCompileResult */
-/** @typedef {{ compile?: (source: string, filename: string, options?: { loose?: boolean }) => TSRXCompileResult, compile_to_volar_mappings(source: string, filename: string, options?: { loose?: boolean }): VolarMappingsResult }} TSRXCompilerModule */
+/** @typedef {{ compile?: (source: string, filename: string, options?: { loose?: boolean, platform?: 'web' | 'ios' | 'android' }) => TSRXCompileResult, compile_to_volar_mappings(source: string, filename: string, options?: { loose?: boolean, platform?: 'web' | 'ios' | 'android' }): VolarMappingsResult }} TSRXCompilerModule */
 
 /** @typedef {Map<string, CodeMapping>} CachedMappings */
 /** @typedef {import('typescript').CompilerOptions} CompilerOptions */
@@ -25,6 +25,7 @@ import { fileURLToPath } from 'url';
 import {
 	reset_consumer_compiler_resolution_caches,
 	resolve_consumer_compiler_for_file,
+	resolve_consumer_platform_for_file,
 } from './consumer-compiler.js';
 import { createLogging, DEBUG } from './utils.js';
 
@@ -100,6 +101,49 @@ export function is_tsrx_file(file_name) {
 }
 
 /**
+ * Detect exact platform property paths without matching comments or string
+ * literals. TypeScript's scanner remains usable for partially authored TSRX
+ * because it tokenizes independently of the parser's grammar.
+ *
+ * @param {string} source
+ * @param {typeof import('typescript')} [typescript]
+ * @returns {boolean}
+ */
+export function source_uses_platform_flag(source, typescript = ts) {
+	const scanner = typescript.createScanner(
+		typescript.ScriptTarget.Latest,
+		true,
+		typescript.LanguageVariant.JSX,
+		source,
+	);
+	/** @type {Array<{ kind: number, text: string }>} */
+	const tokens = [];
+	for (
+		let kind = scanner.scan();
+		kind !== typescript.SyntaxKind.EndOfFileToken;
+		kind = scanner.scan()
+	) {
+		tokens.push({ kind, text: scanner.getTokenText() });
+	}
+
+	const prefix = ['import', '.', 'meta', '.', 'env', '.', 'platform', '.'];
+	for (let index = 0; index + prefix.length < tokens.length; index += 1) {
+		if (
+			index > 0 &&
+			(tokens[index - 1].kind === typescript.SyntaxKind.DotToken ||
+				tokens[index - 1].kind === typescript.SyntaxKind.QuestionDotToken)
+		) {
+			continue;
+		}
+		if (!prefix.every((text, offset) => tokens[index + offset].text === text)) continue;
+		const name = tokens[index + prefix.length].text;
+		if (name === 'web' || name === 'ios' || name === 'android') return true;
+	}
+
+	return false;
+}
+
+/**
  * @param {CompilerResolutionOptions} [options]
  * @returns {TsrxLanguagePlugin}
  */
@@ -134,7 +178,12 @@ export function getTsrxLanguagePlugin(options = {}) {
 				}
 				log('Creating virtual code for:', file_name);
 				try {
-					return new TSRXVirtualCode(file_name, snapshot, compiler);
+					return new TSRXVirtualCode(file_name, snapshot, compiler, (required) =>
+						resolve_consumer_platform_for_file(file_name, {
+							...compiler_resolution_options,
+							requirePlatformResolution: required,
+						}),
+					);
 				} catch (err) {
 					logError('Failed to create virtual code for:', file_name, ':', err);
 					throw err;
@@ -226,6 +275,8 @@ export class TSRXVirtualCode {
 	codegenStacks = [];
 	/** @type {TSRXCompilerModule} */
 	tsrx;
+	/** @type {((required: boolean) => 'web' | 'ios' | 'android' | undefined) | undefined} */
+	platformProvider;
 	/** @type {string} */
 	generatedCode = '';
 	/** @type {VirtualCode['embeddedCodes']} */
@@ -257,12 +308,14 @@ export class TSRXVirtualCode {
 	 * @param {string} file_name
 	 * @param {IScriptSnapshot} snapshot
 	 * @param {TSRXCompilerModule} tsrx
+	 * @param {(required: boolean) => 'web' | 'ios' | 'android' | undefined} [platform_provider]
 	 */
-	constructor(file_name, snapshot, tsrx) {
+	constructor(file_name, snapshot, tsrx, platform_provider) {
 		log('Initializing TSRXVirtualCode for:', file_name);
 
 		this.fileName = file_name;
 		this.tsrx = tsrx;
+		this.platformProvider = platform_provider;
 		this.snapshot = snapshot;
 		this.sourceSnapshot = snapshot;
 		this.originalCode = snapshot.getText(0, snapshot.getLength());
@@ -336,6 +389,7 @@ export class TSRXVirtualCode {
 		}
 
 		try {
+			const platform = this.platformProvider?.(source_uses_platform_flag(newCode));
 			// If user typed a ".", compile without it and then stitch it back into
 			// the generated output so completions can still resolve.
 			if (isDotTyped && dotPosition >= 0) {
@@ -346,6 +400,7 @@ export class TSRXVirtualCode {
 				log('Compiling without typed dot at position', dotPosition);
 				transpiled = this.tsrx.compile_to_volar_mappings(codeWithoutDot, this.fileName, {
 					loose: true,
+					platform,
 				});
 				log('Compilation without dot successful');
 
@@ -363,6 +418,7 @@ export class TSRXVirtualCode {
 				log('Compiling TSRX code...');
 				transpiled = this.tsrx.compile_to_volar_mappings(newCode, this.fileName, {
 					loose: true,
+					platform,
 				});
 				log('Compilation successful, generated code length:', transpiled?.code?.length || 0);
 			}

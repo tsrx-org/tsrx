@@ -1,6 +1,6 @@
 /** @import { Plugin } from 'vite' */
 /** @import { DepScanTransformPlugin } from '@tsrx/core/types/vite/dep-scan' */
-/** @import { RuntimeImportMode } from '@tsrx/react' */
+/** @import { Platform, RuntimeImportMode } from '@tsrx/react' */
 
 /**
  * @typedef {{ code: string, map: unknown }} TsrxReactTransformResult
@@ -17,7 +17,8 @@
  *   (id: string): string | null,
  * }} TsrxReactLoad
  * @typedef {{
- *   optimizeDeps: {
+ *   define?: Record<string, unknown>,
+ *   optimizeDeps?: {
  *     extensions: string[],
  *     rolldownOptions: {
  *       transform: { jsx: { importSource: string } },
@@ -27,7 +28,7 @@
  * }} TsrxReactEnvironmentConfig
  * @typedef {(
  *   name: string,
- *   config: import('vite').EnvironmentOptions,
+ *   config?: import('vite').EnvironmentOptions,
  * ) => TsrxReactEnvironmentConfig | undefined} TsrxReactConfigEnvironmentHook
  * @typedef {Omit<Plugin, 'configEnvironment' | 'transform' | 'resolveId' | 'load'> & {
  *   configEnvironment: TsrxReactConfigEnvironmentHook,
@@ -38,7 +39,7 @@
  */
 
 import { transformWithOxc } from 'vite';
-import { compile } from '@tsrx/react';
+import { compile, mergePlatformDefinitions, validatePlatform } from '@tsrx/react';
 import { createDepScanTransformPlugin } from '@tsrx/core/vite/dep-scan';
 
 const TSRX_EXTENSION_PATTERN = /\.tsrx$/;
@@ -50,12 +51,13 @@ const CSS_QUERY = '?tsrx-css&lang.css';
  * `jsx-runtime`. Per-component `<style>` blocks are emitted as virtual CSS
  * modules that are imported by the compiled JS output.
  *
- * @param {{ jsxImportSource?: string, runtimeImports?: RuntimeImportMode }} [options]
+ * @param {{ jsxImportSource?: string, runtimeImports?: RuntimeImportMode, platform?: Platform }} [options]
  * @returns {TsrxReactPlugin}
  */
 export function tsrxReact(options = {}) {
+	const platform = validatePlatform(options.platform);
 	const jsxImportSource = options.jsxImportSource ?? 'react';
-	const compile_options = { runtimeImports: options.runtimeImports };
+	const compile_options = { runtimeImports: options.runtimeImports, platform };
 
 	/** @type {Map<string, string>} */
 	const css_cache = new Map();
@@ -78,14 +80,32 @@ export function tsrxReact(options = {}) {
 		name: '@tsrx/vite-plugin-react',
 		enforce: 'pre',
 
-		configEnvironment(name, config) {
+		config(config = /** @type {import('vite').UserConfig} */ ({})) {
+			if (platform === undefined) return;
+			return {
+				define: mergePlatformDefinitions(config.define, platform, {
+					integration: 'Vite',
+				}),
+			};
+		},
+
+		configEnvironment(name, config = /** @type {import('vite').EnvironmentOptions} */ ({})) {
 			const discovers_dependencies =
 				name === 'client' || config.optimizeDeps?.noDiscovery === false;
-			if (!discovers_dependencies) {
+			if (!discovers_dependencies && platform === undefined) {
 				return;
 			}
 
-			return create_dep_scan_config(jsxImportSource, compile_options);
+			return {
+				...(platform === undefined
+					? {}
+					: {
+							define: mergePlatformDefinitions(config.define, platform, {
+								integration: `Vite environment ${JSON.stringify(name)}`,
+							}),
+						}),
+				...(discovers_dependencies ? create_dep_scan_config(jsxImportSource, compile_options) : {}),
+			};
 		},
 
 		resolveId(/** @type {string} */ source) {
@@ -150,7 +170,7 @@ export function tsrxReact(options = {}) {
 
 /**
  * @param {string} jsxImportSource
- * @param {{ runtimeImports?: RuntimeImportMode }} compile_options
+ * @param {{ runtimeImports?: RuntimeImportMode, platform?: Platform }} compile_options
  * @returns {TsrxReactEnvironmentConfig}
  */
 function create_dep_scan_config(jsxImportSource, compile_options) {
@@ -174,7 +194,7 @@ function create_dep_scan_config(jsxImportSource, compile_options) {
 
 /**
  * @param {string} jsxImportSource
- * @param {{ runtimeImports?: RuntimeImportMode }} compile_options
+ * @param {{ runtimeImports?: RuntimeImportMode, platform?: Platform }} compile_options
  * @returns {DepScanTransformPlugin}
  */
 function create_dep_scan_plugin(jsxImportSource, compile_options) {
