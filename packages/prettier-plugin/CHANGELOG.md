@@ -1,5 +1,15 @@
 # @tsrx/prettier-plugin
 
+## 0.3.137
+
+### Patch Changes
+
+- [#96](https://github.com/tsrx-org/tsrx/pull/96)
+  [`0415b1c`](https://github.com/tsrx-org/tsrx/commit/0415b1c446b11571f5bb6d1787a320388c54899e)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Keep the parentheses of an
+  object destructuring assignment used as a statement (`({ a } = obj);`), which
+  the formatter dropped, turning the statement into a block.
+
 ## 0.3.136
 
 ### Patch Changes
