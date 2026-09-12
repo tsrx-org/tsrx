@@ -48,6 +48,8 @@ private class GuardedRainbowBracketsRuntime(
 		delegate.settings()
 	} catch (_: LinkageError) {
 		null
+	} catch (_: RuntimeException) {
+		null
 	}
 
 	override fun colorKey(
@@ -58,12 +60,15 @@ private class GuardedRainbowBracketsRuntime(
 		delegate.colorKey(scheme, kind, level)
 	} catch (_: LinkageError) {
 		null
+	} catch (_: ArithmeticException) {
+		null
 	}
 }
 
 private class DirectRainbowBracketsRuntime : TsrxRainbowBracketsRuntime {
-	override fun settings(): TsrxRainbowBracketsSettings {
+	override fun settings(): TsrxRainbowBracketsSettings? {
 		val settings = ApplicationManager.getApplication().getService(RainbowSettings::class.java)
+			?: return null
 		return TsrxRainbowBracketsSettings(
 			enabled = settings.isRainbowEnabled,
 			enabledKinds = buildSet {

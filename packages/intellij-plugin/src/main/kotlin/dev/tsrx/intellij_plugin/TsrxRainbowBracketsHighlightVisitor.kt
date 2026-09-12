@@ -63,12 +63,12 @@ class TsrxRainbowBracketsHighlightVisitor : HighlightVisitor {
 		val file = activeFile ?: return
 		if (visitedRoot || element !== file) return
 		visitedRoot = true
-		for (highlight in collectHighlights(file)) {
+		forEachHighlight(file) { range, key, _, _ ->
 			ProgressManager.checkCanceled()
 			val info = HighlightInfo
 				.newHighlightInfo(HighlightInfoType.INFORMATION)
-				.range(highlight.range)
-				.textAttributes(highlight.key)
+				.range(range)
+				.textAttributes(key)
 				.create()
 			holder?.add(info)
 		}
@@ -80,38 +80,41 @@ class TsrxRainbowBracketsHighlightVisitor : HighlightVisitor {
 		schemeProvider = schemeProvider,
 	)
 
-	internal fun collectHighlights(file: PsiFile): List<TsrxRainbowBracketHighlight> {
-		if (!suitableForFile(file)) return emptyList()
+	internal fun collectHighlights(file: PsiFile): List<TsrxRainbowBracketHighlight> = buildList {
+		forEachHighlight(file) { range, key, structureKind, level ->
+			add(TsrxRainbowBracketHighlight(range, key, structureKind, level))
+		}
+	}
+
+	private fun forEachHighlight(
+		file: PsiFile,
+		emit: (TextRange, TextAttributesKey, TsrxRainbowBracketKind, Int) -> Unit,
+	) {
+		if (!suitableForFile(file)) return
 		val runtime = try {
 			runtimeProvider()
 		} catch (_: LinkageError) {
-			return emptyList()
-		} ?: return emptyList()
-		val settings = runtime.settings() ?: return emptyList()
+			return
+		} ?: return
+		val settings = runtime.settings() ?: return
 		val source = file.viewProvider.contents
-		if (!settings.isEligible(source, TsrxLanguage.id)) return emptyList()
+		if (!settings.isEligible(source, TsrxLanguage.id, ProgressManager::checkCanceled)) return
 
 		val lexer = SyntaxHighlighterFactory
 			.getSyntaxHighlighter(TsrxLanguage, file.project, file.virtualFile)
 			.highlightingLexer
 		val analysis = analyzer(source, lexer, ProgressManager::checkCanceled)
 		val scheme = schemeProvider()
-		return buildList {
-			for (structure in analysis.structures) {
-				ProgressManager.checkCanceled()
-				val request = structure.colorRequest(settings) ?: continue
-				val key = runtime.colorKey(scheme, request.colorKind, request.level) ?: continue
-				for (range in structure.punctuation) {
-					add(
-						TsrxRainbowBracketHighlight(
-							range = range,
-							key = key,
-							structureKind = structure.kind,
-							colorKind = request.colorKind,
-							level = request.level,
-						),
-					)
-				}
+		val colorKeys = mutableMapOf<ColorRequest, TextAttributesKey?>()
+		for (structure in analysis.structures) {
+			ProgressManager.checkCanceled()
+			val request = structure.colorRequest(settings) ?: continue
+			if (request !in colorKeys) {
+				colorKeys[request] = runtime.colorKey(scheme, request.colorKind, request.level)
+			}
+			val key = colorKeys[request] ?: continue
+			for (range in structure.punctuation) {
+				emit(range, key, structure.kind, request.level)
 			}
 		}
 	}
@@ -121,7 +124,6 @@ internal data class TsrxRainbowBracketHighlight(
 	val range: TextRange,
 	val key: TextAttributesKey,
 	val structureKind: TsrxRainbowBracketKind,
-	val colorKind: TsrxRainbowBracketKind,
 	val level: Int,
 )
 
@@ -133,10 +135,11 @@ private data class ColorRequest(
 private fun TsrxRainbowBracketsSettings.isEligible(
 	source: CharSequence,
 	languageId: String,
+	checkCanceled: () -> Unit,
 ): Boolean {
 	if (!enabled || enabledKinds.isEmpty() || numberOfColors <= 0) return false
 	if (languageBlacklist.any { it.equals(languageId, ignoreCase = true) }) return false
-	if (skipLargeFiles && source.lineCount() > largeFileLineThreshold) return false
+	if (skipLargeFiles && source.exceedsLineThreshold(largeFileLineThreshold, checkCanceled)) return false
 	return true
 }
 
@@ -155,11 +158,20 @@ private fun TsrxRainbowBracketStructure.colorRequest(
 	)
 }
 
-private fun CharSequence.lineCount(): Int {
+private fun CharSequence.exceedsLineThreshold(
+	threshold: Int,
+	checkCanceled: () -> Unit,
+): Boolean {
 	var lines = 1
-	for (character in this) if (character == '\n') lines += 1
-	return lines
+	if (lines > threshold) return true
+	for (index in indices) {
+		if (index % CANCELLATION_INTERVAL == 0) checkCanceled()
+		if (this[index] == '\n' && ++lines > threshold) return true
+	}
+	return false
 }
+
+private const val CANCELLATION_INTERVAL = 1_024
 
 private val HTML_INSIDE_JS_ORIGINS = setOf(
 	TsrxRainbowBracketOrigin.JSX_EXPRESSION,

@@ -1,12 +1,10 @@
 package dev.tsrx.intellij_plugin
 
 import com.intellij.codeInsight.daemon.impl.analysis.HighlightInfoHolder
-import com.intellij.lexer.Lexer
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.editor.colors.TextAttributesScheme
 import com.intellij.openapi.fileTypes.PlainTextFileType
-import com.intellij.psi.PsiFile
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 
 class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
@@ -48,25 +46,25 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 		""".trimIndent()
 
 		assertEquals(0, collect(source, runtime = null).analyzerRuns)
-		assertEquals(0, collect(source, settings = settings(enabled = false)).analyzerRuns)
-		assertEquals(0, collect(source, settings = settings(languageBlacklist = setOf("tsrx"))).analyzerRuns)
+		assertEquals(0, collect(source, settings = DEFAULT_SETTINGS.copy(enabled = false)).analyzerRuns)
+		assertEquals(0, collect(source, settings = DEFAULT_SETTINGS.copy(languageBlacklist = setOf("tsrx"))).analyzerRuns)
 		assertEquals(
 			0,
 			collect(
 				source,
-				settings = settings(skipLargeFiles = true, largeFileLineThreshold = 2),
+				settings = DEFAULT_SETTINGS.copy(skipLargeFiles = true, largeFileLineThreshold = 2),
 			).analyzerRuns,
 		)
-		assertEquals(0, collect(source, settings = settings(numberOfColors = 0)).analyzerRuns)
-		assertEquals(0, collect(source, settings = settings(numberOfColors = -1)).analyzerRuns)
-		assertEquals(0, collect(source, settings = settings(enabledKinds = emptySet())).analyzerRuns)
+		assertEquals(0, collect(source, settings = DEFAULT_SETTINGS.copy(numberOfColors = 0)).analyzerRuns)
+		assertEquals(0, collect(source, settings = DEFAULT_SETTINGS.copy(numberOfColors = -1)).analyzerRuns)
+		assertEquals(0, collect(source, settings = DEFAULT_SETTINGS.copy(enabledKinds = emptySet())).analyzerRuns)
 
 		val atThreshold = collect(
 			source,
-			settings = settings(skipLargeFiles = true, largeFileLineThreshold = 3),
+			settings = DEFAULT_SETTINGS.copy(skipLargeFiles = true, largeFileLineThreshold = 3),
 		)
 		assertEquals(1, atThreshold.analyzerRuns)
-		assertEquals(listOf("ROUND:0"), atThreshold.runtime.requests)
+		assertEquals(listOf(request(TsrxRainbowBracketKind.ROUND, 0)), atThreshold.runtime.requests)
 	}
 
 	fun testKindFilteringDoesNotRenumberMixedDepth() {
@@ -78,13 +76,15 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 		val allKinds = collect(source)
 		val withoutSquares = collect(
 			source,
-			settings = settings(enabledKinds = TsrxRainbowBracketKind.entries.toSet() - TsrxRainbowBracketKind.SQUARE),
+			settings = DEFAULT_SETTINGS.copy(
+				enabledKinds = TsrxRainbowBracketKind.entries.toSet() - TsrxRainbowBracketKind.SQUARE,
+			),
 		)
 
-		assertTrue(allKinds.runtime.requests.contains("SQUARE:4"))
-		assertTrue(allKinds.runtime.requests.contains("ROUND:5"))
-		assertFalse(withoutSquares.runtime.requests.any { it.startsWith("SQUARE:") })
-		assertTrue(withoutSquares.runtime.requests.contains("ROUND:5"))
+		assertTrue(allKinds.runtime.requests.contains(request(TsrxRainbowBracketKind.SQUARE, 4)))
+		assertTrue(allKinds.runtime.requests.contains(request(TsrxRainbowBracketKind.ROUND, 5)))
+		assertFalse(withoutSquares.runtime.requests.any { it.kind == TsrxRainbowBracketKind.SQUARE })
+		assertTrue(withoutSquares.runtime.requests.contains(request(TsrxRainbowBracketKind.ROUND, 5)))
 	}
 
 	fun testPerFamilyDepthAndRoundColorOverride() {
@@ -93,15 +93,22 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 				return <Panel value={{ items: [call()] }} />;
 			}
 		""".trimIndent()
-		val perFamily = collect(source, settings = settings(cycleAcrossAllKinds = false))
+		val perFamily = collect(source, settings = DEFAULT_SETTINGS.copy(cycleAcrossAllKinds = false))
 		assertEquals(
-			listOf("ROUND:0", "CURLY:0", "ANGLE:0", "CURLY:1", "CURLY:2", "SQUARE:0", "ROUND:0"),
+			listOf(
+				request(TsrxRainbowBracketKind.ROUND, 0),
+				request(TsrxRainbowBracketKind.CURLY, 0),
+				request(TsrxRainbowBracketKind.ANGLE, 0),
+				request(TsrxRainbowBracketKind.CURLY, 1),
+				request(TsrxRainbowBracketKind.CURLY, 2),
+				request(TsrxRainbowBracketKind.SQUARE, 0),
+			),
 			perFamily.runtime.requests,
 		)
 
-		val roundColors = collect(source, settings = settings(useRoundColorsForAllKinds = true))
+		val roundColors = collect(source, settings = DEFAULT_SETTINGS.copy(useRoundColorsForAllKinds = true))
 		assertTrue(roundColors.runtime.requests.isNotEmpty())
-		assertTrue(roundColors.runtime.requests.all { it.startsWith("ROUND:") })
+		assertTrue(roundColors.runtime.requests.all { it.kind == TsrxRainbowBracketKind.ROUND })
 		assertTrue(roundColors.highlights.any { it.structureKind == TsrxRainbowBracketKind.ANGLE })
 	}
 
@@ -109,22 +116,22 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 		val source = "[()]"
 		val skipFirst = collect(
 			source,
-			settings = settings(cycleAcrossAllKinds = false, skipFirstLevel = true),
+			settings = DEFAULT_SETTINGS.copy(cycleAcrossAllKinds = false, skipFirstLevel = true),
 		)
-		assertEquals(emptyList<String>(), skipFirst.runtime.requests)
+		assertEquals(emptyList<RecordedColorRequest>(), skipFirst.runtime.requests)
 
-		val mixedSkipFirst = collect(source, settings = settings(skipFirstLevel = true))
-		assertEquals(listOf("ROUND:1"), mixedSkipFirst.runtime.requests)
+		val mixedSkipFirst = collect(source, settings = DEFAULT_SETTINGS.copy(skipFirstLevel = true))
+		assertEquals(listOf(request(TsrxRainbowBracketKind.ROUND, 1)), mixedSkipFirst.runtime.requests)
 
-		val skipEmpty = collect(source, settings = settings(skipEmptyPairs = true))
-		assertEquals(listOf("SQUARE:0"), skipEmpty.runtime.requests)
+		val skipEmpty = collect(source, settings = DEFAULT_SETTINGS.copy(skipEmptyPairs = true))
+		assertEquals(listOf(request(TsrxRainbowBracketKind.SQUARE, 0)), skipEmpty.runtime.requests)
 		assertEquals(2, skipEmpty.highlights.size)
 	}
 
 	fun testHtmlAndTemplateSettingsSuppressOnlyTheirOwnStructures() {
 		val html = collect(
 			"const view = <Panel>{call()}</Panel>;",
-			settings = settings(rainbowHtmlInsideJs = false),
+			settings = DEFAULT_SETTINGS.copy(rainbowHtmlInsideJs = false),
 		)
 		assertFalse(html.highlights.any { it.structureKind == TsrxRainbowBracketKind.ANGLE })
 		assertFalse(html.highlights.any { it.structureKind == TsrxRainbowBracketKind.CURLY })
@@ -132,16 +139,22 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 
 		val template = collect(
 			"const value = `prefix ${'$'}{items[0]}`;",
-			settings = settings(skipTemplateStrings = true),
+			settings = DEFAULT_SETTINGS.copy(skipTemplateStrings = true),
 		)
 		assertFalse(template.highlights.any { it.structureKind == TsrxRainbowBracketKind.CURLY })
 		assertTrue(template.highlights.any { it.structureKind == TsrxRainbowBracketKind.SQUARE && it.level == 1 })
 	}
 
 	fun testMissingColorKeySkipsOnlyThatStructure() {
-		val result = collect("([])", missingKeys = setOf("SQUARE:1"))
+		val result = collect("([])", missingKeys = setOf(request(TsrxRainbowBracketKind.SQUARE, 1)))
 
-		assertEquals(listOf("ROUND:0", "SQUARE:1"), result.runtime.requests)
+		assertEquals(
+			listOf(
+				request(TsrxRainbowBracketKind.ROUND, 0),
+				request(TsrxRainbowBracketKind.SQUARE, 1),
+			),
+			result.runtime.requests,
+		)
 		assertTrue(result.highlights.all { it.structureKind == TsrxRainbowBracketKind.ROUND })
 	}
 
@@ -149,7 +162,7 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 		val file = myFixture.configureByText(TsrxFileType.INSTANCE, "()")
 		var analyzerRuns = 0
 		var failAnalysis = false
-		val runtime = RecordingRuntime(settings())
+		val runtime = RecordingRuntime(DEFAULT_SETTINGS)
 		val visitor = TsrxRainbowBracketsHighlightVisitor(
 			runtimeProvider = { runtime },
 			analyzer = { source, lexer, checkCanceled ->
@@ -187,9 +200,9 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 
 	private fun collect(
 		source: String,
-		settings: TsrxRainbowBracketsSettings = settings(),
+		settings: TsrxRainbowBracketsSettings = DEFAULT_SETTINGS,
 		runtime: RecordingRuntime? = RecordingRuntime(settings),
-		missingKeys: Set<String> = emptySet(),
+		missingKeys: Set<RecordedColorRequest> = emptySet(),
 	): Result {
 		val file = myFixture.configureByText(TsrxFileType.INSTANCE, source)
 		val recordingRuntime = runtime ?: RecordingRuntime(settings)
@@ -216,11 +229,16 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 		val analyzerRuns: Int,
 	)
 
+	private data class RecordedColorRequest(
+		val kind: TsrxRainbowBracketKind,
+		val level: Int,
+	)
+
 	private class RecordingRuntime(
 		private val snapshot: TsrxRainbowBracketsSettings,
 	) : TsrxRainbowBracketsRuntime {
-		val requests = mutableListOf<String>()
-		var missingKeys = emptySet<String>()
+		val requests = mutableListOf<RecordedColorRequest>()
+		var missingKeys = emptySet<RecordedColorRequest>()
 
 		override fun settings(): TsrxRainbowBracketsSettings = snapshot
 
@@ -229,39 +247,32 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 			kind: TsrxRainbowBracketKind,
 			level: Int,
 		): TextAttributesKey? {
-			val request = "$kind:$level"
+			val request = RecordedColorRequest(kind, level)
 			requests += request
-			return if (request in missingKeys) null else TextAttributesKey.createTextAttributesKey("TSRX.TEST.$request")
+			return if (request in missingKeys) {
+				null
+			} else {
+				TextAttributesKey.createTextAttributesKey("TSRX.TEST.${request.kind}:${request.level}")
+			}
 		}
 	}
 
 	private companion object {
-		fun settings(
-			enabled: Boolean = true,
-			enabledKinds: Set<TsrxRainbowBracketKind> = TsrxRainbowBracketKind.entries.toSet(),
-			skipFirstLevel: Boolean = false,
-			skipEmptyPairs: Boolean = false,
-			languageBlacklist: Set<String> = emptySet(),
-			skipLargeFiles: Boolean = false,
-			largeFileLineThreshold: Int = 1_000,
-			rainbowHtmlInsideJs: Boolean = true,
-			useRoundColorsForAllKinds: Boolean = false,
-			cycleAcrossAllKinds: Boolean = true,
-			skipTemplateStrings: Boolean = false,
-			numberOfColors: Int = 5,
-		) = TsrxRainbowBracketsSettings(
-			enabled = enabled,
-			enabledKinds = enabledKinds,
-			skipFirstLevel = skipFirstLevel,
-			skipEmptyPairs = skipEmptyPairs,
-			languageBlacklist = languageBlacklist,
-			skipLargeFiles = skipLargeFiles,
-			largeFileLineThreshold = largeFileLineThreshold,
-			rainbowHtmlInsideJs = rainbowHtmlInsideJs,
-			useRoundColorsForAllKinds = useRoundColorsForAllKinds,
-			cycleAcrossAllKinds = cycleAcrossAllKinds,
-			skipTemplateStrings = skipTemplateStrings,
-			numberOfColors = numberOfColors,
+		val DEFAULT_SETTINGS = TsrxRainbowBracketsSettings(
+			enabled = true,
+			enabledKinds = TsrxRainbowBracketKind.entries.toSet(),
+			skipFirstLevel = false,
+			skipEmptyPairs = false,
+			languageBlacklist = emptySet(),
+			skipLargeFiles = false,
+			largeFileLineThreshold = 1_000,
+			rainbowHtmlInsideJs = true,
+			useRoundColorsForAllKinds = false,
+			cycleAcrossAllKinds = true,
+			skipTemplateStrings = false,
+			numberOfColors = 5,
 		)
+
+		fun request(kind: TsrxRainbowBracketKind, level: Int) = RecordedColorRequest(kind, level)
 	}
 }

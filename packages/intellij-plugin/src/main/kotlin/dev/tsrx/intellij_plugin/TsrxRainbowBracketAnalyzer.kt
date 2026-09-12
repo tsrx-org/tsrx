@@ -13,9 +13,9 @@ internal object TsrxRainbowBracketAnalyzer {
 		checkCanceled: () -> Unit,
 	): TsrxRainbowBracketAnalysis {
 		val metrics = MutableMetrics()
-		val ordinaryCandidates = mutableListOf<DelimiterCandidate>()
+		val delimiterCandidates = mutableListOf<DelimiterCandidate>()
 		val pendingTagBegins = ArrayDeque<TagBegin>()
-		val tags = mutableListOf<Tag>()
+		val tags = mutableListOf<Tag?>()
 		lexer.start(source)
 
 		while (lexer.tokenType != null) {
@@ -25,56 +25,83 @@ internal object TsrxRainbowBracketAnalyzer {
 			val start = lexer.tokenStart
 			val end = lexer.tokenEnd
 			if (tokenType is TextMateElementType && start >= 0 && start < end && end <= source.length) {
-				val scopes = tokenType.scope.names()
-				val leafScope = scopes.firstOrNull()
-				val tokenText = source.subSequence(start, end).toString()
-				val range = TextRange(start, end)
-				when (leafScope) {
-					TAG_BEGIN_SCOPE -> pendingTagBegins.addLast(TagBegin(range, tokenText == "</"))
+				val scope = tokenType.scope
+				when (scope.name()) {
+					TAG_BEGIN_SCOPE -> {
+						val begin = TagBegin(
+							range = TextRange(start, end),
+							closing = source.tokenEquals(start, end, "</"),
+							order = tags.size,
+						)
+						pendingTagBegins.addLast(begin)
+						tags += null
+					}
+
 					TAG_END_SCOPE -> if (pendingTagBegins.isNotEmpty()) {
 						val begin = pendingTagBegins.removeLast()
+						val range = TextRange(start, end)
 						metrics.stackOperations += 2
-						tags += Tag(
+						tags[begin.order] = Tag(
 							begin = begin,
 							end = range,
 							name = source.tagName(begin.range.endOffset, range.startOffset),
-							selfClosing = tokenText == "/>" && !begin.closing,
+							selfClosing = source.tokenEquals(start, end, "/>") && !begin.closing,
 						)
 					}
 
-					else -> classifyDelimiter(leafScope, scopes, tokenText, range)?.let(ordinaryCandidates::add)
+					else -> classifyDelimiter(
+						scope = scope,
+						source = source,
+						start = start,
+						end = end,
+						order = delimiterCandidates.size,
+					)?.let(delimiterCandidates::add)
 				}
 			}
 			lexer.advance()
 		}
 
-		val structures = buildList {
-			addAll(pairDelimiters(source, ordinaryCandidates, metrics, checkCanceled))
-			addAll(pairTags(tags, metrics, checkCanceled))
-		}
+		val structures = mergeStructures(
+			pairDelimiters(source, delimiterCandidates, metrics, checkCanceled),
+			pairTags(tags.filterNotNull(), metrics, checkCanceled),
+		)
 		val valid = discardCrossingSpans(structures, metrics, checkCanceled)
 		val leveled = assignLevels(valid, metrics, checkCanceled)
 		return TsrxRainbowBracketAnalysis(
-			structures = leveled.sortedBy { it.punctuation.first().startOffset },
+			structures = leveled,
 			operations = metrics.freeze(),
 		)
 	}
 
 	private fun classifyDelimiter(
-		leafScope: String?,
-		scopes: List<String>,
-		text: String,
-		range: TextRange,
-	): DelimiterCandidate? = when (leafScope) {
-		PARAMETERS_BEGIN_SCOPE -> DelimiterCandidate(TsrxRainbowBracketKind.ROUND, range, true)
-		PARAMETERS_END_SCOPE -> DelimiterCandidate(TsrxRainbowBracketKind.ROUND, range, false)
-		ROUND_SCOPE -> candidateForText(TsrxRainbowBracketKind.ROUND, text, range)
-		SQUARE_SCOPE -> candidateForText(TsrxRainbowBracketKind.SQUARE, text, range)
-		BLOCK_SCOPE -> candidateForText(
+		scope: TextMateScope,
+		source: CharSequence,
+		start: Int,
+		end: Int,
+		order: Int,
+	): DelimiterCandidate? {
+		return when (scope.name()) {
+		PARAMETERS_BEGIN_SCOPE -> DelimiterCandidate(
+			TsrxRainbowBracketKind.ROUND,
+			TextRange(start, end),
+			true,
+			order = order,
+		)
+		PARAMETERS_END_SCOPE -> DelimiterCandidate(
+			TsrxRainbowBracketKind.ROUND,
+			TextRange(start, end),
+			false,
+			order = order,
+		)
+		ROUND_SCOPE -> candidateForToken(TsrxRainbowBracketKind.ROUND, source, start, end, order)
+		SQUARE_SCOPE -> candidateForToken(TsrxRainbowBracketKind.SQUARE, source, start, end, order)
+		BLOCK_SCOPE -> candidateForToken(
 			TsrxRainbowBracketKind.CURLY,
-			text,
-			range,
-			if (TSRX_BLOCK_SCOPE in scopes) {
+			source,
+			start,
+			end,
+			order,
+			if (scope.contains(TSRX_BLOCK_SCOPE)) {
 				TsrxRainbowBracketOrigin.TEMPLATE_BLOCK
 			} else {
 				TsrxRainbowBracketOrigin.ORDINARY
@@ -83,58 +110,69 @@ internal object TsrxRainbowBracketAnalyzer {
 
 		EMBEDDED_BEGIN_SCOPE -> DelimiterCandidate(
 			TsrxRainbowBracketKind.CURLY,
-			range,
+			TextRange(start, end),
 			true,
 			TsrxRainbowBracketOrigin.JSX_EXPRESSION,
+			order,
 		)
 
 		EMBEDDED_END_SCOPE -> DelimiterCandidate(
 			TsrxRainbowBracketKind.CURLY,
-			range,
+			TextRange(start, end),
 			false,
 			TsrxRainbowBracketOrigin.JSX_EXPRESSION,
+			order,
 		)
 
 		TEMPLATE_BEGIN_SCOPE -> DelimiterCandidate(
 			TsrxRainbowBracketKind.CURLY,
-			range,
+			TextRange(start, end),
 			true,
 			TsrxRainbowBracketOrigin.TEMPLATE_SUBSTITUTION,
+			order,
 		)
 
 		TEMPLATE_END_SCOPE -> DelimiterCandidate(
 			TsrxRainbowBracketKind.CURLY,
-			range,
+			TextRange(start, end),
 			false,
 			TsrxRainbowBracketOrigin.TEMPLATE_SUBSTITUTION,
+			order,
 		)
 
-		else -> fallbackCandidateForText(scopes, text, range)
+		else -> fallbackCandidateForToken(scope, source, start, end, order)
+		}
 	}
 
-	private fun fallbackCandidateForText(
-		scopes: List<String>,
-		text: String,
-		range: TextRange,
+	private fun fallbackCandidateForToken(
+		scope: TextMateScope,
+		source: CharSequence,
+		start: Int,
+		end: Int,
+		order: Int,
 	): DelimiterCandidate? {
-		if (text.length != 1 || scopes.any { it.startsWith("string.") || it.startsWith("comment.") }) return null
-		val kind = when (text[0]) {
+		if (end - start != 1 || scope.containsLexicalContent()) return null
+		val kind = when (source[start]) {
 			'(', ')' -> TsrxRainbowBracketKind.ROUND
 			'[', ']' -> TsrxRainbowBracketKind.SQUARE
 			'{', '}' -> TsrxRainbowBracketKind.CURLY
 			else -> return null
 		}
-		return candidateForText(kind, text, range)
+		return candidateForToken(kind, source, start, end, order)
 	}
 
-	private fun candidateForText(
+	private fun candidateForToken(
 		kind: TsrxRainbowBracketKind,
-		text: String,
-		range: TextRange,
+		source: CharSequence,
+		start: Int,
+		end: Int,
+		order: Int,
 		origin: TsrxRainbowBracketOrigin = TsrxRainbowBracketOrigin.ORDINARY,
-	): DelimiterCandidate? = when (text) {
-		"(", "[", "{" -> DelimiterCandidate(kind, range, true, origin)
-		")", "]", "}" -> DelimiterCandidate(kind, range, false, origin)
+	): DelimiterCandidate? = if (end - start != 1) {
+		null
+	} else when (source[start]) {
+		'(', '[', '{' -> DelimiterCandidate(kind, TextRange(start, end), true, origin, order)
+		')', ']', '}' -> DelimiterCandidate(kind, TextRange(start, end), false, origin, order)
 		else -> null
 	}
 
@@ -146,7 +184,7 @@ internal object TsrxRainbowBracketAnalyzer {
 	): List<PendingStructure> {
 		val stack = ArrayDeque<DelimiterCandidate>()
 		val openCounts = mutableMapOf<DelimiterKey, Int>()
-		val structures = mutableListOf<PendingStructure>()
+		val structures = arrayOfNulls<PendingStructure>(candidates.size)
 		for (candidate in candidates) {
 			checkCanceled()
 			val key = candidate.key
@@ -158,7 +196,7 @@ internal object TsrxRainbowBracketAnalyzer {
 			}
 
 			if (openCounts.getOrDefault(key, 0) == 0) continue
-			if (stack.last().key != key) {
+			if (stack.getLast().key != key) {
 				do {
 					checkCanceled()
 					val discarded = stack.removeLast()
@@ -171,7 +209,7 @@ internal object TsrxRainbowBracketAnalyzer {
 			val opening = stack.removeLast()
 			openCounts.decrement(key)
 			metrics.stackOperations += 1
-			structures += PendingStructure(
+			structures[opening.order] = PendingStructure(
 				kind = candidate.kind,
 				origin = candidate.origin,
 				span = TextRange(opening.range.startOffset, candidate.range.endOffset),
@@ -181,7 +219,7 @@ internal object TsrxRainbowBracketAnalyzer {
 					.all(Char::isWhitespace),
 			)
 		}
-		return structures
+		return structures.filterNotNull()
 	}
 
 	private fun pairTags(
@@ -191,11 +229,11 @@ internal object TsrxRainbowBracketAnalyzer {
 	): List<PendingStructure> {
 		val stack = ArrayDeque<Tag>()
 		val openCounts = mutableMapOf<String, Int>()
-		val structures = mutableListOf<PendingStructure>()
-		for (tag in tags.sortedBy { it.begin.range.startOffset }) {
+		val structures = arrayOfNulls<PendingStructure>((tags.maxOfOrNull { it.begin.order } ?: -1) + 1)
+		for (tag in tags) {
 			checkCanceled()
 			if (tag.selfClosing) {
-				structures += tag.asSelfClosingStructure()
+				structures[tag.begin.order] = tag.asSelfClosingStructure()
 				continue
 			}
 			if (!tag.begin.closing) {
@@ -206,7 +244,7 @@ internal object TsrxRainbowBracketAnalyzer {
 			}
 
 			if (openCounts.getOrDefault(tag.name, 0) == 0) continue
-			if (stack.last().name != tag.name) {
+			if (stack.getLast().name != tag.name) {
 				do {
 					checkCanceled()
 					val discarded = stack.removeLast()
@@ -219,7 +257,7 @@ internal object TsrxRainbowBracketAnalyzer {
 			val opening = stack.removeLast()
 			openCounts.decrement(tag.name)
 			metrics.stackOperations += 1
-			structures += PendingStructure(
+			structures[opening.begin.order] = PendingStructure(
 				kind = TsrxRainbowBracketKind.ANGLE,
 				origin = TsrxRainbowBracketOrigin.JSX_TAG,
 				span = TextRange(opening.begin.range.startOffset, tag.end.endOffset),
@@ -227,7 +265,30 @@ internal object TsrxRainbowBracketAnalyzer {
 				isEmpty = false,
 			)
 		}
-		return structures
+		return structures.filterNotNull()
+	}
+
+	private fun mergeStructures(
+		delimiters: List<PendingStructure>,
+		tags: List<PendingStructure>,
+	): List<PendingStructure> = buildList(delimiters.size + tags.size) {
+		var delimiterIndex = 0
+		var tagIndex = 0
+		while (delimiterIndex < delimiters.size || tagIndex < tags.size) {
+			val delimiter = delimiters.getOrNull(delimiterIndex)
+			val tag = tags.getOrNull(tagIndex)
+			val takeDelimiter = tag == null || delimiter != null && (
+				delimiter.span.startOffset < tag.span.startOffset ||
+					delimiter.span.startOffset == tag.span.startOffset && delimiter.span.endOffset >= tag.span.endOffset
+			)
+			if (takeDelimiter) {
+				add(checkNotNull(delimiter))
+				delimiterIndex += 1
+			} else {
+				add(checkNotNull(tag))
+				tagIndex += 1
+			}
+		}
 	}
 
 	private fun discardCrossingSpans(
@@ -235,21 +296,20 @@ internal object TsrxRainbowBracketAnalyzer {
 		metrics: MutableMetrics,
 		checkCanceled: () -> Unit,
 	): List<PendingStructure> {
-		val sorted = structures.sortedWith(compareBy<PendingStructure>({ it.span.startOffset }, { -it.span.endOffset }))
 		val active = ArrayDeque<IndexedValue<PendingStructure>>()
-		val invalid = BooleanArray(sorted.size)
-		for ((index, structure) in sorted.withIndex()) {
+		val invalid = BooleanArray(structures.size)
+		for ((index, structure) in structures.withIndex()) {
 			checkCanceled()
 			while (active.isNotEmpty()) {
 				metrics.intervalComparisons += 1
-				if (structure.span.startOffset < active.last().value.span.endOffset) break
+				if (structure.span.startOffset < active.getLast().value.span.endOffset) break
 				active.removeLast()
 				metrics.stackOperations += 1
 			}
 			var crossed = false
 			while (active.isNotEmpty()) {
 				metrics.intervalComparisons += 1
-				if (structure.span.endOffset <= active.last().value.span.endOffset) break
+				if (structure.span.endOffset <= active.getLast().value.span.endOffset) break
 				invalid[active.removeLast().index] = true
 				metrics.stackOperations += 1
 				crossed = true
@@ -261,7 +321,7 @@ internal object TsrxRainbowBracketAnalyzer {
 				metrics.stackOperations += 1
 			}
 		}
-		return sorted.filterIndexed { index, _ -> !invalid[index] }
+		return structures.filterIndexed { index, _ -> !invalid[index] }
 	}
 
 	private fun assignLevels(
@@ -276,7 +336,7 @@ internal object TsrxRainbowBracketAnalyzer {
 				checkCanceled()
 				while (active.isNotEmpty()) {
 					metrics.intervalComparisons += 1
-					if (structure.span.startOffset < active.last().span.endOffset) break
+					if (structure.span.startOffset < active.getLast().span.endOffset) break
 					familyCounts[active.removeLast().kind.ordinal] -= 1
 					metrics.stackOperations += 1
 				}
@@ -298,21 +358,37 @@ internal object TsrxRainbowBracketAnalyzer {
 		}
 	}
 
-	private fun MutableMap<DelimiterKey, Int>.decrement(key: DelimiterKey) {
+	private fun <K> MutableMap<K, Int>.decrement(key: K) {
 		this[key] = getValue(key) - 1
 	}
 
-	private fun MutableMap<String, Int>.decrement(key: String) {
-		this[key] = getValue(key) - 1
-	}
+	private fun TextMateScope.name(): String? = scopeName?.toString()
 
-	private fun TextMateScope.names(): List<String> = buildList {
-		var current: TextMateScope? = this@names
+	private fun TextMateScope.contains(expected: String): Boolean {
+		var current: TextMateScope? = this
 		while (current != null) {
-			val name = current.scopeName.toString()
-			if (name != "null") add(name)
+			if (current.name() == expected) return true
 			current = current.parent
 		}
+		return false
+	}
+
+	private fun TextMateScope.containsLexicalContent(): Boolean {
+		var current: TextMateScope? = this
+		while (current != null) {
+			val name = current.name()
+			if (name?.startsWith("string.") == true || name?.startsWith("comment.") == true) return true
+			current = current.parent
+		}
+		return false
+	}
+
+	private fun CharSequence.tokenEquals(start: Int, end: Int, expected: String): Boolean {
+		if (end - start != expected.length) return false
+		for (index in expected.indices) {
+			if (this[start + index] != expected[index]) return false
+		}
+		return true
 	}
 
 	private fun CharSequence.tagName(start: Int, end: Int): String {
@@ -383,6 +459,7 @@ private data class DelimiterCandidate(
 	val range: TextRange,
 	val opening: Boolean,
 	val origin: TsrxRainbowBracketOrigin = TsrxRainbowBracketOrigin.ORDINARY,
+	val order: Int,
 ) {
 	val key = DelimiterKey(kind, origin)
 }
@@ -398,6 +475,7 @@ private data class PendingStructure(
 private data class TagBegin(
 	val range: TextRange,
 	val closing: Boolean,
+	val order: Int,
 )
 
 private data class Tag(

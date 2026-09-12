@@ -10,21 +10,22 @@ import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.editor.colors.TextAttributesScheme
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.intellij.util.xmlb.XmlSerializerUtil
 
 class TsrxRainbowBracketsHighlightingTest : BasePlatformTestCase() {
 	private lateinit var rainbowSettings: RainbowSettings
-	private lateinit var originalSettings: ExternalSettingsState
+	private lateinit var originalSettings: RainbowSettings
 
 	override fun setUp() {
 		super.setUp()
 		rainbowSettings = ApplicationManager.getApplication().getService(RainbowSettings::class.java)
-		originalSettings = ExternalSettingsState.capture(rainbowSettings)
+		originalSettings = XmlSerializerUtil.createCopy(rainbowSettings)
 		configureEnabledSettings()
 	}
 
 	override fun tearDown() {
 		try {
-			originalSettings.restore(rainbowSettings)
+			rainbowSettings.loadState(originalSettings)
 		} finally {
 			super.tearDown()
 		}
@@ -207,59 +208,4 @@ class TsrxRainbowBracketsHighlightingTest : BasePlatformTestCase() {
 			"Missing highlighting fixture: $name"
 		}.readText()
 
-	private data class ExternalSettingsState(
-		val enabled: Boolean,
-		val round: Boolean,
-		val square: Boolean,
-		val curly: Boolean,
-		val angle: Boolean,
-		val skipFirst: Boolean,
-		val skipEmpty: Boolean,
-		val blacklist: Set<String>,
-		val skipLarge: Boolean,
-		val lineThreshold: Int,
-		val htmlInsideJs: Boolean,
-		val roundForAll: Boolean,
-		val cycleAll: Boolean,
-		val skipTemplates: Boolean,
-		val colorCount: Int,
-	) {
-		fun restore(settings: RainbowSettings) {
-			settings.isRainbowEnabled = enabled
-			settings.isEnableRainbowRoundBrackets = round
-			settings.isEnableRainbowSquareBrackets = square
-			settings.isEnableRainbowSquigglyBrackets = curly
-			settings.isEnableRainbowAngleBrackets = angle
-			settings.isDoNOTRainbowifyTheFirstLevel = skipFirst
-			settings.isDoNOTRainbowifyBracketsWithoutContent = skipEmpty
-			settings.languageBlacklist = blacklist
-			settings.doNOTRainbowifyBigFiles = skipLarge
-			settings.bigFilesLinesThreshold = lineThreshold
-			settings.isRainbowifyHTMLInsideJS = htmlInsideJs
-			settings.applyColorsOfRoundForAllBrackets = roundForAll
-			settings.cycleCountOnAllBrackets = cycleAll
-			settings.doNOTRainbowifyTemplateString = skipTemplates
-			settings.numberOfColors = colorCount
-		}
-
-		companion object {
-			fun capture(settings: RainbowSettings) = ExternalSettingsState(
-				enabled = settings.isRainbowEnabled,
-				round = settings.isEnableRainbowRoundBrackets,
-				square = settings.isEnableRainbowSquareBrackets,
-				curly = settings.isEnableRainbowSquigglyBrackets,
-				angle = settings.isEnableRainbowAngleBrackets,
-				skipFirst = settings.isDoNOTRainbowifyTheFirstLevel,
-				skipEmpty = settings.isDoNOTRainbowifyBracketsWithoutContent,
-				blacklist = settings.languageBlacklist.toSet(),
-				skipLarge = settings.doNOTRainbowifyBigFiles,
-				lineThreshold = settings.bigFilesLinesThreshold,
-				htmlInsideJs = settings.isRainbowifyHTMLInsideJS,
-				roundForAll = settings.applyColorsOfRoundForAllBrackets,
-				cycleAll = settings.cycleCountOnAllBrackets,
-				skipTemplates = settings.doNOTRainbowifyTemplateString,
-				colorCount = settings.numberOfColors,
-			)
-		}
-	}
 }

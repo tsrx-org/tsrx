@@ -106,6 +106,25 @@ class TsrxRainbowBracketAnalyzerTest : BasePlatformTestCase() {
 		assertEquals(listOf(true, true, false), roundPairs.map { it.isEmpty })
 	}
 
+	fun testIgnoresBlockCommentsJsDocAndJsxText() {
+		val source = """
+			/* block ([{}]) */
+			/** docs ({[]}) */
+			const view = <div>text ( [ ] )</div>;
+		""".trimIndent()
+		val structures = analyze(source).structures
+		val jsxText = source.indexOf("text") until source.indexOf("</div>")
+
+		assertTrue(structures.none { structure ->
+			structure.kind != TsrxRainbowBracketKind.ANGLE &&
+				structure.punctuation.any { it.startOffset in 0 until source.indexOf("const view") }
+		})
+		assertTrue(structures.none { structure ->
+			structure.kind != TsrxRainbowBracketKind.ANGLE &&
+				structure.punctuation.any { it.startOffset in jsxText }
+		})
+	}
+
 	fun testOperationCountsScaleLinearly() {
 		val small = analyze("()[]{}".repeat(200)).operations
 		val large = analyze("()[]{}".repeat(400)).operations
@@ -169,8 +188,7 @@ class TsrxRainbowBracketAnalyzerTest : BasePlatformTestCase() {
 	private fun TextMateScope.names(): List<String> = buildList {
 		var current: TextMateScope? = this@names
 		while (current != null) {
-			val name = current.scopeName.toString()
-			if (name != "null") add(name)
+			current.scopeName?.toString()?.let { add(it) }
 			current = current.parent
 		}
 	}
