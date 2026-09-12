@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Suspense, createContext, createElement } from 'hono/jsx';
 import { renderToReadableStream as renderHonoStream } from 'hono/jsx/streaming';
-import {
-	renderToReadableStream as renderDomStream,
-	renderToString,
-} from 'hono/jsx/dom/server';
+import { renderToReadableStream as renderDomStream, renderToString } from 'hono/jsx/dom/server';
 import { TsrxErrorBoundary } from '../src/error-boundary.js';
 
 const unsafe_html = '<img src=x onerror=globalThis.pwned=true>';

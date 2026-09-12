@@ -24,7 +24,7 @@ let dom_component_assertion_template = null;
 function get_hono_dom_component_assertion_template() {
 	dom_component_assertion_template ??= /** @type {AST.ExpressionStatement} */ (
 		parseModule(
-		`(function <T extends (...args: any[]) => any>(
+			`(function <T extends (...args: any[]) => any>(
 			component: [T] extends [{
 				(...args: infer A1): infer R1;
 				(...args: infer A2): infer R2;
