@@ -38,8 +38,18 @@ chosen target. For example, a React project can use:
 
 All targets use the `.tsrx` extension. The `tsrx.compiler` value must be a bare
 package specifier such as `@tsrx/react`, `@tsrx/preact`, `@tsrx/solid`,
-`@tsrx/vue`, `@tsrx/ripple`, `octane`, or a third-party TSRX compiler. Package
-subpaths are supported; relative and absolute paths are not.
+`@tsrx/vue`, `@tsrx/hono`, `@tsrx/ripple`, `octane`, or a third-party TSRX
+compiler. Package subpaths are supported; relative and absolute paths are not.
+
+Hono automatic discovery is server-first: `@tsrx/hono`, `@tsrx/vite-plugin-hono`,
+or `@tsrx/bun-plugin-hono` selects the root compiler. A browser project must
+explicitly set `"compiler": "@tsrx/hono/dom"` and
+`"jsxImportSource": "hono/jsx/dom"`. Use `hono/jsx` as the JSX import source for
+the server compiler. In DOM mode the compiler reports source-local `async` and
+component-scope `await`; imported or inferred component returns are diagnosed
+through the generated virtual TypeScript only when their project type is
+definitely Promise-like. Uncertain generic, overloaded, broad, or mixed-return
+types are not treated as proof.
 
 `tsrx.platform` is optional. When present, it must be exactly `"web"`, `"ios"`, or
 `"android"`; it selects compile-time `import.meta.env.platform` guards in virtual

@@ -55,6 +55,36 @@ const VUE_VITE_CONFIG_HTML = [
 	'<span class="ln">6</span> <span class="br">}</span><span class="br">)</span>;',
 ].join('\n');
 
+const HONO_INSTALL_HTML = [
+	'<span class="ln">1</span> <span class="fn">pnpm</span> <span class="prop">add</span> <span class="str">hono@">=4.13.7 &lt;4.14"</span>',
+	'<span class="ln">2</span> <span class="fn">pnpm</span> <span class="prop">add</span> <span class="str">-D</span> <span class="str">@tsrx/hono</span> <span class="str">@tsrx/vite-plugin-hono</span>',
+].join('\n');
+
+const HONO_SERVER_VITE_CONFIG_HTML = [
+	'<span class="ln">1</span> <span class="kw-export">import</span> <span class="br">{</span> <span class="prop">defineConfig</span> <span class="br">}</span> <span class="kw-export">from</span> <span class="str">\'vite\'</span>;',
+	'<span class="ln">2</span> <span class="kw-export">import</span> <span class="br">{</span> <span class="prop">tsrxHono</span> <span class="br">}</span> <span class="kw-export">from</span> <span class="str">\'@tsrx/vite-plugin-hono\'</span>;',
+	'<span class="ln">3</span>',
+	'<span class="ln">4</span> <span class="kw-export">export default</span> <span class="fn">defineConfig</span><span class="br">(</span><span class="br">{</span>',
+	'<span class="ln">5</span>   <span class="prop">plugins</span>: <span class="br">[</span><span class="fn">tsrxHono</span><span class="br">(</span><span class="br">)</span><span class="br">]</span>,',
+	'<span class="ln">6</span> <span class="br">}</span><span class="br">)</span>;',
+].join('\n');
+
+const HONO_DOM_VITE_CONFIG_HTML = [
+	'<span class="ln">1</span> <span class="kw-export">export default</span> <span class="fn">defineConfig</span><span class="br">(</span><span class="br">{</span>',
+	'<span class="ln">2</span>   <span class="prop">plugins</span>: <span class="br">[</span><span class="fn">tsrxHono</span><span class="br">(</span><span class="br">{</span> <span class="prop">mode</span>: <span class="str">\'dom\'</span> <span class="br">}</span><span class="br">)</span><span class="br">]</span>,',
+	'<span class="ln">3</span> <span class="br">}</span><span class="br">)</span>;',
+].join('\n');
+
+const HONO_DOM_TSCONFIG_HTML = [
+	'<span class="ln">1</span> <span class="br">{</span>',
+	'<span class="ln">2</span>   <span class="attr">"tsrx"</span>: <span class="br">{</span> <span class="attr">"compiler"</span>: <span class="str">"@tsrx/hono/dom"</span> <span class="br">}</span>,',
+	'<span class="ln">3</span>   <span class="attr">"compilerOptions"</span>: <span class="br">{</span>',
+	'<span class="ln">4</span>     <span class="attr">"jsx"</span>: <span class="str">"preserve"</span>,',
+	'<span class="ln">5</span>     <span class="attr">"jsxImportSource"</span>: <span class="str">"hono/jsx/dom"</span>',
+	'<span class="ln">6</span>   <span class="br">}</span>',
+	'<span class="ln">7</span> <span class="br">}</span>',
+].join('\n');
+
 const OCTANE_INSTALL_HTML = [
 	'<span class="ln">1</span> <span class="fn">pnpm</span> <span class="prop">add</span> <span class="str">octane</span> <span class="str">@octanejs/vite-plugin</span>',
 	'<span class="ln">2</span> <span class="fn">pnpm</span> <span class="prop">add</span> <span class="str">-D</span> <span class="str">vite</span>',
@@ -355,6 +385,7 @@ const NAV_GROUPS = [
 			{ id: 'vue-vite', label: 'Vue + Vite' },
 			{ id: 'vue-rspack', label: 'Vue + Rspack' },
 			{ id: 'vue-bun', label: 'Vue + Bun' },
+			{ id: 'hono', label: 'Hono server + DOM' },
 			{ id: 'platform-flags', label: 'Platform flags' },
 			{ id: 'direct-runtime-imports', label: 'Direct runtime imports' },
 			{ id: 'ripple', label: 'Ripple' },
@@ -387,7 +418,7 @@ export function GettingStartedPage() @{
 			<title>TSRX | Getting Started</title>
 			<meta
 				name="description"
-				content="Get started with TSRX: install with Octane, React, Preact, Solid, Vue, or Ripple for Vite, Rspack, Turbopack, or Bun, learn the function-return syntax, and explore inline template control flow."
+				content="Get started with TSRX: install with Hono, Octane, React, Preact, Solid, Vue, or Ripple for Vite, Rspack, Turbopack, or Bun, learn the function-return syntax, and explore inline template control flow."
 			/>
 		</head>
 		<div class="app-shell">
@@ -415,7 +446,7 @@ export function GettingStartedPage() @{
 				<section class="hero">
 					<h1>Getting Started</h1>
 					<p class="lede">
-						Set up TSRX with Octane, React, Preact, Solid, Vue, or Ripple and then wire in the
+						Set up TSRX with Hono, Octane, React, Preact, Solid, Vue, or Ripple and then wire in the
 						editor tooling that makes
 						<code class="inline-code">.tsrx</code>
 						files feel native in the rest of your repo.
@@ -826,6 +857,63 @@ export function GettingStartedPage() @{
 							</p>
 						</section>
 
+						<section class="doc-section" id="hono">
+							<p class="section-kicker">Server default, explicit browser mode</p>
+							<h2 class="section-heading">Hono server + DOM</h2>
+							<p class="section-body">
+								Install the dedicated Hono compiler target, its Vite integration, and Hono in the
+								supported
+								<code class="inline-code">{'>=4.13.7 <4.14'}</code>
+								range:
+							</p>
+							<pre class="code-block">
+								<code innerHTML={HONO_INSTALL_HTML} />
+							</pre>
+							<p class="section-body">
+								The default entry is server-first. This configuration compiles
+								<code class="inline-code">.tsrx</code>
+								with
+								<code class="inline-code">@tsrx/hono</code>
+								and renders through
+								<code class="inline-code">hono/jsx</code>
+								, including Hono-supported asynchronous server components:
+							</p>
+							<pre class="code-block">
+								<code innerHTML={HONO_SERVER_VITE_CONFIG_HTML} />
+							</pre>
+							<p class="section-body">
+								A browser application must select DOM mode explicitly. Set the Vite plugin to
+								<code class="inline-code">mode: 'dom'</code>
+								and match it in the TypeScript project:
+							</p>
+							<pre class="code-block">
+								<code innerHTML={HONO_DOM_VITE_CONFIG_HTML} />
+							</pre>
+							<pre class="code-block">
+								<code innerHTML={HONO_DOM_TSCONFIG_HTML} />
+							</pre>
+							<p class="section-body">
+								Hono DOM components render synchronously. Use
+								<code class="inline-code">use(promise)</code>
+								inside Hono's experimental
+								<code class="inline-code">Suspense</code>
+								for pending work. The compiler catches locally visible
+								<code class="inline-code">async</code>
+								components and component-scope
+								<code class="inline-code">await</code>
+								; imported and inferred Promise returns are left to TypeScript and reported only
+								when definitely Promise-like.
+							</p>
+							<p class="section-body">
+								TSRX boundaries use Hono's experimental one-argument error fallback, preserve Hono's
+								escaping, and retain Hono-compatible callback and object refs. Bun users can select
+								the same modes with
+								<code class="inline-code">@tsrx/bun-plugin-hono</code>
+								. Hono supplies the renderers: TSRX does not route through React compatibility or
+								add HonoX routing, navigation, or Server Actions.
+							</p>
+						</section>
+
 						<section class="doc-section" id="platform-flags">
 							<p class="section-kicker">Shared source</p>
 							<h2 class="section-heading">Compile-time platform flags</h2>
@@ -1225,6 +1313,18 @@ export function GettingStartedPage() @{
 								when diagnostics need syntax-aware advice. For existing files, use
 								<code class="inline-code">validate-tsrx-file</code>
 								for a read-only format, compile, and advice pass.
+							</p>
+							<p class="section-body">
+								For Hono, keep MCP's generic mode vocabulary: omitted mode or
+								<code class="inline-code">server</code>
+								uses
+								<code class="inline-code">@tsrx/hono</code>
+								, while
+								<code class="inline-code">client</code>
+								uses
+								<code class="inline-code">@tsrx/hono/dom</code>
+								. Results expose the effective compiler entry, and a failed DOM load never falls
+								back to server mode.
 							</p>
 						</section>
 

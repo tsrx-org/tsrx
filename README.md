@@ -95,11 +95,31 @@ The same language currently supports:
 | Preact | `@tsrx/preact`       | This repository                               |
 | Solid  | `@tsrx/solid`        | This repository                               |
 | Vue    | `@tsrx/vue`          | This repository                               |
+| Hono   | `@tsrx/hono`         | This repository                               |
 | Ripple | `@tsrx/ripple`       | [Ripple](https://github.com/Ripple-TS/ripple) |
 | Octane | `octane/compiler`    | [Octane](https://github.com/octanejs/octane)  |
 
 Additional targets can be added as standalone compiler plugins without changing
 the TSRX language itself.
+
+### Hono server and DOM modes
+
+Hono is a dedicated TSRX target, not a React-compatibility setting. Install
+`@tsrx/hono` with Hono `>=4.13.7 <4.14`. The default compiler entry emits code for
+Hono's server JSX runtime, `hono/jsx`; browser applications explicitly select
+`@tsrx/hono/dom` and `hono/jsx/dom`. The Vite and Bun integrations expose the same
+server-default contract:
+
+```js
+tsrxHono(); // server (default)
+tsrxHono({ mode: 'dom' }); // browser DOM
+```
+
+Hono supplies the renderer. TSRX supplies the language and compiler integration;
+it does not add HonoX routing, navigation, Server Actions, or other HonoX
+application features. See [`@tsrx/hono`](packages/tsrx-hono/README.md) for async,
+boundary, ref, TypeScript, and MCP guidance, and `playground/hono` for the
+maintained DOM example.
 
 ## Tooling
 

@@ -42,8 +42,10 @@ await Bun.build({
 ```
 
 DOM mode compiles with `@tsrx/hono/dom` and transforms JSX through `hono/jsx/dom`.
-Hono DOM components render synchronously; use Hono's `use(promise)` inside
-`Suspense` for pending browser work.
+Hono DOM components render synchronously; use Hono's `use(promise)` inside the
+experimental `Suspense` API for pending browser work. Locally obvious async
+components are compiler errors; imported and inferred Promise returns are left to
+type-aware tooling and reported only when definitely Promise-like.
 
 The plugin emits sibling-scoped `<style>` blocks as owned virtual CSS modules.
 When source maps are enabled in `Bun.build`, Bun emits maps for the generated
@@ -71,4 +73,6 @@ With `runtimeImports: 'direct'`, add `@tsrx/core` as a direct production
 dependency because compiled modules import its runtime helpers.
 
 This package selects Hono's JSX runtime; it does not provide a renderer or add
-HonoX application features.
+HonoX application features. It is a dedicated Hono target rather than a React
+compatibility mode. Hono owns boundary escaping and DOM ref behavior; see
+`@tsrx/hono` for the complete supported runtime contract.
