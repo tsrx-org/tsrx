@@ -38,6 +38,11 @@ export const TARGET_CANDIDATES = [
 		compilerPackage: '@tsrx/vue',
 		signals: ['@tsrx/vue', '@tsrx/vite-plugin-vue', '@tsrx/rspack-plugin-vue'],
 	},
+	{
+		target: 'hono',
+		compilerPackage: '@tsrx/hono',
+		signals: ['@tsrx/hono', '@tsrx/vite-plugin-hono', '@tsrx/bun-plugin-hono'],
+	},
 ];
 
 export const CONFIG_FILES = [

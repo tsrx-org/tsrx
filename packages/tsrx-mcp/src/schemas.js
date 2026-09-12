@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const TARGET_SCHEMA = z.enum(['ripple', 'react', 'preact', 'solid', 'vue']);
+export const TARGET_SCHEMA = z.enum(['ripple', 'react', 'preact', 'solid', 'vue', 'hono']);
 
 export const target_match_schema = z.object({
 	target: z.string(),

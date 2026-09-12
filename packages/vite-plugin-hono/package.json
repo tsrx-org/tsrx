@@ -1,0 +1,42 @@
+{
+  "name": "@tsrx/vite-plugin-hono",
+  "description": "Vite plugin for the TSRX Hono JSX targets",
+  "license": "MIT",
+  "author": "Dominic Gannaway",
+  "version": "0.1.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tsrx-org/tsrx.git",
+    "directory": "packages/vite-plugin-hono"
+  },
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    }
+  },
+  "scripts": {
+    "typecheck:tests": "tsrx-tsc --noEmit -p tests/tsconfig.json"
+  },
+  "dependencies": {
+    "@tsrx/core": "workspace:*",
+    "@tsrx/hono": "workspace:*"
+  },
+  "peerDependencies": {
+    "vite": "^8.0.0"
+  },
+  "devDependencies": {
+    "@tsrx/typescript-plugin": "workspace:*",
+    "hono": "^4.13.7",
+    "typescript": "catalog:default",
+    "vite": "catalog:default"
+  },
+  "files": [
+    "src",
+    "types"
+  ]
+}

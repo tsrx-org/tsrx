@@ -95,6 +95,7 @@ The same language currently supports:
 | Preact | `@tsrx/preact`       | This repository                               |
 | Solid  | `@tsrx/solid`        | This repository                               |
 | Vue    | `@tsrx/vue`          | This repository                               |
+| Hono   | `@tsrx/hono`         | This repository                               |
 | Ripple | `@tsrx/ripple`       | [Ripple](https://github.com/Ripple-TS/ripple) |
 | Octane | `octane/compiler`    | [Octane](https://github.com/octanejs/octane)  |
 

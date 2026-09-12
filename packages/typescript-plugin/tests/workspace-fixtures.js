@@ -117,6 +117,7 @@ const COMPILER_STUBS = {
 	react: compiler_stub('react'),
 	solid: compiler_stub('solid'),
 	preact: compiler_stub('preact'),
+	hono: compiler_stub('hono'),
 	// Octane ships its compiler inside the `octane` package under
 	// `<layout>/compiler/volar.js` and exports the contract under a camelCase name
 	// — this stub mirrors the real published shape so the tests cover the
@@ -249,6 +250,17 @@ export const WORKSPACE_CONFIGS = {
 		},
 		compilers: ['vue'],
 	},
+	'hono-only': {
+		package_json: {
+			name: '@tsrx/fixture-hono-only-project',
+			private: true,
+			devDependencies: {
+				'@tsrx/hono': 'workspace:*',
+				'@tsrx/vite-plugin-hono': 'workspace:*',
+			},
+		},
+		compilers: ['hono'],
+	},
 	'octane-only': {
 		package_json: {
 			name: '@octanejs/fixture-octane-only-project',
@@ -332,6 +344,12 @@ export const WORKSPACE_CONFIGS = {
 		'@tsrx/fixture-declared-only-project',
 		'consumer-tsrx-compiler',
 		'declared',
+	),
+	'hono-dom-explicit': declared_workspace_config(
+		'@tsrx/fixture-hono-dom-explicit-project',
+		'@tsrx/hono/dom',
+		'hono-dom',
+		{ package_json: { devDependencies: { '@tsrx/hono': 'workspace:*' } } },
 	),
 	'declared-scoped': declared_workspace_config(
 		'@tsrx/fixture-declared-scoped-project',
@@ -445,6 +463,9 @@ function write_compiler_stub(workspace_dir, compiler_name) {
 		main: './src/index.js',
 	});
 	fs.writeFileSync(path.join(compiler_dir, 'index.js'), COMPILER_STUBS[compiler_name]);
+	if (compiler_name === 'hono') {
+		fs.writeFileSync(path.join(compiler_dir, 'dom.js'), COMPILER_STUBS[compiler_name]);
+	}
 }
 
 /** @param {string} workspace_dir @param {string} specifier @param {string} marker @param {string} [directory] @param {string[]} [entry_parts] @param {boolean} [export_subpath] */

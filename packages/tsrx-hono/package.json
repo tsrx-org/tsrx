@@ -1,0 +1,60 @@
+{
+  "name": "@tsrx/hono",
+  "description": "Hono JSX compiler target for TSRX",
+  "license": "MIT",
+  "author": "Dominic Gannaway",
+  "version": "0.1.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tsrx-org/tsrx.git",
+    "directory": "packages/tsrx-hono"
+  },
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./dom": {
+      "types": "./types/dom.d.ts",
+      "default": "./src/dom.js"
+    },
+    "./dynamic": {
+      "types": "./types/dynamic.d.ts"
+    },
+    "./error-boundary": {
+      "types": "./types/error-boundary.d.ts",
+      "default": "./src/error-boundary.js"
+    },
+    "./dom/error-boundary": {
+      "types": "./types/dom/error-boundary.d.ts",
+      "default": "./src/dom/error-boundary.js"
+    },
+    "./ref": {
+      "types": "./types/ref.d.ts",
+      "default": "./src/ref.js"
+    },
+    "./runtime/iterable": {
+      "types": "./types/runtime/iterable.d.ts",
+      "default": "./src/runtime/iterable.js"
+    }
+  },
+  "dependencies": {
+    "@tsrx/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "hono": "^4.13.7"
+  },
+  "devDependencies": {
+    "@types/estree": "catalog:default",
+    "@types/estree-jsx": "catalog:default",
+    "typescript": "catalog:default"
+  },
+  "files": [
+    "src",
+    "types"
+  ]
+}

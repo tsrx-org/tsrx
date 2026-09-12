@@ -4,7 +4,7 @@
 
 TSRX (TypeScript Render Extensions) is a **TypeScript language extension** for
 building declarative UIs. It compiles one `.tsrx` source file to **Octane**,
-**React**, **Preact**, **Solid**, **Vue**, or **Ripple**. TSRX is the
+**React**, **Preact**, **Solid**, **Vue**, **Hono**, or **Ripple**. TSRX is the
 source language; the target picks the runtime semantics.
 
 Think of TSRX as a spiritual successor to JSX: the same mental model of
@@ -15,7 +15,7 @@ them all the way through to the compiled output.
 
 **Key characteristics:**
 
-- **One source, many targets**: `octane`, `@tsrx/react`, `@tsrx/preact`, `@tsrx/solid`, `@tsrx/vue`, `@tsrx/ripple`
+- **One source, many targets**: `octane`, `@tsrx/react`, `@tsrx/preact`, `@tsrx/solid`, `@tsrx/vue`, `@tsrx/hono`, `@tsrx/ripple`
 - **JSX-shaped templates**: JSX elements, fragments, text, and expression containers use standard JSX node shapes
 - **JSX statement containers**: `@{ ... }` keeps TypeScript setup local to the JSX that uses it
 - **Declarative control flow**: `@if`, `@for`, `@switch`, and `@try` are JSX expressions whose bodies use `{...}` template blocks
@@ -27,7 +27,8 @@ them all the way through to the compiled output.
 **Canonical compiler packages**: `@tsrx/core` (framework-agnostic
 parser/analyzer), `@tsrx/react` (React codegen), `@tsrx/preact` (Preact codegen),
 `@tsrx/solid` (Solid codegen), `@tsrx/vue` (Vue/Vapor codegen), `@tsrx/ripple`
-(Ripple codegen), and `octane/compiler` (Octane codegen).
+(Ripple codegen), `@tsrx/hono` (Hono JSX server and DOM codegen), and
+`octane/compiler` (Octane codegen).
 
 ## Installation & Targets
 
@@ -58,6 +59,11 @@ npm install @tsrx/vue vue vue-jsx-vapor
 npm install -D @tsrx/vite-plugin-vue
 npm install -D @tsrx/rspack-plugin-vue
 npm install -D @tsrx/bun-plugin-vue        # Bun
+
+# Hono target
+npm install @tsrx/hono hono
+npm install -D @tsrx/vite-plugin-hono      # Vite
+npm install -D @tsrx/bun-plugin-hono       # Bun
 
 # Ripple target
 npm install ripple @ripple-ts/vite-plugin
@@ -139,11 +145,11 @@ Rspack's `resolve.tsConfig`, Bun's `build.tsconfig`, or Next's
 root.
 
 Vite, Rspack, Bun, and the available React Turbopack integration support the
-option. The same option is available for every React, Preact, Solid, and Vue
-integration that exists. An explicit builder `platform` remains available as an
-override/fallback, but it must agree with tsconfig when both exist. Vite, Rspack,
-and Bun reject conflicting user-provided definitions. Omitting the platform
-remains valid until a recognized flag is used; using a flag without
+option. The same option is available for every React, Preact, Solid, Vue, and
+Hono integration that exists. An explicit builder `platform` remains available
+as an override/fallback, but it must agree with tsconfig when both exist. Vite,
+Rspack, and Bun reject conflicting user-provided definitions. Omitting the
+platform remains valid until a recognized flag is used; using a flag without
 configuration, or supplying any other value, is an actionable error.
 
 ### Runtime helper imports
@@ -153,6 +159,12 @@ can continue installing only their target compiler package. Published component
 libraries can instead depend on the matching small runtime package:
 `@tsrx/react-runtime`, `@tsrx/preact-runtime`, `@tsrx/solid-runtime`, or
 `@tsrx/vue-runtime`.
+
+Hono does not publish a separate standalone runtime package. Its default compiler
+mode uses `@tsrx/hono/*` helper subpaths. In `runtimeImports: 'direct'` mode,
+shared helpers use `@tsrx/core/runtime/*`, but Hono-specific adapters still use
+`@tsrx/hono/*`; declare `@tsrx/core` and `@tsrx/hono` directly when using that
+mode.
 
 Pass `runtimeImports: 'direct'` to a target compiler or its Vite, Rspack, or Bun
 integration to emit those direct runtime imports. React's Turbopack helper accepts
@@ -188,6 +200,86 @@ For published components, keep the compiler and build integration in
 `devDependencies` and put the matching runtime in `dependencies`. The default
 `runtimeImports: 'compiler'` mode remains appropriate for applications that own
 their TSRX compilation and install the target compiler package.
+
+### Hono setup
+
+Requires Hono `^4.13.7`. The Vite integration requires Vite `^8.0.0`.
+
+`@tsrx/hono` provides two compiler modes: the server target emits `hono/jsx`,
+and the DOM target emits `hono/jsx/dom`. Select the mode explicitly in the Vite
+or Bun plugin. A single plugin instance and build use one Hono mode.
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite';
+import tsrxHono from '@tsrx/vite-plugin-hono';
+
+export default defineConfig({
+	plugins: [tsrxHono({ mode: 'server' })],
+});
+```
+
+For browser builds, use `tsrxHono({ mode: 'dom' })`. Hono DOM components are
+synchronous; use Hono's async and Suspense APIs for asynchronous work. The DOM
+validator reports explicit async components when they can be identified safely
+in the same module, but does not infer arbitrary Promise returns.
+
+For an application that has both server and browser entrypoints, keep one Vite
+config and run two builds. Map Vite's explicit `client` mode to the DOM target:
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite';
+import tsrxHono from '@tsrx/vite-plugin-hono';
+
+export default defineConfig(({ mode }) => ({
+	plugins: [
+		tsrxHono({
+			mode: mode === 'client' ? 'dom' : 'server',
+		}),
+	],
+}));
+```
+
+```bash
+vite build --mode client  # hono/jsx/dom
+vite build                # hono/jsx
+```
+
+Use separate entrypoints and output directories as needed. Do not use Vite or
+Bun `include`/`exclude` filters to route server and DOM files within one build.
+A shared `.tsrx` module is compiled separately in each entrypoint graph and must
+be valid for both runtimes.
+
+The Hono `server`/`dom` mode is independent of the shared compile-time
+`tsrx.platform` setting. Vite and Bun read `tsrx.platform` from the active
+tsconfig and specialize `import.meta.env.platform.web`, `.ios`, and `.android`;
+an explicit plugin `platform` option is only an override and must agree with
+tsconfig when both are set.
+
+For editor diagnostics, set `tsrx.compiler: "@tsrx/hono/dom"` explicitly for
+Hono DOM files. The TypeScript plugin does not infer the DOM target from
+`jsxImportSource`. For MCP compilation, select `target: 'hono'` and
+`mode: 'client'` for DOM output; `mode: 'server'` or omitting `mode` selects
+server output.
+
+The Bun integration has the same `server`/`dom` modes. Run two `Bun.build()` calls
+when a project has both server and browser entrypoints:
+
+```ts
+import tsrxHono from '@tsrx/bun-plugin-hono';
+
+for (const target of [
+	{ mode: 'dom', entrypoint: './src/client-entry.tsrx', outdir: './dist/client' },
+	{ mode: 'server', entrypoint: './src/server-entry.tsrx', outdir: './dist/server' },
+] as const) {
+	await Bun.build({
+		entrypoints: [target.entrypoint],
+		outdir: target.outdir,
+		plugins: [tsrxHono({ mode: target.mode })],
+	});
+}
+```
 
 ### Octane setup
 

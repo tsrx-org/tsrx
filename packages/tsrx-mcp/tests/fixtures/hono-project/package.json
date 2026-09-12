@@ -1,0 +1,10 @@
+{
+  "name": "tsrx-mcp-hono-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@tsrx/hono": "workspace:*",
+    "@tsrx/vite-plugin-hono": "workspace:*",
+    "hono": "^4.13.7"
+  }
+}

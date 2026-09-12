@@ -44,6 +44,7 @@
     "zod": "catalog:default"
   },
   "devDependencies": {
+    "@tsrx/hono": "workspace:*",
     "@types/node": "catalog:default",
     "typescript": "catalog:default",
     "vitest": "catalog:default"

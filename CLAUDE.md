@@ -33,11 +33,12 @@ directly.
 
 - `packages/tsrx/` and `packages/tsrx-runtime/`: core parser, transforms, shared
   compiler infrastructure, and target-neutral runtime helpers
-- `packages/tsrx-react/`, `packages/tsrx-preact/`, `packages/tsrx-solid/`, and
-  `packages/tsrx-vue/`: target compilers, with matching runtime packages
+- `packages/tsrx-react/`, `packages/tsrx-preact/`, `packages/tsrx-solid/`,
+  `packages/tsrx-vue/`, and `packages/tsrx-hono/`: target compilers, with matching
+  target-specific runtime adapters
 - `packages/vite-plugin-*`, `packages/rspack-plugin-*`,
   `packages/turbopack-plugin-*`, and `packages/bun-plugin-*`: target-specific
-  build integrations
+  build integrations, including the Hono Vite and Bun plugins
 - `packages/language-server/` and `packages/typescript-plugin/`: shared language
   intelligence and consumer-compiler resolution
 - `packages/vscode-plugin/`, `packages/zed-plugin/`, `packages/nvim-plugin/`,
@@ -45,7 +46,7 @@ directly.
 - `packages/prettier-plugin/`, `packages/eslint-parser/`, and
   `packages/eslint-plugin/`: formatting and linting
 - `grammars/`: TextMate and Tree-sitter grammars
-- `playground/`: retained React, Solid, and Vue examples plus shared editor
+- `playground/`: retained React, Solid, Vue, and Hono examples plus shared editor
   settings in `playground/.vscode/`
 - `website-tsrx/` and `website-mcp/`: documentation and MCP-facing sites
 

@@ -33,6 +33,11 @@ const target_fixtures = [
 	},
 	{ target: 'vue', compilerPackage: '@tsrx/vue', cwd: resolve(__dirname, 'fixtures/vue-project') },
 	{
+		target: 'hono',
+		compilerPackage: '@tsrx/hono',
+		cwd: resolve(__dirname, 'fixtures/hono-project'),
+	},
+	{
 		target: 'ripple',
 		compilerPackage: '@tsrx/ripple',
 		cwd: resolve(__dirname, 'fixtures/ripple-project'),
@@ -47,6 +52,7 @@ describe('@tsrx/mcp compile helpers', () => {
 		{ target: 'ripple', compilerPackage: '@tsrx/ripple' },
 		{ target: 'solid', compilerPackage: '@tsrx/solid' },
 		{ target: 'vue', compilerPackage: '@tsrx/vue' },
+		{ target: 'hono', compilerPackage: '@tsrx/hono' },
 	])('detects $target from a minimal package.json signal', async ({ target, compilerPackage }) => {
 		const temp_dir = await mkdtemp(join(tmpdir(), `tsrx-mcp-detect-${target}-`));
 
@@ -108,6 +114,11 @@ describe('@tsrx/mcp compile helpers', () => {
 			target: 'vue',
 			compilerPackage: '@tsrx/vue',
 			pluginPackage: '@tsrx/rspack-plugin-vue',
+		},
+		{
+			target: 'hono',
+			compilerPackage: '@tsrx/hono',
+			pluginPackage: '@tsrx/vite-plugin-hono',
 		},
 	])(
 		'detects $target from a bundler plugin package.json signal',
