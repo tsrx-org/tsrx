@@ -3146,7 +3146,31 @@
 			<array>
 				<dict>
 					<key>include</key>
-					<string>#jsx</string>
+					<string>#jsx-tag-code-in-expression</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-style-in-expression</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-script-in-expression</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-fragment</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-dynamic-in-expression</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-without-attributes-in-expression</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-in-expression</string>
 				</dict>
 				<dict>
 					<key>include</key>

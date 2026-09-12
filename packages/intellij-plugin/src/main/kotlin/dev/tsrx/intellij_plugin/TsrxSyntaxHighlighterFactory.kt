@@ -4,6 +4,7 @@ import com.intellij.lexer.Lexer
 import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
 import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.fileTypes.SyntaxHighlighter
+import com.intellij.openapi.fileTypes.SyntaxHighlighterBase
 import com.intellij.openapi.fileTypes.SyntaxHighlighterFactory
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
@@ -27,52 +28,63 @@ internal class TsrxSyntaxHighlighter(
 	override fun getTokenHighlights(tokenType: IElementType): Array<TextAttributesKey> {
 		val delegated = delegate.getTokenHighlights(tokenType)
 		val textMateToken = tokenType as? TextMateElementType ?: return delegated
-		val scopes = textMateToken.scope.names()
-		if (!scopes.containsAll(JSX_EXPRESSION_SCOPES)) return delegated
+		val leafScope = textMateToken.scope.scopeName.toString()
+		val memberRole = when {
+			leafScope in PROPERTY_SCOPES -> MemberRole.PROPERTY
+			leafScope == FUNCTION_SCOPE -> MemberRole.FUNCTION
+			else -> return delegated
+		}
+		if (!textMateToken.scope.isJsxExpressionMember(memberRole)) return delegated
 
-		return when {
-			textMateToken.scope.scopeName in PROPERTY_SCOPES ->
-				delegated.withMemberRole(
+		return when (memberRole) {
+			MemberRole.PROPERTY ->
+				SyntaxHighlighterBase.pack(
+					delegated,
 					DefaultLanguageHighlighterColors.INSTANCE_FIELD,
 					TsrxMemberRoleKeys.INSTANCE_MEMBER_VARIABLE,
 				)
 
-			textMateToken.scope.scopeName == FUNCTION_SCOPE && FUNCTION_CALL_SCOPE in scopes ->
-				delegated.withMemberRole(
+			MemberRole.FUNCTION ->
+				SyntaxHighlighterBase.pack(
+					delegated,
 					DefaultLanguageHighlighterColors.INSTANCE_METHOD,
 					TsrxMemberRoleKeys.INSTANCE_MEMBER_FUNCTION,
 				)
-
-			else -> delegated
 		}
 	}
 
-	private fun Array<TextAttributesKey>.withMemberRole(
-		platformFallback: TextAttributesKey,
-		targetRole: TextAttributesKey,
-	): Array<TextAttributesKey> = this + platformFallback + targetRole
-
-	private fun TextMateScope.names(): Set<String> = buildSet {
-		var current: TextMateScope? = this@names
+	private fun TextMateScope.isJsxExpressionMember(memberRole: MemberRole): Boolean {
+		var hasSource = false
+		var hasJsxContext = false
+		var hasEmbeddedExpression = false
+		var hasFunctionCall = memberRole != MemberRole.FUNCTION
+		var current: TextMateScope? = this
 		while (current != null) {
-			add(current.scopeName.toString())
+			when (current.scopeName.toString()) {
+				SOURCE_SCOPE -> hasSource = true
+				JSX_CHILDREN_SCOPE, JSX_ATTRIBUTES_SCOPE -> hasJsxContext = true
+				EMBEDDED_EXPRESSION_SCOPE -> hasEmbeddedExpression = true
+				FUNCTION_CALL_SCOPE -> hasFunctionCall = true
+			}
 			current = current.parent
 		}
+		return hasSource && hasJsxContext && hasEmbeddedExpression && hasFunctionCall
 	}
 
 	companion object {
-		private val JSX_EXPRESSION_SCOPES = setOf(
-			"source.tsrx",
-			"meta.jsx.children.js",
-			"meta.embedded.expression.js",
-		)
 		private val PROPERTY_SCOPES = setOf(
 			"support.variable.property.js",
 			"variable.other.property.js",
 		)
+		private const val SOURCE_SCOPE = "source.tsrx"
+		private const val JSX_CHILDREN_SCOPE = "meta.jsx.children.js"
+		private const val JSX_ATTRIBUTES_SCOPE = "meta.tag.attributes.js"
+		private const val EMBEDDED_EXPRESSION_SCOPE = "meta.embedded.expression.js"
 		private const val FUNCTION_SCOPE = "entity.name.function.js"
 		private const val FUNCTION_CALL_SCOPE = "meta.function-call.js"
 	}
+
+	private enum class MemberRole { PROPERTY, FUNCTION }
 }
 
 internal object TsrxMemberRoleKeys {

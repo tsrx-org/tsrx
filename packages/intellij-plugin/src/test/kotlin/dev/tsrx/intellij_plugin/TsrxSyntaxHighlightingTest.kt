@@ -9,15 +9,13 @@ import com.intellij.openapi.fileTypes.SyntaxHighlighter
 import com.intellij.psi.TokenType
 import com.intellij.psi.tree.IElementType
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import java.nio.file.Path
-import kotlin.io.path.readText
 import org.jetbrains.plugins.textmate.language.syntax.lexer.TextMateElementType
 import org.jetbrains.plugins.textmate.language.syntax.lexer.TextMateScope
 
 class TsrxSyntaxHighlightingTest : BasePlatformTestCase() {
 	fun testIssue100RolesMatchTsxReference() {
-		val tsx = capture("tsx")
-		val tsrx = capture("tsrx")
+		val tsx = capture(FileKind.TSX)
+		val tsrx = capture(FileKind.TSRX)
 
 		for (probe in ROLE_PROBES) {
 			assertEquals(
@@ -62,6 +60,14 @@ class TsrxSyntaxHighlightingTest : BasePlatformTestCase() {
 			),
 			highlighter.getTokenHighlights(textMateToken(*JSX_METHOD_SCOPES)).toList(),
 		)
+		assertEquals(
+			listOf(
+				delegated,
+				DefaultLanguageHighlighterColors.INSTANCE_FIELD,
+				TsrxMemberRoleKeys.INSTANCE_MEMBER_VARIABLE,
+			),
+			highlighter.getTokenHighlights(textMateToken(*JSX_ATTRIBUTE_PROPERTY_SCOPES)).toList(),
+		)
 
 		val unchangedTokens = listOf(
 			textMateToken("source.tsrx", "support.variable.property.js"),
@@ -80,13 +86,13 @@ class TsrxSyntaxHighlightingTest : BasePlatformTestCase() {
 		}
 	}
 
-	private fun capture(extension: String): Map<RoleProbe, TokenEvidence> {
-		val source = fixture("issue-100.$extension")
-		myFixture.configureByText("issue-100.$extension", source)
+	private fun capture(fileKind: FileKind): Map<RoleProbe, TokenEvidence> {
+		val source = fixture("issue-100.${fileKind.extension}")
+		myFixture.configureByText("issue-100.${fileKind.extension}", source)
 		val editor = myFixture.editor as EditorEx
 		// TSX member roles are semantic overlays, not EditorHighlighter lexer keys.
 		// TSRX has no PSI overlay, so its TextMate syntax keys carry the role.
-		val semanticHighlights = if (extension == "tsx") myFixture.doHighlighting() else emptyList()
+		val semanticHighlights = if (fileKind == FileKind.TSX) myFixture.doHighlighting() else emptyList()
 		return ROLE_PROBES.associateWith { probe ->
 			val offset = source.indexOfOccurrence(probe.text, probe.occurrence)
 			val iterator = editor.highlighter.createIterator(offset)
@@ -103,27 +109,21 @@ class TsrxSyntaxHighlightingTest : BasePlatformTestCase() {
 
 	private fun TokenEvidence.normalizedRole(fileKind: FileKind): TokenRole? {
 		val identities = (syntaxKeys + semanticKeys).flatMapTo(linkedSetOf()) { it.fallbackIdentities() }
+		if ("TS.INSTANCE_MEMBER_VARIABLE" in identities) return TokenRole.INSTANCE_FIELD
+		if ("TS.INSTANCE_MEMBER_FUNCTION" in identities) return TokenRole.INSTANCE_METHOD
 		return when (fileKind) {
 			FileKind.TSX -> when {
-				"TS.INSTANCE_MEMBER_VARIABLE" in identities -> TokenRole.INSTANCE_FIELD
-				"TS.INSTANCE_MEMBER_FUNCTION" in identities -> TokenRole.INSTANCE_METHOD
 				"XML_TAG_NAME" in identities -> TokenRole.TAG
 				"DEFAULT_ATTRIBUTE" in identities -> TokenRole.ATTRIBUTE
 				"DEFAULT_TAG" in identities -> TokenRole.DELIMITER
 				else -> null
 			}
 
-			FileKind.TSRX -> {
-				val scopes = (tokenType as? TextMateElementType)?.scope?.names().orEmpty()
-				when {
-					"TS.INSTANCE_MEMBER_VARIABLE" in identities -> TokenRole.INSTANCE_FIELD
-					"TS.INSTANCE_MEMBER_FUNCTION" in identities -> TokenRole.INSTANCE_METHOD
-					"entity.name.tag.js" in scopes -> TokenRole.TAG
-					"punctuation.definition.tag.begin.js" in scopes ||
-						"punctuation.definition.tag.end.js" in scopes -> TokenRole.DELIMITER
-					"entity.other.attribute-name.js" in scopes -> TokenRole.ATTRIBUTE
-					else -> null
-				}
+			FileKind.TSRX -> when {
+				"HTML_TAG_NAME" in identities -> TokenRole.TAG
+				"DEFAULT_ATTRIBUTE" in identities -> TokenRole.ATTRIBUTE
+				"DEFAULT_TAG" in identities -> TokenRole.DELIMITER
+				else -> null
 			}
 		}
 	}
@@ -133,14 +133,6 @@ class TsrxSyntaxHighlightingTest : BasePlatformTestCase() {
 			.map(TextAttributesKey::getExternalName)
 			.toList()
 
-	private fun TextMateScope.names(): Set<String> = buildSet {
-		var current: TextMateScope? = this@names
-		while (current != null) {
-			add(current.scopeName.toString())
-			current = current.parent
-		}
-	}
-
 	private fun textMateToken(vararg scopes: String): TextMateElementType {
 		var scope = TextMateScope.EMPTY
 		for (name in scopes) scope = scope.add(name)
@@ -148,7 +140,9 @@ class TsrxSyntaxHighlightingTest : BasePlatformTestCase() {
 	}
 
 	private fun fixture(name: String): String =
-		Path.of("src/test/resources/highlighting", name).readText()
+		checkNotNull(javaClass.classLoader.getResource("highlighting/$name")) {
+			"Missing highlighting fixture: $name"
+		}.readText()
 
 	private fun String.indexOfOccurrence(text: String, occurrence: Int): Int {
 		var offset = -1
@@ -171,7 +165,10 @@ class TsrxSyntaxHighlightingTest : BasePlatformTestCase() {
 		val occurrence: Int = 0,
 	)
 
-	private enum class FileKind { TSX, TSRX }
+	private enum class FileKind(val extension: String) {
+		TSX("tsx"),
+		TSRX("tsrx"),
+	}
 
 	private enum class TokenRole { TAG, DELIMITER, ATTRIBUTE, INSTANCE_FIELD, INSTANCE_METHOD }
 
@@ -184,6 +181,7 @@ class TsrxSyntaxHighlightingTest : BasePlatformTestCase() {
 			RoleProbe("length", TokenRole.INSTANCE_FIELD),
 			RoleProbe("map", TokenRole.INSTANCE_METHOD),
 			RoleProbe("text", TokenRole.INSTANCE_FIELD),
+			RoleProbe("title", TokenRole.INSTANCE_FIELD, occurrence = 1),
 		)
 		private val JSX_BASE_SCOPES = arrayOf(
 			"source.tsrx",
@@ -199,6 +197,13 @@ class TsrxSyntaxHighlightingTest : BasePlatformTestCase() {
 			*JSX_BASE_SCOPES,
 			"meta.function-call.js",
 			"entity.name.function.js",
+		)
+		private val JSX_ATTRIBUTE_PROPERTY_SCOPES = arrayOf(
+			"source.tsrx",
+			"meta.tag.attributes.js",
+			"meta.embedded.expression.js",
+			"source.js.embedded.tsrx",
+			"support.variable.property.js",
 		)
 	}
 }

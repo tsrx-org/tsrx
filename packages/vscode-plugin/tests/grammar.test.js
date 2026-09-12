@@ -245,9 +245,13 @@ describe('TSRX TextMate grammar: JSX expression boundaries', () => {
 				'const less = a < b;',
 				'const lessOrEqual = a <= b;',
 				'const shifted = a << b;',
+				'const chained = a < b && c > d;',
+				'const arithmetic = a < b + c;',
+				'const between = a < b > c;',
 				'const called = fn<T>(x);',
 				'const identity = <T,>(value: T): T => value;',
 				'type Box<T> = { value: T };',
+				'const next = value.method();',
 			].join('\n'),
 		);
 
@@ -257,6 +261,17 @@ describe('TSRX TextMate grammar: JSX expression boundaries', () => {
 			expect(token.scopes).not.toContain('entity.name.tag.js');
 			expect(token.scopes).not.toContain('meta.jsx.children.js');
 		}
+		expect(find(tokens, 'method').scopes).toContain('entity.name.function.js');
+	});
+
+	it('keeps tag-shaped comparisons in directive conditions outside JSX', () => {
+		const tokens = tokenize(
+			['function App() @{', '  @if (a < b && c > d) {', '    <div />', '  }', '}'].join('\n'),
+		);
+
+		expect(find(tokens, 'b').scopes).not.toContain('meta.tag.js');
+		expect(find(tokens, 'b').scopes).not.toContain('entity.name.tag.js');
+		expect(find(tokens, 'div').scopes).toContain('entity.name.tag.js');
 	});
 
 	it('preserves representative @if and @for directive scopes', () => {
