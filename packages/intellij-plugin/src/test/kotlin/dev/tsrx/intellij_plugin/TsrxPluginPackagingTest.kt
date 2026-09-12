@@ -2,6 +2,8 @@ package dev.tsrx.intellij_plugin
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.jar.JarInputStream
+import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.io.path.readBytes
 import kotlin.io.path.readText
@@ -41,7 +43,7 @@ class TsrxPluginPackagingTest {
 	}
 
 	@Test
-	fun `descriptor keeps baseline support independent from jointly optional LSP support`() {
+	fun `descriptor keeps baseline support independent from optional integrations`() {
 		val mainDescriptor = parseXml(packageDir.resolve("src/main/resources/META-INF/plugin.xml"))
 		val requiredDependencies = mainDescriptor.dependencies(optional = false)
 		val optionalDependencies = mainDescriptor.dependencies(optional = true)
@@ -49,7 +51,10 @@ class TsrxPluginPackagingTest {
 		assertTrue(requiredDependencies.contains("com.intellij.modules.platform"))
 		assertTrue(requiredDependencies.contains("org.jetbrains.plugins.textmate"))
 		assertEquals(
-			mapOf("com.intellij.modules.ultimate" to "tsrx-ultimate.xml"),
+			mapOf(
+				"com.intellij.modules.ultimate" to "tsrx-ultimate.xml",
+				"izhangzhihao.rainbow.brackets" to "tsrx.intellij-plugin-rainbow-brackets.xml",
+			),
 			optionalDependencies,
 		)
 
@@ -68,6 +73,20 @@ class TsrxPluginPackagingTest {
 			"dev.tsrx.intellij_plugin.TsrxLspServerSupportProvider",
 			(providers.item(0) as Element).getAttribute("implementation"),
 		)
+
+		val rainbowDescriptor = parseXml(
+			packageDir.resolve("src/main/resources/META-INF/tsrx.intellij-plugin-rainbow-brackets.xml"),
+		)
+		val visitors = rainbowDescriptor.getElementsByTagName("highlightVisitor")
+		assertEquals(1, visitors.length)
+		assertEquals(
+			"dev.tsrx.intellij_plugin.TsrxRainbowBracketsHighlightVisitor",
+			(visitors.item(0) as Element).getAttribute("implementation"),
+		)
+		assertNotNull(
+			"Missing packaged Rainbow Brackets companion descriptor",
+			javaClass.classLoader.getResource("META-INF/tsrx.intellij-plugin-rainbow-brackets.xml"),
+		)
 	}
 
 	@Test
@@ -84,6 +103,26 @@ class TsrxPluginPackagingTest {
 		assertTrue(packageJson.contains("\"license\": \"MIT\""))
 		assertTrue(packageJson.contains("\"homepage\": \"https://tsrx.dev/\""))
 		assertTrue(packageJson.contains("\"repository\""))
+	}
+
+	@Test
+	fun `distribution ships the companion descriptor without Rainbow implementation code`() {
+		val packageJson = packageDir.resolve("package.json").readText()
+		val version = checkNotNull(Regex(""""version"\s*:\s*"([^"]+)"""").find(packageJson))
+			.groupValues[1]
+		val distribution = packageDir.resolve("build/distributions/intellij-plugin-$version.zip")
+		assertTrue("Missing built plugin distribution: $distribution", Files.isRegularFile(distribution))
+
+		ZipFile(distribution.toFile()).use { archive ->
+			val entries = archive.entries().asSequence().toList()
+			assertTrue(entries.none { it.name.contains("intellij-rainbow-brackets", ignoreCase = true) })
+			val pluginJar = entries.single { it.name.endsWith("/lib/intellij-plugin-$version.jar") }
+			JarInputStream(archive.getInputStream(pluginJar)).use { jar ->
+				val names = generateSequence { jar.nextJarEntry }.map { it.name }.toSet()
+				assertTrue("META-INF/tsrx.intellij-plugin-rainbow-brackets.xml" in names)
+				assertTrue(names.none { it.startsWith("com/github/izhangzhihao/rainbow/brackets/") })
+			}
+		}
 	}
 
 	private fun assertResourceMatches(resourcePath: String, sourcePath: Path) {

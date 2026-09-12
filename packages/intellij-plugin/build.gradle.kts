@@ -114,6 +114,9 @@ tasks {
 	processResources {
 		dependsOn(generatePluginResources)
 	}
+	test {
+		dependsOn(buildPlugin)
+	}
 
 	// Set the JVM compatibility versions
 	withType<JavaCompile> {
