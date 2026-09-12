@@ -104,12 +104,27 @@ export function tsrxHono(options = {}) {
 	// therefore belongs to the hook's current environment, and each entry to the
 	// source file that emitted it.
 	const get_environment_css_cache = perEnvironmentState(() => new Map());
+	const get_environment_css_revisions = perEnvironmentState(() => new Map());
 
 	/** @param {{ environment: import('vite').Environment }} context */
 	function css_cache_for(context) {
 		return get_environment_css_cache(
 			/** @type {Parameters<typeof get_environment_css_cache>[0]} */ (context),
 		);
+	}
+
+	/** @param {{ environment: import('vite').Environment }} context */
+	function css_revisions_for(context) {
+		return get_environment_css_revisions(
+			/** @type {Parameters<typeof get_environment_css_revisions>[0]} */ (context),
+		);
+	}
+
+	/** @param {Map<string, number>} revisions @param {string} id */
+	function begin_css_update(revisions, id) {
+		const revision = (revisions.get(id) ?? 0) + 1;
+		revisions.set(id, revision);
+		return revision;
 	}
 
 	/**
@@ -131,13 +146,13 @@ export function tsrxHono(options = {}) {
 	}
 
 	/**
-	 * @param {Map<string, string>} css_cache
 	 * @param {string} source
 	 * @param {string} id
+	 * @returns {Promise<string | undefined>}
 	 */
-	async function update_css_cache(css_cache, source, id) {
+	async function compile_css(source, id) {
 		const { css } = await compile(source, id, compile_options);
-		cache_css(css_cache, id, css);
+		return css;
 	}
 
 	const plugin = /** @type {Plugin} */ ({
@@ -190,6 +205,7 @@ export function tsrxHono(options = {}) {
 
 		buildStart() {
 			css_cache_for(this).clear();
+			css_revisions_for(this).clear();
 		},
 
 		watchChange(
@@ -198,15 +214,18 @@ export function tsrxHono(options = {}) {
 		) {
 			if (event === 'delete') {
 				css_cache_for(this).delete(id);
+				begin_css_update(css_revisions_for(this), id);
 			}
 		},
 
 		async transform(code, id) {
 			if (!TSRX_EXTENSION_PATTERN.test(id)) return null;
 
+			const css_revisions = css_revisions_for(this);
+			const revision = begin_css_update(css_revisions, id);
 			const result = await compile(code, id, compile_options);
 			const css_cache = css_cache_for(this);
-			cache_css(css_cache, id, result.css);
+			if (css_revisions.get(id) === revision) cache_css(css_cache, id, result.css);
 			const source = result.css
 				? `${result.code}\nimport ${JSON.stringify(id + CSS_QUERY)};\n`
 				: result.code;
@@ -231,12 +250,19 @@ export function tsrxHono(options = {}) {
 
 		async hotUpdate(/** @type {import('vite').HotUpdateOptions} */ update) {
 			if (!TSRX_EXTENSION_PATTERN.test(update.file)) return;
-			if (update.type === 'delete') return update.modules;
+			const css_revisions = css_revisions_for(this);
+			const revision = begin_css_update(css_revisions, update.file);
+			if (update.type === 'delete') {
+				css_cache_for(this).delete(update.file);
+				return update.modules;
+			}
 
 			const css_module = this.environment.moduleGraph.getModuleById('\0' + update.file + CSS_QUERY);
 			if (!css_module) return update.modules;
 
-			await update_css_cache(css_cache_for(this), await update.read(), update.file);
+			const css = await compile_css(await update.read(), update.file);
+			if (css_revisions.get(update.file) !== revision) return [];
+			cache_css(css_cache_for(this), update.file, css);
 			this.environment.moduleGraph.invalidateModule(css_module);
 			return [...update.modules, css_module];
 		},

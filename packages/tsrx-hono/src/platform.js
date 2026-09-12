@@ -1,6 +1,6 @@
 /** @import * as AST from 'estree' */
 /** @import * as ESTreeJSX from 'estree-jsx' */
-/** @import { JsxPlatform, JsxTransformContext, TSRXAnalysisResult } from '@tsrx/core/types' */
+/** @import { BaseNodeMetaData, JsxPlatform, JsxTransformContext, TSRXAnalysisResult } from '@tsrx/core/types' */
 
 import {
 	builders as b,
@@ -16,6 +16,8 @@ const HONO_SERVER_SOURCE = 'hono/jsx';
 const HONO_DOM_SOURCE = 'hono/jsx/dom';
 const AST_METADATA_KEYS = new Set(['loc', 'start', 'end', 'metadata']);
 const DOM_COMPONENT_PLACEHOLDER = '__TSRX_HONO_DOM_COMPONENT__';
+
+/** @typedef {BaseNodeMetaData & { hono_dom_local_async?: boolean }} HonoNodeMetaData */
 
 /** @type {AST.Expression | null} */
 let dom_component_assertion_template = null;
@@ -177,15 +179,44 @@ export const hono_dom_transform = createJsxTransform(create_hono_platform('dom')
 function add_hono_dom_component_assertion(attrs, ctx, element) {
 	if (!ctx.typeOnly || !isComponentLikeElement(element)) return attrs;
 	const name = element.openingElement.name;
-	if (/** @type {any} */ (name.metadata)?.hono_dom_local_async) return attrs;
+	const dynamic_target = element.metadata.dynamicElement ? find_hono_dynamic_target(attrs) : null;
+	const target = dynamic_target ?? jsx_name_to_expression(name, true);
+	const target_metadata = /** @type {HonoNodeMetaData | undefined} */ (
+		(dynamic_target ?? name).metadata
+	);
+	if (target_metadata?.hono_dom_local_async) {
+		return attrs;
+	}
 
 	const assertion = /** @type {AST.CallExpression} */ (
 		clone_ast_node(get_hono_dom_component_assertion_template(), false)
 	);
-	replace_hono_dom_component_placeholder(assertion, jsx_name_to_expression(name, false));
-	assertion.arguments[0] = jsx_name_to_expression(name, true);
+	replace_hono_dom_component_placeholder(assertion, clone_ast_node(target, false));
+	assertion.arguments[0] = clone_ast_node(target, true);
 
 	return [...attrs, b.jsx_spread_attribute(b.sequence([assertion, b.object([])]))];
+}
+
+/**
+ * Type-only dynamic tags have already become `<TsrxDynamic is={target}>`.
+ * Recover that target so the Promise assertion checks the authored component.
+ *
+ * @param {ESTreeJSX.JSXAttributeNode[]} attrs
+ * @returns {AST.Expression | null}
+ */
+function find_hono_dynamic_target(attrs) {
+	for (const attr of attrs) {
+		if (
+			attr.type === 'JSXAttribute' &&
+			attr.name.type === 'JSXIdentifier' &&
+			attr.name.name === 'is' &&
+			attr.value?.type === 'JSXExpressionContainer' &&
+			attr.value.expression.type !== 'JSXEmptyExpression'
+		) {
+			return attr.value.expression;
+		}
+	}
+	return null;
 }
 
 /**
@@ -360,7 +391,7 @@ function find_hono_dom_async_components(ast, analysis) {
 	for (const reference of jsx_references) {
 		const found = resolve_async_component(reference.node, [], new Set());
 		if (!found) continue;
-		reference.node.metadata = /** @type {any} */ ({
+		reference.node.metadata = /** @type {HonoNodeMetaData} */ ({
 			...(reference.node.metadata || {}),
 			hono_dom_local_async: true,
 		});

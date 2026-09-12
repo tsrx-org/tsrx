@@ -14,10 +14,11 @@ const card_props: DynamicProps<typeof Card> = {
 };
 void card_props;
 
-Dynamic({
+const dynamic_card: ReturnType<FC> = Dynamic({
 	is: Card,
 	title: 'dynamic card',
 });
+void dynamic_card;
 
 const button_props: DynamicProps<'button'> = {
 	is: 'button',
@@ -25,10 +26,11 @@ const button_props: DynamicProps<'button'> = {
 };
 void button_props;
 
-Dynamic({
+const dynamic_button: ReturnType<FC> = Dynamic({
 	is: 'button',
 	type: 'button',
 });
+void dynamic_button;
 
 // @ts-expect-error A component's required props remain required for a dynamic tag.
 const missing_card_props: DynamicProps<typeof Card> = { is: Card };

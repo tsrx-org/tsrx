@@ -1,4 +1,4 @@
-import type { FC, JSX, JSXNode } from 'hono/jsx';
+import type { FC, JSX } from 'hono/jsx';
 
 type DynamicIntrinsicElements = JSX.IntrinsicElements;
 type DynamicIntrinsicElement = Extract<keyof DynamicIntrinsicElements, string>;
@@ -23,9 +23,9 @@ export declare function Dynamic<T extends DynamicIntrinsicElement>(
 	props: DynamicIntrinsicElements[T] & {
 		is: T | null | undefined | false;
 	},
-): JSXNode;
+): ReturnType<FC>;
 export declare function Dynamic<T extends DynamicElementType>(
 	props: DynamicComponentProps<DynamicTarget<NoInfer<T>>> & {
 		is: T | null | undefined | false;
 	},
-): JSXNode;
+): ReturnType<FC>;

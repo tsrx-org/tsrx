@@ -122,6 +122,51 @@ describe('@tsrx/vite-plugin-hono', () => {
 		expect(plugin.load.call(client, css_id)).toContain('color: red;');
 	});
 
+	it('does not publish CSS from a superseded hot update', async () => {
+		const plugin = tsrxHono({ mode: 'dom' });
+		const id = '/virtual/App.tsrx';
+		const css_id = `\0${id}${CSS_QUERY}`;
+		const css_module = { id: css_id };
+		const invalidated = [];
+		const environment = {
+			moduleGraph: {
+				getModuleById(module_id) {
+					return module_id === css_id ? css_module : undefined;
+				},
+				invalidateModule(module) {
+					invalidated.push(module);
+				},
+			},
+		};
+		const context = create_context(environment);
+		const styled = (color) =>
+			`export function App() @{ <><style>main { color: ${color}; }</style><main /></> }`;
+
+		await plugin.transform.call(context, styled('initial'), id);
+		let release_first_read;
+		const first = plugin.hotUpdate.call(context, {
+			file: id,
+			modules: [{ id }],
+			read: () =>
+				new Promise((resolve) => {
+					release_first_read = () => resolve(styled('red'));
+				}),
+		});
+		const second_modules = [{ id, revision: 2 }];
+		const second = await plugin.hotUpdate.call(context, {
+			file: id,
+			modules: second_modules,
+			read: async () => styled('blue'),
+		});
+		release_first_read();
+		const stale = await first;
+
+		expect(second).toEqual([...second_modules, css_module]);
+		expect(stale).toEqual([]);
+		expect(plugin.load.call(context, css_id)).toContain('color: blue;');
+		expect(invalidated).toEqual([css_module]);
+	});
+
 	it('releases stylesheet ownership when a source file is deleted', async () => {
 		const plugin = tsrxHono();
 		const context = create_context();

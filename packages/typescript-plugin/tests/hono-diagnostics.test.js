@@ -96,6 +96,35 @@ describe('tsrx-tsc Hono diagnostics', () => {
 		expect(hono_lines.every((line) => line.includes('src/App.tsrx('))).toBe(true);
 	});
 
+	it('checks the selected component in dynamic DOM tags', () => {
+		configure_workspace('@tsrx/hono/dom');
+		write(
+			'src/components.ts',
+			`export function ImportedAsync(): Promise<string> {
+	return Promise.resolve('async');
+}
+	export function ImportedSync(): string {
+		return 'sync';
+	}
+`,
+		);
+		write(
+			'src/App.tsrx',
+			`import { ImportedAsync, ImportedSync } from './components';
+		export function App({ Selected }: { Selected: typeof ImportedAsync | typeof ImportedSync }) {
+			return <><{ImportedAsync} /><{ImportedSync} /><{Selected} /></>;
+		}
+`,
+		);
+
+		const result = run_tsrx_tsc();
+		const hono_lines = result.output.split('\n').filter((line) => line.includes(TYPE_MESSAGE));
+
+		expect(result.status).not.toBe(0);
+		expect(hono_lines).toHaveLength(1);
+		expect(hono_lines[0]).toContain('src/App.tsrx(');
+	});
+
 	it('does not apply the DOM Promise policy through the server entry', () => {
 		configure_workspace('@tsrx/hono');
 		write(
