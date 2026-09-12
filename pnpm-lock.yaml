@@ -111,6 +111,9 @@ catalogs:
     get-tsconfig:
       specifier: 5.0.0-beta.6
       version: 5.0.0-beta.6
+    hono:
+      specifier: 4.13.7
+      version: 4.13.7
     is-reference:
       specifier: ^3.0.3
       version: 3.0.3
@@ -705,6 +708,25 @@ importers:
       vscode-languageserver-types:
         specifier: catalog:default
         version: 3.17.5
+
+  packages/tsrx-hono:
+    dependencies:
+      '@tsrx/core':
+        specifier: workspace:*
+        version: link:../tsrx
+    devDependencies:
+      '@types/estree':
+        specifier: catalog:default
+        version: 1.0.8
+      '@types/estree-jsx':
+        specifier: catalog:default
+        version: 1.0.5
+      hono:
+        specifier: catalog:default
+        version: 4.13.7
+      typescript:
+        specifier: catalog:default
+        version: 5.9.3
 
   packages/tsrx-mcp:
     dependencies:
@@ -4332,6 +4354,10 @@ packages:
 
   hono@4.12.4:
     resolution: {integrity: sha512-ooiZW1Xy8rQ4oELQ++otI2T9DsKpV0M6c6cO6JGx4RTfav9poFFLlet9UMXHZnoM1yG0HWGlQLswBGX3RZmHtg==}
+    engines: {node: '>=16.9.0'}
+
+  hono@4.13.7:
+    resolution: {integrity: sha512-c8/gF9ac8Y78/agExVocyLevgR+JlpNB444Py0FSX8pJoPdYUfUzRcXtYEYGwt6l19qIlVZPN5Mfsw9jFShmQQ==}
     engines: {node: '>=16.9.0'}
 
   hookable@6.1.1:
@@ -9586,6 +9612,8 @@ snapshots:
       '@types/hast': 3.0.4
 
   hono@4.12.4: {}
+
+  hono@4.13.7: {}
 
   hookable@6.1.1: {}
 

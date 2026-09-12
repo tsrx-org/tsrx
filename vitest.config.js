@@ -113,6 +113,15 @@ export default defineConfig({
 		projects: [
 			{
 				test: {
+					name: 'tsrx-hono',
+					include: ['packages/tsrx-hono/tests/**/*.test.js'],
+					environment: 'node',
+					globals: true,
+				},
+				plugins: [],
+			},
+			{
+				test: {
 					name: 'tsrx-react',
 					include: ['packages/tsrx-react/tests/**/*.test.js'],
 					environment: 'node',
