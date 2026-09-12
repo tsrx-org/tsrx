@@ -107,6 +107,10 @@ export function tsrxHono(options = {}) {
 		name: '@tsrx/bun-plugin-hono',
 
 		setup(build) {
+			build.onStart(() => {
+				css_cache.clear();
+			});
+
 			// build.config is absent when registered through Bun.plugin(), including
 			// bun:test preloads, so every setting also has a safe runtime default.
 			const build_config = build.config ?? {};

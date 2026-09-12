@@ -6,6 +6,7 @@ import { tsrxHono } from '../src/index.js';
 
 /**
  * @typedef {{
+ *  onStart: Function[],
  *  onResolve: Array<{ options: { filter: RegExp, namespace?: string }, callback: Function }>,
  *  onLoad: Array<{ options: { filter: RegExp, namespace?: string }, callback: Function }>,
  *  config: Record<string, any>,
@@ -59,13 +60,17 @@ function install_transpiler_stub() {
  */
 function setup_plugin(options, config = {}) {
 	/** @type {Omit<Hooks, 'config'>} */
-	const hooks = { onResolve: [], onLoad: [] };
+	const hooks = { onStart: [], onResolve: [], onLoad: [] };
 	const plugin = tsrxHono(options);
 	const build = {
 		config: {
 			entrypoints: [],
 			plugins: [],
 			...config,
+		},
+		onStart(callback) {
+			hooks.onStart.push(callback);
+			return build;
 		},
 		/**
 		 * @param {{ filter: RegExp, namespace?: string }} hook_options
@@ -192,6 +197,12 @@ describe('@tsrx/bun-plugin-hono', () => {
 			expect(css.contents).toContain('.app.');
 			expect(css.contents).toContain('color: red;');
 			expect(resolve_css(hooks, '/other/App.tsrx?tsrx-css&lang.css')).toBeUndefined();
+
+			expect(hooks.onStart).toHaveLength(1);
+			hooks.onStart[0]();
+			expect(resolve_css(hooks, css_id)).toBeUndefined();
+			await load_tsrx(hooks, file_path);
+			expect(resolve_css(hooks, css_id)).toBeDefined();
 
 			await writeFile(file_path, `export function App() @{ <div>{'No style'}</div> }`);
 			const without_css = await load_tsrx(hooks, file_path);
