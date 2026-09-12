@@ -49,6 +49,9 @@ overrides:
   # preset's own dependency range.
   babel-preset-solid: '2.0.0-rc.2'
   babel-plugin-jsx-dom-expressions: '0.50.0-next.14'
+  brace-expansion@1: '1.1.16'
+  brace-expansion@2: '2.1.2'
+  brace-expansion@5: '5.0.9'
 
 catalogs:
   default:
