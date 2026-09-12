@@ -29,6 +29,9 @@
     "./dynamic": {
       "types": "./types/dynamic.d.ts"
     },
+    "./dom/dynamic": {
+      "types": "./types/dom/dynamic.d.ts"
+    },
     "./error-boundary": {
       "types": "./types/error-boundary.d.ts",
       "default": "./src/error-boundary.js"

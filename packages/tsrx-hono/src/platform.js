@@ -91,7 +91,7 @@ function create_hono_platform(mode) {
 		imports: {
 			fragment: jsx_source,
 			suspense: jsx_source,
-			dynamic: '@tsrx/hono/dynamic',
+			dynamic: is_dom ? '@tsrx/hono/dom/dynamic' : '@tsrx/hono/dynamic',
 			dynamicFactory: {},
 			errorBoundary: is_dom ? '@tsrx/hono/dom/error-boundary' : '@tsrx/hono/error-boundary',
 			mergeRefs: '@tsrx/hono/ref',

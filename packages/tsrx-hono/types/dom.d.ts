@@ -5,7 +5,7 @@ export type { Platform, RuntimeImportMode, TsrxPlatformFlags } from '@tsrx/core/
 
 export function parse(source: string, filename?: string, options?: ParseOptions): Program;
 
-export type { DynamicElementType, DynamicProps } from './dynamic.js';
+export type { DynamicElementType, DynamicProps } from './dom/dynamic.js';
 export { isRefProp } from './ref.js';
 
 export const compile: CompileFn;

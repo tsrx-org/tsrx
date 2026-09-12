@@ -119,6 +119,17 @@ describe('@tsrx/hono server compiler', () => {
 		expect(code).not.toContain("from '@tsrx/hono/dynamic'");
 	});
 
+	it('uses the server Dynamic helper in type-only output', () => {
+		const { code } = compileServerToVolarMappings(
+			`export function App({ Tag }) @{
+				<{Tag} class="dynamic" />
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(`import { Dynamic as TsrxDynamic } from '@tsrx/hono/dynamic';`);
+	});
+
 	it('allows top-level await for server components', () => {
 		expect(() =>
 			compileServer(
@@ -164,6 +175,18 @@ describe('@tsrx/hono server compiler', () => {
 });
 
 describe('@tsrx/hono DOM compiler', () => {
+	it('uses the DOM Dynamic helper in type-only output', () => {
+		const { code } = compileDomToVolarMappings(
+			`export function App({ Tag }) @{
+				<{Tag} class="dynamic" />
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(`import { Dynamic as TsrxDynamic } from '@tsrx/hono/dom/dynamic';`);
+		expect(code).not.toContain("from '@tsrx/hono/dynamic'");
+	});
+
 	it('specializes compile-time platform flags before DOM lowering', () => {
 		const { code } = compileDom(
 			`if (import.meta.env.platform.web) {

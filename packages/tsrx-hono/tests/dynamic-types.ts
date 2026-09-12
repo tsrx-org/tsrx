@@ -1,4 +1,10 @@
 import type { FC } from 'hono/jsx';
+import type { JSX as DomJSX } from 'hono/jsx/dom/jsx-runtime';
+import { Dynamic as DomDynamic } from '@tsrx/hono/dom/dynamic';
+import type {
+	DynamicElementType as DomDynamicElementType,
+	DynamicProps as DomDynamicProps,
+} from '@tsrx/hono/dom';
 import { Dynamic } from '../types/dynamic.js';
 import type { DynamicElementType, DynamicProps } from '../types/index.js';
 
@@ -51,3 +57,26 @@ Dynamic({
 	// @ts-expect-error Intrinsic element attributes keep their target-specific value types.
 	type: 'checkbox',
 });
+
+const dom_element_type: DomDynamicElementType = 'button';
+void dom_element_type;
+
+const dom_card_props: DomDynamicProps<typeof Card> = {
+	is: Card,
+	title: 'dynamic DOM card',
+};
+void dom_card_props;
+
+const dom_dynamic_card: DomJSX.Element = DomDynamic({
+	is: Card,
+	title: 'dynamic DOM card',
+});
+void dom_dynamic_card;
+
+type IsAny<T> = 0 extends 1 & T ? true : false;
+type Assert<T extends true> = T;
+type DomCustomElementUsesDomIntrinsicIndex = Assert<
+	IsAny<DomDynamicProps<'tsrx-custom-element'>['customProperty']>
+>;
+declare const dom_custom_element_uses_dom_intrinsic_index: DomCustomElementUsesDomIntrinsicIndex;
+void dom_custom_element_uses_dom_intrinsic_index;
