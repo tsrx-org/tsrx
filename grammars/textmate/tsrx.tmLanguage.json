@@ -668,6 +668,9 @@
     "expressionWithoutIdentifiers": {
       "patterns": [
         {
+          "include": "#jsx"
+        },
+        {
           "include": "#tsrx-template-child-directive"
         },
         {

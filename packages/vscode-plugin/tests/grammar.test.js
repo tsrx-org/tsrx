@@ -186,3 +186,97 @@ describe('TSRX TextMate grammar: <style> blocks', () => {
 		expect(find(tokens, '</').scopes).toContain('style.tag.js');
 	});
 });
+
+describe('TSRX TextMate grammar: JSX expression boundaries', () => {
+	it('highlights the issue #100 JSX structure and embedded expressions independently', () => {
+		const tokens = tokenize(
+			[
+				'const output = (',
+				'  <ul>',
+				'    {visibleItems.length > 0',
+				'      ? visibleItems.map((item) => (',
+				'          <li key={item.text}>{item.text}</li>',
+				'        ))',
+				'      : (',
+				'          <li className="no-todos">No todos</li>',
+				'        )}',
+				'  </ul>',
+				');',
+			].join('\n'),
+		);
+
+		// Tag names and delimiters are separate evidence categories.
+		expect(find(tokens, 'ul').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'ul', 1).scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'li').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'li', 1).scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, '<').scopes).toContain('punctuation.definition.tag.begin.js');
+		expect(find(tokens, '</').scopes).toContain('punctuation.definition.tag.begin.js');
+		expect(find(tokens, '>').scopes).toContain('punctuation.definition.tag.end.js');
+
+		// Attribute names are asserted independently from their values.
+		expect(find(tokens, 'key').scopes).toContain('entity.other.attribute-name.js');
+		expect(find(tokens, 'className').scopes).toContain('entity.other.attribute-name.js');
+
+		// Embedded expression objects, methods, and properties keep distinct roles.
+		expect(find(tokens, 'visibleItems').scopes).toContain('variable.other.object.js');
+		expect(find(tokens, 'length').scopes).toContain('support.variable.property.js');
+		expect(find(tokens, 'visibleItems', 1).scopes).toContain('variable.other.object.js');
+		expect(find(tokens, 'map').scopes).toContain('entity.name.function.js');
+		expect(find(tokens, 'text').scopes).toContain('variable.other.property.js');
+		expect(find(tokens, 'text', 1).scopes).toContain('variable.other.property.js');
+	});
+
+	it.each([
+		['return', ['function view() {', '  return (', '    <div />', '  );', '}'].join('\n')],
+		['arrow body', ['const view = () => (', '  <div />', ');'].join('\n')],
+		['initializer', ['const view = (', '  <div />', ');'].join('\n')],
+	])('recognizes JSX after a multiline %s boundary', (_name, code) => {
+		const tokens = tokenize(code);
+
+		expect(find(tokens, 'div').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, '<').scopes).toContain('punctuation.definition.tag.begin.js');
+		expect(find(tokens, '/>').scopes).toContain('punctuation.definition.tag.end.js');
+	});
+
+	it('does not reclassify relational, shift, generic, or type syntax as JSX', () => {
+		const tokens = tokenize(
+			[
+				'const less = a < b;',
+				'const lessOrEqual = a <= b;',
+				'const shifted = a << b;',
+				'const called = fn<T>(x);',
+				'const identity = <T,>(value: T): T => value;',
+				'type Box<T> = { value: T };',
+			].join('\n'),
+		);
+
+		for (const token of tokens) {
+			expect(token.scopes).not.toContain('meta.tag.js');
+			expect(token.scopes).not.toContain('punctuation.definition.tag.begin.js');
+			expect(token.scopes).not.toContain('entity.name.tag.js');
+			expect(token.scopes).not.toContain('meta.jsx.children.js');
+		}
+	});
+
+	it('preserves representative @if and @for directive scopes', () => {
+		const tokens = tokenize(
+			[
+				'function App(items) @{',
+				'  @if (items.length > 0) {',
+				'    <div />',
+				'  }',
+				'  @for (const item of items) {',
+				'    <span>{item}</span>',
+				'  }',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, '@').scopes).toContain('keyword.control.directive.tsrx');
+		expect(find(tokens, 'if').scopes).toContain('keyword.control.directive.tsrx');
+		expect(find(tokens, '@', 1).scopes).toContain('keyword.control.directive.tsrx');
+		expect(find(tokens, 'for').scopes).toContain('keyword.control.directive.tsrx');
+		expect(find(tokens, 'item', 1).scopes).toContain('meta.embedded.expression.js');
+	});
+});
