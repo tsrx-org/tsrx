@@ -3146,6 +3146,10 @@
 			<array>
 				<dict>
 					<key>include</key>
+					<string>#jsx</string>
+				</dict>
+				<dict>
+					<key>include</key>
 					<string>#tsrx-template-child-directive</string>
 				</dict>
 				<dict>
