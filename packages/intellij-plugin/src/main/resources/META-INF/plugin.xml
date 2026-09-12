@@ -25,6 +25,7 @@
 	<depends>com.intellij.modules.platform</depends>
 	<depends>org.jetbrains.plugins.textmate</depends>
 	<depends optional="true" config-file="tsrx-ultimate.xml">com.intellij.modules.ultimate</depends>
+	<depends optional="true" config-file="tsrx.intellij-plugin-rainbow-brackets.xml">izhangzhihao.rainbow.brackets</depends>
 	<!-- Extensions defined by the plugin.
 			 Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
 	<extensions defaultExtensionNs="com.intellij">

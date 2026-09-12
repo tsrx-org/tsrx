@@ -37,6 +37,7 @@ dependencies {
 
 		// Add plugin dependencies for compilation here:
 		bundledPlugin("org.jetbrains.plugins.textmate")
+		plugin("izhangzhihao.rainbow.brackets", "2025.3.12")
 	}
 }
 
@@ -112,6 +113,9 @@ sourceSets.main {
 tasks {
 	processResources {
 		dependsOn(generatePluginResources)
+	}
+	test {
+		dependsOn(buildPlugin)
 	}
 
 	// Set the JVM compatibility versions

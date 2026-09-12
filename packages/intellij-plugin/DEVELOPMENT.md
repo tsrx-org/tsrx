@@ -12,12 +12,18 @@ packages/intellij-plugin/gradlew -p packages/intellij-plugin \
 
 The archive is written to `packages/intellij-plugin/build/distributions`. It
 contains the plugin descriptors, MIT license, icon, pinned language-server
-version, and generated TextMate bundle.
+version, and generated TextMate bundle. It declares the standard Rainbow Brackets
+plugin as optional and does not package its JAR or implementation classes.
 
 The plugin targets compatible IntelliJ-based IDEs from 2025.2 onward. WebStorm
 2025.2.4 is the reference build used for compilation, platform tests, and Plugin
 Verifier. Syntax support does not load the optional LSP classes; IDEs exposing the
 Ultimate and LSP modules additionally receive language-server features.
+
+The optional bracket-coloring integration is verified against the standard Rainbow
+Brackets plugin 2025.3.12. Do not substitute Rainbow Brackets Lite. The
+development dependency places the standard plugin in Gradle's IDE and test
+sandboxes, while the published TSRX ZIP remains independently installable.
 
 ## Install-from-disk smoke test
 
@@ -34,6 +40,42 @@ and `issue-100.tsrx` side by side in WebStorm 2025.2.4 under Darcula. Compare ta
 names and delimiters, `key` and `className`, and the `length`, `map`, and `text`
 member names. The comparison is theme-relative; it checks equivalent syntax roles,
 not full TypeScript PSI-backed semantics for `.tsrx` files.
+
+### Rainbow Brackets compatibility smoke
+
+Run these checks in WebStorm 2025.2.4 with a clean profile:
+
+1. Leave Rainbow Brackets uninstalled. Install the TSRX ZIP, open
+   `src/test/resources/highlighting/rainbow-brackets.tsrx`, and confirm the file
+   type and baseline TextMate highlighting work without errors or a required
+   companion-plugin install.
+2. Install the standard Rainbow Brackets plugin 2025.3.12 and restart WebStorm.
+   Confirm its theme-relative colors cover the TSRX `@{}` block, round, square,
+   and curly JavaScript pairs, JSX tags, self-closing tags, fragments, and JSX
+   expression braces. Tag names, comparison operators, and type-parameter angles
+   must retain their normal syntax colors.
+3. Create an equivalent `.tsx` copy by changing `function View() @{` to
+   `function View() {`. Compare the shared JavaScript and JSX structures side by
+   side; equivalent nesting should use equivalent Rainbow keys even when the
+   underlying TSRX syntax colors differ.
+4. Toggle Rainbow globally, each bracket family, first-level suppression,
+   empty-pair suppression, the `TSRX` language blacklist, HTML-inside-JavaScript,
+   round colors for all bracket kinds, mixed-family cycling, and template-string
+   suppression. Confirm each edit removes or restores only the expected overlays
+   and never changes the depth assigned to a still-visible descendant.
+5. Change a valid nested sequence to crossed or incomplete delimiters, then make
+   it valid again. Confirm invalid punctuation receives no Rainbow overlay, a
+   later independent pair keeps its level, and no stale color remains after any
+   edit.
+6. Enable the large-file limit and create a representative `.tsrx` file one line
+   below its configured threshold. Rapidly type, paste, undo, and repeat the
+   settings toggles above. Record any visible UI stall, stale overlay, evidence of
+   retained pass state, or profiler evidence that substring/per-character
+   allocation dominates the pass. At exactly the threshold, coloring remains
+   eligible; it is suppressed only above the threshold.
+7. Disable or uninstall Rainbow Brackets and restart. Confirm the same `.tsrx`
+   files immediately return to baseline TextMate highlighting and all other TSRX
+   features continue to work.
 
 The managed language server is installed with npm lifecycle scripts disabled.
 Gradle derives its exact pinned version directly from
