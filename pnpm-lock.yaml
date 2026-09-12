@@ -323,6 +323,9 @@ importers:
       bun:
         specifier: ^1.0.0
         version: 1.3.10
+      source-map:
+        specifier: catalog:default
+        version: 0.7.6
     devDependencies:
       '@types/bun':
         specifier: catalog:default

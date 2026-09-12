@@ -50,6 +50,23 @@ function write_json(path, value) {
 	writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
 }
 
+function write_pnpm_workspace(directory, overrides, strict_peer_dependencies = true) {
+	writeFileSync(
+		join(directory, 'pnpm-workspace.yaml'),
+		[
+			'autoInstallPeers: false',
+			`strictPeerDependencies: ${strict_peer_dependencies}`,
+			'allowBuilds:',
+			'  bun: true',
+			'overrides:',
+			...Object.entries(overrides).map(
+				([name, version]) => `  ${JSON.stringify(name)}: ${JSON.stringify(version)}`,
+			),
+			'',
+		].join('\n'),
+	);
+}
+
 function installed_version(package_dir, name) {
 	return package_json(join(root, package_dir, 'node_modules', name, 'package.json')).version;
 }
@@ -66,8 +83,8 @@ function install_consumer(directory, dependencies, strict = true) {
 		private: true,
 		type: 'module',
 		dependencies,
-		pnpm: { onlyBuiltDependencies: ['bun'], overrides },
 	});
+	write_pnpm_workspace(directory, overrides, strict);
 	writeFileSync(
 		join(directory, '.npmrc'),
 		`auto-install-peers=false\nstrict-peer-dependencies=${strict}\n`,
@@ -87,13 +104,11 @@ function expect_peer_rejection(label, compiler_tarball, core_tarball, runtime_ta
 			'@tsrx/hono': `file:${compiler_tarball}`,
 			hono: version,
 		},
-		pnpm: {
-			overrides: {
-				'@tsrx/runtime': `file:${runtime_tarball}`,
-				'@tsrx/core': `file:${core_tarball}`,
-				'@tsrx/hono': `file:${compiler_tarball}`,
-			},
-		},
+	});
+	write_pnpm_workspace(directory, {
+		'@tsrx/runtime': `file:${runtime_tarball}`,
+		'@tsrx/core': `file:${core_tarball}`,
+		'@tsrx/hono': `file:${compiler_tarball}`,
 	});
 	writeFileSync(
 		join(directory, '.npmrc'),

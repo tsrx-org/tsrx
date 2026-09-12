@@ -25,7 +25,8 @@
   },
   "dependencies": {
     "@tsrx/core": "workspace:*",
-    "@tsrx/hono": "workspace:*"
+    "@tsrx/hono": "workspace:*",
+    "source-map": "catalog:default"
   },
   "peerDependencies": {
     "bun": "^1.0.0",

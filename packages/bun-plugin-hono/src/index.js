@@ -3,9 +3,11 @@
 /** @import { HonoTargetMode } from '@tsrx/hono/target' */
 
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
 import { resolveBuildPlatform } from '@tsrx/core/config';
 import { resolveHonoTarget } from '@tsrx/hono/target';
+import { compose_bun_source_maps } from './source-maps.js';
 
 const DEFAULT_INCLUDE = /\.tsrx$/;
 const CSS_QUERY = '?tsrx-css&lang.css';
@@ -102,6 +104,8 @@ export function tsrxHono(options = {}) {
 
 	/** @type {Map<string, string>} */
 	const css_cache = new Map();
+	/** @type {Map<string, import('source-map').RawSourceMap>} */
+	const compiler_maps = new Map();
 
 	return {
 		name: '@tsrx/bun-plugin-hono',
@@ -109,6 +113,7 @@ export function tsrxHono(options = {}) {
 		setup(build) {
 			build.onStart(() => {
 				css_cache.clear();
+				compiler_maps.clear();
 			});
 
 			// build.config is absent when registered through Bun.plugin(), including
@@ -130,6 +135,11 @@ export function tsrxHono(options = {}) {
 				);
 			}
 			const transpiler = create_transpiler(target.jsxImportSource, build_config.target);
+			if (typeof build.onEnd === 'function') {
+				build.onEnd((result) =>
+					compose_bun_source_maps(result, compiler_maps, typeof build_config.outdir === 'string'),
+				);
+			}
 
 			build.onResolve({ filter: CSS_QUERY_PATTERN }, (args) => {
 				if (!css_cache.has(args.path)) return undefined;
@@ -148,7 +158,8 @@ export function tsrxHono(options = {}) {
 
 					const source = await readFile(args.path, 'utf-8');
 					const compile = await load_compiler();
-					const { code, css } = compile(source, args.path, compile_options);
+					const { code, css, map } = compile(source, args.path, compile_options);
+					compiler_maps.set(path.normalize(args.path), map);
 					const css_id = to_css_id(args.path);
 					let output = code;
 

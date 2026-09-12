@@ -7,6 +7,7 @@ import { tsrxHono } from '../src/index.js';
 /**
  * @typedef {{
  *  onStart: Function[],
+ *  onEnd: Function[],
  *  onResolve: Array<{ options: { filter: RegExp, namespace?: string }, callback: Function }>,
  *  onLoad: Array<{ options: { filter: RegExp, namespace?: string }, callback: Function }>,
  *  config: Record<string, any>,
@@ -60,7 +61,7 @@ function install_transpiler_stub() {
  */
 function setup_plugin(options, config = {}) {
 	/** @type {Omit<Hooks, 'config'>} */
-	const hooks = { onStart: [], onResolve: [], onLoad: [] };
+	const hooks = { onStart: [], onEnd: [], onResolve: [], onLoad: [] };
 	const plugin = tsrxHono(options);
 	const build = {
 		config: {
@@ -70,6 +71,10 @@ function setup_plugin(options, config = {}) {
 		},
 		onStart(callback) {
 			hooks.onStart.push(callback);
+			return build;
+		},
+		onEnd(callback) {
+			hooks.onEnd.push(callback);
 			return build;
 		},
 		/**

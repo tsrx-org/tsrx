@@ -48,8 +48,9 @@ components are compiler errors; imported and inferred Promise returns are left t
 type-aware tooling and reported only when definitely Promise-like.
 
 The plugin emits sibling-scoped `<style>` blocks as owned virtual CSS modules.
-When source maps are enabled in `Bun.build`, Bun emits maps for the generated
-JavaScript and CSS outputs.
+When source maps are enabled in `Bun.build`, the plugin composes JavaScript maps
+back to the authored `.tsrx` files. Bun emits CSS maps for the generated CSS
+output.
 
 For `bun:test`, register one mode from a preload:
 
