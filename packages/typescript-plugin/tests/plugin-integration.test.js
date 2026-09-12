@@ -460,6 +460,13 @@ describe('typescript-plugin language plugin integration', () => {
 			undefined,
 		],
 		[
+			'resolves the explicit @tsrx/hono/dom compiler through the generic declared-compiler path',
+			'hono-dom-declared',
+			'hono-dom',
+			undefined,
+			undefined,
+		],
+		[
 			'accepts a declared compiler using a mixed-case scoped package subpath specifier',
 			'declared-mixed-case-subpath',
 			'mixed-case-subpath',

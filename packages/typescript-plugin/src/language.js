@@ -58,6 +58,12 @@ export const COMPILER_CANDIDATES = [
 		['@tsrx/react', '@tsrx/vite-plugin-react'],
 	],
 	[
+		'@tsrx/hono',
+		['node_modules', '@tsrx', 'hono'],
+		['.tsrx'],
+		['@tsrx/hono', '@tsrx/vite-plugin-hono', '@tsrx/bun-plugin-hono'],
+	],
+	[
 		'@tsrx/solid',
 		['node_modules', '@tsrx', 'solid'],
 		['.tsrx'],

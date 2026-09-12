@@ -8,7 +8,13 @@ import { createLanguageService, createUriMap } from '@volar/language-service';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { URI } from 'vscode-uri';
 import { beforeEach } from 'vitest';
-import { getTsrxLanguagePlugin, _reset_for_test } from '@tsrx/typescript-plugin/src/language.js';
+import {
+	getTsrxLanguagePlugin,
+	TSRXVirtualCode,
+	_reset_for_test,
+} from '@tsrx/typescript-plugin/src/language.js';
+import * as hono_dom_compiler from '../../tsrx-hono/src/dom.js';
+import * as hono_server_compiler from '../../tsrx-hono/src/index.js';
 import { createDocumentSymbolPlugin } from '../src/documentSymbolPlugin.js';
 import { createCompletionPlugin } from '../src/completionPlugin.js';
 import { createTypeScriptServices } from '../src/typescriptService.js';
@@ -38,6 +44,35 @@ function create_snapshot(source) {
 }
 
 /**
+ * Hono's language-service fixtures exercise the real target compiler before the
+ * workspace lockfile has necessarily been regenerated to link a newly added
+ * package into `node_modules`. Inject only the compiler module; the surrounding
+ * Volar and TypeScript services are the same ones used by every target.
+ * @param {string} fixture_name
+ */
+function get_fixture_language_plugin(fixture_name) {
+	const language_plugin = getTsrxLanguagePlugin();
+	const compiler = fixture_name.startsWith('hono-dom/')
+		? hono_dom_compiler
+		: fixture_name.startsWith('hono-server/')
+			? hono_server_compiler
+			: undefined;
+	if (!compiler) return language_plugin;
+
+	return {
+		...language_plugin,
+		createVirtualCode(file_name_or_uri, language_id, snapshot) {
+			if (language_id !== 'tsrx') return undefined;
+			const file_name =
+				typeof file_name_or_uri === 'string'
+					? file_name_or_uri
+					: file_name_or_uri.fsPath.replace(/\\/g, '/');
+			return new TSRXVirtualCode(file_name, snapshot, compiler);
+		},
+	};
+}
+
+/**
  * Build a Volar language service wired with the given service plugins, so tests can drive a
  * feature end-to-end (including Volar's source<->generated mapping). Fixture names may carry a
  * subdirectory: `react/App.tsrx` resolves to the workspace `@tsrx/react` compiler through
@@ -50,7 +85,7 @@ function create_snapshot(source) {
 export function create_service_harness(source, plugins, fixture_name = 'App.tsrx') {
 	const uri = URI.file(path.join(fixture_dir, fixture_name));
 	const scripts = createUriMap();
-	const language = createLanguage([getTsrxLanguagePlugin()], scripts, () => {});
+	const language = createLanguage([get_fixture_language_plugin(fixture_name)], scripts, () => {});
 	const source_snapshot = create_snapshot(source);
 	language.scripts.set(uri, source_snapshot, 'tsrx');
 
@@ -101,7 +136,7 @@ export function create_typescript_harness(source, plugins, fixture_name = 'react
 	/** @type {import('@volar/language-core').Language<URI>} */
 	const language = createLanguage(
 		[
-			getTsrxLanguagePlugin(),
+			get_fixture_language_plugin(fixture_name),
 			{
 				getLanguageId(script_uri) {
 					return volar_typescript.resolveFileLanguageId(script_uri.path);
@@ -183,7 +218,7 @@ export function create_typescript_harness(source, plugins, fixture_name = 'react
 export function create_stateful_completion_harness(initial_source, fixture_name = 'App.tsrx') {
 	const uri = URI.file(path.join(fixture_dir, fixture_name));
 	const scripts = createUriMap();
-	const language = createLanguage([getTsrxLanguagePlugin()], scripts, () => {});
+	const language = createLanguage([get_fixture_language_plugin(fixture_name)], scripts, () => {});
 	const set_document = (/** @type {string} */ source) => {
 		language.scripts.set(uri, create_snapshot(source), 'tsrx');
 	};

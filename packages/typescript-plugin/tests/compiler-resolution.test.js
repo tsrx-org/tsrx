@@ -4,6 +4,10 @@ import { cleanup_fixture_workspaces, create_fixture_workspace } from './workspac
 import fs from 'fs';
 
 /** @import { WORKSPACE_CONFIGS } from './workspace-fixtures.js'; */
+/** @typedef {keyof typeof WORKSPACE_CONFIGS} WorkspaceName */
+
+/** @type {WorkspaceName[]} */
+const HONO_SIGNAL_WORKSPACES = ['hono-compiler-only', 'hono-vite-only', 'hono-bun-only'];
 
 const {
 	is_tsrx_file,
@@ -38,6 +42,9 @@ describe('typescript-plugin compiler resolution', () => {
 			const react_candidate = COMPILER_CANDIDATES.find(
 				([package_name]) => package_name === '@tsrx/react',
 			);
+			const hono_candidate = COMPILER_CANDIDATES.find(
+				([package_name]) => package_name === '@tsrx/hono',
+			);
 			const vue_candidate = COMPILER_CANDIDATES.find(
 				([package_name]) => package_name === '@tsrx/vue',
 			);
@@ -54,6 +61,7 @@ describe('typescript-plugin compiler resolution', () => {
 			if (
 				!ripple_candidate ||
 				!react_candidate ||
+				!hono_candidate ||
 				!solid_candidate ||
 				!preact_candidate ||
 				!vue_candidate ||
@@ -64,6 +72,12 @@ describe('typescript-plugin compiler resolution', () => {
 
 			expect(ripple_candidate[2]).toEqual(['.tsrx']);
 			expect(react_candidate[2]).toEqual(['.tsrx']);
+			expect(hono_candidate[2]).toEqual(['.tsrx']);
+			expect(hono_candidate[3]).toEqual([
+				'@tsrx/hono',
+				'@tsrx/vite-plugin-hono',
+				'@tsrx/bun-plugin-hono',
+			]);
 			expect(vue_candidate[2]).toEqual(['.tsrx']);
 			expect(solid_candidate[2]).toEqual(['.tsrx']);
 			expect(preact_candidate[2]).toEqual(['.tsrx']);
@@ -115,6 +129,29 @@ describe('typescript-plugin compiler resolution', () => {
 			const workspace = create_fixture_workspace('react-only');
 			const file_name = path.join(workspace, 'src', 'App.tsrx');
 			const expected = path.join(workspace, 'node_modules', '@tsrx', 'react', 'src', 'index.js');
+
+			expect(find_workspace_compiler_entry_for_file(file_name, fs.existsSync, new Map())).toBe(
+				expected,
+			);
+		});
+
+		it.each(HONO_SIGNAL_WORKSPACES)(
+			'selects the server-default Hono compiler from the %s package signal',
+			(workspace_name) => {
+				const workspace = create_fixture_workspace(workspace_name);
+				const file_name = path.join(workspace, 'src', 'App.tsrx');
+				const expected = path.join(workspace, 'node_modules', '@tsrx', 'hono', 'src', 'index.js');
+
+				expect(find_workspace_compiler_entry_for_file(file_name, fs.existsSync, new Map())).toBe(
+					expected,
+				);
+			},
+		);
+
+		it('keeps the existing first-candidate fallback when an ambiguous project has no target signal', () => {
+			const workspace = create_fixture_workspace('ambiguous-hono');
+			const file_name = path.join(workspace, 'src', 'App.tsrx');
+			const expected = path.join(workspace, 'node_modules', '@tsrx', 'ripple', 'src', 'index.js');
 
 			expect(find_workspace_compiler_entry_for_file(file_name, fs.existsSync, new Map())).toBe(
 				expected,
@@ -329,6 +366,10 @@ describe('typescript-plugin compiler resolution', () => {
 		const cases = [
 			{ name: 'ripple-only', expected: ['@tsrx', 'ripple'] },
 			{ name: 'react-only', expected: ['@tsrx', 'react'] },
+			{ name: 'hono-compiler-only', expected: ['@tsrx', 'hono'] },
+			{ name: 'hono-vite-only', expected: ['@tsrx', 'hono'] },
+			{ name: 'hono-bun-only', expected: ['@tsrx', 'hono'] },
+			{ name: 'ambiguous-hono', expected: ['@tsrx', 'ripple'] },
 			{ name: 'solid-only', expected: ['@tsrx', 'solid'] },
 			{ name: 'preact-only', expected: ['@tsrx', 'preact'] },
 			{ name: 'vue-only', expected: ['@tsrx', 'vue'] },
@@ -363,6 +404,10 @@ describe('typescript-plugin compiler resolution', () => {
 		const cases = [
 			{ name: 'ripple-only', compiler: '@tsrx/ripple', is_ripple: true },
 			{ name: 'react-only', compiler: '@tsrx/react', is_ripple: false },
+			{ name: 'hono-compiler-only', compiler: '@tsrx/hono', is_ripple: false },
+			{ name: 'hono-vite-only', compiler: '@tsrx/hono', is_ripple: false },
+			{ name: 'hono-bun-only', compiler: '@tsrx/hono', is_ripple: false },
+			{ name: 'ambiguous-hono', compiler: '@tsrx/ripple', is_ripple: true },
 			{ name: 'solid-only', compiler: '@tsrx/solid', is_ripple: false },
 			{ name: 'preact-only', compiler: '@tsrx/preact', is_ripple: false },
 			{ name: 'vue-only', compiler: '@tsrx/vue', is_ripple: false },

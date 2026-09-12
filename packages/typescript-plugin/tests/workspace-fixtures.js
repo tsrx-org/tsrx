@@ -115,6 +115,7 @@ module.exports = {
 const COMPILER_STUBS = {
 	ripple: compiler_stub('ripple'),
 	react: compiler_stub('react'),
+	hono: compiler_stub('hono'),
 	solid: compiler_stub('solid'),
 	preact: compiler_stub('preact'),
 	// Octane ships its compiler inside the `octane` package under
@@ -214,6 +215,37 @@ export const WORKSPACE_CONFIGS = {
 			},
 		},
 		compilers: ['react'],
+	},
+	'hono-compiler-only': {
+		package_json: {
+			name: '@tsrx/fixture-hono-compiler-project',
+			private: true,
+			devDependencies: { '@tsrx/hono': 'workspace:*' },
+		},
+		compilers: ['hono'],
+	},
+	'hono-vite-only': {
+		package_json: {
+			name: '@tsrx/fixture-hono-vite-project',
+			private: true,
+			devDependencies: { '@tsrx/vite-plugin-hono': 'workspace:*' },
+		},
+		compilers: ['hono'],
+	},
+	'hono-bun-only': {
+		package_json: {
+			name: '@tsrx/fixture-hono-bun-project',
+			private: true,
+			devDependencies: { '@tsrx/bun-plugin-hono': 'workspace:*' },
+		},
+		compilers: ['hono'],
+	},
+	'ambiguous-hono': {
+		package_json: {
+			name: '@tsrx/fixture-ambiguous-hono-project',
+			private: true,
+		},
+		compilers: ['ripple', 'hono'],
 	},
 	'solid-only': {
 		package_json: {
@@ -358,6 +390,12 @@ export const WORKSPACE_CONFIGS = {
 		'@tsrx/fixture-declared-scoped-subpath-project',
 		'@consumer/tsrx-compiler/compiler/volar',
 		'scoped-subpath',
+	),
+	'hono-dom-declared': declared_workspace_config(
+		'@tsrx/fixture-hono-dom-project',
+		'@tsrx/hono/dom',
+		'hono-dom',
+		{ declared_compiler: { export_subpath: true } },
 	),
 	'declared-mixed-case-subpath': declared_workspace_config(
 		'@tsrx/fixture-declared-mixed-case-subpath-project',
