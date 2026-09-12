@@ -1,11 +1,5 @@
-const output = (
-	<ul title={viewModel.title}>
-		{visibleItems.length > 0
-			? visibleItems.map((item) => (
-					<li key={item.text}>{item.label}</li>
-				))
-			: (
-					<li className="no-todos">No todos</li>
-			)}
-	</ul>
-);
+const list = <ul title={viewModel.title} />;
+const count = <p>{visibleItems.length}</p>;
+const items = <p>{visibleItems.map(renderItem)}</p>;
+const keyed = <li key={item.text}>{item.label}</li>;
+const empty = <li className="no-todos">No todos</li>;
