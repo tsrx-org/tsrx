@@ -125,6 +125,45 @@ class TsrxRainbowBracketAnalyzerTest : BasePlatformTestCase() {
 		})
 	}
 
+	fun testIgnoresSplitOneCharacterJsxTextWithoutShiftingNestedTagLevel() {
+		val source = "const view = <div>(<span />)</div>;"
+		val structures = analyze(source).structures
+		val tags = structures.filter { it.kind == TsrxRainbowBracketKind.ANGLE }
+		val span = tags.single { it.span.substring(source) == "<span />" }
+
+		assertTrue(structures.none { it.kind == TsrxRainbowBracketKind.ROUND })
+		assertEquals(1, span.mixedLevel)
+		assertEquals(1, span.familyLevel)
+	}
+
+	fun testCoalescesPairedNestedAndSelfClosingDynamicTagsFromTextMateScopes() {
+		val source = "const view = <{ Outer }><{Self} /><{Inner}><span /></{ Inner }></{Outer}>;"
+		val scoped = scopedTokens(source)
+		val structures = analyze(source).structures
+		val tags = structures.filter { it.kind == TsrxRainbowBracketKind.ANGLE }
+		val outer = tags.single { it.span.substring(source).startsWith("<{ Outer }>") }
+		val selfClosing = tags.single { it.span.substring(source) == "<{Self} />" }
+		val inner = tags.single { it.span.substring(source).startsWith("<{Inner}>") }
+		val span = tags.single { it.span.substring(source) == "<span />" }
+
+		assertTrue(scoped.any { it.text == "{" && it.scopes.first() == "punctuation.definition.tag.begin.js" })
+		assertTrue(scoped.any { it.text == "}" && it.scopes.first() == "punctuation.definition.tag.end.js" })
+		assertEquals(4, tags.size)
+		assertEquals("<{}></{}>", outer.punctuationText(source))
+		assertEquals("<{}/>", selfClosing.punctuationText(source))
+		assertEquals("<{}></{}>", inner.punctuationText(source))
+		assertEquals(1, inner.mixedLevel)
+		assertEquals(2, span.mixedLevel)
+	}
+
+	fun testDynamicTagMismatchFailsClosedAndLaterTagRecovers() {
+		val source = "const malformed = <{First}></{Second}>; const later = <{Later} />;"
+		val tags = analyze(source).structures.filter { it.kind == TsrxRainbowBracketKind.ANGLE }
+
+		assertEquals(listOf("<{Later} />"), tags.map { it.span.substring(source) })
+		assertEquals("<{}/>", tags.single().punctuationText(source))
+	}
+
 	fun testOperationCountsScaleLinearly() {
 		val small = analyze("()[]{}".repeat(200)).operations
 		val large = analyze("()[]{}".repeat(400)).operations
@@ -148,6 +187,20 @@ class TsrxRainbowBracketAnalyzerTest : BasePlatformTestCase() {
 		}
 
 		assertEquals(1, analyze("()").structures.size)
+	}
+
+	fun testCancelsDuringVeryLongWhitespaceOnlyPairScan() {
+		assertLongScanCanBeCanceled(
+			shortSource = "( )",
+			longSource = "(" + " ".repeat(4_096) + ")",
+		)
+	}
+
+	fun testCancelsDuringVeryLongTagNameScan() {
+		assertLongScanCanBeCanceled(
+			shortSource = "<A />",
+			longSource = "<" + "A".repeat(4_096) + " />",
+		)
 	}
 
 	private fun analyze(
@@ -177,6 +230,22 @@ class TsrxRainbowBracketAnalyzerTest : BasePlatformTestCase() {
 		}
 	}
 
+	private fun assertLongScanCanBeCanceled(shortSource: String, longSource: String) {
+		var shortChecks = 0
+		analyze(shortSource) { shortChecks += 1 }
+
+		var longChecks = 0
+		try {
+			analyze(longSource) {
+				longChecks += 1
+				if (longChecks > shortChecks + 1) throw ProcessCanceledException()
+			}
+			fail("Expected cancellation during long source scan")
+		} catch (_: ProcessCanceledException) {
+			assertEquals(shortChecks + 2, longChecks)
+		}
+	}
+
 	private fun lexer(source: String): Lexer {
 		val file = myFixture.configureByText("analyzer-${source.hashCode()}.tsrx", source)
 		return SyntaxHighlighterFactory
@@ -196,6 +265,9 @@ class TsrxRainbowBracketAnalyzerTest : BasePlatformTestCase() {
 	private fun List<TsrxRainbowBracketStructure>.describe(source: String): String = joinToString("\n") { structure ->
 		"${structure.kind}:${structure.span.substring(source)}:${structure.punctuation}"
 	}
+
+	private fun TsrxRainbowBracketStructure.punctuationText(source: String): String =
+		punctuation.joinToString("") { it.substring(source) }
 
 	private data class ScopedToken(
 		val text: String,

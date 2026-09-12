@@ -1,5 +1,6 @@
 package dev.tsrx.intellij_plugin
 
+import com.github.izhangzhihao.rainbow.brackets.RainbowHighlighter
 import com.github.izhangzhihao.rainbow.brackets.settings.RainbowSettings
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
@@ -71,53 +72,74 @@ class TsrxRainbowBracketsHighlightingTest : BasePlatformTestCase() {
 		val source = fixture("rainbow-brackets.tsrx")
 		myFixture.configureByText(TsrxFileType.INSTANCE, source)
 		val highlights = myFixture.doHighlighting()
-		val runtime = checkNotNull(TsrxRainbowBracketsAdapter.load())
 		val scheme = EditorColorsManager.getInstance().globalScheme
 
-		assertKeyAt(highlights, source.indexOf("()"), 1, runtime.key(scheme, TsrxRainbowBracketKind.ROUND, 0))
-		assertKeyAt(highlights, source.indexOf("()") + 1, 1, runtime.key(scheme, TsrxRainbowBracketKind.ROUND, 0))
-		assertKeyAt(highlights, source.indexOf("@{") + 1, 1, runtime.key(scheme, TsrxRainbowBracketKind.CURLY, 0))
-		assertKeyAt(highlights, source.lastIndexOf('}'), 1, runtime.key(scheme, TsrxRainbowBracketKind.CURLY, 0))
+		assertKeyAt(highlights, source.indexOf("()"), 1, rainbowKey(scheme, RainbowHighlighter.NAME_ROUND_BRACKETS, 0))
+		assertKeyAt(highlights, source.indexOf("()") + 1, 1, rainbowKey(scheme, RainbowHighlighter.NAME_ROUND_BRACKETS, 0))
+		assertKeyAt(highlights, source.indexOf("@{") + 1, 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 0))
+		assertKeyAt(highlights, source.lastIndexOf('}'), 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 0))
 
 		val fragmentOpen = source.indexOf("<>")
-		assertKeyAt(highlights, fragmentOpen, 1, runtime.key(scheme, TsrxRainbowBracketKind.ANGLE, 1))
-		assertKeyAt(highlights, fragmentOpen + 1, 1, runtime.key(scheme, TsrxRainbowBracketKind.ANGLE, 1))
+		assertKeyAt(highlights, fragmentOpen, 1, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 1))
+		assertKeyAt(highlights, fragmentOpen + 1, 1, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 1))
 		val fragmentClose = source.indexOf("</>")
-		assertKeyAt(highlights, fragmentClose, 2, runtime.key(scheme, TsrxRainbowBracketKind.ANGLE, 1))
-		assertKeyAt(highlights, fragmentClose + 2, 1, runtime.key(scheme, TsrxRainbowBracketKind.ANGLE, 1))
+		assertKeyAt(highlights, fragmentClose, 2, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 1))
+		assertKeyAt(highlights, fragmentClose + 2, 1, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 1))
 
 		val panelOpen = source.indexOf("<Panel")
-		assertKeyAt(highlights, panelOpen, 1, runtime.key(scheme, TsrxRainbowBracketKind.ANGLE, 2))
-		assertKeyAt(highlights, source.indexOf("/>", panelOpen), 2, runtime.key(scheme, TsrxRainbowBracketKind.ANGLE, 2))
+		assertKeyAt(highlights, panelOpen, 1, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 2))
+		assertKeyAt(highlights, source.indexOf("/>", panelOpen), 2, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 2))
 		val attributeOpen = source.indexOf("{{")
-		assertKeyAt(highlights, attributeOpen, 1, runtime.key(scheme, TsrxRainbowBracketKind.CURLY, 3))
-		assertKeyAt(highlights, attributeOpen + 1, 1, runtime.key(scheme, TsrxRainbowBracketKind.CURLY, 4))
+		assertKeyAt(highlights, attributeOpen, 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 3))
+		assertKeyAt(highlights, attributeOpen + 1, 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 4))
 		val attributeClose = source.indexOf("}}", attributeOpen)
-		assertKeyAt(highlights, attributeClose, 1, runtime.key(scheme, TsrxRainbowBracketKind.CURLY, 4))
-		assertKeyAt(highlights, attributeClose + 1, 1, runtime.key(scheme, TsrxRainbowBracketKind.CURLY, 3))
-		assertPairKey(highlights, source, "[call()]", '[', ']', runtime.key(scheme, TsrxRainbowBracketKind.SQUARE, 5))
-		assertPairKey(highlights, source, "call()", '(', ')', runtime.key(scheme, TsrxRainbowBracketKind.ROUND, 6))
+		assertKeyAt(highlights, attributeClose, 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 4))
+		assertKeyAt(highlights, attributeClose + 1, 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 3))
+		assertPairKey(highlights, source, "[call()]", '[', ']', rainbowKey(scheme, RainbowHighlighter.NAME_SQUARE_BRACKETS, 5))
+		assertPairKey(highlights, source, "call()", '(', ')', rainbowKey(scheme, RainbowHighlighter.NAME_ROUND_BRACKETS, 6))
 
-		val rainbowKeys = buildSet {
-			for (kind in TsrxRainbowBracketKind.entries) {
-				for (level in 0..6) add(runtime.key(scheme, kind, level).externalName)
-			}
-		}
+		val rainbowKeys = rainbowKeys(scheme, 0..6)
 		assertNoRainbowKeyAt(highlights, source.indexOf("< limit"), rainbowKeys)
 		assertNoRainbowKeyAt(highlights, source.indexOf("<T>"), rainbowKeys)
 		assertNoRainbowKeyAt(highlights, source.indexOf("Panel") + 1, rainbowKeys)
 	}
 
+	fun testRealPluginHighlightsDocumentedDynamicTagPunctuation() {
+		val source = """
+			const view = <{tag}>content</{tag}>;
+			const selfClosing = <{tag} />;
+		""".trimIndent()
+		myFixture.configureByText(TsrxFileType.INSTANCE, source)
+		val highlights = myFixture.doHighlighting()
+		val angleKey = rainbowKey(
+			EditorColorsManager.getInstance().globalScheme,
+			RainbowHighlighter.NAME_ANGLE_BRACKETS,
+			0,
+		)
+
+		val pairedOpen = source.indexOf("<{tag}>")
+		assertKeyAt(highlights, pairedOpen, 1, angleKey)
+		assertKeyAt(highlights, pairedOpen + 1, 1, angleKey)
+		assertKeyAt(highlights, source.indexOf('}', pairedOpen), 1, angleKey)
+		assertKeyAt(highlights, source.indexOf('>', pairedOpen), 1, angleKey)
+		val pairedClose = source.indexOf("</{tag}>")
+		assertKeyAt(highlights, pairedClose, 2, angleKey)
+		assertKeyAt(highlights, pairedClose + 2, 1, angleKey)
+		assertKeyAt(highlights, source.indexOf('}', pairedClose), 1, angleKey)
+		assertKeyAt(highlights, source.indexOf('>', pairedClose), 1, angleKey)
+
+		val selfClosing = source.indexOf("<{tag} />")
+		assertKeyAt(highlights, selfClosing, 1, angleKey)
+		assertKeyAt(highlights, selfClosing + 1, 1, angleKey)
+		assertKeyAt(highlights, source.indexOf('}', selfClosing), 1, angleKey)
+		assertKeyAt(highlights, source.indexOf("/>", selfClosing), 2, angleKey)
+	}
+
 	fun testSettingAndMalformedEditTransitionsRemoveStaleOverlays() {
 		val initial = "([value]); [later]"
 		val file = myFixture.configureByText(TsrxFileType.INSTANCE, initial)
-		val runtime = checkNotNull(TsrxRainbowBracketsAdapter.load())
 		val scheme = EditorColorsManager.getInstance().globalScheme
-		val rainbowKeys = buildSet {
-			for (kind in TsrxRainbowBracketKind.entries) {
-				for (level in 0..2) add(runtime.key(scheme, kind, level).externalName)
-			}
-		}
+		val rainbowKeys = rainbowKeys(scheme, 0..2)
 
 		assertTrue(myFixture.doHighlighting().any { it.forcedTextAttributesKey?.externalName in rainbowKeys })
 		rainbowSettings.isRainbowEnabled = false
@@ -139,7 +161,7 @@ class TsrxRainbowBracketsHighlightingTest : BasePlatformTestCase() {
 			"[later]",
 			'[',
 			']',
-			runtime.key(scheme, TsrxRainbowBracketKind.SQUARE, 0),
+			rainbowKey(scheme, RainbowHighlighter.NAME_SQUARE_BRACKETS, 0),
 		)
 	}
 
@@ -197,11 +219,28 @@ class TsrxRainbowBracketsHighlightingTest : BasePlatformTestCase() {
 		assertTrue("Unexpected Rainbow key at $offset: $actual", actual.none { it in rainbowKeys })
 	}
 
-	private fun TsrxRainbowBracketsRuntime.key(
+	private fun rainbowKey(
 		scheme: TextAttributesScheme,
-		kind: TsrxRainbowBracketKind,
+		family: String,
 		level: Int,
-	): TextAttributesKey = checkNotNull(colorKey(scheme, kind, level))
+	): TextAttributesKey = checkNotNull(
+		RainbowHighlighter.INSTANCE.getRainbowColorByLevel(scheme, family, level),
+	)
+
+	private fun rainbowKeys(
+		scheme: TextAttributesScheme,
+		levels: IntRange,
+	): Set<String> = buildSet {
+		val families = listOf(
+			RainbowHighlighter.NAME_ROUND_BRACKETS,
+			RainbowHighlighter.NAME_SQUARE_BRACKETS,
+			RainbowHighlighter.NAME_SQUIGGLY_BRACKETS,
+			RainbowHighlighter.NAME_ANGLE_BRACKETS,
+		)
+		for (family in families) {
+			for (level in levels) add(rainbowKey(scheme, family, level).externalName)
+		}
+	}
 
 	private fun fixture(name: String): String =
 		checkNotNull(javaClass.classLoader.getResource("highlighting/$name")) {

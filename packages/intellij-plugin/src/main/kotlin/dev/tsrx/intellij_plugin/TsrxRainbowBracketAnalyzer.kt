@@ -14,7 +14,7 @@ internal object TsrxRainbowBracketAnalyzer {
 	): TsrxRainbowBracketAnalysis {
 		val metrics = MutableMetrics()
 		val delimiterCandidates = mutableListOf<DelimiterCandidate>()
-		val pendingTagBegins = ArrayDeque<TagBegin>()
+		var pendingTag: PendingTag? = null
 		val tags = mutableListOf<Tag?>()
 		lexer.start(source)
 
@@ -28,25 +28,41 @@ internal object TsrxRainbowBracketAnalyzer {
 				val scope = tokenType.scope
 				when (scope.name()) {
 					TAG_BEGIN_SCOPE -> {
-						val begin = TagBegin(
-							range = TextRange(start, end),
-							closing = source.tokenEquals(start, end, "</"),
-							order = tags.size,
-						)
-						pendingTagBegins.addLast(begin)
-						tags += null
+						val range = TextRange(start, end)
+						if (source.isOuterTagBegin(start, end)) {
+							val begin = TagBegin(
+								range = range,
+								closing = source.tokenEquals(start, end, "</"),
+								order = tags.size,
+							)
+							pendingTag = PendingTag(begin, mutableListOf(range))
+							tags += null
+							metrics.stackOperations += 1
+						} else {
+							pendingTag?.punctuation?.add(range)
+						}
 					}
 
-					TAG_END_SCOPE -> if (pendingTagBegins.isNotEmpty()) {
-						val begin = pendingTagBegins.removeLast()
+					TAG_END_SCOPE -> pendingTag?.let { current ->
 						val range = TextRange(start, end)
-						metrics.stackOperations += 2
-						tags[begin.order] = Tag(
-							begin = begin,
-							end = range,
-							name = source.tagName(begin.range.endOffset, range.startOffset),
-							selfClosing = source.tokenEquals(start, end, "/>") && !begin.closing,
-						)
+						current.punctuation.add(range)
+						if (source.isOuterTagEnd(start, end)) {
+							pendingTag = null
+							metrics.stackOperations += 1
+							source.tagIdentity(
+								current.begin.range.endOffset,
+								range.startOffset,
+								checkCanceled,
+							)?.let { identity ->
+								tags[current.begin.order] = Tag(
+									begin = current.begin,
+									end = range,
+									identity = identity,
+									punctuation = current.punctuation.toList(),
+									selfClosing = source.tokenEquals(start, end, "/>") && !current.begin.closing,
+								)
+							}
+						}
 					}
 
 					else -> classifyDelimiter(
@@ -151,7 +167,11 @@ internal object TsrxRainbowBracketAnalyzer {
 		end: Int,
 		order: Int,
 	): DelimiterCandidate? {
-		if (end - start != 1 || scope.containsLexicalContent()) return null
+		if (
+			end - start != 1 ||
+			scope.containsLexicalContent() ||
+			scope.contains(JSX_CHILDREN_SCOPE)
+		) return null
 		val kind = when (source[start]) {
 			'(', ')' -> TsrxRainbowBracketKind.ROUND
 			'[', ']' -> TsrxRainbowBracketKind.SQUARE
@@ -214,9 +234,11 @@ internal object TsrxRainbowBracketAnalyzer {
 				origin = candidate.origin,
 				span = TextRange(opening.range.startOffset, candidate.range.endOffset),
 				punctuation = listOf(opening.range, candidate.range),
-				isEmpty = source
-					.subSequence(opening.range.endOffset, candidate.range.startOffset)
-					.all(Char::isWhitespace),
+				isEmpty = source.isWhitespaceOnly(
+					opening.range.endOffset,
+					candidate.range.startOffset,
+					checkCanceled,
+				),
 			)
 		}
 		return structures.filterNotNull()
@@ -228,7 +250,7 @@ internal object TsrxRainbowBracketAnalyzer {
 		checkCanceled: () -> Unit,
 	): List<PendingStructure> {
 		val stack = ArrayDeque<Tag>()
-		val openCounts = mutableMapOf<String, Int>()
+		val openCounts = mutableMapOf<TagIdentity, Int>()
 		val structures = arrayOfNulls<PendingStructure>((tags.maxOfOrNull { it.begin.order } ?: -1) + 1)
 		for (tag in tags) {
 			checkCanceled()
@@ -238,30 +260,30 @@ internal object TsrxRainbowBracketAnalyzer {
 			}
 			if (!tag.begin.closing) {
 				stack.addLast(tag)
-				openCounts[tag.name] = openCounts.getOrDefault(tag.name, 0) + 1
+				openCounts[tag.identity] = openCounts.getOrDefault(tag.identity, 0) + 1
 				metrics.stackOperations += 1
 				continue
 			}
 
-			if (openCounts.getOrDefault(tag.name, 0) == 0) continue
-			if (stack.getLast().name != tag.name) {
+			if (openCounts.getOrDefault(tag.identity, 0) == 0) continue
+			if (stack.getLast().identity != tag.identity) {
 				do {
 					checkCanceled()
 					val discarded = stack.removeLast()
-					openCounts.decrement(discarded.name)
+					openCounts.decrement(discarded.identity)
 					metrics.stackOperations += 1
-				} while (discarded.name != tag.name)
+				} while (discarded.identity != tag.identity)
 				continue
 			}
 
 			val opening = stack.removeLast()
-			openCounts.decrement(tag.name)
+			openCounts.decrement(tag.identity)
 			metrics.stackOperations += 1
 			structures[opening.begin.order] = PendingStructure(
 				kind = TsrxRainbowBracketKind.ANGLE,
 				origin = TsrxRainbowBracketOrigin.JSX_TAG,
 				span = TextRange(opening.begin.range.startOffset, tag.end.endOffset),
-				punctuation = listOf(opening.begin.range, opening.end, tag.begin.range, tag.end),
+				punctuation = opening.punctuation + tag.punctuation,
 				isEmpty = false,
 			)
 		}
@@ -391,12 +413,66 @@ internal object TsrxRainbowBracketAnalyzer {
 		return true
 	}
 
-	private fun CharSequence.tagName(start: Int, end: Int): String {
+	private fun CharSequence.isOuterTagBegin(start: Int, end: Int): Boolean =
+		start < end && this[start] == '<'
+
+	private fun CharSequence.isOuterTagEnd(start: Int, end: Int): Boolean =
+		start < end && this[end - 1] == '>'
+
+	private fun CharSequence.isWhitespaceOnly(
+		start: Int,
+		end: Int,
+		checkCanceled: () -> Unit,
+	): Boolean {
+		for (index in start until end) {
+			if ((index - start) % CANCELLATION_CHECK_INTERVAL == 0) checkCanceled()
+			if (!this[index].isWhitespace()) return false
+		}
+		return true
+	}
+
+	private fun CharSequence.tagIdentity(
+		start: Int,
+		end: Int,
+		checkCanceled: () -> Unit,
+	): TagIdentity? {
 		var index = start
-		while (index < end && this[index].isWhitespace()) index += 1
+		while (index < end && this[index].isWhitespace()) {
+			if ((index - start) % CANCELLATION_CHECK_INTERVAL == 0) checkCanceled()
+			index += 1
+		}
+		if (index == end) return TagIdentity(dynamic = false, value = "")
+
+		if (this[index] == '{') {
+			val expressionScanStart = index + 1
+			index = expressionScanStart
+			var expressionStart = -1
+			var expressionEnd = -1
+			while (index < end && this[index] != '}') {
+				if ((index - expressionScanStart) % CANCELLATION_CHECK_INTERVAL == 0) checkCanceled()
+				if (!this[index].isWhitespace()) {
+					if (expressionStart == -1) expressionStart = index
+					expressionEnd = index + 1
+				}
+				index += 1
+			}
+			if (index == end || expressionStart == -1) return null
+			return TagIdentity(
+				dynamic = true,
+				value = subSequence(expressionStart, expressionEnd).toString(),
+			)
+		}
+
 		val nameStart = index
-		while (index < end && (this[index].isLetterOrDigit() || this[index] in "_$.:-")) index += 1
-		return subSequence(nameStart, index).toString()
+		while (index < end && (this[index].isLetterOrDigit() || this[index] in "_$.:-")) {
+			if ((index - nameStart) % CANCELLATION_CHECK_INTERVAL == 0) checkCanceled()
+			index += 1
+		}
+		if (index == nameStart) return null
+		return TagIdentity(
+			dynamic = false,
+			value = subSequence(nameStart, index).toString(),
+		)
 	}
 
 	private const val PARAMETERS_BEGIN_SCOPE = "punctuation.definition.parameters.begin.js"
@@ -411,6 +487,8 @@ internal object TsrxRainbowBracketAnalyzer {
 	private const val TEMPLATE_END_SCOPE = "punctuation.definition.template-expression.end.js"
 	private const val TAG_BEGIN_SCOPE = "punctuation.definition.tag.begin.js"
 	private const val TAG_END_SCOPE = "punctuation.definition.tag.end.js"
+	private const val JSX_CHILDREN_SCOPE = "meta.jsx.children.js"
+	private const val CANCELLATION_CHECK_INTERVAL = 256
 }
 
 internal enum class TsrxRainbowBracketKind {
@@ -478,17 +556,28 @@ private data class TagBegin(
 	val order: Int,
 )
 
+private data class PendingTag(
+	val begin: TagBegin,
+	val punctuation: MutableList<TextRange>,
+)
+
+private data class TagIdentity(
+	val dynamic: Boolean,
+	val value: String,
+)
+
 private data class Tag(
 	val begin: TagBegin,
 	val end: TextRange,
-	val name: String,
+	val identity: TagIdentity,
+	val punctuation: List<TextRange>,
 	val selfClosing: Boolean,
 ) {
 	fun asSelfClosingStructure() = PendingStructure(
 		kind = TsrxRainbowBracketKind.ANGLE,
 		origin = TsrxRainbowBracketOrigin.JSX_TAG,
 		span = TextRange(begin.range.startOffset, end.endOffset),
-		punctuation = listOf(begin.range, end),
+		punctuation = punctuation,
 		isEmpty = false,
 	)
 }
