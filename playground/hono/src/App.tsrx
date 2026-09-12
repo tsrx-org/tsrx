@@ -19,9 +19,10 @@ export function App() @{
 			<p class="eyebrow">Dedicated Hono DOM target</p>
 			<h1>TSRX + Hono JSX DOM</h1>
 			<p>
-				This playground explicitly compiles with
+				This playground explicitly compiles with{' '}
 				<code>@tsrx/hono/dom</code>
-				and renders with
+				{' '}
+				and renders with{' '}
 				<code>hono/jsx/dom</code>.
 			</p>
 
