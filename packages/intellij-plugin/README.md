@@ -6,18 +6,26 @@ TSRX language support for compatible IntelliJ-based IDEs.
 
 - TSRX file type, icon, commenting, and TextMate syntax highlighting for `.tsrx`
   files
+- Optional structural bracket coloring from the standard Rainbow Brackets plugin,
+  including TSRX template blocks, JavaScript delimiters, JSX tags, fragments, and
+  embedded expressions
 - Diagnostics, completion, navigation, and formatting through
   `@tsrx/language-server` when the IDE exposes JetBrains' LSP module
 
 ## Requirements
 
 - IntelliJ-based IDE 2025.2 or newer
+- Rainbow coloring requires the optional standard Rainbow Brackets plugin. The
+  integration is verified with Rainbow Brackets 2025.3.12; Rainbow Brackets Lite
+  is not supported.
 - LSP features require both the Ultimate and LSP modules
 - Node.js 22+ with npm available on PATH (for LSP features)
 
 WebStorm 2025.2.4 is the reference build used by CI. Syntax-only IDEs receive the
 baseline feature tier; products with the optional modules receive the LSP feature
-tier.
+tier. Rainbow Brackets is not required for the TSRX file type or baseline syntax
+highlighting. When installed, its existing colors and settings control TSRX
+bracket overlays.
 
 ## Installation status
 
@@ -62,5 +70,7 @@ shows an actionable notification instead of repeatedly starting a broken server.
 
 - Syntax highlighting works without the LSP module; language features are enabled
   when LSP support is present.
+- Rainbow Brackets support is an optional enhancement. Disabling or uninstalling
+  it returns `.tsrx` files to the baseline TextMate highlighting path.
 - Plugin and language-server versions are synchronized by the repository's
   Changesets workflow. Do not hand-edit a duplicate release version.
