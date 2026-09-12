@@ -6,7 +6,12 @@ on:
     tags: ["!**"]
     paths:
       - "packages/**"
+      - "playground/hono/**"
       - "grammars/**"
+      - "website-mcp/package.json"
+      - "website-tsrx/public/llms.txt"
+      - "website-tsrx/src/pages/getting-started.tsrx"
+      - "README.md"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -19,7 +24,12 @@ on:
     branches: [main, develop]
     paths:
       - "packages/**"
+      - "playground/hono/**"
       - "grammars/**"
+      - "website-mcp/package.json"
+      - "website-tsrx/public/llms.txt"
+      - "website-tsrx/src/pages/getting-started.tsrx"
+      - "README.md"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -71,6 +81,107 @@ jobs:
 
       - name: Run tests
         run: pnpm test
+
+  hono-compatibility:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [minimum, supported-latest, candidate]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Resolve Hono version
+        id: hono
+        env:
+          LANE: ${{ matrix.lane }}
+        run: |
+          case "$LANE" in
+            minimum)
+              version=4.13.7
+              ;;
+            supported-latest)
+              versions=$(pnpm view "hono@>=4.13.7 <4.14" version --json)
+              version=$(node -e "const value=JSON.parse(process.argv[1]); console.log(Array.isArray(value) ? value.at(-1) : value)" "$versions")
+              ;;
+            candidate)
+              versions=$(pnpm view "hono@4" version --json)
+              version=$(node -e "const value=JSON.parse(process.argv[1]); console.log(Array.isArray(value) ? value.at(-1) : value)" "$versions")
+              ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Select Hono ${{ steps.hono.outputs.version }}
+        env:
+          HONO_VERSION: ${{ steps.hono.outputs.version }}
+        run: |
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const path = "pnpm-workspace.yaml";
+            const source = readFileSync(path, "utf8");
+            const updated = source.replace(/^(\s+hono:) 4\.13\.7$/m, `$1 ${process.env.HONO_VERSION}`);
+            if (updated === source && process.env.HONO_VERSION !== "4.13.7") {
+              throw new Error("Could not replace the Hono catalog version.");
+            }
+            writeFileSync(path, updated);
+          '
+          pnpm install --no-frozen-lockfile
+
+      - name: Verify declared support lane
+        if: matrix.lane != 'candidate'
+        env:
+          HONO_VERSION: ${{ steps.hono.outputs.version }}
+        run: |
+          node -e '
+            const [major, minor, patch] = process.env.HONO_VERSION.split(".").map(Number);
+            if (major !== 4 || minor !== 13 || patch < 7) {
+              throw new Error(`${process.env.HONO_VERSION} is outside >=4.13.7 <4.14`);
+            }
+          '
+
+      - name: Run Hono compiler and DOM runtime tests
+        run: |
+          pnpm test --project tsrx-hono
+          pnpm test --project tsrx-hono-runtime
+
+      - name: Run Hono Vite and Bun tests
+        run: |
+          pnpm test --project vite-plugin-hono
+          pnpm test --project bun-plugin-hono
+          pnpm --filter @tsrx/bun-plugin-hono test:native
+
+      - name: Run Hono tooling tests
+        run: |
+          pnpm test --project typescript-plugin
+          pnpm test --project language-server
+          pnpm test --project tsrx-mcp
+
+      - name: Build the Hono playground
+        run: |
+          pnpm --filter @tsrx/typescript-plugin build
+          pnpm --filter @tsrx/hono-playground typecheck
+          pnpm --filter @tsrx/hono-playground build
+
+      - name: Verify packed Hono consumers
+        env:
+          HONO_VERSION: ${{ steps.hono.outputs.version }}
+          ALLOW_UNSUPPORTED_HONO: ${{ matrix.lane == 'candidate' && '1' || '0' }}
+        run: pnpm test:hono-packages
 
   lint:
     runs-on: ubuntu-latest

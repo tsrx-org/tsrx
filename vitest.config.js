@@ -1,5 +1,6 @@
 import { configDefaults, defineConfig } from 'vitest/config';
 import { tsrxPreact } from './packages/vite-plugin-preact/src/index.js';
+import { tsrxHono } from './packages/vite-plugin-hono/src/index.js';
 import { tsrxReact } from './packages/vite-plugin-react/src/index.js';
 import { tsrxSolid } from './packages/vite-plugin-solid/src/index.js';
 import { tsrxVue } from './packages/vite-plugin-vue/src/index.js';
@@ -83,6 +84,12 @@ const preact_runtime_dependency_resolver = create_test_dependency_resolver(
 	['@tsrx/preact', 'preact'],
 );
 
+const hono_runtime_dependency_resolver = create_test_dependency_resolver(
+	'tsrx-hono-runtime-dependencies',
+	'./packages/vite-plugin-hono/package.json',
+	['@tsrx/hono', 'hono'],
+);
+
 const solid_runtime_dependency_resolver = create_test_dependency_resolver(
 	'tsrx-solid-runtime-dependencies',
 	'./packages/vite-plugin-solid/package.json',
@@ -122,6 +129,17 @@ export default defineConfig({
 			},
 			{
 				test: {
+					name: 'tsrx-hono-runtime',
+					include: ['packages/tsrx-hono/tests/**/*.runtime.test.tsrx'],
+					environment: 'jsdom',
+					setupFiles: ['packages/tsrx-hono/tests/runtime-setup.js'],
+					globals: true,
+					css: true,
+				},
+				plugins: [hono_runtime_dependency_resolver, tsrxHono({ mode: 'dom' })],
+			},
+			{
+				test: {
 					name: 'tsrx-react',
 					include: ['packages/tsrx-react/tests/**/*.test.js'],
 					environment: 'node',
@@ -142,6 +160,15 @@ export default defineConfig({
 				test: {
 					name: 'vite-plugin-preact',
 					include: ['packages/vite-plugin-preact/tests/**/*.test.js'],
+					environment: 'node',
+					globals: true,
+				},
+				plugins: [],
+			},
+			{
+				test: {
+					name: 'vite-plugin-hono',
+					include: ['packages/vite-plugin-hono/tests/**/*.test.js'],
 					environment: 'node',
 					globals: true,
 				},
@@ -174,6 +201,15 @@ export default defineConfig({
 				test: {
 					name: 'bun-plugin-react',
 					include: ['packages/bun-plugin-react/tests/**/*.test.js'],
+					environment: 'node',
+					globals: true,
+				},
+				plugins: [],
+			},
+			{
+				test: {
+					name: 'bun-plugin-hono',
+					include: ['packages/bun-plugin-hono/tests/**/*.test.js'],
 					environment: 'node',
 					globals: true,
 				},

@@ -229,6 +229,9 @@ importers:
       '@solidjs/web':
         specifier: catalog:default
         version: 2.0.0-rc.3(solid-js@2.0.0-rc.3)
+      '@tsrx/hono':
+        specifier: workspace:*
+        version: link:packages/tsrx-hono
       '@tsrx/preact':
         specifier: workspace:*
         version: link:packages/tsrx-preact
@@ -308,6 +311,28 @@ importers:
       tree-sitter-cli:
         specifier: ^0.26.6
         version: 0.26.6
+
+  packages/bun-plugin-hono:
+    dependencies:
+      '@tsrx/core':
+        specifier: workspace:*
+        version: link:../tsrx
+      '@tsrx/hono':
+        specifier: workspace:*
+        version: link:../tsrx-hono
+      bun:
+        specifier: ^1.0.0
+        version: 1.3.10
+    devDependencies:
+      '@types/bun':
+        specifier: catalog:default
+        version: 1.3.10
+      hono:
+        specifier: catalog:default
+        version: 4.13.7
+      typescript:
+        specifier: catalog:default
+        version: 5.9.3
 
   packages/bun-plugin-preact:
     dependencies:
@@ -946,6 +971,9 @@ importers:
 
   packages/typescript-plugin:
     dependencies:
+      '@tsrx/hono':
+        specifier: workspace:*
+        version: link:../tsrx-hono
       '@tsrx/preact':
         specifier: workspace:*
         version: link:../tsrx-preact
@@ -986,6 +1014,25 @@ importers:
       tsdown:
         specifier: catalog:default
         version: 0.22.0(@typescript/native-preview@7.0.0-dev.20260707.2)(typescript@5.9.3)
+
+  packages/vite-plugin-hono:
+    dependencies:
+      '@tsrx/core':
+        specifier: workspace:*
+        version: link:../tsrx
+      '@tsrx/hono':
+        specifier: workspace:*
+        version: link:../tsrx-hono
+    devDependencies:
+      hono:
+        specifier: catalog:default
+        version: 4.13.7
+      typescript:
+        specifier: catalog:default
+        version: 5.9.3
+      vite:
+        specifier: catalog:default
+        version: 8.1.5(@types/node@25.3.3)(esbuild@0.27.3)(jiti@2.6.1)
 
   packages/vite-plugin-preact:
     dependencies:
@@ -1147,6 +1194,31 @@ importers:
 
   packages/zed-plugin: {}
 
+  playground/hono:
+    dependencies:
+      hono:
+        specifier: catalog:default
+        version: 4.13.7
+    devDependencies:
+      '@tsrx/hono':
+        specifier: workspace:*
+        version: link:../../packages/tsrx-hono
+      '@tsrx/language-server':
+        specifier: workspace:*
+        version: link:../../packages/language-server
+      '@tsrx/typescript-plugin':
+        specifier: workspace:*
+        version: link:../../packages/typescript-plugin
+      '@tsrx/vite-plugin-hono':
+        specifier: workspace:*
+        version: link:../../packages/vite-plugin-hono
+      typescript:
+        specifier: catalog:default
+        version: 5.9.3
+      vite:
+        specifier: catalog:default
+        version: 8.1.5(@types/node@25.3.3)(esbuild@0.27.3)(jiti@2.6.1)
+
   playground/react:
     dependencies:
       react:
@@ -1242,6 +1314,9 @@ importers:
 
   website-mcp:
     dependencies:
+      '@tsrx/hono':
+        specifier: workspace:*
+        version: link:../packages/tsrx-hono
       '@tsrx/mcp':
         specifier: workspace:*
         version: link:../packages/tsrx-mcp
@@ -4352,10 +4427,6 @@ packages:
   hast-util-whitespace@3.0.0:
     resolution: {integrity: sha512-88JUN06ipLwsnv+dVn+OIYOvAuvBMy/Qoi6O7mQHxdPXpjy+Cd6xRkWwux7DKO+4sYILtLBRIKgsdpS2gQc7qw==}
 
-  hono@4.12.4:
-    resolution: {integrity: sha512-ooiZW1Xy8rQ4oELQ++otI2T9DsKpV0M6c6cO6JGx4RTfav9poFFLlet9UMXHZnoM1yG0HWGlQLswBGX3RZmHtg==}
-    engines: {node: '>=16.9.0'}
-
   hono@4.13.7:
     resolution: {integrity: sha512-c8/gF9ac8Y78/agExVocyLevgR+JlpNB444Py0FSX8pJoPdYUfUzRcXtYEYGwt6l19qIlVZPN5Mfsw9jFShmQQ==}
     engines: {node: '>=16.9.0'}
@@ -7126,9 +7197,9 @@ snapshots:
     dependencies:
       '@hapi/hoek': 11.0.7
 
-  '@hono/node-server@1.19.10(hono@4.12.4)':
+  '@hono/node-server@1.19.10(hono@4.13.7)':
     dependencies:
-      hono: 4.12.4
+      hono: 4.13.7
 
   '@humanfs/core@0.19.1': {}
 
@@ -7312,7 +7383,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.27.1(supports-color@7.2.0)(zod@4.3.6)':
     dependencies:
-      '@hono/node-server': 1.19.10(hono@4.12.4)
+      '@hono/node-server': 1.19.10(hono@4.13.7)
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       content-type: 1.0.5
@@ -7322,7 +7393,7 @@ snapshots:
       eventsource-parser: 3.0.6
       express: 5.2.1(supports-color@7.2.0)
       express-rate-limit: 8.2.1(express@5.2.1(supports-color@7.2.0))
-      hono: 4.12.4
+      hono: 4.13.7
       jose: 6.1.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -7334,7 +7405,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(supports-color@7.2.0)(zod@4.3.6)':
     dependencies:
-      '@hono/node-server': 1.19.10(hono@4.12.4)
+      '@hono/node-server': 1.19.10(hono@4.13.7)
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       content-type: 1.0.5
@@ -7344,7 +7415,7 @@ snapshots:
       eventsource-parser: 3.0.6
       express: 5.2.1(supports-color@7.2.0)
       express-rate-limit: 8.2.1(express@5.2.1(supports-color@7.2.0))
-      hono: 4.12.4
+      hono: 4.13.7
       jose: 6.1.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -9339,7 +9410,7 @@ snapshots:
       execa: 9.6.1
       file-type: 21.3.0(supports-color@7.2.0)
       fuse.js: 7.1.0
-      hono: 4.12.4
+      hono: 4.13.7
       mcp-proxy: 6.4.0(supports-color@7.2.0)
       strict-event-emitter-types: 2.0.0
       undici: 7.25.0
@@ -9610,8 +9681,6 @@ snapshots:
   hast-util-whitespace@3.0.0:
     dependencies:
       '@types/hast': 3.0.4
-
-  hono@4.12.4: {}
 
   hono@4.13.7: {}
 
