@@ -9,6 +9,9 @@ import * as tsrx_mcp from '@tsrx/mcp';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const package_dir = resolve(__dirname, '..');
 const package_json = JSON.parse(readFileSync(resolve(package_dir, 'package.json'), 'utf8'));
+const website_package_json = JSON.parse(
+	readFileSync(resolve(package_dir, '../../website-mcp/package.json'), 'utf8'),
+);
 
 describe('@tsrx/mcp package contract', () => {
 	it('exposes the public package entrypoint through package exports', () => {
@@ -58,5 +61,9 @@ describe('@tsrx/mcp package contract', () => {
 		} finally {
 			await client.close();
 		}
+	});
+
+	it('keeps the Hono compiler available to the hosted MCP endpoint', () => {
+		expect(website_package_json.dependencies['@tsrx/hono']).toBe('workspace:*');
 	});
 });

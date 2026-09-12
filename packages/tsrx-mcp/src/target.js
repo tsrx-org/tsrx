@@ -3,6 +3,11 @@ import path from 'node:path';
 
 export const TARGET_CANDIDATES = [
 	{
+		target: 'hono',
+		compilerPackage: '@tsrx/hono',
+		signals: ['@tsrx/hono', '@tsrx/vite-plugin-hono', '@tsrx/bun-plugin-hono'],
+	},
+	{
 		target: 'ripple',
 		compilerPackage: '@tsrx/ripple',
 		signals: ['@tsrx/ripple', 'ripple', '@ripple-ts/vite-plugin'],
@@ -39,6 +44,20 @@ export const TARGET_CANDIDATES = [
 		signals: ['@tsrx/vue', '@tsrx/vite-plugin-vue', '@tsrx/rspack-plugin-vue'],
 	},
 ];
+
+/**
+ * Resolve the compiler entry used for one target and MCP execution mode.
+ * Detection intentionally remains target-only and therefore server-default.
+ *
+ * @param {{ target: string, compilerPackage: string }} candidate
+ * @param {'client' | 'server' | undefined} mode
+ */
+export function resolve_compiler_entry(candidate, mode) {
+	if (candidate.target === 'hono' && mode === 'client') {
+		return '@tsrx/hono/dom';
+	}
+	return candidate.compilerPackage;
+}
 
 export const CONFIG_FILES = [
 	'vite.config.js',

@@ -38,6 +38,15 @@ const SERVER_INFO = {
 };
 
 const TARGET_RESOURCE_CONTENT = {
+	hono: `# TSRX Hono Target
+
+TSRX provides one Hono target with two compiler entries. Omitted mode and mode: \`server\` use \`@tsrx/hono\` with \`hono/jsx\`; mode: \`client\` uses \`@tsrx/hono/dom\` with \`hono/jsx/dom\`. Automatic discovery is server-first, so browser compilation must select client mode explicitly.
+
+Hono DOM components render synchronously. Suspend on asynchronous work with Hono's \`use(promise)\` and \`Suspense\` APIs rather than an async DOM component. Hono JSX error boundaries are experimental and their fallback receives the error without a reset callback. Preserve Hono's callback and object ref contracts when composing refs.
+
+This target supplies TSRX compilation and build integration for Hono's maintained JSX runtimes. It does not provide HonoX routing, file conventions, or application features.
+
+Before giving Hono-specific advice, use \`detect-target\` or an explicit \`hono\` target, select the generic server/client mode, and validate generated .tsrx code with \`compile-tsrx\`.`,
 	react: `# TSRX React Target
 
 The core TSRX MCP server owns target-neutral language syntax and compiler validation. React-specific guidance should live in a React target layer.
@@ -290,7 +299,7 @@ function text_resource(uri, text) {
 function create_tsrx_task_prompt(options) {
 	const project_context_step = options.remote
 		? '2. This hosted MCP endpoint cannot inspect a local project filesystem. Use an explicit `target` argument when compiling or analyzing code, or ask the user which target runtime they use.'
-		: '2. If project context exists, call `inspect-project` for package/tooling context or `detect-target` when only the runtime target is needed before assuming React, Preact, Solid, Vue, or Ripple semantics.';
+		: '2. If project context exists, call `inspect-project` for package/tooling context or `detect-target` when only the runtime target is needed before assuming Hono, React, Preact, Solid, Vue, or Ripple semantics.';
 	const file_validation_step = options.remote
 		? '6. For existing files, ask the user to paste source or use a local stdio MCP client; hosted MCP cannot read local file paths.'
 		: '6. When working with an existing file, call `validate-tsrx-file` for one-shot format, compile, and advice feedback.';
@@ -441,7 +450,7 @@ export function createTSRXMcpServer(options = {}) {
 				'Guide an agent through target-aware TSRX work: detect target, fetch docs, compile, and defer runtime-specific details to target layers.',
 			argsSchema: {
 				task: z.string().optional(),
-				target: z.enum(['ripple', 'react', 'preact', 'solid', 'vue']).optional(),
+				target: TARGET_SCHEMA.optional(),
 			},
 		},
 		async ({ task, target }) => {
@@ -473,7 +482,7 @@ export function createTSRXMcpServer(options = {}) {
 			{
 				title: 'Detect TSRX Runtime Target',
 				description:
-					'Inspects package.json and common bundler config files to infer whether a project uses TSRX with Ripple, React, Preact, Solid, or Vue.',
+					'Inspects package.json and common bundler config files to infer whether a project uses TSRX with Hono, Ripple, React, Preact, Solid, or Vue.',
 				inputSchema: {
 					cwd: z.string().optional(),
 				},
@@ -501,7 +510,7 @@ export function createTSRXMcpServer(options = {}) {
 		{
 			title: 'Compile TSRX',
 			description:
-				'Compiles TSRX code with the inferred or explicit runtime target compiler. Use this to validate generated .tsrx code and collect compiler diagnostics.',
+				'Compiles TSRX code with the inferred or explicit runtime target compiler. For Hono, omitted/server mode uses @tsrx/hono and client mode uses @tsrx/hono/dom. Use this to validate generated .tsrx code and collect compiler diagnostics.',
 			inputSchema: {
 				code: z.string(),
 				filename: z.string().optional(),

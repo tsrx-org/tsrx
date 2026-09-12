@@ -151,6 +151,31 @@ describe('@tsrx/mcp HTTP server', () => {
 		});
 	});
 
+	it('compiles with the explicit Hono DOM entry over Streamable HTTP', async () => {
+		await with_http_client(async (client) => {
+			const result = await client.callTool({
+				name: 'compile-tsrx',
+				arguments: {
+					code: `export function Greeting() @{ @try { <p>Hello</p> } @pending { <p>Loading</p> } }`,
+					filename: 'Greeting.tsrx',
+					target: 'hono',
+					mode: 'client',
+					includeCode: true,
+				},
+			});
+			const output = JSON.parse(expect_text_content(expect_first_tool_content(result)));
+
+			expect(output).toMatchObject({
+				ok: true,
+				target: 'hono',
+				compilerPackage: '@tsrx/hono',
+				compilerEntry: '@tsrx/hono/dom',
+				cwd: 'remote',
+			});
+			expect(output.code).toContain("from 'hono/jsx/dom'");
+		});
+	});
+
 	it('supports optional bearer auth', async () => {
 		await with_http_client(
 			async (client) => {

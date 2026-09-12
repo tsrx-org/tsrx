@@ -9,6 +9,7 @@
     "start": "node src/server.js"
   },
   "dependencies": {
+    "@tsrx/hono": "workspace:*",
     "@tsrx/mcp": "workspace:*",
     "@tsrx/preact": "workspace:*",
     "@tsrx/react": "workspace:*",

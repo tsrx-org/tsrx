@@ -24,7 +24,7 @@ export { compile_tsrx } from './compile.js';
 export { format_tsrx } from './format.js';
 export { inspect_project } from './inspect.js';
 export { validate_tsrx_file } from './validate.js';
-export { detect_target, TARGET_CANDIDATES } from './target.js';
+export { detect_target, resolve_compiler_entry, TARGET_CANDIDATES } from './target.js';
 export {
 	documentation_sections,
 	find_documentation_section,

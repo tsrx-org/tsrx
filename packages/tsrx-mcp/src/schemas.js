@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const TARGET_SCHEMA = z.enum(['ripple', 'react', 'preact', 'solid', 'vue']);
+export const TARGET_SCHEMA = z.enum(['hono', 'ripple', 'react', 'preact', 'solid', 'vue']);
 
 export const target_match_schema = z.object({
 	target: z.string(),
@@ -33,6 +33,7 @@ export const compile_result_schema = {
 	ok: z.boolean(),
 	target: z.string().nullable(),
 	compilerPackage: z.string().nullable(),
+	compilerEntry: z.string().nullable(),
 	filename: z.string(),
 	cwd: z.string(),
 	errors: z.array(compile_error_schema),
@@ -89,6 +90,7 @@ export const analysis_result_schema = {
 	ok: z.boolean(),
 	target: z.string().nullable(),
 	compilerPackage: z.string().nullable(),
+	compilerEntry: z.string().nullable(),
 	filename: z.string(),
 	cwd: z.string(),
 	errors: z.array(compile_error_schema),

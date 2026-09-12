@@ -17,6 +17,11 @@ import { analyze_tsrx_result } from '../src/analyze.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const target_fixtures = [
 	{
+		target: 'hono',
+		compilerPackage: '@tsrx/hono',
+		cwd: resolve(__dirname, 'fixtures/hono-project'),
+	},
+	{
 		target: 'react',
 		compilerPackage: '@tsrx/react',
 		cwd: resolve(__dirname, 'fixtures/react-project'),
@@ -38,10 +43,19 @@ const target_fixtures = [
 		cwd: resolve(__dirname, 'fixtures/ripple-project'),
 	},
 ];
-const react_fixture = target_fixtures[0].cwd;
+const react_fixture = /** @type {string} */ (
+	target_fixtures.find(({ target }) => target === 'react')?.cwd
+);
+/** @type {Array<{ mode: 'client' | 'server' | undefined, compilerEntry: string, runtime: string }>} */
+const hono_mode_cases = [
+	{ mode: undefined, compilerEntry: '@tsrx/hono', runtime: "from 'hono/jsx'" },
+	{ mode: 'server', compilerEntry: '@tsrx/hono', runtime: "from 'hono/jsx'" },
+	{ mode: 'client', compilerEntry: '@tsrx/hono/dom', runtime: "from 'hono/jsx/dom'" },
+];
 
 describe('@tsrx/mcp compile helpers', () => {
 	it.each([
+		{ target: 'hono', compilerPackage: '@tsrx/hono' },
 		{ target: 'react', compilerPackage: '@tsrx/react' },
 		{ target: 'preact', compilerPackage: '@tsrx/preact' },
 		{ target: 'ripple', compilerPackage: '@tsrx/ripple' },
@@ -84,6 +98,16 @@ describe('@tsrx/mcp compile helpers', () => {
 	});
 
 	it.each([
+		{
+			target: 'hono',
+			compilerPackage: '@tsrx/hono',
+			pluginPackage: '@tsrx/vite-plugin-hono',
+		},
+		{
+			target: 'hono',
+			compilerPackage: '@tsrx/hono',
+			pluginPackage: '@tsrx/bun-plugin-hono',
+		},
 		{
 			target: 'react',
 			compilerPackage: '@tsrx/react',
@@ -226,6 +250,24 @@ describe('@tsrx/mcp compile helpers', () => {
 		});
 	});
 
+	it('inspects every Hono package signal with its declared version', () => {
+		const cwd = resolve(__dirname, 'fixtures/hono-project');
+		const result = inspect_project({ cwd });
+		const hono = result.targetPackages.find(({ target }) => target === 'hono');
+
+		expect(result.target.detectedTarget).toBe('hono');
+		expect(hono).toMatchObject({
+			target: 'hono',
+			compilerPackage: '@tsrx/hono',
+			present: true,
+		});
+		expect(hono?.packages).toEqual([
+			{ name: '@tsrx/hono', version: 'workspace:*', field: 'dependencies' },
+			{ name: '@tsrx/vite-plugin-hono', version: 'workspace:*', field: 'devDependencies' },
+			{ name: '@tsrx/bun-plugin-hono', version: 'workspace:*', field: 'devDependencies' },
+		]);
+	});
+
 	it('inspects project target, tooling, scripts, and likely commands', () => {
 		const result = inspect_project({ cwd: react_fixture });
 
@@ -308,8 +350,144 @@ describe('@tsrx/mcp compile helpers', () => {
 		expect(result.ok).toBe(true);
 		expect(result.target).toBe('react');
 		expect(result.compilerPackage).toBe('@tsrx/react');
+		expect(result.compilerEntry).toBe('@tsrx/react');
 		expect(result.errors).toEqual([]);
 		expect(result.code ?? '').toContain('const App');
+	});
+
+	it.each(hono_mode_cases)(
+		'maps Hono mode $mode to $compilerEntry',
+		async ({ mode, compilerEntry, runtime }) => {
+			const result = await compile_tsrx({
+				code: `export function App() @{ @try { <div /> } @pending { <p /> } }`,
+				filename: 'App.tsrx',
+				target: 'hono',
+				cwd: resolve(__dirname, 'fixtures/hono-project'),
+				mode,
+				includeCode: true,
+			});
+
+			expect(result.ok).toBe(true);
+			expect(result.compilerPackage).toBe('@tsrx/hono');
+			expect(result.compilerEntry).toBe(compilerEntry);
+			expect(result.code).toContain(runtime);
+		},
+	);
+
+	it('lets an explicit Hono target override ambiguous automatic discovery', async () => {
+		const temp_dir = await mkdtemp(join(tmpdir(), 'tsrx-mcp-hono-ambiguous-'));
+
+		try {
+			await writeFile(
+				join(temp_dir, 'package.json'),
+				JSON.stringify({
+					private: true,
+					dependencies: { '@tsrx/hono': '*', '@tsrx/react': '*' },
+				}),
+				'utf8',
+			);
+			const detection = detect_target(temp_dir);
+			expect(detection.detectedTarget).toBe(null);
+			expect(detection.confidence).toBe('ambiguous');
+
+			const inferred = await compile_tsrx({ code: '<div />', cwd: temp_dir });
+			expect(inferred.ok).toBe(false);
+			expect(inferred.compilerPackage).toBe(null);
+			expect(inferred.compilerEntry).toBe(null);
+
+			const explicit = await compile_tsrx({
+				code: '<div />',
+				target: 'hono',
+				cwd: resolve(__dirname, 'fixtures/hono-project'),
+			});
+			expect(explicit.ok).toBe(true);
+			expect(explicit.compilerEntry).toBe('@tsrx/hono');
+		} finally {
+			await rm(temp_dir, { recursive: true, force: true });
+		}
+	});
+
+	it('does not retry the Hono server compiler when the DOM entry cannot load', async () => {
+		const temp_dir = await mkdtemp(join(tmpdir(), 'tsrx-mcp-hono-no-dom-'));
+		const package_dir = join(temp_dir, 'node_modules', '@tsrx', 'hono');
+
+		try {
+			await mkdir(package_dir, { recursive: true });
+			await writeFile(
+				join(temp_dir, 'package.json'),
+				JSON.stringify({ private: true, dependencies: { '@tsrx/hono': '*' } }),
+				'utf8',
+			);
+			await writeFile(
+				join(package_dir, 'package.json'),
+				JSON.stringify({
+					name: '@tsrx/hono',
+					type: 'module',
+					exports: { '.': './index.js' },
+				}),
+				'utf8',
+			);
+			await writeFile(
+				join(package_dir, 'index.js'),
+				`export function compile() { return { code: 'server fallback', errors: [] }; }`,
+				'utf8',
+			);
+
+			const result = await compile_tsrx({
+				code: '<div />',
+				target: 'hono',
+				mode: 'client',
+				cwd: temp_dir,
+				includeCode: true,
+			});
+
+			expect(result.ok).toBe(false);
+			expect(result.compilerPackage).toBe('@tsrx/hono');
+			expect(result.compilerEntry).toBe('@tsrx/hono/dom');
+			expect(result.code).toBe(null);
+			expect(result.errors[0]?.message).toMatch(/@tsrx\/hono|Package subpath/);
+		} finally {
+			await rm(temp_dir, { recursive: true, force: true });
+		}
+	});
+
+	it('reports the same Hono DOM entry through compile, analyze, and validate', async () => {
+		const cwd = resolve(__dirname, 'fixtures/hono-project');
+		const code = `export const App = () => <div>Hello</div>;\n`;
+		const temp_dir = await mkdtemp(join(tmpdir(), 'tsrx-mcp-hono-validate-'));
+		const filePath = join(temp_dir, 'App.tsrx');
+
+		try {
+			await writeFile(filePath, code, 'utf8');
+			const compiled = await compile_tsrx({ code, target: 'hono', mode: 'client', cwd });
+			const analyzed = await analyze_tsrx({ code, target: 'hono', mode: 'client', cwd });
+			const validated = await validate_tsrx_file({
+				filePath,
+				target: 'hono',
+				mode: 'client',
+				cwd,
+			});
+
+			expect(compiled.compilerEntry).toBe('@tsrx/hono/dom');
+			expect(analyzed.compilerEntry).toBe('@tsrx/hono/dom');
+			expect(validated.compile?.compilerEntry).toBe('@tsrx/hono/dom');
+			expect(validated.analysis?.compilerEntry).toBe('@tsrx/hono/dom');
+		} finally {
+			await rm(temp_dir, { recursive: true, force: true });
+		}
+	});
+
+	it('surfaces local Hono DOM async diagnostics through compile and analyze', async () => {
+		const cwd = resolve(__dirname, 'fixtures/hono-project');
+		const code = `const AsyncChild = async () => <span />; export const App = () => <AsyncChild />;`;
+		const compiled = await compile_tsrx({ code, target: 'hono', mode: 'client', cwd });
+		const analyzed = await analyze_tsrx({ code, target: 'hono', mode: 'client', cwd });
+
+		expect(compiled.ok).toBe(false);
+		expect(compiled.compilerEntry).toBe('@tsrx/hono/dom');
+		expect(compiled.errors[0]?.message).toMatch(/does not support async components/);
+		expect(analyzed.compilerEntry).toBe('@tsrx/hono/dom');
+		expect(analyzed.errors).toEqual(compiled.errors);
 	});
 
 	it('infers the target when compiling from a project cwd', async () => {
@@ -442,6 +620,7 @@ describe('@tsrx/mcp compile helpers', () => {
 				ok: false,
 				target: 'ripple',
 				compilerPackage: '@tsrx/ripple',
+				compilerEntry: '@tsrx/ripple',
 				filename: 'App.tsrx',
 				cwd: resolve(__dirname, 'fixtures/ripple-project'),
 				errors: [

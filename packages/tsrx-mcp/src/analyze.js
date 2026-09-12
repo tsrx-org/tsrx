@@ -49,7 +49,7 @@ function create_advice(input) {
 			severity: 'error',
 			title: 'Select a TSRX runtime target',
 			message:
-				'The compiler could not infer a runtime target. Call detect-target with a project cwd, or pass target as ripple, react, preact, solid, or vue.',
+				'The compiler could not infer a runtime target. Call detect-target with a project cwd, or pass target as hono, ripple, react, preact, solid, or vue.',
 			documentation: ['tsrx://docs/target-integration.md'],
 		});
 	}
@@ -187,6 +187,7 @@ function create_advice(input) {
  *     ok: boolean,
  *     target: string | null,
  *     compilerPackage: string | null,
+ *     compilerEntry: string | null,
  *     filename: string,
  *     cwd: string,
  *     errors: Array<{
@@ -212,6 +213,7 @@ export function analyze_tsrx_result(input) {
 		ok: compileResult.ok,
 		target: compileResult.target,
 		compilerPackage: compileResult.compilerPackage,
+		compilerEntry: compileResult.compilerEntry,
 		filename: compileResult.filename,
 		cwd: compileResult.cwd,
 		errors: compileResult.errors,

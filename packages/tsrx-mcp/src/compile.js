@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { detect_target, TARGET_CANDIDATES } from './target.js';
+import { detect_target, resolve_compiler_entry, TARGET_CANDIDATES } from './target.js';
 
 const VALID_TARGETS = new Set(TARGET_CANDIDATES.map((candidate) => candidate.target));
 
@@ -123,6 +123,7 @@ export async function compile_tsrx(input) {
 			ok: false,
 			target: null,
 			compilerPackage: null,
+			compilerEntry: null,
 			filename,
 			cwd,
 			errors: [
@@ -150,6 +151,7 @@ export async function compile_tsrx(input) {
 			ok: false,
 			target,
 			compilerPackage: null,
+			compilerEntry: null,
 			filename,
 			cwd,
 			errors: [
@@ -173,15 +175,12 @@ export async function compile_tsrx(input) {
 	if (!candidate) {
 		throw new Error(`Missing compiler candidate for target "${target}".`);
 	}
+	const compiler_entry = resolve_compiler_entry(candidate, input.mode);
 
 	try {
-		const compiler = await import_compiler(
-			candidate.compilerPackage,
-			cwd,
-			detection.packageJsonPath,
-		);
+		const compiler = await import_compiler(compiler_entry, cwd, detection.packageJsonPath);
 		if (typeof compiler.compile !== 'function') {
-			throw new Error(`${candidate.compilerPackage} does not export a compile() function.`);
+			throw new Error(`${compiler_entry} does not export a compile() function.`);
 		}
 
 		const result = compiler.compile(input.code, filename, {
@@ -197,6 +196,7 @@ export async function compile_tsrx(input) {
 			ok: errors.length === 0,
 			target,
 			compilerPackage: candidate.compilerPackage,
+			compilerEntry: compiler_entry,
 			filename,
 			cwd,
 			errors,
@@ -208,6 +208,7 @@ export async function compile_tsrx(input) {
 			ok: false,
 			target,
 			compilerPackage: candidate.compilerPackage,
+			compilerEntry: compiler_entry,
 			filename,
 			cwd,
 			errors: [normalize_error(error, filename)],

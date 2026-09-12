@@ -138,6 +138,7 @@ describe('@tsrx/mcp stdio server', () => {
 
 			expect(uris).toContain('tsrx://docs/components.md');
 			expect(uris).toContain('tsrx://targets/react.md');
+			expect(uris).toContain('tsrx://targets/hono.md');
 
 			const docs = await client.readResource({ uri: 'tsrx://docs/components.md' });
 			expect(docs.contents[0]).toMatchObject({
@@ -148,6 +149,12 @@ describe('@tsrx/mcp stdio server', () => {
 
 			const target = await client.readResource({ uri: 'tsrx://targets/react.md' });
 			expect(expect_text_content(target.contents[0])).toContain('React target layer');
+
+			const hono = await client.readResource({ uri: 'tsrx://targets/hono.md' });
+			const hono_text = expect_text_content(hono.contents[0]);
+			expect(hono_text).toContain('@tsrx/hono/dom');
+			expect(hono_text).toContain('mode: `client`');
+			expect(hono_text).toContain('does not provide HonoX');
 		});
 	});
 
@@ -169,6 +176,23 @@ describe('@tsrx/mcp stdio server', () => {
 				text: expect.stringContaining('Build a counter component'),
 			});
 			expect(expect_text_content(prompt.messages[0].content)).toContain('compile-tsrx');
+
+			const hono_prompt = await client.getPrompt({
+				name: 'tsrx-task',
+				arguments: { target: 'hono' },
+			});
+			expect(expect_text_content(hono_prompt.messages[0].content)).toContain('Known target: hono');
+		});
+	});
+
+	it('publishes Hono and compilerEntry in tool schemas over stdio', async () => {
+		await with_client(async (client) => {
+			const { tools } = await client.listTools();
+			const compile = tools.find(({ name }) => name === 'compile-tsrx');
+			const target = /** @type {{ enum?: string[] }} */ (compile?.inputSchema?.properties?.target);
+			expect(target.enum).toContain('hono');
+			expect(compile?.outputSchema?.properties).toHaveProperty('compilerEntry');
+			expect(compile?.outputSchema?.required).toContain('compilerEntry');
 		});
 	});
 
@@ -231,6 +255,7 @@ describe('@tsrx/mcp stdio server', () => {
 				ok: true,
 				target: 'react',
 				compilerPackage: '@tsrx/react',
+				compilerEntry: '@tsrx/react',
 			});
 
 			const invalid = await client.callTool({
