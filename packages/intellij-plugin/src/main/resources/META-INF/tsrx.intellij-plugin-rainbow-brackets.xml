@@ -1,0 +1,5 @@
+<idea-plugin>
+	<extensions defaultExtensionNs="com.intellij">
+		<highlightVisitor implementation="dev.tsrx.intellij_plugin.TsrxRainbowBracketsHighlightVisitor"/>
+	</extensions>
+</idea-plugin>

@@ -37,6 +37,7 @@ dependencies {
 
 		// Add plugin dependencies for compilation here:
 		bundledPlugin("org.jetbrains.plugins.textmate")
+		plugin("izhangzhihao.rainbow.brackets", "2025.3.12")
 	}
 }
 
