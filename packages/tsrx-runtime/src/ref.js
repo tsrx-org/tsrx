@@ -206,26 +206,77 @@ export function merge_ref_props(...refs) {
 	 * @returns {void | (() => void)}
 	 */
 	function merged_ref_prop(node) {
-		/** @type {Array<() => void>} */
+		/**
+		 * Flat `[kind, payload]` pairs: one array instead of a closure per ref.
+		 * @type {unknown[]}
+		 */
 		const cleanups = [];
 
 		for (const ref of refs) {
-			const cleanup = apply_ref_value(ref, node);
-			if (typeof cleanup === 'function') {
-				cleanups.push(cleanup);
-			} else if (is_ref_callback(ref) && node !== null) {
-				cleanups.push(() => ref(null));
-			}
+			collect_ref_cleanups(ref, node, cleanups);
 		}
 
 		return () => {
-			for (const cleanup of cleanups) {
-				cleanup();
+			for (let i = 0; i < cleanups.length; i += 2) {
+				const kind = cleanups[i];
+				const payload = /** @type {any} */ (cleanups[i + 1]);
+				if (kind === 0) {
+					payload();
+				} else if (kind === 1) {
+					payload(null);
+				} else if (kind === 2) {
+					payload.current = null;
+				} else {
+					payload.value = null;
+				}
 			}
 		};
 	}
 
 	return merged_ref_prop;
+}
+
+/**
+ * Collect ref cleanups as flat `[kind, payload]` pairs, matching
+ * `apply_ref_value`'s observable behavior for every ref shape: kind 0 is a
+ * cleanup a callback ref returned, kind 1 a callback ref to re-invoke with
+ * `null`, kind 2/3 ref objects whose `current`/`value` is nulled.
+ *
+ * @template [T=Element]
+ * @param {RefValue<T>} ref_value
+ * @param {T | null} node
+ * @param {unknown[]} cleanups
+ * @returns {void}
+ */
+function collect_ref_cleanups(ref_value, node, cleanups) {
+	if (is_array(ref_value)) {
+		for (const item of ref_value) {
+			collect_ref_cleanups(item, node, cleanups);
+		}
+		return;
+	}
+
+	if (is_ref_callback(ref_value)) {
+		const result = ref_value(node);
+		if (typeof result === 'function') {
+			cleanups.push(0, result);
+		} else if (node !== null) {
+			cleanups.push(1, ref_value);
+		}
+		return;
+	}
+
+	if (ref_value && typeof ref_value === 'object') {
+		if (is_ref_object(ref_value, 'current')) {
+			ref_value.current = node;
+			cleanups.push(2, ref_value);
+			return;
+		}
+		if (is_ref_object(ref_value, 'value')) {
+			ref_value.value = node;
+			cleanups.push(3, ref_value);
+		}
+	}
 }
 
 /**

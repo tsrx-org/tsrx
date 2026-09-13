@@ -483,6 +483,67 @@ describe('ref runtime helpers', () => {
 			}
 		},
 	);
+
+	it('flattens array refs and branded value refs into merged cleanup order', () => {
+		/** @type {string[]} */
+		const events = [];
+		const node = {};
+		/** @type {{ value: object | null, __v_isRef: boolean }} */
+		const branded_ref = { value: null, __v_isRef: true };
+		/** @type {{ current: object | null }} */
+		const inner_ref = { current: null };
+		const merged = merge_ref_props(
+			/** @param {object | null} _node */
+			(_node) => {
+				events.push('outer');
+				return () => events.push('outer cleanup');
+			},
+			[
+				inner_ref,
+				/** @param {object | null} _node */
+				(_node) => {
+					events.push('inner');
+				},
+			],
+			branded_ref,
+		);
+		if (typeof merged !== 'function') {
+			throw new TypeError('Expected multiple refs to produce a callback');
+		}
+
+		const cleanup = merged(node);
+		expect(events).toEqual(['outer', 'inner']);
+		expect(inner_ref.current).toBe(node);
+		expect(branded_ref.value).toBe(node);
+		cleanup?.();
+		expect(events).toEqual(['outer', 'inner', 'outer cleanup', 'inner']);
+		expect(inner_ref.current).toBeNull();
+		expect(branded_ref.value).toBeNull();
+	});
+
+	it('does not re-invoke bare callbacks on cleanup after a null mount', () => {
+		/** @type {Array<object | null>} */
+		const callback_seen = [];
+		/** @type {{ current: object | null }} */
+		const object_ref = { current: null };
+		const merged = merge_ref_props(
+			/** @param {object | null} node */
+			(node) => {
+				callback_seen.push(node);
+			},
+			object_ref,
+		);
+		if (typeof merged !== 'function') {
+			throw new TypeError('Expected multiple refs to produce a callback');
+		}
+
+		const cleanup = merged(/** @type {object} */ (/** @type {unknown} */ (null)));
+		expect(callback_seen).toEqual([null]);
+		expect(object_ref.current).toBeNull();
+		cleanup?.();
+		expect(callback_seen).toEqual([null]);
+		expect(object_ref.current).toBeNull();
+	});
 });
 
 describe('spread ref normalization', () => {
