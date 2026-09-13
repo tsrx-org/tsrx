@@ -133,6 +133,161 @@ describe('ref runtime helpers', () => {
 		expect(Object.prototype.hasOwnProperty.call(inherited_ref_shape, 'value')).toBe(false);
 	});
 
+	it('applies mergeRefs in order and cleans up in the same order', () => {
+		/** @type {Array<unknown>} */
+		const events = [];
+		const node = {};
+		/** @type {{ current: object | null }} */
+		const current_ref = { current: null };
+		/** @type {{ value: object | null }} */
+		const value_ref = { value: null };
+		/** @param {object | null} value */
+		const callback_with_cleanup = (value) => {
+			events.push(['callback', value]);
+			return () => events.push(['callback cleanup']);
+		};
+		/** @param {object | null} value */
+		const callback_without_cleanup = (value) => {
+			events.push(['bare callback', value]);
+		};
+
+		const merged = mergeRefs(
+			null,
+			callback_with_cleanup,
+			undefined,
+			current_ref,
+			callback_without_cleanup,
+			value_ref,
+		);
+		const cleanup = merged(node);
+		expect(events).toEqual([
+			['callback', node],
+			['bare callback', node],
+		]);
+		expect(current_ref.current).toBe(node);
+		expect(value_ref.value).toBe(node);
+
+		cleanup();
+		expect(events).toEqual([
+			['callback', node],
+			['bare callback', node],
+			['callback cleanup'],
+			['bare callback', null],
+		]);
+		expect(current_ref.current).toBeNull();
+		expect(value_ref.value).toBeNull();
+	});
+
+	it('stops mergeRefs at a thrown callback or cleanup in the original order', () => {
+		/** @type {string[]} */
+		const events = [];
+		const error = new Error('ref failure');
+		/** @param {object | null} _node */
+		const first = (_node) => {
+			events.push('first');
+			return () => events.push('first cleanup');
+		};
+		/** @param {object | null} _node */
+		const second = (_node) => {
+			events.push('second');
+			throw error;
+		};
+		/** @param {object | null} _node */
+		const third = (_node) => {
+			events.push('third');
+		};
+
+		expect(() => mergeRefs(first, second, third)({})).toThrow(error);
+		expect(events).toEqual(['first', 'second']);
+
+		events.length = 0;
+		/** @type {{ current: object | null }} */
+		const current_ref = { current: null };
+		/** @param {object | null} _node */
+		const throwing_cleanup = (_node) => {
+			events.push('callback');
+			return () => {
+				events.push('throwing cleanup');
+				throw error;
+			};
+		};
+		const cleanup = mergeRefs(first, current_ref, throwing_cleanup, third)({});
+		expect(events).toEqual(['first', 'callback', 'third']);
+		expect(() => cleanup()).toThrow(error);
+		expect(events).toEqual(['first', 'callback', 'third', 'first cleanup', 'throwing cleanup']);
+		expect(current_ref.current).toBeNull();
+	});
+
+	it('mergeRefs ignores array refs and DOM-like objects', () => {
+		const node = {};
+		const dom_like = { nodeType: 1, nodeName: 'DIV', current: null, value: null };
+		/** @type {{ current: object | null }} */
+		const current_ref = { current: null };
+		/** @type {object[]} */
+		const callback_seen = [];
+		/** @param {object | null} value */
+		const callback = (value) => {
+			if (value === null) return;
+			callback_seen.push(value);
+		};
+
+		const cleanup = mergeRefs(
+			/** @type {MergeableRef<object>} */ (/** @type {unknown} */ ([callback])),
+			/** @type {MergeableRef<object>} */ (dom_like),
+			current_ref,
+		)(node);
+
+		expect(callback_seen).toEqual([]);
+		expect(dom_like.current).toBeNull();
+		expect(dom_like.value).toBeNull();
+		expect(current_ref.current).toBe(node);
+		cleanup();
+		expect(current_ref.current).toBeNull();
+	});
+
+	it('mergeRefs assigns branded and inherited-accessor value refs', () => {
+		const node = {};
+		/** @type {object | null} */
+		let inherited_stored = null;
+		const inherited_value_ref = Object.create({
+			get value() {
+				return inherited_stored;
+			},
+			set value(value) {
+				inherited_stored = value;
+			},
+		});
+		const branded_ref = { __v_isRef: true };
+		/** @param {object | null} _node */
+		const callback = (_node) => {};
+
+		const cleanup = mergeRefs(
+			/** @type {MergeableRef<object>} */ (inherited_value_ref),
+			/** @type {MergeableRef<object>} */ (/** @type {unknown} */ (branded_ref)),
+			callback,
+		)(node);
+
+		expect(inherited_stored).toBe(node);
+		expect(/** @type {{ value?: unknown }} */ (branded_ref).value).toBe(node);
+		cleanup();
+		expect(inherited_stored).toBeNull();
+		expect(/** @type {{ value?: unknown }} */ (branded_ref).value).toBeNull();
+	});
+
+	it('mergeRefs re-applies bare callback refs with null on cleanup after a null mount', () => {
+		/** @type {Array<object | null>} */
+		const seen = [];
+		/** @param {object | null} value */
+		const callback = (value) => {
+			seen.push(value);
+		};
+
+		const cleanup = mergeRefs(callback)(null);
+		expect(seen).toEqual([null]);
+		cleanup();
+		expect(seen).toEqual([null, null]);
+	});
+
 	it('keeps nullish filtering, single-ref identity, and merged cleanup order', () => {
 		/** @type {Array<unknown>} */
 		const events = [];

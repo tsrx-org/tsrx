@@ -23,31 +23,42 @@ const REF_VALUE = Symbol();
  */
 export function mergeRefs(...refs) {
 	return (node) => {
-		/** @type {Array<() => void>} */
+		/**
+		 * Flat `[kind, payload]` pairs: one array instead of a closure per ref.
+		 * @type {unknown[]}
+		 */
 		const cleanups = [];
 		for (const ref of refs) {
 			if (ref == null) continue;
 			if (typeof ref === 'function') {
 				const result = ref(node);
 				if (typeof result === 'function') {
-					cleanups.push(result);
+					cleanups.push(0, result);
 				} else {
-					cleanups.push(() => ref(null));
+					cleanups.push(1, ref);
 				}
 			} else if (is_ref_object(ref, 'current')) {
 				ref.current = node;
-				cleanups.push(() => {
-					ref.current = null;
-				});
+				cleanups.push(2, ref);
 			} else if (is_ref_object(ref, 'value')) {
 				ref.value = node;
-				cleanups.push(() => {
-					ref.value = null;
-				});
+				cleanups.push(3, ref);
 			}
 		}
 		return () => {
-			for (const cleanup of cleanups) cleanup();
+			for (let i = 0; i < cleanups.length; i += 2) {
+				const kind = cleanups[i];
+				const payload = /** @type {any} */ (cleanups[i + 1]);
+				if (kind === 0) {
+					payload();
+				} else if (kind === 1) {
+					payload(null);
+				} else if (kind === 2) {
+					payload.current = null;
+				} else {
+					payload.value = null;
+				}
+			}
 		};
 	};
 }
