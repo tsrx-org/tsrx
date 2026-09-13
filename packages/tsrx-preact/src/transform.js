@@ -1,7 +1,5 @@
 /** @import { JsxPlatform } from '@tsrx/core/types' */
 
-import { createJsxTransform } from '@tsrx/core';
-
 /**
  * Public re-export for downstream consumers (e.g. the Vite plugin) that
  * want to let the user override which module `Suspense` is imported from.
@@ -11,7 +9,7 @@ import { createJsxTransform } from '@tsrx/core';
 export const DEFAULT_SUSPENSE_SOURCE = 'preact/compat';
 
 /**
- * Preact platform descriptor consumed by `createJsxTransform`.
+ * Preact platform descriptor consumed by `createTargetCompiler`.
  *
  * Differences from React:
  * - `suspense` imports from `preact/compat` (overridable via `suspenseSource`).
@@ -20,7 +18,7 @@ export const DEFAULT_SUSPENSE_SOURCE = 'preact/compat';
  *
  * @type {JsxPlatform}
  */
-const preact_platform = {
+export const platform = {
 	name: 'Preact',
 	imports: {
 		fragment: 'preact',
@@ -49,5 +47,3 @@ const preact_platform = {
 		requireUseServerForAwait: false,
 	},
 };
-
-export const transform = createJsxTransform(preact_platform);

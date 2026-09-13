@@ -1,16 +1,14 @@
 /** @import { JsxPlatform } from '@tsrx/core/types' */
 
-import { createJsxTransform } from '@tsrx/core';
-
 /**
- * React platform descriptor consumed by `createJsxTransform`. Each field
+ * React platform descriptor consumed by `createTargetCompiler`. Each field
  * configures one React-specific decision the shared transformer would
  * otherwise have to branch on (import sources, `use server` validation, error
  * message prefix).
  *
  * @type {JsxPlatform}
  */
-const react_platform = {
+export const platform = {
 	name: 'React',
 	imports: {
 		fragment: 'react',
@@ -40,5 +38,3 @@ const react_platform = {
 		requireUseServerForAwait: false,
 	},
 };
-
-export const transform = createJsxTransform(react_platform);

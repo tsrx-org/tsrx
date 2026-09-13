@@ -1,13 +1,7 @@
-/** @import * as AST from 'estree' */
-/** @import { CompileError, JsxPlatform } from '../../types/index' */
+/** @import { CodeMapping, JsxPlatform } from '../../types/index' */
 
 import { describe, expect, it } from 'vitest';
-import {
-	analyzeTsrx,
-	createJsxTransform,
-	createVolarMappingsResult,
-	parseModule,
-} from '../../src/index.js';
+import { createTargetCompiler } from '../../src/index.js';
 
 /**
  * `options.inspect` — opt-in navigation origins for the type-only transform.
@@ -45,41 +39,21 @@ const SOURCE = `export default function App() @{
 }
 `;
 
+const { compile_to_volar_mappings } = createTargetCompiler(PLATFORM);
+
 /**
+ * Compiles through the shipped editor pipeline. `inspect` is a transform
+ * option, not part of the public parse-options surface, so it is threaded
+ * through the options passthrough.
  * @param {string} source
  * @param {{ inspect?: boolean }} [options]
  */
 function compile(source, { inspect = false } = {}) {
-	/** @type {CompileError[]} */
-	const errors = [];
-	/** @type {AST.CommentWithLocation[]} */
-	const comments = [];
-	const ast = parseModule(source, 'App.tsrx', {
-		collect: true,
-		loose: true,
-		preserveParens: true,
-		keywordTokens: true,
-		errors,
-		comments,
-	});
-	analyzeTsrx(ast, 'App.tsrx', { collect: true, loose: true, to_ts: true, errors, comments });
-	const transformed = createJsxTransform(PLATFORM)(ast, source, 'App.tsrx', {
-		collect: true,
-		loose: true,
-		typeOnly: true,
-		inspect,
-		errors,
-		comments,
-	});
-	const volar = createVolarMappingsResult({
-		ast: transformed.ast,
-		ast_from_source: ast,
+	return compile_to_volar_mappings(
 		source,
-		generated_code: transformed.code,
-		source_map: transformed.map,
-		errors,
-	});
-	return { code: transformed.code, map: transformed.map.mappings, mappings: volar.mappings };
+		'App.tsrx',
+		/** @type {any} */ ({ loose: true, inspect }),
+	);
 }
 
 describe('type-only inspect origins', () => {
@@ -93,13 +67,13 @@ describe('type-only inspect origins', () => {
 	});
 
 	it('leaves the directive keyword unreachable without the flag', () => {
-		const { map } = compile(SOURCE);
-		expect(mapReaches(map, SOURCE, SOURCE.indexOf('@for'))).toBe(false);
+		const { mappings } = compile(SOURCE);
+		expect(reaches(mappings, SOURCE.indexOf('@for'))).toBe(false);
 	});
 
 	it('anchors the lowered helper on the authored keyword with the flag', () => {
-		const { map } = compile(SOURCE, { inspect: true });
-		expect(mapReaches(map, SOURCE, SOURCE.indexOf('@for'))).toBe(true);
+		const { mappings } = compile(SOURCE, { inspect: true });
+		expect(reaches(mappings, SOURCE.indexOf('@for'))).toBe(true);
 	});
 
 	it('anchors nothing for a plain for…of, which is not a directive', () => {
@@ -119,62 +93,12 @@ describe('type-only inspect origins', () => {
 });
 
 /**
- * @param {string} text
- * @param {number} at
- * @param {number} length
- */
-const source_slice = (text, at, length) => text.slice(at, at + length);
-
-/**
- * Does the print's source map carry a segment for this authored offset?
+ * Do the Volar mappings — the surface the language server actually consumes —
+ * carry a segment sourced at this authored offset?
  *
- * @param {string} encoded
- * @param {string} source
+ * @param {CodeMapping[]} mappings
  * @param {number} offset
  */
-function mapReaches(encoded, source, offset) {
-	const lineStarts = [0];
-	for (let i = 0; i < source.length; i++) {
-		if (source.charCodeAt(i) === 10) lineStarts.push(i + 1);
-	}
-	let line = 0;
-	let sourceLine = 0;
-	let sourceColumn = 0;
-	for (const group of encoded.split(';')) {
-		let column = 0;
-		for (const segment of group.split(',')) {
-			if (!segment) continue;
-			const fields = decodeVlq(segment);
-			if (fields.length < 4) continue;
-			column += fields[0];
-			sourceLine += fields[2];
-			sourceColumn += fields[3];
-			if (lineStarts[sourceLine] + sourceColumn === offset) return true;
-		}
-		line++;
-	}
-	return false;
-}
-
-const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-/** @param {string} segment */
-function decodeVlq(segment) {
-	const values = [];
-	let shift = 0;
-	let value = 0;
-	for (const char of segment) {
-		const integer = B64.indexOf(char);
-		const hasContinuation = integer & 32;
-		value += (integer & 31) << shift;
-		if (hasContinuation) {
-			shift += 5;
-			continue;
-		}
-		const negative = value & 1;
-		value >>>= 1;
-		values.push(negative ? (value === 0 ? -0x80000000 : -value) : value);
-		shift = 0;
-		value = 0;
-	}
-	return values;
+function reaches(mappings, offset) {
+	return mappings.some((mapping) => mapping.sourceOffsets.includes(offset));
 }

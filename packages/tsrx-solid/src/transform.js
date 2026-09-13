@@ -18,7 +18,6 @@
 
 import { walk } from 'zimmerframe';
 import {
-	createJsxTransform,
 	error,
 	mergeDuplicateRefs,
 	validateAtMostOneRefAttribute,
@@ -68,7 +67,7 @@ const TSRX_IF_CONTINUE_ERROR =
 	'Continue statements are not allowed inside TSRX template @if blocks. Filter before rendering or use conditional output instead.';
 
 /**
- * Solid platform descriptor consumed by `createJsxTransform`. Everything
+ * Solid platform descriptor consumed by `createTargetCompiler`. Everything
  * that diverges from React/Preact is plugged in via `hooks`:
  * - Component-level `await` is rejected outright (no `"use server"` escape).
  * - Control-flow statements become Solid's `<Show>` / `<For>` /
@@ -82,7 +81,7 @@ const TSRX_IF_CONTINUE_ERROR =
  *
  * @type {JsxPlatform}
  */
-const solid_platform = {
+export const platform = {
 	name: 'Solid',
 	imports: {
 		// Solid doesn't use the React-style Suspense / ErrorBoundary pair.
@@ -171,8 +170,6 @@ const solid_platform = {
 		transformElement: (inner, ctx) => to_jsx_element(inner, ctx),
 	},
 };
-
-export const transform = createJsxTransform(solid_platform);
 
 /**
  * @param {AST.TSRXAwaitNode} await_node

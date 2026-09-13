@@ -12,7 +12,6 @@ import {
 	contains_component_jsx,
 	createHookSafeHelper,
 	create_generated_identifier,
-	createJsxTransform,
 	error,
 	has_location,
 	is_component_like_element,
@@ -23,7 +22,7 @@ import {
 } from '@tsrx/core';
 
 /**
- * Minimal Vue platform descriptor consumed by `createJsxTransform`.
+ * Minimal Vue platform descriptor consumed by `createTargetCompiler`.
  *
  * Vue largely reuses the shared JSX lowering while wrapping compiled
  * components in `defineVaporComponent(...)` and handling its extra imports.
@@ -31,7 +30,7 @@ import {
  *
  * @type {JsxPlatform}
  */
-const vue_platform = {
+export const platform = {
 	name: 'Vue',
 	imports: {
 		suspense: 'vue',
@@ -156,8 +155,6 @@ const vue_platform = {
 		},
 	},
 };
-
-export const transform = createJsxTransform(vue_platform);
 
 /**
  * @param {ESTreeJSX.JSXRenderNode} try_content

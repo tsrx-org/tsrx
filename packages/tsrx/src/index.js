@@ -261,6 +261,9 @@ export {
 	is_hoist_safe_jsx_node as isHoistSafeJsxNode,
 } from './transform/jsx-hoist.js';
 
+// Compile pipeline
+export { create_target_compiler as createTargetCompiler } from './compile.js';
+
 // Analyze
 export { analyze_css as analyzeCss } from './analyze/css-analyze.js';
 export { prune_css as pruneCss } from './analyze/prune.js';

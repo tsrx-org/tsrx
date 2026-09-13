@@ -2428,6 +2428,31 @@ export type VolarCompileFn<TOptions = ParseOptions & BaseCompileOptions> = (
 ) => VolarMappingsResult;
 
 /**
+ * The `{ parse, compile, compile_to_volar_mappings }` entry-point triple every
+ * TSRX target package exposes. Produced by {@link createTargetCompiler} from
+ * the target's {@link JsxPlatform} descriptor.
+ *
+ * @template TOptions Per-target options accepted by `compile` and
+ *   `compile_to_volar_mappings`. Defaults to {@link BaseCompileOptions};
+ *   targets intersect their own option type (for example Preact's
+ *   `suspenseSource`) onto it.
+ */
+export interface TargetCompiler<TOptions = BaseCompileOptions> {
+	parse: (source: string, filename?: string, options?: ParseOptions) => AST.Program;
+	compile: CompileFn<TOptions>;
+	compile_to_volar_mappings: VolarCompileFn<ParseOptions & TOptions>;
+}
+
+/**
+ * Build a target package's compiler entry points from its {@link JsxPlatform}
+ * descriptor. The shared parse → specialize → analyze → transform pipeline
+ * lives here in `@tsrx/core`; the descriptor is the only per-target input.
+ */
+export function createTargetCompiler<TOptions = BaseCompileOptions>(
+	platform: JsxPlatform,
+): TargetCompiler<TOptions>;
+
+/**
  * The node interface behind a `type` discriminant, preferring the widened TSRX
  * shapes for the JSX kinds the parser actually produces.
  */

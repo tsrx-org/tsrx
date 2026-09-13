@@ -1,17 +1,11 @@
-/** @import * as AST from 'estree' */
-/** @import { CompileError, JsxPlatform } from '../../types/index' */
+/** @import { CompileResult, JsxPlatform, VolarMappingsResult } from '../../types/index' */
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import {
-	analyzeTsrx,
-	createJsxTransform,
-	createVolarMappingsResult,
-	parseModule,
-} from '../../src/index.js';
+import { createTargetCompiler } from '../../src/index.js';
 
 /** @type {JsxPlatform} */
 const PLATFORM = {
@@ -31,48 +25,30 @@ const PLATFORM = {
 	validation: { requireUseServerForAwait: false },
 };
 
+const { compile, compile_to_volar_mappings } = createTargetCompiler(PLATFORM);
+
 /**
- * Mirrors a target package's public compiler pipeline.
+ * Compiles through the same pipeline a target package ships: the type-only
+ * Volar variant by default, the runtime variant when `type_only` is false.
+ * @overload
+ * @param {string} source
+ * @param {true} [type_only]
+ * @returns {VolarMappingsResult}
+ */
+/**
+ * @overload
+ * @param {string} source
+ * @param {false} type_only
+ * @returns {CompileResult}
+ */
+/**
  * @param {string} source
  * @param {boolean} [type_only]
  */
 function compile_source(source, type_only = true) {
-	/** @type {CompileError[]} */
-	const errors = [];
-	/** @type {AST.CommentWithLocation[]} */
-	const comments = [];
-	const filename = 'App.tsrx';
-	const ast = parseModule(source, filename, {
-		collect: true,
-		loose: true,
-		preserveParens: true,
-		keywordTokens: true,
-		errors,
-		comments,
-	});
-	analyzeTsrx(ast, filename, {
-		collect: true,
-		loose: true,
-		typeOnly: type_only,
-		errors,
-		comments,
-	});
-	const transformed = createJsxTransform(PLATFORM)(ast, source, filename, {
-		collect: true,
-		loose: true,
-		typeOnly: type_only,
-		errors,
-		comments,
-	});
-	const result = createVolarMappingsResult({
-		ast: transformed.ast,
-		ast_from_source: ast,
-		source,
-		generated_code: transformed.code,
-		source_map: transformed.map,
-		errors,
-	});
-	return { ...transformed, ...result, errors };
+	return type_only
+		? compile_to_volar_mappings(source, 'App.tsrx', { loose: true })
+		: compile(source, 'App.tsrx', { loose: true });
 }
 
 // Raw CSS in `<style>` is TSRX template syntax, so the blocks sit in a `@{ … }`
