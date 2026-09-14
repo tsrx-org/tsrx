@@ -15,8 +15,3 @@ export const has_own_property: typeof Object.prototype.hasOwnProperty;
 export const property_is_enumerable: typeof Object.prototype.propertyIsEnumerable;
 
 export function has_prototype_accessor(value: object, key: PropertyKey): boolean;
-export function array_slice<T>(array_like: ArrayLike<T>, ...args: number[]): T[];
-export function iterable_array_from<T>(
-	iterable: Iterable<T> | Iterator<T> | ArrayLike<T>,
-	index?: number,
-): T[];

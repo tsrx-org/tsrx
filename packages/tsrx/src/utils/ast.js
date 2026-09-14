@@ -341,14 +341,6 @@ export function extract_identifiers(pattern) {
 }
 
 /**
- * @param {AST.Expression} expression
- * @param {AST.Expression} fallback
- */
-export function build_fallback(expression, fallback) {
-	return b.call('_$_.fallback', expression, fallback);
-}
-
-/**
  * @param {AST.AssignmentOperator} operator
  * @param {AST.Identifier | AST.MemberExpression} left
  * @param {AST.Expression} right

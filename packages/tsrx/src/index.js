@@ -82,7 +82,6 @@ export {
 	object,
 	unwrap_pattern as unwrapPattern,
 	extract_identifiers as extractIdentifiers,
-	build_fallback as buildFallback,
 	build_assignment_value as buildAssignmentValue,
 	is_class_node as isClassNode,
 	is_function_node as isFunctionNode,
