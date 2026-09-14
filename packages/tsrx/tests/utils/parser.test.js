@@ -5418,3 +5418,27 @@ describe('lazy destructuring is not supported', () => {
 		expect(array_and.right.type).toBe('ArrayExpression');
 	});
 });
+
+describe('wrapped destructuring assignment targets', () => {
+	// acorn-typescript only unwraps `as` / `!` / `satisfies` wrappers around
+	// simple targets; the TSRX parser's `checkLValPattern` override extends
+	// that to nested patterns so they take the pattern lane instead of
+	// failing with "Assigning to rvalue".
+	it('accepts TypeScript wrappers around nested destructuring patterns', () => {
+		for (const source of [
+			'[{ a } as T] = arr;',
+			'[[b]!] = arr;',
+			'[{ a } satisfies T] = arr;',
+			'[b as any] = arr;',
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow();
+		}
+
+		const ast = parseModule('[{ a } as T] = arr;', 'App.tsrx');
+		const assignment = as_type(
+			firstStatement(ast, 'ExpressionStatement').expression,
+			'AssignmentExpression',
+		);
+		expect(assignment.left.type).toBe('ArrayPattern');
+	});
+});
