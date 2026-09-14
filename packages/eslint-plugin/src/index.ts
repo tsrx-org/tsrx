@@ -1,7 +1,6 @@
 import { createRequire } from 'module';
 import noReturnInComponent from './rules/no-return-in-component.js';
 import controlFlowJsx from './rules/control-flow-jsx.js';
-import noLazyDestructuringInModules from './rules/no-lazy-destructuring-in-modules.js';
 import validForOfKey from './rules/valid-for-of-key.js';
 import requireStatementContainerBody from './rules/require-statement-container-body.js';
 
@@ -13,7 +12,6 @@ const plugin = {
 	rules: {
 		'no-return-in-component': noReturnInComponent,
 		'control-flow-jsx': controlFlowJsx,
-		'no-lazy-destructuring-in-modules': noLazyDestructuringInModules,
 		'valid-for-of-key': validForOfKey,
 		'require-statement-container-body': requireStatementContainerBody,
 	},
@@ -44,7 +42,6 @@ try {
 function createConfig(name: string, files: string[], parser: any, isTsrx: boolean) {
 	const rules: Record<string, string> = {
 		'tsrx/control-flow-jsx': 'error',
-		'tsrx/no-lazy-destructuring-in-modules': 'error',
 		'tsrx/valid-for-of-key': 'error',
 	};
 

@@ -137,20 +137,20 @@ const items=[1,2,3];
 		const input = `function SetTest() {
     return <>@{
         let items = new ReactiveSet([1, 2, 3]);
-        let &[hasValue] = track(() => items.has(2));
+        const hasValue = track(() => items.has(2));
         <>
             <button onClick={() => items.delete(2)}>{'delete'}</button>
-            <pre>{hasValue}</pre>
+            <pre>{hasValue.value}</pre>
         </>
     }</>;
 }`;
 		const expected = `function SetTest() {
   return <>@{
     let items = new ReactiveSet([1, 2, 3]);
-    let &[hasValue] = track(() => items.has(2));
+    const hasValue = track(() => items.has(2));
     <>
       <button onClick={() => items.delete(2)}>{"delete"}</button>
-      <pre>{hasValue}</pre>
+      <pre>{hasValue.value}</pre>
     </>
   }</>;
 }`;
@@ -3129,18 +3129,18 @@ const sink: import('@example/runtime/server').SSRStreamSink = {
 
 		it('should correctly handle call expressions', async () => {
 			const input = `export function App() {
-	const &[context] = track(globalContext.get().theme);
+	const context = track(globalContext.get().theme);
 	<div>
 	<TypedComponent />
-	{context}
+	{context.value}
 	</div>
 }`;
 
 			const expected = `export function App() {
-  const &[context] = track(globalContext.get().theme);
+  const context = track(globalContext.get().theme);
   <div>
     <TypedComponent />
-    {context}
+    {context.value}
   </div>
 }`;
 
@@ -5588,45 +5588,18 @@ function Polygon() {
 			expect(result).toBeWithNewline(expected);
 		});
 
-		it('should handle tracked variable with lazy destructuring', async () => {
-			const input = `export default function App() {
-  return <div>@{
-    let &[count] = track(0);
-    count = 2;
-    console.log(count);
-    console.log(count);
-    @if (count > 1) {
-      <button onClick={() => count++}>{count}</button>
-    }
-  }</div>;
-}`;
-			const expected = `export default function App() {
-  return <div>@{
-    let &[count] = track(0);
-    count = 2;
-    console.log(count);
-    console.log(count);
-    @if (count > 1) {
-      <button onClick={() => count++}>{count}</button>
-    }
-  }</div>;
-}`;
-			const result = await format(input, { singleQuote: true });
-			expect(result).toBeWithNewline(expected);
-		});
-
 		it('should format JSX attributes with tracked values', async () => {
 			const input = `function App() {
-	const &[count] = track(0);
+	const count = track(0);
 
-	<Counter count={count} />
+	<Counter count={count.value} />
 	<Counter {count} />
 }`;
 
 			const expected = `function App() {
-  const &[count] = track(0);
+  const count = track(0);
 
-  <Counter count={count} />
+  <Counter count={count.value} />
   <Counter {count} />
 }`;
 
@@ -6066,7 +6039,7 @@ if(n<2){go("now")}</script>`;
 
 		it('should preserve comments in destructured typed function parameters', async () => {
 			const expected = `function Child({
-  tr: &[count, tr],
+  tr: [count, tr],
   // test,
 }: {
   tr: [number, Tracked<number>];

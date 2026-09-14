@@ -53,7 +53,6 @@ export async function generate_docs_index() {
 		'TEMPLATE_EXPRESSION_GRAMMAR',
 		specification_source,
 	);
-	const lazy_grammar = extract_string_array_constant('LAZY_GRAMMAR', specification_source);
 	const style_grammar = extract_string_array_constant('STYLE_GRAMMAR', specification_source);
 	const style_scope_example = extract_string_array_constant(
 		'STYLE_SCOPE_EXAMPLE',
@@ -87,7 +86,6 @@ Core ideas:
 - JSXElement, JSXFragment, JSXText, JSXExpressionContainer, attributes, and spreads use the standard JSX node family.
 - A mixed setup/template scope must finish with exactly one output node: a JSXElement, JSXFragment, or JSX control-flow expression. Wrap plain text, expression containers, or multiple siblings in a fragment.
 - Template control flow uses directive expressions: \`@if\`, \`@for\`, \`@switch\`, and \`@try\`; every directive body uses a \`{...}\` template block.
-- lazy destructuring uses &[] and &{} for by-reference bindings.
 
 The core language docs should stay target-neutral. After identifying the active runtime target, use target-specific docs, prompts, or skills for runtime imports, bundler setup, and semantics that are not defined by TSRX itself.
 
@@ -208,29 +206,6 @@ Use normal function returns for guard exits before entering template output. Fil
 TSRX rendering supports \`@for ... of\` list loops. Regular \`for\`, \`for...in\`, \`while\`, and \`do...while\` loops are not rendering constructs. Move imperative loops into setup code, a nested function, event handler, effect, or helper where normal JavaScript control-flow rules apply.
 
 Source: website-tsrx/src/pages/features.tsrx#for`,
-		},
-		{
-			slug: 'lazy-destructuring',
-			title: 'Lazy Destructuring',
-			use_cases: 'reactivity, lazy binding, ampersand destructuring, &[], &{}',
-			content: `# Lazy Destructuring
-
-TSRX supports lazy binding patterns prefixed with \`&\`. They bind by reference rather than by value. The target compiler provides the runtime semantics.
-
-\`\`\`tsx
-let &[count] = source;
-let &{ name, age } = props;
-\`\`\`
-
-The language defines the syntax and AST shape. Target-specific docs should explain what source values are valid and how reads and writes are lowered for the active runtime.
-
-Specification grammar:
-
-\`\`\`text
-${lazy_grammar}
-\`\`\`
-
-Source: website-tsrx/src/pages/specification.tsrx#lazy`,
 		},
 		{
 			slug: 'style-and-server',
