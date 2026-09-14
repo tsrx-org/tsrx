@@ -4,10 +4,6 @@
   "module" @keyword
   name: (identifier) @namespace)
 
-; Lazy destructuring
-(lazy_object_pattern "&" @operator)
-(lazy_array_pattern "&" @operator)
-
 ; Reserved identifiers
 [
   "track"

@@ -1287,68 +1287,6 @@
 			<array>
 				<dict>
 					<key>begin</key>
-					<string>(?&lt;!=|:|^of|[^\._$[:alnum:]]of|^in|[^\._$[:alnum:]]in)\s*(&amp;)(?=\{)</string>
-					<key>beginCaptures</key>
-					<dict>
-						<key>1</key>
-						<dict>
-							<key>name</key>
-							<string>punctuation.definition.binding-pattern.object.js</string>
-						</dict>
-					</dict>
-					<key>end</key>
-					<string>(?=$|^|[;,=}]|((?&lt;![_$[:alnum:]])(?:(?&lt;=\.\.\.)|(?&lt;!\.))(of|in)\s+))</string>
-					<key>name</key>
-					<string>meta.object-binding-pattern-variable.js</string>
-					<key>patterns</key>
-					<array>
-						<dict>
-							<key>include</key>
-							<string>#object-binding-pattern-const</string>
-						</dict>
-						<dict>
-							<key>include</key>
-							<string>#type-annotation</string>
-						</dict>
-						<dict>
-							<key>include</key>
-							<string>#comment</string>
-						</dict>
-					</array>
-				</dict>
-				<dict>
-					<key>begin</key>
-					<string>(?&lt;!=|:|^of|[^\._$[:alnum:]]of|^in|[^\._$[:alnum:]]in)\s*(&amp;)(?=\[)</string>
-					<key>beginCaptures</key>
-					<dict>
-						<key>1</key>
-						<dict>
-							<key>name</key>
-							<string>punctuation.definition.binding-pattern.array.js</string>
-						</dict>
-					</dict>
-					<key>end</key>
-					<string>(?=$|^|[;,=}]|((?&lt;![_$[:alnum:]])(?:(?&lt;=\.\.\.)|(?&lt;!\.))(of|in)\s+))</string>
-					<key>name</key>
-					<string>meta.array-binding-pattern-variable.js</string>
-					<key>patterns</key>
-					<array>
-						<dict>
-							<key>include</key>
-							<string>#array-binding-pattern-const</string>
-						</dict>
-						<dict>
-							<key>include</key>
-							<string>#type-annotation</string>
-						</dict>
-						<dict>
-							<key>include</key>
-							<string>#comment</string>
-						</dict>
-					</array>
-				</dict>
-				<dict>
-					<key>begin</key>
 					<string>(?&lt;!=|:|^of|[^\._$[:alnum:]]of|^in|[^\._$[:alnum:]]in)\s*(?=\{)</string>
 					<key>end</key>
 					<string>(?=$|^|[;,=}]|((?&lt;![_$[:alnum:]])(?:(?&lt;=\.\.\.)|(?&lt;!\.))(of|in)\s+))</string>
@@ -1499,68 +1437,6 @@
 		<dict>
 			<key>patterns</key>
 			<array>
-				<dict>
-					<key>begin</key>
-					<string>(?&lt;!=|:|^of|[^\._$[:alnum:]]of|^in|[^\._$[:alnum:]]in)\s*(&amp;)(?=\{)</string>
-					<key>beginCaptures</key>
-					<dict>
-						<key>1</key>
-						<dict>
-							<key>name</key>
-							<string>punctuation.definition.binding-pattern.object.js</string>
-						</dict>
-					</dict>
-					<key>end</key>
-					<string>(?=$|^|[;,=}]|((?&lt;![_$[:alnum:]])(?:(?&lt;=\.\.\.)|(?&lt;!\.))(of|in)\s+))</string>
-					<key>name</key>
-					<string>meta.object-binding-pattern-variable.js</string>
-					<key>patterns</key>
-					<array>
-						<dict>
-							<key>include</key>
-							<string>#object-binding-pattern</string>
-						</dict>
-						<dict>
-							<key>include</key>
-							<string>#type-annotation</string>
-						</dict>
-						<dict>
-							<key>include</key>
-							<string>#comment</string>
-						</dict>
-					</array>
-				</dict>
-				<dict>
-					<key>begin</key>
-					<string>(?&lt;!=|:|^of|[^\._$[:alnum:]]of|^in|[^\._$[:alnum:]]in)\s*(&amp;)(?=\[)</string>
-					<key>beginCaptures</key>
-					<dict>
-						<key>1</key>
-						<dict>
-							<key>name</key>
-							<string>punctuation.definition.binding-pattern.array.js</string>
-						</dict>
-					</dict>
-					<key>end</key>
-					<string>(?=$|^|[;,=}]|((?&lt;![_$[:alnum:]])(?:(?&lt;=\.\.\.)|(?&lt;!\.))(of|in)\s+))</string>
-					<key>name</key>
-					<string>meta.array-binding-pattern-variable.js</string>
-					<key>patterns</key>
-					<array>
-						<dict>
-							<key>include</key>
-							<string>#array-binding-pattern</string>
-						</dict>
-						<dict>
-							<key>include</key>
-							<string>#type-annotation</string>
-						</dict>
-						<dict>
-							<key>include</key>
-							<string>#comment</string>
-						</dict>
-					</array>
-				</dict>
 				<dict>
 					<key>begin</key>
 					<string>(?&lt;!=|:|^of|[^\._$[:alnum:]]of|^in|[^\._$[:alnum:]]in)\s*(?=\{)</string>
@@ -7521,7 +7397,7 @@
 		<key>parameter-array-binding-pattern</key>
 		<dict>
 			<key>begin</key>
-			<string>(?:(\.\.\.)\s*)?(&amp;)?(\[)</string>
+			<string>(?:(\.\.\.)\s*)?(\[)</string>
 			<key>beginCaptures</key>
 			<dict>
 				<key>1</key>
@@ -7530,11 +7406,6 @@
 					<string>keyword.operator.rest.js</string>
 				</dict>
 				<key>2</key>
-				<dict>
-					<key>name</key>
-					<string>punctuation.definition.binding-pattern.array.js</string>
-				</dict>
-				<key>3</key>
 				<dict>
 					<key>name</key>
 					<string>punctuation.definition.binding-pattern.array.js</string>
@@ -7814,7 +7685,7 @@
 		<key>parameter-object-binding-pattern</key>
 		<dict>
 			<key>begin</key>
-			<string>(?:(\.\.\.)\s*)?(&amp;)?(\{)</string>
+			<string>(?:(\.\.\.)\s*)?(\{)</string>
 			<key>beginCaptures</key>
 			<dict>
 				<key>1</key>
@@ -7823,11 +7694,6 @@
 					<string>keyword.operator.rest.js</string>
 				</dict>
 				<key>2</key>
-				<dict>
-					<key>name</key>
-					<string>punctuation.definition.binding-pattern.object.js</string>
-				</dict>
-				<key>3</key>
 				<dict>
 					<key>name</key>
 					<string>punctuation.definition.binding-pattern.object.js</string>
