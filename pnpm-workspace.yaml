@@ -54,8 +54,8 @@ catalogs:
   default:
     '@babel/core': ^7.29.0
     '@babel/preset-typescript': ^7.28.5
-    '@changesets/changelog-github': ^0.7.0
-    '@changesets/cli': ^2.31.0
+    '@changesets/changelog-github': ^1.0.1
+    '@changesets/cli': ^3.0.2
     '@jridgewell/sourcemap-codec': ^1.5.5
     '@modelcontextprotocol/sdk': ^1.29.0
     '@noble/hashes': ^2.2.0

@@ -45,7 +45,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Disallow major and minor bumps in changesets
+      - name: Disallow major bumps in changesets
         run: pnpm changeset:check
 
       - name: Detect IntelliJ plugin release

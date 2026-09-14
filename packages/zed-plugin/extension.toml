@@ -8,7 +8,7 @@ repository = "https://github.com/tsrx-org/tsrx"
 
 [grammars.tsrx]
 repository = "https://github.com/tsrx-org/tsrx"
-rev = "ebab7e06fc19b3fe596d6024ea98e75bcd8376a5"
+rev = "dcc0283a7470773f8a169c8750344ad147c30c99"
 path = "grammars/tree-sitter"
 
 [language_servers.tsrx-language-server]

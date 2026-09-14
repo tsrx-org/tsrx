@@ -51,7 +51,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Disallow major and minor bumps in changesets
+      - name: Disallow major bumps in changesets
         run: pnpm changeset:check
 
       # This job intentionally has no id-token permission. npm prefers OIDC when

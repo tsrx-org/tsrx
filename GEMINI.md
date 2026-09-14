@@ -104,8 +104,9 @@ pnpm typecheck
 ## Changesets
 
 Add a changeset for user-facing package or marketplace-extension changes. Skip
-changesets for docs-only, test-only, and internal tooling updates. Use only
-`patch` bumps unless a release plan explicitly changes that policy.
+changesets for docs-only, test-only, and internal tooling updates. Use `patch` for
+fixes and additive changes and `minor` for language or public API removals;
+`major` bumps are rejected by `scripts/check-changesets.js`.
 
 ```bash
 pnpm changeset
