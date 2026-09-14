@@ -231,49 +231,6 @@ export function is_transparent_expression_wrapper(parent, child) {
 }
 
 /**
- * Whether a lazy destructuring assignment can be lowered from an expression
- * statement into a declaration without changing the syntactic category of its
- * parent slot. Transparent expression wrappers are allowed, but the assignment
- * must otherwise be the whole statement and that statement must be a direct
- * item in a statement list.
- *
- * This is the shared semantic boundary for both target-neutral diagnostics and
- * lazy-ID allocation. Keeping those callers on one predicate ensures collect
- * mode never allocates an ID for a shape that analysis has diagnosed.
- *
- * @param {AST.AssignmentExpression} node
- * @param {AST.Node[]} path
- * @returns {boolean}
- */
-export function is_supported_lazy_assignment_position(node, path) {
-	if (
-		node.operator !== '=' ||
-		(node.left.type !== 'ObjectPattern' && node.left.type !== 'ArrayPattern') ||
-		!node.left.lazy
-	) {
-		return false;
-	}
-
-	/** @type {AST.Node} */
-	let child = node;
-
-	for (let i = path.length - 1; i >= 0; i -= 1) {
-		const parent = path[i];
-		if (is_transparent_expression_wrapper(parent, child)) {
-			child = parent;
-			continue;
-		}
-
-		if (parent.type !== 'ExpressionStatement' || parent.expression !== child) return false;
-
-		const container = path[i - 1];
-		return !!container && is_statement_list_item(container, parent);
-	}
-
-	return false;
-}
-
-/**
  * Returns the closest native TSRX function in an ancestry path. By default,
  * function and class boundaries stop the search so callers only match direct
  * native TSRX function body/control-flow nodes.

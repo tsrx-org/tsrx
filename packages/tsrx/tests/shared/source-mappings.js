@@ -992,48 +992,9 @@ function C() @{
 		});
 	});
 
-	describe(`[${name}] lazy destructuring mappings`, () => {
-		it('maps generated loop sources and rewritten body references to authored lazy bindings', () => {
-			const source = `function read(items) {
-	for (const &{ value } of items) {
-		consume(value);
-	}
-}`;
-			const result = compile(source, 'App.tsrx');
-			const generated_line_offsets = build_line_offsets(result.code);
-			const [src_to_gen_map] = build_src_to_gen_map(
-				result.map,
-				new Map(),
-				generated_line_offsets,
-				result.code,
-			);
-			const source_line_offsets = build_line_offsets(source);
-			const loop_pattern = offset_to_line_col(source.indexOf('&{ value }'), source_line_offsets);
-			const body_value = offset_to_line_col(source.lastIndexOf('value'), source_line_offsets);
-			const generated_pattern = get_generated_position(
-				loop_pattern.line,
-				loop_pattern.column,
-				src_to_gen_map,
-			);
-			const generated_body = get_generated_position(
-				body_value.line,
-				body_value.column,
-				src_to_gen_map,
-			);
-
-			expect(result.code).toContain('for (const __lazy0 of items)');
-			expect(result.code).toContain('consume(__lazy0.value)');
-			if (generated_pattern instanceof Error) throw generated_pattern;
-			if (generated_body instanceof Error) throw generated_body;
-			const pattern_offset =
-				generated_line_offsets[generated_pattern.line - 1] + generated_pattern.column;
-			const body_offset = generated_line_offsets[generated_body.line - 1] + generated_body.column;
-			expect(result.code.slice(pattern_offset, pattern_offset + '__lazy0'.length)).toBe('__lazy0');
-			expect(result.code.slice(body_offset, body_offset + 'value'.length)).toBe('value');
-		});
-
-		it('preserves untyped lazy object patterns so source identifiers map identity-style', () => {
-			const source = `function Hello(&{ a: value, b }) @{
+	describe(`[${name}] destructured parameter mappings`, () => {
+		it('maps pattern keys, aliases, shorthand bindings, and body references identity-style', () => {
+			const source = `function Hello({ a: value, b }) @{
 	<>{value}{b}</>
 }`;
 			const result = compile_to_volar_mappings(source, 'App.tsrx');
@@ -1074,56 +1035,18 @@ function C() @{
 			expect(identity_mapping(src_body_b, gen_body_b, 'b'.length)).toBeDefined();
 		});
 
-		it('preserves annotated lazy object params with their type annotation intact', () => {
-			const source = `function Hello(&{ a: value, b }: { a: string, b: string }) @{
-	<>{value}{b}</>
-}`;
-			const result = compile_to_volar_mappings(source, 'App.tsrx');
-
-			expect(result.code).toContain('function Hello({ a: value, b }: { a: string; b: string })');
-		});
-
-		it('preserves annotated lazy params on plain functions', () => {
-			const source = `function greet(&{ a: c, b }: { a: string, b: string }) {
-	return c + b;
-}`;
-			const result = compile_to_volar_mappings(source, 'App.tsrx');
-
-			expect(result.code).toContain('function greet({ a: c, b }: { a: string; b: string })');
-		});
-
-		it('reports repeated lazy param bindings in loose mode without throwing', () => {
-			const source = `function greet(&{ a: b, b }: { a: string, b: string }) {
-	return b;
-}`;
-
-			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
-
-			expect(result.errors).toHaveLength(2);
-			expect(result.errors[0].message).toBe('Argument name clash');
-			expect(result.errors[0].type).toBe('usage');
-			expect(source.slice(result.errors[0].pos, result.errors[0].end)).toBe('b');
-			expect(result.errors[1].message).toBe('Argument name clash');
-			expect(result.errors[1].type).toBe('usage');
-			expect(source.slice(result.errors[1].pos, result.errors[1].end)).toBe('b');
-			expect(result.code).toContain('function greet({ a: b, b }: { a: string; b: string })');
-		});
-
-		it('reports repeated lazy component param bindings in loose mode without throwing', () => {
-			const source = `function App(&{ a: b, b }: { a: string, b: string }) @{
+		it('reports repeated component param bindings in loose mode with mapped ranges', () => {
+			const source = `function App({ a: b, b }: { a: string, b: string }) @{
 	<>{b}</>
 }`;
 
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 
 			expect(result.errors).toHaveLength(2);
-			expect(result.errors[0].message).toBe('Argument name clash');
-			expect(result.errors[0].type).toBe('usage');
-			expect(source.slice(result.errors[0].pos, result.errors[0].end)).toBe('b');
-			expect(result.errors[1].message).toBe('Argument name clash');
-			expect(result.errors[1].type).toBe('usage');
-			expect(source.slice(result.errors[1].pos, result.errors[1].end)).toBe('b');
 			for (const error of result.errors) {
+				expect(error.message).toBe('Argument name clash');
+				expect(error.type).toBe('usage');
+				expect(source.slice(error.pos, error.end)).toBe('b');
 				expect(
 					result.mappings.find(
 						(mapping) =>
@@ -1133,27 +1056,6 @@ function C() @{
 				).toBeDefined();
 			}
 			expect(result.code).toContain('function App({ a: b, b }: { a: string; b: string })');
-		});
-
-		it('reports repeated lazy param bindings with full identifier ranges', () => {
-			const source = `function App(&{ a: value, value }: { a: string, value: string }) @{
-	<>{value}</>
-}`;
-
-			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
-
-			expect(result.errors).toHaveLength(2);
-			expect(source.slice(result.errors[0].pos, result.errors[0].end)).toBe('value');
-			expect(source.slice(result.errors[1].pos, result.errors[1].end)).toBe('value');
-			for (const error of result.errors) {
-				expect(
-					result.mappings.find(
-						(mapping) =>
-							mapping.sourceOffsets[0] === error.pos &&
-							mapping.lengths[0] === Number(error.end) - Number(error.pos),
-					),
-				).toBeDefined();
-			}
 		});
 	});
 

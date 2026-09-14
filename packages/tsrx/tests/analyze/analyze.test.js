@@ -3,10 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { analyzeTsrx, DIAGNOSTIC_CODES, parseModule } from '../../src/index.js';
-import {
-	TSRX_FORGOTTEN_STATEMENT_CONTAINER_ERROR,
-	TSRX_UNSUPPORTED_LAZY_ASSIGNMENT_POSITION_ERROR,
-} from '../../src/analyze/validation.js';
+import { TSRX_FORGOTTEN_STATEMENT_CONTAINER_ERROR } from '../../src/analyze/validation.js';
 
 const filename = 'App.tsrx';
 
@@ -38,13 +35,6 @@ function analyze(source, options = { collect: true }) {
 function forgotten_output_errors(result) {
 	return result.errors.filter(
 		(error) => error.code === DIAGNOSTIC_CODES.FORGOTTEN_STATEMENT_CONTAINER,
-	);
-}
-
-/** @param {ReturnType<typeof analyze>} result */
-function unsupported_lazy_assignment_errors(result) {
-	return result.errors.filter(
-		(error) => error.code === DIAGNOSTIC_CODES.UNSUPPORTED_LAZY_ASSIGNMENT_POSITION,
 	);
 }
 
@@ -210,110 +200,6 @@ describe('target-neutral TSRX analysis', () => {
 				const result = analyze('function Test() { <div /> }', options);
 
 				expect(forgotten_output_errors(result), JSON.stringify(options)).toHaveLength(1);
-			}
-		});
-	});
-
-	describe('lazy destructuring assignment positions', () => {
-		it('allows direct assignments in every supported statement list', () => {
-			const result = analyze(`&{ root } = source;
-				{ &{ block } = source; }
-				function View() @{ &{ code_block } = source; <div /> }
-				switch (kind) { case 1: &{ switch_case } = source; break; }`);
-
-			expect(unsupported_lazy_assignment_errors(result)).toEqual([]);
-		});
-
-		it('allows a parenthesized direct assignment in the preserve-parens editor path', () => {
-			const errors = /** @type {CompileError[]} */ ([]);
-			const comments = /** @type {AST.CommentWithLocation[]} */ ([]);
-			const ast = parseModule('(&{ value } = source);', filename, {
-				collect: true,
-				preserveParens: true,
-				errors,
-				comments,
-			});
-
-			const result = analyzeTsrx(ast, filename, { collect: true, errors, comments });
-
-			expect(unsupported_lazy_assignment_errors(result)).toEqual([]);
-		});
-
-		it('reports every braceless statement position exactly once', () => {
-			for (const source of [
-				'if (ready) &{ value } = source;',
-				'if (ready) {} else &{ value } = source;',
-				'for (;;) &{ value } = source;',
-				'while (ready) &{ value } = source;',
-				'label: &{ value } = source;',
-			]) {
-				const errors = unsupported_lazy_assignment_errors(analyze(source));
-
-				expect(errors, source).toHaveLength(1);
-				expect(errors[0].message, source).toBe(TSRX_UNSUPPORTED_LAZY_ASSIGNMENT_POSITION_ERROR);
-			}
-		});
-
-		it('reports nested and non-direct assignment targets exactly once', () => {
-			for (const source of [
-				'(&{ value } = source, consume());',
-				'consume(&{ value } = source);',
-				'target = (&{ value } = source);',
-				'[&{ value }] = pairs;',
-				'[&{ value } as any] = pairs;',
-			]) {
-				const errors = unsupported_lazy_assignment_errors(analyze(source));
-
-				expect(errors, source).toHaveLength(1);
-				expect(errors[0].message, source).toBe(TSRX_UNSUPPORTED_LAZY_ASSIGNMENT_POSITION_ERROR);
-			}
-		});
-
-		it('focuses one diagnostic on the first lazy descendant in an unsupported target', () => {
-			const source = '[&{ first }, &{ second }] = pairs;';
-			const errors = unsupported_lazy_assignment_errors(analyze(source));
-			const target = '{ first }';
-			const start = source.indexOf(target);
-
-			expect(errors).toHaveLength(1);
-			expect(errors[0].code).toBe(DIAGNOSTIC_CODES.UNSUPPORTED_LAZY_ASSIGNMENT_POSITION);
-			expect(errors[0].pos).toBe(start);
-			expect(errors[0].end).toBe(start + target.length);
-			expect(source.slice(errors[0].pos, errors[0].end)).toBe(target);
-		});
-
-		it('leaves lazy assignments in evaluated target expressions to their own visitor', () => {
-			for (const [source, target] of [
-				['[x = (&{ value } = source)] = items;', '{ value }'],
-				['({ [(&{ x } = source).key]: value } = object);', '{ x }'],
-			]) {
-				const errors = unsupported_lazy_assignment_errors(analyze(source));
-				const start = source.indexOf(target);
-
-				expect(errors, source).toHaveLength(1);
-				expect(errors[0].pos, source).toBe(start);
-				expect(errors[0].end, source).toBe(start + target.length);
-				expect(source.slice(errors[0].pos, errors[0].end), source).toBe(target);
-			}
-		});
-
-		it('throws in strict analysis and collects in editor and type-only modes', () => {
-			const source = 'if (ready) &{ value } = source;';
-			const ast = parseModule(source, filename);
-
-			expect(() => analyzeTsrx(ast, filename)).toThrow(
-				TSRX_UNSUPPORTED_LAZY_ASSIGNMENT_POSITION_ERROR,
-			);
-
-			for (const options of [
-				{ collect: true },
-				{ loose: true },
-				{ typeOnly: true },
-				{ to_ts: true },
-			]) {
-				const errors = unsupported_lazy_assignment_errors(analyze(source, options));
-
-				expect(errors, JSON.stringify(options)).toHaveLength(1);
 			}
 		});
 	});

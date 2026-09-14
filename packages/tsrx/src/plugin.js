@@ -163,88 +163,6 @@ function get_argument_clash_reported_names(check_clashes) {
 }
 
 /**
- * The position of a pending `&{…}`/`&[…]` lazy binding pattern recorded on a
- * DestructuringErrors context, or -1. Acorn's DestructuringErrors class knows
- * nothing about the field, so absence means none was recorded.
- *
- * @param {Parse.DestructuringErrors | undefined | null} refDestructuringErrors
- * @returns {number}
- */
-function get_lazy_binding_pos(refDestructuringErrors) {
-	return refDestructuringErrors?.lazyBindingPos ?? -1;
-}
-
-/** @type {ReadonlySet<string>} */
-const lazy_target_wrapper_types = new Set([
-	'ParenthesizedExpression',
-	'TSAsExpression',
-	'TSSatisfiesExpression',
-	'TSNonNullExpression',
-	'TSTypeAssertion',
-	'TSTypeCastExpression',
-]);
-
-/**
- * Whether the lazy binding pattern recorded at `pos` (the position of its `&`,
- * one character before the pattern node) sits in a pattern-forming position of
- * `node` — a slot that toAssignable converts into a binding or assignment
- * target. A lazy pattern reached only through an expression position (for
- * example as a member expression's object in `&{ a }.b = x`) is an expression
- * use and must keep its pending error. `node` is the pre-conversion tree, so
- * both the expression and pattern spellings of each slot appear here.
- *
- * @param {AST.Node | null | undefined} node
- * @param {number} pos
- * @returns {boolean}
- */
-function pattern_position_contains_lazy(node, pos) {
-	if (!node || typeof node !== 'object') return false;
-	if (
-		/** @type {AST.ObjectPattern | AST.ArrayPattern} */ (node).lazy &&
-		/** @type {number} */ (node.start) === pos + 1
-	) {
-		return true;
-	}
-	// Parentheses and the TypeScript expression wrappers acorn-typescript's
-	// toAssignable unwraps when converting a target (`[&{ a }!] = arr`) — the
-	// wrapped node stays in a pattern-forming position. TSTypeCastExpression is
-	// internal to acorn-typescript, hence the string set rather than switch
-	// cases over the ESTree union.
-	if (lazy_target_wrapper_types.has(node.type)) {
-		return pattern_position_contains_lazy(
-			/** @type {{ expression: AST.Node }} */ (/** @type {unknown} */ (node)).expression,
-			pos,
-		);
-	}
-	switch (node.type) {
-		case 'ObjectExpression':
-		case 'ObjectPattern':
-			return node.properties.some((property) =>
-				pattern_position_contains_lazy(
-					property.type === 'Property'
-						? /** @type {AST.Node} */ (property.value)
-						: property.argument,
-					pos,
-				),
-			);
-		case 'ArrayExpression':
-		case 'ArrayPattern':
-			return node.elements.some(
-				(element) => element && pattern_position_contains_lazy(element, pos),
-			);
-		case 'AssignmentExpression':
-			return node.operator === '=' && pattern_position_contains_lazy(node.left, pos);
-		case 'AssignmentPattern':
-			return pattern_position_contains_lazy(node.left, pos);
-		case 'SpreadElement':
-		case 'RestElement':
-			return pattern_position_contains_lazy(node.argument, pos);
-		default:
-			return false;
-	}
-}
-
-/**
  * A `<` opens a tag only when the character after it can begin one: `/` for a
  * closing tag, `>` for a fragment, `{` for a dynamic tag, or an element or
  * component name start. Any other character, or end of input, leaves the `<`
@@ -383,8 +301,8 @@ function looks_like_generic_arrow(input, pos) {
 
 /**
  * Acorn parser plugin for TSRX syntax extensions.
- * Adds support for: native TSRX templates, &[]/&{} lazy destructuring,
- * submodule imports, TSRX directives, and enhanced JSX handling.
+ * Adds support for: native TSRX templates, submodule imports, TSRX directives,
+ * and enhanced JSX handling.
  *
  * @param {import('../types/index').TSRXPluginConfig} [config] - Plugin configuration
  * @returns {(Parser: Parse.ParserConstructor) => Parse.ParserConstructor} Parser extension function
@@ -1652,25 +1570,6 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['parseExprAtom']}
 			 */
 			parseExprAtom(refDestructuringErrors, forInit, forNew) {
-				// A `&{…}`/`&[…]` lazy binding pattern is only meaningful where the
-				// expression may still turn out to be a binding or assignment target —
-				// an arrow parameter list, a destructuring assignment target, or a
-				// for–of/for–in loop target. Those are exactly the positions Acorn
-				// parses with a DestructuringErrors context, so parse the pattern there
-				// and record it as a pending error the same way Acorn treats `{a = b}`
-				// shorthand: pattern conversion accepts the node as-is, while contexts
-				// that remain expressions raise in checkExpressionErrors.
-				if (
-					refDestructuringErrors &&
-					this.type === tt.bitwiseAND &&
-					(this.input.charCodeAt(this.end) === CharCode.openBrace ||
-						this.input.charCodeAt(this.end) === CharCode.openBracket)
-				) {
-					if (get_lazy_binding_pos(refDestructuringErrors) < 0) {
-						refDestructuringErrors.lazyBindingPos = this.start;
-					}
-					return /** @type {AST.Expression} */ (/** @type {unknown} */ (this.parseBindingAtom()));
-				}
 				// A token already consumed as JSX text (a script-mode element child) must
 				// stay text even when it happens to begin at an `@` — otherwise whether
 				// `@if` parses as a directive would depend on leading whitespace.
@@ -3355,48 +3254,6 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Override isLet to recognize `let &{` and `let &[` as variable declarations.
-			 * Acorn's isLet checks the char after `let` and only recognizes `{`, `[`, or identifiers.
-			 * The `&` character is not in that set, so `let &{...}` would not be parsed as a declaration.
-			 * @type {Parse.Parser['isLet']}
-			 */
-			isLet(context) {
-				if (!this.isContextual('let')) return false;
-				const skip = /\s*/y;
-				skip.lastIndex = this.pos;
-				const match = skip.exec(this.input);
-				if (!match) return super.isLet(context);
-				const next = this.pos + match[0].length;
-				const nextCh = this.input.charCodeAt(next);
-				// If next char is &, check if char after & is { or [
-				if (nextCh === CharCode.ampersand) {
-					const afterAmp = this.input.charCodeAt(next + 1);
-					if (afterAmp === CharCode.openBrace || afterAmp === CharCode.openBracket) return true;
-				}
-				return super.isLet(context);
-			}
-
-			/**
-			 * Parse binding atom - handles lazy destructuring patterns (&{...} and &[...])
-			 * When & is directly followed by { or [, parse as a lazy destructuring pattern.
-			 * The resulting ObjectPattern/ArrayPattern node gets a `lazy: true` flag.
-			 */
-			parseBindingAtom() {
-				if (this.type === tt.bitwiseAND) {
-					// Check that the char immediately after & is { or [ (no whitespace)
-					const charAfterAmp = this.input.charCodeAt(this.end);
-					if (charAfterAmp === CharCode.openBrace || charAfterAmp === CharCode.openBracket) {
-						// & directly followed by { or [ — lazy destructuring
-						this.next(); // consume &, now current token is { or [
-						const pattern = super.parseBindingAtom();
-						/** @type {AST.ObjectPattern | AST.ArrayPattern} */ (pattern).lazy = true;
-						return pattern;
-					}
-				}
-				return super.parseBindingAtom();
-			}
-
-			/**
 			 * Acorn reports only the second duplicate function parameter. When collecting,
 			 * report the first one too so editor diagnostics can underline both
 			 * binding sites. Keep strict mode on Acorn's normal fatal path.
@@ -3460,39 +3317,9 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * A recorded lazy binding pattern that never became a binding or
-			 * assignment target is a pending error, exactly like `{a = b}` shorthand
-			 * outside a destructuring pattern. Acorn calls the throwing form at every
-			 * boundary where a context definitively stayed an expression
-			 * (parenthesized expressions, call arguments, plain assignments'
-			 * right-hand sides, …) — that is where the record is enforced.
-			 *
-			 * The non-throwing form is deliberately left untouched: Acorn uses it in
-			 * parseExprOps/parseMaybeConditional to stop parsing operators early, and
-			 * returning true there would cut the pattern off from the `as` /
-			 * `satisfies` operator lane before toAssignable can accept the wrapped
-			 * target (`[&{ a } as T] = arr`). Every path that keeps a stale record
-			 * still ends in a throwing check.
-			 *
-			 * @type {Parse.Parser['checkExpressionErrors']}
-			 */
-			checkExpressionErrors(refDestructuringErrors, andThrow) {
-				if (andThrow) {
-					const lazy_binding_pos = get_lazy_binding_pos(refDestructuringErrors);
-					if (lazy_binding_pos >= 0) {
-						this.raise(
-							lazy_binding_pos,
-							'Lazy binding patterns are only valid as binding or assignment targets',
-						);
-					}
-				}
-				return super.checkExpressionErrors(refDestructuringErrors, andThrow);
-			}
-
-			/**
 			 * acorn-typescript unwraps TS expression wrappers in checkLValSimple,
 			 * which is only right for simple targets (`[b as any] = arr`). A wrapped
-			 * destructuring pattern (`[&{ a } as T] = arr`) reaches checkLValPattern
+			 * destructuring pattern (`[{ a } as T] = arr`) reaches checkLValPattern
 			 * still wrapped — toAssignableList ignores return values, so the wrapper
 			 * survives conversion — and would fall through to checkLValSimple's
 			 * "Assigning to rvalue". Unwrap here so wrapped patterns take the
@@ -3513,33 +3340,6 @@ export function TSRXPlugin(config) {
 					);
 				}
 				return super.checkLValPattern(node, bindingType, checkClashes);
-			}
-
-			/**
-			 * Converting a node into an assignment target resolves any lazy binding
-			 * pattern recorded inside it — the pattern landed in a valid position,
-			 * so its pending error must not outlive the conversion (e.g.
-			 * `({ pair: &{ a } } = obj)` would otherwise still raise when the
-			 * enclosing parenthesized expression runs checkExpressionErrors). This
-			 * mirrors how Acorn resets `shorthandAssign` once the shorthand ends up
-			 * inside a converted left-hand side.
-			 *
-			 * @type {Parse.Parser['toAssignable']}
-			 */
-			toAssignable(node, isBinding, refDestructuringErrors, preserveTypeScriptWrapper) {
-				const lazy_binding_pos = get_lazy_binding_pos(refDestructuringErrors);
-				// Only a pattern-forming position resolves the record: a lazy pattern
-				// that is merely inside the target's span but reached through an
-				// expression position (`&{ a }.b = x`) is still an expression use.
-				if (lazy_binding_pos >= 0 && pattern_position_contains_lazy(node, lazy_binding_pos)) {
-					/** @type {Parse.DestructuringErrors} */ (refDestructuringErrors).lazyBindingPos = -1;
-				}
-				return super.toAssignable(
-					node,
-					isBinding,
-					refDestructuringErrors,
-					preserveTypeScriptWrapper,
-				);
 			}
 
 			/**
@@ -5489,37 +5289,6 @@ export function TSRXPlugin(config) {
 					return /** @type {AST.ExpressionStatement} */ (
 						this.finishNode(node, 'ExpressionStatement')
 					);
-				}
-
-				// &[ or &{ at statement level — lazy destructuring assignment
-				// e.g., &[data] = track(0); or &{x, y} = obj;
-				if (this.type === tt.bitwiseAND) {
-					const charAfterAmp = this.input.charCodeAt(this.end);
-					if (charAfterAmp === CharCode.openBrace || charAfterAmp === CharCode.openBracket) {
-						const node = /** @type {AST.ExpressionStatement} */ (this.startNode());
-						const assign_node = /** @type {AST.AssignmentExpression} */ (this.startNode());
-						this.next(); // consume &
-						// Parse the left-hand side (array or object expression)
-						const left = /** @type {AST.ArrayPattern | AST.ObjectPattern} */ (
-							/** @type {unknown} */ (this.parseExprAtom())
-						);
-						// Convert expression to destructuring pattern
-						this.toAssignable(left, false);
-						left.lazy = true;
-						// Expect = operator
-						this.expect(tt.eq);
-						// Parse the right-hand side
-						assign_node.operator = '=';
-						assign_node.left = left;
-						assign_node.right = /** @type {AST.Expression} */ (this.parseMaybeAssign());
-						node.expression = /** @type {AST.AssignmentExpression} */ (
-							this.finishNode(assign_node, 'AssignmentExpression')
-						);
-						this.semicolon();
-						return /** @type {AST.ExpressionStatement} */ (
-							this.finishNode(node, 'ExpressionStatement')
-						);
-					}
 				}
 
 				return super.parseStatement(context, topLevel, exports);

@@ -44,8 +44,7 @@ The TSRX website is the canonical source for language documentation:
 - [Getting Started](https://tsrx.dev/getting-started) — install TSRX for React,
   Preact, Solid, Vue, or Ripple and configure editor/AI tooling.
 - [Features](https://tsrx.dev/features) — examples of function components,
-  statement templates, control flow, scoped styles, submodules, and lazy
-  destructuring.
+  statement templates, control flow, scoped styles, and submodules.
 - [Specification](https://tsrx.dev/specification) — the current grammar and
   parser-level semantics.
 

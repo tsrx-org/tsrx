@@ -2972,7 +2972,7 @@ foo();`;
 
 	it('parses parenthesized conditional JSX spread attributes in render output', () => {
 		const returned = getReturned(`function App() { return <div>@{
-			let &[enabled] = track(true);
+			let [enabled] = track(true);
 			<button {...(enabled ? { onClick: fn } : { title: 'disabled' })}>target</button>
 		}</div>; }`);
 
@@ -2988,7 +2988,7 @@ foo();`;
 
 	it('parses parenthesized conditional spreads that swap ref-shaped props', () => {
 		const returned = getReturned(`function App() { return <div>@{
-			let &[as_ref] = track(true);
+			let [as_ref] = track(true);
 			const props = { ref: input };
 			<input {...(as_ref ? { ref: props.ref } : { input_ref: 'regular prop' })} />
 		}</div>; }`);
@@ -3749,139 +3749,6 @@ foo();`;
 			'JSXText',
 			'JSXExpressionContainer',
 		]);
-	});
-
-	it('parses a typed lazy object pattern in an arrow component parameter', () => {
-		const ast = parseModule(
-			`const Something = (&{ name, title = name }: Props) => @{
-				<h1>{title}</h1>
-			};`,
-			'App.tsrx',
-		);
-		const arrow = as_type(
-			declaratorInit(firstStatement(ast, 'VariableDeclaration')),
-			'ArrowFunctionExpression',
-		);
-		const pattern = as_type(arrow.params[0], 'ObjectPattern');
-		expect(pattern.lazy).toBe(true);
-		expect(pattern.typeAnnotation?.typeAnnotation.type).toBe('TSTypeReference');
-		expect(arrow.body.type).toBe('JSXCodeBlock');
-	});
-
-	it('parses lazy array patterns in async and multi-parameter arrows', () => {
-		const ast = parseModule(
-			`const select = async (prefix: string, &[first, ...rest]: Items = items) =>
-				[prefix, first, rest];`,
-			'App.tsrx',
-		);
-		const arrow = as_type(
-			declaratorInit(firstStatement(ast, 'VariableDeclaration')),
-			'ArrowFunctionExpression',
-		);
-		expect(arrow.async).toBe(true);
-		const parameter = as_type(arrow.params[1], 'AssignmentPattern');
-		expect(as_type(parameter.left, 'ArrayPattern').lazy).toBe(true);
-	});
-
-	it('parses lazy patterns in generic arrow parameters', () => {
-		const ast = parseModule(`const select = <T,>(&{ value }: { value: T }) => value;`, 'App.tsrx');
-		const arrow = as_type(
-			declaratorInit(firstStatement(ast, 'VariableDeclaration')),
-			'ArrowFunctionExpression',
-		);
-		expect(as_type(arrow.params[0], 'ObjectPattern').lazy).toBe(true);
-		expect(arrow.typeParameters?.type).toBe('TSTypeParameterDeclaration');
-	});
-
-	it('keeps lazy binding patterns out of expression positions', () => {
-		expect(() => parseModule(`const value = (&{ name });`, 'App.tsrx')).toThrow(
-			/Lazy binding patterns are only valid as binding or assignment targets/,
-		);
-		expect(() => parseModule(`const value = &{ name };`, 'App.tsrx')).toThrow(
-			/Lazy binding patterns are only valid as binding or assignment targets/,
-		);
-		expect(() => parseModule(`foo(&{ name });`, 'App.tsrx')).toThrow(
-			/Lazy binding patterns are only valid as binding or assignment targets/,
-		);
-		expect(() => parseModule(`for (&{ name }; done; step);`, 'App.tsrx')).toThrow(
-			/Lazy binding patterns are only valid as binding or assignment targets/,
-		);
-		expect(() => parseModule(`const value = (& { name }) => name;`, 'App.tsrx')).toThrow(
-			/Unexpected token/,
-		);
-	});
-
-	it('parses lazy binding patterns nested in destructuring assignment targets', () => {
-		// Statement-level lazy destructuring assignment (dedicated branch).
-		expect(() => parseModule(`&{ name } = obj;`, 'App.tsrx')).not.toThrow();
-
-		const ast = parseModule(`[&{ name }] = pairs;`, 'App.tsrx');
-		const statement = firstStatement(ast, 'ExpressionStatement');
-		const assignment = as_type(statement.expression, 'AssignmentExpression');
-		const target = as_type(assignment.left, 'ArrayPattern');
-		expect(as_type(target.elements[0], 'ObjectPattern').lazy).toBe(true);
-	});
-
-	it('parses lazy binding patterns in parenthesized destructuring assignments', () => {
-		// Object-rooted targets can only be written parenthesized (a bare `{`
-		// starts a block), so the pending lazy record must be cleared when the
-		// target converts — otherwise the enclosing parenthesized expression
-		// would reject it in checkExpressionErrors.
-		const ast = parseModule(`({ pair: &{ a } } = obj);`, 'App.tsrx');
-		const statement = firstStatement(ast, 'ExpressionStatement');
-		const assignment = as_type(statement.expression, 'AssignmentExpression');
-		const target = as_type(assignment.left, 'ObjectPattern');
-		const pair = as_type(target.properties[0], 'Property');
-		expect(as_type(pair.value, 'ObjectPattern').lazy).toBe(true);
-
-		expect(() => parseModule(`(&{ name } = obj);`, 'App.tsrx')).not.toThrow();
-		expect(() => parseModule(`foo([&{ a }] = pairs);`, 'App.tsrx')).not.toThrow();
-		// A lazy pattern that is not part of the converted assignment target
-		// still raises.
-		expect(() => parseModule(`(&{ name }, other = 1);`, 'App.tsrx')).toThrow(
-			/Lazy binding patterns are only valid as binding or assignment targets/,
-		);
-	});
-
-	it('keeps lazy binding patterns out of expression positions inside assignment targets', () => {
-		// Inside the target's span but reached through an expression position (a
-		// member expression's object) — an expression use, not a pattern slot.
-		expect(() => parseModule(`(&{ a }.b = x);`, 'App.tsrx')).toThrow(
-			/Lazy binding patterns are only valid as binding or assignment targets/,
-		);
-		expect(() => parseModule(`([&{ a }.b] = arr);`, 'App.tsrx')).toThrow(
-			/Lazy binding patterns are only valid as binding or assignment targets/,
-		);
-		expect(() => parseModule(`({ k: &{ a }.b } = obj);`, 'App.tsrx')).toThrow(
-			/Lazy binding patterns are only valid as binding or assignment targets/,
-		);
-	});
-
-	it('sees lazy binding patterns through TypeScript wrappers in assignment targets', () => {
-		// TS wrappers are unwrapped by toAssignable, so the wrapped lazy pattern
-		// is still in a pattern-forming position — parenthesized or not…
-		expect(() => parseModule(`([&{ a }!] = arr);`, 'App.tsrx')).not.toThrow();
-		expect(() => parseModule(`[&{ a }!] = arr;`, 'App.tsrx')).not.toThrow();
-		expect(() => parseModule(`([&{ a } as any] = arr);`, 'App.tsrx')).not.toThrow();
-		expect(() => parseModule(`[&{ a } as any] = arr;`, 'App.tsrx')).not.toThrow();
-		expect(() => parseModule(`([&{ a } satisfies T] = arr);`, 'App.tsrx')).not.toThrow();
-		// …but a wrapper feeding a member access is still an expression use.
-		expect(() => parseModule(`(&{ a }!.b = x);`, 'App.tsrx')).toThrow(
-			/Lazy binding patterns are only valid as binding or assignment targets/,
-		);
-		expect(() => parseModule(`(&{ a } as any).b = x;`, 'App.tsrx')).toThrow(
-			/Lazy binding patterns are only valid as binding or assignment targets/,
-		);
-	});
-
-	it('parses lazy binding patterns as for-of and for-in loop targets', () => {
-		const for_of = parseModule(`for (&{ name } of items);`, 'App.tsrx');
-		const of_statement = firstStatement(for_of, 'ForOfStatement');
-		expect(as_type(of_statement.left, 'ObjectPattern').lazy).toBe(true);
-
-		const for_in = parseModule(`for (&[key] in table);`, 'App.tsrx');
-		const in_statement = firstStatement(for_in, 'ForInStatement');
-		expect(as_type(in_statement.left, 'ArrayPattern').lazy).toBe(true);
 	});
 
 	it('parses a function declaration whose whole body is a `@{ }` block', () => {
@@ -5515,5 +5382,39 @@ describe('function types in JSX attribute values', () => {
 		expect(
 			as_type(as_type(element.children[0], 'JSXElement').openingElement.name, 'JSXIdentifier').name,
 		).toBe('Sibling');
+	});
+});
+
+describe('lazy destructuring is not supported', () => {
+	it('rejects `&{ ... }` and `&[ ... ]` binding patterns as parse errors', () => {
+		for (const source of [
+			'function f(&{ a }) {}',
+			'const &[x] = y;',
+			'let &{ a } = b;',
+			'for (const &{ v } of items) {}',
+			'&[x] = expr;',
+			'(&{ a }) => a;',
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow();
+		}
+	});
+
+	it('still parses `&` followed by an object or array literal as a bitwise AND', () => {
+		const object_ast = parseModule('a & { b: 1 };', 'App.tsrx');
+		const object_and = as_type(
+			firstStatement(object_ast, 'ExpressionStatement').expression,
+			'BinaryExpression',
+		);
+		expect(object_and.operator).toBe('&');
+		expect(object_and.left.type).toBe('Identifier');
+		expect(object_and.right.type).toBe('ObjectExpression');
+
+		const array_ast = parseModule('x & [1];', 'App.tsrx');
+		const array_and = as_type(
+			firstStatement(array_ast, 'ExpressionStatement').expression,
+			'BinaryExpression',
+		);
+		expect(array_and.operator).toBe('&');
+		expect(array_and.right.type).toBe('ArrayExpression');
 	});
 });
