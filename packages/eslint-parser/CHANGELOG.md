@@ -1,5 +1,16 @@
 # @tsrx/eslint-parser
 
+## 0.4.0
+
+### Patch Changes
+
+- Updated dependencies
+  [[`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99),
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99),
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99),
+  [`79c1359`](https://github.com/tsrx-org/tsrx/commit/79c1359650d7e74914e818bbf179b6a41d06370c)]:
+  - @tsrx/core@0.2.0
+
 ## 0.3.138
 
 ### Patch Changes

@@ -1,5 +1,52 @@
 # @tsrx/runtime
 
+## 0.2.0
+
+### Minor Changes
+
+- [#110](https://github.com/tsrx-org/tsrx/pull/110)
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Remove the unused
+  `exclude_prop_from_object` language helper (also re-exported from
+  `@tsrx/core/runtime/language-helpers`). Its last in-repo callers, the Solid and
+  Vue `<Dynamic>` runtime wrappers, were replaced by compiler lowering; props are
+  plain objects, so a `const { is, ...rest } = props` spread covers the remaining
+  use.
+
+- [#113](https://github.com/tsrx-org/tsrx/pull/113)
+  [`79c1359`](https://github.com/tsrx-org/tsrx/commit/79c1359650d7e74914e818bbf179b6a41d06370c)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Remove the `array_slice` and
+  `iterable_array_from` language helpers (also re-exported from
+  `@tsrx/core/runtime/language-helpers`) and the `buildFallback` AST utility. They
+  only backed lazy destructuring and the `extractPaths` lowering, both removed;
+  their last consumer, the Ripple compiler, now lowers rest and default patterns
+  with native destructuring.
+
+### Patch Changes
+
+- [#109](https://github.com/tsrx-org/tsrx/pull/109)
+  [`6ac7e34`](https://github.com/tsrx-org/tsrx/commit/6ac7e3422a71f19f7defb5dd7df3e8df5d089bfe)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Speed up
+  `normalize_spread_props` by checking own-property enumerability with
+  `propertyIsEnumerable` instead of materializing a descriptor object per key,
+  preserving the same own-key, descriptor-trap, and getter observation order for
+  every source shape.
+
+- [#104](https://github.com/tsrx-org/tsrx/pull/104)
+  [`734023b`](https://github.com/tsrx-org/tsrx/commit/734023bbee936d50c67c85396014ad2373f5c550)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Speed up `mergeRefs`
+  and `merge_ref_props` mount and unmount by tracking pending cleanups as flat
+  tagged entries instead of allocating a closure per ref, preserving callback
+  order, cleanup order, and thrown-error behavior.
+
+- [#108](https://github.com/tsrx-org/tsrx/pull/108)
+  [`c2bdb3d`](https://github.com/tsrx-org/tsrx/commit/c2bdb3dbd94f9db0a0a075bc53072da343d73091)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Speed up
+  `normalize_spread_props` on ref-bearing spreads by passing a single collected
+  ref through unchanged and composing multi-ref lists in place, instead of always
+  spreading refs into a fresh arguments array for `merge_ref_props`. Merge order,
+  cleanup order, and `merge_ref_props`' public behavior are unchanged.
+
 ## 0.1.7
 
 ### Patch Changes

@@ -1,5 +1,22 @@
 # @tsrx/eslint-plugin
 
+## 0.4.0
+
+### Minor Changes
+
+- [#110](https://github.com/tsrx-org/tsrx/pull/110)
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Remove lazy destructuring
+  support per [RFC #106](https://github.com/tsrx-org/tsrx/discussions/106): the
+  Prettier plugin no longer prints `&{ ... }` / `&[ ... ]` patterns, and the
+  `tsrx/no-lazy-destructuring-in-modules` ESLint rule is removed from the plugin
+  and its `recommended` and `strict` configs.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/eslint-parser@0.4.0
+
 ## 0.3.138
 
 ### Patch Changes

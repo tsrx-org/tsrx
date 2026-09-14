@@ -1,5 +1,27 @@
 # @tsrx/preact
 
+## 0.2.0
+
+### Minor Changes
+
+- [#110](https://github.com/tsrx-org/tsrx/pull/110)
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Stop accepting lazy
+  destructuring (`&{ ... }` / `&[ ... ]`), which is removed from the TSRX language
+  per [RFC #106](https://github.com/tsrx-org/tsrx/discussions/106). Write
+  `({ name }: Props)` for React and Preact, `props.name` (or `splitProps`) for
+  Solid, and `state.count` or `toRefs(state)` for Vue.
+
+### Patch Changes
+
+- Updated dependencies
+  [[`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99),
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99),
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99),
+  [`79c1359`](https://github.com/tsrx-org/tsrx/commit/79c1359650d7e74914e818bbf179b6a41d06370c)]:
+  - @tsrx/core@0.2.0
+  - @tsrx/preact-runtime@0.1.8
+
 ## 0.1.71
 
 ### Patch Changes

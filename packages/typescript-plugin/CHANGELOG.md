@@ -1,5 +1,16 @@
 # @tsrx/typescript-plugin
 
+## 0.4.0
+
+### Patch Changes
+
+- Updated dependencies
+  [[`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99)]:
+  - @tsrx/react@0.3.0
+  - @tsrx/preact@0.2.0
+  - @tsrx/solid@0.2.0
+  - @tsrx/vue@0.2.0
+
 ## 0.3.138
 
 ### Patch Changes

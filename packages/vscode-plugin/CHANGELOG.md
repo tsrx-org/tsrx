@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.1.0
+
+### Minor Changes
+
+- [#110](https://github.com/tsrx-org/tsrx/pull/110)
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Remove the `&{ ... }` /
+  `&[ ... ]` lazy destructuring rules from the TextMate and Tree-sitter grammars
+  and highlight queries, per
+  [RFC #106](https://github.com/tsrx-org/tsrx/discussions/106).
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/language-server@0.4.0
+  - @tsrx/typescript-plugin@0.4.0
+
 ## 2.0.88
 
 ### Patch Changes

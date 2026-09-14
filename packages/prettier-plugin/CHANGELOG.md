@@ -1,5 +1,26 @@
 # @tsrx/prettier-plugin
 
+## 0.4.0
+
+### Minor Changes
+
+- [#110](https://github.com/tsrx-org/tsrx/pull/110)
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Remove lazy destructuring
+  support per [RFC #106](https://github.com/tsrx-org/tsrx/discussions/106): the
+  Prettier plugin no longer prints `&{ ... }` / `&[ ... ]` patterns, and the
+  `tsrx/no-lazy-destructuring-in-modules` ESLint rule is removed from the plugin
+  and its `recommended` and `strict` configs.
+
+### Patch Changes
+
+- Updated dependencies
+  [[`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99),
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99),
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99),
+  [`79c1359`](https://github.com/tsrx-org/tsrx/commit/79c1359650d7e74914e818bbf179b6a41d06370c)]:
+  - @tsrx/core@0.2.0
+
 ## 0.3.138
 
 ### Patch Changes
