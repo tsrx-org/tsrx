@@ -2,9 +2,9 @@
 
 import {
 	has_own_property,
-	get_descriptor,
 	has_prototype_accessor,
 	is_array,
+	property_is_enumerable,
 } from '@tsrx/runtime/language-helpers';
 
 const REF_VALUE = Symbol();
@@ -314,9 +314,10 @@ export function normalize_spread_props(props, ...outer_refs) {
 	const next = {};
 	let existing_ref;
 
-	for (const key of Reflect.ownKeys(source)) {
-		const descriptor = get_descriptor(source, key);
-		if (!descriptor?.enumerable) {
+	const keys = Reflect.ownKeys(source);
+	for (let i = 0; i < keys.length; i++) {
+		const key = keys[i];
+		if (!property_is_enumerable.call(source, key)) {
 			continue;
 		}
 

@@ -1184,4 +1184,165 @@ describe('spread ref normalization', () => {
 			['outer2', null],
 		]);
 	});
+
+	it('returns a plain-ref spread at source identity when no outer refs are passed', () => {
+		/** @type {Array<unknown>} */
+		const ref_events = [];
+		/** @param {object | null} value */
+		const plain_ref = (value) => {
+			ref_events.push(['plain', value]);
+		};
+		const target = { id: 'plain', ref: plain_ref };
+		Object.defineProperty(target, 'hidden', {
+			enumerable: false,
+			value: 'secret',
+		});
+		/** @type {string[]} */
+		const events = [];
+		const props = observe_props(target, events);
+
+		const normalized = normalize_spread_props(props);
+
+		expect(normalized === props).toBe(true);
+		expect(ref_events).toEqual([]);
+		expect(events).toEqual([
+			'ownKeys',
+			'descriptor:id',
+			'get:id',
+			'descriptor:ref',
+			'get:ref',
+			'descriptor:hidden',
+		]);
+	});
+
+	it('checks enumerability through the captured intrinsic, not an own method', () => {
+		/** @type {string[]} */
+		const events = [];
+		let own_check_called = false;
+		const target = {
+			/** @returns {boolean} */
+			propertyIsEnumerable() {
+				own_check_called = true;
+				return false;
+			},
+			visible: 1,
+		};
+		Object.defineProperty(target, 'hidden', {
+			enumerable: false,
+			value: 'secret',
+		});
+		const props = observe_props(target, events);
+
+		const normalized = normalize_spread_props(props);
+
+		expect(own_check_called).toBe(false);
+		expect(normalized === props).toBe(true);
+		expect(Object.keys(normalized)).toEqual(['propertyIsEnumerable', 'visible']);
+	});
+
+	it('propagates strict-mode write failures from Object.prototype at the same iteration point', () => {
+		const getter_only = Symbol('getter only');
+		const read_only = Symbol('read only');
+		/** @type {Array<unknown>} */
+		const thrown = [];
+		try {
+			Object.defineProperty(Object.prototype, getter_only, {
+				configurable: true,
+				get() {
+					return 'inherited';
+				},
+			});
+			Object.defineProperty(Object.prototype, read_only, {
+				configurable: true,
+				value: 'frozen',
+				writable: false,
+			});
+			thrown.push(capture_error(() => normalize_spread_props({ before: 1, [getter_only]: 2 })));
+			thrown.push(capture_error(() => normalize_spread_props({ before: 1, [read_only]: 2 })));
+			const later_key = Symbol('later');
+			/** @type {symbol[]} */
+			const seen = [];
+			thrown.push(
+				capture_error(() =>
+					normalize_spread_props({
+						[getter_only]: 2,
+						get [later_key]() {
+							seen.push(later_key);
+							return 3;
+						},
+					}),
+				),
+			);
+			expect(seen).toEqual([]);
+		} finally {
+			delete (/** @type {Record<PropertyKey, unknown>} */ (Object.prototype)[getter_only]);
+			delete (/** @type {Record<PropertyKey, unknown>} */ (Object.prototype)[read_only]);
+		}
+		for (const error of thrown) {
+			expect(error).toBeInstanceOf(TypeError);
+		}
+	});
+
+	it('does not fire setters installed mid-iteration for already-written keys', () => {
+		const late_key = Symbol('late installed');
+		/** @type {Array<unknown>} */
+		const events = [];
+		const branded = create_ref_prop(() => () => {});
+		const props = {
+			first: 1,
+			get middle() {
+				Object.defineProperty(Object.prototype, 'first', {
+					configurable: true,
+					set(value) {
+						events.push(['set:first', value]);
+					},
+				});
+				Object.defineProperty(Object.prototype, late_key, {
+					configurable: true,
+					set(value) {
+						events.push(['set:late', value]);
+					},
+				});
+				return 2;
+			},
+			[late_key]: 3,
+			onMount: branded,
+		};
+		try {
+			const normalized = normalize_spread_props(props);
+			expect(normalized).toMatchObject({ first: 1, middle: 2 });
+			expect(Object.getOwnPropertyDescriptor(normalized, 'first')).toMatchObject({
+				value: 1,
+				enumerable: true,
+				writable: true,
+				configurable: true,
+			});
+			expect(events).toEqual([['set:late', 3]]);
+			expect(Object.prototype.hasOwnProperty.call(normalized, late_key)).toBe(false);
+			expect(/** @type {Record<PropertyKey, unknown>} */ (normalized).ref).toBe(branded);
+		} finally {
+			delete (/** @type {Record<PropertyKey, unknown>} */ (Object.prototype)['first']);
+			delete (/** @type {Record<PropertyKey, unknown>} */ (Object.prototype)[late_key]);
+		}
+	});
+
+	it('preserves __proto__ assignment semantics on the copied object', () => {
+		const custom_proto = { tag: 'custom' };
+		const props = { first: 1 };
+		Object.defineProperty(props, '__proto__', {
+			value: custom_proto,
+			enumerable: true,
+			writable: true,
+			configurable: true,
+		});
+		const branded = create_ref_prop(() => () => {});
+
+		const input = { ...{}, ...props, onMount: branded };
+		const normalized = normalize_spread_props(input);
+
+		expect(normalized).not.toBe(input);
+		expect(Object.getPrototypeOf(normalized)).toBe(custom_proto);
+		expect(Reflect.ownKeys(normalized)).toEqual(['first', 'ref']);
+		expect(/** @type {Record<PropertyKey, unknown>} */ (normalized).first).toBe(1);
+	});
 });
