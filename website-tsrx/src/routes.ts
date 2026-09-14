@@ -221,6 +221,11 @@ export const routes = [
 		entry: '/src/pages/blog-rethinking-tsrx.tsrx',
 		layout,
 	}),
+	new RenderRoute({
+		path: '/blog/removing-lazy-destructuring',
+		entry: '/src/pages/blog-removing-lazy-destructuring.tsrx',
+		layout,
+	}),
 	new RenderRoute({ path: '/specification', entry: '/src/pages/specification.tsrx', layout }),
 	new RenderRoute({ path: '/playground', entry: '/src/pages/playground.tsrx', layout }),
 	new ServerRoute({
