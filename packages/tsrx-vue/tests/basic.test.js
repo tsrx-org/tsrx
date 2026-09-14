@@ -71,34 +71,15 @@ describe('@tsrx/vue basic', () => {
 		expect(code.match(/defineVaporComponent/g)).toHaveLength(2);
 	});
 
-	it('supports lazy destructuring in Vue component params', () => {
-		const { code } = compile(
-			`function Child(&{ count }: { count: number }) @{
-				<pre>{count}</pre>
-			}`,
-			'App.tsrx',
-		);
-
-		expect(code).toContain('function Child(__lazy0: { count: number })');
-		expect(code).toContain('return <pre>{__lazy0.count}</pre>;');
-	});
-
-	it('supports lazy destructuring in Vue component bodies', () => {
-		const { code } = compile(
-			`import { reactive } from 'vue';
-
-			function App() @{
-				const state = reactive({ count: 1 });
-				let &{ count } = state;
-				count++;
-				<pre>{count}</pre>
-			}`,
-			'App.tsrx',
-		);
-
-		expect(code).toContain('let __lazy0 = state;');
-		expect(code).toContain('__lazy0.count++;');
-		expect(code).toContain('return <pre>{__lazy0.count}</pre>;');
+	it('rejects the removed `&{ ... }` lazy destructuring syntax', () => {
+		expect(() =>
+			compile(
+				`function Child(&{ count }: { count: number }) @{
+					<pre>{count}</pre>
+				}`,
+				'App.tsrx',
+			),
+		).toThrow();
 	});
 
 	it('keeps return-value branches in component callback props as plain conditionals', () => {

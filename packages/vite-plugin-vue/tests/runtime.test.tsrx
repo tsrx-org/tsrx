@@ -327,26 +327,16 @@ function CounterApp() @{
 	</>
 }
 
-function LazyParamChild(&{ count }: { count: number }) {
-	return <p class="lazy-child-count">{count}</p>;
+function DestructuredParamChild({ count }: { count: number }) {
+	return <p class="destructured-child-count">{count}</p>;
 }
 
-function LazyObjectDestructuringApp() @{
+function ReactiveStateToDestructuredParamApp() @{
 	const state = reactive({ count: 0 });
-	let &{ count } = state;
 	<>
-		<p class="lazy-local-count">{count}</p>
-		<LazyParamChild count={state.count} />
-		<button class="lazy-inc" onClick={() => count++}>{'+'}</button>
-	</>
-}
-
-function LazyArrayDestructuringApp() @{
-	const values = reactive([1, 2]);
-	let &[first, second] = values;
-	<>
-		<p class="lazy-array-counts">{`${first}-${second}`}</p>
-		<button class="lazy-array-update" onClick={() => (first = second + 1)}>{'update'}</button>
+		<p class="reactive-local-count">{state.count}</p>
+		<DestructuredParamChild count={state.count} />
+		<button class="reactive-inc" onClick={() => state.count++}>{'+'}</button>
 	</>
 }
 
@@ -1083,26 +1073,18 @@ describe('tsrx-vue runtime', () => {
 		expect(text('.count')).toBe('2');
 	});
 
-	it('supports lazy object destructuring for local state and child params', async () => {
-		await render(LazyObjectDestructuringApp);
-		expect(text('.lazy-local-count')).toBe('0');
-		expect(text('.lazy-child-count')).toBe('0');
+	it('keeps reactive state updates flowing to plain destructured child params', async () => {
+		await render(ReactiveStateToDestructuredParamApp);
+		expect(text('.reactive-local-count')).toBe('0');
+		expect(text('.destructured-child-count')).toBe('0');
 
-		await click('.lazy-inc');
-		expect(text('.lazy-local-count')).toBe('1');
-		expect(text('.lazy-child-count')).toBe('1');
+		await click('.reactive-inc');
+		expect(text('.reactive-local-count')).toBe('1');
+		expect(text('.destructured-child-count')).toBe('1');
 
-		await click('.lazy-inc');
-		expect(text('.lazy-local-count')).toBe('2');
-		expect(text('.lazy-child-count')).toBe('2');
-	});
-
-	it('supports lazy array destructuring with reactive arrays', async () => {
-		await render(LazyArrayDestructuringApp);
-		expect(text('.lazy-array-counts')).toBe('1-2');
-
-		await click('.lazy-array-update');
-		expect(text('.lazy-array-counts')).toBe('3-2');
+		await click('.reactive-inc');
+		expect(text('.reactive-local-count')).toBe('2');
+		expect(text('.destructured-child-count')).toBe('2');
 	});
 
 	it('toggles if-statement branches reactively', async () => {

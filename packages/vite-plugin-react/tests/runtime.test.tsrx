@@ -960,37 +960,26 @@ function FullyStaticApp() @{
 	</div>
 }
 
-// ── Lazy destructuring: object in props ──
+// ── Destructuring: object in props ──
 
-function LazyPropsChild(&{ name, age }: { name: string; age: number }) @{
-	<div className="lazy-props">
+function DestructuredPropsChild({ name, age }: { name: string; age: number }) @{
+	<div className="destructured-props">
 		{name}
 		{' is '}
 		{age}
 	</div>
 }
 
-function LazyPropsApp() @{
-	<LazyPropsChild name="Alice" age={30} />
+function DestructuredPropsApp() @{
+	<DestructuredPropsChild name="Alice" age={30} />
 }
 
-// ── Lazy destructuring: array in variable ──
+// ── Destructuring: object in variable ──
 
-function LazyArrayApp() @{
-	const [count, setCount] = useState(0);
+function DestructuredObjVarApp() @{
+	const { x, y } = usePosition();
 
-	<>
-		<p className="lazy-count">{count}</p>
-		<button className="lazy-inc" onClick={() => setCount(count + 1)}>{'+'}</button>
-	</>
-}
-
-// ── Lazy destructuring: object in variable ──
-
-function LazyObjVarApp() @{
-	const &{ x, y } = usePosition();
-
-	<p className="lazy-pos">
+	<p className="destructured-pos">
 		{x}
 		{','}
 		{y}
@@ -999,21 +988,6 @@ function LazyObjVarApp() @{
 
 function usePosition() {
 	return { x: 10, y: 20 };
-}
-
-// ── Lazy destructuring: combined props + variable ──
-
-function LazyCombinedApp(&{ label }: { label: string }) @{
-	const [count, setCount] = useState(0);
-
-	<>
-		<p className="lazy-combined">
-			{label}
-			{': '}
-			{count}
-		</p>
-		<button className="lazy-combined-inc" onClick={() => setCount(count + 1)}>{'+'}</button>
-	</>
 }
 
 // ── Tests ──
@@ -1614,35 +1588,16 @@ describe('tsrx-react runtime', () => {
 		expect(text('.all-static p')).toBe('Paragraph');
 	});
 
-	// ── Lazy destructuring ──
+	// ── Destructuring ──
 
-	it('lazy object destructuring in props works at runtime', async () => {
-		await render(LazyPropsApp);
-		expect(text('.lazy-props')).toBe('Alice is 30');
+	it('object destructuring in props works at runtime', async () => {
+		await render(DestructuredPropsApp);
+		expect(text('.destructured-props')).toBe('Alice is 30');
 	});
 
-	it('lazy array destructuring in variables works at runtime', async () => {
-		await render(LazyArrayApp);
-		expect(text('.lazy-count')).toBe('0');
-
-		await click('.lazy-inc');
-		expect(text('.lazy-count')).toBe('1');
-
-		await click('.lazy-inc');
-		expect(text('.lazy-count')).toBe('2');
-	});
-
-	it('lazy object destructuring in variables works at runtime', async () => {
-		await render(LazyObjVarApp);
-		expect(text('.lazy-pos')).toBe('10,20');
-	});
-
-	it('combined lazy props and lazy variables work at runtime', async () => {
-		await render(LazyCombinedApp, { label: 'Count' });
-		expect(text('.lazy-combined')).toBe('Count: 0');
-
-		await click('.lazy-combined-inc');
-		expect(text('.lazy-combined')).toBe('Count: 1');
+	it('object destructuring in variables works at runtime', async () => {
+		await render(DestructuredObjVarApp);
+		expect(text('.destructured-pos')).toBe('10,20');
 	});
 });
 

@@ -1354,20 +1354,26 @@ describe('@tsrx/react basic', () => {
 	});
 });
 
-describe('lazy destructuring', () => {
-	it('transforms lazy object destructuring in component params', () => {
-		const { code } = compile(
-			`export function App(&{name, age}: Props) @{
-				<div>{name}{age}</div>
-			}`,
-			'App.tsrx',
-		);
+describe('destructuring', () => {
+	it('rejects the removed `&{ ... }` / `&[ ... ]` lazy destructuring syntax', () => {
+		expect(() =>
+			compile(
+				`export function App(&{ name }: Props) @{
+					<div>{name}</div>
+				}`,
+				'App.tsrx',
+			),
+		).toThrow();
 
-		// Param should be replaced with generated identifier
-		expect(code).toContain('function App(__lazy0: Props)');
-		// References should be member expressions
-		expect(code).toContain('__lazy0.name');
-		expect(code).toContain('__lazy0.age');
+		expect(() =>
+			compile(
+				`export function App() @{
+					let &[count] = useState(0);
+					<div>{count}</div>
+				}`,
+				'App.tsrx',
+			),
+		).toThrow();
 	});
 
 	it('uses regular array destructuring for useState', () => {
@@ -1383,69 +1389,10 @@ describe('lazy destructuring', () => {
 		expect(code).toContain('{count}');
 	});
 
-	it('transforms lazy object destructuring in variable declarations', () => {
+	it('does not hoist static elements that reference destructured bindings', () => {
 		const { code } = compile(
 			`export function App() @{
-				const &{data, error} = useSWR("/api");
-				<div>{data}{error}</div>
-			}`,
-			'App.tsrx',
-		);
-
-		expect(code).toContain('const __lazy0 = useSWR("/api")');
-		expect(code).toContain('__lazy0.data');
-		expect(code).toContain('__lazy0.error');
-	});
-
-	it('handles assignment to lazy array bindings', () => {
-		const { code } = compile(
-			`export function App() @{
-				let &[val] = getState();
-				val = 10;
-				val++;
-				++val;
-				<div>{val}</div>
-			}`,
-			'App.tsrx',
-		);
-
-		expect(code).toContain('__lazy0[0] = 10');
-		expect(code).toContain('__lazy0[0]++');
-		expect(code).toContain('++__lazy0[0]');
-	});
-
-	it('handles shorthand object properties with lazy bindings', () => {
-		const { code } = compile(
-			`export function App(&{name}: Props) @{
-				const obj = {name};
-				<div>{obj}</div>
-			}`,
-			'App.tsrx',
-		);
-
-		// Shorthand {name} should expand to {name: __lazy0.name}
-		expect(code).toContain('name: __lazy0.name');
-	});
-
-	it('handles shadowing in inner functions', () => {
-		const { code } = compile(
-			`export function App(&{name}: Props) @{
-				const fn = (name: string) => name.toUpperCase();
-				<div>{fn(name)}</div>
-			}`,
-			'App.tsrx',
-		);
-
-		// Inner param shadows lazy binding - should stay as `name`
-		expect(code).toContain('(name: string) => name.toUpperCase()');
-		// Outer reference should use lazy accessor
-		expect(code).toContain('fn(__lazy0.name)');
-	});
-
-	it('does not hoist static elements that reference lazy bindings', () => {
-		const { code } = compile(
-			`export function App() @{
-				const &[count] = useState(0);
+				const [count] = useState(0);
 				<>
 					<div>{"static"}</div>
 					<div>{count}</div>
@@ -1458,7 +1405,7 @@ describe('lazy destructuring', () => {
 		expect(code).toContain('App__static1');
 		expect(code).toContain('App__static1 = <div>{"static"}</div>');
 		// The element referencing count should NOT be hoisted
-		expect(code).toContain('__lazy0[0]');
+		expect(code).toContain('<div>{count}</div>');
 		expect(code).not.toContain('App__static2');
 	});
 
@@ -1474,21 +1421,6 @@ describe('lazy destructuring', () => {
 		expect(code).toContain('return <div>{Date.now()}</div>;');
 	});
 
-	it('combines lazy params and regular destructuring', () => {
-		const { code } = compile(
-			`export function App(&{name}: Props) @{
-				const [count, setCount] = useState(0);
-				<div>{name}{count}</div>
-			}`,
-			'App.tsrx',
-		);
-
-		expect(code).toContain('function App(__lazy0: Props)');
-		expect(code).toContain('const [count, setCount] = useState(0)');
-		expect(code).toContain('__lazy0.name');
-		expect(code).toContain('{count}');
-	});
-
 	it('uses regular destructuring inside callbacks', () => {
 		const { code } = compile(
 			`export function App() @{
@@ -1501,47 +1433,6 @@ describe('lazy destructuring', () => {
 
 		expect(code).toContain('const [count, setCount] = useState(0)');
 		expect(code).toContain('() => setCount(count + 1)');
-	});
-
-	it('transforms lazy params on plain function declarations', () => {
-		const { code } = compile(
-			`export function greet(&{ name }: { name: string }) {
-				return 'hello ' + name;
-			}`,
-			'App.tsrx',
-		);
-
-		expect(code).toContain('function greet(__lazy0: { name: string })');
-		expect(code).toContain("'hello ' + __lazy0.name");
-		expect(code).not.toContain('{ name }');
-	});
-
-	it('transforms lazy params on function expressions', () => {
-		const { code } = compile(
-			`const add = function (&{ a, b }: { a: number; b: number }) {
-				return a + b;
-			};`,
-			'App.tsrx',
-		);
-
-		expect(code).toContain('function (__lazy0: { a: number; b: number })');
-		expect(code).toContain('__lazy0.a + __lazy0.b');
-	});
-
-	it('transforms lazy params in nested functions inside components', () => {
-		const { code } = compile(
-			`export function App(&{ outer }: { outer: string }) @{
-				function greet(&{ name }: { name: string }) {
-					return 'hi ' + name + ' from ' + outer;
-				}
-				<div>{greet}</div>
-			}`,
-			'App.tsrx',
-		);
-
-		expect(code).toContain('function App(__lazy0: { outer: string })');
-		expect(code).toContain('function greet(__lazy1: { name: string })');
-		expect(code).toContain("'hi ' + __lazy1.name + ' from ' + __lazy0.outer");
 	});
 
 	it('uses regular destructuring for useState at statement level', () => {
@@ -1767,40 +1658,6 @@ describe('lazy destructuring', () => {
 		expect(code).not.toContain('<App__StatementBodyHook1 laterVar={laterVar} />');
 		expect(code).toContain('return <div>{laterVar}</div>;');
 		expect(code).not.toContain('App__Continue');
-	});
-
-	it('leaves lazy destructuring inside nested scopes untouched in type-only output', () => {
-		const { code } = compile_to_volar_mappings(
-			`export function App(props) @{
-				@{
-					let &{ name } = props;
-					<div>{name}</div>
-				}
-			}`,
-			'App.tsrx',
-		);
-
-		// Type-only (virtual TSX) output must not run the lazy transform: the
-		// pattern prints as a plain destructure and no generated `__lazy` source
-		// id appears, even when the lazy declaration sits in a nested code block.
-		expect(code).not.toContain('__lazy');
-		expect(code).toContain('let { name } = props');
-	});
-
-	it('keeps a lazy binding used as a JSX name unrewritten in type-only output', () => {
-		const { code } = compile_to_volar_mappings(
-			`export function Comp(&{ Item }) @{
-				<Item></Item>
-			}`,
-			'App.tsrx',
-		);
-
-		// The param stays a bare destructure (so `Item` maps identity-style to
-		// source) and `<Item>` keeps referencing that in-scope binding — no rename
-		// to `__lazy0.Item`, which only happens in production output.
-		expect(code).not.toContain('__lazy');
-		expect(code).toContain('{ Item }');
-		expect(code).toContain('<Item>');
 	});
 
 	describe('ref attributes', () => {
