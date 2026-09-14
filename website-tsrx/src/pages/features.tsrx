@@ -557,20 +557,10 @@ function Child() @{
 }`,
 );
 
-const LAZY_PROPS_HTML = highlight_tsrx(
-	`function UserCard(&{ name, age }: { name: string; age: number }) {
-  return <div>
-    <h2>{name}</h2>
-    <p>Age: {age}</p>
-  </div>;
-}`,
-);
-
 const NAV_ITEMS = [
 	{ id: 'components', label: 'Components' },
 	{ id: 'template-structure', label: 'Statement containers' },
 	{ id: 'comments', label: 'JS comments' },
-	{ id: 'lazy-destructuring', label: 'Lazy destructuring' },
 	{ id: 'prop-shorthands', label: 'Prop shorthands' },
 	{ id: 'scoping', label: 'Lexical scoping' },
 	{ id: 'if', label: 'Conditional rendering' },
@@ -752,35 +742,6 @@ export const FeaturesPage = () => @{
 							<pre class="code-block">
 								<code innerHTML={COMMENTS_HTML} />
 							</pre>
-						</section>
-						<section class="doc-section" id="lazy-destructuring">
-							<h2 class="section-heading">Lazy destructuring</h2>
-							<p class="section-body">
-								TSRX adds two sigils —
-								<code class="inline-code">{'&{ ... }'}</code>
-								for objects and
-								<code class="inline-code">{'&[ ... ]'}</code>
-								for arrays — that look like destructuring but defer the actual property access until
-								each binding is read. Every reference to a lazy binding is compiled back to a
-								property lookup on the source object, so downstream readers pick up the latest value
-								without a manual getter.
-							</p>
-							<p class="section-body">
-								The most common use is in component parameters. Regular object destructuring would
-								snapshot each prop at call time and break any target runtime that relies on
-								per-access reactivity (Ripple, Solid, Vue).
-								<code class="inline-code">{'&{ ... }'}</code>
-								preserves that reactivity while keeping the ergonomic destructuring syntax:
-							</p>
-							<pre class="code-block">
-								<code innerHTML={LAZY_PROPS_HTML} />
-							</pre>
-							<p class="section-body muted">
-								Lazy destructuring is supported across every target. In React and Preact it compiles
-								to direct property access on the source object; in Ripple, Solid, and Vue it
-								preserves tracked, signal, or proxy-backed reactivity without needing a wrapper
-								call.
-							</p>
 						</section>
 						<section class="doc-section" id="prop-shorthands">
 							<h2 class="section-heading">Prop shorthands</h2>

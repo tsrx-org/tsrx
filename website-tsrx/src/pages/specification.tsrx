@@ -36,16 +36,6 @@ const MODIFIED_PRODUCTIONS = [
 	'  JSXSwitchExpression',
 	'  JSXTryExpression',
 	'',
-	'BindingAtom :',
-	'  LazyObjectBindingPattern',
-	'  LazyArrayBindingPattern',
-	'',
-	'LazyObjectBindingPattern :',
-	'  &{ BindingPropertyListopt }',
-	'',
-	'LazyArrayBindingPattern :',
-	'  &[ BindingElementListopt ]',
-	'',
 	'JSXFragment :',
 	'  <> TemplateChildrenopt </>',
 ].join('\n');
@@ -123,20 +113,6 @@ const TEMPLATE_EXPRESSION_GRAMMAR = [
 	'JSXTryExpression :',
 	'  @try TemplateBlock @pending TemplateBlock',
 	'  @try TemplateBlock @catch ( CatchParameteropt ) TemplateBlock',
-].join('\n');
-
-const LAZY_GRAMMAR = [
-	'LazyAssignmentStatement :',
-	'  LazyObjectBindingPattern = AssignmentExpression ;',
-	'  LazyArrayBindingPattern = AssignmentExpression ;',
-].join('\n');
-
-const LAZY_LOOP_EXAMPLES = [
-	'for (const &{ value } of items) { use(value); }',
-	'for (let &[key] in table) { use(key); }',
-	'for (&{ value } of items) { use(value); }',
-	'for (let &{ value } = cursor; value < limit; value++) { use(value); }',
-	'for await (const &{ value } of stream) { use(value); }',
 ].join('\n');
 
 const STYLE_GRAMMAR = [
@@ -528,7 +504,6 @@ const NAV_ITEMS = [
 	{ id: 'components', label: 'Function Bodies' },
 	{ id: 'templates', label: 'Template Elements' },
 	{ id: 'expression-values', label: 'Expression Values' },
-	{ id: 'lazy', label: 'Lazy Destructuring' },
 	{ id: 'style', label: 'Style Elements' },
 	{ id: 'server-profile', label: 'Server Extensions' },
 	{ id: 'early-errors', label: 'Early Errors' },
@@ -542,7 +517,7 @@ export function SpecificationPage() @{
 			<title>TSRX | Specification</title>
 			<meta
 				name="description"
-				content="Draft TSRX language specification: TypeScript-compatible JSX extensions, statement containers, control-flow expressions, lazy destructuring, style identifiers, and host-defined server extensions."
+				content="Draft TSRX language specification: TypeScript-compatible JSX extensions, statement containers, control-flow expressions, style identifiers, and host-defined server extensions."
 			/>
 		</head>
 		<div class="app-shell">
@@ -607,9 +582,8 @@ export function SpecificationPage() @{
 								<p class="status-chip">First-edition scope</p>
 								<p class="section-body compact">
 									The current draft fixes the syntax and early-error surface for JSX-shaped TSRX
-									values, JSX statement containers, template control flow, lazy destructuring,
-									sibling-scoped style blocks with themes and apply, and proposal-aligned submodule
-									declarations.
+									values, JSX statement containers, template control flow, sibling-scoped style
+									blocks with themes and apply, and proposal-aligned submodule declarations.
 								</p>
 							</div>
 						</section>
@@ -620,8 +594,7 @@ export function SpecificationPage() @{
 								TSRX is a TypeScript-compatible syntax extension to ECMAScript for authoring
 								component-oriented user interface programs. It extends the TypeScript source
 								language with JSX-shaped template values, JSX statement containers, template
-								control-flow directives, lazy destructuring patterns, sibling-scoped style elements,
-								and style identifiers.
+								control-flow directives, sibling-scoped style elements, and style identifiers.
 							</p>
 							<p class="section-body">
 								This specification defines the syntax of TSRX and the static constraints that a
@@ -653,10 +626,6 @@ export function SpecificationPage() @{
 								<li>
 									Native TSRX values can be assigned, returned, or passed as props using ordinary
 									JSX-shaped nodes.
-								</li>
-								<li>
-									Lazy destructuring is represented as source syntax rather than a host-specific
-									library convention.
 								</li>
 								<li>
 									Host features such as server execution and stylesheet composition can be specified
@@ -694,12 +663,9 @@ export function SpecificationPage() @{
 						<section class="doc-section" id="lexical">
 							<h2 class="section-heading">3 Modified Lexical Conventions</h2>
 							<p class="section-body">
-								TSRX introduces the whitespace-sensitive lazy-pattern introducers &amp;&#123; and
-								&amp;[, and module declarations that can be imported by identifier source.
-							</p>
-							<p class="section-body">
-								The ampersand introducer is part of the syntax of the lazy pattern itself.
-								Implementations must not treat &amp; &#123; or &amp; [ as lazy pattern forms.
+								TSRX introduces module declarations that can be imported by identifier source. It
+								adds no other lexical forms; every other TSRX construct is built from tokens that
+								the TypeScript-compatible baseline grammar already defines.
 							</p>
 						</section>
 
@@ -778,7 +744,7 @@ export function SpecificationPage() @{
 								needs text, expression containers, or multiple siblings after setup, wrap them in a
 								JSX fragment. Standalone style elements are not output nodes: any number may sit
 								among the setup statements or after the output node, and they scope the container
-								(4.6).
+								(4.5).
 							</p>
 							<p class="section-body">
 								Control-flow block bodies follow the same structural rule as statement containers:
@@ -922,52 +888,8 @@ export function SpecificationPage() @{
 							</p>
 						</section>
 
-						<section class="doc-section" id="lazy">
-							<h2 class="section-heading">4.5 Lazy Destructuring</h2>
-							<p class="section-body">
-								TSRX extends the baseline binding grammar with lazy array and object forms. The
-								syntax is fixed by the language. The runtime observation model is not. Hosts may
-								implement lazy bindings as deferred property reads, reactive accessors, or another
-								equivalent mechanism, provided the syntactic and static constraints remain
-								satisfied.
-							</p>
-							<pre class="code-block plain">
-								<code>{LAZY_GRAMMAR}</code>
-							</pre>
-							<p class="section-body">
-								Lazy binding patterns are permitted in ordinary JavaScript loop headers: in a
-								classic
-								<code class="inline-code">for</code>
-								initializer, in
-								<code class="inline-code">for...of</code>
-								and
-								<code class="inline-code">for...in</code>
-								declarations, and in
-								<code class="inline-code">for await...of</code>
-								declarations. A
-								<code class="inline-code">for...of</code>
-								or
-								<code class="inline-code">for...in</code>
-								header may also use a bare target that contains a lazy pattern; it behaves as a
-								per-iteration binding. Declaration kinds retain their ordinary ECMAScript scope,
-								including post-loop visibility for
-								<code class="inline-code">var</code>.
-							</p>
-							<pre class="code-block plain">
-								<code>{LAZY_LOOP_EXAMPLES}</code>
-							</pre>
-							<p class="section-body">
-								The iterable or right-hand expression is evaluated in the outer binding environment.
-								The lazy names introduced by the loop target apply to the loop's test, update, and
-								body only after that target has been established. These are ordinary JavaScript
-								loops used in setup or imperative logic; rendered list output continues to use the
-								<code class="inline-code">@for</code>
-								template directive.
-							</p>
-						</section>
-
 						<section class="doc-section" id="style">
-							<h2 class="section-heading">4.6 Style Elements and Style Identifiers</h2>
+							<h2 class="section-heading">4.5 Style Elements and Style Identifiers</h2>
 							<p class="section-body">
 								The syntax of style elements, where a style block may be placed, the sibling scope a
 								standalone block styles, the value an assigned block evaluates to, the meaning of
@@ -1017,7 +939,7 @@ export function SpecificationPage() @{
 								<code class="inline-code">apply</code>
 								attribute. A scoped style block admits exactly two attributes:
 								<code class="inline-code">ref</code>, whose value receives the class-map object of
-								the block's scope (4.6.3), and
+								the block's scope (4.5.3), and
 								<code class="inline-code">apply</code>, whose value must be a StyleApplyValue. Style
 								elements inside a
 								<code class="inline-code">{'<head>'}</code>
@@ -1027,7 +949,7 @@ export function SpecificationPage() @{
 								any attribute, are not scoped, and do not admit
 								<code class="inline-code">apply</code>.
 							</p>
-							<h3 class="appendix-heading">4.6.1 A block is standalone or assigned</h3>
+							<h3 class="appendix-heading">4.5.1 A block is standalone or assigned</h3>
 							<p class="section-body">
 								A style element is standalone when it is written as template content: a child of a
 								native element or fragment, the output node of a JSXCodeBlock or of a control-flow
@@ -1055,7 +977,7 @@ export function SpecificationPage() @{
 								to it. Head styles and resource styles remain exempt.
 							</p>
 							<h3 class="appendix-heading">
-								4.6.2 A block styles its siblings and everything below them
+								4.5.2 A block styles its siblings and everything below them
 							</h3>
 							<p class="section-body">
 								A standalone block is scoped to its siblings. A sibling scope is the children list
@@ -1109,7 +1031,7 @@ export function SpecificationPage() @{
 								stylesheet, whether or not the branch ever renders, because CSS is static.
 							</p>
 							<h3 class="appendix-heading">
-								4.6.3 An assigned block evaluates to an object with $class
+								4.5.3 An assigned block evaluates to an object with $class
 							</h3>
 							<p class="section-body">
 								An assigned block evaluates to an object. Its first property is
@@ -1157,7 +1079,7 @@ export function SpecificationPage() @{
 								a theme's
 								<code class="inline-code">$class</code>
 								matches the theme's element and descendant selectors exactly as an element of an
-								applying scope does (4.6.4), and no other element is affected. The value is an
+								applying scope does (4.5.4), and no other element is affected. The value is an
 								ordinary string, so it may be passed to a component as a prop and placed on that
 								component's elements; it is then an authored class of those elements and precedes
 								the hash classes of their own enclosing scopes.
@@ -1174,7 +1096,7 @@ export function SpecificationPage() @{
 								<code>{STYLE_THEME_EXAMPLE}</code>
 							</pre>
 							<h3 class="appendix-heading">
-								4.6.4 apply adds a theme's $class to every element of a scope
+								4.5.4 apply adds a theme's $class to every element of a scope
 							</h3>
 							<p class="section-body">
 								<code class="inline-code">apply</code>
@@ -1200,7 +1122,7 @@ export function SpecificationPage() @{
 								of the module by the language, so they always satisfy the rule.
 							</p>
 							<h3 class="appendix-heading">
-								4.6.5 Later rules win: stylesheets are output in source order, outer first
+								4.5.5 Later rules win: stylesheets are output in source order, outer first
 							</h3>
 							<p class="section-body">
 								Every generated hash class is a single class, so all scoped rules have equal
@@ -1229,7 +1151,7 @@ export function SpecificationPage() @{
 						</section>
 
 						<section class="doc-section" id="server-profile">
-							<h2 class="section-heading">4.7 Host-defined Server Extensions</h2>
+							<h2 class="section-heading">4.6 Host-defined Server Extensions</h2>
 							<p class="section-body">
 								Submodule declarations are documented in the first edition as a generic extension
 								surface aligned with the TC39 module declarations proposal. Ripple and Octane both
@@ -1285,16 +1207,6 @@ export function SpecificationPage() @{
 									siblings.
 								</li>
 								<li>
-									A lazy destructuring assignment must have a directly lazy array or object target,
-									must be the complete expression statement, and must be a direct item in a Program,
-									BlockStatement, JSXCodeBlock, or SwitchCase statement list. Braceless control-flow
-									bodies, nested assignments, sequence operands, call arguments, and non-lazy outer
-									targets that contain a lazy pattern are early errors reported as
-									<code class="inline-code">tsrx-unsupported-lazy-assignment-position</code>.
-									Diagnostic-collecting tooling may preserve syntactically valid best-effort output,
-									but that recovery does not make the unsupported assignment conforming TSRX.
-								</li>
-								<li>
 									In hosts that enable server-oriented submodules, server exports must be imported
 									before use using the host profile's import form, for example
 									<code class="inline-code">import &#123; load &#125; from server</code>
@@ -1312,7 +1224,7 @@ export function SpecificationPage() @{
 							</ul>
 							<h3 class="appendix-heading">5.1 Style blocks</h3>
 							<p class="section-body">
-								The following static constraints apply to style elements (4.6). Each is reported
+								The following static constraints apply to style elements (4.5). Each is reported
 								with the diagnostic code shown. None of them changes the parse, and a
 								diagnostic-collecting implementation may still produce best-effort output, but that
 								output is not conforming TSRX.
@@ -1333,7 +1245,7 @@ export function SpecificationPage() @{
 								</li>
 								<li>
 									A standalone style block with CSS text must sit lexically inside a JSXCodeBlock
-									body or a control-flow body (4.6.1). Anywhere else, such as a plain TSX return or
+									body or a control-flow body (4.5.1). Anywhere else, such as a plain TSX return or
 									an assigned template outside those bodies, it is
 									<code class="inline-code">tsrx-style-standalone-outside-template</code>
 									. Head styles, resource styles, and self-closing blocks are exempt.
@@ -1404,7 +1316,7 @@ export function SpecificationPage() @{
 								</li>
 							</ul>
 							<p class="section-body">
-								The precedence rules of 4.6.5 are constraints on the output stylesheets: outer
+								The precedence rules of 4.5.5 are constraints on the output stylesheets: outer
 								before inner, applied theme before the block that applies it, and source order
 								within a scope. An implementation that outputs sheets in any other order does not
 								conform.
@@ -1424,7 +1336,6 @@ export function SpecificationPage() @{
 							</p>
 							<ul class="spec-list">
 								<li>How functions returning TSRX lower into executable host code.</li>
-								<li>How lazy destructuring is realized at runtime.</li>
 								<li>
 									The text of generated scope hashes, the name of the stamped class attribute, and
 									how hashed selectors are rewritten.
@@ -1432,7 +1343,7 @@ export function SpecificationPage() @{
 								<li>
 									How stylesheets are registered and injected, provided that a module's CSS precedes
 									the CSS of every module that imports it and that sheets keep the emission order of
-									4.6.5.
+									4.5.5.
 								</li>
 								<li>
 									How the object of an assigned block and the value handed to a style
@@ -1460,7 +1371,7 @@ export function SpecificationPage() @{
 								JSXAttribute, and JSXSpreadAttribute. TSRX-specific additions are limited to
 								JSXCodeBlock, JSXStyleElement, JSXIfExpression, JSXForExpression,
 								JSXSwitchExpression, JSXTryExpression, TSModuleDeclaration, and TSModuleBlock. The
-								grammar in sections 4.1 through 4.7 is normative; the node shapes in this appendix
+								grammar in sections 4.1 through 4.6 is normative; the node shapes in this appendix
 								are informative and describe the parser contract exposed to tooling.
 							</p>
 							<h3 class="appendix-heading">A.1 Grammar-to-node correspondence</h3>
@@ -1488,7 +1399,7 @@ export function SpecificationPage() @{
 							<ul class="spec-list">
 								<li>
 									The function id and params fields preserve the ordinary TypeScript function
-									surface, including type annotations and lazy patterns after parsing.
+									surface, including type annotations, after parsing.
 								</li>
 								<li>
 									Ordinary function bodies remain BlockStatement nodes. A statement-container
@@ -1510,7 +1421,7 @@ export function SpecificationPage() @{
 									A style element with a body carries a parsed StyleSheet child and
 									<code class="inline-code">metadata.styleScopeHash</code>
 									, the position-derived hash of that block. Head styles and self-closing blocks
-									carry no hash. A standalone block is emitted under the hash of its scope (4.6.2),
+									carry no hash. A standalone block is emitted under the hash of its scope (4.5.2),
 									which the transform takes from the scope's first bodied block.
 								</li>
 								<li>
