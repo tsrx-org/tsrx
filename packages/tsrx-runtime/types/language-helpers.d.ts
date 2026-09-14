@@ -20,12 +20,3 @@ export function iterable_array_from<T>(
 	iterable: Iterable<T> | Iterator<T> | ArrayLike<T>,
 	index?: number,
 ): T[];
-/**
- * The props bag minus one prop. Constrained to `object` rather than an index
- * signature so an interface- or class-typed props bag is accepted; returns `{}`
- * when `props` is nullish.
- */
-export function exclude_prop_from_object<
-	T extends object = Record<PropertyKey, unknown>,
-	K extends PropertyKey = PropertyKey,
->(props: T | null | undefined, exclude_prop: K): Omit<T, K>;

@@ -10,7 +10,6 @@ import { check_types } from '../shared/type-diagnostics.js';
 
 const IMPORTS = `import {
 	array_slice,
-	exclude_prop_from_object,
 	iterable_array_from,
 } from './types/runtime/language-helpers.js';`;
 
@@ -68,74 +67,6 @@ describe('language helper types', () => {
 			expect(errors).toEqual([]);
 			expect(types.fromSet).toBe('number[]');
 			expect(types.fromArray).toBe('string[]');
-		});
-	});
-
-	describe('exclude_prop_from_object', () => {
-		it('drops the excluded prop and keeps the rest readable', () => {
-			const { errors, types } = check(`
-				const props = { is: 'div', title: 'hello', count: 2 };
-				const rest = exclude_prop_from_object(props, 'is');
-				const title = rest.title;
-			`);
-
-			expect(errors).toEqual([]);
-			expect(types.rest).toBe('Omit<{ is: string; title: string; count: number; }, "is">');
-			expect(types.title).toBe('string');
-		});
-
-		it('reports a read of the prop that was excluded', () => {
-			const { errors } = check(`
-				const props = { is: 'div', title: 'hello' };
-				const rest = exclude_prop_from_object(props, 'is');
-				rest.is;
-			`);
-
-			expect(errors).toEqual([
-				`Property 'is' does not exist on type 'Omit<{ is: string; title: string; }, "is">'.`,
-			]);
-		});
-
-		it('accepts an interface- or class-typed props bag', () => {
-			// Component props are interfaces, which have no implicit index
-			// signature — constraining the parameter to one would reject every
-			// real caller (`Index signature for type 'string' is missing`).
-			const { errors, types } = check(`
-				interface Props {
-					is: string;
-					title: string;
-				}
-				class ClassProps {
-					is = 'div';
-					title = 'hello';
-				}
-
-				const fromInterface = exclude_prop_from_object({ is: 'div', title: 'x' } as Props, 'is');
-				const fromClass = exclude_prop_from_object(new ClassProps(), 'is');
-			`);
-
-			expect(errors).toEqual([]);
-			expect(types.fromInterface).toBe('Omit<Props, "is">');
-			expect(types.fromClass).toBe('Omit<ClassProps, "is">');
-		});
-
-		it('accepts a nullish props bag', () => {
-			const { errors } = check(`
-				exclude_prop_from_object(null, 'is');
-				exclude_prop_from_object(undefined, 'is');
-			`);
-
-			expect(errors).toEqual([]);
-		});
-
-		it('stays spreadable into another props bag', () => {
-			const { errors, types } = check(`
-				const props = { is: 'div', title: 'hello' };
-				const spread = { ...exclude_prop_from_object(props, 'is'), extra: true };
-			`);
-
-			expect(errors).toEqual([]);
-			expect(types.spread).toBe('{ extra: boolean; title: string; }');
 		});
 	});
 });
