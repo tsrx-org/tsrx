@@ -44,11 +44,12 @@ jobs:
 
       - name: Create or update release pull request
         id: changesets
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           github-token: ${{ github.token }}
-          version: pnpm changeset:version
-          commit: Version Packages
-          title: Version Packages
+          version-script: pnpm changeset:version
+          commit-message: Version Packages
+          pr-title: Version Packages
         env:
+          # Read by @changesets/changelog-github while it writes changelogs.
           GITHUB_TOKEN: ${{ github.token }}
