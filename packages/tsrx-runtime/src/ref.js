@@ -173,6 +173,20 @@ export function create_ref_prop(get_ref_value, set_ref_value) {
  * @returns {RefValue<T>} the single surviving ref, or a callback applying all
  */
 export function merge_ref_props(...refs) {
+	return merge_ref_list(refs);
+}
+
+/**
+ * Merge an already-collected ref list into a single callback ref. The list is
+ * compacted in place and captured by the returned callback, so callers must
+ * pass an array they own — `merge_ref_props`' rest array, or a list assembled
+ * internally for the same purpose.
+ *
+ * @template [T=Element]
+ * @param {RefValue<T>[]} refs
+ * @returns {RefValue<T>} the single surviving ref, or a callback applying all
+ */
+function merge_ref_list(refs) {
 	if (refs.length <= 2) {
 		const first = refs[0];
 		const second = refs[1];
@@ -187,7 +201,10 @@ export function merge_ref_props(...refs) {
 		for (let index = 0; index < refs.length; index++) {
 			const ref = refs[index];
 			if (ref != null) {
-				refs[count++] = ref;
+				if (count !== index) {
+					refs[count] = ref;
+				}
+				count++;
 			}
 		}
 		if (count === 0) {
@@ -334,10 +351,29 @@ export function normalize_spread_props(props, ...outer_refs) {
 		return source;
 	}
 
-	const merged_ref =
-		refs === undefined
-			? merge_ref_props(existing_ref, ...outer_refs)
-			: merge_ref_props(existing_ref, ...refs, ...outer_refs);
+	let merged_ref;
+	if (refs === undefined) {
+		// `outer_refs` is a fresh rest array owned by this call; unshifting
+		// `existing_ref` into place avoids a second concatenated array.
+		if (existing_ref != null) {
+			outer_refs.unshift(existing_ref);
+		}
+		merged_ref = merge_ref_list(outer_refs);
+	} else if (existing_ref == null && outer_refs.length === 0) {
+		// A single collected ref survives unchanged without merge machinery.
+		// `refs` holds only `is_ref_prop`-verified non-null entries, so a lone
+		// entry can be returned directly instead of routing through
+		// `merge_ref_list`'s nullish filtering.
+		merged_ref = refs.length === 1 ? refs[0] : merge_ref_list(refs);
+	} else {
+		if (existing_ref != null) {
+			refs.unshift(existing_ref);
+		}
+		if (outer_refs.length !== 0) {
+			refs.push(...outer_refs);
+		}
+		merged_ref = merge_ref_list(refs);
+	}
 	if (merged_ref !== undefined) {
 		next.ref = merged_ref;
 	}

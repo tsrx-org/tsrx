@@ -1092,4 +1092,96 @@ describe('spread ref normalization', () => {
 		expect(normalize_spread_props_for_ref_attr(undefined, outer_ref)).toBeUndefined();
 		expect(normalize_spread_props(props, outer_ref)).toEqual({ id: 'field', ref: outer_ref });
 	});
+
+	it('passes a single collected ref through unwrapped', () => {
+		/** @type {Array<unknown>} */
+		const events = [];
+		const node = {};
+		/** @param {object | null} value */
+		const named_callback = (value) => {
+			events.push(['named', value]);
+		};
+		const named_ref = create_ref_prop(() => named_callback);
+		/** @param {object | null} value */
+		const keyed_callback = (value) => {
+			events.push(['keyed', value]);
+		};
+		const keyed_ref = create_ref_prop(() => keyed_callback);
+
+		const named_only = normalize_spread_props({ id: 'a', onMount: named_ref });
+		expect(named_only).toMatchObject({ id: 'a' });
+		expect(named_only).not.toHaveProperty('onMount');
+		expect(/** @type {Record<PropertyKey, unknown>} */ (named_only).ref).toBe(named_ref);
+
+		const keyed_only = normalize_spread_props({ id: 'b', ref: keyed_ref });
+		expect(/** @type {Record<PropertyKey, unknown>} */ (keyed_only).ref).toBe(keyed_ref);
+
+		// Two collected refs merge in key order and stay wrapped.
+		const merged = normalize_spread_props({ first: named_ref, second: keyed_ref });
+		const merged_ref = /** @type {(value: object | null) => () => void} */ (
+			/** @type {Record<PropertyKey, unknown>} */ (merged).ref
+		);
+		expect(merged_ref).not.toBe(named_ref);
+		expect(merged_ref).not.toBe(keyed_ref);
+		const cleanup = merged_ref(node);
+		expect(events).toEqual([
+			['named', node],
+			['keyed', node],
+		]);
+		cleanup();
+		expect(events).toEqual([
+			['named', node],
+			['keyed', node],
+			['named', null],
+			['keyed', null],
+		]);
+	});
+
+	it('prepends a plain ref ahead of outer refs when no branded refs were collected', () => {
+		/** @type {Array<unknown>} */
+		const events = [];
+		const node = {};
+		/** @param {object | null} value */
+		const existing = (value) => {
+			events.push(['existing', value]);
+			return () => {
+				events.push(['existing cleanup']);
+			};
+		};
+		/** @param {object | null} value */
+		const outer_first = (value) => {
+			events.push(['outer1', value]);
+		};
+		/** @param {object | null} value */
+		const outer_second = (value) => {
+			events.push(['outer2', value]);
+		};
+
+		const normalized = normalize_spread_props(
+			{ id: 'field', ref: existing },
+			outer_first,
+			null,
+			outer_second,
+		);
+		const merged_ref = /** @type {(value: object | null) => () => void} */ (
+			/** @type {Record<PropertyKey, unknown>} */ (normalized).ref
+		);
+		expect(merged_ref).not.toBe(existing);
+
+		const cleanup = merged_ref(node);
+		expect(events).toEqual([
+			['existing', node],
+			['outer1', node],
+			['outer2', node],
+		]);
+		cleanup();
+		expect(events).toEqual([
+			['existing', node],
+			['outer1', node],
+			['outer2', node],
+			['existing cleanup'],
+			['outer1', null],
+			['outer2', null],
+		]);
+	});
 });
