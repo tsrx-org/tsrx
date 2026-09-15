@@ -1,5 +1,17 @@
 # @tsrx/typescript-plugin
 
+## 0.4.1
+
+### Patch Changes
+
+- [#114](https://github.com/tsrx-org/tsrx/pull/114)
+  [`f1c2828`](https://github.com/tsrx-org/tsrx/commit/f1c2828b2747b705b02a25f789055c36ead1fd20)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Update the optional
+  `@tsrx/ripple` compiler peer dependency to `^0.2.0`, aligning with
+  [Ripple's release PR #1456](https://github.com/Ripple-TS/ripple/pull/1456). The
+  workspace also updates `ripple`, `@ripple-ts/vite-plugin`, and
+  `@ripple-ts/adapter-node` to `^0.4.0`.
+
 ## 0.4.0
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # @tsrx/language-server
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies
+  [[`f1c2828`](https://github.com/tsrx-org/tsrx/commit/f1c2828b2747b705b02a25f789055c36ead1fd20)]:
+  - @tsrx/typescript-plugin@0.4.1
+
 ## 0.4.0
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # @tsrx/eslint-plugin
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/eslint-parser@0.4.1
+
 ## 0.4.0
 
 ### Minor Changes
