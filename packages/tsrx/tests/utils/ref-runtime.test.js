@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+	apply_ref_value,
 	create_ref_prop,
 	merge_ref_props,
 	mergeRefs,
@@ -543,6 +544,76 @@ describe('ref runtime helpers', () => {
 		cleanup?.();
 		expect(callback_seen).toEqual([null]);
 		expect(object_ref.current).toBeNull();
+	});
+
+	it('prefers current over value when an object ref has both keys', () => {
+		/** @type {{ current: object | null, value: object | null }} */
+		const both = { current: null, value: null };
+		const node = {};
+
+		const applied = apply_ref_value(both, node);
+		expect(both).toEqual({ current: node, value: null });
+		applied?.();
+		expect(both).toEqual({ current: null, value: null });
+
+		const merged = mergeRefs(both);
+		const merged_cleanup = merged(node);
+		expect(both).toEqual({ current: node, value: null });
+		merged_cleanup();
+		expect(both).toEqual({ current: null, value: null });
+	});
+
+	it('throws on primitive non-function refs at the DOM-node check', () => {
+		const merged = mergeRefs(/** @type {any} */ (5));
+		expect(() => merged(/** @type {any} */ ({}))).toThrow(TypeError);
+	});
+
+	it('replays array ref cleanups in flat push order through apply_ref_value', () => {
+		/** @type {Array<object | string | null>} */
+		const seen = [];
+		const node = {};
+		/** @type {{ current: object | null }} */
+		const current_ref = { current: null };
+		/** @type {{ value: object | null }} */
+		const value_ref = { value: null };
+
+		const applied = apply_ref_value(
+			[
+				() => () => seen.push('returned cleanup'),
+				/** @param {object | null} v */
+				(v) => {
+					seen.push(v);
+				},
+				current_ref,
+				value_ref,
+				[
+					/** @param {object | null} v */
+					(v) => {
+						seen.push(v === null ? 'nested null' : 'nested node');
+					},
+				],
+			],
+			node,
+		);
+
+		expect(seen).toEqual([node, 'nested node']);
+		expect(current_ref.current).toBe(node);
+		expect(value_ref.value).toBe(node);
+		expect(typeof applied).toBe('function');
+
+		applied?.();
+		expect(seen).toEqual([node, 'nested node', 'returned cleanup', null, 'nested null']);
+		expect(current_ref.current).toBeNull();
+		expect(value_ref.value).toBeNull();
+	});
+
+	it('returns undefined for arrays that collect no cleanups', () => {
+		const node = {};
+		expect(apply_ref_value([], node)).toBeUndefined();
+		expect(apply_ref_value([{ plain: true }], node)).toBeUndefined();
+
+		// A bare callback with a null node collects no re-invocation cleanup.
+		expect(apply_ref_value([() => {}], null)).toBeUndefined();
 	});
 });
 
@@ -1344,5 +1415,102 @@ describe('spread ref normalization', () => {
 		expect(Object.getPrototypeOf(normalized)).toBe(custom_proto);
 		expect(Reflect.ownKeys(normalized)).toEqual(['first', 'ref']);
 		expect(/** @type {Record<PropertyKey, unknown>} */ (normalized).first).toBe(1);
+	});
+
+	it('resets a __proto__-re-prototyped copy to Object.prototype on the ref-attr variant', () => {
+		const custom_proto = { tag: 'custom' };
+		const props = { first: 1 };
+		Object.defineProperty(props, '__proto__', {
+			value: custom_proto,
+			enumerable: true,
+			writable: true,
+			configurable: true,
+		});
+		const branded = create_ref_prop(() => () => {});
+
+		const input = { ...props, onMount: branded };
+		const normalized = normalize_spread_props_for_ref_attr(input);
+
+		expect(normalized).not.toBe(input);
+		expect(Object.getPrototypeOf(normalized)).toBe(Object.prototype);
+		expect(Reflect.ownKeys(normalized)).toEqual(['first', 'ref']);
+		expect(/** @type {Record<PropertyKey, unknown>} */ (normalized).first).toBe(1);
+		expect_explicit_ref_descriptor(
+			normalized,
+			/** @type {Record<PropertyKey, unknown>} */ (normalized).ref,
+		);
+	});
+
+	it('returns a distinct object when an inherited setter observed the intermediate copy', () => {
+		/** @type {unknown} */
+		let captured;
+		Object.defineProperty(Object.prototype, 'watched', {
+			configurable: true,
+			/**
+			 * @param {unknown} value
+			 * @this {object}
+			 */
+			set(value) {
+				captured = this;
+			},
+		});
+		try {
+			const branded = create_ref_prop(() => () => {});
+			const normalized = normalize_spread_props_for_ref_attr({
+				watched: 1,
+				id: 'kept',
+				onMount: branded,
+			});
+
+			expect(captured).toBeDefined();
+			expect(normalized).not.toBe(captured);
+			expect(normalized).toMatchObject({ id: 'kept' });
+			expect(Object.prototype.hasOwnProperty.call(normalized, 'watched')).toBe(false);
+			expect_explicit_ref_descriptor(
+				normalized,
+				/** @type {Record<PropertyKey, unknown>} */ (normalized).ref,
+			);
+		} finally {
+			delete (/** @type {Record<PropertyKey, unknown>} */ (Object.prototype)['watched']);
+		}
+	});
+
+	it('attaches the merged ref non-enumerably on the fresh copy for the ref-attr variant', () => {
+		/** @type {Array<unknown>} */
+		const events = [];
+		const node = {};
+		/** @param {object | null} value */
+		const first_callback = (value) => {
+			events.push(['first', value]);
+		};
+		const first_ref = create_ref_prop(() => first_callback);
+		/** @param {object | null} value */
+		const second_callback = (value) => {
+			events.push(['second', value]);
+		};
+		const second_ref = create_ref_prop(() => second_callback);
+		/** @param {object | null} value */
+		const outer_ref = (value) => {
+			events.push(['outer', value]);
+		};
+		const props = { id: 'field', count: 2, onMount: first_ref, onUnmount: second_ref };
+
+		const normalized = normalize_spread_props_for_ref_attr(props, outer_ref);
+		const normalized_props = /** @type {Record<PropertyKey, unknown>} */ (normalized);
+
+		expect(normalized).not.toBe(props);
+		expect(normalized_props).toMatchObject({ id: 'field', count: 2 });
+		expect(normalized_props).not.toHaveProperty('onMount');
+		expect(normalized_props).not.toHaveProperty('onUnmount');
+		expect(Object.keys(normalized_props)).toEqual(['id', 'count']);
+		expect(Reflect.ownKeys(normalized_props)).toEqual(['id', 'count', 'ref']);
+		expect_explicit_ref_descriptor(normalized_props, normalized_props.ref);
+
+		/** @type {(value: object | null) => void} */ (normalized_props.ref)(node);
+		expect(events).toEqual([
+			['first', node],
+			['second', node],
+			['outer', node],
+		]);
 	});
 });
