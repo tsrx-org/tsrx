@@ -879,6 +879,20 @@ describe('typescript-plugin language plugin integration', () => {
 		expect(virtual_code.generatedCode).toContain('compiler:vue');
 	});
 
+	it('creates virtual code with the Hono compiler in a hono-only project', () => {
+		const plugin = create_plugin();
+		const workspace = create_fixture_workspace('hono-only');
+		const file_name = path.join(workspace, 'src', 'App.tsrx');
+		const virtual_code = create_virtual_code(
+			plugin,
+			file_name,
+			'export default function App() { return <div>Hello Hono</div>; }',
+		);
+
+		expect(virtual_code).toBeInstanceOf(TSRXVirtualCode);
+		expect(virtual_code.generatedCode).toContain('compiler:hono');
+	});
+
 	it('creates virtual code with the vue compiler in a vue project when both compilers exist', () => {
 		const plugin = create_plugin();
 		const workspace = create_fixture_workspace('both-vue');

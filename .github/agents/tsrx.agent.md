@@ -11,7 +11,8 @@ authoring components that compile to multiple UI frameworks.
 
 - Target-neutral `.tsrx` syntax and directive control flow
 - Parser, analyzer, transform, and source-map behavior
-- React, Preact, Solid, and Vue compiler targets
+- React, Preact, Solid, Vue, and Hono compiler targets
+- Hono JSX server and DOM integration through the Vite and Bun plugins
 - Third-party compiler target integration
 - TypeScript, language-server, formatter, linter, MCP, and editor tooling
 - TextMate and Tree-sitter grammars

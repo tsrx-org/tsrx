@@ -8,6 +8,7 @@ import fs from 'fs';
 const {
 	is_tsrx_file,
 	find_workspace_compiler_entry_for_file,
+	get_compiler_entry_for_file,
 	get_tsrx_compiler_name_for_file,
 	is_ripple_target_file,
 	COMPILER_CANDIDATES,
@@ -50,6 +51,9 @@ describe('typescript-plugin compiler resolution', () => {
 			const preact_candidate = COMPILER_CANDIDATES.find(
 				([package_name]) => package_name === '@tsrx/preact',
 			);
+			const hono_candidate = COMPILER_CANDIDATES.find(
+				([package_name]) => package_name === '@tsrx/hono',
+			);
 
 			if (
 				!ripple_candidate ||
@@ -57,6 +61,7 @@ describe('typescript-plugin compiler resolution', () => {
 				!solid_candidate ||
 				!preact_candidate ||
 				!vue_candidate ||
+				!hono_candidate ||
 				!octane_candidate
 			) {
 				throw new Error('Missing compiler candidates');
@@ -67,6 +72,7 @@ describe('typescript-plugin compiler resolution', () => {
 			expect(vue_candidate[2]).toEqual(['.tsrx']);
 			expect(solid_candidate[2]).toEqual(['.tsrx']);
 			expect(preact_candidate[2]).toEqual(['.tsrx']);
+			expect(hono_candidate[2]).toEqual(['.tsrx']);
 			expect(octane_candidate[2]).toEqual(['.tsrx']);
 		});
 	});
@@ -149,6 +155,25 @@ describe('typescript-plugin compiler resolution', () => {
 			expect(find_workspace_compiler_entry_for_file(file_name, fs.existsSync, new Map())).toBe(
 				expected,
 			);
+		});
+
+		it('selects the Hono compiler in a hono-only project', () => {
+			const workspace = create_fixture_workspace('hono-only');
+			const file_name = path.join(workspace, 'src', 'App.tsrx');
+			const expected = path.join(workspace, 'node_modules', '@tsrx', 'hono', 'src', 'index.js');
+
+			expect(find_workspace_compiler_entry_for_file(file_name, fs.existsSync, new Map())).toBe(
+				expected,
+			);
+		});
+
+		it('resolves an explicitly selected Hono DOM compiler subpath', () => {
+			const workspace = create_fixture_workspace('hono-dom-explicit');
+			const file_name = path.join(workspace, 'src', 'App.tsrx');
+			const expected = path.join(workspace, 'node_modules', '@tsrx', 'hono', 'dom.js');
+
+			expect(get_compiler_entry_for_file(file_name)).toBe(expected);
+			expect(get_tsrx_compiler_name_for_file(file_name)).toBe('@tsrx/hono');
 		});
 
 		it('selects the octane compiler (published dist entry path) in an octane-only project', () => {
@@ -332,6 +357,7 @@ describe('typescript-plugin compiler resolution', () => {
 			{ name: 'solid-only', expected: ['@tsrx', 'solid'] },
 			{ name: 'preact-only', expected: ['@tsrx', 'preact'] },
 			{ name: 'vue-only', expected: ['@tsrx', 'vue'] },
+			{ name: 'hono-only', expected: ['@tsrx', 'hono'] },
 			{ name: 'octane-only', expected: ['octane', 'dist', 'compiler', 'volar.js'] },
 			{ name: 'octane-src-only', expected: ['octane', 'src', 'compiler', 'volar.js'] },
 			{ name: 'both', expected: ['@tsrx', 'ripple'] },
@@ -366,6 +392,7 @@ describe('typescript-plugin compiler resolution', () => {
 			{ name: 'solid-only', compiler: '@tsrx/solid', is_ripple: false },
 			{ name: 'preact-only', compiler: '@tsrx/preact', is_ripple: false },
 			{ name: 'vue-only', compiler: '@tsrx/vue', is_ripple: false },
+			{ name: 'hono-only', compiler: '@tsrx/hono', is_ripple: false },
 			{ name: 'both', compiler: '@tsrx/ripple', is_ripple: true },
 			{ name: 'both-react', compiler: '@tsrx/react', is_ripple: false },
 			{ name: 'octane-only', compiler: 'octane', is_ripple: false },

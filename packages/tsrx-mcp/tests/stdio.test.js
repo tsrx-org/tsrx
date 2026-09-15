@@ -138,6 +138,7 @@ describe('@tsrx/mcp stdio server', () => {
 
 			expect(uris).toContain('tsrx://docs/components.md');
 			expect(uris).toContain('tsrx://targets/react.md');
+			expect(uris).toContain('tsrx://targets/hono.md');
 
 			const docs = await client.readResource({ uri: 'tsrx://docs/components.md' });
 			expect(docs.contents[0]).toMatchObject({
@@ -148,6 +149,11 @@ describe('@tsrx/mcp stdio server', () => {
 
 			const target = await client.readResource({ uri: 'tsrx://targets/react.md' });
 			expect(expect_text_content(target.contents[0])).toContain('React target layer');
+
+			const hono_target = await client.readResource({ uri: 'tsrx://targets/hono.md' });
+			expect(expect_text_content(hono_target.contents[0])).toContain('Hono target layer');
+			expect(expect_text_content(hono_target.contents[0])).toContain('vite build --mode client');
+			expect(expect_text_content(hono_target.contents[0])).toContain('Bun.build()');
 		});
 	});
 
@@ -160,7 +166,7 @@ describe('@tsrx/mcp stdio server', () => {
 				name: 'tsrx-task',
 				arguments: {
 					task: 'Build a counter component',
-					target: 'react',
+					target: 'hono',
 				},
 			});
 

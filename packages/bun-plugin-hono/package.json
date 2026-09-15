@@ -1,0 +1,42 @@
+{
+  "name": "@tsrx/bun-plugin-hono",
+  "description": "Bun plugin for the TSRX Hono JSX targets",
+  "license": "MIT",
+  "author": "Dominic Gannaway",
+  "version": "0.1.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tsrx-org/tsrx.git",
+    "directory": "packages/bun-plugin-hono"
+  },
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    }
+  },
+  "scripts": {
+    "test": "pnpm -w test --project bun-plugin-hono",
+    "test:native": "bun test tests/native.test.ts"
+  },
+  "dependencies": {
+    "@tsrx/core": "workspace:*",
+    "@tsrx/hono": "workspace:*"
+  },
+  "peerDependencies": {
+    "bun": ">=1",
+    "hono": "^4.13.7"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:default",
+    "typescript": "catalog:default"
+  },
+  "files": [
+    "src",
+    "types"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@tsrx/hono-playground",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsrx-tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.13.7"
+  },
+  "devDependencies": {
+    "@tsrx/hono": "workspace:*",
+    "@tsrx/language-server": "workspace:*",
+    "@tsrx/typescript-plugin": "workspace:*",
+    "@tsrx/vite-plugin-hono": "workspace:*",
+    "typescript": "catalog:default",
+    "vite": "catalog:default"
+  }
+}

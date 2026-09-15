@@ -76,6 +76,12 @@ export const COMPILER_CANDIDATES = [
 		['@tsrx/vue', '@tsrx/vite-plugin-vue'],
 	],
 	[
+		'@tsrx/hono',
+		['node_modules', '@tsrx', 'hono'],
+		['.tsrx'],
+		['@tsrx/hono', '@tsrx/vite-plugin-hono'],
+	],
+	[
 		'octane',
 		['node_modules', 'octane'],
 		['.tsrx'],

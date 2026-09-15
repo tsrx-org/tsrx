@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "jsxImportSource": "hono/jsx/dom",
+    "types": ["node", "vitest/globals"]
+  },
+  "tsrx": {
+    "compiler": "@tsrx/hono/dom"
+  },
+  "include": ["runtime.test.tsrx"],
+  // Override the parent exclusion of this folder.
+  "exclude": []
+}

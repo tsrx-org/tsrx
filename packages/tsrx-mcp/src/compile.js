@@ -173,15 +173,13 @@ export async function compile_tsrx(input) {
 	if (!candidate) {
 		throw new Error(`Missing compiler candidate for target "${target}".`);
 	}
+	const compiler_package =
+		target === 'hono' && input.mode === 'client' ? '@tsrx/hono/dom' : candidate.compilerPackage;
 
 	try {
-		const compiler = await import_compiler(
-			candidate.compilerPackage,
-			cwd,
-			detection.packageJsonPath,
-		);
+		const compiler = await import_compiler(compiler_package, cwd, detection.packageJsonPath);
 		if (typeof compiler.compile !== 'function') {
-			throw new Error(`${candidate.compilerPackage} does not export a compile() function.`);
+			throw new Error(`${compiler_package} does not export a compile() function.`);
 		}
 
 		const result = compiler.compile(input.code, filename, {
@@ -196,7 +194,7 @@ export async function compile_tsrx(input) {
 		return {
 			ok: errors.length === 0,
 			target,
-			compilerPackage: candidate.compilerPackage,
+			compilerPackage: compiler_package,
 			filename,
 			cwd,
 			errors,
@@ -207,7 +205,7 @@ export async function compile_tsrx(input) {
 		return {
 			ok: false,
 			target,
-			compilerPackage: candidate.compilerPackage,
+			compilerPackage: compiler_package,
 			filename,
 			cwd,
 			errors: [normalize_error(error, filename)],

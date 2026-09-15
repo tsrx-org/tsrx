@@ -1,0 +1,12 @@
+import type { Program } from 'estree';
+import type { BaseCompileOptions, CompileFn, ParseOptions, VolarCompileFn } from '@tsrx/core/types';
+
+export type { Platform, RuntimeImportMode, TsrxPlatformFlags } from '@tsrx/core/types';
+
+export function parse(source: string, filename?: string, options?: ParseOptions): Program;
+
+export type { DynamicElementType, DynamicProps } from './dynamic.js';
+export { isRefProp } from './ref.js';
+
+export const compile: CompileFn;
+export const compile_to_volar_mappings: VolarCompileFn<ParseOptions & BaseCompileOptions>;
