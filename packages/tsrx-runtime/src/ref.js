@@ -8,6 +8,7 @@ import {
 } from '@tsrx/runtime/language-helpers';
 
 const REF_VALUE = Symbol();
+const REINVOKE_REF = Symbol();
 
 /**
  * Merge multiple refs (function refs and ref objects) into a single
@@ -23,6 +24,80 @@ const REF_VALUE = Symbol();
  */
 export function mergeRefs(...refs) {
 	return (node) => {
+		if (refs.length === 2) {
+			const first = refs[0];
+			const second = refs[1];
+			// The dominant emitted shape is `mergeRefs(a, b)`. Apply both refs
+			// directly and record each cleanup step in a scalar slot — a writable
+			// key, `REINVOKE_REF` for a bare callback, or a returned cleanup —
+			// instead of materializing a cleanups array per mount.
+			/** @type {unknown} */
+			let first_step;
+			/** @type {unknown} */
+			let second_step;
+			if (first != null) {
+				if (typeof first === 'function') {
+					const result = first(node);
+					if (typeof result === 'function') {
+						first_step = result;
+					} else {
+						first_step = REINVOKE_REF;
+					}
+				} else {
+					const key = ref_write_key(first);
+					// Named writes keep the monomorphic property ICs a keyed store
+					// would lose.
+					if (key === 'current') {
+						/** @type {{ current: T | null }} */ (first).current = node;
+						first_step = key;
+					} else if (key === 'value') {
+						/** @type {{ value: T | null }} */ (first).value = node;
+						first_step = key;
+					}
+				}
+			}
+			// This block must stay identical to the `first` block above.
+			if (second != null) {
+				if (typeof second === 'function') {
+					const result = second(node);
+					if (typeof result === 'function') {
+						second_step = result;
+					} else {
+						second_step = REINVOKE_REF;
+					}
+				} else {
+					const key = ref_write_key(second);
+					if (key === 'current') {
+						/** @type {{ current: T | null }} */ (second).current = node;
+						second_step = key;
+					} else if (key === 'value') {
+						/** @type {{ value: T | null }} */ (second).value = node;
+						second_step = key;
+					}
+				}
+			}
+			return () => {
+				if (first_step === 'current') {
+					/** @type {{ current: unknown }} */ (first).current = null;
+				} else if (first_step === 'value') {
+					/** @type {{ value: unknown }} */ (first).value = null;
+				} else if (first_step === REINVOKE_REF) {
+					/** @type {(node: null) => void} */ (first)(null);
+				} else if (first_step !== undefined) {
+					/** @type {() => void} */ (first_step)();
+				}
+				// This ladder must stay identical to the `first_step` ladder above.
+				if (second_step === 'current') {
+					/** @type {{ current: unknown }} */ (second).current = null;
+				} else if (second_step === 'value') {
+					/** @type {{ value: unknown }} */ (second).value = null;
+				} else if (second_step === REINVOKE_REF) {
+					/** @type {(node: null) => void} */ (second)(null);
+				} else if (second_step !== undefined) {
+					/** @type {() => void} */ (second_step)();
+				}
+			};
+		}
 		/**
 		 * Flat `[kind, payload]` pairs: one array instead of a closure per ref.
 		 * @type {unknown[]}
@@ -427,6 +502,27 @@ function is_ref_object(value, key) {
 		return true;
 	}
 	return key === 'value' && has_prototype_accessor(value, 'value');
+}
+
+/**
+ * The writable ref key an object ref value uses, matching the general merge
+ * path's `current`-before-`value` preference. `null` for values that carry no
+ * ref key. It must call `is_ref_object` once per key in order — no hoisted
+ * `is_dom_node` or fused shape check — so the observable check sequence
+ * (trap/getter emission count and order) matches the general merge path's
+ * else-if chain exactly.
+ *
+ * @param {object} ref_value
+ * @returns {'current' | 'value' | null}
+ */
+function ref_write_key(ref_value) {
+	if (is_ref_object(ref_value, 'current')) {
+		return 'current';
+	}
+	if (is_ref_object(ref_value, 'value')) {
+		return 'value';
+	}
+	return null;
 }
 
 /**
