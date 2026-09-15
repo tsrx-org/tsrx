@@ -4,6 +4,13 @@
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - '@sveltejs/acorn-typescript@1.0.13'
+  - '@ripple-ts/adapter-node@0.4.0'
+  - '@ripple-ts/adapter@0.4.0'
+  - '@ripple-ts/vite-plugin@0.4.0'
+  - '@tsrx/core@0.2.0'
+  - '@tsrx/ripple@0.2.0'
+  - '@tsrx/runtime@0.2.0'
+  - ripple@0.4.0
 minimumReleaseAgeIgnoreMissingTime: true
 minimumReleaseAgeStrict: false
 trustPolicy: no-downgrade
@@ -59,8 +66,8 @@ catalogs:
     '@jridgewell/sourcemap-codec': ^1.5.5
     '@modelcontextprotocol/sdk': ^1.29.0
     '@noble/hashes': ^2.2.0
-    '@ripple-ts/adapter-node': ^0.3.124
-    '@ripple-ts/vite-plugin': ^0.3.124
+    '@ripple-ts/adapter-node': ^0.4.0
+    '@ripple-ts/vite-plugin': ^0.4.0
     '@rollup/pluginutils': ^5.3.0
     '@sveltejs/acorn-typescript': ^1.0.13
     '@solidjs/web': '2.0.0-rc.3'
@@ -76,7 +83,7 @@ catalogs:
     '@types/react': ^19.2.2
     '@types/react-dom': ^19.2.2
     '@types/vscode': ^1.116.0
-    '@tsrx/ripple': ^0.1.61
+    '@tsrx/ripple': ^0.2.0
     '@typescript-eslint/parser': *ts_eslint_parser
     '@typescript-eslint/types': ^8.40.0
     '@vercel/nft': ^1.3.2
@@ -115,7 +122,7 @@ catalogs:
     prompts: ^2.4.2
     react: ^19.2.0
     react-dom: ^19.2.0
-    ripple: ^0.3.124
+    ripple: ^0.4.0
     rollup: ^4.59.0
     rulesync: ^8.17.0
     shiki: 4.0.1
