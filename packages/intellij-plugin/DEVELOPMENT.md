@@ -29,6 +29,12 @@ comments, syntax highlighting, diagnostics, completion, navigation, and
 formatting. In a syntax-only IDE, confirm the file type and highlighting work
 without starting a language-server download.
 
+For JSX highlighting parity, open `src/test/resources/highlighting/issue-100.tsx`
+and `issue-100.tsrx` side by side in WebStorm 2025.2.4 under Darcula. Compare tag
+names and delimiters, `key` and `className`, and the `length`, `map`, and `text`
+member names. The comparison is theme-relative; it checks equivalent syntax roles,
+not full TypeScript PSI-backed semantics for `.tsrx` files.
+
 The managed language server is installed with npm lifecycle scripts disabled.
 Gradle derives its exact pinned version directly from
 `packages/language-server/package.json`; do not duplicate that version in IntelliJ

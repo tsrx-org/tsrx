@@ -32,7 +32,7 @@
 					 language="TSRX" extensions="tsrx"/>
 		<lang.commenter language="TSRX" implementationClass="dev.tsrx.intellij_plugin.TsrxCommenter"/>
 		<lang.syntaxHighlighterFactory language="TSRX"
-									 implementationClass="org.jetbrains.plugins.textmate.language.syntax.highlighting.TextMateSyntaxHighlighterFactory"/>
+									 implementationClass="dev.tsrx.intellij_plugin.TsrxSyntaxHighlighterFactory"/>
 		<editorHighlighterProvider filetype="TSRX"
 								 implementationClass="org.jetbrains.plugins.textmate.language.syntax.highlighting.TextMateEditorHighlighterProvider"/>
 		<textmate.bundleProvider implementation="dev.tsrx.intellij_plugin.TsrxTextMateBundleProvider"/>
