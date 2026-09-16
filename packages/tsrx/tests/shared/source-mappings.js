@@ -122,6 +122,41 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		);
 	});
 
+	describe(`[${name}] multiline spread attributes`, () => {
+		it.each([
+			['LF', '\n'],
+			['CRLF', '\r\n'],
+		])('maps attributes following a multiline spread to the authored tokens (%s)', (_, eol) => {
+			const source = [
+				'function Demo(props: { id: string }, extra: object) @{',
+				'\t<div {...',
+				'\t\tprops',
+				'\t} {...extra} id={props.id} />',
+				'}',
+			].join(eol);
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(result.mappings.length).toBeGreaterThan(0);
+
+			for (const token of ['extra}', 'props.id']) {
+				const start = source.indexOf(token);
+				const length = token.replace('}', '').length;
+				const mapping = result.mappings.find((mapping) =>
+					mapping.sourceOffsets.some(
+						(offset, index) => offset === start && mapping.lengths[index] === length,
+					),
+				);
+				assert(mapping, `Expected a mapping for ${token}`);
+				const index = mapping.sourceOffsets.indexOf(start);
+				const generated_start = mapping.generatedOffsets[index];
+				const generated_length = mapping.generatedLengths?.[index] ?? mapping.lengths[index];
+				expect(result.code.slice(generated_start, generated_start + generated_length)).toBe(
+					source.slice(start, start + length),
+				);
+			}
+		});
+	});
+
 	describe(`[${name}] source mappings do not crash for`, () => {
 		/**
 		 * @param {string} source
