@@ -33,12 +33,11 @@ if (!previousRev) {
 
 if (previousRev === currentRev) {
 	console.log(`Zed grammar rev already at ${currentRev}, skipping.`);
-	process.exit(0);
+} else {
+	await writeFile(
+		extensionTomlPath,
+		extensionToml.replace(/^(\s*rev\s*=\s*")[^"]+(")/m, `$1${currentRev}$2`),
+	);
+
+	console.log(`Zed grammar rev: ${previousRev} -> ${currentRev}`);
 }
-
-await writeFile(
-	extensionTomlPath,
-	extensionToml.replace(/^(\s*rev\s*=\s*")[^"]+(")/m, `$1${currentRev}$2`),
-);
-
-console.log(`Zed grammar rev: ${previousRev} -> ${currentRev}`);

@@ -82,8 +82,6 @@ export {
 	object,
 	unwrap_pattern as unwrapPattern,
 	extract_identifiers as extractIdentifiers,
-	extract_paths as extractPaths,
-	build_fallback as buildFallback,
 	build_assignment_value as buildAssignmentValue,
 	is_class_node as isClassNode,
 	is_function_node as isFunctionNode,
@@ -238,13 +236,6 @@ export {
 	serialize_mapping_value as serializeMappingValue,
 } from './transform/segments.js';
 export {
-	create_lazy_context as createLazyContext,
-	collect_lazy_bindings as collectLazyBindings,
-	collect_lazy_bindings_from_statements as collectLazyBindingsFromStatements,
-	preallocate_lazy_ids as preallocateLazyIds,
-	apply_lazy_transforms as applyLazyTransforms,
-} from './transform/lazy.js';
-export {
 	find_first_top_level_await as findFirstTopLevelAwait,
 	find_first_top_level_await_in_tsrx_function_body as findFirstTopLevelAwaitInTsrxFunctionBody,
 } from './transform/await.js';
@@ -277,7 +268,6 @@ export {
 	TSRX_LOOP_CONTINUE_ERROR,
 	TSRX_LOOP_RETURN_ERROR,
 	TSRX_RETURN_STATEMENT_ERROR,
-	TSRX_UNSUPPORTED_LAZY_ASSIGNMENT_POSITION_ERROR,
 	TSRX_WHILE_STATEMENT_ERROR,
 	get_return_keyword_node as getReturnKeywordNode,
 	get_statement_keyword_node as getStatementKeywordNode,
@@ -288,7 +278,6 @@ export {
 	validate_tsrx_loop_continue_statement as validateTsrxLoopContinueStatement,
 	validate_tsrx_loop_return_statement as validateTsrxLoopReturnStatement,
 	validate_tsrx_return_statement as validateTsrxReturnStatement,
-	validate_unsupported_lazy_assignment_position as validateUnsupportedLazyAssignmentPosition,
 	validate_tsrx_unsupported_loop_statement as validateTsrxUnsupportedLoopStatement,
 	validate_forgotten_statement_container as validateForgottenStatementContainer,
 	validate_nesting as validateNesting,

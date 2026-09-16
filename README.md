@@ -74,7 +74,6 @@ export function TodoList({ items }: { items: Todo[] }) @{
 - JSX statement containers that keep setup and rendered output in one lexical
   scope.
 - Template-native `@if`, `@for`, `@switch`, and `@try` control flow.
-- Lazy object and array destructuring with `&{ ... }` and `&[ ... ]`.
 - Sibling-scoped `<style>` blocks: a block styles its siblings and everything
   below them, sibling blocks share one hash class, and assignable style themes
   expose `$class` and compose through `<style apply={theme} />`.

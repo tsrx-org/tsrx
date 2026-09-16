@@ -41,8 +41,6 @@ export default [...tsrx.configs.strict];
 - `tsrx/require-statement-container-body` detects component bodies that need the
   `@{ ... }` statement-container marker.
 - `tsrx/valid-for-of-key` validates identifiers used in TSRX loop keys.
-- `tsrx/no-lazy-destructuring-in-modules` prevents TSRX-only `&[]` and `&{}`
-  syntax from leaking into ordinary TypeScript or JavaScript modules.
 - `tsrx/no-return-in-component` is a deprecated no-op retained for compatibility.
 
 Target runtime rules do not belong in the shared recommended configuration. For

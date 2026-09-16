@@ -1084,48 +1084,6 @@
       "patterns": [
         {
           "name": "meta.object-binding-pattern-variable.js",
-          "begin": "(?<!=|:|^of|[^\\._$[:alnum:]]of|^in|[^\\._$[:alnum:]]in)\\s*(&)(?=\\{)",
-          "beginCaptures": {
-            "1": {
-              "name": "punctuation.definition.binding-pattern.object.js"
-            }
-          },
-          "end": "(?=$|^|[;,=}]|((?<![_$[:alnum:]])(?:(?<=\\.\\.\\.)|(?<!\\.))(of|in)\\s+))",
-          "patterns": [
-            {
-              "include": "#object-binding-pattern"
-            },
-            {
-              "include": "#type-annotation"
-            },
-            {
-              "include": "#comment"
-            }
-          ]
-        },
-        {
-          "name": "meta.array-binding-pattern-variable.js",
-          "begin": "(?<!=|:|^of|[^\\._$[:alnum:]]of|^in|[^\\._$[:alnum:]]in)\\s*(&)(?=\\[)",
-          "beginCaptures": {
-            "1": {
-              "name": "punctuation.definition.binding-pattern.array.js"
-            }
-          },
-          "end": "(?=$|^|[;,=}]|((?<![_$[:alnum:]])(?:(?<=\\.\\.\\.)|(?<!\\.))(of|in)\\s+))",
-          "patterns": [
-            {
-              "include": "#array-binding-pattern"
-            },
-            {
-              "include": "#type-annotation"
-            },
-            {
-              "include": "#comment"
-            }
-          ]
-        },
-        {
-          "name": "meta.object-binding-pattern-variable.js",
           "begin": "(?<!=|:|^of|[^\\._$[:alnum:]]of|^in|[^\\._$[:alnum:]]in)\\s*(?=\\{)",
           "end": "(?=$|^|[;,=}]|((?<![_$[:alnum:]])(?:(?<=\\.\\.\\.)|(?<!\\.))(of|in)\\s+))",
           "patterns": [
@@ -1160,48 +1118,6 @@
     },
     "destructuring-const": {
       "patterns": [
-        {
-          "name": "meta.object-binding-pattern-variable.js",
-          "begin": "(?<!=|:|^of|[^\\._$[:alnum:]]of|^in|[^\\._$[:alnum:]]in)\\s*(&)(?=\\{)",
-          "beginCaptures": {
-            "1": {
-              "name": "punctuation.definition.binding-pattern.object.js"
-            }
-          },
-          "end": "(?=$|^|[;,=}]|((?<![_$[:alnum:]])(?:(?<=\\.\\.\\.)|(?<!\\.))(of|in)\\s+))",
-          "patterns": [
-            {
-              "include": "#object-binding-pattern-const"
-            },
-            {
-              "include": "#type-annotation"
-            },
-            {
-              "include": "#comment"
-            }
-          ]
-        },
-        {
-          "name": "meta.array-binding-pattern-variable.js",
-          "begin": "(?<!=|:|^of|[^\\._$[:alnum:]]of|^in|[^\\._$[:alnum:]]in)\\s*(&)(?=\\[)",
-          "beginCaptures": {
-            "1": {
-              "name": "punctuation.definition.binding-pattern.array.js"
-            }
-          },
-          "end": "(?=$|^|[;,=}]|((?<![_$[:alnum:]])(?:(?<=\\.\\.\\.)|(?<!\\.))(of|in)\\s+))",
-          "patterns": [
-            {
-              "include": "#array-binding-pattern-const"
-            },
-            {
-              "include": "#type-annotation"
-            },
-            {
-              "include": "#comment"
-            }
-          ]
-        },
         {
           "name": "meta.object-binding-pattern-variable.js",
           "begin": "(?<!=|:|^of|[^\\._$[:alnum:]]of|^in|[^\\._$[:alnum:]]in)\\s*(?=\\{)",
@@ -1673,15 +1589,12 @@
       }
     },
     "parameter-object-binding-pattern": {
-      "begin": "(?:(\\.\\.\\.)\\s*)?(&)?(\\{)",
+      "begin": "(?:(\\.\\.\\.)\\s*)?(\\{)",
       "beginCaptures": {
         "1": {
           "name": "keyword.operator.rest.js"
         },
         "2": {
-          "name": "punctuation.definition.binding-pattern.object.js"
-        },
-        "3": {
           "name": "punctuation.definition.binding-pattern.object.js"
         }
       },
@@ -1698,15 +1611,12 @@
       ]
     },
     "parameter-array-binding-pattern": {
-      "begin": "(?:(\\.\\.\\.)\\s*)?(&)?(\\[)",
+      "begin": "(?:(\\.\\.\\.)\\s*)?(\\[)",
       "beginCaptures": {
         "1": {
           "name": "keyword.operator.rest.js"
         },
         "2": {
-          "name": "punctuation.definition.binding-pattern.array.js"
-        },
-        "3": {
           "name": "punctuation.definition.binding-pattern.array.js"
         }
       },
@@ -3841,6 +3751,14 @@
       "patterns": [
         {
           "include": "#support-function-call-identifiers"
+        },
+        {
+          "match": "(?<=\\.)(?<!\\.\\.)\\s*(\\#?[_$[:alpha:]][_$[:alnum:]]*)",
+          "captures": {
+            "1": {
+              "name": "meta.method-call.js entity.name.function.js"
+            }
+          }
         },
         {
           "name": "entity.name.function.js",

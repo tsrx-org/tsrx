@@ -7,78 +7,12 @@ import { walk } from 'zimmerframe';
 import {
 	is_code_block_function_body,
 	is_statement_position,
-	is_supported_lazy_assignment_position,
 	is_transparent_expression_wrapper,
 	is_tsrx_render_output_node,
 } from '../utils/ast.js';
-import {
-	validate_forgotten_statement_container,
-	validate_unsupported_lazy_assignment_position,
-} from './validation.js';
+import { validate_forgotten_statement_container } from './validation.js';
 import { create_scopes, ScopeRoot } from '../scope.js';
 import { analyze_styles } from './style-analyze.js';
-
-/**
- * Find the first authored lazy pattern along an assignment target's binding
- * edges. Default-value expressions and computed keys are evaluated
- * expressions, so nested assignments there own their own diagnostics.
- *
- * @param {AST.Node} node
- * @returns {import('../../types/index').LazyPattern | null}
- */
-function find_first_lazy_pattern(node) {
-	if ((node.type === 'ObjectPattern' || node.type === 'ArrayPattern') && node.lazy) {
-		return node;
-	}
-
-	switch (node.type) {
-		case 'AssignmentPattern':
-			return find_first_lazy_pattern(node.left);
-		case 'RestElement':
-			return find_first_lazy_pattern(node.argument);
-		case 'ObjectPattern':
-			for (const property of node.properties) {
-				const lazy =
-					property.type === 'Property'
-						? find_first_lazy_pattern(property.value)
-						: find_first_lazy_pattern(property.argument);
-				if (lazy) return lazy;
-			}
-			return null;
-		case 'ArrayPattern':
-			for (const element of node.elements) {
-				if (!element) continue;
-				const lazy = find_first_lazy_pattern(element);
-				if (lazy) return lazy;
-			}
-			return null;
-		default: {
-			const expression = /** @type {{ expression?: AST.Node }} */ (node).expression;
-			return expression && is_transparent_expression_wrapper(node, expression)
-				? find_first_lazy_pattern(expression)
-				: null;
-		}
-	}
-}
-
-/**
- * @param {AST.AssignmentExpression} node
- * @param {{ next: () => unknown, path: AST.Node[], state: TSRXAnalysisState }} context
- */
-function visit_assignment_expression(node, { next, path, state }) {
-	const lazy = find_first_lazy_pattern(node.left);
-
-	if (lazy && !is_supported_lazy_assignment_position(node, path)) {
-		validate_unsupported_lazy_assignment_position(
-			lazy,
-			state.filename,
-			state.collect ? state.errors : undefined,
-			state.comments,
-		);
-	}
-
-	next();
-}
 
 /**
  * A template is unused only when it is itself the statement being executed.
@@ -173,8 +107,6 @@ function visit_class(_node, { next, state }) {
 }
 
 const visitors = {
-	AssignmentExpression: visit_assignment_expression,
-
 	FunctionDeclaration: visit_function,
 	FunctionExpression: visit_function,
 	ArrowFunctionExpression: visit_function,

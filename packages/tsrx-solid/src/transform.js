@@ -1135,7 +1135,7 @@ function switch_statement_to_jsx_child(node, transform_context) {
 
 		// Clone the discriminant per-case: every generated `<Match when={d === caseN}>`
 		// would otherwise share the same AST node reference, so a downstream pass
-		// (lazy transforms, printer metadata, source-map annotation) mutating it on
+		// (printer metadata, source-map annotation) mutating it on
 		// one case would corrupt the others. The right operand (`caseN`) is the
 		// original source `test` node — unique per case, so we keep its real loc
 		// for editor IntelliSense and don't clone it.

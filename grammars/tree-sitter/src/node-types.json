@@ -112,14 +112,6 @@
         "named": true
       },
       {
-        "type": "lazy_array_pattern",
-        "named": true
-      },
-      {
-        "type": "lazy_object_pattern",
-        "named": true
-      },
-      {
         "type": "object_pattern",
         "named": true
       },
@@ -523,14 +515,6 @@
             "named": true
           },
           {
-            "type": "lazy_array_pattern",
-            "named": true
-          },
-          {
-            "type": "lazy_object_pattern",
-            "named": true
-          },
-          {
             "type": "member_expression",
             "named": true
           },
@@ -910,14 +894,6 @@
           },
           {
             "type": "identifier",
-            "named": true
-          },
-          {
-            "type": "lazy_array_pattern",
-            "named": true
-          },
-          {
-            "type": "lazy_object_pattern",
             "named": true
           },
           {
@@ -1611,14 +1587,6 @@
           "named": true
         },
         {
-          "type": "lazy_array_pattern",
-          "named": true
-        },
-        {
-          "type": "lazy_object_pattern",
-          "named": true
-        },
-        {
           "type": "object_pattern",
           "named": true
         }
@@ -1664,14 +1632,6 @@
         },
         {
           "type": "identifier",
-          "named": true
-        },
-        {
-          "type": "lazy_array_pattern",
-          "named": true
-        },
-        {
-          "type": "lazy_object_pattern",
           "named": true
         },
         {
@@ -2330,14 +2290,6 @@
             "named": true
           },
           {
-            "type": "lazy_array_pattern",
-            "named": true
-          },
-          {
-            "type": "lazy_object_pattern",
-            "named": true
-          },
-          {
             "type": "object_pattern",
             "named": true
           }
@@ -2703,14 +2655,6 @@
         },
         {
           "type": "jsx_text",
-          "named": true
-        },
-        {
-          "type": "lazy_array_pattern",
-          "named": true
-        },
-        {
-          "type": "lazy_object_pattern",
           "named": true
         },
         {
@@ -3731,36 +3675,6 @@
     }
   },
   {
-    "type": "lazy_array_pattern",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "array_pattern",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "lazy_object_pattern",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": false,
-      "required": true,
-      "types": [
-        {
-          "type": "object_pattern",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "lexical_declaration",
     "named": true,
     "fields": {},
@@ -4434,14 +4348,6 @@
           },
           {
             "type": "identifier",
-            "named": true
-          },
-          {
-            "type": "lazy_array_pattern",
-            "named": true
-          },
-          {
-            "type": "lazy_object_pattern",
             "named": true
           },
           {
@@ -5177,14 +5083,6 @@
           },
           {
             "type": "identifier",
-            "named": true
-          },
-          {
-            "type": "lazy_array_pattern",
-            "named": true
-          },
-          {
-            "type": "lazy_object_pattern",
             "named": true
           },
           {

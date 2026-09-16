@@ -27,7 +27,7 @@ export type SpreadProps = Record<PropertyKey, unknown>;
 
 /**
  * The node a ref value points at, derived from the ref's own type in the order
- * the runtime resolves it (see `apply_ref_value` and `is_ref_object`): a list
+ * the runtime resolves it (see `apply_ref_value` and `ref_object_prop`): a list
  * resolves through its entries, a callback through its parameter, and a DOM
  * node is never treated as a ref object.
  *

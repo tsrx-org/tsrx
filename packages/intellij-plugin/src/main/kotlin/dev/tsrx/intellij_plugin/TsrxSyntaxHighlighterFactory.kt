@@ -57,18 +57,20 @@ internal class TsrxSyntaxHighlighter(
 		var hasSource = false
 		var hasJsxContext = false
 		var hasEmbeddedExpression = false
-		var hasFunctionCall = memberRole != MemberRole.FUNCTION
+		// A function-call scope also covers standalone calls such as format(item).
+		// Only the grammar's member-access marker justifies a method override.
+		var hasMethodCall = memberRole != MemberRole.FUNCTION
 		var current: TextMateScope? = this
 		while (current != null) {
 			when (current.scopeName.toString()) {
 				SOURCE_SCOPE -> hasSource = true
 				JSX_CHILDREN_SCOPE, JSX_ATTRIBUTES_SCOPE -> hasJsxContext = true
 				EMBEDDED_EXPRESSION_SCOPE -> hasEmbeddedExpression = true
-				FUNCTION_CALL_SCOPE -> hasFunctionCall = true
+				METHOD_CALL_SCOPE -> hasMethodCall = true
 			}
 			current = current.parent
 		}
-		return hasSource && hasJsxContext && hasEmbeddedExpression && hasFunctionCall
+		return hasSource && hasJsxContext && hasEmbeddedExpression && hasMethodCall
 	}
 
 	companion object {
@@ -81,7 +83,7 @@ internal class TsrxSyntaxHighlighter(
 		private const val JSX_ATTRIBUTES_SCOPE = "meta.tag.attributes.js"
 		private const val EMBEDDED_EXPRESSION_SCOPE = "meta.embedded.expression.js"
 		private const val FUNCTION_SCOPE = "entity.name.function.js"
-		private const val FUNCTION_CALL_SCOPE = "meta.function-call.js"
+		private const val METHOD_CALL_SCOPE = "meta.method-call.js"
 	}
 
 	private enum class MemberRole { PROPERTY, FUNCTION }

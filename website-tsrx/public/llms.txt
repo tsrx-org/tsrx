@@ -20,7 +20,6 @@ them all the way through to the compiled output.
 - **JSX statement containers**: `@{ ... }` keeps TypeScript setup local to the JSX that uses it
 - **Declarative control flow**: `@if`, `@for`, `@switch`, and `@try` are JSX expressions whose bodies use `{...}` template blocks
 - **Structural output rules**: statement containers finish with one JSX element, fragment, or JSX control-flow expression
-- **Lazy prop destructuring**: `&{ ... }` and `&[ ... ]` preserve reactivity
 - **Scoped styles**: sibling-scoped `<style>` blocks (a block styles its siblings and everything below them), theme objects with `$class`, and `<style apply={theme} />` composition
 - **TypeScript-first**: `.tsrx` is a superset of TypeScript; types flow through
 
@@ -574,52 +573,6 @@ raw HTML prop for trusted markup.
 const Article = ({ markup }: { markup: string }) =>
 	<article innerHTML={markup} />;
 ```
-
-### Lazy destructuring — `&{ ... }` / `&[ ... ]`
-
-Lazy destructuring defers property/index access until each binding is read.
-It preserves per-access reactivity for Ripple, Solid, and Vue while keeping
-React/Preact output as direct property access.
-
-```tsrx
-const UserCard = (&{ name, age }: { name: string; age: number }) =>
-	<div>
-		<h2>{name}</h2>
-		<p>Age: {age}</p>
-	</div>;
-
-let &[count, setCount] = createSignal(0);
-```
-
-Lazy patterns are also supported in ordinary JavaScript loop headers: classic
-`for` initializers, `for...of`, `for...in`, and `for await...of`. A `for...of`
-or `for...in` target may be either a declaration or a bare target containing a
-lazy pattern; a bare target is normalized to a per-iteration binding. The
-iterable or right-hand expression uses the outer binding environment, while the
-new lazy names apply after the target is established. Declaration kinds keep
-their normal ECMAScript scope, including post-loop visibility for `var`.
-
-```tsrx
-for (const &{ value } of items) consume(value);
-for (let &[key] in table) consume(key);
-for (&{ value } of items) consume(value);
-for (let &{ value } = cursor; value < limit; value++) consume(value);
-for await (const &{ value } of stream) consume(value);
-```
-
-These are imperative JavaScript loops, not rendered-list constructs. Use the
-`@for` template directive when the loop itself produces UI.
-
-A lazy destructuring assignment is supported only when its entire left-hand
-side is a directly lazy array or object pattern and the assignment is the
-complete expression statement in a program, block, TSRX `@{...}` code block, or
-`switch` case statement list. Braceless control-flow bodies, nested
-assignments, sequence operands, call arguments, and non-lazy outer targets that
-contain a lazy pattern report
-`tsrx-unsupported-lazy-assignment-position`. Strict compilation rejects the
-source. Diagnostic-collecting, type-only, and editor paths report the error and
-retain syntactically valid best-effort output; that recovery does not give the
-unsupported assignment lazy semantics.
 
 ### Prop shorthand
 
@@ -1361,8 +1314,10 @@ const UserProfile = ({ user, posts }: { user: User | null; posts: Post[] }) => @
 ### Solid
 
 `@if` lowers to `<Show>`, `@switch` lowers to `<Switch>/<Match>`, `@for` lowers
-to `<For>`, `@try/catch` lowers to Solid error primitives, `@try/pending`
-lowers to loading primitives, and lazy destructuring preserves signal reads.
+to `<For>`, `@try/catch` lowers to Solid error primitives, and `@try/pending`
+lowers to loading primitives. Read props as `props.name` (or split them with
+`splitProps`) rather than destructuring them, so Solid's getter-based prop
+reactivity is preserved.
 
 ### Vue
 
@@ -1463,9 +1418,6 @@ const List = <T,>({ items, render }: Props<T>) =>
 | Native TSRX fragment   | `const v = <><span>Hi</span></>;`                     |
 | Text content           | `<p>literal</p>`, `<p>{expr}</p>`                     |
 | Expression children    | `<List children={items.map(render)} />`                |
-| Lazy prop destructure  | `const C = (&{ x, y }: Props) => <div />;`             |
-| Lazy array destructure | `let &[count, set] = createSignal(0);`                 |
-| Lazy JS loop target    | `for (const &{ x } of items) use(x);`                  |
 | Prop shorthand         | `<Input {value} {onChange} />`                         |
 | Conditional rendering  | `@if (cond) { <Panel /> }`                             |
 | List rendering         | `@for (const x of xs; index i; key x.id) { <li /> }`   |

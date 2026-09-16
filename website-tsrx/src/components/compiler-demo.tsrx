@@ -89,11 +89,11 @@ export function CompilerDemo() @{
 	let selected_target: Tracked<string> = track(initial_hash?.target ?? 'react');
 	let selected_snippet: Tracked<string> = track(get_snippet_value_for_source(initial_source));
 
-	let &[status] = track('Hydrating compiler...');
-	let &[error_message] = track('');
-	let &[last_updated] = track('');
-	let &[editors_ready] = track(false);
-	let &[formatting] = track(false);
+	let status: Tracked<string> = track('Hydrating compiler...');
+	let error_message: Tracked<string> = track('');
+	let last_updated: Tracked<string> = track('');
+	let editors_ready: Tracked<boolean> = track(false);
+	let formatting: Tracked<boolean> = track(false);
 	let active_mobile_panel: Tracked<'input' | 'output'> = track('input');
 	let latest_source = initial_source;
 	let request_compile = () => {};
@@ -208,21 +208,22 @@ export function CompilerDemo() @{
 				latest_source = source;
 
 				if (source.trim().length === 0) {
-					error_message = '';
-					status = 'Waiting for input';
+					error_message.value = '';
+					status.value = 'Waiting for input';
 					replace_doc(output_view, '// Start typing TSRX to see compiled output.');
 					return;
 				}
 
 				if (source.length > MAX_SOURCE_LENGTH) {
-					error_message = `Source is limited to ${MAX_SOURCE_LENGTH} characters for the live demo.`;
-					status = 'Source limit reached';
+					error_message.value =
+						`Source is limited to ${MAX_SOURCE_LENGTH} characters for the live demo.`;
+					status.value = 'Source limit reached';
 					return;
 				}
 
 				const current_request_id = ++request_id;
-				status = `Compiling ${TARGET_LABELS[selected_target.value] ?? 'selected target'}...`;
-				error_message = '';
+				status.value = `Compiling ${TARGET_LABELS[selected_target.value] ?? 'selected target'}...`;
+				error_message.value = '';
 
 				active_controller?.abort();
 				active_controller = new AbortController();
@@ -244,8 +245,8 @@ export function CompilerDemo() @{
 					}
 
 					if (!response.ok) {
-						error_message = payload.error || 'Compilation failed.';
-						status = 'Compiler reported an error';
+						error_message.value = payload.error || 'Compilation failed.';
+						status.value = 'Compiler reported an error';
 						return;
 					}
 
@@ -253,8 +254,8 @@ export function CompilerDemo() @{
 						effects: output_lang_compartment.reconfigure(shiki_highlight('tsx')),
 					});
 					replace_doc(output_view, join_compiled_output(payload.output.code, payload.output.css));
-					status = `${TARGET_LABELS[payload.target] ?? 'Selected output'} ready`;
-					last_updated = new Date().toLocaleTimeString([], {
+					status.value = `${TARGET_LABELS[payload.target] ?? 'Selected output'} ready`;
+					last_updated.value = new Date().toLocaleTimeString([], {
 						hour: '2-digit',
 						minute: '2-digit',
 						second: '2-digit',
@@ -264,8 +265,8 @@ export function CompilerDemo() @{
 						return;
 					}
 
-					error_message = error instanceof Error ? error.message : 'Compilation failed.';
-					status = 'Network or compiler failure';
+					error_message.value = error instanceof Error ? error.message : 'Compilation failed.';
+					status.value = 'Network or compiler failure';
 				}
 			};
 
@@ -289,7 +290,7 @@ export function CompilerDemo() @{
 			};
 
 			format_source = async () => {
-				if (!source_view || formatting) {
+				if (!source_view || formatting.value) {
 					return;
 				}
 
@@ -298,7 +299,7 @@ export function CompilerDemo() @{
 					return;
 				}
 
-				formatting = true;
+				formatting.value = true;
 				try {
 					const response = await fetch('/api/format', {
 						method: 'POST',
@@ -313,7 +314,7 @@ export function CompilerDemo() @{
 					}
 
 					if (!response.ok) {
-						error_message = payload.error || 'Formatting failed.';
+						error_message.value = payload.error || 'Formatting failed.';
 						return;
 					}
 
@@ -324,9 +325,9 @@ export function CompilerDemo() @{
 					if (disposed) {
 						return;
 					}
-					error_message = error instanceof Error ? error.message : 'Formatting failed.';
+					error_message.value = error instanceof Error ? error.message : 'Formatting failed.';
 				} finally {
-					formatting = false;
+					formatting.value = false;
 				}
 			};
 
@@ -362,7 +363,7 @@ export function CompilerDemo() @{
 			});
 
 			await compile_source(latest_source);
-			editors_ready = true;
+			editors_ready.value = true;
 		})();
 
 		return () => {
@@ -450,7 +451,7 @@ export function CompilerDemo() @{
 				</div>
 			</div>
 
-			<div class={`demo-grid${editors_ready ? ' ready' : ''}`}>
+			<div class={`demo-grid${editors_ready.value ? ' ready' : ''}`}>
 				<div
 					class={`panel panel-source${active_mobile_panel.value === 'input' ? ' is-active' : ''}`}
 				>
@@ -464,10 +465,10 @@ export function CompilerDemo() @{
 								onClick={() => {
 									void format_source();
 								}}
-								disabled={formatting || !editors_ready}
+								disabled={formatting.value || !editors_ready.value}
 								title="Format with Prettier"
 							>
-								{formatting ? 'Formatting…' : 'Format'}
+								{formatting.value ? 'Formatting…' : 'Format'}
 							</button>
 						</span>
 					</div>
@@ -481,8 +482,8 @@ export function CompilerDemo() @{
 						<span>{TARGET_LABELS[selected_target.value]}</span>
 					</div>
 					<div class="panel-body">
-						@if (error_message) {
-							<div class="panel-error" role="alert">{error_message}</div>
+						@if (error_message.value) {
+							<div class="panel-error" role="alert">{error_message.value}</div>
 						}
 						<div class="editor-host" ref={bindNode(output_ref)} />
 					</div>

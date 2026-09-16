@@ -48,6 +48,17 @@ runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'preact' });
 runSharedCodeBlockChildrenTests({ compile, name: 'preact' });
 
 describe('@tsrx/preact basic', () => {
+	it('rejects the removed `&{ ... }` lazy destructuring syntax', () => {
+		expect(() =>
+			compile(
+				`export function App(&{ name }: { name: string }) @{
+					<div>{name}</div>
+				}`,
+				'App.tsrx',
+			),
+		).toThrow();
+	});
+
 	it('imports Suspense from preact/compat when try/pending is used', () => {
 		const { code } = compile(
 			`export function App() @{

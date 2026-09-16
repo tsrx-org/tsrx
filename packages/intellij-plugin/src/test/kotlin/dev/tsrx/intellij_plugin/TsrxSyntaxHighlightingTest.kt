@@ -13,6 +13,43 @@ import org.jetbrains.plugins.textmate.language.syntax.lexer.TextMateElementType
 import org.jetbrains.plugins.textmate.language.syntax.lexer.TextMateScope
 
 class TsrxSyntaxHighlightingTest : BasePlatformTestCase() {
+	fun testStandaloneFunctionCallKeepsItsRole() {
+		val source = """
+			function format(item: string) { return item; }
+			const view = <p>{format('x')}</p>;
+		""".trimIndent()
+		assertStandaloneFunctionRole(source, "format")
+	}
+
+	fun testSpreadFunctionCallKeepsItsRole() {
+		val source = """
+			function getProps() { return { title: 'x' }; }
+			const view = <p {...getProps()} />;
+		""".trimIndent()
+		assertStandaloneFunctionRole(source, "getProps")
+	}
+
+	private fun assertStandaloneFunctionRole(source: String, callee: String) {
+		for (extension in listOf("tsx", "tsrx")) {
+			myFixture.configureByText("standalone.$extension", source)
+			val offset = source.lastIndexOf(callee)
+			val highlights = if (extension == "tsx") myFixture.doHighlighting() else emptyList()
+			val iterator = (myFixture.editor as EditorEx).highlighter.createIterator(offset)
+			val semanticKeys = highlights
+				.filter { it.startOffset <= offset && offset < it.endOffset }
+				.mapNotNull { it.forcedTextAttributesKey ?: it.type.attributesKey }
+			val identities = (iterator.textAttributesKeys.toList() + semanticKeys)
+				.flatMap { it.fallbackIdentities() }
+			assertFalse(
+				"Standalone function in $extension must not become an instance method: $identities",
+				"TS.INSTANCE_MEMBER_FUNCTION" in identities,
+			)
+			if (extension == "tsx") {
+				assertContainsElements(identities, "TS.GLOBAL_FUNCTION")
+			}
+		}
+	}
+
 	fun testIssue100RolesMatchTsxReference() {
 		val tsx = capture(FileKind.TSX)
 		val tsrx = capture(FileKind.TSRX)
@@ -79,6 +116,7 @@ class TsrxSyntaxHighlightingTest : BasePlatformTestCase() {
 			textMateToken(*JSX_BASE_SCOPES, "keyword.control.directive.tsrx"),
 			textMateToken("source.tsrx", "meta.tag.js", "entity.name.tag.js"),
 			textMateToken(*JSX_BASE_SCOPES, "variable.other.readwrite.js"),
+			textMateToken(*JSX_BASE_SCOPES, "meta.function-call.js", "entity.name.function.js"),
 			TokenType.BAD_CHARACTER,
 		)
 		for (token in unchangedTokens) {
@@ -196,6 +234,7 @@ class TsrxSyntaxHighlightingTest : BasePlatformTestCase() {
 		private val JSX_METHOD_SCOPES = arrayOf(
 			*JSX_BASE_SCOPES,
 			"meta.function-call.js",
+			"meta.method-call.js",
 			"entity.name.function.js",
 		)
 		private val JSX_ATTRIBUTE_PROPERTY_SCOPES = arrayOf(

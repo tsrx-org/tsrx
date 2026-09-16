@@ -76,7 +76,6 @@ The parser supports TSRX syntax including:
 - JSX statement containers with `@{ ... }` for setup plus one rendered output
 - Template directives like `@if`, `@for`, `@switch`, and `@try`
 - Function components that return TSRX, TSX, or standard JavaScript values
-- `&{}` and `&[]` lazy destructuring
 - All standard JavaScript/TypeScript syntax
 
 ## Example
@@ -87,11 +86,11 @@ Given a `.tsrx` file:
 import { signal } from 'signals';
 
 export function Counter() @{
-  let &[count] = signal(0);
+  const count = signal(0);
 
-  <button onClick={() => count++}>
+  <button onClick={() => count.value++}>
     Increment
-    <span>{count}</span>
+    <span>{count.value}</span>
   </button>
 }
 ```

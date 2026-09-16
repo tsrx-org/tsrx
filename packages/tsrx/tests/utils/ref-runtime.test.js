@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+	apply_ref_value,
 	create_ref_prop,
 	merge_ref_props,
 	mergeRefs,
@@ -131,6 +132,161 @@ describe('ref runtime helpers', () => {
 		expect(inherited_ref_shape.value).toBe('inherited');
 		expect(Object.prototype.hasOwnProperty.call(inherited_ref_shape, 'current')).toBe(false);
 		expect(Object.prototype.hasOwnProperty.call(inherited_ref_shape, 'value')).toBe(false);
+	});
+
+	it('applies mergeRefs in order and cleans up in the same order', () => {
+		/** @type {Array<unknown>} */
+		const events = [];
+		const node = {};
+		/** @type {{ current: object | null }} */
+		const current_ref = { current: null };
+		/** @type {{ value: object | null }} */
+		const value_ref = { value: null };
+		/** @param {object | null} value */
+		const callback_with_cleanup = (value) => {
+			events.push(['callback', value]);
+			return () => events.push(['callback cleanup']);
+		};
+		/** @param {object | null} value */
+		const callback_without_cleanup = (value) => {
+			events.push(['bare callback', value]);
+		};
+
+		const merged = mergeRefs(
+			null,
+			callback_with_cleanup,
+			undefined,
+			current_ref,
+			callback_without_cleanup,
+			value_ref,
+		);
+		const cleanup = merged(node);
+		expect(events).toEqual([
+			['callback', node],
+			['bare callback', node],
+		]);
+		expect(current_ref.current).toBe(node);
+		expect(value_ref.value).toBe(node);
+
+		cleanup();
+		expect(events).toEqual([
+			['callback', node],
+			['bare callback', node],
+			['callback cleanup'],
+			['bare callback', null],
+		]);
+		expect(current_ref.current).toBeNull();
+		expect(value_ref.value).toBeNull();
+	});
+
+	it('stops mergeRefs at a thrown callback or cleanup in the original order', () => {
+		/** @type {string[]} */
+		const events = [];
+		const error = new Error('ref failure');
+		/** @param {object | null} _node */
+		const first = (_node) => {
+			events.push('first');
+			return () => events.push('first cleanup');
+		};
+		/** @param {object | null} _node */
+		const second = (_node) => {
+			events.push('second');
+			throw error;
+		};
+		/** @param {object | null} _node */
+		const third = (_node) => {
+			events.push('third');
+		};
+
+		expect(() => mergeRefs(first, second, third)({})).toThrow(error);
+		expect(events).toEqual(['first', 'second']);
+
+		events.length = 0;
+		/** @type {{ current: object | null }} */
+		const current_ref = { current: null };
+		/** @param {object | null} _node */
+		const throwing_cleanup = (_node) => {
+			events.push('callback');
+			return () => {
+				events.push('throwing cleanup');
+				throw error;
+			};
+		};
+		const cleanup = mergeRefs(first, current_ref, throwing_cleanup, third)({});
+		expect(events).toEqual(['first', 'callback', 'third']);
+		expect(() => cleanup()).toThrow(error);
+		expect(events).toEqual(['first', 'callback', 'third', 'first cleanup', 'throwing cleanup']);
+		expect(current_ref.current).toBeNull();
+	});
+
+	it('mergeRefs ignores array refs and DOM-like objects', () => {
+		const node = {};
+		const dom_like = { nodeType: 1, nodeName: 'DIV', current: null, value: null };
+		/** @type {{ current: object | null }} */
+		const current_ref = { current: null };
+		/** @type {object[]} */
+		const callback_seen = [];
+		/** @param {object | null} value */
+		const callback = (value) => {
+			if (value === null) return;
+			callback_seen.push(value);
+		};
+
+		const cleanup = mergeRefs(
+			/** @type {MergeableRef<object>} */ (/** @type {unknown} */ ([callback])),
+			/** @type {MergeableRef<object>} */ (dom_like),
+			current_ref,
+		)(node);
+
+		expect(callback_seen).toEqual([]);
+		expect(dom_like.current).toBeNull();
+		expect(dom_like.value).toBeNull();
+		expect(current_ref.current).toBe(node);
+		cleanup();
+		expect(current_ref.current).toBeNull();
+	});
+
+	it('mergeRefs assigns branded and inherited-accessor value refs', () => {
+		const node = {};
+		/** @type {object | null} */
+		let inherited_stored = null;
+		const inherited_value_ref = Object.create({
+			get value() {
+				return inherited_stored;
+			},
+			set value(value) {
+				inherited_stored = value;
+			},
+		});
+		const branded_ref = { __v_isRef: true };
+		/** @param {object | null} _node */
+		const callback = (_node) => {};
+
+		const cleanup = mergeRefs(
+			/** @type {MergeableRef<object>} */ (inherited_value_ref),
+			/** @type {MergeableRef<object>} */ (/** @type {unknown} */ (branded_ref)),
+			callback,
+		)(node);
+
+		expect(inherited_stored).toBe(node);
+		expect(/** @type {{ value?: unknown }} */ (branded_ref).value).toBe(node);
+		cleanup();
+		expect(inherited_stored).toBeNull();
+		expect(/** @type {{ value?: unknown }} */ (branded_ref).value).toBeNull();
+	});
+
+	it('mergeRefs re-applies bare callback refs with null on cleanup after a null mount', () => {
+		/** @type {Array<object | null>} */
+		const seen = [];
+		/** @param {object | null} value */
+		const callback = (value) => {
+			seen.push(value);
+		};
+
+		const cleanup = mergeRefs(callback)(null);
+		expect(seen).toEqual([null]);
+		cleanup();
+		expect(seen).toEqual([null, null]);
 	});
 
 	it('keeps nullish filtering, single-ref identity, and merged cleanup order', () => {
@@ -328,6 +484,137 @@ describe('ref runtime helpers', () => {
 			}
 		},
 	);
+
+	it('flattens array refs and branded value refs into merged cleanup order', () => {
+		/** @type {string[]} */
+		const events = [];
+		const node = {};
+		/** @type {{ value: object | null, __v_isRef: boolean }} */
+		const branded_ref = { value: null, __v_isRef: true };
+		/** @type {{ current: object | null }} */
+		const inner_ref = { current: null };
+		const merged = merge_ref_props(
+			/** @param {object | null} _node */
+			(_node) => {
+				events.push('outer');
+				return () => events.push('outer cleanup');
+			},
+			[
+				inner_ref,
+				/** @param {object | null} _node */
+				(_node) => {
+					events.push('inner');
+				},
+			],
+			branded_ref,
+		);
+		if (typeof merged !== 'function') {
+			throw new TypeError('Expected multiple refs to produce a callback');
+		}
+
+		const cleanup = merged(node);
+		expect(events).toEqual(['outer', 'inner']);
+		expect(inner_ref.current).toBe(node);
+		expect(branded_ref.value).toBe(node);
+		cleanup?.();
+		expect(events).toEqual(['outer', 'inner', 'outer cleanup', 'inner']);
+		expect(inner_ref.current).toBeNull();
+		expect(branded_ref.value).toBeNull();
+	});
+
+	it('does not re-invoke bare callbacks on cleanup after a null mount', () => {
+		/** @type {Array<object | null>} */
+		const callback_seen = [];
+		/** @type {{ current: object | null }} */
+		const object_ref = { current: null };
+		const merged = merge_ref_props(
+			/** @param {object | null} node */
+			(node) => {
+				callback_seen.push(node);
+			},
+			object_ref,
+		);
+		if (typeof merged !== 'function') {
+			throw new TypeError('Expected multiple refs to produce a callback');
+		}
+
+		const cleanup = merged(/** @type {object} */ (/** @type {unknown} */ (null)));
+		expect(callback_seen).toEqual([null]);
+		expect(object_ref.current).toBeNull();
+		cleanup?.();
+		expect(callback_seen).toEqual([null]);
+		expect(object_ref.current).toBeNull();
+	});
+
+	it('prefers current over value when an object ref has both keys', () => {
+		/** @type {{ current: object | null, value: object | null }} */
+		const both = { current: null, value: null };
+		const node = {};
+
+		const applied = apply_ref_value(both, node);
+		expect(both).toEqual({ current: node, value: null });
+		applied?.();
+		expect(both).toEqual({ current: null, value: null });
+
+		const merged = mergeRefs(both);
+		const merged_cleanup = merged(node);
+		expect(both).toEqual({ current: node, value: null });
+		merged_cleanup();
+		expect(both).toEqual({ current: null, value: null });
+	});
+
+	it('throws on primitive non-function refs at the DOM-node check', () => {
+		const merged = mergeRefs(/** @type {any} */ (5));
+		expect(() => merged(/** @type {any} */ ({}))).toThrow(TypeError);
+	});
+
+	it('replays array ref cleanups in flat push order through apply_ref_value', () => {
+		/** @type {Array<object | string | null>} */
+		const seen = [];
+		const node = {};
+		/** @type {{ current: object | null }} */
+		const current_ref = { current: null };
+		/** @type {{ value: object | null }} */
+		const value_ref = { value: null };
+
+		const applied = apply_ref_value(
+			[
+				() => () => seen.push('returned cleanup'),
+				/** @param {object | null} v */
+				(v) => {
+					seen.push(v);
+				},
+				current_ref,
+				value_ref,
+				[
+					/** @param {object | null} v */
+					(v) => {
+						seen.push(v === null ? 'nested null' : 'nested node');
+					},
+				],
+			],
+			node,
+		);
+
+		expect(seen).toEqual([node, 'nested node']);
+		expect(current_ref.current).toBe(node);
+		expect(value_ref.value).toBe(node);
+		expect(typeof applied).toBe('function');
+
+		applied?.();
+		expect(seen).toEqual([node, 'nested node', 'returned cleanup', null, 'nested null']);
+		expect(current_ref.current).toBeNull();
+		expect(value_ref.value).toBeNull();
+	});
+
+	it('returns undefined for arrays that collect no cleanups', () => {
+		const node = {};
+		expect(apply_ref_value([], node)).toBeUndefined();
+		expect(apply_ref_value([{ plain: true }], node)).toBeUndefined();
+
+		// A bare callback with a null node collects no re-invocation cleanup.
+		expect(apply_ref_value([() => {}], null)).toBeUndefined();
+	});
 });
 
 describe('spread ref normalization', () => {
@@ -875,5 +1162,355 @@ describe('spread ref normalization', () => {
 		expect(normalize_spread_props_for_ref_attr(null, outer_ref)).toBeNull();
 		expect(normalize_spread_props_for_ref_attr(undefined, outer_ref)).toBeUndefined();
 		expect(normalize_spread_props(props, outer_ref)).toEqual({ id: 'field', ref: outer_ref });
+	});
+
+	it('passes a single collected ref through unwrapped', () => {
+		/** @type {Array<unknown>} */
+		const events = [];
+		const node = {};
+		/** @param {object | null} value */
+		const named_callback = (value) => {
+			events.push(['named', value]);
+		};
+		const named_ref = create_ref_prop(() => named_callback);
+		/** @param {object | null} value */
+		const keyed_callback = (value) => {
+			events.push(['keyed', value]);
+		};
+		const keyed_ref = create_ref_prop(() => keyed_callback);
+
+		const named_only = normalize_spread_props({ id: 'a', onMount: named_ref });
+		expect(named_only).toMatchObject({ id: 'a' });
+		expect(named_only).not.toHaveProperty('onMount');
+		expect(/** @type {Record<PropertyKey, unknown>} */ (named_only).ref).toBe(named_ref);
+
+		const keyed_only = normalize_spread_props({ id: 'b', ref: keyed_ref });
+		expect(/** @type {Record<PropertyKey, unknown>} */ (keyed_only).ref).toBe(keyed_ref);
+
+		// Two collected refs merge in key order and stay wrapped.
+		const merged = normalize_spread_props({ first: named_ref, second: keyed_ref });
+		const merged_ref = /** @type {(value: object | null) => () => void} */ (
+			/** @type {Record<PropertyKey, unknown>} */ (merged).ref
+		);
+		expect(merged_ref).not.toBe(named_ref);
+		expect(merged_ref).not.toBe(keyed_ref);
+		const cleanup = merged_ref(node);
+		expect(events).toEqual([
+			['named', node],
+			['keyed', node],
+		]);
+		cleanup();
+		expect(events).toEqual([
+			['named', node],
+			['keyed', node],
+			['named', null],
+			['keyed', null],
+		]);
+	});
+
+	it('prepends a plain ref ahead of outer refs when no branded refs were collected', () => {
+		/** @type {Array<unknown>} */
+		const events = [];
+		const node = {};
+		/** @param {object | null} value */
+		const existing = (value) => {
+			events.push(['existing', value]);
+			return () => {
+				events.push(['existing cleanup']);
+			};
+		};
+		/** @param {object | null} value */
+		const outer_first = (value) => {
+			events.push(['outer1', value]);
+		};
+		/** @param {object | null} value */
+		const outer_second = (value) => {
+			events.push(['outer2', value]);
+		};
+
+		const normalized = normalize_spread_props(
+			{ id: 'field', ref: existing },
+			outer_first,
+			null,
+			outer_second,
+		);
+		const merged_ref = /** @type {(value: object | null) => () => void} */ (
+			/** @type {Record<PropertyKey, unknown>} */ (normalized).ref
+		);
+		expect(merged_ref).not.toBe(existing);
+
+		const cleanup = merged_ref(node);
+		expect(events).toEqual([
+			['existing', node],
+			['outer1', node],
+			['outer2', node],
+		]);
+		cleanup();
+		expect(events).toEqual([
+			['existing', node],
+			['outer1', node],
+			['outer2', node],
+			['existing cleanup'],
+			['outer1', null],
+			['outer2', null],
+		]);
+	});
+
+	it('returns a plain-ref spread at source identity when no outer refs are passed', () => {
+		/** @type {Array<unknown>} */
+		const ref_events = [];
+		/** @param {object | null} value */
+		const plain_ref = (value) => {
+			ref_events.push(['plain', value]);
+		};
+		const target = { id: 'plain', ref: plain_ref };
+		Object.defineProperty(target, 'hidden', {
+			enumerable: false,
+			value: 'secret',
+		});
+		/** @type {string[]} */
+		const events = [];
+		const props = observe_props(target, events);
+
+		const normalized = normalize_spread_props(props);
+
+		expect(normalized === props).toBe(true);
+		expect(ref_events).toEqual([]);
+		expect(events).toEqual([
+			'ownKeys',
+			'descriptor:id',
+			'get:id',
+			'descriptor:ref',
+			'get:ref',
+			'descriptor:hidden',
+		]);
+	});
+
+	it('checks enumerability through the captured intrinsic, not an own method', () => {
+		/** @type {string[]} */
+		const events = [];
+		let own_check_called = false;
+		const target = {
+			/** @returns {boolean} */
+			propertyIsEnumerable() {
+				own_check_called = true;
+				return false;
+			},
+			visible: 1,
+		};
+		Object.defineProperty(target, 'hidden', {
+			enumerable: false,
+			value: 'secret',
+		});
+		const props = observe_props(target, events);
+
+		const normalized = normalize_spread_props(props);
+
+		expect(own_check_called).toBe(false);
+		expect(normalized === props).toBe(true);
+		expect(Object.keys(normalized)).toEqual(['propertyIsEnumerable', 'visible']);
+	});
+
+	it('propagates strict-mode write failures from Object.prototype at the same iteration point', () => {
+		const getter_only = Symbol('getter only');
+		const read_only = Symbol('read only');
+		/** @type {Array<unknown>} */
+		const thrown = [];
+		try {
+			Object.defineProperty(Object.prototype, getter_only, {
+				configurable: true,
+				get() {
+					return 'inherited';
+				},
+			});
+			Object.defineProperty(Object.prototype, read_only, {
+				configurable: true,
+				value: 'frozen',
+				writable: false,
+			});
+			thrown.push(capture_error(() => normalize_spread_props({ before: 1, [getter_only]: 2 })));
+			thrown.push(capture_error(() => normalize_spread_props({ before: 1, [read_only]: 2 })));
+			const later_key = Symbol('later');
+			/** @type {symbol[]} */
+			const seen = [];
+			thrown.push(
+				capture_error(() =>
+					normalize_spread_props({
+						[getter_only]: 2,
+						get [later_key]() {
+							seen.push(later_key);
+							return 3;
+						},
+					}),
+				),
+			);
+			expect(seen).toEqual([]);
+		} finally {
+			delete (/** @type {Record<PropertyKey, unknown>} */ (Object.prototype)[getter_only]);
+			delete (/** @type {Record<PropertyKey, unknown>} */ (Object.prototype)[read_only]);
+		}
+		for (const error of thrown) {
+			expect(error).toBeInstanceOf(TypeError);
+		}
+	});
+
+	it('does not fire setters installed mid-iteration for already-written keys', () => {
+		const late_key = Symbol('late installed');
+		/** @type {Array<unknown>} */
+		const events = [];
+		const branded = create_ref_prop(() => () => {});
+		const props = {
+			first: 1,
+			get middle() {
+				Object.defineProperty(Object.prototype, 'first', {
+					configurable: true,
+					set(value) {
+						events.push(['set:first', value]);
+					},
+				});
+				Object.defineProperty(Object.prototype, late_key, {
+					configurable: true,
+					set(value) {
+						events.push(['set:late', value]);
+					},
+				});
+				return 2;
+			},
+			[late_key]: 3,
+			onMount: branded,
+		};
+		try {
+			const normalized = normalize_spread_props(props);
+			expect(normalized).toMatchObject({ first: 1, middle: 2 });
+			expect(Object.getOwnPropertyDescriptor(normalized, 'first')).toMatchObject({
+				value: 1,
+				enumerable: true,
+				writable: true,
+				configurable: true,
+			});
+			expect(events).toEqual([['set:late', 3]]);
+			expect(Object.prototype.hasOwnProperty.call(normalized, late_key)).toBe(false);
+			expect(/** @type {Record<PropertyKey, unknown>} */ (normalized).ref).toBe(branded);
+		} finally {
+			delete (/** @type {Record<PropertyKey, unknown>} */ (Object.prototype)['first']);
+			delete (/** @type {Record<PropertyKey, unknown>} */ (Object.prototype)[late_key]);
+		}
+	});
+
+	it('preserves __proto__ assignment semantics on the copied object', () => {
+		const custom_proto = { tag: 'custom' };
+		const props = { first: 1 };
+		Object.defineProperty(props, '__proto__', {
+			value: custom_proto,
+			enumerable: true,
+			writable: true,
+			configurable: true,
+		});
+		const branded = create_ref_prop(() => () => {});
+
+		const input = { ...{}, ...props, onMount: branded };
+		const normalized = normalize_spread_props(input);
+
+		expect(normalized).not.toBe(input);
+		expect(Object.getPrototypeOf(normalized)).toBe(custom_proto);
+		expect(Reflect.ownKeys(normalized)).toEqual(['first', 'ref']);
+		expect(/** @type {Record<PropertyKey, unknown>} */ (normalized).first).toBe(1);
+	});
+
+	it('resets a __proto__-re-prototyped copy to Object.prototype on the ref-attr variant', () => {
+		const custom_proto = { tag: 'custom' };
+		const props = { first: 1 };
+		Object.defineProperty(props, '__proto__', {
+			value: custom_proto,
+			enumerable: true,
+			writable: true,
+			configurable: true,
+		});
+		const branded = create_ref_prop(() => () => {});
+
+		const input = { ...props, onMount: branded };
+		const normalized = normalize_spread_props_for_ref_attr(input);
+
+		expect(normalized).not.toBe(input);
+		expect(Object.getPrototypeOf(normalized)).toBe(Object.prototype);
+		expect(Reflect.ownKeys(normalized)).toEqual(['first', 'ref']);
+		expect(/** @type {Record<PropertyKey, unknown>} */ (normalized).first).toBe(1);
+		expect_explicit_ref_descriptor(
+			normalized,
+			/** @type {Record<PropertyKey, unknown>} */ (normalized).ref,
+		);
+	});
+
+	it('returns a distinct object when an inherited setter observed the intermediate copy', () => {
+		/** @type {unknown} */
+		let captured;
+		Object.defineProperty(Object.prototype, 'watched', {
+			configurable: true,
+			/**
+			 * @param {unknown} value
+			 * @this {object}
+			 */
+			set(value) {
+				captured = this;
+			},
+		});
+		try {
+			const branded = create_ref_prop(() => () => {});
+			const normalized = normalize_spread_props_for_ref_attr({
+				watched: 1,
+				id: 'kept',
+				onMount: branded,
+			});
+
+			expect(captured).toBeDefined();
+			expect(normalized).not.toBe(captured);
+			expect(normalized).toMatchObject({ id: 'kept' });
+			expect(Object.prototype.hasOwnProperty.call(normalized, 'watched')).toBe(false);
+			expect_explicit_ref_descriptor(
+				normalized,
+				/** @type {Record<PropertyKey, unknown>} */ (normalized).ref,
+			);
+		} finally {
+			delete (/** @type {Record<PropertyKey, unknown>} */ (Object.prototype)['watched']);
+		}
+	});
+
+	it('attaches the merged ref non-enumerably on the fresh copy for the ref-attr variant', () => {
+		/** @type {Array<unknown>} */
+		const events = [];
+		const node = {};
+		/** @param {object | null} value */
+		const first_callback = (value) => {
+			events.push(['first', value]);
+		};
+		const first_ref = create_ref_prop(() => first_callback);
+		/** @param {object | null} value */
+		const second_callback = (value) => {
+			events.push(['second', value]);
+		};
+		const second_ref = create_ref_prop(() => second_callback);
+		/** @param {object | null} value */
+		const outer_ref = (value) => {
+			events.push(['outer', value]);
+		};
+		const props = { id: 'field', count: 2, onMount: first_ref, onUnmount: second_ref };
+
+		const normalized = normalize_spread_props_for_ref_attr(props, outer_ref);
+		const normalized_props = /** @type {Record<PropertyKey, unknown>} */ (normalized);
+
+		expect(normalized).not.toBe(props);
+		expect(normalized_props).toMatchObject({ id: 'field', count: 2 });
+		expect(normalized_props).not.toHaveProperty('onMount');
+		expect(normalized_props).not.toHaveProperty('onUnmount');
+		expect(Object.keys(normalized_props)).toEqual(['id', 'count']);
+		expect(Reflect.ownKeys(normalized_props)).toEqual(['id', 'count', 'ref']);
+		expect_explicit_ref_descriptor(normalized_props, normalized_props.ref);
+
+		/** @type {(value: object | null) => void} */ (normalized_props.ref)(node);
+		expect(events).toEqual([
+			['first', node],
+			['second', node],
+			['outer', node],
+		]);
 	});
 });

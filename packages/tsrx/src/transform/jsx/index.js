@@ -38,7 +38,6 @@ import {
 	jsx_id as build_jsx_id,
 } from '../../utils/builders.js';
 import * as b from '../../utils/builders.js';
-import { apply_lazy_transforms, preallocate_lazy_ids } from '../lazy.js';
 import {
 	find_first_top_level_await,
 	find_first_top_level_await_in_tsrx_function_body,
@@ -605,7 +604,6 @@ export function createJsxTransform(platform) {
 			helper_state: null,
 			hook_helpers_enabled: false,
 			available_bindings: new Map(),
-			lazy_next_id: 0,
 			filename: filename ?? null,
 			source,
 			collect,
@@ -643,10 +641,6 @@ export function createJsxTransform(platform) {
 		// hand back the same shape they were given.
 		ast = /** @type {AST.Program} */ (expand_child_code_blocks(ast));
 		ast = /** @type {AST.Program} */ (wrap_control_flow_expression_values(ast, transform_context));
-
-		if (!transform_context.typeOnly) {
-			preallocate_lazy_ids(ast, transform_context);
-		}
 
 		// Walked as `AST.Node` rather than `AST.Program`: zimmerframe keys its
 		// visitor map off the node type it is given, and only the `Node` union
@@ -871,36 +865,10 @@ export function createJsxTransform(platform) {
 			inject_try_imports(expanded, transform_context, effective_platform, suspense_source);
 		}
 
-		// Lower any `@{ … }` code blocks left in generated helper bodies before the
-		// lazy transform runs, so every `@{ … }` block / `@`-directive has already
-		// been lowered to its final closure / block shape. The lazy transform can
-		// then walk the complete function structure in one pass.
-		const lowered_program = lower_remaining_jsx_code_blocks(expanded, transform_context);
-
-		// Apply lazy destructuring transforms to module-level code (top-level function
-		// declarations, arrow functions, etc.).
-		// In type-only mode, ordinary lazy patterns survive untouched: esrap ignores the
-		// non-standard `lazy` flag, so `&{ a, b }` prints as `{ a, b }`, `let &[a]
-		// = expr` prints as `let [a] = expr`, and the bare statement-level form
-		// `&[x] = expr;` standalone assignment is the exception: it must take the
-		// same declaration path as runtime output so transparent editor-only wrappers
-		// cannot turn it into an eager destructure. The assignment-only preallocation
-		// below leaves params and declarations on their existing type-only path.
-		//
-		// Re-run `preallocate_lazy_ids` first. The initial pre-walk pass stamps
-		// `metadata.has_lazy_descendants` (the fast-path gate that tells
-		// `apply_lazy_transforms` a function body is worth walking) on the function
-		// boundaries that existed in the source. Lowering `@{ … }` blocks and
-		// `@if`/`@for`/`@switch`/`@try` directives introduces NEW function
-		// boundaries — scoped IIFEs and `.map(...)` callbacks — that wrap those same
-		// lazy patterns but were never stamped. Re-running over the lowered tree
-		// stamps them too (it is idempotent: already-allocated `lazy_id`s are kept),
-		// so lazy bindings declared inside a nested block or directive body are
-		// rewritten just like a flat function body.
-		preallocate_lazy_ids(lowered_program, transform_context, transform_context.typeOnly);
-		const final_program = /** @type {AST.Program} */ (
-			apply_lazy_transforms(lowered_program, new Map())
-		);
+		// Lower any `@{ … }` code blocks left in generated helper bodies, so every
+		// `@{ … }` block / `@`-directive has been lowered to its final closure /
+		// block shape before printing.
+		const final_program = lower_remaining_jsx_code_blocks(expanded, transform_context);
 
 		const result = print(
 			final_program,
@@ -2703,18 +2671,6 @@ export function collect_statement_bindings(statement, bindings) {
 		statement.id
 	) {
 		bindings.set(statement.id.name, statement.id);
-	}
-
-	// Statement-level lazy assignment: `&[x] = expr;` introduces `x` as a binding.
-	if (
-		statement.type === 'ExpressionStatement' &&
-		statement.expression?.type === 'AssignmentExpression' &&
-		statement.expression.operator === '=' &&
-		(statement.expression.left?.type === 'ObjectPattern' ||
-			statement.expression.left?.type === 'ArrayPattern') &&
-		statement.expression.left.lazy
-	) {
-		collect_pattern_bindings(statement.expression.left, bindings);
 	}
 }
 

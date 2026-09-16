@@ -32,6 +32,21 @@ export function BlogPage() @{
 					<h1>Blog</h1>
 					<section class="post-list" aria-label="Blog posts">
 						<article class="post-preview">
+							<p class="post-date">September 14, 2026</p>
+							<h2>
+								<a href="/blog/removing-lazy-destructuring">Removing lazy destructuring</a>
+							</h2>
+							<p>
+								The
+								{'&{ ... }'}
+								and
+								{'&[ ... ]'}
+								lazy patterns are gone. Destructuring is ordinary destructuring again, and reactive
+								state is read through each framework's own API.
+							</p>
+							<a class="read-link" href="/blog/removing-lazy-destructuring">Read the post</a>
+						</article>
+						<article class="post-preview">
 							<p class="post-date">June 7, 2026</p>
 							<h2>
 								<a href="/blog/rethinking-tsrx">Rethinking TSRX</a>

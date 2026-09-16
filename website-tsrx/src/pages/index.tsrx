@@ -16,15 +16,6 @@ const SNIPPET_HTML = highlight_tsrx(
 }`,
 );
 
-const SOLID_LAZY_HTML = highlight_tsrx(
-	`function Counter(&{ count, label }: Props) @{
-  <section>
-    <h2>{label}</h2>
-    <p>Count: {count}</p>
-  </section>
-}`,
-);
-
 const INLINE_LOCALS_HTML = highlight_tsrx(
 	`function Cart({ items }: { items: Item[] }) @{
   const subtotal = items.reduce((sum, item) => sum + item.price, 0);
@@ -190,21 +181,11 @@ export const IndexPage = () => @{
 					<p class="eyebrow">Ergonomics</p>
 					<h2 class="section-heading">Better ergonomics for today's frameworks.</h2>
 					<p class="section-body">
-						TSRX takes care of awkward target-specific details where the compiler can preserve the
-						runtime's semantics directly. The source stays readable for humans and predictable for
-						language models, while target transforms handle the mechanical parts that are safe to
-						automate.
+						TSRX takes care of the mechanical parts of component authoring where the compiler can
+						preserve the runtime's semantics directly. The source stays readable for humans and
+						predictable for language models, while target transforms handle the details that are
+						safe to automate.
 					</p>
-					<p class="section-body">
-						Solid props can be destructured eagerly. The
-						<code class="inline-code">{'&{ ... }'}</code>
-						pattern compiles to lazy getters, so reads stay reactive without forcing
-						<code class="inline-code">props.count</code>
-						everywhere and without losing type inference on the destructured names.
-					</p>
-					<pre class="code-block">
-						<code innerHTML={SOLID_LAZY_HTML} />
-					</pre>
 					<p class="section-body">
 						Locals can live next to the JSX that uses them. A statement container starts with
 						TypeScript setup and ends with one output node, so derived values sit beside the markup

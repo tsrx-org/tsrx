@@ -1,5 +1,90 @@
 # @tsrx/core
 
+## 0.2.2
+
+### Patch Changes
+
+- [#120](https://github.com/tsrx-org/tsrx/pull/120)
+  [`2d053f4`](https://github.com/tsrx-org/tsrx/commit/2d053f421f09c5c4936d8866bbeb44b924411dbb)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Fix a regression where a
+  spread attribute preceded by a comment or non-ASCII whitespace inside the braces
+  (`<div {/* c */ ...props} />`) failed to parse with `Unexpected token`. The peek
+  that decides how to tokenize the attribute brace only skipped ASCII whitespace,
+  so the ellipsis was read as raw template text. The token after an attribute `{`
+  is now always tokenized as JavaScript, which also lets shorthand attributes like
+  `{/* c */ id}` parse.
+
+## 0.2.1
+
+### Patch Changes
+
+- [#119](https://github.com/tsrx-org/tsrx/pull/119)
+  [`33d6093`](https://github.com/tsrx-org/tsrx/commit/33d60939c720d7d0bb8ab03790486a4c033dde96)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Fix AST line/column locations
+  for spread attributes whose `{...` spans multiple lines inside a TSRX template
+  body. The `...` was first read as raw template text up to the closing brace and
+  then re-tokenized, so the line breaks inside the spread were counted twice. This
+  misplaced diagnostics and made source-map generation throw
+  `Location line or line offsets length is out of bounds`. The spread is now
+  tokenized directly.
+- Updated dependencies
+  [[`449338e`](https://github.com/tsrx-org/tsrx/commit/449338e4f17ff0e0d0814a1e8dcb8745c5771589)]:
+  - @tsrx/runtime@0.2.1
+
+## 0.2.0
+
+### Minor Changes
+
+- [#110](https://github.com/tsrx-org/tsrx/pull/110)
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Remove the unused
+  `exclude_prop_from_object` language helper (also re-exported from
+  `@tsrx/core/runtime/language-helpers`). Its last in-repo callers, the Solid and
+  Vue `<Dynamic>` runtime wrappers, were replaced by compiler lowering; props are
+  plain objects, so a `const { is, ...rest } = props` spread covers the remaining
+  use.
+
+- [#110](https://github.com/tsrx-org/tsrx/pull/110)
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Remove the `extractPaths`
+  utility and the `DestructuredAssignment` type. Nothing in this repository used
+  them, and the emitted `_$_.exclude_from_object` / `_$_.array_slice` calls were
+  Ripple runtime names baked into the target-neutral core; the Ripple compiler is
+  the only consumer and now owns that lowering.
+
+- [#110](https://github.com/tsrx-org/tsrx/pull/110)
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Remove lazy destructuring
+  (`&{ ... }` and `&[ ... ]`) from the TSRX language, per
+  [RFC #106](https://github.com/tsrx-org/tsrx/discussions/106). `&` followed by
+  `{` or `[` in a binding or assignment position is now a plain syntax error, as
+  it is in TypeScript. The `transform/lazy.js` pass, the `lazy` flag on
+  `ObjectPattern` / `ArrayPattern`, the `lazy` / `lazy_fallback` binding kinds,
+  the lazy AST metadata, the `UNSUPPORTED_LAZY_ASSIGNMENT_POSITION` diagnostic,
+  and the `createLazyContext`, `collectLazyBindings`,
+  `collectLazyBindingsFromStatements`, `preallocateLazyIds`,
+  `applyLazyTransforms`, and `validateUnsupportedLazyAssignmentPosition` exports
+  are gone. Use ordinary destructuring or the target's own state API instead.
+
+- [#113](https://github.com/tsrx-org/tsrx/pull/113)
+  [`79c1359`](https://github.com/tsrx-org/tsrx/commit/79c1359650d7e74914e818bbf179b6a41d06370c)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Remove the `array_slice` and
+  `iterable_array_from` language helpers (also re-exported from
+  `@tsrx/core/runtime/language-helpers`) and the `buildFallback` AST utility. They
+  only backed lazy destructuring and the `extractPaths` lowering, both removed;
+  their last consumer, the Ripple compiler, now lowers rest and default patterns
+  with native destructuring.
+
+### Patch Changes
+
+- Updated dependencies
+  [[`6ac7e34`](https://github.com/tsrx-org/tsrx/commit/6ac7e3422a71f19f7defb5dd7df3e8df5d089bfe),
+  [`734023b`](https://github.com/tsrx-org/tsrx/commit/734023bbee936d50c67c85396014ad2373f5c550),
+  [`dcc0283`](https://github.com/tsrx-org/tsrx/commit/dcc0283a7470773f8a169c8750344ad147c30c99),
+  [`79c1359`](https://github.com/tsrx-org/tsrx/commit/79c1359650d7e74914e818bbf179b6a41d06370c),
+  [`c2bdb3d`](https://github.com/tsrx-org/tsrx/commit/c2bdb3dbd94f9db0a0a075bc53072da343d73091)]:
+  - @tsrx/runtime@0.2.0
+
 ## 0.1.71
 
 ### Patch Changes

@@ -239,6 +239,40 @@ describe('TSRX TextMate grammar: JSX expression boundaries', () => {
 		expect(find(tokens, '/>').scopes).toContain('punctuation.definition.tag.end.js');
 	});
 
+	it.each([
+		['items.map(renderItem)', 'map', true],
+		['items?.map(renderItem)', 'map', true],
+		['items.map?.(renderItem)', 'map', true],
+		['items . map(renderItem)', 'map', true],
+		['model.items.map(renderItem)', 'map', true],
+		['items.map<string>(renderItem)', 'map', true],
+		['format(item)', 'format', false],
+		['format?.(item)', 'format', false],
+		['format<string>(item)', 'format', false],
+		['items.map(item => format(item))', 'format', false],
+	])('distinguishes member calls in %s', (expression, name, isMethod) => {
+		const tokens = tokenize(`const view = <p>{${expression}}</p>;`);
+		const scopes = find(tokens, name).scopes;
+
+		expect(scopes).toContain('entity.name.function.js');
+		expect(scopes.includes('meta.method-call.js')).toBe(isMethod);
+	});
+
+	it.each([
+		['<div {...getProps()} />', false],
+		['<div {... getProps()} />', false],
+		['<p>{[...getProps()]}</p>', false],
+		['<p>{render(...getProps())}</p>', false],
+		['<div {...model.getProps()} />', true],
+		['<div {...model?.getProps()} />', true],
+	])('distinguishes spread operands in %s', (expression, isMethod) => {
+		const tokens = tokenize(`const view = ${expression};`);
+		const scopes = find(tokens, 'getProps').scopes;
+
+		expect(scopes).toContain('entity.name.function.js');
+		expect(scopes.includes('meta.method-call.js')).toBe(isMethod);
+	});
+
 	it('does not reclassify relational, shift, generic, or type syntax as JSX', () => {
 		const tokens = tokenize(
 			[

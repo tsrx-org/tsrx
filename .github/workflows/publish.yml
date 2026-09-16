@@ -45,7 +45,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Disallow major and minor bumps in changesets
+      - name: Disallow major bumps in changesets
         run: pnpm changeset:check
 
       - name: Detect IntelliJ plugin release
@@ -93,11 +93,11 @@ jobs:
 
       - name: Publish to npm
         id: changesets
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
-          publish: pnpm changeset:publish
+          github-token: ${{ github.token }}
+          publish-script: pnpm changeset:publish
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PNPM_CONFIG_PROVENANCE: true
           # keep for now just in case
           NPM_CONFIG_PROVENANCE: true

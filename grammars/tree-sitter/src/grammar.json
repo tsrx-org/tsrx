@@ -4403,40 +4403,6 @@
         {
           "type": "SYMBOL",
           "name": "array_pattern"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "lazy_object_pattern"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "lazy_array_pattern"
-        }
-      ]
-    },
-    "lazy_object_pattern": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "&"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "object_pattern"
-        }
-      ]
-    },
-    "lazy_array_pattern": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "&"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "array_pattern"
         }
       ]
     },

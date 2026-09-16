@@ -213,9 +213,6 @@ export interface BaseNodeMetaData {
 	returned_tsrx_child?: boolean;
 	forceMapping?: boolean;
 	generated_loop_skip_if?: boolean;
-	lazy_id?: string;
-	/** The current var scope contains a lazy `var` binding in a JavaScript loop header. */
-	has_lazy_var_loop_descendants?: boolean;
 	disable_verification?: boolean;
 	/** Map this synthesized identifier's borrowed source span for diagnostics only (no hover/navigation). */
 	verify_only?: boolean;
@@ -247,10 +244,6 @@ export interface BaseNodeMetaData {
 	 * renders. Callers place or inline the arrow depending on the slot.
 	 */
 	is_branch_arrow?: boolean;
-	lazy_param_binding_mappings?: Array<{
-		source: AST.Identifier;
-		generated: AST.Identifier | AST.Literal;
-	}>;
 }
 
 export interface FunctionMetaData extends BaseNodeMetaData {
@@ -258,7 +251,6 @@ export interface FunctionMetaData extends BaseNodeMetaData {
 	native_tsrx_function?: boolean;
 	is_method?: boolean;
 	tracked?: boolean;
-	has_lazy_descendants?: boolean;
 	/** The component's extracted `<style>` stylesheet (element-level scoped-class info lives on BaseNodeMetaData's `css`). */
 	component_css?: AST.CSS.StyleSheet | null;
 	synthetic_children?: boolean;
@@ -390,14 +382,6 @@ declare module 'estree' {
 		typeAnnotation?: TSTypeAnnotation | undefined;
 		decorators: TSESTree.Decorator[];
 		optional: boolean;
-	}
-
-	// Lazy destructuring patterns (&{...} and &[...])
-	interface ObjectPattern {
-		lazy?: boolean;
-	}
-	interface ArrayPattern {
-		lazy?: boolean;
 	}
 
 	// Target analysis may mark a whole member expression as tracked metadata.
@@ -1705,14 +1689,7 @@ export type DeclarationKind =
  * Binding kinds
  */
 export type BindingKind =
-	| 'normal'
-	| 'for_pattern'
-	| 'rest_prop'
-	| 'prop'
-	| 'prop_fallback'
-	| 'lazy'
-	| 'lazy_fallback'
-	| 'index';
+	'normal' | 'for_pattern' | 'rest_prop' | 'prop' | 'prop_fallback' | 'index';
 
 /**
  * A variable binding in a scope
@@ -1745,10 +1722,6 @@ export interface Binding {
 		pattern?: AST.Identifier;
 		is_tsrx_object?: boolean;
 		is_template_value?: boolean;
-		lazy_array_source?: string;
-		lazy_array_index?: number;
-		lazy_array_source_tracked?: boolean;
-		lazy_array_rest?: boolean;
 		typeAnnotation?: AST.TypeNode;
 	} | null;
 	/** Kind of binding */
@@ -2034,33 +2007,6 @@ export type JsxVisitorContext = ZimmerframeContext<AST.Node, JsxTransformContext
 /**
  * Delegated event result
  */
-/**
- * Represents the path of a destructured assignment from either a declaration
- * or assignment expression. For example, given `const { foo: { bar: baz } } = quux`,
- * the path of `baz` is `foo.bar`.
- */
-export interface DestructuredAssignment {
-	/**
-	 * The node the destructuring path ends in. Can be a member expression only
-	 * for assignment expressions.
-	 */
-	node: AST.Identifier | AST.MemberExpression;
-	/** `true` if this is a `...rest` destructuring. */
-	is_rest: boolean;
-	/** `true` if this has a fallback value like `const { foo = 'bar' } = ..`. */
-	has_default_value: boolean;
-	/**
-	 * The value of the current path. Will be a call expression if a rest element
-	 * or default is involved — e.g. `const { foo: { bar: baz = 42 }, ...rest } =
-	 * quux` — since we can't represent `baz` or `rest` purely as a path. Will be
-	 * an await expression in case of an async default value
-	 * (`const { foo = await bar } = ...`).
-	 */
-	expression: (object: AST.Identifier | AST.CallExpression) => AST.Expression;
-	/** Like `expression` but without default values. */
-	update_expression: (object: AST.Identifier) => AST.Expression;
-}
-
 /** Render state threaded through the stylesheet printer. */
 export interface StylesheetRenderState {
 	code: MagicString;
@@ -2174,29 +2120,6 @@ export interface MaybeLocated {
 	start?: number;
 	end?: number;
 	loc?: AST.SourceLocation | null;
-}
-
-/** The lazy destructuring patterns: `&{ … }` and `&[ … ]`. */
-export type LazyPattern = AST.ObjectPattern | AST.ArrayPattern;
-
-/** Id allocation state for the lazy destructuring transform. */
-export interface LazyContext {
-	lazy_next_id: number;
-}
-
-/** A name introduced by a lazy `&{ … }` / `&[ … ]` destructuring pattern. */
-export interface LazyBinding {
-	/** The generated identifier the pattern was replaced with (`__lazy0`). */
-	source_name: string;
-	/**
-	 * Builds the access that reads this binding off the generated source
-	 * identifier (`__lazy0.name`, `__lazy0[1]`). `reference` is the identifier
-	 * being rewritten; its source range is carried onto the generated property
-	 * so mappings still point at the authored name.
-	 */
-	read: (
-		reference?: AST.Identifier | ESTreeJSX.JSXIdentifier,
-	) => AST.Identifier | AST.MemberExpression;
 }
 
 export type TopScopedClasses = Map<

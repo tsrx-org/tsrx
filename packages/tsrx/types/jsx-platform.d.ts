@@ -56,7 +56,6 @@ export interface JsxTransformContext {
 	helper_state: JsxHelperState | null;
 	hook_helpers_enabled: boolean;
 	available_bindings: Map<string, AST.Identifier>;
-	lazy_next_id: number;
 	inside_element_child?: boolean;
 	/** Full source text for source-aware diagnostics. */
 	source: string;
@@ -68,7 +67,7 @@ export interface JsxTransformContext {
 	errors: CompileError[] | undefined;
 	/** Module-level comments used to honor `@tsrx-ignore` / `@tsrx-expect-error`. */
 	comments: AST.CommentWithLocation[] | undefined;
-	/** True when emitting a type-only virtual TSX module; preserves lazy destructuring patterns. */
+	/** True when emitting a type-only virtual TSX module. */
 	typeOnly: boolean;
 	/**
 	 * True when generated nodes may be anchored on the directive keyword that
@@ -123,10 +122,7 @@ export interface JsxTransformOptions {
 	moduleScopedHookComponents?: boolean;
 	/**
 	 * Emit a type-only virtual TSX module — output is fed to TypeScript for
-	 * editor diagnostics / completions and never executed. Skips the lazy
-	 * destructuring rewrite (`&{ a, b }` → `__lazy0: { a: any; b: any }`) so
-	 * destructuring patterns survive and TypeScript can flow real types to the
-	 * bindings.
+	 * editor diagnostics / completions and never executed.
 	 */
 	typeOnly?: boolean;
 	/**
