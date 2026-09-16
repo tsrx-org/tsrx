@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.4
+
+### Patch Changes
+
+- [#101](https://github.com/tsrx-org/tsrx/pull/101)
+  [`1c9d76a`](https://github.com/tsrx-org/tsrx/commit/1c9d76a60b4506f2992cd029e68808c592571ead)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Recognize multiline JSX
+  expression boundaries and align theme-relative highlighting roles for member
+  access inside embedded JSX expressions. Preserve ordinary function-call
+  highlighting when mapping embedded JSX members to WebStorm theme roles.
+
 ## 2.1.3
 
 ### Patch Changes
