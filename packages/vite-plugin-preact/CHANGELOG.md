@@ -1,5 +1,14 @@
 # @tsrx/vite-plugin-preact
 
+## 0.0.99
+
+### Patch Changes
+
+- Updated dependencies
+  [[`2d053f4`](https://github.com/tsrx-org/tsrx/commit/2d053f421f09c5c4936d8866bbeb44b924411dbb)]:
+  - @tsrx/core@0.2.2
+  - @tsrx/preact@0.2.2
+
 ## 0.0.98
 
 ### Patch Changes
