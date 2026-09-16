@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "preview": "ripple-preview"
+    "preview": "ripple-preview",
+    "typecheck": "tsgo --noEmit -p tsconfig.json"
   },
   "keywords": [],
   "author": "",
@@ -28,11 +29,13 @@
     "@tsrx/vue": "workspace:*",
     "octane": "^0.1.6",
     "prettier": "catalog:",
-    "shiki": "catalog:"
+    "shiki": "catalog:",
+    "vue": "3.6.0-beta.12"
   },
   "devDependencies": {
-    "@tsrx/typescript-plugin": "workspace:*",
     "@ripple-ts/vite-plugin": "catalog:default",
+    "@tsrx/typescript-plugin": "workspace:*",
+    "@types/node": "catalog:default",
     "ripple": "catalog:default",
     "typescript": "catalog:default",
     "vite": "catalog:default"

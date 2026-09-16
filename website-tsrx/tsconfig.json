@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2023",
     "module": "ESNext",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "allowJs": true,
     "checkJs": true,
     "esModuleInterop": true,
@@ -18,7 +18,17 @@
     "noEmit": true,
     "jsx": "preserve",
     "jsxImportSource": "ripple",
-    "plugins": [{ "name": "@tsrx/typescript-plugin" }]
+    "plugins": [
+      {
+        "name": "@tsrx/typescript-plugin"
+      }
+    ],
+    "types": ["node"],
+    "paths": {
+      "@tsrx/core": ["../packages/tsrx/src/index.js"],
+      "@tsrx/core/types": ["../packages/tsrx/types/index.d.ts"],
+      "@tsrx/core/types/*": ["../packages/tsrx/types/*"]
+    }
   },
   "exclude": ["node_modules", "dist", "api"]
 }

@@ -6,17 +6,23 @@ import {
 	type ViewUpdate,
 } from '@codemirror/view';
 import { type Extension, StateEffect, StateField } from '@codemirror/state';
-import { createHighlighter, type ThemedToken, type Highlighter } from 'shiki';
+import {
+	createHighlighter,
+	type ThemedToken,
+	type HighlighterCore,
+	type LanguageRegistration,
+} from 'shiki';
 import tsrx_grammar from '../../../grammars/textmate/tsrx.tmLanguage.json';
 
 const modified_grammar = {
-	...tsrx_grammar,
+	// JSON inference cannot express TextMate's sparse capture maps.
+	...(tsrx_grammar as unknown as LanguageRegistration),
 	embeddedLangs: ['jsx', 'tsx', 'css'],
 };
 
-let highlighter_promise: Promise<Highlighter> | null = null;
+let highlighter_promise: Promise<HighlighterCore> | null = null;
 
-function get_highlighter(): Promise<Highlighter> {
+function get_highlighter(): Promise<HighlighterCore> {
 	if (!highlighter_promise) {
 		highlighter_promise = createHighlighter({
 			themes: ['dark-plus'],
@@ -26,15 +32,15 @@ function get_highlighter(): Promise<Highlighter> {
 				'jsx',
 				'tsx',
 				'css',
-				modified_grammar as any,
-				{ ...(modified_grammar as any), name: 'tsrx' },
+				modified_grammar,
+				{ ...modified_grammar, name: 'tsrx' },
 			],
 		});
 	}
 	return highlighter_promise;
 }
 
-function build_decorations(doc: string, highlighter: Highlighter, lang: string): DecorationSet {
+function build_decorations(doc: string, highlighter: HighlighterCore, lang: string): DecorationSet {
 	if (!doc) return Decoration.none;
 
 	let tokens: ThemedToken[][];

@@ -1,7 +1,7 @@
 import { ripple } from '@ripple-ts/vite-plugin';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 
-function mount_after_ssr() {
+function mount_after_ssr(): Plugin {
 	const source_id = 'virtual:ripple-hydrate';
 	const resolved_id = '\0website-tsrx-mount-after-ssr';
 
@@ -69,6 +69,8 @@ const route_modules = import.meta.glob('/src/pages/*.tsrx');
 }
 
 export default defineConfig({
+	// The tsconfig core aliases unify declarations, not compiler runtimes.
+	resolve: { tsconfigPaths: false },
 	define: {
 		'import.meta.env.TEST': process.env.VITEST ? 'true' : 'false',
 	},

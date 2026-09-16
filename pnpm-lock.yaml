@@ -918,12 +918,9 @@ importers:
       is-reference:
         specifier: catalog:default
         version: 3.0.3
-      vue:
-        specifier: '>=3.5'
-        version: 3.5.29(typescript@5.9.3)
       vue-jsx-vapor:
         specifier: '>=3.2.14'
-        version: 3.2.14(csstype@3.2.3)(esbuild@0.27.3)(vite@8.1.5(@types/node@25.3.3)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))(vue@3.5.29(typescript@5.9.3))
+        version: 3.2.14(csstype@3.2.3)(esbuild@0.27.3)(vite@8.1.5(@types/node@25.3.3)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))(vue@3.6.0-beta.12(typescript@5.9.3))
       zimmerframe:
         specifier: catalog:default
         version: 1.1.4
@@ -937,6 +934,9 @@ importers:
       typescript:
         specifier: catalog:default
         version: 5.9.3
+      vue:
+        specifier: 3.6.0-beta.12
+        version: 3.6.0-beta.12(typescript@5.9.3)
 
   packages/tsrx-vue-runtime:
     dependencies:
@@ -1377,6 +1377,9 @@ importers:
       shiki:
         specifier: 'catalog:'
         version: 4.0.1
+      vue:
+        specifier: 3.6.0-beta.12
+        version: 3.6.0-beta.12(typescript@5.9.3)
     devDependencies:
       '@ripple-ts/vite-plugin':
         specifier: catalog:default
@@ -1384,6 +1387,9 @@ importers:
       '@tsrx/typescript-plugin':
         specifier: workspace:*
         version: link:../packages/typescript-plugin
+      '@types/node':
+        specifier: catalog:default
+        version: 24.11.0
       ripple:
         specifier: catalog:default
         version: 0.4.0(@typescript-eslint/types@8.56.1)(typescript@5.9.3)
@@ -1392,7 +1398,7 @@ importers:
         version: 5.9.3
       vite:
         specifier: catalog:default
-        version: 8.1.5(@types/node@25.3.3)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1)
+        version: 8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1)
 
 packages:
 

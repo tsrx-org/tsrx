@@ -6,6 +6,7 @@ on:
     tags: ["!**"]
     paths:
       - "packages/**"
+      - "website-tsrx/**"
       - "grammars/**"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -19,6 +20,7 @@ on:
     branches: [main, develop]
     paths:
       - "packages/**"
+      - "website-tsrx/**"
       - "grammars/**"
       - "package.json"
       - "pnpm-lock.yaml"
