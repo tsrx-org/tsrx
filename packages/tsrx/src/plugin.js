@@ -3784,12 +3784,13 @@ export function TSRXPlugin(config) {
 						}
 					}
 
-					// Inside a template body `next()` would otherwise read `...` as raw
-					// template text, scanning (and counting line breaks) up to the closing
-					// brace. Suppress that one token so the ellipsis tokenizes directly.
-					if (this.input.startsWith('...', name_start)) {
-						this.#suppressTemplateRawTextToken = true;
-					}
+					// Inside a native element `next()` would otherwise read whatever follows
+					// the brace as raw template text, scanning (and counting line breaks) up
+					// to the closing brace. An attribute brace is only ever followed by
+					// JavaScript (a spread or a shorthand name), so suppress that one token
+					// and let acorn's `skipSpace` handle any comments or Unicode whitespace
+					// before it instead of replicating them in the peek above.
+					this.#suppressTemplateRawTextToken = true;
 				}
 
 				if (this.eat(tt.braceL)) {
