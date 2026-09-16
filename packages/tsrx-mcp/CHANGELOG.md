@@ -1,5 +1,23 @@
 # @tsrx/mcp
 
+## 0.1.4
+
+### Patch Changes
+
+- [#92](https://github.com/tsrx-org/tsrx/pull/92)
+  [`0e3f36f`](https://github.com/tsrx-org/tsrx/commit/0e3f36fb824e3fa7a74f3464b24a36679052872d)
+  Thanks [@kotarotaniguchi0523](https://github.com/kotarotaniguchi0523)! - Add
+  Hono server and DOM compiler targets with Vite and Bun integrations. The
+  compilers and build integrations support the shared compile-time platform flags;
+  DOM editor selection remains explicit, and DOM async-component validation stays
+  conservative and same-module.
+
+  Respect later object-property overrides during DOM async-component validation,
+  and add server/DOM targets and supported examples to the website playground.
+
+- Updated dependencies []:
+  - @tsrx/prettier-plugin@0.4.4
+
 ## 0.1.3
 
 ### Patch Changes
