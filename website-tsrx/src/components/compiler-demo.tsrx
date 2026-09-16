@@ -195,6 +195,9 @@ export function CompilerDemo() @{
 
 			const compile_source = async (source: string) => {
 				latest_source = source;
+				const current_request_id = ++request_id;
+				active_controller?.abort();
+				active_controller = null;
 
 				if (source.trim().length === 0) {
 					error_message.value = '';
@@ -210,12 +213,11 @@ export function CompilerDemo() @{
 					return;
 				}
 
-				const current_request_id = ++request_id;
 				status.value = `Compiling ${TARGET_LABELS[selected_target.value] ?? 'selected target'}...`;
 				error_message.value = '';
 
-				active_controller?.abort();
-				active_controller = new AbortController();
+				const controller = new AbortController();
+				active_controller = controller;
 
 				try {
 					const response = await fetch('/api/compile', {
@@ -224,7 +226,7 @@ export function CompilerDemo() @{
 							'Content-Type': 'application/json',
 						},
 						body: JSON.stringify({ source, target: selected_target.value }),
-						signal: active_controller.signal,
+						signal: controller.signal,
 					});
 
 					const payload = await response.json();
@@ -250,7 +252,7 @@ export function CompilerDemo() @{
 						second: '2-digit',
 					});
 				} catch (error) {
-					if (disposed || active_controller?.signal.aborted) {
+					if (disposed || current_request_id !== request_id || controller.signal.aborted) {
 						return;
 					}
 
