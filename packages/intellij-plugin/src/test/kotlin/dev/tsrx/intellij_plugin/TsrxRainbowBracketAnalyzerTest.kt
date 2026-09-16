@@ -30,7 +30,7 @@ class TsrxRainbowBracketAnalyzerTest : BasePlatformTestCase() {
 		val source = """
 			function View() @{
 				const value = ({ items: [1] });
-				return <><Panel prop={{ x: [call()] }} /></>;
+				<><Panel prop={{ x: [call()] }} /></>
 			}
 		""".trimIndent()
 		val tokens = scopedTokens(source)
@@ -46,7 +46,7 @@ class TsrxRainbowBracketAnalyzerTest : BasePlatformTestCase() {
 	fun testTracksJsxTagsSeparatelyFromJavaScriptNesting() {
 		val source = """
 			function View() @{
-				return <Panel value={{ items: [call()] }}><span>{value}</span></Panel>;
+				<Panel value={{ items: [call()] }}><span>{value}</span></Panel>
 			}
 		""".trimIndent()
 		val structures = analyze(source).structures

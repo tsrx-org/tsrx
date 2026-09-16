@@ -55,12 +55,12 @@ Run these checks in WebStorm 2025.2.4 with a clean profile:
    expression braces. Tag names, comparison operators, and type-parameter angles
    must retain their normal syntax colors.
 3. Create an equivalent `.tsx` copy by changing `function View() @{` to
-   `function View() {`. Compare shared JavaScript and JSX punctuation side by
-   side, including JSX inside attributes, with mixed-family cycling both enabled
-   and disabled. JSX tags cycle independently of JavaScript delimiters. In
-   per-family mode, a different bracket family or embedded-expression boundary
-   starts a new cycle. TSRX additionally colors fragment punctuation, which native
-   Rainbow leaves uncolored.
+   `function View() {` and adding `return` before the final fragment. Compare
+   shared JavaScript and JSX punctuation side by side, including JSX inside
+   attributes, with mixed-family cycling both enabled and disabled. JSX tags cycle
+   independently of JavaScript delimiters. In per-family mode, a different bracket
+   family or embedded-expression boundary starts a new cycle. TSRX additionally
+   colors fragment punctuation, which native Rainbow leaves uncolored.
 4. Toggle Rainbow globally, each bracket family, first-level suppression,
    empty-pair suppression, the `TSRX` language blacklist, HTML-inside-JavaScript,
    round colors for all bracket kinds, mixed-family cycling, and template-string

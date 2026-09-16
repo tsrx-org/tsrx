@@ -70,7 +70,7 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 	fun testKindFilteringDoesNotRenumberMixedDepth() {
 		val source = """
 			function View() @{
-				return <Panel value={{ items: [call()] }} />;
+				<Panel value={{ items: [call()] }} />
 			}
 		""".trimIndent()
 		val allKinds = collect(source)
@@ -90,7 +90,7 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 	fun testPerFamilyDepthAndRoundColorOverride() {
 		val source = """
 			function View() @{
-				return <Panel value={{ items: [call()] }} />;
+				<Panel value={{ items: [call()] }} />
 			}
 		""".trimIndent()
 		val perFamily = collect(source, settings = DEFAULT_SETTINGS.copy(cycleAcrossAllKinds = false))
