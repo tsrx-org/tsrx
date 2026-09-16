@@ -8,6 +8,24 @@ import org.jetbrains.plugins.textmate.language.syntax.lexer.TextMateElementType
 import org.jetbrains.plugins.textmate.language.syntax.lexer.TextMateScope
 
 class TsrxRainbowBracketAnalyzerTest : BasePlatformTestCase() {
+	fun testPreservesTagsNestedInsideAttributes() {
+		for (source in listOf(
+			"const view = <Panel header={<Icon />} />;",
+			"const view = <Panel header={<Icon />}><span /></Panel>;",
+			"const view = <Panel header={<Title><Icon /></Title>} />;",
+		)) {
+			val tags = analyze(source).structures.filter { it.kind == TsrxRainbowBracketKind.ANGLE }
+			assertEquals(
+				source,
+				source.substring(source.indexOf("<Panel"), source.lastIndexOf(';')),
+				tags.first().span.substring(source),
+			)
+			assertEquals(source, 0, tags.first().familyLevel)
+			assertEquals(source, 1, tags[1].familyLevel)
+			assertEquals(source, if ("<span" in source || "<Title" in source) 3 else 2, tags.size)
+		}
+	}
+
 	fun testCharacterizesStructuralTextMateScopes() {
 		val source = """
 			function View() @{
@@ -25,7 +43,7 @@ class TsrxRainbowBracketAnalyzerTest : BasePlatformTestCase() {
 		assertTrue(tokens.any { it.text == "/>" && it.scopes.first() == "punctuation.definition.tag.end.js" })
 	}
 
-	fun testBuildsOneMixedHierarchyAcrossTsrxJsxAndJavaScript() {
+	fun testTracksJsxTagsSeparatelyFromJavaScriptNesting() {
 		val source = """
 			function View() @{
 				return <Panel value={{ items: [call()] }}><span>{value}</span></Panel>;
@@ -37,13 +55,13 @@ class TsrxRainbowBracketAnalyzerTest : BasePlatformTestCase() {
 			listOf(
 				"ROUND:():0:0:ORDINARY",
 				"CURLY:{}:0:0:TEMPLATE_BLOCK",
-				"ANGLE:<></>:1:0:JSX_TAG",
-				"CURLY:{}:2:1:JSX_EXPRESSION",
-				"CURLY:{}:3:2:ORDINARY",
-				"SQUARE:[]:4:0:ORDINARY",
-				"ROUND:():5:0:ORDINARY",
-				"ANGLE:<></>:2:1:JSX_TAG",
-				"CURLY:{}:3:1:JSX_EXPRESSION",
+				"ANGLE:<></>:0:0:JSX_TAG",
+				"CURLY:{}:1:0:JSX_EXPRESSION",
+				"CURLY:{}:2:0:ORDINARY",
+				"SQUARE:[]:3:0:ORDINARY",
+				"ROUND:():4:0:ORDINARY",
+				"ANGLE:<></>:1:1:JSX_TAG",
+				"CURLY:{}:1:0:JSX_EXPRESSION",
 			),
 			structures.map { structure ->
 				val punctuation = structure.punctuation.joinToString("") { range ->

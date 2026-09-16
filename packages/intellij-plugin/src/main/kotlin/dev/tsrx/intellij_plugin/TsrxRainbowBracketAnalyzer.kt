@@ -14,7 +14,7 @@ internal object TsrxRainbowBracketAnalyzer {
 	): TsrxRainbowBracketAnalysis {
 		val metrics = MutableMetrics()
 		val delimiterCandidates = mutableListOf<DelimiterCandidate>()
-		var pendingTag: PendingTag? = null
+		val pendingTags = ArrayDeque<PendingTag>()
 		val tags = mutableListOf<Tag?>()
 		lexer.start(source)
 
@@ -35,19 +35,19 @@ internal object TsrxRainbowBracketAnalyzer {
 								closing = source.tokenEquals(start, end, "</"),
 								order = tags.size,
 							)
-							pendingTag = PendingTag(begin, mutableListOf(range))
+							pendingTags.addLast(PendingTag(begin, mutableListOf(range)))
 							tags += null
 							metrics.stackOperations += 1
 						} else {
-							pendingTag?.punctuation?.add(range)
+							pendingTags.peekLast()?.punctuation?.add(range)
 						}
 					}
 
-					TAG_END_SCOPE -> pendingTag?.let { current ->
+					TAG_END_SCOPE -> pendingTags.peekLast()?.let { current ->
 						val range = TextRange(start, end)
 						current.punctuation.add(range)
 						if (source.isOuterTagEnd(start, end)) {
-							pendingTag = null
+							pendingTags.removeLast()
 							metrics.stackOperations += 1
 							source.tagIdentity(
 								current.begin.range.endOffset,
@@ -351,34 +351,46 @@ internal object TsrxRainbowBracketAnalyzer {
 		metrics: MutableMetrics,
 		checkCanceled: () -> Unit,
 	): List<TsrxRainbowBracketStructure> {
-		val active = ArrayDeque<PendingStructure>()
-		val familyCounts = IntArray(TsrxRainbowBracketKind.entries.size)
+		val active = ArrayDeque<TsrxRainbowBracketStructure>()
+		var tagDepth = 0
 		return buildList {
 			for (structure in structures) {
 				checkCanceled()
 				while (active.isNotEmpty()) {
 					metrics.intervalComparisons += 1
 					if (structure.span.startOffset < active.getLast().span.endOffset) break
-					familyCounts[active.removeLast().kind.ordinal] -= 1
+					if (active.removeLast().kind == TsrxRainbowBracketKind.ANGLE) tagDepth -= 1
 					metrics.stackOperations += 1
 				}
-				add(
-					TsrxRainbowBracketStructure(
-						kind = structure.kind,
-						origin = structure.origin,
-						span = structure.span,
-						punctuation = structure.punctuation,
-						mixedLevel = active.size,
-						familyLevel = familyCounts[structure.kind.ordinal],
-						isEmpty = structure.isEmpty,
-					),
+				val parent = active.peekLast()
+				val isTag = structure.kind == TsrxRainbowBracketKind.ANGLE
+				val leveled = TsrxRainbowBracketStructure(
+					kind = structure.kind,
+					origin = structure.origin,
+					span = structure.span,
+					punctuation = structure.punctuation,
+					// Native Rainbow counts JSX tags independently of JavaScript.
+					mixedLevel = if (isTag) tagDepth else active.size - tagDepth,
+					// Per-family cycles restart at a different bracket family or
+					// embedded-expression boundary, rather than counting all ancestors.
+					familyLevel = when {
+						isTag -> tagDepth
+						parent?.kind == structure.kind &&
+							parent.origin.familyOrigin() == structure.origin.familyOrigin() -> parent.familyLevel + 1
+						else -> 0
+					},
+					isEmpty = structure.isEmpty,
 				)
-				active.addLast(structure)
-				familyCounts[structure.kind.ordinal] += 1
+				add(leveled)
+				active.addLast(leveled)
+				if (isTag) tagDepth += 1
 				metrics.stackOperations += 1
 			}
 		}
 	}
+
+	private fun TsrxRainbowBracketOrigin.familyOrigin(): TsrxRainbowBracketOrigin =
+		if (this == TsrxRainbowBracketOrigin.TEMPLATE_BLOCK) TsrxRainbowBracketOrigin.ORDINARY else this
 
 	private fun <K> MutableMap<K, Int>.decrement(key: K) {
 		this[key] = getValue(key) - 1

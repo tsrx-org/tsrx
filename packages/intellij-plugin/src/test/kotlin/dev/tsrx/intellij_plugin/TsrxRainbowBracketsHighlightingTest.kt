@@ -32,6 +32,55 @@ class TsrxRainbowBracketsHighlightingTest : BasePlatformTestCase() {
 		}
 	}
 
+	fun testNestingMatchesNativeTsxForSharedPunctuation() {
+		val sources = listOf(
+			"function View() { return <Panel value={{items: [call()]}}><span>{value}</span></Panel>; }",
+			"const view = <Panel header={<Icon />} />;",
+			"const view = <Panel header={<Title><Icon /></Title>}><span /></Panel>;",
+			"const view = <Panel>{items.map(item => <span>{item.text}</span>)}</Panel>;",
+			"function View() { return <><Panel /><span>{call([value])}</span></>; }",
+		)
+		for (cycleAcrossAllKinds in listOf(false, true)) {
+			rainbowSettings.cycleCountOnAllBrackets = cycleAcrossAllKinds
+			for (source in sources) {
+				val tsx = captureRainbowKeys("tsx", source)
+				val tsrx = captureRainbowKeys("tsrx", source)
+				// Native Rainbow counts fragment nesting but leaves its punctuation
+				// uncolored. TSRX explicitly supports coloring those delimiters too.
+				val fragmentOffsets = Regex("</?>").findAll(source)
+					.flatMap { it.range.asSequence() }.toSet()
+				assertFalse("Expected native Rainbow highlighting", tsx.isEmpty())
+				assertEquals(source, tsx, tsrx.filterKeys { it !in fragmentOffsets })
+				assertTrue(source, fragmentOffsets.all { it in tsrx })
+			}
+		}
+	}
+
+	fun testOrdinaryPerFamilyNestingMatchesNativeTsx() {
+		rainbowSettings.cycleCountOnAllBrackets = false
+		for (source in listOf(
+			"const value = [[value]];",
+			"const value = [call([nested()])];",
+			"function View() { return {x: {y: 1}}; }",
+			"const view = <Panel prop={{x: {y: 1}}} />;",
+			"const value = ((call((value))));",
+			"function view() { if (ready) { call(); } }",
+		)) {
+			assertEquals(source, captureRainbowKeys("tsx", source), captureRainbowKeys("tsrx", source))
+		}
+	}
+
+	private fun captureRainbowKeys(extension: String, source: String): Map<Int, String> {
+		val keys = rainbowKeys(EditorColorsManager.getInstance().globalScheme, 0 until rainbowSettings.numberOfColors)
+		myFixture.configureByText("parity.$extension", source)
+		return myFixture.doHighlighting()
+			.filter { it.forcedTextAttributesKey?.externalName in keys }
+			.flatMap { info ->
+				(info.startOffset until info.endOffset).map { it to info.forcedTextAttributesKey!!.externalName }
+			}
+			.toMap()
+	}
+
 	fun testRealAdapterSnapshotsRainbowBracketsSettings() {
 		rainbowSettings.isRainbowEnabled = true
 		rainbowSettings.isEnableRainbowRoundBrackets = true
@@ -80,23 +129,23 @@ class TsrxRainbowBracketsHighlightingTest : BasePlatformTestCase() {
 		assertKeyAt(highlights, source.lastIndexOf('}'), 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 0))
 
 		val fragmentOpen = source.indexOf("<>")
-		assertKeyAt(highlights, fragmentOpen, 1, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 1))
-		assertKeyAt(highlights, fragmentOpen + 1, 1, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 1))
+		assertKeyAt(highlights, fragmentOpen, 1, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 0))
+		assertKeyAt(highlights, fragmentOpen + 1, 1, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 0))
 		val fragmentClose = source.indexOf("</>")
-		assertKeyAt(highlights, fragmentClose, 2, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 1))
-		assertKeyAt(highlights, fragmentClose + 2, 1, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 1))
+		assertKeyAt(highlights, fragmentClose, 2, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 0))
+		assertKeyAt(highlights, fragmentClose + 2, 1, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 0))
 
 		val panelOpen = source.indexOf("<Panel")
-		assertKeyAt(highlights, panelOpen, 1, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 2))
-		assertKeyAt(highlights, source.indexOf("/>", panelOpen), 2, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 2))
+		assertKeyAt(highlights, panelOpen, 1, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 1))
+		assertKeyAt(highlights, source.indexOf("/>", panelOpen), 2, rainbowKey(scheme, RainbowHighlighter.NAME_ANGLE_BRACKETS, 1))
 		val attributeOpen = source.indexOf("{{")
-		assertKeyAt(highlights, attributeOpen, 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 3))
-		assertKeyAt(highlights, attributeOpen + 1, 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 4))
+		assertKeyAt(highlights, attributeOpen, 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 1))
+		assertKeyAt(highlights, attributeOpen + 1, 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 2))
 		val attributeClose = source.indexOf("}}", attributeOpen)
-		assertKeyAt(highlights, attributeClose, 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 4))
-		assertKeyAt(highlights, attributeClose + 1, 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 3))
-		assertPairKey(highlights, source, "[call()]", '[', ']', rainbowKey(scheme, RainbowHighlighter.NAME_SQUARE_BRACKETS, 5))
-		assertPairKey(highlights, source, "call()", '(', ')', rainbowKey(scheme, RainbowHighlighter.NAME_ROUND_BRACKETS, 6))
+		assertKeyAt(highlights, attributeClose, 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 2))
+		assertKeyAt(highlights, attributeClose + 1, 1, rainbowKey(scheme, RainbowHighlighter.NAME_SQUIGGLY_BRACKETS, 1))
+		assertPairKey(highlights, source, "[call()]", '[', ']', rainbowKey(scheme, RainbowHighlighter.NAME_SQUARE_BRACKETS, 3))
+		assertPairKey(highlights, source, "call()", '(', ')', rainbowKey(scheme, RainbowHighlighter.NAME_ROUND_BRACKETS, 4))
 
 		val rainbowKeys = rainbowKeys(scheme, 0..6)
 		assertNoRainbowKeyAt(highlights, source.indexOf("< limit"), rainbowKeys)

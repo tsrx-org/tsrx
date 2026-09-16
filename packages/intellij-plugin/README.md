@@ -25,7 +25,11 @@ WebStorm 2025.2.4 is the reference build used by CI. Syntax-only IDEs receive th
 baseline feature tier; products with the optional modules receive the LSP feature
 tier. Rainbow Brackets is not required for the TSRX file type or baseline syntax
 highlighting. When installed, its existing colors and settings control TSRX
-bracket overlays.
+bracket overlays. JSX tags have their own nesting cycle; mixed-family cycling
+counts JavaScript delimiters independently of tags. With mixed-family cycling
+disabled, a different bracket family or embedded-expression boundary starts a new
+cycle. Fragment punctuation and TSRX dynamic tags are additional coloring
+supported by this integration.
 
 ## Installation status
 

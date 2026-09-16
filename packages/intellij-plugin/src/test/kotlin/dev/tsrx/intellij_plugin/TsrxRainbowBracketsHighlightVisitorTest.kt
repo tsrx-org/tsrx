@@ -81,10 +81,10 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 			),
 		)
 
-		assertTrue(allKinds.runtime.requests.contains(request(TsrxRainbowBracketKind.SQUARE, 4)))
-		assertTrue(allKinds.runtime.requests.contains(request(TsrxRainbowBracketKind.ROUND, 5)))
+		assertTrue(allKinds.runtime.requests.contains(request(TsrxRainbowBracketKind.SQUARE, 3)))
+		assertTrue(allKinds.runtime.requests.contains(request(TsrxRainbowBracketKind.ROUND, 4)))
 		assertFalse(withoutSquares.runtime.requests.any { it.kind == TsrxRainbowBracketKind.SQUARE })
-		assertTrue(withoutSquares.runtime.requests.contains(request(TsrxRainbowBracketKind.ROUND, 5)))
+		assertTrue(withoutSquares.runtime.requests.contains(request(TsrxRainbowBracketKind.ROUND, 4)))
 	}
 
 	fun testPerFamilyDepthAndRoundColorOverride() {
@@ -99,8 +99,6 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 				request(TsrxRainbowBracketKind.ROUND, 0),
 				request(TsrxRainbowBracketKind.CURLY, 0),
 				request(TsrxRainbowBracketKind.ANGLE, 0),
-				request(TsrxRainbowBracketKind.CURLY, 1),
-				request(TsrxRainbowBracketKind.CURLY, 2),
 				request(TsrxRainbowBracketKind.SQUARE, 0),
 			),
 			perFamily.runtime.requests,
@@ -135,7 +133,7 @@ class TsrxRainbowBracketsHighlightVisitorTest : BasePlatformTestCase() {
 		)
 		assertFalse(html.highlights.any { it.structureKind == TsrxRainbowBracketKind.ANGLE })
 		assertFalse(html.highlights.any { it.structureKind == TsrxRainbowBracketKind.CURLY })
-		assertTrue(html.highlights.any { it.structureKind == TsrxRainbowBracketKind.ROUND && it.level == 2 })
+		assertTrue(html.highlights.any { it.structureKind == TsrxRainbowBracketKind.ROUND && it.level == 1 })
 
 		val template = collect(
 			"const value = `prefix ${'$'}{items[0]}`;",
