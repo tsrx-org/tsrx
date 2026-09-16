@@ -1,5 +1,13 @@
 # @tsrx/eslint-parser
 
+## 0.4.2
+
+### Patch Changes
+
+- Updated dependencies
+  [[`33d6093`](https://github.com/tsrx-org/tsrx/commit/33d60939c720d7d0bb8ab03790486a4c033dde96)]:
+  - @tsrx/core@0.2.1
+
 ## 0.4.1
 
 No changes in this release.

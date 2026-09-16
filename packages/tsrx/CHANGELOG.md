@@ -1,5 +1,22 @@
 # @tsrx/core
 
+## 0.2.1
+
+### Patch Changes
+
+- [#119](https://github.com/tsrx-org/tsrx/pull/119)
+  [`33d6093`](https://github.com/tsrx-org/tsrx/commit/33d60939c720d7d0bb8ab03790486a4c033dde96)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Fix AST line/column locations
+  for spread attributes whose `{...` spans multiple lines inside a TSRX template
+  body. The `...` was first read as raw template text up to the closing brace and
+  then re-tokenized, so the line breaks inside the spread were counted twice. This
+  misplaced diagnostics and made source-map generation throw
+  `Location line or line offsets length is out of bounds`. The spread is now
+  tokenized directly.
+- Updated dependencies
+  [[`449338e`](https://github.com/tsrx-org/tsrx/commit/449338e4f17ff0e0d0814a1e8dcb8745c5771589)]:
+  - @tsrx/runtime@0.2.1
+
 ## 0.2.0
 
 ### Minor Changes
