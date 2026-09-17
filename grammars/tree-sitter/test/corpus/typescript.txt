@@ -756,3 +756,65 @@ const chained = a satisfies Shape === b;
             (type
               (identifier)))
           (identifier))))))
+
+==================
+Non-null Assertions On Constructors
+==================
+const bare = new Constructor!;
+const args = new Constructor!();
+const result = new Constructor()!;
+const grouped = (new Constructor)!;
+const member = new Constructor!.factory;
+const repeated = new Constructor!!;
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (new_expression
+          (non_null_expression
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (new_expression
+          (non_null_expression
+            (identifier))
+          (arguments)))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (non_null_expression
+          (new_expression
+            (identifier)
+            (arguments))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (non_null_expression
+          (parenthesized_expression
+            (new_expression
+              (identifier)))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (new_expression
+          (member_expression
+            (non_null_expression
+              (identifier))
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (new_expression
+          (non_null_expression
+            (non_null_expression
+              (identifier))))))))
