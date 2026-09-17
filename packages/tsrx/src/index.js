@@ -173,6 +173,8 @@ export {
 	createJsxTransform,
 	extract_jsx_setup_declarations as extractJsxSetupDeclarations,
 	is_component_like_element,
+	is_svg_tag_name as isSvgTagName,
+	is_mathml_tag_name as isMathmlTagName,
 	MERGE_REFS_INTERNAL_NAME,
 	merge_duplicate_refs as mergeDuplicateRefs,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
