@@ -6,19 +6,20 @@ const PREC = {
 	TERNARY: 1,
 	OR: 2,
 	AND: 3,
-	REL: 4,
-	PLUS: 5,
-	TIMES: 6,
-	EXP: 7,
-	TYPEOF: 8,
-	DELETE: 8,
-	VOID: 8,
-	NOT: 9,
-	NEG: 10,
-	INC: 11,
-	CALL: 12,
-	NEW: 13,
-	MEMBER: 14,
+	EQUALITY: 4,
+	REL: 5,
+	PLUS: 6,
+	TIMES: 7,
+	EXP: 8,
+	TYPEOF: 9,
+	DELETE: 9,
+	VOID: 9,
+	NOT: 10,
+	NEG: 11,
+	INC: 12,
+	CALL: 13,
+	NEW: 14,
+	MEMBER: 15,
 };
 
 module.exports = grammar({
@@ -953,7 +954,11 @@ module.exports = grammar({
 
 		satisfies_expression: ($) => prec.left(PREC.REL, seq($.expression, 'satisfies', $.type)),
 
-		non_null_expression: ($) => prec.left(PREC.NOT, seq($.expression, '!')),
+		non_null_expression: ($) =>
+			prec.left(
+				PREC.MEMBER,
+				seq(choice($.primary_expression, $.parenthesized_expression, $.new_expression), '!'),
+			),
 
 		primary_expression: ($) =>
 			choice(
@@ -1009,6 +1014,7 @@ module.exports = grammar({
 							$.identifier,
 							$.member_expression,
 							$.subscript_expression,
+							$.non_null_expression,
 							$._destructuring_pattern,
 						),
 					),
@@ -1021,7 +1027,15 @@ module.exports = grammar({
 			prec.right(
 				PREC.ASSIGN,
 				seq(
-					field('left', choice($.identifier, $.member_expression, $.subscript_expression)),
+					field(
+						'left',
+						choice(
+							$.identifier,
+							$.member_expression,
+							$.subscript_expression,
+							$.non_null_expression,
+						),
+					),
 					field(
 						'operator',
 						choice(
@@ -1078,10 +1092,10 @@ module.exports = grammar({
 					['**', PREC.EXP],
 					['<', PREC.REL],
 					['<=', PREC.REL],
-					['==', PREC.REL],
-					['===', PREC.REL],
-					['!=', PREC.REL],
-					['!==', PREC.REL],
+					['==', PREC.EQUALITY],
+					['===', PREC.EQUALITY],
+					['!=', PREC.EQUALITY],
+					['!==', PREC.EQUALITY],
 					['>=', PREC.REL],
 					['>', PREC.REL],
 					['instanceof', PREC.REL],

@@ -541,3 +541,218 @@ export function View() @{ <p>{label}</p> }
           (jsx_closing_element
             (jsx_element_name
               (identifier))))))))
+
+==================
+Non-null Assertion Precedence
+==================
+const negative = -value!;
+const positive = +value!;
+const resolved = await value!;
+const increment = ++value!;
+const decrement = value!--;
+const field = -value!.field;
+const instance = new Constructor!();
+const asserted = new Constructor()!;
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (unary_expression
+          (non_null_expression
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (unary_expression
+          (non_null_expression
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (await_expression
+          (non_null_expression
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (update_expression
+          (non_null_expression
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (update_expression
+          (non_null_expression
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (unary_expression
+          (member_expression
+            (non_null_expression
+              (identifier))
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (new_expression
+          (non_null_expression
+            (identifier))
+          (arguments)))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (non_null_expression
+          (new_expression
+            (identifier)
+            (arguments)))))))
+
+==================
+Non-null Assignment Targets
+==================
+value! = next;
+object.field! += 1;
+items[index]! ??= fallback;
+const output = @{ value! = next; <div /> };
+
+---
+
+(program
+  (expression_statement
+    (assignment_expression
+      (non_null_expression
+        (identifier))
+      (identifier)))
+  (expression_statement
+    (augmented_assignment_expression
+      (non_null_expression
+        (member_expression
+          (identifier)
+          (identifier)))
+      (number)))
+  (expression_statement
+    (augmented_assignment_expression
+      (non_null_expression
+        (subscript_expression
+          (identifier)
+          (identifier)))
+      (identifier)))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (jsx_statement_container
+          (assignment_expression
+            (non_null_expression
+              (identifier))
+            (identifier))
+          (jsx_self_closing_element
+            (jsx_non_namespaced_element_name
+              (identifier))))))))
+
+==================
+Satisfies Operator Precedence
+==================
+const equal = a === b satisfies Shape;
+const unequal = a !== b satisfies Shape;
+const loose = a == b satisfies Shape;
+const looseUnequal = a != b satisfies Shape;
+const relation = a < b satisfies boolean;
+const arithmetic = a + b satisfies number;
+const logical = a && b satisfies Shape;
+const chained = a satisfies Shape === b;
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (binary_expression
+          (identifier)
+          (satisfies_expression
+            (identifier)
+            (type
+              (identifier)))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (binary_expression
+          (identifier)
+          (satisfies_expression
+            (identifier)
+            (type
+              (identifier)))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (binary_expression
+          (identifier)
+          (satisfies_expression
+            (identifier)
+            (type
+              (identifier)))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (binary_expression
+          (identifier)
+          (satisfies_expression
+            (identifier)
+            (type
+              (identifier)))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (satisfies_expression
+          (binary_expression
+            (identifier)
+            (identifier))
+          (type
+            (predefined_type))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (satisfies_expression
+          (binary_expression
+            (identifier)
+            (identifier))
+          (type
+            (predefined_type))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (binary_expression
+          (identifier)
+          (satisfies_expression
+            (identifier)
+            (type
+              (identifier)))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (binary_expression
+          (satisfies_expression
+            (identifier)
+            (type
+              (identifier)))
+          (identifier))))))
