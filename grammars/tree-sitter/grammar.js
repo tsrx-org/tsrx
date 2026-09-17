@@ -230,6 +230,7 @@ module.exports = grammar({
 		_expression_statement_expression: ($) =>
 			choice(
 				$._expression_statement_primary_expression,
+				$.satisfies_expression,
 				$.assignment_expression,
 				$.augmented_assignment_expression,
 				$.await_expression,
@@ -245,6 +246,7 @@ module.exports = grammar({
 
 		_expression_statement_primary_expression: ($) =>
 			choice(
+				$.non_null_expression,
 				$.this,
 				$.super,
 				$.identifier,
@@ -500,6 +502,8 @@ module.exports = grammar({
 		_jsx_statement_container_expression_statement: ($) =>
 			seq(
 				choice(
+					$.non_null_expression,
+					$.satisfies_expression,
 					$.assignment_expression,
 					$.augmented_assignment_expression,
 					$.await_expression,
@@ -931,6 +935,7 @@ module.exports = grammar({
 		expression: ($) =>
 			choice(
 				$.primary_expression,
+				$.satisfies_expression,
 				$.assignment_expression,
 				$.augmented_assignment_expression,
 				$.await_expression,
@@ -946,8 +951,13 @@ module.exports = grammar({
 
 		as_expression: ($) => prec.left(PREC.REL, seq($.expression, 'as', choice('const', $.type))),
 
+		satisfies_expression: ($) => prec.left(PREC.REL, seq($.expression, 'satisfies', $.type)),
+
+		non_null_expression: ($) => prec.left(PREC.NOT, seq($.expression, '!')),
+
 		primary_expression: ($) =>
 			choice(
+				$.non_null_expression,
 				$.this,
 				$.super,
 				$.identifier,

@@ -691,6 +691,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "satisfies_expression"
+        },
+        {
+          "type": "SYMBOL",
           "name": "assignment_expression"
         },
         {
@@ -738,6 +742,10 @@
     "_expression_statement_primary_expression": {
       "type": "CHOICE",
       "members": [
+        {
+          "type": "SYMBOL",
+          "name": "non_null_expression"
+        },
         {
           "type": "SYMBOL",
           "name": "this"
@@ -2243,6 +2251,14 @@
         {
           "type": "CHOICE",
           "members": [
+            {
+              "type": "SYMBOL",
+              "name": "non_null_expression"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "satisfies_expression"
+            },
             {
               "type": "SYMBOL",
               "name": "assignment_expression"
@@ -4714,6 +4730,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "satisfies_expression"
+        },
+        {
+          "type": "SYMBOL",
           "name": "assignment_expression"
         },
         {
@@ -4788,9 +4808,51 @@
         ]
       }
     },
+    "satisfies_expression": {
+      "type": "PREC_LEFT",
+      "value": 4,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "SYMBOL",
+            "name": "expression"
+          },
+          {
+            "type": "STRING",
+            "value": "satisfies"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "type"
+          }
+        ]
+      }
+    },
+    "non_null_expression": {
+      "type": "PREC_LEFT",
+      "value": 9,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "SYMBOL",
+            "name": "expression"
+          },
+          {
+            "type": "STRING",
+            "value": "!"
+          }
+        ]
+      }
+    },
     "primary_expression": {
       "type": "CHOICE",
       "members": [
+        {
+          "type": "SYMBOL",
+          "name": "non_null_expression"
+        },
         {
           "type": "SYMBOL",
           "name": "this"

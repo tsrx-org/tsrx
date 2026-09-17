@@ -284,3 +284,260 @@ export default function View() @{
           (jsx_closing_element
             (jsx_element_name
               (identifier))))))))
+
+==================
+Postfix Non-null Assertions
+==================
+const value = params.id!;
+const nested = value!.field![index]!;
+const call = callback!(value!);
+const unary = !value!;
+value!;
+const output = @{ value!; <div /> };
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (non_null_expression
+          (member_expression
+            (identifier)
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (non_null_expression
+          (subscript_expression
+            (non_null_expression
+              (member_expression
+                (non_null_expression
+                  (identifier))
+                (identifier)))
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (call_expression
+          (non_null_expression
+            (identifier))
+          (arguments
+            (non_null_expression
+              (identifier)))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (unary_expression
+          (non_null_expression
+            (identifier))))))
+  (expression_statement
+    (non_null_expression
+      (identifier)))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (jsx_statement_container
+          (non_null_expression
+            (identifier))
+          (jsx_self_closing_element
+            (jsx_non_namespaced_element_name
+              (identifier))))))))
+
+==================
+Satisfies Expressions
+==================
+const route = { id: 1 } satisfies RouteDefinition;
+const literal = value as const satisfies Shape;
+const checked = value satisfies Shape as Shape;
+value satisfies Shape;
+const output = @{ value satisfies Shape; <div /> };
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (satisfies_expression
+          (object
+            (pair
+              (property_name
+                (identifier))
+              (number)))
+          (type
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (satisfies_expression
+          (as_expression
+            (identifier))
+          (type
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (as_expression
+          (satisfies_expression
+            (identifier)
+            (type
+              (identifier)))
+          (type
+            (identifier))))))
+  (expression_statement
+    (satisfies_expression
+      (identifier)
+      (type
+        (identifier))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (jsx_statement_container
+          (satisfies_expression
+            (identifier)
+            (type
+              (identifier)))
+          (jsx_self_closing_element
+            (jsx_non_namespaced_element_name
+              (identifier))))))))
+
+==================
+Assertions And Satisfies Before Quoted Dollar Braces
+==================
+export const route = {
+    preload: ({ params }) => void getUser(params.id!),
+} satisfies RouteDefinition;
+
+export default function User(props: RouteProps<"/users/:id">) @{
+    <section>
+        <Title>{'${a}'}</Title>
+        <Title>{"${b}"}</Title>
+    </section>
+}
+
+---
+
+(program
+  (export_statement
+    (variable_declaration
+      (variable_declarator
+        (identifier)
+        (initializer
+          (satisfies_expression
+            (object
+              (pair
+                (property_name
+                  (identifier))
+                (arrow_function
+                  (formal_parameters
+                    (required_parameter
+                      (object_pattern
+                        (shorthand_property_identifier_pattern
+                          (shorthand_property_identifier)))))
+                  (unary_expression
+                    (call_expression
+                      (identifier)
+                      (arguments
+                        (non_null_expression
+                          (member_expression
+                            (identifier)
+                            (identifier)))))))))
+            (type
+              (identifier)))))))
+  (export_statement
+    (function_declaration
+      (identifier)
+      (formal_parameters
+        (required_parameter
+          (identifier)
+          (type
+            (generic_type
+              (identifier)
+              (type_arguments
+                (type
+                  (literal_type
+                    (string))))))))
+      (jsx_statement_container
+        (jsx_element
+          (jsx_opening_element
+            (jsx_element_name
+              (identifier)))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_expression
+              (component_statement
+                (expression_statement
+                  (string))))
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_expression
+              (component_statement
+                (expression_statement
+                  (string))))
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_closing_element
+            (jsx_element_name
+              (identifier))))))))
+
+==================
+Assertions In Template Interpolations
+==================
+const label = `User ${params.id!} ${value satisfies Shape}`;
+export function View() @{ <p>{label}</p> }
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (template_string
+          (template_substitution
+            (non_null_expression
+              (member_expression
+                (identifier)
+                (identifier))))
+          (template_substitution
+            (satisfies_expression
+              (identifier)
+              (type
+                (identifier))))))))
+  (export_statement
+    (function_declaration
+      (identifier)
+      (formal_parameters)
+      (jsx_statement_container
+        (jsx_element
+          (jsx_opening_element
+            (jsx_element_name
+              (identifier)))
+          (jsx_expression
+            (component_statement
+              (expression_statement
+                (identifier))))
+          (jsx_closing_element
+            (jsx_element_name
+              (identifier))))))))

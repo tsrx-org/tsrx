@@ -261,6 +261,8 @@
 ; Type assertions (`value as const`) are not import syntax; re-scope their
 ; `as` after the group above so this more specific pattern takes precedence.
 (as_expression "as" @keyword)
+(satisfies_expression "satisfies" @keyword)
+(non_null_expression "!" @operator)
 
 ; Other keywords
 [
