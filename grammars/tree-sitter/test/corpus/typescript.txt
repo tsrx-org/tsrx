@@ -252,3 +252,35 @@ let q: {
               (identifier))
             (type
               (predefined_type))))))))
+
+==================
+Recovery Before Dollar Braces In Strings
+==================
+const broken = ;
+export default function View() @{
+    <p>{'${a}'}</p>
+}
+
+---
+
+(program
+  (lexical_declaration
+    (variable_declarator
+      (identifier))
+    (ERROR))
+  (export_statement
+    (function_declaration
+      (identifier)
+      (formal_parameters)
+      (jsx_statement_container
+        (jsx_element
+          (jsx_opening_element
+            (jsx_element_name
+              (identifier)))
+          (jsx_expression
+            (component_statement
+              (expression_statement
+                (string))))
+          (jsx_closing_element
+            (jsx_element_name
+              (identifier))))))))

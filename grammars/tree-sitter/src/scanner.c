@@ -306,10 +306,15 @@ static bool scan_script_content(TSLexer *lexer) {
 
 bool tree_sitter_tsrx_external_scanner_scan(void *payload, TSLexer *lexer,
                                                 const bool *valid_symbols) {
-  // In error recovery every external token is marked valid at once; the
-  // AUTOMATIC_SEMICOLON check filters that out, since it is never valid in the
-  // one real state where SCRIPT_CONTENT is (right after `<script ...>`).
-  if (valid_symbols[SCRIPT_CONTENT] && !valid_symbols[AUTOMATIC_SEMICOLON]) {
+  // Error recovery enables every external token. Template chunks are never
+  // valid alongside automatic semicolons in a real parse state. In recovery,
+  // scanning them could swallow arbitrary code up to an unrelated `${` or
+  // backtick; leave recovery to the internal lexer instead.
+  if (valid_symbols[TEMPLATE_CHARS] && valid_symbols[AUTOMATIC_SEMICOLON]) {
+    return false;
+  }
+
+  if (valid_symbols[SCRIPT_CONTENT]) {
     return scan_script_content(lexer);
   }
 
