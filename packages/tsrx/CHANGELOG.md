@@ -1,5 +1,17 @@
 # @tsrx/core
 
+## 0.2.3
+
+### Patch Changes
+
+- [#130](https://github.com/tsrx-org/tsrx/pull/130)
+  [`ba0be2d`](https://github.com/tsrx-org/tsrx/commit/ba0be2dd06c7b707912a067c20e276c4428a905b)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Export `isSvgTagName` and
+  `isMathmlTagName` predicates for case-sensitive tag-name membership checks.
+  Target compilers can reuse the core tag-name sets for lowering decisions,
+  including SVG names shared with HTML, without changing ref-type namespace
+  inference.
+
 ## 0.2.2
 
 ### Patch Changes

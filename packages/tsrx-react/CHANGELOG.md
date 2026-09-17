@@ -1,5 +1,13 @@
 # @tsrx/react
 
+## 0.3.3
+
+### Patch Changes
+
+- Updated dependencies
+  [[`ba0be2d`](https://github.com/tsrx-org/tsrx/commit/ba0be2dd06c7b707912a067c20e276c4428a905b)]:
+  - @tsrx/core@0.2.3
+
 ## 0.3.2
 
 ### Patch Changes

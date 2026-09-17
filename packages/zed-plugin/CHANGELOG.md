@@ -1,5 +1,17 @@
 # @tsrx/zed-plugin
 
+## 0.1.1
+
+### Patch Changes
+
+- [#132](https://github.com/tsrx-org/tsrx/pull/132)
+  [`bbda4d2`](https://github.com/tsrx-org/tsrx/commit/bbda4d20cefba9504b92cddbb64955443fcdcca3)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Support TypeScript
+  `satisfies` expressions and postfix non-null assertions in the Tree-sitter
+  grammar and editor highlighting, including their precedence and assignment
+  targets. Prevent template-string scanning from consuming later declarations
+  during error recovery.
+
 ## 0.1.0
 
 ### Minor Changes

@@ -3,7 +3,7 @@
   "description": "Turbopack integration for @tsrx/react",
   "license": "MIT",
   "author": "Dominic Gannaway",
-  "version": "0.1.97",
+  "version": "0.1.98",
   "type": "module",
   "publishConfig": {
     "access": "public"
