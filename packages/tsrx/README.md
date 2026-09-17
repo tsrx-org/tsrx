@@ -91,6 +91,12 @@ here and keeps package docs focused on the core parser API.
   `DIAGNOSTIC_CODES`.
 - **HTML helpers** — `isVoidElement`, `isBooleanAttribute`, `isDomProperty`,
   `validateNesting`.
+- **Tag-name helpers** — `isSvgTagName(name)` and `isMathmlTagName(name)` check
+  case-sensitive membership in the tag-name sets used for ref types. These are
+  namespace-independent checks: `isSvgTagName` includes names shared with HTML
+  (`a`, `title`, `script`, and `style`), even though ref-type inference prefers
+  HTML for those names when no SVG namespace is provided. Target compilers can use
+  these checks when choosing safe lowering behavior without a known namespace.
 - **Event helpers** — delegated-event utilities, event-name normalization.
 - **Source maps** — `convertSourceMapToMappings`.
 

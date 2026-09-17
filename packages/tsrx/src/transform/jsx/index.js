@@ -6244,6 +6244,25 @@ const MATHML_REF_TAG_NAMES = new Set(
 );
 
 /**
+ * Checks case-sensitive SVG tag-name membership, including names shared with HTML.
+ * This does not infer an element's namespace from its surrounding context.
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function is_svg_tag_name(name) {
+	return SVG_REF_TAG_NAMES.has(name);
+}
+
+/**
+ * Checks case-sensitive MathML tag-name membership without inferring an element's namespace.
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function is_mathml_tag_name(name) {
+	return MATHML_REF_TAG_NAMES.has(name);
+}
+
+/**
  * @param {ESTreeJSX.JSXElement | ESTreeJSX.JSXOpeningElement} element
  * @param {'html' | 'svg' | 'mathml'} [namespace]
  * @returns {AST.TypeNode | null}
