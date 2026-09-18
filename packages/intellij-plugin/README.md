@@ -61,6 +61,20 @@ Automatic resolution and installation run only for trusted projects. Syntax
 highlighting remains available when npm or the network is unavailable; the IDE
 shows an actionable notification instead of repeatedly starting a broken server.
 
+## TypeScript backends
+
+`@tsrx/language-server` runs with its default `classic` backend: it hosts
+TypeScript 5 itself and serves every feature for `.tsrx` files. The IDE's own
+TypeScript service is not involved with `.tsrx` files.
+
+The server's `native` backend (TypeScript 7 owning TypeScript features through
+`@tsrx/content-mapper`, see
+[`@tsrx/language-server`](../language-server/README.md)) requires a client that
+runs TypeScript 7's language server with
+`initializationOptions.runExternalCode: true` for `.tsrx` files. JetBrains IDEs do
+not expose TypeScript 7's language server for that today, so this plugin always
+starts the classic backend.
+
 ## Development and release
 
 - See [DEVELOPMENT.md](./DEVELOPMENT.md) for local tests, compatibility
