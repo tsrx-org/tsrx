@@ -6,22 +6,14 @@ import {
 	createServer,
 	createTypeScriptProject,
 } from '@volar/language-server/node';
-import { createCompileErrorDiagnosticPlugin } from './compileErrorDiagnosticPlugin.js';
-import { createDefinitionPlugin } from './definitionPlugin.js';
-import { createHoverPlugin } from './hoverPlugin.js';
-import { createCompletionPlugin } from './completionPlugin.js';
-import { createAutoInsertPlugin } from './autoInsertPlugin.js';
-import { createTypeScriptDiagnosticFilterPlugin } from './typescriptDiagnosticPlugin.js';
-import { createDocumentHighlightPlugin } from './documentHighlightPlugin.js';
-import { createDocumentSymbolPlugin } from './documentSymbolPlugin.js';
+import { resolve_typescript_backend } from './backend.js';
+import { createServicePlugins } from './servicePlugins.js';
 import {
 	getTsrxLanguagePlugin,
 	invalidateCompilerResolutionCaches,
 	invalidateTypeDefinitionCaches,
 	resolveConfig,
 } from '@tsrx/typescript-plugin/src/language.js';
-import { createTypeScriptServices } from './typescriptService.js';
-import { create as createCssService } from 'volar-service-css';
 import {
 	handleWorkspaceChanges,
 	trackTypeScriptConfigDependencies,
@@ -31,32 +23,11 @@ import {
 const { log, logError } = createLogging('[TSRX Language Server]');
 
 /**
- * Strip whole-document formatting capabilities from a Volar service plugin.
- *
- * The bundled TypeScript (`typescript-syntactic`) and CSS services advertise a
- * `documentFormattingProvider`. Because they run against the virtual TS/CSS code
- * rather than the `.tsrx` source, their edits don't map back and formatting is a
- * no-op — yet the capability still makes the language client contribute a
- * "TSRX Syntax for VS Code" entry to "Format Document With…" that silently does nothing.
- * Formatting for `.tsrx` is owned by Prettier + @tsrx/prettier-plugin (configured
- * as the default `[tsrx]` formatter in the VS Code extension), so we drop these
- * capabilities to keep Prettier as the single, working formatter. On-type
- * formatting is left intact.
- *
- * @template {{ capabilities?: Record<string, unknown> }} T
- * @param {T} plugin
- * @returns {T}
+ * @param {{ argv?: readonly string[] }} [options] `argv` defaults to the process
+ *   arguments; it carries the `--typescript-backend=<classic|native>` flag.
  */
-function stripDocumentFormatting(plugin) {
-	const {
-		documentFormattingProvider: _fmt,
-		documentRangeFormattingProvider: _rangeFmt,
-		...capabilities
-	} = plugin.capabilities ?? {};
-	return { ...plugin, capabilities };
-}
-
-export function createTsrxLanguageServer() {
+export function createTsrxLanguageServer(options = {}) {
+	const argv = options.argv ?? process.argv.slice(2);
 	const connection = createConnection();
 	const server = createServer(connection);
 
@@ -121,6 +92,19 @@ export function createTsrxLanguageServer() {
 			log('Initializing TSRX language server...');
 			log('Initialization options:', JSON.stringify(params.initializationOptions, null, 2));
 
+			const selection = resolve_typescript_backend({
+				argv,
+				initializationOptions: params.initializationOptions,
+			});
+			if (selection.invalid !== undefined) {
+				logError(
+					`Unknown TypeScript backend ${JSON.stringify(selection.invalid)}; using "${selection.backend}".`,
+				);
+			}
+			log(`TypeScript backend: ${selection.backend} (from ${selection.source})`);
+
+			// Classic TypeScript is still needed on the native path: the language
+			// plugin reads tsconfig (compiler selection, `extends`) through its API.
 			const ts = require('typescript');
 
 			const initResult = server.initialize(
@@ -153,21 +137,7 @@ export function createTsrxLanguageServer() {
 						},
 					};
 				}),
-				[
-					createAutoInsertPlugin(),
-					createCompletionPlugin(),
-					createCompileErrorDiagnosticPlugin(),
-					createDefinitionPlugin(),
-					createDocumentSymbolPlugin(),
-					stripDocumentFormatting(createCssService()),
-					...createTypeScriptServices(ts).map(stripDocumentFormatting),
-					// !IMPORTANT 'createTypeScriptDiagnosticFilterPlugin', 'createHoverPlugin',
-					// and 'createDocumentHighlightPlugin' must come after TypeScript services
-					// to intercept volar's and vscode default providers
-					createTypeScriptDiagnosticFilterPlugin(),
-					createHoverPlugin(),
-					createDocumentHighlightPlugin(),
-				],
+				createServicePlugins(selection.backend, ts),
 			);
 
 			log('Server initialization complete');
