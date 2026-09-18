@@ -11,6 +11,14 @@ minimumReleaseAgeExclude:
   - '@tsrx/ripple@0.2.0'
   - '@tsrx/runtime@0.2.0'
   - ripple@0.4.0
+  # Native TypeScript nightly pinned for the .tsrx content mapper (packages/content-mapper).
+  - '@typescript/typescript-darwin-arm64@7.1.0-dev.20260918.1'
+  - '@typescript/typescript-darwin-x64@7.1.0-dev.20260918.1'
+  - '@typescript/typescript-linux-arm@7.1.0-dev.20260918.1'
+  - '@typescript/typescript-linux-arm64@7.1.0-dev.20260918.1'
+  - '@typescript/typescript-linux-x64@7.1.0-dev.20260918.1'
+  - '@typescript/typescript-win32-arm64@7.1.0-dev.20260918.1'
+  - '@typescript/typescript-win32-x64@7.1.0-dev.20260918.1'
 minimumReleaseAgeIgnoreMissingTime: true
 minimumReleaseAgeStrict: false
 trustPolicy: no-downgrade

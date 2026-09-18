@@ -2184,7 +2184,6 @@ export interface PluginActionOverrides {
 	wordHighlight?: {
 		kind: DocumentHighlightKind;
 	};
-	suppressedDiagnostics?: number[];
 	hover?: string | false | ((content: string) => string);
 	definition?:
 		| {

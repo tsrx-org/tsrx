@@ -1,0 +1,26 @@
+{
+  "name": "@tsrx/content-mapper",
+  "description": "TypeScript 7 content mapper for .tsrx files",
+  "version": "0.0.0",
+  "license": "MIT",
+  "author": "Dominic Gannaway",
+  "type": "module",
+  "private": true,
+  "homepage": "https://tsrx.dev/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tsrx-org/tsrx.git",
+    "directory": "packages/content-mapper"
+  },
+  "bugs": {
+    "url": "https://github.com/tsrx-org/tsrx/issues"
+  },
+  "devDependencies": {
+    "@tsrx/react": "workspace:*",
+    "@tsrx/typescript-plugin": "workspace:*",
+    "@types/node": "catalog:default",
+    "@types/react": "catalog:default",
+    "react": "catalog:default",
+    "typescript": "catalog:default"
+  }
+}

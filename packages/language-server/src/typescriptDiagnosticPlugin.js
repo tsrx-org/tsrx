@@ -22,7 +22,10 @@ function process(diagnostic, items) {
 }
 
 /**
- * Filter diagnostics based on suppressed diagnostic codes in mappings.
+ * Post-process TypeScript diagnostics for a TSRX document: drop every TS
+ * diagnostic while the file has a fatal compile error (the raw source is fed
+ * to TS in that state, so its diagnostics would be noise) and deobfuscate
+ * generated identifiers in the remaining messages.
  * @param {TextDocument} document
  * @param {LanguageServiceContext} context
  * @param {Diagnostic[]} diagnostics
@@ -50,35 +53,6 @@ function processDiagnostics(document, context, diagnostics) {
 			continue;
 		}
 
-		const range = diagnostic.range;
-		const rangeStart = document.offsetAt(range.start);
-		const rangeEnd = document.offsetAt(range.end);
-		const mapping = virtualCode.findMappingByGeneratedRange(rangeStart, rangeEnd);
-
-		if (!mapping) {
-			process(diagnostic, result);
-			continue;
-		}
-
-		const suppressedCodes = mapping.data.customData?.suppressedDiagnostics;
-
-		if (!suppressedCodes || suppressedCodes.length === 0) {
-			process(diagnostic, result);
-			continue;
-		}
-
-		const diagnosticCode =
-			typeof diagnostic.code === 'number'
-				? diagnostic.code
-				: typeof diagnostic.code === 'string'
-					? parseInt(diagnostic.code)
-					: null;
-
-		if (diagnosticCode && suppressedCodes.includes(diagnosticCode)) {
-			log(`Suppressing diagnostic ${diagnosticCode}: ${diagnostic.message}`);
-			continue;
-		}
-
 		process(diagnostic, result);
 	}
 
@@ -88,7 +62,7 @@ function processDiagnostics(document, context, diagnostics) {
 
 /**
  * Creates a plugin that wraps typescript-semantic's provideDiagnostics
- * to filter out suppressed diagnostics while maintaining the original
+ * to post-process its diagnostics while maintaining the original
  * plugin association. This is crucial for code actions (like "Add import")
  * to work correctly, as volar matches diagnostics by pluginIndex.
  * @returns {LanguageServicePlugin}

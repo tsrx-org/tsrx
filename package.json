@@ -55,5 +55,14 @@
     "vite-plugin-solid": "3.0.0-next.5",
     "vitest": "catalog:default",
     "wait-on": "catalog:default"
+  },
+  "optionalDependencies": {
+    "@typescript/typescript-darwin-arm64": "7.1.0-dev.20260918.1",
+    "@typescript/typescript-darwin-x64": "7.1.0-dev.20260918.1",
+    "@typescript/typescript-linux-arm": "7.1.0-dev.20260918.1",
+    "@typescript/typescript-linux-arm64": "7.1.0-dev.20260918.1",
+    "@typescript/typescript-linux-x64": "7.1.0-dev.20260918.1",
+    "@typescript/typescript-win32-arm64": "7.1.0-dev.20260918.1",
+    "@typescript/typescript-win32-x64": "7.1.0-dev.20260918.1"
   }
 }
