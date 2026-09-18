@@ -80,8 +80,8 @@ describe('to_span_mappings', () => {
 			original,
 		);
 		expect(spans).toEqual([
-			[0, 5, 0, 5, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
-			[6, 1, 6, 1, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+			// `const` and `a` coalesce across the identical ` ` gap; the Atom stays apart.
+			[0, 7, 0, 7, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
 			[10, 10, 10, 1, SpanMapKind.Atom, SpanMapFeature.All & ~SpanMapFeature.Formatting],
 		]);
 	});
@@ -105,18 +105,52 @@ describe('to_span_mappings', () => {
 		]);
 	});
 
-	it('does not alias a partial token such as the file-start anchor', () => {
-		const spans = to_span_mappings([m(0, 0, 1)], 'const x = 1;', 'export x;');
-		expect(spans[0][4]).toBe(SpanMapKind.Atom);
+	it('drops a partial-identifier Atom such as the file-start anchor', () => {
+		expect(to_span_mappings([m(0, 0, 1)], 'const x = 1;', 'export x;')).toEqual([]);
+		// A whole token that changed spelling and length is still an Atom.
+		expect(to_span_mappings([{ ...m(0, 0, 2), generatedLengths: [3] }], '/>;', '/>')).toEqual([
+			[0, 3, 0, 2, SpanMapKind.Atom, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+		]);
 	});
 
-	it('keeps adjacent spans and exact boundaries', () => {
+	it('coalesces adjacent Verbatim spans with equal features, keeps others apart', () => {
 		const text = 'ab';
-		const spans = to_span_mappings([m(0, 0, 1), m(1, 1, 1)], text, text);
-		expect(spans.map((span) => [span[0], span[1]])).toEqual([
+		expect(
+			to_span_mappings([m(0, 0, 1), m(1, 1, 1)], text, text).map((span) => [span[0], span[1]]),
+		).toEqual([[0, 2]]);
+		expect(
+			to_span_mappings([m(0, 0, 1), m(1, 1, 1, { data: verify_only })], text, text).map((span) => [
+				span[0],
+				span[1],
+			]),
+		).toEqual([
 			[0, 1],
 			[1, 1],
 		]);
+	});
+
+	it('coalesces token spans of a statement across identical unmapped gaps', () => {
+		// The transform maps `import`, `helperA`, `'./lib'` and `;` but not the punctuation
+		// between them. Auto-import edits inside the statement are only applied by TypeScript
+		// when they fit into one Verbatim span, so the run becomes a single span.
+		const text = "import { helperA } from './lib';";
+		const spans = to_span_mappings(
+			[m(0, 0, 6), m(9, 9, 7), m(24, 24, 7), m(31, 31, 1)],
+			text,
+			text,
+		);
+		expect(spans).toEqual([
+			[0, 32, 0, 32, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+		]);
+	});
+
+	it('does not coalesce across gaps whose text differs or whose lengths differ', () => {
+		const original = 'a + b';
+		const generated = 'a - b';
+		expect(to_span_mappings([m(0, 0, 1), m(4, 4, 1)], generated, original)).toHaveLength(2);
+		expect(to_span_mappings([m(0, 0, 1), m(4, 3, 1)], 'a +b', original)).toHaveLength(2);
+		// Original ranges may be projected twice; a second projection never merges backwards.
+		expect(to_span_mappings([m(0, 0, 1), m(0, 2, 1)], 'a a', 'a')).toHaveLength(2);
 	});
 
 	it('drops zero-length spans and spans outside either text', () => {
@@ -144,9 +178,27 @@ describe('to_span_mappings', () => {
 			generated,
 			original,
 		);
-		expect(spans.map((span) => [span[0], span[1]])).toEqual([
-			[4, 1],
-			[9, 1],
+		// The verify-only containers lose to the tokens they enclose; the two tokens then
+		// coalesce across the identical `) { ` gap into one span carrying the token features.
+		expect(spans).toEqual([
+			[4, 6, 4, 6, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+		]);
+	});
+
+	it('keeps container-only regions unmapped when tokens have different features', () => {
+		const text = 'if (x) { y }';
+		const spans = to_span_mappings(
+			[
+				{ ...m(0, 0, text.length), data: verify_only },
+				m(4, 4, 1),
+				m(9, 9, 1, { data: verify_only }),
+			],
+			text,
+			text,
+		);
+		expect(spans.map((span) => [span[0], span[1], span[5]])).toEqual([
+			[4, 1, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+			[9, 1, SpanMapFeature.None],
 		]);
 		for (let index = 1; index < spans.length; index++) {
 			expect(spans[index][0]).toBeGreaterThanOrEqual(spans[index - 1][0] + spans[index - 1][1]);
@@ -171,20 +223,22 @@ describe('to_span_mappings', () => {
 			generated,
 			original,
 		);
-		expect(spans).toEqual([
-			[6, 1, 6, 1, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
-			[
-				name_offset,
-				1,
-				name_offset,
-				1,
-				SpanMapKind.Verbatim,
-				SpanMapFeature.All & ~SpanMapFeature.Formatting,
-			],
-		]);
-		// Offsets are UTF-16 code units: the emoji occupies two.
+		// Identical text on both sides, so the two tokens coalesce over the CRLF and the emoji;
+		// offsets are UTF-16 code units (the emoji occupies two).
 		expect(original.indexOf('\r\n')).toBe(15);
 		expect(name_offset).toBe(23);
+		expect(spans).toEqual([
+			[6, 18, 6, 18, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+		]);
+		const apart = to_span_mappings(
+			[m(name_offset, name_offset, 1), m(6, 6, 1, { data: verify_only })],
+			generated,
+			original,
+		);
+		expect(apart.map((span) => [span[0], span[1]])).toEqual([
+			[6, 1],
+			[name_offset, 1],
+		]);
 	});
 
 	it('clears every feature bit when language features are disabled', () => {
@@ -207,6 +261,8 @@ describe('to_span_mappings', () => {
 			text,
 			text,
 		);
-		expect(spans).toHaveLength(2);
+		expect(spans).toEqual([
+			[0, 2, 0, 2, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+		]);
 	});
 });

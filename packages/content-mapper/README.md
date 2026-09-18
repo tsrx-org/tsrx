@@ -66,7 +66,12 @@ One precedence rule, highest first:
 - The generated TSX of the type-only transform, with a span map. Spans whose text
   is unchanged are `Verbatim` (edit-safe: rename, code actions and formatting
   write back through them); renamed identifiers are `Alias`, so a diagnostic that
-  covers one shows the authored name; everything else is `Atom`.
+  covers one shows the authored name; everything else is `Atom`. Neighbouring
+  `Verbatim` spans with the same feature bits whose gap is identical text in both
+  files are coalesced into one span, so a statement such as
+  `import { a } from './x';` is one edit-safe span and TypeScript can place an
+  auto-import edit inside it. Fragments of identifiers (the transform's
+  one-character file-start anchor) are dropped.
 - Each embedded `<script>` body as a supplemental `.mts` output (module scope, so
   bodies never collide as globals) with a single verbatim span. TypeScript names
   it `<file>.tsrx.<index>.mts` and, under `--declaration`, emits
@@ -101,6 +106,45 @@ next to `main.d.ts`, keeps `./Component.tsrx` in import specifiers, and emits
   `.tsrx` to `.js` emit `Component.d.ts` instead; do not design around the current
   naming.
 
+### Editors
+
+TypeScript 7's language server (`tsc --lsp --stdio`, what the VS Code TypeScript 7
+extension and other LSP clients run) serves `.tsrx` files through the mapper once
+the client sends `initializationOptions.runExternalCode: true` and the project
+declares `contentMappers`. `tests/native-lsp.test.js` drives that server and pins
+what editors get:
+
+- `.tsrx` document filters are registered dynamically for diagnostics, hover,
+  definition, references, document highlights, completion, rename and code
+  actions.
+- Pull diagnostics report TypeScript errors and TSRX compile errors (source
+  `tsrx`) at authored spans; while a file fails to compile, importers keep
+  resolving through the export stub.
+- Hover, definition, references, document highlights and rename work through
+  `Verbatim` spans, across `.tsrx` and `.ts` files and across several configured
+  projects in one session, and again after a server restart.
+- Auto-import that extends an existing import statement works. Auto-import that
+  needs a new import statement is dropped by the server because the insertion
+  point falls into synthesized code (the hoisted static JSX at the top of the
+  generated file); tracked as microsoft/TypeScript#64119.
+- Rename on an `Atom` span (for example `/>`, which becomes `/>;`) returns
+  nothing; whole-symbol projection for `Atom` spans is microsoft/TypeScript#63879.
+- Requests on synthesized spans (`@{`) return nothing. VS Code takes the first
+  non-empty document-highlight result in provider order, so the TSRX language
+  server's keyword highlights are consulted exactly there; with several `.tsrx`
+  editors visible VS Code only asks multi-document providers, which the TSRX
+  server does not register.
+- Without `runExternalCode` the mapper process is never spawned, `.tsrx` is never
+  registered and `.ts` importers report TS2307 for `.tsrx` modules: that is the
+  untrusted-workspace behaviour.
+- `custom/setContentMapperContributions` (what the VS Code extension's
+  `registerContentMappers` call becomes) maps `.tsrx` files that belong to no
+  configured project, and clearing it unregisters them.
+
+The TSRX language server runs beside it with `--typescript-backend=native`; see
+[`@tsrx/language-server`](../language-server/README.md) and the VS Code
+extension's README for the per-editor setup.
+
 ### Known limitations (TypeScript 7.1.0-dev.20260918.1)
 
 - `--watch` compiles once and never recompiles after an edit on macOS in this
@@ -111,6 +155,10 @@ next to `main.d.ts`, keeps `./Component.tsrx` in import specifiers, and emits
   bodies out of composite libraries until this is fixed upstream;
   `tests/native-build.test.js` pins the current behaviour.
 - `--runExternalCode` is required and is never enabled by the mapper.
+- Editors: no auto-import when a new import statement is needed
+  (microsoft/TypeScript#64119), no rename on `Atom` spans
+  (microsoft/TypeScript#63879), and an unused variable in a `<script>` body is
+  reported as a hint (TS6133) because the body is checked as a module.
 
 ### Cache invalidation
 
@@ -177,6 +225,9 @@ pnpm test --project content-mapper
 - `third-party-compiler.test.js` selects a stub compiler through the mapper
   options and through `tsrx.compiler`, and checks that `Alias` spans show authored
   identifiers in diagnostics.
+- `native-lsp.test.js` drives the native language server (`tsc --lsp --stdio`)
+  through `tests/lsp-client.js`, a minimal JSON-RPC client, and pins the editor
+  features listed under _Editors_ above.
 - Integration tests spawn the mapper from `src/server.js` through a generated
   manifest in a temporary workspace, so they never depend on a stale `dist/`.
 

@@ -101,6 +101,13 @@ export function features_from_mapping_data(data) {
  * candidate that overlaps an already selected span in generated space is
  * dropped. Overlap in original space is allowed by the protocol (one source
  * range may be projected several times) and is kept.
+ *
+ * Neighbouring Verbatim spans with equal feature bits whose gap is the same
+ * text in both files are then coalesced into one span (see
+ * {@link coalesce_verbatim_spans}), so a statement such as
+ * `import { a } from './x';` is one edit-safe span rather than four tokens
+ * with unmapped punctuation between them. TypeScript only applies text edits
+ * (auto-import, rename, code actions) that fit inside a single Verbatim span.
  * @param {readonly CodeMapping[]} mappings
  * @param {string} generated_text
  * @param {string} original_text
@@ -148,6 +155,13 @@ export function to_span_mappings(mappings, generated_text, original_text, option
 				is_whole_token(original_text, original_start, original_end)
 			) {
 				kind = SpanMapKind.Alias;
+			} else if (is_partial_identifier(original_text, original_start, original_end)) {
+				// A fragment of an identifier (the transform's one-character file-start
+				// anchor, `e` of `export` → `c` of a hoisted `const`) is not an entity.
+				// Volar needed the anchor; under the content-mapper protocol it would
+				// only make TypeScript project requests at the file start into
+				// synthesized code.
+				continue;
 			} else {
 				kind = SpanMapKind.Atom;
 			}
@@ -183,7 +197,7 @@ export function to_span_mappings(mappings, generated_text, original_text, option
 	}
 
 	selected.sort((left, right) => left.generatedStart - right.generatedStart);
-	return selected.map((candidate) => [
+	return coalesce_verbatim_spans(selected, generated_text, original_text).map((candidate) => [
 		candidate.generatedStart,
 		candidate.generatedEnd - candidate.generatedStart,
 		candidate.originalStart,
@@ -191,6 +205,41 @@ export function to_span_mappings(mappings, generated_text, original_text, option
 		candidate.kind,
 		candidate.features,
 	]);
+}
+
+/**
+ * Merge runs of Verbatim spans, sorted by generated start, when the two spans
+ * carry the same feature bits and the text between them is identical (and of
+ * equal length) in the generated and the original file. The merged span is
+ * Verbatim by construction: every position inside it maps with the same
+ * offset and the same text.
+ * @param {Candidate[]} spans
+ * @param {string} generated_text
+ * @param {string} original_text
+ * @returns {Candidate[]}
+ */
+export function coalesce_verbatim_spans(spans, generated_text, original_text) {
+	/** @type {Candidate[]} */
+	const merged = [];
+	for (const span of spans) {
+		const previous = merged[merged.length - 1];
+		if (
+			previous &&
+			previous.kind === SpanMapKind.Verbatim &&
+			span.kind === SpanMapKind.Verbatim &&
+			previous.features === span.features &&
+			span.originalStart >= previous.originalEnd &&
+			span.generatedStart - previous.generatedEnd === span.originalStart - previous.originalEnd &&
+			generated_text.slice(previous.generatedEnd, span.generatedStart) ===
+				original_text.slice(previous.originalEnd, span.originalStart)
+		) {
+			previous.generatedEnd = span.generatedEnd;
+			previous.originalEnd = span.originalEnd;
+			continue;
+		}
+		merged.push({ ...span });
+	}
+	return merged;
 }
 
 const identifier_part = /[\p{ID_Continue}$\u200c\u200d]/u;
@@ -208,6 +257,23 @@ function is_whole_identifier(text, start, end) {
 		identifier_pattern.test(text.slice(start, end)) &&
 		(start === 0 || !identifier_part.test(text[start - 1])) &&
 		(end === text.length || !identifier_part.test(text[end]))
+	);
+}
+
+/**
+ * Whether `[start, end)` is a piece of a longer identifier in `text`:
+ * identifier characters inside and an identifier character touching an edge.
+ * @param {string} text
+ * @param {number} start
+ * @param {number} end
+ */
+function is_partial_identifier(text, start, end) {
+	const slice = text.slice(start, end);
+	return (
+		slice.length > 0 &&
+		[...slice].every((character) => identifier_part.test(character)) &&
+		((start > 0 && identifier_part.test(text[start - 1])) ||
+			(end < text.length && identifier_part.test(text[end])))
 	);
 }
 

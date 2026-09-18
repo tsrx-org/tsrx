@@ -54,3 +54,13 @@ diagnostic text shows the authored name.
   (`hoverPlugin.js`, `definitionPlugin.js`). Not TypeScript's concern.
 - `wordHighlight`: keyword highlights (`documentHighlightPlugin.js`).
 - `suppressedDiagnostics`: removed in Phase 0. No transform ever produced it.
+
+## Post-processing in `span-mappings.js`
+
+- Container spans lose to the token spans they enclose (Verbatim first, then
+  shorter before longer, disjoint in generated space).
+- Neighbouring Verbatim spans with equal feature bits whose gap is identical text
+  in both files are coalesced, so whole statements such as import declarations
+  become one edit-safe span.
+- Atom candidates that are fragments of an identifier (the one-character
+  file-start anchor) are dropped.

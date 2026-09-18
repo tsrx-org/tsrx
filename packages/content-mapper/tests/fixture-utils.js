@@ -57,6 +57,8 @@ export function parse_tsc_output(output) {
 
 export const repo_root = fileURLToPath(new URL('../../../', import.meta.url));
 const package_dir = fileURLToPath(new URL('../', import.meta.url));
+/** The mapper's executable entry, run from source. */
+export const mapper_server_path = path.join(package_dir, 'src', 'server.js');
 
 /**
  * Absolute path of the pinned native TypeScript 7 binary for this platform,
@@ -89,7 +91,11 @@ export function native_tsc_path() {
  * the current sources rather than a stale `dist/`. Target compilers and
  * runtime type packages are symlinked from this package's `node_modules`.
  * @param {Record<string, string>} files Relative path → content, written into the workspace.
- * @param {{ dependencies?: Array<string | [name: string, provider_dir: string]>, mapperOptions?: Record<string, unknown> }} [options]
+ * @param {{
+ * 	dependencies?: Array<string | [name: string, provider_dir: string]>,
+ * 	mapperOptions?: Record<string, unknown>,
+ * 	exec?: string[],
+ * }} [options] `exec` replaces the manifest's `exec` (default: `node src/server.js`).
  * @returns {{ dir: string, cleanup: () => void }}
  */
 export function create_native_workspace(files, options = {}) {
@@ -114,7 +120,7 @@ export function create_native_workspace(files, options = {}) {
 				type: 'module',
 				typescript: {
 					contentMapper: {
-						exec: [process.execPath, path.join(package_dir, 'src', 'server.js')],
+						exec: options.exec ?? [process.execPath, mapper_server_path],
 						dynamicConfig: true,
 					},
 				},
