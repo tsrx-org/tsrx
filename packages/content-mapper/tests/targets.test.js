@@ -5,17 +5,23 @@ import {
 	create_native_workspace,
 	fixture_files_with_native_config,
 	parse_tsc_output,
+	repo_root,
 	run_classic_tsc,
 	run_native_tsc,
 } from './fixture-utils.js';
 
 const targets_dir = fileURLToPath(new URL('./fixtures/targets/', import.meta.url));
 
-/** Runtime and compiler packages each target fixture resolves from its workspace. */
+/**
+ * Runtime and compiler packages each target fixture resolves from its
+ * workspace. `vue-jsx-vapor` is borrowed from the Vite Vue plugin's install so
+ * this package does not pull a second `vite` instance into the lockfile.
+ * @type {Record<string, Array<string | [string, string]>>}
+ */
 const target_dependencies = {
 	preact: ['@tsrx/preact', 'preact'],
 	solid: ['@tsrx/solid', 'solid-js', '@solidjs/web'],
-	vue: ['@tsrx/vue', 'vue', 'vue-jsx-vapor'],
+	vue: ['@tsrx/vue', 'vue', ['vue-jsx-vapor', path.join(repo_root, 'packages', 'vite-plugin-vue')]],
 	ripple: ['@tsrx/ripple', 'ripple'],
 };
 
@@ -29,7 +35,7 @@ describe.each(Object.keys(target_dependencies))('%s target', (target) => {
 	it('produces the same diagnostics under native tsc as under classic tsrx-tsc', () => {
 		const files = fixture_files_with_native_config(path.join(targets_dir, target));
 		const created = create_native_workspace(files, {
-			dependencies: target_dependencies[/** @type {keyof typeof target_dependencies} */ (target)],
+			dependencies: target_dependencies[target],
 		});
 		cleanups.push(created.cleanup);
 

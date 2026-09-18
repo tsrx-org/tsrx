@@ -512,9 +512,6 @@ importers:
       vue:
         specifier: 3.6.0-beta.12
         version: 3.6.0-beta.12(typescript@5.9.3)
-      vue-jsx-vapor:
-        specifier: ^3.2.14
-        version: 3.2.14(csstype@3.2.3)(esbuild@0.27.3)(vite@8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))(vue@3.6.0-beta.12(typescript@5.9.3))
 
   packages/eslint-parser:
     dependencies:
@@ -5225,10 +5222,6 @@ packages:
     resolution: {integrity: sha512-5gTmgEY/sqK6gFXLIsQNH19lWb4ebPDLA4SdLP7dsWkIXHWlG66oPuVvXSGFPppYZz8ZDZq0dYYrbHfBCVUb1Q==}
     engines: {node: '>=12'}
 
-  picomatch@4.0.4:
-    resolution: {integrity: sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==}
-    engines: {node: '>=12'}
-
   picomatch@4.0.5:
     resolution: {integrity: sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A==}
     engines: {node: '>=12'}
@@ -5751,10 +5744,6 @@ packages:
 
   tinyglobby@0.2.15:
     resolution: {integrity: sha512-j2Zq4NyQYG5XMST4cbs02Ak8iJUdxRM0XI5QyxXuZOzKOINmWurp3smXu3y5wDcJrptwpSjgXHzIQxR0omXljQ==}
-    engines: {node: '>=12.0.0'}
-
-  tinyglobby@0.2.16:
-    resolution: {integrity: sha512-pn99VhoACYR8nFHhxqix+uvsbXineAasWm5ojXoN8xEwK5Kd3/TrhNn1wByuD52UxWRLy8pu+kRMniEi6Eq9Zg==}
     engines: {node: '>=12.0.0'}
 
   tinyglobby@0.2.17:
@@ -8043,7 +8032,7 @@ snapshots:
       debug: 4.4.3(supports-color@7.2.0)
       minimatch: 10.2.4
       semver: 7.7.4
-      tinyglobby: 0.2.16
+      tinyglobby: 0.2.17
       ts-api-utils: 2.4.0(typescript@5.9.3)
       typescript: 5.9.3
     transitivePeerDependencies:
@@ -8338,18 +8327,6 @@ snapshots:
       '@vue-jsx-vapor/compiler-rs-win32-ia32-msvc': 3.2.14
       '@vue-jsx-vapor/compiler-rs-win32-x64-msvc': 3.2.14
 
-  '@vue-jsx-vapor/macros@3.2.14(esbuild@0.27.3)(vite@8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))(vue@3.6.0-beta.12(typescript@5.9.3))':
-    dependencies:
-      hash-sum: 2.0.0
-      magic-string: 0.30.21
-      ts-macro: 0.3.7
-      unplugin: 3.0.0
-      unplugin-utils: 0.3.1
-      vue: 3.6.0-beta.12(typescript@5.9.3)
-    optionalDependencies:
-      esbuild: 0.27.3
-      vite: 8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1)
-
   '@vue-jsx-vapor/macros@3.2.14(esbuild@0.27.3)(vite@8.1.5(@types/node@25.3.3)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))(vue@3.5.29(typescript@5.9.3))':
     dependencies:
       hash-sum: 2.0.0
@@ -8386,7 +8363,7 @@ snapshots:
 
   '@vue/compiler-core@3.5.29':
     dependencies:
-      '@babel/parser': 7.29.3
+      '@babel/parser': 7.29.2
       '@vue/shared': 3.5.29
       entities: 7.0.1
       estree-walker: 2.0.2
@@ -9280,10 +9257,6 @@ snapshots:
   fastq@1.20.1:
     dependencies:
       reusify: 1.1.0
-
-  fdir@6.5.0(picomatch@4.0.3):
-    optionalDependencies:
-      picomatch: 4.0.3
 
   fdir@6.5.0(picomatch@4.0.5):
     optionalDependencies:
@@ -10269,8 +10242,6 @@ snapshots:
 
   picomatch@4.0.3: {}
 
-  picomatch@4.0.4: {}
-
   picomatch@4.0.5: {}
 
   pipenet@1.4.0(supports-color@7.2.0):
@@ -10918,11 +10889,6 @@ snapshots:
 
   tinyglobby@0.2.15:
     dependencies:
-      fdir: 6.5.0(picomatch@4.0.3)
-      picomatch: 4.0.3
-
-  tinyglobby@0.2.16:
-    dependencies:
       fdir: 6.5.0(picomatch@4.0.5)
       picomatch: 4.0.5
 
@@ -11102,12 +11068,12 @@ snapshots:
   unplugin-utils@0.3.1:
     dependencies:
       pathe: 2.0.3
-      picomatch: 4.0.4
+      picomatch: 4.0.5
 
   unplugin@3.0.0:
     dependencies:
       '@jridgewell/remapping': 2.3.5
-      picomatch: 4.0.4
+      picomatch: 4.0.5
       webpack-virtual-modules: 0.6.2
 
   update-browserslist-db@1.2.3(browserslist@4.28.2):
@@ -11299,23 +11265,6 @@ snapshots:
   vscode-nls@5.2.0: {}
 
   vscode-uri@3.1.0: {}
-
-  vue-jsx-vapor@3.2.14(csstype@3.2.3)(esbuild@0.27.3)(vite@8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))(vue@3.6.0-beta.12(typescript@5.9.3)):
-    dependencies:
-      '@vue-jsx-vapor/compiler-rs': 3.2.14
-      '@vue-jsx-vapor/macros': 3.2.14(esbuild@0.27.3)(vite@8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))(vue@3.6.0-beta.12(typescript@5.9.3))
-      '@vue-jsx-vapor/runtime': 3.2.14(csstype@3.2.3)(vue@3.6.0-beta.12(typescript@5.9.3))
-      '@vue/shared': 3.6.0-beta.10
-      pathe: 2.0.3
-      ts-macro: 0.3.7
-      unplugin: 3.0.0
-      unplugin-utils: 0.3.1
-      vue: 3.6.0-beta.12(typescript@5.9.3)
-    optionalDependencies:
-      esbuild: 0.27.3
-      vite: 8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1)
-    transitivePeerDependencies:
-      - csstype
 
   vue-jsx-vapor@3.2.14(csstype@3.2.3)(esbuild@0.27.3)(vite@8.1.5(@types/node@25.3.3)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))(vue@3.5.29(typescript@5.9.3)):
     dependencies:

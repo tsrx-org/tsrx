@@ -54,8 +54,7 @@
     "solid-js": "catalog:default",
     "tsdown": "catalog:default",
     "typescript": "catalog:default",
-    "vue": "3.6.0-beta.12",
-    "vue-jsx-vapor": "^3.2.14"
+    "vue": "3.6.0-beta.12"
   },
   "publishConfig": {
     "access": "public"

@@ -55,7 +55,7 @@ export function parse_tsc_output(output) {
 	return diagnostics;
 }
 
-const repo_root = fileURLToPath(new URL('../../../', import.meta.url));
+export const repo_root = fileURLToPath(new URL('../../../', import.meta.url));
 const package_dir = fileURLToPath(new URL('../', import.meta.url));
 
 /**
@@ -89,13 +89,16 @@ export function native_tsc_path() {
  * the current sources rather than a stale `dist/`. Target compilers and
  * runtime type packages are symlinked from this package's `node_modules`.
  * @param {Record<string, string>} files Relative path → content, written into the workspace.
- * @param {{ dependencies?: string[], mapperOptions?: Record<string, unknown> }} [options]
+ * @param {{ dependencies?: Array<string | [name: string, provider_dir: string]>, mapperOptions?: Record<string, unknown> }} [options]
  * @returns {{ dir: string, cleanup: () => void }}
  */
 export function create_native_workspace(files, options = {}) {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsrx-content-mapper-'));
-	for (const dependency of options.dependencies ?? ['@tsrx/react', 'react', '@types/react']) {
-		const source = fs.realpathSync(path.join(package_dir, 'node_modules', dependency));
+	for (const entry of options.dependencies ?? ['@tsrx/react', 'react', '@types/react']) {
+		// A tuple names the workspace package whose node_modules provides the
+		// dependency, for packages this package does not declare itself.
+		const [dependency, provider] = Array.isArray(entry) ? entry : [entry, package_dir];
+		const source = fs.realpathSync(path.join(provider, 'node_modules', dependency));
 		const target = path.join(dir, 'node_modules', dependency);
 		fs.mkdirSync(path.dirname(target), { recursive: true });
 		fs.symlinkSync(source, target, 'junction');
