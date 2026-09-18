@@ -13,7 +13,6 @@ const ROOT_EXTERNAL_PACKAGES = [
 	'@tsrx/core',
 	'volar-service-css',
 	'vscode-uri',
-	'@tsrx/typescript-plugin',
 	// this definitely has to be external as we monkey patch it at runtime
 	'volar-service-typescript',
 ];
@@ -21,8 +20,8 @@ const REGEX_EXTERNAL_PACKAGES = [
 	// also definitely need it for monkey patching
 	/^volar-service-typescript(?:\/.*)?$/,
 ];
-// Always external (bundled by VS Code or handled separately)
-const ALWAYS_EXTERNAL = ['vscode', '@tsrx/typescript-plugin'];
+// Always external (provided by VS Code)
+const ALWAYS_EXTERNAL = ['vscode'];
 const OUT_DIR = 'dist';
 
 // Compute all external packages by collecting dependency trees
@@ -35,7 +34,10 @@ const isDev = process.env.NODE_ENV !== 'production';
 
 export default defineConfig({
 	inlineOnly: false,
-	entry: ['src/extension.js', 'src/server.js'],
+	// `content-mapper.js` is the bundled @tsrx/content-mapper the extension registers with the
+	// TypeScript 7 extension for inferred projects (native backend). `@tsrx/typescript-plugin` is
+	// inlined into both servers, exactly like the language server's own build does.
+	entry: ['src/extension.js', 'src/server.js', 'src/content-mapper.js'],
 	outDir: OUT_DIR,
 	sourcemap: isDev,
 	outputOptions: {
@@ -60,20 +62,6 @@ export default defineConfig({
 			execSync(`node "${scriptPath}" "${distPath}" ${ROOT_EXTERNAL_PACKAGES.join(' ')}`, {
 				stdio: 'inherit',
 			});
-
-			// Remove unnecessary files from typescript-plugin (only dist/ and package.json needed)
-			const tsPluginPath = path.join(
-				dirname,
-				OUT_DIR,
-				'node_modules',
-				'@tsrx',
-				'typescript-plugin',
-			);
-			for (const entry of fs.readdirSync(tsPluginPath)) {
-				if (entry !== 'dist' && entry !== 'package.json') {
-					execSync(`rm -rf "${path.join(tsPluginPath, entry)}"`, { stdio: 'inherit' });
-				}
-			}
 		},
 	},
 });

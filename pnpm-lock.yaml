@@ -1215,6 +1215,9 @@ importers:
 
   packages/vscode-plugin:
     dependencies:
+      '@tsrx/content-mapper':
+        specifier: workspace:*
+        version: link:../content-mapper
       '@tsrx/language-server':
         specifier: workspace:*
         version: link:../language-server
