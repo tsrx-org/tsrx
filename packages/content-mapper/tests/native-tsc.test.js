@@ -103,7 +103,7 @@ describe('native tsc --runExternalCode', () => {
 	it('type-checks embedded <script> bodies as supplemental outputs', () => {
 		const files = consumer_fixture_files();
 		const edited = files['Panel.tsrx'].replace(
-			'const analyticsEnabled: boolean = true;',
+			'const analyticsEnabled: boolean = 1 < 2;',
 			'const analyticsEnabled: boolean = "no";',
 		);
 		files['Panel.tsrx'] = edited;

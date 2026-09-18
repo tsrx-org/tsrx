@@ -10,7 +10,7 @@ export default function Panel({ title, count }: PanelProps) @{
 	<>
 		<head>
 			<script type="text/typescript">
-				const analyticsEnabled: boolean = true;
+				const analyticsEnabled: boolean = 1 < 2;
 			</script>
 		</head>
 		<section className="panel">

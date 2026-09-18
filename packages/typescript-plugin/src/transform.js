@@ -79,15 +79,44 @@ export function transform_tsrx(compiler, file_name, content, options = {}) {
 		};
 	}
 
+	const scriptRegions = regions_from_mappings(transpiled.scriptMappings ?? []);
 	return {
-		text: transpiled.code ?? '',
+		text: blank_script_bodies(transpiled.code ?? '', scriptRegions),
 		mappings: transpiled.mappings ?? [],
 		cssRegions: regions_from_mappings(transpiled.cssMappings ?? []),
-		scriptRegions: regions_from_mappings(transpiled.scriptMappings ?? []),
+		scriptRegions,
 		errors: transpiled.errors ?? [],
 		fatalError: null,
 		sourceAst: transpiled.sourceAst ?? null,
 	};
+}
+
+/**
+ * Blank every `<script>` body in the generated TSX, keeping its length and
+ * line breaks. The compilers copy the body verbatim into the JSX text of the
+ * `<script>` element, where a `<` (as in `1 < 2`) parses as a tag and yields a
+ * syntax error that only the Volar path used to hide (it drops diagnostics
+ * with no source mapping; the content-mapper protocol reports them). The body
+ * is type-checked on its own as an embedded script, and no mapping of the
+ * generated TSX points into it (`regions_from_mappings`), so blanking loses
+ * nothing. A body is located by its text followed by the closing tag; a body
+ * that is not found unchanged in the output is left alone.
+ * @param {string} text
+ * @param {EmbeddedRegion[]} script_regions
+ * @returns {string}
+ */
+export function blank_script_bodies(text, script_regions) {
+	let cursor = 0;
+	for (const region of script_regions) {
+		if (region.length === 0) continue;
+		const needle = `${region.content}</script>`;
+		const index = text.indexOf(needle, cursor);
+		if (index < 0) continue;
+		const blank = region.content.replace(/[^\r\n]/g, ' ');
+		text = text.slice(0, index) + blank + text.slice(index + region.content.length);
+		cursor = index + needle.length;
+	}
+	return text;
 }
 
 /**

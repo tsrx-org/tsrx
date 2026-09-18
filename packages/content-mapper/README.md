@@ -160,6 +160,28 @@ extension's README for the per-editor setup.
   (microsoft/TypeScript#63879), and an unused variable in a `<script>` body is
   reported as a hint (TS6133) because the body is checked as a module.
 
+### Compatibility notes (for the Phase 4 matrix)
+
+Observed on 2026-09-18 with the pinned nightly, checking the Ripple playground
+(`playground/ripple` in the Ripple repository, 1,648-line `App.tsrx`, external
+`@tsrx/ripple` compiler) with `tsc --runExternalCode --noEmit` against classic
+`tsrx-tsc --noEmit` on the same tsconfig:
+
+- Identical diagnostics for every `.tsrx` and `.ts` source (29 errors), plus
+  hover, definition into Ripple's type declarations and completions through the
+  native language server.
+- One extra native diagnostic in Vite's own `index.d.ts` (TS2320, a library-check
+  difference between TypeScript 7 and 5 with `skipLibCheck` off): compiler-version
+  difference.
+- Before `blank_script_bodies` in `@tsrx/typescript-plugin/src/transform.js`,
+  native `tsc` reported a TS1003 "in virtual code produced by the content mapper"
+  for a `<script>` body containing `1 < 2`: the Ripple compiler copies the body
+  into the JSX of the `<script>` element, where `<` parses as a tag. The classic
+  path hid that syntax error because Volar drops diagnostics with no source
+  mapping (the playground's `debug/tsx/App.tsx` dump shows it). The body is now
+  blanked in the main TSX on both paths and checked only as the supplemental
+  output: adapter bug, fixed.
+
 ### Cache invalidation
 
 The mapper uses `dynamicConfig`. `openProject` returns a `configIdentity` hashed

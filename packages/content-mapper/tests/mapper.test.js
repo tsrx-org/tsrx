@@ -15,6 +15,7 @@ import {
 	DIAGNOSTIC_CODE_USAGE_ERROR,
 	SpanMapKind,
 } from '../src/protocol.js';
+import { blank_script_bodies } from '@tsrx/typescript-plugin/src/transform.js';
 import {
 	consumer_fixture_dir,
 	consumer_fixture_files,
@@ -130,6 +131,13 @@ describe('create_tsrx_content_mapper', () => {
 		expect(result.supplemental).toHaveLength(1);
 		expect(result.supplemental?.[0].extension).toBe('.mts');
 		expect(result.supplemental?.[0].mappings[0][4]).toBe(SpanMapKind.Verbatim);
+		// The `<script>` body is checked as the supplemental output only. Compilers
+		// that copy it into the main TSX (Ripple does; React leaves the element
+		// empty) get it blanked there, so its `<` cannot parse as a JSX tag and
+		// raise a syntax error in synthesized code.
+		expect(result.supplemental?.[0].text).toContain('const analyticsEnabled: boolean = 1 < 2;');
+		expect(result.text).not.toContain('analyticsEnabled');
+		expect(result.text).toMatch(/<script type="text\/typescript">\s*<\/script>/);
 		// Ordered and disjoint in generated space.
 		for (let index = 1; index < result.mappings.length; index++) {
 			const previous = result.mappings[index - 1];
@@ -242,5 +250,31 @@ describe('create_tsrx_content_mapper', () => {
 		const b = mapper.transform({ fileName: file, content, projectHandle: 'b' });
 		expect(a.mappings.some((span) => span[5] !== 0)).toBe(true);
 		expect(b.mappings.every((span) => span[5] === 0)).toBe(true);
+	});
+});
+
+describe('blank_script_bodies', () => {
+	it('blanks each script body in place, keeping length and line breaks', () => {
+		const body = 'const value = 1 < 2;\n\tlet x = "<b>";';
+		const text = `<head><script>${body}</script><script>${body}</script></head>`;
+		const regions = [
+			{ id: 'script_0', start: 0, length: body.length, content: body },
+			{ id: 'script_1', start: 0, length: body.length, content: body },
+		];
+		const blanked = blank_script_bodies(text, regions);
+		expect(blanked.length).toBe(text.length);
+		expect(blanked).not.toContain('value');
+		expect(blanked.split('\n').length).toBe(text.split('\n').length);
+		expect(blanked).toBe(
+			`<head><script>${body.replace(/[^\n]/g, ' ')}</script><script>${body.replace(/[^\n]/g, ' ')}</script></head>`,
+		);
+	});
+
+	it('leaves the text alone when a body is empty or not copied into the output', () => {
+		const text = '<script></script><div>{"const a = 1;"}</div>';
+		expect(blank_script_bodies(text, [{ id: 's', start: 0, length: 0, content: '' }])).toBe(text);
+		expect(
+			blank_script_bodies(text, [{ id: 's', start: 0, length: 12, content: 'const a = 1;' }]),
+		).toBe(text);
 	});
 });
