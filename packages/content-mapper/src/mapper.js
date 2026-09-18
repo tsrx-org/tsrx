@@ -45,7 +45,7 @@ const bare_package_specifier_pattern =
  * @property {string | undefined} configFileName
  * @property {MapperOptions} options
  * @property {Set<string>} dependencies Files whose content affects transform output.
- * @property {Map<string, AST.Program>} lastGood Last successfully parsed source AST per file, for the compile-failure stub.
+ * @property {Map<string, AST.Program>} lastGood Last successfully parsed source AST per file, for the compile-failure stub. Shared by every project state of a mapper (see {@link create_tsrx_content_mapper}).
  */
 
 /**
@@ -60,7 +60,11 @@ const bare_package_specifier_pattern =
  * Create the `.tsrx` content mapper. Each `projectHandle` owns its own state;
  * nothing is shared between projects except the process-wide compiler
  * resolution caches, which are keyed by directory and reset on every
- * `openProject`.
+ * `openProject`, and the last successfully parsed AST per file. The latter is
+ * keyed by file name and independent of the project, and TypeScript reopens a
+ * project (same or new handle) whenever its identity or a watched file
+ * changes, so keeping it at the mapper level is what lets a file that still
+ * fails to compile keep its export stub across a reopen.
  * @param {{ host?: typeof ts.sys, typescript?: typeof ts }} [context]
  * @returns {ContentMapper}
  */
@@ -69,6 +73,8 @@ export function create_tsrx_content_mapper(context = {}) {
 	const host = context.host ?? typescript.sys;
 	/** @type {Map<string, ProjectState>} */
 	const projects = new Map();
+	/** @type {Map<string, AST.Program>} */
+	const last_good = new Map();
 	/** Transforms that arrive without a project handle. */
 	const standalone = create_project_state(undefined, {});
 
@@ -227,7 +233,7 @@ export function create_tsrx_content_mapper(context = {}) {
 			configFileName: config_file_name ? path.normalize(config_file_name) : undefined,
 			options,
 			dependencies: new Set(),
-			lastGood: new Map(),
+			lastGood: last_good,
 		};
 	}
 

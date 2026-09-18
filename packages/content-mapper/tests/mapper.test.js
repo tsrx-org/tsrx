@@ -192,6 +192,27 @@ describe('create_tsrx_content_mapper', () => {
 		expect(first.text).toBe('export {};\n');
 	});
 
+	it('keeps the export stub across a project reopen while the file still fails', () => {
+		// TypeScript reopens a project (with the same or a new handle) when its
+		// identity or a watched file changes; the last good AST must survive that.
+		const mapper = create_tsrx_content_mapper();
+		const config = path.join(consumer_fixture_dir, 'tsconfig.json');
+		const file = path.join(consumer_fixture_dir, 'Panel.tsrx');
+		const broken = fixture('Panel.tsrx').replace('{label}', '{{{label}');
+		mapper.openProject({ configFileName: config, projectHandle: 'p1', compilerOptions: {} });
+		mapper.transform({ fileName: file, content: fixture('Panel.tsrx'), projectHandle: 'p1' });
+
+		mapper.openProject({ configFileName: config, projectHandle: 'p1', compilerOptions: {} });
+		const same_handle = mapper.transform({ fileName: file, content: broken, projectHandle: 'p1' });
+		expect(same_handle.text).toContain('export declare const PanelProps: any;');
+		expect(same_handle.text).toContain('export default _default;');
+
+		mapper.closeProject({ projectHandle: 'p1' });
+		mapper.openProject({ configFileName: config, projectHandle: 'p2', compilerOptions: {} });
+		const new_handle = mapper.transform({ fileName: file, content: broken, projectHandle: 'p2' });
+		expect(new_handle.text).toBe(same_handle.text);
+	});
+
 	it('reports an unresolvable declared compiler as a diagnostic instead of throwing', () => {
 		// Inside this monorepo a packaged compiler is always discoverable, so the
 		// "no compiler at all" branch cannot be reached here; an explicit but
