@@ -25,8 +25,11 @@ export function build_export_stub(program) {
 	for (const statement of program?.body ?? []) {
 		switch (statement.type) {
 			case 'ExportAllDeclaration': {
+				const type = is_type_export(statement) ? ' type' : '';
 				const exported = statement.exported ? ` as ${export_name(statement.exported)}` : '';
-				lines.push(`export *${exported} from ${JSON.stringify(String(statement.source.value))};`);
+				lines.push(
+					`export${type} *${exported} from ${JSON.stringify(String(statement.source.value))};`,
+				);
 				break;
 			}
 			case 'ExportDefaultDeclaration':
@@ -34,13 +37,15 @@ export function build_export_stub(program) {
 				break;
 			case 'ExportNamedDeclaration': {
 				if (statement.source) {
+					const declaration_is_type = is_type_export(statement);
 					const specifiers = statement.specifiers.map((specifier) => {
 						const local = export_name(specifier.local);
 						const exported = export_name(specifier.exported);
-						return local === exported ? local : `${local} as ${exported}`;
+						const type = !declaration_is_type && is_type_export(specifier) ? 'type ' : '';
+						return local === exported ? `${type}${local}` : `${type}${local} as ${exported}`;
 					});
 					lines.push(
-						`export { ${specifiers.join(', ')} } from ${JSON.stringify(String(statement.source.value))};`,
+						`export${declaration_is_type ? ' type' : ''} { ${specifiers.join(', ')} } from ${JSON.stringify(String(statement.source.value))};`,
 					);
 					break;
 				}
@@ -74,6 +79,14 @@ export function build_export_stub(program) {
 		lines.push('export {};');
 	}
 	return lines.join('\n') + '\n';
+}
+
+/**
+ * @param {object} node
+ * @returns {boolean}
+ */
+function is_type_export(node) {
+	return /** @type {{ exportKind?: string }} */ (node).exportKind === 'type';
 }
 
 /**

@@ -192,6 +192,28 @@ describe('create_tsrx_content_mapper', () => {
 		expect(first.text).toBe('export {};\n');
 	});
 
+	it('keeps the last-good export stub after TypeScript reopens the project', () => {
+		const mapper = create_tsrx_content_mapper();
+		const config = path.join(consumer_fixture_dir, 'tsconfig.json');
+		const open = () =>
+			mapper.openProject({
+				configFileName: config,
+				projectHandle: 'p1',
+				compilerOptions: {},
+			});
+		open();
+		const file = path.join(consumer_fixture_dir, 'Panel.tsrx');
+		mapper.transform({ fileName: file, content: fixture('Panel.tsrx'), projectHandle: 'p1' });
+		const broken = fixture('Panel.tsrx').replace('{label}', '{{{label}');
+		const before = mapper.transform({ fileName: file, content: broken, projectHandle: 'p1' });
+		expect(before.text).toContain('export declare const PanelProps: any;');
+		open();
+		const after = mapper.transform({ fileName: file, content: broken, projectHandle: 'p1' });
+		expect(after.text).toBe(before.text);
+		expect(after.diagnostics).toHaveLength(1);
+		expect(after.diagnostics?.[0].code).toBe(DIAGNOSTIC_CODE_COMPILE_ERROR);
+	});
+
 	it('reports an unresolvable declared compiler as a diagnostic instead of throwing', () => {
 		// Inside this monorepo a packaged compiler is always discoverable, so the
 		// "no compiler at all" branch cannot be reached here; an explicit but

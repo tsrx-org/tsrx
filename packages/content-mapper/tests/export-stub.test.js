@@ -44,4 +44,19 @@ export default function Component() @{
 		expect(text).toContain(`export { x, y as z } from "./c.tsrx";`);
 		expect(text).toContain('declare const _default: any;\nexport default _default;');
 	});
+
+	it('keeps type-only re-exports as type-only', () => {
+		const text = stub(`
+export type { Foo, Bar as Baz } from './types.tsrx';
+export { type Qux, value } from './mixed.tsrx';
+export type * from './all-types.tsrx';
+export type * as ns from './ns.tsrx';
+`);
+		expect(text).toContain(`export type { Foo, Bar as Baz } from "./types.tsrx";`);
+		expect(text).toContain(`export { type Qux, value } from "./mixed.tsrx";`);
+		expect(text).toContain(`export type * from "./all-types.tsrx";`);
+		expect(text).toContain(`export type * as ns from "./ns.tsrx";`);
+		expect(text).not.toMatch(/export \{ Foo/);
+		expect(text).not.toMatch(/export \* from "\.\/all-types/);
+	});
 });

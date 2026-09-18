@@ -87,7 +87,15 @@ export function create_tsrx_content_mapper(context = {}) {
 		// (installed compilers, package manifests) may be stale.
 		invalidateCompilerResolutionCaches();
 		const { options, optionDiagnostics } = validate_options(params.options);
-		const state = create_project_state(params.configFileName || undefined, options);
+		// Reopen keeps last-good source ASTs so a file that is still failing to
+		// compile continues to emit its export stub after tsconfig or compiler
+		// identity changes.
+		const previous = projects.get(params.projectHandle);
+		const state = create_project_state(
+			params.configFileName || undefined,
+			options,
+			previous?.lastGood,
+		);
 		projects.set(params.projectHandle, state);
 
 		// Resolve the compiler once up front so the tsconfig chain and the
@@ -220,14 +228,15 @@ export function create_tsrx_content_mapper(context = {}) {
 	/**
 	 * @param {string | undefined} config_file_name
 	 * @param {MapperOptions} options
+	 * @param {Map<string, AST.Program>} [last_good]
 	 * @returns {ProjectState}
 	 */
-	function create_project_state(config_file_name, options) {
+	function create_project_state(config_file_name, options, last_good) {
 		return {
 			configFileName: config_file_name ? path.normalize(config_file_name) : undefined,
 			options,
 			dependencies: new Set(),
-			lastGood: new Map(),
+			lastGood: last_good ?? new Map(),
 		};
 	}
 
