@@ -28,20 +28,27 @@ export class NativeLspClient {
 	stderr = [];
 	/** @type {Map<string, number>} */
 	#versions = new Map();
+	/** @type {Array<(method: string, params: any) => void>} */
+	#notification_listeners = [];
 
 	/**
 	 * @param {string} cwd
+	 * @param {{ command?: string, args?: string[] }} [server] Another
+	 *   stdio language server to drive with the same client, for example the
+	 *   classic TSRX language server in benchmarks. Defaults to the native
+	 *   TypeScript 7 server.
 	 */
-	constructor(cwd) {
+	constructor(cwd, server = {}) {
 		this.cwd = cwd;
 		// `--stdio` is what vscode-languageclient appends for its stdio transport.
-		this.#process = spawn(native_tsc_path(), ['--lsp', '--stdio'], {
+		const command = server.command ?? native_tsc_path();
+		this.#process = spawn(command, server.args ?? ['--lsp', '--stdio'], {
 			cwd,
 			env: { ...process.env, TSRX_DEBUG: undefined },
 		});
 		this.#process.on('exit', (code, signal) => {
 			const error = new Error(
-				`Native TypeScript language server exited (code ${code}, signal ${signal}): ${this.stderr.join('')}`,
+				`Language server ${command} exited (code ${code}, signal ${signal}): ${this.stderr.join('')}`,
 			);
 			for (const pending of this.#pending.values()) pending.reject(error);
 			this.#pending.clear();
@@ -112,8 +119,36 @@ export class NativeLspClient {
 					result = null;
 			}
 			this.#write({ jsonrpc: '2.0', id: message.id, result });
+			return;
 		}
-		// Notifications from the server (logs, progress) are ignored.
+		// Notifications from the server (diagnostics, logs, progress).
+		for (const listener of this.#notification_listeners) listener(message.method, message.params);
+	}
+
+	/**
+	 * Resolve with the params of the next server notification `method` that
+	 * satisfies `predicate` (push diagnostics from servers without pull
+	 * support, for example).
+	 * @param {string} method
+	 * @param {(params: any) => boolean} [predicate]
+	 * @param {number} [timeout]
+	 * @returns {Promise<any>}
+	 */
+	wait_for_notification(method, predicate = () => true, timeout = 30_000) {
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.#notification_listeners = this.#notification_listeners.filter((l) => l !== listener);
+				reject(new Error(`Timed out waiting for notification ${method}`));
+			}, timeout);
+			/** @type {(method: string, params: any) => void} */
+			const listener = (received, params) => {
+				if (received !== method || !predicate(params)) return;
+				clearTimeout(timer);
+				this.#notification_listeners = this.#notification_listeners.filter((l) => l !== listener);
+				resolve(params);
+			};
+			this.#notification_listeners.push(listener);
+		});
 	}
 
 	/** @param {unknown} message */
@@ -150,10 +185,22 @@ export class NativeLspClient {
 		);
 	}
 
+	/** The server process id, for process-tree measurements. */
+	get pid() {
+		return this.#process.pid;
+	}
+
 	/**
 	 * Initialize with the capabilities the tests rely on (pull diagnostics,
 	 * completion resolve with additional edits, dynamic registration).
-	 * @param {{ runExternalCode?: boolean }} [options]
+	 * @param {{
+	 * 	runExternalCode?: boolean,
+	 * 	initializationOptions?: Record<string, unknown>,
+	 * 	textDocumentCapabilities?: Record<string, unknown>,
+	 * }} [options]
+	 *   `initializationOptions` are merged over the `runExternalCode` entry;
+	 *   `textDocumentCapabilities` are merged over the default text-document
+	 *   capabilities (to advertise more features than the tests pin).
 	 */
 	async initialize(options = {}) {
 		const result = await this.request('initialize', {
@@ -163,6 +210,7 @@ export class NativeLspClient {
 			capabilities: {
 				workspace: { configuration: true, workspaceFolders: true },
 				textDocument: {
+					...options.textDocumentCapabilities,
 					synchronization: { dynamicRegistration: true },
 					diagnostic: { dynamicRegistration: true },
 					hover: { dynamicRegistration: true, contentFormat: ['markdown', 'plaintext'] },
@@ -180,7 +228,10 @@ export class NativeLspClient {
 					codeAction: { dynamicRegistration: true },
 				},
 			},
-			initializationOptions: options.runExternalCode ? { runExternalCode: true } : {},
+			initializationOptions: {
+				...(options.runExternalCode ? { runExternalCode: true } : null),
+				...options.initializationOptions,
+			},
 		});
 		this.notify('initialized', {});
 		return result;
