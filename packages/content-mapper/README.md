@@ -180,5 +180,15 @@ pnpm test --project content-mapper
 - Integration tests spawn the mapper from `src/server.js` through a generated
   manifest in a temporary workspace, so they never depend on a stale `dist/`.
 
+### Package layout
+
+- `src/server.js` is the executable entry named by the manifest.
+- `src/rpc.js` (`run_mapper_server`, `redirect_console_to_stderr`) is the stdio
+  transport and `src/mapper.js` (`create_tsrx_content_mapper`) the protocol
+  implementation. Both are exported (`@tsrx/content-mapper/rpc`,
+  `@tsrx/content-mapper/mapper`) so a host that ships its own copy of the mapper,
+  such as the VS Code extension for inferred projects, can start it from its own
+  bundled entry file.
+
 `MAPPING.md` is the inventory of every mapping site in the shared transform and
 the span kind and feature bits each one becomes.

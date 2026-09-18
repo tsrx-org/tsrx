@@ -15,10 +15,14 @@
     "url": "https://github.com/tsrx-org/tsrx/issues"
   },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "exports": {
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./mapper": "./src/mapper.js",
+    "./rpc": "./src/rpc.js",
+    "./protocol": "./src/protocol.js"
   },
   "typescript": {
     "contentMapper": {
