@@ -1,5 +1,13 @@
 # @tsrx/vue
 
+## 0.2.4
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/core@0.2.4
+  - @tsrx/vue-runtime@0.1.10
+
 ## 0.2.3
 
 ### Patch Changes

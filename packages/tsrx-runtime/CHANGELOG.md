@@ -1,5 +1,17 @@
 # @tsrx/runtime
 
+## 0.2.2
+
+### Patch Changes
+
+- [#112](https://github.com/tsrx-org/tsrx/pull/112)
+  [`ca84d73`](https://github.com/tsrx-org/tsrx/commit/ca84d7333621ad809593add9f8202c9a16cc6ce3)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Reduce mount and
+  cleanup overhead for `mergeRefs(a, b)`, including composed spread refs. Track
+  the two cleanup steps directly instead of allocating a cleanup array on each
+  mount, while preserving single-pass object-ref classification, callback and
+  cleanup order, and thrown-error behavior.
+
 ## 0.2.1
 
 ### Patch Changes

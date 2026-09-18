@@ -1,5 +1,13 @@
 # @tsrx/mcp
 
+## 0.1.6
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/core@0.2.4
+  - @tsrx/prettier-plugin@0.4.6
+
 ## 0.1.5
 
 ### Patch Changes

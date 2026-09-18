@@ -1,5 +1,21 @@
 # @tsrx/typescript-plugin
 
+## 0.4.6
+
+### Patch Changes
+
+- [#133](https://github.com/tsrx-org/tsrx/pull/133)
+  [`bfb0373`](https://github.com/tsrx-org/tsrx/commit/bfb037311255466297af01fb17bfaa262de8dd00)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Fix `tsrx-tsc` under Deno
+  using `node:module` load hooks so Volar's TypeScript CLI patch is applied. This
+  enables `.tsrx` imports and type checking without a custom loader workaround or
+  deprecated `require.extensions` hooks.
+- Updated dependencies []:
+  - @tsrx/preact@0.2.4
+  - @tsrx/react@0.3.4
+  - @tsrx/solid@0.2.4
+  - @tsrx/vue@0.2.4
+
 ## 0.4.5
 
 ### Patch Changes

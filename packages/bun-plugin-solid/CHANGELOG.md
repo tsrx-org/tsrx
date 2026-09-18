@@ -1,5 +1,13 @@
 # @tsrx/bun-plugin-solid
 
+## 0.0.70
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/core@0.2.4
+  - @tsrx/solid@0.2.4
+
 ## 0.0.69
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # @tsrx/preact
 
+## 0.2.4
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/core@0.2.4
+  - @tsrx/preact-runtime@0.1.10
+
 ## 0.2.3
 
 ### Patch Changes
