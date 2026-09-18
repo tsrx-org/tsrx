@@ -9,9 +9,11 @@
  * type errors of its own) to the checker would produce noise. Instead every
  * export from the last successful transform's source AST is re-declared as
  * `any` (both as a value and as a type, so `new X()`, `X.y` and `let v: X` all
- * keep resolving), re-exports from other modules are kept as written, and the
- * compile error is reported through the mapper's own diagnostics. Importers
- * keep resolving; the author sees one error at the right place.
+ * keep resolving), re-exports from other modules are kept as written (including
+ * their `type` modifiers, so `isolatedModules` and `verbatimModuleSyntax` do
+ * not reject the stub), and the compile error is reported through the mapper's
+ * own diagnostics. Importers keep resolving; the author sees one error at the
+ * right place.
  * @param {AST.Program | null | undefined} program The last successfully parsed source AST, if any.
  * @returns {string}
  */
@@ -26,7 +28,9 @@ export function build_export_stub(program) {
 		switch (statement.type) {
 			case 'ExportAllDeclaration': {
 				const exported = statement.exported ? ` as ${export_name(statement.exported)}` : '';
-				lines.push(`export *${exported} from ${JSON.stringify(String(statement.source.value))};`);
+				lines.push(
+					`export ${type_modifier(statement)}*${exported} from ${JSON.stringify(String(statement.source.value))};`,
+				);
 				break;
 			}
 			case 'ExportDefaultDeclaration':
@@ -34,13 +38,17 @@ export function build_export_stub(program) {
 				break;
 			case 'ExportNamedDeclaration': {
 				if (statement.source) {
+					const statement_is_type = type_modifier(statement) !== '';
 					const specifiers = statement.specifiers.map((specifier) => {
 						const local = export_name(specifier.local);
 						const exported = export_name(specifier.exported);
-						return local === exported ? local : `${local} as ${exported}`;
+						// `export type { A }` marks the statement; `export { type A }`
+						// marks the specifier. Never write both.
+						const modifier = statement_is_type ? '' : type_modifier(specifier);
+						return `${modifier}${local === exported ? local : `${local} as ${exported}`}`;
 					});
 					lines.push(
-						`export { ${specifiers.join(', ')} } from ${JSON.stringify(String(statement.source.value))};`,
+						`export ${type_modifier(statement)}{ ${specifiers.join(', ')} } from ${JSON.stringify(String(statement.source.value))};`,
 					);
 					break;
 				}
@@ -74,6 +82,16 @@ export function build_export_stub(program) {
 		lines.push('export {};');
 	}
 	return lines.join('\n') + '\n';
+}
+
+/**
+ * `type ` for a type-only export statement or specifier (the ESTree-TS
+ * `exportKind` field), else the empty string.
+ * @param {AST.Node} node
+ * @returns {'type ' | ''}
+ */
+function type_modifier(node) {
+	return /** @type {{ exportKind?: string }} */ (node).exportKind === 'type' ? 'type ' : '';
 }
 
 /**
