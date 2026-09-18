@@ -56,3 +56,22 @@ nearest `package.json` to resolve ambiguity.
 The language server, tsserver plugin, and `tsrx-tsc` share the same compiler
 selection behavior. See the [TSRX documentation](https://tsrx.dev/) for target
 setup and authoring guidance.
+
+## Command-line type checking
+
+Install this package, TypeScript, and your target compiler, then run
+`tsrx-tsc --noEmit -p tsconfig.json` to check TypeScript and `.tsrx` files.
+
+With Deno 2.8 or newer and the npm dependencies installed locally, add a task to
+`deno.json`:
+
+```json
+{
+  "tasks": {
+    "check": "tsrx-tsc --noEmit -p tsconfig.json"
+  }
+}
+```
+
+Run `deno task check`. This uses the npm-installed TypeScript version and your
+`tsconfig.json`, including `tsrx.compiler`. No custom loader script is needed.
