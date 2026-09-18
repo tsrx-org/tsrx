@@ -72,4 +72,6 @@ server automatically.
 
 See the [TSRX documentation](https://tsrx.dev/) and
 [`@tsrx/typescript-plugin`](../typescript-plugin/README.md) for target compiler
-selection and TypeScript configuration.
+selection and TypeScript configuration, and
+[`@tsrx/content-mapper`'s `ROLLOUT.md`](../content-mapper/ROLLOUT.md) for the
+migration, rollback and default-backend decision behind the two backends.

@@ -52,4 +52,11 @@ What differs from the classic backend:
 
 See the
 [`@tsrx/content-mapper` README](https://github.com/tsrx-org/tsrx/tree/main/packages/content-mapper)
-for the CLI (`tsc --runExternalCode`), declaration output and known limitations.
+for the CLI (`tsc --runExternalCode`), declaration output and known limitations,
+its
+[`ROLLOUT.md`](https://github.com/tsrx-org/tsrx/blob/main/packages/content-mapper/ROLLOUT.md)
+for migration and rollback steps and why `auto` is the default, and its
+[`COMPATIBILITY.md`](https://github.com/tsrx-org/tsrx/blob/main/packages/content-mapper/COMPATIBILITY.md)
+and
+[`BENCHMARKS.md`](https://github.com/tsrx-org/tsrx/blob/main/packages/content-mapper/BENCHMARKS.md)
+for how the two backends compare.
