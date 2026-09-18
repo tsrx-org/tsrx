@@ -67,8 +67,10 @@ One precedence rule, highest first:
   is unchanged are `Verbatim` (edit-safe: rename, code actions and formatting
   write back through them); renamed identifiers are `Alias`, so a diagnostic that
   covers one shows the authored name; everything else is `Atom`.
-- Each embedded `<script>` body as a supplemental `.ts` output with a single
-  verbatim span.
+- Each embedded `<script>` body as a supplemental `.mts` output (module scope, so
+  bodies never collide as globals) with a single verbatim span. TypeScript names
+  it `<file>.tsrx.<index>.mts` and, under `--declaration`, emits
+  `<file>.tsrx.<index>.d.mts` next to `<file>.d.tsrx.ts`.
 - TSRX compile errors as mapper diagnostics in the original file, printed as
   `error tsrx<code>`. Code `1000` is a fatal compile error, `1001` a usage error
   without a string code, `1002` no compiler found, `1003` invalid configuration;
@@ -79,6 +81,36 @@ One precedence rule, highest first:
   (values and types), so importers keep resolving and the author sees exactly one
   error at the failing construct. `<style>` bodies are never TypeScript's concern
   and stay in the TSRX language server.
+
+### Declarations
+
+Under `--declaration`, native TypeScript emits `Component.d.tsrx.ts` (plus `.map`)
+next to `main.d.ts`, keeps `./Component.tsrx` in import specifiers, and emits
+`Component.tsrx.<index>.d.mts` for each `<script>` body.
+
+- A project that references a `.tsrx` library through `references` (`tsc --build`)
+  must declare the content mapper as well, so that TypeScript knows `.tsrx` inputs
+  and redirects `lib/Component.tsrx` to `lib/dist/Component.d.tsrx.ts`. Without
+  it, the `./Component.tsrx` specifier inside the library's `index.d.ts` fails to
+  resolve and, under `skipLibCheck`, the export silently becomes `any`.
+- A project that consumes published declarations without the mapper needs
+  `allowArbitraryExtensions: true`, which makes TypeScript resolve
+  `./Component.tsrx` to `Component.d.tsrx.ts`. Emitted declarations are plain
+  TypeScript and re-check with TypeScript 5 or 7 this way.
+- microsoft/TypeScript#64120 (`outputExtension`) will let a build that compiles
+  `.tsrx` to `.js` emit `Component.d.ts` instead; do not design around the current
+  naming.
+
+### Known limitations (TypeScript 7.1.0-dev.20260918.1)
+
+- `--watch` compiles once and never recompiles after an edit on macOS in this
+  environment, with or without a content mapper and with every `--watchFile`
+  strategy. The watch test only asserts the initial pass.
+- Composite projects (`--build`) reject the compiler-named supplemental `<script>`
+  file with TS6307 because it cannot be listed in `include`. Keep `<script>`
+  bodies out of composite libraries until this is fixed upstream;
+  `tests/native-build.test.js` pins the current behaviour.
+- `--runExternalCode` is required and is never enabled by the mapper.
 
 ### Cache invalidation
 

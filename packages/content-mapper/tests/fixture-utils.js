@@ -168,7 +168,10 @@ export function consumer_fixture_files(mapper_options) {
  * @returns {{ status: number | null, stdout: string, stderr: string, output: string }}
  */
 export function run_native_tsc(cwd, args) {
-	const result = spawnSync(native_tsc_path(), ['--runExternalCode', ...args], {
+	// `--build` has to be the first argument; `--runExternalCode` can follow anywhere.
+	const argv =
+		args[0] === '--build' ? [...args, '--runExternalCode'] : ['--runExternalCode', ...args];
+	const result = spawnSync(native_tsc_path(), argv, {
 		cwd,
 		encoding: 'utf8',
 		timeout: 120_000,

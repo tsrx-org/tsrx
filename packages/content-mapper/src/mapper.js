@@ -186,10 +186,13 @@ export function create_tsrx_content_mapper(context = {}) {
 		const diagnostics = result.errors.map((error) =>
 			to_diagnostic(error, content.length, DIAGNOSTIC_CODE_USAGE_ERROR),
 		);
+		// Each <script> body is its own compiler input. `.mts` forces module
+		// scope so two bodies declaring the same name never collide as globals
+		// and nothing leaks into the component's declaration output.
 		/** @type {MappedOutput[]} */
 		const supplemental = result.scriptRegions.map((region) => ({
 			text: region.content,
-			extension: '.ts',
+			extension: '.mts',
 			mappings:
 				region.length > 0
 					? [

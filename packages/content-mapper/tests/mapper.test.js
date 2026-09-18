@@ -128,7 +128,7 @@ describe('create_tsrx_content_mapper', () => {
 		expect(result.diagnostics).toBeUndefined();
 		expect(result.mappings.length).toBeGreaterThan(10);
 		expect(result.supplemental).toHaveLength(1);
-		expect(result.supplemental?.[0].extension).toBe('.ts');
+		expect(result.supplemental?.[0].extension).toBe('.mts');
 		expect(result.supplemental?.[0].mappings[0][4]).toBe(SpanMapKind.Verbatim);
 		// Ordered and disjoint in generated space.
 		for (let index = 1; index < result.mappings.length; index++) {
