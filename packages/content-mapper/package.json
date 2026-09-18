@@ -5,7 +5,6 @@
   "license": "MIT",
   "author": "Dominic Gannaway",
   "type": "module",
-  "private": true,
   "homepage": "https://tsrx.dev/",
   "repository": {
     "type": "git",
@@ -15,12 +14,50 @@
   "bugs": {
     "url": "https://github.com/tsrx-org/tsrx/issues"
   },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "typescript": {
+    "contentMapper": {
+      "exec": [
+        "node",
+        "dist/server.js"
+      ],
+      "dynamicConfig": true
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "prepare": "tsdown"
+  },
+  "peerDependencies": {
+    "typescript": "catalog:peer"
+  },
   "devDependencies": {
+    "@solidjs/web": "catalog:default",
+    "@tsrx/core": "workspace:*",
+    "@tsrx/preact": "workspace:*",
     "@tsrx/react": "workspace:*",
+    "@tsrx/ripple": "catalog:default",
+    "@tsrx/solid": "workspace:*",
     "@tsrx/typescript-plugin": "workspace:*",
+    "@tsrx/vue": "workspace:*",
+    "@types/estree": "catalog:default",
     "@types/node": "catalog:default",
     "@types/react": "catalog:default",
+    "preact": "catalog:default",
     "react": "catalog:default",
-    "typescript": "catalog:default"
+    "ripple": "catalog:default",
+    "solid-js": "catalog:default",
+    "tsdown": "catalog:default",
+    "typescript": "catalog:default",
+    "vue": "3.6.0-beta.12",
+    "vue-jsx-vapor": "^3.2.14"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

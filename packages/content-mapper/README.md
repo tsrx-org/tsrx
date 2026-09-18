@@ -1,19 +1,102 @@
 # @tsrx/content-mapper
 
-TypeScript 7 content mapper for `.tsrx` files. It lets native TypeScript (`tsc`
-from the `typescript@7` line, and the TypeScript 7 language server) type-check
-`.tsrx` modules through the upstream content-mapper protocol, reusing the same
-target-specific type-only transform that powers `@tsrx/typescript-plugin` and the
-classic Volar path.
+TypeScript 7 content mapper for `.tsrx` files. It lets native TypeScript (the
+`typescript@7` line's `tsc` and its language server) type-check `.tsrx` modules
+through the upstream content-mapper protocol, reusing the target-specific
+type-only transform that also powers `@tsrx/typescript-plugin` and the classic
+Volar path.
 
 Tracking issue: https://github.com/tsrx-org/tsrx/issues/41
 
-## Status
+## Usage
 
-Phase 0 (baseline) of the plan in the tracking issue. The mapper itself lands in
-Phase 1.
+Install the mapper next to TypeScript 7 and declare it in `tsconfig.json`:
+
+```jsonc
+{
+  "tsrx": { "compiler": "@tsrx/react" },
+  "contentMappers": [
+    { "package": "@tsrx/content-mapper", "extensions": [".tsrx"] },
+  ],
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+  },
+}
+```
+
+Then run native `tsc` with external code enabled. The flag is a user decision; the
+mapper never turns it on for you:
+
+```sh
+tsc --runExternalCode --noEmit
+```
+
+The classic `tsrx-tsc` (from `@tsrx/typescript-plugin`) keeps working unchanged
+for TypeScript 5.
+
+### Options
+
+The mapper entry accepts an `options` object:
+
+| Option             | Type                          | Meaning                                                                                |
+| ------------------ | ----------------------------- | -------------------------------------------------------------------------------------- |
+| `compiler`         | bare package specifier        | The TSRX target compiler to use, for example `@tsrx/react` or a third-party compiler.  |
+| `platform`         | `"web"`, `"ios"`, `"android"` | Platform for `import.meta.env.platform` flags.                                         |
+| `languageFeatures` | boolean, default `true`       | `false` keeps spans for diagnostics but drops editor feature bits (CLI-only projects). |
+
+Invalid options are reported by TypeScript as option diagnostics on the mapper
+entry.
+
+### Compiler selection
+
+One precedence rule, highest first:
+
+1. `contentMappers[].options.compiler` on the mapper entry.
+2. `tsrx.compiler` in the project's tsconfig, following the `extends` chain (the
+   same rule the classic plugin uses).
+3. Auto-detection of an installed target compiler (`@tsrx/react`, `@tsrx/preact`,
+   `@tsrx/solid`, `@tsrx/vue`, `@tsrx/hono`, `@tsrx/ripple`, `octane`) from the
+   file's directory upwards.
+
+`platform` follows the same rule with `tsrx.platform`.
+
+### What TypeScript sees
+
+- The generated TSX of the type-only transform, with a span map. Spans whose text
+  is unchanged are `Verbatim` (edit-safe: rename, code actions and formatting
+  write back through them); renamed identifiers are `Alias`, so a diagnostic that
+  covers one shows the authored name; everything else is `Atom`.
+- Each embedded `<script>` body as a supplemental `.ts` output with a single
+  verbatim span.
+- TSRX compile errors as mapper diagnostics in the original file, printed as
+  `error tsrx<code>`. Code `1000` is a fatal compile error, `1001` a usage error
+  without a string code, `1002` no compiler found, `1003` invalid configuration;
+  string-coded diagnostics such as `tsrx-unclosed-tag` get a stable numeric code
+  in the `10000` to `99999` range and keep the string code in brackets in the
+  message.
+- While a file cannot be compiled, a stub that re-declares its exports as `any`
+  (values and types), so importers keep resolving and the author sees exactly one
+  error at the failing construct. `<style>` bodies are never TypeScript's concern
+  and stay in the TSRX language server.
+
+### Cache invalidation
+
+The mapper uses `dynamicConfig`. `openProject` returns a `configIdentity` hashed
+from the mapper options, every tsconfig in the `extends` chain and the resolved
+compiler's `package.json`, and lists those files as `watchedFiles`.
 
 ## Development
+
+### Dependencies
+
+The mapper bundles `@tsrx/typescript-plugin`'s compiler resolution and transform
+(`src/transform.js`, `consumer-compiler.js`, `tsconfig-resolution.js`) and keeps
+classic `typescript` as a peer dependency: the tsconfig readers use
+`readJsonConfigFile`, `convertToObject`, `parseJsonSourceFileConfigFileContent`
+and `resolveModuleName` from the TypeScript 5 API for `extends` and JSONC
+handling. The native compiler never loads the mapper's copy of TypeScript, so this
+is an explicit, versioned dependency rather than a claim of independence.
 
 ### Native TypeScript binary
 
@@ -45,15 +128,25 @@ To move to a newer nightly, update the version in the root `package.json`
 (`optionalDependencies`) and in `pnpm-workspace.yaml`
 (`minimumReleaseAgeExclude`), then run `pnpm install`.
 
-### Parity fixture
-
-`tests/fixtures/consumer/` is the reference project: two `.tsrx` modules that
-import each other, a `.ts` importer, one intentional cross-file prop-type error,
-one embedded `<script>` block, and one `<style>` block with a scoped class.
-`tests/fixtures/consumer/expected-diagnostics.json` records the classic `tsrx-tsc`
-output (file, position, code, message, exit status) and is the parity target for
-the native path.
+### Tests
 
 ```sh
 pnpm test --project content-mapper
 ```
+
+- `tests/fixtures/consumer/` is the React reference project: two `.tsrx` modules
+  that import each other, a `.ts` importer, one intentional cross-file prop-type
+  error, one embedded `<script>` block and one `<style>` block with a scoped
+  class. `expected-diagnostics.json` records the classic `tsrx-tsc` output and is
+  the parity target for `native-tsc.test.js`.
+- `tests/fixtures/targets/` holds one fixture per target (Preact, Solid, Vue,
+  Ripple); `targets.test.js` runs both `tsrx-tsc` and native `tsc` on each and
+  requires identical diagnostics.
+- `third-party-compiler.test.js` selects a stub compiler through the mapper
+  options and through `tsrx.compiler`, and checks that `Alias` spans show authored
+  identifiers in diagnostics.
+- Integration tests spawn the mapper from `src/server.js` through a generated
+  manifest in a temporary workspace, so they never depend on a stale `dist/`.
+
+`MAPPING.md` is the inventory of every mapping site in the shared transform and
+the span kind and feature bits each one becomes.

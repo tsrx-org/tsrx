@@ -1,0 +1,17 @@
+{
+  "tsrx": { "compiler": "@tsrx/ripple" },
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "preserve",
+    "jsxImportSource": "ripple",
+    "allowImportingTsExtensions": true,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "skipLibCheck": true,
+    "types": [],
+    "noEmit": true
+  },
+  "include": ["main.ts"]
+}
