@@ -149,8 +149,9 @@ export function project_config_paths(args, cwd, host = NODE_CONFIG_HOST) {
  * Walk the `references` graph of the build roots, in build order, and return
  * the projects that compile sources. `references` is the one top-level key
  * TypeScript does not inherit through `extends`, so each config's own entry is
- * read; `files` is inherited, and a config whose resolved `files` is empty is
- * a solution that compiles nothing. Configs that cannot be read are kept for
+ * read; `files` and `include` are inherited, and a config whose resolved
+ * `files` is empty with no `include` is a solution that compiles nothing
+ * (TypeScript unions the two lists). Configs that cannot be read are kept for
  * `tsc` to report.
  * @param {readonly string[]} roots
  * @param {import('./config-host.js').ConfigHost} host
@@ -181,15 +182,23 @@ function build_graph_projects(roots, host) {
 				}
 			}
 		}
-		const files = resolve_inherited_config_value(layers, (layer) =>
-			get_own_config_value(layer.config, ['files']),
+		// TypeScript unions `files` and `include`, so a solution is a config
+		// whose `files` is empty and that has no `include` to add anything.
+		/** @param {'files' | 'include'} key */
+		const is_empty_list = (key) => {
+			const value = resolve_inherited_config_value(layers, (layer) =>
+				get_own_config_value(layer.config, [key]),
+			);
+			return value.state === 'found' && Array.isArray(value.value) && value.value.length === 0;
+		};
+		const include = resolve_inherited_config_value(layers, (layer) =>
+			get_own_config_value(layer.config, ['include']),
 		);
 		const is_solution =
 			diagnostics.length === 0 &&
 			extends_failures.length === 0 &&
-			files.state === 'found' &&
-			Array.isArray(files.value) &&
-			files.value.length === 0;
+			is_empty_list('files') &&
+			(include.state === 'absent' || is_empty_list('include'));
 		if (!is_solution) projects.push(config_path);
 	}
 	for (const root of roots) visit(root);

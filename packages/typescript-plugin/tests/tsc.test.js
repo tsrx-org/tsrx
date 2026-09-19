@@ -354,6 +354,28 @@ process.exit(Number(process.env.TSRX_TEST_EXIT ?? 0));
 			]);
 		});
 
+		it('treats a root with files: [] and an include as a project, not a solution', () => {
+			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
+				platform_binary: record_call,
+			});
+			// TypeScript unions `files` and `include`: this root compiles main.ts.
+			write_tsconfig({ files: [], include: ['*.ts'], references: [{ path: './lib' }] });
+			fs.mkdirSync(path.join(workspace, 'lib'));
+			fs.writeFileSync(
+				path.join(workspace, 'lib', 'tsconfig.json'),
+				JSON.stringify({ contentMappers: [mapper_entry], compilerOptions: { composite: true } }),
+			);
+			const call_file = path.join(workspace, 'call.json');
+			const result = run_cli_with_typescript_7(stub_dir, ['--build'], {
+				TSRX_TEST_CALL: call_file,
+			});
+			expect(result.status).toBe(1);
+			expect(result.output).toContain(
+				`${path.join(workspace, 'tsconfig.json')} declares no content mapper`,
+			);
+			expect(fs.existsSync(call_file)).toBe(false);
+		});
+
 		it('leaves a tsconfig that does not parse to the compiler instead of refusing it', () => {
 			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
 				platform_binary: record_call,
