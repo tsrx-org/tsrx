@@ -41,8 +41,8 @@ import protocol from '@volar/language-server/protocol';
 import * as lsp from 'vscode-languageclient/node';
 import { activateAutoInsertion, createLabsInfo } from '@volar/vscode';
 import {
-	SERVER_COMPILE_ERROR_SOURCE,
 	has_mapper_diagnostics,
+	should_sync_server_compile_errors,
 	without_duplicate_compile_errors,
 } from './diagnostics.js';
 
@@ -59,6 +59,11 @@ function is_tsrx_file_path(file_path) {
 
 /** @type {import('vscode-languageclient/node').LanguageClient | undefined} */
 let client;
+
+/** @type {Map<string, import('vscode').Diagnostic[]>} Last unfiltered `publishDiagnostics` report per file. */
+const last_pushed_server_diagnostics = new Map();
+/** @type {Set<string>} Files whose current VS Code diagnostics include the mapper's source. */
+const files_with_mapper_diagnostics = new Set();
 
 /**
  * @param {import('vscode').ExtensionContext} context
@@ -124,6 +129,7 @@ export async function activate(context) {
 		initializationOptions: { typescriptBackend: 'plugin' },
 		middleware: {
 			handleDiagnostics(uri, diagnostics, next) {
+				last_pushed_server_diagnostics.set(uri.toString(), [...diagnostics]);
 				next(
 					uri,
 					without_duplicate_compile_errors(diagnostics, vscode.languages.getDiagnostics(uri)),
@@ -186,25 +192,31 @@ export async function activate(context) {
 		// `tsSupportsFileReferences`, `supportedCodeAction`; with TypeScript 7 on, the built-in
 		// extension is off and those entries stay hidden by themselves.
 
-		// The mapper's compile errors may arrive after the server's. When they do, drop the
-		// server's copy: directly for pushed diagnostics, and by asking VS Code to pull the
-		// server's diagnostics again (the middleware then filters them) for pulled ones.
+		// The mapper's compile errors may arrive after the server's, or later go away
+		// (TypeScript 7 off, the file leaves a contentMappers project, or the mapper
+		// clears). Re-apply the last unfiltered server report: drop the server's copy
+		// while the mapper covers the file, and put it back when it no longer does.
+		// Pulled diagnostics are refreshed so the middleware applies the same filter.
 		context.subscriptions.push(
 			vscode.languages.onDidChangeDiagnostics((event) => {
 				for (const uri of event.uris) {
 					if (!is_tsrx_file_path(uri.fsPath) || !client) {
 						continue;
 					}
+					const key = uri.toString();
 					const all = vscode.languages.getDiagnostics(uri);
-					if (
-						!has_mapper_diagnostics(all) ||
-						!all.some((diagnostic) => diagnostic.source === SERVER_COMPILE_ERROR_SOURCE)
-					) {
+					const had_mapper = files_with_mapper_diagnostics.has(key);
+					if (has_mapper_diagnostics(all)) {
+						files_with_mapper_diagnostics.add(key);
+					} else {
+						files_with_mapper_diagnostics.delete(key);
+					}
+					if (!should_sync_server_compile_errors(all, had_mapper)) {
 						continue;
 					}
-					const pushed = client.diagnostics?.get(uri);
-					if (pushed?.length) {
-						client.diagnostics?.set(uri, without_duplicate_compile_errors(pushed, all));
+					const saved = last_pushed_server_diagnostics.get(key);
+					if (saved !== undefined) {
+						client.diagnostics?.set(uri, without_duplicate_compile_errors(saved, all));
 						continue;
 					}
 					const document = vscode.workspace.textDocuments.find(

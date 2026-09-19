@@ -6,6 +6,7 @@ import {
 	MAPPER_DIAGNOSTIC_SOURCE,
 	SERVER_COMPILE_ERROR_SOURCE,
 	has_mapper_diagnostics,
+	should_sync_server_compile_errors,
 	without_duplicate_compile_errors,
 } from '../src/diagnostics.js';
 
@@ -40,5 +41,23 @@ describe('TSRX compile errors are shown once', () => {
 		expect(
 			without_duplicate_compile_errors([compile_error, css], [compile_error, css, mapper, ts]),
 		).toEqual([css]);
+	});
+
+	it('re-applies the server report when mapper coverage appears or disappears', () => {
+		const compile_error = { source: 'TSRX', message: 'Unexpected token' };
+		const css = { source: 'css', message: 'unknown property' };
+		const mapper = { source: 'tsrx', message: 'Unexpected token' };
+		const ts = { source: 'ts', message: 'Type error' };
+		// Mapper arrives while the server's compile errors are still visible.
+		expect(should_sync_server_compile_errors([compile_error, css, mapper, ts], false)).toBe(true);
+		// Already dropped; the mapper still covers the file.
+		expect(should_sync_server_compile_errors([css, mapper, ts], true)).toBe(false);
+		// Mapper gone: the client's stored (already filtered) report must be refreshed.
+		expect(should_sync_server_compile_errors([css, ts], true)).toBe(true);
+		expect(should_sync_server_compile_errors([css, ts], false)).toBe(false);
+		expect(without_duplicate_compile_errors([compile_error, css], [css, ts])).toEqual([
+			compile_error,
+			css,
+		]);
 	});
 });
