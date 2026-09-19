@@ -67,7 +67,6 @@ import {
 /** @import { Backend } from './backend.js' */
 
 const TSRX_FILE_SELECTORS = ['**/*.tsrx'];
-const TSRX_FILE_EXCLUDE_GLOB = '**/{node_modules,dist,build,.git}/**';
 const RESTART_EXTENSIONS_ACTION = 'Restart Extensions';
 
 /**
