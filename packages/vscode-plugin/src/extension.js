@@ -40,11 +40,7 @@ import fs from 'node:fs';
 import protocol from '@volar/language-server/protocol';
 import * as lsp from 'vscode-languageclient/node';
 import { activateAutoInsertion, createLabsInfo } from '@volar/vscode';
-import {
-	SERVER_COMPILE_ERROR_SOURCE,
-	has_mapper_diagnostics,
-	without_duplicate_compile_errors,
-} from './diagnostics.js';
+import { CompileErrorDedupe, has_server_compile_errors } from './diagnostics.js';
 
 const TSRX_FILE_SELECTORS = ['**/*.tsrx'];
 const RESTART_EXTENSIONS_ACTION = 'Restart Extensions';
@@ -57,8 +53,35 @@ function is_tsrx_file_path(file_path) {
 	return file_path.endsWith('.tsrx');
 }
 
+/**
+ * Re-apply the compile-error filter to the language server's diagnostics for a file:
+ * directly for pushed diagnostics, and by asking VS Code to pull them again for pulled ones.
+ * @param {import('vscode').Uri} uri
+ */
+function refresh_server_diagnostics(uri) {
+	if (!client) {
+		return;
+	}
+	const pushed = client.diagnostics?.get(uri);
+	if (pushed?.length) {
+		client.diagnostics?.set(uri, dedupe.filter(pushed, vscode.languages.getDiagnostics(uri)));
+		return;
+	}
+	const document = vscode.workspace.textDocuments.find(
+		(candidate) => candidate.uri.toString() === uri.toString(),
+	);
+	if (document) {
+		client
+			.getFeature(lsp.DocumentDiagnosticRequest.method)
+			?.getProvider(document)
+			?.onDidChangeDiagnosticsEmitter.fire();
+	}
+}
+
 /** @type {import('vscode-languageclient/node').LanguageClient | undefined} */
 let client;
+/** Whether TypeScript 7's content mapper has been seen reporting in this session. */
+const dedupe = new CompileErrorDedupe();
 
 /**
  * @param {import('vscode').ExtensionContext} context
@@ -119,24 +142,18 @@ export async function activate(context) {
 		// through the contributed @tsrx/typescript-plugin, or TypeScript 7 through
 		// @tsrx/content-mapper), so the server never loads TypeScript and never serves TypeScript
 		// features here. It always reports TSRX compile errors; the middleware below drops that
-		// copy for a file the mapper already reports on, so the extension never has to know
-		// which TypeScript VS Code runs.
+		// copy once TypeScript 7's content mapper has been seen reporting in this session, so
+		// the extension never has to know which TypeScript VS Code runs.
 		initializationOptions: { typescriptBackend: 'plugin' },
 		middleware: {
 			handleDiagnostics(uri, diagnostics, next) {
-				next(
-					uri,
-					without_duplicate_compile_errors(diagnostics, vscode.languages.getDiagnostics(uri)),
-				);
+				next(uri, dedupe.filter(diagnostics, vscode.languages.getDiagnostics(uri)));
 			},
 			async provideDiagnostics(document, previousResultId, token, next) {
 				const report = await next(document, previousResultId, token);
 				if (report && 'items' in report) {
 					const uri = document instanceof vscode.Uri ? document : document.uri;
-					report.items = without_duplicate_compile_errors(
-						report.items,
-						vscode.languages.getDiagnostics(uri),
-					);
+					report.items = dedupe.filter(report.items, vscode.languages.getDiagnostics(uri));
 				}
 				return report;
 			},
@@ -186,35 +203,24 @@ export async function activate(context) {
 		// `tsSupportsFileReferences`, `supportedCodeAction`; with TypeScript 7 on, the built-in
 		// extension is off and those entries stay hidden by themselves.
 
-		// The mapper's compile errors may arrive after the server's. When they do, drop the
-		// server's copy: directly for pushed diagnostics, and by asking VS Code to pull the
-		// server's diagnostics again (the middleware then filters them) for pulled ones.
+		// The mapper's compile errors can arrive after the server's copy is already shown. On the
+		// first sighting of the mapper, and whenever a .tsrx file still shows the server's copy
+		// afterwards, refresh the server's diagnostics so the middleware filters them.
 		context.subscriptions.push(
 			vscode.languages.onDidChangeDiagnostics((event) => {
 				for (const uri of event.uris) {
-					if (!is_tsrx_file_path(uri.fsPath) || !client) {
+					if (!is_tsrx_file_path(uri.fsPath)) {
 						continue;
 					}
 					const all = vscode.languages.getDiagnostics(uri);
-					if (
-						!has_mapper_diagnostics(all) ||
-						!all.some((diagnostic) => diagnostic.source === SERVER_COMPILE_ERROR_SOURCE)
-					) {
-						continue;
-					}
-					const pushed = client.diagnostics?.get(uri);
-					if (pushed?.length) {
-						client.diagnostics?.set(uri, without_duplicate_compile_errors(pushed, all));
-						continue;
-					}
-					const document = vscode.workspace.textDocuments.find(
-						(candidate) => candidate.uri.toString() === uri.toString(),
-					);
-					if (document) {
-						client
-							.getFeature(lsp.DocumentDiagnosticRequest.method)
-							?.getProvider(document)
-							?.onDidChangeDiagnosticsEmitter.fire();
+					if (dedupe.observe(all)) {
+						for (const document of vscode.workspace.textDocuments) {
+							if (document.languageId === 'tsrx') {
+								refresh_server_diagnostics(document.uri);
+							}
+						}
+					} else if (dedupe.mapper_seen && has_server_compile_errors(all)) {
+						refresh_server_diagnostics(uri);
 					}
 				}
 			}),
