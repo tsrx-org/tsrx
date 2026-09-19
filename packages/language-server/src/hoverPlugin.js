@@ -16,9 +16,20 @@ import {
 const { log, logError } = createLogging('[TSRX Hover Plugin]');
 
 /**
+ * Hover for TSRX.
+ *
+ * Classic backend: wraps `typescript-semantic`'s hover (deobfuscating generated
+ * identifiers) and merges in the CSS-class hover carried by mapping metadata.
+ *
+ * Native backend: TypeScript 7 serves the TypeScript hover itself, so this
+ * plugin only answers on spans that carry custom hover metadata (CSS class
+ * names in `class` attributes). The mapper leaves the Hover feature bit off on
+ * those spans, so TypeScript stays silent there and the editor shows one hover.
+ * @param {{ typescriptBackend?: import('./backend.js').TypeScriptBackend }} [options]
  * @returns {LanguageServicePlugin}
  */
-export function createHoverPlugin() {
+export function createHoverPlugin(options = {}) {
+	const standalone = options.typescriptBackend === 'native';
 	return {
 		name: 'tsrx-hover',
 		capabilities: {
@@ -30,21 +41,23 @@ export function createHoverPlugin() {
 			/** @type {LanguageServicePluginInstance} */
 			let originalInstance;
 
-			// Disable typescript-semantic's provideHover so it doesn't merge with ours
-			for (const [plugin, instance] of context.plugins) {
-				if (plugin.name === 'typescript-semantic') {
-					originalInstance = instance;
-					originalProvideHover = instance.provideHover;
-					instance.provideHover = undefined;
-					break;
+			if (!standalone) {
+				// Disable typescript-semantic's provideHover so it doesn't merge with ours
+				for (const [plugin, instance] of context.plugins) {
+					if (plugin.name === 'typescript-semantic') {
+						originalInstance = instance;
+						originalProvideHover = instance.provideHover;
+						instance.provideHover = undefined;
+						break;
+					}
 				}
-			}
 
-			if (!originalProvideHover) {
-				logError(
-					"'typescript-semantic plugin' was not found or has no 'provideHover'. \
-					This plugin must be loaded after Volar's typescript-semantic plugin.",
-				);
+				if (!originalProvideHover) {
+					logError(
+						"'typescript-semantic plugin' was not found or has no 'provideHover'. \
+						This plugin must be loaded after Volar's typescript-semantic plugin.",
+					);
+				}
 			}
 			return {
 				async provideHover(document, position, token) {

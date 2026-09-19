@@ -1,0 +1,18 @@
+{
+  "tsrx": {
+    "compiler": "@tsrx/react"
+  },
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "allowImportingTsExtensions": true,
+    "target": "ES2022",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": [],
+    "noEmit": true
+  },
+  "include": ["main.ts"]
+}

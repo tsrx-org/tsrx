@@ -19,6 +19,16 @@ import {
 const { log } = createLogging('[TSRX Definition Plugin]');
 
 /**
+ * Definition for TSRX.
+ *
+ * Classic backend: forwards to `typescript-semantic` and adds the custom
+ * definitions carried by mapping metadata (CSS class names jump into the
+ * `<style>` block; `typeReplace` entries jump into the compiler's types).
+ *
+ * Native backend: TypeScript 7 serves its own definitions and the mapper leaves
+ * the Definition feature bit off on spans with custom metadata, so only the
+ * custom definitions are served here. The plugin tolerates the absence of
+ * `typescript-semantic` in both modes.
  * @returns {LanguageServicePlugin}
  */
 export function createDefinitionPlugin() {

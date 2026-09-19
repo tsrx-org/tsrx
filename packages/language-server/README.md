@@ -31,7 +31,40 @@ npx @tsrx/language-server --stdio
 ```
 
 Configure your editor's LSP client for `*.tsrx` files with the language ID `tsrx`.
-VS Code users can install the
+
+## TypeScript backends
+
+The server runs beside one of two TypeScript backends. Never run both on the same
+file.
+
+- `classic` (default): the server hosts TypeScript 5 itself through Volar and
+  serves every feature for `.tsrx` files, including type-aware ones.
+- `native`: TypeScript 7 owns every TypeScript feature for `.tsrx` files through
+  [`@tsrx/content-mapper`](../content-mapper/README.md) (diagnostics including
+  TSRX compile errors, hover, completions, signature help, definitions,
+  references, rename, code actions, auto-import, inlay hints, semantic tokens).
+  The TSRX server is slimmed down to what TypeScript does not own: TSRX snippet
+  completions (Ripple-gated), CSS in `<style>` blocks, document symbols,
+  auto-closing tags, CSS-class hover and definition, and keyword highlights.
+  `volar-service-typescript` is never loaded in this mode.
+
+Select the backend with a command-line flag or an initialization option (the flag
+wins):
+
+```bash
+tsrx-language-server --stdio --typescript-backend=native
+```
+
+```jsonc
+// LSP initialize params
+{ "initializationOptions": { "typescriptBackend": "native" } }
+```
+
+Use `native` only when the same editor also runs TypeScript 7's language server
+with `initializationOptions.runExternalCode: true` and the project declares the
+content mapper in `tsconfig.json`; otherwise `.tsrx` files get no type
+information. The VS Code extension selects the backend for you. VS Code users can
+install the
 [TSRX Syntax for VS Code](https://marketplace.visualstudio.com/items?itemName=TSRX.tsrx-vscode-plugin),
 which bundles and starts this server automatically. Zed users can install the
 [TSRX extension for Zed](https://zed.dev/extensions/tsrx), which also starts this
@@ -39,4 +72,6 @@ server automatically.
 
 See the [TSRX documentation](https://tsrx.dev/) and
 [`@tsrx/typescript-plugin`](../typescript-plugin/README.md) for target compiler
-selection and TypeScript configuration.
+selection and TypeScript configuration, and
+[`@tsrx/content-mapper`'s `ROLLOUT.md`](../content-mapper/ROLLOUT.md) for the
+migration, rollback and default-backend decision behind the two backends.

@@ -193,14 +193,52 @@ local function ensure_server_binary()
 	return bin
 end
 
-function M.setup()
+--- Register `.tsrx` with TypeScript 7's language server (the `tsc` config shipped by
+--- nvim-lspconfig, `tsc --lsp --stdio`) and enable content mappers for it. The server still
+--- needs `@tsrx/content-mapper` declared under `contentMappers` in the project's tsconfig.
+local function extend_native_typescript_server()
+	local ok, config = pcall(function()
+		return vim.lsp.config.tsc
+	end)
+	if not ok or type(config) ~= "table" then
+		vim.notify(
+			"[tsrx] typescript_backend is native but no `tsc` LSP config is registered (nvim-lspconfig with TypeScript 7)",
+			vim.log.levels.WARN
+		)
+		return
+	end
+
+	local filetypes = vim.deepcopy(config.filetypes or {})
+	if not vim.tbl_contains(filetypes, "tsrx") then
+		table.insert(filetypes, "tsrx")
+	end
+	local init_options = vim.deepcopy(config.init_options or {})
+	init_options.runExternalCode = true
+	vim.lsp.config("tsc", { filetypes = filetypes, init_options = init_options })
+end
+
+--- @param opts? { typescript_backend?: "classic"|"native" }
+function M.setup(opts)
+	opts = opts or {}
+	local backend = opts.typescript_backend or "classic"
+	if backend ~= "classic" and backend ~= "native" then
+		vim.notify(("[tsrx] unknown typescript_backend %q, using classic"):format(tostring(backend)), vim.log.levels.WARN)
+		backend = "classic"
+	end
+
 	local bin = ensure_server_binary()
 	if not bin then
 		return
 	end
 
+	local cmd = { bin, "--stdio" }
+	if backend == "native" then
+		table.insert(cmd, "--typescript-backend=native")
+		extend_native_typescript_server()
+	end
+
 	local base_config = {
-		cmd = { bin, "--stdio" },
+		cmd = cmd,
 		filetypes = { "tsrx" },
 		root_markers = { "package.json", "pnpm-workspace.yaml", ".git" },
 	}

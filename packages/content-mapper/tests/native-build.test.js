@@ -1,0 +1,351 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+	consumer_fixture_files,
+	create_native_workspace,
+	parse_tsc_output,
+	run_native_tsc,
+} from './fixture-utils.js';
+import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+
+const classic_tsc = createRequire(import.meta.url).resolve('typescript/bin/tsc');
+
+/** @type {Array<() => void>} */
+const cleanups = [];
+afterEach(() => {
+	for (const cleanup of cleanups.splice(0)) cleanup();
+});
+
+/**
+ * @param {Record<string, string>} files
+ * @param {Parameters<typeof create_native_workspace>[1]} [options]
+ */
+function workspace(files, options) {
+	const created = create_native_workspace(files, options);
+	cleanups.push(created.cleanup);
+	return created.dir;
+}
+
+/** The consumer fixture without its intentional error, as a passing baseline. */
+function passing_consumer_files() {
+	const files = consumer_fixture_files();
+	files['main.ts'] = files['main.ts'].replace(/\/\/ Intentional[^\n]*\n[^\n]*\n/, '');
+	return files;
+}
+
+/**
+ * @param {Record<string, string>} files
+ * @param {Record<string, unknown>} compiler_options
+ */
+function with_native_options(files, compiler_options) {
+	const config = JSON.parse(files['tsconfig.native.json']);
+	config.compilerOptions = { ...config.compilerOptions, ...compiler_options };
+	files['tsconfig.native.json'] = JSON.stringify(config, null, '\t');
+	return files;
+}
+
+const emit_options = {
+	noEmit: false,
+	declaration: true,
+	declarationMap: true,
+	emitDeclarationOnly: true,
+	outDir: 'dist',
+};
+
+describe('native tsc declaration emit', () => {
+	it('emits Component.d.tsrx.ts declarations with maps and supplemental script declarations', () => {
+		const dir = workspace(with_native_options(passing_consumer_files(), emit_options));
+		const result = run_native_tsc(dir, [
+			'-p',
+			'tsconfig.native.json',
+			'--pretty',
+			'false',
+			'--listEmittedFiles',
+		]);
+		expect(result.output).not.toContain('error');
+		expect(result.status).toBe(0);
+
+		const emitted = fs.readdirSync(path.join(dir, 'dist')).sort();
+		expect(emitted).toEqual([
+			'Button.d.tsrx.ts',
+			'Button.d.tsrx.ts.map',
+			'Panel.d.tsrx.ts',
+			'Panel.d.tsrx.ts.map',
+			'Panel.tsrx.0.d.mts',
+			'Panel.tsrx.0.d.mts.map',
+			'main.d.ts',
+			'main.d.ts.map',
+		]);
+
+		const panel = fs.readFileSync(path.join(dir, 'dist', 'Panel.d.tsrx.ts'), 'utf8');
+		expect(panel).toContain('export interface PanelProps');
+		expect(panel).toContain(
+			'export default function Panel({ title, count }: PanelProps): import("react/jsx-runtime").JSX.Element;',
+		);
+		// The supplemental <script> declaration is a module and exports nothing.
+		const script = fs.readFileSync(path.join(dir, 'dist', 'Panel.tsrx.0.d.mts'), 'utf8');
+		expect(script).toContain('export {}');
+		expect(script).not.toContain('analyticsEnabled');
+
+		const button = fs.readFileSync(path.join(dir, 'dist', 'Button.d.tsrx.ts'), 'utf8');
+		// Specifiers keep pointing at the .tsrx module (TS#64120 tracks `outputExtension`).
+		expect(button).toContain("from './Panel.tsrx'");
+
+		const map = JSON.parse(fs.readFileSync(path.join(dir, 'dist', 'Panel.d.tsrx.ts.map'), 'utf8'));
+		expect(map.sources).toEqual(['../Panel.tsrx']);
+		expect(map.file).toBe('Panel.d.tsrx.ts');
+	});
+
+	it('keeps generics and lets a separate project consume the declarations as plain TypeScript', () => {
+		const files = with_native_options(passing_consumer_files(), emit_options);
+		files['List.tsrx'] = `export interface ListProps<T> {
+	items: T[];
+	render: (item: T) => string;
+}
+
+export function List<T>({ items, render }: ListProps<T>) @{
+	<ul>
+		@for (const item of items) {
+			<li>{render(item)}</li>
+		}
+	</ul>
+}
+`;
+		files['main.ts'] += "export { List } from './List.tsrx';\n";
+		const dir = workspace(files);
+		const build = run_native_tsc(dir, ['-p', 'tsconfig.native.json', '--pretty', 'false']);
+		expect(build.output).toBe('');
+		expect(build.status).toBe(0);
+		const list = fs.readFileSync(path.join(dir, 'dist', 'List.d.tsrx.ts'), 'utf8');
+		expect(list).toMatch(/export declare function List<T>\(\{ items, render \}: ListProps<T>\)/);
+
+		// A downstream project with `allowArbitraryExtensions` resolves
+		// `./Panel.tsrx` to `Panel.d.tsrx.ts` and needs no mapper at all.
+		const consumer = path.join(dir, 'consumer');
+		fs.mkdirSync(consumer);
+		fs.writeFileSync(
+			path.join(consumer, 'tsconfig.json'),
+			JSON.stringify({
+				compilerOptions: {
+					module: 'ESNext',
+					moduleResolution: 'Bundler',
+					allowArbitraryExtensions: true,
+					allowImportingTsExtensions: true,
+					jsx: 'react-jsx',
+					jsxImportSource: 'react',
+					strict: true,
+					skipLibCheck: true,
+					noEmit: true,
+					types: [],
+				},
+				include: ['use.ts'],
+			}),
+		);
+		fs.writeFileSync(
+			path.join(consumer, 'use.ts'),
+			`import Panel from '../dist/Panel.tsrx';
+import { List } from '../dist/List.tsrx';
+export const ok = Panel({ title: 'x', count: 1 });
+export const list = List<number>({ items: [1], render: (n) => String(n) });
+export const bad = Panel({ title: 'x', count: 'one' });
+export const badList = List<number>({ items: ['a'], render: (n) => String(n) });
+`,
+		);
+		for (const [label, run] of /** @type {const} */ ([
+			[
+				'classic TypeScript 5',
+				() =>
+					spawnSync(process.execPath, [classic_tsc, '-p', 'tsconfig.json', '--pretty', 'false'], {
+						cwd: consumer,
+						encoding: 'utf8',
+					}),
+			],
+			[
+				'native TypeScript 7 without the mapper',
+				() => run_native_tsc(consumer, ['-p', 'tsconfig.json', '--pretty', 'false']),
+			],
+		])) {
+			const result = run();
+			const output =
+				typeof result.output === 'string'
+					? result.output
+					: String(result.stdout) + String(result.stderr);
+			expect(label).toBeTruthy();
+			const diagnostics = parse_tsc_output(output);
+			expect(diagnostics.map((d) => [d.file, d.line, d.code])).toEqual([
+				['use.ts', 5, 'TS2322'],
+				['use.ts', 6, 'TS2322'],
+			]);
+			expect(result.status).toBe(2);
+		}
+	});
+});
+
+describe('native tsc incremental builds', () => {
+	it('is a no-op on the second run and reacts to file, config and compiler changes', () => {
+		const dir = workspace(
+			with_native_options(passing_consumer_files(), {
+				...emit_options,
+				incremental: true,
+				tsBuildInfoFile: 'dist/tsbuildinfo',
+			}),
+		);
+		const args = ['-p', 'tsconfig.native.json', '--pretty', 'false', '--listEmittedFiles'];
+
+		const first = run_native_tsc(dir, args);
+		expect(first.status).toBe(0);
+		expect(first.output).toContain('Panel.d.tsrx.ts');
+
+		const second = run_native_tsc(dir, args);
+		expect(second.status).toBe(0);
+		expect(second.output).toBe('');
+
+		// Editing a .tsrx file re-checks it and its importers.
+		const button_path = path.join(dir, 'Button.tsrx');
+		const button = fs.readFileSync(button_path, 'utf8');
+		fs.writeFileSync(button_path, button + 'export const oops: number = "x";\n');
+		const broken = run_native_tsc(dir, args);
+		expect(parse_tsc_output(broken.output).map((d) => [d.file, d.code])).toEqual([
+			['Button.tsrx', 'TS2322'],
+		]);
+		expect(broken.status).toBe(2);
+		fs.writeFileSync(button_path, button);
+		expect(run_native_tsc(dir, args).status).toBe(0);
+
+		// Changing the tsconfig chain changes the mapper's config identity: a
+		// bogus compiler declaration must surface even though no source changed.
+		const config_path = path.join(dir, 'tsconfig.json');
+		const config = fs.readFileSync(config_path, 'utf8');
+		fs.writeFileSync(config_path, config.replace('"@tsrx/react"', '"@tsrx/does-not-exist"'));
+		const misconfigured = run_native_tsc(dir, args);
+		expect(parse_tsc_output(misconfigured.output).map((d) => [d.file, d.code])).toEqual([
+			['Button.tsrx', 'tsrx1002'],
+			['Panel.tsrx', 'tsrx1002'],
+		]);
+		expect(misconfigured.status).not.toBe(0);
+		fs.writeFileSync(config_path, config);
+		expect(run_native_tsc(dir, args).status).toBe(0);
+
+		// Adding, deleting and renaming .tsrx files.
+		fs.writeFileSync(path.join(dir, 'Extra.tsrx'), 'export const extra: string = 1;\n');
+		const main_path = path.join(dir, 'main.ts');
+		const main = fs.readFileSync(main_path, 'utf8');
+		fs.writeFileSync(main_path, main + "export { extra } from './Extra.tsrx';\n");
+		expect(parse_tsc_output(run_native_tsc(dir, args).output).map((d) => [d.file, d.code])).toEqual(
+			[['Extra.tsrx', 'TS2322']],
+		);
+		fs.rmSync(path.join(dir, 'Extra.tsrx'));
+		expect(parse_tsc_output(run_native_tsc(dir, args).output).map((d) => [d.file, d.code])).toEqual(
+			[['main.ts', 'TS2307']],
+		);
+		fs.writeFileSync(main_path, main);
+		fs.renameSync(button_path, path.join(dir, 'Btn.tsrx'));
+		const renamed = parse_tsc_output(run_native_tsc(dir, args).output);
+		expect(renamed.map((d) => d.code)).toContain('TS2307');
+		fs.renameSync(path.join(dir, 'Btn.tsrx'), button_path);
+		expect(run_native_tsc(dir, args).status).toBe(0);
+	}, 60_000);
+});
+
+describe('native tsc --build with project references', () => {
+	/**
+	 * @param {Record<string, string>} lib_sources
+	 * @param {string} lib_index
+	 */
+	function references_workspace(lib_sources, lib_index) {
+		return workspace({
+			'lib/tsconfig.json': JSON.stringify({
+				tsrx: { compiler: '@tsrx/react' },
+				contentMappers: [{ package: '@tsrx/content-mapper', extensions: ['.tsrx'] }],
+				compilerOptions: {
+					composite: true,
+					declaration: true,
+					emitDeclarationOnly: true,
+					outDir: 'dist',
+					rootDir: '.',
+					module: 'ESNext',
+					moduleResolution: 'Bundler',
+					jsx: 'react-jsx',
+					jsxImportSource: 'react',
+					allowImportingTsExtensions: true,
+					strict: true,
+					skipLibCheck: true,
+					types: [],
+				},
+				include: ['index.ts', '*.tsrx'],
+			}),
+			'lib/index.ts': lib_index,
+			...lib_sources,
+			// A project that references a .tsrx library declares the mapper too:
+			// that is what lets TypeScript treat `lib/Button.tsrx` as a known
+			// input and redirect it to `lib/dist/Button.d.tsrx.ts`. Without it the
+			// `./Button.tsrx` specifier in the library's index.d.ts fails to
+			// resolve and, under skipLibCheck, the export silently becomes `any`.
+			'app/tsconfig.json': JSON.stringify({
+				tsrx: { compiler: '@tsrx/react' },
+				contentMappers: [{ package: '@tsrx/content-mapper', extensions: ['.tsrx'] }],
+				compilerOptions: {
+					composite: true,
+					noEmit: true,
+					module: 'ESNext',
+					moduleResolution: 'Bundler',
+					jsx: 'react-jsx',
+					jsxImportSource: 'react',
+					strict: true,
+					skipLibCheck: true,
+					types: [],
+				},
+				references: [{ path: '../lib' }],
+				include: ['app.ts'],
+			}),
+			'app/app.ts':
+				"import { Panel } from '../lib/index';\nexport const ok = Panel({ title: 'x', count: 1 });\n",
+		});
+	}
+
+	it('builds a referenced .tsrx library and checks the app against its declarations', () => {
+		const files = consumer_fixture_files();
+		// Composite projects must list every input, and a supplemental <script>
+		// output cannot be listed (see the next test), so this library has none.
+		const panel = files['Panel.tsrx'].replace(/\t\t<head>[\s\S]*?<\/head>\n/, '');
+		expect(panel).not.toContain('<script');
+		const dir = references_workspace(
+			{ 'lib/Panel.tsrx': panel, 'lib/Button.tsrx': files['Button.tsrx'] },
+			"export { default as Panel } from './Panel.tsrx';\nexport { default as Button } from './Button.tsrx';\n",
+		);
+		const good = run_native_tsc(dir, ['--build', 'app', '--pretty', 'false']);
+		expect(good.output).toBe('');
+		expect(good.status).toBe(0);
+		expect(fs.existsSync(path.join(dir, 'lib', 'dist', 'Panel.d.tsrx.ts'))).toBe(true);
+		expect(fs.existsSync(path.join(dir, 'lib', 'dist', 'index.d.ts'))).toBe(true);
+
+		fs.appendFileSync(
+			path.join(dir, 'app', 'app.ts'),
+			"export const bad = Panel({ title: 'x', count: 'one' });\n",
+		);
+		const bad = run_native_tsc(dir, ['--build', 'app', '--pretty', 'false']);
+		expect(parse_tsc_output(bad.output).map((d) => [d.file, d.line, d.code])).toEqual([
+			['app/app.ts', 3, 'TS2322'],
+		]);
+		expect(bad.status).not.toBe(0);
+	}, 30_000);
+
+	it('pins the upstream limitation that composite projects reject supplemental <script> outputs', () => {
+		// TypeScript 7.1.0-dev.20260918.1 reports TS6307 for the compiler-named
+		// supplemental file (`Panel.tsrx.0.mts`) because a composite project
+		// requires every input to be listed (microsoft/TypeScript#64350). When this
+		// test starts failing, the limitation is fixed upstream and this guard
+		// (plus the README note) can go.
+		const files = consumer_fixture_files();
+		const dir = references_workspace(
+			{ 'lib/Panel.tsrx': files['Panel.tsrx'], 'lib/Button.tsrx': files['Button.tsrx'] },
+			"export { default as Panel } from './Panel.tsrx';\n",
+		);
+		const result = run_native_tsc(dir, ['--build', 'app', '--pretty', 'false']);
+		expect(result.output).toContain('error TS6307');
+		expect(result.output).toContain('Panel.tsrx.0.mts');
+		expect(result.output).toContain('Supplemental virtual file produced by the content mapper');
+	}, 30_000);
+});
