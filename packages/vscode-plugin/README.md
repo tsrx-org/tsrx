@@ -77,7 +77,7 @@ What differs from the classic backend:
 
 On both backends, declarations inside `<script>` bodies are type-checked in place
 but not listed in the Outline: the body is a block statement in the generated
-TypeScript, which TypeScript's navigation tree skips.
+TypeScript, which TypeScript's navigation tree skips (tsrx-org/tsrx#137).
 
 See the
 [`@tsrx/content-mapper` README](https://github.com/tsrx-org/tsrx/tree/main/packages/content-mapper)
