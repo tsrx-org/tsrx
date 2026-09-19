@@ -247,6 +247,19 @@ const TYPECHECK_SCRIPT_HTML = [
 	'<span class="ln">5</span> <span class="br">}</span>',
 ].join('\n');
 
+const CONTENT_MAPPER_TSCONFIG_HTML = [
+	'<span class="ln">1</span> <span class="br">{</span>',
+	'<span class="ln">2</span>   <span class="attr">"contentMappers"</span>: <span class="br">[</span>',
+	'<span class="ln">3</span>     <span class="br">{</span> <span class="attr">"package"</span>: <span class="str">"@tsrx/content-mapper"</span>, <span class="attr">"extensions"</span>: <span class="br">[</span><span class="str">".tsrx"</span><span class="br">]</span> <span class="br">}</span>',
+	'<span class="ln">4</span>   <span class="br">]</span>',
+	'<span class="ln">5</span> <span class="br">}</span>',
+].join('\n');
+
+const NATIVE_TYPECHECK_HTML = [
+	'<span class="ln">1</span> <span class="fn">pnpm</span> <span class="prop">install</span> <span class="str">-D</span> <span class="str">typescript@next</span> <span class="str">@tsrx/content-mapper</span>',
+	'<span class="ln">2</span> <span class="fn">tsc</span> <span class="str">--runExternalCode</span> <span class="str">--noEmit</span>',
+].join('\n');
+
 const MCP_CONFIG_HTML = [
 	'<span class="ln">1</span> <span class="br">{</span>',
 	'<span class="ln">2</span>   <span class="attr">"mcpServers"</span>: <span class="br">{</span>',
@@ -1077,7 +1090,44 @@ export function GettingStartedPage() @{
 								<code class="inline-code">.tsrx</code>
 								files, without emitting any output. It accepts the same flags as
 								<code class="inline-code">tsc</code>
-								.
+								. It needs TypeScript 5.9 or 6 (
+								<code class="inline-code">typescript@^5.9.3 || ^6.0.0</code>
+								); the
+								<code class="inline-code">typescript@7</code>
+								package has no JavaScript API, and
+								<code class="inline-code">tsrx-tsc</code>
+								says so instead of running.
+							</p>
+							<h3 class="subsection-heading">TypeScript 7</h3>
+							<p class="section-body">
+								TypeScript 7 (the native compiler) type checks
+								<code class="inline-code">.tsrx</code>
+								files itself through
+								<code class="inline-code">@tsrx/content-mapper</code>
+								, with the same transform. It needs a TypeScript 7.1 nightly (
+								<code class="inline-code">7.1.0-dev.20260822.1</code>
+								or newer; the stable 7.0 releases have no content-mapper protocol) and the
+								<code class="inline-code">--runExternalCode</code>
+								flag, which lets TypeScript start the mapper. Declare the mapper in
+								<code class="inline-code">tsconfig.json</code>
+								; TypeScript 5 and 6 ignore the key, so one file serves both paths:
+							</p>
+							<pre class="code-block">
+								<code innerHTML={CONTENT_MAPPER_TSCONFIG_HTML} />
+							</pre>
+							<pre class="code-block">
+								<code innerHTML={NATIVE_TYPECHECK_HTML} />
+							</pre>
+							<p class="section-body">
+								TypeScript 7 support is not complete yet. The remaining gaps and the upstream
+								TypeScript issues behind them are tracked in
+								<a
+									class="inline-link"
+									href="https://github.com/tsrx-org/tsrx/issues/136"
+									target="_blank"
+									rel="noopener noreferrer"
+								>tsrx-org/tsrx#136</a>
+								; if you run into one that is not listed there, please file a new issue.
 							</p>
 						</section>
 
@@ -1100,6 +1150,25 @@ export function GettingStartedPage() @{
 								<code class="inline-code">.tsrx</code>
 								file should give you syntax highlighting, diagnostics, go-to-definition, formatting,
 								and the rest of the normal editor loop without extra manual setup.
+							</p>
+							<p class="section-body">
+								The
+								<code class="inline-code">tsrx.typescript.backend</code>
+								setting chooses where TypeScript features for
+								<code class="inline-code">.tsrx</code>
+								files come from:
+								<code class="inline-code">classic</code>
+								(the bundled TypeScript 5.9),
+								<code class="inline-code">native</code>
+								(TypeScript 7 through the bundled content mapper), or
+								<code class="inline-code">auto</code>
+								(the default: native only when a TypeScript 7 extension build with the
+								content-mapper API is installed and
+								<code class="inline-code">js/ts.experimental.useTsgo</code>
+								is on). With TypeScript 7 enabled, set Prettier as the
+								<code class="inline-code">[tsrx]</code>
+								default formatter, since TypeScript 7 also registers one. The extension explains
+								when it has to fall back and links the tracking issue.
 							</p>
 						</section>
 

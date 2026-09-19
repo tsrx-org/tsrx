@@ -150,3 +150,20 @@ paths checked the same thing.
 Diagnostic counts and exit codes match across paths on every project, so the runs
 compared equal work. Each figure is five runs on one machine; treat the ratios,
 not the absolute milliseconds, as the result.
+
+## Start-up floor of the mapper (2026-09-19)
+
+The ~600 ms floor of a native cold check is the mapper process starting. Best of
+five on the same machine (Node 24.18), measured with `spawnSync`:
+
+| Step                                           | ms  |
+| ---------------------------------------------- | --- |
+| Bare `node -e ""`                              | 66  |
+| `require('typescript')` (the JavaScript API)   | 268 |
+| `import('src/mapper.js')` (includes the above) | 326 |
+| Mapper plus the `@tsrx/react` compiler         | 380 |
+
+About a third of the floor is loading TypeScript's JavaScript API, which the
+mapper only uses to read `tsconfig.json` and resolve the compiler. Replacing that
+with a dedicated tsconfig reader (tracked in tsrx-org/tsrx#136) would also remove
+the mapper's `typescript` dependency.

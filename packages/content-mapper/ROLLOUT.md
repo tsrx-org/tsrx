@@ -34,6 +34,40 @@ and is not made here.
   run in untrusted workspaces.
 - **Editor guides** for Zed, Neovim (`setup(plugin, { typescript_backend })`),
   IntelliJ and Sublime Text describe the native setup per editor.
+- **TypeScript 6** on the classic path: the `typescript` peer range of
+  `@tsrx/typescript-plugin` and `@tsrx/language-server` is `^5.9.3 || ^6.0.0` (the
+  whole suite passes on 6.0.3). The `typescript@7` package has no JavaScript API,
+  so `tsrx-tsc`, the language server and the mapper stop with an explanation when
+  they resolve one; the mapper carries its own `typescript` dependency for
+  tsconfig parsing.
+
+## Requirements and status on 2026-09-19
+
+- The content-mapper protocol needs a TypeScript 7.1 nightly:
+  `7.1.0-dev.20260822.1` or newer (found by running the native suite across the
+  nightlies with `TSRX_NATIVE_TSC`). The stable `typescript@7.0.2` rejects
+  `--runExternalCode` (TS5023) and ignores `contentMappers`; there is no 7.1 beta
+  or release candidate yet.
+- No marketplace release of the VS Code TypeScript 7 extension exposes
+  `registerContentMappers` yet: **TypeScript 7** (`TypeScriptTeam.native-preview`)
+  stopped at `0.20260708.2`, and **TypeScript 7 Nightly**
+  (`TypeScriptTeam.vscode-typescript-nightly`) only ships the compiler. The native
+  backend therefore needs a build of the extension from the typescript-go
+  repository's `_extension` until a release with the API appears. The TSRX
+  extension looks the extension up under the ids VS Code's own TypeScript
+  extension uses (`vscode-typescript`, `vscode-typescript-nightly`,
+  `native-preview`) and tries every installed one for the API.
+- Packaging verified on macOS x64: the `pnpm pack` tarball of
+  `@tsrx/content-mapper` installed with npm into a fresh project outside the
+  checkout beside `typescript@7.1.0-dev.20260918.1` and the published
+  `@tsrx/react` (npm nests `typescript@6.0.3` under the mapper) reports the
+  consumer fixture's diagnostic through `npx tsc --runExternalCode`; the VSIX
+  built by `pnpm run build-and-package` (851 files, 7.2 MB, bundling TypeScript
+  5.9.3) does the same through its `dist/content-mapper.js` from an unpacked copy
+  outside the checkout. Linux and Windows are not exercised.
+- The gaps and their upstream issues are tracked in
+  [tsrx-org/tsrx#136](https://github.com/tsrx-org/tsrx/issues/136), which the VS
+  Code messages, the CLI and the docs point users to.
 
 Performance on the same projects and hardware
 ([`BENCHMARKS.md`](./BENCHMARKS.md)): cold checks 2.1–3.6× faster,
@@ -67,16 +101,19 @@ flip.
 
 ### Command-line type checking
 
-1. Install TypeScript 7 and the mapper next to the project:
+1. Install a TypeScript 7.1 nightly (`7.1.0-dev.20260822.1` or newer; the stable
+   7.0 releases have no content-mapper protocol) and the mapper next to the
+   project:
 
    ```sh
-   pnpm add -D @typescript/native-preview@next @tsrx/content-mapper
+   pnpm add -D typescript@next @tsrx/content-mapper
    ```
 
    Use the exact nightly recorded in this repository's root `package.json`
    (`@typescript/typescript-<os>-<arch>` under `optionalDependencies`) if you need
    the tested build; the `README.md` "Native TypeScript binary" section explains
-   the launcher and platform packages.
+   the launcher and platform packages. The mapper brings the JavaScript TypeScript
+   it needs for tsconfig parsing as its own dependency.
 
 2. Declare the mapper in every `tsconfig.json` that contains `.tsrx` files.
    TypeScript 5 ignores the key, so the same file keeps working with `tsrx-tsc`:
@@ -116,10 +153,11 @@ flip.
 
 ### VS Code
 
-1. Install the
-   [TypeScript 7 extension](https://marketplace.visualstudio.com/items?itemName=TypeScriptTeam.vscode-typescript)
-   and enable it (`js/ts.experimental.useTsgo` or the **TypeScript: Enable
-   TypeScript 7** command). Keep `js/ts.contentMappers.enabled` on (default).
+1. Install a TypeScript 7 extension build that exposes `registerContentMappers`
+   and runs TypeScript `7.1.0-dev.20260822.1` or newer (see "Requirements and
+   status" above for what is available today), and enable it
+   (`js/ts.experimental.useTsgo` or the **TypeScript: Enable TypeScript 7**
+   command). Keep `js/ts.contentMappers.enabled` on (default).
 2. Declare `contentMappers` in the project's `tsconfig.json` and install
    `@tsrx/content-mapper` (steps 1 and 2 above), so `.tsrx` imports resolve across
    the project. Files outside any configured project are mapped by the copy
@@ -129,6 +167,9 @@ flip.
    its `registerContentMappers` API is missing). Restart extensions after changing
    the setting.
 4. Trust the workspace; neither backend runs in Restricted Mode.
+5. Set Prettier as the `[tsrx]` default formatter (`editor.defaultFormatter`):
+   TypeScript 7 registers a formatter for `.tsrx` that returns no edits, and VS
+   Code otherwise asks which of the two to use.
 
 What changes for the user is listed under "What differs from the classic backend"
 in the extension README: `tsrx`-sourced compile errors, no auto-import that needs
@@ -185,3 +226,9 @@ classification and evidence for each.
   microsoft/TypeScript#64120.
 - Diagnostics are pull-only; clients without pull support get none from TypeScript
   7 (microsoft/TypeScript#63921).
+- Only TypeScript 7.1 nightlies from `7.1.0-dev.20260822.1` on speak the protocol;
+  `typescript@7.0.x` does not.
+- Editors other than VS Code need `typescript@^5.9.3 || ^6.0.0` installed beside
+  TypeScript 7 for the TSRX language server (it reads tsconfig through the
+  TypeScript API and runs on Volar's TypeScript project host); removing that
+  requirement is tracked in tsrx-org/tsrx#136.
