@@ -310,6 +310,40 @@ process.exit(Number(process.env.TSRX_TEST_EXIT ?? 0));
 			]);
 		});
 
+		it('refuses a files:[] project that still compiles through inherited include', () => {
+			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
+				platform_binary: record_call,
+			});
+			// `files: []` only disables the default glob; an inherited include still
+			// compiles those matches, so this leaf needs a mapper.
+			fs.writeFileSync(
+				path.join(workspace, 'tsconfig.base.json'),
+				JSON.stringify({ include: ['**/*'] }),
+			);
+			write_tsconfig({
+				extends: './tsconfig.base.json',
+				files: [],
+				references: [{ path: './lib' }],
+			});
+			fs.mkdirSync(path.join(workspace, 'lib'));
+			fs.writeFileSync(
+				path.join(workspace, 'lib', 'tsconfig.json'),
+				JSON.stringify({
+					contentMappers: [mapper_entry],
+					compilerOptions: { composite: true },
+				}),
+			);
+			const call_file = path.join(workspace, 'call.json');
+			const refused = run_cli_with_typescript_7(stub_dir, ['--build'], {
+				TSRX_TEST_CALL: call_file,
+			});
+			expect(refused.status).toBe(1);
+			expect(refused.output).toContain(
+				`${path.join(workspace, 'tsconfig.json')} declares no content mapper`,
+			);
+			expect(fs.existsSync(call_file)).toBe(false);
+		});
+
 		it('checks every compiling project of a --build graph and skips solution configs', () => {
 			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
 				platform_binary: record_call,

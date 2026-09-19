@@ -99,9 +99,9 @@ const INFORMATIONAL_FLAGS = new Set(['--version', '-v', '--help', '-h', '--init'
  * roots are each positional argument that is a directory or a config file, or
  * the working directory when there is none, and the result is every project
  * in their `references` graph that compiles something: a solution-style config
- * (`files: []`) only points at other projects and is left out. Paths that do
- * not exist are left out, so `tsc` reports them itself, and `--version`,
- * `--help` and `--init` read none.
+ * (`files: []` with no `include`) only points at other projects and is left
+ * out. Paths that do not exist are left out, so `tsc` reports them itself, and
+ * `--version`, `--help` and `--init` read none.
  * @param {readonly string[]} args
  * @param {string} cwd
  * @param {import('./config-host.js').ConfigHost} [host]
@@ -149,9 +149,10 @@ export function project_config_paths(args, cwd, host = NODE_CONFIG_HOST) {
  * Walk the `references` graph of the build roots, in build order, and return
  * the projects that compile sources. `references` is the one top-level key
  * TypeScript does not inherit through `extends`, so each config's own entry is
- * read; `files` is inherited, and a config whose resolved `files` is empty is
- * a solution that compiles nothing. Configs that cannot be read are kept for
- * `tsc` to report.
+ * read; `files` and `include` are inherited. Specifying `files` only disables
+ * the default glob, so a config is a solution that compiles nothing only when
+ * its resolved `files` is empty and it has no include globs. Configs that
+ * cannot be read are kept for `tsc` to report.
  * @param {readonly string[]} roots
  * @param {import('./config-host.js').ConfigHost} host
  * @returns {string[]}
@@ -184,12 +185,15 @@ function build_graph_projects(roots, host) {
 		const files = resolve_inherited_config_value(layers, (layer) =>
 			get_own_config_value(layer.config, ['files']),
 		);
+		const include = resolve_inherited_config_value(layers, (layer) =>
+			get_own_config_value(layer.config, ['include']),
+		);
+		const empty_files =
+			files.state === 'found' && Array.isArray(files.value) && files.value.length === 0;
+		const no_include =
+			include.state === 'absent' || (Array.isArray(include.value) && include.value.length === 0);
 		const is_solution =
-			diagnostics.length === 0 &&
-			extends_failures.length === 0 &&
-			files.state === 'found' &&
-			Array.isArray(files.value) &&
-			files.value.length === 0;
+			diagnostics.length === 0 && extends_failures.length === 0 && empty_files && no_include;
 		if (!is_solution) projects.push(config_path);
 	}
 	for (const root of roots) visit(root);
