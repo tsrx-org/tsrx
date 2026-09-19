@@ -5,15 +5,18 @@ using the TSRX language server.
 
 ## TypeScript backends
 
-`.tsrx` files get their TypeScript features from one of two backends, selected by
-the `tsrx.typescript.backend` setting (`auto` by default). Only one backend ever
-runs on a file, and changing the setting requires restarting extensions.
+`.tsrx` files get their TypeScript features from one of two backends. The
+extension has no setting of its own for this: the backend follows VS Code's own
+TypeScript 7 switch, `js/ts.experimental.useTsgo`, which the **TypeScript: Select
+TypeScript Version** picker writes. TypeScript 7 off means `classic`, on means
+`native`; nothing else is consulted, in particular no other extension. Only one
+backend ever runs on a file, and switching TypeScript 7 on or off requires
+restarting extensions.
 
 | Backend   | How it works                                                                                                                                                                                                                                                                                                                                                                                                           |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `classic` | The TSRX language server hosts TypeScript 5 itself and the built-in TypeScript extension is patched to recognize `.tsrx` files.                                                                                                                                                                                                                                                                                        |
 | `native`  | The [TypeScript 7 extension](https://github.com/microsoft/TypeScript/tree/main/packages/vscode-typescript) owns every TypeScript feature for `.tsrx` files through [`@tsrx/content-mapper`](https://www.npmjs.com/package/@tsrx/content-mapper), declared in `tsconfig.json`. The TSRX language server only serves snippets, CSS in `<style>`, document symbols, auto-closing tags and CSS-class hover and definition. |
-| `auto`    | `native` when TypeScript 7 is enabled in VS Code (`js/ts.experimental.useTsgo`, which the **TypeScript: Select TypeScript Version** picker sets), otherwise `classic`.                                                                                                                                                                                                                                                 |
 
 ### Native backend setup
 
@@ -70,7 +73,8 @@ See the
 for the CLI (`tsc --runExternalCode`), declaration output and known limitations,
 its
 [`ROLLOUT.md`](https://github.com/tsrx-org/tsrx/blob/main/packages/content-mapper/ROLLOUT.md)
-for migration and rollback steps and why `auto` is the default, and its
+for migration and rollback steps and why the backend follows VS Code's TypeScript
+7 switch, and its
 [`COMPATIBILITY.md`](https://github.com/tsrx-org/tsrx/blob/main/packages/content-mapper/COMPATIBILITY.md)
 and
 [`BENCHMARKS.md`](https://github.com/tsrx-org/tsrx/blob/main/packages/content-mapper/BENCHMARKS.md)

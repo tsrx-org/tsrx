@@ -59,34 +59,16 @@ import protocol from '@volar/language-server/protocol';
 import * as lsp from 'vscode-languageclient/node';
 import { activateAutoInsertion, createLabsInfo } from '@volar/vscode';
 import {
-	BACKEND_SETTING,
-	TYPESCRIPT_7_SETTING,
 	TYPESCRIPT_7_SETTING_KEY,
 	TYPESCRIPT_7_SETTING_SECTIONS,
 	resolve_backend,
 } from './backend.js';
-import {
-	MINIMUM_NATIVE_TYPESCRIPT_VERSION,
-	TYPESCRIPT_7_SUPPORT_NOTE,
-	TYPESCRIPT_7_TRACKING_ISSUE_URL,
-} from '@tsrx/typescript-plugin/src/typescript-version.js';
 
-/** @import { Backend, BackendReason } from './backend.js' */
+/** @import { Backend } from './backend.js' */
 
 const TSRX_FILE_SELECTORS = ['**/*.tsrx'];
 const TSRX_FILE_EXCLUDE_GLOB = '**/{node_modules,dist,build,.git}/**';
-const TYPESCRIPT_7_WARNING_STATE_KEY = 'tsrx.hasWarnedTypeScript7OnClassic';
-/** What the native backend needs, for user-facing messages. */
-const NATIVE_REQUIREMENTS = `TypeScript ${MINIMUM_NATIVE_TYPESCRIPT_VERSION} or newer (a 7.1 nightly) served by the TypeScript 7 extension, and "contentMappers": [{ "package": "@tsrx/content-mapper", "extensions": [".tsrx"] }] in every tsconfig.json that contains .tsrx files, with @tsrx/content-mapper installed next to it`;
-const TYPESCRIPT_7_ON_CLASSIC_MESSAGE = `TypeScript 7 is enabled in this workspace (${TYPESCRIPT_7_SETTING}), but the TSRX extension is running the classic TypeScript backend for .tsrx files, so their TypeScript features are limited. TypeScript 7 support for .tsrx files is not complete yet: it needs ${NATIVE_REQUIREMENTS}, with "tsrx.typescript.backend" set to "auto" or "native". ${TYPESCRIPT_7_SUPPORT_NOTE} To keep full TypeScript features for .tsrx files today, disable "${TYPESCRIPT_7_SETTING}" for this workspace.`;
 const RESTART_EXTENSIONS_ACTION = 'Restart Extensions';
-const OPEN_TRACKING_ISSUE_ACTION = 'Open Tracking Issue';
-
-/**
- * @typedef {object} BackendSelection
- * @property {Backend} backend
- * @property {BackendReason} reason
- */
 
 /**
  * @param {string} file_path
@@ -116,22 +98,18 @@ export async function activate(context) {
 		return;
 	}
 
-	const selection = select_backend();
-	active_backend = selection.backend;
-	console.log(`[TSRX] TypeScript backend: ${selection.backend} (${selection.reason})`);
-	await report_native_without_typescript_7(selection);
+	const backend = select_backend();
+	active_backend = backend;
+	console.log(`[TSRX] TypeScript backend: ${backend}`);
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration(async (event) => {
-			if (
-				event.affectsConfiguration(BACKEND_SETTING) ||
-				is_typescript_7_configuration_change(event)
-			) {
+			if (is_typescript_7_configuration_change(event)) {
 				await prompt_restart_if_backend_changed();
 			}
 		}),
 	);
 
-	if (selection.backend === 'classic') {
+	if (backend === 'classic') {
 		await activate_classic_backend(context);
 	}
 
@@ -177,7 +155,7 @@ export async function activate(context) {
 	const clientOptions = {
 		documentSelector: [{ language: 'tsrx' }],
 		// The server drops its TypeScript services on the native backend (TypeScript 7 owns them).
-		initializationOptions: { typescriptBackend: selection.backend },
+		initializationOptions: { typescriptBackend: backend },
 		errorHandler: {
 			error: (
 				/** @type {Error} */ error,
@@ -239,13 +217,9 @@ export async function activate(context) {
 		// On the native backend the built-in TypeScript extension is disabled, so only the
 		// contexts behind this extension's own command (`tsrx.goToSourceDefinition`) are set.
 		vscode.commands.executeCommand('setContext', 'tsSupportsSourceDefinition', true);
-		vscode.commands.executeCommand(
-			'setContext',
-			'tsSupportsFileReferences',
-			selection.backend === 'classic',
-		);
+		vscode.commands.executeCommand('setContext', 'tsSupportsFileReferences', backend === 'classic');
 
-		setupDynamicContexts(context, selection.backend);
+		setupDynamicContexts(context, backend);
 		console.log('[TSRX] Set up dynamic VSCode menu contexts');
 
 		addCustomCommands(context);
@@ -261,49 +235,12 @@ export async function activate(context) {
 }
 
 /**
- * Read `tsrx.typescript.backend` and VS Code's TypeScript 7 setting and decide the backend.
- * @returns {BackendSelection}
+ * The backend that matches VS Code's TypeScript 7 switch: native when it is on, classic
+ * otherwise. Nothing else is consulted, in particular no other extension.
+ * @returns {Backend}
  */
 function select_backend() {
-	return resolve_backend({
-		setting: vscode.workspace.getConfiguration().get(BACKEND_SETTING),
-		typescript7Enabled: is_typescript_7_enabled(),
-	});
-}
-
-/**
- * Tell the user when the native backend was asked for while TypeScript 7 is off in VS Code:
- * the built-in TypeScript extension then serves the workspace and ignores `contentMappers`.
- * @param {BackendSelection} selection
- */
-async function report_native_without_typescript_7(selection) {
-	if (selection.reason !== 'setting-native' || is_typescript_7_enabled()) {
-		return;
-	}
-	await show_typescript_7_warning(
-		`"tsrx.typescript.backend" is set to "native", but TypeScript 7 is not enabled ("${TYPESCRIPT_7_SETTING}"). .tsrx files get no TypeScript features until it is enabled; the native backend needs ${NATIVE_REQUIREMENTS}. ${TYPESCRIPT_7_SUPPORT_NOTE}`,
-		`@id:${BACKEND_SETTING} @id:${TYPESCRIPT_7_SETTING}`,
-	);
-}
-
-/**
- * Show a warning about TypeScript 7 support with the actions every such message
- * shares: open the tracking issue, or open the settings that decide the backend.
- * @param {string} message
- * @param {string} settings_query
- */
-async function show_typescript_7_warning(message, settings_query) {
-	const open_settings_action = 'Open Settings';
-	const selected = await vscode.window.showWarningMessage(
-		message,
-		OPEN_TRACKING_ISSUE_ACTION,
-		open_settings_action,
-	);
-	if (selected === OPEN_TRACKING_ISSUE_ACTION) {
-		await vscode.env.openExternal(vscode.Uri.parse(TYPESCRIPT_7_TRACKING_ISSUE_URL));
-	} else if (selected === open_settings_action) {
-		await vscode.commands.executeCommand('workbench.action.openSettings', settings_query);
-	}
+	return resolve_backend(is_typescript_7_setting_enabled());
 }
 
 /**
@@ -313,11 +250,11 @@ async function show_typescript_7_warning(message, settings_query) {
  */
 async function prompt_restart_if_backend_changed() {
 	const next = select_backend();
-	if (next.backend === active_backend) {
+	if (next === active_backend) {
 		return;
 	}
 	const selected = await vscode.window.showInformationMessage(
-		`The TSRX TypeScript backend changed to "${next.backend}". Restart extensions to apply it.`,
+		`TypeScript 7 was ${next === 'native' ? 'enabled' : 'disabled'} for this workspace. Restart extensions so the TSRX extension follows it.`,
 		RESTART_EXTENSIONS_ACTION,
 	);
 	if (selected === RESTART_EXTENSIONS_ACTION) {
@@ -326,22 +263,10 @@ async function prompt_restart_if_backend_changed() {
 }
 
 /**
- * Classic backend: warn when TypeScript 7 is on (the built-in extension this path patches is
- * then off), and patch the built-in TypeScript extension before it activates.
+ * Classic backend: patch the built-in TypeScript extension before it activates.
  * @param {import('vscode').ExtensionContext} context
  */
 async function activate_classic_backend(context) {
-	await warn_about_typescript_7_on_classic(context);
-	context.subscriptions.push(
-		vscode.workspace.onDidChangeConfiguration(async (event) => {
-			if (!is_typescript_7_configuration_change(event)) {
-				return;
-			}
-
-			await warn_about_typescript_7_on_classic(context);
-		}),
-	);
-
 	const patchResult = await patchTypeScriptExtension();
 	if (!patchResult.success) {
 		switch (patchResult.reason) {
@@ -383,69 +308,14 @@ async function activate_classic_backend(context) {
 }
 
 /**
- * @param {import('vscode').ExtensionContext} context
- * @returns {Promise<void>}
- */
-async function warn_about_typescript_7_on_classic(context) {
-	if (!(await workspace_has_tsrx_files())) {
-		await context.workspaceState.update(TYPESCRIPT_7_WARNING_STATE_KEY, false);
-		return;
-	}
-
-	if (get_local_typescript_7_sections().length === 0) {
-		await context.workspaceState.update(TYPESCRIPT_7_WARNING_STATE_KEY, false);
-		return;
-	}
-
-	if (context.workspaceState.get(TYPESCRIPT_7_WARNING_STATE_KEY, false)) {
-		return;
-	}
-
-	await context.workspaceState.update(TYPESCRIPT_7_WARNING_STATE_KEY, true);
-
-	await show_typescript_7_warning(
-		TYPESCRIPT_7_ON_CLASSIC_MESSAGE,
-		`@id:${BACKEND_SETTING} ${TYPESCRIPT_7_SETTING_SECTIONS.map((section) => `@id:${section}.${TYPESCRIPT_7_SETTING_KEY}`).join(' ')}`,
-	);
-}
-
-/**
- * @returns {Promise<boolean>}
- */
-async function workspace_has_tsrx_files() {
-	if (!vscode.workspace.workspaceFolders?.length) {
-		return false;
-	}
-
-	const tsrx_files = await vscode.workspace.findFiles(
-		TSRX_FILE_SELECTORS[0],
-		TSRX_FILE_EXCLUDE_GLOB,
-		1,
-	);
-
-	return tsrx_files.length > 0;
-}
-
-/**
- * Whether TypeScript 7 is enabled in any configuration scope (`js/ts.experimental.useTsgo` or
- * its deprecated `typescript.` spelling). Mirrors what VS Code's built-in TypeScript extension
- * and the TypeScript 7 extension check to decide which of them serves the workspace.
+ * Whether VS Code's TypeScript 7 switch is on in any configuration scope
+ * (`js/ts.experimental.useTsgo` or its deprecated `typescript.` spelling).
  * @returns {boolean}
  */
-function is_typescript_7_enabled() {
+function is_typescript_7_setting_enabled() {
 	return TYPESCRIPT_7_SETTING_SECTIONS.some(
 		(section) => vscode.workspace.getConfiguration(section).get(TYPESCRIPT_7_SETTING_KEY) === true,
 	);
-}
-
-/**
- * @returns {string[]}
- */
-function get_local_typescript_7_sections() {
-	return TYPESCRIPT_7_SETTING_SECTIONS.filter((section) => {
-		const inspected = vscode.workspace.getConfiguration(section).inspect(TYPESCRIPT_7_SETTING_KEY);
-		return inspected?.workspaceValue === true || inspected?.workspaceFolderValue === true;
-	});
 }
 
 /**

@@ -78,22 +78,6 @@
     "configuration": {
       "title": "TSRX",
       "properties": {
-        "tsrx.typescript.backend": {
-          "type": "string",
-          "enum": [
-            "auto",
-            "classic",
-            "native"
-          ],
-          "enumDescriptions": [
-            "Use the native backend when TypeScript 7 is enabled in VS Code (js/ts.experimental.useTsgo, which the \"Select TypeScript Version\" picker sets); otherwise the classic backend. TypeScript 7 support for .tsrx files is not complete yet: https://github.com/tsrx-org/tsrx/issues/136.",
-            "The TSRX language server hosts TypeScript 5 itself and the built-in TypeScript extension is patched to recognize .tsrx files.",
-            "TypeScript 7 owns TypeScript features for .tsrx files through @tsrx/content-mapper, which every tsconfig.json containing .tsrx files must declare under \"contentMappers\" (a 7.1 nightly is required). The TSRX language server only serves snippets, CSS, symbols, auto-closing tags and CSS-class navigation."
-          ],
-          "default": "auto",
-          "scope": "window",
-          "markdownDescription": "Which TypeScript backend gives `.tsrx` files their TypeScript features. Only one backend ever runs on a file. Changing this setting requires restarting extensions."
-        },
         "tsrx.autoClosingTags.enabled": {
           "type": "boolean",
           "default": true,

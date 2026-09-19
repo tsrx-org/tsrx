@@ -1164,22 +1164,17 @@ export function GettingStartedPage() @{
 								and the rest of the normal editor loop without extra manual setup.
 							</p>
 							<p class="section-body">
-								The
-								<code class="inline-code">tsrx.typescript.backend</code>
-								setting chooses where TypeScript features for
+								TypeScript features for
 								<code class="inline-code">.tsrx</code>
-								files come from:
-								<code class="inline-code">classic</code>
-								(the bundled TypeScript 5.9),
-								<code class="inline-code">native</code>
-								(TypeScript 7 through the content mapper declared in tsconfig.json), or
-								<code class="inline-code">auto</code>
-								(the default: native when TypeScript 7 is enabled in VS Code through
+								files follow the TypeScript VS Code runs, chosen with the
+								<strong>TypeScript: Select TypeScript Version</strong>
+								picker: the bundled TypeScript 5.9 (the extension hosts TypeScript itself), or
+								TypeScript 7 through the content mapper declared in tsconfig.json when TypeScript 7
+								is enabled (
 								<code class="inline-code">js/ts.experimental.useTsgo</code>
-								or the TypeScript version picker). With TypeScript 7 enabled, set Prettier as the
+								). With TypeScript 7 enabled, set Prettier as the
 								<code class="inline-code">[tsrx]</code>
-								default formatter, since TypeScript 7 also registers one. The extension explains
-								when it has to fall back and links the tracking issue.
+								default formatter, since TypeScript 7 also registers one.
 							</p>
 						</section>
 

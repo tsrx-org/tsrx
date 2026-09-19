@@ -42,15 +42,9 @@ describe('@tsrx/vscode-plugin package contract', () => {
 		expect(package_json.capabilities.untrustedWorkspaces).toMatchObject({ supported: false });
 	});
 
-	it('exposes one documented TypeScript backend setting defaulting to auto', () => {
-		const setting = package_json.contributes.configuration.properties['tsrx.typescript.backend'];
-		expect(setting).toMatchObject({
-			type: 'string',
-			enum: ['auto', 'classic', 'native'],
-			default: 'auto',
-			scope: 'window',
-		});
-		expect(setting.enumDescriptions).toHaveLength(3);
+	it('contributes no TypeScript backend setting: the backend follows VS Code', () => {
+		const properties = package_json.contributes.configuration.properties;
+		expect(Object.keys(properties).filter((key) => /backend/i.test(key))).toEqual([]);
 	});
 
 	it('ships no content mapper of its own and depends on no other extension', () => {
