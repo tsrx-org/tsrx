@@ -56,6 +56,13 @@ one that is not listed there, please file a new issue.
 3. The workspace must be trusted. Neither the mapper nor the TSRX compilers run in
    Restricted Mode.
 
+With TypeScript 7 enabled in your user settings, its extension shows a one-time
+warning that "TypeScript server plugins from the TSRX Syntax for VS Code extension
+will not be loaded". That is expected and harmless: the plugin it refers to is the
+one VS Code's own tsserver uses for `.tsrx` files on TypeScript 5.9 or 6, and
+TypeScript 7 serves them through the content mapper instead. Dismiss it with
+**Don't Show Again**.
+
 What differs from the classic backend:
 
 - TSRX compile errors are reported by TypeScript with the `tsrx` source.

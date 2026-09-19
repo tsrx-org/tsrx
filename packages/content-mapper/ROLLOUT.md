@@ -189,7 +189,10 @@ flip.
    file no such tsconfig covers gets no TypeScript features.
 3. Restart extensions after switching TypeScript 7 on, as VS Code asks; the TSRX
    extension needs nothing.
-4. Trust the workspace; neither backend runs in Restricted Mode.
+4. Trust the workspace; neither backend runs in Restricted Mode. With TypeScript 7
+   enabled in user settings, its extension warns once that the TSRX extension's
+   tsserver plugin will not be loaded; that plugin is only for TypeScript 5.9 or
+   6, so the warning is harmless.
 5. Set Prettier as the `[tsrx]` default formatter (`editor.defaultFormatter`):
    TypeScript 7 registers a formatter for `.tsrx` that returns no edits, and VS
    Code otherwise asks which of the two to use.
