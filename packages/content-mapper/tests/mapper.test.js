@@ -132,16 +132,21 @@ describe('create_tsrx_content_mapper', () => {
 		expect(result.text).toContain('export default function Panel');
 		expect(result.diagnostics).toBeUndefined();
 		expect(result.mappings.length).toBeGreaterThan(10);
-		expect(result.supplemental).toHaveLength(1);
-		expect(result.supplemental?.[0].extension).toBe('.mts');
-		expect(result.supplemental?.[0].mappings[0][4]).toBe(SpanMapKind.Verbatim);
-		// The `<script>` body is checked as the supplemental output only. Compilers
+		// The `<script>` body is checked as a block appended to the main TSX, mapped
+		// verbatim back to the source; there is no supplemental output. Compilers
 		// that copy it into the main TSX (Ripple does; React leaves the element
 		// empty) get it blanked there, so its `<` cannot parse as a JSX tag and
 		// raise a syntax error in synthesized code.
-		expect(result.supplemental?.[0].text).toContain('const analyticsEnabled: boolean = 1 < 2;');
-		expect(result.text).not.toContain('analyticsEnabled');
+		expect(result.supplemental).toBeUndefined();
+		const body = 'const analyticsEnabled: boolean = 1 < 2;';
+		expect(result.text.indexOf(';{\n')).toBeGreaterThan(-1);
+		expect(result.text.indexOf(body)).toBeGreaterThan(result.text.indexOf(';{\n'));
+		expect(result.text.trimEnd().endsWith('}')).toBe(true);
 		expect(result.text).toMatch(/<script type="text\/typescript">\s*<\/script>/);
+		const body_span = result.mappings.find((span) =>
+			result.text.slice(span[0], span[0] + span[1]).includes(body),
+		);
+		expect(body_span?.[4]).toBe(SpanMapKind.Verbatim);
 		// Ordered and disjoint in generated space.
 		for (let index = 1; index < result.mappings.length; index++) {
 			const previous = result.mappings[index - 1];

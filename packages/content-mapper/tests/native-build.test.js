@@ -55,7 +55,7 @@ const emit_options = {
 };
 
 describe('native tsc declaration emit', () => {
-	it('emits Component.d.tsrx.ts declarations with maps and supplemental script declarations', () => {
+	it('emits Component.d.tsrx.ts declarations with maps; <script> bodies add no declaration files', () => {
 		const dir = workspace(with_native_options(passing_consumer_files(), emit_options));
 		const result = run_native_tsc(dir, [
 			'-p',
@@ -73,8 +73,6 @@ describe('native tsc declaration emit', () => {
 			'Button.d.tsrx.ts.map',
 			'Panel.d.tsrx.ts',
 			'Panel.d.tsrx.ts.map',
-			'Panel.tsrx.0.d.mts',
-			'Panel.tsrx.0.d.mts.map',
 			'main.d.ts',
 			'main.d.ts.map',
 		]);
@@ -84,10 +82,9 @@ describe('native tsc declaration emit', () => {
 		expect(panel).toContain(
 			'export default function Panel({ title, count }: PanelProps): import("react/jsx-runtime").JSX.Element;',
 		);
-		// The supplemental <script> declaration is a module and exports nothing.
-		const script = fs.readFileSync(path.join(dir, 'dist', 'Panel.tsrx.0.d.mts'), 'utf8');
-		expect(script).toContain('export {}');
-		expect(script).not.toContain('analyticsEnabled');
+		// The <script> body is a block in the generated TSX: nothing of it leaks into
+		// the declaration output.
+		expect(panel).not.toContain('analyticsEnabled');
 
 		const button = fs.readFileSync(path.join(dir, 'dist', 'Button.d.tsrx.ts'), 'utf8');
 		// Specifiers keep pointing at the .tsrx module (TS#64120 tracks `outputExtension`).
@@ -307,10 +304,10 @@ describe('native tsc --build with project references', () => {
 
 	it('builds a referenced .tsrx library and checks the app against its declarations', () => {
 		const files = consumer_fixture_files();
-		// Composite projects must list every input, and a supplemental <script>
-		// output cannot be listed (see the next test), so this library has none.
-		const panel = files['Panel.tsrx'].replace(/\t\t<head>[\s\S]*?<\/head>\n/, '');
-		expect(panel).not.toContain('<script');
+		// The library keeps its <script> body: it is a block in the generated TSX, so a
+		// composite project has no extra input to list.
+		const panel = files['Panel.tsrx'];
+		expect(panel).toContain('<script');
 		const dir = references_workspace(
 			{ 'lib/Panel.tsrx': panel, 'lib/Button.tsrx': files['Button.tsrx'] },
 			"export { default as Panel } from './Panel.tsrx';\nexport { default as Button } from './Button.tsrx';\n",
@@ -332,21 +329,24 @@ describe('native tsc --build with project references', () => {
 		expect(bad.status).not.toBe(0);
 	}, 30_000);
 
-	it('pins the upstream limitation that composite projects reject supplemental <script> outputs', () => {
-		// TypeScript 7.1.0-dev.20260918.1 reports TS6307 for the compiler-named
-		// supplemental file (`Panel.tsrx.0.mts`) because a composite project
-		// requires every input to be listed (microsoft/TypeScript#64350). When this
-		// test starts failing, the limitation is fixed upstream and this guard
-		// (plus the README note) can go.
+	it('type-checks a <script> body inside a referenced composite library', () => {
+		// Before script bodies were embedded as blocks, the compiler-named supplemental
+		// file could not be listed in a composite project (TS6307,
+		// microsoft/TypeScript#64350); now the body is part of Panel.tsrx itself.
 		const files = consumer_fixture_files();
+		const panel = files['Panel.tsrx'].replace(
+			'const analyticsEnabled: boolean = 1 < 2;',
+			'const analyticsEnabled: boolean = "no";',
+		);
 		const dir = references_workspace(
-			{ 'lib/Panel.tsrx': files['Panel.tsrx'], 'lib/Button.tsrx': files['Button.tsrx'] },
+			{ 'lib/Panel.tsrx': panel, 'lib/Button.tsrx': files['Button.tsrx'] },
 			"export { default as Panel } from './Panel.tsrx';\n",
 		);
 		const result = run_native_tsc(dir, ['--build', 'app', '--pretty', 'false']);
-		expect(result.output).toContain('error TS6307');
-		expect(result.output).toContain('Panel.tsrx.0.mts');
-		expect(result.output).toContain('Supplemental virtual file produced by the content mapper');
+		expect(result.output).not.toContain('TS6307');
+		const diagnostics = parse_tsc_output(result.output);
+		expect(diagnostics.map((d) => [d.file, d.code])).toEqual([['lib/Panel.tsrx', 'TS2322']]);
+		expect(result.status).not.toBe(0);
 	}, 30_000);
 });
 

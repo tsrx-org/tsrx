@@ -100,10 +100,12 @@ One precedence rule, highest first:
   `import { a } from './x';` is one edit-safe span and TypeScript can place an
   auto-import edit inside it. Fragments of identifiers (the transform's
   one-character file-start anchor) are dropped.
-- Each embedded `<script>` body as a supplemental `.mts` output (module scope, so
-  bodies never collide as globals) with a single verbatim span. TypeScript names
-  it `<file>.tsrx.<index>.mts` and, under `--declaration`, emits
-  `<file>.tsrx.<index>.d.mts` next to `<file>.d.tsrx.ts`.
+- Each embedded `<script>` body as a block statement appended to the generated
+  TSX, with a verbatim span back to the source (the shared transform does this on
+  every path). A block keeps one body's declarations from colliding with another's
+  or with the component's, and contributes nothing to declaration output. `import`
+  declarations of a `<script type="module">` body are hoisted to module level in
+  front of the block, where TypeScript resolves them like any other import.
 - TSRX compile errors as mapper diagnostics in the original file, printed as
   `error tsrx<code>`. Code `1000` is a fatal compile error, `1001` a usage error
   without a string code, `1002` no compiler found, `1003` invalid configuration;
@@ -118,8 +120,8 @@ One precedence rule, highest first:
 ### Declarations
 
 Under `--declaration`, native TypeScript emits `Component.d.tsrx.ts` (plus `.map`)
-next to `main.d.ts`, keeps `./Component.tsrx` in import specifiers, and emits
-`Component.tsrx.<index>.d.mts` for each `<script>` body.
+next to `main.d.ts` and keeps `./Component.tsrx` in import specifiers. `<script>`
+bodies add no declaration files.
 
 - A project that references a `.tsrx` library through `references` (`tsc --build`)
   must declare the content mapper as well, so that TypeScript knows `.tsrx` inputs
@@ -182,11 +184,6 @@ extension's README for the per-editor setup.
   (microsoft/TypeScript#64351, a nightly regression since `7.1.0-dev.20260811.1`
   that reproduces without a content mapper and with every `--watchFile` strategy).
   The watch test only asserts the initial pass.
-- Composite projects (`--build`) reject the compiler-named supplemental `<script>`
-  file with TS6307 because it cannot be listed in `include` or `files`
-  (microsoft/TypeScript#64350). Keep `<script>` bodies out of composite libraries
-  until this is fixed upstream; `tests/native-build.test.js` pins the current
-  behaviour.
 - `--runExternalCode` is required and is never enabled by the mapper; `tsrx-tsc`
   passes it.
 - Editors: no auto-import when a new import statement is needed

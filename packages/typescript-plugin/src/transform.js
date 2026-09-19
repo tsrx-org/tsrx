@@ -80,9 +80,14 @@ export function transform_tsrx(compiler, file_name, content, options = {}) {
 	}
 
 	const scriptRegions = regions_from_mappings(transpiled.scriptMappings ?? []);
+	const embedded = embed_script_bodies(
+		blank_script_bodies(transpiled.code ?? '', scriptRegions),
+		transpiled.mappings ?? [],
+		scriptRegions,
+	);
 	return {
-		text: blank_script_bodies(transpiled.code ?? '', scriptRegions),
-		mappings: transpiled.mappings ?? [],
+		text: embedded.text,
+		mappings: embedded.mappings,
 		cssRegions: regions_from_mappings(transpiled.cssMappings ?? []),
 		scriptRegions,
 		errors: transpiled.errors ?? [],
@@ -92,14 +97,115 @@ export function transform_tsrx(compiler, file_name, content, options = {}) {
 }
 
 /**
+ * The mapping data of a `<script>` body embedded in the generated TSX: every
+ * language feature except formatting, exactly like the compiler's own spans.
+ */
+const SCRIPT_BODY_MAPPING_DATA = {
+	verification: true,
+	completion: true,
+	semantic: true,
+	navigation: true,
+	structure: true,
+	format: false,
+	customData: {},
+};
+
+/**
+ * `import` declarations at the top level of a `<script>` body, by offset. A
+ * conservative statement scanner (a line starting with `import`, up to the
+ * module specifier and optional attributes) rather than a parser: the body is
+ * plain TypeScript and the transform has no TypeScript parser of its own.
+ */
+const IMPORT_DECLARATION =
+	/^[ \t]*import\s+(?:type\s+)?(?:(?:[\w$]+\s*,\s*)?(?:\{[^}]*\}|\*\s+as\s+[\w$]+|[\w$]+)\s+from\s+)?(['"])[^'"\n]*\1(?:\s+with\s*\{[^}]*\})?[ \t]*;?/gm;
+
+/**
+ * @param {string} body
+ * @returns {Array<{ start: number, end: number }>}
+ */
+export function find_import_declarations(body) {
+	/** @type {Array<{ start: number, end: number }>} */
+	const imports = [];
+	for (const match of body.matchAll(IMPORT_DECLARATION)) {
+		const start = match.index + match[0].length - match[0].trimStart().length;
+		imports.push({ start, end: match.index + match[0].length });
+	}
+	return imports;
+}
+
+/**
+ * Append every `<script>` body to the generated TSX as a block statement, so
+ * TypeScript checks it in the same file as the component, on every path that
+ * consumes the transform (the language server, tsserver through the plugin, and
+ * the content mapper), with ordinary mappings back to the source. A block keeps
+ * one body's declarations from colliding with another's or with the
+ * component's, and contributes nothing to declaration output.
+ *
+ * `import` declarations cannot live in a block, so each body's imports are
+ * hoisted verbatim in front of its block, at module level, where TypeScript
+ * resolves them like any other import (a browser-only URL in a
+ * `<script type="module">` yields a mapped "cannot find module"); their place
+ * in the block is blanked. Each body maps in one multi-segment mapping.
+ * @param {string} text
+ * @param {CodeMapping[]} mappings
+ * @param {EmbeddedRegion[]} script_regions
+ * @returns {{ text: string, mappings: CodeMapping[] }}
+ */
+export function embed_script_bodies(text, mappings, script_regions) {
+	const result_mappings = [...mappings];
+	for (const region of script_regions) {
+		if (region.length === 0 || region.content.length !== region.length) continue;
+		const imports = find_import_declarations(region.content);
+		/** @type {number[]} */
+		const sourceOffsets = [];
+		/** @type {number[]} */
+		const generatedOffsets = [];
+		/** @type {number[]} */
+		const lengths = [];
+
+		let hoisted = '';
+		let body = region.content;
+		for (const { start, end } of imports) {
+			sourceOffsets.push(region.start + start);
+			generatedOffsets.push(text.length + 1 + hoisted.length);
+			lengths.push(end - start);
+			hoisted += region.content.slice(start, end) + '\n';
+			body = body.slice(0, start) + ' '.repeat(end - start) + body.slice(end);
+		}
+		const block_prefix = `\n${hoisted};{\n`;
+		const body_offset = text.length + block_prefix.length;
+		let cursor = 0;
+		for (const { start, end } of [...imports, { start: region.length, end: region.length }]) {
+			if (start > cursor) {
+				sourceOffsets.push(region.start + cursor);
+				generatedOffsets.push(body_offset + cursor);
+				lengths.push(start - cursor);
+			}
+			cursor = end;
+		}
+		text += `${block_prefix}${body}\n}\n`;
+		if (sourceOffsets.length > 0) {
+			result_mappings.push({
+				sourceOffsets,
+				generatedOffsets,
+				lengths,
+				generatedLengths: [...lengths],
+				data: { ...SCRIPT_BODY_MAPPING_DATA, customData: { embeddedId: region.id } },
+			});
+		}
+	}
+	return { text, mappings: result_mappings };
+}
+
+/**
  * Blank every `<script>` body in the generated TSX, keeping its length and
  * line breaks. The compilers copy the body verbatim into the JSX text of the
  * `<script>` element, where a `<` (as in `1 < 2`) parses as a tag and yields a
  * syntax error that only the Volar path used to hide (it drops diagnostics
  * with no source mapping; the content-mapper protocol reports them). The body
- * is type-checked on its own as an embedded script, and no mapping of the
- * generated TSX points into it (`regions_from_mappings`), so blanking loses
- * nothing. A body is located by its text followed by the closing tag; a body
+ * is type-checked as a block appended by {@link embed_script_bodies}, and no
+ * mapping of the generated TSX points into the copy in the JSX text
+ * (`regions_from_mappings`), so blanking it loses nothing. A body is located by its text followed by the closing tag; a body
  * that is not found unchanged in the output is left alone.
  * @param {string} text
  * @param {EmbeddedRegion[]} script_regions

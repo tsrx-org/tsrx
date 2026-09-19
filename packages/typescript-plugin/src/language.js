@@ -28,7 +28,7 @@ import {
 	resolve_consumer_platform_for_file,
 } from './consumer-compiler.js';
 import { NODE_CONFIG_HOST } from './config-host.js';
-import { extract_css_regions, extract_script_regions, transform_tsrx } from './transform.js';
+import { extract_css_regions, transform_tsrx } from './transform.js';
 import { createLogging, DEBUG } from './utils.js';
 
 const require = createRequire(import.meta.url);
@@ -300,44 +300,6 @@ export function getTsrxLanguagePlugin(options = {}) {
 				}
 				return undefined;
 			},
-			// Volar's tsc program proxy (`proxyCreateProgram`) does not support
-			// extra service scripts and warns ONCE PER PARSED FILE when the hook
-			// is merely present — omit it entirely under tsrx-tsc (the bin sets
-			// TSRX_TSC before loading this module).
-			...(process.env.TSRX_TSC === 'true'
-				? null
-				: {
-						/**
-						 * Register each embedded `<script>` body as its own TypeScript service
-						 * script so volar-service-typescript's semantic features (type-aware
-						 * completions, hover, go-to-definition, diagnostics, imports) run against it
-						 * and map back to the `.tsrx` source — the same way `<style>` bodies get CSS
-						 * intellisense, except semantic TS additionally requires a service-script
-						 * registration (a self-contained languageId is not enough).
-						 *
-						 * The returned `code` must be the exact same instance stored in the root's
-						 * `embeddedCodes` (volar matches it by identity), and each `fileName` must be
-						 * unique. Only honored on the language-server (`createTypeScriptProject`)
-						 * path, not the tsserver-plugin path.
-						 * @param {string} fileName
-						 * @param {VirtualCode} tsrx_code
-						 */
-						getExtraServiceScripts(fileName, tsrx_code) {
-							/** @type {Array<{ fileName: string, code: VirtualCode, extension: string, scriptKind: number }>} */
-							const scripts = [];
-							for (const code of forEachEmbeddedCode(tsrx_code)) {
-								if (code.languageId === 'typescript') {
-									scripts.push({
-										fileName: `${fileName}.${code.id}.ts`,
-										code,
-										extension: '.ts',
-										scriptKind: typescript?.ScriptKind.TS ?? 3,
-									});
-								}
-							}
-							return scripts;
-						},
-					}),
 		},
 	};
 }
@@ -558,25 +520,15 @@ export class TSRXVirtualCode {
 				logTSRXErrors(this.fileName, result.errors);
 			}
 
-			if (result.cssRegions.length > 0 || result.scriptRegions.length > 0) {
-				log(
-					'Creating',
-					result.cssRegions.length,
-					'CSS and',
-					result.scriptRegions.length,
-					'script embedded codes',
-				);
+			if (result.cssRegions.length > 0) {
+				log('Creating', result.cssRegions.length, 'CSS embedded codes');
 			}
-			// Every script body is treated as TypeScript in the editor — TS is a
-			// superset of JS, and this matches the TextMate/tree-sitter/prettier
-			// treatment. The `type` attribute only matters to the runtime
-			// transforms, which read it off the AST.
-			this.embeddedCodes = [
-				...result.cssRegions.map((region) => create_embedded_code_from_region(region, 'css')),
-				...result.scriptRegions.map((region) =>
-					create_embedded_code_from_region(region, 'typescript'),
-				),
-			];
+			// `<script>` bodies are not embedded codes: the transform appends each one
+			// to the generated TSX as a block (`embed_script_bodies`), so TypeScript
+			// checks them in the same file on every path. Only CSS is embedded.
+			this.embeddedCodes = result.cssRegions.map((region) =>
+				create_embedded_code_from_region(region, 'css'),
+			);
 
 			if (DEBUG) {
 				log('CSS embedded codes:', (this.embeddedCodes || []).length);
@@ -630,17 +582,11 @@ export class TSRXVirtualCode {
 				},
 			];
 
-			// Extract CSS from <style> and JS/TS from <script> tags for embedded codes,
-			// so CSS and script intellisense keep working while the file has a transient
-			// compile error elsewhere.
-			this.embeddedCodes = [
-				...extract_css_regions(newCode).map((region) =>
-					create_embedded_code_from_region(region, 'css'),
-				),
-				...extract_script_regions(newCode).map((region) =>
-					create_embedded_code_from_region(region, 'typescript'),
-				),
-			];
+			// Extract CSS from <style> tags for embedded codes, so CSS intellisense
+			// keeps working while the file has a transient compile error elsewhere.
+			this.embeddedCodes = extract_css_regions(newCode).map((region) =>
+				create_embedded_code_from_region(region, 'css'),
+			);
 		}
 
 		this.snapshot = /** @type {IScriptSnapshot} */ ({

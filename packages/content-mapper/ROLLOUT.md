@@ -112,8 +112,7 @@ of the following hold; each is tracked in `COMPATIBILITY.md`:
 2. microsoft/TypeScript#64119 (auto-import needing a new import statement) and
    microsoft/TypeScript#63879 (rename on `Atom` spans) are fixed, or TSRX accepts
    them as permanent.
-3. `--watch` recompiles (microsoft/TypeScript#64351) and composite `--build`
-   projects accept supplemental `<script>` outputs (microsoft/TypeScript#64350).
+3. `--watch` recompiles (microsoft/TypeScript#64351).
 4. Push diagnostics (microsoft/TypeScript#63921) or every supported editor
    integration is confirmed to pull diagnostics.
 
@@ -166,12 +165,10 @@ flip.
    to make consciously for untrusted checkouts; `tsrx-tsc` passes it for the same
    reason the classic path runs the compiler in-process.
 
-4. Emitting declarations: native writes `Component.d.tsrx.ts` (plus one
-   `Component.tsrx.<n>.d.mts` per `<script>` body) next to `main.d.ts`. A project
-   that references a `.tsrx` library must declare the mapper as well; a consumer
-   of published declarations without the mapper needs
-   `allowArbitraryExtensions: true`. Keep `<script>` bodies out of composite
-   libraries until TS6307 is fixed upstream (microsoft/TypeScript#64350).
+4. Emitting declarations: native writes `Component.d.tsrx.ts` next to `main.d.ts`;
+   `<script>` bodies add nothing to it. A project that references a `.tsrx`
+   library must declare the mapper as well; a consumer of published declarations
+   without the mapper needs `allowArbitraryExtensions: true`.
 
 5. Keep `tsrx-tsc` in `package.json` scripts: it runs the native path once
    TypeScript 7 is installed, and both commands can run in the same CI job on the
@@ -243,8 +240,6 @@ classification and evidence for each.
 - `--watch` compiles once and never recompiles on macOS
   (microsoft/TypeScript#64351, a nightly regression since `7.1.0-dev.20260811.1`,
   with or without a mapper).
-- Composite (`--build`) projects reject `<script>` bodies with TS6307
-  (microsoft/TypeScript#64350).
 - No auto-import when a new import statement is needed
   (microsoft/TypeScript#64119); no rename on `Atom` spans
   (microsoft/TypeScript#63879).

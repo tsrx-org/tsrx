@@ -1,6 +1,6 @@
 /** @import * as AST from 'estree' */
 /** @import {CompileError} from '@tsrx/core/types' */
-/** @import {InitializeParams, InitializeResult, OpenProjectParams, OpenProjectResult, TransformParams, TransformResult, MapperDiagnostic, MappedOutput} from './protocol.js' */
+/** @import {InitializeParams, InitializeResult, OpenProjectParams, OpenProjectResult, TransformParams, TransformResult, MapperDiagnostic} from './protocol.js' */
 
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -23,8 +23,6 @@ import {
 	DIAGNOSTIC_CODE_NO_COMPILER,
 	DIAGNOSTIC_CODE_USAGE_ERROR,
 	DIAGNOSTIC_SOURCE,
-	SpanMapFeature,
-	SpanMapKind,
 } from './protocol.js';
 import { to_span_mappings } from './span-mappings.js';
 
@@ -195,34 +193,11 @@ export function create_tsrx_content_mapper(context = {}) {
 		const diagnostics = result.errors.map((error) =>
 			to_diagnostic(error, content.length, DIAGNOSTIC_CODE_USAGE_ERROR),
 		);
-		// Each <script> body is its own compiler input. `.mts` forces module
-		// scope so two bodies declaring the same name never collide as globals
-		// and nothing leaks into the component's declaration output.
-		/** @type {MappedOutput[]} */
-		const supplemental = result.scriptRegions.map((region) => ({
-			text: region.content,
-			extension: '.mts',
-			mappings:
-				region.length > 0
-					? [
-							[
-								0,
-								region.length,
-								region.start,
-								region.length,
-								SpanMapKind.Verbatim,
-								language_features ? SpanMapFeature.All & ~SpanMapFeature.Formatting : 0,
-							],
-						]
-					: [],
-		}));
-
 		return {
 			text: result.text,
 			extension: '.tsx',
 			mappings,
 			...(diagnostics.length > 0 ? { diagnostics } : null),
-			...(supplemental.length > 0 ? { supplemental } : null),
 		};
 	}
 
