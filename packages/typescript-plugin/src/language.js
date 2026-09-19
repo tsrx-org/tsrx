@@ -524,7 +524,7 @@ export class TSRXVirtualCode {
 				log('Creating', result.cssRegions.length, 'CSS embedded codes');
 			}
 			// `<script>` bodies are not embedded codes: the transform appends each one
-			// to the generated TSX as a block (`embed_script_bodies`), so TypeScript
+			// to the generated TSX as an async IIFE (`embed_script_bodies`), so TypeScript
 			// checks them in the same file on every path. Only CSS is embedded.
 			this.embeddedCodes = result.cssRegions.map((region) =>
 				create_embedded_code_from_region(region, 'css'),

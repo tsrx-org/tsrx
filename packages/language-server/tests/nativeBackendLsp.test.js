@@ -140,7 +140,7 @@ describe.each(/** @type {const} */ (['native', 'plugin', 'classic']))(
 			for (const name of ['.panel', '.heading', 'PanelProps', 'Panel']) {
 				expect(names).toContain(name);
 			}
-			// The `<script>` body is a bare block in the generated TSX, which TypeScript's
+			// The `<script>` body is an async IIFE in the generated TSX, which TypeScript's
 			// navigation tree skips, so its declarations are not document symbols on any path.
 			expect(names.includes('analyticsEnabled')).toBe(false);
 		});

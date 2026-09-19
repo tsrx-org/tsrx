@@ -120,32 +120,80 @@ const IMPORT_DECLARATION =
 	/^[ \t]*import\s+(?:type\s+)?(?:(?:[\w$]+\s*,\s*)?(?:\{[^}]*\}|\*\s+as\s+[\w$]+|[\w$]+)\s+from\s+)?(['"])[^'"\n]*\1(?:\s+with\s*\{[^}]*\})?[ \t]*;?/gm;
 
 /**
+ * `export … from` at the top level of a `<script>` body. Same conservative
+ * single-line scanner as {@link IMPORT_DECLARATION}: a function body cannot
+ * hold `export`, so these are hoisted with imports.
+ */
+const EXPORT_FROM_DECLARATION =
+	/^[ \t]*export\s+(?:type\s+)?(?:\{[^}]*\}|\*(?:\s+as\s+[\w$]+)?)\s+from\s+(['"])[^'"\n]*\1(?:\s+with\s*\{[^}]*\})?[ \t]*;?/gm;
+
+/**
+ * A local `export { … }` list (no `from`). Blanked in the wrapper; the
+ * bindings are still checked at their declarations.
+ */
+const EXPORT_LIST = /^[ \t]*export\s+(?:type\s+)?\{[^}]*\}[ \t]*;?/gm;
+
+/**
+ * The `export` or `export default` modifier on a declaration. Blanked so the
+ * declaration can live in the async wrapper.
+ */
+const EXPORT_MODIFIER = /^[ \t]*export(?:\s+default\b)?(?:\s|(?=[({]))/gm;
+
+/**
+ * @param {string} body
+ * @param {RegExp} pattern
+ * @returns {Array<{ start: number, end: number }>}
+ */
+function find_line_ranges(body, pattern) {
+	/** @type {Array<{ start: number, end: number }>} */
+	const ranges = [];
+	for (const match of body.matchAll(pattern)) {
+		const start = match.index + match[0].length - match[0].trimStart().length;
+		ranges.push({ start, end: match.index + match[0].length });
+	}
+	return ranges;
+}
+
+/**
+ * @param {Array<{ start: number, end: number }>} ranges
+ * @returns {Array<{ start: number, end: number }>}
+ */
+function sort_and_dedupe_ranges(ranges) {
+	const sorted = [...ranges].sort((a, b) => a.start - b.start || b.end - a.end);
+	/** @type {Array<{ start: number, end: number }>} */
+	const out = [];
+	for (const range of sorted) {
+		const last = out[out.length - 1];
+		if (last && range.start < last.end) continue;
+		out.push(range);
+	}
+	return out;
+}
+
+/**
  * @param {string} body
  * @returns {Array<{ start: number, end: number }>}
  */
 export function find_import_declarations(body) {
-	/** @type {Array<{ start: number, end: number }>} */
-	const imports = [];
-	for (const match of body.matchAll(IMPORT_DECLARATION)) {
-		const start = match.index + match[0].length - match[0].trimStart().length;
-		imports.push({ start, end: match.index + match[0].length });
-	}
-	return imports;
+	return find_line_ranges(body, IMPORT_DECLARATION);
 }
 
 /**
- * Append every `<script>` body to the generated TSX as a block statement, so
+ * Append every `<script>` body to the generated TSX as an async IIFE, so
  * TypeScript checks it in the same file as the component, on every path that
  * consumes the transform (the language server, tsserver through the plugin, and
- * the content mapper), with ordinary mappings back to the source. A block keeps
- * one body's declarations from colliding with another's or with the
- * component's, and contributes nothing to declaration output.
+ * the content mapper), with ordinary mappings back to the source. The function
+ * keeps one body's declarations from colliding with another's or with the
+ * component's, contributes nothing to declaration output, and is an async
+ * context so a `<script type="module">` body's top-level `await` type-checks.
  *
- * `import` declarations cannot live in a block, so each body's imports are
- * hoisted verbatim in front of its block, at module level, where TypeScript
- * resolves them like any other import (a browser-only URL in a
+ * `import` and `export … from` cannot live in a function, so each is hoisted
+ * verbatim in front of its wrapper, at module level, where TypeScript
+ * resolves them like any other import or re-export (a browser-only URL in a
  * `<script type="module">` yields a mapped "cannot find module"); their place
- * in the block is blanked. Each body maps in one multi-segment mapping.
+ * in the wrapper is blanked. Other `export` / `export default` modifiers and
+ * local `export { … }` lists are blanked in place so the declaration stays
+ * isolated inside the wrapper. Each body maps in one multi-segment mapping.
  * @param {string} text
  * @param {CodeMapping[]} mappings
  * @param {EmbeddedRegion[]} script_regions
@@ -155,7 +203,15 @@ export function embed_script_bodies(text, mappings, script_regions) {
 	const result_mappings = [...mappings];
 	for (const region of script_regions) {
 		if (region.length === 0 || region.content.length !== region.length) continue;
-		const imports = find_import_declarations(region.content);
+		const hoisted_stmts = sort_and_dedupe_ranges([
+			...find_import_declarations(region.content),
+			...find_line_ranges(region.content, EXPORT_FROM_DECLARATION),
+		]);
+		const gaps = sort_and_dedupe_ranges([
+			...hoisted_stmts,
+			...find_line_ranges(region.content, EXPORT_LIST),
+			...find_line_ranges(region.content, EXPORT_MODIFIER),
+		]);
 		/** @type {number[]} */
 		const sourceOffsets = [];
 		/** @type {number[]} */
@@ -165,17 +221,19 @@ export function embed_script_bodies(text, mappings, script_regions) {
 
 		let hoisted = '';
 		let body = region.content;
-		for (const { start, end } of imports) {
+		for (const { start, end } of hoisted_stmts) {
 			sourceOffsets.push(region.start + start);
 			generatedOffsets.push(text.length + 1 + hoisted.length);
 			lengths.push(end - start);
 			hoisted += region.content.slice(start, end) + '\n';
+		}
+		for (const { start, end } of gaps) {
 			body = body.slice(0, start) + ' '.repeat(end - start) + body.slice(end);
 		}
-		const block_prefix = `\n${hoisted};{\n`;
-		const body_offset = text.length + block_prefix.length;
+		const wrapper_prefix = `\n${hoisted};void (async () => {\n`;
+		const body_offset = text.length + wrapper_prefix.length;
 		let cursor = 0;
-		for (const { start, end } of [...imports, { start: region.length, end: region.length }]) {
+		for (const { start, end } of [...gaps, { start: region.length, end: region.length }]) {
 			if (start > cursor) {
 				sourceOffsets.push(region.start + cursor);
 				generatedOffsets.push(body_offset + cursor);
@@ -183,7 +241,7 @@ export function embed_script_bodies(text, mappings, script_regions) {
 			}
 			cursor = end;
 		}
-		text += `${block_prefix}${body}\n}\n`;
+		text += `${wrapper_prefix}${body}\n})();\n`;
 		if (sourceOffsets.length > 0) {
 			result_mappings.push({
 				sourceOffsets,
@@ -203,7 +261,7 @@ export function embed_script_bodies(text, mappings, script_regions) {
  * `<script>` element, where a `<` (as in `1 < 2`) parses as a tag and yields a
  * syntax error that only the Volar path used to hide (it drops diagnostics
  * with no source mapping; the content-mapper protocol reports them). The body
- * is type-checked as a block appended by {@link embed_script_bodies}, and no
+ * is type-checked as an async IIFE appended by {@link embed_script_bodies}, and no
  * mapping of the generated TSX points into the copy in the JSX text
  * (`regions_from_mappings`), so blanking it loses nothing. A body is located by its text followed by the closing tag; a body
  * that is not found unchanged in the output is left alone.

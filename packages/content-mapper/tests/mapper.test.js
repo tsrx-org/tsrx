@@ -132,16 +132,18 @@ describe('create_tsrx_content_mapper', () => {
 		expect(result.text).toContain('export default function Panel');
 		expect(result.diagnostics).toBeUndefined();
 		expect(result.mappings.length).toBeGreaterThan(10);
-		// The `<script>` body is checked as a block appended to the main TSX, mapped
-		// verbatim back to the source; there is no supplemental output. Compilers
+		// The `<script>` body is checked as an async IIFE appended to the main TSX,
+		// mapped verbatim back to the source; there is no supplemental output. Compilers
 		// that copy it into the main TSX (Ripple does; React leaves the element
 		// empty) get it blanked there, so its `<` cannot parse as a JSX tag and
 		// raise a syntax error in synthesized code.
 		expect(result.supplemental).toBeUndefined();
 		const body = 'const analyticsEnabled: boolean = 1 < 2;';
-		expect(result.text.indexOf(';{\n')).toBeGreaterThan(-1);
-		expect(result.text.indexOf(body)).toBeGreaterThan(result.text.indexOf(';{\n'));
-		expect(result.text.trimEnd().endsWith('}')).toBe(true);
+		expect(result.text.indexOf(';void (async () => {\n')).toBeGreaterThan(-1);
+		expect(result.text.indexOf(body)).toBeGreaterThan(
+			result.text.indexOf(';void (async () => {\n'),
+		);
+		expect(result.text.trimEnd().endsWith('})();')).toBe(true);
 		expect(result.text).toMatch(/<script type="text\/typescript">\s*<\/script>/);
 		const body_span = result.mappings.find((span) =>
 			result.text.slice(span[0], span[0] + span[1]).includes(body),

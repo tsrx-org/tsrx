@@ -61,10 +61,10 @@ function script_mapping(root, id) {
 
 describe('<script> bodies embedded in the generated TSX', () => {
 	// `<script>` bodies are not embedded codes: the transform appends each one to
-	// the generated TSX as a block statement with a mapping back to the source, so
+	// the generated TSX as an async IIFE with a mapping back to the source, so
 	// TypeScript checks them in the same file on every path (language server,
 	// tsserver plugin, content mapper) with no extra service scripts.
-	it('appends a <script type="text/typescript"> body as a mapped block', () => {
+	it('appends a <script type="text/typescript"> body as a mapped async IIFE', () => {
 		const source = `function App() @{
 	<head>
 		<script type="text/typescript">const n: number = 1 < 2 ? 3 : 4;</script>
@@ -74,7 +74,9 @@ describe('<script> bodies embedded in the generated TSX', () => {
 		const { root } = create_virtual_code(source);
 		expect(embedded_of(root, 'typescript')).toHaveLength(0);
 		const text = generated(root);
-		expect(text).toMatch(/;\{\nconst n: number = 1 < 2 \? 3 : 4;\n\}\n$/);
+		expect(text).toMatch(
+			/;void \(async \(\) => \{\nconst n: number = 1 < 2 \? 3 : 4;\n\}\)\(\);\n$/,
+		);
 		// The copy inside the JSX <script> element is blanked, so `<` never parses as a tag.
 		expect(text).toMatch(/<script type="text\/typescript">\s*<\/script>/);
 		const mapping = script_mapping(root, 'script_0');
@@ -101,7 +103,7 @@ describe('<script> bodies embedded in the generated TSX', () => {
 	</head>
 }`,
 		);
-		expect(generated(root)).toContain(';{\nconsole.log(1 < 2);\n}\n');
+		expect(generated(root)).toContain(';void (async () => {\nconsole.log(1 < 2);\n})();\n');
 		expect(script_mapping(root, 'script_0')).toBeDefined();
 	});
 
@@ -120,10 +122,10 @@ describe('<script> bodies embedded in the generated TSX', () => {
 		);
 		expect(embedded_of(root, 'css')).toHaveLength(1);
 		expect(embedded_of(root, 'typescript')).toHaveLength(0);
-		expect(generated(root)).toContain(';{\nconst a: number = 1;\n}\n');
+		expect(generated(root)).toContain(';void (async () => {\nconst a: number = 1;\n})();\n');
 	});
 
-	it('gives each <script> body its own block, so their declarations never collide', () => {
+	it('gives each <script> body its own wrapper, so their declarations never collide', () => {
 		const { root } = create_virtual_code(
 			`function App() @{
 	<head>
@@ -133,8 +135,8 @@ describe('<script> bodies embedded in the generated TSX', () => {
 }`,
 		);
 		const text = generated(root);
-		expect(text).toContain(';{\nconst a: number = 1;\n}\n');
-		expect(text).toContain(';{\nconst a = 2;\n}\n');
+		expect(text).toContain(';void (async () => {\nconst a: number = 1;\n})();\n');
+		expect(text).toContain(';void (async () => {\nconst a = 2;\n})();\n');
 		expect(script_mapping(root, 'script_0')).toBeDefined();
 		expect(script_mapping(root, 'script_1')).toBeDefined();
 	});
@@ -148,11 +150,13 @@ const value: number = helper();</script>
 }`;
 		const { root } = create_virtual_code(source);
 		const text = generated(root);
-		const block = text.indexOf(';{\n');
+		const wrap = text.indexOf(';void (async () => {\n');
 		expect(text.indexOf("import { helper } from './helper.js';")).toBeGreaterThan(-1);
-		expect(text.indexOf("import { helper } from './helper.js';")).toBeLessThan(block);
-		// Its place in the block is blanked; the statement after it keeps its column.
-		expect(text.slice(block)).toMatch(/;\{\n {37}\nconst value: number = helper\(\);\n\}\n/);
+		expect(text.indexOf("import { helper } from './helper.js';")).toBeLessThan(wrap);
+		// Its place in the wrapper is blanked; the statement after it keeps its column.
+		expect(text.slice(wrap)).toMatch(
+			/;void \(async \(\) => \{\n {37}\nconst value: number = helper\(\);\n\}\)\(\);\n/,
+		);
 		const mapping = script_mapping(root, 'script_0');
 		const import_index = mapping?.sourceOffsets.indexOf(source.indexOf('import { helper }'));
 		expect(import_index).toBeGreaterThanOrEqual(0);
@@ -165,6 +169,72 @@ const value: number = helper();</script>
 		).toBe("import { helper } from './helper.js';");
 	});
 
+	it('wraps a module-script body in an async IIFE so top-level await is legal', () => {
+		const source = `function App() @{
+	<head>
+		<script type="module">const data = await fetch('/api');</script>
+	</head>
+}`;
+		const body = "const data = await fetch('/api');";
+		const { root } = create_virtual_code(source);
+		const text = generated(root);
+		expect(text).toContain(";void (async () => {\nconst data = await fetch('/api');\n})();\n");
+		const mapping = script_mapping(root, 'script_0');
+		expect(mapping?.sourceOffsets).toEqual([source.indexOf(body)]);
+		expect(mapping?.lengths).toEqual([body.length]);
+		expect(
+			text.slice(mapping?.generatedOffsets[0], (mapping?.generatedOffsets[0] ?? 0) + body.length),
+		).toBe(body);
+	});
+
+	it('blanks export modifiers so a module-script export stays isolated in the wrapper', () => {
+		const source = `function App() @{
+	<head>
+		<script type="module">export const answer: number = 42;</script>
+	</head>
+}`;
+		const { root } = create_virtual_code(source);
+		const text = generated(root);
+		expect(text).toMatch(/;void \(async \(\) => \{\n {7}const answer: number = 42;\n\}\)\(\);\n/);
+		const mapping = script_mapping(root, 'script_0');
+		const declaration = 'const answer: number = 42;';
+		const index = mapping?.sourceOffsets.indexOf(source.indexOf(declaration));
+		expect(index).toBeGreaterThanOrEqual(0);
+		expect(
+			text.slice(
+				mapping?.generatedOffsets[index ?? 0],
+				(mapping?.generatedOffsets[index ?? 0] ?? 0) + (mapping?.lengths[index ?? 0] ?? 0),
+			),
+		).toBe(declaration);
+	});
+
+	it('hoists export-from of a <script type="module"> body to module level, mapped', () => {
+		const source = `function App() @{
+	<head>
+		<script type="module">export { helper } from './helper.js';
+const value: number = 1;</script>
+	</head>
+}`;
+		const { root } = create_virtual_code(source);
+		const text = generated(root);
+		const wrap = text.indexOf(';void (async () => {\n');
+		expect(text.indexOf("export { helper } from './helper.js';")).toBeGreaterThan(-1);
+		expect(text.indexOf("export { helper } from './helper.js';")).toBeLessThan(wrap);
+		expect(text.slice(wrap)).toMatch(
+			/;void \(async \(\) => \{\n {37}\nconst value: number = 1;\n\}\)\(\);\n/,
+		);
+		const mapping = script_mapping(root, 'script_0');
+		const export_index = mapping?.sourceOffsets.indexOf(source.indexOf('export { helper }'));
+		expect(export_index).toBeGreaterThanOrEqual(0);
+		expect(
+			text.slice(
+				mapping?.generatedOffsets[export_index ?? 0],
+				(mapping?.generatedOffsets[export_index ?? 0] ?? 0) +
+					(mapping?.lengths[export_index ?? 0] ?? 0),
+			),
+		).toBe("export { helper } from './helper.js';");
+	});
+
 	it('emits nothing for a self-closing <script src=... />', () => {
 		const { root } = create_virtual_code(
 			`function App() @{
@@ -173,7 +243,7 @@ const value: number = helper();</script>
 	</head>
 }`,
 		);
-		expect(generated(root)).not.toContain(';{\n');
+		expect(generated(root)).not.toContain(';void (async () => {');
 		expect(root?.mappings.some((mapping) => mapping.data.customData?.embeddedId)).toBe(false);
 	});
 });
@@ -181,7 +251,7 @@ const value: number = helper();</script>
 describe('<script> bodies while the file has a fatal compile error', () => {
 	// `import { from 'x';` makes compilation throw fatally: the generated code is
 	// the raw source, CSS keeps its embedded codes from the regex fallback, and
-	// script bodies are left to the compile error (no block, no embedded code).
+	// script bodies are left to the compile error (no wrapper, no embedded code).
 	it('embeds no script code and keeps CSS intellisense alive', () => {
 		const { root } = create_virtual_code(
 			`import { from 'x';
@@ -194,7 +264,7 @@ function App() @{
 		);
 		expect(embedded_of(root, 'typescript')).toHaveLength(0);
 		expect(embedded_of(root, 'css')).toHaveLength(1);
-		expect(generated(root)).not.toContain(';{\n');
+		expect(generated(root)).not.toContain(';void (async () => {');
 	});
 });
 

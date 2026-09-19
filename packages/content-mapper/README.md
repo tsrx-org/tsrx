@@ -100,12 +100,15 @@ One precedence rule, highest first:
   `import { a } from './x';` is one edit-safe span and TypeScript can place an
   auto-import edit inside it. Fragments of identifiers (the transform's
   one-character file-start anchor) are dropped.
-- Each embedded `<script>` body as a block statement appended to the generated
-  TSX, with a verbatim span back to the source (the shared transform does this on
-  every path). A block keeps one body's declarations from colliding with another's
-  or with the component's, and contributes nothing to declaration output. `import`
+- Each embedded `<script>` body as an async IIFE appended to the generated TSX,
+  with a verbatim span back to the source (the shared transform does this on every
+  path). The function keeps one body's declarations from colliding with another's
+  or with the component's, contributes nothing to declaration output, and is an
+  async context so top-level `await` type-checks. `import` and `export … from`
   declarations of a `<script type="module">` body are hoisted to module level in
-  front of the block, where TypeScript resolves them like any other import.
+  front of the wrapper, where TypeScript resolves them like any other import or
+  re-export. Other `export` modifiers are blanked so the declaration stays inside
+  the wrapper.
 - TSRX compile errors as mapper diagnostics in the original file, printed as
   `error tsrx<code>`. Code `1000` is a fatal compile error, `1001` a usage error
   without a string code, `1002` no compiler found, `1003` invalid configuration;
