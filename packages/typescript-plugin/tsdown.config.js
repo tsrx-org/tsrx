@@ -19,7 +19,10 @@ export default defineConfig({
 		legalComments: 'inline',
 		minify: true,
 	},
-	external: ['typescript', /^@tsrx\/.*$/],
+	// `jsonc-parser` stays external: its `main` is a UMD build whose internal
+	// `require('./impl/...')` calls survive bundling and then fail at runtime.
+	// It is a runtime dependency, so consumers install it next to this package.
+	external: ['typescript', 'jsonc-parser', /^@tsrx\/.*$/],
 	clean: true,
 	noExternal: /.+/,
 	hooks: {
