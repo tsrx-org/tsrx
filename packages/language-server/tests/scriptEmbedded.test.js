@@ -94,6 +94,30 @@ describe('embedded <script> virtual codes', () => {
 		expect(embedded_of(root, 'typescript')).toHaveLength(1);
 	});
 
+	it('embeds each <script> body in the service script when the tsserver plugin asks for it', () => {
+		const source = `function App() @{
+	<head>
+		<script type="text/typescript">const n: number = 1 < 2 ? 3 : 4;</script>
+	</head>
+}`;
+		const uri = URI.file(path.join(fixture_dir, 'App.tsrx'));
+		const scripts = createUriMap();
+		const plugin = getTsrxLanguagePlugin({ embedScriptBodiesInServiceScript: true });
+		const language = createLanguage([plugin], scripts, () => {});
+		language.scripts.set(uri, ts.ScriptSnapshot.fromString(source), 'tsrx');
+		const root = language.scripts.get(uri)?.generated?.root;
+		const body = 'const n: number = 1 < 2 ? 3 : 4;';
+		expect(root?.generatedCode).toContain(body);
+		const mapping = root?.mappings.find((entry) => entry.sourceOffsets[0] === source.indexOf(body));
+		expect(mapping).toBeDefined();
+		expect(
+			root?.generatedCode.slice(
+				/** @type {{ generatedOffsets: number[] }} */ (mapping).generatedOffsets[0],
+				/** @type {{ generatedOffsets: number[] }} */ (mapping).generatedOffsets[0] + body.length,
+			),
+		).toBe(body);
+	});
+
 	it('registers each <script> body as a unique TS service script via getExtraServiceScripts', () => {
 		const { plugin, root, fileName } = create_virtual_code(
 			`function App() @{

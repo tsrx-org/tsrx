@@ -19,6 +19,8 @@ const volar_plugin = createLanguageServicePlugin((ts, info) => ({
 					? info.project.getProjectName()
 					: undefined,
 			configHost: ts.sys,
+			// Volar's tsserver plugin does not honor `getExtraServiceScripts`.
+			embedScriptBodiesInServiceScript: true,
 		}),
 	],
 }));

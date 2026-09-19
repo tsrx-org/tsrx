@@ -120,6 +120,44 @@ export function blank_script_bodies(text, script_regions) {
 }
 
 /**
+ * Append each `<script>` body to the generated TSX as an isolated function and
+ * map it back to the source. Volar's tsserver plugin does not honor
+ * `getExtraServiceScripts`, so those bodies would otherwise have no TypeScript
+ * program (they are blanked in the JSX to avoid a TS1003 on `<`). A leading
+ * `;` closes a previous expression so the appendix cannot be parsed as JSX.
+ * @param {string} text
+ * @param {CodeMapping[]} mappings
+ * @param {EmbeddedRegion[]} script_regions
+ * @returns {string}
+ */
+export function embed_script_bodies_in_service_script(text, mappings, script_regions) {
+	let out = text;
+	for (const region of script_regions) {
+		if (region.length === 0) continue;
+		const prefix = '\n;void function() {\n';
+		const suffix = '\n};\n';
+		const generated_offset = out.length + prefix.length;
+		out += prefix + region.content + suffix;
+		mappings.push({
+			sourceOffsets: [region.start],
+			generatedOffsets: [generated_offset],
+			lengths: [region.length],
+			generatedLengths: [region.length],
+			data: {
+				verification: true,
+				completion: true,
+				semantic: true,
+				navigation: true,
+				structure: true,
+				format: false,
+				customData: {},
+			},
+		});
+	}
+	return out;
+}
+
+/**
  * @param {CodeMapping[]} mappings
  * @returns {EmbeddedRegion[]}
  */

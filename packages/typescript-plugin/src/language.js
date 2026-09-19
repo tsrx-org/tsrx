@@ -28,7 +28,12 @@ import {
 	resolve_consumer_platform_for_file,
 } from './consumer-compiler.js';
 import { NODE_CONFIG_HOST } from './config-host.js';
-import { extract_css_regions, extract_script_regions, transform_tsrx } from './transform.js';
+import {
+	embed_script_bodies_in_service_script,
+	extract_css_regions,
+	extract_script_regions,
+	transform_tsrx,
+} from './transform.js';
 import { createLogging, DEBUG } from './utils.js';
 
 const require = createRequire(import.meta.url);
@@ -222,7 +227,7 @@ export function source_uses_platform_flag(source, _typescript) {
 }
 
 /**
- * @param {CompilerResolutionOptions} [options]
+ * @param {CompilerResolutionOptions & { embedScriptBodiesInServiceScript?: boolean }} [options]
  * @returns {TsrxLanguagePlugin}
  */
 export function getTsrxLanguagePlugin(options = {}) {
@@ -230,6 +235,8 @@ export function getTsrxLanguagePlugin(options = {}) {
 	// `ts` is only needed by the TypeScript-facing parts of the plugin (the
 	// classic path); the native backend creates the plugin without one.
 	const typescript = options.ts;
+	const embed_script_bodies_in_service_script_option =
+		options.embedScriptBodiesInServiceScript === true;
 	/** @type {CompilerResolutionOptions} */
 	const compiler_resolution_options = {
 		...options,
@@ -257,11 +264,18 @@ export function getTsrxLanguagePlugin(options = {}) {
 				}
 				log('Creating virtual code for:', file_name);
 				try {
-					return new TSRXVirtualCode(file_name, snapshot, compiler, (required) =>
-						resolve_consumer_platform_for_file(file_name, {
-							...compiler_resolution_options,
-							requirePlatformResolution: required,
-						}),
+					return new TSRXVirtualCode(
+						file_name,
+						snapshot,
+						compiler,
+						(required) =>
+							resolve_consumer_platform_for_file(file_name, {
+								...compiler_resolution_options,
+								requirePlatformResolution: required,
+							}),
+						{
+							embedScriptBodiesInServiceScript: embed_script_bodies_in_service_script_option,
+						},
 					);
 				} catch (err) {
 					logError('Failed to create virtual code for:', file_name, ':', err);
@@ -318,7 +332,9 @@ export function getTsrxLanguagePlugin(options = {}) {
 						 * The returned `code` must be the exact same instance stored in the root's
 						 * `embeddedCodes` (volar matches it by identity), and each `fileName` must be
 						 * unique. Only honored on the language-server (`createTypeScriptProject`)
-						 * path, not the tsserver-plugin path.
+						 * path, not the tsserver-plugin path. The tsserver plugin therefore embeds
+						 * each body into the root service script (`embedScriptBodiesInServiceScript`)
+						 * so those regions still have a TypeScript program.
 						 * @param {string} fileName
 						 * @param {VirtualCode} tsrx_code
 						 */
@@ -402,6 +418,8 @@ export class TSRXVirtualCode {
 	sourceAst = null;
 	/** @type {boolean} */
 	isDotCompletionMode = false;
+	/** @type {boolean} */
+	embedScriptBodiesInServiceScript = false;
 	/** @type {unknown[]} */
 	diagnostics = [];
 	/** @type {CachedMappings | null} */
@@ -414,13 +432,15 @@ export class TSRXVirtualCode {
 	 * @param {IScriptSnapshot} snapshot
 	 * @param {TSRXCompilerModule} tsrx
 	 * @param {(required: boolean) => 'web' | 'ios' | 'android' | undefined} [platform_provider]
+	 * @param {{ embedScriptBodiesInServiceScript?: boolean }} [options]
 	 */
-	constructor(file_name, snapshot, tsrx, platform_provider) {
+	constructor(file_name, snapshot, tsrx, platform_provider, options) {
 		log('Initializing TSRXVirtualCode for:', file_name);
 
 		this.fileName = file_name;
 		this.tsrx = tsrx;
 		this.platformProvider = platform_provider;
+		this.embedScriptBodiesInServiceScript = options?.embedScriptBodiesInServiceScript === true;
 		this.snapshot = snapshot;
 		this.sourceSnapshot = snapshot;
 		this.originalCode = snapshot.getText(0, snapshot.getLength());
@@ -551,6 +571,13 @@ export class TSRXVirtualCode {
 			// Successful compilation - update everything
 			this.generatedCode = result.text;
 			this.mappings = result.mappings;
+			if (this.embedScriptBodiesInServiceScript) {
+				this.generatedCode = embed_script_bodies_in_service_script(
+					this.generatedCode,
+					this.mappings,
+					result.scriptRegions,
+				);
+			}
 			this.usageErrors = result.errors;
 			this.sourceAst = result.sourceAst;
 
