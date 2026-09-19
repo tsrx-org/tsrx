@@ -178,6 +178,17 @@ describe('load_tsconfig_layers', () => {
 		]);
 	});
 
+	it('appends .json to a relative extends path even when a same-named directory exists', () => {
+		fs.mkdirSync(path.join(directory, 'base'));
+		const base_path = write_config('base.json', { custom: { value: 'base' } });
+		const config_path = write_config('tsconfig.json', { extends: './base' });
+		for (const host of [ts.sys, NODE_CONFIG_HOST]) {
+			const result = load_tsconfig_layers(host, config_path);
+			expect(result.diagnostics).toEqual([]);
+			expect(result.layers.map((layer) => layer.path)).toEqual([base_path, config_path]);
+		}
+	});
+
 	it('reads JSON with comments and trailing commas, on the node host as on ts.sys', () => {
 		const source =
 			'// leading comment\n{\n\t/* block */ "custom": { "value": "root", }, // trailing\n\t"extends": "./base",\n}\n';
