@@ -349,3 +349,109 @@ describe('native tsc --build with project references', () => {
 		expect(result.output).toContain('Supplemental virtual file produced by the content mapper');
 	}, 30_000);
 });
+
+describe('native tsc --build with a chain of mapper-backed projects', () => {
+	const shared_options = {
+		composite: true,
+		declaration: true,
+		emitDeclarationOnly: true,
+		outDir: 'dist',
+		rootDir: '.',
+		module: 'ESNext',
+		moduleResolution: 'Bundler',
+		jsx: 'react-jsx',
+		jsxImportSource: 'react',
+		allowImportingTsExtensions: true,
+		strict: true,
+		skipLibCheck: true,
+		types: [],
+	};
+	const mapper = [{ package: '@tsrx/content-mapper', extensions: ['.tsrx'] }];
+
+	it('builds lib-a → lib-b → app where both libraries contain .tsrx files', () => {
+		// No `<script>` bodies: composite projects reject their supplemental
+		// outputs (microsoft/TypeScript#64350, pinned above).
+		const dir = workspace({
+			'lib-a/tsconfig.json': JSON.stringify({
+				tsrx: { compiler: '@tsrx/react' },
+				contentMappers: mapper,
+				compilerOptions: shared_options,
+				include: ['index.ts', '*.tsrx'],
+			}),
+			'lib-a/index.ts': "export { default as Button } from './Button.tsrx';\n",
+			'lib-a/Button.tsrx':
+				'export interface ButtonProps {\n\tlabel: string;\n\tonPress?: () => void;\n}\n\nexport default function Button({ label, onPress }: ButtonProps) @{\n\t<button type="button" onClick={onPress}>{label}</button>\n}\n',
+			'lib-b/tsconfig.json': JSON.stringify({
+				tsrx: { compiler: '@tsrx/react' },
+				contentMappers: mapper,
+				compilerOptions: shared_options,
+				references: [{ path: '../lib-a' }],
+				include: ['index.ts', '*.tsrx'],
+			}),
+			'lib-b/index.ts': "export { default as Panel } from './Panel.tsrx';\n",
+			// A .tsrx file in one project importing a .tsrx component from the
+			// referenced project's declarations.
+			'lib-b/Panel.tsrx':
+				"import { Button } from '../lib-a/index';\n\nexport interface PanelProps {\n\ttitle: string;\n\tcount: number;\n}\n\nexport default function Panel({ title, count }: PanelProps) @{\n\t<section>\n\t\t<h2>{title}</h2>\n\t\t<Button label={String(count)} />\n\t</section>\n}\n",
+			'app/tsconfig.json': JSON.stringify({
+				tsrx: { compiler: '@tsrx/react' },
+				contentMappers: mapper,
+				compilerOptions: {
+					...shared_options,
+					declaration: undefined,
+					emitDeclarationOnly: undefined,
+					outDir: undefined,
+					rootDir: undefined,
+					noEmit: true,
+				},
+				references: [{ path: '../lib-b' }],
+				include: ['app.ts'],
+			}),
+			'app/app.ts':
+				"import { Panel } from '../lib-b/index';\nexport const ok = Panel({ title: 'x', count: 1 });\n",
+		});
+		const good = run_native_tsc(dir, ['--build', 'app', '--pretty', 'false']);
+		expect(good.output).toBe('');
+		expect(good.status).toBe(0);
+		for (const emitted of [
+			'lib-a/dist/Button.d.tsrx.ts',
+			'lib-a/dist/index.d.ts',
+			'lib-b/dist/Panel.d.tsrx.ts',
+			'lib-b/dist/index.d.ts',
+		]) {
+			expect(fs.existsSync(path.join(dir, emitted)), emitted).toBe(true);
+		}
+
+		// A prop error in the app against lib-b's declarations, and one inside
+		// lib-b's .tsrx against lib-a's declarations, are both reported by the
+		// build at their authored positions.
+		fs.appendFileSync(
+			path.join(dir, 'app', 'app.ts'),
+			"export const bad = Panel({ title: 'x', count: 'one' });\n",
+		);
+		fs.writeFileSync(
+			path.join(dir, 'lib-b', 'Panel.tsrx'),
+			fs
+				.readFileSync(path.join(dir, 'lib-b', 'Panel.tsrx'), 'utf8')
+				.replace('label={String(count)}', 'label={count}'),
+		);
+		const bad = run_native_tsc(dir, ['--build', 'app', '--pretty', 'false']);
+		// Declarations are still emitted for the failing library (no `noEmitOnError`),
+		// so the build goes on to the app and reports both.
+		expect(parse_tsc_output(bad.output).map((d) => [d.file, d.line, d.column, d.code])).toEqual([
+			['lib-b/Panel.tsrx', 11, 11, 'TS2322'],
+			['app/app.ts', 3, 40, 'TS2322'],
+		]);
+		expect(bad.status).not.toBe(0);
+		fs.writeFileSync(
+			path.join(dir, 'lib-b', 'Panel.tsrx'),
+			fs
+				.readFileSync(path.join(dir, 'lib-b', 'Panel.tsrx'), 'utf8')
+				.replace('label={count}', 'label={String(count)}'),
+		);
+		const app_bad = run_native_tsc(dir, ['--build', 'app', '--pretty', 'false']);
+		expect(parse_tsc_output(app_bad.output).map((d) => [d.file, d.line, d.column, d.code])).toEqual(
+			[['app/app.ts', 3, 40, 'TS2322']],
+		);
+	}, 60_000);
+});

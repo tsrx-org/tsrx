@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { create_native_workspace, parse_tsc_output, run_native_tsc } from './fixture-utils.js';
+import { NativeLspClient, position_of, range_text } from './lsp-client.js';
 
 /**
  * A minimal third-party TSRX compiler: it treats the file as TSX and rewrites
@@ -143,4 +144,68 @@ describe('third-party compiler', () => {
 		expect(result.output).toBe('');
 		expect(result.status).toBe(0);
 	});
+});
+
+describe('third-party compiler under the language server', () => {
+	it('serves diagnostics, hover and navigation through the compiler’s spans', async () => {
+		const config = JSON.parse(tsconfig);
+		config.tsrx = { compiler: 'tsrx-stub-compiler' };
+		config.contentMappers = [{ package: '@tsrx/content-mapper', extensions: ['.tsrx'] }];
+		config.include = ['main.ts', '*.tsrx'];
+		const files = {
+			'tsconfig.json': JSON.stringify(config, null, '\t'),
+			'Thing.tsrx':
+				'export const #value = 1;\nexport const copy = #value;\nexport const missing = #nope;\n',
+			'main.ts': "import { copy } from './Thing.tsrx';\nexport const n: string = copy;\n",
+		};
+		const dir = workspace(files);
+		const client = new NativeLspClient(dir);
+		try {
+			await client.initialize({ runExternalCode: true });
+			client.open('main.ts', files['main.ts']);
+			await client.wait_for_registration('content-mapper-did-open');
+			client.open('Thing.tsrx', files['Thing.tsrx']);
+
+			expect(
+				(await client.diagnostics('main.ts')).map((d) => [
+					d.code,
+					range_text(files['main.ts'], d.range),
+				]),
+			).toEqual([[2322, 'n']]);
+			expect(
+				(await client.diagnostics('Thing.tsrx')).map((d) => [
+					d.code,
+					range_text(files['Thing.tsrx'], d.range),
+				]),
+			).toEqual([[2304, '#nope']]);
+
+			// Verbatim spans: hover and definition use authored positions and names.
+			const hover = await client.request('textDocument/hover', {
+				textDocument: { uri: client.uri('Thing.tsrx') },
+				position: position_of(files['Thing.tsrx'], 'copy', 1),
+			});
+			expect(hover.contents.value).toContain('const copy: 1');
+			const definition = await client.request('textDocument/definition', {
+				textDocument: { uri: client.uri('main.ts') },
+				position: position_of(files['main.ts'], 'copy;', 1),
+			});
+			expect(
+				definition.map((/** @type {{ uri: string, range: any }} */ d) => [
+					path.basename(d.uri),
+					range_text(files['Thing.tsrx'], d.range),
+				]),
+			).toEqual([['Thing.tsrx', 'copy']]);
+
+			// Alias spans: hover text shows the generated identifier (upstream
+			// microsoft/TypeScript#63875 item 1B), while the range is the authored span.
+			const alias_hover = await client.request('textDocument/hover', {
+				textDocument: { uri: client.uri('Thing.tsrx') },
+				position: position_of(files['Thing.tsrx'], '#value;', 2),
+			});
+			expect(alias_hover.contents.value).toContain('_$__u0023_value');
+			expect(range_text(files['Thing.tsrx'], alias_hover.range)).toBe('#value');
+		} finally {
+			await client.shutdown();
+		}
+	}, 60_000);
 });

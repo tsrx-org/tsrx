@@ -30,6 +30,12 @@ export class NativeLspClient {
 	#versions = new Map();
 	/** @type {Array<(method: string, params: any) => void>} */
 	#notification_listeners = [];
+	/**
+	 * Answers to `workspace/configuration` by section (`js/ts`, `typescript`,
+	 * `editor`, ...); sections without an answer get `null`.
+	 * @type {Record<string, unknown>}
+	 */
+	configuration = {};
 
 	/**
 	 * @param {string} cwd
@@ -113,7 +119,10 @@ export class NativeLspClient {
 					}
 					break;
 				case 'workspace/configuration':
-					result = message.params.items.map(() => null);
+					result = message.params.items.map(
+						(/** @type {{ section?: string }} */ item) =>
+							(item.section !== undefined && this.configuration[item.section]) ?? null,
+					);
 					break;
 				default:
 					result = null;
@@ -197,18 +206,31 @@ export class NativeLspClient {
 	 * 	runExternalCode?: boolean,
 	 * 	initializationOptions?: Record<string, unknown>,
 	 * 	textDocumentCapabilities?: Record<string, unknown>,
+	 * 	workspaceCapabilities?: Record<string, unknown>,
+	 * 	configuration?: Record<string, unknown>,
 	 * }} [options]
 	 *   `initializationOptions` are merged over the `runExternalCode` entry;
-	 *   `textDocumentCapabilities` are merged over the default text-document
-	 *   capabilities (to advertise more features than the tests pin).
+	 *   `textDocumentCapabilities` and `workspaceCapabilities` are merged over
+	 *   the default capabilities (to advertise more features than the tests
+	 *   pin); `configuration` seeds the answers to `workspace/configuration`
+	 *   (see {@link NativeLspClient.configuration}), which the native server
+	 *   requests during initialization.
 	 */
 	async initialize(options = {}) {
+		if (options.configuration) {
+			this.configuration = options.configuration;
+		}
 		const result = await this.request('initialize', {
 			processId: process.pid,
 			rootUri: pathToFileURL(this.cwd).href,
 			workspaceFolders: [{ uri: pathToFileURL(this.cwd).href, name: 'workspace' }],
 			capabilities: {
-				workspace: { configuration: true, workspaceFolders: true },
+				workspace: {
+					configuration: true,
+					workspaceFolders: true,
+					didChangeWatchedFiles: { dynamicRegistration: true },
+					...options.workspaceCapabilities,
+				},
 				textDocument: {
 					...options.textDocumentCapabilities,
 					synchronization: { dynamicRegistration: true },
@@ -226,6 +248,9 @@ export class NativeLspClient {
 						},
 					},
 					codeAction: { dynamicRegistration: true },
+					inlayHint: { dynamicRegistration: true },
+					formatting: { dynamicRegistration: true },
+					rangeFormatting: { dynamicRegistration: true },
 				},
 			},
 			initializationOptions: {
@@ -289,6 +314,17 @@ export class NativeLspClient {
 	/** @param {string} file */
 	close(file) {
 		this.notify('textDocument/didClose', { textDocument: { uri: this.uri(file) } });
+	}
+
+	/**
+	 * Report file-system changes the way an editor's watcher does.
+	 * @param {Array<[file: string, type: 'created' | 'changed' | 'deleted']>} changes
+	 */
+	watched_files_changed(changes) {
+		const types = { created: 1, changed: 2, deleted: 3 };
+		this.notify('workspace/didChangeWatchedFiles', {
+			changes: changes.map(([file, type]) => ({ uri: this.uri(file), type: types[type] })),
+		});
 	}
 
 	/** @param {string} file */

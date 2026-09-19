@@ -451,3 +451,193 @@ describe('inferred projects through custom/setContentMapperContributions', () =>
 		});
 	});
 });
+
+const HINTS_TSRX =
+	'export function Hints(props: { items: string[] }) @{\n\tconst total = props.items.length;\n\tconst shown = Math.min(total, 10);\n\t<span>{shown}</span>\n}\n';
+
+/**
+ * Poll until `probe` resolves to a value `predicate` accepts; the server
+ * applies watcher notifications asynchronously.
+ * @template T
+ * @param {() => Promise<T>} probe
+ * @param {(value: T) => boolean} predicate
+ * @param {number} [timeout]
+ * @returns {Promise<T>}
+ */
+async function until(probe, predicate, timeout = 10_000) {
+	const started = Date.now();
+	let value = await probe();
+	while (!predicate(value)) {
+		if (Date.now() - started > timeout) return value;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		value = await probe();
+	}
+	return value;
+}
+
+describe('editor preferences and file lifecycle on the native server', () => {
+	const files = workspace_files();
+	files['Hints.tsrx'] = HINTS_TSRX;
+	/** @type {ReturnType<typeof create_native_workspace>} */
+	let workspace;
+	/** @type {NativeLspClient} */
+	let client;
+
+	beforeAll(async () => {
+		workspace = create_native_workspace(files);
+		client = new NativeLspClient(workspace.dir);
+		// What VS Code sends for `js/ts.inlayHints.*` when every hint is on; the
+		// server reads them through `workspace/configuration` during initialize.
+		await client.initialize({
+			runExternalCode: true,
+			configuration: {
+				'js/ts': {
+					inlayHints: {
+						parameterNames: { enabled: 'all' },
+						parameterTypes: { enabled: true },
+						variableTypes: { enabled: true },
+						propertyDeclarationTypes: { enabled: true },
+						functionLikeReturnTypes: { enabled: true },
+						enumMemberValues: { enabled: true },
+					},
+				},
+			},
+		});
+		client.open('main.ts', files['main.ts']);
+		await client.wait_for_registration('content-mapper-did-open');
+		for (const file of ['Panel.tsrx', 'Button.tsrx', 'Hints.tsrx']) {
+			client.open(file, files[file]);
+		}
+	});
+
+	afterAll(async () => {
+		await client?.shutdown();
+		workspace?.cleanup();
+	});
+
+	/** @param {string} file @param {string} source */
+	function inlay_hints(file, source) {
+		return client
+			.request('textDocument/inlayHint', {
+				textDocument: { uri: client.uri(file) },
+				range: {
+					start: { line: 0, character: 0 },
+					end: { line: source.split('\n').length, character: 0 },
+				},
+			})
+			.then((hints) =>
+				hints.map((/** @type {any} */ hint) => [
+					hint.position,
+					typeof hint.label === 'string'
+						? hint.label
+						: hint.label.map((/** @type {{ value: string }} */ p) => p.value).join(''),
+				]),
+			);
+	}
+
+	it('serves inlay hints at authored positions once they are enabled', async () => {
+		const source = files['Hints.tsrx'];
+		expect(await inlay_hints('Hints.tsrx', source)).toEqual([
+			[position_of(source, 'const total', 'const total'.length), ': number'],
+			[position_of(source, 'const shown', 'const shown'.length), ': number'],
+			[position_of(source, 'Math.min(', 'Math.min('.length), '...values:'],
+		]);
+		// Hints in a template expression and in a `.ts` importer of `.tsrx` modules.
+		const panel = files['Panel.tsrx'];
+		expect(await inlay_hints('Panel.tsrx', panel)).toEqual([
+			[position_of(panel, '() => console.log', '()'.length), ': void'],
+			[position_of(panel, 'console.log(', 'console.log('.length), '...data:'],
+		]);
+		expect(
+			(await inlay_hints('main.ts', files['main.ts'])).map(
+				(/** @type {[unknown, string]} */ hint) => hint[1],
+			),
+		).toEqual([': Element', ': Element', ': Element']);
+	});
+
+	it('registers formatting for .tsrx and returns no edits, so Prettier must stay the default formatter', async () => {
+		const ids = client.registrations.map((r) => r.id);
+		expect(ids).toContain('content-mapper-formatting');
+		expect(ids).toContain('content-mapper-range-formatting');
+		const options = { tabSize: 2, insertSpaces: false };
+		expect(
+			await client.request('textDocument/formatting', {
+				textDocument: { uri: client.uri('Panel.tsrx') },
+				options,
+			}),
+		).toEqual([]);
+		expect(
+			await client.request('textDocument/rangeFormatting', {
+				textDocument: { uri: client.uri('Panel.tsrx') },
+				range: { start: { line: 8, character: 0 }, end: { line: 9, character: 0 } },
+				options,
+			}),
+		).toEqual([]);
+	});
+
+	it('reports missing modules after a .tsrx file is deleted and resolves again once it is recreated', async () => {
+		/** @param {string} file @param {string} source */
+		const codes = (file, source) =>
+			client.diagnostics(file).then((d) => d.map((x) => [x.code, range_text(source, x.range)]));
+		client.close('Button.tsrx');
+		fs.rmSync(path.join(workspace.dir, 'Button.tsrx'));
+		client.watched_files_changed([['Button.tsrx', 'deleted']]);
+		expect(
+			await until(
+				() => codes('main.ts', files['main.ts']),
+				(d) => d.some(([code]) => code === 2307),
+			),
+		).toEqual([
+			[2307, "'./Button.tsrx'"],
+			[2322, 'count'],
+		]);
+		expect(await codes('Panel.tsrx', files['Panel.tsrx'])).toEqual([
+			[2307, "'./Button.tsrx'"],
+			[6133, 'analyticsEnabled'],
+		]);
+
+		fs.writeFileSync(path.join(workspace.dir, 'Button.tsrx'), files['Button.tsrx']);
+		client.watched_files_changed([['Button.tsrx', 'created']]);
+		client.open('Button.tsrx', files['Button.tsrx']);
+		expect(
+			await until(
+				() => codes('main.ts', files['main.ts']),
+				(d) => !d.some(([code]) => code === 2307),
+			),
+		).toEqual([[2322, 'count']]);
+		expect(await codes('Panel.tsrx', files['Panel.tsrx'])).toEqual([[6133, 'analyticsEnabled']]);
+	});
+
+	it('follows a renamed .tsrx file once its importers point at the new name', async () => {
+		client.close('Button.tsrx');
+		fs.renameSync(path.join(workspace.dir, 'Button.tsrx'), path.join(workspace.dir, 'Btn.tsrx'));
+		client.watched_files_changed([
+			['Button.tsrx', 'deleted'],
+			['Btn.tsrx', 'created'],
+		]);
+		client.open('Btn.tsrx', files['Button.tsrx']);
+		const panel = files['Panel.tsrx'].replace("'./Button.tsrx'", "'./Btn.tsrx'");
+		const main = files['main.ts'].replace("'./Button.tsrx'", "'./Btn.tsrx'");
+		client.change('Panel.tsrx', panel);
+		client.change('main.ts', main);
+		expect(
+			await until(
+				() =>
+					client
+						.diagnostics('main.ts')
+						.then((d) => d.map((x) => [x.code, range_text(main, x.range)])),
+				(d) => !d.some(([code]) => code === 2307),
+			),
+		).toEqual([[2322, 'count']]);
+		expect(
+			(await client.diagnostics('Panel.tsrx')).map((d) => [d.code, range_text(panel, d.range)]),
+		).toEqual([[6133, 'analyticsEnabled']]);
+		const definition = await client.request('textDocument/definition', {
+			textDocument: { uri: client.uri('Panel.tsrx') },
+			position: position_of(panel, '<Button', 1),
+		});
+		expect(definition.map((/** @type {{ uri: string }} */ d) => path.basename(d.uri))).toEqual([
+			'Btn.tsrx',
+		]);
+	});
+});

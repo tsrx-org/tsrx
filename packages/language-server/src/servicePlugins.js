@@ -20,10 +20,12 @@ import { createTypeScriptServices } from './typescriptService.js';
  * rather than the `.tsrx` source, their edits don't map back and formatting is a
  * no-op — yet the capability still makes the language client contribute a
  * "TSRX Syntax for VS Code" entry to "Format Document With…" that silently does nothing.
- * Formatting for `.tsrx` is owned by Prettier + @tsrx/prettier-plugin (configured
- * as the default `[tsrx]` formatter in the VS Code extension), so we drop these
- * capabilities to keep Prettier as the single, working formatter. On-type
- * formatting is left intact.
+ * Formatting for `.tsrx` is owned by Prettier + @tsrx/prettier-plugin (users set
+ * it as the `[tsrx]` default formatter), so we drop these capabilities to keep
+ * Prettier as the single, working formatter. On-type formatting is left intact.
+ * On the native backend TypeScript 7 registers its own formatter for `.tsrx`
+ * files that returns no edits (`native-lsp.test.js` pins it), so a `[tsrx]`
+ * default formatter is what keeps Prettier winning there.
  *
  * @template {{ capabilities?: Record<string, unknown> }} T
  * @param {T} plugin
