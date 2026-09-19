@@ -66,6 +66,8 @@ export class NativeLspClient {
 		this.#process.stderr.on('data', (chunk) => {
 			this.stderr.push(String(chunk));
 		});
+		// A reply to a server request can race the server's exit (EPIPE).
+		this.#process.stdin.on('error', () => {});
 	}
 
 	#read_messages() {
@@ -162,6 +164,7 @@ export class NativeLspClient {
 
 	/** @param {unknown} message */
 	#write(message) {
+		if (this.#process.exitCode !== null || this.#process.stdin.destroyed) return;
 		const body = Buffer.from(JSON.stringify(message), 'utf8');
 		this.#process.stdin.write(`Content-Length: ${body.length}\r\n\r\n`);
 		this.#process.stdin.write(body);

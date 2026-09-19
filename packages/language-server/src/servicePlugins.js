@@ -53,7 +53,7 @@ export function stripDocumentFormatting(plugin) {
  * services nor the plugins that wrap or duplicate them are loaded, and
  * `volar-service-typescript` is never required (see `typescriptService.js`).
  * @param {TypeScriptBackend} backend
- * @param {typeof import('typescript')} ts
+ * @param {typeof import('typescript')} [ts] The classic backend's TypeScript; the native backend has none.
  * @returns {LanguageServicePlugin[]}
  */
 export function createServicePlugins(backend, ts) {
@@ -70,6 +70,9 @@ export function createServicePlugins(backend, ts) {
 			createHoverPlugin({ typescriptBackend: backend }),
 			createDocumentHighlightPlugin({ typescriptBackend: backend }),
 		];
+	}
+	if (!ts) {
+		throw new Error('The classic TypeScript backend needs a TypeScript module.');
 	}
 	return [
 		...shared_first,

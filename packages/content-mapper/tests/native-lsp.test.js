@@ -14,6 +14,7 @@ import {
 	create_native_workspace,
 	mapper_server_path,
 } from './fixture-utils.js';
+import { parse_jsonc } from '@tsrx/typescript-plugin/src/jsonc.js';
 import { NativeLspClient, position_of, range_text } from './lsp-client.js';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
@@ -32,7 +33,9 @@ const USE_TS = "import { Other } from './Other.tsrx';\nexport const x = Other({ 
  */
 function workspace_files() {
 	const files = consumer_fixture_files();
-	const tsconfig = JSON.parse(files['tsconfig.json']);
+	const tsconfig = /** @type {Record<string, unknown>} */ (
+		parse_jsonc(files['tsconfig.json']).value
+	);
 	tsconfig.contentMappers = [{ package: '@tsrx/content-mapper', extensions: ['.tsrx'] }];
 	tsconfig.include = ['*.ts', '*.tsrx'];
 	files['tsconfig.json'] = JSON.stringify(tsconfig, null, '\t');

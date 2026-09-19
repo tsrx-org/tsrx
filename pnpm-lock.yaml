@@ -117,6 +117,9 @@ catalogs:
     jsdom:
       specifier: ^29.0.2
       version: 29.0.2
+    jsonc-parser:
+      specifier: ^3.3.1
+      version: 3.3.1
     linkedom:
       specifier: ^0.18.12
       version: 0.18.12
@@ -138,6 +141,9 @@ catalogs:
     react-dom:
       specifier: ^19.2.0
       version: 19.2.4
+    resolve-pkg-maps:
+      specifier: ^1.0.0
+      version: 1.0.0
     ripple:
       specifier: ^0.4.0
       version: 0.4.0
@@ -458,9 +464,9 @@ importers:
 
   packages/content-mapper:
     dependencies:
-      typescript:
-        specifier: catalog:peer
-        version: 5.9.3
+      jsonc-parser:
+        specifier: catalog:default
+        version: 3.3.1
     devDependencies:
       '@solidjs/web':
         specifier: catalog:default
@@ -510,6 +516,9 @@ importers:
       tsdown:
         specifier: catalog:default
         version: 0.22.0(@typescript/native-preview@7.0.0-dev.20260707.2)(typescript@5.9.3)
+      typescript:
+        specifier: catalog:default
+        version: 5.9.3
       vue:
         specifier: 3.6.0-beta.12
         version: 3.6.0-beta.12(typescript@5.9.3)
@@ -582,6 +591,9 @@ importers:
       '@volar/language-server':
         specifier: catalog:default
         version: 2.4.28
+      jsonc-parser:
+        specifier: catalog:default
+        version: 3.3.1
       typescript:
         specifier: catalog:peer
         version: 5.9.3
@@ -1069,9 +1081,15 @@ importers:
       '@volar/typescript':
         specifier: catalog:default
         version: 2.4.28
+      jsonc-parser:
+        specifier: catalog:default
+        version: 3.3.1
       octane:
         specifier: '*'
         version: 0.1.6(@typescript-eslint/types@8.56.1)
+      resolve-pkg-maps:
+        specifier: catalog:default
+        version: 1.0.0
       typescript:
         specifier: catalog:peer
         version: 5.9.3
@@ -1240,6 +1258,9 @@ importers:
       '@volar/vscode':
         specifier: catalog:default
         version: 2.4.28
+      jsonc-parser:
+        specifier: catalog:default
+        version: 3.3.1
       typescript:
         specifier: catalog:vscode
         version: 5.9.3

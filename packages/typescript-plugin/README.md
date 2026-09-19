@@ -22,7 +22,11 @@ resolves one instead of failing on the package's export map. To type-check `.tsr
 files with TypeScript 7 itself, use
 [`@tsrx/content-mapper`](../content-mapper/README.md) with
 `tsc --runExternalCode`; it needs a TypeScript 7.1 nightly (`7.1.0-dev.20260822.1`
-or newer), because the stable 7.0 releases have no content-mapper protocol.
+or newer), because the stable 7.0 releases have no content-mapper protocol, and no
+other TypeScript: this package reads `tsconfig.json` and resolves compiler
+packages itself (`src/tsconfig-resolution.js`, `src/package-resolution.js`, with
+`jsonc-parser` and `resolve-pkg-maps`), so the mapper and the language server's
+native backend run in a project whose only `typescript` is the native compiler.
 TypeScript 7 support is not complete yet; the gaps are tracked in
 [tsrx-org/tsrx#136](https://github.com/tsrx-org/tsrx/issues/136).
 

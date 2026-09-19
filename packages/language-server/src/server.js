@@ -4,6 +4,7 @@ import { createLogging } from './utils.js';
 import {
 	createConnection,
 	createServer,
+	createSimpleProject,
 	createTypeScriptProject,
 } from '@volar/language-server/node';
 import { resolve_typescript_backend } from './backend.js';
@@ -15,6 +16,7 @@ import {
 	resolveConfig,
 } from '@tsrx/typescript-plugin/src/language.js';
 import { unsupported_typescript_message } from '@tsrx/typescript-plugin/src/typescript-version.js';
+import { NODE_CONFIG_HOST } from '@tsrx/typescript-plugin/src/config-host.js';
 import {
 	handleWorkspaceChanges,
 	trackTypeScriptConfigDependencies,
@@ -104,8 +106,27 @@ export function createTsrxLanguageServer(options = {}) {
 			}
 			log(`TypeScript backend: ${selection.backend} (from ${selection.source})`);
 
-			// Classic TypeScript is still needed on the native path: the language
-			// plugin reads tsconfig (compiler selection, `extends`) through its API.
+			if (selection.backend === 'native') {
+				// TypeScript 7 owns every TypeScript feature for `.tsrx` files. The
+				// TSRX plugin only needs the compiler per file, which it resolves from
+				// the nearest tsconfig.json itself, so no TypeScript module is loaded
+				// (the native compiler's package has none) and no TypeScript project
+				// host is created.
+				const compilerResolutionDependencies = new Set();
+				compilerResolutionDependencySets.add(compilerResolutionDependencies);
+				const languagePlugin = getTsrxLanguagePlugin({
+					configHost: NODE_CONFIG_HOST,
+					dependencies: compilerResolutionDependencies,
+				});
+				const initResult = server.initialize(
+					params,
+					createSimpleProject([languagePlugin]),
+					createServicePlugins(selection.backend),
+				);
+				log('Server initialization complete (native backend, no TypeScript loaded)');
+				return initResult;
+			}
+
 			const ts = require('typescript');
 			const unsupported_typescript = unsupported_typescript_message(ts, 'language-server');
 			if (unsupported_typescript) {

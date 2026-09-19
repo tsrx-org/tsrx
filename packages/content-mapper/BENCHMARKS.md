@@ -163,7 +163,13 @@ five on the same machine (Node 24.18), measured with `spawnSync`:
 | `import('src/mapper.js')` (includes the above) | 326 |
 | Mapper plus the `@tsrx/react` compiler         | 380 |
 
-About a third of the floor is loading TypeScript's JavaScript API, which the
-mapper only uses to read `tsconfig.json` and resolve the compiler. Replacing that
-with a dedicated tsconfig reader (tracked in tsrx-org/tsrx#136) would also remove
-the mapper's `typescript` dependency.
+About a third of the floor was loading TypeScript's JavaScript API, which the
+mapper only used to read `tsconfig.json` and resolve the compiler. With the
+plugin's own tsconfig reader and package walk (no TypeScript loaded at all), the
+same measurements are:
+
+| Step                                   | ms  |
+| -------------------------------------- | --- |
+| Bare `node -e ""`                      | 71  |
+| `import('src/mapper.js')`              | 108 |
+| Mapper plus the `@tsrx/react` compiler | 166 |

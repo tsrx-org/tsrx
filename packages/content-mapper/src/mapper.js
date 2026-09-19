@@ -6,8 +6,9 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import ts from 'typescript';
+import { NODE_CONFIG_HOST } from '@tsrx/typescript-plugin/src/config-host.js';
 import { resolve_consumer_platform_for_file } from '@tsrx/typescript-plugin/src/consumer-compiler.js';
+import { resolve_package_entry } from '@tsrx/typescript-plugin/src/package-resolution.js';
 import {
 	get_compiler_entry_for_file,
 	invalidateCompilerResolutionCaches,
@@ -15,7 +16,6 @@ import {
 	source_uses_platform_flag,
 } from '@tsrx/typescript-plugin/src/language.js';
 import { transform_tsrx } from '@tsrx/typescript-plugin/src/transform.js';
-import { unsupported_typescript_message } from '@tsrx/typescript-plugin/src/typescript-version.js';
 import { build_export_stub } from './export-stub.js';
 import {
 	DIAGNOSTIC_CODE_COMPILE_ERROR,
@@ -66,18 +66,15 @@ const bare_package_specifier_pattern =
  * project (same or new handle) whenever its identity or a watched file
  * changes, so keeping it at the mapper level is what lets a file that still
  * fails to compile keep its export stub across a reopen.
- * @param {{ host?: typeof ts.sys, typescript?: typeof ts }} [context]
+ * The mapper needs no TypeScript of its own: tsconfig files are read and
+ * compilers resolved through `@tsrx/typescript-plugin`'s own reader and
+ * package walk, so the native compiler's `typescript` package (which has no
+ * JavaScript API) can be the only TypeScript in a project.
+ * @param {{ host?: import('@tsrx/typescript-plugin/src/config-host.js').ConfigHost }} [context]
  * @returns {ContentMapper}
  */
 export function create_tsrx_content_mapper(context = {}) {
-	const typescript = context.typescript ?? ts;
-	// tsconfig parsing and compiler resolution go through TypeScript's JavaScript
-	// API, which the native TypeScript package (7.x) does not have.
-	const unsupported_typescript = unsupported_typescript_message(typescript, 'content-mapper');
-	if (unsupported_typescript) {
-		throw new Error(unsupported_typescript);
-	}
-	const host = context.host ?? typescript.sys;
+	const host = context.host ?? NODE_CONFIG_HOST;
 	/** @type {Map<string, ProjectState>} */
 	const projects = new Map();
 	/** @type {Map<string, AST.Program>} */
@@ -164,11 +161,10 @@ export function create_tsrx_content_mapper(context = {}) {
 			platform =
 				state.options.platform ??
 				resolve_consumer_platform_for_file(file_name, {
-					ts: typescript,
 					configFileName: state.configFileName,
 					configHost: host,
 					dependencies: state.dependencies,
-					requirePlatformResolution: source_uses_platform_flag(content, typescript),
+					requirePlatformResolution: source_uses_platform_flag(content),
 				});
 		} catch (error) {
 			return failure(state, file_name, content, {
@@ -270,7 +266,6 @@ export function create_tsrx_content_mapper(context = {}) {
 			entry = resolve_declared_compiler(state, file_name, state.options.compiler);
 		} else {
 			entry = get_compiler_entry_for_file(file_name, {
-				ts: typescript,
 				configFileName: state.configFileName,
 				configHost: host,
 				dependencies: state.dependencies,
@@ -302,19 +297,9 @@ export function create_tsrx_content_mapper(context = {}) {
 		try {
 			return createRequire(anchor).resolve(specifier);
 		} catch {
-			const resolved = typescript.resolveModuleName(
-				specifier,
-				anchor,
-				{
-					module: typescript.ModuleKind.Node16,
-					moduleResolution: typescript.ModuleResolutionKind.Node16,
-					noDtsResolution: true,
-				},
-				host,
-				undefined,
-				undefined,
-				typescript.ModuleKind.CommonJS,
-			).resolvedModule?.resolvedFileName;
+			// Node keeps a negative lookup after a package is installed; the
+			// package walk reads manifests fresh.
+			const resolved = resolve_package_entry(specifier, path.dirname(anchor), { host });
 			if (!resolved) {
 				throw new Error(
 					`Unable to resolve the TSRX compiler ${JSON.stringify(specifier)} declared in the content mapper options from ${anchor}.`,

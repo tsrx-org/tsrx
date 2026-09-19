@@ -21,12 +21,13 @@ https://github.com/tsrx-org/tsrx/issues/136.
 - **`--runExternalCode`.** TypeScript only spawns the mapper when the user opts
   in; the mapper never enables it. Without the flag, a `contentMappers` entry is
   an error (TS100024).
-- **A JavaScript TypeScript for tsconfig parsing.** The mapper reads
-  `tsconfig.json` and resolves compilers through TypeScript's JavaScript API,
-  which the native `typescript@7` package does not have, so it declares
-  `typescript@^5.9.3 || ^6.0.0` as its own dependency. A project on `typescript@7`
-  needs nothing extra; the mapper refuses to start with an explanation if it still
-  resolves a TypeScript 7 package.
+- **No other TypeScript.** The mapper reads `tsconfig.json` (comments, trailing
+  commas and the `extends` chain, including packages) and resolves compiler
+  packages with `@tsrx/typescript-plugin`'s own reader and package walk
+  (`src/tsconfig-resolution.js`, `src/package-resolution.js`), never through
+  TypeScript's JavaScript API. A project whose only `typescript` is the native
+  compiler's launcher package needs nothing else; `tests/mapper.test.js` runs the
+  mapper with the `typescript` package forbidden to prove it.
 
 ## Usage
 

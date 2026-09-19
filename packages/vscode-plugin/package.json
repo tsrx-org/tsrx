@@ -47,6 +47,7 @@
   "dependencies": {
     "@tsrx/content-mapper": "workspace:*",
     "@tsrx/language-server": "workspace:*",
+    "jsonc-parser": "catalog:default",
     "@tsrx/typescript-plugin": "workspace:*",
     "@volar/language-core": "catalog:default",
     "@volar/language-server": "catalog:default",

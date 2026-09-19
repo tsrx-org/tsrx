@@ -37,9 +37,16 @@ and is not made here.
 - **TypeScript 6** on the classic path: the `typescript` peer range of
   `@tsrx/typescript-plugin` and `@tsrx/language-server` is `^5.9.3 || ^6.0.0` (the
   whole suite passes on 6.0.3). The `typescript@7` package has no JavaScript API,
-  so `tsrx-tsc`, the language server and the mapper stop with an explanation when
-  they resolve one; the mapper carries its own `typescript` dependency for
-  tsconfig parsing.
+  so `tsrx-tsc` and the classic language server stop with an explanation when they
+  resolve one.
+- **The native path needs only TypeScript 7.** `@tsrx/content-mapper` and the
+  language server's native backend read `tsconfig.json` and resolve compiler
+  packages themselves (`@tsrx/typescript-plugin`'s `tsconfig-resolution.js` and
+  `package-resolution.js`, with `resolve-pkg-maps` for `exports`), and the native
+  backend runs on Volar's plain project host instead of its TypeScript one, so a
+  project whose only `typescript` is the native compiler's launcher package needs
+  nothing else. The mapper starts in about a third of the time it did with the
+  TypeScript API loaded (`BENCHMARKS.md`).
 
 ## Requirements and status on 2026-09-19
 
@@ -60,11 +67,11 @@ and is not made here.
 - Packaging verified on macOS x64: the `pnpm pack` tarball of
   `@tsrx/content-mapper` installed with npm into a fresh project outside the
   checkout beside `typescript@7.1.0-dev.20260918.1` and the published
-  `@tsrx/react` (npm nests `typescript@6.0.3` under the mapper) reports the
-  consumer fixture's diagnostic through `npx tsc --runExternalCode`; the VSIX
-  built by `pnpm run build-and-package` (851 files, 7.2 MB, bundling TypeScript
-  5.9.3) does the same through its `dist/content-mapper.js` from an unpacked copy
-  outside the checkout. Linux and Windows are not exercised.
+  `@tsrx/react` reports the consumer fixture's diagnostic through
+  `npx tsc --runExternalCode`; the VSIX built by `pnpm run build-and-package` (851
+  files, 7.2 MB, bundling TypeScript 5.9.3) does the same through its
+  `dist/content-mapper.js` from an unpacked copy outside the checkout. Linux and
+  Windows are not exercised.
 - The gaps and their upstream issues are tracked in
   [tsrx-org/tsrx#136](https://github.com/tsrx-org/tsrx/issues/136), which the VS
   Code messages, the CLI and the docs point users to.
@@ -112,8 +119,7 @@ flip.
    Use the exact nightly recorded in this repository's root `package.json`
    (`@typescript/typescript-<os>-<arch>` under `optionalDependencies`) if you need
    the tested build; the `README.md` "Native TypeScript binary" section explains
-   the launcher and platform packages. The mapper brings the JavaScript TypeScript
-   it needs for tsconfig parsing as its own dependency.
+   the launcher and platform packages. The mapper needs no other TypeScript.
 
 2. Declare the mapper in every `tsconfig.json` that contains `.tsrx` files.
    TypeScript 5 ignores the key, so the same file keeps working with `tsrx-tsc`:
@@ -228,7 +234,3 @@ classification and evidence for each.
   7 (microsoft/TypeScript#63921).
 - Only TypeScript 7.1 nightlies from `7.1.0-dev.20260822.1` on speak the protocol;
   `typescript@7.0.x` does not.
-- Editors other than VS Code need `typescript@^5.9.3 || ^6.0.0` installed beside
-  TypeScript 7 for the TSRX language server (it reads tsconfig through the
-  TypeScript API and runs on Volar's TypeScript project host); removing that
-  requirement is tracked in tsrx-org/tsrx#136.

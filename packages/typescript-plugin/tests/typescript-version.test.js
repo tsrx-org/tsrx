@@ -46,18 +46,15 @@ describe('TypeScript version support', () => {
 		expect(tsc).toContain(TYPESCRIPT_7_TRACKING_ISSUE_URL);
 
 		const server = unsupported_typescript_message('7.1.0-dev.20260918.1', 'language-server');
-		expect(server).toContain('The TSRX language server resolved typescript@7.1.0-dev.20260918.1');
-		expect(server).toContain('on both backends');
+		expect(server).toContain(
+			"The TSRX language server's classic backend resolved typescript@7.1.0-dev.20260918.1",
+		);
+		expect(server).toContain('--typescript-backend=native');
 		expect(server).toContain(TYPESCRIPT_7_TRACKING_ISSUE_URL);
-
-		const mapper = unsupported_typescript_message(stub, 'content-mapper');
-		expect(mapper).toContain('@tsrx/content-mapper resolved typescript@7.0.2');
-		expect(mapper).toContain('its own dependency');
-		expect(mapper).toContain(TYPESCRIPT_7_TRACKING_ISSUE_URL);
 	});
 
 	it('stays silent without a version to judge', () => {
 		expect(unsupported_typescript_message(undefined, 'tsrx-tsc')).toBeUndefined();
-		expect(unsupported_typescript_message({}, 'content-mapper')).toBeUndefined();
+		expect(unsupported_typescript_message({}, 'language-server')).toBeUndefined();
 	});
 });

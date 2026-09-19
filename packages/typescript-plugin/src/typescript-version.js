@@ -5,10 +5,11 @@
  * TypeScript 7 (`typescript@7`) is the native compiler: its npm package only
  * launches the platform binary and exposes no JavaScript API. Everything that
  * hosts TypeScript through Volar (`tsrx-tsc`, the tsserver plugin, the classic
- * TSRX language server) and everything that reads `tsconfig.json` through the
- * API (`@tsrx/content-mapper`, the TSRX language server on the native backend)
- * therefore needs TypeScript 5.9 or 6 installed. TypeScript 7 itself
- * type-checks `.tsrx` files through `@tsrx/content-mapper`, which needs a 7.1
+ * TSRX language server) therefore needs TypeScript 5.9 or 6 installed. The
+ * native path needs no other TypeScript: `@tsrx/content-mapper` and the TSRX
+ * language server's native backend read `tsconfig.json` and resolve compilers
+ * themselves (`tsconfig-resolution.js`, `package-resolution.js`), and
+ * TypeScript 7 type-checks `.tsrx` files through the mapper, which needs a 7.1
  * nightly: the stable 7.0 releases have no content-mapper protocol.
  */
 
@@ -47,7 +48,7 @@ export function is_native_typescript_package(version) {
 	return typescript_major(version) >= 7;
 }
 
-/** @typedef {'tsrx-tsc' | 'language-server' | 'content-mapper'} TypeScriptConsumer */
+/** @typedef {'tsrx-tsc' | 'language-server'} TypeScriptConsumer */
 
 /**
  * The message to show when `typescript` resolved to a package the given tool
@@ -66,8 +67,6 @@ export function unsupported_typescript_message(typescript, tool) {
 		case 'tsrx-tsc':
 			return `tsrx-tsc ${resolved} tsrx-tsc runs TypeScript ${SUPPORTED_TYPESCRIPT_RANGE} through Volar: install one of those versions, or type-check with TypeScript 7 itself (a 7.1 nightly, ${MINIMUM_NATIVE_TYPESCRIPT_VERSION} or newer) through "tsc --runExternalCode" and @tsrx/content-mapper. ${TYPESCRIPT_7_SUPPORT_NOTE}`;
 		case 'language-server':
-			return `The TSRX language server ${resolved} It needs TypeScript's JavaScript API (typescript ${SUPPORTED_TYPESCRIPT_RANGE}) on both backends: to host TypeScript on "classic", and to read tsconfig.json on "native". Install one of those versions beside TypeScript 7. ${TYPESCRIPT_7_SUPPORT_NOTE}`;
-		case 'content-mapper':
-			return `@tsrx/content-mapper ${resolved} The mapper reads tsconfig.json through TypeScript's JavaScript API and declares typescript ${SUPPORTED_TYPESCRIPT_RANGE} as its own dependency; reinstall dependencies so that copy is present, or install one of those versions beside TypeScript 7. ${TYPESCRIPT_7_SUPPORT_NOTE}`;
+			return `The TSRX language server's classic backend ${resolved} The classic backend hosts TypeScript ${SUPPORTED_TYPESCRIPT_RANGE} through Volar: install one of those versions, or run the server with --typescript-backend=native beside TypeScript 7's own language server, which needs no other TypeScript. ${TYPESCRIPT_7_SUPPORT_NOTE}`;
 	}
 }

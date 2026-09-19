@@ -16,10 +16,14 @@ import {
 	SpanMapKind,
 } from '../src/protocol.js';
 import { blank_script_bodies } from '@tsrx/typescript-plugin/src/transform.js';
+import { fileURLToPath } from 'node:url';
 import {
 	consumer_fixture_dir,
 	consumer_fixture_files,
 	create_native_workspace,
+	mapper_server_path,
+	parse_tsc_output,
+	run_native_tsc,
 } from './fixture-utils.js';
 
 /** @type {Array<() => void>} */
@@ -300,11 +304,58 @@ describe('blank_script_bodies', () => {
 	});
 });
 
-describe('TypeScript package guard', () => {
-	it('refuses the native TypeScript package, whose npm package has no JavaScript API', () => {
-		const native_package = /** @type {any} */ ({ version: '7.0.2', versionMajorMinor: '7.0' });
-		expect(() => create_tsrx_content_mapper({ typescript: native_package })).toThrow(
-			/@tsrx\/content-mapper resolved typescript@7\.0\.2,[\s\S]*its own dependency/,
-		);
-	});
+describe('without TypeScript', () => {
+	it('checks a project through native tsc while the mapper process cannot load the typescript package', () => {
+		// A project on `typescript@7` has no JavaScript TypeScript at all; the
+		// preload makes any attempt to load one fail inside the mapper process.
+		const created = create_native_workspace(consumer_fixture_files(), {
+			exec: [
+				process.execPath,
+				'--require',
+				fileURLToPath(new URL('./forbid-typescript.cjs', import.meta.url)),
+				mapper_server_path,
+			],
+		});
+		cleanups.push(created.cleanup);
+		const result = run_native_tsc(created.dir, [
+			'--noEmit',
+			'-p',
+			'tsconfig.native.json',
+			'--pretty',
+			'false',
+		]);
+		expect(parse_tsc_output(result.output).map((d) => [d.file, d.line, d.code])).toEqual([
+			['main.ts', 7, 'TS2322'],
+		]);
+		expect(result.status).toBe(2);
+	}, 30_000);
+
+	it('does the same through the built dist/server.js (what the package ships)', () => {
+		// Built by the package's `prepare` script on install and by `pnpm build`;
+		// bundling must not leave any TypeScript or unresolvable requires behind.
+		const dist_server = fileURLToPath(new URL('../dist/server.js', import.meta.url));
+		if (!fs.existsSync(dist_server)) {
+			throw new Error(`${dist_server} is missing; run "pnpm --filter @tsrx/content-mapper build".`);
+		}
+		const created = create_native_workspace(consumer_fixture_files(), {
+			exec: [
+				process.execPath,
+				'--require',
+				fileURLToPath(new URL('./forbid-typescript.cjs', import.meta.url)),
+				dist_server,
+			],
+		});
+		cleanups.push(created.cleanup);
+		const result = run_native_tsc(created.dir, [
+			'--noEmit',
+			'-p',
+			'tsconfig.native.json',
+			'--pretty',
+			'false',
+		]);
+		expect(parse_tsc_output(result.output).map((d) => [d.file, d.line, d.code])).toEqual([
+			['main.ts', 7, 'TS2322'],
+		]);
+		expect(result.status).toBe(2);
+	}, 30_000);
 });

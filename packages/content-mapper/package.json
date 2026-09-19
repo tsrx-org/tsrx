@@ -33,12 +33,12 @@
       "dynamicConfig": true
     }
   },
+  "dependencies": {
+    "jsonc-parser": "catalog:default"
+  },
   "scripts": {
     "build": "tsdown",
     "prepare": "tsdown"
-  },
-  "dependencies": {
-    "typescript": "catalog:peer"
   },
   "devDependencies": {
     "@solidjs/web": "catalog:default",
@@ -57,6 +57,7 @@
     "ripple": "catalog:default",
     "solid-js": "catalog:default",
     "tsdown": "catalog:default",
+    "typescript": "catalog:default",
     "vue": "3.6.0-beta.12"
   },
   "publishConfig": {

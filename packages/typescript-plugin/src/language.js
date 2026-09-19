@@ -17,7 +17,6 @@
 
 /** @typedef {InstanceType<typeof import('./language.js')["TSRXVirtualCode"]>} TSRXVirtualCodeInstance */
 
-import ts from 'typescript';
 import { forEachEmbeddedCode } from '@volar/language-core';
 import fs from 'fs';
 import path from 'path';
@@ -28,6 +27,7 @@ import {
 	resolve_consumer_compiler_for_file,
 	resolve_consumer_platform_for_file,
 } from './consumer-compiler.js';
+import { NODE_CONFIG_HOST } from './config-host.js';
 import { extract_css_regions, extract_script_regions, transform_tsrx } from './transform.js';
 import { createLogging, DEBUG } from './utils.js';
 
@@ -109,37 +109,108 @@ export function is_tsrx_file(file_name) {
 }
 
 /**
- * Detect exact platform property paths without matching comments or string
- * literals. TypeScript's scanner remains usable for partially authored TSRX
- * because it tokenizes independently of the parser's grammar.
- *
+ * Tokenize enough of a source text to find member chains: comments and
+ * string literals are skipped, template literals contribute only their
+ * `${...}` expressions, and every identifier, `.` and `?.` is a token.
+ * It tokenizes independently of any grammar, so partially authored TSRX and
+ * template syntax (`@{`, `@if`) are fine.
  * @param {string} source
- * @param {typeof import('typescript')} [typescript]
- * @returns {boolean}
+ * @returns {Array<{ kind: 'word' | 'dot' | 'question-dot' | 'other', text: string }>}
  */
-export function source_uses_platform_flag(source, typescript = ts) {
-	const scanner = typescript.createScanner(
-		typescript.ScriptTarget.Latest,
-		true,
-		typescript.LanguageVariant.JSX,
-		source,
-	);
-	/** @type {Array<{ kind: number, text: string }>} */
+function tokenize_member_chains(source) {
+	/** @type {Array<{ kind: 'word' | 'dot' | 'question-dot' | 'other', text: string }>} */
 	const tokens = [];
-	for (
-		let kind = scanner.scan();
-		kind !== typescript.SyntaxKind.EndOfFileToken;
-		kind = scanner.scan()
-	) {
-		tokens.push({ kind, text: scanner.getTokenText() });
+	const length = source.length;
+	let index = 0;
+	/** Brace depth at which each open template substitution started, innermost last. */
+	/** @type {number[]} */
+	const template_braces = [];
+	let brace_depth = 0;
+
+	/** Skip template text from `index` to the closing backtick or the next substitution. */
+	function skip_template_text() {
+		while (index < length && source[index] !== '`') {
+			if (source[index] === '\\') {
+				index += 2;
+				continue;
+			}
+			if (source[index] === '$' && source[index + 1] === '{') {
+				template_braces.push(brace_depth);
+				index += 2;
+				return;
+			}
+			index += 1;
+		}
+		if (index < length) index += 1;
 	}
 
+	while (index < length) {
+		const char = source[index];
+		const next = source[index + 1];
+		if (/\s/.test(char)) {
+			index += 1;
+		} else if (char === '/' && next === '/') {
+			while (index < length && source[index] !== '\n') index += 1;
+		} else if (char === '/' && next === '*') {
+			const end = source.indexOf('*/', index + 2);
+			index = end < 0 ? length : end + 2;
+		} else if (char === '"' || char === "'") {
+			index += 1;
+			while (index < length && source[index] !== char && source[index] !== '\n') {
+				if (source[index] === '\\') index += 1;
+				index += 1;
+			}
+			index += 1;
+		} else if (char === '`') {
+			index += 1;
+			skip_template_text();
+		} else if (
+			char === '}' &&
+			template_braces.length > 0 &&
+			template_braces[template_braces.length - 1] === brace_depth
+		) {
+			// The substitution closed: back into the template literal's text.
+			template_braces.pop();
+			index += 1;
+			skip_template_text();
+		} else if (/[A-Za-z_$]/.test(char)) {
+			let end = index + 1;
+			while (end < length && /[\w$]/.test(source[end])) end += 1;
+			tokens.push({ kind: 'word', text: source.slice(index, end) });
+			index = end;
+		} else if (char === '?' && next === '.') {
+			tokens.push({ kind: 'question-dot', text: '?.' });
+			index += 2;
+		} else if (char === '.') {
+			tokens.push({ kind: 'dot', text: '.' });
+			index += 1;
+		} else {
+			if (char === '{') brace_depth += 1;
+			else if (char === '}') brace_depth -= 1;
+			tokens.push({ kind: 'other', text: char });
+			index += 1;
+		}
+	}
+	return tokens;
+}
+
+/**
+ * Detect exact platform property paths (`import.meta.env.platform.web` and
+ * the `ios` and `android` twins) without matching comments or string
+ * literals, and without TypeScript's scanner so the native path needs no
+ * TypeScript.
+ *
+ * @param {string} source
+ * @param {unknown} [_typescript] Accepted for older callers; unused.
+ * @returns {boolean}
+ */
+export function source_uses_platform_flag(source, _typescript) {
+	const tokens = tokenize_member_chains(source);
 	const prefix = ['import', '.', 'meta', '.', 'env', '.', 'platform', '.'];
 	for (let index = 0; index + prefix.length < tokens.length; index += 1) {
 		if (
 			index > 0 &&
-			(tokens[index - 1].kind === typescript.SyntaxKind.DotToken ||
-				tokens[index - 1].kind === typescript.SyntaxKind.QuestionDotToken)
+			(tokens[index - 1].kind === 'dot' || tokens[index - 1].kind === 'question-dot')
 		) {
 			continue;
 		}
@@ -147,7 +218,6 @@ export function source_uses_platform_flag(source, typescript = ts) {
 		const name = tokens[index + prefix.length].text;
 		if (name === 'web' || name === 'ios' || name === 'android') return true;
 	}
-
 	return false;
 }
 
@@ -157,12 +227,13 @@ export function source_uses_platform_flag(source, typescript = ts) {
  */
 export function getTsrxLanguagePlugin(options = {}) {
 	log('Creating TSRX language plugin...');
-	const typescript = options.ts ?? ts;
+	// `ts` is only needed by the TypeScript-facing parts of the plugin (the
+	// classic path); the native backend creates the plugin without one.
+	const typescript = options.ts;
 	/** @type {CompilerResolutionOptions} */
 	const compiler_resolution_options = {
 		...options,
-		ts: typescript,
-		configHost: options.configHost ?? typescript.sys,
+		configHost: options.configHost ?? NODE_CONFIG_HOST,
 	};
 
 	return {
@@ -260,7 +331,7 @@ export function getTsrxLanguagePlugin(options = {}) {
 										fileName: `${fileName}.${code.id}.ts`,
 										code,
 										extension: '.ts',
-										scriptKind: ts.ScriptKind.TS,
+										scriptKind: typescript?.ScriptKind.TS ?? 3,
 									});
 								}
 							}
@@ -806,6 +877,10 @@ export const resolveConfig = (config) => {
 	const baseOptions = config.options ?? /** @type {CompilerOptions} */ ({});
 	/** @type {CompilerOptions} */
 	const options = { ...baseOptions };
+
+	// Only the classic path (a TypeScript language service host) asks for
+	// resolved compiler options, so TypeScript is loaded here and not at import.
+	const ts = /** @type {typeof import('typescript')} */ (require('typescript'));
 
 	// Default target: align with modern bundlers while staying configurable.
 	if (options.target === undefined) {

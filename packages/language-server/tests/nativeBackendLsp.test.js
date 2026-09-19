@@ -14,6 +14,13 @@ import {
 	create_native_workspace,
 } from '../../content-mapper/tests/fixture-utils.js';
 import { NativeLspClient, position_of } from '../../content-mapper/tests/lsp-client.js';
+import { parse_jsonc } from '@tsrx/typescript-plugin/src/jsonc.js';
+
+// On the native backend the server must run in a project whose only
+// `typescript` is TypeScript 7's launcher package, so loading one is forbidden.
+const forbid_typescript = fileURLToPath(
+	new URL('../../content-mapper/tests/forbid-typescript.cjs', import.meta.url),
+);
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
@@ -24,7 +31,9 @@ const server_path = fileURLToPath(new URL('../dist/language-server.js', import.m
 /** @param {'native' | 'classic'} backend */
 function workspace_with_server(backend) {
 	const files = consumer_fixture_files();
-	const tsconfig = JSON.parse(files['tsconfig.json']);
+	const tsconfig = /** @type {Record<string, unknown>} */ (
+		parse_jsonc(files['tsconfig.json']).value
+	);
 	tsconfig.contentMappers = [{ package: '@tsrx/content-mapper', extensions: ['.tsrx'] }];
 	tsconfig.include = ['*.ts', '*.tsrx'];
 	files['tsconfig.json'] = JSON.stringify(tsconfig, null, '\t');
@@ -32,7 +41,12 @@ function workspace_with_server(backend) {
 	const workspace = create_native_workspace(files);
 	const client = new NativeLspClient(workspace.dir, {
 		command: process.execPath,
-		args: [server_path, '--stdio', `--typescript-backend=${backend}`],
+		args: [
+			...(backend === 'native' ? ['--require', forbid_typescript] : []),
+			server_path,
+			'--stdio',
+			`--typescript-backend=${backend}`,
+		],
 	});
 	return { files, workspace, client };
 }

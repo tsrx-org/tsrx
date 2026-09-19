@@ -15,6 +15,8 @@ const ROOT_EXTERNAL_PACKAGES = [
 	'vscode-uri',
 	// this definitely has to be external as we monkey patch it at runtime
 	'volar-service-typescript',
+	// its UMD entry requires ./impl/* files at run time — can't be bundled
+	'jsonc-parser',
 ];
 const REGEX_EXTERNAL_PACKAGES = [
 	// also definitely need it for monkey patching
