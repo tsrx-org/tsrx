@@ -42,10 +42,10 @@ function wait_for(child, log, predicate, timeout = 30_000) {
 
 describe('native tsc --watch', () => {
 	// TypeScript 7.1.0-dev.20260918.1 never recompiles after a file edit on
-	// macOS in this environment, with or without a content mapper and with
-	// every `--watchFile` strategy, so only the initial watch-mode compilation
-	// is asserted here. Recompilation on edit is tracked as an upstream item
-	// in the README; extend this test once a nightly reacts to edits.
+	// macOS (microsoft/TypeScript#64351, a nightly regression since
+	// 7.1.0-dev.20260811.1 that reproduces without a content mapper and with
+	// every `--watchFile` strategy), so only the initial watch-mode compilation
+	// is asserted here. Extend this test once a nightly reacts to edits.
 	it('runs the mapper for the initial compilation in watch mode', async () => {
 		const files = consumer_fixture_files();
 		files['Panel.tsrx'] = files['Panel.tsrx'].replace('{label}', '{{{label}');

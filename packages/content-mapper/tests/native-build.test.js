@@ -335,8 +335,9 @@ describe('native tsc --build with project references', () => {
 	it('pins the upstream limitation that composite projects reject supplemental <script> outputs', () => {
 		// TypeScript 7.1.0-dev.20260918.1 reports TS6307 for the compiler-named
 		// supplemental file (`Panel.tsrx.0.mts`) because a composite project
-		// requires every input to be listed. When this test starts failing, the
-		// limitation is fixed upstream and this guard (plus the README note) can go.
+		// requires every input to be listed (microsoft/TypeScript#64350). When this
+		// test starts failing, the limitation is fixed upstream and this guard
+		// (plus the README note) can go.
 		const files = consumer_fixture_files();
 		const dir = references_workspace(
 			{ 'lib/Panel.tsrx': files['Panel.tsrx'], 'lib/Button.tsrx': files['Button.tsrx'] },

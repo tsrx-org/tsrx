@@ -147,13 +147,15 @@ extension's README for the per-editor setup.
 
 ### Known limitations (TypeScript 7.1.0-dev.20260918.1)
 
-- `--watch` compiles once and never recompiles after an edit on macOS in this
-  environment, with or without a content mapper and with every `--watchFile`
-  strategy. The watch test only asserts the initial pass.
+- `--watch` compiles once and never recompiles after an edit on macOS
+  (microsoft/TypeScript#64351, a nightly regression since `7.1.0-dev.20260811.1`
+  that reproduces without a content mapper and with every `--watchFile` strategy).
+  The watch test only asserts the initial pass.
 - Composite projects (`--build`) reject the compiler-named supplemental `<script>`
-  file with TS6307 because it cannot be listed in `include`. Keep `<script>`
-  bodies out of composite libraries until this is fixed upstream;
-  `tests/native-build.test.js` pins the current behaviour.
+  file with TS6307 because it cannot be listed in `include` or `files`
+  (microsoft/TypeScript#64350). Keep `<script>` bodies out of composite libraries
+  until this is fixed upstream; `tests/native-build.test.js` pins the current
+  behaviour.
 - `--runExternalCode` is required and is never enabled by the mapper.
 - Editors: no auto-import when a new import statement is needed
   (microsoft/TypeScript#64119), no rename on `Atom` spans

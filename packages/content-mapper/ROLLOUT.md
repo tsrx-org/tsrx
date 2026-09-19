@@ -42,11 +42,11 @@ extra Node process (the mapper) per `tsc` invocation or language-server session.
 
 ## Default backend decision
 
-| Surface                 | Default              | Why                                                                                                                                                                                                                                                                                                                                                               |
-| ----------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Command line            | `tsrx-tsc` (classic) | Native needs TypeScript 7 (a nightly at the time of writing), `--runExternalCode` (a user decision the mapper never makes), and has upstream gaps: `--watch` does not recompile on macOS, composite `--build` projects reject `<script>` bodies (TS6307), declaration files are named `Component.d.tsrx.ts` until microsoft/TypeScript#64120 lands.               |
-| `@tsrx/language-server` | `classic`            | Native mode without a TypeScript 7 server beside it gives `.tsrx` files no type information, and every non-VS Code editor has to be configured for both servers by hand. The flag makes the choice explicit and per-editor.                                                                                                                                       |
-| VS Code extension       | `auto`               | `auto` is native exactly when the TypeScript 7 extension is installed and `js/ts.experimental.useTsgo` is on. In that state the built-in TypeScript extension that the classic path patches is already off, so classic would not work; following the user's TypeScript 7 choice is the only working default. Users who never enable TypeScript 7 stay on classic. |
+| Surface                 | Default              | Why                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Command line            | `tsrx-tsc` (classic) | Native needs TypeScript 7 (a nightly at the time of writing), `--runExternalCode` (a user decision the mapper never makes), and has upstream gaps: `--watch` does not recompile on macOS (microsoft/TypeScript#64351), composite `--build` projects reject `<script>` bodies (TS6307, microsoft/TypeScript#64350), declaration files are named `Component.d.tsrx.ts` until microsoft/TypeScript#64120 lands. |
+| `@tsrx/language-server` | `classic`            | Native mode without a TypeScript 7 server beside it gives `.tsrx` files no type information, and every non-VS Code editor has to be configured for both servers by hand. The flag makes the choice explicit and per-editor.                                                                                                                                                                                  |
+| VS Code extension       | `auto`               | `auto` is native exactly when the TypeScript 7 extension is installed and `js/ts.experimental.useTsgo` is on. In that state the built-in TypeScript extension that the classic path patches is already off, so classic would not work; following the user's TypeScript 7 choice is the only working default. Users who never enable TypeScript 7 stay on classic.                                            |
 
 The default flips to native (CLI documentation and the language server) when all
 of the following hold; each is tracked in `COMPATIBILITY.md`:
@@ -55,8 +55,8 @@ of the following hold; each is tracked in `COMPATIBILITY.md`:
 2. microsoft/TypeScript#64119 (auto-import needing a new import statement) and
    microsoft/TypeScript#63879 (rename on `Atom` spans) are fixed, or TSRX accepts
    them as permanent.
-3. `--watch` recompiles and composite `--build` projects accept supplemental
-   `<script>` outputs.
+3. `--watch` recompiles (microsoft/TypeScript#64351) and composite `--build`
+   projects accept supplemental `<script>` outputs (microsoft/TypeScript#64350).
 4. Push diagnostics (microsoft/TypeScript#63921) or every supported editor
    integration is confirmed to pull diagnostics.
 
@@ -109,7 +109,7 @@ flip.
    that references a `.tsrx` library must declare the mapper as well; a consumer
    of published declarations without the mapper needs
    `allowArbitraryExtensions: true`. Keep `<script>` bodies out of composite
-   libraries until TS6307 is fixed upstream.
+   libraries until TS6307 is fixed upstream (microsoft/TypeScript#64350).
 
 5. Keep `tsrx-tsc` in `package.json` scripts until the default flips; both
    commands can run in the same CI job on the same tsconfig.
@@ -172,9 +172,11 @@ Copied from the README so this note stands alone; `COMPATIBILITY.md` has the
 classification and evidence for each.
 
 - `--runExternalCode` is required and never enabled by the mapper.
-- `--watch` compiles once and never recompiles on macOS in the tested environment
-  (TypeScript 7 nightly, with or without a mapper).
-- Composite (`--build`) projects reject `<script>` bodies with TS6307.
+- `--watch` compiles once and never recompiles on macOS
+  (microsoft/TypeScript#64351, a nightly regression since `7.1.0-dev.20260811.1`,
+  with or without a mapper).
+- Composite (`--build`) projects reject `<script>` bodies with TS6307
+  (microsoft/TypeScript#64350).
 - No auto-import when a new import statement is needed
   (microsoft/TypeScript#64119); no rename on `Atom` spans
   (microsoft/TypeScript#63879).
