@@ -44,7 +44,9 @@ export function resolve_backend(typescript7Enabled) {
  * The settings VS Code's built-in TypeScript extension reads for a workspace
  * TypeScript: the unified key and its deprecated spelling. Its "Select
  * TypeScript Version" picker writes the unified key when the user picks the
- * workspace version.
+ * workspace version. That path is only loaded after the user opts in; the
+ * choice itself is workspace state (`USE_WORKSPACE_TSDK_STATE_KEY`), not the
+ * setting.
  */
 export const TSDK_SETTINGS = [
 	{ section: 'js/ts', key: 'tsdk.path' },
@@ -52,29 +54,48 @@ export const TSDK_SETTINGS = [
 ];
 
 /**
+ * Workspace-state key VS Code's TypeScript extension (and Volar-style hosts)
+ * use for the "TypeScript: Select TypeScript Version" opt-in. A configured
+ * `js/ts.tsdk.path` / `typescript.tsdk` is only the location to load when this
+ * is true; switching back to VS Code's copy leaves the path in place.
+ */
+export const USE_WORKSPACE_TSDK_STATE_KEY = 'typescript.useWorkspaceTsdk';
+
+/**
  * The TypeScript `lib` directories to try for the classic backend, in order:
- * the configured tsdk paths (an absolute path as is, a relative one against
- * every workspace folder), then the TypeScript VS Code itself ships. The first
+ * the preferred tsdk paths (an absolute path as is, a relative one against
+ * every workspace folder), then the TypeScript VS Code itself ships, then
+ * optional fallback paths (a workspace tsdk that is configured but not opted
+ * into, used only when VS Code's copy has no `typescript.js`). The first
  * one that contains `typescript.js` wins, so the classic backend hosts the
  * same TypeScript VS Code runs for the workspace instead of a bundled copy.
- * @param {{ settingPaths: readonly string[], workspaceFolders: readonly string[], vscodeTypescriptLib: string | undefined }} input
+ * @param {{ settingPaths: readonly string[], workspaceFolders: readonly string[], vscodeTypescriptLib: string | undefined, fallbackSettingPaths?: readonly string[] }} input
  * @returns {string[]}
  */
-export function tsdk_candidates({ settingPaths, workspaceFolders, vscodeTypescriptLib }) {
+export function tsdk_candidates({
+	settingPaths,
+	workspaceFolders,
+	vscodeTypescriptLib,
+	fallbackSettingPaths = [],
+}) {
 	/** @type {string[]} */
 	const candidates = [];
-	for (const setting of settingPaths) {
-		const normalized = setting.replace(/\\/g, '/');
-		if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
-			candidates.push(normalized);
-		} else {
-			for (const folder of workspaceFolders) {
-				candidates.push(`${folder.replace(/\\/g, '/').replace(/\/$/, '')}/${normalized}`);
+	const add_setting_paths = (/** @type {readonly string[]} */ settings) => {
+		for (const setting of settings) {
+			const normalized = setting.replace(/\\/g, '/');
+			if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
+				candidates.push(normalized);
+			} else {
+				for (const folder of workspaceFolders) {
+					candidates.push(`${folder.replace(/\\/g, '/').replace(/\/$/, '')}/${normalized}`);
+				}
 			}
 		}
-	}
+	};
+	add_setting_paths(settingPaths);
 	if (vscodeTypescriptLib) {
 		candidates.push(vscodeTypescriptLib.replace(/\\/g, '/'));
 	}
+	add_setting_paths(fallbackSettingPaths);
 	return [...new Set(candidates)];
 }

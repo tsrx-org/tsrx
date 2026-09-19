@@ -4,6 +4,7 @@ import {
 	TYPESCRIPT_7_SETTING,
 	TYPESCRIPT_7_SETTING_KEY,
 	TYPESCRIPT_7_SETTING_SECTIONS,
+	USE_WORKSPACE_TSDK_STATE_KEY,
 	resolve_backend,
 	tsdk_candidates,
 } from '../src/backend.js';
@@ -31,6 +32,7 @@ describe('TypeScript installation for the classic backend', () => {
 			{ section: 'js/ts', key: 'tsdk.path' },
 			{ section: 'typescript', key: 'tsdk' },
 		]);
+		expect(USE_WORKSPACE_TSDK_STATE_KEY).toBe('typescript.useWorkspaceTsdk');
 		expect(
 			tsdk_candidates({
 				settingPaths: ['node_modules/typescript/lib', '/opt/ts/lib'],
@@ -57,5 +59,24 @@ describe('TypeScript installation for the classic backend', () => {
 				vscodeTypescriptLib: undefined,
 			}),
 		).toEqual(['C:/ts/lib', 'C:/ws/node_modules/typescript/lib']);
+	});
+
+	it('does not prefer a workspace tsdk until the picker opts in', () => {
+		expect(
+			tsdk_candidates({
+				settingPaths: [],
+				fallbackSettingPaths: ['node_modules/typescript/lib'],
+				workspaceFolders: ['/ws'],
+				vscodeTypescriptLib: '/app/extensions/node_modules/typescript/lib',
+			}),
+		).toEqual(['/app/extensions/node_modules/typescript/lib', '/ws/node_modules/typescript/lib']);
+		expect(
+			tsdk_candidates({
+				settingPaths: ['node_modules/typescript/lib'],
+				fallbackSettingPaths: [],
+				workspaceFolders: ['/ws'],
+				vscodeTypescriptLib: '/app/extensions/node_modules/typescript/lib',
+			}),
+		).toEqual(['/ws/node_modules/typescript/lib', '/app/extensions/node_modules/typescript/lib']);
 	});
 });

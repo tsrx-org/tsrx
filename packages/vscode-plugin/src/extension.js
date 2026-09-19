@@ -62,6 +62,7 @@ import {
 	TSDK_SETTINGS,
 	TYPESCRIPT_7_SETTING_KEY,
 	TYPESCRIPT_7_SETTING_SECTIONS,
+	USE_WORKSPACE_TSDK_STATE_KEY,
 	resolve_backend,
 	tsdk_candidates,
 } from './backend.js';
@@ -92,6 +93,8 @@ let client;
 /** The backend this extension host session runs; changing it needs an extension restart. */
 /** @type {Backend | undefined} */
 let active_backend;
+/** @type {import('vscode').ExtensionContext | undefined} */
+let extension_context;
 
 /**
  * @param {import('vscode').ExtensionContext} context
@@ -107,6 +110,7 @@ export async function activate(context) {
 		return;
 	}
 
+	extension_context = context;
 	const backend = select_backend();
 	active_backend = backend;
 	console.log(`[TSRX] TypeScript backend: ${backend}`);
@@ -119,6 +123,22 @@ export async function activate(context) {
 			}
 		}),
 	);
+
+	return start_language_client();
+}
+
+/**
+ * Create and start the language client for the current backend. On the classic
+ * backend this waits until a TypeScript with a JavaScript API is resolved, so a
+ * later tsdk setting or picker change can recover without reloading the window.
+ */
+async function start_language_client() {
+	if (client || !extension_context || !active_backend) {
+		return;
+	}
+
+	const context = extension_context;
+	const backend = active_backend;
 
 	/** @type {ClassicTypeScript | undefined} */
 	let typescript;
@@ -365,31 +385,42 @@ function is_tsdk_configuration_change(event) {
 }
 
 /**
- * The TypeScript the classic backend hosts: the one VS Code runs for the workspace. A
- * configured tsdk path (`js/ts.tsdk.path`, written by "TypeScript: Select TypeScript Version"
- * when the workspace version is picked, or its deprecated `typescript.tsdk` spelling) comes
- * first, then the TypeScript VS Code ships. The first directory that holds `typescript.js`
- * wins; the TypeScript 7 package has none, so it is skipped like VS Code skips it.
+ * The TypeScript the classic backend hosts: the one VS Code runs for the workspace.
+ * A user-level tsdk (`js/ts.tsdk.path` or `typescript.tsdk`) is used without opt-in.
+ * A workspace-level path is only the location to load after "TypeScript: Select
+ * TypeScript Version" sets `typescript.useWorkspaceTsdk`; otherwise VS Code's copy
+ * comes first so switching back to it does not leave `.tsrx` on the workspace
+ * compiler. Workspace paths are still tried last when VS Code's copy has no
+ * `typescript.js`, so pointing the setting at a lib can recover activation.
  * @returns {ClassicTypeScript | undefined}
  */
 function resolve_classic_typescript() {
+	const useWorkspaceTsdk =
+		extension_context?.workspaceState.get(USE_WORKSPACE_TSDK_STATE_KEY, false) === true;
 	/** @type {string[]} */
-	const settingPaths = [];
+	const workspaceSettingPaths = [];
+	/** @type {string[]} */
+	const userSettingPaths = [];
 	for (const { section, key } of TSDK_SETTINGS) {
-		const value = vscode.workspace.getConfiguration(section).get(key);
-		if (typeof value === 'string' && value.trim() !== '') {
-			settingPaths.push(value.trim());
+		const inspected = vscode.workspace.getConfiguration(section).inspect(key);
+		if (typeof inspected?.workspaceValue === 'string' && inspected.workspaceValue.trim() !== '') {
+			workspaceSettingPaths.push(inspected.workspaceValue.trim());
+		}
+		if (typeof inspected?.globalValue === 'string' && inspected.globalValue.trim() !== '') {
+			userSettingPaths.push(inspected.globalValue.trim());
 		}
 	}
 	const vscodeTypescriptLib = vscode.env.appRoot
 		? path.join(vscode.env.appRoot, 'extensions', 'node_modules', 'typescript', 'lib')
 		: undefined;
 	const candidates = tsdk_candidates({
-		settingPaths,
+		settingPaths: useWorkspaceTsdk ? workspaceSettingPaths : userSettingPaths,
 		workspaceFolders: (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
 		vscodeTypescriptLib,
+		fallbackSettingPaths: useWorkspaceTsdk ? [] : workspaceSettingPaths,
 	});
-	for (const [index, tsdk] of candidates.entries()) {
+	const vscodeTsdk = vscodeTypescriptLib?.replace(/\\/g, '/');
+	for (const tsdk of candidates) {
 		if (!fs.existsSync(path.join(tsdk, 'typescript.js'))) {
 			continue;
 		}
@@ -398,8 +429,7 @@ function resolve_classic_typescript() {
 				fs.readFileSync(path.join(tsdk, '..', 'package.json'), 'utf8'),
 			);
 			if (typeof version === 'string') {
-				const from_setting = index < candidates.length - (vscodeTypescriptLib ? 1 : 0);
-				return { tsdk, version, source: from_setting ? 'setting' : 'vscode' };
+				return { tsdk, version, source: tsdk === vscodeTsdk ? 'vscode' : 'setting' };
 			}
 		} catch {
 			// Not a TypeScript package directory: try the next candidate.
@@ -409,11 +439,14 @@ function resolve_classic_typescript() {
 }
 
 /**
- * Restart the language client on the TypeScript now configured for the workspace, so the
- * classic backend follows "TypeScript: Select TypeScript Version" without an extension restart.
+ * Start or restart the language client on the TypeScript now configured for the
+ * workspace, so the classic backend follows "TypeScript: Select TypeScript Version"
+ * without an extension restart — including the first successful resolve after
+ * activation found no TypeScript.
  */
 async function restart_client_with_current_typescript() {
 	if (!client) {
+		await start_language_client();
 		return;
 	}
 	const typescript = resolve_classic_typescript();
