@@ -222,10 +222,9 @@ export function resolve_extends_target(extends_value, config_dir, host = NODE_CO
 		if (host.fileExists(file_path)) {
 			return { path: file_path, candidate: file_path };
 		}
-		const candidate =
-			!is_directory(host, file_path) && !file_path.endsWith('.json')
-				? `${file_path}.json`
-				: file_path;
+		// Like TypeScript, append `.json` whenever the path is not a file, even
+		// when a directory of that name exists next to the JSON file.
+		const candidate = file_path.endsWith('.json') ? file_path : `${file_path}.json`;
 		return host.fileExists(candidate) ? { path: candidate, candidate } : { candidate };
 	}
 	const parsed = parse_bare_specifier(extends_value);
