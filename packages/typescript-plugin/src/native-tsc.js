@@ -91,19 +91,23 @@ const SOURCE_FILE_EXTENSIONS = /\.(?:[cm]?[jt]sx?|tsrx|d\.[cm]?ts)$/i;
 const INFORMATIONAL_FLAGS = new Set(['--version', '-v', '--help', '-h', '--init']);
 
 /**
- * The `tsconfig.json` files a `tsc` invocation reads, mirroring how the
- * compiler picks them: `-p`/`--project` (a file, or a directory holding
- * `tsconfig.json`); otherwise `tsconfig.json` in the working directory unless
- * source files are passed, which makes `tsc` ignore every tsconfig; in build
- * mode, each positional argument that is a directory or a config file, or the
- * working directory when there is none. Paths that do not exist are left out,
- * so `tsc` reports them itself, and `--version`, `--help` and `--init` read
- * none.
+ * The `tsconfig.json` files whose sources a `tsc` invocation compiles,
+ * mirroring how the compiler picks them: `-p`/`--project` (a file, or a
+ * directory holding `tsconfig.json`; TypeScript accepts no `--project=path`
+ * form); otherwise `tsconfig.json` in the working directory unless source
+ * files are passed, which makes `tsc` ignore every tsconfig. In build mode the
+ * roots are each positional argument that is a directory or a config file, or
+ * the working directory when there is none, and the result is every project
+ * in their `references` graph that compiles something: a solution-style config
+ * (`files: []`) only points at other projects and is left out. Paths that do
+ * not exist are left out, so `tsc` reports them itself, and `--version`,
+ * `--help` and `--init` read none.
  * @param {readonly string[]} args
  * @param {string} cwd
+ * @param {import('./config-host.js').ConfigHost} [host]
  * @returns {string[]}
  */
-export function project_config_paths(args, cwd) {
+export function project_config_paths(args, cwd, host = NODE_CONFIG_HOST) {
 	/** @type {string[]} */
 	const configs = [];
 	if (args.some((arg) => INFORMATIONAL_FLAGS.has(arg))) {
@@ -125,7 +129,7 @@ export function project_config_paths(args, cwd) {
 			if (!arg.startsWith('-') && !SOURCE_FILE_EXTENSIONS.test(arg)) add(arg);
 		}
 		if (configs.length === 0) add('.');
-		return configs;
+		return build_graph_projects(configs, host);
 	}
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
@@ -142,18 +146,70 @@ export function project_config_paths(args, cwd) {
 }
 
 /**
+ * Walk the `references` graph of the build roots, in build order, and return
+ * the projects that compile sources. `references` is the one top-level key
+ * TypeScript does not inherit through `extends`, so each config's own entry is
+ * read; `files` is inherited, and a config whose resolved `files` is empty is
+ * a solution that compiles nothing. Configs that cannot be read are kept for
+ * `tsc` to report.
+ * @param {readonly string[]} roots
+ * @param {import('./config-host.js').ConfigHost} host
+ * @returns {string[]}
+ */
+function build_graph_projects(roots, host) {
+	/** @type {string[]} */
+	const projects = [];
+	const seen = new Set();
+	/** @param {string} config_path */
+	function visit(config_path) {
+		if (seen.has(config_path)) return;
+		seen.add(config_path);
+		const { layers, diagnostics, extends_failures } = load_tsconfig_layers(host, config_path);
+		const own = layers[layers.length - 1];
+		const references = get_own_config_value(own.config, ['references']);
+		if (references.state === 'found' && Array.isArray(references.value)) {
+			for (const reference of references.value) {
+				const target = get_own_config_value(reference, ['path']);
+				if (target.state !== 'found' || typeof target.value !== 'string') continue;
+				const resolved = path.resolve(own.dir, target.value);
+				const stats = fs.statSync(resolved, { throwIfNoEntry: false });
+				if (stats?.isDirectory()) {
+					const nested = path.join(resolved, 'tsconfig.json');
+					if (fs.existsSync(nested)) visit(nested);
+				} else if (stats?.isFile()) {
+					visit(resolved);
+				}
+			}
+		}
+		const files = resolve_inherited_config_value(layers, (layer) =>
+			get_own_config_value(layer.config, ['files']),
+		);
+		const is_solution =
+			diagnostics.length === 0 &&
+			extends_failures.length === 0 &&
+			files.state === 'found' &&
+			Array.isArray(files.value) &&
+			files.value.length === 0;
+		if (!is_solution) projects.push(config_path);
+	}
+	for (const root of roots) visit(root);
+	return projects;
+}
+
+/**
  * Whether a tsconfig, through its `extends` chain, declares a content mapper
  * for `.tsrx` files. Without one, native `tsc` never spawns the mapper: `.tsrx`
  * files are silently not checked and their importers report TS2307, which a
- * type-check command must not let pass. Unreadable configs count as declared
- * so that `tsc` reports the real problem.
+ * type-check command must not let pass. A config that does not parse, or whose
+ * `extends` chain does not resolve, counts as declared so that `tsc` reports
+ * the real problem instead of this guard.
  * @param {string} config_path
  * @param {import('./config-host.js').ConfigHost} [host]
  * @returns {boolean}
  */
 export function declares_tsrx_content_mapper(config_path, host = NODE_CONFIG_HOST) {
-	const { layers } = load_tsconfig_layers(host, config_path);
-	if (layers.length === 0) {
+	const { layers, diagnostics, extends_failures } = load_tsconfig_layers(host, config_path);
+	if (diagnostics.length > 0 || extends_failures.length > 0) {
 		return true;
 	}
 	const mappers = resolve_inherited_config_value(layers, (layer) =>
@@ -209,7 +265,7 @@ export function run_native_tsc(options) {
 		stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
 		return 1;
 	}
-	for (const config_path of project_config_paths(options.args, cwd)) {
+	for (const config_path of project_config_paths(options.args, cwd, options.host)) {
 		if (!declares_tsrx_content_mapper(config_path, options.host)) {
 			stderr.write(`${missing_content_mapper_message(config_path)}\n`);
 			return 1;

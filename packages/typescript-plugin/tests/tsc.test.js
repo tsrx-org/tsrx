@@ -310,6 +310,64 @@ process.exit(Number(process.env.TSRX_TEST_EXIT ?? 0));
 			]);
 		});
 
+		it('checks every compiling project of a --build graph and skips solution configs', () => {
+			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
+				platform_binary: record_call,
+			});
+			// A solution root only points at projects; it has no mapper and needs none.
+			write_tsconfig({ files: [], references: [{ path: './lib' }, { path: './app' }] });
+			fs.mkdirSync(path.join(workspace, 'lib'));
+			fs.mkdirSync(path.join(workspace, 'app'));
+			fs.writeFileSync(
+				path.join(workspace, 'lib', 'tsconfig.json'),
+				JSON.stringify({ contentMappers: [mapper_entry], compilerOptions: { composite: true } }),
+			);
+			fs.writeFileSync(
+				path.join(workspace, 'app', 'tsconfig.json'),
+				JSON.stringify({ compilerOptions: { composite: true }, references: [{ path: '../lib' }] }),
+			);
+			const call_file = path.join(workspace, 'call.json');
+			const refused = run_cli_with_typescript_7(stub_dir, ['--build'], {
+				TSRX_TEST_CALL: call_file,
+			});
+			expect(refused.status).toBe(1);
+			expect(refused.output).toContain(
+				`${path.join(workspace, 'app', 'tsconfig.json')} declares no content mapper`,
+			);
+			expect(fs.existsSync(call_file)).toBe(false);
+
+			fs.writeFileSync(
+				path.join(workspace, 'app', 'tsconfig.json'),
+				JSON.stringify({
+					contentMappers: [mapper_entry],
+					compilerOptions: { composite: true },
+					references: [{ path: '../lib' }],
+				}),
+			);
+			const accepted = run_cli_with_typescript_7(stub_dir, ['--build'], {
+				TSRX_TEST_CALL: call_file,
+			});
+			expect(accepted.status).toBe(0);
+			expect(JSON.parse(fs.readFileSync(call_file, 'utf8')).argv).toEqual([
+				'--build',
+				'--runExternalCode',
+			]);
+		});
+
+		it('leaves a tsconfig that does not parse to the compiler instead of refusing it', () => {
+			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
+				platform_binary: record_call,
+			});
+			fs.writeFileSync(path.join(workspace, 'tsconfig.json'), '{ "contentMappers": [ oops');
+			const call_file = path.join(workspace, 'call.json');
+			const result = run_cli_with_typescript_7(stub_dir, ['--noEmit', '-p', 'tsconfig.json'], {
+				TSRX_TEST_CALL: call_file,
+			});
+			expect(result.status).toBe(0);
+			expect(result.output).not.toContain('declares no content mapper');
+			expect(fs.existsSync(call_file)).toBe(true);
+		});
+
 		it('refuses a project that declares no content mapper for .tsrx files', () => {
 			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
 				platform_binary: record_call,
