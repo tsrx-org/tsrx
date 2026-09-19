@@ -721,7 +721,13 @@ export function createCompletionPlugin() {
 					// the `@`-directives (so typing e.g. `if` still surfaces `@if`). Ripple-runtime snippets
 					// (track/effect/untrack/module server) are only added for Ripple files, so
 					// React/Solid/Preact/Vue `.tsrx` files don't see APIs they can't use.
-					items.push(COMPONENT_SNIPPET, ...TSRX_SNIPPETS);
+					// `TSRX_SNIPPETS` carries its own copy of the component snippet for the `@` path
+					// (with an `@` filterText); here the plain one is offered, so skip the copy or the
+					// snippet is listed twice.
+					items.push(
+						COMPONENT_SNIPPET,
+						...TSRX_SNIPPETS.filter((snippet) => snippet.label !== COMPONENT_SNIPPET.label),
+					);
 					if (!tagStartMatch) {
 						// Not already offered with a `<`-anchored textEdit above: surface the `<style>`
 						// snippets by name (`sty…`) so they are discoverable without typing `<` first.
