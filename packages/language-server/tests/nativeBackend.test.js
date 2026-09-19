@@ -4,12 +4,26 @@ import {
 	DEFAULT_TYPESCRIPT_BACKEND,
 	read_typescript_backend_flag,
 	resolve_typescript_backend,
+	resolve_typescript_tsdk,
 } from '../src/backend.js';
 import { createDefinitionPlugin } from '../src/definitionPlugin.js';
 import { createDocumentHighlightPlugin } from '../src/documentHighlightPlugin.js';
 import { createHoverPlugin } from '../src/hoverPlugin.js';
 import { createServicePlugins } from '../src/servicePlugins.js';
 import { create_service_harness } from './setup.js';
+
+describe('TypeScript installation selection', () => {
+	it('reads the Volar-style typescript.tsdk initialization option', () => {
+		expect(
+			resolve_typescript_tsdk({ typescript: { tsdk: '/ws/node_modules/typescript/lib' } }),
+		).toBe('/ws/node_modules/typescript/lib');
+		expect(resolve_typescript_tsdk({ typescript: { tsdk: '' } })).toBeUndefined();
+		expect(resolve_typescript_tsdk({ typescript: {} })).toBeUndefined();
+		expect(resolve_typescript_tsdk({ typescriptBackend: 'classic' })).toBeUndefined();
+		expect(resolve_typescript_tsdk(undefined)).toBeUndefined();
+		expect(resolve_typescript_tsdk('nope')).toBeUndefined();
+	});
+});
 
 describe('TypeScript backend selection', () => {
 	it('defaults to the classic backend', () => {

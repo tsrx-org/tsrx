@@ -39,3 +39,42 @@ export const TYPESCRIPT_7_SETTING = `${TYPESCRIPT_7_SETTING_SECTIONS[0]}.${TYPES
 export function resolve_backend(typescript7Enabled) {
 	return typescript7Enabled ? 'native' : 'classic';
 }
+
+/**
+ * The settings VS Code's built-in TypeScript extension reads for a workspace
+ * TypeScript: the unified key and its deprecated spelling. Its "Select
+ * TypeScript Version" picker writes the unified key when the user picks the
+ * workspace version.
+ */
+export const TSDK_SETTINGS = [
+	{ section: 'js/ts', key: 'tsdk.path' },
+	{ section: 'typescript', key: 'tsdk' },
+];
+
+/**
+ * The TypeScript `lib` directories to try for the classic backend, in order:
+ * the configured tsdk paths (an absolute path as is, a relative one against
+ * every workspace folder), then the TypeScript VS Code itself ships. The first
+ * one that contains `typescript.js` wins, so the classic backend hosts the
+ * same TypeScript VS Code runs for the workspace instead of a bundled copy.
+ * @param {{ settingPaths: readonly string[], workspaceFolders: readonly string[], vscodeTypescriptLib: string | undefined }} input
+ * @returns {string[]}
+ */
+export function tsdk_candidates({ settingPaths, workspaceFolders, vscodeTypescriptLib }) {
+	/** @type {string[]} */
+	const candidates = [];
+	for (const setting of settingPaths) {
+		const normalized = setting.replace(/\\/g, '/');
+		if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
+			candidates.push(normalized);
+		} else {
+			for (const folder of workspaceFolders) {
+				candidates.push(`${folder.replace(/\\/g, '/').replace(/\/$/, '')}/${normalized}`);
+			}
+		}
+	}
+	if (vscodeTypescriptLib) {
+		candidates.push(vscodeTypescriptLib.replace(/\\/g, '/'));
+	}
+	return [...new Set(candidates)];
+}

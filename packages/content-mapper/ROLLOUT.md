@@ -81,7 +81,8 @@ here.
   checkout beside `typescript@7.1.0-dev.20260918.1` and the published
   `@tsrx/react` reports the consumer fixture's diagnostic through
   `npx tsc --runExternalCode`; the VSIX built by `pnpm run build-and-package` (851
-  files, 7.2 MB, bundling TypeScript 5.9.3) does the same through its
+  files, 7.2 MB, at the time bundling TypeScript 5.9.3; the extension now hosts
+  the TypeScript VS Code runs and bundles none) does the same through its
   `dist/content-mapper.js` from an unpacked copy outside the checkout. Linux and
   Windows are not exercised.
 - The gaps and their upstream issues are tracked in

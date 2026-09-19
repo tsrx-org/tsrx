@@ -167,5 +167,3 @@ catalogs:
     prettier: '>=2.0.0'
     tailwindcss: ^4.1.12
     typescript: *ts_supported
-  vscode:
-    typescript: *ts_common

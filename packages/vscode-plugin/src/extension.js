@@ -59,12 +59,21 @@ import protocol from '@volar/language-server/protocol';
 import * as lsp from 'vscode-languageclient/node';
 import { activateAutoInsertion, createLabsInfo } from '@volar/vscode';
 import {
+	TSDK_SETTINGS,
 	TYPESCRIPT_7_SETTING_KEY,
 	TYPESCRIPT_7_SETTING_SECTIONS,
 	resolve_backend,
+	tsdk_candidates,
 } from './backend.js';
 
 /** @import { Backend } from './backend.js' */
+
+/**
+ * @typedef {object} ClassicTypeScript
+ * @property {string} tsdk The `lib` directory of the TypeScript installation the classic backend hosts.
+ * @property {string} version
+ * @property {'setting' | 'vscode'} source
+ */
 
 const TSRX_FILE_SELECTORS = ['**/*.tsrx'];
 const TSRX_FILE_EXCLUDE_GLOB = '**/{node_modules,dist,build,.git}/**';
@@ -105,11 +114,25 @@ export async function activate(context) {
 		vscode.workspace.onDidChangeConfiguration(async (event) => {
 			if (is_typescript_7_configuration_change(event)) {
 				await prompt_restart_if_backend_changed();
+			} else if (backend === 'classic' && is_tsdk_configuration_change(event)) {
+				await restart_client_with_current_typescript();
 			}
 		}),
 	);
 
+	/** @type {ClassicTypeScript | undefined} */
+	let typescript;
 	if (backend === 'classic') {
+		typescript = resolve_classic_typescript();
+		if (!typescript) {
+			const message = `TSRX: no TypeScript with a JavaScript API was found for .tsrx files. Point "${TSDK_SETTINGS[0].section}.${TSDK_SETTINGS[0].key}" at a TypeScript 5.9 or 6 "lib" directory, or select one with "TypeScript: Select TypeScript Version".`;
+			console.error(`[TSRX] ${message}`);
+			vscode.window.showErrorMessage(message);
+			return;
+		}
+		console.log(
+			`[TSRX] TypeScript ${typescript.version} from ${typescript.tsdk} (${typescript.source})`,
+		);
 		await activate_classic_backend(context);
 	}
 
@@ -155,7 +178,12 @@ export async function activate(context) {
 	const clientOptions = {
 		documentSelector: [{ language: 'tsrx' }],
 		// The server drops its TypeScript services on the native backend (TypeScript 7 owns them).
-		initializationOptions: { typescriptBackend: backend },
+		// On the classic backend it hosts the TypeScript VS Code runs for the workspace (Volar's
+		// `typescript.tsdk` option); the extension bundles no TypeScript of its own.
+		initializationOptions: {
+			typescriptBackend: backend,
+			...(typescript ? { typescript: { tsdk: typescript.tsdk } } : {}),
+		},
 		errorHandler: {
 			error: (
 				/** @type {Error} */ error,
@@ -226,7 +254,7 @@ export async function activate(context) {
 		console.log('[TSRX] Registered custom commands');
 
 		console.log('[TSRX] Extension activated successfully');
-		return volar_labs.extensionExports;
+		return { ...volar_labs.extensionExports, tsrx: { backend, typescript } };
 	} catch (error) {
 		console.error('Failed to start language client:', error);
 		const message = error instanceof Error ? error.message : String(error);
@@ -326,6 +354,80 @@ function is_typescript_7_configuration_change(event) {
 	return TYPESCRIPT_7_SETTING_SECTIONS.some((section) =>
 		event.affectsConfiguration(`${section}.${TYPESCRIPT_7_SETTING_KEY}`),
 	);
+}
+
+/**
+ * @param {import('vscode').ConfigurationChangeEvent} event
+ * @returns {boolean}
+ */
+function is_tsdk_configuration_change(event) {
+	return TSDK_SETTINGS.some(({ section, key }) => event.affectsConfiguration(`${section}.${key}`));
+}
+
+/**
+ * The TypeScript the classic backend hosts: the one VS Code runs for the workspace. A
+ * configured tsdk path (`js/ts.tsdk.path`, written by "TypeScript: Select TypeScript Version"
+ * when the workspace version is picked, or its deprecated `typescript.tsdk` spelling) comes
+ * first, then the TypeScript VS Code ships. The first directory that holds `typescript.js`
+ * wins; the TypeScript 7 package has none, so it is skipped like VS Code skips it.
+ * @returns {ClassicTypeScript | undefined}
+ */
+function resolve_classic_typescript() {
+	/** @type {string[]} */
+	const settingPaths = [];
+	for (const { section, key } of TSDK_SETTINGS) {
+		const value = vscode.workspace.getConfiguration(section).get(key);
+		if (typeof value === 'string' && value.trim() !== '') {
+			settingPaths.push(value.trim());
+		}
+	}
+	const vscodeTypescriptLib = vscode.env.appRoot
+		? path.join(vscode.env.appRoot, 'extensions', 'node_modules', 'typescript', 'lib')
+		: undefined;
+	const candidates = tsdk_candidates({
+		settingPaths,
+		workspaceFolders: (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
+		vscodeTypescriptLib,
+	});
+	for (const [index, tsdk] of candidates.entries()) {
+		if (!fs.existsSync(path.join(tsdk, 'typescript.js'))) {
+			continue;
+		}
+		try {
+			const { version } = JSON.parse(
+				fs.readFileSync(path.join(tsdk, '..', 'package.json'), 'utf8'),
+			);
+			if (typeof version === 'string') {
+				const from_setting = index < candidates.length - (vscodeTypescriptLib ? 1 : 0);
+				return { tsdk, version, source: from_setting ? 'setting' : 'vscode' };
+			}
+		} catch {
+			// Not a TypeScript package directory: try the next candidate.
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Restart the language client on the TypeScript now configured for the workspace, so the
+ * classic backend follows "TypeScript: Select TypeScript Version" without an extension restart.
+ */
+async function restart_client_with_current_typescript() {
+	if (!client) {
+		return;
+	}
+	const typescript = resolve_classic_typescript();
+	const options = /** @type {{ typescript?: { tsdk: string } }} */ (
+		client.clientOptions.initializationOptions
+	);
+	if (!typescript || options.typescript?.tsdk === typescript.tsdk) {
+		return;
+	}
+	options.typescript = { tsdk: typescript.tsdk };
+	console.log(
+		`[TSRX] TypeScript changed to ${typescript.version} from ${typescript.tsdk}; restarting the language server`,
+	);
+	await client.restart();
 }
 
 /**

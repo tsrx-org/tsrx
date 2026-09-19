@@ -1168,9 +1168,9 @@ export function GettingStartedPage() @{
 								<code class="inline-code">.tsrx</code>
 								files follow the TypeScript VS Code runs, chosen with the
 								<strong>TypeScript: Select TypeScript Version</strong>
-								picker: the bundled TypeScript 5.9 (the extension hosts TypeScript itself), or
-								TypeScript 7 through the content mapper declared in tsconfig.json when TypeScript 7
-								is enabled (
+								picker: the TypeScript VS Code runs, 5.9 or 6 (the extension hosts that same
+								installation for .tsrx files and bundles none of its own), or TypeScript 7 through
+								the content mapper declared in tsconfig.json when TypeScript 7 is enabled (
 								<code class="inline-code">js/ts.experimental.useTsgo</code>
 								). With TypeScript 7 enabled, set Prettier as the
 								<code class="inline-code">[tsrx]</code>

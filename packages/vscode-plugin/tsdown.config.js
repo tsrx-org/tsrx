@@ -8,8 +8,9 @@ import { getAllExternalPackages } from '../../scripts/collect-external-deps.js';
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Root packages to treat as external (their full dependency trees will be copied)
+// `typescript` is deliberately absent: the classic backend hosts the TypeScript VS Code
+// runs for the workspace (`typescript.tsdk` initialization option), never a bundled copy.
 const ROOT_EXTERNAL_PACKAGES = [
-	'typescript',
 	'@tsrx/core',
 	'volar-service-css',
 	'vscode-uri',

@@ -45,8 +45,13 @@ TypeScript 7 can be the only TypeScript in the project.
 The server runs beside one of two TypeScript backends. Never run both on the same
 file.
 
-- `classic` (default): the server hosts TypeScript 5 itself through Volar and
-  serves every feature for `.tsrx` files, including type-aware ones.
+- `classic` (default): the server hosts TypeScript (5.9 or 6) itself through Volar
+  and serves every feature for `.tsrx` files, including type-aware ones. Which
+  installation it hosts comes from the Volar-style `typescript.tsdk`
+  initialization option, the absolute path of a TypeScript `lib` directory (the
+  one containing `typescript.js`); the VS Code extension passes the TypeScript VS
+  Code runs for the workspace. Without the option the server loads the
+  `typescript` package resolvable from its own location (the peer dependency).
 - `native`: TypeScript 7 owns every TypeScript feature for `.tsrx` files through
   [`@tsrx/content-mapper`](../content-mapper/README.md) (diagnostics including
   TSRX compile errors, hover, completions, signature help, definitions,
@@ -66,6 +71,8 @@ tsrx-language-server --stdio --typescript-backend=native
 ```jsonc
 // LSP initialize params
 { "initializationOptions": { "typescriptBackend": "native" } }
+// or, on the classic backend, the TypeScript to host:
+{ "initializationOptions": { "typescript": { "tsdk": "/path/to/node_modules/typescript/lib" } } }
 ```
 
 Use `native` only when the same editor also runs TypeScript 7's language server

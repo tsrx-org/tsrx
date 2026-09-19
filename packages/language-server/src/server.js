@@ -7,7 +7,9 @@ import {
 	createSimpleProject,
 	createTypeScriptProject,
 } from '@volar/language-server/node';
-import { resolve_typescript_backend } from './backend.js';
+import Module from 'node:module';
+import path from 'node:path';
+import { resolve_typescript_backend, resolve_typescript_tsdk } from './backend.js';
 import { createServicePlugins } from './servicePlugins.js';
 import {
 	getTsrxLanguagePlugin,
@@ -90,6 +92,38 @@ export function createTsrxLanguageServer(options = {}) {
 		host[method] = wrapped;
 	}
 
+	/**
+	 * Load the TypeScript the classic backend hosts. With a `typescript.tsdk`
+	 * initialization option (the `lib` directory of a TypeScript installation),
+	 * that installation is loaded and every later `require('typescript')` in this
+	 * process (the shared transform's option defaults, Volar's TypeScript
+	 * service) resolves to the same module, so one TypeScript runs. Without the
+	 * option, the `typescript` package resolvable from the server (its peer
+	 * dependency) is used, as before.
+	 * @param {string | undefined} tsdk
+	 * @returns {typeof import('typescript')}
+	 */
+	function load_typescript(tsdk) {
+		if (tsdk === undefined) {
+			const bundled = require('typescript');
+			log(`TypeScript ${bundled.version} from the typescript package next to the server`);
+			return bundled;
+		}
+		const typescript_js = path.join(tsdk, 'typescript.js');
+		const module_loader = /** @type {{ _resolveFilename: (...args: unknown[]) => string }} */ (
+			/** @type {unknown} */ (Module)
+		);
+		const original_resolve = module_loader._resolveFilename;
+		module_loader._resolveFilename = function (request, ...rest) {
+			return request === 'typescript'
+				? typescript_js
+				: original_resolve.call(this, request, ...rest);
+		};
+		const loaded = require(typescript_js);
+		log(`TypeScript ${loaded.version} from ${tsdk} (typescript.tsdk initialization option)`);
+		return loaded;
+	}
+
 	connection.onInitialize(async (params) => {
 		try {
 			log('Initializing TSRX language server...');
@@ -127,7 +161,7 @@ export function createTsrxLanguageServer(options = {}) {
 				return initResult;
 			}
 
-			const ts = require('typescript');
+			const ts = load_typescript(resolve_typescript_tsdk(params.initializationOptions));
 			const unsupported_typescript = unsupported_typescript_message(ts, 'language-server');
 			if (unsupported_typescript) {
 				throw new Error(unsupported_typescript);

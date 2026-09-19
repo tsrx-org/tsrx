@@ -58,7 +58,6 @@
   },
   "// @types/vscode": "Keep in `peerDependencies` - prevent vsix compatibility, but it's a dev dep",
   "peerDependencies": {
-    "typescript": "catalog:vscode",
     "@types/vscode": "catalog:default"
   },
   "devDependencies": {

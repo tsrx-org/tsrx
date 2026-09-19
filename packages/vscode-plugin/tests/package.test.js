@@ -47,6 +47,13 @@ describe('@tsrx/vscode-plugin package contract', () => {
 		expect(Object.keys(properties).filter((key) => /backend/i.test(key))).toEqual([]);
 	});
 
+	it('bundles no TypeScript: the classic backend hosts the TypeScript VS Code runs', () => {
+		expect(package_json.dependencies.typescript).toBeUndefined();
+		expect(package_json.peerDependencies.typescript).toBeUndefined();
+		const tsdown_config = readFileSync(resolve(__dirname, '../tsdown.config.js'), 'utf8');
+		expect(tsdown_config).not.toMatch(/^\s*'typescript',/m);
+	});
+
 	it('ships no content mapper of its own and depends on no other extension', () => {
 		// On the native backend TypeScript 7 runs the mapper each tsconfig.json declares under
 		// `contentMappers`; the extension neither bundles a copy nor registers one through the
