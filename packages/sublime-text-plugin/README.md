@@ -12,6 +12,20 @@ package. The plugin starts a project-local
 By default the TSRX language server hosts TypeScript 5 itself (the `classic`
 backend) and serves every feature for `.tsrx` files.
 
+### What goes in tsconfig.json
+
+- **TypeScript 5.9 or 6** (classic backend): install `@tsrx/typescript-plugin` and
+  add `{ "name": "@tsrx/typescript-plugin" }` to `compilerOptions.plugins`. The
+  LSP-typescript client you run for `.ts` files loads the plugin from there, next
+  to the workspace `typescript` package it runs, so `.ts` files that import
+  `.tsrx` modules resolve them. The TSRX language server needs nothing: it serves
+  the `.tsrx` files themselves.
+- **TypeScript 7** (native backend): declare `@tsrx/content-mapper` under
+  `contentMappers` instead; TypeScript 7 ignores `plugins`. Both entries can sit
+  in one tsconfig, since TypeScript 5 and 6 ignore `contentMappers`.
+- VS Code alone needs no `plugins` entry: its extension hands the plugin to VS
+  Code's own tsserver.
+
 The `native` backend leaves TypeScript features to TypeScript 7's language server
 (`tsc --lsp --stdio`) through
 [`@tsrx/content-mapper`](https://www.npmjs.com/package/@tsrx/content-mapper), and

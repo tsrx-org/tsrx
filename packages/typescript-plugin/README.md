@@ -40,9 +40,21 @@ gaps are tracked in
 
 ## Configuration
 
-For a standalone tsserver integration, install this package and add it to the
-project's `tsconfig.json`. The compiler and `jsxImportSource` should match the
-chosen target. For example, a React project can use:
+Which tsconfig entry a project needs depends on the TypeScript line, not on the
+editor:
+
+- **TypeScript 5.9 or 6**: add this package to `compilerOptions.plugins`. The
+  editor's TypeScript server (tsserver, `typescript-language-server`, `vtsls`)
+  loads it from there, next to the workspace `typescript`, so `.ts` files that
+  import `.tsrx` modules resolve them. `tsrx-tsc` does not need the entry (it
+  hosts the plugin itself), and neither does VS Code (its extension hands the
+  plugin to VS Code's own tsserver).
+- **TypeScript 7**: nothing from this package; declare `@tsrx/content-mapper`
+  under `contentMappers` instead. TypeScript 7 ignores `plugins`, and TypeScript 5
+  and 6 ignore `contentMappers`, so both entries can share one tsconfig.
+
+The compiler and `jsxImportSource` should match the chosen target. For example, a
+React project on TypeScript 5.9 or 6 can use:
 
 ```json
 {

@@ -67,6 +67,21 @@ shows an actionable notification instead of repeatedly starting a broken server.
 TypeScript 5 itself and serves every feature for `.tsrx` files. The IDE's own
 TypeScript service is not involved with `.tsrx` files.
 
+### What goes in tsconfig.json
+
+- **TypeScript 5.9 or 6** (classic backend): install `@tsrx/typescript-plugin` and
+  add `{ "name": "@tsrx/typescript-plugin" }` to `compilerOptions.plugins`. The
+  IDE's TypeScript service (tsserver based) loads the plugin from there, next to
+  the workspace `typescript` package it runs, so `.ts` files that import `.tsrx`
+  modules resolve them. The TSRX language server needs nothing: it serves the
+  `.tsrx` files themselves. Whether the IDE's service honours the entry is not
+  covered by automated tests in this repository.
+- **TypeScript 7** (native backend): declare `@tsrx/content-mapper` under
+  `contentMappers` instead; TypeScript 7 ignores `plugins`. Both entries can sit
+  in one tsconfig, since TypeScript 5 and 6 ignore `contentMappers`.
+- VS Code alone needs no `plugins` entry: its extension hands the plugin to VS
+  Code's own tsserver.
+
 The server's `native` backend (TypeScript 7 owning TypeScript features through
 `@tsrx/content-mapper`, see
 [`@tsrx/language-server`](../language-server/README.md)) requires a client that

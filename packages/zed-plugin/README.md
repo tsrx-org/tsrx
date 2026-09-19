@@ -83,6 +83,20 @@ The TSRX language server hosts TypeScript 5 itself (the `classic` backend), so
 runs `vtsls` or `typescript-language-server`, both TypeScript 5 based, and cannot
 serve `.tsrx` files.
 
+### What goes in tsconfig.json
+
+- **TypeScript 5.9 or 6** (classic backend): install `@tsrx/typescript-plugin` and
+  add `{ "name": "@tsrx/typescript-plugin" }` to `compilerOptions.plugins`. Zed's
+  `vtsls` or `typescript-language-server` loads the plugin from there, next to the
+  workspace `typescript` package it runs, so `.ts` files that import `.tsrx`
+  modules resolve them. The TSRX language server needs nothing: it serves the
+  `.tsrx` files themselves.
+- **TypeScript 7** (native backend): declare `@tsrx/content-mapper` under
+  `contentMappers` instead; TypeScript 7 ignores `plugins`. Both entries can sit
+  in one tsconfig, since TypeScript 5 and 6 ignore `contentMappers`.
+- VS Code alone needs no `plugins` entry: its extension hands the plugin to VS
+  Code's own tsserver.
+
 The server also has a `native` backend that leaves TypeScript features to
 TypeScript 7's language server (`tsc --lsp`) through `@tsrx/content-mapper` (see
 [`@tsrx/language-server`](../language-server/README.md)). It only makes sense next

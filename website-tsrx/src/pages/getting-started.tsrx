@@ -1038,31 +1038,35 @@ export function GettingStartedPage() @{
 								<code class="inline-code">@tsrx/typescript-plugin</code>
 								when you want TypeScript itself to understand
 								<code class="inline-code">.tsrx</code>
-								files, especially outside TSRX Syntax for VS Code: other editors,
-								<code class="inline-code">tsserver</code>
-								, and command-line
-								<code class="inline-code">tsc</code>
-								workflows.
+								files: it powers
+								<code class="inline-code">tsrx-tsc</code>
+								on the command line and, in editors other than VS Code, the editor's own TypeScript
+								server on TypeScript 5.9 or 6. VS Code ships it inside TSRX Syntax for VS Code. On
+								TypeScript 7 the content mapper below replaces it.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={TYPESCRIPT_PLUGIN_INSTALL_HTML} />
 							</pre>
 							<p class="section-body">
-								Then register it in your
+								For editors other than VS Code on TypeScript 5.9 or 6, register it in your
 								<code class="inline-code">tsconfig.json</code>
-								. Keep your existing compiler options and add the
+								so the editor's TypeScript server loads it next to your workspace TypeScript and
+								<code class="inline-code">.ts</code>
+								files can import
+								<code class="inline-code">.tsrx</code>
+								modules. Keep your existing compiler options and add the
 								<code class="inline-code">plugins</code>
 								entry under
 								<code class="inline-code">compilerOptions</code>
-								:
+								(TypeScript 7 ignores it):
 							</p>
 							<pre class="code-block">
 								<code innerHTML={TYPESCRIPT_PLUGIN_CONFIG_HTML} />
 							</pre>
 							<p class="section-body">
 								The plugin turns TSRX into virtual TypeScript for diagnostics, navigation,
-								completions, and type checking. If you already use TSRX Syntax for VS Code, this
-								manual setup is optional because the extension runs the language tooling for you.
+								completions, and type checking. VS Code needs none of this: TSRX Syntax for VS Code
+								hands the plugin to VS Code's own TypeScript.
 							</p>
 							<h3 class="subsection-heading">Command-line type checking</h3>
 							<p class="section-body">

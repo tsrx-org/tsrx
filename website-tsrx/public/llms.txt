@@ -1503,10 +1503,12 @@ const List = <T,>({ items, render }: Props<T>) =>
 
 Two paths type-check `.tsrx` files; both use the same target-specific transform.
 
-- **TypeScript 5.9 or 6 (default):** install `@tsrx/typescript-plugin`, add
-  `{ "name": "@tsrx/typescript-plugin" }` to `compilerOptions.plugins`, and run
-  `tsrx-tsc --noEmit` (a `tsc` wrapper that understands `.tsrx`). Requires
-  `typescript@^5.9.3 || ^6.0.0`.
+- **TypeScript 5.9 or 6 (default):** install `@tsrx/typescript-plugin` and run
+  `tsrx-tsc --noEmit` (a `tsc` wrapper that understands `.tsrx`; it hosts the
+  plugin itself). Add `{ "name": "@tsrx/typescript-plugin" }` to
+  `compilerOptions.plugins` only for editors other than VS Code: their TypeScript
+  server loads it from there so `.ts` importers resolve `.tsrx` modules. VS Code
+  ships the plugin and needs no entry. Requires `typescript@^5.9.3 || ^6.0.0`.
 - **TypeScript 7 (native, not complete yet):** install `@tsrx/content-mapper` and
   a TypeScript 7.1 nightly (`typescript@next`, `7.1.0-dev.20260822.1` or newer;
   the stable 7.0 releases have no content-mapper protocol), declare the mapper in
