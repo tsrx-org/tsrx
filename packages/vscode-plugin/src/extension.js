@@ -3,7 +3,7 @@
  *
  * This extension provides language support for TSRX files (.tsrx) by:
  * 1. Starting a Volar-based language server (language-server) for TSRX syntax and semantics
- * 2. Giving `.tsrx` files TypeScript features through one of two backends (see `backend.js`):
+ * 2. Leaving TypeScript features for `.tsrx` files to VS Code's own TypeScript:
  *    - classic: patching the built-in TypeScript extension to recognize TSRX files while the
  *      language server hosts TypeScript 5 itself
  *    - native: leaving them to TypeScript 7, which runs `@tsrx/content-mapper` for the `.tsrx`
@@ -28,8 +28,10 @@
  * The TSRX language server (language-server, Volar based) runs beside it in a slim mode and
  * serves only what TypeScript does not: TSRX snippets, CSS in `<style>`, document symbols,
  * auto-closing tags, CSS-class hover and definition, keyword highlights, and, when VS Code's
- * tsserver is the TypeScript (`typescriptBackend: "plugin"`), the TSRX compile errors that the
- * content mapper reports itself on TypeScript 7. Only one TypeScript ever serves a file.
+ * the TSRX compile errors (`typescriptBackend: "plugin"`); `diagnostics.js` drops that copy for
+ * a file the content mapper already reports on under TypeScript 7. The extension never asks
+ * which TypeScript VS Code runs: no setting, no other extension. Only one TypeScript ever
+ * serves a file.
  */
 
 import vscode from 'vscode';
@@ -39,12 +41,10 @@ import protocol from '@volar/language-server/protocol';
 import * as lsp from 'vscode-languageclient/node';
 import { activateAutoInsertion, createLabsInfo } from '@volar/vscode';
 import {
-	TYPESCRIPT_7_SETTING_KEY,
-	TYPESCRIPT_7_SETTING_SECTIONS,
-	resolve_backend,
-} from './backend.js';
-
-/** @import { Backend } from './backend.js' */
+	SERVER_COMPILE_ERROR_SOURCE,
+	has_mapper_diagnostics,
+	without_duplicate_compile_errors,
+} from './diagnostics.js';
 
 const TSRX_FILE_SELECTORS = ['**/*.tsrx'];
 const RESTART_EXTENSIONS_ACTION = 'Restart Extensions';
@@ -59,9 +59,6 @@ function is_tsrx_file_path(file_path) {
 
 /** @type {import('vscode-languageclient/node').LanguageClient | undefined} */
 let client;
-/** The backend this extension host session runs; changing it needs an extension restart. */
-/** @type {Backend | undefined} */
-let active_backend;
 
 /**
  * @param {import('vscode').ExtensionContext} context
@@ -76,17 +73,6 @@ export async function activate(context) {
 		console.warn('[TSRX] Workspace is not trusted; TSRX language features stay off.');
 		return;
 	}
-
-	const backend = select_backend();
-	active_backend = backend;
-	console.log(`[TSRX] TypeScript backend: ${backend}`);
-	context.subscriptions.push(
-		vscode.workspace.onDidChangeConfiguration(async (event) => {
-			if (is_typescript_7_configuration_change(event)) {
-				await prompt_restart_if_backend_changed();
-			}
-		}),
-	);
 
 	const serverModule = path.join(__dirname, 'server.js');
 
@@ -129,11 +115,32 @@ export async function activate(context) {
 	/** @type {import('vscode-languageclient/node').LanguageClientOptions} */
 	const clientOptions = {
 		documentSelector: [{ language: 'tsrx' }],
-		// VS Code's TypeScript owns every TypeScript feature for .tsrx files on both backends
-		// (its tsserver through the contributed @tsrx/typescript-plugin, or TypeScript 7 through
+		// VS Code's own TypeScript serves every TypeScript feature for .tsrx files (its tsserver
+		// through the contributed @tsrx/typescript-plugin, or TypeScript 7 through
 		// @tsrx/content-mapper), so the server never loads TypeScript and never serves TypeScript
-		// features here. `typescriptBackend` tells it which one reports TSRX compile errors.
-		initializationOptions: { typescriptBackend: backend === 'native' ? 'native' : 'plugin' },
+		// features here. It always reports TSRX compile errors; the middleware below drops that
+		// copy for a file the mapper already reports on, so the extension never has to know
+		// which TypeScript VS Code runs.
+		initializationOptions: { typescriptBackend: 'plugin' },
+		middleware: {
+			handleDiagnostics(uri, diagnostics, next) {
+				next(
+					uri,
+					without_duplicate_compile_errors(diagnostics, vscode.languages.getDiagnostics(uri)),
+				);
+			},
+			async provideDiagnostics(document, previousResultId, token, next) {
+				const report = await next(document, previousResultId, token);
+				if (report && 'items' in report) {
+					const uri = document instanceof vscode.Uri ? document : document.uri;
+					report.items = without_duplicate_compile_errors(
+						report.items,
+						vscode.languages.getDiagnostics(uri),
+					);
+				}
+				return report;
+			},
+		},
 		errorHandler: {
 			error: (
 				/** @type {Error} */ error,
@@ -175,72 +182,54 @@ export async function activate(context) {
 
 		// The menus in package.json reuse the built-in TypeScript extension's commands on .tsrx
 		// files. VS Code manages .tsrx documents itself (the contributed plugin declares the
-		// language), so it maintains `typescript.isManagedFile`, `editorLangId`, `resourceLangId`
-		// and `supportedCodeAction` for them; only the two capability contexts are set here. On
-		// the native backend the built-in extension is off, so only this extension's own
-		// `tsrx.goToSourceDefinition` stays available.
-		vscode.commands.executeCommand('setContext', 'tsSupportsSourceDefinition', true);
-		vscode.commands.executeCommand('setContext', 'tsSupportsFileReferences', backend === 'classic');
+		// language) and maintains every context key those menus use, `typescript.isManagedFile`,
+		// `tsSupportsFileReferences`, `supportedCodeAction`; with TypeScript 7 on, the built-in
+		// extension is off and those entries stay hidden by themselves.
+
+		// The mapper's compile errors may arrive after the server's. When they do, drop the
+		// server's copy: directly for pushed diagnostics, and by asking VS Code to pull the
+		// server's diagnostics again (the middleware then filters them) for pulled ones.
+		context.subscriptions.push(
+			vscode.languages.onDidChangeDiagnostics((event) => {
+				for (const uri of event.uris) {
+					if (!is_tsrx_file_path(uri.fsPath) || !client) {
+						continue;
+					}
+					const all = vscode.languages.getDiagnostics(uri);
+					if (
+						!has_mapper_diagnostics(all) ||
+						!all.some((diagnostic) => diagnostic.source === SERVER_COMPILE_ERROR_SOURCE)
+					) {
+						continue;
+					}
+					const pushed = client.diagnostics?.get(uri);
+					if (pushed?.length) {
+						client.diagnostics?.set(uri, without_duplicate_compile_errors(pushed, all));
+						continue;
+					}
+					const document = vscode.workspace.textDocuments.find(
+						(candidate) => candidate.uri.toString() === uri.toString(),
+					);
+					if (document) {
+						client
+							.getFeature(lsp.DocumentDiagnosticRequest.method)
+							?.getProvider(document)
+							?.onDidChangeDiagnosticsEmitter.fire();
+					}
+				}
+			}),
+		);
 
 		addCustomCommands(context);
 		console.log('[TSRX] Registered custom commands');
 
 		console.log('[TSRX] Extension activated successfully');
-		return { ...volar_labs.extensionExports, tsrx: { backend } };
+		return volar_labs.extensionExports;
 	} catch (error) {
 		console.error('Failed to start language client:', error);
 		const message = error instanceof Error ? error.message : String(error);
 		vscode.window.showErrorMessage(`Failed to start TSRX language server: ${message}`);
 	}
-}
-
-/**
- * The backend that matches VS Code's TypeScript 7 switch: native when it is on, classic
- * otherwise. Nothing else is consulted, in particular no other extension.
- * @returns {Backend}
- */
-function select_backend() {
-	return resolve_backend(is_typescript_7_setting_enabled());
-}
-
-/**
- * The backend is fixed for the life of the extension host (the classic path patches the
- * built-in TypeScript extension before it activates), so a setting change that would flip it
- * needs a restart.
- */
-async function prompt_restart_if_backend_changed() {
-	const next = select_backend();
-	if (next === active_backend) {
-		return;
-	}
-	const selected = await vscode.window.showInformationMessage(
-		`TypeScript 7 was ${next === 'native' ? 'enabled' : 'disabled'} for this workspace. Restart extensions so the TSRX extension follows it.`,
-		RESTART_EXTENSIONS_ACTION,
-	);
-	if (selected === RESTART_EXTENSIONS_ACTION) {
-		await vscode.commands.executeCommand('workbench.action.restartExtensionHost');
-	}
-}
-
-/**
- * Whether VS Code's TypeScript 7 switch is on in any configuration scope
- * (`js/ts.experimental.useTsgo` or its deprecated `typescript.` spelling).
- * @returns {boolean}
- */
-function is_typescript_7_setting_enabled() {
-	return TYPESCRIPT_7_SETTING_SECTIONS.some(
-		(section) => vscode.workspace.getConfiguration(section).get(TYPESCRIPT_7_SETTING_KEY) === true,
-	);
-}
-
-/**
- * @param {import('vscode').ConfigurationChangeEvent} event
- * @returns {boolean}
- */
-function is_typescript_7_configuration_change(event) {
-	return TYPESCRIPT_7_SETTING_SECTIONS.some((section) =>
-		event.affectsConfiguration(`${section}.${TYPESCRIPT_7_SETTING_KEY}`),
-	);
 }
 
 /**

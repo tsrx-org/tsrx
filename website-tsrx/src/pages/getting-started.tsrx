@@ -1175,9 +1175,8 @@ export function GettingStartedPage() @{
 								picker: VS Code's tsserver (its own TypeScript or the workspace version, 5.9 or 6)
 								through the TSRX TypeScript plugin the extension ships, so no tsconfig plugins entry
 								is needed in VS Code, or TypeScript 7 through the content mapper declared in
-								tsconfig.json when TypeScript 7 is enabled (
-								<code class="inline-code">js/ts.experimental.useTsgo</code>
-								). With TypeScript 7 enabled, set Prettier as the
+								tsconfig.json when TypeScript 7 is selected. The extension reads no setting for
+								this. With TypeScript 7 enabled, set Prettier as the
 								<code class="inline-code">[tsrx]</code>
 								default formatter, since TypeScript 7 also registers one.
 							</p>

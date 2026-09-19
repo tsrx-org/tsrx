@@ -6,12 +6,11 @@ using the TSRX language server.
 ## TypeScript backends
 
 VS Code's own TypeScript owns every TypeScript feature for `.tsrx` files: the
-extension never loads TypeScript, bundles none, and never patches another
-extension. Which TypeScript that is follows VS Code's own TypeScript 7 switch,
-`js/ts.experimental.useTsgo`, which the **TypeScript: Select TypeScript Version**
-picker writes; the extension has no setting of its own. Only one TypeScript ever
-serves a file, and switching TypeScript 7 on or off requires restarting
-extensions.
+extension never loads TypeScript, bundles none, never patches another extension,
+and never asks which TypeScript VS Code runs (no setting of its own, no lookup of
+other extensions). Pick the TypeScript with the **TypeScript: Select TypeScript
+Version** picker as for any `.ts` file; the two rows below are what happens in
+each case. Only one TypeScript ever serves a file.
 
 | Backend   | How it works                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -73,8 +72,7 @@ See the
 for the CLI (`tsc --runExternalCode`), declaration output and known limitations,
 its
 [`ROLLOUT.md`](https://github.com/tsrx-org/tsrx/blob/main/packages/content-mapper/ROLLOUT.md)
-for migration and rollback steps and why the backend follows VS Code's TypeScript
-7 switch, and its
+for migration and rollback steps, and its
 [`COMPATIBILITY.md`](https://github.com/tsrx-org/tsrx/blob/main/packages/content-mapper/COMPATIBILITY.md)
 and
 [`BENCHMARKS.md`](https://github.com/tsrx-org/tsrx/blob/main/packages/content-mapper/BENCHMARKS.md)

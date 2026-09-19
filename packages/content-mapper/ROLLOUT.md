@@ -31,12 +31,13 @@ here.
   extension contributes through `typescriptServerPlugins` and ships (no patch of
   the built-in extension, no bundled TypeScript, no tsconfig `plugins` entry
   needed in VS Code); with it on, TypeScript 7 runs the mapper each
-  `tsconfig.json` declares under `contentMappers`. The choice follows VS Code's
-  own switch (`js/ts.experimental.useTsgo`, written by the **TypeScript: Select
-  TypeScript Version** picker), with no setting of the extension's own and without
-  consulting any other extension. The TSRX server runs slim in both cases
-  (`--typescript-backend=plugin` or `native`). The extension now activates on a
-  single `.tsrx` file and declares that it does not run in untrusted workspaces.
+  `tsconfig.json` declares under `contentMappers`. The extension never asks which
+  TypeScript VS Code runs: no setting of its own, no lookup of other extensions.
+  The TSRX server always runs slim (`--typescript-backend=plugin`) and reports
+  TSRX compile errors; the extension drops that copy for a file the mapper already
+  reports on, so they show once on TypeScript 7 too. The extension now activates
+  on a single `.tsrx` file and declares that it does not run in untrusted
+  workspaces.
 - **Editor guides** for Zed, Neovim (`setup(plugin, { typescript_backend })`),
   IntelliJ and Sublime Text describe the native setup per editor.
 - **TypeScript 6** on the classic path: the `typescript` peer range of
@@ -77,8 +78,7 @@ here.
   are published, the native backend in VS Code needs the extension built from
   `packages/vscode-typescript` in the microsoft/TypeScript repository (the
   typescript-go staging repository is closed). The TSRX extension does not talk to
-  that extension at all; it only reads VS Code's `js/ts.experimental.useTsgo`
-  setting to pick the backend.
+  that extension at all, and reads no setting to tell the two cases apart.
 - Packaging verified on macOS x64: the `pnpm pack` tarball of
   `@tsrx/content-mapper` installed with npm into a fresh project outside the
   checkout beside `typescript@7.1.0-dev.20260918.1` and the published
@@ -103,7 +103,7 @@ extra Node process (the mapper) per `tsc` invocation or language-server session.
 | ----------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Command line            | `tsrx-tsc`, following the installed TypeScript: classic on 5.9 and 6, native on 7 | The choice of path is the choice of TypeScript version, which the project already makes in `package.json`; the docs keep recommending TypeScript 5.9 or 6 because native needs a TypeScript 7 nightly at the time of writing and has upstream gaps: `--watch` does not recompile on macOS (microsoft/TypeScript#64351), composite `--build` projects reject `<script>` bodies (TS6307, microsoft/TypeScript#64350), declaration files are named `Component.d.tsrx.ts` until microsoft/TypeScript#64120 lands. `--runExternalCode` stays a user decision the mapper never makes; `tsrx-tsc` passes it because running the command already executes the project's TSRX compiler. |
 | `@tsrx/language-server` | `classic`                                                                         | Native mode without a TypeScript 7 server beside it gives `.tsrx` files no type information, and every non-VS Code editor has to be configured for both servers by hand. The flag makes the choice explicit and per-editor.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| VS Code extension       | follows VS Code's TypeScript 7 switch                                             | The backend is native exactly when TypeScript 7 is enabled in VS Code (`js/ts.experimental.useTsgo`, which the "Select TypeScript Version" picker sets). In that state the built-in TypeScript extension that the classic path patches is already off, so classic would not work; following the user's TypeScript 7 choice is the only working default. Users who never enable TypeScript 7 stay on classic.                                                                                                                                                                                                                                                                   |
+| VS Code extension       | none: VS Code's TypeScript serves `.tsrx` on both lines                           | The extension never asks which TypeScript VS Code runs. With TypeScript 7 off, VS Code's tsserver serves `.tsrx` through the contributed `@tsrx/typescript-plugin`; with it on, TypeScript 7 does through the mapper. The TSRX server always runs slim and its compile-error copy is dropped for files the mapper reports on, so no choice is needed and no restart of the TSRX server either.                                                                                                                                                                                                                                                                                 |
 
 The default flips to native (CLI documentation and the language server) when all
 of the following hold; each is tracked in `COMPATIBILITY.md`:
@@ -187,8 +187,8 @@ flip.
 2. Declare `contentMappers` in every `tsconfig.json` that contains `.tsrx` files
    and install `@tsrx/content-mapper` next to it (steps 1 and 2 above). A `.tsrx`
    file no such tsconfig covers gets no TypeScript features.
-3. Restart extensions after switching TypeScript 7 on: the TSRX extension follows
-   VS Code's switch and asks for the restart itself.
+3. Restart extensions after switching TypeScript 7 on, as VS Code asks; the TSRX
+   extension needs nothing.
 4. Trust the workspace; neither backend runs in Restricted Mode.
 5. Set Prettier as the `[tsrx]` default formatter (`editor.defaultFormatter`):
    TypeScript 7 registers a formatter for `.tsrx` that returns no edits, and VS

@@ -150,7 +150,7 @@
       "editor/context": [
         {
           "command": "tsrx.goToSourceDefinition",
-          "when": "tsSupportsSourceDefinition && resourceLangId == tsrx",
+          "when": "resourceLangId == tsrx",
           "group": "navigation@9"
         }
       ],

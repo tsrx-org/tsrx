@@ -67,9 +67,16 @@ describe('@tsrx/vscode-plugin package contract', () => {
 		]);
 		const tsdown_config = readFileSync(resolve(__dirname, '../tsdown.config.js'), 'utf8');
 		expect(tsdown_config).toContain("'@tsrx/typescript-plugin'");
-		expect(readFileSync(resolve(__dirname, '../src/extension.js'), 'utf8')).not.toContain(
-			'readFileSync = ',
-		);
+		const extension_source = readFileSync(resolve(__dirname, '../src/extension.js'), 'utf8');
+		expect(extension_source).not.toContain('readFileSync = ');
+		// The extension never asks which TypeScript VS Code runs: no setting, no extension lookup.
+		expect(extension_source).not.toMatch(/useTsgo|getExtension\('TypeScriptTeam/);
+		// Its own command needs no context key that another extension maintains.
+		const [source_definition] = package_json.contributes.menus['editor/context'];
+		expect(source_definition).toMatchObject({
+			command: 'tsrx.goToSourceDefinition',
+			when: 'resourceLangId == tsrx',
+		});
 	});
 
 	it('ships no content mapper of its own and depends on no other extension', () => {
