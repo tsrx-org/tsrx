@@ -67,6 +67,11 @@ import {
 	create_content_mapper_contribution,
 	resolve_backend,
 } from './backend.js';
+import {
+	MINIMUM_NATIVE_TYPESCRIPT_VERSION,
+	TYPESCRIPT_7_SUPPORT_NOTE,
+	TYPESCRIPT_7_TRACKING_ISSUE_URL,
+} from '@tsrx/typescript-plugin/src/typescript-version.js';
 
 /** @import { Backend, BackendReason, NativeExtensionState } from './backend.js' */
 
@@ -78,9 +83,11 @@ const TSRX_FILE_SELECTORS = ['**/*.tsrx'];
 const TSRX_FILE_EXCLUDE_GLOB = '**/{node_modules,dist,build,.git}/**';
 const TSGO_CONFIGURATION_SECTIONS = USE_TSGO_SECTIONS;
 const TSGO_WARNING_STATE_KEY = 'tsrx.hasWarnedLocalTsgoUnsupported';
-const TSGO_UNSUPPORTED_MESSAGE =
-	'TypeScript 7 is enabled in this workspace, but the TSRX extension is using the classic TypeScript backend for .tsrx files, so TypeScript commands for .tsrx files are limited. Install the TypeScript 7 extension and set "tsrx.typescript.backend" to "auto" or "native", or disable "js/ts.experimental.useTsgo" for this workspace.';
+/** What the native backend needs from the TypeScript 7 extension, for user-facing messages. */
+const NATIVE_REQUIREMENTS = `a TypeScript 7 extension build that exposes the content-mapper API (registerContentMappers) and runs TypeScript ${MINIMUM_NATIVE_TYPESCRIPT_VERSION} or newer`;
+const TSGO_UNSUPPORTED_MESSAGE = `TypeScript 7 is enabled in this workspace (js/ts.experimental.useTsgo), but the TSRX extension is running the classic TypeScript backend for .tsrx files, so their TypeScript features are limited. TypeScript 7 support for .tsrx files is not complete yet: it needs ${NATIVE_REQUIREMENTS}, with "tsrx.typescript.backend" set to "auto" or "native". ${TYPESCRIPT_7_SUPPORT_NOTE} To keep full TypeScript features for .tsrx files today, disable "js/ts.experimental.useTsgo" for this workspace.`;
 const RESTART_EXTENSIONS_ACTION = 'Restart Extensions';
+const OPEN_TRACKING_ISSUE_ACTION = 'Open Tracking Issue';
 
 /**
  * @typedef {object} NativeTypeScriptExtension
@@ -288,19 +295,34 @@ async function select_backend() {
 }
 
 /**
- * @returns {NativeTypeScriptExtension}
+ * Every installed TypeScript 7 extension, in lookup order.
+ * @returns {import('vscode').Extension<unknown>[]}
  */
-function find_native_typescript_extension() {
+function find_native_typescript_extensions() {
+	/** @type {import('vscode').Extension<unknown>[]} */
+	const extensions = [];
 	for (const id of NATIVE_TYPESCRIPT_EXTENSION_IDS) {
 		const extension = vscode.extensions.getExtension(id);
 		if (extension) {
-			return { state: 'installed', extension };
+			extensions.push(extension);
 		}
 	}
-	return { state: 'missing' };
+	return extensions;
 }
 
 /**
+ * @returns {NativeTypeScriptExtension}
+ */
+function find_native_typescript_extension() {
+	const [extension] = find_native_typescript_extensions();
+	return extension ? { state: 'installed', extension } : { state: 'missing' };
+}
+
+/**
+ * Activate the installed TypeScript 7 extensions until one exposes
+ * `registerContentMappers`. The nightly channel is a compiler-only companion
+ * without an API when it is installed beside the extension that has one, and
+ * a released build may predate the API.
  * @param {NativeTypeScriptExtension} native
  * @returns {Promise<NativeTypeScriptExtension>}
  */
@@ -308,18 +330,20 @@ async function activate_native_typescript_extension(native) {
 	if (!native.extension) {
 		return native;
 	}
-	try {
-		const api = /** @type {NativeTypeScriptExtension['api'] | undefined} */ (
-			await native.extension.activate()
-		);
-		if (api && typeof api.registerContentMappers === 'function') {
-			return { state: 'available', extension: native.extension, api };
+	for (const extension of find_native_typescript_extensions()) {
+		try {
+			const api = /** @type {NativeTypeScriptExtension['api'] | undefined} */ (
+				await extension.activate()
+			);
+			if (api && typeof api.registerContentMappers === 'function') {
+				return { state: 'available', extension, api };
+			}
+			console.warn(
+				`[TSRX] ${extension.id} ${extension.packageJSON?.version ?? ''} has no registerContentMappers API; the native backend needs ${NATIVE_REQUIREMENTS}.`,
+			);
+		} catch (error) {
+			console.error(`[TSRX] Failed to activate ${extension.id}:`, error);
 		}
-		console.warn(
-			`[TSRX] ${native.extension.id} has no registerContentMappers API; update the TypeScript 7 extension.`,
-		);
-	} catch (error) {
-		console.error(`[TSRX] Failed to activate ${native.extension.id}:`, error);
 	}
 	return { state: 'no-api', extension: native.extension };
 }
@@ -333,27 +357,37 @@ async function report_backend_fallback(context, selection) {
 	/** @type {string | undefined} */
 	let message;
 	if (selection.reason === 'native-extension-missing') {
-		message =
-			'"tsrx.typescript.backend" is set to "native", but the TypeScript 7 extension (TypeScriptTeam.vscode-typescript) is not installed. Using the classic backend for .tsrx files.';
+		message = `"tsrx.typescript.backend" is set to "native", but the TypeScript 7 extension (${NATIVE_TYPESCRIPT_EXTENSION_IDS.join(', ')}) is not installed. Using the classic backend for .tsrx files. ${TYPESCRIPT_7_SUPPORT_NOTE}`;
 	} else if (selection.reason === 'native-api-missing') {
-		message =
-			'"tsrx.typescript.backend" is set to "native", but the installed TypeScript 7 extension does not support content mappers. Update it; using the classic backend for .tsrx files.';
+		message = `"tsrx.typescript.backend" is set to "native", but the installed TypeScript 7 extension (${selection.native.extension?.id ?? 'unknown'} ${selection.native.extension?.packageJSON?.version ?? ''}) does not expose the content-mapper API. The native backend needs ${NATIVE_REQUIREMENTS}. Using the classic backend for .tsrx files. ${TYPESCRIPT_7_SUPPORT_NOTE}`;
 	} else if (selection.reason === 'setting-native' && !is_tsgo_enabled()) {
-		message =
-			'"tsrx.typescript.backend" is set to "native", but TypeScript 7 is not enabled ("js/ts.experimental.useTsgo"). .tsrx files get no TypeScript features until it is enabled.';
+		message = `"tsrx.typescript.backend" is set to "native", but TypeScript 7 is not enabled ("js/ts.experimental.useTsgo"). .tsrx files get no TypeScript features until it is enabled. ${TYPESCRIPT_7_SUPPORT_NOTE}`;
 	}
 	if (!message) {
 		return;
 	}
-	const open_settings_action = 'Open Settings';
-	const selected = await vscode.window.showWarningMessage(message, open_settings_action);
-	if (selected === open_settings_action) {
-		await vscode.commands.executeCommand(
-			'workbench.action.openSettings',
-			`@id:${BACKEND_SETTING} @id:js/ts.experimental.useTsgo`,
-		);
-	}
+	await show_typescript_7_warning(message, `@id:${BACKEND_SETTING} @id:js/ts.experimental.useTsgo`);
 	void context;
+}
+
+/**
+ * Show a warning about TypeScript 7 support with the actions every such message
+ * shares: open the tracking issue, or open the settings that decide the backend.
+ * @param {string} message
+ * @param {string} settings_query
+ */
+async function show_typescript_7_warning(message, settings_query) {
+	const open_settings_action = 'Open Settings';
+	const selected = await vscode.window.showWarningMessage(
+		message,
+		OPEN_TRACKING_ISSUE_ACTION,
+		open_settings_action,
+	);
+	if (selected === OPEN_TRACKING_ISSUE_ACTION) {
+		await vscode.env.openExternal(vscode.Uri.parse(TYPESCRIPT_7_TRACKING_ISSUE_URL));
+	} else if (selected === open_settings_action) {
+		await vscode.commands.executeCommand('workbench.action.openSettings', settings_query);
+	}
 }
 
 /**
@@ -430,7 +464,11 @@ function register_native_content_mapper(context, native) {
 	context.subscriptions.push(
 		vscode.extensions.onDidChange(async () => {
 			const current = find_native_typescript_extension();
-			if (current.extension === registered_with && registration) {
+			if (
+				registration &&
+				registered_with &&
+				find_native_typescript_extensions().includes(registered_with)
+			) {
 				return;
 			}
 			unregister();
@@ -521,20 +559,10 @@ async function warn_about_local_tsgo_usage(context) {
 
 	await context.workspaceState.update(TSGO_WARNING_STATE_KEY, true);
 
-	const open_settings_action = 'Open Settings';
-	const dismiss_action = 'Dismiss';
-	const selection = await vscode.window.showWarningMessage(
+	await show_typescript_7_warning(
 		TSGO_UNSUPPORTED_MESSAGE,
-		open_settings_action,
-		dismiss_action,
+		`@id:${BACKEND_SETTING} @id:js/ts.experimental.useTsgo @id:typescript.experimental.useTsgo`,
 	);
-
-	if (selection === open_settings_action) {
-		await vscode.commands.executeCommand(
-			'workbench.action.openSettings',
-			'@id:js/ts.experimental.useTsgo @id:typescript.experimental.useTsgo',
-		);
-	}
 	void local_tsgo_sections;
 }
 

@@ -145,3 +145,52 @@ describe.each(['native', 'bypass', 'legacy'])('tsrx-tsc with the %s loader', (lo
 		expect(result.status).toBe(0);
 	});
 });
+
+describe('tsrx-tsc with a TypeScript 7 package', () => {
+	it('explains that the native TypeScript package has no JavaScript API instead of failing on its export map', () => {
+		// What `typescript@7` resolves to: an export map without `lib/tsc.js` and a
+		// main that only carries the version.
+		const stub_dir = path.join(workspace, 'typescript-7-stub');
+		fs.mkdirSync(path.join(stub_dir, 'lib'), { recursive: true });
+		fs.writeFileSync(
+			path.join(stub_dir, 'package.json'),
+			JSON.stringify({
+				name: 'typescript',
+				version: '7.0.2',
+				exports: { './package.json': './package.json', '.': './lib/version.cjs' },
+			}),
+		);
+		fs.writeFileSync(
+			path.join(stub_dir, 'lib', 'version.cjs'),
+			'module.exports = { version: "7.0.2", versionMajorMinor: "7.0" };',
+		);
+		const runner_path = path.join(workspace, 'runner-ts7.cjs');
+		fs.writeFileSync(
+			runner_path,
+			`
+const node_module = require('node:module');
+const path = require('node:path');
+const stub_dir = ${JSON.stringify(stub_dir)};
+const original_resolve = node_module.Module._resolveFilename;
+node_module.Module._resolveFilename = function (request, ...rest) {
+	if (request === 'typescript/package.json') return path.join(stub_dir, 'package.json');
+	if (request === 'typescript') return path.join(stub_dir, 'lib', 'version.cjs');
+	return original_resolve.call(this, request, ...rest);
+};
+require(${JSON.stringify(cli_path)});
+`,
+		);
+		const result = spawnSync(process.execPath, [runner_path, '--noEmit', '-p', 'tsconfig.json'], {
+			cwd: workspace,
+			encoding: 'utf8',
+			timeout: 30_000,
+		});
+		expect(result.error).toBeUndefined();
+		expect(result.status).toBe(1);
+		const output = result.stdout + result.stderr;
+		expect(output).toContain('tsrx-tsc resolved typescript@7.0.2');
+		expect(output).toContain('^5.9.3 || ^6.0.0');
+		expect(output).toContain('https://github.com/tsrx-org/tsrx/issues/');
+		expect(output).not.toContain('ERR_PACKAGE_PATH_NOT_EXPORTED');
+	});
+});

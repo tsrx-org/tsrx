@@ -299,3 +299,12 @@ describe('blank_script_bodies', () => {
 		).toBe(text);
 	});
 });
+
+describe('TypeScript package guard', () => {
+	it('refuses the native TypeScript package, whose npm package has no JavaScript API', () => {
+		const native_package = /** @type {any} */ ({ version: '7.0.2', versionMajorMinor: '7.0' });
+		expect(() => create_tsrx_content_mapper({ typescript: native_package })).toThrow(
+			/@tsrx\/content-mapper resolved typescript@7\.0\.2,[\s\S]*its own dependency/,
+		);
+	});
+});

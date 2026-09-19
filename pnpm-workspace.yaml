@@ -40,6 +40,10 @@ allowBuilds:
 # variables used in the catalog
 prettier_common: &prettier_common ^3.9.6
 ts_common: &ts_common ^5.9.3
+# The typescript versions whose JavaScript API TSRX's tooling runs on (see
+# packages/typescript-plugin/src/typescript-version.js). TypeScript 7 packages only
+# launch the native binary and are not in this range.
+ts_supported: &ts_supported ^5.9.3 || ^6.0.0
 ts_eslint_parser: &ts_eslint_parser ^8.56.1
 esrap_common: &esrap_common ^2.3.2
 
@@ -160,6 +164,6 @@ catalogs:
     eslint: '>=9.0.0'
     prettier: '>=2.0.0'
     tailwindcss: ^4.1.12
-    typescript: *ts_common
+    typescript: *ts_supported
   vscode:
     typescript: *ts_common

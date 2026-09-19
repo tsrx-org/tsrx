@@ -86,7 +86,7 @@
             "native"
           ],
           "enumDescriptions": [
-            "Use the native backend when the TypeScript 7 extension (TypeScriptTeam.vscode-typescript) is installed and TypeScript 7 is enabled (js/ts.experimental.useTsgo); otherwise the classic backend.",
+            "Use the native backend when a TypeScript 7 extension (TypeScriptTeam.vscode-typescript, its nightly channel, or TypeScriptTeam.native-preview) that exposes the content-mapper API is installed and TypeScript 7 is enabled (js/ts.experimental.useTsgo); otherwise the classic backend. TypeScript 7 support for .tsrx files is not complete yet: https://github.com/tsrx-org/tsrx/issues/136.",
             "The TSRX language server hosts TypeScript 5 itself and the built-in TypeScript extension is patched to recognize .tsrx files.",
             "TypeScript 7 owns TypeScript features for .tsrx files through @tsrx/content-mapper (declare it under \"contentMappers\" in tsconfig.json; files without a project use the copy bundled with this extension). The TSRX language server only serves snippets, CSS, symbols, auto-closing tags and CSS-class navigation."
           ],

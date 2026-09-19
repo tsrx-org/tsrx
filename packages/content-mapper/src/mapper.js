@@ -15,6 +15,7 @@ import {
 	source_uses_platform_flag,
 } from '@tsrx/typescript-plugin/src/language.js';
 import { transform_tsrx } from '@tsrx/typescript-plugin/src/transform.js';
+import { unsupported_typescript_message } from '@tsrx/typescript-plugin/src/typescript-version.js';
 import { build_export_stub } from './export-stub.js';
 import {
 	DIAGNOSTIC_CODE_COMPILE_ERROR,
@@ -70,6 +71,12 @@ const bare_package_specifier_pattern =
  */
 export function create_tsrx_content_mapper(context = {}) {
 	const typescript = context.typescript ?? ts;
+	// tsconfig parsing and compiler resolution go through TypeScript's JavaScript
+	// API, which the native TypeScript package (7.x) does not have.
+	const unsupported_typescript = unsupported_typescript_message(typescript, 'content-mapper');
+	if (unsupported_typescript) {
+		throw new Error(unsupported_typescript);
+	}
 	const host = context.host ?? typescript.sys;
 	/** @type {Map<string, ProjectState>} */
 	const projects = new Map();

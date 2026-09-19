@@ -4,8 +4,20 @@ import fs from 'node:fs';
 import node_module, { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { getTsrxLanguagePlugin } from './language.js';
+import { unsupported_typescript_message } from './typescript-version.js';
 
 const require = createRequire(import.meta.url);
+// The TypeScript 7 package is a launcher for the native binary without
+// `lib/tsc.js` or any other JavaScript entry; explain that instead of failing
+// on the export map.
+const unsupported_typescript = unsupported_typescript_message(
+	/** @type {{ version: string }} */ (require('typescript/package.json')).version,
+	'tsrx-tsc',
+);
+if (unsupported_typescript) {
+	console.error(unsupported_typescript);
+	process.exit(1);
+}
 const { runTsc } = /** @type {typeof import('@volar/typescript/lib/quickstart/runTsc.js')} */ (
 	require('@volar/typescript/lib/quickstart/runTsc.js')
 );

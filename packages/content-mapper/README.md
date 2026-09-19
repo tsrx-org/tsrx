@@ -6,7 +6,27 @@ through the upstream content-mapper protocol, reusing the target-specific
 type-only transform that also powers `@tsrx/typescript-plugin` and the classic
 Volar path.
 
-Tracking issue: https://github.com/tsrx-org/tsrx/issues/41
+Implementation issue: https://github.com/tsrx-org/tsrx/issues/41. Gaps in
+TypeScript 7 support and the upstream issues behind them:
+https://github.com/tsrx-org/tsrx/issues/136.
+
+## Requirements
+
+- **TypeScript `7.1.0-dev.20260822.1` or newer.** The content-mapper protocol is
+  not in the stable 7.0 line: `typescript@7.0.2` rejects `--runExternalCode`
+  (TS5023) and ignores `contentMappers`. `7.1.0-dev.20260822.1` is the oldest
+  nightly that passes this package's test suite (`7.1.0-dev.20260821.1` fails it);
+  the repository pins `7.1.0-dev.20260918.1`. Run the suite against another build
+  with `TSRX_NATIVE_TSC=<path to tsc>`.
+- **`--runExternalCode`.** TypeScript only spawns the mapper when the user opts
+  in; the mapper never enables it. Without the flag, a `contentMappers` entry is
+  an error (TS100024).
+- **A JavaScript TypeScript for tsconfig parsing.** The mapper reads
+  `tsconfig.json` and resolves compilers through TypeScript's JavaScript API,
+  which the native `typescript@7` package does not have, so it declares
+  `typescript@^5.9.3 || ^6.0.0` as its own dependency. A project on `typescript@7`
+  needs nothing extra; the mapper refuses to start with an explanation if it still
+  resolves a TypeScript 7 package.
 
 ## Usage
 
@@ -33,7 +53,7 @@ tsc --runExternalCode --noEmit
 ```
 
 The classic `tsrx-tsc` (from `@tsrx/typescript-plugin`) keeps working unchanged
-for TypeScript 5.
+for TypeScript 5.9 and 6.
 
 ### Options
 

@@ -61,10 +61,14 @@ describe('TypeScript backend resolution', () => {
 		).toEqual({ backend: 'classic', reason: 'native-api-missing' });
 	});
 
-	it('looks up the stable TypeScript 7 extension before the nightly one', () => {
+	it('looks up the TypeScript 7 extension ids in the order VS Code does', () => {
+		// The current id, its nightly channel and the original preview id: the list
+		// VS Code's built-in TypeScript extension consults
+		// (extensions/typescript-language-features/src/commands/useTsgo.ts).
 		expect(NATIVE_TYPESCRIPT_EXTENSION_IDS).toEqual([
 			'TypeScriptTeam.vscode-typescript',
 			'TypeScriptTeam.vscode-typescript-nightly',
+			'TypeScriptTeam.native-preview',
 		]);
 		expect(BACKEND_SETTING).toBe('tsrx.typescript.backend');
 	});

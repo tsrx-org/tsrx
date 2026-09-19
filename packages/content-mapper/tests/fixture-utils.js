@@ -64,10 +64,19 @@ export const mapper_server_path = path.join(package_dir, 'src', 'server.js');
  * Absolute path of the pinned native TypeScript 7 binary for this platform,
  * resolved from the repository root's `@typescript/typescript-<os>-<arch>`
  * optional dependency. Throws when it is missing: the native path must be
- * exercised in CI, never skipped.
+ * exercised in CI, never skipped. `TSRX_NATIVE_TSC=<path>` overrides it to run
+ * the suite against another TypeScript build (a newer nightly, or the oldest
+ * one the mapper still supports).
  * @returns {string}
  */
 export function native_tsc_path() {
+	const override = process.env.TSRX_NATIVE_TSC;
+	if (override) {
+		if (!fs.existsSync(override)) {
+			throw new Error(`TSRX_NATIVE_TSC points to a missing file: ${override}`);
+		}
+		return override;
+	}
 	const package_name = `@typescript/typescript-${process.platform}-${process.arch}`;
 	const binary = path.join(
 		repo_root,

@@ -14,6 +14,7 @@ import {
 	invalidateTypeDefinitionCaches,
 	resolveConfig,
 } from '@tsrx/typescript-plugin/src/language.js';
+import { unsupported_typescript_message } from '@tsrx/typescript-plugin/src/typescript-version.js';
 import {
 	handleWorkspaceChanges,
 	trackTypeScriptConfigDependencies,
@@ -106,6 +107,10 @@ export function createTsrxLanguageServer(options = {}) {
 			// Classic TypeScript is still needed on the native path: the language
 			// plugin reads tsconfig (compiler selection, `extends`) through its API.
 			const ts = require('typescript');
+			const unsupported_typescript = unsupported_typescript_message(ts, 'language-server');
+			if (unsupported_typescript) {
+				throw new Error(unsupported_typescript);
+			}
 
 			const initResult = server.initialize(
 				params,

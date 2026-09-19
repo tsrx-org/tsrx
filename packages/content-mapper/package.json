@@ -37,7 +37,7 @@
     "build": "tsdown",
     "prepare": "tsdown"
   },
-  "peerDependencies": {
+  "dependencies": {
     "typescript": "catalog:peer"
   },
   "devDependencies": {
@@ -57,7 +57,6 @@
     "ripple": "catalog:default",
     "solid-js": "catalog:default",
     "tsdown": "catalog:default",
-    "typescript": "catalog:default",
     "vue": "3.6.0-beta.12"
   },
   "publishConfig": {

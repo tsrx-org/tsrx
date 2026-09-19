@@ -12,6 +12,20 @@ The
 already bundles this plugin through `@tsrx/language-server`; no separate VS Code
 configuration is needed.
 
+## Supported TypeScript versions
+
+The plugin, `tsrx-tsc` and the TSRX language server run on TypeScript's JavaScript
+API and support `typescript@^5.9.3 || ^6.0.0` (the peer dependency range). The
+`typescript@7` package is the native compiler: it only launches the platform
+binary and has no JavaScript API, so `tsrx-tsc` stops with an explanation when it
+resolves one instead of failing on the package's export map. To type-check `.tsrx`
+files with TypeScript 7 itself, use
+[`@tsrx/content-mapper`](../content-mapper/README.md) with
+`tsc --runExternalCode`; it needs a TypeScript 7.1 nightly (`7.1.0-dev.20260822.1`
+or newer), because the stable 7.0 releases have no content-mapper protocol.
+TypeScript 7 support is not complete yet; the gaps are tracked in
+[tsrx-org/tsrx#136](https://github.com/tsrx-org/tsrx/issues/136).
+
 ## Configuration
 
 For a standalone tsserver integration, install this package and add it to the

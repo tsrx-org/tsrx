@@ -17,10 +17,17 @@
 /** The contributor id passed to `registerContentMappers`: publisher.name of this extension. */
 export const CONTRIBUTOR_ID = 'TSRX.tsrx-vscode-plugin';
 
-/** Stable and nightly ids of the TypeScript 7 extension, in lookup order. */
+/**
+ * Ids of the TypeScript 7 extension, in lookup order: the current id, its
+ * nightly channel and the original preview id (the same list VS Code's built-in
+ * TypeScript extension consults). The nightly channel can be installed as a
+ * compiler-only companion without an API beside the extension that has one, so
+ * every installed id is tried for `registerContentMappers`.
+ */
 export const NATIVE_TYPESCRIPT_EXTENSION_IDS = [
 	'TypeScriptTeam.vscode-typescript',
 	'TypeScriptTeam.vscode-typescript-nightly',
+	'TypeScriptTeam.native-preview',
 ];
 
 export const BACKEND_SETTING = 'tsrx.typescript.backend';

@@ -32,6 +32,13 @@ npx @tsrx/language-server --stdio
 
 Configure your editor's LSP client for `*.tsrx` files with the language ID `tsrx`.
 
+The server needs TypeScript's JavaScript API, `typescript@^5.9.3 || ^6.0.0` (its
+peer dependency), on both backends: to host TypeScript on `classic`, and to read
+`tsconfig.json` on `native`. A project whose only `typescript` is the native
+TypeScript 7 package (a launcher without a JavaScript API) must install one of
+those versions beside it; the server refuses to initialize with an explanation
+otherwise.
+
 ## TypeScript backends
 
 The server runs beside one of two TypeScript backends. Never run both on the same
