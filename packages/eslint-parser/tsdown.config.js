@@ -1,18 +1,20 @@
 import { defineConfig } from 'tsdown';
 
 export default defineConfig({
-	inlineOnly: false,
 	entry: 'src/index.ts',
 	format: ['esm'],
 	fixedExtension: false,
 	dts: true,
-	// Mark peer dependencies and workspace packages as external so they're not bundled
-	external: ['eslint', '@tsrx/core'],
+	deps: {
+		// Mark peer dependencies and workspace packages as external so they're not bundled
+		neverBundle: ['eslint', '@tsrx/core'],
+		alwaysBundle: /.+/,
+		onlyBundle: false,
+	},
 	outputOptions: {
-		legalComments: 'inline',
+		comments: { legal: true },
 	},
 	clean: true,
-	noExternal: /.+/,
 	platform: 'node',
 	target: 'node22',
 	outDir: 'dist',

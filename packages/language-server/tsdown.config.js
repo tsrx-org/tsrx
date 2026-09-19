@@ -21,7 +21,6 @@ const ROOT_EXTERNAL_PACKAGES = [
 ];
 
 export default defineConfig({
-	inlineOnly: false,
 	dts: false,
 	entry: ['src/server.js', 'src/language-server.js'],
 	format: ['cjs'],
@@ -31,12 +30,15 @@ export default defineConfig({
 	outDir: 'dist',
 	sourcemap: isDev,
 	outputOptions: {
-		legalComments: 'inline',
+		comments: { legal: true },
 		minify: false,
 	},
-	external: [...ROOT_EXTERNAL_PACKAGES],
+	deps: {
+		neverBundle: [...ROOT_EXTERNAL_PACKAGES],
+		alwaysBundle: /.+/,
+		onlyBundle: false,
+	},
 	clean: true,
-	noExternal: /.+/,
 	hooks: {
 		'build:done': () => {
 			fs.writeFileSync(path.join(dirname, 'dist', 'package.json'), '{"type":"commonjs"}\n');

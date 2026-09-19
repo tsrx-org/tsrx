@@ -7,7 +7,6 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.NODE_ENV !== 'production';
 
 export default defineConfig({
-	inlineOnly: false,
 	entry: ['src/index.js', 'src/tsc.js'],
 	format: ['cjs'],
 	outExtensions: () => ({ js: '.js' }),
@@ -16,15 +15,18 @@ export default defineConfig({
 	outDir: 'dist',
 	sourcemap: isDev,
 	outputOptions: {
-		legalComments: 'inline',
+		comments: { legal: true },
 		minify: true,
 	},
-	// `jsonc-parser` stays external: its `main` is a UMD build whose internal
-	// `require('./impl/...')` calls survive bundling and then fail at runtime.
-	// It is a runtime dependency, so consumers install it next to this package.
-	external: ['typescript', 'jsonc-parser', /^@tsrx\/.*$/],
+	deps: {
+		// `jsonc-parser` stays external: its `main` is a UMD build whose internal
+		// `require('./impl/...')` calls survive bundling and then fail at runtime.
+		// It is a runtime dependency, so consumers install it next to this package.
+		neverBundle: ['typescript', 'jsonc-parser', /^@tsrx\/.*$/],
+		alwaysBundle: /.+/,
+		onlyBundle: false,
+	},
 	clean: true,
-	noExternal: /.+/,
 	hooks: {
 		'build:done': () => {
 			fs.writeFileSync(path.join(dirname, 'dist', 'package.json'), '{"type":"commonjs"}\n');
