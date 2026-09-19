@@ -1527,8 +1527,8 @@ Two paths type-check `.tsrx` files; both use the same target-specific transform.
 ```
 
 Editors: the VS Code extension picks the backend with `tsrx.typescript.backend`
-(`auto` uses native only when a TypeScript 7 extension build with the
-content-mapper API is installed and `js/ts.experimental.useTsgo` is on); other
+(`auto` uses native when TypeScript 7 is enabled in VS Code,
+`js/ts.experimental.useTsgo`; the mapper always comes from `tsconfig.json`); other
 editors run `tsrx-language-server --stdio --typescript-backend=native` beside
 TypeScript 7's `tsc --lsp`. Gaps in TypeScript 7 support and the upstream issues
 behind them: https://github.com/tsrx-org/tsrx/issues/136.

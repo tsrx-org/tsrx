@@ -45,7 +45,6 @@
     "build-package-install-and-run": "pnpm build && pnpm package && pnpm install-package && code"
   },
   "dependencies": {
-    "@tsrx/content-mapper": "workspace:*",
     "@tsrx/language-server": "workspace:*",
     "jsonc-parser": "catalog:default",
     "@tsrx/typescript-plugin": "workspace:*",
@@ -87,9 +86,9 @@
             "native"
           ],
           "enumDescriptions": [
-            "Use the native backend when a TypeScript 7 extension (TypeScriptTeam.vscode-typescript, its nightly channel, or TypeScriptTeam.native-preview) that exposes the content-mapper API is installed and TypeScript 7 is enabled (js/ts.experimental.useTsgo); otherwise the classic backend. TypeScript 7 support for .tsrx files is not complete yet: https://github.com/tsrx-org/tsrx/issues/136.",
+            "Use the native backend when TypeScript 7 is enabled in VS Code (js/ts.experimental.useTsgo, which the \"Select TypeScript Version\" picker sets); otherwise the classic backend. TypeScript 7 support for .tsrx files is not complete yet: https://github.com/tsrx-org/tsrx/issues/136.",
             "The TSRX language server hosts TypeScript 5 itself and the built-in TypeScript extension is patched to recognize .tsrx files.",
-            "TypeScript 7 owns TypeScript features for .tsrx files through @tsrx/content-mapper (declare it under \"contentMappers\" in tsconfig.json; files without a project use the copy bundled with this extension). The TSRX language server only serves snippets, CSS, symbols, auto-closing tags and CSS-class navigation."
+            "TypeScript 7 owns TypeScript features for .tsrx files through @tsrx/content-mapper, which every tsconfig.json containing .tsrx files must declare under \"contentMappers\" (a 7.1 nightly is required). The TSRX language server only serves snippets, CSS, symbols, auto-closing tags and CSS-class navigation."
           ],
           "default": "auto",
           "scope": "window",

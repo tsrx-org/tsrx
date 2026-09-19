@@ -378,8 +378,10 @@ describe('trust gate: runExternalCode', () => {
 });
 
 describe('inferred projects through custom/setContentMapperContributions', () => {
-	// What the VS Code extension's `registerContentMappers` call turns into on the
-	// wire: no tsconfig anywhere, the mapper comes from the contribution.
+	// The inferred-project contribution of the protocol (what the TypeScript 7 VS
+	// Code extension's `registerContentMappers` API turns into on the wire): no
+	// tsconfig anywhere, the mapper comes from the contribution. The TSRX VS Code
+	// extension does not use that API; this pins the server side of the protocol.
 	const all = workspace_files();
 	const files = {
 		'Panel.tsrx': all['Panel.tsrx'],

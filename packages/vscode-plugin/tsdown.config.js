@@ -35,15 +35,13 @@ console.log(`ℹ️  Found ${computed.length} packages to mark as external`);
 const isDev = process.env.NODE_ENV !== 'production';
 
 export default defineConfig({
-	inlineOnly: false,
-	// `content-mapper.js` is the bundled @tsrx/content-mapper the extension registers with the
-	// TypeScript 7 extension for inferred projects (native backend). `@tsrx/typescript-plugin` is
-	// inlined into both servers, exactly like the language server's own build does.
-	entry: ['src/extension.js', 'src/server.js', 'src/content-mapper.js'],
+	// `@tsrx/typescript-plugin` is inlined into the server, exactly like the language server's
+	// own build does.
+	entry: ['src/extension.js', 'src/server.js'],
 	outDir: OUT_DIR,
 	sourcemap: isDev,
 	outputOptions: {
-		legalComments: 'inline',
+		comments: { legal: true },
 		minify: false,
 	},
 	clean: true,
@@ -51,8 +49,11 @@ export default defineConfig({
 	outExtensions: () => ({ js: '.js' }),
 	platform: 'node',
 	target: 'node22',
-	external: [...allExternalPackages],
-	noExternal: /.+/,
+	deps: {
+		neverBundle: [...allExternalPackages],
+		alwaysBundle: /.+/,
+		onlyBundle: false,
+	},
 	hooks: {
 		'build:done': () => {
 			// Write a CJS package.json so Node.js treats dist/*.js as CommonJS

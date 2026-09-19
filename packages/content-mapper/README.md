@@ -165,9 +165,12 @@ what editors get:
 - Without `runExternalCode` the mapper process is never spawned, `.tsrx` is never
   registered and `.ts` importers report TS2307 for `.tsrx` modules: that is the
   untrusted-workspace behaviour.
-- `custom/setContentMapperContributions` (what the VS Code extension's
-  `registerContentMappers` call becomes) maps `.tsrx` files that belong to no
-  configured project, and clearing it unregisters them.
+- `custom/setContentMapperContributions` (the inferred-project contribution of the
+  protocol, which the TypeScript 7 VS Code extension exposes to other extensions
+  as `registerContentMappers`) maps `.tsrx` files that belong to no configured
+  project, and clearing it unregisters them. The TSRX VS Code extension does not
+  use it: `.tsrx` files are mapped through the `contentMappers` entry of the
+  `tsconfig.json` that covers them, in every editor alike.
 
 The TSRX language server runs beside it with `--typescript-backend=native`; see
 [`@tsrx/language-server`](../language-server/README.md) and the VS Code
@@ -238,8 +241,9 @@ platform packages directly instead of the launcher:
 - The pinned nightly is also listed under `minimumReleaseAgeExclude` in
   `pnpm-workspace.yaml` because it is newer than the workspace's release-age
   policy.
-- `@typescript/native-preview` (the `tsgo` used by `pnpm typecheck`) is a
-  different, older build and does not contain the content-mapper feature.
+- `pnpm typecheck` runs the same pinned platform packages through
+  `scripts/native-tsc.js`, since the root `typescript` must stay on the 5.x line
+  for the tooling's JavaScript API.
 
 Tests locate the binary as
 `node_modules/@typescript/typescript-${process.platform}-${process.arch}/lib/tsc`
@@ -279,9 +283,8 @@ pnpm test --project content-mapper
 - `src/rpc.js` (`run_mapper_server`, `redirect_console_to_stderr`) is the stdio
   transport and `src/mapper.js` (`create_tsrx_content_mapper`) the protocol
   implementation. Both are exported (`@tsrx/content-mapper/rpc`,
-  `@tsrx/content-mapper/mapper`) so a host that ships its own copy of the mapper,
-  such as the VS Code extension for inferred projects, can start it from its own
-  bundled entry file.
+  `@tsrx/content-mapper/mapper`) so a host that ships its own copy of the mapper
+  can start it from its own bundled entry file.
 
 `MAPPING.md` is the inventory of every mapping site in the shared transform and
 the span kind and feature bits each one becomes.

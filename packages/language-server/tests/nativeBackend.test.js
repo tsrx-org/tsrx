@@ -49,10 +49,10 @@ describe('TypeScript backend selection', () => {
 	});
 
 	it('falls back to classic and reports an invalid value', () => {
-		expect(resolve_typescript_backend({ argv: ['--typescript-backend=tsgo'] })).toEqual({
+		expect(resolve_typescript_backend({ argv: ['--typescript-backend=volar'] })).toEqual({
 			backend: 'classic',
 			source: 'default',
-			invalid: 'tsgo',
+			invalid: 'volar',
 		});
 		expect(
 			resolve_typescript_backend({ initializationOptions: { typescriptBackend: true } }),

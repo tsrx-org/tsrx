@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { CONTRIBUTOR_ID } from '../src/backend.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const package_json = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf8'));
@@ -54,12 +53,15 @@ describe('@tsrx/vscode-plugin package contract', () => {
 		expect(setting.enumDescriptions).toHaveLength(3);
 	});
 
-	it('bundles @tsrx/content-mapper for inferred projects', () => {
-		expect(package_json.dependencies['@tsrx/content-mapper']).toBe('workspace:*');
-		expect(existsSync(resolve(__dirname, '../src/content-mapper.js'))).toBe(true);
+	it('ships no content mapper of its own and depends on no other extension', () => {
+		// On the native backend TypeScript 7 runs the mapper each tsconfig.json declares under
+		// `contentMappers`; the extension neither bundles a copy nor registers one through the
+		// TypeScript 7 extension's API.
+		expect(package_json.dependencies['@tsrx/content-mapper']).toBeUndefined();
+		expect(existsSync(resolve(__dirname, '../src/content-mapper.js'))).toBe(false);
 		const tsdown_config = readFileSync(resolve(__dirname, '../tsdown.config.js'), 'utf8');
-		expect(tsdown_config).toContain("'src/content-mapper.js'");
-		// The contributor id handed to registerContentMappers is the marketplace identity.
-		expect(CONTRIBUTOR_ID).toBe(`${package_json.publisher}.tsrx-vscode-plugin`);
+		expect(tsdown_config).not.toContain('content-mapper');
+		expect(package_json.extensionDependencies).toBeUndefined();
+		expect(package_json.extensionPack).toBeUndefined();
 	});
 });

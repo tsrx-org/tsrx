@@ -1172,12 +1172,11 @@ export function GettingStartedPage() @{
 								<code class="inline-code">classic</code>
 								(the bundled TypeScript 5.9),
 								<code class="inline-code">native</code>
-								(TypeScript 7 through the bundled content mapper), or
+								(TypeScript 7 through the content mapper declared in tsconfig.json), or
 								<code class="inline-code">auto</code>
-								(the default: native only when a TypeScript 7 extension build with the
-								content-mapper API is installed and
+								(the default: native when TypeScript 7 is enabled in VS Code through
 								<code class="inline-code">js/ts.experimental.useTsgo</code>
-								is on). With TypeScript 7 enabled, set Prettier as the
+								or the TypeScript version picker). With TypeScript 7 enabled, set Prettier as the
 								<code class="inline-code">[tsrx]</code>
 								default formatter, since TypeScript 7 also registers one. The extension explains
 								when it has to fall back and links the tracking issue.
