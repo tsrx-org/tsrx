@@ -4,18 +4,23 @@
  * - `classic`: the server hosts TypeScript 5 itself through Volar
  *   (`volar-service-typescript`) and wraps its results for `.tsrx` files.
  * - `native`: TypeScript 7 owns every TypeScript feature for `.tsrx` files
- *   through `@tsrx/content-mapper`; the server only serves what TypeScript
- *   does not (snippets, CSS in `<style>`, document symbols, auto-insert,
- *   CSS-class hover and definition, keyword highlights).
+ *   through `@tsrx/content-mapper`, including the TSRX compile errors the
+ *   mapper reports; the server only serves what TypeScript does not
+ *   (snippets, CSS in `<style>`, document symbols, auto-insert, CSS-class
+ *   hover and definition, keyword highlights).
+ * - `plugin`: the editor's own tsserver owns every TypeScript feature for
+ *   `.tsrx` files through `@tsrx/typescript-plugin` (VS Code with TypeScript
+ *   5.9 or 6). The server is as slim as on `native` but also reports the TSRX
+ *   compile errors, which a tsserver plugin cannot.
  *
  * Both backends must never run on the same file, so the choice is made once
  * at startup, from the `--typescript-backend=<name>` command-line flag or the
  * `typescriptBackend` initialization option (the flag wins).
  */
 
-/** @typedef {'classic' | 'native'} TypeScriptBackend */
+/** @typedef {'classic' | 'native' | 'plugin'} TypeScriptBackend */
 
-export const TYPESCRIPT_BACKENDS = /** @type {const} */ (['classic', 'native']);
+export const TYPESCRIPT_BACKENDS = /** @type {const} */ (['classic', 'native', 'plugin']);
 export const DEFAULT_TYPESCRIPT_BACKEND = /** @type {TypeScriptBackend} */ ('classic');
 export const TYPESCRIPT_BACKEND_FLAG = '--typescript-backend';
 

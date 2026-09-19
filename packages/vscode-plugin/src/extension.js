@@ -11,45 +11,25 @@
  *      language server slimmed down. The extension never talks to the TypeScript 7 extension.
  * 3. Setting VSCode context variables to expose TypeScript commands for TSRX files
  *
- * Architecture: Language Server vs TypeScript Plugin
- * --------------------------------------------------
- * language-server: A Language Server Protocol (LSP) server built on Volar that provides
- * language features for TSRX files including diagnostics, IntelliSense, go-to-definition, etc.
- * It uses typescript-plugin internally to transform TSRX syntax into TypeScript virtual
- * files for type checking and IntelliSense.
+ * Architecture: VS Code's TypeScript owns `.tsrx` files
+ * -----------------------------------------------------
+ * The extension never loads TypeScript and never patches another extension. TypeScript
+ * features for `.tsrx` files come from the TypeScript VS Code itself runs:
  *
- * typescript-plugin: A Volar-based TypeScript plugin that transforms TSRX component files into
- * TypeScript virtual code. This plugin enables TypeScript's language service to understand TSRX
- * syntax. It's already loaded and used by language-server, so we don't need to configure
- * it separately.
+ * - TypeScript 7 off (classic): VS Code's built-in TypeScript extension runs its tsserver with
+ *   `@tsrx/typescript-plugin`, contributed through the `typescriptServerPlugins` point of
+ *   package.json and shipped inside this extension. `languages: ["tsrx"]` makes VS Code manage
+ *   `.tsrx` documents like `.ts` ones, so its own commands and menus (Find All File References,
+ *   Sort Imports, ...) work on them and `.ts` importers resolve `.tsrx` modules, whichever
+ *   TypeScript version VS Code runs (its own copy or the workspace's).
+ * - TypeScript 7 on (native): the TypeScript 7 extension runs `@tsrx/content-mapper` for the
+ *   `.tsrx` files each tsconfig.json declares under `contentMappers`.
  *
- * IMPORTANT: DO NOT use "typescriptServerPlugins" in package.json
- * ----------------------------------------------------------------
- * The "typescriptServerPlugins" contribution point would tell VSCode's TypeScript extension to
- * load typescript-plugin into its own tsserver instance. However:
- * 1. We already run language-server which uses typescript-plugin internally
- * 2. Loading it twice (once in our LSP, once in TS extension) creates conflicts and duplication
- * 3. Our language server provides more features than just the TypeScript plugin alone
- * 4. We use runtime patching instead to make the TS extension recognize TSRX files
- *
- * IMPORTANT: TypeScript Command Integration
- * ----------------------------------------
- * We DO NOT register TypeScript commands (like typescript.goToSourceDefinition,
- * typescript.findAllFileReferences, etc.) ourselves, as this would conflict with
- * the built-in TypeScript extension which already owns these commands.
- *
- * Instead, we:
- * 1. Patch the TypeScript extension to treat TSRX files as TypeScript-like files
- * 2. Set context variables (via setupDynamicContexts) that the TypeScript extension uses
- * 3. Declare menu contributions in package.json that reference the existing TypeScript commands
- *
- * The package.json "menus" section controls WHERE and WHEN TypeScript commands appear in the UI.
- * This extension's code sets the context variable VALUES that the menu "when" clauses check.
- *
- * Example flow:
- * - package.json declares: Show "typescript.goToSourceDefinition" when "resourceLangId == tsrx"
- * - This code sets: resourceLangId = 'tsrx' when editing a supported TSRX component file
- * - Result: The TypeScript command appears in the context menu for TSRX files
+ * The TSRX language server (language-server, Volar based) runs beside it in a slim mode and
+ * serves only what TypeScript does not: TSRX snippets, CSS in `<style>`, document symbols,
+ * auto-closing tags, CSS-class hover and definition, keyword highlights, and, when VS Code's
+ * tsserver is the TypeScript (`typescriptBackend: "plugin"`), the TSRX compile errors that the
+ * content mapper reports itself on TypeScript 7. Only one TypeScript ever serves a file.
  */
 
 import vscode from 'vscode';
@@ -59,24 +39,14 @@ import protocol from '@volar/language-server/protocol';
 import * as lsp from 'vscode-languageclient/node';
 import { activateAutoInsertion, createLabsInfo } from '@volar/vscode';
 import {
-	TSDK_SETTINGS,
 	TYPESCRIPT_7_SETTING_KEY,
 	TYPESCRIPT_7_SETTING_SECTIONS,
 	resolve_backend,
-	tsdk_candidates,
 } from './backend.js';
 
 /** @import { Backend } from './backend.js' */
 
-/**
- * @typedef {object} ClassicTypeScript
- * @property {string} tsdk The `lib` directory of the TypeScript installation the classic backend hosts.
- * @property {string} version
- * @property {'setting' | 'vscode'} source
- */
-
 const TSRX_FILE_SELECTORS = ['**/*.tsrx'];
-const TSRX_FILE_EXCLUDE_GLOB = '**/{node_modules,dist,build,.git}/**';
 const RESTART_EXTENSIONS_ACTION = 'Restart Extensions';
 
 /**
@@ -114,27 +84,9 @@ export async function activate(context) {
 		vscode.workspace.onDidChangeConfiguration(async (event) => {
 			if (is_typescript_7_configuration_change(event)) {
 				await prompt_restart_if_backend_changed();
-			} else if (backend === 'classic' && is_tsdk_configuration_change(event)) {
-				await restart_client_with_current_typescript();
 			}
 		}),
 	);
-
-	/** @type {ClassicTypeScript | undefined} */
-	let typescript;
-	if (backend === 'classic') {
-		typescript = resolve_classic_typescript();
-		if (!typescript) {
-			const message = `TSRX: no TypeScript with a JavaScript API was found for .tsrx files. Point "${TSDK_SETTINGS[0].section}.${TSDK_SETTINGS[0].key}" at a TypeScript 5.9 or 6 "lib" directory, or select one with "TypeScript: Select TypeScript Version".`;
-			console.error(`[TSRX] ${message}`);
-			vscode.window.showErrorMessage(message);
-			return;
-		}
-		console.log(
-			`[TSRX] TypeScript ${typescript.version} from ${typescript.tsdk} (${typescript.source})`,
-		);
-		await activate_classic_backend(context);
-	}
 
 	const serverModule = path.join(__dirname, 'server.js');
 
@@ -177,13 +129,11 @@ export async function activate(context) {
 	/** @type {import('vscode-languageclient/node').LanguageClientOptions} */
 	const clientOptions = {
 		documentSelector: [{ language: 'tsrx' }],
-		// The server drops its TypeScript services on the native backend (TypeScript 7 owns them).
-		// On the classic backend it hosts the TypeScript VS Code runs for the workspace (Volar's
-		// `typescript.tsdk` option); the extension bundles no TypeScript of its own.
-		initializationOptions: {
-			typescriptBackend: backend,
-			...(typescript ? { typescript: { tsdk: typescript.tsdk } } : {}),
-		},
+		// VS Code's TypeScript owns every TypeScript feature for .tsrx files on both backends
+		// (its tsserver through the contributed @tsrx/typescript-plugin, or TypeScript 7 through
+		// @tsrx/content-mapper), so the server never loads TypeScript and never serves TypeScript
+		// features here. `typescriptBackend` tells it which one reports TSRX compile errors.
+		initializationOptions: { typescriptBackend: backend === 'native' ? 'native' : 'plugin' },
 		errorHandler: {
 			error: (
 				/** @type {Error} */ error,
@@ -223,38 +173,20 @@ export async function activate(context) {
 		// whenever the Prettier extension's format command was unavailable.
 		await configurePrettier();
 
-		// Configure TypeScript command visibility for TSRX files
-		//
-		// The built-in TypeScript extension provides many useful commands (Go to Definition, Find
-		// References, etc.) but its menus only show for .ts/.js files by default. On the classic
-		// backend, to make these commands available for TSRX files, we need to:
-		//
-		// 1. Set static capability contexts (features that don't change):
-		//    - tsSupportsSourceDefinition: Enables "Go to Source Definition" command
-		//    - tsSupportsFileReferences: Enables "Find All File References" command
-		//
-		// 2. Set dynamic contexts that change based on the active editor (via setupDynamicContexts):
-		//    - editorLangId: Current editor's language (used in Command Palette "when" clauses)
-		//    - resourceLangId: Current resource's language (used in context menu "when" clauses)
-		//    - typescript.isManagedFile: Whether TypeScript extension manages this file
-		//    - supportedCodeAction: Available code actions (for "Sort Imports", etc.)
-		//
-		// These context values are then checked by the "when" clauses in package.json's "menus" section.
-		// For example: "when": "resourceLangId == tsrx" will show a menu item only for TSRX files.
-		//
-		// On the native backend the built-in TypeScript extension is disabled, so only the
-		// contexts behind this extension's own command (`tsrx.goToSourceDefinition`) are set.
+		// The menus in package.json reuse the built-in TypeScript extension's commands on .tsrx
+		// files. VS Code manages .tsrx documents itself (the contributed plugin declares the
+		// language), so it maintains `typescript.isManagedFile`, `editorLangId`, `resourceLangId`
+		// and `supportedCodeAction` for them; only the two capability contexts are set here. On
+		// the native backend the built-in extension is off, so only this extension's own
+		// `tsrx.goToSourceDefinition` stays available.
 		vscode.commands.executeCommand('setContext', 'tsSupportsSourceDefinition', true);
 		vscode.commands.executeCommand('setContext', 'tsSupportsFileReferences', backend === 'classic');
-
-		setupDynamicContexts(context, backend);
-		console.log('[TSRX] Set up dynamic VSCode menu contexts');
 
 		addCustomCommands(context);
 		console.log('[TSRX] Registered custom commands');
 
 		console.log('[TSRX] Extension activated successfully');
-		return { ...volar_labs.extensionExports, tsrx: { backend, typescript } };
+		return { ...volar_labs.extensionExports, tsrx: { backend } };
 	} catch (error) {
 		console.error('Failed to start language client:', error);
 		const message = error instanceof Error ? error.message : String(error);
@@ -291,51 +223,6 @@ async function prompt_restart_if_backend_changed() {
 }
 
 /**
- * Classic backend: patch the built-in TypeScript extension before it activates.
- * @param {import('vscode').ExtensionContext} context
- */
-async function activate_classic_backend(context) {
-	const patchResult = await patchTypeScriptExtension();
-	if (!patchResult.success) {
-		switch (patchResult.reason) {
-			case 'missing':
-				console.warn('[TSRX] TypeScript extension not found; TSRX commands will be limited.');
-				break;
-			case 'alreadyActive':
-				console.warn('[TSRX] TypeScript extension already active - patch skipped');
-				// Check if we've already prompted for reload in this session
-				const hasPromptedReload = context.globalState.get('tsrx.hasPromptedReload', false);
-				if (!hasPromptedReload) {
-					// Mark that we've prompted to avoid repeated prompts
-					await context.globalState.update('tsrx.hasPromptedReload', true);
-					// Prompt user to restart extension host for full TypeScript integration
-					vscode.window
-						.showInformationMessage(
-							'TSRX extension needs to restart extensions to enable full TypeScript integration.',
-							'Restart Extensions',
-							'Later',
-						)
-						.then((selection) => {
-							if (selection === 'Restart Extensions') {
-								vscode.commands.executeCommand('workbench.action.restartExtensionHost');
-							}
-						});
-				}
-				break;
-			case 'patternMismatch':
-				console.warn(
-					'[TSRX] Patch patterns did not match - TypeScript extension internals may have changed.',
-				);
-				break;
-		}
-	} else if (patchResult.reason === 'alreadyPatched') {
-		console.log('[TSRX] TypeScript extension already supports TSRX files.');
-	} else {
-		console.log('[TSRX] Successfully patched TypeScript extension to recognize TSRX files.');
-	}
-}
-
-/**
  * Whether VS Code's TypeScript 7 switch is on in any configuration scope
  * (`js/ts.experimental.useTsgo` or its deprecated `typescript.` spelling).
  * @returns {boolean}
@@ -357,184 +244,7 @@ function is_typescript_7_configuration_change(event) {
 }
 
 /**
- * @param {import('vscode').ConfigurationChangeEvent} event
- * @returns {boolean}
- */
-function is_tsdk_configuration_change(event) {
-	return TSDK_SETTINGS.some(({ section, key }) => event.affectsConfiguration(`${section}.${key}`));
-}
-
-/**
- * The TypeScript the classic backend hosts: the one VS Code runs for the workspace. A
- * configured tsdk path (`js/ts.tsdk.path`, written by "TypeScript: Select TypeScript Version"
- * when the workspace version is picked, or its deprecated `typescript.tsdk` spelling) comes
- * first, then the TypeScript VS Code ships. The first directory that holds `typescript.js`
- * wins; the TypeScript 7 package has none, so it is skipped like VS Code skips it.
- * @returns {ClassicTypeScript | undefined}
- */
-function resolve_classic_typescript() {
-	/** @type {string[]} */
-	const settingPaths = [];
-	for (const { section, key } of TSDK_SETTINGS) {
-		const value = vscode.workspace.getConfiguration(section).get(key);
-		if (typeof value === 'string' && value.trim() !== '') {
-			settingPaths.push(value.trim());
-		}
-	}
-	const vscodeTypescriptLib = vscode.env.appRoot
-		? path.join(vscode.env.appRoot, 'extensions', 'node_modules', 'typescript', 'lib')
-		: undefined;
-	const candidates = tsdk_candidates({
-		settingPaths,
-		workspaceFolders: (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
-		vscodeTypescriptLib,
-	});
-	for (const [index, tsdk] of candidates.entries()) {
-		if (!fs.existsSync(path.join(tsdk, 'typescript.js'))) {
-			continue;
-		}
-		try {
-			const { version } = JSON.parse(
-				fs.readFileSync(path.join(tsdk, '..', 'package.json'), 'utf8'),
-			);
-			if (typeof version === 'string') {
-				const from_setting = index < candidates.length - (vscodeTypescriptLib ? 1 : 0);
-				return { tsdk, version, source: from_setting ? 'setting' : 'vscode' };
-			}
-		} catch {
-			// Not a TypeScript package directory: try the next candidate.
-		}
-	}
-	return undefined;
-}
-
-/**
- * Restart the language client on the TypeScript now configured for the workspace, so the
- * classic backend follows "TypeScript: Select TypeScript Version" without an extension restart.
- */
-async function restart_client_with_current_typescript() {
-	if (!client) {
-		return;
-	}
-	const typescript = resolve_classic_typescript();
-	const options = /** @type {{ typescript?: { tsdk: string } }} */ (
-		client.clientOptions.initializationOptions
-	);
-	if (!typescript || options.typescript?.tsdk === typescript.tsdk) {
-		return;
-	}
-	options.typescript = { tsdk: typescript.tsdk };
-	console.log(
-		`[TSRX] TypeScript changed to ${typescript.version} from ${typescript.tsdk}; restarting the language server`,
-	);
-	await client.restart();
-}
-
-/**
- * Sets up dynamic context variables that control when TypeScript commands appear in menus.
- *
- * Context Variables vs Menu Contributions:
- * ----------------------------------------
- * VSCode's menu system is declarative (defined in package.json) but uses context variables
- * for conditional visibility. This function bridges the gap by setting those context values.
- *
- * How it works:
- * 1. package.json defines WHERE commands appear and WHEN (using "when" clauses)
- *    Example: { "command": "typescript.goToSourceDefinition", "when": "resourceLangId == tsrx" }
- *
- * 2. This function sets the VALUES of context variables that the "when" clauses check
- *    Example: setContext('resourceLangId', 'tsrx') makes the above menu item visible
- *
- * 3. We update these contexts dynamically as the user switches between files
- *
- * Context Variables Set:
- * - editorLangId: Language ID of the active editor (for Command Palette menus)
- * - resourceLangId: Language ID of the current resource (for context menus)
- * - typescript.isManagedFile: Whether this file should be treated as a TypeScript-managed file
- * - supportedCodeAction: Space-separated list of available code action kinds
- *
- * Why Dynamic?
- * These contexts must update as the user switches files. A context set for a .tsrx file
- * should not persist when switching to a .txt file, otherwise TypeScript commands would
- * inappropriately appear for non-TSRX files.
- *
- * Package.json Requirement:
- * This function is USELESS without corresponding "menus" entries in package.json that
- * reference these context variables in their "when" clauses. The contexts set here are
- * checked by those "when" clauses to determine menu visibility.
- */
-/**
- * @param {import('vscode').ExtensionContext} context
- * @param {Backend} backend
- */
-function setupDynamicContexts(context, backend) {
-	// The contexts below `resourceLangId` gate commands of the built-in TypeScript extension,
-	// which is only patched (and active) on the classic backend.
-	const builtin_typescript = backend === 'classic';
-
-	// Update contexts based on active editor
-	function updateContexts() {
-		const editor = vscode.window.activeTextEditor;
-		const is_tsrx = editor?.document.languageId === 'tsrx';
-
-		// Set editorLangId context (used in commandPalette "when" clauses)
-		// Example usage in package.json: "when": "editorLangId == tsrx"
-		vscode.commands.executeCommand('setContext', 'editorLangId', is_tsrx ? 'tsrx' : undefined);
-
-		// Set resourceLangId context (used in editor/context and explorer/context "when" clauses)
-		// Example usage in package.json: "when": "resourceLangId == tsrx"
-		vscode.commands.executeCommand('setContext', 'resourceLangId', is_tsrx ? 'tsrx' : undefined);
-
-		// Set typescript.isManagedFile (used in commandPalette "when" clauses)
-		// This mimics the TypeScript extension's own context to indicate TSRX files
-		// are managed by TypeScript-like tooling
-		vscode.commands.executeCommand(
-			'setContext',
-			'typescript.isManagedFile',
-			is_tsrx && builtin_typescript,
-		);
-
-		// Set supportedCodeAction context based on available code actions
-		// This enables commands like "Sort Imports" and "Remove Unused Imports"
-		// which check for specific code action support via regex in their "when" clauses
-		if (is_tsrx && editor && builtin_typescript) {
-			// Query available code actions for the current file
-			vscode.commands
-				.executeCommand('vscode.executeCodeActionProvider', editor.document.uri, editor.selection)
-				.then((actions) => {
-					if (Array.isArray(actions) && actions.length > 0) {
-						const kinds = actions
-							.map(
-								(/** @type {{ kind?: { value?: string } }} */ action) => action.kind?.value || '',
-							)
-							.join(' ');
-						vscode.commands.executeCommand('setContext', 'supportedCodeAction', kinds);
-					} else {
-						vscode.commands.executeCommand('setContext', 'supportedCodeAction', undefined);
-					}
-				});
-		} else {
-			vscode.commands.executeCommand('setContext', 'supportedCodeAction', undefined);
-		}
-	}
-
-	// Update on activation
-	updateContexts();
-
-	// Update when active editor changes
-	context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => updateContexts()));
-
-	// Update when text document changes (code actions may change)
-	context.subscriptions.push(
-		vscode.workspace.onDidChangeTextDocument((e) => {
-			if (e.document === vscode.window.activeTextEditor?.document) {
-				updateContexts();
-			}
-		}),
-	);
-}
-
-/**
+ * The extension's own commands.
  * @param {import('vscode').ExtensionContext} context
  */
 function addCustomCommands(context) {
@@ -641,109 +351,4 @@ export async function deactivate() {
 			console.error('Error stopping language client:', error);
 		}
 	}
-}
-
-/**
- * Patches the built-in TypeScript extension to recognize TSRX files.
- *
- * The built-in TypeScript extension (vscode.typescript-language-features) provides rich
- * language features for TypeScript and JavaScript files. To make these features work for
- * TSRX files, we need to patch the extension's internal language mode list.
- *
- * This patch modifies the TypeScript extension's code at runtime to add 'tsrx' to:
- * 1. jsTsLanguageModes - The list of supported language IDs
- * 2. isSupportedLanguageMode - The function that checks if a file should be handled
- *
- * Why patching instead of typescriptServerPlugins?
- * -------------------------------------------------
- * The typescriptServerPlugins contribution point would load typescript-plugin into
- * the TypeScript extension's tsserver. However, we already run our own language server
- * (language-server) which uses typescript-plugin internally. Loading the
- * plugin twice would create conflicts and duplicate processing.
- *
- * By patching directly instead, we:
- * 1. Avoid double-loading typescript-plugin (it's already in our language server)
- * 2. Get deeper integration with the TypeScript extension's UI (menus, commands)
- * 3. Enable TypeScript commands for TSRX files without running duplicate language services
- * 4. Keep language intelligence in language-server while exposing TS UI features
- *
- * Combined with the context variables set by setupDynamicContexts(), this patch enables
- * the full suite of TypeScript commands and features to work seamlessly with TSRX files.
- */
-/**
- * @typedef {object} PatchResult
- * @property {boolean} success Whether the patch ran without issues.
- * @property {"patched" | "alreadyPatched" | "missing" | "alreadyActive" | "patternMismatch"} reason
- */
-
-/**
- * Ensures the built-in TypeScript extension recognizes TSRX files before it activates.
- * @returns {Promise<PatchResult>}
- */
-async function patchTypeScriptExtension() {
-	console.log('[TSRX] Starting TypeScript extension patch...');
-
-	const tsExtension = vscode.extensions.getExtension('vscode.typescript-language-features');
-	if (!tsExtension) {
-		console.warn('[TSRX] TypeScript extension not found');
-		return { success: false, reason: 'missing' };
-	}
-
-	if (tsExtension.isActive) {
-		return { success: false, reason: 'alreadyActive' };
-	}
-
-	const originalReadFileSync = fs.readFileSync;
-	const extensionJsPath = path.join(tsExtension.extensionPath, 'dist', 'extension.js');
-
-	/**
-	 * @param {import('node:fs').PathOrFileDescriptor} path
-	 * @param {(import('node:fs').ObjectEncodingOptions & { flag?: string }) | BufferEncoding | null} [options]
-	 * @returns {string | Buffer}
-	 */
-	function patchedReadFileSync(path, options) {
-		const hasOptions = typeof options !== 'undefined' && options !== null;
-		const result = hasOptions
-			? originalReadFileSync.call(fs, path, options)
-			: originalReadFileSync.call(fs, path);
-		if (path === extensionJsPath) {
-			console.log('[TSRX] Intercepted read of TypeScript extension.js, applying patch...');
-			const text = typeof result === 'string' ? result : result.toString('utf8');
-
-			// Patch the TypeScript extension to recognize tsrx files
-			let patched = text
-				.replace(
-					't.jsTsLanguageModes=[t.javascript,t.javascriptreact,t.typescript,t.typescriptreact]',
-					(s) => s + '.concat("tsrx")',
-				)
-				.replace(
-					'.languages.match([t.typescript,t.typescriptreact,t.javascript,t.javascriptreact]',
-					(s) => s + '.concat("tsrx")',
-				);
-
-			if (patched !== text) {
-				console.log('[TSRX] Successfully patched TypeScript extension');
-				return typeof result === 'string' ? patched : Buffer.from(patched, 'utf8');
-			} else {
-				console.warn(
-					'[TSRX] TypeScript extension patterns did not match - may already be patched or structure changed',
-				);
-			}
-		}
-		return result;
-	}
-
-	try {
-		console.log('[TSRX] Installing fs.readFileSync hook and activating TypeScript extension...');
-		fs.readFileSync = /** @type {typeof fs.readFileSync} */ (patchedReadFileSync);
-		await tsExtension.activate();
-		console.log('[TSRX] TypeScript extension activated');
-	} catch (error) {
-		console.error('[TSRX] Failed to activate TypeScript extension:', error);
-	} finally {
-		fs.readFileSync = originalReadFileSync;
-		console.log('[TSRX] fs.readFileSync hook removed');
-	}
-
-	return { success: true, reason: 'patched' };
 }

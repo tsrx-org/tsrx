@@ -66,6 +66,25 @@ export default defineConfig({
 			execSync(`node "${scriptPath}" "${distPath}" ${ROOT_EXTERNAL_PACKAGES.join(' ')}`, {
 				stdio: 'inherit',
 			});
+
+			// `@tsrx/typescript-plugin` is contributed to VS Code as a tsserver plugin
+			// (`typescriptServerPlugins` in package.json): VS Code passes this extension's
+			// directory as a plugin probe location, so the built plugin package must sit in
+			// the extension's node_modules. Only its manifest and build are copied: its
+			// bundle needs nothing but `jsonc-parser` (copied above) and the TypeScript that
+			// loads it, and it resolves TSRX target compilers from the workspace at run time.
+			const TSSERVER_PLUGIN = '@tsrx/typescript-plugin';
+			const pluginSource = path.join(dirname, '../typescript-plugin');
+			const pluginTarget = path.join(distPath, 'node_modules', TSSERVER_PLUGIN);
+			fs.rmSync(pluginTarget, { recursive: true, force: true });
+			fs.mkdirSync(pluginTarget, { recursive: true });
+			fs.copyFileSync(
+				path.join(pluginSource, 'package.json'),
+				path.join(pluginTarget, 'package.json'),
+			);
+			fs.cpSync(path.join(pluginSource, 'dist'), path.join(pluginTarget, 'dist'), {
+				recursive: true,
+			});
 		},
 	},
 });

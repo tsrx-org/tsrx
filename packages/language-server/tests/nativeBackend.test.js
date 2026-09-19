@@ -26,6 +26,16 @@ describe('TypeScript installation selection', () => {
 });
 
 describe('TypeScript backend selection', () => {
+	it('accepts the plugin backend (editor tsserver + @tsrx/typescript-plugin)', () => {
+		expect(resolve_typescript_backend({ argv: ['--typescript-backend=plugin'] })).toEqual({
+			backend: 'plugin',
+			source: 'flag',
+		});
+		expect(
+			resolve_typescript_backend({ initializationOptions: { typescriptBackend: 'plugin' } }),
+		).toEqual({ backend: 'plugin', source: 'initializationOptions' });
+	});
+
 	it('defaults to the classic backend', () => {
 		expect(DEFAULT_TYPESCRIPT_BACKEND).toBe('classic');
 		expect(resolve_typescript_backend()).toEqual({ backend: 'classic', source: 'default' });

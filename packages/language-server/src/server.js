@@ -140,12 +140,13 @@ export function createTsrxLanguageServer(options = {}) {
 			}
 			log(`TypeScript backend: ${selection.backend} (from ${selection.source})`);
 
-			if (selection.backend === 'native') {
-				// TypeScript 7 owns every TypeScript feature for `.tsrx` files. The
-				// TSRX plugin only needs the compiler per file, which it resolves from
-				// the nearest tsconfig.json itself, so no TypeScript module is loaded
-				// (the native compiler's package has none) and no TypeScript project
-				// host is created.
+			if (selection.backend !== 'classic') {
+				// The editor's TypeScript (TypeScript 7 through the content mapper, or
+				// its tsserver through the tsserver plugin) owns every TypeScript
+				// feature for `.tsrx` files. The TSRX plugin only needs the compiler
+				// per file, which it resolves from the nearest tsconfig.json itself,
+				// so no TypeScript module is loaded (the native compiler's package has
+				// none) and no TypeScript project host is created.
 				const compilerResolutionDependencies = new Set();
 				compilerResolutionDependencySets.add(compilerResolutionDependencies);
 				const languagePlugin = getTsrxLanguagePlugin({

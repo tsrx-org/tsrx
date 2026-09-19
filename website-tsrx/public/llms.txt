@@ -1526,9 +1526,10 @@ Two paths type-check `.tsrx` files; both use the same target-specific transform.
 }
 ```
 
-Editors: the VS Code extension follows VS Code's TypeScript 7 switch (native
-when TypeScript 7 is enabled through the "Select TypeScript Version" picker, that
-is `js/ts.experimental.useTsgo`; the mapper always comes from `tsconfig.json`); other
+Editors: in VS Code, VS Code's own TypeScript serves `.tsrx` files: its tsserver
+with the TSRX plugin the extension ships (no tsconfig `plugins` entry needed), or
+TypeScript 7 with the mapper from `tsconfig.json` when TypeScript 7 is enabled
+through the "Select TypeScript Version" picker (`js/ts.experimental.useTsgo`); other
 editors run `tsrx-language-server --stdio --typescript-backend=native` beside
 TypeScript 7's `tsc --lsp`. Gaps in TypeScript 7 support and the upstream issues
 behind them: https://github.com/tsrx-org/tsrx/issues/136.

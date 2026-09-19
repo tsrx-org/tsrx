@@ -345,6 +345,32 @@ export function getTsrxLanguagePlugin(options = {}) {
 /**
  * @implements {VirtualCode}
  */
+/**
+ * File names (as TypeScript spells them) whose last TSRX compilation failed.
+ * While a file is in this state its generated code is the raw source, so every
+ * TypeScript diagnostic on it would be noise; the tsserver plugin (`index.js`)
+ * drops them, as the classic language server's diagnostic filter does, and the
+ * TSRX compile error is reported by the language server instead.
+ * @type {Set<string>}
+ */
+export const files_with_fatal_compile_error = new Set();
+
+/**
+ * @param {string} file_name
+ * @returns {boolean}
+ */
+export function has_fatal_compile_error(file_name) {
+	return files_with_fatal_compile_error.has(normalize_file_name_key(file_name));
+}
+
+/**
+ * @param {string} file_name
+ * @returns {string}
+ */
+function normalize_file_name_key(file_name) {
+	return file_name.replace(/\\/g, '/').toLowerCase();
+}
+
 export class TSRXVirtualCode {
 	/** @type {string} */
 	id = 'root';
@@ -513,8 +539,10 @@ export class TSRXVirtualCode {
 				logTSRXErrors(this.fileName, [result.fatalError]);
 			}
 			this.fatalErrors.push(result.fatalError);
+			files_with_fatal_compile_error.add(normalize_file_name_key(this.fileName));
 		} else {
 			log('Compilation successful, generated code length:', result.text.length);
+			files_with_fatal_compile_error.delete(normalize_file_name_key(this.fileName));
 		}
 
 		this.originalCode = newCode;

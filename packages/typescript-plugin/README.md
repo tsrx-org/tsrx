@@ -9,8 +9,12 @@ to TSRX source.
 
 The
 [TSRX Syntax for VS Code](https://marketplace.visualstudio.com/items?itemName=TSRX.tsrx-vscode-plugin)
-already bundles this plugin through `@tsrx/language-server`; no separate VS Code
-configuration is needed.
+ships this plugin and hands it to whichever tsserver VS Code runs (its own
+TypeScript or the workspace version), so VS Code needs no tsconfig `plugins`
+entry. The entry below is for other editors, whose TypeScript server finds the
+plugin next to the workspace `typescript` package it runs. On TypeScript 7 the
+`contentMappers` entry replaces it everywhere (see
+[`@tsrx/content-mapper`](../content-mapper/README.md)).
 
 ## Supported TypeScript versions
 

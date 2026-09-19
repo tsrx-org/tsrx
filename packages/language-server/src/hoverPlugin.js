@@ -29,7 +29,8 @@ const { log, logError } = createLogging('[TSRX Hover Plugin]');
  * @returns {LanguageServicePlugin}
  */
 export function createHoverPlugin(options = {}) {
-	const standalone = options.typescriptBackend === 'native';
+	const standalone =
+		options.typescriptBackend === 'native' || options.typescriptBackend === 'plugin';
 	return {
 		name: 'tsrx-hover',
 		capabilities: {

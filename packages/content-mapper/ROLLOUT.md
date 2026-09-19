@@ -26,14 +26,17 @@ here.
   what TypeScript 7 does not (snippets, CSS in `<style>`, document symbols,
   auto-insert, CSS-class hover and definition, keyword highlights) and never loads
   `volar-service-typescript`. Default: `classic`.
-- **VS Code extension**: the backend follows VS Code's own TypeScript 7 switch
-  (`js/ts.experimental.useTsgo`, written by the **TypeScript: Select TypeScript
-  Version** picker), with no setting of its own and without consulting any other
-  extension: off means classic, on means native. On native the extension stops
-  patching the built-in TypeScript extension and starts the TSRX server in native
-  mode; TypeScript 7 runs the mapper each `tsconfig.json` declares under
-  `contentMappers`. The extension now activates on a single `.tsrx` file and
-  declares that it does not run in untrusted workspaces.
+- **VS Code extension**: VS Code's own TypeScript owns `.tsrx` files. With
+  TypeScript 7 off, VS Code's tsserver runs `@tsrx/typescript-plugin`, which the
+  extension contributes through `typescriptServerPlugins` and ships (no patch of
+  the built-in extension, no bundled TypeScript, no tsconfig `plugins` entry
+  needed in VS Code); with it on, TypeScript 7 runs the mapper each
+  `tsconfig.json` declares under `contentMappers`. The choice follows VS Code's
+  own switch (`js/ts.experimental.useTsgo`, written by the **TypeScript: Select
+  TypeScript Version** picker), with no setting of the extension's own and without
+  consulting any other extension. The TSRX server runs slim in both cases
+  (`--typescript-backend=plugin` or `native`). The extension now activates on a
+  single `.tsrx` file and declares that it does not run in untrusted workspaces.
 - **Editor guides** for Zed, Neovim (`setup(plugin, { typescript_backend })`),
   IntelliJ and Sublime Text describe the native setup per editor.
 - **TypeScript 6** on the classic path: the `typescript` peer range of

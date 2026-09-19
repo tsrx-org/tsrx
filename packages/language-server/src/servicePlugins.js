@@ -52,6 +52,11 @@ export function stripDocumentFormatting(plugin) {
  * the mapper reports as `tsrx` diagnostics, so neither the TypeScript
  * services nor the plugins that wrap or duplicate them are loaded, and
  * `volar-service-typescript` is never required (see `typescriptService.js`).
+ *
+ * Plugin: the editor's tsserver serves every TypeScript feature through
+ * `@tsrx/typescript-plugin`; the same slim set as native, plus the TSRX
+ * compile-error diagnostics, because a tsserver plugin has no way to report
+ * them.
  * @param {TypeScriptBackend} backend
  * @param {typeof import('typescript')} [ts] The classic backend's TypeScript; the native backend has none.
  * @returns {LanguageServicePlugin[]}
@@ -63,9 +68,10 @@ export function createServicePlugins(backend, ts) {
 		createDocumentSymbolPlugin(),
 		stripDocumentFormatting(createCssService()),
 	];
-	if (backend === 'native') {
+	if (backend === 'native' || backend === 'plugin') {
 		return [
 			...shared_first,
+			...(backend === 'plugin' ? [createCompileErrorDiagnosticPlugin()] : []),
 			...shared_last,
 			createHoverPlugin({ typescriptBackend: backend }),
 			createDocumentHighlightPlugin({ typescriptBackend: backend }),

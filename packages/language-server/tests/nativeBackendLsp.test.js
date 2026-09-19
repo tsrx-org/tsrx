@@ -28,7 +28,7 @@ vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 // (CI builds before testing; locally: `pnpm --filter @tsrx/language-server build`).
 const server_path = fileURLToPath(new URL('../dist/language-server.js', import.meta.url));
 
-/** @param {'native' | 'classic'} backend */
+/** @param {'native' | 'plugin' | 'classic'} backend */
 function workspace_with_server(backend) {
 	const files = consumer_fixture_files();
 	const tsconfig = /** @type {Record<string, unknown>} */ (
@@ -51,7 +51,7 @@ function workspace_with_server(backend) {
 	return { files, workspace, client };
 }
 
-describe.each(/** @type {const} */ (['native', 'classic']))(
+describe.each(/** @type {const} */ (['native', 'plugin', 'classic']))(
 	'TSRX language server over stdio on the %s backend',
 	(backend) => {
 		/** @type {ReturnType<typeof workspace_with_server>} */
@@ -119,12 +119,12 @@ describe.each(/** @type {const} */ (['native', 'classic']))(
 		});
 
 		it(
-			backend === 'native'
-				? 'leaves TypeScript hover to TypeScript 7'
-				: 'serves TypeScript hover itself',
+			backend === 'classic'
+				? 'serves TypeScript hover itself'
+				: "leaves TypeScript hover to the editor's TypeScript",
 			async () => {
 				const hover = await session.client.request('textDocument/hover', at('{label}', 1));
-				if (backend === 'native') {
+				if (backend !== 'classic') {
 					expect(hover).toBeNull();
 				} else {
 					expect(hover.contents.value).toContain('const label: string');
@@ -151,6 +151,8 @@ describe.each(/** @type {const} */ (['native', 'classic']))(
 			async () => {
 				// Volar publishes for every open document; on native the list is always
 				// empty because TypeScript 7 reports type and TSRX compile errors itself.
+				// On plugin the editor's tsserver reports type errors but cannot report
+				// TSRX compile errors, so the server publishes those.
 				session.client.change(
 					'Panel.tsrx',
 					session.files['Panel.tsrx'].replace('{label}', '{{{label}'),

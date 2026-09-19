@@ -47,11 +47,29 @@ describe('@tsrx/vscode-plugin package contract', () => {
 		expect(Object.keys(properties).filter((key) => /backend/i.test(key))).toEqual([]);
 	});
 
-	it('bundles no TypeScript: the classic backend hosts the TypeScript VS Code runs', () => {
+	it("bundles no TypeScript: VS Code's own TypeScript owns .tsrx files", () => {
 		expect(package_json.dependencies.typescript).toBeUndefined();
 		expect(package_json.peerDependencies.typescript).toBeUndefined();
 		const tsdown_config = readFileSync(resolve(__dirname, '../tsdown.config.js'), 'utf8');
 		expect(tsdown_config).not.toMatch(/^\s*'typescript',/m);
+	});
+
+	it('hands @tsrx/typescript-plugin to whichever tsserver VS Code runs, for .tsrx files', () => {
+		// VS Code's own contribution point for tsserver plugins: VS Code passes this extension's
+		// directory as a plugin probe location, so the plugin ships inside the VSIX, and `languages`
+		// makes VS Code manage .tsrx documents itself (no patch of the built-in extension).
+		expect(package_json.contributes.typescriptServerPlugins).toEqual([
+			{
+				name: '@tsrx/typescript-plugin',
+				enableForWorkspaceTypeScriptVersions: true,
+				languages: ['tsrx'],
+			},
+		]);
+		const tsdown_config = readFileSync(resolve(__dirname, '../tsdown.config.js'), 'utf8');
+		expect(tsdown_config).toContain("'@tsrx/typescript-plugin'");
+		expect(readFileSync(resolve(__dirname, '../src/extension.js'), 'utf8')).not.toContain(
+			'readFileSync = ',
+		);
 	});
 
 	it('ships no content mapper of its own and depends on no other extension', () => {

@@ -69,6 +69,15 @@
     "shiki": "catalog:"
   },
   "contributes": {
+    "typescriptServerPlugins": [
+      {
+        "name": "@tsrx/typescript-plugin",
+        "enableForWorkspaceTypeScriptVersions": true,
+        "languages": [
+          "tsrx"
+        ]
+      }
+    ],
     "breakpoints": [
       {
         "language": "tsrx"

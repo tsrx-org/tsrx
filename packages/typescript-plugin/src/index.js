@@ -1,11 +1,16 @@
 import { createLanguageServicePlugin } from '@volar/typescript/lib/quickstart/createLanguageServicePlugin.js';
 import { getTsrxLanguagePlugin } from './language.js';
+import { without_typescript_diagnostics_on_compile_error } from './plugin-diagnostics.js';
 
-// This TypeScript plugin is loaded by TypeScript's tsserver when configured in tsconfig.json.
-// Note: When using TSRX Syntax for VS Code, the language server handles everything,
-// so this plugin is redundant but harmless (both instances work independently).
-// This plugin is useful for non-VS Code editors or when not using the language server.
-export default createLanguageServicePlugin((ts, info) => ({
+/**
+ * TypeScript's tsserver loads this plugin to serve `.tsrx` files: through the
+ * `plugins` entry of a project's tsconfig.json (other editors, next to the
+ * workspace TypeScript), or handed to whichever tsserver VS Code runs by the
+ * TSRX VS Code extension (`typescriptServerPlugins`), where the TSRX language
+ * server runs beside it in its slim `plugin` mode and adds what a tsserver
+ * plugin cannot: TSRX compile errors, snippets, CSS in `<style>`, symbols.
+ */
+const volar_plugin = createLanguageServicePlugin((ts, info) => ({
 	languagePlugins: [
 		getTsrxLanguagePlugin({
 			ts,
@@ -17,3 +22,16 @@ export default createLanguageServicePlugin((ts, info) => ({
 		}),
 	],
 }));
+
+/** @type {typeof volar_plugin} */
+const plugin = (modules) => {
+	const inner = volar_plugin(modules);
+	return {
+		...inner,
+		create(info) {
+			return without_typescript_diagnostics_on_compile_error(inner.create(info));
+		},
+	};
+};
+
+export default plugin;

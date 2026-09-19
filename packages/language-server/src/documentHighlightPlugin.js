@@ -24,7 +24,8 @@ const { log } = createLogging('[TSRX Document Highlight Plugin]');
  * @returns {LanguageServicePlugin}
  */
 export function createDocumentHighlightPlugin(options = {}) {
-	const standalone = options.typescriptBackend === 'native';
+	const standalone =
+		options.typescriptBackend === 'native' || options.typescriptBackend === 'plugin';
 	return {
 		name: 'tsrx-document-highlight',
 		capabilities: {
