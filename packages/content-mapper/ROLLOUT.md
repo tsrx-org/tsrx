@@ -36,9 +36,17 @@ and is not made here.
   IntelliJ and Sublime Text describe the native setup per editor.
 - **TypeScript 6** on the classic path: the `typescript` peer range of
   `@tsrx/typescript-plugin` and `@tsrx/language-server` is `^5.9.3 || ^6.0.0` (the
-  whole suite passes on 6.0.3). The `typescript@7` package has no JavaScript API,
-  so `tsrx-tsc` and the classic language server stop with an explanation when they
-  resolve one.
+  whole suite passes on 6.0.3). The `typescript@7` package has no JavaScript API:
+  the classic language server stops with an explanation when it resolves one, and
+  `tsrx-tsc` runs the native path instead (next bullet).
+- **`tsrx-tsc` on TypeScript 7.** When the installed `typescript` is a 7.1 nightly
+  with the content-mapper protocol, `tsrx-tsc` finds the native binary through the
+  launcher's platform package and runs it with `--runExternalCode` for the
+  project's `contentMappers` entry, so one `package.json` script serves TypeScript
+  5.9, 6 and 7. A TypeScript 7 build without the protocol (stable 7.0, earlier
+  nightlies) is explained, and a tsconfig without a `.tsrx` mapper is refused
+  rather than checked without its `.tsrx` files. `@tsrx/content-mapper` is an
+  optional peer dependency of `@tsrx/typescript-plugin`.
 - **The native path needs only TypeScript 7.** `@tsrx/content-mapper` and the
   language server's native backend read `tsconfig.json` and resolve compiler
   packages themselves (`@tsrx/typescript-plugin`'s `tsconfig-resolution.js` and
@@ -83,11 +91,11 @@ extra Node process (the mapper) per `tsc` invocation or language-server session.
 
 ## Default backend decision
 
-| Surface                 | Default              | Why                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ----------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Command line            | `tsrx-tsc` (classic) | Native needs TypeScript 7 (a nightly at the time of writing), `--runExternalCode` (a user decision the mapper never makes), and has upstream gaps: `--watch` does not recompile on macOS (microsoft/TypeScript#64351), composite `--build` projects reject `<script>` bodies (TS6307, microsoft/TypeScript#64350), declaration files are named `Component.d.tsrx.ts` until microsoft/TypeScript#64120 lands. |
-| `@tsrx/language-server` | `classic`            | Native mode without a TypeScript 7 server beside it gives `.tsrx` files no type information, and every non-VS Code editor has to be configured for both servers by hand. The flag makes the choice explicit and per-editor.                                                                                                                                                                                  |
-| VS Code extension       | `auto`               | `auto` is native exactly when the TypeScript 7 extension is installed and `js/ts.experimental.useTsgo` is on. In that state the built-in TypeScript extension that the classic path patches is already off, so classic would not work; following the user's TypeScript 7 choice is the only working default. Users who never enable TypeScript 7 stay on classic.                                            |
+| Surface                 | Default                                                                           | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Command line            | `tsrx-tsc`, following the installed TypeScript: classic on 5.9 and 6, native on 7 | The choice of path is the choice of TypeScript version, which the project already makes in `package.json`; the docs keep recommending TypeScript 5.9 or 6 because native needs a TypeScript 7 nightly at the time of writing and has upstream gaps: `--watch` does not recompile on macOS (microsoft/TypeScript#64351), composite `--build` projects reject `<script>` bodies (TS6307, microsoft/TypeScript#64350), declaration files are named `Component.d.tsrx.ts` until microsoft/TypeScript#64120 lands. `--runExternalCode` stays a user decision the mapper never makes; `tsrx-tsc` passes it because running the command already executes the project's TSRX compiler. |
+| `@tsrx/language-server` | `classic`                                                                         | Native mode without a TypeScript 7 server beside it gives `.tsrx` files no type information, and every non-VS Code editor has to be configured for both servers by hand. The flag makes the choice explicit and per-editor.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| VS Code extension       | `auto`                                                                            | `auto` is native exactly when the TypeScript 7 extension is installed and `js/ts.experimental.useTsgo` is on. In that state the built-in TypeScript extension that the classic path patches is already off, so classic would not work; following the user's TypeScript 7 choice is the only working default. Users who never enable TypeScript 7 stay on classic.                                                                                                                                                                                                                                                                                                              |
 
 The default flips to native (CLI documentation and the language server) when all
 of the following hold; each is tracked in `COMPATIBILITY.md`:
@@ -142,10 +150,13 @@ flip.
    tsc --runExternalCode --noEmit
    ```
 
-   `--runExternalCode` lets TypeScript start the mapper (and therefore the TSRX
-   target compiler) from the workspace. Treat it like any other script that runs
-   workspace code: fine for your own projects and CI, a decision to make
-   consciously for untrusted checkouts.
+   or keep running `tsrx-tsc --noEmit`, which does the same once the installed
+   `typescript` is a 7.1 nightly (and refuses to run without the `contentMappers`
+   entry from step 2). `--runExternalCode` lets TypeScript start the mapper (and
+   therefore the TSRX target compiler) from the workspace. Treat it like any other
+   script that runs workspace code: fine for your own projects and CI, a decision
+   to make consciously for untrusted checkouts; `tsrx-tsc` passes it for the same
+   reason the classic path runs the compiler in-process.
 
 4. Emitting declarations: native writes `Component.d.tsrx.ts` (plus one
    `Component.tsrx.<n>.d.mts` per `<script>` body) next to `main.d.ts`. A project
@@ -154,8 +165,9 @@ flip.
    `allowArbitraryExtensions: true`. Keep `<script>` bodies out of composite
    libraries until TS6307 is fixed upstream (microsoft/TypeScript#64350).
 
-5. Keep `tsrx-tsc` in `package.json` scripts until the default flips; both
-   commands can run in the same CI job on the same tsconfig.
+5. Keep `tsrx-tsc` in `package.json` scripts: it runs the native path once
+   TypeScript 7 is installed, and both commands can run in the same CI job on the
+   same tsconfig.
 
 ### VS Code
 
@@ -197,11 +209,12 @@ contribution outside VS Code).
 Every step is independent and reversible; nothing on the native path rewrites
 project files.
 
-- **Command line**: run `tsrx-tsc --noEmit` again. The `contentMappers` entry can
-  stay (TypeScript 5 ignores it) or be removed. Uninstall `@tsrx/content-mapper`
-  and the TypeScript 7 packages if unwanted. Declaration outputs from a native run
-  have different names (`*.d.tsrx.ts`); delete the output directory before
-  re-emitting with the classic path.
+- **Command line**: install TypeScript 5.9 or 6 again; `tsrx-tsc --noEmit` follows
+  the installed version. The `contentMappers` entry can stay (TypeScript 5 ignores
+  it) or be removed. Uninstall `@tsrx/content-mapper` and the TypeScript 7
+  packages if unwanted. Declaration outputs from a native run have different names
+  (`*.d.tsrx.ts`); delete the output directory before re-emitting with the classic
+  path.
 - **VS Code**: set `tsrx.typescript.backend` to `classic` (or disable
   `js/ts.experimental.useTsgo`, which makes `auto` choose classic) and restart
   extensions. The extension patches the built-in TypeScript extension again on the

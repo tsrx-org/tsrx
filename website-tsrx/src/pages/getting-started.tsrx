@@ -1090,13 +1090,12 @@ export function GettingStartedPage() @{
 								<code class="inline-code">.tsrx</code>
 								files, without emitting any output. It accepts the same flags as
 								<code class="inline-code">tsc</code>
-								. It needs TypeScript 5.9 or 6 (
+								and follows the installed TypeScript: on TypeScript 5.9 or 6 (
 								<code class="inline-code">typescript@^5.9.3 || ^6.0.0</code>
-								); the
-								<code class="inline-code">typescript@7</code>
-								package has no JavaScript API, and
-								<code class="inline-code">tsrx-tsc</code>
-								says so instead of running.
+								) it hosts
+								<code class="inline-code">tsc</code>
+								itself; on a TypeScript 7.1 nightly it runs the native compiler with the content
+								mapper described below, so the same script serves both.
 							</p>
 							<h3 class="subsection-heading">TypeScript 7</h3>
 							<p class="section-body">
@@ -1118,6 +1117,19 @@ export function GettingStartedPage() @{
 							<pre class="code-block">
 								<code innerHTML={NATIVE_TYPECHECK_HTML} />
 							</pre>
+							<p class="section-body">
+								<code class="inline-code">tsrx-tsc --noEmit</code>
+								does the same once the installed
+								<code class="inline-code">typescript</code>
+								is such a nightly: it finds the native compiler, adds
+								<code class="inline-code">--runExternalCode</code>
+								, and refuses to run a
+								<code class="inline-code">tsconfig.json</code>
+								without the mapper entry rather than let TypeScript skip your
+								<code class="inline-code">.tsrx</code>
+								files. A TypeScript 7 build without the content-mapper protocol is explained
+								instead.
+							</p>
 							<p class="section-body">
 								TypeScript 7 support is not complete yet. The remaining gaps and the upstream
 								TypeScript issues behind them are tracked in

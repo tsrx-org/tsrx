@@ -146,28 +146,65 @@ describe.each(['native', 'bypass', 'legacy'])('tsrx-tsc with the %s loader', (lo
 	});
 });
 
-describe('tsrx-tsc with a TypeScript 7 package', () => {
-	it('explains that the native TypeScript package has no JavaScript API instead of failing on its export map', () => {
-		// What `typescript@7` resolves to: an export map without `lib/tsc.js` and a
-		// main that only carries the version.
-		const stub_dir = path.join(workspace, 'typescript-7-stub');
-		fs.mkdirSync(path.join(stub_dir, 'lib'), { recursive: true });
+/**
+ * Stand in for what `typescript@7` resolves to: a launcher with an export map
+ * without `lib/tsc.js` and a main that only carries the version. With
+ * `platform_binary`, a fake `@typescript/typescript-<os>-<arch>` package whose
+ * `lib/tsc` records how it was called is installed beside it.
+ * @param {string} version
+ * @param {{ platform_binary?: string }} [options] The fake binary's source.
+ */
+function install_typescript_7_stub(version, options = {}) {
+	const stub_dir = path.join(workspace, 'node_modules', 'typescript');
+	fs.mkdirSync(path.join(stub_dir, 'lib'), { recursive: true });
+	fs.writeFileSync(
+		path.join(stub_dir, 'package.json'),
+		JSON.stringify({
+			name: 'typescript',
+			version,
+			type: 'module',
+			bin: { tsc: './bin/tsc' },
+			exports: { './package.json': './package.json', '.': './lib/version.cjs' },
+		}),
+	);
+	fs.writeFileSync(
+		path.join(stub_dir, 'lib', 'version.cjs'),
+		`module.exports = { version: ${JSON.stringify(version)}, versionMajorMinor: "7.0" };`,
+	);
+	if (options.platform_binary !== undefined) {
+		const platform_dir = path.join(
+			workspace,
+			'node_modules',
+			'@typescript',
+			`typescript-${process.platform}-${process.arch}`,
+		);
+		fs.mkdirSync(path.join(platform_dir, 'lib'), { recursive: true });
 		fs.writeFileSync(
-			path.join(stub_dir, 'package.json'),
+			path.join(platform_dir, 'package.json'),
 			JSON.stringify({
-				name: 'typescript',
-				version: '7.0.2',
-				exports: { './package.json': './package.json', '.': './lib/version.cjs' },
+				name: `@typescript/typescript-${process.platform}-${process.arch}`,
+				version,
 			}),
 		);
-		fs.writeFileSync(
-			path.join(stub_dir, 'lib', 'version.cjs'),
-			'module.exports = { version: "7.0.2", versionMajorMinor: "7.0" };',
-		);
-		const runner_path = path.join(workspace, 'runner-ts7.cjs');
-		fs.writeFileSync(
-			runner_path,
-			`
+		const binary = path.join(platform_dir, 'lib', 'tsc');
+		fs.writeFileSync(binary, `#!/usr/bin/env node\n${options.platform_binary}`);
+		fs.chmodSync(binary, 0o755);
+	}
+	return stub_dir;
+}
+
+/**
+ * Run the CLI with `typescript` resolving to the stub launcher, the way it does
+ * in a project whose only TypeScript is the native compiler's package.
+ * @param {string} stub_dir
+ * @param {string[]} args
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+function run_cli_with_typescript_7(stub_dir, args, env = {}) {
+	const runner_path = path.join(workspace, 'runner-ts7.cjs');
+	fs.writeFileSync(
+		runner_path,
+		`
 const node_module = require('node:module');
 const path = require('node:path');
 const stub_dir = ${JSON.stringify(stub_dir)};
@@ -179,18 +216,138 @@ node_module.Module._resolveFilename = function (request, ...rest) {
 };
 require(${JSON.stringify(cli_path)});
 `,
-		);
-		const result = spawnSync(process.execPath, [runner_path, '--noEmit', '-p', 'tsconfig.json'], {
-			cwd: workspace,
-			encoding: 'utf8',
-			timeout: 30_000,
-		});
-		expect(result.error).toBeUndefined();
+	);
+	const result = spawnSync(process.execPath, [runner_path, ...args], {
+		cwd: workspace,
+		encoding: 'utf8',
+		timeout: 30_000,
+		env: { ...process.env, ...env },
+	});
+	expect(result.error).toBeUndefined();
+	return { status: result.status, output: result.stdout + result.stderr };
+}
+
+describe('tsrx-tsc with a TypeScript 7 package', () => {
+	it('explains that a build without the content-mapper protocol cannot be used instead of failing on its export map', () => {
+		const stub_dir = install_typescript_7_stub('7.0.2');
+		const result = run_cli_with_typescript_7(stub_dir, ['--noEmit', '-p', 'tsconfig.json']);
 		expect(result.status).toBe(1);
-		const output = result.stdout + result.stderr;
-		expect(output).toContain('tsrx-tsc resolved typescript@7.0.2');
-		expect(output).toContain('^5.9.3 || ^6.0.0');
-		expect(output).toContain('https://github.com/tsrx-org/tsrx/issues/');
-		expect(output).not.toContain('ERR_PACKAGE_PATH_NOT_EXPORTED');
+		expect(result.output).toContain('tsrx-tsc resolved typescript@7.0.2');
+		expect(result.output).toContain('^5.9.3 || ^6.0.0');
+		expect(result.output).toContain('7.1.0-dev.20260822.1');
+		expect(result.output).toContain('https://github.com/tsrx-org/tsrx/issues/');
+		expect(result.output).not.toContain('ERR_PACKAGE_PATH_NOT_EXPORTED');
+	});
+
+	it('explains a missing platform package instead of crashing', () => {
+		const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1');
+		const result = run_cli_with_typescript_7(stub_dir, ['--version']);
+		expect(result.status).toBe(1);
+		expect(result.output).toContain(
+			`could not resolve @typescript/typescript-${process.platform}-${process.arch}`,
+		);
+	});
+
+	describe.skipIf(process.platform === 'win32')('with a content-mapper build', () => {
+		const record_call = `
+const fs = require('node:fs');
+fs.writeFileSync(process.env.TSRX_TEST_CALL, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }));
+process.stdout.write('native tsc ran\\n');
+process.exit(Number(process.env.TSRX_TEST_EXIT ?? 0));
+`;
+
+		/** @param {Record<string, unknown>} config */
+		function write_tsconfig(config) {
+			fs.writeFileSync(path.join(workspace, 'tsconfig.json'), JSON.stringify(config));
+		}
+
+		const mapper_entry = { package: '@tsrx/content-mapper', extensions: ['.tsrx'] };
+
+		it('runs the native binary with --runExternalCode and passes the exit code through', () => {
+			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
+				platform_binary: record_call,
+			});
+			write_tsconfig({ tsrx: { compiler: '@tsrx/preact' }, contentMappers: [mapper_entry] });
+			const call_file = path.join(workspace, 'call.json');
+			const result = run_cli_with_typescript_7(
+				stub_dir,
+				['--noEmit', '-p', 'tsconfig.json', '--pretty', 'false'],
+				{ TSRX_TEST_CALL: call_file, TSRX_TEST_EXIT: '2' },
+			);
+			expect(result.output).toBe('native tsc ran\n');
+			expect(result.status).toBe(2);
+			const call = JSON.parse(fs.readFileSync(call_file, 'utf8'));
+			expect(call.argv).toEqual([
+				'--runExternalCode',
+				'--noEmit',
+				'-p',
+				'tsconfig.json',
+				'--pretty',
+				'false',
+			]);
+			expect(fs.realpathSync(call.cwd)).toBe(fs.realpathSync(workspace));
+		});
+
+		it('keeps --build first and finds the mapper through extends', () => {
+			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
+				platform_binary: record_call,
+			});
+			fs.writeFileSync(
+				path.join(workspace, 'tsconfig.base.json'),
+				JSON.stringify({ contentMappers: [mapper_entry] }),
+			);
+			write_tsconfig({ extends: './tsconfig.base.json', compilerOptions: { composite: true } });
+			const call_file = path.join(workspace, 'call.json');
+			const result = run_cli_with_typescript_7(stub_dir, ['--build', '.', '--verbose'], {
+				TSRX_TEST_CALL: call_file,
+			});
+			expect(result.status).toBe(0);
+			expect(JSON.parse(fs.readFileSync(call_file, 'utf8')).argv).toEqual([
+				'--build',
+				'.',
+				'--verbose',
+				'--runExternalCode',
+			]);
+		});
+
+		it('refuses a project that declares no content mapper for .tsrx files', () => {
+			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
+				platform_binary: record_call,
+			});
+			write_tsconfig({ tsrx: { compiler: '@tsrx/preact' } });
+			const call_file = path.join(workspace, 'call.json');
+			const result = run_cli_with_typescript_7(stub_dir, ['--noEmit', '-p', 'tsconfig.json'], {
+				TSRX_TEST_CALL: call_file,
+			});
+			expect(result.status).toBe(1);
+			expect(result.output).toContain('declares no content mapper for .tsrx files');
+			expect(result.output).toContain('@tsrx/content-mapper');
+			expect(fs.existsSync(call_file)).toBe(false);
+		});
+
+		it('leaves --version and explicit source files to the binary', () => {
+			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
+				platform_binary: record_call,
+			});
+			// The tsconfig here declares no mapper; neither invocation reads it.
+			write_tsconfig({});
+			const call_file = path.join(workspace, 'call.json');
+			expect(
+				run_cli_with_typescript_7(stub_dir, ['--version'], { TSRX_TEST_CALL: call_file }).status,
+			).toBe(0);
+			expect(JSON.parse(fs.readFileSync(call_file, 'utf8')).argv).toEqual([
+				'--runExternalCode',
+				'--version',
+			]);
+			expect(
+				run_cli_with_typescript_7(stub_dir, ['main.ts', '--noEmit'], { TSRX_TEST_CALL: call_file })
+					.status,
+			).toBe(0);
+			expect(JSON.parse(fs.readFileSync(call_file, 'utf8')).argv).toEqual([
+				'--runExternalCode',
+				'main.ts',
+				'--noEmit',
+			]);
+		});
 	});
 });

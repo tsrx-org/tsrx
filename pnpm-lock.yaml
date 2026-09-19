@@ -1060,6 +1060,9 @@ importers:
 
   packages/typescript-plugin:
     dependencies:
+      '@tsrx/content-mapper':
+        specifier: workspace:*
+        version: link:../content-mapper
       '@tsrx/preact':
         specifier: workspace:*
         version: link:../tsrx-preact

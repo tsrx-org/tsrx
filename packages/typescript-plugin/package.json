@@ -39,6 +39,7 @@
   },
   "peerDependencies": {
     "typescript": "catalog:peer",
+    "@tsrx/content-mapper": "workspace:*",
     "@tsrx/react": "workspace:*",
     "@tsrx/ripple": "catalog:default",
     "@tsrx/solid": "workspace:*",
@@ -47,6 +48,9 @@
     "octane": "*"
   },
   "peerDependenciesMeta": {
+    "@tsrx/content-mapper": {
+      "optional": true
+    },
     "@tsrx/react": {
       "optional": true
     },

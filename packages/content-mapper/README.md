@@ -20,7 +20,9 @@ https://github.com/tsrx-org/tsrx/issues/136.
   with `TSRX_NATIVE_TSC=<path to tsc>`.
 - **`--runExternalCode`.** TypeScript only spawns the mapper when the user opts
   in; the mapper never enables it. Without the flag, a `contentMappers` entry is
-  an error (TS100024).
+  an error (TS100024). `tsrx-tsc` passes the flag when it runs TypeScript 7,
+  because running it is already the decision to execute the project's TSRX
+  compiler.
 - **No other TypeScript.** The mapper reads `tsconfig.json` (comments, trailing
   commas and the `extends` chain, including packages) and resolves compiler
   packages with `@tsrx/typescript-plugin`'s own reader and package walk
@@ -53,8 +55,13 @@ mapper never turns it on for you:
 tsc --runExternalCode --noEmit
 ```
 
-The classic `tsrx-tsc` (from `@tsrx/typescript-plugin`) keeps working unchanged
-for TypeScript 5.9 and 6.
+`tsrx-tsc` (from `@tsrx/typescript-plugin`) keeps working unchanged for TypeScript
+5.9 and 6, and on a TypeScript 7.1 nightly it runs this same command for you: it
+finds the native binary through the `typescript` launcher package's platform
+package, adds `--runExternalCode`, and refuses to run a tsconfig without a `.tsrx`
+content mapper rather than let TypeScript skip those files. One `package.json`
+script therefore serves every supported TypeScript
+(`tests/tsrx-tsc-native.test.js`).
 
 ### Options
 
@@ -177,7 +184,8 @@ extension's README for the per-editor setup.
   (microsoft/TypeScript#64350). Keep `<script>` bodies out of composite libraries
   until this is fixed upstream; `tests/native-build.test.js` pins the current
   behaviour.
-- `--runExternalCode` is required and is never enabled by the mapper.
+- `--runExternalCode` is required and is never enabled by the mapper; `tsrx-tsc`
+  passes it.
 - Editors: no auto-import when a new import statement is needed
   (microsoft/TypeScript#64119), no rename on `Atom` spans
   (microsoft/TypeScript#63879), and an unused variable in a `<script>` body is
