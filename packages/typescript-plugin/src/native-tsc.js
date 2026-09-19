@@ -91,14 +91,34 @@ const SOURCE_FILE_EXTENSIONS = /\.(?:[cm]?[jt]sx?|tsrx|d\.[cm]?ts)$/i;
 const INFORMATIONAL_FLAGS = new Set(['--version', '-v', '--help', '-h', '--init']);
 
 /**
+ * The value of a `-p`/`--project` token, including the `--project=file` and
+ * `-p=file` form TypeScript's parser accepts.
+ * @param {string} arg
+ * @param {string | undefined} next
+ * @returns {{ value: string | undefined } | undefined}
+ */
+function read_project_option(arg, next) {
+	if (arg === '-p' || arg === '--project') {
+		return { value: next };
+	}
+	if (arg.startsWith('--project=')) {
+		return { value: arg.slice('--project='.length) };
+	}
+	if (arg.startsWith('-p=')) {
+		return { value: arg.slice(3) };
+	}
+	return undefined;
+}
+
+/**
  * The `tsconfig.json` files a `tsc` invocation reads, mirroring how the
  * compiler picks them: `-p`/`--project` (a file, or a directory holding
- * `tsconfig.json`); otherwise `tsconfig.json` in the working directory unless
- * source files are passed, which makes `tsc` ignore every tsconfig; in build
- * mode, each positional argument that is a directory or a config file, or the
- * working directory when there is none. Paths that do not exist are left out,
- * so `tsc` reports them itself, and `--version`, `--help` and `--init` read
- * none.
+ * `tsconfig.json`), including `--project=file` / `-p=file`; otherwise
+ * `tsconfig.json` in the working directory unless source files are passed,
+ * which makes `tsc` ignore every tsconfig; in build mode, each positional
+ * argument that is a directory or a config file, or the working directory
+ * when there is none. Paths that do not exist are left out, so `tsc` reports
+ * them itself, and `--version`, `--help` and `--init` read none.
  * @param {readonly string[]} args
  * @param {string} cwd
  * @returns {string[]}
@@ -111,14 +131,8 @@ export function project_config_paths(args, cwd) {
 	}
 	/** @param {string} candidate A file or a directory. */
 	function add(candidate) {
-		const resolved = path.resolve(cwd, candidate);
-		const stats = fs.statSync(resolved, { throwIfNoEntry: false });
-		if (stats?.isDirectory()) {
-			const nested = path.join(resolved, 'tsconfig.json');
-			if (fs.existsSync(nested)) configs.push(nested);
-		} else if (stats?.isFile()) {
-			configs.push(resolved);
-		}
+		const resolved = existing_config_path(path.resolve(cwd, candidate));
+		if (resolved !== undefined) configs.push(resolved);
 	}
 	if (is_build_mode(args)) {
 		for (const arg of args.slice(1)) {
@@ -128,9 +142,9 @@ export function project_config_paths(args, cwd) {
 		return configs;
 	}
 	for (let index = 0; index < args.length; index++) {
-		const arg = args[index];
-		if (arg === '-p' || arg === '--project') {
-			if (args[index + 1] !== undefined) add(args[index + 1]);
+		const project = read_project_option(args[index], args[index + 1]);
+		if (project) {
+			if (project.value !== undefined) add(project.value);
 			return configs;
 		}
 	}
@@ -138,6 +152,137 @@ export function project_config_paths(args, cwd) {
 		return configs;
 	}
 	add('.');
+	return configs;
+}
+
+/**
+ * @param {string} candidate Absolute path to a file or a directory.
+ * @param {import('./config-host.js').ConfigHost} [host]
+ * @returns {string | undefined}
+ */
+function existing_config_path(candidate, host) {
+	const nested = path.join(candidate, 'tsconfig.json');
+	if (host?.directoryExists?.(candidate) === true) {
+		return host.fileExists(nested) ? nested : undefined;
+	}
+	if (host?.fileExists(candidate)) {
+		return candidate;
+	}
+	if (host?.directoryExists === undefined) {
+		const stats = fs.statSync(candidate, { throwIfNoEntry: false });
+		if (stats?.isDirectory()) {
+			return fs.existsSync(nested) ? nested : undefined;
+		}
+		if (stats?.isFile()) {
+			return candidate;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * @param {import('./tsconfig-resolution.js').ResolvedTsconfigLayers} loaded
+ * @returns {boolean}
+ */
+function tsconfig_load_failed(loaded) {
+	return (
+		loaded.layers.length === 0 ||
+		loaded.diagnostics.length > 0 ||
+		loaded.extends_failures.length > 0 ||
+		loaded.layers.some((layer) => layer.raw_source === undefined)
+	);
+}
+
+/**
+ * Whether a project compiles its own files, as opposed to a solution-style
+ * `files: []` aggregator that only lists `references`.
+ * @param {import('./tsconfig-resolution.js').TsconfigLayer[]} layers
+ * @returns {boolean}
+ */
+function compiles_own_sources(layers) {
+	const files = resolve_inherited_config_value(layers, (layer) =>
+		get_own_config_value(layer.config, ['files']),
+	);
+	const include = resolve_inherited_config_value(layers, (layer) =>
+		get_own_config_value(layer.config, ['include']),
+	);
+	const empty_files =
+		files.state === 'found' && Array.isArray(files.value) && files.value.length === 0;
+	const empty_include =
+		include.state === 'found' && Array.isArray(include.value) && include.value.length === 0;
+	if (empty_files && (include.state === 'absent' || empty_include)) {
+		return false;
+	}
+	if (files.state === 'absent' && empty_include) {
+		return false;
+	}
+	return true;
+}
+
+/**
+ * @param {string} config_path
+ * @param {import('./config-host.js').ConfigHost} host
+ * @returns {string[]}
+ */
+function referenced_config_paths(config_path, host) {
+	const { layers } = load_tsconfig_layers(host, config_path);
+	const root = layers[layers.length - 1];
+	if (root === undefined) {
+		return [];
+	}
+	const refs = get_own_config_value(root.config, ['references']);
+	if (refs.state !== 'found' || !Array.isArray(refs.value)) {
+		return [];
+	}
+	/** @type {string[]} */
+	const configs = [];
+	for (const entry of refs.value) {
+		if (entry === null || typeof entry !== 'object') {
+			continue;
+		}
+		const ref_path = /** @type {{ path?: unknown }} */ (entry).path;
+		if (typeof ref_path !== 'string') {
+			continue;
+		}
+		const resolved = existing_config_path(path.resolve(root.dir, ref_path), host);
+		if (resolved !== undefined) {
+			configs.push(resolved);
+		}
+	}
+	return configs;
+}
+
+/**
+ * Command-line configs plus, in `--build` mode, every project in their
+ * `references` graph.
+ * @param {readonly string[]} args
+ * @param {string} cwd
+ * @param {import('./config-host.js').ConfigHost} host
+ * @returns {string[]}
+ */
+function mapper_guard_config_paths(args, cwd, host) {
+	const roots = project_config_paths(args, cwd);
+	if (!is_build_mode(args)) {
+		return roots;
+	}
+	/** @type {string[]} */
+	const configs = [];
+	const seen = new Set();
+	/** @param {string} config_path */
+	function visit(config_path) {
+		const key = path.resolve(config_path);
+		if (seen.has(key)) {
+			return;
+		}
+		seen.add(key);
+		configs.push(config_path);
+		for (const referenced of referenced_config_paths(config_path, host)) {
+			visit(referenced);
+		}
+	}
+	for (const root of roots) {
+		visit(root);
+	}
 	return configs;
 }
 
@@ -152,11 +297,11 @@ export function project_config_paths(args, cwd) {
  * @returns {boolean}
  */
 export function declares_tsrx_content_mapper(config_path, host = NODE_CONFIG_HOST) {
-	const { layers } = load_tsconfig_layers(host, config_path);
-	if (layers.length === 0) {
+	const loaded = load_tsconfig_layers(host, config_path);
+	if (tsconfig_load_failed(loaded)) {
 		return true;
 	}
-	const mappers = resolve_inherited_config_value(layers, (layer) =>
+	const mappers = resolve_inherited_config_value(loaded.layers, (layer) =>
 		get_own_config_value(layer.config, ['contentMappers']),
 	);
 	if (mappers.state === 'absent') {
@@ -209,8 +354,13 @@ export function run_native_tsc(options) {
 		stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
 		return 1;
 	}
-	for (const config_path of project_config_paths(options.args, cwd)) {
-		if (!declares_tsrx_content_mapper(config_path, options.host)) {
+	const host = options.host ?? NODE_CONFIG_HOST;
+	const build_mode = is_build_mode(options.args);
+	for (const config_path of mapper_guard_config_paths(options.args, cwd, host)) {
+		if (build_mode && !compiles_own_sources(load_tsconfig_layers(host, config_path).layers)) {
+			continue;
+		}
+		if (!declares_tsrx_content_mapper(config_path, host)) {
 			stderr.write(`${missing_content_mapper_message(config_path)}\n`);
 			return 1;
 		}

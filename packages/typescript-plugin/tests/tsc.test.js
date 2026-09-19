@@ -325,6 +325,77 @@ process.exit(Number(process.env.TSRX_TEST_EXIT ?? 0));
 			expect(fs.existsSync(call_file)).toBe(false);
 		});
 
+		it('honors --project= so the working-directory tsconfig is not the one checked', () => {
+			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
+				platform_binary: record_call,
+			});
+			write_tsconfig({ tsrx: { compiler: '@tsrx/preact' } });
+			fs.writeFileSync(
+				path.join(workspace, 'tsconfig.mapped.json'),
+				JSON.stringify({ contentMappers: [mapper_entry] }),
+			);
+			const call_file = path.join(workspace, 'call.json');
+			const mapped = run_cli_with_typescript_7(
+				stub_dir,
+				['--noEmit', '--project=tsconfig.mapped.json'],
+				{ TSRX_TEST_CALL: call_file },
+			);
+			expect(mapped.status).toBe(0);
+			expect(fs.existsSync(call_file)).toBe(true);
+			fs.unlinkSync(call_file);
+			const unmapped = run_cli_with_typescript_7(stub_dir, ['--noEmit', '-p=tsconfig.json'], {
+				TSRX_TEST_CALL: call_file,
+			});
+			expect(unmapped.status).toBe(1);
+			expect(unmapped.output).toContain('declares no content mapper for .tsrx files');
+			expect(fs.existsSync(call_file)).toBe(false);
+		});
+
+		it('walks --build references and refuses an unmapped referenced project', () => {
+			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
+				platform_binary: record_call,
+			});
+			write_tsconfig({ files: [], references: [{ path: './pkg' }] });
+			fs.mkdirSync(path.join(workspace, 'pkg'));
+			fs.writeFileSync(
+				path.join(workspace, 'pkg', 'tsconfig.json'),
+				JSON.stringify({ contentMappers: [mapper_entry], compilerOptions: { composite: true } }),
+			);
+			const call_file = path.join(workspace, 'call.json');
+			const allowed = run_cli_with_typescript_7(stub_dir, ['--build'], {
+				TSRX_TEST_CALL: call_file,
+			});
+			expect(allowed.status).toBe(0);
+			expect(fs.existsSync(call_file)).toBe(true);
+			fs.writeFileSync(
+				path.join(workspace, 'pkg', 'tsconfig.json'),
+				JSON.stringify({ compilerOptions: { composite: true } }),
+			);
+			fs.unlinkSync(call_file);
+			const refused = run_cli_with_typescript_7(stub_dir, ['--build'], {
+				TSRX_TEST_CALL: call_file,
+			});
+			expect(refused.status).toBe(1);
+			expect(refused.output).toContain(
+				`${path.join(workspace, 'pkg', 'tsconfig.json')} declares no content mapper`,
+			);
+			expect(fs.existsSync(call_file)).toBe(false);
+		});
+
+		it('lets tsc report an unreadable tsconfig instead of claiming no mapper', () => {
+			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
+				platform_binary: record_call,
+			});
+			fs.writeFileSync(path.join(workspace, 'tsconfig.json'), '{ not json');
+			const call_file = path.join(workspace, 'call.json');
+			const result = run_cli_with_typescript_7(stub_dir, ['--noEmit', '-p', 'tsconfig.json'], {
+				TSRX_TEST_CALL: call_file,
+			});
+			expect(result.status).toBe(0);
+			expect(result.output).not.toContain('declares no content mapper');
+			expect(fs.existsSync(call_file)).toBe(true);
+		});
+
 		it('leaves --version and explicit source files to the binary', () => {
 			const stub_dir = install_typescript_7_stub('7.1.0-dev.20260918.1', {
 				platform_binary: record_call,
