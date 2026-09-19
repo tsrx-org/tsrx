@@ -3,11 +3,11 @@
 Phase 4 of [tsrx-org/tsrx#41](https://github.com/tsrx-org/tsrx/issues/41). This is
 the release note for the first release that ships `@tsrx/content-mapper`, the
 `native` backend of `@tsrx/language-server`, and the native backend of the VS Code
-extension. The classic path (`tsrx-tsc`, the TypeScript 5 language server, the
-patched built-in VS Code TypeScript extension) is unchanged and remains the
-default everywhere except where the user has already switched their editor to
-TypeScript 7. Deprecating the classic path is a separate decision and is not made
-here.
+extension. The classic path (`tsrx-tsc`, the TypeScript 5 language server, the VS
+Code extension serving `.tsrx` through VS Code's own tsserver and the plugin) is
+unchanged and remains the default everywhere except where the user has already
+switched their editor to TypeScript 7. Deprecating the classic path is a separate
+decision and is not made here.
 
 ## What ships
 
@@ -221,9 +221,9 @@ project files.
   (`*.d.tsrx.ts`); delete the output directory before re-emitting with the classic
   path.
 - **VS Code**: switch TypeScript 7 off (the **TypeScript: Select TypeScript
-  Version** picker, or `js/ts.experimental.useTsgo`) and restart extensions. The
-  extension patches the built-in TypeScript extension again on the next
-  activation.
+  Version** picker, or `js/ts.experimental.useTsgo`) and restart extensions. VS
+  Code's own tsserver serves `.tsrx` files again through the plugin the extension
+  ships.
 - **Other editors**: start the TSRX server without `--typescript-backend` (or with
   `classic`) and stop sending `.tsrx` to the TypeScript 7 server. Never run both
   backends on the same file.

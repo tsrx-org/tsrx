@@ -60,6 +60,11 @@ file.
   completions (Ripple-gated), CSS in `<style>` blocks, document symbols,
   auto-closing tags, CSS-class hover and definition, and keyword highlights.
   `volar-service-typescript` is never loaded in this mode.
+- `plugin`: the editor's own tsserver owns every TypeScript feature for `.tsrx`
+  files through `@tsrx/typescript-plugin` (VS Code on TypeScript 5.9 or 6, where
+  the extension hands the plugin to VS Code's tsserver). The server is as slim as
+  on `native` but also reports the TSRX compile errors, which a tsserver plugin
+  cannot.
 
 Select the backend with a command-line flag or an initialization option (the flag
 wins):

@@ -65,14 +65,19 @@ TypeScript 7 serves them through the content mapper instead. Dismiss it with
 
 What differs from the classic backend:
 
-- TSRX compile errors are reported by TypeScript with the `tsrx` source.
-- Hover text shows generated helper identifiers as TypeScript sees them; the
-  classic backend rewrote them to the authored names.
+- TSRX compile errors are reported by TypeScript 7 with the `tsrx` source; on
+  classic the TSRX language server reports them with the `TSRX` source.
 - Rename is limited to identifiers whose generated text matches the source
   (upstream microsoft/TypeScript#63879).
 - Keyword highlights from the TSRX server are not shown while several `.tsrx`
   editors are visible side by side (VS Code then only consults the TypeScript 7
   extension's multi-document highlight provider).
+- The TypeScript 7 extension only activates once a `.ts` or `.js` file has been
+  opened; until then `.tsrx` files get no TypeScript features.
+
+On both backends, declarations inside `<script>` bodies are type-checked in place
+but not listed in the Outline: the body is a block statement in the generated
+TypeScript, which TypeScript's navigation tree skips.
 
 See the
 [`@tsrx/content-mapper` README](https://github.com/tsrx-org/tsrx/tree/main/packages/content-mapper)
