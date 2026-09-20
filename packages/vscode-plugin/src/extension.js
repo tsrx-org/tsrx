@@ -106,6 +106,8 @@ function tsrxWakeUp() {
 `;
 /** How long to keep the wake-up file at most before closing and removing it anyway. */
 const WAKE_UP_TIMEOUT_MS = 30_000;
+/** The `source` VS Code's TypeScript extension (5.x, 6.x and 7.x alike) sets on its diagnostics. */
+const TYPESCRIPT_DIAGNOSTIC_SOURCE = 'ts';
 
 /**
  * @param {import('vscode').ExtensionContext} context
@@ -256,7 +258,7 @@ export async function activate(context) {
 		// where only `.tsrx` files are opened would therefore get no TypeScript features at
 		// all (microsoft/TypeScript#64355). Until that is fixed upstream, open the nearest
 		// TypeScript or JavaScript file of the project once, hidden: no editor, nothing
-		// written, nothing to close.
+		// written, nothing to close. Removal is tracked in tsrx-org/tsrx#138.
 		context.subscriptions.push(
 			vscode.workspace.onDidOpenTextDocument((document) => {
 				if (document.languageId === 'tsrx') {
@@ -349,11 +351,11 @@ async function wake_typescript_for(document) {
 
 /**
  * The project has no `.ts` or `.js` file to open: write one that explains itself, open it
- * as an inactive tab next to the `.tsrx` file, and, as soon as TypeScript reports its unused-local hint on it
- * (proof that TypeScript is running and has loaded this project; the file is a module with
- * an unused local, since unused globals of a script are never reported), or after a timeout,
- * close its tab and delete it. If the user closes the tab first, the file is deleted right
- * away.
+ * as an inactive tab next to the `.tsrx` file, and, as soon as TypeScript reports its
+ * unused-local hint on it (proof that TypeScript is running and has loaded this project;
+ * the file is a module with an unused local, since unused globals of a script are never
+ * reported), or after a timeout, close its tab and delete it. If the user closes the tab
+ * first, the file is deleted right away.
  * @param {import('vscode').Uri} uri
  */
 async function wake_typescript_with_a_file(uri) {
@@ -362,9 +364,12 @@ async function wake_typescript_with_a_file(uri) {
 		await vscode.workspace.openTextDocument(uri);
 		// `vscode.open` (unlike `showTextDocument`) honours `background`: the tab is added next
 		// to the `.tsrx` tab without becoming the active one, so the `.tsrx` file stays in view.
+		// Pinned (`preview: false`), because a preview tab would replace a `.tsrx` tab that is
+		// itself a preview (single-clicked in the explorer), and that tab would be gone for good
+		// once the wake-up tab closes.
 		await vscode.commands.executeCommand('vscode.open', uri, {
 			background: true,
-			preview: true,
+			preview: false,
 			preserveFocus: true,
 		});
 	} catch (error) {
@@ -398,11 +403,17 @@ async function wake_typescript_with_a_file(uri) {
 			console.warn(`[TSRX] Could not remove ${uri.fsPath}:`, error);
 		}
 	};
+	// Only TypeScript's own diagnostics prove that it has loaded the project: a linter may
+	// report the unused local first.
+	const typescript_has_reported = () =>
+		vscode.languages
+			.getDiagnostics(uri)
+			.some((diagnostic) => diagnostic.source === TYPESCRIPT_DIAGNOSTIC_SOURCE);
 	subscriptions.push(
 		vscode.languages.onDidChangeDiagnostics((event) => {
 			if (
 				event.uris.some((changed) => changed.toString() === uri.toString()) &&
-				vscode.languages.getDiagnostics(uri).length > 0
+				typescript_has_reported()
 			) {
 				void finish();
 			}
@@ -413,7 +424,7 @@ async function wake_typescript_with_a_file(uri) {
 			}
 		}),
 	);
-	if (vscode.languages.getDiagnostics(uri).length > 0) {
+	if (typescript_has_reported()) {
 		void finish();
 	} else {
 		setTimeout(() => void finish(), WAKE_UP_TIMEOUT_MS);
