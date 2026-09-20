@@ -77,7 +77,10 @@ What differs from the classic backend:
   mapper has loaded (microsoft/TypeScript#64355). This extension works around
   that: on the first `.tsrx` file it opens the nearest `.ts` or `.js` file of the
   project hidden (no editor, nothing written). A project with no `.ts` or `.js`
-  file at all still gets no TypeScript 7 features until one is opened.
+  file at all gets a `tsrx-wake-up.ts` written next to the `.tsrx` file and shown
+  for a moment; it explains itself, and the extension closes and deletes it as
+  soon as TypeScript is running for the project (a few seconds). If it is ever
+  left behind, delete it.
 
 On both backends, declarations inside `<script>` bodies are type-checked in place
 but not listed in the Outline: the body is a block statement in the generated

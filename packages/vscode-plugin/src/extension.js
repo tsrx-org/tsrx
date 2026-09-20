@@ -88,6 +88,24 @@ const JS_TS_LANGUAGES = new Set(['typescript', 'typescriptreact', 'javascript', 
 const JS_TS_GLOB = '*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}';
 /** Directories for which a JavaScript or TypeScript file was opened to wake VS Code's TypeScript. */
 const woken_directories = new Set();
+/** The file written next to a `.tsrx` file when its project has no `.ts` or `.js` file at all. */
+const WAKE_UP_FILE_NAME = 'tsrx-wake-up.ts';
+const WAKE_UP_FILE_CONTENT = `// DO NOT CLOSE THIS FILE. IT CLOSES AND DELETES ITSELF IN A MOMENT.
+//
+// The TSRX extension created it because this project has no TypeScript or
+// JavaScript file. VS Code's TypeScript starts, and loads a project, only when
+// one of the project's .ts or .js files is opened (microsoft/TypeScript#64355);
+// without one, .tsrx files would get no TypeScript features at all.
+//
+// As soon as TypeScript is running for this project, this tab is closed and the
+// file is removed. If the file is still here later, delete it.
+export {};
+function tsrxWakeUp() {
+	const unused = 1;
+}
+`;
+/** How long to keep the wake-up file at most before closing and removing it anyway. */
+const WAKE_UP_TIMEOUT_MS = 30_000;
 
 /**
  * @param {import('vscode').ExtensionContext} context
@@ -314,8 +332,9 @@ async function wake_typescript_for(document) {
 	}
 	if (!candidate) {
 		console.log(
-			`[TSRX] No TypeScript or JavaScript file near ${document.uri.fsPath} to wake VS Code's TypeScript with`,
+			`[TSRX] No TypeScript or JavaScript file near ${document.uri.fsPath}; writing ${WAKE_UP_FILE_NAME} to wake VS Code's TypeScript`,
 		);
+		await wake_typescript_with_a_file(vscode.Uri.file(path.join(directory, WAKE_UP_FILE_NAME)));
 		return;
 	}
 	try {
@@ -325,6 +344,73 @@ async function wake_typescript_for(document) {
 		);
 	} catch (error) {
 		console.warn("[TSRX] Could not open a TypeScript file to wake VS Code's TypeScript:", error);
+	}
+}
+
+/**
+ * The project has no `.ts` or `.js` file to open: write one that explains itself, show it
+ * (without taking focus), and, as soon as TypeScript reports its unused-local hint on it
+ * (proof that TypeScript is running and has loaded this project; the file is a module with
+ * an unused local, since unused globals of a script are never reported), or after a timeout,
+ * close its tab and delete it. If the user closes the tab first, the file is deleted right
+ * away.
+ * @param {import('vscode').Uri} uri
+ */
+async function wake_typescript_with_a_file(uri) {
+	try {
+		await vscode.workspace.fs.writeFile(uri, Buffer.from(WAKE_UP_FILE_CONTENT, 'utf8'));
+		const document = await vscode.workspace.openTextDocument(uri);
+		await vscode.window.showTextDocument(document, { preview: true, preserveFocus: true });
+	} catch (error) {
+		console.warn(`[TSRX] Could not write or open ${uri.fsPath}:`, error);
+		return;
+	}
+	let done = false;
+	/** @type {import('vscode').Disposable[]} */
+	const subscriptions = [];
+	const finish = async () => {
+		if (done) {
+			return;
+		}
+		done = true;
+		for (const subscription of subscriptions) {
+			subscription.dispose();
+		}
+		const tabs = vscode.window.tabGroups.all.flatMap((group) =>
+			group.tabs.filter(
+				(tab) =>
+					tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uri.toString(),
+			),
+		);
+		try {
+			if (tabs.length > 0) {
+				await vscode.window.tabGroups.close(tabs, true);
+			}
+			await vscode.workspace.fs.delete(uri);
+			console.log(`[TSRX] Removed ${uri.fsPath}`);
+		} catch (error) {
+			console.warn(`[TSRX] Could not remove ${uri.fsPath}:`, error);
+		}
+	};
+	subscriptions.push(
+		vscode.languages.onDidChangeDiagnostics((event) => {
+			if (
+				event.uris.some((changed) => changed.toString() === uri.toString()) &&
+				vscode.languages.getDiagnostics(uri).length > 0
+			) {
+				void finish();
+			}
+		}),
+		vscode.workspace.onDidCloseTextDocument((closed) => {
+			if (closed.uri.toString() === uri.toString()) {
+				void finish();
+			}
+		}),
+	);
+	if (vscode.languages.getDiagnostics(uri).length > 0) {
+		void finish();
+	} else {
+		setTimeout(() => void finish(), WAKE_UP_TIMEOUT_MS);
 	}
 }
 
