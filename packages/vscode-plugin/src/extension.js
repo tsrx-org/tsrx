@@ -106,6 +106,24 @@ function tsrxWakeUp() {
 `;
 /** How long to keep the wake-up file at most before closing and removing it anyway. */
 const WAKE_UP_TIMEOUT_MS = 30_000;
+/** TypeScript's unused-local hint (`TS6133`), the planted signal in the wake-up file. */
+const TS_UNUSED_LOCAL_CODE = 6133;
+
+/**
+ * True when TypeScript itself has reported its unused-local hint. `getDiagnostics`
+ * merges every provider, so ESLint or a spell checker can fire first on the
+ * planted unused local.
+ * @param {readonly import('vscode').Diagnostic[]} diagnostics
+ */
+function has_typescript_unused_local(diagnostics) {
+	return diagnostics.some((diagnostic) => {
+		const code =
+			typeof diagnostic.code === 'object' && diagnostic.code != null
+				? diagnostic.code.value
+				: diagnostic.code;
+		return diagnostic.source === 'ts' && Number(code) === TS_UNUSED_LOCAL_CODE;
+	});
+}
 
 /**
  * @param {import('vscode').ExtensionContext} context
@@ -360,7 +378,7 @@ async function wake_typescript_with_a_file(uri) {
 	try {
 		await vscode.workspace.fs.writeFile(uri, Buffer.from(WAKE_UP_FILE_CONTENT, 'utf8'));
 		const document = await vscode.workspace.openTextDocument(uri);
-		await vscode.window.showTextDocument(document, { preview: true, preserveFocus: true });
+		await vscode.window.showTextDocument(document, { preview: false, preserveFocus: true });
 	} catch (error) {
 		console.warn(`[TSRX] Could not write or open ${uri.fsPath}:`, error);
 		return;
@@ -396,7 +414,7 @@ async function wake_typescript_with_a_file(uri) {
 		vscode.languages.onDidChangeDiagnostics((event) => {
 			if (
 				event.uris.some((changed) => changed.toString() === uri.toString()) &&
-				vscode.languages.getDiagnostics(uri).length > 0
+				has_typescript_unused_local(vscode.languages.getDiagnostics(uri))
 			) {
 				void finish();
 			}
@@ -407,7 +425,7 @@ async function wake_typescript_with_a_file(uri) {
 			}
 		}),
 	);
-	if (vscode.languages.getDiagnostics(uri).length > 0) {
+	if (has_typescript_unused_local(vscode.languages.getDiagnostics(uri))) {
 		void finish();
 	} else {
 		setTimeout(() => void finish(), WAKE_UP_TIMEOUT_MS);
