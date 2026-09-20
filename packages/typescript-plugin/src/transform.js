@@ -120,6 +120,34 @@ const IMPORT_DECLARATION =
 	/^[ \t]*import\s+(?:type\s+)?(?:(?:[\w$]+\s*,\s*)?(?:\{[^}]*\}|\*\s+as\s+[\w$]+|[\w$]+)\s+from\s+)?(['"])[^'"\n]*\1(?:\s+with\s*\{[^}]*\})?[ \t]*;?/gm;
 
 /**
+ * Re-export statements (`export ... from '...'`) at the top level of a body,
+ * which are module-level syntax with nothing to re-export in an inline script.
+ */
+const REEXPORT_DECLARATION =
+	/^[ \t]*export\s+(?:type\s+)?(?:\{[^}]*\}|\*(?:\s+as\s+[\w$]+)?)\s+from\s+(['"])[^'"\n]*\1(?:\s+with\s*\{[^}]*\})?[ \t]*;?/gm;
+
+/** The `export` (and `export default`) keywords in front of a declaration. */
+const EXPORT_KEYWORDS = /^[ \t]*(export[ \t]+(?:default[ \t]+)?)(?=\S)/gm;
+
+/**
+ * A `<script type="module">` body may `export`, but nothing can import an inline
+ * script, so its exports are dead and a block cannot hold them: blank the
+ * keywords in front of declarations and whole re-export statements, keeping every
+ * length so the body's mapping stays one to one.
+ * @param {string} body
+ * @returns {string}
+ */
+export function blank_export_syntax(body) {
+	return body
+		.replace(REEXPORT_DECLARATION, (statement) => statement.replace(/[^\r\n]/g, ' '))
+		.replace(
+			EXPORT_KEYWORDS,
+			(match, keywords) =>
+				match.slice(0, match.length - keywords.length) + ' '.repeat(keywords.length),
+		);
+}
+
+/**
  * @param {string} body
  * @returns {Array<{ start: number, end: number }>}
  */
@@ -145,7 +173,9 @@ export function find_import_declarations(body) {
  * hoisted verbatim in front of its block, at module level, where TypeScript
  * resolves them like any other import (a browser-only URL in a
  * `<script type="module">` yields a mapped "cannot find module"); their place
- * in the block is blanked. Each body maps in one multi-segment mapping.
+ * in the block is blanked. `export` syntax is blanked in place
+ * ({@link blank_export_syntax}). Top-level `await` is legal inside a block of a
+ * module and stays as written. Each body maps in one multi-segment mapping.
  * @param {string} text
  * @param {CodeMapping[]} mappings
  * @param {EmbeddedRegion[]} script_regions
@@ -164,7 +194,7 @@ export function embed_script_bodies(text, mappings, script_regions) {
 		const lengths = [];
 
 		let hoisted = '';
-		let body = region.content;
+		let body = blank_export_syntax(region.content);
 		for (const { start, end } of imports) {
 			sourceOffsets.push(region.start + start);
 			generatedOffsets.push(text.length + 1 + hoisted.length);
