@@ -60,23 +60,41 @@ describe('<script> bodies embedded as blocks', () => {
 		expect(text.slice(block)).not.toContain('import');
 	});
 
-	it('blanks export syntax in place (nothing can import an inline script) and keeps await', () => {
+	it('turns export syntax into valid, same-length code (nothing can import an inline script) and keeps await', () => {
 		const body = [
 			"export { helper } from './helper.js';",
+			"export * as ns from './ns.js';",
 			'export const value = 1;',
+			'export async function run() {}',
+			'export default function () {}',
+			'export default class {}',
 			'export default value;',
 			'export { value as alias };',
+			'export type { T };',
 			'const r = await Promise.resolve(value);',
 		].join('\n');
 		const blanked = blank_export_syntax(body);
 		expect(blanked).toHaveLength(body.length);
-		expect(blanked.split('\n')).toEqual([
-			' '.repeat("export { helper } from './helper.js';".length),
-			'       const value = 1;',
-			'               value;',
-			'       { value as alias };',
-			'const r = await Promise.resolve(value);',
-		]);
+		for (const [original, expected] of [
+			[
+				"export { helper } from './helper.js';",
+				' '.repeat("export { helper } from './helper.js';".length),
+			],
+			["export * as ns from './ns.js';", ' '.repeat("export * as ns from './ns.js';".length)],
+			['export const value = 1;', '       const value = 1;'],
+			['export async function run() {}', '       async function run() {}'],
+			['export default function () {}', 'const _default=function () {}'],
+			['export default class {}', 'const _default=class {}'],
+			['export default value;', 'const _default=value;'],
+			['export { value as alias };', ' '.repeat('export { value as alias };'.length)],
+			['export type { T };', ' '.repeat('export type { T };'.length)],
+			['const r = await Promise.resolve(value);', 'const r = await Promise.resolve(value);'],
+		]) {
+			expect(blanked.split('\n')).toContain(expected);
+			expect(original.length).toBe(expected.length);
+		}
+		// Extra whitespace in the keywords is absorbed by the binding name.
+		expect(blank_export_syntax('export   default   x;')).toBe('const _default____=x;');
 		const { text } = embed_script_bodies('', [], [region(body)]);
 		expect(text).not.toContain('export');
 		expect(text).toContain('const r = await Promise.resolve(value);');

@@ -120,31 +120,43 @@ const IMPORT_DECLARATION =
 	/^[ \t]*import\s+(?:type\s+)?(?:(?:[\w$]+\s*,\s*)?(?:\{[^}]*\}|\*\s+as\s+[\w$]+|[\w$]+)\s+from\s+)?(['"])[^'"\n]*\1(?:\s+with\s*\{[^}]*\})?[ \t]*;?/gm;
 
 /**
- * Re-export statements (`export ... from '...'`) at the top level of a body,
- * which are module-level syntax with nothing to re-export in an inline script.
+ * Whole export statements that carry no declaration: re-exports
+ * (`export ... from '...'`), local export lists (`export { a as b };`),
+ * `export type { T };` and `export = x;`. Module-level syntax with nothing to
+ * export from an inline script, blanked entirely.
  */
-const REEXPORT_DECLARATION =
-	/^[ \t]*export\s+(?:type\s+)?(?:\{[^}]*\}|\*(?:\s+as\s+[\w$]+)?)\s+from\s+(['"])[^'"\n]*\1(?:\s+with\s*\{[^}]*\})?[ \t]*;?/gm;
+const EXPORT_STATEMENT =
+	/^[ \t]*export\s+(?:type\s+)?(?:(?:\{[^}]*\}|\*(?:\s+as\s+[\w$]+)?)(?:\s+from\s+(['"])[^'"\n]*\1(?:\s+with\s*\{[^}]*\})?)?|=\s*[^;\n]*)[ \t]*;?/gm;
 
-/** The `export` (and `export default`) keywords in front of a declaration. */
-const EXPORT_KEYWORDS = /^[ \t]*(export[ \t]+(?:default[ \t]+)?)(?=\S)/gm;
+/**
+ * `export default` in front of an expression, a function or a class: replaced by
+ * a same-length `const <name>=` so the rest stays a valid, checked initializer
+ * (an anonymous `function () {}` or `class {}` is only valid as an expression).
+ */
+const EXPORT_DEFAULT = /^([ \t]*)(export[ \t]+default[ \t]+)(?=\S)/gm;
+
+/** The `export` keyword in front of a declaration. */
+const EXPORT_KEYWORD =
+	/^([ \t]*)(export[ \t]+)(?=(?:async[ \t]+)?(?:const|let|var|function|class|type|interface|enum|abstract|declare|namespace|module)\b)/gm;
 
 /**
  * A `<script type="module">` body may `export`, but nothing can import an inline
- * script, so its exports are dead and a block cannot hold them: blank the
- * keywords in front of declarations and whole re-export statements, keeping every
+ * script, so its exports are dead and a block cannot hold them: statements that
+ * only export are blanked, `export default` becomes a same-length `const`
+ * binding, and the keyword in front of a declaration is blanked, keeping every
  * length so the body's mapping stays one to one.
  * @param {string} body
  * @returns {string}
  */
 export function blank_export_syntax(body) {
 	return body
-		.replace(REEXPORT_DECLARATION, (statement) => statement.replace(/[^\r\n]/g, ' '))
-		.replace(
-			EXPORT_KEYWORDS,
-			(match, keywords) =>
-				match.slice(0, match.length - keywords.length) + ' '.repeat(keywords.length),
-		);
+		.replace(EXPORT_STATEMENT, (statement) => statement.replace(/[^\r\n]/g, ' '))
+		.replace(EXPORT_DEFAULT, (_match, indent, keywords) => {
+			// `const ` + name + `=` must be exactly as long as the keywords (15+ chars).
+			const name = '_default'.padEnd(keywords.length - 'const '.length - '='.length, '_');
+			return `${indent}const ${name}=`;
+		})
+		.replace(EXPORT_KEYWORD, (_match, indent, keyword) => indent + ' '.repeat(keyword.length));
 }
 
 /**
