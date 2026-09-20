@@ -68,6 +68,8 @@ describe('<script> bodies embedded as blocks', () => {
 			'export async function run() {}',
 			'export default function () {}',
 			'export default class {}',
+			'export default class extends Base {}',
+			'export default class implements I {}',
 			'export default function named() {}',
 			'export default async function* gen() {}',
 			'export default abstract class Base {}',
@@ -88,6 +90,8 @@ describe('<script> bodies embedded as blocks', () => {
 			['export async function run() {}', '       async function run() {}'],
 			['export default function () {}', 'const _default=function () {}'],
 			['export default class {}', 'const _default=class {}'],
+			['export default class extends Base {}', 'const _default=class extends Base {}'],
+			['export default class implements I {}', 'const _default=class implements I {}'],
 			// Named declarations keep their name in the block's scope.
 			['export default function named() {}', '               function named() {}'],
 			['export default async function* gen() {}', '               async function* gen() {}'],

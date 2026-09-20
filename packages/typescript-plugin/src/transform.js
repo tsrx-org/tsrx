@@ -133,7 +133,7 @@ const EXPORT_STATEMENT =
  * keywords are blanked, so the declaration keeps its name in the block's scope.
  */
 const EXPORT_DEFAULT_NAMED =
-	/^([ \t]*)(export[ \t]+default[ \t]+)(?=(?:async[ \t]+)?function[ \t]*\*?[ \t]*[A-Za-z_$]|(?:abstract[ \t]+)?class[ \t]+[A-Za-z_$])/gm;
+	/^([ \t]*)(export[ \t]+default[ \t]+)(?=(?:async[ \t]+)?function[ \t]*\*?[ \t]*[A-Za-z_$]|(?:abstract[ \t]+)?class[ \t]+(?!extends\b|implements\b)[A-Za-z_$])/gm;
 
 /**
  * `export default` in front of an expression, an anonymous function or an
