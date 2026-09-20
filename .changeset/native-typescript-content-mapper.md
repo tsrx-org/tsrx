@@ -1,6 +1,6 @@
 ---
 '@tsrx/content-mapper': patch
-'@tsrx/typescript-plugin': patch
+'@tsrx/typescript-plugin': minor
 '@tsrx/core': patch
 ---
 
