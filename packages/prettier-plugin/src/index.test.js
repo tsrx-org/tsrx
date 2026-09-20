@@ -6846,6 +6846,24 @@ function g() {
 	});
 
 	describe('type parameter declarations', () => {
+		it.each([
+			'type Select<T> = <K extends keyof T>(value: T[K]) => T[K];',
+			'type Mapper = <T, U = T>(value: T) => U;',
+			'type Factory = <T = unknown>() => <U extends T>(value: U) => U;',
+			`interface Api {
+  select: <T>(value: T) => T;
+}`,
+		])('preserves generic function type declarations: %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			'type Constructor = new <T>(value: T) => Box<T>;',
+			'type Constructor = abstract new <T, U = T>(value: U) => Box<T>;',
+		])('preserves generic constructor type declarations: %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
 		/**
 		 * Formats twice and asserts the output is stable (idempotent).
 		 * @param {string} code
@@ -6986,6 +7004,28 @@ function g() {
 			const result = await format(source);
 			expect(result).toBeWithNewline(source);
 		};
+
+		it.each([
+			'type Setter<in T> = (value: T) => void;',
+			'type Getter<out T> = () => T;',
+			'type Cell<in out T> = { value: T };',
+			`interface Cell<in out T extends object = object> {
+  value: T;
+}`,
+		])('keeps type parameter variance: %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it.each([
+			`function identity<const T>(value: T): T {
+  return value;
+}`,
+			'const identity = <const T,>(value: T): T => value;',
+			'class Box<const T> {}',
+			'class Box<const in out T> {}',
+		])('keeps const type parameters: %s', async (source) => {
+			await expectUnchanged(source);
+		});
 
 		it('keeps readonly on interface members', async () => {
 			await expectUnchanged(`export interface BenchRow {
