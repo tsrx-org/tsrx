@@ -1,5 +1,15 @@
 # @tsrx/prettier-plugin
 
+## 0.4.7
+
+### Patch Changes
+
+- [#139](https://github.com/tsrx-org/tsrx/pull/139)
+  [`8a8dd29`](https://github.com/tsrx-org/tsrx/commit/8a8dd292ff7f10700e69c5dba21111b5d9593c11)
+  Thanks [@crutchcorn](https://github.com/crutchcorn)! - Preserve generic type
+  parameters on function and constructor types, and keep `const`, `in`, and `out`
+  type parameter modifiers when formatting TSRX files.
+
 ## 0.4.6
 
 ### Patch Changes
