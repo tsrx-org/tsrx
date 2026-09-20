@@ -6,8 +6,10 @@ the release note for the first release that ships `@tsrx/content-mapper`, the
 extension. The classic path (`tsrx-tsc`, the TypeScript 5 language server, the VS
 Code extension serving `.tsrx` through VS Code's own tsserver and the plugin) is
 unchanged and remains the default everywhere except where the user has already
-switched their editor to TypeScript 7. Deprecating the classic path is a separate
-decision and is not made here.
+switched their editor to TypeScript 7. The classic path is kept for as long as
+TypeScript 5.9 and 6 are supported; no deprecation is planned. `tsrx-tsc` works
+with every supported version (classic on 5.9 and 6, native on 7), and on
+TypeScript 7 plain `tsc --runExternalCode` can be used directly instead.
 
 ## What ships
 
@@ -116,8 +118,8 @@ of the following hold; each is tracked in `COMPATIBILITY.md`:
 4. Push diagnostics (microsoft/TypeScript#63921) or every supported editor
    integration is confirmed to pull diagnostics.
 
-Deprecating `tsrx-tsc` and the classic server is decided separately after the
-flip.
+`tsrx-tsc` and the classic server are not deprecated by the flip: they stay for as
+long as TypeScript 5.9 and 6 are supported.
 
 ## Migration
 
