@@ -348,8 +348,8 @@ async function wake_typescript_for(document) {
 }
 
 /**
- * The project has no `.ts` or `.js` file to open: write one that explains itself, show it
- * (without taking focus), and, as soon as TypeScript reports its unused-local hint on it
+ * The project has no `.ts` or `.js` file to open: write one that explains itself, open it
+ * as an inactive tab next to the `.tsrx` file, and, as soon as TypeScript reports its unused-local hint on it
  * (proof that TypeScript is running and has loaded this project; the file is a module with
  * an unused local, since unused globals of a script are never reported), or after a timeout,
  * close its tab and delete it. If the user closes the tab first, the file is deleted right
@@ -359,8 +359,14 @@ async function wake_typescript_for(document) {
 async function wake_typescript_with_a_file(uri) {
 	try {
 		await vscode.workspace.fs.writeFile(uri, Buffer.from(WAKE_UP_FILE_CONTENT, 'utf8'));
-		const document = await vscode.workspace.openTextDocument(uri);
-		await vscode.window.showTextDocument(document, { preview: true, preserveFocus: true });
+		await vscode.workspace.openTextDocument(uri);
+		// `vscode.open` (unlike `showTextDocument`) honours `background`: the tab is added next
+		// to the `.tsrx` tab without becoming the active one, so the `.tsrx` file stays in view.
+		await vscode.commands.executeCommand('vscode.open', uri, {
+			background: true,
+			preview: true,
+			preserveFocus: true,
+		});
 	} catch (error) {
 		console.warn(`[TSRX] Could not write or open ${uri.fsPath}:`, error);
 		return;
