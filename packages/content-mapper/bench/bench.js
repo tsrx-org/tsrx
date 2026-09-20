@@ -35,6 +35,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'jsonc-parser';
 import {
 	consumer_fixture_dir,
 	create_native_workspace,
@@ -233,7 +234,7 @@ function prepare_project() {
 		const tsconfig_path = path.join(dir, tsconfig);
 		const original = fs.readFileSync(tsconfig_path, 'utf8');
 		cleanups.push(() => fs.writeFileSync(tsconfig_path, original));
-		const parsed = JSON.parse(original);
+		const parsed = parse(original, [], { allowTrailingComma: true });
 		if (!Array.isArray(parsed.contentMappers)) {
 			parsed.contentMappers = [mapper_entry];
 			fs.writeFileSync(tsconfig_path, JSON.stringify(parsed, null, '\t') + '\n');

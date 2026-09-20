@@ -9,7 +9,8 @@
     "tsrx-tsc": "./dist/tsc.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "type": "module",
   "homepage": "https://tsrx.dev/",

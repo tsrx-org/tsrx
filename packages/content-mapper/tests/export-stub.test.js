@@ -45,6 +45,17 @@ export default function Component() @{
 		expect(text).toContain('declare const _default: any;\nexport default _default;');
 	});
 
+	it('quotes string-literal export names in re-exports', () => {
+		const text = stub(`
+export { "foo-bar" as baz, qux as "qux-name" } from './a.tsrx';
+export * as "ns-name" from './b.tsrx';
+export { "same" as "same" } from './c.tsrx';
+`);
+		expect(text).toContain(`export { "foo-bar" as baz, qux as "qux-name" } from "./a.tsrx";`);
+		expect(text).toContain(`export * as "ns-name" from "./b.tsrx";`);
+		expect(text).toContain(`export { "same" } from "./c.tsrx";`);
+	});
+
 	it('keeps the type modifier of type-only re-exports', () => {
 		const text = stub(`
 export type { A } from './a.tsrx';

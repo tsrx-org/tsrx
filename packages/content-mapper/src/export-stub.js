@@ -100,7 +100,7 @@ function type_modifier(node) {
  */
 function export_name(node) {
 	if (node.type === 'Identifier') return node.name;
-	if (node.type === 'Literal') return String(node.value);
+	if (node.type === 'Literal') return JSON.stringify(String(node.value));
 	return '';
 }
 

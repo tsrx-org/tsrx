@@ -457,6 +457,9 @@ importers:
 
   packages/content-mapper:
     dependencies:
+      '@tsrx/typescript-plugin':
+        specifier: workspace:*
+        version: link:../typescript-plugin
       jsonc-parser:
         specifier: catalog:default
         version: 3.3.1
@@ -479,9 +482,6 @@ importers:
       '@tsrx/solid':
         specifier: workspace:*
         version: link:../tsrx-solid
-      '@tsrx/typescript-plugin':
-        specifier: workspace:*
-        version: link:../typescript-plugin
       '@tsrx/vue':
         specifier: workspace:*
         version: link:../tsrx-vue
