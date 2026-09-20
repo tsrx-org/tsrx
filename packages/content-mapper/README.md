@@ -212,13 +212,23 @@ compiler's `package.json`, and lists those files as `watchedFiles`.
 
 ### Dependencies
 
-The mapper bundles `@tsrx/typescript-plugin`'s compiler resolution and transform
-(`src/transform.js`, `consumer-compiler.js`, `tsconfig-resolution.js`) and keeps
-classic `typescript` as a peer dependency: the tsconfig readers use
-`readJsonConfigFile`, `convertToObject`, `parseJsonSourceFileConfigFileContent`
-and `resolveModuleName` from the TypeScript 5 API for `extends` and JSONC
-handling. The native compiler never loads the mapper's copy of TypeScript, so this
-is an explicit, versioned dependency rather than a claim of independence.
+The mapper has no dependency on `typescript`, classic or native: it reads tsconfig
+files and resolves compiler packages with its own code, and `tests/mapper.test.js`
+and `tests/package.test.js` run the shipped bundles with the `typescript` package
+forbidden to keep it that way.
+
+`@tsrx/typescript-plugin` is a devDependency only. The bundles inline its compiler
+resolution and transform (`src/transform.js`, `language.js`,
+`consumer-compiler.js`, `package-resolution.js`, `tsconfig-resolution.js`,
+`config-host.js`, `jsonc.js`) together with the third-party modules those pull in
+(`@volar/language-core`, `resolve-pkg-maps`), because the plugin publishes only
+its `dist` and pulls the classic Volar stack into anything that depends on it.
+`@tsrx/core` appears in JSDoc types only; the TSRX target compiler itself is
+resolved from the project at run time.
+
+`jsonc-parser` is the one runtime dependency: its UMD entry requires its
+`./impl/*` files at run time, which a bundle cannot follow, so it stays external
+and installs next to the package.
 
 ### Native TypeScript binary
 
@@ -280,8 +290,12 @@ pnpm test --project content-mapper
 - `src/rpc.js` (`run_mapper_server`, `redirect_console_to_stderr`) is the stdio
   transport and `src/mapper.js` (`create_tsrx_content_mapper`) the protocol
   implementation. Both are exported (`@tsrx/content-mapper/rpc`,
-  `@tsrx/content-mapper/mapper`) so a host that ships its own copy of the mapper
-  can start it from its own bundled entry file.
+  `@tsrx/content-mapper/mapper`), with `src/protocol.js`
+  (`@tsrx/content-mapper/protocol`), so a host that ships its own copy of the
+  mapper can start it from its own bundled entry file. The exports resolve to the
+  bundles in `dist/` (built with `dist/server.js`), never to `src/`: the source
+  imports `@tsrx/typescript-plugin/src/*`, which that package does not publish and
+  which is not a dependency of this one.
 
 `MAPPING.md` is the inventory of every mapping site in the shared transform and
 the span kind and feature bits each one becomes.

@@ -1,7 +1,7 @@
 {
   "name": "@tsrx/content-mapper",
   "description": "TypeScript 7 content mapper for .tsrx files",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "author": "Dominic Gannaway",
   "type": "module",
@@ -20,9 +20,9 @@
   ],
   "exports": {
     "./package.json": "./package.json",
-    "./mapper": "./src/mapper.js",
-    "./rpc": "./src/rpc.js",
-    "./protocol": "./src/protocol.js"
+    "./mapper": "./dist/mapper.js",
+    "./rpc": "./dist/rpc.js",
+    "./protocol": "./dist/protocol.js"
   },
   "typescript": {
     "contentMapper": {

@@ -4,7 +4,11 @@ const isDev = process.env.NODE_ENV !== 'production';
 
 export default defineConfig({
 	dts: false,
-	entry: ['src/server.js'],
+	// `server.js` is the executable the manifest names; `mapper.js`, `rpc.js` and
+	// `protocol.js` are the package's `exports`. They are bundled too because the
+	// source imports `@tsrx/typescript-plugin/src/*`, which that package does not
+	// publish (only its `dist`) and which is not a dependency of this one.
+	entry: ['src/server.js', 'src/mapper.js', 'src/rpc.js', 'src/protocol.js'],
 	format: ['esm'],
 	outExtensions: () => ({ js: '.js' }),
 	platform: 'node',

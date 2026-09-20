@@ -35,6 +35,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applyEdits, modify } from 'jsonc-parser';
+import { parse_jsonc } from '@tsrx/typescript-plugin/src/jsonc.js';
 import {
 	consumer_fixture_dir,
 	create_native_workspace,
@@ -233,10 +235,17 @@ function prepare_project() {
 		const tsconfig_path = path.join(dir, tsconfig);
 		const original = fs.readFileSync(tsconfig_path, 'utf8');
 		cleanups.push(() => fs.writeFileSync(tsconfig_path, original));
-		const parsed = JSON.parse(original);
+		// The tsconfig is JSONC (comments and trailing commas, as TypeScript
+		// allows): read it with the mapper's reader and splice the entry in as an
+		// edit, which keeps the comments.
+		const { value, error } = parse_jsonc(original);
+		if (error) fail(`${tsconfig_path}: ${error.message}`);
+		const parsed = /** @type {{ contentMappers?: unknown }} */ (value);
 		if (!Array.isArray(parsed.contentMappers)) {
-			parsed.contentMappers = [mapper_entry];
-			fs.writeFileSync(tsconfig_path, JSON.stringify(parsed, null, '\t') + '\n');
+			const edits = modify(original, ['contentMappers'], [mapper_entry], {
+				formattingOptions: { insertSpaces: false, tabSize: 1 },
+			});
+			fs.writeFileSync(tsconfig_path, applyEdits(original, edits));
 		}
 	} else {
 		const files = scaled_consumer_fixture(scale, mapper_entry);

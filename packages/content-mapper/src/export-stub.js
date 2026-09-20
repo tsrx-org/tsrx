@@ -27,7 +27,7 @@ export function build_export_stub(program) {
 	for (const statement of program?.body ?? []) {
 		switch (statement.type) {
 			case 'ExportAllDeclaration': {
-				const exported = statement.exported ? ` as ${export_name(statement.exported)}` : '';
+				const exported = statement.exported ? ` as ${print_name(statement.exported)}` : '';
 				lines.push(
 					`export ${type_modifier(statement)}*${exported} from ${JSON.stringify(String(statement.source.value))};`,
 				);
@@ -40,8 +40,8 @@ export function build_export_stub(program) {
 				if (statement.source) {
 					const statement_is_type = type_modifier(statement) !== '';
 					const specifiers = statement.specifiers.map((specifier) => {
-						const local = export_name(specifier.local);
-						const exported = export_name(specifier.exported);
+						const local = print_name(specifier.local);
+						const exported = print_name(specifier.exported);
 						// `export type { A }` marks the statement; `export { type A }`
 						// marks the specifier. Never write both.
 						const modifier = statement_is_type ? '' : type_modifier(specifier);
@@ -70,7 +70,7 @@ export function build_export_stub(program) {
 	}
 
 	for (const name of names) {
-		if (!/^[\p{ID_Start}_$][\p{ID_Continue}$]*$/u.test(name)) continue;
+		if (!identifier_pattern.test(name)) continue;
 		lines.push(`export declare const ${name}: any;`);
 		lines.push(`export type ${name} = any;`);
 	}
@@ -94,7 +94,11 @@ function type_modifier(node) {
 	return /** @type {{ exportKind?: string }} */ (node).exportKind === 'type' ? 'type ' : '';
 }
 
+const identifier_pattern = /^[\p{ID_Start}_$][\p{ID_Continue}$]*$/u;
+
 /**
+ * The name an export binds, as a plain string: `a` for `export { a }` and
+ * `foo-bar` for `export { "foo-bar" as a } from`.
  * @param {AST.Identifier | AST.Literal | AST.Expression} node
  * @returns {string}
  */
@@ -102,6 +106,18 @@ function export_name(node) {
 	if (node.type === 'Identifier') return node.name;
 	if (node.type === 'Literal') return String(node.value);
 	return '';
+}
+
+/**
+ * The name as it must be written back in a re-export: an identifier as is, an
+ * arbitrary module namespace name (`export { "foo-bar" as a } from`,
+ * `export * as "ns-name" from`) quoted, so the stub stays valid TypeScript.
+ * @param {AST.Identifier | AST.Literal | AST.Expression} node
+ * @returns {string}
+ */
+function print_name(node) {
+	const name = export_name(node);
+	return identifier_pattern.test(name) ? name : JSON.stringify(name);
 }
 
 /**
