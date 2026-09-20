@@ -2645,6 +2645,10 @@ function printTsrxNode(node, path, options, print, args) {
 			/** @type {Doc[]} */
 			const parts = [];
 
+			if (node.typeParameters) {
+				parts.push(path.call(print, 'typeParameters'));
+			}
+
 			// Handle parameters
 			parts.push('(');
 			if (node.parameters && node.parameters.length > 0) {
@@ -5167,6 +5171,15 @@ function printTSTypeParameterDeclaration(node, path, options, print) {
 function printTSTypeParameter(node, path, options, print) {
 	/** @type {Doc[]} */
 	const parts = [];
+	if (node.const) {
+		parts.push('const ');
+	}
+	if (node.in) {
+		parts.push('in ');
+	}
+	if (node.out) {
+		parts.push('out ');
+	}
 	parts.push(node.name);
 
 	if (node.constraint) {
@@ -6273,6 +6286,9 @@ function printTSConstructorType(node, path, options, print) {
 		parts.push('abstract ');
 	}
 	parts.push('new ');
+	if (node.typeParameters) {
+		parts.push(path.call(print, 'typeParameters'));
+	}
 	parts.push('(');
 	const hasParameters = Array.isArray(node.parameters) && node.parameters.length > 0;
 	if (hasParameters) {
