@@ -66,6 +66,8 @@ describe('<script> bodies embedded as blocks', () => {
 			'export const value = 1;',
 			'export default value;',
 			'export { value as alias };',
+			'export default function() { return value; }',
+			'export default class {}',
 			'const r = await Promise.resolve(value);',
 		].join('\n');
 		const blanked = blank_export_syntax(body);
@@ -74,7 +76,9 @@ describe('<script> bodies embedded as blocks', () => {
 			' '.repeat("export { helper } from './helper.js';".length),
 			'       const value = 1;',
 			'               value;',
-			'       { value as alias };',
+			' '.repeat('export { value as alias };'.length),
+			'void           function() { return value; }',
+			'void           class {}',
 			'const r = await Promise.resolve(value);',
 		]);
 		const { text } = embed_script_bodies('', [], [region(body)]);

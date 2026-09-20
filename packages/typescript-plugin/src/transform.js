@@ -120,31 +120,51 @@ const IMPORT_DECLARATION =
 	/^[ \t]*import\s+(?:type\s+)?(?:(?:[\w$]+\s*,\s*)?(?:\{[^}]*\}|\*\s+as\s+[\w$]+|[\w$]+)\s+from\s+)?(['"])[^'"\n]*\1(?:\s+with\s*\{[^}]*\})?[ \t]*;?/gm;
 
 /**
- * Re-export statements (`export ... from '...'`) at the top level of a body,
- * which are module-level syntax with nothing to re-export in an inline script.
+ * Re-export statements (`export ... from '...'`) and local export lists
+ * (`export { value as alias }`) at the top level of a body. Both are
+ * module-level syntax with nothing to import from an inline script; a leftover
+ * `{ value as alias }` would parse as a type assertion.
  */
-const REEXPORT_DECLARATION =
-	/^[ \t]*export\s+(?:type\s+)?(?:\{[^}]*\}|\*(?:\s+as\s+[\w$]+)?)\s+from\s+(['"])[^'"\n]*\1(?:\s+with\s*\{[^}]*\})?[ \t]*;?/gm;
+const EXPORT_LIST_OR_REEXPORT =
+	/^[ \t]*export\s+(?:type\s+)?(?:\{[^}]*\}|\*(?:\s+as\s+[\w$]+)?)(?:\s+from\s+(['"])[^'"\n]*\1(?:\s+with\s*\{[^}]*\})?)?[ \t]*;?/gm;
 
 /** The `export` (and `export default`) keywords in front of a declaration. */
 const EXPORT_KEYWORDS = /^[ \t]*(export[ \t]+(?:default[ \t]+)?)(?=\S)/gm;
 
 /**
+ * Anonymous `export default function() {}` / `class {}` (and `async` /
+ * `abstract` / `extends` forms). Stripping only the keywords leaves an unnamed
+ * declaration, which is a parse error; `void` puts the remainder in expression
+ * context. Named `function Foo` / `class Foo` stay declarations.
+ */
+const ANONYMOUS_DEFAULT_DECLARATION =
+	/^(?:async\s+)?function(?:\s*\*)?(?:\s*<[^>]*>)?\s*\(|^(?:abstract\s+)?class(?:\s*<[^>]*>)?(?:\s+extends\b|\s+implements\b|\s*\{)/;
+
+/**
  * A `<script type="module">` body may `export`, but nothing can import an inline
  * script, so its exports are dead and a block cannot hold them: blank the
- * keywords in front of declarations and whole re-export statements, keeping every
- * length so the body's mapping stays one to one.
+ * keywords in front of declarations and whole export lists / re-export
+ * statements, keeping every length so the body's mapping stays one to one.
+ * Anonymous `export default function` / `class` become `void` expressions so
+ * they stay valid TypeScript.
  * @param {string} body
  * @returns {string}
  */
 export function blank_export_syntax(body) {
 	return body
-		.replace(REEXPORT_DECLARATION, (statement) => statement.replace(/[^\r\n]/g, ' '))
-		.replace(
-			EXPORT_KEYWORDS,
-			(match, keywords) =>
-				match.slice(0, match.length - keywords.length) + ' '.repeat(keywords.length),
-		);
+		.replace(EXPORT_LIST_OR_REEXPORT, (statement) => statement.replace(/[^\r\n]/g, ' '))
+		.replace(EXPORT_KEYWORDS, (match, keywords, offset) => {
+			const indent = match.slice(0, match.length - keywords.length);
+			const rest = body.slice(offset + match.length);
+			if (
+				keywords.includes('default') &&
+				keywords.length >= 4 &&
+				ANONYMOUS_DEFAULT_DECLARATION.test(rest)
+			) {
+				return indent + 'void' + ' '.repeat(keywords.length - 4);
+			}
+			return indent + ' '.repeat(keywords.length);
+		});
 }
 
 /**
