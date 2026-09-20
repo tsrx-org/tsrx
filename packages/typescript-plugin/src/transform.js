@@ -296,7 +296,7 @@ function regions_from_mappings(mappings) {
  * Extract raw `<style>...</style>` bodies from source text, used as a fallback
  * for CSS intellisense while the file has a fatal compile error (no AST
  * available; the normal path derives regions from the compiler's
- * `cssMappings` instead). Parallels {@link extract_script_regions}.
+ * `cssMappings` instead).
  *
  * The opening-tag pattern is attribute-aware: a `>` inside a quoted value or an
  * `{...}` expression container (one level of nesting) does not end the tag, so
@@ -313,20 +313,6 @@ export function extract_css_regions(code) {
 	const style_regex =
 		/<style\b((?:[^>"'{}/]|"[^"]*"|'[^']*'|\{(?:[^{}]|\{[^{}]*\})*\}|\/(?!>))*)>([\s\S]*?)<\/style>/gi;
 	return extract_regions(code, style_regex, '<style'.length, 'style');
-}
-
-/**
- * Extract raw `<script>...</script>` bodies from source text, used as a fallback
- * for script intellisense while the file has a fatal compile error. Every body
- * is treated as TypeScript (a superset of JS), so the attributes are never
- * inspected. The opening-tag pattern refuses to match self-closing
- * `<script src=... />` tags, so they cannot swallow a later real script's body.
- * @param {string} code
- * @returns {EmbeddedRegion[]}
- */
-export function extract_script_regions(code) {
-	const script_regex = /<script\b((?:[^>"'/]|"[^"]*"|'[^']*'|\/(?!>))*)>([\s\S]*?)<\/script>/gi;
-	return extract_regions(code, script_regex, '<script'.length, 'script');
 }
 
 /**
