@@ -257,18 +257,16 @@ describe('native language server on a configured project', () => {
 			'}',
 			'',
 		].join('\n');
-		session.client.open('Unsorted.tsrx', source);
-		await session.client.diagnostics('Unsorted.tsrx').catch(() => undefined);
-		const uri = session.client.uri('Unsorted.tsrx');
-		const [action] = await session.client.request('textDocument/codeAction', {
+		client.open('Unsorted.tsrx', source);
+		await client.diagnostics('Unsorted.tsrx').catch(() => undefined);
+		const uri = client.uri('Unsorted.tsrx');
+		const [action] = await client.request('textDocument/codeAction', {
 			textDocument: { uri },
 			range: { start: { line: 0, character: 0 }, end: { line: 6, character: 0 } },
 			context: { diagnostics: [], only: ['source.organizeImports'] },
 		});
 		expect(action?.kind).toBe('source.organizeImports.ts');
-		const resolved = action.edit
-			? action
-			: await session.client.request('codeAction/resolve', action);
+		const resolved = action.edit ? action : await client.request('codeAction/resolve', action);
 		// The unused `Panel` import is removed: one edit replacing the first line with the
 		// remaining import, one deleting the second line.
 		expect(resolved.edit?.changes?.[uri]).toEqual([
@@ -281,7 +279,7 @@ describe('native language server on a configured project', () => {
 				newText: '',
 			},
 		]);
-		session.client.close('Unsorted.tsrx');
+		client.close('Unsorted.tsrx');
 	});
 
 	it('reports a compile error at the authored construct and keeps importers resolving', async () => {

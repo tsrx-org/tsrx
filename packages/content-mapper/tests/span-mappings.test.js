@@ -275,9 +275,10 @@ describe('to_span_mappings', () => {
 			generated,
 			original,
 		);
+		// Each token still extends over the identical space that follows it.
 		expect(apart.map((span) => [span[0], span[1]])).toEqual([
-			[6, 1],
-			[name_offset, 1],
+			[6, 2],
+			[name_offset, 2],
 		]);
 	});
 
