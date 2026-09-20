@@ -1,4 +1,5 @@
 ---
+'@tsrx/content-mapper': patch
 '@tsrx/typescript-plugin': patch
 '@tsrx/core': patch
 ---
