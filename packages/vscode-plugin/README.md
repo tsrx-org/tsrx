@@ -73,7 +73,11 @@ What differs from the classic backend:
   editors are visible side by side (VS Code then only consults the TypeScript 7
   extension's multi-document highlight provider).
 - The TypeScript 7 extension only activates once a `.ts` or `.js` file has been
-  opened; until then `.tsrx` files get no TypeScript features.
+  opened, and learns about `.tsrx` files only once the project declaring the
+  mapper has loaded (microsoft/TypeScript#64355). This extension works around
+  that: on the first `.tsrx` file it opens the nearest `.ts` or `.js` file of the
+  project hidden (no editor, nothing written). A project with no `.ts` or `.js`
+  file at all still gets no TypeScript 7 features until one is opened.
 
 On both backends, declarations inside `<script>` bodies are type-checked in place
 but not listed in the Outline: the body is a block statement in the generated

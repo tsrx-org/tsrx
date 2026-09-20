@@ -83,6 +83,12 @@ let client;
 /** Whether TypeScript 7's content mapper has been seen reporting in this session. */
 const dedupe = new CompileErrorDedupe();
 
+/** Language ids VS Code's TypeScript extensions activate on. */
+const JS_TS_LANGUAGES = new Set(['typescript', 'typescriptreact', 'javascript', 'javascriptreact']);
+const JS_TS_GLOB = '*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}';
+/** Directories for which a JavaScript or TypeScript file was opened to wake VS Code's TypeScript. */
+const woken_directories = new Set();
+
 /**
  * @param {import('vscode').ExtensionContext} context
  */
@@ -226,6 +232,26 @@ export async function activate(context) {
 			}),
 		);
 
+		// VS Code's TypeScript extensions activate only on JavaScript and TypeScript documents,
+		// and TypeScript 7 learns about `.tsrx` files only once a project that declares the
+		// mapper has loaded, which also takes a file of that project being opened. A workspace
+		// where only `.tsrx` files are opened would therefore get no TypeScript features at
+		// all (microsoft/TypeScript#64355). Until that is fixed upstream, open the nearest
+		// TypeScript or JavaScript file of the project once, hidden: no editor, nothing
+		// written, nothing to close.
+		context.subscriptions.push(
+			vscode.workspace.onDidOpenTextDocument((document) => {
+				if (document.languageId === 'tsrx') {
+					void wake_typescript_for(document);
+				}
+			}),
+		);
+		for (const document of vscode.workspace.textDocuments) {
+			if (document.languageId === 'tsrx') {
+				void wake_typescript_for(document);
+			}
+		}
+
 		addCustomCommands(context);
 		console.log('[TSRX] Registered custom commands');
 
@@ -235,6 +261,70 @@ export async function activate(context) {
 		console.error('Failed to start language client:', error);
 		const message = error instanceof Error ? error.message : String(error);
 		vscode.window.showErrorMessage(`Failed to start TSRX language server: ${message}`);
+	}
+}
+
+/**
+ * Open, without showing it, the JavaScript or TypeScript file nearest to a `.tsrx` document
+ * (same directory first, then up to the workspace folder, then anywhere in it outside
+ * node_modules), so VS Code's TypeScript activates and loads the project the `.tsrx` file
+ * belongs to. Done once per directory; skipped while any such file is already open.
+ * @param {import('vscode').TextDocument} document
+ */
+async function wake_typescript_for(document) {
+	if (document.uri.scheme !== 'file') {
+		return;
+	}
+	const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+	if (!folder) {
+		return;
+	}
+	const directory = path.dirname(document.uri.fsPath);
+	if (woken_directories.has(directory)) {
+		return;
+	}
+	if (
+		vscode.workspace.textDocuments.some(
+			(open) => open.uri.scheme === 'file' && JS_TS_LANGUAGES.has(open.languageId),
+		)
+	) {
+		woken_directories.add(directory);
+		return;
+	}
+	woken_directories.add(directory);
+	const root = folder.uri.fsPath;
+	/** @type {import('vscode').Uri | undefined} */
+	let candidate;
+	for (let current = directory; ; current = path.dirname(current)) {
+		[candidate] = await vscode.workspace.findFiles(
+			new vscode.RelativePattern(current, JS_TS_GLOB),
+			null,
+			1,
+		);
+		if (candidate || current === root || !current.startsWith(root)) {
+			break;
+		}
+	}
+	if (!candidate) {
+		[candidate] = await vscode.workspace.findFiles(
+			new vscode.RelativePattern(folder, `**/${JS_TS_GLOB}`),
+			'**/node_modules/**',
+			1,
+		);
+	}
+	if (!candidate) {
+		console.log(
+			`[TSRX] No TypeScript or JavaScript file near ${document.uri.fsPath} to wake VS Code's TypeScript with`,
+		);
+		return;
+	}
+	try {
+		await vscode.workspace.openTextDocument(candidate);
+		console.log(
+			`[TSRX] Opened ${candidate.fsPath} (hidden) so VS Code's TypeScript serves ${path.basename(document.uri.fsPath)}`,
+		);
+	} catch (error) {
+		console.warn("[TSRX] Could not open a TypeScript file to wake VS Code's TypeScript:", error);
 	}
 }
 
