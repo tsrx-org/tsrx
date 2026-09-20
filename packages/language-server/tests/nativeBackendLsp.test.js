@@ -158,10 +158,17 @@ describe.each(/** @type {const} */ (['native', 'plugin', 'classic']))(
 					'Panel.tsrx',
 					session.files['Panel.tsrx'].replace('{label}', '{{{label}'),
 				);
+				// Volar publishes each plugin's batch as it arrives, so wait for the one that
+				// carries the compile error rather than the first non-empty one.
 				const with_items = await session.client
 					.wait_for_notification(
 						'textDocument/publishDiagnostics',
-						(params) => params.diagnostics.length > 0,
+						(params) =>
+							backend === 'native'
+								? params.diagnostics.length > 0
+								: params.diagnostics.some(
+										(/** @type {{ source?: string }} */ d) => d.source === 'TSRX',
+									),
 						backend === 'native' ? 3_000 : 15_000,
 					)
 					.catch(() => undefined);
