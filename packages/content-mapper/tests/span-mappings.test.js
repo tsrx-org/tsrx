@@ -80,8 +80,9 @@ describe('to_span_mappings', () => {
 			original,
 		);
 		expect(spans).toEqual([
-			// `const` and `a` coalesce across the identical ` ` gap; the Atom stays apart.
-			[0, 7, 0, 7, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+			// `const` and `a` coalesce across the identical ` ` gap and extend over the
+			// identical ` ` that follows; the Atom stays apart.
+			[0, 8, 0, 8, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
 			[10, 10, 10, 1, SpanMapKind.Atom, SpanMapFeature.All & ~SpanMapFeature.Formatting],
 		]);
 	});
@@ -126,6 +127,45 @@ describe('to_span_mappings', () => {
 		).toEqual([
 			[0, 1],
 			[1, 1],
+		]);
+	});
+
+	it('extends a Verbatim span over the identical whitespace that follows it', () => {
+		// TypeScript's organize-imports edit ends after the last import's newline;
+		// TypeScript 7 drops the whole edit when that position does not map.
+		const original =
+			"import a from './a';\nimport b from './b';\n\nexport function C() @{ <a /> }\n";
+		const generated = "import a from './a';\nimport b from './b';\n\nconst C__static = <a />;\n";
+		const imports = "import a from './a';\nimport b from './b';";
+		const spans = to_span_mappings(
+			[
+				{
+					sourceOffsets: [0, original.indexOf('<a />')],
+					generatedOffsets: [0, generated.indexOf('<a />')],
+					lengths: [imports.length, 5],
+					generatedLengths: [imports.length, 5],
+					data: {
+						verification: true,
+						completion: true,
+						semantic: true,
+						navigation: true,
+						customData: {},
+					},
+				},
+			],
+			generated,
+			original,
+		);
+		// The import span now covers the two newlines after it (the third character,
+		// `c` versus `e`, differs), and stops well before the next span.
+		expect(spans[0].slice(0, 4)).toEqual([0, imports.length + 2, 0, imports.length + 2]);
+		expect(spans[0][4]).toBe(SpanMapKind.Verbatim);
+		// A span followed by non-whitespace, or by the next span, is left alone.
+		expect(spans[1].slice(0, 4)).toEqual([
+			generated.indexOf('<a />'),
+			5,
+			original.indexOf('<a />'),
+			5,
 		]);
 	});
 
@@ -181,7 +221,7 @@ describe('to_span_mappings', () => {
 		// The verify-only containers lose to the tokens they enclose; the two tokens then
 		// coalesce across the identical `) { ` gap into one span carrying the token features.
 		expect(spans).toEqual([
-			[4, 6, 4, 6, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+			[4, 7, 4, 7, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
 		]);
 	});
 
@@ -198,7 +238,7 @@ describe('to_span_mappings', () => {
 		);
 		expect(spans.map((span) => [span[0], span[1], span[5]])).toEqual([
 			[4, 1, SpanMapFeature.All & ~SpanMapFeature.Formatting],
-			[9, 1, SpanMapFeature.None],
+			[9, 2, SpanMapFeature.None],
 		]);
 		for (let index = 1; index < spans.length; index++) {
 			expect(spans[index][0]).toBeGreaterThanOrEqual(spans[index - 1][0] + spans[index - 1][1]);
@@ -228,7 +268,7 @@ describe('to_span_mappings', () => {
 		expect(original.indexOf('\r\n')).toBe(15);
 		expect(name_offset).toBe(23);
 		expect(spans).toEqual([
-			[6, 18, 6, 18, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+			[6, 19, 6, 19, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
 		]);
 		const apart = to_span_mappings(
 			[m(name_offset, name_offset, 1), m(6, 6, 1, { data: verify_only })],

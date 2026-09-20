@@ -247,6 +247,43 @@ describe('native language server on a configured project', () => {
 		).toEqual([]);
 	});
 
+	it('organizes imports (TypeScript 7 drops the edit unless the newline after the last import maps)', async () => {
+		const source = [
+			"import Panel from './Panel.tsrx';",
+			"import Button from './Button.tsrx';",
+			'',
+			'export default function Unsorted() @{',
+			'\t<Button label="x" />',
+			'}',
+			'',
+		].join('\n');
+		session.client.open('Unsorted.tsrx', source);
+		await session.client.diagnostics('Unsorted.tsrx').catch(() => undefined);
+		const uri = session.client.uri('Unsorted.tsrx');
+		const [action] = await session.client.request('textDocument/codeAction', {
+			textDocument: { uri },
+			range: { start: { line: 0, character: 0 }, end: { line: 6, character: 0 } },
+			context: { diagnostics: [], only: ['source.organizeImports'] },
+		});
+		expect(action?.kind).toBe('source.organizeImports.ts');
+		const resolved = action.edit
+			? action
+			: await session.client.request('codeAction/resolve', action);
+		// The unused `Panel` import is removed: one edit replacing the first line with the
+		// remaining import, one deleting the second line.
+		expect(resolved.edit?.changes?.[uri]).toEqual([
+			{
+				range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } },
+				newText: "import Button from './Button.tsrx';\n",
+			},
+			{
+				range: { start: { line: 1, character: 0 }, end: { line: 2, character: 0 } },
+				newText: '',
+			},
+		]);
+		session.client.close('Unsorted.tsrx');
+	});
+
 	it('reports a compile error at the authored construct and keeps importers resolving', async () => {
 		const broken = files['Button.tsrx'].replace('<button type="button"', '<button type="button"><');
 		client.change('Button.tsrx', broken);

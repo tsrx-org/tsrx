@@ -197,7 +197,11 @@ export function to_span_mappings(mappings, generated_text, original_text, option
 	}
 
 	selected.sort((left, right) => left.generatedStart - right.generatedStart);
-	return coalesce_verbatim_spans(selected, generated_text, original_text).map((candidate) => [
+	return extend_verbatim_spans_over_whitespace(
+		coalesce_verbatim_spans(selected, generated_text, original_text),
+		generated_text,
+		original_text,
+	).map((candidate) => [
 		candidate.generatedStart,
 		candidate.generatedEnd - candidate.generatedStart,
 		candidate.originalStart,
@@ -240,6 +244,41 @@ export function coalesce_verbatim_spans(spans, generated_text, original_text) {
 		merged.push({ ...span });
 	}
 	return merged;
+}
+
+/**
+ * Extend every Verbatim span forward over whitespace that is identical in the
+ * generated and the original file, up to the next span in either file.
+ *
+ * TypeScript's edits routinely end at the start of the line after a statement
+ * (an organize-imports edit for the import block ends after the last import's
+ * newline), and TypeScript 7 discards a whole edit when any of its ranges does
+ * not map. A span that stops at a statement's last character therefore made
+ * "Organize Imports" a no-op on `.tsrx` files; covering the newline that follows
+ * fixes that at no cost, since identical whitespace maps verbatim.
+ * @param {Candidate[]} spans Sorted by generated start, non-overlapping.
+ * @param {string} generated_text
+ * @param {string} original_text
+ * @returns {Candidate[]}
+ */
+export function extend_verbatim_spans_over_whitespace(spans, generated_text, original_text) {
+	for (let index = 0; index < spans.length; index++) {
+		const span = spans[index];
+		if (span.kind !== SpanMapKind.Verbatim) continue;
+		const next = spans[index + 1];
+		const generated_limit = next ? next.generatedStart : generated_text.length;
+		const original_limit = next ? next.originalStart : original_text.length;
+		while (
+			span.generatedEnd < generated_limit &&
+			span.originalEnd < original_limit &&
+			generated_text[span.generatedEnd] === original_text[span.originalEnd] &&
+			/[ \t\r\n]/.test(generated_text[span.generatedEnd])
+		) {
+			span.generatedEnd++;
+			span.originalEnd++;
+		}
+	}
+	return spans;
 }
 
 const identifier_part = /[\p{ID_Continue}$\u200c\u200d]/u;
