@@ -1,7 +1,7 @@
 {
   "name": "@tsrx/content-mapper",
   "description": "TypeScript 7 content mapper for .tsrx files",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "MIT",
   "author": "Dominic Gannaway",
   "type": "module",
