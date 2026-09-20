@@ -97,6 +97,11 @@ serve `.tsrx` files.
 - VS Code alone needs no `plugins` entry: its extension hands the plugin to VS
   Code's own tsserver.
 
+TypeScript 7 support for `.tsrx` files is not complete yet. The gaps and the
+upstream TypeScript issues behind them are tracked in
+[tsrx-org/tsrx#136](https://github.com/tsrx-org/tsrx/issues/136); if you run into
+one that is not listed there, please file a new issue.
+
 The server also has a `native` backend that leaves TypeScript features to
 TypeScript 7's language server (`tsc --lsp`) through `@tsrx/content-mapper` (see
 [`@tsrx/language-server`](../language-server/README.md)). It only makes sense next

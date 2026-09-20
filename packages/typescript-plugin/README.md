@@ -52,6 +52,9 @@ editor:
 - **TypeScript 7**: nothing from this package; declare `@tsrx/content-mapper`
   under `contentMappers` instead. TypeScript 7 ignores `plugins`, and TypeScript 5
   and 6 ignore `contentMappers`, so both entries can share one tsconfig.
+  TypeScript 7 support is not complete yet; the gaps and the upstream issues
+  behind them are tracked in
+  [tsrx-org/tsrx#136](https://github.com/tsrx-org/tsrx/issues/136).
 
 The compiler and `jsxImportSource` should match the chosen target. For example, a
 React project on TypeScript 5.9 or 6 can use:

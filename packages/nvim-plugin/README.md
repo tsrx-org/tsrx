@@ -46,6 +46,11 @@ backend) and serves every feature for `.tsrx` files.
 - VS Code alone needs no `plugins` entry: its extension hands the plugin to VS
   Code's own tsserver.
 
+TypeScript 7 support for `.tsrx` files is not complete yet. The gaps and the
+upstream TypeScript issues behind them are tracked in
+[tsrx-org/tsrx#136](https://github.com/tsrx-org/tsrx/issues/136); if you run into
+one that is not listed there, please file a new issue.
+
 With TypeScript 7 installed in the project, its language server (`tsc --lsp`, the
 `tsc` config of nvim-lspconfig, which requires a TypeScript 7 binary) can own
 TypeScript features for `.tsrx` files instead, through
