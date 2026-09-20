@@ -71,6 +71,8 @@ describe('<script> bodies embedded as blocks', () => {
 			'export default function named() {}',
 			'export default async function* gen() {}',
 			'export default abstract class Base {}',
+			'export default class extends Base {}',
+			'export default class implements I {}',
 			'export default value;',
 			'export { value as alias };',
 			'export type { T };',
@@ -92,6 +94,9 @@ describe('<script> bodies embedded as blocks', () => {
 			['export default function named() {}', '               function named() {}'],
 			['export default async function* gen() {}', '               async function* gen() {}'],
 			['export default abstract class Base {}', '               abstract class Base {}'],
+			// `extends` / `implements` after `class` are keywords, not a name: still anonymous.
+			['export default class extends Base {}', 'const _default=class extends Base {}'],
+			['export default class implements I {}', 'const _default=class implements I {}'],
 			['export default value;', 'const _default=value;'],
 			['export { value as alias };', ' '.repeat('export { value as alias };'.length)],
 			['export type { T };', ' '.repeat('export type { T };'.length)],
