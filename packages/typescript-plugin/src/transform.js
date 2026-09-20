@@ -129,9 +129,17 @@ const EXPORT_STATEMENT =
 	/^[ \t]*export\s+(?:type\s+)?(?:(?:\{[^}]*\}|\*(?:\s+as\s+[\w$]+)?)(?:\s+from\s+(['"])[^'"\n]*\1(?:\s+with\s*\{[^}]*\})?)?|=\s*[^;\n]*)[ \t]*;?/gm;
 
 /**
- * `export default` in front of an expression, a function or a class: replaced by
- * a same-length `const <name>=` so the rest stays a valid, checked initializer
- * (an anonymous `function () {}` or `class {}` is only valid as an expression).
+ * `export default` in front of a named function or class declaration: only the
+ * keywords are blanked, so the declaration keeps its name in the block's scope.
+ */
+const EXPORT_DEFAULT_NAMED =
+	/^([ \t]*)(export[ \t]+default[ \t]+)(?=(?:async[ \t]+)?function[ \t]*\*?[ \t]*[A-Za-z_$]|(?:abstract[ \t]+)?class[ \t]+[A-Za-z_$])/gm;
+
+/**
+ * `export default` in front of an expression, an anonymous function or an
+ * anonymous class: replaced by a same-length `const <name>=` so the rest stays
+ * a valid, checked initializer (an anonymous `function () {}` or `class {}` is
+ * only valid as an expression).
  */
 const EXPORT_DEFAULT = /^([ \t]*)(export[ \t]+default[ \t]+)(?=\S)/gm;
 
@@ -151,6 +159,10 @@ const EXPORT_KEYWORD =
 export function blank_export_syntax(body) {
 	return body
 		.replace(EXPORT_STATEMENT, (statement) => statement.replace(/[^\r\n]/g, ' '))
+		.replace(
+			EXPORT_DEFAULT_NAMED,
+			(_match, indent, keywords) => indent + ' '.repeat(keywords.length),
+		)
 		.replace(EXPORT_DEFAULT, (_match, indent, keywords) => {
 			// `const ` + name + `=` must be exactly as long as the keywords (15+ chars).
 			const name = '_default'.padEnd(keywords.length - 'const '.length - '='.length, '_');
