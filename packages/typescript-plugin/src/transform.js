@@ -129,9 +129,19 @@ const EXPORT_STATEMENT =
 	/^[ \t]*export\s+(?:type\s+)?(?:(?:\{[^}]*\}|\*(?:\s+as\s+[\w$]+)?)(?:\s+from\s+(['"])[^'"\n]*\1(?:\s+with\s*\{[^}]*\})?)?|=\s*[^;\n]*)[ \t]*;?/gm;
 
 /**
- * `export default` in front of an expression, a function or a class: replaced by
- * a same-length `const <name>=` so the rest stays a valid, checked initializer
- * (an anonymous `function () {}` or `class {}` is only valid as an expression).
+ * `export default` in front of a named `function` or `class` declaration: the
+ * name is in the enclosing scope, so only the keywords are blanked. Rewriting
+ * to `const … =` would make a named expression (or illegal `abstract class`
+ * initializer) and leave later references unresolved.
+ */
+const EXPORT_DEFAULT_NAMED =
+	/^([ \t]*)(export[ \t]+default[ \t]+)(?=(?:async[ \t]+)?function\b(?:[ \t]*\*)?[ \t]*[\w$]|(?:abstract[ \t]+)?class\b[ \t]+(?!(?:extends|implements)\b)[\w$])/gm;
+
+/**
+ * `export default` in front of an expression or an anonymous function / class:
+ * replaced by a same-length `const <name>=` so the rest stays a valid, checked
+ * initializer (an anonymous `function () {}` or `class {}` is only valid as an
+ * expression).
  */
 const EXPORT_DEFAULT = /^([ \t]*)(export[ \t]+default[ \t]+)(?=\S)/gm;
 
@@ -143,14 +153,19 @@ const EXPORT_KEYWORD =
  * A `<script type="module">` body may `export`, but nothing can import an inline
  * script, so its exports are dead and a block cannot hold them: statements that
  * only export are blanked, `export default` becomes a same-length `const`
- * binding, and the keyword in front of a declaration is blanked, keeping every
- * length so the body's mapping stays one to one.
+ * binding unless it is a named `function` / `class` (those keep their
+ * declaration), and the keyword in front of a declaration is blanked, keeping
+ * every length so the body's mapping stays one to one.
  * @param {string} body
  * @returns {string}
  */
 export function blank_export_syntax(body) {
 	return body
 		.replace(EXPORT_STATEMENT, (statement) => statement.replace(/[^\r\n]/g, ' '))
+		.replace(
+			EXPORT_DEFAULT_NAMED,
+			(_match, indent, keywords) => indent + ' '.repeat(keywords.length),
+		)
 		.replace(EXPORT_DEFAULT, (_match, indent, keywords) => {
 			// `const ` + name + `=` must be exactly as long as the keywords (15+ chars).
 			const name = '_default'.padEnd(keywords.length - 'const '.length - '='.length, '_');

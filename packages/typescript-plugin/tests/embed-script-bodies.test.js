@@ -68,10 +68,17 @@ describe('<script> bodies embedded as blocks', () => {
 			'export async function run() {}',
 			'export default function () {}',
 			'export default class {}',
+			'export default function Foo() {}',
+			'export default async function Bar() {}',
+			'export default class Baz {}',
+			'export default abstract class Qux {}',
+			'export default class extends Base {}',
 			'export default value;',
 			'export { value as alias };',
 			'export type { T };',
 			'const r = await Promise.resolve(value);',
+			'const foo = Foo;',
+			'const baz: Baz = new Baz();',
 		].join('\n');
 		const blanked = blank_export_syntax(body);
 		expect(blanked).toHaveLength(body.length);
@@ -85,16 +92,27 @@ describe('<script> bodies embedded as blocks', () => {
 			['export async function run() {}', '       async function run() {}'],
 			['export default function () {}', 'const _default=function () {}'],
 			['export default class {}', 'const _default=class {}'],
+			['export default function Foo() {}', '               function Foo() {}'],
+			['export default async function Bar() {}', '               async function Bar() {}'],
+			['export default class Baz {}', '               class Baz {}'],
+			['export default abstract class Qux {}', '               abstract class Qux {}'],
+			['export default class extends Base {}', 'const _default=class extends Base {}'],
 			['export default value;', 'const _default=value;'],
 			['export { value as alias };', ' '.repeat('export { value as alias };'.length)],
 			['export type { T };', ' '.repeat('export type { T };'.length)],
 			['const r = await Promise.resolve(value);', 'const r = await Promise.resolve(value);'],
+			['const foo = Foo;', 'const foo = Foo;'],
+			['const baz: Baz = new Baz();', 'const baz: Baz = new Baz();'],
 		]) {
 			expect(blanked.split('\n')).toContain(expected);
 			expect(original.length).toBe(expected.length);
 		}
 		// Extra whitespace in the keywords is absorbed by the binding name.
 		expect(blank_export_syntax('export   default   x;')).toBe('const _default____=x;');
+		// Named default declarations keep their binding when the keywords grow.
+		expect(blank_export_syntax('export   default   function Foo() {}')).toBe(
+			'                   function Foo() {}',
+		);
 		const { text } = embed_script_bodies('', [], [region(body)]);
 		expect(text).not.toContain('export');
 		expect(text).toContain('const r = await Promise.resolve(value);');
