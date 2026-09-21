@@ -1,4 +1,5 @@
-#if (${PACKAGE_NAME} && ${PACKAGE_NAME} != "")package ${PACKAGE_NAME} #end
-export function ${NAME}() @{
-  return <div>${NAME}</div>
+#set($SAFE_NAME = $NAME.replaceAll('[^A-Za-z0-9_$]', ''))
+#if ($SAFE_NAME.matches('^[0-9].*') || $SAFE_NAME == '')#set($SAFE_NAME = 'Component')#end
+export function ${SAFE_NAME}() @{
+  return <div></div>
 }

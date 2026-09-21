@@ -7,8 +7,6 @@
   "version": "https://github.com/microsoft/TypeScript-TmLanguage/commit/48f608692aa6d6ad7bd65b478187906c798234a8",
   "name": "TSRX",
   "scopeName": "source.tsrx",
-  "foldingStartMarker": "<[^/!?][^>]*>\\s*$|\\{\\s*$",
-  "foldingStopMarker": "^\\s*</[^>]+>|^\\s*\\}",
   "patterns": [
     {
       "include": "#directives"

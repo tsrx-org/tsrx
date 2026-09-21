@@ -10,25 +10,31 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.psi.PsiElement
 
 /**
- * Enables \"Go to Declaration or Usages\" (Cmd+B) on TSRX definitions.
+ * Enables "Go to Declaration or Usages" (Cmd+B) on TSRX definitions.
  *
- * For TextMate-only language (no PSI), IntelliJ's default handler for
- * LSP (textDocument/definition) only triggers when caret is on a *usage*.
- * When caret is on the *definition* itself (e.g. `export function MyButton`),
- * textDocument/definition returns the same location or empty, so Cmd+B does nothing.
+ * For TextMate-only language (flat PSI), IntelliJ's LSP
+ * `textDocument/definition` handler only triggers on *usages*. When the caret is
+ * on the *definition* itself (e.g. `export function MyButton`), the definition
+ * request resolves to the same location or empty, so Cmd+B does nothing.
  *
  * This handler makes Cmd+B on a definition fall back to Find Usages
  * (textDocument/references) via the existing TsrxFindUsagesProvider + LSP.
+ * Anything that is not reliably recognized as a declaration returns null so
+ * that LSP's definition lookup handles it.
  *
- * Logic: if the element is inside a TSRX file and looks like a declaration
- * (previous text contains `function`, `const`, `let`, `class`), return the element
- * itself as a target. Then GotoDeclarationOrUsagesHandler2 detects that the target
- * is the source itself and shows the usages popup (which will be populated by LSP).
- * Otherwise return null to let LSP's definition handler run normally.
+ * Declaration detection is deliberately strict: the identifier under the caret
+ * must be immediately preceded — on the same line — by a declaration keyword
+ * (`export function`, `function`, `const`, `let`, `var`, `class`, `type`,
+ * `interface`, including `export default function/class`). A merely *nearby*
+ * `export function` elsewhere on the line (e.g. the caret on `helper` in
+ * `export function App() { return helper(); }`) must NOT take this path.
  */
 class TsrxGotoDeclarationHandler : GotoDeclarationHandler {
 	companion object {
 		private val LOG = Logger.getInstance(TsrxGotoDeclarationHandler::class.java)
+		private val DECLARATION_PREFIX = Regex(
+			"""^(?:export\s+(?:default\s+)?)?(?:function|class|const|let|var|type|interface)$"""
+		)
 	}
 
 	override fun getGotoDeclarationTargets(
@@ -36,96 +42,77 @@ class TsrxGotoDeclarationHandler : GotoDeclarationHandler {
 		offset: Int,
 		editor: Editor?,
 	): Array<PsiElement>? {
-		LOG.warn("TsrxGotoDeclarationHandler CALLED: source=${sourceElement?.text?.take(30)} offset=$offset file=${sourceElement?.containingFile?.name} lang=${sourceElement?.containingFile?.language} fileType=${sourceElement?.containingFile?.fileType?.name} elementType=${sourceElement?.node?.elementType}")
-		if (sourceElement == null) {
-			LOG.warn("TsrxGotoDeclarationHandler: sourceElement null -> return null")
+		if (sourceElement == null || editor == null) {
 			return null
 		}
-		val file = sourceElement.containingFile
-		if (file == null) {
-			LOG.warn("TsrxGotoDeclarationHandler: containingFile null -> return null")
-			return null
-		}
+		val file = sourceElement.containingFile ?: return null
 		val vFile = file.virtualFile ?: file.viewProvider.virtualFile
-		val isTsrxByName = file.name.endsWith(".tsrx") || vFile?.name?.endsWith(".tsrx") == true || vFile?.extension == "tsrx"
-		val isTsrxByLang = file.language.`is`(TsrxLanguage)
-		val isTsrxByType = file.fileType === TsrxFileType.INSTANCE
-		LOG.warn("TsrxGotoDeclarationHandler: file language=${file.language} fileType=${file.fileType.name} isTsrxLang=$isTsrxByLang isTsrxFileType=$isTsrxByType isTsrxByName=$isTsrxByName vFile=${vFile?.name}")
-		if (!isTsrxByName && !isTsrxByLang && !isTsrxByType) {
-			LOG.warn("TsrxGotoDeclarationHandler: not TSRX file -> return null (let LSP handle)")
+		val isTsrx = file.name.endsWith(".tsrx", true) ||
+			vFile?.name?.endsWith(".tsrx", true) == true ||
+			vFile?.extension?.equals("tsrx", true) == true ||
+			file.language.isKindOf(TsrxLanguage) ||
+			file.language.id == "TSRX" ||
+			file.fileType === TsrxFileType.INSTANCE
+		if (!isTsrx) {
 			return null
 		}
 
-		val text = sourceElement.text
-		if (text == null || text.isBlank()) {
-			LOG.warn("TsrxGotoDeclarationHandler: blank text -> return null")
+		if (!isCaretOnDeclaration(file.text ?: return null, editor.caretModel.offset)) {
+			// Ordinary usage -> let LSP's GotoDefinition handle it.
 			return null
 		}
 
-		// Heuristic: distinguish declaration (Prueba.tsrx: export function TestButton) vs usage (App.tsrx: <TestButton/>)
-		try {
-			val docText = file.text ?: return null
-			// Use caret offset from editor if available, otherwise element start offset
-			val caretOffset = editor?.caretModel?.offset ?: offset
-			val wordAtCaret = try {
-				val start = maxOf(0, caretOffset - 15)
-				val end = minOf(docText.length, caretOffset + 15)
-				val snippet = docText.substring(start, end)
-				// Find word around caret
-				val wordRegex = Regex("""\b(\w+)\b""")
-				// Look for word that contains caret
-				val caretInSnippet = caretOffset - start
-				wordRegex.findAll(snippet).firstOrNull { it.range.first <= caretInSnippet && caretInSnippet <= it.range.last }?.groupValues?.getOrNull(1)
-					?: Regex("""\b(\w+)\b""").find(text)?.groupValues?.getOrNull(1)
-			} catch (_: Exception) { null }
-			val effectiveWord = wordAtCaret?.takeIf { it.isNotBlank() } ?: text.trim().take(30).split(Regex("""\W+""")).firstOrNull() ?: text.take(20)
-			val beforeCaret = docText.substring(maxOf(0, caretOffset - 40), caretOffset)
-			val beforeCaretTrimmed = beforeCaret.trimEnd()
-			val isDeclaration = beforeCaret.contains(Regex("""export\s+function\s+${Regex.escape(effectiveWord)}\b"""))
-				|| beforeCaretTrimmed.endsWith("export function $effectiveWord")
-				|| beforeCaretTrimmed.endsWith("function $effectiveWord")
-				|| beforeCaret.matches(Regex(""".*\bexport\s+function\s+${Regex.escape(effectiveWord)}\s*"""))
-				|| (beforeCaret.contains(Regex("""\bexport\s+function\b""")) && beforeCaret.length < 50 && effectiveWord.length > 2)
-
-			LOG.warn("TsrxGotoDeclarationHandler: text='${text.take(30)}' wordAtCaret='$effectiveWord' beforeCaret='${beforeCaret.takeLast(40)}' isDeclaration=$isDeclaration caretOffset=$caretOffset offset=$offset file=${file.name}")
-
-			// If isDeclaration, trigger Find Usages via the same action as Alt+F7 (uses editor caret, not PsiElement text)
-			if (isDeclaration) {
-				LOG.warn("TsrxGotoDeclarationHandler: triggering FindUsages via FindUsagesAction for declaration: ${file.name}:$caretOffset word=$effectiveWord")
-				if (editor != null) {
-					val project = file.project
-					ApplicationManager.getApplication().invokeLater {
-						try {
-							val actionManager = ActionManager.getInstance()
-							val findUsagesAction = actionManager.getAction("FindUsages")
-							if (findUsagesAction != null) {
-								val dataContext = DataManager.getInstance().getDataContext(editor.component)
-								val event = AnActionEvent.createFromDataContext("FindUsages", null, dataContext)
-								findUsagesAction.actionPerformed(event)
-								LOG.warn("TsrxGotoDeclarationHandler: FindUsagesAction performed for ${file.name}:$caretOffset word=$effectiveWord")
-							} else {
-								LOG.warn("TsrxGotoDeclarationHandler: FindUsages action not found")
-							}
-						} catch (e: Exception) {
-							LOG.warn("TsrxGotoDeclarationHandler: FindUsagesAction failed", e)
-						}
-					}
-					return emptyArray()
+		ApplicationManager.getApplication().invokeLater {
+			try {
+				val findUsagesAction = ActionManager.getInstance().getAction("FindUsages")
+				if (findUsagesAction != null) {
+					val dataContext = DataManager.getInstance().getDataContext(editor.component)
+					findUsagesAction.actionPerformed(
+						AnActionEvent.createFromDataContext("FindUsages", null, dataContext)
+					)
 				} else {
-					LOG.warn("TsrxGotoDeclarationHandler: editor null, returning sourceElement for ${file.name}:$caretOffset")
-					return arrayOf(sourceElement)
+					LOG.warn("TsrxGotoDeclarationHandler: FindUsages action not found")
 				}
+			} catch (e: Exception) {
+				LOG.warn("TsrxGotoDeclarationHandler: FindUsagesAction failed", e)
 			}
-		} catch (e: Exception) {
-			LOG.warn("TsrxGotoDeclarationHandler: exception", e)
 		}
+		return emptyArray()
+	}
 
-		// Not a declaration -> let LSP's GotoDefinition handle it
-		return null
+	/**
+	 * Returns true only when the caret sits inside an identifier that is directly
+	 * introduced by a declaration keyword on the same line.
+	 */
+	internal fun isCaretOnDeclaration(docText: String, caretOffset: Int): Boolean {
+		if (docText.isEmpty()) return false
+		val caret = caretOffset.coerceIn(0, docText.length)
+		if (!isIdentifierChar(docText.getOrNull(caret)) && !isIdentifierChar(docText.getOrNull(caret - 1))) {
+			return false
+		}
+		var wordStart = caret
+		while (wordStart > 0 && isIdentifierChar(docText[wordStart - 1])) {
+			wordStart--
+		}
+		var wordEnd = caret
+		while (wordEnd < docText.length && isIdentifierChar(docText[wordEnd])) {
+			wordEnd++
+		}
+		if (wordStart == wordEnd) return false
+
+		// Restrict to the current line: a declaration keyword on a previous line
+		// must not leak into this decision.
+		val lineStart = docText.lastIndexOf('\n', (wordStart - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
+		val beforeWord = docText.substring(lineStart, wordStart).trim()
+		if (beforeWord.isEmpty()) return false
+		return DECLARATION_PREFIX.matches(beforeWord)
+	}
+
+	private fun isIdentifierChar(c: Char?): Boolean {
+		return c != null && (c.isLetterOrDigit() || c == '_' || c == '$')
 	}
 
 	override fun getActionText(context: com.intellij.openapi.actionSystem.DataContext): String? {
-		// Provide hint text for the action when on declaration
 		return null
 	}
 }

@@ -13,15 +13,14 @@ import com.intellij.psi.TokenType
 import com.intellij.psi.tree.IElementType
 import com.intellij.psi.tree.IFileElementType
 import com.intellij.psi.tree.TokenSet
-import com.intellij.lexer.LexerBase
 
 class TsrxParserDefinition : ParserDefinition {
 
-    override fun createLexer(project: Project): Lexer = TsrxDummyLexer()
+    override fun createLexer(project: Project): Lexer = TsrxBraceLexer()
 
     override fun getWhitespaceTokens(): TokenSet = TokenSet.create(TokenType.WHITE_SPACE)
 
-    override fun getCommentTokens(): TokenSet = TokenSet.EMPTY
+    override fun getCommentTokens(): TokenSet = TokenSet.create(TsrxTokenTypes.COMMENT)
 
     override fun getStringLiteralElements(): TokenSet = TokenSet.EMPTY
 
@@ -40,39 +39,6 @@ class TsrxParserDefinition : ParserDefinition {
     companion object {
         val FILE: IFileElementType = IFileElementType(TsrxLanguage)
     }
-}
-
-private class TsrxDummyLexer : LexerBase() {
-    private var buffer: CharSequence = ""
-    private var startOffset: Int = 0
-    private var endOffset: Int = 0
-    private var curOffset: Int = 0
-
-    override fun start(buffer: CharSequence, startOffset: Int, endOffset: Int, initialState: Int) {
-        this.buffer = buffer
-        this.startOffset = startOffset
-        this.endOffset = endOffset
-        this.curOffset = startOffset
-    }
-
-    override fun getState(): Int = 0
-
-    override fun getTokenType(): IElementType? {
-        if (curOffset >= endOffset) return null
-        // Emit entire remaining text as BAD_CHARACTER so parser can consume it in one go
-        return TokenType.BAD_CHARACTER
-    }
-
-    override fun getTokenStart(): Int = curOffset
-
-    override fun getTokenEnd(): Int = endOffset
-
-    override fun advance() {
-        curOffset = endOffset
-    }
-
-    override fun getBufferSequence(): CharSequence = buffer
-    override fun getBufferEnd(): Int = endOffset
 }
 
 private class TsrxDummyParser : PsiParser {

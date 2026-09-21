@@ -22,7 +22,7 @@ TSRX — TypeScript Render Extensions for .tsrx files. A TSX superset with decla
   <li>Status bar TSRX icon for Language Services, <em>New File → TSRX File</em> template, braces & comments</li>
   <li>Emmet abbreviations (<code>div&gt;ul&gt;li*3</code> → <code>Tab</code>) and HTML tag handling (auto-close, sync editing) in <code>.tsrx</code> files</li>
   <li>Code folding — collapse tags (<code>&lt;div class="test"&gt;...&lt;/div&gt;</code>), <code>@if/@for/@switch/@try</code> blocks, braces and import groups</li>
-  <li>Reformat Code — indent tags/braces like TSX in <code>.tsrx</code> files (<code>Code → Reformat Code</code>)</li>
+   <li>Reformat Code via Prettier with <code>@tsrx/prettier-plugin</code> (<code>Code → Reformat Code</code>), honoring the project's Prettier configuration</li>
 </ul>
 <p>Requirements: Node.js 22+ on PATH and project with <code>@tsrx/typescript-plugin</code> in <code>tsconfig.json</code>. The LSP auto-installs if missing.</p>
 <p>Links: <a href="https://tsrx.dev">tsrx.dev</a> · <a href="https://github.com/tsrx-org/tsrx">GitHub</a> · <a href="https://github.com/tsrx-org/tsrx/issues">Issues</a></p>
@@ -55,7 +55,7 @@ TSRX — TypeScript Render Extensions for .tsrx files. A TSX superset with decla
 		<xml.zenCodingGenerator implementation="dev.tsrx.intellij_plugin.TsrxEmmetGenerator"/>
 		<xml.extension implementation="dev.tsrx.intellij_plugin.TsrxXmlExtension"/>
 		<lang.foldingBuilder language="TSRX" implementationClass="dev.tsrx.intellij_plugin.TsrxFoldingBuilder"/>
-		<formattingService implementation="dev.tsrx.intellij_plugin.TsrxFormattingService"/>
+		<formattingService implementation="dev.tsrx.intellij_plugin.TsrxPrettierFormattingService"/>
 	</extensions>
 	<actions>
 		<action id="NewTsrxFile" class="dev.tsrx.intellij_plugin.NewTsrxFileAction"

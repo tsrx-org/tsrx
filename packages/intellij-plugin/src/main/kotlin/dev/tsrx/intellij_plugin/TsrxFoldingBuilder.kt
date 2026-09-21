@@ -25,12 +25,7 @@ import com.intellij.psi.PsiFile
  */
 class TsrxFoldingBuilder : CustomFoldingBuilder(), DumbAware {
 
-    init {
-        LOG.warn("TSRX folding builder instantiated: ${this::class.qualifiedName}")
-    }
-
     override fun isDumbAware(): Boolean {
-        LOG.warn("TSRX folding isDumbAware check")
         return true
     }
 
@@ -40,44 +35,23 @@ class TsrxFoldingBuilder : CustomFoldingBuilder(), DumbAware {
         document: Document,
         quick: Boolean
     ) {
-        val before = descriptors.size
         val file = root.containingFile ?: (root as? PsiFile)
-        LOG.warn(
-            "TSRX folding invoked: root=${root::class.simpleName} lang=${root.language.id} " +
-                "fileLang=${file?.language?.id} fileName=${file?.name} vf=${file?.virtualFile?.name} " +
-                "ext=${file?.virtualFile?.extension} quick=$quick textLen=${document.textLength} lines=${document.lineCount} thread=${Thread.currentThread().name}"
-        )
         if (!isTsrxElement(root)) {
-            LOG.warn("TSRX folding skipped: isTsrxElement=false for ${file?.name} lang=${file?.language?.id} vfExt=${file?.virtualFile?.extension} rootLang=${root.language.id}")
-            if (file?.virtualFile?.extension?.equals("tsrx", true) == true) {
-                LOG.warn("TSRX folding forced for .tsrx extension despite language mismatch, proceeding")
-            } else {
+            if (file?.virtualFile?.extension?.equals("tsrx", true) != true) {
                 return
             }
         }
         val node = root.node
-        LOG.warn("TSRX folding node=${node != null} nodeTextLen=${node?.textLength} descriptorsBefore=$before")
         try {
             if (node != null) {
                 addImportFolds(descriptors, document, node)
                 addTagAndBraceFolds(descriptors, document, node)
             } else {
-                LOG.warn("TSRX folding using PsiElement fallback (node null)")
                 addImportFoldsForElement(descriptors, document, root)
                 addTagAndBraceFoldsForElement(descriptors, document, root)
             }
         } catch (e: Exception) {
-            LOG.warn("TSRX folding exception: ${e::class.simpleName}: ${e.message}", e)
-        }
-        val added = descriptors.size - before
-        LOG.warn("TSRX folding done: added=$added total=${descriptors.size} for ${file?.name} quick=$quick")
-        if (added == 0) {
-            val preview = document.charsSequence.take(300).toString().replace("\n", "\\n")
-            LOG.warn("TSRX folding zero descriptors: preview='$preview'")
-        } else {
-            descriptors.take(5).forEach { d ->
-                LOG.warn("TSRX folding descriptor: range=${d.range} placeholder='${d.placeholderText}' element=${d.element?.text?.take(30)?.replace("\n","\\n")}")
-            }
+            LOG.warn("TSRX folding failed for ${file?.name}", e)
         }
     }
 
@@ -320,6 +294,11 @@ class TsrxFoldingBuilder : CustomFoldingBuilder(), DumbAware {
 
     private fun skipQuoted(text: CharSequence, start: Int, quote: Char): Int {
         val n = text.length
+        // Only treat the quote as a string delimiter when a matching closing
+        // quote exists on the same line. Otherwise it is an apostrophe in JSX
+        // text (e.g. `don't</div>`), and consuming up to the newline would
+        // swallow the closing tag and lose the fold. Regular string literals
+        // cannot span lines, so a same-line close is always expected.
         var j = start + 1
         while (j < n) {
             val ch = text[j]
@@ -328,10 +307,10 @@ class TsrxFoldingBuilder : CustomFoldingBuilder(), DumbAware {
                 continue
             }
             if (ch == quote) return j + 1
-            if (ch == '\n') return j
+            if (ch == '\n') return start + 1
             j++
         }
-        return n
+        return start + 1
     }
 
     private fun skipLineComment(text: CharSequence, start: Int): Int {
@@ -514,9 +493,7 @@ class TsrxFoldingBuilder : CustomFoldingBuilder(), DumbAware {
     private fun isTagNameChar(c: Char): Boolean =
         c.isLetterOrDigit() || c == '_' || c == '-' || c == '$' || c == '.'
 
-    private fun isVoidTag(name: String): Boolean {
-        return name.lowercase() in VOID_TAGS
-    }
+    private fun isVoidTag(name: String): Boolean = TsrxFoldingRules.isVoidTag(name)
 
     private fun isTsrxElement(root: PsiElement): Boolean {
         val file: PsiFile = root.containingFile ?: (root as? PsiFile) ?: return false
@@ -528,10 +505,6 @@ class TsrxFoldingBuilder : CustomFoldingBuilder(), DumbAware {
     companion object {
         private val LOG = Logger.getInstance(TsrxFoldingBuilder::class.java)
         private const val NULL_CHAR = '\u0000'
-        private val VOID_TAGS = setOf(
-            "area", "base", "br", "col", "embed", "hr", "img", "input",
-            "link", "meta", "param", "source", "track", "wbr"
-        )
         private val REGEX_PREV_CHARS = "=(:,!&|?;[+*%^~".toSet()
     }
 }
