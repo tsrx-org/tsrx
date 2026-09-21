@@ -13,9 +13,10 @@
  * @param {CompileError[]} [errors]
  * @param {AST.CommentWithLocation[]} [comments]
  * @param {string} [code] TSRX's own code, or TypeScript's for a mistake TypeScript also reports
+ * @param {CompileError['severity']} [severity]
  * @returns {void}
  */
-export function error(message, filename, node, errors, comments, code) {
+export function error(message, filename, node, errors, comments, code, severity) {
 	if (errors && comments && is_error_suppressed(node, comments)) {
 		return;
 	}
@@ -33,6 +34,7 @@ export function error(message, filename, node, errors, comments, code) {
 	// custom properties
 	error.fileName = filename;
 	error.code = code;
+	error.severity = severity;
 	error.end = node.end ?? undefined;
 	error.loc = !node.loc
 		? undefined

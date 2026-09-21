@@ -712,21 +712,37 @@ function clamp_offset(offset, length) {
 }
 
 /**
+ * Mirrors collected compiler diagnostics to stderr under `tsrx-tsc`. The line
+ * follows tsc's `file(line,col): error TS2339: message` convention — position
+ * when the diagnostic carries `loc`, then severity and the diagnostic `code` —
+ * so output is greppable by code and actionable by position.
  * @param {string} file_name
  * @param {ReadonlyArray<unknown>} errors
  */
 function logTSRXErrors(file_name, errors) {
 	for (const error of errors) {
-		const message =
-			error && typeof error === 'object' && 'message' in error
-				? String(/** @type {{ message: unknown }} */ (error).message)
-				: String(error);
-		const key = `${file_name}\0${message}`;
+		const details =
+			error && typeof error === 'object'
+				? /** @type {{ message?: unknown, code?: unknown, severity?: unknown, loc?: { start?: { line?: unknown, column?: unknown } } }} */ (
+						error
+					)
+				: undefined;
+		const message = details && 'message' in details ? String(details.message) : String(error);
+		const severity = details?.severity === 'warning' ? 'warning' : 'error';
+		const code =
+			typeof details?.code === 'string' && details.code.length > 0 ? details.code : undefined;
+		const label = code === undefined ? severity : `${severity} ${code}`;
+		const start = details?.loc?.start;
+		const position =
+			typeof start?.line === 'number' && typeof start?.column === 'number'
+				? `(${start.line},${start.column + 1})`
+				: '';
+		const key = `${file_name}\0${position}\0${label}\0${message}`;
 		if (loggedCompilationFailures.has(key)) {
 			continue;
 		}
 		loggedCompilationFailures.add(key);
-		console.error(`[tsrx-tsc] ${file_name}: ${message}`);
+		console.error(`[tsrx-tsc] ${file_name}${position}: ${label}: ${message}`);
 	}
 }
 
