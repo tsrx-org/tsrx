@@ -1,37 +1,15 @@
 /**
- * TSRX Syntax for VS Code
+ * VS Code's selected TypeScript owns TypeScript features for `.tsrx` files:
+ * - On TypeScript 5.9/6, the built-in extension runs the contributed
+ *   `@tsrx/typescript-plugin` and manages `.tsrx` documents itself.
+ * - On TypeScript 7, the native extension discovers configured projects through
+ *   `registerContentMappers` and runs the mapper each tsconfig.json declares.
  *
- * This extension provides language support for TSRX files (.tsrx) by:
- * 1. Starting a Volar-based language server (language-server) for TSRX syntax and semantics
- * 2. Leaving TypeScript features for `.tsrx` files to VS Code's own TypeScript:
- *    - classic: patching the built-in TypeScript extension to recognize TSRX files while the
- *      language server hosts TypeScript 5 itself
- *    - native: leaving them to TypeScript 7, which runs `@tsrx/content-mapper` for the `.tsrx`
- *      files a project declares under `contentMappers` in tsconfig.json, and running the
- *      language server slimmed down. The extension never talks to the TypeScript 7 extension.
- * 3. Setting VSCode context variables to expose TypeScript commands for TSRX files
- *
- * Architecture: VS Code's TypeScript owns `.tsrx` files
- * -----------------------------------------------------
- * The extension never loads TypeScript and never patches another extension. TypeScript
- * features for `.tsrx` files come from the TypeScript VS Code itself runs:
- *
- * - TypeScript 7 off (classic): VS Code's built-in TypeScript extension runs its tsserver with
- *   `@tsrx/typescript-plugin`, contributed through the `typescriptServerPlugins` point of
- *   package.json and shipped inside this extension. `languages: ["tsrx"]` makes VS Code manage
- *   `.tsrx` documents like `.ts` ones, so its own commands and menus (Find All File References,
- *   Sort Imports, ...) work on them and `.ts` importers resolve `.tsrx` modules, whichever
- *   TypeScript version VS Code runs (its own copy or the workspace's).
- * - TypeScript 7 on (native): the TypeScript 7 extension runs `@tsrx/content-mapper` for the
- *   `.tsrx` files each tsconfig.json declares under `contentMappers`.
- *
- * The TSRX language server (language-server, Volar based) runs beside it in a slim mode and
- * serves only what TypeScript does not: TSRX snippets, CSS in `<style>`, document symbols,
- * auto-closing tags, CSS-class hover and definition, keyword highlights, and, when VS Code's
- * the TSRX compile errors (`typescriptBackend: "plugin"`); `diagnostics.js` drops that copy for
- * a file the content mapper already reports on under TypeScript 7. The extension never asks
- * which TypeScript VS Code runs: no setting, no other extension. Only one TypeScript ever
- * serves a file.
+ * The TSRX language server runs alongside it in `plugin` mode for snippets, CSS,
+ * document symbols, auto-closing tags, CSS-class navigation and keyword highlights.
+ * It also reports compile errors; `diagnostics.js` removes that copy once the native
+ * mapper reports for the file. This extension neither loads TypeScript nor patches
+ * another extension, and has no TypeScript backend setting of its own.
  */
 
 import vscode from 'vscode';
@@ -41,6 +19,7 @@ import protocol from '@volar/language-server/protocol';
 import * as lsp from 'vscode-languageclient/node';
 import { activateAutoInsertion, createLabsInfo } from '@volar/vscode';
 import { CompileErrorDedupe, has_server_compile_errors } from './diagnostics.js';
+import { activate_typescript } from './typescript.js';
 
 const TSRX_FILE_SELECTORS = ['**/*.tsrx'];
 const RESTART_EXTENSIONS_ACTION = 'Restart Extensions';
@@ -82,32 +61,6 @@ function refresh_server_diagnostics(uri) {
 let client;
 /** Whether TypeScript 7's content mapper has been seen reporting in this session. */
 const dedupe = new CompileErrorDedupe();
-
-/** Language ids VS Code's TypeScript extensions activate on. */
-const JS_TS_LANGUAGES = new Set(['typescript', 'typescriptreact', 'javascript', 'javascriptreact']);
-const JS_TS_GLOB = '*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}';
-/** Directories for which a JavaScript or TypeScript file was opened to wake VS Code's TypeScript. */
-const woken_directories = new Set();
-/** The file written next to a `.tsrx` file when its project has no `.ts` or `.js` file at all. */
-const WAKE_UP_FILE_NAME = 'tsrx-wake-up.ts';
-const WAKE_UP_FILE_CONTENT = `// DO NOT CLOSE THIS FILE. IT CLOSES AND DELETES ITSELF IN A MOMENT.
-//
-// The TSRX extension created it because this project has no TypeScript or
-// JavaScript file. VS Code's TypeScript starts, and loads a project, only when
-// one of the project's .ts or .js files is opened (microsoft/TypeScript#64355);
-// without one, .tsrx files would get no TypeScript features at all.
-//
-// As soon as TypeScript is running for this project, this tab is closed and the
-// file is removed. If the file is still here later, delete it.
-export {};
-function tsrxWakeUp() {
-	const unused = 1;
-}
-`;
-/** How long to keep the wake-up file at most before closing and removing it anyway. */
-const WAKE_UP_TIMEOUT_MS = 30_000;
-/** The `source` VS Code's TypeScript extension (5.x, 6.x and 7.x alike) sets on its diagnostics. */
-const TYPESCRIPT_DIAGNOSTIC_SOURCE = 'ts';
 
 /**
  * @param {import('vscode').ExtensionContext} context
@@ -252,25 +205,7 @@ export async function activate(context) {
 			}),
 		);
 
-		// VS Code's TypeScript extensions activate only on JavaScript and TypeScript documents,
-		// and TypeScript 7 learns about `.tsrx` files only once a project that declares the
-		// mapper has loaded, which also takes a file of that project being opened. A workspace
-		// where only `.tsrx` files are opened would therefore get no TypeScript features at
-		// all (microsoft/TypeScript#64355). Until that is fixed upstream, open the nearest
-		// TypeScript or JavaScript file of the project once, hidden: no editor, nothing
-		// written, nothing to close. Removal is tracked in tsrx-org/tsrx#138.
-		context.subscriptions.push(
-			vscode.workspace.onDidOpenTextDocument((document) => {
-				if (document.languageId === 'tsrx') {
-					void wake_typescript_for(document);
-				}
-			}),
-		);
-		for (const document of vscode.workspace.textDocuments) {
-			if (document.languageId === 'tsrx') {
-				void wake_typescript_for(document);
-			}
-		}
+		await activate_typescript(context);
 
 		addCustomCommands(context);
 		console.log('[TSRX] Registered custom commands');
@@ -281,153 +216,6 @@ export async function activate(context) {
 		console.error('Failed to start language client:', error);
 		const message = error instanceof Error ? error.message : String(error);
 		vscode.window.showErrorMessage(`Failed to start TSRX language server: ${message}`);
-	}
-}
-
-/**
- * Open, without showing it, the JavaScript or TypeScript file nearest to a `.tsrx` document
- * (same directory first, then up to the workspace folder, then anywhere in it outside
- * node_modules), so VS Code's TypeScript activates and loads the project the `.tsrx` file
- * belongs to. Done once per directory; skipped while any such file is already open.
- * @param {import('vscode').TextDocument} document
- */
-async function wake_typescript_for(document) {
-	if (document.uri.scheme !== 'file') {
-		return;
-	}
-	const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-	if (!folder) {
-		return;
-	}
-	const directory = path.dirname(document.uri.fsPath);
-	if (woken_directories.has(directory)) {
-		return;
-	}
-	if (
-		vscode.workspace.textDocuments.some(
-			(open) => open.uri.scheme === 'file' && JS_TS_LANGUAGES.has(open.languageId),
-		)
-	) {
-		woken_directories.add(directory);
-		return;
-	}
-	woken_directories.add(directory);
-	const root = folder.uri.fsPath;
-	/** @type {import('vscode').Uri | undefined} */
-	let candidate;
-	for (let current = directory; ; current = path.dirname(current)) {
-		[candidate] = await vscode.workspace.findFiles(
-			new vscode.RelativePattern(current, JS_TS_GLOB),
-			null,
-			1,
-		);
-		if (candidate || current === root || !current.startsWith(root)) {
-			break;
-		}
-	}
-	if (!candidate) {
-		[candidate] = await vscode.workspace.findFiles(
-			new vscode.RelativePattern(folder, `**/${JS_TS_GLOB}`),
-			'**/node_modules/**',
-			1,
-		);
-	}
-	if (!candidate) {
-		console.log(
-			`[TSRX] No TypeScript or JavaScript file near ${document.uri.fsPath}; writing ${WAKE_UP_FILE_NAME} to wake VS Code's TypeScript`,
-		);
-		await wake_typescript_with_a_file(vscode.Uri.file(path.join(directory, WAKE_UP_FILE_NAME)));
-		return;
-	}
-	try {
-		await vscode.workspace.openTextDocument(candidate);
-		console.log(
-			`[TSRX] Opened ${candidate.fsPath} (hidden) so VS Code's TypeScript serves ${path.basename(document.uri.fsPath)}`,
-		);
-	} catch (error) {
-		console.warn("[TSRX] Could not open a TypeScript file to wake VS Code's TypeScript:", error);
-	}
-}
-
-/**
- * The project has no `.ts` or `.js` file to open: write one that explains itself, open it
- * as an inactive tab next to the `.tsrx` file, and, as soon as TypeScript reports its
- * unused-local hint on it (proof that TypeScript is running and has loaded this project;
- * the file is a module with an unused local, since unused globals of a script are never
- * reported), or after a timeout, close its tab and delete it. If the user closes the tab
- * first, the file is deleted right away.
- * @param {import('vscode').Uri} uri
- */
-async function wake_typescript_with_a_file(uri) {
-	try {
-		await vscode.workspace.fs.writeFile(uri, Buffer.from(WAKE_UP_FILE_CONTENT, 'utf8'));
-		await vscode.workspace.openTextDocument(uri);
-		// `vscode.open` (unlike `showTextDocument`) honours `background`: the tab is added next
-		// to the `.tsrx` tab without becoming the active one, so the `.tsrx` file stays in view.
-		// Pinned (`preview: false`), because a preview tab would replace a `.tsrx` tab that is
-		// itself a preview (single-clicked in the explorer), and that tab would be gone for good
-		// once the wake-up tab closes.
-		await vscode.commands.executeCommand('vscode.open', uri, {
-			background: true,
-			preview: false,
-			preserveFocus: true,
-		});
-	} catch (error) {
-		console.warn(`[TSRX] Could not write or open ${uri.fsPath}:`, error);
-		return;
-	}
-	let done = false;
-	/** @type {import('vscode').Disposable[]} */
-	const subscriptions = [];
-	const finish = async () => {
-		if (done) {
-			return;
-		}
-		done = true;
-		for (const subscription of subscriptions) {
-			subscription.dispose();
-		}
-		const tabs = vscode.window.tabGroups.all.flatMap((group) =>
-			group.tabs.filter(
-				(tab) =>
-					tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uri.toString(),
-			),
-		);
-		try {
-			if (tabs.length > 0) {
-				await vscode.window.tabGroups.close(tabs, true);
-			}
-			await vscode.workspace.fs.delete(uri);
-			console.log(`[TSRX] Removed ${uri.fsPath}`);
-		} catch (error) {
-			console.warn(`[TSRX] Could not remove ${uri.fsPath}:`, error);
-		}
-	};
-	// Only TypeScript's own diagnostics prove that it has loaded the project: a linter may
-	// report the unused local first.
-	const typescript_has_reported = () =>
-		vscode.languages
-			.getDiagnostics(uri)
-			.some((diagnostic) => diagnostic.source === TYPESCRIPT_DIAGNOSTIC_SOURCE);
-	subscriptions.push(
-		vscode.languages.onDidChangeDiagnostics((event) => {
-			if (
-				event.uris.some((changed) => changed.toString() === uri.toString()) &&
-				typescript_has_reported()
-			) {
-				void finish();
-			}
-		}),
-		vscode.workspace.onDidCloseTextDocument((closed) => {
-			if (closed.uri.toString() === uri.toString()) {
-				void finish();
-			}
-		}),
-	);
-	if (typescript_has_reported()) {
-		void finish();
-	} else {
-		setTimeout(() => void finish(), WAKE_UP_TIMEOUT_MS);
 	}
 }
 

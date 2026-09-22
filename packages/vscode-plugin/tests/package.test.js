@@ -69,8 +69,6 @@ describe('@tsrx/vscode-plugin package contract', () => {
 		expect(tsdown_config).toContain("'@tsrx/typescript-plugin'");
 		const extension_source = readFileSync(resolve(__dirname, '../src/extension.js'), 'utf8');
 		expect(extension_source).not.toContain('readFileSync = ');
-		// The extension never asks which TypeScript VS Code runs: no setting, no extension lookup.
-		expect(extension_source).not.toMatch(/useTsgo|getExtension\('TypeScriptTeam/);
 		// Its own command needs no context key that another extension maintains.
 		const [source_definition] = package_json.contributes.menus['editor/context'];
 		expect(source_definition).toMatchObject({
@@ -79,10 +77,10 @@ describe('@tsrx/vscode-plugin package contract', () => {
 		});
 	});
 
-	it('ships no content mapper of its own and depends on no other extension', () => {
+	it('ships no content mapper of its own and requires no other extension to be installed', () => {
 		// On the native backend TypeScript 7 runs the mapper each tsconfig.json declares under
-		// `contentMappers`; the extension neither bundles a copy nor registers one through the
-		// TypeScript 7 extension's API.
+		// `contentMappers`; the optional extension API registration only contributes `.tsrx`
+		// for project discovery, without an inferred-project mapper or a bundled copy.
 		expect(package_json.dependencies['@tsrx/content-mapper']).toBeUndefined();
 		expect(existsSync(resolve(__dirname, '../src/content-mapper.js'))).toBe(false);
 		const tsdown_config = readFileSync(resolve(__dirname, '../tsdown.config.js'), 'utf8');

@@ -6,11 +6,12 @@ using the TSRX language server.
 ## TypeScript backends
 
 VS Code's own TypeScript owns every TypeScript feature for `.tsrx` files: the
-extension never loads TypeScript, bundles none, never patches another extension,
-and never asks which TypeScript VS Code runs (no setting of its own, no lookup of
-other extensions). Pick the TypeScript with the **TypeScript: Select TypeScript
-Version** picker as for any `.ts` file; the two rows below are what happens in
-each case. Only one TypeScript ever serves a file.
+extension never loads or bundles TypeScript and never patches another extension.
+It activates Microsoft's installed TypeScript extensions and lets them choose
+which server runs, without reading their selection settings or adding its own.
+Pick the TypeScript with the **TypeScript: Select TypeScript Version** picker as
+for any `.ts` file; the two rows below are what happens in each case. Only one
+TypeScript ever serves a file.
 
 | Backend   | How it works                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -35,8 +36,7 @@ one that is not listed there, please file a new issue.
    only supplies the compiler. Until TypeScript 7.1 and its extension are
    published it takes a build of
    [`packages/vscode-typescript`](https://github.com/microsoft/TypeScript/tree/main/packages/vscode-typescript)
-   from the TypeScript repository. This extension never talks to the TypeScript 7
-   extension; it only reads the setting above to pick the backend.
+   from the TypeScript repository.
 2. Declare the mapper in every `tsconfig.json` that contains `.tsrx` files, and
    install `@tsrx/content-mapper` next to it. TypeScript 7 reads that entry itself
    and resolves `.tsrx` imports across the whole project:
@@ -56,6 +56,15 @@ one that is not listed there, please file a new issue.
 3. The workspace must be trusted. Neither the mapper nor the TSRX compilers run in
    Restricted Mode.
 
+Opening a `.tsrx` file is enough to start TypeScript features, including in
+projects with no `.ts` or `.js` source files. TSRX activates Microsoft's
+TypeScript extensions and calls `registerContentMappers` when their API supports
+it, with `[{ extensions: ['.tsrx'] }]`. That registration discovers the projects
+of already-open and subsequently opened `.tsrx` files. The mapper still comes from
+each project's `tsconfig.json`; TSRX supplies no inferred-project mapper. Version
+selection and any first-run setup follow Microsoft's extensions, just as when
+opening a `.ts` file.
+
 With TypeScript 7 enabled in your user settings, its extension shows a one-time
 warning that "TypeScript server plugins from the TSRX Syntax for VS Code extension
 will not be loaded". That is expected and harmless: the plugin it refers to is the
@@ -72,17 +81,6 @@ What differs from the classic backend:
 - Keyword highlights from the TSRX server are not shown while several `.tsrx`
   editors are visible side by side (VS Code then only consults the TypeScript 7
   extension's multi-document highlight provider).
-- The TypeScript 7 extension only activates once a `.ts` or `.js` file has been
-  opened, and learns about `.tsrx` files only once the project declaring the
-  mapper has loaded (microsoft/TypeScript#64355). This extension works around
-  that, once per directory and only when a `.tsrx` file is open: if no `.ts` or
-  `.js` file is open yet, it opens the nearest one of the project hidden (no
-  editor, nothing written). A project with no `.ts` or `.js` file at all gets a
-  `tsrx-wake-up.ts` written next to the `.tsrx` file and opened as an inactive tab
-  beside it; the file explains itself, and the extension closes the tab and
-  deletes the file as soon as TypeScript reports on it (a few seconds), when the
-  tab is closed, or after 30 seconds. If it is ever left behind, delete it. The
-  workaround is removed once the upstream fix ships (tsrx-org/tsrx#138).
 
 On both backends, declarations inside `<script>` bodies are type-checked in place
 but not listed in the Outline: the body is a block statement in the generated

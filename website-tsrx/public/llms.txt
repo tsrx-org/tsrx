@@ -1531,7 +1531,9 @@ Two paths type-check `.tsrx` files; both use the same target-specific transform.
 Editors: in VS Code, VS Code's own TypeScript serves `.tsrx` files: its tsserver
 with the TSRX plugin the extension ships (no tsconfig `plugins` entry needed), or
 TypeScript 7 with the mapper from `tsconfig.json` when TypeScript 7 is selected
-in the "Select TypeScript Version" picker; the extension reads no setting; other
+in the "Select TypeScript Version" picker. The extension activates Microsoft's
+TypeScript extensions, leaving server selection to them, and registers `.tsrx`
+for project discovery on TypeScript 7. Other
 editors run `tsrx-language-server --stdio --typescript-backend=native` beside
 TypeScript 7's `tsc --lsp`. Gaps in TypeScript 7 support and the upstream issues
 behind them: https://github.com/tsrx-org/tsrx/issues/136.

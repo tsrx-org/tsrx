@@ -412,11 +412,62 @@ describe('trust gate: runExternalCode', () => {
 	});
 });
 
+describe('configured-project discovery through contributed extensions', () => {
+	it('serves already-open and later .tsrx-only projects without a bundled mapper or a .ts file', async () => {
+		const config = /** @type {any} */ (parse_jsonc(workspace_files()['tsconfig.json']).value);
+		config.include = ['*.tsrx'];
+		delete config.compilerOptions.allowImportingTsExtensions;
+		const source =
+			'export function App() @{\n\tconst message: string = 123;\n\t<div>{message}</div>\n}\n';
+		const workspace = create_native_workspace({
+			'tsconfig.json': JSON.stringify(config),
+			'App.tsrx': source,
+			'sub/tsconfig.json': JSON.stringify(config),
+			'sub/App.tsrx': source,
+		});
+		const client = new NativeLspClient(workspace.dir);
+		try {
+			await client.initialize({ runExternalCode: true });
+			const open_documents = [];
+			for (const file of ['App.tsrx', 'sub/App.tsrx']) {
+				open_documents.push({ uri: client.uri(file) });
+				// VS Code sends this hint for matching documents before the server knows to
+				// synchronize them. The project must be discovered from the .tsrx path alone.
+				await client.request('custom/setContentMapperContributions', {
+					contributions: [{ contributorId: 'TSRX.tsrx-vscode-plugin', extensions: ['.tsrx'] }],
+					openDocuments: open_documents,
+				});
+				await client.wait_for_registration('content-mapper-did-open');
+				client.open(file, source);
+				const hover = await client.request('textDocument/hover', {
+					textDocument: { uri: client.uri(file) },
+					position: position_of(source, 'message'),
+				});
+				expect(hover.contents.value).toContain('const message: string');
+				expect((await client.diagnostics(file)).map((d) => [d.source, d.code])).toEqual([
+					['ts', 2322],
+				]);
+				expect(
+					await client.request('custom/projectInfo', {
+						textDocument: { uri: client.uri(file) },
+					}),
+				).toEqual({
+					configFilePath: path.join(workspace.dir, path.dirname(file), 'tsconfig.json'),
+				});
+			}
+		} finally {
+			await client.shutdown();
+			workspace.cleanup();
+		}
+	});
+});
+
 describe('inferred projects through custom/setContentMapperContributions', () => {
 	// The inferred-project contribution of the protocol (what the TypeScript 7 VS
 	// Code extension's `registerContentMappers` API turns into on the wire): no
 	// tsconfig anywhere, the mapper comes from the contribution. The TSRX VS Code
-	// extension does not use that API; this pins the server side of the protocol.
+	// extension only registers extensions for discovery, without this optional
+	// inferred-project contribution; this pins the server side of that protocol.
 	const all = workspace_files();
 	const files = {
 		'Panel.tsrx': all['Panel.tsrx'],

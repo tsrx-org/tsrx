@@ -167,12 +167,13 @@ what editors get:
 - Without `runExternalCode` the mapper process is never spawned, `.tsrx` is never
   registered and `.ts` importers report TS2307 for `.tsrx` modules: that is the
   untrusted-workspace behaviour.
-- `custom/setContentMapperContributions` (the inferred-project contribution of the
-  protocol, which the TypeScript 7 VS Code extension exposes to other extensions
-  as `registerContentMappers`) maps `.tsrx` files that belong to no configured
-  project, and clearing it unregisters them. The TSRX VS Code extension does not
-  use it: `.tsrx` files are mapped through the `contentMappers` entry of the
-  `tsconfig.json` that covers them, in every editor alike.
+- `custom/setContentMapperContributions`, exposed by the TypeScript 7 VS Code
+  extension as `registerContentMappers`, discovers configured projects for
+  contributed file extensions. TSRX registers only `.tsrx`, so opening a `.tsrx`
+  file starts TypeScript features without opening a `.ts` or `.js` file. The
+  mapper comes from the project's `contentMappers` entry. The API also supports an
+  optional inferred-project mapper for files outside configured projects; the TSRX
+  extension does not provide one.
 
 The TSRX language server runs beside it with `--typescript-backend=native`; see
 [`@tsrx/language-server`](../language-server/README.md) and the VS Code
