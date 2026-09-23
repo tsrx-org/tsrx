@@ -10,11 +10,11 @@
  *   (code: string, id: string): Promise<TsrxReactTransformResult | null>,
  * }} TsrxReactTransform
  * @typedef {{
- *   (source: `${string}?tsrx-css&lang.css`): `\0${string}?tsrx-css&lang.css`,
+ *   (source: `${string}?tsrx-css&lang.css`): `${string}?tsrx-css&lang.css`,
  *   (source: string): string | null,
  * }} TsrxReactResolveId
  * @typedef {{
- *   (id: `\0${string}?tsrx-css&lang.css`): string,
+ *   (id: `${string}?tsrx-css&lang.css`): string,
  *   (id: string): string | null,
  * }} TsrxReactLoad
  * @typedef {{
@@ -47,6 +47,9 @@ import { createDepScanTransformPlugin } from '@tsrx/core/vite/dep-scan';
 import { createWorkerEntryMiddleware, stripWorkerEntryQuery } from '@tsrx/core/vite/worker';
 
 const TSRX_EXTENSION_PATTERN = /\.tsrx$/;
+// CSS ids stay the component path plus this query, with no `\0` prefix, so
+// Vite resolves relative `@import` and `url()` references in the extracted
+// CSS from the component's directory.
 const CSS_QUERY = '?tsrx-css&lang.css';
 
 /**
@@ -135,13 +138,12 @@ export function tsrxReact(options = {}) {
 
 		resolveId(/** @type {string} */ source) {
 			if (!source.includes(CSS_QUERY)) return null;
-			if (source.startsWith('\0')) return source;
-			return '\0' + source;
+			return source;
 		},
 
 		load(/** @type {string} */ id) {
-			if (!id.startsWith('\0') || !id.includes(CSS_QUERY)) return null;
-			const key = id.slice(1).split('?')[0];
+			if (!id.includes(CSS_QUERY)) return null;
+			const key = id.split('?')[0];
 			const css = css_cache.get(key);
 			return css ?? '';
 		},
@@ -187,10 +189,12 @@ export function tsrxReact(options = {}) {
 
 			update_css_cache(await ctx.read(), ctx.file);
 
-			const css_mod = ctx.server.moduleGraph.getModuleById('\0' + ctx.file + CSS_QUERY);
+			const css_mod = ctx.server.moduleGraph.getModuleById(ctx.file + CSS_QUERY);
 			if (!css_mod) return ctx.modules;
 
 			ctx.server.moduleGraph.invalidateModule(css_mod);
+			// Vite usually lists the CSS module already, under the component's file.
+			if (ctx.modules.includes(css_mod)) return ctx.modules;
 			return [...ctx.modules, css_mod];
 		},
 	});

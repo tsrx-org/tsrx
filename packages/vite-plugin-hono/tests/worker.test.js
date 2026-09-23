@@ -47,7 +47,7 @@ describe('@tsrx/vite-plugin-hono web workers', () => {
 
 		expect(transformed.map.sources).toEqual(['/virtual/Worker.tsrx']);
 		expect(transformed.code).toContain('"/virtual/Worker.tsrx?tsrx-css&lang.css"');
-		expect(plugin.load.call(context, '\0/virtual/Worker.tsrx?tsrx-css&lang.css')).toContain(
+		expect(plugin.load.call(context, '/virtual/Worker.tsrx?tsrx-css&lang.css')).toContain(
 			'color: red;',
 		);
 	});

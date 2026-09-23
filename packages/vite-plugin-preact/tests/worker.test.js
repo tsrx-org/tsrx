@@ -31,7 +31,7 @@ describe('@tsrx/vite-plugin-preact web workers', () => {
 
 		expect(/** @type {any} */ (transformed.map).sources).toEqual(['/virtual/Worker.tsrx']);
 		expect(transformed.code).toContain('"/virtual/Worker.tsrx?tsrx-css&lang.css"');
-		expect(plugin.load('\0/virtual/Worker.tsrx?tsrx-css&lang.css')).toContain('color: red;');
+		expect(plugin.load('/virtual/Worker.tsrx?tsrx-css&lang.css')).toContain('color: red;');
 	});
 
 	it('leaves other query-suffixed ids to vite', async () => {

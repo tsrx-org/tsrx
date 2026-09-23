@@ -11,6 +11,9 @@ import { createWorkerEntryMiddleware, stripWorkerEntryQuery } from '@tsrx/core/v
 
 const DEFAULT_TSRX_PATTERN = /\.tsrx$/;
 const VIRTUAL_TSX_SUFFIX = '.tsx';
+// CSS ids stay the component path plus this query, with no `\0` prefix, so
+// Vite resolves relative `@import` and `url()` references in the extracted
+// CSS from the component's directory.
 const CSS_QUERY = '?tsrx-solid-css&lang.css';
 
 /**
@@ -146,10 +149,7 @@ export function tsrxSolid(options = {}) {
 
 		async resolveId(source, importer, options) {
 			// Intercept virtual CSS imports.
-			if (source.includes(CSS_QUERY)) {
-				if (source.startsWith('\0')) return source;
-				return '\0' + source;
-			}
+			if (source.includes(CSS_QUERY)) return source;
 			// A dev worker entry arrives as `<path>?worker_file&type=<type>`.
 			// Resolve the path, then keep the query on the virtual id: Vite's
 			// worker plugin reads it back to set the entry up as a worker.
@@ -182,8 +182,8 @@ export function tsrxSolid(options = {}) {
 		},
 
 		async load(id) {
-			if (id.startsWith('\0') && id.includes(CSS_QUERY)) {
-				const key = id.slice(1).split('?')[0];
+			if (id.includes(CSS_QUERY)) {
+				const key = id.split('?')[0];
 				return css_cache.get(key) ?? '';
 			}
 			const path = stripWorkerEntryQuery(id);
@@ -214,10 +214,11 @@ export function tsrxSolid(options = {}) {
 			// module keeps serving the cached content and `<style>` edits in
 			// `.tsrx` files wouldn't hot-reload.
 			const virtual_id = ctx.file + VIRTUAL_TSX_SUFFIX;
-			const css_virtual_id = '\0' + ctx.file + CSS_QUERY;
+			const css_virtual_id = ctx.file + CSS_QUERY;
 			const extra = [...(ctx.server.moduleGraph.getModulesByFile(virtual_id) ?? [])];
 			const css_mod = ctx.server.moduleGraph.getModuleById(css_virtual_id);
-			if (css_mod) extra.push(css_mod);
+			// Vite usually lists the CSS module already, under the component's file.
+			if (css_mod && !ctx.modules.includes(css_mod)) extra.push(css_mod);
 			if (extra.length > 0) return [...extra, ...ctx.modules];
 			return ctx.modules;
 		},

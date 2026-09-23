@@ -309,7 +309,7 @@ describe('@tsrx/vite-plugin-hono', () => {
 
 	it('emits and refreshes virtual CSS', async () => {
 		const plugin = tsrxHono();
-		const css_module = { id: '\0/virtual/App.tsrx?tsrx-css&lang.css' };
+		const css_module = { id: '/virtual/App.tsrx?tsrx-css&lang.css' };
 		const invalidated = [];
 		const context = create_context({
 			getModuleById(module_id) {

@@ -15,6 +15,9 @@ import { createVaporInteropPlugin } from './interop.js';
 
 const DEFAULT_TSRX_PATTERN = /\.tsrx$/;
 const VIRTUAL_TSX_SUFFIX = '.tsx';
+// CSS ids stay the component path plus this query, with no `\0` prefix, so
+// Vite resolves relative `@import` and `url()` references in the extracted
+// CSS from the component's directory.
 const CSS_QUERY = '?tsrx-vue-css&lang.css';
 const DEFAULT_VAPOR_OPTIONS = {
 	macros: true,
@@ -185,10 +188,7 @@ function create_tsrx_vue_plugin(options) {
 		},
 
 		async resolveId(source, importer, options) {
-			if (source.includes(CSS_QUERY)) {
-				if (source.startsWith('\0')) return source;
-				return '\0' + source;
-			}
+			if (source.includes(CSS_QUERY)) return source;
 
 			// A dev worker entry arrives as `<path>?worker_file&type=<type>`.
 			// Resolve the path, then keep the query on the virtual id: Vite's
@@ -224,8 +224,8 @@ function create_tsrx_vue_plugin(options) {
 		},
 
 		async load(id) {
-			if (id.startsWith('\0') && id.includes(CSS_QUERY)) {
-				const key = id.slice(1).split('?')[0];
+			if (id.includes(CSS_QUERY)) {
+				const key = id.split('?')[0];
 				return cssCache.get(key) ?? '';
 			}
 
@@ -254,10 +254,11 @@ function create_tsrx_vue_plugin(options) {
 			// Look the virtual modules up by file to include a worker entry's
 			// query-suffixed id.
 			const virtualId = ctx.file + VIRTUAL_TSX_SUFFIX;
-			const cssVirtualId = '\0' + ctx.file + CSS_QUERY;
+			const cssVirtualId = ctx.file + CSS_QUERY;
 			const extra = [...(ctx.server.moduleGraph.getModulesByFile(virtualId) ?? [])];
 			const cssMod = ctx.server.moduleGraph.getModuleById(cssVirtualId);
-			if (cssMod) extra.push(cssMod);
+			// Vite usually lists the CSS module already, under the component's file.
+			if (cssMod && !ctx.modules.includes(cssMod)) extra.push(cssMod);
 			if (extra.length > 0) return [...extra, ...ctx.modules];
 			return ctx.modules;
 		},

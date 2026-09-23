@@ -70,7 +70,7 @@ describe('Hono integration boundaries', () => {
 			'/other/App.tsrx?tsrx-css&lang.css&raw',
 		]) {
 			expect(plugin.resolveId.call(context, id)).toBeNull();
-			expect(plugin.load.call(context, '\0' + id)).toBeNull();
+			expect(plugin.load.call(context, id)).toBeNull();
 		}
 	});
 
@@ -112,7 +112,7 @@ describe('Hono integration boundaries', () => {
 		const ssr_environment = {};
 		const client_context = { environment: client_environment };
 		const ssr_context = { environment: ssr_environment };
-		const css_id = '\0' + id + '?tsrx-css&lang.css';
+		const css_id = id + '?tsrx-css&lang.css';
 
 		await plugin.transform.call(
 			client_context,
@@ -136,7 +136,7 @@ describe('Hono integration boundaries', () => {
 	it('refreshes environment-scoped virtual CSS through Vite hotUpdate', async () => {
 		const plugin = tsrxHono();
 		const id = '/virtual/Styled.tsrx';
-		const css_id = '\0' + id + '?tsrx-css&lang.css';
+		const css_id = id + '?tsrx-css&lang.css';
 		const css_module = { id: css_id };
 		const invalidated = [];
 		const environment = {

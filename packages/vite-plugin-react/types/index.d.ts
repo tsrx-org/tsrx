@@ -45,11 +45,11 @@ export interface TsrxReactPlugin extends Omit<
 		(code: string, id: string): Promise<TsrxReactTransformResult | null>;
 	};
 	resolveId: {
-		(source: `${string}?tsrx-css&lang.css`): `\0${string}?tsrx-css&lang.css`;
+		(source: `${string}?tsrx-css&lang.css`): `${string}?tsrx-css&lang.css`;
 		(source: string): string | null;
 	};
 	load: {
-		(id: `\0${string}?tsrx-css&lang.css`): string;
+		(id: `${string}?tsrx-css&lang.css`): string;
 		(id: string): string | null;
 	};
 }

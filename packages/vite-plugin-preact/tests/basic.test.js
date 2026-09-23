@@ -35,7 +35,7 @@ describe('@tsrx/vite-plugin-preact basic', () => {
 
 		expect(transformed).not.toBeNull();
 		expect(transformed.code).toContain(virtual_id);
-		expect(resolved_id).toBe(`\0${virtual_id}`);
+		expect(resolved_id).toBe(virtual_id);
 		expect(plugin.load(resolved_id)).toContain('.div.');
 		expect(plugin.load(resolved_id)).toContain('color: red;');
 	});
@@ -74,7 +74,7 @@ describe('@tsrx/vite-plugin-preact basic', () => {
 	it('refreshes virtual css during hot updates', async () => {
 		const plugin = tsrxPreact();
 		const id = '/virtual/App.tsrx';
-		const css_module = { id: `\0${id}?tsrx-css&lang.css` };
+		const css_module = { id: `${id}?tsrx-css&lang.css` };
 		/** @type {Array<typeof css_module>} */
 		const invalidated = [];
 		const source = `export function App() @{
