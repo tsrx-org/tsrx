@@ -623,6 +623,21 @@ function App({ tag }: { tag: string }) @{
 			));
 		it('optional method signature', () =>
 			expect_maps(`class Foo { m?(): void; } function C() @{}`));
+		it('maps bodyless method names through their MethodDefinition key', () => {
+			// The parser emits bodyless methods as MethodDefinition { key, value:
+			// TSDeclareMethod }, so the key is mapped by MethodDefinition and the
+			// TSDeclareMethod case only walks the signature.
+			const source = `abstract class Foo { fmt(x: string): string; fmt(x: any) { return x; } abstract area(): number; opt?(): void; } function C() @{}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			/** @param {number} offset @param {number} length */
+			const mapped = (offset, length) =>
+				result.mappings.some(
+					(mapping) => mapping.sourceOffsets[0] === offset && mapping.lengths[0] === length,
+				);
+			expect(mapped(source.indexOf('fmt(x: string)'), 3)).toBe(true);
+			expect(mapped(source.indexOf('area()'), 4)).toBe(true);
+			expect(mapped(source.indexOf('opt?()'), 3)).toBe(true);
+		});
 		it('maps parameter property names and annotations', () => {
 			const source = `class Foo { constructor(private readonly start: Date, public step: Date = new Date()) {} } function C() @{}`;
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
