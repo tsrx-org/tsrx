@@ -437,6 +437,7 @@ function MultiSpreadExplicitRefApp() @{
 
 let conditional_spread_and_node: HTMLInputElement | null = null;
 let conditional_spread_null_node: HTMLInputElement | null = null;
+let conditional_spread_if_node: HTMLInputElement | null = null;
 
 function ConditionalSpreadApp(props: { enabled: boolean }) @{
 	<>
@@ -455,6 +456,16 @@ function ConditionalSpreadApp(props: { enabled: boolean }) @{
 			}}
 			{...(props.enabled ? { disabled: true } : null)}
 		/>
+		{/* Solid lowers a spread inside control flow through the plain normalizer. */}
+		@if (true) {
+			<input
+				class="conditional-spread"
+				ref={(node: HTMLInputElement | null) => {
+					conditional_spread_if_node = node;
+				}}
+				{...props.enabled && { disabled: true }}
+			/>
+		}
 	</>
 }
 
@@ -1185,13 +1196,15 @@ describe('tsrx-solid runtime', () => {
 		it(`renders conditional host spreads when the condition is ${enabled}`, async () => {
 			conditional_spread_and_node = null;
 			conditional_spread_null_node = null;
+			conditional_spread_if_node = null;
 			await render(ConditionalSpreadApp, { enabled });
 			const inputs = Array.from(
 				container.querySelectorAll('.conditional-spread'),
 			) as HTMLInputElement[];
-			expect(inputs.map((input) => input.disabled)).toEqual([enabled, enabled, enabled]);
+			expect(inputs.map((input) => input.disabled)).toEqual([enabled, enabled, enabled, enabled]);
 			expect(conditional_spread_and_node).toBe(inputs[1]);
 			expect(conditional_spread_null_node).toBe(inputs[2]);
+			expect(conditional_spread_if_node).toBe(inputs[3]);
 		});
 	}
 
