@@ -635,6 +635,26 @@ export function runSharedScopedStyleTests({
 			expect(code).toContain(`'title': '${hash} title'`);
 		});
 
+		it('defines a .__proto__ class entry as an own property of the theme', () => {
+			const { code, css } = compile(
+				`export const theme = <style>
+					.__proto__ { color: red; }
+					.card { color: blue; }
+				</style>;`,
+				'App.tsrx',
+			);
+
+			const hash = hash_for_selector(css, '__proto__');
+			// A literal `'__proto__'` key would set the prototype instead.
+			expect(code).toContain(`['__proto__']: '${hash} __proto__'`);
+			const literal = /export const theme = (\{[\s\S]*?\});/.exec(code)?.[1];
+			const theme = new Function(`return ${literal}`)();
+			expect(Object.hasOwn(theme, '__proto__')).toBe(true);
+			expect(theme.__proto__).toBe(`${hash} __proto__`);
+			expect(theme.card).toBe(`${hash} card`);
+			expect(Object.getPrototypeOf(theme)).toBe(Object.prototype);
+		});
+
 		it('composes $class from applied same-module themes, own hash last', () => {
 			const { code, css } = compile(
 				`const base = <style>.x { color: red; }</style>;

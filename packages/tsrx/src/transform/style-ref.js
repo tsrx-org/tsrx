@@ -57,7 +57,14 @@ export function build_style_class_map(top_scoped_classes, hash, options = {}) {
 	return b.object([
 		b.prop('init', b.literal('$class'), build_class_expression(parts)),
 		...class_names.map((class_name) =>
-			b.prop('init', b.literal(class_name), b.literal(hash ? `${hash} ${class_name}` : class_name)),
+			b.prop(
+				'init',
+				b.literal(class_name),
+				b.literal(hash ? `${hash} ${class_name}` : class_name),
+				// A literal `'__proto__': …` key sets the object's prototype
+				// instead of defining a property; a computed key defines it.
+				class_name === '__proto__',
+			),
 		),
 	]);
 }
