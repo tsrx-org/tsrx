@@ -158,3 +158,16 @@ it('reports unresolved class field and heritage types in .tsrx files', () => {
 		);
 	}
 });
+
+it('reports errors on private class fields in .tsrx files', () => {
+	const line = 'export class Model { #value: number = "bad"; #missing: number; }';
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${line}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	expect(result.output).toContain(
+		`layout.tsrx(4,${line.indexOf('#value') + 1}): error TS2322: Type 'string' is not assignable to type 'number'.`,
+	);
+	expect(result.output).toContain(
+		`layout.tsrx(4,${line.indexOf('#missing') + 1}): error TS2564: Property '#missing' has no initializer and is not definitely assigned in the constructor.`,
+	);
+});

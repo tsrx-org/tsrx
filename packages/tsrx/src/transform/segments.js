@@ -572,6 +572,41 @@ export function convert_source_map_to_mappings(
 		}
 	}
 
+	/**
+	 * TypeScript reports private-name diagnostics (e.g. TS2322 on an
+	 * incompatible initializer, TS2564 on a missing one) on the whole `#name`.
+	 * esrap prints the `#` bare and anchors the node's source start on the name
+	 * after it, so locate the generated `#name` from either anchor. Extra
+	 * sources (a dynamic tag's closing `</{this.#Tag}>`) share that range.
+	 * @param {AST.PrivateIdentifier} node
+	 * @returns {void}
+	 */
+	function add_private_identifier_mappings(node) {
+		if (!has_location(node)) return;
+
+		const text = `#${node.name}`;
+		let generated_start = generated_offset_for_text(node.loc.start, text);
+		if (generated_start === undefined) {
+			const name_start = generated_offset_for_text(node.loc.start, node.name);
+			if (name_start !== undefined && generated_code[name_start - 1] === '#') {
+				generated_start = name_start - 1;
+			}
+		}
+		if (generated_start === undefined) return;
+
+		const source_nodes = [node, ...(node.metadata?.extra_source_mappings ?? [])];
+		for (const source_node of source_nodes) {
+			if (!has_location(source_node)) continue;
+			mappings.push({
+				sourceOffsets: [source_node.start],
+				lengths: [source_node.end - source_node.start],
+				generatedOffsets: [generated_start],
+				generatedLengths: [text.length],
+				data: { ...mapping_data, customData: {} },
+			});
+		}
+	}
+
 	// We have to visit everything in generated order to maintain correct indices
 
 	walk(ast, null, {
@@ -1775,8 +1810,8 @@ export function convert_source_map_to_mappings(
 				// Leaf node, no children to visit
 				return;
 			} else if (node.type === 'PrivateIdentifier') {
-				// Leaf node
-				return;
+				add_private_identifier_mappings(node);
+				return; // Leaf node, don't traverse further
 			} else if (node.type === 'PropertyDefinition') {
 				// Visit in source order: decorators, key, typeAnnotation, value
 				if (node.decorators) {

@@ -1143,6 +1143,42 @@ export function optionalFn(declRequired: string, declMaybe?: string) {
 		});
 	});
 
+	describe(`[${name}] private names keep mappings`, () => {
+		it('maps each private name, including its #, to the generated name', () => {
+			// TypeScript reports private-name diagnostics on the whole `#name`, so an
+			// unmapped name let `#value: number = 'bad'` type-check clean.
+			const source = `export class Model {
+	#value: number = 1;
+	static #count = 0;
+	accessor #flag = false;
+	#Tag = 'div';
+	get #size() { return this.#value; }
+	#run() { return Model.#count; }
+	static has(o: object) { return #value in o; }
+	render() { return <{this.#Tag}>{'x'}</{this.#Tag}>; }
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+
+			const unmapped = [...source.matchAll(/#\w+/g)]
+				.filter(
+					({ 0: text, index }) =>
+						!result.mappings.some(
+							(/** @type {CodeMapping} */ mapping) =>
+								mapping.sourceOffsets[0] === index &&
+								mapping.lengths[0] === text.length &&
+								mapping.data.verification &&
+								result.code.slice(
+									mapping.generatedOffsets[0],
+									mapping.generatedOffsets[0] + mapping.generatedLengths[0],
+								) === text,
+						),
+				)
+				.map(({ 0: text, index }) => `${text}@${index}`);
+			expect(unmapped).toEqual([]);
+		});
+	});
+
 	describe(`[${name}] submodule import mappings`, () => {
 		it('maps imported, local, and source identifiers in imports from submodules', () => {
 			const source = `module server {
