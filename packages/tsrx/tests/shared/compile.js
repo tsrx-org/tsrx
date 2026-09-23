@@ -2393,6 +2393,39 @@ export function optionalFn(bar: string, baz?: string) {
 			expect(code).toContain('export function optionalFn(bar: string, baz?: string)');
 		});
 
+		// acorn-typescript flags `export import` on the declaration itself, and
+		// the printer ignored the flag, so the module lost the alias's export.
+		it('keeps the export on import-equals aliases', () => {
+			const { code } = compile(
+				`namespace Shapes {
+	export const sides = 4;
+}
+export import Square = Shapes;
+import Local = Shapes;
+export namespace Outer {
+	export import Inner = Shapes;
+}
+export import path = require('node:path');`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('export import Square = Shapes');
+			expect(code).toMatch(/^import Local = Shapes$/m);
+			expect(code).toContain('export import Inner = Shapes');
+			expect(code).toContain("export import path = require('node:path');");
+
+			const module = { exports: /** @type {Record<string, any>} */ ({}) };
+			const commonjs = ts.transpileModule(code, {
+				compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+			}).outputText;
+			new Function('module', 'exports', 'require', commonjs)(module, module.exports, () => ({
+				sep: '/',
+			}));
+			expect(module.exports.Square).toEqual({ sides: 4 });
+			expect(module.exports.Outer.Inner).toEqual({ sides: 4 });
+			expect(module.exports.path).toEqual({ sep: '/' });
+		});
+
 		it('keeps JavaScript block scopes inside component-local callables', () => {
 			const { code } = compile(
 				`export function BlockScopeCheck() @{

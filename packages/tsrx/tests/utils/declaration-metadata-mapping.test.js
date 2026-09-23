@@ -181,6 +181,15 @@ describe('virtual declaration metadata', () => {
 		['named variable', 'export const version = 1;'],
 		['named variable without a terminator', 'export const version = 1'],
 		['named re-export', "export { NativeModel as Model } from './native';"],
+		[
+			'import-equals alias',
+			'namespace Native { export const value = 1; }\nexport import Model = Native;',
+		],
+		[
+			'import-equals alias without a terminator',
+			'namespace Native { export const value = 1; }\nexport import Model = Native',
+		],
+		['import-equals require', "export import native = require('./native');"],
 		['export-all without a terminator', "export * from './native'"],
 		['default expression', 'export default 42;'],
 		['default expression without a terminator', 'export default 42'],

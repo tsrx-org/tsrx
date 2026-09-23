@@ -417,12 +417,15 @@ export function convert_source_map_to_mappings(
 		}
 	}
 
-	/** @param {AST.ExportNamedDeclaration | AST.ExportDefaultDeclaration | AST.ExportAllDeclaration} node */
+	/** @param {AST.ExportNamedDeclaration | AST.ExportDefaultDeclaration | AST.ExportAllDeclaration | AST.TSImportEqualsDeclaration} node */
 	function add_export_mapping(node) {
 		if (!has_location(node)) return;
 		const mapping = declaration_mapping(node, EXPORT_KEYWORD);
 		if (mapping) {
-			const declaration = node.type === 'ExportAllDeclaration' ? null : node.declaration;
+			const declaration =
+				node.type === 'ExportNamedDeclaration' || node.type === 'ExportDefaultDeclaration'
+					? node.declaration
+					: null;
 			const end = mapping.generatedOffsets[0] + mapping.generatedLengths[0];
 			// A semicolon-free source declaration shares its end with its last
 			// expression. The first map entry then precedes the statement's emitted
@@ -2268,6 +2271,9 @@ export function convert_source_map_to_mappings(
 			} else if (node.type === 'TSImportEqualsDeclaration') {
 				// TypeScript import alias: import foo = ns.bar;
 				// Visit in source order: id, then the referenced entity name
+				if (node.isExport) {
+					add_export_mapping(node);
+				}
 				if (node.id) {
 					visit(node.id);
 				}

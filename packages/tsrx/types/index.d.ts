@@ -1273,6 +1273,11 @@ declare module 'estree' {
 	> {
 		id: AST.Identifier;
 		moduleReference: EntityName | TSExternalModuleReference;
+		/**
+		 * `export import A = B`. acorn-typescript sets this flag rather than
+		 * wrapping the declaration in an `ExportNamedDeclaration`.
+		 */
+		isExport?: boolean;
 	}
 	interface TSImportType extends Omit<
 		AcornTSNode<TSESTree.TSImportType>,

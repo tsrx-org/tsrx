@@ -246,6 +246,25 @@ export function tsx_with_ts_locations(boundary_tokens = false, comments = undefi
 			}
 			context.visit(node.parameter);
 		},
+		// acorn-typescript marks `export import A = B` with `isExport` instead of
+		// wrapping it in an ExportNamedDeclaration, and esrap's printer ignores
+		// the flag, so the compiled module silently lost the alias's export.
+		// Tooling prints mark both ends, as for an ExportNamedDeclaration, so
+		// the whole exported statement maps back to its source.
+		TSImportEqualsDeclaration: (node, context) => {
+			const print = /** @type {NonNullable<typeof base.TSImportEqualsDeclaration>} */ (
+				base.TSImportEqualsDeclaration
+			);
+			if (!node.isExport) {
+				print(node, context);
+				return;
+			}
+			const loc = boundary_tokens ? node.loc : undefined;
+			if (loc) context.location(loc.start.line, loc.start.column);
+			context.write('export ');
+			print(node, context);
+			if (loc) context.location(loc.end.line, loc.end.column);
+		},
 		TSModuleDeclaration: (node, context) => {
 			// `declare global` is represented as a TSModuleDeclaration whose id is
 			// `global`; adding `module` changes it into an unrelated named module.
