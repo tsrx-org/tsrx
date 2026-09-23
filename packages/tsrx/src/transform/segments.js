@@ -575,9 +575,13 @@ export function convert_source_map_to_mappings(
 	/**
 	 * TypeScript reports private-name diagnostics (e.g. TS2322 on an
 	 * incompatible initializer, TS2564 on a missing one) on the whole `#name`.
-	 * esrap prints the `#` bare and anchors the node's source start on the name
-	 * after it, so locate the generated `#name` from either anchor. Extra
-	 * sources (a dynamic tag's closing `</{this.#Tag}>`) share that range.
+	 * Extra sources (a dynamic tag's closing `</{this.#Tag}>`) share that range.
+	 *
+	 * Workaround: esrap (2.3.10 and main) writes the `#` without a location and
+	 * anchors the node's source start on the name after it, so the source `#`
+	 * maps one character late. Once esrap maps the `#` itself
+	 * (sveltejs/esrap#198), replace this with an ordinary `#name` token in the
+	 * Identifier branch: https://github.com/tsrx-org/tsrx/issues/208
 	 * @param {AST.PrivateIdentifier} node
 	 * @returns {void}
 	 */
@@ -586,6 +590,7 @@ export function convert_source_map_to_mappings(
 
 		const text = `#${node.name}`;
 		let generated_start = generated_offset_for_text(node.loc.start, text);
+		// esrap's anchor sits after the `#`; step back over it (#208).
 		if (generated_start === undefined) {
 			const name_start = generated_offset_for_text(node.loc.start, node.name);
 			if (name_start !== undefined && generated_code[name_start - 1] === '#') {
