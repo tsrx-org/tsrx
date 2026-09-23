@@ -25,6 +25,7 @@ const CharCode = Object.freeze({
 	singleQuote: 39,
 	openParen: 40,
 	closeParen: 41,
+	comma: 44,
 	asterisk: 42,
 	dash: 45,
 	slash: 47,
@@ -48,6 +49,9 @@ const CharCode = Object.freeze({
 	openBrace: 123,
 	closeBrace: 125,
 });
+
+const TYPE_PARAMETER_MODIFIERS = new Set(['const']);
+const regex_identifier = /[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*/uy;
 
 /** @type {WeakMap<Parse.Parser, number[]>} */
 const parser_line_starts = new WeakMap();
@@ -246,55 +250,175 @@ function scan_balanced_from(input, i, open, close) {
 }
 
 /**
- * Best-effort lookahead at a `<` to decide whether it starts a generic arrow
- * expression — `<...>(...)[: T] => ...`. Conservative: returns false on any
- * unexpected shape so JSX continues to parse as JSX.
+ * Skip whitespace and comments starting at `i`. Returns -1 when a block
+ * comment is left open at the end of the input.
  * @param {string} input
- * @param {number} pos
+ * @param {number} i
  */
-function looks_like_generic_arrow(input, pos) {
-	if (input.charCodeAt(pos) !== CharCode.lessThan) return false;
-	// Type parameters open with a name, so `<=` and `<<` are operators.
-	const next = input.charCodeAt(pos + 1);
-	if (next === CharCode.equals || next === CharCode.lessThan) return false;
+function skip_space_and_comments_from(input, i) {
+	while (i < input.length) {
+		const ch = input.charCodeAt(i);
+		if (
+			ch === CharCode.space ||
+			ch === CharCode.tab ||
+			ch === CharCode.lineFeed ||
+			ch === CharCode.carriageReturn
+		) {
+			i++;
+			continue;
+		}
+		if (ch !== CharCode.slash) break;
+		const next = input.charCodeAt(i + 1);
+		if (next === CharCode.slash) {
+			i += 2;
+			while (i < input.length) {
+				const c = input.charCodeAt(i);
+				if (c === CharCode.lineFeed || c === CharCode.carriageReturn) break;
+				i++;
+			}
+		} else if (next === CharCode.asterisk) {
+			const end = input.indexOf('*/', i + 2);
+			if (end === -1) return -1;
+			i = end + 2;
+		} else break;
+	}
+	return i;
+}
 
-	// Match the angle brackets, skipping over string literals.
-	let i = pos + 1;
-	let depth = 1;
+/**
+ * Scan an identifier starting at `i`. Returns the index after it, or -1 when
+ * no identifier starts there.
+ * @param {string} input
+ * @param {number} i
+ */
+function scan_identifier_from(input, i) {
+	regex_identifier.lastIndex = i;
+	const match = regex_identifier.exec(input);
+	return match === null ? -1 : i + match[0].length;
+}
+
+/**
+ * Scan a type starting at `i` and return the index of the character that ends
+ * it: a `,`, `;`, `=`, `>`, `)`, `]`, or `}` outside any brackets the type
+ * itself opened. Inside a type `>` only closes `<` and `=>` only belongs to a
+ * function type, so neither is mistaken for the end of an enclosing type
+ * parameter list. With `stop_at_arrow`, a `=>` outside brackets ends the type
+ * instead, which is how an arrow's return type ends. Returns -1 when the input
+ * runs out first, brackets do not match, or a character that cannot appear in
+ * a type is found.
+ * @param {string} input
+ * @param {number} i
+ * @param {boolean} stop_at_arrow
+ */
+function scan_type_from(input, i, stop_at_arrow) {
+	/** @type {number[]} */
+	const closers = [];
 	while (i < input.length) {
 		const ch = input.charCodeAt(i);
 		if (ch === CharCode.doubleQuote || ch === CharCode.singleQuote || ch === CharCode.backtick) {
 			i = skip_string_from(input, i, ch);
 			continue;
 		}
-		if (ch === CharCode.lessThan) depth++;
-		else if (ch === CharCode.greaterThan && --depth === 0) break;
+		if (ch === CharCode.slash) {
+			const after_comment = skip_space_and_comments_from(input, i);
+			if (after_comment === -1 || after_comment === i) return -1;
+			i = after_comment;
+			continue;
+		}
+		if (ch === CharCode.equals && input.charCodeAt(i + 1) === CharCode.greaterThan) {
+			if (stop_at_arrow && closers.length === 0) return i;
+			i += 2;
+			continue;
+		}
+		if (ch === CharCode.openParen) closers.push(CharCode.closeParen);
+		else if (ch === CharCode.openBracket) closers.push(CharCode.closeBracket);
+		else if (ch === CharCode.openBrace) closers.push(CharCode.closeBrace);
+		else if (ch === CharCode.lessThan) closers.push(CharCode.greaterThan);
+		else if (
+			ch === CharCode.closeParen ||
+			ch === CharCode.closeBracket ||
+			ch === CharCode.closeBrace ||
+			ch === CharCode.greaterThan
+		) {
+			if (closers.length === 0) return i;
+			if (closers.pop() !== ch) return -1;
+		} else if (
+			closers.length === 0 &&
+			(ch === CharCode.comma || ch === CharCode.semicolon || ch === CharCode.equals)
+		) {
+			return i;
+		}
 		i++;
 	}
-	if (depth !== 0) return false;
+	return -1;
+}
+
+/**
+ * Best-effort lookahead at a `<` to decide whether it starts a generic arrow
+ * expression — `<...>(...)[: T] => ...`. The angle brackets must hold a type
+ * parameter list, `<[const] Name [extends Type] [= Type], ...>`, so a JSX tag
+ * whose attributes or children happen to contain `>` and `=>` (for example a
+ * generic arrow passed as a prop) is never mistaken for one. Conservative:
+ * returns false on any unexpected shape so JSX continues to parse as JSX.
+ * @param {string} input
+ * @param {number} pos
+ */
+function looks_like_generic_arrow(input, pos) {
+	if (input.charCodeAt(pos) !== CharCode.lessThan) return false;
+
+	let i = pos + 1;
+	while (true) {
+		i = skip_space_and_comments_from(input, i);
+		if (i === -1) return false;
+		let name_end = scan_identifier_from(input, i);
+		if (name_end === -1) return false;
+
+		// A `const` modifier precedes the parameter name.
+		while (TYPE_PARAMETER_MODIFIERS.has(input.slice(i, name_end))) {
+			const next = skip_space_and_comments_from(input, name_end);
+			const next_end = next === -1 ? -1 : scan_identifier_from(input, next);
+			if (next_end === -1) break;
+			i = next;
+			name_end = next_end;
+		}
+
+		i = skip_space_and_comments_from(input, name_end);
+		if (i === -1) return false;
+		if (input.startsWith('extends', i) && scan_identifier_from(input, i) === i + 7) {
+			i = scan_type_from(input, i + 7, false);
+			if (i === -1) return false;
+		}
+		if (input.charCodeAt(i) === CharCode.equals) {
+			i = scan_type_from(input, i + 1, false);
+			if (i === -1) return false;
+		}
+
+		const ch = input.charCodeAt(i);
+		if (ch === CharCode.greaterThan) {
+			i++;
+			break;
+		}
+		if (ch !== CharCode.comma) return false;
+		i = skip_space_and_comments_from(input, i + 1);
+		if (i === -1) return false;
+		if (input.charCodeAt(i) === CharCode.greaterThan) {
+			i++;
+			break;
+		}
+	}
 
 	// `>` must be followed by `(...)`.
-	i = skip_whitespace_from(input, i + 1);
-	if (input.charCodeAt(i) !== CharCode.openParen) return false;
+	i = skip_space_and_comments_from(input, i);
+	if (i === -1 || input.charCodeAt(i) !== CharCode.openParen) return false;
 	i = scan_balanced_from(input, i, CharCode.openParen, CharCode.closeParen);
 	if (i === -1) return false;
 
 	// Optional `: ReturnType` before `=>`.
-	i = skip_whitespace_from(input, i);
+	i = skip_space_and_comments_from(input, i);
+	if (i === -1) return false;
 	if (input.charCodeAt(i) === CharCode.colon) {
-		i++;
-		while (i < input.length) {
-			const ch = input.charCodeAt(i);
-			if (ch === CharCode.doubleQuote || ch === CharCode.singleQuote || ch === CharCode.backtick) {
-				i = skip_string_from(input, i, ch);
-				continue;
-			}
-			if (ch === CharCode.equals && input.charCodeAt(i + 1) === CharCode.greaterThan) return true;
-			if (ch === CharCode.semicolon || ch === CharCode.openBrace || ch === CharCode.closeBrace)
-				return false;
-			i++;
-		}
-		return false;
+		i = scan_type_from(input, i + 1, true);
+		if (i === -1) return false;
 	}
 
 	return (

@@ -5683,6 +5683,43 @@ describe('`<` operators beside type-argument lookahead', () => {
 		).toHaveLength(1);
 	});
 
+	it('keeps a tag whose generic arrow prop has a function-type constraint as JSX (#164)', () => {
+		for (const source of [
+			'const node = <Box fn={<T extends () => void,>(x: T) => x} />;',
+			'const node = <Box fn={<T extends () => void>(x: T) => x} />;',
+			'const node = <Box fn={<T extends (a: T) => T = () => void,>(x: T) => x} />;',
+			'const node = <Box fn={<T,>(x: T) => x}>(b) => c</Box>;',
+			'const node = <Box fn={<T,>(x: T) => x}>(b): T => c</Box>;',
+			'function App() @{ <Box fn={<T extends () => void,>(x: T) => x}>{1}</Box> }',
+		]) {
+			const attributes = findNode(source, 'JSXElement').openingElement.attributes;
+			expect(attributes, source).toHaveLength(1);
+			const value = as_type(attributes[0], 'JSXAttribute').value;
+			const arrow = as_type(
+				as_type(value, 'JSXExpressionContainer').expression,
+				'ArrowFunctionExpression',
+			);
+			expect(arrow.typeParameters?.params, source).toHaveLength(1);
+		}
+	});
+
+	it('recognizes generic arrows whose type parameters hold arrows, defaults, modifiers, and comments', () => {
+		for (const source of [
+			'const run = <T extends () => void,>(task: T) => task;',
+			'const run = <T extends (x: number) => void = () => void>(task: T) => task;',
+			'const run = <const T extends readonly unknown[]>(x: T) => x;',
+			'const run = <T, U extends Map<string, Array<T>>>(x: T, y: U) => x;',
+			'const run = <T /* first */, U // second\n>(x: T, y: U) => x;',
+			'const run = <T extends { fn(): void; key: "a" | \'b\' }>(x: T) => x;',
+			'const run = <T,>(x: T): { value: T } => ({ value: x });',
+			'const run = <T,>(x: T): (y: T) => T => (y) => y;',
+		]) {
+			const arrow = findNode(source, 'ArrowFunctionExpression');
+			expect(arrow.typeParameters?.params.length, source).toBeGreaterThan(0);
+			expect(arrow.params, source).not.toHaveLength(0);
+		}
+	});
+
 	it('reads type parameters after an optional class member name', () => {
 		for (const source of [
 			'abstract class A { abstract m?<T>(x: T): T; }',
