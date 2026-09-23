@@ -80,6 +80,7 @@ function create_hono_platform(mode) {
 		jsx: {
 			rewriteClassAttr: false,
 			multiRefStrategy: 'merge-refs',
+			hostSpreadRefBinding: 'in-place',
 		},
 		validation: {
 			// Server JSX supports async function components. The DOM renderer is

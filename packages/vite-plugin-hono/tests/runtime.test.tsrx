@@ -7,6 +7,12 @@ import {
 	NullishSpreadRefInIfApp,
 	nullish_spread_ref_nodes,
 } from '@tsrx/core/test-harness/runtime/nullish-spread-ref-components.tsrx';
+import {
+	NestedSpreadRefOrderApp,
+	SpreadRefOrderApp,
+	SpreadsRefOrderApp,
+	spread_ref_order_nodes,
+} from '@tsrx/core/test-harness/runtime/spread-ref-order-components.tsrx';
 
 let container: HTMLDivElement;
 let resolveValue: (value: string) => void;
@@ -232,6 +238,24 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 				expect(nullish_spread_ref_nodes).toEqual([input]);
 				render(null, container);
 			}
+		});
+	}
+
+	for (const [label, App, selector, refCalls] of [
+		['a spread between attributes', SpreadRefOrderApp, '.spread-ref-order', 1],
+		['a spread on a nested element', NestedSpreadRefOrderApp, '.nested-spread-ref-order', 1],
+		['two spreads, one carrying a ref', SpreadsRefOrderApp, '.spreads-ref-order', 2],
+	] as const) {
+		it(`keeps authored attribute order beside a ref: ${label}`, () => {
+			spread_ref_order_nodes.length = 0;
+			render(<App />, container);
+
+			const element = container.querySelector(selector);
+			const values = ['data-first', 'data-second', 'data-third'].map(
+				(name) => element?.closest(`[${name}]`)?.getAttribute(name) ?? null,
+			);
+			expect(values).toEqual(['1', '2', '3']);
+			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
 		});
 	}
 

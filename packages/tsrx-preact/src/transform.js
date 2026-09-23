@@ -44,6 +44,7 @@ const preact_platform = {
 	jsx: {
 		rewriteClassAttr: false,
 		multiRefStrategy: 'merge-refs',
+		hostSpreadRefBinding: 'in-place',
 	},
 	validation: {
 		requireUseServerForAwait: false,

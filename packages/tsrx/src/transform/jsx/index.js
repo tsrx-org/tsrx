@@ -6123,6 +6123,11 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 		.filter((attr) => is_jsx_ref_attribute(attr))
 		.map((attr) => attr.value.expression);
 	const needs_synthetic_spread_ref = needs_explicit_spread_ref || ref_exprs.length > 0;
+	// Types do not depend on evaluation order, so the type-only print keeps
+	// the initialized setup declaration.
+	const bind_in_place =
+		!transform_context.typeOnly &&
+		transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place';
 
 	return attrs.flatMap(
 		/**
@@ -6148,9 +6153,15 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				const normalized_id = create_generated_identifier(
 					create_spread_props_name(transform_context),
 				);
+				// Bound in place, the bag is evaluated between the attributes around
+				// it, as in native JSX; the setup declaration only declares the name.
+				// The `ref` read below comes after the spread either way: the synthetic
+				// ref follows it, and `merge_duplicate_refs` appends the merged ref.
 				const spread = {
 					...attr,
-					argument: clone_identifier(normalized_id),
+					argument: bind_in_place
+						? b.parenthesized(b.assignment('=', clone_identifier(normalized_id), normalized))
+						: clone_identifier(normalized_id),
 				};
 				// A spread bag may be nullish (`{...props.optional}`) and spread to
 				// nothing, as in native JSX, so its ref is read without throwing.
@@ -6162,7 +6173,12 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				);
 				ref_attr.metadata = { ...(ref_attr.metadata || {}) };
 				ref_attr.metadata.synthetic_ref = true;
-				add_jsx_setup_declaration(spread, b.let(clone_identifier(normalized_id), normalized));
+				add_jsx_setup_declaration(
+					spread,
+					bind_in_place
+						? b.let(clone_identifier(normalized_id))
+						: b.let(clone_identifier(normalized_id), normalized),
+				);
 
 				return [spread, ref_attr];
 			}

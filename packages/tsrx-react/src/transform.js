@@ -35,6 +35,7 @@ const react_platform = {
 		rewriteClassAttr: false,
 		classAttrName: 'className',
 		multiRefStrategy: 'merge-refs',
+		hostSpreadRefBinding: 'in-place',
 	},
 	validation: {
 		requireUseServerForAwait: false,

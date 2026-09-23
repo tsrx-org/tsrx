@@ -460,6 +460,20 @@ export interface JsxPlatform {
 		 * explicit `ref={normalized.ref}` attribute.
 		 */
 		hostSpreadRefStrategy?: 'explicit-ref-attr';
+		/**
+		 * Where a host spread binds its normalized props bag when the element
+		 * also reads the bag's `ref` through a `ref` attribute.
+		 *
+		 * - `'in-place'`: assign the bag inside the spread
+		 *   (`{...(bag = normalize(expr))}`) and declare `let bag;` ahead of the
+		 *   element, so attribute expressions keep their authored evaluation
+		 *   order. Requires a JSX runtime that evaluates attributes left to
+		 *   right, as `jsx()` and `createElement` calls do.
+		 * - `undefined`: evaluate the spread in a `let bag = normalize(expr);`
+		 *   declaration ahead of the element, for compiled JSX that reads `ref`
+		 *   before the spread or evaluates the spread lazily, such as Solid's.
+		 */
+		hostSpreadRefBinding?: 'in-place';
 	};
 
 	validation: {

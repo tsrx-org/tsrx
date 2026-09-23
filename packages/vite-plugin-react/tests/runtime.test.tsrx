@@ -10,6 +10,7 @@ import {
 import {
 	runNullishSpreadRefRuntimeTests,
 } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
+import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
@@ -1724,3 +1725,4 @@ describe('tsrx-react runtime', () => {
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runNullishSpreadRefRuntimeTests();
+runSpreadRefOrderRuntimeTests();
