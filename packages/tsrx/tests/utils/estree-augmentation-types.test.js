@@ -2,15 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { check_types } from '../shared/type-diagnostics.js';
 
 /**
- * The published types augment the shared `estree` module, so they merge with
- * every other augmentation in a consumer's program. Merged interface members
- * must agree on their modifiers and types, so a member core declares
- * differently from another package fails that consumer's typecheck.
+ * ESTree's decorators extension gives classes, methods, and properties a
+ * `decorators` array. The published types add it to the shared `estree`
+ * module, where it merges with every other declaration of the extension in a
+ * consumer's program. Merged members must match exactly, so declaring the
+ * property optional fails any program that also declares the array.
  */
 
-// Verbatim from rollup 4's `dist/rollup.d.ts` (4.59 through 4.63). Rollup's
-// parser always emits `decorators`, so it declares the property required.
-const ROLLUP_ESTREE_AUGMENTATION = `import type * as estree from 'estree';
+// The extension's array, declared on the shared estree interfaces.
+const DECORATORS_EXTENSION = `import type * as estree from 'estree';
 
 declare module 'estree' {
 	export interface Decorator extends estree.BaseNode {
@@ -28,10 +28,10 @@ declare module 'estree' {
 	}
 }`;
 
-describe('estree augmentation compatibility', () => {
-	it("merges with rollup's estree augmentation", () => {
+describe('estree decorators extension types', () => {
+	it('merges with another declaration of the decorators extension', () => {
 		const { errors } = check_types(`import type {} from './types/index';
-${ROLLUP_ESTREE_AUGMENTATION}`);
+${DECORATORS_EXTENSION}`);
 
 		expect(errors).toEqual([]);
 	});

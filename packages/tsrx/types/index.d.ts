@@ -402,9 +402,8 @@ declare module 'estree' {
 
 	// A `@decorator` on a class, class member, or parameter. The parser emits
 	// these, but estree has no node type for them. Classes, methods, and
-	// properties always carry a `decorators` array, empty when undecorated, as
-	// in ESTree's decorators extension. Rollup declares these the same way, and
-	// the declarations must match for the two to merge in one program.
+	// properties always carry the `decorators` array of ESTree's decorators
+	// extension, empty when undecorated.
 	interface Decorator extends AST.BaseNode {
 		type: 'Decorator';
 		expression: AST.Expression;
