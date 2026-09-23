@@ -5,6 +5,7 @@
 import { walk } from 'zimmerframe';
 import { node_children } from '../utils/ast.js';
 import { unescape_css } from '../parse/style.js';
+import { regex_whitespaces_strict } from '../utils/patterns.js';
 
 /** @type {CssPruneDirection} */
 const FORWARD = 0;
@@ -746,7 +747,9 @@ function test_attribute(operator, expected_value, case_insensitive, value) {
 		case '=':
 			return value === expected_value;
 		case '~=':
-			return value.split(/\s/).includes(expected_value);
+			// Split on ASCII whitespace only, as HTML does for class tokens, so a
+			// no-break space stays inside its word
+			return value.split(regex_whitespaces_strict).includes(expected_value);
 		case '|=':
 			return `${value}-`.startsWith(`${expected_value}-`);
 		case '^=':

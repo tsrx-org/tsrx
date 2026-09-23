@@ -251,6 +251,37 @@ export function runSharedScopedStyleTests({
 			expect(css).not.toContain('(unused)');
 		});
 
+		it('splits class attributes on ASCII whitespace only, so a no-break space stays inside its class', () => {
+			const nbsp = '\u00a0';
+			const { code, css, cssHash } = compile(
+				String.raw`export function App() @{
+					<>
+						<style>
+							.a\a0 b { color: red; }
+							.c${nbsp}d { color: blue; }
+							.e\2003 f { color: green; }
+							.g { margin: 0; }
+							.h { padding: 0; }
+							.a { border: 0; }
+						</style>
+						<div ${attr}="a${nbsp}b">{'a'}</div>
+						<p ${attr}="c${nbsp}d">{'c'}</p>
+						<span ${attr}="e${'\u2003'}f${'\t'}g${'\n'}h">{'e'}</span>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(String.raw`.a\a0 b.${hash} {`);
+			expect(css).toContain(`.c${nbsp}d.${hash} {`);
+			expect(css).toContain(String.raw`.e\2003 f.${hash} {`);
+			expect(css).toContain(`.g.${hash} {`);
+			expect(css).toContain(`.h.${hash} {`);
+			expect(css).toContain('/* (unused) .a { border: 0; }*/');
+			expect(class_of(code, `a${nbsp}b`)).toBe(`a${nbsp}b ${hash}`);
+		});
+
 		it('rfc1-nested-scope: a nested @{} gets its own hash and emits after its parent even when written first', () => {
 			const { code, css, cssHash } = compile(
 				`export function App() @{

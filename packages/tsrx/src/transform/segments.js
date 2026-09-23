@@ -36,6 +36,7 @@ import {
 } from '../source-map-utils.js';
 import { should_preserve_jsx_tooling_comment, format_comment } from '../comment-utils.js';
 import { has_location } from '../utils/ast.js';
+import { regex_whitespaces_strict } from '../utils/patterns.js';
 
 const RETURN_KEYWORD = 'return';
 const EXPORT_KEYWORD = 'export';
@@ -176,8 +177,8 @@ function extract_classes(node, src_to_gen_map, gen_line_offsets, src_line_offset
 				textOffset = 1;
 			}
 
-			// Split by whitespace
-			const classNames = text.split(/\s+/).filter((c) => c.length > 0);
+			// Split on ASCII whitespace only, as HTML does for class tokens
+			const classNames = text.split(regex_whitespaces_strict).filter((c) => c.length > 0);
 			const nodeSrcStart = /** @type {AST.Position} */ (node.loc?.start);
 
 			let currentPos = 0;

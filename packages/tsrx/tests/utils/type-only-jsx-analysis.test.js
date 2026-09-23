@@ -216,6 +216,32 @@ describe('type-only JSX analysis', () => {
 		).toBe(css_mapping_ids[1]);
 	});
 
+	it('maps a class containing a no-break space as one class token', () => {
+		const source =
+			'export function Card() @{\n' +
+			'\t<>\n' +
+			'\t\t<div class="a\u00a0b c">one</div>\n' +
+			'\t\t<style>.a\\a0 b { color: red; } .c { color: blue; }</style>\n' +
+			'\t</>\n' +
+			'}\n';
+		const result = compile_source(source);
+		const class_start = source.indexOf('class="') + 'class="'.length;
+		const class_end = source.indexOf('"', class_start);
+		const class_definitions = result.mappings
+			.filter(
+				(mapping) =>
+					mapping.data.customData?.definition &&
+					mapping.sourceOffsets[0] >= class_start &&
+					mapping.sourceOffsets[0] < class_end,
+			)
+			.map((mapping) => [mapping.sourceOffsets[0] - class_start, mapping.lengths[0]]);
+
+		expect(class_definitions).toEqual([
+			[0, 3],
+			[4, 1],
+		]);
+	});
+
 	it('declares generated host ref/spread bindings in every element position', () => {
 		const root = mkdtempSync(join(tmpdir(), 'tsrx-ref-spread-'));
 		try {
