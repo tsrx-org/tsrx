@@ -594,6 +594,49 @@ function App({ tag }: { tag: string }) @{
 			expect_maps(`class Foo { bar<T>(x: T): T { return x; } } function C() @{}`));
 		it('class method with return type', () =>
 			expect_maps(`class Foo { bar(x: number): string { return ''; } } function C() @{}`));
+
+		// TS-only class members: constructor parameter properties and bodyless
+		// methods (TSDeclareMethod: overloads, abstract, optional).
+		it('constructor parameter properties', () =>
+			expect_maps(
+				`class Foo { constructor(private readonly a: number, public b = 1, protected c?: string) {} } function C() @{}`,
+			));
+		it('override parameter property', () =>
+			expect_maps(
+				`class A { constructor(public n: number) {} } class B extends A { constructor(override readonly n: number) { super(n); } } function C() @{}`,
+			));
+		it('keeps parameter property modifiers in the virtual TS', () => {
+			const { code } = compile_to_volar_mappings(
+				`class A { constructor(public n: number) {} } class B extends A { constructor(public override readonly n: number) { super(n); } } function C() @{}`,
+				'App.tsrx',
+				{ loose: true },
+			);
+			expect(code).toContain('constructor(public override readonly n: number)');
+		});
+		it('method overload signatures', () =>
+			expect_maps(
+				`class Foo { f(x: string): string; f<T>(x: T): T; f(x: any) { return x; } } function C() @{}`,
+			));
+		it('abstract class members', () =>
+			expect_maps(
+				`abstract class Foo { abstract m(x: number): number; abstract readonly p: string; abstract accessor v: number; } function C() @{}`,
+			));
+		it('optional method signature', () =>
+			expect_maps(`class Foo { m?(): void; } function C() @{}`));
+		it('maps parameter property names and annotations', () => {
+			const source = `class Foo { constructor(private readonly start: Date, public step: Date = new Date()) {} } function C() @{}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			/** @param {string} text */
+			const mapped = (text) => {
+				const offset = source.indexOf(text);
+				return result.mappings.some(
+					(mapping) => mapping.sourceOffsets[0] === offset && mapping.lengths[0] === text.length,
+				);
+			};
+			expect(mapped('start')).toBe(true);
+			expect(mapped('step')).toBe(true);
+			expect(mapped('Date')).toBe(true);
+		});
 		it('object method shorthand with type parameters', () =>
 			expect_maps(`function C() @{
 	const o = { foo<T>(x: T): T { return x; } };

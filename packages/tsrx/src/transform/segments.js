@@ -2283,6 +2283,37 @@ export function convert_source_map_to_mappings(
 					visit(node.typeArguments);
 				}
 				return;
+			} else if (node.type === 'TSParameterProperty') {
+				// Constructor parameter property: `private readonly x: T` / `public y = 1`.
+				// The modifiers have no child nodes. The parameter is an Identifier
+				// (annotation on it) or an AssignmentPattern (which visits its own
+				// left-hand annotation).
+				const parameter = /** @type {AST.Pattern} */ (/** @type {unknown} */ (node.parameter));
+				visit(parameter);
+				if (parameter.type === 'Identifier' && parameter.typeAnnotation) {
+					visit(parameter.typeAnnotation);
+				}
+				return;
+			} else if (/** @type {string} */ (node.type) === 'TSDeclareMethod') {
+				// Bodyless class method value: an overload signature, `abstract m(): T;`,
+				// or optional `m?(): T;`. The key was visited by MethodDefinition.
+				// Visit in source order: typeParameters, params, returnType
+				const method = /** @type {AST.TSDeclareFunction} */ (/** @type {unknown} */ (node));
+				if (method.typeParameters) {
+					visit(method.typeParameters);
+				}
+				for (const param of method.params) {
+					visit(param);
+					const annotation = /** @type {Exclude<AST.Parameter, AST.TSParameterProperty>} */ (param)
+						.typeAnnotation;
+					if (annotation) {
+						visit(annotation);
+					}
+				}
+				if (method.returnType) {
+					visit(method.returnType);
+				}
+				return;
 			} else if (node.type === 'TSTypePredicate') {
 				// Type predicate: `x is T` / `asserts x is T` / `asserts x`
 				if (node.parameterName) {

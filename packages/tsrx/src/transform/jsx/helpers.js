@@ -230,6 +230,22 @@ export function tsx_with_ts_locations(boundary_tokens = false, comments = undefi
 				context.visit(node.typeParameters);
 			}
 		},
+		// esrap's TSParameterProperty printer drops `override`, so
+		// `constructor(override readonly n: number)` typechecks as TS4115
+		// ("must have an 'override' modifier") under `noImplicitOverride`.
+		// TypeScript's modifier order is accessibility, override, readonly.
+		TSParameterProperty: (node, context) => {
+			if (node.accessibility) {
+				context.write(node.accessibility + ' ');
+			}
+			if (node.override) {
+				context.write('override ');
+			}
+			if (node.readonly) {
+				context.write('readonly ');
+			}
+			context.visit(node.parameter);
+		},
 		TSModuleDeclaration: (node, context) => {
 			// `declare global` is represented as a TSModuleDeclaration whose id is
 			// `global`; adding `module` changes it into an unrelated named module.
