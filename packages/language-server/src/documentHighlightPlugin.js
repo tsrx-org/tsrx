@@ -6,10 +6,26 @@ const { log } = createLogging('[TSRX Document Highlight Plugin]');
 
 /**
  * Document Highlight plugin for TSRX.
- * Provides word highlighting (grey background) for custom TSRX keywords like `pending`.
+ * Provides word highlighting (grey background) for custom TSRX keywords that carry
+ * `wordHighlight` mapping metadata.
+ *
+ * Classic backend: wraps `typescript-semantic`'s highlights and only adds keyword
+ * highlights when TypeScript returned none.
+ *
+ * Native backend: TypeScript 7 serves its own highlights. VS Code asks document
+ * highlight providers in score order and uses the first non-empty result
+ * (`first(..., isNonEmptyArray)` in `wordHighlighter.ts`), so this provider is
+ * consulted exactly when TypeScript has nothing for the span, which is the case
+ * for keyword spans (the mapper leaves their DocumentHighlights feature bit off).
+ * With several `.tsrx` editors visible at once VS Code switches to the
+ * multi-document providers that only the TypeScript 7 extension registers, and
+ * keyword highlights are not shown; that limitation is documented.
+ * @param {{ typescriptBackend?: import('./backend.js').TypeScriptBackend }} [options]
  * @returns {LanguageServicePlugin}
  */
-export function createDocumentHighlightPlugin() {
+export function createDocumentHighlightPlugin(options = {}) {
+	const standalone =
+		options.typescriptBackend === 'native' || options.typescriptBackend === 'plugin';
 	return {
 		name: 'tsrx-document-highlight',
 		capabilities: {
@@ -21,39 +37,41 @@ export function createDocumentHighlightPlugin() {
 			/** @type {LanguageServicePluginInstance} */
 			let originalInstance;
 
-			// Get TypeScript's document highlights provider
-			for (const [plugin, instance] of context.plugins) {
-				if (plugin.name === 'typescript-semantic' && instance.provideDocumentHighlights) {
-					originalInstance = instance;
-					originalProvideDocumentHighlights = instance.provideDocumentHighlights;
-					instance.provideDocumentHighlights = undefined;
-					break;
+			if (!standalone) {
+				// Get TypeScript's document highlights provider
+				for (const [plugin, instance] of context.plugins) {
+					if (plugin.name === 'typescript-semantic' && instance.provideDocumentHighlights) {
+						originalInstance = instance;
+						originalProvideDocumentHighlights = instance.provideDocumentHighlights;
+						instance.provideDocumentHighlights = undefined;
+						break;
+					}
 				}
-			}
 
-			if (!originalProvideDocumentHighlights) {
-				log(
-					"'typescript-semantic plugin' was not found or has no 'provideDocumentHighlights'. \
-					Document highlights will be limited to custom TSRX keywords only.",
-				);
+				if (!originalProvideDocumentHighlights) {
+					log(
+						"'typescript-semantic plugin' was not found or has no 'provideDocumentHighlights'. \
+						Document highlights will be limited to custom TSRX keywords only.",
+					);
+				}
 			}
 
 			return {
 				async provideDocumentHighlights(document, position, token) {
-					if (!originalProvideDocumentHighlights) {
-						return null;
-					}
+					/** @type {import('@volar/language-server').DocumentHighlight[] | null | undefined} */
+					let tsHighlights = null;
+					if (originalProvideDocumentHighlights) {
+						tsHighlights = await originalProvideDocumentHighlights.call(
+							originalInstance,
+							document,
+							position,
+							token,
+						);
 
-					let tsHighlights = await originalProvideDocumentHighlights.call(
-						originalInstance,
-						document,
-						position,
-						token,
-					);
-
-					if (!tsHighlights || tsHighlights.length > 0) {
-						// If TypeScript recognized tokens and provided highlights, return them
-						return tsHighlights;
+						if (!tsHighlights || tsHighlights.length > 0) {
+							// If TypeScript recognized tokens and provided highlights, return them
+							return tsHighlights;
+						}
 					}
 
 					const { virtualCode } = getVirtualCode(document, context);
@@ -70,9 +88,14 @@ export function createDocumentHighlightPlugin() {
 					// Find word boundaries
 					const { word } = getWordFromPosition(text, offset);
 
+					if (!/^[\w$]+$/.test(word)) {
+						// Not a keyword-shaped word (empty, or a CSS/TSRX token with `-` or `#`).
+						return tsHighlights;
+					}
+
 					// If the word is a TSRX keyword, find all occurrences in the document.
 
-					const regex = new RegExp(`\\b${word}\\b`, 'g');
+					const regex = new RegExp(`\\b${word.replace(/\$/g, '\\$')}\\b`, 'g');
 					let match;
 
 					while ((match = regex.exec(text)) !== null) {
@@ -105,11 +128,12 @@ export function createDocumentHighlightPlugin() {
 						});
 					}
 
-					if (tsHighlights.length > 0) {
-						log(`Found ${tsHighlights.length} occurrences of '${word}'`);
+					if (!tsHighlights) {
+						// No keyword occurrence: let the next provider (TypeScript) answer.
+						return null;
 					}
 
-					// Return TypeScript highlights if no custom keyword was found
+					log(`Found ${tsHighlights.length} occurrences of '${word}'`);
 					return [...tsHighlights];
 				},
 			};

@@ -12,8 +12,15 @@
   },
   "homepage": "https://tsrx.dev/",
   "activationEvents": [
+    "onLanguage:tsrx",
     "workspaceContains:**/*.tsrx"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "TSRX target compilers and the TypeScript content mapper execute code from the workspace, so TSRX language features are only available in trusted workspaces."
+    }
+  },
   "categories": [
     "Programming Languages"
   ],
@@ -38,19 +45,19 @@
     "build-package-install-and-run": "pnpm build && pnpm package && pnpm install-package && code"
   },
   "dependencies": {
+    "@tsrx/language-server": "workspace:*",
+    "jsonc-parser": "catalog:default",
+    "@tsrx/typescript-plugin": "workspace:*",
     "@volar/language-core": "catalog:default",
     "@volar/language-server": "catalog:default",
     "@volar/typescript": "catalog:default",
     "@volar/vscode": "catalog:default",
-    "@tsrx/language-server": "workspace:*",
-    "@tsrx/typescript-plugin": "workspace:*",
     "volar-service-typescript": "catalog:default",
     "vscode-languageclient": "catalog:default",
     "vscode-uri": "catalog:default"
   },
   "// @types/vscode": "Keep in `peerDependencies` - prevent vsix compatibility, but it's a dev dep",
   "peerDependencies": {
-    "typescript": "catalog:vscode",
     "@types/vscode": "catalog:default"
   },
   "devDependencies": {
@@ -62,6 +69,15 @@
     "shiki": "catalog:"
   },
   "contributes": {
+    "typescriptServerPlugins": [
+      {
+        "name": "@tsrx/typescript-plugin",
+        "enableForWorkspaceTypeScriptVersions": true,
+        "languages": [
+          "tsrx"
+        ]
+      }
+    ],
     "breakpoints": [
       {
         "language": "tsrx"
@@ -134,7 +150,7 @@
       "editor/context": [
         {
           "command": "tsrx.goToSourceDefinition",
-          "when": "tsSupportsSourceDefinition && resourceLangId == tsrx",
+          "when": "resourceLangId == tsrx",
           "group": "navigation@9"
         }
       ],

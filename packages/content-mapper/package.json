@@ -1,0 +1,66 @@
+{
+  "name": "@tsrx/content-mapper",
+  "description": "TypeScript 7 content mapper for .tsrx files",
+  "version": "0.1.1",
+  "license": "MIT",
+  "author": "Dominic Gannaway",
+  "type": "module",
+  "homepage": "https://tsrx.dev/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tsrx-org/tsrx.git",
+    "directory": "packages/content-mapper"
+  },
+  "bugs": {
+    "url": "https://github.com/tsrx-org/tsrx/issues"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    "./mapper": "./dist/mapper.js",
+    "./rpc": "./dist/rpc.js",
+    "./protocol": "./dist/protocol.js"
+  },
+  "typescript": {
+    "contentMapper": {
+      "exec": [
+        "node",
+        "dist/server.js"
+      ],
+      "dynamicConfig": true
+    }
+  },
+  "dependencies": {
+    "jsonc-parser": "catalog:default"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "prepare": "tsdown"
+  },
+  "devDependencies": {
+    "@solidjs/web": "catalog:default",
+    "@tsrx/core": "workspace:*",
+    "@tsrx/preact": "workspace:*",
+    "@tsrx/react": "workspace:*",
+    "@tsrx/ripple": "catalog:default",
+    "@tsrx/solid": "workspace:*",
+    "@tsrx/typescript-plugin": "workspace:*",
+    "@tsrx/vue": "workspace:*",
+    "@types/estree": "catalog:default",
+    "@types/node": "catalog:default",
+    "@types/react": "catalog:default",
+    "preact": "catalog:default",
+    "react": "catalog:default",
+    "ripple": "catalog:default",
+    "solid-js": "catalog:default",
+    "tsdown": "catalog:default",
+    "typescript": "catalog:default",
+    "vue": "3.6.0-beta.12"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

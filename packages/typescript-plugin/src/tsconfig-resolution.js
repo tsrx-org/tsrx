@@ -1,12 +1,27 @@
 import path from 'node:path';
+import { parse_jsonc } from './jsonc.js';
+import { resolve_extends_target } from './package-resolution.js';
 
 /**
+ * What the tooling needs from a file system to read tsconfig files: the
+ * subset of TypeScript's `sys` that `config-host.js` also provides on
+ * `node:fs`, so no TypeScript is needed to resolve a config chain.
  * @typedef {object} TsconfigHost
  * @property {(file_name: string) => boolean} fileExists
  * @property {(file_name: string) => string | undefined} readFile
- * @property {import('typescript').ParseConfigHost['readDirectory']} readDirectory
  * @property {boolean | (() => boolean)} useCaseSensitiveFileNames
- * @property {import('typescript').System['getModifiedTime']} [getModifiedTime]
+ * @property {(file_name: string) => Date | undefined} [getModifiedTime]
+ */
+
+/**
+ * A problem reading or resolving a config file. `code` follows TypeScript's
+ * numbering for the cases it has one for (5024 invalid `extends` entry,
+ * 6053 file not found, 18000 circular `extends`), so callers that filter on
+ * codes keep working on both paths.
+ * @typedef {object} TsconfigDiagnostic
+ * @property {number} code
+ * @property {string} message
+ * @property {string} [file] The config file the problem is in.
  */
 
 /**
@@ -15,7 +30,7 @@ import path from 'node:path';
  * @property {string} dir
  * @property {Record<string, unknown>} config
  * @property {string | undefined} raw_source
- * @property {import('typescript').Diagnostic[]} parse_diagnostics
+ * @property {TsconfigDiagnostic[]} parse_diagnostics
  */
 
 /** @typedef {TsconfigLayer & { extends_values: unknown[] }} ParsedTsconfigLayer */
@@ -25,14 +40,14 @@ import path from 'node:path';
  * @property {string} config_path
  * @property {unknown} extends_value
  * @property {string | undefined} resolved_path
- * @property {import('typescript').Diagnostic[]} diagnostics
+ * @property {TsconfigDiagnostic[]} diagnostics
  */
 
 /**
  * @typedef {object} ResolvedTsconfigLayers
  * @property {TsconfigLayer[]} layers
  * @property {string[]} dependencies
- * @property {import('typescript').Diagnostic[]} diagnostics
+ * @property {TsconfigDiagnostic[]} diagnostics
  * @property {TsconfigExtendsFailure[]} extends_failures
  */
 
@@ -43,20 +58,22 @@ import path from 'node:path';
 
 /** @typedef {{config_path: string, config_dir: string}} TsconfigValueOrigin */
 
-const no_inputs_found_diagnostic_code = 18003;
-const circularity_diagnostic_code = 18000;
+export const INVALID_EXTENDS_DIAGNOSTIC_CODE = 5024;
+export const FILE_NOT_FOUND_DIAGNOSTIC_CODE = 6053;
+export const CIRCULARITY_DIAGNOSTIC_CODE = 18000;
+const PARSE_ERROR_DIAGNOSTIC_CODE = 1005;
 
 /**
  * Load a tsconfig and its explicit inheritance graph from lowest to highest
  * precedence. Parsed files are cached, but traversal intentionally does not
  * deduplicate layers because a shared base must be reapplied in every branch.
+ * `extends` entries follow TypeScript's rules (see `resolve_extends_target`).
  *
- * @param {typeof import('typescript')} ts
  * @param {TsconfigHost} host
  * @param {string} config_file_name
  * @returns {ResolvedTsconfigLayers}
  */
-export function load_tsconfig_layers(ts, host, config_file_name) {
+export function load_tsconfig_layers(host, config_file_name) {
 	/** @type {Map<string, ParsedTsconfigLayer>} */
 	const parsed_file_cache = new Map();
 	/** @type {TsconfigLayer[]} */
@@ -64,24 +81,19 @@ export function load_tsconfig_layers(ts, host, config_file_name) {
 	/** @type {string[]} */
 	const dependencies = [];
 	const dependency_keys = new Set();
-	/** @type {import('typescript').Diagnostic[]} */
+	/** @type {TsconfigDiagnostic[]} */
 	const diagnostics = [];
 	/** @type {TsconfigExtendsFailure[]} */
 	const extends_failures = [];
 	const diagnostic_keys = new Set();
-	const active_stack = new Set();
+	/** The chain of configs being visited, root first, for cycle reporting. */
+	/** @type {string[]} */
+	const active_stack = [];
+	const active_keys = new Set();
 	const use_case_sensitive_file_names =
 		typeof host.useCaseSensitiveFileNames === 'function'
 			? host.useCaseSensitiveFileNames()
 			: host.useCaseSensitiveFileNames;
-
-	/** @type {import('typescript').ParseConfigHost} */
-	const parse_host = {
-		fileExists: host.fileExists,
-		readFile: host.readFile,
-		readDirectory: host.readDirectory,
-		useCaseSensitiveFileNames: use_case_sensitive_file_names,
-	};
 
 	/** @param {string} file_name */
 	function normalize_path(file_name) {
@@ -94,11 +106,10 @@ export function load_tsconfig_layers(ts, host, config_file_name) {
 		return use_case_sensitive_file_names ? normalized_path : normalized_path.toLowerCase();
 	}
 
-	/** @param {import('typescript').Diagnostic[]} next_diagnostics */
+	/** @param {TsconfigDiagnostic[]} next_diagnostics */
 	function add_diagnostics(next_diagnostics) {
 		for (const diagnostic of next_diagnostics) {
-			const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
-			const key = `${diagnostic.code}\0${diagnostic.file?.fileName ?? ''}\0${diagnostic.start ?? ''}\0${message}`;
+			const key = `${diagnostic.code}\0${diagnostic.file ?? ''}\0${diagnostic.message}`;
 			if (!diagnostic_keys.has(key)) {
 				diagnostic_keys.add(key);
 				diagnostics.push(diagnostic);
@@ -116,24 +127,6 @@ export function load_tsconfig_layers(ts, host, config_file_name) {
 		}
 	}
 
-	/**
-	 * TypeScript does not expose a failed lookup path for extensionless relative
-	 * extends entries. Preserve the conventional JSON candidate so creating it
-	 * later invalidates both the mtime cache and the language-server project.
-	 * @param {ParsedTsconfigLayer} parsed
-	 * @param {unknown} extends_value
-	 */
-	function get_unresolved_relative_dependency(parsed, extends_value) {
-		if (
-			typeof extends_value !== 'string' ||
-			(!path.isAbsolute(extends_value) && !extends_value.startsWith('.'))
-		) {
-			return undefined;
-		}
-		const candidate_path = path.resolve(parsed.dir, extends_value);
-		return path.extname(candidate_path) === '' ? `${candidate_path}.json` : candidate_path;
-	}
-
 	/** @param {string} file_name */
 	function parse_file(file_name) {
 		const normalized_path = normalize_path(file_name);
@@ -144,20 +137,32 @@ export function load_tsconfig_layers(ts, host, config_file_name) {
 		}
 
 		const raw_source = host.readFile(normalized_path);
-		const source_file = ts.readJsonConfigFile(normalized_path, host.readFile);
-		const source_file_with_diagnostics =
-			/** @type {typeof source_file & {
-			 * 	parseDiagnostics: readonly import('typescript').Diagnostic[],
-			 * }} */ (source_file);
-		/** @type {import('typescript').Diagnostic[]} */
-		const parse_diagnostics = [...source_file_with_diagnostics.parseDiagnostics];
-		const converted_config = ts.convertToObject(source_file, parse_diagnostics);
-		const config =
-			converted_config !== null &&
-			typeof converted_config === 'object' &&
-			!Array.isArray(converted_config)
-				? /** @type {Record<string, unknown>} */ (converted_config)
-				: {};
+		/** @type {TsconfigDiagnostic[]} */
+		const parse_diagnostics = [];
+		/** @type {Record<string, unknown>} */
+		let config = {};
+		if (raw_source !== undefined) {
+			const parsed = parse_jsonc(raw_source);
+			if (parsed.error) {
+				parse_diagnostics.push({
+					code: PARSE_ERROR_DIAGNOSTIC_CODE,
+					message: `Failed to parse ${normalized_path}: ${parsed.error.message}`,
+					file: normalized_path,
+				});
+			} else if (
+				parsed.value !== null &&
+				typeof parsed.value === 'object' &&
+				!Array.isArray(parsed.value)
+			) {
+				config = /** @type {Record<string, unknown>} */ (parsed.value);
+			} else {
+				parse_diagnostics.push({
+					code: PARSE_ERROR_DIAGNOSTIC_CODE,
+					message: `The root value of ${normalized_path} must be an object.`,
+					file: normalized_path,
+				});
+			}
+		}
 		const extends_value = config.extends;
 		const extends_values = Array.isArray(extends_value)
 			? extends_value
@@ -178,59 +183,73 @@ export function load_tsconfig_layers(ts, host, config_file_name) {
 	}
 
 	/**
-	 * Resolve one immediate extends entry with TypeScript's own config resolver.
-	 * A synthetic config isolates the edge; inherited files remain available to
-	 * TypeScript so relative, absolute, package, optional-suffix, and cycle
-	 * semantics stay aligned with parseJsonSourceFileConfigFileContent.
-	 *
+	 * Resolve one immediate extends entry. The conventional JSON candidate of an
+	 * unresolved relative entry is still recorded as a dependency so creating it
+	 * later invalidates caches and language-server projects.
 	 * @param {ParsedTsconfigLayer} parsed
 	 * @param {unknown} extends_value
 	 */
 	function resolve_extends_path(parsed, extends_value) {
-		const synthetic_source = JSON.stringify({ extends: extends_value, files: [] });
-		const source_file = ts.readJsonConfigFile(parsed.path, () => synthetic_source);
-		const parsed_command_line = ts.parseJsonSourceFileConfigFileContent(
-			source_file,
-			parse_host,
-			parsed.dir,
-			{},
-			parsed.path,
-		);
-		const edge_diagnostics = parsed_command_line.errors.filter(
-			(diagnostic) => diagnostic.code !== no_inputs_found_diagnostic_code,
-		);
-		add_diagnostics(edge_diagnostics);
-		const resolved_path = source_file.extendedSourceFiles?.[0];
-		const dependency_path =
-			resolved_path ?? get_unresolved_relative_dependency(parsed, extends_value);
+		if (typeof extends_value !== 'string') {
+			const diagnostic = {
+				code: INVALID_EXTENDS_DIAGNOSTIC_CODE,
+				message: `Compiler option 'extends' requires a value of type string.`,
+				file: parsed.path,
+			};
+			add_diagnostics([diagnostic]);
+			extends_failures.push({
+				config_path: parsed.path,
+				extends_value,
+				resolved_path: undefined,
+				diagnostics: [diagnostic],
+			});
+			return undefined;
+		}
+		const target = resolve_extends_target(extends_value, parsed.dir, host);
+		const dependency_path = target.path ?? target.candidate;
 		if (dependency_path !== undefined) {
 			add_dependency(dependency_path);
 		}
-
-		const has_cycle = edge_diagnostics.some(
-			(diagnostic) => diagnostic.code === circularity_diagnostic_code,
-		);
-		const is_unresolved = resolved_path === undefined || !host.fileExists(resolved_path);
-		if (is_unresolved || has_cycle) {
+		if (target.path === undefined) {
+			const diagnostic = {
+				code: FILE_NOT_FOUND_DIAGNOSTIC_CODE,
+				message: `File '${target.candidate ?? extends_value}' not found.`,
+				file: parsed.path,
+			};
+			add_diagnostics([diagnostic]);
 			extends_failures.push({
 				config_path: parsed.path,
 				extends_value,
 				resolved_path: dependency_path,
-				diagnostics: edge_diagnostics,
+				diagnostics: [diagnostic],
 			});
+			return undefined;
 		}
-		return is_unresolved ? undefined : resolved_path;
+		if (active_keys.has(get_path_key(target.path))) {
+			const chain = [...active_stack, normalize_path(target.path)];
+			const diagnostic = {
+				code: CIRCULARITY_DIAGNOSTIC_CODE,
+				message: `Circularity detected while resolving configuration: ${chain.join(' -> ')}`,
+				file: parsed.path,
+			};
+			add_diagnostics([diagnostic]);
+			extends_failures.push({
+				config_path: parsed.path,
+				extends_value,
+				resolved_path: dependency_path,
+				diagnostics: [diagnostic],
+			});
+			return undefined;
+		}
+		return target.path;
 	}
 
 	/** @param {string} file_name */
 	function visit(file_name) {
 		const normalized_path = normalize_path(file_name);
 		const key = get_path_key(normalized_path);
-		if (active_stack.has(key)) {
-			return;
-		}
-
-		active_stack.add(key);
+		active_keys.add(key);
+		active_stack.push(normalized_path);
 		add_dependency(normalized_path);
 		const parsed = parse_file(normalized_path);
 		for (const extends_value of parsed.extends_values) {
@@ -246,7 +265,8 @@ export function load_tsconfig_layers(ts, host, config_file_name) {
 			raw_source: parsed.raw_source,
 			parse_diagnostics: parsed.parse_diagnostics,
 		});
-		active_stack.delete(key);
+		active_stack.pop();
+		active_keys.delete(key);
 	}
 
 	visit(config_file_name);

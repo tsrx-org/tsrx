@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { NODE_CONFIG_HOST } from '../src/config-host.js';
 import {
 	get_own_config_value,
 	load_tsconfig_layers,
@@ -28,7 +29,7 @@ function write_config(relative_path, config) {
 /** @param {Array<[string, string | object]>} files */
 function load(files) {
 	for (const [file_name, config] of files) write_config(file_name, config);
-	return load_tsconfig_layers(ts, ts.sys, path.join(directory, 'tsconfig.json'));
+	return load_tsconfig_layers(ts.sys, path.join(directory, 'tsconfig.json'));
 }
 
 beforeEach(() => {
@@ -42,7 +43,7 @@ afterEach(() => {
 describe('load_tsconfig_layers', () => {
 	it('loads a single config without extends', () => {
 		const config_path = write_config('tsconfig.json', { custom: { value: 'root' } });
-		const result = load_tsconfig_layers(ts, ts.sys, config_path);
+		const result = load_tsconfig_layers(ts.sys, config_path);
 
 		expect(result.layers).toHaveLength(1);
 		expect(result.layers[0]).toMatchObject({
@@ -162,7 +163,7 @@ describe('load_tsconfig_layers', () => {
 
 	it('tracks the JSON candidate for an unresolved extensionless relative base', () => {
 		const config_path = write_config('tsconfig.json', { extends: './configs/base' });
-		const result = load_tsconfig_layers(ts, ts.sys, config_path);
+		const result = load_tsconfig_layers(ts.sys, config_path);
 
 		expect(result.dependencies).toEqual([
 			config_path,
@@ -174,6 +175,87 @@ describe('load_tsconfig_layers', () => {
 				extends_value: './configs/base',
 				resolved_path: path.join(directory, 'configs', 'base.json'),
 			}),
+		]);
+	});
+
+	it('appends .json to a relative extends path even when a same-named directory exists', () => {
+		fs.mkdirSync(path.join(directory, 'base'));
+		const base_path = write_config('base.json', { custom: { value: 'base' } });
+		const config_path = write_config('tsconfig.json', { extends: './base' });
+		for (const host of [ts.sys, NODE_CONFIG_HOST]) {
+			const result = load_tsconfig_layers(host, config_path);
+			expect(result.diagnostics).toEqual([]);
+			expect(result.layers.map((layer) => layer.path)).toEqual([base_path, config_path]);
+		}
+	});
+
+	it('reads JSON with comments and trailing commas, on the node host as on ts.sys', () => {
+		const source =
+			'// leading comment\n{\n\t/* block */ "custom": { "value": "root", }, // trailing\n\t"extends": "./base",\n}\n';
+		const base_path = write_config('base.json', '{ "custom": { "value": "base" }, }');
+		const config_path = write_config('tsconfig.json', source);
+		for (const host of [ts.sys, NODE_CONFIG_HOST]) {
+			const result = load_tsconfig_layers(host, config_path);
+			expect(result.diagnostics).toEqual([]);
+			expect(result.layers.map((layer) => [layer.path, layer.config])).toEqual([
+				[base_path, { custom: { value: 'base' } }],
+				[config_path, { custom: { value: 'root' }, extends: './base' }],
+			]);
+		}
+	});
+
+	it('resolves package extends entries the way TypeScript does', () => {
+		// A package root (its tsconfig.json), a package.json "tsconfig" field, a
+		// subpath file with an implied .json, and a subpath through "exports".
+		write_config('node_modules/@acme/base/package.json', { name: '@acme/base' });
+		const root_path = write_config('node_modules/@acme/base/tsconfig.json', {
+			custom: { value: 'root' },
+		});
+		write_config('node_modules/fielded/package.json', {
+			name: 'fielded',
+			tsconfig: 'configs/main',
+		});
+		const field_path = write_config('node_modules/fielded/configs/main.json', {
+			custom: { value: 'field' },
+		});
+		write_config('node_modules/subpaths/package.json', { name: 'subpaths' });
+		const subpath_path = write_config('node_modules/subpaths/strict.json', {
+			custom: { value: 'subpath' },
+		});
+		write_config('node_modules/exported/package.json', {
+			name: 'exported',
+			exports: { './strict': './configs/strict.json' },
+		});
+		const exported_path = write_config('node_modules/exported/configs/strict.json', {
+			custom: { value: 'exported' },
+		});
+		const config_path = write_config('tsconfig.json', {
+			extends: ['@acme/base', 'fielded', 'subpaths/strict', 'exported/strict', 'missing-package'],
+		});
+		const result = load_tsconfig_layers(NODE_CONFIG_HOST, config_path);
+		// Package targets come back through realpath, as from TypeScript's resolver.
+		expect(result.layers.map((layer) => layer.path)).toEqual([
+			...[root_path, field_path, subpath_path, exported_path].map((p) => fs.realpathSync(p)),
+			config_path,
+		]);
+		expect(result.extends_failures).toEqual([
+			expect.objectContaining({
+				extends_value: 'missing-package',
+				resolved_path: undefined,
+				diagnostics: [expect.objectContaining({ code: 6053 })],
+			}),
+		]);
+	});
+
+	it('reports a circular extends chain once and keeps the layers it read', () => {
+		const a_path = write_config('a.json', { extends: './b', custom: { value: 'a' } });
+		const b_path = write_config('b.json', { extends: './a', custom: { value: 'b' } });
+		const result = load([['tsconfig.json', { extends: './a' }]]);
+		expect(result.diagnostics).toEqual([expect.objectContaining({ code: 18000, file: b_path })]);
+		expect(result.layers.map((layer) => layer.path)).toEqual([
+			b_path,
+			a_path,
+			path.join(directory, 'tsconfig.json'),
 		]);
 	});
 

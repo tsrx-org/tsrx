@@ -18,7 +18,7 @@
 
 /**
  * @typedef {object} CompilerResolutionOptions
- * @property {typeof import('typescript')} [ts]
+ * @property {typeof import('typescript')} [ts] Accepted for the classic callers; config resolution no longer uses it.
  * @property {string} [configFileName]
  * @property {import('./tsconfig-resolution.js').TsconfigHost} [configHost]
  * @property {Set<string>} [dependencies]
@@ -39,7 +39,8 @@
 
 import { createRequire } from 'module';
 import path from 'path';
-import ts from 'typescript';
+import { NODE_CONFIG_HOST } from './config-host.js';
+import { resolve_package_entry } from './package-resolution.js';
 import {
 	get_own_config_value,
 	load_tsconfig_layers,
@@ -196,12 +197,11 @@ function get_nearest_root_tsconfig(start_dir, host, cache) {
 }
 
 /**
- * @param {typeof import('typescript')} typescript
  * @param {import('./tsconfig-resolution.js').TsconfigHost} host
  * @param {string} root_config_path
  * @param {ConfigHostResolutionCache} cache
  */
-function get_tsconfig_layers(typescript, host, root_config_path, cache) {
+function get_tsconfig_layers(host, root_config_path, cache) {
 	const cache_key = get_config_cache_key(root_config_path, host);
 	const cached = cache.resolved_config_layers.get(cache_key);
 	if (
@@ -214,7 +214,7 @@ function get_tsconfig_layers(typescript, host, root_config_path, cache) {
 	) {
 		return cached.value;
 	}
-	const value = load_tsconfig_layers(typescript, host, root_config_path);
+	const value = load_tsconfig_layers(host, root_config_path);
 	const dependency_modified_times = host.getModifiedTime
 		? new Map(
 				value.dependencies.map((dependency) => [
@@ -243,40 +243,26 @@ function is_extends_failure_overridden(layers, failure, declaration_config_path)
 
 /**
  * Resolve without a module-resolution cache. This is the recovery path when
- * Node retains a negative package lookup after a dependency is installed.
- * `noDtsResolution` ensures the runtime entry wins over a package's types.
- * @param {typeof import('typescript')} typescript
+ * Node retains a negative package lookup after a dependency is installed: the
+ * package walk reads every manifest fresh and resolves the runtime entry.
  * @param {import('./tsconfig-resolution.js').TsconfigHost} host
  * @param {string} config_path
  * @param {string} specifier
  */
-function resolve_uncached_declared_compiler(typescript, host, config_path, specifier) {
-	return typescript.resolveModuleName(
-		specifier,
-		config_path,
-		{
-			module: typescript.ModuleKind.Node16,
-			moduleResolution: typescript.ModuleResolutionKind.Node16,
-			noDtsResolution: true,
-		},
-		host,
-		undefined,
-		undefined,
-		typescript.ModuleKind.CommonJS,
-	).resolvedModule?.resolvedFileName;
+function resolve_uncached_declared_compiler(host, config_path, specifier) {
+	return resolve_package_entry(specifier, path.dirname(config_path), { host });
 }
 
 /**
  * Resolve the compiler explicitly selected by a consumer tsconfig. Invalid
  * specifiers are stable and cached, while missing packages are retried so
  * tsserver can recover after the dependency is installed.
- * @param {typeof import('typescript')} typescript
  * @param {import('./tsconfig-resolution.js').TsconfigHost} host
  * @param {string} config_path
  * @param {string} specifier
  * @returns {string | null}
  */
-function resolve_declared_compiler(typescript, host, config_path, specifier) {
+function resolve_declared_compiler(host, config_path, specifier) {
 	const cache_key = `${config_path}\0${specifier}`;
 	if (declared_compiler_path_map.has(cache_key)) {
 		return declared_compiler_path_map.get(cache_key) ?? null;
@@ -299,12 +285,7 @@ function resolve_declared_compiler(typescript, host, config_path, specifier) {
 		log('Found declared tsrx compiler at:', compiler_path, 'from tsconfig:', config_path);
 		return compiler_path;
 	} catch {
-		const compiler_path = resolve_uncached_declared_compiler(
-			typescript,
-			host,
-			config_path,
-			specifier,
-		);
+		const compiler_path = resolve_uncached_declared_compiler(host, config_path, specifier);
 		if (compiler_path !== undefined) {
 			declared_compiler_path_map.set(cache_key, compiler_path);
 			log(
@@ -328,8 +309,7 @@ function resolve_declared_compiler(typescript, host, config_path, specifier) {
  * @returns {string | null | undefined}
  */
 export function resolve_consumer_compiler_for_file(normalized_file_name, options = {}) {
-	const typescript = options.ts ?? ts;
-	const config_host = options.configHost ?? typescript.sys;
+	const config_host = options.configHost ?? NODE_CONFIG_HOST;
 	const host_cache = get_config_host_cache(config_host);
 	const root_config_path =
 		options.configFileName ??
@@ -337,12 +317,7 @@ export function resolve_consumer_compiler_for_file(normalized_file_name, options
 	if (root_config_path === null) {
 		return undefined;
 	}
-	const resolved_layers = get_tsconfig_layers(
-		typescript,
-		config_host,
-		root_config_path,
-		host_cache,
-	);
+	const resolved_layers = get_tsconfig_layers(config_host, root_config_path, host_cache);
 	for (const dependency of resolved_layers.dependencies) {
 		options.dependencies?.add(dependency);
 	}
@@ -373,11 +348,7 @@ export function resolve_consumer_compiler_for_file(normalized_file_name, options
 		const log_parse_error = has_tsrx_intent ? logError : logWarning;
 		for (const layer of malformed_layers) {
 			for (const diagnostic of layer.parse_diagnostics) {
-				log_parse_error(
-					'Unable to parse tsconfig layer:',
-					layer.path,
-					typescript.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
-				);
+				log_parse_error('Unable to parse tsconfig layer:', layer.path, diagnostic.message);
 			}
 		}
 		return has_tsrx_intent ? null : undefined;
@@ -414,19 +385,14 @@ export function resolve_consumer_compiler_for_file(normalized_file_name, options
 					'Unable to resolve tsconfig extends entry:',
 					JSON.stringify(failure.extends_value),
 					`in ${failure.config_path}`,
-					typescript.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
+					diagnostic.message,
 				);
 			}
 		}
 		return null;
 	}
 	if (declaration.state === 'declared') {
-		return resolve_declared_compiler(
-			typescript,
-			config_host,
-			declaration.config_path,
-			declaration.value,
-		);
+		return resolve_declared_compiler(config_host, declaration.config_path, declaration.value);
 	}
 	return undefined;
 }
@@ -441,8 +407,7 @@ export function resolve_consumer_compiler_for_file(normalized_file_name, options
  * @returns {Platform | undefined}
  */
 export function resolve_consumer_platform_for_file(normalized_file_name, options = {}) {
-	const typescript = options.ts ?? ts;
-	const config_host = options.configHost ?? typescript.sys;
+	const config_host = options.configHost ?? NODE_CONFIG_HOST;
 	const host_cache = get_config_host_cache(config_host);
 	const root_config_path =
 		options.configFileName ??
@@ -451,12 +416,7 @@ export function resolve_consumer_platform_for_file(normalized_file_name, options
 		return undefined;
 	}
 
-	const resolved_layers = get_tsconfig_layers(
-		typescript,
-		config_host,
-		root_config_path,
-		host_cache,
-	);
+	const resolved_layers = get_tsconfig_layers(config_host, root_config_path, host_cache);
 	for (const dependency of resolved_layers.dependencies) {
 		options.dependencies?.add(dependency);
 	}
@@ -483,10 +443,7 @@ export function resolve_consumer_platform_for_file(normalized_file_name, options
 		if (!has_tsrx_intent) return undefined;
 
 		const layer = malformed_layers[0];
-		const detail = typescript.flattenDiagnosticMessageText(
-			layer.parse_diagnostics[0].messageText,
-			'\n',
-		);
+		const detail = layer.parse_diagnostics[0].message;
 		const message = `Unable to parse tsconfig layer while resolving TSRX platform: ${layer.path}: ${detail}`;
 		logError(message);
 		throw new Error(message);
@@ -517,10 +474,7 @@ export function resolve_consumer_platform_for_file(normalized_file_name, options
 			return declaration.state === 'declared' ? declaration.value : undefined;
 		}
 		const failure = effective_extends_failures[0];
-		const detail =
-			failure.diagnostics.length > 0
-				? `: ${typescript.flattenDiagnosticMessageText(failure.diagnostics[0].messageText, '\n')}`
-				: '';
+		const detail = failure.diagnostics.length > 0 ? `: ${failure.diagnostics[0].message}` : '';
 		const message = `Unable to resolve tsconfig extends entry ${JSON.stringify(failure.extends_value)} in ${failure.config_path} while resolving TSRX platform${detail}`;
 		logError(message);
 		throw new Error(message);

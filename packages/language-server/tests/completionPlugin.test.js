@@ -107,6 +107,18 @@ describe('completion plugin — function component snippet', () => {
 		expect(find(result.items, 'function Component(props) @{ }')).toBeDefined();
 	});
 
+	it('lists every snippet once (the component snippet also lives in the `@` list)', async () => {
+		const { service, uri } = create_completion_harness('func');
+		const result = await service.getCompletionItems(
+			uri,
+			{ line: 0, character: 4 },
+			{ triggerKind: 1 },
+		);
+		const labels = result.items.map((item) => item.label);
+		expect(labels.filter((label) => label === 'function Component(props) @{ }')).toHaveLength(1);
+		expect(new Set(labels).size).toBe(labels.length);
+	});
+
 	it('offers `function component` when typing `export func` (export declaration)', async () => {
 		// `export func…` sits inside an export statement, but `export function Name(props) @{ }` is a
 		// valid component declaration — so the snippet must still be offered. Previously the export

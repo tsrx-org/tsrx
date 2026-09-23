@@ -2354,9 +2354,6 @@ export function convert_source_map_to_mappings(
 		if ('wordHighlight' in token.metadata) {
 			customData.wordHighlight = token.metadata.wordHighlight;
 		}
-		if ('suppressedDiagnostics' in token.metadata) {
-			customData.suppressedDiagnostics = token.metadata.suppressedDiagnostics;
-		}
 		if ('hover' in token.metadata) {
 			customData.hover = token.metadata.hover;
 		}

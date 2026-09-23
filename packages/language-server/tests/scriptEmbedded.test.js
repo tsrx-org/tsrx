@@ -17,8 +17,8 @@ beforeEach(() => {
 
 /**
  * Build a virtual code for a `.tsrx` source and return it alongside the language
- * plugin instance so tests can inspect embedded codes and drive the plugin's
- * `typescript.getExtraServiceScripts` hook directly.
+ * plugin instance so tests can inspect the generated code, its mappings and the
+ * embedded codes.
  * @param {string} source
  * @param {string} [fixture_name] `react/App.tsrx` selects the workspace `@tsrx/react` compiler
  *   through `tests/fixtures/react/tsconfig.json`.
@@ -45,21 +45,52 @@ function embedded_of(root, languageId) {
 	return out;
 }
 
-describe('embedded <script> virtual codes', () => {
-	it('creates a TypeScript embedded document for <script type="text/typescript">', () => {
-		const { root } = create_virtual_code(
-			`function App() @{
+/** @param {import('@volar/language-core').VirtualCode | undefined} root */
+function generated(root) {
+	return root ? root.snapshot.getText(0, root.snapshot.getLength()) : '';
+}
+
+/**
+ * The mapping of a script body: the one whose `customData.embeddedId` names it.
+ * @param {import('@volar/language-core').VirtualCode | undefined} root
+ * @param {string} id
+ */
+function script_mapping(root, id) {
+	return root?.mappings.find((mapping) => mapping.data.customData?.embeddedId === id);
+}
+
+describe('<script> bodies embedded in the generated TSX', () => {
+	// `<script>` bodies are not embedded codes: the transform appends each one to
+	// the generated TSX as a block statement with a mapping back to the source, so
+	// TypeScript checks them in the same file on every path (language server,
+	// tsserver plugin, content mapper) with no extra service scripts.
+	it('appends a <script type="text/typescript"> body as a mapped block', () => {
+		const source = `function App() @{
 	<head>
 		<script type="text/typescript">const n: number = 1 < 2 ? 3 : 4;</script>
 	</head>
-}`,
-		);
-		const ts_codes = embedded_of(root, 'typescript');
-		expect(ts_codes).toHaveLength(1);
-		expect(ts_codes[0].id).toBe('script_0');
-		expect(ts_codes[0].snapshot.getText(0, ts_codes[0].snapshot.getLength())).toBe(
-			'const n: number = 1 < 2 ? 3 : 4;',
-		);
+}`;
+		const body = 'const n: number = 1 < 2 ? 3 : 4;';
+		const { root } = create_virtual_code(source);
+		expect(embedded_of(root, 'typescript')).toHaveLength(0);
+		const text = generated(root);
+		expect(text).toMatch(/;\{\nconst n: number = 1 < 2 \? 3 : 4;\n\}\n$/);
+		// The copy inside the JSX <script> element is blanked, so `<` never parses as a tag.
+		expect(text).toMatch(/<script type="text\/typescript">\s*<\/script>/);
+		const mapping = script_mapping(root, 'script_0');
+		expect(mapping).toBeDefined();
+		expect(mapping?.sourceOffsets).toEqual([source.indexOf(body)]);
+		expect(mapping?.lengths).toEqual([body.length]);
+		expect(
+			text.slice(mapping?.generatedOffsets[0], mapping?.generatedOffsets[0] + body.length),
+		).toBe(body);
+		expect(mapping?.data).toMatchObject({
+			verification: true,
+			completion: true,
+			semantic: true,
+			navigation: true,
+			format: false,
+		});
 	});
 
 	it('treats a plain <script> body as TypeScript too (TS is a superset of JS)', () => {
@@ -70,14 +101,11 @@ describe('embedded <script> virtual codes', () => {
 	</head>
 }`,
 		);
-		const ts_codes = embedded_of(root, 'typescript');
-		expect(ts_codes).toHaveLength(1);
-		expect(ts_codes[0].snapshot.getText(0, ts_codes[0].snapshot.getLength())).toBe(
-			'console.log(1 < 2);',
-		);
+		expect(generated(root)).toContain(';{\nconsole.log(1 < 2);\n}\n');
+		expect(script_mapping(root, 'script_0')).toBeDefined();
 	});
 
-	it('keeps <style> CSS and <script> TS embedded codes side by side', () => {
+	it('keeps <style> CSS embedded codes beside an embedded <script> body', () => {
 		const { root } = create_virtual_code(
 			`function App() @{
 	<head>
@@ -91,39 +119,53 @@ describe('embedded <script> virtual codes', () => {
 }`,
 		);
 		expect(embedded_of(root, 'css')).toHaveLength(1);
-		expect(embedded_of(root, 'typescript')).toHaveLength(1);
+		expect(embedded_of(root, 'typescript')).toHaveLength(0);
+		expect(generated(root)).toContain(';{\nconst a: number = 1;\n}\n');
 	});
 
-	it('registers each <script> body as a unique TS service script via getExtraServiceScripts', () => {
-		const { plugin, root, fileName } = create_virtual_code(
+	it('gives each <script> body its own block, so their declarations never collide', () => {
+		const { root } = create_virtual_code(
 			`function App() @{
 	<head>
 		<script type="text/typescript">const a: number = 1;</script>
-		<script>const b = 2;</script>
+		<script>const a = 2;</script>
 	</head>
 }`,
 		);
-		const scripts = plugin.typescript?.getExtraServiceScripts?.(
-			fileName,
-			/** @type {any} */ (root),
-		);
-		expect(scripts).toHaveLength(2);
-
-		for (const script of scripts) {
-			expect(script.extension).toBe('.ts');
-			expect(script.scriptKind).toBe(ts.ScriptKind.TS);
-		}
-
-		// fileNames must be unique so each becomes a distinct TS program entry.
-		expect(new Set(scripts.map((s) => s.fileName)).size).toBe(2);
-
-		// The returned `code` must be the exact instance stored in the root's
-		// embeddedCodes (volar matches it by identity).
-		const embedded = embedded_of(root, 'typescript');
-		expect(scripts.map((s) => s.code)).toEqual(embedded);
+		const text = generated(root);
+		expect(text).toContain(';{\nconst a: number = 1;\n}\n');
+		expect(text).toContain(';{\nconst a = 2;\n}\n');
+		expect(script_mapping(root, 'script_0')).toBeDefined();
+		expect(script_mapping(root, 'script_1')).toBeDefined();
 	});
 
-	it('emits no script embedded codes for self-closing <script src=... />', () => {
+	it('hoists import declarations of a <script type="module"> body to module level, mapped', () => {
+		const source = `function App() @{
+	<head>
+		<script type="module">import { helper } from './helper.js';
+const value: number = helper();</script>
+	</head>
+}`;
+		const { root } = create_virtual_code(source);
+		const text = generated(root);
+		const block = text.indexOf(';{\n');
+		expect(text.indexOf("import { helper } from './helper.js';")).toBeGreaterThan(-1);
+		expect(text.indexOf("import { helper } from './helper.js';")).toBeLessThan(block);
+		// Its place in the block is blanked; the statement after it keeps its column.
+		expect(text.slice(block)).toMatch(/;\{\n {37}\nconst value: number = helper\(\);\n\}\n/);
+		const mapping = script_mapping(root, 'script_0');
+		const import_index = mapping?.sourceOffsets.indexOf(source.indexOf('import { helper }'));
+		expect(import_index).toBeGreaterThanOrEqual(0);
+		expect(
+			text.slice(
+				mapping?.generatedOffsets[import_index ?? 0],
+				(mapping?.generatedOffsets[import_index ?? 0] ?? 0) +
+					(mapping?.lengths[import_index ?? 0] ?? 0),
+			),
+		).toBe("import { helper } from './helper.js';");
+	});
+
+	it('emits nothing for a self-closing <script src=... />', () => {
 		const { root } = create_virtual_code(
 			`function App() @{
 	<head>
@@ -131,42 +173,28 @@ describe('embedded <script> virtual codes', () => {
 	</head>
 }`,
 		);
-		expect(embedded_of(root, 'typescript')).toHaveLength(0);
+		expect(generated(root)).not.toContain(';{\n');
+		expect(root?.mappings.some((mapping) => mapping.data.customData?.embeddedId)).toBe(false);
 	});
 });
 
-describe('embedded <script> compile-failure fallback', () => {
-	// `import { from 'x';` makes compilation throw fatally, so the embedded codes
-	// below come from the regex fallback (extractScriptFromSource), not the compiler.
-	it('keeps a typed script embedded document alive while the file has a fatal error', () => {
+describe('<script> bodies while the file has a fatal compile error', () => {
+	// `import { from 'x';` makes compilation throw fatally: the generated code is
+	// the raw source, CSS keeps its embedded codes from the regex fallback, and
+	// script bodies are left to the compile error (no block, no embedded code).
+	it('embeds no script code and keeps CSS intellisense alive', () => {
 		const { root } = create_virtual_code(
 			`import { from 'x';
 function App() @{
 	<head>
 		<script type="text/typescript">const n: number = 1;</script>
+		<style>.a { color: red; }</style>
 	</head>
 }`,
 		);
-		const ts_codes = embedded_of(root, 'typescript');
-		expect(ts_codes).toHaveLength(1);
-		expect(ts_codes[0].snapshot.getText(0, ts_codes[0].snapshot.getLength())).toBe(
-			'const n: number = 1;',
-		);
-	});
-
-	it('does not let a self-closing <script src /> swallow a later script body', () => {
-		const { root } = create_virtual_code(
-			`import { from 'x';
-function App() @{
-	<head>
-		<script src="/a.js" />
-		<script>const x = 1;</script>
-	</head>
-}`,
-		);
-		const ts_codes = embedded_of(root, 'typescript');
-		expect(ts_codes).toHaveLength(1);
-		expect(ts_codes[0].snapshot.getText(0, ts_codes[0].snapshot.getLength())).toBe('const x = 1;');
+		expect(embedded_of(root, 'typescript')).toHaveLength(0);
+		expect(embedded_of(root, 'css')).toHaveLength(1);
+		expect(generated(root)).not.toContain(';{\n');
 	});
 });
 

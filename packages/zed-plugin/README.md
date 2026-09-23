@@ -75,3 +75,48 @@ The extension looks for the language server `@tsrx/language-server` in this orde
 
 Project-local installations (`node_modules/.bin/tsrx-language-server`) are also
 detected automatically.
+
+## TypeScript backends
+
+The TSRX language server hosts TypeScript 5 itself (the `classic` backend), so
+`.tsrx` files get their TypeScript features from it. Zed's own TypeScript support
+runs `vtsls` or `typescript-language-server`, both TypeScript 5 based, and cannot
+serve `.tsrx` files.
+
+### What goes in tsconfig.json
+
+- **TypeScript 5.9 or 6** (classic backend): install `@tsrx/typescript-plugin` and
+  add `{ "name": "@tsrx/typescript-plugin" }` to `compilerOptions.plugins`. Zed's
+  `vtsls` or `typescript-language-server` loads the plugin from there, next to the
+  workspace `typescript` package it runs, so `.ts` files that import `.tsrx`
+  modules resolve them. The TSRX language server needs nothing: it serves the
+  `.tsrx` files themselves.
+- **TypeScript 7** (native backend): declare `@tsrx/content-mapper` under
+  `contentMappers` instead; TypeScript 7 ignores `plugins`. Both entries can sit
+  in one tsconfig, since TypeScript 5 and 6 ignore `contentMappers`.
+- VS Code alone needs no `plugins` entry: its extension hands the plugin to VS
+  Code's own tsserver.
+
+TypeScript 7 support for `.tsrx` files is not complete yet. The gaps and the
+upstream TypeScript issues behind them are tracked in
+[tsrx-org/tsrx#136](https://github.com/tsrx-org/tsrx/issues/136); if you run into
+one that is not listed there, please file a new issue.
+
+The server also has a `native` backend that leaves TypeScript features to
+TypeScript 7's language server (`tsc --lsp`) through `@tsrx/content-mapper` (see
+[`@tsrx/language-server`](../language-server/README.md)). It only makes sense next
+to a client that runs TypeScript 7 with
+`initializationOptions.runExternalCode: true` for `.tsrx` files. Zed has no such
+language server yet, so keep the default `classic` backend in Zed. Once Zed can
+run TypeScript 7 for `.tsrx` files, select the backend without an extension update
+through Zed's settings:
+
+```jsonc
+{
+  "lsp": {
+    "tsrx-language-server": {
+      "initialization_options": { "typescriptBackend": "native" },
+    },
+  },
+}
+```

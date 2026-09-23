@@ -31,7 +31,60 @@ npx @tsrx/language-server --stdio
 ```
 
 Configure your editor's LSP client for `*.tsrx` files with the language ID `tsrx`.
-VS Code users can install the
+
+The `classic` backend hosts TypeScript's JavaScript API,
+`typescript@^5.9.3 || ^6.0.0` (the peer dependency); it refuses to initialize with
+an explanation when the project's only `typescript` is the native TypeScript 7
+package (a launcher without a JavaScript API). The `native` backend loads no
+TypeScript at all: it reads `tsconfig.json` and resolves compilers through
+`@tsrx/typescript-plugin`'s own reader and runs on Volar's plain project host, so
+TypeScript 7 can be the only TypeScript in the project.
+
+## TypeScript backends
+
+The server runs beside one of two TypeScript backends. Never run both on the same
+file.
+
+- `classic` (default): the server hosts TypeScript (5.9 or 6) itself through Volar
+  and serves every feature for `.tsrx` files, including type-aware ones. Which
+  installation it hosts comes from the Volar-style `typescript.tsdk`
+  initialization option, the absolute path of a TypeScript `lib` directory (the
+  one containing `typescript.js`); the VS Code extension passes the TypeScript VS
+  Code runs for the workspace. Without the option the server loads the
+  `typescript` package resolvable from its own location (the peer dependency).
+- `native`: TypeScript 7 owns every TypeScript feature for `.tsrx` files through
+  [`@tsrx/content-mapper`](../content-mapper/README.md) (diagnostics including
+  TSRX compile errors, hover, completions, signature help, definitions,
+  references, rename, code actions, auto-import, inlay hints, semantic tokens).
+  The TSRX server is slimmed down to what TypeScript does not own: TSRX snippet
+  completions (Ripple-gated), CSS in `<style>` blocks, document symbols,
+  auto-closing tags, CSS-class hover and definition, and keyword highlights.
+  `volar-service-typescript` is never loaded in this mode.
+- `plugin`: the editor's own tsserver owns every TypeScript feature for `.tsrx`
+  files through `@tsrx/typescript-plugin` (VS Code on TypeScript 5.9 or 6, where
+  the extension hands the plugin to VS Code's tsserver). The server is as slim as
+  on `native` but also reports the TSRX compile errors, which a tsserver plugin
+  cannot.
+
+Select the backend with a command-line flag or an initialization option (the flag
+wins):
+
+```bash
+tsrx-language-server --stdio --typescript-backend=native
+```
+
+```jsonc
+// LSP initialize params
+{ "initializationOptions": { "typescriptBackend": "native" } }
+// or, on the classic backend, the TypeScript to host:
+{ "initializationOptions": { "typescript": { "tsdk": "/path/to/node_modules/typescript/lib" } } }
+```
+
+Use `native` only when the same editor also runs TypeScript 7's language server
+with `initializationOptions.runExternalCode: true` and the project declares the
+content mapper in `tsconfig.json`; otherwise `.tsrx` files get no type
+information. The VS Code extension selects the backend for you. VS Code users can
+install the
 [TSRX Syntax for VS Code](https://marketplace.visualstudio.com/items?itemName=TSRX.tsrx-vscode-plugin),
 which bundles and starts this server automatically. Zed users can install the
 [TSRX extension for Zed](https://zed.dev/extensions/tsrx), which also starts this
@@ -39,4 +92,6 @@ server automatically.
 
 See the [TSRX documentation](https://tsrx.dev/) and
 [`@tsrx/typescript-plugin`](../typescript-plugin/README.md) for target compiler
-selection and TypeScript configuration.
+selection and TypeScript configuration, and
+[`@tsrx/content-mapper`'s `ROLLOUT.md`](../content-mapper/ROLLOUT.md) for the
+migration, rollback and default-backend decision behind the two backends.

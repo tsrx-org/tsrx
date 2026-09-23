@@ -4,24 +4,21 @@ import { createLogging } from './utils.js';
 import {
 	createConnection,
 	createServer,
+	createSimpleProject,
 	createTypeScriptProject,
 } from '@volar/language-server/node';
-import { createCompileErrorDiagnosticPlugin } from './compileErrorDiagnosticPlugin.js';
-import { createDefinitionPlugin } from './definitionPlugin.js';
-import { createHoverPlugin } from './hoverPlugin.js';
-import { createCompletionPlugin } from './completionPlugin.js';
-import { createAutoInsertPlugin } from './autoInsertPlugin.js';
-import { createTypeScriptDiagnosticFilterPlugin } from './typescriptDiagnosticPlugin.js';
-import { createDocumentHighlightPlugin } from './documentHighlightPlugin.js';
-import { createDocumentSymbolPlugin } from './documentSymbolPlugin.js';
+import Module from 'node:module';
+import path from 'node:path';
+import { resolve_typescript_backend, resolve_typescript_tsdk } from './backend.js';
+import { createServicePlugins } from './servicePlugins.js';
 import {
 	getTsrxLanguagePlugin,
 	invalidateCompilerResolutionCaches,
 	invalidateTypeDefinitionCaches,
 	resolveConfig,
 } from '@tsrx/typescript-plugin/src/language.js';
-import { createTypeScriptServices } from './typescriptService.js';
-import { create as createCssService } from 'volar-service-css';
+import { unsupported_typescript_message } from '@tsrx/typescript-plugin/src/typescript-version.js';
+import { NODE_CONFIG_HOST } from '@tsrx/typescript-plugin/src/config-host.js';
 import {
 	handleWorkspaceChanges,
 	trackTypeScriptConfigDependencies,
@@ -31,32 +28,11 @@ import {
 const { log, logError } = createLogging('[TSRX Language Server]');
 
 /**
- * Strip whole-document formatting capabilities from a Volar service plugin.
- *
- * The bundled TypeScript (`typescript-syntactic`) and CSS services advertise a
- * `documentFormattingProvider`. Because they run against the virtual TS/CSS code
- * rather than the `.tsrx` source, their edits don't map back and formatting is a
- * no-op — yet the capability still makes the language client contribute a
- * "TSRX Syntax for VS Code" entry to "Format Document With…" that silently does nothing.
- * Formatting for `.tsrx` is owned by Prettier + @tsrx/prettier-plugin (configured
- * as the default `[tsrx]` formatter in the VS Code extension), so we drop these
- * capabilities to keep Prettier as the single, working formatter. On-type
- * formatting is left intact.
- *
- * @template {{ capabilities?: Record<string, unknown> }} T
- * @param {T} plugin
- * @returns {T}
+ * @param {{ argv?: readonly string[] }} [options] `argv` defaults to the process
+ *   arguments; it carries the `--typescript-backend=<classic|native>` flag.
  */
-function stripDocumentFormatting(plugin) {
-	const {
-		documentFormattingProvider: _fmt,
-		documentRangeFormattingProvider: _rangeFmt,
-		...capabilities
-	} = plugin.capabilities ?? {};
-	return { ...plugin, capabilities };
-}
-
-export function createTsrxLanguageServer() {
+export function createTsrxLanguageServer(options = {}) {
+	const argv = options.argv ?? process.argv.slice(2);
 	const connection = createConnection();
 	const server = createServer(connection);
 
@@ -116,12 +92,81 @@ export function createTsrxLanguageServer() {
 		host[method] = wrapped;
 	}
 
+	/**
+	 * Load the TypeScript the classic backend hosts. With a `typescript.tsdk`
+	 * initialization option (the `lib` directory of a TypeScript installation),
+	 * that installation is loaded and every later `require('typescript')` in this
+	 * process (the shared transform's option defaults, Volar's TypeScript
+	 * service) resolves to the same module, so one TypeScript runs. Without the
+	 * option, the `typescript` package resolvable from the server (its peer
+	 * dependency) is used, as before.
+	 * @param {string | undefined} tsdk
+	 * @returns {typeof import('typescript')}
+	 */
+	function load_typescript(tsdk) {
+		if (tsdk === undefined) {
+			const bundled = require('typescript');
+			log(`TypeScript ${bundled.version} from the typescript package next to the server`);
+			return bundled;
+		}
+		const typescript_js = path.join(tsdk, 'typescript.js');
+		const module_loader = /** @type {{ _resolveFilename: (...args: unknown[]) => string }} */ (
+			/** @type {unknown} */ (Module)
+		);
+		const original_resolve = module_loader._resolveFilename;
+		module_loader._resolveFilename = function (request, ...rest) {
+			return request === 'typescript'
+				? typescript_js
+				: original_resolve.call(this, request, ...rest);
+		};
+		const loaded = require(typescript_js);
+		log(`TypeScript ${loaded.version} from ${tsdk} (typescript.tsdk initialization option)`);
+		return loaded;
+	}
+
 	connection.onInitialize(async (params) => {
 		try {
 			log('Initializing TSRX language server...');
 			log('Initialization options:', JSON.stringify(params.initializationOptions, null, 2));
 
-			const ts = require('typescript');
+			const selection = resolve_typescript_backend({
+				argv,
+				initializationOptions: params.initializationOptions,
+			});
+			if (selection.invalid !== undefined) {
+				logError(
+					`Unknown TypeScript backend ${JSON.stringify(selection.invalid)}; using "${selection.backend}".`,
+				);
+			}
+			log(`TypeScript backend: ${selection.backend} (from ${selection.source})`);
+
+			if (selection.backend !== 'classic') {
+				// The editor's TypeScript (TypeScript 7 through the content mapper, or
+				// its tsserver through the tsserver plugin) owns every TypeScript
+				// feature for `.tsrx` files. The TSRX plugin only needs the compiler
+				// per file, which it resolves from the nearest tsconfig.json itself,
+				// so no TypeScript module is loaded (the native compiler's package has
+				// none) and no TypeScript project host is created.
+				const compilerResolutionDependencies = new Set();
+				compilerResolutionDependencySets.add(compilerResolutionDependencies);
+				const languagePlugin = getTsrxLanguagePlugin({
+					configHost: NODE_CONFIG_HOST,
+					dependencies: compilerResolutionDependencies,
+				});
+				const initResult = server.initialize(
+					params,
+					createSimpleProject([languagePlugin]),
+					createServicePlugins(selection.backend),
+				);
+				log('Server initialization complete (native backend, no TypeScript loaded)');
+				return initResult;
+			}
+
+			const ts = load_typescript(resolve_typescript_tsdk(params.initializationOptions));
+			const unsupported_typescript = unsupported_typescript_message(ts, 'language-server');
+			if (unsupported_typescript) {
+				throw new Error(unsupported_typescript);
+			}
 
 			const initResult = server.initialize(
 				params,
@@ -153,21 +198,7 @@ export function createTsrxLanguageServer() {
 						},
 					};
 				}),
-				[
-					createAutoInsertPlugin(),
-					createCompletionPlugin(),
-					createCompileErrorDiagnosticPlugin(),
-					createDefinitionPlugin(),
-					createDocumentSymbolPlugin(),
-					stripDocumentFormatting(createCssService()),
-					...createTypeScriptServices(ts).map(stripDocumentFormatting),
-					// !IMPORTANT 'createTypeScriptDiagnosticFilterPlugin', 'createHoverPlugin',
-					// and 'createDocumentHighlightPlugin' must come after TypeScript services
-					// to intercept volar's and vscode default providers
-					createTypeScriptDiagnosticFilterPlugin(),
-					createHoverPlugin(),
-					createDocumentHighlightPlugin(),
-				],
+				createServicePlugins(selection.backend, ts),
 			);
 
 			log('Server initialization complete');

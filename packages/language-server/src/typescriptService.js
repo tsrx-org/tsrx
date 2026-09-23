@@ -11,39 +11,56 @@ import { createRequire } from 'node:module';
 // volar-service-typescript is also externalized (via regex in tsdown config)
 // so that its internal consumers (semantic.js, codeAction.js, etc.) load
 // getUserPreferences from the same Node module cache entry we patch here.
+//
+// The require and the patch run on first use, not at module load: the native
+// TypeScript backend never calls `createTypeScriptServices`, so it never loads
+// `volar-service-typescript` at all.
 const require = createRequire(import.meta.url);
-const getUserPreferencesModule = require('volar-service-typescript/lib/configs/getUserPreferences');
-const { create } = require('volar-service-typescript');
 
-const originalGetUserPreferences = getUserPreferencesModule.getUserPreferences;
+/** @type {typeof import('volar-service-typescript') | undefined} */
+let volar_service_typescript;
 
 /**
- * Enhanced getUserPreferences to add TypeScript and TSRX preferences.
- * Specifically makes preferTypeOnlyAutoImports true if not set
- * @param {LanguageServiceContext} context
- * @param {TextDocument} document
+ * @returns {typeof import('volar-service-typescript')}
  */
-getUserPreferencesModule.getUserPreferences = async function (context, document) {
-	const origPreferences = await originalGetUserPreferences.call(this, context, document);
+function load_typescript_service() {
+	if (volar_service_typescript) {
+		return volar_service_typescript;
+	}
+	const getUserPreferencesModule = require('volar-service-typescript/lib/configs/getUserPreferences');
+	const originalGetUserPreferences = getUserPreferencesModule.getUserPreferences;
 
-	const [tsConfig, tsrxConfig] = await Promise.all([
-		context.env.getConfiguration?.('typescript'),
-		context.env.getConfiguration?.('tsrx'),
-	]);
+	/**
+	 * Enhanced getUserPreferences to add TypeScript and TSRX preferences.
+	 * Specifically makes preferTypeOnlyAutoImports true if not set
+	 * @param {LanguageServiceContext} context
+	 * @param {TextDocument} document
+	 */
+	getUserPreferencesModule.getUserPreferences = async function (context, document) {
+		const origPreferences = await originalGetUserPreferences.call(this, context, document);
 
-	return {
-		preferTypeOnlyAutoImports: true,
-		...origPreferences,
-		.../** @type {any} */ (tsConfig)?.preferences,
-		.../** @type {any} */ (tsrxConfig)?.preferences,
+		const [tsConfig, tsrxConfig] = await Promise.all([
+			context.env.getConfiguration?.('typescript'),
+			context.env.getConfiguration?.('tsrx'),
+		]);
+
+		return {
+			preferTypeOnlyAutoImports: true,
+			...origPreferences,
+			.../** @type {any} */ (tsConfig)?.preferences,
+			.../** @type {any} */ (tsrxConfig)?.preferences,
+		};
 	};
-};
+
+	volar_service_typescript = require('volar-service-typescript');
+	return /** @type {typeof import('volar-service-typescript')} */ (volar_service_typescript);
+}
 
 /**
- * Create TypeScript services with TSRX-specific enhancements.
+ * Create TypeScript services with TSRX-specific enhancements (classic backend only).
  * @param {typeof import('typescript')} ts
- * @returns {ReturnType<typeof create>}
+ * @returns {ReturnType<typeof import('volar-service-typescript').create>}
  */
 export function createTypeScriptServices(ts) {
-	return create(ts);
+	return load_typescript_service().create(ts);
 }

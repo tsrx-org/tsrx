@@ -8,7 +8,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "ripple-preview",
-    "typecheck": "tsgo --noEmit -p tsconfig.json"
+    "typecheck": "node ../scripts/native-tsc.js --noEmit -p tsconfig.json"
   },
   "keywords": [],
   "author": "",

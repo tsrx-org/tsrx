@@ -1,8 +1,9 @@
 /** @import * as AST from 'estree'; */
-/** @import {CompileError, VolarMappingsResult, CodeMapping} from '@tsrx/core/types' */
+/** @import {CompileError, CodeMapping} from '@tsrx/core/types' */
 
-/** @typedef {{ code?: string, errors?: CompileError[] }} TSRXCompileResult */
-/** @typedef {{ compile?: (source: string, filename: string, options?: { loose?: boolean, platform?: 'web' | 'ios' | 'android' }) => TSRXCompileResult, compile_to_volar_mappings(source: string, filename: string, options?: { loose?: boolean, platform?: 'web' | 'ios' | 'android' }): VolarMappingsResult }} TSRXCompilerModule */
+/** @typedef {import('./transform.js').TSRXCompilerModule} TSRXCompilerModule */
+/** @typedef {import('./transform.js').TsrxTransformResult} TsrxTransformResult */
+/** @typedef {import('./transform.js').EmbeddedRegion} EmbeddedRegion */
 
 /** @typedef {Map<string, CodeMapping>} CachedMappings */
 /** @typedef {import('typescript').CompilerOptions} CompilerOptions */
@@ -16,7 +17,6 @@
 
 /** @typedef {InstanceType<typeof import('./language.js')["TSRXVirtualCode"]>} TSRXVirtualCodeInstance */
 
-import ts from 'typescript';
 import { forEachEmbeddedCode } from '@volar/language-core';
 import fs from 'fs';
 import path from 'path';
@@ -27,6 +27,8 @@ import {
 	resolve_consumer_compiler_for_file,
 	resolve_consumer_platform_for_file,
 } from './consumer-compiler.js';
+import { NODE_CONFIG_HOST } from './config-host.js';
+import { extract_css_regions, transform_tsrx } from './transform.js';
 import { createLogging, DEBUG } from './utils.js';
 
 const require = createRequire(import.meta.url);
@@ -107,37 +109,108 @@ export function is_tsrx_file(file_name) {
 }
 
 /**
- * Detect exact platform property paths without matching comments or string
- * literals. TypeScript's scanner remains usable for partially authored TSRX
- * because it tokenizes independently of the parser's grammar.
- *
+ * Tokenize enough of a source text to find member chains: comments and
+ * string literals are skipped, template literals contribute only their
+ * `${...}` expressions, and every identifier, `.` and `?.` is a token.
+ * It tokenizes independently of any grammar, so partially authored TSRX and
+ * template syntax (`@{`, `@if`) are fine.
  * @param {string} source
- * @param {typeof import('typescript')} [typescript]
- * @returns {boolean}
+ * @returns {Array<{ kind: 'word' | 'dot' | 'question-dot' | 'other', text: string }>}
  */
-export function source_uses_platform_flag(source, typescript = ts) {
-	const scanner = typescript.createScanner(
-		typescript.ScriptTarget.Latest,
-		true,
-		typescript.LanguageVariant.JSX,
-		source,
-	);
-	/** @type {Array<{ kind: number, text: string }>} */
+function tokenize_member_chains(source) {
+	/** @type {Array<{ kind: 'word' | 'dot' | 'question-dot' | 'other', text: string }>} */
 	const tokens = [];
-	for (
-		let kind = scanner.scan();
-		kind !== typescript.SyntaxKind.EndOfFileToken;
-		kind = scanner.scan()
-	) {
-		tokens.push({ kind, text: scanner.getTokenText() });
+	const length = source.length;
+	let index = 0;
+	/** Brace depth at which each open template substitution started, innermost last. */
+	/** @type {number[]} */
+	const template_braces = [];
+	let brace_depth = 0;
+
+	/** Skip template text from `index` to the closing backtick or the next substitution. */
+	function skip_template_text() {
+		while (index < length && source[index] !== '`') {
+			if (source[index] === '\\') {
+				index += 2;
+				continue;
+			}
+			if (source[index] === '$' && source[index + 1] === '{') {
+				template_braces.push(brace_depth);
+				index += 2;
+				return;
+			}
+			index += 1;
+		}
+		if (index < length) index += 1;
 	}
 
+	while (index < length) {
+		const char = source[index];
+		const next = source[index + 1];
+		if (/\s/.test(char)) {
+			index += 1;
+		} else if (char === '/' && next === '/') {
+			while (index < length && source[index] !== '\n') index += 1;
+		} else if (char === '/' && next === '*') {
+			const end = source.indexOf('*/', index + 2);
+			index = end < 0 ? length : end + 2;
+		} else if (char === '"' || char === "'") {
+			index += 1;
+			while (index < length && source[index] !== char && source[index] !== '\n') {
+				if (source[index] === '\\') index += 1;
+				index += 1;
+			}
+			index += 1;
+		} else if (char === '`') {
+			index += 1;
+			skip_template_text();
+		} else if (
+			char === '}' &&
+			template_braces.length > 0 &&
+			template_braces[template_braces.length - 1] === brace_depth
+		) {
+			// The substitution closed: back into the template literal's text.
+			template_braces.pop();
+			index += 1;
+			skip_template_text();
+		} else if (/[A-Za-z_$]/.test(char)) {
+			let end = index + 1;
+			while (end < length && /[\w$]/.test(source[end])) end += 1;
+			tokens.push({ kind: 'word', text: source.slice(index, end) });
+			index = end;
+		} else if (char === '?' && next === '.') {
+			tokens.push({ kind: 'question-dot', text: '?.' });
+			index += 2;
+		} else if (char === '.') {
+			tokens.push({ kind: 'dot', text: '.' });
+			index += 1;
+		} else {
+			if (char === '{') brace_depth += 1;
+			else if (char === '}') brace_depth -= 1;
+			tokens.push({ kind: 'other', text: char });
+			index += 1;
+		}
+	}
+	return tokens;
+}
+
+/**
+ * Detect exact platform property paths (`import.meta.env.platform.web` and
+ * the `ios` and `android` twins) without matching comments or string
+ * literals, and without TypeScript's scanner so the native path needs no
+ * TypeScript.
+ *
+ * @param {string} source
+ * @param {unknown} [_typescript] Accepted for older callers; unused.
+ * @returns {boolean}
+ */
+export function source_uses_platform_flag(source, _typescript) {
+	const tokens = tokenize_member_chains(source);
 	const prefix = ['import', '.', 'meta', '.', 'env', '.', 'platform', '.'];
 	for (let index = 0; index + prefix.length < tokens.length; index += 1) {
 		if (
 			index > 0 &&
-			(tokens[index - 1].kind === typescript.SyntaxKind.DotToken ||
-				tokens[index - 1].kind === typescript.SyntaxKind.QuestionDotToken)
+			(tokens[index - 1].kind === 'dot' || tokens[index - 1].kind === 'question-dot')
 		) {
 			continue;
 		}
@@ -145,7 +218,6 @@ export function source_uses_platform_flag(source, typescript = ts) {
 		const name = tokens[index + prefix.length].text;
 		if (name === 'web' || name === 'ios' || name === 'android') return true;
 	}
-
 	return false;
 }
 
@@ -155,12 +227,13 @@ export function source_uses_platform_flag(source, typescript = ts) {
  */
 export function getTsrxLanguagePlugin(options = {}) {
 	log('Creating TSRX language plugin...');
-	const typescript = options.ts ?? ts;
+	// `ts` is only needed by the TypeScript-facing parts of the plugin (the
+	// classic path); the native backend creates the plugin without one.
+	const typescript = options.ts;
 	/** @type {CompilerResolutionOptions} */
 	const compiler_resolution_options = {
 		...options,
-		ts: typescript,
-		configHost: options.configHost ?? typescript.sys,
+		configHost: options.configHost ?? NODE_CONFIG_HOST,
 	};
 
 	return {
@@ -227,44 +300,6 @@ export function getTsrxLanguagePlugin(options = {}) {
 				}
 				return undefined;
 			},
-			// Volar's tsc program proxy (`proxyCreateProgram`) does not support
-			// extra service scripts and warns ONCE PER PARSED FILE when the hook
-			// is merely present — omit it entirely under tsrx-tsc (the bin sets
-			// TSRX_TSC before loading this module).
-			...(process.env.TSRX_TSC === 'true'
-				? null
-				: {
-						/**
-						 * Register each embedded `<script>` body as its own TypeScript service
-						 * script so volar-service-typescript's semantic features (type-aware
-						 * completions, hover, go-to-definition, diagnostics, imports) run against it
-						 * and map back to the `.tsrx` source — the same way `<style>` bodies get CSS
-						 * intellisense, except semantic TS additionally requires a service-script
-						 * registration (a self-contained languageId is not enough).
-						 *
-						 * The returned `code` must be the exact same instance stored in the root's
-						 * `embeddedCodes` (volar matches it by identity), and each `fileName` must be
-						 * unique. Only honored on the language-server (`createTypeScriptProject`)
-						 * path, not the tsserver-plugin path.
-						 * @param {string} fileName
-						 * @param {VirtualCode} tsrx_code
-						 */
-						getExtraServiceScripts(fileName, tsrx_code) {
-							/** @type {Array<{ fileName: string, code: VirtualCode, extension: string, scriptKind: number }>} */
-							const scripts = [];
-							for (const code of forEachEmbeddedCode(tsrx_code)) {
-								if (code.languageId === 'typescript') {
-									scripts.push({
-										fileName: `${fileName}.${code.id}.ts`,
-										code,
-										extension: '.ts',
-										scriptKind: ts.ScriptKind.TS,
-									});
-								}
-							}
-							return scripts;
-						},
-					}),
 		},
 	};
 }
@@ -272,6 +307,32 @@ export function getTsrxLanguagePlugin(options = {}) {
 /**
  * @implements {VirtualCode}
  */
+/**
+ * File names (as TypeScript spells them) whose last TSRX compilation failed.
+ * While a file is in this state its generated code is the raw source, so every
+ * TypeScript diagnostic on it would be noise; the tsserver plugin (`index.js`)
+ * drops them, as the classic language server's diagnostic filter does, and the
+ * TSRX compile error is reported by the language server instead.
+ * @type {Set<string>}
+ */
+export const files_with_fatal_compile_error = new Set();
+
+/**
+ * @param {string} file_name
+ * @returns {boolean}
+ */
+export function has_fatal_compile_error(file_name) {
+	return files_with_fatal_compile_error.has(normalize_file_name_key(file_name));
+}
+
+/**
+ * @param {string} file_name
+ * @returns {string}
+ */
+function normalize_file_name_key(file_name) {
+	return file_name.replace(/\\/g, '/').toLowerCase();
+}
+
 export class TSRXVirtualCode {
 	/** @type {string} */
 	id = 'root';
@@ -355,9 +416,6 @@ export class TSRXVirtualCode {
 		this.sourceAst = null;
 		this.isDotCompletionMode = false;
 
-		/** @type {VolarMappingsResult | undefined} */
-		let transpiled;
-
 		// Check if a single "." was typed using changeRange
 		let isDotTyped = false;
 		let dotPosition = -1;
@@ -394,6 +452,8 @@ export class TSRXVirtualCode {
 			}
 		}
 
+		/** @type {TsrxTransformResult} */
+		let result;
 		try {
 			const platform = this.platformProvider?.(source_uses_platform_flag(newCode));
 			// If user typed a ".", compile without it and then stitch it back into
@@ -404,14 +464,11 @@ export class TSRXVirtualCode {
 					newCode.substring(0, dotPosition) + newCode.substring(dotPosition + 1);
 
 				log('Compiling without typed dot at position', dotPosition);
-				transpiled = this.tsrx.compile_to_volar_mappings(codeWithoutDot, this.fileName, {
-					loose: true,
-					platform,
-				});
-				log('Compilation without dot successful');
+				result = transform_tsrx(this.tsrx, this.fileName, codeWithoutDot, { platform });
 
-				if (transpiled && transpiled.code && transpiled.mappings.length > 0) {
-					const insertedDotPosition = restore_typed_dot_in_transpiled_code(transpiled, dotPosition);
+				if (!result.fatalError && result.text && result.mappings.length > 0) {
+					log('Compilation without dot successful');
+					const insertedDotPosition = restore_typed_dot_in_transpiled_code(result, dotPosition);
 
 					if (insertedDotPosition === null) {
 						logWarning('Failed to restore typed dot into transpiled output');
@@ -420,63 +477,58 @@ export class TSRXVirtualCode {
 					}
 				}
 			} else {
-				// Normal compilation
 				log('Compiling TSRX code...');
-				transpiled = this.tsrx.compile_to_volar_mappings(newCode, this.fileName, {
-					loose: true,
-					platform,
-				});
-				log('Compilation successful, generated code length:', transpiled?.code?.length || 0);
+				result = transform_tsrx(this.tsrx, this.fileName, newCode, { platform });
 			}
 		} catch (e) {
+			// Platform resolution failed (invalid tsconfig): treat it like a compile failure.
 			const error = /** @type {CompileError} */ (e);
-			logError('TSRX compilation failed for', this.fileName, ':', error);
-			if (process.env.TSRX_TSC === 'true') {
-				logTSRXErrors(this.fileName, [error]);
-			}
 			error.type = 'fatal';
-			this.fatalErrors.push(error);
+			result = {
+				text: '',
+				mappings: [],
+				cssRegions: [],
+				scriptRegions: [],
+				errors: [],
+				fatalError: error,
+				sourceAst: null,
+			};
 		}
 
-		if (transpiled && transpiled.code) {
+		if (result.fatalError) {
+			logError('TSRX compilation failed for', this.fileName, ':', result.fatalError);
+			if (process.env.TSRX_TSC === 'true') {
+				logTSRXErrors(this.fileName, [result.fatalError]);
+			}
+			this.fatalErrors.push(result.fatalError);
+			files_with_fatal_compile_error.add(normalize_file_name_key(this.fileName));
+		} else {
+			log('Compilation successful, generated code length:', result.text.length);
+			files_with_fatal_compile_error.delete(normalize_file_name_key(this.fileName));
+		}
+
+		this.originalCode = newCode;
+
+		if (!result.fatalError && result.text) {
 			// Successful compilation - update everything
-			this.originalCode = newCode;
-			this.generatedCode = transpiled.code;
-			this.mappings = transpiled.mappings ?? [];
-			this.usageErrors = transpiled.errors;
-			this.sourceAst = transpiled.sourceAst;
+			this.generatedCode = result.text;
+			this.mappings = result.mappings;
+			this.usageErrors = result.errors;
+			this.sourceAst = result.sourceAst;
 
-			if (process.env.TSRX_TSC === 'true' && transpiled.errors.length > 0) {
-				logTSRXErrors(this.fileName, transpiled.errors);
+			if (process.env.TSRX_TSC === 'true' && result.errors.length > 0) {
+				logTSRXErrors(this.fileName, result.errors);
 			}
 
-			const cssMappings = transpiled.cssMappings;
-			const scriptMappings = transpiled.scriptMappings ?? [];
-			if (cssMappings.length > 0 || scriptMappings.length > 0) {
-				log(
-					'Creating',
-					cssMappings.length,
-					'CSS and',
-					scriptMappings.length,
-					'script embedded codes',
-				);
-
-				/** @type {VirtualCode[]} */
-				const embedded = [];
-				for (const mapping of cssMappings) {
-					embedded.push(create_embedded_code_from_mapping(mapping, 'css'));
-				}
-				for (const mapping of scriptMappings) {
-					// Every script body is treated as TypeScript in the editor — TS is a
-					// superset of JS, and this matches the TextMate/tree-sitter/prettier
-					// treatment. The `type` attribute only matters to the runtime
-					// transforms, which read it off the AST.
-					embedded.push(create_embedded_code_from_mapping(mapping, 'typescript'));
-				}
-				this.embeddedCodes = embedded;
-			} else {
-				this.embeddedCodes = [];
+			if (result.cssRegions.length > 0) {
+				log('Creating', result.cssRegions.length, 'CSS embedded codes');
 			}
+			// `<script>` bodies are not embedded codes: the transform appends each one
+			// to the generated TSX as a block (`embed_script_bodies`), so TypeScript
+			// checks them in the same file on every path. Only CSS is embedded.
+			this.embeddedCodes = result.cssRegions.map((region) =>
+				create_embedded_code_from_region(region, 'css'),
+			);
 
 			if (DEBUG) {
 				log('CSS embedded codes:', (this.embeddedCodes || []).length);
@@ -494,18 +546,10 @@ export class TSRXVirtualCode {
 					);
 				}
 			}
-
-			this.snapshot = /** @type {IScriptSnapshot} */ ({
-				getText: (start, end) => this.generatedCode.substring(start, end),
-				getLength: () => this.generatedCode.length,
-				getChangeRange: () => undefined,
-			});
 		} else {
 			// When compilation fails, show where it failed and disable all
 			// TypeScript diagnostics until the compilation error is fixed
 			log('Compilation failed, only display where the compilation error occurred.');
-
-			this.originalCode = newCode;
 
 			// Feed the raw source back as the generated code, with verification
 			// enabled. This lets TS parse it and surface errors at the broken
@@ -538,17 +582,18 @@ export class TSRXVirtualCode {
 				},
 			];
 
-			// Extract CSS from <style> and JS/TS from <script> tags for embedded codes,
-			// so CSS and script intellisense keep working while the file has a transient
-			// compile error elsewhere.
-			this.embeddedCodes = [...extractCssFromSource(newCode), ...extractScriptFromSource(newCode)];
-
-			this.snapshot = /** @type {IScriptSnapshot} */ ({
-				getText: (start, end) => this.generatedCode.substring(start, end),
-				getLength: () => this.generatedCode.length,
-				getChangeRange: () => undefined,
-			});
+			// Extract CSS from <style> tags for embedded codes, so CSS intellisense
+			// keeps working while the file has a transient compile error elsewhere.
+			this.embeddedCodes = extract_css_regions(newCode).map((region) =>
+				create_embedded_code_from_region(region, 'css'),
+			);
 		}
+
+		this.snapshot = /** @type {IScriptSnapshot} */ ({
+			getText: (start, end) => this.generatedCode.substring(start, end),
+			getLength: () => this.generatedCode.length,
+			getChangeRange: () => undefined,
+		});
 	}
 
 	#buildMappingCache() {
@@ -686,92 +731,41 @@ function logTSRXErrors(file_name, errors) {
 }
 
 /**
- * Extract raw CSS content from `<style>...</style>` tags in source code, used as a
- * fallback for CSS intellisense while the file has a fatal compile error (no AST
- * available — the normal path derives regions from the compiler's `cssMappings`
- * instead). Parallels {@link extractScriptFromSource}.
- * The opening-tag pattern is attribute-aware: a `>` inside a quoted value or an
- * `{...}` expression container (one level of nesting) does not end the tag, so
- * `apply={cond ? a : b}` and `apply={(x) => y}` are handled. It refuses to match
- * self-closing `<style apply={theme} />` blocks (the `/` before `>` must not close
- * the tag): they carry no CSS body, so — like the compiler's `cssMappings` — they
- * yield no region and can't swallow a later bodied block. One region is produced
- * per bodied block, in source order, whether the blocks share a scope or sit in
- * nested `@{ ... }` / control-flow bodies.
- * @param {string} code - The source code to extract CSS from
- * @returns {VirtualCode[]} Array of embedded CSS virtual codes
- */
-function extractCssFromSource(code) {
-	/** @type {VirtualCode[]} */
-	const embeddedCodes = [];
-	const styleRegex =
-		/<style\b((?:[^>"'{}/]|"[^"]*"|'[^']*'|\{(?:[^{}]|\{[^{}]*\})*\}|\/(?!>))*)>([\s\S]*?)<\/style>/gi;
-	let match;
-	let index = 0;
-
-	while ((match = styleRegex.exec(code)) !== null) {
-		const attrs = match[1];
-		const cssContent = match[2];
-		const styleTagStart = match.index;
-		// `<style` + attrs + `>`; attrs may contain a quoted or braced `>`, so derive
-		// the opening tag's end from the match structure rather than searching for `>`.
-		const openTagEnd = '<style'.length + attrs.length + 1;
-		const cssStart = styleTagStart + openTagEnd;
-		const cssLength = cssContent.length;
-		const id = `style_${index}`;
-
-		log(`Extracted CSS region ${index}: offset ${cssStart}, length ${cssLength}`);
-
-		/** @type {CodeMapping} */
-		const mapping = {
-			sourceOffsets: [cssStart],
-			generatedOffsets: [0],
-			lengths: [cssLength],
-			generatedLengths: [cssLength],
-			data: {
-				verification: true,
-				completion: true,
-				semantic: true,
-				navigation: true,
-				structure: true,
-				format: false,
-				customData: {
-					content: cssContent,
-					embeddedId: id,
-				},
-			},
-		};
-
-		embeddedCodes.push(create_embedded_code_from_mapping(mapping, 'css'));
-
-		index++;
-	}
-
-	if (embeddedCodes.length > 0) {
-		log(`Extracted ${embeddedCodes.length} CSS embedded codes from style tags`);
-	}
-
-	return embeddedCodes;
-}
-
-/**
- * Build an embedded virtual code from a single mapping produced by the compiler
- * (`cssMappings` / `scriptMappings`). The embedded document text is the region's
- * `customData.content`; `languageId` selects which Volar service handles it
- * (`css`, `typescript`, or `javascript`).
- * @param {CodeMapping} mapping
+ * Build an embedded virtual code from a `<style>` / `<script>` region produced
+ * by the transform. The embedded document text is the region's content;
+ * `languageId` selects which Volar service handles it (`css` or `typescript`).
+ * @param {EmbeddedRegion} region
  * @param {string} languageId
  * @returns {VirtualCode}
  */
-function create_embedded_code_from_mapping(mapping, languageId) {
-	const content = /** @type {string} */ (mapping.data?.customData?.content ?? '');
+function create_embedded_code_from_region(region, languageId) {
+	const content = region.content;
+	/** @type {CodeMapping} */
+	const mapping = {
+		sourceOffsets: [region.start],
+		generatedOffsets: [0],
+		lengths: [region.length],
+		generatedLengths: [region.length],
+		data: {
+			verification: true,
+			completion: true,
+			semantic: true,
+			navigation: true,
+			structure: true,
+			format: false,
+			customData: {
+				content,
+				embeddedId: region.id,
+			},
+		},
+	};
 	return {
-		id: /** @type {string} */ (mapping.data?.customData?.embeddedId),
+		id: region.id,
 		languageId,
 		snapshot: {
 			getText: (/** @type {number} */ start, /** @type {number} */ end) =>
 				content.substring(start, end),
-			getLength: () => mapping.lengths[0],
+			getLength: () => region.length,
 			getChangeRange: () => undefined,
 		},
 		mappings: [mapping],
@@ -780,73 +774,9 @@ function create_embedded_code_from_mapping(mapping, languageId) {
 }
 
 /**
- * Extract raw script content from `<script>...</script>` tags in source code, used
- * as a fallback for script intellisense while the file has a fatal compile error
- * (no AST available — the normal path derives regions from the compiler's
- * `scriptMappings` instead). Parallels {@link extractCssFromSource}.
- * Every body is treated as TypeScript (a superset of JS), so the attributes are
- * never inspected. The opening-tag pattern refuses to match self-closing
- * `<script src=... />` tags (the `/` before `>` must not close the tag), so they
- * can't swallow a later real script's body.
- * @param {string} code - The source code to extract scripts from
- * @returns {VirtualCode[]} Array of embedded TypeScript virtual codes
- */
-function extractScriptFromSource(code) {
-	/** @type {VirtualCode[]} */
-	const embeddedCodes = [];
-	const scriptRegex = /<script\b((?:[^>"'/]|"[^"]*"|'[^']*'|\/(?!>))*)>([\s\S]*?)<\/script>/gi;
-	let match;
-	let index = 0;
-
-	while ((match = scriptRegex.exec(code)) !== null) {
-		const attrs = match[1];
-		const scriptContent = match[2];
-		const scriptTagStart = match.index;
-		// `<script` + attrs + `>`; attrs may contain a quoted `>`, so derive the
-		// opening tag's end from the match structure rather than searching for `>`.
-		const openTagEnd = '<script'.length + attrs.length + 1;
-		const scriptStart = scriptTagStart + openTagEnd;
-		const scriptLength = scriptContent.length;
-		const id = `script_${index}`;
-
-		log(`Extracted script region ${index}: offset ${scriptStart}, length ${scriptLength}`);
-
-		/** @type {CodeMapping} */
-		const mapping = {
-			sourceOffsets: [scriptStart],
-			generatedOffsets: [0],
-			lengths: [scriptLength],
-			generatedLengths: [scriptLength],
-			data: {
-				verification: true,
-				completion: true,
-				semantic: true,
-				navigation: true,
-				structure: true,
-				format: false,
-				customData: {
-					content: scriptContent,
-					embeddedId: id,
-				},
-			},
-		};
-
-		embeddedCodes.push(create_embedded_code_from_mapping(mapping, 'typescript'));
-
-		index++;
-	}
-
-	if (embeddedCodes.length > 0) {
-		log(`Extracted ${embeddedCodes.length} script embedded codes from script tags`);
-	}
-
-	return embeddedCodes;
-}
-
-/**
  * Insert a typed dot back into the transpiled code and update mappings so the
  * source and generated offsets stay aligned for completion requests.
- * @param {VolarMappingsResult} transpiled
+ * @param {TsrxTransformResult} transpiled
  * @param {number} dotPosition
  * @returns {number | null}
  */
@@ -868,10 +798,10 @@ function restore_typed_dot_in_transpiled_code(transpiled, dotPosition) {
 	const generated_length = dot_mapping.generatedLengths[0];
 	const insertedDotPosition = dot_mapping.generatedOffsets[0] + generated_length;
 
-	transpiled.code =
-		transpiled.code.substring(0, insertedDotPosition) +
+	transpiled.text =
+		transpiled.text.substring(0, insertedDotPosition) +
 		'.' +
-		transpiled.code.substring(insertedDotPosition);
+		transpiled.text.substring(insertedDotPosition);
 
 	// Create a separate 1:1 mapping for the dot character instead of extending
 	// the existing mapping. When source and generated lengths differ (e.g.
@@ -921,6 +851,10 @@ export const resolveConfig = (config) => {
 	const baseOptions = config.options ?? /** @type {CompilerOptions} */ ({});
 	/** @type {CompilerOptions} */
 	const options = { ...baseOptions };
+
+	// Only the classic path (a TypeScript language service host) asks for
+	// resolved compiler options, so TypeScript is loaded here and not at import.
+	const ts = /** @type {typeof import('typescript')} */ (require('typescript'));
 
 	// Default target: align with modern bundlers while staying configurable.
 	if (options.target === undefined) {
@@ -1060,16 +994,25 @@ function package_manifest_matches_compiler(package_manifest, compiler_name, pack
 }
 
 /**
+ * Resolve and load the TSRX compiler that owns a `.tsrx` file.
  * @param {string} normalized_file_name
  * @param {CompilerResolutionOptions} [options]
  * @returns {TSRXCompilerModule | undefined}
  */
-function get_tsrx_compiler(normalized_file_name, options) {
+export function get_tsrx_compiler(normalized_file_name, options) {
 	const compiler_path = get_compiler_entry_for_file(normalized_file_name, options);
 	if (compiler_path) {
-		const compiler_module = require(compiler_path);
-		return normalize_tsrx_compiler_module(compiler_module);
+		return require_tsrx_compiler(compiler_path);
 	}
+}
+
+/**
+ * Load a resolved compiler entry and normalize its contract.
+ * @param {string} compiler_path
+ * @returns {TSRXCompilerModule}
+ */
+export function require_tsrx_compiler(compiler_path) {
+	return normalize_tsrx_compiler_module(require(compiler_path));
 }
 
 /**
