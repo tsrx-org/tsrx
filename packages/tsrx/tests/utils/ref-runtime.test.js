@@ -1536,9 +1536,31 @@ describe('spread ref normalization', () => {
 
 		expect(normalize_spread_props(null)).toBeNull();
 		expect(normalize_spread_props(undefined)).toBeUndefined();
-		expect(normalize_spread_props_for_ref_attr(null, outer_ref)).toBeNull();
-		expect(normalize_spread_props_for_ref_attr(undefined, outer_ref)).toBeUndefined();
 		expect(normalize_spread_props(props, outer_ref)).toEqual({ id: 'field', ref: outer_ref });
+	});
+
+	it('passes a non-object spread through unchanged', () => {
+		// `{...(enabled && { disabled: true })}` hands over `false`, and a number
+		// or string condition hands over `0` or `''`; the spread then treats the
+		// value exactly as a native JSX spread would. The types reject a truthy
+		// primitive, but an `any`-typed spread can still hand one over.
+		/** @type {any[]} */
+		const values = [false, 0, '', 0n, true, 'id', Symbol.iterator];
+		for (const value of values) {
+			expect(normalize_spread_props(value)).toBe(value);
+			expect(normalize_spread_props_for_ref_attr(value)).toBe(value);
+		}
+	});
+
+	it('returns an empty bag for a nullish spread that feeds a ref attribute', () => {
+		// The compiler reads `normalized.ref` for the synthetic ref attribute.
+		for (const value of [null, undefined]) {
+			const normalized = /** @type {Record<string, unknown>} */ (
+				normalize_spread_props_for_ref_attr(value)
+			);
+			expect(normalized.ref).toBeUndefined();
+			expect({ ...normalized }).toEqual({});
+		}
 	});
 
 	it('passes a single collected ref through unwrapped', () => {

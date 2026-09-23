@@ -78,11 +78,20 @@ export function apply_ref_value<T = Element>(
 	set_ref_value?: (value: T | null) => void,
 ): void | (() => void);
 export function merge_ref_props<T = Element>(...refs: Array<RefValue<T>>): RefValue<T>;
-export function normalize_spread_props<T extends object | null | undefined>(
+/**
+ * The non-object values a JSX spread accepts: TypeScript drops the
+ * definitely-falsy members of a spread's type, so the `false` of
+ * `{...(enabled && props)}` — or the `0` or `''` of a number or string
+ * condition — spreads to nothing.
+ */
+export type SpreadFalsy = false | 0 | '' | 0n | null | undefined | void;
+
+export function normalize_spread_props<T extends object | SpreadFalsy>(
 	props: T,
 	...outer_refs: Array<RefValue<Element>>
 ): T | SpreadProps;
-export function normalize_spread_props_for_ref_attr<T extends object | null | undefined>(
+// A nullish bag comes back as an empty one so the compiler can read `.ref`.
+export function normalize_spread_props_for_ref_attr<T extends object | SpreadFalsy>(
 	props: T,
 	...outer_refs: Array<RefValue<Element>>
-): T | SpreadProps;
+): Exclude<T, null | undefined | void> | SpreadProps;

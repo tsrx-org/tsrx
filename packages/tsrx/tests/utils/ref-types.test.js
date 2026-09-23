@@ -317,6 +317,47 @@ describe('ref runtime types', () => {
 			);
 		});
 
+		it('accepts the falsy values a native JSX spread drops', () => {
+			const { errors, types } = check(`
+				declare const enabled: boolean;
+				declare const count: number;
+				declare const label: string;
+				const bool = normalize_spread_props(enabled && { disabled: true });
+				const num = normalize_spread_props(count && { disabled: true });
+				const str = normalize_spread_props(label && { disabled: true });
+				const forAttr = normalize_spread_props_for_ref_attr(enabled && { disabled: true });
+				const empty = normalize_spread_props_for_ref_attr(enabled ? { disabled: true } : null);
+			`);
+
+			// Union members print in type-creation order, which varies by snippet.
+			/** @param {string} type */
+			const members = (type) => type.split(' | ').sort();
+			const bag = ['SpreadProps', '{ disabled: boolean; }'];
+
+			expect(errors).toEqual([]);
+			expect(members(types.bool)).toEqual(members(['false', ...bag].join(' | ')));
+			expect(members(types.num)).toEqual(members(['0', ...bag].join(' | ')));
+			expect(members(types.str)).toEqual(members(['""', ...bag].join(' | ')));
+			expect(members(types.forAttr)).toEqual(members(['false', ...bag].join(' | ')));
+			expect(members(types.empty)).toEqual(members(bag.join(' | ')));
+		});
+
+		it('rejects the values a native JSX spread rejects', () => {
+			const { errors } = check(`
+				declare const enabled: boolean;
+				declare const label: string;
+				normalize_spread_props(enabled);
+				normalize_spread_props(label);
+				normalize_spread_props_for_ref_attr(true);
+			`);
+
+			expect(errors).toEqual([
+				"Argument of type 'boolean' is not assignable to parameter of type 'object | SpreadFalsy'.",
+				"Argument of type 'string' is not assignable to parameter of type 'object | SpreadFalsy'.",
+				"Argument of type 'true' is not assignable to parameter of type 'object | SpreadFalsy'.",
+			]);
+		});
+
 		it('takes ref values as the outer refs', () => {
 			const { errors } = check(`
 				const objectRef: { current: Element | null } = { current: null };

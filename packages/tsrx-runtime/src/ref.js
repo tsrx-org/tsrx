@@ -1,4 +1,4 @@
-/** @import { MergeableRef, RefProp, RefValue, SpreadProps } from '../types/ref' */
+/** @import { MergeableRef, RefProp, RefValue, SpreadFalsy, SpreadProps } from '../types/ref' */
 
 import {
 	has_own_property,
@@ -9,6 +9,8 @@ import {
 
 const REF_VALUE = Symbol();
 const REINVOKE_REF = Symbol();
+/** @type {SpreadProps} */
+const EMPTY_SPREAD_PROPS = Object.freeze({});
 
 /**
  * Merge multiple refs (function refs and ref objects) into a single
@@ -404,13 +406,16 @@ function collect_ref_cleanups(ref_value, node, cleanups) {
 }
 
 /**
- * @param {object | null | undefined} props a props bag; `object` rather than an
- *   index signature so an interface-typed bag is accepted
+ * @param {object | SpreadFalsy} props a props bag, or the falsy value of a
+ *   conditional spread such as `{...(enabled && { disabled: true })}`; `object`
+ *   rather than an index signature so an interface-typed bag is accepted
  * @param {...RefValue<Element>} outer_refs
- * @returns {SpreadProps | null | undefined}
+ * @returns {SpreadProps | SpreadFalsy}
  */
 export function normalize_spread_props(props, ...outer_refs) {
-	if (props == null) {
+	// A non-object carries no refs to collect. Returning it unchanged leaves the
+	// spread to treat it exactly as a native JSX spread would.
+	if (props === null || (typeof props !== 'object' && typeof props !== 'function')) {
 		return props;
 	}
 
@@ -495,18 +500,26 @@ export function normalize_spread_props(props, ...outer_refs) {
  * attribute but is non-enumerable so `{...normalized}` does not also pass it as
  * a DOM prop.
  *
- * @param {object | null | undefined} props
+ * @param {object | SpreadFalsy} props
  * @param {...RefValue<Element>} outer_refs
- * @returns {SpreadProps | null | undefined}
+ * @returns {SpreadProps | Exclude<SpreadFalsy, null | undefined | void>}
  */
 export function normalize_spread_props_for_ref_attr(props, ...outer_refs) {
 	const next = normalize_spread_props(props, ...outer_refs);
-	if (next == null || !has_own_property.call(next, 'ref')) {
+	// The compiler reads `normalized.ref` for the ref attribute, which throws on
+	// a nullish spread; an empty bag spreads to nothing just the same. Other
+	// primitives read `ref` as `undefined` and pass through.
+	if (next == null) {
+		return EMPTY_SPREAD_PROPS;
+	}
+	if (!has_own_property.call(next, 'ref')) {
 		return next;
 	}
 
-	const ref = next.ref;
-	const without_ref = { ...next };
+	// A primitive never has an own `ref`, so this is a props bag.
+	const bag = /** @type {SpreadProps} */ (next);
+	const ref = bag.ref;
+	const without_ref = { ...bag };
 	delete without_ref.ref;
 	Object.defineProperty(without_ref, 'ref', {
 		value: ref,
