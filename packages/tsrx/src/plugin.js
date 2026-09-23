@@ -359,6 +359,10 @@ export function TSRXPlugin(config) {
 			#scriptJSXElementDepth = 0;
 			#forceScriptJSXElementDepth = 0;
 			#suppressTemplateRawTextToken = false;
+			// Set while the `?` of an optional class member (`m?<T>()`) is consumed:
+			// `?` allows an expression next, so the tokenizer would otherwise read the
+			// `<` of the type parameters as a JSX tag.
+			#afterOptionalMemberName = false;
 			#templateScriptParsingDepth = 0;
 			#controlFlowBlockAllowsNativeReturn = false;
 			#parsingJSXSwitchCaseScriptStatementDepth = 0;
@@ -3039,6 +3043,8 @@ export function TSRXPlugin(config) {
 			readToken(code) {
 				const suppressTemplateRawTextToken = this.#suppressTemplateRawTextToken;
 				this.#suppressTemplateRawTextToken = false;
+				const afterOptionalMemberName = this.#afterOptionalMemberName;
+				this.#afterOptionalMemberName = false;
 				const context = this.curContext();
 				if (
 					(code !== CharCode.lessThan || !can_start_tag_after_lt(this.input, this.pos)) &&
@@ -3067,9 +3073,10 @@ export function TSRXPlugin(config) {
 					// the start of a type argument list (`hello<T>`).
 					const next = this.input.charCodeAt(this.pos + 1);
 					if (
-						next !== CharCode.slash &&
-						(looks_like_generic_arrow(this.input, this.pos) ||
-							this.#canStartTypeParameterOrArgumentList(this.pos))
+						afterOptionalMemberName ||
+						(next !== CharCode.slash &&
+							(looks_like_generic_arrow(this.input, this.pos) ||
+								this.#canStartTypeParameterOrArgumentList(this.pos)))
 					) {
 						++this.pos;
 						return this.finishToken(tt.relational, '<');
@@ -3600,6 +3607,17 @@ export function TSRXPlugin(config) {
 				this.exitScope();
 				this.labels.pop();
 				return this.finishNode(node, isForIn ? 'ForInStatement' : 'ForOfStatement');
+			}
+
+			/**
+			 * acorn-typescript eats the optional `?` of a class member here; the
+			 * token read right after it is the `<` of `m?<T>()`, never a JSX tag.
+			 *
+			 * @type {Parse.Parser['parsePostMemberNameModifiers']}
+			 */
+			parsePostMemberNameModifiers(methodOrProp) {
+				this.#afterOptionalMemberName = this.type === tt.question;
+				super.parsePostMemberNameModifiers(methodOrProp);
 			}
 
 			/**

@@ -1186,6 +1186,12 @@ export namespace Parse {
 		parsePropertyName(prop: AST.Node): AST.Expression | AST.PrivateIdentifier;
 
 		/**
+		 * Consume the optional `?` after a class member name (acorn-typescript)
+		 * @param methodOrProp Class member node to mark optional
+		 */
+		parsePostMemberNameModifiers(methodOrProp: AST.Node): void;
+
+		/**
 		 * Parse property value
 		 * @param prop Property node
 		 * @param isPattern Whether parsing pattern

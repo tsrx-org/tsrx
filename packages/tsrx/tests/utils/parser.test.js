@@ -5682,6 +5682,18 @@ describe('`<` operators beside type-argument lookahead', () => {
 			findNode('type F = new <T>(x: T) => T;', 'TSConstructorType').typeParameters?.params,
 		).toHaveLength(1);
 	});
+
+	it('reads type parameters after an optional class member name', () => {
+		for (const source of [
+			'abstract class A { abstract m?<T>(x: T): T; }',
+			'class A { m?<T>(x: T): T { return x; } }',
+			'class A { m? <T>(x: T): T; }',
+		]) {
+			const method = findNode(source, 'MethodDefinition');
+			expect(method.optional, source).toBe(true);
+			expect(method.typeParameters?.params, source).toHaveLength(1);
+		}
+	});
 });
 
 describe('lazy destructuring is not supported', () => {
