@@ -2323,19 +2323,35 @@ function printTsrxNode(node, path, options, print, args) {
 		}
 
 		case 'TSModuleDeclaration': {
-			// `declare global` augments the global scope; printing it as
-			// `declare module global` declares an unrelated module named `global`.
-			nodeContent =
-				node.kind === 'global'
-					? [node.declare ? 'declare ' : '', path.call(print, 'id'), ' ', path.call(print, 'body')]
-					: [
-							node.declare ? 'declare ' : '',
-							node.kind,
-							' ',
-							path.call(print, 'id'),
-							' ',
-							path.call(print, 'body'),
-						];
+			const parent = path.getParentNode();
+			/** @type {Doc[]} */
+			const parts = [];
+			// A dotted name (`namespace A.B { … }`) parses as nested declarations
+			// whose body is the next name part, so only the outermost one prints
+			// the keyword; repeating it gives the invalid `namespace A namespace B`.
+			if (parent?.type !== 'TSModuleDeclaration' || parent.body !== node) {
+				if (node.declare) {
+					parts.push('declare ');
+				}
+				// `declare global` augments the global scope; printing it as
+				// `declare module global` declares an unrelated module named `global`.
+				if (node.kind !== 'global') {
+					parts.push(node.kind, ' ');
+				}
+			}
+			parts.push(path.call(print, 'id'));
+			const body = /** @type {typeof node | typeof node.body} */ (
+				/** @type {unknown} */ (node.body)
+			);
+			if (body?.type === 'TSModuleDeclaration') {
+				parts.push('.', path.call(print, 'body'));
+			} else if (body) {
+				parts.push(' ', path.call(print, 'body'));
+			} else {
+				// Shorthand ambient module: `declare module 'name';`
+				parts.push(semi(options));
+			}
+			nodeContent = parts;
 			break;
 		}
 

@@ -253,15 +253,26 @@ export function tsx_with_ts_locations(boundary_tokens = false, comments = undefi
 			// the typeOnly/volar output is real TS and `module '…' { … }` alone is
 			// a syntax error (TS1035).
 			if (node.declare) context.write('declare ');
-			if (node.kind === 'global') {
-				context.visit(node.id);
-				context.visit(node.body);
-				return;
+			if (node.kind !== 'global') {
+				context.write(node.kind);
+				context.write(' ');
 			}
-			context.write(node.kind);
-			context.write(' ');
 			context.visit(node.id);
-			context.visit(node.body);
+			// A dotted name (`namespace A.B { … }`) parses as nested declarations
+			// whose body is the next name part; print one qualified name instead
+			// of repeating the keyword (`namespace Anamespace B`).
+			let body = /** @type {typeof node | typeof node.body} */ (/** @type {unknown} */ (node.body));
+			while (body?.type === 'TSModuleDeclaration') {
+				context.write('.');
+				context.visit(body.id);
+				body = body.body;
+			}
+			if (body) {
+				context.visit(body);
+			} else {
+				// Shorthand ambient module: `declare module '…';`
+				context.write(';');
+			}
 		},
 		_(node, context, visit) {
 			if (preserve_owner_comments) write_leading_comments(node, context);

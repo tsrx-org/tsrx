@@ -7300,6 +7300,37 @@ export const x = Alias.answer;`;
 			});
 			expect(result).toBeWithNewline(`import fs = require('fs')\nexport = fs`);
 		});
+
+		// A dotted name parses as nested declarations. Printing the keyword for
+		// each part gave `namespace A namespace B { … }`, which no longer parses.
+		it.each([
+			`namespace A.B {
+  export const value = 1;
+}`,
+			`declare namespace A.B.C {
+  const value: number;
+}`,
+			'export namespace A.B {}',
+			'export declare namespace A.B {}',
+			'module A.B {}',
+			'namespace A./* between */ B {}',
+		])('keeps dotted namespace names: %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it('formats the body of a dotted namespace', async () => {
+			const result = await format('namespace A.B { export const value = 1; }');
+			expect(result).toBeWithNewline(`namespace A.B {
+  export const value = 1;
+}`);
+		});
+
+		it('keeps the semicolon on shorthand ambient modules', async () => {
+			await expectUnchanged(`declare module "untyped-a";
+declare module "untyped-b";`);
+			const result = await format(`declare module "untyped";`, { semi: false });
+			expect(result).toBeWithNewline(`declare module "untyped"`);
+		});
 	});
 
 	// `export default (class Named {})` is an expression: `Named` is bound only

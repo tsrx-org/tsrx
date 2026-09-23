@@ -159,6 +159,41 @@ describe('ordinary TypeScript module declarations in type-only output', () => {
 			types: { globalValue: 'string | undefined' },
 		});
 	});
+
+	// A dotted name parses as nested declarations; repeating the keyword for
+	// each part printed `namespace Outernamespace Inner`.
+	it('prints dotted namespace names as one qualified name', () => {
+		const source =
+			'namespace Outer.Inner {\n' +
+			'\texport const value = 1;\n' +
+			'}\n' +
+			'declare namespace Ambient.Deep.Name {\n' +
+			'\tconst depth: number;\n' +
+			'}\n' +
+			'const qualified = Outer.Inner.value;\n' +
+			'const ambient = Ambient.Deep.Name.depth;\n';
+		const result = compile_to_volar_mappings(source, {
+			platform: PLAIN_PLATFORM,
+		});
+
+		expect(result.errors).toEqual([]);
+		expect(result.code).toContain('namespace Outer.Inner {');
+		expect(result.code).toContain('declare namespace Ambient.Deep.Name {');
+		expect(check_types(result.code)).toEqual({
+			errors: [],
+			types: { qualified: '1', ambient: 'number' },
+		});
+	});
+
+	it('prints shorthand ambient modules without a body', () => {
+		const source = "declare module 'untyped-a';\ndeclare module 'untyped-b';\n";
+		const result = compile_to_volar_mappings(source, {
+			platform: PLAIN_PLATFORM,
+		});
+
+		expect(result.errors).toEqual([]);
+		expect(result.code).toContain("declare module 'untyped-a';\ndeclare module 'untyped-b';");
+	});
 });
 
 describe('server-module type-only lowering', () => {
