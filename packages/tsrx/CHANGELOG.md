@@ -1,5 +1,19 @@
 # @tsrx/core
 
+## 0.3.2
+
+### Patch Changes
+
+- [#217](https://github.com/tsrx-org/tsrx/pull/217)
+  [`c426225`](https://github.com/tsrx-org/tsrx/commit/c42622548a877bc5a1d2741c96534447679f2ae5)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - `tsrx-tsc` and the editor now
+  report missing-return errors on functions and methods with a primitive return
+  type, such as `value(): number {}` failing with TS2355. TypeScript reports these
+  errors on the return type, but the source-mapping walker never mapped primitive
+  type keywords (`number`, `string`, `this`, and the rest), so Volar dropped them.
+  A method in a file with no `function` or `async` keyword also no longer gets a
+  stray mapping that treated its opening `(` as a `function` keyword.
+
 ## 0.3.1
 
 ### Patch Changes

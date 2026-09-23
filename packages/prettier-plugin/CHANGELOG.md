@@ -1,5 +1,32 @@
 # @tsrx/prettier-plugin
 
+## 0.4.10
+
+### Patch Changes
+
+- [#214](https://github.com/tsrx-org/tsrx/pull/214)
+  [`e34902a`](https://github.com/tsrx-org/tsrx/commit/e34902aee375fc1abb2e55344e8d50413b499f9a)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Keep `static` and the
+  trailing `;` on class index signatures (`static [key: string]: number;`) when
+  formatting TSRX files. Previously `static` was dropped, which moved the
+  signature from the class to its instances, and the missing `;` ran the signature
+  into the next member on the same line, leaving code that no longer parsed.
+
+- [#214](https://github.com/tsrx-org/tsrx/pull/214)
+  [`e34902a`](https://github.com/tsrx-org/tsrx/commit/e34902aee375fc1abb2e55344e8d50413b499f9a)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Keep class members apart when
+  formatting TSRX files with `semi: false`. A short class no longer collapses onto
+  one line when a field, index signature, or bodiless method is followed by
+  another member, so `class A { x = 1; y = 2 }` no longer becomes the invalid
+  `class A { x = 1 y = 2 }`. A field also keeps its `;` when the next member would
+  otherwise continue it: before a computed member, an index signature, a generator
+  method, or a member named `in` or `instanceof`, and after a bare `static`,
+  `get`, or `set` field. Previously `x = a;` followed by `[k] = 1;` came back as
+  `x = a` / `[k] = 1`, which reads as `x = a[k] = 1`.
+- Updated dependencies
+  [[`c426225`](https://github.com/tsrx-org/tsrx/commit/c42622548a877bc5a1d2741c96534447679f2ae5)]:
+  - @tsrx/core@0.3.2
+
 ## 0.4.9
 
 ### Patch Changes
