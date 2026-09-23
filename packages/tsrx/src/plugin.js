@@ -349,6 +349,16 @@ function scan_balanced_from(input, i, open, close) {
 			after_dot = false;
 			i += 2;
 			continue;
+		} else if (
+			ch === CharCode.dot &&
+			input.charCodeAt(i + 1) === CharCode.dot &&
+			input.charCodeAt(i + 2) === CharCode.dot
+		) {
+			// A spread or rest `...` precedes an operand rather than a property name.
+			after_operand = false;
+			after_dot = false;
+			i += 3;
+			continue;
 		} else if (ch !== CharCode.exclamation && ch !== CharCode.dot) {
 			// Postfix `!` and a number's trailing `.` keep the operand; the
 			// prefix `!` and a leading `.` already follow a non-operand.

@@ -5778,6 +5778,8 @@ describe('`<` operators beside type-argument lookahead', () => {
 				4,
 			],
 			['const fn = <T extends object>(x: T, of = 1, y = of / 2) => x;', 3],
+			['const fn = <T extends object>(x: T, y = [...typeof /[)]/.source, ...void /\\)/]) => x;', 2],
+			['const fn = <T extends object>(x: T, ...rest: [y?: RegExp]) => rest[0] ?? /[)]/;', 2],
 			[
 				'const fn = <T extends object>(x: T, y = (s) => { for (const c of /[)]/.exec(s) ?? []) c; }) => x;',
 				2,
