@@ -5510,6 +5510,160 @@ describe('function types in JSX attribute values', () => {
 	});
 });
 
+describe('`<` operators beside type-argument lookahead', () => {
+	// The tokenizer splits a lone `<` off when the source after it looks like
+	// type parameters or arguments. It must leave `<=`, `<<`, and `<<=` whole,
+	// both when the operator is compact (`value<=1`) and when a later arrow
+	// gives the generic-arrow lookahead a `<...>() =>` shape to pair with.
+
+	/**
+	 * @param {string} source
+	 * @returns {{ type: string, operator: string | undefined }}
+	 */
+	function ifTest(source) {
+		const test = findNode(source, 'IfStatement').test;
+		return { type: test.type, operator: 'operator' in test ? test.operator : undefined };
+	}
+
+	/**
+	 * Binary operators in source order.
+	 *
+	 * @param {string} source
+	 * @returns {string[]}
+	 */
+	function binaryOperators(source) {
+		/** @type {AST.BinaryExpression[]} */
+		const binaries = [];
+		find_first(parseModule(source, 'App.tsrx'), (node) => {
+			if (node.type === 'BinaryExpression') binaries.push(node);
+			return false;
+		});
+		return binaries
+			.sort((a, b) => /** @type {number} */ (a.start) - /** @type {number} */ (b.start))
+			.map((node) => node.operator);
+	}
+
+	it('keeps comparison and shift operators whole', () => {
+		for (const [operator, type] of [
+			['<', 'BinaryExpression'],
+			['<=', 'BinaryExpression'],
+			['<<', 'BinaryExpression'],
+			['<<=', 'AssignmentExpression'],
+			['>=', 'BinaryExpression'],
+			['>>', 'BinaryExpression'],
+			['>>>', 'BinaryExpression'],
+		]) {
+			// A name operand gives the `<<` lookahead something that looks like a
+			// type parameter, so the later arrow's `>` is its only way to close.
+			for (const operand of ['0', 'n']) {
+				for (const expression of [
+					`value ${operator} ${operand}`,
+					`value${operator}${operand}`,
+					`value ${operator}${operand}`,
+					`value${operator} ${operand}`,
+				]) {
+					for (const rest of ['', ' const release = () => () => value; return release;']) {
+						const source = `function compare(value: number, n: number) { if (${expression}) return;${rest} }`;
+						expect(ifTest(source), source).toEqual({ type, operator });
+					}
+				}
+			}
+		}
+	});
+
+	it('keeps a compact shift whole after any operand', () => {
+		for (const expression of ['1<<n', 'value<<n', '(value)<<1', 'value[0]<<1']) {
+			const source = `function shift(value: number[], n: number) { if (${expression}) return; }`;
+			expect(ifTest(source), source).toEqual({ type: 'BinaryExpression', operator: '<<' });
+		}
+	});
+
+	it('keeps `<=` whole in loop headers and beside JSX', () => {
+		for (const source of [
+			'for (let i = 0; i<=n; i++) {}',
+			'for (let i = 0; i <= n; i++) { const f = () => (y) => y; }',
+		]) {
+			expect(binaryOperators(source), source).toEqual(['<=']);
+		}
+
+		const conditional = findNode('const a = b<=c ? <div /> : null;', 'ConditionalExpression');
+		expect(as_type(conditional.test, 'BinaryExpression').operator).toBe('<=');
+		expect(conditional.consequent.type).toBe('JSXElement');
+	});
+
+	it('keeps `<=` and `<<` whole in template bodies, headers, and attributes', () => {
+		/** @type {Array<[source: string, operators: string[]]>} */
+		const cases = [
+			[
+				`function App({ n }: { n: number }) @{
+	@if (n<=1) {
+		<button disabled={n<=0} onClick={() => () => n}>{n<<1}</button>
+	}
+}`,
+				['<=', '<=', '<<'],
+			],
+			[
+				`function App({ n }: { n: number }) @{
+	const flags = 1<<n;
+	<>{flags <= 4 && <b />}</>
+}`,
+				['<<', '<='],
+			],
+		];
+		for (const [source, operators] of cases) {
+			expect(binaryOperators(source), source).toEqual(operators);
+		}
+	});
+
+	it('still reads type arguments, including a generic function type after `<<`', () => {
+		/** @type {Array<[source: string, params: string[]]>} */
+		const cases = [
+			['const result = f<T>(1);', ['TSTypeReference']],
+			['const result = x<y>(z);', ['TSTypeReference']],
+			['const result = f<<T,>(x: T) => T>(g);', ['TSFunctionType']],
+			['const result = f<<T extends () => void>() => T>(g);', ['TSFunctionType']],
+			['const result = f < <T,>(x: T) => T > (g);', ['TSFunctionType']],
+		];
+		for (const [source, params] of cases) {
+			const call = findNode(source, 'CallExpression');
+			expect(
+				call.typeArguments?.params.map((param) => param.type),
+				source,
+			).toEqual(params);
+		}
+
+		for (const source of [
+			'type List = Array<<T>() => T>;',
+			'let list: Array<<T>(x: T) => T> = [];',
+		]) {
+			expect(findNode(source, 'TSFunctionType').typeParameters?.params, source).toHaveLength(1);
+		}
+	});
+
+	it('still recognizes generic arrows and generic function expressions', () => {
+		for (const source of [
+			'const id = <T,>(x: T) => x;',
+			'const id = < T,>(x: T) => x;',
+			'const id = <T extends object = {}>(x: T): T => x;',
+			'const run = <T extends () => void>(task: T) => task;',
+		]) {
+			expect(
+				findNode(source, 'ArrowFunctionExpression').typeParameters?.params,
+				source,
+			).toHaveLength(1);
+		}
+
+		expect(
+			findNode('const id = function <T>(x: T) { return x; };', 'FunctionExpression').typeParameters
+				?.params,
+		).toHaveLength(1);
+
+		const source = 'const a = x < y; const id = <T,>(x: T) => x;';
+		expect(binaryOperators(source)).toEqual(['<']);
+		expect(findNode(source, 'ArrowFunctionExpression').typeParameters?.params).toHaveLength(1);
+	});
+});
+
 describe('lazy destructuring is not supported', () => {
 	it('rejects `&{ ... }` and `&[ ... ]` binding patterns as parse errors', () => {
 		for (const source of [

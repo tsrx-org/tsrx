@@ -254,8 +254,13 @@ function scan_balanced_from(input, i, open, close) {
  */
 function looks_like_generic_arrow(input, pos) {
 	if (input.charCodeAt(pos) !== CharCode.lessThan) return false;
+	// Type parameters open with a name, so `<=` and `<<` are operators.
+	const next = input.charCodeAt(pos + 1);
+	if (next === CharCode.equals || next === CharCode.lessThan) return false;
 
-	// Match the angle brackets, skipping over string literals.
+	// Match the angle brackets, skipping over string literals. The `>` of an
+	// arrow (`() => void` in a constraint, or a later arrow in the source)
+	// never closes the list.
 	let i = pos + 1;
 	let depth = 1;
 	while (i < input.length) {
@@ -265,7 +270,12 @@ function looks_like_generic_arrow(input, pos) {
 			continue;
 		}
 		if (ch === CharCode.lessThan) depth++;
-		else if (ch === CharCode.greaterThan && --depth === 0) break;
+		else if (
+			ch === CharCode.greaterThan &&
+			input.charCodeAt(i - 1) !== CharCode.equals &&
+			--depth === 0
+		)
+			break;
 		i++;
 	}
 	if (depth !== 0) return false;
@@ -640,9 +650,19 @@ export function TSRXPlugin(config) {
 			 * anonymous generic function expressions (`function <T>() {}`); generic
 			 * arrows are handled separately by `looks_like_generic_arrow`.
 			 *
+			 * Returning true splits a lone `<` off whatever follows, so `<=` and
+			 * `<<=` are always left whole. `<<` is left whole unless it opens type
+			 * arguments with a generic function type (`f<<T>() => T>()`), which
+			 * TypeScript reads by re-scanning `<<` as `<`.
+			 *
 			 * @param {number} index
 			 */
 			#canStartTypeParameterOrArgumentList(index) {
+				const next = this.input.charCodeAt(index + 1);
+				if (next === CharCode.equals) return false;
+				if (next === CharCode.lessThan && !looks_like_generic_arrow(this.input, index + 1)) {
+					return false;
+				}
 				const previous = this.#previousNonSpaceTabIndex(index);
 				if (previous < 0) return false;
 				if (previous === index - 1) {
