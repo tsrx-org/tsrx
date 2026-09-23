@@ -38,6 +38,10 @@ export interface TsrxReactPlugin extends Omit<
 		| undefined;
 	transform: {
 		(code: string, id: `${string}.tsrx`): Promise<TsrxReactTransformResult>;
+		(
+			code: string,
+			id: `${string}.tsrx?worker_file&type=${string}`,
+		): Promise<TsrxReactTransformResult>;
 		(code: string, id: string): Promise<TsrxReactTransformResult | null>;
 	};
 	resolveId: {

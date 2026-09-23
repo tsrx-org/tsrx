@@ -9,6 +9,7 @@ import { compile } from '@tsrx/vue';
 import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
 import { resolveBuildPlatform } from '@tsrx/core/config';
 import { createDepScanLoadPlugin } from '@tsrx/core/vite/dep-scan';
+import { createWorkerEntryMiddleware, stripWorkerEntryQuery } from '@tsrx/core/vite/worker';
 import vueJsxVaporModule from 'vue-jsx-vapor/vite';
 import { createVaporInteropPlugin } from './interop.js';
 
@@ -179,34 +180,44 @@ function create_tsrx_vue_plugin(options) {
 			rootDir = config.root;
 		},
 
+		configureServer(server) {
+			server.middlewares.use(createWorkerEntryMiddleware(isTsrxSource));
+		},
+
 		async resolveId(source, importer, options) {
 			if (source.includes(CSS_QUERY)) {
 				if (source.startsWith('\0')) return source;
 				return '\0' + source;
 			}
 
-			if (isVirtual(source)) {
+			// A dev worker entry arrives as `<path>?worker_file&type=<type>`.
+			// Resolve the path, then keep the query on the virtual id: Vite's
+			// worker plugin reads it back to set the entry up as a worker.
+			const path = stripWorkerEntryQuery(source);
+			const workerQuery = source.slice(path.length);
+
+			if (isVirtual(path)) {
 				return isAbsolute(source) ? source : pathResolve(rootDir, source.replace(/^\/+/, ''));
 			}
 
-			if (isTsrxSource(source)) {
-				const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
+			if (isTsrxSource(path)) {
+				const resolved = await this.resolve(path, importer, { ...options, skipSelf: true });
 				if (resolved && !isVirtual(resolved.id)) {
 					const resolvedId = isAbsolute(resolved.id)
 						? resolved.id
 						: pathResolve(rootDir, resolved.id.replace(/^\/+/, ''));
-					return { ...resolved, id: resolvedId + VIRTUAL_TSX_SUFFIX };
+					return { ...resolved, id: resolvedId + VIRTUAL_TSX_SUFFIX + workerQuery };
 				}
-				if (resolved) return resolved;
+				if (resolved) return { ...resolved, id: resolved.id + workerQuery };
 				// Re-anchor the fallback virtual id to an absolute path so
 				// downstream import resolution walks `node_modules` from the
 				// real file's location rather than from workspace root —
 				// otherwise package deps declared inside
 				// `packages/<pkg>/node_modules` are invisible to vite.
-				const absoluteSource = isAbsolute(source)
-					? source
-					: pathResolve(rootDir, source.replace(/^\/+/, ''));
-				return absoluteSource + VIRTUAL_TSX_SUFFIX;
+				const absoluteSource = isAbsolute(path)
+					? path
+					: pathResolve(rootDir, path.replace(/^\/+/, ''));
+				return absoluteSource + VIRTUAL_TSX_SUFFIX + workerQuery;
 			}
 
 			return null;
@@ -218,9 +229,10 @@ function create_tsrx_vue_plugin(options) {
 				return cssCache.get(key) ?? '';
 			}
 
-			if (!isVirtual(id)) return null;
+			const path = stripWorkerEntryQuery(id);
+			if (!isVirtual(path)) return null;
 
-			const realPath = toRealPath(id.split('?')[0]);
+			const realPath = toRealPath(path);
 			const source = await readFile(realPath, 'utf-8');
 			let { code, css, map } = compile(source, realPath, compile_options);
 
@@ -239,11 +251,11 @@ function create_tsrx_vue_plugin(options) {
 		handleHotUpdate(ctx) {
 			if (!isTsrxSource(ctx.file)) return;
 
+			// Look the virtual modules up by file to include a worker entry's
+			// query-suffixed id.
 			const virtualId = ctx.file + VIRTUAL_TSX_SUFFIX;
 			const cssVirtualId = '\0' + ctx.file + CSS_QUERY;
-			const extra = [];
-			const mod = ctx.server.moduleGraph.getModuleById(virtualId);
-			if (mod) extra.push(mod);
+			const extra = [...(ctx.server.moduleGraph.getModulesByFile(virtualId) ?? [])];
 			const cssMod = ctx.server.moduleGraph.getModuleById(cssVirtualId);
 			if (cssMod) extra.push(cssMod);
 			if (extra.length > 0) return [...extra, ...ctx.modules];

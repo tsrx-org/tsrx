@@ -8,6 +8,7 @@ import { compile as compileServer } from '@tsrx/hono';
 import { compile as compileDom } from '@tsrx/hono/dom';
 import { resolveBuildPlatform } from '@tsrx/core/config';
 import { createDepScanTransformPlugin } from '@tsrx/core/vite/dep-scan';
+import { createWorkerEntryMiddleware, stripWorkerEntryQuery } from '@tsrx/core/vite/worker';
 
 const TSRX_EXTENSION_PATTERN = /\.tsrx$/;
 const CSS_QUERY = '?tsrx-css&lang.css';
@@ -139,6 +140,12 @@ export function tsrxHono(options = {}) {
 			};
 		},
 
+		configureServer(server) {
+			server.middlewares.use(
+				createWorkerEntryMiddleware((path) => TSRX_EXTENSION_PATTERN.test(path)),
+			);
+		},
+
 		resolveId(source) {
 			const css_cache = css_cache_for(this);
 			if (css_owner(css_cache, source) === null) return null;
@@ -162,14 +169,17 @@ export function tsrxHono(options = {}) {
 		},
 
 		async transform(code, id) {
-			if (!TSRX_EXTENSION_PATTERN.test(id)) return null;
+			// A dev worker entry arrives as `<path>?worker_file&type=<type>`.
+			// Compile it under its file path, as a plain import would be.
+			const file = stripWorkerEntryQuery(id);
+			if (!TSRX_EXTENSION_PATTERN.test(file)) return null;
 
-			const result = compile(code, id, compile_options);
-			const source = append_css_import(css_cache_for(this), result.code, id, result.css);
+			const result = compile(code, file, compile_options);
+			const source = append_css_import(css_cache_for(this), result.code, file, result.css);
 
 			const transformed = await transformWithOxc(
 				source,
-				id,
+				file,
 				{
 					lang: 'tsx',
 					sourcemap: true,

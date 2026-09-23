@@ -7,6 +7,7 @@ import { compile } from '@tsrx/solid';
 import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
 import { resolveBuildPlatform } from '@tsrx/core/config';
 import { createDepScanLoadPlugin } from '@tsrx/core/vite/dep-scan';
+import { createWorkerEntryMiddleware, stripWorkerEntryQuery } from '@tsrx/core/vite/worker';
 
 const DEFAULT_TSRX_PATTERN = /\.tsrx$/;
 const VIRTUAL_TSX_SUFFIX = '.tsx';
@@ -139,22 +140,31 @@ export function tsrxSolid(options = {}) {
 			root_dir = config.root;
 		},
 
+		configureServer(server) {
+			server.middlewares.use(createWorkerEntryMiddleware(is_tsrx_source));
+		},
+
 		async resolveId(source, importer, options) {
 			// Intercept virtual CSS imports.
 			if (source.includes(CSS_QUERY)) {
 				if (source.startsWith('\0')) return source;
 				return '\0' + source;
 			}
-			if (is_virtual(source)) return source;
+			// A dev worker entry arrives as `<path>?worker_file&type=<type>`.
+			// Resolve the path, then keep the query on the virtual id: Vite's
+			// worker plugin reads it back to set the entry up as a worker.
+			const path = stripWorkerEntryQuery(source);
+			const worker_query = source.slice(path.length);
+			if (is_virtual(path)) return source;
 
 			// Rewrite tsrx source imports to their virtual `<path>.tsx` form
 			// so downstream extension-based plugins pick the module up as TSX.
-			if (is_tsrx_source(source)) {
-				const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
+			if (is_tsrx_source(path)) {
+				const resolved = await this.resolve(path, importer, { ...options, skipSelf: true });
 				if (resolved && !is_virtual(resolved.id)) {
-					return { ...resolved, id: resolved.id + VIRTUAL_TSX_SUFFIX };
+					return { ...resolved, id: resolved.id + VIRTUAL_TSX_SUFFIX + worker_query };
 				}
-				if (resolved) return resolved;
+				if (resolved) return { ...resolved, id: resolved.id + worker_query };
 				// Fallback: when `this.resolve` can't resolve (e.g. an absolute
 				// path coming in as a root entry such as a vitest test file),
 				// still rewrite to the virtual `.tsx` id directly so `load`
@@ -163,10 +173,10 @@ export function tsrxSolid(options = {}) {
 				// correct `node_modules` chain — leaving it relative makes
 				// vite walk up from the workspace root and miss package
 				// dependencies declared inside `packages/<pkg>/node_modules`.
-				const absolute_source = isAbsolute(source)
-					? source
-					: path_resolve(root_dir, source.replace(/^\/+/, ''));
-				return absolute_source + VIRTUAL_TSX_SUFFIX;
+				const absolute_source = isAbsolute(path)
+					? path
+					: path_resolve(root_dir, path.replace(/^\/+/, ''));
+				return absolute_source + VIRTUAL_TSX_SUFFIX + worker_query;
 			}
 			return null;
 		},
@@ -176,9 +186,10 @@ export function tsrxSolid(options = {}) {
 				const key = id.slice(1).split('?')[0];
 				return css_cache.get(key) ?? '';
 			}
-			if (!is_virtual(id)) return null;
+			const path = stripWorkerEntryQuery(id);
+			if (!is_virtual(path)) return null;
 
-			const real_path = to_real_path(id.split('?')[0]);
+			const real_path = to_real_path(path);
 			const source = await readFile(real_path, 'utf-8');
 			let { code, css, map } = compile(source, real_path, compile_options);
 
@@ -196,16 +207,15 @@ export function tsrxSolid(options = {}) {
 
 		handleHotUpdate(ctx) {
 			if (!is_tsrx_source(ctx.file)) return;
-			// Invalidate the virtual `<path>.tsx` module so Vite re-runs `load`.
+			// Invalidate the virtual `<path>.tsx` modules so Vite re-runs `load`,
+			// looked up by file to include a worker entry's query-suffixed id.
 			// Also invalidate the virtual CSS module — Vite doesn't cascade
 			// invalidation from importer to importee, so without this the CSS
 			// module keeps serving the cached content and `<style>` edits in
 			// `.tsrx` files wouldn't hot-reload.
 			const virtual_id = ctx.file + VIRTUAL_TSX_SUFFIX;
 			const css_virtual_id = '\0' + ctx.file + CSS_QUERY;
-			const extra = [];
-			const mod = ctx.server.moduleGraph.getModuleById(virtual_id);
-			if (mod) extra.push(mod);
+			const extra = [...(ctx.server.moduleGraph.getModulesByFile(virtual_id) ?? [])];
 			const css_mod = ctx.server.moduleGraph.getModuleById(css_virtual_id);
 			if (css_mod) extra.push(css_mod);
 			if (extra.length > 0) return [...extra, ...ctx.modules];

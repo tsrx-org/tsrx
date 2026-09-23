@@ -37,6 +37,10 @@
       "types": "./src/vite/dep-scan.js",
       "default": "./src/vite/dep-scan.js"
     },
+    "./vite/worker": {
+      "types": "./src/vite/worker.js",
+      "default": "./src/vite/worker.js"
+    },
     "./config": {
       "types": "./types/config.d.ts",
       "default": "./src/config.js"
@@ -68,6 +72,7 @@
     "./test-harness/source-mappings": "./tests/shared/source-mappings.js",
     "./test-harness/compile": "./tests/shared/compile.js",
     "./test-harness/dep-scan": "./tests/shared/dep-scan.js",
+    "./test-harness/worker": "./tests/shared/worker.js",
     "./test-harness/runtime/*": "./tests/shared/runtime/*.js",
     "./test-harness/runtime/*.js": "./tests/shared/runtime/*.js",
     "./test-harness/runtime/*.tsrx": "./tests/shared/runtime/*.tsrx",

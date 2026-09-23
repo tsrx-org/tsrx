@@ -6,6 +6,7 @@
  * @typedef {{ code: string, map: unknown }} TsrxPreactTransformResult
  * @typedef {{
  *   (code: string, id: `${string}.tsrx`): Promise<TsrxPreactTransformResult>,
+ *   (code: string, id: `${string}.tsrx?worker_file&type=${string}`): Promise<TsrxPreactTransformResult>,
  *   (code: string, id: string): Promise<TsrxPreactTransformResult | null>,
  * }} TsrxPreactTransform
  * @typedef {{
@@ -38,6 +39,7 @@ import { compile } from '@tsrx/preact';
 import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
 import { resolveBuildPlatform } from '@tsrx/core/config';
 import { createDepScanTransformPlugin } from '@tsrx/core/vite/dep-scan';
+import { createWorkerEntryMiddleware, stripWorkerEntryQuery } from '@tsrx/core/vite/worker';
 
 const TSRX_EXTENSION_PATTERN = /\.tsrx$/;
 const CSS_QUERY = '?tsrx-css&lang.css';
@@ -138,6 +140,12 @@ export function tsrxPreact(options = {}) {
 			};
 		},
 
+		configureServer(server) {
+			server.middlewares.use(
+				createWorkerEntryMiddleware((path) => TSRX_EXTENSION_PATTERN.test(path)),
+			);
+		},
+
 		resolveId(/** @type {string} */ source) {
 			if (!source.includes(CSS_QUERY)) return null;
 			if (source.startsWith('\0')) return source;
@@ -152,23 +160,26 @@ export function tsrxPreact(options = {}) {
 		},
 
 		async transform(/** @type {string} */ code, /** @type {string} */ id) {
-			if (!TSRX_EXTENSION_PATTERN.test(id)) return null;
+			// A dev worker entry arrives as `<path>?worker_file&type=<type>`.
+			// Compile it under its file path, as a plain import would be.
+			const file = stripWorkerEntryQuery(id);
+			if (!TSRX_EXTENSION_PATTERN.test(file)) return null;
 
-			let { code: tsx_code, css, map } = compile(code, id, compile_options);
+			let { code: tsx_code, css, map } = compile(code, file, compile_options);
 
 			let source = tsx_code;
 			if (css) {
-				css_cache.set(id, css);
+				css_cache.set(file, css);
 				// After existing imports so dependency sheets (imported themes)
 				// evaluate first and this module's rules win at equal specificity.
-				source = `${tsx_code}\nimport ${JSON.stringify(id + CSS_QUERY)};\n`;
+				source = `${tsx_code}\nimport ${JSON.stringify(file + CSS_QUERY)};\n`;
 			} else {
-				css_cache.delete(id);
+				css_cache.delete(file);
 			}
 
 			const result = await transformWithOxc(
 				source,
-				id,
+				file,
 				{
 					lang: 'tsx',
 					sourcemap: true,
