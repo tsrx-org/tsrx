@@ -4624,9 +4624,84 @@ function printClassBody(node, path, options, print) {
 		}
 		contentParts.push(line);
 		contentParts.push(members[i]);
+		if (options.semi === false && needsClassPropertySemicolon(node.body[i], node.body[i + 1])) {
+			contentParts.push(';');
+		}
 	}
 
-	return group(['{', indent(contentParts), line, '}']);
+	// Without semicolons only a line break ends a field, an index signature or
+	// a bodiless method, so a class with one before another member can't
+	// collapse onto a single line
+	const shouldBreak =
+		options.semi === false &&
+		node.body.some(
+			(member, i) =>
+				i < node.body.length - 1 &&
+				member.type !== 'StaticBlock' &&
+				!(member.type === 'MethodDefinition' && member.value.body),
+		);
+
+	return group(['{', indent(contentParts), line, '}'], { shouldBreak });
+}
+
+/**
+ * Whether a class field printed without semicolons still needs one, because
+ * the next member would otherwise continue its value or type (`x = a` then
+ * `[k] = 1` reads as `x = a[k] = 1`) or a bare `static`, `get` or `set` field
+ * would become that member's modifier. Mirrors Prettier's
+ * shouldPrintSemicolonAfterClassProperty.
+ * @param {AST.Node} node - The member just printed
+ * @param {AST.Node | undefined} next - The member after it
+ * @returns {boolean}
+ */
+function needsClassPropertySemicolon(node, next) {
+	if (node.type !== 'PropertyDefinition' || !next) {
+		return false;
+	}
+
+	if (
+		!node.computed &&
+		!node.value &&
+		!node.typeAnnotation &&
+		node.key.type === 'Identifier' &&
+		(node.key.name === 'static' || node.key.name === 'get' || node.key.name === 'set')
+	) {
+		return true;
+	}
+
+	if (next.type === 'TSIndexSignature') {
+		return !next.static && !next.readonly;
+	}
+
+	// `static { ... }` starts with a keyword
+	if (next.type !== 'PropertyDefinition' && next.type !== 'MethodDefinition') {
+		return false;
+	}
+
+	// So does a member led by a modifier, and a keyword can't continue the field
+	if (
+		next.static ||
+		next.accessibility ||
+		next.abstract ||
+		next.override ||
+		(next.type === 'PropertyDefinition' && (next.readonly || next.declare || next.accessor)) ||
+		(next.type === 'MethodDefinition' &&
+			(next.value.async || next.kind === 'get' || next.kind === 'set'))
+	) {
+		return false;
+	}
+
+	// `in` and `instanceof` read as operators on the field's value
+	if (
+		!next.computed &&
+		next.key.type === 'Identifier' &&
+		(next.key.name === 'in' || next.key.name === 'instanceof')
+	) {
+		return true;
+	}
+
+	// `[` indexes the field's value and `*` multiplies it
+	return next.computed || (next.type === 'MethodDefinition' && next.value.generator === true);
 }
 
 /**
