@@ -1275,6 +1275,60 @@ export function optionalFn(declRequired: string, declMaybe?: string) {
 		});
 	});
 
+	describe(`[${name}] primitive type keywords keep mappings`, () => {
+		const keywords = [
+			'any',
+			'unknown',
+			'number',
+			'object',
+			'boolean',
+			'bigint',
+			'string',
+			'symbol',
+			'void',
+			'undefined',
+			'null',
+			'never',
+			'this',
+		];
+		// No `function` keyword anywhere, so the lexer collects no keyword tokens.
+		const source = `export class Model {\n${keywords
+			.map((keyword, index) => `\tm${index}(): ${keyword} {}`)
+			.join('\n')}\n}`;
+
+		it('maps each keyword to the generated keyword', () => {
+			// TypeScript reports a missing return (TS2355) on the whole return
+			// type, so an unmapped `number` let `value(): number {}` type-check clean.
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+
+			const unmapped = keywords.filter((keyword, index) => {
+				const start = source.indexOf(`m${index}(): `) + `m${index}(): `.length;
+				return !result.mappings.some(
+					(/** @type {CodeMapping} */ mapping) =>
+						mapping.sourceOffsets[0] === start &&
+						mapping.lengths[0] === keyword.length &&
+						mapping.data.verification &&
+						result.code.slice(
+							mapping.generatedOffsets[0],
+							mapping.generatedOffsets[0] + mapping.generatedLengths[0],
+						) === keyword,
+				);
+			});
+			expect(unmapped).toEqual([]);
+		});
+
+		it('does not map a method value as a function keyword', () => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const value_starts = keywords.map((_, index) => source.indexOf(`m${index}(`) + 2);
+			expect(
+				result.mappings.filter((/** @type {CodeMapping} */ mapping) =>
+					value_starts.includes(mapping.sourceOffsets[0]),
+				),
+			).toEqual([]);
+		});
+	});
+
 	describe(`[${name}] submodule import mappings`, () => {
 		it('maps imported, local, and source identifiers in imports from submodules', () => {
 			const source = `module server {

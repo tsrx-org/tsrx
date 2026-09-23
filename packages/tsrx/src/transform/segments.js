@@ -1047,21 +1047,24 @@ export function convert_source_map_to_mappings(
 					// node-start-anchored arithmetic when tokens were not collected.
 					const keyword_bound =
 						node_fn.id?.start ?? node_fn.params?.[0]?.start ?? node_fn.body?.start ?? node_fn.end;
-					const lexer_tokens = ast_from_source.tsrx_keyword_tokens ?? [];
+					const lexer_tokens = ast_from_source.tsrx_keyword_tokens;
 					/**
 					 * @param {'async' | 'function'} keyword
 					 * @param {number} from
 					 * @returns {AST.SourceLocation | null}
 					 */
 					const keyword_loc = (keyword, from) => {
-						const token = lexer_tokens.find(
-							(candidate) =>
-								candidate.value === keyword &&
-								candidate.start >= from &&
-								candidate.start < keyword_bound,
-						);
-						if (token) return token.loc;
-						if (lexer_tokens.length > 0) return null;
+						// An empty collected list means the file has no such keyword,
+						// not that tokens were skipped: a method value starts at `(`.
+						if (lexer_tokens) {
+							const token = lexer_tokens.find(
+								(candidate) =>
+									candidate.value === keyword &&
+									candidate.start >= from &&
+									candidate.start < keyword_bound,
+							);
+							return token?.loc ?? null;
+						}
 						// Arithmetic fallback (callers that do not collect tokens):
 						// assumes the historical `async` + one-space + `function`
 						// single-line layout.
@@ -1069,6 +1072,7 @@ export function convert_source_map_to_mappings(
 							keyword === 'function' && node_fn.async
 								? node_fn.start + 'async '.length
 								: node_fn.start;
+						if (!source.startsWith(keyword, offset)) return null;
 						const start_pos = offset_to_line_col(offset, src_line_offsets);
 						const end_pos = offset_to_line_col(offset + keyword.length, src_line_offsets);
 						return { start: start_pos, end: end_pos };
@@ -2316,7 +2320,20 @@ export function convert_source_map_to_mappings(
 				node.type === 'TSThisType' ||
 				node.type === 'TSIntrinsicKeyword'
 			) {
-				// Primitive type keywords - leaf nodes, no children
+				// Primitive type keywords - leaf nodes, no children. TypeScript
+				// reports on the whole keyword (e.g. TS2355 on a `number` return
+				// type), so map it like an identifier.
+				//
+				// Workaround: esrap (2.3.10 and main) records no location at the
+				// boundaries of composite types (`number[]`, `{ a: number }`,
+				// `keyof T`), so only keyword return types map. Once esrap maps
+				// every node's start and end (sveltejs/esrap#198), replace this
+				// with a verify-only mapping over the whole return type:
+				// https://github.com/tsrx-org/tsrx/issues/216
+				if (has_location(node)) {
+					const keyword = source.slice(node.start, node.end);
+					tokens.push({ source: keyword, generated: keyword, loc: node.loc, metadata: {} });
+				}
 				return;
 			} else if (node.type === 'TSDeclareFunction') {
 				// TypeScript declare function: declare function foo(): void;

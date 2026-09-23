@@ -171,3 +171,13 @@ it('reports errors on private class fields in .tsrx files', () => {
 		`layout.tsrx(4,${line.indexOf('#missing') + 1}): error TS2564: Property '#missing' has no initializer and is not definitely assigned in the constructor.`,
 	);
 });
+
+it('reports a missing return on a primitive return type in .tsrx files', () => {
+	const line = 'export class Model { value(): number {} }';
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${line}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	expect(result.output).toContain(
+		`layout.tsrx(4,${line.indexOf('number') + 1}): error TS2355: A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.`,
+	);
+});
