@@ -341,6 +341,7 @@ declare module 'estree' {
 	type Accessibility = 'public' | 'protected' | 'private'; // missing in acorn-typescript types
 	interface MethodDefinition {
 		typeParameters?: TSTypeParameterDeclaration;
+		decorators?: Decorator[];
 		accessibility?: Accessibility;
 		optional?: boolean;
 		abstract?: boolean;
@@ -356,6 +357,8 @@ declare module 'estree' {
 		override?: boolean;
 		declare?: boolean;
 		accessor?: boolean;
+		typeAnnotation?: TSTypeAnnotation;
+		decorators?: Decorator[];
 	}
 
 	interface ClassDeclaration {
@@ -364,6 +367,7 @@ declare module 'estree' {
 		implements?: AST.TSClassImplements[];
 		abstract?: boolean;
 		declare?: boolean;
+		decorators?: Decorator[];
 	}
 
 	interface ClassExpression {
@@ -372,6 +376,7 @@ declare module 'estree' {
 		implements?: AST.TSClassImplements[];
 		abstract?: boolean;
 		declare?: boolean;
+		decorators?: Decorator[];
 	}
 
 	interface Identifier extends AST.TrackedNode {

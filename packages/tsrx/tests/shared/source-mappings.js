@@ -588,6 +588,65 @@ function App({ tag }: { tag: string }) @{
 			expect_maps(`function C() @{
 	const F = class<T> { x: T | null = null; };
 }`));
+		it('maps class type positions, field annotations, and decorators', () => {
+			// An unmapped name drops its diagnostic, so `value!: Missing` type-checked clean.
+			const source = `declare function classDec(...args: any[]): any;
+declare function fieldDec(...args: any[]): any;
+declare function methodDec(...args: any[]): any;
+declare function exprDec(...args: any[]): any;
+declare const key: unique symbol;
+declare class Base<T> {}
+@classDec export abstract class Model<P extends ClassBound> extends Base<SuperArg> implements Shape<ImplArg>, OtherShape {
+	@fieldDec value!: FieldType;
+	static count: StaticType = null!;
+	'quoted': QuotedType;
+	0: NumericType;
+	[key]: ComputedType;
+	#secret: PrivateType = null!;
+	declare declared: DeclaredType;
+	accessor acc: AccessorType = null!;
+	abstract ab: AbstractType;
+	optional?: OptionalType;
+	@methodDec method<M extends MethodBound>(): void {}
+	overload<O extends OverloadBound>(o: O): void;
+	overload(o: unknown) {}
+}
+const Expr = @exprDec class<E extends ExprBound> implements ExprShape { field!: ExprField; };
+function C() @{}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			/** @param {string} text @param {string} [prefix] */
+			const mapped = (text, prefix = '') => {
+				const offset = source.indexOf(prefix + text) + prefix.length;
+				return result.mappings.some(
+					(mapping) => mapping.sourceOffsets[0] === offset && mapping.lengths[0] === text.length,
+				);
+			};
+			const types = [
+				'ClassBound',
+				'SuperArg',
+				'Shape',
+				'ImplArg',
+				'OtherShape',
+				'FieldType',
+				'StaticType',
+				'QuotedType',
+				'NumericType',
+				'ComputedType',
+				'PrivateType',
+				'DeclaredType',
+				'AccessorType',
+				'AbstractType',
+				'OptionalType',
+				'MethodBound',
+				'OverloadBound',
+				'ExprBound',
+				'ExprShape',
+				'ExprField',
+			];
+			const decorators = ['classDec', 'fieldDec', 'methodDec', 'exprDec'];
+			expect(types.filter((name) => !mapped(name))).toEqual([]);
+			expect(decorators.filter((name) => !mapped(name, '@'))).toEqual([]);
+		});
 
 		// Method shorthand and class methods with type parameters / return types.
 		it('class method with type parameters', () =>

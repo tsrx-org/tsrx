@@ -462,7 +462,7 @@ export function convert_source_map_to_mappings(
 
 	/**
 	 * Needed for a mapping that includes the computed brackets for diagnostics
-	 * @param {AST.MethodDefinition | AST.Property} node
+	 * @param {AST.MethodDefinition | AST.PropertyDefinition | AST.Property} node
 	 * @param {CodeMapping[]} mappings
 	 * @returns {void}
 	 */
@@ -1583,12 +1583,29 @@ export function convert_source_map_to_mappings(
 					});
 				}
 
-				// Visit in source order: id, superClass, body
+				// Visit in source order: decorators, id, typeParameters, superClass,
+				// superTypeParameters, implements, body
+				if (node.decorators) {
+					for (const decorator of node.decorators) {
+						visit(decorator);
+					}
+				}
 				if (node.id) {
 					visit(node.id);
 				}
+				if (node.typeParameters) {
+					visit(node.typeParameters);
+				}
 				if (node.superClass) {
 					visit(node.superClass);
+				}
+				if (node.superTypeParameters) {
+					visit(node.superTypeParameters);
+				}
+				if (node.implements) {
+					for (const heritage of node.implements) {
+						visit(heritage);
+					}
 				}
 				if (node.body) {
 					visit(node.body);
@@ -1603,6 +1620,12 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'MethodDefinition') {
+				if (node.decorators) {
+					for (const decorator of node.decorators) {
+						visit(decorator);
+					}
+				}
+
 				if (node.computed) {
 					set_bracket_computed_mapping(node, mappings);
 				}
@@ -1611,6 +1634,12 @@ export function convert_source_map_to_mappings(
 					handle_literal(node.key);
 				} else {
 					visit(node.key);
+				}
+
+				// The parser stores a class method's type parameters on the
+				// MethodDefinition, not on its FunctionExpression / TSDeclareMethod value.
+				if (node.typeParameters) {
+					visit(node.typeParameters);
 				}
 
 				if (node.value) {
@@ -1746,13 +1775,28 @@ export function convert_source_map_to_mappings(
 				// Leaf node
 				return;
 			} else if (node.type === 'PropertyDefinition') {
-				// Visit key and value
+				// Visit in source order: decorators, key, typeAnnotation, value
+				if (node.decorators) {
+					for (const decorator of node.decorators) {
+						visit(decorator);
+					}
+				}
+				if (node.computed) {
+					set_bracket_computed_mapping(node, mappings);
+				}
 				if (node.key) {
 					visit(node.key);
+				}
+				if (node.typeAnnotation) {
+					visit(node.typeAnnotation);
 				}
 				if (node.value) {
 					visit(node.value);
 				}
+				return;
+			} else if (node.type === 'Decorator') {
+				// `@expr` on a class or class member
+				visit(node.expression);
 				return;
 			} else if (node.type === 'StaticBlock') {
 				// Visit body

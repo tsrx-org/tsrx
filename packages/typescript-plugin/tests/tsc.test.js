@@ -145,3 +145,16 @@ describe.each(['native', 'bypass', 'legacy'])('tsrx-tsc with the %s loader', (lo
 		expect(result.status).toBe(0);
 	});
 });
+
+it('reports unresolved class field and heritage types in .tsrx files', () => {
+	const line =
+		'export class Model<T extends MissingBound> implements MissingShape { value!: MissingType; }';
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${line}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	for (const name of ['MissingBound', 'MissingShape', 'MissingType']) {
+		expect(result.output).toContain(
+			`layout.tsrx(4,${line.indexOf(name) + 1}): error TS2304: Cannot find name '${name}'.`,
+		);
+	}
+});
