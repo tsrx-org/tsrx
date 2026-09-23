@@ -54,6 +54,14 @@ const CharCode = Object.freeze({
 });
 
 const TYPE_PARAMETER_MODIFIERS = new Set(['const']);
+
+// Nodes that ESTree's decorators extension gives a `decorators` array.
+const DECORATABLE_NODE_TYPES = new Set([
+	'ClassDeclaration',
+	'ClassExpression',
+	'MethodDefinition',
+	'PropertyDefinition',
+]);
 // Reserved words after which a `/` opens a regular expression literal rather
 // than dividing, because they never end an operand. `of` is handled apart
 // since it is also a plain identifier.
@@ -628,6 +636,15 @@ export function TSRXPlugin(config) {
 			 */
 			finishNode(node, type) {
 				const finished = super.finishNode(node, type);
+				if (DECORATABLE_NODE_TYPES.has(type)) {
+					// acorn-typescript sets `decorators` only when there is one. Give every
+					// class and class member the array ESTree specifies; a member's
+					// decorators are attached after it finishes and replace this one.
+					const decoratable = /** @type {{ decorators?: AST.Decorator[] }} */ (
+						/** @type {unknown} */ (finished)
+					);
+					decoratable.decorators ??= [];
+				}
 				if (type === 'TSModuleDeclaration') {
 					const declaration = /** @type {AST.TSModuleDeclaration} */ (finished);
 					const start = /** @type {number} */ (declaration.start);

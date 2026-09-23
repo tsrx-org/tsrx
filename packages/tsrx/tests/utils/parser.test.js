@@ -4068,9 +4068,35 @@ foo();`;
 		const ast = parseModule(`const X = @dec class {};`, 'App.tsrx');
 		const init = declaratorInit(firstStatement(ast, 'VariableDeclaration'));
 		assert_type(init, 'ClassExpression');
-		// estree has no decorators on class nodes; the parser emits the TS shape.
-		const decorators = /** @type {{ decorators?: TSESTree.Decorator[] }} */ (init).decorators;
-		expect(as_type(found(decorators)[0].expression, 'Identifier').name).toBe('dec');
+		expect(as_type(init.decorators[0].expression, 'Identifier').name).toBe('dec');
+	});
+
+	it('gives every class and class member an ESTree decorators array', () => {
+		const ast = parseModule(
+			`class Plain { method() {} field = 1; accessor stored = 1; }
+			const Expression = class { method() {} };
+			@dec class Decorated { @member method() {} field = 1; }`,
+			'App.tsrx',
+		);
+		/** @param {AST.ClassDeclaration | AST.ClassExpression} node */
+		const decorator_names = (node) =>
+			[node, ...node.body.body].map((part) =>
+				'decorators' in part
+					? part.decorators.map((decorator) => as_type(decorator.expression, 'Identifier').name)
+					: null,
+			);
+
+		expect(decorator_names(as_type(ast.body[0], 'ClassDeclaration'))).toEqual([[], [], [], []]);
+		expect(
+			decorator_names(
+				as_type(declaratorInit(as_type(ast.body[1], 'VariableDeclaration')), 'ClassExpression'),
+			),
+		).toEqual([[], []]);
+		expect(decorator_names(as_type(ast.body[2], 'ClassDeclaration'))).toEqual([
+			['dec'],
+			['member'],
+			[],
+		]);
 	});
 
 	it('reports an error for two bare render nodes in a code block', () => {

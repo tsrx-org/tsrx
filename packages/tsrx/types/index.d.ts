@@ -341,7 +341,7 @@ declare module 'estree' {
 	type Accessibility = 'public' | 'protected' | 'private'; // missing in acorn-typescript types
 	interface MethodDefinition {
 		typeParameters?: TSTypeParameterDeclaration;
-		decorators?: Decorator[];
+		decorators: Decorator[];
 		accessibility?: Accessibility;
 		optional?: boolean;
 		abstract?: boolean;
@@ -358,7 +358,11 @@ declare module 'estree' {
 		declare?: boolean;
 		accessor?: boolean;
 		typeAnnotation?: TSTypeAnnotation;
-		decorators?: Decorator[];
+		decorators: Decorator[];
+	}
+
+	interface BaseClass {
+		decorators: Decorator[];
 	}
 
 	interface ClassDeclaration {
@@ -367,7 +371,6 @@ declare module 'estree' {
 		implements?: AST.TSClassImplements[];
 		abstract?: boolean;
 		declare?: boolean;
-		decorators?: Decorator[];
 	}
 
 	interface ClassExpression {
@@ -376,7 +379,6 @@ declare module 'estree' {
 		implements?: AST.TSClassImplements[];
 		abstract?: boolean;
 		declare?: boolean;
-		decorators?: Decorator[];
 	}
 
 	interface Identifier extends AST.TrackedNode {
@@ -399,7 +401,10 @@ declare module 'estree' {
 	}
 
 	// A `@decorator` on a class, class member, or parameter. The parser emits
-	// these, but estree has no node type for them.
+	// these, but estree has no node type for them. Classes, methods, and
+	// properties always carry a `decorators` array, empty when undecorated, as
+	// in ESTree's decorators extension. Rollup declares these the same way, and
+	// the declarations must match for the two to merge in one program.
 	interface Decorator extends AST.BaseNode {
 		type: 'Decorator';
 		expression: AST.Expression;
