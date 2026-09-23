@@ -1,5 +1,14 @@
 # @tsrx/preact-runtime
 
+## 0.1.11
+
+### Patch Changes
+
+- Updated dependencies
+  [[`3d6fa8c`](https://github.com/tsrx-org/tsrx/commit/3d6fa8cadecf5c550231101a899960e53796483f),
+  [`af6475e`](https://github.com/tsrx-org/tsrx/commit/af6475e7ec2a430d9ef5675d0cd512457572fb16)]:
+  - @tsrx/runtime@0.2.3
+
 ## 0.1.10
 
 ### Patch Changes

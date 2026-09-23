@@ -1,5 +1,231 @@
 # @tsrx/core
 
+## 0.3.0
+
+### Minor Changes
+
+- [#198](https://github.com/tsrx-org/tsrx/pull/198)
+  [`fb52feb`](https://github.com/tsrx-org/tsrx/commit/fb52febb0661dd111e15d55b918236125ab65385)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - `@import` in a `<style>`
+  block is now the `tsrx-css-import` compile error
+  (`DIAGNOSTIC_CODES.CSS_IMPORT`). The compiler scopes only the rules written in
+  the block and passed `@import` through, so the bundler inlined the imported
+  rules unscoped and they applied to the whole page. Share scoped styles through
+  an assigned block (`const theme = <style>…</style>`) and `apply={theme}`. For
+  global CSS, use `:global` in the block, or import the stylesheet in JavaScript:
+  `import './global.css'`.
+
+### Patch Changes
+
+- [#212](https://github.com/tsrx-org/tsrx/pull/212)
+  [`3d6fa8c`](https://github.com/tsrx-org/tsrx/commit/3d6fa8cadecf5c550231101a899960e53796483f)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - An async component can now
+  `await` inside `@for`, `@empty`, `@switch`, and `@if` bodies on React, Preact,
+  and the Hono server target. These bodies compile to callbacks and IIFEs that
+  were not async, so the output was invalid: builds failed with "`await` is only
+  allowed within async functions" and editors reported TS1308. The compiler now
+  makes those generated functions async and awaits them in the component. A loop
+  body with an `await` compiles to the new `map_iterable_async` runtime helper,
+  which finishes one item before it starts the next, like a `for...of` loop in an
+  async function. An `await` in a `@catch` body is now reported at the `await`
+  itself, because the target calls that fallback during rendering and cannot wait
+  for its result.
+
+- [#188](https://github.com/tsrx-org/tsrx/pull/188)
+  [`5272aec`](https://github.com/tsrx-org/tsrx/commit/5272aece1c9f0cf2b07cc0f80607b2e8a470b433)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A scoped class selector for a
+  class that contains a no-break space (U+00A0) or another non-ASCII space is no
+  longer marked unused. Class attributes are now split into tokens on ASCII
+  whitespace only, as HTML does, so `class="a&nbsp;b"` is the one class that
+  `.a\a0 b` matches, not the two classes `a` and `b`. The `[attr~=value]`
+  attribute selector uses the same splitting. Editor hover and go-to-definition
+  for such a class now link to its selector.
+
+- [#143](https://github.com/tsrx-org/tsrx/pull/143)
+  [`f1a21f6`](https://github.com/tsrx-org/tsrx/commit/f1a21f65557a19d5069f8985dee887ca079e5c4e)
+  Thanks [@trueadm](https://github.com/trueadm)! - Map TypeScript constructor
+  parameter properties (`private readonly x: T`) and bodyless class methods
+  (overload signatures, `abstract` and optional methods) in the source-mapping
+  walker, which previously threw `Unhandled AST node type in mapping walker` and
+  dropped the file to raw text. Also keep the `override` modifier on parameter
+  properties in printed output.
+
+- [#192](https://github.com/tsrx-org/tsrx/pull/192)
+  [`61fc4d6`](https://github.com/tsrx-org/tsrx/commit/61fc4d69cc3807ca9ca423a128c0e7854d1bb36b)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - `tsrx-tsc` and the editor now
+  report errors in class type positions, such as `value!: MissingType` failing
+  with `Cannot find name 'MissingType'`. The source-mapping walker skipped class
+  field type annotations, class and method type parameters, `extends Base<T>` type
+  arguments, `implements` clauses, and class and member decorators. Volar drops
+  any diagnostic it cannot map back to the source, so these files type-checked
+  clean.
+
+- [#173](https://github.com/tsrx-org/tsrx/pull/173)
+  [`ae4131c`](https://github.com/tsrx-org/tsrx/commit/ae4131c5054e77b4bb1c9ac020c1c827de6ddc5c)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A `<style>` selector with a
+  CSS hexadecimal escape now compiles and scopes correctly. The whitespace that
+  ends a hex escape is part of the escape, so `.\31 23` is the class `123` rather
+  than a descendant selector, and an assigned block exposes it as `theme['123']`.
+  Hex escapes also decode to their code points when matching elements and naming
+  theme entries, so `.\31` matches `class="1"` and appears as `theme['1']` instead
+  of `theme['31']`.
+
+  Attribute selectors decode the same way. An unquoted value such as
+  `[data-x=\31 23]` no longer fails with `Expected ]`, and attribute names and
+  values are unescaped before they are matched against elements. Quoted values
+  also keep their leading and trailing whitespace. Before this change, rules like
+  `[data-x="\31 23"]`, `[\64 ata-x=y]` and `[title=" a "]` were marked unused even
+  when a sibling element matched.
+
+- [#180](https://github.com/tsrx-org/tsrx/pull/180)
+  [`bbfe88e`](https://github.com/tsrx-org/tsrx/commit/bbfe88e058bc6eefc9c9f08acf1df61e20d44170)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Keep dotted namespace names
+  (`namespace A.B { … }`, `declare namespace A.B.C`) when formatting and compiling
+  TSRX files. Prettier printed the keyword again for each name part
+  (`namespace A namespace B { … }`), which no longer parses, and the compilers
+  emitted `namespace Anamespace B`. Shorthand ambient modules
+  (`declare module 'name';`) also keep their semicolon when formatted and no
+  longer crash the compilers.
+
+- [#195](https://github.com/tsrx-org/tsrx/pull/195)
+  [`9e25e90`](https://github.com/tsrx-org/tsrx/commit/9e25e90a34724b1b89b7a7735dee737d91bfd0c9)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Keep `export` on TypeScript
+  import-equals aliases (`export import Alias = Foo;`,
+  `export import fs = require('fs');`) when compiling TSRX files. The compilers
+  printed a plain `import Alias = Foo`, so the module silently stopped exporting
+  the alias. Editor output now also maps the whole exported statement back to its
+  source.
+
+- [#177](https://github.com/tsrx-org/tsrx/pull/177)
+  [`3bbc283`](https://github.com/tsrx-org/tsrx/commit/3bbc283debdd6e34d598e127259dff27ee154998)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Apply a `@for` key to the
+  rows a loop renders through `@if` or `@switch`. The key clause (`key item.id`)
+  and the implicit index key were only placed on a body that returned an element
+  or a fragment, so a conditional body lost its key: reordering the list moved row
+  state to the wrong item on React, Preact, and Hono, and React warned about
+  missing keys. The key now lands on the element or fragment each branch renders,
+  and a key written on a branch element still wins. A static branch element in a
+  keyed loop now stays inline, since it carries a per-row key, instead of being
+  hoisted. Vue's `VaporFor` keeps keying rows through `getKey`, and its output is
+  unchanged.
+
+- [#176](https://github.com/tsrx-org/tsrx/pull/176)
+  [`f8bb16d`](https://github.com/tsrx-org/tsrx/commit/f8bb16dfe59309aa4fe19e10e2412c132d29f0d9)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Recognize a generic arrow
+  whose parameter list holds a `)` inside a comment or regular expression literal
+  (`<T extends object>(x: T /* ) */) => x`,
+  `<T extends object>(x: T, re = /[)]/) => x`). The lookahead that balances the
+  parameter list only skipped strings, so the stray `)` ended the scan early and
+  the `<T>` was parsed as an unclosed JSX tag. It now skips comments and regex
+  literals too, telling a regex from division by the token before the `/`.
+
+- [#166](https://github.com/tsrx-org/tsrx/pull/166)
+  [`676d943`](https://github.com/tsrx-org/tsrx/commit/676d94395c6561d3f2f7febad1c42fb40b7b0221)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Read a JSX tag whose prop
+  holds a generic arrow with a function-type constraint
+  (`<Box fn={<T extends () => void,>(x: T) => x} />`) as JSX. The generic-arrow
+  lookahead treated the `>` of `=>` as a closing angle bracket, so the outer tag
+  was tokenized as a type parameter list and parsing failed with
+  `Unexpected token`. The lookahead now scans an actual type parameter list
+  (`<[const] Name [extends Type] [= Type], ...>`), skipping strings, comments,
+  `=>`, and nested brackets, instead of counting angle brackets.
+
+- [#211](https://github.com/tsrx-org/tsrx/pull/211)
+  [`8916c70`](https://github.com/tsrx-org/tsrx/commit/8916c7091156023e716c0d75f0be4a8465c6d5c4)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Adding a `ref` to a host
+  element with a spread no longer changes the order in which its attributes are
+  evaluated on React, Preact, and Hono. In
+  `<div data-first={next()} {...{ 'data-second': next() }} ref={cb} />` the
+  compiler evaluated the spread in a declaration before the element, so
+  `data-second` got `1` and `data-first` got `2`; a spread on a nested element
+  also ran before its ancestors' attributes. The spread's props bag is now
+  assigned where it is spread, `{...(bag = normalize(expr))}`, and the element's
+  `ref` reads `bag?.ref` afterward, as before.
+
+  Platforms opt in with the new `jsx.hostSpreadRefBinding: 'in-place'` option.
+  Solid and Vue keep the declaration: their compiled JSX evaluates attributes in
+  its own order, and Solid reads `ref` before the spread.
+
+- [#159](https://github.com/tsrx-org/tsrx/pull/159)
+  [`73c956c`](https://github.com/tsrx-org/tsrx/commit/73c956cf9ea739e948ca2498dcc85fdd2b5954c5)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Parse `<=`, `<<`, and `<<=`
+  as whole operators when they are written without surrounding spaces (`value<=0`,
+  `1<<n`) or when a later arrow made them look like the start of a generic arrow
+  function. Type arguments that open with a generic function type
+  (`f<<T>() => T>()`) still parse, and a `<` inside a type is never read as a JSX
+  tag, so spaced construct signatures (`new <T>(x: T): T`) and optional generic
+  methods (`f?<T>(x: T): T`) in interfaces, type literals and classes parse.
+
+- [#200](https://github.com/tsrx-org/tsrx/pull/200)
+  [`69b5a33`](https://github.com/tsrx-org/tsrx/commit/69b5a3359edc09ec90b16a721f2f00909f3e4f21)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Spreading an omitted or
+  `null` props bag onto a host element no longer throws when the element also has
+  a `ref`: `<input {...props.optional} ref={cb} />` renders `<input />`, as native
+  JSX does. The compiler read the spread's ref as `spread.ref`, which threw
+  `Cannot read properties of undefined (reading 'ref')` on React, Preact, Solid,
+  Vue, and Hono. Vue reads that ref for every host spread, so it threw even
+  without an explicit `ref`. The generated read is now `spread?.ref`.
+
+- [#199](https://github.com/tsrx-org/tsrx/pull/199)
+  [`4cf5823`](https://github.com/tsrx-org/tsrx/commit/4cf5823525daaf683b80a40037d0b7c3c2538b91)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Keep `var` bindings declared
+  in an inactive platform branch. When
+  `if (import.meta.env.platform.web) { var value = 'web'; }` compiled for another
+  platform, the compilers dropped the whole branch, so `export { value }` failed
+  with `Export 'value' is not defined` and a function reading `value` threw a
+  `ReferenceError`. The branch's code is still dropped, but its `var` names are
+  now declared without initializers, so they read as `undefined`, as in plain
+  JavaScript with the flag replaced by `false`.
+
+- [#207](https://github.com/tsrx-org/tsrx/pull/207)
+  [`3a13af2`](https://github.com/tsrx-org/tsrx/commit/3a13af2550939c9615048e1b95f6c77ba6dca6d9)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - `tsrx-tsc` and the editor now
+  report errors on `#private` class members, such as `#value: number = 'bad'`
+  failing with `Type 'string' is not assignable to type 'number'` and an
+  uninitialized `#value: number` failing with TS2564. The source-mapping walker
+  never mapped private names, and TypeScript reports these errors on the `#name`
+  itself, so Volar dropped them. Private names in method and accessor keys,
+  `this.#name` reads, and `#name in obj` checks now map too.
+
+- [#165](https://github.com/tsrx-org/tsrx/pull/165)
+  [`c37eb95`](https://github.com/tsrx-org/tsrx/commit/c37eb95572ec79a369300f4fa69e3a71d76b2703)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - An assigned `<style>` block
+  with a `.__proto__` class selector now exposes a `theme.__proto__` class entry
+  like any other class. The generated theme object defines the key as its own
+  property instead of setting the object's prototype, so `theme.__proto__` reads
+  the scoped class string rather than `Object.prototype`.
+
+- [#170](https://github.com/tsrx-org/tsrx/pull/170)
+  [`3372724`](https://github.com/tsrx-org/tsrx/commit/3372724784db8b8de9ff918b3a048279a587f43d)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Each `@switch` arm
+  (`@case x: { … }` or `@default: { … }`) is now its own block scope, so setup
+  locals in different arms can share a name. Before, the whole switch shared one
+  scope: declaring the same `const` in two arms failed with
+  `Identifier has already been declared`, and a `<style apply={theme}>` in one arm
+  could resolve to another arm's `theme`. React, Preact, Vue, and Hono output now
+  wraps an arm's setup statements in their own block inside the generated
+  `switch`.
+
+- [#185](https://github.com/tsrx-org/tsrx/pull/185)
+  [`6490e51`](https://github.com/tsrx-org/tsrx/commit/6490e519634a5697310b073495033ecbca05e457)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A `.tsrx` module imported as
+  a web worker (`import MyWorker from './worker.tsrx?worker'`) now starts in
+  `vite dev`. Vite requested the entry as `worker.tsrx?worker_file&type=module`,
+  which its dev server served as a static file, and the plugins skipped the
+  query-suffixed id, so the browser received raw TSRX source and the worker failed
+  to load. The Vite plugins now route that request through Vite's transform
+  pipeline and compile the entry. In the Solid and Vue plugins, editing the entry
+  also invalidates the cached worker module, so the next page load gets the new
+  code. Production builds were not affected.
+
+  `@tsrx/core` gains a `@tsrx/core/vite/worker` entry point with the shared
+  dev-server middleware and id helper.
+
+- Updated dependencies
+  [[`3d6fa8c`](https://github.com/tsrx-org/tsrx/commit/3d6fa8cadecf5c550231101a899960e53796483f),
+  [`af6475e`](https://github.com/tsrx-org/tsrx/commit/af6475e7ec2a430d9ef5675d0cd512457572fb16)]:
+  - @tsrx/runtime@0.2.3
+
 ## 0.2.4
 
 ### Patch Changes

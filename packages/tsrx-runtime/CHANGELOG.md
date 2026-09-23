@@ -1,5 +1,35 @@
 # @tsrx/runtime
 
+## 0.2.3
+
+### Patch Changes
+
+- [#212](https://github.com/tsrx-org/tsrx/pull/212)
+  [`3d6fa8c`](https://github.com/tsrx-org/tsrx/commit/3d6fa8cadecf5c550231101a899960e53796483f)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - An async component can now
+  `await` inside `@for`, `@empty`, `@switch`, and `@if` bodies on React, Preact,
+  and the Hono server target. These bodies compile to callbacks and IIFEs that
+  were not async, so the output was invalid: builds failed with "`await` is only
+  allowed within async functions" and editors reported TS1308. The compiler now
+  makes those generated functions async and awaits them in the component. A loop
+  body with an `await` compiles to the new `map_iterable_async` runtime helper,
+  which finishes one item before it starts the next, like a `for...of` loop in an
+  async function. An `await` in a `@catch` body is now reported at the `await`
+  itself, because the target calls that fallback during rendering and cannot wait
+  for its result.
+
+- [#201](https://github.com/tsrx-org/tsrx/pull/201)
+  [`af6475e`](https://github.com/tsrx-org/tsrx/commit/af6475e7ec2a430d9ef5675d0cd512457572fb16)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Render conditional host
+  spreads such as `<input {...(enabled && { disabled: true })} />` when the
+  condition is false. `normalize_spread_props` now passes every non-object value
+  through unchanged instead of throwing `Reflect.ownKeys called on non-object`, so
+  `false`, `0`, and `''` spread to nothing as they do in native JSX, and
+  `normalize_spread_props_for_ref_attr` returns an empty bag for `null` or
+  `undefined` so an element with both a `ref` and a nullish spread no longer
+  throws reading `.ref`. The helper types accept the falsy values TypeScript
+  allows in a JSX spread, so editors stop reporting them as errors.
+
 ## 0.2.2
 
 ### Patch Changes

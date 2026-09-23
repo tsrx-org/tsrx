@@ -1,5 +1,82 @@
 # @tsrx/prettier-plugin
 
+## 0.4.8
+
+### Patch Changes
+
+- [#180](https://github.com/tsrx-org/tsrx/pull/180)
+  [`bbfe88e`](https://github.com/tsrx-org/tsrx/commit/bbfe88e058bc6eefc9c9f08acf1df61e20d44170)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Keep dotted namespace names
+  (`namespace A.B { … }`, `declare namespace A.B.C`) when formatting and compiling
+  TSRX files. Prettier printed the keyword again for each name part
+  (`namespace A namespace B { … }`), which no longer parses, and the compilers
+  emitted `namespace Anamespace B`. Shorthand ambient modules
+  (`declare module 'name';`) also keep their semicolon when formatted and no
+  longer crash the compilers.
+
+- [#205](https://github.com/tsrx-org/tsrx/pull/205)
+  [`dbf6d93`](https://github.com/tsrx-org/tsrx/commit/dbf6d932f9e24f1fbdf8eba80ace59eec4d9c0e0)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Keep the `!` on class fields
+  with a definite-assignment assertion (`value!: string;`) when formatting TSRX
+  files. Previously the marker was dropped, so strict type checking reported the
+  field as never assigned (TS2564).
+
+- [#187](https://github.com/tsrx-org/tsrx/pull/187)
+  [`a894936`](https://github.com/tsrx-org/tsrx/commit/a89493640d38aaa4c7098475c2f48d1d98e8814e)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Keep export clauses intact
+  when formatting TSRX files. `export {};` was printed as a bare `export`, which
+  failed to parse at the end of a file and otherwise exported the next
+  declaration. Empty re-exports (`export {} from "x";`) now keep their source,
+  `export * from` and `export * as ns from` no longer become an `Unknown:`
+  comment, re-exports keep their import attributes (`with { type: "json" }`), and
+  string module export names such as `export { "a-b" as ab }` are no longer
+  printed as `undefined`.
+
+- [#172](https://github.com/tsrx-org/tsrx/pull/172)
+  [`036be30`](https://github.com/tsrx-org/tsrx/commit/036be30f2f688a2da4caf1cd3c66fa4cd034d783)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Keep TypeScript import
+  aliases (`import Alias = Foo.Bar;`, `import fs = require("fs");`,
+  `export import`), export assignments (`export = value;`), and
+  `export as namespace` declarations when formatting TSRX files. Previously each
+  was replaced with an `Unknown:` comment, which removed a runtime binding from
+  otherwise working modules.
+
+- [#191](https://github.com/tsrx-org/tsrx/pull/191)
+  [`3a42f82`](https://github.com/tsrx-org/tsrx/commit/3a42f828ee557a9a54e5c39e402868a948ccf437)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Keep the `?` on optional
+  class methods (`onMount?(): void;`) when formatting TSRX files. Previously the
+  marker was dropped, which made the method required and broke type checking for
+  objects that leave it out.
+
+- [#162](https://github.com/tsrx-org/tsrx/pull/162)
+  [`d808849`](https://github.com/tsrx-org/tsrx/commit/d8088497e444c5b2753da6df0d841863f812e8c1)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Keep type arguments on
+  `typeof` type queries (`typeof identity<string>`) and `import()` types, print
+  polymorphic `this` types instead of an `Unknown: TSThisType` comment, and keep
+  superclass type arguments and `implements` clauses on classes when formatting
+  TSRX files.
+- Updated dependencies
+  [[`3d6fa8c`](https://github.com/tsrx-org/tsrx/commit/3d6fa8cadecf5c550231101a899960e53796483f),
+  [`5272aec`](https://github.com/tsrx-org/tsrx/commit/5272aece1c9f0cf2b07cc0f80607b2e8a470b433),
+  [`f1a21f6`](https://github.com/tsrx-org/tsrx/commit/f1a21f65557a19d5069f8985dee887ca079e5c4e),
+  [`61fc4d6`](https://github.com/tsrx-org/tsrx/commit/61fc4d69cc3807ca9ca423a128c0e7854d1bb36b),
+  [`ae4131c`](https://github.com/tsrx-org/tsrx/commit/ae4131c5054e77b4bb1c9ac020c1c827de6ddc5c),
+  [`fb52feb`](https://github.com/tsrx-org/tsrx/commit/fb52febb0661dd111e15d55b918236125ab65385),
+  [`bbfe88e`](https://github.com/tsrx-org/tsrx/commit/bbfe88e058bc6eefc9c9f08acf1df61e20d44170),
+  [`9e25e90`](https://github.com/tsrx-org/tsrx/commit/9e25e90a34724b1b89b7a7735dee737d91bfd0c9),
+  [`3bbc283`](https://github.com/tsrx-org/tsrx/commit/3bbc283debdd6e34d598e127259dff27ee154998),
+  [`f8bb16d`](https://github.com/tsrx-org/tsrx/commit/f8bb16dfe59309aa4fe19e10e2412c132d29f0d9),
+  [`676d943`](https://github.com/tsrx-org/tsrx/commit/676d94395c6561d3f2f7febad1c42fb40b7b0221),
+  [`8916c70`](https://github.com/tsrx-org/tsrx/commit/8916c7091156023e716c0d75f0be4a8465c6d5c4),
+  [`73c956c`](https://github.com/tsrx-org/tsrx/commit/73c956cf9ea739e948ca2498dcc85fdd2b5954c5),
+  [`69b5a33`](https://github.com/tsrx-org/tsrx/commit/69b5a3359edc09ec90b16a721f2f00909f3e4f21),
+  [`4cf5823`](https://github.com/tsrx-org/tsrx/commit/4cf5823525daaf683b80a40037d0b7c3c2538b91),
+  [`3a13af2`](https://github.com/tsrx-org/tsrx/commit/3a13af2550939c9615048e1b95f6c77ba6dca6d9),
+  [`c37eb95`](https://github.com/tsrx-org/tsrx/commit/c37eb95572ec79a369300f4fa69e3a71d76b2703),
+  [`3372724`](https://github.com/tsrx-org/tsrx/commit/3372724784db8b8de9ff918b3a048279a587f43d),
+  [`6490e51`](https://github.com/tsrx-org/tsrx/commit/6490e519634a5697310b073495033ecbca05e457)]:
+  - @tsrx/core@0.3.0
+
 ## 0.4.7
 
 ### Patch Changes
