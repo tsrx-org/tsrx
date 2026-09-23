@@ -18,6 +18,7 @@ const CharCode = Object.freeze({
 	lineFeed: 10,
 	carriageReturn: 13,
 	space: 32,
+	exclamation: 33,
 	doubleQuote: 34,
 	numberSign: 35,
 	dollar: 36,
@@ -27,7 +28,9 @@ const CharCode = Object.freeze({
 	closeParen: 41,
 	comma: 44,
 	asterisk: 42,
+	plus: 43,
 	dash: 45,
+	dot: 46,
 	slash: 47,
 	colon: 58,
 	semicolon: 59,
@@ -51,6 +54,24 @@ const CharCode = Object.freeze({
 });
 
 const TYPE_PARAMETER_MODIFIERS = new Set(['const']);
+// Keywords after which a `/` opens a regular expression literal rather than
+// dividing, because they never end an operand.
+const REGEX_PRECEDING_KEYWORDS = new Set([
+	'await',
+	'case',
+	'delete',
+	'do',
+	'else',
+	'in',
+	'instanceof',
+	'new',
+	'of',
+	'return',
+	'throw',
+	'typeof',
+	'void',
+	'yield',
+]);
 const regex_identifier = /[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*/uy;
 
 /** @type {WeakMap<Parse.Parser, number[]>} */
@@ -248,30 +269,12 @@ function skip_regex_from(input, i) {
 }
 
 /**
- * Whether a `/` after the significant character `last` divides rather than
- * opens a regular expression literal: it does after an identifier, a number,
- * a closing bracket, or a string/regex literal, which callers record as `)`.
- * @param {number} last
- */
-function slash_is_division(last) {
-	return (
-		last === CharCode.closeParen ||
-		last === CharCode.closeBracket ||
-		last === CharCode.closeBrace ||
-		(last >= CharCode.digit0 && last <= CharCode.digit9) ||
-		(last >= CharCode.uppercaseA && last <= CharCode.uppercaseZ) ||
-		(last >= CharCode.lowercaseA && last <= CharCode.lowercaseZ) ||
-		last === CharCode.underscore ||
-		last === CharCode.dollar ||
-		last > 127
-	);
-}
-
-/**
  * Scan past a balanced pair starting at `i` (which must point at `open`).
  * Strings, comments, and regular expression literals are skipped so brackets
- * inside them do not count. Returns the position after the matching close, or
- * -1 if unbalanced.
+ * inside them do not count. A `/` divides when the previous token ends an
+ * operand (an identifier, number, literal, or closing bracket, kept through
+ * postfix `!`, `++`, `--`, and `.`) and opens a regex otherwise. Returns the
+ * position after the matching close, or -1 if unbalanced.
  * @param {string} input
  * @param {number} i
  * @param {number} open
@@ -279,13 +282,22 @@ function slash_is_division(last) {
  */
 function scan_balanced_from(input, i, open, close) {
 	let depth = 1;
-	let last = open;
+	let after_operand = false;
 	i++;
 	while (i < input.length) {
 		const ch = input.charCodeAt(i);
+		if (
+			ch === CharCode.space ||
+			ch === CharCode.tab ||
+			ch === CharCode.lineFeed ||
+			ch === CharCode.carriageReturn
+		) {
+			i++;
+			continue;
+		}
 		if (ch === CharCode.doubleQuote || ch === CharCode.singleQuote || ch === CharCode.backtick) {
 			i = skip_string_from(input, i, ch);
-			last = CharCode.closeParen;
+			after_operand = true;
 			continue;
 		}
 		if (ch === CharCode.slash) {
@@ -295,22 +307,41 @@ function scan_balanced_from(input, i, open, close) {
 				i = after_comment;
 				continue;
 			}
-			if (!slash_is_division(last)) {
-				i = skip_regex_from(input, i);
-				if (i === -1) return -1;
-				last = CharCode.closeParen;
+			if (after_operand) {
+				after_operand = false;
+				i++;
 				continue;
 			}
+			i = skip_regex_from(input, i);
+			if (i === -1) return -1;
+			after_operand = true;
+			continue;
 		}
 		if (ch === open) depth++;
 		else if (ch === close && --depth === 0) return i + 1;
-		if (
-			ch !== CharCode.space &&
-			ch !== CharCode.tab &&
-			ch !== CharCode.lineFeed &&
-			ch !== CharCode.carriageReturn
+
+		const name_end = scan_identifier_from(input, i);
+		if (name_end !== -1) {
+			after_operand = !REGEX_PRECEDING_KEYWORDS.has(input.slice(i, name_end));
+			i = name_end;
+			continue;
+		}
+		if (ch >= CharCode.digit0 && ch <= CharCode.digit9) {
+			after_operand = true;
+		} else if (
+			ch === CharCode.closeParen ||
+			ch === CharCode.closeBracket ||
+			ch === CharCode.closeBrace
 		) {
-			last = ch;
+			after_operand = true;
+		} else if ((ch === CharCode.plus || ch === CharCode.dash) && input.charCodeAt(i + 1) === ch) {
+			// Postfix `++`/`--` keeps the operand; the prefix forms follow a non-operand.
+			i += 2;
+			continue;
+		} else if (ch !== CharCode.exclamation && ch !== CharCode.dot) {
+			// Postfix `!` and a number's trailing `.` keep the operand; the
+			// prefix `!` and a leading `.` already follow a non-operand.
+			after_operand = false;
 		}
 		i++;
 	}
