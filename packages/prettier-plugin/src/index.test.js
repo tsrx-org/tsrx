@@ -7333,6 +7333,58 @@ declare module "untyped-b";`);
 		});
 	});
 
+	// Export clauses decide what a module exposes. Printing `export {};` as a
+	// bare `export` made the next declaration public, and a dropped
+	// `export * from` or import attribute changed what the module loads.
+	describe('export clauses survive formatting', () => {
+		/**
+		 * Assert the input is already formatted and comes back byte-identical.
+		 * @param {string} source
+		 */
+		const expectUnchanged = async (source) => {
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		};
+
+		it.each([
+			'export {};',
+			'export type {};',
+			'export {} from "./side-effect";',
+			'export type {} from "./types";',
+			'export * from "./module";',
+			'export * as ns from "./module";',
+			'export type * from "./types";',
+			'export type * as Types from "./types";',
+			'export { a } from "./data.json" with { type: "json" };',
+			'export * from "./data.json" with { type: "json" };',
+			'export { "a-b" as ab, c as "c-d" } from "./module";',
+			'export { "a-b" } from "./module";',
+			'export * as "a-b" from "./module";',
+			'import { "a-b" as ab } from "./module";',
+		])('keeps %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it('keeps the declaration after an empty export local', async () => {
+			await expectUnchanged(`export {};
+const internal = 42;`);
+			await expectUnchanged(`export {};
+declare global {
+  interface Window {
+    value: number;
+  }
+}`);
+		});
+
+		it('follows quote and semicolon options', async () => {
+			const result = await format(`export {};\nexport {} from "a";\nexport * as ns from "b";`, {
+				singleQuote: true,
+				semi: false,
+			});
+			expect(result).toBeWithNewline(`export {}\nexport {} from 'a'\nexport * as ns from 'b'`);
+		});
+	});
+
 	// `export default (class Named {})` is an expression: `Named` is bound only
 	// inside the class body. `export default class Named {}` is a declaration:
 	// `Named` becomes a module-scoped binding. Dropping the parens swaps one for

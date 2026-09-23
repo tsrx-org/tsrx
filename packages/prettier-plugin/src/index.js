@@ -1248,6 +1248,10 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = printExportNamedDeclaration(node, path, options, print);
 			break;
 
+		case 'ExportAllDeclaration':
+			nodeContent = printExportAllDeclaration(node, options);
+			break;
+
 		case 'ExportDefaultDeclaration':
 			nodeContent = printExportDefaultDeclaration(node, path, options, print);
 			break;
@@ -2923,7 +2927,7 @@ function printImportDeclaration(node, path, options, _print) {
 			} else if (spec.type === 'ImportSpecifier') {
 				// Handle inline type imports: import { type Component } from '@example/runtime'
 				const typePrefix = spec.importKind === 'type' ? 'type ' : '';
-				const importedName = /** @type {AST.Identifier} */ (spec.imported).name;
+				const importedName = printModuleExportName(spec.imported, options);
 				const localName = spec.local.name;
 				const importName =
 					importedName === localName
@@ -2967,13 +2971,40 @@ function printImportDeclaration(node, path, options, _print) {
 		parts.push(' from');
 	}
 
+	parts.push(' ', printModuleSource(node, options), semi(options));
+
+	return parts;
+}
+
+/**
+ * Print a name in an import or export clause. A name that is not a valid
+ * identifier is written as a string literal: `export { a as "a-b" }`.
+ * @param {AST.Identifier | AST.Literal} node
+ * @param {TsrxFormatOptions} options
+ * @returns {string}
+ */
+function printModuleExportName(node, options) {
+	return node.type === 'Identifier'
+		? node.name
+		: formatStringLiteral(/** @type {string} */ (node.value), options);
+}
+
+/**
+ * Print the module an import or re-export loads, with its import attributes:
+ * `"./data.json" with { type: "json" }`. Dropping the attributes changes how
+ * the module loads, so every declaration with a source prints them.
+ * @param {AST.TSRXImportDeclaration | AST.ExportNamedDeclaration | AST.ExportAllDeclaration} node
+ * @param {TsrxFormatOptions} options
+ * @returns {Doc[]}
+ */
+function printModuleSource(node, options) {
 	const source = /** @type {AST.Literal | AST.Identifier} */ (/** @type {unknown} */ (node.source));
-	const sourceDoc =
+	/** @type {Doc[]} */
+	const parts = [
 		source.type === 'Identifier'
 			? source.name
-			: formatStringLiteral(/** @type {string} */ (source.value), options);
-
-	parts.push(' ', sourceDoc);
+			: formatStringLiteral(/** @type {string} */ (source.value), options),
+	];
 
 	const attributes =
 		/** @type {Array<{ key: AST.Identifier | AST.Literal, value: AST.Literal }>} */ (
@@ -2990,8 +3021,6 @@ function printImportDeclaration(node, path, options, _print) {
 		});
 		parts.push(' with { ', join(', ', attributeDocs), ' }');
 	}
-
-	parts.push(semi(options));
 
 	return parts;
 }
@@ -3025,7 +3054,7 @@ function printTSImportEqualsDeclaration(node, path, options, print) {
  * @param {AstPath<AST.ExportNamedDeclaration>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
- * @returns {Doc[] | Doc}
+ * @returns {Doc[]}
  */
 function printExportNamedDeclaration(node, path, options, print) {
 	if (node.declaration) {
@@ -3035,42 +3064,52 @@ function printExportNamedDeclaration(node, path, options, print) {
 		parts.push('export ');
 		parts.push(path.call(print, 'declaration'));
 		return parts;
-	} else if (node.specifiers && node.specifiers.length > 0) {
-		const specifiers = node.specifiers.map((spec) => {
-			const typePrefix = spec.exportKind === 'type' ? 'type ' : '';
-			const exportedName = /** @type {AST.Identifier} */ (spec.exported).name;
-			const localName = /** @type {AST.Identifier} */ (spec.local).name;
-			if (exportedName === localName) {
-				return typePrefix + localName;
-			} else {
-				return typePrefix + localName + ' as ' + exportedName;
-			}
-		});
-
-		const parts = [node.exportKind === 'type' ? 'export type { ' : 'export { '];
-		for (let i = 0; i < specifiers.length; i++) {
-			if (i > 0) parts.push(', ');
-			parts.push(specifiers[i]);
-		}
-		parts.push(' }');
-
-		if (node.source) {
-			const source = /** @type {AST.Literal | AST.Identifier} */ (
-				/** @type {unknown} */ (node.source)
-			);
-			parts.push(' from ');
-			parts.push(
-				source.type === 'Identifier'
-					? source.name
-					: formatStringLiteral(/** @type {string} */ (source.value), options),
-			);
-		}
-		parts.push(semi(options));
-
-		return parts;
 	}
 
-	return 'export';
+	const specifiers = node.specifiers.map((spec) => {
+		const typePrefix = spec.exportKind === 'type' ? 'type ' : '';
+		const exportedName = printModuleExportName(spec.exported, options);
+		const localName = printModuleExportName(spec.local, options);
+		if (exportedName === localName) {
+			return typePrefix + localName;
+		} else {
+			return typePrefix + localName + ' as ' + exportedName;
+		}
+	});
+
+	// `export {};` still marks the file as a module, and `export {} from "x"`
+	// still loads `x`, so an empty list keeps its braces. A bare `export` would
+	// export the next declaration or fail to parse at the end of the file.
+	/** @type {Doc[]} */
+	const parts = [
+		node.exportKind === 'type' ? 'export type ' : 'export ',
+		specifiers.length > 0 ? ['{ ', join(', ', specifiers), ' }'] : '{}',
+	];
+
+	if (node.source) {
+		parts.push(' from ', printModuleSource(node, options));
+	}
+	parts.push(semi(options));
+
+	return parts;
+}
+
+/**
+ * Print a star re-export: `export * from "x";` or `export type * as ns from "x";`.
+ * @param {AST.ExportAllDeclaration} node
+ * @param {TsrxFormatOptions} options
+ * @returns {Doc[]}
+ */
+function printExportAllDeclaration(node, options) {
+	return [
+		/** @type {{ exportKind?: string }} */ (node).exportKind === 'type'
+			? 'export type * '
+			: 'export * ',
+		node.exported ? ['as ', printModuleExportName(node.exported, options), ' '] : '',
+		'from ',
+		printModuleSource(node, options),
+		semi(options),
+	];
 }
 
 /**
