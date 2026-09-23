@@ -7119,6 +7119,32 @@ function g() {
 }`);
 		});
 
+		it('keeps static and the member separator on class index signatures', async () => {
+			await expectUnchanged('class Registry { [name: string]: number; count = 1; }');
+			await expectUnchanged('class Registry { static [name: string]: number; }');
+			await expectUnchanged(`class Cache {
+  static readonly [key: string]: number;
+  readonly [index: number]: string;
+  [key: symbol]: unknown;
+  size = 0;
+  clear() {}
+}`);
+
+			const result = await format(
+				`class Cache {
+  static [key: string]: number;
+  [index: number]: string;
+  clearAllEntriesFromTheCacheAndResetTheSize() {}
+}`,
+				{ semi: false },
+			);
+			expect(result).toBeWithNewline(`class Cache {
+  static [key: string]: number
+  [index: number]: string
+  clearAllEntriesFromTheCacheAndResetTheSize() {}
+}`);
+		});
+
 		it('keeps override on class members', async () => {
 			await expectUnchanged(`class Derived extends Base {
   override toString(): string {

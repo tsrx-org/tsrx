@@ -6373,6 +6373,10 @@ function printTSNamedTupleMember(node, path, options, print) {
 function printTSIndexSignature(node, path, options, print) {
 	/** @type {Doc[]} */
 	const parts = [];
+	// A static index signature types the constructor, not its instances
+	if (node.static === true) {
+		parts.push('static ');
+	}
 	if (node.readonly === true) {
 		parts.push('readonly ');
 	}
@@ -6388,6 +6392,13 @@ function printTSIndexSignature(node, path, options, print) {
 	if (node.typeAnnotation) {
 		parts.push(': ');
 		parts.push(path.call(print, 'typeAnnotation'));
+	}
+
+	// Interfaces and type literals separate their members, but class members
+	// end themselves — without this the class body runs into the next member
+	const parent = /** @type {AST.Node | null} */ (path.getParentNode());
+	if (parent?.type === 'ClassBody') {
+		parts.push(semi(options));
 	}
 
 	return parts;
