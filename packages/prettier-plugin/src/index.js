@@ -4755,6 +4755,11 @@ function printMethodDefinition(node, path, options, print) {
 	// the key is 'constructor' and we already handled that above
 	parts.push(...printKey(node, path, options, print));
 
+	// Optional marker — dropping it turns `onMount?()` into a required member
+	if (node.optional) {
+		parts.push('?');
+	}
+
 	// Add TypeScript generics if present (always on the method node, not on value)
 	if (node.typeParameters) {
 		const typeParams = path.call(print, 'typeParameters');

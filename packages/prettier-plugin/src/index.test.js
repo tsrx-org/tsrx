@@ -7092,6 +7092,21 @@ function g() {
 }`);
 		});
 
+		it('keeps the optional marker on class methods', async () => {
+			await expectUnchanged(`declare class Hook {
+  onMount?(): void;
+  onUpdate?<T>(value: T): T;
+  [Symbol.dispose]?(): void;
+}`);
+			await expectUnchanged(`abstract class Lifecycle {
+  abstract onMount?(): void;
+  static async *stream?() {}
+  onUnmount?() {
+    return;
+  }
+}`);
+		});
+
 		it('keeps override on class members', async () => {
 			await expectUnchanged(`class Derived extends Base {
   override toString(): string {
