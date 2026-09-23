@@ -54,8 +54,9 @@ const CharCode = Object.freeze({
 });
 
 const TYPE_PARAMETER_MODIFIERS = new Set(['const']);
-// Keywords after which a `/` opens a regular expression literal rather than
-// dividing, because they never end an operand.
+// Reserved words after which a `/` opens a regular expression literal rather
+// than dividing, because they never end an operand. `of` is handled apart
+// since it is also a plain identifier.
 const REGEX_PRECEDING_KEYWORDS = new Set([
 	'await',
 	'case',
@@ -65,7 +66,6 @@ const REGEX_PRECEDING_KEYWORDS = new Set([
 	'in',
 	'instanceof',
 	'new',
-	'of',
 	'return',
 	'throw',
 	'typeof',
@@ -283,6 +283,7 @@ function skip_regex_from(input, i) {
 function scan_balanced_from(input, i, open, close) {
 	let depth = 1;
 	let after_operand = false;
+	let after_dot = false;
 	i++;
 	while (i < input.length) {
 		const ch = input.charCodeAt(i);
@@ -298,6 +299,7 @@ function scan_balanced_from(input, i, open, close) {
 		if (ch === CharCode.doubleQuote || ch === CharCode.singleQuote || ch === CharCode.backtick) {
 			i = skip_string_from(input, i, ch);
 			after_operand = true;
+			after_dot = false;
 			continue;
 		}
 		if (ch === CharCode.slash) {
@@ -310,11 +312,12 @@ function scan_balanced_from(input, i, open, close) {
 			if (after_operand) {
 				after_operand = false;
 				i++;
-				continue;
+			} else {
+				i = skip_regex_from(input, i);
+				if (i === -1) return -1;
+				after_operand = true;
 			}
-			i = skip_regex_from(input, i);
-			if (i === -1) return -1;
-			after_operand = true;
+			after_dot = false;
 			continue;
 		}
 		if (ch === open) depth++;
@@ -322,7 +325,14 @@ function scan_balanced_from(input, i, open, close) {
 
 		const name_end = scan_identifier_from(input, i);
 		if (name_end !== -1) {
-			after_operand = !REGEX_PRECEDING_KEYWORDS.has(input.slice(i, name_end));
+			const name = input.slice(i, name_end);
+			// A property name after `.` is always an operand. `of` is only the
+			// `for ... of` keyword when it follows an operand, and a reserved
+			// word never ends one.
+			if (after_dot) after_operand = true;
+			else if (name === 'of') after_operand = !after_operand;
+			else after_operand = !REGEX_PRECEDING_KEYWORDS.has(name);
+			after_dot = false;
 			i = name_end;
 			continue;
 		}
@@ -336,6 +346,7 @@ function scan_balanced_from(input, i, open, close) {
 			after_operand = true;
 		} else if ((ch === CharCode.plus || ch === CharCode.dash) && input.charCodeAt(i + 1) === ch) {
 			// Postfix `++`/`--` keeps the operand; the prefix forms follow a non-operand.
+			after_dot = false;
 			i += 2;
 			continue;
 		} else if (ch !== CharCode.exclamation && ch !== CharCode.dot) {
@@ -343,6 +354,7 @@ function scan_balanced_from(input, i, open, close) {
 			// prefix `!` and a leading `.` already follow a non-operand.
 			after_operand = false;
 		}
+		after_dot = ch === CharCode.dot;
 		i++;
 	}
 	return -1;

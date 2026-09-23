@@ -5773,6 +5773,15 @@ describe('`<` operators beside type-argument lookahead', () => {
 			['const fn = <T extends object>(x: T, y = 1. / 2, z = .5 / 3) => x;', 3],
 			['const fn = <T extends object>(x: T, y = typeof /[)]/, z = !/[)]/.test("")) => x;', 3],
 			['const fn = <T extends object>(x: T, y = c ? /[)]/ : /\\)/) => x;', 2],
+			[
+				'const fn = <T extends object>(x: T, y = a.in / 2, z = b.typeof / 3, w = c?.d / 4) => x;',
+				4,
+			],
+			['const fn = <T extends object>(x: T, of = 1, y = of / 2) => x;', 3],
+			[
+				'const fn = <T extends object>(x: T, y = (s) => { for (const c of /[)]/.exec(s) ?? []) c; }) => x;',
+				2,
+			],
 		])) {
 			const arrow = findNode(source, 'ArrowFunctionExpression');
 			expect(arrow.typeParameters?.params, source).toHaveLength(1);
