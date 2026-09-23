@@ -7,6 +7,9 @@ import {
 import {
 	runTsxExpressionTsrxRuntimeTests,
 } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
+import {
+	runNullishSpreadRefRuntimeTests,
+} from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
@@ -1527,3 +1530,4 @@ describe('tsrx-vue runtime', () => {
 
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
+runNullishSpreadRefRuntimeTests();

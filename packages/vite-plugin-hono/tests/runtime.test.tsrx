@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { use, useState } from 'hono/jsx';
 import { createContext, render, useContext } from 'hono/jsx/dom';
 import { Style, css } from 'hono/css';
+import {
+	NullishSpreadRefApp,
+	NullishSpreadRefInIfApp,
+	nullish_spread_ref_nodes,
+} from '@tsrx/core/test-harness/runtime/nullish-spread-ref-components.tsrx';
 
 let container: HTMLDivElement;
 let resolveValue: (value: string) => void;
@@ -189,6 +194,23 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 
 		expect(container.innerHTML).toBe('<p class="error">boom</p>');
 	});
+
+	for (const [label, App, selector] of [
+		['', NullishSpreadRefApp, '.nullish-spread-ref'],
+		[' inside @if', NullishSpreadRefInIfApp, '.nullish-spread-ref-if'],
+	] as const) {
+		it(`spreads a nullish props bag beside an explicit ref${label}`, () => {
+			for (const bag of [undefined, null]) {
+				nullish_spread_ref_nodes.length = 0;
+				render(<App bag={bag} />, container);
+
+				const input = container.querySelector(selector);
+				expect(input).toBeInstanceOf(HTMLInputElement);
+				expect(nullish_spread_ref_nodes).toEqual([input]);
+				render(null, container);
+			}
+		});
+	}
 
 	for (const [directive, App, reverse] of [
 		['@if', ForKeyedIfApp, '.reverse-keyed-if'],

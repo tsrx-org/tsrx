@@ -412,7 +412,7 @@ describe('@tsrx/vue basic', () => {
 			'let Child__spread_props1 = __normalize_spread_props_for_ref_attr(props);',
 		);
 		expect(code).toContain('{...Child__spread_props1}');
-		expect(code).toContain('ref={Child__spread_props1.ref}');
+		expect(code).toContain('ref={Child__spread_props1?.ref}');
 		expect(code.match(/__normalize_spread_props_for_ref_attr\(/g)).toHaveLength(1);
 	});
 
@@ -453,7 +453,9 @@ describe('@tsrx/vue basic', () => {
 		);
 		expect(code).toContain('{...App__spread_props1}');
 		expect(code).toContain('{...App__spread_props2}');
-		expect(code).toContain('ref={__mergeRefs(App__spread_props1.ref, App__spread_props2.ref, cb)}');
+		expect(code).toContain(
+			'ref={__mergeRefs(App__spread_props1?.ref, App__spread_props2?.ref, cb)}',
+		);
 		expect(code.match(/__normalize_spread_props_for_ref_attr\(/g)).toHaveLength(2);
 		expect(code).not.toContain('create_ref_prop');
 		expect(code).not.toContain('__normalize_spread_props(first, cb)');

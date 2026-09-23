@@ -411,6 +411,19 @@ export function member(object, property, computed = false, optional = false, loc
 }
 
 /**
+ * @param {AST.Expression} object
+ * @param {string | AST.Identifier} property
+ * @returns {AST.ChainExpression}
+ */
+export function maybe_member(object, property) {
+	return {
+		type: 'ChainExpression',
+		expression: member(object, property, false, true),
+		metadata: { path: [] },
+	};
+}
+
+/**
  * @param {AST.Expression} expression
  * @param {AST.Node} type_annotation
  * @param {AST.NodeWithLocation} [loc_info]

@@ -8,6 +8,9 @@ import {
 import {
 	runTsxExpressionTsrxRuntimeTests,
 } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
+import {
+	runNullishSpreadRefRuntimeTests,
+} from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 
 function text(selector: string): string | null {
 	return container.querySelector(selector)?.textContent ?? null;
@@ -537,3 +540,4 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
+runNullishSpreadRefRuntimeTests();

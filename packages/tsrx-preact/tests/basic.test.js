@@ -425,7 +425,7 @@ describe('@tsrx/preact basic', () => {
 			expect(code).toContain('{...App__spread_props1}');
 			expect(code).toContain('{...App__spread_props2}');
 			expect(code).toContain(
-				'ref={__mergeRefs(App__spread_props1.ref, App__spread_props2.ref, cb)}',
+				'ref={__mergeRefs(App__spread_props1?.ref, App__spread_props2?.ref, cb)}',
 			);
 			expect(code.match(/__normalize_spread_props_for_ref_attr\(/g)).toHaveLength(2);
 			expect(code).not.toContain('create_ref_prop');

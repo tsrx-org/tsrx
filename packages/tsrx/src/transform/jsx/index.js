@@ -6152,9 +6152,11 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 					...attr,
 					argument: clone_identifier(normalized_id),
 				};
+				// A spread bag may be nullish (`{...props.optional}`) and spread to
+				// nothing, as in native JSX, so its ref is read without throwing.
 				const ref_attr = b.jsx_attribute(
 					b.jsx_id('ref'),
-					to_jsx_expression_container(b.member(clone_identifier(normalized_id), 'ref'), attr),
+					to_jsx_expression_container(b.maybe_member(clone_identifier(normalized_id), 'ref'), attr),
 					false,
 					has_location(attr) ? attr : undefined,
 				);
