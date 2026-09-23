@@ -4930,8 +4930,13 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		collect_pattern_bindings(param, transform_context.available_bindings);
 	}
 
-	if (implicit_non_hook_key_expression && should_apply_key_to_loop_body(loop_body)) {
-		loop_body = apply_key_to_loop_body(loop_body, implicit_non_hook_key_expression);
+	// Without hooks, the key placed before lowering and the one placed after it
+	// come from the same clause, so both passes share one `LoopKey`.
+	const implicit_loop_key = implicit_non_hook_key_expression
+		? create_loop_key(implicit_non_hook_key_expression, transform_context)
+		: null;
+	if (implicit_loop_key) {
+		loop_body = apply_key_to_loop_body(loop_body, implicit_loop_key, transform_context);
 	}
 
 	let body_statements = has_hooks
@@ -4953,7 +4958,7 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 	if (!has_hooks && non_hook_key_expression) {
 		body_statements = apply_key_to_render_statements(
 			body_statements,
-			non_hook_key_expression,
+			implicit_loop_key ?? create_loop_key(non_hook_key_expression, transform_context),
 			transform_context,
 		);
 	}
@@ -5027,34 +5032,152 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 }
 
 /**
- * Returns a copy of `body_nodes` where the first keyable element carries the
- * key attribute on a rebuilt opening element — the source nodes are never
- * mutated (they may belong to the caller's parsed AST).
+ * A loop's key clause as the keying passes hand it out. A body that renders
+ * through `@if` / `@switch` needs a copy per branch, but only the first copy
+ * keeps its source locations, so the clause maps to one place in the output.
+ *
+ * `branches` is off for a platform that lowers the loop itself
+ * (`renderForOf`, e.g. Vue's `VaporFor`): it keys rows through the loop and
+ * only expects a key on the body's top-level output, including when it falls
+ * back to the default lowering.
+ *
+ * @typedef {{ expression: AST.Expression, mapped: boolean, branches: boolean }} LoopKey
+ */
+
+/**
+ * @param {AST.Expression} expression
+ * @param {TransformContext} transform_context
+ * @returns {LoopKey}
+ */
+function create_loop_key(expression, transform_context) {
+	return {
+		expression,
+		mapped: false,
+		branches: !transform_context.platform.hooks?.renderForOf,
+	};
+}
+
+/**
+ * @param {LoopKey} loop_key
+ * @returns {ESTreeJSX.JSXAttribute}
+ */
+function create_loop_key_attribute(loop_key) {
+	const expression = clone_ast_node(loop_key.expression, !loop_key.mapped);
+	loop_key.mapped = true;
+	return b.jsx_attribute(b.jsx_id('key'), to_jsx_expression_container(expression));
+}
+
+/**
+ * Returns a copy of `body_nodes` where the element the body renders carries
+ * the key attribute: its only top-level element, or the only element of each
+ * `@if` / `@switch` branch it renders through. Keying before lowering keeps
+ * those elements from being hoisted as statics; anything else a body renders
+ * is keyed after lowering by `apply_key_to_render_statements`. The source
+ * nodes are never mutated (they may belong to the caller's parsed AST).
+ *
  * @param {AST.Node[]} body_nodes
- * @param {AST.Expression} key_expression
+ * @param {LoopKey} loop_key
+ * @param {TransformContext} transform_context
  * @returns {AST.Node[]}
  */
-function apply_key_to_loop_body(body_nodes, key_expression) {
-	let applied = false;
-	return body_nodes.map((node) => {
-		if (applied || node.type !== 'JSXElement') return node;
-		applied = true;
-		const attributes = node.openingElement?.attributes || [];
-		if (attributes.some(is_key_attribute)) return node;
-		return {
-			...node,
-			openingElement: {
-				...node.openingElement,
-				attributes: [
-					...attributes,
-					b.jsx_attribute(
-						b.jsx_id('key'),
-						to_jsx_expression_container(clone_ast_node(key_expression), key_expression),
-					),
-				],
-			},
-		};
+function apply_key_to_loop_body(body_nodes, loop_key, transform_context) {
+	/** @type {AST.Node | undefined} */
+	let output;
+	/** @type {AST.Node | undefined} */
+	let keyed;
+	if (should_apply_key_to_loop_body(body_nodes)) {
+		output = body_nodes.find((node) => node.type === 'JSXElement');
+		keyed = apply_key_to_jsx_element(/** @type {AST.TSRXJSXElement} */ (output), loop_key);
+	} else if (loop_key.branches) {
+		const render_nodes = body_nodes.filter(is_render_child_node);
+		if (render_nodes.length !== 1) return body_nodes;
+		output = render_nodes[0];
+		if (is_if_control_node(output)) {
+			keyed = apply_key_to_if_branches(output, loop_key, transform_context);
+		} else if (is_switch_control_node(output)) {
+			keyed = apply_key_to_switch_cases(output, loop_key, transform_context);
+		}
+	}
+
+	if (!keyed || keyed === output) return body_nodes;
+	return body_nodes.map((node) => (node === output ? keyed : node));
+}
+
+/**
+ * @param {AST.IfStatement | AST.JSXIfExpression} node
+ * @param {LoopKey} loop_key
+ * @param {TransformContext} transform_context
+ * @returns {AST.IfStatement | AST.JSXIfExpression}
+ */
+function apply_key_to_if_branches(node, loop_key, transform_context) {
+	const consequent = apply_key_to_branch_block(node.consequent, loop_key, transform_context);
+	const alternate = !node.alternate
+		? node.alternate
+		: is_if_control_node(node.alternate)
+			? apply_key_to_if_branches(node.alternate, loop_key, transform_context)
+			: apply_key_to_branch_block(node.alternate, loop_key, transform_context);
+
+	if (consequent === node.consequent && alternate === node.alternate) return node;
+	return /** @type {AST.IfStatement | AST.JSXIfExpression} */ ({ ...node, consequent, alternate });
+}
+
+/**
+ * @param {AST.SwitchStatement | AST.JSXSwitchExpression} node
+ * @param {LoopKey} loop_key
+ * @param {TransformContext} transform_context
+ * @returns {AST.SwitchStatement | AST.JSXSwitchExpression}
+ */
+function apply_key_to_switch_cases(node, loop_key, transform_context) {
+	let changed = false;
+	const cases = node.cases.map((switch_case) => {
+		// `@case x: { … }` holds its body in one block.
+		const [block] = switch_case.consequent;
+		const consequent =
+			switch_case.consequent.length === 1 && block.type === 'BlockStatement'
+				? [apply_key_to_branch_block(block, loop_key, transform_context)]
+				: apply_key_to_branch_body(switch_case.consequent, loop_key, transform_context);
+		if (consequent.every((statement, i) => statement === switch_case.consequent[i])) {
+			return switch_case;
+		}
+		changed = true;
+		return { ...switch_case, consequent };
 	});
+
+	if (!changed) return node;
+	return /** @type {AST.SwitchStatement | AST.JSXSwitchExpression} */ ({ ...node, cases });
+}
+
+/**
+ * @template {AST.Node} T
+ * @param {T} block
+ * @param {LoopKey} loop_key
+ * @param {TransformContext} transform_context
+ * @returns {T}
+ */
+function apply_key_to_branch_block(block, loop_key, transform_context) {
+	if (block.type !== 'BlockStatement') return block;
+	const body = apply_key_to_branch_body(block.body, loop_key, transform_context);
+	return body === block.body ? block : { ...block, body };
+}
+
+/**
+ * A branch body with hooks is lifted into a helper component, and the helper's
+ * element is keyed after lowering, so its own elements are left alone.
+ *
+ * @template {AST.Node} T
+ * @param {T[]} body_nodes
+ * @param {LoopKey} loop_key
+ * @param {TransformContext} transform_context
+ * @returns {T[]}
+ */
+function apply_key_to_branch_body(body_nodes, loop_key, transform_context) {
+	if (
+		should_extract_hook_helpers(transform_context) &&
+		body_contains_top_level_hook_call(body_nodes, transform_context, true)
+	) {
+		return body_nodes;
+	}
+	return /** @type {T[]} */ (apply_key_to_loop_body(body_nodes, loop_key, transform_context));
 }
 
 /**
@@ -5077,25 +5200,18 @@ function should_apply_key_to_loop_body(body_nodes) {
  * argument.
  *
  * @param {AST.Statement[]} statements
- * @param {AST.Expression} key_expression
+ * @param {LoopKey} loop_key
  * @param {TransformContext} transform_context
  * @returns {AST.Statement[]}
  */
-function apply_key_to_render_statements(statements, key_expression, transform_context) {
+function apply_key_to_render_statements(statements, loop_key, transform_context) {
 	for (let i = statements.length - 1; i >= 0; i -= 1) {
 		const statement = statements[i];
 		if (statement?.type !== 'ReturnStatement' || !statement.argument) {
 			continue;
 		}
 
-		let argument = statement.argument;
-		if (argument.type === 'JSXElement') {
-			argument = apply_key_to_jsx_element(argument, key_expression);
-		} else if (argument.type === 'JSXFragment') {
-			transform_context.needs_fragment = true;
-			argument = keyed_fragment_to_jsx_element(argument, key_expression);
-		}
-
+		const argument = apply_key_to_rendered_value(statement.argument, loop_key, transform_context);
 		if (argument === statement.argument) {
 			return statements;
 		}
@@ -5107,12 +5223,141 @@ function apply_key_to_render_statements(statements, key_expression, transform_co
 }
 
 /**
+ * Keys what one loop iteration renders. `@if` lowers to a ternary, and
+ * `@switch` (or a branch with setup statements) to an IIFE, so the key is
+ * pushed into every element and fragment they can return; an element the
+ * author already keyed keeps its own key.
+ *
+ * @param {AST.Expression} expression
+ * @param {LoopKey} loop_key
+ * @param {TransformContext} transform_context
+ * @returns {AST.Expression}
+ */
+function apply_key_to_rendered_value(expression, loop_key, transform_context) {
+	switch (expression.type) {
+		case 'JSXElement':
+			return apply_key_to_jsx_element(expression, loop_key);
+		case 'JSXFragment':
+			transform_context.needs_fragment = true;
+			return keyed_fragment_to_jsx_element(expression, loop_key);
+		case 'ConditionalExpression': {
+			if (!loop_key.branches) return expression;
+			const consequent = apply_key_to_rendered_value(
+				expression.consequent,
+				loop_key,
+				transform_context,
+			);
+			const alternate = apply_key_to_rendered_value(
+				expression.alternate,
+				loop_key,
+				transform_context,
+			);
+			if (consequent === expression.consequent && alternate === expression.alternate) {
+				return expression;
+			}
+			return { ...expression, consequent, alternate };
+		}
+		case 'CallExpression': {
+			if (!loop_key.branches || !is_render_iife(expression)) return expression;
+			const callee = expression.callee;
+			const body = apply_key_to_returned_values(callee.body.body, loop_key, transform_context);
+			if (body === callee.body.body) return expression;
+			return { ...expression, callee: { ...callee, body: { ...callee.body, body } } };
+		}
+		default:
+			return expression;
+	}
+}
+
+/**
+ * @param {AST.CallExpression} expression
+ * @returns {expression is AST.SimpleCallExpression & { callee: AST.ArrowFunctionExpression & { body: AST.BlockStatement } }}
+ */
+function is_render_iife(expression) {
+	return (
+		expression.arguments.length === 0 &&
+		expression.callee.type === 'ArrowFunctionExpression' &&
+		expression.callee.params.length === 0 &&
+		expression.callee.body.type === 'BlockStatement'
+	);
+}
+
+/**
+ * @param {AST.Statement[]} statements
+ * @param {LoopKey} loop_key
+ * @param {TransformContext} transform_context
+ * @returns {AST.Statement[]}
+ */
+function apply_key_to_returned_values(statements, loop_key, transform_context) {
+	let changed = false;
+	const result = statements.map((statement) => {
+		const keyed = apply_key_to_returned_value(statement, loop_key, transform_context);
+		if (keyed !== statement) changed = true;
+		return keyed;
+	});
+	return changed ? result : statements;
+}
+
+/**
+ * Follows the statements a lowered `@if` / `@switch` IIFE returns through, and
+ * stops at any other statement: nested functions own their returns.
+ *
+ * @param {AST.Statement} statement
+ * @param {LoopKey} loop_key
+ * @param {TransformContext} transform_context
+ * @returns {AST.Statement}
+ */
+function apply_key_to_returned_value(statement, loop_key, transform_context) {
+	switch (statement.type) {
+		case 'ReturnStatement': {
+			if (!statement.argument) return statement;
+			const argument = apply_key_to_rendered_value(statement.argument, loop_key, transform_context);
+			return argument === statement.argument ? statement : { ...statement, argument };
+		}
+		case 'BlockStatement': {
+			const body = apply_key_to_returned_values(statement.body, loop_key, transform_context);
+			return body === statement.body ? statement : { ...statement, body };
+		}
+		case 'IfStatement': {
+			const consequent = apply_key_to_returned_value(
+				statement.consequent,
+				loop_key,
+				transform_context,
+			);
+			const alternate =
+				statement.alternate &&
+				apply_key_to_returned_value(statement.alternate, loop_key, transform_context);
+			if (consequent === statement.consequent && alternate === statement.alternate) {
+				return statement;
+			}
+			return { ...statement, consequent, alternate };
+		}
+		case 'SwitchStatement': {
+			let changed = false;
+			const cases = statement.cases.map((switch_case) => {
+				const consequent = apply_key_to_returned_values(
+					switch_case.consequent,
+					loop_key,
+					transform_context,
+				);
+				if (consequent === switch_case.consequent) return switch_case;
+				changed = true;
+				return { ...switch_case, consequent };
+			});
+			return changed ? { ...statement, cases } : statement;
+		}
+		default:
+			return statement;
+	}
+}
+
+/**
  * @param {AST.TSRXJSXElement} element
- * @param {AST.Expression} key_expression
+ * @param {LoopKey} loop_key
  * @returns {AST.TSRXJSXElement} the element itself when it already has a `key`,
  * otherwise a shallow copy with the key attribute appended.
  */
-function apply_key_to_jsx_element(element, key_expression) {
+function apply_key_to_jsx_element(element, loop_key) {
 	const attributes = element.openingElement?.attributes || [];
 	if (attributes.some(is_key_attribute)) return element;
 
@@ -5120,13 +5365,7 @@ function apply_key_to_jsx_element(element, key_expression) {
 		...element,
 		openingElement: {
 			...element.openingElement,
-			attributes: [
-				...attributes,
-				b.jsx_attribute(
-					b.jsx_id('key'),
-					to_jsx_expression_container(clone_ast_node(key_expression), key_expression),
-				),
-			],
+			attributes: [...attributes, create_loop_key_attribute(loop_key)],
 		},
 	};
 }
@@ -5143,18 +5382,14 @@ function is_key_attribute(attr) {
 
 /**
  * @param {AST.TSRXJSXFragment} fragment
- * @param {AST.Expression} key_expression
+ * @param {LoopKey} loop_key
  * @returns {AST.TSRXJSXElement}
  */
-function keyed_fragment_to_jsx_element(fragment, key_expression) {
+function keyed_fragment_to_jsx_element(fragment, loop_key) {
 	const name = b.jsx_id('Fragment');
-	const key_attribute = b.jsx_attribute(
-		b.jsx_id('key'),
-		to_jsx_expression_container(clone_ast_node(key_expression), key_expression),
-	);
 
 	return b.jsx_element_fresh(
-		b.jsx_opening_element(name, [key_attribute]),
+		b.jsx_opening_element(name, [create_loop_key_attribute(loop_key)]),
 		b.jsx_closing_element(clone_jsx_name(name)),
 		fragment.children,
 	);

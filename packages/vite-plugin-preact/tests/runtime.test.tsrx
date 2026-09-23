@@ -273,6 +273,61 @@ function TsrxExpressionHookApp() @{
 	</>
 }
 
+type KeyedBranchItem = { id: string; visible: boolean };
+
+function KeyedBranchRow({ item }: { item: KeyedBranchItem }) @{
+	const [initial] = useState(item.id);
+
+	<li class="keyed-branch-row">{`${item.id}:${initial}`}</li>
+}
+
+function ForKeyedIfApp() @{
+	const [items, setItems] = useState<KeyedBranchItem[]>([
+		{ id: 'a', visible: true },
+		{ id: 'b', visible: true },
+	]);
+
+	<>
+		<ul>
+			@for (const item of items; key item.id) {
+				@if (item.visible) {
+					<KeyedBranchRow item={item} />
+				}
+			}
+		</ul>
+		<button
+			class="reverse-keyed-if"
+			onClick={() => setItems([...items].reverse())}
+		>{'reverse'}</button>
+	</>
+}
+
+function ForKeyedSwitchApp() @{
+	const [items, setItems] = useState<KeyedBranchItem[]>([
+		{ id: 'a', visible: true },
+		{ id: 'b', visible: true },
+	]);
+
+	<>
+		<ul>
+			@for (const item of items; key item.id) {
+				@switch (item.visible) {
+					@case true: {
+						<KeyedBranchRow item={item} />
+					}
+					@default: {
+						<li>{'hidden'}</li>
+					}
+				}
+			}
+		</ul>
+		<button
+			class="reverse-keyed-switch"
+			onClick={() => setItems([...items].reverse())}
+		>{'reverse'}</button>
+	</>
+}
+
 describe('@tsrx/vite-plugin-preact runtime', () => {
 	it('renders nothing for an empty pending fallback then resolves', async () => {
 		let resolve_fn: (mod: { default: typeof ResolvedChild }) => void;
@@ -458,6 +513,26 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 		});
 		expect(container.querySelector('.tsrx-expression-hook-count')?.textContent).toBe('second:1');
 	});
+
+	for (const [directive, App, reverse] of [
+		['@if', ForKeyedIfApp, '.reverse-keyed-if'],
+		['@switch', ForKeyedSwitchApp, '.reverse-keyed-switch'],
+	] as const) {
+		it(`keeps row state with its item when a keyed loop renders through ${directive}`, async () => {
+			const rows = () => Array.from(
+				container.querySelectorAll('.keyed-branch-row'),
+				(row) => row.textContent,
+			);
+
+			await render(App);
+			expect(rows()).toEqual(['a:a', 'b:b']);
+
+			await act(() => {
+				(container.querySelector(reverse) as HTMLButtonElement).click();
+			});
+			expect(rows()).toEqual(['b:b', 'a:a']);
+		});
+	}
 });
 
 runSwitchFallthroughRuntimeTests();

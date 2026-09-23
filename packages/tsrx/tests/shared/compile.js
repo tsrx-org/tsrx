@@ -1484,6 +1484,98 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			},
 		);
 
+		// Targets that identify loop rows by the JSX `key` prop.
+		const keys_rows_by_prop = ['react', 'preact', 'hono', 'hono-dom'].includes(name);
+
+		it.runIf(keys_rows_by_prop)('keys each @if branch a keyed loop renders', () => {
+			const { code } = compile(
+				`export function App({ items }: { items: { id: string; kind: string }[] }) @{
+					@for (const item of items; key item.id) {
+						@if (item.kind === 'text') {
+							<p>{'static'}</p>
+						} @else if (item.kind === 'pair') {
+							<>
+								<b>{item.id}</b>
+								<i>{item.id}</i>
+							</>
+						} @else {
+							<Row />
+						}
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain("<p key={item.id}>{'static'}</p>");
+			expect(code).toContain('<Fragment key={item.id}>');
+			expect(code).toContain('<Row key={item.id} />');
+			// A keyed branch element is per-row, so it is never hoisted as a static.
+			expect(code).not.toContain('__static');
+		});
+
+		it.runIf(keys_rows_by_prop)('keys each @switch case a keyed loop renders', () => {
+			const { code } = compile(
+				`export function App({ items }: { items: { id: string; kind: string }[] }) @{
+					@for (const item of items; key item.id) {
+						@switch (item.kind) {
+							@case 'text': {
+								const label = item.id.toUpperCase();
+								<p>{label}</p>
+							}
+							@default: {
+								@if (item.id) {
+									<span>{'nested'}</span>
+								}
+							}
+						}
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('<p key={item.id}>{label}</p>');
+			expect(code).toContain("<span key={item.id}>{'nested'}</span>");
+		});
+
+		it.runIf(keys_rows_by_prop)(
+			'keeps a key written inside a loop branch and keys the other branches',
+			() => {
+				const { code } = compile(
+					`export function App({ items }: { items: { id: string }[] }) @{
+						@for (const item of items; index i) {
+							@if (item.id) {
+								<li key={item.id}>{item.id}</li>
+							} @else {
+								<li>{i}</li>
+							}
+						}
+					}`,
+					'App.tsrx',
+				);
+
+				expect(code).toContain('<li key={item.id}>{item.id}</li>');
+				expect(code).toContain('<li key={i}>{i}</li>');
+			},
+		);
+
+		it.runIf(name === 'vue')('leaves keyed loop branches to the VaporFor row key', () => {
+			const { code } = compile(
+				`export function App({ items }: { items: { id: string; visible: boolean }[] }) @{
+					@for (const item of items; key item.id) {
+						@if (item.visible) {
+							<li>{item.id}</li>
+						} @else {
+							<li>{'hidden'}</li>
+						}
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('getKey={(item) => item.id}');
+			expect(code).not.toContain('key={');
+		});
+
 		it('allows ordinary function control flow inside for...of loops', () => {
 			const { code } = compile(
 				`export function App({ items }: { items: string[] }) @{

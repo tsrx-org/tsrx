@@ -424,6 +424,63 @@ function ForFilteredApp() @{
 	}
 }
 
+// ── Keyed for-of loops rendering through @if / @switch ──
+
+type KeyedBranchItem = { id: string; visible: boolean };
+
+function KeyedBranchRow({ item }: { item: KeyedBranchItem }) @{
+	const [initial] = useState(item.id);
+
+	<li className="keyed-branch-row">{`${item.id}:${initial}`}</li>
+}
+
+function ForKeyedIfApp() @{
+	const [items, setItems] = useState<KeyedBranchItem[]>([
+		{ id: 'a', visible: true },
+		{ id: 'b', visible: true },
+	]);
+
+	<>
+		<ul>
+			@for (const item of items; key item.id) {
+				@if (item.visible) {
+					<KeyedBranchRow item={item} />
+				}
+			}
+		</ul>
+		<button
+			className="reverse-keyed-if"
+			onClick={() => setItems([...items].reverse())}
+		>{'reverse'}</button>
+	</>
+}
+
+function ForKeyedSwitchApp() @{
+	const [items, setItems] = useState<KeyedBranchItem[]>([
+		{ id: 'a', visible: true },
+		{ id: 'b', visible: true },
+	]);
+
+	<>
+		<ul>
+			@for (const item of items; key item.id) {
+				@switch (item.visible) {
+					@case true: {
+						<KeyedBranchRow item={item} />
+					}
+					@default: {
+						<li>{'hidden'}</li>
+					}
+				}
+			}
+		</ul>
+		<button
+			className="reverse-keyed-switch"
+			onClick={() => setItems([...items].reverse())}
+		>{'reverse'}</button>
+	</>
+}
+
 // ── For-of over a Set ──
 
 function ForOverSetApp() @{
@@ -1300,6 +1357,27 @@ describe('tsrx-react runtime', () => {
 			'c',
 		]);
 	});
+
+	for (const [directive, App, reverse] of [
+		['@if', ForKeyedIfApp, '.reverse-keyed-if'],
+		['@switch', ForKeyedSwitchApp, '.reverse-keyed-switch'],
+	] as const) {
+		it(`keeps row state with its item when a keyed loop renders through ${directive}`, async () => {
+			const rows = () => Array.from(
+				container.querySelectorAll('.keyed-branch-row'),
+				(row) => row.textContent,
+			);
+
+			await render(App);
+			expect(rows()).toEqual(['a:a', 'b:b']);
+
+			await click(reverse);
+			expect(rows()).toEqual(['b:b', 'a:a']);
+			expect(
+				console_error_spy?.mock.calls.some((args) => String(args[0]).includes('unique "key"')),
+			).toBe(false);
+		});
+	}
 
 	it('renders for-of over a Set via map_iterable', async () => {
 		await render(ForOverSetApp);

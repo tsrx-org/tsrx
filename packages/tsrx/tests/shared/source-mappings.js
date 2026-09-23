@@ -995,6 +995,53 @@ function C() @{
 		});
 	});
 
+	describe(`[${name}] loop key clauses map to one emitted key`, () => {
+		const BODIES = {
+			'@if': `@if (item.visible) {
+				<li>{item.id}</li>
+			} @else {
+				<li>{'hidden'}</li>
+			}`,
+			'@switch': `@switch (item.visible) {
+				@case true: {
+					<li>{item.id}</li>
+				}
+				@default: {
+					<>{'hidden'}</>
+				}
+			}`,
+		};
+
+		/**
+		 * @param {string} body
+		 * @returns {number}
+		 */
+		const count_key_clause_mappings = (body) => {
+			const source = `function App(props: { items: { id: string; visible: boolean }[] }) @{
+	<ul>
+		@for (const item of props.items; key item.id) {
+			${body}
+		}
+	</ul>
+}`;
+			const key_offset = source.indexOf('key item.id') + 'key '.length;
+			const result = compile_to_volar_mappings(source, 'App.tsrx');
+			return result.mappings.filter(
+				(/** @type {{ sourceOffsets: number[] }} */ m) => m.sourceOffsets[0] === key_offset,
+			).length;
+		};
+
+		for (const [directive, body] of Object.entries(BODIES)) {
+			it(`maps the key clause as for a single element when the loop renders through ${directive}`, () => {
+				// Branches may each carry a copy of the key, but only one copy maps
+				// back to the clause.
+				expect(count_key_clause_mappings(body)).toBe(
+					count_key_clause_mappings('<li>{item.id}</li>'),
+				);
+			});
+		}
+	});
+
 	describe(`[${name}] optional TypeScript identifiers keep mappings`, () => {
 		it('maps manually printed optional tuple labels and function parameters', () => {
 			const source = `export type OptionalTuple = [tupleRequired: string, tupleMaybe?: string];
@@ -1697,6 +1744,29 @@ export function App(props: { items: { id: string; name: string }[] }) @{
 				<li>{item.name}</li>
 				<li>{open ? 'open' : 'closed'}</li>
 			</>
+		}
+	</ul>
+}`,
+			'keyed loops rendering through @if and @switch': `export function App(props: { items: { id: string; kind: string }[] }) @{
+	<ul>
+		@for (const item of props.items; key item.id) {
+			@if (item.kind === 'a') {
+				<li>{'static'}</li>
+			} @else if (item.kind === 'b') {
+				<>
+					<li>{item.id}</li>
+				</>
+			} @else {
+				@switch (item.kind) {
+					@case 'c': {
+						const label = item.id;
+						<li>{label}</li>
+					}
+					@default: {
+						<li key={item.kind}>{'other'}</li>
+					}
+				}
+			}
 		}
 	</ul>
 }`,

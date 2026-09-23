@@ -222,8 +222,11 @@ export interface JsxPlatformHooks {
 	/**
 	 * Optionally replace the default React-style `.map(...)` lowering for a
 	 * `for...of` body after the shared transform has already produced its render
-	 * statements and applied any explicit or implicit keys. Vue uses this to hand
-	 * the loop to the downstream Vapor JSX compiler as a typed `VaporFor` component.
+	 * statements and applied any explicit or implicit key to the body's top-level
+	 * element. The default lowering also keys each element an `@if` / `@switch`
+	 * body renders; with this hook set, those branches stay unkeyed, including
+	 * when the hook returns `null`. Vue uses this to hand the loop to the
+	 * downstream Vapor JSX compiler as a typed `VaporFor` component.
 	 */
 	renderForOf?: (
 		node: AST.ForOfStatement,
