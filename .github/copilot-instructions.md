@@ -82,8 +82,8 @@ dependencies, not workspace packages.
   change, and a bare `:global` only for page-level elements.
 - `@import` in a `<style>` block is a compile error (`tsrx-css-import`) because
   the imported rules would not be scoped. Share scoped styles through an assigned
-  block and `apply`, and import global CSS from the module
-  (`import './global.css'`).
+  block and `apply`; for global CSS use `:global`, or import the stylesheet in
+  JavaScript (`import './global.css'`).
 - Target-specific behavior must be selected through the consumer compiler. In
   particular, Ripple API completions must only appear for the Ripple target.
 - Use `pnpm` and match the conventions of the package being changed.
