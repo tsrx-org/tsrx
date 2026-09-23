@@ -226,8 +226,52 @@ function skip_string_from(input, i, quote) {
 }
 
 /**
+ * Skip past a regular expression literal opened at `i`. Returns the index after
+ * its flags, or -1 when a line ends before the closing `/`.
+ * @param {string} input
+ * @param {number} i
+ */
+function skip_regex_from(input, i) {
+	let in_class = false;
+	i++;
+	while (i < input.length) {
+		const ch = input.charCodeAt(i);
+		if (ch === CharCode.lineFeed || ch === CharCode.carriageReturn) return -1;
+		i++;
+		if (ch === CharCode.backslash) i++;
+		else if (ch === CharCode.openBracket) in_class = true;
+		else if (ch === CharCode.closeBracket) in_class = false;
+		else if (ch === CharCode.slash && !in_class) break;
+	}
+	const flags_end = scan_identifier_from(input, i);
+	return flags_end === -1 ? i : flags_end;
+}
+
+/**
+ * Whether a `/` after the significant character `last` divides rather than
+ * opens a regular expression literal: it does after an identifier, a number,
+ * a closing bracket, or a string/regex literal, which callers record as `)`.
+ * @param {number} last
+ */
+function slash_is_division(last) {
+	return (
+		last === CharCode.closeParen ||
+		last === CharCode.closeBracket ||
+		last === CharCode.closeBrace ||
+		(last >= CharCode.digit0 && last <= CharCode.digit9) ||
+		(last >= CharCode.uppercaseA && last <= CharCode.uppercaseZ) ||
+		(last >= CharCode.lowercaseA && last <= CharCode.lowercaseZ) ||
+		last === CharCode.underscore ||
+		last === CharCode.dollar ||
+		last > 127
+	);
+}
+
+/**
  * Scan past a balanced pair starting at `i` (which must point at `open`).
- * Returns the position after the matching close, or -1 if unbalanced.
+ * Strings, comments, and regular expression literals are skipped so brackets
+ * inside them do not count. Returns the position after the matching close, or
+ * -1 if unbalanced.
  * @param {string} input
  * @param {number} i
  * @param {number} open
@@ -235,15 +279,39 @@ function skip_string_from(input, i, quote) {
  */
 function scan_balanced_from(input, i, open, close) {
 	let depth = 1;
+	let last = open;
 	i++;
 	while (i < input.length) {
 		const ch = input.charCodeAt(i);
 		if (ch === CharCode.doubleQuote || ch === CharCode.singleQuote || ch === CharCode.backtick) {
 			i = skip_string_from(input, i, ch);
+			last = CharCode.closeParen;
 			continue;
+		}
+		if (ch === CharCode.slash) {
+			const after_comment = skip_space_and_comments_from(input, i);
+			if (after_comment === -1) return -1;
+			if (after_comment !== i) {
+				i = after_comment;
+				continue;
+			}
+			if (!slash_is_division(last)) {
+				i = skip_regex_from(input, i);
+				if (i === -1) return -1;
+				last = CharCode.closeParen;
+				continue;
+			}
 		}
 		if (ch === open) depth++;
 		else if (ch === close && --depth === 0) return i + 1;
+		if (
+			ch !== CharCode.space &&
+			ch !== CharCode.tab &&
+			ch !== CharCode.lineFeed &&
+			ch !== CharCode.carriageReturn
+		) {
+			last = ch;
+		}
 		i++;
 	}
 	return -1;
