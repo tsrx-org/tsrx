@@ -41,6 +41,7 @@ export interface JsxTransformContext {
 	needs_dynamic_element: boolean;
 	needs_dynamic_factory: boolean;
 	needs_for_of_iterable: boolean;
+	needs_for_of_iterable_async: boolean;
 	needs_iteration_value_type: boolean;
 	needs_show: boolean;
 	needs_for: boolean;
@@ -409,7 +410,8 @@ export interface JsxPlatform {
 		/**
 		 * Module to import the `map_iterable` runtime helper (and the
 		 * `IterationValue` type) from when compiling `for ... of` bodies whose
-		 * source can be any `Iterable` — not just an array. React and Preact
+		 * source can be any `Iterable` — not just an array. A body that awaits
+		 * imports `map_iterable_async` from the same module. React and Preact
 		 * use target-owned paths like `'@tsrx/react/runtime/iterable'` and
 		 * `'@tsrx/preact/runtime/iterable'`, which re-export from
 		 * `'@tsrx/core/runtime/iterable'`. Solid and Vue lower for-of via their

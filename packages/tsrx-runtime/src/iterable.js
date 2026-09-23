@@ -12,17 +12,8 @@ export function map_iterable(iterable, fn, tail, empty) {
 		return map_array(iterable, fn, tail, empty);
 	}
 
-	/** @type {Iterable<T>} */
-	var source;
 	var iterable_prop = /** @type {Iterable<T>} */ (iterable)[Symbol.iterator];
-
-	if (typeof iterable_prop === 'function') {
-		source = /** @type {Iterable<T>} */ (iterable);
-	} else if (typeof (/** @type {Iterator<T>} */ (iterable).next) === 'function') {
-		source = Iterator.from(/** @type {Iterator<T>} */ (iterable));
-	} else {
-		throw new TypeError('The loop target has to be an Iterable');
-	}
+	var source = to_iterable(iterable, iterable_prop);
 
 	// A real Set or Map preallocates the result from its size. The size is only a
 	// capacity hint: `is_last` still comes from the walk itself, so callbacks that
@@ -71,6 +62,78 @@ export function map_iterable(iterable, fn, tail, empty) {
 		result.length = count;
 	}
 	return finish_tail(result, tail);
+}
+
+/**
+ * The `@for` helper for a loop body that awaits: `map_iterable`'s contract, with
+ * each item's value settled before the next item is visited, as in a
+ * `for...of` loop in an async function.
+ *
+ * @template T
+ * @template U
+ * @param {Iterable<T> | Iterator<T>} iterable
+ * @param {(item: T, index: number, is_last: boolean) => U | Promise<U>} fn
+ * @param {(() => U | U[] | Promise<U | U[]>) | null} [tail]
+ * @param {() => U | U[] | Promise<U | U[]>} [empty]
+ * @returns {Promise<U[]>}
+ */
+export async function map_iterable_async(iterable, fn, tail, empty) {
+	/** @type {U[]} */
+	var result = [];
+	var count = 0;
+
+	if (Array.isArray(iterable)) {
+		var length = iterable.length;
+		for (; count < length; count++) {
+			push_mapped(result, await fn(iterable[count], count, count === length - 1));
+		}
+	} else {
+		var source = to_iterable(iterable, /** @type {Iterable<T>} */ (iterable)[Symbol.iterator]);
+		var has_previous = false;
+		/** @type {T | undefined} */
+		var previous;
+
+		for (var item of source) {
+			if (has_previous) {
+				push_mapped(result, await fn(/** @type {T} */ (previous), count++, false));
+			}
+			previous = item;
+			has_previous = true;
+		}
+
+		if (has_previous) {
+			push_mapped(result, await fn(/** @type {T} */ (previous), count++, true));
+		}
+	}
+
+	if (count === 0) {
+		if (!empty) {
+			return [];
+		}
+		var empty_value = await empty();
+		return Array.isArray(empty_value) ? empty_value : [empty_value];
+	}
+
+	if (tail) {
+		push_mapped(result, await tail());
+	}
+	return result;
+}
+
+/**
+ * @template T
+ * @param {Iterable<T> | Iterator<T>} iterable
+ * @param {unknown} iterable_prop the value's own `Symbol.iterator`
+ * @returns {Iterable<T>}
+ */
+function to_iterable(iterable, iterable_prop) {
+	if (typeof iterable_prop === 'function') {
+		return /** @type {Iterable<T>} */ (iterable);
+	}
+	if (typeof (/** @type {Iterator<T>} */ (iterable).next) === 'function') {
+		return Iterator.from(/** @type {Iterator<T>} */ (iterable));
+	}
+	throw new TypeError('The loop target has to be an Iterable');
 }
 
 /**

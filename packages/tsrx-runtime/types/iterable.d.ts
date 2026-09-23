@@ -14,3 +14,10 @@ export function map_iterable<T, U>(
 	tail?: (() => U | U[]) | null,
 	empty?: () => U | U[],
 ): U[];
+
+export function map_iterable_async<T, U>(
+	value: Iterable<T> | Iterator<T>,
+	fn: (item: T, index: number, is_last: boolean) => U | Promise<U>,
+	tail?: (() => U | U[] | Promise<U | U[]>) | null,
+	empty?: () => U | U[] | Promise<U | U[]>,
+): Promise<U[]>;

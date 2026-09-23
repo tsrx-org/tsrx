@@ -1679,7 +1679,9 @@ export function convert_source_map_to_mappings(
 					visit(node.argument);
 				}
 
-				if (node.type === 'AwaitExpression') {
+				// An `await` the compiler added around a generated closure has no
+				// authored keyword to map.
+				if (node.type === 'AwaitExpression' && node.loc) {
 					const max_len = 'await'.length;
 					// We need a mapping for diagnostics but only on the 'await' keyword
 					const mapping = get_mapping_from_node(

@@ -18,10 +18,11 @@ statements, dynamic tags, sibling-scoped styles, themes, and error boundaries.
 Hono handles rendering, hooks, context, and Suspense through its own runtime APIs.
 Authored `class` attributes are preserved.
 
-Server components may be async and use top-level `await`. DOM components must be
-synchronous; use Hono's `use(promise)` with a pending boundary for asynchronous
-work. `@catch (error)` is supported, but Hono does not provide the reset callback
-used by some other targets.
+Server components may be async and use `await` in setup code and in `@for`,
+`@empty`, `@switch`, and `@if` bodies; a loop body finishes one item before it
+starts the next. DOM components must be synchronous; use Hono's `use(promise)`
+with a pending boundary for asynchronous work. `@catch (error)` is supported, but
+Hono does not provide the reset callback used by some other targets.
 
 ```tsx
 import { use } from 'hono/jsx';

@@ -2,9 +2,12 @@ import { readFile } from 'node:fs/promises';
 
 import { describe, expect, it } from 'vitest';
 
-import { map_iterable as map_iterable_from_core } from '@tsrx/core/runtime/iterable';
+import {
+	map_iterable as map_iterable_from_core,
+	map_iterable_async as map_iterable_async_from_core,
+} from '@tsrx/core/runtime/iterable';
 import { create_ref_prop as create_ref_prop_from_core } from '@tsrx/core/runtime/ref';
-import { map_iterable } from '@tsrx/runtime/iterable';
+import { map_iterable, map_iterable_async } from '@tsrx/runtime/iterable';
 import { create_ref_prop } from '@tsrx/runtime/ref';
 
 const runtime_packages = [
@@ -18,6 +21,7 @@ const runtime_packages = [
 describe('runtime package boundaries', () => {
 	it('keeps compatibility exports wired to the shared runtime implementation', () => {
 		expect(map_iterable_from_core).toBe(map_iterable);
+		expect(map_iterable_async_from_core).toBe(map_iterable_async);
 		expect(create_ref_prop_from_core).toBe(create_ref_prop);
 		expect(map_iterable(new Set(['a', 'b']), (value) => value.toUpperCase())).toEqual(['A', 'B']);
 	});

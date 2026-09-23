@@ -218,6 +218,9 @@ export default defineConfig({
 });
 ```
 
+Hono server components may be async and can use `await` in setup code and in
+template bodies, including `@for` and `@switch` bodies.
+
 For browser builds, use `tsrxHono({ mode: 'dom' })`. Hono DOM components are
 synchronous; use Hono's async and Suspense APIs for asynchronous work. The DOM
 validator reports explicit async components when they can be identified safely
@@ -1380,7 +1383,9 @@ or expression values are isolated behind generated child components
 when safe. Hook results must stay local to the generated component; move shared
 state into an explicit child component when values need to cross the generated
 boundary. React and Preact can also emit async component functions when template
-body `await` is supported by the target pipeline.
+body `await` is supported by the target pipeline. An `await` in an `@for`,
+`@empty`, `@switch`, or `@if` body is awaited by that component, and a loop body
+finishes one item before it starts the next.
 
 ```tsrx
 import { useEffect, useState } from 'react';

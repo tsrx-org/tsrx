@@ -944,7 +944,16 @@ export const FeaturesPage = () => @{
 								<code class="inline-code">await</code>
 								. On React and Preact, template-body
 								<code class="inline-code">await</code>
-								is supported and TSRX emits an async component function.
+								is supported and TSRX emits an async component function. An
+								<code class="inline-code">await</code>
+								inside an
+								<code class="inline-code">@for</code>
+								,
+								<code class="inline-code">@switch</code>
+								, or
+								<code class="inline-code">@if</code>
+								body is awaited by that component, and a loop body finishes one item before it
+								starts the next.
 							</p>
 							<p class="section-body muted">
 								React/Preact note:

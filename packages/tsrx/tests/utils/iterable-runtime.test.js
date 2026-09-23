@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { map_iterable } from '../../src/runtime/iterable.js';
+import { map_iterable, map_iterable_async } from '../../src/runtime/iterable.js';
 
 describe('map_iterable', function () {
 	/**
@@ -298,5 +298,114 @@ describe('map_iterable', function () {
 		expect(function () {
 			map_iterable(/** @type {any} */ ({ next: 1 }), text_fn);
 		}).toThrow(TypeError);
+	});
+});
+
+describe('map_iterable_async', function () {
+	/**
+	 * @param {unknown} item
+	 * @param {number} index
+	 * @param {boolean} is_last
+	 */
+	async function text_fn(item, index, is_last) {
+		await Promise.resolve();
+		return String(item) + ':' + index + (is_last ? '!' : '');
+	}
+
+	it('settles each item before visiting the next', async function () {
+		/** @type {string[]} */
+		var log = [];
+		var result = await map_iterable_async([30, 10, 20], function (delay, index) {
+			log.push('start ' + index);
+			return new Promise(function (resolve) {
+				setTimeout(function () {
+					log.push('end ' + index);
+					resolve(delay);
+				}, delay);
+			});
+		});
+
+		expect(result).toEqual([30, 10, 20]);
+		expect(log).toEqual(['start 0', 'end 0', 'start 1', 'end 1', 'start 2', 'end 2']);
+	});
+
+	it('maps arrays, sets, generators, and raw iterators with is_last', async function () {
+		expect(await map_iterable_async(['a', 'b', 'c'], text_fn)).toEqual(['a:0', 'b:1', 'c:2!']);
+		expect(await map_iterable_async(new Set(['a', 'b']), text_fn)).toEqual(['a:0', 'b:1!']);
+		expect(
+			await map_iterable_async(
+				(function* () {
+					yield 'p';
+					yield 'q';
+				})(),
+				text_fn,
+			),
+		).toEqual(['p:0', 'q:1!']);
+		expect(await map_iterable_async(['r', 's'][Symbol.iterator](), text_fn)).toEqual([
+			'r:0',
+			's:1!',
+		]);
+	});
+
+	it('flattens array-valued results and accepts synchronous callbacks', async function () {
+		expect(
+			await map_iterable_async(['a', 'b'], async function (item, index) {
+				return index === 0 ? [item, item] : item;
+			}),
+		).toEqual(['a', 'a', 'b']);
+		expect(
+			await map_iterable_async(new Set([1, 2]), function (item) {
+				return item * 2;
+			}),
+		).toEqual([2, 4]);
+	});
+
+	it('handles empty sources, empty fallbacks, and tails', async function () {
+		expect(await map_iterable_async([], text_fn)).toEqual([]);
+		expect(await map_iterable_async(new Set(), text_fn)).toEqual([]);
+		expect(
+			await map_iterable_async([], text_fn, null, async function () {
+				return 'empty';
+			}),
+		).toEqual(['empty']);
+		expect(
+			await map_iterable_async(new Set(), text_fn, null, function () {
+				return ['x', 'y'];
+			}),
+		).toEqual(['x', 'y']);
+		expect(
+			await map_iterable_async(['a'], text_fn, async function () {
+				return ['t', 'u'];
+			}),
+		).toEqual(['a:0!', 't', 'u']);
+	});
+
+	it('stops at the first rejection and closes a generator', async function () {
+		var closed = false;
+		var calls = 0;
+		var source = (function* () {
+			try {
+				yield 'a';
+				yield 'b';
+				yield 'c';
+			} finally {
+				closed = true;
+			}
+		})();
+
+		await expect(
+			map_iterable_async(source, async function () {
+				calls += 1;
+				throw new Error('boom');
+			}),
+		).rejects.toThrow('boom');
+		expect(calls).toBe(1);
+		expect(closed).toBe(true);
+	});
+
+	it('rejects values that are neither iterable nor iterators', async function () {
+		await expect(map_iterable_async(/** @type {any} */ ({ next: 1 }), text_fn)).rejects.toThrow(
+			TypeError,
+		);
 	});
 });

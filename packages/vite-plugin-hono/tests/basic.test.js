@@ -79,6 +79,77 @@ describe('@tsrx/vite-plugin-hono', () => {
 		}
 	});
 
+	it('renders awaits inside @for, @empty, @switch, and @if bodies with Hono SSR (#145)', async () => {
+		const plugin = tsrxHono();
+		const context = create_context();
+		const directory = await mkdtemp(
+			path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-hono-'),
+		);
+
+		try {
+			const source_id = path.join(directory, 'App.tsrx');
+			const output_id = path.join(directory, 'App.js');
+			const transformed = await plugin.transform.call(
+				context,
+				`const settled = [];
+				// Earlier items settle later, so only a sequential walk logs 1,2,3.
+				const load = (n) => new Promise((resolve) => {
+					setTimeout(() => {
+						settled.push(n);
+						resolve(n * 10);
+					}, 30 - n * 10);
+				});
+
+				export async function App({ items, empty }) @{
+					<>
+						<ul>
+							@for (const item of items; index i) {
+								const value = await load(item);
+								<li>{i}:{value}:{await Promise.resolve(item)}</li>
+							}
+						</ul>
+						<p class="settled">{settled.join(',')}</p>
+						@for (const item of empty) {
+							<p>{item}</p>
+						} @empty {
+							<p class="empty">{await Promise.resolve('none')}</p>
+						}
+						@switch (items.length) {
+							@case 3: {
+								const label = await Promise.resolve('three');
+								<p class="switch">{label}</p>
+							}
+						}
+						@if (items.length > 0) {
+							const first = await Promise.resolve(items[0]);
+							<p class="if">{first}</p>
+						}
+					</>
+				}`,
+				source_id,
+			);
+			await writeFile(output_id, transformed.code);
+
+			const [{ App }, { jsx }, { renderToReadableStream }] = await Promise.all([
+				import(`${pathToFileURL(output_id).href}?test=${Date.now()}`),
+				import('hono/jsx'),
+				import('hono/jsx/streaming'),
+			]);
+
+			const stream = await renderToReadableStream(jsx(App, { items: [1, 2, 3], empty: [] }));
+			let html = '';
+			for await (const chunk of stream) html += new TextDecoder().decode(chunk);
+
+			expect(html).toContain('<ul><li>0:10:1</li><li>1:20:2</li><li>2:30:3</li></ul>');
+			expect(html).toContain('<p class="settled">1,2,3</p>');
+			expect(html).toContain('<p class="empty">none</p>');
+			expect(html).toContain('<p class="switch">three</p>');
+			expect(html).toContain('<p class="if">1</p>');
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it('works with c.html, c.render, and the JSX renderer context', async () => {
 		const plugin = tsrxHono();
 		const context = create_context();

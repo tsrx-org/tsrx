@@ -588,6 +588,7 @@ export function createJsxTransform(platform) {
 			needs_dynamic_element: false,
 			needs_dynamic_factory: false,
 			needs_for_of_iterable: false,
+			needs_for_of_iterable_async: false,
 			needs_iteration_value_type: false,
 			needs_show: false,
 			needs_for: false,
@@ -858,17 +859,22 @@ export function createJsxTransform(platform) {
 			transformed_program.body.unshift(...type_only_style_anchors);
 		}
 		const expanded = expand_component_helpers(transformed_program);
-		inject_dynamic_import(expanded, transform_context);
-		if (platform.hooks?.injectImports) {
-			platform.hooks.injectImports(expanded, transform_context, suspense_source);
-		} else {
-			inject_try_imports(expanded, transform_context, effective_platform, suspense_source);
-		}
 
 		// Lower any `@{ … }` code blocks left in generated helper bodies, so every
 		// `@{ … }` block / `@`-directive has been lowered to its final closure /
-		// block shape before printing.
-		const final_program = lower_remaining_jsx_code_blocks(expanded, transform_context);
+		// block shape before printing. Only then are all generated closures known,
+		// so the ones an authored `await` landed in are made async last. Imports
+		// come after, because that can swap which iterable helper is used.
+		const final_program = await_generated_closures(
+			lower_remaining_jsx_code_blocks(expanded, transform_context),
+			transform_context,
+		);
+		inject_dynamic_import(final_program, transform_context);
+		if (platform.hooks?.injectImports) {
+			platform.hooks.injectImports(final_program, transform_context, suspense_source);
+		} else {
+			inject_try_imports(final_program, transform_context, effective_platform, suspense_source);
+		}
 
 		const result = print(
 			final_program,
@@ -2930,6 +2936,158 @@ function lower_remaining_jsx_code_blocks(node, transform_context, seen = new Set
 	}
 
 	return /** @type {T} */ (out);
+}
+
+/**
+ * An authored `await` is valid where it was written, but lowering can move it
+ * into a closure the compiler generated: the IIFE of a `@switch` or of a branch
+ * with setup statements, or a callback a `@for` hands to `map_iterable`. The
+ * parser rejects `await` inside authored functions that are not async, so a
+ * non-async function that directly contains one is generated. This pass makes
+ * each such closure async and awaits it where it is called, so the value still
+ * settles in the enclosing async function, in source order:
+ *
+ * - an IIFE becomes `await (async () => { … })()`;
+ * - a `map_iterable` call given an async callback becomes
+ *   `await map_iterable_async(…)`, which settles one item before the next,
+ *   like a `for...of` loop with an `await` in its body.
+ *
+ * Any other generated closure is a callback the target calls during rendering
+ * (a `@catch` fallback, for one), where the result cannot be awaited, so an
+ * `await` there is reported instead.
+ *
+ * The tree is never mutated; see `lower_remaining_jsx_code_blocks`.
+ *
+ * @template {AST.Node} T
+ * @param {T} program
+ * @param {TransformContext} transform_context
+ * @returns {T}
+ */
+function await_generated_closures(program, transform_context) {
+	// Only a source that mentions `await` can contain an await expression.
+	if (transform_context.source && !transform_context.source.includes('await')) {
+		return program;
+	}
+
+	/** @type {Map<AST.Node, { node: AST.Node, first_await: AST.Node | null }>} */
+	const results = new Map();
+	/** Closures made async here, with the authored `await` that required it. */
+	/** @type {Map<AST.Node, AST.Node>} */
+	const made_async = new Map();
+	let sync_iterable_calls = 0;
+	let async_iterable_calls = 0;
+
+	/**
+	 * Returns the node with its generated closures made async, and the first
+	 * authored `await` it contains outside any nested function.
+	 *
+	 * @param {AST.Node} node
+	 * @param {boolean} awaitable whether the parent awaits this node's call when
+	 *   it becomes an async closure
+	 * @returns {{ node: AST.Node, first_await: AST.Node | null }}
+	 */
+	const visit = (node, awaitable) => {
+		const cached = results.get(node);
+		if (cached) return cached;
+
+		/** @type {AST.Node | null} */
+		let first_await =
+			node.type === 'AwaitExpression' || (node.type === 'ForOfStatement' && node.await)
+				? node
+				: null;
+		const is_call = node.type === 'CallExpression';
+		const is_iterable_call =
+			is_call &&
+			node.callee.type === 'Identifier' &&
+			node.callee.name === MAP_ITERABLE_INTERNAL_NAME;
+		/** @type {AST.TraversableAstNode} */
+		let out = /** @type {AST.TraversableAstNode} */ (node);
+
+		for (const key of Object.keys(node)) {
+			if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
+			const value = /** @type {AST.TraversableAstNode} */ (node)[key];
+			// A generated IIFE, or a callback `map_iterable` receives, is awaited below.
+			const child_awaitable =
+				(is_call && key === 'callee') || (is_iterable_call && key === 'arguments');
+			/**
+			 * @param {AST.Node} child
+			 * @returns {AST.Node}
+			 */
+			const visit_child = (child) => {
+				const result = visit(child, child_awaitable);
+				first_await ??= result.first_await;
+				return result.node;
+			};
+			/** @type {unknown} */
+			let next = value;
+			if (Array.isArray(value)) {
+				const walked = value.map((child) => (is_ast_node(child) ? visit_child(child) : child));
+				if (walked.some((child, index) => child !== value[index])) next = walked;
+			} else if (is_ast_node(value)) {
+				next = visit_child(value);
+			}
+			if (next !== value) {
+				if (out === node) out = { ...out };
+				out[key] = next;
+			}
+		}
+
+		/** @type {{ node: AST.Node, first_await: AST.Node | null }} */
+		let result = { node: /** @type {AST.Node} */ (out), first_await };
+
+		if (is_function_node(node)) {
+			// An `await` never escapes the function that contains it.
+			result = { node: result.node, first_await: null };
+			if (first_await && !node.async) {
+				if (awaitable) {
+					result.node = /** @type {AST.Node} */ ({ ...result.node, async: true });
+					made_async.set(result.node, first_await);
+				} else {
+					error(
+						`${transform_context.platform.name} TSRX does not support \`await\` here: this part of the template renders through a callback the target calls, so its result cannot be awaited. Await the value in the component body, or move it into an async child component.`,
+						transform_context.filename,
+						first_await,
+						transform_context.errors,
+						transform_context.comments,
+					);
+				}
+			}
+		} else if (result.node.type === 'CallExpression') {
+			// The `await` added here stands for the authored one inside the
+			// closure, which the enclosing function now has to allow.
+			const call = result.node;
+			const async_callback = is_iterable_call
+				? call.arguments.find((arg) => made_async.has(arg))
+				: undefined;
+			if (made_async.has(call.callee)) {
+				result = { node: b.await(call), first_await: made_async.get(call.callee) ?? null };
+			} else if (async_callback) {
+				result = {
+					node: b.await({
+						...call,
+						callee: {
+							.../** @type {AST.Identifier} */ (call.callee),
+							name: MAP_ITERABLE_ASYNC_INTERNAL_NAME,
+						},
+					}),
+					first_await: made_async.get(async_callback) ?? null,
+				};
+				async_iterable_calls += 1;
+			} else if (is_iterable_call) {
+				sync_iterable_calls += 1;
+			}
+		}
+
+		results.set(node, result);
+		return result;
+	};
+
+	const lowered = /** @type {T} */ (visit(program, false).node);
+	if (async_iterable_calls > 0) {
+		transform_context.needs_for_of_iterable = sync_iterable_calls > 0;
+		transform_context.needs_for_of_iterable_async = true;
+	}
+	return lowered;
 }
 
 /**
@@ -5654,8 +5812,17 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 		imports.push(b.imports([['Suspense', 'Suspense']], suspense_source));
 	}
 
-	if (transform_context.needs_for_of_iterable && platform.imports.forOfIterableHelper) {
-		const specifiers = [b.import_specifier('map_iterable', MAP_ITERABLE_INTERNAL_NAME)];
+	if (
+		(transform_context.needs_for_of_iterable || transform_context.needs_for_of_iterable_async) &&
+		platform.imports.forOfIterableHelper
+	) {
+		const specifiers = [];
+		if (transform_context.needs_for_of_iterable) {
+			specifiers.push(b.import_specifier('map_iterable', MAP_ITERABLE_INTERNAL_NAME));
+		}
+		if (transform_context.needs_for_of_iterable_async) {
+			specifiers.push(b.import_specifier('map_iterable_async', MAP_ITERABLE_ASYNC_INTERNAL_NAME));
+		}
 		// The loop-scoped type alias `IterationValue<typeof source>` only
 		// appears in the output when at least one hook-bearing for-of body
 		// was lowered with non-module-scoped helpers (editor tooling sets
@@ -6465,6 +6632,7 @@ function stamp_directive_origin(node, directive, keyword, transform_context) {
 }
 
 export const MAP_ITERABLE_INTERNAL_NAME = '__map_iterable';
+export const MAP_ITERABLE_ASYNC_INTERNAL_NAME = '__map_iterable_async';
 export const ITERATION_VALUE_INTERNAL_NAME = '__IterationValue';
 
 const HTML_REF_TAG_NAMES = new Set(

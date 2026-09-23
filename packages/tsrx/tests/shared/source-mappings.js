@@ -122,6 +122,102 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		);
 	});
 
+	describe(`[${name}] await in lowered template bodies (#145)`, () => {
+		/** @type {Record<string, string>} */
+		const SOURCES = {
+			'@for body': `export async function App({ items }: { items: number[] }) @{
+	@for (const item of items; index i) {
+		const value = await load(item);
+		<p>{i}{value}{await load(item)}</p>
+	}
+}`,
+			'@empty body': `export async function App({ items }: { items: number[] }) @{
+	@for (const item of items) {
+		<p>{item}</p>
+	} @empty {
+		<p>{await load(0)}</p>
+	}
+}`,
+			'nested @for': `export async function App({ rows }: { rows: number[][] }) @{
+	@for (const row of rows) {
+		@for (const item of row) {
+			<p>{await load(item)}</p>
+		}
+	}
+}`,
+			'@switch case': `export async function App({ kind }: { kind: string }) @{
+	@switch (kind) {
+		@case 'a': {
+			const value = await load(1);
+			<p>{value}</p>
+		}
+	}
+}`,
+			'@if branch with setup statements': `export async function App({ ok }: { ok: boolean }) @{
+	@if (ok) {
+		const value = await load(1);
+		<p>{value}</p>
+	}
+}`,
+		};
+
+		if (rejectsComponentAwait) {
+			it.each(Object.keys(SOURCES))('rejects an await in the %s', (label) => {
+				expect(() => compile(SOURCES[label], 'App.tsrx')).toThrow(/await/);
+			});
+			return;
+		}
+
+		it.each(Object.keys(SOURCES))('emits valid async output for the %s', (label) => {
+			const { code } = compile(SOURCES[label], 'App.tsrx');
+			expect(() =>
+				parseModule(code, 'App.tsx', { preserveParens: true, errors: [], comments: [] }),
+			).not.toThrow();
+		});
+
+		it.each(Object.keys(SOURCES))('maps the authored await keywords in the %s', (label) => {
+			const source = SOURCES[label];
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			for (const match of source.matchAll(/\bawait\b/g)) {
+				const generated = result.mappings.flatMap((mapping) =>
+					mapping.sourceOffsets.flatMap((offset, index) =>
+						offset === match.index && mapping.lengths[index] === 5
+							? [
+									result.code.slice(
+										mapping.generatedOffsets[index],
+										mapping.generatedOffsets[index] + 5,
+									),
+								]
+							: [],
+					),
+				);
+				expect(generated, `await at ${match.index}`).toContain('await');
+			}
+		});
+
+		it('walks the loop body one item at a time', () => {
+			const { code } = compile(SOURCES['@for body'], 'App.tsrx');
+			expect(code).toContain('await __map_iterable_async(items, async (item, i) =>');
+			expect(code).not.toContain('map_iterable as __map_iterable');
+		});
+
+		it('reports an await in a @catch body at the authored await', () => {
+			const source = `export async function App() @{
+	@try {
+		<p>ok</p>
+	} @catch (error) {
+		<p>{await load(error)}</p>
+	}
+}`;
+			expect(() => compile(source, 'App.tsrx')).toThrow(/does not support `await` here/);
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors.map((error) => [error.message, error.pos])).toEqual([
+				[expect.stringContaining('does not support `await` here'), source.indexOf('await')],
+			]);
+		});
+	});
+
 	describe(`[${name}] multiline spread attributes`, () => {
 		it.each([
 			['LF', '\n'],
