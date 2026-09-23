@@ -7349,8 +7349,51 @@ declare enum Level {
   [k: string]: unknown
   [j] = 1
 }`,
+			`class A {
+  x = a
+  as = 1
+}`,
+			`class A {
+  x = a
+  satisfies: T
+}`,
 		])('omits the semicolon before a member that cannot continue: %s', async (source) => {
 			await expectUnchanged(source);
+		});
+
+		// Unlike `static`, `get` and `set`, these only modify a member that
+		// starts on the same line
+		it.each([
+			`class A {
+  readonly
+  value = 1
+}`,
+			`class A {
+  declare
+  value: string
+}`,
+			`class A {
+  private
+  run() {}
+}`,
+			`class A {
+  async
+  run() {}
+}`,
+		])('omits the semicolon after a field named like a same-line modifier: %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it('keeps the semicolon when a quoted key prints as a keyword', async () => {
+			const result = await format(`class A { "static"; run() {} x = a; 'in' = 1 }`, {
+				semi: false,
+			});
+			expect(result).toBeWithNewline(`class A {
+  static;
+  run() {}
+  x = a;
+  in = 1
+}`);
 		});
 
 		it('keeps the semicolon ahead of a trailing comment', async () => {

@@ -4659,16 +4659,18 @@ function needsClassPropertySemicolon(node, next) {
 		return false;
 	}
 
+	// Only these keywords modify a member on the next line; `readonly`,
+	// `declare`, `async` and the rest must share its line
+	const name = getPrintedKeyName(node);
 	if (
-		!node.computed &&
 		!node.value &&
 		!node.typeAnnotation &&
-		node.key.type === 'Identifier' &&
-		(node.key.name === 'static' || node.key.name === 'get' || node.key.name === 'set')
+		(name === 'static' || name === 'get' || name === 'set')
 	) {
 		return true;
 	}
 
+	// Unless a modifier leads, its `[` would index the field's value
 	if (next.type === 'TSIndexSignature') {
 		return !next.static && !next.readonly;
 	}
@@ -4692,16 +4694,32 @@ function needsClassPropertySemicolon(node, next) {
 	}
 
 	// `in` and `instanceof` read as operators on the field's value
-	if (
-		!next.computed &&
-		next.key.type === 'Identifier' &&
-		(next.key.name === 'in' || next.key.name === 'instanceof')
-	) {
+	const nextName = getPrintedKeyName(next);
+	if (nextName === 'in' || nextName === 'instanceof') {
 		return true;
 	}
 
 	// `[` indexes the field's value and `*` multiplies it
 	return next.computed || (next.type === 'MethodDefinition' && next.value.generator === true);
+}
+
+/**
+ * The name a class member's key prints as. printKey unquotes string keys that
+ * are valid identifiers, so `"static"` prints as `static` and parses as one.
+ * @param {AST.PropertyDefinition | AST.MethodDefinition} member - The class member
+ * @returns {string | null} The name, or null for computed and non-name keys
+ */
+function getPrintedKeyName(member) {
+	if (member.computed) {
+		return null;
+	}
+	if (member.key.type === 'Identifier') {
+		return member.key.name;
+	}
+	if (member.key.type === 'Literal' && typeof member.key.value === 'string') {
+		return member.key.value;
+	}
+	return null;
 }
 
 /**
