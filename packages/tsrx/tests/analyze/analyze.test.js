@@ -286,4 +286,32 @@ describe('target-neutral TSRX analysis', () => {
 			expect(forgotten_output_errors(analyze('<div />'))).toEqual([]);
 		});
 	});
+
+	describe('@switch arm scopes', () => {
+		it('resolves a case test in the enclosing scope, not in the arm it opens', () => {
+			const source = `function App({ value }) @{
+	const label = 'outer';
+	@switch (value) {
+		@case label: {
+			const label = 'inner';
+			<p>{label}</p>
+		}
+	}
+}`;
+			const { scopes } = analyze(source);
+			const [outer, inner] = [...new Set(scopes.values())]
+				.map((scope) => scope.declarations.get('label'))
+				.filter((binding) => binding !== undefined)
+				.sort(
+					(a, b) => /** @type {number} */ (a.node.start) - /** @type {number} */ (b.node.start),
+				);
+			const starts = (/** @type {typeof outer} */ binding) =>
+				binding.references
+					.filter((reference) => reference.node !== binding.node)
+					.map((reference) => reference.node.start);
+
+			expect(starts(outer)).toEqual([source.indexOf('@case label') + '@case '.length]);
+			expect(starts(inner)).toEqual([source.indexOf('{label}') + 1]);
+		});
+	});
 });
