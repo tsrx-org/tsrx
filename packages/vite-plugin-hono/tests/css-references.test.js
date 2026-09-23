@@ -11,23 +11,21 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-hono-
 
 describe('@tsrx/vite-plugin-hono style references', () => {
 	for (const mode of /** @type {const} */ (['server', 'dom'])) {
-		it(`resolves relative @import and url() from the component in ${mode} builds`, async () => {
+		it(`resolves a relative url() from the component in ${mode} builds`, async () => {
 			const css = await buildCssReferenceFixture({ root, plugins: [tsrxHono({ mode })] });
 
-			expect(css).toContain('color: blue;');
 			expect(css).toContain('data:image/svg+xml');
 			expect(css).not.toContain('./asset.svg');
 		}, 60_000);
 	}
 
-	it('resolves relative @import and url() from the component in dev', async () => {
+	it('resolves a relative url() from the component in dev', async () => {
 		const { url, css } = await serveCssReferenceFixture({
 			root,
 			plugins: [tsrxHono({ mode: 'dom' })],
 		});
 
 		expect(url).toBe('/components/Styled.tsrx?tsrx-css&lang.css');
-		expect(css).toContain('color: blue;');
 		expect(css).toContain('data:image/svg+xml');
 		expect(css).not.toContain('./asset.svg');
 	}, 60_000);

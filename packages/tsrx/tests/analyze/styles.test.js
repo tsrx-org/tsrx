@@ -12,6 +12,7 @@ import {
 import {
 	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
 	TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
+	TSRX_CSS_IMPORT_ERROR,
 	TSRX_STYLE_APPLY_DUPLICATE_ERROR,
 	TSRX_STYLE_APPLY_UNSUPPORTED_HOST_ERROR,
 	TSRX_STYLE_APPLY_VALUE_ERROR,
@@ -420,6 +421,51 @@ describe('scoped style analysis', () => {
 				'const t = <style>.class { color: red; }</style>;',
 			]) {
 				expect(style_errors(analyze(source)), source).toEqual([]);
+			}
+		});
+	});
+
+	describe('css @import', () => {
+		it('reports an @import rule at its position', () => {
+			const source =
+				"function App() @{\n\t<>\n\t\t<style>@import './a.css'; p {}</style>\n\t\t<p />\n\t</>\n}";
+			const errors = errors_with_code(analyze(source), DIAGNOSTIC_CODES.CSS_IMPORT);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].message).toBe(TSRX_CSS_IMPORT_ERROR);
+			expect(errors[0].type).toBe('usage');
+			expect(errors[0].loc?.start).toEqual(loc_of(source, '@import'));
+		});
+
+		it('reports every style block kind and @import form', () => {
+			for (const source of [
+				"function App() @{ <><style>@import url('./a.css');</style><div /></> }",
+				"function App() @{ <><style>@IMPORT './a.css' print;</style><div /></> }",
+				"function App() @{ <><style>@media print { @import './a.css'; }</style><div /></> }",
+				"function App() @{ <html><head><style>@import './a.css';</style></head></html> }",
+				"const t = <style>@import 'pkg/theme.css'; .a {}</style>;",
+				"export default <style>@import './a.css';</style>;",
+			]) {
+				const errors = errors_with_code(analyze(source), DIAGNOSTIC_CODES.CSS_IMPORT);
+
+				expect(errors, source).toHaveLength(1);
+				expect(errors[0].message, source).toBe(TSRX_CSS_IMPORT_ERROR);
+			}
+		});
+
+		it('reports each @import rule in a block', () => {
+			const source = "const t = <style>@import './a.css'; @import './b.css';</style>;";
+
+			expect(errors_with_code(analyze(source), DIAGNOSTIC_CODES.CSS_IMPORT)).toHaveLength(2);
+		});
+
+		it('does not report other at-rules or plain TSX style children', () => {
+			for (const source of [
+				'function App() @{ <><style>@media print { p { color: red; } }</style><p /></> }',
+				"function App() @{ <><style>@font-face { src: url('./a.woff2'); }</style><p /></> }",
+				'function App() { return <style>{\'@import "./a.css";\'}</style>; }',
+			]) {
+				expect(errors_with_code(analyze(source), DIAGNOSTIC_CODES.CSS_IMPORT), source).toEqual([]);
 			}
 		});
 	});
@@ -1387,6 +1433,7 @@ describe('scoped style analysis', () => {
 					DIAGNOSTIC_CODES.STYLE_APPLY_UNSUPPORTED_HOST,
 				],
 				['const t = <style>.\\$class {}</style>;', DIAGNOSTIC_CODES.STYLE_RESERVED_CLASS_KEY],
+				["const t = <style>@import './a.css';</style>;", DIAGNOSTIC_CODES.CSS_IMPORT],
 				['<style>.a {}</style>;', DIAGNOSTIC_CODES.STYLE_STANDALONE_AT_MODULE_SCOPE],
 				[
 					'function App() { return <><style>.a {}</style><div /></>; }',

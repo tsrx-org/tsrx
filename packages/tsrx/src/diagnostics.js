@@ -29,4 +29,6 @@ export const DIAGNOSTIC_CODES = {
 	STYLE_UNKNOWN_ATTRIBUTE: 'tsrx-style-unknown-attribute',
 	/** `:global` used where the scoping rules do not allow it. */
 	CSS_GLOBAL_PLACEMENT: 'tsrx-css-global-placement',
+	/** An `@import` rule in a `<style>` block, whose rules would not be scoped. */
+	CSS_IMPORT: 'tsrx-css-import',
 };

@@ -18,9 +18,11 @@
 
 import { walk } from 'zimmerframe';
 import { DIAGNOSTIC_CODES } from '../diagnostics.js';
+import { css_node_source_position } from '../parse/style.js';
 import { get_style_class_map_names, get_style_element_stylesheet } from '../transform/style-ref.js';
 import { is_function_node, is_template_directive } from '../utils/ast.js';
 import {
+	TSRX_CSS_IMPORT_ERROR,
 	TSRX_STYLE_APPLY_DUPLICATE_ERROR,
 	TSRX_STYLE_APPLY_UNSUPPORTED_HOST_ERROR,
 	TSRX_STYLE_APPLY_VALUE_ERROR,
@@ -376,6 +378,24 @@ export function analyze_styles(ast, scopes, state) {
 				}
 				node.metadata.styleApplies = resolutions;
 
+				const stylesheet = get_style_element_stylesheet(node);
+				if (stylesheet) {
+					// Scoping only rewrites the rules written in the block, so rules an
+					// `@import` pulls in would apply to the whole page.
+					walk(/** @type {AST.CSS.Node} */ (stylesheet), null, {
+						Atrule(rule, { next }) {
+							if (rule.name.toLowerCase() === 'import') {
+								report(
+									TSRX_CSS_IMPORT_ERROR,
+									DIAGNOSTIC_CODES.CSS_IMPORT,
+									/** @type {AST.Node} */ (css_node_source_position(stylesheet, rule)),
+								);
+							}
+							next();
+						},
+					});
+				}
+
 				if (is_standalone) {
 					if (!inside_head && !is_resource) {
 						const parent = path.at(-1);
@@ -435,7 +455,6 @@ export function analyze_styles(ast, scopes, state) {
 						declared_name !== null &&
 						is_class_read(nearest_scope(path, scopes)?.get(declared_name) ?? null);
 
-					const stylesheet = get_style_element_stylesheet(node);
 					if (stylesheet && get_style_class_map_names(stylesheet).includes('$class')) {
 						report(
 							TSRX_STYLE_RESERVED_CLASS_KEY_ERROR,

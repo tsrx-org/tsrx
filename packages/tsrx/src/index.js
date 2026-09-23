@@ -293,6 +293,7 @@ export {
 	TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR,
 	TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
 	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
+	TSRX_CSS_IMPORT_ERROR,
 	tsrx_style_apply_target_error as tsrxStyleApplyTargetError,
 	tsrx_style_apply_before_declaration_error as tsrxStyleApplyBeforeDeclarationError,
 	tsrx_style_unknown_attribute_error as tsrxStyleUnknownAttributeError,

@@ -263,6 +263,9 @@ const STYLE_STATIC_CONSTRAINTS = [
 	'tsrx-css-global-placement',
 	'  :global(...) may begin or end a selector sequence but not sit in its middle,',
 	'  and a bare :global must not be nested inside another pseudo-class.',
+	'tsrx-css-import',
+	'  A style body must not contain an @import rule; the imported rules would not',
+	'  be scoped.',
 	'',
 	'Emission order (normative): outer scope before inner scope; applied block',
 	'before the block that applies it; source order within one scope, later wins.',
@@ -1313,6 +1316,13 @@ export function SpecificationPage() @{
 									must not be nested inside another pseudo-class; both are
 									<code class="inline-code">tsrx-css-global-placement</code>
 									.
+								</li>
+								<li>
+									A style body containing an
+									<code class="inline-code">@import</code>
+									rule is
+									<code class="inline-code">tsrx-css-import</code>
+									: the imported rules would not be scoped.
 								</li>
 							</ul>
 							<p class="section-body">

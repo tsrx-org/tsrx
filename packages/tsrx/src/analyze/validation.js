@@ -48,6 +48,8 @@ export const TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR =
 	'A :global selector cannot be inside a pseudoclass.';
 export const TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR =
 	':global(...) can be at the start or end of a selector sequence, but not in the middle.';
+export const TSRX_CSS_IMPORT_ERROR =
+	"@import is not supported in <style> blocks: the imported rules would not be scoped. Share scoped styles with an assigned block (const theme = <style>…</style>) and apply={theme}, or import global CSS from the module: import './global.css'.";
 
 /**
  * @param {string} name

@@ -87,8 +87,8 @@ here and keeps package docs focused on the core parser API.
   with `mode: 'scope' | 'class-map' | 'theme'` (a boolean still means
   `class-map`/`scope`) and `createStyleClassMapFromStylesheet(sheet, options)`,
   whose object starts with `$class` and accepts `{ applied }` for composed themes.
-  Style diagnostics use the `STYLE_*` and `CSS_GLOBAL_PLACEMENT` codes in
-  `DIAGNOSTIC_CODES`.
+  Style diagnostics use the `STYLE_*`, `CSS_GLOBAL_PLACEMENT`, and `CSS_IMPORT`
+  codes in `DIAGNOSTIC_CODES`.
 - **HTML helpers** — `isVoidElement`, `isBooleanAttribute`, `isDomProperty`,
   `validateNesting`.
 - **Tag-name helpers** — `isSvgTagName(name)` and `isMathmlTagName(name)` check

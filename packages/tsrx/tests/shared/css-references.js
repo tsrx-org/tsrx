@@ -8,9 +8,9 @@ const CSS_IMPORT_PATTERN = /import\s*"([^"]+lang\.css)"/;
 const DEV_CSS_PATTERN = /^const __vite__css = (".*")$/m;
 
 /**
- * A component whose `<style>` block imports a stylesheet and references an
- * asset, both next to it. The component sits below the root, so a reference
- * resolved from anywhere but the component's directory fails.
+ * A component whose `<style>` block references an asset next to it. The
+ * component sits below the root, so a reference resolved from anywhere but the
+ * component's directory fails.
  *
  * @type {Record<string, string>}
  */
@@ -18,7 +18,6 @@ const FILES = {
 	[ENTRY]: `export function Styled() @{
 	<>
 		<style>
-			@import './shared.css';
 			div {
 				background: url(./asset.svg);
 			}
@@ -27,7 +26,6 @@ const FILES = {
 	</>
 }
 `,
-	'components/shared.css': '.shared {\n\tcolor: blue;\n}\n',
 	'components/asset.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>\n',
 };
 
