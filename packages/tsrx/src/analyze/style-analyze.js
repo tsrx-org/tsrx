@@ -380,20 +380,18 @@ export function analyze_styles(ast, scopes, state) {
 
 				const stylesheet = get_style_element_stylesheet(node);
 				if (stylesheet) {
-					// Scoping only rewrites the rules written in the block, so rules an
-					// `@import` pulls in would apply to the whole page.
-					walk(/** @type {AST.CSS.Node} */ (stylesheet), null, {
-						Atrule(rule, { next }) {
-							if (rule.name.toLowerCase() === 'import') {
-								report(
-									TSRX_CSS_IMPORT_ERROR,
-									DIAGNOSTIC_CODES.CSS_IMPORT,
-									/** @type {AST.Node} */ (css_node_source_position(stylesheet, rule)),
-								);
-							}
-							next();
-						},
-					});
+					// `@import` is only valid at the top level of a stylesheet. Scoping
+					// only rewrites the rules written in the block, so the rules it pulls
+					// in would apply to the whole page.
+					for (const rule of stylesheet.children) {
+						if (rule.type === 'Atrule' && rule.name.toLowerCase() === 'import') {
+							report(
+								TSRX_CSS_IMPORT_ERROR,
+								DIAGNOSTIC_CODES.CSS_IMPORT,
+								/** @type {AST.Node} */ (css_node_source_position(stylesheet, rule)),
+							);
+						}
+					}
 				}
 
 				if (is_standalone) {

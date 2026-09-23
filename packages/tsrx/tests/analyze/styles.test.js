@@ -441,7 +441,6 @@ describe('scoped style analysis', () => {
 			for (const source of [
 				"function App() @{ <><style>@import url('./a.css');</style><div /></> }",
 				"function App() @{ <><style>@IMPORT './a.css' print;</style><div /></> }",
-				"function App() @{ <><style>@media print { @import './a.css'; }</style><div /></> }",
 				"function App() @{ <html><head><style>@import './a.css';</style></head></html> }",
 				"const t = <style>@import 'pkg/theme.css'; .a {}</style>;",
 				"export default <style>@import './a.css';</style>;",
