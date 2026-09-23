@@ -1228,6 +1228,22 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = printImportDeclaration(node, path, options, print);
 			break;
 
+		case 'TSImportEqualsDeclaration':
+			nodeContent = printTSImportEqualsDeclaration(node, path, options, print);
+			break;
+
+		case 'TSExternalModuleReference':
+			nodeContent = ['require(', path.call(print, 'expression'), ')'];
+			break;
+
+		case 'TSExportAssignment':
+			nodeContent = ['export = ', path.call(print, 'expression'), semi(options)];
+			break;
+
+		case 'TSNamespaceExportDeclaration':
+			nodeContent = ['export as namespace ', path.call(print, 'id'), semi(options)];
+			break;
+
 		case 'ExportNamedDeclaration':
 			nodeContent = printExportNamedDeclaration(node, path, options, print);
 			break;
@@ -2962,6 +2978,29 @@ function printImportDeclaration(node, path, options, _print) {
 	parts.push(semi(options));
 
 	return parts;
+}
+
+/**
+ * Print an import alias: `import A = Foo.Bar;` or `import fs = require("fs");`.
+ * The alias is a runtime binding, so it must never fall through to the
+ * unknown-node fallback. acorn-typescript flags `export import` with `isExport`
+ * rather than wrapping it in an `ExportNamedDeclaration`.
+ * @param {AST.TSImportEqualsDeclaration} node
+ * @param {AstPath<AST.TSImportEqualsDeclaration>} path
+ * @param {TsrxFormatOptions} options
+ * @param {PrintFn} print
+ * @returns {Doc[]}
+ */
+function printTSImportEqualsDeclaration(node, path, options, print) {
+	return [
+		/** @type {{ isExport?: boolean }} */ (node).isExport ? 'export ' : '',
+		'import ',
+		node.importKind === 'type' ? 'type ' : '',
+		path.call(print, 'id'),
+		' = ',
+		path.call(print, 'moduleReference'),
+		semi(options),
+	];
 }
 
 /**

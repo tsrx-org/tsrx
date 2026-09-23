@@ -7237,6 +7237,71 @@ declare enum Level {
 		});
 	});
 
+	// Import aliases and export assignments are runtime bindings. Dropping one
+	// leaves every later reference dangling, and the file still compiles, so the
+	// break only surfaces when the module runs.
+	describe('TypeScript module declarations survive formatting', () => {
+		/**
+		 * Assert the input is already formatted and comes back byte-identical.
+		 * @param {string} source
+		 */
+		const expectUnchanged = async (source) => {
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		};
+
+		it.each([
+			'import Alias = Foo;',
+			'import Alias = Foo.Bar.Baz;',
+			'import fs = require("fs");',
+			'import type Types = require("./types");',
+			'export import Alias = Foo.Bar;',
+			'export import type Types = require("./types");',
+			'export = value;',
+			'export as namespace Library;',
+		])('keeps %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it('keeps import aliases and export assignments inside namespaces and modules', async () => {
+			await expectUnchanged(`namespace Outer {
+  export import Alias = Foo;
+  import fs = require("fs");
+}`);
+			await expectUnchanged(`declare module "library" {
+  const value: number;
+  export = value;
+}`);
+		});
+
+		it('keeps the import alias a module reads from', async () => {
+			const input = `namespace Foo { export const answer = 1; }
+import Alias = Foo;
+export const x = Alias.answer;`;
+			const expected = `namespace Foo {
+  export const answer = 1;
+}
+import Alias = Foo;
+export const x = Alias.answer;`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps comments inside import aliases', async () => {
+			await expectUnchanged('import /* a */ Alias /* b */ = /* c */ Foo /* d */;');
+			await expectUnchanged('import fs = require(/* why */ "fs");');
+		});
+
+		it('follows quote and semicolon options', async () => {
+			const result = await format(`import fs = require("fs");\nexport = fs;`, {
+				singleQuote: true,
+				semi: false,
+			});
+			expect(result).toBeWithNewline(`import fs = require('fs')\nexport = fs`);
+		});
+	});
+
 	// `export default (class Named {})` is an expression: `Named` is bound only
 	// inside the class body. `export default class Named {}` is a declaration:
 	// `Named` becomes a module-scoped binding. Dropping the parens swaps one for
