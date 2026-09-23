@@ -1003,11 +1003,11 @@ function relative_selector_might_apply_to_node(relative_selector, rule, element,
 						? whitelist_attribute_selector.get(element_name.name.toLowerCase())
 						: undefined;
 				if (
-					!whitelisted?.includes(selector.name.toLowerCase()) &&
+					!whitelisted?.includes(name.toLowerCase()) &&
 					!attribute_matches(
 						element,
-						selector.name,
-						selector.value && unquote(selector.value),
+						name,
+						selector.value && unescape_css(selector.value),
 						selector.matcher,
 						selector.flags?.includes('i') ?? false,
 					)
@@ -1080,20 +1080,6 @@ function relative_selector_might_apply_to_node(relative_selector, rule, element,
 
 	// possible match
 	return true;
-}
-
-/**
- * @param {string} str
- * @returns {string}
- */
-function unquote(str) {
-	if (
-		(str[0] === '"' && str[str.length - 1] === '"') ||
-		(str[0] === "'" && str[str.length - 1] === "'")
-	) {
-		return str.slice(1, -1);
-	}
-	return str;
 }
 
 /**

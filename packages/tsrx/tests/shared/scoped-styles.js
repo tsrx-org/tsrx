@@ -228,6 +228,29 @@ export function runSharedScopedStyleTests({
 			expect(class_of(code, '123')).toBe(`123 ${hash}`);
 		});
 
+		it('matches attribute selectors against decoded names and values', () => {
+			const { css, cssHash } = compile(
+				String.raw`export function App() @{
+					<>
+						<style>
+							[data-a=\31 23] { color: red; }
+							[data-b="\31 23"] { color: blue; }
+							[\64 ata-c=y] { color: green; }
+							[data-d=a\ ] { margin: 0; }
+							[title=" a "] { padding: 0; }
+							[lang="'x'"] { border: 0; }
+						</style>
+						<div data-a="123" data-b="123" data-c="y" data-d="a " title=" a " lang="'x'">{'a'}</div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(String.raw`[data-a=\31 23].${hash} {`);
+			expect(css).not.toContain('(unused)');
+		});
+
 		it('rfc1-nested-scope: a nested @{} gets its own hash and emits after its parent even when written first', () => {
 			const { code, css, cssHash } = compile(
 				`export function App() @{

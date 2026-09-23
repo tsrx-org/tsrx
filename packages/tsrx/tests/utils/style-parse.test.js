@@ -105,6 +105,23 @@ describe('parseStyle escapes', function () {
 		expect(selector.children[1].combinator).toMatchObject({ name: ' ' });
 	});
 
+	it('reads an unquoted attribute value through a hex escape', function () {
+		const selector = first_selector(String.raw`[data-x=\31 23 i] { color: red; }`);
+
+		expect(selector.children[0].selectors).toMatchObject([
+			{ type: 'AttributeSelector', name: 'data-x', value: String.raw`\31 23`, flags: 'i' },
+		]);
+	});
+
+	it.each([
+		[String.raw`[title=" a "]`, ' a '],
+		[String.raw`[title=a\ ]`, String.raw`a\ `],
+	])('keeps the edge whitespace of the attribute value in %j', function (css, value) {
+		const selector = first_selector(`${css} { color: red; }`);
+
+		expect(selector.children[0].selectors[0].value).toBe(value);
+	});
+
 	it.each([
 		[String.raw`foo\:bar`, 'foo:bar'],
 		[String.raw`\31 23`, '123'],
@@ -116,7 +133,9 @@ describe('parseStyle escapes', function () {
 		[String.raw`\0`, '\uFFFD'],
 		[String.raw`\D800`, '\uFFFD'],
 		[String.raw`\110000`, '\uFFFD'],
-	])('unescapes %j to %j', function (identifier, expected) {
-		expect(unescape_css(identifier)).toBe(expected);
+		['a\\\nb', 'ab'],
+		['a\\\r\nb', 'ab'],
+	])('unescapes %j to %j', function (value, expected) {
+		expect(unescape_css(value)).toBe(expected);
 	});
 });

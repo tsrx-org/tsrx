@@ -17,7 +17,8 @@ const REGEX_NTH_OF =
 // Up to six hex digits, then one optional whitespace that ends the escape
 // https://www.w3.org/TR/css-syntax-3/#consume-escaped-code-point
 const REGEX_HEX_ESCAPE = /^[0-9a-fA-F]{1,6}(\r\n|[ \t\n\r\f])?/;
-const REGEX_ESCAPE = /\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\n\r\f])?|(.))/g;
+// In a string, an escaped newline is a line continuation and decodes to nothing
+const REGEX_ESCAPE = /\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\n\r\f])?|(\r\n|[\n\r\f])|([\s\S]))/g;
 
 const regex_whitespace = /\s/;
 
@@ -739,22 +740,19 @@ function read_selector(parser, inside_pseudo_class = false) {
  */
 function read_attribute_value(parser) {
 	let value = '';
-	let escaped = false;
 	const quote_mark = parser.eat('"') ? '"' : parser.eat("'") ? "'" : null;
 
 	while (parser.index < parser.template.length) {
 		const char = parser.template[parser.index];
-		if (escaped) {
-			value += '\\' + char;
-			escaped = false;
-		} else if (char === '\\') {
-			escaped = true;
+		if (char === '\\') {
+			value += read_escape(parser);
+			continue;
 		} else if (quote_mark ? char === quote_mark : /[\s\]]/.test(char)) {
 			if (quote_mark) {
 				parser.eat(quote_mark, true);
 			}
 
-			return value.trim();
+			return value;
 		} else {
 			value += char;
 		}
@@ -820,13 +818,14 @@ function read_escape(parser) {
 }
 
 /**
- * Decode the escapes in a CSS identifier as written in source, e.g.
- * `foo\:bar` to `foo:bar` and `\31 23` to `123`.
- * @param {string} identifier
+ * Decode the escapes in a CSS identifier or string body as written in source,
+ * e.g. `foo\:bar` to `foo:bar` and `\31 23` to `123`.
+ * @param {string} value
  * @returns {string}
  */
-export function unescape_css(identifier) {
-	return identifier.replace(REGEX_ESCAPE, (_, hex, char) => {
+export function unescape_css(value) {
+	return value.replace(REGEX_ESCAPE, (_, hex, newline, char) => {
+		if (newline !== undefined) return '';
 		if (hex === undefined) return char;
 
 		const code = parseInt(hex, 16);
