@@ -14,6 +14,10 @@ const REGEX_LEADING_HYPHEN_OR_DIGIT = /-?\d/;
 const REGEX_WHITESPACE_OR_COLON = /[\s:]/;
 const REGEX_NTH_OF =
 	/^(even|odd|\+?(\d+|\d*n(\s*[+-]\s*\d+)?)|-\d*n(\s*\+\s*\d+))((?=\s*[,)])|\s+of\s+)/;
+// Up to six hex digits, then one optional whitespace that ends the escape
+// https://www.w3.org/TR/css-syntax-3/#consume-escaped-code-point
+const REGEX_HEX_ESCAPE = /^[0-9a-fA-F]{1,6}(\r\n|[ \t\n\r\f])?/;
+const REGEX_ESCAPE = /\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\n\r\f])?|(.))/g;
 
 const regex_whitespace = /\s/;
 
@@ -774,15 +778,11 @@ function read_identifier(parser) {
 		throw new Error('Unexpected CSS identifier');
 	}
 
-	let escaped = false;
-
 	while (parser.index < parser.template.length) {
 		const char = parser.template[parser.index];
-		if (escaped) {
-			identifier += '\\' + char;
-			escaped = false;
-		} else if (char === '\\') {
-			escaped = true;
+		if (char === '\\') {
+			identifier += read_escape(parser);
+			continue;
 		} else if (
 			/** @type {number} */ (char.codePointAt(0)) >= 160 ||
 			REGEX_VALID_IDENTIFIER_CHAR.test(char)
@@ -800,4 +800,39 @@ function read_identifier(parser) {
 	}
 
 	return identifier;
+}
+
+/**
+ * Read the escape at the parser's backslash and return its source text. A hex
+ * escape keeps the whitespace that ends it, so `\31 23` is the one identifier
+ * `123`, not `\31` followed by a descendant combinator.
+ * @param {Parser} parser
+ * @returns {string}
+ */
+function read_escape(parser) {
+	const start = parser.index++;
+
+	if (!parser.read(REGEX_HEX_ESCAPE) && parser.index < parser.template.length) {
+		parser.index++;
+	}
+
+	return parser.template.slice(start, parser.index);
+}
+
+/**
+ * Decode the escapes in a CSS identifier as written in source, e.g.
+ * `foo\:bar` to `foo:bar` and `\31 23` to `123`.
+ * @param {string} identifier
+ * @returns {string}
+ */
+export function unescape_css(identifier) {
+	return identifier.replace(REGEX_ESCAPE, (_, hex, char) => {
+		if (hex === undefined) return char;
+
+		const code = parseInt(hex, 16);
+		// NULL, surrogates, and values past the last code point decode to U+FFFD
+		return code === 0 || (code >= 0xd800 && code <= 0xdfff) || code > 0x10ffff
+			? '\uFFFD'
+			: String.fromCodePoint(code);
+	});
 }

@@ -10,8 +10,7 @@ import {
 	is_style_element,
 } from '../utils/ast.js';
 import { clone_ast_node, clone_identifier } from './jsx/ast-builders.js';
-
-const regex_backslash_and_following_character = /\\(.)/g;
+import { unescape_css } from '../parse/style.js';
 
 /**
  * @param {AST.Node} component the node whose metadata carries the scope's `topScopedClasses`
@@ -341,7 +340,7 @@ function collect_rule_class_map_entries(css, entries) {
 					// deduped first) so the render preparation of style expressions keeps
 					// exactly the selectors whose classes the map exposes.
 					enclosing_selector.metadata.class_map_selector = true;
-					const name = class_selector.name.replace(regex_backslash_and_following_character, '$1');
+					const name = unescape_css(class_selector.name);
 					if (!entries.has(name)) {
 						entries.set(name, {
 							start: class_selector.start,

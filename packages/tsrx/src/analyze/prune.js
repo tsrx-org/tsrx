@@ -4,8 +4,8 @@
 
 import { walk } from 'zimmerframe';
 import { node_children } from '../utils/ast.js';
+import { unescape_css } from '../parse/style.js';
 
-const regex_backslash_and_following_character = /\\(.)/g;
 /** @type {CssPruneDirection} */
 const FORWARD = 0;
 /** @type {CssPruneDirection} */
@@ -287,7 +287,7 @@ function apply_selector(relative_selectors, rule, element, direction) {
 				// Extract class selectors from the relative selector
 				for (const selector of relative_selector.selectors) {
 					if (selector.type === 'ClassSelector') {
-						const name = selector.name.replace(regex_backslash_and_following_character, '$1');
+						const name = unescape_css(selector.name);
 
 						if (!element.metadata.css) {
 							element.metadata.css = {
@@ -907,7 +907,7 @@ function relative_selector_might_apply_to_node(relative_selector, rule, element,
 	for (const selector of other_selectors) {
 		if (selector.type === 'Percentage' || selector.type === 'Nth') continue;
 
-		const name = selector.name.replace(regex_backslash_and_following_character, '$1');
+		const name = unescape_css(selector.name);
 
 		switch (selector.type) {
 			case 'PseudoClassSelector': {
@@ -1178,7 +1178,7 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
 					sole_selector.selectors[0].type === 'ClassSelector'
 				) {
 					const class_selector = sole_selector.selectors[0];
-					const name = class_selector.name.replace(regex_backslash_and_following_character, '$1');
+					const name = unescape_css(class_selector.name);
 					if (!top_scoped_classes.has(name)) {
 						top_scoped_classes.set(name, {
 							start: class_selector.start,
