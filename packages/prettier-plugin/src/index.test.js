@@ -7107,6 +7107,18 @@ function g() {
 }`);
 		});
 
+		it('keeps the definite-assignment assertion on class fields', async () => {
+			await expectUnchanged(`export class Model { value!: string; }`);
+			await expectUnchanged(`class Store extends Base {
+  #id!: number;
+  static instance!: Store;
+  private readonly items!: Item[];
+  [key]!: string;
+  override name!: string;
+  accessor state!: State;
+}`);
+		});
+
 		it('keeps override on class members', async () => {
 			await expectUnchanged(`class Derived extends Base {
   override toString(): string {

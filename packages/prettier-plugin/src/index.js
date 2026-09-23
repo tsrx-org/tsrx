@@ -4685,6 +4685,12 @@ function printPropertyDefinition(node, path, options, print) {
 		parts.push('?');
 	}
 
+	// Definite-assignment assertion (`value!: T`) — dropping it makes TS
+	// report the field as unassigned under strictPropertyInitialization
+	if (node.definite) {
+		parts.push('!');
+	}
+
 	// Type annotation
 	if (node.typeAnnotation) {
 		parts.push(': ');
