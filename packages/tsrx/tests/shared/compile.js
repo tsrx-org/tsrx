@@ -95,6 +95,18 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			expect(virtual_parse_diagnostics(result.code)).toEqual([]);
 			expect(virtual_semantic_diagnostics(result.code)).toEqual([]);
 		});
+
+		it('keeps var bindings hoisted from an inactive branch', () => {
+			const result = compile_to_volar_mappings(
+				`if (import.meta.env.platform.web) { var value = 'web'; }
+				export { value };`,
+				'App.tsrx',
+				{ platform: 'ios' },
+			);
+
+			expect(result.errors).toEqual([]);
+			expect(virtual_semantic_diagnostics(result.code)).toEqual([]);
+		});
 	});
 
 	describe(`[${name}] type-only style stand-ins`, () => {
@@ -4037,6 +4049,42 @@ function runSharedPlatformTests({ compile, name }) {
 			expect(code).toContain('const inner = outer');
 			expect(code).toMatch(/\{[\s\S]*const outer[\s\S]*\{[\s\S]*const inner/);
 			expect(code).not.toContain('not_ios');
+		});
+
+		it('keeps var bindings hoisted from an inactive branch', () => {
+			const { code } = compile(
+				`if (import.meta.env.platform.web) { var value = 'web_value'; }
+				export { value };
+				export function read() {
+					if (import.meta.env.platform.web) { var local = 'web_local'; }
+					return local;
+				}`,
+				'App.tsrx',
+				{ platform: 'ios' },
+			);
+
+			expect(code).toMatch(/var value;[\s\S]*export \{ value \}/);
+			expect(code).toMatch(/function read\(\) \{\s*var local;\s*return local;/);
+			expect(code).not.toContain('web_value');
+			expect(code).not.toContain('web_local');
+		});
+
+		it('declares only discarded var bindings the selected branch lacks', () => {
+			const { code } = compile(
+				`if (import.meta.env.platform.web) {
+					var shared = 'web_shared';
+					var web_only = 'web_only';
+				} else {
+					var shared = 'native_shared';
+				}
+				export { shared, web_only };`,
+				'App.tsrx',
+				{ platform: 'android' },
+			);
+
+			expect(code).toMatch(/var web_only;[\s\S]*var shared = 'native_shared'/);
+			expect(code).not.toContain('var shared;');
+			expect(code).not.toContain('web_shared');
 		});
 
 		it('drops inactive imports and scoped CSS before dependency/style analysis', () => {

@@ -28,6 +28,64 @@ describe('platform specialization', () => {
 		expect(ast.body[0].type).toBe('IfStatement');
 	});
 
+	it('declares every var an inactive branch hoists, without locations', () => {
+		const ast = parseModule(
+			`function read(o, xs) {
+				if (import.meta.env.platform.web) {
+					for (var i = 0; i < 1; i++) { var in_for; }
+					for (var key in o) {}
+					for (var { x, y: [z = 1, ...rest] } of xs) {}
+					while (o) { var in_while; }
+					do { var in_do; } while (o);
+					label: { var in_label; }
+					try { var in_try; } catch (e) { var in_catch; } finally { var in_finally; }
+					switch (o) { case 1: var in_case; default: { var in_default; } }
+					if (o) var in_if; else var in_else;
+					let not_let;
+					const not_const = 1;
+					function not_function() { var in_function; }
+					class NotClass { static { var in_static; } method() { var in_method; } }
+					const not_arrow = () => { var in_arrow; };
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		const specialized = specializePlatform(ast, 'ios', 'App.tsrx');
+		const read = specialized.body[0];
+		if (read.type !== 'FunctionDeclaration') throw new Error('expected FunctionDeclaration');
+		const [declaration] = read.body.body;
+		if (declaration.type !== 'VariableDeclaration') throw new Error('expected VariableDeclaration');
+
+		expect(read.body.body).toHaveLength(1);
+		expect(declaration.kind).toBe('var');
+		expect(declaration.loc).toBeUndefined();
+		expect(
+			declaration.declarations.map((declarator) => {
+				expect(declarator.init).toBeUndefined();
+				expect(declarator.id.loc).toBeUndefined();
+				return declarator.id.type === 'Identifier' ? declarator.id.name : null;
+			}),
+		).toEqual([
+			'i',
+			'in_for',
+			'key',
+			'x',
+			'z',
+			'rest',
+			'in_while',
+			'in_do',
+			'in_label',
+			'in_try',
+			'in_catch',
+			'in_finally',
+			'in_case',
+			'in_default',
+			'in_if',
+			'in_else',
+		]);
+	});
+
 	it('returns an unguarded program unchanged', () => {
 		const ast = parseModule('if (ready) consume();', 'App.tsrx');
 		expect(specializePlatform(ast, 'web', 'App.tsrx')).toBe(ast);

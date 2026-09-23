@@ -6,7 +6,8 @@ import { decode, encode } from '@jridgewell/sourcemap-codec';
 import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 import { error } from '../errors.js';
 import { parse_module } from '../parse/parse-module.js';
-import { child_nodes, is_ast_node } from '../utils/ast.js';
+import { child_nodes, extract_identifiers, is_ast_node } from '../utils/ast.js';
+import * as b from '../utils/builders.js';
 
 export const PLATFORMS = /** @type {const} */ (['web', 'ios', 'android']);
 
@@ -150,10 +151,87 @@ function empty_statement() {
 }
 
 /**
+ * Collect the names a statement declares with `var`. Those bindings hoist out
+ * of blocks, loops, labels, `try`, and `switch` to the enclosing function or
+ * module, but not out of nested functions or classes, which only appear in
+ * expression position and are therefore never visited.
+ *
+ * @param {AST.Node | null | undefined} node
+ * @param {Set<string>} [names]
+ * @returns {Set<string>}
+ */
+function collect_var_names(node, names = new Set()) {
+	switch (node?.type) {
+		case 'VariableDeclaration':
+			if (node.kind === 'var') {
+				for (const declarator of node.declarations) {
+					for (const id of extract_identifiers(declarator.id)) names.add(id.name);
+				}
+			}
+			break;
+		case 'BlockStatement':
+			for (const statement of node.body) collect_var_names(statement, names);
+			break;
+		case 'IfStatement':
+			collect_var_names(node.consequent, names);
+			collect_var_names(node.alternate, names);
+			break;
+		case 'ForStatement':
+			collect_var_names(node.init, names);
+			collect_var_names(node.body, names);
+			break;
+		case 'ForInStatement':
+		case 'ForOfStatement':
+			collect_var_names(node.left, names);
+			collect_var_names(node.body, names);
+			break;
+		case 'WhileStatement':
+		case 'DoWhileStatement':
+		case 'LabeledStatement':
+			collect_var_names(node.body, names);
+			break;
+		case 'TryStatement':
+			collect_var_names(node.block, names);
+			collect_var_names(node.handler?.body, names);
+			collect_var_names(node.finalizer, names);
+			break;
+		case 'SwitchStatement':
+			for (const switch_case of node.cases) {
+				for (const statement of switch_case.consequent) collect_var_names(statement, names);
+			}
+			break;
+	}
+
+	return names;
+}
+
+/**
+ * An inactive branch contributes no code, but its `var` bindings still exist
+ * in the enclosing function or module, exactly as they would if the flag were
+ * replaced with `false`. Declare them without initializers or locations,
+ * skipping names the selected branch already declares.
+ *
+ * @param {AST.Statement | null | undefined} discarded
+ * @param {AST.Statement | null | undefined} selected
+ * @returns {AST.VariableDeclaration | null}
+ */
+function hoisted_var_declaration(discarded, selected) {
+	const names = collect_var_names(discarded);
+	for (const name of collect_var_names(selected)) names.delete(name);
+	if (names.size === 0) return null;
+
+	return b.declaration(
+		'var',
+		Array.from(names, (name) => b.declarator(name)),
+	);
+}
+
+/**
  * Copy-on-write specialization of arbitrary AST properties. An exact ordinary
  * `if (import.meta.env.platform.<name>)` is replaced by its selected original
  * statement. A selected block therefore retains both its lexical scope and its
- * authored source locations.
+ * authored source locations. When the discarded branch hoists `var` bindings,
+ * their declaration precedes the selected statement in a synthesized block.
  *
  * @param {AST.Node} node
  * @param {Platform} platform
@@ -163,8 +241,16 @@ function specialize_node(node, platform) {
 	if (node.type === 'IfStatement') {
 		const flag = get_platform_flag(node.test);
 		if (flag !== null) {
-			const selected = flag === platform ? node.consequent : node.alternate;
-			return selected ? specialize_node(selected, platform) : empty_statement();
+			const active = flag === platform;
+			const selected = active ? node.consequent : node.alternate;
+			const discarded = active ? node.alternate : node.consequent;
+			const hoisted = hoisted_var_declaration(discarded, selected);
+			const specialized = selected
+				? /** @type {AST.Statement} */ (specialize_node(selected, platform))
+				: null;
+
+			if (hoisted && specialized) return b.block([hoisted, specialized]);
+			return hoisted ?? specialized ?? empty_statement();
 		}
 	}
 
