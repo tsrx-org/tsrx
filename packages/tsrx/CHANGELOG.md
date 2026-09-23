@@ -1,5 +1,19 @@
 # @tsrx/core
 
+## 0.3.1
+
+### Patch Changes
+
+- [#213](https://github.com/tsrx-org/tsrx/pull/213)
+  [`b12105e`](https://github.com/tsrx-org/tsrx/commit/b12105e60a077559e55f59940cb25c0dd73eda8a)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Classes, methods, and
+  properties now always carry a `decorators` array, empty when undecorated, as
+  ESTree's decorators extension requires. The parser set it only when a decorator
+  was present, and the types declared it optional, so another declaration of the
+  extension on the shared `estree` interfaces failed to merge with core's in the
+  same program (TS2687, TS2717, TS2430). The types now declare
+  `decorators: Decorator[]` on methods, properties, and classes.
+
 ## 0.3.0
 
 ### Minor Changes
