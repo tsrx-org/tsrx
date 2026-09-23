@@ -7187,6 +7187,56 @@ declare enum Level {
 		});
 	});
 
+	// Type arguments, `this` types, and heritage clauses decide what a
+	// declaration means. Dropping one either breaks the file or quietly
+	// widens a type, so each must come back exactly as written.
+	describe('TypeScript types survive formatting', () => {
+		/**
+		 * Assert the input is already formatted and comes back byte-identical.
+		 * @param {string} source
+		 */
+		const expectUnchanged = async (source) => {
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		};
+
+		it.each([
+			'const upper: typeof identity<string> = (value) => value.toUpperCase();',
+			'type Pair = typeof ns.pair<number, string>;',
+			'type Loaded = typeof import("./module").load<string>;',
+		])('keeps type arguments on typeof type queries: %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it('keeps type arguments on import types', async () => {
+			await expectUnchanged('type Entry = import("./module").Entry<string>;');
+		});
+
+		it('keeps polymorphic this types', async () => {
+			await expectUnchanged(`interface Builder {
+  self: this;
+  next(): this;
+  all: this[];
+}`);
+			await expectUnchanged(`class Chain {
+  clone(): this {
+    return this;
+  }
+}`);
+		});
+
+		it.each([
+			'class Derived extends Base<string> implements Contract<string> {}',
+			'class Derived extends ns.Base<Map<string, number>> {}',
+			'class Derived implements Contract<string>, ns.Other {}',
+			'const Derived = class extends Base<number> implements Contract<number> {};',
+			'abstract class Derived<T> extends Base<T> implements Contract<T> {}',
+			'export default class Derived extends Base<string> implements Contract<string> {}',
+		])('keeps superclass type arguments and implements clauses: %s', async (source) => {
+			await expectUnchanged(source);
+		});
+	});
+
 	// `export default (class Named {})` is an expression: `Named` is bound only
 	// inside the class body. `export default class Named {}` is a declaration:
 	// `Named` becomes a module-scoped binding. Dropping the parens swaps one for

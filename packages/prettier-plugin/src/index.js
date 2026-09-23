@@ -2043,6 +2043,10 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = 'string';
 			break;
 
+		case 'TSThisType':
+			nodeContent = 'this';
+			break;
+
 		case 'EmptyStatement':
 			nodeContent = '';
 			break;
@@ -2637,7 +2641,11 @@ function printTsrxNode(node, path, options, print, args) {
 
 		case 'TSTypeQuery': {
 			const expr = path.call(print, 'exprName');
-			nodeContent = ['typeof ', expr];
+			// `typeof fn<string>` is an instantiation expression: dropping the
+			// arguments turns a specialized type back into the generic one.
+			nodeContent = node.typeArguments
+				? ['typeof ', expr, path.call(print, 'typeArguments')]
+				: ['typeof ', expr];
 			break;
 		}
 
@@ -4420,6 +4428,16 @@ function printClassDeclaration(node, path, options, print) {
 	if (node.superClass) {
 		parts.push(' extends ');
 		parts.push(path.call(print, 'superClass'));
+		if (node.superTypeParameters) {
+			parts.push(path.call(print, 'superTypeParameters'));
+		}
+	}
+
+	// Heritage type arguments and implements clauses are what TypeScript
+	// checks the class against, so dropping them silently loses those checks
+	if (node.implements && node.implements.length > 0) {
+		parts.push(' implements ');
+		parts.push(join(', ', path.map(print, 'implements')));
 	}
 
 	parts.push(' ');
@@ -6407,7 +6425,10 @@ function printTSImportType(node, path, options, print) {
 		parts.push('.', path.call(print, 'qualifier'));
 	}
 
-	if (node.typeParameters) {
+	// acorn-typescript stores import type arguments on typeArguments
+	if (node.typeArguments) {
+		parts.push(path.call(print, 'typeArguments'));
+	} else if (node.typeParameters) {
 		parts.push(path.call(print, 'typeParameters'));
 	}
 
