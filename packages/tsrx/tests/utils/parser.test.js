@@ -5660,6 +5660,28 @@ describe('`<` operators beside type-argument lookahead', () => {
 		expect(binaryOperators(source)).toEqual(['<']);
 		expect(findNode(source, 'ArrowFunctionExpression').typeParameters?.params).toHaveLength(1);
 	});
+
+	it('keeps a tag with an arrow attribute and arrow-shaped text as JSX', () => {
+		for (const source of [
+			'const a = <div onClick={() => a}>(b) => c</div>;',
+			'function App() @{ <Foo cb={(x) => x}>(b) => c</Foo> }',
+		]) {
+			expect(findNode(source, 'JSXElement').openingElement.attributes, source).toHaveLength(1);
+		}
+	});
+
+	it('reads type parameters inside types instead of a JSX tag', () => {
+		expect(
+			findNode('type C = { new <T>(x: T): T };', 'TSConstructSignatureDeclaration').typeParameters
+				?.params,
+		).toHaveLength(1);
+		expect(
+			findNode('interface A { f?<T>(x: T): T; }', 'TSMethodSignature').typeParameters?.params,
+		).toHaveLength(1);
+		expect(
+			findNode('type F = new <T>(x: T) => T;', 'TSConstructorType').typeParameters?.params,
+		).toHaveLength(1);
+	});
 });
 
 describe('lazy destructuring is not supported', () => {

@@ -258,19 +258,13 @@ function looks_like_generic_arrow(input, pos) {
 	const next = input.charCodeAt(pos + 1);
 	if (next === CharCode.equals || next === CharCode.lessThan) return false;
 
-	// Match the angle brackets, skipping over string literals and `=>`: the
-	// `>` of an arrow (`<T extends () => void>`, or a later arrow when this
-	// `<` is an operator) never closes the list.
+	// Match the angle brackets, skipping over string literals.
 	let i = pos + 1;
 	let depth = 1;
 	while (i < input.length) {
 		const ch = input.charCodeAt(i);
 		if (ch === CharCode.doubleQuote || ch === CharCode.singleQuote || ch === CharCode.backtick) {
 			i = skip_string_from(input, i, ch);
-			continue;
-		}
-		if (ch === CharCode.equals && input.charCodeAt(i + 1) === CharCode.greaterThan) {
-			i += 2;
 			continue;
 		}
 		if (ch === CharCode.lessThan) depth++;
@@ -3084,7 +3078,7 @@ export function TSRXPlugin(config) {
 				if (context === tstc.tc_expr || context === tstc.tc_oTag || context === tstc.tc_cTag) {
 					return super.readToken(code);
 				}
-				if (code === CharCode.lessThan) {
+				if (code === CharCode.lessThan && !this.inType) {
 					if (this.exprAllowed && can_start_tag_after_lt(this.input, this.pos)) {
 						++this.pos;
 						return this.finishToken(tstt.jsxTagStart);
@@ -3163,7 +3157,10 @@ export function TSRXPlugin(config) {
 					return this.finishToken(tt.name, this.input.slice(this.start, this.pos));
 				}
 
-				if (code === CharCode.lessThan) {
+				// Inside a type (`new <T>()`, `f?<T>()`, the re-scanned `<<` of
+				// `f<<T>() => T>()`) a `<` is never a JSX tag; acorn-typescript reads it
+				// as a lone `<` there, so the JSX heuristics below only run outside types.
+				if (code === CharCode.lessThan && !this.inType) {
 					// < character
 					const parent = this.#path.at(-1);
 					const inNativeTemplate =
