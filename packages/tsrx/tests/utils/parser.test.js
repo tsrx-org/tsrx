@@ -5553,8 +5553,6 @@ describe('`<` operators beside type-argument lookahead', () => {
 			['>>', 'BinaryExpression'],
 			['>>>', 'BinaryExpression'],
 		]) {
-			// A name operand gives the `<<` lookahead something that looks like a
-			// type parameter, so the later arrow's `>` is its only way to close.
 			for (const operand of ['0', 'n']) {
 				for (const expression of [
 					`value ${operator} ${operand}`,
