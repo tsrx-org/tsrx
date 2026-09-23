@@ -2092,9 +2092,13 @@ export function TSRXPlugin(config) {
 							this.#readingJSXControlFlowHeader = previous_reading_header;
 						}
 						this.expect(tt.braceL);
+						// Each arm's braces are its own template block, so setup locals
+						// in separate arms may share names, like `@if`/`@else` branches.
+						this.enterScope(0);
 						while (this.type !== tt.braceR) {
 							this.#parseJSXSwitchCaseConsequent(current.consequent);
 						}
+						this.exitScope();
 						this.expect(tt.braceR);
 						node.cases.push(this.finishNode(current, 'SwitchCase'));
 						continue;

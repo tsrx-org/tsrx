@@ -179,6 +179,15 @@ export function create_scopes(ast, root, parent, error_options) {
 		SwitchStatement: create_block_scope,
 		JSXForExpression: create_block_scope,
 		JSXSwitchExpression: create_block_scope,
+		// A `@switch` arm is its own template block, unlike the cases of a JS
+		// `switch`, which share the switch body's scope.
+		SwitchCase(node, context) {
+			if (context.path.at(-1)?.type === 'JSXSwitchExpression') {
+				create_block_scope(node, context);
+			} else {
+				context.next();
+			}
+		},
 		// Each `@{ … }` code block is its own lexical scope, whether it is a
 		// function body or a template child — its bindings never leak out.
 		JSXCodeBlock(node, context) {

@@ -5766,7 +5766,12 @@ function build_switch_with_lift(switch_node, transform_context) {
 			}
 		}
 
-		return set_loc(b.switch_case(original_case.test, case_body), original_case);
+		// Each arm is its own template block, but the cases of a JS `switch` share
+		// one lexical scope, so an arm's setup locals get a block of their own.
+		return set_loc(
+			b.switch_case(original_case.test, case_body.length > 1 ? [b.block(case_body)] : case_body),
+			original_case,
+		);
 	});
 
 	return {

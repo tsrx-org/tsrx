@@ -305,6 +305,26 @@ describe('scoped style analysis', () => {
 
 			expect(style_errors(result)).toEqual([]);
 		});
+
+		it('resolves a name reused across @switch cases to its own case', () => {
+			const result = analyze(`function App({ kind }) @{
+	@switch (kind) {
+		@case 'a': {
+			const t = <style>.a { color: red; }</style>;
+			<><style apply={t} /><div /></>
+		}
+		@case 'b': {
+			const t = <style>.b { color: blue; }</style>;
+			<><style apply={t} /><div /></>
+		}
+	}
+}`);
+
+			expect(style_errors(result)).toEqual([]);
+			const [a, b] = result.styles.standalone;
+			expect(a.metadata.styleApplies?.[0].target).toBe(result.styles.assigned[0]);
+			expect(b.metadata.styleApplies?.[0].target).toBe(result.styles.assigned[1]);
+		});
 	});
 
 	describe('duplicate apply', () => {

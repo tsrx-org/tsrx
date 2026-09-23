@@ -2396,6 +2396,45 @@ foo();`;
 		).toThrow('`return` is invalid inside `@switch` cases.');
 	});
 
+	it('scopes switch case setup locals to their own case block', () => {
+		expect(() =>
+			parseModule(
+				`function App({ tag }) @{
+					const label = 'outer';
+					@switch (tag) {
+						@case 'a': {
+							const label = 'A';
+							<p>{label}</p>
+						}
+						@case 'b': {
+							const label = 'B';
+							<p>{label}</p>
+						}
+						@default: {
+							const label = 'Other';
+							<p>{label}</p>
+						}
+					}
+				}`,
+				'App.tsrx',
+			),
+		).not.toThrow();
+		expect(() =>
+			parseModule(
+				`function App({ tag }) @{
+					@switch (tag) {
+						@case 'a': {
+							const label = 'A';
+							const label = 'B';
+							<p>{label}</p>
+						}
+					}
+				}`,
+				'App.tsrx',
+			),
+		).toThrow("Identifier 'label' has already been declared");
+	});
+
 	it('requires switch case and default bodies to be blocks', () => {
 		expect(() =>
 			parseModule(

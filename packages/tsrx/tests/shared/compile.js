@@ -1014,6 +1014,34 @@ export function runSharedSwitchFallthroughTests({ compile, name }) {
 			}
 		});
 
+		it('keeps setup locals with the same name in separate case blocks', () => {
+			const { code } = compile(
+				`export function App({ kind }: { kind: string }) @{
+					@switch (kind) {
+						@case "a": {
+							const label = 'A';
+							<span>{label}</span>
+						}
+						@case "b": {
+							const label = 'B';
+							<span>{label}</span>
+						}
+						@default: {
+							const label = 'Other';
+							<span>{label}</span>
+						}
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(count_substring(code, 'const label')).toBe(3);
+			const redeclarations = virtual_semantic_diagnostics(code)
+				.filter((diagnostic) => diagnostic.code === 2451)
+				.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+			expect(redeclarations).toEqual([]);
+		});
+
 		it.runIf(['react', 'preact', 'vue'].includes(name))(
 			'treats stacked case labels as separate isolated cases',
 			() => {
