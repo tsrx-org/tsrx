@@ -962,12 +962,11 @@ export function get_comment_handlers(source, comments, index = 0) {
 								// `next_index` is 0 for a callee or a function's name, which aren't
 								// in the list
 								if (isCommaList && next_index > 0 && !is_last_in_array && nextSibling) {
-									const comma = findOutsideComments(
-										',',
-										end_node.end,
-										/** @type {AST.NodeWithLocation} */ (nextSibling).start,
-									);
-									if (comments[0].start < comma) {
+									const nextStart = /** @type {AST.NodeWithLocation} */ (nextSibling).start;
+									const comma = findOutsideComments(',', end_node.end, nextStart);
+									// Without a comma there's nothing to measure against, so the
+									// usual rules decide
+									if (comma < nextStart && comments[0].start < comma) {
 										while (comments[0] && comments[0].start < comma) {
 											(node.trailingComments ||= []).push(
 												/** @type {AST.CommentWithLocation} */ (comments.shift()),
