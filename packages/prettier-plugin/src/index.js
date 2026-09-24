@@ -3385,31 +3385,90 @@ function printModuleSource(path, options, print) {
 		path.call(print, 'source'),
 	];
 
-	const attributeNodes = /** @type {AST.Node[] | undefined} */ (
-		/** @type {any} */ (node).attributes ?? /** @type {any} */ (node).assertions
-	);
-	if (attributeNodes && attributeNodes.length > 0) {
-		const attributes = path.map(
-			print,
-			/** @type {any} */ (/** @type {any} */ (node).attributes ? 'attributes' : 'assertions'),
-		);
-		// Like a commented specifier, a commented attribute lets the braces break,
-		// so a line comment doesn't end up in front of the next attribute
-		parts.push(
-			' with ',
-			attributeNodes.some((attribute) => hasComment(attribute))
-				? group([
-						'{',
-						indent([line, join([',', line], attributes)]),
-						ifBreak(shouldPrintComma(options) ? ',' : ''),
-						line,
-						'}',
-					])
-				: ['{ ', join(', ', attributes), ' }'],
-		);
-	}
+	parts.push(printImportAttributes(path, options, print));
 
 	return parts;
+}
+
+/**
+ * @typedef {{ keyword: 'with' | 'assert', braceIndex: number }} ImportAttributesClause
+ * @typedef {AST.TSRXImportDeclaration | AST.ExportNamedDeclaration | AST.ExportAllDeclaration} ModuleDeclarationWithSource
+ */
+
+/**
+ * Find the attributes clause after an import or re-export's source, like
+ * Prettier's `getImportAttributesKeyword`: the parser gives `with { … }` and
+ * the older `assert { … }` the same node, so the keyword comes from the source
+ * text. Returns null when the source has no clause.
+ * @param {ModuleDeclarationWithSource} node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {ImportAttributesClause | null}
+ */
+function getImportAttributesClause(node, options) {
+	const text = /** @type {string} */ (options.originalText);
+	const source = /** @type {AST.NodeWithLocation} */ (/** @type {unknown} */ (node.source));
+	const keywordIndex = skipWhitespaceAndComments(text, options.locEnd(source));
+	const keyword = text.startsWith('assert', keywordIndex)
+		? 'assert'
+		: text.startsWith('with', keywordIndex)
+			? 'with'
+			: null;
+	if (!keyword) {
+		return null;
+	}
+	const braceIndex = skipWhitespaceAndComments(text, keywordIndex + keyword.length);
+	return text.charAt(braceIndex) === '{' ? { keyword, braceIndex } : null;
+}
+
+/**
+ * Whether the attributes are a lone `type: "…"` with no comments, which
+ * Prettier never breaks
+ * @param {AST.ImportAttribute[]} attributes
+ * @returns {boolean}
+ */
+function isSingleTypeImportAttributes(attributes) {
+	if (attributes.length !== 1) {
+		return false;
+	}
+	const [attribute] = attributes;
+	const { key, value } = attribute;
+	return (
+		((key.type === 'Identifier' && key.name === 'type') ||
+			(key.type === 'Literal' && key.value === 'type')) &&
+		value.type === 'Literal' &&
+		typeof value.value === 'string' &&
+		!hasComment(
+			/** @type {AST.Node & AST.NodeWithMaybeComments} */ (/** @type {unknown} */ (attribute)),
+		) &&
+		!hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (key)) &&
+		!hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (value))
+	);
+}
+
+/**
+ * Print the attributes clause of an import or re-export, like Prettier's
+ * `printImportAttributes`: the keyword from the source, then the attributes
+ * as an object literal, so `bracketSpacing`, `objectWrap`, and breaking
+ * apply. A lone `type` attribute never breaks.
+ * @param {AstPath<ModuleDeclarationWithSource>} path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printImportAttributes(path, options, print) {
+	const { node } = path;
+	const clause = node.source ? getImportAttributesClause(node, options) : null;
+	if (!clause) {
+		return '';
+	}
+
+	/** @type {Doc} */
+	let attributesDoc = printObject(node, path, options, print);
+	if (isSingleTypeImportAttributes(node.attributes ?? [])) {
+		attributesDoc = removeLines(attributesDoc);
+	}
+
+	return [' ', clause.keyword, ' ', attributesDoc];
 }
 
 /**
@@ -5672,22 +5731,29 @@ function hasNewLineAfterOpeningBrace(openingBraceIndex, firstMember, options) {
 }
 
 /**
- * Print an object literal or object pattern like Prettier's `printObject`.
- * Under `objectWrap: "preserve"` (the default) an object literal stays
- * expanded when the source has a line break between `{` and its first
- * property; otherwise it breaks only when it doesn't fit. A pattern breaks
- * when it destructures a nested pattern, except in a parameter list. A blank
- * line after a property is kept.
- * @param {AST.ObjectExpression | AST.ObjectPattern} node - The object node
- * @param {AstPath<AST.ObjectExpression | AST.ObjectPattern>} path - The AST path
+ * Print an object literal, an object pattern, or the attributes of an import
+ * or re-export like Prettier's `printObject`. Under `objectWrap: "preserve"`
+ * (the default) an object literal stays expanded when the source has a line
+ * break between `{` and its first property; otherwise it breaks only when it
+ * doesn't fit. A pattern breaks when it destructures a nested pattern, except
+ * in a parameter list. A blank line after a property is kept.
+ * @param {AST.ObjectExpression | AST.ObjectPattern | ModuleDeclarationWithSource} node - The object node, or the declaration whose attributes to print
+ * @param {AstPath<AST.ObjectExpression | AST.ObjectPattern | ModuleDeclarationWithSource>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @returns {Doc}
  */
 function printObject(node, path, options, print) {
 	const parent = /** @type {AST.Node} */ (path.parent);
+	const isImportAttributes = node.type !== 'ObjectExpression' && node.type !== 'ObjectPattern';
+	const property = isImportAttributes ? 'attributes' : 'properties';
 	/** @type {AST.Node[]} */
-	const children = node.properties;
+	const children = /** @type {Record<string, AST.Node[]>} */ (/** @type {unknown} */ (node))[
+		property
+	];
+	const openingBraceIndex = isImportAttributes
+		? /** @type {ImportAttributesClause} */ (getImportAttributesClause(node, options)).braceIndex
+		: options.locStart(/** @type {AST.NodeWithLocation} */ (node));
 
 	const shouldBreak =
 		(node.type === 'ObjectPattern' &&
@@ -5704,23 +5770,19 @@ function printObject(node, path, options, print) {
 		(node.type !== 'ObjectPattern' &&
 			options.objectWrap === 'preserve' &&
 			children.length > 0 &&
-			hasNewLineAfterOpeningBrace(
-				options.locStart(/** @type {AST.NodeWithLocation} */ (node)),
-				children[0],
-				options,
-			));
+			hasNewLineAfterOpeningBrace(openingBraceIndex, children[0], options));
 
 	/** @type {Doc[]} */
 	let separatorParts = [];
 	/** @type {Doc[]} */
-	const parts = path.map((childPath) => {
+	const parts = /** @type {AstPath} */ (path).map((childPath) => {
 		const result = [...separatorParts, print(childPath)];
 		separatorParts = [',', line];
-		if (isNextLineEmpty(childPath.node, options)) {
+		if (isNextLineEmpty(/** @type {AST.Node} */ (childPath.node), options)) {
 			separatorParts.push(hardline);
 		}
 		return result;
-	}, 'properties');
+	}, property);
 
 	const canHaveTrailingSeparator = children[children.length - 1]?.type !== 'RestElement';
 

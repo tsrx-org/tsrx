@@ -11048,6 +11048,48 @@ export ${list};`);
 			});
 		});
 
+		it('follows bracketSpacing in import attributes', async () => {
+			const input = `export * from './b.json' with { type: 'json' };
+export { x } from './x.json' with { type: 'json', other: 'x' };
+import a from './a.json' with { type: 'json' };`;
+			const expected = `export * from "./b.json" with {type: "json"};
+export {x} from "./x.json" with {type: "json", other: "x"};
+import a from "./a.json" with {type: "json"};`;
+			expect(await format(input, { bracketSpacing: false })).toBeWithNewline(expected);
+		});
+
+		it('breaks long import attributes like an object, but never a lone type attribute', async () => {
+			const input = `import data from './data.json' with { type: 'json', integrity: 'sha384-0123456789abcdef' };
+import e from './eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.json' with { type: 'json' };
+import c from './c' with {
+  type: 'json' };`;
+			const expected = `import data from "./data.json" with {
+  type: "json",
+  integrity: "sha384-0123456789abcdef",
+};
+import e from "./eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.json" with { type: "json" };
+import c from "./c" with { type: "json" };`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps import attributes expanded when a line break follows their {', async () => {
+			const input = `import d from './d' with {
+  type: 'json', other: 'x' };`;
+			expect(await format(input)).toBeWithNewline(`import d from "./d" with {
+  type: "json",
+  other: "x",
+};`);
+			expect(await format(input, { objectWrap: 'collapse' })).toBeWithNewline(
+				`import d from "./d" with { type: "json", other: "x" };`,
+			);
+		});
+
+		it('keeps the assert keyword and an empty attribute list', async () => {
+			await expectUnchanged(`import a from "./a.json" assert { type: "json" };
+import b from "./b" with {};
+import f from "./f" /* c */ with { type: "json" };`);
+		});
+
 		it('keeps an alias that repeats the name', async () => {
 			await expectUnchanged('import { a as a } from "mod";');
 			await expectUnchanged('const b = 1;\nexport { b as b };');
