@@ -5319,13 +5319,10 @@ function shouldInlineCondition(node) {
 		return false;
 	}
 	let argument = node.argument;
-	if (argument.type === 'UnaryExpression' && argument.operator === '!' && !hasComment(argument)) {
+	if (argument.type === 'UnaryExpression' && argument.operator === '!') {
 		argument = argument.argument;
 	}
-	// Prettier attaches a comment at the end of the operand to the operand's
-	// last token, where the parser attaches it to the operand, and one printed
-	// after the parentheses moves to the condition on the next pass
-	return argument.type === 'LogicalExpression' && !hasComment(argument);
+	return argument.type === 'LogicalExpression';
 }
 
 /**
