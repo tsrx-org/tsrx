@@ -2023,10 +2023,15 @@ function printTsrxNode(node, path, options, print, args) {
 			// Add it unless the code is completely empty
 			if (statements.length > 0) {
 				nodeContent = [...statements, hardline];
-			} else if (node.innerComments?.length) {
-				// The parser keeps a comment-only file's comments on the program. Each
-				// comment's docs start with a line break, which the first one drops.
+			} else if (node.body.length === 0 && node.innerComments?.length) {
+				// The parser keeps a comment-only file's comments on the program. Like
+				// Prettier, they keep their blank lines. Each comment's docs start with
+				// a line break, which the first one drops.
 				nodeContent = [...printElementBodyComments(node.innerComments).slice(1), hardline];
+			} else if (innerCommentParts.length > 0) {
+				// With only empty statements, they print on consecutive lines like
+				// the comments of an empty block
+				nodeContent = [join(hardline, innerCommentParts), hardline];
 			} else {
 				nodeContent = statements;
 			}
@@ -2569,91 +2574,19 @@ function printTsrxNode(node, path, options, print, args) {
 			const open = node.type === 'StaticBlock' ? 'static {' : '{';
 			const printedIndexes = getPrintedStatementIndexes(node.body ?? []);
 			if (printedIndexes.length === 0) {
-				// Handle innerComments for empty blocks
 				if (innerCommentParts.length > 0) {
-					const blockNode = /** @type {AST.BlockStatement} */ (node);
-					// Check if we need to preserve blank lines between comments
-					if (blockNode.innerComments && blockNode.innerComments.length > 0) {
-						const commentDocs = [];
-						const comments = blockNode.innerComments;
-
-						for (let i = 0; i < comments.length; i++) {
-							const comment = comments[i];
-							const prevComment = i > 0 ? comments[i - 1] : null;
-
-							// Check if there's a blank line before this comment
-							const hasBlankLineBefore =
-								prevComment && getBlankLinesBetweenNodes(prevComment, comment) > 0;
-
-							/** @type {Doc | undefined} */
-							let commentDoc;
-							if (comment.type === 'Line') {
-								commentDoc = '//' + comment.value;
-							} else if (comment.type === 'Block') {
-								commentDoc = '/*' + comment.value + '*/';
-							}
-
-							if (commentDoc !== undefined) {
-								commentDocs.push({ doc: commentDoc, hasBlankLineBefore });
-							}
-						}
-
-						// Build the content with proper spacing
-						const contentParts = [];
-						for (let i = 0; i < commentDocs.length; i++) {
-							const { doc, hasBlankLineBefore } = commentDocs[i];
-
-							if (i > 0) {
-								// Add blank line if needed (two hardlines = one blank line)
-								if (hasBlankLineBefore) {
-									contentParts.push(hardline);
-									contentParts.push(hardline);
-								} else {
-									contentParts.push(hardline);
-								}
-							}
-
-							contentParts.push(doc);
-						}
-
-						nodeContent = group([open, indent([hardline, contentParts]), hardline, '}']);
-						break;
-					} else {
-						// Fallback to simple join
-						nodeContent = group([
-							open,
-							indent([hardline, join(hardline, innerCommentParts)]),
-							hardline,
-							'}',
-						]);
-						break;
-					}
-				}
-
-				// Control flow statements (if, for, while, etc.) get expanded empty blocks
-				// to match standard Prettier behavior. Functions/methods keep `{}`.
-				const blockParent = path.getParentNode();
-				const isControlFlow =
-					blockParent &&
-					(blockParent.type === 'IfStatement' ||
-						blockParent.type === 'ForStatement' ||
-						blockParent.type === 'ForInStatement' ||
-						blockParent.type === 'ForOfStatement' ||
-						blockParent.type === 'WhileStatement' ||
-						blockParent.type === 'DoWhileStatement' ||
-						blockParent.type === 'TryStatement' ||
-						blockParent.type === 'CatchClause' ||
-						blockParent.type === 'SwitchCase' ||
-						blockParent.type === 'LabeledStatement' ||
-						blockParent.type === 'JSXIfExpression' ||
-						blockParent.type === 'JSXForExpression' ||
-						blockParent.type === 'JSXTryExpression' ||
-						blockParent.type === 'JSXSwitchExpression');
-
-				if (isControlFlow) {
-					nodeContent = [open, hardline, '}'];
-				} else {
+					// Like Prettier's `printDanglingComments`, the comments of an empty
+					// block print on consecutive lines
+					nodeContent = [
+						open,
+						indent([hardline, join(hardline, innerCommentParts)]),
+						hardline,
+						'}',
+					];
+				} else if (printsEmptyBlockOnOneLine(node, path)) {
 					nodeContent = [open, '}'];
+				} else {
+					nodeContent = [open, hardline, '}'];
 				}
 				break;
 			}
@@ -5037,7 +4970,11 @@ function printTryStatement(node, path, options, print, directive = false) {
  */
 function printClassBody(node, path, options, print) {
 	if (!node.body || node.body.length === 0) {
-		return '{}';
+		const comments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
+		// Like Prettier's `printDanglingComments`, on consecutive lines
+		return comments.length === 0
+			? '{}'
+			: ['{', indent([hardline, join(hardline, comments.map(printCommentText))]), hardline, '}'];
 	}
 
 	const members = path.map(print, 'body');
@@ -5732,7 +5669,17 @@ function printEmptyMemberList(node) {
 	if (node.type !== 'TSInterfaceBody' && comments.length === 1 && comments[0].type === 'Block') {
 		return group(['{', indent([softline, '/*' + comments[0].value + '*/']), softline, '}']);
 	}
-	return ['{', indent(printElementBodyComments(comments)), hardline, '}'];
+	// Like Prettier's `printDanglingComments`, on consecutive lines
+	return ['{', indent([hardline, join(hardline, comments.map(printCommentText))]), hardline, '}'];
+}
+
+/**
+ * The source text of a comment
+ * @param {AST.Comment} comment
+ * @returns {string}
+ */
+function printCommentText(comment) {
+	return comment.type === 'Line' ? '//' + comment.value : '/*' + comment.value + '*/';
 }
 
 /**
@@ -6529,6 +6476,39 @@ function getPrintedStatementIndexes(statements) {
 		}
 	});
 	return indexes;
+}
+
+/**
+ * Whether an empty block prints as `{}`, as Prettier's `printBlock` decides: a
+ * function body, a `for (;;)`, `while` or `do` body, a `catch` block without
+ * `finally`, a namespace body, or a static block. Every other empty block
+ * prints its braces on two lines, and so does every template directive body.
+ * @param {AST.Node} node - The empty block
+ * @param {AstPath} path - Its path
+ * @returns {boolean}
+ */
+function printsEmptyBlockOnOneLine(node, path) {
+	if (node.type === 'StaticBlock') {
+		return true;
+	}
+	const parent = /** @type {AST.Node | null} */ (path.getParentNode());
+	switch (parent?.type) {
+		case 'ArrowFunctionExpression':
+		case 'FunctionExpression':
+		case 'FunctionDeclaration':
+		case 'ForStatement':
+		case 'WhileStatement':
+		case 'DoWhileStatement':
+		case 'TSModuleDeclaration':
+			return true;
+		case 'CatchClause': {
+			// `@catch` belongs to a template `@try`
+			const grandparent = /** @type {AST.Node | null} */ (path.getParentNode(1));
+			return grandparent?.type === 'TryStatement' && !grandparent.finalizer;
+		}
+		default:
+			return false;
+	}
 }
 
 /**
@@ -8400,15 +8380,19 @@ function printJSXCodeBlock(node, path, options, print) {
 		}
 		parts.push(path.call(print, 'render'));
 	}
-	// Trailing comments after the last statement/render inside the block.
-	parts.push(
-		...printElementBodyComments(
-			node.innerComments,
-			node.render ?? node.body[node.body.length - 1],
-			/** @type {string} */ (options.originalText),
-		),
-	);
-	if (parts.length === 0) {
+	if (parts.length > 0) {
+		// Trailing comments after the last statement/render inside the block
+		parts.push(
+			...printElementBodyComments(
+				node.innerComments,
+				node.render ?? node.body[node.body.length - 1],
+				/** @type {string} */ (options.originalText),
+			),
+		);
+	} else if (node.innerComments?.length) {
+		// Like the comments of an empty function body, on consecutive lines
+		parts.push(join(hardline, node.innerComments.map(printCommentText)));
+	} else {
 		return '@{}';
 	}
 	return group(['@{', indent([hardline, ...parts]), hardline, '}']);

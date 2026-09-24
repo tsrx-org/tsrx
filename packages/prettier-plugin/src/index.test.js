@@ -3112,24 +3112,50 @@ files = [...(files ?? []), ...dt.files];`;
 			expect(result).toBeWithNewline(expected);
 		});
 
-		it('expands empty braces to new lines for for statements', async () => {
-			const expected = `for (let i = 0; i < 10; i++) {
-}`;
-			const result = await format(expected);
-			expect(result).toBeWithNewline(expected);
-		});
-
-		it('expands empty braces to new lines for while statements', async () => {
-			const expected = `while (true) {
-}`;
-			const result = await format(expected);
-			expect(result).toBeWithNewline(expected);
-		});
-
-		it('expands empty braces to new lines for do-while statements', async () => {
-			const expected = `do {
+		it('prints empty for, while, and do-while bodies as {} like Prettier', async () => {
+			const input = `for (let i = 0; i < 10; i++) {
+}
+for (;;) {
+}
+while (true) {
+}
+do {
 } while (true);`;
-			const result = await format(expected);
+			const expected = `for (let i = 0; i < 10; i++) {}
+for (;;) {}
+while (true) {}
+do {} while (true);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('expands an empty block in a statement list like Prettier', async () => {
+			const input = `{}
+function f() {
+  {}
+  label: {}
+}
+const g = () => {};
+class K {
+  static {}
+  m() {}
+}
+namespace N {}`;
+			const expected = `{
+}
+function f() {
+  {
+  }
+  label: {
+  }
+}
+const g = () => {};
+class K {
+  static {}
+  m() {}
+}
+namespace N {}`;
+			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
 
@@ -3198,8 +3224,7 @@ function Baz() {
 }
 function Qux() {
   try {
-  } catch {
-  }
+  } catch {}
 }`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
@@ -3788,8 +3813,8 @@ foo(
 			expect(result).toBeWithNewline(expected);
 		});
 
-		it('should preserve comment if the whole function code is commented out, including blank lines', async () => {
-			const expected = `export function Test() {
+		it('prints the comments of a commented-out function body on consecutive lines', async () => {
+			const input = `export function Test() {
   // thing
   // thing
   /* thing */
@@ -3801,8 +3826,18 @@ foo(
   /* thing */
   // thing
 }`;
+			const expected = `export function Test() {
+  // thing
+  // thing
+  /* thing */
+  // thing
+  /* thing */
+  // thing
+  /* thing */
+  // thing
+}`;
 
-			const result = await format(expected, { singleQuote: true });
+			const result = await format(input, { singleQuote: true });
 			expect(result).toBeWithNewline(expected);
 		});
 
@@ -8422,6 +8457,142 @@ log()
 				expect(await format(source)).toBeWithNewline(source);
 			},
 		);
+
+		it('prints the comments of a file with only empty statements on consecutive lines', async () => {
+			expect(await format('// a\n\n// b\n;\n')).toBeWithNewline('// a\n// b');
+			expect(await format(';\n// a\n\n// b\n')).toBeWithNewline('// a\n// b');
+		});
+	});
+
+	// Like Prettier's `printDanglingComments`, the comments of a body with no
+	// statements or members print on consecutive lines
+	describe('comments in empty bodies', () => {
+		it('drops the blank lines between the comments of an empty body', async () => {
+			const input = `{
+  // a
+
+  // b
+}
+function f() {
+  // a
+
+  /* b */
+}
+const g = () => {
+  // a
+  ;
+  // b
+};
+for (;;) {
+  // a
+
+  // b
+}
+interface A {
+  // a
+
+  // b
+}
+enum E {
+  // a
+
+  // b
+}
+type T = {
+  // a
+
+  // b
+};
+namespace N {
+  // a
+
+  // b
+}`;
+			const expected = `{
+  // a
+  // b
+}
+function f() {
+  // a
+  /* b */
+}
+const g = () => {
+  // a
+  // b
+};
+for (;;) {
+  // a
+  // b
+}
+interface A {
+  // a
+  // b
+}
+enum E {
+  // a
+  // b
+}
+type T = {
+  // a
+  // b
+};
+namespace N {
+  // a
+  // b
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps the comments of a class body with no members inside it', async () => {
+			const input = `class A {
+  // a
+
+  // b
+}
+const C = class {
+  /* only */
+};
+class D { /* x */ }`;
+			const expected = `class A {
+  // a
+  // b
+}
+const C = class {
+  /* only */
+};
+class D {
+  /* x */
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('starts the comments of a code block with no statements on its first line', async () => {
+			const input = `function App() @{
+  // note
+}
+const Arrow = () => @{
+  /* note */
+};
+function Two() @{
+  // a
+
+  // b
+}`;
+			const expected = `function App() @{
+  // note
+}
+const Arrow = () => @{
+  /* note */
+};
+function Two() @{
+  // a
+  // b
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
 	});
 
 	// Type arguments, `this` types, and heritage clauses decide what a
@@ -8658,7 +8829,7 @@ log()
 			['const fn = function () {}.call(null);', 'const fn = function () {}.call(null);'],
 			['const seq = ((a, b)).c;', 'const seq = (a, b).c;'],
 			['const body = () => (a, b);', 'const body = () => (a, b);'],
-			['for (i = 0, j = 0; i < 1; i++, j++) {}', 'for (i = 0, j = 0; i < 1; i++, j++) {\n}'],
+			['for (i = 0, j = 0; i < 1; i++, j++) {}', 'for (i = 0, j = 0; i < 1; i++, j++) {}'],
 		])('drops redundant parentheses: %s', async (source, expected) => {
 			const result = await format(source);
 			expect(result).toBeWithNewline(expected);
@@ -8701,7 +8872,7 @@ log()
 			'const power = (-a) ** 2;',
 			'const typed = (!a) in b;',
 			'const text = (1).toString();',
-			'for (i = ("key" in store) ? 1 : 0; i < 1; i++) {\n}',
+			'for (i = ("key" in store) ? 1 : 0; i < 1; i++) {}',
 			'const mixed = (a ?? b) || c;',
 			'const other = a ?? (b || c);',
 			'const regrouped = a - (b - c);',
@@ -9269,7 +9440,6 @@ declare global {
 			const expected = `class C {
   static {
     // one
-
     /* two */
   }
   static {
