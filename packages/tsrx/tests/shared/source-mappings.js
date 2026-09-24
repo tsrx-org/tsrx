@@ -583,6 +583,35 @@ function App({ tag }: { tag: string }) @{
 			expect(css_mapping).toBeDefined();
 			expect(css_mapping?.data.customData.embeddedId).toMatch(/^style-/);
 		});
+		it('exposes style blocks, scripts and scoped classes inside attribute values', () => {
+			// The compiler scopes elements in an attribute value too
+			// (`icon={<span class="a" />}` prints `class="a tsrx-…"`).
+			const source = `export function App(props: { on: boolean }) @{
+	<>
+		<Comp icon={<span class="a" />} />
+		<Comp badge={(@if (props.on) { <><i class="b" /><style>.b { color: blue; }</style></> })} />
+		<Comp slot={<script>const inner = 1;</script>} />
+		<style>.a { color: red; }</style>
+	</>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+
+			const css_contents = result.cssMappings.map((mapping) => mapping.data.customData.content);
+			expect(css_contents.join('\n')).toContain('.b { color: blue; }');
+			const script_contents = result.scriptMappings.map(
+				(mapping) => mapping.data.customData.content,
+			);
+			expect(script_contents.join('\n')).toContain('const inner = 1;');
+			for (const class_name of ['a', 'b']) {
+				const offset = source.indexOf(`class="${class_name}"`) + 'class="'.length;
+				const mapping = result.mappings.find(
+					(/** @type {CodeMapping} */ entry) =>
+						entry.sourceOffsets[0] === offset && entry.lengths[0] === class_name.length,
+				);
+				expect(mapping?.data.customData?.hover).toContain(`.${class_name}`);
+			}
+		});
 		it('keeps assigned style blocks anchored in type-only output', () => {
 			const source = `function C() @{
 		const styles = <style>
@@ -1429,6 +1458,15 @@ export function optionalFn(declRequired: string, declMaybe?: string) {
 	<div>{items.length}</div>
 }`;
 			expect(whole_span_mappings(source, 'createBase()')).toHaveLength(1);
+		});
+
+		it('maps the whole call in an attribute value', () => {
+			// The compiler prints the arrow body over several lines, so the
+			// attribute's own mapping no longer lines up with the call inside it.
+			const source = `export function App() @{
+	<div onClick={() => { if (createVoid()) {} }} />
+}`;
+			expect(whole_span_mappings(source, 'createVoid()')).toHaveLength(1);
 		});
 
 		it('adds no whole-span mapping over parentheses around a compiled directive', () => {

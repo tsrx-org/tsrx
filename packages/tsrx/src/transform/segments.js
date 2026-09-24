@@ -58,17 +58,24 @@ function get_style_region_id(hash, fallback) {
 }
 
 /**
- * Extract CSS source regions from style elements in the AST
+ * Extract CSS source regions from style elements in the AST, and record the
+ * author's calls and parenthesized expressions, each keyed by its type and span
+ * and mapped to the same key for its callee or wrapped expression.
  * @param {AST.Node} ast - The parsed AST
  * @param {number[]} src_line_offsets
  * @param {{
  * 	regions: CssSourceRegion[],
  * 	css_element_info: CssElementInfo,
  * 	script_regions: ScriptSourceRegion[],
+ * 	authored_span_nodes: Map<string, string>,
  * }} param2
  * @returns {void}
  */
-function visit_source_ast(ast, src_line_offsets, { regions, css_element_info, script_regions }) {
+function visit_source_ast(
+	ast,
+	src_line_offsets,
+	{ regions, css_element_info, script_regions, authored_span_nodes },
+) {
 	let region_id = 0;
 	let script_region_id = 0;
 	walk(ast, null, {
@@ -135,12 +142,24 @@ function visit_source_ast(ast, src_line_offsets, { regions, css_element_info, sc
 				const css = element.metadata.css;
 				const { line, column } = node.value?.loc?.start ?? {};
 
-				if (line === undefined || column === undefined) {
-					return;
+				if (line !== undefined && column !== undefined) {
+					css_element_info.set(`${line}:${column}`, css);
 				}
-
-				css_element_info.set(`${line}:${column}`, css);
 			}
+
+			context.next();
+		},
+		CallExpression(node, context) {
+			if (has_location(node) && has_location(node.callee)) {
+				authored_span_nodes.set(span_key(node), span_key(node.callee));
+			}
+			context.next();
+		},
+		ParenthesizedExpression(node, context) {
+			if (has_location(node) && has_location(node.expression)) {
+				authored_span_nodes.set(span_key(node), span_key(node.expression));
+			}
+			context.next();
 		},
 	});
 }
@@ -150,32 +169,6 @@ function visit_source_ast(ast, src_line_offsets, { regions, css_element_info, sc
  */
 function span_key(node) {
 	return `${node.type}:${node.start}:${node.end}`;
-}
-
-/**
- * The calls and parenthesized expressions of the source AST, each keyed by its
- * type and span and mapped to the same key for its callee or wrapped expression.
- * @param {AST.Program} ast
- * @returns {Map<string, string>}
- */
-function collect_authored_span_nodes(ast) {
-	/** @type {Map<string, string>} */
-	const nodes = new Map();
-	walk(ast, null, {
-		CallExpression(node, { next }) {
-			if (has_location(node) && has_location(node.callee)) {
-				nodes.set(span_key(node), span_key(node.callee));
-			}
-			next();
-		},
-		ParenthesizedExpression(node, { next }) {
-			if (has_location(node) && has_location(node.expression)) {
-				nodes.set(span_key(node), span_key(node.expression));
-			}
-			next();
-		},
-	});
-	return nodes;
 }
 
 /**
@@ -372,14 +365,15 @@ export function convert_source_map_to_mappings(
 	const css_element_info = new Map();
 	/** @type {ScriptSourceRegion[]} */
 	const script_regions = [];
+	/** @type {Map<string, string>} */
+	const authored_span_nodes = new Map();
 
 	visit_source_ast(ast_from_source, src_line_offsets, {
 		regions: css_regions,
 		css_element_info,
 		script_regions,
+		authored_span_nodes,
 	});
-
-	const authored_span_nodes = collect_authored_span_nodes(ast_from_source);
 
 	/**
 	 * TypeScript reports some errors on a whole call or parenthesized expression
