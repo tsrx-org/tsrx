@@ -1,6 +1,6 @@
-// Assigned blocks in every declaration position. Exported (directly or via
-// an export list) blocks keep every selector; local unapplied ones keep only
-// their class selectors.
+// Assigned blocks in every declaration position. Every assigned block keeps
+// every selector, exported or local, applied or not: its `$class` can reach
+// any element through ordinary JavaScript.
 export const exported = <style>
 	.exported {
 		--label: exported;

@@ -1,11 +1,13 @@
 /**
  * Module-level analysis of `<style>` blocks: which blocks are standalone
  * (scoped to the template scope they sit in) and which are assigned
- * (`const theme = <style>…</style>`), what every `apply` attribute resolves to,
- * and whether an assigned block is a theme (exported or applied, D5) or a
- * class map. Results are stamped on the style nodes' `metadata` so the target
- * transforms — which clone nodes but share metadata — read one shape, and are
- * summarized on `program.metadata.styles` for consumer compilers.
+ * (`const theme = <style>…</style>`), and what every `apply` attribute resolves
+ * to. Every assigned block is a theme: its `$class` is an ordinary value that
+ * reaches elements through any JavaScript path, and `apply` stamps it on scopes
+ * in other modules, so no selector of an assigned block is ever pruned.
+ * Results are stamped on the style nodes' `metadata` so the target transforms —
+ * which clone nodes but share metadata — read one shape, and are summarized on
+ * `program.metadata.styles` for consumer compilers.
  *
  * Declared-before-use (D13 layer 1) is enforced here by source position and
  * lexical visibility: same-module CSS is emitted in lexical order, so a theme
@@ -58,30 +60,6 @@ function nearest_scope(path, scopes) {
 		if (scope) return scope;
 	}
 	return null;
-}
-
-/**
- * Names exported through `export { a, b as c }` and `export default a`.
- *
- * @param {AST.Program} ast
- * @returns {Set<string>}
- */
-function collect_exported_names(ast) {
-	/** @type {Set<string>} */
-	const names = new Set();
-	for (const statement of ast.body) {
-		if (statement.type === 'ExportNamedDeclaration' && !statement.declaration) {
-			for (const specifier of statement.specifiers) {
-				if (specifier.local.type === 'Identifier') names.add(specifier.local.name);
-			}
-		} else if (
-			statement.type === 'ExportDefaultDeclaration' &&
-			statement.declaration.type === 'Identifier'
-		) {
-			names.add(statement.declaration.name);
-		}
-	}
-	return names;
 }
 
 /**
@@ -189,24 +167,6 @@ function resolve_local_member(binding, expression) {
 }
 
 /**
- * Whether any reference to the binding reads its `$class` property.
- *
- * @param {Binding | null} binding
- * @returns {boolean}
- */
-function is_class_read(binding) {
-	if (!binding) return false;
-	return binding.references.some(({ node, path }) => {
-		const parent = path.at(-1);
-		if (parent?.type !== 'MemberExpression' || parent.object !== node) return false;
-		if (parent.computed) {
-			return parent.property.type === 'Literal' && parent.property.value === '$class';
-		}
-		return parent.property.type === 'Identifier' && parent.property.name === '$class';
-	});
-}
-
-/**
  * Run the module-level style analysis. `scopes` comes from `create_scopes`
  * over the same program so target resolution uses real bindings.
  *
@@ -216,7 +176,6 @@ function is_class_read(binding) {
  * @returns {StyleAnalysis}
  */
 export function analyze_styles(ast, scopes, state) {
-	const exported_names = collect_exported_names(ast);
 	const errors = state.collect ? state.errors : undefined;
 	/** @type {AST.JSXStyleElement[]} */
 	const assigned = [];
@@ -429,29 +388,10 @@ export function analyze_styles(ast, scopes, state) {
 					}
 				} else {
 					assigned.push(node);
-					const parent = path.at(-1);
-					const grandparent = path.at(-2);
-					/** @type {AST.VariableDeclarator | null} */
-					let declarator = null;
-					if (parent?.type === 'VariableDeclarator') {
-						declarator = parent;
-					} else if (parent?.type === 'Property' && grandparent?.type === 'ObjectExpression') {
-						const holder = path.at(-3);
-						if (holder?.type === 'VariableDeclarator') declarator = holder;
-					}
-					const declared_name = declarator?.id.type === 'Identifier' ? declarator.id.name : null;
-					const declaration_index = declarator ? path.indexOf(declarator) : -1;
-					const export_parent = declaration_index > 0 ? path[declaration_index - 2] : null;
-					node.metadata.styleExported =
-						parent?.type === 'ExportDefaultDeclaration' ||
-						export_parent?.type === 'ExportNamedDeclaration' ||
-						(declared_name !== null && exported_names.has(declared_name));
-					// Reading `theme.$class` opts an element (or a child component's
-					// element, through a prop) into the block's whole stylesheet, so
-					// such a block is a theme: every selector stays, like `apply`.
-					node.metadata.styleClassRead =
-						declared_name !== null &&
-						is_class_read(nearest_scope(path, scopes)?.get(declared_name) ?? null);
+					// No use of the block's value is tracked: `$class` is an ordinary
+					// string that destructuring, aliases, props, and return values carry
+					// anywhere, so whether an element receives it is not decidable here.
+					node.metadata.styleKind = 'theme';
 
 					if (stylesheet && get_style_class_map_names(stylesheet).includes('$class')) {
 						report(
@@ -466,13 +406,6 @@ export function analyze_styles(ast, scopes, state) {
 			},
 		}),
 	);
-
-	for (const node of assigned) {
-		node.metadata.styleKind =
-			node.metadata.styleExported || node.metadata.styleApplied || node.metadata.styleClassRead
-				? 'theme'
-				: 'class-map';
-	}
 
 	/** @type {StyleAnalysis} */
 	const styles = { assigned, standalone };

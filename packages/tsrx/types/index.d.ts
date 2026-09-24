@@ -49,14 +49,6 @@ export interface StyleRefOptions {
 	visitExpression?: (expression: AST.Expression) => AST.Expression;
 }
 
-/**
- * Walk state for the style-expression class-map collection: the nearest
- * prelude-level selector, which carries the class map entries found beneath it.
- */
-export interface ClassMapCollectionState {
-	enclosing_selector: AST.CSS.ComplexSelector | null;
-}
-
 export function createStyleRefSetupStatements(
 	refAttributes: ESTreeJSX.JSXAttribute[],
 	styleMap: AST.Expression,
@@ -184,11 +176,11 @@ export interface BaseNodeMetaData {
 	styleApplies?: StyleApplyResolution[];
 	/** An assigned block is the target of some `apply` in its module. */
 	styleApplied?: boolean;
-	/** An assigned block is exported from its module. */
-	styleExported?: boolean;
-	/** An assigned block's `$class` is read somewhere in its module (an element or a child prop opts into the theme). */
-	styleClassRead?: boolean;
-	/** How an assigned block renders: `theme` keeps every selector, `class-map` prunes (D4/D5). */
+	/**
+	 * How an assigned block renders: always `theme`, which keeps every selector
+	 * (D4/D5). `class-map` is no longer produced; the member stays for consumer
+	 * compilers that choose a render mode from it.
+	 */
 	styleKind?: 'theme' | 'class-map';
 	/** The transform's style pre-pass already rendered this assigned block's sheet. */
 	tsrx_style_prepared?: boolean;
@@ -862,12 +854,6 @@ declare module 'estree' {
 				rule: Rule | null;
 				used: boolean;
 				is_global?: boolean;
-				/**
-				 * The selector carries a class the generated style-expression class
-				 * map exposes, so render preparation must keep it (see
-				 * `mark_class_map_selectors`).
-				 */
-				class_map_selector?: boolean;
 			};
 		}
 
@@ -1636,7 +1622,11 @@ export interface StyleClassMapOptions {
 	hash?: string | null;
 }
 
-/** How `prepareStylesheetForRender` treats a sheet's selectors (D4). */
+/**
+ * How `prepareStylesheetForRender` treats a sheet's selectors (D4): `scope` for
+ * a standalone block, `theme` for an assigned one. Every mode keeps every
+ * selector; `class-map` renders as `theme` for earlier consumers.
+ */
 export type StyleRenderMode = 'scope' | 'class-map' | 'theme';
 
 /**

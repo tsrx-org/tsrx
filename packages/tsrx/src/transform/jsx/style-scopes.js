@@ -719,12 +719,8 @@ function prepare_assigned_style(node, state) {
 	const sheet = get_style_element_stylesheet(node);
 	if (!sheet) return;
 	if (!analyze_scope_css(node, sheet, state)) return;
-	state.ctx.stylesheets.push(
-		prepare_stylesheet_for_render(
-			sheet,
-			node.metadata.styleKind === 'theme' ? 'theme' : 'class-map',
-		),
-	);
+	// Every assigned block is a theme: its selectors are never pruned.
+	state.ctx.stylesheets.push(prepare_stylesheet_for_render(sheet, 'theme'));
 }
 
 /**

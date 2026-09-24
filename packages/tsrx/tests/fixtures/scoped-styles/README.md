@@ -59,8 +59,7 @@ Fixture conventions that make this work:
   distinct hashes of this list, in order.
 - **`pruned`** — selector texts expected inside `/* (unused) … */` comments, in
   order. Standalone blocks prune selectors that match nothing in their reach;
-  assigned blocks that are neither exported nor applied prune every non-class
-  selector; exported or applied blocks prune nothing.
+  assigned blocks prune nothing.
 - **`classMaps`** — assigned-block variable → `$class` composition: applied
   blocks' compositions first (transitively), the block's own label last. `own` may
   stand for the variable's label. Adjacent static hashes share one string literal

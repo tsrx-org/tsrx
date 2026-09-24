@@ -15,7 +15,7 @@
     "inBlock",
     "inNested"
   ],
-  "pruned": ["em", "i", "b", "u", "s"],
+  "pruned": [],
   "classMaps": {
     "exported": ["exported"],
     "local": ["local"],

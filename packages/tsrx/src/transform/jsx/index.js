@@ -783,12 +783,7 @@ export function createJsxTransform(platform) {
 					if (stylesheet && !node.metadata.tsrx_style_prepared) {
 						node.metadata.tsrx_style_prepared = true;
 						analyze_css(stylesheet);
-						state.stylesheets.push(
-							prepare_stylesheet_for_render(
-								stylesheet,
-								node.metadata.styleKind === 'theme' ? 'theme' : 'class-map',
-							),
-						);
+						state.stylesheets.push(prepare_stylesheet_for_render(stylesheet, 'theme'));
 					}
 					return create_style_expression_value(node, stylesheet, state);
 				}

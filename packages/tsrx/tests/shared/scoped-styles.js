@@ -961,8 +961,8 @@ export function runSharedScopedStyleTests({
 			expect(css).not.toContain('(unused)');
 		});
 
-		it('still prunes an unexported, unapplied assigned block', () => {
-			const { css } = compile(
+		it('keeps every selector of an unexported, unapplied assigned block', () => {
+			const { css, cssHash } = compile(
 				`export function App() @{
 					const styles = <style>
 						div { color: red; }
@@ -973,7 +973,9 @@ export function runSharedScopedStyleTests({
 				'App.tsrx',
 			);
 
-			expect(css).toContain('/* (unused) div { color: red; }*/');
+			const hash = hashes_of(cssHash)[0];
+			expect(css).not.toContain('(unused)');
+			expect(css).toContain(`div.${hash} { color: red; }`);
 		});
 
 		it('resolves apply through lexical scope to a block declared in the component body', () => {
@@ -1102,19 +1104,36 @@ export function runSharedScopedStyleTests({
 			expect(code).toContain(`<h2 ${classAttrName}={\`\${parentClass} ${local}\`}>`);
 		});
 
-		it('keeps class-map pruning when only class entries of a local block are read', () => {
-			const { css } = compile(
-				`export function App() @{
-					const styles = <style>
-						div { color: blue; }
-						.card { color: red; }
-					</style>;
-					<div ${classAttrName}={styles.card}>{'card'}</div>
+		it('keeps every selector however $class leaves the block', () => {
+			const block = '<style>div { color: red; }</style>';
+			for (const source of [
+				`const theme = ${block};
+				const { $class: cls } = theme;
+				export function App() { return <div ${classAttrName}={cls}>{'a'}</div>; }`,
+				`const theme = ${block};
+				const alias = theme;
+				export function App() { return <div ${classAttrName}={alias.$class}>{'a'}</div>; }`,
+				`const themes = { red: ${block} };
+				export function App() { return <div ${classAttrName}={themes.red.$class}>{'a'}</div>; }`,
+				`const themes = [${block}];
+				export function App() {
+					return <>{themes.map((t) => <div ${classAttrName}={t.$class}>{'a'}</div>)}</>;
 				}`,
-				'App.tsrx',
-			);
+				`function Card({ theme }: { theme: { $class: string } }) {
+					return <div ${classAttrName}={theme.$class}>{'a'}</div>;
+				}
+				const theme = ${block};
+				export function App() { return <Card theme={theme} />; }`,
+				`function getTheme() { const theme = ${block}; return theme; }
+				export function App() { return <div ${classAttrName}={getTheme().$class}>{'a'}</div>; }`,
+				`const theme = ${block};
+				export function App() { return <div ${classAttrName}={theme!.$class}>{'a'}</div>; }`,
+			]) {
+				const { css, cssHash } = compile(source, 'App.tsrx');
 
-			expect(css).toContain('/* (unused) div { color: blue; }*/');
+				expect(css, source).not.toContain('(unused)');
+				expect(css, source).toContain(`div.${hashes_of(cssHash)[0]} { color: red; }`);
+			}
 		});
 
 		it('includes $class in the class map handed to a style ref', () => {

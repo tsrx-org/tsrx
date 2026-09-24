@@ -12,56 +12,38 @@
 import { walk } from 'zimmerframe';
 import * as b from '../utils/builders.js';
 import { is_ast_node, is_style_element } from '../utils/ast.js';
-import { mark_class_map_selectors } from './style-ref.js';
 
 export { is_style_element };
 
 /**
  * Mark selectors inside the stylesheet as "used" so `renderStylesheets` does
- * not comment them out, per render mode (D4):
+ * not comment them out, and mark every non-global relative selector as
+ * scoped. Both render modes (D4) keep every selector:
  *
- * - `scope`: a free-standing `<style>` block. Every selector is marked; we
+ * - `scope`: a standalone `<style>` block. Every selector is marked; we
  *   skip selector-pruning because component boundaries can be dynamic — any
  *   selector authored inside a scope's `<style>` block is considered
  *   intentional.
- * - `class-map`: a block assigned to a local, unexported, unapplied variable.
- *   The only selectors reachable through the generated class map are
- *   standalone class selectors — scoped (`.x`) or global-wrapped
- *   (`:global(.x)`). Anything else at the top level — element selectors,
- *   compound selectors, descendant chains, global tag selectors — never ends
- *   up in the class map and is marked unused for `renderStylesheets` to
- *   comment out. Selectors of nested rules ride along with their parent: they
- *   apply where the parent's class matched, and the whole rule is pruned when
- *   the parent itself is unreachable.
- * - `theme`: an exported or applied block (D5). Every selector is kept and
- *   hash-scoped, because appliers stamp `$class` on arbitrary elements.
+ * - `theme`: an assigned block. Every selector is kept and hash-scoped:
+ *   `$class` is an ordinary value that reaches elements through any
+ *   JavaScript path (destructuring, props, return values), and `apply` stamps
+ *   it on scopes in other modules, so no element set can prune against.
  *
- * The boolean form (`true` → `class-map`, `false` → `scope`) is kept for one
- * release for consumers compiled against the previous signature.
+ * `class-map` and the boolean form (`true` → assigned, `false` → `scope`) are
+ * kept for consumers compiled against earlier releases. An assigned block is
+ * never pruned, so both render as `theme`.
  *
  * @param {AST.CSS.StyleSheet} stylesheet
  * @param {StyleRenderMode | boolean} [mode]
  * @returns {AST.CSS.StyleSheet}
  */
 export function prepare_stylesheet_for_render(stylesheet, mode = 'scope') {
-	const render_mode = mode === true ? 'class-map' : mode === false ? 'scope' : mode;
-	const is_class_map = render_mode === 'class-map';
-	if (is_class_map) {
-		mark_class_map_selectors(stylesheet);
-	}
 	walk(
 		/** @type {AST.CSS.Node} */ (stylesheet),
 		null,
 		/** @type {Visitors<AST.CSS.Node, null>} */ ({
-			_(node, { next, path }) {
+			_(node, { next }) {
 				if (node.type === 'ComplexSelector') {
-					if (is_class_map && is_unreachable_via_class_map(node, path)) {
-						// Not in the generated class map. The analyzer pre-marks global
-						// selectors as used, so reset, and leave the subtree untouched —
-						// no `scoped` marks that would splice the hash into pruned output.
-						node.metadata.used = false;
-						return;
-					}
 					node.metadata.used = true;
 				} else if (node.type === 'RelativeSelector' && !node.metadata.is_global) {
 					node.metadata.scoped = true;
@@ -71,37 +53,6 @@ export function prepare_stylesheet_for_render(stylesheet, mode = 'scope') {
 		}),
 	);
 	return stylesheet;
-}
-
-/**
- * True when a selector of a style expression should be pruned because nothing
- * reachable through the generated class map can match it. The class map
- * collection in `style-ref.js` is the single decider of what the map exposes:
- * it marks the carrying prelude-level selectors with `class_map_selector`.
- * The remaining cases are structural, not class-shaped: selectors of nested
- * rules ride along with their parent (the whole rule is pruned when the parent
- * is unreachable), selectors inside another selector's arguments belong to
- * their enclosing prelude-level selector, and a bare `:global` block prelude
- * is kept because its contents render unscoped as authored and cannot be
- * pruned selector-by-selector.
- *
- * @param {AST.CSS.ComplexSelector} complex_selector
- * @param {AST.CSS.Node[]} path
- * @returns {boolean}
- */
-function is_unreachable_via_class_map(complex_selector, path) {
-	if (complex_selector.metadata.class_map_selector) return false;
-	if (complex_selector.metadata.rule?.metadata?.parent_rule != null) return false;
-	if (path.some((parent) => parent.type === 'ComplexSelector')) return false;
-
-	if (complex_selector.children.length === 1) {
-		const first = complex_selector.children[0].selectors[0];
-		if (first?.type === 'PseudoClassSelector' && first.name === 'global' && first.args === null) {
-			return false;
-		}
-	}
-
-	return true;
 }
 
 /**
