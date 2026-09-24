@@ -16,7 +16,9 @@ The element's spread and ref are also lowered once instead of twice, which
 nested a second normalize call and merged ref around the first. On Solid, an
 element in a `.map()` callback inside a template no longer hoists its
 normalize call out of the callback, where the callback's parameter is not in
-scope.
+scope. The same holds on every target for an element in a callback inside
+another element's spread argument, such as
+`<List {...{ items: items.map((item) => <li {...item} ref={cb} />) }} />`.
 
 The same elements no longer report a type error in the editor or `tsrx-tsc`.
 `normalize_spread_props_for_ref_attr` now declares the merged `ref` its result

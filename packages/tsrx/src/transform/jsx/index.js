@@ -713,7 +713,15 @@ export function createJsxTransform(platform) {
 				}
 
 				if (!node.metadata?.native_tsrx) {
-					return next() ?? node;
+					// JSX inside a spread attribute's argument is parsed as plain JSX,
+					// but the JSXOpeningElement visitor still lowers its host ref/spread
+					// to a setup declaration. Wrap it here: left for the nearest native
+					// ancestor, it would be declared outside any callback between the
+					// two, where the callback's parameters are not in scope.
+					return wrap_jsx_setup_declarations(
+						/** @type {AST.Expression} */ (next() ?? node),
+						in_jsx_child_context(path),
+					);
 				}
 
 				// Capture raw children BEFORE the walker transforms them so platform

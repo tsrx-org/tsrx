@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	CallbackSpreadRefApp,
 	DeclaratorSpreadRefApp,
+	SpreadArgumentSpreadRefApp,
 	TemplateCallbackSpreadRefApp,
 	TernarySpreadRefApp,
 	expression_spread_ref_nodes,
@@ -10,7 +11,7 @@ import {
 /**
  * Shared runtime suite for host spreads beside a `ref` in plain-JS expression
  * positions: a ternary arm, a declarator init, and a `.map()` callback in a
- * plain function or a native template. Each element spreads its bag and
+ * plain function, a native template, or another element's spread argument. Each element spreads its bag and
  * attaches its ref, as in native JSX.
  */
 export function runExpressionSpreadRefRuntimeTests() {
@@ -67,6 +68,13 @@ export function runExpressionSpreadRefRuntimeTests() {
 				TemplateCallbackSpreadRefApp,
 				{ bags },
 				'.expression-spread-ref-template-callback',
+				bags,
+			],
+			[
+				'a callback in a spread argument',
+				SpreadArgumentSpreadRefApp,
+				{ bags },
+				'.expression-spread-ref-spread-argument',
 				bags,
 			],
 		])) {

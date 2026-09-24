@@ -16,6 +16,7 @@ import {
 import {
 	CallbackSpreadRefApp,
 	DeclaratorSpreadRefApp,
+	SpreadArgumentSpreadRefApp,
 	TemplateCallbackSpreadRefApp,
 	TernarySpreadRefApp,
 	expression_spread_ref_nodes,
@@ -291,6 +292,12 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			'a callback in a native template',
 			() => <TemplateCallbackSpreadRefApp bags={spread_bags} />,
 			'.expression-spread-ref-template-callback',
+			spread_bags,
+		],
+		[
+			'a callback in a spread argument',
+			() => <SpreadArgumentSpreadRefApp bags={spread_bags} />,
+			'.expression-spread-ref-spread-argument',
 			spread_bags,
 		],
 	] as const) {

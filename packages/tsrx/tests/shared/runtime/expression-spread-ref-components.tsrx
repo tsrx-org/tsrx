@@ -35,3 +35,20 @@ export function TemplateCallbackSpreadRefApp({ bags }: { bags: SpreadBag[] }) @{
 			<li key={bag.id} class="expression-spread-ref-template-callback" {...bag} ref={capture} />,
 	)}</ul>
 }
+
+function List(props: { items: unknown }) @{
+	<ul>{props.items}</ul>
+}
+
+// JSX in a spread argument is parsed as plain JSX rather than a template node.
+export function SpreadArgumentSpreadRefApp({ bags }: { bags: SpreadBag[] }) {
+	const list = <List
+		{...{
+			items: bags.map(
+				(bag) =>
+					<li key={bag.id} class="expression-spread-ref-spread-argument" {...bag} ref={capture} />,
+			),
+		}}
+	/>;
+	return <div>{list}</div>;
+}

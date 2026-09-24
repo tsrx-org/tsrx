@@ -355,4 +355,62 @@ describe('type-only JSX analysis', () => {
 			}
 		},
 	);
+
+	it.each(REF_SPREAD_OUTPUTS)(
+		'declares the binding of a host inside a spread argument within its callback (%s)',
+		(_output, type_only, platform) => {
+			// JSX in a spread argument is parsed as plain JSX, not a native template
+			// node; its binding must stay in the callback that declares `row`.
+			const svg =
+				'<svg {...{ children: props.rows.map((row: number) => <text key={row} ref={props.nodeRef} {...props.rest} />) }} />';
+			for (const [name, source] of [
+				[
+					'concise arrow body',
+					`${REF_SPREAD_PROPS_TYPE}export const Chart = (props: Props) => ${svg};\n`,
+				],
+				[
+					'declarator init',
+					`${REF_SPREAD_PROPS_TYPE}export function Chart(props: Props) {\n\tconst chart = ${svg};\n\treturn chart;\n}\n`,
+				],
+			]) {
+				const compiled = compile_source(source, type_only, platform);
+				expect(compiled.errors, name).toEqual([]);
+				const generated = ts.createSourceFile(
+					'Chart.tsx',
+					compiled.code,
+					ts.ScriptTarget.ESNext,
+					true,
+					ts.ScriptKind.TSX,
+				);
+				/** @type {ts.VariableDeclaration[]} */
+				const bindings = [];
+				/** @param {ts.Node} node */
+				const visit = (node) => {
+					if (
+						ts.isVariableDeclaration(node) &&
+						ts.isIdentifier(node.name) &&
+						node.name.text.includes('spread_props')
+					) {
+						bindings.push(node);
+					}
+					ts.forEachChild(node, visit);
+				};
+				visit(generated);
+
+				expect(bindings, name).toHaveLength(1);
+				/** @type {ts.Node | undefined} */
+				let scope = bindings[0];
+				while (
+					scope &&
+					!(
+						ts.isArrowFunction(scope) &&
+						scope.parameters.some((parameter) => parameter.name.getText() === 'row')
+					)
+				) {
+					scope = scope.parent;
+				}
+				expect(scope, name).toBeDefined();
+			}
+		},
+	);
 });
