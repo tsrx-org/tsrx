@@ -744,7 +744,8 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 			);
 
 		case 'UpdateExpression':
-			if (parent.type === 'UnaryExpression') {
+		case 'UnaryExpression':
+			if (node.type === 'UpdateExpression' && parent.type === 'UnaryExpression') {
 				// `+(++a)`, not `+++a`
 				return (
 					node.prefix &&
@@ -752,8 +753,6 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 						(node.operator === '--' && parent.operator === '-'))
 				);
 			}
-		// falls through
-		case 'UnaryExpression':
 			switch (parent.type) {
 				case 'UnaryExpression':
 					// `-(-a)`, not `--a`
@@ -814,7 +813,11 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 				case 'UpdateExpression':
 					return true;
 				case 'LogicalExpression':
-					if (node.type === 'LogicalExpression') {
+				case 'BinaryExpression': {
+					if (node.type !== 'BinaryExpression' && node.type !== 'LogicalExpression') {
+						return true;
+					}
+					if (node.type === 'LogicalExpression' && parent.type === 'LogicalExpression') {
 						// `??` does not mix with `||` or `&&` without parentheses
 						if ((node.operator === '??') !== (parent.operator === '??')) {
 							return true;
@@ -824,11 +827,6 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 						if (node.operator === parent.operator) {
 							return false;
 						}
-					}
-				// falls through
-				case 'BinaryExpression': {
-					if (node.type !== 'BinaryExpression' && node.type !== 'LogicalExpression') {
-						return true;
 					}
 					const nodeOperator = node.operator;
 					const parentOperator = parent.operator;
@@ -857,11 +855,10 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 			return false;
 
 		case 'YieldExpression':
-			if (parent.type === 'AwaitExpression') {
+		case 'AwaitExpression':
+			if (node.type === 'YieldExpression' && parent.type === 'AwaitExpression') {
 				return true;
 			}
-		// falls through
-		case 'AwaitExpression':
 			switch (parent.type) {
 				case 'BinaryExpression':
 				case 'JSXSpreadAttribute':

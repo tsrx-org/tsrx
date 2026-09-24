@@ -447,13 +447,13 @@ let conditional_spread_if_node: HTMLInputElement | null = null;
 
 function ConditionalSpreadApp(props: { enabled: boolean }) @{
 	<>
-		<input class="conditional-spread" {...props.enabled && { disabled: true }} />
+		<input class="conditional-spread" {...(props.enabled && { disabled: true })} />
 		<input
 			class="conditional-spread"
 			ref={(node: HTMLInputElement | null) => {
 				conditional_spread_and_node = node;
 			}}
-			{...props.enabled && { disabled: true }}
+			{...(props.enabled && { disabled: true })}
 		/>
 		<input
 			class="conditional-spread"
@@ -469,7 +469,7 @@ function ConditionalSpreadApp(props: { enabled: boolean }) @{
 				ref={(node: HTMLInputElement | null) => {
 					conditional_spread_if_node = node;
 				}}
-				{...props.enabled && { disabled: true }}
+				{...(props.enabled && { disabled: true })}
 			/>
 		}
 	</>
