@@ -5172,6 +5172,68 @@ namespace N {
 	});
 });
 
+describe('comments in member lists', () => {
+	/**
+	 * @param {AST.Node | undefined} node
+	 * @returns {AST.Node[]}
+	 */
+	function members(node) {
+		if (node?.type === 'TSInterfaceDeclaration') return node.body.body;
+		if (node?.type === 'TSEnumDeclaration') return node.members;
+		if (node?.type === 'TSTypeAliasDeclaration') {
+			return as_type(node.typeAnnotation, 'TSTypeLiteral').members;
+		}
+		throw new Error(`No member list in ${node?.type}`);
+	}
+
+	// A JSDoc tag on the next member's line documents that member, not the one
+	// before it.
+	it.each([
+		['an interface', 'interface I { a: 1; /** @deprecated */ b: 2; }'],
+		['an enum', 'enum E { A, /** @deprecated */ B }'],
+		['a type literal', 'type T = { a: 1; /** @deprecated */ b: 2; };'],
+	])('leads the next member with a block comment on its line in %s', (_, source) => {
+		const [previous, next] = members(parseModule(source, 'App.ts').body[0]);
+
+		expect(previous.trailingComments).toBeUndefined();
+		expect(next.leadingComments?.map((comment) => comment.value)).toEqual(['* @deprecated ']);
+	});
+
+	it.each([
+		['an interface', 'interface I {\n\ta: 1; // a\n\t// after a\n}'],
+		['an enum', 'enum E {\n\tA, // a\n\t// after a\n}'],
+		['a type literal', 'type T = {\n\ta: 1; // a\n\t// after a\n};'],
+	])('keeps comments after the last member inside %s', (_, source) => {
+		const [last] = members(parseModule(source, 'App.ts').body[0]);
+
+		expect(last.trailingComments?.map((comment) => comment.value)).toEqual([' a', ' after a']);
+	});
+
+	it('keeps the comments of an empty interface, enum, or type literal as inner comments', () => {
+		const ast = parseModule(
+			`interface I {
+	// interface
+}
+enum E {
+	// enum
+}
+type T = {
+	// type
+};`,
+			'App.ts',
+		);
+		const iface = as_type(ast.body[0], 'TSInterfaceDeclaration');
+		const enumeration = as_type(ast.body[1], 'TSEnumDeclaration');
+		const alias = as_type(ast.body[2], 'TSTypeAliasDeclaration');
+
+		expect(iface.body.innerComments?.map((comment) => comment.value)).toEqual([' interface']);
+		// The enum's name is not a member, so it doesn't take the body's comments.
+		expect(enumeration.id.trailingComments).toBeUndefined();
+		expect(enumeration.innerComments?.map((comment) => comment.value)).toEqual([' enum']);
+		expect(alias.typeAnnotation.innerComments?.map((comment) => comment.value)).toEqual([' type']);
+	});
+});
+
 describe('keywordTokens parse option', () => {
 	it('collects async/function keyword tokens from the lexer', () => {
 		const source = `async function load() {}\nfunction plain() {}`;

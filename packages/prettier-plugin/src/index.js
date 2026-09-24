@@ -5905,7 +5905,7 @@ function printTSInterfaceDeclaration(node, path, options, print) {
  */
 function printTSInterfaceBody(node, path, options, print) {
 	if (!node.body || node.body.length === 0) {
-		return '{}';
+		return printEmptyMemberList(node);
 	}
 
 	const members = path.map(print, 'body');
@@ -5914,6 +5914,25 @@ function printTSInterfaceBody(node, path, options, print) {
 	const membersWithSemicolons = members.map((member) => [member, semi(options)]);
 
 	return group(['{', indent([hardline, join(hardline, membersWithSemicolons)]), hardline, '}']);
+}
+
+/**
+ * Print the braces of an empty interface body, type literal, or enum, with the
+ * comments the parser keeps inside them as inner comments. Like Prettier, an
+ * enum or type literal keeps a lone block comment on the line of its braces
+ * when it fits. Otherwise each comment prints on its own line.
+ * @param {AST.TSInterfaceBody | AST.TSTypeLiteral | AST.TSEnumDeclaration} node
+ * @returns {Doc}
+ */
+function printEmptyMemberList(node) {
+	const comments = node.innerComments ?? [];
+	if (comments.length === 0) {
+		return '{}';
+	}
+	if (node.type !== 'TSInterfaceBody' && comments.length === 1 && comments[0].type === 'Block') {
+		return group(['{', indent([softline, '/*' + comments[0].value + '*/']), softline, '}']);
+	}
+	return ['{', indent(printElementBodyComments(comments)), hardline, '}'];
 }
 
 /**
@@ -5995,7 +6014,7 @@ function printTSEnumDeclaration(node, path, options, print) {
 
 	// Print enum body
 	if (!node.members || node.members.length === 0) {
-		parts.push('{}');
+		parts.push(printEmptyMemberList(node));
 	} else {
 		const members = path.map(print, 'members');
 		const membersWithCommas = [];
@@ -6953,7 +6972,7 @@ function printAssignmentPattern(node, path, options, print) {
  */
 function printTSTypeLiteral(node, path, options, print) {
 	if (!node.members || node.members.length === 0) {
-		return '{}';
+		return printEmptyMemberList(node);
 	}
 
 	const members = path.map(print, 'members');

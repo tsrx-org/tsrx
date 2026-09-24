@@ -8492,6 +8492,75 @@ declare global {
 		});
 	});
 
+	// A JSDoc tag documents the member it leads, so moving it to the member
+	// before changes what the tag applies to.
+	describe('comments in interfaces, enums, and type literals', () => {
+		it('keeps a JSDoc comment with the member it starts', async () => {
+			const input = `interface I { a: 1; /** @deprecated */ b: 2; }
+enum E { A, /** @deprecated */ B }
+type T = { a: 1; /** @deprecated */ b: 2 };`;
+			const expected = `interface I {
+  a: 1;
+  /** @deprecated */ b: 2;
+}
+enum E {
+  A,
+  /** @deprecated */ B,
+}
+type T = { a: 1; /** @deprecated */ b: 2 };`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps comments after the last member inside the body', async () => {
+			const source = `interface I {
+  a: 1; // a
+  // after a
+}
+enum E {
+  A, // a
+  // after a
+}
+type T = {
+  a: 1; // a
+  // after a
+};`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('keeps the comments of an empty interface, enum, or type literal inside it', async () => {
+			const input = `interface I {
+  // interface
+}
+enum E {
+  // enum
+}
+type T = {
+  // type
+};
+interface J { /* interface */ }
+enum F { /* enum */ }
+type U = { /* type */ };`;
+			const expected = `interface I {
+  // interface
+}
+enum E {
+  // enum
+}
+type T = {
+  // type
+};
+interface J {
+  /* interface */
+}
+enum F {/* enum */}
+type U = {/* type */};`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	// Import aliases and export assignments are runtime bindings. Dropping one
 	// leaves every later reference dangling, and the file still compiles, so the
 	// break only surfaces when the module runs.

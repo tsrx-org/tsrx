@@ -618,12 +618,15 @@ export function get_comment_handlers(source, comments, index = 0) {
 							}
 						}
 						if (
-							(node.type === 'BlockStatement' ||
+							((node.type === 'BlockStatement' ||
 								node.type === 'StaticBlock' ||
-								node.type === 'TSModuleBlock') &&
-							node.body.length === 0
+								node.type === 'TSModuleBlock' ||
+								node.type === 'TSInterfaceBody') &&
+								node.body.length === 0) ||
+							((node.type === 'TSTypeLiteral' || node.type === 'TSEnumDeclaration') &&
+								node.members.length === 0)
 						) {
-							// Collect all comments that fall within this empty block
+							// Collect all comments that fall within this empty block or member list
 							while (
 								comments[0] &&
 								comments[0].start < /** @type {AST.NodeWithLocation} */ (node).end &&
@@ -704,7 +707,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 									parent.type === 'Program' ||
 									parent.type === 'ClassBody' ||
 									parent.type === 'StaticBlock' ||
-									parent.type === 'TSModuleBlock'
+									parent.type === 'TSModuleBlock' ||
+									parent.type === 'TSInterfaceBody'
 								) {
 									node_array = parent.body;
 								} else if (parent.type === 'JSXCodeBlock') {
@@ -726,6 +730,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 									node_array = parent.properties;
 								} else if (parent.type === 'TSTypeLiteral') {
 									node_array = parent.members;
+								} else if (parent.type === 'TSEnumDeclaration') {
+									// The enum's name is not a member. With no members, it would
+									// count as the last one and take the body's comments.
+									if (node !== parent.id) {
+										node_array = parent.members;
+									}
 								} else if (
 									parent.type === 'FunctionDeclaration' ||
 									parent.type === 'FunctionExpression' ||
