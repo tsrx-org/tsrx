@@ -1811,6 +1811,29 @@ export function Pair() @{
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('keeps await on for await loops and @for await directives', async () => {
+			const input = `async function read(stream){for await(const chunk of stream){use(chunk)}}
+async function App({ items }) @{
+<ul>@for await(const item of items; index i){<li>{item}</li>}@empty{<li>none</li>}</ul>
+}`;
+			const expected = `async function read(stream) {
+  for await (const chunk of stream) {
+    use(chunk);
+  }
+}
+async function App({ items }) @{
+  <ul>
+    @for await (const item of items; index i) {
+      <li>{item}</li>
+    } @empty {
+      <li>none</li>
+    }
+  </ul>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should handle TypeScript function return type', async () => {
 			const input = `export function FooBar() { function Foo() : string { return ""; }}`;
 			const expected = `export function FooBar() {

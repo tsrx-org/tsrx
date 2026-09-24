@@ -4626,7 +4626,7 @@ function printForInStatement(node, path, options, print) {
 function printForOfStatement(node, path, options, print, directive = false) {
 	/** @type {Doc[]} */
 	const parts = [];
-	parts.push('for (');
+	parts.push(node.await ? 'for await (' : 'for (');
 	parts.push(path.call(print, 'left'));
 	parts.push(' of ');
 	parts.push(path.call(print, 'right'));
