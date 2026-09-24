@@ -46,6 +46,7 @@ const {
 	lineSuffixBoundary,
 	align,
 	addAlignmentToDoc,
+	label,
 } = builders;
 const { replaceEndOfLine, stripTrailingHardline, willBreak, canBreak, removeLines, mapDoc } = utils;
 const { printDocToString } = doc.printer;
@@ -913,9 +914,11 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 				case 'TaggedTemplateExpression':
 				case 'TSInstantiationExpression':
 				case 'TSNonNullExpression':
-				case 'UnaryExpression':
 				case 'UpdateExpression':
 					return true;
+				case 'UnaryExpression':
+					// The unary prints the parentheses around an operand with comments
+					return !hasComment(node);
 				case 'LogicalExpression':
 				case 'BinaryExpression': {
 					if (node.type !== 'BinaryExpression' && node.type !== 'LogicalExpression') {
@@ -2292,6 +2295,15 @@ function printTsrxNode(node, path, options, print, args) {
 		}
 
 		case 'CallExpression': {
+			// A call on a member lookup prints as a member chain
+			if (
+				node.callee.type === 'MemberExpression' &&
+				path.call((calleePath) => canInlineChainNode(calleePath, options), 'callee')
+			) {
+				nodeContent = printMemberChain(path, options, print);
+				break;
+			}
+
 			/** @type {Doc[]} */
 			const parts = [];
 			parts.push(path.call(print, 'callee'));
@@ -6078,7 +6090,11 @@ function printMethodDefinition(node, path, options, print) {
 }
 
 /**
- * Print a member expression (object.property or object[property])
+ * Print a member expression like Prettier's `printMemberExpression`. A lookup
+ * in a long chain of plain property accesses can break before its `.`, except
+ * where Prettier keeps it inline: a computed lookup, `a.b` outside a longer
+ * chain, a `new` callee, an assignment target, and a lookup on a call with
+ * arguments or a member chain in an assigned value.
  * @param {AST.MemberExpression} node - The member expression node
  * @param {AstPath<AST.MemberExpression>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
@@ -6086,15 +6102,565 @@ function printMethodDefinition(node, path, options, print) {
  * @returns {Doc}
  */
 function printMemberExpression(node, path, options, print) {
-	const objectPart = path.call(print, 'object');
-	const propertyPart = path.call(print, 'property');
+	const objectDoc = path.call(print, 'object');
+	const lookupDoc = printMemberLookup(path, print);
+	const firstNonMemberParent = findAncestor(
+		path,
+		(ancestor) => ancestor.type !== 'MemberExpression' && ancestor.type !== 'TSNonNullExpression',
+	);
+	const firstNonChainElementWrapperParent = findAncestor(
+		path,
+		(ancestor) => ancestor.type !== 'ChainExpression' && ancestor.type !== 'TSNonNullExpression',
+	);
+	const objectLabel = /** @type {{ label?: { memberChain?: boolean } }} */ (objectDoc).label;
+	const object = skipChainElementWrappers(node.object);
 
-	if (node.computed) {
-		const openBracket = node.optional ? '?.[' : '[';
-		return [objectPart, openBracket, propertyPart, ']'];
+	const shouldInline =
+		(firstNonMemberParent?.type === 'AssignmentExpression' &&
+			firstNonMemberParent.left.type !== 'Identifier') ||
+		shouldInlineNewExpressionCallee(path) ||
+		node.computed ||
+		(node.object.type === 'Identifier' &&
+			node.property.type === 'Identifier' &&
+			firstNonChainElementWrapperParent?.type !== 'MemberExpression') ||
+		((firstNonChainElementWrapperParent?.type === 'AssignmentExpression' ||
+			firstNonChainElementWrapperParent?.type === 'VariableDeclarator') &&
+			((object.type === 'CallExpression' && object.arguments.length > 0) ||
+				Boolean(objectLabel?.memberChain)));
+
+	return label(objectLabel, [
+		objectDoc,
+		lineSuffixBoundary,
+		shouldInline ? lookupDoc : group(indent([softline, lookupDoc])),
+	]);
+}
+
+/**
+ * The closest ancestor of the node at `path` that matches `predicate`.
+ * @param {AstPath} path
+ * @param {(node: AST.Node) => boolean} predicate
+ * @returns {AST.Node | null}
+ */
+function findAncestor(path, predicate) {
+	for (let level = 0; ; level++) {
+		const ancestor = /** @type {AST.Node | null} */ (path.getParentNode(level));
+		if (!ancestor || predicate(ancestor)) {
+			return ancestor;
+		}
 	}
-	const separator = node.optional ? '?.' : '.';
-	return [objectPart, separator, propertyPart];
+}
+
+/**
+ * Whether a member expression is part of a `new` callee, where a line break
+ * would read as the end of the callee (Prettier's
+ * `shouldInlineNewExpressionCallee`).
+ * @param {AstPath} path - The path to the member expression
+ * @returns {boolean}
+ */
+function shouldInlineNewExpressionCallee(path) {
+	/** @type {AST.Node} */
+	let child = /** @type {AST.Node} */ (path.node);
+	for (let level = 0; ; level++) {
+		const ancestor = /** @type {AST.Node | null} */ (path.getParentNode(level));
+		if (!ancestor) {
+			return false;
+		}
+		if (!(
+			(ancestor.type === 'MemberExpression' && ancestor.object === child) ||
+			(ancestor.type === 'TSNonNullExpression' && ancestor.expression === child)
+		)) {
+			return ancestor.type === 'NewExpression' && ancestor.callee === child;
+		}
+		child = ancestor;
+	}
+}
+
+/**
+ * Print the `.property`, `?.property` or `[property]` part of a member
+ * expression (Prettier's `printMemberLookup`).
+ * @param {AstPath} path - The path to the member expression
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printMemberLookup(path, print) {
+	const node = /** @type {AST.MemberExpression} */ (path.node);
+	const property = path.call(print, 'property');
+	const optional = node.optional ? '?.' : '';
+
+	if (!node.computed) {
+		return [optional || '.', property];
+	}
+
+	if (isNumericLiteral(node.property)) {
+		return [optional, '[', property, ']'];
+	}
+
+	return group([optional, '[', indent([softline, property]), softline, ']']);
+}
+
+/**
+ * @typedef {{ node: AST.Node, printed: Doc, hasTrailingEmptyLine?: boolean }} PrintedChainNode
+ */
+
+/**
+ * Print a call on a member expression, and the calls and lookups before it, as
+ * a member chain, like Prettier's `printMemberChain`:
+ *
+ *   promise
+ *     .then((result) => result.value)
+ *     .catch((error) => console.error(error));
+ *
+ * The chain splits into groups, each a `.name` lookup with its calls. A short
+ * chain prints on one line. A longer one prints on one line when it fits and
+ * has only simple arguments, and otherwise with one group per indented line.
+ * A short head (`this`, a factory like `Object` or `z`, or a short identifier
+ * in a statement) stays on the first line with the first group.
+ * @param {AstPath<AST.CallExpression>} path - The path to the outermost call
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printMemberChain(path, options, print) {
+	const node = path.node;
+	const parent = /** @type {AST.Node} */ (path.getParentNode());
+	const isExpressionStatement =
+		/** @type {AST.Node | null} */ (
+			parent.type === 'ChainExpression' ? path.getParentNode(1) : parent
+		)?.type === 'ExpressionStatement';
+	const text = options.originalText ?? '';
+
+	// Linearize the chain: `a().b()` is Call(Member(Call(a))), and prints as
+	// the list [a, (), .b, ()]
+	/** @type {PrintedChainNode[]} */
+	const printedNodes = [];
+
+	/**
+	 * Whether a blank line typed after a call (or the first group, past its
+	 * parentheses) is kept
+	 * @param {AST.Node} chainNode
+	 * @returns {boolean}
+	 */
+	const shouldInsertEmptyLineAfter = (chainNode) => {
+		const nextCharIndex = getNextNonSpaceNonCommentCharacterIndex(
+			text,
+			/** @type {AST.NodeWithLocation} */ (chainNode).end,
+		);
+		if (nextCharIndex !== false && text.charAt(nextCharIndex) === ')') {
+			return isNextLineEmptyAfterIndex(text, nextCharIndex + 1);
+		}
+		return isNextLineEmpty(chainNode, options);
+	};
+
+	/**
+	 * @param {AstPath} chainPath
+	 */
+	const printCallTail = (chainPath) => {
+		const call = /** @type {AST.SimpleCallExpression} */ (chainPath.node);
+		return [
+			call.optional ? '?.' : '',
+			call.typeArguments ? chainPath.call(print, 'typeArguments') : '',
+			printCallArguments(chainPath, options, print),
+		];
+	};
+
+	/**
+	 * @param {AstPath} chainPath
+	 */
+	const rec = (chainPath) => {
+		const chainNode = /** @type {AST.Node} */ (chainPath.node);
+		const printsItself = !canInlineChainNode(chainPath, options);
+		if (
+			chainNode.type === 'CallExpression' &&
+			(chainNode.callee.type === 'MemberExpression' ||
+				chainNode.callee.type === 'CallExpression') &&
+			!printsItself
+		) {
+			const hasTrailingEmptyLine = shouldInsertEmptyLineAfter(chainNode);
+			printedNodes.unshift({
+				node: chainNode,
+				hasTrailingEmptyLine,
+				printed: [
+					printChainNodeComments(chainNode, printCallTail(chainPath), options),
+					hasTrailingEmptyLine ? hardline : '',
+				],
+			});
+			chainPath.call(rec, 'callee');
+		} else if (chainNode.type === 'MemberExpression' && !printsItself) {
+			printedNodes.unshift({
+				node: chainNode,
+				printed: printChainNodeComments(chainNode, printMemberLookup(chainPath, print), options),
+			});
+			chainPath.call(rec, 'object');
+		} else if (chainNode.type === 'ChainExpression' && !printsItself) {
+			chainPath.call(rec, 'expression');
+		} else if (chainNode.type === 'TSNonNullExpression' && !printsItself) {
+			printedNodes.unshift({
+				node: chainNode,
+				printed: printChainNodeComments(chainNode, '!', options),
+			});
+			chainPath.call(rec, 'expression');
+		} else {
+			printedNodes.unshift({ node: chainNode, printed: print(chainPath) });
+		}
+	};
+
+	// The outermost call's comments print with it, in printTsrxNode
+	printedNodes.unshift({ node, printed: printCallTail(path) });
+	path.call(rec, 'callee');
+
+	// Group the list. The first group is the first node, followed by
+	//   - as many calls as possible: < fn()()() >.something()
+	//   - as many numeric lookups as possible: < fn()[0][1] >.something()
+	//   - then all the lookups but the last one: < this.items >.something()
+	// Each following group is lookups, then the calls after them:
+	//   a().b.c().d().e  ->  [a, ()] [.b, .c, ()] [.d, ()] [.e]
+	/** @type {PrintedChainNode[][]} */
+	const groups = [];
+	let currentGroup = [printedNodes[0]];
+	let index = 1;
+	for (; index < printedNodes.length; ++index) {
+		const chainNode = printedNodes[index].node;
+		if (
+			chainNode.type === 'TSNonNullExpression' ||
+			chainNode.type === 'ChainExpression' ||
+			chainNode.type === 'CallExpression' ||
+			(chainNode.type === 'MemberExpression' &&
+				chainNode.computed &&
+				isNumericLiteral(chainNode.property))
+		) {
+			currentGroup.push(printedNodes[index]);
+		} else {
+			break;
+		}
+	}
+	if (printedNodes[0].node.type !== 'CallExpression') {
+		for (; index + 1 < printedNodes.length; ++index) {
+			if (
+				printedNodes[index].node.type === 'MemberExpression' &&
+				printedNodes[index + 1].node.type === 'MemberExpression'
+			) {
+				currentGroup.push(printedNodes[index]);
+			} else {
+				break;
+			}
+		}
+	}
+	groups.push(currentGroup);
+	currentGroup = [];
+
+	let hasSeenCallExpression = false;
+	for (; index < printedNodes.length; ++index) {
+		const chainNode = printedNodes[index].node;
+		if (hasSeenCallExpression && chainNode.type === 'MemberExpression') {
+			// `[0]` ends the current group instead of starting the next one
+			if (chainNode.computed && isNumericLiteral(chainNode.property)) {
+				currentGroup.push(printedNodes[index]);
+				continue;
+			}
+			groups.push(currentGroup);
+			currentGroup = [];
+			hasSeenCallExpression = false;
+		}
+		if (chainNode.type === 'CallExpression' || chainNode.type === 'ImportExpression') {
+			hasSeenCallExpression = true;
+		}
+		currentGroup.push(printedNodes[index]);
+		if (/** @type {AST.NodeWithMaybeComments} */ (chainNode).trailingComments?.length) {
+			groups.push(currentGroup);
+			currentGroup = [];
+			hasSeenCallExpression = false;
+		}
+	}
+	if (currentGroup.length > 0) {
+		groups.push(currentGroup);
+	}
+
+	// A factory (`Object.keys()`, `z.object()`, `_.values()`) or `this` is the
+	// subject of the calls after it, and so is a short identifier in a
+	// statement (`d3.scaleLinear()`): the first group stays on the first line
+	/** @param {string} name */
+	const isFactory = (name) => /^[A-Z]|^[$_]+$/.test(name);
+	/** @param {string} name */
+	const isShort = (name) => name.length <= (options.tabWidth ?? 2);
+	const shouldNotWrap = () => {
+		const firstLookup = /** @type {AST.MemberExpression | undefined} */ (groups[1][0]?.node);
+		const hasComputed = Boolean(firstLookup?.computed);
+		if (groups[0].length === 1) {
+			const firstNode = groups[0][0].node;
+			return (
+				firstNode.type === 'ThisExpression' ||
+				(firstNode.type === 'Identifier' &&
+					(isFactory(firstNode.name) ||
+						(isExpressionStatement && isShort(firstNode.name)) ||
+						hasComputed))
+			);
+		}
+		const lastNode = /** @type {AST.Node} */ (groups[0].at(-1)?.node);
+		return (
+			lastNode.type === 'MemberExpression' &&
+			lastNode.property.type === 'Identifier' &&
+			(isFactory(lastNode.property.name) || hasComputed)
+		);
+	};
+	const shouldMerge = groups.length >= 2 && !hasComment(groups[1][0].node) && shouldNotWrap();
+
+	/** @param {PrintedChainNode[]} printedGroup */
+	const printGroup = (printedGroup) => printedGroup.map((tuple) => tuple.printed);
+	/** @param {PrintedChainNode[][]} indentedGroups */
+	const printIndentedGroup = (indentedGroups) =>
+		indentedGroups.length === 0
+			? ''
+			: indent([hardline, join(hardline, indentedGroups.map(printGroup))]);
+
+	const printedGroups = groups.map(printGroup);
+	const oneLine = printedGroups;
+
+	const cutoff = shouldMerge ? 3 : 2;
+	const flatGroups = groups.flat();
+	const nodeHasComment =
+		flatGroups
+			.slice(1, -1)
+			.some(
+				({ node }) => /** @type {AST.NodeWithMaybeComments} */ (node).leadingComments?.length,
+			) ||
+		flatGroups
+			.slice(0, -1)
+			.some(
+				({ node }) => /** @type {AST.NodeWithMaybeComments} */ (node).trailingComments?.length,
+			) ||
+		Boolean(
+			groups[cutoff] &&
+			/** @type {AST.NodeWithMaybeComments} */ (groups[cutoff][0].node).leadingComments?.length,
+		);
+
+	// A chain with a single `.` group prints as it is
+	if (
+		groups.length <= cutoff &&
+		!nodeHasComment &&
+		groups.every((printedGroup) => !printedGroup.at(-1)?.hasTrailingEmptyLine)
+	) {
+		return isLongCurriedCallExpression(path) ? oneLine : group(oneLine);
+	}
+
+	// Keep a blank line typed after the last node before the indented groups
+	const lastNodeBeforeIndent = /** @type {AST.Node} */ (groups[shouldMerge ? 1 : 0].at(-1)?.node);
+	const shouldHaveEmptyLineBeforeIndent =
+		lastNodeBeforeIndent.type !== 'CallExpression' &&
+		shouldInsertEmptyLineAfter(lastNodeBeforeIndent);
+
+	/** @type {Doc} */
+	const expanded = [
+		printGroup(groups[0]),
+		shouldMerge ? printGroup(groups[1]) : '',
+		shouldHaveEmptyLineBeforeIndent ? hardline : '',
+		printIndentedGroup(groups.slice(shouldMerge ? 2 : 1)),
+	];
+
+	const callExpressions = /** @type {AST.CallExpression[]} */ (
+		printedNodes.map(({ node }) => node).filter(({ type }) => type === 'CallExpression')
+	);
+
+	const lastGroupWillBreakAndOtherCallsHaveFunctionArguments = () => {
+		const lastGroupNode = /** @type {AST.Node} */ (groups.at(-1)?.at(-1)?.node);
+		const lastGroupDoc = /** @type {Doc} */ (printedGroups.at(-1));
+		return (
+			lastGroupNode.type === 'CallExpression' &&
+			willBreak(lastGroupDoc) &&
+			callExpressions
+				.slice(0, -1)
+				.some((call) =>
+					call.arguments.some(
+						(argument) =>
+							argument.type === 'FunctionExpression' || argument.type === 'ArrowFunctionExpression',
+					),
+				)
+		);
+	};
+
+	/** @type {Doc} */
+	let result;
+	// Don't try the one-line form when the chain has comments, when it has more
+	// than two calls and any argument that isn't simple, when any group but
+	// the last breaks, or when the last call breaks and another call takes a
+	// function
+	if (
+		nodeHasComment ||
+		(callExpressions.length > 2 &&
+			callExpressions.some((call) =>
+				call.arguments.some((argument) => !isSimpleCallArgument(argument)),
+			)) ||
+		printedGroups.slice(0, -1).some(willBreak) ||
+		lastGroupWillBreakAndOtherCallsHaveFunctionArguments()
+	) {
+		result = group(expanded);
+	} else {
+		result = [
+			// Only `oneLine` needs the check: choosing `expanded` means the parent
+			// group broke already
+			willBreak(oneLine) || shouldHaveEmptyLineBeforeIndent ? breakParent : '',
+			conditionalGroup([oneLine, expanded]),
+		];
+	}
+
+	return label({ memberChain: true }, result);
+}
+
+/**
+ * Whether a node of a member chain prints as part of the chain. One that needs
+ * parentheses, prints inside a JSDoc cast's parentheses, or prints verbatim
+ * keeps its own printer and ends the chain.
+ * @param {AstPath} path - The path to the node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {boolean}
+ */
+function canInlineChainNode(path, options) {
+	const node = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node);
+	return (
+		!needsParens(path, options) && !getTypeCastParens(path, options) && !hasPrettierIgnore(node)
+	);
+}
+
+/**
+ * Print a member chain node's comments around its part of the chain, since
+ * the chain prints the node without `print`.
+ * @param {AST.Node} node - The node
+ * @param {Doc} doc - The node's part of the chain
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc}
+ */
+function printChainNodeComments(node, doc, options) {
+	const commentNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node);
+	if (!commentNode.leadingComments?.length && !commentNode.trailingComments?.length) {
+		return doc;
+	}
+	return finishTsrxNode(
+		commentNode,
+		printLeadingComments(commentNode, commentNode.leadingComments ?? [], options, false),
+		doc,
+		options,
+	);
+}
+
+/**
+ * Whether a call is the callee of a call with fewer arguments, as in
+ * `connect(a, b, c)(d)` (Prettier's `isLongCurriedCallExpression`).
+ * @param {AstPath} path - The path to the call
+ * @returns {boolean}
+ */
+function isLongCurriedCallExpression(path) {
+	const node = /** @type {AST.Node} */ (path.node);
+	const parent = /** @type {AST.Node | null} */ (path.getParentNode());
+	return (
+		path.key === 'callee' &&
+		node.type === 'CallExpression' &&
+		parent?.type === 'CallExpression' &&
+		parent.arguments.length > 0 &&
+		node.arguments.length > parent.arguments.length
+	);
+}
+
+/** Unary operators whose operand keeps a call argument simple */
+const SIMPLE_CALL_ARGUMENT_UNARY_OPERATORS = new Set(['!', '-', '+', '~']);
+
+/**
+ * Whether a call argument is simple enough for a member chain to stay on one
+ * line (Prettier's `isSimpleCallArgument`): a literal, an identifier, `this`,
+ * a short regular expression, and objects, arrays, templates, calls, member
+ * lookups and some unary expressions made of those, two levels deep.
+ * @param {AST.Node} node - The argument
+ * @param {number} [depth]
+ * @returns {boolean}
+ */
+function isSimpleCallArgument(node, depth = 2) {
+	if (depth <= 0) {
+		return false;
+	}
+	/** @param {AST.Node | null} child */
+	const isChildSimple = (child) => child === null || isSimpleCallArgument(child, depth - 1);
+
+	node = skipChainElementWrappers(node);
+
+	if (node.type === 'Literal' && 'regex' in node && node.regex) {
+		return node.regex.pattern.length <= 5;
+	}
+
+	if (
+		node.type === 'Literal' ||
+		node.type === 'Identifier' ||
+		node.type === 'ThisExpression' ||
+		node.type === 'Super' ||
+		node.type === 'PrivateIdentifier'
+	) {
+		return true;
+	}
+
+	if (node.type === 'TemplateLiteral') {
+		return (
+			node.quasis.every((element) => !element.value.raw.includes('\n')) &&
+			node.expressions.every(isChildSimple)
+		);
+	}
+
+	if (node.type === 'ObjectExpression') {
+		return node.properties.every(
+			(property) =>
+				property.type === 'Property' &&
+				!property.computed &&
+				(property.shorthand || (property.value && isChildSimple(property.value))),
+		);
+	}
+
+	if (node.type === 'ArrayExpression') {
+		return node.elements.every(isChildSimple);
+	}
+
+	if (node.type === 'ImportExpression') {
+		return isChildSimple(node.source) && (!node.options || isChildSimple(node.options));
+	}
+
+	if (node.type === 'CallExpression' || node.type === 'NewExpression') {
+		return (
+			isSimpleCallArgument(node.callee, depth) &&
+			node.arguments.length <= depth &&
+			node.arguments.every(isChildSimple)
+		);
+	}
+
+	if (node.type === 'MemberExpression') {
+		return isSimpleCallArgument(node.object, depth) && isSimpleCallArgument(node.property, depth);
+	}
+
+	if (
+		(node.type === 'UnaryExpression' && SIMPLE_CALL_ARGUMENT_UNARY_OPERATORS.has(node.operator)) ||
+		node.type === 'UpdateExpression'
+	) {
+		return isSimpleCallArgument(node.argument, depth);
+	}
+
+	return false;
+}
+
+/**
+ * The index of the first character after `startIndex` that isn't a space, a
+ * line break or part of a comment (Prettier's
+ * `getNextNonSpaceNonCommentCharacterIndex`).
+ * @param {string} text
+ * @param {number} startIndex
+ * @returns {number | false}
+ */
+function getNextNonSpaceNonCommentCharacterIndex(text, startIndex) {
+	/** @type {number | false | null} */
+	let previousIndex = null;
+	/** @type {number | false} */
+	let index = startIndex;
+	while (index !== previousIndex) {
+		previousIndex = index;
+		index = skipSpaces(text, index);
+		index = skipInlineComment(text, index);
+		index = skipTrailingComment(text, index);
+		index = skipNewline(text, index);
+	}
+	return index;
 }
 
 /**
@@ -6116,7 +6682,14 @@ function printUnaryExpression(node, path, options, print) {
 		if (needsSpace) {
 			parts.push(' ');
 		}
-		parts.push(path.call(print, 'argument'));
+		const argumentDoc = path.call(print, 'argument');
+		// Like Prettier, an operand with comments prints in parentheses that
+		// break around it
+		parts.push(
+			hasComment(node.argument)
+				? group(['(', indent([softline, argumentDoc]), softline, ')'])
+				: argumentDoc,
+		);
 	} else {
 		parts.push(path.call(print, 'argument'), node.operator);
 	}

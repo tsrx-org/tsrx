@@ -10262,6 +10262,174 @@ function f() {
 		});
 	});
 
+	describe('member chains break like Prettier', () => {
+		it.each([
+			[
+				'promise.then((result) => result.value).catch((error) => console.error(error)).finally(() => done());',
+				`promise
+  .then((result) => result.value)
+  .catch((error) => console.error(error))
+  .finally(() => done());`,
+			],
+			[
+				'const names = users.filter((user) => user.isActive).map((user) => user.name).join(", ");',
+				`const names = users
+  .filter((user) => user.isActive)
+  .map((user) => user.name)
+  .join(", ");`,
+			],
+			[
+				'function load() {\n  return fetch(url).then((response) => response.json()).then((data) => data.items);\n}',
+				`function load() {
+  return fetch(url)
+    .then((response) => response.json())
+    .then((data) => data.items);
+}`,
+			],
+			[
+				'async function load() {\n  const data = await fetch(url).then((response) => response.json()).then((data) => data.items);\n}',
+				`async function load() {
+  const data = await fetch(url)
+    .then((response) => response.json())
+    .then((data) => data.items);
+}`,
+			],
+			[
+				'array.map((element) => element * 2).filter(Boolean)[0].toString().padStart(someWidth, "0");',
+				`array
+  .map((element) => element * 2)
+  .filter(Boolean)[0]
+  .toString()
+  .padStart(someWidth, "0");`,
+			],
+			[
+				'const handler = event.target.closest("[data-some-attribute]")?.getAttribute("data-some-attribute");',
+				`const handler = event.target
+  .closest("[data-some-attribute]")
+  ?.getAttribute("data-some-attribute");`,
+			],
+		])('puts each call of a long chain on its own line in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			[
+				'const schema = z.object({ name: z.string(), email: z.string().email(), age: z.number().int().positive() }).strict().optional();',
+				`const schema = z
+  .object({
+    name: z.string(),
+    email: z.string().email(),
+    age: z.number().int().positive(),
+  })
+  .strict()
+  .optional();`,
+			],
+			[
+				'const result = Object.keys(someObjectWithALongName).filter((key) => key.startsWith("a")).map((key) => key.toUpperCase());',
+				`const result = Object.keys(someObjectWithALongName)
+  .filter((key) => key.startsWith("a"))
+  .map((key) => key.toUpperCase());`,
+			],
+			[
+				'd3.scaleLinear().domain([0, 100]).range([0, width]).clamp(true).nice().ticks(someTickCount);',
+				`d3.scaleLinear()
+  .domain([0, 100])
+  .range([0, width])
+  .clamp(true)
+  .nice()
+  .ticks(someTickCount);`,
+			],
+			[
+				'this.server.listen(port).on("error", (error) => handleTheError(error)).on("close", () => cleanup());',
+				`this.server
+  .listen(port)
+  .on("error", (error) => handleTheError(error))
+  .on("close", () => cleanup());`,
+			],
+		])(
+			'keeps a factory or short head on the first line only where Prettier does in %s',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		it('keeps short chains and chains that break inside a call on one line', async () => {
+			const source = `const x = a.b().c().d();
+wrapper.find("SomeSelector").prop("children")(defaultValue).toBe(1);
+object.foo.bar.baz.qux();
+expect(
+  screen.getByRole("button", { name: "Submit the form now please" }),
+).toBeInTheDocument();`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a blank line and a trailing comment inside a chain', async () => {
+			const source = `app
+  .use(express.json())
+
+  .use(cors());
+item
+  .foo() // trailing
+  .bar()
+  .baz();`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('breaks a long chain of property lookups before its last lookup', async () => {
+			const result = await format(
+				'foo(someObject.someProperty.someOtherProperty.yetAnotherProperty.finalProperty.last);',
+			);
+			expect(result).toBeWithNewline(`foo(
+  someObject.someProperty.someOtherProperty.yetAnotherProperty.finalProperty
+    .last,
+);`);
+		});
+
+		it('keeps a component template chain idempotent', async () => {
+			const result = await format(`export function List(props) @{
+  const visible = props.items.filter((item) => item.includes(props.filter)).map((item) => item.toUpperCase()).slice(0, 10);
+  <ul>
+    @for (const item of visible) {
+      <li>{item.toUpperCase().split("").reverse().join("")}</li>
+    }
+  </ul>
+}`);
+			expect(result).toBeWithNewline(`export function List(props) @{
+  const visible = props.items
+    .filter((item) => item.includes(props.filter))
+    .map((item) => item.toUpperCase())
+    .slice(0, 10);
+  <ul>
+    @for (const item of visible) {
+      <li>{item.toUpperCase().split("").reverse().join("")}</li>
+    }
+  </ul>
+}`);
+		});
+	});
+
+	describe('unary operands with comments print in their own parentheses', () => {
+		it.each([
+			['x = !/* c */ a;', 'x = !(/* c */ a);'],
+			['x = !(a || b /* c */);', 'x = !(a || b /* c */);'],
+			['x = typeof (/* c */ a + b);', 'x = typeof (/* c */ a + b);'],
+		])('prints %s like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parentheses around a long commented operand', async () => {
+			const source = `function f() {
+  return !(
+    (before >= 48 /* 0 */ && before <= 57) ||
+    (before >= 65 /* A */ && before <= 90) ||
+    before === 36 /* $ */ ||
+    before === 95 /* _ */
+  );
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
 	// Dropping the `;` of an empty body makes the next statement the body, so the
 	// formatted program runs different code and a trailing loop stops parsing.
 	describe('empty statement bodies keep their semicolon', () => {
