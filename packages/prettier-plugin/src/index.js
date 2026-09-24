@@ -22,7 +22,7 @@
  * @typedef {AST.Node & { decorators?: AST.Decorator[] }} MaybeDecoratedNode
  */
 
-/** @typedef {{ isConditionalTest?: boolean, isNestedConditional?: boolean, suppressLeadingComments?: boolean, suppressExpressionLeadingComments?: boolean, suppressOwnParens?: boolean, isInlineContext?: boolean, isStatement?: boolean, isLogicalAndOr?: boolean, allowShorthandProperty?: boolean, isFirstChild?: boolean, noBreakInside?: boolean, expandLastArg?: boolean, expandFirstArg?: boolean, assignmentLayout?: AssignmentLayout, preferInlineSimpleUnionType?: boolean }} PrintArgs */
+/** @typedef {{ suppressLeadingComments?: boolean, suppressExpressionLeadingComments?: boolean, suppressOwnParens?: boolean, isInlineContext?: boolean, isStatement?: boolean, isLogicalAndOr?: boolean, allowShorthandProperty?: boolean, isFirstChild?: boolean, noBreakInside?: boolean, expandLastArg?: boolean, expandFirstArg?: boolean, assignmentLayout?: AssignmentLayout, preferInlineSimpleUnionType?: boolean }} PrintArgs */
 
 import { parseModule } from '@tsrx/core';
 import { doc } from 'prettier';
@@ -39,13 +39,16 @@ const {
 	ifBreak,
 	fill,
 	conditionalGroup,
+	dedent,
 	breakParent,
 	indentIfBreak,
 	lineSuffix,
 	lineSuffixBoundary,
 	align,
+	addAlignmentToDoc,
 } = builders;
 const { replaceEndOfLine, stripTrailingHardline, willBreak, canBreak, removeLines, mapDoc } = utils;
+const { printDocToString } = doc.printer;
 
 /** @type {import('prettier').Plugin['languages']} */
 export const languages = [
@@ -919,15 +922,12 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 						return true;
 					}
 					if (node.type === 'LogicalExpression' && parent.type === 'LogicalExpression') {
-						// `??` does not mix with `||` or `&&` without parentheses
-						if ((node.operator === '??') !== (parent.operator === '??')) {
-							return true;
-						}
-						// A chain of one logical operator evaluates the same however it
-						// is grouped, so `a || (b || c)` flattens like Prettier does
-						if (node.operator === parent.operator) {
-							return false;
-						}
+						// Like Prettier, a logical operand of another logical operator
+						// shows its grouping: `(a && b) || c`. `??` does not mix with
+						// `||` or `&&` without them anyway. A chain of one operator
+						// evaluates the same however it is grouped, so `a || (b || c)`
+						// flattens.
+						return parent.operator !== node.operator;
 					}
 					const nodeOperator = node.operator;
 					const parentOperator = parent.operator;
@@ -1003,9 +1003,8 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 				case 'MemberExpression':
 					return key === 'object';
 				case 'ConditionalExpression':
-					// The ternary layout keeps a parenthesized nested branch inline, so
-					// branch parens stay as written; a nested test always needs them.
-					return key === 'test' || Boolean(node.metadata?.parenthesized);
+					// A nested consequent prints its parentheses itself, only on one line
+					return key === 'test';
 				default:
 					return false;
 			}
@@ -2679,215 +2678,22 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 		}
 
-		case 'ReturnStatement': {
-			/** @type {Doc[]} */
-			const parts = ['return'];
-			if (node.argument) {
-				if (
-					path.call((argumentPath) => getOwnLineCommentAhead(argumentPath, options), 'argument')
-				) {
-					// The comment prints on its own line, which would separate `return`
-					// from its argument and trigger ASI — keep the argument in parens.
-					// These parens replace any the argument would print for itself.
-					parts.push(
-						' (',
-						indent([
-							hardline,
-							path.call(
-								(argumentPath) => print(argumentPath, { suppressOwnParens: true }),
-								'argument',
-							),
-						]),
-						hardline,
-						')',
-					);
-				} else {
-					parts.push(' ');
-					parts.push(path.call(print, 'argument'));
-				}
-			}
-			parts.push(semi(options));
-			nodeContent = parts;
+		case 'ReturnStatement':
+			nodeContent = [
+				'return',
+				node.argument ? printReturnOrThrowArgument(path, options, print) : '',
+				semi(options),
+			];
 			break;
-		}
 
-		case 'BinaryExpression': {
-			// Check if we're in an assignment/declaration context where parent handles indentation
-			const parent = path.getParentNode();
-			const shouldNotIndent =
-				parent &&
-				(parent.type === 'VariableDeclarator' ||
-					parent.type === 'AssignmentExpression' ||
-					parent.type === 'AssignmentPattern' ||
-					// Class fields and object properties indent their value
-					// after the operator too (see `printAssignment`)
-					parent.type === 'PropertyDefinition' ||
-					parent.type === 'Property');
-
-			let result;
-			// Don't add indent if we're in a conditional test context
-			if (args?.isConditionalTest) {
-				result = group([
-					path.call((childPath) => print(childPath, { isConditionalTest: true }), 'left'),
-					' ',
-					node.operator,
-					[line, path.call((childPath) => print(childPath, { isConditionalTest: true }), 'right')],
-				]);
-			} else if (shouldNotIndent) {
-				// In assignment context, don't add indent - parent will handle it
-				result = group([
-					path.call(print, 'left'),
-					' ',
-					node.operator,
-					[line, path.call(print, 'right')],
-				]);
-			} else {
-				result = group([
-					path.call(print, 'left'),
-					' ',
-					node.operator,
-					indent([line, path.call(print, 'right')]),
-				]);
-			}
-
-			nodeContent = result;
+		case 'BinaryExpression':
+		case 'LogicalExpression':
+			nodeContent = printBinaryishExpression(path, options, print);
 			break;
-		}
-		case 'LogicalExpression': {
-			let logicalResult;
-			const rightIsNullLiteral = node.right.type === 'Literal' && node.right.value === null;
-			const shouldKeepNullishFallbackInline =
-				node.operator === '??' &&
-				rightIsNullLiteral &&
-				(node.left.type === 'CallExpression' ||
-					node.left.type === 'ChainExpression' ||
-					node.left.type === 'NewExpression');
-			if (shouldKeepNullishFallbackInline) {
-				logicalResult = group([
-					path.call(print, 'left'),
-					' ',
-					node.operator,
-					' ',
-					path.call(print, 'right'),
-				]);
-			} else if (args?.isConditionalTest) {
-				// Don't add indent if we're in a conditional test context
-				logicalResult = group([
-					path.call((childPath) => print(childPath, { isConditionalTest: true }), 'left'),
-					' ',
-					node.operator,
-					[line, path.call((childPath) => print(childPath, { isConditionalTest: true }), 'right')],
-				]);
-			} else {
-				// Like Prettier's `shouldIndentIfInlining`, the value of a declarator,
-				// an assignment, a class field, or an object property is already
-				// indented after the operator (see `printAssignment`)
-				const parent = /** @type {AST.Node | null} */ (path.parent);
-				const isIndentedByParent =
-					!shouldInlineLogicalExpression(node) &&
-					(parent?.type === 'VariableDeclarator' ||
-						parent?.type === 'AssignmentExpression' ||
-						parent?.type === 'PropertyDefinition' ||
-						parent?.type === 'Property');
-				const right = [line, path.call(print, 'right')];
-				logicalResult = group([
-					path.call(print, 'left'),
-					' ',
-					node.operator,
-					isIndentedByParent ? right : indent(right),
-				]);
-			}
 
-			nodeContent = logicalResult;
+		case 'ConditionalExpression':
+			nodeContent = printConditionalExpression(path, options, print);
 			break;
-		}
-
-		case 'ConditionalExpression': {
-			// Use Prettier's grouping to handle line breaking when exceeding printWidth
-			// For the test expression, if it's a LogicalExpression or BinaryExpression,
-			// tell it not to add its own indentation since we're in a conditional context
-			const testNeedsContext =
-				node.test.type === 'LogicalExpression' || node.test.type === 'BinaryExpression';
-			const testDoc = testNeedsContext
-				? path.call((childPath) => print(childPath, { isConditionalTest: true }), 'test')
-				: path.call(print, 'test');
-
-			// Check if we have nested ternaries (but not if they're parenthesized, which keeps them inline)
-			const hasUnparenthesizedNestedConditional =
-				(node.consequent.type === 'ConditionalExpression' &&
-					!node.consequent.metadata?.parenthesized) ||
-				(node.alternate.type === 'ConditionalExpression' &&
-					!node.alternate.metadata?.parenthesized);
-
-			// If we have unparenthesized nested ternaries, tell the children they're nested
-			const consequentDoc =
-				hasUnparenthesizedNestedConditional &&
-				node.consequent.type === 'ConditionalExpression' &&
-				!node.consequent.metadata?.parenthesized
-					? path.call((childPath) => print(childPath, { isNestedConditional: true }), 'consequent')
-					: path.call(print, 'consequent');
-			const alternateDoc =
-				hasUnparenthesizedNestedConditional &&
-				node.alternate.type === 'ConditionalExpression' &&
-				!node.alternate.metadata?.parenthesized
-					? path.call((childPath) => print(childPath, { isNestedConditional: true }), 'alternate')
-					: path.call(print, 'alternate');
-
-			// Check if the consequent or alternate will break
-			const consequentBreaks = willBreak(consequentDoc);
-			const alternateBreaks = willBreak(alternateDoc);
-
-			// Helper to determine if a node type already handles its own indentation
-			const hasOwnIndentation = (/** @type {string} */ nodeType) => {
-				return nodeType === 'BinaryExpression' || nodeType === 'LogicalExpression';
-			};
-
-			let result;
-			// If either branch breaks OR we have unparenthesized nested ternaries OR we're already nested, use multiline format
-			if (
-				consequentBreaks ||
-				alternateBreaks ||
-				hasUnparenthesizedNestedConditional ||
-				args?.isNestedConditional
-			) {
-				// Only add extra indent if the expression doesn't handle its own indentation
-				// AND it's not a nested conditional (which already gets indented by its parent)
-				const shouldIndentConsequent =
-					!hasOwnIndentation(node.consequent.type) &&
-					node.consequent.type !== 'ConditionalExpression';
-				const shouldIndentAlternate =
-					!hasOwnIndentation(node.alternate.type) &&
-					node.alternate.type !== 'ConditionalExpression';
-
-				result = [
-					testDoc,
-					indent([line, '? ', shouldIndentConsequent ? indent(consequentDoc) : consequentDoc]),
-					indent([line, ': ', shouldIndentAlternate ? indent(alternateDoc) : alternateDoc]),
-				];
-			} else {
-				// Otherwise try inline first, then multiline if it doesn't fit
-				const shouldIndentConsequent =
-					!hasOwnIndentation(node.consequent.type) &&
-					node.consequent.type !== 'ConditionalExpression';
-				const shouldIndentAlternate =
-					!hasOwnIndentation(node.alternate.type) &&
-					node.alternate.type !== 'ConditionalExpression';
-
-				result = conditionalGroup([
-					// Try inline first
-					[testDoc, ' ? ', consequentDoc, ' : ', alternateDoc],
-					// If inline doesn't fit, use multiline
-					[
-						testDoc,
-						indent([line, '? ', shouldIndentConsequent ? indent(consequentDoc) : consequentDoc]),
-						indent([line, ': ', shouldIndentAlternate ? indent(alternateDoc) : alternateDoc]),
-					],
-				]);
-			}
-
-			nodeContent = result;
-			break;
-		}
 
 		case 'UpdateExpression':
 			if (node.prefix) {
@@ -5476,6 +5282,41 @@ function printClause(body, bodyDoc) {
 }
 
 /**
+ * Print the condition of an `if`, `while` or `do … while` statement inside its
+ * parentheses, like Prettier's `printIfOrWhileConditionOrWithStatementObject`:
+ * a condition that doesn't fit moves onto its own lines. A negated logical
+ * condition (`!(a && b)`, `!!(a && b)`) stays on the keyword's line and
+ * breaks inside its own parentheses instead.
+ * @param {AST.Expression} testNode - The condition
+ * @param {Doc} testDoc - The printed condition
+ * @returns {Doc}
+ */
+function printStatementCondition(testNode, testDoc) {
+	return shouldInlineCondition(testNode) ? testDoc : group([indent([softline, testDoc]), softline]);
+}
+
+/**
+ * Whether a statement's condition is `!(…)` or `!!(…)` around a logical
+ * expression, which Prettier keeps on the keyword's line
+ * (`shouldInlineCondition`).
+ * @param {AST.Node} node - The condition
+ * @returns {boolean}
+ */
+function shouldInlineCondition(node) {
+	if (hasComment(node) || node.type !== 'UnaryExpression' || node.operator !== '!') {
+		return false;
+	}
+	let argument = node.argument;
+	if (argument.type === 'UnaryExpression' && argument.operator === '!' && !hasComment(argument)) {
+		argument = argument.argument;
+	}
+	// Prettier attaches a comment at the end of the operand to the operand's
+	// last token, where the parser attaches it to the operand, and one printed
+	// after the parentheses moves to the condition on the next pass
+	return argument.type === 'LogicalExpression' && !hasComment(argument);
+}
+
+/**
  * Print an if statement
  * @param {AST.IfStatement} node - The if statement node
  * @param {AstPath<AST.IfStatement>} path - The AST path
@@ -5492,8 +5333,7 @@ function printIfStatement(node, path, options, print, directive = false) {
 	const test = path.call((testPath) => print(testPath, { suppressLeadingComments: true }), 'test');
 	const consequent = path.call(print, 'consequent');
 
-	// Use group to allow breaking the test when it doesn't fit
-	const testDoc = group(['if (', indent([softline, test]), softline, ')']);
+	const testDoc = group(['if (', printStatementCondition(node.test, test), ')']);
 
 	// Check if consequent is a block statement or another if statement
 	const consequentIsBlock = node.consequent.type === 'BlockStatement';
@@ -5662,9 +5502,10 @@ function printWhileStatement(node, path, options, print) {
 	// Print leading comments from test node before 'while' keyword
 	parts.push(...extractAndPrintLeadingComments(testNode));
 
-	parts.push('while (');
-	parts.push(test);
-	parts.push(')', printClause(node.body, path.call(print, 'body')));
+	parts.push(
+		group(['while (', printStatementCondition(node.test, test), ')']),
+		printClause(node.body, path.call(print, 'body')),
+	);
 
 	return parts;
 }
@@ -5693,9 +5534,7 @@ function printDoWhileStatement(node, path, options, print) {
 	// Print leading comments from test node before 'while' keyword
 	parts.push(...extractAndPrintLeadingComments(testNode));
 
-	parts.push('while (');
-	parts.push(test);
-	parts.push(')');
+	parts.push('while (', printStatementCondition(node.test, test), ')');
 	parts.push(semi(options));
 
 	return parts;
@@ -6334,7 +6173,7 @@ function printNewExpression(node, path, options, print) {
 }
 
 /**
- * Print a template literal
+ * Print a template literal like Prettier's `printTemplateLiteral`.
  * @param {AST.TemplateLiteral} node - The template literal node
  * @param {AstPath<AST.TemplateLiteral>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
@@ -6343,40 +6182,144 @@ function printNewExpression(node, path, options, print) {
  */
 function printTemplateLiteral(node, path, options, print) {
 	/** @type {Doc[]} */
-	const parts = [];
+	const parts = [lineSuffixBoundary, '`'];
+	const indents = getTemplateLiteralExpressionIndents(node, options);
+	node.quasis.forEach((quasi, index) => {
+		parts.push(quasi.value.raw);
+		if (index < node.expressions.length) {
+			parts.push(
+				path.call(
+					(expressionPath) =>
+						printTemplateExpression(expressionPath, node, index, indents[index], options, print),
+					'expressions',
+					index,
+				),
+			);
+		}
+	});
 	parts.push('`');
+	return parts;
+}
 
-	for (let i = 0; i < node.expressions.length; i++) {
-		parts.push(node.quasis[i].value.raw);
+/**
+ * Print an expression inside `${…}` like Prettier's `printTemplateExpression`.
+ * An expression written on one line stays on one line: breaking it would
+ * change nothing in the string, and the next pass would read the breaks as
+ * written ones. One written across lines, or one that breaks anyway (a
+ * function body), prints normally, aligned with the line of the template it
+ * starts on.
+ * @param {AstPath} path - The path to the expression
+ * @param {AST.TemplateLiteral} templateLiteral - The template literal
+ * @param {number} index - The expression's index
+ * @param {{ indentSize: number, previousQuasiText: string }} lineIndent - See {@link getTemplateLiteralExpressionIndents}
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printTemplateExpression(path, templateLiteral, index, lineIndent, options, print) {
+	const node = /** @type {AST.Node} */ (path.node);
+	/** @type {Doc} */
+	let expressionDoc = print(path);
 
-		const expression = node.expressions[i];
-		const expressionDoc = path.call(print, 'expressions', i);
+	const { quasis } = templateLiteral;
+	const text = options.originalText ?? '';
+	const start = /** @type {AST.NodeWithLocation} */ (quasis[index]).end;
+	const end = /** @type {AST.NodeWithLocation} */ (quasis[index + 1]).start;
+	let interpolationHasNewline = text.slice(start, end).includes('\n');
 
-		// Check if the expression will break (e.g., ternary, binary, logical)
-		const needsBreaking =
-			expression.type === 'ConditionalExpression' ||
-			expression.type === 'BinaryExpression' ||
-			expression.type === 'LogicalExpression' ||
-			willBreak(expressionDoc);
-
-		if (needsBreaking) {
-			// For expressions that break, use group with indent to format nicely
-			parts.push(group(['${', indent([softline, expressionDoc]), softline, '}']));
+	if (!interpolationHasNewline) {
+		// Never add a line break to an interpolation that didn't have one, unless
+		// one is introduced anyway, e.g. by a function body
+		const rendered = printDocToString(
+			expressionDoc,
+			/** @type {Parameters<typeof printDocToString>[1]} */ ({
+				...options,
+				printWidth: Number.POSITIVE_INFINITY,
+			}),
+		).formatted;
+		if (rendered.includes('\n')) {
+			interpolationHasNewline = true;
 		} else {
-			// For simple expressions, keep them inline
-			parts.push('${');
-			parts.push(expressionDoc);
-			parts.push('}');
+			expressionDoc = rendered;
 		}
 	}
 
-	// Add the final quasi (text after the last expression)
-	if (node.quasis.length > node.expressions.length) {
-		parts.push(node.quasis[node.quasis.length - 1].value.raw);
+	// Breaking at `${` and `}` reads better than breaking inside a member
+	// expression
+	if (
+		interpolationHasNewline &&
+		(hasComment(node) ||
+			node.type === 'Identifier' ||
+			skipChainElementWrappers(node).type === 'MemberExpression' ||
+			node.type === 'ConditionalExpression' ||
+			node.type === 'SequenceExpression' ||
+			isCastExpression(node) ||
+			isBinaryish(node))
+	) {
+		expressionDoc = [indent([softline, expressionDoc]), softline];
 	}
 
-	parts.push('`');
-	return parts;
+	// An expression that starts a line of the template indents from that line
+	// instead of from the backtick's
+	expressionDoc =
+		lineIndent.indentSize === 0 && lineIndent.previousQuasiText.endsWith('\n')
+			? align(Number.NEGATIVE_INFINITY, expressionDoc)
+			: addAlignmentToDoc(expressionDoc, lineIndent.indentSize, options.tabWidth ?? 2);
+
+	return group(['${', expressionDoc, lineSuffixBoundary, '}']);
+}
+
+/**
+ * The indentation of the template line each expression of a template literal
+ * starts on, like Prettier's `getTemplateLiteralExpressionIndent`.
+ * @param {AST.TemplateLiteral} templateLiteral
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {{ indentSize: number, previousQuasiText: string }[]}
+ */
+function getTemplateLiteralExpressionIndents(templateLiteral, options) {
+	const tabWidth = options.tabWidth ?? 2;
+	let previousQuasiIndentSize = 0;
+	return templateLiteral.quasis.map((quasi) => {
+		const text = quasi.value.raw;
+		const lastNewlineIndex = text.lastIndexOf('\n');
+		const indentSize =
+			lastNewlineIndex === -1
+				? previousQuasiIndentSize
+				: getAlignmentSize(
+						/** @type {RegExpMatchArray} */ (text.slice(lastNewlineIndex + 1).match(/^[\t ]*/))[0],
+						tabWidth,
+					);
+		previousQuasiIndentSize = indentSize;
+		return { indentSize, previousQuasiText: text };
+	});
+}
+
+/**
+ * The width of leading whitespace, with tabs aligned to the next multiple of
+ * `tabWidth` (Prettier's `getAlignmentSize`).
+ * @param {string} text
+ * @param {number} tabWidth
+ * @returns {number}
+ */
+function getAlignmentSize(text, tabWidth) {
+	let size = 0;
+	for (const character of text) {
+		size = character === '\t' ? size + tabWidth - (size % tabWidth) : size + 1;
+	}
+	return size;
+}
+
+/**
+ * Look through the `ChainExpression` and non-null wrappers of a chain
+ * (Prettier's `stripChainElementWrappers`).
+ * @param {AST.Node} node
+ * @returns {AST.Node}
+ */
+function skipChainElementWrappers(node) {
+	while (node.type === 'ChainExpression' || node.type === 'TSNonNullExpression') {
+		node = node.expression;
+	}
+	return node;
 }
 
 /**
@@ -6408,26 +6351,43 @@ function printTaggedTemplateExpression(node, path, options, print) {
  * @returns {Doc[]}
  */
 function printThrowStatement(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = [];
+	return ['throw', printReturnOrThrowArgument(path, options, print), semi(options)];
+}
+
+/**
+ * Print the argument of a `return` or `throw` statement, with the space after
+ * the keyword, like Prettier's `printReturnOrThrowArgument`. An argument that
+ * starts with a comment on its own line prints in parentheses, since a line
+ * break after the keyword would end the statement. A binary or logical
+ * argument that breaks prints in parentheses, with its operands on their own
+ * lines.
+ * @param {AstPath<AST.ReturnStatement | AST.ThrowStatement>} path - The path to the statement
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printReturnOrThrowArgument(path, options, print) {
 	if (path.call((argumentPath) => getOwnLineCommentAhead(argumentPath, options), 'argument')) {
-		// Same ASI hazard as `return`: keep the argument attached via parens.
-		// These parens replace any the argument would print for itself.
-		parts.push(
-			'throw (',
+		// These parens replace any the argument would print for itself
+		return [
+			' (',
 			indent([
 				hardline,
 				path.call((argumentPath) => print(argumentPath, { suppressOwnParens: true }), 'argument'),
 			]),
 			hardline,
 			')',
-		);
-	} else {
-		parts.push('throw ');
-		parts.push(path.call(print, 'argument'));
+		];
 	}
-	parts.push(semi(options));
-	return parts;
+	const argumentDoc = path.call(print, 'argument');
+	// A JSDoc cast prints its own parentheses around the expression
+	if (
+		isBinaryish(path.node.argument) &&
+		!path.call((argumentPath) => getTypeCastParens(argumentPath, options), 'argument')
+	) {
+		return [' ', group([ifBreak('('), indent([softline, argumentDoc]), softline, ifBreak(')')])];
+	}
+	return [' ', argumentDoc];
 }
 
 /**
@@ -7392,31 +7352,524 @@ function printDebuggerStatement(node, path, options) {
 }
 
 /**
- * Print a sequence expression
+ * Print a conditional expression like Prettier's ternary printer (without
+ * `experimentalTernaries`). A chain of nested conditionals prints in one
+ * group, so it stays on one line when it fits and breaks at every `?` and `:`
+ * when it doesn't. A nested conditional consequent gets parentheses only on
+ * one line.
+ * @param {AstPath<AST.ConditionalExpression>} path
+ * @param {TsrxFormatOptions} options
+ * @param {PrintFn} print
+ * @returns {Doc}
+ */
+function printConditionalExpression(path, options, print) {
+	const node = path.node;
+	const parent = /** @type {AST.Node} */ (path.getParentNode());
+	const isParentTest = parent.type === 'ConditionalExpression' && parent.test === node;
+	const forceNoIndent = parent.type === 'ConditionalExpression' && !isParentTest;
+
+	// The outermost conditional of the chain groups it
+	/** @type {AST.Node} */
+	let child = node;
+	/** @type {AST.Node | null} */
+	let firstNonConditionalParent = parent;
+	for (let level = 0; ; level++) {
+		const ancestor = /** @type {AST.Node | null} */ (path.getParentNode(level));
+		if (!ancestor || ancestor.type !== 'ConditionalExpression' || ancestor.test === child) {
+			firstNonConditionalParent = ancestor ?? parent;
+			break;
+		}
+		child = ancestor;
+	}
+
+	/**
+	 * Align a branch with the first character after `? ` or `: `
+	 * @param {'consequent' | 'alternate'} key
+	 */
+	const printBranch = (key) => {
+		const printed = path.call(print, key);
+		return options.useTabs ? indent(printed) : align(2, printed);
+	};
+	const consequentIsConditional = node.consequent.type === 'ConditionalExpression';
+	const branches = [
+		line,
+		'? ',
+		consequentIsConditional ? ifBreak('', '(') : '',
+		printBranch('consequent'),
+		consequentIsConditional ? ifBreak('', ')') : '',
+		line,
+		': ',
+		printBranch('alternate'),
+	];
+	/** @type {Doc} */
+	let parts = branches;
+	if (parent.type === 'ConditionalExpression' && parent.alternate !== node && !isParentTest) {
+		// A conditional consequent indents its branches past its parent's
+		parts = options.useTabs
+			? dedent(indent(branches))
+			: align(Math.max(0, (options.tabWidth ?? 2) - 2), branches);
+	}
+
+	// Break before the closing parenthesis to keep the chain right after it:
+	//   (a
+	//     ? b
+	//     : c
+	//   ).call()
+	const breakClosingParen = parent.type === 'MemberExpression' && !parent.computed;
+	const shouldExtraIndent = shouldExtraIndentForConditionalExpression(path);
+
+	const testDoc = path.call(print, 'test');
+	/** @type {Doc[]} */
+	const contents = [
+		// A multiline test in an alternate lines up with the branches
+		parent.type === 'ConditionalExpression' && parent.alternate === node
+			? align(2, testDoc)
+			: testDoc,
+		forceNoIndent ? parts : indent(parts),
+		breakClosingParen && !shouldExtraIndent ? softline : '',
+	];
+	const result = parent === firstNonConditionalParent ? group(contents) : contents;
+
+	return isParentTest || shouldExtraIndent ? group([indent([softline, result]), softline]) : result;
+}
+
+/**
+ * Whether a conditional at the head of a member chain gets an extra indent
+ * (Prettier's `shouldExtraIndentForConditionalExpression`): the chain is an
+ * assigned value, a `return`, `throw`, `yield` or `await` argument, or the
+ * operand of a unary operator.
+ * @param {AstPath<AST.ConditionalExpression>} path
+ * @returns {boolean}
+ */
+function shouldExtraIndentForConditionalExpression(path) {
+	const node = path.node;
+	/** @type {AST.Node} */
+	let child = node;
+	/** @type {AST.Node | null} */
+	let parent = null;
+	for (let level = 0; !parent; level++) {
+		const ancestor = /** @type {AST.Node | null} */ (path.getParentNode(level));
+		if (!ancestor) {
+			return false;
+		}
+		if (
+			((ancestor.type === 'ChainExpression' || ancestor.type === 'TSNonNullExpression') &&
+				ancestor.expression === child) ||
+			(ancestor.type === 'CallExpression' && ancestor.callee === child) ||
+			(ancestor.type === 'MemberExpression' && ancestor.object === child)
+		) {
+			child = ancestor;
+			continue;
+		}
+		// Reached the root of the chain
+		if (
+			(ancestor.type === 'NewExpression' && ancestor.callee === child) ||
+			(isCastExpression(ancestor) &&
+				/** @type {AST.TSAsExpression} */ (ancestor).expression === child)
+		) {
+			parent = /** @type {AST.Node | null} */ (path.getParentNode(level + 1));
+			child = ancestor;
+			if (!parent) {
+				return false;
+			}
+		} else {
+			parent = ancestor;
+		}
+	}
+
+	// A conditional that is the value itself doesn't get one
+	if (child === node) {
+		return false;
+	}
+
+	const key = CONDITIONAL_CHAIN_ANCESTOR_KEYS[parent.type];
+	return Boolean(key) && /** @type {Record<string, unknown>} */ (parent)[key] === child;
+}
+
+/** @type {Record<string, string>} */
+const CONDITIONAL_CHAIN_ANCESTOR_KEYS = {
+	AssignmentExpression: 'right',
+	VariableDeclarator: 'init',
+	ReturnStatement: 'argument',
+	ThrowStatement: 'argument',
+	UnaryExpression: 'argument',
+	YieldExpression: 'argument',
+	AwaitExpression: 'argument',
+};
+
+/**
+ * Whether a node is a binary or logical expression (Prettier's `isBinaryish`).
+ * @param {AST.Node | null | undefined} node
+ * @returns {node is AST.BinaryExpression | AST.LogicalExpression}
+ */
+function isBinaryish(node) {
+	return node?.type === 'BinaryExpression' || node?.type === 'LogicalExpression';
+}
+
+/**
+ * Whether a node is a `return` or `throw` statement.
+ * @param {AST.Node | null | undefined} node
+ * @returns {boolean}
+ */
+function isReturnOrThrowStatement(node) {
+	return node?.type === 'ReturnStatement' || node?.type === 'ThrowStatement';
+}
+
+/**
+ * Whether a node is a call or `new` expression.
+ * @param {AST.Node | null | undefined} node
+ * @returns {boolean}
+ */
+function isCallOrNewExpression(node) {
+	return node?.type === 'CallExpression' || node?.type === 'NewExpression';
+}
+
+/**
+ * Whether a node is a `for (;;)` statement, or TSRX's `@for (;;)`.
+ * @param {AST.Node | null | undefined} node
+ * @returns {boolean}
+ */
+function isForStatement(node) {
+	return (
+		node?.type === 'ForStatement' ||
+		(node?.type === 'JSXForExpression' &&
+			/** @type {{ statementType?: string }} */ (node).statementType === 'ForStatement')
+	);
+}
+
+/**
+ * Statements whose condition prints inside their own parentheses: `if`,
+ * `while`, `do … while` and `switch`, and TSRX's `@if` and `@switch`.
+ */
+const PARENTHESIZED_CONDITION_STATEMENTS = new Set([
+	'IfStatement',
+	'JSXIfExpression',
+	'WhileStatement',
+	'DoWhileStatement',
+	'SwitchStatement',
+	'JSXSwitchExpression',
+]);
+
+/**
+ * Stands in for the parent of an expression inside a JSDoc cast's
+ * parentheses, which Prettier's parsers keep as a `ParenthesizedExpression`.
+ * @type {AST.Node}
+ */
+const PARENTHESIZED_EXPRESSION = /** @type {AST.Node} */ (
+	/** @type {unknown} */ ({ type: 'ParenthesizedExpression' })
+);
+
+/**
+ * Whether a call is `Boolean(x)` (Prettier's `isBooleanTypeCoercion`).
+ * @param {AST.Node | null | undefined} node
+ * @returns {boolean}
+ */
+function isBooleanTypeCoercion(node) {
+	return (
+		node?.type === 'CallExpression' &&
+		!node.optional &&
+		node.arguments.length === 1 &&
+		node.callee.type === 'Identifier' &&
+		node.callee.name === 'Boolean'
+	);
+}
+
+/**
+ * Whether a node starts with a leading comment that ends its line (Prettier's
+ * `hasLeadingOwnLineComment`).
+ * @param {AST.Node & AST.NodeWithMaybeComments} node
+ * @param {TsrxFormatOptions} options
+ * @returns {boolean}
+ */
+function hasLeadingCommentEndingLine(node, options) {
+	if (isTemplateExpression(node)) {
+		return hasPrettierIgnore(node);
+	}
+	const text = options.originalText ?? '';
+	return (node.leadingComments ?? []).some((comment) =>
+		hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).end),
+	);
+}
+
+/**
+ * Whether a logical expression keeps its right operand on the operator's line
+ * (Prettier's `shouldInlineLogicalExpression`): a non-empty object or array
+ * literal, or an element.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function shouldInlineLogicalExpression(node) {
+	if (node.type !== 'LogicalExpression') {
+		return false;
+	}
+	const right = node.right;
+	return (
+		(right.type === 'ObjectExpression' && right.properties.length > 0) ||
+		(right.type === 'ArrayExpression' && right.elements.length > 0) ||
+		isTemplateExpression(right)
+	);
+}
+
+/**
+ * Print a binary or logical expression like Prettier's
+ * `printBinaryishExpression`. Operators of one precedence level print in one
+ * group (see {@link printBinaryishExpressions}), and the parent decides how
+ * the operands after the first are indented: not at all in a statement's
+ * parenthesized condition, an arrow body, a `return` or `throw` argument, a
+ * `Boolean(…)` argument, or an assigned value, and with a break after the
+ * opening parenthesis under a unary operator, as a member object, or as a
+ * callee.
+ * @param {AstPath<AST.BinaryExpression | AST.LogicalExpression>} path
+ * @param {TsrxFormatOptions} options
+ * @param {PrintFn} print
+ * @returns {Doc}
+ */
+function printBinaryishExpression(path, options, print) {
+	const node = path.node;
+	// Inside a JSDoc cast's parentheses, the parentheses are the parent, as in
+	// Prettier, where they are a node of their own
+	const parent = getTypeCastParens(path, options)
+		? PARENTHESIZED_EXPRESSION
+		: /** @type {AST.Node} */ (path.getParentNode());
+	const grandparent = /** @type {AST.Node | null} */ (path.getParentNode(1));
+	const key = path.key;
+	const isInsideParenthesis = key !== 'body' && PARENTHESIZED_CONDITION_STATEMENTS.has(parent.type);
+
+	const parts = printBinaryishExpressions(path, options, print, false, isInsideParenthesis);
+
+	// The statement's parentheses group the condition, so every operator of the
+	// condition breaks with them:
+	//   if (
+	//     aaa &&
+	//     bbb
+	//   ) {
+	if (isInsideParenthesis) {
+		return parts;
+	}
+
+	// Break inside the parentheses under a unary operator, as a member object,
+	// or as a callee:
+	//   (
+	//     aaa &&
+	//     bbb
+	//   ).call()
+	if (
+		(key === 'callee' && isCallOrNewExpression(parent)) ||
+		(parent.type === 'UnaryExpression' && !hasComment(node)) ||
+		(parent.type === 'MemberExpression' && !parent.computed)
+	) {
+		return group([indent([softline, ...parts]), softline]);
+	}
+
+	// Don't indent the operands after the first where the first one already
+	// starts an indented line
+	const shouldNotIndent =
+		isReturnOrThrowStatement(parent) ||
+		(parent.type === 'JSXExpressionContainer' && grandparent?.type === 'JSXAttribute') ||
+		(key === 'body' && parent.type === 'ArrowFunctionExpression') ||
+		(key !== 'body' && isForStatement(parent)) ||
+		(parent.type === 'ConditionalExpression' &&
+			!isReturnOrThrowStatement(grandparent) &&
+			!isCallOrNewExpression(grandparent)) ||
+		parent.type === 'TemplateLiteral' ||
+		(key === 'argument' && parent.type === 'UnaryExpression') ||
+		(key === 'arguments' && isBooleanTypeCoercion(parent));
+
+	// An assigned value breaks after the `=` and indents there. Prettier also
+	// lists assignment expressions, class fields, and object properties, but
+	// their printers don't break after `=` or `:` for these values yet (#332),
+	// so their values keep the indent for now.
+	const shouldIndentIfInlining = parent.type === 'VariableDeclarator';
+
+	const samePrecedenceSubExpression =
+		isBinaryish(node.left) && shouldFlatten(node.operator, node.left.operator);
+
+	if (
+		shouldNotIndent ||
+		(shouldInlineLogicalExpression(node) && !samePrecedenceSubExpression) ||
+		(!shouldInlineLogicalExpression(node) && shouldIndentIfInlining)
+	) {
+		return group(parts);
+	}
+
+	if (parts.length === 0) {
+		return '';
+	}
+
+	// An element on the right prints in its own group, so it can break without
+	// breaking the whole chain:
+	//   foo && bar && (
+	//     <Foo>
+	//       <Bar />
+	//     </Foo>
+	//   )
+	const hasJsx = isTemplateExpression(node.right);
+
+	// The leftmost operand, with any comments printed ahead of it, stays out of
+	// the indentation
+	const firstGroupIndex = parts.findIndex(
+		(part) =>
+			typeof part !== 'string' &&
+			!Array.isArray(part) &&
+			/** @type {{ type?: string }} */ (part).type === 'group',
+	);
+	const headParts = parts.slice(0, firstGroupIndex === -1 ? 1 : firstGroupIndex + 1);
+	const rest = parts.slice(headParts.length, hasJsx ? -1 : undefined);
+	const groupId = Symbol('logicalChain');
+	const chain = group([...headParts, indent(rest)], { id: groupId });
+
+	if (!hasJsx) {
+		return chain;
+	}
+
+	return group([chain, indentIfBreak(/** @type {Doc} */ (parts.at(-1)), { groupId })]);
+}
+
+/**
+ * Print the operands and operators of a binary or logical expression as a
+ * flat list, like Prettier's `printBinaryishExpressions`. A left operand with
+ * an operator of the same precedence (`a && b` in `a && b && c`) is inlined
+ * into the same list, so every operator of one precedence level breaks
+ * together, instead of the nested operators staying on one line while only
+ * the last one breaks.
+ * @param {AstPath} path - The path to the expression, or to a flattened operand
+ * @param {TsrxFormatOptions} options
+ * @param {PrintFn} print
+ * @param {boolean} isNested - Whether the node is a flattened left operand
+ * @param {boolean} isInsideParenthesis - Whether the chain is a statement's condition
+ * @returns {Doc[]}
+ */
+function printBinaryishExpressions(path, options, print, isNested, isInsideParenthesis) {
+	const node = /** @type {AST.Node} */ (path.node);
+
+	// A unary operand shares its operator with a binary one (`-a + b`)
+	if (!isBinaryish(node)) {
+		return [group(print(path))];
+	}
+
+	/** @type {Doc[]} */
+	let parts;
+	if (
+		shouldFlatten(node.operator, /** @type {{ operator?: string }} */ (node.left).operator ?? '') &&
+		path.call((leftPath) => canFlattenOperand(leftPath, options), 'left')
+	) {
+		parts = path.call(
+			(leftPath) => printBinaryishExpressions(leftPath, options, print, true, isInsideParenthesis),
+			'left',
+		);
+	} else {
+		parts = [group(path.call(print, 'left'))];
+	}
+
+	const shouldInline = shouldInlineLogicalExpression(node);
+	const rightNode = node.right.type === 'ChainExpression' ? node.right.expression : node.right;
+	const rightDoc = path.call(print, 'right');
+
+	/** @type {Doc} */
+	let right;
+	if (shouldInline) {
+		right = [
+			node.operator,
+			hasLeadingCommentEndingLine(rightNode, options) ||
+			hasLeadingCommentEndingLine(node.right, options)
+				? indent([line, rightDoc])
+				: [' ', rightDoc],
+		];
+	} else {
+		right = [node.operator, line, rightDoc];
+	}
+
+	// A lone operator gets its own group, so a short right operand like `-1`
+	// doesn't end up alone on the next line
+	const parent =
+		!isNested && getTypeCastParens(path, options)
+			? PARENTHESIZED_EXPRESSION
+			: /** @type {AST.Node} */ (path.getParentNode());
+	const shouldBreak = Boolean(
+		node.left.trailingComments?.some((comment) => comment.type === 'Line'),
+	);
+	const shouldGroup =
+		shouldBreak ||
+		(!(isInsideParenthesis && node.type === 'LogicalExpression') &&
+			parent.type !== node.type &&
+			node.left.type !== node.type &&
+			node.right.type !== node.type);
+	if (shouldGroup) {
+		right = group(right, { shouldBreak });
+	}
+
+	parts.push(' ', right);
+
+	// A flattened operand isn't printed through `print`, so print its comments
+	if (isNested && hasComment(node)) {
+		const printed = finishTsrxNode(
+			node,
+			printLeadingComments(node, node.leadingComments ?? [], options, false),
+			parts,
+			options,
+		);
+		return Array.isArray(printed)
+			? printed.flatMap((part) => (part === parts ? parts : [part]))
+			: [printed];
+	}
+
+	return parts;
+}
+
+/**
+ * Whether a binary or logical operand can print inline in its parent's operand
+ * list. One that prints verbatim or inside a JSDoc cast's parentheses keeps
+ * its own printer.
+ * @param {AstPath} path - The path to the operand
+ * @param {TsrxFormatOptions} options
+ * @returns {boolean}
+ */
+function canFlattenOperand(path, options) {
+	const node = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node);
+	return !isBinaryish(node) || (!hasPrettierIgnore(node) && !getTypeCastParens(path, options));
+}
+
+/**
+ * Print a sequence expression like Prettier's `printSequenceExpression`. As a
+ * statement or in a `for` head, the expressions after the first indent when
+ * they break. As an arrow body or a `return` or `throw` argument, the
+ * expressions move inside the parentheses onto their own lines. Elsewhere,
+ * they break after each comma.
  * @param {AST.SequenceExpression} node - The sequence expression node
  * @param {AstPath<AST.SequenceExpression>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @param {PrintArgs} [args] - Additional context arguments
- * @returns {Doc[]}
+ * @returns {Doc}
  */
 function printSequenceExpression(node, path, options, print, args) {
-	/** @type {Doc[]} */
-	const parts = [];
-	const exprList = path.map(print, 'expressions');
-	for (let i = 0; i < exprList.length; i++) {
-		if (i > 0) parts.push(', ');
-		parts.push(exprList[i]);
-	}
+	const parent = /** @type {AST.Node} */ (path.getParentNode());
 	// Sequences keep their parentheses everywhere except a `for` head, like
-	// Prettier, unless the parent prints them (`return` with a comment).
-	const parent = /** @type {AST.Node | null} */ (path.getParentNode());
-	const inForHead =
-		parent?.type === 'ForStatement' && (path.key === 'init' || path.key === 'update');
-	if (inForHead || args?.suppressOwnParens) {
-		return parts;
+	// Prettier, unless the parent prints them (`return` with a comment)
+	const printsOwnParens = !isForStatement(parent) && !args?.suppressOwnParens;
+
+	/** @type {Doc} */
+	let printed;
+	if (parent.type === 'ExpressionStatement' || isForStatement(parent)) {
+		/** @type {Doc[]} */
+		const parts = [];
+		path.each((expressionPath, index) => {
+			const expression = print(expressionPath);
+			parts.push(index === 0 ? expression : [',', indent([line, expression])]);
+		}, 'expressions');
+		printed = group(parts);
+	} else {
+		const parts = join([',', line], path.map(print, 'expressions'));
+		const key = path.key;
+		const shouldIndent =
+			(key === 'argument' && isReturnOrThrowStatement(parent) && printsOwnParens) ||
+			(key === 'body' && parent.type === 'ArrowFunctionExpression');
+		printed = shouldIndent
+			? group(ifBreak([indent([softline, parts]), softline], parts))
+			: group(parts);
 	}
-	return ['(', ...parts, ')'];
+
+	return printsOwnParens ? ['(', printed, ')'] : printed;
 }
 
 /**
