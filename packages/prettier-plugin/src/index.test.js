@@ -7485,6 +7485,20 @@ function g() {
 			const result = await formatStable(input, { trailingComma: 'none' });
 			expect(result).toBeWithNewline(expected);
 		});
+
+		it('keeps the trailing comma in broken type parameter lists when trailingComma is es5', async () => {
+			const input = `interface Container<TExtremelyLongParameterName extends Record<string, unknown>> {
+	value: TExtremelyLongParameterName;
+}`;
+			const expected = `interface Container<
+  TExtremelyLongParameterName extends Record<string, unknown>,
+> {
+  value: TExtremelyLongParameterName;
+}`;
+
+			const result = await formatStable(input, { trailingComma: 'es5' });
+			expect(result).toBeWithNewline(expected);
+		});
 	});
 
 	// A formatter may never change what the source declares. Every modifier
@@ -9619,6 +9633,140 @@ class A {}
 
 @second
 class B {}`);
+		});
+	});
+
+	describe('new expression arguments break like call arguments', () => {
+		it('puts each argument on its own line when they do not fit', async () => {
+			const input = `const x = new Foo(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccc);`;
+			const expected = `const x = new Foo(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ccccccccccccccc,
+);`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks a lone argument that cannot break by itself', async () => {
+			const input = `throw new Error(\`Something went terribly wrong with the value \${value} and \${otherValue}\`);`;
+			const expected = `throw new Error(
+  \`Something went terribly wrong with the value \${value} and \${otherValue}\`,
+);`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps a blank line between arguments', async () => {
+			const input = `const x = new Foo(
+  a,
+
+  b,
+);`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(input);
+		});
+
+		it('expands a last object argument and hugs a lone callback', async () => {
+			const input = `const formatter = new Intl.DateTimeFormat("en-US", { year: "numeric", month: "long", day: "numeric" });
+const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module", name: "background" });
+const promise = new Promise<void>((resolve) => { setTimeout(resolve, 1000); });
+const set = new Set([aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccc]);`;
+			const expected = `const formatter = new Intl.DateTimeFormat("en-US", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+const worker = new Worker(new URL("./worker.js", import.meta.url), {
+  type: "module",
+  name: "background",
+});
+const promise = new Promise<void>((resolve) => {
+  setTimeout(resolve, 1000);
+});
+const set = new Set([
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ccccccccccccccc,
+]);`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps short argument lists on one line', async () => {
+			const source = `const a = new Foo();
+const b = new Foo(first, second);
+const c = new (getClass())(first, second);`;
+
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+	});
+
+	// Like Prettier, \`es5\` leaves out the commas ES5 cannot parse (after the
+	// last argument or parameter), and \`all\` adds them.
+	describe('trailing commas follow the trailingComma option', () => {
+		const input = `foo(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccc);
+new Foo(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccc);
+function bar(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccc) {}
+const baz = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccc) => {};
+interface Triple<Aaaaaaaaaaaaaaaaaaaaaaaaaaaa, Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, Cccccccccccccc> {}
+const values = [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccc];
+const object = { aaaaaaaaaaaaaaaaaaaaaaaaaa: 1, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: 2, cccccc: 3 };`;
+
+		/**
+		 * @param {string} argumentComma - comma after the last argument or parameter
+		 * @param {string} listComma - comma after the last type parameter, element, or property
+		 */
+		const expected = (argumentComma, listComma) => `foo(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ccccccccccccccc${argumentComma}
+);
+new Foo(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ccccccccccccccc${argumentComma}
+);
+function bar(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ccccccccccccccc${argumentComma}
+) {}
+const baz = (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccc${argumentComma}
+) => {};
+interface Triple<
+  Aaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  Cccccccccccccc${listComma}
+> {}
+const values = [
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ccccccccccccccc${listComma}
+];
+const object = {
+  aaaaaaaaaaaaaaaaaaaaaaaaaa: 1,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: 2,
+  cccccc: 3${listComma}
+};`;
+
+		it.each([
+			['all', ',', ','],
+			['es5', '', ','],
+			['none', '', ''],
+		])('with trailingComma %s', async (trailingComma, argumentComma, listComma) => {
+			const result = await format(input, {
+				trailingComma: /** @type {'all' | 'es5' | 'none'} */ (trailingComma),
+			});
+			expect(result).toBeWithNewline(expected(argumentComma, listComma));
 		});
 	});
 

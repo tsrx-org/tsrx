@@ -1520,19 +1520,19 @@ function hasRestParameter(node) {
 }
 
 /**
- * Determine if a trailing comma should be printed based on options
+ * Determine if a trailing comma should be printed based on options. Like
+ * Prettier, `es5` prints only the commas ES5 allows (level `es5`), and `all`
+ * also prints them after arguments and parameters (level `all`).
  * @param {TsrxFormatOptions} options - Prettier options
- * @param {'es5' | 'all'} [level='all'] - Comma level to check
+ * @param {'es5' | 'all'} [level='es5'] - Comma level to check
  * @returns {boolean}
  */
-function shouldPrintComma(options, level = 'all') {
+function shouldPrintComma(options, level = 'es5') {
 	switch (options.trailingComma) {
-		case 'none':
-			return false;
 		case 'es5':
-			return level === 'es5' || level === 'all';
+			return level === 'es5';
 		case 'all':
-			return level === 'all';
+			return true;
 		default:
 			return false;
 	}
@@ -4028,8 +4028,8 @@ function shouldHugArrowFunctions(args) {
 }
 
 /**
- * Print call expression arguments
- * @param {AstPath<AST.CallExpression>} path - The call path
+ * Print call or new expression arguments
+ * @param {AstPath<AST.CallExpression | AST.NewExpression>} path - The call or new expression path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @returns {Doc}
@@ -5290,17 +5290,7 @@ function printNewExpression(node, path, options, print) {
 		parts.push(path.call(print, 'typeArguments'));
 	}
 
-	if (node.arguments && node.arguments.length > 0) {
-		parts.push('(');
-		const argList = path.map(print, 'arguments');
-		for (let i = 0; i < argList.length; i++) {
-			if (i > 0) parts.push(', ');
-			parts.push(argList[i]);
-		}
-		parts.push(')');
-	} else {
-		parts.push('()');
-	}
+	parts.push(printCallArguments(path, options, print));
 
 	return parts;
 }
@@ -5703,11 +5693,7 @@ function printTSTypeParameterDeclaration(node, path, options, print) {
 
 	return group([
 		'<',
-		indent([
-			softline,
-			join([',', line], paramList),
-			ifBreak(shouldPrintComma(options, 'all') ? ',' : ''),
-		]),
+		indent([softline, join([',', line], paramList), ifBreak(shouldPrintComma(options) ? ',' : '')]),
 		softline,
 		'>',
 	]);
