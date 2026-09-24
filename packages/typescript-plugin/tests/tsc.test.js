@@ -195,6 +195,34 @@ it('reports a superclass expression that is not a constructor in .tsrx files', (
 	}
 });
 
+it('reports errors on a whole call or parenthesized expression in .tsrx files', () => {
+	const line =
+		'declare const plain: {}; declare function createBase(): {}; declare function createVoid(): void; export function run() { const items = [...createBase()]; createBase()(); (plain)(); if (createVoid()) {} return [items, createBase() as const]; }';
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${line}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	/** @type {Array<[string, string]>} */
+	const expected = [
+		[
+			'createBase()]',
+			`error TS2488: Type '{}' must have a '[Symbol.iterator]()' method that returns an iterator.`,
+		],
+		['createBase()();', 'error TS2349: This expression is not callable.'],
+		['(plain)();', 'error TS2349: This expression is not callable.'],
+		[
+			'createVoid()) {}',
+			`error TS1345: An expression of type 'void' cannot be tested for truthiness.`,
+		],
+		[
+			'createBase() as const',
+			`error TS1355: A 'const' assertions can only be applied to references to enum members, or string, number, boolean, array, or object literals.`,
+		],
+	];
+	for (const [anchor, message] of expected) {
+		expect(result.output).toContain(`layout.tsrx(4,${line.indexOf(anchor) + 1}): ${message}`);
+	}
+});
+
 it('reports errors on a bare this in .tsrx files', () => {
 	const line =
 		'export function readValue() { return this; } class Base {} export class Derived extends Base { constructor() { this; super(); } }';

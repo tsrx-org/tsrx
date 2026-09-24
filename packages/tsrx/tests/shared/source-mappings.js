@@ -1375,6 +1375,82 @@ export function optionalFn(declRequired: string, declMaybe?: string) {
 		);
 	});
 
+	describe(`[${name}] whole calls and parenthesized expressions keep mappings`, () => {
+		/**
+		 * Verification mappings over exactly `expression`, the first one in `source`
+		 * at or after `after`, whose generated text is the same expression.
+		 * @param {string} source
+		 * @param {string} expression
+		 * @param {string} [after]
+		 */
+		const whole_span_mappings = (source, expression, after = '') => {
+			/** @param {string} code without whitespace or trailing commas */
+			const normalize = (code) => code.replace(/\s/g, '').replace(/,\)/g, ')');
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const start = source.indexOf(expression, source.indexOf(after));
+			return result.mappings.filter(
+				(/** @type {CodeMapping} */ mapping) =>
+					mapping.sourceOffsets[0] === start &&
+					mapping.lengths[0] === expression.length &&
+					mapping.data.verification &&
+					normalize(
+						result.code.slice(
+							mapping.generatedOffsets[0],
+							mapping.generatedOffsets[0] + mapping.generatedLengths[0],
+						),
+					) === normalize(expression),
+			);
+		};
+
+		it.each([
+			['const items = [...createBase()];', 'createBase()'],
+			['createBase()();', 'createBase()()'],
+			['createBase()();', 'createBase()'],
+			['(plain)();', '(plain)()'],
+			['(plain)();', '(plain)'],
+			['if (createVoid()) {}', 'createVoid()'],
+			['const frozen = createBase() as const;', 'createBase()'],
+			['createBase(\n\t\t1,\n\t)();', 'createBase(\n\t\t1,\n\t)'],
+			['maybe?.()();', 'maybe?.()'],
+			['(plain || other)();', '(plain || other)'],
+			['((plain))();', '(plain)'],
+		])('maps the whole expression once in `%s`: %s', (statement, expression) => {
+			// TypeScript reports TS2488 on a spread argument, TS2349 on a callee,
+			// TS1345 on a `void` condition and TS1355 on an `as const` operand, all
+			// over the whole expression, so an unmapped end dropped each of them.
+			const source = `export function run() {\n\t${statement}\n}`;
+			expect(whole_span_mappings(source, expression, statement)).toHaveLength(1);
+		});
+
+		it('maps the whole call in a component body', () => {
+			const source = `export function App() @{
+	const items = [...createBase()];
+	<div>{items.length}</div>
+}`;
+			expect(whole_span_mappings(source, 'createBase()')).toHaveLength(1);
+		});
+
+		it('adds no whole-span mapping over parentheses around a compiled directive', () => {
+			// The parentheses are the author's, but the expression inside them is
+			// generated, so an error in it must not be reported over the source span.
+			const source = `export function App(props: { on: boolean }) @{
+	const badge = (@if (props.on) { <b>on</b> }) || 'off';
+	<div>{badge}</div>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const expression = '(@if (props.on) { <b>on</b> })';
+			const start = source.indexOf(expression);
+			expect(
+				result.mappings.filter(
+					(/** @type {CodeMapping} */ mapping) =>
+						mapping.sourceOffsets[0] === start && mapping.lengths[0] === expression.length,
+				),
+			).toEqual([]);
+		});
+	});
+
 	describe(`[${name}] this and super keep mappings`, () => {
 		it('maps each bare this and super to the generated keyword', () => {
 			// TypeScript reports on the bare keyword (TS2683 implicit `this`, TS17009
