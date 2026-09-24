@@ -7791,6 +7791,177 @@ const called = (
 		});
 	});
 
+	// Dropping the `;` of an empty body makes the next statement the body, so the
+	// formatted program runs different code and a trailing loop stops parsing.
+	describe('empty statement bodies keep their semicolon', () => {
+		it.each([
+			'if (a);\ncount++;',
+			'while (next());\ncount++;',
+			'for (const k of list);\ncount++;',
+			'for (const k in obj);\ncount++;',
+			'for (;;);',
+			'for (let i = 0; i < n; i++);\ncount++;',
+			'do;\nwhile (next());',
+			'if (a) b();\nelse;',
+			'if (a);\nelse if (b);\nelse c();',
+		])('keeps the empty body of %s', async (source) => {
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('keeps the empty body with semi: false', async () => {
+			const source = 'if (a);\ncount++\nwhile (next());\ndo;\nwhile (next())';
+			const result = await format(source, { semi: false });
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('puts while on its own line after a non-block do body', async () => {
+			const result = await format('do count++; while (next());');
+			expect(result).toBeWithNewline('do count++;\nwhile (next());');
+		});
+	});
+
+	describe('variable initializer layouts follow Prettier', () => {
+		it.each([
+			'const g = a || b ? c : d;',
+			'const i = a > 1 ? b : c;',
+			'const x = a ? (b ? c : d) : e;',
+			'const y = a ? b : c ? d : e;',
+			'const w = cond ? call(argumentOne, argumentTwo) : other;',
+		])('keeps the short conditional initializer %s on one line', async (source) => {
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('breaks after = before a conditional with a binary test', async () => {
+			const source = `const z =
+  isSomethingVeryLong || otherCondition
+    ? someVeryLongValueNameHere
+    : anotherLongValue;`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('keeps any other conditional test on the = line', async () => {
+			const source = `const v = cond
+  ? call(argumentOne, argumentTwo, argumentThree, argumentFour)
+  : otherValueHere;
+const u = cond
+  ? () => {
+      run();
+    }
+  : null;`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+	});
+
+	describe('comments that start an assigned value', () => {
+		it('prints an own-line comment below the = with the value indented', async () => {
+			const input = `const value = (
+  // pick the cached entry
+  cache.entry
+);
+const block = (
+  /* pick the cached entry */
+  cache.entry
+);`;
+			const expected = `const value =
+  // pick the cached entry
+  cache.entry;
+const block =
+  /* pick the cached entry */
+  cache.entry;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps a comment on the = line and indents the value below it', async () => {
+			const source = `const value = // pick the cached entry
+  cache.entry;
+const call = // compute it
+  compute(a);`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('indents the value in assignments, class fields, and object properties', async () => {
+			const source = `value =
+  // pick the cached entry
+  cache.entry;
+total += // running sum
+  next;
+class Store {
+  value =
+    // pick the cached entry
+    cache.entry;
+}
+const options = {
+  value:
+    // pick the cached entry
+    cache.entry,
+};`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('sees a comment that belongs to the leftmost operand', async () => {
+			const input = `const called = (
+  // pick the handler
+  primary || fallback
+)();
+const member = (
+  // pick the cache
+  cache
+).entry;`;
+			const expected = `const called =
+  // pick the handler
+  (primary || fallback)();
+const member =
+  // pick the cache
+  cache.entry;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps a type cast comment on the = line', async () => {
+			await expect(format('const value = /** @type {Entry} */ (cache.entry);')).resolves.toBe(
+				'const value = /** @type {Entry} */ (cache.entry);\n',
+			);
+		});
+
+		// A line break between `return` or `throw` and its argument ends the
+		// statement, so the argument would no longer be returned or thrown.
+		it('keeps a return or throw argument whose leftmost operand has an own-line comment', async () => {
+			const input = `function run() {
+  return (
+    // pick the handler
+    primary || fallback
+  )();
+}
+function fail() {
+  throw (
+    // pick the error
+    errors
+  ).first;
+}`;
+			const expected = `function run() {
+  return (
+    // pick the handler
+    (primary || fallback)()
+  );
+}
+function fail() {
+  throw (
+    // pick the error
+    errors.first
+  );
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	// Import aliases and export assignments are runtime bindings. Dropping one
 	// leaves every later reference dangling, and the file still compiles, so the
 	// break only surfaces when the module runs.
