@@ -375,9 +375,7 @@ const NAV_GROUPS = [
 	},
 	{
 		heading: 'Next',
-		items: [
-			{ id: 'next', label: 'What\'s next?' },
-		],
+		items: [{ id: 'next', label: 'What\'s next?' }],
 	},
 ];
 

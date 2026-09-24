@@ -1588,6 +1588,94 @@ function test() {
 			expect(result).toBeWithNewline(expected);
 		});
 
+		// Both comments of a stacked cast lead the innermost node, and without
+		// its own parentheses the outer comment stops being a cast
+		it('keeps one pair of parentheses per stacked JSDoc cast', async () => {
+			const input = `const entry = /** @type {Entry} */ (/** @type {unknown} */ (node));
+console.log(/** @type {Entry} */ (/** @type {unknown} */ (node)));
+const three = /** @type {A} */ (/** @type {B} */ (/** @type {C} */ (node)));
+const config = /** @type {Config} */ (/** @type {unknown} */ ({ a: 1 }));
+const extra = /** @type {A} */ ((/** @type {B} */ (node)));
+function unwrap(node) {
+  return /** @type {Entry} */ (/** @type {unknown} */ (node));
+}
+const long = /** @type {Entry} */ (/** @type {unknown} */ (createEntry(firstArgument, secondArgument)));`;
+			const expected = `const entry = /** @type {Entry} */ (/** @type {unknown} */ (node));
+console.log(/** @type {Entry} */ (/** @type {unknown} */ (node)));
+const three = /** @type {A} */ (/** @type {B} */ (/** @type {C} */ (node)));
+const config = /** @type {Config} */ (/** @type {unknown} */ ({ a: 1 }));
+const extra = /** @type {A} */ (/** @type {B} */ (node));
+function unwrap(node) {
+  return /** @type {Entry} */ (/** @type {unknown} */ (node));
+}
+const long = /** @type {Entry} */ (
+  /** @type {unknown} */ (createEntry(firstArgument, secondArgument))
+);`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps a cast whose parentheses hold a comment or another cast', async () => {
+			const input = `const member = /** @type {A} */ (/** @type {B} */ (node).y).z;
+const outer = /** @type {A} */ (/** @type {B} */ (node)).z;
+const plain = /** @type {A} */ (/* plain */ (node));
+const chained = /** @type {A} */ (/* note */ node.y);
+const commented = /** @type {A} */ (
+  // why
+  node
+);
+const kept =
+  // prettier-ignore
+  /** @type {A} */ (/** @type {B} */ (node));`;
+			const expected = `const member = /** @type {A} */ (/** @type {B} */ (node).y).z;
+const outer = /** @type {A} */ (/** @type {B} */ (node)).z;
+const plain = /** @type {A} */ (/* plain */ node);
+const chained = /** @type {A} */ (/* note */ node.y);
+const commented = /** @type {A} */ (
+  // why
+  node
+);
+const kept =
+  // prettier-ignore
+  /** @type {A} */ (/** @type {B} */ (node));`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps stacked casts in a JSX attribute', async () => {
+			const input = `export function Link(props) {
+  return <a title={/** @type {string} */ (/** @type {unknown} */ (props.t))} />;
+}`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(input);
+		});
+
+		// The parentheses of the argument list are the call's, so the comment
+		// before them does not cast the argument
+		it('does not turn a comment before call parentheses into a cast', async () => {
+			const result = await format('foo /** @type {A} */ ((node));');
+			expect(result).toBeWithNewline('foo(/** @type {A} */ node);');
+		});
+
+		it('puts the leading semicolon before a stacked cast that starts a statement', async () => {
+			const input = `run();
+/** @type {A} */ (/** @type {B} */ (node)).start();
+run();
+// note
+/** @type {A} */ (/** @type {B} */ (node).y).z();`;
+			const expected = `run()
+;/** @type {A} */ (/** @type {B} */ (node)).start()
+run()
+// note
+;/** @type {A} */ (/** @type {B} */ (node).y).z()`;
+
+			const result = await format(input, { semi: false });
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should preserve required parentheses around assignment expressions', async () => {
 			const input = `const openSignal = useRef<Signal<boolean> | null>(null)
 const open = props.open ?? (openSignal.current ??= signal(false))
@@ -2223,10 +2311,17 @@ const [obj1, obj2] = arrayOfObjects;`;
 		});
 
 		it('should keep ReactiveMap short syntax intact', async () => {
-			const expected = `const map = new ReactiveMap([['key1', 'value1'], ['key2', 'value2']]);
+			const input = `const map = new ReactiveMap([['key1', 'value1'], ['key2', 'value2']]);
 const set = new ReactiveSet([1, 2, 3]);`;
 
-			const result = await format(expected, { singleQuote: true, printWidth: 100 });
+			// Like Prettier, a matrix of arrays prints one entry per line
+			const expected = `const map = new ReactiveMap([
+  ['key1', 'value1'],
+  ['key2', 'value2'],
+]);
+const set = new ReactiveSet([1, 2, 3]);`;
+
+			const result = await format(input, { singleQuote: true, printWidth: 100 });
 			expect(result).toBeWithNewline(expected);
 		});
 
@@ -3508,9 +3603,9 @@ function test() {
 ];`;
 
 			const expected = `const arr = [
-  1, /* comment 1 */
-  2,
-  3,
+  1,
+  /* comment 1 */
+  2, 3,
   // comment 2
 ];`;
 
@@ -4690,6 +4785,49 @@ export function App() {
 }`;
 
 			const result = await format(input, { singleQuote: true });
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('respects trailingComma none in arrays with blank lines between elements', async () => {
+			const input = `const values = [
+  1,
+
+  2,
+];
+const pairs = [
+  1, 2,
+
+  3, 4,
+];
+const commented = [
+  1,
+
+  2, // last
+];
+const holed = [
+  1,
+
+  2, ,
+];`;
+
+			const expected = `const values = [
+  1,
+
+  2
+];
+const pairs = [
+  1, 2,
+
+  3, 4
+];
+const commented = [
+  1,
+
+  2 // last
+];
+const holed = [1, 2, ,];`;
+
+			const result = await format(input, { trailingComma: 'none' });
 			expect(result).toBeWithNewline(expected);
 		});
 
@@ -6730,6 +6868,187 @@ const f = 1.5;`);
 		});
 	});
 
+	// Arrays follow Prettier's `printArray`: the source layout doesn't matter,
+	// only whether the array fits and what its elements are.
+	describe('arrays lay out like Prettier', () => {
+		it('collapses a multiline array that fits', async () => {
+			const input = `const letters = [
+  'x',
+  'y',
+];
+foo([
+  'a',
+  'b',
+]);
+const list = [
+  first,
+
+  ...rest,
+];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const letters = ["x", "y"];
+foo(["a", "b"]);
+const list = [first, ...rest];`);
+		});
+
+		it('keeps a blank line between elements when the array breaks', async () => {
+			const input = `const names = [
+  'aaaaaaaaaaaaaaaaaaaa',
+
+  'bbbbbbbbbbbbbbbbbbbb',
+  'cccccccccccccccccccc',
+  'dddddddddddddddddddd',
+];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const names = [
+  "aaaaaaaaaaaaaaaaaaaa",
+
+  "bbbbbbbbbbbbbbbbbbbb",
+  "cccccccccccccccccccc",
+  "dddddddddddddddddddd",
+];`);
+		});
+
+		it('packs number arrays several elements per line', async () => {
+			const input = `const numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27];
+const signed = [
+  -1,
+  +2,
+
+  3.5,
+];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const numbers = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+  23, 24, 25, 26, 27,
+];
+const signed = [
+  -1, +2,
+
+  3.5,
+];`);
+		});
+
+		it('breaks a matrix of arrays or of objects with several properties', async () => {
+			const input = `const matrix = [[1, 2], [3, 4]];
+const rows = [{ id: 1, name: "one" }, { id: 2, name: "two" }];
+const mixed = [[1, 2], { id: 1, name: "one" }];
+const single = [[1], [2]];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const matrix = [
+  [1, 2],
+  [3, 4],
+];
+const rows = [
+  { id: 1, name: "one" },
+  { id: 2, name: "two" },
+];
+const mixed = [[1, 2], { id: 1, name: "one" }];
+const single = [[1], [2]];`);
+		});
+
+		it('prints objects in arrays like any other object', async () => {
+			const input = `const broken = [{
+  a: 1,
+}];
+const inline = [{ a: 1, b: 2 }];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const broken = [
+  {
+    a: 1,
+  },
+];
+const inline = [{ a: 1, b: 2 }];`);
+		});
+
+		it('breaks out a dependency or number array instead of expanding it', async () => {
+			const input = `const value = useMemo(() => compute(), [firstDependency, secondDependency, thirdDependency]);
+const sum = add(first, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const value = useMemo(
+  () => compute(),
+  [firstDependency, secondDependency, thirdDependency],
+);
+const sum = add(
+  first,
+  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+);`);
+		});
+
+		it('keeps a comment before an element with that element', async () => {
+			const input = `const cast = [first, /** @type {Entry} */ (second)];
+const note = [
+  first,
+  /* note */ second,
+];
+const own = [
+  "a",
+  /* lead b */
+  "b",
+];
+const line = [
+  first,
+  // lead second
+  second,
+];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const cast = [first, /** @type {Entry} */ (second)];
+const note = [first, /* note */ second];
+const own = [
+  "a",
+  /* lead b */
+  "b",
+];
+const line = [
+  first,
+  // lead second
+  second,
+];`);
+		});
+
+		it('keeps JSDoc casts in a number array', async () => {
+			const input = `const first = [/** @type {Port} */ (80), 443];
+const own = [
+  80,
+  /** @type {Port} */ (443),
+];
+const commented = [
+  80,
+  // secure
+  /** @type {Port} */ (443),
+];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const first = [/** @type {Port} */ (80), 443];
+const own = [80, /** @type {Port} */ (443)];
+const commented = [
+  80,
+  // secure
+  /** @type {Port} */ (443),
+];`);
+		});
+
+		it('breaks an array around a call whose callback body breaks', async () => {
+			const input = `const handlers = [on("click", () => {
+  run();
+})];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const handlers = [
+  on("click", () => {
+    run();
+  }),
+];`);
+		});
+	});
+
 	// The comma after a trailing hole creates an array slot (or an iterator
 	// step in a pattern); it is not an optional trailing comma.
 	describe('trailing array holes survive formatting', () => {
@@ -6757,7 +7076,7 @@ function f([a, ,], [,]) {}`);
 			'keeps a trailing hole in a multiline array with trailingComma %s',
 			async (trailingComma) => {
 				const input = `const values = [
-  1,
+  1, // one
   2,
   ,
 ];`;
@@ -7741,6 +8060,50 @@ log()
 		});
 	});
 
+	// An empty statement prints as nothing, so like Prettier its comments go to
+	// the statements around it, or to its block when it has no neighbors.
+	describe('comments around empty statements', () => {
+		it.each([
+			['a; ; // c\nb;', 'a; // c\nb;'],
+			['a; ; ; /* c */\nb;', 'a; /* c */\nb;'],
+			['a; /* c */ ;\nb;', 'a; /* c */\nb;'],
+			['; // c\nb;', '// c\nb;'],
+			['; /* c */ b;', '/* c */ b;'],
+			['; // c', '// c'],
+			['function f() {\n  a; ; // c\n  b;\n}', 'function f() {\n  a; // c\n  b;\n}'],
+			['function f() {\n  a; ; // c\n}', 'function f() {\n  a; // c\n}'],
+			['function f() {\n  ; // c\n}', 'function f() {\n  // c\n}'],
+			[
+				'switch (x) {\n  case 1:\n    a; ; // c\n    b;\n}',
+				'switch (x) {\n  case 1:\n    a; // c\n    b;\n}',
+			],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['; // c\n[1].forEach(log)', '// c\n;[1].forEach(log)'],
+			['a; ; // c\nb', 'a // c\nb'],
+			['a\n; // c\n[1].forEach(log)', 'a // c\n;[1].forEach(log)'],
+		])('formats %j like Prettier with semi: false', async (source, expected) => {
+			expect(await format(source, { semi: false })).toBeWithNewline(expected);
+		});
+
+		it('keeps a comment on an empty statement body', async () => {
+			const source = 'if (x); // c\nelse y;';
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	describe('comment-only files', () => {
+		it.each(['// only', '// a\n\n// b', '/* block */', '/**\n * License\n */'])(
+			'keeps %j',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
+	});
+
 	// Type arguments, `this` types, and heritage clauses decide what a
 	// declaration means. Dropping one either breaks the file or quietly
 	// widens a type, so each must come back exactly as written.
@@ -8432,7 +8795,10 @@ function fail() {
 		// argument's parentheses itself must still print them.
 		it('keeps a type cast inside parentheses that return, throw, or a superclass add', async () => {
 			const input = `function unwrap(node) {
-  return /** @type {Entry} */ (/** @type {unknown} */ (node));
+  return (
+    // unwrap the entry
+    /** @type {Entry} */ (/** @type {unknown} */ (node))
+  );
 }
 function pick(node) {
   return (
@@ -8449,8 +8815,8 @@ function fail(error) {
 class Store extends /** @type {Base} */ (new Base()) {}`;
 			const expected = `function unwrap(node) {
   return (
-    /** @type {Entry} */
-    /** @type {unknown} */ (node)
+    // unwrap the entry
+    /** @type {Entry} */ (/** @type {unknown} */ (node))
   );
 }
 function pick(node) {

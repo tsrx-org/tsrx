@@ -22,7 +22,7 @@
  * @typedef {AST.Node & { decorators?: AST.Decorator[] }} MaybeDecoratedNode
  */
 
-/** @typedef {{ isInAttribute?: boolean, isInArray?: boolean, allowInlineObject?: boolean, isConditionalTest?: boolean, isNestedConditional?: boolean, suppressLeadingComments?: boolean, suppressExpressionLeadingComments?: boolean, suppressOwnParens?: boolean, isInlineContext?: boolean, isStatement?: boolean, isLogicalAndOr?: boolean, allowShorthandProperty?: boolean, isFirstChild?: boolean, noBreakInside?: boolean, expandLastArg?: boolean, preferInlineSimpleUnionType?: boolean }} PrintArgs */
+/** @typedef {{ isConditionalTest?: boolean, isNestedConditional?: boolean, suppressLeadingComments?: boolean, suppressExpressionLeadingComments?: boolean, suppressOwnParens?: boolean, isInlineContext?: boolean, isStatement?: boolean, isLogicalAndOr?: boolean, allowShorthandProperty?: boolean, isFirstChild?: boolean, noBreakInside?: boolean, expandLastArg?: boolean, preferInlineSimpleUnionType?: boolean }} PrintArgs */
 
 import { parseModule } from '@tsrx/core';
 import { doc } from 'prettier';
@@ -345,15 +345,6 @@ function wasOriginallySingleLine(node) {
 }
 
 /**
- * Check if an object expression was originally single line
- * @param {AST.ObjectExpression} node - The object expression node
- * @returns {boolean} - True if single line
- */
-function isSingleLineObjectExpression(node) {
-	return wasOriginallySingleLine(node);
-}
-
-/**
  * Check if a node has any comments (leading, trailing, or inner)
  * @param {AST.Node & AST.NodeWithMaybeComments} node - The AST node to check
  * @returns {boolean} - True if the node has comments
@@ -563,55 +554,85 @@ function isTypeCastComment(comment) {
 }
 
 /**
- * Whether a parenthesized node's parentheses complete a JSDoc type cast:
- * `/** @type {T} *\/ (value)` only casts `value` with them. The cast comment
- * sits right before the opening paren, so the parser attaches it either to
- * the node itself or to an ancestor that starts at that paren
+ * The parentheses of a parenthesized node that complete JSDoc type casts:
+ * `/** @type {T} *\/ (value)` only casts `value` with them. Casts stack, one
+ * pair each (`/** @type {A} *\/ (/** @type {B} *\/ (value))`), and the other
+ * pairs are dropped like any redundant parentheses. A cast comment sits right
+ * before its opening paren, so the parser attaches it to the node itself or,
+ * for the outermost pair, to an ancestor that starts at that paren
  * (`/** @type {T} *\/ (node).start` hangs it on the member expression).
+ * The node's leading comments split around the pairs: `ahead` print before
+ * the outermost one, and `inside[i]` right after the opening paren of pair `i`
+ * (outermost first).
  * @param {AstPath} path - The path to the parenthesized node
  * @param {TsrxFormatOptions} options - Prettier options
- * @returns {boolean}
+ * @returns {{ ahead: AST.Comment[], inside: AST.Comment[][] } | null} - null
+ * when no pair is a cast
  */
-function hasTypeCastParens(path, options) {
+function getTypeCastParens(path, options) {
 	const node = /** @type {AST.Node & AST.NodeWithLocation} */ (path.node);
+	const parenStart = node.metadata?.paren_start;
 	const text = options.originalText;
-	if (!node.metadata?.parenthesized || typeof text !== 'string') {
-		return false;
+	if (typeof parenStart !== 'number' || typeof text !== 'string') {
+		return null;
 	}
 
-	// Walk back over the opening parens (and the whitespace between them).
-	let parenStart = node.start;
-	for (let index = node.start - 1; index >= 0; index--) {
-		const character = text.charAt(index);
-		if (character === '(') {
-			parenStart = index;
-		} else if (!/\s/.test(character)) {
-			break;
+	// The node's opening parens. Only whitespace and comments sit between them.
+	/** @type {number[]} */
+	const parens = [];
+	for (let index = parenStart; index < node.start;) {
+		if (text.startsWith('/*', index)) {
+			const end = text.indexOf('*/', index + 2);
+			index = end < 0 ? node.start : end + 2;
+		} else if (text.startsWith('//', index)) {
+			const end = text.slice(index).search(/[\n\r\u2028\u2029]/);
+			index = end < 0 ? node.start : index + end;
+		} else {
+			if (text.charAt(index) === '(') {
+				parens.push(index);
+			}
+			index++;
 		}
 	}
-	if (parenStart === node.start) {
-		return false;
-	}
 
+	/** @type {AST.Comment[]} */
+	const castComments = [];
 	for (let level = -1; ; level++) {
 		const candidate = /** @type {(AST.Node & AST.NodeWithLocation) | null} */ (
 			level < 0 ? node : path.getParentNode(level)
 		);
 		if (!candidate || (level >= 0 && candidate.start < parenStart)) {
-			return false;
+			break;
 		}
 		const comments = /** @type {AST.NodeWithMaybeComments} */ (candidate).leadingComments;
-		for (const comment of comments ?? []) {
-			const commentEnd = /** @type {AST.NodeWithLocation} */ (comment).end;
-			if (
-				isTypeCastComment(comment) &&
-				commentEnd <= parenStart &&
-				!text.slice(commentEnd, parenStart).trim()
-			) {
-				return true;
-			}
-		}
+		castComments.push(...(comments ?? []).filter(isTypeCastComment));
 	}
+	const castParens = parens.filter((paren) =>
+		castComments.some((comment) => {
+			const commentEnd = /** @type {AST.NodeWithLocation} */ (comment).end;
+			return commentEnd <= paren && !text.slice(commentEnd, paren).trim();
+		}),
+	);
+	if (castParens.length === 0) {
+		return null;
+	}
+
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (node).leadingComments ?? [];
+	/**
+	 * @param {number} from
+	 * @param {number} to
+	 */
+	const commentsBetween = (from, to) =>
+		comments.filter((comment) => {
+			const commentStart = /** @type {AST.NodeWithLocation} */ (comment).start;
+			return commentStart >= from && commentStart < to;
+		});
+	return {
+		ahead: commentsBetween(-Infinity, castParens[0]),
+		inside: castParens.map((paren, index) =>
+			commentsBetween(paren, castParens[index + 1] ?? node.start),
+		),
+	};
 }
 
 /**
@@ -1092,7 +1113,7 @@ function nodeNeedsParens(node, key, parent, grandparent) {
  * Whether the node at `path` prints inside parentheses. This follows
  * Prettier's `needs-parens`: the parentheses the grammar requires and the ones
  * Prettier adds for readability. Other parentheses in the source are dropped
- * unless they complete a JSDoc type cast (see {@link hasTypeCastParens}).
+ * unless they complete a JSDoc type cast (see {@link getTypeCastParens}).
  * Parents that lay out the parentheses themselves (class heritage,
  * `export default`, and `return` or `throw` with an own-line comment) own them.
  * @param {AstPath} path - The path to the node
@@ -1256,7 +1277,7 @@ function startsWithASIHazard(path, options) {
 			break;
 	}
 
-	if (hasTypeCastParens(path, options) || needsParens(path, options)) {
+	if (getTypeCastParens(path, options) || needsParens(path, options)) {
 		return true;
 	}
 	const key = getLeftmostChildKey(node);
@@ -1455,9 +1476,22 @@ function isNextLineEmpty(node, options) {
 		return false;
 	}
 
-	const text = options.originalText;
+	return isNextLineEmptyAfterIndex(
+		options.originalText,
+		options.locEnd(/** @type {AST.NodeWithLocation} */ (node)),
+	);
+}
+
+/**
+ * Check if the line after the one containing `startIndex` is empty, skipping
+ * the rest of that line's separators and comments
+ * @param {string} text - Source text
+ * @param {number} startIndex - Position to start from
+ * @returns {boolean}
+ */
+function isNextLineEmptyAfterIndex(text, startIndex) {
 	/** @type {number | false} */
-	let index = options.locEnd(/** @type {AST.NodeWithLocation} */ (node));
+	let index = startIndex;
 
 	let previousIndex = null;
 	while (index !== previousIndex) {
@@ -1502,67 +1536,6 @@ function shouldPrintComma(options, level = 'all') {
 		default:
 			return false;
 	}
-}
-
-/**
- * Check if a leading comment can be attached to the previous element
- * @param {AST.Comment} comment - The comment node
- * @param {AST.Node} previousNode - Previous node
- * @param {AST.Node} nextNode - Next node
- * @returns {boolean}
- */
-function canAttachLeadingCommentToPreviousElement(comment, previousNode, nextNode) {
-	if (!comment || !previousNode || !nextNode) {
-		return false;
-	}
-
-	const isBlockComment = comment.type === 'Block';
-	if (!isBlockComment) {
-		return false;
-	}
-
-	if (!comment.loc || !previousNode.loc || !nextNode.loc) {
-		return false;
-	}
-
-	if (getBlankLinesBetweenNodes(previousNode, comment) > 0) {
-		return false;
-	}
-
-	if (getBlankLinesBetweenNodes(comment, nextNode) > 0) {
-		return false;
-	}
-
-	return true;
-}
-
-/**
- * Build doc for inline array comments
- * @param {AST.Comment[]} comments - Array of comment nodes
- * @returns {Doc | null}
- */
-function buildInlineArrayCommentDoc(comments) {
-	if (!Array.isArray(comments) || comments.length === 0) {
-		return null;
-	}
-
-	const docs = [];
-	for (let index = 0; index < comments.length; index++) {
-		const comment = comments[index];
-		if (!comment) {
-			continue;
-		}
-
-		// Ensure spacing before the first comment and between subsequent ones.
-		docs.push(' ');
-		if (comment.type === 'Block') {
-			docs.push('/*' + comment.value + '*/');
-		} else if (comment.type === 'Line') {
-			docs.push('//' + comment.value);
-		}
-	}
-
-	return docs.length > 0 ? docs : null;
 }
 
 /**
@@ -1748,6 +1721,110 @@ function printDeclarationDecorators(node, path, options, print) {
 }
 
 /**
+ * Print leading comments that come before a node, or before the next
+ * parenthesis of the node's type casts (see {@link printTypeCastParens}).
+ * @param {AST.Node | AST.CSS.StyleSheet} node - The node the comments lead
+ * @param {AST.Comment[]} comments - The comments, in source order
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {boolean | undefined} isInlineContext - Whether block comments stay on the line
+ * @param {boolean} [semicolonBeforeLast] - Print the statement's leading `;`
+ *   right before the last comment, a JSDoc cast that must touch its `(`
+ * @returns {Doc[]}
+ */
+function printLeadingComments(node, comments, options, isInlineContext, semicolonBeforeLast) {
+	/** @type {Doc[]} */
+	const parts = [];
+	for (let i = 0; i < comments.length; i++) {
+		const comment = comments[i];
+		const nextComment = comments[i + 1];
+		const isLastComment = i === comments.length - 1;
+
+		if (comment.type === 'Line') {
+			parts.push('//' + comment.value);
+			parts.push(hardline);
+
+			// Check if there should be blank lines between this comment and the next
+			if (nextComment) {
+				const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
+				if (blankLinesBetween > 0) {
+					parts.push(hardline);
+				}
+			} else if (isLastComment && node.type !== 'JSXText') {
+				// Preserve a blank line between the last comment and the node if it existed
+				const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
+				if (blankLinesBetween > 0) {
+					parts.push(hardline);
+				}
+			}
+		} else if (comment.type === 'Block') {
+			if (isLastComment && semicolonBeforeLast) {
+				parts.push(';');
+			}
+			parts.push('/*' + comment.value + '*/');
+
+			// Check if comment and node are on the same line (for inline JSDoc comments)
+			const isCommentInlineWithParen =
+				isLastComment && isCommentFollowedBySameLineParen(comment, options);
+			const isCommentOnSameLine =
+				isLastComment && comment.loc && node.loc && comment.loc.end.line === node.loc.start.line;
+			const shouldKeepOnSameLine = isCommentOnSameLine || isCommentInlineWithParen;
+
+			if (!isInlineContext && !shouldKeepOnSameLine) {
+				parts.push(hardline);
+
+				// Check if there should be blank lines between this comment and the next
+				if (nextComment) {
+					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
+					if (blankLinesBetween > 0) {
+						parts.push(hardline);
+					}
+				} else if (isLastComment) {
+					// Preserve a blank line between the last comment and the node if it existed
+					const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
+					if (blankLinesBetween > 0) {
+						parts.push(hardline);
+					}
+				}
+			} else {
+				parts.push(' ');
+			}
+		}
+	}
+	return parts;
+}
+
+/**
+ * Wrap a node's printed content in the parentheses of its type casts, with the
+ * comments that sit inside each pair: `/** @type {A} *\/ (/** @type {B} *\/ (node))`.
+ * Like Prettier, a pair breaks inside unless it hugs a literal.
+ * @param {AST.Node} node - The node
+ * @param {{ inside: AST.Comment[][] }} typeCastParens - See {@link getTypeCastParens}
+ * @param {Doc} nodeContent - The node's printed content
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintArgs | undefined} args - The node's print arguments
+ * @returns {Doc}
+ */
+function printTypeCastParens(node, typeCastParens, nodeContent, options, args) {
+	// A parent that prints the node's leading comments prints all of them ahead
+	// of the outermost pair, so the inner pairs lose their casts
+	const inside = args?.suppressLeadingComments ? [[]] : typeCastParens.inside;
+	let printed = nodeContent;
+	for (let index = inside.length - 1; index >= 0; index--) {
+		const comments = inside[index];
+		const hug =
+			comments.length === 0 &&
+			index === inside.length - 1 &&
+			(node.type === 'ObjectExpression' || node.type === 'ArrayExpression');
+		const inner = [
+			...printLeadingComments(node, comments, options, args?.isInlineContext),
+			printed,
+		];
+		printed = hug ? ['(', inner, ')'] : group(['(', indent([softline, inner]), softline, ')']);
+	}
+	return printed;
+}
+
+/**
  * Combine already-printed leading comment parts, a node's printed body, and its
  * trailing comments into the final Doc returned by {@link printTsrxNode}.
  * @param {AST.Node} node - The AST node
@@ -1812,79 +1889,6 @@ function finishTsrxNode(node, parts, nodeContent) {
 }
 
 /**
- * Print the comments ahead of a node, each followed by a line break except a
- * last block comment that shares the node's line.
- * @param {AST.Comment[]} comments - The comments, in source order
- * @param {AST.Node | AST.CSS.StyleSheet} node - The node the comments precede in the source
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {boolean} [isInlineContext] - Keep every block comment on its line
- * @param {boolean} [castSemicolon] - Print the statement's leading `;` right
- *   before the last comment, a JSDoc cast (see `needsLeadingSemicolon`)
- * @returns {Doc[]}
- */
-function printLeadingComments(comments, node, options, isInlineContext, castSemicolon) {
-	/** @type {Doc[]} */
-	const parts = [];
-	for (let i = 0; i < comments.length; i++) {
-		const comment = comments[i];
-		const nextComment = comments[i + 1];
-		const isLastComment = i === comments.length - 1;
-
-		if (comment.type === 'Line') {
-			parts.push('//' + comment.value);
-			parts.push(hardline);
-
-			// Check if there should be blank lines between this comment and the next
-			if (nextComment) {
-				const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-				if (blankLinesBetween > 0) {
-					parts.push(hardline);
-				}
-			} else if (isLastComment && node.type !== 'JSXText') {
-				// Preserve a blank line between the last comment and the node if it existed
-				const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
-				if (blankLinesBetween > 0) {
-					parts.push(hardline);
-				}
-			}
-		} else if (comment.type === 'Block') {
-			if (isLastComment && castSemicolon) {
-				parts.push(';');
-			}
-			parts.push('/*' + comment.value + '*/');
-
-			// Check if comment and node are on the same line (for inline JSDoc comments)
-			const isCommentInlineWithParen =
-				isLastComment && isCommentFollowedBySameLineParen(comment, options);
-			const isCommentOnSameLine =
-				isLastComment && comment.loc && node.loc && comment.loc.end.line === node.loc.start.line;
-			const shouldKeepOnSameLine = isCommentOnSameLine || isCommentInlineWithParen;
-
-			if (!isInlineContext && !shouldKeepOnSameLine) {
-				parts.push(hardline);
-
-				// Check if there should be blank lines between this comment and the next
-				if (nextComment) {
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
-				} else if (isLastComment) {
-					// Preserve a blank line between the last comment and the node if it existed
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
-				}
-			} else {
-				parts.push(' ');
-			}
-		}
-	}
-	return parts;
-}
-
-/**
  * Main print function for TSRX AST nodes
  * @param {AST.Node | AST.CSS.StyleSheet} node - The AST node to print
  * @param {AstPath} path - The AST path
@@ -1903,28 +1907,25 @@ function printTsrxNode(node, path, options, print, args) {
 
 	const isInlineContext = args && args.isInlineContext;
 	const suppressLeadingComments = args && args.suppressLeadingComments;
+	// A cast's comments print between its parentheses, not ahead of the node
+	const typeCastParens = getTypeCastParens(path, options);
 	// Whether a `;` that starts the statement (see `needsLeadingSemicolon`)
 	// went out ahead of its comments
 	let leadingSemicolonPrinted = false;
 
 	// Handle leading comments
-	if (node.leadingComments && !suppressLeadingComments) {
-		const lastComment = node.leadingComments[node.leadingComments.length - 1];
-		// A JSDoc cast must stay right before the parenthesis it casts, so a `;`
-		// that starts the statement goes ahead of it
-		leadingSemicolonPrinted =
-			lastComment !== undefined &&
+	if (!suppressLeadingComments) {
+		const comments = typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []);
+		const lastComment = comments.at(-1);
+		// A JSDoc cast must stay right before the parenthesis it casts
+		leadingSemicolonPrinted = Boolean(
+			lastComment &&
 			isTypeCastComment(lastComment) &&
 			isCommentFollowedBySameLineParen(lastComment, options) &&
-			needsLeadingSemicolon(path, options);
+			needsLeadingSemicolon(path, options),
+		);
 		parts.push(
-			...printLeadingComments(
-				node.leadingComments,
-				node,
-				options,
-				isInlineContext,
-				leadingSemicolonPrinted,
-			),
+			...printLeadingComments(node, comments, options, isInlineContext, leadingSemicolonPrinted),
 		);
 	}
 
@@ -1955,7 +1956,9 @@ function printTsrxNode(node, path, options, print, args) {
 		/** @type {Doc} */
 		let ignored = replaceEndOfLine(ignoredText);
 		// The node's span excludes its own parentheses, so put back any it had
-		if (commentNode.metadata?.parenthesized && !args?.suppressOwnParens) {
+		if (typeCastParens) {
+			ignored = printTypeCastParens(commentNode, typeCastParens, ignored, options, args);
+		} else if (commentNode.metadata?.parenthesized && !args?.suppressOwnParens) {
 			ignored = ['(', ignored, ')'];
 		}
 		// The previous statement may have lost the `;` that ended it
@@ -1995,6 +1998,10 @@ function printTsrxNode(node, path, options, print, args) {
 			// Add it unless the code is completely empty
 			if (statements.length > 0) {
 				nodeContent = [...statements, hardline];
+			} else if (node.innerComments?.length) {
+				// The parser keeps a comment-only file's comments on the program. Each
+				// comment's docs start with a line break, which the first one drops.
+				nodeContent = [...printElementBodyComments(node.innerComments).slice(1), hardline];
 			} else {
 				nodeContent = statements;
 			}
@@ -2132,423 +2139,12 @@ function printTsrxNode(node, path, options, print, args) {
 			];
 			break;
 
-		case 'ArrayExpression': {
-			if (!node.elements || node.elements.length === 0) {
-				nodeContent = '[]';
-				break;
-			}
-
-			// Check if any element is an object expression
-			let hasObjectElements = false;
-			for (let i = 0; i < node.elements.length; i++) {
-				const element = node.elements[i];
-				if (element && element.type === 'ObjectExpression') {
-					hasObjectElements = true;
-					break;
-				}
-			}
-			let shouldInlineObjects = false;
-
-			// Check if this array is inside an attribute
-			const isInAttribute = args && args.isInAttribute;
-			const suppressLeadingCommentIndices = new Set();
-			const inlineCommentsBetween = new Array(Math.max(node.elements.length - 1, 0)).fill(null);
-
-			for (let index = 0; index < node.elements.length - 1; index++) {
-				const currentElement = /** @type {AST.Expression | AST.SpreadElement} */ (
-					node.elements[index]
-				);
-				const nextElement = node.elements[index + 1];
-				if (
-					!nextElement ||
-					!nextElement.leadingComments ||
-					nextElement.leadingComments.length === 0
-				) {
-					continue;
-				}
-
-				const canTransferAllLeadingComments = nextElement.leadingComments.every(
-					(/** @type {AST.Comment} */ comment) =>
-						canAttachLeadingCommentToPreviousElement(comment, currentElement, nextElement),
-				);
-
-				if (!canTransferAllLeadingComments) {
-					continue;
-				}
-
-				const inlineCommentDoc = buildInlineArrayCommentDoc(nextElement.leadingComments);
-				if (inlineCommentDoc) {
-					inlineCommentsBetween[index] = inlineCommentDoc;
-					suppressLeadingCommentIndices.add(index + 1);
-				}
-			}
-
-			// Check if all elements are objects with multiple properties
-			// In that case, each object should be on its own line
-			const objectElements = node.elements.filter((el) => el && el.type === 'ObjectExpression');
-			const allElementsAreObjects =
-				node.elements.length > 0 &&
-				node.elements.every((el) => el && el.type === 'ObjectExpression');
-			const allObjectsHaveMultipleProperties =
-				allElementsAreObjects &&
-				objectElements.length > 0 &&
-				objectElements.every(
-					(obj) =>
-						/** @type {AST.ObjectExpression} */ (obj).properties &&
-						/** @type {AST.ObjectExpression} */ (obj).properties.length > 1,
-				);
-
-			// For arrays of simple objects with only a few properties, try to keep compact
-			// But NOT if all objects have multiple properties
-			if (hasObjectElements && !allObjectsHaveMultipleProperties) {
-				shouldInlineObjects = true;
-				for (let i = 0; i < node.elements.length; i++) {
-					const element = node.elements[i];
-					if (element && element.type === 'ObjectExpression') {
-						if (!isSingleLineObjectExpression(element)) {
-							shouldInlineObjects = false;
-							break;
-						}
-					}
-				}
-			}
-
-			// Default printing - pass isInArray or isInAttribute context
-			const arrayWasSingleLine = wasOriginallySingleLine(node);
-			const shouldUseTrailingComma = options.trailingComma !== 'none';
-			// A trailing hole (`[1, ,]`) is an array slot, and its comma is what
-			// creates it: dropping that comma shortens the array. It prints in
-			// every layout and regardless of `trailingComma`.
-			const hasTrailingHole = node.elements[node.elements.length - 1] === null;
-			/** @type {Doc} */
-			const trailingCommaDoc = hasTrailingHole
-				? ','
-				: shouldUseTrailingComma
-					? ifBreak(',', '')
-					: '';
-			const elements = path.map(
-				/**
-				 * @param {AstPath} elPath
-				 * @param {number} index
-				 */
-				(elPath, index) => {
-					const childNode = node.elements[index];
-					/** @type {PrintArgs} */
-					const childArgs = {};
-
-					if (suppressLeadingCommentIndices.has(index)) {
-						childArgs.suppressLeadingComments = true;
-					}
-
-					if (isInAttribute) {
-						childArgs.isInAttribute = true;
-						return print(elPath, childArgs);
-					}
-
-					if (
-						hasObjectElements &&
-						childNode &&
-						childNode.type === 'ObjectExpression' &&
-						shouldInlineObjects
-					) {
-						childArgs.isInArray = true;
-						childArgs.allowInlineObject = true;
-						return print(elPath, childArgs);
-					}
-
-					if (hasObjectElements) {
-						childArgs.isInArray = true;
-					}
-
-					return Object.keys(childArgs).length > 0 ? print(elPath, childArgs) : print(elPath);
-				},
-				'elements',
-			);
-
-			if (hasObjectElements && shouldInlineObjects && arrayWasSingleLine) {
-				const separator = [',', line];
-				nodeContent = group([
-					'[',
-					indent([softline, join(separator, elements), trailingCommaDoc]),
-					softline,
-					']',
-				]);
-				break;
-			}
-
-			// Arrays should inline all elements unless:
-			// 1. An element (not first) has blank line above it - then that element on new line with blank
-			// 2. Elements don't fit within printWidth
-			// 3. Array contains objects and every object has more than 1 property - each object on own line
-
-			// Check which elements have blank lines above them
-			const elementsWithBlankLineAbove = [];
-
-			// Check for blank line after opening bracket (before first element)
-			// This indicates the array should be collapsed, not preserved as multiline
-			let hasBlankLineAfterOpening = false;
-			if (node.elements.length > 0 && node.elements[0]) {
-				const firstElement = node.elements[0];
-				// Check if first element starts on a different line than the opening bracket
-				// and there's a blank line between them
-				if (firstElement.loc && node.loc) {
-					const bracketLine = node.loc.start.line;
-					const firstElementLine = firstElement.loc.start.line;
-					// If there's more than one line between bracket and first element, there's a blank line
-					if (firstElementLine - bracketLine > 1) {
-						hasBlankLineAfterOpening = true;
-					}
-				}
-			}
-
-			// Check for blank line before closing bracket (after last element)
-			let hasBlankLineBeforeClosing = false;
-			if (node.elements.length > 0 && node.elements[node.elements.length - 1]) {
-				const lastElement = node.elements[node.elements.length - 1];
-				if (lastElement?.loc && node.loc) {
-					const lastElementLine = lastElement.loc.end.line;
-					const closingBracketLine = node.loc.end.line;
-					// If there's more than one line between last element and closing bracket, there's a blank line
-					if (closingBracketLine - lastElementLine > 1) {
-						hasBlankLineBeforeClosing = true;
-					}
-				}
-			}
-
-			for (let i = 1; i < node.elements.length; i++) {
-				const prevElement = node.elements[i - 1];
-				const currentElement = node.elements[i];
-				if (!prevElement || !currentElement) {
-					continue;
-				}
-
-				const leadingComments = currentElement.leadingComments || [];
-				if (leadingComments.length > 0) {
-					const firstComment = leadingComments[0];
-					const lastComment = leadingComments[leadingComments.length - 1];
-
-					const linesBeforeComment = getBlankLinesBetweenNodes(prevElement, firstComment);
-					const linesAfterComment = getBlankLinesBetweenNodes(lastComment, currentElement);
-
-					if (linesBeforeComment > 0 || linesAfterComment > 0) {
-						elementsWithBlankLineAbove.push(i);
-					}
-					continue;
-				}
-
-				if (getBlankLinesBetweenNodes(prevElement, currentElement) > 0) {
-					elementsWithBlankLineAbove.push(i);
-				}
-			}
-
-			const hasAnyBlankLines = elementsWithBlankLineAbove.length > 0;
-
-			// Check if any elements contain hard breaks (like multiline ternaries)
-			// Don't check willBreak() as that includes soft breaks from groups
-			// Only check for actual multiline content that forces breaking
-			const hasHardBreakingElements = node.elements.some((el) => {
-				if (!el) return false;
-				// Multiline ternaries are the main case that should force all elements on separate lines
-				return el.type === 'ConditionalExpression';
-			});
-
-			if (!hasAnyBlankLines && !allObjectsHaveMultipleProperties && !hasHardBreakingElements) {
-				// Check if array has inline comments between elements
-				const hasInlineComments = inlineCommentsBetween.some((comment) => comment !== null);
-
-				// For arrays originally formatted with one element per line (no blank lines between),
-				// preserve that formatting using join() with hardline - BUT only if no inline comments
-				// and no blank lines at boundaries
-				if (
-					!arrayWasSingleLine &&
-					!hasBlankLineAfterOpening &&
-					!hasBlankLineBeforeClosing &&
-					!hasInlineComments
-				) {
-					const separator = [',', hardline];
-					const trailingDoc = shouldUseTrailingComma || hasTrailingHole ? ',' : '';
-					nodeContent = group([
-						'[',
-						indent([hardline, join(separator, elements), trailingDoc]),
-						hardline,
-						']',
-					]);
-					break;
-				}
-
-				// For arrays that should collapse (single-line or blank after opening) or have comments,
-				// use fill() to pack elements
-				const fillParts = [];
-				let skipNextSeparator = false;
-				for (let index = 0; index < elements.length; index++) {
-					if (index > 0) {
-						if (skipNextSeparator) {
-							skipNextSeparator = false;
-						} else {
-							fillParts.push(line);
-						}
-					}
-
-					if (index < elements.length - 1) {
-						const inlineCommentDoc = inlineCommentsBetween[index];
-
-						if (inlineCommentDoc) {
-							// Build comment without leading space for separate-line version
-							const nextElement = node.elements[index + 1];
-							const commentParts = [];
-							if (nextElement && nextElement.leadingComments) {
-								for (const comment of nextElement.leadingComments) {
-									if (comment.type === 'Block') {
-										commentParts.push('/*' + comment.value + '*/');
-									} else if (comment.type === 'Line') {
-										commentParts.push('//' + comment.value);
-									}
-								}
-							}
-							const commentDocNoSpace = commentParts.length > 0 ? commentParts : '';
-
-							// Provide conditional rendering: inline if it fits, otherwise on separate line
-							fillParts.push(
-								conditionalGroup([
-									// Try inline first (with space before comment)
-									[elements[index], ',', inlineCommentDoc, hardline],
-									// If doesn't fit, put comment on next line (without leading space)
-									[elements[index], ',', hardline, commentDocNoSpace, hardline],
-								]),
-							);
-							skipNextSeparator = true;
-						} else {
-							fillParts.push(group([elements[index], ',']));
-							skipNextSeparator = false;
-						}
-					} else {
-						fillParts.push(elements[index]);
-						skipNextSeparator = false;
-					}
-				}
-
-				// All-or-nothing group instead of fill(): packing several elements
-				// per wrapped line is never a fixpoint — the repacked output reparses
-				// as a multiline array and would then break one element per line.
-				nodeContent = group(['[', indent([softline, fillParts, trailingCommaDoc]), softline, ']']);
-				break;
-			}
-
-			// If array has breaking elements (multiline ternaries, functions, etc.)
-			// use join() to put each element on its own line, per Prettier spec
-			if (hasHardBreakingElements) {
-				const separator = [',', line];
-				/** @type {Doc[]} */
-				const parts = [];
-				for (let index = 0; index < elements.length; index++) {
-					parts.push(elements[index]);
-				}
-				nodeContent = group([
-					'[',
-					indent([softline, join(separator, parts), trailingCommaDoc]),
-					softline,
-					']',
-				]);
-				break;
-			}
-
-			// If array has multi-property objects, force each object on its own line
-			// Objects that were originally inline can stay inline if they fit printWidth
-			// Objects that were originally multi-line should stay multi-line
-			if (allObjectsHaveMultipleProperties) {
-				const inlineElements = path.map((elPath, index) => {
-					const obj = node.elements[index];
-					const wasObjSingleLine =
-						obj && obj.type === 'ObjectExpression' && wasOriginallySingleLine(obj);
-					return print(elPath, {
-						isInArray: true,
-						allowInlineObject: wasObjSingleLine || undefined,
-					});
-				}, 'elements');
-				const separator = [',', hardline];
-				const trailingDoc = shouldUseTrailingComma ? ifBreak(',', '') : '';
-				nodeContent = group([
-					'[',
-					indent([hardline, join(separator, inlineElements), trailingDoc]),
-					hardline,
-					']',
-				]);
-				break;
-			}
-
-			// Has blank lines - format with blank lines preserved
-			// Group elements between blank lines together so they can inline
-			const contentParts = [];
-
-			// Split elements into groups separated by blank lines
-			/** @type {number[][]} */
-			const groups = [];
-			/** @type {number[]} */
-			let currentGroup = [];
-
-			for (let i = 0; i < elements.length; i++) {
-				const hasBlankLineAbove = elementsWithBlankLineAbove.includes(i);
-
-				if (hasBlankLineAbove && currentGroup.length > 0) {
-					// Save current group and start new one
-					groups.push(currentGroup);
-					currentGroup = [i];
-				} else {
-					currentGroup.push(i);
-				}
-			}
-
-			// Don't forget the last group
-			if (currentGroup.length > 0) {
-				groups.push(currentGroup);
-			}
-
-			// Now output each group
-			for (let groupIdx = 0; groupIdx < groups.length; groupIdx++) {
-				const group_indices = groups[groupIdx];
-
-				// Add blank line before this group (except first group)
-				if (groupIdx > 0) {
-					contentParts.push(hardline);
-					contentParts.push(hardline);
-				}
-
-				// Build the group elements
-				// Use fill() to automatically pack as many elements as fit per line
-				// IMPORTANT: Each element+comma needs to be grouped for proper width calculation
-				const fillParts = [];
-				for (let i = 0; i < group_indices.length; i++) {
-					const elemIdx = group_indices[i];
-					const isLastInArray = elemIdx === elements.length - 1;
-
-					if (i > 0) {
-						fillParts.push(line);
-					}
-					// Wrap element+comma in group so fill() measures them together including breaks
-					// But don't add comma to the very last element (it gets trailing comma separately)
-					if (isLastInArray && shouldUseTrailingComma) {
-						fillParts.push(group(elements[elemIdx]));
-					} else {
-						fillParts.push(group([elements[elemIdx], ',']));
-					}
-				}
-
-				contentParts.push(fill(fillParts));
-			}
-
-			// Add trailing comma only if the last element didn't already have one
-			if (shouldUseTrailingComma) {
-				contentParts.push(',');
-			}
-
-			// Array with blank lines - format as multi-line
-			// Use simple group that will break to fit within printWidth
-			nodeContent = group(['[', indent([line, contentParts]), line, ']']);
+		case 'ArrayExpression':
+			nodeContent = printArrayExpression(node, path, options, print);
 			break;
-		}
 
 		case 'ObjectExpression':
-			nodeContent = printObjectExpression(node, path, options, print, args);
+			nodeContent = printObjectExpression(node, path, options, print);
 			break;
 
 		case 'ClassBody':
@@ -3614,12 +3210,14 @@ function printTsrxNode(node, path, options, print, args) {
 
 	// A cast's parens belong to the cast, so they print even where a parent
 	// lays out the node's other parens (`suppressOwnParens`)
-	if (hasTypeCastParens(path, options)) {
-		// Like Prettier, a cast breaks inside its parens unless it hugs a literal
-		nodeContent =
-			node.type === 'ObjectExpression' || node.type === 'ArrayExpression'
-				? ['(', nodeContent, ')']
-				: group(['(', indent([softline, nodeContent]), softline, ')']);
+	if (typeCastParens) {
+		nodeContent = printTypeCastParens(
+			/** @type {AST.Node} */ (node),
+			typeCastParens,
+			nodeContent,
+			options,
+			args,
+		);
 	} else if (!args?.suppressOwnParens && needsParens(path, options)) {
 		nodeContent = ['(', nodeContent, ')'];
 	}
@@ -4461,11 +4059,16 @@ function printCallArguments(path, options, print) {
 		return '()';
 	}
 
-	// Check if last argument can be expanded (object or array)
+	// Check if last argument can be expanded (object or array). Like Prettier,
+	// an array after a lone arrow function (`useMemo(() => value, [deps])`) or
+	// a number-only array after other arguments breaks out with them instead.
 	const finalArg = args[args.length - 1];
 	const couldExpandLastArg =
 		finalArg &&
-		(finalArg.type === 'ObjectExpression' || finalArg.type === 'ArrayExpression') &&
+		(finalArg.type === 'ObjectExpression' ||
+			(finalArg.type === 'ArrayExpression' &&
+				!(args.length === 2 && args[0].type === 'ArrowFunctionExpression') &&
+				!(args.length > 1 && isConciselyPrintedArray(finalArg, options)))) &&
 		!hasComment(finalArg);
 
 	/** @type {Doc[]} */
@@ -4550,18 +4153,20 @@ function printCallArguments(path, options, print) {
 		shouldBreak: shouldForceBreak || shouldBreakForContent,
 	});
 
+	// Like Prettier, a hugged argument that breaks also breaks the groups
+	// around the call: a break inside a conditionalGroup doesn't propagate
 	if (huggedArrowDoc) {
-		return conditionalGroup([huggedArrowDoc, groupedContents]);
+		return [
+			willBreak(huggedArrowDoc) ? breakParent : '',
+			conditionalGroup([huggedArrowDoc, groupedContents]),
+		];
 	}
 
 	const lastIndex = args.length - 1;
-	const lastArg = args[lastIndex];
 	const lastArgDoc = argumentDocs[lastIndex];
 	const lastArgBreaks = lastArgDoc ? willBreak(lastArgDoc) : false;
 	const previousArgsBreak =
 		lastIndex > 0 ? argumentBreakFlags.slice(0, lastIndex).some(Boolean) : false;
-	const isExpandableLastArgType =
-		lastArg && (lastArg.type === 'ObjectExpression' || lastArg.type === 'ArrayExpression');
 
 	// Check if we should expand the last argument (like Prettier's shouldExpandLastArg)
 	const shouldExpandLast =
@@ -4592,23 +4197,25 @@ function printCallArguments(path, options, print) {
 		inlinePartsWithExpanded.push(group(expandedLastArg, { shouldBreak: true }));
 		inlinePartsWithExpanded.push(')');
 
-		return conditionalGroup([
-			// Try with normal formatting first
-			['(', ...argumentDocs.flatMap((doc, i) => (i > 0 ? [', ', doc] : [doc])), ')'],
-			// Then try with expanded last arg
-			inlinePartsWithExpanded,
-			// Finally fall back to all args broken out
-			groupedContents,
-		]);
+		return [
+			willBreak(expandedLastArg) ? breakParent : '',
+			conditionalGroup([
+				// Try with normal formatting first
+				['(', ...argumentDocs.flatMap((doc, i) => (i > 0 ? [', ', doc] : [doc])), ')'],
+				// Then try with expanded last arg
+				inlinePartsWithExpanded,
+				// Finally fall back to all args broken out
+				groupedContents,
+			]),
+		];
 	}
 
 	const canInlineLastArg =
 		args.length > 1 &&
-		isExpandableLastArgType &&
+		couldExpandLastArg &&
 		lastArgBreaks &&
 		!previousArgsBreak &&
-		!anyArgumentHasEmptyLine &&
-		!hasComment(lastArg);
+		!anyArgumentHasEmptyLine;
 
 	if (canInlineLastArg) {
 		/** @type {Doc[]} */
@@ -4621,7 +4228,7 @@ function printCallArguments(path, options, print) {
 		}
 		inlineParts.push(')');
 
-		return conditionalGroup([inlineParts, groupedContents]);
+		return [breakParent, conditionalGroup([inlineParts, groupedContents])];
 	}
 
 	if (!anyArgumentHasEmptyLine && shouldHugLastArgument(args, argumentBreakFlags)) {
@@ -4643,7 +4250,10 @@ function printCallArguments(path, options, print) {
 		inlineParts.push(argumentDocs[lastIndex]);
 		inlineParts.push(')');
 
-		return conditionalGroup([group(inlineParts), groupedContents]);
+		return [
+			willBreak(argumentDocs[lastIndex]) ? breakParent : '',
+			conditionalGroup([group(inlineParts), groupedContents]),
+		];
 	}
 
 	return groupedContents;
@@ -5046,10 +4656,9 @@ function printDoWhileStatement(node, path, options, print) {
  * @param {AstPath<AST.ObjectExpression>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
- * @param {PrintArgs} [args] - Additional context arguments
  * @returns {Doc}
  */
-function printObjectExpression(node, path, options, print, args) {
+function printObjectExpression(node, path, options, print) {
 	const open_brace = '{';
 	const close_brace = '}';
 	const skip_offset = 1;
@@ -5102,43 +4711,15 @@ function printObjectExpression(node, path, options, print, args) {
 		}
 	}
 
-	// Check if we should try to format inline
-	const isInArray = args && args.isInArray;
-	const isInAttribute = args && args.isInAttribute;
-	const isSimple = node.properties.length <= 2;
-	// Only 1-property objects are considered very simple for compact formatting
-	const isVerySimple = node.properties.length === 1;
-
 	// Use AST builders and respect trailing commas
 	const properties = path.map(print, 'properties');
 	const shouldUseTrailingComma = options.trailingComma !== 'none' && properties.length > 0;
 
-	// For arrays: very simple (1-prop) objects can be inline, 2-prop objects always multiline
-	// For attributes: force inline for simple objects
-	// BUT: if there are ANY blank lines in the object (between props or at edges), always use multi-line
-	if (isSimple && (isInArray || isInAttribute) && !hasAnyBlankLines) {
-		if (isInArray) {
-			if (isVerySimple) {
-				// 1-property objects: force inline with spaces
-				return [open_brace, ' ', properties[0], ' ', close_brace];
-			}
-		}
-	}
-
-	if (args && args.allowInlineObject) {
-		const separator = [',', line];
-		const propertyDoc = join(separator, properties);
-		const spacing = options.bracketSpacing === false ? softline : line;
-		const trailingDoc = shouldUseTrailingComma ? ifBreak(',', '') : '';
-
-		return group([open_brace, indent([spacing, propertyDoc, trailingDoc]), spacing, close_brace]);
-	}
-
 	// For objects that were originally inline (single-line) and don't have blank lines,
-	// and aren't in arrays, allow inline formatting if it fits printWidth
+	// allow inline formatting if it fits printWidth
 	// This handles cases like `const T0: t17 = { x: 1 };` staying inline when it fits
 	// The group() will automatically break to multi-line if it doesn't fit
-	if (!hasAnyBlankLines && !isOriginallyMultiLine && !isInArray) {
+	if (!hasAnyBlankLines && !isOriginallyMultiLine) {
 		const separator = [',', line];
 		const propertyDoc = join(separator, properties);
 		const spacing = options.bracketSpacing === false ? softline : line;
@@ -5843,14 +5424,11 @@ function printThrowStatement(node, path, options, print) {
  * does after a line comment, and after a block comment unless that is the last
  * comment and shares its line with the node or with a type cast's `(`.
  * @param {AST.Node} node - The node
+ * @param {AST.Comment[]} comments - The comments printed ahead of the node
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {boolean}
  */
-function hasOwnLineLeadingComment(node, options) {
-	const comments = /** @type {AST.NodeWithMaybeComments} */ (node).leadingComments;
-	if (!comments) {
-		return false;
-	}
+function hasOwnLineLeadingComment(node, comments, options) {
 	return comments.some((comment, index) => {
 		if (comment.type === 'Line' || index < comments.length - 1) {
 			return true;
@@ -5872,17 +5450,14 @@ function hasOwnLineLeadingComment(node, options) {
  */
 function getOwnLineCommentAhead(path, options) {
 	const node = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node);
-	const firstComment = node.leadingComments?.[0] ?? null;
-	if (hasOwnLineLeadingComment(node, options)) {
+	const typeCastParens = getTypeCastParens(path, options);
+	const comments = typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []);
+	const firstComment = comments[0] ?? null;
+	if (hasOwnLineLeadingComment(node, comments, options)) {
 		return firstComment;
 	}
 	const key = getLeftmostChildKey(node);
-	if (
-		!key ||
-		hasPrettierIgnore(node) ||
-		hasTypeCastParens(path, options) ||
-		needsParens(path, options)
-	) {
+	if (!key || hasPrettierIgnore(node) || typeCastParens || needsParens(path, options)) {
 		return null;
 	}
 	const comment = path.call((childPath) => getOwnLineCommentAhead(childPath, options), key);
@@ -6519,7 +6094,10 @@ function printLabeledStatement(node, path, options, print) {
 
 	const body = path.call((bodyPath) => print(bodyPath, { suppressLeadingComments: true }), 'body');
 	/** @type {Doc[]} */
-	const parts = [...printLeadingComments(moved, node.body, options), path.call(print, 'label')];
+	const parts = [
+		...printLeadingComments(node.body, moved, options, false),
+		path.call(print, 'label'),
+	];
 	for (const commentDoc of beforeColon) {
 		parts.push(' ', commentDoc);
 	}
@@ -6634,6 +6212,8 @@ function getBlankLinesBetweenNodes(currentNode, nextNode) {
  * The indexes of the statements a statement list prints. Like Prettier, it
  * drops empty statements (a stray `;`, or the one semicolon-free code writes
  * before a first statement that starts with `[`), unless a comment is on one.
+ * The parser only leaves comments on those in static blocks and namespace
+ * bodies (#286).
  * @param {AST.Node[]} statements
  * @returns {number[]}
  */
@@ -6809,6 +6389,190 @@ function printObjectPattern(node, path, options, print) {
 }
 
 /**
+ * Print an array literal like Prettier's `printArray`. The array breaks only
+ * when it doesn't fit, or when every element is an object (or every element
+ * an array) with more than one entry. A blank line between elements is kept
+ * only in a broken array, and number-only arrays pack as many elements per
+ * line as fit.
+ * @param {AST.ArrayExpression} node - The array expression node
+ * @param {AstPath<AST.ArrayExpression>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printArrayExpression(node, path, options, print) {
+	const { elements } = node;
+	if (elements.length === 0) {
+		return '[]';
+	}
+
+	// A trailing hole (`[1, ,]`) is an array slot, and its comma is what
+	// creates it: dropping that comma shortens the array. It prints in
+	// every layout and regardless of `trailingComma`.
+	const needsForcedTrailingComma = elements[elements.length - 1] === null;
+	const groupId = Symbol('array');
+
+	const shouldBreak =
+		elements.length > 1 &&
+		elements.every((element, index) => {
+			if (!element || (element.type !== 'ArrayExpression' && element.type !== 'ObjectExpression')) {
+				return false;
+			}
+
+			const nextElement = elements[index + 1];
+			if (nextElement && nextElement.type !== element.type) {
+				return false;
+			}
+
+			const items = element.type === 'ArrayExpression' ? element.elements : element.properties;
+			return items.length > 1;
+		});
+
+	const shouldUseConciseFormatting = isConciselyPrintedArray(node, options);
+
+	/** @type {Doc} */
+	const trailingComma = needsForcedTrailingComma
+		? ','
+		: options.trailingComma === 'none'
+			? ''
+			: shouldUseConciseFormatting
+				? ifBreak(',', '', { groupId })
+				: ifBreak(',');
+
+	return group(
+		[
+			'[',
+			indent([
+				softline,
+				shouldUseConciseFormatting
+					? printArrayElementsConcisely(path, options, print, trailingComma)
+					: [printArrayElements(path, options, print), trailingComma],
+			]),
+			softline,
+			']',
+		],
+		{ shouldBreak, id: groupId },
+	);
+}
+
+/**
+ * Whether Prettier packs an array's elements with `fill`: every element is a
+ * number, and no element has a line comment after it on the same line
+ * @param {AST.ArrayExpression} node - The array expression node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {boolean}
+ */
+function isConciselyPrintedArray(node, options) {
+	const text = /** @type {string} */ (options.originalText);
+	return (
+		node.elements.length > 0 &&
+		node.elements.every(
+			(element) =>
+				!!element &&
+				(isNumericLiteral(element) ||
+					(element.type === 'UnaryExpression' &&
+						(element.operator === '+' || element.operator === '-') &&
+						isNumericLiteral(element.argument) &&
+						!hasComment(element.argument))) &&
+				!element.trailingComments?.some(
+					(comment) =>
+						comment.type === 'Line' &&
+						!hasNewline(text, /** @type {AST.CommentWithLocation} */ (comment).start, {
+							backwards: true,
+						}),
+				),
+		)
+	);
+}
+
+/**
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function isNumericLiteral(node) {
+	return node.type === 'Literal' && typeof node.value === 'number';
+}
+
+/**
+ * Whether a blank line follows the comma after an array element. Like
+ * Prettier's `isLineAfterElementEmpty`, this finds the comma first, past any
+ * parentheses or comments after the element.
+ * @param {AST.Node} element - The array element
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {boolean}
+ */
+function isLineAfterElementEmpty(element, options) {
+	const text = /** @type {string} */ (options.originalText);
+	let index = options.locEnd(/** @type {AST.NodeWithLocation} */ (element));
+	while (index < text.length && text[index] !== ',') {
+		index = /** @type {number} */ (skipInlineComment(text, skipTrailingComment(text, index + 1)));
+	}
+
+	return isNextLineEmptyAfterIndex(text, index);
+}
+
+/**
+ * Print array elements separated by `line`, keeping a blank line after an
+ * element as a `softline` that only shows when the array breaks
+ * @param {AstPath<AST.ArrayExpression>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc[]}
+ */
+function printArrayElements(path, options, print) {
+	const { elements } = path.node;
+	/** @type {Doc[]} */
+	const parts = [];
+
+	path.each((elementPath, index) => {
+		const element = elements[index];
+		parts.push(element ? group(print(elementPath)) : '');
+
+		if (index < elements.length - 1) {
+			parts.push([',', line, element && isLineAfterElementEmpty(element, options) ? softline : '']);
+		}
+	}, 'elements');
+
+	return parts;
+}
+
+/**
+ * Print number-only array elements with `fill`, several per line. A blank
+ * line after an element is always kept.
+ * @param {AstPath<AST.ArrayExpression>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @param {Doc} trailingComma - The comma to print after the last element
+ * @returns {Doc}
+ */
+function printArrayElementsConcisely(path, options, print, trailingComma) {
+	const elements = /** @type {AST.Expression[]} */ (path.node.elements);
+	/** @type {Doc[]} */
+	const parts = [];
+
+	path.each((elementPath, index) => {
+		if (index > 0) {
+			// Prettier breaks before a leading line comment. A block comment on its
+			// own line breaks too: after `1, /* note */` it would reparse as a
+			// trailing comment of `1`. A cast's comment prints inside its parens.
+			const commentsAhead =
+				getTypeCastParens(elementPath, options)?.ahead ?? elements[index].leadingComments ?? [];
+			parts.push(
+				isLineAfterElementEmpty(elements[index - 1], options)
+					? [hardline, hardline]
+					: hasOwnLineLeadingComment(elements[index], commentsAhead, options)
+						? hardline
+						: line,
+			);
+		}
+
+		parts.push([print(elementPath), index === elements.length - 1 ? trailingComma : ',']);
+	}, 'elements');
+
+	return fill(parts);
+}
+
+/**
  * Print an array pattern (destructuring)
  * @param {AST.ArrayPattern} node - The array pattern node
  * @param {AstPath<AST.ArrayPattern>} path - The AST path
@@ -6975,38 +6739,18 @@ function printVariableDeclarator(node, path, options, print) {
 			return group([group(id), ' =', group(indent([line, init]))]);
 		}
 
-		// For arrays/objects with blank lines, use conditionalGroup to try both layouts
+		// For objects with blank lines, use conditionalGroup to try both layouts
 		// Prettier will break the declaration if keeping it inline doesn't fit
-		const isArray = node.init.type === 'ArrayExpression';
-		const isObject = node.init.type === 'ObjectExpression';
-
-		if (isArray || isObject) {
-			const items = isArray
-				? /** @type {AST.ArrayExpression} */ (node.init).elements || []
-				: /** @type {AST.ObjectExpression} */ (node.init).properties || [];
+		if (node.init.type === 'ObjectExpression') {
+			const items = node.init.properties || [];
 			let hasBlankLines = false;
 
-			if (isArray) {
-				for (let i = 1; i < items.length; i++) {
-					const prevElement = items[i - 1];
-					const currentElement = items[i];
-					if (
-						prevElement &&
-						currentElement &&
-						getBlankLinesBetweenNodes(prevElement, currentElement) > 0
-					) {
-						hasBlankLines = true;
-						break;
-					}
-				}
-			} else {
-				for (let i = 0; i < items.length - 1; i++) {
-					const current = items[i];
-					const next = items[i + 1];
-					if (current && next && getBlankLinesBetweenNodes(current, next) > 0) {
-						hasBlankLines = true;
-						break;
-					}
+			for (let i = 0; i < items.length - 1; i++) {
+				const current = items[i];
+				const next = items[i + 1];
+				if (current && next && getBlankLinesBetweenNodes(current, next) > 0) {
+					hasBlankLines = true;
+					break;
 				}
 			}
 
@@ -7029,8 +6773,12 @@ function printVariableDeclarator(node, path, options, print) {
 			const init = path.call(print, 'init');
 			return group([group(id), ' =', group(indent([line, init]))]);
 		}
-		// For CallExpression and ConditionalExpression inits, use fluid layout strategy to break after = if needed
-		if (node.init.type === 'CallExpression' || node.init.type === 'ConditionalExpression') {
+		// For CallExpression, ConditionalExpression and ArrayExpression inits, use fluid layout strategy to break after = if needed
+		if (
+			node.init.type === 'CallExpression' ||
+			node.init.type === 'ConditionalExpression' ||
+			node.init.type === 'ArrayExpression'
+		) {
 			// Always use fluid layout for call expressions
 			// This allows breaking after = when the whole line doesn't fit
 			{
@@ -8441,11 +8189,7 @@ function printJSXAttribute(attr, path, options, print) {
 				return [name, '=', quote, expression.value, quote];
 			}
 		}
-		const exprDoc = path.call(
-			(valuePath) => print(valuePath, { isInAttribute: true }),
-			'value',
-			'expression',
-		);
+		const exprDoc = path.call(print, 'value', 'expression');
 		return [name, '={', exprDoc, '}'];
 	}
 
