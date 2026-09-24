@@ -2223,10 +2223,17 @@ const [obj1, obj2] = arrayOfObjects;`;
 		});
 
 		it('should keep ReactiveMap short syntax intact', async () => {
-			const expected = `const map = new ReactiveMap([['key1', 'value1'], ['key2', 'value2']]);
+			const input = `const map = new ReactiveMap([['key1', 'value1'], ['key2', 'value2']]);
 const set = new ReactiveSet([1, 2, 3]);`;
 
-			const result = await format(expected, { singleQuote: true, printWidth: 100 });
+			// Like Prettier, a matrix of arrays prints one entry per line
+			const expected = `const map = new ReactiveMap([
+  ['key1', 'value1'],
+  ['key2', 'value2'],
+]);
+const set = new ReactiveSet([1, 2, 3]);`;
+
+			const result = await format(input, { singleQuote: true, printWidth: 100 });
 			expect(result).toBeWithNewline(expected);
 		});
 
@@ -3508,9 +3515,9 @@ function test() {
 ];`;
 
 			const expected = `const arr = [
-  1, /* comment 1 */
-  2,
-  3,
+  1,
+  /* comment 1 */
+  2, 3,
   // comment 2
 ];`;
 
@@ -4730,11 +4737,7 @@ const commented = [
 
   2 // last
 ];
-const holed = [
-  1,
-
-  2, ,
-];`;
+const holed = [1, 2, ,];`;
 
 			const result = await format(input, { trailingComma: 'none' });
 			expect(result).toBeWithNewline(expected);
@@ -6777,6 +6780,133 @@ const f = 1.5;`);
 		});
 	});
 
+	// Arrays follow Prettier's `printArray`: the source layout doesn't matter,
+	// only whether the array fits and what its elements are.
+	describe('arrays lay out like Prettier', () => {
+		it('collapses a multiline array that fits', async () => {
+			const input = `const letters = [
+  'x',
+  'y',
+];
+foo([
+  'a',
+  'b',
+]);
+const list = [
+  first,
+
+  ...rest,
+];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const letters = ["x", "y"];
+foo(["a", "b"]);
+const list = [first, ...rest];`);
+		});
+
+		it('keeps a blank line between elements when the array breaks', async () => {
+			const input = `const names = [
+  'aaaaaaaaaaaaaaaaaaaa',
+
+  'bbbbbbbbbbbbbbbbbbbb',
+  'cccccccccccccccccccc',
+  'dddddddddddddddddddd',
+];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const names = [
+  "aaaaaaaaaaaaaaaaaaaa",
+
+  "bbbbbbbbbbbbbbbbbbbb",
+  "cccccccccccccccccccc",
+  "dddddddddddddddddddd",
+];`);
+		});
+
+		it('packs number arrays several elements per line', async () => {
+			const input = `const numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27];
+const signed = [
+  -1,
+  +2,
+
+  3.5,
+];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const numbers = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+  23, 24, 25, 26, 27,
+];
+const signed = [
+  -1, +2,
+
+  3.5,
+];`);
+		});
+
+		it('breaks a matrix of arrays or of objects with several properties', async () => {
+			const input = `const matrix = [[1, 2], [3, 4]];
+const rows = [{ id: 1, name: "one" }, { id: 2, name: "two" }];
+const mixed = [[1, 2], { id: 1, name: "one" }];
+const single = [[1], [2]];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const matrix = [
+  [1, 2],
+  [3, 4],
+];
+const rows = [
+  { id: 1, name: "one" },
+  { id: 2, name: "two" },
+];
+const mixed = [[1, 2], { id: 1, name: "one" }];
+const single = [[1], [2]];`);
+		});
+
+		it('prints objects in arrays like any other object', async () => {
+			const input = `const broken = [{
+  a: 1,
+}];
+const inline = [{ a: 1, b: 2 }];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const broken = [
+  {
+    a: 1,
+  },
+];
+const inline = [{ a: 1, b: 2 }];`);
+		});
+
+		it('breaks out a dependency or number array instead of expanding it', async () => {
+			const input = `const value = useMemo(() => compute(), [firstDependency, secondDependency, thirdDependency]);
+const sum = add(first, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const value = useMemo(
+  () => compute(),
+  [firstDependency, secondDependency, thirdDependency],
+);
+const sum = add(
+  first,
+  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+);`);
+		});
+
+		it('breaks an array around a call whose callback body breaks', async () => {
+			const input = `const handlers = [on("click", () => {
+  run();
+})];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const handlers = [
+  on("click", () => {
+    run();
+  }),
+];`);
+		});
+	});
+
 	// The comma after a trailing hole creates an array slot (or an iterator
 	// step in a pattern); it is not an optional trailing comma.
 	describe('trailing array holes survive formatting', () => {
@@ -6804,7 +6934,7 @@ function f([a, ,], [,]) {}`);
 			'keeps a trailing hole in a multiline array with trailingComma %s',
 			async (trailingComma) => {
 				const input = `const values = [
-  1,
+  1, // one
   2,
   ,
 ];`;
