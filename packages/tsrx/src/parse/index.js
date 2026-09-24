@@ -697,6 +697,26 @@ export function get_comment_handlers(source, comments, index = 0) {
 								return;
 							}
 						}
+						// Like Prettier, comments in an empty array or object stay inside
+						// its brackets. Comments before it that are still queued belong to
+						// an attribute of an enclosing element, visited after its children.
+						if (
+							((node.type === 'ArrayExpression' || node.type === 'ArrayPattern') &&
+								node.elements.length === 0) ||
+							((node.type === 'ObjectExpression' || node.type === 'ObjectPattern') &&
+								node.properties.length === 0)
+						) {
+							while (
+								comments[0] &&
+								comments[0].start > /** @type {AST.NodeWithLocation} */ (node).start &&
+								comments[0].end < /** @type {AST.NodeWithLocation} */ (node).end
+							) {
+								pushInnerComment(node, /** @type {AST.CommentWithLocation} */ (comments.shift()));
+							}
+							if (hasInnerComments(node)) {
+								return;
+							}
+						}
 						// Handle JSXEmptyExpression - these represent {/* comment */} in JSX
 						if (node.type === 'JSXEmptyExpression') {
 							// Collect all comments that fall within this JSXEmptyExpression
