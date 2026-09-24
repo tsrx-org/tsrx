@@ -1660,6 +1660,22 @@ const kept =
 			expect(result).toBeWithNewline('foo(/** @type {A} */ node);');
 		});
 
+		it('puts the leading semicolon before a stacked cast that starts a statement', async () => {
+			const input = `run();
+/** @type {A} */ (/** @type {B} */ (node)).start();
+run();
+// note
+/** @type {A} */ (/** @type {B} */ (node).y).z();`;
+			const expected = `run()
+;/** @type {A} */ (/** @type {B} */ (node)).start()
+run()
+// note
+;/** @type {A} */ (/** @type {B} */ (node).y).z()`;
+
+			const result = await format(input, { semi: false });
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should preserve required parentheses around assignment expressions', async () => {
 			const input = `const openSignal = useRef<Signal<boolean> | null>(null)
 const open = props.open ?? (openSignal.current ??= signal(false))
