@@ -105,6 +105,15 @@ function await_builder(argument) {
 }
 
 /**
+ * @param {AST.Expression | null} argument
+ * @param {boolean} [delegate]
+ * @returns {AST.YieldExpression}
+ */
+function yield_builder(argument, delegate = false) {
+	return { type: 'YieldExpression', argument, delegate, metadata: { path: [] } };
+}
+
+/**
  * @param {AST.BinaryOperator} operator
  * @param {AST.Expression} left
  * @param {AST.Expression} right
@@ -1485,6 +1494,7 @@ export const continue_statement = {
 
 export {
 	await_builder as await,
+	yield_builder as yield,
 	let_builder as let,
 	const_builder as const,
 	var_builder as var,

@@ -218,6 +218,62 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		});
 	});
 
+	describe(`[${name}] yield in lowered expressions (#246)`, () => {
+		/** @type {Record<string, string>} */
+		const SOURCES = {
+			'host spread beside a ref in a ternary arm': `export function* makeInput(enabled: boolean) {
+	return enabled ? <input {...{}} ref={() => {}} title={yield 'title'} /> : null;
+}`,
+			'host spread beside a ref in a logical operand': `export function* makeInput(fallback: unknown) {
+	return fallback || <input {...{}} ref={() => {}} title={yield 'title'} />;
+}`,
+			'@switch case': `export function* makeLabel(kind: number) {
+	return <p>{@switch (kind) { @case 1: { <span title={yield 'title'} /> } }}</p>;
+}`,
+		};
+
+		it.each(Object.keys(SOURCES))('keeps the yield inside a generator for the %s', (label) => {
+			const runtime = compile(SOURCES[label], 'App.tsrx').code;
+			const type_only = compile_to_volar_mappings(SOURCES[label], 'App.tsrx', { loose: true });
+			expect(type_only.errors).toEqual([]);
+			for (const code of [runtime, type_only.code]) {
+				expect(() =>
+					parseModule(code, 'App.tsx', { preserveParens: true, errors: [], comments: [] }),
+				).not.toThrow();
+			}
+		});
+
+		it.each(Object.keys(SOURCES))('maps the yielded value in the %s', (label) => {
+			const source = SOURCES[label];
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const offset = source.indexOf("'title'");
+			const generated = result.mappings.flatMap((mapping) =>
+				mapping.sourceOffsets.flatMap((source_offset, index) =>
+					source_offset === offset
+						? [
+								result.code.slice(
+									mapping.generatedOffsets[index],
+									mapping.generatedOffsets[index] + mapping.lengths[index],
+								),
+							]
+						: [],
+				),
+			);
+			expect(generated).toContain("'title'");
+		});
+
+		it('reports a yield in a @for body at the authored yield', () => {
+			const source = `export function* makeList(items: string[]) {
+	return <ul>{@for (const item of items) { <li title={yield item} /> }}</ul>;
+}`;
+			expect(() => compile(source, 'App.tsrx')).toThrow(/does not support `yield` here/);
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors.map((error) => [error.message, error.pos])).toEqual([
+				[expect.stringContaining('does not support `yield` here'), source.indexOf('yield')],
+			]);
+		});
+	});
+
 	describe(`[${name}] multiline spread attributes`, () => {
 		it.each([
 			['LF', '\n'],
