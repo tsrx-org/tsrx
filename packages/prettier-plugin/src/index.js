@@ -505,6 +505,19 @@ function isCastExpression(node) {
 }
 
 /**
+ * Look through `as`, `satisfies`, and `<T>` casts, as Prettier's
+ * couldExpandArg does, so `f({ ... } as T)` expands like `f({ ... })`.
+ * @param {AST.Node} node
+ * @returns {AST.Node}
+ */
+function skipArgumentCasts(node) {
+	while (isCastExpression(node) || node.type === 'TSTypeAssertion') {
+		node = /** @type {AST.TSAsExpression} */ (node).expression;
+	}
+	return node;
+}
+
+/**
  * Check whether a class's superclass expression prints parenthesized.
  * `extends` only takes a left-hand-side expression, so anything that binds
  * looser no longer parses without its parens: `class A extends B || C {}` is
@@ -1067,6 +1080,7 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 				case 'MemberExpression':
 					return key === 'object' && !parent.optional;
 				case 'NewExpression':
+					return key === 'callee';
 				case 'TaggedTemplateExpression':
 				case 'TSInstantiationExpression':
 				case 'TSNonNullExpression':
@@ -1549,19 +1563,19 @@ function hasRestParameter(node) {
 }
 
 /**
- * Determine if a trailing comma should be printed based on options
+ * Determine if a trailing comma should be printed based on options. Like
+ * Prettier, `es5` prints only the commas ES5 allows (level `es5`), and `all`
+ * also prints them after arguments and parameters (level `all`).
  * @param {TsrxFormatOptions} options - Prettier options
- * @param {'es5' | 'all'} [level='all'] - Comma level to check
+ * @param {'es5' | 'all'} [level='es5'] - Comma level to check
  * @returns {boolean}
  */
-function shouldPrintComma(options, level = 'all') {
+function shouldPrintComma(options, level = 'es5') {
 	switch (options.trailingComma) {
-		case 'none':
-			return false;
 		case 'es5':
-			return level === 'es5' || level === 'all';
+			return level === 'es5';
 		case 'all':
-			return level === 'all';
+			return true;
 		default:
 			return false;
 	}
@@ -4039,8 +4053,8 @@ function shouldHugArrowFunctions(args) {
 }
 
 /**
- * Print call expression arguments
- * @param {AstPath<AST.CallExpression>} path - The call path
+ * Print call or new expression arguments
+ * @param {AstPath<AST.CallExpression | AST.NewExpression>} path - The call or new expression path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @returns {Doc}
@@ -4057,12 +4071,12 @@ function printCallArguments(path, options, print) {
 	// an array after a lone arrow function (`useMemo(() => value, [deps])`) or
 	// a number-only array after other arguments breaks out with them instead.
 	const finalArg = args[args.length - 1];
+	const expandableFinalArg = skipArgumentCasts(finalArg);
 	const couldExpandLastArg =
-		finalArg &&
-		(finalArg.type === 'ObjectExpression' ||
-			(finalArg.type === 'ArrayExpression' &&
+		(expandableFinalArg.type === 'ObjectExpression' ||
+			(expandableFinalArg.type === 'ArrayExpression' &&
 				!(args.length === 2 && args[0].type === 'ArrowFunctionExpression') &&
-				!(args.length > 1 && isConciselyPrintedArray(finalArg, options)))) &&
+				!(args.length > 1 && isConciselyPrintedArray(expandableFinalArg, options)))) &&
 		!hasComment(finalArg);
 
 	/** @type {Doc[]} */
@@ -4101,11 +4115,12 @@ function printCallArguments(path, options, print) {
 	const trailingComma = shouldPrintComma(options, 'all') ? ',' : '';
 
 	// Special case: single array/object argument should keep opening delimiter inline
-	const isSingleArrayArgument = args.length === 1 && args[0] && args[0].type === 'ArrayExpression';
-	const isSingleObjectArgument =
-		args.length === 1 && args[0] && args[0].type === 'ObjectExpression';
+	const isSingleArrayOrObjectArgument =
+		args.length === 1 &&
+		(expandableFinalArg.type === 'ArrayExpression' ||
+			expandableFinalArg.type === 'ObjectExpression');
 
-	if (isSingleArrayArgument || isSingleObjectArgument) {
+	if (isSingleArrayOrObjectArgument) {
 		// Don't use group() - just concat to allow the argument to control its own breaking
 		// For single argument, no trailing comma needed
 		return ['(', argumentDocs[0], ')'];
@@ -5301,17 +5316,7 @@ function printNewExpression(node, path, options, print) {
 		parts.push(path.call(print, 'typeArguments'));
 	}
 
-	if (node.arguments && node.arguments.length > 0) {
-		parts.push('(');
-		const argList = path.map(print, 'arguments');
-		for (let i = 0; i < argList.length; i++) {
-			if (i > 0) parts.push(', ');
-			parts.push(argList[i]);
-		}
-		parts.push(')');
-	} else {
-		parts.push('()');
-	}
+	parts.push(printCallArguments(path, options, print));
 
 	return parts;
 }
@@ -5714,11 +5719,7 @@ function printTSTypeParameterDeclaration(node, path, options, print) {
 
 	return group([
 		'<',
-		indent([
-			softline,
-			join([',', line], paramList),
-			ifBreak(shouldPrintComma(options, 'all') ? ',' : ''),
-		]),
+		indent([softline, join([',', line], paramList), ifBreak(shouldPrintComma(options) ? ',' : '')]),
 		softline,
 		'>',
 	]);
