@@ -2058,7 +2058,14 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'ExportAllDeclaration':
-			nodeContent = printExportAllDeclaration(node, options);
+			nodeContent = printExportAllDeclaration(node, path, options, print);
+			break;
+
+		case 'ImportSpecifier':
+		case 'ExportSpecifier':
+		case 'ImportDefaultSpecifier':
+		case 'ImportNamespaceSpecifier':
+			nodeContent = printModuleSpecifier(node, path, print);
 			break;
 
 		case 'ExportDefaultDeclaration':
@@ -3203,6 +3210,12 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		default:
+			// An import attribute (`type: "json"` in `with { … }`) isn't in the AST
+			// node union. It goes through `print` so its comments print.
+			if (/** @type {string} */ (node.type) === 'ImportAttribute') {
+				nodeContent = [path.call(print, 'key'), ': ', path.call(print, 'value')];
+				break;
+			}
 			// Fallback for unknown node types
 			console.warn('Unknown node type:', node.type);
 			nodeContent = '/* Unknown: ' + node.type + ' */';
@@ -3238,10 +3251,10 @@ function printTsrxNode(node, path, options, print, args) {
  * @param {AST.TSRXImportDeclaration} node - The import declaration node
  * @param {AstPath<AST.TSRXImportDeclaration>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} _print - Print callback (unused)
+ * @param {PrintFn} print - Print callback
  * @returns {Doc[]}
  */
-function printImportDeclaration(node, path, options, _print) {
+function printImportDeclaration(node, path, options, print) {
 	/** @type {Doc[]} */
 	const parts = ['import'];
 	if (node.phase === 'defer') {
@@ -3250,107 +3263,199 @@ function printImportDeclaration(node, path, options, _print) {
 		parts.push(' type');
 	}
 
-	if (node.specifiers && node.specifiers.length > 0) {
-		/** @type {string[]} */
-		const defaultImports = [];
-		/** @type {string[]} */
-		const namedImports = [];
-		/** @type {string[]} */
-		const namespaceImports = [];
-
-		node.specifiers.forEach((/** @type {AST.Node} */ spec) => {
-			if (spec.type === 'ImportDefaultSpecifier') {
-				defaultImports.push(/** @type {string} */ (spec.local.name));
-			} else if (spec.type === 'ImportSpecifier') {
-				// Handle inline type imports: import { type Component } from '@example/runtime'
-				const typePrefix = spec.importKind === 'type' ? 'type ' : '';
-				const importedName = printModuleExportName(spec.imported, options);
-				const localName = spec.local.name;
-				const importName =
-					importedName === localName
-						? typePrefix + localName
-						: typePrefix + importedName + ' as ' + localName;
-				namedImports.push(importName);
-			} else if (spec.type === 'ImportNamespaceSpecifier') {
-				namespaceImports.push('* as ' + /** @type {string} */ (spec.local.name));
-			}
-		});
-
-		// Build import clause with proper grouping and line breaking
-		/** @type {Doc[]} */
-		const importClauseParts = [];
-
-		if (defaultImports.length > 0) {
-			importClauseParts.push(defaultImports.join(', '));
-		}
-		if (namespaceImports.length > 0) {
-			importClauseParts.push(namespaceImports.join(', '));
-		}
-		if (namedImports.length > 0) {
-			// Use Prettier's group and conditionalGroup for named imports to handle line breaking
-			const namedImportsDocs = namedImports.map((name) => name);
-			const namedImportsGroup = group([
-				'{',
-				indent([options.bracketSpacing ? line : softline, join([',', line], namedImportsDocs)]),
-				ifBreak(shouldPrintComma(options) ? ',' : ''),
-				options.bracketSpacing ? line : softline,
-				'}',
-			]);
-			importClauseParts.push(namedImportsGroup);
-		}
-
-		parts.push(' ');
-		if (importClauseParts.length === 1 && typeof importClauseParts[0] === 'object') {
-			parts.push(importClauseParts[0]);
-		} else {
-			parts.push(/** @type {Doc} */ (join(', ', /** @type {string[]} */ (importClauseParts))));
-		}
-		parts.push(' from');
-	}
-
-	parts.push(' ', printModuleSource(node, options), semi(options));
+	parts.push(
+		printModuleSpecifiers(path, options, print),
+		printModuleSource(path, options, print),
+		semi(options),
+	);
 
 	return parts;
 }
 
 /**
- * Print a name in an import or export clause. A name that is not a valid
- * identifier is written as a string literal: `export { a as "a-b" }`.
- * @param {AST.Identifier | AST.Literal} node
+ * Print the specifier clause of an import or export, like Prettier's
+ * printModuleSpecifiers: default and namespace specifiers first, then the named
+ * ones in braces. The braces can break only when there is more than one named
+ * specifier, a default or namespace specifier before them, or a comment on a
+ * specifier, so a lone `{ a }` stays on the line.
+ * @param {AstPath<AST.TSRXImportDeclaration | AST.ExportNamedDeclaration>} path
  * @param {TsrxFormatOptions} options
- * @returns {string}
+ * @param {PrintFn} print
+ * @returns {Doc}
  */
-function printModuleExportName(node, options) {
-	return node.type === 'Identifier' ? node.name : printStringLiteral(node, options);
+function printModuleSpecifiers(path, options, print) {
+	const { node } = path;
+	if (!shouldPrintModuleSpecifiers(node, options)) {
+		return '';
+	}
+
+	const specifiers = /** @type {AST.Node[]} */ (node.specifiers);
+	if (specifiers.length === 0) {
+		return ' {}';
+	}
+
+	/** @type {Doc[]} */
+	const standaloneSpecifiers = [];
+	/** @type {Doc[]} */
+	const groupedSpecifiers = [];
+	path.each((specifierPath) => {
+		const type = specifierPath.node.type;
+		if (type === 'ImportDefaultSpecifier' || type === 'ImportNamespaceSpecifier') {
+			standaloneSpecifiers.push(print(specifierPath));
+		} else {
+			groupedSpecifiers.push(print(specifierPath));
+		}
+	}, 'specifiers');
+
+	/** @type {Doc[]} */
+	const parts = [' ', join(', ', standaloneSpecifiers)];
+	if (groupedSpecifiers.length > 0) {
+		if (standaloneSpecifiers.length > 0) {
+			parts.push(', ');
+		}
+
+		const space = options.bracketSpacing ? ' ' : '';
+		const canBreak =
+			groupedSpecifiers.length > 1 ||
+			standaloneSpecifiers.length > 0 ||
+			specifiers.some((specifier) => hasComment(specifier));
+		parts.push(
+			canBreak
+				? group([
+						'{',
+						indent([
+							options.bracketSpacing ? line : softline,
+							join([',', line], groupedSpecifiers),
+						]),
+						ifBreak(shouldPrintComma(options) ? ',' : ''),
+						options.bracketSpacing ? line : softline,
+						'}',
+					])
+				: ['{', space, ...groupedSpecifiers, space, '}'],
+		);
+	}
+
+	return parts;
 }
 
 /**
- * Print the module an import or re-export loads, with its import attributes:
- * `"./data.json" with { type: "json" }`. Dropping the attributes changes how
- * the module loads, so every declaration with a source prints them.
- * @param {AST.TSRXImportDeclaration | AST.ExportNamedDeclaration | AST.ExportAllDeclaration} node
+ * Whether an import or export prints a specifier clause. `import {} from "x"`
+ * and `import "x"` parse to the same node, so, like Prettier, an import with no
+ * specifiers keeps its braces when the source has `from` before the module
+ * name. `import type` always has them: `import type "x"` is not TypeScript.
+ * @param {AST.Node} node
  * @param {TsrxFormatOptions} options
+ * @returns {boolean}
+ */
+function shouldPrintModuleSpecifiers(node, options) {
+	if (
+		node.type !== 'ImportDeclaration' ||
+		node.specifiers.length > 0 ||
+		node.importKind === 'type'
+	) {
+		return true;
+	}
+
+	const text = /** @type {string} */ (options.originalText);
+	const source = /** @type {AST.NodeWithLocation} */ (/** @type {unknown} */ (node.source));
+	const beforeSource = text.slice(
+		options.locStart(/** @type {AST.NodeWithLocation} */ (node)),
+		options.locStart(source),
+	);
+	return stripComments(beforeSource).trimEnd().endsWith('from');
+}
+
+/**
+ * Print one import or export specifier: `a`, `type a`, `a as b`, `* as ns`, or
+ * a default import. Like Prettier, `a as a` keeps its alias; only a specifier
+ * written without `as` prints one name.
+ * @param {AST.ImportSpecifier | AST.ExportSpecifier | AST.ImportDefaultSpecifier | AST.ImportNamespaceSpecifier} node
+ * @param {AstPath<AST.ImportSpecifier | AST.ExportSpecifier | AST.ImportDefaultSpecifier | AST.ImportNamespaceSpecifier>} path
+ * @param {PrintFn} print
  * @returns {Doc[]}
  */
-function printModuleSource(node, options) {
-	const source = /** @type {AST.Literal | AST.Identifier} */ (/** @type {unknown} */ (node.source));
-	/** @type {Doc[]} */
-	const parts = [source.type === 'Identifier' ? source.name : printStringLiteral(source, options)];
+function printModuleSpecifier(node, path, print) {
+	if (node.type === 'ImportDefaultSpecifier') {
+		return [path.call(print, 'local')];
+	}
+	if (node.type === 'ImportNamespaceSpecifier') {
+		return ['* as ', path.call(print, 'local')];
+	}
 
-	const attributes =
-		/** @type {Array<{ key: AST.Identifier | AST.Literal, value: AST.Literal }>} */ (
-			/** @type {any} */ (node).attributes ?? /** @type {any} */ (node).assertions ?? []
+	const isImport = node.type === 'ImportSpecifier';
+	const kind = isImport
+		? /** @type {AST.ImportSpecifier} */ (node).importKind
+		: /** @type {AST.ExportSpecifier} */ (node).exportKind;
+	const leftKey = isImport ? 'imported' : 'local';
+	const rightKey = isImport ? 'local' : 'exported';
+	/** @type {Doc[]} */
+	const parts = [kind === 'type' ? 'type ' : '', path.call(print, leftKey)];
+	if (!isShorthandSpecifier(node)) {
+		parts.push(' as ', path.call(print, rightKey));
+	}
+	return parts;
+}
+
+/**
+ * Whether a specifier was written without `as`: both of its names are the same
+ * source span. Prettier's isShorthandSpecifier.
+ * @param {AST.ImportSpecifier | AST.ExportSpecifier} node
+ * @returns {boolean}
+ */
+function isShorthandSpecifier(node) {
+	const left = /** @type {AST.NodeWithLocation} */ (
+		/** @type {unknown} */ (node.type === 'ImportSpecifier' ? node.imported : node.local)
+	);
+	const right = /** @type {AST.NodeWithLocation} */ (
+		/** @type {unknown} */ (node.type === 'ImportSpecifier' ? node.local : node.exported)
+	);
+	return left === right || (left.start === right.start && left.end === right.end);
+}
+
+/**
+ * Print the module an import or re-export loads, with `from` before it and its
+ * import attributes after it: ` from "./data.json" with { type: "json" }`.
+ * Dropping the attributes changes how the module loads, so every declaration
+ * with a source prints them.
+ * @param {AstPath<AST.TSRXImportDeclaration | AST.ExportNamedDeclaration | AST.ExportAllDeclaration>} path
+ * @param {TsrxFormatOptions} options
+ * @param {PrintFn} print
+ * @returns {Doc[]}
+ */
+function printModuleSource(path, options, print) {
+	const { node } = path;
+	if (!node.source) {
+		return [];
+	}
+
+	/** @type {Doc[]} */
+	const parts = [
+		shouldPrintModuleSpecifiers(node, options) ? ' from ' : ' ',
+		path.call(print, 'source'),
+	];
+
+	const attributeNodes = /** @type {AST.Node[] | undefined} */ (
+		/** @type {any} */ (node).attributes ?? /** @type {any} */ (node).assertions
+	);
+	if (attributeNodes && attributeNodes.length > 0) {
+		const attributes = path.map(
+			print,
+			/** @type {any} */ (/** @type {any} */ (node).attributes ? 'attributes' : 'assertions'),
 		);
-	if (attributes.length > 0) {
-		const attributeDocs = attributes.map((attribute) => {
-			const key =
-				attribute.key.type === 'Identifier'
-					? attribute.key.name
-					: printStringLiteral(attribute.key, options);
-			const value = printStringLiteral(attribute.value, options);
-			return [key, ': ', value];
-		});
-		parts.push(' with { ', join(', ', attributeDocs), ' }');
+		// Like a commented specifier, a commented attribute lets the braces break,
+		// so a line comment doesn't end up in front of the next attribute
+		parts.push(
+			' with ',
+			attributeNodes.some((attribute) => hasComment(attribute))
+				? group([
+						'{',
+						indent([line, join([',', line], attributes)]),
+						ifBreak(shouldPrintComma(options) ? ',' : ''),
+						line,
+						'}',
+					])
+				: ['{ ', join(', ', attributes), ' }'],
+		);
 	}
 
 	return parts;
@@ -3397,48 +3502,32 @@ function printExportNamedDeclaration(node, path, options, print) {
 		return parts;
 	}
 
-	const specifiers = node.specifiers.map((spec) => {
-		const typePrefix = spec.exportKind === 'type' ? 'type ' : '';
-		const exportedName = printModuleExportName(spec.exported, options);
-		const localName = printModuleExportName(spec.local, options);
-		if (exportedName === localName) {
-			return typePrefix + localName;
-		} else {
-			return typePrefix + localName + ' as ' + exportedName;
-		}
-	});
-
 	// `export {};` still marks the file as a module, and `export {} from "x"`
 	// still loads `x`, so an empty list keeps its braces. A bare `export` would
 	// export the next declaration or fail to parse at the end of the file.
-	/** @type {Doc[]} */
-	const parts = [
-		node.exportKind === 'type' ? 'export type ' : 'export ',
-		specifiers.length > 0 ? ['{ ', join(', ', specifiers), ' }'] : '{}',
+	return [
+		node.exportKind === 'type' ? 'export type' : 'export',
+		printModuleSpecifiers(path, options, print),
+		printModuleSource(path, options, print),
+		semi(options),
 	];
-
-	if (node.source) {
-		parts.push(' from ', printModuleSource(node, options));
-	}
-	parts.push(semi(options));
-
-	return parts;
 }
 
 /**
  * Print a star re-export: `export * from "x";` or `export type * as ns from "x";`.
  * @param {AST.ExportAllDeclaration} node
+ * @param {AstPath<AST.ExportAllDeclaration>} path
  * @param {TsrxFormatOptions} options
+ * @param {PrintFn} print
  * @returns {Doc[]}
  */
-function printExportAllDeclaration(node, options) {
+function printExportAllDeclaration(node, path, options, print) {
 	return [
 		/** @type {{ exportKind?: string }} */ (node).exportKind === 'type'
-			? 'export type * '
-			: 'export * ',
-		node.exported ? ['as ', printModuleExportName(node.exported, options), ' '] : '',
-		'from ',
-		printModuleSource(node, options),
+			? 'export type *'
+			: 'export *',
+		node.exported ? [' as ', path.call(print, 'exported')] : '',
+		printModuleSource(path, options, print),
 		semi(options),
 	];
 }

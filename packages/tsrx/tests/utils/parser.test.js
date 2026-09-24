@@ -5234,6 +5234,68 @@ type T = {
 	});
 });
 
+describe('comments in import and export specifier lists', () => {
+	/**
+	 * @param {string} source
+	 * @returns {AST.ImportDeclaration | AST.ExportNamedDeclaration}
+	 */
+	function lastDeclaration(source) {
+		const declaration = parseModule(source, 'App.ts').body.at(-1);
+		if (
+			declaration?.type !== 'ImportDeclaration' &&
+			declaration?.type !== 'ExportNamedDeclaration'
+		) {
+			throw new Error(`Expected an import or export, got ${declaration?.type}`);
+		}
+		return declaration;
+	}
+
+	// Like the last element of an array or object, the last specifier keeps the
+	// comments before `}`, so the formatter prints them inside the braces.
+	it.each([
+		['an import', "import {\n\ta,\n\tb,\n\t// after b\n} from 'mod';"],
+		['a re-export', "export {\n\ta,\n\tb,\n\t// after b\n} from 'mod';"],
+		['a local export list', 'const a = 1;\nconst b = 2;\nexport {\n\ta,\n\tb,\n\t// after b\n};'],
+	])('keeps a comment after the last specifier of %s with that specifier', (_, source) => {
+		const declaration = lastDeclaration(source);
+		const [first, last] = declaration.specifiers;
+
+		expect(first.trailingComments).toBeUndefined();
+		expect(last.trailingComments?.map((comment) => comment.value)).toEqual([' after b']);
+		expect(declaration.source?.leadingComments).toBeUndefined();
+	});
+
+	it('keeps a comment before `from` with the last specifier and one after it with the source', () => {
+		const declaration = lastDeclaration("import def, { a } /* before */ from /* after */ 'mod';");
+
+		expect(declaration.specifiers[1].trailingComments?.map((comment) => comment.value)).toEqual([
+			' before ',
+		]);
+		expect(declaration.source?.leadingComments?.map((comment) => comment.value)).toEqual([
+			' after ',
+		]);
+	});
+
+	it('leaves a block comment before a comma with the specifier before it', () => {
+		const declaration = lastDeclaration("import def /* d */, { a } from 'mod';");
+
+		expect(declaration.specifiers[0].trailingComments?.map((comment) => comment.value)).toEqual([
+			' d ',
+		]);
+		expect(declaration.specifiers[1].leadingComments).toBeUndefined();
+	});
+
+	it('leaves the comments after the module source to the source and the declaration', () => {
+		const declaration = lastDeclaration("import { a } from 'mod' /* source */; // declaration");
+
+		expect(declaration.specifiers[0].trailingComments).toBeUndefined();
+		expect(declaration.source?.trailingComments?.map((comment) => comment.value)).toEqual([
+			' source ',
+		]);
+		expect(declaration.trailingComments?.map((comment) => comment.value)).toEqual([' declaration']);
+	});
+});
+
 describe('keywordTokens parse option', () => {
 	it('collects async/function keyword tokens from the lexer', () => {
 		const source = `async function load() {}\nfunction plain() {}`;

@@ -299,6 +299,28 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Find the `from` of an import or re-export between its last specifier and
+	 * its module source, skipping comments. Only `}`, commas, whitespace, and
+	 * comments can come before it there.
+	 * @param {number} start - The end of the last specifier
+	 * @param {number} end - The start of the module source
+	 * @returns {number}
+	 */
+	function findFromKeyword(start, end) {
+		for (let i = start; i < end; i++) {
+			if (source.startsWith('/*', i)) {
+				i = source.indexOf('*/', i + 2) + 1;
+			} else if (source.startsWith('//', i)) {
+				const newline = source.indexOf('\n', i);
+				i = newline === -1 ? end : newline;
+			} else if (source.startsWith('from', i)) {
+				return i;
+			}
+		}
+		return end;
+	}
+
+	/**
 	 * @param {AST.Node | AST.CSS.Node | null | undefined} node
 	 * @returns {node is AST.NativeTSRXTemplateNode & AST.NodeWithLocation}
 	 */
@@ -778,6 +800,16 @@ export function get_comment_handlers(source, comments, index = 0) {
 								} else if (parent.type === 'CallExpression' || parent.type === 'NewExpression') {
 									node_array = parent.arguments;
 									isArgument = true;
+								} else if (
+									(parent.type === 'ImportDeclaration' ||
+										parent.type === 'ExportNamedDeclaration') &&
+									parent.specifiers.at(-1) === node
+								) {
+									// A comment after the last specifier, before `}` or `from`,
+									// trails that specifier, as it does after the last element
+									// of an array or object. The other specifiers keep the
+									// default rules.
+									node_array = parent.specifiers;
 								}
 							}
 
@@ -810,7 +842,15 @@ export function get_comment_handlers(source, comments, index = 0) {
 								parent.typeAnnotation &&
 								parent.typeAnnotation.start !== undefined
 									? parent.typeAnnotation.start
-									: parent?.end;
+									: parent &&
+										  (parent.type === 'ImportDeclaration' ||
+												parent.type === 'ExportNamedDeclaration') &&
+										  parent.source
+										? findFromKeyword(
+												/** @type {AST.NodeWithLocation} */ (node).end,
+												/** @type {AST.NodeWithLocation} */ (parent.source).start,
+											)
+										: parent?.end;
 
 							if (is_last_in_array) {
 								if (isParam || isArgument) {
