@@ -5904,6 +5904,95 @@ describe('wrapped destructuring assignment targets', () => {
 	});
 });
 
+describe('comments around empty statements', () => {
+	/**
+	 * @param {AST.Comment[] | undefined} comments
+	 * @returns {string[] | undefined}
+	 */
+	const values = (comments) => comments?.map((comment) => comment.value);
+
+	// Like Prettier, a `;` in a statement list prints as nothing, so the
+	// statements around it take its comments.
+	it('gives a comment after an empty statement to the statement before it', () => {
+		const ast = parseModule('a; ; // c\nb;', 'App.tsrx');
+		const [a, empty, b] = ast.body;
+		assert_type(empty, 'EmptyStatement');
+
+		expect(values(a.trailingComments)).toEqual([' c']);
+		expect(empty.leadingComments).toBeUndefined();
+		expect(empty.trailingComments).toBeUndefined();
+		expect(b.leadingComments).toBeUndefined();
+	});
+
+	it('gives a comment on its own line before an empty statement to the next statement', () => {
+		const ast = parseModule('a;\n// c\n;\nb;', 'App.tsrx');
+		const [a, empty, b] = ast.body;
+		assert_type(empty, 'EmptyStatement');
+
+		expect(a.trailingComments).toBeUndefined();
+		expect(empty.leadingComments).toBeUndefined();
+		expect(values(b.leadingComments)).toEqual([' c']);
+	});
+
+	it('gives the last statement the comments after the empty statements that end a list', () => {
+		const ast = parseModule('function f() {\n\ta; ; // c\n\t;\n\t// d\n}', 'App.tsrx');
+		const declaration = firstStatement(ast, 'FunctionDeclaration');
+		const [a] = declaration.body.body;
+
+		expect(values(a.trailingComments)).toEqual([' c', ' d']);
+	});
+
+	it('keeps the comments of a list with only empty statements in its container', () => {
+		const block_ast = parseModule('function f() {\n\t; // c\n}\nb;', 'App.tsrx');
+		const declaration = firstStatement(block_ast, 'FunctionDeclaration');
+		const [, b] = block_ast.body;
+
+		expect(values(declaration.body.innerComments)).toEqual([' c']);
+		expect(b.leadingComments).toBeUndefined();
+
+		const program_ast = parseModule('; // c\n;', 'App.tsrx');
+		expect(values(program_ast.innerComments)).toEqual([' c']);
+	});
+
+	it('keeps the comments of an empty statement body', () => {
+		const ast = parseModule('if (x) ; // c\nelse y;', 'App.tsrx');
+		const statement = firstStatement(ast, 'IfStatement');
+		assert_type(statement.consequent, 'EmptyStatement');
+
+		expect(values(statement.consequent.trailingComments)).toEqual([' c']);
+	});
+
+	// Until static blocks and namespace bodies keep a comment after their last
+	// statement (#286), their empty statements keep it inside the block.
+	it('keeps the comments of empty statements inside static blocks and namespaces', () => {
+		/**
+		 * @param {AST.Node[]} statements
+		 * @returns {string[]}
+		 */
+		const trailing = (statements) =>
+			statements.flatMap((statement) => values(statement.trailingComments) ?? []);
+
+		const class_ast = parseModule(
+			'class A {\n\tstatic {\n\t\ta; ; // c\n\t}\n\tb() {}\n}',
+			'App.tsrx',
+		);
+		const [static_block, method] = firstStatement(class_ast, 'ClassDeclaration').body.body;
+		assert_type(static_block, 'StaticBlock');
+
+		expect(trailing(static_block.body)).toEqual([' c']);
+		expect(static_block.trailingComments).toBeUndefined();
+		expect(method.leadingComments).toBeUndefined();
+
+		const namespace_ast = parseModule('namespace N {\n\ta; ; // c\n}\nb;', 'App.tsrx');
+		const declaration = firstStatement(namespace_ast, 'TSModuleDeclaration');
+		assert_type(declaration.body, 'TSModuleBlock');
+
+		expect(trailing(declaration.body.body)).toEqual([' c']);
+		expect(declaration.trailingComments).toBeUndefined();
+		expect(namespace_ast.body[1].leadingComments).toBeUndefined();
+	});
+});
+
 describe('parenthesized expression metadata', () => {
 	/**
 	 * @param {string} source
