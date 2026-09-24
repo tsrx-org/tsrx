@@ -11,6 +11,9 @@ import {
 import {
 	runNullishSpreadRefRuntimeTests,
 } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
+import {
+	runExpressionSpreadRefRuntimeTests,
+} from '@tsrx/core/test-harness/runtime/expression-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
 
 function text(selector: string): string | null {
@@ -581,4 +584,5 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runNullishSpreadRefRuntimeTests();
+runExpressionSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();

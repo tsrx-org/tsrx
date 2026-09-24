@@ -300,7 +300,32 @@ describe('ref runtime types', () => {
 
 			expect(errors).toEqual([]);
 			expect(types.normalized).toBe('Props | SpreadProps');
-			expect(types.forAttr).toBe('Props | SpreadProps');
+			expect(types.forAttr).toBe('SpreadRefProps<Props>');
+		});
+
+		it('types the merged ref the compiler reads for the ref attribute', () => {
+			// The compiler reads `bag?.ref` into the element's ref attribute, often
+			// through `mergeRefs`. A bag type without a `ref` must not reject that
+			// read, and an index-signature bag must not make it `unknown`.
+			const { errors, types } = check(`
+				interface Props {
+					className: string;
+				}
+
+				declare const props: Props;
+				declare const loose: Record<string, string>;
+				declare const enabled: boolean;
+				const ref = normalize_spread_props_for_ref_attr(props)?.ref;
+				const looseRef = normalize_spread_props_for_ref_attr(loose)?.ref;
+				const conditionalRef = normalize_spread_props_for_ref_attr(enabled && props)?.ref;
+				const merged = mergeRefs(ref, (node: HTMLInputElement | null) => {});
+			`);
+
+			expect(errors).toEqual([]);
+			expect(types.ref).toBe('any');
+			expect(types.looseRef).toBe('any');
+			expect(types.conditionalRef).toBe('any');
+			expect(types.merged).toBe('(node: HTMLInputElement | null) => () => void');
 		});
 
 		it('keeps a nullish props bag nullish and spreads cleanly', () => {
@@ -333,13 +358,18 @@ describe('ref runtime types', () => {
 			/** @param {string} type */
 			const members = (type) => type.split(' | ').sort();
 			const bag = ['SpreadProps', '{ disabled: boolean; }'];
+			/** @param {string} type */
+			const spread_ref_props = (type) => /^SpreadRefProps<(.*)>$/.exec(type)?.[1] ?? type;
 
 			expect(errors).toEqual([]);
 			expect(members(types.bool)).toEqual(members(['false', ...bag].join(' | ')));
 			expect(members(types.num)).toEqual(members(['0', ...bag].join(' | ')));
 			expect(members(types.str)).toEqual(members(['""', ...bag].join(' | ')));
-			expect(members(types.forAttr)).toEqual(members(['false', ...bag].join(' | ')));
-			expect(members(types.empty)).toEqual(members(bag.join(' | ')));
+			expect(types.forAttr).toMatch(/^SpreadRefProps</);
+			expect(members(spread_ref_props(types.forAttr))).toEqual(
+				members('false | { disabled: boolean; }'),
+			);
+			expect(types.empty).toBe('SpreadRefProps<{ disabled: boolean; }>');
 		});
 
 		it('rejects the values a native JSX spread rejects', () => {

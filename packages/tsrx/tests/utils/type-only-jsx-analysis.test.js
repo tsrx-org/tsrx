@@ -32,11 +32,21 @@ const PLATFORM = {
 };
 
 /**
+ * Binds host spreads beside a ref in place, as React, Preact, and Hono do.
+ * @type {JsxPlatform}
+ */
+const IN_PLACE_PLATFORM = {
+	...PLATFORM,
+	jsx: { ...PLATFORM.jsx, hostSpreadRefBinding: 'in-place' },
+};
+
+/**
  * Mirrors a target package's public compiler pipeline.
  * @param {string} source
  * @param {boolean} [type_only]
+ * @param {JsxPlatform} [platform]
  */
-function compile_source(source, type_only = true) {
+function compile_source(source, type_only = true, platform = PLATFORM) {
 	/** @type {CompileError[]} */
 	const errors = [];
 	/** @type {AST.CommentWithLocation[]} */
@@ -57,7 +67,7 @@ function compile_source(source, type_only = true) {
 		errors,
 		comments,
 	});
-	const transformed = createJsxTransform(PLATFORM)(ast, source, filename, {
+	const transformed = createJsxTransform(platform)(ast, source, filename, {
 		collect: true,
 		loose: true,
 		typeOnly: type_only,
@@ -181,6 +191,17 @@ function ref_spread_modules() {
 	];
 }
 
+/**
+ * The runtime output lowers host ref/spreads like the type-only print, except
+ * that an in-place platform declares the binding without an initializer.
+ * @type {Array<[string, boolean, JsxPlatform]>}
+ */
+const REF_SPREAD_OUTPUTS = [
+	['type-only', true, PLATFORM],
+	['runtime', false, PLATFORM],
+	['runtime, bound in place', false, IN_PLACE_PLATFORM],
+];
+
 describe('type-only JSX analysis', () => {
 	it('keeps multiple scoped style blocks analyzable and compiles them as one scope', () => {
 		const result = compile_source(SPLIT_STYLE_SOURCE);
@@ -242,90 +263,154 @@ describe('type-only JSX analysis', () => {
 		]);
 	});
 
-	it('declares generated host ref/spread bindings in every element position', () => {
-		const root = mkdtempSync(join(tmpdir(), 'tsrx-ref-spread-'));
-		try {
-			const files = ref_spread_modules().map(([name, source], index) => {
-				const compiled = compile_source(source);
-				expect(compiled.errors).toEqual([]);
-				const file = join(root, `Chart${index}.tsx`);
-				writeFileSync(file, compiled.code);
-				return { name, file };
-			});
-
-			const program = ts.createProgram({
-				rootNames: files.map(({ file }) => file),
-				options: {
-					jsx: ts.JsxEmit.Preserve,
-					module: ts.ModuleKind.ESNext,
-					moduleResolution: ts.ModuleResolutionKind.Bundler,
-					noEmit: true,
-					skipLibCheck: true,
-					strict: true,
-					target: ts.ScriptTarget.ESNext,
-				},
-			});
-			const undefined_names = ts
-				.getPreEmitDiagnostics(program)
-				.filter((diagnostic) => diagnostic.code === 2304)
-				.map((diagnostic) => {
-					const position = files.find(({ file }) => file === diagnostic.file?.fileName);
-					return `${position?.name ?? diagnostic.file?.fileName}: ${ts.flattenDiagnosticMessageText(
-						diagnostic.messageText,
-						' ',
-					)}`;
+	it.each(REF_SPREAD_OUTPUTS)(
+		'declares generated host ref/spread bindings in every element position (%s)',
+		(_output, type_only, platform) => {
+			const root = mkdtempSync(join(tmpdir(), 'tsrx-ref-spread-'));
+			try {
+				const files = ref_spread_modules().map(([name, source], index) => {
+					const compiled = compile_source(source, type_only, platform);
+					expect(compiled.errors).toEqual([]);
+					const file = join(root, `Chart${index}.tsx`);
+					writeFileSync(file, compiled.code);
+					return { name, file };
 				});
-			expect(undefined_names).toEqual([]);
-		} finally {
-			rmSync(root, { recursive: true, force: true });
-		}
-	});
 
-	it('lowers each host ref/spread exactly once', () => {
-		for (const [name, source] of ref_spread_modules()) {
-			const compiled = compile_source(source);
-			const generated = ts.createSourceFile(
-				'Chart.tsx',
-				compiled.code,
-				ts.ScriptTarget.ESNext,
-				true,
-				ts.ScriptKind.TSX,
-			);
-			/** @type {ts.ArrayLiteralExpression[]} */
-			const ref_arrays = [];
-			/** @type {ts.CallExpression[]} */
-			const normalize_calls = [];
-			/** @param {ts.Node} node */
-			const visit = (node) => {
-				if (
-					ts.isJsxAttribute(node) &&
-					ts.isIdentifier(node.name) &&
-					node.name.text === 'ref' &&
-					node.initializer &&
-					ts.isJsxExpression(node.initializer) &&
-					node.initializer.expression &&
-					ts.isArrayLiteralExpression(node.initializer.expression)
-				) {
-					ref_arrays.push(node.initializer.expression);
-				}
-				if (
-					ts.isCallExpression(node) &&
-					ts.isIdentifier(node.expression) &&
-					node.expression.text === '__normalize_spread_props_for_ref_attr'
-				) {
-					normalize_calls.push(node);
-				}
-				ts.forEachChild(node, visit);
-			};
-			visit(generated);
+				const program = ts.createProgram({
+					rootNames: files.map(({ file }) => file),
+					options: {
+						jsx: ts.JsxEmit.Preserve,
+						module: ts.ModuleKind.ESNext,
+						moduleResolution: ts.ModuleResolutionKind.Bundler,
+						noEmit: true,
+						skipLibCheck: true,
+						strict: true,
+						target: ts.ScriptTarget.ESNext,
+					},
+				});
+				const undefined_names = ts
+					.getPreEmitDiagnostics(program)
+					.filter((diagnostic) => diagnostic.code === 2304)
+					.map((diagnostic) => {
+						const position = files.find(({ file }) => file === diagnostic.file?.fileName);
+						return `${position?.name ?? diagnostic.file?.fileName}: ${ts.flattenDiagnosticMessageText(
+							diagnostic.messageText,
+							' ',
+						)}`;
+					});
+				expect(undefined_names).toEqual([]);
+			} finally {
+				rmSync(root, { recursive: true, force: true });
+			}
+		},
+	);
 
-			expect(ref_arrays, name).toHaveLength(1);
-			expect(
-				ref_arrays[0].elements.filter((element) => ts.isArrayLiteralExpression(element)),
-				name,
-			).toEqual([]);
-			const authored_spreads = source.match(/{\.\.\./g)?.length ?? 0;
-			expect(normalize_calls, name).toHaveLength(authored_spreads);
-		}
-	});
+	it.each(REF_SPREAD_OUTPUTS)(
+		'lowers each host ref/spread exactly once (%s)',
+		(_output, type_only, platform) => {
+			for (const [name, source] of ref_spread_modules()) {
+				const compiled = compile_source(source, type_only, platform);
+				const generated = ts.createSourceFile(
+					'Chart.tsx',
+					compiled.code,
+					ts.ScriptTarget.ESNext,
+					true,
+					ts.ScriptKind.TSX,
+				);
+				/** @type {ts.ArrayLiteralExpression[]} */
+				const ref_arrays = [];
+				/** @type {ts.CallExpression[]} */
+				const normalize_calls = [];
+				/** @param {ts.Node} node */
+				const visit = (node) => {
+					if (
+						ts.isJsxAttribute(node) &&
+						ts.isIdentifier(node.name) &&
+						node.name.text === 'ref' &&
+						node.initializer &&
+						ts.isJsxExpression(node.initializer) &&
+						node.initializer.expression &&
+						ts.isArrayLiteralExpression(node.initializer.expression)
+					) {
+						ref_arrays.push(node.initializer.expression);
+					}
+					if (
+						ts.isCallExpression(node) &&
+						ts.isIdentifier(node.expression) &&
+						node.expression.text === '__normalize_spread_props_for_ref_attr'
+					) {
+						normalize_calls.push(node);
+					}
+					ts.forEachChild(node, visit);
+				};
+				visit(generated);
+
+				expect(ref_arrays, name).toHaveLength(1);
+				expect(
+					ref_arrays[0].elements.filter((element) => ts.isArrayLiteralExpression(element)),
+					name,
+				).toEqual([]);
+				const authored_spreads = source.match(/{\.\.\./g)?.length ?? 0;
+				expect(normalize_calls, name).toHaveLength(authored_spreads);
+			}
+		},
+	);
+
+	it.each(REF_SPREAD_OUTPUTS)(
+		'declares the binding of a host inside a spread argument within its callback (%s)',
+		(_output, type_only, platform) => {
+			// JSX in a spread argument is parsed as plain JSX, not a native template
+			// node; its binding must stay in the callback that declares `row`.
+			const svg =
+				'<svg {...{ children: props.rows.map((row: number) => <text key={row} ref={props.nodeRef} {...props.rest} />) }} />';
+			for (const [name, source] of [
+				[
+					'concise arrow body',
+					`${REF_SPREAD_PROPS_TYPE}export const Chart = (props: Props) => ${svg};\n`,
+				],
+				[
+					'declarator init',
+					`${REF_SPREAD_PROPS_TYPE}export function Chart(props: Props) {\n\tconst chart = ${svg};\n\treturn chart;\n}\n`,
+				],
+			]) {
+				const compiled = compile_source(source, type_only, platform);
+				expect(compiled.errors, name).toEqual([]);
+				const generated = ts.createSourceFile(
+					'Chart.tsx',
+					compiled.code,
+					ts.ScriptTarget.ESNext,
+					true,
+					ts.ScriptKind.TSX,
+				);
+				/** @type {ts.VariableDeclaration[]} */
+				const bindings = [];
+				/** @param {ts.Node} node */
+				const visit = (node) => {
+					if (
+						ts.isVariableDeclaration(node) &&
+						ts.isIdentifier(node.name) &&
+						node.name.text.includes('spread_props')
+					) {
+						bindings.push(node);
+					}
+					ts.forEachChild(node, visit);
+				};
+				visit(generated);
+
+				expect(bindings, name).toHaveLength(1);
+				/** @type {ts.Node | undefined} */
+				let scope = bindings[0];
+				while (
+					scope &&
+					!(
+						ts.isArrowFunction(scope) &&
+						scope.parameters.some((parameter) => parameter.name.getText() === 'row')
+					)
+				) {
+					scope = scope.parent;
+				}
+				expect(scope, name).toBeDefined();
+			}
+		},
+	);
 });

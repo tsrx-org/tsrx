@@ -2070,8 +2070,14 @@ function create_element_children(children, transform_context) {
  */
 function transform_element_attributes(raw_attrs, is_composite, transform_context, element) {
 	validateAtMostOneRefAttribute(raw_attrs, transform_context);
+	// Core's JSXOpeningElement visitor has already lowered the host ref/spread
+	// of an element in plain-JS expression position; lowering it again nests a
+	// second spread binding and ref array around the first.
+	const already_lowered = element?.openingElement?.metadata?.host_ref_spread_lowered === true;
 	return mergeDuplicateRefs(
-		normalize_solid_host_ref_spreads(raw_attrs, !is_composite, transform_context),
+		already_lowered
+			? raw_attrs
+			: normalize_solid_host_ref_spreads(raw_attrs, !is_composite, transform_context),
 		transform_context,
 	);
 }
@@ -2097,8 +2103,19 @@ function normalize_solid_host_ref_spreads(attrs, is_host, transform_context) {
 				return [attr];
 			}
 
-			transform_context.needs_normalize_spread_props = true;
-			const normalized = b.call(NORMALIZE_SPREAD_PROPS_INTERNAL_NAME, attr.argument);
+			// Like core's lowering, a bag whose `ref` the element reads goes through
+			// the ref-attr normalizer, whose result types that `ref`.
+			if (needs_synthetic_spread_ref) {
+				transform_context.needs_normalize_spread_props_for_ref_attr = true;
+			} else {
+				transform_context.needs_normalize_spread_props = true;
+			}
+			const normalized = b.call(
+				needs_synthetic_spread_ref
+					? NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME
+					: NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
+				attr.argument,
+			);
 
 			if (needs_synthetic_spread_ref) {
 				const normalized_id = create_generated_identifier(
