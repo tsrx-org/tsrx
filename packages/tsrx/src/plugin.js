@@ -3594,6 +3594,8 @@ export function TSRXPlugin(config) {
 				if (expr && /** @type {AST.NodeWithLocation} */ (expr).start > startPos) {
 					expr.metadata ??= { path: [] };
 					expr.metadata.parenthesized = true;
+					// Nested parens finish outermost last, so this ends on the outermost `(`
+					expr.metadata.paren_start = startPos;
 				}
 
 				return expr;

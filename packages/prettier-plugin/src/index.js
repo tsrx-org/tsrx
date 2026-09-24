@@ -563,55 +563,85 @@ function isTypeCastComment(comment) {
 }
 
 /**
- * Whether a parenthesized node's parentheses complete a JSDoc type cast:
- * `/** @type {T} *\/ (value)` only casts `value` with them. The cast comment
- * sits right before the opening paren, so the parser attaches it either to
- * the node itself or to an ancestor that starts at that paren
+ * The parentheses of a parenthesized node that complete JSDoc type casts:
+ * `/** @type {T} *\/ (value)` only casts `value` with them. Casts stack, one
+ * pair each (`/** @type {A} *\/ (/** @type {B} *\/ (value))`), and the other
+ * pairs are dropped like any redundant parentheses. A cast comment sits right
+ * before its opening paren, so the parser attaches it to the node itself or,
+ * for the outermost pair, to an ancestor that starts at that paren
  * (`/** @type {T} *\/ (node).start` hangs it on the member expression).
+ * The node's leading comments split around the pairs: `ahead` print before
+ * the outermost one, and `inside[i]` right after the opening paren of pair `i`
+ * (outermost first).
  * @param {AstPath} path - The path to the parenthesized node
  * @param {TsrxFormatOptions} options - Prettier options
- * @returns {boolean}
+ * @returns {{ ahead: AST.Comment[], inside: AST.Comment[][] } | null} - null
+ * when no pair is a cast
  */
-function hasTypeCastParens(path, options) {
+function getTypeCastParens(path, options) {
 	const node = /** @type {AST.Node & AST.NodeWithLocation} */ (path.node);
+	const parenStart = node.metadata?.paren_start;
 	const text = options.originalText;
-	if (!node.metadata?.parenthesized || typeof text !== 'string') {
-		return false;
+	if (typeof parenStart !== 'number' || typeof text !== 'string') {
+		return null;
 	}
 
-	// Walk back over the opening parens (and the whitespace between them).
-	let parenStart = node.start;
-	for (let index = node.start - 1; index >= 0; index--) {
-		const character = text.charAt(index);
-		if (character === '(') {
-			parenStart = index;
-		} else if (!/\s/.test(character)) {
-			break;
+	// The node's opening parens. Only whitespace and comments sit between them.
+	/** @type {number[]} */
+	const parens = [];
+	for (let index = parenStart; index < node.start;) {
+		if (text.startsWith('/*', index)) {
+			const end = text.indexOf('*/', index + 2);
+			index = end < 0 ? node.start : end + 2;
+		} else if (text.startsWith('//', index)) {
+			const end = text.slice(index).search(/[\n\r\u2028\u2029]/);
+			index = end < 0 ? node.start : index + end;
+		} else {
+			if (text.charAt(index) === '(') {
+				parens.push(index);
+			}
+			index++;
 		}
 	}
-	if (parenStart === node.start) {
-		return false;
-	}
 
+	/** @type {AST.Comment[]} */
+	const castComments = [];
 	for (let level = -1; ; level++) {
 		const candidate = /** @type {(AST.Node & AST.NodeWithLocation) | null} */ (
 			level < 0 ? node : path.getParentNode(level)
 		);
 		if (!candidate || (level >= 0 && candidate.start < parenStart)) {
-			return false;
+			break;
 		}
 		const comments = /** @type {AST.NodeWithMaybeComments} */ (candidate).leadingComments;
-		for (const comment of comments ?? []) {
-			const commentEnd = /** @type {AST.NodeWithLocation} */ (comment).end;
-			if (
-				isTypeCastComment(comment) &&
-				commentEnd <= parenStart &&
-				!text.slice(commentEnd, parenStart).trim()
-			) {
-				return true;
-			}
-		}
+		castComments.push(...(comments ?? []).filter(isTypeCastComment));
 	}
+	const castParens = parens.filter((paren) =>
+		castComments.some((comment) => {
+			const commentEnd = /** @type {AST.NodeWithLocation} */ (comment).end;
+			return commentEnd <= paren && !text.slice(commentEnd, paren).trim();
+		}),
+	);
+	if (castParens.length === 0) {
+		return null;
+	}
+
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (node).leadingComments ?? [];
+	/**
+	 * @param {number} from
+	 * @param {number} to
+	 */
+	const commentsBetween = (from, to) =>
+		comments.filter((comment) => {
+			const commentStart = /** @type {AST.NodeWithLocation} */ (comment).start;
+			return commentStart >= from && commentStart < to;
+		});
+	return {
+		ahead: commentsBetween(-Infinity, castParens[0]),
+		inside: castParens.map((paren, index) =>
+			commentsBetween(paren, castParens[index + 1] ?? node.start),
+		),
+	};
 }
 
 /**
@@ -1092,7 +1122,7 @@ function nodeNeedsParens(node, key, parent, grandparent) {
  * Whether the node at `path` prints inside parentheses. This follows
  * Prettier's `needs-parens`: the parentheses the grammar requires and the ones
  * Prettier adds for readability. Other parentheses in the source are dropped
- * unless they complete a JSDoc type cast (see {@link hasTypeCastParens}).
+ * unless they complete a JSDoc type cast (see {@link getTypeCastParens}).
  * Parents that lay out the parentheses themselves (class heritage,
  * `export default`, and `return` or `throw` with an own-line comment) own them.
  * @param {AstPath} path - The path to the node
@@ -1256,7 +1286,7 @@ function startsWithASIHazard(path, options) {
 			break;
 	}
 
-	if (hasTypeCastParens(path, options) || needsParens(path, options)) {
+	if (getTypeCastParens(path, options) || needsParens(path, options)) {
 		return true;
 	}
 	const key = getLeftmostChildKey(node);
@@ -1748,6 +1778,110 @@ function printDeclarationDecorators(node, path, options, print) {
 }
 
 /**
+ * Print leading comments that come before a node, or before the next
+ * parenthesis of the node's type casts (see {@link printTypeCastParens}).
+ * @param {AST.Node | AST.CSS.StyleSheet} node - The node the comments lead
+ * @param {AST.Comment[]} comments - The comments, in source order
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {boolean | undefined} isInlineContext - Whether block comments stay on the line
+ * @param {boolean} [semicolonBeforeLast] - Print the statement's leading `;`
+ *   right before the last comment, a JSDoc cast that must touch its `(`
+ * @returns {Doc[]}
+ */
+function printLeadingComments(node, comments, options, isInlineContext, semicolonBeforeLast) {
+	/** @type {Doc[]} */
+	const parts = [];
+	for (let i = 0; i < comments.length; i++) {
+		const comment = comments[i];
+		const nextComment = comments[i + 1];
+		const isLastComment = i === comments.length - 1;
+
+		if (comment.type === 'Line') {
+			parts.push('//' + comment.value);
+			parts.push(hardline);
+
+			// Check if there should be blank lines between this comment and the next
+			if (nextComment) {
+				const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
+				if (blankLinesBetween > 0) {
+					parts.push(hardline);
+				}
+			} else if (isLastComment && node.type !== 'JSXText') {
+				// Preserve a blank line between the last comment and the node if it existed
+				const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
+				if (blankLinesBetween > 0) {
+					parts.push(hardline);
+				}
+			}
+		} else if (comment.type === 'Block') {
+			if (isLastComment && semicolonBeforeLast) {
+				parts.push(';');
+			}
+			parts.push('/*' + comment.value + '*/');
+
+			// Check if comment and node are on the same line (for inline JSDoc comments)
+			const isCommentInlineWithParen =
+				isLastComment && isCommentFollowedBySameLineParen(comment, options);
+			const isCommentOnSameLine =
+				isLastComment && comment.loc && node.loc && comment.loc.end.line === node.loc.start.line;
+			const shouldKeepOnSameLine = isCommentOnSameLine || isCommentInlineWithParen;
+
+			if (!isInlineContext && !shouldKeepOnSameLine) {
+				parts.push(hardline);
+
+				// Check if there should be blank lines between this comment and the next
+				if (nextComment) {
+					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
+					if (blankLinesBetween > 0) {
+						parts.push(hardline);
+					}
+				} else if (isLastComment) {
+					// Preserve a blank line between the last comment and the node if it existed
+					const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
+					if (blankLinesBetween > 0) {
+						parts.push(hardline);
+					}
+				}
+			} else {
+				parts.push(' ');
+			}
+		}
+	}
+	return parts;
+}
+
+/**
+ * Wrap a node's printed content in the parentheses of its type casts, with the
+ * comments that sit inside each pair: `/** @type {A} *\/ (/** @type {B} *\/ (node))`.
+ * Like Prettier, a pair breaks inside unless it hugs a literal.
+ * @param {AST.Node} node - The node
+ * @param {{ inside: AST.Comment[][] }} typeCastParens - See {@link getTypeCastParens}
+ * @param {Doc} nodeContent - The node's printed content
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintArgs | undefined} args - The node's print arguments
+ * @returns {Doc}
+ */
+function printTypeCastParens(node, typeCastParens, nodeContent, options, args) {
+	// A parent that prints the node's leading comments prints all of them ahead
+	// of the outermost pair, so the inner pairs lose their casts
+	const inside = args?.suppressLeadingComments ? [[]] : typeCastParens.inside;
+	let printed = nodeContent;
+	for (let index = inside.length - 1; index >= 0; index--) {
+		const comments = inside[index];
+		const hug =
+			comments.length === 0 &&
+			index === inside.length - 1 &&
+			(node.type === 'ObjectExpression' || node.type === 'ArrayExpression');
+		const inner = [
+			...printLeadingComments(node, comments, options, args?.isInlineContext),
+			printed,
+		];
+		printed = hug ? ['(', inner, ')'] : group(['(', indent([softline, inner]), softline, ')']);
+	}
+	return printed;
+}
+
+/**
  * Combine already-printed leading comment parts, a node's printed body, and its
  * trailing comments into the final Doc returned by {@link printTsrxNode}.
  * @param {AST.Node} node - The AST node
@@ -1830,75 +1964,26 @@ function printTsrxNode(node, path, options, print, args) {
 
 	const isInlineContext = args && args.isInlineContext;
 	const suppressLeadingComments = args && args.suppressLeadingComments;
+	// A cast's comments print between its parentheses, not ahead of the node
+	const typeCastParens = getTypeCastParens(path, options);
 	// Whether a `;` that starts the statement (see `needsLeadingSemicolon`)
 	// went out ahead of its comments
 	let leadingSemicolonPrinted = false;
 
 	// Handle leading comments
-	if (node.leadingComments && !suppressLeadingComments) {
-		for (let i = 0; i < node.leadingComments.length; i++) {
-			const comment = node.leadingComments[i];
-			const nextComment = node.leadingComments[i + 1];
-			const isLastComment = i === node.leadingComments.length - 1;
-
-			if (comment.type === 'Line') {
-				parts.push('//' + comment.value);
-				parts.push(hardline);
-
-				// Check if there should be blank lines between this comment and the next
-				if (nextComment) {
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
-				} else if (isLastComment && node.type !== 'JSXText') {
-					// Preserve a blank line between the last comment and the node if it existed
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
-				}
-			} else if (comment.type === 'Block') {
-				// Check if comment and node are on the same line (for inline JSDoc comments)
-				const isCommentInlineWithParen =
-					isLastComment && isCommentFollowedBySameLineParen(comment, options);
-
-				// A JSDoc cast must stay right before the parenthesis it casts
-				if (
-					isCommentInlineWithParen &&
-					isTypeCastComment(comment) &&
-					needsLeadingSemicolon(path, options)
-				) {
-					parts.push(';');
-					leadingSemicolonPrinted = true;
-				}
-				parts.push('/*' + comment.value + '*/');
-
-				const isCommentOnSameLine =
-					isLastComment && comment.loc && node.loc && comment.loc.end.line === node.loc.start.line;
-				const shouldKeepOnSameLine = isCommentOnSameLine || isCommentInlineWithParen;
-
-				if (!isInlineContext && !shouldKeepOnSameLine) {
-					parts.push(hardline);
-
-					// Check if there should be blank lines between this comment and the next
-					if (nextComment) {
-						const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-						if (blankLinesBetween > 0) {
-							parts.push(hardline);
-						}
-					} else if (isLastComment) {
-						// Preserve a blank line between the last comment and the node if it existed
-						const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
-						if (blankLinesBetween > 0) {
-							parts.push(hardline);
-						}
-					}
-				} else {
-					parts.push(' ');
-				}
-			}
-		}
+	if (!suppressLeadingComments) {
+		const comments = typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []);
+		const lastComment = comments.at(-1);
+		// A JSDoc cast must stay right before the parenthesis it casts
+		leadingSemicolonPrinted = Boolean(
+			lastComment &&
+			isTypeCastComment(lastComment) &&
+			isCommentFollowedBySameLineParen(lastComment, options) &&
+			needsLeadingSemicolon(path, options),
+		);
+		parts.push(
+			...printLeadingComments(node, comments, options, isInlineContext, leadingSemicolonPrinted),
+		);
 	}
 
 	// Handle inner comments (for nodes with no children to attach to)
@@ -1928,7 +2013,9 @@ function printTsrxNode(node, path, options, print, args) {
 		/** @type {Doc} */
 		let ignored = replaceEndOfLine(ignoredText);
 		// The node's span excludes its own parentheses, so put back any it had
-		if (commentNode.metadata?.parenthesized && !args?.suppressOwnParens) {
+		if (typeCastParens) {
+			ignored = printTypeCastParens(commentNode, typeCastParens, ignored, options, args);
+		} else if (commentNode.metadata?.parenthesized && !args?.suppressOwnParens) {
 			ignored = ['(', ignored, ')'];
 		}
 		// The previous statement may have lost the `;` that ended it
@@ -3582,12 +3669,14 @@ function printTsrxNode(node, path, options, print, args) {
 
 	// A cast's parens belong to the cast, so they print even where a parent
 	// lays out the node's other parens (`suppressOwnParens`)
-	if (hasTypeCastParens(path, options)) {
-		// Like Prettier, a cast breaks inside its parens unless it hugs a literal
-		nodeContent =
-			node.type === 'ObjectExpression' || node.type === 'ArrayExpression'
-				? ['(', nodeContent, ')']
-				: group(['(', indent([softline, nodeContent]), softline, ')']);
+	if (typeCastParens) {
+		nodeContent = printTypeCastParens(
+			/** @type {AST.Node} */ (node),
+			typeCastParens,
+			nodeContent,
+			options,
+			args,
+		);
 	} else if (!args?.suppressOwnParens && needsParens(path, options)) {
 		nodeContent = ['(', nodeContent, ')'];
 	}
@@ -5811,14 +5900,11 @@ function printThrowStatement(node, path, options, print) {
  * does after a line comment, and after a block comment unless that is the last
  * comment and shares its line with the node or with a type cast's `(`.
  * @param {AST.Node} node - The node
+ * @param {AST.Comment[]} comments - The comments printed ahead of the node
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {boolean}
  */
-function hasOwnLineLeadingComment(node, options) {
-	const comments = /** @type {AST.NodeWithMaybeComments} */ (node).leadingComments;
-	if (!comments) {
-		return false;
-	}
+function hasOwnLineLeadingComment(node, comments, options) {
 	return comments.some((comment, index) => {
 		if (comment.type === 'Line' || index < comments.length - 1) {
 			return true;
@@ -5840,17 +5926,14 @@ function hasOwnLineLeadingComment(node, options) {
  */
 function getOwnLineCommentAhead(path, options) {
 	const node = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node);
-	const firstComment = node.leadingComments?.[0] ?? null;
-	if (hasOwnLineLeadingComment(node, options)) {
+	const typeCastParens = getTypeCastParens(path, options);
+	const comments = typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []);
+	const firstComment = comments[0] ?? null;
+	if (hasOwnLineLeadingComment(node, comments, options)) {
 		return firstComment;
 	}
 	const key = getLeftmostChildKey(node);
-	if (
-		!key ||
-		hasPrettierIgnore(node) ||
-		hasTypeCastParens(path, options) ||
-		needsParens(path, options)
-	) {
+	if (!key || hasPrettierIgnore(node) || typeCastParens || needsParens(path, options)) {
 		return null;
 	}
 	const comment = path.call((childPath) => getOwnLineCommentAhead(childPath, options), key);

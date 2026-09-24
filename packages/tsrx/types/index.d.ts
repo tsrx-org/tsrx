@@ -136,6 +136,11 @@ export interface BaseNodeMetaData {
 	is_capitalized?: boolean;
 	commentContainerId?: number;
 	parenthesized?: boolean;
+	/**
+	 * Offset of the outermost `(` of a parenthesized expression. Only grouping
+	 * parens count, not the parens of a call, an `if` or other syntax around them.
+	 */
+	paren_start?: number;
 	native_tsrx?: boolean;
 	/** The function's body came from a `@{ … }` code block that has been lowered. */
 	native_tsrx_body?: boolean;
