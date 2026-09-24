@@ -1375,6 +1375,46 @@ export function optionalFn(declRequired: string, declMaybe?: string) {
 		);
 	});
 
+	describe(`[${name}] this and super keep mappings`, () => {
+		it('maps each bare this and super to the generated keyword', () => {
+			// TypeScript reports on the bare keyword (TS2683 implicit `this`, TS17009
+			// `this` before `super()`), so an unmapped `this` let both type-check clean.
+			const source = `class Base {}
+export class Derived extends Base {
+	constructor() {
+		this;
+		super();
+	}
+}
+export function read(flag: boolean) {
+	return [this, this!, this as unknown, flag ? this : null, ...this, this()];
+}
+export function App() @{
+	const value = this;
+	<div>{String(value)}</div>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+
+			const keywords = [...source.matchAll(/\b(?:this|super)\b/g)];
+			expect(keywords).toHaveLength(9);
+			const unmapped = keywords.filter(
+				(match) =>
+					!result.mappings.some(
+						(/** @type {CodeMapping} */ mapping) =>
+							mapping.sourceOffsets[0] === match.index &&
+							mapping.lengths[0] === match[0].length &&
+							mapping.data.verification &&
+							result.code.slice(
+								mapping.generatedOffsets[0],
+								mapping.generatedOffsets[0] + mapping.generatedLengths[0],
+							) === match[0],
+					),
+			);
+			expect(unmapped.map((match) => `${match[0]}@${match.index}`)).toEqual([]);
+		});
+	});
+
 	describe(`[${name}] submodule import mappings`, () => {
 		it('maps imported, local, and source identifiers in imports from submodules', () => {
 			const source = `module server {
