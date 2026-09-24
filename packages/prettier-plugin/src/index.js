@@ -505,6 +505,19 @@ function isCastExpression(node) {
 }
 
 /**
+ * Look through `as`, `satisfies`, and `<T>` casts, as Prettier's
+ * couldExpandArg does, so `f({ ... } as T)` expands like `f({ ... })`.
+ * @param {AST.Node} node
+ * @returns {AST.Node}
+ */
+function skipArgumentCasts(node) {
+	while (isCastExpression(node) || node.type === 'TSTypeAssertion') {
+		node = /** @type {AST.TSAsExpression} */ (node).expression;
+	}
+	return node;
+}
+
+/**
  * Check whether a class's superclass expression prints parenthesized.
  * `extends` only takes a left-hand-side expression, so anything that binds
  * looser no longer parses without its parens: `class A extends B || C {}` is
@@ -1067,6 +1080,7 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 				case 'MemberExpression':
 					return key === 'object' && !parent.optional;
 				case 'NewExpression':
+					return key === 'callee';
 				case 'TaggedTemplateExpression':
 				case 'TSInstantiationExpression':
 				case 'TSNonNullExpression':
@@ -4046,12 +4060,12 @@ function printCallArguments(path, options, print) {
 	// an array after a lone arrow function (`useMemo(() => value, [deps])`) or
 	// a number-only array after other arguments breaks out with them instead.
 	const finalArg = args[args.length - 1];
+	const expandableFinalArg = skipArgumentCasts(finalArg);
 	const couldExpandLastArg =
-		finalArg &&
-		(finalArg.type === 'ObjectExpression' ||
-			(finalArg.type === 'ArrayExpression' &&
+		(expandableFinalArg.type === 'ObjectExpression' ||
+			(expandableFinalArg.type === 'ArrayExpression' &&
 				!(args.length === 2 && args[0].type === 'ArrowFunctionExpression') &&
-				!(args.length > 1 && isConciselyPrintedArray(finalArg, options)))) &&
+				!(args.length > 1 && isConciselyPrintedArray(expandableFinalArg, options)))) &&
 		!hasComment(finalArg);
 
 	/** @type {Doc[]} */
@@ -4090,11 +4104,12 @@ function printCallArguments(path, options, print) {
 	const trailingComma = shouldPrintComma(options, 'all') ? ',' : '';
 
 	// Special case: single array/object argument should keep opening delimiter inline
-	const isSingleArrayArgument = args.length === 1 && args[0] && args[0].type === 'ArrayExpression';
-	const isSingleObjectArgument =
-		args.length === 1 && args[0] && args[0].type === 'ObjectExpression';
+	const isSingleArrayOrObjectArgument =
+		args.length === 1 &&
+		(expandableFinalArg.type === 'ArrayExpression' ||
+			expandableFinalArg.type === 'ObjectExpression');
 
-	if (isSingleArrayArgument || isSingleObjectArgument) {
+	if (isSingleArrayOrObjectArgument) {
 		// Don't use group() - just concat to allow the argument to control its own breaking
 		// For single argument, no trailing comma needed
 		return ['(', argumentDocs[0], ')'];

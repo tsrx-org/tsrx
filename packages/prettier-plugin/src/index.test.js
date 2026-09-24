@@ -9705,6 +9705,39 @@ const c = new (getClass())(first, second);`;
 			const result = await format(source);
 			expect(result).toBeWithNewline(source);
 		});
+
+		it('expands a last object or array argument through an as or satisfies cast', async () => {
+			const input = `throw new MalformedNodeError({ type: NodeType.IndexedValue, index: id, other: somethingElse } as SerovalNode);
+report({ type: NodeType.IndexedValue, index: id, other: somethingElseHere, more: 1 } satisfies Report);
+const pair = new Pair(first, [aaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccc] as const);`;
+			const expected = `throw new MalformedNodeError({
+  type: NodeType.IndexedValue,
+  index: id,
+  other: somethingElse,
+} as SerovalNode);
+report({
+  type: NodeType.IndexedValue,
+  index: id,
+  other: somethingElseHere,
+  more: 1,
+} satisfies Report);
+const pair = new Pair(first, [
+  aaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccc,
+] as const);`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('parenthesizes an optional chain only as the callee', async () => {
+			const source = `const client = new HttpClient(system?.proxyUrl, options?.agent);
+const widget = new (registry?.Widget)();`;
+
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
 	});
 
 	// Like Prettier, \`es5\` leaves out the commas ES5 cannot parse (after the
