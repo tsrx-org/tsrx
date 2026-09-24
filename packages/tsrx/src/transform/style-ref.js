@@ -1,6 +1,6 @@
 /** @import * as AST from 'estree' */
 /** @import * as ESTreeJSX from 'estree-jsx' */
-/** @import { ClassMapCollectionState, StyleClassMapOptions, StyleRefOptions, TopScopedClasses, Visitors } from '../../types/index' */
+/** @import { StyleClassMapOptions, StyleRefOptions, TopScopedClasses, Visitors } from '../../types/index' */
 
 import { walk } from 'zimmerframe';
 import * as b from '../utils/builders.js';
@@ -293,53 +293,23 @@ function is_ref_attribute(attr) {
 }
 
 /**
+ * The class selectors that stand alone as a complete selector, keyed by their
+ * decoded name, in source order.
+ *
  * @param {AST.CSS.StyleSheet} css
  * @returns {TopScopedClasses}
  */
 function collect_style_class_map_entries(css) {
 	/** @type {TopScopedClasses} */
 	const entries = new Map();
-	collect_rule_class_map_entries(css, entries);
-	return entries;
-}
-
-/**
- * Stamp `class_map_selector` on the prelude-level selectors whose classes the
- * class map exposes, without building the map. Runs the same collection as
- * `create_style_class_map_from_stylesheet`, so marking and the generated map
- * always agree; calling both is harmless.
- *
- * @param {AST.CSS.StyleSheet} css
- * @returns {void}
- */
-export function mark_class_map_selectors(css) {
-	collect_rule_class_map_entries(css, new Map());
-}
-
-/**
- * The state threaded through the class-map collection walk: the nearest
- * prelude-level selector. Classes found inside another selector (e.g. in
- * `:global(...)` args) mark it as the selector that carries their class map
- * entry.
- *
- * @param {AST.CSS.StyleSheet} css
- * @param {TopScopedClasses} entries
- * @returns {void}
- */
-function collect_rule_class_map_entries(css, entries) {
 	walk(
 		/** @type {AST.CSS.Node} */ (css),
-		/** @type {ClassMapCollectionState} */ ({ enclosing_selector: null }),
-		/** @type {Visitors<AST.CSS.Node, ClassMapCollectionState>} */ ({
-			ComplexSelector(node, context) {
-				const enclosing_selector = context.state.enclosing_selector ?? node;
+		null,
+		/** @type {Visitors<AST.CSS.Node, null>} */ ({
+			ComplexSelector(node, { next }) {
 				const class_selector = get_standalone_class_selector(node);
 
 				if (class_selector) {
-					// Mark the prelude-level selector for every occurrence (not just the
-					// deduped first) so the render preparation of style expressions keeps
-					// exactly the selectors whose classes the map exposes.
-					enclosing_selector.metadata.class_map_selector = true;
 					const name = unescape_css(class_selector.name);
 					if (!entries.has(name)) {
 						entries.set(name, {
@@ -350,10 +320,11 @@ function collect_rule_class_map_entries(css, entries) {
 					}
 				}
 
-				context.next({ enclosing_selector });
+				next();
 			},
 		}),
 	);
+	return entries;
 }
 
 /**

@@ -3839,7 +3839,7 @@ export import path = require('node:path');`,
 			expect(code).toContain('card');
 		});
 
-		it('prunes style expression selectors that the class map cannot reach', () => {
+		it('keeps every selector of a style expression that only class entries read', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{
 						const styles = <style>
@@ -3857,13 +3857,16 @@ export import path = require('node:path');`,
 				'App.tsrx',
 			);
 
-			expect(css).toContain('/* (unused) div { color: red; }*/');
-			expect(css).toContain('/* (unused) .parent .card { font-weight: bold; }*/');
+			// An assigned block is a theme: `$class` can reach any element, so
+			// element, descendant, and global selectors all stay.
+			expect(css).not.toContain('(unused)');
+			expect(css).toContain(`div.${cssHash} { color: red; }`);
+			expect(css).toContain(`.parent.${cssHash} .card:where(.${cssHash}) { font-weight: bold; }`);
 			expect(css).toContain(`.card.${cssHash}`);
 			expect(css).toContain('&:hover { color: blue; }');
 			expect(css).toContain('.badge { padding: 0; }');
 			expect(css).not.toContain(`.badge.${cssHash}`);
-			expect(css).toContain('/* (unused) :global(body) { margin: 0; }*/');
+			expect(css).toContain('body { margin: 0; }');
 		});
 
 		it('matches free-standing selectors for both class and className attributes', () => {

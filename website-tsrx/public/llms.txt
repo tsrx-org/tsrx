@@ -1198,11 +1198,12 @@ is the hash class and the class name together. Pass these strings to child
 components as props. `$class` is reserved: a block cannot declare a `.$class`
 selector.
 
-- A block that is exported, applied, or whose `$class` is read is a theme. It
-  keeps every selector, element and descendant selectors included.
-- A block that is only read through class entries (`styles.card`) is a class
-  map. It keeps only its standalone class selectors; the others are removed as
-  unused.
+- Every assigned block is a theme. It keeps every selector, element and
+  descendant selectors included, and none is removed as unused: `$class` is an
+  ordinary string that destructuring, props, and return values carry anywhere,
+  and `apply` can stamp it on scopes in other modules.
+- An element that carries a class entry (`styles.card`) also carries the hash,
+  so the block's element rules match it too.
 - The block can live at module scope or inside a component body.
 
 ```tsrx
@@ -1319,9 +1320,9 @@ Every element of `Panel` carries `A theme.$class`; the nested `div` carries
 - `class={theme.$class}` opts one element in: it matches the theme's element and
   descendant rules exactly as an element of an applying scope does, and no other
   element is affected. `theme.card` stays `'<hash> card'`.
-- Reading `theme.$class` anywhere in the module makes the block a theme, so its
-  element selectors are kept; a block read only through class entries stays a
-  class map.
+- `theme.$class` is an ordinary string: read it directly, destructure it
+  (`const { $class } = theme`), or pass the theme object along, and it works
+  the same.
 - Pass `theme.$class` to a child component through a prop to opt its elements
   in; on the child's elements it comes before the child's own hash class.
 - `$class` and `apply` combine. Listing several themes' `$class` values on one
@@ -1361,10 +1362,11 @@ export function App() @{
 }
 ```
 
-`theme` is a theme because `theme.$class` is read, so `div { color: blue }` is
-kept and scoped as `div.<hash>`. Only the opted-in `<div>` and `Card`'s
-`<article>` and `<h2>` match it; the `<p>` carries nothing from `theme`. Inside
-`Card`, the compiled class is `` `${parentClass} <card-hash>` ``.
+`div { color: blue }` is kept and scoped as `div.<hash>`. The opted-in `<div>`
+and `Card`'s `<article>` and `<h2>` match it, and so does the `.card` `<div>`,
+because `theme.card` carries the hash too (`.card` still wins on specificity);
+the `<p>` carries nothing from `theme`. Inside `Card`, the compiled class is
+`` `${parentClass} <card-hash>` ``.
 
 ### Cascade layers pass through
 

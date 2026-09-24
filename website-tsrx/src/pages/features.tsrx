@@ -422,7 +422,7 @@ export function App() @{
   </>
 }
 
-// theme.$class is read, so theme keeps div { color: blue }.
+// theme is assigned, so it is a theme and keeps div { color: blue }.
 // Card's <article> and <h2> carry theme.$class, then Card's own scope hash.`,
 );
 
@@ -1336,17 +1336,18 @@ export const FeaturesPage = () => @{
 							<pre class="code-block">
 								<code innerHTML={THEME_CLASS_HTML} />
 							</pre>
-							<h3 class="subsection-heading">
-								A theme keeps every selector; a class map keeps only classes
-							</h3>
+							<h3 class="subsection-heading">An assigned block keeps every selector</h3>
 							<p class="section-body">
-								A block that is exported, applied, or whose
+								Every assigned block is a theme. It keeps every selector, element and descendant
+								selectors included, and none is removed as unused:
 								<code class="inline-code">$class</code>
-								is read is a theme. It keeps every selector, element and descendant selectors
-								included. A block that is only read through class entries such as
+								is an ordinary string that destructuring, props, and return values carry anywhere,
+								and
+								<code class="inline-code">apply</code>
+								can stamp it on scopes in other modules. An element that carries a class entry such
+								as
 								<code class="inline-code">styles.card</code>
-								is a class map. It keeps only its standalone class selectors; the others are removed
-								as unused, because no element can get its hash class.
+								carries the hash too, so the block's element rules match it as well.
 							</p>
 							<h3 class="subsection-heading">apply adds a theme to a whole scope</h3>
 							<p class="section-body">

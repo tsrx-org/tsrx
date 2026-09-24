@@ -220,7 +220,7 @@ const STYLE_THEME_EXAMPLE = [
 	'    <p>Untouched: carries nothing from palette</p>',
 	'  </>',
 	'}',
-	'// palette.$class is read, so palette is a theme and div { color: blue } is kept.',
+	'// palette is assigned, so it is a theme and div { color: blue } is kept.',
 	'// <article> and <h2> carry palette.$class, then the hash of the scope of Card.',
 ].join('\n');
 
@@ -420,7 +420,7 @@ const TSRX_EXTENSION_AST_SHAPE = [
 	'  metadata?: {',
 	'    native_tsrx?: true;',
 	'    styleScopeHash?: string;',
-	'    styleKind?: \'theme\' | \'class-map\';',
+	'    styleKind?: \'theme\';',
 	'    styleApplies?: StyleApplyResolution[];',
 	'  };',
 	'}',
@@ -1046,17 +1046,19 @@ export function SpecificationPage() @{
 								in an assigned block is an early error.
 							</p>
 							<p class="section-body">
-								An assigned block is a theme when it is exported from its module, is the target of
-								any
-								<code class="inline-code">apply</code>
-								in its module, or has its
+								Every assigned block is a theme. A theme keeps every selector, each scoped under the
+								block's hash class, and an implementation must not remove any selector of an
+								assigned block as unused. The block's
 								<code class="inline-code">$class</code>
-								property read anywhere in its module; otherwise it is a class map. A theme keeps
-								every selector, each scoped under the block's hash class. A class map keeps only the
-								class selectors its object exposes; every other selector is removed as unused.
-								Reading a class property such as
+								and class properties are ordinary strings that any JavaScript use may carry to any
+								element, and
+								<code class="inline-code">apply</code>
+								may stamp its
+								<code class="inline-code">$class</code>
+								on scopes in other modules, so no set of elements bounds what the block can match.
+								An element that carries a class property such as
 								<code class="inline-code">styles.card</code>
-								does not make a block a theme.
+								carries the hash class too, so the block's element selectors match it as well.
 							</p>
 							<p class="section-body">
 								<code class="inline-code">$class</code>
@@ -1440,15 +1442,13 @@ export function SpecificationPage() @{
 								</li>
 								<li>
 									Implementation metadata may additionally record topScopedClasses for downstream
-									style-ref analysis. The style analyzer records
-									<code class="inline-code">metadata.styleExported</code>
-									,
-									<code class="inline-code">metadata.styleApplied</code>
-									, and
-									<code class="inline-code">metadata.styleClassRead</code>
-									on assigned blocks, derives
+									style-ref analysis. The style analyzer sets
 									<code class="inline-code">metadata.styleKind</code>
-									from them (theme when any of the three is set, otherwise class-map), records
+									to theme on every assigned block, sets
+									<code class="inline-code">metadata.styleApplied</code>
+									on each block that an
+									<code class="inline-code">apply</code>
+									in its module resolves to, records
 									<code class="inline-code">metadata.styleApplies</code>
 									on every style element, and summarizes the module's assigned and standalone
 									blocks, in source order, on
