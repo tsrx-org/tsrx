@@ -8535,6 +8535,129 @@ const called = (
 		});
 	});
 
+	// A labeled statement used to print as an `Unknown` comment, deleting the
+	// loop or block it labels.
+	describe('labeled statements', () => {
+		it('keeps labeled loops and blocks', async () => {
+			const source = `outer: for (const row of rows) {
+  for (const cell of row) {
+    if (cell) continue outer;
+  }
+}
+block: {
+  break block;
+}
+label:;`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it.each([
+			'a: b: while (true) break a;',
+			'loop: do {\n  continue loop;\n} while (next());',
+			'check: if (a) {\n  break check;\n}',
+			'attempt: try {\n  break attempt;\n} finally {\n  done();\n}',
+			'count: n++;',
+			'switch (x) {\n  case 1:\n    inner: for (;;) break inner;\n}',
+		])('keeps the labeled statement %s', async (source) => {
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('keeps labels with semi: false', async () => {
+			const source = 'outer: for (;;) {\n  continue outer\n}\nlabel:;';
+			const result = await format(source, { semi: false });
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('expands an empty labeled block like Prettier', async () => {
+			const result = await format('empty: {}');
+			expect(result).toBeWithNewline('empty: {\n}');
+		});
+
+		it('keeps a labeled loop in a component body', async () => {
+			const source = `function Grid({ rows }) @{
+  let first = -1;
+  outer: for (const row of rows) {
+    for (const cell of row) {
+      if (cell > 0) {
+        first = cell;
+        break outer;
+      }
+    }
+  }
+  <div>{first}</div>
+}`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('moves a comment that starts or ends its line above the label', async () => {
+			const input = `a: // empty
+;
+b: // loop
+
+for (;;) {
+  break b;
+}
+c:
+// call
+run();
+// lead
+d: // one
+
+// two
+while (next()) {
+  break d;
+}`;
+			const expected = `// empty
+a:;
+// loop
+
+b: for (;;) {
+  break b;
+}
+// call
+c: run();
+// lead
+// one
+
+// two
+d: while (next()) {
+  break d;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps an inline comment on its side of the colon', async () => {
+			const source = `a /* before */: for (;;) {
+  break a;
+}
+b: /* after */ run();
+c: /* empty */ ;`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('keeps an own-line block comment on the label line when the body follows it', async () => {
+			const result = await format('a:\n/* call */ run();');
+			expect(result).toBeWithNewline('/* call */ a: run();');
+		});
+
+		it('keeps the source of a statement whose label is followed by prettier-ignore', async () => {
+			const source = `a: // prettier-ignore
+for (  ;; ) {  break a }
+b:   for (;;) {  break b }`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(`a: // prettier-ignore
+for (  ;; ) {  break a }
+b: for (;;) {
+  break b;
+}`);
+		});
+	});
+
 	describe('variable initializer layouts follow Prettier', () => {
 		it.each([
 			'const g = a || b ? c : d;',
