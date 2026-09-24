@@ -1401,10 +1401,7 @@ describe('tsrx-react runtime', () => {
 		await render(ForFilteredApp);
 		expect(
 			Array.from(container.querySelectorAll('.continue-item'), (item) => item.textContent),
-		).toEqual([
-			'a',
-			'c',
-		]);
+		).toEqual(['a', 'c']);
 	});
 
 	for (const [directive, App, reverse] of [
@@ -1450,11 +1447,7 @@ describe('tsrx-react runtime', () => {
 		await render(ForOverCustomIterableApp);
 		expect(
 			Array.from(container.querySelectorAll('.generator-item'), (el) => el.textContent),
-		).toEqual([
-			'one',
-			'two',
-			'three',
-		]);
+		).toEqual(['one', 'two', 'three']);
 	});
 
 	// ── Reactive control flow: switch ──

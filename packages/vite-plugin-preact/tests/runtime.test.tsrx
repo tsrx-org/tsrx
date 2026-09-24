@@ -440,10 +440,7 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 		await render(ForFilteredApp);
 		expect(
 			Array.from(container.querySelectorAll('.continue-item'), (item) => item.textContent),
-		).toEqual([
-			'a',
-			'c',
-		]);
+		).toEqual(['a', 'c']);
 	});
 
 	it('renders for-of over a Set via map_iterable', async () => {
@@ -468,11 +465,7 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 		await render(ForOverCustomIterableApp);
 		expect(
 			Array.from(container.querySelectorAll('.generator-item'), (el) => el.textContent),
-		).toEqual([
-			'one',
-			'two',
-			'three',
-		]);
+		).toEqual(['one', 'two', 'three']);
 	});
 
 	it('merges explicit callback refs with native refs', async () => {
