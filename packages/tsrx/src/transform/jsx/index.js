@@ -732,10 +732,11 @@ export function createJsxTransform(platform) {
 				// element in plain-JS expression position — a ternary arm, a concise
 				// arrow body, a declarator init, a callback body, an attribute value, an
 				// array element — reaches neither: the declaration is dropped while the
-				// rewritten attributes still reference the name, and the type-only print
-				// carries an undefined identifier (TS2304). Wrap it in the same IIFE the
-				// native-directive path already uses.
-				return state.typeOnly && produced.type !== 'JSXSpreadChild' && produced.type !== 'JSXText'
+				// rewritten attributes still reference the name, so the runtime output
+				// throws a ReferenceError and the type-only print carries an undefined
+				// identifier (TS2304). Wrap it in the same IIFE the native-directive path
+				// already uses.
+				return produced.type !== 'JSXSpreadChild' && produced.type !== 'JSXText'
 					? wrap_jsx_setup_declarations(produced, in_jsx_child)
 					: produced;
 			},
@@ -6238,12 +6239,8 @@ function transform_element_attributes_dispatch(attrs, transform_context, element
 	const result = hook ? hook(attrs, transform_context, element) : attrs;
 	// An element in plain-JS expression position reaches BOTH lowering sites —
 	// the JSXOpeningElement visitor above and this dispatch — so without the
-	// marker its host ref/spread is lowered twice. Scoped to the type-only
-	// print: runtime emit for the other platforms sharing this transform keeps
-	// its existing output.
-	const already_lowered =
-		transform_context.typeOnly &&
-		element?.openingElement?.metadata?.host_ref_spread_lowered === true;
+	// marker its host ref/spread is lowered twice.
+	const already_lowered = element?.openingElement?.metadata?.host_ref_spread_lowered === true;
 	return merge_duplicate_refs(
 		already_lowered ? result : normalize_host_ref_spreads(result, !is_component, transform_context),
 		transform_context,

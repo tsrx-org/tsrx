@@ -13,6 +13,13 @@ import {
 	SpreadsRefOrderApp,
 	spread_ref_order_nodes,
 } from '@tsrx/core/test-harness/runtime/spread-ref-order-components.tsrx';
+import {
+	CallbackSpreadRefApp,
+	DeclaratorSpreadRefApp,
+	TemplateCallbackSpreadRefApp,
+	TernarySpreadRefApp,
+	expression_spread_ref_nodes,
+} from '@tsrx/core/test-harness/runtime/expression-spread-ref-components.tsrx';
 
 let container: HTMLDivElement;
 let resolveValue: (value: string) => void;
@@ -256,6 +263,46 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			);
 			expect(values).toEqual(['1', '2', '3']);
 			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
+		});
+	}
+
+	const spread_bag = { id: 'first', title: 'First' };
+	const spread_bags = [spread_bag, { id: 'second', title: 'Second' }];
+	for (const [label, app, selector, rendered] of [
+		[
+			'a ternary arm',
+			() => <TernarySpreadRefApp enabled bag={spread_bag} />,
+			'.expression-spread-ref-ternary',
+			[spread_bag],
+		],
+		[
+			'a declarator init',
+			() => <DeclaratorSpreadRefApp bag={spread_bag} />,
+			'.expression-spread-ref-declarator',
+			[spread_bag],
+		],
+		[
+			'a callback in a plain function',
+			() => <CallbackSpreadRefApp bags={spread_bags} />,
+			'.expression-spread-ref-callback',
+			spread_bags,
+		],
+		[
+			'a callback in a native template',
+			() => <TemplateCallbackSpreadRefApp bags={spread_bags} />,
+			'.expression-spread-ref-template-callback',
+			spread_bags,
+		],
+	] as const) {
+		it(`spreads the bag and attaches the ref in expression position: ${label}`, () => {
+			expression_spread_ref_nodes.length = 0;
+			render(app(), container);
+
+			const elements = Array.from(container.querySelectorAll(selector));
+			expect(elements.map((element) => [element.id, element.getAttribute('title')])).toEqual(
+				rendered.map((item) => [item.id, item.title]),
+			);
+			expect(expression_spread_ref_nodes).toEqual(elements);
 		});
 	}
 
