@@ -14,7 +14,7 @@
  * @typedef {((path: AstPath) => Doc) & ((path: AstPath, args: PrintArgs) => Doc)} PrintFn
  */
 
-/** @typedef {Partial<Pick<ParserOptions, 'singleQuote' | 'jsxSingleQuote' | 'semi' | 'trailingComma' | 'useTabs' | 'tabWidth' | 'singleAttributePerLine' | 'bracketSameLine' | 'bracketSpacing' | 'arrowParens' | 'originalText' | 'printWidth'>> & { locStart: (node: AST.NodeWithLocation) => number, locEnd: (node: AST.NodeWithLocation) => number }} TsrxFormatOptions */
+/** @typedef {Partial<Pick<ParserOptions, 'singleQuote' | 'jsxSingleQuote' | 'semi' | 'trailingComma' | 'useTabs' | 'tabWidth' | 'singleAttributePerLine' | 'bracketSameLine' | 'bracketSpacing' | 'objectWrap' | 'arrowParens' | 'originalText' | 'printWidth'>> & { locStart: (node: AST.NodeWithLocation) => number, locEnd: (node: AST.NodeWithLocation) => number }} TsrxFormatOptions */
 
 /**
  * Any node the parser may hang decorators off. The individual node types do not
@@ -1336,6 +1336,7 @@ function createSkip(characters) {
 }
 
 const skipSpaces = createSkip(' \t');
+const skipWhitespace = createSkip(/\s/u);
 const skipToLineEnd = createSkip(',; \t');
 const skipEverythingButNewLine = createSkip(/[^\n\r\u2028\u2029]/u);
 
@@ -1430,6 +1431,27 @@ function skipTrailingComment(text, startIndex) {
 	}
 
 	return startIndex;
+}
+
+/**
+ * The position of the next token at or after `startIndex`, past whitespace
+ * and comments
+ * @param {string} text - Source text
+ * @param {number} startIndex - Position to start from
+ * @returns {number}
+ */
+function skipWhitespaceAndComments(text, startIndex) {
+	/** @type {number | false} */
+	let index = startIndex;
+	/** @type {number | false | null} */
+	let previousIndex = null;
+	while (index !== false && index !== previousIndex) {
+		previousIndex = index;
+		index = skipWhitespace(text, index);
+		index = skipInlineComment(text, index);
+		index = skipTrailingComment(text, index);
+	}
+	return index === false ? text.length : index;
 }
 
 /**
@@ -2181,7 +2203,7 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'ObjectExpression':
-			nodeContent = printObjectExpression(node, path, options, print);
+			nodeContent = printObject(node, path, options, print);
 			break;
 
 		case 'ClassBody':
@@ -2869,7 +2891,7 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'ObjectPattern':
-			nodeContent = printObjectPattern(node, path, options, print);
+			nodeContent = printObject(node, path, options, print);
 			break;
 
 		case 'Property':
@@ -4178,7 +4200,14 @@ function shouldHugTheOnlyFunctionParameter(node) {
 			(parameter.type === 'Identifier' &&
 				!!parameter.typeAnnotation &&
 				parameter.typeAnnotation.type === 'TSTypeAnnotation' &&
-				isHuggableParameterType(parameter.typeAnnotation.typeAnnotation)))
+				isHuggableParameterType(parameter.typeAnnotation.typeAnnotation)) ||
+			// `({ a, b } = {})`: a destructured parameter with a trivial default
+			(parameter.type === 'AssignmentPattern' &&
+				(parameter.left.type === 'ObjectPattern' || parameter.left.type === 'ArrayPattern') &&
+				(parameter.right.type === 'Identifier' ||
+					(parameter.right.type === 'ObjectExpression' &&
+						parameter.right.properties.length === 0) ||
+					(parameter.right.type === 'ArrayExpression' && parameter.right.elements.length === 0))))
 	);
 }
 
@@ -5596,136 +5625,129 @@ function printDoWhileStatement(node, path, options, print) {
 }
 
 /**
- * Print an object expression
- * @param {AST.ObjectExpression} node - The object expression node
- * @param {AstPath<AST.ObjectExpression>} path - The AST path
+ * Whether a node is the only parameter of the function holding it and hugs
+ * its parentheses. Mirrors Prettier's `shouldHugTheOnlyParameter`, for use as
+ * a `path.match` predicate on the function.
+ * @param {AST.Node} node - The possible function
+ * @param {string | null} name - The key of the parameter in `node`
+ * @returns {boolean}
+ */
+function shouldHugTheOnlyParameter(node, name) {
+	return (
+		(name === 'params' || name === 'parameters') &&
+		shouldHugTheOnlyFunctionParameter(/** @type {FunctionLikeNode} */ (node))
+	);
+}
+
+/**
+ * Whether the source has a line break between an object's `{` and its first
+ * member, which keeps the object expanded under `objectWrap: "preserve"`.
+ * @param {number} openingBraceIndex - The position of the `{`
+ * @param {AST.Node} firstMember - The first property or attribute
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {boolean}
+ */
+function hasNewLineAfterOpeningBrace(openingBraceIndex, firstMember, options) {
+	const text = /** @type {string} */ (options.originalText);
+	const firstMemberStart = options.locStart(/** @type {AST.NodeWithLocation} */ (firstMember));
+	return text.slice(openingBraceIndex, firstMemberStart).includes('\n');
+}
+
+/**
+ * Print an object literal or object pattern like Prettier's `printObject`.
+ * Under `objectWrap: "preserve"` (the default) an object literal stays
+ * expanded when the source has a line break between `{` and its first
+ * property; otherwise it breaks only when it doesn't fit. A pattern breaks
+ * when it destructures a nested pattern, except in a parameter list. A blank
+ * line after a property is kept.
+ * @param {AST.ObjectExpression | AST.ObjectPattern} node - The object node
+ * @param {AstPath<AST.ObjectExpression | AST.ObjectPattern>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @returns {Doc}
  */
-function printObjectExpression(node, path, options, print) {
-	const open_brace = '{';
-	const close_brace = '}';
-	const skip_offset = 1;
-	const closing_offset = 1;
+function printObject(node, path, options, print) {
+	const parent = /** @type {AST.Node} */ (path.parent);
+	/** @type {AST.Node[]} */
+	const children = node.properties;
 
-	if (!node.properties || node.properties.length === 0) {
-		return open_brace + close_brace;
-	}
+	const shouldBreak =
+		(node.type === 'ObjectPattern' &&
+			parent.type !== 'FunctionDeclaration' &&
+			parent.type !== 'FunctionExpression' &&
+			parent.type !== 'ArrowFunctionExpression' &&
+			parent.type !== 'AssignmentPattern' &&
+			parent.type !== 'CatchClause' &&
+			node.properties.some(
+				(property) =>
+					property.type === 'Property' &&
+					(property.value.type === 'ObjectPattern' || property.value.type === 'ArrayPattern'),
+			)) ||
+		(node.type !== 'ObjectPattern' &&
+			options.objectWrap === 'preserve' &&
+			children.length > 0 &&
+			hasNewLineAfterOpeningBrace(
+				options.locStart(/** @type {AST.NodeWithLocation} */ (node)),
+				children[0],
+				options,
+			));
 
-	// Check if there are blank lines between any properties
-	let hasBlankLinesBetweenProperties = false;
-	for (let i = 0; i < node.properties.length - 1; i++) {
-		const current = node.properties[i];
-		const next = node.properties[i + 1];
-		if (current && next && getBlankLinesBetweenNodes(current, next) > 0) {
-			hasBlankLinesBetweenProperties = true;
-			break;
+	/** @type {Doc[]} */
+	let separatorParts = [];
+	/** @type {Doc[]} */
+	const parts = path.map((childPath) => {
+		const result = [...separatorParts, print(childPath)];
+		separatorParts = [',', line];
+		if (isNextLineEmpty(childPath.node, options)) {
+			separatorParts.push(hardline);
 		}
-	}
+		return result;
+	}, 'properties');
 
-	// Check if object was originally multi-line
-	let isOriginallyMultiLine = false;
-	if (node.loc && node.loc.start && node.loc.end) {
-		isOriginallyMultiLine = node.loc.start.line !== node.loc.end.line;
-	}
+	const canHaveTrailingSeparator = children[children.length - 1]?.type !== 'RestElement';
 
-	// Also check for blank lines at edges (after { or before })
-	// If the original code has blank lines anywhere in the object, format multi-line
-	let hasAnyBlankLines = hasBlankLinesBetweenProperties;
-	if (!hasAnyBlankLines && node.properties.length > 0 && options.originalText) {
-		const firstProp = node.properties[0];
-		const lastProp = node.properties[node.properties.length - 1];
-
-		// Check for blank line after opening brace (before first property)
-		if (firstProp && firstProp.loc && node.loc && node.loc.start) {
-			hasAnyBlankLines =
-				getBlankLinesBetweenPositions(
-					/** @type {acorn.Position} */ (node.loc.start).offset(skip_offset),
-					firstProp.loc.start,
-				) > 0;
+	/** @type {Doc[]} */
+	const annotationParts = [];
+	if (node.type === 'ObjectPattern') {
+		if (/** @type {{ optional?: boolean }} */ (node).optional) {
+			annotationParts.push('?');
 		}
-
-		// Check for blank line before closing brace (after last property)
-		if (!hasAnyBlankLines && lastProp && lastProp.loc && node.loc && node.loc.end) {
-			hasAnyBlankLines =
-				getBlankLinesBetweenPositions(
-					lastProp.loc.end,
-					/** @type {acorn.Position} */ (node.loc.end).offset(-closing_offset),
-				) > 0; // Skip closing delimiter(s): either '}' or '})'.
+		if (node.typeAnnotation) {
+			annotationParts.push(': ', path.call(print, 'typeAnnotation'));
 		}
-	}
-
-	// Use AST builders and respect trailing commas
-	const properties = path.map(print, 'properties');
-	const shouldUseTrailingComma = options.trailingComma !== 'none' && properties.length > 0;
-
-	// For objects that were originally inline (single-line) and don't have blank lines,
-	// allow inline formatting if it fits printWidth
-	// This handles cases like `const T0: t17 = { x: 1 };` staying inline when it fits
-	// The group() will automatically break to multi-line if it doesn't fit
-	if (!hasAnyBlankLines && !isOriginallyMultiLine) {
-		const separator = [',', line];
-		const propertyDoc = join(separator, properties);
-		const spacing = options.bracketSpacing === false ? softline : line;
-		const trailingDoc = shouldUseTrailingComma ? ifBreak(',', '') : '';
-
-		return group([open_brace, indent([spacing, propertyDoc, trailingDoc]), spacing, close_brace]);
 	}
 
 	/** @type {Doc[]} */
-	let content = [hardline];
-	if (properties.length > 0) {
-		// Build properties with blank line preservation
-		/** @type {Doc[]} */
-		const propertyParts = [];
-		for (let i = 0; i < properties.length; i++) {
-			if (i > 0) {
-				propertyParts.push(',');
-
-				// Check for blank lines between properties and preserve them
-				// Need to account for trailing comments on previous property and
-				// leading comments on current property
-				const prevProp = node.properties[i - 1];
-				const currentProp = node.properties[i];
-
-				// Determine the source node (end of previous property or its trailing comments)
-				/** @type {AST.Property | AST.SpreadElement | AST.Comment} */
-				let sourceNode = prevProp;
-				if (prevProp && prevProp.trailingComments && prevProp.trailingComments.length > 0) {
-					sourceNode = prevProp.trailingComments[prevProp.trailingComments.length - 1];
-				}
-
-				// Determine the target node (start of current property or its leading comments)
-				/** @type {AST.Property | AST.SpreadElement | AST.Comment} */
-				let targetNode = currentProp;
-				if (currentProp && currentProp.leadingComments && currentProp.leadingComments.length > 0) {
-					targetNode = currentProp.leadingComments[0];
-				}
-
-				if (sourceNode && targetNode && getBlankLinesBetweenNodes(sourceNode, targetNode) > 0) {
-					propertyParts.push(hardline);
-					propertyParts.push(hardline); // Two hardlines = blank line
-				} else {
-					propertyParts.push(hardline);
-				}
-			}
-			propertyParts.push(properties[i]);
-		}
-
-		content.push(...propertyParts);
-		if (shouldUseTrailingComma) {
-			content.push(',');
-		}
-		content.push(hardline);
+	let content;
+	if (parts.length === 0) {
+		content = ['{}', ...annotationParts];
+	} else {
+		const spacing = options.bracketSpacing === false ? softline : line;
+		content = [
+			'{',
+			indent([spacing, ...parts]),
+			canHaveTrailingSeparator && shouldPrintComma(options) ? ifBreak(',') : '',
+			spacing,
+			'}',
+			...annotationParts,
+		];
 	}
 
-	return group([
-		open_brace,
-		indent(content.slice(0, -1)),
-		content[content.length - 1],
-		close_brace,
-	]);
+	// A pattern that is the only, hugged parameter breaks with the parameter
+	// list rather than on its own. (Prettier also leaves the pattern on the
+	// left of an assignment ungrouped, for its assignment layouts to group;
+	// the declarator and assignment printers here don't port those layouts
+	// yet, so the pattern keeps its own group there.)
+	if (
+		path.match(
+			(node) => node.type === 'ObjectPattern' && getDecorators(node).length === 0,
+			shouldHugTheOnlyParameter,
+		)
+	) {
+		return content;
+	}
+
+	return group(content, { shouldBreak });
 }
 
 /**
@@ -6452,15 +6474,17 @@ function printTSInterfaceBody(node, path, options, print) {
  * @param {'body' | 'members'} key - The property that holds the members
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
+ * @param {Doc} [separator] - The line between members: `line` lets a type
+ *   literal stay on one line
  * @returns {Doc[]}
  */
-function printTypeMembers(members, path, key, options, print) {
+function printTypeMembers(members, path, key, options, print, separator = hardline) {
 	const isInterface = path.node.type === 'TSInterfaceBody';
 	/** @type {Doc[]} */
 	const parts = [];
 	path.each((memberPath, index) => {
 		if (index > 0) {
-			parts.push(hardline);
+			parts.push(separator);
 			if (shouldAddBlankLine(members[index - 1], members[index], options)) {
 				parts.push(hardline);
 			}
@@ -7465,82 +7489,6 @@ function shouldAddBlankLine(currentNode, nextNode, options) {
 		isNextLineEmptyAfterIndex(text, contentEnd) ||
 		(contentEnd !== end && isNextLineEmptyAfterIndex(text, end))
 	);
-}
-
-/**
- * Print an object pattern (destructuring)
- * @param {AST.ObjectPattern} node - The object pattern node
- * @param {AstPath<AST.ObjectPattern>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc}
- */
-function printObjectPattern(node, path, options, print) {
-	const propList = path.map(print, 'properties');
-	if (propList.length === 0) {
-		if (node.typeAnnotation) {
-			return ['{}', ': ', path.call(print, 'typeAnnotation')];
-		}
-		return '{}';
-	}
-
-	const allowTrailingComma =
-		node.properties &&
-		node.properties.length > 0 &&
-		node.properties[node.properties.length - 1].type !== 'RestElement';
-
-	const trailingCommaDoc =
-		allowTrailingComma && options.trailingComma !== 'none' ? ifBreak(',', '') : '';
-
-	// When the pattern has a type annotation, we need to format them together
-	// so they break at the same time
-	if (node.typeAnnotation) {
-		const typeAnn = node.typeAnnotation.typeAnnotation;
-
-		// If it's a TSTypeLiteral, format both object and type
-		if (typeAnn && typeAnn.type === 'TSTypeLiteral') {
-			const typeMembers = path.call(
-				(path) => path.map(print, 'members'),
-				'typeAnnotation',
-				'typeAnnotation',
-			);
-
-			// Each member prints its own `;` (see `printTypeMemberSemicolon`)
-			const typeMemberDocs = join(line, typeMembers);
-
-			// Don't wrap in group - let the outer params group control breaking
-			const objectDoc = [
-				'{',
-				indent([line, join([',', line], propList), trailingCommaDoc]),
-				line,
-				'}',
-			];
-			const typeDoc =
-				typeMembers.length === 0 ? '{}' : ['{', indent([line, typeMemberDocs]), line, '}'];
-
-			// Return combined
-			return [objectDoc, ': ', typeDoc];
-		}
-
-		// For other type annotations, just concatenate
-		const objectContent = group([
-			'{',
-			indent([line, join([',', line], propList), trailingCommaDoc]),
-			line,
-			'}',
-		]);
-		return [objectContent, ': ', path.call(print, 'typeAnnotation')];
-	}
-
-	// No type annotation - just format the object pattern
-	const objectContent = group([
-		'{',
-		indent([line, join([',', line], propList), trailingCommaDoc]),
-		line,
-		'}',
-	]);
-
-	return objectContent;
 }
 
 /**
@@ -8680,26 +8628,37 @@ function printTSTypeLiteral(node, path, options, print) {
 		return printEmptyMemberList(node);
 	}
 
-	// Each member prints its own `;` (see `printTypeMemberSemicolon`)
-	const inlineDoc = group(['{', indent([line, join(line, path.map(print, 'members'))]), line, '}']);
+	// Each member prints its own `;` (see `printTypeMemberSemicolon`), and
+	// `line` separates them, so the literal can stay on one line
+	const members = printTypeMembers(node.members, path, 'members', options, print, line);
 
-	const multilineDoc = group([
-		'{',
-		indent([hardline, printTypeMembers(node.members, path, 'members', options, print)]),
-		hardline,
-		'}',
-	]);
+	// Like Prettier, under `objectWrap: "preserve"` a type literal stays
+	// expanded when the source has a line break between `{` and its first
+	// member; otherwise it breaks only when it doesn't fit.
+	const shouldBreak =
+		options.objectWrap === 'preserve' &&
+		hasNewLineAfterOpeningBrace(
+			options.locStart(/** @type {AST.NodeWithLocation} */ (node)),
+			node.members[0],
+			options,
+		);
+	const spacing = options.bracketSpacing === false ? softline : line;
+	const content = ['{', indent([spacing, ...members]), spacing, '}'];
 
-	if (!wasOriginallySingleLine(node)) {
-		// A hardline-first conditionalGroup always picks that state (fits()
-		// short-circuits to true on hardlines) while hiding the hardlines from
-		// enclosing groups' break propagation — ancestors then stay flat and
-		// print following siblings past printWidth. The multiline doc alone is
-		// equivalent and propagates its breaks correctly.
-		return multilineDoc;
+	// The type of a hugged only parameter breaks with the parameter list:
+	// `({ a, b }: { a: A; b: B })` breaks both braces together.
+	if (
+		path.match(
+			() => true,
+			(node, name) => name === 'typeAnnotation',
+			(node, name) => name === 'typeAnnotation',
+			shouldHugTheOnlyParameter,
+		)
+	) {
+		return content;
 	}
 
-	return conditionalGroup([inlineDoc, multilineDoc]);
+	return group(content, { shouldBreak });
 }
 
 /**
@@ -8905,46 +8864,75 @@ function printTSConditionalType(node, path, options, print) {
  * @returns {Doc[] | Doc}
  */
 function printTSMappedType(node, path, options, print) {
-	const readonlyMod =
-		node.readonly === true || node.readonly === '+'
-			? 'readonly '
-			: node.readonly === '-'
-				? '-readonly '
-				: '';
+	const text = /** @type {string} */ (options.originalText);
 
-	let optionalMod = '';
-	if (node.optional === true || node.optional === '+') {
-		optionalMod = '?';
-	} else if (node.optional === '-') {
-		optionalMod = '-?';
+	// Like Prettier, under `objectWrap: "preserve"` a mapped type stays
+	// expanded when the source has a line break after its `{`
+	let shouldBreak = false;
+	if (options.objectWrap === 'preserve') {
+		const start = options.locStart(/** @type {AST.NodeWithLocation} */ (node)) + 1;
+		shouldBreak = text.slice(start, skipWhitespaceAndComments(text, start)).includes('\n');
 	}
 
-	/** @type {Doc[]} */
-	const innerParts = [];
+	/**
+	 * @param {boolean | '+' | '-' | undefined} token
+	 * @param {string} keyword
+	 * @returns {string}
+	 */
+	const printModifier = (token, keyword) =>
+		token === '+' || token === '-' ? token + keyword : keyword;
+
 	const typeParam = node.typeParameter;
-	innerParts.push('[');
-	if (typeParam) {
-		// name
-		innerParts.push(typeParam.name);
-		innerParts.push(' in ');
-		if (typeParam.constraint) {
-			innerParts.push(path.call(print, 'typeParameter', 'constraint'));
-		} else {
-			innerParts.push(path.call(print, 'typeParameter'));
-		}
-		if (node.nameType) {
-			innerParts.push(' as ');
-			innerParts.push(path.call(print, 'nameType'));
-		}
-	}
-	innerParts.push(']');
-	innerParts.push(optionalMod);
-	if (node.typeAnnotation) {
-		innerParts.push(': ');
-		innerParts.push(path.call(print, 'typeAnnotation'));
+	const spacing = options.bracketSpacing === false ? softline : line;
+
+	// A comment after `{` attaches to the type parameter, whose name this
+	// printer prints directly, so print it here, like Prettier prints the
+	// mapped type's dangling comments
+	/** @type {Doc[]} */
+	const commentsDoc = [];
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (typeParam).leadingComments ?? [];
+	if (comments.length > 0) {
+		const printed = comments.map(printCommentText);
+		const lastComment = /** @type {AST.CommentWithLocation} */ (comments[comments.length - 1]);
+		commentsDoc.push(
+			...printed.slice(0, -1).map((comment) => [comment, hardline]),
+			group([
+				printed[printed.length - 1],
+				lastComment.type === 'Line' || hasNewline(text, lastComment.end) ? hardline : line,
+			]),
+		);
 	}
 
-	return group(['{ ', readonlyMod, innerParts, ' }']);
+	return group(
+		[
+			'{',
+			indent([
+				spacing,
+				...commentsDoc,
+				node.readonly ? [printModifier(node.readonly, 'readonly'), ' '] : '',
+				group([
+					'[',
+					indent([
+						softline,
+						typeParam.name,
+						' in ',
+						typeParam.constraint
+							? path.call(print, 'typeParameter', 'constraint')
+							: path.call(print, 'typeParameter'),
+						node.nameType ? [' as ', path.call(print, 'nameType')] : '',
+					]),
+					softline,
+					']',
+				]),
+				node.optional ? printModifier(node.optional, '?') : '',
+				node.typeAnnotation ? [': ', path.call(print, 'typeAnnotation')] : '',
+				options.semi !== false ? ifBreak(';') : '',
+			]),
+			spacing,
+			'}',
+		],
+		{ shouldBreak },
+	);
 }
 
 /**

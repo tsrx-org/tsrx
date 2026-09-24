@@ -4411,7 +4411,7 @@ const deleteButton = container.querySelector(
 
 		it('should preserve explicit plus mapped modifiers in TypeScript mapped types', async () => {
 			const input = `type ExplicitReadonlyOptional<T> = { +readonly [K in keyof T]+?: T[K] }`;
-			const expected = `type ExplicitReadonlyOptional<T> = { readonly [K in keyof T]?: T[K] };`;
+			const expected = `type ExplicitReadonlyOptional<T> = { +readonly [K in keyof T]+?: T[K] };`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
@@ -7420,6 +7420,147 @@ const {
 		});
 	});
 
+	describe('objects lay out like Prettier', () => {
+		it('keeps an object expanded only when a line break follows its {', async () => {
+			const input = `const o = { a: 1,
+  b: 2 };
+const p = { list: [
+  'a',
+  'b',
+] };
+const q = {
+  a: 1, b: 2 };
+foo({ a: 1,
+  b: 2 });`;
+			const expected = `const o = { a: 1, b: 2 };
+const p = { list: ["a", "b"] };
+const q = {
+  a: 1,
+  b: 2,
+};
+foo({ a: 1, b: 2 });`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('collapses every object that fits with objectWrap collapse', async () => {
+			const input = `const o = {
+  a: 1, b: 2 };
+type U = {
+  a: string; b: number };
+let m: {
+  [K in keyof T]: T[K] } = x;`;
+			const expected = `const o = { a: 1, b: 2 };
+type U = { a: string; b: number };
+let m: { [K in keyof T]: T[K] } = x;`;
+			expect(await format(input, { objectWrap: 'collapse' })).toBeWithNewline(expected);
+		});
+
+		it('keeps a blank line after a property, past its comments', async () => {
+			const source = `const r = {
+  a: 1,
+
+  b: 2, // trailing
+
+  // leading
+  c: 3,
+};`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('breaks a pattern that destructures a nested pattern, except in parameters', async () => {
+			const input = `const { a, b: { c } } = x;
+function f({ a, b: { c } }) {}
+const fn = ({ a, b: [c] }) => a;`;
+			const expected = `const {
+  a,
+  b: { c },
+} = x;
+function f({ a, b: { c } }) {}
+const fn = ({ a, b: [c] }) => a;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('hugs a destructured parameter with a default or an object type', async () => {
+			const input = `function foo({ aaaaaaaaaaaa, bbbbbbbbbbbbbbbb, ccccccccccccccccccc, dddddddddddddddd } = {}) {}
+function bar({ aaaaaaaaaaaa, bbbbbbbbbbbbbbbb, ccccccccccccccccccc }: { aaaaaaaaaaaa: string }) {}`;
+			const expected = `function foo({
+  aaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbb,
+  ccccccccccccccccccc,
+  dddddddddddddddd,
+} = {}) {}
+function bar({
+  aaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbb,
+  ccccccccccccccccccc,
+}: {
+  aaaaaaaaaaaa: string;
+}) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('follows bracketSpacing in object patterns, type literals, and mapped types', async () => {
+			const input = `type M = { [K in keyof T]: T[K] };
+const { a, b } = obj;
+function f({ a }: { a: string }) {}
+let t: { a: string; b: number } = x;`;
+			const expected = `type M = {[K in keyof T]: T[K]};
+const {a, b} = obj;
+function f({a}: {a: string}) {}
+let t: {a: string; b: number} = x;`;
+			expect(await format(input, { bracketSpacing: false })).toBeWithNewline(expected);
+		});
+
+		it('breaks mapped types like Prettier and keeps their modifiers and comments', async () => {
+			const input = `let g: { readonly [K in keyof Tttttttttttttttttttttttttt as \`get\${Capitalize<K & string>}\`]-?: () => T[K] };
+let m: {
+  [K in keyof T]: T[K];
+} = x;
+type P = { +readonly [K in keyof T]+?: T[K] };
+let c: {
+  // note
+  [K in keyof T]: T[K];
+} = x;
+let d: { /* note */ [K in keyof T]: T[K] } = x;`;
+			const expected = `let g: {
+  readonly [
+    K in keyof Tttttttttttttttttttttttttt as \`get\${Capitalize<K & string>}\`
+  ]-?: () => T[K];
+};
+let m: {
+  [K in keyof T]: T[K];
+} = x;
+type P = { +readonly [K in keyof T]+?: T[K] };
+let c: {
+  // note
+  [K in keyof T]: T[K];
+} = x;
+let d: { /* note */ [K in keyof T]: T[K] } = x;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps a type literal expanded only when a line break follows its {', async () => {
+			const input = `type T = { a: string;
+  b: number };
+type U = {
+  a: string; b: number };
+function g(options: {
+  a: string; b: number }) {}
+let m: {
+  [K in keyof T]: T[K] } = x;`;
+			const expected = `type T = { a: string; b: number };
+type U = {
+  a: string;
+  b: number;
+};
+function g(options: { a: string; b: number }) {}
+let m: {
+  [K in keyof T]: T[K];
+} = x;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+	});
+
 	// The comma after a trailing hole creates an array slot (or an iterator
 	// step in a pattern); it is not an optional trailing comma.
 	describe('trailing array holes survive formatting', () => {
@@ -7657,6 +7798,16 @@ function g() {
 				mapping.lengths[0] === identifier.length,
 	);
 }`;
+			// Like Prettier, the type of a hugged only parameter joins the
+			// parameter list and collapses when it fits.
+			const expected = `function f() {
+	const mapping = result.mappings.find(
+		(mapping: { sourceOffsets: number[]; generatedOffsets: number[] }) =>
+			mapping.sourceOffsets[0] === source_offset &&
+				mapping.generatedOffsets[0] === generated_offset &&
+				mapping.lengths[0] === identifier.length,
+	);
+}`;
 
 			// The multiline param type used to hide its hardlines from enclosing
 			// groups (fits() short-circuits on hardlines inside conditionalGroup
@@ -7666,7 +7817,7 @@ function g() {
 				singleQuote: true,
 				printWidth: 100,
 			});
-			expect(result).toBeWithNewline(input);
+			expect(result).toBeWithNewline(expected);
 		});
 
 		it('stabilizes long arrow bodies with logical expressions in one pass', async () => {
