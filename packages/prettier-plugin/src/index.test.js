@@ -7642,6 +7642,283 @@ function g() {
 		});
 	});
 
+	describe('parameter lists of methods, signatures, and function types', () => {
+		const params =
+			'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number';
+
+		it('breaks the parameters of every kind of class method', async () => {
+			const input = `class C {
+  constructor(${params}) {}
+  method(${params}): void {}
+  set value(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string) {}
+  static method2(${params}): void {}
+  *gen(${params}) {}
+  #priv(${params}) {}
+}`;
+			const expected = `class C {
+  constructor(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) {}
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void {}
+  set value(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  ) {}
+  static method2(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void {}
+  *gen(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) {}
+  #priv(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) {}
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters before type parameters or return type arguments', async () => {
+			const input = `class G {
+  method<T>(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: T, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number) {}
+  async load(${params}): Promise<void> {}
+}`;
+			const expected = `class G {
+  method<T>(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: T,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) {}
+  async load(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): Promise<void> {}
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a lone method parameter and keeps an object return type hugged', async () => {
+			const input = `class Q {
+  async load(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): Promise<void> {}
+  m<T>(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): { aaaaaaaaaaa: string; b: number } {}
+  x(...rest: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa[]) {}
+}`;
+			const expected = `class Q {
+  async load(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  ): Promise<void> {}
+  m<T>(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): {
+    aaaaaaaaaaa: string;
+    b: number;
+  } {}
+  x(
+    ...rest: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa[]
+  ) {}
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('always breaks a constructor with parameter properties and more than one parameter', async () => {
+			const input = `class D {
+  constructor(private readonly a: string, public b: number) {}
+}
+class E {
+  constructor(@Inject() private readonly a: string) {
+    init();
+  }
+}`;
+			const expected = `class D {
+  constructor(
+    private readonly a: string,
+    public b: number,
+  ) {}
+}
+class E {
+  constructor(@Inject() private readonly a: string) {
+    init();
+  }
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of abstract methods, overloads, and declared classes', async () => {
+			const input = `abstract class A {
+  abstract method(${params}): void;
+  overload(${params}): void;
+  overload(a: string): void;
+  overload(a: any) {}
+}
+declare class X {
+  method(${params}): void;
+}`;
+			const expected = `abstract class A {
+  abstract method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  overload(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  overload(a: string): void;
+  overload(a: any) {}
+}
+declare class X {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of object methods before their return type', async () => {
+			const input = `const o = {
+  method(${params}): void {},
+  m(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): Promise<Aaaaaaaaaaaaaaaaaaaaaaaaa> {},
+  async *gen<T>(a: T): AsyncGenerator<T> {},
+};`;
+			const expected = `const o = {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void {},
+  m(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  ): Promise<Aaaaaaaaaaaaaaaaaaaaaaaaa> {},
+  async *gen<T>(a: T): AsyncGenerator<T> {},
+};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of interface signatures', async () => {
+			const input = `interface I {
+  method(${params}): void;
+  method2?(${params}): void;
+  set x(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string);
+  (${params}): void;
+  new (${params}): I;
+  <T>(aaaaaaaaaaaaaaaaaaaaaaaa: T, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number): void;
+  n(options: { aaaaaaaaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbbbbbbb: number; cccccccccccccc: boolean }): void;
+}`;
+			const expected = `interface I {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  method2?(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  set x(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  );
+  (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  new (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): I;
+  <T>(
+    aaaaaaaaaaaaaaaaaaaaaaaa: T,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  n(options: {
+    aaaaaaaaaaaaaaaaaaa: string;
+    bbbbbbbbbbbbbbbbbbbbbbbbb: number;
+    cccccccccccccc: boolean;
+  }): void;
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of type literal methods and function-typed properties', async () => {
+			const input = `type T = {
+  method(${params}): void;
+  prop: (${params}) => void;
+};`;
+			const expected = `type T = {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  prop: (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) => void;
+};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of function and constructor types', async () => {
+			const input = `let fn: (${params}) => void;
+let ctor: new (${params}) => I;
+let actor: abstract new (${params}) => I;
+function f(cb: (${params}) => void) {}`;
+			const expected = `let fn: (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+) => void;
+let ctor: new (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+) => I;
+let actor: abstract new (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+) => I;
+function f(
+  cb: (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) => void,
+) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('leaves out the parameter trailing comma unless trailingComma is all', async () => {
+			const input = `interface I {
+  method(${params}): void;
+}
+let fn: (${params}) => void;`;
+			const expected = `interface I {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number
+  ): void;
+}
+let fn: (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number
+) => void;`;
+			expect(await format(input, { trailingComma: 'es5' })).toBeWithNewline(expected);
+		});
+
+		it('keeps short signatures and hugged parameters on one line', async () => {
+			const source = `class C {
+  method(a: string): void {
+    run(a);
+  }
+  m2({ a, b }: Props) {}
+}
+interface I {
+  method(a: string): void;
+  (b: number): void;
+  new (c: string): I;
+}
+type Fn = () => void;
+let x: (a: string) => void = (a) => {};
+let y: abstract new () => Foo;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
 	describe('type parameter declarations', () => {
 		it.each([
 			'type Select<T> = <K extends keyof T>(value: T[K]) => T[K];',
@@ -7975,7 +8252,10 @@ function g() {
 		it('keeps modifiers on constructor parameter properties', async () => {
 			await expectUnchanged(`class Point {
   readonly origin = 0;
-  constructor(private readonly x: number, public y: string) {}
+  constructor(
+    private readonly x: number,
+    public y: string,
+  ) {}
 }`);
 		});
 

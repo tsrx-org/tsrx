@@ -381,36 +381,40 @@ function hasPrettierIgnore(node) {
 }
 
 /**
- * @param {AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction} node - The function node
+ * Any node with a parameter list: functions and methods keep it in `params`,
+ * while TypeScript signatures and function or constructor types keep it in
+ * `parameters` (and their return type in `typeAnnotation`).
+ * @typedef {AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction | AST.TSMethodSignature | AST.TSCallSignatureDeclaration | AST.TSConstructSignatureDeclaration | AST.TSFunctionType | AST.TSConstructorType} FunctionLikeNode
+ */
+
+/**
+ * @param {FunctionLikeNode} node - The function-like node
  * @returns {Array<AST.Pattern | AST.Parameter>} - Array of parameter patterns
  */
 function getFunctionParameters(node) {
-	/** @type {(AST.Pattern | AST.Parameter)[]} */
-	const parameters = [];
-
-	if (node.params) {
-		parameters.push(...node.params);
-	}
-
-	return parameters;
+	const parameters =
+		'params' in node
+			? node.params
+			: /** @type {{ parameters?: Array<AST.Pattern | AST.Parameter> }} */ (node).parameters;
+	return parameters ? [...parameters] : [];
 }
 
 /**
  * Iterate over function parameters with path callbacks.
- * TypeScript/TSRX functions can have additional `this` and `rest` parameters.
- * @param {AstPath<AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction | AST.FunctionDeclaration>} path - The function path
- * @param {(paramPath: AstPath<AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction | AST.FunctionDeclaration>, index: number) => void} iteratee - Callback for each parameter
+ * @param {AstPath<FunctionLikeNode>} path - The function-like node's path
+ * @param {(paramPath: AstPath<FunctionLikeNode>, index: number) => void} iteratee - Callback for each parameter
  * @returns {void}
  */
 function iterateFunctionParametersPath(path, iteratee) {
-	/** @type {AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction | AST.FunctionDeclaration} */
 	const node = path.node;
 	let index = 0;
 	/** @type {(paramPath: AstPath) => void} */
 	const callback = (paramPath) => iteratee(paramPath, index++);
 
-	if (node.params) {
+	if ('params' in node) {
 		path.each(callback, 'params');
+	} else if (/** @type {{ parameters?: unknown[] }} */ (node).parameters) {
+		path.each(callback, 'parameters');
 	}
 }
 
@@ -1549,15 +1553,11 @@ function isLineAfterCommentEmpty(text, comment) {
 
 /**
  * Check if a function has a rest parameter
- * @param {AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction} node - The function node
+ * @param {FunctionLikeNode} node - The function-like node
  * @returns {boolean}
  */
 function hasRestParameter(node) {
-	return (
-		!!node.params &&
-		node.params.length > 0 &&
-		node.params[node.params.length - 1].type === 'RestElement'
-	);
+	return getFunctionParameters(node).at(-1)?.type === 'RestElement';
 }
 
 /**
@@ -2924,17 +2924,16 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'TSCallSignatureDeclaration':
+		case 'TSConstructSignatureDeclaration':
 			nodeContent = [
-				printTSCallSignatureDeclaration(node, path, options, print),
+				printFunctionType(node, path, options, print),
 				printTypeMemberSemicolon(path, options),
 			];
 			break;
 
-		case 'TSConstructSignatureDeclaration':
-			nodeContent = [
-				printTSConstructSignatureDeclaration(node, path, options, print),
-				printTypeMemberSemicolon(path, options),
-			];
+		case 'TSFunctionType':
+		case 'TSConstructorType':
+			nodeContent = printFunctionType(node, path, options, print);
 			break;
 
 		case 'TSEnumMember':
@@ -2976,35 +2975,6 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 		}
 
-		case 'TSFunctionType': {
-			/** @type {Doc[]} */
-			const parts = [];
-
-			if (node.typeParameters) {
-				parts.push(path.call(print, 'typeParameters'));
-			}
-
-			// Handle parameters
-			parts.push('(');
-			if (node.parameters && node.parameters.length > 0) {
-				const params = path.map(print, 'parameters');
-				for (let i = 0; i < params.length; i++) {
-					if (i > 0) parts.push(', ');
-					parts.push(params[i]);
-				}
-			}
-			parts.push(')');
-
-			// Handle return type
-			parts.push(' => ');
-			if (node.typeAnnotation) {
-				parts.push(path.call(print, 'typeAnnotation'));
-			}
-
-			nodeContent = parts;
-			break;
-		}
-
 		case 'TSTupleType':
 			nodeContent = printTSTupleType(node, path, options, print);
 			break;
@@ -3026,10 +2996,6 @@ function printTsrxNode(node, path, options, print, args) {
 				printTSIndexSignature(node, path, options, print),
 				printTypeMemberSemicolon(path, options),
 			];
-			break;
-
-		case 'TSConstructorType':
-			nodeContent = printTSConstructorType(node, path, options, print);
 			break;
 
 		case 'TSConditionalType':
@@ -4199,7 +4165,7 @@ function printExportDefaultDeclaration(node, path, options, print) {
 
 /**
  * Check if the only function parameter should be hugged (no extra parens)
- * @param {AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction} node - The function node
+ * @param {FunctionLikeNode} node - The function-like node
  * @returns {boolean}
  */
 function shouldHugTheOnlyFunctionParameter(node) {
@@ -4262,20 +4228,35 @@ function isHuggableParameterType(node) {
 }
 
 /**
- * Print function parameters with proper formatting
- * @param {AstPath<AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction | AST.FunctionDeclaration>} path - The function path
+ * Print a parameter list like Prettier's `printFunctionParameters`, for
+ * functions, methods, TypeScript signatures, and function and constructor
+ * types. The list breaks one parameter per line (with a trailing comma under
+ * `trailingComma: "all"`) unless its only parameter hugs the parentheses.
+ * @param {AstPath<FunctionLikeNode>} path - The function-like node's path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @param {boolean} [shouldExpandParameters] - Whether the function is a hugged
  * call argument, which keeps its parameters on one line
+ * @param {boolean} [shouldPrintTypeParameters] - Print the node's type parameters before `(`
  * @returns {Doc[]}
  */
-function printFunctionParameters(path, options, print, shouldExpandParameters = false) {
+function printFunctionParameters(
+	path,
+	options,
+	print,
+	shouldExpandParameters = false,
+	shouldPrintTypeParameters = false,
+) {
 	const functionNode = path.node;
 	const parameters = getFunctionParameters(functionNode);
+	/** @type {Doc} */
+	const typeParametersDoc =
+		shouldPrintTypeParameters && functionNode.typeParameters
+			? path.call(print, 'typeParameters')
+			: '';
 
 	if (parameters.length === 0) {
-		return ['(', ')'];
+		return [typeParametersDoc, '(', ')'];
 	}
 
 	// Like Prettier, a test call's function keeps its parameters on one line
@@ -4305,10 +4286,10 @@ function printFunctionParameters(path, options, print, shouldExpandParameters = 
 	// on the call's line: breaking them would read worse than putting the
 	// whole function on a line of its own
 	if (shouldExpandParameters && !isDecoratedFunction(path)) {
-		if (willBreak(printed)) {
+		if (willBreak(typeParametersDoc) || willBreak(printed)) {
 			throw new ArgExpansionBailout();
 		}
-		return [group(['(', removeLinesForHug(printed), ')'])];
+		return [group([removeLinesForHug(typeParametersDoc), '(', removeLinesForHug(printed), ')'])];
 	}
 
 	const hasNotParameterDecorator = parameters.every(
@@ -4318,10 +4299,11 @@ function printFunctionParameters(path, options, print, shouldExpandParameters = 
 	);
 
 	if ((shouldHugParameters && hasNotParameterDecorator) || isParametersInTestCall) {
-		return ['(', ...printed, ')'];
+		return [typeParametersDoc, '(', ...printed, ')'];
 	}
 
 	return [
+		typeParametersDoc,
 		'(',
 		indent([softline, ...printed]),
 		ifBreak(shouldPrintComma(options, 'all') && !hasRestParameter(functionNode) ? ',' : ''),
@@ -4331,21 +4313,46 @@ function printFunctionParameters(path, options, print, shouldExpandParameters = 
 }
 
 /**
+ * The return type of a function-like node, without its `TSTypeAnnotation`
+ * wrapper. TypeScript signatures keep it in `typeAnnotation`.
+ * @param {FunctionLikeNode} functionNode - The function-like node
+ * @returns {AST.Node | undefined}
+ */
+function getReturnTypeNode(functionNode) {
+	const returnType =
+		/** @type {{ returnType?: AST.Node }} */ (functionNode).returnType ??
+		/** @type {{ typeAnnotation?: AST.Node }} */ (functionNode).typeAnnotation;
+	if (returnType?.type === 'TSTypeAnnotation') {
+		return /** @type {AST.TSTypeAnnotation} */ (returnType).typeAnnotation;
+	}
+	return returnType;
+}
+
+/**
  * Check whether the parameter list should be grouped separately from the return
  * type, so a breaking return type does not force the parameters to break too.
- * @param {AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction | AST.FunctionDeclaration} functionNode - The function node
+ * @param {FunctionLikeNode} functionNode - The function-like node
  * @param {Doc} returnTypeDoc - The printed return type
+ * @param {AST.TSTypeParameterDeclaration | null | undefined} [typeParameters] - The
+ *   type parameters, which a class method keeps on the method rather than its value
  * @returns {boolean}
  */
-function shouldGroupFunctionParameters(functionNode, returnTypeDoc) {
-	const returnTypeNode = functionNode.returnType?.typeAnnotation;
-	const typeParameters = functionNode.typeParameters?.params;
-	if (typeParameters) {
-		if (typeParameters.length > 1) {
+function shouldGroupFunctionParameters(
+	functionNode,
+	returnTypeDoc,
+	typeParameters = functionNode.typeParameters,
+) {
+	const returnTypeNode = getReturnTypeNode(functionNode);
+	if (!returnTypeNode) {
+		return false;
+	}
+	const typeParameterList = typeParameters?.params;
+	if (typeParameterList) {
+		if (typeParameterList.length > 1) {
 			return false;
 		}
-		if (typeParameters.length === 1) {
-			const typeParameter = typeParameters[0];
+		if (typeParameterList.length === 1) {
+			const typeParameter = typeParameterList[0];
 			if (typeParameter.constraint || typeParameter.default) {
 				return false;
 			}
@@ -4354,6 +4361,21 @@ function shouldGroupFunctionParameters(functionNode, returnTypeDoc) {
 	return (
 		getFunctionParameters(functionNode).length === 1 &&
 		(isObjectType(returnTypeNode) || willBreak(returnTypeDoc))
+	);
+}
+
+/**
+ * Like Prettier, a constructor with more than one parameter that declares a
+ * parameter property (`private readonly a: string`) always breaks its
+ * parameters, one per line.
+ * @param {FunctionLikeNode} functionNode - The function-like node
+ * @returns {boolean}
+ */
+function shouldBreakFunctionParameters(functionNode) {
+	const parameters = getFunctionParameters(functionNode);
+	return (
+		parameters.length > 1 &&
+		parameters.some((parameter) => parameter.type === 'TSParameterProperty')
 	);
 }
 
@@ -4380,6 +4402,90 @@ function printFunctionSignature(node, path, options, print, shouldExpandParamete
 		return group([group(paramsPart), ...returnTypeDoc]);
 	}
 	return group([...paramsPart, ...returnTypeDoc]);
+}
+
+/**
+ * Print the function of a class or object method from its parameters on, like
+ * Prettier's `printMethodValue`: the parameters and return type as one group,
+ * then the body, or a semicolon for a bodiless (abstract, declared, or
+ * overload) method.
+ * @param {AstPath<AST.FunctionExpression>} path - The path of the method's function
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @param {AST.TSTypeParameterDeclaration | null | undefined} [typeParameters] - The
+ *   method's type parameters, which the caller prints before the function
+ * @returns {Doc[]}
+ */
+function printMethodValue(path, options, print, typeParameters = path.node.typeParameters) {
+	const node = path.node;
+	const parametersDoc = printFunctionParameters(path, options, print);
+	/** @type {Doc} */
+	const returnTypeDoc = node.returnType ? [': ', path.call(print, 'returnType')] : '';
+	/** @type {Doc[]} */
+	const parts = [
+		node.typeParameters ? path.call(print, 'typeParameters') : '',
+		group([
+			shouldBreakFunctionParameters(node)
+				? group(parametersDoc, { shouldBreak: true })
+				: shouldGroupFunctionParameters(node, returnTypeDoc, typeParameters)
+					? group(parametersDoc)
+					: parametersDoc,
+			returnTypeDoc,
+		]),
+	];
+
+	// Bodiless members terminate with a semicolon: inventing an empty body
+	// makes an abstract method concrete.
+	if (node.body) {
+		parts.push(' ', path.call(print, 'body'));
+	} else {
+		parts.push(semi(options));
+	}
+
+	return parts;
+}
+
+/**
+ * Print a function type, constructor type, call signature, or construct
+ * signature like Prettier's `printFunctionType`: the type parameters,
+ * parameters, and return type as one group.
+ * @param {AST.TSFunctionType | AST.TSConstructorType | AST.TSCallSignatureDeclaration | AST.TSConstructSignatureDeclaration} node - The node
+ * @param {AstPath<AST.TSFunctionType | AST.TSConstructorType | AST.TSCallSignatureDeclaration | AST.TSConstructSignatureDeclaration>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printFunctionType(node, path, options, print) {
+	/** @type {Doc[]} */
+	const parts = [];
+
+	// `abstract new () => T` only accepts abstract constructors
+	if (node.type === 'TSConstructorType' && node.abstract) {
+		parts.push('abstract ');
+	}
+	if (node.type === 'TSConstructorType' || node.type === 'TSConstructSignatureDeclaration') {
+		parts.push('new ');
+	}
+
+	/** @type {Doc} */
+	let parametersDoc = printFunctionParameters(path, options, print, false, true);
+
+	const isArrowType = node.type === 'TSFunctionType' || node.type === 'TSConstructorType';
+	/** @type {Doc[]} */
+	const returnTypeDoc = [];
+	if (node.typeAnnotation) {
+		returnTypeDoc.push(isArrowType ? ' => ' : ': ', path.call(print, 'typeAnnotation'));
+	} else if (isArrowType) {
+		returnTypeDoc.push(' => ');
+	}
+
+	if (shouldGroupFunctionParameters(node, returnTypeDoc)) {
+		parametersDoc = group(parametersDoc);
+	}
+
+	parts.push(parametersDoc, returnTypeDoc);
+
+	return group(parts);
 }
 
 /**
@@ -6005,41 +6111,23 @@ function printMethodDefinition(node, path, options, print) {
 		parts.push('?');
 	}
 
-	// Add TypeScript generics if present (always on the method node, not on value)
+	// TypeScript generics live on the method node, not on its value
 	if (node.typeParameters) {
-		const typeParams = path.call(print, 'typeParameters');
-		if (Array.isArray(typeParams)) {
-			parts.push(...typeParams);
-		} else {
-			parts.push(typeParams);
-		}
+		parts.push(path.call(print, 'typeParameters'));
 	}
 
-	// Parameters - use proper path.map for TypeScript support
-	parts.push('(');
-	if (node.value && node.value.params && node.value.params.length > 0) {
-		const params = path.map(print, 'value', 'params');
-		for (let i = 0; i < params.length; i++) {
-			if (i > 0) parts.push(', ');
-			parts.push(params[i]);
-		}
-	}
-	parts.push(')');
-
-	// Return type
-	if (node.value && node.value.returnType) {
-		parts.push(': ', path.call(print, 'value', 'returnType'));
-	}
-
-	// Method body. Bodiless members (abstract, declared, overload signatures)
-	// terminate with a semicolon — inventing an empty body makes an abstract
-	// method concrete.
-	if (node.value && node.value.body) {
-		parts.push(' ');
-		parts.push(path.call(print, 'value', 'body'));
-	} else {
-		parts.push(semi(options));
-	}
+	parts.push(
+		...path.call(
+			(valuePath) =>
+				printMethodValue(
+					/** @type {AstPath<AST.FunctionExpression>} */ (valuePath),
+					options,
+					print,
+					node.typeParameters,
+				),
+			'value',
+		),
+	);
 
 	return parts;
 }
@@ -8484,44 +8572,19 @@ function printProperty(node, path, options, print) {
 		return path.call(print, 'key');
 	}
 
-	// Handle getter/setter methods
-	if (node.kind === 'get' || node.kind === 'set') {
+	// Getters, setters, and method shorthand (`increment() {}`) print like
+	// class methods
+	if (
+		(node.kind === 'get' || node.kind === 'set' || node.method) &&
+		node.value.type === 'FunctionExpression'
+	) {
+		/** @type {Doc[]} */
 		const methodParts = [];
 		const funcValue = /** @type {AST.FunctionExpression} */ (node.value);
 
-		// Add get/set keyword
-		methodParts.push(node.kind, ' ');
-
-		methodParts.push(...printKey(node, path, options, print));
-
-		// Print parameters by calling into the value path
-		const paramsPart = path.call(
-			(valuePath) =>
-				printFunctionParameters(
-					/** @type {Parameters<typeof printFunctionParameters>[0]} */ (valuePath),
-					options,
-					print,
-				),
-			'value',
-		);
-		methodParts.push(group(paramsPart));
-
-		// Handle return type annotation
-		if (funcValue.returnType) {
-			methodParts.push(': ', path.call(print, 'value', 'returnType'));
-		}
-
-		methodParts.push(' ', path.call(print, 'value', 'body'));
-		return methodParts;
-	}
-
-	// Handle method shorthand: increment() {} instead of increment: function() {}
-	if (node.method && node.value.type === 'FunctionExpression') {
-		const methodParts = [];
-		const funcValue = /** @type {AST.FunctionExpression} */ (node.value);
-
-		// Handle async and generator
-		if (funcValue.async) {
+		if (node.kind === 'get' || node.kind === 'set') {
+			methodParts.push(node.kind, ' ');
+		} else if (funcValue.async) {
 			methodParts.push('async ');
 		}
 
@@ -8530,30 +8593,17 @@ function printProperty(node, path, options, print) {
 		}
 
 		methodParts.push(...printKey(node, path, options, print));
-
-		// Handle type parameters (generics)
-		if (funcValue.typeParameters) {
-			methodParts.push(path.call(print, 'value', 'typeParameters'));
-		}
-
-		// Print parameters by calling into the value path
-		const paramsPart = path.call(
-			(valuePath) =>
-				printFunctionParameters(
-					/** @type {Parameters<typeof printFunctionParameters>[0]} */ (valuePath),
-					options,
-					print,
-				),
-			'value',
+		methodParts.push(
+			...path.call(
+				(valuePath) =>
+					printMethodValue(
+						/** @type {AstPath<AST.FunctionExpression>} */ (valuePath),
+						options,
+						print,
+					),
+				'value',
+			),
 		);
-		methodParts.push(group(paramsPart));
-
-		// Handle return type annotation
-		if (funcValue.returnType) {
-			methodParts.push(': ', path.call(print, 'value', 'returnType'));
-		}
-
-		methodParts.push(' ', path.call(print, 'value', 'body'));
 		return methodParts;
 	}
 
@@ -8663,7 +8713,7 @@ function printTSPropertySignature(node, path, options, print) {
  * @param {AstPath<AST.TSMethodSignature>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
+ * @returns {Doc}
  */
 function printTSMethodSignature(node, path, options, print) {
 	/** @type {Doc[]} */
@@ -8689,113 +8739,19 @@ function printTSMethodSignature(node, path, options, print) {
 		parts.push('?');
 	}
 
-	// Add TypeScript generics/type parameters if present
-	if (node.typeParameters) {
-		const typeParams = path.call(print, 'typeParameters');
-		if (Array.isArray(typeParams)) {
-			parts.push(...typeParams);
-		} else {
-			parts.push(typeParams);
-		}
-	}
-
-	// Print parameters - use 'parameters' property for TypeScript signature nodes
-	parts.push('(');
-	if (node.parameters && node.parameters.length > 0) {
-		const params = path.map(print, 'parameters');
-		for (let i = 0; i < params.length; i++) {
-			if (i > 0) parts.push(', ');
-			parts.push(params[i]);
-		}
-	}
-	parts.push(')');
-
-	// Return type annotation
+	// Type parameters, parameters, and return type, like Prettier's
+	// `printMethodSignature`
+	const parametersDoc = printFunctionParameters(path, options, print, false, true);
+	/** @type {Doc} */
+	const returnTypeDoc = node.typeAnnotation ? [': ', path.call(print, 'typeAnnotation')] : '';
+	parts.push(
+		shouldGroupFunctionParameters(node, returnTypeDoc) ? group(parametersDoc) : parametersDoc,
+	);
 	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
+		parts.push(group(returnTypeDoc));
 	}
 
-	return parts;
-}
-
-/**
- * Print a TypeScript call signature in an interface
- * @param {AST.TSCallSignatureDeclaration} node - The call signature node
- * @param {AstPath<AST.TSCallSignatureDeclaration>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
- */
-function printTSCallSignatureDeclaration(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = [];
-
-	// Add TypeScript generics/type parameters if present
-	if (node.typeParameters) {
-		const type_params = path.call(print, 'typeParameters');
-		if (Array.isArray(type_params)) {
-			parts.push(...type_params);
-		} else {
-			parts.push(type_params);
-		}
-	}
-
-	parts.push('(');
-	if (node.parameters && node.parameters.length > 0) {
-		const params = path.map(print, 'parameters');
-		for (let i = 0; i < params.length; i++) {
-			if (i > 0) parts.push(', ');
-			parts.push(params[i]);
-		}
-	}
-	parts.push(')');
-
-	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
-
-	return parts;
-}
-
-/**
- * Print a TypeScript construct signature in an interface or type literal
- * @param {AST.TSConstructSignatureDeclaration} node - The construct signature node
- * @param {AstPath<AST.TSConstructSignatureDeclaration>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
- */
-function printTSConstructSignatureDeclaration(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = ['new '];
-
-	if (node.typeParameters) {
-		const type_params = path.call(print, 'typeParameters');
-		if (Array.isArray(type_params)) {
-			parts.push(...type_params);
-		} else {
-			parts.push(type_params);
-		}
-	}
-
-	parts.push('(');
-	if (node.parameters && node.parameters.length > 0) {
-		const params = path.map(print, 'parameters');
-		for (let i = 0; i < params.length; i++) {
-			if (i > 0) parts.push(', ');
-			parts.push(params[i]);
-		}
-	}
-	parts.push(')');
-
-	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
-
-	return parts;
+	return group(parts);
 }
 
 /**
@@ -8901,42 +8857,6 @@ function printTSIndexSignature(node, path, options, print) {
 		parts.push(semi(options));
 	}
 
-	return parts;
-}
-
-/**
- * Print a TypeScript constructor type
- * @param {AST.TSConstructorType} node - The constructor type node
- * @param {AstPath<AST.TSConstructorType>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
- */
-function printTSConstructorType(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = [];
-	// `abstract new () => T` only accepts abstract constructors
-	if (node.abstract) {
-		parts.push('abstract ');
-	}
-	parts.push('new ');
-	if (node.typeParameters) {
-		parts.push(path.call(print, 'typeParameters'));
-	}
-	parts.push('(');
-	const hasParameters = Array.isArray(node.parameters) && node.parameters.length > 0;
-	if (hasParameters) {
-		const params = path.map(print, 'parameters');
-		for (let i = 0; i < params.length; i++) {
-			if (i > 0) parts.push(', ');
-			parts.push(params[i]);
-		}
-	}
-	parts.push(')');
-	parts.push(' => ');
-	if (node.typeAnnotation) {
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
 	return parts;
 }
 
