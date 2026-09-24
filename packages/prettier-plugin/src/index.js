@@ -1812,6 +1812,79 @@ function finishTsrxNode(node, parts, nodeContent) {
 }
 
 /**
+ * Print the comments ahead of a node, each followed by a line break except a
+ * last block comment that shares the node's line.
+ * @param {AST.Comment[]} comments - The comments, in source order
+ * @param {AST.Node | AST.CSS.StyleSheet} node - The node the comments precede in the source
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {boolean} [isInlineContext] - Keep every block comment on its line
+ * @param {boolean} [castSemicolon] - Print the statement's leading `;` right
+ *   before the last comment, a JSDoc cast (see `needsLeadingSemicolon`)
+ * @returns {Doc[]}
+ */
+function printLeadingComments(comments, node, options, isInlineContext, castSemicolon) {
+	/** @type {Doc[]} */
+	const parts = [];
+	for (let i = 0; i < comments.length; i++) {
+		const comment = comments[i];
+		const nextComment = comments[i + 1];
+		const isLastComment = i === comments.length - 1;
+
+		if (comment.type === 'Line') {
+			parts.push('//' + comment.value);
+			parts.push(hardline);
+
+			// Check if there should be blank lines between this comment and the next
+			if (nextComment) {
+				const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
+				if (blankLinesBetween > 0) {
+					parts.push(hardline);
+				}
+			} else if (isLastComment && node.type !== 'JSXText') {
+				// Preserve a blank line between the last comment and the node if it existed
+				const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
+				if (blankLinesBetween > 0) {
+					parts.push(hardline);
+				}
+			}
+		} else if (comment.type === 'Block') {
+			if (isLastComment && castSemicolon) {
+				parts.push(';');
+			}
+			parts.push('/*' + comment.value + '*/');
+
+			// Check if comment and node are on the same line (for inline JSDoc comments)
+			const isCommentInlineWithParen =
+				isLastComment && isCommentFollowedBySameLineParen(comment, options);
+			const isCommentOnSameLine =
+				isLastComment && comment.loc && node.loc && comment.loc.end.line === node.loc.start.line;
+			const shouldKeepOnSameLine = isCommentOnSameLine || isCommentInlineWithParen;
+
+			if (!isInlineContext && !shouldKeepOnSameLine) {
+				parts.push(hardline);
+
+				// Check if there should be blank lines between this comment and the next
+				if (nextComment) {
+					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
+					if (blankLinesBetween > 0) {
+						parts.push(hardline);
+					}
+				} else if (isLastComment) {
+					// Preserve a blank line between the last comment and the node if it existed
+					const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
+					if (blankLinesBetween > 0) {
+						parts.push(hardline);
+					}
+				}
+			} else {
+				parts.push(' ');
+			}
+		}
+	}
+	return parts;
+}
+
+/**
  * Main print function for TSRX AST nodes
  * @param {AST.Node | AST.CSS.StyleSheet} node - The AST node to print
  * @param {AstPath} path - The AST path
@@ -1836,69 +1909,23 @@ function printTsrxNode(node, path, options, print, args) {
 
 	// Handle leading comments
 	if (node.leadingComments && !suppressLeadingComments) {
-		for (let i = 0; i < node.leadingComments.length; i++) {
-			const comment = node.leadingComments[i];
-			const nextComment = node.leadingComments[i + 1];
-			const isLastComment = i === node.leadingComments.length - 1;
-
-			if (comment.type === 'Line') {
-				parts.push('//' + comment.value);
-				parts.push(hardline);
-
-				// Check if there should be blank lines between this comment and the next
-				if (nextComment) {
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
-				} else if (isLastComment && node.type !== 'JSXText') {
-					// Preserve a blank line between the last comment and the node if it existed
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
-				}
-			} else if (comment.type === 'Block') {
-				// Check if comment and node are on the same line (for inline JSDoc comments)
-				const isCommentInlineWithParen =
-					isLastComment && isCommentFollowedBySameLineParen(comment, options);
-
-				// A JSDoc cast must stay right before the parenthesis it casts
-				if (
-					isCommentInlineWithParen &&
-					isTypeCastComment(comment) &&
-					needsLeadingSemicolon(path, options)
-				) {
-					parts.push(';');
-					leadingSemicolonPrinted = true;
-				}
-				parts.push('/*' + comment.value + '*/');
-
-				const isCommentOnSameLine =
-					isLastComment && comment.loc && node.loc && comment.loc.end.line === node.loc.start.line;
-				const shouldKeepOnSameLine = isCommentOnSameLine || isCommentInlineWithParen;
-
-				if (!isInlineContext && !shouldKeepOnSameLine) {
-					parts.push(hardline);
-
-					// Check if there should be blank lines between this comment and the next
-					if (nextComment) {
-						const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-						if (blankLinesBetween > 0) {
-							parts.push(hardline);
-						}
-					} else if (isLastComment) {
-						// Preserve a blank line between the last comment and the node if it existed
-						const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
-						if (blankLinesBetween > 0) {
-							parts.push(hardline);
-						}
-					}
-				} else {
-					parts.push(' ');
-				}
-			}
-		}
+		const lastComment = node.leadingComments[node.leadingComments.length - 1];
+		// A JSDoc cast must stay right before the parenthesis it casts, so a `;`
+		// that starts the statement goes ahead of it
+		leadingSemicolonPrinted =
+			lastComment !== undefined &&
+			isTypeCastComment(lastComment) &&
+			isCommentFollowedBySameLineParen(lastComment, options) &&
+			needsLeadingSemicolon(path, options);
+		parts.push(
+			...printLeadingComments(
+				node.leadingComments,
+				node,
+				options,
+				isInlineContext,
+				leadingSemicolonPrinted,
+			),
+		);
 	}
 
 	// Handle inner comments (for nodes with no children to attach to)
@@ -2818,6 +2845,10 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = printContinueStatement(node, path, options, print);
 			break;
 
+		case 'LabeledStatement':
+			nodeContent = printLabeledStatement(node, path, options, print);
+			break;
+
 		case 'DebuggerStatement':
 			nodeContent = printDebuggerStatement(node, path, options);
 			break;
@@ -2982,6 +3013,7 @@ function printTsrxNode(node, path, options, print, args) {
 						blockParent.type === 'TryStatement' ||
 						blockParent.type === 'CatchClause' ||
 						blockParent.type === 'SwitchCase' ||
+						blockParent.type === 'LabeledStatement' ||
 						blockParent.type === 'JSXIfExpression' ||
 						blockParent.type === 'JSXForExpression' ||
 						blockParent.type === 'JSXTryExpression' ||
@@ -4769,9 +4801,9 @@ function extractAndPrintLeadingComments(node) {
 }
 
 /**
- * Print a loop or `if` body after its header. An empty statement body prints
- * as `;` against the header, as Prettier does: printing nothing would make the
- * next statement the body.
+ * Print a loop, `if` or label body after its header. An empty statement body
+ * prints as `;` against the header, as Prettier does: printing nothing would
+ * make the next statement the body.
  * @param {AST.Statement} body - The body statement
  * @param {Doc} bodyDoc - The printed body
  * @returns {Doc}
@@ -6416,6 +6448,90 @@ function printContinueStatement(node, path, options, print) {
 		parts.push(path.call(print, 'label'));
 	}
 	parts.push(semi(options));
+	return parts;
+}
+
+/**
+ * Whether a comment starts or ends its line, counting the comments beside it
+ * on that line, as Prettier's comment placement does.
+ * @param {AST.Comment[]} comments - Consecutive comments
+ * @param {number} index - The comment's index in `comments`
+ * @param {string} text - The source text
+ * @returns {boolean}
+ */
+function commentStartsOrEndsLine(comments, index, text) {
+	const sameLineGap = /^[^\S\n]*$/;
+	let start = /** @type {AST.NodeWithLocation} */ (comments[index]).start;
+	for (let i = index - 1; i >= 0; i--) {
+		const previous = /** @type {AST.NodeWithLocation} */ (comments[i]);
+		if (!sameLineGap.test(text.slice(previous.end, start))) break;
+		start = previous.start;
+	}
+	let end = /** @type {AST.NodeWithLocation} */ (comments[index]).end;
+	for (let i = index + 1; i < comments.length; i++) {
+		const next = /** @type {AST.NodeWithLocation} */ (comments[i]);
+		if (!sameLineGap.test(text.slice(end, next.start))) break;
+		end = next.end;
+	}
+	return hasNewline(text, start, { backwards: true }) || hasNewline(text, end);
+}
+
+/**
+ * Print a labeled statement. As in Prettier, a comment between the label and
+ * the body moves above the label when it starts or ends its line; the other
+ * comments stay on their side of the colon.
+ * @param {AST.LabeledStatement} node - The labeled statement node
+ * @param {AstPath<AST.LabeledStatement>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printLabeledStatement(node, path, options, print) {
+	const text = options.originalText ?? '';
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (node.body).leadingComments ?? [];
+	/** @type {AST.Comment[]} */
+	const moved = [];
+	/** @type {Doc[]} */
+	const beforeColon = [];
+	/** @type {Doc[]} */
+	const afterColon = [];
+	let gapStart = /** @type {AST.NodeWithLocation} */ (node.label).end;
+	let pastColon = false;
+	for (let i = 0; i < comments.length; i++) {
+		const comment = comments[i];
+		const { start, end } = /** @type {AST.NodeWithLocation} */ (comment);
+		pastColon ||= text.slice(gapStart, start).includes(':');
+		gapStart = end;
+		if (commentStartsOrEndsLine(comments, i, text)) {
+			moved.push(comment);
+		} else {
+			// A line comment always ends its line, so this is a block comment
+			(pastColon ? afterColon : beforeColon).push('/*' + comment.value + '*/');
+		}
+	}
+
+	// A moved `prettier-ignore` is the last comment before the label, so it
+	// keeps the whole statement's source.
+	if (isPrettierIgnoreComment(moved.at(-1))) {
+		const { start, end } = /** @type {AST.NodeWithLocation} */ (node);
+		return replaceEndOfLine(text.slice(start, end));
+	}
+
+	const body = path.call((bodyPath) => print(bodyPath, { suppressLeadingComments: true }), 'body');
+	/** @type {Doc[]} */
+	const parts = [...printLeadingComments(moved, node.body, options), path.call(print, 'label')];
+	for (const commentDoc of beforeColon) {
+		parts.push(' ', commentDoc);
+	}
+	parts.push(':');
+	if (afterColon.length === 0) {
+		parts.push(printClause(node.body, body));
+	} else {
+		parts.push(' ', join(' ', afterColon), ' ', body);
+		if (node.body.type === 'EmptyStatement') {
+			parts.push(';');
+		}
+	}
 	return parts;
 }
 
