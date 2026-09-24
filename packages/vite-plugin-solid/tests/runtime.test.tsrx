@@ -1257,27 +1257,17 @@ describe('tsrx-solid runtime', () => {
 		await render(ForFilteredApp);
 		expect(
 			Array.from(container.querySelectorAll('.continue-item'), (item) => item.textContent),
-		).toEqual([
-			'a',
-			'c',
-		]);
+		).toEqual(['a', 'c']);
 	});
 
 	it('keeps prior JSX children when conditional output skips a for-of continuation', async () => {
 		await render(ForContinueAfterPriorJsxApp);
 		expect(
 			Array.from(container.querySelectorAll('.continue-before'), (item) => item.textContent),
-		).toEqual([
-			'before-a',
-			'before-empty',
-			'before-c',
-		]);
+		).toEqual(['before-a', 'before-empty', 'before-c']);
 		expect(
 			Array.from(container.querySelectorAll('.continue-after'), (item) => item.textContent),
-		).toEqual([
-			'after-a',
-			'after-c',
-		]);
+		).toEqual(['after-a', 'after-c']);
 	});
 
 	// ── Reactive control flow: switch ──
