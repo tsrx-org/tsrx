@@ -529,15 +529,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 					// list never owns a comment: it prints as nothing, so the comment would
 					// lose its place. The statement before or after it, or the list's
 					// container, takes it. A `;` body (`if (x) ;`) prints in place and keeps
-					// its comments. Static blocks and namespace bodies don't keep a comment
-					// after their last statement yet (#286), so theirs keep comments too.
+					// its comments.
 					const emptyParent = path.at(-1);
-					if (
-						node.type === 'EmptyStatement' &&
-						emptyParent?.type !== 'StaticBlock' &&
-						emptyParent?.type !== 'TSModuleBlock' &&
-						isListEntry(node, emptyParent)
-					) {
+					if (node.type === 'EmptyStatement' && isListEntry(node, emptyParent)) {
 						return;
 					}
 
@@ -657,8 +651,16 @@ export function get_comment_handlers(source, comments, index = 0) {
 								return;
 							}
 						}
-						if (node.type === 'BlockStatement' && hasOnlyEmptyStatements(node.body)) {
-							// Collect all comments that fall within this empty block
+						if (
+							((node.type === 'BlockStatement' ||
+								node.type === 'StaticBlock' ||
+								node.type === 'TSModuleBlock') &&
+								hasOnlyEmptyStatements(node.body)) ||
+							(node.type === 'TSInterfaceBody' && node.body.length === 0) ||
+							((node.type === 'TSTypeLiteral' || node.type === 'TSEnumDeclaration') &&
+								node.members.length === 0)
+						) {
+							// Collect all comments that fall within this empty block or member list
 							while (
 								comments[0] &&
 								comments[0].start < /** @type {AST.NodeWithLocation} */ (node).end &&
@@ -729,14 +731,24 @@ export function get_comment_handlers(source, comments, index = 0) {
 							let isParam = false;
 							let isArgument = false;
 							let isSwitchCaseSibling = false;
+							let isCodeBlockChild = false;
 
 							if (parent) {
 								if (
 									parent.type === 'BlockStatement' ||
 									parent.type === 'Program' ||
-									parent.type === 'ClassBody'
+									parent.type === 'ClassBody' ||
+									parent.type === 'StaticBlock' ||
+									parent.type === 'TSModuleBlock' ||
+									parent.type === 'TSInterfaceBody'
 								) {
 									node_array = parent.body;
+								} else if (parent.type === 'JSXCodeBlock') {
+									// The render output is the sibling after the setup statements.
+									// Comments after the last node stay for the code block, which
+									// keeps them as inner comments.
+									node_array = parent.render ? [...parent.body, parent.render] : parent.body;
+									isCodeBlockChild = true;
 								} else if (parent.type === 'SwitchStatement') {
 									node_array = parent.cases;
 									isSwitchCaseSibling = true;
@@ -750,6 +762,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 									node_array = parent.properties;
 								} else if (parent.type === 'TSTypeLiteral') {
 									node_array = parent.members;
+								} else if (parent.type === 'TSEnumDeclaration') {
+									// The enum's name is not a member. With no members, it would
+									// count as the last one and take the body's comments.
+									if (node !== parent.id) {
+										node_array = parent.members;
+									}
 								} else if (
 									parent.type === 'FunctionDeclaration' ||
 									parent.type === 'FunctionExpression' ||
@@ -779,7 +797,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 									}
 									next_index++;
 								}
-								is_last_in_array = next_index >= node_array.length;
+								is_last_in_array = !isCodeBlockChild && next_index >= node_array.length;
 							}
 
 							const nextSibling = node_array?.[next_index];
@@ -934,10 +952,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 									// When there's a blank line between node and comment(s),
 									// check if there's also a blank line after the comment(s) before the next node
 									// If so, attach comments as trailing to preserve the grouping
-									// Only do this for statement-level contexts (BlockStatement, Program),
+									// Only do this for statement-level contexts (blocks, Program),
 									// not for JSX element children or other contexts
 									const isStatementContext =
-										parent.type === 'BlockStatement' || parent.type === 'Program';
+										parent.type === 'BlockStatement' ||
+										parent.type === 'Program' ||
+										parent.type === 'StaticBlock' ||
+										parent.type === 'TSModuleBlock';
 
 									if (!isStatementContext) {
 										return;

@@ -2525,9 +2525,12 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = printFunctionExpression(node, path, options, print);
 			break;
 
+		case 'StaticBlock':
 		case 'TSModuleBlock':
 		case 'BlockStatement': {
-			// Apply the same block formatting pattern throughout TSRX.
+			// Apply the same block formatting pattern throughout TSRX. A static
+			// block is a block statement after its keyword.
+			const open = node.type === 'StaticBlock' ? 'static {' : '{';
 			const printedIndexes = getPrintedStatementIndexes(node.body ?? []);
 			if (printedIndexes.length === 0) {
 				// Handle innerComments for empty blocks
@@ -2577,12 +2580,12 @@ function printTsrxNode(node, path, options, print, args) {
 							contentParts.push(doc);
 						}
 
-						nodeContent = group(['{', indent([hardline, contentParts]), hardline, '}']);
+						nodeContent = group([open, indent([hardline, contentParts]), hardline, '}']);
 						break;
 					} else {
 						// Fallback to simple join
 						nodeContent = group([
-							'{',
+							open,
 							indent([hardline, join(hardline, innerCommentParts)]),
 							hardline,
 							'}',
@@ -2611,9 +2614,9 @@ function printTsrxNode(node, path, options, print, args) {
 						blockParent.type === 'JSXSwitchExpression');
 
 				if (isControlFlow) {
-					nodeContent = ['{', hardline, '}'];
+					nodeContent = [open, hardline, '}'];
 				} else {
-					nodeContent = '{}';
+					nodeContent = [open, '}'];
 				}
 				break;
 			}
@@ -2639,7 +2642,7 @@ function printTsrxNode(node, path, options, print, args) {
 			}
 
 			// Use proper block statement pattern
-			nodeContent = group(['{', indent([hardline, statements]), hardline, '}']);
+			nodeContent = group([open, indent([hardline, statements]), hardline, '}']);
 			break;
 		}
 
@@ -3105,26 +3108,6 @@ function printTsrxNode(node, path, options, print, args) {
 
 			parts.push(path.call(print, 'parameter'));
 			nodeContent = parts;
-			break;
-		}
-
-		case 'StaticBlock': {
-			const printedIndexes = getPrintedStatementIndexes(node.body ?? []);
-			nodeContent =
-				printedIndexes.length > 0
-					? group([
-							'static {',
-							indent([
-								hardline,
-								join(
-									hardline,
-									printedIndexes.map((i) => path.call(print, 'body', i)),
-								),
-							]),
-							hardline,
-							'}',
-						])
-					: 'static {}';
 			break;
 		}
 
@@ -5524,7 +5507,7 @@ function printTSInterfaceDeclaration(node, path, options, print) {
  */
 function printTSInterfaceBody(node, path, options, print) {
 	if (!node.body || node.body.length === 0) {
-		return '{}';
+		return printEmptyMemberList(node);
 	}
 
 	const members = path.map(print, 'body');
@@ -5533,6 +5516,25 @@ function printTSInterfaceBody(node, path, options, print) {
 	const membersWithSemicolons = members.map((member) => [member, semi(options)]);
 
 	return group(['{', indent([hardline, join(hardline, membersWithSemicolons)]), hardline, '}']);
+}
+
+/**
+ * Print the braces of an empty interface body, type literal, or enum, with the
+ * comments the parser keeps inside them as inner comments. Like Prettier, an
+ * enum or type literal keeps a lone block comment on the line of its braces
+ * when it fits. Otherwise each comment prints on its own line.
+ * @param {AST.TSInterfaceBody | AST.TSTypeLiteral | AST.TSEnumDeclaration} node
+ * @returns {Doc}
+ */
+function printEmptyMemberList(node) {
+	const comments = node.innerComments ?? [];
+	if (comments.length === 0) {
+		return '{}';
+	}
+	if (node.type !== 'TSInterfaceBody' && comments.length === 1 && comments[0].type === 'Block') {
+		return group(['{', indent([softline, '/*' + comments[0].value + '*/']), softline, '}']);
+	}
+	return ['{', indent(printElementBodyComments(comments)), hardline, '}'];
 }
 
 /**
@@ -5614,7 +5616,7 @@ function printTSEnumDeclaration(node, path, options, print) {
 
 	// Print enum body
 	if (!node.members || node.members.length === 0) {
-		parts.push('{}');
+		parts.push(printEmptyMemberList(node));
 	} else {
 		const members = path.map(print, 'members');
 		const membersWithCommas = [];
@@ -6119,9 +6121,8 @@ function getBlankLinesBetweenNodes(currentNode, nextNode) {
 /**
  * The indexes of the statements a statement list prints. Like Prettier, it
  * drops empty statements (a stray `;`, or the one semicolon-free code writes
- * before a first statement that starts with `[`), unless a comment is on one.
- * The parser only leaves comments on those in static blocks and namespace
- * bodies (#286).
+ * before a first statement that starts with `[`). The parser gives their
+ * comments to the statements around them or to the list's container.
  * @param {AST.Node[]} statements
  * @returns {number[]}
  */
@@ -6129,7 +6130,7 @@ function getPrintedStatementIndexes(statements) {
 	/** @type {number[]} */
 	const indexes = [];
 	statements.forEach((statement, index) => {
-		if (statement.type !== 'EmptyStatement' || hasComment(statement)) {
+		if (statement.type !== 'EmptyStatement') {
 			indexes.push(index);
 		}
 	});
@@ -6742,7 +6743,7 @@ function printAssignmentPattern(node, path, options, print) {
  */
 function printTSTypeLiteral(node, path, options, print) {
 	if (!node.members || node.members.length === 0) {
-		return '{}';
+		return printEmptyMemberList(node);
 	}
 
 	const members = path.map(print, 'members');
