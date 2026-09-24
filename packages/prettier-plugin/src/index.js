@@ -595,7 +595,9 @@ function getLeftmostChildKey(node) {
  * Whether an object literal, function or class expression would be the first
  * token of a context that reads it differently: a statement (`{` opens a
  * block, `function`/`class` a declaration), an arrow body (`{` opens a block
- * body), or an `export default` (`function`/`class` start a declaration).
+ * body), an `export default` (`function`/`class` start a declaration), or a
+ * superclass (TypeScript reads the `{` of `extends {}.Base {}` as the class
+ * body).
  * @param {AstPath} path - The path to the object, function or class expression
  * @returns {boolean}
  */
@@ -615,6 +617,10 @@ function startsAmbiguousHead(path) {
 			case 'ExportDefaultDeclaration':
 				// The declaration itself is `printExportDefaultDeclaration`'s to wrap
 				return node.type !== 'ObjectExpression' && level > 0;
+			case 'ClassDeclaration':
+			case 'ClassExpression':
+				// The superclass itself is `printClassDeclaration`'s to wrap
+				return node.type === 'ObjectExpression' && parent.superClass === child && level > 0;
 		}
 		const key = getLeftmostChildKey(parent);
 		if (!key || /** @type {Record<string, unknown>} */ (parent)[key] !== child) {
@@ -1000,7 +1006,15 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 			return key === 'callee' && parent.type === 'NewExpression' && newCalleeContainsCall(node);
 
 		case 'TSInstantiationExpression':
-			return key === 'object' && parent.type === 'MemberExpression';
+			// TypeScript does not parse `a<T>.b`, `a<T>!` or `a<T><U>`, and
+			// `(a<T>)<U>()` would otherwise print a second type argument list
+			return (
+				(key === 'object' && parent.type === 'MemberExpression') ||
+				parent.type === 'TSNonNullExpression' ||
+				parent.type === 'TSInstantiationExpression' ||
+				((key === 'callee' || key === 'tag') &&
+					Boolean(/** @type {{ typeArguments?: unknown }} */ (parent).typeArguments))
+			);
 
 		case 'JSXElement':
 		case 'JSXFragment':

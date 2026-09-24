@@ -7683,6 +7683,46 @@ declare enum Level {
 			await expectUnchanged(source);
 		});
 
+		it.each([
+			'class Derived extends ({}).Base {}',
+			'class Derived extends ({}).mixin(Base) {}',
+			'class Derived extends ({})[0] {}',
+			'class Derived extends ({}).Base! {}',
+			'class Derived extends ({})`t`.Base {}',
+			'const Derived = class extends ({}).Base {};',
+		])(
+			'keeps an object literal at the start of a superclass parenthesized in %s',
+			async (source) => {
+				// TypeScript reads the `{` of `extends {}.Base {}` as the class body
+				await expectUnchanged(source);
+			},
+		);
+
+		it('drops the parentheses around a class or function at the start of a superclass', async () => {
+			const result = await format(
+				'class A extends (class {}).Base {}\nclass B extends (function () {}).Base {}',
+			);
+			expect(result).toBeWithNewline(
+				'class A extends class {}.Base {}\nclass B extends function () {}.Base {}',
+			);
+		});
+
+		it.each([
+			'const a = (make<T>)!;',
+			'const b = (make<T>)!.value;',
+			'const c = (make<T>)<U>;',
+			'const d = (make<T>)<U>();',
+			'const e = new (make<T>)<U>();',
+			'const f = (make<T>).value;',
+		])('keeps the parentheses around an instantiation expression in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it('drops the parentheses around an instantiation expression that is called', async () => {
+			const result = await format('const a = (make<T>)();');
+			expect(result).toBeWithNewline('const a = make<T>();');
+		});
+
 		it('keeps the parentheses of a prettier-ignored operand', async () => {
 			const result = await format(`const list = [
   // prettier-ignore
