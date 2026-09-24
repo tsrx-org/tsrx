@@ -10,6 +10,11 @@ between elements is kept only when the array breaks. Number-only arrays pack
 several numbers per line. An object inside an array prints like any other
 object, so a one-property object written across lines stays that way.
 
+A comment before an array element now stays with that element. The formatter
+used to print it after the previous element's comma and break the line, so the
+next pass attached it to the previous element and dropped a JSDoc cast
+(`[first, /** @type {Entry} */ (second)]` lost the cast on `second`).
+
 `trailingComma: "none"` now also applies to arrays with a blank line between
 elements, which used to print a comma after the last element with every
 setting. A trailing hole (`[1, 2, ,]`) still keeps the comma that creates it.

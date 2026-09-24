@@ -6893,6 +6893,38 @@ const sum = add(
 );`);
 		});
 
+		it('keeps a comment before an element with that element', async () => {
+			const input = `const cast = [first, /** @type {Entry} */ (second)];
+const note = [
+  first,
+  /* note */ second,
+];
+const own = [
+  "a",
+  /* lead b */
+  "b",
+];
+const line = [
+  first,
+  // lead second
+  second,
+];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const cast = [first, /** @type {Entry} */ (second)];
+const note = [first, /* note */ second];
+const own = [
+  "a",
+  /* lead b */
+  "b",
+];
+const line = [
+  first,
+  // lead second
+  second,
+];`);
+		});
+
 		it('breaks an array around a call whose callback body breaks', async () => {
 			const input = `const handlers = [on("click", () => {
   run();
