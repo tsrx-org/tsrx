@@ -2416,6 +2416,23 @@ import { GetRootNode } from './somewhere';`;
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('adds no blank line after an import that the source does not have', async () => {
+			const expected = `import a from "a";
+b();
+import c from "c";
+// note
+d();
+function f() {}
+import e from "e";
+export { e };
+import g from "g";
+
+g();`;
+
+			const result = await format(expected);
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should preserve export interface with extends as provided', async () => {
 			const expected = `export interface ReactiveArray<T> extends Array<T> {}`;
 

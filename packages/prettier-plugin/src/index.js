@@ -6358,11 +6358,6 @@ function getContentEndBeforeSemicolon(node, text, nextStart) {
  * @returns {boolean}
  */
 function shouldAddBlankLine(currentNode, nextNode, options) {
-	// Always set imports apart from the code after them
-	if (currentNode.type === 'ImportDeclaration' && nextNode.type !== 'ImportDeclaration') {
-		return true;
-	}
-
 	const text = /** @type {string} */ (options.originalText);
 	// Like Prettier's `isNextLineEmpty`, only the line right after the node
 	// counts, so a line holding a `;` that isn't printed is not a blank line
