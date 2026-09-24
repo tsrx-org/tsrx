@@ -366,34 +366,41 @@ function iterateFunctionParametersPath(path, iteratee) {
 	}
 }
 
-// Operator precedence (higher number = higher precedence)
+// Operator precedence (higher number = binds tighter). `??` binds loosest,
+// matching Prettier's table.
 /** @type {Record<string, number>} */
 const PRECEDENCE = {
-	'||': 1,
-	'&&': 2,
-	'|': 3,
-	'^': 4,
-	'&': 5,
-	'==': 6,
-	'!=': 6,
-	'===': 6,
-	'!==': 6,
-	'<': 7,
-	'<=': 7,
-	'>': 7,
-	'>=': 7,
-	in: 7,
-	instanceof: 7,
-	'<<': 8,
-	'>>': 8,
-	'>>>': 8,
-	'+': 9,
-	'-': 9,
-	'*': 10,
-	'/': 10,
-	'%': 10,
-	'**': 11,
+	'??': 1,
+	'||': 2,
+	'&&': 3,
+	'|': 4,
+	'^': 5,
+	'&': 6,
+	'==': 7,
+	'!=': 7,
+	'===': 7,
+	'!==': 7,
+	'<': 8,
+	'<=': 8,
+	'>': 8,
+	'>=': 8,
+	in: 8,
+	instanceof: 8,
+	'<<': 9,
+	'>>': 9,
+	'>>>': 9,
+	'+': 10,
+	'-': 10,
+	'*': 11,
+	'/': 11,
+	'%': 11,
+	'**': 12,
 };
+
+const EQUALITY_OPERATORS = new Set(['==', '!=', '===', '!==']);
+const MULTIPLICATIVE_OPERATORS = new Set(['*', '/', '%']);
+const BITSHIFT_OPERATORS = new Set(['<<', '>>', '>>>']);
+const BITWISE_OPERATORS = new Set(['|', '^', '&', ...BITSHIFT_OPERATORS]);
 
 /**
  * Get operator precedence for binary/logical expressions
@@ -405,89 +412,60 @@ function getPrecedence(operator) {
 }
 
 /**
- * Check if a BinaryExpression needs parentheses
- * @param {AST.BinaryExpression | AST.LogicalExpression} node - The expression node
- * @param {AST.Node} parent - The parent node
- * @returns {boolean} - True if parentheses are needed
+ * Whether a binary operand that shares its parent's precedence reads the same
+ * without parentheses (Prettier's `shouldFlatten`). `a + b - c` flattens;
+ * `(a * b) % c` and `(a == b) == c` keep their grouping visible.
+ * @param {string} parentOperator - The parent's operator
+ * @param {string} nodeOperator - The operand's operator
+ * @returns {boolean}
  */
-function binaryExpressionNeedsParens(node, parent) {
-	if (!node.metadata?.parenthesized) {
+function shouldFlatten(parentOperator, nodeOperator) {
+	if (getPrecedence(nodeOperator) !== getPrecedence(parentOperator)) {
 		return false;
 	}
-
-	// If parent is not an operator context, don't preserve parens
+	// `**` is right-associative
+	if (parentOperator === '**') {
+		return false;
+	}
+	if (EQUALITY_OPERATORS.has(parentOperator) && EQUALITY_OPERATORS.has(nodeOperator)) {
+		return false;
+	}
 	if (
-		!parent ||
-		(parent.type !== 'BinaryExpression' &&
-			parent.type !== 'LogicalExpression' &&
-			parent.type !== 'UnaryExpression')
+		(nodeOperator === '%' && MULTIPLICATIVE_OPERATORS.has(parentOperator)) ||
+		(parentOperator === '%' && MULTIPLICATIVE_OPERATORS.has(nodeOperator))
 	) {
 		return false;
 	}
-
-	// If parent is UnaryExpression, it already handles the parentheses
-	if (parent.type === 'UnaryExpression') {
+	if (
+		nodeOperator !== parentOperator &&
+		MULTIPLICATIVE_OPERATORS.has(nodeOperator) &&
+		MULTIPLICATIVE_OPERATORS.has(parentOperator)
+	) {
 		return false;
 	}
-
-	// For BinaryExpression/LogicalExpression parents, check precedence
-	if (parent.type === 'BinaryExpression' || parent.type === 'LogicalExpression') {
-		const nodePrecedence = getPrecedence(node.operator);
-		const parentPrecedence = getPrecedence(parent.operator);
-
-		// Need parens if:
-		// 1. Child has lower precedence than parent
-		// 2. Same precedence but different operators (for clarity)
-		// 3. Child is on the right side and precedence is equal (for left-associative operators)
-		if (nodePrecedence < parentPrecedence) {
-			return true;
-		}
-		if (nodePrecedence === parentPrecedence && node.operator !== parent.operator) {
-			return true;
-		}
-		if (nodePrecedence === parentPrecedence) {
-			// Same precedence, same operator: dropping the parens regroups a
-			// left-associative chain (`a - (b - c)` !== `a - b - c`; even `+` is
-			// non-associative once strings are involved), so the RIGHT operand
-			// keeps its parens. `**` is right-associative — there it's the LEFT
-			// operand that must keep them.
-			if (parent.operator === '**' ? parent.left === node : parent.right === node) {
-				return true;
-			}
-		}
+	if (BITSHIFT_OPERATORS.has(parentOperator) && BITSHIFT_OPERATORS.has(nodeOperator)) {
+		return false;
 	}
-
-	return false;
+	return true;
 }
 
 /**
- * Check whether the operand of an `as`/`satisfies` cast must stay parenthesized.
- * The cast binds at relational precedence, so lower-precedence operands parse
- * differently without their parens: `a ?? b as string` is `a ?? (b as string)`,
- * and mixing `??` with an unparenthesized cast operand is a TS syntax error.
- * @param {AST.Node} expression - The cast operand
- * @returns {boolean} - True if parentheses are required
+ * @param {AST.Node} node
+ * @returns {boolean}
  */
-function castOperandNeedsParens(expression) {
-	switch (expression.type) {
-		case 'LogicalExpression':
-		case 'ArrowFunctionExpression':
-		case 'YieldExpression':
-			return true;
-		case 'BinaryExpression':
-			return getPrecedence(expression.operator) < PRECEDENCE['<'];
-		default:
-			return false;
-	}
+function isCastExpression(node) {
+	return node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression';
 }
 
 /**
- * Check whether a class's superclass expression must stay parenthesized.
+ * Check whether a class's superclass expression prints parenthesized.
  * `extends` only takes a left-hand-side expression, so anything that binds
  * looser no longer parses without its parens: `class A extends B || C {}` is
- * a syntax error. Sequence expressions always print their own parens.
+ * a syntax error. Like Prettier, `new`, object literal and tagged template
+ * superclasses are wrapped for readability too. Sequence expressions always
+ * print their own parens.
  * @param {AST.Node} expression - The superclass expression
- * @returns {boolean} - True if parentheses are required
+ * @returns {boolean} - True if parentheses are printed
  */
 function superClassNeedsParens(expression) {
 	switch (expression.type) {
@@ -497,6 +475,9 @@ function superClassNeedsParens(expression) {
 		case 'BinaryExpression':
 		case 'ConditionalExpression':
 		case 'LogicalExpression':
+		case 'NewExpression':
+		case 'ObjectExpression':
+		case 'TaggedTemplateExpression':
 		case 'TSAsExpression':
 		case 'TSSatisfiesExpression':
 		case 'UnaryExpression':
@@ -512,51 +493,595 @@ function superClassNeedsParens(expression) {
 }
 
 /**
- * Check if a parenthesized AssignmentExpression needs its parentheses preserved.
- * @param {AST.AssignmentExpression} node - The expression node
- * @param {AST.Node | null} parent - The parent node
- * @returns {boolean} - True if parentheses are needed
+ * Whether a comment is a JSDoc type cast. Like Prettier's `babel` parser, any
+ * block comment carrying `@type` or `@satisfies` counts.
+ * @param {AST.Comment} comment
+ * @returns {boolean}
  */
-function assignmentExpressionNeedsParens(node, parent) {
-	if (!node.metadata?.parenthesized || !parent) {
+function isTypeCastComment(comment) {
+	return (
+		comment.type === 'Block' &&
+		comment.value[0] === '*' &&
+		/@(?:type|satisfies)\b/.test(comment.value)
+	);
+}
+
+/**
+ * Whether a parenthesized node's parentheses complete a JSDoc type cast:
+ * `/** @type {T} *\/ (value)` only casts `value` with them. The cast comment
+ * sits right before the opening paren, so the parser attaches it either to
+ * the node itself or to an ancestor that starts at that paren
+ * (`/** @type {T} *\/ (node).start` hangs it on the member expression).
+ * @param {AstPath} path - The path to the parenthesized node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {boolean}
+ */
+function hasTypeCastParens(path, options) {
+	const node = /** @type {AST.Node & AST.NodeWithLocation} */ (path.node);
+	const text = options.originalText;
+	if (!node.metadata?.parenthesized || typeof text !== 'string') {
 		return false;
 	}
 
-	if (parent.type === 'BinaryExpression' || parent.type === 'LogicalExpression') {
-		return true;
+	// Walk back over the opening parens (and the whitespace between them).
+	let parenStart = node.start;
+	for (let index = node.start - 1; index >= 0; index--) {
+		const character = text.charAt(index);
+		if (character === '(') {
+			parenStart = index;
+		} else if (!/\s/.test(character)) {
+			break;
+		}
+	}
+	if (parenStart === node.start) {
+		return false;
 	}
 
-	// `({ a } = obj);` — without the parentheses the statement starts with a block.
-	if (parent.type === 'ExpressionStatement') {
-		return node.left.type === 'ObjectPattern';
+	for (let level = -1; ; level++) {
+		const candidate = /** @type {(AST.Node & AST.NodeWithLocation) | null} */ (
+			level < 0 ? node : path.getParentNode(level)
+		);
+		if (!candidate || (level >= 0 && candidate.start < parenStart)) {
+			return false;
+		}
+		const comments = /** @type {AST.NodeWithMaybeComments} */ (candidate).leadingComments;
+		for (const comment of comments ?? []) {
+			const commentEnd = /** @type {AST.NodeWithLocation} */ (comment).end;
+			if (
+				isTypeCastComment(comment) &&
+				commentEnd <= parenStart &&
+				!text.slice(commentEnd, parenStart).trim()
+			) {
+				return true;
+			}
+		}
 	}
+}
 
-	if (parent.type === 'ConditionalExpression') {
-		return parent.test === node;
+/**
+ * The key of the child a node's printed output starts with, when that child
+ * is an expression printed without a leading token of the node's own.
+ * @param {AST.Node} node
+ * @returns {string | null}
+ */
+function getLeftmostChildKey(node) {
+	switch (node.type) {
+		case 'AssignmentExpression':
+		case 'BinaryExpression':
+		case 'LogicalExpression':
+			return 'left';
+		case 'MemberExpression':
+			return 'object';
+		case 'CallExpression':
+			return 'callee';
+		case 'TaggedTemplateExpression':
+			return 'tag';
+		case 'ConditionalExpression':
+			return 'test';
+		case 'UpdateExpression':
+			return node.prefix ? null : 'argument';
+		case 'ChainExpression':
+		case 'TSAsExpression':
+		case 'TSSatisfiesExpression':
+		case 'TSNonNullExpression':
+		case 'TSInstantiationExpression':
+			return 'expression';
+		default:
+			return null;
 	}
+}
 
-	if (parent.type === 'AwaitExpression' || parent.type === 'YieldExpression') {
-		return parent.argument === node;
+/**
+ * Whether an object literal, function or class expression would be the first
+ * token of a context that reads it differently: a statement (`{` opens a
+ * block, `function`/`class` a declaration), an arrow body (`{` opens a block
+ * body), or an `export default` (`function`/`class` start a declaration).
+ * @param {AstPath} path - The path to the object, function or class expression
+ * @returns {boolean}
+ */
+function startsAmbiguousHead(path) {
+	const node = /** @type {AST.Node} */ (path.node);
+	let child = node;
+	for (let level = 0; ; level++) {
+		const parent = /** @type {AST.Node | null} */ (path.getParentNode(level));
+		if (!parent) {
+			return false;
+		}
+		switch (parent.type) {
+			case 'ExpressionStatement':
+				return true;
+			case 'ArrowFunctionExpression':
+				return node.type === 'ObjectExpression' && parent.body === child;
+			case 'ExportDefaultDeclaration':
+				// The declaration itself is `printExportDefaultDeclaration`'s to wrap
+				return node.type !== 'ObjectExpression' && level > 0;
+		}
+		const key = getLeftmostChildKey(parent);
+		if (!key || /** @type {Record<string, unknown>} */ (parent)[key] !== child) {
+			return false;
+		}
+		// An operand that prints its own parens already moves the head off the start
+		if (
+			level > 0 &&
+			nodeNeedsParens(
+				child,
+				key,
+				parent,
+				/** @type {AST.Node | null} */ (path.getParentNode(level + 1)),
+			)
+		) {
+			return false;
+		}
+		child = parent;
 	}
+}
 
-	if (parent.type === 'CallExpression' || parent.type === 'NewExpression') {
-		return parent.callee === node;
+/**
+ * Whether the node sits anywhere inside a `for` statement's initializer,
+ * where an unparenthesized `in` would be read as a for-in loop.
+ * @param {AstPath} path
+ * @returns {boolean}
+ */
+function isInForStatementInit(path) {
+	let child = /** @type {AST.Node} */ (path.node);
+	for (let level = 0; ; level++) {
+		const parent = /** @type {AST.Node | null} */ (path.getParentNode(level));
+		if (!parent) {
+			return false;
+		}
+		if (parent.type === 'ForStatement' && parent.init === child) {
+			return true;
+		}
+		child = parent;
 	}
+}
 
-	if (parent.type === 'TaggedTemplateExpression') {
-		return parent.tag === node;
+/**
+ * Whether a `new` callee contains a call, which would otherwise take the
+ * `new` expression's arguments: `new (a().b)()` is not `new a().b()`.
+ * @param {AST.Node} node - The `new` callee
+ * @returns {boolean}
+ */
+function newCalleeContainsCall(node) {
+	/** @type {AST.Node | null} */
+	let current = node;
+	while (current) {
+		switch (current.type) {
+			case 'CallExpression':
+			case 'ImportExpression':
+				return true;
+			case 'MemberExpression':
+				current = current.object;
+				break;
+			case 'TaggedTemplateExpression':
+				current = current.tag;
+				break;
+			case 'TSNonNullExpression':
+				current = current.expression;
+				break;
+			default:
+				return false;
+		}
 	}
-
-	if (
-		parent.type === 'TSAsExpression' ||
-		parent.type === 'TSSatisfiesExpression' ||
-		parent.type === 'TSNonNullExpression' ||
-		parent.type === 'TSInstantiationExpression'
-	) {
-		return parent.expression === node;
-	}
-
 	return false;
+}
+
+/**
+ * Whether a decorator expression needs parentheses. Without them a decorator
+ * only takes a dotted name, optionally called once: `@a.b` and `@a.b()`.
+ * @param {AST.Node} node - The decorator expression
+ * @returns {boolean}
+ */
+function decoratorExpressionNeedsParens(node) {
+	let hasCall = false;
+	let hasMember = false;
+	/** @type {AST.Node} */
+	let current = node;
+	while (true) {
+		switch (current.type) {
+			case 'Identifier':
+				return false;
+			case 'MemberExpression':
+				if (current.computed) {
+					return true;
+				}
+				hasMember = true;
+				current = current.object;
+				break;
+			case 'CallExpression':
+				if (hasMember || hasCall) {
+					return true;
+				}
+				hasCall = true;
+				current = current.callee;
+				break;
+			default:
+				return true;
+		}
+	}
+}
+
+/**
+ * The parent-relative part of {@link needsParens}: whether `node`, printed as
+ * the `key` child of `parent`, needs parentheses to parse the same way or to
+ * match Prettier's readability parentheses.
+ * @param {AST.Node} node - The child node
+ * @param {string | number | null} key - The child's key in `parent`
+ * @param {AST.Node} parent - The parent node
+ * @param {AST.Node | null} grandparent - The parent's parent
+ * @returns {boolean}
+ */
+function nodeNeedsParens(node, key, parent, grandparent) {
+	if (parent.type === 'Decorator' && key === 'expression') {
+		return decoratorExpressionNeedsParens(node);
+	}
+
+	switch (node.type) {
+		case 'Literal':
+			// `1.toString()` does not parse
+			return (
+				key === 'object' && parent.type === 'MemberExpression' && typeof node.value === 'number'
+			);
+
+		case 'UpdateExpression':
+			if (parent.type === 'UnaryExpression') {
+				// `+(++a)`, not `+++a`
+				return (
+					node.prefix &&
+					((node.operator === '++' && parent.operator === '+') ||
+						(node.operator === '--' && parent.operator === '-'))
+				);
+			}
+		// falls through
+		case 'UnaryExpression':
+			switch (parent.type) {
+				case 'UnaryExpression':
+					// `-(-a)`, not `--a`
+					return (
+						node.type === 'UnaryExpression' &&
+						node.operator === parent.operator &&
+						(node.operator === '+' || node.operator === '-')
+					);
+				case 'MemberExpression':
+					return key === 'object';
+				case 'CallExpression':
+				case 'NewExpression':
+					return key === 'callee';
+				case 'BinaryExpression':
+					// `-a ** b` is a syntax error; `(!a) in b` reads as `!(a in b)` without them
+					return (
+						key === 'left' &&
+						(parent.operator === '**' ||
+							(node.type === 'UnaryExpression' &&
+								(parent.operator === 'in' || parent.operator === 'instanceof')))
+					);
+				case 'TaggedTemplateExpression':
+				case 'TSNonNullExpression':
+				case 'TSInstantiationExpression':
+					return true;
+				default:
+					return false;
+			}
+
+		case 'BinaryExpression':
+		case 'LogicalExpression':
+		case 'TSAsExpression':
+		case 'TSSatisfiesExpression':
+			switch (parent.type) {
+				case 'TSAsExpression':
+				case 'TSSatisfiesExpression':
+					// `a as B as C` chains; anything looser than a cast is grouped
+					return !isCastExpression(node);
+				case 'ConditionalExpression':
+					return (
+						isCastExpression(node) || (node.type === 'LogicalExpression' && node.operator === '??')
+					);
+				case 'CallExpression':
+				case 'NewExpression':
+					return key === 'callee';
+				case 'MemberExpression':
+					return key === 'object';
+				case 'AssignmentExpression':
+				case 'AssignmentPattern':
+					return key === 'left' && isCastExpression(node);
+				case 'AwaitExpression':
+				case 'JSXSpreadAttribute':
+				case 'SpreadElement':
+				case 'TaggedTemplateExpression':
+				case 'TSInstantiationExpression':
+				case 'TSNonNullExpression':
+				case 'UnaryExpression':
+				case 'UpdateExpression':
+					return true;
+				case 'LogicalExpression':
+					if (node.type === 'LogicalExpression') {
+						// `??` does not mix with `||` or `&&` without parentheses
+						if ((node.operator === '??') !== (parent.operator === '??')) {
+							return true;
+						}
+						// A chain of one logical operator evaluates the same however it
+						// is grouped, so `a || (b || c)` flattens like Prettier does
+						if (node.operator === parent.operator) {
+							return false;
+						}
+					}
+				// falls through
+				case 'BinaryExpression': {
+					if (node.type !== 'BinaryExpression' && node.type !== 'LogicalExpression') {
+						return true;
+					}
+					const nodeOperator = node.operator;
+					const parentOperator = parent.operator;
+					const nodePrecedence = getPrecedence(nodeOperator);
+					const parentPrecedence = getPrecedence(parentOperator);
+					if (parentPrecedence > nodePrecedence) {
+						return true;
+					}
+					if (key === 'right' && parentPrecedence === nodePrecedence) {
+						return true;
+					}
+					if (parentPrecedence === nodePrecedence && !shouldFlatten(parentOperator, nodeOperator)) {
+						return true;
+					}
+					if (parentPrecedence < nodePrecedence && nodeOperator === '%') {
+						return parentOperator === '+' || parentOperator === '-';
+					}
+					return BITWISE_OPERATORS.has(parentOperator);
+				}
+				default:
+					return false;
+			}
+
+		case 'SequenceExpression':
+			// Prints its own parentheses
+			return false;
+
+		case 'YieldExpression':
+			if (parent.type === 'AwaitExpression') {
+				return true;
+			}
+		// falls through
+		case 'AwaitExpression':
+			switch (parent.type) {
+				case 'BinaryExpression':
+				case 'JSXSpreadAttribute':
+				case 'LogicalExpression':
+				case 'SpreadElement':
+				case 'TaggedTemplateExpression':
+				case 'TSAsExpression':
+				case 'TSInstantiationExpression':
+				case 'TSNonNullExpression':
+				case 'TSSatisfiesExpression':
+				case 'UnaryExpression':
+					return true;
+				case 'MemberExpression':
+					return key === 'object';
+				case 'CallExpression':
+				case 'NewExpression':
+					return key === 'callee';
+				case 'ConditionalExpression':
+					return key === 'test';
+				default:
+					return false;
+			}
+
+		case 'ConditionalExpression':
+			switch (parent.type) {
+				case 'AwaitExpression':
+				case 'BinaryExpression':
+				case 'JSXSpreadAttribute':
+				case 'LogicalExpression':
+				case 'SpreadElement':
+				case 'TaggedTemplateExpression':
+				case 'TSAsExpression':
+				case 'TSInstantiationExpression':
+				case 'TSNonNullExpression':
+				case 'TSSatisfiesExpression':
+				case 'UnaryExpression':
+					return true;
+				case 'CallExpression':
+				case 'NewExpression':
+					return key === 'callee';
+				case 'MemberExpression':
+					return key === 'object';
+				case 'ConditionalExpression':
+					// The ternary layout keeps a parenthesized nested branch inline, so
+					// branch parens stay as written; a nested test always needs them.
+					return key === 'test' || Boolean(node.metadata?.parenthesized);
+				case 'ArrowFunctionExpression':
+					// Kept as written for the same reason: the arrow layout differs
+					return key === 'body' && Boolean(node.metadata?.parenthesized);
+				default:
+					return false;
+			}
+
+		case 'FunctionExpression':
+			switch (parent.type) {
+				case 'CallExpression':
+				case 'NewExpression':
+					return key === 'callee';
+				case 'TaggedTemplateExpression':
+					return true;
+				default:
+					return false;
+			}
+
+		case 'ArrowFunctionExpression':
+			switch (parent.type) {
+				case 'CallExpression':
+				case 'NewExpression':
+					return key === 'callee';
+				case 'MemberExpression':
+					return key === 'object';
+				case 'ConditionalExpression':
+					return key === 'test';
+				case 'AwaitExpression':
+				case 'BinaryExpression':
+				case 'LogicalExpression':
+				case 'TaggedTemplateExpression':
+				case 'TSAsExpression':
+				case 'TSInstantiationExpression':
+				case 'TSNonNullExpression':
+				case 'TSSatisfiesExpression':
+				case 'UnaryExpression':
+					return true;
+				default:
+					return false;
+			}
+
+		case 'ClassExpression':
+			if (key === 'callee' && parent.type === 'NewExpression') {
+				return true;
+			}
+			// The decorators would otherwise decorate the whole operand chain
+			return getDecorators(node).length > 0 && getLeftmostChildKey(parent) === key;
+
+		case 'AssignmentExpression':
+			switch (parent.type) {
+				case 'ArrowFunctionExpression':
+					return key === 'body';
+				case 'ExpressionStatement':
+					// `({ a } = obj);` would otherwise start with a block
+					return node.left.type === 'ObjectPattern';
+				case 'AssignmentExpression':
+					return false;
+				case 'ForStatement':
+					return key !== 'init' && key !== 'update';
+				case 'SequenceExpression':
+					return !(
+						grandparent?.type === 'ForStatement' &&
+						(grandparent.init === parent || grandparent.update === parent)
+					);
+				case 'PropertyDefinition':
+					return !(key === 'key' && parent.computed);
+				default:
+					return true;
+			}
+
+		case 'ChainExpression':
+			// The parens end the chain: `(a?.b)()` calls even when `a` is nullish.
+			// An optional continuation short-circuits either way.
+			switch (parent.type) {
+				case 'CallExpression':
+					return key === 'callee' && !parent.optional;
+				case 'MemberExpression':
+					return key === 'object' && !parent.optional;
+				case 'NewExpression':
+				case 'TaggedTemplateExpression':
+				case 'TSInstantiationExpression':
+				case 'TSNonNullExpression':
+					return true;
+				default:
+					return false;
+			}
+
+		case 'CallExpression':
+		case 'ImportExpression':
+		case 'MemberExpression':
+		case 'TaggedTemplateExpression':
+		case 'TSNonNullExpression':
+			return key === 'callee' && parent.type === 'NewExpression' && newCalleeContainsCall(node);
+
+		case 'TSInstantiationExpression':
+			return key === 'object' && parent.type === 'MemberExpression';
+
+		case 'JSXElement':
+		case 'JSXFragment':
+			return (
+				key === 'callee' ||
+				key === 'tag' ||
+				(key === 'object' && parent.type === 'MemberExpression') ||
+				parent.type === 'TSNonNullExpression' ||
+				parent.type === 'TSInstantiationExpression' ||
+				(key === 'left' && parent.type === 'BinaryExpression' && parent.operator === '<')
+			);
+
+		default:
+			return false;
+	}
+}
+
+/**
+ * Whether the node at `path` prints inside parentheses. This follows
+ * Prettier's `needs-parens`: the parentheses the grammar requires and the ones
+ * Prettier adds for readability. Other parentheses in the source are dropped
+ * unless they complete a JSDoc type cast (see {@link hasTypeCastParens}).
+ * Parents that lay out the parentheses themselves (class heritage,
+ * `export default`, and `return` or `throw` with an own-line comment) own them.
+ * @param {AstPath} path - The path to the node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {boolean}
+ */
+function needsParens(path, options) {
+	const node = /** @type {AST.Node} */ (path.node);
+	const parent = /** @type {AST.Node | null} */ (path.getParentNode());
+	if (!parent) {
+		return false;
+	}
+
+	const key = path.key;
+	if (
+		(key === 'superClass' &&
+			(parent.type === 'ClassDeclaration' || parent.type === 'ClassExpression')) ||
+		(key === 'declaration' && parent.type === 'ExportDefaultDeclaration')
+	) {
+		return false;
+	}
+
+	switch (node.type) {
+		case 'ObjectExpression':
+		case 'FunctionExpression':
+		case 'ClassExpression':
+			if (startsAmbiguousHead(path)) {
+				return true;
+			}
+			break;
+		case 'BinaryExpression':
+			if (node.operator === 'in' && isInForStatementInit(path)) {
+				return true;
+			}
+			break;
+		case 'Identifier':
+			// `for (async of x)` starts an async arrow
+			return (
+				node.name === 'async' && key === 'left' && parent.type === 'ForOfStatement' && !parent.await
+			);
+		case 'Literal': {
+			// A string statement at the top of a body would become a directive
+			const grandparent = /** @type {AST.Node | null} */ (path.getParentNode(1));
+			if (
+				typeof node.value === 'string' &&
+				parent.type === 'ExpressionStatement' &&
+				!(/** @type {{ directive?: string }} */ (parent).directive) &&
+				(grandparent?.type === 'Program' || grandparent?.type === 'BlockStatement')
+			) {
+				return true;
+			}
+			break;
+		}
+	}
+
+	return nodeNeedsParens(node, key, parent, /** @type {AST.Node | null} */ (path.getParentNode(1)));
 }
 
 /**
@@ -1207,11 +1732,13 @@ function printTsrxNode(node, path, options, print, args) {
 		typeof ignoreStart === 'number' &&
 		typeof ignoreEnd === 'number'
 	) {
-		return finishTsrxNode(
-			commentNode,
-			parts,
-			replaceEndOfLine(options.originalText.slice(ignoreStart, ignoreEnd)),
-		);
+		/** @type {Doc} */
+		let ignored = replaceEndOfLine(options.originalText.slice(ignoreStart, ignoreEnd));
+		// The node's span excludes its own parentheses, so put back any it had
+		if (commentNode.metadata?.parenthesized && !args?.suppressOwnParens) {
+			ignored = ['(', ignored, ')'];
+		}
+		return finishTsrxNode(commentNode, parts, ignored);
 	}
 
 	/** @type {Doc[] | Doc} */
@@ -1815,11 +2342,7 @@ function printTsrxNode(node, path, options, print, args) {
 
 		case 'AssignmentExpression': {
 			// Print left side with noBreakInside context to keep calls compact
-			let leftPart = path.call((p) => print(p, { noBreakInside: true }), 'left');
-			// Preserve parentheses around the left side when present
-			if (node.left.metadata?.parenthesized) {
-				leftPart = ['(', leftPart, ')'];
-			}
+			const leftPart = path.call((p) => print(p, { noBreakInside: true }), 'left');
 			// For CallExpression on the right with JSDoc comments, use fluid layout strategy
 			const rightSide = path.call(print, 'right');
 
@@ -1832,15 +2355,11 @@ function printTsrxNode(node, path, options, print, args) {
 				group(indent(line), { id: groupId }),
 				indentIfBreak(rightSide, { groupId }),
 			]);
-			const parent = path.getParentNode();
-			if (assignmentExpressionNeedsParens(node, parent)) {
-				nodeContent = ['(', nodeContent, ')'];
-			}
 			break;
 		}
 
 		case 'MemberExpression':
-			nodeContent = printMemberExpression(node, path, options, print, args);
+			nodeContent = printMemberExpression(node, path, options, print);
 			break;
 
 		case 'MetaProperty':
@@ -1883,17 +2402,7 @@ function printTsrxNode(node, path, options, print, args) {
 		case 'CallExpression': {
 			/** @type {Doc[]} */
 			const parts = [];
-			let calleePart = path.call(print, 'callee');
-			const calleeNeedsParens =
-				node.callee.metadata?.parenthesized &&
-				(node.callee.type === 'ArrowFunctionExpression' ||
-					node.callee.type === 'FunctionExpression' ||
-					node.callee.type === 'TSAsExpression' ||
-					node.callee.type === 'TSSatisfiesExpression');
-			if (calleeNeedsParens) {
-				calleePart = ['(', calleePart, ')'];
-			}
-			parts.push(calleePart);
+			parts.push(path.call(print, 'callee'));
 
 			if (node.optional) {
 				parts.push('?.');
@@ -1907,22 +2416,7 @@ function printTsrxNode(node, path, options, print, args) {
 			const argsDoc = printCallArguments(path, options, print);
 			parts.push(argsDoc);
 
-			let callContent = parts;
-
-			// Preserve parentheses for type-annotated call expressions
-			// When parenthesized with leading comments, use grouping to allow breaking
-			if (node.metadata?.parenthesized && !args?.suppressOwnParens) {
-				const hasLeadingComments = node.leadingComments && node.leadingComments.length > 0;
-				if (hasLeadingComments) {
-					// Group with softline to allow breaking after opening paren
-					callContent = /** @type {Doc[]} */ ([
-						group(['(', indent([softline, callContent]), softline, ')']),
-					]);
-				} else {
-					callContent = ['(', callContent, ')'];
-				}
-			}
-			nodeContent = callContent;
+			nodeContent = parts;
 			break;
 		}
 
@@ -1959,10 +2453,7 @@ function printTsrxNode(node, path, options, print, args) {
 				(typePath) => print(typePath, { preferInlineSimpleUnionType: true }),
 				'typeAnnotation',
 			);
-			const expressionDoc = path.call(print, 'expression');
-			const operand = castOperandNeedsParens(node.expression)
-				? ['(', expressionDoc, ')']
-				: expressionDoc;
+			const operand = path.call(print, 'expression');
 			nodeContent =
 				node.typeAnnotation.type !== 'TSTypeLiteral' && willBreak(typeAnnotation)
 					? [operand, ' as', indent([line, typeAnnotation])]
@@ -1975,10 +2466,7 @@ function printTsrxNode(node, path, options, print, args) {
 				(typePath) => print(typePath, { preferInlineSimpleUnionType: true }),
 				'typeAnnotation',
 			);
-			const expressionDoc = path.call(print, 'expression');
-			const operand = castOperandNeedsParens(node.expression)
-				? ['(', expressionDoc, ')']
-				: expressionDoc;
+			const operand = path.call(print, 'expression');
 			nodeContent =
 				node.typeAnnotation.type !== 'TSTypeLiteral' && willBreak(typeAnnotation)
 					? [operand, ' satisfies', indent([line, typeAnnotation])]
@@ -1986,14 +2474,9 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 		}
 
-		case 'TSNonNullExpression': {
-			const expression = path.call(print, 'expression');
-			const needsParens =
-				node.expression.type === 'TSAsExpression' ||
-				node.expression.type === 'TSSatisfiesExpression';
-			nodeContent = needsParens ? ['(', expression, ')!'] : [expression, '!'];
+		case 'TSNonNullExpression':
+			nodeContent = [path.call(print, 'expression'), '!'];
 			break;
-		}
 
 		case 'TSInstantiationExpression': {
 			// Explicit type instantiation: foo<Type>, identity<string>
@@ -2134,22 +2617,12 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'SequenceExpression':
-			nodeContent = printSequenceExpression(node, path, options, print);
+			nodeContent = printSequenceExpression(node, path, options, print, args);
 			break;
 
-		case 'SpreadElement': {
-			const argumentDoc = path.call(print, 'argument');
-			// Wrap argument in parens if it's a low-precedence logical expression (e.g., nullish coalescing)
-			// that needs them for correct parsing
-			const needsParens =
-				node.argument.type === 'LogicalExpression' && node.argument.operator === '??';
-			if (needsParens) {
-				nodeContent = ['...(', argumentDoc, ')'];
-			} else {
-				nodeContent = ['...', argumentDoc];
-			}
+		case 'SpreadElement':
+			nodeContent = ['...', path.call(print, 'argument')];
 			break;
-		}
 		case 'RestElement': {
 			/** @type {Doc[]} */
 			const parts = ['...', path.call(print, 'argument')];
@@ -2163,16 +2636,9 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = printVariableDeclaration(node, path, options, print);
 			break;
 
-		case 'ExpressionStatement': {
-			// Object literals at statement position need parentheses to avoid ambiguity with blocks
-			const needsParens = node.expression.type === 'ObjectExpression';
-			if (needsParens) {
-				nodeContent = ['(', path.call(print, 'expression'), ')', semi(options)];
-			} else {
-				nodeContent = [path.call(print, 'expression'), semi(options)];
-			}
+		case 'ExpressionStatement':
+			nodeContent = [path.call(print, 'expression'), semi(options)];
 			break;
-		}
 		case 'Identifier': {
 			// Simple case - just return the name directly like Prettier core
 			const parent = path.getParentNode();
@@ -2181,10 +2647,9 @@ function printTsrxNode(node, path, options, print, args) {
 				parent && parent.type === 'VariableDeclarator' && parent.id === node && parent.definite
 					? '!'
 					: '';
-			let identifierContent;
 			if (node.typeAnnotation) {
 				const optionalMarker = node.optional ? '?' : '';
-				identifierContent = [
+				nodeContent = [
 					node.name,
 					definiteMarker,
 					optionalMarker,
@@ -2192,21 +2657,7 @@ function printTsrxNode(node, path, options, print, args) {
 					path.call(print, 'typeAnnotation'),
 				];
 			} else {
-				identifierContent = definiteMarker ? [node.name, definiteMarker] : node.name;
-			}
-			// Preserve parentheses for type-cast identifiers, but only if:
-			// 1. The identifier itself is marked as parenthesized
-			// 2. The parent is NOT handling parentheses itself (MemberExpression, AssignmentExpression, etc.)
-			const parentHandlesParens =
-				parent &&
-				(parent.type === 'MemberExpression' ||
-					(parent.type === 'AssignmentExpression' && parent.left === node));
-			const shouldAddParens =
-				node.metadata?.parenthesized && !parentHandlesParens && !args?.suppressOwnParens;
-			if (shouldAddParens) {
-				nodeContent = ['(', identifierContent, ')'];
-			} else {
-				nodeContent = identifierContent;
+				nodeContent = definiteMarker ? [node.name, definiteMarker] : node.name;
 			}
 			break;
 		}
@@ -2454,16 +2905,10 @@ function printTsrxNode(node, path, options, print, args) {
 				]);
 			}
 
-			// Wrap in parentheses only if semantically necessary
-			if (binaryExpressionNeedsParens(node, parent)) {
-				result = ['(', result, ')'];
-			}
-
 			nodeContent = result;
 			break;
 		}
 		case 'LogicalExpression': {
-			const logicalParent = path.getParentNode();
 			let logicalResult;
 			const rightIsNullLiteral = node.right.type === 'Literal' && node.right.value === null;
 			const shouldKeepNullishFallbackInline =
@@ -2495,11 +2940,6 @@ function printTsrxNode(node, path, options, print, args) {
 					node.operator,
 					indent([line, path.call(print, 'right')]),
 				]);
-			}
-
-			// Wrap in parentheses only if semantically necessary
-			if (binaryExpressionNeedsParens(node, logicalParent)) {
-				logicalResult = ['(', logicalResult, ')'];
 			}
 
 			nodeContent = logicalResult;
@@ -2589,11 +3029,6 @@ function printTsrxNode(node, path, options, print, args) {
 				]);
 			}
 
-			// Wrap in parentheses if metadata indicates they were present
-			if (node.metadata?.parenthesized && !args?.suppressOwnParens) {
-				result = ['(', result, ')'];
-			}
-
 			nodeContent = result;
 			break;
 		}
@@ -2614,7 +3049,7 @@ function printTsrxNode(node, path, options, print, args) {
 		}
 
 		case 'MemberExpression':
-			nodeContent = printMemberExpression(node, path, options, print, args);
+			nodeContent = printMemberExpression(node, path, options, print);
 			break;
 
 		case 'ObjectPattern':
@@ -2921,6 +3356,18 @@ function printTsrxNode(node, path, options, print, args) {
 	const decorated = /** @type {AST.Node} */ (node);
 	if (getDecorators(decorated).length > 0 && !decoratorsPrintedByParent(decorated, path, options)) {
 		nodeContent = [...printDecorators(decorated, path, options, print), nodeContent];
+	}
+
+	if (!args?.suppressOwnParens) {
+		if (hasTypeCastParens(path, options)) {
+			// Like Prettier, a cast breaks inside its parens unless it hugs a literal
+			nodeContent =
+				node.type === 'ObjectExpression' || node.type === 'ArrayExpression'
+					? ['(', nodeContent, ')']
+					: group(['(', indent([softline, nodeContent]), softline, ')']);
+		} else if (needsParens(path, options)) {
+			nodeContent = ['(', nodeContent, ')'];
+		}
 	}
 
 	return finishTsrxNode(/** @type {AST.Node} */ (node), parts, nodeContent);
@@ -3285,22 +3732,10 @@ function printArrowFunction(node, path, options, print, args) {
 		parts.push(' => ');
 		parts.push(path.call(print, 'body'));
 	} else {
-		// For expression bodies, check if we need to wrap in parens
-		// Wrap ObjectExpression, AssignmentExpression, and SequenceExpression in parens
-		// to avoid ambiguity with block statements or to clarify intent
-		const bodyDoc = path.call(print, 'body');
+		// Object, assignment and sequence bodies print their own parentheses
+		// (see `needsParens`)
+		const bodyContent = path.call(print, 'body');
 		const groupId = Symbol('arrow');
-		/** @type {Doc | Doc[]} */
-		let bodyContent;
-		if (
-			node.body.type === 'ObjectExpression' ||
-			node.body.type === 'AssignmentExpression' ||
-			node.body.type === 'SequenceExpression'
-		) {
-			bodyContent = ['(', bodyDoc, ')'];
-		} else {
-			bodyContent = bodyDoc;
-		}
 		if (isTemplateExpression(node.body)) {
 			return conditionalGroup([
 				group([...parts, ' => ', bodyContent]),
@@ -4949,38 +5384,18 @@ function printMethodDefinition(node, path, options, print) {
  * @param {AstPath<AST.MemberExpression>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
- * @param {PrintArgs} [args] - Additional context arguments
  * @returns {Doc}
  */
-function printMemberExpression(node, path, options, print, args) {
-	let objectPart = path.call(print, 'object');
-	// Preserve parentheses around the object when present
-	if (node.object.metadata?.parenthesized) {
-		objectPart = ['(', objectPart, ')'];
-	}
+function printMemberExpression(node, path, options, print) {
+	const objectPart = path.call(print, 'object');
 	const propertyPart = path.call(print, 'property');
 
-	let result;
 	if (node.computed) {
 		const openBracket = node.optional ? '?.[' : '[';
-		result = [objectPart, openBracket, propertyPart, ']'];
-	} else {
-		const separator = node.optional ? '?.' : '.';
-		result = [objectPart, separator, propertyPart];
+		return [objectPart, openBracket, propertyPart, ']'];
 	}
-
-	// Preserve parentheses around the entire member expression when present
-	if (node.metadata?.parenthesized && !args?.suppressOwnParens) {
-		// Check if there are leading comments - if so, use group with softlines to allow breaking
-		const hasLeadingComments = node.leadingComments && node.leadingComments.length > 0;
-		if (hasLeadingComments) {
-			result = group(['(', indent([softline, result]), softline, ')']);
-		} else {
-			result = ['(', result, ')'];
-		}
-	}
-
-	return result;
+	const separator = node.optional ? '?.' : '.';
+	return [objectPart, separator, propertyPart];
 }
 
 /**
@@ -5002,22 +5417,9 @@ function printUnaryExpression(node, path, options, print) {
 		if (needsSpace) {
 			parts.push(' ');
 		}
-		const argumentDoc = path.call(print, 'argument');
-		// Preserve parentheses around the argument when present
-		if (node.argument.metadata?.parenthesized) {
-			parts.push('(', argumentDoc, ')');
-		} else {
-			parts.push(argumentDoc);
-		}
+		parts.push(path.call(print, 'argument'));
 	} else {
-		const argumentDoc = path.call(print, 'argument');
-		// Preserve parentheses around the argument when present
-		if (node.argument.metadata?.parenthesized) {
-			parts.push('(', argumentDoc, ')');
-		} else {
-			parts.push(argumentDoc);
-		}
-		parts.push(node.operator);
+		parts.push(path.call(print, 'argument'), node.operator);
 	}
 
 	return parts;
@@ -5753,19 +6155,26 @@ function printDebuggerStatement(node, path, options) {
  * @param {AstPath<AST.SequenceExpression>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
+ * @param {PrintArgs} [args] - Additional context arguments
  * @returns {Doc[]}
  */
-function printSequenceExpression(node, path, options, print) {
+function printSequenceExpression(node, path, options, print, args) {
 	/** @type {Doc[]} */
 	const parts = [];
-	parts.push('(');
 	const exprList = path.map(print, 'expressions');
 	for (let i = 0; i < exprList.length; i++) {
 		if (i > 0) parts.push(', ');
 		parts.push(exprList[i]);
 	}
-	parts.push(')');
-	return parts;
+	// Sequences keep their parentheses everywhere except a `for` head, like
+	// Prettier, unless the parent prints them (`return` with a comment).
+	const parent = /** @type {AST.Node | null} */ (path.getParentNode());
+	const inForHead =
+		parent?.type === 'ForStatement' && (path.key === 'init' || path.key === 'update');
+	if (inForHead || args?.suppressOwnParens) {
+		return parts;
+	}
+	return ['(', ...parts, ')'];
 }
 
 /**
