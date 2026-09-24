@@ -7561,6 +7561,87 @@ let m: {
 		});
 	});
 
+	describe('comments in empty arrays and objects', () => {
+		it('keeps a line comment inside an empty array or object', async () => {
+			const source = `const a = [
+  // pending
+];
+const o = {
+  // pending
+};
+foo([
+  // pending
+]);
+const x = {
+  a: [], // trailing
+  b: {
+    // inner
+  },
+};`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a block comment inline between the brackets', async () => {
+			const source = `const a = [/* pending */];
+const o = {/* pending */};
+const { /* c */ } = x;
+function f([/* c */]) {}`;
+			const expected = `const a = [/* pending */];
+const o = {/* pending */};
+const {/* c */} = x;
+function f([/* c */]) {}`;
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it('puts several comments on their own lines', async () => {
+			const input = `const a = [/* a */ /* b */];
+const b = [ // one
+
+  // two
+];`;
+			const expected = `const a = [
+  /* a */
+  /* b */
+];
+const b = [
+  // one
+  // two
+];`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the call arguments around an object with a line comment', async () => {
+			const input = `foo({
+  // pending
+}, 1);`;
+			const expected = `foo(
+  {
+    // pending
+  },
+  1,
+);`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps comments in empty arrays and objects in templates', async () => {
+			const input = `export function App() @{
+  const none = {/* x */};
+  <div list={[
+    // nothing
+  ]} />
+}`;
+			const expected = `export function App() @{
+  const none = {/* x */};
+  <div
+    list={[
+      // nothing
+    ]}
+  />
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+	});
+
 	// The comma after a trailing hole creates an array slot (or an iterator
 	// step in a pattern); it is not an optional trailing comma.
 	describe('trailing array holes survive formatting', () => {

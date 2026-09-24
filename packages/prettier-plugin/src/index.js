@@ -1784,6 +1784,24 @@ function printDeclarationDecorators(node, path, options, print) {
 }
 
 /**
+ * Print the comments inside an empty array or object as Prettier's
+ * `printDanglingCommentsInList` does: block comments stay inline between the
+ * brackets when they fit, and a line comment breaks the list.
+ * @param {AST.NodeWithMaybeComments} node - The empty array or object
+ * @returns {Doc}
+ */
+function printDanglingCommentsInList(node) {
+	const comments = node.innerComments ?? [];
+	if (comments.length === 0) {
+		return '';
+	}
+	return [
+		indent([softline, join(hardline, comments.map(printCommentText))]),
+		comments.some((comment) => comment.type === 'Line') ? hardline : softline,
+	];
+}
+
+/**
  * Print leading comments that come before a node, or before the next
  * parenthesis of the node's type casts (see {@link printTypeCastParens}).
  * @param {AST.Node | AST.CSS.StyleSheet} node - The node the comments lead
@@ -5720,7 +5738,14 @@ function printObject(node, path, options, print) {
 	/** @type {Doc[]} */
 	let content;
 	if (parts.length === 0) {
-		content = ['{}', ...annotationParts];
+		content = [
+			group([
+				'{',
+				printDanglingCommentsInList(/** @type {AST.NodeWithMaybeComments} */ (node)),
+				'}',
+			]),
+			...annotationParts,
+		];
 	} else {
 		const spacing = options.bracketSpacing === false ? softline : line;
 		content = [
@@ -7514,7 +7539,13 @@ function printArray(node, path, options, print) {
 		)[elementsProperty] ?? [];
 
 	if (elements.length === 0) {
-		parts.push('[]');
+		parts.push(
+			group([
+				'[',
+				printDanglingCommentsInList(/** @type {AST.NodeWithMaybeComments} */ (node)),
+				']',
+			]),
+		);
 	} else {
 		const lastElement = elements[elements.length - 1];
 		const canHaveTrailingComma = lastElement?.type !== 'RestElement';
