@@ -6024,65 +6024,141 @@ function printJSXSwitchCase(node, path, options, print, index) {
  * @returns {Doc}
  */
 function printSwitchCase(node, path, options, print) {
-	const header = node.test ? ['case ', path.call(print, 'test'), ':'] : 'default:';
-
+	const text = /** @type {string} */ (options.originalText);
 	const consequents = node.consequent || [];
-	const printedConsequents = [];
-	const referencedConsequents = [];
+	const printedIndexes = getPrintedStatementIndexes(consequents);
+	const first = printedIndexes.length > 0 ? consequents[printedIndexes[0]] : null;
+	const singleBlock = printedIndexes.length === 1 && first?.type === 'BlockStatement';
 
-	for (let i = 0; i < consequents.length; i++) {
-		const child = consequents[i];
-		if (!child || child.type === 'EmptyStatement') {
-			continue;
-		}
-		referencedConsequents.push(child);
-		printedConsequents.push(path.call(print, 'consequent', i));
-	}
-
-	let bodyDoc = null;
-	if (printedConsequents.length > 0) {
-		const singleBlock =
-			printedConsequents.length === 1 && referencedConsequents[0].type === 'BlockStatement';
-		if (singleBlock) {
-			bodyDoc = [' ', printedConsequents[0]];
+	// The comments after `case x:` on its line. The parser gives them to the
+	// first statement. Prettier makes them trailing comments of the test, or
+	// dangling comments of a `default` case, so they stay on that line, except
+	// that a line comment moves into a lone block.
+	const headerComments = first ? takeSwitchCaseHeaderComments(first, text) : [];
+	/** @type {Doc[]} */
+	const headerBlockComments = [];
+	/** @type {Doc} */
+	let headerLineComment = '';
+	for (const comment of headerComments) {
+		if (comment.type === 'Block') {
+			headerBlockComments.push(' /*' + comment.value + '*/');
+		} else if (singleBlock) {
+			moveIntoBlock(/** @type {AST.BlockStatement} */ (first), comment);
 		} else {
-			bodyDoc = indent([hardline, join(hardline, printedConsequents)]);
+			headerLineComment = [lineSuffix([' //' + comment.value]), breakParent];
 		}
 	}
-
-	let trailingDoc = null;
-	if (node.trailingComments && node.trailingComments.length > 0) {
-		const text = /** @type {string} */ (options.originalText);
-		/** @type {Doc[]} */
-		const commentDocs = [];
-
-		for (let i = 0; i < node.trailingComments.length; i++) {
-			const comment = node.trailingComments[i];
-			commentDocs.push(hardline);
-			// Like Prettier, keep one blank line when the line before the comment
-			// is empty, not a line holding a `;` that isn't printed
-			if (isPreviousLineEmpty(text, /** @type {AST.NodeWithLocation} */ (comment).start)) {
-				commentDocs.push(hardline);
-			}
-			const commentDoc =
-				comment.type === 'Line' ? ['//', comment.value] : ['/*', comment.value, '*/'];
-			commentDocs.push(commentDoc);
-		}
-
-		trailingDoc = commentDocs;
-		delete node.trailingComments;
-	}
+	const header = node.test
+		? ['case ', path.call(print, 'test'), ...headerBlockComments, ':', headerLineComment]
+		: ['default:', ...headerBlockComments, headerLineComment];
 
 	/** @type {Doc[]} */
 	const parts = [header];
-	if (bodyDoc) {
-		parts.push(bodyDoc);
+	if (singleBlock) {
+		parts.push(' ', path.call(print, 'consequent', printedIndexes[0]));
+	} else if (printedIndexes.length > 0) {
+		// Separate the statements like a block does
+		/** @type {Doc[]} */
+		const statements = [];
+		printedIndexes.forEach((index, n) => {
+			if (n > 0) {
+				statements.push(hardline);
+				if (shouldAddBlankLine(consequents[printedIndexes[n - 1]], consequents[index], options)) {
+					statements.push(hardline);
+				}
+			}
+			statements.push(path.call(print, 'consequent', index));
+		});
+		parts.push(indent([hardline, statements]));
 	}
-	if (trailingDoc) {
-		parts.push(trailingDoc);
+
+	if (node.trailingComments && node.trailingComments.length > 0) {
+		// Like Prettier's `printTrailingComment`, a comment on the case's last
+		// line stays there, and one on a later line keeps its own line
+		/** @type {{ isBlock: boolean, hasLineSuffix: boolean } | null} */
+		let previous = null;
+		for (const comment of node.trailingComments) {
+			const start = /** @type {AST.NodeWithLocation} */ (comment).start;
+			const isBlock = comment.type === 'Block';
+			const commentDoc = isBlock ? '/*' + comment.value + '*/' : '//' + comment.value;
+			if (
+				(previous?.hasLineSuffix && !previous.isBlock) ||
+				hasNewline(text, start, { backwards: true })
+			) {
+				// Keep one blank line when the line before the comment is empty, not
+				// a line holding a `;` that isn't printed
+				parts.push(
+					lineSuffix([hardline, isPreviousLineEmpty(text, start) ? hardline : '', commentDoc]),
+				);
+				previous = { isBlock, hasLineSuffix: true };
+			} else if (!isBlock || previous?.hasLineSuffix) {
+				parts.push(lineSuffix([' ', commentDoc]), breakParent);
+				previous = { isBlock, hasLineSuffix: true };
+			} else {
+				parts.push(' ', commentDoc);
+				previous = { isBlock, hasLineSuffix: false };
+			}
+		}
+		delete node.trailingComments;
 	}
 
 	return parts;
+}
+
+/**
+ * Take a switch case's header comments off its first statement: the comments
+ * that start on the line of `case x:` or `default:`. Like Prettier's
+ * `breakTies`, the ones that only spaces separate from the statement stay
+ * with it (`case 1: /* c *\/ a();`).
+ * @param {AST.Node} first - The case's first printed statement
+ * @param {string} text - The original source
+ * @returns {AST.Comment[]}
+ */
+function takeSwitchCaseHeaderComments(first, text) {
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (first).leadingComments;
+	if (!comments) {
+		return [];
+	}
+	let count = 0;
+	while (
+		count < comments.length &&
+		!hasNewline(text, /** @type {AST.NodeWithLocation} */ (comments[count]).start, {
+			backwards: true,
+		})
+	) {
+		count++;
+	}
+	let gapEnd = /** @type {AST.NodeWithLocation} */ (comments[count] ?? first).start;
+	while (
+		count > 0 &&
+		/^[^\S\n]*$/.test(
+			text.slice(/** @type {AST.NodeWithLocation} */ (comments[count - 1]).end, gapEnd),
+		)
+	) {
+		count--;
+		gapEnd = /** @type {AST.NodeWithLocation} */ (comments[count]).start;
+	}
+	if (count === 0) {
+		return [];
+	}
+	const taken = comments.splice(0, count);
+	if (comments.length === 0) {
+		delete (/** @type {AST.NodeWithMaybeComments} */ (first).leadingComments);
+	}
+	return taken;
+}
+
+/**
+ * Make a comment the first comment inside a block, as Prettier's
+ * `addBlockStatementFirstComment` does.
+ * @param {AST.BlockStatement} block - The block
+ * @param {AST.Comment} comment - The comment
+ */
+function moveIntoBlock(block, comment) {
+	const firstStatement = block.body.find((statement) => statement.type !== 'EmptyStatement');
+	const holder = /** @type {AST.NodeWithMaybeComments} */ (firstStatement ?? block);
+	const key = firstStatement ? 'leadingComments' : 'innerComments';
+	holder[key] = [comment, ...(holder[key] ?? [])];
 }
 
 /**

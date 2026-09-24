@@ -3574,6 +3574,120 @@ function test() {
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('keeps blank lines between the statements of a switch case', async () => {
+			const expected = `switch (x) {
+  case 1:
+    a();
+
+    // lead b
+    b();
+    break;
+
+  default:
+    c();
+
+    d();
+}`;
+
+			const result = await format(expected);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('drops a blank line after a case label or a stray semicolon line in a switch case', async () => {
+			const input = `switch (x) {
+  case 1:
+
+    a();
+    ;
+    b();
+}`;
+			const expected = `switch (x) {
+  case 1:
+    a();
+    b();
+}`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps same-line comments in switch cases on their line', async () => {
+			const expected = `switch (x) {
+  case 1: // after the label
+    a(); // after a statement
+  case 2: // after an empty case
+  case 3 /* before the colon */:
+    b(); /* block */
+  case 4 /* a */: // b
+    c();
+  default: /* d */
+    d(); // last
+  // own line
+}`;
+
+			const result = await format(expected);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps a comment after a case label with its first statement below it', async () => {
+			const input = `switch (x) {
+  case 1: // c
+    // d
+    a();
+  default: // e
+    b();
+  case 2: /* f */ c();
+  case 3 /* g */: d();
+  case 4: /* h */ /* i */
+    e();
+}`;
+			const expected = `switch (x) {
+  case 1: // c
+    // d
+    a();
+  default: // e
+    b();
+  case 2:
+    /* f */ c();
+  case 3 /* g */:
+    d();
+  case 4 /* h */ /* i */:
+    e();
+}`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('moves a line comment after a case label into the lone block that follows', async () => {
+			// Prettier prints \`case 1: { // c\` and then, on a second pass, this
+			const input = `switch (x) {
+  case 1: // c
+    {
+      a();
+    }
+  case 2: /* d */
+  {}
+  default: // e
+    {
+    }
+}`;
+			const expected = `switch (x) {
+  case 1: {
+    // c
+    a();
+  }
+  case 2 /* d */: {
+  }
+  default: {
+    // e
+  }
+}`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should not add an extra new line above a comment inside objects and in between properties', async () => {
 			const expected = `let obj = {
   ['hey']: function () {
