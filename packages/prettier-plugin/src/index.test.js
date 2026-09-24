@@ -1989,9 +1989,9 @@ import { effect, track } from '@example/runtime';`;
 		it('keeps nullish fallback inline in a conditional test', async () => {
 			const input = `const test = menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])') ?? null ? a : b;`;
 			const expected = `const test =
-  menuRef.current?.querySelector<HTMLElement>(
+  (menuRef.current?.querySelector<HTMLElement>(
     '[role="menuitem"]:not([aria-disabled="true"])',
-  ) ?? null
+  ) ?? null)
     ? a
     : b;`;
 			const result = await format(input, { singleQuote: true });
@@ -2683,11 +2683,9 @@ files = [...(files ?? []), ...dt.files];`;
 			expect(result).toBeWithNewline(expected);
 		});
 
-		it('should not double-parenthesize a parenthesized identifier callee', async () => {
-			const expected = `const s = (foo)();`;
-
-			const result = await format(expected, { singleQuote: true, printWidth: 80 });
-			expect(result).toBeWithNewline(expected);
+		it('should drop redundant parentheses around an identifier callee', async () => {
+			const result = await format(`const s = (foo)();`, { singleQuote: true, printWidth: 80 });
+			expect(result).toBeWithNewline(`const s = foo();`);
 		});
 
 		it('should preserve parentheses around IIFE arrow function callee', async () => {
@@ -6663,7 +6661,7 @@ function RowList({ rows, Row }) {
 			expect(result).toBeWithNewline(input);
 		});
 
-		it('does not add parens around higher-precedence operands of as-casts', async () => {
+		it('adds parens around binary operands of as-casts like Prettier', async () => {
 			const input = `function App() {
   const a = x + y as string;
   const b = x < y as unknown;
@@ -6671,7 +6669,11 @@ function RowList({ rows, Row }) {
 }`;
 
 			const result = await format(input);
-			expect(result).toBeWithNewline(input);
+			expect(result).toBeWithNewline(`function App() {
+  const a = (x + y) as string;
+  const b = (x < y) as unknown;
+  return <div>{a}</div>;
+}`);
 		});
 	});
 
@@ -7521,6 +7523,271 @@ declare enum Level {
 			'class Derived extends Base! {}',
 		])('does not add parentheses in %s', async (source) => {
 			await expectUnchanged(source);
+		});
+	});
+
+	describe('expression parentheses follow Prettier', () => {
+		/**
+		 * Assert the input is already formatted and comes back byte-identical.
+		 * @param {string} source
+		 */
+		const expectUnchanged = async (source) => {
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		};
+
+		/**
+		 * Parse with Prettier's own TypeScript printer to compare syntax trees:
+		 * two sources print the same exactly when they parse the same.
+		 * @param {string} source
+		 */
+		const normalize = (source) => prettier.format(source, { parser: 'typescript' });
+
+		it.each([
+			'const result = (primary || fallback)();',
+			'const result = (primary ?? fallback)();',
+			'const result = (primary && fallback)?.();',
+			'const result = (left + right)(1, 2)();',
+			'const result = new (primary || fallback)();',
+			'const result = (primary || fallback)`template`;',
+			'const result = (primary || fallback)!;',
+			'const result = (primary || fallback).name;',
+			'class Derived extends (primary || fallback)() {}',
+			'class Derived extends (primary ?? fallback)().Mixin {}',
+		])('keeps the parentheses around a logical or binary callee in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it.each([
+			`async function run() {
+  return (await Promise.resolve(() => 42))();
+}`,
+			`async function run() {
+  return new (await load())();
+}`,
+			`async function run() {
+  return (await load())\`template\`;
+}`,
+			`async function run() {
+  return (await load()) ** 2;
+}`,
+			`async function run() {
+  return !(await load());
+}`,
+			`function* run() {
+  return (yield 2) + 1;
+}`,
+			`function* run() {
+  return (yield 2) ? left : right;
+}`,
+			`function* run() {
+  return (yield 2).value;
+}`,
+			`function* run() {
+  return (yield 2)!;
+}`,
+			`function* run() {
+  return (yield 2) as number;
+}`,
+		])('keeps the parentheses around await and yield in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it.each([
+			'const result = new (a?.b)();',
+			'const result = (a?.b)`x`;',
+			'const result = (a?.b)();',
+			'const result = (a?.b)!();',
+			'const result = (a?.b)!.c;',
+			'const result = (a?.b)<T>();',
+			'const result = (a?.b.c)();',
+			'const result = (a?.[k])();',
+			'const result = (a?.())();',
+			'const result = (a?.b)(1, 2);',
+			'const result = (a?.b)()();',
+			'const result = (a?.b).c;',
+			'const result = (a?.b)[0];',
+		])('keeps the parentheses that end an optional chain in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it('drops the parentheses before an optional continuation of a chain', async () => {
+			const result = await format('const result = (a?.b)?.();\nconst next = (a?.b)?.c;');
+			expect(result).toBeWithNewline('const result = a?.b?.();\nconst next = a?.b?.c;');
+		});
+
+		it.each([
+			['const x = (a);', 'const x = a;'],
+			['const y = (a.b);', 'const y = a.b;'],
+			['const z = (f());', 'const z = f();'],
+			['foo((a));', 'foo(a);'],
+			['const v = (a) + 1;', 'const v = a + 1;'],
+			['const w = (a.b)();', 'const w = a.b();'],
+			['const u = !(a);', 'const u = !a;'],
+			['const t = (a ? b : c);', 'const t = a ? b : c;'],
+			['const s = <div class={(a)}>{(b)}</div>;', 'const s = <div class={a}>{b}</div>;'],
+			['class D extends (Base) {}', 'class D extends Base {}'],
+			['class D extends (Mixin(Base)) {}', 'class D extends Mixin(Base) {}'],
+			['const fn = function () {}.call(null);', 'const fn = function () {}.call(null);'],
+			['const seq = ((a, b)).c;', 'const seq = (a, b).c;'],
+			['const body = () => (a, b);', 'const body = () => (a, b);'],
+			['for (i = 0, j = 0; i < 1; i++, j++) {}', 'for (i = 0, j = 0; i < 1; i++, j++) {\n}'],
+		])('drops redundant parentheses: %s', async (source, expected) => {
+			const result = await format(source);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['class D extends new Base() {}', 'class D extends (new Base()) {}'],
+			['class D extends {} {}', 'class D extends ({}) {}'],
+			['class D extends tag`x` {}', 'class D extends (tag`x`) {}'],
+			['const a = x + y as string;', 'const a = (x + y) as string;'],
+			['const b = a * b / c;', 'const b = (a * b) / c;'],
+			['const c = a & b | c;', 'const c = (a & b) | c;'],
+			['const d = a + b << c;', 'const d = (a + b) << c;'],
+			['e = a ?? b ? c : d;', 'e = (a ?? b) ? c : d;'],
+			['const f = -(-a);', 'const f = -(-a);'],
+			['const g = - -a;', 'const g = -(-a);'],
+			['f(a = 1);', 'f((a = 1));'],
+			['const h = [...a ?? []];', 'const h = [...(a ?? [])];'],
+			['const i = <div {...a && b} />;', 'const i = <div {...(a && b)} />;'],
+		])('adds the parentheses Prettier adds: %s', async (source, expected) => {
+			const result = await format(source);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'(function () {}).call(this);',
+			'(class {}).name;',
+			'({}).toString.call(value);',
+			'({ a } = source);',
+			'const head = () => ({}).toString();',
+			'export default (function () {}).call(this);',
+			'const created = new (factory())();',
+			'const created = new (factory().Widget)();',
+			'const created = new (class {})();',
+			'const called = (function () {})();',
+			'const called = (() => {})();',
+			'const called = (async () => {})();',
+			'const tagged = (() => {})`x`;',
+			'const fallback = a || (() => 1);',
+			'const power = (-a) ** 2;',
+			'const typed = (!a) in b;',
+			'const text = (1).toString();',
+			'for (i = ("key" in store) ? 1 : 0; i < 1; i++) {\n}',
+			'const mixed = (a ?? b) || c;',
+			'const other = a ?? (b || c);',
+			'const regrouped = a - (b - c);',
+			'(a as any) = 1;',
+		])('keeps the parentheses the grammar requires in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it.each([
+			'class Derived extends ({}).Base {}',
+			'class Derived extends ({}).mixin(Base) {}',
+			'class Derived extends ({})[0] {}',
+			'class Derived extends ({}).Base! {}',
+			'class Derived extends ({})`t`.Base {}',
+			'const Derived = class extends ({}).Base {};',
+		])(
+			'keeps an object literal at the start of a superclass parenthesized in %s',
+			async (source) => {
+				// TypeScript reads the `{` of `extends {}.Base {}` as the class body
+				await expectUnchanged(source);
+			},
+		);
+
+		it('drops the parentheses around a class or function at the start of a superclass', async () => {
+			const result = await format(
+				'class A extends (class {}).Base {}\nclass B extends (function () {}).Base {}',
+			);
+			expect(result).toBeWithNewline(
+				'class A extends class {}.Base {}\nclass B extends function () {}.Base {}',
+			);
+		});
+
+		it.each([
+			'const a = (make<T>)!;',
+			'const b = (make<T>)!.value;',
+			'const c = (make<T>)<U>;',
+			'const d = (make<T>)<U>();',
+			'const e = new (make<T>)<U>();',
+			'const f = (make<T>).value;',
+		])('keeps the parentheses around an instantiation expression in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it('drops the parentheses around an instantiation expression that is called', async () => {
+			const result = await format('const a = (make<T>)();');
+			expect(result).toBeWithNewline('const a = make<T>();');
+		});
+
+		it('keeps the parentheses of a prettier-ignored operand', async () => {
+			const result = await format(`const list = [
+  // prettier-ignore
+  (a   +   b),
+];
+const called = (
+  // prettier-ignore
+  a   ||   b
+)();`);
+			expect(result).toContain('  (a   +   b),\n');
+			expect(result).toContain('(a   ||   b)();');
+		});
+
+		it('keeps a parenthesized nested ternary branch as written', async () => {
+			await expectUnchanged('x = a ? (b ? c : d) : e;\ny = a ? b : (c ? d : e);');
+		});
+
+		it('preserves execution when formatting parenthesized operands', async () => {
+			const operands = [
+				'a || b',
+				'a ?? b',
+				'a + b',
+				'a ? b : c',
+				'a = b',
+				'-a',
+				'typeof a',
+				'a++',
+				'x => x',
+				'function () {}',
+				'class {}',
+				'a as F',
+				'a?.b',
+				'a?.()',
+				'new a()',
+				'a()',
+				'{}',
+			];
+			const positions = [
+				(/** @type {string} */ e) => `(${e})();`,
+				(/** @type {string} */ e) => `new (${e})();`,
+				(/** @type {string} */ e) => `(${e})\`t\`;`,
+				(/** @type {string} */ e) => `x = (${e}).p;`,
+				(/** @type {string} */ e) => `x = (${e})!;`,
+				(/** @type {string} */ e) => `x = (${e}) * 2;`,
+				(/** @type {string} */ e) => `x = (${e}) ? 1 : 2;`,
+				(/** @type {string} */ e) => `x = !(${e});`,
+				(/** @type {string} */ e) => `x = [...(${e})];`,
+				(/** @type {string} */ e) => `x = () => (${e});`,
+			];
+
+			for (const position of positions) {
+				for (const operand of operands) {
+					const source = position(operand);
+					/** @type {string} */
+					let expected;
+					try {
+						expected = await normalize(source);
+					} catch {
+						// Not a valid program (e.g. `new (a?.b)` inputs Prettier rejects)
+						continue;
+					}
+					const formatted = await format(source);
+					expect(await normalize(formatted), source).toBe(expected);
+				}
+			}
 		});
 	});
 
