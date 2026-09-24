@@ -7454,6 +7454,76 @@ declare enum Level {
 		});
 	});
 
+	// `extends` only takes a left-hand-side expression, so a superclass that
+	// binds looser than that is a syntax error without its parens.
+	describe('superclass expressions keep required parentheses', () => {
+		/**
+		 * Assert the input is already formatted and comes back byte-identical.
+		 * @param {string} source
+		 * @param {import('prettier').Options} [options]
+		 */
+		const expectUnchanged = async (source, options) => {
+			const result = await format(source, options);
+			expect(result).toBeWithNewline(source);
+		};
+
+		it.each([
+			'class Derived extends (Base || Object) {}',
+			'class Derived extends (Base && Object) {}',
+			'class Derived extends (Base ?? Object) {}',
+			'class Derived extends (left + right) {}',
+			'class Derived extends (key in registry) {}',
+			'class Derived extends (cached = Base) {}',
+			'class Derived extends (() => Base) {}',
+			'class Derived extends (Base as Constructor) {}',
+			'class Derived extends (Base satisfies Constructor) {}',
+			'class Derived extends (typeof Base) {}',
+			'class Derived extends (count++) {}',
+			'class Derived extends (useBase ? Base : Object) {}',
+			'class Derived extends (0, Base) {}',
+			'const Derived = class extends (Base || Object) {};',
+			'export default class extends (Base || Object) {}',
+			'class Derived extends (Base || Object)<string> implements Contract {}',
+		])('keeps the parentheses in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it('keeps the parentheses with semi: false', async () => {
+			await expectUnchanged('class Derived extends (Base ?? Object) {}', { semi: false });
+		});
+
+		it('keeps the parentheses around await and yield superclasses', async () => {
+			await expectUnchanged(`async function load() {
+  class Derived extends (await Base) {}
+}`);
+			await expectUnchanged(`function* load() {
+  class Derived extends (yield Base) {}
+}`);
+		});
+
+		it('keeps the parentheses around a decorated class expression', async () => {
+			await expectUnchanged(`class Derived extends (
+  @sealed
+  class {}
+) {}`);
+		});
+
+		it('hugs the parentheses when the superclass breaks', async () => {
+			await expectUnchanged(`class Derived extends (SomeVeryLongBaseClassName ||
+  AnotherVeryLongFallbackClassName ||
+  Object) {}`);
+		});
+
+		it.each([
+			'class Derived extends Base.Mixin {}',
+			'class Derived extends Mixin(Base) {}',
+			'class Derived extends class {} {}',
+			'class Derived extends Base! {}',
+		])('does not add parentheses in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+	});
+
 	// Import aliases and export assignments are runtime bindings. Dropping one
 	// leaves every later reference dangling, and the file still compiles, so the
 	// break only surfaces when the module runs.

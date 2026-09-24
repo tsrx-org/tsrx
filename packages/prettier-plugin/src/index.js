@@ -482,6 +482,36 @@ function castOperandNeedsParens(expression) {
 }
 
 /**
+ * Check whether a class's superclass expression must stay parenthesized.
+ * `extends` only takes a left-hand-side expression, so anything that binds
+ * looser no longer parses without its parens: `class A extends B || C {}` is
+ * a syntax error. Sequence expressions always print their own parens.
+ * @param {AST.Node} expression - The superclass expression
+ * @returns {boolean} - True if parentheses are required
+ */
+function superClassNeedsParens(expression) {
+	switch (expression.type) {
+		case 'ArrowFunctionExpression':
+		case 'AssignmentExpression':
+		case 'AwaitExpression':
+		case 'BinaryExpression':
+		case 'ConditionalExpression':
+		case 'LogicalExpression':
+		case 'TSAsExpression':
+		case 'TSSatisfiesExpression':
+		case 'UnaryExpression':
+		case 'UpdateExpression':
+		case 'YieldExpression':
+			return true;
+		case 'ClassExpression':
+			// `extends @dec class {}` does not parse; the decorator needs the parens
+			return getDecorators(expression).length > 0;
+		default:
+			return false;
+	}
+}
+
+/**
  * Check if a parenthesized AssignmentExpression needs its parentheses preserved.
  * @param {AST.AssignmentExpression} node - The expression node
  * @param {AST.Node | null} parent - The parent node
@@ -4521,7 +4551,22 @@ function printClassDeclaration(node, path, options, print) {
 
 	if (node.superClass) {
 		parts.push(' extends ');
-		parts.push(path.call(print, 'superClass'));
+		if (superClassNeedsParens(node.superClass)) {
+			// The class owns these parens, so the superclass must not add its own
+			const superClass = path.call(
+				(superPath) => print(superPath, { suppressOwnParens: true }),
+				'superClass',
+			);
+			if (getDecorators(node.superClass).length > 0) {
+				// Each decorator prints on its own line, so the class is indented
+				// inside the parens to keep them off column zero.
+				parts.push('(', indent([hardline, superClass]), hardline, ')');
+			} else {
+				parts.push('(', superClass, ')');
+			}
+		} else {
+			parts.push(path.call(print, 'superClass'));
+		}
 		if (node.superTypeParameters) {
 			parts.push(path.call(print, 'superTypeParameters'));
 		}
