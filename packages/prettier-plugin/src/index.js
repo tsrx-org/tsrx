@@ -507,6 +507,27 @@ function isTypeCastComment(comment) {
 }
 
 /**
+ * Whether `comment` is a JSDoc cast whose `(` opens before `nextStart`
+ * (the next leading comment). One pair of parentheses around the whole value
+ * only keeps the last cast; each earlier one has to be printed after its
+ * comment.
+ * @param {AST.Comment} comment
+ * @param {number} nextStart
+ * @param {TsrxFormatOptions} options
+ * @returns {boolean}
+ */
+function commentOpensTypeCast(comment, nextStart, options) {
+	if (!isTypeCastComment(comment) || typeof options.originalText !== 'string') {
+		return false;
+	}
+	const end = /** @type {AST.NodeWithLocation} */ (comment).end;
+	if (typeof end !== 'number' || nextStart < end) {
+		return false;
+	}
+	return /^\s*\(\s*$/.test(options.originalText.slice(end, nextStart));
+}
+
+/**
  * Whether a parenthesized node's parentheses complete a JSDoc type cast:
  * `/** @type {T} *\/ (value)` only casts `value` with them. The cast comment
  * sits right before the opening paren, so the parser attaches it either to
@@ -1659,6 +1680,11 @@ function printTsrxNode(node, path, options, print, args) {
 
 	/** @type {Doc[]} */
 	const parts = [];
+	// Leading comments fill this list. A stacked JSDoc cast reassigns it to the
+	// inside of the parentheses that comment opens, so later comments hug that
+	// `(`.
+	/** @type {Doc[]} */
+	let commentParts = parts;
 
 	const isInlineContext = args && args.isInlineContext;
 	const suppressLeadingComments = args && args.suppressLeadingComments;
@@ -1671,24 +1697,43 @@ function printTsrxNode(node, path, options, print, args) {
 			const isLastComment = i === node.leadingComments.length - 1;
 
 			if (comment.type === 'Line') {
-				parts.push('//' + comment.value);
-				parts.push(hardline);
+				commentParts.push('//' + comment.value);
+				commentParts.push(hardline);
 
 				// Check if there should be blank lines between this comment and the next
 				if (nextComment) {
 					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
 					if (blankLinesBetween > 0) {
-						parts.push(hardline);
+						commentParts.push(hardline);
 					}
 				} else if (isLastComment && node.type !== 'JSXText') {
 					// Preserve a blank line between the last comment and the node if it existed
 					const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
 					if (blankLinesBetween > 0) {
-						parts.push(hardline);
+						commentParts.push(hardline);
 					}
 				}
 			} else if (comment.type === 'Block') {
-				parts.push('/*' + comment.value + '*/');
+				commentParts.push('/*' + comment.value + '*/');
+
+				const nextStart = /** @type {AST.NodeWithLocation} */ (nextComment ?? node).start;
+				if (
+					nextComment &&
+					typeof nextStart === 'number' &&
+					commentOpensTypeCast(comment, nextStart, options)
+				) {
+					// The `(` between this cast and the next comment is what makes
+					// the comment a cast. Keep it here; the innermost pair is
+					// printed around the value.
+					const inner = /** @type {Doc[]} */ ([]);
+					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
+					// A blank line belongs after the opening `(`, not before the close.
+					const openBreak = blankLinesBetween > 0 ? [hardline, hardline] : softline;
+					const closeBreak = blankLinesBetween > 0 ? hardline : softline;
+					commentParts.push(' ', group(['(', indent([openBreak, inner]), closeBreak, ')']));
+					commentParts = inner;
+					continue;
+				}
 
 				// Check if comment and node are on the same line (for inline JSDoc comments)
 				const isCommentInlineWithParen =
@@ -1698,23 +1743,23 @@ function printTsrxNode(node, path, options, print, args) {
 				const shouldKeepOnSameLine = isCommentOnSameLine || isCommentInlineWithParen;
 
 				if (!isInlineContext && !shouldKeepOnSameLine) {
-					parts.push(hardline);
+					commentParts.push(hardline);
 
 					// Check if there should be blank lines between this comment and the next
 					if (nextComment) {
 						const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
 						if (blankLinesBetween > 0) {
-							parts.push(hardline);
+							commentParts.push(hardline);
 						}
 					} else if (isLastComment) {
 						// Preserve a blank line between the last comment and the node if it existed
 						const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
 						if (blankLinesBetween > 0) {
-							parts.push(hardline);
+							commentParts.push(hardline);
 						}
 					}
 				} else {
-					parts.push(' ');
+					commentParts.push(' ');
 				}
 			}
 		}
@@ -2866,7 +2911,8 @@ function printTsrxNode(node, path, options, print, args) {
 				) {
 					// The comment prints on its own line, which would separate `return`
 					// from its argument and trigger ASI — keep the argument in parens.
-					// These parens replace any the argument would print for itself.
+					// These parens replace precedence parentheses the argument would
+					// print for itself. A JSDoc type cast keeps its own parentheses.
 					parts.push(
 						' (',
 						indent([
@@ -3377,18 +3423,28 @@ function printTsrxNode(node, path, options, print, args) {
 		nodeContent = [...printDecorators(decorated, path, options, print), nodeContent];
 	}
 
-	if (!args?.suppressOwnParens) {
-		if (hasTypeCastParens(path, options)) {
-			// Like Prettier, a cast breaks inside its parens unless it hugs a literal
-			nodeContent =
-				node.type === 'ObjectExpression' || node.type === 'ArrayExpression'
-					? ['(', nodeContent, ')']
-					: group(['(', indent([softline, nodeContent]), softline, ')']);
-		} else if (needsParens(path, options)) {
-			nodeContent = ['(', nodeContent, ')'];
-		}
+	// A parent that prints its own parens (`return` / `throw` with a leading
+	// comment, a superclass) passes `suppressOwnParens` so precedence
+	// parentheses are not doubled. JSDoc type-cast parentheses are not those:
+	// the comment is only a cast when it hugs `(expr)`.
+	if (hasTypeCastParens(path, options)) {
+		// Like Prettier, a cast breaks inside its parens unless it hugs a literal
+		nodeContent =
+			node.type === 'ObjectExpression' || node.type === 'ArrayExpression'
+				? ['(', nodeContent, ')']
+				: group(['(', indent([softline, nodeContent]), softline, ')']);
+	} else if (!args?.suppressOwnParens && needsParens(path, options)) {
+		nodeContent = ['(', nodeContent, ')'];
 	}
 
+	if (commentParts !== parts) {
+		// Trailing comments belong with the value, inside the cast parentheses.
+		const finished = finishTsrxNode(/** @type {AST.Node} */ (node), commentParts, nodeContent);
+		if (finished !== commentParts) {
+			commentParts.push(finished);
+		}
+		return parts;
+	}
 	return finishTsrxNode(/** @type {AST.Node} */ (node), parts, nodeContent);
 }
 
@@ -5578,7 +5634,8 @@ function printThrowStatement(node, path, options, print) {
 	const parts = [];
 	if (path.call((argumentPath) => getOwnLineCommentAhead(argumentPath, options), 'argument')) {
 		// Same ASI hazard as `return`: keep the argument attached via parens.
-		// These parens replace any the argument would print for itself.
+		// These parens replace precedence parentheses the argument would
+		// print for itself. A JSDoc type cast keeps its own parentheses.
 		parts.push(
 			'throw (',
 			indent([
@@ -5598,8 +5655,9 @@ function printThrowStatement(node, path, options, print) {
 
 /**
  * Whether printTsrxNode ends a node's leading comments with a line break. It
- * does after a line comment, and after a block comment unless that is the last
- * comment and shares its line with the node or with a type cast's `(`.
+ * does after a line comment, and after a block comment unless that comment
+ * hugs a type cast's `(`, or it is the last comment and shares its line with
+ * the node or with a type cast's `(`.
  * @param {AST.Node} node - The node
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {boolean}
@@ -5610,8 +5668,14 @@ function hasOwnLineLeadingComment(node, options) {
 		return false;
 	}
 	return comments.some((comment, index) => {
-		if (comment.type === 'Line' || index < comments.length - 1) {
+		if (comment.type === 'Line') {
 			return true;
+		}
+		if (index < comments.length - 1) {
+			const nextStart = /** @type {AST.NodeWithLocation} */ (comments[index + 1]).start;
+			// A stacked cast prints `(` after this comment, so the comment does
+			// not end the line between `return`/`throw` and the argument.
+			return !(typeof nextStart === 'number' && commentOpensTypeCast(comment, nextStart, options));
 		}
 		const isOnNodeLine = comment.loc && node.loc && comment.loc.end.line === node.loc.start.line;
 		return !isOnNodeLine && !isCommentFollowedBySameLineParen(comment, options);

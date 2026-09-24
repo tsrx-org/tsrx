@@ -7960,6 +7960,46 @@ function fail() {
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
+
+		// A JSDoc cast is only a cast while its comment hugs `(expr)`. Wrapping
+		// the argument to avoid ASI used to drop those parentheses.
+		it('keeps JSDoc type casts on a return or throw argument with leading comments', async () => {
+			const input = `function run() {
+  return /** @type {A} */ (/** @type {B} */ (x));
+}
+function fail() {
+  throw /** @type {A} */ (/** @satisfies {B} */ (x));
+}
+function noted() {
+  return (
+    // note
+    /** @type {T} */ (value)
+  );
+}
+function blocked() {
+  return /* note */ /** @type {A} */ (/** @type {B} */ (x));
+}`;
+			const expected = `function run() {
+  return /** @type {A} */ (/** @type {B} */ (x));
+}
+function fail() {
+  throw /** @type {A} */ (/** @satisfies {B} */ (x));
+}
+function noted() {
+  return (
+    // note
+    /** @type {T} */ (value)
+  );
+}
+function blocked() {
+  return (
+    /* note */
+    /** @type {A} */ (/** @type {B} */ (x))
+  );
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
 	});
 
 	// Import aliases and export assignments are runtime bindings. Dropping one
