@@ -2770,9 +2770,12 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = printFunctionExpression(node, path, options, print);
 			break;
 
+		case 'StaticBlock':
 		case 'TSModuleBlock':
 		case 'BlockStatement': {
-			// Apply the same block formatting pattern throughout TSRX.
+			// Apply the same block formatting pattern throughout TSRX. A static
+			// block is a block statement after its keyword.
+			const open = node.type === 'StaticBlock' ? 'static {' : '{';
 			if (!node.body || node.body.length === 0) {
 				// Handle innerComments for empty blocks
 				if (innerCommentParts.length > 0) {
@@ -2821,12 +2824,12 @@ function printTsrxNode(node, path, options, print, args) {
 							contentParts.push(doc);
 						}
 
-						nodeContent = group(['{', indent([hardline, contentParts]), hardline, '}']);
+						nodeContent = group([open, indent([hardline, contentParts]), hardline, '}']);
 						break;
 					} else {
 						// Fallback to simple join
 						nodeContent = group([
-							'{',
+							open,
 							indent([hardline, join(hardline, innerCommentParts)]),
 							hardline,
 							'}',
@@ -2855,9 +2858,9 @@ function printTsrxNode(node, path, options, print, args) {
 						blockParent.type === 'JSXSwitchExpression');
 
 				if (isControlFlow) {
-					nodeContent = ['{', hardline, '}'];
+					nodeContent = [open, hardline, '}'];
 				} else {
-					nodeContent = '{}';
+					nodeContent = [open, '}'];
 				}
 				break;
 			}
@@ -2883,7 +2886,7 @@ function printTsrxNode(node, path, options, print, args) {
 			}
 
 			// Use proper block statement pattern
-			nodeContent = group(['{', indent([hardline, statements]), hardline, '}']);
+			nodeContent = group([open, indent([hardline, statements]), hardline, '}']);
 			break;
 		}
 
@@ -3349,19 +3352,6 @@ function printTsrxNode(node, path, options, print, args) {
 
 			parts.push(path.call(print, 'parameter'));
 			nodeContent = parts;
-			break;
-		}
-
-		case 'StaticBlock': {
-			nodeContent =
-				node.body && node.body.length > 0
-					? group([
-							'static {',
-							indent([hardline, join(hardline, path.map(print, 'body'))]),
-							hardline,
-							'}',
-						])
-					: 'static {}';
 			break;
 		}
 

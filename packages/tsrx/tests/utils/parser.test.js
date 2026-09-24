@@ -5081,6 +5081,97 @@ const p: Point = { x: 1 }; // trailing`,
 	});
 });
 
+describe('comments in statement lists', () => {
+	// A block comment on the next statement's line leads that statement, so a
+	// JSDoc cast stays with the parentheses it casts. The semicolon-less form
+	// is what the formatter prints with `semi: false`.
+	it.each([
+		['a function body', 'function f() { a; /** @type {Foo} */ (x).y(); }'],
+		['a static block', 'class C { static { a; /** @type {Foo} */ (x).y(); } }'],
+		['a namespace', 'namespace N { a; /** @type {Foo} */ (x).y(); }'],
+		['a code block', 'function App() @{ const a = 1; /** @type {Foo} */ (x).y(); <div /> }'],
+		['a semicolon-less static block', 'class C { static { a\n;/** @type {Foo} */ (x).y() } }'],
+		['a semicolon-less namespace', 'namespace N { a\n;/** @type {Foo} */ (x).y() }'],
+		[
+			'a semicolon-less code block',
+			'function App() @{ const a = 1\n;/** @type {Foo} */ (x).y()\n<div /> }',
+		],
+	])('leads the next statement with a block comment on its line in %s', (_, source) => {
+		const ast = parseModule(source, 'App.tsrx');
+		const block = /** @type {AST.Node & { body: AST.Node[] }} */ (
+			find_first(
+				ast,
+				(node) =>
+					node.type === 'BlockStatement' ||
+					node.type === 'StaticBlock' ||
+					node.type === 'TSModuleBlock' ||
+					node.type === 'JSXCodeBlock',
+			)
+		);
+		const [previous, cast] = block.body;
+
+		expect(source.slice(cast.start, cast.end)).toMatch(/^\(x\)\.y\(\);?$/);
+		expect(previous.trailingComments).toBeUndefined();
+		expect(cast.leadingComments?.map((comment) => comment.value)).toEqual(['* @type {Foo} ']);
+	});
+
+	it('leads the render output of a code block with a block comment on its line', () => {
+		const ast = parseModule('function App() @{ const a = 1; /* output */ <div /> }', 'App.tsrx');
+		const block = find_first(ast, (node) => node.type === 'JSXCodeBlock');
+		assert_type(block, 'JSXCodeBlock');
+
+		expect(block.body[0].trailingComments).toBeUndefined();
+		expect(block.render?.leadingComments?.map((comment) => comment.value)).toEqual([' output ']);
+	});
+
+	it('keeps comments after the last statement inside a static block or namespace', () => {
+		const ast = parseModule(
+			`class C {
+	static {
+		a; // a
+		// after a
+	}
+}
+namespace N {
+	a; // a
+	// after a
+}`,
+			'App.ts',
+		);
+		const staticBlock = find_first(ast, (node) => node.type === 'StaticBlock');
+		const moduleBlock = find_first(ast, (node) => node.type === 'TSModuleBlock');
+		assert_type(staticBlock, 'StaticBlock');
+		assert_type(moduleBlock, 'TSModuleBlock');
+
+		for (const block of [staticBlock, moduleBlock]) {
+			expect(block.body[0].trailingComments?.map((comment) => comment.value)).toEqual([
+				' a',
+				' after a',
+			]);
+		}
+	});
+
+	it('keeps the comments of an empty static block or namespace as inner comments', () => {
+		const ast = parseModule(
+			`class C {
+	static {
+		// static
+	}
+	x = 1;
+}
+namespace N {
+	// namespace
+}`,
+			'App.ts',
+		);
+		const staticBlock = find_first(ast, (node) => node.type === 'StaticBlock');
+		const moduleBlock = find_first(ast, (node) => node.type === 'TSModuleBlock');
+
+		expect(staticBlock?.innerComments?.map((comment) => comment.value)).toEqual([' static']);
+		expect(moduleBlock?.innerComments?.map((comment) => comment.value)).toEqual([' namespace']);
+	});
+});
+
 describe('keywordTokens parse option', () => {
 	it('collects async/function keyword tokens from the lexer', () => {
 		const source = `async function load() {}\nfunction plain() {}`;

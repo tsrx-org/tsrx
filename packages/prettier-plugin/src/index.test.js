@@ -8135,6 +8135,122 @@ class Store extends (/** @type {Base} */ (new Base())) {}`;
 		});
 	});
 
+	// Static blocks, namespaces, and code blocks are statement lists like a
+	// function body, so their comments stay where a function body keeps them.
+	describe('comments in static blocks, namespaces, and code blocks', () => {
+		it('keeps a JSDoc cast with the statement it starts', async () => {
+			const input = `function f() { a; /** @type {Foo} */ (x).y(); }
+class C { static { a; /** @type {Foo} */ (x).y(); } }
+namespace N { a; /** @type {Foo} */ (x).y(); }
+export function App() @{
+  const a = 1; /** @type {Foo} */ (x).y();
+  <div />
+}`;
+			const expected = `function f() {
+  a;
+  /** @type {Foo} */ (x).y();
+}
+class C {
+  static {
+    a;
+    /** @type {Foo} */ (x).y();
+  }
+}
+namespace N {
+  a;
+  /** @type {Foo} */ (x).y();
+}
+export function App() @{
+  const a = 1;
+  /** @type {Foo} */ (x).y();
+  <div />
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps a block comment with the render output on its line', async () => {
+			const input = `export function App() @{
+  const a = 1; /* the output */ <div />
+}`;
+			const expected = `export function App() @{
+  const a = 1;
+  /* the output */ <div />
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps comments after the last statement inside the block', async () => {
+			const source = `class C {
+  static {
+    a; // a
+    // after a
+  }
+  x = 1;
+}
+namespace N {
+  a; // a
+  // after a
+}
+declare module "m" {
+  export const a: 1;
+  // after a
+}`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('keeps the comments of an empty static block or namespace inside it', async () => {
+			const input = `class C {
+  static {
+    // one
+
+    /* two */
+  }
+  static { /* only */ }
+}
+namespace N {
+  // only
+}
+declare global {
+  // only
+}`;
+			const expected = `class C {
+  static {
+    // one
+
+    /* two */
+  }
+  static {
+    /* only */
+  }
+}
+namespace N {
+  // only
+}
+declare global {
+  // only
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps blank lines between the statements of a static block', async () => {
+			const source = `class C {
+  static {
+    a;
+
+    // b
+
+    b;
+  }
+}`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+	});
+
 	// Import aliases and export assignments are runtime bindings. Dropping one
 	// leaves every later reference dangling, and the file still compiles, so the
 	// break only surfaces when the module runs.

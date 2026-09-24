@@ -617,7 +617,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 								return;
 							}
 						}
-						if (node.type === 'BlockStatement' && node.body.length === 0) {
+						if (
+							(node.type === 'BlockStatement' ||
+								node.type === 'StaticBlock' ||
+								node.type === 'TSModuleBlock') &&
+							node.body.length === 0
+						) {
 							// Collect all comments that fall within this empty block
 							while (
 								comments[0] &&
@@ -691,14 +696,23 @@ export function get_comment_handlers(source, comments, index = 0) {
 							let isParam = false;
 							let isArgument = false;
 							let isSwitchCaseSibling = false;
+							let isCodeBlockChild = false;
 
 							if (parent) {
 								if (
 									parent.type === 'BlockStatement' ||
 									parent.type === 'Program' ||
-									parent.type === 'ClassBody'
+									parent.type === 'ClassBody' ||
+									parent.type === 'StaticBlock' ||
+									parent.type === 'TSModuleBlock'
 								) {
 									node_array = parent.body;
+								} else if (parent.type === 'JSXCodeBlock') {
+									// The render output is the sibling after the setup statements.
+									// Comments after the last node stay for the code block, which
+									// keeps them as inner comments.
+									node_array = parent.render ? [...parent.body, parent.render] : parent.body;
+									isCodeBlockChild = true;
 								} else if (parent.type === 'SwitchStatement') {
 									node_array = parent.cases;
 									isSwitchCaseSibling = true;
@@ -725,7 +739,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 								}
 							}
 
-							if (node_array && Array.isArray(node_array)) {
+							if (node_array && Array.isArray(node_array) && !isCodeBlockChild) {
 								is_last_in_array = node_array.indexOf(node) === node_array.length - 1;
 							}
 
@@ -880,10 +894,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 									// When there's a blank line between node and comment(s),
 									// check if there's also a blank line after the comment(s) before the next node
 									// If so, attach comments as trailing to preserve the grouping
-									// Only do this for statement-level contexts (BlockStatement, Program),
+									// Only do this for statement-level contexts (blocks, Program),
 									// not for JSX element children or other contexts
 									const isStatementContext =
-										parent.type === 'BlockStatement' || parent.type === 'Program';
+										parent.type === 'BlockStatement' ||
+										parent.type === 'Program' ||
+										parent.type === 'StaticBlock' ||
+										parent.type === 'TSModuleBlock';
 
 									if (!isStatementContext) {
 										return;
