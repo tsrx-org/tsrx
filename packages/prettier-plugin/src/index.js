@@ -5042,37 +5042,24 @@ function printClassBody(node, path, options, print) {
 
 	const members = path.map(print, 'body');
 
-	// Build content with proper blank line handling
-	const contentParts = [];
+	// Like Prettier, every member starts its own line, and one blank line
+	// stays where the source has one
+	/** @type {Doc[]} */
+	const parts = [];
 	for (let i = 0; i < members.length; i++) {
 		if (i > 0) {
-			// Check if we should add a blank line between members
-			const prevNode = node.body[i - 1];
-			const currNode = node.body[i];
-			if (shouldAddBlankLine(prevNode, currNode, options)) {
-				contentParts.push(line);
+			parts.push(hardline);
+			if (shouldAddBlankLine(node.body[i - 1], node.body[i], options)) {
+				parts.push(hardline);
 			}
 		}
-		contentParts.push(line);
-		contentParts.push(members[i]);
+		parts.push(members[i]);
 		if (options.semi === false && needsClassPropertySemicolon(node.body[i], node.body[i + 1])) {
-			contentParts.push(';');
+			parts.push(';');
 		}
 	}
 
-	// Without semicolons only a line break ends a field, an index signature or
-	// a bodiless method, so a class with one before another member can't
-	// collapse onto a single line
-	const shouldBreak =
-		options.semi === false &&
-		node.body.some(
-			(member, i) =>
-				i < node.body.length - 1 &&
-				member.type !== 'StaticBlock' &&
-				!(member.type === 'MethodDefinition' && member.value.body),
-		);
-
-	return group(['{', indent(contentParts), line, '}'], { shouldBreak });
+	return ['{', indent([hardline, parts]), hardline, '}'];
 }
 
 /**
@@ -6609,9 +6596,7 @@ function printObjectPattern(node, path, options, print) {
 				'}',
 			];
 			const typeDoc =
-				typeMembers.length === 0
-					? '{}'
-					: ['{', indent([line, typeMemberDocs]), line, '}'];
+				typeMembers.length === 0 ? '{}' : ['{', indent([line, typeMemberDocs]), line, '}'];
 
 			// Return combined
 			return [objectDoc, ': ', typeDoc];

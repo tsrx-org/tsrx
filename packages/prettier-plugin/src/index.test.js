@@ -3537,6 +3537,42 @@ function test() {
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('puts every class member on its own line and keeps one blank line between members', async () => {
+			const input = `class A { a = 1; b = 2; }
+class B {
+  a = 1;
+
+
+  b = 2;
+}
+class C {
+  a = 1; /* note */
+  b = 2;
+}
+foo(class { a = 1 });`;
+			const expected = `class A {
+  a = 1;
+  b = 2;
+}
+class B {
+  a = 1;
+
+  b = 2;
+}
+class C {
+  a = 1; /* note */
+  b = 2;
+}
+foo(
+  class {
+    a = 1;
+  },
+);`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should preserve comments in object expressions', async () => {
 			const expected = `const obj = {
   /* comment 1 */
@@ -7771,7 +7807,9 @@ function g() {
 		});
 
 		it('keeps the definite-assignment assertion on class fields', async () => {
-			await expectUnchanged(`export class Model { value!: string; }`);
+			await expectUnchanged(`export class Model {
+  value!: string;
+}`);
 			await expectUnchanged(`class Store extends Base {
   #id!: number;
   static instance!: Store;
@@ -7783,8 +7821,13 @@ function g() {
 		});
 
 		it('keeps static and the member separator on class index signatures', async () => {
-			await expectUnchanged('class Registry { [name: string]: number; count = 1; }');
-			await expectUnchanged('class Registry { static [name: string]: number; }');
+			await expectUnchanged(`class Registry {
+  [name: string]: number;
+  count = 1;
+}`);
+			await expectUnchanged(`class Registry {
+  static [name: string]: number;
+}`);
 			await expectUnchanged(`class Cache {
   static readonly [key: string]: number;
   readonly [index: number]: string;
@@ -7887,7 +7930,10 @@ declare enum Level {
 		});
 
 		it('keeps brackets on computed class field keys', async () => {
-			await expectUnchanged(`class Keyed { [key] = 1; readonly [other] = 2; }`);
+			await expectUnchanged(`class Keyed {
+  [key] = 1;
+  readonly [other] = 2;
+}`);
 		});
 
 		it('normalises readonly onto reformatted interface members', async () => {
@@ -7930,10 +7976,18 @@ declare enum Level {
 		});
 
 		it.each([
-			'class Point { x = 1 }',
-			'class List { first() {} last() {} }',
-			'class Lazy { static {} value = 1 }',
-		])('keeps a class on one line when no member needs a line break: %s', async (source) => {
+			`class Point {
+  x = 1
+}`,
+			`class List {
+  first() {}
+  last() {}
+}`,
+			`class Lazy {
+  static {}
+  value = 1
+}`,
+		])('puts every member of a class on its own line: %s', async (source) => {
 			await expectUnchanged(source);
 		});
 
