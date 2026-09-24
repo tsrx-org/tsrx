@@ -1778,7 +1778,13 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'Super' || node.type === 'ThisExpression') {
-				// Leaf nodes, no children
+				// Leaf nodes, no children. TypeScript reports on the bare keyword
+				// (e.g. TS2683 implicit `this`, TS17009 `this` before `super()`),
+				// so map it like an identifier.
+				if (has_location(node)) {
+					const keyword = source.slice(node.start, node.end);
+					tokens.push({ source: keyword, generated: keyword, loc: node.loc, metadata: {} });
+				}
 				return;
 			} else if (node.type === 'MetaProperty') {
 				// Visit meta and property (e.g., new.target, import.meta)

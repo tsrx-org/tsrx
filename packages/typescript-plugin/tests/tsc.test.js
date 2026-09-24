@@ -194,3 +194,17 @@ it('reports a superclass expression that is not a constructor in .tsrx files', (
 		);
 	}
 });
+
+it('reports errors on a bare this in .tsrx files', () => {
+	const line =
+		'export function readValue() { return this; } class Base {} export class Derived extends Base { constructor() { this; super(); } }';
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${line}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	expect(result.output).toContain(
+		`layout.tsrx(4,${line.indexOf('this') + 1}): error TS2683: 'this' implicitly has type 'any' because it does not have a type annotation.`,
+	);
+	expect(result.output).toContain(
+		`layout.tsrx(4,${line.lastIndexOf('this') + 1}): error TS17009: 'super' must be called before accessing 'this' in the constructor of a derived class.`,
+	);
+});
