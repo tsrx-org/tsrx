@@ -7829,6 +7829,50 @@ log()
 		});
 	});
 
+	// An empty statement prints as nothing, so like Prettier its comments go to
+	// the statements around it, or to its block when it has no neighbors.
+	describe('comments around empty statements', () => {
+		it.each([
+			['a; ; // c\nb;', 'a; // c\nb;'],
+			['a; ; ; /* c */\nb;', 'a; /* c */\nb;'],
+			['a; /* c */ ;\nb;', 'a; /* c */\nb;'],
+			['; // c\nb;', '// c\nb;'],
+			['; /* c */ b;', '/* c */ b;'],
+			['; // c', '// c'],
+			['function f() {\n  a; ; // c\n  b;\n}', 'function f() {\n  a; // c\n  b;\n}'],
+			['function f() {\n  a; ; // c\n}', 'function f() {\n  a; // c\n}'],
+			['function f() {\n  ; // c\n}', 'function f() {\n  // c\n}'],
+			[
+				'switch (x) {\n  case 1:\n    a; ; // c\n    b;\n}',
+				'switch (x) {\n  case 1:\n    a; // c\n    b;\n}',
+			],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['; // c\n[1].forEach(log)', '// c\n;[1].forEach(log)'],
+			['a; ; // c\nb', 'a // c\nb'],
+			['a\n; // c\n[1].forEach(log)', 'a // c\n;[1].forEach(log)'],
+		])('formats %j like Prettier with semi: false', async (source, expected) => {
+			expect(await format(source, { semi: false })).toBeWithNewline(expected);
+		});
+
+		it('keeps a comment on an empty statement body', async () => {
+			const source = 'if (x); // c\nelse y;';
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	describe('comment-only files', () => {
+		it.each(['// only', '// a\n\n// b', '/* block */', '/**\n * License\n */'])(
+			'keeps %j',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
+	});
+
 	// Type arguments, `this` types, and heritage clauses decide what a
 	// declaration means. Dropping one either breaks the file or quietly
 	// widens a type, so each must come back exactly as written.
