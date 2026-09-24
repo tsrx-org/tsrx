@@ -5903,3 +5903,62 @@ describe('wrapped destructuring assignment targets', () => {
 		expect(assignment.left.type).toBe('ArrayPattern');
 	});
 });
+
+describe('comments around empty statements', () => {
+	/**
+	 * @param {AST.Comment[] | undefined} comments
+	 * @returns {string[] | undefined}
+	 */
+	const values = (comments) => comments?.map((comment) => comment.value);
+
+	// Like Prettier, a `;` in a statement list prints as nothing, so the
+	// statements around it take its comments.
+	it('gives a comment after an empty statement to the statement before it', () => {
+		const ast = parseModule('a; ; // c\nb;', 'App.tsrx');
+		const [a, empty, b] = ast.body;
+		assert_type(empty, 'EmptyStatement');
+
+		expect(values(a.trailingComments)).toEqual([' c']);
+		expect(empty.leadingComments).toBeUndefined();
+		expect(empty.trailingComments).toBeUndefined();
+		expect(b.leadingComments).toBeUndefined();
+	});
+
+	it('gives a comment on its own line before an empty statement to the next statement', () => {
+		const ast = parseModule('a;\n// c\n;\nb;', 'App.tsrx');
+		const [a, empty, b] = ast.body;
+		assert_type(empty, 'EmptyStatement');
+
+		expect(a.trailingComments).toBeUndefined();
+		expect(empty.leadingComments).toBeUndefined();
+		expect(values(b.leadingComments)).toEqual([' c']);
+	});
+
+	it('gives the last statement the comments after the empty statements that end a list', () => {
+		const ast = parseModule('function f() {\n\ta; ; // c\n\t;\n\t// d\n}', 'App.tsrx');
+		const declaration = firstStatement(ast, 'FunctionDeclaration');
+		const [a] = declaration.body.body;
+
+		expect(values(a.trailingComments)).toEqual([' c', ' d']);
+	});
+
+	it('keeps the comments of a list with only empty statements in its container', () => {
+		const block_ast = parseModule('function f() {\n\t; // c\n}\nb;', 'App.tsrx');
+		const declaration = firstStatement(block_ast, 'FunctionDeclaration');
+		const [, b] = block_ast.body;
+
+		expect(values(declaration.body.innerComments)).toEqual([' c']);
+		expect(b.leadingComments).toBeUndefined();
+
+		const program_ast = parseModule('; // c\n;', 'App.tsrx');
+		expect(values(program_ast.innerComments)).toEqual([' c']);
+	});
+
+	it('keeps the comments of an empty statement body', () => {
+		const ast = parseModule('if (x) ; // c\nelse y;', 'App.tsrx');
+		const statement = firstStatement(ast, 'IfStatement');
+		assert_type(statement.consequent, 'EmptyStatement');
+
+		expect(values(statement.consequent.trailingComments)).toEqual([' c']);
+	});
+});

@@ -356,6 +356,30 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Whether a statement list has nothing but empty statements (`;`), which
+	 * never take comments, so the list's comments belong to its container.
+	 * @param {AST.Node[]} statements
+	 * @returns {boolean}
+	 */
+	function hasOnlyEmptyStatements(statements) {
+		return statements.every((statement) => statement.type === 'EmptyStatement');
+	}
+
+	/**
+	 * Whether a node is an entry in one of its parent's lists, like a statement
+	 * in a block, rather than a single child, like the body of `if (x) ;`.
+	 * @param {AST.Node} node
+	 * @param {AST.Node | AST.CSS.StyleSheet | undefined} parent
+	 * @returns {boolean}
+	 */
+	function isListEntry(node, parent) {
+		return (
+			!!parent &&
+			Object.values(parent).some((value) => Array.isArray(value) && value.includes(node))
+		);
+	}
+
+	/**
 	 * @param {AST.TSRXElementNode} node
 	 * @returns {string | null}
 	 */
@@ -501,6 +525,15 @@ export function get_comment_handlers(source, comments, index = 0) {
 						return;
 					}
 
+					// Like Prettier's `canAttachComment`, an empty statement in a statement
+					// list never owns a comment: it prints as nothing, so the comment would
+					// lose its place. The statement before or after it, or the list's
+					// container, takes it. A `;` body (`if (x) ;`) prints in place and keeps
+					// its comments.
+					if (node.type === 'EmptyStatement' && isListEntry(node, path.at(-1))) {
+						return;
+					}
+
 					if (metadata && metadata.commentContainerId !== undefined) {
 						// For empty template elements, keep comments as `innerComments`.
 						// The Prettier plugin uses `innerComments` to preserve them and
@@ -607,7 +640,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 					next();
 
 					if (comments[0]) {
-						if (node.type === 'Program' && node.body.length === 0) {
+						if (node.type === 'Program' && hasOnlyEmptyStatements(node.body)) {
 							// Collect all comments in an empty program (file with only comments)
 							while (comments.length) {
 								const comment = /** @type {AST.CommentWithLocation} */ (comments.shift());
@@ -617,7 +650,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 								return;
 							}
 						}
-						if (node.type === 'BlockStatement' && node.body.length === 0) {
+						if (node.type === 'BlockStatement' && hasOnlyEmptyStatements(node.body)) {
 							// Collect all comments that fall within this empty block
 							while (
 								comments[0] &&
@@ -682,8 +715,6 @@ export function get_comment_handlers(source, comments, index = 0) {
 						const parent = /** @type {AST.Node & AST.NodeWithLocation} */ (path.at(-1));
 
 						if (parent === undefined || node.end !== parent.end) {
-							const slice = source.slice(node.end, comments[0].start);
-
 							// Check if this node is the last item in an array-like structure
 							let is_last_in_array = false;
 							/** @type {(AST.Node | null)[] | null} */
@@ -725,9 +756,28 @@ export function get_comment_handlers(source, comments, index = 0) {
 								}
 							}
 
+							/** @type {AST.NodeWithLocation} */
+							let end_node = /** @type {AST.NodeWithLocation} */ (node);
+							let next_index = -1;
+
 							if (node_array && Array.isArray(node_array)) {
-								is_last_in_array = node_array.indexOf(node) === node_array.length - 1;
+								// Empty statements take no comments, so look past them: the next
+								// sibling is the next real one, and the `;` of any before the
+								// comment ends this node, as in `a; ; // comment`
+								next_index = node_array.indexOf(node) + 1;
+								while (next_index > 0 && node_array[next_index]?.type === 'EmptyStatement') {
+									const empty = /** @type {AST.NodeWithLocation} */ (node_array[next_index]);
+									if (empty.end <= comments[0].start) {
+										end_node = empty;
+									}
+									next_index++;
+								}
+								is_last_in_array = next_index >= node_array.length;
 							}
+
+							const nextSibling = node_array?.[next_index];
+
+							const slice = source.slice(end_node.end, comments[0].start);
 
 							const trailingCommentBoundary =
 								parent &&
@@ -807,7 +857,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 								const onlySimpleWhitespace = /^[,) \t]*$/.test(slice);
 								const onlyWhitespace = /^\s*$/.test(slice);
 								const hasBlankLine = /\n\s*\n/.test(slice);
-								const nodeEndLine = node.loc?.end?.line ?? null;
+								const nodeEndLine = end_node.loc?.end?.line ?? null;
 								const commentStartLine = comments[0].loc?.start?.line ?? null;
 								const commentOnSameLine =
 									nodeEndLine !== null &&
@@ -839,9 +889,6 @@ export function get_comment_handlers(source, comments, index = 0) {
 									// e.g., /** @type {SomeType} */ (a) = 5;
 									// These should be leading comments, not trailing
 									if (comments[0].type === 'Block' && !is_last_in_array && node_array) {
-										const currentIndex = node_array.indexOf(node);
-										const nextSibling = node_array[currentIndex + 1];
-
 										if (nextSibling && nextSibling.loc) {
 											const commentEndLine = comments[0].loc?.end?.line;
 											const nextSiblingStartLine = nextSibling.loc?.start?.line;
@@ -888,9 +935,6 @@ export function get_comment_handlers(source, comments, index = 0) {
 									if (!isStatementContext) {
 										return;
 									}
-
-									const currentIndex = node_array.indexOf(node);
-									const nextSibling = node_array[currentIndex + 1];
 
 									if (nextSibling && nextSibling.loc) {
 										// Find where the comment block ends

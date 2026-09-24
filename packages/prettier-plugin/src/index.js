@@ -1968,6 +1968,10 @@ function printTsrxNode(node, path, options, print, args) {
 			// Add it unless the code is completely empty
 			if (statements.length > 0) {
 				nodeContent = [...statements, hardline];
+			} else if (node.innerComments?.length) {
+				// The parser keeps a comment-only file's comments on the program. Each
+				// comment's docs start with a line break, which the first one drops.
+				nodeContent = [...printElementBodyComments(node.innerComments).slice(1), hardline];
 			} else {
 				nodeContent = statements;
 			}
@@ -6517,7 +6521,8 @@ function getBlankLinesBetweenNodes(currentNode, nextNode) {
 /**
  * The indexes of the statements a statement list prints. Like Prettier, it
  * drops empty statements (a stray `;`, or the one semicolon-free code writes
- * before a first statement that starts with `[`), unless a comment is on one.
+ * before a first statement that starts with `[`). The parser never attaches a
+ * comment to one, so nothing is lost.
  * @param {AST.Node[]} statements
  * @returns {number[]}
  */
@@ -6525,7 +6530,7 @@ function getPrintedStatementIndexes(statements) {
 	/** @type {number[]} */
 	const indexes = [];
 	statements.forEach((statement, index) => {
-		if (statement.type !== 'EmptyStatement' || hasComment(statement)) {
+		if (statement.type !== 'EmptyStatement') {
 			indexes.push(index);
 		}
 	});
