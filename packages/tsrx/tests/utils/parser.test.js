@@ -6115,34 +6115,37 @@ describe('comments around empty statements', () => {
 		expect(values(statement.consequent.trailingComments)).toEqual([' c']);
 	});
 
-	// Until static blocks and namespace bodies keep a comment after their last
-	// statement (#286), their empty statements keep it inside the block.
-	it('keeps the comments of empty statements inside static blocks and namespaces', () => {
-		/**
-		 * @param {AST.Node[]} statements
-		 * @returns {string[]}
-		 */
-		const trailing = (statements) =>
-			statements.flatMap((statement) => values(statement.trailingComments) ?? []);
-
+	// Static blocks and namespace bodies are statement lists like a function
+	// body (#286), so their empty statements take no comments either.
+	it('gives the comments of empty statements in static blocks and namespaces to their neighbors', () => {
 		const class_ast = parseModule(
-			'class A {\n\tstatic {\n\t\ta; ; // c\n\t}\n\tb() {}\n}',
+			'class A {\n\tstatic {\n\t\ta; ; // c\n\t}\n\tstatic {\n\t\t; // d\n\t}\n\tb() {}\n}',
 			'App.tsrx',
 		);
-		const [static_block, method] = firstStatement(class_ast, 'ClassDeclaration').body.body;
+		const [static_block, empty_block, method] = firstStatement(class_ast, 'ClassDeclaration').body
+			.body;
 		assert_type(static_block, 'StaticBlock');
+		assert_type(empty_block, 'StaticBlock');
+		const [a, empty] = static_block.body;
 
-		expect(trailing(static_block.body)).toEqual([' c']);
-		expect(static_block.trailingComments).toBeUndefined();
+		expect(values(a.trailingComments)).toEqual([' c']);
+		expect(empty.trailingComments).toBeUndefined();
+		expect(values(empty_block.innerComments)).toEqual([' d']);
+		expect(empty_block.body[0].trailingComments).toBeUndefined();
 		expect(method.leadingComments).toBeUndefined();
 
-		const namespace_ast = parseModule('namespace N {\n\ta; ; // c\n}\nb;', 'App.tsrx');
-		const declaration = firstStatement(namespace_ast, 'TSModuleDeclaration');
-		assert_type(declaration.body, 'TSModuleBlock');
+		const namespace_ast = parseModule(
+			'namespace N {\n\ta; ; // c\n}\nnamespace M {\n\t; // d\n}\nb;',
+			'App.tsrx',
+		);
+		const namespace = as_type(namespace_ast.body[0], 'TSModuleDeclaration');
+		const empty_namespace = as_type(namespace_ast.body[1], 'TSModuleDeclaration');
+		const block = as_type(namespace.body, 'TSModuleBlock');
 
-		expect(trailing(declaration.body.body)).toEqual([' c']);
-		expect(declaration.trailingComments).toBeUndefined();
-		expect(namespace_ast.body[1].leadingComments).toBeUndefined();
+		expect(values(block.body[0].trailingComments)).toEqual([' c']);
+		expect(block.body[1].trailingComments).toBeUndefined();
+		expect(values(as_type(empty_namespace.body, 'TSModuleBlock').innerComments)).toEqual([' d']);
+		expect(namespace_ast.body[2].leadingComments).toBeUndefined();
 	});
 });
 

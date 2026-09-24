@@ -6606,9 +6606,8 @@ function getBlankLinesBetweenNodes(currentNode, nextNode) {
 /**
  * The indexes of the statements a statement list prints. Like Prettier, it
  * drops empty statements (a stray `;`, or the one semicolon-free code writes
- * before a first statement that starts with `[`), unless a comment is on one.
- * The parser only leaves comments on those in static blocks and namespace
- * bodies (#286).
+ * before a first statement that starts with `[`). The parser gives their
+ * comments to the statements around them or to the list's container.
  * @param {AST.Node[]} statements
  * @returns {number[]}
  */
@@ -6616,7 +6615,7 @@ function getPrintedStatementIndexes(statements) {
 	/** @type {number[]} */
 	const indexes = [];
 	statements.forEach((statement, index) => {
-		if (statement.type !== 'EmptyStatement' || hasComment(statement)) {
+		if (statement.type !== 'EmptyStatement') {
 			indexes.push(index);
 		}
 	});

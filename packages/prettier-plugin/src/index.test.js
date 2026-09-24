@@ -7846,6 +7846,13 @@ log()
 				'switch (x) {\n  case 1:\n    a; ; // c\n    b;\n}',
 				'switch (x) {\n  case 1:\n    a; // c\n    b;\n}',
 			],
+			[
+				'class C {\n  static {\n    a; ; // c\n  }\n}',
+				'class C {\n  static {\n    a; // c\n  }\n}',
+			],
+			['class C {\n  static {\n    ; // c\n  }\n}', 'class C {\n  static {\n    // c\n  }\n}'],
+			['namespace N {\n  a; ; // c\n  b;\n}', 'namespace N {\n  a; // c\n  b;\n}'],
+			['namespace N {\n  ; // c\n}', 'namespace N {\n  // c\n}'],
 		])('formats %j like Prettier', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
 		});
