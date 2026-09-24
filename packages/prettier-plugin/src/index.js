@@ -9515,6 +9515,22 @@ function printJSXElement(node, path, options, print) {
 	) {
 		return group([openingTag, childrenDocs[0], '</', tagName, '>']);
 	}
+	// Multiple children or complex children - format with line breaks. Text runs
+	// fill/wrap to printWidth. Children with no whitespace between them in the
+	// source (`{a}/{b}`) stay glued as a single unit.
+	const multilineElement = printMultilineJSXChildren(
+		openingTag,
+		tagName,
+		childrenDocs,
+		childNodes,
+		childEndNodes,
+		closingCommentDocs,
+	);
+
+	// Text mixed with simple expressions, written on one line, stays on one line
+	// when it fits. Otherwise, like Prettier, the whole element takes the
+	// multi-line layout, which a second pass keeps, rather than breaking only
+	// the attributes and leaving the children against the tags.
 	if (
 		!forceMultiline &&
 		childrenDocs.length > 1 &&
@@ -9525,12 +9541,36 @@ function printJSXElement(node, path, options, print) {
 				child.type === 'JSXText' || isSimpleJSXExpressionChild(/** @type {AST.Node} */ (child)),
 		)
 	) {
-		return group([openingTag, ...childrenDocs, '</', tagName, '>']);
+		return conditionalGroup([
+			group([openingTag, ...childrenDocs, '</', tagName, '>']),
+			multilineElement,
+		]);
 	}
 
-	// Multiple children or complex children - format with line breaks. Text runs
-	// fill/wrap to printWidth. Children with no whitespace between them in the
-	// source (`{a}/{b}`) stay glued as a single unit.
+	return multilineElement;
+}
+
+/**
+ * Print an element with its children on their own lines between the tags.
+ * Text runs fill/wrap to printWidth, children with no whitespace between them
+ * in the source (`{a}/{b}`) stay glued as a single unit, and one authored
+ * blank line between children is kept.
+ * @param {Doc} openingTag - The printed opening tag
+ * @param {Doc} tagName - The printed tag name
+ * @param {Doc[]} childrenDocs - The printed children, text runs as strings
+ * @param {any[]} childNodes - The first source node behind each printed child
+ * @param {any[]} childEndNodes - The last source node behind each printed child
+ * @param {Doc[]} closingCommentDocs - Comments before the closing tag
+ * @returns {Doc}
+ */
+function printMultilineJSXChildren(
+	openingTag,
+	tagName,
+	childrenDocs,
+	childNodes,
+	childEndNodes,
+	closingCommentDocs,
+) {
 	const formattedChildren = [];
 	for (let i = 0; i < childrenDocs.length; i++) {
 		const unitEntries = [childrenDocs[i]];

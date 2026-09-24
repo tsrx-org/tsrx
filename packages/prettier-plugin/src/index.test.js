@@ -7828,6 +7828,35 @@ const c = 'it\\'s';`);
 			return once;
 		};
 
+		it('puts mixed text and expression children on their own lines when the element does not fit', async () => {
+			const input = `function App() { return <div title="aaaaaaaa" alt="bbbbbbbbbb">xxxxx yyyyy zzzzzzzzzzzzzzzzzzzzz {"x"}</div>; }
+function Long() { return <div title="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" alt="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb">text {x} more</div>; }`;
+			const expected = `function App() {
+  return <div title="aaaaaaaa" alt="bbbbbbbbbb">
+    xxxxx yyyyy zzzzzzzzzzzzzzzzzzzzz
+    {"x"}
+  </div>;
+}
+function Long() {
+  return <div
+    title="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    alt="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  >
+    text
+    {x}
+    more
+  </div>;
+}`;
+			expect(await expectStable(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps mixed text and expression children on the line when the element fits', async () => {
+			const source = `function App() {
+  return <div title="a">Hello {name}!</div>;
+}`;
+			expect(await expectStable(source)).toBeWithNewline(source);
+		});
+
 		it('keeps a return argument with leading line comments after the return keyword', async () => {
 			const input = `function isXOrYInValid(xOrY: string | number | undefined) {
 	return (
