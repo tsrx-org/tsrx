@@ -5903,3 +5903,33 @@ describe('wrapped destructuring assignment targets', () => {
 		expect(assignment.left.type).toBe('ArrayPattern');
 	});
 });
+
+describe('parenthesized expression metadata', () => {
+	/**
+	 * @param {string} source
+	 * @param {string} name
+	 * @returns {AST.Identifier & { metadata?: { paren_start?: number } }}
+	 */
+	function findIdentifier(source, name) {
+		const ast = parseModule(source, 'App.tsrx');
+		const found = find_first(ast, (node) => node.type === 'Identifier' && node.name === name);
+		if (!found) throw new Error(`No identifier ${name} found in source`);
+		return /** @type {AST.Identifier & { metadata?: { paren_start?: number } }} */ (found);
+	}
+
+	// The formatter finds a node's own parentheses from here, one pair per
+	// stacked JSDoc cast.
+	it('records the outermost grouping paren of a parenthesized expression', () => {
+		const source = 'x = /** @type {A} */ ((/** @type {B} */ (n)));';
+		expect(findIdentifier(source, 'n').metadata?.paren_start).toBe(source.indexOf('(('));
+	});
+
+	it('leaves out the parens of a call or statement around the expression', () => {
+		for (const source of ['foo /** @type {A} */ ((n));', 'if ((n)) {}', 'while ((n)) {}']) {
+			expect(findIdentifier(source, 'n').metadata?.paren_start, source).toBe(
+				source.indexOf('((') + 1,
+			);
+		}
+		expect(findIdentifier('foo(n);', 'n').metadata?.paren_start).toBeUndefined();
+	});
+});
