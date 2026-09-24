@@ -1956,7 +1956,7 @@ function printTsrxNode(node, path, options, print, args) {
 					const nextStmt = node.body[printedIndexes[n + 1]];
 
 					// Only add spacing when explicitly needed
-					if (shouldAddBlankLine(currentStmt, nextStmt)) {
+					if (shouldAddBlankLine(currentStmt, nextStmt, options.originalText)) {
 						statements.push([line, line]); // blank line
 					} else {
 						statements.push(line); // single line break
@@ -3007,7 +3007,7 @@ function printTsrxNode(node, path, options, print, args) {
 					const currentStmt = node.body[i];
 					const nextStmt = node.body[printedIndexes[n + 1]];
 
-					if (shouldAddBlankLine(currentStmt, nextStmt)) {
+					if (shouldAddBlankLine(currentStmt, nextStmt, options.originalText)) {
 						statements.push(hardline, hardline); // Blank line = two hardlines
 					} else {
 						statements.push(hardline); // Normal line break
@@ -6533,48 +6533,37 @@ function getPrintedStatementIndexes(statements) {
 }
 
 /**
- * The last child of a statement that can end with a semicolon. Code without
- * semicolons writes the one before `[`, `(` or `` ` `` at the start of the next
- * statement's line, and that `;` still ends the previous statement, so its
- * blank lines are counted from its content, like Prettier's `__contentEnd`.
+ * Where a statement's content ends when its source ends with a `;`: before
+ * that `;` and the whitespace ahead of it, like Prettier's `__contentEnd`.
+ * Code without semicolons writes the one before `[`, `(` or `` ` `` at the
+ * start of the next statement's line (`a\n\n;[b].c()`), and that `;` still
+ * ends the previous statement. Comments that lead the next statement can sit
+ * between the content and the `;`, so the search starts before them.
  * @param {AST.Node | AST.Comment} node - The statement
- * @returns {AST.Node | null}
+ * @param {string} text - The original source
+ * @param {number} nextStart - Where the next statement or its first comment starts
+ * @returns {number | null} - The offset, or null without a final `;`
  */
-function getStatementContentEnd(node) {
-	switch (node.type) {
-		case 'ExpressionStatement':
-			return node.expression;
-		case 'VariableDeclaration':
-			return node.declarations[node.declarations.length - 1] ?? null;
-		case 'ReturnStatement':
-		case 'ThrowStatement':
-			return node.argument ?? null;
-		case 'DoWhileStatement':
-			return node.test;
-		case 'TSTypeAliasDeclaration':
-			return node.typeAnnotation;
-		case 'ExportDefaultDeclaration': {
-			const declaration = /** @type {AST.Node} */ (node.declaration);
-			return getStatementContentEnd(declaration) ?? declaration;
-		}
-		case 'ExportNamedDeclaration':
-			return node.declaration
-				? getStatementContentEnd(node.declaration)
-				: /** @type {AST.Node | null} */ (node.source ?? null);
-		case 'ExportAllDeclaration':
-			return node.source;
-		default:
-			return null;
+function getContentEndBeforeSemicolon(node, text, nextStart) {
+	const { start, end } = /** @type {AST.NodeWithLocation} */ (node);
+	if (typeof end !== 'number' || text.charAt(end - 1) !== ';') {
+		return null;
 	}
+	let index = Math.min(end - 1, nextStart);
+	while (index > start && /\s/.test(text.charAt(index - 1))) {
+		index--;
+	}
+	return index;
 }
 
 /**
  * Determine if a blank line should be added between nodes
  * @param {AST.Node | AST.Comment} currentNode - Current node
  * @param {AST.Node | AST.Comment} nextNode - Next node
+ * @param {string} [text] - The original source, for statements in a statement list
  * @returns {boolean}
  */
-function shouldAddBlankLine(currentNode, nextNode) {
+function shouldAddBlankLine(currentNode, nextNode, text) {
 	// Simplified blank line logic:
 	// 1. Check if there was originally 1+ blank lines between nodes
 	// 2. If yes, preserve exactly 1 blank line (collapse multiple to one)
@@ -6605,12 +6594,13 @@ function shouldAddBlankLine(currentNode, nextNode) {
 		sourceNode === currentNode &&
 		currentNode.loc?.end.line !== undefined &&
 		currentNode.loc.end.line === nextNode.loc?.start.line;
-	const contentEnd = endsOnNextLine ? getStatementContentEnd(currentNode) : null;
-	if (contentEnd) {
-		originalBlankLines = Math.max(
-			originalBlankLines,
-			getBlankLinesBetweenNodes(contentEnd, targetNode),
-		);
+	if (text !== undefined && endsOnNextLine) {
+		const targetStart = /** @type {AST.NodeWithLocation} */ (targetNode).start;
+		const contentEnd = getContentEndBeforeSemicolon(currentNode, text, targetStart);
+		if (contentEnd !== null) {
+			const lineBreaks = text.slice(contentEnd, targetStart).split('\n').length - 1;
+			originalBlankLines = Math.max(originalBlankLines, lineBreaks - 1);
+		}
 	}
 
 	// Special case: Always add blank line after import declarations when followed by non-imports
@@ -8254,7 +8244,9 @@ function printJSXCodeBlock(node, path, options, print) {
 		parts.push(path.call(print, 'body', i));
 		if (i < node.body.length - 1) {
 			parts.push(
-				shouldAddBlankLine(node.body[i], node.body[i + 1]) ? [hardline, hardline] : hardline,
+				shouldAddBlankLine(node.body[i], node.body[i + 1], options.originalText)
+					? [hardline, hardline]
+					: hardline,
 			);
 		}
 	}

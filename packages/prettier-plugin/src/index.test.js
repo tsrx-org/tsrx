@@ -7700,6 +7700,25 @@ log()
 ;(first || second)()`);
 		});
 
+		it.each([
+			'if (ready) run()',
+			'if (ready) run()\nelse stop()',
+			'for (const item of items) run(item)',
+			'while (ready) run()',
+			'debugger',
+			'export { value }',
+		])('keeps the blank line before a guarded statement after %s', async (statement) => {
+			await expectUnchanged(`const value = 1\n${statement}\n\n;[1].forEach(log)`);
+		});
+
+		it('keeps the blank line before a guarded statement after continue', async () => {
+			await expectUnchanged(`for (const item of items) {
+  continue
+
+  ;[item].forEach(log)
+}`);
+		});
+
 		it('keeps the blank line before a comment that leads a guarded statement', async () => {
 			await expectUnchanged(`const value = 1
 
