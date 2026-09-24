@@ -9401,6 +9401,40 @@ export ${list};`);
 		});
 	});
 
+	describe('comments on either side of a comma stay there', () => {
+		it.each([
+			'const x = [a /* c */, b];',
+			'foo(a /* c */, b);',
+			'new Foo(a /* c */, b);',
+			'const o = { a: 1 /* c */, b: 2 };',
+			'function f(a /* c */, b) {}',
+			'const { a /* c */, b } = o;',
+			'import a /* c */, { b } from "mod";',
+			'const x = [a /* c */ /* d */, b];',
+			'const x = [a, /* c */ b];',
+			'foo(a, /** @type {T} */ (b));',
+		])('keeps %s', async (source) => {
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('keeps a comment before the comma in an enum', async () => {
+			const result = await format('enum E { A /* c */, B }');
+			expect(result).toBeWithNewline(`enum E {
+  A /* c */,
+  B,
+}`);
+		});
+
+		it('keeps a comment before the comma when the list collapses', async () => {
+			const result = await format(`const y = [
+  a /* c */,
+  b,
+];`);
+			expect(result).toBeWithNewline('const y = [a /* c */, b];');
+		});
+	});
+
 	// `export default (class Named {})` is an expression: `Named` is bound only
 	// inside the class body. `export default class Named {}` is a declaration:
 	// `Named` becomes a module-scoped binding. Dropping the parens swaps one for

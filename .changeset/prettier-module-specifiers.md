@@ -19,3 +19,10 @@ module source, or an import attribute stays where it was written, and a line
 comment in a specifier list keeps the list broken. The parser now attaches a
 comment after the last specifier, before `}` or `from`, to that specifier, so
 the formatter prints it inside the braces.
+
+A block comment between a list element and the comma after it now stays with
+that element in arrays, call and `new` arguments, objects, parameters, object
+patterns, enums, and specifier lists, as in Prettier. `[a /* c */, b]` used to
+format as `[a, /* c */ b]`, which moved the comment onto the next element, and a
+list written across lines changed again on the second pass. A comment after
+the comma still leads the next element.
