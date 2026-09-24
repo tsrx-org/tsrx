@@ -639,6 +639,35 @@ function App({ tag }: { tag: string }) @{
 			expect(css_mapping).toBeDefined();
 			expect(css_mapping?.data.customData.embeddedId).toMatch(/^style-/);
 		});
+		it('exposes style blocks, scripts and scoped classes inside attribute values', () => {
+			// The compiler scopes elements in an attribute value too
+			// (`icon={<span class="a" />}` prints `class="a tsrx-…"`).
+			const source = `export function App(props: { on: boolean }) @{
+	<>
+		<Comp icon={<span class="a" />} />
+		<Comp badge={(@if (props.on) { <><i class="b" /><style>.b { color: blue; }</style></> })} />
+		<Comp slot={<script>const inner = 1;</script>} />
+		<style>.a { color: red; }</style>
+	</>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+
+			const css_contents = result.cssMappings.map((mapping) => mapping.data.customData.content);
+			expect(css_contents.join('\n')).toContain('.b { color: blue; }');
+			const script_contents = result.scriptMappings.map(
+				(mapping) => mapping.data.customData.content,
+			);
+			expect(script_contents.join('\n')).toContain('const inner = 1;');
+			for (const class_name of ['a', 'b']) {
+				const offset = source.indexOf(`class="${class_name}"`) + 'class="'.length;
+				const mapping = result.mappings.find(
+					(/** @type {CodeMapping} */ entry) =>
+						entry.sourceOffsets[0] === offset && entry.lengths[0] === class_name.length,
+				);
+				expect(mapping?.data.customData?.hover).toContain(`.${class_name}`);
+			}
+		});
 		it('keeps assigned style blocks anchored in type-only output', () => {
 			const source = `function C() @{
 		const styles = <style>
@@ -1429,6 +1458,91 @@ export function optionalFn(declRequired: string, declMaybe?: string) {
 				expect(whole_span_mappings(`export class Model extends ${base} {}`, base)).toHaveLength(1);
 			},
 		);
+	});
+
+	describe(`[${name}] whole calls and parenthesized expressions keep mappings`, () => {
+		/**
+		 * Verification mappings over exactly `expression`, the first one in `source`
+		 * at or after `after`, whose generated text is the same expression.
+		 * @param {string} source
+		 * @param {string} expression
+		 * @param {string} [after]
+		 */
+		const whole_span_mappings = (source, expression, after = '') => {
+			/** @param {string} code without whitespace or trailing commas */
+			const normalize = (code) => code.replace(/\s/g, '').replace(/,\)/g, ')');
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const start = source.indexOf(expression, source.indexOf(after));
+			return result.mappings.filter(
+				(/** @type {CodeMapping} */ mapping) =>
+					mapping.sourceOffsets[0] === start &&
+					mapping.lengths[0] === expression.length &&
+					mapping.data.verification &&
+					normalize(
+						result.code.slice(
+							mapping.generatedOffsets[0],
+							mapping.generatedOffsets[0] + mapping.generatedLengths[0],
+						),
+					) === normalize(expression),
+			);
+		};
+
+		it.each([
+			['const items = [...createBase()];', 'createBase()'],
+			['createBase()();', 'createBase()()'],
+			['createBase()();', 'createBase()'],
+			['(plain)();', '(plain)()'],
+			['(plain)();', '(plain)'],
+			['if (createVoid()) {}', 'createVoid()'],
+			['const frozen = createBase() as const;', 'createBase()'],
+			['createBase(\n\t\t1,\n\t)();', 'createBase(\n\t\t1,\n\t)'],
+			['maybe?.()();', 'maybe?.()'],
+			['(plain || other)();', '(plain || other)'],
+			['((plain))();', '(plain)'],
+		])('maps the whole expression once in `%s`: %s', (statement, expression) => {
+			// TypeScript reports TS2488 on a spread argument, TS2349 on a callee,
+			// TS1345 on a `void` condition and TS1355 on an `as const` operand, all
+			// over the whole expression, so an unmapped end dropped each of them.
+			const source = `export function run() {\n\t${statement}\n}`;
+			expect(whole_span_mappings(source, expression, statement)).toHaveLength(1);
+		});
+
+		it('maps the whole call in a component body', () => {
+			const source = `export function App() @{
+	const items = [...createBase()];
+	<div>{items.length}</div>
+}`;
+			expect(whole_span_mappings(source, 'createBase()')).toHaveLength(1);
+		});
+
+		it('maps the whole call in an attribute value', () => {
+			// The compiler prints the arrow body over several lines, so the
+			// attribute's own mapping no longer lines up with the call inside it.
+			const source = `export function App() @{
+	<div onClick={() => { if (createVoid()) {} }} />
+}`;
+			expect(whole_span_mappings(source, 'createVoid()')).toHaveLength(1);
+		});
+
+		it('adds no whole-span mapping over parentheses around a compiled directive', () => {
+			// The parentheses are the author's, but the expression inside them is
+			// generated, so an error in it must not be reported over the source span.
+			const source = `export function App(props: { on: boolean }) @{
+	const badge = (@if (props.on) { <b>on</b> }) || 'off';
+	<div>{badge}</div>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const expression = '(@if (props.on) { <b>on</b> })';
+			const start = source.indexOf(expression);
+			expect(
+				result.mappings.filter(
+					(/** @type {CodeMapping} */ mapping) =>
+						mapping.sourceOffsets[0] === start && mapping.lengths[0] === expression.length,
+				),
+			).toEqual([]);
+		});
 	});
 
 	describe(`[${name}] this and super keep mappings`, () => {

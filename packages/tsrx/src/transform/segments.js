@@ -47,12 +47,6 @@ const BLOCK_DECLARATION_TYPES = new Set([
 	'TSEnumDeclaration',
 	'TSModuleDeclaration',
 ]);
-// Superclass expressions whose walker case maps no span ending where they end.
-const UNMAPPED_SUPERCLASS_TYPES = new Set([
-	'CallExpression',
-	'ParenthesizedExpression',
-	'ArrayExpression',
-]);
 
 /**
  * @param {string} [hash]
@@ -64,17 +58,24 @@ function get_style_region_id(hash, fallback) {
 }
 
 /**
- * Extract CSS source regions from style elements in the AST
+ * Extract CSS source regions from style elements in the AST, and record the
+ * author's calls and parenthesized expressions, each keyed by its type and span
+ * and mapped to the same key for its callee or wrapped expression.
  * @param {AST.Node} ast - The parsed AST
  * @param {number[]} src_line_offsets
  * @param {{
  * 	regions: CssSourceRegion[],
  * 	css_element_info: CssElementInfo,
  * 	script_regions: ScriptSourceRegion[],
+ * 	authored_span_nodes: Map<string, string>,
  * }} param2
  * @returns {void}
  */
-function visit_source_ast(ast, src_line_offsets, { regions, css_element_info, script_regions }) {
+function visit_source_ast(
+	ast,
+	src_line_offsets,
+	{ regions, css_element_info, script_regions, authored_span_nodes },
+) {
 	let region_id = 0;
 	let script_region_id = 0;
 	walk(ast, null, {
@@ -141,14 +142,33 @@ function visit_source_ast(ast, src_line_offsets, { regions, css_element_info, sc
 				const css = element.metadata.css;
 				const { line, column } = node.value?.loc?.start ?? {};
 
-				if (line === undefined || column === undefined) {
-					return;
+				if (line !== undefined && column !== undefined) {
+					css_element_info.set(`${line}:${column}`, css);
 				}
-
-				css_element_info.set(`${line}:${column}`, css);
 			}
+
+			context.next();
+		},
+		CallExpression(node, context) {
+			if (has_location(node) && has_location(node.callee)) {
+				authored_span_nodes.set(span_key(node), span_key(node.callee));
+			}
+			context.next();
+		},
+		ParenthesizedExpression(node, context) {
+			if (has_location(node) && has_location(node.expression)) {
+				authored_span_nodes.set(span_key(node), span_key(node.expression));
+			}
+			context.next();
 		},
 	});
+}
+
+/**
+ * @param {AST.Node & AST.NodeWithLocation} node
+ */
+function span_key(node) {
+	return `${node.type}:${node.start}:${node.end}`;
 }
 
 /**
@@ -345,12 +365,42 @@ export function convert_source_map_to_mappings(
 	const css_element_info = new Map();
 	/** @type {ScriptSourceRegion[]} */
 	const script_regions = [];
+	/** @type {Map<string, string>} */
+	const authored_span_nodes = new Map();
 
 	visit_source_ast(ast_from_source, src_line_offsets, {
 		regions: css_regions,
 		css_element_info,
 		script_regions,
+		authored_span_nodes,
 	});
+
+	/**
+	 * TypeScript reports some errors on a whole call or parenthesized expression
+	 * (TS2349 on a callee, TS2488 on a spread argument, TS1345 on a `void`
+	 * condition), and Volar drops a diagnostic whose end no mapping covers.
+	 * Only the author's nodes get this mapping: the compiler also generates
+	 * calls and parentheses with source locations (Vue's `defineVaporComponent`
+	 * wrapper, the parentheses around a compiled `@if`), and errors in those
+	 * would otherwise be reported on the author's code. A node counts as the
+	 * author's when the source has one of the same type and span, and its
+	 * callee or wrapped expression matches too.
+	 * @param {AST.Node} node
+	 * @param {AST.Node} inner the callee or the wrapped expression
+	 */
+	function push_authored_span_mapping(node, inner) {
+		if (
+			!has_location(node) ||
+			!has_location(inner) ||
+			authored_span_nodes.get(span_key(node)) !== span_key(inner) ||
+			!has_source_map_boundaries(node, src_to_gen_map)
+		) {
+			return;
+		}
+		mappings.push(
+			get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
+		);
+	}
 
 	/** @type {Map<string, number>} */
 	const generated_position_indexes = new Map();
@@ -1394,6 +1444,10 @@ export function convert_source_map_to_mappings(
 				if (node.callee) {
 					visit(node.callee);
 				}
+
+				if (node.type === 'CallExpression') {
+					push_authored_span_mapping(node, node.callee);
+				}
 				return;
 			} else if (node.type === 'LogicalExpression' || node.type === 'BinaryExpression') {
 				// Visit in source order: left, right
@@ -1655,15 +1709,10 @@ export function convert_source_map_to_mappings(
 					// TypeScript reports base-class errors (TS2507 on a value that is
 					// not a constructor, TS2509, TS2510) on the whole superclass
 					// expression, and Volar drops a diagnostic whose end it cannot map.
-					// Identifiers and member expressions map their whole span, but no
-					// mapping reaches the end of a call (`createBase()`), a
-					// parenthesized expression (`(flag ? A : B)`), or an array literal.
-					const base =
-						node.superClass.type === 'ChainExpression'
-							? node.superClass.expression
-							: node.superClass;
+					// Identifiers, member expressions, calls and parenthesized
+					// expressions map their whole span, but an array literal doesn't.
 					if (
-						UNMAPPED_SUPERCLASS_TYPES.has(base.type) &&
+						node.superClass.type === 'ArrayExpression' &&
 						has_location(node.superClass) &&
 						has_source_map_boundaries(node.superClass, src_to_gen_map)
 					) {
@@ -1906,6 +1955,8 @@ export function convert_source_map_to_mappings(
 						mapping.generatedLengths[0] = mapping.generatedLengths[0] - 2; // Skip both parentheses
 					}
 					mappings.push(mapping);
+				} else {
+					push_authored_span_mapping(node, node.expression);
 				}
 				// Visit the wrapped expression
 				if (node.expression) {
