@@ -6593,6 +6593,12 @@ function printTSTypeAliasDeclaration(node, path, options, print) {
 function printTSUnionType(node, path, print, args) {
 	const types = path.map(print, 'types');
 	const inlineDoc = join(' | ', types);
+
+	// `{ ... } | null` stays inline, like Prettier
+	if (shouldHugUnionType(node)) {
+		return inlineDoc;
+	}
+
 	const multilineDoc = [
 		'| ',
 		join(
@@ -6765,7 +6771,27 @@ function printTSTypeParameter(node, path, options, print) {
 }
 
 /**
- * Print TypeScript type parameter instantiation (<string, number>)
+ * Whether a type can stay against the brackets around it. Mirrors Prettier's
+ * `shouldHugType`.
+ * @param {AST.Node} node - The type node
+ * @returns {boolean}
+ */
+function shouldHugType(node) {
+	if (isSimpleType(node) || isObjectType(node)) {
+		return true;
+	}
+	if (node.type === 'TSUnionType') {
+		return shouldHugUnionType(/** @type {AST.TSUnionType} */ (node));
+	}
+	return false;
+}
+
+/**
+ * Print TypeScript type arguments (`<string, number>`) like Prettier's
+ * `printTypeParameters`. A lone argument that hugs (a keyword type, a type
+ * name without type arguments, an object type) stays inline with no group, so
+ * the brackets never break around it. Other lists break one argument per line,
+ * without a trailing comma.
  * @param {AST.TSTypeParameterInstantiation} node - The type parameter instantiation node
  * @param {AstPath<AST.TSTypeParameterInstantiation>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
@@ -6778,39 +6804,44 @@ function printTSTypeParameterInstantiation(node, path, options, print) {
 	}
 
 	const paramList = path.map(print, 'params');
+	const text = /** @type {string} */ (options.originalText);
 
-	// Hug a lone object-type argument against the brackets: Foo<{ ... }>
-	if (
+	// The type of an arrow function variable (`const f: Fn<A> = () => {}`)
+	// breaks its arguments like any other list, unless it's one object type.
+	const grandparent = /** @type {AST.Node | null} */ (path.getParentNode(1));
+	const identifier = /** @type {AST.Node | null} */ (path.getParentNode(2));
+	const declarator = /** @type {AST.Node | null} */ (path.getParentNode(3));
+	const isArrowFunctionVariable =
+		!(node.params.length === 1 && isObjectType(node.params[0])) &&
+		grandparent?.type === 'TSTypeAnnotation' &&
+		identifier?.type === 'Identifier' &&
+		identifier.typeAnnotation === grandparent &&
+		declarator?.type === 'VariableDeclarator' &&
+		declarator.init?.type === 'ArrowFunctionExpression';
+
+	const shouldInline =
+		!isArrowFunctionVariable &&
 		node.params.length === 1 &&
-		isObjectType(node.params[0]) &&
-		!hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (node.params[0]))
-	) {
-		return ['<', paramList[0], '>'];
+		shouldHugType(node.params[0]) &&
+		!node.params.some((param) => {
+			const { leadingComments = [], trailingComments = [] } =
+				/** @type {AST.NodeWithMaybeComments} */ (param);
+			const comments = [...leadingComments, ...trailingComments];
+			return (
+				comments.length > 0 &&
+				(comments.some((comment) => comment.type === 'Line') ||
+					hasNewline(
+						text,
+						/** @type {AST.CommentWithLocation} */ (comments[comments.length - 1]).end,
+					))
+			);
+		});
+
+	if (shouldInline) {
+		return ['<', join(', ', paramList), '>'];
 	}
 
-	// Check if any param has line breaks (e.g., contains object types)
-	const hasBreakingParam = paramList.some((param) => willBreak(param));
-
-	// If any param breaks, use the breaking version with proper indentation
-	if (hasBreakingParam) {
-		// Build breaking version: <\n  T,\n  U\n>
-		const breakingParts = [];
-		for (let i = 0; i < paramList.length; i++) {
-			if (i > 0) breakingParts.push(',', hardline);
-			breakingParts.push(paramList[i]);
-		}
-		return group(['<', indent([hardline, ...breakingParts]), hardline, '>']);
-	}
-
-	// Otherwise use group to allow natural breaking
-	/** @type {Doc[]} */
-	const parts = [];
-	for (let i = 0; i < paramList.length; i++) {
-		if (i > 0) parts.push(',', line);
-		parts.push(paramList[i]);
-	}
-
-	return group(['<', indent([softline, ...parts]), softline, '>']);
+	return group(['<', indent([softline, join([',', line], paramList)]), softline, '>']);
 }
 
 /**

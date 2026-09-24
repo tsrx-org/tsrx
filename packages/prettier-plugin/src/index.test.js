@@ -8080,6 +8080,77 @@ let y: abstract new () => Foo;`;
 		});
 	});
 
+	describe('type argument lists', () => {
+		it('keeps a lone simple type argument against its brackets', async () => {
+			const input = `const w = (a) => a as unknown as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbb>;
+function f(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbbbbbb> {}
+foo(bar as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbb>);
+function g() {
+  return value satisfies Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<string>;
+}
+const q = useMemo<Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>(() => compute(aaaaaaa, bbbbbbbbbb), []);`;
+			const expected = `const w = (a) =>
+  a as unknown as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbb>;
+function f(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbbbbbb> {}
+foo(
+  bar as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbb>,
+);
+function g() {
+  return value satisfies Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<string>;
+}
+const q = useMemo<Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>(
+  () => compute(aaaaaaa, bbbbbbbbbb),
+  [],
+);`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps a lone object type or a hugged union against its brackets', async () => {
+			const input = `let o: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<{ aaaaaaaaaa: string; bbbbbbbbbbbbbb: number }> = v;
+function h(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbb | null> {}`;
+			const expected = `let o: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<{
+  aaaaaaaaaa: string;
+  bbbbbbbbbbbbbb: number;
+}> = v;
+function h(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbb | null> {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks lists of several types, nested type arguments, and other unions', async () => {
+			const input = `let y: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, Cccc> = v;
+let z: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbb<Cccc>> = v;
+let u: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<"aaaaaa" | "bbbbbbb"> = v;`;
+			const expected = `let y: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  Cccc
+> = v;
+let z: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  Bbbbbbbbbbb<Cccc>
+> = v;
+let u: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  "aaaaaa" | "bbbbbbb"
+> = v;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a lone type argument in the type of an arrow function variable', async () => {
+			const input = `const fn: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbb> = () => {};`;
+			const expected = `const fn: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  Bbbbbbbbbbbbbbbbbbbb
+> = () => {};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a lone type argument with a line comment', async () => {
+			const source = `let k: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  // comment
+  string
+> = value;
+let m: Map<string /* key */, number> = new Map<string, number>();`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
 	// A formatter may never change what the source declares. Every modifier
 	// below is load-bearing: dropping it silently retypes or redefines the
 	// member, and the result still compiles, so nothing catches it downstream.
