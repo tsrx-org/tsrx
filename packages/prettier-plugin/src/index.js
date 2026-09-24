@@ -2974,19 +2974,31 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'TSPropertySignature':
-			nodeContent = printTSPropertySignature(node, path, options, print);
+			nodeContent = [
+				printTSPropertySignature(node, path, options, print),
+				printTypeMemberSemicolon(path, options),
+			];
 			break;
 
 		case 'TSMethodSignature':
-			nodeContent = printTSMethodSignature(node, path, options, print);
+			nodeContent = [
+				printTSMethodSignature(node, path, options, print),
+				printTypeMemberSemicolon(path, options),
+			];
 			break;
 
 		case 'TSCallSignatureDeclaration':
-			nodeContent = printTSCallSignatureDeclaration(node, path, options, print);
+			nodeContent = [
+				printTSCallSignatureDeclaration(node, path, options, print),
+				printTypeMemberSemicolon(path, options),
+			];
 			break;
 
 		case 'TSConstructSignatureDeclaration':
-			nodeContent = printTSConstructSignatureDeclaration(node, path, options, print);
+			nodeContent = [
+				printTSConstructSignatureDeclaration(node, path, options, print),
+				printTypeMemberSemicolon(path, options),
+			];
 			break;
 
 		case 'TSEnumMember':
@@ -3074,7 +3086,10 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'TSIndexSignature':
-			nodeContent = printTSIndexSignature(node, path, options, print);
+			nodeContent = [
+				printTSIndexSignature(node, path, options, print),
+				printTypeMemberSemicolon(path, options),
+			];
 			break;
 
 		case 'TSConstructorType':
@@ -5620,12 +5635,98 @@ function printTSInterfaceBody(node, path, options, print) {
 		return printEmptyMemberList(node);
 	}
 
-	const members = path.map(print, 'body');
+	// Each member prints its own `;` (see `printTypeMemberSemicolon`)
+	return group([
+		'{',
+		indent([hardline, printTypeMembers(node.body, path, 'body', options, print)]),
+		hardline,
+		'}',
+	]);
+}
 
-	// Add semicolons to all members
-	const membersWithSemicolons = members.map((member) => [member, semi(options)]);
+/**
+ * Print the members of an interface or type literal on their own lines, with
+ * a blank line where the source has one. Like Prettier's class body printer,
+ * a member that needs a `;` without semicolons gets it after its comments.
+ * @param {AST.Node[]} members - The members
+ * @param {AstPath} path - The path of the interface body or type literal
+ * @param {'body' | 'members'} key - The property that holds the members
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc[]}
+ */
+function printTypeMembers(members, path, key, options, print) {
+	const isInterface = path.node.type === 'TSInterfaceBody';
+	/** @type {Doc[]} */
+	const parts = [];
+	path.each((memberPath, index) => {
+		if (index > 0) {
+			parts.push(hardline);
+			if (shouldAddBlankLine(members[index - 1], members[index], options)) {
+				parts.push(hardline);
+			}
+		}
+		parts.push(print(memberPath));
+		if (
+			options.semi === false &&
+			isInterface &&
+			typeMemberNeedsSemicolon(members[index], members[index + 1])
+		) {
+			parts.push(';');
+		}
+	}, key);
+	return parts;
+}
 
-	return group(['{', indent([hardline, join(hardline, membersWithSemicolons)]), hardline, '}']);
+/**
+ * The `;` that ends an interface or type literal member. Like Prettier's
+ * `printClassMemberSemicolon`, it belongs to the member, so the member's
+ * trailing comments print after it. A type literal on one line has none after
+ * its last member, and without semicolons it keeps the others only on one line.
+ * @param {AstPath} path - The member's path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc}
+ */
+function printTypeMemberSemicolon(path, options) {
+	const parent = path.getParentNode();
+	if (parent?.type === 'TSInterfaceBody') {
+		return semi(options);
+	}
+	if (parent?.type !== 'TSTypeLiteral') {
+		return '';
+	}
+	if (path.isLast) {
+		return options.semi === false ? '' : ifBreak(';', '');
+	}
+	if (options.semi !== false || typeMemberNeedsSemicolon(path.node, path.next)) {
+		return ';';
+	}
+	return ifBreak('', ';');
+}
+
+/**
+ * Whether an interface or type literal member still needs its `;` without
+ * semicolons: a bare `static`, `get` or `set` property would become a modifier
+ * of the next member, and a property without a type would turn a call
+ * signature after it into a method (`a` then `(): void` reads as `a(): void`).
+ * Mirrors Prettier's `shouldPrintSemicolonAfterInterfaceProperty`.
+ * @param {AST.Node} node - The member
+ * @param {AST.Node | undefined} next - The member after it
+ * @returns {boolean}
+ */
+function typeMemberNeedsSemicolon(node, next) {
+	if (node.type !== 'TSPropertySignature') {
+		return false;
+	}
+	if (
+		!node.computed &&
+		!node.typeAnnotation &&
+		node.key.type === 'Identifier' &&
+		(node.key.name === 'static' || node.key.name === 'get' || node.key.name === 'set')
+	) {
+		return true;
+	}
+	return next?.type === 'TSCallSignatureDeclaration' && !node.typeAnnotation;
 }
 
 /**
@@ -5736,6 +5837,9 @@ function printTSEnumDeclaration(node, path, options, print) {
 			if (i < members.length - 1) {
 				membersWithCommas.push(',');
 				membersWithCommas.push(hardline);
+				if (shouldAddBlankLine(node.members[i], node.members[i + 1], options)) {
+					membersWithCommas.push(hardline);
+				}
 			}
 		}
 
@@ -6494,9 +6598,8 @@ function printObjectPattern(node, path, options, print) {
 				'typeAnnotation',
 			);
 
-			// Use softline for proper spacing - will become space when inline, line when breaking
-			// Format type members with semicolons between AND after the last member
-			const typeMemberDocs = join([';', line], typeMembers);
+			// Each member prints its own `;` (see `printTypeMemberSemicolon`)
+			const typeMemberDocs = join(line, typeMembers);
 
 			// Don't wrap in group - let the outer params group control breaking
 			const objectDoc = [
@@ -6508,7 +6611,7 @@ function printObjectPattern(node, path, options, print) {
 			const typeDoc =
 				typeMembers.length === 0
 					? '{}'
-					: ['{', indent([line, typeMemberDocs, ifBreak(';', '')]), line, '}'];
+					: ['{', indent([line, typeMemberDocs]), line, '}'];
 
 			// Return combined
 			return [objectDoc, ': ', typeDoc];
@@ -6984,17 +7087,12 @@ function printTSTypeLiteral(node, path, options, print) {
 		return printEmptyMemberList(node);
 	}
 
-	const members = path.map(print, 'members');
-	const inlineMembers = members.map((member, index) =>
-		index < members.length - 1 ? [member, ';'] : member,
-	);
-	const multilineMembers = members.map((member) => [member, ';']);
-
-	const inlineDoc = group(['{', indent([line, join(line, inlineMembers)]), line, '}']);
+	// Each member prints its own `;` (see `printTypeMemberSemicolon`)
+	const inlineDoc = group(['{', indent([line, join(line, path.map(print, 'members'))]), line, '}']);
 
 	const multilineDoc = group([
 		'{',
-		indent([hardline, join(hardline, multilineMembers)]),
+		indent([hardline, printTypeMembers(node.members, path, 'members', options, print)]),
 		hardline,
 		'}',
 	]);

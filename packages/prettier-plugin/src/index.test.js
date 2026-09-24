@@ -9293,6 +9293,128 @@ type U = {/* type */};`;
 		});
 	});
 
+	describe('interface, enum, and type literal members lay out like Prettier', () => {
+		it('keeps one blank line between members where the source has one', async () => {
+			const input = `interface I {
+  a: 1;
+
+
+  b(): void;
+
+  // c
+  [k: string]: unknown;
+}
+type T = {
+  a: 1;
+
+  // group
+
+  b: 2;
+};
+enum E {
+  A = 1, // one
+
+  // lead
+  B,
+
+  C,
+}
+let x: {
+  a: 1;
+
+  b: 2;
+} = null;`;
+			const expected = `interface I {
+  a: 1;
+
+  b(): void;
+
+  // c
+  [k: string]: unknown;
+}
+type T = {
+  a: 1;
+
+  // group
+
+  b: 2;
+};
+enum E {
+  A = 1, // one
+
+  // lead
+  B,
+
+  C,
+}
+let x: {
+  a: 1;
+
+  b: 2;
+} = null;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('prints a trailing comment after the semicolon of an interface or type literal member', async () => {
+			const expected = `interface I {
+  a: 1; /* note */
+  b(): void; // line
+  (x: number): string; /* call */
+  new (x: number): I; /* construct */
+  [k: string]: unknown; /* index */
+}
+type T = {
+  a: 1; /* note */
+  b: 2; // line
+};
+type U = { a: 1 /* c */; b: 2 };
+enum E {
+  A /* c */,
+  B, // d
+}`;
+			const result = await format(expected);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('prints the member semicolons of interfaces and type literals like Prettier without semicolons', async () => {
+			const input = `interface I {
+  a;
+  (): void;
+  get;
+  x: 1; /* note */
+  y: 2;
+}
+type T = {
+  a;
+  (): void;
+  get;
+  x: 1; /* note */
+  y: 2;
+};
+type U = { a: 1; b: 2 };
+function f({ a, b }: { a: string; b: number }) {}`;
+			const expected = `interface I {
+  a;
+  (): void
+  get;
+  x: 1 /* note */
+  y: 2
+}
+type T = {
+  a;
+  (): void
+  get;
+  x: 1 /* note */
+  y: 2
+}
+type U = { a: 1; b: 2 }
+function f({ a, b }: { a: string; b: number }) {}`;
+			const result = await format(input, { semi: false });
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	// Import aliases and export assignments are runtime bindings. Dropping one
 	// leaves every later reference dangling, and the file still compiles, so the
 	// break only surfaces when the module runs.
