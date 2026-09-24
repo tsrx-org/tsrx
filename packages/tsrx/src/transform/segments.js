@@ -47,6 +47,12 @@ const BLOCK_DECLARATION_TYPES = new Set([
 	'TSEnumDeclaration',
 	'TSModuleDeclaration',
 ]);
+// Superclass expressions whose walker case maps no span ending where they end.
+const UNMAPPED_SUPERCLASS_TYPES = new Set([
+	'CallExpression',
+	'ParenthesizedExpression',
+	'ArrayExpression',
+]);
 
 /**
  * @param {string} [hash]
@@ -1645,6 +1651,31 @@ export function convert_source_map_to_mappings(
 				}
 				if (node.superClass) {
 					visit(node.superClass);
+
+					// TypeScript reports base-class errors (TS2507 on a value that is
+					// not a constructor, TS2509, TS2510) on the whole superclass
+					// expression, and Volar drops a diagnostic whose end it cannot map.
+					// Identifiers and member expressions map their whole span, but no
+					// mapping reaches the end of a call (`createBase()`), a
+					// parenthesized expression (`(flag ? A : B)`), or an array literal.
+					const base =
+						node.superClass.type === 'ChainExpression'
+							? node.superClass.expression
+							: node.superClass;
+					if (
+						UNMAPPED_SUPERCLASS_TYPES.has(base.type) &&
+						has_location(node.superClass) &&
+						has_source_map_boundaries(node.superClass, src_to_gen_map)
+					) {
+						mappings.push(
+							get_mapping_from_node(
+								node.superClass,
+								src_to_gen_map,
+								gen_line_offsets,
+								mapping_data_verify_only,
+							),
+						);
+					}
 				}
 				if (node.superTypeParameters) {
 					visit(node.superTypeParameters);
@@ -2707,6 +2738,18 @@ function add_diagnostic_mappings(
 function has_exact_source_map_position(error, src_to_gen_map) {
 	const loc = error.loc?.start;
 	return !!loc && src_to_gen_map.has(`${loc.line}:${loc.column}`);
+}
+
+/**
+ * @param {AST.NodeWithLocation} node
+ * @param {Map<string, Array<{ line: number, column: number }>>} src_to_gen_map
+ */
+function has_source_map_boundaries(node, src_to_gen_map) {
+	const { start, end } = node.loc;
+	return (
+		src_to_gen_map.has(`${start.line}:${start.column}`) &&
+		src_to_gen_map.has(`${end.line}:${end.column}`)
+	);
 }
 
 /**

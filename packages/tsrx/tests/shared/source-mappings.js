@@ -1329,6 +1329,52 @@ export function optionalFn(declRequired: string, declMaybe?: string) {
 		});
 	});
 
+	describe(`[${name}] superclass expressions keep mappings`, () => {
+		/**
+		 * Verification mappings over exactly `base`, the superclass in `source`.
+		 * @param {string} source
+		 * @param {string} base
+		 */
+		const whole_span_mappings = (source, base) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const start = source.indexOf(`extends ${base}`) + 'extends '.length;
+			return result.mappings.filter(
+				(/** @type {CodeMapping} */ mapping) =>
+					mapping.sourceOffsets[0] === start &&
+					mapping.lengths[0] === base.length &&
+					mapping.data.verification &&
+					result.code
+						.slice(
+							mapping.generatedOffsets[0],
+							mapping.generatedOffsets[0] + mapping.generatedLengths[0],
+						)
+						.replace(/\s/g, '') === base.replace(/\s/g, ''),
+			);
+		};
+
+		it.each([
+			'createBase()',
+			'mixin(\n\tBase\n)',
+			'registry?.get()',
+			'(flag ? Base : Other)',
+			'(Base as unknown as {})',
+			'[]',
+		])('maps the whole superclass expression: %s', (base) => {
+			// TypeScript reports a non-constructor base (TS2507) on the whole
+			// expression, so an unmapped end let `extends createBase()` type-check clean.
+			expect(whole_span_mappings(`export class Model extends ${base} {}`, base)).toHaveLength(1);
+			expect(whole_span_mappings(`const Model = class extends ${base} {};`, base)).toHaveLength(1);
+		});
+
+		it.each(['Base', 'ns.Base', 'new Factory()'])(
+			'adds no second mapping for a base that already maps its whole span: %s',
+			(base) => {
+				expect(whole_span_mappings(`export class Model extends ${base} {}`, base)).toHaveLength(1);
+			},
+		);
+	});
+
 	describe(`[${name}] submodule import mappings`, () => {
 		it('maps imported, local, and source identifiers in imports from submodules', () => {
 			const source = `module server {
