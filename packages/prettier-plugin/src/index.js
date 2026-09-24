@@ -1169,7 +1169,7 @@ function needsParens(path, options) {
 			if (
 				typeof node.value === 'string' &&
 				parent.type === 'ExpressionStatement' &&
-				!(/** @type {{ directive?: string }} */ (parent).directive) &&
+				!isDirective(parent) &&
 				(grandparent?.type === 'Program' || grandparent?.type === 'BlockStatement')
 			) {
 				return true;
@@ -1179,6 +1179,118 @@ function needsParens(path, options) {
 	}
 
 	return nodeNeedsParens(node, key, parent, /** @type {AST.Node | null} */ (path.getParentNode(1)));
+}
+
+/**
+ * Whether a statement is a directive. The parser stores the directive's text,
+ * which is empty for `"";`, so this checks for a string, not a truthy one.
+ * @param {AST.Node | null} node
+ * @returns {boolean}
+ */
+function isDirective(node) {
+	return (
+		node?.type === 'ExpressionStatement' &&
+		typeof (/** @type {{ directive?: unknown }} */ (node).directive) === 'string'
+	);
+}
+
+/**
+ * Print a directive's string exactly as written, only swapping its quotes when
+ * neither kind appears inside, like Prettier's `printDirective`. A directive is
+ * its source text, not its value: `"use\x20strict"` enables nothing, while
+ * the unescaped `"use strict"` makes the function strict.
+ * @param {string} raw - The directive literal's source text
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {string}
+ */
+function printDirective(raw, options) {
+	const content = raw.slice(1, -1);
+	if (content.includes('"') || content.includes("'")) {
+		return raw;
+	}
+	const quote = options.singleQuote ? "'" : '"';
+	return quote + content + quote;
+}
+
+/** Nodes whose `body` is a list of statements. */
+const STATEMENT_LIST_PARENTS = new Set([
+	'Program',
+	'BlockStatement',
+	'StaticBlock',
+	'TSModuleBlock',
+	'JSXCodeBlock',
+]);
+
+/**
+ * Whether the statement at `path` needs a leading `;` when semicolons are
+ * omitted (`semi: false`), like Prettier's `shouldPrintLeadingSemicolon`. A
+ * statement that starts with `(`, `[`, `` ` ``, `+`, `-`, `/` or `<` would
+ * otherwise continue the one before it: `a\n(b)()` calls `a`.
+ * @param {AstPath} path - The path to the statement
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {string} [sourceText] - The statement's source, when `prettier-ignore`
+ *   prints it verbatim with parentheses that may differ from the printed ones
+ * @returns {boolean}
+ */
+function needsLeadingSemicolon(path, options, sourceText) {
+	const node = /** @type {AST.Node} */ (path.node);
+	const parent = /** @type {AST.Node | null} */ (path.getParentNode());
+	if (options.semi !== false || node.type !== 'ExpressionStatement' || !parent) {
+		return false;
+	}
+	const inStatementList =
+		(path.key === 'body' && STATEMENT_LIST_PARENTS.has(parent.type)) ||
+		(path.key === 'consequent' && parent.type === 'SwitchCase');
+	if (!inStatementList) {
+		return false;
+	}
+	if (sourceText !== undefined) {
+		return /^[([`/<+-]/.test(sourceText);
+	}
+	return path.call((expressionPath) => startsWithASIHazard(expressionPath, options), 'expression');
+}
+
+/**
+ * Whether an expression prints starting with a token that continues the
+ * previous line, following Prettier's `expressionStatementHasDanglingASIHazard`.
+ * @param {AstPath} path - The path to the expression
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {boolean}
+ */
+function startsWithASIHazard(path, options) {
+	const node = /** @type {AST.Node} */ (path.node);
+	switch (node.type) {
+		case 'ArrayExpression':
+		case 'ArrayPattern':
+		case 'TemplateLiteral':
+		case 'ParenthesizedExpression':
+		case 'JSXElement':
+		case 'JSXFragment':
+		// Prints its own parentheses outside a `for` head
+		case 'SequenceExpression':
+			return true;
+		case 'ArrowFunctionExpression':
+			if (!printsArrowParamWithoutParens(node, options)) {
+				return true;
+			}
+			break;
+		case 'UnaryExpression':
+			if (node.operator === '+' || node.operator === '-') {
+				return true;
+			}
+			break;
+		case 'Literal':
+			if ('regex' in node && node.regex) {
+				return true;
+			}
+			break;
+	}
+
+	if (getTypeCastParens(path, options) || needsParens(path, options)) {
+		return true;
+	}
+	const key = getLeftmostChildKey(node);
+	return key !== null && path.call((child) => startsWithASIHazard(child, options), key);
 }
 
 /**
@@ -1672,9 +1784,11 @@ function printDeclarationDecorators(node, path, options, print) {
  * @param {AST.Comment[]} comments - The comments, in source order
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {boolean | undefined} isInlineContext - Whether block comments stay on the line
+ * @param {boolean} [semicolonBeforeLast] - Print the statement's leading `;`
+ *   right before the last comment, a JSDoc cast that must touch its `(`
  * @returns {Doc[]}
  */
-function printLeadingComments(node, comments, options, isInlineContext) {
+function printLeadingComments(node, comments, options, isInlineContext, semicolonBeforeLast) {
 	/** @type {Doc[]} */
 	const parts = [];
 	for (let i = 0; i < comments.length; i++) {
@@ -1700,6 +1814,9 @@ function printLeadingComments(node, comments, options, isInlineContext) {
 				}
 			}
 		} else if (comment.type === 'Block') {
+			if (isLastComment && semicolonBeforeLast) {
+				parts.push(';');
+			}
 			parts.push('/*' + comment.value + '*/');
 
 			// Check if comment and node are on the same line (for inline JSDoc comments)
@@ -1849,16 +1966,23 @@ function printTsrxNode(node, path, options, print, args) {
 	const suppressLeadingComments = args && args.suppressLeadingComments;
 	// A cast's comments print between its parentheses, not ahead of the node
 	const typeCastParens = getTypeCastParens(path, options);
+	// Whether a `;` that starts the statement (see `needsLeadingSemicolon`)
+	// went out ahead of its comments
+	let leadingSemicolonPrinted = false;
 
 	// Handle leading comments
 	if (!suppressLeadingComments) {
+		const comments = typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []);
+		const lastComment = comments.at(-1);
+		// A JSDoc cast must stay right before the parenthesis it casts
+		leadingSemicolonPrinted = Boolean(
+			lastComment &&
+			isTypeCastComment(lastComment) &&
+			isCommentFollowedBySameLineParen(lastComment, options) &&
+			needsLeadingSemicolon(path, options),
+		);
 		parts.push(
-			...printLeadingComments(
-				node,
-				typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []),
-				options,
-				isInlineContext,
-			),
+			...printLeadingComments(node, comments, options, isInlineContext, leadingSemicolonPrinted),
 		);
 	}
 
@@ -1885,13 +2009,18 @@ function printTsrxNode(node, path, options, print, args) {
 		typeof ignoreStart === 'number' &&
 		typeof ignoreEnd === 'number'
 	) {
+		const ignoredText = options.originalText.slice(ignoreStart, ignoreEnd);
 		/** @type {Doc} */
-		let ignored = replaceEndOfLine(options.originalText.slice(ignoreStart, ignoreEnd));
+		let ignored = replaceEndOfLine(ignoredText);
 		// The node's span excludes its own parentheses, so put back any it had
 		if (typeCastParens) {
 			ignored = printTypeCastParens(commentNode, typeCastParens, ignored, options, args);
 		} else if (commentNode.metadata?.parenthesized && !args?.suppressOwnParens) {
 			ignored = ['(', ignored, ')'];
+		}
+		// The previous statement may have lost the `;` that ended it
+		if (!leadingSemicolonPrinted && needsLeadingSemicolon(path, options, ignoredText)) {
+			ignored = [';', ignored];
 		}
 		return finishTsrxNode(commentNode, parts, ignored);
 	}
@@ -1903,22 +2032,18 @@ function printTsrxNode(node, path, options, print, args) {
 		case 'Program': {
 			// Handle the body statements properly with whitespace preservation
 			const statements = [];
-			for (let i = 0; i < node.body.length; i++) {
-				const statement = path.call(print, 'body', i);
-				// If statement is an array, flatten it
-				if (Array.isArray(statement)) {
-					statements.push(statement);
-				} else {
-					statements.push(statement);
-				}
+			const printedIndexes = getPrintedStatementIndexes(node.body);
+			for (let n = 0; n < printedIndexes.length; n++) {
+				const i = printedIndexes[n];
+				statements.push(path.call(print, 'body', i));
 
 				// Add spacing between top-level statements based on original formatting
-				if (i < node.body.length - 1) {
+				if (n < printedIndexes.length - 1) {
 					const currentStmt = node.body[i];
-					const nextStmt = node.body[i + 1];
+					const nextStmt = node.body[printedIndexes[n + 1]];
 
 					// Only add spacing when explicitly needed
-					if (shouldAddBlankLine(currentStmt, nextStmt)) {
+					if (shouldAddBlankLine(currentStmt, nextStmt, options.originalText)) {
 						statements.push([line, line]); // blank line
 					} else {
 						statements.push(line); // single line break
@@ -2805,7 +2930,11 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'ExpressionStatement':
-			nodeContent = [path.call(print, 'expression'), semi(options)];
+			nodeContent = [
+				!leadingSemicolonPrinted && needsLeadingSemicolon(path, options) ? ';' : '',
+				path.call(print, 'expression'),
+				semi(options),
+			];
 			break;
 		case 'Identifier': {
 			// Simple case - just return the name directly like Prettier core
@@ -2843,6 +2972,8 @@ function printTsrxNode(node, path, options, print, args) {
 			} else if (typeof node.value === 'number' && typeof node_typed.raw === 'string') {
 				// Numeric literal: normalize, but never reprint from `value`.
 				nodeContent = formatNumericLiteral(node_typed.raw);
+			} else if (typeof node_typed.raw === 'string' && isDirective(path.getParentNode())) {
+				nodeContent = printDirective(node_typed.raw, options);
 			} else {
 				// String, boolean, or null literal
 				nodeContent = printStringLiteral(node, options);
@@ -2861,7 +2992,8 @@ function printTsrxNode(node, path, options, print, args) {
 		case 'TSModuleBlock':
 		case 'BlockStatement': {
 			// Apply the same block formatting pattern throughout TSRX.
-			if (!node.body || node.body.length === 0) {
+			const printedIndexes = getPrintedStatementIndexes(node.body ?? []);
+			if (printedIndexes.length === 0) {
 				// Handle innerComments for empty blocks
 				if (innerCommentParts.length > 0) {
 					const blockNode = /** @type {AST.BlockStatement} */ (node);
@@ -2953,16 +3085,16 @@ function printTsrxNode(node, path, options, print, args) {
 			// Process statements and handle spacing using shouldAddBlankLine
 			/** @type {Doc[]} */
 			const statements = [];
-			for (let i = 0; i < node.body.length; i++) {
-				const statement = path.call(print, 'body', i);
-				statements.push(statement);
+			for (let n = 0; n < printedIndexes.length; n++) {
+				const i = printedIndexes[n];
+				statements.push(path.call(print, 'body', i));
 
 				// Handle blank lines between statements
-				if (i < node.body.length - 1) {
+				if (n < printedIndexes.length - 1) {
 					const currentStmt = node.body[i];
-					const nextStmt = node.body[i + 1];
+					const nextStmt = node.body[printedIndexes[n + 1]];
 
-					if (shouldAddBlankLine(currentStmt, nextStmt)) {
+					if (shouldAddBlankLine(currentStmt, nextStmt, options.originalText)) {
 						statements.push(hardline, hardline); // Blank line = two hardlines
 					} else {
 						statements.push(hardline); // Normal line break
@@ -3441,11 +3573,18 @@ function printTsrxNode(node, path, options, print, args) {
 		}
 
 		case 'StaticBlock': {
+			const printedIndexes = getPrintedStatementIndexes(node.body ?? []);
 			nodeContent =
-				node.body && node.body.length > 0
+				printedIndexes.length > 0
 					? group([
 							'static {',
-							indent([hardline, join(hardline, path.map(print, 'body'))]),
+							indent([
+								hardline,
+								join(
+									hardline,
+									printedIndexes.map((i) => path.call(print, 'body', i)),
+								),
+							]),
 							hardline,
 							'}',
 						])
@@ -3850,6 +3989,25 @@ function printFunctionExpression(node, path, options, print) {
 }
 
 /**
+ * Whether an arrow function prints its single parameter without parentheses
+ * (`x => x`), which `arrowParens: "avoid"` allows only when nothing but the
+ * name is written: no type annotation, return type, or type parameters.
+ * @param {AST.ArrowFunctionExpression} node - The arrow function node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {boolean}
+ */
+function printsArrowParamWithoutParens(node, options) {
+	return (
+		options.arrowParens !== 'always' &&
+		node.params?.length === 1 &&
+		node.params[0].type === 'Identifier' &&
+		!node.params[0].typeAnnotation &&
+		!node.returnType &&
+		!node.typeParameters
+	);
+}
+
+/**
  * Print an arrow function expression
  * @param {AST.ArrowFunctionExpression} node - The arrow function node
  * @param {AstPath<AST.ArrowFunctionExpression>} path - The AST path
@@ -3876,17 +4034,7 @@ function printArrowFunction(node, path, options, print, args) {
 		}
 	}
 
-	// Handle single param without parens (when arrowParens !== 'always')
-	// Note: can't use single param syntax if there are type parameters or return type
-	if (
-		options.arrowParens !== 'always' &&
-		node.params &&
-		node.params.length === 1 &&
-		node.params[0].type === 'Identifier' &&
-		!node.params[0].typeAnnotation &&
-		!node.returnType &&
-		!node.typeParameters
-	) {
+	if (printsArrowParamWithoutParens(node, options)) {
 		parts.push(path.call(print, 'params', 0));
 	} else {
 		// Print parameters and return type as a single group
@@ -5708,6 +5856,10 @@ function printTaggedTemplateExpression(node, path, options, print) {
 	/** @type {Doc[]} */
 	const parts = [];
 	parts.push(path.call(print, 'tag'));
+	// `sql<Row>` types the result; without the arguments TypeScript infers them
+	if (node.typeArguments) {
+		parts.push(path.call(print, 'typeArguments'));
+	}
 	parts.push(path.call(print, 'quasi'));
 	return parts;
 }
@@ -6446,12 +6598,55 @@ function getBlankLinesBetweenNodes(currentNode, nextNode) {
 }
 
 /**
+ * The indexes of the statements a statement list prints. Like Prettier, it
+ * drops empty statements (a stray `;`, or the one semicolon-free code writes
+ * before a first statement that starts with `[`), unless a comment is on one.
+ * @param {AST.Node[]} statements
+ * @returns {number[]}
+ */
+function getPrintedStatementIndexes(statements) {
+	/** @type {number[]} */
+	const indexes = [];
+	statements.forEach((statement, index) => {
+		if (statement.type !== 'EmptyStatement' || hasComment(statement)) {
+			indexes.push(index);
+		}
+	});
+	return indexes;
+}
+
+/**
+ * Where a statement's content ends when its source ends with a `;`: before
+ * that `;` and the whitespace ahead of it, like Prettier's `__contentEnd`.
+ * Code without semicolons writes the one before `[`, `(` or `` ` `` at the
+ * start of the next statement's line (`a\n\n;[b].c()`), and that `;` still
+ * ends the previous statement. Comments that lead the next statement can sit
+ * between the content and the `;`, so the search starts before them.
+ * @param {AST.Node | AST.Comment} node - The statement
+ * @param {string} text - The original source
+ * @param {number} nextStart - Where the next statement or its first comment starts
+ * @returns {number | null} - The offset, or null without a final `;`
+ */
+function getContentEndBeforeSemicolon(node, text, nextStart) {
+	const { start, end } = /** @type {AST.NodeWithLocation} */ (node);
+	if (typeof end !== 'number' || text.charAt(end - 1) !== ';') {
+		return null;
+	}
+	let index = Math.min(end - 1, nextStart);
+	while (index > start && /\s/.test(text.charAt(index - 1))) {
+		index--;
+	}
+	return index;
+}
+
+/**
  * Determine if a blank line should be added between nodes
  * @param {AST.Node | AST.Comment} currentNode - Current node
  * @param {AST.Node | AST.Comment} nextNode - Next node
+ * @param {string} [text] - The original source, for statements in a statement list
  * @returns {boolean}
  */
-function shouldAddBlankLine(currentNode, nextNode) {
+function shouldAddBlankLine(currentNode, nextNode, text) {
 	// Simplified blank line logic:
 	// 1. Check if there was originally 1+ blank lines between nodes
 	// 2. If yes, preserve exactly 1 blank line (collapse multiple to one)
@@ -6475,7 +6670,21 @@ function shouldAddBlankLine(currentNode, nextNode) {
 	}
 
 	// Check if there was original whitespace between the nodes
-	const originalBlankLines = getBlankLinesBetweenNodes(sourceNode, targetNode);
+	let originalBlankLines = getBlankLinesBetweenNodes(sourceNode, targetNode);
+	// The statement ends with a `;` on the next one's line (`a\n\n;[b].c()`),
+	// after any comments that lead the next statement
+	const endsOnNextLine =
+		sourceNode === currentNode &&
+		currentNode.loc?.end.line !== undefined &&
+		currentNode.loc.end.line === nextNode.loc?.start.line;
+	if (text !== undefined && endsOnNextLine) {
+		const targetStart = /** @type {AST.NodeWithLocation} */ (targetNode).start;
+		const contentEnd = getContentEndBeforeSemicolon(currentNode, text, targetStart);
+		if (contentEnd !== null) {
+			const lineBreaks = text.slice(contentEnd, targetStart).split('\n').length - 1;
+			originalBlankLines = Math.max(originalBlankLines, lineBreaks - 1);
+		}
+	}
 
 	// Special case: Always add blank line after import declarations when followed by non-imports
 	// This is standard Prettier behavior for separating imports from code
@@ -8118,7 +8327,9 @@ function printJSXCodeBlock(node, path, options, print) {
 		parts.push(path.call(print, 'body', i));
 		if (i < node.body.length - 1) {
 			parts.push(
-				shouldAddBlankLine(node.body[i], node.body[i + 1]) ? [hardline, hardline] : hardline,
+				shouldAddBlankLine(node.body[i], node.body[i + 1], options.originalText)
+					? [hardline, hardline]
+					: hardline,
 			);
 		}
 	}
