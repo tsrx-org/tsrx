@@ -280,7 +280,7 @@ export function tsx_with_ts_locations(boundary_tokens = false, comments = undefi
 			// A dotted name (`namespace A.B { … }`) parses as nested declarations
 			// whose body is the next name part; print one qualified name instead
 			// of repeating the keyword (`namespace Anamespace B`).
-			let body = /** @type {typeof node | typeof node.body} */ (/** @type {unknown} */ (node.body));
+			let body = node.body;
 			while (body?.type === 'TSModuleDeclaration') {
 				context.write('.');
 				context.visit(body.id);

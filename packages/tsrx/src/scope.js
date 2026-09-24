@@ -12,7 +12,12 @@
  */
 
 import { is_reference } from './utils/is-reference.js';
-import { extract_identifiers, object, unwrap_pattern } from './utils/ast.js';
+import {
+	extract_identifiers,
+	is_submodule_declaration,
+	object,
+	unwrap_pattern,
+} from './utils/ast.js';
 import { walk } from 'zimmerframe';
 import { is_reserved } from './utils.js';
 import { error } from './errors.js';
@@ -129,8 +134,8 @@ export function create_scopes(ast, root, parent, error_options) {
 			next();
 		},
 
-		TSModuleDeclaration(node, { state, next }) {
-			const is_submodule = node.declare !== true && node.kind === 'module';
+		TSModuleDeclaration(node, { path, state, next }) {
+			const is_submodule = is_submodule_declaration(node, path);
 			if (is_submodule && node.id?.type === 'Identifier') {
 				state.scope.declare(node.id, 'normal', 'module', node);
 			}

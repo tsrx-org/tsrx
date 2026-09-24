@@ -267,6 +267,25 @@ export function is_inside_component(context_or_path, includes_functions = false)
 }
 
 /**
+ * Whether `node` is a submodule: a `module X { … }` declaration outside any
+ * `declare` block. TypeScript reads every other `module` declaration as a
+ * namespace. That includes the inner parts of a dotted name, since `module A.B`
+ * parses as `A` whose `body` is the declaration for `B`, and the parser sets
+ * `declare` only on the outermost part.
+ *
+ * @param {AST.Node} node
+ * @param {AST.Node[]} path the ancestors of `node`, nearest last
+ * @returns {node is AST.TSModuleDeclaration}
+ */
+export function is_submodule_declaration(node, path) {
+	if (node.type !== 'TSModuleDeclaration' || node.kind !== 'module' || node.declare) {
+		return false;
+	}
+	if (path.at(-1)?.type === 'TSModuleDeclaration') return false;
+	return !path.some((ancestor) => ancestor.type === 'TSModuleDeclaration' && ancestor.declare);
+}
+
+/**
  * Gets the left-most identifier of a member expression or identifier.
  * @param {AST.MemberExpression | AST.Identifier} expression
  * @returns {AST.Identifier | null}

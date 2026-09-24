@@ -89,6 +89,7 @@ export {
 	is_function_or_component_node as isFunctionOrComponentNode,
 	has_location,
 	is_inside_component as isInsideComponent,
+	is_submodule_declaration as isSubmoduleDeclaration,
 	is_template_directive as isTemplateDirective,
 	is_tsrx_render_output_node as isTsrxRenderOutputNode,
 	is_code_block_function_body as isCodeBlockFunctionBody,

@@ -667,10 +667,7 @@ export function TSRXPlugin(config) {
 						delete current_legacy.global;
 						current.metadata ??= { path: [] };
 						current.metadata.module_keyword = kind;
-						const body = /** @type {AST.TSModuleBlock | AST.TSModuleDeclaration} */ (
-							/** @type {unknown} */ (current.body)
-						);
-						current = body?.type === 'TSModuleDeclaration' ? body : null;
+						current = current.body?.type === 'TSModuleDeclaration' ? current.body : null;
 					}
 				}
 				return finished;

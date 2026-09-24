@@ -419,11 +419,12 @@ function lower_colliding_import(statement, hoisted_name) {
  * binding the checker can see through.
  *
  * @param {AST.TSModuleDeclaration} declaration
+ * @param {AST.TSModuleBlock} block the declaration's body
  * @param {Set<string>} outside_names
  * @param {string} block_name
  * @returns {AST.Node[]}
  */
-function lower_declaration(declaration, outside_names, block_name) {
+function lower_declaration(declaration, block, outside_names, block_name) {
 	/** @type {AST.Node[]} */
 	const hoisted_imports = [];
 	/** @type {AST.Node[]} */
@@ -432,7 +433,7 @@ function lower_declaration(declaration, outside_names, block_name) {
 	const rest = [];
 	let hoisted_index = 0;
 
-	for (const statement of declaration.body?.body ?? []) {
+	for (const statement of block.body) {
 		if (statement.type !== 'ImportDeclaration') {
 			rest.push(statement);
 			continue;
@@ -467,7 +468,7 @@ function lower_declaration(declaration, outside_names, block_name) {
 		id,
 		kind: 'namespace',
 		metadata: { ...declaration.metadata, module_keyword: 'namespace' },
-		body: { ...declaration.body, body: [...aliases, ...rest] },
+		body: { ...block, body: [...aliases, ...rest] },
 	});
 	return [...hoisted_imports, namespace];
 }
@@ -550,8 +551,11 @@ export function lower_server_module_for_types(ast, server_module) {
 	if (!Array.isArray(body)) return ast;
 	const declaration = body.find((node) => is_server_module_declaration(node, block_name));
 	// A body-less `module server;` only occurs mid-edit / in loose parses;
-	// leave it for TS to flag rather than fabricating an empty namespace.
-	if (declaration === undefined || !Array.isArray(declaration.body?.body)) return ast;
+	// leave it for TS to flag rather than fabricating an empty namespace. A
+	// dotted `module server.api` has the next name part as its body and is
+	// left as the namespace it parses as.
+	const block = declaration?.body;
+	if (declaration === undefined || block?.type !== 'TSModuleBlock') return ast;
 
 	const outside_names = collect_outside_identifier_names(ast, declaration);
 	// The lowered namespace claims the authored block name at module scope; a
@@ -561,7 +565,7 @@ export function lower_server_module_for_types(ast, server_module) {
 	const new_body = [];
 	for (const statement of body) {
 		if (statement === declaration) {
-			new_body.push(...lower_declaration(declaration, outside_names, block_name));
+			new_body.push(...lower_declaration(declaration, block, outside_names, block_name));
 		} else if (is_server_import(statement, import_specifier)) {
 			new_body.push(...lower_server_import(statement, block_name));
 		} else {

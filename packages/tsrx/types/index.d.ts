@@ -1366,7 +1366,12 @@ declare module 'estree' {
 		AcornTSNode<TSESTree.TSModuleDeclaration>,
 		'body' | 'global' | 'id'
 	> {
-		body: TSModuleBlock;
+		/**
+		 * The block, or for a dotted name the declaration of the next name part:
+		 * `module A.B` parses as `A` whose body is `B`. Missing for the shorthand
+		 * `declare module '<specifier>';`.
+		 */
+		body?: TSModuleBlock | TSModuleDeclaration;
 		/** A string literal for `declare module '<specifier>'`. */
 		id: AST.Identifier | AST.Literal;
 		metadata: BaseNodeMetaData & {
