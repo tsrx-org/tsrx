@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.12
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/language-server@0.4.11
+  - @tsrx/typescript-plugin@0.4.11
+
 ## 2.1.11
 
 ### Patch Changes

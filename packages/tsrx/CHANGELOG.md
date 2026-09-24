@@ -1,5 +1,32 @@
 # @tsrx/core
 
+## 0.3.3
+
+### Patch Changes
+
+- [#226](https://github.com/tsrx-org/tsrx/pull/226)
+  [`ca86115`](https://github.com/tsrx-org/tsrx/commit/ca86115f91e9aec052bff27809b7439fd6fa7dbd)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - `createScopes` now scopes a
+  `module` declaration as a namespace when it is inside a `declare` block or is an
+  inner part of a dotted name, as TypeScript does. Before,
+  `declare module A.B { … }` and `declare namespace A { module B { … } }` gave `B`
+  a `module` binding and a submodule scope, and two `module B` blocks in one
+  `declare namespace` failed with `'B' has already been declared`. The new
+  `isSubmoduleDeclaration(node, path)` export applies the same rule for compilers
+  that check submodules themselves. `TSModuleDeclaration.body` is now typed as
+  optional and as `TSModuleBlock | TSModuleDeclaration`, matching what the parser
+  produces for `declare module 'x';` and dotted names.
+
+- [#222](https://github.com/tsrx-org/tsrx/pull/222)
+  [`06a9c5c`](https://github.com/tsrx-org/tsrx/commit/06a9c5c699961c7ac1def5196229cc65704f358d)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - `tsrx-tsc` and the editor now
+  report errors on a class whose base is a call, a parenthesized expression, or an
+  array literal, such as `class Model extends createBase() {}` failing with TS2507
+  when `createBase()` returns a plain object. TypeScript reports these errors on
+  the whole superclass expression, but no mapping reached the end of those
+  expressions, so Volar dropped them and the class failed only when the module
+  ran.
+
 ## 0.3.2
 
 ### Patch Changes
