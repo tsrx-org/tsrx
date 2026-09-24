@@ -6539,11 +6539,12 @@ function shouldAddBlankLine(currentNode, nextNode) {
 
 	// Check if there was original whitespace between the nodes
 	let originalBlankLines = getBlankLinesBetweenNodes(sourceNode, targetNode);
-	// The statement ends with a `;` on the next one's line (`a\n\n;[b].c()`)
+	// The statement ends with a `;` on the next one's line (`a\n\n;[b].c()`),
+	// after any comments that lead the next statement
 	const endsOnNextLine =
 		sourceNode === currentNode &&
 		currentNode.loc?.end.line !== undefined &&
-		currentNode.loc.end.line === targetNode.loc?.start.line;
+		currentNode.loc.end.line === nextNode.loc?.start.line;
 	const contentEnd = endsOnNextLine ? getStatementContentEnd(currentNode) : null;
 	if (contentEnd) {
 		originalBlankLines = Math.max(

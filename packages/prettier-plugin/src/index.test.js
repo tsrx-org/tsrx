@@ -7665,6 +7665,7 @@ namespace Tools {
   ;[4].forEach(log)
 }
 export function App() @{
+  ;[0].forEach(log)
   const count = 1
   ;[count].forEach(log)
   <>
@@ -7696,6 +7697,17 @@ export function App() @{
 ;[1].forEach(log)
 log()
 
+;(first || second)()`);
+		});
+
+		it('keeps the blank line before a comment that leads a guarded statement', async () => {
+			await expectUnchanged(`const value = 1
+
+// note
+;[1].forEach(log)
+log()
+
+/* note */
 ;(first || second)()`);
 		});
 
