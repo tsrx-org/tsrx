@@ -5081,6 +5081,159 @@ const p: Point = { x: 1 }; // trailing`,
 	});
 });
 
+describe('comments in statement lists', () => {
+	// A block comment on the next statement's line leads that statement, so a
+	// JSDoc cast stays with the parentheses it casts. The semicolon-less form
+	// is what the formatter prints with `semi: false`.
+	it.each([
+		['a function body', 'function f() { a; /** @type {Foo} */ (x).y(); }'],
+		['a static block', 'class C { static { a; /** @type {Foo} */ (x).y(); } }'],
+		['a namespace', 'namespace N { a; /** @type {Foo} */ (x).y(); }'],
+		['a code block', 'function App() @{ const a = 1; /** @type {Foo} */ (x).y(); <div /> }'],
+		['a semicolon-less static block', 'class C { static { a\n;/** @type {Foo} */ (x).y() } }'],
+		['a semicolon-less namespace', 'namespace N { a\n;/** @type {Foo} */ (x).y() }'],
+		[
+			'a semicolon-less code block',
+			'function App() @{ const a = 1\n;/** @type {Foo} */ (x).y()\n<div /> }',
+		],
+	])('leads the next statement with a block comment on its line in %s', (_, source) => {
+		const ast = parseModule(source, 'App.tsrx');
+		const block = /** @type {AST.Node & { body: AST.Node[] }} */ (
+			find_first(
+				ast,
+				(node) =>
+					node.type === 'BlockStatement' ||
+					node.type === 'StaticBlock' ||
+					node.type === 'TSModuleBlock' ||
+					node.type === 'JSXCodeBlock',
+			)
+		);
+		const [previous, cast] = block.body;
+
+		expect(source.slice(cast.start, cast.end)).toMatch(/^\(x\)\.y\(\);?$/);
+		expect(previous.trailingComments).toBeUndefined();
+		expect(cast.leadingComments?.map((comment) => comment.value)).toEqual(['* @type {Foo} ']);
+	});
+
+	it('leads the render output of a code block with a block comment on its line', () => {
+		const ast = parseModule('function App() @{ const a = 1; /* output */ <div /> }', 'App.tsrx');
+		const block = find_first(ast, (node) => node.type === 'JSXCodeBlock');
+		assert_type(block, 'JSXCodeBlock');
+
+		expect(block.body[0].trailingComments).toBeUndefined();
+		expect(block.render?.leadingComments?.map((comment) => comment.value)).toEqual([' output ']);
+	});
+
+	it('keeps comments after the last statement inside a static block or namespace', () => {
+		const ast = parseModule(
+			`class C {
+	static {
+		a; // a
+		// after a
+	}
+}
+namespace N {
+	a; // a
+	// after a
+}`,
+			'App.ts',
+		);
+		const staticBlock = find_first(ast, (node) => node.type === 'StaticBlock');
+		const moduleBlock = find_first(ast, (node) => node.type === 'TSModuleBlock');
+		assert_type(staticBlock, 'StaticBlock');
+		assert_type(moduleBlock, 'TSModuleBlock');
+
+		for (const block of [staticBlock, moduleBlock]) {
+			expect(block.body[0].trailingComments?.map((comment) => comment.value)).toEqual([
+				' a',
+				' after a',
+			]);
+		}
+	});
+
+	it('keeps the comments of an empty static block or namespace as inner comments', () => {
+		const ast = parseModule(
+			`class C {
+	static {
+		// static
+	}
+	x = 1;
+}
+namespace N {
+	// namespace
+}`,
+			'App.ts',
+		);
+		const staticBlock = find_first(ast, (node) => node.type === 'StaticBlock');
+		const moduleBlock = find_first(ast, (node) => node.type === 'TSModuleBlock');
+
+		expect(staticBlock?.innerComments?.map((comment) => comment.value)).toEqual([' static']);
+		expect(moduleBlock?.innerComments?.map((comment) => comment.value)).toEqual([' namespace']);
+	});
+});
+
+describe('comments in member lists', () => {
+	/**
+	 * @param {AST.Node | undefined} node
+	 * @returns {AST.Node[]}
+	 */
+	function members(node) {
+		if (node?.type === 'TSInterfaceDeclaration') return node.body.body;
+		if (node?.type === 'TSEnumDeclaration') return node.members;
+		if (node?.type === 'TSTypeAliasDeclaration') {
+			return as_type(node.typeAnnotation, 'TSTypeLiteral').members;
+		}
+		throw new Error(`No member list in ${node?.type}`);
+	}
+
+	// A JSDoc tag on the next member's line documents that member, not the one
+	// before it.
+	it.each([
+		['an interface', 'interface I { a: 1; /** @deprecated */ b: 2; }'],
+		['an enum', 'enum E { A, /** @deprecated */ B }'],
+		['a type literal', 'type T = { a: 1; /** @deprecated */ b: 2; };'],
+	])('leads the next member with a block comment on its line in %s', (_, source) => {
+		const [previous, next] = members(parseModule(source, 'App.ts').body[0]);
+
+		expect(previous.trailingComments).toBeUndefined();
+		expect(next.leadingComments?.map((comment) => comment.value)).toEqual(['* @deprecated ']);
+	});
+
+	it.each([
+		['an interface', 'interface I {\n\ta: 1; // a\n\t// after a\n}'],
+		['an enum', 'enum E {\n\tA, // a\n\t// after a\n}'],
+		['a type literal', 'type T = {\n\ta: 1; // a\n\t// after a\n};'],
+	])('keeps comments after the last member inside %s', (_, source) => {
+		const [last] = members(parseModule(source, 'App.ts').body[0]);
+
+		expect(last.trailingComments?.map((comment) => comment.value)).toEqual([' a', ' after a']);
+	});
+
+	it('keeps the comments of an empty interface, enum, or type literal as inner comments', () => {
+		const ast = parseModule(
+			`interface I {
+	// interface
+}
+enum E {
+	// enum
+}
+type T = {
+	// type
+};`,
+			'App.ts',
+		);
+		const iface = as_type(ast.body[0], 'TSInterfaceDeclaration');
+		const enumeration = as_type(ast.body[1], 'TSEnumDeclaration');
+		const alias = as_type(ast.body[2], 'TSTypeAliasDeclaration');
+
+		expect(iface.body.innerComments?.map((comment) => comment.value)).toEqual([' interface']);
+		// The enum's name is not a member, so it doesn't take the body's comments.
+		expect(enumeration.id.trailingComments).toBeUndefined();
+		expect(enumeration.innerComments?.map((comment) => comment.value)).toEqual([' enum']);
+		expect(alias.typeAnnotation.innerComments?.map((comment) => comment.value)).toEqual([' type']);
+	});
+});
+
 describe('keywordTokens parse option', () => {
 	it('collects async/function keyword tokens from the lexer', () => {
 		const source = `async function load() {}\nfunction plain() {}`;
@@ -5962,34 +6115,37 @@ describe('comments around empty statements', () => {
 		expect(values(statement.consequent.trailingComments)).toEqual([' c']);
 	});
 
-	// Until static blocks and namespace bodies keep a comment after their last
-	// statement (#286), their empty statements keep it inside the block.
-	it('keeps the comments of empty statements inside static blocks and namespaces', () => {
-		/**
-		 * @param {AST.Node[]} statements
-		 * @returns {string[]}
-		 */
-		const trailing = (statements) =>
-			statements.flatMap((statement) => values(statement.trailingComments) ?? []);
-
+	// Static blocks and namespace bodies are statement lists like a function
+	// body (#286), so their empty statements take no comments either.
+	it('gives the comments of empty statements in static blocks and namespaces to their neighbors', () => {
 		const class_ast = parseModule(
-			'class A {\n\tstatic {\n\t\ta; ; // c\n\t}\n\tb() {}\n}',
+			'class A {\n\tstatic {\n\t\ta; ; // c\n\t}\n\tstatic {\n\t\t; // d\n\t}\n\tb() {}\n}',
 			'App.tsrx',
 		);
-		const [static_block, method] = firstStatement(class_ast, 'ClassDeclaration').body.body;
+		const [static_block, empty_block, method] = firstStatement(class_ast, 'ClassDeclaration').body
+			.body;
 		assert_type(static_block, 'StaticBlock');
+		assert_type(empty_block, 'StaticBlock');
+		const [a, empty] = static_block.body;
 
-		expect(trailing(static_block.body)).toEqual([' c']);
-		expect(static_block.trailingComments).toBeUndefined();
+		expect(values(a.trailingComments)).toEqual([' c']);
+		expect(empty.trailingComments).toBeUndefined();
+		expect(values(empty_block.innerComments)).toEqual([' d']);
+		expect(empty_block.body[0].trailingComments).toBeUndefined();
 		expect(method.leadingComments).toBeUndefined();
 
-		const namespace_ast = parseModule('namespace N {\n\ta; ; // c\n}\nb;', 'App.tsrx');
-		const declaration = firstStatement(namespace_ast, 'TSModuleDeclaration');
-		assert_type(declaration.body, 'TSModuleBlock');
+		const namespace_ast = parseModule(
+			'namespace N {\n\ta; ; // c\n}\nnamespace M {\n\t; // d\n}\nb;',
+			'App.tsrx',
+		);
+		const namespace = as_type(namespace_ast.body[0], 'TSModuleDeclaration');
+		const empty_namespace = as_type(namespace_ast.body[1], 'TSModuleDeclaration');
+		const block = as_type(namespace.body, 'TSModuleBlock');
 
-		expect(trailing(declaration.body.body)).toEqual([' c']);
-		expect(declaration.trailingComments).toBeUndefined();
-		expect(namespace_ast.body[1].leadingComments).toBeUndefined();
+		expect(values(block.body[0].trailingComments)).toEqual([' c']);
+		expect(block.body[1].trailingComments).toBeUndefined();
+		expect(values(as_type(empty_namespace.body, 'TSModuleBlock').innerComments)).toEqual([' d']);
+		expect(namespace_ast.body[2].leadingComments).toBeUndefined();
 	});
 });
 

@@ -8077,6 +8077,13 @@ log()
 				'switch (x) {\n  case 1:\n    a; ; // c\n    b;\n}',
 				'switch (x) {\n  case 1:\n    a; // c\n    b;\n}',
 			],
+			[
+				'class C {\n  static {\n    a; ; // c\n  }\n}',
+				'class C {\n  static {\n    a; // c\n  }\n}',
+			],
+			['class C {\n  static {\n    ; // c\n  }\n}', 'class C {\n  static {\n    // c\n  }\n}'],
+			['namespace N {\n  a; ; // c\n  b;\n}', 'namespace N {\n  a; // c\n  b;\n}'],
+			['namespace N {\n  ; // c\n}', 'namespace N {\n  // c\n}'],
 		])('formats %j like Prettier', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
 		});
@@ -8832,6 +8839,219 @@ function fail(error) {
   );
 }
 class Store extends (/** @type {Base} */ (new Base())) {}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
+	// Static blocks, namespaces, and code blocks are statement lists like a
+	// function body, so their comments stay where a function body keeps them.
+	describe('comments in static blocks, namespaces, and code blocks', () => {
+		it('keeps a JSDoc cast with the statement it starts', async () => {
+			const input = `function f() { a; /** @type {Foo} */ (x).y(); }
+class C { static { a; /** @type {Foo} */ (x).y(); } }
+namespace N { a; /** @type {Foo} */ (x).y(); }
+export function App() @{
+  const a = 1; /** @type {Foo} */ (x).y();
+  <div />
+}`;
+			const expected = `function f() {
+  a;
+  /** @type {Foo} */ (x).y();
+}
+class C {
+  static {
+    a;
+    /** @type {Foo} */ (x).y();
+  }
+}
+namespace N {
+  a;
+  /** @type {Foo} */ (x).y();
+}
+export function App() @{
+  const a = 1;
+  /** @type {Foo} */ (x).y();
+  <div />
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		// The `;` guard prints before the cast, on the cast's line, so the next
+		// pass must still read the cast as the start of the guarded statement.
+		it('keeps a JSDoc cast with the statement it starts without semicolons', async () => {
+			const input = `class C { static { a; /** @type {Foo} */ (x).y(); } }
+namespace N { a; /** @type {Foo} */ (x).y(); }
+export function App() @{
+  const a = 1; /** @type {Foo} */ (x).y();
+  <div />
+}`;
+			const expected = `class C {
+  static {
+    a
+    ;/** @type {Foo} */ (x).y()
+  }
+}
+namespace N {
+  a
+  ;/** @type {Foo} */ (x).y()
+}
+export function App() @{
+  const a = 1
+  ;/** @type {Foo} */ (x).y()
+  <div />
+}`;
+			const result = await format(input, { semi: false });
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps a block comment with the render output on its line', async () => {
+			const input = `export function App() @{
+  const a = 1; /* the output */ <div />
+}`;
+			const expected = `export function App() @{
+  const a = 1;
+  /* the output */ <div />
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps comments after the last statement inside the block', async () => {
+			const source = `class C {
+  static {
+    a; // a
+    // after a
+  }
+  x = 1;
+}
+namespace N {
+  a; // a
+  // after a
+}
+declare module "m" {
+  export const a: 1;
+  // after a
+}`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('keeps the comments of an empty static block or namespace inside it', async () => {
+			const input = `class C {
+  static {
+    // one
+
+    /* two */
+  }
+  static { /* only */ }
+}
+namespace N {
+  // only
+}
+declare global {
+  // only
+}`;
+			const expected = `class C {
+  static {
+    // one
+
+    /* two */
+  }
+  static {
+    /* only */
+  }
+}
+namespace N {
+  // only
+}
+declare global {
+  // only
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps blank lines between the statements of a static block', async () => {
+			const source = `class C {
+  static {
+    a;
+
+    // b
+
+    b;
+  }
+}`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+	});
+
+	// A JSDoc tag documents the member it leads, so moving it to the member
+	// before changes what the tag applies to.
+	describe('comments in interfaces, enums, and type literals', () => {
+		it('keeps a JSDoc comment with the member it starts', async () => {
+			const input = `interface I { a: 1; /** @deprecated */ b: 2; }
+enum E { A, /** @deprecated */ B }
+type T = { a: 1; /** @deprecated */ b: 2 };`;
+			const expected = `interface I {
+  a: 1;
+  /** @deprecated */ b: 2;
+}
+enum E {
+  A,
+  /** @deprecated */ B,
+}
+type T = { a: 1; /** @deprecated */ b: 2 };`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps comments after the last member inside the body', async () => {
+			const source = `interface I {
+  a: 1; // a
+  // after a
+}
+enum E {
+  A, // a
+  // after a
+}
+type T = {
+  a: 1; // a
+  // after a
+};`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('keeps the comments of an empty interface, enum, or type literal inside it', async () => {
+			const input = `interface I {
+  // interface
+}
+enum E {
+  // enum
+}
+type T = {
+  // type
+};
+interface J { /* interface */ }
+enum F { /* enum */ }
+type U = { /* type */ };`;
+			const expected = `interface I {
+  // interface
+}
+enum E {
+  // enum
+}
+type T = {
+  // type
+};
+interface J {
+  /* interface */
+}
+enum F {/* enum */}
+type U = {/* type */};`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
