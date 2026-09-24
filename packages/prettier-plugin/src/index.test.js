@@ -3724,6 +3724,29 @@ foo(
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('keeps blank lines and comments around @case bodies', async () => {
+			const expected = `function App() @{
+  <div>
+    @switch (x) {
+      // before case
+      @case 1: {
+        const a = 1;
+
+        <span>{a}</span>
+      } // after case
+
+      /* before default */
+      @default: {
+        <b />
+      }
+    }
+  </div>
+}`;
+
+			const result = await format(expected);
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should not add an extra new line above a comment inside objects and in between properties', async () => {
 			const expected = `let obj = {
   ['hey']: function () {

@@ -6086,24 +6086,93 @@ function printJSXSwitchCase(node, path, options, print, index) {
 		? ['@case ', path.call(print, 'cases', index, 'test'), ':']
 		: '@default:';
 	const consequents = node.consequent || [];
-	const printedConsequents = [];
-
-	for (let i = 0; i < consequents.length; i++) {
-		const child = consequents[i];
-		if (!child || child.type === 'EmptyStatement') {
-			continue;
-		}
-		printedConsequents.push(
-			path.call((casePath) => casePath.call(print, 'consequent', i), 'cases', index),
-		);
-	}
+	const printedIndexes = getPrintedStatementIndexes(consequents);
 
 	const bodyDoc =
-		printedConsequents.length > 0
-			? [indent([hardline, join(hardline, printedConsequents)]), hardline]
+		printedIndexes.length > 0
+			? [
+					indent([
+						hardline,
+						printSwitchCaseStatements(consequents, printedIndexes, options, (i) =>
+							path.call((casePath) => casePath.call(print, 'consequent', i), 'cases', index),
+						),
+					]),
+					hardline,
+				]
 			: hardline;
 
-	return [header, ' {', bodyDoc, '}'];
+	// The case doesn't go through `print`, so it prints its own comments
+	return [
+		...printLeadingComments(node, node.leadingComments ?? [], options, false, false),
+		header,
+		' {',
+		bodyDoc,
+		'}',
+		...printSwitchCaseTrailingComments(node, options),
+	];
+}
+
+/**
+ * Print the statements of a switch case on their own lines, with a blank line
+ * where the source has one, like a block's statements
+ * @param {AST.Node[]} consequents - The case's statements
+ * @param {number[]} printedIndexes - The indexes of the ones that print
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {(index: number) => Doc} printAt - Prints the statement at an index
+ * @returns {Doc[]}
+ */
+function printSwitchCaseStatements(consequents, printedIndexes, options, printAt) {
+	/** @type {Doc[]} */
+	const statements = [];
+	printedIndexes.forEach((index, n) => {
+		if (n > 0) {
+			statements.push(hardline);
+			if (shouldAddBlankLine(consequents[printedIndexes[n - 1]], consequents[index], options)) {
+				statements.push(hardline);
+			}
+		}
+		statements.push(printAt(index));
+	});
+	return statements;
+}
+
+/**
+ * Print a switch case's trailing comments like Prettier's
+ * `printTrailingComment`: a comment on the case's last line stays there, and
+ * one on a later line keeps its own line.
+ * @param {AST.SwitchCase} node - The switch case
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc[]}
+ */
+function printSwitchCaseTrailingComments(node, options) {
+	const text = /** @type {string} */ (options.originalText);
+	/** @type {Doc[]} */
+	const parts = [];
+	/** @type {{ isBlock: boolean, hasLineSuffix: boolean } | null} */
+	let previous = null;
+	for (const comment of node.trailingComments ?? []) {
+		const start = /** @type {AST.NodeWithLocation} */ (comment).start;
+		const isBlock = comment.type === 'Block';
+		const commentDoc = isBlock ? '/*' + comment.value + '*/' : '//' + comment.value;
+		if (
+			(previous?.hasLineSuffix && !previous.isBlock) ||
+			hasNewline(text, start, { backwards: true })
+		) {
+			// Keep one blank line when the line before the comment is empty, not a
+			// line holding a `;` that isn't printed
+			parts.push(
+				lineSuffix([hardline, isPreviousLineEmpty(text, start) ? hardline : '', commentDoc]),
+			);
+			previous = { isBlock, hasLineSuffix: true };
+		} else if (!isBlock || previous?.hasLineSuffix) {
+			parts.push(lineSuffix([' ', commentDoc]), breakParent);
+			previous = { isBlock, hasLineSuffix: true };
+		} else {
+			parts.push(' ', commentDoc);
+			previous = { isBlock, hasLineSuffix: false };
+		}
+	}
+	return parts;
 }
 
 /**
@@ -6148,50 +6217,19 @@ function printSwitchCase(node, path, options, print) {
 	if (singleBlock) {
 		parts.push(' ', path.call(print, 'consequent', printedIndexes[0]));
 	} else if (printedIndexes.length > 0) {
-		// Separate the statements like a block does
-		/** @type {Doc[]} */
-		const statements = [];
-		printedIndexes.forEach((index, n) => {
-			if (n > 0) {
-				statements.push(hardline);
-				if (shouldAddBlankLine(consequents[printedIndexes[n - 1]], consequents[index], options)) {
-					statements.push(hardline);
-				}
-			}
-			statements.push(path.call(print, 'consequent', index));
-		});
-		parts.push(indent([hardline, statements]));
+		parts.push(
+			indent([
+				hardline,
+				printSwitchCaseStatements(consequents, printedIndexes, options, (index) =>
+					path.call(print, 'consequent', index),
+				),
+			]),
+		);
 	}
 
-	if (node.trailingComments && node.trailingComments.length > 0) {
-		// Like Prettier's `printTrailingComment`, a comment on the case's last
-		// line stays there, and one on a later line keeps its own line
-		/** @type {{ isBlock: boolean, hasLineSuffix: boolean } | null} */
-		let previous = null;
-		for (const comment of node.trailingComments) {
-			const start = /** @type {AST.NodeWithLocation} */ (comment).start;
-			const isBlock = comment.type === 'Block';
-			const commentDoc = isBlock ? '/*' + comment.value + '*/' : '//' + comment.value;
-			if (
-				(previous?.hasLineSuffix && !previous.isBlock) ||
-				hasNewline(text, start, { backwards: true })
-			) {
-				// Keep one blank line when the line before the comment is empty, not
-				// a line holding a `;` that isn't printed
-				parts.push(
-					lineSuffix([hardline, isPreviousLineEmpty(text, start) ? hardline : '', commentDoc]),
-				);
-				previous = { isBlock, hasLineSuffix: true };
-			} else if (!isBlock || previous?.hasLineSuffix) {
-				parts.push(lineSuffix([' ', commentDoc]), breakParent);
-				previous = { isBlock, hasLineSuffix: true };
-			} else {
-				parts.push(' ', commentDoc);
-				previous = { isBlock, hasLineSuffix: false };
-			}
-		}
-		delete node.trailingComments;
-	}
+	// The case prints its trailing comments itself, not `finishTsrxNode`
+	parts.push(...printSwitchCaseTrailingComments(node, options));
+	delete node.trailingComments;
 
 	return parts;
 }
