@@ -4605,35 +4605,33 @@ function printForOfStatement(node, path, options, print, directive = false) {
  * @param {AstPath<AST.ForStatement>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
+ * @returns {Doc}
  */
 function printForStatement(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = [];
-	parts.push('for (');
-
-	// Handle init part
-	if (node.init) {
-		parts.push(path.call(print, 'init'));
-	}
-	parts.push(';');
-
-	// Handle test part
-	if (node.test) {
-		parts.push(' ');
-		parts.push(path.call(print, 'test'));
-	}
-	parts.push(';');
-
-	// Handle update part
-	if (node.update) {
-		parts.push(' ');
-		parts.push(path.call(print, 'update'));
+	const body = printClause(node.body, path.call(print, 'body'));
+	if (!node.init && !node.test && !node.update) {
+		return group(['for (;;)', body]);
 	}
 
-	parts.push(')', printClause(node.body, path.call(print, 'body')));
-
-	return parts;
+	// Like Prettier, a header that doesn't fit puts each clause on its own
+	// line, and an empty clause still gets its line (`for (let i = 0; ;)`)
+	return group([
+		'for (',
+		group([
+			indent([
+				softline,
+				node.init ? path.call(print, 'init') : '',
+				';',
+				line,
+				node.test ? path.call(print, 'test') : '',
+				';',
+				node.update ? [line, path.call(print, 'update')] : '',
+			]),
+			softline,
+		]),
+		')',
+		body,
+	]);
 }
 
 /**

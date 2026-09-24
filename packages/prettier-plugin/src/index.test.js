@@ -3886,6 +3886,60 @@ foo(
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('puts each clause of a long for header on its own line', async () => {
+			const input = `for (let index = 0, length = items.length; index < length && !found; index += step) {
+  visit(items[index]);
+}
+label: for (let someLongVariableName = 0; someLongVariableName < limit; someLongVariableName++) {}
+function App() @{
+  <ul>
+    @for (let someLongVariableName = 0; someLongVariableName < limit; someLongVariableName++) {
+      <li />
+    }
+  </ul>
+}`;
+			const expected = `for (
+  let index = 0, length = items.length;
+  index < length && !found;
+  index += step
+) {
+  visit(items[index]);
+}
+label: for (
+  let someLongVariableName = 0;
+  someLongVariableName < limit;
+  someLongVariableName++
+) {}
+function App() @{
+  <ul>
+    @for (
+      let someLongVariableName = 0;
+      someLongVariableName < limit;
+      someLongVariableName++
+    ) {
+      <li />
+    }
+  </ul>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('prints the empty clauses of a for header like Prettier', async () => {
+			const input = `for (;;) {}
+for (; i < n;) {}
+for (;; i++) {}
+for (let i = 0;;) {}
+for (let i = 0; i < n;) {}`;
+			const expected = `for (;;) {}
+for (; i < n;) {}
+for (; ; i++) {}
+for (let i = 0; ;) {}
+for (let i = 0; i < n;) {}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should correctly render attributes in template', async () => {
 			const input = `export function App() {
   <div>
