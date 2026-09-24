@@ -15,6 +15,7 @@ import { is_reference } from './utils/is-reference.js';
 import {
 	extract_identifiers,
 	is_submodule_declaration,
+	is_transparent_expression_wrapper,
 	object,
 	unwrap_pattern,
 } from './utils/ast.js';
@@ -85,7 +86,8 @@ export function create_scopes(ast, root, parent, error_options) {
 				// TSTypeAnnotation, TSInterfaceDeclaration etc - these are normally already filtered out,
 				// but for the migration they aren't, so we need to filter them out here
 				// TODO -> once migration script is gone we can remove this check
-				!parent.type.startsWith('TS')
+				// `value as T`, `value!`, and `value satisfies T` still read `value`.
+				(!parent.type.startsWith('TS') || is_transparent_expression_wrapper(parent, node))
 			) {
 				references.push([state.scope, { node, path: path.slice() }]);
 			}

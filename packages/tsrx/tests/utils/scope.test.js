@@ -89,3 +89,45 @@ describe('createScopes module declarations', () => {
 		expect(submodule_names('namespace A { module B.C { const x = 1; } }')).toEqual(['B']);
 	});
 });
+
+describe('createScopes references', () => {
+	/**
+	 * The parent node type of every read of the module-level binding `name`.
+	 *
+	 * @param {string} source
+	 * @param {string} name
+	 */
+	function reference_parents(source, name) {
+		const ast = parseModule(source, 'App.tsrx');
+		const { scope } = createScopes(ast, new ScopeRoot(), null, {
+			filename: 'App.tsrx',
+			collect: false,
+			errors: [],
+		});
+		const binding = scope.get(name);
+		return (binding?.references ?? [])
+			.filter(({ node }) => node !== binding?.node)
+			.map(({ path }) => path.at(-1)?.type);
+	}
+
+	it('records a value read through `as`, `!`, `satisfies`, and instantiation', () => {
+		expect(
+			reference_parents(
+				'const value = { a: 1 };\nuse(value as object);\nuse(value!);\nuse(value satisfies object);',
+				'value',
+			),
+		).toEqual(['TSAsExpression', 'TSNonNullExpression', 'TSSatisfiesExpression']);
+		expect(reference_parents('function make<T>() {}\nconst made = make<string>;', 'make')).toEqual([
+			'TSInstantiationExpression',
+		]);
+	});
+
+	it('does not record type positions as references', () => {
+		expect(
+			reference_parents(
+				'const value = { a: 1 };\ntype Value = typeof value;\nlet copy: typeof value;',
+				'value',
+			),
+		).toEqual([]);
+	});
+});
