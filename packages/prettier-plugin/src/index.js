@@ -1507,6 +1507,35 @@ function isNextLineEmptyAfterIndex(text, startIndex) {
 }
 
 /**
+ * Check if the line before the one containing `startIndex` is empty, like
+ * Prettier's `isPreviousLineEmpty`
+ * @param {string} text - Source text
+ * @param {number} startIndex - Position to start from
+ * @returns {boolean}
+ */
+function isPreviousLineEmpty(text, startIndex) {
+	let index = skipSpaces(text, startIndex - 1, { backwards: true });
+	index = skipNewline(text, index, { backwards: true });
+	index = skipSpaces(text, index, { backwards: true });
+	return index !== skipNewline(text, index, { backwards: true });
+}
+
+/**
+ * Check if a comment ends its line and the next line is empty, as Prettier
+ * checks after a leading comment
+ * @param {string} text - Source text
+ * @param {AST.Comment} comment - The comment
+ * @returns {boolean}
+ */
+function isLineAfterCommentEmpty(text, comment) {
+	const index = skipNewline(
+		text,
+		skipSpaces(text, /** @type {AST.NodeWithLocation} */ (comment).end),
+	);
+	return index !== false && hasNewline(text, index);
+}
+
+/**
  * Check if a function has a rest parameter
  * @param {AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction} node - The function node
  * @returns {boolean}
@@ -1732,6 +1761,7 @@ function printDeclarationDecorators(node, path, options, print) {
  * @returns {Doc[]}
  */
 function printLeadingComments(node, comments, options, isInlineContext, semicolonBeforeLast) {
+	const text = /** @type {string} */ (options.originalText);
 	/** @type {Doc[]} */
 	const parts = [];
 	for (let i = 0; i < comments.length; i++) {
@@ -1743,18 +1773,11 @@ function printLeadingComments(node, comments, options, isInlineContext, semicolo
 			parts.push('//' + comment.value);
 			parts.push(hardline);
 
-			// Check if there should be blank lines between this comment and the next
-			if (nextComment) {
-				const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-				if (blankLinesBetween > 0) {
-					parts.push(hardline);
-				}
-			} else if (isLastComment && node.type !== 'JSXText') {
-				// Preserve a blank line between the last comment and the node if it existed
-				const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
-				if (blankLinesBetween > 0) {
-					parts.push(hardline);
-				}
+			// Preserve a blank line before the next comment or the node. Like
+			// Prettier, only the line right after the comment counts, so a line
+			// holding a `;` that isn't printed is not a blank line.
+			if ((nextComment || node.type !== 'JSXText') && isLineAfterCommentEmpty(text, comment)) {
+				parts.push(hardline);
 			}
 		} else if (comment.type === 'Block') {
 			if (isLastComment && semicolonBeforeLast) {
@@ -1772,18 +1795,9 @@ function printLeadingComments(node, comments, options, isInlineContext, semicolo
 			if (!isInlineContext && !shouldKeepOnSameLine) {
 				parts.push(hardline);
 
-				// Check if there should be blank lines between this comment and the next
-				if (nextComment) {
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
-				} else if (isLastComment) {
-					// Preserve a blank line between the last comment and the node if it existed
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, node);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
+				// Preserve a blank line before the next comment or the node
+				if (isLineAfterCommentEmpty(text, comment)) {
+					parts.push(hardline);
 				}
 			} else {
 				parts.push(' ');
@@ -1830,19 +1844,21 @@ function printTypeCastParens(node, typeCastParens, nodeContent, options, args) {
  * @param {AST.Node} node - The AST node
  * @param {Doc[]} parts - Leading-comment parts already collected for the node
  * @param {Doc[] | Doc} nodeContent - The printed body of the node
+ * @param {TsrxFormatOptions} options - Prettier options
  * @returns {Doc[] | Doc}
  */
-function finishTsrxNode(node, parts, nodeContent) {
+function finishTsrxNode(node, parts, nodeContent, options) {
 	// Handle trailing comments
 	if (node.trailingComments) {
+		const text = /** @type {string} */ (options.originalText);
 		const trailingParts = [];
-		let previousComment = null;
 
 		for (let i = 0; i < node.trailingComments.length; i++) {
 			const comment = node.trailingComments[i];
-			const isInlineComment = Boolean(
-				node.loc && comment.loc && node.loc.end.line === comment.loc.start.line,
-			);
+			const commentStart = /** @type {AST.NodeWithLocation} */ (comment).start;
+			// Like Prettier, a comment stays on the line it shares with code, even
+			// a `;` that isn't printed
+			const isInlineComment = !hasNewline(text, commentStart, { backwards: true });
 
 			const commentDoc =
 				comment.type === 'Line' ? '//' + comment.value : '/*' + comment.value + '*/';
@@ -1858,18 +1874,13 @@ function finishTsrxNode(node, parts, nodeContent) {
 				const refs = [];
 				refs.push(hardline);
 
-				const blankLinesBetween = previousComment
-					? getBlankLinesBetweenNodes(previousComment, comment)
-					: getBlankLinesBetweenNodes(node, comment);
-				if (blankLinesBetween > 0) {
+				if (isPreviousLineEmpty(text, commentStart)) {
 					refs.push(hardline);
 				}
 
 				refs.push(commentDoc);
 				trailingParts.push(lineSuffix(refs));
 			}
-
-			previousComment = comment;
 		}
 
 		if (trailingParts.length > 0) {
@@ -1965,7 +1976,7 @@ function printTsrxNode(node, path, options, print, args) {
 		if (!leadingSemicolonPrinted && needsLeadingSemicolon(path, options, ignoredText)) {
 			ignored = [';', ignored];
 		}
-		return finishTsrxNode(commentNode, parts, ignored);
+		return finishTsrxNode(commentNode, parts, ignored, options);
 	}
 
 	/** @type {Doc[] | Doc} */
@@ -1986,7 +1997,7 @@ function printTsrxNode(node, path, options, print, args) {
 					const nextStmt = node.body[printedIndexes[n + 1]];
 
 					// Only add spacing when explicitly needed
-					if (shouldAddBlankLine(currentStmt, nextStmt, options.originalText)) {
+					if (shouldAddBlankLine(currentStmt, nextStmt, options)) {
 						statements.push([line, line]); // blank line
 					} else {
 						statements.push(line); // single line break
@@ -2638,7 +2649,7 @@ function printTsrxNode(node, path, options, print, args) {
 					const currentStmt = node.body[i];
 					const nextStmt = node.body[printedIndexes[n + 1]];
 
-					if (shouldAddBlankLine(currentStmt, nextStmt, options.originalText)) {
+					if (shouldAddBlankLine(currentStmt, nextStmt, options)) {
 						statements.push(hardline, hardline); // Blank line = two hardlines
 					} else {
 						statements.push(hardline); // Normal line break
@@ -3205,7 +3216,7 @@ function printTsrxNode(node, path, options, print, args) {
 		nodeContent = ['(', nodeContent, ')'];
 	}
 
-	return finishTsrxNode(/** @type {AST.Node} */ (node), parts, nodeContent);
+	return finishTsrxNode(/** @type {AST.Node} */ (node), parts, nodeContent, options);
 }
 
 /**
@@ -4919,7 +4930,7 @@ function printClassBody(node, path, options, print) {
 			// Check if we should add a blank line between members
 			const prevNode = node.body[i - 1];
 			const currNode = node.body[i];
-			if (shouldAddBlankLine(prevNode, currNode)) {
+			if (shouldAddBlankLine(prevNode, currNode, options)) {
 				contentParts.push(line);
 			}
 		}
@@ -5951,25 +5962,21 @@ function printSwitchCase(node, path, options, print) {
 
 	let trailingDoc = null;
 	if (node.trailingComments && node.trailingComments.length > 0) {
+		const text = /** @type {string} */ (options.originalText);
 		/** @type {Doc[]} */
 		const commentDocs = [];
-		/** @type {AST.Node | AST.Comment} */
-		let previousNode =
-			referencedConsequents.length > 0
-				? referencedConsequents[referencedConsequents.length - 1]
-				: node;
 
 		for (let i = 0; i < node.trailingComments.length; i++) {
 			const comment = node.trailingComments[i];
-			const blankLines = previousNode ? getBlankLinesBetweenNodes(previousNode, comment) : 0;
 			commentDocs.push(hardline);
-			for (let j = 0; j < blankLines; j++) {
+			// Like Prettier, keep one blank line when the line before the comment
+			// is empty, not a line holding a `;` that isn't printed
+			if (isPreviousLineEmpty(text, /** @type {AST.NodeWithLocation} */ (comment).start)) {
 				commentDocs.push(hardline);
 			}
 			const commentDoc =
 				comment.type === 'Line' ? ['//', comment.value] : ['/*', comment.value, '*/'];
 			commentDocs.push(commentDoc);
-			previousNode = comment;
 		}
 
 		trailingDoc = commentDocs;
@@ -6254,60 +6261,38 @@ function getContentEndBeforeSemicolon(node, text, nextStart) {
 }
 
 /**
- * Determine if a blank line should be added between nodes
+ * Determine if a blank line should be added between statements or class members
  * @param {AST.Node | AST.Comment} currentNode - Current node
  * @param {AST.Node | AST.Comment} nextNode - Next node
- * @param {string} [text] - The original source, for statements in a statement list
+ * @param {TsrxFormatOptions} options - Prettier options
  * @returns {boolean}
  */
-function shouldAddBlankLine(currentNode, nextNode, text) {
-	// Simplified blank line logic:
-	// 1. Check if there was originally 1+ blank lines between nodes
-	// 2. If yes, preserve exactly 1 blank line (collapse multiple to one)
-	// 3. Only exception: add blank line after imports when followed by non-imports
-	//    (this is standard Prettier behavior)
-
-	// Determine the source node for whitespace checking
-	// If currentNode has trailing comments, use the last one
-	let sourceNode = currentNode;
-	const currentTrailing = /** @type {AST.Node} */ (currentNode).trailingComments;
-	if (currentTrailing && currentTrailing.length > 0) {
-		sourceNode = currentTrailing[currentTrailing.length - 1];
-	}
-
-	// If nextNode has leading comments, check whitespace between source node and first comment
-	// Otherwise check whitespace between source node and next node
-	let targetNode = nextNode;
-	const nextLeading = /** @type {AST.Node} */ (nextNode).leadingComments;
-	if (nextLeading && nextLeading.length > 0) {
-		targetNode = nextLeading[0];
-	}
-
-	// Check if there was original whitespace between the nodes
-	let originalBlankLines = getBlankLinesBetweenNodes(sourceNode, targetNode);
-	// The statement ends with a `;` on the next one's line (`a\n\n;[b].c()`),
-	// after any comments that lead the next statement
-	const endsOnNextLine =
-		sourceNode === currentNode &&
-		currentNode.loc?.end.line !== undefined &&
-		currentNode.loc.end.line === nextNode.loc?.start.line;
-	if (text !== undefined && endsOnNextLine) {
-		const targetStart = /** @type {AST.NodeWithLocation} */ (targetNode).start;
-		const contentEnd = getContentEndBeforeSemicolon(currentNode, text, targetStart);
-		if (contentEnd !== null) {
-			const lineBreaks = text.slice(contentEnd, targetStart).split('\n').length - 1;
-			originalBlankLines = Math.max(originalBlankLines, lineBreaks - 1);
-		}
-	}
-
-	// Special case: Always add blank line after import declarations when followed by non-imports
-	// This is standard Prettier behavior for separating imports from code
+function shouldAddBlankLine(currentNode, nextNode, options) {
+	// Always set imports apart from the code after them
 	if (currentNode.type === 'ImportDeclaration' && nextNode.type !== 'ImportDeclaration') {
 		return true;
 	}
 
-	// Default behavior: preserve blank line if one or more existed originally
-	return originalBlankLines > 0;
+	const text = /** @type {string} */ (options.originalText);
+	// Like Prettier's `isNextLineEmpty`, only the line right after the node
+	// counts, so a line holding a `;` that isn't printed is not a blank line
+	const currentTrailing = /** @type {AST.Node} */ (currentNode).trailingComments;
+	if (currentTrailing && currentTrailing.length > 0) {
+		const lastTrailing = /** @type {AST.NodeWithLocation} */ (currentTrailing.at(-1));
+		return isNextLineEmptyAfterIndex(text, lastTrailing.end);
+	}
+
+	// Measure from the content before a final `;` as well as from the `;`,
+	// which can end the statement on a later line (`a\n\n;[b].c()`) after any
+	// comments that lead the next statement
+	const { end } = /** @type {AST.NodeWithLocation} */ (currentNode);
+	const nextLeading = /** @type {AST.Node} */ (nextNode).leadingComments;
+	const nextStart = /** @type {AST.NodeWithLocation} */ (nextLeading?.[0] ?? nextNode).start;
+	const contentEnd = getContentEndBeforeSemicolon(currentNode, text, nextStart) ?? end;
+	return (
+		isNextLineEmptyAfterIndex(text, contentEnd) ||
+		(contentEnd !== end && isNextLineEmptyAfterIndex(text, end))
+	);
 }
 
 /**
@@ -8067,9 +8052,13 @@ function collectElementBodyCommentDocs(node, openingNode, closingNode) {
  * at the children indent.
  * @param {AST.Comment[] | null | undefined} commentList
  * @param {any} [previousNode]
+ * @param {string} [text] - The original source, for comments after statements.
+ *   Like Prettier's trailing comments, a blank line is kept only when the line
+ *   right before the comment is empty, so a line holding a `;` that isn't
+ *   printed doesn't count.
  * @returns {Doc[]}
  */
-function printElementBodyComments(commentList, previousNode = null) {
+function printElementBodyComments(commentList, previousNode = null, text) {
 	const comments = commentList ?? [];
 	if (comments.length === 0) {
 		return [];
@@ -8081,7 +8070,12 @@ function printElementBodyComments(commentList, previousNode = null) {
 	for (let i = 0; i < comments.length; i++) {
 		parts.push(hardline);
 		// Preserve a blank line before this comment if one existed in source.
-		if (prev && getBlankLinesBetweenNodes(prev, comments[i]) > 0) {
+		if (
+			prev &&
+			(text === undefined
+				? getBlankLinesBetweenNodes(prev, comments[i]) > 0
+				: isPreviousLineEmpty(text, /** @type {AST.NodeWithLocation} */ (comments[i]).start))
+		) {
 			parts.push(hardline);
 		}
 		parts.push(
@@ -8109,7 +8103,7 @@ function printJSXCodeBlock(node, path, options, print) {
 		parts.push(path.call(print, 'body', i));
 		if (i < node.body.length - 1) {
 			parts.push(
-				shouldAddBlankLine(node.body[i], node.body[i + 1], options.originalText)
+				shouldAddBlankLine(node.body[i], node.body[i + 1], options)
 					? [hardline, hardline]
 					: hardline,
 			);
@@ -8118,26 +8112,20 @@ function printJSXCodeBlock(node, path, options, print) {
 	if (node.render) {
 		if (node.body.length > 0) {
 			// Preserve a blank line between the last setup statement and the render
-			// output (measured to the render's leading comment, if any).
+			// output, as between setup statements
 			const last = node.body[node.body.length - 1];
-			const renderStart =
-				/** @type {AST.NodeWithMaybeComments} */ (node.render).leadingComments?.[0] ?? node.render;
-			parts.push(
-				getBlankLinesBetweenNodes(last, renderStart) > 0 ? [hardline, hardline] : hardline,
-			);
+			parts.push(shouldAddBlankLine(last, node.render, options) ? [hardline, hardline] : hardline);
 		}
 		parts.push(path.call(print, 'render'));
 	}
 	// Trailing comments after the last statement/render inside the block.
-	const innerCommentDocs = printElementBodyComments(node.innerComments);
-	if (innerCommentDocs.length > 0) {
-		const lastNode = node.render ?? node.body[node.body.length - 1];
-		const firstComment = (node.innerComments ?? [])[0];
-		if (lastNode && firstComment && getBlankLinesBetweenNodes(lastNode, firstComment) > 0) {
-			parts.push(hardline);
-		}
-		parts.push(...innerCommentDocs);
-	}
+	parts.push(
+		...printElementBodyComments(
+			node.innerComments,
+			node.render ?? node.body[node.body.length - 1],
+			/** @type {string} */ (options.originalText),
+		),
+	);
 	if (parts.length === 0) {
 		return '@{}';
 	}

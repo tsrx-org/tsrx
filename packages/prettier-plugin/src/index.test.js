@@ -8102,6 +8102,74 @@ log()
 		});
 	});
 
+	// A line that holds only an empty statement prints as nothing, not as a
+	// blank line. Like Prettier, a blank line is kept only when the line right
+	// after a statement or leading comment, or right before a trailing
+	// comment, is empty.
+	describe('lines with only a semicolon', () => {
+		it.each([
+			['a();\n;\nb();', 'a();\nb();'],
+			['a();\n;;\n;\nb();', 'a();\nb();'],
+			['a();\n;\n\nb();', 'a();\nb();'],
+			['a();\n\n;\nb();', 'a();\n\nb();'],
+			['a(); // c\n;\nb();', 'a(); // c\nb();'],
+			['a();\n; // c\nb();', 'a(); // c\nb();'],
+			['a();\n// c\n;\nb();', 'a();\n// c\nb();'],
+			['a();\n;\n// c\nb();', 'a();\n// c\nb();'],
+			['a();\n// c\n;\n// d\nb();', 'a();\n// c\n// d\nb();'],
+			['a();\n/* c */\n;\nb();', 'a();\n/* c */\nb();'],
+			['a();\n;\n// c', 'a();\n// c'],
+			['a();\n;\n\n// c', 'a();\n\n// c'],
+			['function f() {\n  a();\n  ;\n  b();\n}', 'function f() {\n  a();\n  b();\n}'],
+			['function f() {\n  a();\n  ;\n  // c\n}', 'function f() {\n  a();\n  // c\n}'],
+			[
+				'class A {\n  static {\n    a();\n    ;\n    b();\n  }\n}',
+				'class A {\n  static {\n    a();\n    b();\n  }\n}',
+			],
+			['namespace N {\n  a();\n  ;\n  b();\n}', 'namespace N {\n  a();\n  b();\n}'],
+			[
+				'class A {\n  first() {\n    return 1;\n  }\n  ;\n  second() {\n    return 2;\n  }\n}',
+				'class A {\n  first() {\n    return 1;\n  }\n  second() {\n    return 2;\n  }\n}',
+			],
+			[
+				'switch (x) {\n  case 1:\n    a();\n    ;\n    // c\n}',
+				'switch (x) {\n  case 1:\n    a();\n  // c\n}',
+			],
+			[
+				'switch (x) {\n  case 1:\n    a();\n\n\n    // c\n}',
+				'switch (x) {\n  case 1:\n    a();\n\n  // c\n}',
+			],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['a()\n;\n\nb()', 'a()\n\nb()'],
+			['a\n;\n;[b].c()', 'a\n;[b].c()'],
+		])('formats %j like Prettier with semi: false', async (source, expected) => {
+			expect(await format(source, { semi: false })).toBeWithNewline(expected);
+		});
+
+		it.each([
+			[
+				'function App() @{\n  a();\n  ;\n  b();\n  <div />\n}',
+				'function App() @{\n  a();\n  b();\n  <div />\n}',
+			],
+			['function App() @{\n  a();\n  ;\n  <div />\n}', 'function App() @{\n  a();\n  <div />\n}'],
+			[
+				'function App() @{\n  a();\n  // c\n  ;\n  <div />\n}',
+				'function App() @{\n  a();\n  // c\n  <div />\n}',
+			],
+			['function App() @{\n  <div />\n  ;\n  // c\n}', 'function App() @{\n  <div />\n  // c\n}'],
+			[
+				'function App() @{\n  <div />\n\n  // c\n  ;\n  // d\n}',
+				'function App() @{\n  <div />\n\n  // c\n  // d\n}',
+			],
+		])('formats %j in a code block', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+	});
+
 	describe('comment-only files', () => {
 		it.each(['// only', '// a\n\n// b', '/* block */', '/**\n * License\n */'])(
 			'keeps %j',
