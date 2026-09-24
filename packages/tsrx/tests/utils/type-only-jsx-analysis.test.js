@@ -202,6 +202,57 @@ const REF_SPREAD_OUTPUTS = [
 	['runtime, bound in place', false, IN_PLACE_PLATFORM],
 ];
 
+/**
+ * Generator positions whose lowering wraps an authored `yield` in a generated
+ * closure: a host ref/spread's setup binding, or a directive's IIFE.
+ * @type {Array<[string, string]>}
+ */
+const GENERATOR_POSITIONS = [
+	[
+		'ternary arm of a return',
+		'return props.show ? <text ref={props.nodeRef} {...props.rest} data-label={yield 1} /> : null;',
+	],
+	[
+		'logical operand of a return',
+		'return props.show || <text ref={props.nodeRef} {...props.rest} data-label={yield 1} />;',
+	],
+	[
+		'declarator init',
+		'const label = <text ref={props.nodeRef} {...props.rest} data-label={yield 1} />;\n\treturn label;',
+	],
+	[
+		'@switch case',
+		'return <svg>{@switch (props.rows.length) { @case 1: { <text data-label={yield 1} /> } }}</svg>;',
+	],
+	[
+		'@if branch with setup statements',
+		'return <svg>{@if (props.show) { const label: string = yield 1; <text data-label={label} /> }}</svg>;',
+	],
+	[
+		'host ref/spread inside a @switch case',
+		'return <svg>{@switch (props.rows.length) { @case 1: { <g>{props.show ? <text ref={props.nodeRef} {...props.rest} data-label={yield 1} /> : null}</g> } }}</svg>;',
+	],
+];
+
+/**
+ * @param {string} body
+ * @returns {string}
+ */
+function generator_module(body) {
+	return (
+		REF_SPREAD_PROPS_TYPE +
+		`export function* chart(props: Props): Generator<number, unknown, string> {\n\t${body}\n}\n`
+	);
+}
+
+/**
+ * @param {string} code
+ * @returns {ts.SourceFile}
+ */
+function parse_generated(code) {
+	return ts.createSourceFile('Chart.tsx', code, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TSX);
+}
+
 describe('type-only JSX analysis', () => {
 	it('keeps multiple scoped style blocks analyzable and compiles them as one scope', () => {
 		const result = compile_source(SPLIT_STYLE_SOURCE);
@@ -413,4 +464,113 @@ describe('type-only JSX analysis', () => {
 			}
 		},
 	);
+
+	describe('generated closures in a generator (#246)', () => {
+		it.each(REF_SPREAD_OUTPUTS)(
+			'keeps an authored yield inside a generator in every position (%s)',
+			(_output, type_only, platform) => {
+				const root = mkdtempSync(join(tmpdir(), 'tsrx-generator-'));
+				try {
+					const files = GENERATOR_POSITIONS.map(([name, body], index) => {
+						const compiled = compile_source(generator_module(body), type_only, platform);
+						expect(compiled.errors, name).toEqual([]);
+						expect(compiled.code, name).toContain('yield* (function* () {');
+						const file = join(root, `Chart${index}.tsx`);
+						writeFileSync(file, compiled.code);
+						return { name, file };
+					});
+
+					const program = ts.createProgram({
+						rootNames: files.map(({ file }) => file),
+						options: {
+							jsx: ts.JsxEmit.Preserve,
+							module: ts.ModuleKind.ESNext,
+							moduleResolution: ts.ModuleResolutionKind.Bundler,
+							noEmit: true,
+							skipLibCheck: true,
+							strict: true,
+							target: ts.ScriptTarget.ESNext,
+						},
+					});
+					// TS1163: a `yield` outside a generator body. TS7057: a `yield`
+					// result that the annotated generator's `next` type no longer
+					// reaches.
+					const yield_errors = ts
+						.getPreEmitDiagnostics(program)
+						.filter((diagnostic) => diagnostic.code === 1163 || diagnostic.code === 7057)
+						.map((diagnostic) => {
+							const position = files.find(({ file }) => file === diagnostic.file?.fileName);
+							return `${position?.name}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')}`;
+						});
+					expect(yield_errors).toEqual([]);
+				} finally {
+					rmSync(root, { recursive: true, force: true });
+				}
+			},
+		);
+
+		it.each(REF_SPREAD_OUTPUTS)(
+			'passes this and arguments on to the generated generator (%s)',
+			(_output, type_only, platform) => {
+				const element = '<text ref={props.nodeRef} {...props.rest} data-label={yield VALUE} />';
+				const this_source =
+					REF_SPREAD_PROPS_TYPE +
+					'export class Chart {\n' +
+					'\tlabel = 1;\n' +
+					`\t*render(props: Props) {\n\t\treturn props.show ? ${element.replace('VALUE', 'this.label')} : null;\n\t}\n` +
+					'}\n';
+				const arguments_source = generator_module(
+					`return props.show ? ${element.replace('VALUE', 'arguments.length')} : null;`,
+				);
+
+				const with_this = compile_source(this_source, type_only, platform);
+				const with_arguments = compile_source(arguments_source, type_only, platform);
+				expect(with_this.errors).toEqual([]);
+				expect(with_arguments.errors).toEqual([]);
+				// The type-only print keeps the direct call, which TypeScript types the
+				// delegated `yield` results from; nothing runs it.
+				expect(with_this.code).toMatch(type_only ? /\}\)\(\)/ : /\}\)\.call\(this\)/);
+				expect(with_arguments.code).toMatch(
+					type_only ? /\}\)\(\)/ : /\}\)\.apply\(this, arguments\)/,
+				);
+			},
+		);
+
+		it('delegates to a closure made both async and a generator without awaiting it', () => {
+			const source = generator_module(
+				'return props.show ? <text ref={props.nodeRef} {...props.rest} data-label={yield await props.rows[0]} /> : null;',
+			)
+				.replace('export function* chart', 'export async function* chart')
+				.replace('Generator<', 'AsyncGenerator<');
+			const compiled = compile_source(source, false, IN_PLACE_PLATFORM);
+			expect(compiled.errors).toEqual([]);
+			expect(compiled.code).toContain('? yield* (async function* () {');
+			expect(compiled.code).not.toContain('await (');
+		});
+
+		it('reports super in a closure that becomes a generator at the authored super', () => {
+			const source =
+				REF_SPREAD_PROPS_TYPE +
+				'class Base { get label() { return 1; } }\n' +
+				'export class Chart extends Base {\n' +
+				'\t*render(props: Props) {\n' +
+				'\t\treturn props.show ? <text ref={props.nodeRef} {...props.rest} data-label={yield super.label} /> : null;\n' +
+				'\t}\n' +
+				'}\n';
+			const compiled = compile_source(source, true);
+			expect(compiled.errors.map((error) => [error.message, error.pos])).toEqual([
+				[expect.stringContaining('does not support `super` here'), source.indexOf('super.label')],
+			]);
+		});
+
+		it('reports a yield in a @for body at the authored yield', () => {
+			const source = generator_module(
+				'return <svg>{@for (const row of props.rows) { <text data-label={yield row} /> }}</svg>;',
+			);
+			const compiled = compile_source(source, true);
+			expect(compiled.errors.map((error) => [error.message, error.pos])).toEqual([
+				[expect.stringContaining('does not support `yield` here'), source.indexOf('yield row')],
+			]);
+		});
+	});
 });

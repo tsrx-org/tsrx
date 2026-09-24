@@ -21,6 +21,10 @@ import {
 	TernarySpreadRefApp,
 	expression_spread_ref_nodes,
 } from '@tsrx/core/test-harness/runtime/expression-spread-ref-components.tsrx';
+import {
+	GeneratorSpreadRefApp,
+	generator_spread_ref_nodes,
+} from '@tsrx/core/test-harness/runtime/generator-spread-ref-components.tsrx';
 
 let container: HTMLDivElement;
 let resolveValue: (value: string) => void;
@@ -312,6 +316,17 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			expect(expression_spread_ref_nodes).toEqual(elements);
 		});
 	}
+
+	it('spreads the bag and attaches the ref in a generator that yields', () => {
+		generator_spread_ref_nodes.length = 0;
+		render(<GeneratorSpreadRefApp enabled bag={spread_bag} />, container);
+
+		const elements = Array.from(container.querySelectorAll('.generator-spread-ref'));
+		expect(elements.map((element) => [element.id, element.getAttribute('title')])).toEqual([
+			[spread_bag.id, `${spread_bag.title} (resumed)`],
+		]);
+		expect(generator_spread_ref_nodes).toEqual(elements);
+	});
 
 	for (const [directive, App, reverse] of [
 		['@if', ForKeyedIfApp, '.reverse-keyed-if'],

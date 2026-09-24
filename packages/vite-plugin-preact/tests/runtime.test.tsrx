@@ -14,6 +14,9 @@ import {
 import {
 	runExpressionSpreadRefRuntimeTests,
 } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
+import {
+	runGeneratorSpreadRefRuntimeTests,
+} from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
 
 function text(selector: string): string | null {
@@ -585,4 +588,5 @@ runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
+runGeneratorSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();

@@ -872,9 +872,10 @@ export function createJsxTransform(platform) {
 		// Lower any `@{ … }` code blocks left in generated helper bodies, so every
 		// `@{ … }` block / `@`-directive has been lowered to its final closure /
 		// block shape before printing. Only then are all generated closures known,
-		// so the ones an authored `await` landed in are made async last. Imports
-		// come after, because that can swap which iterable helper is used.
-		const final_program = await_generated_closures(
+		// so the ones an authored `await` or `yield` landed in are made async or
+		// generators last. Imports come after, because that can swap which
+		// iterable helper is used.
+		const final_program = suspend_generated_closures(
 			lower_remaining_jsx_code_blocks(expanded, transform_context),
 			transform_context,
 		);
@@ -2948,22 +2949,32 @@ function lower_remaining_jsx_code_blocks(node, transform_context, seen = new Set
 }
 
 /**
- * An authored `await` is valid where it was written, but lowering can move it
- * into a closure the compiler generated: the IIFE of a `@switch` or of a branch
- * with setup statements, or a callback a `@for` hands to `map_iterable`. The
- * parser rejects `await` inside authored functions that are not async, so a
- * non-async function that directly contains one is generated. This pass makes
- * each such closure async and awaits it where it is called, so the value still
- * settles in the enclosing async function, in source order:
+ * An authored `await` or `yield` is valid where it was written, but lowering
+ * can move it into a closure the compiler generated: the IIFE of a `@switch`,
+ * of a branch with setup statements, or of an element whose spread and `ref`
+ * need a setup binding, or a callback a `@for` hands to `map_iterable`. The
+ * parser rejects `await` inside authored functions that are not async, and
+ * `yield` inside authored functions that are not generators, so a function
+ * that directly contains one it cannot hold is generated. This pass gives each
+ * such closure the missing kind and suspends where it is called, so the value
+ * still settles in the enclosing function, in source order:
  *
- * - an IIFE becomes `await (async () => { … })()`;
+ * - an IIFE holding an `await` becomes `await (async () => { … })()`;
+ * - an IIFE holding a `yield` becomes a generator the call delegates to,
+ *   `yield* (function* () { … })()`, which is also `async` when it awaits.
+ *   An arrow shares `this` and `arguments` with the enclosing function and a
+ *   generator does not, so the runtime call passes whichever the body reads
+ *   (`.call(this)` or `.apply(this, arguments)`). The type-only print keeps
+ *   the plain call, the form TypeScript types the delegated `yield` results
+ *   from;
  * - a `map_iterable` call given an async callback becomes
  *   `await map_iterable_async(…)`, which settles one item before the next,
  *   like a `for...of` loop with an `await` in its body.
  *
- * Any other generated closure is a callback the target calls during rendering
- * (a `@catch` fallback, for one), where the result cannot be awaited, so an
- * `await` there is reported instead.
+ * Any other generated closure is a callback that something else calls (a
+ * `@catch` fallback the target renders, or a `@for` body that yields), where
+ * the result cannot be awaited or delegated, so the `await` or `yield` there
+ * is reported instead.
  *
  * The tree is never mutated; see `lower_remaining_jsx_code_blocks`.
  *
@@ -2972,30 +2983,48 @@ function lower_remaining_jsx_code_blocks(node, transform_context, seen = new Set
  * @param {TransformContext} transform_context
  * @returns {T}
  */
-function await_generated_closures(program, transform_context) {
-	// Only a source that mentions `await` can contain an await expression.
-	if (transform_context.source && !transform_context.source.includes('await')) {
+function suspend_generated_closures(program, transform_context) {
+	// Only a source that mentions `await` or `yield` can contain one.
+	if (
+		transform_context.source &&
+		!transform_context.source.includes('await') &&
+		!transform_context.source.includes('yield')
+	) {
 		return program;
 	}
 
-	/** @type {Map<AST.Node, { node: AST.Node, first_await: AST.Node | null }>} */
+	/**
+	 * @typedef {{
+	 *   node: AST.Node,
+	 *   first_await: AST.Node | null,
+	 *   first_yield: AST.Node | null,
+	 * }} SuspendResult
+	 */
+
+	/** @type {Map<AST.Node, SuspendResult>} */
 	const results = new Map();
 	/** Closures made async here, with the authored `await` that required it. */
 	/** @type {Map<AST.Node, AST.Node>} */
 	const made_async = new Map();
+	/** Closures made generators here, with the authored `yield` that required it. */
+	/** @type {Map<AST.Node, AST.Node>} */
+	const made_generator = new Map();
 	let sync_iterable_calls = 0;
 	let async_iterable_calls = 0;
 
 	/**
-	 * Returns the node with its generated closures made async, and the first
-	 * authored `await` it contains outside any nested function.
+	 * Returns the node with its generated closures made async or generators,
+	 * and the first authored `await` and `yield` it contains outside any
+	 * nested function.
 	 *
 	 * @param {AST.Node} node
 	 * @param {boolean} awaitable whether the parent awaits this node's call when
 	 *   it becomes an async closure
-	 * @returns {{ node: AST.Node, first_await: AST.Node | null }}
+	 * @param {boolean} delegable whether the parent delegates to this node's
+	 *   call when it becomes a generator
+	 * @returns {SuspendResult}
 	 */
-	const visit = (node, awaitable) => {
+	const visit = (node, awaitable, delegable) => {
 		const cached = results.get(node);
 		if (cached) return cached;
 
@@ -3004,6 +3033,8 @@ function await_generated_closures(program, transform_context) {
 			node.type === 'AwaitExpression' || (node.type === 'ForOfStatement' && node.await)
 				? node
 				: null;
+		/** @type {AST.Node | null} */
+		let first_yield = node.type === 'YieldExpression' ? node : null;
 		const is_call = node.type === 'CallExpression';
 		const is_iterable_call =
 			is_call &&
@@ -3015,16 +3046,18 @@ function await_generated_closures(program, transform_context) {
 		for (const key of Object.keys(node)) {
 			if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
 			const value = /** @type {AST.TraversableAstNode} */ (node)[key];
-			// A generated IIFE, or a callback `map_iterable` receives, is awaited below.
-			const child_awaitable =
-				(is_call && key === 'callee') || (is_iterable_call && key === 'arguments');
+			// A generated IIFE is awaited or delegated to below; a callback
+			// `map_iterable` receives can only be awaited.
+			const is_callee = is_call && key === 'callee';
+			const child_awaitable = is_callee || (is_iterable_call && key === 'arguments');
 			/**
 			 * @param {AST.Node} child
 			 * @returns {AST.Node}
 			 */
 			const visit_child = (child) => {
-				const result = visit(child, child_awaitable);
+				const result = visit(child, child_awaitable, is_callee);
 				first_await ??= result.first_await;
+				first_yield ??= result.first_yield;
 				return result.node;
 			};
 			/** @type {unknown} */
@@ -3041,35 +3074,67 @@ function await_generated_closures(program, transform_context) {
 			}
 		}
 
-		/** @type {{ node: AST.Node, first_await: AST.Node | null }} */
-		let result = { node: /** @type {AST.Node} */ (out), first_await };
+		/** @type {SuspendResult} */
+		let result = { node: /** @type {AST.Node} */ (out), first_await, first_yield };
 
 		if (is_function_node(node)) {
-			// An `await` never escapes the function that contains it.
-			result = { node: result.node, first_await: null };
-			if (first_await && !node.async) {
+			// An `await` or `yield` never escapes the function that contains it.
+			result = { node: result.node, first_await: null, first_yield: null };
+			let fn = /** @type {AST.Function} */ (result.node);
+			const make_async = !!first_await && !node.async;
+			const make_generator = !!first_yield && !node.generator;
+			if (make_async) {
 				if (awaitable) {
-					result.node = /** @type {AST.Node} */ ({ ...result.node, async: true });
-					made_async.set(result.node, first_await);
+					fn = { ...fn, async: true };
 				} else {
 					error(
 						`${transform_context.platform.name} TSRX does not support \`await\` here: this part of the template renders through a callback the target calls, so its result cannot be awaited. Await the value in the component body, or move it into an async child component.`,
 						transform_context.filename,
-						first_await,
+						/** @type {AST.Node} */ (first_await),
 						transform_context.errors,
 						transform_context.comments,
 					);
 				}
 			}
+			if (make_generator) {
+				if (delegable) {
+					fn = to_generator_function(fn);
+				} else {
+					error(
+						`${transform_context.platform.name} TSRX does not support \`yield\` here: this part of the template runs in a callback, which cannot yield from the enclosing generator. Yield the value in the function body first.`,
+						transform_context.filename,
+						/** @type {AST.Node} */ (first_yield),
+						transform_context.errors,
+						transform_context.comments,
+					);
+				}
+			}
+			result.node = fn;
+			if (fn.async && make_async) made_async.set(fn, /** @type {AST.Node} */ (first_await));
+			if (fn.generator && make_generator) {
+				made_generator.set(fn, /** @type {AST.Node} */ (first_yield));
+			}
 		} else if (result.node.type === 'CallExpression') {
-			// The `await` added here stands for the authored one inside the
-			// closure, which the enclosing function now has to allow.
+			// The `await` or `yield*` added here stands for the authored one
+			// inside the closure, which the enclosing function now has to allow.
 			const call = result.node;
 			const async_callback = is_iterable_call
 				? call.arguments.find((arg) => made_async.has(arg))
 				: undefined;
-			if (made_async.has(call.callee)) {
-				result = { node: b.await(call), first_await: made_async.get(call.callee) ?? null };
+			if (made_generator.has(call.callee)) {
+				// `yield*` also settles a delegated async generator, so a closure
+				// made both async and a generator is not awaited as well.
+				result = {
+					node: b.yield(delegate_to_generated_generator(call, transform_context), true),
+					first_await: made_async.get(call.callee) ?? first_await,
+					first_yield: made_generator.get(call.callee) ?? first_yield,
+				};
+			} else if (made_async.has(call.callee)) {
+				result = {
+					node: b.await(call),
+					first_await: made_async.get(call.callee) ?? null,
+					first_yield,
+				};
 			} else if (async_callback) {
 				result = {
 					node: b.await({
@@ -3080,6 +3145,7 @@ function await_generated_closures(program, transform_context) {
 						},
 					}),
 					first_await: made_async.get(async_callback) ?? null,
+					first_yield,
 				};
 				async_iterable_calls += 1;
 			} else if (is_iterable_call) {
@@ -3091,12 +3157,98 @@ function await_generated_closures(program, transform_context) {
 		return result;
 	};
 
-	const lowered = /** @type {T} */ (visit(program, false).node);
+	const lowered = /** @type {T} */ (visit(program, false, false).node);
 	if (async_iterable_calls > 0) {
 		transform_context.needs_for_of_iterable = sync_iterable_calls > 0;
 		transform_context.needs_for_of_iterable_async = true;
 	}
 	return lowered;
+}
+
+/**
+ * A generated closure as a generator function expression. An arrow's concise
+ * body becomes a `return`, since a generator has no concise form.
+ *
+ * @param {AST.Function} fn
+ * @returns {AST.FunctionExpression}
+ */
+function to_generator_function(fn) {
+	return /** @type {AST.FunctionExpression} */ ({
+		...fn,
+		type: 'FunctionExpression',
+		id: fn.type === 'ArrowFunctionExpression' ? null : fn.id,
+		generator: true,
+		body: fn.body.type === 'BlockStatement' ? fn.body : b.block([b.return(fn.body)]),
+	});
+}
+
+/**
+ * The call a `yield*` delegates to for an IIFE made a generator. The arrow it
+ * replaces read `this` and `arguments` from the enclosing function, so the
+ * runtime call passes on whichever the body reads. `super` has no such
+ * hand-off: a function expression cannot reference it, so it is reported.
+ *
+ * @param {AST.CallExpression} call
+ * @param {TransformContext} transform_context
+ * @returns {AST.CallExpression}
+ */
+function delegate_to_generated_generator(call, transform_context) {
+	const generator = /** @type {AST.FunctionExpression} */ (call.callee);
+	/** @type {{ this: boolean, arguments: boolean, super: AST.Node | null }} */
+	const found = { this: false, arguments: false, super: null };
+	for (const child of child_nodes(generator.body)) {
+		find_function_context_references(child, found);
+	}
+
+	if (found.super) {
+		error(
+			`${transform_context.platform.name} TSRX does not support \`super\` here: this part of the template also yields, so it is lowered into a generator function, where \`super\` is unavailable. Read the value into a variable in the method body first.`,
+			transform_context.filename,
+			found.super,
+			transform_context.errors,
+			transform_context.comments,
+		);
+	}
+
+	// TypeScript types the delegated `yield` results only for a direct call.
+	if (transform_context.typeOnly) return call;
+	if (found.arguments) {
+		return b.call(b.member(generator, 'apply'), b.this, b.id('arguments'));
+	}
+	if (found.this) {
+		return b.call(b.member(generator, 'call'), b.this, ...call.arguments);
+	}
+	return call;
+}
+
+/**
+ * Records whether `node` reads `this`, `arguments`, or `super` from the
+ * function a generated closure sits in. An arrow shares all three with that
+ * function; a nested function, class field initializer, or static block binds
+ * its own.
+ *
+ * @param {AST.Node} node
+ * @param {{ this: boolean, arguments: boolean, super: AST.Node | null }} found
+ * @returns {void}
+ */
+function find_function_context_references(node, found) {
+	if (node.type === 'ThisExpression') {
+		found.this = true;
+	} else if (node.type === 'Identifier' && node.name === 'arguments') {
+		found.arguments = true;
+	} else if (node.type === 'Super') {
+		found.super ??= node;
+	} else if (
+		node.type === 'FunctionExpression' ||
+		node.type === 'FunctionDeclaration' ||
+		node.type === 'StaticBlock'
+	) {
+		return;
+	}
+
+	for (const child of child_nodes(node, node.type === 'PropertyDefinition' ? 'value' : undefined)) {
+		find_function_context_references(child, found);
+	}
 }
 
 /**
