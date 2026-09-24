@@ -2175,7 +2175,9 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'ArrayExpression':
-			nodeContent = printArrayExpression(node, path, options, print);
+		case 'ArrayPattern':
+		case 'TSTupleType':
+			nodeContent = printArray(node, path, options, print);
 			break;
 
 		case 'ObjectExpression':
@@ -2870,10 +2872,6 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = printObjectPattern(node, path, options, print);
 			break;
 
-		case 'ArrayPattern':
-			nodeContent = printArrayPattern(node, path, options, print);
-			break;
-
 		case 'Property':
 			nodeContent = printProperty(node, path, options, print);
 			break;
@@ -2974,10 +2972,6 @@ function printTsrxNode(node, path, options, print, args) {
 				: ['typeof ', expr];
 			break;
 		}
-
-		case 'TSTupleType':
-			nodeContent = printTSTupleType(node, path, options, print);
-			break;
 
 		case 'TSNamedTupleMember':
 			nodeContent = printTSNamedTupleMember(node, path, options, print);
@@ -7550,70 +7544,105 @@ function printObjectPattern(node, path, options, print) {
 }
 
 /**
- * Print an array literal like Prettier's `printArray`. The array breaks only
- * when it doesn't fit, or when every element is an object (or every element
- * an array) with more than one entry. A blank line between elements is kept
- * only in a broken array, and number-only arrays pack as many elements per
- * line as fit.
- * @param {AST.ArrayExpression} node - The array expression node
- * @param {AstPath<AST.ArrayExpression>} path - The AST path
+ * Print an array literal, array pattern, or tuple type like Prettier's
+ * `printArray`. The array breaks only when it doesn't fit, or when every
+ * element is an object (or every element an array) with more than one entry.
+ * A blank line between elements is kept only in a broken array, and
+ * number-only array literals pack as many elements per line as fit.
+ * @param {AST.ArrayExpression | AST.ArrayPattern | AST.TSTupleType} node - The node
+ * @param {AstPath<AST.ArrayExpression | AST.ArrayPattern | AST.TSTupleType>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @returns {Doc}
  */
-function printArrayExpression(node, path, options, print) {
-	const { elements } = node;
+function printArray(node, path, options, print) {
+	/** @type {Doc[]} */
+	const parts = [];
+	const elementsProperty = node.type === 'TSTupleType' ? 'elementTypes' : 'elements';
+	/** @type {Array<AST.Node | null>} */
+	const elements =
+		/** @type {Record<string, Array<AST.Node | null> | undefined>} */ (
+			/** @type {unknown} */ (node)
+		)[elementsProperty] ?? [];
+
 	if (elements.length === 0) {
-		return '[]';
+		parts.push('[]');
+	} else {
+		const lastElement = elements[elements.length - 1];
+		const canHaveTrailingComma = lastElement?.type !== 'RestElement';
+
+		// A trailing hole (`[1, ,]`) is an array slot, and its comma is what
+		// creates it: dropping that comma shortens the array. It prints in
+		// every layout and regardless of `trailingComma`.
+		const needsForcedTrailingComma = lastElement === null;
+		const groupId = Symbol('array');
+
+		const shouldBreak =
+			elements.length > 1 &&
+			elements.every((element, index) => {
+				if (
+					!element ||
+					(element.type !== 'ArrayExpression' && element.type !== 'ObjectExpression')
+				) {
+					return false;
+				}
+
+				const nextElement = elements[index + 1];
+				if (nextElement && nextElement.type !== element.type) {
+					return false;
+				}
+
+				const items = element.type === 'ArrayExpression' ? element.elements : element.properties;
+				return items.length > 1;
+			});
+
+		const shouldUseConciseFormatting =
+			node.type === 'ArrayExpression' && isConciselyPrintedArray(node, options);
+
+		/** @type {Doc} */
+		const trailingComma = !canHaveTrailingComma
+			? ''
+			: needsForcedTrailingComma
+				? ','
+				: !shouldPrintComma(options)
+					? ''
+					: shouldUseConciseFormatting
+						? ifBreak(',', '', { groupId })
+						: ifBreak(',');
+
+		parts.push(
+			group(
+				[
+					'[',
+					indent([
+						softline,
+						shouldUseConciseFormatting
+							? printArrayElementsConcisely(
+									/** @type {AstPath<AST.ArrayExpression>} */ (path),
+									options,
+									print,
+									trailingComma,
+								)
+							: [printArrayElements(path, options, print, elementsProperty), trailingComma],
+					]),
+					softline,
+					']',
+				],
+				{ shouldBreak, id: groupId },
+			),
+		);
 	}
 
-	// A trailing hole (`[1, ,]`) is an array slot, and its comma is what
-	// creates it: dropping that comma shortens the array. It prints in
-	// every layout and regardless of `trailingComma`.
-	const needsForcedTrailingComma = elements[elements.length - 1] === null;
-	const groupId = Symbol('array');
+	if (node.type === 'ArrayPattern') {
+		if (/** @type {{ optional?: boolean }} */ (node).optional) {
+			parts.push('?');
+		}
+		if (node.typeAnnotation) {
+			parts.push(': ', path.call(print, 'typeAnnotation'));
+		}
+	}
 
-	const shouldBreak =
-		elements.length > 1 &&
-		elements.every((element, index) => {
-			if (!element || (element.type !== 'ArrayExpression' && element.type !== 'ObjectExpression')) {
-				return false;
-			}
-
-			const nextElement = elements[index + 1];
-			if (nextElement && nextElement.type !== element.type) {
-				return false;
-			}
-
-			const items = element.type === 'ArrayExpression' ? element.elements : element.properties;
-			return items.length > 1;
-		});
-
-	const shouldUseConciseFormatting = isConciselyPrintedArray(node, options);
-
-	/** @type {Doc} */
-	const trailingComma = needsForcedTrailingComma
-		? ','
-		: options.trailingComma === 'none'
-			? ''
-			: shouldUseConciseFormatting
-				? ifBreak(',', '', { groupId })
-				: ifBreak(',');
-
-	return group(
-		[
-			'[',
-			indent([
-				softline,
-				shouldUseConciseFormatting
-					? printArrayElementsConcisely(path, options, print, trailingComma)
-					: [printArrayElements(path, options, print), trailingComma],
-			]),
-			softline,
-			']',
-		],
-		{ shouldBreak, id: groupId },
-	);
+	return parts;
 }
 
 /**
@@ -7675,13 +7704,17 @@ function isLineAfterElementEmpty(element, options) {
 /**
  * Print array elements separated by `line`, keeping a blank line after an
  * element as a `softline` that only shows when the array breaks
- * @param {AstPath<AST.ArrayExpression>} path - The AST path
+ * @param {AstPath<AST.ArrayExpression | AST.ArrayPattern | AST.TSTupleType>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
+ * @param {'elements' | 'elementTypes'} elementsProperty - The key of the elements
  * @returns {Doc[]}
  */
-function printArrayElements(path, options, print) {
-	const { elements } = path.node;
+function printArrayElements(path, options, print, elementsProperty) {
+	/** @type {Array<AST.Node | null>} */
+	const elements = /** @type {Record<string, Array<AST.Node | null>>} */ (
+		/** @type {unknown} */ (path.node)
+	)[elementsProperty];
 	/** @type {Doc[]} */
 	const parts = [];
 
@@ -7692,7 +7725,7 @@ function printArrayElements(path, options, print) {
 		if (index < elements.length - 1) {
 			parts.push([',', line, element && isLineAfterElementEmpty(element, options) ? softline : '']);
 		}
-	}, 'elements');
+	}, elementsProperty);
 
 	return parts;
 }
@@ -7731,38 +7764,6 @@ function printArrayElementsConcisely(path, options, print, trailingComma) {
 	}, 'elements');
 
 	return fill(parts);
-}
-
-/**
- * Print an array pattern (destructuring)
- * @param {AST.ArrayPattern} node - The array pattern node
- * @param {AstPath<AST.ArrayPattern>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
- */
-function printArrayPattern(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = [];
-	parts.push('[');
-	const elementList = path.map(print, 'elements');
-	for (let i = 0; i < elementList.length; i++) {
-		if (i > 0) parts.push(', ');
-		parts.push(elementList[i]);
-	}
-	// A trailing elision (`[a, ,]`) advances the iterator one more step; its
-	// comma is the only thing that marks it.
-	if (node.elements[node.elements.length - 1] === null) {
-		parts.push(',');
-	}
-	parts.push(']');
-
-	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
-
-	return parts;
 }
 
 /**
@@ -8809,26 +8810,6 @@ function printTSTypeReference(node, path, options, print) {
 		parts.push(path.call(print, 'typeParameters'));
 	}
 
-	return parts;
-}
-
-/**
- * Print a TypeScript tuple type
- * @param {AST.TSTupleType} node - The tuple type node
- * @param {AstPath<AST.TSTupleType>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
- */
-function printTSTupleType(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = ['['];
-	const elements = node.elementTypes ? path.map(print, 'elementTypes') : [];
-	for (let i = 0; i < elements.length; i++) {
-		if (i > 0) parts.push(', ');
-		parts.push(elements[i]);
-	}
-	parts.push(']');
 	return parts;
 }
 

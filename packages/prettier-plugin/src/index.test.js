@@ -7349,6 +7349,75 @@ const commented = [
   }),
 ];`);
 		});
+
+		it('breaks array patterns one element per line when they do not fit', async () => {
+			const input = `const [aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccccccc] = useThing();
+function f([aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccccccc, ddddd]) {}
+[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccc] = [1, 2, 3];`;
+			const expected = `const [
+  aaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccccccccccc,
+] = useThing();
+function f([
+  aaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccccccccccc,
+  ddddd,
+]) {}
+[
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ccccccccccccccc,
+] = [1, 2, 3];`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('prints no trailing comma after a rest element and the type annotation after the brackets', async () => {
+			const input = `const [aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb, ...ccccccccccccccccccccccccccccccc] = useThing();
+function g([aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb]: [Aaaaaaaaaaaaaaaaa, Bbbbbbbbbbbbbbbbbbbbbb]) {}`;
+			const expected = `const [
+  aaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ...ccccccccccccccccccccccccccccccc
+] = useThing();
+function g([aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb]: [
+  Aaaaaaaaaaaaaaaaa,
+  Bbbbbbbbbbbbbbbbbbbbbb,
+]) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks tuple types one member per line, keeping the comma after a rest type', async () => {
+			const input = `let t: [Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ...Ccccccccccccccccccccccc[]];
+function h(row: [aaaaaaaaaaaaaaaaaaaaaa: string, bbbbbbbbbbbbbbbbbbbbbbbbbbb: number, ccccccccccccc: boolean]) {}`;
+			const expected = `let t: [
+  Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ...Ccccccccccccccccccccccc[],
+];
+function h(
+  row: [
+    aaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+    ccccccccccccc: boolean,
+  ],
+) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps short patterns and tuples on one line', async () => {
+			const source = `const [a, , b] = x;
+const [c, ,] = y;
+let u: [a?: string, ...rest: number[]] = [];
+const {
+  aaaaaaaaaaaaaaaaaa: [
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+    ccccccccccccccccccccccccccccccccc,
+  ],
+} = x;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
 	});
 
 	// The comma after a trailing hole creates an array slot (or an iterator
