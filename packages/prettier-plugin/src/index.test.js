@@ -8382,6 +8382,34 @@ export function App() @{
 			expect(result).toBeWithNewline(expected);
 		});
 
+		// The `;` guard prints before the cast, on the cast's line, so the next
+		// pass must still read the cast as the start of the guarded statement.
+		it('keeps a JSDoc cast with the statement it starts without semicolons', async () => {
+			const input = `class C { static { a; /** @type {Foo} */ (x).y(); } }
+namespace N { a; /** @type {Foo} */ (x).y(); }
+export function App() @{
+  const a = 1; /** @type {Foo} */ (x).y();
+  <div />
+}`;
+			const expected = `class C {
+  static {
+    a
+    ;/** @type {Foo} */ (x).y()
+  }
+}
+namespace N {
+  a
+  ;/** @type {Foo} */ (x).y()
+}
+export function App() @{
+  const a = 1
+  ;/** @type {Foo} */ (x).y()
+  <div />
+}`;
+			const result = await format(input, { semi: false });
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('keeps a block comment with the render output on its line', async () => {
 			const input = `export function App() @{
   const a = 1; /* the output */ <div />
