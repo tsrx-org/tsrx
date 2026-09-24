@@ -236,9 +236,65 @@ function formatStringLiteral(value, options) {
 		.replace(new RegExp(quote, 'g'), '\\' + quote)
 		.replace(/\n/g, '\\n')
 		.replace(/\r/g, '\\r')
-		.replace(/\t/g, '\\t');
+		.replace(/\t/g, '\\t')
+		// A lone surrogate has no UTF-8 encoding: written raw, saving the file
+		// turns it into U+FFFD.
+		.replace(
+			/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g,
+			(surrogate) => '\\u' + surrogate.charCodeAt(0).toString(16),
+		);
 
 	return quote + escapedValue + quote;
+}
+
+/**
+ * Whether `raw` is the source text of a quoted string literal.
+ * @param {unknown} raw
+ * @returns {raw is string}
+ */
+function isQuotedStringRaw(raw) {
+	return (
+		typeof raw === 'string' &&
+		raw.length >= 2 &&
+		(raw[0] === '"' || raw[0] === "'") &&
+		raw[raw.length - 1] === raw[0]
+	);
+}
+
+/**
+ * Print a string literal from its source text, changing only the quotes the
+ * way Prettier does. Reprinting the cooked value would drop the author's
+ * escapes, and an escaped lone surrogate (`'\ud800'`) cannot be written back
+ * as a raw character. Literals without source text fall back to the value.
+ * @param {AST.Literal} node - The literal
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {string} - The formatted string literal with quotes
+ */
+function printStringLiteral(node, options) {
+	const raw = node.raw;
+	if (typeof node.value !== 'string' || !isQuotedStringRaw(raw)) {
+		return formatStringLiteral(node.value, options);
+	}
+
+	const quote = options.singleQuote ? "'" : '"';
+	const otherQuote = quote === '"' ? "'" : '"';
+	const content = raw.slice(1, -1).replace(
+		/\\(.)|(["'])/gs,
+		/**
+		 * @param {string} match
+		 * @param {string | undefined} escaped
+		 * @param {string | undefined} bareQuote
+		 */
+		(match, escaped, bareQuote) => {
+			if (escaped !== undefined) {
+				// `\'` inside double quotes no longer needs its backslash.
+				return escaped === otherQuote ? escaped : match;
+			}
+			return bareQuote === quote ? '\\' + quote : /** @type {string} */ (bareQuote);
+		},
+	);
+
+	return quote + content + quote;
 }
 
 /**
@@ -1424,7 +1480,7 @@ function printKey(node, path, options, print) {
 			parts.push(key);
 		} else {
 			// Quote keys that need it (e.g., contain special characters)
-			parts.push(formatStringLiteral(key, options));
+			parts.push(printStringLiteral(node.key, options));
 		}
 	} else {
 		parts.push(path.call(print, 'key'));
@@ -2007,6 +2063,16 @@ function printTsrxNode(node, path, options, print, args) {
 			// Default printing - pass isInArray or isInAttribute context
 			const arrayWasSingleLine = wasOriginallySingleLine(node);
 			const shouldUseTrailingComma = options.trailingComma !== 'none';
+			// A trailing hole (`[1, ,]`) is an array slot, and its comma is what
+			// creates it: dropping that comma shortens the array. It prints in
+			// every layout and regardless of `trailingComma`.
+			const hasTrailingHole = node.elements[node.elements.length - 1] === null;
+			/** @type {Doc} */
+			const trailingCommaDoc = hasTrailingHole
+				? ','
+				: shouldUseTrailingComma
+					? ifBreak(',', '')
+					: '';
 			const elements = path.map(
 				/**
 				 * @param {AstPath} elPath
@@ -2048,10 +2114,9 @@ function printTsrxNode(node, path, options, print, args) {
 
 			if (hasObjectElements && shouldInlineObjects && arrayWasSingleLine) {
 				const separator = [',', line];
-				const trailing = shouldUseTrailingComma ? ifBreak(',', '') : '';
 				nodeContent = group([
 					'[',
-					indent([softline, join(separator, elements), trailing]),
+					indent([softline, join(separator, elements), trailingCommaDoc]),
 					softline,
 					']',
 				]);
@@ -2148,7 +2213,7 @@ function printTsrxNode(node, path, options, print, args) {
 					!hasInlineComments
 				) {
 					const separator = [',', hardline];
-					const trailingDoc = shouldUseTrailingComma ? ',' : '';
+					const trailingDoc = shouldUseTrailingComma || hasTrailingHole ? ',' : '';
 					nodeContent = group([
 						'[',
 						indent([hardline, join(separator, elements), trailingDoc]),
@@ -2209,11 +2274,10 @@ function printTsrxNode(node, path, options, print, args) {
 					}
 				}
 
-				const trailingDoc = shouldUseTrailingComma ? ifBreak(',', '') : '';
 				// All-or-nothing group instead of fill(): packing several elements
 				// per wrapped line is never a fixpoint — the repacked output reparses
 				// as a multiline array and would then break one element per line.
-				nodeContent = group(['[', indent([softline, fillParts, trailingDoc]), softline, ']']);
+				nodeContent = group(['[', indent([softline, fillParts, trailingCommaDoc]), softline, ']']);
 				break;
 			}
 
@@ -2226,10 +2290,9 @@ function printTsrxNode(node, path, options, print, args) {
 				for (let index = 0; index < elements.length; index++) {
 					parts.push(elements[index]);
 				}
-				const trailingDoc = shouldUseTrailingComma ? ifBreak(',', '') : '';
 				nodeContent = group([
 					'[',
-					indent([softline, join(separator, parts), trailingDoc]),
+					indent([softline, join(separator, parts), trailingCommaDoc]),
 					softline,
 					']',
 				]);
@@ -2688,7 +2751,7 @@ function printTsrxNode(node, path, options, print, args) {
 				nodeContent = formatNumericLiteral(node_typed.raw);
 			} else {
 				// String, boolean, or null literal
-				nodeContent = formatStringLiteral(node.value, options);
+				nodeContent = printStringLiteral(node, options);
 			}
 			break;
 		}
@@ -3472,9 +3535,7 @@ function printImportDeclaration(node, path, options, _print) {
  * @returns {string}
  */
 function printModuleExportName(node, options) {
-	return node.type === 'Identifier'
-		? node.name
-		: formatStringLiteral(/** @type {string} */ (node.value), options);
+	return node.type === 'Identifier' ? node.name : printStringLiteral(node, options);
 }
 
 /**
@@ -3488,11 +3549,7 @@ function printModuleExportName(node, options) {
 function printModuleSource(node, options) {
 	const source = /** @type {AST.Literal | AST.Identifier} */ (/** @type {unknown} */ (node.source));
 	/** @type {Doc[]} */
-	const parts = [
-		source.type === 'Identifier'
-			? source.name
-			: formatStringLiteral(/** @type {string} */ (source.value), options),
-	];
+	const parts = [source.type === 'Identifier' ? source.name : printStringLiteral(source, options)];
 
 	const attributes =
 		/** @type {Array<{ key: AST.Identifier | AST.Literal, value: AST.Literal }>} */ (
@@ -3503,8 +3560,8 @@ function printModuleSource(node, options) {
 			const key =
 				attribute.key.type === 'Identifier'
 					? attribute.key.name
-					: formatStringLiteral(/** @type {string} */ (attribute.key.value), options);
-			const value = formatStringLiteral(/** @type {string} */ (attribute.value.value), options);
+					: printStringLiteral(attribute.key, options);
+			const value = printStringLiteral(attribute.value, options);
 			return [key, ': ', value];
 		});
 		parts.push(' with { ', join(', ', attributeDocs), ' }');
@@ -6382,6 +6439,11 @@ function printArrayPattern(node, path, options, print) {
 		if (i > 0) parts.push(', ');
 		parts.push(elementList[i]);
 	}
+	// A trailing elision (`[a, ,]`) advances the iterator one more step; its
+	// comma is the only thing that marks it.
+	if (node.elements[node.elements.length - 1] === null) {
+		parts.push(',');
+	}
 	parts.push(']');
 
 	if (node.typeAnnotation) {
@@ -7986,21 +8048,20 @@ function printJSXAttribute(attr, path, options, print) {
 	}
 
 	if (attr.value.type === 'Literal') {
-		const quote = options.jsxSingleQuote ? "'" : '"';
 		return [
 			name,
 			'=',
-			quote,
-			/** @type {string} */ (/** @type {AST.SimpleLiteral} */ (attr.value).value),
-			quote,
+			printJSXAttributeString(/** @type {AST.SimpleLiteral} */ (attr.value), options),
 		];
 	}
 
 	if (attr.value.type === 'JSXExpressionContainer') {
 		const expression = attr.value.expression;
 		if (expression.type === 'Literal' && typeof expression.value === 'string') {
-			const quote = options.jsxSingleQuote ? "'" : '"';
-			return [name, '=', quote, /** @type {string} */ (expression.value), quote];
+			const quote = getJSXAttributeStringQuote(expression, options);
+			if (quote) {
+				return [name, '=', quote, expression.value, quote];
+			}
 		}
 		const exprDoc = path.call(
 			(valuePath) => print(valuePath, { isInAttribute: true }),
@@ -8011,6 +8072,76 @@ function printJSXAttribute(attr, path, options, print) {
 	}
 
 	return name;
+}
+
+/**
+ * Pick the quote that needs fewer escapes in `text`, preferring the
+ * configured one on a tie, like Prettier's `getPreferredQuote`.
+ * @param {string} text
+ * @param {boolean | undefined} preferSingleQuote
+ * @returns {'"' | "'"}
+ */
+function getPreferredQuote(text, preferSingleQuote) {
+	const preferred = preferSingleQuote ? "'" : '"';
+	const alternate = preferSingleQuote ? '"' : "'";
+	let preferredCount = 0;
+	let alternateCount = 0;
+	for (const char of text) {
+		if (char === preferred) preferredCount++;
+		else if (char === alternate) alternateCount++;
+	}
+	return preferredCount > alternateCount ? alternate : preferred;
+}
+
+/**
+ * Print a JSX attribute string (`title="Hello"`) from its source text, as
+ * Prettier does. The literal's `value` has its HTML entities decoded, so
+ * writing it back would turn `&quot;` into a bare delimiter and `&amp;amp;`
+ * into `&amp;`. Only the delimiter changes, and the chosen quote is encoded
+ * as an entity wherever it appears inside.
+ * @param {AST.SimpleLiteral} literal
+ * @param {TsrxFormatOptions} options
+ * @returns {string}
+ */
+function printJSXAttributeString(literal, options) {
+	const raw = literal.raw;
+	const content = (
+		isQuotedStringRaw(raw) ? raw.slice(1, -1) : String(literal.value).replaceAll('&', '&amp;')
+	)
+		.replaceAll('&apos;', "'")
+		.replaceAll('&quot;', '"');
+	const quote = getPreferredQuote(content, options.jsxSingleQuote);
+	return quote + content.replaceAll(quote, quote === '"' ? '&quot;' : '&apos;') + quote;
+}
+
+/**
+ * Pick the quote for printing a string expression container
+ * (`title={"Hello"}`) as a plain attribute string (`title="Hello"`), or
+ * `null` when the container has to stay. An attribute string has no escape
+ * sequences and decodes HTML entities, so the value moves over unchanged
+ * only when the literal spells it out verbatim (escaped quotes aside), it has
+ * no `&`, and one quote character is free to delimit it.
+ * @param {AST.Literal} literal
+ * @param {TsrxFormatOptions} options
+ * @returns {'"' | "'" | null}
+ */
+function getJSXAttributeStringQuote(literal, options) {
+	const value = literal.value;
+	const raw = literal.raw;
+	if (
+		typeof value !== 'string' ||
+		!isQuotedStringRaw(raw) ||
+		value.includes('&') ||
+		raw.slice(1, -1).replace(/\\(["'])/g, '$1') !== value
+	) {
+		return null;
+	}
+
+	const preferred = options.jsxSingleQuote ? "'" : '"';
+	const alternate = options.jsxSingleQuote ? '"' : "'";
+	if (!value.includes(preferred)) return preferred;
+	if (!value.includes(alternate)) return alternate;
+	return null;
 }
 
 /**

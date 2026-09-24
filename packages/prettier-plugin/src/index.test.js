@@ -6730,6 +6730,137 @@ const f = 1.5;`);
 		});
 	});
 
+	// The comma after a trailing hole creates an array slot (or an iterator
+	// step in a pattern); it is not an optional trailing comma.
+	describe('trailing array holes survive formatting', () => {
+		it.each(['all', 'none'])(
+			'keeps trailing holes with trailingComma %s',
+			async (trailingComma) => {
+				const input = `const one = [1,,];
+const two = [,,];
+const inner = [1,,2];
+const [,] = values();
+const [first, ,] = values();
+function f([a, ,], [,]) {}`;
+
+				const result = await format(input, { trailingComma: /** @type {any} */ (trailingComma) });
+				expect(result).toBeWithNewline(`const one = [1, ,];
+const two = [, ,];
+const inner = [1, , 2];
+const [,] = values();
+const [first, ,] = values();
+function f([a, ,], [,]) {}`);
+			},
+		);
+
+		it.each(['all', 'none'])(
+			'keeps a trailing hole in a multiline array with trailingComma %s',
+			async (trailingComma) => {
+				const input = `const values = [
+  1,
+  2,
+  ,
+];`;
+
+				const result = await format(input, { trailingComma: /** @type {any} */ (trailingComma) });
+				expect(result).toBeWithNewline(input);
+			},
+		);
+
+		it('keeps a trailing hole when the array breaks to fit', async () => {
+			const input = `const values = [aaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccccccccc,,];`;
+
+			const result = await format(input, { trailingComma: 'none' });
+			expect(result).toBeWithNewline(`const values = [
+  aaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccccccccccccc,
+  ,
+];`);
+		});
+	});
+
+	// String literals print from their source text: only the quotes change, so
+	// escapes the author wrote stay escapes.
+	describe('string literal escapes survive formatting', () => {
+		it('keeps an escaped lone surrogate as an escape', async () => {
+			const input = `const keys = { '\\ud800': 1, '\\ufffd': 2 };`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const keys = { "\\ud800": 1, "\\ufffd": 2 };`);
+		});
+
+		it('keeps escapes in every string position', async () => {
+			const input = `import data from '\\u0061.json' with { type: '\\u006a' };
+
+export { '\\u0062' as b } from './b';
+type Lone = '\\udc00';
+enum Keys {
+  '\\ud800' = 1,
+}
+const text = '\\x1b[31m' + '\\u00e9' + '\\0';`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`import data from "\\u0061.json" with { type: "\\u006a" };
+
+export { "\\u0062" as b } from "./b";
+type Lone = "\\udc00";
+enum Keys {
+  "\\ud800" = 1,
+}
+const text = "\\x1b[31m" + "\\u00e9" + "\\0";`);
+		});
+
+		it('escapes only the enclosing quote', async () => {
+			const input = `const a = 'say "hi"';
+const b = "it's";
+const c = 'it\\'s';`;
+
+			expect(await format(input)).toBeWithNewline(`const a = "say \\"hi\\"";
+const b = "it's";
+const c = "it's";`);
+			expect(await format(input, { singleQuote: true })).toBeWithNewline(`const a = 'say "hi"';
+const b = 'it\\'s';
+const c = 'it\\'s';`);
+		});
+	});
+
+	// A JSX attribute string has no escapes and decodes HTML entities, so it is
+	// printed from its source text, and a string expression container only
+	// loses its braces when the value moves over unchanged.
+	describe('JSX attribute strings survive formatting', () => {
+		/**
+		 * @param {string} attribute
+		 */
+		const wrap = (attribute) => `export function App() {
+  return <input ${attribute} />;
+}`;
+
+		it.each([
+			[`title={'Say "hello"'}`, `title='Say "hello"'`],
+			[`title="Say &quot;hello&quot;"`, `title='Say "hello"'`],
+			[`title='x "y" &apos;z&apos;'`, `title="x &quot;y&quot; 'z'"`],
+			[`title="&amp;amp;"`, `title="&amp;amp;"`],
+			[`title="a &#34;b&#34;"`, `title="a &#34;b&#34;"`],
+			[`title={'&amp;'}`, `title={"&amp;"}`],
+			[`title={"It's \\"both\\""}`, `title={"It's \\"both\\""}`],
+			[`title={'\\ud800'}`, `title={"\\ud800"}`],
+			[`title={'a\\nb'}`, `title={"a\\nb"}`],
+			[`title={'It\\'s'}`, `title="It's"`],
+			[`title={'hello'}`, `title="hello"`],
+		])('prints %s as %s', async (input, expected) => {
+			const result = await format(wrap(input));
+			expect(result).toBeWithNewline(wrap(expected));
+		});
+
+		it('switches quotes instead of breaking the attribute with jsxSingleQuote', async () => {
+			const result = await format(wrap(`title={"It's ready"} alt="Say &apos;hi&apos;"`), {
+				jsxSingleQuote: true,
+			});
+			expect(result).toBeWithNewline(wrap(`title="It's ready" alt="Say 'hi'"`));
+		});
+	});
+
 	describe('idempotence', () => {
 		/**
 		 * @param {string} code
