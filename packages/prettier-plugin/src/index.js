@@ -2373,20 +2373,15 @@ function printTsrxNode(node, path, options, print, args) {
 					}
 					// Wrap element+comma in group so fill() measures them together including breaks
 					// But don't add comma to the very last element (it gets trailing comma separately)
-					if (isLastInArray && shouldUseTrailingComma) {
-						fillParts.push(group(elements[elemIdx]));
-					} else {
-						fillParts.push(group([elements[elemIdx], ',']));
-					}
+					fillParts.push(group(isLastInArray ? elements[elemIdx] : [elements[elemIdx], ',']));
 				}
 
 				contentParts.push(fill(fillParts));
 			}
 
-			// Add trailing comma only if the last element didn't already have one
-			if (shouldUseTrailingComma) {
-				contentParts.push(',');
-			}
+			// The blank lines break the array, so this follows `trailingComma`
+			// like every other layout (and keeps a trailing hole's comma)
+			contentParts.push(trailingCommaDoc);
 
 			// Array with blank lines - format as multi-line
 			// Use simple group that will break to fit within printWidth

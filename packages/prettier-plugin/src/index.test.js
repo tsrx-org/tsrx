@@ -4693,6 +4693,53 @@ export function App() {
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('respects trailingComma none in arrays with blank lines between elements', async () => {
+			const input = `const values = [
+  1,
+
+  2,
+];
+const pairs = [
+  1, 2,
+
+  3, 4,
+];
+const commented = [
+  1,
+
+  2, // last
+];
+const holed = [
+  1,
+
+  2, ,
+];`;
+
+			const expected = `const values = [
+  1,
+
+  2
+];
+const pairs = [
+  1, 2,
+
+  3, 4
+];
+const commented = [
+  1,
+
+  2 // last
+];
+const holed = [
+  1,
+
+  2, ,
+];`;
+
+			const result = await format(input, { trailingComma: 'none' });
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('preserves blank lines between object properties when multi-line', async () => {
 			const input = `export function App() {
   let obj = {
