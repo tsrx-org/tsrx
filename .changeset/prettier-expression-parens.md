@@ -14,6 +14,8 @@ drops the ones that change what code means:
 - Parentheses that end an optional chain stay: `(a?.b)()`, `new (a?.b)()`,
   ``(a?.b)`x` ``, `(a?.b)!.c`, and `(a?.b)<T>()`.
 - `a || (() => 1)` and `- -a` no longer print as `a || () => 1` and `--a`.
+- Parentheses TypeScript needs stay even where Prettier drops them:
+  `class A extends ({}).Base {}`, `(make<T>)!`, and `(make<T>)<U>()`.
 
 Formatting existing files changes their output in two ways. Parentheses that
 do nothing are removed (`const x = (a);` becomes `const x = a;`), except around
