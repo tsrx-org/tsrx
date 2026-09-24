@@ -6861,6 +6861,49 @@ const c = 'it\\'s';`);
 		});
 	});
 
+	// A directive is the exact text of its string, so printing it from the
+	// cooked value could turn `"use\x20strict"` into a real strict-mode directive.
+	describe('directives keep their meaning', () => {
+		it('keeps an escaped directive as written', async () => {
+			const input = `function run(value = 1) {
+  "use\\x20strict";
+  return value;
+}`;
+
+			expect(await format(input)).toBeWithNewline(input);
+			expect(await format(input, { singleQuote: true })).toBeWithNewline(`function run(value = 1) {
+  'use\\x20strict';
+  return value;
+}`);
+		});
+
+		it('swaps the quotes of a directive only when it contains neither kind', async () => {
+			const input = `function f() {
+  'it\\'s';
+  'use strict';
+}`;
+
+			expect(await format(input)).toBeWithNewline(`function f() {
+  'it\\'s';
+  "use strict";
+}`);
+		});
+
+		it('keeps an empty directive unparenthesized so the prologue continues', async () => {
+			await expect(
+				format(`function f() {
+  "";
+  "use strict";
+  return 1;
+}`),
+			).resolves.toBeWithNewline(`function f() {
+  "";
+  "use strict";
+  return 1;
+}`);
+		});
+	});
+
 	describe('idempotence', () => {
 		/**
 		 * @param {string} code
@@ -7537,6 +7580,136 @@ declare enum Level {
 		});
 	});
 
+	// With `semi: false` a statement that starts with `(`, `[`, `` ` ``, `/`,
+	// `+`, `-` or `<` would continue the one before it, so it starts with `;`
+	// like Prettier prints it.
+	describe('statements without semicolons', () => {
+		/**
+		 * Assert the input is already formatted without semicolons and comes
+		 * back byte-identical.
+		 * @param {string} source
+		 * @param {import('prettier').Options} [options]
+		 */
+		const expectUnchanged = async (source, options = {}) => {
+			const result = await format(source, { semi: false, ...options });
+			expect(result).toBeWithNewline(source);
+		};
+
+		it('keeps an immediately invoked function a statement of its own', async () => {
+			const result = await format(
+				`let calls = 0;
+const value = 1;
+(() => { calls++; })();
+calls;`,
+				{ semi: false },
+			);
+			expect(result).toBeWithNewline(`let calls = 0
+const value = 1
+;(() => {
+  calls++
+})()
+calls`);
+		});
+
+		it.each([
+			';(function () {})()',
+			';(async () => {})()',
+			';(<T,>(value: T) => value)(1)',
+			';[1, 2].forEach(log)',
+			';[first, second] = [second, first]',
+			';/pattern/.test(text)',
+			';`template`.trim()',
+			';+value',
+			';-value',
+			';(primary || fallback).run()',
+			';(first, second)',
+			';({}).toString()',
+			';(value as any).name = 1',
+		])('starts the statement with a semicolon: %s', async (statement) => {
+			await expectUnchanged(`const value = 1\n${statement}`);
+		});
+
+		it('adds no semicolon before statements that cannot continue the previous one', async () => {
+			await expectUnchanged(`const value = 1
+!value
+++count
+count++
+new Widget()
+items = [1]
+typeof value`);
+		});
+
+		it('prints an arrow without parentheses unguarded', async () => {
+			await expectUnchanged('const value = 1\nvalue => value', { arrowParens: 'avoid' });
+		});
+
+		it('guards statements in every statement list', async () => {
+			await expectUnchanged(`function run() {
+  ;[1].forEach(log)
+  log()
+  ;(first || second)()
+}
+switch (key) {
+  case 1:
+    log()
+    ;[2].forEach(log)
+}
+class Registry {
+  static {
+    log()
+    ;[3].forEach(log)
+  }
+}
+namespace Tools {
+  log()
+  ;[4].forEach(log)
+}
+export function App() @{
+  const count = 1
+  ;[count].forEach(log)
+  <>
+    @if (count) {
+      const next = count
+      ;(next || count).toString()
+      <span />
+    }
+  </>
+}`);
+		});
+
+		it('puts the semicolon after comments and before a JSDoc cast', async () => {
+			await expectUnchanged(`log()
+// note
+;[1].forEach(log)
+;/** @type {any} */ (value).run()`);
+		});
+
+		it('guards a statement kept verbatim by prettier-ignore', async () => {
+			await expectUnchanged(`log()
+// prettier-ignore
+;(new  Widget).run()`);
+		});
+
+		it('keeps the blank line before a guarded statement', async () => {
+			await expectUnchanged(`const value = 1
+
+;[1].forEach(log)
+log()
+
+;(first || second)()`);
+		});
+
+		it('drops empty statements from statement lists', async () => {
+			expect(await format(';log();;\nrun();')).toBeWithNewline('log();\nrun();');
+			expect(await format('function f() { ; }')).toBeWithNewline('function f() {}');
+			expect(await format('class A { static { ;log() } }')).toBeWithNewline(`class A {
+  static {
+    log();
+  }
+}`);
+		});
+	});
+
 	// Type arguments, `this` types, and heritage clauses decide what a
 	// declaration means. Dropping one either breaks the file or quietly
 	// widens a type, so each must come back exactly as written.
@@ -7555,6 +7728,15 @@ declare enum Level {
 			'type Pair = typeof ns.pair<number, string>;',
 			'type Loaded = typeof import("./module").load<string>;',
 		])('keeps type arguments on typeof type queries: %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it.each([
+			'const query = sql<Row>`select 1`;',
+			'const Title = styled.h1<Props>`color: red;`;',
+			'const nested = tag<Map<string, number>, Key>`a${value}c`;',
+			'const explicit = (tag<T>)<U>`x`;',
+		])('keeps type arguments on tagged templates: %s', async (source) => {
 			await expectUnchanged(source);
 		});
 
