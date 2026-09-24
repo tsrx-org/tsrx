@@ -529,8 +529,15 @@ export function get_comment_handlers(source, comments, index = 0) {
 					// list never owns a comment: it prints as nothing, so the comment would
 					// lose its place. The statement before or after it, or the list's
 					// container, takes it. A `;` body (`if (x) ;`) prints in place and keeps
-					// its comments.
-					if (node.type === 'EmptyStatement' && isListEntry(node, path.at(-1))) {
+					// its comments. Static blocks and namespace bodies don't keep a comment
+					// after their last statement yet (#286), so theirs keep comments too.
+					const emptyParent = path.at(-1);
+					if (
+						node.type === 'EmptyStatement' &&
+						emptyParent?.type !== 'StaticBlock' &&
+						emptyParent?.type !== 'TSModuleBlock' &&
+						isListEntry(node, emptyParent)
+					) {
 						return;
 					}
 

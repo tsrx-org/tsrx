@@ -5961,4 +5961,34 @@ describe('comments around empty statements', () => {
 
 		expect(values(statement.consequent.trailingComments)).toEqual([' c']);
 	});
+
+	// Until static blocks and namespace bodies keep a comment after their last
+	// statement (#286), their empty statements keep it inside the block.
+	it('keeps the comments of empty statements inside static blocks and namespaces', () => {
+		/**
+		 * @param {AST.Node[]} statements
+		 * @returns {string[]}
+		 */
+		const trailing = (statements) =>
+			statements.flatMap((statement) => values(statement.trailingComments) ?? []);
+
+		const class_ast = parseModule(
+			'class A {\n\tstatic {\n\t\ta; ; // c\n\t}\n\tb() {}\n}',
+			'App.tsrx',
+		);
+		const [static_block, method] = firstStatement(class_ast, 'ClassDeclaration').body.body;
+		assert_type(static_block, 'StaticBlock');
+
+		expect(trailing(static_block.body)).toEqual([' c']);
+		expect(static_block.trailingComments).toBeUndefined();
+		expect(method.leadingComments).toBeUndefined();
+
+		const namespace_ast = parseModule('namespace N {\n\ta; ; // c\n}\nb;', 'App.tsrx');
+		const declaration = firstStatement(namespace_ast, 'TSModuleDeclaration');
+		assert_type(declaration.body, 'TSModuleBlock');
+
+		expect(trailing(declaration.body.body)).toEqual([' c']);
+		expect(declaration.trailingComments).toBeUndefined();
+		expect(namespace_ast.body[1].leadingComments).toBeUndefined();
+	});
 });
