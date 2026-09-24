@@ -5234,6 +5234,146 @@ type T = {
 	});
 });
 
+describe('comments in import and export specifier lists', () => {
+	/**
+	 * @param {string} source
+	 * @returns {AST.ImportDeclaration | AST.ExportNamedDeclaration}
+	 */
+	function lastDeclaration(source) {
+		const declaration = parseModule(source, 'App.ts').body.at(-1);
+		if (
+			declaration?.type !== 'ImportDeclaration' &&
+			declaration?.type !== 'ExportNamedDeclaration'
+		) {
+			throw new Error(`Expected an import or export, got ${declaration?.type}`);
+		}
+		return declaration;
+	}
+
+	// Like the last element of an array or object, the last specifier keeps the
+	// comments before `}`, so the formatter prints them inside the braces.
+	it.each([
+		['an import', "import {\n\ta,\n\tb,\n\t// after b\n} from 'mod';"],
+		['a re-export', "export {\n\ta,\n\tb,\n\t// after b\n} from 'mod';"],
+		['a local export list', 'const a = 1;\nconst b = 2;\nexport {\n\ta,\n\tb,\n\t// after b\n};'],
+	])('keeps a comment after the last specifier of %s with that specifier', (_, source) => {
+		const declaration = lastDeclaration(source);
+		const [first, last] = declaration.specifiers;
+
+		expect(first.trailingComments).toBeUndefined();
+		expect(last.trailingComments?.map((comment) => comment.value)).toEqual([' after b']);
+		expect(declaration.source?.leadingComments).toBeUndefined();
+	});
+
+	it('keeps a comment before `from` with the last specifier and one after it with the source', () => {
+		const declaration = lastDeclaration("import def, { a } /* before */ from /* after */ 'mod';");
+
+		expect(declaration.specifiers[1].trailingComments?.map((comment) => comment.value)).toEqual([
+			' before ',
+		]);
+		expect(declaration.source?.leadingComments?.map((comment) => comment.value)).toEqual([
+			' after ',
+		]);
+	});
+
+	it('leaves a block comment before a comma with the specifier before it', () => {
+		const declaration = lastDeclaration("import def /* d */, { a } from 'mod';");
+
+		expect(declaration.specifiers[0].trailingComments?.map((comment) => comment.value)).toEqual([
+			' d ',
+		]);
+		expect(declaration.specifiers[1].leadingComments).toBeUndefined();
+	});
+
+	it('leaves the comments after the module source to the source and the declaration', () => {
+		const declaration = lastDeclaration("import { a } from 'mod' /* source */; // declaration");
+
+		expect(declaration.specifiers[0].trailingComments).toBeUndefined();
+		expect(declaration.source?.trailingComments?.map((comment) => comment.value)).toEqual([
+			' source ',
+		]);
+		expect(declaration.trailingComments?.map((comment) => comment.value)).toEqual([' declaration']);
+	});
+});
+
+describe('comments around the commas of a list', () => {
+	/**
+	 * @param {string} source
+	 * @returns {any}
+	 */
+	function firstStatement(source) {
+		return parseModule(source, 'App.ts').body[0];
+	}
+
+	/** @type {Array<[string, string, (statement: any) => AST.Node[]]>} */
+	const lists = [
+		['an array', 'x = [a /* c */, b];', (statement) => statement.expression.right.elements],
+		['call arguments', 'foo(a /* c */, b);', (statement) => statement.expression.arguments],
+		['new arguments', 'new Foo(a /* c */, b);', (statement) => statement.expression.arguments],
+		[
+			'an object',
+			'x = { a: 1 /* c */, b: 2 };',
+			(statement) => statement.expression.right.properties,
+		],
+		['parameters', 'function f(a /* c */, b) {}', (statement) => statement.params],
+		[
+			'an object pattern',
+			'const { a /* c */, b } = o;',
+			(statement) => statement.declarations[0].id.properties,
+		],
+		['an enum', 'enum E { A /* c */, B }', (statement) => statement.members],
+		[
+			'import specifiers',
+			"import def /* c */, { b } from 'mod';",
+			(statement) => statement.specifiers,
+		],
+	];
+
+	it.each(lists)(
+		'keeps a comment before the comma with the element before it in %s',
+		(_, source, list) => {
+			const [first, second] = list(firstStatement(source));
+
+			expect(first.trailingComments?.map((comment) => comment.value)).toEqual([' c ']);
+			expect(second.leadingComments).toBeUndefined();
+		},
+	);
+
+	it.each(lists)(
+		'leads the next element with a comment after the comma in %s',
+		(_, source, list) => {
+			const [first, second] = list(firstStatement(source.replace(' /* c */,', ', /* c */')));
+
+			expect(first.trailingComments).toBeUndefined();
+			expect(second.leadingComments?.map((comment) => comment.value)).toEqual([' c ']);
+		},
+	);
+
+	it('keeps every comment before the comma with the element before it', () => {
+		/** @type {AST.Node[]} */
+		const [first, second] = firstStatement('x = [a /* c */ /* d */, b];').expression.right.elements;
+
+		expect(first.trailingComments?.map((comment) => comment.value)).toEqual([' c ', ' d ']);
+		expect(second.leadingComments).toBeUndefined();
+	});
+
+	// A callee or a function's name isn't in the argument or parameter list, so
+	// a comment before the first element stays with that element.
+	it('leads the first argument or parameter with a comment before it', () => {
+		/** @type {AST.CallExpression} */
+		const call = firstStatement('foo(/** @type {T} */ (x), y);').expression;
+		expect(call.callee.trailingComments).toBeUndefined();
+		expect(call.arguments[0].leadingComments?.map((comment) => comment.value)).toEqual([
+			'* @type {T} ',
+		]);
+
+		/** @type {AST.FunctionDeclaration} */
+		const fn = firstStatement('function f(\n\t// first\n\ta,\n) {}');
+		expect(fn.id.trailingComments).toBeUndefined();
+		expect(fn.params[0].leadingComments?.map((comment) => comment.value)).toEqual([' first']);
+	});
+});
+
 describe('keywordTokens parse option', () => {
 	it('collects async/function keyword tokens from the lexer', () => {
 		const source = `async function load() {}\nfunction plain() {}`;

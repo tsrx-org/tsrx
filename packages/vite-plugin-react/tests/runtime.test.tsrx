@@ -1,21 +1,11 @@
 import type { MockInstance } from 'vitest';
 import { useState, use } from 'react';
 import { mergeRefs } from '@tsrx/react/ref';
-import {
-	runSwitchFallthroughRuntimeTests,
-} from '@tsrx/core/test-harness/runtime/switch-fallthrough';
-import {
-	runTsxExpressionTsrxRuntimeTests,
-} from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
-import {
-	runNullishSpreadRefRuntimeTests,
-} from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
-import {
-	runExpressionSpreadRefRuntimeTests,
-} from '@tsrx/core/test-harness/runtime/expression-spread-ref';
-import {
-	runGeneratorSpreadRefRuntimeTests,
-} from '@tsrx/core/test-harness/runtime/generator-spread-ref';
+import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
+import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
+import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
+import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
+import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [

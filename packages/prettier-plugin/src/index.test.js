@@ -9287,6 +9287,154 @@ declare global {
 		});
 	});
 
+	describe('import and export specifier lists lay out like Prettier', () => {
+		/**
+		 * Assert the input is already formatted and comes back byte-identical.
+		 * @param {string} source
+		 * @param {import('prettier').Options} [options]
+		 */
+		const expectUnchanged = async (source, options) => {
+			const result = await format(source, options);
+			expect(result).toBeWithNewline(source);
+		};
+
+		it('breaks a long export list one specifier per line', async () => {
+			const names =
+				'aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccccccccc';
+			const list = `{
+  aaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccccccccccccc,
+}`;
+
+			const reexports = await format(`export { ${names} } from 'mod';
+export type { ${names} } from 'mod';`);
+			expect(reexports).toBeWithNewline(`export ${list} from "mod";
+export type ${list} from "mod";`);
+
+			const local = await format(`const aaaaaaaaaaaaaaaaaaaaaa = 1;
+const bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb = 2;
+const cccccccccccccccccccccccccc = 3;
+export { ${names} };`);
+			expect(local).toBeWithNewline(`const aaaaaaaaaaaaaaaaaaaaaa = 1;
+const bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb = 2;
+const cccccccccccccccccccccccccc = 3;
+export ${list};`);
+		});
+
+		it('keeps a lone named import on the line with a long source', async () => {
+			await expectUnchanged(
+				'import { a } from "./a-module-with-a-long-name/that-lives/in-a-deeply-nested/folder-structure";',
+			);
+			await expectUnchanged(
+				'import type { A } from "./a-module-with-a-long-name/that-lives/in-a-deeply-nested/folder-structure";',
+			);
+		});
+
+		it('breaks the braces of a default import with named imports', async () => {
+			const result = await format(
+				`import aaaaaaaaaaaaaaaaaaaaaaaaaaaaa, { bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccccccccccccc } from 'mod';`,
+			);
+			expect(result).toBeWithNewline(`import aaaaaaaaaaaaaaaaaaaaaaaaaaaaa, {
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ccccccccccccccccccccccccc,
+} from "mod";`);
+		});
+
+		it('follows bracketSpacing in import and export lists', async () => {
+			await expectUnchanged(`import {a} from "mod";\nimport b, {c, d} from "mod";`, {
+				bracketSpacing: false,
+			});
+			await expectUnchanged(`const a = 1;\nexport {a};\nexport {b as c, d} from "mod";`, {
+				bracketSpacing: false,
+			});
+		});
+
+		it('keeps an alias that repeats the name', async () => {
+			await expectUnchanged('import { a as a } from "mod";');
+			await expectUnchanged('const b = 1;\nexport { b as b };');
+		});
+
+		it.each([
+			'import {} from "mod";',
+			'import type {} from "mod";',
+			'import {} from "./a.json" with { type: "json" };',
+			'import "side-effect";',
+		])('keeps %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it.each([
+			['a trailing line comment', 'import {\n  a, // first\n  b,\n} from "mod";'],
+			['an own-line comment', 'export {\n  a,\n  // own line\n  b,\n} from "mod";'],
+			['a comment after the last specifier', 'import {\n  a,\n  b,\n  // after b\n} from "mod";'],
+			['block comments', 'import { /* x */ a, b /* y */ } from "mod";'],
+			[
+				'comments on default and namespace imports',
+				'import /* d */ a, * as /* ns */ b from "mod";',
+			],
+			['a comment before a comma', 'import def /* d */, { a } from "mod";'],
+			['a comment before from', 'import a /* c */ from "mod";'],
+			['a comment on an alias', 'export { a as /* c */ b } from "mod";'],
+			['a comment on a namespace re-export', 'export * as ns /* c */ from "mod";'],
+			['a comment before the source', 'import {} from /* nothing */ "mod";'],
+			[
+				'a block comment on an attribute',
+				'import a from "./a.json" with { /* c */ type: "json" };',
+			],
+			[
+				'a line comment on an attribute',
+				'import a from "./a.json" with {\n  // c\n  type: "json",\n};',
+			],
+		])('keeps %s', async (_, source) => {
+			await expectUnchanged(source);
+		});
+
+		it('moves a comment after the braces inside them', async () => {
+			const result = await format(`import { a } /* after */ from 'mod';`);
+			expect(result).toBeWithNewline(`import { a /* after */ } from "mod";`);
+		});
+
+		// Prettier prints `/* d */` after the `;`. It stays next to the source here.
+		it('keeps a comment after the module source', async () => {
+			await expectUnchanged('import a from /* c */ "mod" /* d */;');
+		});
+	});
+
+	describe('comments on either side of a comma stay there', () => {
+		it.each([
+			'const x = [a /* c */, b];',
+			'foo(a /* c */, b);',
+			'new Foo(a /* c */, b);',
+			'const o = { a: 1 /* c */, b: 2 };',
+			'function f(a /* c */, b) {}',
+			'const { a /* c */, b } = o;',
+			'import a /* c */, { b } from "mod";',
+			'const x = [a /* c */ /* d */, b];',
+			'const x = [a, /* c */ b];',
+			'foo(a, /** @type {T} */ (b));',
+		])('keeps %s', async (source) => {
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('keeps a comment before the comma in an enum', async () => {
+			const result = await format('enum E { A /* c */, B }');
+			expect(result).toBeWithNewline(`enum E {
+  A /* c */,
+  B,
+}`);
+		});
+
+		it('keeps a comment before the comma when the list collapses', async () => {
+			const result = await format(`const y = [
+  a /* c */,
+  b,
+];`);
+			expect(result).toBeWithNewline('const y = [a /* c */, b];');
+		});
+	});
+
 	// `export default (class Named {})` is an expression: `Named` is bound only
 	// inside the class body. `export default class Named {}` is a declaration:
 	// `Named` becomes a module-scoped binding. Dropping the parens swaps one for

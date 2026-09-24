@@ -299,6 +299,29 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Find the first `token` between two positions that isn't inside a comment,
+	 * such as the comma after a list element or the `from` of an import. Only
+	 * punctuation, whitespace, and comments can come before it there.
+	 * @param {string} token
+	 * @param {number} start
+	 * @param {number} end
+	 * @returns {number} The token's position, or `end` if there is none
+	 */
+	function findOutsideComments(token, start, end) {
+		for (let i = start; i < end; i++) {
+			if (source.startsWith('/*', i)) {
+				i = source.indexOf('*/', i + 2) + 1;
+			} else if (source.startsWith('//', i)) {
+				const newline = source.indexOf('\n', i);
+				i = newline === -1 ? end : newline;
+			} else if (source.startsWith(token, i)) {
+				return i;
+			}
+		}
+		return end;
+	}
+
+	/**
 	 * @param {AST.Node | AST.CSS.Node | null | undefined} node
 	 * @returns {node is AST.NativeTSRXTemplateNode & AST.NodeWithLocation}
 	 */
@@ -778,6 +801,15 @@ export function get_comment_handlers(source, comments, index = 0) {
 								} else if (parent.type === 'CallExpression' || parent.type === 'NewExpression') {
 									node_array = parent.arguments;
 									isArgument = true;
+								} else if (
+									(parent.type === 'ImportDeclaration' ||
+										parent.type === 'ExportNamedDeclaration') &&
+									parent.specifiers.includes(/** @type {any} */ (node))
+								) {
+									// A comment after the last specifier, before `}` or `from`,
+									// trails that specifier, as it does after the last element
+									// of an array or object
+									node_array = parent.specifiers;
 								}
 							}
 
@@ -810,7 +842,16 @@ export function get_comment_handlers(source, comments, index = 0) {
 								parent.typeAnnotation &&
 								parent.typeAnnotation.start !== undefined
 									? parent.typeAnnotation.start
-									: parent?.end;
+									: parent &&
+										  (parent.type === 'ImportDeclaration' ||
+												parent.type === 'ExportNamedDeclaration') &&
+										  parent.source
+										? findOutsideComments(
+												'from',
+												/** @type {AST.NodeWithLocation} */ (node).end,
+												/** @type {AST.NodeWithLocation} */ (parent.source).start,
+											)
+										: parent?.end;
 
 							if (is_last_in_array) {
 								if (isParam || isArgument) {
@@ -904,6 +945,35 @@ export function get_comment_handlers(source, comments, index = 0) {
 										];
 									}
 									return;
+								}
+
+								// In a comma-separated list, the comments before the comma trail
+								// the element and the ones after it lead the next element, as in
+								// Prettier: `[a /* a */, /* b */ b]`
+								const isCommaList =
+									isParam ||
+									isArgument ||
+									parent?.type === 'ArrayExpression' ||
+									parent?.type === 'ObjectExpression' ||
+									parent?.type === 'ObjectPattern' ||
+									parent?.type === 'TSEnumDeclaration' ||
+									parent?.type === 'ImportDeclaration' ||
+									parent?.type === 'ExportNamedDeclaration';
+								// `next_index` is 0 for a callee or a function's name, which aren't
+								// in the list
+								if (isCommaList && next_index > 0 && !is_last_in_array && nextSibling) {
+									const nextStart = /** @type {AST.NodeWithLocation} */ (nextSibling).start;
+									const comma = findOutsideComments(',', end_node.end, nextStart);
+									// Without a comma there's nothing to measure against, so the
+									// usual rules decide
+									if (comma < nextStart && comments[0].start < comma) {
+										while (comments[0] && comments[0].start < comma) {
+											(node.trailingComments ||= []).push(
+												/** @type {AST.CommentWithLocation} */ (comments.shift()),
+											);
+										}
+										return;
+									}
 								}
 
 								if (

@@ -1,18 +1,10 @@
 import type { MockInstance } from 'vitest';
 import { defineVaporAsyncComponent, inject, provide, reactive, ref, watch, watchEffect } from 'vue';
 import { mergeRefs } from '@tsrx/vue/ref';
-import {
-	runSwitchFallthroughRuntimeTests,
-} from '@tsrx/core/test-harness/runtime/switch-fallthrough';
-import {
-	runTsxExpressionTsrxRuntimeTests,
-} from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
-import {
-	runNullishSpreadRefRuntimeTests,
-} from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
-import {
-	runExpressionSpreadRefRuntimeTests,
-} from '@tsrx/core/test-harness/runtime/expression-spread-ref';
+import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
+import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
+import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
+import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
