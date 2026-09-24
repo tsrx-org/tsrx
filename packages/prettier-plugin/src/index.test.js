@@ -1588,6 +1588,94 @@ function test() {
 			expect(result).toBeWithNewline(expected);
 		});
 
+		// Both comments of a stacked cast lead the innermost node, and without
+		// its own parentheses the outer comment stops being a cast
+		it('keeps one pair of parentheses per stacked JSDoc cast', async () => {
+			const input = `const entry = /** @type {Entry} */ (/** @type {unknown} */ (node));
+console.log(/** @type {Entry} */ (/** @type {unknown} */ (node)));
+const three = /** @type {A} */ (/** @type {B} */ (/** @type {C} */ (node)));
+const config = /** @type {Config} */ (/** @type {unknown} */ ({ a: 1 }));
+const extra = /** @type {A} */ ((/** @type {B} */ (node)));
+function unwrap(node) {
+  return /** @type {Entry} */ (/** @type {unknown} */ (node));
+}
+const long = /** @type {Entry} */ (/** @type {unknown} */ (createEntry(firstArgument, secondArgument)));`;
+			const expected = `const entry = /** @type {Entry} */ (/** @type {unknown} */ (node));
+console.log(/** @type {Entry} */ (/** @type {unknown} */ (node)));
+const three = /** @type {A} */ (/** @type {B} */ (/** @type {C} */ (node)));
+const config = /** @type {Config} */ (/** @type {unknown} */ ({ a: 1 }));
+const extra = /** @type {A} */ (/** @type {B} */ (node));
+function unwrap(node) {
+  return /** @type {Entry} */ (/** @type {unknown} */ (node));
+}
+const long = /** @type {Entry} */ (
+  /** @type {unknown} */ (createEntry(firstArgument, secondArgument))
+);`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps a cast whose parentheses hold a comment or another cast', async () => {
+			const input = `const member = /** @type {A} */ (/** @type {B} */ (node).y).z;
+const outer = /** @type {A} */ (/** @type {B} */ (node)).z;
+const plain = /** @type {A} */ (/* plain */ (node));
+const chained = /** @type {A} */ (/* note */ node.y);
+const commented = /** @type {A} */ (
+  // why
+  node
+);
+const kept =
+  // prettier-ignore
+  /** @type {A} */ (/** @type {B} */ (node));`;
+			const expected = `const member = /** @type {A} */ (/** @type {B} */ (node).y).z;
+const outer = /** @type {A} */ (/** @type {B} */ (node)).z;
+const plain = /** @type {A} */ (/* plain */ node);
+const chained = /** @type {A} */ (/* note */ node.y);
+const commented = /** @type {A} */ (
+  // why
+  node
+);
+const kept =
+  // prettier-ignore
+  /** @type {A} */ (/** @type {B} */ (node));`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps stacked casts in a JSX attribute', async () => {
+			const input = `export function Link(props) {
+  return <a title={/** @type {string} */ (/** @type {unknown} */ (props.t))} />;
+}`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(input);
+		});
+
+		// The parentheses of the argument list are the call's, so the comment
+		// before them does not cast the argument
+		it('does not turn a comment before call parentheses into a cast', async () => {
+			const result = await format('foo /** @type {A} */ ((node));');
+			expect(result).toBeWithNewline('foo(/** @type {A} */ node);');
+		});
+
+		it('puts the leading semicolon before a stacked cast that starts a statement', async () => {
+			const input = `run();
+/** @type {A} */ (/** @type {B} */ (node)).start();
+run();
+// note
+/** @type {A} */ (/** @type {B} */ (node).y).z();`;
+			const expected = `run()
+;/** @type {A} */ (/** @type {B} */ (node)).start()
+run()
+// note
+;/** @type {A} */ (/** @type {B} */ (node).y).z()`;
+
+			const result = await format(input, { semi: false });
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should preserve required parentheses around assignment expressions', async () => {
 			const input = `const openSignal = useRef<Signal<boolean> | null>(null)
 const open = props.open ?? (openSignal.current ??= signal(false))
@@ -8353,7 +8441,10 @@ function fail() {
 		// argument's parentheses itself must still print them.
 		it('keeps a type cast inside parentheses that return, throw, or a superclass add', async () => {
 			const input = `function unwrap(node) {
-  return /** @type {Entry} */ (/** @type {unknown} */ (node));
+  return (
+    // unwrap the entry
+    /** @type {Entry} */ (/** @type {unknown} */ (node))
+  );
 }
 function pick(node) {
   return (
@@ -8370,8 +8461,8 @@ function fail(error) {
 class Store extends /** @type {Base} */ (new Base()) {}`;
 			const expected = `function unwrap(node) {
   return (
-    /** @type {Entry} */
-    /** @type {unknown} */ (node)
+    // unwrap the entry
+    /** @type {Entry} */ (/** @type {unknown} */ (node))
   );
 }
 function pick(node) {
