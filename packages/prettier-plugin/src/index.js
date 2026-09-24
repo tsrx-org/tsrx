@@ -6453,21 +6453,22 @@ function printArrayElementsConcisely(path, options, print, trailingComma) {
 	const parts = [];
 
 	path.each((elementPath, index) => {
-		const isLast = index === elements.length - 1;
-		parts.push([print(elementPath), isLast ? trailingComma : ',']);
-
-		if (!isLast) {
+		if (index > 0) {
 			// Prettier breaks before a leading line comment. A block comment on its
 			// own line breaks too: after `1, /* note */` it would reparse as a
-			// trailing comment of `1`.
+			// trailing comment of `1`. A cast's comment prints inside its parens.
+			const commentsAhead =
+				getTypeCastParens(elementPath, options)?.ahead ?? elements[index].leadingComments ?? [];
 			parts.push(
-				isLineAfterElementEmpty(elements[index], options)
+				isLineAfterElementEmpty(elements[index - 1], options)
 					? [hardline, hardline]
-					: hasOwnLineLeadingComment(elements[index + 1], options)
+					: hasOwnLineLeadingComment(elements[index], commentsAhead, options)
 						? hardline
 						: line,
 			);
 		}
+
+		parts.push([print(elementPath), index === elements.length - 1 ? trailingComma : ',']);
 	}, 'elements');
 
 	return fill(parts);

@@ -7013,6 +7013,28 @@ const line = [
 ];`);
 		});
 
+		it('keeps JSDoc casts in a number array', async () => {
+			const input = `const first = [/** @type {Port} */ (80), 443];
+const own = [
+  80,
+  /** @type {Port} */ (443),
+];
+const commented = [
+  80,
+  // secure
+  /** @type {Port} */ (443),
+];`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(`const first = [/** @type {Port} */ (80), 443];
+const own = [80, /** @type {Port} */ (443)];
+const commented = [
+  80,
+  // secure
+  /** @type {Port} */ (443),
+];`);
+		});
+
 		it('breaks an array around a call whose callback body breaks', async () => {
 			const input = `const handlers = [on("click", () => {
   run();
