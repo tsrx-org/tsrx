@@ -8091,6 +8091,48 @@ function fail() {
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
+
+		// A JSDoc cast needs its own parentheses, so a parent that lays out the
+		// argument's parentheses itself must still print them.
+		it('keeps a type cast inside parentheses that return, throw, or a superclass add', async () => {
+			const input = `function unwrap(node) {
+  return /** @type {Entry} */ (/** @type {unknown} */ (node));
+}
+function pick(node) {
+  return (
+    // pick the entry
+    /** @type {Entry} */ (node)
+  );
+}
+function fail(error) {
+  throw (
+    // rethrow as an Error
+    /** @type {Error} */ (error)
+  );
+}
+class Store extends /** @type {Base} */ (new Base()) {}`;
+			const expected = `function unwrap(node) {
+  return (
+    /** @type {Entry} */
+    /** @type {unknown} */ (node)
+  );
+}
+function pick(node) {
+  return (
+    // pick the entry
+    /** @type {Entry} */ (node)
+  );
+}
+function fail(error) {
+  throw (
+    // rethrow as an Error
+    /** @type {Error} */ (error)
+  );
+}
+class Store extends (/** @type {Base} */ (new Base())) {}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
 	});
 
 	// Import aliases and export assignments are runtime bindings. Dropping one

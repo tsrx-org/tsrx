@@ -3440,16 +3440,16 @@ function printTsrxNode(node, path, options, print, args) {
 		nodeContent = [...printDecorators(decorated, path, options, print), nodeContent];
 	}
 
-	if (!args?.suppressOwnParens) {
-		if (hasTypeCastParens(path, options)) {
-			// Like Prettier, a cast breaks inside its parens unless it hugs a literal
-			nodeContent =
-				node.type === 'ObjectExpression' || node.type === 'ArrayExpression'
-					? ['(', nodeContent, ')']
-					: group(['(', indent([softline, nodeContent]), softline, ')']);
-		} else if (needsParens(path, options)) {
-			nodeContent = ['(', nodeContent, ')'];
-		}
+	// A cast's parens belong to the cast, so they print even where a parent
+	// lays out the node's other parens (`suppressOwnParens`)
+	if (hasTypeCastParens(path, options)) {
+		// Like Prettier, a cast breaks inside its parens unless it hugs a literal
+		nodeContent =
+			node.type === 'ObjectExpression' || node.type === 'ArrayExpression'
+				? ['(', nodeContent, ')']
+				: group(['(', indent([softline, nodeContent]), softline, ')']);
+	} else if (!args?.suppressOwnParens && needsParens(path, options)) {
+		nodeContent = ['(', nodeContent, ')'];
 	}
 
 	return finishTsrxNode(/** @type {AST.Node} */ (node), parts, nodeContent);

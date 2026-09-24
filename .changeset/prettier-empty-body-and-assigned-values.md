@@ -24,3 +24,7 @@ the way Prettier does:
   `)();` on separate lines, or when two block comments lead the argument, as in
   `return /* a */ /* b */ x;`. Both used to print a line break right after
   `return`, which returned `undefined`.
+- A JSDoc type cast keeps its parentheses when `return`, `throw`, or a
+  superclass puts parentheses around it. `return (` + `// note` +
+  `/** @type {Entry} */ (node)` + `);` used to lose the cast's parentheses,
+  leaving a plain comment before `node`.
