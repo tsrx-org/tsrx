@@ -6116,6 +6116,26 @@ describe('comments around the commas of a list', () => {
 			"import def /* c */, { b } from 'mod';",
 			(statement) => statement.specifiers,
 		],
+		[
+			'type arguments',
+			'type X = Foo<A /* c */, B>;',
+			(statement) => statement.typeAnnotation.typeArguments.params,
+		],
+		[
+			'type parameters',
+			'function f<A /* c */, B>() {}',
+			(statement) => statement.typeParameters.params,
+		],
+		[
+			'a tuple type',
+			'type X = [A /* c */, B];',
+			(statement) => statement.typeAnnotation.elementTypes,
+		],
+		[
+			'a tuple type with a type in parentheses',
+			'type X = [(A) /* c */, B];',
+			(statement) => statement.typeAnnotation.elementTypes,
+		],
 	];
 
 	it.each(lists)(
@@ -6242,6 +6262,16 @@ describe('comments placed like Prettier', () => {
 		expect(union.types[1].metadata?.prettierIgnore).toBeUndefined();
 	});
 
+	// Prettier's parsers keep no node for a type's parentheses
+	it('marks the first member of a union in parentheses after a prettier-ignore comment on its own line', () => {
+		const type = firstStatement('type K =\n  // prettier-ignore\n  ((A | B));').typeAnnotation;
+		const union = type.typeAnnotation.typeAnnotation;
+
+		expect(type.leadingComments[0].unignore).toBe(true);
+		expect(union.types[0].metadata.prettierIgnore).toBe(true);
+		expect(union.types[1].metadata?.prettierIgnore).toBeUndefined();
+	});
+
 	it('leaves a prettier-ignore comment that ends a union member on that member', () => {
 		const union = firstStatement('type K =\n  | A // prettier-ignore\n  | B;').typeAnnotation;
 		const [comment] = /** @type {any[]} */ (union.types[0].trailingComments);
@@ -6329,6 +6359,84 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(expression.typeArguments.params[0]).leading).toEqual(['* a ']);
 		expect(commentsOf(expression.typeArguments.params[1]).leading).toEqual(['* b ']);
 		expect(commentsOf(expression.arguments[0]).leading).toBeUndefined();
+	});
+
+	// Prettier's `handleTryStatementComments`
+	it('moves a comment between the blocks of a try statement into the next block', () => {
+		const statement = firstStatement(
+			'try {\n  a();\n} // c\ncatch (e) {\n  b();\n}\n// d\nfinally {}',
+		);
+
+		expect(commentsOf(statement.block).trailing).toBeUndefined();
+		expect(commentsOf(statement.handler).leading).toBeUndefined();
+		expect(commentsOf(statement.handler.body.body[0]).leading).toEqual([' c']);
+		expect(commentsOf(statement.finalizer).inner).toEqual([' d']);
+	});
+
+	it('trails the catch parameter with a comment before the catch body', () => {
+		const statement = firstStatement('try {\n  a();\n} catch (e) // c\n{\n  b();\n}');
+
+		expect(commentsOf(statement.handler.param).trailing).toEqual([' c']);
+		expect(commentsOf(statement.handler.body.body[0]).leading).toBeUndefined();
+	});
+
+	it('moves a comment before a template @pending block into it', () => {
+		const [fn] = /** @type {any[]} */ (
+			parseModule(
+				'function A() @{\n  @try {\n    <B />\n  } // c\n  @pending {\n    <p />\n  }\n}',
+				'App.tsrx',
+			).body
+		);
+		const directive = fn.body.render;
+
+		expect(commentsOf(directive.block).trailing).toBeUndefined();
+		expect(commentsOf(directive.pending.body[0]).leading).toEqual([' c']);
+	});
+
+	it('trails the last parameter with the comments before a trailing comma', () => {
+		const [fn] = /** @type {any[]} */ (
+			parseModule('function f(\n  a,\n  b /* c */, /* d */\n) {}', 'App.ts').body
+		);
+
+		expect(commentsOf(fn.params[1]).trailing).toEqual([' c ', ' d ']);
+		expect(commentsOf(fn).inner).toBeUndefined();
+	});
+
+	// Prettier's `handleConditionalExpressionComments` and its default for a
+	// comment at the end of a line
+	it('trails the node before a comment at the end of the line of a ? or :', () => {
+		const { init } = firstStatement('const x = cond ? // a\n  b : // c\n  d;').declarations[0];
+		const type = firstStatement('type X = A extends B ? // a\n  C : D;').typeAnnotation;
+
+		expect(commentsOf(init.test).trailing).toEqual([' a']);
+		expect(commentsOf(init.consequent).trailing).toEqual([' c']);
+		expect(commentsOf(init.consequent).leading).toBeUndefined();
+		expect(commentsOf(type.extendsType).trailing).toEqual([' a']);
+	});
+
+	it('leads the branch after a comment on its own line in a conditional', () => {
+		const { init } = firstStatement('const x = cond ?\n  // a\n  b : c;').declarations[0];
+
+		expect(commentsOf(init.consequent).leading).toEqual([' a']);
+	});
+
+	// Prettier's export starts at the decorators written before it
+	it('trails the last decorator with a comment before the class keyword of an export', () => {
+		const [named, other] = /** @type {any[]} */ (
+			parseModule('@dec export /* c */ class A {}\n@dec\n// d\nexport class B {}', 'App.ts').body
+		);
+
+		expect(commentsOf(named.declaration.decorators[0]).trailing).toEqual([' c ']);
+		expect(commentsOf(named.declaration.id).leading).toBeUndefined();
+		expect(commentsOf(other.declaration.decorators[0]).trailing).toEqual([' d']);
+		expect(commentsOf(other).leading).toBeUndefined();
+	});
+
+	it('leads the type annotation of an object pattern with a comment before its colon', () => {
+		const { id } = firstStatement('const { a } /* c */ : T = o;').declarations[0];
+
+		expect(commentsOf(id.typeAnnotation).leading).toEqual([' c ']);
+		expect(commentsOf(id.properties[0]).trailing).toBeUndefined();
 	});
 });
 

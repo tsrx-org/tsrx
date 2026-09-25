@@ -416,10 +416,8 @@ function isParenthesizedType(node) {
 /**
  * The type inside a `TSParenthesizedType` and any directly nested ones, with
  * the comments of each pair of parentheses moved onto it: the ones before the
- * `(` lead it, the ones after the `)` trail it. It is marked parenthesized, like
- * a parenthesized expression, so a `prettier-ignore` comment keeps the
- * parentheses along with the rest of its source, and it takes over the
- * parser's `prettierIgnore` mark of a union member written in parentheses.
+ * `(` lead it, the ones after the `)` trail it. It takes over the parser's
+ * `prettierIgnore` mark of a union member written in parentheses.
  * @param {AST.TSParenthesizedType & AST.NodeWithMaybeComments & { typeAnnotation: AST.TypeNode & AST.NodeWithMaybeComments }} node
  * @returns {AST.TypeNode & AST.NodeWithMaybeComments}
  */
@@ -429,9 +427,8 @@ function unwrapParenthesizedType(node) {
 		: node.typeAnnotation;
 	const innerNode = /** @type {AST.Node} */ (/** @type {unknown} */ (inner));
 	const wrapperNode = /** @type {AST.Node} */ (/** @type {unknown} */ (node));
-	innerNode.metadata = { ...innerNode.metadata, parenthesized: true };
 	if (wrapperNode.metadata?.prettierIgnore) {
-		innerNode.metadata.prettierIgnore = true;
+		innerNode.metadata = { ...innerNode.metadata, prettierIgnore: true };
 	}
 	if (node.leadingComments?.length) {
 		inner.leadingComments = [...node.leadingComments, ...(inner.leadingComments ?? [])];
@@ -1607,6 +1604,87 @@ function isStatementSlot(key, parent) {
 }
 
 /**
+ * The parents that print an element without parentheses of its own, from
+ * Prettier's `maybeWrapJsxElementInParens`.
+ */
+const ELEMENT_NO_WRAP_PARENTS = new Set([
+	'ArrayExpression',
+	'CallExpression',
+	'ConditionalExpression',
+	'ExpressionStatement',
+	'JSXAttribute',
+	'JSXElement',
+	'JSXExpressionContainer',
+	'JSXFragment',
+	'NewExpression',
+]);
+
+/**
+ * Whether the element or fragment at `path` prints its comments inside its
+ * parentheses, like Prettier's `printJsxElement`: it prints the comments
+ * itself, then adds the parentheses from `needsParens` around them, or else
+ * the ones from `maybeWrapJsxElementInParens`, which print only when the
+ * element breaks. A comment that prints a line break breaks it: a leading
+ * comment that ends its line or spans lines, so a `return`, `throw`, `yield`,
+ * or `await` keeps the element (#456), and a trailing line comment, one on a
+ * line of its own, or one that spans lines. Only such an element does this
+ * here: the parentheses around an element that breaks without one are #369,
+ * and other comments stay outside them (#449).
+ * @param {AstPath} path - The path to the node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintArgs | undefined} args - The node's print arguments
+ * @returns {boolean}
+ */
+function elementPrintsCommentsInParens(path, options, args) {
+	const node = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node);
+	if (
+		!isTemplateExpression(node) ||
+		// A parent that prints the comments or the parentheses lays them out
+		args?.suppressLeadingComments ||
+		args?.suppressOwnParens ||
+		getTypeCastParens(path, options)
+	) {
+		return false;
+	}
+	const text = /** @type {string} */ (options.originalText);
+	/** @param {AST.Comment} comment */
+	const spansLines = (comment) => comment.type === 'Block' && comment.value.includes('\n');
+	return (
+		(node.leadingComments ?? []).some(
+			(comment) =>
+				spansLines(comment) || hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).end),
+		) ||
+		(!args?.suppressTrailingComments &&
+			(node.trailingComments ?? []).some(
+				(comment) =>
+					comment.type === 'Line' ||
+					spansLines(comment) ||
+					hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).start, {
+						backwards: true,
+					}),
+			))
+	);
+}
+
+/**
+ * Put an element's printed comments and content in its parentheses (see
+ * {@link elementPrintsCommentsInParens}).
+ * @param {AstPath} path - The path to the element
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {Doc} printed - The element with its comments
+ * @returns {Doc}
+ */
+function printElementInParens(path, options, printed) {
+	const parent = /** @type {AST.Node | null} */ (path.parent);
+	const hasParens = needsParens(path, options);
+	if (!parent || ELEMENT_NO_WRAP_PARENTS.has(parent.type) || isStatementSlot(path.key, parent)) {
+		return hasParens ? ['(', printed, ')'] : printed;
+	}
+	const contents = [indent([softline, printed]), softline];
+	return hasParens ? ['(', group(contents), ')'] : group([ifBreak('('), ...contents, ifBreak(')')]);
+}
+
+/**
  * The type part of {@link nodeNeedsParens}. Prettier's `needsParens` lists
  * these types as one chain of `switch` cases that fall through from function
  * types down to type operators: each type adds its own rules and then shares
@@ -2672,10 +2750,14 @@ function printTsrxNode(node, path, options, print, args) {
 		const ignoredText = ignoredSource.text;
 		/** @type {Doc} */
 		let ignored = ignoredText;
-		// The node's span excludes its own parentheses, so put back any it had
+		// Like Prettier, the node's span excludes its parentheses, and it prints
+		// in the ones it needs where it is, not the ones it was written with
 		if (typeCastParens) {
 			ignored = printTypeCastParens(commentNode, typeCastParens, ignored, options, args);
-		} else if (commentNode.metadata?.parenthesized && !args?.suppressOwnParens) {
+		} else if (
+			!args?.suppressOwnParens &&
+			(needsParens(path, options) || sequencePrintsOwnParens(path, args))
+		) {
 			ignored = ['(', ignored, ')'];
 		}
 		// The previous statement may have lost the `;` that ended it
@@ -2854,6 +2936,9 @@ function printTsrxNode(node, path, options, print, args) {
 
 		case 'TryStatement':
 			nodeContent = printTryStatement(node, path, options, print);
+			break;
+		case 'CatchClause':
+			nodeContent = printCatchClause(node, path, options, print);
 			break;
 		case 'JSXTryExpression':
 			nodeContent = [
@@ -3149,9 +3234,7 @@ function printTsrxNode(node, path, options, print, args) {
 		case 'RestElement': {
 			/** @type {Doc[]} */
 			const parts = ['...', path.call(print, 'argument')];
-			if (node.typeAnnotation) {
-				parts.push(': ', path.call(print, 'typeAnnotation'));
-			}
+			parts.push(...printTypeAnnotationProperty(path, print));
 			nodeContent = parts;
 			break;
 		}
@@ -3180,8 +3263,7 @@ function printTsrxNode(node, path, options, print, args) {
 					node.name,
 					definiteMarker,
 					optionalMarker,
-					': ',
-					path.call(print, 'typeAnnotation'),
+					...printTypeAnnotationProperty(path, print),
 				];
 			} else {
 				nodeContent = definiteMarker ? [node.name, definiteMarker] : node.name;
@@ -3355,7 +3437,9 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'TSTypeAnnotation': {
-			nodeContent = path.call(print, 'typeAnnotation');
+			const token = getTypeAnnotationToken(path.parent, path.key);
+			const type = path.call(print, 'typeAnnotation');
+			nodeContent = token ? [token, ' ', type] : type;
 			break;
 		}
 
@@ -3461,7 +3545,7 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'TSConditionalType':
-			nodeContent = printTSConditionalType(node, path, options, print);
+			nodeContent = printConditionalExpression(path, options, print);
 			break;
 		case 'TSInferType':
 			nodeContent = ['infer ', path.call(print, 'typeParameter')];
@@ -3620,6 +3704,18 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent,
 			options,
 			args,
+		);
+	} else if (elementPrintsCommentsInParens(path, options, args)) {
+		return printElementInParens(
+			path,
+			options,
+			finishTsrxNode(
+				/** @type {AST.Node} */ (node),
+				parts,
+				nodeContent,
+				options,
+				args?.suppressTrailingComments,
+			),
 		);
 	} else if (!args?.suppressOwnParens && needsParens(path, options)) {
 		nodeContent = ['(', nodeContent, ')'];
@@ -4330,7 +4426,7 @@ function printArrowFunctionSignature(path, options, print, args) {
 	/** @type {Doc} */
 	let typeParametersDoc = node.typeParameters ? path.call(print, 'typeParameters') : '';
 	/** @type {Doc} */
-	let returnTypeDoc = node.returnType ? [': ', path.call(print, 'returnType')] : '';
+	let returnTypeDoc = printTypeAnnotationProperty(path, print, 'returnType');
 	if (shouldExpandParameters) {
 		if (willBreak(returnTypeDoc)) {
 			throw new ArgExpansionBailout();
@@ -4875,6 +4971,50 @@ function printFunctionParameters(
 }
 
 /**
+ * The token a `TSTypeAnnotation` starts with, like Prettier's
+ * `getTypeAnnotationFirstToken`: the `=>` of a function or constructor type,
+ * none in a type predicate (`x is T`), and `:` everywhere else
+ * @param {AST.Node | null} parent - The node that holds the annotation
+ * @param {string | number | null} key - The property that holds it
+ * @returns {string}
+ */
+function getTypeAnnotationToken(parent, key) {
+	if (
+		(parent?.type === 'TSFunctionType' || parent?.type === 'TSConstructorType') &&
+		(key === 'typeAnnotation' || key === 'returnType')
+	) {
+		return '=>';
+	}
+	return parent?.type === 'TSTypePredicate' ? '' : ':';
+}
+
+/**
+ * Print a type annotation or return type with its `:` (or `=>`), like
+ * Prettier's `printTypeAnnotationProperty`. The `TSTypeAnnotation` prints
+ * the token itself, after its leading comments, so that a comment before
+ * the `:` stays there (`let x /* c *\/ : T`). A space goes before those
+ * comments, and always before a `=>`.
+ * @param {AstPath} path - The path to the node that holds the annotation
+ * @param {PrintFn} print - Print callback
+ * @param {string} [key] - The property that holds the annotation
+ * @returns {Doc[]}
+ */
+function printTypeAnnotationProperty(path, print, key = 'typeAnnotation') {
+	const annotation = /** @type {AST.Node & AST.NodeWithMaybeComments | null | undefined} */ (
+		path.node[key]
+	);
+	if (!annotation) {
+		return [];
+	}
+	if (annotation.type !== 'TSTypeAnnotation') {
+		return [': ', path.call(print, key)];
+	}
+	return getTypeAnnotationToken(path.node, key) === '=>' || annotation.leadingComments?.length
+		? [' ', path.call(print, key)]
+		: [path.call(print, key)];
+}
+
+/**
  * The return type of a function-like node, without its `TSTypeAnnotation`
  * wrapper. TypeScript signatures keep it in `typeAnnotation`.
  * @param {FunctionLikeNode} functionNode - The function-like node
@@ -4959,7 +5099,7 @@ function printFunctionSignature(node, path, options, print, shouldExpandParamete
 		return group(paramsPart);
 	}
 	/** @type {Doc[]} */
-	const returnTypeDoc = [': ', path.call(print, 'returnType')];
+	const returnTypeDoc = printTypeAnnotationProperty(path, print, 'returnType');
 	if (shouldGroupFunctionParameters(node, returnTypeDoc)) {
 		return group([group(paramsPart), ...returnTypeDoc]);
 	}
@@ -4981,8 +5121,7 @@ function printFunctionSignature(node, path, options, print, shouldExpandParamete
 function printMethodValue(path, options, print, typeParameters = path.node.typeParameters) {
 	const node = path.node;
 	const parametersDoc = printFunctionParameters(path, options, print);
-	/** @type {Doc} */
-	const returnTypeDoc = node.returnType ? [': ', path.call(print, 'returnType')] : '';
+	const returnTypeDoc = printTypeAnnotationProperty(path, print, 'returnType');
 	/** @type {Doc[]} */
 	const parts = [
 		node.typeParameters ? path.call(print, 'typeParameters') : '',
@@ -5034,12 +5173,11 @@ function printFunctionType(node, path, options, print) {
 
 	const isArrowType = node.type === 'TSFunctionType' || node.type === 'TSConstructorType';
 	/** @type {Doc[]} */
-	const returnTypeDoc = [];
-	if (node.typeAnnotation) {
-		returnTypeDoc.push(isArrowType ? ' => ' : ': ', path.call(print, 'typeAnnotation'));
-	} else if (isArrowType) {
-		returnTypeDoc.push(' => ');
-	}
+	const returnTypeDoc = node.typeAnnotation
+		? printTypeAnnotationProperty(path, print)
+		: isArrowType
+			? [' => ']
+			: [];
 
 	if (shouldGroupFunctionParameters(node, returnTypeDoc)) {
 		parametersDoc = group(parametersDoc);
@@ -5885,50 +6023,6 @@ function printFunctionDeclaration(node, path, options, print) {
 }
 
 /**
- * Extract and print leading comments from a node before a control flow statement keyword
- * @param {AST.Node} node - The node that may have leading comments
- * @returns {Doc[]} - Array of doc parts for the comments
- */
-function extractAndPrintLeadingComments(node) {
-	const leadingComments = node && node.leadingComments;
-	/** @type {Doc[]} */
-	const parts = [];
-
-	if (leadingComments && leadingComments.length > 0) {
-		for (let i = 0; i < leadingComments.length; i++) {
-			const comment = leadingComments[i];
-			const nextComment = leadingComments[i + 1];
-
-			if (comment.type === 'Line') {
-				parts.push(printComment(comment));
-				parts.push(hardline);
-
-				// Check if there should be blank lines between comments
-				if (nextComment) {
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
-				}
-			} else if (comment.type === 'Block') {
-				parts.push(printComment(comment));
-				parts.push(hardline);
-
-				// Check if there should be blank lines between comments
-				if (nextComment) {
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
-				}
-			}
-		}
-	}
-
-	return parts;
-}
-
-/**
  * Print a loop, `if` or `else` body after its header, like Prettier's
  * `printClause`. A block, or the `if` of an `else if`, stays on the header's
  * line. Another statement moves to its own indented line when the enclosing
@@ -6314,9 +6408,7 @@ function printObject(node, path, options, print) {
 		if (/** @type {{ optional?: boolean }} */ (node).optional) {
 			annotationParts.push('?');
 		}
-		if (node.typeAnnotation) {
-			annotationParts.push(': ', path.call(print, 'typeAnnotation'));
-		}
+		annotationParts.push(...printTypeAnnotationProperty(path, print));
 	}
 
 	/** @type {Doc[]} */
@@ -6590,7 +6682,8 @@ function printHeritageClauses(node, path, options, print, groupMode) {
 }
 
 /**
- * Print a try statement (with TSRX pending block extension)
+ * Print a try statement (with TSRX pending block extension), like Prettier's
+ * `printTryStatement`
  * @param {AST.TryStatement} node - The try statement node
  * @param {AstPath<AST.TryStatement>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
@@ -6599,50 +6692,75 @@ function printHeritageClauses(node, path, options, print, groupMode) {
  * @returns {Doc[]}
  */
 function printTryStatement(node, path, options, print, directive = false) {
-	// Extract leading comments from block node to print them before 'try' keyword
-	const blockNode = node.block;
-
-	// Print block without its leading comments (they'll be printed before 'try')
-	const block = path.call(
-		(blockPath) => print(blockPath, { suppressLeadingComments: true }),
-		'block',
-	);
-
 	/** @type {Doc[]} */
-	const parts = [];
-
-	// Print leading comments from block node before 'try' keyword
-	parts.push(...extractAndPrintLeadingComments(blockNode));
-
-	parts.push('try ');
-	parts.push(block);
+	const parts = ['try ', path.call(print, 'block')];
 
 	if (node.pending) {
-		parts.push(directive ? ' @pending ' : ' pending ');
-		parts.push(path.call(print, 'pending'));
+		parts.push(directive ? ' @pending ' : ' pending ', path.call(print, 'pending'));
 	}
 
 	if (node.handler) {
-		parts.push(directive ? ' @catch' : ' catch');
-		if (node.handler.param) {
-			parts.push(' (');
-			parts.push(path.call(print, 'handler', 'param'));
-			if (node.handler.resetParam) {
-				parts.push(', ');
-				parts.push(path.call(print, 'handler', 'resetParam'));
-			}
-			parts.push(')');
-		}
-		parts.push(' ');
-		parts.push(path.call(print, 'handler', 'body'));
+		parts.push(' ', path.call(print, 'handler'));
 	}
 
 	if (node.finalizer) {
-		parts.push(' finally ');
-		parts.push(path.call(print, 'finalizer'));
+		parts.push(' finally ', path.call(print, 'finalizer'));
 	}
 
 	return parts;
+}
+
+/**
+ * Print a `catch` clause (`@catch` in a template `@try`), like Prettier's
+ * `printCatchClause`: parameters with a line comment, or a block comment on
+ * a line of its own, go on their own indented line
+ * @param {AST.CatchClause} node - The catch clause
+ * @param {AstPath<AST.CatchClause>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc[]}
+ */
+function printCatchClause(node, path, options, print) {
+	const parent = /** @type {AST.Node | null} */ (path.parent);
+	const keyword = parent?.type === 'JSXTryExpression' ? '@catch ' : 'catch ';
+	if (!node.param) {
+		return [keyword, path.call(print, 'body')];
+	}
+
+	const text = /** @type {string} */ (options.originalText);
+	const params = [node.param, node.resetParam].filter((param) => !!param);
+	const parameterHasComments = params.some((param) => {
+		const { leadingComments = [], trailingComments = [] } =
+			/** @type {AST.NodeWithMaybeComments} */ (param);
+		return (
+			leadingComments.some(
+				(comment) =>
+					comment.type !== 'Block' ||
+					hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).end),
+			) ||
+			trailingComments.some(
+				(comment) =>
+					comment.type !== 'Block' ||
+					hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).start, {
+						backwards: true,
+					}),
+			)
+		);
+	});
+	// A template `@catch` may also name its reset function, which breaks onto
+	// its own line like a second function parameter
+	const printed = [path.call(print, 'param')];
+	if (node.resetParam) {
+		printed.push(path.call(print, 'resetParam'));
+	}
+
+	return [
+		keyword,
+		parameterHasComments
+			? ['(', indent([softline, join([',', line], printed)]), softline, ') ']
+			: ['(', join(', ', printed), ') '],
+		path.call(print, 'body'),
+	];
 }
 
 /**
@@ -6835,11 +6953,7 @@ function printPropertyDefinition(node, path, options, print) {
 		parts.push('!');
 	}
 
-	// Type annotation
-	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
+	parts.push(...printTypeAnnotationProperty(path, print));
 
 	return [printAssignment(path, options, print, parts, ' =', 'value'), semi(options)];
 }
@@ -8685,7 +8799,7 @@ function getOwnLineCommentAhead(path, options, skipLookupComments = false, isOpe
 			/** @type {AST.NodeWithLocation} */ (comment).start < nodeStart,
 	);
 	const firstComment = comments[0] ?? null;
-	if (hasLeadingOwnLineComment(node, comments, options)) {
+	if (hasLeadingOwnLineComment(node, comments, options, Boolean(typeCastParens))) {
 		return firstComment;
 	}
 	const key = getLeftmostChildKey(node);
@@ -9720,21 +9834,37 @@ function printDebuggerStatement(node, path, options) {
 }
 
 /**
- * Print a conditional expression like Prettier's ternary printer (without
- * `experimentalTernaries`). A chain of nested conditionals prints in one
- * group, so it stays on one line when it fits and breaks at every `?` and `:`
- * when it doesn't. A nested conditional consequent gets parentheses only on
- * one line.
- * @param {AstPath<AST.ConditionalExpression>} path
+ * Print a conditional expression or a conditional type like Prettier's
+ * ternary printer (`printTernaryOld`, without `experimentalTernaries`). A
+ * chain of nested conditionals prints in one group, so it stays on one line
+ * when it fits and breaks at every `?` and `:` when it doesn't. A nested
+ * conditional in the true branch gets parentheses only on one line, and one
+ * in the test (a conditional type's check or extends type) breaks inside the
+ * parentheses it needs there.
+ * @param {AstPath<AST.ConditionalExpression | AST.TSConditionalType>} path
  * @param {TsrxFormatOptions} options
  * @param {PrintFn} print
  * @returns {Doc}
  */
 function printConditionalExpression(path, options, print) {
 	const node = path.node;
+	// The keys differ between the two node types
+	/** @type {AstPath} */
+	const nodePath = path;
+	const isConditionalExpression = node.type === 'ConditionalExpression';
+	const consequentKey = isConditionalExpression ? 'consequent' : 'trueType';
+	const alternateKey = isConditionalExpression ? 'alternate' : 'falseType';
+	const testKeys = isConditionalExpression ? ['test'] : ['checkType', 'extendsType'];
+	/**
+	 * @param {AST.Node} ancestor
+	 * @param {AST.Node} child
+	 * @returns {boolean}
+	 */
+	const isTestOf = (ancestor, child) =>
+		testKeys.some((key) => /** @type {Record<string, unknown>} */ (ancestor)[key] === child);
 	const parent = /** @type {AST.Node} */ (path.getParentNode());
-	const isParentTest = parent.type === 'ConditionalExpression' && parent.test === node;
-	const forceNoIndent = parent.type === 'ConditionalExpression' && !isParentTest;
+	const isParentTest = parent.type === node.type && isTestOf(parent, node);
+	const forceNoIndent = parent.type === node.type && !isParentTest;
 
 	// The outermost conditional of the chain groups it
 	/** @type {AST.Node} */
@@ -9743,7 +9873,7 @@ function printConditionalExpression(path, options, print) {
 	let firstNonConditionalParent = parent;
 	for (let level = 0; ; level++) {
 		const ancestor = /** @type {AST.Node | null} */ (path.getParentNode(level));
-		if (!ancestor || ancestor.type !== 'ConditionalExpression' || ancestor.test === child) {
+		if (!ancestor || ancestor.type !== node.type || isTestOf(ancestor, child)) {
 			firstNonConditionalParent = ancestor ?? parent;
 			break;
 		}
@@ -9752,26 +9882,27 @@ function printConditionalExpression(path, options, print) {
 
 	/**
 	 * Align a branch with the first character after `? ` or `: `
-	 * @param {'consequent' | 'alternate'} key
+	 * @param {string} key
 	 */
 	const printBranch = (key) => {
-		const printed = path.call(print, key);
+		const printed = nodePath.call(print, key);
 		return options.useTabs ? indent(printed) : align(2, printed);
 	};
-	const consequentIsConditional = node.consequent.type === 'ConditionalExpression';
+	const consequentIsConditional = nodePath.node[consequentKey].type === node.type;
 	const branches = [
 		line,
 		'? ',
 		consequentIsConditional ? ifBreak('', '(') : '',
-		printBranch('consequent'),
+		printBranch(consequentKey),
 		consequentIsConditional ? ifBreak('', ')') : '',
 		line,
 		': ',
-		printBranch('alternate'),
+		printBranch(alternateKey),
 	];
+	const isParentAlternate = parent.type === node.type && nodePath.parent[alternateKey] === node;
 	/** @type {Doc} */
 	let parts = branches;
-	if (parent.type === 'ConditionalExpression' && parent.alternate !== node && !isParentTest) {
+	if (parent.type === node.type && !isParentAlternate && !isParentTest) {
 		// A conditional consequent indents its branches past its parent's
 		parts = options.useTabs
 			? dedent(indent(branches))
@@ -9783,16 +9914,22 @@ function printConditionalExpression(path, options, print) {
 	//     ? b
 	//     : c
 	//   ).call()
-	const breakClosingParen = parent.type === 'MemberExpression' && !parent.computed;
-	const shouldExtraIndent = shouldExtraIndentForConditionalExpression(path);
+	const breakClosingParen =
+		isConditionalExpression && parent.type === 'MemberExpression' && !parent.computed;
+	const shouldExtraIndent =
+		isConditionalExpression &&
+		shouldExtraIndentForConditionalExpression(
+			/** @type {AstPath<AST.ConditionalExpression>} */ (path),
+		);
 
-	const testDoc = path.call(print, 'test');
+	/** @type {Doc} */
+	const testDoc = isConditionalExpression
+		? nodePath.call(print, 'test')
+		: [nodePath.call(print, 'checkType'), ' extends ', nodePath.call(print, 'extendsType')];
 	/** @type {Doc[]} */
 	const contents = [
 		// A multiline test in an alternate lines up with the branches
-		parent.type === 'ConditionalExpression' && parent.alternate === node
-			? align(2, testDoc)
-			: testDoc,
+		isParentAlternate ? align(2, testDoc) : testDoc,
 		forceNoIndent ? parts : indent(parts),
 		breakClosingParen && !shouldExtraIndent ? softline : '',
 	];
@@ -10156,6 +10293,22 @@ function canFlattenOperand(path, options) {
 }
 
 /**
+ * Whether the node at `path` is a sequence expression that prints its own
+ * parentheses. Like Prettier, sequences keep them everywhere except in a
+ * `for` head, unless the parent prints them (`return` with a comment).
+ * @param {AstPath} path - The path to the node
+ * @param {PrintArgs} [args] - The node's print arguments
+ * @returns {boolean}
+ */
+function sequencePrintsOwnParens(path, args) {
+	return (
+		path.node.type === 'SequenceExpression' &&
+		!isForStatement(/** @type {AST.Node | null} */ (path.getParentNode())) &&
+		!args?.suppressOwnParens
+	);
+}
+
+/**
  * Print a sequence expression like Prettier's `printSequenceExpression`. As a
  * statement or in a `for` head, the expressions after the first indent when
  * they break. As an arrow body or a `return` or `throw` argument, the
@@ -10170,9 +10323,7 @@ function canFlattenOperand(path, options) {
  */
 function printSequenceExpression(node, path, options, print, args) {
 	const parent = /** @type {AST.Node} */ (path.getParentNode());
-	// Sequences keep their parentheses everywhere except a `for` head, like
-	// Prettier, unless the parent prints them (`return` with a comment)
-	const printsOwnParens = !isForStatement(parent) && !args?.suppressOwnParens;
+	const printsOwnParens = sequencePrintsOwnParens(path, args);
 
 	/** @type {Doc} */
 	let printed;
@@ -10463,9 +10614,7 @@ function printArray(node, path, options, print) {
 		if (/** @type {{ optional?: boolean }} */ (node).optional) {
 			parts.push('?');
 		}
-		if (node.typeAnnotation) {
-			parts.push(': ', path.call(print, 'typeAnnotation'));
-		}
+		parts.push(...printTypeAnnotationProperty(path, print));
 	}
 
 	return parts;
@@ -11060,14 +11209,19 @@ function getCommentsAhead(path, options) {
 
 /**
  * Prettier's `hasLeadingOwnLineComment`: whether a comment the node prints
- * ahead of itself ends its line.
+ * ahead of itself ends its line. An element prints its comments inside its
+ * parentheses (see {@link elementPrintsCommentsInParens}), unless they go
+ * ahead of a type cast's parentheses, which Prettier's `babel` parser keeps as
+ * a `ParenthesizedExpression`.
  * @param {AST.Node} node
  * @param {AST.Comment[]} comments - The comments the node prints ahead of itself
  * @param {TsrxFormatOptions} options - Prettier options
+ * @param {boolean} [isTypeCast] - Whether the comments go ahead of the
+ *   node's type-cast parentheses
  * @returns {boolean}
  */
-function hasLeadingOwnLineComment(node, comments, options) {
-	if (isTemplateExpression(node)) {
+function hasLeadingOwnLineComment(node, comments, options, isTypeCast = false) {
+	if (isTemplateExpression(node) && !isTypeCast) {
 		return hasPrettierIgnore(node);
 	}
 	const text = /** @type {string} */ (options.originalText);
@@ -11437,10 +11591,7 @@ function printTSPropertySignature(node, path, options, print) {
 		parts.push('?');
 	}
 
-	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
+	parts.push(...printTypeAnnotationProperty(path, print));
 
 	return parts;
 }
@@ -11481,7 +11632,7 @@ function printTSMethodSignature(node, path, options, print) {
 	// `printMethodSignature`
 	const parametersDoc = printFunctionParameters(path, options, print, false, true);
 	/** @type {Doc} */
-	const returnTypeDoc = node.typeAnnotation ? [': ', path.call(print, 'typeAnnotation')] : '';
+	const returnTypeDoc = printTypeAnnotationProperty(path, print);
 	parts.push(
 		shouldGroupFunctionParameters(node, returnTypeDoc) ? group(parametersDoc) : parametersDoc,
 	);
@@ -11563,10 +11714,7 @@ function printTSIndexSignature(node, path, options, print) {
 	}
 	parts.push(']');
 
-	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
+	parts.push(...printTypeAnnotationProperty(path, print));
 
 	// Interfaces and type literals separate their members, but class members
 	// end themselves — without this the class body runs into the next member
@@ -11576,36 +11724,6 @@ function printTSIndexSignature(node, path, options, print) {
 	}
 
 	return parts;
-}
-
-/**
- * Print a TypeScript conditional type
- * @param {AST.TSConditionalType} node - The conditional type node
- * @param {AstPath<AST.TSConditionalType>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc}
- */
-function printTSConditionalType(node, path, options, print) {
-	const trueType = path.call(print, 'trueType');
-	const falseType = path.call(print, 'falseType');
-
-	const shouldIndentTrueType = node.trueType.type !== 'TSConditionalType';
-	const shouldIndentFalseType = node.falseType.type !== 'TSConditionalType';
-
-	// Like Prettier's ternaries, a conditional true type gets parentheses only
-	// on one line
-	const isTrueType = path.key === 'trueType' && path.parent?.type === 'TSConditionalType';
-
-	return group([
-		isTrueType ? ifBreak('', '(') : '',
-		path.call(print, 'checkType'),
-		' extends ',
-		path.call(print, 'extendsType'),
-		indent([line, '? ', shouldIndentTrueType ? indent(trueType) : trueType]),
-		indent([line, ': ', shouldIndentFalseType ? indent(falseType) : falseType]),
-		isTrueType ? ifBreak('', ')') : '',
-	]);
 }
 
 /**

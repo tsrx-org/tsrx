@@ -287,21 +287,6 @@ export function createParser(...plugins) {
  */
 export function get_comment_handlers(source, comments, index = 0) {
 	/**
-	 * @param {string} text
-	 * @param {number} startIndex
-	 * @returns {string | null}
-	 */
-	function getNextNonWhitespaceCharacter(text, startIndex) {
-		for (let i = startIndex; i < text.length; i++) {
-			const char = text[i];
-			if (char !== ' ' && char !== '\t' && char !== '\n' && char !== '\r') {
-				return char;
-			}
-		}
-		return null;
-	}
-
-	/**
 	 * Find the first `token` between two positions that isn't inside a comment,
 	 * such as the comma after a list element or the `from` of an import. Only
 	 * punctuation, whitespace, and comments can come before it there.
@@ -845,6 +830,20 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Where a node starts for the comments before it, like Prettier's
+	 * `locStart`: an export whose declaration's decorators come before
+	 * `export` starts at the first of them, so that the comments after them
+	 * lie in the declaration (`@dec /* c *\/ export class A {}`)
+	 * @param {AST.Node | AST.CSS.StyleSheet} node
+	 * @returns {number}
+	 */
+	function getCommentStart(node) {
+		const { start } = /** @type {AST.NodeWithLocation} */ (node);
+		const [decorator] = /** @type {any} */ (node).declaration?.decorators ?? [];
+		return decorator && decorator.start < start ? decorator.start : start;
+	}
+
+	/**
 	 * @param {AST.Node | null | undefined} node
 	 * @returns {node is AST.ClassDeclaration | AST.ClassExpression | AST.TSInterfaceDeclaration}
 	 */
@@ -875,6 +874,23 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Like Prettier's `addBlockStatementFirstComment`: the comment leads the
+	 * first statement of a block, or dangles in the block when it has none.
+	 * @param {AST.BlockStatement | AST.ClassBody} block
+	 * @param {AST.CommentWithLocation} comment
+	 */
+	function addBlockStatementFirstComment(block, comment) {
+		const first = /** @type {AST.Node[]} */ (block.body).find(
+			(statement) => statement.type !== 'EmptyStatement',
+		);
+		if (first) {
+			addLeadingComment(first, comment);
+		} else {
+			pushInnerComment(block, comment);
+		}
+	}
+
+	/**
 	 * Like Prettier's `isTypeCastComment`: a JSDoc comment with `@type` or
 	 * `@satisfies`
 	 * @param {AST.CommentWithLocation} comment
@@ -897,6 +913,19 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * The type inside any parentheses written around a type
+	 * (`TSParenthesizedType`), or the node itself.
+	 * @param {AST.Node | null} node
+	 * @returns {AST.Node | null}
+	 */
+	function skipParenthesizedTypes(node) {
+		while (node?.type === 'TSParenthesizedType') {
+			node = /** @type {AST.Node} */ (/** @type {unknown} */ (node.typeAnnotation));
+		}
+		return node;
+	}
+
+	/**
 	 * Whether {@link handleComment} has a rule for comments in the node.
 	 * @param {AST.Node | AST.CSS.StyleSheet | undefined} node
 	 * @returns {boolean}
@@ -907,6 +936,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 			type === 'IfStatement' ||
 			type === 'WhileStatement' ||
 			type === 'WithStatement' ||
+			type === 'TryStatement' ||
+			type === 'CatchClause' ||
+			type === 'ConditionalExpression' ||
+			type === 'TSConditionalType' ||
 			type === 'MemberExpression' ||
 			type === 'BinaryExpression' ||
 			type === 'LogicalExpression' ||
@@ -983,6 +1016,64 @@ export function get_comment_handlers(source, comments, index = 0) {
 			return true;
 		}
 
+		// `handleTryStatementComments`: a comment on its own line or at the end
+		// of a line before a block of a `try` (the `try` block, a template's
+		// `@pending` block, the `catch` body, or the `finally` block) moves into
+		// that block as its first comment. In a `catch`, one after the
+		// parameter trails it.
+		if (
+			(ownLine || endOfLine) &&
+			(type === 'TryStatement' || type === 'CatchClause') &&
+			following
+		) {
+			if (type === 'CatchClause' && preceding) {
+				addTrailingComment(preceding, comment);
+				return true;
+			}
+			if (following.type === 'BlockStatement') {
+				addBlockStatementFirstComment(/** @type {AST.BlockStatement} */ (following), comment);
+				return true;
+			}
+			if (following.type === 'CatchClause') {
+				addBlockStatementFirstComment(/** @type {AST.CatchClause} */ (following).body, comment);
+				return true;
+			}
+		}
+
+		// `handleConditionalExpressionComments`: a comment on its own line or at
+		// the end of a line in a conditional leads the branch after it, unless
+		// it's on the line of the node before it. That one trails the node by
+		// the default below, so it stays before the `?` or `:`.
+		if (
+			(ownLine || endOfLine) &&
+			(type === 'ConditionalExpression' || type === 'TSConditionalType') &&
+			following &&
+			(!preceding ||
+				source
+					.slice(/** @type {AST.NodeWithLocation} */ (preceding).end, comment.start)
+					.includes('\n'))
+		) {
+			addLeadingComment(following, comment);
+			return true;
+		}
+
+		// Prettier's tie-break for a comment between a class's last decorator
+		// and the node after it: with a keyword between them, like the
+		// `export` and `class` of `@dec export /* c */ class A {}`, it trails
+		// the decorator, which prints it before `export`
+		if (
+			!ownLine &&
+			!endOfLine &&
+			isClassLike(enclosing) &&
+			preceding?.type === 'Decorator' &&
+			following &&
+			following.type !== 'Decorator' &&
+			!isBlankBetween(comment.end, /** @type {AST.NodeWithLocation} */ (following).start, false)
+		) {
+			addTrailingComment(preceding, comment);
+			return true;
+		}
+
 		// `handleClassComments`: a comment in the heading of a decorated class
 		// trails the last decorator. One before the body moves into it, and one
 		// before the superclass or the first `implements`/`extends` type trails
@@ -995,13 +1086,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 				return true;
 			}
 			if (following === node.body) {
-				// Like `addBlockStatementFirstComment`
-				const first = node.body.body[0];
-				if (first) {
-					addLeadingComment(first, comment);
-				} else {
-					pushInnerComment(node.body, comment);
-				}
+				addBlockStatementFirstComment(node.body, comment);
 				return true;
 			}
 			/** @type {unknown[]} */
@@ -1040,12 +1125,15 @@ export function get_comment_handlers(source, comments, index = 0) {
 		// ignores the member after it: it marks that member and no longer
 		// counts itself (Prettier's `prettierIgnore` and `unignore`). Any other
 		// `prettier-ignore` comment stays with the member it ignores.
+		// Prettier's parsers keep no node for a type's parentheses, so a union
+		// written in them is the node after the comment there.
 		if (ownLine && isPrettierIgnoreComment(comment)) {
+			const followingType = skipParenthesizedTypes(following);
 			const ignored =
 				node.type === 'TSUnionType'
 					? following
-					: following?.type === 'TSUnionType'
-						? /** @type {AST.TSUnionType} */ (following).types[0]
+					: followingType?.type === 'TSUnionType'
+						? /** @type {AST.TSUnionType} */ (followingType).types[0]
 						: null;
 			if (ignored) {
 				getNodeMetadata(ignored).prettierIgnore = true;
@@ -1083,6 +1171,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 			preceding &&
 			(node.type === 'BinaryExpression' ||
 				node.type === 'LogicalExpression' ||
+				node.type === 'ConditionalExpression' ||
+				node.type === 'TSConditionalType' ||
 				node.type === 'TSUnionType')
 		) {
 			addTrailingComment(preceding, comment);
@@ -1275,10 +1365,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 						}
 					}
 
-					while (
-						comments[0] &&
-						comments[0].start < /** @type {AST.NodeWithLocation} */ (node).start
-					) {
+					while (comments[0] && comments[0].start < getCommentStart(node)) {
 						// Skip comments that are inside an attribute of an ancestor JSX element.
 						// Since zimmerframe visits children before attributes, we need to leave
 						// these comments for when the attribute nodes are visited.
@@ -1332,7 +1419,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 						// Prettier's handlers for a comment before this node in its parent
 						const enclosing = /** @type {AST.Node} */ (path.at(-1));
-						if (isHandledEnclosingNode(enclosing) || node.type === 'TSUnionType') {
+						if (
+							isHandledEnclosingNode(enclosing) ||
+							skipParenthesizedTypes(node)?.type === 'TSUnionType'
+						) {
 							const neighbors = getCommentNeighbors(comment, enclosing);
 							if (
 								neighbors?.following === node &&
@@ -1657,6 +1747,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 									node_array = parent.properties;
 								} else if (parent.type === 'TSTypeLiteral') {
 									node_array = parent.members;
+								} else if (
+									parent.type === 'TSTypeParameterInstantiation' ||
+									parent.type === 'TSTypeParameterDeclaration'
+								) {
+									node_array = parent.params;
+								} else if (parent.type === 'TSTupleType') {
+									node_array = parent.elementTypes;
 								} else if (parent.type === 'TSEnumDeclaration') {
 									// The enum's name is not a member. With no members, it would
 									// count as the last one and take the body's comments.
@@ -1737,12 +1834,18 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 							const slice = source.slice(end_node.end, comments[0].start);
 
+							// A typed pattern's comments between its `}` and the `:` lead the
+							// type annotation, like Prettier: `{ a } /* c */ : T`
 							const trailingCommentBoundary =
 								parent &&
 								parent.type === 'ObjectPattern' &&
 								parent.typeAnnotation &&
 								parent.typeAnnotation.start !== undefined
-									? parent.typeAnnotation.start
+									? findOutsideComments(
+											'}',
+											/** @type {AST.NodeWithLocation} */ (node).end,
+											parent.typeAnnotation.start,
+										)
 									: parent &&
 										  (parent.type === 'ImportDeclaration' ||
 												parent.type === 'ExportNamedDeclaration') &&
@@ -1779,8 +1882,17 @@ export function get_comment_handlers(source, comments, index = 0) {
 											continue;
 										}
 
-										const nextChar = getNextNonWhitespaceCharacter(source, potentialComment.end);
-										if (nextChar === ')') {
+										// Like Prettier, the comments before the `)` all trail the last
+										// one, even with other comments or a trailing comma between
+										// (`f(a, b /* c */ /* d */)`, `f(a, b /* c */,)`)
+										const nextChar = getNextNonSpaceNonCommentCharacter(potentialComment.end);
+										if (
+											nextChar === ')' ||
+											(nextChar === ',' &&
+												getNextNonSpaceNonCommentCharacter(
+													findOutsideComments(',', potentialComment.end, source.length) + 1,
+												) === ')')
+										) {
 											(node.trailingComments ||= []).push(
 												/** @type {AST.CommentWithLocation} */ (comments.shift()),
 											);
@@ -1904,6 +2016,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 									parent?.type === 'ObjectExpression' ||
 									parent?.type === 'ObjectPattern' ||
 									parent?.type === 'TSEnumDeclaration' ||
+									parent?.type === 'TSTypeParameterInstantiation' ||
+									parent?.type === 'TSTypeParameterDeclaration' ||
+									parent?.type === 'TSTupleType' ||
 									parent?.type === 'ImportDeclaration' ||
 									parent?.type === 'ExportNamedDeclaration';
 								// `next_index` is 0 for a callee or a function's name, which aren't

@@ -1299,15 +1299,19 @@ export default   class  B {}`;
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// Like Prettier, a comment between the decorators and `export` trails
+		// the last decorator, so it ignores only the decorator (#445)
 		it('prints a comment between the decorators and export once', async () => {
-			// The ignored source starts at the decorator and holds the comment.
-			// Prettier formats the class here; the source stays as written.
 			const source = `@dec
 // prettier-ignore
 export class A {  }
 @dec /* prettier-ignore */
 export default class {  }`;
-			expect(await format(source)).toBeWithNewline(source);
+			expect(await format(source)).toBeWithNewline(`@dec
+// prettier-ignore
+export class A {}
+@dec /* prettier-ignore */
+export default class {}`);
 		});
 
 		it.each([
@@ -1345,6 +1349,39 @@ type C =
 type F =
   | G<  1 > // prettier-ignore
   | H<2>;`);
+		});
+
+		// Prettier's parsers keep no node for the parentheses, so the union
+		// inside them is the node after the comment
+		it('ignores the first member of a union written in parentheses', async () => {
+			const source = `type A =
+  // prettier-ignore
+  (B   |   C);
+type D =
+  // prettier-ignore
+  ((E<  1 >   |   F<  2 >));
+let x:
+  // prettier-ignore
+  (B   |   C);
+type G = {
+  a:
+    // prettier-ignore
+    (B   |   C);
+};`;
+			expect(await format(source)).toBeWithNewline(`type A =
+  // prettier-ignore
+  B | C;
+type D =
+  // prettier-ignore
+  E<  1 > | F<2>;
+let x:
+  // prettier-ignore
+  B | C;
+type G = {
+  a:
+    // prettier-ignore
+    B | C;
+};`);
 		});
 
 		it("doesn't break the list around an ignored node over several lines", async () => {
@@ -11210,7 +11247,9 @@ export interface SectionProps<T>
 			expect(result).toBeWithNewline('const a = make<T>();');
 		});
 
-		it('keeps the parentheses of a prettier-ignored operand', async () => {
+		// Like Prettier, which prints the ignored source in the parentheses that
+		// `needsParens` decides, not the ones it was written with
+		it('prints a prettier-ignored operand in the parentheses it needs', async () => {
 			const result = await format(`const list = [
   // prettier-ignore
   (a   +   b),
@@ -11219,8 +11258,56 @@ const called = (
   // prettier-ignore
   a   ||   b
 )();`);
-			expect(result).toContain('  (a   +   b),\n');
+			expect(result).toContain('  a   +   b,\n');
 			expect(result).toContain('(a   ||   b)();');
+		});
+
+		it.each([
+			['foo(/* prettier-ignore */ (a  +  b));', 'foo(/* prettier-ignore */ a  +  b);'],
+			[
+				'const w = [\n  // prettier-ignore\n  (b  ?  c : d),\n];',
+				'const w = [\n  // prettier-ignore\n  b  ?  c : d,\n];',
+			],
+			['const t = /* prettier-ignore */ ((a  +  b));', 'const t = /* prettier-ignore */ a  +  b;'],
+			['!(/* prettier-ignore */ a  &&  b);', '!(/* prettier-ignore */ a  &&  b);'],
+			['(/* prettier-ignore */ a  =  b);', '/* prettier-ignore */ a  =  b;'],
+			['({ a } = /* prettier-ignore */ (b  ||  c));', '({ a } = /* prettier-ignore */ b  ||  c);'],
+			[
+				'a ? /* prettier-ignore */ (b  ?  c : d) : e;',
+				'a ? (/* prettier-ignore */ b  ?  c : d) : e;',
+			],
+			['type A = /* prettier-ignore */ (B   |   C);', 'type A = /* prettier-ignore */ B   |   C;'],
+		])(
+			'drops the parentheses a prettier-ignored node does not need: %s',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		it('adds the parentheses a prettier-ignored node needs', async () => {
+			// Without a `;`, the array is a lookup in `1` with a sequence in it
+			const result = await format('let x = 1\n// prettier-ignore\n[1,  2].forEach(f)');
+			expect(result).toBeWithNewline(`let x = (1)[
+  // prettier-ignore
+  (1,  2)
+].forEach(f);`);
+		});
+
+		it.each([
+			'f(/* prettier-ignore */ (a,  b));',
+			'const y = /* prettier-ignore */ (a,  b);',
+			'x = /* prettier-ignore */ (a  +  b) * c;',
+			'const z = /* prettier-ignore */ (a  ??  b) || c;',
+			'let v = /* prettier-ignore */ (a  as  B).c;',
+			'const g = () => /* prettier-ignore */ ({a:  1});',
+			'const h = () => /* prettier-ignore */ (a,  b);',
+			'export default /* prettier-ignore */ (a,  b);',
+			'x = a[/* prettier-ignore */ (b,  c)];',
+			'for (/* prettier-ignore */ i = 0,  j = 0; ;) {}',
+			'async function k() {\n  await /* prettier-ignore */ (a  ||  b);\n}',
+			'function r() {\n  return /* prettier-ignore */ (a,  b);\n}',
+		])('keeps the parentheses a prettier-ignored node needs: %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
 		});
 
 		it('parenthesizes a nested ternary consequent, not an alternate, like Prettier', async () => {
@@ -11653,6 +11740,107 @@ for (i = 0, j = 1; i < 10; i++, j++) {
 		});
 	});
 
+	// Prettier prints conditional types with the ternary printer: a chain of
+	// nested conditional types breaks as one group
+	describe('conditional types lay out like Prettier', () => {
+		it('breaks every conditional type of a chain together', async () => {
+			const input = `type C<T> = T extends string ? "a" : T extends number ? "b" : T extends boolean ? "c" : T extends undefined ? "dddddddddd" : never;
+type TypeEquality<T, E> = [T] extends [E] ? ([E] extends [T] ? true : false) : false;
+type IsUnion<T, U = T> = (T extends any ? ([U] extends [T] ? false : true) : never) extends infer Result ? Result : never;`;
+			expect(await format(input)).toBeWithNewline(`type C<T> = T extends string
+  ? "a"
+  : T extends number
+    ? "b"
+    : T extends boolean
+      ? "c"
+      : T extends undefined
+        ? "dddddddddd"
+        : never;
+type TypeEquality<T, E> = [T] extends [E]
+  ? [E] extends [T]
+    ? true
+    : false
+  : false;
+type IsUnion<T, U = T> = (
+  T extends any ? ([U] extends [T] ? false : true) : never
+) extends infer Result
+  ? Result
+  : never;`);
+		});
+
+		it('breaks a chain of conditional types with tabs', async () => {
+			const input = `type C<T> = T extends string ? "a" : T extends number ? "b" : T extends boolean ? "c" : never;
+type E<T, E> = [T] extends [E] ? ([E] extends [T] ? true : false) : false;`;
+			expect(await format(input, { useTabs: true, printWidth: 40 }))
+				.toBeWithNewline(`type C<T> = T extends string
+	? "a"
+	: T extends number
+		? "b"
+		: T extends boolean
+			? "c"
+			: never;
+type E<T, E> = [T] extends [E]
+	? [E] extends [T]
+		? true
+		: false
+	: false;`);
+		});
+
+		it('breaks a conditional extends type inside its parentheses', async () => {
+			const input = `type P<T> = T extends (T extends any ? ([T] extends [any] ? true : false) : never) ? "aaaaaaaaaaaaaaaaaa" : "b";`;
+			expect(await format(input)).toBeWithNewline(`type P<T> = T extends (
+  T extends any ? ([T] extends [any] ? true : false) : never
+)
+  ? "aaaaaaaaaaaaaaaaaa"
+  : "b";`);
+		});
+
+		it('breaks a chain of conditional types in a return type and a mapped type', async () => {
+			const input = `function f<T>(x: T): T extends string ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" : T extends number ? "bbbbbbbbbbbbb" : never {}
+type N<T> = { [K in keyof T]: T[K] extends Function ? K : T[K] extends object ? NNNNNNNNNNN<T[K]> : never }[keyof T];`;
+			expect(await format(input)).toBeWithNewline(`function f<T>(
+  x: T,
+): T extends string
+  ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  : T extends number
+    ? "bbbbbbbbbbbbb"
+    : never {}
+type N<T> = {
+  [K in keyof T]: T[K] extends Function
+    ? K
+    : T[K] extends object
+      ? NNNNNNNNNNN<T[K]>
+      : never;
+}[keyof T];`);
+		});
+
+		it.each([
+			'type A<T> = T extends (infer U extends string ? U : never) ? T : never;',
+			'type Y<T> = (T extends string ? "a" : "b")[];',
+			`type Z<T> = Foo<
+  T extends string
+    ? "aaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  T
+>;`,
+			`type M<T> = keyof (T extends string
+  ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");`,
+			`type O<T> =
+  | A
+  | (T extends string
+      ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");`,
+			`type K<T> = T extends string
+  ? // comment
+    "a"
+  : "b";`,
+			'type L<T> = T extends string ? "a" : /* c */ T extends number ? "b" : "c";',
+		])('keeps a conditional type laid out like Prettier: %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
 	describe('conditional expressions lay out like Prettier', () => {
 		it('keeps a nested conditional that fits on one line after return, throw, and export default', async () => {
 			const source = `function pick() {
@@ -11740,6 +11928,53 @@ export default a ? b : c ? d : e;`;
 \t\t: c;
 }`;
 			expect(await format(tabbed, { useTabs: true })).toBeWithNewline(tabbed);
+		});
+	});
+
+	// Like Prettier's `handleConditionalExpressionComments`, a comment on its
+	// own line leads the branch after it, and one at the end of the line of
+	// the node before it trails that node, before the `?` or `:` (#465)
+	describe('comments after the ? or : of a conditional', () => {
+		it.each([
+			['const x = cond ? // why\n  a : b;', 'const x = cond // why\n  ? a\n  : b;'],
+			['const x = cond\n  ? a : // why\n  b;', 'const x = cond\n  ? a // why\n  : b;'],
+			['type X = A extends B ? // why\n  C : D;', 'type X = A extends B // why\n  ? C\n  : D;'],
+			['type X = A extends B\n  ? C : // why\n  D;', 'type X = A extends B\n  ? C // why\n  : D;'],
+			['foo(cond ? // why\n  a : b);', 'foo(\n  cond // why\n    ? a\n    : b,\n);'],
+			[
+				'function f() {\n  return cond ? // why\n    a : b;\n}',
+				'function f() {\n  return cond // why\n    ? a\n    : b;\n}',
+			],
+			[
+				'const x = cond ? // why\n  a : c2 ? // two\n  b : d;',
+				'const x = cond // why\n  ? a\n  : c2 // two\n    ? b\n    : d;',
+			],
+			[
+				'type X<T> = T extends string ? // str\n  "a" : T extends number ? // num\n  "b" : never;',
+				'type X<T> = T extends string // str\n  ? "a"\n  : T extends number // num\n    ? "b"\n    : never;',
+			],
+			[
+				'const x = cond ?\n  // own line\n  a : b;',
+				'const x = cond\n  ? // own line\n    a\n  : b;',
+			],
+			[
+				'const x = cond ? a :\n  // own line\n  b;',
+				'const x = cond\n  ? a\n  : // own line\n    b;',
+			],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const x = cond // why\n  ? a\n  : b;',
+			'const x = cond\n  ? a // why\n  : b;',
+			'const x = cond\n  ? // why\n    a\n  : b;',
+			'const x = cond\n  ? a\n  : // why\n    b;',
+			'const x = cond ? /* c */ a : b;',
+			'const x = cond ? a /* c */ : b;',
+			'const x = cond ? a : /* c */ b;',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
 		});
 	});
 
@@ -12676,6 +12911,84 @@ item
 		});
 	});
 
+	// Like Prettier's `handleTryStatementComments`, a comment on its own line
+	// or at the end of a line before a block of a `try` moves into that block,
+	// and one after a `catch` parameter trails it (#464)
+	describe('comments between the blocks of a try statement', () => {
+		it.each([
+			[
+				'try {\n  a();\n}\n// c\ncatch (e) {\n  b();\n}',
+				'try {\n  a();\n} catch (e) {\n  // c\n  b();\n}',
+			],
+			[
+				'try {\n  a();\n} // c\ncatch (e) {\n  b();\n}',
+				'try {\n  a();\n} catch (e) {\n  // c\n  b();\n}',
+			],
+			[
+				'try {\n  a();\n}\n// c\n// d\ncatch {\n  ;b();\n}',
+				'try {\n  a();\n} catch {\n  // c\n  // d\n  b();\n}',
+			],
+			['try {\n  a();\n} // c\ncatch {\n}', 'try {\n  a();\n} catch {\n  // c\n}'],
+			[
+				'try {\n  a();\n} catch (e) {\n  b();\n} // c\nfinally {\n  d();\n}',
+				'try {\n  a();\n} catch (e) {\n  b();\n} finally {\n  // c\n  d();\n}',
+			],
+			[
+				'try {\n  a();\n}\n// c\nfinally {\n  d();\n}',
+				'try {\n  a();\n} finally {\n  // c\n  d();\n}',
+			],
+			['try // c\n{\n  a();\n} catch {}', 'try {\n  // c\n  a();\n} catch {}'],
+			['try\n/* c */\n{\n  a();\n} catch {}', 'try {\n  /* c */\n  a();\n} catch {}'],
+			[
+				'try {\n  a();\n} catch (e) // c\n{\n  b();\n}',
+				'try {\n  a();\n} catch (\n  e // c\n) {\n  b();\n}',
+			],
+			[
+				'try {\n  a();\n} catch (e)\n// c\n{\n  b();\n}',
+				'try {\n  a();\n} catch (\n  e\n  // c\n) {\n  b();\n}',
+			],
+			[
+				'try {\n  a();\n} catch\n// c\n(e) {\n  b();\n}',
+				'try {\n  a();\n} catch (\n  // c\n  e\n) {\n  b();\n}',
+			],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'try /* c */ {\n  a();\n} catch {}',
+			'try {\n  a();\n} /* c */ catch (e) {\n  b();\n}',
+			'try {\n  a();\n} catch (/* c */ e) {\n  b();\n}',
+			'try {\n  a();\n} catch (e /* c */) {\n  b();\n}',
+			'try {\n  a();\n} catch (e) {\n  b();\n} /* c */ finally {\n  d();\n}',
+			'try {\n  a();\n} finally /* c */ {\n  d();\n}',
+			'try {\n  a();\n} catch (e) {\n  b();\n} // c',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'function A() @{\n  @try {\n    <B />\n  } // c\n  @pending {\n    <p>{"loading"}</p>\n  } @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
+				'function A() @{\n  @try {\n    <B />\n  } @pending {\n    // c\n    <p>{"loading"}</p>\n  } @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
+			],
+			[
+				'function A() @{\n  @try {\n    <B />\n  } @pending {\n    <p>{"loading"}</p>\n  }\n  // c\n  @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
+				'function A() @{\n  @try {\n    <B />\n  } @pending {\n    <p>{"loading"}</p>\n  } @catch (e) {\n    // c\n    <p>{"error"}</p>\n  }\n}',
+			],
+			[
+				'function A() @{\n  @try {\n    <B />\n  } // c\n  @catch (e, reset) {\n  }\n}',
+				'function A() @{\n  @try {\n    <B />\n  } @catch (e, reset) {\n    // c\n  }\n}',
+			],
+			[
+				'function A() @{\n  @try {\n    <B />\n  } @catch (e, reset) // c\n  {\n    <p>{"error"}</p>\n  }\n}',
+				'function A() @{\n  @try {\n    <B />\n  } @catch (\n    e,\n    reset // c\n  ) {\n    <p>{"error"}</p>\n  }\n}',
+			],
+		])('formats the template %j like a try statement', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+	});
+
 	// A comment in a function's body used to become a trailing comment of the
 	// function's last parameter, or of its name when it had none.
 	describe('comments in function bodies stay in the body', () => {
@@ -12807,6 +13120,40 @@ item
 		});
 	});
 
+	// Like Prettier's `printTypeAnnotationProperty`, a type annotation prints
+	// its own `:` (or `=>`), after its leading comments (#461)
+	describe('comments before the colon of a type annotation', () => {
+		it.each([
+			'let x /* c */ : T = 1;',
+			'function f(a /* c */ : T) {}',
+			'function f(a) /* c */ : T {}',
+			'const f = (a) /* c */ : T => a;',
+			'const f = <T,>(a: T) /* c */ : T => a;',
+			'const f = function (a) /* c */ : T {};',
+			'class A {\n  m() /* c */ : T {}\n}',
+			'const o = { m() /* c */ : T {} };',
+			'interface I {\n  m() /* c */ : T;\n}',
+			'declare function f() /* c */ : T;',
+			'type F = (a /* c */ : T) => void;',
+			'function f(a? /* c */ : T) {}',
+			'function f(a) /* c */ : asserts a is T {}',
+			'class A {\n  constructor(private a /* c */ : T) {}\n}',
+			'const { a } /* c */ : T = o;',
+			'function f({ a } /* c */ : T) {}',
+			'const [a] /* c */ : T = o;',
+			'let x: /* c */ T = 1;',
+			'function f(a): /* c */ T {}',
+			'const { a /* c */ }: T = o;',
+			'interface I {\n  x /* c */: T;\n}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a line comment before the colon on its line, like Prettier', async () => {
+			expect(await format('let x // c\n  : T = 1;')).toBeWithNewline('let x // c\n: T = 1;');
+		});
+	});
+
 	// A comment between a class or interface heading and its body used to trail
 	// the heading and print after the {, or before it on the next pass (#406).
 	// Like Prettier's handleClassComments, it moves into the body.
@@ -12905,6 +13252,39 @@ item
 				expect(await format(input)).toBeWithNewline(expected);
 			},
 		);
+	});
+
+	// Like Prettier, whose export starts at the decorators written before it,
+	// a comment between them and the class keyword trails the last decorator,
+	// which prints it before `export` (#445)
+	describe('comments between the decorators of an exported class and the class keyword', () => {
+		it.each([
+			['@dec export /* c */ class A {}', '@dec /* c */\nexport class A {}'],
+			['@dec\nexport\n// c\nclass B {}', '@dec\n// c\nexport class B {}'],
+			['@dec\nexport // c\nclass B {}', '@dec // c\nexport class B {}'],
+			['@dec export default /* c */ class A {}', '@dec /* c */\nexport default class A {}'],
+			['@dec export default /* c */ class {}', '@dec /* c */\nexport default class {}'],
+			['@dec /* c */ export class A {}', '@dec /* c */\nexport class A {}'],
+			['@a @b export /* c */ class A {}', '@a\n@b /* c */\nexport class A {}'],
+			[
+				'@dec\nexport\n/** doc */\nabstract class A {}',
+				'@dec\n/** doc */\nexport abstract class A {}',
+			],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'@dec\n// c\nexport class A {}',
+			'@dec\n/** doc */\nexport class A {}',
+			'// c\n@dec\nexport class A {}',
+			'foo();\n@dec // c\nexport class A {}',
+			'@a // c\n@b\nexport class A {}',
+			'@dec\nexport class /* c */ A {}',
+			'export /* c */ class A {}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
 	});
 
 	// These comments sit where no node took them, so the parser gave them to
@@ -13186,6 +13566,151 @@ item
 			'function* values() {\n  yield* // delegate\n  other();\n}',
 		])('prints %j like Prettier', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	// Like Prettier's `printJsxElement`, an element prints its comments inside
+	// its own parentheses, and a comment that breaks the line breaks them onto
+	// lines of their own. The element used to print right after a `return`,
+	// `throw`, `yield`, or `await` with the comment in between, so the
+	// statement ended at the comment and returned `undefined` (#456). Each case
+	// also parses the output and checks that the syntax tree is unchanged.
+	describe('elements print comments that break the line inside their parentheses', () => {
+		const positionKeys = new Set([
+			'start',
+			'end',
+			'loc',
+			'range',
+			'metadata',
+			'leadingComments',
+			'trailingComments',
+			'innerComments',
+			'comments',
+		]);
+
+		/**
+		 * The syntax tree without positions, comments, or parser metadata.
+		 * @param {string} code
+		 */
+		const parseShape = (code) =>
+			JSON.stringify(parsers?.tsrx.parse(code, /** @type {any} */ ({})), (key, value) =>
+				positionKeys.has(key) ? undefined : value,
+			);
+
+		/**
+		 * @param {string} input
+		 * @param {string} [expected]
+		 */
+		const expectFormatted = async (input, expected = input) => {
+			const output = await format(input);
+			expect(output).toBeWithNewline(expected);
+			expect(parseShape(output)).toBe(parseShape(input));
+		};
+
+		it.each([
+			'function g() {\n  return (\n    // note\n    <Note />\n  );\n}',
+			'function g() {\n  throw (\n    // note\n    <Note />\n  );\n}',
+			'function g() {\n  return (\n    /* note */\n    <Note />\n  );\n}',
+			'function g() {\n  return (\n    // note\n    <>\n      <a />\n    </>\n  );\n}',
+			'function g() {\n  throw (\n    /* note */\n    <>\n      <a />\n    </>\n  );\n}',
+			'function g() {\n  return (\n    // note\n    <div>\n      @if (x) {\n        <a />\n      }\n    </div>\n  );\n}',
+			'function* g() {\n  yield (\n    // note\n    <Note />\n  );\n}',
+			'async function g() {\n  await (\n    // note\n    <Note />\n  );\n}',
+			'export default (\n  // note\n  <Note />\n);',
+			'x = a && (\n  // note\n  <Note />\n);',
+			'function g() {\n  return (\n    // note\n    <Note />\n  ).props;\n}',
+			'function g() {\n  return (// note\n  <Note />)();\n}',
+			'function g() {\n  return (\n    // note\n    /** @type {X} */ (<Note />)\n  );\n}',
+			// A block comment over several lines on the element's line
+			'function g() {\n  return (\n    /**\n     * note\n     */ <Note />\n  );\n}',
+			'function g() {\n  throw (\n    /* note\n    more */ <Note />\n  );\n}',
+			'function* g() {\n  yield (\n    /**\n     * note\n     */ <></>\n  );\n}',
+		])('keeps %j', async (source) => {
+			await expectFormatted(source);
+		});
+
+		it.each([
+			'const x = (\n  <Note />\n  // note\n);',
+			'const x = (\n  <Note />\n  /* note */\n);',
+			'x = a && (\n  <Note /> // note\n);',
+			'x = a && (\n  <Note /> /* note\n  more */\n);',
+		])('keeps the trailing comment inside the parentheses in %j', async (source) => {
+			await expectFormatted(source);
+		});
+
+		it.each([
+			[
+				'function g() {\n  return ( // note\n    <Note />\n  );\n}',
+				'function g() {\n  return (\n    // note\n    <Note />\n  );\n}',
+			],
+			[
+				'function g() {\n  return (\n    (\n      // note\n      <Note />\n    )\n  );\n}',
+				'function g() {\n  return (\n    // note\n    <Note />\n  );\n}',
+			],
+			[
+				'function g() {\n  throw (\n    (\n      /* note */\n      <Note />\n    )\n  );\n}',
+				'function g() {\n  throw (\n    /* note */\n    <Note />\n  );\n}',
+			],
+			[
+				'function g() {\n  return (\n    // note\n    (<Note />)\n  );\n}',
+				'function g() {\n  return (\n    // note\n    <Note />\n  );\n}',
+			],
+			[
+				'function* g() {\n  yield (\n    (\n      /* note */\n      <></>\n    )\n  );\n}',
+				'function* g() {\n  yield (\n    /* note */\n    <></>\n  );\n}',
+			],
+			['const f = () =>\n  // note\n  <Note />;', 'const f = () => (\n  // note\n  <Note />\n);'],
+			[
+				'const f = (a) => (b) =>\n  // note\n  <Note />;',
+				'const f = (a) => (b) => (\n  // note\n  <Note />\n);',
+			],
+			['const x =\n  // note\n  <Note />;', 'const x = (\n  // note\n  <Note />\n);'],
+			[
+				'x = {\n  a:\n    // note\n    <Note />,\n};',
+				'x = {\n  a: (\n    // note\n    <Note />\n  ),\n};',
+			],
+			[
+				'class A {\n  x =\n    // note\n    <Note />;\n}',
+				'class A {\n  x = (\n    // note\n    <Note />\n  );\n}',
+			],
+			[
+				'function g() {\n  return (\n    (\n      // note\n      <Note />\n    ).props\n  );\n}',
+				'function g() {\n  return (\n    // note\n    <Note />\n  ).props;\n}',
+			],
+			[
+				'function g() {\n  return (\n    (\n      // note\n      <Note />\n    )()\n  );\n}',
+				'function g() {\n  return (// note\n  <Note />)();\n}',
+			],
+			[
+				'function g() {\n  return (/**\n   * note\n   */ <Note />);\n}',
+				'function g() {\n  return (\n    /**\n     * note\n     */ <Note />\n  );\n}',
+			],
+			[
+				'const f = () => (/**\n * note\n */ <Note />);',
+				'const f = () => (\n  /**\n   * note\n   */ <Note />\n);',
+			],
+		])('prints %j like Prettier', async (input, expected) => {
+			await expectFormatted(input, expected);
+		});
+
+		it('keeps the elements of a component body', async () => {
+			await expectFormatted(
+				'function C() @{\n  const render = () =>\n    // note\n    <a />;\n  function other() {\n    return (\n      // note\n      <b />\n    );\n  }\n  // note\n  <div>{render()}</div>\n}',
+				'function C() @{\n  const render = () => (\n    // note\n    <a />\n  );\n  function other() {\n    return (\n      // note\n      <b />\n    );\n  }\n  // note\n  <div>{render()}</div>\n}',
+			);
+		});
+
+		// Prettier prints these without parentheses around the element
+		it.each([
+			'function g() {\n  return /* note */ <Note />;\n}',
+			'foo(\n  // note\n  <Note />,\n);',
+			'const x = [\n  // note\n  <Note />,\n];',
+			'const x =\n  // note\n  /** @type {X} */ (<Note />);',
+			'x = a && <Note />; // note',
+			'const x = <Note />; /* note */',
+			'function C() @{\n  const a = 1;\n  <>\n    @if (a) {\n      // note\n      <a />\n    }\n    // note\n    <b />\n  </>\n}',
+		])('prints %j without parentheses of its own', async (source) => {
+			await expectFormatted(source);
 		});
 	});
 
@@ -14709,6 +15234,88 @@ import f from "./f" /* c */ with { type: "json" };`);
   b,
 ];`);
 			expect(result).toBeWithNewline('const y = [a /* c */, b];');
+		});
+
+		// Type argument and parameter lists and tuple types are comma lists too
+		it.each([
+			'type F = Foo<A, /* y */ B>;',
+			'let v: Map<A, /* y */ B>;',
+			'new Map<A, /* y */ B>();',
+			'f<A, /* y */ B>();',
+			'class C<A, /* y */ B> {}',
+			'interface I<A, /* y */ B> {}',
+			'function f<A, /* y */ B>() {}',
+			'type T = [A, /* y */ B];',
+			'type T = [a: A, /* y */ b: B];',
+			'type T = [A, /* y */ ...B];',
+			'type F = Foo<A, /* y */ B>[];',
+			'type F = Foo<A /* y */, B>;',
+			'type T = [A /* a */ /* b */, /* c */ B];',
+			'type F = Foo<A, B /* y */>;',
+			'type T = [A, B /* y */];',
+			'function f<A /* a */, B /* b */>() {}',
+		])('keeps the comment on its side of the comma in %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a comment after the comma next to a type written in parentheses', async () => {
+			const result = await format(`type F = Foo<(A), /* y */ B>;
+type G = Foo<A, /* y */ (B)>;
+let v: Map<(A), /* y */ B>;
+type T = [(A), /* y */ B];`);
+			expect(result).toBeWithNewline(`type F = Foo<A, /* y */ B>;
+type G = Foo<A, /* y */ B>;
+let v: Map<A, /* y */ B>;
+type T = [A, /* y */ B];`);
+		});
+
+		it.each([
+			`type F = Foo<
+  A, // a
+  B // b
+>;`,
+			`type T = [
+  A, // a
+  B, // b
+];`,
+			`type T = [
+  A,
+  // own line
+  B,
+];`,
+			`function f<
+  A, // a
+  B, // b
+>() {}`,
+		])('keeps the line comments of a broken type list: %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier, the comments before the `)` trail the last parameter
+		// or argument, even with a trailing comma or another comment between
+		// (#435)
+		it.each([
+			['function f(\n  a,\n  b /* c */,\n) {}', 'function f(a, b /* c */) {}'],
+			['const f = (\n  a,\n  b /* c */,\n) => {};', 'const f = (a, b /* c */) => {};'],
+			['class A {\n  m(\n    a,\n    b /* c */,\n  ) {}\n}', 'class A {\n  m(a, b /* c */) {}\n}'],
+			['function f(\n  a,\n  b /* c */,\n): void {}', 'function f(a, b /* c */): void {}'],
+			['function f<T>(\n  a,\n  b = 1 /* c */,\n) {}', 'function f<T>(a, b = 1 /* c */) {}'],
+			['function f(\n  a,\n  b /* c */, /* d */\n) {}', 'function f(a, b /* c */ /* d */) {}'],
+			['function f(\n  a,\n  b /* c */, // d\n) {}', 'function f(\n  a,\n  b /* c */, // d\n) {}'],
+			['const x = run(\n  a,\n  b /* c */,\n);', 'const x = run(a, b /* c */);'],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'function f(a, b /* c */ /* d */) {}',
+			'const f = (a /* c */ /* d */) => a;',
+			'run(a, b /* c */ /* d */);',
+			'function f(\n  a,\n  b, // c\n) {}',
+			'function f(\n  a,\n  b,\n  // c\n) {}',
+			'function f(a, ...b /* c */) {}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
 		});
 	});
 
