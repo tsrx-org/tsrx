@@ -388,6 +388,23 @@ export function get_comment_handlers(source, comments, index = 0) {
 	]);
 
 	/**
+	 * The end of the keyword of a statement that is only its keyword and `;`:
+	 * `continue` or `break` without a label, `debugger`, and `return` without
+	 * an argument. Other nodes give -1.
+	 * @param {AST.NodeWithLocation} node
+	 * @returns {number}
+	 */
+	function getKeywordOnlyStatementEnd(node) {
+		const statement = /** @type {any} */ (node);
+		const keyword =
+			(statement.type === 'ContinueStatement' && !statement.label && 'continue') ||
+			(statement.type === 'BreakStatement' && !statement.label && 'break') ||
+			(statement.type === 'DebuggerStatement' && 'debugger') ||
+			(statement.type === 'ReturnStatement' && !statement.argument && 'return');
+		return keyword ? node.start + keyword.length : -1;
+	}
+
+	/**
 	 * When the next comment follows `node` on its line and only comments sit
 	 * between it and the `;` that ends the statement enclosing `node`, give it,
 	 * and the comments after it on the same line, to the outermost statement
@@ -404,6 +421,14 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * @returns {boolean} Whether it took the comments
 	 */
 	function takeCommentsBeforeFinalSemicolon(node, path) {
+		// A statement that is only its keyword has no child for the comment to
+		// follow, so the comment follows the keyword, and the statement itself
+		// may end at the `;`: `for (;;) continue // note` with the `;` on the
+		// next line prints `for (;;) continue; // note`
+		const keywordEnd = getKeywordOnlyStatementEnd(node);
+		if (keywordEnd >= 0) {
+			path = [...path, /** @type {AST.Node} */ (node)];
+		}
 		// Look past the expressions around the node, whose parentheses may close
 		// between the comment and the `;`, for the statement they end. A call's
 		// parentheses are its own, so a comment inside them stays there.
@@ -422,7 +447,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			!statementsEndingBeforeSemicolon.has(statement.type) ||
 			statement.end <= comments[0].end ||
 			// The comment must follow the node on its line
-			!/^[ \t)]*$/.test(source.slice(node.end, comments[0].start))
+			!/^[ \t)]*$/.test(source.slice(keywordEnd < 0 ? node.end : keywordEnd, comments[0].start))
 		) {
 			return false;
 		}
@@ -490,7 +515,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 			if (ancestor.type === 'Program' || ancestor.end !== statement.end) break;
 			outermost = ancestor;
 		}
-		let previousEnd = first === 0 ? node.end : comments[first - 1].end;
+		let previousEnd =
+			first !== 0 ? comments[first - 1].end : keywordEnd < 0 ? node.end : keywordEnd;
 		while (
 			comments[first] &&
 			comments[first].end < statement.end &&
@@ -2821,9 +2847,11 @@ export function get_comment_handlers(source, comments, index = 0) {
 						// Like Prettier, which ends a statement before its `;`, the comments
 						// between the two, as in `if (a) return b // note` with the `;` on the
 						// next line, trail the outermost statement that ends at that `;`, so
-						// they print after it
+						// they print after it. In a statement that is only its keyword, like
+						// `continue // note`, they lie in the statement itself.
 						if (
-							/** @type {AST.NodeWithLocation} */ (node).end <= comments[0].start &&
+							(nodeEnd <= comments[0].start ||
+								getKeywordOnlyStatementEnd(/** @type {AST.NodeWithLocation} */ (node)) >= 0) &&
 							takeCommentsBeforeFinalSemicolon(/** @type {AST.NodeWithLocation} */ (node), path)
 						) {
 							return;
