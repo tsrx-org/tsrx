@@ -8820,6 +8820,17 @@ let aaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
 			expect(result).toBeWithNewline(source);
 		});
 
+		it('keeps the comments between declarators in order', async () => {
+			const source = `var a, // first
+  // second
+  b;
+var c = 1, // first
+  // second
+  d = 2;`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
 		it('keeps the declarators of a for head on one line while they fit', async () => {
 			const source = `for (let i = 0, j = 10; i < j; i++) {
   run(i, j);
