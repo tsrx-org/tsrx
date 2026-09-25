@@ -17722,6 +17722,10 @@ item
 			['(a + b /* note */);', 'a + b; /* note */'],
 			['(function () {} /* note */);', '(function () {}); /* note */'],
 			['if (a) (b, c /* note */);', 'if (a) (b, c); /* note */'],
+			// In an arrow function's body, inside the arrow function's own
+			// parentheses
+			['(() => (a, b /* note */));', '() => (a, b /* note */);'],
+			['(() => a /* note */);', '() => a; /* note */'],
 			[
 				'function f() {\n  return (a, b // note\n  );\n}',
 				'function f() {\n  return (\n    a,\n    b // note\n  );\n}',
@@ -17741,6 +17745,9 @@ item
 			],
 			['export default (a, b /* note */);', 'export default (a, b); /* note */'],
 			['x = (y = z /* note */);', 'x = y = z; /* note */'],
+			// The parentheses around the arrow function's body print as nothing,
+			// as they do without the ones around the arrow function (#529)
+			['(() => (a /* note */));', '() => a; /* note */'],
 			['const x = (a, b // note\n);', 'const x = (a, b); // note'],
 			['x = (a, b // note\n);', 'x = (a, b); // note'],
 		])('formats %j in one pass', async (source, expected) => {

@@ -507,10 +507,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 		} else if (node.type === 'ExportDefaultDeclaration') {
 			candidates.push(node.declaration);
 		}
-		for (let candidate of candidates) {
-			if (candidate?.metadata?.parenthesized && movesCommentAfterParens(node, candidate, comment)) {
-				return candidate;
-			}
+		for (const value of candidates) {
+			let candidate = value;
 			let isArrowBody = false;
 			while (candidate?.type === 'ArrowFunctionExpression') {
 				candidate = /** @type {AST.Node & AST.NodeWithLocation} */ (candidate.body);
@@ -523,6 +521,11 @@ export function get_comment_handlers(source, comments, index = 0) {
 					: valuesPrintedWithoutParens.has(candidate.type))
 			) {
 				return candidate;
+			}
+			// The parentheses around an arrow function's body come first: the
+			// ones around the whole arrow function close after them
+			if (value?.metadata?.parenthesized && movesCommentAfterParens(node, value, comment)) {
+				return value;
 			}
 		}
 		return null;
