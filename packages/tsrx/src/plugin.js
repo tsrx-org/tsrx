@@ -2279,7 +2279,10 @@ export function TSRXPlugin(config) {
 							// Each arm's braces are its own template block, so setup locals
 							// in separate arms may share names, like `@if`/`@else` branches.
 							this.enterScope(0);
-							while (this.type !== tt.braceR) {
+							// Stop at the end of the input too, like a code block body, so an
+							// unterminated arm reaches the `expect(tt.braceR)` below and reports
+							// the missing `}` instead of reading nothing forever.
+							while (this.type !== tt.braceR && this.type !== tt.eof) {
 								this.#parseJSXSwitchCaseConsequent(current.consequent);
 							}
 							this.exitScope();
@@ -2415,35 +2418,29 @@ export function TSRXPlugin(config) {
 
 				// Anything else here is JS read as ordinary tokens (e.g.
 				// `props.status satisfies never`, `doThing()`): a setup statement, not text
-				// (bare text in a case must be wrapped in `<>`). Clear the JSX/template
-				// token contexts so the statement and the following `}`/`case` tokenize as
-				// code.
-				if (this.type !== tstt.jsxText && this.type !== tt.eof) {
-					this.#filterTemplateScriptContexts();
-					// The statement's first token is already read. A template literal's
-					// backtick or an opening paren pushed its own context, which must stay
-					// on top, or the rest of the template reads as code and the closing
-					// paren pops the statement context instead.
-					const token_context =
-						this.type === tt.backQuote || this.type === tt.parenL ? this.context.pop() : undefined;
-					if (this.curContext() !== b_stat) {
-						this.context.push(b_stat);
-					}
-					if (token_context) {
-						this.context.push(token_context);
-					}
-					this.#parsingJSXSwitchCaseScriptStatementDepth++;
-					try {
-						consequent.push(this.parseStatement(null));
-					} finally {
-						this.#parsingJSXSwitchCaseScriptStatementDepth--;
-					}
-					return;
+				// (bare text in a case must be wrapped in `<>`, and text tokens returned
+				// above). The arm loop stops at the end of the input, and `parseStatement`
+				// rejects it, so this call always moves forward or throws. Clear the
+				// JSX/template token contexts so the statement and the following
+				// `}`/`case` tokenize as code.
+				this.#filterTemplateScriptContexts();
+				// The statement's first token is already read. A template literal's
+				// backtick or an opening paren pushed its own context, which must stay
+				// on top, or the rest of the template reads as code and the closing
+				// paren pops the statement context instead.
+				const token_context =
+					this.type === tt.backQuote || this.type === tt.parenL ? this.context.pop() : undefined;
+				if (this.curContext() !== b_stat) {
+					this.context.push(b_stat);
 				}
-
-				const text = this.#parseJSXSwitchCaseRawText();
-				if (!isWhitespaceTextNode(text)) {
-					consequent.push(text);
+				if (token_context) {
+					this.context.push(token_context);
+				}
+				this.#parsingJSXSwitchCaseScriptStatementDepth++;
+				try {
+					consequent.push(this.parseStatement(null));
+				} finally {
+					this.#parsingJSXSwitchCaseScriptStatementDepth--;
 				}
 			}
 
