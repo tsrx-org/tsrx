@@ -3848,12 +3848,17 @@ export function TSRXPlugin(config) {
 			/**
 			 * The same where a tag can't start but type arguments can: after a
 			 * superclass, and after a class or function expression on its line. A
-			 * closing tag's `</` stays a tag start, so an error stays at it. Returns
-			 * whether the token is now `<`.
+			 * closing tag's `</` stays a tag start, so an error stays at it, but not
+			 * a comment right after the `<` (`</* c *\/ T>`, `<// c`), as for a `</`
+			 * after an operand (see `getTokenFromCode`). Returns whether the token is
+			 * now `<`.
 			 */
 			#readTagStartAsTypeArgumentStart() {
 				if (this.type !== tstt.jsxTagStart) return false;
-				if (this.input.charCodeAt(this.start + 1) === CharCode.slash) return false;
+				if (this.input.charCodeAt(this.start + 1) === CharCode.slash) {
+					const after_slash = this.input.charCodeAt(this.start + 2);
+					if (after_slash !== CharCode.slash && after_slash !== CharCode.asterisk) return false;
+				}
 				this.#readTagStartAsTypeParameterStart();
 				return true;
 			}

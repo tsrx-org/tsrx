@@ -483,6 +483,35 @@ describe('type arguments where a tag could start (#545, #578)', () => {
 		]);
 	});
 
+	// A comment right after the `<` isn't a closing tag, as after an operand
+	// (#586). TypeScript's TSX scanner reads `<//` as `</`, so it rejects the
+	// `<// c` forms, which TSRX already reads on the superclass's line.
+	it('reads type arguments that start with a comment where a tag could start', async () => {
+		/** @type {Array<[source: string, typeArguments: string]>} */
+		const cases = [
+			['class A extends B\n</* c */ T> {}', '</* c */ T>'],
+			['class A extends B\n<// c\nT> {}', '<// c\nT>'],
+			['const a = class {}</* c */ T>;', '</* c */ T>'],
+			['const f = function () {}</* c */ T>;', '</* c */ T>'],
+			['const g = function () {}<// c\nT>;', '<// c\nT>'],
+			['const h = function () {} </* c */ T>(1);', '</* c */ T>'],
+		];
+		const programs = await parse_all(cases.map(([source]) => source));
+		expect(
+			programs.map((program, index) => {
+				const node = find(
+					program,
+					(type) =>
+						type === 'ClassDeclaration' ||
+						type === 'TSInstantiationExpression' ||
+						type === 'CallExpression',
+				);
+				return text(cases[index][0], node?.superTypeParameters ?? node?.typeArguments);
+			}),
+		).toEqual(cases.map(([, typeArguments]) => typeArguments));
+		await expect_errors([['x = class {}</div>;', 'Unexpected token', '</']]);
+	});
+
 	it('reads type arguments right after a class or function expression', async () => {
 		/** @type {Array<[source: string, path: string[]]>} */
 		const cases = [
