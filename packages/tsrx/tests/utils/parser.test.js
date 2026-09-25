@@ -6226,6 +6226,101 @@ describe('comments after the `<` of an element or fragment', () => {
 	});
 });
 
+describe('comments in element bodies and closing tags', () => {
+	/**
+	 * @param {unknown} node
+	 * @returns {{ leading?: string[], trailing?: string[], inner?: string[] }}
+	 */
+	function commentsOf(node) {
+		const withComments = /** @type {AST.NodeWithMaybeComments | undefined} */ (node);
+		/** @param {AST.Comment[] | undefined} list */
+		const values = (list) => list?.map((comment) => comment.value);
+		return {
+			leading: values(withComments?.leadingComments),
+			trailing: values(withComments?.trailingComments),
+			inner: values(withComments?.innerComments),
+		};
+	}
+
+	/**
+	 * @param {string} source
+	 * @returns {any}
+	 */
+	function firstTemplate(source) {
+		return find_first(
+			parseModule(source, 'App.tsrx'),
+			(node) => node.type === 'JSXElement' || node.type === 'JSXFragment',
+		);
+	}
+
+	it('gives a comment right after an opening tag to the body, not the tag', () => {
+		for (const source of ['<div>/* note */x</div>;', '<>/* note */ x</>;']) {
+			const element = firstTemplate(source);
+			expect(commentsOf(element.openingElement ?? element.openingFragment), source).toEqual({});
+			// The text starts at the `>`, so the comment is in it
+			expect(commentsOf(element.children[0]).inner, source).toEqual([' note ']);
+		}
+
+		const element = firstTemplate('const a = <p>/* note */{name}</p>;');
+		expect(commentsOf(element.openingElement)).toEqual({});
+		expect(commentsOf(element.children[0]).leading).toEqual([' note ']);
+	});
+
+	it('keeps a comment in JSX text on the text, not the closing tag', () => {
+		for (const source of [
+			'const a = <div>\n  /* note */\n  text\n</div>;',
+			'const a = <div>\n  text\n  // note\n  more\n</div>;',
+			'const a = <div>text /* note */ more</div>;',
+		]) {
+			const element = firstTemplate(source);
+			expect(commentsOf(element.closingElement), source).toEqual({});
+			expect(
+				commentsOf(element.children[0]).inner?.map((value) => value.trim()),
+				source,
+			).toEqual(['note']);
+		}
+	});
+
+	it("gives a comment in the text after a child to the text, even on the child's line", () => {
+		for (const source of [
+			'const a = <div>{a} /* note */ text</div>;',
+			'const a = <div><b />/* note */text</div>;',
+		]) {
+			const element = firstTemplate(source);
+			expect(commentsOf(element.children[0]), source).toEqual({});
+			expect(commentsOf(element.children[1]).inner, source).toEqual([' note ']);
+		}
+
+		// A `prettier-ignore` after the text's last word leads the next child,
+		// which it keeps as written
+		const element = firstTemplate(
+			'const a = <div>\n  text\n  // prettier-ignore\n  <b />\n</div>;',
+		);
+		expect(commentsOf(element.children[0])).toEqual({});
+		expect(commentsOf(element.children[1]).leading).toEqual([' prettier-ignore']);
+
+		// A `{" "}` keeps it, and so does a child before text of only whitespace
+		for (const source of [
+			'const a = <div>x{" "}/* note */ y</div>;',
+			'const a = <div><b /> /* note */ <i /></div>;',
+		]) {
+			const element = firstTemplate(source);
+			const child = element.children.find(
+				(/** @type {AST.Node} */ node) => node.type !== 'JSXText',
+			);
+			expect(commentsOf(child).trailing, source).toEqual([' note ']);
+		}
+	});
+
+	it("keeps a comment between a closing fragment's `</` and `>` on it, as Prettier does", () => {
+		const program = parseModule('<>x</ /* note */>;\nfoo();', 'App.tsrx');
+		const fragment = find_first(program, (node) => node.type === 'JSXFragment');
+		assert_type(fragment, 'JSXFragment');
+		expect(commentsOf(fragment.closingFragment).inner).toEqual([' note ']);
+		expect(commentsOf(program.body.at(-1))).toEqual({});
+	});
+});
+
 describe('comments in empty arrays and objects', () => {
 	it('keeps the comments of an empty array or object as inner comments', () => {
 		const ast = parseModule(
