@@ -113,12 +113,13 @@ export function CompilerDemo() @{
 		};
 
 		(async () => {
-			const [{ EditorState, Compartment }, { oneDark }, {
-				history,
-				defaultKeymap,
-				historyKeymap,
-				indentWithTab,
-			}, view_mod, shiki_mod] = await Promise.all([
+			const [
+				{ EditorState, Compartment },
+				{ oneDark },
+				{ history, defaultKeymap, historyKeymap, indentWithTab },
+				view_mod,
+				shiki_mod,
+			] = await Promise.all([
 				import('@codemirror/state'),
 				import('@codemirror/theme-one-dark'),
 				import('@codemirror/commands'),
