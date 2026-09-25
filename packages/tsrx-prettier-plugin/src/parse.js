@@ -29,6 +29,30 @@ const BROKEN_MARKUP_CODES = new Set([
 	DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG,
 ]);
 
+/**
+ * Mistakes the parser records when collecting that Prettier's `typescript`
+ * parser rejects: a declaration list without a declarator (`const` on its
+ * own), and a modifier where TypeScript doesn't allow one, which Prettier's
+ * printer would leave out.
+ * @type {Array<string | RegExp>}
+ */
+const REJECTED_MISTAKES = [
+	'Variable declaration list cannot be empty.',
+	/^'\w+' modifier cannot appear on a type (?:member|parameter)\.$/,
+	/^'\w+' modifier can only appear on a type parameter of a class, interface or type alias\.$/,
+];
+
+/**
+ * @param {Error & { code?: string }} error
+ * @returns {boolean}
+ */
+function isRejected(error) {
+	if (error.code && BROKEN_MARKUP_CODES.has(error.code)) return true;
+	return REJECTED_MISTAKES.some((mistake) =>
+		typeof mistake === 'string' ? mistake === error.message : mistake.test(error.message),
+	);
+}
+
 /** The statements whose `__contentEnd` Prettier's comment handling reads. */
 const CONTENT_END_STATEMENTS = new Set([
 	'ExpressionStatement',
@@ -65,7 +89,8 @@ export function parse(text, options) {
 				parseModule(text, options.filepath || 'Component.tsrx', {
 					// Collecting keeps parsing past mistakes TypeScript reports only as
 					// diagnostics, such as a redeclared variable, which don't change the
-					// tree. Recovered markup does, so it is still an error here.
+					// tree. Recovered markup does, so it is still an error here, and so
+					// are the mistakes Prettier's own parser rejects.
 					collect: true,
 					errors: /** @type {any} */ (errors),
 					comments: /** @type {any} */ (comments),
@@ -76,8 +101,8 @@ export function parse(text, options) {
 	} catch (error) {
 		throw createParseError(/** @type {ParseError} */ (error));
 	}
-	const brokenMarkup = errors.find((error) => error.code && BROKEN_MARKUP_CODES.has(error.code));
-	if (brokenMarkup) throw createParseError(brokenMarkup);
+	const rejected = errors.find(isRejected);
+	if (rejected) throw createParseError(rejected);
 	const adapter = new Adapter(text, comments);
 	const program = adapter.visit(ast);
 	program.start = 0;
