@@ -88,9 +88,11 @@ describe('prettier-plugin', () => {
 		const input = `function App(props){const Child='div';return <{Child} {...props} class="card"><span>Hello</span></{Child}>}`;
 		const expected = `function App(props) {
   const Child = "div";
-  return <{Child} {...props} class="card">
-    <span>Hello</span>
-  </{Child}>;
+  return (
+    <{Child} {...props} class="card">
+      <span>Hello</span>
+    </{Child}>
+  );
 }`;
 
 		const result = await format(input);
@@ -100,12 +102,14 @@ describe('prettier-plugin', () => {
 	it('formats dynamic element tag expressions', async () => {
 		const input = `function App(){return <><{registry.item}/><{items[0]}/><{'section'}/><{\`article\`}/></>;}`;
 		const expected = `function App() {
-  return <>
-    <{registry.item} />
-    <{items[0]} />
-    <{"section"} />
-    <{\`article\`} />
-  </>;
+  return (
+    <>
+      <{registry.item} />
+      <{items[0]} />
+      <{"section"} />
+      <{\`article\`} />
+    </>
+  );
 }`;
 
 		const result = await format(input);
@@ -118,15 +122,17 @@ const items=[1,2,3];
 @for(const item of items; index i; key item){<div>{i}{item}</div>}
 }</>}`;
 		const expected = `function App() {
-  return <>@{
-    const items = [1, 2, 3];
-    @for (const item of items; index i; key item) {
-      <div>
-        {i}
-        {item}
-      </div>
-    }
-  }</>;
+  return (
+    <>@{
+      const items = [1, 2, 3];
+      @for (const item of items; index i; key item) {
+        <div>
+          {i}
+          {item}
+        </div>
+      }
+    }</>
+  );
 }`;
 
 		const result = await format(input);
@@ -145,14 +151,16 @@ const items=[1,2,3];
     }</>;
 }`;
 		const expected = `function SetTest() {
-  return <>@{
-    let items = new ReactiveSet([1, 2, 3]);
-    const hasValue = track(() => items.has(2));
-    <>
-      <button onClick={() => items.delete(2)}>{"delete"}</button>
-      <pre>{hasValue.value}</pre>
-    </>
-  }</>;
+  return (
+    <>@{
+      let items = new ReactiveSet([1, 2, 3]);
+      const hasValue = track(() => items.has(2));
+      <>
+        <button onClick={() => items.delete(2)}>{"delete"}</button>
+        <pre>{hasValue.value}</pre>
+      </>
+    }</>
+  );
 }`;
 
 		const result = await format(input);
@@ -176,19 +184,21 @@ const items=[1,2,3];
     }</>;
 }`;
 		const expected = `function App() {
-  return <>@{
-    MyContext.set(4);
-    <>
-      <h3>{MyContext.get()}</h3>
-      <h4>
-        {"2x:"}
-        {doubleContext()}
-      </h4>
-      <>@{
-        MyContext.set(8);
-      }</>
-    </>
-  }</>;
+  return (
+    <>@{
+      MyContext.set(4);
+      <>
+        <h3>{MyContext.get()}</h3>
+        <h4>
+          {"2x:"}
+          {doubleContext()}
+        </h4>
+        <>@{
+          MyContext.set(8);
+        }</>
+      </>
+    }</>
+  );
 }`;
 
 		const result = await format(input);
@@ -197,13 +207,15 @@ const items=[1,2,3];
 
 	it('formats template for-of expressions without adding a semicolon before of', async () => {
 		const input = `const App=()=> <><ul>@for (const item of items) {<li>{item.label}</li>}</ul></>;`;
-		const expected = `const App = () => <>
-  <ul>
-    @for (const item of items) {
-      <li>{item.label}</li>
-    }
-  </ul>
-</>;`;
+		const expected = `const App = () => (
+  <>
+    <ul>
+      @for (const item of items) {
+        <li>{item.label}</li>
+      }
+    </ul>
+  </>
+);`;
 
 		const result = await format(input);
 		expect(result).toBeWithNewline(expected);
@@ -214,10 +226,12 @@ const items=[1,2,3];
 // keep the status visible
 <span>Ready</span>
 </>;`;
-		const expected = `const App = () => <>
-  // keep the status visible
-  <span>Ready</span>
-</>;`;
+		const expected = `const App = () => (
+  <>
+    // keep the status visible
+    <span>Ready</span>
+  </>
+);`;
 
 		const result = await format(input);
 		expect(result).toBeWithNewline(expected);
@@ -242,24 +256,26 @@ const items=[1,2,3];
 <>Error</>
 }
 </>;`;
-		const expected = `const App = () => <>
-  @switch (value) {
-    @case "a": {
-      // explain case a
-      <>A</>
+		const expected = `const App = () => (
+  <>
+    @switch (value) {
+      @case "a": {
+        // explain case a
+        <>A</>
+      }
+      @default: {
+        <>Fallback</>
+      }
     }
-    @default: {
-      <>Fallback</>
+    @try {
+      // render the panel when ready
+      <Panel />
+    } @catch (error) {
+      // render plain text fallback
+      <>Error</>
     }
-  }
-  @try {
-    // render the panel when ready
-    <Panel />
-  } @catch (error) {
-    // render plain text fallback
-    <>Error</>
-  }
-</>;`;
+  </>
+);`;
 
 		const result = await format(input);
 		expect(result).toBeWithNewline(expected);
@@ -267,7 +283,11 @@ const items=[1,2,3];
 
 	it('preserves fragment shorthand for simple returned TSRX expressions', async () => {
 		const input = `const App=()=> <><span>{"Ready"}</span></>;`;
-		const expected = `const App = () => <><span>{"Ready"}</span></>;`;
+		const expected = `const App = () => (
+  <>
+    <span>{"Ready"}</span>
+  </>
+);`;
 
 		const result = await format(input);
 		expect(result).toBeWithNewline(expected);
@@ -276,10 +296,12 @@ const items=[1,2,3];
 	it('keeps native fragments expression based', async () => {
 		const input = `function App(){return <><div>Hello world</div>{value}</>}`;
 		const expected = `function App() {
-  return <>
-    <div>Hello world</div>
-    {value}
-  </>;
+  return (
+    <>
+      <div>Hello world</div>
+      {value}
+    </>
+  );
 }`;
 
 		const result = await format(input);
@@ -289,13 +311,15 @@ const items=[1,2,3];
 	it('formats style tags inside returned TSRX', async () => {
 		const input = `export default function App(){return <><style>div{color:red}</style></>}`;
 		const expected = `export default function App() {
-  return <>
-    <style>
-      div {
-        color: red;
-      }
-    </style>
-  </>;
+  return (
+    <>
+      <style>
+        div {
+          color: red;
+        }
+      </style>
+    </>
+  );
 }`;
 
 		const result = await format(input);
@@ -398,11 +422,13 @@ const items=[1,2,3];
 }`;
 		const expected = `export function App() {
   let [count] = track(0);
-  return <div>
-    <p>Count: {count}</p>
-    <p>Count: {count}</p>
-    <button onClick={() => count++}>Increment</button>
-  </div>;
+  return (
+    <div>
+      <p>Count: {count}</p>
+      <p>Count: {count}</p>
+      <button onClick={() => count++}>Increment</button>
+    </div>
+  );
 }`;
 
 		const result = await format(input);
@@ -495,11 +521,13 @@ const items=[1,2,3];
 	it('preserves inline text spaces around expression children', async () => {
 		const input = `function Test(){return <div><p class="status">Visible: {String(visible)}</p><p>{name} is visible</p><p>Hello {name}!</p></div>}`;
 		const expected = `function Test() {
-  return <div>
-    <p class="status">Visible: {String(visible)}</p>
-    <p>{name} is visible</p>
-    <p>Hello {name}!</p>
-  </div>;
+  return (
+    <div>
+      <p class="status">Visible: {String(visible)}</p>
+      <p>{name} is visible</p>
+      <p>Hello {name}!</p>
+    </div>
+  );
 }`;
 
 		const result = await format(input);
@@ -514,10 +542,12 @@ const items=[1,2,3];
   </a>;
 }`;
 		const expected = `function Test() {
-  return <a href={x}>
-    {state.owner}/{state.repoName}
-    <ExternalLink className="w-3 h-3" />
-  </a>;
+  return (
+    <a href={x}>
+      {state.owner}/{state.repoName}
+      <ExternalLink className="w-3 h-3" />
+    </a>
+  );
 }`;
 
 		const result = await format(input);
@@ -532,10 +562,12 @@ const items=[1,2,3];
   </div>;
 }`;
 		const expected = `function Test() {
-  return <div>
-    {a}some words here{b}
-    <Foo />
-  </div>;
+  return (
+    <div>
+      {a}some words here{b}
+      <Foo />
+    </div>
+  );
 }`;
 
 		const result = await format(input);
@@ -552,12 +584,14 @@ const items=[1,2,3];
   </div>;
 }`;
 		const expected = `function Test() {
-  return <div>
-    {a} / {b}
-    {c}
-    {d}
-    <Foo />
-  </div>;
+  return (
+    <div>
+      {a} / {b}
+      {c}
+      {d}
+      <Foo />
+    </div>
+  );
 }`;
 
 		const result = await format(input);
@@ -572,10 +606,12 @@ const items=[1,2,3];
   </>;
 }`;
 		const expected = `function Test() {
-  return <>
-    {state.owner}/{state.repoName}
-    <Foo />
-  </>;
+  return (
+    <>
+      {state.owner}/{state.repoName}
+      <Foo />
+    </>
+  );
 }`;
 
 		const result = await format(input);
@@ -596,17 +632,19 @@ const items=[1,2,3];
 }`;
 
 		const expected = `function Test() {
-  return <div>
-    <p class="status">
-      Visible:
-      {String(visible)}
-    </p>
-    <p>
-      {name}
-      is visible
-    </p>
-    <p>Hello {name}!</p>
-  </div>;
+  return (
+    <div>
+      <p class="status">
+        Visible:
+        {String(visible)}
+      </p>
+      <p>
+        {name}
+        is visible
+      </p>
+      <p>Hello {name}!</p>
+    </div>
+  );
 }`;
 
 		const result = await format(input);
@@ -625,12 +663,11 @@ const items=[1,2,3];
 }`;
 		const expected = `export function App() {
   let [count] = track(0);
-  return <div>
-    <p>
-      "Count: "
-      {count}
-    </p>
-  </div>;
+  return (
+    <div>
+      <p>"Count: "{count}</p>
+    </div>
+  );
 }`;
 
 		const result = await format(input);
@@ -686,10 +723,12 @@ function App() {
 	it('keeps TypeScript assertion expressions parenthesized before non-null assertions', async () => {
 		const input = `function App(){return <div>{(child("value") as any)!}{(child("ok") satisfies any)!}</div>}`;
 		const expected = `function App() {
-  return <div>
-    {(child("value") as any)!}
-    {(child("ok") satisfies any)!}
-  </div>;
+  return (
+    <div>
+      {(child("value") as any)!}
+      {(child("ok") satisfies any)!}
+    </div>
+  );
 }`;
 
 		const result = await format(input);
@@ -716,10 +755,12 @@ function App() {
 		const result = await format('function App() { return <> <div /> </>; }');
 		// The spaces around <div /> render, so they print as {" "} on broken lines.
 		expect(result).toBeWithNewline(`function App() {
-  return <>
-    {" "}
-    <div />{" "}
-  </>;
+  return (
+    <>
+      {" "}
+      <div />{" "}
+    </>
+  );
 }`);
 	});
 
@@ -774,10 +815,12 @@ function App() {
 	it('hugs a `@{ }` code block to an element body', async () => {
 		const input = `function App(){return <div>@{const x=1;<span>{x}</span>}</div>}`;
 		const expected = `function App() {
-  return <div>@{
-    const x = 1;
-    <span>{x}</span>
-  }</div>;
+  return (
+    <div>@{
+      const x = 1;
+      <span>{x}</span>
+    }</div>
+  );
 }`;
 
 		const result = await format(input);
@@ -787,10 +830,12 @@ function App() {
 	it('formats a code-only `@{ }` block', async () => {
 		const input = `function App(){return <div>@{let count=track(0);effect(()=>log(count));}</div>}`;
 		const expected = `function App() {
-  return <div>@{
-    let count = track(0);
-    effect(() => log(count));
-  }</div>;
+  return (
+    <div>@{
+      let count = track(0);
+      effect(() => log(count));
+    }</div>
+  );
 }`;
 
 		const result = await format(input);
@@ -821,13 +866,15 @@ function App() {
 
 	it('formats @if/else directive bodies in a plain JSX body', async () => {
 		const input = `const App=()=> <div>@if(ready){<span>Ready</span>}@else{<span>Waiting</span>}</div>;`;
-		const expected = `const App = () => <div>
-  @if (ready) {
-    <span>Ready</span>
-  } @else {
-    <span>Waiting</span>
-  }
-</div>;`;
+		const expected = `const App = () => (
+  <div>
+    @if (ready) {
+      <span>Ready</span>
+    } @else {
+      <span>Waiting</span>
+    }
+  </div>
+);`;
 
 		const result = await format(input);
 		expect(result).toBeWithNewline(expected);
@@ -856,13 +903,15 @@ const items=[1,2,3];
 	it('should format tsrx expression fragments', async () => {
 		const input = `function App(){const content=<>@{const label="Hi";<><div>Hello {label}</div>{content}</>}</>;}`;
 		const expected = `function App() {
-  const content = <>@{
-    const label = 'Hi';
-    <>
-      <div>Hello {label}</div>
-      {content}
-    </>
-  }</>;
+  const content = (
+    <>@{
+      const label = 'Hi';
+      <>
+        <div>Hello {label}</div>
+        {content}
+      </>
+    }</>
+  );
 }`;
 		const result = await format(input, { singleQuote: true });
 		expect(result).toBeWithNewline(expected);
@@ -913,11 +962,13 @@ const items=[1,2,3];
 	it('should keep sibling children in tsrx expression fragments on separate lines', async () => {
 		const input = `function Test(p1,p2){return <><div>Hello</div><div>{p1}</div><div>{p2}</div></>}`;
 		const expected = `function Test(p1, p2) {
-  return <>
-    <div>Hello</div>
-    <div>{p1}</div>
-    <div>{p2}</div>
-  </>;
+  return (
+    <>
+      <div>Hello</div>
+      <div>{p1}</div>
+      <div>{p2}</div>
+    </>
+  );
 }`;
 		const result = await format(input);
 		expect(result).toBeWithNewline(expected);
@@ -938,19 +989,19 @@ const items=[1,2,3];
   }</>;
     }`;
 		const expected = `export function Test() {
-  return <>@{
-    let count = 0;
-    // comment
-    <>
-      <div>{'Hello'}</div>
-      <div>@{
-        let two = 2;
-        <>
-          {'Hello'}
-        </>
-      }</div>
-    </>
-  }</>;
+  return (
+    <>@{
+      let count = 0;
+      // comment
+      <>
+        <div>{'Hello'}</div>
+        <div>@{
+          let two = 2;
+          <>{'Hello'}</>
+        }</div>
+      </>
+    }</>
+  );
 }`;
 		const result = await format(input, { singleQuote: true });
 		expect(result).toBeWithNewline(expected);
@@ -959,8 +1010,18 @@ const items=[1,2,3];
 	it('keeps fitting tsrx arrow returns inline in declarations and attributes', async () => {
 		const input = `function Test(props){const func=(item)=><><Item {item}/></>;<List renderItem={(item)=><><Item {item}/></>} />}`;
 		const expected = `function Test(props) {
-  const func = (item) => <><Item {item} /></>;
-  <List renderItem={(item) => <><Item {item} /></>} />
+  const func = (item) => (
+    <>
+      <Item {item} />
+    </>
+  );
+  <List
+    renderItem={(item) => (
+      <>
+        <Item {item} />
+      </>
+    )}
+  />
 }`;
 
 		const result = await format(input, { printWidth: 60 });
@@ -976,12 +1037,18 @@ const items=[1,2,3];
   />
 }`;
 		const expected = `function Test(props) {
-  const func = (item) =>
-    <><ItemView {item} onSelect={props.onSelect} /></>;
+  const func = (item) => (
+    <>
+      <ItemView {item} onSelect={props.onSelect} />
+    </>
+  );
   <List
     items={props.items}
-    renderItem={(item) =>
-      <><ItemView {item} onSelect={props.onSelect} /></>}
+    renderItem={(item) => (
+      <>
+        <ItemView {item} onSelect={props.onSelect} />
+      </>
+    )}
   />
 }`;
 		const result = await format(input, { singleQuote: true, printWidth: 60 });
@@ -997,10 +1064,18 @@ const items=[1,2,3];
   />
 }`;
 		const expected = `function Test(props) {
-  const func = (item) => <><ItemView {item} onSelect={props.onSelect} /></>;
+  const func = (item) => (
+    <>
+      <ItemView {item} onSelect={props.onSelect} />
+    </>
+  );
   <List
     items={props.items}
-    renderItem={(item) => <><ItemView {item} onSelect={props.onSelect} /></>}
+    renderItem={(item) => (
+      <>
+        <ItemView {item} onSelect={props.onSelect} />
+      </>
+    )}
   />
 }`;
 		const result = await format(input, { singleQuote: true, printWidth: 80 });
@@ -1010,14 +1085,20 @@ const items=[1,2,3];
 	it('keeps fitting single-child fragments inline and expands non-fitting single-child fragments', async () => {
 		const input = `function Test(){const short=<><span>Ready</span></>;const long=<><ReallyLongComponentName first={alpha} second={beta} third={gamma}/></>;}`;
 		const expected = `function Test() {
-  const short = <><span>Ready</span></>;
-  const long = <>
-    <ReallyLongComponentName
-      first={alpha}
-      second={beta}
-      third={gamma}
-    />
-  </>;
+  const short = (
+    <>
+      <span>Ready</span>
+    </>
+  );
+  const long = (
+    <>
+      <ReallyLongComponentName
+        first={alpha}
+        second={beta}
+        third={gamma}
+      />
+    </>
+  );
 }`;
 
 		const result = await format(input, { printWidth: 60 });
@@ -1027,15 +1108,19 @@ const items=[1,2,3];
 	it('expands multi-child fragments while keeping fitting openers on the first line', async () => {
 		const input = `function Test(){const short=<><div>A</div><div>B</div></>;const thisNameIsRidiculouslyLongEnoughToMissThePrintWidth=<><div>A</div><div>B</div></>;}`;
 		const expected = `function Test() {
-  const short = <>
-    <div>A</div>
-    <div>B</div>
-  </>;
-  const thisNameIsRidiculouslyLongEnoughToMissThePrintWidth =
+  const short = (
     <>
       <div>A</div>
       <div>B</div>
-    </>;
+    </>
+  );
+  const thisNameIsRidiculouslyLongEnoughToMissThePrintWidth =
+    (
+      <>
+        <div>A</div>
+        <div>B</div>
+      </>
+    );
 }`;
 
 		const result = await format(input, { printWidth: 60 });
@@ -1044,14 +1129,16 @@ const items=[1,2,3];
 
 	it('should preserve comments before expressions after nested tsx and tsrx blocks', async () => {
 		const expected = `function App() {
-  const content = <>
-    <span class="nested-tsx">{'inside nested tsx'}</span>
-    <div class="native">{nested}</div>
-    // const content =
-    //   <div>{hey()}</div>
-    // ;
-    {content}
-  </>;
+  const content = (
+    <>
+      <span class="nested-tsx">{'inside nested tsx'}</span>
+      <div class="native">{nested}</div>
+      // const content =
+      //   <div>{hey()}</div>
+      // ;
+      {content}
+    </>
+  );
   return content;
 }`;
 		const result = await format(expected, { singleQuote: true });
@@ -1083,29 +1170,29 @@ const items=[1,2,3];
     }</>;
     }`;
 		const expected = `export function Test() {
-  return <>@{
-    let count = 0;
-    const x = () => {
-      console.log('test');
-      if (x) {
+  return (
+    <>@{
+      let count = 0;
+      const x = () => {
         console.log('test');
-        return null;
-      }
-      if (y) {
-        return null;
-      }
-      return x;
-    };
-    <>
-      <div>{'Hello'}</div>
-      <div>@{
-        let two = 2;
-        <>
-          {'Hello'}
-        </>
-      }</div>
-    </>
-  }</>;
+        if (x) {
+          console.log('test');
+          return null;
+        }
+        if (y) {
+          return null;
+        }
+        return x;
+      };
+      <>
+        <div>{'Hello'}</div>
+        <div>@{
+          let two = 2;
+          <>{'Hello'}</>
+        }</div>
+      </>
+    }</>
+  );
 }`;
 		const result = await format(input, { singleQuote: true });
 		expect(result).toBeWithNewline(expected);
@@ -1558,11 +1645,13 @@ export type C =   D`);
 		it('should format shorthand tsx fragments like JSX fragments', async () => {
 			const input = `function Test(p1,p2){return <><div>Hello</div><div>{p1}</div><div>{p2}</div></>}`;
 			const expected = `function Test(p1, p2) {
-  return <>
-    <div>Hello</div>
-    <div>{p1}</div>
-    <div>{p2}</div>
-  </>;
+  return (
+    <>
+      <div>Hello</div>
+      <div>{p1}</div>
+      <div>{p2}</div>
+    </>
+  );
 }`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
@@ -2260,7 +2349,9 @@ export function Test({ a, b }: Props) {}`;
   </button>
 }`;
 			const expected = `function App() {
-  <button class="test another" onClick={handler}>{'Click Me'}</button>
+  <button class="test another" onClick={handler}>
+    {'Click Me'}
+  </button>
 }`;
 
 			const result = await format(input, { singleQuote: true, printWidth: 80 });
@@ -3151,9 +3242,7 @@ files = [...(files ?? []), ...dt.files];`;
 
 			const expected = `class Foo {
   bar() {
-    return <>
-      {'Hello'}
-    </>;
+    return <>{'Hello'}</>;
   }
 }`;
 
@@ -3471,14 +3560,16 @@ namespace N {}`;
 
 		it('expands empty braces for template control-flow blocks', async () => {
 			const input = `const App=()=> <>@if (ready) {} @else {}@for (const item of items) {} @empty {}</>;`;
-			const expected = `const App = () => <>
-  @if (ready) {
-  } @else {
-  }
-  @for (const item of items) {
-  } @empty {
-  }
-</>;`;
+			const expected = `const App = () => (
+  <>
+    @if (ready) {
+    } @else {
+    }
+    @for (const item of items) {
+    } @empty {
+    }
+  </>
+);`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
@@ -4607,7 +4698,9 @@ const deleteButton = container.querySelector(
 	label: string;
 	onClick: EventListener;
 }>) @{
-	<button class={props.variant} onClick={props.onClick}>{props.label}</button>
+	<button class={props.variant} onClick={props.onClick}>
+		{props.label}
+	</button>
 }`;
 			const options = { useTabs: true, tabWidth: 2, singleQuote: true, printWidth: 100 };
 			const result = await format(input, options);
@@ -4834,9 +4927,7 @@ export function App() {
 			const expected = `type User = { name: string };
 function RenderProp<Item>(props: { children: (item: Item) => any }) {}
 export function App() {
-  <RenderProp<User>>
-    {(item) => item.name}
-  </RenderProp>
+  <RenderProp<User>>{(item) => item.name}</RenderProp>
 }`;
 
 			const result = await format(input);
@@ -6274,13 +6365,19 @@ function Polygon() {
 	/>
 }`;
 			const expected = `function Test(props) {
-  const func = (item) =>
-    <><ItemView item={item} onSelect={props.onSelect} /></>;
+  const func = (item) => (
+    <>
+      <ItemView item={item} onSelect={props.onSelect} />
+    </>
+  );
 
   <List
     items={props.items}
-    renderItem={(item) =>
-      <><ItemView item={item} onSelect={props.onSelect} /></>}
+    renderItem={(item) => (
+      <>
+        <ItemView item={item} onSelect={props.onSelect} />
+      </>
+    )}
   />
 }`;
 			const result = await format(input);
@@ -6297,13 +6394,18 @@ function Polygon() {
 	</>;
 }`;
 			const expected = `function Test(props) {
-  const view = <>
-    <List
-      items={props.items}
-      renderItem={(item) =>
-        <><ItemView item={item} onSelect={props.onSelect} /></>}
-    />
-  </>;
+  const view = (
+    <>
+      <List
+        items={props.items}
+        renderItem={(item) => (
+          <>
+            <ItemView item={item} onSelect={props.onSelect} />
+          </>
+        )}
+      />
+    </>
+  );
 }`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
@@ -6333,7 +6435,11 @@ function Polygon() {
 const foo = <><Bar {...props} /></>;`;
 
 			const expected = `const props = {};
-const foo = <><Bar {...props} /></>;`;
+const foo = (
+  <>
+    <Bar {...props} />
+  </>
+);`;
 
 			const result = await format(input, { singleQuote: true });
 			expect(result).toBeWithNewline(expected);
@@ -6382,7 +6488,9 @@ const foo = <><Bar {...props} /></>;`;
 			const expected = `function One() {
   <button
     class="some-class another-class yet-another-class class-with-a-long-name"
-    id="this-is-a-button">{'this is a button'}</button>
+    id="this-is-a-button">
+    {'this is a button'}
+  </button>
 }`;
 
 			const result = await format(input, {
@@ -6410,7 +6518,9 @@ const foo = <><Bar {...props} /></>;`;
     not="go"
     wrong="at all"
     id="this-is-a-button"
-  >{'this is a button'}</button>
+  >
+    {'this is a button'}
+  </button>
 }`;
 
 			const result = await format(input, {
@@ -6435,13 +6545,9 @@ const foo = <><Bar {...props} /></>;`;
 }`;
 
 			const expected = `function One() {
-  <button
-    class="some-class"
-    something="should"
-    not="go"
-    wrong="at all"
-    id="this-is-a-button"
-  >{'this is a button'}</button>
+  <button class="some-class" something="should" not="go" wrong="at all" id="this-is-a-button">
+    {'this is a button'}
+  </button>
 }`;
 
 			const result = await format(input, {
@@ -6459,10 +6565,9 @@ const foo = <><Bar {...props} /></>;`;
   onClick={{handleEvent: handler}}>{'Click Me'}</button>
 }`;
 			const expected = `function App() {
-  <button
-    class="test another"
-    onClick={{ handleEvent: handler }}
-  >{'Click Me'}</button>
+  <button class="test another" onClick={{ handleEvent: handler }}>
+    {'Click Me'}
+  </button>
 }`;
 
 			const result = await format(input, { singleQuote: true });
@@ -6476,7 +6581,9 @@ const foo = <><Bar {...props} /></>;`;
   </div>
 }`;
 			const expected = `function App() {
-  <div class={styles.item} data-active={state.active ? 'true' : 'false'} style={{ gridTemplateColumns: Icon ? '16px minmax(0, 1fr) auto' : 'minmax(0, 1fr) auto' }}>{'content'}</div>
+  <div class={styles.item} data-active={state.active ? 'true' : 'false'} style={{ gridTemplateColumns: Icon ? '16px minmax(0, 1fr) auto' : 'minmax(0, 1fr) auto' }}>
+    {'content'}
+  </div>
 }`;
 
 			const result = await format(input, { singleQuote: true, printWidth: 200 });
@@ -6490,7 +6597,9 @@ const foo = <><Bar {...props} /></>;`;
   </div>
 }`;
 			const expected = `function App() {
-  <div class={styles.item} data-active={state.active ? 'true' : 'false'} style={{ gridTemplateColumns: Icon ? '16px minmax(0, 1fr) auto' : 'minmax(0, 1fr) auto' }}>{'content'}</div>
+  <div class={styles.item} data-active={state.active ? 'true' : 'false'} style={{ gridTemplateColumns: Icon ? '16px minmax(0, 1fr) auto' : 'minmax(0, 1fr) auto' }}>
+    {'content'}
+  </div>
 }`;
 
 			const result = await format(input, {
@@ -6510,9 +6619,7 @@ const foo = <><Bar {...props} /></>;`;
 
 			const expected = `class Foo {
   bar() {
-    return <>
-      {'Hello'}
-    </>;
+    return <>{'Hello'}</>;
   }
 }`;
 
@@ -6547,9 +6654,11 @@ const foo = <><Bar {...props} /></>;`;
 }`;
 
 			const expected = `function App() {
-  return <span class={styles.notificationMessage}>
-    The report is ready. Review the summary before sharing it with the team.
-  </span>;
+  return (
+    <span class={styles.notificationMessage}>
+      The report is ready. Review the summary before sharing it with the team.
+    </span>
+  );
 }`;
 
 			const result = await format(input, { printWidth: 80 });
@@ -6593,7 +6702,9 @@ if (status === 'a') status = 'b'; else if (status === 'b') status = 'c'; else st
       else if (status === 'b') status = 'c';
       else status = 'a';
     }}
-  >{'Click'}</button>
+  >
+    {'Click'}
+  </button>
 }`;
 
 			const result = await format(input, { singleQuote: true });
@@ -6605,7 +6716,9 @@ if (status === 'a') status = 'b'; else if (status === 'b') status = 'c'; else st
   <button
     class="some-class another-class yet-another-class class-with-a-long-name"
     id="this-is-a-button"
-  >{'this is a button'}</button>
+  >
+    {'this is a button'}
+  </button>
 }`;
 
 			const result = await format(expected, { singleQuote: true, printWidth: 40 });
@@ -6615,12 +6728,14 @@ if (status === 'a') status = 'b'; else if (status === 'b') status = 'c'; else st
 		it('properly formats for of loops where the parent has no attributes', async () => {
 			const expected = `<tbody>
   for (const [key, value] of Object.entries(attributes).filter(([_key, value]) => value !== ''))
-  {<tr class="not-last:border-b border-border/50">
-    <td class="py-2 font-mono w-48">
-      <Kbd>{key}</Kbd>
-    </td>
-    <td class="py-2">{value}</td>
-  </tr>}
+  {
+    <tr class="not-last:border-b border-border/50">
+      <td class="py-2 font-mono w-48">
+        <Kbd>{key}</Kbd>
+      </td>
+      <td class="py-2">{value}</td>
+    </tr>
+  }
 </tbody>`;
 
 			const result = await format(expected, { singleQuote: true, printWidth: 100 });
@@ -6656,15 +6771,17 @@ if (status === 'a') status = 'b'; else if (status === 'b') status = 'c'; else st
 
 		it('should preserve a blank line between components and js declarations if one is provided', async () => {
 			const expected = `export function App() {
-  return <>
-    <Card>@{
-      function children() {
-        <p class="highlighted">{'Card content here'}</p>
-      }
-    }</Card>
+  return (
+    <>
+      <Card>@{
+        function children() {
+          <p class="highlighted">{'Card content here'}</p>
+        }
+      }</Card>
 
-    <div>{test}</div>
-  </>;
+      <div>{test}</div>
+    </>
+  );
 }`;
 
 			const result = await format(expected, { singleQuote: true, printWidth: 100 });
@@ -6693,9 +6810,7 @@ render(App);`;
 		});
 
 		it('should preserve block comments formatting inside curly braces and inside markup', async () => {
-			const expected = `<div class="container">
-  {/* Dynamic SVG - the original problem case */}
-</div>`;
+			const expected = `<div class="container">{/* Dynamic SVG - the original problem case */}</div>`;
 
 			const result = await format(expected, { singleQuote: true, printWidth: 100 });
 			expect(result).toBeWithNewline(expected);
@@ -6825,7 +6940,9 @@ if(n<2){go("now")}</script>`;
       count++;
       tr[0]++;
     }}
-  >{count}</button>
+  >
+    {count}
+  </button>
 }`;
 
 			const result = await format(expected);
@@ -6858,7 +6975,9 @@ if(n<2){go("now")}</script>`;
         // hasError = true;
       }
     }}
-  >{'Nonexistent'}</button>
+  >
+    {'Nonexistent'}
+  </button>
 }`;
 
 			const result = await format(expected, { singleQuote: true, printWidth: 100 });
@@ -6895,12 +7014,8 @@ if(n<2){go("now")}</script>`;
 
 		it('should preserve inline comments inside jsx expressions', async () => {
 			const expected = `<>
-  <div>
-    {/* 'This is visible text' */}
-  </div>
-  <div>
-    {/* <div>{'Card Component'}</div> */}
-  </div>
+  <div>{/* 'This is visible text' */}</div>
+  <div>{/* <div>{'Card Component'}</div> */}</div>
 </>`;
 
 			const result = await format(expected, { singleQuote: true });
@@ -7101,12 +7216,14 @@ if(n<2){go("now")}</script>`;
 		it('should preserve the exact order with a commented out function a text literal sibling', async () => {
 			const expected = `function Something({ children }) {
   const test = 'yo';
-  return <Another>
-    {\`Content inside \${test} Another component\`}
-    // function children() {
-    // 	<span>{'Child Component'}</span>
-    // }
-  </Another>;
+  return (
+    <Another>
+      {\`Content inside \${test} Another component\`}
+      // function children() {
+      // 	<span>{'Child Component'}</span>
+      // }
+    </Another>
+  );
 }`;
 
 			const result = await format(expected, { singleQuote: true });
@@ -7116,13 +7233,15 @@ if(n<2){go("now")}</script>`;
 		it('should preserve the blank line between a commented out function and text literal sibling', async () => {
 			const expected = `function Something({ children }) {
   const test = 'yo';
-  return <Another>
-    {\`Content inside \${test} Another component\`}
+  return (
+    <Another>
+      {\`Content inside \${test} Another component\`}
 
-    // function children() {
-    // 	<span>{'Child Component'}</span>
-    // }
-  </Another>;
+      // function children() {
+      // 	<span>{'Child Component'}</span>
+      // }
+    </Another>
+  );
 }`;
 
 			const result = await format(expected, { singleQuote: true });
@@ -7131,15 +7250,17 @@ if(n<2){go("now")}</script>`;
 
 		it('should preserve comments before closing tag in elements', async () => {
 			const expected = `function App() {
-  return <div id="second-top-block">@{
-    @if (true) {
-      <div>{'b is true'}</div>
-    }
-    // <div>
-    // 	<div />
-    // </div>
-    // <div id="sibling-block">{'Sibling'}</div>
-  }</div>;
+  return (
+    <div id="second-top-block">@{
+      @if (true) {
+        <div>{'b is true'}</div>
+      }
+      // <div>
+      // 	<div />
+      // </div>
+      // <div id="sibling-block">{'Sibling'}</div>
+    }</div>
+  );
 }`;
 
 			const result = await format(expected, { singleQuote: true });
@@ -7177,22 +7298,24 @@ if(n<2){go("now")}</script>`;
   }</div>;
 }`;
 			const expected = `function App() {
-  return <div id="second-top-block">@{
-    // <div>
-    @if (true) {
-      <div>{'b is true'}</div>
-    }
-    // <div>
-    // <div>
-    // @if (b) {
-    // <span>nested</span>
-    // }
-    // </div>
-    // </div>
-    // <div />
-    // </div>
-    // <div id="sibling-block">{'Sibling'}</div>
-  }</div>;
+  return (
+    <div id="second-top-block">@{
+      // <div>
+      @if (true) {
+        <div>{'b is true'}</div>
+      }
+      // <div>
+      // <div>
+      // @if (b) {
+      // <span>nested</span>
+      // }
+      // </div>
+      // </div>
+      // <div />
+      // </div>
+      // <div id="sibling-block">{'Sibling'}</div>
+    }</div>
+  );
 }`;
 
 			const result = await format(input, { singleQuote: true });
@@ -7220,23 +7343,25 @@ if(n<2){go("now")}</script>`;
   }</div>
 }`;
 			const expected = `function App() {
-  return <div id="second-top-block">@{
-    // <div>
-    @try {
-      <div>b is true</div>
-    } @catch (e) {
-    }
-    // 	<div>
-    // 		<div>
-    // 			@if (b) {
-    // 				return;
-    // 			}
-    // 		</div>
-    // 	</div>
-    // 	<div />
-    // </div>
-    // <div id="sibling-block">{'Sibling'}</div>
-  }</div>;
+  return (
+    <div id="second-top-block">@{
+      // <div>
+      @try {
+        <div>b is true</div>
+      } @catch (e) {
+      }
+      // 	<div>
+      // 		<div>
+      // 			@if (b) {
+      // 				return;
+      // 			}
+      // 		</div>
+      // 	</div>
+      // 	<div />
+      // </div>
+      // <div id="sibling-block">{'Sibling'}</div>
+    }</div>
+  );
 }`;
 
 			const result = await format(input, { singleQuote: true });
@@ -7245,12 +7370,14 @@ if(n<2){go("now")}</script>`;
 
 		it('should preserve comments above attributes on dom elements', async () => {
 			const expected = `function App() {
-  return <div
-    // @tsrx-ignore
-    something="test"
-  >
-    test
-  </div>;
+  return (
+    <div
+      // @tsrx-ignore
+      something="test"
+    >
+      test
+    </div>
+  );
 }`;
 
 			const result = await format(expected, { singleQuote: true, printWidth: 100 });
@@ -7259,12 +7386,14 @@ if(n<2){go("now")}</script>`;
 
 		it('should preserve comments above attributes on components', async () => {
 			const expected = `function App() {
-  return <Child
-    // @tsrx-ignore
-    something="test"
-  >
-    test
-  </Child>;
+  return (
+    <Child
+      // @tsrx-ignore
+      something="test"
+    >
+      test
+    </Child>
+  );
 }
 function Child({ something }) {
   return <div>{something}</div>;
@@ -7334,12 +7463,14 @@ function Child({ something }) {
 }`;
 
 			const expected = `function App() {
-  return <p class="lede">
-    Set up TSRX with React, Preact, Solid, Vue, or Ripple and then wire in the editor tooling that
-    makes
-    <code class="inline-code">.tsrx</code>
-    files feel native in the rest of your repo.
-  </p>;
+  return (
+    <p class="lede">
+      Set up TSRX with React, Preact, Solid, Vue, or Ripple and then wire in the editor tooling that
+      makes
+      <code class="inline-code">.tsrx</code>
+      files feel native in the rest of your repo.
+    </p>
+  );
 }
 `;
 
@@ -7355,19 +7486,23 @@ function Child({ something }) {
 }`;
 
 			const expectedPrintWidth70 = `function App() {
-  return <span class={styles.notificationMessage}>
-    The report is ready. Review the summary before sharing it with the
-    team.
-  </span>;
+  return (
+    <span class={styles.notificationMessage}>
+      The report is ready. Review the summary before sharing it with
+      the team.
+    </span>
+  );
 }`;
 			const expectedPrintWidth40 = `function App() {
-  return <span
-    class={styles.notificationMessage}
-  >
-    The report is ready. Review the
-    summary before sharing it with the
-    team.
-  </span>;
+  return (
+    <span
+      class={styles.notificationMessage}
+    >
+      The report is ready. Review the
+      summary before sharing it with the
+      team.
+    </span>
+  );
 }`;
 
 			const resultPrintWidth70 = await format(input, { printWidth: 70 });
@@ -7379,26 +7514,30 @@ function Child({ something }) {
 
 		it('properly formats components markup and new lines and leaves one new line between components and <style> if one or more exists', async () => {
 			const expected = `export function App() {
-  return <div>
-    <RowList rows={[{ id: 'a' }, { id: 'b' }, { id: 'c' }]}>@{
-      function Row({ id, index, isHighlighted = (index) => index % 2 === 0 }) {
-        return <>
-          <div class={{ highlighted: isHighlighted(index) }}>
-            {index}
-            {' - '}
-            {id}
-          </div>
+  return (
+    <div>
+      <RowList rows={[{ id: 'a' }, { id: 'b' }, { id: 'c' }]}>@{
+        function Row({ id, index, isHighlighted = (index) => index % 2 === 0 }) {
+          return (
+            <>
+              <div class={{ highlighted: isHighlighted(index) }}>
+                {index}
+                {' - '}
+                {id}
+              </div>
 
-          <style>
-            .highlighted {
-              background-color: lightgray;
-              color: black;
-            }
-          </style>
-        </>;
-      }
-    }</RowList>
-  </div>;
+              <style>
+                .highlighted {
+                  background-color: lightgray;
+                  color: black;
+                }
+              </style>
+            </>
+          );
+        }
+      }</RowList>
+    </div>
+  );
 }
 
 function RowList({ rows, Row }) {
@@ -8474,11 +8613,13 @@ b";`);
 		it('keeps an element written as an attribute value without braces', async () => {
 			const result = await format(`const a = <Foo prop=<Bar><Baz /></Bar> />;
 const c = <LeftRight left=<a /> right=<b>monkeys</b> />;`);
-			expect(result).toBeWithNewline(`const a = <Foo
-  prop=<Bar>
-    <Baz />
-  </Bar>
-/>;
+			expect(result).toBeWithNewline(`const a = (
+  <Foo
+    prop=<Bar>
+      <Baz />
+    </Bar>
+  />
+);
 const c = <LeftRight left=<a /> right=<b>monkeys</b> />;`);
 		});
 
@@ -8518,6 +8659,268 @@ const c = <LeftRight left=<a /> right=<b>monkeys</b> />;`);
   </>
 }`;
 			expect(await format(input)).toBeWithNewline(expected);
+		});
+	});
+
+	// A template lays out its children the way Prettier lays out the same JSX
+	// in a TSX file (\`printJsxChildren\` and \`printJsxElementInternal\`): text
+	// and the children next to it fill the lines, a child that renders glued to
+	// text stays glued, and a line breaks at a space as {" "}.
+	describe('template children lay out like the same JSX in TSX', () => {
+		const repoOptions = { useTabs: true, singleQuote: true, printWidth: 100 };
+
+		/**
+		 * Format an element as a template body, and with Prettier's TypeScript
+		 * parser as an expression statement, which gets no parentheses either.
+		 * @param {string} element
+		 */
+		const formatBoth = async (element) => {
+			const body = element.replace(/\n/g, '\n\t');
+			const template = await format(`export function Page() @{\n\t${body}\n}`, repoOptions);
+			const tsx = await prettier.format(`export function Page() {\n\t${body};\n}`, {
+				parser: 'typescript',
+				...repoOptions,
+			});
+			return {
+				template,
+				tsx: tsx.replace('Page() {', 'Page() @{').replace(/;\n}\n$/, '\n}\n'),
+			};
+		};
+
+		// Website sections as written on main
+		it.each([
+			[
+				'features: components',
+				`<section class="doc-section" id="components">
+	<h2 class="section-heading">Components</h2>
+	<p class="section-body">
+		A TSRX component is just a TypeScript function that produces JSX. Use a
+		statement-container body for component-shaped templates, especially when local
+		setup, comments, scoped styles, or multiple rendered children belong with the
+		markup.
+	</p>
+	<p class="section-body">
+		In practice, components are ordinary TypeScript functions or
+		{' '}
+		<code class="inline-code">const</code>
+		{' '}
+		values. A component can use
+		{' '}
+		<code class="inline-code">{'@{...}'}</code>
+		{' '}
+		as the function body, giving you one place for local state, derived values, template
+		control flow, rendered elements, and scoped styles.
+	</p>
+	<pre class="code-block">
+		<code innerHTML={COMPONENT_HTML} />
+	</pre>
+	<p class="section-body">
+		Export them like any other function:
+		{' '}
+		<code class="inline-code">{'export function Name() @{ <div /> }'}</code>
+		. The compiler turns that into the right component shape for the target you're
+		using.
+	</p>
+	<p class="section-body">
+		When a bit of logic should stay plain JavaScript rather than render into the
+		template, put it in a normal function beside the markup. Use
+		{' '}
+		<code class="inline-code">{'function fn() { ... }'}</code>
+		{' '}
+		for ordinary control flow, then call helpers from event handlers or expressions:
+		{' '}
+		<code class="inline-code">{'onClick={fn}'}</code>
+		.
+	</p>
+	<pre class="code-block">
+		<code innerHTML={BAILOUT_HTML} />
+	</pre>
+</section>`,
+			],
+			[
+				'features: statement containers',
+				`<section class="doc-section" id="template-structure">
+	<h2 class="section-heading">Statement containers</h2>
+	<p class="section-body">
+		When a template scope mixes TypeScript setup with rendered output, wrap the setup in
+		<code class="inline-code">{'@{...}'}</code>
+		. TSRX treats everything before the final renderable child as script, then the
+		container must finish with exactly one output node.
+	</p>
+	<p class="section-body muted">
+		That final output can be a JSX element, a JSX fragment, or JSX control flow like
+		{' '}
+		<code class="inline-code">{'@if'}</code>
+		,
+		{' '}
+		<code class="inline-code">{'@for'}</code>
+		,
+		{' '}
+		<code class="inline-code">{'@switch'}</code>
+		, or
+		{' '}
+		<code class="inline-code">{'@try'}</code>
+		. It cannot be a bare expression container, and no script statements can appear
+		after it.
+	</p>
+	<p class="section-body muted">
+		If the rendered part needs multiple siblings or text next to elements, wrap those
+		children in a fragment so they become one output. The rule applies locally to
+		component bodies, element children, and control-flow branches, so setup can stay
+		close to the markup that uses it without turning ordinary template text into
+		JavaScript.
+	</p>
+	<p class="section-body muted">
+		Control-flow bodies are implicit statement containers too:
+		<code class="inline-code">@if</code>
+		,
+		<code class="inline-code">@for</code>
+		,
+		<code class="inline-code">@switch</code>
+		, and
+		<code class="inline-code">@try</code>
+		arms all use
+		<code class="inline-code">{'{}'}</code>
+		blocks.
+	</p>
+	<p class="section-body muted">
+		If you write setup statements and then a bare JSX element inside a normal
+		<code class="inline-code">{'{}'}</code>
+		function body, the compiler will ask you to add the missing
+		<code class="inline-code">@</code>
+		. Plain braces are JavaScript; statement-container braces are
+		<code class="inline-code">{'@{...}'}</code>
+		.
+	</p>
+	<pre class="code-block">
+		<code innerHTML={TEMPLATE_STRUCTURE_HTML} />
+	</pre>
+</section>`,
+			],
+			[
+				'getting started: Zed',
+				`<section class="doc-section" id="zed">
+	<h2 class="section-heading">Zed</h2>
+	<p class="section-body">
+		Install the
+		{' '}
+		<a
+			class="inline-link"
+			href="https://zed.dev/extensions/tsrx"
+			target="_blank"
+			rel="noopener noreferrer"
+		>TSRX extension for Zed</a>
+		{' '}
+		from the Zed Extension Marketplace for syntax highlighting and language-server
+		support. Open Zed's Extensions view and search for
+		{' '}
+		<code class="inline-code">TSRX</code>
+		{' '}
+		to install it.
+	</p>
+	<p class="section-body">
+		The extension uses a project-local
+		{' '}
+		<code class="inline-code">@tsrx/language-server</code>
+		{' '}
+		when available and otherwise downloads its pinned language-server version
+		automatically.
+	</p>
+</section>`,
+			],
+			[
+				'index: beta notice',
+				`<aside class="alpha-notice" role="note" aria-label="Beta release notice">
+	<span class="alpha-badge">Beta</span>
+	<p class="alpha-notice-body">
+		TSRX is in active beta development. Feedback on the
+		{' '}
+		<a
+			class="alpha-notice-link"
+			href="https://github.com/tsrx-org/tsrx/issues"
+			target="_blank"
+			rel="noopener noreferrer"
+		>issue tracker</a>
+		{' '}
+		is very welcome.
+	</p>
+</aside>`,
+			],
+		])('formats the %s section like Prettier', async (_, element) => {
+			const { template, tsx } = await formatBoth(element);
+			expect(template).toBe(tsx);
+		});
+
+		it('breaks inside the braces of a {…} child that starts with a comment', async () => {
+			const input = `const a = <div>
+{
+  /* prettier-ignore */
+  foo ( )
+}
+</div>;
+const b = <div>{// note
+foo()}</div>;`;
+			expect(await format(input)).toBeWithNewline(`const a = (
+  <div>
+    {
+      /* prettier-ignore */
+      foo ( )
+    }
+  </div>
+);
+const b = (
+  <div>
+    {
+      // note
+      foo()
+    }
+  </div>
+);`);
+		});
+
+		it('joins text to the element it touches and fills the lines', async () => {
+			// A line break between `</code>` and `.` renders as nothing, so the
+			// period stays against the element, and `{' '}` ends a line.
+			const result = await format(
+				`export function Page() @{
+	<>
+		<p>
+			Export them like any other function:
+			{' '}
+			<code class="inline-code">{'export function Name() @{ <div /> }'}</code>
+			. The compiler turns that into the right component shape for the target you're
+			using.
+		</p>
+		<p>
+			That final output can be a JSX element, a JSX fragment, or JSX control flow like
+			{' '}
+			<code class="inline-code">{'@if'}</code>
+			,
+			{' '}
+			<code class="inline-code">{'@for'}</code>
+			, or
+			{' '}
+			<code class="inline-code">{'@try'}</code>
+			. It cannot be a bare expression container.
+		</p>
+	</>
+}`,
+				repoOptions,
+			);
+			expect(result).toBeWithNewline(`export function Page() @{
+	<>
+		<p>
+			Export them like any other function:{' '}
+			<code class="inline-code">{'export function Name() @{ <div /> }'}</code>. The compiler turns
+			that into the right component shape for the target you're using.
+		</p>
+		<p>
+			That final output can be a JSX element, a JSX fragment, or JSX control flow like{' '}
+			<code class="inline-code">{'@if'}</code>, <code class="inline-code">{'@for'}</code>, or{' '}
+			<code class="inline-code">{'@try'}</code>. It cannot be a bare expression container.
+		</p>
+	</>
+}`);
 		});
 	});
 
@@ -8612,6 +9015,120 @@ export function CodeBlock() @{
 			]);
 		});
 
+		it('renders website sections the same after formatting', async () => {
+			const input = `export function Structure() @{
+	<section class="doc-section" id="template-structure">
+		<h2 class="section-heading">Statement containers</h2>
+		<p class="section-body">
+			When a template scope mixes TypeScript setup with rendered output, wrap the setup in
+			<code class="inline-code">{'@{...}'}</code>
+			. TSRX treats everything before the final renderable child as script, then the
+			container must finish with exactly one output node.
+		</p>
+		<p class="section-body muted">
+			That final output can be a JSX element, a JSX fragment, or JSX control flow like
+			{' '}
+			<code class="inline-code">{'@if'}</code>
+			,
+			{' '}
+			<code class="inline-code">{'@for'}</code>
+			,
+			{' '}
+			<code class="inline-code">{'@switch'}</code>
+			, or
+			{' '}
+			<code class="inline-code">{'@try'}</code>
+			. It cannot be a bare expression container, and no script statements can appear
+			after it.
+		</p>
+		<p class="section-body muted">
+			If the rendered part needs multiple siblings or text next to elements, wrap those
+			children in a fragment so they become one output. The rule applies locally to
+			component bodies, element children, and control-flow branches, so setup can stay
+			close to the markup that uses it without turning ordinary template text into
+			JavaScript.
+		</p>
+		<p class="section-body muted">
+			Control-flow bodies are implicit statement containers too:
+			<code class="inline-code">@if</code>
+			,
+			<code class="inline-code">@for</code>
+			,
+			<code class="inline-code">@switch</code>
+			, and
+			<code class="inline-code">@try</code>
+			arms all use
+			<code class="inline-code">{'{}'}</code>
+			blocks.
+		</p>
+		<p class="section-body muted">
+			If you write setup statements and then a bare JSX element inside a normal
+			<code class="inline-code">{'{}'}</code>
+			function body, the compiler will ask you to add the missing
+			<code class="inline-code">@</code>
+			. Plain braces are JavaScript; statement-container braces are
+			<code class="inline-code">{'@{...}'}</code>
+			.
+		</p>
+	</section>
+}
+export function Zed() @{
+	<section class="doc-section" id="zed">
+		<h2 class="section-heading">Zed</h2>
+		<p class="section-body">
+			Install the
+			{' '}
+			<a
+				class="inline-link"
+				href="https://zed.dev/extensions/tsrx"
+				target="_blank"
+				rel="noopener noreferrer"
+			>TSRX extension for Zed</a>
+			{' '}
+			from the Zed Extension Marketplace for syntax highlighting and language-server
+			support. Open Zed's Extensions view and search for
+			{' '}
+			<code class="inline-code">TSRX</code>
+			{' '}
+			to install it.
+		</p>
+		<p class="section-body">
+			The extension uses a project-local
+			{' '}
+			<code class="inline-code">@tsrx/language-server</code>
+			{' '}
+			when available and otherwise downloads its pinned language-server version
+			automatically.
+		</p>
+	</section>
+}
+export function Notice() @{
+	<aside class="alpha-notice" role="note" aria-label="Beta release notice">
+		<span class="alpha-badge">Beta</span>
+		<p class="alpha-notice-body">
+			TSRX is in active beta development. Feedback on the
+			{' '}
+			<a
+				class="alpha-notice-link"
+				href="https://github.com/tsrx-org/tsrx/issues"
+				target="_blank"
+				rel="noopener noreferrer"
+			>issue tracker</a>
+			{' '}
+			is very welcome.
+		</p>
+	</aside>
+}`;
+			const result = await format(input, { useTabs: true, singleQuote: true, printWidth: 100 });
+			expect(result).not.toBe(input);
+			const markup = await render(input);
+			expect(markup.join('')).toContain(
+				'Install the <a>TSRX extension for Zed</a> from the Zed Extension Marketplace',
+			);
+			expect(markup.join('')).toContain('Feedback on the <a>issue tracker</a> is very welcome.');
+			expect(await render(result)).toEqual(markup);
+		});
+
 		it('keeps a space between children on their line', async () => {
 			const input = `export function App() @{
   <div>
@@ -8624,25 +9141,33 @@ export function CodeBlock() @{
 		it('keeps text and elements separated by spaces on one line', async () => {
 			const result = await format(`const a = <div>hello <b>x</b> world</div>;
 const b = <>a <b>1</b> b</>;`);
-			expect(result).toBeWithNewline(`const a = <div>
-  hello <b>x</b> world
-</div>;
-const b = <>
-  a <b>1</b> b
-</>;`);
+			expect(result).toBeWithNewline(`const a = (
+  <div>
+    hello <b>x</b> world
+  </div>
+);
+const b = (
+  <>
+    a <b>1</b> b
+  </>
+);`);
 		});
 
 		it('prints a space against a broken tag as {" "}', async () => {
 			const result = await format(`const a = <div> <b>1</b> </div>;
 const b = <> <b>1</b></>;`);
-			expect(result).toBeWithNewline(`const a = <div>
-  {" "}
-  <b>1</b>{" "}
-</div>;
-const b = <>
-  {" "}
-  <b>1</b>
-</>;`);
+			expect(result).toBeWithNewline(`const a = (
+  <div>
+    {" "}
+    <b>1</b>{" "}
+  </div>
+);
+const b = (
+  <>
+    {" "}
+    <b>1</b>
+  </>
+);`);
 		});
 
 		it('keeps a lone space', async () => {
@@ -8681,10 +9206,12 @@ const d = <p> {a} </p>;`;
 			const result = await format(
 				`const a = <div> This is some long text that will not fit on one line because it is long </div>;`,
 			);
-			expect(result).toBeWithNewline(`const a = <div>
-  {" "}
-  This is some long text that will not fit on one line because it is long{" "}
-</div>;`);
+			expect(result).toBeWithNewline(`const a = (
+  <div>
+    {" "}
+    This is some long text that will not fit on one line because it is long{" "}
+  </div>
+);`);
 		});
 
 		it('breaks a line at a space as {" "} when the children do not fit', async () => {
@@ -8707,20 +9234,24 @@ const d = <p> {a} </p>;`;
   <b>2</b>
 </div>;
 const b = <p>hello {" "}{a}</p>;`);
-			expect(result).toBeWithNewline(`const a = <div>
-  <b>1</b> <b>2</b>
-</div>;
+			expect(result).toBeWithNewline(`const a = (
+  <div>
+    <b>1</b> <b>2</b>
+  </div>
+);
 const b = <p>hello {a}</p>;`);
 		});
 
 		it('keeps the spaces around a code block', async () => {
 			const result = await format(`let a = <>   @{<b>123</b>}   </>;`);
-			expect(result).toBeWithNewline(`let a = <>
-  {" "}
-  @{
-    <b>123</b>
-  }{" "}
-</>;`);
+			expect(result).toBeWithNewline(`let a = (
+  <>
+    {" "}
+    @{
+      <b>123</b>
+    }{" "}
+  </>
+);`);
 		});
 
 		it('fills text across a blank line or an unindented line', async () => {
@@ -8757,23 +9288,29 @@ export function Unindented() @{
 			// U+00A0 is text in JSX, not whitespace, so it is neither collapsed
 			// into a plain space nor dropped.
 			const input = `const a = <div>a  b</div>;
-const b = <div>
-  <b>x</b> <b>y</b>
-</div>;
+const b = (
+  <div>
+    <b>x</b> <b>y</b>
+  </div>
+);
 const c = <> hi </>;
 const d = <div> hi </div>;
-const e = <p>
-  hello <b>x</b>
-</p>;`;
+const e = (
+  <p>
+    hello <b>x</b>
+  </p>
+);`;
 			expect(await format(input)).toBeWithNewline(input);
 		});
 
 		it('prints {" "} with the singleQuote quote', async () => {
 			const result = await format(`const a = <div> <b>1</b> </div>;`, { singleQuote: true });
-			expect(result).toBeWithNewline(`const a = <div>
-  {' '}
-  <b>1</b>{' '}
-</div>;`);
+			expect(result).toBeWithNewline(`const a = (
+  <div>
+    {' '}
+    <b>1</b>{' '}
+  </div>
+);`);
 		});
 	});
 
@@ -8836,17 +9373,21 @@ const e = <p>
 			const input = `function App() { return <div title="aaaaaaaa" alt="bbbbbbbbbb">xxxxx yyyyy zzzzzzzzzzzzzzzzzzzzz {"x"}</div>; }
 function Long() { return <div title="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" alt="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb">text {x} more</div>; }`;
 			const expected = `function App() {
-  return <div title="aaaaaaaa" alt="bbbbbbbbbb">
-    xxxxx yyyyy zzzzzzzzzzzzzzzzzzzzz {"x"}
-  </div>;
+  return (
+    <div title="aaaaaaaa" alt="bbbbbbbbbb">
+      xxxxx yyyyy zzzzzzzzzzzzzzzzzzzzz {"x"}
+    </div>
+  );
 }
 function Long() {
-  return <div
-    title="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    alt="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  >
-    text {x} more
-  </div>;
+  return (
+    <div
+      title="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      alt="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    >
+      text {x} more
+    </div>
+  );
 }`;
 			expect(await expectStable(input)).toBeWithNewline(expected);
 		});
@@ -10157,7 +10698,11 @@ function render() {
 
 		it('keeps an element with attributes after an element with children', async () => {
 			const source = `function Test(props) {
-  const render = (item) => <><Item /></>
+  const render = (item) => (
+    <>
+      <Item />
+    </>
+  )
   <List renderItem={render} />
   const field = <b>{label}</b>
   <List renderItem={render} key="a" />
@@ -10165,7 +10710,8 @@ function render() {
 const render = <b>x</b>
 <List renderItem={render} />`;
 			await expectUnchanged(source);
-			const with_semicolons = source.replace(/(<\/>|<\/b>)$/gm, '$1;');
+			// The parentheses around the multi-line element end its statement
+			const with_semicolons = source.replace(/(^ {2}\)|<\/b>)$/gm, '$1;');
 			expect(await format(with_semicolons)).toBeWithNewline(with_semicolons);
 			expect(await format(with_semicolons, { semi: false })).toBeWithNewline(source);
 		});
@@ -13210,12 +13756,12 @@ item
 		});
 
 		it.each([
-			'function App() {\n  return <div a="1" /* c */ b="2">\n    test\n  </div>;\n}',
-			'function App() {\n  return <div {...props} /* c */ a="1">\n    test\n  </div>;\n}',
-			'function App() {\n  return <div\n    a="1"\n    // c\n  >\n    test\n  </div>;\n}',
-			'function App() {\n  return <div // c\n    a="1"\n  >\n    test\n  </div>;\n}',
-			'function App() {\n  return <div\n    something="test" // after\n  >\n    test\n  </div>;\n}',
-			'function App() {\n  return <div\n    a="1"\n    // c\n  />;\n}',
+			'function App() {\n  return (\n    <div a="1" /* c */ b="2">\n      test\n    </div>\n  );\n}',
+			'function App() {\n  return (\n    <div {...props} /* c */ a="1">\n      test\n    </div>\n  );\n}',
+			'function App() {\n  return (\n    <div\n      a="1"\n      // c\n    >\n      test\n    </div>\n  );\n}',
+			'function App() {\n  return (\n    <div // c\n      a="1"\n    >\n      test\n    </div>\n  );\n}',
+			'function App() {\n  return (\n    <div\n      something="test" // after\n    >\n      test\n    </div>\n  );\n}',
+			'function App() {\n  return (\n    <div\n      a="1"\n      // c\n    />\n  );\n}',
 		])('keeps the comment in the opening tag of %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});
@@ -14049,7 +14595,9 @@ foo(
     onClick={() =>
       doSomethingWithAVeryLongName(props.value, props.otherValue, more)
     }
-  >{"Hi"}</button>
+  >
+    {"Hi"}
+  </button>
 }`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
@@ -15800,10 +16348,12 @@ const object = {
 		it('formats a body-less <style apply={theme} /> inside a fragment', async () => {
 			const input = `export function App(){return <><style apply={theme} /><div>{"hi"}</div></>}`;
 			const expected = `export function App() {
-  return <>
-    <style apply={theme} />
-    <div>{"hi"}</div>
-  </>;
+  return (
+    <>
+      <style apply={theme} />
+      <div>{"hi"}</div>
+    </>
+  );
 }`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
@@ -15903,15 +16453,17 @@ const object = {
 		it('formats multiple <style> blocks in one fragment', async () => {
 			const input = `export function App(){return <><style apply={a} /><style apply={b}>p{margin:0}</style><p>{"x"}</p></>}`;
 			const expected = `export function App() {
-  return <>
-    <style apply={a} />
-    <style apply={b}>
-      p {
-        margin: 0;
-      }
-    </style>
-    <p>{"x"}</p>
-  </>;
+  return (
+    <>
+      <style apply={a} />
+      <style apply={b}>
+        p {
+          margin: 0;
+        }
+      </style>
+      <p>{"x"}</p>
+    </>
+  );
 }`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
