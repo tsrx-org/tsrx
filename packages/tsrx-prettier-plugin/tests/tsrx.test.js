@@ -793,6 +793,8 @@ describe('parse errors', () => {
 				"Unclosed tag '<div>'. Expected '</div>' before end of template. (2:1)",
 				{ line: 2, column: 1 },
 			],
+			// Prettier's typescript parser: `Property assignment expected. (1:13)`.
+			['const o = { @dec m() {} };', 'Unexpected token (1:13)', { line: 1, column: 13 }],
 		]) {
 			const error = await format(/** @type {string} */ (source)).catch((/** @type {any} */ e) => e);
 			expect(error).toBeInstanceOf(SyntaxError);
@@ -817,11 +819,25 @@ describe('parse errors', () => {
 			'class A { @dec constructor() {} }',
 			'class A {\n  @dec constructor() {}\n}\n',
 		);
+		// The tree keeps these too, which Prettier's typescript parser rejects: a
+		// parameter property with a pattern, and one on a function's parameter.
+		await expectFormat(
+			'class A { constructor(public [a]: number[]) {} }',
+			'class A {\n  constructor(public [a]: number[]) {}\n}\n',
+		);
+		await expectFormat(
+			'function f(private readonly x: number) {}',
+			'function f(private readonly x: number) {}\n',
+		);
+		// Prettier's typescript parser formats `let` as a name the same way.
+		await expectFormat('var let = 1;\nclass let {}', 'var let = 1;\nclass let {}\n');
 	});
 
 	test("mistakes Prettier's typescript parser rejects are errors, not left out", async () => {
 		for (const [source, message] of [
 			['function f() {\n  const\n}', 'Variable declaration list cannot be empty. (2:8)'],
+			['for (var; ;) {}', 'Variable declaration list cannot be empty. (1:9)'],
+			['for (const of x) {}', 'Variable declaration list cannot be empty. (1:11)'],
 			[
 				'export function App() @{\n  var\n  <div />\n}',
 				'Variable declaration list cannot be empty. (2:6)',

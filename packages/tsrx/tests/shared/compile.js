@@ -322,6 +322,27 @@ export function App() @{
 			expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
 		});
 
+		it('gives a `@for` loop with an empty declaration list no parameter', () => {
+			// Loose mode parses `const` with no name (TS1123), as while it is typed.
+			const result = compile_to_volar_mappings(
+				`export function App({ items }: { items: string[] }) @{
+					<ul>
+						@for (const of items) {
+							<li />
+						}
+					</ul>
+				}`,
+				'App.tsrx',
+				{ loose: true },
+			);
+
+			expect(result.errors.map((error) => error.message)).toEqual([
+				'Variable declaration list cannot be empty.',
+			]);
+			expect(result.code).toContain('() =>');
+			expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+		});
+
 		it('preserves deferred imports in type-only output', () => {
 			const result = compile_to_volar_mappings(
 				`import defer * as feature from './feature.js';

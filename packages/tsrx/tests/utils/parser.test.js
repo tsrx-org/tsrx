@@ -9259,6 +9259,222 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: function_statement,
 			match: { type: 'ExpressionStatement', expression: { type: 'Identifier', name: 'let' } },
 		},
+		{
+			// acorn also reports the binding name and the lexical declaration's name,
+			// at the same place: one mistake, one error.
+			source: 'const { a: let } = b;',
+			errors: [["The keyword 'let' is reserved", 'let }']],
+			throws: "The keyword 'let' is reserved (1:11)",
+			pick: first,
+			match: {
+				type: 'VariableDeclaration',
+				declarations: [{ id: { properties: [{ value: { type: 'Identifier', name: 'let' } }] } }],
+			},
+		},
+		{
+			source: 'var let = 1;',
+			errors: [["The keyword 'let' is reserved", 'let =']],
+			throws: "The keyword 'let' is reserved (1:4)",
+			pick: first,
+			match: { type: 'VariableDeclaration', declarations: [{ id: { name: 'let' } }] },
+		},
+		{
+			source: 'class let {}',
+			errors: [["The keyword 'let' is reserved", 'let {']],
+			throws: "The keyword 'let' is reserved (1:6)",
+			pick: first,
+			match: { type: 'ClassDeclaration', id: { name: 'let' } },
+		},
+		{
+			source: "import let from 'a';",
+			errors: [["The keyword 'let' is reserved", 'let from']],
+			throws: "The keyword 'let' is reserved (1:7)",
+			pick: first,
+			match: { type: 'ImportDeclaration', specifiers: [{ local: { name: 'let' } }] },
+		},
+		{
+			source: 'function f(let) {\n\tlet = 1;\n}',
+			errors: [
+				["The keyword 'let' is reserved", 'let)'],
+				["The keyword 'let' is reserved", 'let ='],
+			],
+			throws: "The keyword 'let' is reserved (1:11)",
+			pick: first,
+			match: {
+				params: [{ type: 'Identifier', name: 'let' }],
+				body: {
+					body: [
+						{
+							expression: {
+								type: 'AssignmentExpression',
+								left: { type: 'Identifier', name: 'let' },
+							},
+						},
+					],
+				},
+			},
+		},
+		{
+			source: 'for (var; ;) {}',
+			// Right after `var`, as for a statement.
+			errors: [['Variable declaration list cannot be empty.', '; ;)']],
+			throws: 'Unexpected token (1:8)',
+			pick: first,
+			match: {
+				type: 'ForStatement',
+				init: { type: 'VariableDeclaration', kind: 'var', declarations: [] },
+				test: null,
+				update: null,
+			},
+		},
+		{
+			source: 'for (const of x) {}',
+			errors: [['Variable declaration list cannot be empty.', ' of x']],
+			throws: 'Unexpected token (1:14)',
+			pick: first,
+			match: {
+				type: 'ForOfStatement',
+				left: { type: 'VariableDeclaration', kind: 'const', declarations: [] },
+				right: { type: 'Identifier', name: 'x' },
+			},
+		},
+		{
+			source: 'for (let of x) {}',
+			errors: [['Variable declaration list cannot be empty.', ' of x']],
+			throws: 'Unexpected token (1:12)',
+			pick: first,
+			match: {
+				type: 'ForOfStatement',
+				left: { type: 'VariableDeclaration', kind: 'let', declarations: [] },
+			},
+		},
+		{
+			source: 'for (const in x) {}',
+			errors: [['Variable declaration list cannot be empty.', ' in x']],
+			throws: "Unexpected keyword 'in' (1:11)",
+			pick: first,
+			match: {
+				type: 'ForInStatement',
+				left: { type: 'VariableDeclaration', kind: 'const', declarations: [] },
+			},
+		},
+		{
+			source: 'async function f() {\n\tfor await (var\n\t\tof x) {}\n}',
+			errors: [['Variable declaration list cannot be empty.', '\n\t\tof']],
+			// At `await`: acorn reads a declarator named `of`.
+			throws: 'Unexpected token (2:5)',
+			pick: function_statement,
+			match: {
+				type: 'ForOfStatement',
+				await: true,
+				left: { type: 'VariableDeclaration', kind: 'var', declarations: [] },
+			},
+		},
+		{
+			source:
+				'export function App() @{\n\t<ul>\n\t\t@for (const of items) {\n\t\t\t<li />\n\t\t}\n\t</ul>\n}',
+			errors: [['Variable declaration list cannot be empty.', ' of items']],
+			throws: 'Unexpected token (3:17)',
+		},
+		{
+			source: 'class A { constructor(public [a]: number[]) {} }',
+			errors: [['A parameter property may not be declared using a binding pattern.', 'public [a]']],
+			throws: 'A parameter property may not be declared using a binding pattern. (1:22)',
+			pick: constructor_parameter,
+			match: {
+				type: 'TSParameterProperty',
+				accessibility: 'public',
+				parameter: { type: 'ArrayPattern', elements: [{ type: 'Identifier', name: 'a' }] },
+			},
+		},
+		{
+			source: 'class A {\n\tconstructor(readonly { a }?: { a: number }) {}\n}',
+			errors: [
+				['A parameter property may not be declared using a binding pattern.', 'readonly {'],
+				// As for any other optional pattern parameter of a constructor with a body.
+				[
+					'A binding pattern parameter cannot be optional in an implementation signature.',
+					'{ a }?',
+				],
+			],
+			throws: 'A parameter property may not be declared using a binding pattern. (2:13)',
+			pick: constructor_parameter,
+			match: {
+				type: 'TSParameterProperty',
+				readonly: true,
+				parameter: { type: 'ObjectPattern', optional: true },
+			},
+		},
+		{
+			source: 'function f(public x: number) {}',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public x'],
+			],
+			throws: "The keyword 'public' is reserved (1:11)",
+			valid: 'class A { constructor(public x: number) {} }',
+			pick: first_parameter,
+			pickValid: constructor_parameter,
+		},
+		{
+			// At the first modifier, not at its column.
+			source: 'const g = function (\n\tprivate readonly x: number,\n\tprotected y: number,\n) {};',
+			errors: [
+				[
+					'A parameter property is only allowed in a constructor implementation.',
+					'private readonly',
+				],
+				['A parameter property is only allowed in a constructor implementation.', 'protected y'],
+			],
+			throws: "The keyword 'private' is reserved (2:1)",
+			valid:
+				'class A {\n\tconstructor(\n\t\tprivate readonly x: number,\n\t\tprotected y: number,\n\t) {}\n}',
+			pick: (program) =>
+				as_type(
+					as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations[0]
+						.init,
+					'FunctionExpression',
+				).params,
+			pickValid: (program) =>
+				as_type(/** @type {AST.Node} */ (first_member(program)), 'MethodDefinition').value.params,
+		},
+		{
+			source: 'declare function f(readonly x: number): void;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'readonly x'],
+			],
+			throws: 'Unexpected token (1:28)',
+			valid: 'class A { constructor(readonly x: number) {} }',
+			pick: first_parameter,
+			pickValid: constructor_parameter,
+		},
+		{
+			source: 'export function App(override x: number) @{\n\t<div>{x}</div>\n}',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'override'],
+			],
+			throws: 'Unexpected token (1:29)',
+		},
+		{
+			// TypeScript reports both.
+			source: 'function f(public ...rest: number[]) {}',
+			errors: [
+				['A parameter property cannot be declared using a rest parameter.', 'public'],
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+			],
+			throws: "The keyword 'public' is reserved (1:11)",
+			valid: 'function f(...rest: number[]) {}',
+			pick: first_parameter,
+		},
+		{
+			source: 'function f(public [a]: number[]) {}',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				['A parameter property may not be declared using a binding pattern.', 'public'],
+			],
+			throws: "The keyword 'public' is reserved (1:11)",
+			pick: first_parameter,
+			match: { type: 'TSParameterProperty', parameter: { type: 'ArrayPattern' } },
+		},
 	];
 
 	/** @type {Array<ParseOptions>} */
@@ -9354,6 +9570,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// Decorators before a statement that isn't a declaration, in a function
 			// that has decorators of its own.
 			'@dec function f() {\n\t@inner x;\n}',
+			// TypeScript's parser reads a declarator named `of` in these `for` heads.
+			'for (const of []) {}',
+			'for (const of x.y) {}',
+			// Modifiers on the line before a parameter's name are its name.
+			'function f(readonly\n\tx: number) {}',
 		];
 		const modes = [undefined, ...collect_modes];
 		const inputs = sources.flatMap((source) => modes.map((options) => ({ source, options })));
@@ -9417,6 +9638,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'class A {\n\tconstructor(@dec private x: number) {}\n\tm(@dec y: number) {}\n}',
 			// Parameter properties and parameters named after modifiers.
 			'class A {\n\tconstructor(public x: number, readonly: number, ...rest: number[]) {}\n}',
+			'function f(readonly, override?: number) {}',
+			// A declarator named `of`.
+			'for (const of of x) {}',
+			'for (var of = 1; ; ) {}',
 		];
 		const outcomes = await parse_in_worker(
 			sources.flatMap((source) => collect_modes.map((options) => ({ source, options }))),
