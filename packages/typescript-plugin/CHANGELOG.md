@@ -1,5 +1,16 @@
 # @tsrx/typescript-plugin
 
+## 0.4.12
+
+### Patch Changes
+
+- Updated dependencies
+  [[`baaad3d`](https://github.com/tsrx-org/tsrx/commit/baaad3db8a5ec9add8c584351c2d2040bdee6f49)]:
+  - @tsrx/solid@0.2.9
+  - @tsrx/preact@0.2.9
+  - @tsrx/react@0.3.9
+  - @tsrx/vue@0.2.9
+
 ## 0.4.11
 
 ### Patch Changes
