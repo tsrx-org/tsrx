@@ -235,7 +235,7 @@ function formatStringLiteral(value, options) {
 		return JSON.stringify(value);
 	}
 
-	const quote = options.singleQuote ? "'" : '"';
+	const quote = getPreferredQuote(value, options.singleQuote);
 	const escapedValue = value
 		.replace(/\\/g, '\\\\')
 		.replace(new RegExp(quote, 'g'), '\\' + quote)
@@ -268,9 +268,11 @@ function isQuotedStringRaw(raw) {
 
 /**
  * Print a string literal from its source text, changing only the quotes the
- * way Prettier does. Reprinting the cooked value would drop the author's
- * escapes, and an escaped lone surrogate (`'\ud800'`) cannot be written back
- * as a raw character. Literals without source text fall back to the value.
+ * way Prettier's `printString` does: the configured quote, unless the string
+ * holds more of it than of the other one. Reprinting the cooked value would
+ * drop the author's escapes, and an escaped lone surrogate (`'\ud800'`)
+ * cannot be written back as a raw character. Literals without source text
+ * fall back to the value.
  * @param {AST.Literal} node - The literal
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {string} - The formatted string literal with quotes
@@ -281,25 +283,37 @@ function printStringLiteral(node, options) {
 		return formatStringLiteral(node.value, options);
 	}
 
-	const quote = options.singleQuote ? "'" : '"';
+	const content = raw.slice(1, -1);
+	const quote = getPreferredQuote(content, options.singleQuote);
+	return raw[0] === quote ? raw : makeString(content, quote);
+}
+
+/**
+ * Enclose a string's source text in `quote`, like Prettier's `makeString`:
+ * escape that quote wherever it appears bare, drop the backslash of an escaped
+ * other quote, and leave every other escape as written.
+ * @param {string} content - The string's source text without its quotes
+ * @param {'"' | "'"} quote - The enclosing quote
+ * @returns {string}
+ */
+function makeString(content, quote) {
 	const otherQuote = quote === '"' ? "'" : '"';
-	const content = raw.slice(1, -1).replace(
-		/\\(.)|(["'])/gs,
+	// `\\` is matched as a pair, so the quote in `\\"` counts as bare
+	const escaped = content.replace(
+		/\\(["'\\])|(["'])/g,
 		/**
 		 * @param {string} match
-		 * @param {string | undefined} escaped
+		 * @param {string | undefined} escapedChar
 		 * @param {string | undefined} bareQuote
 		 */
-		(match, escaped, bareQuote) => {
-			if (escaped !== undefined) {
-				// `\'` inside double quotes no longer needs its backslash.
-				return escaped === otherQuote ? escaped : match;
+		(match, escapedChar, bareQuote) => {
+			if (escapedChar !== undefined) {
+				return escapedChar === otherQuote ? escapedChar : match;
 			}
 			return bareQuote === quote ? '\\' + quote : /** @type {string} */ (bareQuote);
 		},
 	);
-
-	return quote + content + quote;
+	return quote + escaped + quote;
 }
 
 /**

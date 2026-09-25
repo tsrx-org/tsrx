@@ -7785,17 +7785,68 @@ enum Keys {
 const text = "\\x1b[31m" + "\\u00e9" + "\\0";`);
 		});
 
-		it('escapes only the enclosing quote', async () => {
-			const input = `const a = 'say "hi"';
-const b = "it's";
-const c = 'it\\'s';`;
+		// Like Prettier's `printString`: the configured quote, unless the string
+		// holds more of it than of the other one, and only the chosen quote is
+		// escaped.
+		it('switches to the other quote when the string holds more of the configured one', async () => {
+			const input = String.raw`const a = "\"";
+const b = "say \"hi\"";
+const c = 'it\'s';
+const d = "it's \"x\"";
+const e = 'say "hi"';
+const f = "it's";`;
 
-			expect(await format(input)).toBeWithNewline(`const a = "say \\"hi\\"";
-const b = "it's";
-const c = "it's";`);
-			expect(await format(input, { singleQuote: true })).toBeWithNewline(`const a = 'say "hi"';
-const b = 'it\\'s';
-const c = 'it\\'s';`);
+			expect(await format(input)).toBeWithNewline(String.raw`const a = '"';
+const b = 'say "hi"';
+const c = "it's";
+const d = 'it\'s "x"';
+const e = 'say "hi"';
+const f = "it's";`);
+			expect(await format(input, { singleQuote: true })).toBeWithNewline(String.raw`const a = '"';
+const b = 'say "hi"';
+const c = "it's";
+const d = 'it\'s "x"';
+const e = 'say "hi"';
+const f = "it's";`);
+		});
+
+		it('keeps the configured quote on a tie', async () => {
+			const input = String.raw`const a = 'a"b\'c';
+const b = "a\"b'c";`;
+
+			expect(await format(input)).toBeWithNewline(String.raw`const a = "a\"b'c";
+const b = "a\"b'c";`);
+			expect(await format(input, { singleQuote: true }))
+				.toBeWithNewline(String.raw`const a = 'a"b\'c';
+const b = 'a"b\'c';`);
+		});
+
+		it('keeps a string as written when its quote does not change', async () => {
+			const input = String.raw`const a = "it\'s";
+const b = 'a\"b';
+const c = '\d\n\\"';
+const d = "\\\"";`;
+
+			expect(await format(input)).toBeWithNewline(String.raw`const a = "it\'s";
+const b = 'a\"b';
+const c = '\d\n\\"';
+const d = '\\"';`);
+		});
+
+		it('picks the quote of keys, module names, and literal types the same way', async () => {
+			const input = String.raw`import x from 'it\'s.js';
+const o = { 'it\'s': 1, "say \"hi\"": 2 };
+type T = 'it\'s' | "say \"hi\"";
+enum E {
+  'it\'s' = 1,
+}`;
+
+			expect(await format(input)).toBeWithNewline(String.raw`import x from "it's.js";
+const o = { "it's": 1, 'say "hi"': 2 };
+type T = "it's" | 'say "hi"';
+enum E {
+  "it's" = 1,
+}`);
 		});
 	});
 
@@ -7817,7 +7868,7 @@ const c = 'it\\'s';`);
 			[`title="&amp;amp;"`, `title="&amp;amp;"`],
 			[`title="a &#34;b&#34;"`, `title="a &#34;b&#34;"`],
 			[`title={'&amp;'}`, `title={"&amp;"}`],
-			[`title={"It's \\"both\\""}`, `title={"It's \\"both\\""}`],
+			[`title={"It's \\"both\\""}`, `title={'It\\'s "both"'}`],
 			[`title={'\\ud800'}`, `title={"\\ud800"}`],
 			[`title={'a\\nb'}`, `title={"a\\nb"}`],
 			[`title={'It\\'s'}`, `title="It's"`],
