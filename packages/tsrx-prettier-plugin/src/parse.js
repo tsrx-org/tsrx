@@ -601,17 +601,6 @@ class Adapter {
 				}
 				break;
 
-			case 'ExportDefaultDeclaration':
-				// `export default @d class {}` declares an anonymous class; only a
-				// parenthesized class stays an expression.
-				if (
-					node.declaration.type === 'ClassExpression' &&
-					!this.text.slice(node.start, locStart(node.declaration)).includes('(')
-				) {
-					node.declaration.type = 'ClassDeclaration';
-				}
-				break;
-
 			case 'TSFunctionType':
 			case 'TSConstructorType':
 			case 'TSCallSignatureDeclaration':
