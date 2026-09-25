@@ -1636,87 +1636,6 @@ function isStatementSlot(key, parent) {
 }
 
 /**
- * The parents that print an element without parentheses of its own, from
- * Prettier's `maybeWrapJsxElementInParens`.
- */
-const ELEMENT_NO_WRAP_PARENTS = new Set([
-	'ArrayExpression',
-	'CallExpression',
-	'ConditionalExpression',
-	'ExpressionStatement',
-	'JSXAttribute',
-	'JSXElement',
-	'JSXExpressionContainer',
-	'JSXFragment',
-	'NewExpression',
-]);
-
-/**
- * Whether the element or fragment at `path` prints its comments inside its
- * parentheses, like Prettier's `printJsxElement`: it prints the comments
- * itself, then adds the parentheses from `needsParens` around them, or else
- * the ones from `maybeWrapJsxElementInParens`, which print only when the
- * element breaks. A comment that prints a line break breaks it: a leading
- * comment that ends its line or spans lines, so a `return`, `throw`, `yield`,
- * or `await` keeps the element (#456), and a trailing line comment, one on a
- * line of its own, or one that spans lines. Only such an element does this
- * here: the parentheses around an element that breaks without one are #369,
- * and other comments stay outside them (#449).
- * @param {AstPath} path - The path to the node
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintArgs | undefined} args - The node's print arguments
- * @returns {boolean}
- */
-function elementPrintsCommentsInParens(path, options, args) {
-	const node = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node);
-	if (
-		!isTemplateExpression(node) ||
-		// A parent that prints the comments or the parentheses lays them out
-		args?.suppressLeadingComments ||
-		args?.suppressOwnParens ||
-		getTypeCastParens(path, options)
-	) {
-		return false;
-	}
-	const text = /** @type {string} */ (options.originalText);
-	/** @param {AST.Comment} comment */
-	const spansLines = (comment) => comment.type === 'Block' && comment.value.includes('\n');
-	return (
-		(node.leadingComments ?? []).some(
-			(comment) =>
-				spansLines(comment) || hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).end),
-		) ||
-		(!args?.suppressTrailingComments &&
-			(node.trailingComments ?? []).some(
-				(comment) =>
-					comment.type === 'Line' ||
-					spansLines(comment) ||
-					hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).start, {
-						backwards: true,
-					}),
-			))
-	);
-}
-
-/**
- * Put an element's printed comments and content in its parentheses (see
- * {@link elementPrintsCommentsInParens}).
- * @param {AstPath} path - The path to the element
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {Doc} printed - The element with its comments
- * @returns {Doc}
- */
-function printElementInParens(path, options, printed) {
-	const parent = /** @type {AST.Node | null} */ (path.parent);
-	const hasParens = needsParens(path, options);
-	if (!parent || ELEMENT_NO_WRAP_PARENTS.has(parent.type) || isStatementSlot(path.key, parent)) {
-		return hasParens ? ['(', printed, ')'] : printed;
-	}
-	const contents = [indent([softline, printed]), softline];
-	return hasParens ? ['(', group(contents), ')'] : group([ifBreak('('), ...contents, ifBreak(')')]);
-}
-
-/**
  * The type part of {@link nodeNeedsParens}. Prettier's `needsParens` lists
  * these types as one chain of `switch` cases that fall through from function
  * types down to type operators: each type adds its own rules and then shares
@@ -3719,24 +3638,7 @@ function printTsrxNode(node, path, options, print, args) {
 		nodeContent = [...printDecorators(decorated, path, options, print), nodeContent];
 	}
 
-	// Like Prettier's `printJsxElement`, an element's comments print inside
-	// the parentheses around a multi-line element, so a comment on its own
-	// line opens them. Template values (control flow, code blocks) get the
-	// same parentheses, but a code block that is a function's body doesn't.
 	let suppressTrailingComments = args?.suppressTrailingComments;
-	if (isTemplateExpression(/** @type {AST.Node} */ (node)) && !isFunctionBodyCodeBlock(path)) {
-		const trailingParts = suppressTrailingComments ? [] : printTrailingComments(node, options);
-		nodeContent = maybeWrapJSXElementInParens(
-			path,
-			parts.length > 0 || trailingParts.length > 0
-				? [...parts, nodeContent, ...trailingParts]
-				: nodeContent,
-			options,
-		);
-		parts.length = 0;
-		suppressTrailingComments = true;
-	}
-
 	// A cast's parens belong to the cast, so they print even where a parent
 	// lays out the node's other parens (`suppressOwnParens`)
 	if (typeCastParens) {
@@ -3747,18 +3649,25 @@ function printTsrxNode(node, path, options, print, args) {
 			options,
 			args,
 		);
-	} else if (elementPrintsCommentsInParens(path, options, args)) {
-		return printElementInParens(
+	} else if (
+		isTemplateExpression(/** @type {AST.Node} */ (node)) &&
+		!isFunctionBodyCodeBlock(path) &&
+		!args?.suppressOwnParens
+	) {
+		// Like Prettier's `printJsxElement`, an element prints its comments
+		// inside the parentheses around it, so a comment on its own line opens
+		// them and a `return` keeps its value (#456). Template values (control
+		// flow, code blocks) get the same parentheses.
+		const trailingParts = suppressTrailingComments ? [] : printTrailingComments(node, options);
+		nodeContent = printTemplateInParens(
 			path,
 			options,
-			finishTsrxNode(
-				/** @type {AST.Node} */ (node),
-				parts,
-				nodeContent,
-				options,
-				args?.suppressTrailingComments,
-			),
+			parts.length > 0 || trailingParts.length > 0
+				? [...parts, nodeContent, ...trailingParts]
+				: nodeContent,
 		);
+		parts.length = 0;
+		suppressTrailingComments = true;
 	} else if (!args?.suppressOwnParens && needsParens(path, options)) {
 		nodeContent = ['(', nodeContent, ')'];
 	}
@@ -11281,7 +11190,7 @@ function getCommentsAhead(path, options) {
 /**
  * Prettier's `hasLeadingOwnLineComment`: whether a comment the node prints
  * ahead of itself ends its line. An element prints its comments inside its
- * parentheses (see {@link elementPrintsCommentsInParens}), unless they go
+ * parentheses (see {@link printTemplateInParens}), unless they go
  * ahead of a type cast's parentheses, which Prettier's `babel` parser keeps as
  * a `ParenthesizedExpression`.
  * @param {AST.Node} node
@@ -12403,8 +12312,8 @@ function printJSXElementBody(
 }
 
 /**
- * Parents that print a JSX element as it is, like Prettier's `isNoWrapParent`,
- * plus the TSRX template bodies, where an element is a statement.
+ * Parents that print a JSX element as it is, from Prettier's `isNoWrapParent`.
+ * A template statement position (`isStatementSlot`) doesn't wrap either.
  */
 const JSX_NO_WRAP_PARENTS = new Set([
 	'ArrayExpression',
@@ -12419,12 +12328,6 @@ const JSX_NO_WRAP_PARENTS = new Set([
 	'ConditionalExpression',
 	'JsExpressionRoot',
 	'MatchExpressionCase',
-	'Program',
-	'BlockStatement',
-	'StaticBlock',
-	'SwitchCase',
-	'JSXCodeBlock',
-	'JSXStyleElement',
 ]);
 
 /**
@@ -12436,18 +12339,26 @@ function anyJSXPathNode() {
 }
 
 /**
- * Prettier's `maybeWrapJsxElementInParens`: a multi-line element in any other
- * position, like after `return`, `=`, `=>`, or `&&`, prints between
- * parentheses on lines of their own.
+ * Prettier's `maybeWrapJsxElementInParens` for an element, fragment, or
+ * template value printed with its comments: in any position but the no-wrap
+ * parents and statement positions, like after `return`, `=`, `=>`, or `&&`,
+ * it prints between parentheses on lines of their own when it breaks. When
+ * `needsParens` adds parentheses, they are always there and the comments go
+ * inside them.
  * @param {AstPath} path
- * @param {Doc} elem
  * @param {TsrxFormatOptions} options
+ * @param {Doc} printed - The node with its comments
  * @returns {Doc}
  */
-function maybeWrapJSXElementInParens(path, elem, options) {
-	const parent = path.parent;
-	if (!parent || JSX_NO_WRAP_PARENTS.has(parent.type)) {
-		return elem;
+function printTemplateInParens(path, options, printed) {
+	const parent = /** @type {AST.Node | null} */ (path.parent);
+	const hasParens = needsParens(path, options);
+	if (
+		!parent ||
+		JSX_NO_WRAP_PARENTS.has(parent.type) ||
+		isStatementSlot(/** @type {string} */ (path.key), parent)
+	) {
+		return hasParens ? ['(', printed, ')'] : printed;
 	}
 	// An arrow body that is a call argument inside a `{…}` child, as in
 	// `{items.map((item) => <li />)}`
@@ -12475,16 +12386,10 @@ function maybeWrapJSXElementInParens(path, elem, options) {
 				(/** @type {any} */ node, /** @type {any} */ key) =>
 					key === 'expression' && node.type === 'JSXExpressionContainer',
 			));
-	const hasOwnParens = needsParens(path, options);
-	return group(
-		[
-			hasOwnParens ? '' : ifBreak('('),
-			indent([softline, elem]),
-			softline,
-			hasOwnParens ? '' : ifBreak(')'),
-		],
-		{ shouldBreak },
-	);
+	const contents = [indent([softline, printed]), softline];
+	return hasParens
+		? ['(', group(contents, { shouldBreak }), ')']
+		: group([ifBreak('('), ...contents, ifBreak(')')], { shouldBreak });
 }
 
 /**
