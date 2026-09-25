@@ -502,7 +502,10 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 				// breaks, so the space goes there, where it prints as `{" "}`.
 				if (run.after === 'boundary') {
 					if (outerAfter) after = whitespace;
-					if (outerBefore && run.before === 'boundary') before = '';
+					// That `{" "}` is the run's one space. A literal space before
+					// the comment would stay on its line and render again once
+					// the comment is gone.
+					if (outerBefore && (run.before === 'boundary' || before === ' ')) before = '';
 				} else if (outerBefore) {
 					before = whitespace;
 				}

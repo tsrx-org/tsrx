@@ -611,7 +611,7 @@ const b = (
 			`export function App() @{
   <>
     <div>
-      <b>t</b> /* c */{" "}
+      <b>t</b>/* c */{" "}
     </div>
     <div>
       {" "}
