@@ -4439,7 +4439,10 @@ export function TSRXPlugin(config) {
 					if (alias && !is_identifier(next.type)) this.#raiseIdentifierExpected(next);
 				}
 				if (line_break) return;
-				// What `tsParseDeclaration` reads after the word.
+				// What `tsParseDeclaration` reads after the word, which keeps the word.
+				// After `abstract`, it takes a name to `tsParseAbstractDeclaration`,
+				// which reads `interface` and rejects any other name at `abstract`
+				// (#697).
 				if (
 					is_identifier(next.type) ||
 					(value === 'abstract' && next.type === tt._class) ||
