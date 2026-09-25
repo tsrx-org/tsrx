@@ -8238,6 +8238,15 @@ type O = { [K in keyof T /* c */ as X]: T[K] };`;
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
+		// Prettier prints an own-line comment before the `]` after the `:`, and
+		// its next pass moves it back before the `]`, at the end of the key's
+		// line. It stays on its own line before the `]`.
+		it('keeps an own-line comment before the ] of a mapped type key there', async () => {
+			const input = 'type U = {\n  [K in T\n  // c\n  ]: T[K];\n};';
+			const expected = 'type U = {\n  [\n    K in T\n    // c\n  ]: T[K];\n};';
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		// A comment after the `[` used to move before it
 		it.each([
 			'type V = { [/* c */ K in T]: T[K] };',

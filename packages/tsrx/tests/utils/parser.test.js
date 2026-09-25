@@ -6811,8 +6811,11 @@ describe('comments placed like Prettier', () => {
 		const endOfLine = firstStatement('type M = {\n  [K in T] // c\n  : T[K];\n};').typeAnnotation;
 
 		expect(commentsOf(type.typeParameter).trailing).toEqual([' c ']);
+		const ownLine = firstStatement('type M = {\n  [K in T\n  // c\n  ]: T[K];\n};').typeAnnotation;
+
 		expect(commentsOf(endOfLine.typeParameter).trailing).toEqual([' c']);
 		expect(commentsOf(endOfLine.typeAnnotation).leading).toBeUndefined();
+		expect(commentsOf(ownLine.typeParameter).trailing).toEqual([' c']);
 	});
 });
 

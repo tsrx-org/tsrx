@@ -26,8 +26,9 @@ Comments keep the places Prettier gives them in five more spots:
   parentheses stays in them when a return type follows, and in function types
   and signatures.
 - A comment after the type a mapped type's key ranges over is no longer
-  deleted, a comment right after the `[` stays after it, and one at the end of
-  the line after the `]` moves before it.
+  deleted, a comment right after the `[` stays after it, one at the end of the
+  line after the `]` moves before it, and one on its own line before the `]`
+  stays there instead of moving after the `:`.
 
 A comment before the `=` of a shorthand property's default value
 (`{ a /* c */ = 1 }`) is no longer deleted.

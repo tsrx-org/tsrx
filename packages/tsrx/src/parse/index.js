@@ -1280,6 +1280,20 @@ export function get_comment_handlers(source, comments, index = 0) {
 			return true;
 		}
 
+		// A comment on its own line before the `]` of a mapped type's key trails
+		// the node before it, where the printer keeps it. Prettier gives it to
+		// the type after the `]`, which prints it after the `:`, and its next
+		// pass moves it back before the `]`, at the end of the key's line.
+		if (
+			ownLine &&
+			node.type === 'TSMappedType' &&
+			preceding &&
+			getNextNonSpaceNonCommentCharacter(comment.end) === ']'
+		) {
+			addTrailingComment(preceding, comment);
+			return true;
+		}
+
 		// Prettier's default for a comment that ends its line: it trails the
 		// node before it, so that it stays after an operator (`a || // note`)
 		// instead of moving to its own line, and before the `)` of a parameter
