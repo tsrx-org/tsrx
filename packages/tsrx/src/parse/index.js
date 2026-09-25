@@ -461,8 +461,31 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Values that print without the parentheses they're written in, wherever
+	 * they end a statement. A binary or logical value keeps them when it
+	 * breaks after `return`, so a comment before them stays inside.
+	 */
+	const valuesPrintedWithoutParens = new Set([
+		'Identifier',
+		'Literal',
+		'ThisExpression',
+		'MemberExpression',
+		'CallExpression',
+		'NewExpression',
+		'ChainExpression',
+		'TemplateLiteral',
+		'TaggedTemplateExpression',
+		'ArrayExpression',
+		'UnaryExpression',
+		'UpdateExpression',
+		'AwaitExpression',
+		'TSNonNullExpression',
+	]);
+
+	/**
 	 * The value of a statement, like the argument of `return (a)` or the right
-	 * side of `x = (a)`, when it's written in parentheses.
+	 * side of `x = (a)`, when it's written in parentheses that print as
+	 * nothing (see {@link valuesPrintedWithoutParens}).
 	 * @param {AST.Node} statement
 	 * @returns {(AST.Node & AST.NodeWithLocation) | null}
 	 */
@@ -479,7 +502,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 		} else if (node.type === 'ExportDefaultDeclaration') {
 			candidates.push(node.declaration);
 		}
-		return candidates.find((candidate) => candidate?.metadata?.parenthesized) ?? null;
+		return (
+			candidates.find(
+				(candidate) =>
+					candidate?.metadata?.parenthesized && valuesPrintedWithoutParens.has(candidate.type),
+			) ?? null
+		);
 	}
 
 	/**
