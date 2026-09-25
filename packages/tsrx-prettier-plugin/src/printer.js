@@ -70,15 +70,15 @@ export const printer = {
 	},
 
 	// Prettier's JSX printer prints an element's own comments. This plugin prints
-	// the comments of a `@{ … }` value or a directive (inside its parentheses);
-	// for an element with comment children, which `jsx.js` prints, Prettier
-	// prints its comments around it.
+	// the comments of a `@{ … }` value or a directive (inside its parentheses),
+	// and of a tag name (`printTagNameComments`); for an element with comment
+	// children, which `jsx.js` prints, Prettier prints its comments around it.
 	/**
 	 * @param {AstPath<Node>} path
 	 * @param {...unknown} rest
 	 */
 	willPrintOwnComments(path, ...rest) {
-		if (isTsrxValue(path)) return true;
+		if (isTsrxValue(path) || isCommentedTagName(path)) return true;
 		if (path.node?.tsrxCommentChildren) return false;
 		const willPrintOwnComments = /** @type {(...args: unknown[]) => boolean} */ (
 			estree.willPrintOwnComments
@@ -202,12 +202,16 @@ const JSX_LAYOUT_PARENTS = new Set([
  * @param {AstPath<Node>} path
  * @param {ParserOptions<Node>} options
  * @param {Doc} doc
+ * @param {{ afterText?: boolean }} [layout] `afterText`: the first comment is
+ *   printed straight after other text, so a line break before it in the source
+ *   doesn't count.
  * @returns {Doc}
  */
-function printOwnComments(path, options, doc) {
+function printOwnComments(path, options, doc, { afterText = false } = {}) {
 	const comments = /** @type {Node[] | undefined} */ (path.node.comments);
 	if (!comments?.length) return doc;
 	const text = options.originalText;
+	const first = comments.find((comment) => comment.leading);
 	const printComment = (/** @type {Node} */ comment) => {
 		comment.printed = true;
 		return /** @type {NonNullable<Printer<Node>['printComment']>} */ (estree.printComment)(
@@ -229,7 +233,7 @@ function printOwnComments(path, options, doc) {
 			if (isBlock) {
 				leading.push(
 					hasNewline(text, comment.end)
-						? hasNewline(text, comment.start, true)
+						? hasNewline(text, comment.start, true) && !(afterText && comment === first)
 							? hardline
 							: line
 						: ' ',
@@ -309,6 +313,50 @@ function isTsrxValueNode(node, parent, key) {
 			parent?.type === 'FunctionExpression' ||
 			parent?.type === 'ArrowFunctionExpression')
 	);
+}
+
+/**
+ * A tag's name with a comment before it (`<` `// note` `div`).
+ * @param {AstPath<Node>} path
+ * @returns {boolean}
+ */
+function isCommentedTagName(path) {
+	return (
+		path.key === 'name' &&
+		(path.parent?.type === 'JSXOpeningElement' || path.parent?.type === 'JSXClosingElement') &&
+		/** @type {Node[] | undefined} */ (path.node.comments)?.some((comment) => comment.leading) ===
+			true
+	);
+}
+
+/**
+ * A tag name with the comments before it. Prettier prints an opening tag's name
+ * after a line comment at the indentation of its `<` (`<// note`), which TSX
+ * can't parse, so the comments and the name go on their own indented lines
+ * instead, the way Prettier prints a closing tag's: `<`, `// note`, `div`, the
+ * attributes, `>`. An element's direct child keeps Prettier's layout, since a
+ * `<` followed by a line break there is text. Block comments print as they
+ * would straight after the `<` or `</` (`</* note *\/ div />`), which is what
+ * Prettier's second format makes of a block comment on its own line.
+ * @param {AstPath<Node>} path
+ * @param {ParserOptions<Node>} options
+ * @param {Print} print
+ * @returns {Doc}
+ */
+function printTagNameComments(path, options, print) {
+	const name = /** @type {Doc} */ (estree.print(path, asTypeScript(options), print));
+	const hasLineComment = /** @type {Node[]} */ (path.node.comments).some(
+		(comment) => comment.leading && comment.type === 'Line',
+	);
+	if (path.parent?.type === 'JSXClosingElement') {
+		// Prettier puts the name on its own line after a line comment.
+		return printOwnComments(path, options, name, { afterText: !hasLineComment });
+	}
+	const container = path.getParentNode(2)?.type;
+	const isChild = container === 'JSXElement' || container === 'JSXFragment';
+	return hasLineComment && !isChild
+		? indent([hardline, printOwnComments(path, options, name)])
+		: printOwnComments(path, options, name, { afterText: true });
 }
 
 /**
@@ -403,6 +451,11 @@ function printTsrx(path, options, print) {
 			)(/** @type {AstPath<Node>} */ (/** @type {unknown} */ ({ node: comment })), options);
 			return node.commentType === 'Line' ? [printed, breakParent] : printed;
 		}
+
+		case 'JSXIdentifier':
+		case 'JSXMemberExpression':
+		case 'JSXNamespacedName':
+			return isCommentedTagName(path) ? printTagNameComments(path, options, print) : null;
 
 		case 'JSXAttribute':
 			return node.shorthand ? ['{', print(['value', 'expression']), '}'] : null;

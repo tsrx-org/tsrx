@@ -49,6 +49,31 @@ const privateFieldDestructuring = {
 };
 
 /**
+ * TypeScript's parser accepts these inputs only through its error recovery (an
+ * index signature with several parameters or none, JSDoc-only types such as
+ * `?string`) and reports them as syntax errors. TSRX reports them as syntax
+ * errors too, without recovering (#415).
+ * @type {Override}
+ */
+const errorRecovery = {
+	reason:
+		"Only TypeScript's error recovery parses this input; TSRX reports the syntax error (#415)",
+	skip: true,
+};
+
+/**
+ * In TSRX, a `<` that starts a line starts an element, even after a name, which
+ * is what lets a template statement without a semicolon be followed by an
+ * element. `foo` followed by `<string>(1)` on the next line is two statements.
+ * @type {Override}
+ */
+const lineStartElement = {
+	reason:
+		'TSRX reads a `<` that starts a line as an element, so `<string>(1)` on the line after a callee is an element',
+	skip: true,
+};
+
+/**
  * Prettier test cases whose TSRX result deliberately differs from Prettier's
  * snapshot, keyed like `prettier-known-failures.json` (`<dir>/<snapshot
  * title>`). An override gives the reason, and then either skips the case,
@@ -74,4 +99,13 @@ export default {
 
 	'js/top-level-await/test.cjs format 1': commonJsAwait,
 	'typescript/top-level-await/test.cts format 1': commonJsAwait,
+
+	'typescript/call/callee-comments.ts format 1': lineStartElement,
+
+	'typescript/error-recovery/index-signature.ts format 1': errorRecovery,
+	'typescript/error-recovery/index-signature.ts - {"trailingComma":"all"} format 1': errorRecovery,
+	'typescript/error-recovery/index-signature.ts - {"trailingComma":"es5"} format 1': errorRecovery,
+	'typescript/error-recovery/jsdoc_only_types.ts format 1': errorRecovery,
+	'typescript/error-recovery/jsdoc_only_types.ts - {"trailingComma":"all"} format 1': errorRecovery,
+	'typescript/error-recovery/jsdoc_only_types.ts - {"trailingComma":"es5"} format 1': errorRecovery,
 };

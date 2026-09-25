@@ -460,6 +460,83 @@ const b = (
 	});
 });
 
+describe('comments before a tag name', () => {
+	// Prettier prints `<// note` with the name below it at the same indentation,
+	// which TSX can't parse.
+	test('a line comment goes on its own line after `<`, like in a closing tag', async () => {
+		await expectFormat(
+			`const a = <
+  // note
+  div className="x">text</div>;
+const b = <// note
+  br />;
+function App() @{
+  @if (x) {
+    <// note
+      span />
+  }
+}`,
+			`const a = (
+  <
+    // note
+    div
+    className="x"
+  >
+    text
+  </div>
+);
+const b = (
+  <
+    // note
+    br
+  />
+);
+function App() @{
+  @if (x) {
+    <
+      // note
+      span
+    />
+  }
+}
+`,
+		);
+	});
+
+	// A `<` followed by a line break in an element's children is text.
+	test("an element's direct child keeps the comment right after `<`", async () => {
+		await expectFormat(
+			`const a = <div>
+  <// note
+    span />
+</div>;`,
+			`const a = (
+  <div>
+    <// note
+    span
+    />
+  </div>
+);
+`,
+		);
+	});
+
+	// Prettier prints this on its second format; its first keeps the line breaks.
+	test('a block comment on its own line prints straight after `<` or `</`', async () => {
+		await expectFormat(
+			`const a = <
+  /* note */
+  div className="x">text</div>;
+const b = <div>text</
+  /* note */
+  div>;`,
+			`const a = </* note */ div className="x">text</div>;
+const b = <div>text</ /* note */ div>;
+`,
+		);
+	});
+});
+
 describe('<script> bodies', () => {
 	test('only JavaScript and TypeScript bodies are formatted', async () => {
 		await expectFormat(
