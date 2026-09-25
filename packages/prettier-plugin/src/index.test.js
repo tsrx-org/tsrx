@@ -12676,6 +12676,84 @@ item
 		});
 	});
 
+	// Like Prettier's `handleTryStatementComments`, a comment on its own line
+	// or at the end of a line before a block of a `try` moves into that block,
+	// and one after a `catch` parameter trails it (#464)
+	describe('comments between the blocks of a try statement', () => {
+		it.each([
+			[
+				'try {\n  a();\n}\n// c\ncatch (e) {\n  b();\n}',
+				'try {\n  a();\n} catch (e) {\n  // c\n  b();\n}',
+			],
+			[
+				'try {\n  a();\n} // c\ncatch (e) {\n  b();\n}',
+				'try {\n  a();\n} catch (e) {\n  // c\n  b();\n}',
+			],
+			[
+				'try {\n  a();\n}\n// c\n// d\ncatch {\n  ;b();\n}',
+				'try {\n  a();\n} catch {\n  // c\n  // d\n  b();\n}',
+			],
+			['try {\n  a();\n} // c\ncatch {\n}', 'try {\n  a();\n} catch {\n  // c\n}'],
+			[
+				'try {\n  a();\n} catch (e) {\n  b();\n} // c\nfinally {\n  d();\n}',
+				'try {\n  a();\n} catch (e) {\n  b();\n} finally {\n  // c\n  d();\n}',
+			],
+			[
+				'try {\n  a();\n}\n// c\nfinally {\n  d();\n}',
+				'try {\n  a();\n} finally {\n  // c\n  d();\n}',
+			],
+			['try // c\n{\n  a();\n} catch {}', 'try {\n  // c\n  a();\n} catch {}'],
+			['try\n/* c */\n{\n  a();\n} catch {}', 'try {\n  /* c */\n  a();\n} catch {}'],
+			[
+				'try {\n  a();\n} catch (e) // c\n{\n  b();\n}',
+				'try {\n  a();\n} catch (\n  e // c\n) {\n  b();\n}',
+			],
+			[
+				'try {\n  a();\n} catch (e)\n// c\n{\n  b();\n}',
+				'try {\n  a();\n} catch (\n  e\n  // c\n) {\n  b();\n}',
+			],
+			[
+				'try {\n  a();\n} catch\n// c\n(e) {\n  b();\n}',
+				'try {\n  a();\n} catch (\n  // c\n  e\n) {\n  b();\n}',
+			],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'try /* c */ {\n  a();\n} catch {}',
+			'try {\n  a();\n} /* c */ catch (e) {\n  b();\n}',
+			'try {\n  a();\n} catch (/* c */ e) {\n  b();\n}',
+			'try {\n  a();\n} catch (e /* c */) {\n  b();\n}',
+			'try {\n  a();\n} catch (e) {\n  b();\n} /* c */ finally {\n  d();\n}',
+			'try {\n  a();\n} finally /* c */ {\n  d();\n}',
+			'try {\n  a();\n} catch (e) {\n  b();\n} // c',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'function A() @{\n  @try {\n    <B />\n  } // c\n  @pending {\n    <p>{"loading"}</p>\n  } @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
+				'function A() @{\n  @try {\n    <B />\n  } @pending {\n    // c\n    <p>{"loading"}</p>\n  } @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
+			],
+			[
+				'function A() @{\n  @try {\n    <B />\n  } @pending {\n    <p>{"loading"}</p>\n  }\n  // c\n  @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
+				'function A() @{\n  @try {\n    <B />\n  } @pending {\n    <p>{"loading"}</p>\n  } @catch (e) {\n    // c\n    <p>{"error"}</p>\n  }\n}',
+			],
+			[
+				'function A() @{\n  @try {\n    <B />\n  } // c\n  @catch (e, reset) {\n  }\n}',
+				'function A() @{\n  @try {\n    <B />\n  } @catch (e, reset) {\n    // c\n  }\n}',
+			],
+			[
+				'function A() @{\n  @try {\n    <B />\n  } @catch (e, reset) // c\n  {\n    <p>{"error"}</p>\n  }\n}',
+				'function A() @{\n  @try {\n    <B />\n  } @catch (\n    e,\n    reset // c\n  ) {\n    <p>{"error"}</p>\n  }\n}',
+			],
+		])('formats the template %j like a try statement', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+	});
+
 	// A comment in a function's body used to become a trailing comment of the
 	// function's last parameter, or of its name when it had none.
 	describe('comments in function bodies stay in the body', () => {

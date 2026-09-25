@@ -875,6 +875,23 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Like Prettier's `addBlockStatementFirstComment`: the comment leads the
+	 * first statement of a block, or dangles in the block when it has none.
+	 * @param {AST.BlockStatement | AST.ClassBody} block
+	 * @param {AST.CommentWithLocation} comment
+	 */
+	function addBlockStatementFirstComment(block, comment) {
+		const first = /** @type {AST.Node[]} */ (block.body).find(
+			(statement) => statement.type !== 'EmptyStatement',
+		);
+		if (first) {
+			addLeadingComment(first, comment);
+		} else {
+			pushInnerComment(block, comment);
+		}
+	}
+
+	/**
 	 * Like Prettier's `isTypeCastComment`: a JSDoc comment with `@type` or
 	 * `@satisfies`
 	 * @param {AST.CommentWithLocation} comment
@@ -907,6 +924,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 			type === 'IfStatement' ||
 			type === 'WhileStatement' ||
 			type === 'WithStatement' ||
+			type === 'TryStatement' ||
+			type === 'CatchClause' ||
 			type === 'MemberExpression' ||
 			type === 'BinaryExpression' ||
 			type === 'LogicalExpression' ||
@@ -983,6 +1002,30 @@ export function get_comment_handlers(source, comments, index = 0) {
 			return true;
 		}
 
+		// `handleTryStatementComments`: a comment on its own line or at the end
+		// of a line before a block of a `try` (the `try` block, a template's
+		// `@pending` block, the `catch` body, or the `finally` block) moves into
+		// that block as its first comment. In a `catch`, one after the
+		// parameter trails it.
+		if (
+			(ownLine || endOfLine) &&
+			(type === 'TryStatement' || type === 'CatchClause') &&
+			following
+		) {
+			if (type === 'CatchClause' && preceding) {
+				addTrailingComment(preceding, comment);
+				return true;
+			}
+			if (following.type === 'BlockStatement') {
+				addBlockStatementFirstComment(/** @type {AST.BlockStatement} */ (following), comment);
+				return true;
+			}
+			if (following.type === 'CatchClause') {
+				addBlockStatementFirstComment(/** @type {AST.CatchClause} */ (following).body, comment);
+				return true;
+			}
+		}
+
 		// `handleClassComments`: a comment in the heading of a decorated class
 		// trails the last decorator. One before the body moves into it, and one
 		// before the superclass or the first `implements`/`extends` type trails
@@ -995,13 +1038,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 				return true;
 			}
 			if (following === node.body) {
-				// Like `addBlockStatementFirstComment`
-				const first = node.body.body[0];
-				if (first) {
-					addLeadingComment(first, comment);
-				} else {
-					pushInnerComment(node.body, comment);
-				}
+				addBlockStatementFirstComment(node.body, comment);
 				return true;
 			}
 			/** @type {unknown[]} */

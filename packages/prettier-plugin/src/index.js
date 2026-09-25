@@ -2855,6 +2855,9 @@ function printTsrxNode(node, path, options, print, args) {
 		case 'TryStatement':
 			nodeContent = printTryStatement(node, path, options, print);
 			break;
+		case 'CatchClause':
+			nodeContent = printCatchClause(node, path, options, print);
+			break;
 		case 'JSXTryExpression':
 			nodeContent = [
 				'@',
@@ -6582,7 +6585,8 @@ function printHeritageClauses(node, path, options, print, groupMode) {
 }
 
 /**
- * Print a try statement (with TSRX pending block extension)
+ * Print a try statement (with TSRX pending block extension), like Prettier's
+ * `printTryStatement`
  * @param {AST.TryStatement} node - The try statement node
  * @param {AstPath<AST.TryStatement>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
@@ -6591,50 +6595,74 @@ function printHeritageClauses(node, path, options, print, groupMode) {
  * @returns {Doc[]}
  */
 function printTryStatement(node, path, options, print, directive = false) {
-	// Extract leading comments from block node to print them before 'try' keyword
-	const blockNode = node.block;
-
-	// Print block without its leading comments (they'll be printed before 'try')
-	const block = path.call(
-		(blockPath) => print(blockPath, { suppressLeadingComments: true }),
-		'block',
-	);
-
 	/** @type {Doc[]} */
-	const parts = [];
-
-	// Print leading comments from block node before 'try' keyword
-	parts.push(...extractAndPrintLeadingComments(blockNode));
-
-	parts.push('try ');
-	parts.push(block);
+	const parts = ['try ', path.call(print, 'block')];
 
 	if (node.pending) {
-		parts.push(directive ? ' @pending ' : ' pending ');
-		parts.push(path.call(print, 'pending'));
+		parts.push(directive ? ' @pending ' : ' pending ', path.call(print, 'pending'));
 	}
 
 	if (node.handler) {
-		parts.push(directive ? ' @catch' : ' catch');
-		if (node.handler.param) {
-			parts.push(' (');
-			parts.push(path.call(print, 'handler', 'param'));
-			if (node.handler.resetParam) {
-				parts.push(', ');
-				parts.push(path.call(print, 'handler', 'resetParam'));
-			}
-			parts.push(')');
-		}
-		parts.push(' ');
-		parts.push(path.call(print, 'handler', 'body'));
+		parts.push(' ', path.call(print, 'handler'));
 	}
 
 	if (node.finalizer) {
-		parts.push(' finally ');
-		parts.push(path.call(print, 'finalizer'));
+		parts.push(' finally ', path.call(print, 'finalizer'));
 	}
 
 	return parts;
+}
+
+/**
+ * Print a `catch` clause (`@catch` in a template `@try`), like Prettier's
+ * `printCatchClause`: parameters with a line comment, or a block comment on
+ * a line of its own, go on their own indented line
+ * @param {AST.CatchClause} node - The catch clause
+ * @param {AstPath<AST.CatchClause>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc[]}
+ */
+function printCatchClause(node, path, options, print) {
+	const keyword = path.parent?.type === 'JSXTryExpression' ? '@catch ' : 'catch ';
+	if (!node.param) {
+		return [keyword, path.call(print, 'body')];
+	}
+
+	const text = /** @type {string} */ (options.originalText);
+	const params = [node.param, node.resetParam].filter((param) => !!param);
+	const parameterHasComments = params.some((param) => {
+		const { leadingComments = [], trailingComments = [] } =
+			/** @type {AST.NodeWithMaybeComments} */ (param);
+		return (
+			leadingComments.some(
+				(comment) =>
+					comment.type !== 'Block' ||
+					hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).end),
+			) ||
+			trailingComments.some(
+				(comment) =>
+					comment.type !== 'Block' ||
+					hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).start, {
+						backwards: true,
+					}),
+			)
+		);
+	});
+	// A template `@catch` may also name its reset function, which breaks onto
+	// its own line like a second function parameter
+	const printed = [path.call(print, 'param')];
+	if (node.resetParam) {
+		printed.push(path.call(print, 'resetParam'));
+	}
+
+	return [
+		keyword,
+		parameterHasComments
+			? ['(', indent([softline, join([',', line], printed)]), softline, ') ']
+			: ['(', join(', ', printed), ') '],
+		path.call(print, 'body'),
+	];
 }
 
 /**
