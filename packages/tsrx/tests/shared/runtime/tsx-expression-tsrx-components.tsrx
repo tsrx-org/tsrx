@@ -26,23 +26,31 @@ export function TsrxInTsxExpressionApp() @{
 		placeholder: 'placeholder-class',
 	};
 	function renderPlugin() {
-		return <>
-			<PlainTextPlugin
-				contentEditable={
-					<>
-						<ContentEditable
-							aria-placeholder={placeholder}
-							class={classes.contentEditable}
-							placeholder={<><div class={classes.placeholder}>{placeholder}</div></>}
-						/>
-					</>
-				}
-				placeholder={<><div class={classes.placeholder}>{placeholder}</div></>}
-			/>
-		</>;
+		return (
+			<>
+				<PlainTextPlugin
+					contentEditable={
+						<>
+							<ContentEditable
+								aria-placeholder={placeholder}
+								class={classes.contentEditable}
+								placeholder={
+									<>
+										<div class={classes.placeholder}>{placeholder}</div>
+									</>
+								}
+							/>
+						</>
+					}
+					placeholder={
+						<>
+							<div class={classes.placeholder}>{placeholder}</div>
+						</>
+					}
+				/>
+			</>
+		);
 	}
 
-	<>
-		{renderPlugin()}
-	</>
+	<>{renderPlugin()}</>
 }

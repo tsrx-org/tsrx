@@ -476,7 +476,9 @@ export function CompilerDemo() @{
 					</div>
 					<div class="panel-body">
 						@if (error_message.value) {
-							<div class="panel-error" role="alert">{error_message.value}</div>
+							<div class="panel-error" role="alert">
+								{error_message.value}
+							</div>
 						}
 						<div class="editor-host" ref={bindNode(output_ref)} />
 					</div>
@@ -490,14 +492,18 @@ export function CompilerDemo() @{
 					onClick={() => {
 						active_mobile_panel.value = 'input';
 					}}
-				>input</button>
+				>
+					input
+				</button>
 				<button
 					type="button"
 					class={`pane-button${active_mobile_panel.value === 'output' ? ' is-active' : ''}`}
 					onClick={() => {
 						active_mobile_panel.value = 'output';
 					}}
-				>output</button>
+				>
+					output
+				</button>
 			</div>
 		</section>
 		<style>

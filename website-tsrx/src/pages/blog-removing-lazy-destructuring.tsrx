@@ -97,18 +97,24 @@ export function BlogRemovingLazyDestructuringPage() @{
 						<a href="/features">Features</a>
 						<a href="/specification">Specification</a>
 						<a href="/playground">Playground</a>
-						<a href="/blog" aria-current="page">Blog</a>
+						<a href="/blog" aria-current="page">
+							Blog
+						</a>
 						<a href="https://discord.gg/HCYpT5QHQR" target="_blank" rel="noopener noreferrer">
 							Discord
 						</a>
 						<a href="https://github.com/tsrx-org/tsrx" target="_blank" rel="noopener noreferrer">
 							GitHub
 						</a>
-						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a>
+						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">
+							llms.txt
+						</a>
 					</nav>
 				</header>
 				<main class="article-shell">
-					<a class="back-link" href="/blog">Back to blog</a>
+					<a class="back-link" href="/blog">
+						Back to blog
+					</a>
 					<article>
 						<header class="article-header">
 							<p class="eyebrow">September 14, 2026</p>
@@ -117,9 +123,8 @@ export function BlogRemovingLazyDestructuringPage() @{
 								TSRX no longer has
 								<code>{'&{ ... }'}</code>
 								and
-								<code>{'&[ ... ]'}</code>
-								. Destructuring is ordinary destructuring again, and reactive state is read through
-								your framework's own API.
+								<code>{'&[ ... ]'}</code>. Destructuring is ordinary destructuring again, and
+								reactive state is read through your framework's own API.
 							</p>
 						</header>
 						<p>
@@ -142,8 +147,8 @@ export function BlogRemovingLazyDestructuringPage() @{
 							<code>[</code>
 							in a binding position is a syntax error, exactly as it is in TypeScript. There is no
 							replacement syntax. The full reasoning is in
-							<a href="https://github.com/tsrx-org/tsrx/discussions/106">RFC #106</a>
-							; this post is the short version.
+							<a href="https://github.com/tsrx-org/tsrx/discussions/106">RFC #106</a>; this post is
+							the short version.
 						</p>
 						<h2>Why it existed</h2>
 						<p>
@@ -154,8 +159,7 @@ export function BlogRemovingLazyDestructuringPage() @{
 							across the component boundary. The
 							<code>{'&'}</code>
 							kept the ergonomics of destructuring while compiling every read back to
-							<code>props.name</code>
-							. The same trick was then applied to
+							<code>props.name</code>. The same trick was then applied to
 							<code>track()</code>
 							so a bare
 							<code>count</code>
@@ -163,16 +167,13 @@ export function BlogRemovingLazyDestructuringPage() @{
 						</p>
 						<p>
 							Ripple has since made props plain objects. Reactivity crosses the component boundary
-							explicitly, as a
-							<code>Tracked</code>
+							explicitly, as a<code>Tracked</code>
 							or
 							<code>Derived</code>
 							that the child reads through
-							<code>.value</code>
-							. With prop getters gone, the only remaining use was sugar over
-							<code>track()</code>
-							, and no other target ever needed the feature: React, Preact, and Octane re-run the
-							component body on every render, Solid's own guidance is to read
+							<code>.value</code>. With prop getters gone, the only remaining use was sugar over
+							<code>track()</code>, and no other target ever needed the feature: React, Preact, and
+							Octane re-run the component body on every render, Solid's own guidance is to read
 							<code>props.name</code>
 							rather than destructure, and Vue's reactive proxy already makes
 							<code>state.count</code>
@@ -190,12 +191,10 @@ export function BlogRemovingLazyDestructuringPage() @{
 							Hovering
 							<code>count</code>
 							in an editor showed
-							<code>number</code>
-							. The type checker, and every tool built on it, believed it was a plain value. To make
-							the declaration type-check at all, Ripple's
+							<code>number</code>. The type checker, and every tool built on it, believed it was a
+							plain value. To make the declaration type-check at all, Ripple's
 							<code>{'Tracked<V>'}</code>
-							had to claim it was also a
-							<code>{'[V, Tracked<V>]'}</code>
+							had to claim it was also a<code>{'[V, Tracked<V>]'}</code>
 							tuple, and the compiler then needed two dedicated errors to stop people from indexing
 							it. Reactivity was invisible in the type system exactly where it mattered most.
 						</p>
@@ -208,9 +207,8 @@ export function BlogRemovingLazyDestructuringPage() @{
 						</pre>
 						<p>
 							The same applied to
-							<code>val++</code>
-							, which mutated someone else's array. Each case was handled correctly by the compiler;
-							the cost fell on the reader, who had to remember that an
+							<code>val++</code>, which mutated someone else's array. Each case was handled
+							correctly by the compiler; the cost fell on the reader, who had to remember that an
 							<code>{'&'}</code>
 							many lines above changed the meaning of every later occurrence of the name.
 						</p>
@@ -257,8 +255,7 @@ export function BlogRemovingLazyDestructuringPage() @{
 						</pre>
 						<p>
 							For Ripple, hold the tracked object and read and write
-							<code>.value</code>
-							. Passing
+							<code>.value</code>. Passing
 							<code>count</code>
 							to a child passes the tracked object; passing
 							<code>count.value</code>
@@ -271,8 +268,7 @@ export function BlogRemovingLazyDestructuringPage() @{
 						<p>
 							The rewrites are mechanical. A file that still uses the sigils fails to compile with a
 							syntax error pointing at the
-							<code>{'&'}</code>
-							, so nothing changes meaning silently.
+							<code>{'&'}</code>, so nothing changes meaning silently.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={MIGRATION_HTML} />

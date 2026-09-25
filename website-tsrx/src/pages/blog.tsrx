@@ -18,14 +18,18 @@ export function BlogPage() @{
 						<a href="/features">Features</a>
 						<a href="/specification">Specification</a>
 						<a href="/playground">Playground</a>
-						<a href="/blog" aria-current="page">Blog</a>
+						<a href="/blog" aria-current="page">
+							Blog
+						</a>
 						<a href="https://discord.gg/HCYpT5QHQR" target="_blank" rel="noopener noreferrer">
 							Discord
 						</a>
 						<a href="https://github.com/tsrx-org/tsrx" target="_blank" rel="noopener noreferrer">
 							GitHub
 						</a>
-						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a>
+						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">
+							llms.txt
+						</a>
 					</nav>
 				</header>
 				<main class="blog-shell">
@@ -44,7 +48,9 @@ export function BlogPage() @{
 								lazy patterns are gone. Destructuring is ordinary destructuring again, and reactive
 								state is read through each framework's own API.
 							</p>
-							<a class="read-link" href="/blog/removing-lazy-destructuring">Read the post</a>
+							<a class="read-link" href="/blog/removing-lazy-destructuring">
+								Read the post
+							</a>
 						</article>
 						<article class="post-preview">
 							<p class="post-date">June 7, 2026</p>
@@ -56,7 +62,9 @@ export function BlogPage() @{
 								statement-container component bodies, and marked control flow only where templates
 								need it.
 							</p>
-							<a class="read-link" href="/blog/rethinking-tsrx">Read the post</a>
+							<a class="read-link" href="/blog/rethinking-tsrx">
+								Read the post
+							</a>
 						</article>
 						<article class="post-preview">
 							<p class="post-date">May 29, 2026</p>
@@ -67,7 +75,9 @@ export function BlogPage() @{
 								We removed some early TSRX-only ideas and made the language feel closer to ordinary
 								TypeScript and JSX.
 							</p>
-							<a class="read-link" href="/blog/simplifying-tsrx-after-feedback">Read the post</a>
+							<a class="read-link" href="/blog/simplifying-tsrx-after-feedback">
+								Read the post
+							</a>
 						</article>
 					</section>
 				</main>

@@ -83,7 +83,9 @@ export const IndexPage = () => @{
 						<a href="https://github.com/tsrx-org/tsrx" target="_blank" rel="noopener noreferrer">
 							GitHub
 						</a>
-						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a>
+						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">
+							llms.txt
+						</a>
 					</nav>
 				</header>
 				<section class="hero" id="top">
@@ -117,17 +119,23 @@ export const IndexPage = () => @{
 						modules from JS, TS, and TSX files and it just works.
 					</p>
 					<div class="hero-actions">
-						<a class="cta-link" href="/getting-started">Get started →</a>
+						<a class="cta-link" href="/getting-started">
+							Get started →
+						</a>
 						<a
 							class="secondary-cta-link"
 							href="https://github.com/tsrx-org/tsrx"
 							target="_blank"
 							rel="noopener noreferrer"
-						>View Source</a>
+						>
+							View Source
+						</a>
 					</div>
 					<p class="section-body what-is-copy compact-link-copy">
 						Looking for the formal grammar and AST shape? Read the
-						<a class="supporting-link" href="/specification">specification →</a>
+						<a class="supporting-link" href="/specification">
+							specification →
+						</a>
 					</p>
 					<aside class="alpha-notice" role="note" aria-label="Beta release notice">
 						<span class="alpha-badge">Beta</span>
@@ -138,7 +146,9 @@ export const IndexPage = () => @{
 								href="https://github.com/tsrx-org/tsrx/issues"
 								target="_blank"
 								rel="noopener noreferrer"
-							>issue tracker</a>{' '}
+							>
+								issue tracker
+							</a>{' '}
 							is very welcome.
 						</p>
 					</aside>
@@ -172,7 +182,9 @@ export const IndexPage = () => @{
 							href="https://arxiv.org/abs/2307.03172"
 							target="_blank"
 							rel="noopener noreferrer"
-						>Lost in the Middle (Liu et al., TACL 2024) →</a>
+						>
+							Lost in the Middle (Liu et al., TACL 2024) →
+						</a>
 					</p>
 				</section>
 				<section class="readable-section section-shell">
@@ -234,23 +246,20 @@ export const IndexPage = () => @{
 					<p class="section-body">
 						The TSRX compiler parses component source into an AST and hands it off to
 						framework-specific plugins for code generation. Plugins such as
-						<code class="inline-code">@tsrx/react</code>
-						,
-						<code class="inline-code">@tsrx/preact</code>
-						,
-						<code class="inline-code">@tsrx/ripple</code>
-						,
-						<code class="inline-code">@tsrx/solid</code>
-						,
-						<code class="inline-code">@tsrx/vue</code>
-						, and
+						<code class="inline-code">@tsrx/react</code>,
+						<code class="inline-code">@tsrx/preact</code>,
+						<code class="inline-code">@tsrx/ripple</code>,
+						<code class="inline-code">@tsrx/solid</code>,<code class="inline-code">@tsrx/vue</code>,
+						and
 						<code class="inline-code">octane/compiler</code>
 						transform the same AST into idiomatic output for their target runtimes, including scoped
 						CSS. New targets can be added as standalone compiler plugins without changing the
 						language itself.
 					</p>
 					<p class="section-body">
-						<a class="cta-link" href="/playground">Try it in the playground →</a>
+						<a class="cta-link" href="/playground">
+							Try it in the playground →
+						</a>
 					</p>
 				</section>
 				<footer class="site-footer">
