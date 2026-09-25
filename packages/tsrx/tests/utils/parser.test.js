@@ -7411,6 +7411,58 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(statement.declarations[0].init.body).trailing).toBeUndefined();
 		expect(commentsOf(conditional).trailing).toBeUndefined();
 	});
+
+	// Prettier's `handleParenthesizedExpressionTrailingComment`
+	it('trails the last expression of a parenthesized sequence or the right side of an assignment with a comment after it', () => {
+		const arrow = firstStatement('const f = () => (a = b /* c */);').declarations[0].init;
+		const declarator = firstStatement('const x = (a, b /* c */);').declarations[0];
+		const returned = firstStatement('function f() {\n  return (a, b /* c */);\n}').body.body[0];
+		const assigned = firstStatement('x = (a, b /* c */);');
+		const statement = firstStatement('(a, b /* c */);');
+
+		expect(commentsOf(arrow.body.right).trailing).toEqual([' c ']);
+		expect(commentsOf(declarator.init.expressions[1]).trailing).toEqual([' c ']);
+		expect(commentsOf(declarator.init).trailing).toBeUndefined();
+		expect(commentsOf(returned.argument.expressions[1]).trailing).toEqual([' c ']);
+		expect(commentsOf(assigned.expression.right.expressions[1]).trailing).toEqual([' c ']);
+		expect(commentsOf(statement).trailing).toEqual([' c ']);
+		expect(commentsOf(statement.expression).trailing).toBeUndefined();
+	});
+
+	// Prettier prints these after the parentheses, or the value without them,
+	// and its next pass moves them after the `;`
+	it('trails the statement with a comment after a parenthesized throw argument or chained assignment', () => {
+		const thrown = firstStatement('throw (a, b /* c */);');
+		const chained = firstStatement('x = (y = z /* c */);');
+		const lineComment = firstStatement('const x = (a, b // c\n);');
+
+		expect(commentsOf(thrown).trailing).toEqual([' c ']);
+		expect(commentsOf(chained).trailing).toEqual([' c ']);
+		expect(commentsOf(lineComment).trailing).toEqual([' c']);
+	});
+
+	it('trails the constraint of a type parameter with a comment at the end of the line of its =', () => {
+		const [parameter] = firstStatement('type A<B extends C = // c\n  D> = R;').typeParameters
+			.params;
+		const [ignored] = firstStatement('type A<B extends C = // prettier-ignore\n  D> = R;')
+			.typeParameters.params;
+
+		expect(commentsOf(parameter.constraint).trailing).toEqual([' c']);
+		expect(commentsOf(parameter.default).leading).toBeUndefined();
+		expect(commentsOf(ignored.default).leading).toEqual([' prettier-ignore']);
+	});
+
+	// Prettier moves these after the constraint on its next pass
+	it('trails the constraint of a type parameter with a line comment on its own line around its =', () => {
+		const [after] = firstStatement('type A<B extends C =\n  // c\n  D> = R;').typeParameters.params;
+		const [second] = firstStatement('type A<B extends C = // a\n  // b\n  D> = R;').typeParameters
+			.params;
+
+		expect(commentsOf(after.constraint).trailing).toEqual([' c']);
+		expect(commentsOf(after.default).leading).toBeUndefined();
+		expect(commentsOf(second.constraint).trailing).toEqual([' a']);
+		expect(commentsOf(second.default).leading).toEqual([' b']);
+	});
 });
 
 describe('keywordTokens parse option', () => {
