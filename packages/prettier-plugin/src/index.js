@@ -12273,6 +12273,14 @@ const JSX_NO_WRAP_PARENTS = new Set([
 ]);
 
 /**
+ * A `path.match` predicate that accepts any node.
+ * @returns {boolean}
+ */
+function anyJSXPathNode() {
+	return true;
+}
+
+/**
  * Prettier's `maybeWrapJsxElementInParens`: a multi-line element in any other
  * position, like after `return`, `=`, `=>`, or `&&`, prints between
  * parentheses on lines of their own.
@@ -12290,23 +12298,23 @@ function maybeWrapJSXElementInParens(path, elem, options) {
 	// `{items.map((item) => <li />)}`
 	const shouldBreak =
 		path.match(
-			undefined,
+			anyJSXPathNode,
 			(/** @type {any} */ node, /** @type {any} */ key) =>
 				key === 'body' && node.type === 'ArrowFunctionExpression',
 			(/** @type {any} */ node, /** @type {any} */ key) =>
 				key === 'arguments' && node.type === 'CallExpression',
 		) &&
 		(path.match(
-			undefined,
-			undefined,
-			undefined,
+			anyJSXPathNode,
+			anyJSXPathNode,
+			anyJSXPathNode,
 			(/** @type {any} */ node, /** @type {any} */ key) =>
 				key === 'expression' && node.type === 'JSXExpressionContainer',
 		) ||
 			path.match(
-				undefined,
-				undefined,
-				undefined,
+				anyJSXPathNode,
+				anyJSXPathNode,
+				anyJSXPathNode,
 				(/** @type {any} */ node, /** @type {any} */ key) =>
 					key === 'expression' && node.type === 'ChainExpression',
 				(/** @type {any} */ node, /** @type {any} */ key) =>
