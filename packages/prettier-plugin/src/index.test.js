@@ -1257,6 +1257,24 @@ const o = {
 			expect(await format('\n\n// prettier-ignore\n\n\n')).toBe('\n\n// prettier-ignore\n\n\n');
 		});
 
+		it('still formats an element or code block whose only comments are its children', async () => {
+			// Like a JSX comment child, the comment doesn't dangle on the element
+			const result = await format(`function App() @{
+  const  x = 1;
+  <div   a="1">
+    // prettier-ignore
+  </div>
+  // prettier-ignore
+}`);
+			expect(result).toBeWithNewline(`function App() @{
+  const x = 1;
+  <div a="1">
+    // prettier-ignore
+  </div>
+  // prettier-ignore
+}`);
+		});
+
 		it('keeps the decorators written before export', async () => {
 			const source = `// prettier-ignore
 @dec

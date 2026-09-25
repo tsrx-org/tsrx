@@ -390,15 +390,19 @@ function isPrettierIgnoreComment(comment) {
  * Check whether a `prettier-ignore` directive keeps a node as written. Like
  * Prettier's `hasNodeIgnoreComment`, any comment attached to the node counts:
  * leading (even when another comment follows it), trailing (such as
- * `foo(  a ); // prettier-ignore`), or dangling.
+ * `foo(  a ); // prettier-ignore`), or dangling. The inner comments of a
+ * template element or code block are its children, not dangling comments,
+ * so like a JSX comment child they don't keep the element as written.
  * @param {AST.Node & AST.NodeWithMaybeComments} node - The AST node to check
  * @returns {boolean} - True if the node should be printed verbatim
  */
 function hasPrettierIgnore(node) {
+	const isTemplateContainer =
+		node.type === 'JSXElement' || node.type === 'JSXFragment' || node.type === 'JSXCodeBlock';
 	return Boolean(
 		node.leadingComments?.some(isPrettierIgnoreComment) ||
 		node.trailingComments?.some(isPrettierIgnoreComment) ||
-		node.innerComments?.some(isPrettierIgnoreComment),
+		(!isTemplateContainer && node.innerComments?.some(isPrettierIgnoreComment)),
 	);
 }
 
