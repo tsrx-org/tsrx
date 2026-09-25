@@ -2,8 +2,9 @@
 
 An experimental Prettier plugin for [TSRX](https://tsrx.dev) that formats
 everything except TSRX syntax with Prettier's own JavaScript and TypeScript
-printer. It is meant to replace [`@tsrx/prettier-plugin`](../prettier-plugin),
-which prints every node itself, and is not published yet.
+printer, unlike [`@tsrx/prettier-plugin`](../prettier-plugin), which prints every
+node itself. It is not published yet: whether it replaces `@tsrx/prettier-plugin`
+or is released on its own is decided later.
 
 The goal is Prettier's output wherever TSRX is TSX, so TSRX only differs where its
 syntax does: `@{ … }` blocks, `@if`/`@for`/`@switch`/`@try`, `{value}` shorthand
