@@ -398,7 +398,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * moves too, since the printer drops those parentheses: Prettier prints
 	 * `return (b /* note *\/);` as `return b /* note *\/;`, and moves it after
 	 * the `;` on the next pass. So does one before that parenthesis at the end
-	 * of a statement without a `;`, which the printer adds after it.
+	 * of a statement without a `;`, which the printer adds after it (#672).
 	 * @param {AST.NodeWithLocation} node - The node the comment follows
 	 * @param {(AST.Node | AST.CSS.StyleSheet)[]} path - The node's ancestors
 	 * @returns {boolean} Whether it took the comments
@@ -629,16 +629,18 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 	/**
 	 * The comments before the `)` of the parentheses around the last operand
-	 * of a binary or logical expression print after them, where Prettier's
-	 * next pass finds them. Before the `;` that ends the statement, they go
-	 * after it (see {@link takeCommentsBeforeFinalSemicolon}):
+	 * of a binary or logical expression print after them, and after the
+	 * parentheses around the operands that it ends, where Prettier's next
+	 * passes find them, one pair a pass. Before the `;` that ends the
+	 * statement, they go after it (see {@link takeCommentsBeforeFinalSemicolon}):
 	 * `x = a || (b /* c *\/);` prints `x = a || b; /* c *\/` (#622). Before
-	 * an operator, a line comment, which Prettier prints as a line suffix that
-	 * moves it past the operator to the end of the line, trails the left
-	 * operand the operator follows: Prettier prints
-	 * `x = 30 * (month - 1 // c⏎) + day;` with the comment after the `+` and
-	 * the `*` broken by its line break, and its next pass gives it to
-	 * `30 * (month - 1)`, which joins the `*` again (#626).
+	 * an operator, they trail the left operand the operator follows:
+	 * `((0x30 <= c) && (c <= 0x39 /* 9 *\/)) || d` prints
+	 * `(0x30 <= c && c <= 0x39) /* 9 *\/ || d` (#673). Prettier prints a line
+	 * comment as a line suffix, which moves it past the operator to the end of
+	 * the line: it prints `x = 30 * (month - 1 // c⏎) + day;` with the
+	 * comment after the `+` and the `*` broken by its line break, and its next
+	 * pass gives it to `30 * (month - 1)`, which joins the `*` again (#626).
 	 * @param {AST.NodeWithLocation} node - The operand the comment follows
 	 * @param {(AST.Node | AST.CSS.StyleSheet)[]} path - The node's ancestors
 	 * @returns {boolean} Whether it took the comment
@@ -661,7 +663,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 		}
 		// The left operand that the comment ends, up the right operands that
 		// end it, which only `)`s separate from the operator after it
-		for (; comment.type === 'Line' && index >= 1; index--) {
+		for (; index >= 1; index--) {
 			const operand = /** @type {AST.Node} */ (path[index]);
 			if (!isBinaryish(operand) || operand.right !== child) {
 				break;

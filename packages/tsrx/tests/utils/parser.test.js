@@ -7478,14 +7478,16 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(element.expression.right.right).trailing).toEqual([' c']);
 	});
 
-	// Prettier's next pass finds it after the operator that follows the
-	// parentheses (#626)
-	it('trails the left operand of the next operator with a line comment before the ) of its last operand', () => {
+	// Prettier's next passes find it after the parentheses, and a line
+	// comment after the operator that follows them (#626)
+	it('trails the left operand of the next operator with a comment before the ) of its last operand', () => {
 		const statement = firstStatement('x = 30 * (month - 1 // c\n) + day;');
+		const block = firstStatement('x = (a && (b /* c */)) || d;');
 		const call = firstStatement('x = f(a // c\n) + d;');
 
 		expect(commentsOf(statement.expression.right.left).trailing).toEqual([' c']);
 		expect(commentsOf(statement.expression.right.left.right).trailing).toBeUndefined();
+		expect(commentsOf(block.expression.right.left).trailing).toEqual([' c ']);
 		expect(commentsOf(call.expression.right.left.arguments[0]).trailing).toEqual([' c']);
 	});
 

@@ -14858,6 +14858,15 @@ const b = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
 				'const jd = Math.floor(\n  30 * (month - 1) + // c\n    day,\n);',
 			],
 			['x = 30 * (month - 1 /* c */ // d\n) + day;', 'x =\n  30 * (month - 1) /* c */ + // d\n  day;'],
+			// Prettier's next pass takes a block comment out of the parentheses
+			// that print around the operand too (#673)
+			['x = (a && (b /* c */)) || d;', 'x = (a && b) /* c */ || d;'],
+			['x = (a && (b /* c */ /* d */)) || e;', 'x = (a && b) /* c */ /* d */ || e;'],
+			['if ((a && (b /* c */)) || d) {\n}', 'if ((a && b) /* c */ || d) {\n}'],
+			[
+				'function isHexCode(c) {\n  return ((0x30/* 0 */ <= c) && (c <= 0x39/* 9 */)) ||\n         ((0x41/* A */ <= c) && (c <= 0x46/* F */)) ||\n         ((0x61/* a */ <= c) && (c <= 0x66/* f */));\n}',
+				'function isHexCode(c) {\n  return (\n    (0x30 /* 0 */ <= c && c <= 0x39) /* 9 */ ||\n    (0x41 /* A */ <= c && c <= 0x46) /* F */ ||\n    (0x61 /* a */ <= c && c <= 0x66) /* f */\n  );\n}',
+			],
 		])('formats %j in one pass', async (input, expected) => {
 			expect(await format(input)).toBeWithNewline(expected);
 		});
@@ -14867,6 +14876,8 @@ const b = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
 			'x =\n  (a || b) + // c\n  d;',
 			'x =\n  f(\n    a, // c\n  ) + d;',
 			'x = 30 * (month - 1) /* c */ + day;',
+			'x = a || b /* c */ || d;',
+			'x = f(a && b /* c */, x);',
 			'x =\n  a && (\n    <Note /> // note\n  ) &&\n  b;',
 		])('keeps %j like Prettier', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
@@ -18197,7 +18208,7 @@ item
 				'function f() {\n  return a || (b /* c */ // d\n  );\n}',
 				'function f() {\n  return (\n    a || b /* c */ // d\n  );\n}',
 			],
-			// Without a `;`, at the end of the statement, where the `;` goes
+			// Without a `;`, at the end of the statement, where the `;` goes (#672)
 			['const x = a || (b /* c */)\nfoo()', 'const x = a || b; /* c */\nfoo();'],
 			['const x = (b /* c */)\nfoo()', 'const x = b; /* c */\nfoo();'],
 			['function f() {\n  return (b /* c */)\n}', 'function f() {\n  return b; /* c */\n}'],
