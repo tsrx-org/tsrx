@@ -7138,6 +7138,90 @@ function RowList({ rows, Row }) {
 		});
 	});
 
+	// Prettier's `printAwaitExpression` and `printBinaryCastExpression`: an
+	// await or a cast that is called or accessed breaks onto its own line
+	// inside its parentheses.
+	describe('parenthesized callees and member objects break inside their parentheses', () => {
+		it('moves a broken await onto its own line inside its parentheses', async () => {
+			const input = `async function load() {
+  const value = (await loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)).value;
+  const exportsOfModule = (await dynamicImport(pathToTheModule, { with: { type: "json" } })).exports;
+  const handler = (await getHandlerForTheCurrentRequest(requestIdentifier, anotherArgument))(event);
+  const optional = (await loadTheConfigurationFileFromDiskAndMore(somePathVariable, anotherArgum))?.value;
+}`;
+			const expected = `async function load() {
+  const value = (
+    await loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)
+  ).value;
+  const exportsOfModule = (
+    await dynamicImport(pathToTheModule, { with: { type: "json" } })
+  ).exports;
+  const handler = (
+    await getHandlerForTheCurrentRequest(requestIdentifier, anotherArgument)
+  )(event);
+  const optional = (
+    await loadTheConfigurationFileFromDiskAndMore(
+      somePathVariable,
+      anotherArgum,
+    )
+  )?.value;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps await (await together and leaves new, non-null, and yield as they were', async () => {
+			const input = `async function load() {
+  const value = await (await loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)).json();
+  const instance = new (await loadTheConfigurationFileFromDiskAndMore(somePathVariable, anotherArgument))();
+  const asserted = (await loadTheConfigurationFileFromDiskAndMore(somePathVariable, anotherArgum))!.value;
+}
+function* generate() {
+  const value = (yield loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)).value;
+}`;
+			const expected = `async function load() {
+  const value = await (
+    await loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)
+  ).json();
+  const instance = new (await loadTheConfigurationFileFromDiskAndMore(
+    somePathVariable,
+    anotherArgument,
+  ))();
+  const asserted = (await loadTheConfigurationFileFromDiskAndMore(
+    somePathVariable,
+    anotherArgum,
+  ))!.value;
+}
+function* generate() {
+  const value = (yield loadTheConfigurationFileFromDisk(
+    somePathVariable,
+    anotherArgument,
+  )).value;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('moves a broken as or satisfies cast onto its own line inside its parentheses', async () => {
+			const input = `const value = (someObject.someLongPropertyName as SomeVeryLongInterfaceName<WithTypeArgs>).value;
+const result = (handlerForTheRequest satisfies RequestHandlerFunctionType<Context>)(event, ctx);
+const inst = new (someFactoryFunctionResult as unknown as ConstructorTypeForTheThing<Aaaa>)();
+const short = (value as Entry).name;`;
+			const expected = `const value = (
+  someObject.someLongPropertyName as SomeVeryLongInterfaceName<WithTypeArgs>
+).value;
+const result = (
+  handlerForTheRequest satisfies RequestHandlerFunctionType<Context>
+)(event, ctx);
+const inst = new (
+  someFactoryFunctionResult as unknown as ConstructorTypeForTheThing<Aaaa>
+)();
+const short = (value as Entry).name;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	describe('definite assignment assertions', () => {
 		it('keeps the definite assignment assertion on variable declarations', async () => {
 			const input = `function App() {
@@ -9657,6 +9741,208 @@ function Two() @{
 		});
 	});
 
+	// Prettier's `printUnionType`: a union that doesn't fit moves to its own
+	// indented lines, one member per line after a leading `|`, unless its
+	// context already indents it or keeps it in place.
+	describe('union types break like Prettier', () => {
+		it('moves a broken union in a type annotation to its own indented lines', async () => {
+			const input = `let x: Foooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo | null | undefined = 1;
+interface I { value: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbb }`;
+			const expected = `let x:
+  | Foooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
+  | null
+  | undefined = 1;
+interface I {
+  value:
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbb;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('indents a broken union in parameters, return types, and class fields', async () => {
+			const input = `function f(value: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | Ccccc) {}
+function g(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb {}
+class C {
+  value: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | null = null;
+}`;
+			const expected = `function f(
+  value:
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    | Ccccc,
+) {}
+function g():
+  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb {}
+class C {
+  value:
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    | null = null;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks a union in place in type arguments and conditional type branches', async () => {
+			const input = `let list: Array<Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb>;
+type Pick<T> = T extends string ? Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb : never;
+type K<T> = T extends string ? Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | Ccccccccccc : never;`;
+			const expected = `let list: Array<
+  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+>;
+type Pick<T> = T extends string
+  ? Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  : never;
+type K<T> = T extends string
+  ? | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    | Ccccccccccc
+  : never;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks a parenthesized union inside its parentheses', async () => {
+			const input = `type Items = (Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)[];`;
+			const expected = `type Items = (
+  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+)[];`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('moves a cast union below as or satisfies, and keeps a hugged one inline', async () => {
+			const input = `const input = element as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
+const value = options satisfies Aaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbb | Cccccccccccc;
+const target = event.target as HTMLElement | null;`;
+			const expected = `const input = element as
+  HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
+const value = options satisfies
+  Aaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbb | Cccccccccccc;
+const target = event.target as HTMLElement | null;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('prints the comments before a union inside its indentation', async () => {
+			const input = `interface Props {
+  // What the field holds
+  value: // Either kind of value
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb;
+  items: (// Either kind of item
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb)[];
+  short: string | null;
+  config: { enabled: boolean; name: string } | null;
+}`;
+			const expected = `interface Props {
+  // What the field holds
+  value:
+    // Either kind of value
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb;
+  items: (
+    // Either kind of item
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  )[];
+  short: string | null;
+  config: { enabled: boolean; name: string } | null;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
+	// Prettier's `printIntersectionType`: types that aren't object types break
+	// after the `&` between them; an object type stays on the line of its `&`.
+	describe('intersection types break like Prettier', () => {
+		it('breaks a long intersection after each &', async () => {
+			const input = `type MethodsType = typeof Attributes & typeof Traversing & typeof Manipulation & typeof Css & typeof Forms;
+type Merged = FirstVeryLongTypeName<WithArgument> & SecondVeryLongTypeName & ThirdTypeName<X>;`;
+			const expected = `type MethodsType = typeof Attributes &
+  typeof Traversing &
+  typeof Manipulation &
+  typeof Css &
+  typeof Forms;
+type Merged = FirstVeryLongTypeName<WithArgument> &
+  SecondVeryLongTypeName &
+  ThirdTypeName<X>;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps an object type on the line of its &', async () => {
+			const input = `type Props = BaseProps & { aaaaaaaaaaaaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number };
+type Props2 = BaseProps & OtherPropsWithAVeryLongName & { aaaaaaaaaaaaaaaaaaaaaaa: string; bbbbbbbbbbb: number };
+type Props3 = { aaaaaaaaaaaaaaaaaaaaaaa: string } & { bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number };
+type Props4 = { aaaaaaaaaaaaaaaaaaaaaaa: string } & BaseProps & { bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number };`;
+			const expected = `type Props = BaseProps & {
+  aaaaaaaaaaaaaaaaaaaaaaa: string;
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+};
+type Props2 = BaseProps &
+  OtherPropsWithAVeryLongName & {
+    aaaaaaaaaaaaaaaaaaaaaaa: string;
+    bbbbbbbbbbb: number;
+  };
+type Props3 = { aaaaaaaaaaaaaaaaaaaaaaa: string } & {
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+};
+type Props4 = { aaaaaaaaaaaaaaaaaaaaaaa: string } & BaseProps & {
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+  };`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks an intersection in a parameter, an annotation, or a union member', async () => {
+			const input = `function f(options: Aaaaaaaaaaaaaaaaaaaaaaaaaaaa & Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb & Cccccccccccccccccc) {}
+let x: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa & Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb & Ccccccccccc = y;
+type U =
+  | (ManagedIdentityCredentialClientIdOptions & ManagedIdentityDisableProbeOptions)
+  | (ManagedIdentityCredentialResourceIdOptions & ManagedIdentityDisableProbeOptions);`;
+			const expected = `function f(
+  options: Aaaaaaaaaaaaaaaaaaaaaaaaaaaa &
+    Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &
+    Cccccccccccccccccc,
+) {}
+let x: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &
+  Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &
+  Ccccccccccc = y;
+type U =
+  | (ManagedIdentityCredentialClientIdOptions &
+      ManagedIdentityDisableProbeOptions)
+  | (ManagedIdentityCredentialResourceIdOptions &
+      ManagedIdentityDisableProbeOptions);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('moves a type after an own-line comment to the next line', async () => {
+			const input = `type A = B &
+// comment
+C;
+type D = { a: string } &
+// comment
+E;`;
+			const expected = `type A = B &
+  // comment
+  C;
+type D = { a: string } &
+  // comment
+  E;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	// `extends` only takes a left-hand-side expression, so a superclass that
 	// binds looser than that is a syntax error without its parens.
 	describe('superclass expressions keep required parentheses', () => {
@@ -11883,6 +12169,55 @@ type Unwrapped<T> =
 type Checked<T> = T extends string
   ? SomeVeryLongTypeNameForStrings<T>
   : SomeOtherVeryLongType<T>;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		// Prettier keeps a JSDoc cast's parentheses as a node of their own, so
+		// the cast value lays out like any parenthesized value: it stays on the
+		// operator's line and breaks inside its parentheses.
+		it('keeps a JSDoc-cast value on the operator line and breaks inside its parentheses', async () => {
+			const input = `const x = /** @type {Foo} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);
+const sum = /** @type {number} */ (firstValueWithALongName + secondValueWithALongName + third);
+y = /** @type {Foo} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);
+const obj = { key: /** @type {Foo} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) };
+class A { field = /** @type {Foo} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb); }
+const message = /** @type {string} */ ("a long string value that does not fit on one line with the declaration");
+const value = /** @type {Value} */ (someObject.someProperty.anotherProperty.yetAnotherProperty.finalProp);
+const conf = /** @type {Config} */ (await loadTheConfigurationFileFromDisk(somePathVariable));
+const short = /** @type {Foo} */ (a && b);`;
+			const expected = `const x = /** @type {Foo} */ (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);
+const sum = /** @type {number} */ (
+  firstValueWithALongName + secondValueWithALongName + third
+);
+y = /** @type {Foo} */ (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);
+const obj = {
+  key: /** @type {Foo} */ (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  ),
+};
+class A {
+  field = /** @type {Foo} */ (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}
+const message = /** @type {string} */ (
+  "a long string value that does not fit on one line with the declaration"
+);
+const value = /** @type {Value} */ (
+  someObject.someProperty.anotherProperty.yetAnotherProperty.finalProp
+);
+const conf = /** @type {Config} */ (
+  await loadTheConfigurationFileFromDisk(somePathVariable)
+);
+const short = /** @type {Foo} */ (a && b);`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});

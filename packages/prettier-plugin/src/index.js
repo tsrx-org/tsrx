@@ -22,7 +22,7 @@
  * @typedef {AST.Node & { decorators?: AST.Decorator[] }} MaybeDecoratedNode
  */
 
-/** @typedef {{ suppressLeadingComments?: boolean, suppressExpressionLeadingComments?: boolean, suppressOwnParens?: boolean, isInlineContext?: boolean, isStatement?: boolean, isLogicalAndOr?: boolean, allowShorthandProperty?: boolean, isFirstChild?: boolean, noBreakInside?: boolean, expandLastArg?: boolean, expandFirstArg?: boolean, assignmentLayout?: AssignmentLayout, preferInlineSimpleUnionType?: boolean }} PrintArgs */
+/** @typedef {{ suppressLeadingComments?: boolean, suppressExpressionLeadingComments?: boolean, suppressOwnParens?: boolean, isInlineContext?: boolean, isStatement?: boolean, isLogicalAndOr?: boolean, allowShorthandProperty?: boolean, isFirstChild?: boolean, noBreakInside?: boolean, expandLastArg?: boolean, expandFirstArg?: boolean, assignmentLayout?: AssignmentLayout }} PrintArgs */
 
 import { parseModule } from '@tsrx/core';
 import { doc } from 'prettier';
@@ -2159,8 +2159,8 @@ function printTsrxNode(node, path, options, print, args) {
 	// went out ahead of its comments
 	let leadingSemicolonPrinted = false;
 
-	// Handle leading comments
-	if (!suppressLeadingComments) {
+	// Handle leading comments (a union prints its own, inside its indentation)
+	if (!suppressLeadingComments && !unionPrintsOwnComments(path)) {
 		const comments = typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []);
 		const lastComment = comments.at(-1);
 		// A JSDoc cast must stay right before the parenthesis it casts
@@ -2473,12 +2473,9 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = printCallExpression(path, options, print);
 			break;
 
-		case 'AwaitExpression': {
-			/** @type {Doc[]} */
-			const parts = ['await ', path.call(print, 'argument')];
-			nodeContent = parts;
+		case 'AwaitExpression':
+			nodeContent = printAwaitExpression(node, path, options, print);
 			break;
-		}
 
 		case 'StyleSheet': {
 			// StyleSheet nodes inside <style> elements. When CSS is empty/whitespace-only,
@@ -2501,29 +2498,19 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = printYieldExpression(node, path, options, print);
 			break;
 
-		case 'TSAsExpression': {
-			const typeAnnotation = path.call(
-				(typePath) => print(typePath, { preferInlineSimpleUnionType: true }),
-				'typeAnnotation',
-			);
-			const operand = path.call(print, 'expression');
-			nodeContent =
-				node.typeAnnotation.type !== 'TSTypeLiteral' && willBreak(typeAnnotation)
-					? [operand, ' as', indent([line, typeAnnotation])]
-					: [operand, ' as ', typeAnnotation];
-			break;
-		}
-
+		case 'TSAsExpression':
 		case 'TSSatisfiesExpression': {
-			const typeAnnotation = path.call(
-				(typePath) => print(typePath, { preferInlineSimpleUnionType: true }),
-				'typeAnnotation',
-			);
-			const operand = path.call(print, 'expression');
-			nodeContent =
-				node.typeAnnotation.type !== 'TSTypeLiteral' && willBreak(typeAnnotation)
-					? [operand, ' satisfies', indent([line, typeAnnotation])]
-					: [operand, ' satisfies ', typeAnnotation];
+			// Prettier's `printBinaryCastExpression`: a type that breaks lays out
+			// its own lines (a union moves below the operator)
+			/** @type {Doc[]} */
+			const parts = [
+				path.call(print, 'expression'),
+				node.type === 'TSAsExpression' ? ' as ' : ' satisfies ',
+				path.call(print, 'typeAnnotation'),
+			];
+			nodeContent = isParenthesizedCalleeOrObject(path, options, true)
+				? group([indent([softline, ...parts]), softline])
+				: parts;
 			break;
 		}
 
@@ -2947,15 +2934,13 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'TSUnionType': {
-			nodeContent = printTSUnionType(node, path, print, args);
+			nodeContent = printTSUnionType(node, path, options, print, args);
 			break;
 		}
 
-		case 'TSIntersectionType': {
-			const types = path.map(print, 'types');
-			nodeContent = join(' & ', types);
+		case 'TSIntersectionType':
+			nodeContent = printTSIntersectionType(node, path, options, print);
 			break;
-		}
 
 		case 'TSTypeReference':
 			nodeContent = printTSTypeReference(node, path, options, print);
@@ -6967,6 +6952,88 @@ function printUnaryExpression(node, path, options, print) {
 }
 
 /**
+ * Print an await expression like Prettier's `printAwaitExpression`. As the
+ * callee of a call or the object of a member access, it breaks onto its own
+ * indented line inside its parentheses, unless it starts the argument of an
+ * enclosing `await`, where the enclosing group lays out the lines so
+ * `await (await` stays together.
+ * @param {AST.AwaitExpression} node - The await expression node
+ * @param {AstPath<AST.AwaitExpression>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printAwaitExpression(node, path, options, print) {
+	/** @type {Doc[]} */
+	const parts = ['await ', path.call(print, 'argument')];
+	if (!isParenthesizedCalleeOrObject(path, options, false)) {
+		return parts;
+	}
+
+	const inner = [indent([softline, ...parts]), softline];
+	/** @type {AST.Node | null} */
+	let ancestor;
+	for (let level = 0; ; level++) {
+		ancestor = /** @type {AST.Node | null} */ (path.getParentNode(level));
+		if (!ancestor || ancestor.type === 'AwaitExpression' || ancestor.type === 'BlockStatement') {
+			break;
+		}
+	}
+	if (ancestor?.type === 'AwaitExpression' && startsWithNode(ancestor.argument, node)) {
+		return inner;
+	}
+	return group(inner);
+}
+
+/**
+ * Whether the node at `path` is the callee of a call (or of a `new`, with
+ * `includeNew`) or the object of a member access, which print it in its own
+ * parentheses. A JSDoc cast's parentheses lay the node out themselves.
+ * @param {AstPath} path - The path to the node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {boolean} includeNew - Whether the callee of a `new` counts
+ * @returns {boolean}
+ */
+function isParenthesizedCalleeOrObject(path, options, includeNew) {
+	const { key, parent } = path;
+	if (!parent || getTypeCastParens(path, options)) {
+		return false;
+	}
+	return (
+		(key === 'callee' &&
+			(parent.type === 'CallExpression' || (includeNew && parent.type === 'NewExpression'))) ||
+		(key === 'object' && parent.type === 'MemberExpression')
+	);
+}
+
+/**
+ * Prettier's `startsWithNoLookaheadToken` with an identity check: whether
+ * `target` is the leftmost part of `node`, where printing `node` starts.
+ * @param {AST.Node} node - The expression
+ * @param {AST.Node} target - The node to look for
+ * @returns {boolean}
+ */
+function startsWithNode(node, target) {
+	/** @type {AST.Node} */
+	let current = node;
+	while (current !== target) {
+		const key =
+			current.type === 'SequenceExpression' ? 'expressions' : getLeftmostChildKey(current);
+		if (!key) {
+			return false;
+		}
+		/** @type {AST.Node} */
+		const child = /** @type {Record<string, any>} */ (current)[key];
+		// A called or tagged function expression prints in its own parentheses
+		current = Array.isArray(child) ? child[0] : child;
+		if ((key === 'callee' || key === 'tag') && current.type === 'FunctionExpression') {
+			return false;
+		}
+	}
+	return true;
+}
+
+/**
  * Print a yield expression
  * @param {AST.YieldExpression} node - The yield expression node
  * @param {AstPath<AST.YieldExpression>} path - The AST path
@@ -7484,38 +7551,148 @@ function printTSTypeAliasDeclaration(node, path, options, print) {
 }
 
 /**
- * Print a TypeScript union type
+ * Print a TypeScript union type like Prettier's `printUnionType`: `A | B | C`
+ * on one line, or one member per line after a leading `|`. The broken form
+ * moves to its own indented line, unless the context already indents it (an
+ * assignment that breaks after `=`) or keeps it in place (type arguments,
+ * tuple members, conditional type branches).
  * @param {AST.TSUnionType} node - The union node
  * @param {AstPath<AST.TSUnionType>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @param {PrintArgs} [args] - Additional context arguments
  * @returns {Doc}
  */
-function printTSUnionType(node, path, print, args) {
-	const types = path.map(print, 'types');
-	const inlineDoc = join(' | ', types);
-
-	// `{ ... } | null` stays inline, like Prettier
+function printTSUnionType(node, path, options, print, args) {
+	// `{ … } | null` stays inline
 	if (shouldHugUnionType(node)) {
-		return inlineDoc;
+		return join(' | ', path.map(print, 'types'));
 	}
 
-	const multilineDoc = [
-		'| ',
-		join(
-			[hardline, '| '],
-			types.map((typeDoc) => align(2, typeDoc)),
+	/** @type {Doc} */
+	let printed = group(
+		path.map(
+			(typePath, index) => [index === 0 ? ifBreak('| ') : [line, '| '], align(2, print(typePath))],
+			'types',
 		),
-	];
-	// Like Prettier, only a member that must break (such as an object type kept
-	// expanded by `objectWrap`) breaks the union, not how the source wrapped it
-	const shouldBreak = types.some((typeDoc) => willBreak(typeDoc));
+	);
 
-	if (args?.preferInlineSimpleUnionType && !types.some((typeDoc) => willBreak(typeDoc))) {
-		return inlineDoc;
+	if (unionPrintsOwnComments(path) && !args?.suppressLeadingComments) {
+		printed = [...printLeadingComments(node, node.leadingComments ?? [], options), printed];
 	}
 
-	return shouldBreak ? group(multilineDoc) : conditionalGroup([inlineDoc, multilineDoc]);
+	// The parser keeps the parentheses as a node of their own, which prints
+	// them around this doc
+	if (/** @type {AST.Node | null} */ (path.parent)?.type === 'TSParenthesizedType') {
+		return group([indent([softline, printed]), softline]);
+	}
+
+	if (isMultipleTupleTypeElement(path)) {
+		return group([indent([ifBreak(['(', softline]), printed]), softline, ifBreak(')')]);
+	}
+
+	if (args?.assignmentLayout === 'break-after-operator' || !shouldIndentUnionType(path)) {
+		return printed;
+	}
+
+	return group(indent([softline, printed]));
+}
+
+/**
+ * Print a TypeScript intersection type like Prettier's `printIntersectionType`.
+ * Two types that aren't object types break after the `&` between them, with
+ * the next type on an indented line. An object type stays on the line of the
+ * `&` before it and breaks inside its braces, indented once the chain has
+ * broken before it.
+ * @param {AST.TSIntersectionType} node - The intersection node
+ * @param {AstPath<AST.TSIntersectionType>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printTSIntersectionType(node, path, options, print) {
+	let wasIndented = false;
+	return group(
+		path.map((typePath, index) => {
+			const doc = print(typePath);
+			if (index === 0) {
+				return doc;
+			}
+
+			const type = node.types[index];
+			const currentIsObjectType = isObjectType(type);
+			const previousIsObjectType = isObjectType(node.types[index - 1]);
+
+			// Two object types stay together
+			if (previousIsObjectType && currentIsObjectType) {
+				return [' & ', wasIndented ? indent(doc) : doc];
+			}
+
+			// Without an object type, the next type moves to its own line
+			if (
+				(!previousIsObjectType && !currentIsObjectType) ||
+				hasLeadingOwnLineComment(
+					type,
+					/** @type {AST.NodeWithMaybeComments} */ (type).leadingComments ?? [],
+					options,
+				)
+			) {
+				return indent([' &', line, doc]);
+			}
+
+			// Between an object type and another type, the object type stays inline
+			if (index > 1) {
+				wasIndented = true;
+			}
+			return [' & ', index > 1 ? indent(doc) : doc];
+		}, 'types'),
+	);
+}
+
+/**
+ * Prettier's `shouldUnionTypePrintOwnComments`: a union that breaks onto its
+ * own lines prints its leading comments inside its indentation, so they move
+ * with it. A union member of a tuple leaves them outside its parentheses.
+ * @param {AstPath} path - The path to the node
+ * @returns {boolean}
+ */
+function unionPrintsOwnComments(path) {
+	const node = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node);
+	return (
+		node.type === 'TSUnionType' &&
+		!!node.leadingComments &&
+		!hasPrettierIgnore(node) &&
+		!shouldHugUnionType(node) &&
+		!isMultipleTupleTypeElement(path)
+	);
+}
+
+/**
+ * Prettier's `isMultipleTupleTypeElement`: a member of a tuple type with more
+ * than one member.
+ * @param {AstPath} path - The path to the type
+ * @returns {boolean}
+ */
+function isMultipleTupleTypeElement(path) {
+	const { key, parent } = path;
+	return key === 'elementTypes' && parent?.type === 'TSTupleType' && parent.elementTypes.length > 1;
+}
+
+/**
+ * Prettier's `shouldIndentUnionType`: whether a broken union moves to its own
+ * indented line. In a type assertion, a tuple, a conditional type's branch, or
+ * type arguments, it breaks in place.
+ * @param {AstPath} path - The path to the union
+ * @returns {boolean}
+ */
+function shouldIndentUnionType(path) {
+	const { key, parent } = path;
+	return !(
+		(key === 'typeAnnotation' && parent?.type === 'TSTypeAssertion') ||
+		(key === 'elementTypes' && parent?.type === 'TSTupleType') ||
+		((key === 'trueType' || key === 'falseType') && parent?.type === 'TSConditionalType') ||
+		(key === 'params' && parent?.type === 'TSTypeParameterInstantiation')
+	);
 }
 
 /**
@@ -9068,8 +9245,11 @@ function printAssignment(path, options, print, leftDoc, operator, rightPropertyN
 		return leftDoc;
 	}
 
+	// Prettier's parentheses node for a JSDoc cast prints its content without
+	// the layout
 	const rightDoc = path.call(
-		(rightPath) => print(rightPath, { assignmentLayout: layout }),
+		(rightPath) =>
+			print(rightPath, getTypeCastParens(rightPath, options) ? {} : { assignmentLayout: layout }),
 		rightPropertyName,
 	);
 
@@ -9134,8 +9314,15 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 		return 'only-left';
 	}
 
+	// Prettier keeps the parentheses of a JSDoc cast as a node of their own, so
+	// a cast value matches none of the checks on the value's type below
+	const isCast = path.call(
+		(rightPath) => getTypeCastParens(rightPath, options) !== null,
+		rightPropertyName,
+	);
+
 	// Short chains (`a = b = c` and `const a = b = c`) are not formatted as chains
-	const isTail = !isAssignment(rightNode);
+	const isTail = isCast || !isAssignment(rightNode);
 	const shouldUseChainFormatting = path.match(
 		isAssignment,
 		isAssignmentOrVariableDeclarator,
@@ -9146,7 +9333,8 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 		if (!isTail) {
 			return 'chain';
 		}
-		return rightNode.type === 'ArrowFunctionExpression' &&
+		return !isCast &&
+			rightNode.type === 'ArrowFunctionExpression' &&
 			rightNode.body.type === 'ArrowFunctionExpression'
 			? 'chain-tail-arrow-chain'
 			: 'chain-tail';
@@ -9168,7 +9356,8 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 
 	if (
 		/** @type {string} */ (node.type) === 'ImportAttribute' ||
-		(rightNode.type === 'CallExpression' &&
+		(!isCast &&
+			rightNode.type === 'CallExpression' &&
 			rightNode.callee.type === 'Identifier' &&
 			rightNode.callee.name === 'require')
 	) {
@@ -9179,7 +9368,7 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 	if (
 		isComplexDestructuring(node) ||
 		hasComplexTypeAnnotation(node) ||
-		(isArrowFunctionVariableDeclarator(node) && canBreakLeftDoc)
+		(isArrowFunctionVariableDeclarator(node) && !isCast && canBreakLeftDoc)
 	) {
 		return 'break-lhs';
 	}
@@ -9187,6 +9376,7 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 	// Wrapping an object property with a very short key rarely helps
 	const hasShortKey = isObjectPropertyWithShortKey(node, leftDoc, options);
 	if (
+		!isCast &&
 		path.call(
 			(rightPath) => shouldBreakAfterOperator(rightPath, options, print, hasShortKey),
 			rightPropertyName,
@@ -9202,11 +9392,12 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 	if (
 		!canBreakLeftDoc &&
 		(hasShortKey ||
-			rightNode.type === 'TemplateLiteral' ||
-			rightNode.type === 'TaggedTemplateExpression' ||
-			(rightNode.type === 'Literal' && typeof rightNode.value === 'boolean') ||
-			isNumericLiteral(rightNode) ||
-			rightNode.type === 'ClassExpression')
+			(!isCast &&
+				(rightNode.type === 'TemplateLiteral' ||
+					rightNode.type === 'TaggedTemplateExpression' ||
+					(rightNode.type === 'Literal' && typeof rightNode.value === 'boolean') ||
+					isNumericLiteral(rightNode) ||
+					rightNode.type === 'ClassExpression')))
 	) {
 		return 'never-break-after-operator';
 	}
