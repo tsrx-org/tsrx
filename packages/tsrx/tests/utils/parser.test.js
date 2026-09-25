@@ -7486,6 +7486,82 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(second.constraint).trailing).toEqual([' a']);
 		expect(commentsOf(second.default).leading).toEqual([' b']);
 	});
+
+	// Prettier's `handleAssignmentLikeComments`
+	it('leads an object, array, or template value, or a type alias value, with a comment that ends the line of its =', () => {
+		const object = firstStatement('const a = // c\n  { a: 1 };').declarations[0];
+		const before = firstStatement('let a // c\n= [1];').declarations[0];
+		const assigned = firstStatement('a = // c\n  `x`;').expression;
+		const block = firstStatement('const a = /* c */\n  b;').declarations[0];
+		const alias = firstStatement('type A = // c\n  B;');
+		const aliasBefore = firstStatement('type A<T> // c\n= B;');
+		const aliasName = firstStatement('type A // c\n<T> = B;');
+		const union = firstStatement('type A = /* c */ B | C;');
+
+		expect(commentsOf(object.init).leading).toEqual([' c']);
+		expect(commentsOf(object.id).trailing).toBeUndefined();
+		expect(commentsOf(before.init).leading).toEqual([' c']);
+		expect(commentsOf(before.id).trailing).toBeUndefined();
+		expect(commentsOf(assigned.right).leading).toEqual([' c']);
+		expect(commentsOf(block.init).leading).toEqual([' c ']);
+		expect(commentsOf(alias.typeAnnotation).leading).toEqual([' c']);
+		// Prettier's default gives these to the name first, and its next pass
+		// to the value
+		expect(commentsOf(aliasBefore.typeAnnotation).leading).toEqual([' c']);
+		expect(commentsOf(aliasName.typeAnnotation).leading).toEqual([' c']);
+		expect(commentsOf(aliasName.id).trailing).toBeUndefined();
+		expect(commentsOf(union.typeAnnotation.types[0]).leading).toEqual([' c ']);
+	});
+
+	it('trails the left side with a line comment at the end of the line of an = before any other value', () => {
+		const call = firstStatement('const a = // c\n  foo();').declarations[0];
+		const logical = firstStatement('a = // c\n  b || c;').expression;
+		const cast = firstStatement('const a = // c\n  /** @type {X} */ ({});').declarations[0];
+		const both = firstStatement('const a = /* a */ // b\n  value;').declarations[0];
+		const field = firstStatement('class A {\n  f = // c\n    1;\n  g = /* c */\n    2;\n}').body
+			.body;
+
+		expect(commentsOf(call.id).trailing).toEqual([' c']);
+		expect(commentsOf(call.init).leading).toBeUndefined();
+		expect(commentsOf(logical.left).trailing).toEqual([' c']);
+		expect(commentsOf(cast.id).trailing).toEqual([' c']);
+		expect(commentsOf(both.id).trailing).toEqual([' b']);
+		expect(commentsOf(both.init).leading).toEqual([' a ']);
+		expect(commentsOf(field[0].key).trailing).toEqual([' c']);
+		expect(commentsOf(field[1].key).trailing).toEqual([' c ']);
+		expect(commentsOf(field[1].value).leading).toBeUndefined();
+	});
+
+	// Prettier's `handlePropertyComments`
+	it('leads an object property with a comment that ends a line inside it', () => {
+		const [line, block, method] = firstStatement(
+			'const o = {\n  a: // c\n    1,\n  b: /* c */\n    2,\n  m // c\n  () {},\n};',
+		).declarations[0].init.properties;
+		const [pattern] = firstStatement('const { a: // c\n  b } = x;').declarations[0].id.properties;
+		const [kept] = firstStatement('const o = { a: /* c */ 1 };').declarations[0].init.properties;
+
+		expect(commentsOf(line).leading).toEqual([' c']);
+		expect(commentsOf(line.value).leading).toBeUndefined();
+		expect(commentsOf(block).leading).toEqual([' c ']);
+		expect(commentsOf(method).leading).toBeUndefined();
+		expect(commentsOf(pattern).leading).toEqual([' c']);
+		expect(commentsOf(kept).leading).toBeUndefined();
+		expect(commentsOf(kept.value).leading).toEqual([' c ']);
+	});
+
+	it('trails an import attribute key or a for header clause with a comment that ends the line after it', () => {
+		const [attribute] = firstStatement(
+			'import a from "a" with { type: // c\n  "json" };',
+		).attributes;
+		const loop = firstStatement('for (let i = 0; // a\n  i < 1; // b\n  i++) {}');
+
+		expect(commentsOf(attribute.key).trailing).toEqual([' c']);
+		expect(commentsOf(attribute.value).leading).toBeUndefined();
+		expect(commentsOf(loop.init).trailing).toEqual([' a']);
+		expect(commentsOf(loop.test).leading).toBeUndefined();
+		expect(commentsOf(loop.test).trailing).toEqual([' b']);
+		expect(commentsOf(loop.update).leading).toBeUndefined();
+	});
 });
 
 describe('keywordTokens parse option', () => {

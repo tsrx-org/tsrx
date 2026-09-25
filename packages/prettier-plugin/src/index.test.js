@@ -13032,6 +13032,36 @@ function Two() @{
 			await expectUnchanged('type Entry = import("./module").Entry<string>;');
 		});
 
+		// Like Prettier, the module specifier of an import type lays out like a
+		// call argument, so the parentheses break around a comment on its own
+		// line. The comment used to stay after the `(`, and join the specifier
+		// on the next format, and a line comment after it moved past the `;`
+		// (#621).
+		it('breaks the parentheses of an import type around a comment like call arguments', async () => {
+			const input = `type X = import(
+  /* c */
+  'a');
+type Y = import(
+  "a" // c
+).B;`;
+			const expected = `type X = import(
+  /* c */
+  "a"
+);
+type Y = import(
+  "a" // c
+).B;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'type X = import(/* c */ "a");',
+			'type Y = import("a" /* c */).B<T>;',
+			'type Z =\n  import("./long/long/long/long/long/long/long/long/long/long/long/path/to/module");',
+		])('keeps %j', async (source) => {
+			await expectUnchanged(source);
+		});
+
 		// Like Prettier, the module specifier and the import attributes of an
 		// import type lay out like call arguments, without a trailing comma (#422).
 		describe('import attributes in import types', () => {
@@ -13590,6 +13620,86 @@ type D = { a: string } &
   E;`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
+		});
+
+		// Like Prettier's parser postprocess, an intersection or union of one
+		// type is that type, so a comment after its leading `&` or `|` leads the
+		// value, which moves below the `=` with it. It used to print on the `=`
+		// line, with the type at the start of the next line, and move again on
+		// the next format, and after a `|` it stayed there (#603).
+		it('prints a one-member intersection or union as its type, with its comments', async () => {
+			const input = `type A = & // Comment
+"VALUE";
+type F = &
+/* Comment */
+"VALUE";
+type U = | // Comment
+"VALUE";
+type O = & // Comment
+  { a: 1 };`;
+			const expected = `type A =
+  // Comment
+  "VALUE";
+type F =
+  /* Comment */
+  "VALUE";
+type U =
+  // Comment
+  "VALUE";
+type O =
+  // Comment
+  { a: 1 };`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// The parentheses around it no longer count as the parentheses of a
+		// union or intersection, and a long member breaks on its own
+		it('drops the parentheses around a one-member intersection or union', async () => {
+			const input = `type G = (| A)[];
+type H = | (A | B);
+interface X { a: | (() => void); b: & ((x: string) => void) }
+type C = | { a: string; bbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number; ccccccccccccccccccccccccc: boolean }[];
+type D = /* c */ | B;
+let x: | A = 1;`;
+			const expected = `type G = A[];
+type H = A | B;
+interface X {
+  a: () => void;
+  b: (x: string) => void;
+}
+type C = {
+  a: string;
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+  ccccccccccccccccccccccccc: boolean;
+}[];
+type D = /* c */ B;
+let x: A = 1;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Like Prettier's `handleUnionTypeLeadingComments`, a one-line block
+		// comment right before a union leads its first member, through any
+		// wrappers. Prettier's first format of the nested unions from its
+		// `union/consistent-with-flow/single-type.ts` test prints the comment
+		// before the `|`, and its next format moves it after the `|`: the
+		// formatter prints that form at once.
+		it('moves a comment before one-member unions around a union after its first |', async () => {
+			const input = `type A6 = | (
+  /*1*/ | (
+    | (
+          | A
+          // A comment to force break
+          | B
+        )
+  )
+  );
+type C = /* c */ | (| D | E);`;
+			const expected = `type A6 =
+  | /*1*/ A
+    // A comment to force break
+  | B;
+type C = /* c */ D | E;`;
+			expect(await format(input)).toBeWithNewline(expected);
 		});
 	});
 
@@ -16292,6 +16402,36 @@ item
 			expect(await format('switch (a) /* note */ {\n  case 1:\n    break;\n}')).toBeWithNewline(
 				'switch (a /* note */) {\n  case 1:\n    break;\n}',
 			);
+		});
+
+		// Like Prettier's default for a comment at the end of a line, one after
+		// a `;` of a for header trails the clause before it. It used to move to
+		// its own line before the next clause (#660).
+		it('keeps a comment at the end of the line after a ; of a for header after it', async () => {
+			const input = `for (let i = 0; // start
+  i < 1; // bound
+  i++) {}
+for (let j = // c
+  0; j < 1; j++) {}`;
+			const expected = `for (
+  let i = 0; // start
+  i < 1; // bound
+  i++
+) {}
+for (
+  let j = 0; // c
+  j < 1;
+  j++
+) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'for (\n  // c\n  let i = 0;\n  i < 1;\n  i++\n) {}',
+			'for (\n  let i = 0;\n  // c\n  i < 1;\n  i++\n) {}',
+			'for (let i = 0; i < 1; i++)\n  // c\n  foo();',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
 		});
 	});
 
@@ -19553,6 +19693,176 @@ const [
 				expect(await format(source)).toBeWithNewline(source);
 			},
 		);
+
+		// Like Prettier's `handleAssignmentLikeComments`, a comment that ends its
+		// line before the value of a type alias, or before an object, array,
+		// template, or type literal value of a declaration or assignment, leads
+		// the value, which moves below the `=` with it. A line comment there
+		// used to stay on the `=` line (#598).
+		it.each([
+			['type A = // Comment\n  B | C;', 'type A =\n  // Comment\n  B | C;'],
+			['const a = // Comment\n  { a: 1 };', 'const a =\n  // Comment\n  { a: 1 };'],
+			['b = // Comment\n  [1, 2];', 'b =\n  // Comment\n  [1, 2];'],
+			['a.b += // c\n  `x`;', 'a.b +=\n  // c\n  `x`;'],
+			['const t = // c\n  tag`x`;', 'const t =\n  // c\n  tag`x`;'],
+			['let c: T = // c\n  { a: 1 };', 'let c: T =\n  // c\n  { a: 1 };'],
+			['type D<T> = // c\n  { a: T };', 'type D<T> =\n  // c\n  { a: T };'],
+			['const e = /* a */ // b\n  { a: 1 };', 'const e =\n  /* a */ // b\n  { a: 1 };'],
+			['type F = /* a */ // b\n  B | C;', 'type F =\n  /* a */ // b\n  B | C;'],
+			// Before the `=` too. Prettier's first format of the type aliases
+			// leaves the comment after the `=`, and its next format moves it below.
+			['let obj // Comment\n= { a: 1 };', 'let obj =\n  // Comment\n  { a: 1 };'],
+			['x // c\n= [1];', 'x =\n  // c\n  [1];'],
+			['type G // Comment\n= B;', 'type G =\n  // Comment\n  B;'],
+			['type H // c\n  <T> = T;', 'type H<T> =\n  // c\n  T;'],
+		])('moves a comment at the end of the = line below it in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Like Prettier, a JSDoc cast value isn't an object for this: its
+		// parentheses are a node of their own in Prettier's `babel` parser
+		it.each([
+			'const a = // c\n  /** @type {X} */ ({});',
+			'x = // c\n  /** @type {X} */ ([]);',
+			'type A = /* c */ B;',
+			'let obj =\n  // c\n  { a: 1 };',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Prettier's default gives a line comment at the end of the `=` line
+		// before any other value to the left side, which prints it at the end of
+		// the statement when the value stays on the `=` line. A block comment
+		// there leads the value, so it prints after a line comment beside it.
+		// Both used to lead the value in their written order and stay on the
+		// `=` line (#593).
+		it.each([
+			['const a = // Comment\n  b || c;', 'const a = b || c; // Comment'],
+			['const a = // c\n  "str";', 'const a = "str"; // c'],
+			['a = // c\n  b || c;', 'a = b || c; // c'],
+			['const test = /* a */ // b\n  value;', 'const test = // b\n  /* a */ value;'],
+			['let a: number = // c\n  1, b = 2;', 'let a: number = 1, // c\n  b = 2;'],
+			['const h = // c\n  class {};', 'const h = class {}; // c'],
+		])('trails the left side with a line comment after the = in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const f = // c\n  () => {};',
+			'const g = // c\n  function () {};',
+			'const n = // c\n  new Foo(a);',
+			'let obj = // c\n  foo();',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier's `handlePropertyComments`, a comment at the end of a
+		// line inside an object property leads the property, and like its
+		// default, one after a class field's `=` trails the key. Both used to
+		// lead the value (#593).
+		it('moves a comment at the end of the line after a key before the key or the =', async () => {
+			const input = `const o = {
+  key: /* note */
+    compute(aaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccc),
+  other: // note
+    value,
+  [computed]: // note
+    { a: 1 },
+  cast: // note
+    /** @type {X} */ (b),
+};
+const { a: // c
+  b = 1 } = x;
+class A {
+  field = /* note */
+    value;
+  f2 = /* note */ // n2
+    value;
+  f3 = // note
+    b || c;
+  static readonly f4 = // note
+    1;
+}`;
+			const expected = `const o = {
+  /* note */
+  key: compute(
+    aaaaaaaaaaaaaaaaaaaaaaaaa,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+    ccccccccccccc,
+  ),
+  // note
+  other: value,
+  // note
+  [computed]: { a: 1 },
+  // note
+  cast: /** @type {X} */ (b),
+};
+const {
+  // c
+  a: b = 1,
+} = x;
+class A {
+  field /* note */ = value;
+  f2 /* note */ = // n2
+    value;
+  f3 = b || c; // note
+  static readonly f4 = 1; // note
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps the comments in object properties and class fields that Prettier keeps', async () => {
+			const source = `const o = {
+  k: /* c */ v,
+  k2 /* c */: v,
+  k3:
+    // c
+    v,
+  m() {}, // c
+};
+class A {
+  field = // note
+    value;
+  f2 = // note
+    { a: 1 };
+  f3 =
+    // note
+    value;
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier's output for the same TSX, an element after a line
+		// comment at the end of the `=` line prints below it, in parentheses
+		// when it breaks. The comment used to move into the parentheses.
+		it('keeps a line comment on the = line before an element', async () => {
+			const source = `function App() {
+  const el = // c
+    (
+      <div>
+        <span />
+      </div>
+    );
+  const e2 = // c
+    <div />;
+  return el;
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier's `printCallee`, the line ends after a callee or its type
+		// arguments with a line comment. The comment used to move after the
+		// arguments (#658).
+		it.each([
+			'foo // c\n(a);',
+			'const x = require // c\n("x");',
+			'new Foo<T> // c\n(a);',
+			'foo<T> // c\n(a);',
+			'export default foo // c\n(a);',
+			'const x =\n  foo<T> // c\n  (a);',
+		])('keeps the line comment after the callee in %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
 	});
 
 	// Static blocks, namespaces, and code blocks are statement lists like a
@@ -19945,6 +20255,30 @@ export const x = Alias.answer;`;
 			await expectUnchanged('import fs = require(/* why */ "fs");');
 		});
 
+		// Like Prettier, the module name of a `require(…)` lays out like a call
+		// argument. A comment on its own line used to stay after the `(`, with
+		// the name unindented, and a line comment after the name moved past the
+		// `;` (#659).
+		it('breaks the parentheses of a require around a comment like call arguments', async () => {
+			const input = `import A = require(
+  /* c */
+  "a");
+import B = require(
+  "b" // c
+);`;
+			const expected = `import A = require(
+  /* c */
+  "a"
+);
+import B = require(
+  "b" // c
+);`;
+			expect(await format(input)).toBeWithNewline(expected);
+			await expectUnchanged(
+				'import C = require("./long/long/long/long/long/long/long/long/long/long/long/path/to/module");',
+			);
+		});
+
 		it('follows quote and semicolon options', async () => {
 			const result = await format(`import fs = require("fs");\nexport = fs;`, {
 				singleQuote: true,
@@ -20140,6 +20474,54 @@ import c from "./c" with { type: "json" };`;
 			await expectUnchanged(`import a from "./a.json" assert { type: "json" };
 import b from "./b" with {};
 import f from "./f" /* c */ with { type: "json" };`);
+		});
+
+		// Like Prettier, an import attribute prints as an assignment, so a
+		// comment on its own line before the value moves below the `:` with the
+		// value, and one at the end of the line after the `:` trails the key.
+		// The first used to move to the key's line, with the value unindented,
+		// and the second to stay there (#604).
+		it('moves the comments between an import attribute key and its value like Prettier', async () => {
+			const input = `import a from "./a.json" with {
+  type:
+  // comment
+  "json"
+};
+import b from "./b.json" with {
+  type:
+  /* comment */
+  "json"
+};
+import c from "./c.json" with {
+  type: // comment
+  "json"
+};
+import d from "./d.json" with {
+  type: /* comment */
+  "json"
+};`;
+			const expected = `import a from "./a.json" with {
+  type:
+    // comment
+    "json",
+};
+import b from "./b.json" with {
+  type:
+    /* comment */
+    "json",
+};
+import c from "./c.json" with {
+  type: "json", // comment
+};
+import d from "./d.json" with {
+  type /* comment */: "json",
+};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps a comment between an import attribute key and its value on their line', async () => {
+			await expectUnchanged(`import a from "./a.json" with { type: /* c */ "json" };
+import b from "./b.json" with { type /* c */: "json" };`);
 		});
 
 		it('keeps an alias that repeats the name', async () => {
