@@ -6116,6 +6116,26 @@ describe('comments around the commas of a list', () => {
 			"import def /* c */, { b } from 'mod';",
 			(statement) => statement.specifiers,
 		],
+		[
+			'type arguments',
+			'type X = Foo<A /* c */, B>;',
+			(statement) => statement.typeAnnotation.typeArguments.params,
+		],
+		[
+			'type parameters',
+			'function f<A /* c */, B>() {}',
+			(statement) => statement.typeParameters.params,
+		],
+		[
+			'a tuple type',
+			'type X = [A /* c */, B];',
+			(statement) => statement.typeAnnotation.elementTypes,
+		],
+		[
+			'a tuple type with a type in parentheses',
+			'type X = [(A) /* c */, B];',
+			(statement) => statement.typeAnnotation.elementTypes,
+		],
 	];
 
 	it.each(lists)(
@@ -6238,6 +6258,16 @@ describe('comments placed like Prettier', () => {
 		const union = firstStatement('type K =\n  // prettier-ignore\n  | A\n  | B;').typeAnnotation;
 
 		expect(commentsOf(union).leading).toEqual([' prettier-ignore']);
+		expect(union.types[0].metadata.prettierIgnore).toBe(true);
+		expect(union.types[1].metadata?.prettierIgnore).toBeUndefined();
+	});
+
+	// Prettier's parsers keep no node for a type's parentheses
+	it('marks the first member of a union in parentheses after a prettier-ignore comment on its own line', () => {
+		const type = firstStatement('type K =\n  // prettier-ignore\n  ((A | B));').typeAnnotation;
+		const union = type.typeAnnotation.typeAnnotation;
+
+		expect(type.leadingComments[0].unignore).toBe(true);
 		expect(union.types[0].metadata.prettierIgnore).toBe(true);
 		expect(union.types[1].metadata?.prettierIgnore).toBeUndefined();
 	});
