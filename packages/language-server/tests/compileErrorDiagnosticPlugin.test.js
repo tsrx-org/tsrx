@@ -103,3 +103,33 @@ export function App() @{
 		expect(diagnostics).toEqual([]);
 	});
 });
+
+describe('compile error diagnostic plugin — a missing closing brace', () => {
+	it("reports '}' expected at the end of the document, with an empty range", async () => {
+		const source = `export function App() @{
+	@if (ok) {
+		<b />
+`;
+		const { document, diagnostics } = await diagnostics_for(source);
+
+		expect(diagnostics).toHaveLength(1);
+		const [diagnostic] = diagnostics;
+		expect(diagnostic.code).toBe('tsrx-compile-error');
+		expect(diagnostic.message).toBe("'}' expected. (4:0)");
+		const end = document.positionAt(source.length);
+		expect(diagnostic.range).toEqual({ start: end, end });
+	});
+
+	it("reports '}' expected at the token found after a container's expression", async () => {
+		const { document, diagnostics } = await diagnostics_for(
+			`export function App() @{
+	<b>{text name}</b>
+}
+`,
+		);
+
+		expect(diagnostics).toHaveLength(1);
+		expect(diagnostics[0].message).toBe("'}' expected. (2:10)");
+		expect(document.getText(diagnostics[0].range)).toBe('name');
+	});
+});

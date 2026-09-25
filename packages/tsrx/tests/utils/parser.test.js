@@ -3341,7 +3341,7 @@ foo();`;
 					const { line, column } = acorn.getLineInfo(source, source.length);
 					return {
 						ok: false,
-						message: `Unexpected token (${line}:${column})`,
+						message: `'}' expected. (${line}:${column})`,
 						pos: source.length,
 					};
 				}),
@@ -3364,7 +3364,7 @@ foo();`;
 				inputs.map(({ source, options }) => ({
 					ok: false,
 					message: options
-						? 'Unexpected token (4:15)'
+						? "'}' expected. (4:15)"
 						: "Unclosed tag '<section>'. Expected '</section>' before end of template. (4:15)",
 					pos: source.length,
 				})),
