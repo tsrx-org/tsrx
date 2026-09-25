@@ -829,6 +829,23 @@ describe('parse errors', () => {
 			'function f(private readonly x: number) {}',
 			'function f(private readonly x: number) {}\n',
 		);
+		// And a parameter property on a signature's or an arrow function's
+		// parameter, and one with a pattern and a default.
+		await expectFormat(
+			'type F = (public x: number) => void;',
+			'type F = (public x: number) => void;\n',
+		);
+		await expectFormat(
+			'const f = async (a, readonly [b]: number[]) => a;',
+			'const f = async (a, readonly [b]: number[]) => a;\n',
+		);
+		await expectFormat(
+			'class A { constructor(public [a] = [1]) {} }',
+			'class A {\n  constructor(public [a] = [1]) {}\n}\n',
+		);
+		// Prettier's typescript parser formats an arrow function's optional rest
+		// parameter the same way.
+		await expectFormat('const f = (...a?: number[]) => a;', 'const f = (...a: number[]) => a;\n');
 		// Prettier's typescript parser formats `let` as a name the same way.
 		await expectFormat('var let = 1;\nclass let {}', 'var let = 1;\nclass let {}\n');
 	});
@@ -855,6 +872,10 @@ describe('parse errors', () => {
 			[
 				'class A {\n  constructor(public ...rest: number[]) {}\n}',
 				'A parameter property cannot be declared using a rest parameter. (2:15)',
+			],
+			[
+				'const f = (a: number, public ...rest: number[]) => a;',
+				'A parameter property cannot be declared using a rest parameter. (1:23)',
 			],
 			['@dec function f() {}', 'Leading decorators must be attached to a class declaration. (1:1)'],
 			[

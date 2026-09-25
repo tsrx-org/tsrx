@@ -1289,6 +1289,39 @@ export namespace Parse {
 		): AST.TSTypeParameterDeclaration;
 
 		/**
+		 * Parse type parameters, the current token being their `<`
+		 * (@sveltejs/acorn-typescript)
+		 */
+		tsParseTypeParameters(
+			parseModifiers?: (node: AST.Node) => void | null,
+		): AST.TSTypeParameterDeclaration;
+
+		/**
+		 * Parse the parameters of a function or constructor type, or of a method,
+		 * call, or construct signature, after their `(` (@sveltejs/acorn-typescript)
+		 */
+		tsParseBindingListForSignature(): AST.Pattern[];
+
+		/**
+		 * Skip the start of a parameter, for the lookahead that tells a function
+		 * type from a parenthesized type; whether one was there
+		 * (@sveltejs/acorn-typescript)
+		 */
+		tsSkipParameterStart(): boolean;
+
+		/**
+		 * Run a parser callback and restore the tokenizer and parser state
+		 * afterwards (@sveltejs/acorn-typescript)
+		 */
+		tsLookAhead<T>(fn: () => T): T;
+
+		/**
+		 * The expression of a `TSTypeCastExpression` in an arrow function's
+		 * parameters, with the cast's type annotation (@sveltejs/acorn-typescript)
+		 */
+		typeCastToParameter(node: AST.Node): AST.Node;
+
+		/**
 		 * Read a type parameter's `const` modifier, reporting `in` and `out`: the
 		 * modifier parser acorn-typescript gives `tsTryParseTypeParameters` for
 		 * functions, methods and classes (@sveltejs/acorn-typescript)
