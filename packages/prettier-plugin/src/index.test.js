@@ -8604,7 +8604,10 @@ b";`);
 			// Prettier's shouldInline hugs calls, not `new` or `import()`, and only
 			// `await` of an element
 			const input = `f(<div aaaa={new SomeConstructorName(aaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbb)} />);
-f(<div aaaa={import("some-very-long-module-specifier-name/that/does/not/fit/on/one/line")} />);`;
+f(<div aaaa={import("some-very-long-module-specifier-name/that/does/not/fit/on/one/line")} />);
+f(<div aaaa={await (<>
+<b>1</b>
+</>)} />);`;
 			expect(await format(input)).toBeWithNewline(`f(
   <div
     aaaa={
@@ -8619,6 +8622,17 @@ f(
   <div
     aaaa={
       import("some-very-long-module-specifier-name/that/does/not/fit/on/one/line")
+    }
+  />,
+);
+f(
+  <div
+    aaaa={
+      await (
+        <>
+          <b>1</b>
+        </>
+      )
     }
   />,
 );`);
