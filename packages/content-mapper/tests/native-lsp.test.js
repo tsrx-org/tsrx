@@ -19,12 +19,30 @@ import { NativeLspClient, position_of, range_text } from './lsp-client.js';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
-const LIB_TS = 'export function helperA() {}\nexport function helperB() {}\n';
-const EXTEND_TSRX =
-	"import { helperA } from './lib';\n\nexport function Extend() @{\n\thelperA();\n\thelperB\n\t<div />\n}\n";
-const FRESH_TSRX = 'export function Fresh() @{\n\tconst n = 1;\n\thelperB\n\t<div>{n}</div>\n}\n';
-const OTHER_TSRX = 'export function Other(props: { n: number }) @{\n\t<span>{props.n}</span>\n}\n';
-const USE_TS = "import { Other } from './Other.tsrx';\nexport const x = Other({ n: 'no' });\n";
+const LIB_TS = `export function helperA() {}
+export function helperB() {}
+`;
+const EXTEND_TSRX = `import { helperA } from './lib';
+
+export function Extend() @{
+	helperA();
+	helperB
+	<div />
+}
+`;
+const FRESH_TSRX = `export function Fresh() @{
+	const n = 1;
+	helperB
+	<div>{n}</div>
+}
+`;
+const OTHER_TSRX = `export function Other(props: { n: number }) @{
+	<span>{props.n}</span>
+}
+`;
+const USE_TS = `import { Other } from './Other.tsrx';
+export const x = Other({ n: 'no' });
+`;
 
 /**
  * The consumer fixture as an LSP workspace: the language server discovers
@@ -417,8 +435,11 @@ describe('configured-project discovery through contributed extensions', () => {
 		const config = /** @type {any} */ (parse_jsonc(workspace_files()['tsconfig.json']).value);
 		config.include = ['*.tsrx'];
 		delete config.compilerOptions.allowImportingTsExtensions;
-		const source =
-			'export function App() @{\n\tconst message: string = 123;\n\t<div>{message}</div>\n}\n';
+		const source = `export function App() @{
+	const message: string = 123;
+	<div>{message}</div>
+}
+`;
 		const workspace = create_native_workspace({
 			'tsconfig.json': JSON.stringify(config),
 			'App.tsrx': source,
@@ -543,8 +564,12 @@ describe('inferred projects through custom/setContentMapperContributions', () =>
 	});
 });
 
-const HINTS_TSRX =
-	'export function Hints(props: { items: string[] }) @{\n\tconst total = props.items.length;\n\tconst shown = Math.min(total, 10);\n\t<span>{shown}</span>\n}\n';
+const HINTS_TSRX = `export function Hints(props: { items: string[] }) @{
+	const total = props.items.length;
+	const shown = Math.min(total, 10);
+	<span>{shown}</span>
+}
+`;
 
 /**
  * Poll until `probe` resolves to a value `predicate` accepts; the server

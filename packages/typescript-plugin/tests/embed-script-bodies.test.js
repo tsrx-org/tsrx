@@ -17,7 +17,11 @@ describe('<script> bodies embedded as blocks', () => {
 	it('appends the body as a block mapped one to one', () => {
 		const body = 'const n: number = 1 < 2 ? 3 : 4;';
 		const { text, mappings } = embed_script_bodies('const x = 1;', [], [region(body)]);
-		expect(text).toBe('const x = 1;\n;{\n' + body + '\n}\n');
+		expect(text).toBe(`const x = 1;
+;{
+${body}
+}
+`);
 		expect(mappings).toHaveLength(1);
 		const [mapping] = mappings;
 		expect(mapping.sourceOffsets).toEqual([100]);
@@ -56,7 +60,10 @@ describe('<script> bodies embedded as blocks', () => {
 			expect(body.slice(mappings[0].sourceOffsets[index] - 100).startsWith(statement)).toBe(true);
 		}
 		// Their place inside the block is blanked; the last statement keeps its column.
-		expect(text.slice(block)).toContain('\nconst n: number = a + b;\n}\n');
+		expect(text.slice(block)).toContain(`
+const n: number = a + b;
+}
+`);
 		expect(text.slice(block)).not.toContain('import');
 	});
 

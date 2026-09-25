@@ -190,8 +190,12 @@ describe('load_tsconfig_layers', () => {
 	});
 
 	it('reads JSON with comments and trailing commas, on the node host as on ts.sys', () => {
-		const source =
-			'// leading comment\n{\n\t/* block */ "custom": { "value": "root", }, // trailing\n\t"extends": "./base",\n}\n';
+		const source = `// leading comment
+{
+	/* block */ "custom": { "value": "root", }, // trailing
+	"extends": "./base",
+}
+`;
 		const base_path = write_config('base.json', '{ "custom": { "value": "base" }, }');
 		const config_path = write_config('tsconfig.json', source);
 		for (const host of [ts.sys, NODE_CONFIG_HOST]) {

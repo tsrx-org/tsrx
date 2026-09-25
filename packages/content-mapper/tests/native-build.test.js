@@ -297,8 +297,9 @@ describe('native tsc --build with project references', () => {
 				references: [{ path: '../lib' }],
 				include: ['app.ts'],
 			}),
-			'app/app.ts':
-				"import { Panel } from '../lib/index';\nexport const ok = Panel({ title: 'x', count: 1 });\n",
+			'app/app.ts': `import { Panel } from '../lib/index';
+export const ok = Panel({ title: 'x', count: 1 });
+`,
 		});
 	}
 
@@ -310,7 +311,9 @@ describe('native tsc --build with project references', () => {
 		expect(panel).toContain('<script');
 		const dir = references_workspace(
 			{ 'lib/Panel.tsrx': panel, 'lib/Button.tsrx': files['Button.tsrx'] },
-			"export { default as Panel } from './Panel.tsrx';\nexport { default as Button } from './Button.tsrx';\n",
+			`export { default as Panel } from './Panel.tsrx';
+export { default as Button } from './Button.tsrx';
+`,
 		);
 		const good = run_native_tsc(dir, ['--build', 'app', '--pretty', 'false']);
 		expect(good.output).toBe('');
@@ -379,8 +382,15 @@ describe('native tsc --build with a chain of mapper-backed projects', () => {
 				include: ['index.ts', '*.tsrx'],
 			}),
 			'lib-a/index.ts': "export { default as Button } from './Button.tsrx';\n",
-			'lib-a/Button.tsrx':
-				'export interface ButtonProps {\n\tlabel: string;\n\tonPress?: () => void;\n}\n\nexport default function Button({ label, onPress }: ButtonProps) @{\n\t<button type="button" onClick={onPress}>{label}</button>\n}\n',
+			'lib-a/Button.tsrx': `export interface ButtonProps {
+	label: string;
+	onPress?: () => void;
+}
+
+export default function Button({ label, onPress }: ButtonProps) @{
+	<button type="button" onClick={onPress}>{label}</button>
+}
+`,
 			'lib-b/tsconfig.json': JSON.stringify({
 				tsrx: { compiler: '@tsrx/react' },
 				contentMappers: mapper,
@@ -391,8 +401,20 @@ describe('native tsc --build with a chain of mapper-backed projects', () => {
 			'lib-b/index.ts': "export { default as Panel } from './Panel.tsrx';\n",
 			// A .tsrx file in one project importing a .tsrx component from the
 			// referenced project's declarations.
-			'lib-b/Panel.tsrx':
-				"import { Button } from '../lib-a/index';\n\nexport interface PanelProps {\n\ttitle: string;\n\tcount: number;\n}\n\nexport default function Panel({ title, count }: PanelProps) @{\n\t<section>\n\t\t<h2>{title}</h2>\n\t\t<Button label={String(count)} />\n\t</section>\n}\n",
+			'lib-b/Panel.tsrx': `import { Button } from '../lib-a/index';
+
+export interface PanelProps {
+	title: string;
+	count: number;
+}
+
+export default function Panel({ title, count }: PanelProps) @{
+	<section>
+		<h2>{title}</h2>
+		<Button label={String(count)} />
+	</section>
+}
+`,
 			'app/tsconfig.json': JSON.stringify({
 				tsrx: { compiler: '@tsrx/react' },
 				contentMappers: mapper,
@@ -407,8 +429,9 @@ describe('native tsc --build with a chain of mapper-backed projects', () => {
 				references: [{ path: '../lib-b' }],
 				include: ['app.ts'],
 			}),
-			'app/app.ts':
-				"import { Panel } from '../lib-b/index';\nexport const ok = Panel({ title: 'x', count: 1 });\n",
+			'app/app.ts': `import { Panel } from '../lib-b/index';
+export const ok = Panel({ title: 'x', count: 1 });
+`,
 		});
 		const good = run_native_tsc(dir, ['--build', 'app', '--pretty', 'false']);
 		expect(good.output).toBe('');

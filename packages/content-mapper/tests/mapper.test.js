@@ -285,7 +285,8 @@ describe('create_tsrx_content_mapper', () => {
 
 describe('blank_script_bodies', () => {
 	it('blanks each script body in place, keeping length and line breaks', () => {
-		const body = 'const value = 1 < 2;\n\tlet x = "<b>";';
+		const body = `const value = 1 < 2;
+	let x = "<b>";`;
 		const text = `<head><script>${body}</script><script>${body}</script></head>`;
 		const regions = [
 			{ id: 'script_0', start: 0, length: body.length, content: body },

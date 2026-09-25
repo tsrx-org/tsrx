@@ -133,10 +133,18 @@ describe('to_span_mappings', () => {
 	it('extends a Verbatim span over the identical whitespace that follows it', () => {
 		// TypeScript's organize-imports edit ends after the last import's newline;
 		// TypeScript 7 drops the whole edit when that position does not map.
-		const original =
-			"import a from './a';\nimport b from './b';\n\nexport function C() @{ <a /> }\n";
-		const generated = "import a from './a';\nimport b from './b';\n\nconst C__static = <a />;\n";
-		const imports = "import a from './a';\nimport b from './b';";
+		const original = `import a from './a';
+import b from './b';
+
+export function C() @{ <a /> }
+`;
+		const generated = `import a from './a';
+import b from './b';
+
+const C__static = <a />;
+`;
+		const imports = `import a from './a';
+import b from './b';`;
 		const spans = to_span_mappings(
 			[
 				{

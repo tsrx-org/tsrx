@@ -167,7 +167,9 @@ describe('native backend: features the TSRX server owns without TypeScript servi
 		const hover = await service.getHover(uri, position_in('class="card"', 'class="'.length));
 		expect(hover?.contents).toMatchObject({ kind: 'markdown' });
 		expect(/** @type {{ value: string }} */ (hover?.contents).value).toContain(
-			'```css\n.card\n```',
+			`\`\`\`css
+.card
+\`\`\``,
 		);
 		expect(/** @type {{ value: string }} */ (hover?.contents).value).toContain(
 			'CSS class selector',

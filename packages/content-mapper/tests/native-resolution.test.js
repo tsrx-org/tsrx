@@ -59,12 +59,32 @@ function check_both(dir) {
 	};
 }
 
-const BUTTON_TSRX =
-	'export interface ButtonProps {\n\tlabel: string;\n\tonPress?: () => void;\n}\n\nexport default function Button({ label, onPress }: ButtonProps) @{\n\t<button type="button" onClick={onPress}>{label}</button>\n}\n';
+const BUTTON_TSRX = `export interface ButtonProps {
+	label: string;
+	onPress?: () => void;
+}
+
+export default function Button({ label, onPress }: ButtonProps) @{
+	<button type="button" onClick={onPress}>{label}</button>
+}
+`;
 
 /** @param {string} button_specifier */
 function panel_tsrx(button_specifier) {
-	return `import Button from '${button_specifier}';\n\nexport interface PanelProps {\n\ttitle: string;\n\tcount: number;\n}\n\nexport default function Panel({ title, count }: PanelProps) @{\n\t<section>\n\t\t<h2>{title}</h2>\n\t\t<Button label={String(count)} />\n\t</section>\n}\n`;
+	return `import Button from '${button_specifier}';
+
+export interface PanelProps {
+	title: string;
+	count: number;
+}
+
+export default function Panel({ title, count }: PanelProps) @{
+	<section>
+		<h2>{title}</h2>
+		<Button label={String(count)} />
+	</section>
+}
+`;
 }
 
 describe('resolution into .tsrx modules', () => {
@@ -73,8 +93,12 @@ describe('resolution into .tsrx modules', () => {
 			'tsconfig.json': tsconfig({ paths: { '@ui/*': ['./ui/*'] } }, ['main.ts']),
 			'ui/Button.tsrx': BUTTON_TSRX,
 			'ui/Panel.tsrx': panel_tsrx('@ui/Button.tsrx'),
-			'main.ts':
-				"import Panel from '@ui/Panel.tsrx';\nimport Button from '@ui/Button.tsrx';\n\nexport const ok = [Panel({ title: 'Hello', count: 1 }), Button({ label: 'Go' })];\nexport const bad = Panel({ title: 'Hello', count: 'one' });\n",
+			'main.ts': `import Panel from '@ui/Panel.tsrx';
+import Button from '@ui/Button.tsrx';
+
+export const ok = [Panel({ title: 'Hello', count: 1 }), Button({ label: 'Go' })];
+export const bad = Panel({ title: 'Hello', count: 'one' });
+`,
 		});
 		cleanups.push(created.cleanup);
 		const { native, classic } = check_both(created.dir);
@@ -91,8 +115,12 @@ describe('resolution into .tsrx modules', () => {
 			'tsconfig.json': tsconfig({}, ['App.tsx']),
 			'Button.tsrx': BUTTON_TSRX,
 			'Panel.tsrx': panel_tsrx('./Button.tsrx'),
-			'App.tsx':
-				'import Panel from \'./Panel.tsrx\';\n\nexport const ok = <Panel title="Hello" count={1} />;\nexport const bad = <Panel title="Hello" count="one" />;\nexport const missing = <Panel title="Hello" />;\n',
+			'App.tsx': `import Panel from './Panel.tsrx';
+
+export const ok = <Panel title="Hello" count={1} />;
+export const bad = <Panel title="Hello" count="one" />;
+export const missing = <Panel title="Hello" />;
+`,
 		});
 		cleanups.push(created.cleanup);
 		const { native, classic } = check_both(created.dir);
@@ -113,12 +141,16 @@ describe('resolution into .tsrx modules', () => {
 				type: 'module',
 				exports: { '.': './index.ts' },
 			}),
-			'packages/ui/index.ts':
-				"export { default as Panel } from './Panel.tsrx';\nexport { default as Button } from './Button.tsrx';\n",
+			'packages/ui/index.ts': `export { default as Panel } from './Panel.tsrx';
+export { default as Button } from './Button.tsrx';
+`,
 			'packages/ui/Button.tsrx': BUTTON_TSRX,
 			'packages/ui/Panel.tsrx': panel_tsrx('./Button.tsrx'),
-			'app/main.ts':
-				"import { Button, Panel } from '@acme/ui';\n\nexport const ok = [Panel({ title: 'Hello', count: 1 }), Button({ label: 'Go' })];\nexport const bad = Panel({ title: 'Hello', count: 'one' });\n",
+			'app/main.ts': `import { Button, Panel } from '@acme/ui';
+
+export const ok = [Panel({ title: 'Hello', count: 1 }), Button({ label: 'Go' })];
+export const bad = Panel({ title: 'Hello', count: 'one' });
+`,
 		});
 		cleanups.push(created.cleanup);
 		// What a package manager's workspace link looks like.

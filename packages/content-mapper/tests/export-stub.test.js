@@ -42,7 +42,8 @@ export default function Component() @{
 		expect(text).toContain(`export * from "./a.tsrx";`);
 		expect(text).toContain(`export * as ns from "./b.tsrx";`);
 		expect(text).toContain(`export { x, y as z } from "./c.tsrx";`);
-		expect(text).toContain('declare const _default: any;\nexport default _default;');
+		expect(text).toContain(`declare const _default: any;
+export default _default;`);
 	});
 
 	it('quotes arbitrary module namespace names in re-exports', () => {

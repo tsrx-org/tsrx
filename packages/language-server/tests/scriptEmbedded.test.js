@@ -101,7 +101,10 @@ describe('<script> bodies embedded in the generated TSX', () => {
 	</head>
 }`,
 		);
-		expect(generated(root)).toContain(';{\nconsole.log(1 < 2);\n}\n');
+		expect(generated(root)).toContain(`;{
+console.log(1 < 2);
+}
+`);
 		expect(script_mapping(root, 'script_0')).toBeDefined();
 	});
 
@@ -120,7 +123,10 @@ describe('<script> bodies embedded in the generated TSX', () => {
 		);
 		expect(embedded_of(root, 'css')).toHaveLength(1);
 		expect(embedded_of(root, 'typescript')).toHaveLength(0);
-		expect(generated(root)).toContain(';{\nconst a: number = 1;\n}\n');
+		expect(generated(root)).toContain(`;{
+const a: number = 1;
+}
+`);
 	});
 
 	it('gives each <script> body its own block, so their declarations never collide', () => {
@@ -133,8 +139,14 @@ describe('<script> bodies embedded in the generated TSX', () => {
 }`,
 		);
 		const text = generated(root);
-		expect(text).toContain(';{\nconst a: number = 1;\n}\n');
-		expect(text).toContain(';{\nconst a = 2;\n}\n');
+		expect(text).toContain(`;{
+const a: number = 1;
+}
+`);
+		expect(text).toContain(`;{
+const a = 2;
+}
+`);
 		expect(script_mapping(root, 'script_0')).toBeDefined();
 		expect(script_mapping(root, 'script_1')).toBeDefined();
 	});

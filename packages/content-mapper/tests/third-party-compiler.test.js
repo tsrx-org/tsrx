@@ -93,9 +93,13 @@ describe('third-party compiler', () => {
 					},
 				],
 			}),
-			'Thing.tsrx':
-				'export const #value = 1;\nexport const copy = #value;\nexport const missing = #nope;\n',
-			'main.ts': "import { copy } from './Thing.tsrx';\nexport const n: string = copy;\n",
+			'Thing.tsrx': `export const #value = 1;
+export const copy = #value;
+export const missing = #nope;
+`,
+			'main.ts': `import { copy } from './Thing.tsrx';
+export const n: string = copy;
+`,
 		});
 		const result = run_native_tsc(dir, [
 			'--noEmit',
@@ -132,7 +136,9 @@ describe('third-party compiler', () => {
 				contentMappers: [{ package: '@tsrx/content-mapper', extensions: ['.tsrx'] }],
 			}),
 			'Thing.tsrx': 'export const value: number = 1;\n',
-			'main.ts': "import { value } from './Thing.tsrx';\nexport const n: number = value;\n",
+			'main.ts': `import { value } from './Thing.tsrx';
+export const n: number = value;
+`,
 		});
 		const result = run_native_tsc(dir, [
 			'--noEmit',
@@ -154,9 +160,13 @@ describe('third-party compiler under the language server', () => {
 		config.include = ['main.ts', '*.tsrx'];
 		const files = {
 			'tsconfig.json': JSON.stringify(config, null, '\t'),
-			'Thing.tsrx':
-				'export const #value = 1;\nexport const copy = #value;\nexport const missing = #nope;\n',
-			'main.ts': "import { copy } from './Thing.tsrx';\nexport const n: string = copy;\n",
+			'Thing.tsrx': `export const #value = 1;
+export const copy = #value;
+export const missing = #nope;
+`,
+			'main.ts': `import { copy } from './Thing.tsrx';
+export const n: string = copy;
+`,
 		};
 		const dir = workspace(files);
 		const client = new NativeLspClient(dir);
