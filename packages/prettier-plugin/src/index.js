@@ -1379,23 +1379,22 @@ function getOperandTypeCast(path, comments, options) {
 		if (!key) {
 			return null;
 		}
-		return parentPath.call(
-			(childPath) => {
-				const child = /** @type {(AST.Node & AST.NodeWithLocation) | null} */ (childPath.node);
-				if (child?.metadata?.paren_start === node.start) {
-					return { comment, operand: child, printsParens: false };
-				}
-				if (child?.start !== node.start) {
-					return null;
-				}
-				const found = findOperand(childPath);
-				if (found && needsParens(childPath, options)) {
-					found.printsParens = true;
-				}
-				return found;
-			},
-			...(key === 'expressions' ? [key, 0] : [key]),
-		);
+		/** @param {AstPath} childPath */
+		const visit = (childPath) => {
+			const child = /** @type {(AST.Node & AST.NodeWithLocation) | null} */ (childPath.node);
+			if (child?.metadata?.paren_start === node.start) {
+				return { comment, operand: child, printsParens: false };
+			}
+			if (child?.start !== node.start) {
+				return null;
+			}
+			const found = findOperand(childPath);
+			if (found && needsParens(childPath, options)) {
+				found.printsParens = true;
+			}
+			return found;
+		};
+		return key === 'expressions' ? parentPath.call(visit, key, 0) : parentPath.call(visit, key);
 	};
 	return findOperand(path);
 }
@@ -3110,7 +3109,9 @@ function printTsrxNode(node, path, options, print, args) {
 		parts.push(...printLeadingComments(node, printedComments, options, leadingSemicolonPrinted));
 	}
 	// The cast an ancestor handed to this operand prints right before its `(`
-	const handedTypeCast = typeCastParens ? operandTypeCasts.get(node) : undefined;
+	const handedTypeCast = typeCastParens
+		? operandTypeCasts.get(/** @type {AST.Node} */ (node))
+		: undefined;
 	if (handedTypeCast) {
 		parts.push(...printLeadingComments(node, [handedTypeCast], options));
 	}
@@ -7038,7 +7039,8 @@ function printClassDeclaration(node, path, options, print) {
 			: (superClassNode.trailingComments ?? []);
 		const printsTrailingComments = !(addsParens && trailingComments.some(isPrettierIgnoreComment));
 		const leadingComments = printsComments ? (superClassNode.leadingComments ?? []) : [];
-		const isAssigned = path.getParentNode()?.type === 'AssignmentExpression';
+		const isAssigned =
+			/** @type {AST.Node | null} */ (path.getParentNode())?.type === 'AssignmentExpression';
 		// A cast of the operand the superclass starts with stays at the
 		// operand's `(`, inside the parentheses the class may add (see
 		// `getOperandTypeCast`). The operand prints it, or, in an ignored
