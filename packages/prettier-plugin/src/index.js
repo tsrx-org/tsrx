@@ -6619,7 +6619,8 @@ function printTryStatement(node, path, options, print, directive = false) {
  * @returns {Doc[]}
  */
 function printCatchClause(node, path, options, print) {
-	const keyword = path.parent?.type === 'JSXTryExpression' ? '@catch ' : 'catch ';
+	const parent = /** @type {AST.Node | null} */ (path.parent);
+	const keyword = parent?.type === 'JSXTryExpression' ? '@catch ' : 'catch ';
 	if (!node.param) {
 		return [keyword, path.call(print, 'body')];
 	}
