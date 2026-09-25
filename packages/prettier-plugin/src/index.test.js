@@ -2174,6 +2174,67 @@ run()
 			expect(result).toBeWithNewline(expected);
 		});
 
+		// Prettier's `babel` parser keeps a JSDoc cast's parentheses as a
+		// `ParenthesizedExpression`, whose expression prints the comments after
+		// it inside them. They used to print after the parentheses, where a
+		// comment after an element moved again on the next format (#521).
+		it.each([
+			[
+				'const a = /** @type {X} */ (foo /* note */);',
+				'const a = /** @type {X} */ (foo /* note */);',
+			],
+			[
+				'const b = /** @type {X} */ (foo // note\n);',
+				'const b = /** @type {X} */ (\n  foo // note\n);',
+			],
+			[
+				'const d = /** @type {A} */ (/** @type {B} */ (foo /* b */) /* a */); /* z */',
+				'const d = /** @type {A} */ (/** @type {B} */ (foo /* b */) /* a */); /* z */',
+			],
+			[
+				'const e = /** @type {X} */ (foo /* in */) /* out */;',
+				'const e = /** @type {X} */ (foo /* in */); /* out */',
+			],
+			['x = /** @type {X} */ (node /* c */).start;', 'x = /** @type {X} */ (node /* c */).start;'],
+			['x = /** @type {X} */ (a + b /* c */) * 2;', 'x = /** @type {X} */ (a + b /* c */) * 2;'],
+			['x = /** @type {X} */ (await foo /* c */);', 'x = /** @type {X} */ (await foo /* c */);'],
+			['x = /** @type {X} */ ({ a: 1 } /* c */);', 'x = /** @type {X} */ ({ a: 1 } /* c */);'],
+			['f(/** @type {X} */ (foo /* c */), b);', 'f(/** @type {X} */ (foo /* c */), b);'],
+			[
+				'function f() {\n  return /** @type {X} */ (foo /* note */);\n}',
+				'function f() {\n  return /** @type {X} */ (foo /* note */);\n}',
+			],
+			[
+				'function f() {\n  throw /** @type {X} */ (foo // note\n  );\n}',
+				'function f() {\n  throw /** @type {X} */ (\n    foo // note\n  );\n}',
+			],
+			[
+				'export default /** @type {X} */ (foo // note\n);',
+				'export default /** @type {X} */ (\n  foo // note\n);',
+			],
+			[
+				'x = <div a={/** @type {X} */ (a // c\n)} />;',
+				'x = (\n  <div\n    a={\n      /** @type {X} */ (\n        a // c\n      )\n    }\n  />\n);',
+			],
+			[
+				'const a = /** @type {X} */ (\n  // prettier-ignore\n  foo(  a  ) /* c */\n);',
+				'const a = /** @type {X} */ (\n  // prettier-ignore\n  foo(  a  ) /* c */\n);',
+			],
+			[
+				'const c = /** @type {X} */ (\n  foo\n  // note\n);',
+				'const c = /** @type {X} */ (\n  foo\n  // note\n);',
+			],
+			// Pin: one after the parentheses stays after them
+			[
+				'const e = /** @type {X} */ (foo) /* note */;',
+				'const e = /** @type {X} */ (foo); /* note */',
+			],
+		])('keeps the comments inside the parentheses of a cast in %j', async (input, expected) => {
+			const once = await format(input);
+			expect(once).toBeWithNewline(expected);
+			expect(await format(once)).toBe(once);
+		});
+
 		it('should preserve required parentheses around assignment expressions', async () => {
 			const input = `const openSignal = useRef<Signal<boolean> | null>(null)
 const open = props.open ?? (openSignal.current ??= signal(false))
@@ -13613,6 +13674,74 @@ export interface SectionProps<T>
 		 */
 		const normalize = (source) => prettier.format(source, { parser: 'typescript' });
 
+		// A JSDoc cast before the parenthesized operand a value starts with casts
+		// that operand. Parentheses printed around the value, or around a part
+		// of it that starts with the operand, go around the cast too, which keeps
+		// it at the operand's `(`. Prettier's `babel` parser prints them between
+		// the two, so the cast takes the whole value, and its next pass drops the
+		// operand's parentheses (#548).
+		it.each([
+			['f(.../** @type {T} */ (node) ?? b);', 'f(...(/** @type {T} */ (node) ?? b));'],
+			[
+				'x = { .../** @type {T} */ (node).a ?? b };',
+				'x = { ...(/** @type {T} */ (node).a ?? b) };',
+			],
+			[
+				'y = [.../** @type {T} */ (node).innerComments ?? []];',
+				'y = [...(/** @type {T} */ (node).innerComments ?? [])];',
+			],
+			[
+				'f(.../* a */ /** @type {T} */ (node) ?? b);',
+				'f(.../* a */ (/** @type {T} */ (node) ?? b));',
+			],
+			['x = /** @type {T} */ (a) % b * c;', 'x = (/** @type {T} */ (a) % b) * c;'],
+			['x = /** @type {T} */ (a) * b % c;', 'x = (/** @type {T} */ (a) * b) % c;'],
+			[
+				'const x = (/** @type {T} */ (aaaaaaaaaaaaaaaaaaaaaaaaa) || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb).c;',
+				'const x = (\n  /** @type {T} */ (aaaaaaaaaaaaaaaaaaaaaaaaa) ||\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n).c;',
+			],
+			// Pins: the value keeps its parentheses around the cast
+			['(/** @type {T} */ (a) || b)();', '(/** @type {T} */ (a) || b)();'],
+			['(/** @type {T} */ (a) || b).c;', '(/** @type {T} */ (a) || b).c;'],
+			['new (/** @type {T} */ (a) || b)();', 'new (/** @type {T} */ (a) || b)();'],
+			['x = (/** @type {T} */ (a), b);', 'x = (/** @type {T} */ (a), b);'],
+			['g = (/** @type {T} */ (a) ?? b) || c;', 'g = (/** @type {T} */ (a) ?? b) || c;'],
+			['h = (/** @type {T} */ (a) || b)`x`;', 'h = (/** @type {T} */ (a) || b)`x`;'],
+			[
+				'async function f() {\n  await (/** @type {T} */ (a) || b);\n}',
+				'async function f() {\n  await (/** @type {T} */ (a) || b);\n}',
+			],
+			[
+				'class A extends (/** @type {T} */ (b) ?? c) {}',
+				'class A extends (/** @type {T} */ (b) ?? c) {}',
+			],
+			// Pins: without parentheses around it, the cast stays ahead of the value
+			['x = /** @type {T} */ (a) || b;', 'x = /** @type {T} */ (a) || b;'],
+			['x = /** @type {T} */ (a).b ?? c;', 'x = /** @type {T} */ (a).b ?? c;'],
+			['!(/** @type {T} */ (a) || b);', '!(/** @type {T} */ (a) || b);'],
+		])(
+			'keeps the cast of the operand %j starts with at its parentheses',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		// The statement starts with the parentheses around the cast, so without
+		// semicolons it needs the `;` ahead of them
+		it('puts the leading semicolon before the parentheses around an operand cast', async () => {
+			const input = `a;
+/** @type {T} */ (b) % c * d;
+// note
+/** @type {T} */ (b) % c * d;
+(/** @type {T} */ (b)?.c).d();`;
+			const expected = `a
+;(/** @type {T} */ (b) % c) * d
+// note
+;(/** @type {T} */ (b) % c) * d
+;(/** @type {T} */ (b)?.c).d()`;
+			expect(await format(input, { semi: false })).toBeWithNewline(expected);
+		});
+
 		it.each([
 			'const result = (primary || fallback)();',
 			'const result = (primary ?? fallback)();',
@@ -15326,6 +15455,17 @@ function Toggle(props) @{
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// Prettier's `babel` parser keeps a JSDoc cast's parentheses as a node,
+		// so a comment inside them doesn't trail the head and break the chain
+		// (#521). One after them does.
+		it.each([
+			'x = /** @type {X} */ (a /* c */).b.c().d().e().f();',
+			'x = /** @type {X} */ (a /* c */)?.b.c().d();',
+			'x = /** @type {X} */ (a) /* c */.b\n  .c()\n  .d()\n  .e()\n  .f();',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
 		it.each([
 			[
 				'promise.then((result) => result.value).catch((error) => console.error(error)).finally(() => done());',
@@ -16267,10 +16407,6 @@ item
 				'class A extends (a || b /* e */ // c\n)<T> {\n  x = 1;\n}',
 				'class A extends (a || b)<T> /* e */ {\n  // c\n  x = 1;\n}',
 			],
-			[
-				'class A extends /** @type {X} */ (a // c\n)<T> {\n  x = 1;\n}',
-				'class A extends /** @type {X} */ (a)<T> {\n  // c\n  x = 1;\n}',
-			],
 			['class A extends (B) // c\n{\n  x = 1;\n}', 'class A extends B {\n  // c\n  x = 1;\n}'],
 		])(
 			'moves the line comment after the superclass in %j into the body',
@@ -16278,6 +16414,32 @@ item
 				expect(await format(input)).toBeWithNewline(expected);
 			},
 		);
+
+		// A comment inside a JSDoc cast's parentheses stays there, like in
+		// Prettier's `babel-ts` output, which keeps them as a node. It isn't after
+		// the superclass, so a line comment doesn't move into the body (#521).
+		// With type arguments, the body's `{` on its own line reparses them as
+		// an instantiation expression (#523).
+		it.each([
+			[
+				'class A extends /** @type {X} */ (a // c\n)<T> {\n  x = 1;\n}',
+				'class A\n  extends /** @type {X} */ (\n    a // c\n  )<T>\n{\n  x = 1;\n}',
+			],
+			[
+				'class A extends /** @type {X} */ (a // c\n) {\n  x = 1;\n}',
+				'class A\n  extends /** @type {X} */ (\n    a // c\n  )\n{\n  x = 1;\n}',
+			],
+			[
+				'class A extends /** @type {X} */ (a /* c */) {}',
+				'class A extends /** @type {X} */ (a /* c */) {}',
+			],
+			[
+				'class A extends /** @type {X} */ (a) /* c */ {}',
+				'class A extends /** @type {X} */ (a) /* c */ {}',
+			],
+		])('keeps the comment inside the cast of the superclass in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
 
 		// A comment before a heritage clause trails the name, the type
 		// parameters, or the superclass before it, so it doesn't print after
@@ -17508,6 +17670,9 @@ item
 			'const a = /** @type {X} */ (/* note */ <Note />);',
 			'const a = /** @type {X} */ (<Note />);',
 			'const a = /** @type {X} */ (\n  (\n    // note\n    <Note />\n  ).props\n);',
+			// A comment after the element stays inside the cast's parentheses (#521)
+			'function g() {\n  return /** @type {X} */ (<Note /> /* note */);\n}',
+			'function g() {\n  return /** @type {X} */ (\n    (\n      <Note /> // note\n    )\n  );\n}',
 		])('keeps the element in a cast in %j', async (source) => {
 			await expectFormatted(source);
 		});
@@ -18311,6 +18476,22 @@ const member =
 			await expect(format('const value = /** @type {Entry} */ (cache.entry);')).resolves.toBe(
 				'const value = /** @type {Entry} */ (cache.entry);\n',
 			);
+		});
+
+		// A `prettier-ignore` inside a JSDoc cast's parentheses doesn't start the
+		// value, which Prettier's `babel` parser keeps as the cast's
+		// `ParenthesizedExpression`, so an ignored element stays after the `=`
+		// like any other ignored value (#522)
+		it.each([
+			'const a = /** @type {X} */ (\n  // prettier-ignore\n  <Note   />\n);',
+			'a = /** @type {X} */ (\n  // prettier-ignore\n  <Note   />\n);',
+			'x = {\n  k: /** @type {X} */ (\n    // prettier-ignore\n    <Note   />\n  ),\n};',
+			'class A {\n  k = /** @type {X} */ (\n    // prettier-ignore\n    <Note   />\n  );\n}',
+			'const a = /** @type {X} */ (\n  // prettier-ignore\n  foo(  a  )\n);',
+			'const a = /** @type {X} */ (\n  (\n    // c\n    <Note />\n  )\n);',
+			'const a =\n  // prettier-ignore\n  /** @type {X} */ (<Note   />);',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
 		});
 
 		// A line break between `return` or `throw` and its argument ends the
@@ -19154,6 +19335,31 @@ import f from "./f" /* c */ with { type: "json" };`);
 		])('keeps %s', async (source) => {
 			const result = await format(source);
 			expect(result).toBeWithNewline(source);
+		});
+
+		// A JSDoc cast after a comma leads the element it casts, even when its
+		// parentheses break. It used to trail the element before the comma, which
+		// dropped the parentheses and the cast (#579).
+		it.each([
+			['x = [1, /** @type {X} */ (\n  foo\n)];', 'x = [1, /** @type {X} */ (foo)];'],
+			['f(a, /** @type {X} */ (\n  foo\n));', 'f(a, /** @type {X} */ (foo));'],
+			['new F(a, /** @type {X} */ (\n  foo\n));', 'new F(a, /** @type {X} */ (foo));'],
+			[
+				'x = [1, /** @type {X} */ (\n  // c\n  foo\n)];',
+				'x = [\n  1,\n  /** @type {X} */ (\n    // c\n    foo\n  ),\n];',
+			],
+			[
+				'f(1, /** @type {X} */ (\n  // c\n  foo\n));',
+				'f(\n  1,\n  /** @type {X} */ (\n    // c\n    foo\n  ),\n);',
+			],
+			// Pins
+			[
+				'x = [1 /* a */, /** @type {X} */ (\n  foo\n)];',
+				'x = [1 /* a */, /** @type {X} */ (foo)];',
+			],
+			['x = [1, /** not a cast */ (\n  foo\n)];', 'x = [1, /** not a cast */ foo];'],
+		])('keeps the cast after the comma in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
 		});
 
 		// Like Prettier's tie-break, a comment after the comma trails the default

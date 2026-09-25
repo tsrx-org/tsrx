@@ -6683,6 +6683,33 @@ describe('comments around the commas of a list', () => {
 		expect(fn.id.trailingComments).toBeUndefined();
 		expect(fn.params[0].leadingComments?.map((comment) => comment.value)).toEqual([' first']);
 	});
+
+	// The cast's `(` is on the comment's line, but the element it casts starts
+	// on the next one. The comment used to trail the element before the comma
+	// (#579).
+	/** @type {Array<[string, string, (statement: any) => AST.Node[]]>} */
+	const castLists = [
+		[
+			'an array',
+			'x = [a, /** @type {T} */ (\n\tb\n)];',
+			(statement) => statement.expression.right.elements,
+		],
+		[
+			'call arguments',
+			'foo(a, /** @type {T} */ (\n\tb\n));',
+			(statement) => statement.expression.arguments,
+		],
+	];
+
+	it.each(castLists)(
+		'leads the next element with a JSDoc cast whose parentheses break in %s',
+		(_, source, list) => {
+			const [first, second] = list(firstStatement(source));
+
+			expect(first.trailingComments).toBeUndefined();
+			expect(second.leadingComments?.map((comment) => comment.value)).toEqual(['* @type {T} ']);
+		},
+	);
 });
 
 // Ports of Prettier's comment handlers (`handle-comments.js`)
@@ -7145,6 +7172,27 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(fn.returnType).leading).toBeUndefined();
 		expect(commentsOf(signature.parameters[0]).trailing).toEqual([' c']);
 		expect(commentsOf(noParams.id).trailing).toEqual([' c']);
+	});
+
+	// Prettier's `babel` parser keeps a JSDoc cast's parentheses as a
+	// `ParenthesizedExpression`, and the comments after its expression inside
+	// it trail that expression
+	it('trails the cast value with the comments inside the parentheses of its cast', () => {
+		const declaration = firstStatement('const a = /** @type {X} */ (foo /* c */) /* d */;');
+		const stacked = firstStatement(
+			'x = /** @type {A} */ (/** @type {B} */ (foo /* b */) /* a */);',
+		);
+		const awaited = firstStatement('x = /** @type {X} */ (await foo // c\n);');
+		const superClass = firstStatement('class A extends /** @type {X} */ (B // c\n) {}');
+
+		expect(commentsOf(declaration.declarations[0].init).trailing).toEqual([' c ']);
+		expect(commentsOf(declaration).trailing).toEqual([' d ']);
+		expect(commentsOf(stacked.expression.right).trailing).toEqual([' b ', ' a ']);
+		expect(commentsOf(awaited.expression.right).trailing).toEqual([' c']);
+		expect(commentsOf(awaited.expression.right.argument).trailing).toBeUndefined();
+		expect(commentsOf(awaited).trailing).toBeUndefined();
+		expect(commentsOf(superClass.superClass).trailing).toEqual([' c']);
+		expect(commentsOf(superClass.body).inner).toBeUndefined();
 	});
 
 	// Prettier's `handleCommentInEmptyParens`
