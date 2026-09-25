@@ -7351,10 +7351,7 @@ function printTSUnionType(node, path, options, print, args) {
 	);
 
 	if (unionPrintsOwnComments(path) && !args?.suppressLeadingComments) {
-		printed = [
-			...printLeadingComments(node, node.leadingComments ?? [], options, args?.isInlineContext),
-			printed,
-		];
+		printed = [...printLeadingComments(node, node.leadingComments ?? [], options), printed];
 	}
 
 	// The parser keeps the parentheses as a node of their own, which prints
