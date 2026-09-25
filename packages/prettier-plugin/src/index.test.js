@@ -8428,21 +8428,27 @@ const b = <p>hello {a}</p>;`);
     hi
     there
 
-    are you fine today?
+    are you fine today? This line is long enough that Prettier breaks the element too.
   </p>
 }
-const t = <div>
+export function Unindented() @{
+  <div>
 hello
-world
-</div>;`);
+world, a longer line of text that will not fit on one line with the div around it
+</div>
+}`);
 			expect(result).toBeWithNewline(`export function App() @{
   <p>
-    hi there are you fine today?
+    hi there are you fine today? This line is long enough that Prettier breaks
+    the element too.
   </p>
 }
-const t = <div>
-  hello world
-</div>;`);
+export function Unindented() @{
+  <div>
+    hello world, a longer line of text that will not fit on one line with the
+    div around it
+  </div>
+}`);
 		});
 
 		it('keeps non-breaking spaces as text', async () => {
