@@ -12642,6 +12642,10 @@ function printJSXChildren(items, jsxWhitespace) {
 					words.shift();
 					if (/\n/u.test(words[0])) {
 						pushLine(separatorWithWhitespace(words[1], item.node, next?.node));
+					} else if (startsWithLineComment(words[1])) {
+						// TSRX: the word stays on the line of the child before it (see
+						// below)
+						push(' ');
 					} else {
 						pushLine(jsxWhitespace);
 					}
@@ -12692,7 +12696,18 @@ function printJSXChildren(items, jsxWhitespace) {
 			push(item.doc);
 			if (next && 'text' in next && isMeaningfulJSXText(next.text)) {
 				const [firstWord] = trimJSXWhitespace(next.text).split(/[ \t\r\n]+/u);
-				pushLine(separatorNoWhitespace(firstWord, item.node, next.node));
+				// TSRX: a word that starts with `//` would read as a comment at the
+				// start of a line, so it stays on the line of the child before it,
+				// which ends with a comment for it to be text (`{" "}/* c */ //x`).
+				// The sides of a comment in text keep it there (see
+				// `pushJSXTextWithComments`).
+				if (
+					!startsWithLineComment(firstWord) ||
+					isCommentNode(item.node) ||
+					/^[ \t]*[\r\n]/u.test(next.text)
+				) {
+					pushLine(separatorNoWhitespace(firstWord, item.node, next.node));
+				}
 			} else {
 				pushLine(hardline);
 			}
@@ -12700,6 +12715,15 @@ function printJSXChildren(items, jsxWhitespace) {
 	}
 
 	return parts;
+}
+
+/**
+ * Whether a child item of {@link printJSXChildren} is a comment in text.
+ * @param {any} node
+ * @returns {boolean}
+ */
+function isCommentNode(node) {
+	return node?.type === 'Block' || node?.type === 'Line';
 }
 
 /**
@@ -13231,7 +13255,12 @@ function printJSXElementBody(
 			return isBefore ? [rawJsxWhitespace, hardline] : [hardline, rawJsxWhitespace];
 		};
 		for (let i = 0; i < parts.length; i += 2) {
-			const part = parts[i];
+			// A child that a word starting with `//` joins (see `printJSXChildren`)
+			// is the first doc of its part
+			let part = parts[i];
+			while (Array.isArray(part) && part.length === 2 && Array.isArray(part[0])) {
+				part = part[0];
+			}
 			const sides =
 				Array.isArray(part) && part.length === 2 && part[0] === ''
 					? commentSides.get(part[1])

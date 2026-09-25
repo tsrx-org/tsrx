@@ -9927,6 +9927,77 @@ export function Short() @{
 			]);
 		});
 
+		// Right after a child, `//` is a comment too, so such a word is text only
+		// after a comment there. A `{" "}` keeps that comment, and the JSX space
+		// before the word broke the line before it.
+		it('renders a word that starts with // after a child the same after formatting', async () => {
+			const text = 'Some text that goes past the print width once it is indented, and then more';
+			const input = `export function AfterSpace() @{
+	<p>${text} {' '}/* c */ //xxxxxxxxxx ends here</p>
+}
+export function AfterSpaceGlued() @{
+	<p>${text} {' '}/* c *///xxxxxxxxxxx ends here</p>
+}
+export function AfterElement() @{
+	<p>${text} <b>t</b>/* c */ //xxxxxxxxxx ends here</p>
+}
+export function AfterSelfClosing() @{
+	<p>${text} <br />/* c */ //xxxxxxxxxx ends here</p>
+}
+export function AfterExpression() @{
+	<p>${text} {'t'}/* c */ //xxxxxxxxxx ends here</p>
+}
+export function AfterFragment() @{
+	<p>${text} <>t</>/* c */ //xxxxxxxxxx ends here</p>
+}`;
+			const result = await format(input, { useTabs: true, singleQuote: true, printWidth: 100 });
+			expect(result).toBeWithNewline(`export function AfterSpace() @{
+	<p>
+		${text}{' '}
+		{' '}/* c */ //xxxxxxxxxx ends here
+	</p>
+}
+export function AfterSpaceGlued() @{
+	<p>
+		${text}{' '}
+		{' '}/* c *///xxxxxxxxxxx ends here
+	</p>
+}
+export function AfterElement() @{
+	<p>
+		${text} <b>t</b>/* c */ //xxxxxxxxxx
+		ends here
+	</p>
+}
+export function AfterSelfClosing() @{
+	<p>
+		${text} <br />/* c */ //xxxxxxxxxx
+		ends here
+	</p>
+}
+export function AfterExpression() @{
+	<p>
+		${text} {'t'}/* c */ //xxxxxxxxxx
+		ends here
+	</p>
+}
+export function AfterFragment() @{
+	<p>
+		${text} <>t</>/* c */ //xxxxxxxxxx
+		ends here
+	</p>
+}`);
+			expect(await render(result)).toEqual(await render(input));
+			expect(await render(input)).toEqual([
+				`<p>${text} //xxxxxxxxxx ends here</p>`,
+				`<p>${text} //xxxxxxxxxxx ends here</p>`,
+				`<p>${text} <b>t</b> //xxxxxxxxxx ends here</p>`,
+				`<p>${text} <br></br> //xxxxxxxxxx ends here</p>`,
+				`<p>${text} t //xxxxxxxxxx ends here</p>`,
+				`<p>${text} t //xxxxxxxxxx ends here</p>`,
+			]);
+		});
+
 		it('keeps a word that starts with // off the start of a line in JSX text', async () => {
 			const input = `const a = <div>${'a'.repeat(40)} ${'b'.repeat(53)} // cc dd</div>;`;
 			expect(await format(input, { useTabs: true, printWidth: 100 })).toBeWithNewline(
