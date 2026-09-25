@@ -1161,48 +1161,19 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * JSX significant-whitespace rule for a template text child. Non-whitespace
-			 * text is always kept; whitespace-only text is kept only when it is an
-			 * intentional inline space (no newline) separating two siblings, and dropped
-			 * when it is layout indentation (contains a newline).
+			 * JSX significant-whitespace rule for a template text child. Text with a
+			 * character other than JSX whitespace is always kept; whitespace-only text
+			 * is kept only when it is an intentional inline space (no line break)
+			 * separating two siblings, and dropped when it is layout indentation (has a
+			 * line break). JSX whitespace is space, tab, and line breaks, as Babel and
+			 * Prettier read it: a non-breaking space is text, which the JSX compiler
+			 * may still trim at the edge of a line, as it does in TSX.
 			 *
 			 * @param {ESTreeJSX.JSXText} node
 			 */
 			#shouldKeepTemplateTextNode(node) {
-				if (!isWhitespaceTextNode(node)) {
-					return true;
-				}
-				return node.value !== '' && !regex_newline_characters.test(node.value);
-			}
-
-			#skipTrailingLayoutWhitespace() {
-				let index = this.start;
-				let has_newline = false;
-				while (index < this.input.length) {
-					const ch = this.input.charCodeAt(index);
-					if (ch === CharCode.lineFeed || ch === CharCode.carriageReturn) {
-						has_newline = true;
-						index++;
-					} else if (ch === CharCode.space || ch === CharCode.tab) {
-						index++;
-					} else if (ch === CharCode.slash && this.input.charCodeAt(index + 1) === CharCode.slash) {
-						const comment_start = index;
-						while (index < this.input.length && !this.#isNewlineCharCode(index)) {
-							index++;
-						}
-						this.#emitTemplateLineComment(comment_start, index, null);
-					} else {
-						break;
-					}
-				}
-				if (!has_newline) return;
-				const loc = get_line_info(this, index);
-				this.start = index;
-				this.startLoc = new acorn.Position(loc.line, loc.column);
-				if (this.pos <= index) {
-					this.curLine = loc.line;
-					this.lineStart = index - loc.column;
-				}
+				const value = node.value;
+				return regex_not_whitespace.test(value) || (value !== '' && !/[\n\r]/.test(value));
 			}
 
 			/**
@@ -5889,66 +5860,6 @@ export function TSRXPlugin(config) {
 				if (this.type === tt.braceL) {
 					body.push(this.#parseNativeTemplateExpressionContainer());
 				} else if (this.type === tstt.jsxText) {
-					// A nested element with its own body can leak a JSX expression context,
-					// so the whitespace after its closing tag is mis-tokenized as a stale
-					// text token whose start was advanced onto the following `<`. Text never
-					// starts at a `<` that can open a tag, so drop the leaked context and
-					// re-read the tag instead of emitting an empty node.
-					if (
-						this.input.charCodeAt(this.start) === CharCode.lessThan &&
-						can_start_tag_after_lt(this.input, this.start)
-					) {
-						if (this.#jsxExpressionContainerDepth > 0) {
-							// Inside a `{ … }` container the whole-stack counts below are
-							// blind: the enclosing template's `tc_expr` contexts sit on the
-							// stack but their elements are not on the container-scoped
-							// `#path`. Scope both counts to the container instead — each
-							// element opened inside it (all on `#path` above the container's
-							// baseline) still owns one `tc_expr` that its closing tag's
-							// `jsxTagEnd` pops itself, so only the run's excess above that
-							// quota is leaked. Popping deeper would make a re-read closing
-							// tag pop the container's brace or the enclosing tag context.
-							const path_baseline = this.#expressionContainerPathBaselines.at(-1) ?? 0;
-							let open_elements = 0;
-							for (let i = path_baseline; i < this.#path.length; i++) {
-								if (this.#isNativeTemplateNode(this.#path[i])) open_elements++;
-							}
-							let run = 0;
-							for (
-								let i = this.context.length - 1;
-								i >= 0 && this.context[i] === tstc.tc_expr;
-								i--
-							) {
-								run++;
-							}
-							while (run > open_elements && this.curContext() === tstc.tc_expr) {
-								this.context.pop();
-								run--;
-							}
-						} else if (this.input.charCodeAt(this.start + 1) === CharCode.slash) {
-							while (this.curContext() === tstc.tc_expr) {
-								this.context.pop();
-							}
-						} else {
-							let native_depth = 0;
-							for (const node of this.#path) {
-								if (this.#isNativeTemplateNode(node)) native_depth++;
-							}
-							let tc_expr_depth = 0;
-							for (const context of this.context) {
-								if (context === tstc.tc_expr) tc_expr_depth++;
-							}
-							while (tc_expr_depth > native_depth && this.curContext() === tstc.tc_expr) {
-								this.context.pop();
-								tc_expr_depth--;
-							}
-						}
-						this.pos = this.start;
-						this.exprAllowed = true;
-						this.next();
-						this.parseTemplateBody(body);
-						return;
-					}
 					const text = this.#parseTemplateRawText();
 					if (this.#shouldKeepTemplateTextNode(text)) {
 						body.push(text);
@@ -6185,7 +6096,6 @@ export function TSRXPlugin(config) {
 						}
 
 						this.#path.pop();
-						this.#skipTrailingLayoutWhitespace();
 						return;
 					}
 					const node = this.parseElement();

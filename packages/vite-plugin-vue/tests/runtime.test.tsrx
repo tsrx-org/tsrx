@@ -3,6 +3,7 @@ import { defineVaporAsyncComponent, inject, provide, reactive, ref, watch, watch
 import { mergeRefs } from '@tsrx/vue/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
+import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtime/jsx-text-whitespace';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
 
@@ -1569,5 +1570,6 @@ describe('tsrx-vue runtime', () => {
 
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
+runJsxTextWhitespaceRuntimeTests({ nbsp: 'kept' });
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
