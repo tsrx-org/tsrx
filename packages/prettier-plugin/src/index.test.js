@@ -21445,4 +21445,34 @@ export { theme };`;
 			expect(result).toBeWithNewline(expected);
 		});
 	});
+
+	// Type arguments on the line after a superclass (#545), right after a class
+	// or function expression (#578), and a `const` type parameter on an object
+	// method (#631) failed to parse; the output of the first two failed on the
+	// next pass. They print as Prettier's `typescript` parser prints them.
+	describe('type arguments and parameters the parser used to reject', () => {
+		it.each([
+			['class A extends B\n<T> {}', 'class A extends B<T> {}\n'],
+			[
+				'class A extends B.C\n  <T, U>\n  implements I\n{}',
+				'class A extends B.C<T, U> implements I {}\n',
+			],
+			['((class<T> { x?: T })<string>).name', '(class<T> {\n  x?: T;\n}<string>).name;\n'],
+			['const A = class<T> { x?: T }<string>;', 'const A = class<T> {\n  x?: T;\n}<string>;\n'],
+			[
+				'const f = function <T>(x: T) { return x; }<string>(1);',
+				'const f = (function <T>(x: T) {\n  return x;\n})<string>(1);\n',
+			],
+			['const v = new class<T> {}<string>();', 'const v = new (class<T> {})<string>();\n'],
+			[
+				'const o = { m<const T>(x: T) { return x; } };',
+				'const o = {\n  m<const T>(x: T) {\n    return x;\n  },\n};\n',
+			],
+		])('formats %j like Prettier', async (input, expected) => {
+			const output = await format(input);
+			expect(output).toBe(expected);
+			expect(output).toBe(await prettier.format(input, { parser: 'typescript' }));
+			expect(await format(output)).toBe(output);
+		});
+	});
 });

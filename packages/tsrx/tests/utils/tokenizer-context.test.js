@@ -9,9 +9,9 @@ import { parse_in_worker, parse_in_worker_with_ast } from '../shared/parse-in-wo
  * Tokens that depend on what comes before them: a comment after a directive's
  * keyword (#477), an expression that starts with `@` after `yield` (#547), a
  * regular expression that starts with `>` (#584), a `</` after an operand
- * (#586), and what can follow an element (#426). Each source is parsed in a
- * worker, so a parse that never returns fails the test instead of stalling the
- * run.
+ * (#586), what can follow an element (#426), and type arguments where a tag
+ * could start (#545, #578). Each source is parsed in a worker, so a parse that
+ * never returns fails the test instead of stalling the run.
  */
 
 /** @type {Array<ParseOptions | undefined>} */
@@ -434,6 +434,140 @@ describe('what follows an element (#426)', () => {
 			'TSSatisfiesExpression',
 			'ConditionalExpression',
 			'LogicalExpression',
+		]);
+	});
+});
+
+describe('type arguments where a tag could start (#545, #578)', () => {
+	/**
+	 * The source text of a node.
+	 * @param {string} source
+	 * @param {unknown} node
+	 */
+	function text(source, node) {
+		const { start, end } = /** @type {{ start: number, end: number }} */ (node);
+		return source.slice(start, end);
+	}
+
+	it("reads a superclass's type arguments that start on the next line", async () => {
+		/** @type {Array<[source: string, superClass: string, typeArguments: string, implements: string[]]>} */
+		const cases = [
+			['class A extends B\n<T> {}', 'B', '<T>', []],
+			['class C extends (a || b)// d\n<T> {}', 'a || b', '<T>', []],
+			['class A extends B.C\n  <T, U>\n  implements I\n{}', 'B.C', '<T, U>', ['I']],
+			['const X = class extends B\n<T,> {};', 'B', '<T,>', []],
+			['function App() @{\n  class A extends B\n  <T> {}\n  <div />\n}', 'B', '<T>', []],
+		];
+		const programs = await parse_all(cases.map(([source]) => source));
+		expect(
+			programs.map((program, index) => {
+				const source = cases[index][0];
+				const heading = /** @type {AST.ClassDeclaration | AST.ClassExpression} */ (
+					find(program, (type) => type === 'ClassDeclaration' || type === 'ClassExpression')
+				);
+				return [
+					text(source, heading.superClass),
+					text(source, heading.superTypeParameters),
+					(heading.implements ?? []).map((node) => text(source, node)),
+				];
+			}),
+		).toEqual(cases.map(([, ...heading]) => heading));
+	});
+
+	it('still reports a tag, or type arguments on a second line, after the superclass', async () => {
+		await expect_errors([
+			['class A extends B\n</div>', 'Unexpected token', '</'],
+			['class A extends B<T>\n<U> {}', 'Unexpected token', '<U>'],
+			// `<div>` reads as type arguments, as it would on the superclass's line.
+			['class A extends B\n<div>x</div> {}', 'Unexpected token', 'x</'],
+		]);
+	});
+
+	it('reads type arguments right after a class or function expression', async () => {
+		/** @type {Array<[source: string, path: string[]]>} */
+		const cases = [
+			['const A = class<T> { x?: T }<string>;', ['TSInstantiationExpression', 'ClassExpression']],
+			[
+				'const f = function <T>(x: T) { return x; }<string>;',
+				['TSInstantiationExpression', 'FunctionExpression'],
+			],
+			['const A = class<T> {} <string>;', ['TSInstantiationExpression', 'ClassExpression']],
+			[
+				'const f = async function* <T>() {}<string>;',
+				['TSInstantiationExpression', 'FunctionExpression'],
+			],
+			[
+				'const r = function <T>(x: T) { return x; }<string>(1);',
+				['CallExpression', 'FunctionExpression'],
+			],
+			['const v = new class<T> {}<string>();', ['NewExpression', 'ClassExpression']],
+			['const t = function () {}<T>`t`;', ['TaggedTemplateExpression', 'FunctionExpression']],
+			[
+				'const n = (class<T> {\n  x?: T;\n}<string>).name;',
+				['MemberExpression', 'TSInstantiationExpression', 'ClassExpression'],
+			],
+			[
+				'function App() @{\n  const A = class<T> {}<string>;\n  <div />\n}',
+				['TSInstantiationExpression', 'ClassExpression'],
+			],
+		];
+		const programs = await parse_all(cases.map(([source]) => source));
+		expect(
+			programs.map((program) => {
+				const path = [];
+				/** @type {(AST.Node & Record<string, any>) | undefined} */
+				let node = value_of(statements(program)[0]);
+				while (node) {
+					path.push(node.type);
+					node = node.expression ?? node.callee ?? node.tag ?? node.object;
+				}
+				return path;
+			}),
+		).toEqual(cases.map(([, path]) => path));
+		expect(
+			programs.map((program, index) => {
+				const node = find(
+					program,
+					(type) =>
+						type === 'TSInstantiationExpression' ||
+						type === 'CallExpression' ||
+						type === 'NewExpression' ||
+						type === 'TaggedTemplateExpression',
+				);
+				return text(cases[index][0], node?.typeArguments);
+			}),
+		).toEqual(cases.map(([source]) => (source.includes('<string>') ? '<string>' : '<T>')));
+	});
+
+	it('keeps a comparison, and an element on the next line, after a class or function expression', async () => {
+		const [comparison, element] = await parse_all([
+			// `(class {} < b) > c`, as in TypeScript.
+			'const a = class {} <b> c;',
+			'const f = function () {}\n<div />',
+		]);
+		const outer = value_of(statements(comparison)[0]);
+		expect([outer.type, outer.operator, outer.left.type, outer.left.operator]).toEqual([
+			'BinaryExpression',
+			'>',
+			'BinaryExpression',
+			'<',
+		]);
+		expect(outer.left.left.type).toBe('ClassExpression');
+		expect(statements(element).map((statement) => value_of(statement).type)).toEqual([
+			'FunctionExpression',
+			'JSXElement',
+		]);
+	});
+
+	it('still takes no type arguments after an element, and reports a tag after a class or function expression where TypeScript does', async () => {
+		await expect_errors([
+			// An element isn't a left-hand-side expression (#426).
+			['const e = <b /><T>;', 'Unexpected token', '<T>'],
+			['const e = @{ <b /> }<T>;', 'Unexpected token', '<T>'],
+			// TypeScript reports these at the same token.
+			['const f = function () {} <div />;', 'Unexpected token', '>;'],
+			['x = class {}<div>a</div>;', 'Unexpected token', '</'],
+			['x = <div>{function () {}</div>', "'}' expected.", '</'],
 		]);
 	});
 });

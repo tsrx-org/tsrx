@@ -3,7 +3,7 @@
 /** @import { DetailedParseOutcome } from '../shared/parse-in-worker.js' */
 
 import { describe, expect, it } from 'vitest';
-import { createJsxTransform, parseModule } from '../../src/index.js';
+import { acorn, createJsxTransform, parseModule } from '../../src/index.js';
 import { as_type, assert_type } from '../shared/node-types.js';
 import { parse_in_worker, parse_in_worker_with_ast } from '../shared/parse-in-worker.js';
 
@@ -905,17 +905,6 @@ describe('decorators on a rest parameter (sveltejs/acorn-typescript#126)', () =>
 		}
 	});
 
-	it('still rejects `...` after decorators in an array pattern', async () => {
-		for (const { source, strict, collect } of await parseBothModes([
-			'const [@a ...x] = y;',
-			'function f([@a ...x]) {}',
-		])) {
-			for (const outcome of [strict, collect]) {
-				expect(outcome, source).toMatchObject({ ok: false, pos: source.indexOf('...') });
-			}
-		}
-	});
-
 	it('keeps an optional decorated pattern parameter in an overload', async () => {
 		const source = 'class A {\n\tm(@a { b }?: T): void;\n\tm() {}\n}';
 		const [{ strict, collect }] = await parseBothModes([source]);
@@ -946,6 +935,69 @@ const PARSE_MODES = [
 function in_every_mode(sources) {
 	return sources.flatMap((source) => PARSE_MODES.map((options) => ({ source, options })));
 }
+
+describe('decorators in an array pattern (sveltejs/acorn-typescript#133)', () => {
+	it('rejects them at the `@`, as in an object pattern', async () => {
+		/** @type {Array<[source: string, decorator: string]>} */
+		const cases = [
+			['const [@a x] = y;', '@a'],
+			['const [@a x = 1] = y;', '@a'],
+			['const [@a [x]] = y;', '@a'],
+			['const [a, @b c] = d;', '@b'],
+			['const [[@a x]] = y;', '@a'],
+			['const [@a ...x] = y;', '@a'],
+			['function f([@a x]) {}', '@a'],
+			['function f([@a ...x]) {}', '@a'],
+			['function f({ a: [@b c] }) {}', '@b'],
+			['for (const [@a x] of y) {}', '@a'],
+			['try {} catch ([@a x]) {}', '@a'],
+			['class A {\n\tconstructor(@a [@b x]: T) {}\n}', '@b'],
+			['const { a: @d b } = c;', '@d'],
+		];
+		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, decorator]) => {
+				const pos = source.indexOf(decorator);
+				const { line, column } = acorn.getLineInfo(source, pos);
+				return PARSE_MODES.map(() => ({
+					ok: false,
+					message: `Unexpected token (${line}:${column})`,
+					pos,
+				}));
+			}),
+		);
+	});
+
+	it('keeps the decorators of parameters, and of a function parameter in a pattern', async () => {
+		const method = 'class A {\n\tm(@a x, @b [y], @c { z }, @d ...rest: unknown[]) {}\n}';
+		const nested = 'function f([a = function (@e x) {}]) {}';
+		const [first, second] = await parseBothModes([method, nested]);
+		for (const outcome of [first.strict, first.collect]) {
+			const { ast, errors } = parsed(outcome, method);
+			expect(errors).toEqual([]);
+			const [declaration] = ast.body;
+			assert_type(declaration, 'ClassDeclaration');
+			const { params } = as_type(declaration.body.body[0], 'MethodDefinition').value;
+			expect(params.map((param) => decoratorTexts(param, method))).toEqual([
+				['@a'],
+				['@b'],
+				['@c'],
+				['@d'],
+			]);
+		}
+		for (const outcome of [second.strict, second.collect]) {
+			const { ast, errors } = parsed(outcome, nested);
+			expect(errors).toEqual([]);
+			const [declaration] = ast.body;
+			assert_type(declaration, 'FunctionDeclaration');
+			const [pattern] = declaration.params;
+			assert_type(pattern, 'ArrayPattern');
+			const element = as_type(pattern.elements[0], 'AssignmentPattern');
+			const inner = as_type(element.right, 'FunctionExpression');
+			expect(decoratorTexts(inner.params[0], nested)).toEqual(['@e']);
+		}
+	});
+});
 
 describe('quoted import attribute keys (sveltejs/acorn-typescript#116)', () => {
 	/**
@@ -1163,5 +1215,147 @@ describe('`@` after `yield` (sveltejs/acorn-typescript#128)', () => {
 		]);
 		const yielded = as_type(as_type(body[0], 'ExpressionStatement').expression, 'YieldExpression');
 		expect(yielded.argument).toBe(null);
+	});
+});
+
+describe("a superclass's type arguments before a line break (sveltejs/acorn-typescript#131)", () => {
+	/**
+	 * The heading of the class that `source` declares or assigns first, as
+	 * source text: the superclass with its type, its type arguments, and the
+	 * interfaces it implements.
+	 * @param {AST.Program} ast
+	 * @param {string} source
+	 */
+	function heading(ast, source) {
+		const [statement] = ast.body;
+		const node =
+			statement.type === 'VariableDeclaration' ? statement.declarations[0].init : statement;
+		const declaration = /** @type {AST.ClassDeclaration | AST.ClassExpression} */ (node);
+		/** @param {unknown} value */
+		const text = (value) => {
+			const { start, end } = /** @type {{ start: number, end: number }} */ (value);
+			return source.slice(start, end);
+		};
+		const superClass = /** @type {AST.Node} */ (declaration.superClass);
+		const typeArguments = declaration.superTypeParameters;
+		return {
+			superClass: [superClass.type, text(superClass)],
+			typeArguments: typeArguments ? text(typeArguments) : null,
+			implements: (declaration.implements ?? []).map(text),
+		};
+	}
+
+	it('keeps them on the class, as on one line', async () => {
+		/** @type {Array<[source: string, expected: ReturnType<typeof heading>]>} */
+		const cases = [
+			[
+				'class D<T> extends Base<T>\n{\n  x = 1;\n}',
+				{ superClass: ['Identifier', 'Base'], typeArguments: '<T>', implements: [] },
+			],
+			[
+				'class E<T> extends Base<T>\n  implements I {}',
+				{ superClass: ['Identifier', 'Base'], typeArguments: '<T>', implements: ['I'] },
+			],
+			[
+				'class A\n  extends React.Component<P, S>\n  implements I, J\n{}',
+				{
+					superClass: ['MemberExpression', 'React.Component'],
+					typeArguments: '<P, S>',
+					implements: ['I', 'J'],
+				},
+			],
+			[
+				'declare class A<T> // 1\nextends B<T> // 2\n{}',
+				{ superClass: ['Identifier', 'B'], typeArguments: '<T>', implements: [] },
+			],
+			[
+				'const X = class extends B<T>\n{};',
+				{ superClass: ['Identifier', 'B'], typeArguments: '<T>', implements: [] },
+			],
+		];
+		const sources = cases.map(([source]) => source);
+		// The same headings on one line.
+		const oneLine = sources.map((source) => source.replace(/\s*(\/\/[^\n]*)?\n\s*/g, ' '));
+		const outcomes = await parseBothModes([...sources, ...oneLine]);
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			const expected = cases[index % cases.length][1];
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				expect(heading(ast, source), source).toEqual(expected);
+			}
+		}
+	});
+
+	it('keeps a parenthesized instantiation expression as the superclass', async () => {
+		const source = 'class A extends (B<T>)\n{}';
+		const [{ strict, collect }] = await parseBothModes([source]);
+		const declaration = as_type(parsed(strict, source).ast.body[0], 'ClassDeclaration');
+		expect(declaration.superClass?.type).toBe('TSInstantiationExpression');
+		expect(declaration.superTypeParameters).toBeUndefined();
+		const preserved = as_type(parsed(collect, source).ast.body[0], 'ClassDeclaration');
+		const parenthesized = as_type(preserved.superClass, 'ParenthesizedExpression');
+		expect(parenthesized.expression.type).toBe('TSInstantiationExpression');
+		expect(preserved.superTypeParameters).toBeUndefined();
+	});
+});
+
+describe('`abstract`, `module`, `namespace` or `type` after `export` that starts no declaration (sveltejs/acorn-typescript#132)', () => {
+	it('reports `Unexpected token` at the word instead of crashing', async () => {
+		// TypeScript reports TS1128 `Declaration or statement expected.` for each.
+		const sources = [
+			'export abstract\nclass A {}',
+			'export abstract\ninterface I {}',
+			'export abstract;',
+			'export abstract 1',
+			'export abstract',
+			'export type\nFoo = 1;',
+			'export namespace\nN {}',
+			'export module\nM {}',
+			'export declare abstract\nclass A {}',
+			'declare module "m" {\n\texport abstract\n\tclass A {}\n}',
+		];
+		const outcomes = await parse_in_worker(in_every_mode(sources));
+		expect(outcomes).toEqual(
+			sources.flatMap((source) => {
+				const pos = source.indexOf('export') + 'export '.length;
+				const { line, column } = acorn.getLineInfo(source, pos);
+				return PARSE_MODES.map(() => ({
+					ok: false,
+					message: `Unexpected token (${line}:${column})`,
+					pos,
+				}));
+			}),
+		);
+	});
+
+	it('still exports the declarations they start', async () => {
+		/** @type {Array<[source: string, type: string]>} */
+		const cases = [
+			['export abstract class A {}', 'ClassDeclaration'],
+			['export type Foo = 1;', 'TSTypeAliasDeclaration'],
+			['export namespace N {}', 'TSModuleDeclaration'],
+			['export module M {}', 'TSModuleDeclaration'],
+			['export declare abstract class A {}', 'ClassDeclaration'],
+			['declare module "m" {\n\texport abstract class A {}\n}', 'TSModuleDeclaration'],
+			// A line break after `declare` or after `export default abstract` doesn't
+			// end the modifier here, unlike TypeScript; #608 decides whether it should
+			['export declare\nclass A {}', 'ClassDeclaration'],
+			['export default abstract\nclass A {}', 'ClassDeclaration'],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				const [statement] = ast.body;
+				const declaration =
+					statement.type === 'ExportNamedDeclaration' ||
+					statement.type === 'ExportDefaultDeclaration'
+						? statement.declaration
+						: statement;
+				expect(declaration?.type, source).toBe(cases[index][1]);
+			}
+		}
 	});
 });

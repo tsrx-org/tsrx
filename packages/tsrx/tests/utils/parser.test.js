@@ -9319,3 +9319,102 @@ describe('JSX whitespace in template text', () => {
 		}
 	});
 });
+
+describe('an at-sign construct after `export` (#607)', () => {
+	/** @type {Array<ParseOptions | undefined>} */
+	const modes = [undefined, { collect: true }, { loose: true }];
+
+	// acorn-typescript takes every `@` after `export` for decorators, and the
+	// construct was parsed as a statement whose `id` the parser then read.
+	it('reports it like another token that starts no declaration, instead of crashing', async () => {
+		/** @type {Array<[source: string, message: string, at: string]>} */
+		const cases = [
+			['export @if (a) { <div /> };', 'Unexpected token', '@'],
+			['export @{ <div /> };', 'Unexpected token', '@'],
+			['export @for (const a of b) { <div /> }', 'Unexpected token', '@'],
+			['export @switch (a) { @case 1: { <div /> } }', 'Unexpected token', '@'],
+			['export @try { <div /> } @catch (e) { <b /> }', 'Unexpected token', '@'],
+			['export foo;', 'Unexpected token', 'foo'],
+			[
+				'export declare @if (a) { <div /> }',
+				"'export declare' must be followed by an ambient declaration.",
+				'@',
+			],
+		];
+		const outcomes = await parse_in_worker(
+			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
+		);
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, message, at]) => {
+				const pos = source.indexOf(at);
+				const { line, column } = acorn.getLineInfo(source, pos);
+				return modes.map(() => ({ ok: false, message: `${message} (${line}:${column})`, pos }));
+			}),
+		);
+	});
+
+	it('still exports a decorated class, and a default at-sign construct', async () => {
+		const sources = ['export @dec class A {}', 'export default @if (a) { <div /> };'];
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+		expect(
+			outcomes.map((outcome) => {
+				if (!outcome.ok) return outcome.message;
+				const [statement] = outcome.ast.body;
+				return [
+					...(outcome.errors ?? []).map((error) => error.message),
+					/** @type {any} */ (statement).declaration.type,
+				];
+			}),
+		).toEqual(
+			[['ClassDeclaration'], ['JSXIfExpression']].flatMap((expected) => modes.map(() => expected)),
+		);
+	});
+});
+
+describe('`const` type parameters on an object method (#631)', () => {
+	/** @type {Array<ParseOptions | undefined>} */
+	const modes = [undefined, { collect: true }, { loose: true }];
+
+	it('reads them like those of an async method, a class method, or a function', async () => {
+		const sources = [
+			'const o = { m<const T>(x: T) { return x; } };',
+			'const o = { m<T, const U extends readonly unknown[]>(x: T, y: U) {} };',
+			'const o = { m\n  <const T>(x: T) {} };',
+			'const o = { async m<const T>(x: T) { return x; } };',
+			'class A { m<const T>(x: T) { return x; } }',
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+		expect(
+			outcomes.map((outcome) => {
+				if (!outcome.ok) return outcome.message;
+				const parameters = /** @type {any} */ (
+					find_first(outcome.ast, (node) => node.type === 'TSTypeParameterDeclaration')
+				).params;
+				return [
+					...(outcome.errors ?? []).map((error) => error.message),
+					parameters.map((/** @type {any} */ parameter) => Boolean(parameter.const)),
+				];
+			}),
+		).toEqual(
+			[[[true]], [[false, true]], [[true]], [[true]], [[true]]].flatMap((expected) =>
+				modes.map(() => expected),
+			),
+		);
+	});
+
+	it('still reports `in` and `out` there, as for a function', async () => {
+		const source = 'const o = { m<in T>(x: T) {} };';
+		const message =
+			"'in' modifier can only appear on a type parameter of a class, interface or type alias.";
+		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
+		expect(outcomes).toEqual([
+			{ ok: false, message: `${message} (1:14)`, pos: 14 },
+			{ ok: true, errors: [message] },
+			{ ok: true, errors: [message] },
+		]);
+	});
+});

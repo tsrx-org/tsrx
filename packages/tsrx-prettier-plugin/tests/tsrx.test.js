@@ -833,3 +833,31 @@ describe('parse errors', () => {
 		}
 	});
 });
+
+// A `<` after a line break or a `}` reads as a tag start in TSRX, except
+// where type arguments follow a superclass (#545) or a class or function
+// expression (#578). A `const` type parameter on an object method failed to
+// parse too (#631). They print as Prettier's `typescript` parser prints them.
+describe('type arguments and parameters the parser used to reject', () => {
+	test.each([
+		['class A extends B\n<T> {}', 'class A extends B<T> {}\n'],
+		[
+			'class A extends B.C\n  <T, U>\n  implements I\n{}',
+			'class A extends B.C<T, U> implements I {}\n',
+		],
+		['((class<T> { x?: T })<string>).name', '(class<T> {\n  x?: T;\n}<string>).name;\n'],
+		['const A = class<T> { x?: T }<string>;', 'const A = class<T> {\n  x?: T;\n}<string>;\n'],
+		[
+			'const f = function <T>(x: T) { return x; }<string>(1);',
+			'const f = (function <T>(x: T) {\n  return x;\n})<string>(1);\n',
+		],
+		['const v = new class<T> {}<string>();', 'const v = new (class<T> {})<string>();\n'],
+		[
+			'const o = { m<const T>(x: T) { return x; } };',
+			'const o = {\n  m<const T>(x: T) {\n    return x;\n  },\n};\n',
+		],
+	])('formats %j like Prettier', async (input, expected) => {
+		await expectFormat(input, expected);
+		expect(expected).toBe(await prettier.format(input, { parser: 'typescript' }));
+	});
+});
