@@ -12936,6 +12936,40 @@ item
 		});
 	});
 
+	// Like Prettier's `printTypeAnnotationProperty`, a type annotation prints
+	// its own `:` (or `=>`), after its leading comments (#461)
+	describe('comments before the colon of a type annotation', () => {
+		it.each([
+			'let x /* c */ : T = 1;',
+			'function f(a /* c */ : T) {}',
+			'function f(a) /* c */ : T {}',
+			'const f = (a) /* c */ : T => a;',
+			'const f = <T,>(a: T) /* c */ : T => a;',
+			'const f = function (a) /* c */ : T {};',
+			'class A {\n  m() /* c */ : T {}\n}',
+			'const o = { m() /* c */ : T {} };',
+			'interface I {\n  m() /* c */ : T;\n}',
+			'declare function f() /* c */ : T;',
+			'type F = (a /* c */ : T) => void;',
+			'function f(a? /* c */ : T) {}',
+			'function f(a) /* c */ : asserts a is T {}',
+			'class A {\n  constructor(private a /* c */ : T) {}\n}',
+			'const { a } /* c */ : T = o;',
+			'function f({ a } /* c */ : T) {}',
+			'const [a] /* c */ : T = o;',
+			'let x: /* c */ T = 1;',
+			'function f(a): /* c */ T {}',
+			'const { a /* c */ }: T = o;',
+			'interface I {\n  x /* c */: T;\n}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a line comment before the colon on its line, like Prettier', async () => {
+			expect(await format('let x // c\n  : T = 1;')).toBeWithNewline('let x // c\n: T = 1;');
+		});
+	});
+
 	// A comment between a class or interface heading and its body used to trail
 	// the heading and print after the {, or before it on the next pass (#406).
 	// Like Prettier's handleClassComments, it moves into the body.

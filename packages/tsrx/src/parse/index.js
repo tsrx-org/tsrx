@@ -1808,12 +1808,18 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 							const slice = source.slice(end_node.end, comments[0].start);
 
+							// A typed pattern's comments between its `}` and the `:` lead the
+							// type annotation, like Prettier: `{ a } /* c */ : T`
 							const trailingCommentBoundary =
 								parent &&
 								parent.type === 'ObjectPattern' &&
 								parent.typeAnnotation &&
 								parent.typeAnnotation.start !== undefined
-									? parent.typeAnnotation.start
+									? findOutsideComments(
+											'}',
+											/** @type {AST.NodeWithLocation} */ (node).end,
+											parent.typeAnnotation.start,
+										)
 									: parent &&
 										  (parent.type === 'ImportDeclaration' ||
 												parent.type === 'ExportNamedDeclaration') &&
