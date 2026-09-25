@@ -888,6 +888,34 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Like `#previousNonSpaceTabIndex`, but also steps back over block
+			 * comments between the previous token and `index`. A block comment that
+			 * spans lines returns the index of its last line break instead: as for
+			 * ASI, a line break inside a comment still separates the tokens around it.
+			 * Line comments need no handling, since one always ends at a line break.
+			 * @param {number} index
+			 */
+			#previousNonSpaceTabCommentIndex(index) {
+				let cursor = this.#previousNonSpaceTabIndex(index);
+				while (
+					cursor > 2 &&
+					this.input.charCodeAt(cursor) === CharCode.slash &&
+					this.input.charCodeAt(cursor - 1) === CharCode.asterisk
+				) {
+					const open = this.input.lastIndexOf('/*', cursor - 3);
+					// Only a comment in the gap before `index` counts: from its start, only
+					// whitespace and comments may lead to `index`. A `*/` that ends a regex
+					// or a string's text fails this check.
+					if (open === -1 || skip_space_and_comments_from(this.input, open) !== index) break;
+					for (let i = cursor - 2; i > open + 1; i--) {
+						if (this.#isNewlineCharCode(i)) return i;
+					}
+					cursor = this.#previousNonSpaceTabIndex(open);
+				}
+				return cursor;
+			}
+
+			/**
 			 * @param {number} end_index Inclusive index of the keyword's last character.
 			 * @param {string} keyword
 			 */
@@ -2226,14 +2254,24 @@ export function TSRXPlugin(config) {
 						} finally {
 							this.#readingJSXControlFlowHeader = previous_reading_header;
 						}
-						this.expect(tt.braceL);
-						// Each arm's braces are its own template block, so setup locals
-						// in separate arms may share names, like `@if`/`@else` branches.
-						this.enterScope(0);
-						while (this.type !== tt.braceR) {
-							this.#parseJSXSwitchCaseConsequent(current.consequent);
+						// Like an `@if` body, the arm's `{ }` is code: hide the enclosing
+						// template from `#path` while its tokens are read, so a `/` reads as
+						// a regex or division and a `#` as a private name instead of template
+						// text. Render nodes re-establish their own path via `parseElement`.
+						const enclosing_path = this.#path;
+						this.#path = [];
+						try {
+							this.expect(tt.braceL);
+							// Each arm's braces are its own template block, so setup locals
+							// in separate arms may share names, like `@if`/`@else` branches.
+							this.enterScope(0);
+							while (this.type !== tt.braceR) {
+								this.#parseJSXSwitchCaseConsequent(current.consequent);
+							}
+							this.exitScope();
+						} finally {
+							this.#path = enclosing_path;
 						}
-						this.exitScope();
 						this.expect(tt.braceR);
 						node.cases.push(this.finishNode(current, 'SwitchCase'));
 						continue;
@@ -2368,8 +2406,17 @@ export function TSRXPlugin(config) {
 				// code.
 				if (this.type !== tstt.jsxText && this.type !== tt.eof) {
 					this.#filterTemplateScriptContexts();
+					// The statement's first token is already read. A template literal's
+					// backtick or an opening paren pushed its own context, which must stay
+					// on top, or the rest of the template reads as code and the closing
+					// paren pops the statement context instead.
+					const token_context =
+						this.type === tt.backQuote || this.type === tt.parenL ? this.context.pop() : undefined;
 					if (this.curContext() !== b_stat) {
 						this.context.push(b_stat);
+					}
+					if (token_context) {
+						this.context.push(token_context);
 					}
 					this.#parsingJSXSwitchCaseScriptStatementDepth++;
 					try {
@@ -2524,6 +2571,16 @@ export function TSRXPlugin(config) {
 				const closingEndInfo = get_line_info(this, closingEnd);
 				this.curLine = closingEndInfo.line;
 				this.lineStart = closingEnd - closingEndInfo.column;
+				// The current token is still the first one read after the opening tag,
+				// inside the raw body. `next()` below records it as the last token, and
+				// nodes that finish after this element (the declarator and declaration
+				// of `const theme = <style>…</style>`) end at the last token's end, so
+				// make the closing tag the current token first.
+				const closingStartInfo = get_line_info(this, closingStart);
+				this.start = closingStart;
+				this.startLoc = new acorn.Position(closingStartInfo.line, closingStartInfo.column);
+				this.end = closingEnd;
+				this.endLoc = new acorn.Position(closingEndInfo.line, closingEndInfo.column);
 				if (insideTemplate && relativeCloseStart === 0) {
 					// Acorn has already tokenized the adjacent tag start (this element's
 					// closing tag, or, when unclosed, the next sibling or parent close);
@@ -2778,35 +2835,13 @@ export function TSRXPlugin(config) {
 			 * @param {number} enclosing_context_depth
 			 */
 			#popTokenContextsAfterTemplateExpressionElement(node, enclosing_context_depth) {
-				// A fragment in expression position (`() => <>…</>`) leaves the tokenizer
-				// at `exprAllowed === false`, unlike a self-closing element. When the next
-				// token is a `;` or ASI can insert one, the following statement may
-				// legitimately open with a JSX tag (`<List/>`), so restore expression
-				// position to match the element path.
-				if ((this.type === tt.semi || this.canInsertSemicolon()) && node.type === 'JSXFragment') {
-					this.exprAllowed = true;
-				}
-				// A JSX element/fragment used as a ternary consequent (`cond ? <a>…</a> : …`)
-				// likewise leaves the tokenizer at `exprAllowed === false`, so the `<` after
-				// the `:` would not start a tag. Restore expression position so the alternate
-				// branch parses as JSX too. This applies to both elements and fragments,
-				// unlike the `;`/ASI case above (a `:` only follows a value, so the next
-				// token always begins the alternate expression).
-				if (this.type === tt.colon) {
-					this.exprAllowed = true;
-				}
+				// The token after the element (`;`, `:`, `,`, `return`, …) is already
+				// read, and its own context update set `exprAllowed` for the token after
+				// it.
 				const ctx = this.context;
 				const ci = ctx.length - 1;
 				const top = ctx[ci];
 				const second = ctx[ci - 1];
-
-				// A paired JSX element/fragment finishes on the closing tag's `>`, which
-				// leaves `exprAllowed` false even when the already-read next token is a
-				// comma. Re-arm expression mode for the value after that comma, matching
-				// the tokenizer state produced by a self-closing JSX element.
-				if (this.type === tt.comma) {
-					this.exprAllowed = true;
-				}
 
 				// Expression-bodied templates (no statement child) followed by `,`
 				// in an object/array literal need surgical fixups; statement-bodied
@@ -3450,8 +3485,10 @@ export function TSRXPlugin(config) {
 
 					// Check what character/token precedes the <
 					if (lookback >= 0) {
-						const prevChar = this.input.charCodeAt(lookback);
-						prevNonWhitespaceChar = prevChar;
+						// Comments are skipped, so `/* note */ <div />` on its own line still
+						// starts a tag after a statement without a semicolon.
+						const previous = this.#previousNonSpaceTabCommentIndex(this.pos);
+						prevNonWhitespaceChar = previous >= 0 ? this.input.charCodeAt(previous) : null;
 
 						if (
 							nextChar !== CharCode.slash &&
@@ -5253,7 +5290,6 @@ export function TSRXPlugin(config) {
 						if (this.#isDynamicJSXElementName(closingElement.name)) {
 							closingElement.isDynamic = true;
 						}
-						this.exprAllowed = false;
 
 						// Validate that the closing tag matches the opening tag
 						const currentElement = /** @type {AST.NativeTSRXTemplateNode} */ (
