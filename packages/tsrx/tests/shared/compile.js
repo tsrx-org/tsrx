@@ -1,6 +1,7 @@
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { DIAGNOSTIC_CODES } from '../../src/diagnostics.js';
+import { TSRX_JSX_SPREAD_CHILD_ERROR } from '../../src/analyze/validation.js';
 import { runSharedScopedStyleTests } from './scoped-styles.js';
 import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformance.js';
 
@@ -103,6 +104,37 @@ export function App() @{
 			expect(mapping).toBeDefined();
 			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
 			expect(code.slice(generated, generated + 'handle'.length)).toBe('handle');
+		});
+	});
+
+	describe(`[${name}] JSX spread children in virtual code`, () => {
+		// Analysis reports spread children, but the editor still gets typed
+		// code that keeps the spread and maps its expression.
+		it('reports each spread child and keeps it in the virtual code', () => {
+			const source = `export function App({ items }: { items: any[] }) @{
+	<div>
+		{...items}
+		<>{...items}</>
+	</div>
+}`;
+			const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			const first = source.indexOf('{...items}');
+			const second = source.indexOf('{...items}', first + 1);
+			expect(errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				[DIAGNOSTIC_CODES.JSX_SPREAD_CHILD, first, first + '{...items}'.length],
+				[DIAGNOSTIC_CODES.JSX_SPREAD_CHILD, second, second + '{...items}'.length],
+			]);
+			expect(code).toContain('<div>{...items}<>{...items}</></div>');
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+
+			for (const spread of [first, second]) {
+				const items = source.indexOf('items', spread);
+				const mapping = mappings.find((candidate) => candidate.sourceOffsets[0] === items);
+				expect(mapping).toBeDefined();
+				const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
+				expect(code.slice(generated, generated + 'items'.length)).toBe('items');
+			}
 		});
 	});
 
@@ -2122,6 +2154,60 @@ export function App() @{
 			expect(code).toContain('let c = <></>;');
 			expect(code).not.toMatch(/let c = ;/);
 		});
+	});
+
+	describe(`[${name}] JSX spread children`, () => {
+		// Spread children parse, but analysis reports them on every target: a
+		// normal compile throws, and collect mode records the diagnostic and
+		// still produces code.
+		const cases = [
+			[
+				'a template child',
+				`export function App({ items }: { items: any[] }) @{
+	<div>
+		{...items}
+		<span />
+	</div>
+}`,
+			],
+			[
+				'the only child of a fragment',
+				`export function App({ items }: { items: any[] }) @{\n\t<>{...items}</>\n}`,
+			],
+			[
+				'a child in plain TSX',
+				`export function List({ items }: { items: any[] }) {\n\treturn <ul>{...items}</ul>;\n}`,
+			],
+			[
+				'a child of an element in an attribute value',
+				`export function App({ items }: { items: any[] }) @{\n\t<Card content={<i>{...items}</i>} />\n}`,
+			],
+		];
+
+		for (const [label, source] of cases) {
+			const start = source.indexOf('{...items}');
+			const end = start + '{...items}'.length;
+
+			it(`throws for ${label}`, () => {
+				expect(() => compile(source, 'App.tsrx')).toThrow(
+					expect.objectContaining({
+						message: TSRX_JSX_SPREAD_CHILD_ERROR,
+						code: DIAGNOSTIC_CODES.JSX_SPREAD_CHILD,
+						pos: start,
+						end,
+					}),
+				);
+			});
+
+			it(`records ${label} in collect mode`, () => {
+				const { code, errors } = compile(source, 'App.tsrx', { collect: true });
+
+				expect(errors.map((error) => [error.code, error.message, error.pos, error.end])).toEqual([
+					[DIAGNOSTIC_CODES.JSX_SPREAD_CHILD, TSRX_JSX_SPREAD_CHILD_ERROR, start, end],
+				]);
+				expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			});
+		}
 	});
 
 	describe(`[${name}] component export shapes`, () => {

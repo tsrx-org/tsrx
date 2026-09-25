@@ -7,6 +7,8 @@ export const DIAGNOSTIC_CODES = {
 	TEMPLATE_EXPRESSION_TRAILING_SEMICOLON: 'tsrx-template-expression-trailing-semicolon',
 	TEMPLATE_RETURN_STATEMENT: 'tsrx-template-return-statement',
 	FORGOTTEN_STATEMENT_CONTAINER: 'tsrx-forgotten-statement-container',
+	/** A JSX spread child (`{...items}`), which parses but no target supports. */
+	JSX_SPREAD_CHILD: 'tsrx-jsx-spread-child',
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'tsrx-style-apply-value',
 	/** An `apply` entry is not an identifier, member, or array of those, or does not resolve to a style block. */

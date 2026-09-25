@@ -3614,6 +3614,14 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 		}
 
+		case 'JSXSpreadChild':
+			nodeContent = printJSXSpreadChild(
+				/** @type {AstPath<ESTreeJSX.JSXSpreadChild>} */ (path),
+				options,
+				print,
+			);
+			break;
+
 		case 'Decorator':
 			nodeContent = ['@', path.call(print, 'expression')];
 			break;
@@ -12108,6 +12116,44 @@ function printJSXExpressionContainer(expression, expressionDoc, isChild) {
 		return group(['{', expressionDoc, lineSuffixBoundary, '}']);
 	}
 	return group(['{', indent([softline, expressionDoc]), softline, lineSuffixBoundary, '}']);
+}
+
+/**
+ * Print a spread child, `{...expr}`, like Prettier's JSX spread printer: the
+ * expression's leading comments print ahead of the `...`, and a line comment
+ * breaks the braces open so it stays inside them. The comments of a type cast
+ * stay on its parentheses.
+ * @param {AstPath<ESTreeJSX.JSXSpreadChild>} path - The spread child's path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printJSXSpreadChild(path, options, print) {
+	const expression = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node.expression);
+	const isTypeCast = path.call(
+		(expressionPath) => getTypeCastParens(expressionPath, options) !== null,
+		'expression',
+	);
+	const leadingComments = isTypeCast ? [] : (expression.leadingComments ?? []);
+	if (leadingComments.length === 0 && !expression.trailingComments?.length) {
+		return ['{...', path.call(print, 'expression'), '}'];
+	}
+	return group([
+		'{',
+		indent([
+			softline,
+			...printLeadingComments(expression, leadingComments, options),
+			'...',
+			path.call(
+				(expressionPath) =>
+					print(expressionPath, { suppressLeadingComments: leadingComments.length > 0 }),
+				'expression',
+			),
+		]),
+		softline,
+		lineSuffixBoundary,
+		'}',
+	]);
 }
 
 /**
