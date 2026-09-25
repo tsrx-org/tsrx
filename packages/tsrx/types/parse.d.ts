@@ -1271,7 +1271,23 @@ export namespace Parse {
 		 */
 		tsParseTypeOrTypePredicateAnnotation(returnToken: TokenType): AST.TSTypeAnnotation;
 
-		tsParseTypeArguments(): AST.Node;
+		tsParseTypeArguments(): AST.TSTypeParameterInstantiation;
+
+		/**
+		 * Parse an import type, `import('mod', { with: { … } }).Name<T>`
+		 * (@sveltejs/acorn-typescript)
+		 */
+		tsParseImportType(): AST.TSImportType;
+
+		/**
+		 * Parse a type name, dotted or not (`A`, `A.B.C`) (@sveltejs/acorn-typescript)
+		 */
+		tsParseEntityName(allowReservedWords?: boolean): AST.Identifier | AST.TSQualifiedName;
+
+		/**
+		 * Whether the current token is a `<` (@sveltejs/acorn-typescript)
+		 */
+		tsMatchLeftRelational(): boolean;
 
 		/**
 		 * Parse type arguments in an expression position, rescanning the `<` that was

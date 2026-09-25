@@ -244,6 +244,28 @@ export function tsx_with_ts_locations(
 				context.visit(node.typeParameters);
 			}
 		},
+		// esrap's TSImportType printer drops `options`, the import attributes in
+		// `import('./data.json', { with: { type: 'json' } })`, which TypeScript
+		// reads, for instance to pick the module's `resolution-mode`
+		// (sveltejs/esrap#231). Remove this once esrap prints them.
+		TSImportType: (node, context) => {
+			if (!node.options) {
+				/** @type {NonNullable<typeof base.TSImportType>} */ (base.TSImportType)(node, context);
+				return;
+			}
+			context.write('import(');
+			context.visit(node.argument);
+			context.write(', ');
+			context.visit(node.options);
+			context.write(')');
+			if (node.qualifier) {
+				context.write('.');
+				context.visit(node.qualifier);
+			}
+			if (node.typeArguments) {
+				context.visit(node.typeArguments);
+			}
+		},
 		// esrap's TSParameterProperty printer drops `override`, so
 		// `constructor(override readonly n: number)` typechecks as TS4115
 		// ("must have an 'override' modifier") under `noImplicitOverride`.

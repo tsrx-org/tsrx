@@ -1293,10 +1293,13 @@ declare module 'estree' {
 	}
 	interface TSImportType extends Omit<
 		AcornTSNode<TSESTree.TSImportType>,
-		'argument' | 'qualifier' | 'typeParameters'
+		'argument' | 'options' | 'qualifier' | 'typeArguments' | 'typeParameters'
 	> {
 		argument: TypeNode;
+		/** The import attributes, `{ with: { … } }` in `import('mod', { with: { … } })`. */
+		options: AST.ObjectExpression | null;
 		qualifier: EntityName | null;
+		typeArguments: TSTypeParameterInstantiation | undefined;
 		// looks like acorn-typescript has typeParameters
 		typeParameters: TSTypeParameterDeclaration | undefined | undefined;
 	}

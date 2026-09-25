@@ -2277,9 +2277,12 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSImportType') {
-				// Import type: import("module").Type
+				// Import type: import("module", { with: { … } }).Type
 				if (node.argument) {
 					visit(node.argument);
+				}
+				if (node.options) {
+					visit(node.options);
 				}
 				if (node.qualifier) {
 					visit(node.qualifier);
