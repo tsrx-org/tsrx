@@ -747,6 +747,7 @@ describe('TSRX parser', () => {
 			['<span />', 'JSXElement'],
 			['<span>x</span>', 'JSXElement'],
 			['<>x</>', 'JSXFragment'],
+			['<{tag}>\n  <b>x</b>\n</{tag}>', 'JSXElement'],
 		]) {
 			const declaration = firstStatement(
 				parseModule(`const half = ${element} / 2\n`, 'App.tsrx'),
@@ -786,6 +787,13 @@ describe('TSRX parser', () => {
 				node.type === 'JSXText' ? node.value : openingName(as_type(node, 'JSXElement')).name,
 			),
 		).toEqual(['span', ' / 2', 'b', '/3']);
+
+		// The `}` after a code block's rendered dynamic element closes the block.
+		const block = findNode(
+			'export function Panel() @{\n  <{tag} class="panel">\n    <h2>{title}</h2>\n  </{tag}>\n}',
+			'JSXCodeBlock',
+		);
+		expect(dynamicName(as_type(codeBlockRender(block), 'JSXElement')).type).toBe('Identifier');
 	});
 
 	it('reads an element after await as the awaited value', () => {
@@ -858,6 +866,17 @@ describe('TSRX parser', () => {
 		expect(() =>
 			parseModule('export function App() @{\n  a\n  /b/.test(s)\n  <span />\n}', 'App.tsrx'),
 		).toThrow();
+
+		// A code block used as a value divides after its `}`, with or without
+		// setup statements before its render node.
+		for (const setup of ['', 'const q = 1; ']) {
+			const declaration = firstStatement(
+				parseModule(`const a = @{ ${setup}<b /> } / 2\n`, 'App.tsrx'),
+				'VariableDeclaration',
+			);
+			const division = as_type(declaratorInit(declaration), 'BinaryExpression');
+			expect([division.left.type, division.operator]).toEqual(['JSXCodeBlock', '/']);
+		}
 	});
 
 	it('starts an element after a semicolon-less statement that ends with a type', () => {

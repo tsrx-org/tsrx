@@ -20,6 +20,8 @@ parses and the formatter's `semi: false` output parses again:
 - In a `@{ … }` code block or a directive body, a setup statement can divide
   after its first token (`total / count > 1`, `(a) / b`). It used to fail with
   `Unterminated regular expression`.
+- A `@{ … }` code block used as a value can be divided (`@{ <b /> } / 2`). It
+  used to fail with `Unterminated regular expression`.
 - An element on the line after a semicolon-less statement that ends with a type
   (`const x = y as Foo`, `let x: Foo`, `type T = Foo`) starts a new statement,
   as it does after `const x = y`. A `<` that starts a line inside a type is

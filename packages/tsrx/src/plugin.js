@@ -1730,7 +1730,9 @@ export function TSRXPlugin(config) {
 					return this.#parseJSXControlFlowExpression();
 				}
 
-				// Re-read the `<` so its `jsxTagStart` pushes the opening-tag contexts.
+				// Re-read the `<` so its `jsxTagStart` pushes the opening-tag contexts,
+				// in place of the ones it pushed when it was first read.
+				this.context.length -= this.#currentTokenContextCount();
 				this.pos = at_index;
 				this.exprAllowed = true;
 				this.next();
@@ -4994,8 +4996,9 @@ export function TSRXPlugin(config) {
 				// tc_oTag/tc_expr) stripped off. A balanced element should leave the
 				// stack here; the body (especially a control-flow block) can otherwise
 				// leave residue that breaks tokenizing the following JS token when the
-				// element is in expression position.
-				let pre_element_context_depth = this.context.length;
+				// element is in expression position. The token after `<` is already read,
+				// so the `{` of a dynamic tag name (`<{tag}>`) doesn't count.
+				let pre_element_context_depth = this.context.length - this.#currentTokenContextCount();
 				while (pre_element_context_depth > 0) {
 					const ctx = this.context[pre_element_context_depth - 1];
 					if (ctx === tstc.tc_expr || ctx === tstc.tc_oTag || ctx === tstc.tc_cTag) {
