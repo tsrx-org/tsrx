@@ -14732,6 +14732,41 @@ item
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
+		// A line comment after the superclass and its type arguments ends the
+		// heading, and the next format moves it into the body, as the parser
+		// does with one before the body, so it prints there. Prettier prints it
+		// after the type arguments, with the body on the next line, and moves it
+		// into the body on its next pass.
+		it.each([
+			[
+				'class A extends (a || b // c\n)<T> {\n  x = 1;\n}',
+				'class A extends (a || b)<T> {\n  // c\n  x = 1;\n}',
+			],
+			['class A extends (a || b // c\n)<T> {}', 'class A extends (a || b)<T> {\n  // c\n}'],
+			[
+				'class A extends (a || b // c\n)<T> {\n  // d\n}',
+				'class A extends (a || b)<T> {\n  // c\n  // d\n}',
+			],
+			[
+				'x = class extends (a || b // c\n)<T> {\n  x = 1;\n};',
+				'x = class extends (a || b)<T> {\n  // c\n  x = 1;\n};',
+			],
+			[
+				'class A extends (a || b /* e */ // c\n)<T> {\n  x = 1;\n}',
+				'class A extends (a || b)<T> /* e */ {\n  // c\n  x = 1;\n}',
+			],
+			[
+				'class A extends /** @type {X} */ (a // c\n)<T> {\n  x = 1;\n}',
+				'class A extends /** @type {X} */ (a)<T> {\n  // c\n  x = 1;\n}',
+			],
+			['class A extends (B) // c\n{\n  x = 1;\n}', 'class A extends B {\n  // c\n  x = 1;\n}'],
+		])(
+			'moves the line comment after the superclass in %j into the body',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
 		// A comment before a heritage clause trails the name, the type
 		// parameters, or the superclass before it, so it doesn't print after
 		// `implements` or `extends`, and the heading breaks

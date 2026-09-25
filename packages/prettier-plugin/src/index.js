@@ -22,7 +22,7 @@
  * @typedef {AST.Node & { decorators?: AST.Decorator[] }} MaybeDecoratedNode
  */
 
-/** @typedef {{ suppressLeadingComments?: boolean, suppressTrailingComments?: boolean, suppressExpressionLeadingComments?: boolean, suppressOwnParens?: boolean, isInlineContext?: boolean, isStatement?: boolean, isLogicalAndOr?: boolean, allowShorthandProperty?: boolean, isFirstChild?: boolean, noBreakInside?: boolean, expandLastArg?: boolean, expandFirstArg?: boolean, assignmentLayout?: AssignmentLayout }} PrintArgs */
+/** @typedef {{ suppressLeadingComments?: boolean, suppressTrailingComments?: boolean, suppressExpressionLeadingComments?: boolean, suppressOwnParens?: boolean, isInlineContext?: boolean, isStatement?: boolean, isLogicalAndOr?: boolean, allowShorthandProperty?: boolean, isFirstChild?: boolean, noBreakInside?: boolean, expandLastArg?: boolean, expandFirstArg?: boolean, assignmentLayout?: AssignmentLayout, firstComments?: AST.Comment[] }} PrintArgs */
 
 import { parseModule } from '@tsrx/core';
 import { doc } from 'prettier';
@@ -2578,14 +2578,15 @@ function printTypeCastParens(node, typeCastParens, nodeContent, options, args, w
  * one on a line of its own moves to a line of its own after the node's line.
  * @param {AST.Node} node - The AST node
  * @param {TsrxFormatOptions} options - Prettier options
+ * @param {AST.Comment[]} [comments] - The comments to print, when not all of them
  * @returns {Doc[]}
  */
-function printTrailingComments(node, options) {
+function printTrailingComments(node, options, comments = node.trailingComments ?? []) {
 	const text = /** @type {string} */ (options.originalText);
 	/** @type {Doc[]} */
 	const trailingParts = [];
 
-	for (const comment of node.trailingComments ?? []) {
+	for (const comment of comments) {
 		const commentStart = /** @type {AST.NodeWithLocation} */ (comment).start;
 		// Like Prettier, a comment stays on the line it shares with code, even
 		// a `;` that isn't printed
@@ -2938,7 +2939,7 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'ClassBody':
-			nodeContent = printClassBody(node, path, options, print);
+			nodeContent = printClassBody(node, path, options, print, args?.firstComments);
 			break;
 
 		case 'PropertyDefinition':
@@ -6580,6 +6581,8 @@ function printClassDeclaration(node, path, options, print) {
 	const heritage = [];
 	// Whether the heading ends with a comment after the superclass
 	let endsWithComment = false;
+	/** @type {AST.Comment[]} */
+	let bodyComments = [];
 	if (node.superClass) {
 		const superClassNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node.superClass);
 		// A JSDoc cast prints its comments, and parentheses the superclass needs
@@ -6597,10 +6600,19 @@ function printClassDeclaration(node, path, options, print) {
 					// The class owns these parens, so the superclass must not add its own
 					suppressOwnParens: addsParens,
 					suppressLeadingComments: printsComments,
-					suppressTrailingComments: printsComments,
+					suppressTrailingComments: true,
 				}),
 			'superClass',
 		);
+		// A line comment after the superclass and its type arguments ends the
+		// heading, and the next format moves it into the body, as the parser
+		// does with one before the body (Prettier moves it on its next pass
+		// too), so it prints there
+		const trailingComments = superClassNode.trailingComments ?? [];
+		if (!node.implements?.length) {
+			bodyComments = trailingComments.filter((comment) => comment.type === 'Line');
+		}
+		const headingComments = trailingComments.filter((comment) => !bodyComments.includes(comment));
 		/** @type {Doc} */
 		let superClassDoc = superClass;
 		if (addsParens) {
@@ -6630,18 +6642,13 @@ function printClassDeclaration(node, path, options, print) {
 		if (node.superTypeParameters) {
 			superClassParts.push(path.call(print, 'superTypeParameters'));
 		}
-		if (printsComments) {
-			superClassParts.push(...printTrailingComments(superClassNode, options));
-		}
+		superClassParts.push(...printTrailingComments(superClassNode, options, headingComments));
 		const typeArguments = /** @type {AST.NodeWithMaybeComments | undefined} */ (
 			node.superTypeParameters
 		);
 		endsWithComment =
 			!node.implements?.length &&
-			Boolean(
-				(printsComments && superClassNode.trailingComments?.length) ||
-				typeArguments?.trailingComments?.length,
-			);
+			Boolean(headingComments.length || typeArguments?.trailingComments?.length);
 		heritage.push(groupMode ? [line, group(superClassParts)] : [' ', superClassParts]);
 	}
 
@@ -6649,8 +6656,13 @@ function printClassDeclaration(node, path, options, print) {
 	// checks the class against, so dropping them silently loses those checks
 	heritage.push(printHeritageClauses(node, path, options, print, groupMode));
 
+	const body = path.call(
+		(bodyPath) =>
+			bodyComments.length > 0 ? print(bodyPath, { firstComments: bodyComments }) : print(bodyPath),
+		'body',
+	);
 	if (!groupMode) {
-		return [...parts, ...heritage, ' ', path.call(print, 'body')];
+		return [...parts, ...heritage, ' ', body];
 	}
 
 	// Like Prettier, a class whose heading breaks starts its body on a new
@@ -6663,7 +6675,7 @@ function printClassDeclaration(node, path, options, print) {
 		node.body.body.length > 0 && !endsWithComment
 			? ifBreak(hardline, ' ', { groupId: heritageGroupId })
 			: ' ',
-		path.call(print, 'body'),
+		body,
 	];
 }
 
@@ -6894,11 +6906,14 @@ function printCatchClause(node, path, options, print) {
  * @param {AstPath<AST.ClassBody>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
+ * @param {AST.Comment[]} [firstComments] - Comments from the heading that
+ *   print as the body's first lines
  * @returns {Doc}
  */
-function printClassBody(node, path, options, print) {
+function printClassBody(node, path, options, print, firstComments = []) {
 	if (!node.body || node.body.length === 0) {
-		const comments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
+		const innerComments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
+		const comments = [...firstComments, ...innerComments];
 		// Like Prettier's `printDanglingComments`, on consecutive lines
 		return comments.length === 0
 			? '{}'
@@ -6921,7 +6936,10 @@ function printClassBody(node, path, options, print) {
 	// Like Prettier, every member starts its own line, and one blank line
 	// stays where the source has one
 	/** @type {Doc[]} */
-	const parts = [];
+	const parts = firstComments.flatMap((comment) => [
+		printComment(comment, options.originalText),
+		hardline,
+	]);
 	for (let i = 0; i < members.length; i++) {
 		if (i > 0) {
 			parts.push(hardline);
