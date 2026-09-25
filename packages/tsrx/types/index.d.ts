@@ -704,11 +704,6 @@ declare module 'estree' {
 	}
 	interface ImportExpression {
 		phase?: 'defer' | null;
-		/**
-		 * acorn parks an ordinary `import(source, options)` call's second
-		 * argument here; only a deferred import fills in `options`.
-		 */
-		arguments?: AST.Expression[];
 	}
 	interface ImportSpecifier {
 		importKind: TSESTree.ImportSpecifier['importKind'];

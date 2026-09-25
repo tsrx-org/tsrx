@@ -6037,14 +6037,12 @@ function printCallArguments(path, options, print, keepOnCallLine = true) {
 				index === 0 ? 'argument' : 'options',
 			);
 		}
-		// An `import()`'s are its `source` and `options` (see getImportOptions)
+		// An `import()`'s are its `source` and `options`
 		if (node.type === 'ImportExpression') {
-			const importPath = /** @type {AstPath<AST.ImportExpression>} */ (path);
-			return index === 0
-				? importPath.call(printAt, 'source')
-				: node.options
-					? importPath.call(printAt, 'options')
-					: importPath.call(printAt, 'arguments', 0);
+			return /** @type {AstPath<AST.ImportExpression>} */ (path).call(
+				printAt,
+				index === 0 ? 'source' : 'options',
+			);
 		}
 		return /** @type {AstPath<AST.CallExpression | AST.NewExpression>} */ (path).call(
 			printAt,
@@ -6209,20 +6207,9 @@ function getCallArguments(node) {
 		return node.options ? [node.argument, node.options] : [node.argument];
 	}
 	if (node.type === 'ImportExpression') {
-		const importOptions = getImportOptions(node);
-		return importOptions ? [node.source, importOptions] : [node.source];
+		return node.options ? [node.source, node.options] : [node.source];
 	}
 	return node.arguments || [];
-}
-
-/**
- * The options argument of an `import()`. The parser stores it on `arguments`,
- * except for `import.defer()`, which has `options`.
- * @param {AST.ImportExpression} node
- * @returns {AST.Expression | null}
- */
-function getImportOptions(node) {
-	return node.options ?? node.arguments?.[0] ?? null;
 }
 
 /**
@@ -6625,7 +6612,7 @@ function isHopefullyShortCallArgument(node) {
  */
 function getCallArgumentCount(node) {
 	if (node.type === 'ImportExpression') {
-		return getImportOptions(node) ? 2 : 1;
+		return node.options ? 2 : 1;
 	}
 	return /** @type {AST.CallExpression} */ (node).arguments.length;
 }
@@ -6699,8 +6686,7 @@ function isSimpleCallArgument(node, depth = 2) {
 
 	if (isCallLikeExpression(node)) {
 		if (node.type === 'ImportExpression') {
-			const importOptions = getImportOptions(node);
-			return isChildSimple(node.source) && (!importOptions || isChildSimple(importOptions));
+			return isChildSimple(node.source) && (!node.options || isChildSimple(node.options));
 		}
 		const call = /** @type {AST.CallExpression} */ (node);
 		return (
@@ -13718,10 +13704,10 @@ function printJSXElementBody(
 		const previous = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (
 			children[index - 1]
 		);
-		// The parser drops the whitespace with a line break after a closing tag,
-		// alone or at the start of the text that follows. Prettier's separators
-		// depend on it, and it can hold a blank line, which Prettier keeps, so
-		// read it back from the source.
+		// The parser drops text that is only whitespace with a line break, which
+		// JSX renders as nothing. Prettier's separators depend on it, and it can
+		// hold a blank line, which Prettier keeps, so read it back from the
+		// source.
 		let gap = '';
 		if (previous && previous.type !== 'JSXText') {
 			const whitespace = text.slice(getJSXChildEnd(previous), getJSXChildStart(child));
