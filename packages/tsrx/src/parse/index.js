@@ -472,7 +472,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 			// end inside them. They trail the argument, which the printer prints
 			// inside those parentheses when they break, or after the `;` when they
 			// don't, where Prettier's next pass puts them.
-			const argument = /** @type {any} */ (statement).argument;
+			const argument = /** @type {AST.Node & AST.NodeWithLocation} */ (
+				/** @type {any} */ (statement).argument
+			);
 			if (
 				(statement.type === 'ReturnStatement' || statement.type === 'ThrowStatement') &&
 				isBinaryish(argument) &&
