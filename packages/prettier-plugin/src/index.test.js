@@ -11759,6 +11759,72 @@ let m: Map<string /* key */, number> = new Map<string, number>();`;
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// Like Prettier's default for a comment at the end of a line, one after
+		// the `=` of a type parameter with a constraint trails the constraint,
+		// and the default moves to the next line, indented. It used to lead the
+		// default, which printed at the indentation of the name, and one before
+		// the `=` moved after it on the next pass (#569).
+		it.each([
+			['type A<B extends C = // c\n  D> = R;', 'type A<\n  B extends C = // c\n    D,\n> = R;'],
+			['type A<B extends C // c\n  = D> = R;', 'type A<\n  B extends C = // c\n    D,\n> = R;'],
+			[
+				'function f<T extends C = // c\n  D>() {}',
+				'function f<\n  T extends C = // c\n    D,\n>() {}',
+			],
+			[
+				'type A<B extends C = // c\n  // d\n  D> = R;',
+				'type A<\n  B extends C = // c\n    // d\n    D,\n> = R;',
+			],
+			[
+				'type A<B extends C = // c\n  VeryLongTypeName<WithArguments, AndMoreArguments, AndEvenMoreArguments, AndMore>> = R;',
+				'type A<\n  B extends C = // c\n    VeryLongTypeName<\n      WithArguments,\n      AndMoreArguments,\n      AndEvenMoreArguments,\n      AndMore\n    >,\n> = R;',
+			],
+			['type A<B extends C = /* c */\n  D> = R;', 'type A<B extends C /* c */ = D> = R;'],
+		])(
+			'formats the comment around the = of a type parameter in %j like Prettier',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
+
+		it.each([
+			'type A<B extends C /* c */ = D> = R;',
+			'type A<B extends C = /* c */ D> = R;',
+			'type A<\n  B = // c\n    D,\n> = R;',
+			'type A<\n  B extends C = D, // c\n> = R;',
+			// Like the ones after the name, a `prettier-ignore` comment after the
+			// `=` keeps ignoring the default
+			'type A<\n  B extends C = // prettier-ignore\n  D<  E  >,\n> = R;',
+		])('keeps the comment around the = of a type parameter in %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Prettier leads the default with these and prints them after the `=`,
+		// where they end the line, and its next pass trails the constraint with
+		// them, like the ones around the name. The formatter prints the
+		// fixpoint.
+		it.each([
+			['type A<B extends C =\n  // c\n  D> = R;', 'type A<\n  B extends C = // c\n    D,\n> = R;'],
+			['type A<B extends C\n  // c\n  = D> = R;', 'type A<\n  B extends C = // c\n    D,\n> = R;'],
+			['type A<B extends C =\n  /* c */\n  D> = R;', 'type A<B extends C /* c */ = D> = R;'],
+			['type A<B extends C\n  /* c */\n  = D> = R;', 'type A<B extends C /* c */ = D> = R;'],
+			[
+				'type A<B extends C /* a */\n  // b\n  = D> = R;',
+				'type A<\n  B extends C /* a */ = // b\n    D,\n> = R;',
+			],
+		])(
+			'formats the comment around the = of a type parameter in %j in one pass',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
+
+		it('keeps a prettier-ignore comment on its own line after the = of a type parameter on the default like Prettier', async () => {
+			expect(
+				await format('type A<B extends C =\n  // prettier-ignore\n  D<  E  >> = R;'),
+			).toBeWithNewline('type A<\n  B extends C = // prettier-ignore\n  D<  E  >,\n> = R;');
+		});
+
 		// The parser adds a template `@try`'s `@catch` before its `@pending`,
 		// whose comments the `@catch` took and never printed
 		it.each([
@@ -16512,6 +16578,64 @@ item
 		});
 	});
 
+	// Prettier prints a block comment on a line of its own before a type after
+	// a keyword or colon at the end of that keyword's line, with the type on
+	// the next line, and its next pass joins the type, since the comment no
+	// longer starts its line. The formatter prints that fixpoint, which keeps
+	// the comment where it was written, in one pass (#570).
+	describe('block comments on their own line before a type after a keyword or colon', () => {
+		it.each([
+			['type X = keyof\n  /* c */\n  T;', 'type X = keyof /* c */ T;'],
+			['function f(a:\n  /* c */\n  T) {}', 'function f(a: /* c */ T) {}'],
+			['type T = A extends\n  /* c */\n  B ? C : D;', 'type T = A extends /* c */ B ? C : D;'],
+			[
+				'type M = {\n  [\n    A in\n    /* prettier-ignore */\n    B\n  ]: C;\n};',
+				'type M = {\n  [A in /* prettier-ignore */ B]: C;\n};',
+			],
+			['type X = typeof\n  /* c */\n  y;', 'type X = typeof /* c */ y;'],
+			['type X = readonly\n  /* c */\n  T[];', 'type X = readonly /* c */ T[];'],
+			[
+				'type X = T extends infer\n  /* c */\n  U ? U : never;',
+				'type X = T extends infer /* c */ U ? U : never;',
+			],
+			['function f(x): x is\n  /* c */\n  T {}', 'function f(x): x is /* c */ T {}'],
+			['function f(x):\n  /* c */\n  T {}', 'function f(x): /* c */ T {}'],
+			['const x = y as\n  /* c */\n  T;', 'const x = y as /* c */ T;'],
+			['const x = y satisfies\n  /* c */\n  T;', 'const x = y satisfies /* c */ T;'],
+			['let a:\n  /* c */\n  T;', 'let a: /* c */ T;'],
+			['type X = T[\n  /* c */\n  K];', 'type X = T[/* c */ K];'],
+			['type X = () =>\n  /* c */\n  T;', 'type X = () => /* c */ T;'],
+			['type T = A extends B ?\n  /* c */\n  C : D;', 'type T = A extends B ? /* c */ C : D;'],
+			['type T = A extends B ? C :\n  /* c */\n  D;', 'type T = A extends B ? C : /* c */ D;'],
+			['type M = { [K in T as\n  /* c */\n  U]: V };', 'type M = { [K in T as /* c */ U]: V };'],
+			['type T = [a:\n  /* c */\n  T];', 'type T = [a: /* c */ T];'],
+			['type T = [...\n  /* c */\n  T];', 'type T = [.../* c */ T];'],
+			['type X = keyof\n  /* a */\n  /* b */\n  T;', 'type X = keyof /* a */ /* b */ T;'],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// A type that doesn't fit after the comment still starts the next line,
+		// and so does one after a blank line or a line comment
+		it.each([
+			'let x: keyof /* c */\nVeryLongTypeNameThatKeepsGoingAndGoingAndGoingAndGoingAndGoingAndGoingAndGoing;',
+			'type X = keyof /* c */\n\nT;',
+			'type X = keyof // c\nT;',
+			'type X = keyof /* c */ T;',
+			'type X =\n  /* c */\n  T;',
+			'type T = A &\n  /* c */\n  B;',
+		])('keeps %j like Prettier', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// An interface member breaks after the comment anyway
+		it('formats a block comment on its own line after the colon of an interface member like Prettier', async () => {
+			expect(await format('interface I {\n  a:\n    /* c */\n    T;\n}')).toBeWithNewline(
+				'interface I {\n  a: /* c */\n  T;\n}',
+			);
+		});
+	});
+
 	// A comment between a class or interface heading and its body used to trail
 	// the heading and print after the {, or before it on the next pass (#406).
 	// Like Prettier's handleClassComments, it moves into the body.
@@ -17778,6 +17902,98 @@ item
 			'do x();\nwhile (a /* c */);',
 		])('keeps %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier's `handleParenthesizedExpressionTrailingComment`, a
+		// comment after a sequence or assignment in the parentheses around an
+		// arrow function's body, a declarator's value, a `return` argument, or
+		// an assignment's right side trails its last expression or right side,
+		// inside those parentheses. It used to print after them, and move after
+		// the `;` on the next pass (#560). After an expression statement's
+		// expression, it trails the statement.
+		it.each([
+			'const f = () => (a = b /* note */);',
+			'const f = () => (a, b /* note */);',
+			'const x = (a, b /* note */);',
+			'const x = (a = b /* note */);',
+			'function f() {\n  return (a, b /* note */);\n}',
+			'function f() {\n  return (a = b /* note */);\n}',
+			'x = (a, b /* note */);',
+			'x = y = (z, w /* note */);',
+			'f(() => (a, b /* note */));',
+			'const x = (a, b /* note */),\n  y = 1;',
+			'for (let i = (a, b /* note */); ;) {}',
+			'function f() {\n  return (\n    a,\n    b // note\n  );\n}',
+			'f(\n  () => (\n    a,\n    b // note\n  ),\n);',
+		])('keeps the comment inside the parentheses of %j like Prettier', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			['(a, b /* note */);', '(a, b); /* note */'],
+			['(a + b /* note */);', 'a + b; /* note */'],
+			['(function () {} /* note */);', '(function () {}); /* note */'],
+			['if (a) (b, c /* note */);', 'if (a) (b, c); /* note */'],
+			// In an arrow function's body, inside the arrow function's own
+			// parentheses
+			['(() => (a, b /* note */));', '() => (a, b /* note */);'],
+			['(() => a /* note */);', '() => a; /* note */'],
+			// Parentheses inside the value keep the comment
+			['const v = f((a, b /* note */));', 'const v = f((a, b) /* note */);'],
+			['x = (a, (b /* note */));', 'x = (a, b /* note */);'],
+			['x = (y = (a, b /* note */));', 'x = y = (a, b /* note */);'],
+			[
+				'function f() {\n  return (a, b // note\n  );\n}',
+				'function f() {\n  return (\n    a,\n    b // note\n  );\n}',
+			],
+			['f(() => (a, b // note\n));', 'f(\n  () => (\n    a,\n    b // note\n  ),\n);'],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// Prettier prints these after the parentheses, or, in a chain of
+		// assignments, the value without them, and moves the comment after the
+		// `;` on the next pass. The formatter prints the fixpoint.
+		it.each([
+			[
+				'function f() {\n  throw (a, b /* note */);\n}',
+				'function f() {\n  throw (a, b); /* note */\n}',
+			],
+			['export default (a, b /* note */);', 'export default (a, b); /* note */'],
+			['x = (y = z /* note */);', 'x = y = z; /* note */'],
+			// The parentheses around the arrow function's body print as nothing,
+			// as they do without the ones around the arrow function (#529), and
+			// so do the ones around the expression's right operand
+			['(() => (a /* note */));', '() => a; /* note */'],
+			['(a + (b /* note */));', 'a + b; /* note */'],
+			['((a, b) + (c /* note */));', '(a, b) + c; /* note */'],
+			['const x = (a, b // note\n);', 'const x = (a, b); // note'],
+			['x = (a, b // note\n);', 'x = (a, b); // note'],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'function f() {\n  return !(a && b /* note */);\n}',
+			'function f() {\n  return (a, b); /* note */\n}',
+			'function f() {\n  throw (a, b); // note\n}',
+			'const x = (a = b); // note',
+			'const f = () => (a = b); // note',
+			'x = a = b; /* note */',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier, which measures from the end of the statement, the
+		// blank line after a statement stays when the comment that moves after
+		// its `;` was written on a line before it. It used to measure from the
+		// comment and lose the blank line (#627).
+		it.each([
+			['let x = 1 // c\n;\n\nb();', 'let x = 1; // c\n\nb();'],
+			['(foo() /* c */\n);\n\nb();', 'foo(); /* c */\n\nb();'],
+			['({ a } = c /* c */\n);\n\nb();', '({ a } = c); /* c */\n\nb();'],
+		])('keeps the blank line after %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
 		});
 
 		// With no line break after the `;` that ends the file, the program ends
