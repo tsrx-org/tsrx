@@ -241,7 +241,10 @@ export function createParser(...plugins) {
 		try {
 			ast = parser.parse(source, {
 				sourceType: 'module',
-				ecmaVersion: 13,
+				// Parse everything the installed acorn supports (hashbangs, `using`
+				// declarations, the regex `v` flag and modifiers, …); TypeScript
+				// accepts the same syntax at any target.
+				ecmaVersion: 'latest',
 				allowReturnOutsideFunction: true,
 				locations: true,
 				onToken,
