@@ -8207,6 +8207,54 @@ enum E {
   "it's" = 1,
 }`);
 		});
+
+		// Like Prettier's `replaceEndOfLine(printString(…))`: the line break in a
+		// string continued with a backslash breaks the groups around it
+		it('breaks the code around a string that continues onto the next line', async () => {
+			const input = `const message = "first line \\
+second line";
+foo("first line \\
+second line", other);
+x = ["a\\
+b", c];
+function f() { return "a \\
+b" + c; }`;
+
+			expect(await format(input)).toBeWithNewline(`const message =
+  "first line \\
+second line";
+foo(
+  "first line \\
+second line",
+  other,
+);
+x = [
+  "a\\
+b",
+  c,
+];
+function f() {
+  return (
+    "a \\
+b" + c
+  );
+}`);
+		});
+
+		it('breaks an object around a key that continues onto the next line', async () => {
+			const input = `const o = { "a \\
+b": 1, c: 2 };
+type T = "a \\
+b";`;
+
+			expect(await format(input)).toBeWithNewline(`const o = {
+  "a \\
+b": 1,
+  c: 2,
+};
+type T = "a \\
+b";`);
+		});
 	});
 
 	// A JSX attribute string has no escapes and decodes HTML entities, so it is
@@ -8966,6 +9014,39 @@ let m: Map<string /* key */, number> = new Map<string, number>();`;
 		});
 	});
 
+	// The parser adds some keys out of source order: a call's type arguments
+	// after its arguments, a switch case's test after its body, and a generic
+	// arrow function's type parameters after its body. The comments in them
+	// stay where they are (#389).
+	describe('comments in type arguments, type parameters, and case tests stay there', () => {
+		it.each([
+			'const z = f<\n  // only\n  A\n>(1);',
+			'const x = dual<\n  /** a */\n  A,\n  /** b */\n  B\n>(2, f);',
+			'f</* c */ T>(1);',
+			'f<T /* c */>(1);',
+			'new Foo</* c */ T>(1);',
+			'tag</* c */ T>`x`;',
+			'const f = </* c */ T,>(a: T): T => a;',
+			'const f = <T,>(/* c */ a: T): T => a;',
+			'const f = <T,>(a: T /* c */, b): T => a;',
+			'switch (x) {\n  case /* c */ 1:\n    y;\n}',
+			'class A {\n  m</* c */ T>(a: T): T {\n    return a;\n  }\n}',
+		])('keeps the comment in %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// The parser adds a template `@try`'s `@catch` before its `@pending`,
+		// whose comments the `@catch` took and never printed
+		it.each([
+			'function A() @{\n  @try {\n    <B />\n  } @pending {\n    // loading\n    <p>{"loading"}</p>\n  } @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
+			'function A() @{\n  @try {\n    <B />\n  } @pending {\n    <p>{"loading"}</p>\n    // after loading\n  } @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
+			'function A() @{\n  @try {\n    <B />\n  } @pending {\n    <p>{"loading"}</p>\n  } /* after pending */ @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
+			'function A(x) @{\n  @switch (x) {\n    @case /* c */ 1: {\n      <p>{"one"}</p>\n    }\n  }\n}',
+		])('keeps the comment in the template %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
 	// A formatter may never change what the source declares. Every modifier
 	// below is load-bearing: dropping it silently retypes or redefines the
 	// member, and the result still compiles, so nothing catches it downstream.
@@ -9447,6 +9528,33 @@ calls`);
 		])('starts the statement with a semicolon: %s', async (statement) => {
 			await expectUnchanged(`const value = 1\n${statement}`);
 		});
+
+		// Without a `;`, a statement whose value ends in parentheses ends at
+		// the `)`. Like Prettier, a comment after it trails the statement, so it
+		// doesn't break the value (#366).
+		it.each([
+			['const x = a | (b >> 6) // c\nconst y = 1', 'const x = a | (b >> 6); // c\nconst y = 1;'],
+			['const x = (a >> 6) // c\nconst y = 1', 'const x = a >> 6; // c\nconst y = 1;'],
+			['const x = !(a) // c\nconst y = 1', 'const x = !a; // c\nconst y = 1;'],
+			['const f = () => (a >> 6) // c\nfoo()', 'const f = () => a >> 6; // c\nfoo();'],
+			['function f() {\n  return (a >> 6) // c\n}', 'function f() {\n  return a >> 6; // c\n}'],
+			[
+				'function f() {\n  throw (a >> 6) // c\n  x()\n}',
+				'function f() {\n  throw a >> 6; // c\n  x();\n}',
+			],
+			['const o = {\n  a: (b >> 6) // c\n}', 'const o = {\n  a: b >> 6, // c\n};'],
+			['class A {\n  x = (a >> 6) // c\n  y = 1\n}', 'class A {\n  x = a >> 6; // c\n  y = 1;\n}'],
+			[
+				'const x = a | (b >> 6) /* c */\nconst y = 1',
+				'const x = a | (b >> 6); /* c */\nconst y = 1;',
+			],
+		])(
+			'trails the statement with the comment after the ) that ends %j',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+				await expectUnchanged(expected.replaceAll(';', ''));
+			},
+		);
 
 		it('adds no semicolon before statements that cannot continue the previous one', async () => {
 			await expectUnchanged(`const value = 1
@@ -10059,7 +10167,7 @@ function Two() @{
 
 		it.each([
 			'const query = sql<Row>`select 1`;',
-			'const Title = styled.h1<Props>`color: red;`;',
+			'const Title = styled.h1<Props>`\n  color: red;\n`;',
 			'const nested = tag<Map<string, number>, Key>`a${value}c`;',
 			'const explicit = (tag<T>)<U>`x`;',
 		])('keeps type arguments on tagged templates: %s', async (source) => {
@@ -10095,8 +10203,10 @@ function Two() @{
 		});
 	});
 
-	// Parentheses written around a type stay as they are; these are the ones
-	// Prettier adds where the type parses the same without them.
+	// Like Prettier, the parentheses written around a type are dropped, and a
+	// type prints with the ones its parent needs: the ones the grammar
+	// requires and the ones Prettier adds where the type parses the same
+	// without them.
 	describe('type parentheses follow Prettier', () => {
 		it.each([
 			[
@@ -10144,6 +10254,162 @@ function Two() @{
 			'type A<T> = T extends [infer U extends (B extends C ? D : E)] ? U : never;',
 		])('keeps %s as written', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			['type A = (B | C);', 'type A = B | C;'],
+			['let x: (A | B) = 1;', 'let x: A | B = 1;'],
+			['type D = ((E));', 'type D = E;'],
+			['type A = (string);', 'type A = string;'],
+			['type A = Foo<(B | C)>;', 'type A = Foo<B | C>;'],
+			['type A = ReturnType<(typeof f)>;', 'type A = ReturnType<typeof f>;'],
+			['type A = { [K in (keyof T)]: T[K] };', 'type A = { [K in keyof T]: T[K] };'],
+			[
+				'type A = B extends C ? D : (E extends F ? G : H);',
+				'type A = B extends C ? D : E extends F ? G : H;',
+			],
+			[
+				'type A = (B | C) extends (D | E) ? (F | G) : H;',
+				'type A = B | C extends D | E ? F | G : H;',
+			],
+			['type A = ({ a: string }) | null;', 'type A = { a: string } | null;'],
+			['const g = (): (A | B) => x;', 'const g = (): A | B => x;'],
+			['function f(): (() => void) {}', 'function f(): () => void {}'],
+			[
+				'function f(a: (A | B), b: ((x: string) => void)) {}',
+				'function f(a: A | B, b: (x: string) => void) {}',
+			],
+			['let v = x as (A | B);', 'let v = x as A | B;'],
+			['let v = x satisfies (A);', 'let v = x satisfies A;'],
+			[
+				'class C<T extends (A | B) = (C)> implements I<(X)> {}',
+				'class C<T extends A | B = C> implements I<X> {}',
+			],
+			[
+				'interface I { a: (string | number); b(): (A | B); }',
+				'interface I {\n  a: string | number;\n  b(): A | B;\n}',
+			],
+		])('drops the redundant parentheses in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'type A = (B | C)[];',
+			'type A = (B & C) | D;',
+			'type A = B & (C | D);',
+			'type A = keyof (B | C);',
+			'type A = (new () => X) | Y;',
+			'type A = (abstract new () => void) | X;',
+			'type A = ((a: string) => void) | null;',
+			'type A = (B extends C ? D : E)[];',
+			'type A = B extends (infer U)[] ? U : never;',
+			'type A = [(B | C)?];',
+			'type A = (B | C)["x"];',
+			'type A = (readonly string[])[];',
+			'const x = y as (typeof z)[number];',
+		])('keeps the needed parentheses in %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('lays out a type as if its parentheses were not written', async () => {
+			const input = `type A = (Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | Cccccccccccccccccccccccccccccccccccccccccc);
+type B = (Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | Cccccccccccccccccccccccccccccccccccccccccc)[];
+type C = [(Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb), (Cccccccccccccccccccccccc | D)];
+function foo(a: (Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)) {}
+type D = (
+  | { kind: "a"; value: string }
+  | { kind: "b"; value: number }
+);`;
+
+			expect(await format(input)).toBeWithNewline(`type A =
+  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  | Cccccccccccccccccccccccccccccccccccccccccc;
+type B = (
+  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  | Cccccccccccccccccccccccccccccccccccccccccc
+)[];
+type C = [
+  Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  Cccccccccccccccccccccccc | D,
+];
+function foo(
+  a:
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+) {}
+type D = { kind: "a"; value: string } | { kind: "b"; value: number };`);
+		});
+
+		// The layout checks look through a parameter or declarator into its type
+		it('picks the layout from the type inside the parentheses', async () => {
+			const input = `function foo(options: ({ aaaaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbbbbbb: number; ccccccccc: boolean })) {}
+const fooooooooooooooooooooooooo = (aaaaaaa: string, bbbbbbbbbbbbbbb: number): ({ a: string; b: number }) => {};
+export const selectorByInstance: (Map<Selector, WeakMap<Instance, Value>>) = new Map();
+foo(x as (A)[], b);`;
+
+			expect(await format(input)).toBeWithNewline(`function foo(options: {
+  aaaaaaaaaaaaaaa: string;
+  bbbbbbbbbbbbbbbbbbbbbbbb: number;
+  ccccccccc: boolean;
+}) {}
+const fooooooooooooooooooooooooo = (
+  aaaaaaa: string,
+  bbbbbbbbbbbbbbb: number,
+): { a: string; b: number } => {};
+export const selectorByInstance: Map<
+  Selector,
+  WeakMap<Instance, Value>
+> = new Map();
+foo(x as A[], b);`);
+		});
+
+		it('keeps the parentheses of a type kept by prettier-ignore', async () => {
+			const input = `type A = keyof /* prettier-ignore */ (B   |   C);
+type D = [/* prettier-ignore */ (B   |   C)?];
+type E =
+  | B
+  // prettier-ignore
+  | (C   &   D)
+  | E;`;
+
+			expect(await format(input)).toBeWithNewline(input);
+		});
+
+		// Like Prettier's ternaries, only on one line
+		it('parenthesizes a conditional true type that stays on one line', async () => {
+			const input = `type A<T> = T extends string ? T extends "a" ? 1 : 2 : 3;
+type B<T> = T extends string ? (T extends "aaaaaaaaaaaaaaaaaaaaaa" ? "bbbbbbbbbbbbbbbbbbbbbbbbbb" : "cccccccccccccccccccccc") : never;
+type C = IfAny<T, false, T extends object ? (keyof T extends K ? true : false) : false>;`;
+
+			expect(await format(input))
+				.toBeWithNewline(`type A<T> = T extends string ? (T extends "a" ? 1 : 2) : 3;
+type B<T> = T extends string
+  ? T extends "aaaaaaaaaaaaaaaaaaaaaa"
+    ? "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+    : "cccccccccccccccccccccc"
+  : never;
+type C = IfAny<
+  T,
+  false,
+  T extends object ? (keyof T extends K ? true : false) : false
+>;`);
+		});
+
+		it('keeps the comments around dropped parentheses', async () => {
+			const input = `type A = /* c */ (B | C);
+type D = (/* c */ B | C);
+type E = (B | C) /* c */;
+type X = (
+  /* leading */ A
+);
+type Y = (A // trailing
+);`;
+
+			expect(await format(input)).toBeWithNewline(`type A = /* c */ B | C;
+type D = /* c */ B | C;
+type E = B | C /* c */;
+type X = /* leading */ A;
+type Y = A; // trailing`);
 		});
 	});
 
@@ -10689,6 +10955,129 @@ export interface SectionProps<T>
 }`,
 		])('keeps the parentheses around await and yield in %s', async (source) => {
 			await expectUnchanged(source);
+		});
+
+		// Prettier parenthesizes an element unless its parent prints it bare
+		it.each([
+			['async function f() {\n  await <div />;\n}', 'async function f() {\n  await (<div />);\n}'],
+			['x = !<div />;', 'x = !(<div />);'],
+			['x = typeof <div />;', 'x = typeof (<div />);'],
+			['x = -<b />;', 'x = -(<b />);'],
+			['x = void <></>;', 'x = void (<></>);'],
+			['x = <b /> as any;', 'x = (<b />) as any;'],
+			['x = <b /> satisfies T;', 'x = (<b />) satisfies T;'],
+			['x = [...<b />];', 'x = [...(<b />)];'],
+			['x = { ...<b /> };', 'x = { ...(<b />) };'],
+			['x = <div {...<b />} />;', 'x = <div {...(<b />)} />;'],
+			['x = `${<b />}`;', 'x = `${(<b />)}`;'],
+			['x = a[<b />];', 'x = a[(<b />)];'],
+			['x = (a, <b />);', 'x = (a, (<b />));'],
+			['x = import(<b />);', 'x = import((<b />));'],
+			['class A {\n  p = <b />;\n}', 'class A {\n  p = (<b />);\n}'],
+			['for (const x of <b />) {\n}', 'for (const x of (<b />)) {\n}'],
+			['const a = (<style>.a {}</style>).a;', 'const a = (<style>\n  .a {\n  }\n</style>).a;'],
+		])('parenthesizes the element operand in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'x = <div />;',
+			'x = [<b />, <i />];',
+			'x = () => <b />;',
+			'x = a ?? <b />;',
+			'x = <b /> + 1;',
+			'x = cond ? <b /> : <i />;',
+			'x = { a: <b />, [<i />]: 1 };',
+			'f(<a />, new F(<b />));',
+			'let y = <b />;',
+			'function f(a = <b />) {\n  return <b />;\n}',
+			'export default <div />;',
+			'x = <div c={<d />} />;',
+			'async function f() {\n  await (<div />);\n}',
+			'x = (<b />).props;',
+			'x = (<b />)!;',
+			'x = new (<b />)();',
+			`function* g() {
+  yield <div />;
+}`,
+		])('keeps the element bare or parenthesized as Prettier does in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		// A template element is a statement of its own, with no
+		// `ExpressionStatement` around it. `path.key` is the list's name
+		// (`body`), not the element's index, and a directive body is always a
+		// block.
+		it.each([
+			['a program', '<div />\n<span />'],
+			['a block', 'function C() @{\n  if (x) {\n    <div />\n  }\n  <span />\n}'],
+			['an if and else body', 'function C() @{\n  if (x) <div />\n  else <b />\n  <span />\n}'],
+			['a case', 'function C() @{\n  switch (x) {\n    case 1:\n      <div />\n  }\n  <span />\n}'],
+			[
+				'a loop body',
+				'function C() @{\n  for (const a of b) <div />\n  while (x) <i />\n  <span />\n}',
+			],
+			['a labeled statement', 'function C() @{\n  label: <div />\n  <span />\n}'],
+			['a static block', 'class K {\n  static {\n    <div />\n  }\n}'],
+			['a namespace', 'namespace N {\n  <div />\n}'],
+			[
+				'@for, @empty, @try, @pending, and @catch bodies',
+				`function C() @{
+  <div>
+    @for (const i of items) {
+      <span />
+    } @empty {
+      <b />
+    }
+    @try {
+      <i />
+    } @pending {
+      <u />
+    } @catch (e) {
+      <s />
+    }
+  </div>
+}`,
+			],
+		])('keeps an element bare as a statement of %s', async (_, source) => {
+			await expectUnchanged(source);
+		});
+
+		it('keeps template elements, code blocks, and style blocks bare', async () => {
+			await expectUnchanged(`export function Button({ label }) @{
+  const theme = <style>
+    .btn {
+      padding: 0;
+    }
+  </style>;
+  if (label) {
+    <span />
+  }
+  <>
+    <button class="btn">{label}</button>
+    <div>
+      {@{
+        const a = 1;
+        <b>{a}</b>
+      }}
+    </div>
+    @if (label) {
+      <i />
+    } @else {
+      <u />
+    }
+    @switch (label) {
+      @case "a": {
+        <p />
+      }
+    }
+    <style>
+      .btn {
+        color: red;
+      }
+    </style>
+  </>
+}`);
 		});
 
 		it.each([
@@ -11479,6 +11868,264 @@ b \${c}\`,
 		);
 	});
 
+	// Like Prettier's JS `embed`, with `embeddedLanguageFormatting: "auto"`
+	describe('code embedded in template literals formats like Prettier', () => {
+		it.each([
+			[
+				'CSS in styled-components and GraphQL in gql templates',
+				'const Button = styled.button`\ncolor:red;padding:0 4px;\n`;\nconst query = gql`\n  query { user(id: 1) { name } }\n`;',
+				`const Button = styled.button\`
+  color: red;
+  padding: 0 4px;
+\`;
+const query = gql\`
+  query {
+    user(id: 1) {
+      name
+    }
+  }
+\`;`,
+			],
+			[
+				'CSS in styled(Component), .attrs(), and typed tags',
+				'const Link = styled(Anchor)`color:${(props) => props.color};`;\nconst Input = styled.input.attrs({ type: "text" })`border:0;`;\nconst Title = styled.h1<Props>`color: red;`;',
+				`const Link = styled(Anchor)\`
+  color: \${(props) => props.color};
+\`;
+const Input = styled.input.attrs({ type: "text" })\`
+  border: 0;
+\`;
+const Title = styled.h1<Props>\`
+  color: red;
+\`;`,
+			],
+			[
+				'CSS with placeholders, comments, and a nested css template',
+				'const Box = styled.div`\n  ${Child}:hover & { color:red }\n  margin:${(props) => props.gap}px 0;\n  /* a comment */\n  ${(props) => props.active && css`font-weight:bold;`}\n`;',
+				`const Box = styled.div\`
+  \${Child}:hover & {
+    color: red;
+  }
+  margin: \${(props) => props.gap}px 0;
+  /* a comment */
+  \${(props) =>
+    props.active &&
+    css\`
+      font-weight: bold;
+    \`}
+\`;`,
+			],
+			[
+				'CSS in styled-jsx css.global',
+				'const global = css.global`body{margin:0}`;',
+				`const global = css.global\`
+  body {
+    margin: 0;
+  }
+\`;`,
+			],
+			[
+				'GraphQL in graphql(), and marked with a comment',
+				'const query = graphql(schema, `{ user { ...UserParts } }`);\nconst other = /* GraphQL */ `\n  query Q { user { ...UserParts } }\n  ${fragment}\n`;',
+				`const query = graphql(
+  schema,
+  \`
+    {
+      user {
+        ...UserParts
+      }
+    }
+  \`,
+);
+const other = /* GraphQL */ \`
+  query Q {
+    user {
+      ...UserParts
+    }
+  }
+  \${fragment}
+\`;`,
+			],
+			[
+				'HTML in html templates and marked with a comment',
+				'const view = html`<div><p>${message}</p><span>hello</span></div>`;\nconst marked = /* HTML */ `<ul><li>one</li><li>two</li></ul>`;',
+				`const view = html\`<div>
+  <p>\${message}</p>
+  <span>hello</span>
+</div>\`;
+const marked = /* HTML */ \`<ul>
+  <li>one</li>
+  <li>two</li>
+</ul>\`;`,
+			],
+			[
+				'Markdown in markdown templates',
+				'const doc = markdown`\n  # Title\n  Some *text*   here.\n`;',
+				`const doc = markdown\`
+  # Title
+
+  Some _text_ here.
+\`;`,
+			],
+			['a whitespace-only CSS template', 'const empty = css`   `;', 'const empty = css``;'],
+			[
+				'a template after a line comment on its tag',
+				'const t = styled.div // comment\n`color:red;`;',
+				`const t = styled.div // comment
+\`
+  color: red;
+\`;`,
+			],
+		])('formats %s', async (_, input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			[
+				'an arrow body stays on the arrow line',
+				'const f = () => css`color:red;`;',
+				'const f = () => css`\n  color: red;\n`;',
+			],
+			[
+				'a lone argument hugs the parentheses',
+				'foo(css`color:red;`);\nfoo.bar(gql`query { a }`);',
+				'foo(css`\n  color: red;\n`);\nfoo.bar(gql`\n  query {\n    a\n  }\n`);',
+			],
+			[
+				'a call with a lone template on its line prints in its member chain',
+				"wrapper.find('SomeSelector').first().props().style(css`\n  color: red;\n`);",
+				`wrapper
+  .find("SomeSelector")
+  .first()
+  .props()
+  .style(css\`
+    color: red;
+  \`);`,
+			],
+			[
+				'HTML without whitespace at its ends does not hug',
+				'render(html`<div>${a}</div><span>${b}</span>`);\nrender(html` <div>${a}</div><span>${b}</span> `);',
+				`render(
+  html\`<div>\${a}</div>
+    <span>\${b}</span>\`,
+);
+render(html\`
+  <div>\${a}</div>
+  <span>\${b}</span>
+\`);`,
+			],
+			[
+				'an HTML arrow body without whitespace at its ends breaks after the arrow',
+				'const view = (items) => html`<ul>${items.map((item) => html`<li>${item}</li>`)}</ul><p>${footer}</p>`;',
+				`const view = (items) =>
+  html\`<ul>
+      \${items.map((item) => html\`<li>\${item}</li>\`)}
+    </ul>
+    <p>\${footer}</p>\`;`,
+			],
+		])('lays out embedded code like Prettier: %s', async (_, input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['CSS that does not parse', 'const stays = css`color:red;${x}{color:blue`;'],
+			['a template with an invalid escape', 'const bad = css`color: \\u{zz};`;'],
+			[
+				'createGlobalStyle and keyframes, which Prettier 3.9.6 does not format',
+				'const G = createGlobalStyle`body{margin:0}`;\nconst fade = keyframes`from{opacity:0}to{opacity:1}`;',
+			],
+			[
+				'templates kept by prettier-ignore',
+				'foo(/* prettier-ignore */ css`color:red;`);\n// prettier-ignore\nconst kept = gql`query { a }`;',
+			],
+			['a plain template in a call', 'foo(`\ncolor:red;\n`);'],
+		])('keeps %s as written', async (_, source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps templates as written when embedded formatting is disabled', async () => {
+			const source =
+				'const Button = styled.button`\ncolor:red;padding:0 4px;\n`;\nconst f = () => css`color:red;`;\nfoo(gql`query { a }`);';
+			expect(await format(source, { embeddedLanguageFormatting: 'off' })).toBeWithNewline(source);
+		});
+
+		it('formats CSS in template attributes and code blocks like the equivalent TSX', async () => {
+			const input = `function StyledApp() @{
+	const color = css\`
+	color: red;
+\`;
+	<div>
+		<Style />
+		<div
+			class={css\`
+			color: red;
+		\`}
+		>{'styled'}</div>
+		<p css={\`margin:0;padding:\${pad}px\`} />
+		<style jsx>{\`div{color:green}\`}</style>
+	</div>
+}
+
+function Toggle(props) @{
+	@if (props.on) {
+		<div class={css\`color:red;\`} />
+	} @else {
+		<>
+			<div class="off" />
+			<style>
+				.off{color:blue}
+			</style>
+		</>
+	}
+}`;
+			const expected = `function StyledApp() @{
+	const color = css\`
+		color: red;
+	\`;
+	<div>
+		<Style />
+		<div
+			class={css\`
+				color: red;
+			\`}
+		>{'styled'}</div>
+		<p
+			css={\`
+				margin: 0;
+				padding: \${pad}px;
+			\`}
+		/>
+		<style jsx>{\`
+			div {
+				color: green;
+			}
+		\`}</style>
+	</div>
+}
+
+function Toggle(props) @{
+	@if (props.on) {
+		<div
+			class={css\`
+				color: red;
+			\`}
+		/>
+	} @else {
+		<>
+			<div class="off" />
+			<style>
+				.off {
+					color: blue;
+				}
+			</style>
+		</>
+	}
+}`;
+			const result = await format(input, { useTabs: true, singleQuote: true, printWidth: 100 });
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	describe('member chains break like Prettier', () => {
 		// A comment before the `.name` of a lookup used to print after the `.`
 		// (#377). Like Prettier, it leads the lookup, and the chain breaks.
@@ -12227,9 +12874,37 @@ item
 			'class A // c\n  extends B {}',
 			'interface I\n  // c\n  extends J {}',
 			'interface I<T> // c\n  extends J {}',
+			// With nothing before the clause, the comment dangles on the class,
+			// which prints it before the keyword (#434)
+			'const X = class\n  // c\n  implements D, E {};',
+			'const X = class\n  /* c */\n  implements D, E {};',
+			'const X = class\n  // c\n  // d\n  implements D, E\n{\n  x = 1;\n};',
+			'const X = class\n  // c\n  implements\n    VeryLongInterfaceNameNumberOne,\n    VeryLongInterfaceNameNumberTwo,\n    VeryLongInterfaceNameNumberThree {};',
 		])('keeps the comment of %j before the heritage clause', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});
+
+		// With one type, Prettier prints the comment after the keyword and the
+		// type right after it, which comments the type out after a line comment
+		// (`implements // cD`), and runs a block comment into it (`/* c */D`).
+		// A line comment ends its line instead, and a block comment is followed
+		// by a space, as it is when Prettier formats its output again.
+		it.each([
+			['const X = class\n  // c\n  implements D {};', 'const X = class implements // c\nD {};'],
+			[
+				'const X = class\n  /* c */\n  implements D {};',
+				'const X = class implements /* c */ D {};',
+			],
+			[
+				'const X = class\n  // c\n  implements D.E {};',
+				'const X = class\n  implements // c\n  D.E {};',
+			],
+		])(
+			'prints the comment of %j after the keyword of one heritage type',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
 	});
 
 	// These comments sit where no node took them, so the parser gave them to
@@ -13920,6 +14595,15 @@ import f from "./f" /* c */ with { type: "json" };`);
 				'import /* d */ a, * as /* ns */ b from "mod";',
 			],
 			['a comment before a comma', 'import def /* d */, { a } from "mod";'],
+			// Like Prettier, the first comment trails the default import (#384)
+			[
+				'a line comment after the brace of the named imports',
+				'import d, { // first\n  // second\n  a,\n} from "mod";',
+			],
+			[
+				'line comments after the brace and after a named import',
+				'import d, { // first\n  a, // second\n  b,\n} from "mod";',
+			],
 			['a comment before from', 'import a /* c */ from "mod";'],
 			['a comment on an alias', 'export { a as /* c */ b } from "mod";'],
 			['a comment on a namespace re-export', 'export * as ns /* c */ from "mod";'],
@@ -13934,6 +14618,18 @@ import f from "./f" /* c */ with { type: "json" };`);
 			],
 		])('keeps %s', async (_, source) => {
 			await expectUnchanged(source);
+		});
+
+		// Prettier trails the default import with the first comment and prints
+		// it after the `{`, where it trails the default import again (#384)
+		it.each([
+			[
+				'import d, // first\n// second\n{ a } from "mod";',
+				'import d, { // first\n  // second\n  a,\n} from "mod";',
+			],
+			['import d, { // first\n  a,\n} from "mod";', 'import d, { a } from "mod"; // first'],
+		])('prints the comments of %j where Prettier does', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
 		});
 
 		it('moves a comment after the braces inside them', async () => {

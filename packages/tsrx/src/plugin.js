@@ -3180,6 +3180,27 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * A `<` that starts its own line reads as a tag start (see
+			 * `getTokenFromCode`), so an element there can begin a new statement. After
+			 * the name of a class, interface, type alias, function, or method only type
+			 * parameters can follow (`class G\n<T> {}`): read the tag start again as
+			 * `<`, without the tag contexts it pushed.
+			 */
+			#readTagStartAsTypeParameterStart() {
+				if (this.type !== tstt.jsxTagStart) return;
+				this.context.length -= this.#currentTokenContextCount();
+				this.finishToken(tt.relational, '<');
+			}
+
+			/**
+			 * @type {Parse.Parser['tsTryParseTypeParameters']}
+			 */
+			tsTryParseTypeParameters(parseModifiers) {
+				this.#readTagStartAsTypeParameterStart();
+				return super.tsTryParseTypeParameters(parseModifiers);
+			}
+
+			/**
 			 * Override parsePropertyValue to support TypeScript generic methods in object literals.
 			 * By default, acorn-typescript doesn't handle `{ method<T>() {} }` syntax.
 			 * This override checks for type parameters before parsing the method.
@@ -3195,6 +3216,10 @@ export function TSRXPlugin(config) {
 				refDestructuringErrors,
 				containsEsc,
 			) {
+				// A method's type parameters on the line after its name (`m\n<T>() {}`).
+				if (!isPattern) {
+					this.#readTagStartAsTypeParameterStart();
+				}
 				// Check if this is a method with type parameters (e.g., `method<T>() {}`)
 				// We need to parse type parameters before the parentheses
 				if (
@@ -4009,10 +4034,13 @@ export function TSRXPlugin(config) {
 			/**
 			 * acorn-typescript eats the optional `?` of a class member here; the
 			 * token read right after it is the `<` of `m?<T>()`, never a JSX tag.
+			 * Neither is a `<` right after the name that starts the next line
+			 * (`m\n<T>() {}`).
 			 *
 			 * @type {Parse.Parser['parsePostMemberNameModifiers']}
 			 */
 			parsePostMemberNameModifiers(methodOrProp) {
+				this.#readTagStartAsTypeParameterStart();
 				this.#afterOptionalMemberName = this.type === tt.question;
 				super.parsePostMemberNameModifiers(methodOrProp);
 			}
@@ -5702,6 +5730,66 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * True when the token after an element that starts a statement continues
+			 * an expression with it, as in TSX: a binary, logical, or relational
+			 * operator, `**`, `?`, `,`, `as`, or `satisfies` on the element's own line
+			 * (`<div /> > 5;`, `<div /> + 1;`). On the next line the element ends its
+			 * statement, and a tag start (`<div /> <span />`) is the next element.
+			 */
+			#continuesElementExpression() {
+				if (this.hasPrecedingLineBreak()) return false;
+				return (
+					this.type.binop != null ||
+					this.type === tt.starstar ||
+					this.type === tt.question ||
+					this.type === tt.comma ||
+					this.isContextual('as') ||
+					this.isContextual('satisfies')
+				);
+			}
+
+			/**
+			 * Finish the expression statement that an element starts, with the element
+			 * as the leftmost operand, as `parseExpression` would have from its atom.
+			 * @param {AST.Node} element
+			 * @returns {AST.ExpressionStatement}
+			 */
+			#parseElementExpressionStatement(element) {
+				const start = /** @type {number} */ (element.start);
+				const start_loc = /** @type {AST.SourceLocation} */ (element.loc).start;
+				let expression = /** @type {AST.Expression} */ (element);
+				// Acorn reads `**` with the unary operand before it, not as a binop.
+				if (this.eat(tt.starstar)) {
+					expression = this.buildBinary(
+						start,
+						start_loc,
+						expression,
+						this.parseMaybeUnary(null, false, false, false),
+						'**',
+						false,
+					);
+				}
+				expression = this.parseExprOp(expression, start, start_loc, -1, false);
+				expression = this.parseConditional(expression, start, start_loc, false);
+				if (this.type === tt.comma) {
+					const sequence = /** @type {AST.SequenceExpression} */ (
+						this.startNodeAt(start, start_loc)
+					);
+					sequence.expressions = [expression];
+					while (this.eat(tt.comma)) {
+						sequence.expressions.push(this.parseMaybeAssign(false));
+					}
+					expression = this.finishNode(sequence, 'SequenceExpression');
+				}
+				const statement = /** @type {AST.ExpressionStatement} */ (
+					this.startNodeAt(start, start_loc)
+				);
+				return /** @type {AST.ExpressionStatement} */ (
+					this.parseExpressionStatement(statement, expression)
+				);
+			}
+
+			/**
 			 * @type {Parse.Parser['parseStatement']}
 			 */
 			parseStatement(context, topLevel, exports) {
@@ -5744,6 +5832,9 @@ export function TSRXPlugin(config) {
 						if (this.curContext() === b_stat) {
 							this.context.pop();
 						}
+					}
+					if (this.#continuesElementExpression()) {
+						return this.#parseElementExpressionStatement(node);
 					}
 					return node;
 				}

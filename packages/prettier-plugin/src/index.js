@@ -2,7 +2,7 @@
  * @import * as acorn from '@tsrx/core/types/acorn';
  * @import * as AST from '@tsrx/core/types/estree';
  * @import * as ESTreeJSX from '@tsrx/core/types/estree-jsx';
- * @import { Doc, AstPath, ParserOptions } from 'prettier';
+ * @import { Doc, AstPath, Options, ParserOptions } from 'prettier';
  */
 
 /**
@@ -49,6 +49,7 @@ const {
 	label,
 	literalline,
 	markAsRoot,
+	dedentToRoot,
 } = builders;
 const { replaceEndOfLine, stripTrailingHardline, willBreak, canBreak, removeLines, mapDoc } = utils;
 const { printDocToString } = doc.printer;
@@ -158,6 +159,7 @@ export const printers = {
 		 * @returns {Doc}
 		 */
 		print(path, options, print, args) {
+			dropParenthesizedTypes(path);
 			const node = path.node;
 			const parts = printTsrxNode(node, path, options, print, args);
 			// If printTsrxNode returns doc parts, return them directly
@@ -170,10 +172,15 @@ export const printers = {
 		},
 		/**
 		 * @param {AstPath<AST.Node | AST.CSS.StyleSheet>} path
-		 * @returns {((textToDoc: (text: string, options: object) => Promise<Doc>) => Promise<Doc>) | null}
+		 * @returns {((textToDoc: TextToDoc, print: PrintFn, path: AstPath, options: Options) => Promise<Doc | undefined>) | null}
 		 */
 		embed(path) {
 			const node = path.node;
+
+			// CSS, GraphQL, HTML, and Markdown in template literals
+			if (node.type === 'TemplateLiteral') {
+				return getTemplateLiteralEmbed(/** @type {AstPath<AST.TemplateLiteral>} */ (path));
+			}
 
 			// Handle StyleSheet nodes inside style tags
 			if (node.type === 'StyleSheet' && node.source) {
@@ -251,6 +258,189 @@ export const printers = {
 		},
 	},
 };
+
+/**
+ * Drop the parentheses the parser keeps around a type (`TSParenthesizedType`),
+ * as Prettier's parser postprocess does. Prettier's AST has no such node, so
+ * its type rules see a type's real parent, and `needsParens` puts back only the
+ * parentheses the type needs there. The parentheses' comments move to the type
+ * inside them.
+ *
+ * This runs as the printer reaches each node rather than as a walk of its own.
+ * A node is printed after its parent, and the checks that pick a layout look
+ * ahead at most through a child and a grandchild into a type (a parameter's
+ * type annotation, a declarator's annotated type), so this drops the
+ * parentheses in the node's children and grandchildren and in the whole of
+ * every type among them. The node itself is replaced too, in case its parent
+ * printed it through a path that skips a level.
+ * @param {AstPath} path - The path to the node about to print
+ */
+function dropParenthesizedTypes(path) {
+	const stack = path.stack;
+	let node = path.node;
+	if (isParenthesizedType(node)) {
+		node = unwrapParenthesizedType(node);
+		// The slot the node came from: the parent node or list, then the key
+		stack[stack.length - 3][stack[stack.length - 2]] = node;
+		stack[stack.length - 1] = node;
+	}
+
+	for (const child of unwrapParenthesizedChildren(node)) {
+		if (isTypeTreeNode(child)) {
+			dropParenthesizedTypesInType(child);
+			continue;
+		}
+		for (const grandchild of unwrapParenthesizedChildren(child)) {
+			if (isTypeTreeNode(grandchild)) {
+				dropParenthesizedTypesInType(grandchild);
+			}
+		}
+	}
+}
+
+/** Types whose parentheses are already dropped throughout. */
+const typesWithoutParentheses = new WeakSet();
+
+/**
+ * Drop the parentheses throughout a type (see {@link dropParenthesizedTypes}).
+ * @param {object} node - A node of a type
+ */
+function dropParenthesizedTypesInType(node) {
+	if (typesWithoutParentheses.has(node)) {
+		return;
+	}
+	typesWithoutParentheses.add(node);
+	for (const child of unwrapParenthesizedChildren(node)) {
+		dropParenthesizedTypesInType(child);
+	}
+}
+
+/** Node properties that don't hold child nodes. */
+const NON_CHILD_KEYS = new Set([
+	'start',
+	'end',
+	'loc',
+	'range',
+	'metadata',
+	'raw',
+	'regex',
+	'leadingComments',
+	'trailingComments',
+	'innerComments',
+]);
+
+/**
+ * Replace each `TSParenthesizedType` among a node's children with the type
+ * inside it, and list the children.
+ * @param {unknown} node
+ * @returns {Record<string, unknown>[]}
+ */
+function unwrapParenthesizedChildren(node) {
+	/** @type {Record<string, unknown>[]} */
+	const children = [];
+	if (!node || typeof node !== 'object' || Array.isArray(node)) {
+		return children;
+	}
+	const record = /** @type {Record<string, unknown>} */ (node);
+	for (const key of Object.keys(record)) {
+		if (NON_CHILD_KEYS.has(key)) {
+			continue;
+		}
+		const value = record[key];
+		if (Array.isArray(value)) {
+			for (let index = 0; index < value.length; index++) {
+				if (isParenthesizedType(value[index])) {
+					value[index] = unwrapParenthesizedType(value[index]);
+				}
+				if (value[index] && typeof value[index] === 'object') {
+					children.push(value[index]);
+				}
+			}
+		} else if (value && typeof value === 'object') {
+			if (isParenthesizedType(value)) {
+				record[key] = unwrapParenthesizedType(value);
+			}
+			children.push(/** @type {Record<string, unknown>} */ (record[key]));
+		}
+	}
+	return children;
+}
+
+/**
+ * TypeScript nodes that aren't part of a type: expressions and statements
+ * that hold expressions, which the printer reaches node by node.
+ */
+const NON_TYPE_TS_NODES = new Set([
+	'TSAsExpression',
+	'TSSatisfiesExpression',
+	'TSNonNullExpression',
+	'TSInstantiationExpression',
+	'TSTypeAssertion',
+	'TSModuleDeclaration',
+	'TSModuleBlock',
+	'TSEnumDeclaration',
+	'TSEnumBody',
+	'TSEnumMember',
+	'TSExportAssignment',
+	'TSImportEqualsDeclaration',
+	'TSExternalModuleReference',
+	'TSNamespaceExportDeclaration',
+	'TSParameterProperty',
+	'TSDeclareFunction',
+	'TSAbstractMethodDefinition',
+	'TSAbstractPropertyDefinition',
+	'TSAbstractAccessorProperty',
+	'TSDeclareMethod',
+]);
+
+/**
+ * Whether a node is part of a type, or holds one (`TSTypeAnnotation`, a type
+ * parameter or argument list), so everything under it is a type.
+ * @param {Record<string, unknown>} node
+ * @returns {boolean}
+ */
+function isTypeTreeNode(node) {
+	return (
+		typeof node.type === 'string' && node.type.startsWith('TS') && !NON_TYPE_TS_NODES.has(node.type)
+	);
+}
+
+/**
+ * @param {unknown} node
+ * @returns {node is AST.TSParenthesizedType & AST.NodeWithMaybeComments & { typeAnnotation: AST.TypeNode & AST.NodeWithMaybeComments }}
+ */
+function isParenthesizedType(node) {
+	return /** @type {AST.Node | null | undefined} */ (node)?.type === 'TSParenthesizedType';
+}
+
+/**
+ * The type inside a `TSParenthesizedType` and any directly nested ones, with
+ * the comments of each pair of parentheses moved onto it: the ones before the
+ * `(` lead it, the ones after the `)` trail it. It is marked parenthesized, like
+ * a parenthesized expression, so a `prettier-ignore` comment keeps the
+ * parentheses along with the rest of its source, and it takes over the
+ * parser's `prettierIgnore` mark of a union member written in parentheses.
+ * @param {AST.TSParenthesizedType & AST.NodeWithMaybeComments & { typeAnnotation: AST.TypeNode & AST.NodeWithMaybeComments }} node
+ * @returns {AST.TypeNode & AST.NodeWithMaybeComments}
+ */
+function unwrapParenthesizedType(node) {
+	const inner = isParenthesizedType(node.typeAnnotation)
+		? unwrapParenthesizedType(node.typeAnnotation)
+		: node.typeAnnotation;
+	const innerNode = /** @type {AST.Node} */ (/** @type {unknown} */ (inner));
+	const wrapperNode = /** @type {AST.Node} */ (/** @type {unknown} */ (node));
+	innerNode.metadata = { ...innerNode.metadata, parenthesized: true };
+	if (wrapperNode.metadata?.prettierIgnore) {
+		innerNode.metadata.prettierIgnore = true;
+	}
+	if (node.leadingComments?.length) {
+		inner.leadingComments = [...node.leadingComments, ...(inner.leadingComments ?? [])];
+	}
+	if (node.trailingComments?.length) {
+		inner.trailingComments = [...(inner.trailingComments ?? []), ...node.trailingComments];
+	}
+	return inner;
+}
 
 /**
  * Raw-text `<script>` element: the parser stores the verbatim JS/TS body on
@@ -337,6 +527,19 @@ function printStringLiteral(node, options) {
 	const content = raw.slice(1, -1);
 	const quote = getPreferredQuote(content, options.singleQuote);
 	return raw[0] === quote ? raw : makeString(content, quote);
+}
+
+/**
+ * A printed string literal as a doc, like Prettier's
+ * `replaceEndOfLine(printString(…))`. A string that continues onto the next
+ * line (a backslash at the end of the line) joins its lines with a
+ * `literalline`, which breaks the groups around it: an assignment breaks
+ * after its `=` and a call breaks its arguments.
+ * @param {string} printed - The printed string literal
+ * @returns {Doc}
+ */
+function printMultilineString(printed) {
+	return printed.includes('\n') ? replaceEndOfLine(printed) : printed;
 }
 
 /**
@@ -1303,21 +1506,30 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 					Boolean(/** @type {{ typeArguments?: unknown }} */ (parent).typeArguments))
 			);
 
+		// Like Prettier, an element is parenthesized unless its parent prints it
+		// bare: `await (<div />)`, `!(<div />)`, `(<div />) as T`, `[...(<div />)]`.
+		// A `<style>` block is an element too.
 		case 'JSXElement':
 		case 'JSXFragment':
+		case 'JSXStyleElement':
 			return (
 				key === 'callee' ||
-				key === 'tag' ||
-				(key === 'object' && parent.type === 'MemberExpression') ||
-				parent.type === 'TSNonNullExpression' ||
-				parent.type === 'TSInstantiationExpression' ||
-				(key === 'left' && parent.type === 'BinaryExpression' && parent.operator === '<')
+				(key === 'left' && parent.type === 'BinaryExpression' && parent.operator === '<') ||
+				!(
+					ELEMENT_BARE_PARENTS.has(parent.type) ||
+					isCallOrNewExpression(parent) ||
+					(parent.type === 'Property' && !parent.method && parent.kind === 'init') ||
+					isReturnOrThrowStatement(parent) ||
+					(key === 'declaration' && parent.type === 'ExportDefaultDeclaration') ||
+					isStatementSlot(key, parent)
+				)
 			);
 
-		// Types, like Prettier's `needsParens`. Parentheses written in the source
-		// stay as a `TSParenthesizedType`, so these rules only add the ones
-		// Prettier adds for readability: `(): (() => void) => {}` and
-		// `(typeof a)[]` parse the same without them.
+		// Types, like Prettier's `needsParens`. The printer drops the parentheses
+		// written around a type (see `dropParenthesizedTypes`), so these rules
+		// add every pair a type prints with: the ones the grammar requires,
+		// like `(A | B)[]`, and the ones Prettier adds for readability, like
+		// `(): (() => void) => {}` and `(typeof a)[]`.
 		case 'TSFunctionType':
 		case 'TSConditionalType':
 		case 'TSConstructorType':
@@ -1333,6 +1545,62 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 				(key === 'elementType' && parent.type === 'TSArrayType')
 			);
 
+		default:
+			return false;
+	}
+}
+
+/**
+ * The parents that print an element operand without parentheses, from
+ * Prettier's `needsParens`, besides call arguments, object property values,
+ * `return`/`throw` arguments, and `export default`.
+ */
+const ELEMENT_BARE_PARENTS = new Set([
+	'ArrayExpression',
+	'ArrowFunctionExpression',
+	'AssignmentExpression',
+	'AssignmentPattern',
+	'BinaryExpression',
+	'ConditionalExpression',
+	'ExpressionStatement',
+	'JSXAttribute',
+	'JSXElement',
+	'JSXExpressionContainer',
+	'JSXFragment',
+	'LogicalExpression',
+	'VariableDeclarator',
+	'YieldExpression',
+]);
+
+/**
+ * Whether `key` of `parent` holds a statement. TSRX elements are statements
+ * of their own in a template body, with no `ExpressionStatement` around them:
+ * the statements and output of a `@{ … }` code block, of a block, a `case`,
+ * or the body of an `if` or a loop.
+ * @param {string | number | null} key - The child's key in `parent`
+ * @param {AST.Node} parent - The parent node
+ * @returns {boolean}
+ */
+function isStatementSlot(key, parent) {
+	switch (parent.type) {
+		case 'JSXCodeBlock':
+			return key === 'body' || key === 'render';
+		case 'SwitchCase':
+			return key === 'consequent';
+		case 'IfStatement':
+			return key === 'consequent' || key === 'alternate';
+		case 'Program':
+		case 'BlockStatement':
+		case 'StaticBlock':
+		case 'TSModuleBlock':
+		case 'ForStatement':
+		case 'ForInStatement':
+		case 'ForOfStatement':
+		case 'WhileStatement':
+		case 'DoWhileStatement':
+		case 'LabeledStatement':
+		case 'WithStatement':
+			return key === 'body';
 		default:
 			return false;
 	}
@@ -1928,7 +2196,7 @@ function printKey(node, path, options, print) {
 			parts.push(key);
 		} else {
 			// Quote keys that need it (e.g., contain special characters)
-			parts.push(printStringLiteral(node.key, options));
+			parts.push(printMultilineString(printStringLiteral(node.key, options)));
 		}
 	} else {
 		parts.push(path.call(print, 'key'));
@@ -2742,7 +3010,8 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = printNewExpression(node, path, options, print);
 			break;
 		case 'TemplateLiteral':
-			nodeContent = printTemplateLiteral(node, path, options, print);
+			nodeContent =
+				embeddedTemplateDocs.get(node) ?? printTemplateLiteral(node, path, options, print);
 			break;
 
 		case 'TaggedTemplateExpression':
@@ -2937,7 +3206,7 @@ function printTsrxNode(node, path, options, print, args) {
 				nodeContent = printDirective(node_typed.raw, options);
 			} else {
 				// String, boolean, or null literal
-				nodeContent = printStringLiteral(node, options);
+				nodeContent = printMultilineString(printStringLiteral(node, options));
 			}
 			break;
 		}
@@ -3213,11 +3482,6 @@ function printTsrxNode(node, path, options, print, args) {
 		case 'TSIndexedAccessType':
 			nodeContent = printTSIndexedAccessType(node, path, options, print);
 			break;
-
-		case 'TSParenthesizedType': {
-			nodeContent = ['(', path.call(print, 'typeAnnotation'), ')'];
-			break;
-		}
 
 		case 'TSParameterProperty': {
 			// A constructor parameter property declares a class field. Losing
@@ -4179,19 +4443,24 @@ function printArrowFunctionBody(
 
 /**
  * Prettier's `mayBreakAfterShortPrefix`: an arrow body that stays on the `=>`
- * line because it can break right after its first token.
+ * line because it can break right after its first token. That includes a
+ * template printed as embedded code (see {@link getTemplateEmbedLabel}), unless
+ * it is HTML that doesn't start and end with whitespace.
  * @param {AST.Node} functionBody - The arrow body
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {boolean}
  */
 function mayBreakAfterShortPrefix(functionBody, options) {
+	const bodyLabel = getTemplateEmbedLabel(functionBody);
 	return (
 		functionBody.type === 'ArrayExpression' ||
 		functionBody.type === 'ObjectExpression' ||
 		functionBody.type === 'ArrowFunctionExpression' ||
 		isBlockBody(functionBody) ||
 		isTemplateExpression(functionBody) ||
-		isTemplateOnItsOwnLine(functionBody, /** @type {string} */ (options.originalText))
+		(bodyLabel?.hug !== false &&
+			(Boolean(bodyLabel?.embed) ||
+				isTemplateOnItsOwnLine(functionBody, /** @type {string} */ (options.originalText))))
 	);
 }
 
@@ -5272,12 +5541,21 @@ function couldExpandArg(arg, arrowChainRecursion = false) {
 
 /**
  * Prettier's `shouldExpandLastArg`: whether the last argument hugs the
- * parentheses.
+ * parentheses. So does a lone template printed as embedded code (see
+ * {@link getTemplateEmbedLabel}), unless it is HTML that doesn't start and end
+ * with whitespace.
  * @param {AST.Node[]} args - The call arguments
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {boolean}
  */
 function shouldExpandLastArg(args, options) {
+	if (args.length === 1) {
+		const argLabel = getTemplateEmbedLabel(args[0]);
+		if (argLabel?.embed && argLabel.hug !== false) {
+			return true;
+		}
+	}
+
 	const lastArg = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (args[args.length - 1]);
 	const penultimateArg = args.length > 1 ? args[args.length - 2] : null;
 	return (
@@ -6152,7 +6430,7 @@ function printClassDeclaration(node, path, options, print) {
 
 	// Heritage type arguments and implements clauses are what TypeScript
 	// checks the class against, so dropping them silently loses those checks
-	heritage.push(printHeritageClauses(node, path, print, groupMode));
+	heritage.push(printHeritageClauses(node, path, options, print, groupMode));
 
 	if (!groupMode) {
 		return [...parts, ...heritage, ' ', path.call(print, 'body')];
@@ -6255,13 +6533,22 @@ function hasMultipleHeritage(node) {
  * heritage type, the keyword starts its own line when the heading breaks, and
  * the types follow it on one line or, when they do not fit, one per line
  * below it.
+ *
+ * The comments before the keyword of a class with nothing before the clause
+ * (the class's inner comments, Prettier's dangling comments marked with the
+ * clause's name) print on their own lines before the keyword, or after it
+ * with only one heritage type. There, unlike Prettier, which prints the type
+ * right after them, a line comment ends its line, so that it doesn't comment
+ * the type out, and a block comment is followed by a space, as it is once
+ * Prettier formats its output again.
  * @param {AST.ClassDeclaration | AST.ClassExpression | AST.TSInterfaceDeclaration} node
  * @param {AstPath} path - The path to `node`
+ * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @param {boolean} groupMode - Whether the heading groups its clauses
  * @returns {Doc}
  */
-function printHeritageClauses(node, path, print, groupMode) {
+function printHeritageClauses(node, path, options, print, groupMode) {
 	const [listName, list] =
 		node.type === 'TSInterfaceDeclaration'
 			? ['extends', node.extends]
@@ -6270,13 +6557,28 @@ function printHeritageClauses(node, path, print, groupMode) {
 		return '';
 	}
 
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
 	const clauses = join([',', line], path.map(print, listName));
 	if (!hasMultipleHeritage(node)) {
 		/** @type {Doc[]} */
-		const printed = [listName, ' ', clauses];
+		const printed = [listName, ' '];
+		for (const comment of comments) {
+			printed.push(
+				printComment(comment, options.originalText),
+				comment.type === 'Line' ? hardline : ' ',
+			);
+		}
+		printed.push(clauses);
 		return groupMode ? [line, group(printed)] : [' ', printed];
 	}
-	return [line, listName, group(indent([line, clauses]))];
+	/** @type {Doc[]} */
+	const printedComments = comments.map((comment) => printComment(comment, options.originalText));
+	return [
+		line,
+		printedComments.length > 0 ? [join(hardline, printedComments), hardline] : '',
+		listName,
+		group(indent([line, clauses])),
+	];
 }
 
 /**
@@ -6769,9 +7071,16 @@ function printCallExpression(path, options, print) {
 function keepsArgumentsOnCallLine(path, options) {
 	const node = /** @type {AST.CallExpression | AST.NewExpression} */ (path.node);
 	const args = node.arguments ?? [];
+	const isTemplateLiteralSingleArg =
+		args.length === 1 &&
+		isTemplateOnItsOwnLine(args[0], /** @type {string} */ (options.originalText));
+	// Like Prettier, a template printed as embedded code prints like any other
+	// argument, which hugs the parentheses (see shouldExpandLastArg)
+	if (isTemplateLiteralSingleArg && getTemplateEmbedLabel(args[0])?.embed) {
+		return false;
+	}
 	return (
-		(args.length === 1 &&
-			isTemplateOnItsOwnLine(args[0], /** @type {string} */ (options.originalText))) ||
+		isTemplateLiteralSingleArg ||
 		isSimpleModuleImport(node) ||
 		isCommonsJsOrAmdModuleDefinition(path) ||
 		isTestCall(node, /** @type {AST.Node | null} */ (path.parent))
@@ -7337,26 +7646,37 @@ function printNewExpression(node, path, options, print) {
  * @returns {Doc[]}
  */
 function printTemplateLiteral(node, path, options, print) {
+	const expressionDocs = printTemplateExpressions(path, options, print);
 	/** @type {Doc[]} */
 	const parts = [lineSuffixBoundary, '`'];
-	const indents = getTemplateLiteralExpressionIndents(node, options);
 	node.quasis.forEach((quasi, index) => {
 		// Like Prettier, a line break in the text is a `literalline`, which
 		// breaks the groups around the template and restarts the column
 		parts.push(replaceEndOfLine(quasi.value.raw));
-		if (index < node.expressions.length) {
-			parts.push(
-				path.call(
-					(expressionPath) =>
-						printTemplateExpression(expressionPath, node, index, indents[index], options, print),
-					'expressions',
-					index,
-				),
-			);
+		if (index < expressionDocs.length) {
+			parts.push(expressionDocs[index]);
 		}
 	});
 	parts.push('`');
 	return parts;
+}
+
+/**
+ * Print the expressions of a template literal, like Prettier's
+ * `printTemplateExpressions`.
+ * @param {AstPath} path - The path to the template literal
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc[]}
+ */
+function printTemplateExpressions(path, options, print) {
+	const node = /** @type {AST.TemplateLiteral} */ (path.node);
+	const indents = getTemplateLiteralExpressionIndents(node, options);
+	return path.map(
+		(expressionPath, index) =>
+			printTemplateExpression(expressionPath, node, index, indents[index], options, print),
+		'expressions',
+	);
 }
 
 /**
@@ -7468,6 +7788,798 @@ function getAlignmentSize(text, tabWidth) {
 }
 
 /**
+ * @callback TextToDoc
+ * @param {string} text - The embedded code
+ * @param {Options} options - Its parser and options
+ * @returns {Promise<Doc>}
+ */
+
+/**
+ * @callback TemplateEmbedPrint
+ * @param {TextToDoc} textToDoc - Prettier's formatter for the embedded code
+ * @param {PrintFn} print - Print callback
+ * @param {AstPath} path - The path to the template literal
+ * @param {TsrxFormatOptions & Options} options - Prettier options
+ * @returns {Promise<Doc | null>}
+ */
+
+/**
+ * The docs of template literals whose code another language's printer
+ * formats, by template (see {@link getTemplateLiteralEmbed}). The printer
+ * prints one in place of the template, inside the template's comments.
+ * @type {WeakMap<AST.TemplateLiteral, Doc>}
+ */
+const embeddedTemplateDocs = new WeakMap();
+
+/**
+ * Prettier's embedded-language printers for template literals, in the order
+ * its JS `embed` tries them.
+ * @type {{ test: (path: AstPath) => boolean, print: TemplateEmbedPrint }[]}
+ */
+const TEMPLATE_EMBEDS = [
+	{ test: isEmbedCss, print: printEmbedCss },
+	{ test: isEmbedGraphQL, print: printEmbedGraphQL },
+	{
+		test: isEmbedHtml,
+		print: (textToDoc, print, path, options) =>
+			printEmbedHtmlLike('html', textToDoc, print, path, options),
+	},
+	{
+		test: isAngularComponentTemplate,
+		print: (textToDoc, print, path, options) =>
+			printEmbedHtmlLike('angular', textToDoc, print, path, options),
+	},
+	{ test: isEmbedMarkdown, print: printEmbedMarkdown },
+];
+
+/**
+ * Prettier's JS `embed`: a template literal tagged or marked as CSS, GraphQL,
+ * HTML, or Markdown code is printed by that language's printer, which only
+ * runs with `embeddedLanguageFormatting: "auto"`. Returns the function that
+ * Prettier calls with `textToDoc`, or null. The function keeps the doc in
+ * {@link embeddedTemplateDocs} instead of returning it, so the template still
+ * prints through `printTsrxNode` with its comments. Like Prettier, a template
+ * whose code doesn't parse prints as written: the function throws, and
+ * Prettier drops the error.
+ * @param {AstPath<AST.TemplateLiteral>} path - The path to the template literal
+ * @returns {((textToDoc: TextToDoc, print: PrintFn, path: AstPath, options: Options) => Promise<undefined>) | null}
+ */
+function getTemplateLiteralEmbed(path) {
+	const node = path.node;
+	// A quasi with an invalid escape sequence has no cooked value
+	if (node.quasis.some((quasi) => quasi.value.cooked === null)) {
+		return null;
+	}
+	const embed = TEMPLATE_EMBEDS.find(({ test }) => test(path));
+	// Like Prettier, leave alone the code in a node that `prettier-ignore` keeps
+	if (
+		!embed ||
+		/** @type {unknown[]} */ (path.stack).some(
+			(item) =>
+				item !== null &&
+				typeof item === 'object' &&
+				!Array.isArray(item) &&
+				typeof (/** @type {{ type?: unknown }} */ (item).type) === 'string' &&
+				hasPrettierIgnore(/** @type {AST.Node} */ (item)),
+		)
+	) {
+		return null;
+	}
+	if (node.quasis.length === 1 && node.quasis[0].value.raw.trim() === '') {
+		embeddedTemplateDocs.set(node, '``');
+		return null;
+	}
+	return async (textToDoc, print, embedPath, options) => {
+		const formatOptions = /** @type {TsrxFormatOptions & Options} */ (options);
+		const doc = await embed.print(textToDoc, print, embedPath, formatOptions);
+		if (doc) {
+			const docLabel = /** @type {{ label?: object }} */ (doc).label;
+			embeddedTemplateDocs.set(node, label({ embed: true, ...docLabel }, doc));
+		}
+		return undefined;
+	};
+}
+
+/**
+ * The label of an embedded template's doc (see {@link getTemplateLiteralEmbed}),
+ * which a tagged template's doc takes from its template, like Prettier's.
+ * @param {AST.Node} node - A template literal or tagged template
+ * @returns {{ embed?: boolean, hug?: boolean } | undefined}
+ */
+function getTemplateEmbedLabel(node) {
+	const template =
+		node.type === 'TaggedTemplateExpression'
+			? node.quasi
+			: node.type === 'TemplateLiteral'
+				? node
+				: null;
+	const doc = template && embeddedTemplateDocs.get(template);
+	return doc && typeof doc === 'object' && !Array.isArray(doc) && doc.type === 'label'
+		? /** @type {{ embed?: boolean, hug?: boolean }} */ (doc.label)
+		: undefined;
+}
+
+/**
+ * Prettier's `printEmbedCss`: the CSS formatted with the SCSS parser, each
+ * `${…}` swapped for a placeholder while it is, on the lines after the
+ * backtick, one level in.
+ * @type {TemplateEmbedPrint}
+ */
+async function printEmbedCss(textToDoc, print, path, options) {
+	const node = /** @type {AST.TemplateLiteral} */ (path.node);
+	const text = node.quasis
+		.map(
+			(quasi, index) =>
+				(index > 0 ? '@prettier-placeholder-' + (index - 1) + '-id' : '') + quasi.value.raw,
+		)
+		.join('');
+	const quasisDoc = await textToDoc(text, { parser: 'scss' });
+	const expressionDocs = printTemplateExpressions(path, options, print);
+	const newDoc = replaceCssPlaceholders(quasisDoc, expressionDocs);
+	if (!newDoc) {
+		throw new Error("Couldn't insert all the expressions");
+	}
+	return ['`', indent([hardline, newDoc]), softline, '`'];
+}
+
+/**
+ * Put the expressions back in place of their placeholders in the formatted
+ * CSS, like Prettier's `replacePlaceholders`. Returns null when one of them
+ * went missing.
+ * @param {Doc} quasisDoc - The formatted CSS
+ * @param {Doc[]} expressionDocs - The printed expressions
+ * @returns {Doc | null}
+ */
+function replaceCssPlaceholders(quasisDoc, expressionDocs) {
+	if (expressionDocs.length === 0) {
+		return quasisDoc;
+	}
+	let replaceCounter = 0;
+	const newDoc = mapDoc(cleanDoc(quasisDoc), (doc) => {
+		if (typeof doc !== 'string' || !doc.includes('@prettier-placeholder')) {
+			return doc;
+		}
+		// Several placeholders can share a string: `${Child}${Child2}:not(:first-child)`
+		return doc.split(/@prettier-placeholder-(\d+)-id/).map((component, index) => {
+			// The placeholder numbers are at the odd indexes
+			if (index % 2 === 0) {
+				return replaceEndOfLine(component);
+			}
+			replaceCounter++;
+			return expressionDocs[Number(component)];
+		});
+	});
+	return expressionDocs.length === replaceCounter ? newDoc : null;
+}
+
+/**
+ * Prettier's `cleanDoc`, which its doc utilities don't export: join adjacent
+ * strings, flatten arrays, and drop empty docs and nested groups.
+ * @param {Doc} doc
+ * @returns {Doc}
+ */
+function cleanDoc(doc) {
+	return mapDoc(doc, (currentDoc) => {
+		if (Array.isArray(currentDoc)) {
+			/** @type {Doc[]} */
+			const parts = [];
+			for (const part of currentDoc) {
+				if (!part) {
+					continue;
+				}
+				const [currentPart, ...restParts] = Array.isArray(part) ? part : [part];
+				const lastPart = parts.at(-1);
+				if (typeof currentPart === 'string' && typeof lastPart === 'string') {
+					parts[parts.length - 1] = lastPart + currentPart;
+				} else {
+					parts.push(currentPart);
+				}
+				parts.push(...restParts);
+			}
+			return parts.length === 0 ? '' : parts.length === 1 ? parts[0] : parts;
+		}
+		if (typeof currentDoc !== 'object' || currentDoc === null) {
+			return currentDoc;
+		}
+		const cleaned = /** @type {Record<string, any>} */ (currentDoc);
+		switch (cleaned.type) {
+			case 'fill':
+				if (cleaned.parts.every((/** @type {Doc} */ part) => part === '')) {
+					return '';
+				}
+				if (cleaned.parts.length === 1) {
+					return cleaned.parts[0];
+				}
+				break;
+			case 'group':
+				if (!cleaned.contents && !cleaned.id && !cleaned.break && !cleaned.expandedStates) {
+					return '';
+				}
+				// Remove a group whose only content is a group like it
+				if (
+					cleaned.contents.type === 'group' &&
+					cleaned.contents.id === cleaned.id &&
+					cleaned.contents.break === cleaned.break &&
+					cleaned.contents.expandedStates === cleaned.expandedStates
+				) {
+					return cleaned.contents;
+				}
+				break;
+			case 'align':
+			case 'indent':
+			case 'indent-if-break':
+			case 'line-suffix':
+				if (!cleaned.contents) {
+					return '';
+				}
+				break;
+			case 'if-break':
+				if (!cleaned.flatContents && !cleaned.breakContents) {
+					return '';
+				}
+				break;
+		}
+		return currentDoc;
+	});
+}
+
+/**
+ * Prettier's `isEmbedCss`: styled-jsx (`<style jsx>{`…`}</style>`, `css`,
+ * `css.global`, `css.resolve`), styled-components (`styled.foo`,
+ * `styled(Component)`, their `.attrs(…)`, `Component.extend`, `css`,
+ * `createGlobalStyle`, `keyframes`), a `css={`…`}` prop, and Angular
+ * component styles.
+ * @param {AstPath} path - The path to the template literal
+ * @returns {boolean}
+ */
+function isEmbedCss(path) {
+	return (
+		isStyledJsx(path) ||
+		isStyledComponents(path) ||
+		isCssProp(path) ||
+		isAngularComponentStyles(path)
+	);
+}
+
+/**
+ * Prettier's `isStyledJsx`.
+ * @param {AstPath} path - The path to the template literal
+ * @returns {boolean}
+ */
+function isStyledJsx(path) {
+	return (
+		path.match(
+			() => true,
+			(node, key) =>
+				key === 'quasi' &&
+				node.type === 'TaggedTemplateExpression' &&
+				isNodeMatches(node.tag, ['css', 'css.global', 'css.resolve']),
+		) ||
+		path.match(
+			() => true,
+			(node, key) => key === 'expression' && node.type === 'JSXExpressionContainer',
+			(node, key) =>
+				key === 'children' &&
+				node.type === 'JSXElement' &&
+				node.openingElement.name.type === 'JSXIdentifier' &&
+				node.openingElement.name.name === 'style' &&
+				node.openingElement.attributes.some(
+					(/** @type {any} */ attribute) =>
+						attribute.type === 'JSXAttribute' &&
+						attribute.name.type === 'JSXIdentifier' &&
+						attribute.name.name === 'jsx',
+				),
+		)
+	);
+}
+
+/**
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function isStyledIdentifier(node) {
+	return node.type === 'Identifier' && node.name === 'styled';
+}
+
+/**
+ * `Component.extend`
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function isStyledExtend(node) {
+	return (
+		node.type === 'MemberExpression' &&
+		/^[A-Z]/.test(/** @type {AST.Identifier} */ (node.object).name) &&
+		/** @type {AST.Identifier} */ (node.property).name === 'extend'
+	);
+}
+
+/**
+ * Prettier's `isStyledComponents`: the template of `styled.foo`,
+ * `styled(Component)`, `styled.foo.attrs(…)`, `styled(Component).attrs(…)`,
+ * `Component.extend`, `Component.extend.attrs(…)`, or `css`.
+ * @param {AstPath} path - The path to the template literal
+ * @returns {boolean}
+ */
+function isStyledComponents(path) {
+	const parent = /** @type {AST.Node | null} */ (path.parent);
+	if (!parent || parent.type !== 'TaggedTemplateExpression') {
+		return false;
+	}
+	/** @type {AST.Node} */
+	const tag =
+		/** @type {string} */ (parent.tag.type) === 'ParenthesizedExpression'
+			? /** @type {{ expression: AST.Node }} */ (/** @type {unknown} */ (parent.tag)).expression
+			: parent.tag;
+	switch (tag.type) {
+		case 'MemberExpression':
+			return isStyledIdentifier(tag.object) || isStyledExtend(tag);
+		case 'CallExpression': {
+			const callee = tag.callee;
+			return (
+				isStyledIdentifier(callee) ||
+				(callee.type === 'MemberExpression' &&
+					((callee.object.type === 'MemberExpression' &&
+						(isStyledIdentifier(callee.object.object) || isStyledExtend(callee.object))) ||
+						(callee.object.type === 'CallExpression' && isStyledIdentifier(callee.object.callee))))
+			);
+		}
+		case 'Identifier':
+			return tag.name === 'css';
+		default:
+			return false;
+	}
+}
+
+/**
+ * Prettier's `isCssProp`: the template in a JSX `css={…}` attribute.
+ * @param {AstPath} path - The path to the template literal
+ * @returns {boolean}
+ */
+function isCssProp(path) {
+	const parent = /** @type {AST.Node | null} */ (path.parent);
+	const grandparent = /** @type {AST.Node | null} */ (path.grandparent);
+	return (
+		grandparent?.type === 'JSXAttribute' &&
+		parent?.type === 'JSXExpressionContainer' &&
+		grandparent.name.type === 'JSXIdentifier' &&
+		grandparent.name.name === 'css'
+	);
+}
+
+/**
+ * The predicates of Prettier's Angular checks for the object passed to
+ * `@Component(…)`.
+ * @type {((node: any, key: string | number | null) => boolean)[]}
+ */
+const ANGULAR_COMPONENT_OBJECT_PREDICATES = [
+	(node, key) => key === 'properties' && node.type === 'ObjectExpression',
+	(node, key) =>
+		key === 'arguments' &&
+		node.type === 'CallExpression' &&
+		node.callee.type === 'Identifier' &&
+		node.callee.name === 'Component',
+	(node, key) => key === 'expression' && node.type === 'Decorator',
+];
+
+/**
+ * Prettier's `isObjectProperty`: an object property that isn't a method.
+ * @param {AST.Node} node
+ * @returns {node is AST.Property}
+ */
+function isObjectPropertyNode(node) {
+	return (
+		node.type === 'Property' &&
+		!((node.method && node.kind === 'init') || node.kind === 'get' || node.kind === 'set')
+	);
+}
+
+/**
+ * An object property named `name` whose value is the node below it.
+ * @param {string} name
+ * @returns {(node: any, key: string | number | null) => boolean}
+ */
+function isPropertyValueNamed(name) {
+	return (node, key) =>
+		isObjectPropertyNode(node) &&
+		!node.computed &&
+		node.key.type === 'Identifier' &&
+		node.key.name === name &&
+		key === 'value';
+}
+
+/**
+ * Prettier's `isAngularComponentStyles`: a template in the `styles` of
+ * `@Component({ … })`.
+ * @param {AstPath} path - The path to the template literal
+ * @returns {boolean}
+ */
+function isAngularComponentStyles(path) {
+	/** @param {any} node */
+	const isTemplateLiteral = (node) => node.type === 'TemplateLiteral';
+	return (
+		path.match(
+			isTemplateLiteral,
+			(node, key) => node.type === 'ArrayExpression' && key === 'elements',
+			isPropertyValueNamed('styles'),
+			...ANGULAR_COMPONENT_OBJECT_PREDICATES,
+		) ||
+		path.match(
+			isTemplateLiteral,
+			isPropertyValueNamed('styles'),
+			...ANGULAR_COMPONENT_OBJECT_PREDICATES,
+		)
+	);
+}
+
+/**
+ * Prettier's `isAngularComponentTemplate`: the `template` of
+ * `@Component({ … })`.
+ * @param {AstPath} path - The path to the template literal
+ * @returns {boolean}
+ */
+function isAngularComponentTemplate(path) {
+	return path.match(
+		(node) => node.type === 'TemplateLiteral',
+		isPropertyValueNamed('template'),
+		...ANGULAR_COMPONENT_OBJECT_PREDICATES,
+	);
+}
+
+/**
+ * Whether a node has a leading block comment that reads exactly
+ * ` ${languageName} `, like Prettier's `hasLeadingBlockCommentWithName`.
+ * @param {AST.Node & AST.NodeWithMaybeComments} node
+ * @param {string} languageName
+ * @returns {boolean}
+ */
+function hasLeadingBlockCommentWithName(node, languageName) {
+	return Boolean(
+		node.leadingComments?.some(
+			(comment) => comment.type === 'Block' && comment.value === ` ${languageName} `,
+		),
+	);
+}
+
+/**
+ * Prettier's `hasLanguageComment`: a `/* GraphQL *\/` or `/* HTML *\/`
+ * comment before the template, its `as const`, or its statement.
+ * @param {AstPath} path - The path to the template literal
+ * @param {string} languageName
+ * @returns {boolean}
+ */
+function hasLanguageComment(path, languageName) {
+	const node = /** @type {AST.Node} */ (path.node);
+	const parent = /** @type {AST.Node} */ (path.parent);
+	return (
+		hasLeadingBlockCommentWithName(node, languageName) ||
+		(isAsConstExpression(parent) && hasLeadingBlockCommentWithName(parent, languageName)) ||
+		(parent.type === 'ExpressionStatement' && hasLeadingBlockCommentWithName(parent, languageName))
+	);
+}
+
+/**
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function isAsConstExpression(node) {
+	return (
+		node.type === 'TSAsExpression' &&
+		node.typeAnnotation.type === 'TSTypeReference' &&
+		node.typeAnnotation.typeName.type === 'Identifier' &&
+		node.typeAnnotation.typeName.name === 'const'
+	);
+}
+
+/**
+ * Prettier's `printEmbedGraphQL`: each text between the expressions formatted
+ * as GraphQL, one per line with the expressions, one level in.
+ * @type {TemplateEmbedPrint}
+ */
+async function printEmbedGraphQL(textToDoc, print, path, options) {
+	const node = /** @type {AST.TemplateLiteral} */ (path.node);
+	const numQuasis = node.quasis.length;
+	const expressionDocs = printTemplateExpressions(path, options, print);
+	/** @type {Doc[]} */
+	const parts = [];
+
+	for (let i = 0; i < numQuasis; i++) {
+		const isFirst = i === 0;
+		const isLast = i === numQuasis - 1;
+		const text = /** @type {string} */ (node.quasis[i].value.cooked);
+		const lines = text.split('\n');
+		const numLines = lines.length;
+
+		// Bail out if an interpolation occurs within a comment
+		if (!isLast && /#[^\n\r]*$/.test(lines[numLines - 1])) {
+			return null;
+		}
+
+		const startsWithBlankLine = numLines > 2 && lines[0].trim() === '' && lines[1].trim() === '';
+		const endsWithBlankLine =
+			numLines > 2 && lines[numLines - 1].trim() === '' && lines[numLines - 2].trim() === '';
+		const commentsAndWhitespaceOnly = lines.every((textLine) =>
+			/^\s*(?:#[^\n\r]*)?$/.test(textLine),
+		);
+
+		/** @type {Doc | null} */
+		let doc = commentsAndWhitespaceOnly
+			? printGraphqlComments(lines)
+			: await textToDoc(text, { parser: 'graphql' });
+
+		if (doc) {
+			doc = escapeTemplateCharacters(doc, false);
+			if (!isFirst && startsWithBlankLine) {
+				parts.push('');
+			}
+			parts.push(doc);
+			if (!isLast && endsWithBlankLine) {
+				parts.push('');
+			}
+		} else if (!isFirst && !isLast && startsWithBlankLine) {
+			parts.push('');
+		}
+
+		if (!isLast) {
+			parts.push(expressionDocs[i]);
+		}
+	}
+
+	return ['`', indent([hardline, join(hardline, parts)]), hardline, '`'];
+}
+
+/**
+ * Prettier's `printGraphqlComments`: the comment lines of a text between
+ * expressions that has only comments, or null when it has none.
+ * @param {string[]} lines
+ * @returns {Doc | null}
+ */
+function printGraphqlComments(lines) {
+	/** @type {Doc[]} */
+	const parts = [];
+	let seenComment = false;
+	const trimmedLines = lines.map((textLine) => textLine.trim());
+	for (const [i, textLine] of trimmedLines.entries()) {
+		// Drop the blank lines, but keep one before a comment after the first
+		if (textLine === '') {
+			continue;
+		}
+		if (trimmedLines[i - 1] === '' && seenComment) {
+			parts.push([hardline, textLine]);
+		} else {
+			parts.push(textLine);
+		}
+		seenComment = true;
+	}
+	return parts.length === 0 ? null : join(hardline, parts);
+}
+
+/**
+ * Prettier's `isEmbedGraphQL`: a `graphql`, `graphql.experimental`, or `gql`
+ * tagged template, one passed to `graphql(…)`, or one marked
+ * `/* GraphQL *\/`.
+ * @param {AstPath} path - The path to the template literal
+ * @returns {boolean}
+ */
+function isEmbedGraphQL(path) {
+	const parent = /** @type {AST.Node | null} */ (path.parent);
+	if (hasLanguageComment(path, 'GraphQL')) {
+		return true;
+	}
+	if (parent?.type === 'TaggedTemplateExpression') {
+		const { tag } = parent;
+		return (
+			(tag.type === 'MemberExpression' &&
+				/** @type {AST.Identifier} */ (tag.object).name === 'graphql' &&
+				/** @type {AST.Identifier} */ (tag.property).name === 'experimental') ||
+			(tag.type === 'Identifier' && (tag.name === 'gql' || tag.name === 'graphql'))
+		);
+	}
+	return (
+		parent?.type === 'CallExpression' &&
+		parent.callee.type === 'Identifier' &&
+		parent.callee.name === 'graphql'
+	);
+}
+
+/**
+ * Prettier's `escapeTemplateCharacters`: escape the backticks (and, for
+ * cooked text, the backslashes and `${`) of embedded code printed back into a
+ * template.
+ * @param {Doc} doc
+ * @param {boolean} raw - Whether the doc holds the template's raw text
+ * @returns {Doc}
+ */
+function escapeTemplateCharacters(doc, raw) {
+	return mapDoc(doc, (currentDoc) =>
+		typeof currentDoc === 'string'
+			? raw
+				? currentDoc.replace(/(\\*)`/g, '$1$1\\`')
+				: uncookTemplateElementValue(currentDoc)
+			: currentDoc,
+	);
+}
+
+/**
+ * Prettier's `uncookTemplateElementValue`.
+ * @param {string} cookedValue
+ * @returns {string}
+ */
+function uncookTemplateElementValue(cookedValue) {
+	return cookedValue.replace(/([\\`]|\$\{)/g, '\\$1');
+}
+
+/**
+ * Tells apart the placeholders of nested HTML templates, like Prettier's
+ * `htmlTemplateLiteralCounter`.
+ */
+let htmlTemplateLiteralCounter = 0;
+
+/**
+ * Prettier's `printEmbedHtmlLike`: the template formatted as HTML (or an
+ * Angular template), each `${…}` swapped for a placeholder while it is.
+ * @param {'html' | 'angular'} parser
+ * @param {TextToDoc} textToDoc
+ * @param {PrintFn} print
+ * @param {AstPath} path - The path to the template literal
+ * @param {TsrxFormatOptions & Options} options - Prettier options
+ * @returns {Promise<Doc>}
+ */
+async function printEmbedHtmlLike(parser, textToDoc, print, path, options) {
+	const node = /** @type {AST.TemplateLiteral} */ (path.node);
+	const counter = htmlTemplateLiteralCounter;
+	htmlTemplateLiteralCounter = (htmlTemplateLiteralCounter + 1) >>> 0;
+
+	/** @param {number | string} index */
+	const composePlaceholder = (index) => `PRETTIER_HTML_PLACEHOLDER_${index}_${counter}_IN_JS`;
+
+	const text = node.quasis
+		.map((quasi, index, quasis) =>
+			index === quasis.length - 1
+				? /** @type {string} */ (quasi.value.cooked)
+				: /** @type {string} */ (quasi.value.cooked) + composePlaceholder(index),
+		)
+		.join('');
+
+	const expressionDocs = printTemplateExpressions(path, options, print);
+
+	const placeholderRegex = new RegExp(composePlaceholder(String.raw`(\d+)`), 'g');
+	let topLevelCount = 0;
+	const doc = await textToDoc(text, {
+		parser,
+		/** @param {{ children: unknown[] }} root */
+		__onHtmlRoot(root) {
+			topLevelCount = root.children.length;
+		},
+	});
+
+	const contentDoc = mapDoc(doc, (currentDoc) => {
+		if (typeof currentDoc !== 'string') {
+			return currentDoc;
+		}
+		/** @type {Doc[]} */
+		const parts = [];
+		const components = currentDoc.split(placeholderRegex);
+		for (let i = 0; i < components.length; i++) {
+			let component = components[i];
+			if (i % 2 === 0) {
+				if (component) {
+					component = uncookTemplateElementValue(component);
+					if (options.__embeddedInHtml) {
+						component = component.replace(/<\/(?=script\b)/gi, String.raw`<\/`);
+					}
+					parts.push(component);
+				}
+				continue;
+			}
+			parts.push(expressionDocs[Number(component)]);
+		}
+		return parts;
+	});
+
+	const leadingWhitespace = /^\s/.test(text) ? ' ' : '';
+	const trailingWhitespace = /\s$/.test(text) ? ' ' : '';
+
+	const linebreak =
+		options.htmlWhitespaceSensitivity === 'ignore'
+			? hardline
+			: leadingWhitespace && trailingWhitespace
+				? line
+				: null;
+
+	if (linebreak) {
+		return group(['`', indent([linebreak, group(contentDoc)]), linebreak, '`']);
+	}
+
+	return label(
+		{ hug: false },
+		group([
+			'`',
+			leadingWhitespace,
+			topLevelCount > 1 ? indent(group(contentDoc)) : group(contentDoc),
+			trailingWhitespace,
+			'`',
+		]),
+	);
+}
+
+/**
+ * Prettier's `isEmbedHtml`: an `html` tagged template, or one marked
+ * `/* HTML *\/`.
+ * @param {AstPath} path - The path to the template literal
+ * @returns {boolean}
+ */
+function isEmbedHtml(path) {
+	return (
+		hasLanguageComment(path, 'HTML') ||
+		path.match(
+			(node) => node.type === 'TemplateLiteral',
+			(node, key) =>
+				node.type === 'TaggedTemplateExpression' &&
+				node.tag.type === 'Identifier' &&
+				node.tag.name === 'html' &&
+				key === 'quasi',
+		)
+	);
+}
+
+/**
+ * Prettier's `printEmbedMarkdown`: the template formatted as Markdown, with
+ * the indentation of its first line, or from the start of the line.
+ * @type {TemplateEmbedPrint}
+ */
+async function printEmbedMarkdown(textToDoc, print, path) {
+	const node = /** @type {AST.TemplateLiteral} */ (path.node);
+	let text = node.quasis[0].value.raw.replace(
+		/((?:\\\\)*)\\`/g,
+		(_, /** @type {string} */ backslashes) => '\\'.repeat(backslashes.length / 2) + '`',
+	);
+	const indentation = getMarkdownIndentation(text);
+	const hasIndent = indentation !== '';
+	if (hasIndent) {
+		text = text.replace(new RegExp(`^${indentation}`, 'gm'), '');
+	}
+	const doc = escapeTemplateCharacters(
+		await textToDoc(text, { parser: 'markdown', __inJsTemplate: true }),
+		true,
+	);
+	return [
+		'`',
+		hasIndent ? indent([softline, doc]) : [literalline, dedentToRoot(doc)],
+		softline,
+		'`',
+	];
+}
+
+/**
+ * The indentation of the first line with text, like Prettier's markdown
+ * `getIndentation`.
+ * @param {string} text
+ * @returns {string}
+ */
+function getMarkdownIndentation(text) {
+	const firstMatchedIndent = text.match(/^([^\S\n]*)\S/m);
+	return firstMatchedIndent === null ? '' : firstMatchedIndent[1];
+}
+
+/**
+ * Prettier's `isEmbedMarkdown`: an `md` or `markdown` tagged template without
+ * expressions.
+ * @param {AstPath} path - The path to the template literal
+ * @returns {boolean}
+ */
+function isEmbedMarkdown(path) {
+	const node = /** @type {AST.TemplateLiteral} */ (path.node);
+	const parent = /** @type {AST.Node | null} */ (path.parent);
+	return (
+		parent?.type === 'TaggedTemplateExpression' &&
+		node.quasis.length === 1 &&
+		parent.tag.type === 'Identifier' &&
+		(parent.tag.name === 'md' || parent.tag.name === 'markdown')
+	);
+}
+
+/**
  * Print a tagged template expression
  * @param {AST.TaggedTemplateExpression} node - The tagged template node
  * @param {AstPath<AST.TaggedTemplateExpression>} path - The AST path
@@ -7483,7 +8595,9 @@ function printTaggedTemplateExpression(node, path, options, print) {
 	if (node.typeArguments) {
 		parts.push(path.call(print, 'typeArguments'));
 	}
-	parts.push(path.call(print, 'quasi'));
+	// Like Prettier, a line comment after the tag prints before the backtick,
+	// which an embedded template's doc doesn't print first
+	parts.push(lineSuffixBoundary, path.call(print, 'quasi'));
 	return parts;
 }
 
@@ -7626,7 +8740,7 @@ function printTSInterfaceDeclaration(node, path, options, print) {
 	// Handle extends clause. Unlike a class body, an interface body stays on
 	// the heading's last line when the heading breaks, like Prettier.
 	const groupMode = shouldPrintHeritageInGroupMode(node, path);
-	const heritage = printHeritageClauses(node, path, print, groupMode);
+	const heritage = printHeritageClauses(node, path, options, print, groupMode);
 	return [
 		groupMode ? group([...parts, indent(heritage)]) : [...parts, heritage],
 		' ',
@@ -7835,9 +8949,7 @@ function printTSUnionType(node, path, options, print, args) {
 		printed = [...printLeadingComments(node, node.leadingComments ?? [], options), printed];
 	}
 
-	// The parser keeps the parentheses as a node of their own, which prints
-	// them around this doc
-	if (/** @type {AST.Node | null} */ (path.parent)?.type === 'TSParenthesizedType') {
+	if (needsParens(path, options)) {
 		return group([indent([softline, printed]), softline]);
 	}
 
@@ -10473,12 +11585,18 @@ function printTSConditionalType(node, path, options, print) {
 	const shouldIndentTrueType = node.trueType.type !== 'TSConditionalType';
 	const shouldIndentFalseType = node.falseType.type !== 'TSConditionalType';
 
+	// Like Prettier's ternaries, a conditional true type gets parentheses only
+	// on one line
+	const isTrueType = path.key === 'trueType' && path.parent?.type === 'TSConditionalType';
+
 	return group([
+		isTrueType ? ifBreak('', '(') : '',
 		path.call(print, 'checkType'),
 		' extends ',
 		path.call(print, 'extendsType'),
 		indent([line, '? ', shouldIndentTrueType ? indent(trueType) : trueType]),
 		indent([line, ': ', shouldIndentFalseType ? indent(falseType) : falseType]),
+		isTrueType ? ifBreak('', ')') : '',
 	]);
 }
 
