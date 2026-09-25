@@ -6731,6 +6731,21 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(statement.consequent).leading).toBeUndefined();
 	});
 
+	// The next attribute's name took it, and the printer dropped it (#517)
+	it('trails the argument of a spread with a comment on its own line before its }', () => {
+		/** @param {string} source */
+		const element = (source) =>
+			/** @type {any} */ (parseModule(source, 'App.tsrx').body[0]).expression.right;
+		const { openingElement } = element('x = <div {...a\n  // c\n} b="1" />;');
+		const { children, closingElement } = element('x = <div>{...a\n  // c\n}</div>;');
+
+		expect(commentsOf(openingElement.attributes[0].argument).trailing).toEqual([' c']);
+		expect(commentsOf(openingElement.attributes[0]).trailing).toBeUndefined();
+		expect(commentsOf(openingElement.attributes[1].name).leading).toBeUndefined();
+		expect(commentsOf(children[0].expression).trailing).toEqual([' c']);
+		expect(commentsOf(closingElement).leading).toBeUndefined();
+	});
+
 	// Prettier's `canAttachComment` rejects a template element, and its
 	// `findExpressionIndexForComment` keeps a comment in its `${…}`
 	it('trails the expression with a comment after it in the ${…} of a template literal', () => {

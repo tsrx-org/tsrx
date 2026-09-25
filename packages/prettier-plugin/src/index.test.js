@@ -9902,6 +9902,150 @@ export function SpaceBeforeComment() @{
 			]);
 		});
 
+		// `//` at the start of a line of text is a comment, so a word that starts
+		// with it stays on the line of the word before it, where it is text. It
+		// used to wrap to the start of a line, and the rest of the line was lost
+		// (#541).
+		it('renders a word that starts with // the same after formatting', async () => {
+			const input = `export function Wrapped() @{
+	<div>${'a'.repeat(40)} ${'b'.repeat(53)} // ${'c'.repeat(16)} dddd</div>
+}
+export function AfterComment() @{
+	<div>${'a'.repeat(40)} ${'b'.repeat(45)} /* c */ //x dddd</div>
+}
+export function Short() @{
+	<div>a // b</div>
+}`;
+			const result = await format(input, { useTabs: true, printWidth: 100 });
+			expect(result).toBeWithNewline(`export function Wrapped() @{
+	<div>
+		${'a'.repeat(40)}
+		${'b'.repeat(53)} // ${'c'.repeat(16)} dddd
+	</div>
+}
+export function AfterComment() @{
+	<div>
+		${'a'.repeat(40)} ${'b'.repeat(45)} /* c */ //x
+		dddd
+	</div>
+}
+export function Short() @{
+	<div>a // b</div>
+}`);
+			expect(await render(result)).toEqual(await render(input));
+			expect(await render(input)).toEqual([
+				`<div>${'a'.repeat(40)} ${'b'.repeat(53)} // ${'c'.repeat(16)} dddd</div>`,
+				`<div>${'a'.repeat(40)} ${'b'.repeat(45)} //x dddd</div>`,
+				'<div>a // b</div>',
+			]);
+		});
+
+		// Right after a child, `//` is a comment too, so such a word is text only
+		// after a comment there. A `{" "}` keeps that comment, and the JSX space
+		// before the word broke the line before it.
+		it('renders a word that starts with // after a child the same after formatting', async () => {
+			const text = 'Some text that goes past the print width once it is indented, and then more';
+			const input = `export function AfterSpace() @{
+	<p>${text} {' '}/* c */ //xxxxxxxxxx ends here</p>
+}
+export function AfterSpaceGlued() @{
+	<p>${text} {' '}/* c *///xxxxxxxxxxx ends here</p>
+}
+export function AfterElement() @{
+	<p>${text} <b>t</b>/* c */ //xxxxxxxxxx ends here</p>
+}
+export function AfterSelfClosing() @{
+	<p>${text} <br />/* c */ //xxxxxxxxxx ends here</p>
+}
+export function AfterExpression() @{
+	<p>${text} {'t'}/* c */ //xxxxxxxxxx ends here</p>
+}
+export function AfterFragment() @{
+	<p>${text} <>t</>/* c */ //xxxxxxxxxx ends here</p>
+}`;
+			const result = await format(input, { useTabs: true, singleQuote: true, printWidth: 100 });
+			expect(result).toBeWithNewline(`export function AfterSpace() @{
+	<p>
+		${text}{' '}
+		{' '}/* c */ //xxxxxxxxxx ends here
+	</p>
+}
+export function AfterSpaceGlued() @{
+	<p>
+		${text}{' '}
+		{' '}/* c *///xxxxxxxxxxx ends here
+	</p>
+}
+export function AfterElement() @{
+	<p>
+		${text} <b>t</b>/* c */ //xxxxxxxxxx
+		ends here
+	</p>
+}
+export function AfterSelfClosing() @{
+	<p>
+		${text} <br />/* c */ //xxxxxxxxxx
+		ends here
+	</p>
+}
+export function AfterExpression() @{
+	<p>
+		${text} {'t'}/* c */ //xxxxxxxxxx
+		ends here
+	</p>
+}
+export function AfterFragment() @{
+	<p>
+		${text} <>t</>/* c */ //xxxxxxxxxx
+		ends here
+	</p>
+}`);
+			expect(await render(result)).toEqual(await render(input));
+			expect(await render(input)).toEqual([
+				`<p>${text} //xxxxxxxxxx ends here</p>`,
+				`<p>${text} //xxxxxxxxxxx ends here</p>`,
+				`<p>${text} <b>t</b> //xxxxxxxxxx ends here</p>`,
+				`<p>${text} <br></br> //xxxxxxxxxx ends here</p>`,
+				`<p>${text} t //xxxxxxxxxx ends here</p>`,
+				`<p>${text} t //xxxxxxxxxx ends here</p>`,
+			]);
+		});
+
+		it('keeps a word that starts with // off the start of a line in JSX text', async () => {
+			const input = `const a = <div>${'a'.repeat(40)} ${'b'.repeat(53)} // cc dd</div>;`;
+			expect(await format(input, { useTabs: true, printWidth: 100 })).toBeWithNewline(
+				`const a = (\n\t<div>\n\t\t${'a'.repeat(40)}\n\t\t${'b'.repeat(53)} // cc dd\n\t</div>\n);`,
+			);
+		});
+
+		// A block comment after a `{" "}` keeps the spaces around it (#542)
+		it('renders the same markup with a block comment after a {" "}', async () => {
+			const input = `export function Glued() @{
+	<div>x{' '}/* c */y</div>
+}
+export function LineAfter() @{
+	<div>
+		x{' '} /* c */
+		y
+	</div>
+}
+export function Spaced() @{
+	<div>x{' '} /* c */ y</div>
+}`;
+			const result = await format(input, { useTabs: true, singleQuote: true });
+			expect(result).toBeWithNewline(`export function Glued() @{
+	<div>x{' '}/* c */y</div>
+}
+export function LineAfter() @{
+	<div>x{' '}/* c */y</div>
+}
+export function Spaced() @{
+	<div>x{' '} /* c */ y</div>
+}`);
+			expect(await render(result)).toEqual(await render(input));
+			expect(await render(input)).toEqual(['<div>x y</div>', '<div>x y</div>', '<div>x y</div>']);
+		});
+
 		it('renders website sections the same after formatting', async () => {
 			const input = `export function Structure() @{
 	<section class="doc-section" id="template-structure">
@@ -16202,6 +16346,30 @@ item
 			expect(await format(source)).toBeWithNewline(expected);
 		});
 
+		// A `{" "}` keeps a block comment on its line even in the text after it,
+		// where a space printed before the comment is text. It printed one
+		// either way, which the next format read as the text's leading space
+		// (#542).
+		it.each([
+			['const a = <div>{" "}/* c */y</div>;', 'const a = <div>{" "}/* c */y</div>;'],
+			['const a = <div>x{" "}/* c */\n  y</div>;', 'const a = <div>x{" "}/* c */y</div>;'],
+			['const a = <div>x{" "} /* c */\n  y</div>;', 'const a = <div>x{" "}/* c */y</div>;'],
+			[
+				'export function App() @{\n  <p>{a}{" "}/* c */y</p>\n}',
+				'export function App() @{\n  <p>\n    {a}\n    {" "}/* c */y\n  </p>\n}',
+			],
+		])('keeps the block comment after the {" "} of %j in place', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const a = <div>x{" "} /* c */ y</div>;',
+			'const a = <div>x{" "}/* c */ y</div>;',
+			'const a = <div>x{" "} /* c */ /* d */ y</div>;',
+		])('keeps the spaces around the block comment after the {" "} of %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
 		// Like Prettier's `printJsxClosingElement` and
 		// `printJsxOpeningClosingFragment`. They used to be deleted, and the one
 		// in a closing fragment moved to the next statement (#499).
@@ -16254,6 +16422,128 @@ item
 			expect(await format(source)).toBeWithNewline(expected);
 		});
 
+		// Like Prettier, a block comment between an attribute's `=` and its value
+		// prints before the value. They used to be deleted (#514).
+		it.each([
+			[
+				'const el = <div attr=/* comment */"foo" b=/* c */{x}></div>;',
+				'const el = <div attr=/* comment */ "foo" b=/* c */ {x}></div>;',
+			],
+			[
+				'export function App() @{\n  <div attr=/* c */"foo">text</div>\n}',
+				'export function App() @{\n  <div attr=/* c */ "foo">text</div>\n}',
+			],
+			// Prettier moves one that ends its line before the `=` on the next
+			// format; it stays before the value
+			['const el = <div attr=/* c */\n"foo"></div>;', 'const el = <div attr=/* c */ "foo"></div>;'],
+			['const el = <div attr=\n/* c */\n{x}></div>;', 'const el = <div attr=/* c */ {x}></div>;'],
+		])('keeps the comment before the value of %j', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const el = <div attr=/* a */ <i /> c=/* d */ <></>></div>;',
+			'const el = <div attr="foo" /* c */ b="2"></div>;',
+		])('keeps the comments around the value of %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// A line comment there prints where Prettier's output settles: after a
+		// string or element value, like a trailing comment of the attribute, and
+		// inside the braces of a container. Prettier prints one on a line of its
+		// own before the value first, which isn't idempotent, and moves one after
+		// the `=` to the end of the element, or into its children, where it
+		// becomes text; here the opening tag breaks so it stays after the
+		// attribute.
+		it.each([
+			[
+				'const el = <div attr= // comment\n"foo" b="2"></div>;',
+				'const el = (\n  <div\n    attr="foo" // comment\n    b="2"\n  ></div>\n);',
+			],
+			[
+				'const el = <div attr=\n// comment\n"foo"></div>;',
+				'const el = (\n  <div\n    attr="foo" // comment\n  ></div>\n);',
+			],
+			[
+				'const el = <div attr= // c\n"foo">text</div>;',
+				'const el = (\n  <div\n    attr="foo" // c\n  >\n    text\n  </div>\n);',
+			],
+			[
+				'const el = <div attr=/* a */ // c\n"foo" b="1"></div>;',
+				'const el = (\n  <div\n    attr=/* a */ "foo" // c\n    b="1"\n  ></div>\n);',
+			],
+			[
+				'const el = <div attr= // c\n<i />></div>;',
+				'const el = (\n  <div\n    attr=<i /> // c\n  ></div>\n);',
+			],
+			[
+				'const el = <div attr=\n// comment\n{x} b="2"></div>;',
+				'const el = (\n  <div\n    attr={\n      // comment\n      x\n    }\n    b="2"\n  ></div>\n);',
+			],
+			[
+				'export function App() @{\n  <div attr= // c\n  "foo">text</div>\n}',
+				'export function App() @{\n  <div\n    attr="foo" // c\n  >\n    text\n  </div>\n}',
+			],
+		])('formats the line comment before the value of %j', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// Like Prettier's `print("name")`, an attribute's name prints with its
+		// comments, which were deleted (#575)
+		it.each([
+			'const el = <div attr /* a */="x"></div>;',
+			'const el = <div attr /* a */="x" b /* c */></div>;',
+		])('keeps the comment after the name of %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a line comment after the name of an attribute in the opening tag', async () => {
+			expect(await format('const el = <div attr // a\n="x">text</div>;')).toBeWithNewline(
+				'const el = (\n  <div\n    attr="x" // a\n  >\n    text\n  </div>\n);',
+			);
+		});
+
+		// Like Prettier, a comment after a spread's argument stays in its braces.
+		// Before another attribute, it was deleted, and otherwise it moved after
+		// the `}` (#517).
+		it.each([
+			[
+				'c = <div {...a\n// e\n} b="1" />;',
+				'c = (\n  <div\n    {\n      ...a\n      // e\n    }\n    b="1"\n  />\n);',
+			],
+			[
+				'd = <div {...a\n// f\n} />;',
+				'd = (\n  <div\n    {\n      ...a\n      // f\n    }\n  />\n);',
+			],
+			[
+				'const el = <div {...a // s\n} />;',
+				'const el = (\n  <div\n    {\n      ...a // s\n    }\n  />\n);',
+			],
+			[
+				'export function App(props) @{\n  <div {...props\n  // c\n  } class="x">text</div>\n}',
+				'export function App(props) @{\n  <div\n    {\n      ...props\n      // c\n    }\n    class="x"\n  >\n    text\n  </div>\n}',
+			],
+			// The braces break with the opening tag
+			[
+				'const el = <div {...a /* s */} bbbbbbbbbbbbbb="1" ccccccccccccccccc="2" dddddddddddddddddddd="3" />;',
+				'const el = (\n  <div\n    {\n      ...a /* s */\n    }\n    bbbbbbbbbbbbbb="1"\n    ccccccccccccccccc="2"\n    dddddddddddddddddddd="3"\n  />\n);',
+			],
+			// Prettier's `jsx/ignore/spread.js`, which lost its `prettier-ignore`
+			[
+				'function HelloWorld() {\n  return (\n    <div\n      {...{} /*\n      // @ts-ignore */ /* prettier-ignore */}\n      invalidProp="HelloWorld"\n    >\n      test\n    </div>\n  );\n}',
+				'function HelloWorld() {\n  return (\n    <div\n      {\n        ...{} /*\n      // @ts-ignore */ /* prettier-ignore */\n      }\n      invalidProp="HelloWorld"\n    >\n      test\n    </div>\n  );\n}',
+			],
+		])('keeps the comment after the argument of the spread in %j', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each(['const el = <div {...a /* s */} b="1" />;', 'const el = <div {...a} b="1" />;'])(
+			'keeps the spread attribute of %j',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
+
 		it('joins an operator on the next line to the element it continues, like Prettier', async () => {
 			const source = '<div />\n+ 1;\n\nfunction f() {\n  <div />\n  > 5;\n}';
 			expect(await format(source)).toBeWithNewline(
@@ -16297,6 +16587,16 @@ item
 			[
 				'const x = <div>{...a // c\n}</div>;',
 				'const x = (\n  <div>\n    {\n      ...a // c\n    }\n  </div>\n);',
+			],
+			// A comment on its own line after the expression moved after the `}`
+			// (#517)
+			[
+				'const x = <div>{...a\n// c\n}</div>;',
+				'const x = (\n  <div>\n    {\n      ...a\n      // c\n    }\n  </div>\n);',
+			],
+			[
+				'export function App(props) @{\n  <div>{...props\n  // c\n  }</div>\n}',
+				'export function App(props) @{\n  <div>\n    {\n      ...props\n      // c\n    }\n  </div>\n}',
 			],
 			[
 				'const x = <div>{...a}{...b}</div>;',
