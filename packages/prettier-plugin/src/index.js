@@ -423,8 +423,8 @@ const IGNORED_CONTENT_END_TYPES = new Set([
 
 /**
  * The source of a node that `prettier-ignore` keeps, like Prettier's
- * `printIgnored`. It starts at the node's first decorator, even one written
- * before `export`. A statement's source ends where Prettier's `locEnd` does,
+ * `printIgnored`. An export's source starts at its declaration's first
+ * decorator, even one written before `export`. A statement's source ends where Prettier's `locEnd` does,
  * before its `;`, which then prints by the `semi` option: after a declaration,
  * `break`, `continue`, or `debugger` always, and after another statement only
  * when it was written. A compound statement ends like its body.
@@ -435,8 +435,11 @@ const IGNORED_CONTENT_END_TYPES = new Set([
  */
 function printIgnoredSource(node, path, options) {
 	const text = /** @type {string} */ (options.originalText);
+	// A node's own span has the decorators written after `export`. The ones
+	// before it belong to the export, which prints the others when it isn't
+	// ignored itself (see printDeclarationDecorators).
 	const { declaration } = /** @type {{ declaration?: AST.Node | null }} */ (node);
-	const [firstDecorator] = getDecorators(declaration ?? node);
+	const [firstDecorator] = getDecorators(declaration);
 	const nodeStart = /** @type {AST.NodeWithLocation} */ (node).start;
 	const start = firstDecorator
 		? Math.min(/** @type {AST.NodeWithLocation} */ (firstDecorator).start, nodeStart)
@@ -2000,8 +2003,20 @@ function printDecorators(node, path, options, print) {
  */
 function printDeclarationDecorators(node, path, options, print) {
 	const declaration = /** @type {AST.Node | null | undefined} */ (node.declaration);
+	const [firstDecorator] = getDecorators(declaration);
 
-	if (getDecorators(declaration).length === 0) {
+	if (!firstDecorator) {
+		return [];
+	}
+
+	// An ignored declaration keeps the decorators written after `export` in its
+	// source, where Prettier keeps them too
+	const declarationNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (declaration);
+	if (
+		hasPrettierIgnore(declarationNode) &&
+		/** @type {AST.NodeWithLocation} */ (firstDecorator).start >=
+			/** @type {AST.NodeWithLocation} */ (declarationNode).start
+	) {
 		return [];
 	}
 

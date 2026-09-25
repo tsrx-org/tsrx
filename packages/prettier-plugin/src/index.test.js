@@ -1285,6 +1285,20 @@ export default   class  B {}`;
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// The decorators print once, where they were written, as in Prettier
+		it.each([
+			'// prettier-ignore\n@dec export class A {  }',
+			'// prettier-ignore\nexport @dec class A {  }',
+			'// prettier-ignore\n@dec export default class {  }',
+			'// prettier-ignore\n@dec class A {  }',
+			'export /* prettier-ignore */ @dec class A {  }',
+			'export default /* prettier-ignore */ @dec class {  }',
+			'@a @b\nexport class A {  } // prettier-ignore',
+			'class B {\n  // prettier-ignore\n  @dec   m(  ) {}\n}',
+		])('keeps an ignored decorated declaration as written in %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
 		it("doesn't break the list around an ignored node over several lines", async () => {
 			// Prettier prints the ignored source as a plain string
 			const source = `foo(/* prettier-ignore */ [1,
