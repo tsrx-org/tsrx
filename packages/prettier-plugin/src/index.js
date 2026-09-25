@@ -936,9 +936,15 @@ function getIgnoredSource(node, path, options) {
 	const text = /** @type {string} */ (options.originalText);
 	// A node's own span has the decorators written after `export`. The ones
 	// before it belong to the export, which prints the others when it isn't
-	// ignored itself (see printDeclarationDecorators).
+	// ignored itself (see printDeclarationDecorators). Like Prettier's
+	// `locStart`, a parameter starts at its decorators, which the parser keeps
+	// outside its span, and a parameter property at its parameter's.
 	const { declaration } = /** @type {{ declaration?: AST.Node | null }} */ (node);
-	const [firstDecorator] = getDecorators(declaration);
+	const [firstDecorator] = getDecorators(
+		node.type === 'TSParameterProperty'
+			? /** @type {AST.Node} */ (/** @type {unknown} */ (node.parameter))
+			: (declaration ?? node),
+	);
 	const nodeStart = /** @type {AST.NodeWithLocation} */ (node).start;
 	const start = firstDecorator
 		? Math.min(/** @type {AST.NodeWithLocation} */ (firstDecorator).start, nodeStart)
@@ -2535,8 +2541,9 @@ function isClassMember(node) {
 }
 
 /**
- * Whether a class member's decorators must each go on their own line, which is
- * how they were written when any of them is followed by a newline.
+ * Whether a class member's or a parameter's decorators must each go on their
+ * own line, which is how they were written when any of them is followed by a
+ * newline, like Prettier's `hasNewlineBetweenOrAfterDecorators`.
  * @param {AST.Node} node - The decorated node
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {boolean}
@@ -2563,7 +2570,11 @@ function shouldBreakDecorators(node, options) {
  * class member keeps the lines it was written with, and when it was written
  * inline the decorators get their own group, so a decorator too long to share
  * the member's line moves to its own line rather than breaking apart.
- * Everywhere else — parameters, most notably — decorators stay inline.
+ * Everywhere else — parameters, most notably — the decorators are separated
+ * by lines that the caller groups with the node, as Prettier's
+ * `printDecorators` does: they break when a line break follows one of them or
+ * when the decorators and the node don't fit on one line, and then the node
+ * starts a line of its own.
  * @param {AST.Node} node - The decorated node
  * @param {AstPath} path - The AST path, positioned at the decorated node
  * @param {TsrxFormatOptions} options - Prettier options
@@ -2608,7 +2619,7 @@ function printDecorators(node, path, options, print) {
 		return [group([join(line, printed), line])];
 	}
 
-	return [join(' ', printed), ' '];
+	return [shouldBreakDecorators(node, options) ? breakParent : '', join(line, printed), line];
 }
 
 /**
@@ -3813,18 +3824,14 @@ function printTsrxNode(node, path, options, print, args) {
 
 			// The parser hangs the decorators off the inner parameter, but they
 			// are written before the modifiers: `@inject private readonly x: T`.
+			// Like Prettier, they group with the modifiers and the parameter.
 			const parameter = /** @type {AST.Node} */ (/** @type {unknown} */ (node.parameter));
-
-			if (getDecorators(parameter).length > 0) {
-				parts.push(
-					.../** @type {Doc[]} */ (
-						path.call(
-							(parameterPath) => printDecorators(parameter, parameterPath, options, print),
-							'parameter',
-						)
-					),
-				);
-			}
+			const decorators = /** @type {Doc[]} */ (
+				path.call(
+					(parameterPath) => printDecorators(parameter, parameterPath, options, print),
+					'parameter',
+				)
+			);
 
 			if (node.accessibility) {
 				parts.push(node.accessibility, ' ');
@@ -3839,7 +3846,7 @@ function printTsrxNode(node, path, options, print, args) {
 			}
 
 			parts.push(path.call(print, 'parameter'));
-			nodeContent = parts;
+			nodeContent = decorators.length > 0 ? group([...decorators, ...parts]) : parts;
 			break;
 		}
 
@@ -3930,6 +3937,12 @@ function printTsrxNode(node, path, options, print, args) {
 	const decorated = /** @type {AST.Node} */ (node);
 	if (getDecorators(decorated).length > 0 && !decoratorsPrintedByParent(decorated, path, options)) {
 		nodeContent = [...printDecorators(decorated, path, options, print), nodeContent];
+		// Like Prettier, the decorators group with the node they decorate, so
+		// that a parameter moves to the next line when they break. A class
+		// member and a class expression lay out their decorators themselves.
+		if (!isClassMember(decorated) && decorated.type !== 'ClassExpression') {
+			nodeContent = group(nodeContent);
+		}
 		// Like Prettier's `printClass`, a class expression in parentheses puts
 		// its decorators on their own lines inside them
 		if (
