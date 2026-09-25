@@ -64,6 +64,19 @@ function f() {
 		);
 	});
 
+	test('a nested `@{ … }` in a template is a statement, without parentheses (#504)', async () => {
+		await expectFormat(
+			`export function App() @{ @{ const x = 2; <b>{x}</b> } }`,
+			`export function App() @{
+  @{
+    const x = 2;
+    <b>{x}</b>
+  }
+}
+`,
+		);
+	});
+
 	test('keeps comments and blank lines between setup statements', async () => {
 		await expectFormat(
 			`function App() @{
@@ -227,6 +240,68 @@ list.map((item) => (
     <B />
   }
 ));
+`,
+		);
+	});
+
+	// As Prettier places the same comments before `catch` and `else`.
+	test('comments before @catch, @else, and @empty (#505)', async () => {
+		await expectFormat(
+			`function A() @{ @try { <b /> } /* one */ @catch (error) { <i /> } }
+function B() @{ @try { <b /> } // two
+@catch (error) { <i /> } }
+function C() @{ @if (a) { <b /> } // three
+@else { <i /> } }
+function D() @{ @for (const x of xs) { <b /> } // four
+@empty { <i /> } }`,
+			`function A() @{
+  @try {
+    <b />
+  } /* one */ @catch (error) {
+    <i />
+  }
+}
+function B() @{
+  @try {
+    <b />
+  } @catch (error) {
+    // two
+    <i />
+  }
+}
+function C() @{
+  @if (a) {
+    <b />
+  } // three
+  @else {
+    <i />
+  }
+}
+function D() @{
+  @for (const x of xs) {
+    <b />
+  } // four
+  @empty {
+    <i />
+  }
+}
+`,
+		);
+	});
+
+	test('a brace in a comment before an @case body (#509)', async () => {
+		await expectFormat(
+			`const S = () => @switch (1) { @case 1: /* { */ { <b /> } @default: /* } */ { <i /> } }`,
+			`const S = () => (
+  @switch (1) {
+    @case 1: /* { */ {
+      <b />
+    }
+    @default: /* } */ {
+      <i />
+    }
+  }
+);
 `,
 		);
 	});
@@ -460,7 +535,120 @@ const b = (
 	});
 });
 
+describe('comments before a tag name', () => {
+	// Prettier prints `<// note` with the name below it at the same indentation,
+	// which TSX can't parse.
+	test('a line comment goes on its own line after `<`, like in a closing tag', async () => {
+		await expectFormat(
+			`const a = <
+  // note
+  div className="x">text</div>;
+const b = <// note
+  br />;
+function App() @{
+  @if (x) {
+    <// note
+      span />
+  }
+}`,
+			`const a = (
+  <
+    // note
+    div
+    className="x"
+  >
+    text
+  </div>
+);
+const b = (
+  <
+    // note
+    br
+  />
+);
+function App() @{
+  @if (x) {
+    <
+      // note
+      span
+    />
+  }
+}
+`,
+		);
+	});
+
+	// A `<` followed by a line break in an element's children is text.
+	test("an element's direct child keeps the comment right after `<`", async () => {
+		await expectFormat(
+			`const a = <div>
+  <// note
+    span />
+</div>;`,
+			`const a = (
+  <div>
+    <// note
+    span
+    />
+  </div>
+);
+`,
+		);
+	});
+
+	test('a dynamic tag name keeps its comments the same way', async () => {
+		await expectFormat(
+			`const a = <
+  // c
+  {Tag} x={1}>y</{Tag}>;
+const b = </* c */ {Tag} />;
+const c = <{Tag}>x</ /* c */ {Tag}>;`,
+			`const a = (
+  <
+    // c
+    {Tag}
+    x={1}
+  >
+    y
+  </{Tag}>
+);
+const b = </* c */ {Tag} />;
+const c = <{Tag}>x</ /* c */ {Tag}>;
+`,
+		);
+	});
+
+	// Prettier prints this on its second format; its first keeps the line breaks.
+	test('a block comment on its own line prints straight after `<` or `</`', async () => {
+		await expectFormat(
+			`const a = <
+  /* note */
+  div className="x">text</div>;
+const b = <div>text</
+  /* note */
+  div>;`,
+			`const a = </* note */ div className="x">text</div>;
+const b = <div>text</ /* note */ div>;
+`,
+		);
+	});
+});
+
 describe('<script> bodies', () => {
+	test('with embedded formatting off, <style> and <script> bodies are kept as written (#503)', async () => {
+		await expectFormat(
+			`function App() @{ <><style>.x {  color: red }</style><script>const  x=1</script></> }`,
+			`function App() @{
+  <>
+    <style>.x {  color: red }</style>
+    <script>const  x=1</script>
+  </>
+}
+`,
+			{ embeddedLanguageFormatting: 'off' },
+		);
+	});
+
 	test('only JavaScript and TypeScript bodies are formatted', async () => {
 		await expectFormat(
 			`const s = <>
@@ -510,6 +698,26 @@ describe('parse errors', () => {
 	test('unclosed or mismatched tags are errors, not guessed markup', async () => {
 		await expect(format('const x = 1;\nconst y = <div>\n')).rejects.toThrow(/Unclosed tag '<div>'/);
 		await expect(format('const a = <div></span>;\n')).rejects.toThrow();
+	});
+
+	test("errors are reported like Prettier's parsers report them", async () => {
+		for (const [source, message, start] of [
+			[
+				'function App() @{\n  @if (x) {\n    <b />\n',
+				"'}' expected. (4:1)",
+				{ line: 4, column: 1 },
+			],
+			[
+				'const y = <div>\n',
+				"Unclosed tag '<div>'. Expected '</div>' before end of template. (2:1)",
+				{ line: 2, column: 1 },
+			],
+		]) {
+			const error = await format(/** @type {string} */ (source)).catch((/** @type {any} */ e) => e);
+			expect(error).toBeInstanceOf(SyntaxError);
+			expect(error.message.split('\n')[0]).toBe(message);
+			expect(error.loc).toEqual({ start });
+		}
 	});
 
 	test('mistakes TypeScript only reports as diagnostics still format', async () => {
