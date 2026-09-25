@@ -6116,6 +6116,26 @@ describe('comments around the commas of a list', () => {
 			"import def /* c */, { b } from 'mod';",
 			(statement) => statement.specifiers,
 		],
+		[
+			'type arguments',
+			'type X = Foo<A /* c */, B>;',
+			(statement) => statement.typeAnnotation.typeArguments.params,
+		],
+		[
+			'type parameters',
+			'function f<A /* c */, B>() {}',
+			(statement) => statement.typeParameters.params,
+		],
+		[
+			'a tuple type',
+			'type X = [A /* c */, B];',
+			(statement) => statement.typeAnnotation.elementTypes,
+		],
+		[
+			'a tuple type with a type in parentheses',
+			'type X = [(A) /* c */, B];',
+			(statement) => statement.typeAnnotation.elementTypes,
+		],
 	];
 
 	it.each(lists)(
@@ -6242,6 +6262,16 @@ describe('comments placed like Prettier', () => {
 		expect(union.types[1].metadata?.prettierIgnore).toBeUndefined();
 	});
 
+	// Prettier's parsers keep no node for a type's parentheses
+	it('marks the first member of a union in parentheses after a prettier-ignore comment on its own line', () => {
+		const type = firstStatement('type K =\n  // prettier-ignore\n  ((A | B));').typeAnnotation;
+		const union = type.typeAnnotation.typeAnnotation;
+
+		expect(type.leadingComments[0].unignore).toBe(true);
+		expect(union.types[0].metadata.prettierIgnore).toBe(true);
+		expect(union.types[1].metadata?.prettierIgnore).toBeUndefined();
+	});
+
 	it('leaves a prettier-ignore comment that ends a union member on that member', () => {
 		const union = firstStatement('type K =\n  | A // prettier-ignore\n  | B;').typeAnnotation;
 		const [comment] = /** @type {any[]} */ (union.types[0].trailingComments);
@@ -6329,6 +6359,84 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(expression.typeArguments.params[0]).leading).toEqual(['* a ']);
 		expect(commentsOf(expression.typeArguments.params[1]).leading).toEqual(['* b ']);
 		expect(commentsOf(expression.arguments[0]).leading).toBeUndefined();
+	});
+
+	// Prettier's `handleTryStatementComments`
+	it('moves a comment between the blocks of a try statement into the next block', () => {
+		const statement = firstStatement(
+			'try {\n  a();\n} // c\ncatch (e) {\n  b();\n}\n// d\nfinally {}',
+		);
+
+		expect(commentsOf(statement.block).trailing).toBeUndefined();
+		expect(commentsOf(statement.handler).leading).toBeUndefined();
+		expect(commentsOf(statement.handler.body.body[0]).leading).toEqual([' c']);
+		expect(commentsOf(statement.finalizer).inner).toEqual([' d']);
+	});
+
+	it('trails the catch parameter with a comment before the catch body', () => {
+		const statement = firstStatement('try {\n  a();\n} catch (e) // c\n{\n  b();\n}');
+
+		expect(commentsOf(statement.handler.param).trailing).toEqual([' c']);
+		expect(commentsOf(statement.handler.body.body[0]).leading).toBeUndefined();
+	});
+
+	it('moves a comment before a template @pending block into it', () => {
+		const [fn] = /** @type {any[]} */ (
+			parseModule(
+				'function A() @{\n  @try {\n    <B />\n  } // c\n  @pending {\n    <p />\n  }\n}',
+				'App.tsrx',
+			).body
+		);
+		const directive = fn.body.render;
+
+		expect(commentsOf(directive.block).trailing).toBeUndefined();
+		expect(commentsOf(directive.pending.body[0]).leading).toEqual([' c']);
+	});
+
+	it('trails the last parameter with the comments before a trailing comma', () => {
+		const [fn] = /** @type {any[]} */ (
+			parseModule('function f(\n  a,\n  b /* c */, /* d */\n) {}', 'App.ts').body
+		);
+
+		expect(commentsOf(fn.params[1]).trailing).toEqual([' c ', ' d ']);
+		expect(commentsOf(fn).inner).toBeUndefined();
+	});
+
+	// Prettier's `handleConditionalExpressionComments` and its default for a
+	// comment at the end of a line
+	it('trails the node before a comment at the end of the line of a ? or :', () => {
+		const { init } = firstStatement('const x = cond ? // a\n  b : // c\n  d;').declarations[0];
+		const type = firstStatement('type X = A extends B ? // a\n  C : D;').typeAnnotation;
+
+		expect(commentsOf(init.test).trailing).toEqual([' a']);
+		expect(commentsOf(init.consequent).trailing).toEqual([' c']);
+		expect(commentsOf(init.consequent).leading).toBeUndefined();
+		expect(commentsOf(type.extendsType).trailing).toEqual([' a']);
+	});
+
+	it('leads the branch after a comment on its own line in a conditional', () => {
+		const { init } = firstStatement('const x = cond ?\n  // a\n  b : c;').declarations[0];
+
+		expect(commentsOf(init.consequent).leading).toEqual([' a']);
+	});
+
+	// Prettier's export starts at the decorators written before it
+	it('trails the last decorator with a comment before the class keyword of an export', () => {
+		const [named, other] = /** @type {any[]} */ (
+			parseModule('@dec export /* c */ class A {}\n@dec\n// d\nexport class B {}', 'App.ts').body
+		);
+
+		expect(commentsOf(named.declaration.decorators[0]).trailing).toEqual([' c ']);
+		expect(commentsOf(named.declaration.id).leading).toBeUndefined();
+		expect(commentsOf(other.declaration.decorators[0]).trailing).toEqual([' d']);
+		expect(commentsOf(other).leading).toBeUndefined();
+	});
+
+	it('leads the type annotation of an object pattern with a comment before its colon', () => {
+		const { id } = firstStatement('const { a } /* c */ : T = o;').declarations[0];
+
+		expect(commentsOf(id.typeAnnotation).leading).toEqual([' c ']);
+		expect(commentsOf(id.properties[0]).trailing).toBeUndefined();
 	});
 });
 
@@ -6702,6 +6810,112 @@ describe('expression-container children inside JSX attribute values', () => {
 		const value = as_type(attributeExpression(element.openingElement.attributes[0]), 'JSXElement');
 		expect(openingName(value).name).toBe('div');
 		expect(as_type(element.openingElement, 'JSXOpeningElement').selfClosing).toBe(true);
+	});
+});
+
+describe('JSX spread children', () => {
+	/** @type {Array<ParseOptions | undefined>} */
+	const parse_options = [undefined, { collect: true, comments: [] }];
+
+	/**
+	 * Every `JSXSpreadChild` in the parsed tree, in source order.
+	 *
+	 * @param {string} source
+	 * @param {ParseOptions} [options]
+	 * @returns {ESTreeJSX.JSXSpreadChild[]}
+	 */
+	function spreadChildren(source, options) {
+		const ast = parseModule(source, 'App.tsrx', options);
+		return allNodes(ast)
+			.filter((node) => node.type === 'JSXSpreadChild')
+			.map((node) => as_type(node, 'JSXSpreadChild'));
+	}
+
+	it.each(parse_options)(
+		'parses a spread child in statement, initializer, and return position (%o)',
+		(options) => {
+			for (const [source, text] of [
+				['<div>{...a}</div>;', '{...a}'],
+				['const x = <div>{...a}</div>;', '{...a}'],
+				['function f() {\n  return <div>{...children}</div>;\n}', '{...children}'],
+			]) {
+				const [spread, ...rest] = spreadChildren(source, options);
+				expect(rest, source).toEqual([]);
+				expect(source.slice(spread.start, spread.end), source).toBe(text);
+				const expression = as_type(spread.expression, 'Identifier');
+				expect(source.slice(expression.start, expression.end)).toBe(text.slice(4, -1));
+			}
+		},
+	);
+
+	it.each(parse_options)(
+		'parses spread children in template bodies next to other children (%o)',
+		(options) => {
+			const source = `export function App({ items, more }: { items: any[]; more: any[] }) @{
+	<div>
+		{...items}
+		text
+		{...more.map((item) => <b>{item}</b>)}
+		<span />
+	</div>
+}`;
+			const [first, second] = spreadChildren(source, options);
+			expect(source.slice(first.start, first.end)).toBe('{...items}');
+			expect(source.slice(second.start, second.end)).toBe('{...more.map((item) => <b>{item}</b>)}');
+			assert_type(second.expression, 'CallExpression');
+
+			const div = findElement(source, 'div');
+			expect(
+				node_children(div)
+					.filter((node) => node.type !== 'JSXText' || node.value.trim())
+					.map((node) => node.type),
+			).toEqual(['JSXSpreadChild', 'JSXText', 'JSXSpreadChild', 'JSXElement']);
+		},
+	);
+
+	it('parses spread children in fragments, nested containers, and attribute-value elements', () => {
+		for (const source of [
+			'function App({ items }: any) @{\n\t<>{...items}</>\n}',
+			'function App({ items }: any) @{\n\t<div>{<span>{...items}</span>}</div>\n}',
+			'function App({ items }: any) @{\n\t<Card content={<i>{...items}</i>} />\n}',
+			'const x = <ul>{...items}{...items}</ul>;',
+		]) {
+			const spreads = spreadChildren(source);
+			expect(spreads.length, source).toBeGreaterThan(0);
+			for (const spread of spreads) {
+				expect(source.slice(spread.start, spread.end), source).toBe('{...items}');
+			}
+		}
+	});
+
+	it('keeps a comment inside the braces on the spread expression', () => {
+		const source = 'const x = <div>{... /* c */ a}</div>;';
+		const [spread] = spreadChildren(source);
+		const expression = as_type(spread.expression, 'Identifier');
+		expect(expression.leadingComments?.map((comment) => comment.value)).toEqual([' c ']);
+	});
+
+	it.each(parse_options)('rejects a spread without an argument (%o)', (options) => {
+		expect(() => parseModule('const x = <div>{...}</div>;', 'App.tsrx', options)).toThrow(
+			'Unexpected token (1:19)',
+		);
+	});
+
+	it.each(parse_options)('rejects a spread as an attribute value (%o)', (options) => {
+		for (const [source, position] of [
+			['const x = <a b={...c} />;', '1:15'],
+			['function App() @{\n\t<a b={...c} />\n}', '2:6'],
+		]) {
+			expect(() => parseModule(source, 'App.tsrx', options), source).toThrow(
+				`Attribute values cannot be spread. Use a spread attribute (\`{...props}\`) instead. (${position})`,
+			);
+		}
+	});
+
+	it.each(parse_options)('rejects a spread as a dynamic tag name (%o)', (options) => {
+		expect(() => parseModule('const x = <{...a} />;', 'App.tsrx', options)).toThrow(
+			/^Dynamic element names must be .* \(1:11\)$/,
+		);
 	});
 });
 

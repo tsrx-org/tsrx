@@ -951,7 +951,7 @@ export function convert_source_map_to_mappings(
 					visit(node.argument);
 				}
 				return;
-			} else if (node.type === 'JSXExpressionContainer') {
+			} else if (node.type === 'JSXExpressionContainer' || node.type === 'JSXSpreadChild') {
 				if (has_location(node)) {
 					mappings.push(
 						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),

@@ -227,18 +227,24 @@ export function BlogRethinkingTsrxPage() @{
 						<a href="/features">Features</a>
 						<a href="/specification">Specification</a>
 						<a href="/playground">Playground</a>
-						<a href="/blog" aria-current="page">Blog</a>
+						<a href="/blog" aria-current="page">
+							Blog
+						</a>
 						<a href="https://discord.gg/HCYpT5QHQR" target="_blank" rel="noopener noreferrer">
 							Discord
 						</a>
 						<a href="https://github.com/tsrx-org/tsrx" target="_blank" rel="noopener noreferrer">
 							GitHub
 						</a>
-						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a>
+						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">
+							llms.txt
+						</a>
 					</nav>
 				</header>
 				<main class="article-shell">
-					<a class="back-link" href="/blog">Back to blog</a>
+					<a class="back-link" href="/blog">
+						Back to blog
+					</a>
 					<article>
 						<header class="article-header">
 							<p class="eyebrow">June 8, 2026</p>
@@ -256,27 +262,21 @@ export function BlogRethinkingTsrxPage() @{
 						</p>
 						<p>
 							The previous post,
-							<a href="/blog/simplifying-tsrx-after-feedback">Simplifying TSRX after feedback</a>
-							, covered the first big correction: components became ordinary functions, returns
-							became ordinary returns, and TSRX values became easier to store, pass, and type. That
-							change moved TSRX closer to TypeScript and JSX. This post is about the next
-							correction: making sure the specialized parts of TSRX no longer look like native
-							JavaScript by accident.
+							<a href="/blog/simplifying-tsrx-after-feedback">Simplifying TSRX after feedback</a>,
+							covered the first big correction: components became ordinary functions, returns became
+							ordinary returns, and TSRX values became easier to store, pass, and type. That change
+							moved TSRX closer to TypeScript and JSX. This post is about the next correction:
+							making sure the specialized parts of TSRX no longer look like native JavaScript by
+							accident.
 						</p>
 						<p>
 							The feedback was consistent. People could not always tell the difference between
 							JavaScript that ran as normal component logic and JavaScript-shaped syntax that meant
 							"create this UI." Earlier control flow looked too much like native
-							<code>if</code>
-							,
-							<code>switch</code>
-							,
-							<code>try</code>
-							, and
-							<code>for</code>
-							. That made code harder for humans to scan and harder for LLMs to explain or edit
-							safely, because custom template semantics were masquerading as real JavaScript with
-							unclear indicators of what they were producing.
+							<code>if</code>,<code>switch</code>,<code>try</code>, and
+							<code>for</code>. That made code harder for humans to scan and harder for LLMs to
+							explain or edit safely, because custom template semantics were masquerading as real
+							JavaScript with unclear indicators of what they were producing.
 						</p>
 						<p>
 							We also heard loud and clear that forcing static text through
@@ -317,9 +317,8 @@ export function BlogRethinkingTsrxPage() @{
 							That removes a small but persistent source of friction.
 							<code>{'<div>Hello there!</div>'}</code>
 							now means what JSX users expect it to mean. Inside
-							<code>{'{}'}</code>
-							, write JavaScript expression syntax the same way you would in JSX or React: call a
-							formatter, read a property, choose a value, or pass a computed prop.
+							<code>{'{}'}</code>, write JavaScript expression syntax the same way you would in JSX
+							or React: call a formatter, read a property, choose a value, or pass a computed prop.
 						</p>
 						<h2>Comments stay comments</h2>
 						<p>
@@ -333,13 +332,11 @@ export function BlogRethinkingTsrxPage() @{
 						<h2>JSX statement containers</h2>
 						<p>
 							JSX already has expression containers:
-							<code>{'{value}'}</code>
-							. TSRX adds the statement version:
-							<code>{'@{...}'}</code>
-							. It is still an expression, so it can appear anywhere JSX can appear: as a component
-							body, as an assigned value, as a returned value, or as a child inside another element.
-							The only difference is that it can now also contain JavaScript statements and yield
-							JSX template when placed at the end.
+							<code>{'{value}'}</code>. TSRX adds the statement version:
+							<code>{'@{...}'}</code>. It is still an expression, so it can appear anywhere JSX can
+							appear: as a component body, as an assigned value, as a returned value, or as a child
+							inside another element. The only difference is that it can now also contain JavaScript
+							statements and yield JSX template when placed at the end.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={JSX_STATEMENT_CONTAINER_HTML} />
@@ -354,9 +351,9 @@ export function BlogRethinkingTsrxPage() @{
 						<p>
 							A statement container ends with exactly one output node: a JSX element, a JSX
 							fragment, or JSX control flow like
-							<code>@if</code>
-							. Multiple elements need a fragment, and plain JSX text needs one too. Once that
-							output appears, the container is done: no JavaScript logic can come after it.
+							<code>@if</code>. Multiple elements need a fragment, and plain JSX text needs one too.
+							Once that output appears, the container is done: no JavaScript logic can come after
+							it.
 						</p>
 						<p>
 							The
@@ -367,8 +364,7 @@ export function BlogRethinkingTsrxPage() @{
 							function body, the compiler will tell you to add the missing
 							<code>@</code>
 							so the body becomes
-							<code>{'@{...}'}</code>
-							.
+							<code>{'@{...}'}</code>.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={JSX_STATEMENT_CONTAINER_RULES_HTML} />
@@ -413,17 +409,12 @@ export function BlogRethinkingTsrxPage() @{
 						<h2>JSX control flow</h2>
 						<p>
 							Control flow is now explicit JSX syntax. Use
-							<code>@if</code>
-							,
-							<code>@for</code>
-							,
-							<code>@switch</code>
-							, and
+							<code>@if</code>,<code>@for</code>,<code>@switch</code>, and
 							<code>@try</code>
 							when the control flow itself should produce template output. Each branch or block
 							follows the same structural boundary as
-							<code>{'@{...}'}</code>
-							: optional TypeScript setup first, then a single rendered template output.
+							<code>{'@{...}'}</code>: optional TypeScript setup first, then a single rendered
+							template output.
 						</p>
 						<p>
 							The
@@ -432,12 +423,9 @@ export function BlogRethinkingTsrxPage() @{
 							<code>for</code>
 							looks like JavaScript control flow, so both humans and AI agents naturally reach for
 							JavaScript rules:
-							<code>break</code>
-							,
-							<code>continue</code>
-							, fallthrough, or branch-local returns. Template control flow is different: it is JSX
-							that chooses what to render. The prefix makes that boundary visible before anyone has
-							to infer it from context.
+							<code>break</code>,<code>continue</code>, fallthrough, or branch-local returns.
+							Template control flow is different: it is JSX that chooses what to render. The prefix
+							makes that boundary visible before anyone has to infer it from context.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={JSX_CONTROL_FLOW_SCOPE_HTML} />
@@ -457,8 +445,7 @@ export function BlogRethinkingTsrxPage() @{
 							should not render, filter the iterable before the loop. If the list is empty, use the
 							loop's
 							<code>@empty</code>
-							branch instead of smuggling a
-							<code>continue</code>
+							branch instead of smuggling a<code>continue</code>
 							or
 							<code>return</code>
 							into template control flow.
@@ -475,8 +462,7 @@ export function BlogRethinkingTsrxPage() @{
 						</pre>
 						<p>
 							Because JSX control flow is explicitly template syntax, it can also be assigned
-							directly to variables. You no longer need to wrap a
-							<code>switch</code>
+							directly to variables. You no longer need to wrap a<code>switch</code>
 							branch in a helper just to store it.
 						</p>
 						<pre class="code-block">
@@ -485,11 +471,9 @@ export function BlogRethinkingTsrxPage() @{
 						<p>
 							This is also where precise types become more useful. A stored element can be annotated
 							as
-							<code>JSX.Element</code>
-							, and a component arrow can declare that it returns
-							<code>JSX.Element</code>
-							. The type describes the value you are producing instead of depending on a special
-							component declaration form.
+							<code>JSX.Element</code>, and a component arrow can declare that it returns
+							<code>JSX.Element</code>. The type describes the value you are producing instead of
+							depending on a special component declaration form.
 						</p>
 						<h2>Conclusion</h2>
 						<p>
@@ -497,8 +481,7 @@ export function BlogRethinkingTsrxPage() @{
 							Templates still have lexical scopes. Logic can still be colocated. JSX control flow
 							still reads in the order the UI is produced. But the special parts are now marked as
 							special with
-							<code>@</code>
-							, and ordinary JavaScript gets to remain ordinary JavaScript.
+							<code>@</code>, and ordinary JavaScript gets to remain ordinary JavaScript.
 						</p>
 						<p>
 							Thank you for bearing with us while TSRX found this shape. From now, we're ready to

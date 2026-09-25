@@ -407,6 +407,7 @@ const LOCATION_WRAPPED_NODE_TYPES = new Set([
 	'JSXOpeningElement',
 	'JSXClosingElement',
 	'JSXExpressionContainer',
+	'JSXSpreadChild',
 	// TS wrapper nodes with the same issue.
 	'TSTypeParameterInstantiation',
 	'TSTypeParameterDeclaration',

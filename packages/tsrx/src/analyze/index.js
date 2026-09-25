@@ -1,5 +1,6 @@
 /**
 @import * as AST from 'estree';
+@import * as ESTreeJSX from 'estree-jsx';
 @import { TSRXAnalysisOptions, TSRXAnalysisResult, TSRXAnalysisState } from '../../types/index';
  */
 
@@ -10,7 +11,7 @@ import {
 	is_transparent_expression_wrapper,
 	is_tsrx_render_output_node,
 } from '../utils/ast.js';
-import { validate_forgotten_statement_container } from './validation.js';
+import { validate_forgotten_statement_container, validate_jsx_spread_child } from './validation.js';
 import { create_scopes, ScopeRoot } from '../scope.js';
 import { analyze_styles } from './style-analyze.js';
 
@@ -94,6 +95,20 @@ function visit_render_output(node, { next, path, state }) {
 }
 
 /**
+ * @param {ESTreeJSX.JSXSpreadChild} node
+ * @param {{ next: (state?: TSRXAnalysisState) => unknown, state: TSRXAnalysisState }} context
+ */
+function visit_jsx_spread_child(node, { next, state }) {
+	validate_jsx_spread_child(
+		node,
+		state.filename,
+		state.collect ? state.errors : undefined,
+		state.comments,
+	);
+	next();
+}
+
+/**
  * @param {AST.ClassDeclaration | AST.ClassExpression} _node
  * @param {{ next: (state?: TSRXAnalysisState) => unknown, state: TSRXAnalysisState }} context
  */
@@ -124,6 +139,8 @@ const visitors = {
 	JSXForExpression: visit_render_output,
 	JSXSwitchExpression: visit_render_output,
 	JSXTryExpression: visit_render_output,
+
+	JSXSpreadChild: visit_jsx_spread_child,
 };
 
 /**

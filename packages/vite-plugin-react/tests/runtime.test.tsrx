@@ -64,6 +64,7 @@ function JsxTextApp() @{
 	<>
 		<div className="jsx-text-entities">Rock &amp; &quot;Roll&quot;</div>
 		<div className="jsx-text-backslash">line\nbreak</div>
+		// prettier-ignore
 		<pre className="jsx-text-multiline">
 			first
 second
@@ -129,7 +130,9 @@ function DynamicSwitchApp() @{
 		<button
 			className="dynamic-switch-toggle"
 			onClick={() => setTag(tag === 'section' ? 'article' : 'section')}
-		>{'toggle'}</button>
+		>
+			{'toggle'}
+		</button>
 	</>
 }
 
@@ -142,12 +145,8 @@ function ExplicitTextApp() @{
 	<>
 		<div className="explicit-text-markup">{String(markup)}</div>
 		<div className="explicit-text-boolean">{String(hidden)}</div>
-		<div className="explicit-text-null">
-			{empty == null ? '' : String(empty)}
-		</div>
-		<div className="explicit-text-undefined">
-			{missing == null ? '' : String(missing)}
-		</div>
+		<div className="explicit-text-null">{empty == null ? '' : String(empty)}</div>
+		<div className="explicit-text-undefined">{missing == null ? '' : String(missing)}</div>
 	</>
 }
 
@@ -161,7 +160,9 @@ function ExplicitHtmlApp() @{
 			onClick={() => {
 				setMarkup('<strong class="html-node">updated</strong>');
 			}}
-		>{'update'}</button>
+		>
+			{'update'}
+		</button>
 	</>
 }
 
@@ -184,13 +185,17 @@ function SpreadHtmlApp() @{
 					dangerouslySetInnerHTML: { __html: '<i class="html-node">spread update</i>' },
 				});
 			}}
-		>{'spread'}</button>
+		>
+			{'spread'}
+		</button>
 		<button
 			className="spread-html-update-markup"
 			onClick={() => {
 				setMarkup('<strong class="html-node">updated</strong>');
 			}}
-		>{'markup'}</button>
+		>
+			{'markup'}
+		</button>
 	</>
 }
 
@@ -246,7 +251,9 @@ function CounterApp() @{
 
 	<>
 		<p className="count">{count}</p>
-		<button className="inc" onClick={() => setCount(count + 1)}>{'+'}</button>
+		<button className="inc" onClick={() => setCount(count + 1)}>
+			{'+'}
+		</button>
 	</>
 }
 
@@ -260,7 +267,9 @@ function ElementRefApp() @{
 			element_ref_captured = node;
 		}}
 		className="ref-target"
-	>{'ref test'}</div>
+	>
+		{'ref test'}
+	</div>
 }
 
 // ── Ref on composite components via prop forwarding ──
@@ -299,7 +308,9 @@ function MultiRefApp() @{
 			secondRef(node);
 		}}
 		className="multi-ref"
-	>{'multi ref'}</div>
+	>
+		{'multi ref'}
+	</div>
 }
 
 // ── Explicitly merged refs ──
@@ -321,7 +332,9 @@ function AutoMergedRefApp() @{
 		auto_merged_c = node;
 	}
 
-	<div ref={mergeRefs(refA, refB, refC)} className="auto-merged">{'auto merged'}</div>
+	<div ref={mergeRefs(refA, refB, refC)} className="auto-merged">
+		{'auto merged'}
+	</div>
 }
 
 let mixed_keyword_node: HTMLDivElement | null = null;
@@ -335,7 +348,9 @@ function AutoMergedMixedRefApp() @{
 		mixed_jsx_node = node;
 	}
 
-	<div ref={mergeRefs(keywordRef, jsxRef)} className="auto-merged-mixed">{'mixed merged'}</div>
+	<div ref={mergeRefs(keywordRef, jsxRef)} className="auto-merged-mixed">
+		{'mixed merged'}
+	</div>
 }
 
 // ── Mix callback refs and ref objects under mergeRefs ──
@@ -350,10 +365,9 @@ function AutoMergedRefObjectApp() @{
 		auto_ref_obj_callback_node = node;
 	}
 
-	<div
-		ref={mergeRefs(ref_object, callbackRef)}
-		className="auto-merged-objects"
-	>{'object merged'}</div>
+	<div ref={mergeRefs(ref_object, callbackRef)} className="auto-merged-objects">
+		{'object merged'}
+	</div>
 }
 
 // ── React 19 cleanup contract through mergeRefs ──
@@ -382,9 +396,13 @@ function CleanupRefApp() @{
 
 	<>
 		@if (show) {
-			<div ref={mergeRefs(legacyMountRef, modernMountRef)} className="cleanup-target">{'x'}</div>
+			<div ref={mergeRefs(legacyMountRef, modernMountRef)} className="cleanup-target">
+				{'x'}
+			</div>
 		}
-		<button className="cleanup-hide" onClick={() => setShow(false)}>{'hide'}</button>
+		<button className="cleanup-hide" onClick={() => setShow(false)}>
+			{'hide'}
+		</button>
 	</>
 }
 
@@ -399,7 +417,9 @@ function IfReactiveApp() @{
 		} @else {
 			<span className="hidden">{'hidden'}</span>
 		}
-		<button className="toggle" onClick={() => setShow(!show)}>{'toggle'}</button>
+		<button className="toggle" onClick={() => setShow(!show)}>
+			{'toggle'}
+		</button>
 	</>
 }
 
@@ -410,10 +430,16 @@ function ForReactiveApp() @{
 
 	<>
 		@for (const item of items) {
-			<li className="item" key={item}>{item}</li>
+			<li className="item" key={item}>
+				{item}
+			</li>
 		}
-		<button className="add" onClick={() => setItems([...items, 'd'])}>{'add'}</button>
-		<button className="remove" onClick={() => setItems(items.slice(1))}>{'remove'}</button>
+		<button className="add" onClick={() => setItems([...items, 'd'])}>
+			{'add'}
+		</button>
+		<button className="remove" onClick={() => setItems(items.slice(1))}>
+			{'remove'}
+		</button>
 	</>
 }
 
@@ -422,7 +448,9 @@ function ForFilteredApp() @{
 	const visibleItems = items.filter(Boolean);
 
 	@for (const item of visibleItems) {
-		<li className="continue-item" key={item}>{item}</li>
+		<li className="continue-item" key={item}>
+			{item}
+		</li>
 	}
 }
 
@@ -450,10 +478,9 @@ function ForKeyedIfApp() @{
 				}
 			}
 		</ul>
-		<button
-			className="reverse-keyed-if"
-			onClick={() => setItems([...items].reverse())}
-		>{'reverse'}</button>
+		<button className="reverse-keyed-if" onClick={() => setItems([...items].reverse())}>
+			{'reverse'}
+		</button>
 	</>
 }
 
@@ -476,10 +503,9 @@ function ForKeyedSwitchApp() @{
 				}
 			}
 		</ul>
-		<button
-			className="reverse-keyed-switch"
-			onClick={() => setItems([...items].reverse())}
-		>{'reverse'}</button>
+		<button className="reverse-keyed-switch" onClick={() => setItems([...items].reverse())}>
+			{'reverse'}
+		</button>
 	</>
 }
 
@@ -489,7 +515,9 @@ function ForOverSetApp() @{
 	const items = new Set<string>(['x', 'y', 'z']);
 
 	@for (const item of items) {
-		<li className="set-item" key={item}>{item}</li>
+		<li className="set-item" key={item}>
+			{item}
+		</li>
 	}
 }
 
@@ -503,7 +531,9 @@ function ForOverMapApp() @{
 	]);
 
 	@for (const [key, value] of entries) {
-		<li className="map-item" {key}>{key + ':' + value}</li>
+		<li className="map-item" {key}>
+			{key + ':' + value}
+		</li>
 	}
 }
 
@@ -518,7 +548,9 @@ function ForOverCustomIterableApp() @{
 	const items = iter();
 
 	@for (const item of items) {
-		<li className="generator-item" key={item}>{item}</li>
+		<li className="generator-item" key={item}>
+			{item}
+		</li>
 	}
 }
 
@@ -539,8 +571,12 @@ function SwitchReactiveApp() @{
 				<div className="page">{'404'}</div>
 			}
 		}
-		<button className="go-about" onClick={() => setPage('about')}>{'about'}</button>
-		<button className="go-unknown" onClick={() => setPage('other')}>{'other'}</button>
+		<button className="go-about" onClick={() => setPage('about')}>
+			{'about'}
+		</button>
+		<button className="go-unknown" onClick={() => setPage('other')}>
+			{'other'}
+		</button>
 	</>
 }
 
@@ -567,7 +603,9 @@ function IfChildrenApp() @{
 				<span className="inner-visible">{'inner shown'}</span>
 			}
 		</Wrapper>
-		<button className="toggle" onClick={() => setShow(!show)}>{'toggle'}</button>
+		<button className="toggle" onClick={() => setShow(!show)}>
+			{'toggle'}
+		</button>
 	</>
 }
 
@@ -773,7 +811,9 @@ function NamedMutableUnmountApp() @{
 				}}
 			/>
 		}
-		<button className="named-mutable-unmount-hide" onClick={() => setShow(false)}>{'hide'}</button>
+		<button className="named-mutable-unmount-hide" onClick={() => setShow(false)}>
+			{'hide'}
+		</button>
 	</>
 }
 
@@ -818,10 +858,14 @@ function ErrorToggleApp() @{
 						setFail(false);
 						reset();
 					}}
-				>{'reset'}</button>
+				>
+					{'reset'}
+				</button>
 			</>
 		}
-		<button className="trigger-error" onClick={() => setFail(true)}>{'break'}</button>
+		<button className="trigger-error" onClick={() => setFail(true)}>
+			{'break'}
+		</button>
 	</>
 }
 
@@ -870,7 +914,9 @@ function ErrorResetApp(props: { promise: Promise<string> }) @{
 	} @catch (err: Error, reset: () => void) {
 		<>
 			<p className="caught">{err.message}</p>
-			<button className="retry" onClick={() => reset()}>{'retry'}</button>
+			<button className="retry" onClick={() => reset()}>
+				{'retry'}
+			</button>
 		</>
 	}
 }
@@ -908,7 +954,9 @@ function SwappableAsyncApp() @{
 		} @pending {
 			<p className="pending">{'loading...'}</p>
 		}
-		<button className="swap" onClick={() => setPromise(Promise.resolve('second'))}>{'swap'}</button>
+		<button className="swap" onClick={() => setPromise(Promise.resolve('second'))}>
+			{'swap'}
+		</button>
 	</>
 }
 
@@ -927,7 +975,9 @@ function IfInsideTryApp() @{
 		} @catch (err: Error) {
 			<p className="caught">{'error'}</p>
 		}
-		<button className="toggle" onClick={() => setShow(!show)}>{'toggle'}</button>
+		<button className="toggle" onClick={() => setShow(!show)}>
+			{'toggle'}
+		</button>
 	</>
 }
 
@@ -939,12 +989,16 @@ function ForInsideTryApp() @{
 	<>
 		@try {
 			@for (const item of items) {
-				<span className="try-item" key={item}>{item}</span>
+				<span className="try-item" key={item}>
+					{item}
+				</span>
 			}
 		} @catch (err: Error) {
 			<p className="caught">{'error'}</p>
 		}
-		<button className="add" onClick={() => setItems([...items, 'z'])}>{'add'}</button>
+		<button className="add" onClick={() => setItems([...items, 'z'])}>
+			{'add'}
+		</button>
 	</>
 }
 
@@ -953,10 +1007,14 @@ function ForInsideTryApp() @{
 function ExplicitHookPanel(props: { multiplier: number }) {
 	const [base, setBase] = useState(5);
 
-	return <>
-		<p className="explicit-hook-result">{base * props.multiplier}</p>
-		<button className="explicit-hook-inc" onClick={() => setBase(base + 1)}>{'inc base'}</button>
-	</>;
+	return (
+		<>
+			<p className="explicit-hook-result">{base * props.multiplier}</p>
+			<button className="explicit-hook-inc" onClick={() => setBase(base + 1)}>
+				{'inc base'}
+			</button>
+		</>
+	);
 }
 
 function ExplicitHookBranchApp() @{
@@ -969,11 +1027,12 @@ function ExplicitHookBranchApp() @{
 		} @else {
 			<p className="explicit-hook-hidden">{'hidden'}</p>
 		}
-		<button className="explicit-hook-toggle" onClick={() => setShow(!show)}>{'toggle'}</button>
-		<button
-			className="explicit-hook-mult"
-			onClick={() => setMultiplier(multiplier + 1)}
-		>{'inc multiplier'}</button>
+		<button className="explicit-hook-toggle" onClick={() => setShow(!show)}>
+			{'toggle'}
+		</button>
+		<button className="explicit-hook-mult" onClick={() => setMultiplier(multiplier + 1)}>
+			{'inc multiplier'}
+		</button>
 	</>
 }
 
@@ -997,10 +1056,9 @@ function TsrxExpressionHookApp() @{
 		<button className="tsrx-expression-hook-toggle" onClick={() => setActive(!active)}>
 			{active ? 'hide' : 'show'}
 		</button>
-		<button
-			className="tsrx-expression-hook-label"
-			onClick={() => setLabel('second')}
-		>{'label'}</button>
+		<button className="tsrx-expression-hook-label" onClick={() => setLabel('second')}>
+			{'label'}
+		</button>
 		<TsrxExpressionHookPanel {active} {label} />
 	</>
 }
@@ -1016,7 +1074,9 @@ function StaticHoistMixedApp() @{
 		</header>
 		<p className="dynamic-count">{count}</p>
 		<footer className="static-footer">{'Static Footer'}</footer>
-		<button className="hoist-inc" onClick={() => setCount(count + 1)}>{'inc'}</button>
+		<button className="hoist-inc" onClick={() => setCount(count + 1)}>
+			{'inc'}
+		</button>
 	</>
 }
 
@@ -1031,7 +1091,9 @@ function StaticHoistInBranchApp() @{
 				<span>{'Always the same'}</span>
 			</div>
 		}
-		<button className="hoist-toggle" onClick={() => setShow(!show)}>{'toggle'}</button>
+		<button className="hoist-toggle" onClick={() => setShow(!show)}>
+			{'toggle'}
+		</button>
 	</>
 }
 

@@ -1,5 +1,6 @@
 /**
 @import * as AST from 'estree';
+@import * as ESTreeJSX from 'estree-jsx';
 @import { AnalysisContext, CompileError } from '../../types/index';
  */
 
@@ -30,6 +31,8 @@ export const TSRX_DO_WHILE_STATEMENT_ERROR =
 	'Do...while loops are not supported in TSRX templates. Move the do...while loop into a function.';
 export const TSRX_FORGOTTEN_STATEMENT_CONTAINER_ERROR =
 	"This TSRX template output is unused. Return it, assign it to a value that is rendered, or make it part of the rendered output of a function '@{...}' body.";
+export const TSRX_JSX_SPREAD_CHILD_ERROR =
+	'JSX spread children (`{...items}`) are not supported. Render the array as an expression child instead: `{items}`.';
 export const TSRX_STYLE_APPLY_VALUE_ERROR =
 	"The 'apply' attribute of a <style> block requires an expression value: apply={theme} or apply={[a, b]}.";
 export const TSRX_STYLE_APPLY_DUPLICATE_ERROR =
@@ -261,6 +264,26 @@ export function validate_forgotten_statement_container(node, filename, errors, c
 		errors,
 		comments,
 		DIAGNOSTIC_CODES.FORGOTTEN_STATEMENT_CONTAINER,
+	);
+}
+
+/**
+ * JSX spread children parse, as in TypeScript, but no target supports them:
+ * Babel's React transform and vue-jsx-vapor reject or drop them, and Solid's
+ * JSX compiler misplaces them.
+ * @param {ESTreeJSX.JSXSpreadChild} node
+ * @param {string | null | undefined} filename
+ * @param {CompileError[]} [errors]
+ * @param {AST.CommentWithLocation[]} [comments]
+ */
+export function validate_jsx_spread_child(node, filename, errors, comments) {
+	error(
+		TSRX_JSX_SPREAD_CHILD_ERROR,
+		filename ?? null,
+		node,
+		errors,
+		comments,
+		DIAGNOSTIC_CODES.JSX_SPREAD_CHILD,
 	);
 }
 

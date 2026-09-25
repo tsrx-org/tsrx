@@ -8,14 +8,18 @@ export function AppliedPanel() @{
 				color: rgb(0, 0, 0);
 			}
 		</style>
-		<div class="probe" data-probe="applied">{'local wins'}</div>
+		<div class="probe" data-probe="applied">
+			{'local wins'}
+		</div>
 	</>
 }
 
 export function ThemeApplyApp() @{
 	<>
 		<AppliedPanel />
-		<div class={theme.$class} data-probe="opt-in">{'opted in'}</div>
+		<div class={theme.$class} data-probe="opt-in">
+			{'opted in'}
+		</div>
 		<div data-probe="untouched">{'untouched'}</div>
 	</>
 }

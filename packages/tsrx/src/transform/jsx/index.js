@@ -4451,6 +4451,7 @@ function is_render_child_node(node) {
 		case 'JSXElement':
 		case 'JSXFragment':
 		case 'JSXExpressionContainer':
+		case 'JSXSpreadChild':
 		case 'JSXText':
 		case 'JSXIfExpression':
 		case 'JSXForExpression':
@@ -6948,6 +6949,11 @@ export function build_return_expression(render_nodes, in_jsx_child = false, type
 			if (!type_only && !in_jsx_child && (only.value ?? '').trim() === '') {
 				return null;
 			}
+			return set_loc(b.jsx_fragment([only]), has_location(only) ? only : undefined);
+		}
+		if (only.type === 'JSXSpreadChild') {
+			// Analysis reports spread children; the editor's output keeps
+			// `{...items}`, which has no single-value form, as a fragment child.
 			return set_loc(b.jsx_fragment([only]), has_location(only) ? only : undefined);
 		}
 		return only;
