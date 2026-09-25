@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { createJsxTransform, parseModule } from '../../src/index.js';
 import { as_type, assert_type } from '../shared/node-types.js';
+import { parse_in_worker, parse_in_worker_with_ast } from '../shared/parse-in-worker.js';
 
 /**
  * Bugs in @sveltejs/acorn-typescript that the TSRX parser works around by
@@ -131,9 +132,22 @@ describe('`static` followed by a line break (sveltejs/acorn-typescript#119)', ()
 		]);
 	});
 
-	it('rejects `static` before a line break on a type member, like `static` on its line', () => {
-		expect(() => parse('interface I {\n  static\n  x: number\n}')).toThrow();
-		expect(() => parse('interface I {\n  static x: number\n}')).toThrow();
+	it('reports `static` before a line break on a type member, like `static` on its line', async () => {
+		const sources = [
+			'interface I {\n  static\n  x: number\n}',
+			'interface I {\n  static x: number\n}',
+		];
+		const message = "'static' modifier cannot appear on a type member.";
+
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) => [{ source }, { source, options: { collect: true } }]),
+		);
+
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok ? outcome.errors?.map(({ message, pos }) => [message, pos]) : outcome.message,
+			),
+		).toEqual(sources.flatMap(() => [`${message} (2:2)`, [[message, 16]]]));
 	});
 
 	it('compiles the members after `static` and a line break as static members', () => {
@@ -310,6 +324,175 @@ describe('class named after a TypeScript contextual keyword (sveltejs/acorn-type
 		const expression = as_type(statement.declarations[0].init, 'ClassExpression');
 		expect(expression.id ?? null).toBeNull();
 		expect(expression.implements?.length).toBe(1);
+	});
+});
+
+describe("a disallowed modifier's error (sveltejs/acorn-typescript#123)", () => {
+	// acorn-typescript raises these with the error template itself, so the
+	// message was the template function's source, at the token after the
+	// modifier. TypeScript reports them from its checker (TS1070, TS1273,
+	// TS1274), at the modifier.
+
+	/** @param {string} modifier */
+	const variance_message = (modifier) =>
+		`'${modifier}' modifier can only appear on a type parameter of a class, interface or type alias.`;
+
+	const cases = [
+		[
+			'interface I { private x: number }',
+			'private',
+			"'private' modifier cannot appear on a type member.",
+		],
+		[
+			'type T = { static x: number };',
+			'static',
+			"'static' modifier cannot appear on a type member.",
+		],
+		[
+			'interface I { declare m(): void }',
+			'declare',
+			"'declare' modifier cannot appear on a type member.",
+		],
+		['interface I<public T> {}', 'public', "'public' modifier cannot appear on a type parameter."],
+		[
+			'class C<readonly T> {}',
+			'readonly',
+			"'readonly' modifier cannot appear on a type parameter.",
+		],
+		['function f<in T>() {}', 'in', variance_message('in')],
+		['type F = <out T>() => T;', 'out', variance_message('out')],
+		['class C { in x = 1; }', 'in', variance_message('in')],
+	];
+
+	it("throws the modifier's message at the modifier", async () => {
+		const outcomes = await parse_in_worker(cases.map(([source]) => ({ source })));
+
+		expect(outcomes).toEqual(
+			cases.map(([source, modifier, message]) => {
+				const pos = source.indexOf(`${modifier} `);
+				return { ok: false, message: `${message} (1:${pos})`, pos };
+			}),
+		);
+	});
+
+	it('records it at the modifier when collecting, and keeps the modifier', async () => {
+		const outcomes = await parse_in_worker_with_ast(
+			cases.map(([source]) => ({ source, options: { collect: true } })),
+		);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const [source, modifier, message] = cases[index];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			expect(outcome.errors, source).toEqual([
+				{
+					message,
+					pos: source.indexOf(`${modifier} `),
+					end: source.indexOf(`${modifier} `) + 1,
+				},
+			]);
+		}
+	});
+
+	it('leaves the modifiers that are allowed alone', async () => {
+		const sources = [
+			'interface I { readonly x: number }',
+			'class C<in out T> {}',
+			'interface I<in T> {}',
+			'type T<out U> = () => U;',
+			'function f<const T>() {}',
+		];
+		const outcomes = await parse_in_worker(sources.map((source) => ({ source })));
+
+		expect(outcomes).toEqual(sources.map(() => ({ ok: true, errors: undefined })));
+	});
+});
+
+describe('optional binding pattern parameter in a signature (sveltejs/acorn-typescript#110)', () => {
+	// TypeScript's parser accepts `?` after any parameter; its checker reports
+	// an optional binding pattern (TS2463) only in a function with a body.
+	// acorn-typescript raised it while reading the parameter, so overload
+	// signatures got it too.
+	const signatures = [
+		'function f({ a }?: { a: number }): void;\nfunction f(options?: { a: number }) {}',
+		'function f([a]?: number[]): void\nfunction f(values?: number[]) {}',
+		'export function f({ a }?: { a: number }): void;\nexport function f() {}',
+		'class A {\n\tm([a]?: number[]): void;\n\tm(values?: number[]) {}\n}',
+		'class A {\n\tconstructor({ a }?: { a: number });\n\tconstructor(options?: { a: number }) {}\n}',
+		'abstract class A {\n\tabstract m({ a }?: { a: number }): void;\n}',
+	];
+
+	/**
+	 * The first parameter of the first function or method in `program`.
+	 * @param {AST.Program} program
+	 */
+	function first_parameter(program) {
+		let [node] = /** @type {AST.Node[]} */ (program.body);
+		if (node.type === 'ExportNamedDeclaration') node = /** @type {AST.Node} */ (node.declaration);
+		if (node.type === 'ClassDeclaration') {
+			node = as_type(node.body.body[0], 'MethodDefinition').value;
+		}
+		return /** @type {AST.Function} */ (node).params[0];
+	}
+
+	it('accepts it in a signature without a body, with the same node as in a type', async () => {
+		const outcomes = await parse_in_worker_with_ast([
+			...signatures.map((source) => ({ source })),
+			...signatures.map((source) => ({ source, options: { collect: true } })),
+		]);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const source = signatures[index % signatures.length];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], source).toEqual([]);
+			expect(first_parameter(outcome.ast), source).toMatchObject({
+				type: source.includes('[a]') ? 'ArrayPattern' : 'ObjectPattern',
+				optional: true,
+				typeAnnotation: { type: 'TSTypeAnnotation' },
+			});
+		}
+	});
+
+	it('still reports it in a function with a body, and not in an ambient one', async () => {
+		const message =
+			'A binding pattern parameter cannot be optional in an implementation signature.';
+		const sources = [
+			'function f({ a }?: { a: number }) {}',
+			'function f({ a }?: { a: number }): void {}',
+			'const f = function ([a]?: number[]) {};',
+			'class A { m({ a }?: { a: number }) {} }',
+			'const o = { set x({ a }: { a: number }) {}, m({ a }?: { a: number }) {} };',
+			'export function App({ a }?: { a: number }) @{ <div /> }',
+		];
+		const outcomes = await parse_in_worker([
+			...sources.map((source) => ({ source })),
+			{ source: 'declare class A { m({ a }?: { a: number }) {} }' },
+		]);
+
+		expect(outcomes).toEqual([
+			...sources.map((source) => {
+				const pos = source.search(/(?:\{ a \}|\[a\])\?/);
+				return { ok: false, message: `${message} (1:${pos})`, pos };
+			}),
+			{ ok: true, errors: undefined },
+		]);
+	});
+
+	it('keeps the error on an element of an array pattern and on a rest parameter', async () => {
+		const message =
+			'A binding pattern parameter cannot be optional in an implementation signature.';
+		const sources = [
+			'const [{ a }?] = b;',
+			'function f([{ a }?]?: T): void;',
+			'function f(...a?: number[]): void;',
+		];
+		const outcomes = await parse_in_worker(sources.map((source) => ({ source })));
+
+		expect(outcomes.map((outcome) => (outcome.ok ? 'parsed' : outcome.message))).toEqual(
+			sources.map((source) => {
+				const pos = source.search(/\{ a \}\?|\.\.\./);
+				return `${message} (1:${pos})`;
+			}),
+		);
 	});
 });
 
