@@ -3792,11 +3792,12 @@ export function TSRXPlugin(config) {
 						/** @type {AST.FunctionExpression} */ (
 							/** @type {AST.Property} */ (prop).value
 						).typeParameters = typeParameters;
+						this.#startMethodAtTypeParameters(/** @type {AST.Property} */ (prop));
 						return;
 					}
 				}
 
-				return super.parsePropertyValue(
+				super.parsePropertyValue(
 					prop,
 					isPattern,
 					isGenerator,
@@ -3806,6 +3807,32 @@ export function TSRXPlugin(config) {
 					refDestructuringErrors,
 					containsEsc,
 				);
+				// UPSTREAM(sveltejs/acorn-typescript#127): remove once a release includes the fix
+				// A generic `async` or generator method, getter, or setter, which
+				// acorn-typescript parses (its `parsePropertyValue` and
+				// `parseGetterSetter`)
+				this.#startMethodAtTypeParameters(/** @type {AST.Property} */ (prop));
+			}
+
+			/**
+			 * Like typescript-estree, an object method's function starts at its type
+			 * parameters, not at its `(`, so that they lie inside it: a comment in
+			 * them (`m</* c *\/ T>() {}`) leads or trails a type parameter rather than
+			 * the whole function or the key before it. A class method keeps its type
+			 * parameters on the method definition instead.
+			 * @param {AST.Property} prop
+			 */
+			#startMethodAtTypeParameters(prop) {
+				const value = /** @type {AST.FunctionExpression} */ (prop.value);
+				const typeParameters = /** @type {AST.Node | undefined} */ (value?.typeParameters);
+				if (
+					value?.type === 'FunctionExpression' &&
+					typeParameters &&
+					/** @type {AST.NodeWithLocation} */ (typeParameters).start <
+						/** @type {AST.NodeWithLocation} */ (value).start
+				) {
+					this.resetStartLocationFromNode(value, typeParameters);
+				}
 			}
 
 			/**
