@@ -14,7 +14,7 @@
  * @typedef {((path: AstPath) => Doc) & ((path: AstPath, args: PrintArgs) => Doc)} PrintFn
  */
 
-/** @typedef {Partial<Pick<ParserOptions, 'singleQuote' | 'jsxSingleQuote' | 'semi' | 'trailingComma' | 'useTabs' | 'tabWidth' | 'singleAttributePerLine' | 'bracketSameLine' | 'bracketSpacing' | 'objectWrap' | 'arrowParens' | 'originalText' | 'printWidth'>> & { locStart: (node: AST.NodeWithLocation) => number, locEnd: (node: AST.NodeWithLocation) => number }} TsrxFormatOptions */
+/** @typedef {Partial<Pick<ParserOptions, 'singleQuote' | 'jsxSingleQuote' | 'semi' | 'trailingComma' | 'useTabs' | 'tabWidth' | 'singleAttributePerLine' | 'bracketSameLine' | 'bracketSpacing' | 'objectWrap' | 'arrowParens' | 'originalText' | 'printWidth' | 'quoteProps'>> & { locStart: (node: AST.NodeWithLocation) => number, locEnd: (node: AST.NodeWithLocation) => number }} TsrxFormatOptions */
 
 /**
  * Any node the parser may hang decorators off. The individual node types do not
@@ -22,11 +22,12 @@
  * @typedef {AST.Node & { decorators?: AST.Decorator[] }} MaybeDecoratedNode
  */
 
-/** @typedef {{ suppressLeadingComments?: boolean, suppressTrailingComments?: boolean, suppressExpressionLeadingComments?: boolean, suppressOwnParens?: boolean, isInlineContext?: boolean, isStatement?: boolean, isLogicalAndOr?: boolean, allowShorthandProperty?: boolean, isFirstChild?: boolean, noBreakInside?: boolean, expandLastArg?: boolean, expandFirstArg?: boolean, assignmentLayout?: AssignmentLayout, firstComments?: AST.Comment[] }} PrintArgs */
+/** @typedef {{ suppressLeadingComments?: boolean, suppressTrailingComments?: boolean, suppressExpressionLeadingComments?: boolean, suppressOwnParens?: boolean, isInlineContext?: boolean, isStatement?: boolean, isLogicalAndOr?: boolean, allowShorthandProperty?: boolean, isFirstChild?: boolean, noBreakInside?: boolean, expandLastArg?: boolean, expandFirstArg?: boolean, assignmentLayout?: AssignmentLayout, firstComments?: AST.Comment[], printedKey?: string }} PrintArgs */
 
 import { parseModule } from '@tsrx/core';
-import { doc } from 'prettier';
+import { doc, util } from 'prettier';
 import postcssPlugin from 'prettier/parser-postcss.js';
+import isEs5IdentifierName from './is-es5-identifier-name.js';
 
 const { builders, utils } = doc;
 const {
@@ -1330,15 +1331,17 @@ function getLeftmostChildKey(node) {
  * Whether an object literal, function or class expression would be the first
  * token of a context that reads it differently: a statement (`{` opens a
  * block, `function`/`class` a declaration), an arrow body (`{` opens a block
- * body), an `export default` (`function`/`class` start a declaration), or a
- * superclass (TypeScript reads the `{` of `extends {}.Base {}` as the class
- * body).
+ * body), or a superclass (TypeScript reads the `{` of `extends {}.Base {}` as
+ * the class body). An `export default` wraps its whole expression instead
+ * (see {@link getExportDefaultLeadingFunction}), unless the function or class
+ * has type arguments (`(class {})<T>`).
  * @param {AstPath} path - The path to the object, function or class expression
  * @returns {boolean}
  */
 function startsAmbiguousHead(path) {
 	const node = /** @type {AST.Node} */ (path.node);
 	let child = node;
+	let isInstantiated = false;
 	for (let level = 0; ; level++) {
 		const parent = /** @type {AST.Node | null} */ (path.getParentNode(level));
 		if (!parent) {
@@ -1350,8 +1353,10 @@ function startsAmbiguousHead(path) {
 			case 'ArrowFunctionExpression':
 				return node.type === 'ObjectExpression' && parent.body === child;
 			case 'ExportDefaultDeclaration':
-				// The declaration itself is `printExportDefaultDeclaration`'s to wrap
-				return node.type !== 'ObjectExpression' && level > 0;
+				return isInstantiated && node.type !== 'ObjectExpression';
+			case 'TSInstantiationExpression':
+				isInstantiated = true;
+				break;
 			case 'ClassDeclaration':
 			case 'ClassExpression':
 				// The superclass itself is `printClassDeclaration`'s to wrap
@@ -1376,6 +1381,64 @@ function startsAmbiguousHead(path) {
 		child = parent;
 	}
 }
+
+/**
+ * The function or class expression a default export's expression starts
+ * with, when the export prints that expression in parentheses because of it:
+ * right after `export default`, a function or class would start a
+ * declaration. Like Prettier's `shouldWrapFunctionForExportDefault`, the
+ * parentheses go around the whole expression,
+ * `export default (class {}.getInstance());`, unless the function or class,
+ * or an operand it starts, prints in parentheses of its own:
+ * `export default (function () {})();`. An expression that is itself a
+ * function or class is `printExportDefaultDeclaration`'s to wrap.
+ * @param {AstPath} path - The path to the export's expression, and then to the
+ *   operands it starts with
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {AST.Node | null}
+ */
+function getExportDefaultLeadingFunction(path, options) {
+	const node = /** @type {AST.Node} */ (path.node);
+	const isExpression = /** @type {AST.Node} */ (path.parent).type === 'ExportDefaultDeclaration';
+	if (!isExpression && (needsParens(path, options) || getTypeCastParens(path, options))) {
+		return null;
+	}
+	if (node.type === 'FunctionExpression' || node.type === 'ClassExpression') {
+		return isExpression ? null : node;
+	}
+	// `(class {}<T>)` doesn't parse, so an instantiated function or class
+	// keeps parentheses of its own (see startsAmbiguousHead)
+	const key = node.type === 'TSInstantiationExpression' ? null : getLeftmostChildKey(node);
+	return key
+		? path.call((childPath) => getExportDefaultLeadingFunction(childPath, options), key)
+		: null;
+}
+
+/**
+ * The leading comments of the function or class a parenthesized default
+ * export starts with (see {@link getExportDefaultLeadingFunction}). The export
+ * prints them ahead of its parentheses, where they are once it's formatted
+ * again, like Prettier's second pass: `export default (/* a *\/ class {}).x`
+ * prints `export default /* a *\/ (class {}.x)`. They go in
+ * {@link hoistedComments}, so the function or class leaves them out.
+ * @param {AstPath} path - The path to the export's expression
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {AST.Comment[]}
+ */
+function hoistExportDefaultComments(path, options) {
+	const leadingFunction = getExportDefaultLeadingFunction(path, options);
+	const comments = /** @type {AST.NodeWithMaybeComments | null} */ (leadingFunction)?.leadingComments ?? [];
+	for (const comment of comments) {
+		hoistedComments.add(comment);
+	}
+	return comments;
+}
+
+/**
+ * Leading comments an ancestor prints (see {@link hoistExportDefaultComments}).
+ * @type {WeakSet<AST.Comment>}
+ */
+const hoistedComments = new WeakSet();
 
 /**
  * Whether the node sits anywhere inside a `for` statement's initializer,
@@ -1953,12 +2016,11 @@ function needsParens(path, options) {
 	}
 
 	const key = path.key;
-	if (
-		(key === 'superClass' &&
-			(parent.type === 'ClassDeclaration' || parent.type === 'ClassExpression')) ||
-		(key === 'declaration' && parent.type === 'ExportDefaultDeclaration')
-	) {
+	if (key === 'superClass' && (parent.type === 'ClassDeclaration' || parent.type === 'ClassExpression')) {
 		return false;
+	}
+	if (key === 'declaration' && parent.type === 'ExportDefaultDeclaration') {
+		return getExportDefaultLeadingFunction(path, options) !== null;
 	}
 
 	switch (node.type) {
@@ -2411,39 +2473,190 @@ function shouldPrintComma(options, level = 'es5') {
 }
 
 /**
- * Print an object, method, or class field key
- * @param {AST.Property | AST.MethodDefinition | AST.PropertyDefinition} node - The property or method node
- * @param {AstPath<AST.Property | AST.MethodDefinition | AST.PropertyDefinition>} path - The AST path
+ * A node whose key {@link printKey} prints: an object property or method, a
+ * class member, an interface or type literal member, an enum member (its
+ * `id`), or an import attribute.
+ * @typedef {AST.Property | AST.MethodDefinition | AST.PropertyDefinition | AST.TSPropertySignature | AST.TSMethodSignature | AST.TSEnumMember | AST.ImportAttribute} KeyedNode
+ */
+
+/**
+ * The key {@link printKey} prints for a node, or `undefined` for a node
+ * without one (a spread, an index signature, a static block).
+ * @param {AST.Node} node
+ * @returns {AST.Node | undefined}
+ */
+function getKeyNode(node) {
+	return node.type === 'TSEnumMember'
+		? node.id
+		: /** @type {{ key?: AST.Node }} */ (/** @type {unknown} */ (node)).key;
+}
+
+/**
+ * Whether a node's key is computed (`[key]`). An enum member's never is.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function isComputedKey(node) {
+	return (
+		node.type !== 'TSEnumMember' &&
+		!!(/** @type {{ computed?: boolean }} */ (/** @type {unknown} */ (node)).computed)
+	);
+}
+
+/**
+ * Whether a class field's key keeps the quotes it's written with. With
+ * `strictPropertyInitialization`, TypeScript checks that a field named by an
+ * identifier gets a value, but not a field named by a string
+ * (microsoft/TypeScript#20075). Like Prettier with the `typescript` parser,
+ * such a field is never unquoted. Unlike Prettier, it's never quoted either
+ * (`quoteProps: "consistent"`), and an `accessor` field, which TypeScript
+ * checks the same way, keeps its quotes too. TypeScript never checks an
+ * abstract field.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function isQuoteSensitiveKey(node) {
+	return node.type === 'PropertyDefinition' && !node.abstract;
+}
+
+/**
+ * Prettier's `isKeySafeToQuote` for TypeScript: only a name can be quoted. A
+ * number can't, since `{ 1: a }` and `{ "1": a }` have different `keyof` types.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function isKeySafeToQuote(node) {
+	return getKeyNode(node)?.type === 'Identifier' && !isQuoteSensitiveKey(node);
+}
+
+/**
+ * Prettier's `isKeySafeToUnquote` for TypeScript: a string key unquotes when
+ * it's an ES5 identifier written without escapes. A number never unquotes,
+ * for the same reason it's never quoted.
+ * @param {AST.Node} node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {boolean}
+ */
+function isKeySafeToUnquote(node, options) {
+	const key = getKeyNode(node);
+	if (key?.type !== 'Literal' || typeof key.value !== 'string') {
+		return false;
+	}
+	// `'\u0061'` keeps its escape
+	if (printStringLiteral(key, options).slice(1, -1) !== key.value) {
+		return false;
+	}
+	// `new(): T` is a construct signature, not a method named `new`
+	if (node.type === 'TSMethodSignature' && key.value === 'new') {
+		return false;
+	}
+	return !isQuoteSensitiveKey(node) && isEs5IdentifierName(key.value);
+}
+
+/**
+ * Whether one of an object's, class's, or type's members needs its key
+ * quoted, which under `quoteProps: "consistent"` quotes all of them.
+ * Prettier's `hasSiblingsRequireQuoted`, with the same cache per member list.
+ * @type {WeakMap<AST.Node[], boolean>}
+ */
+const siblingsRequireQuotesCache = new WeakMap();
+
+/**
+ * @param {AST.Node[]} siblings - The member list
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {boolean}
+ */
+function hasSiblingsRequireQuoted(siblings, options) {
+	let result = siblingsRequireQuotesCache.get(siblings);
+	if (result === undefined) {
+		result = siblings.some((sibling) => {
+			if (!sibling || isComputedKey(sibling)) {
+				return false;
+			}
+			const key = getKeyNode(sibling);
+			return (
+				key?.type === 'Literal' &&
+				typeof key.value === 'string' &&
+				!isKeySafeToUnquote(sibling, options)
+			);
+		});
+		siblingsRequireQuotesCache.set(siblings, result);
+	}
+	return result;
+}
+
+/**
+ * How {@link printKey} changes a key's quotes under the `quoteProps` option,
+ * like Prettier's `shouldQuoteKey` and `shouldUnquoteKey`: `"as-needed"`
+ * unquotes every key it can, `"consistent"` does too unless a member needs
+ * quotes, and then quotes every key it can, and `"preserve"` changes nothing.
+ * @param {AST.Node} node - The member
+ * @param {AST.Node[]} siblings - The member list it's in
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {'quote' | 'unquote' | null}
+ */
+function getKeyQuoting(node, siblings, options) {
+	const quoteProps = options.quoteProps ?? 'as-needed';
+	if (quoteProps === 'preserve' || isComputedKey(node)) {
+		return null;
+	}
+	if (quoteProps === 'consistent' && hasSiblingsRequireQuoted(siblings, options)) {
+		return isKeySafeToQuote(node) ? 'quote' : null;
+	}
+	return isKeySafeToUnquote(node, options) ? 'unquote' : null;
+}
+
+/**
+ * The name a member's key prints as: a name, or a string key {@link printKey}
+ * unquotes. `null` for a computed key and one that prints as a string or number.
+ * @param {AST.Node} node - The member
+ * @param {AST.Node[]} siblings - The member list it's in
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {string | null}
+ */
+function getPrintedKeyName(node, siblings, options) {
+	const key = getKeyNode(node);
+	if (!key || isComputedKey(node)) {
+		return null;
+	}
+	const quoting = getKeyQuoting(node, siblings, options);
+	if (key.type === 'Identifier') {
+		return quoting === 'quote' ? null : key.name;
+	}
+	return quoting === 'unquote' ? /** @type {string} */ (/** @type {AST.Literal} */ (key).value) : null;
+}
+
+/**
+ * Print a member's key, like Prettier's `printKey`: a computed key in its
+ * brackets, and otherwise the key with the quotes `quoteProps` asks for (see
+ * {@link getKeyQuoting}). The key prints through `print`, so its comments do.
+ * @param {KeyedNode} node - The member
+ * @param {AstPath<KeyedNode>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @returns {Doc[]}
  */
 function printKey(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = [];
-	if (node.computed) {
+	const property = node.type === 'TSEnumMember' ? 'id' : 'key';
+	if (isComputedKey(node)) {
 		// computed are never converted to identifiers
-		parts.push('[', path.call(print, 'key'), ']');
-		return parts;
+		return ['[', path.call(print, property), ']'];
 	}
 
-	if (node.key.type === 'Literal' && typeof node.key.value === 'string') {
-		// Check if the key is a valid identifier that doesn't need quotes
-		const key = node.key.value;
-		const isValidIdentifier = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key);
-
-		if (isValidIdentifier) {
-			// Don't quote valid identifiers
-			parts.push(key);
-		} else {
-			// Quote keys that need it (e.g., contain special characters)
-			parts.push(printMultilineString(printStringLiteral(node.key, options)));
-		}
-	} else {
-		parts.push(path.call(print, 'key'));
+	const key = /** @type {AST.Node} */ (getKeyNode(node));
+	const quoting = getKeyQuoting(node, path.siblings ?? [node], options);
+	/** @type {string | undefined} */
+	let printedKey;
+	if (quoting === 'quote') {
+		printedKey = formatStringLiteral(/** @type {AST.Identifier} */ (key).name, options);
+	} else if (quoting === 'unquote') {
+		printedKey = /** @type {string} */ (/** @type {AST.Literal} */ (key).value);
 	}
-
-	return parts;
+	return [
+		printedKey === undefined
+			? path.call(print, property)
+			: path.call((keyPath) => print(keyPath, { printedKey }), property),
+	];
 }
 
 /**
@@ -2943,7 +3156,12 @@ function printTsrxNode(node, path, options, print, args) {
 
 	// Handle leading comments (a union prints its own, inside its indentation)
 	if (!suppressLeadingComments && !unionPrintsOwnComments(path)) {
-		const allComments = typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []);
+		let allComments = typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []);
+		if (path.key === 'declaration' && path.parent?.type === 'ExportDefaultDeclaration') {
+			allComments = [...allComments, ...hoistExportDefaultComments(path, options)];
+		} else if (allComments.some((comment) => hoistedComments.has(comment))) {
+			allComments = allComments.filter((comment) => !hoistedComments.has(comment));
+		}
 		// The ignored source may start before the node, at a decorator, and
 		// already hold the comments after it
 		const comments = ignoredSource
@@ -3487,6 +3705,11 @@ function printTsrxNode(node, path, options, print, args) {
 			];
 			break;
 		case 'Identifier': {
+			// A key printKey quotes
+			if (args?.printedKey !== undefined) {
+				nodeContent = args.printedKey;
+				break;
+			}
 			// Simple case - just return the name directly like Prettier core
 			const parent = path.getParentNode();
 			// The definite-assignment assertion (`let x!: T`) lives on the declarator
@@ -3511,7 +3734,10 @@ function printTsrxNode(node, path, options, print, args) {
 			// Handle regex literals specially
 			const node_typed = /** @type {AST.RegExpLiteral} */ (node);
 			const bigint_typed = /** @type {AST.BigIntLiteral} */ (node);
-			if (node_typed.regex) {
+			if (args?.printedKey !== undefined) {
+				// A key printKey unquotes
+				nodeContent = args.printedKey;
+			} else if (node_typed.regex) {
 				// Regex literal: use the raw representation
 				nodeContent = node_typed.raw || `/${node_typed.regex.pattern}/${node_typed.regex.flags}`;
 			} else if (typeof bigint_typed.bigint === 'string') {
@@ -3916,7 +4142,16 @@ function printTsrxNode(node, path, options, print, args) {
 			// An import attribute (`type: "json"` in `with { … }`) isn't in the AST
 			// node union. It goes through `print` so its comments print.
 			if (/** @type {string} */ (node.type) === 'ImportAttribute') {
-				nodeContent = [path.call(print, 'key'), ': ', path.call(print, 'value')];
+				nodeContent = [
+					...printKey(
+						/** @type {AST.ImportAttribute} */ (/** @type {unknown} */ (node)),
+						/** @type {AstPath<AST.ImportAttribute>} */ (path),
+						options,
+						print,
+					),
+					': ',
+					path.call(print, 'value'),
+				];
 				break;
 			}
 			// Fallback for unknown node types
@@ -7260,7 +7495,10 @@ function printClassBody(node, path, options, print, firstComments = []) {
 			}
 		}
 		parts.push(members[i]);
-		if (options.semi === false && needsClassPropertySemicolon(node.body[i], node.body[i + 1])) {
+		if (
+			options.semi === false &&
+			needsClassPropertySemicolon(node.body[i], node.body[i + 1], node.body, options)
+		) {
 			parts.push(';');
 		}
 	}
@@ -7276,16 +7514,18 @@ function printClassBody(node, path, options, print, firstComments = []) {
  * shouldPrintSemicolonAfterClassProperty.
  * @param {AST.Node} node - The member just printed
  * @param {AST.Node | undefined} next - The member after it
+ * @param {AST.Node[]} members - The class body's members
+ * @param {TsrxFormatOptions} options - Prettier options
  * @returns {boolean}
  */
-function needsClassPropertySemicolon(node, next) {
+function needsClassPropertySemicolon(node, next, members, options) {
 	if (node.type !== 'PropertyDefinition' || !next) {
 		return false;
 	}
 
 	// Only these keywords modify a member on the next line; `readonly`,
 	// `declare`, `async` and the rest must share its line
-	const name = getPrintedKeyName(node);
+	const name = getPrintedKeyName(node, members, options);
 	if (
 		!node.value &&
 		!node.typeAnnotation &&
@@ -7318,32 +7558,13 @@ function needsClassPropertySemicolon(node, next) {
 	}
 
 	// `in` and `instanceof` read as operators on the field's value
-	const nextName = getPrintedKeyName(next);
+	const nextName = getPrintedKeyName(next, members, options);
 	if (nextName === 'in' || nextName === 'instanceof') {
 		return true;
 	}
 
 	// `[` indexes the field's value and `*` multiplies it
 	return next.computed || (next.type === 'MethodDefinition' && next.value.generator === true);
-}
-
-/**
- * The name a class member's key prints as. printKey unquotes string keys that
- * are valid identifiers, so `"static"` prints as `static` and parses as one.
- * @param {AST.PropertyDefinition | AST.MethodDefinition} member - The class member
- * @returns {string | null} The name, or null for computed and non-name keys
- */
-function getPrintedKeyName(member) {
-	if (member.computed) {
-		return null;
-	}
-	if (member.key.type === 'Identifier') {
-		return member.key.name;
-	}
-	if (member.key.type === 'Literal' && typeof member.key.value === 'string') {
-		return member.key.value;
-	}
-	return null;
 }
 
 /**
@@ -9427,7 +9648,7 @@ function printTypeMembers(members, path, key, options, print, separator = hardli
 		if (
 			options.semi === false &&
 			isInterface &&
-			typeMemberNeedsSemicolon(members[index], members[index + 1])
+			typeMemberNeedsSemicolon(members[index], members[index + 1], members, options)
 		) {
 			parts.push(';');
 		}
@@ -9455,7 +9676,10 @@ function printTypeMemberSemicolon(path, options) {
 	if (path.isLast) {
 		return options.semi === false ? '' : ifBreak(';', '');
 	}
-	if (options.semi !== false || typeMemberNeedsSemicolon(path.node, path.next)) {
+	if (
+		options.semi !== false ||
+		typeMemberNeedsSemicolon(path.node, path.next, path.siblings ?? [path.node], options)
+	) {
 		return ';';
 	}
 	return ifBreak('', ';');
@@ -9469,18 +9693,17 @@ function printTypeMemberSemicolon(path, options) {
  * Mirrors Prettier's `shouldPrintSemicolonAfterInterfaceProperty`.
  * @param {AST.Node} node - The member
  * @param {AST.Node | undefined} next - The member after it
+ * @param {AST.Node[]} members - The interface's or type literal's members
+ * @param {TsrxFormatOptions} options - Prettier options
  * @returns {boolean}
  */
-function typeMemberNeedsSemicolon(node, next) {
+function typeMemberNeedsSemicolon(node, next, members, options) {
 	if (node.type !== 'TSPropertySignature') {
 		return false;
 	}
-	if (
-		!node.computed &&
-		!node.typeAnnotation &&
-		node.key.type === 'Identifier' &&
-		(node.key.name === 'static' || node.key.name === 'get' || node.key.name === 'set')
-	) {
+	// A key printed without its quotes counts too
+	const name = node.typeAnnotation ? null : getPrintedKeyName(node, members, options);
+	if (name === 'static' || name === 'get' || name === 'set') {
 		return true;
 	}
 	return next?.type === 'TSCallSignatureDeclaration' && !node.typeAnnotation;
@@ -9760,7 +9983,7 @@ function printTSEnumMember(node, path, options, print) {
 	const parts = [];
 
 	// Print the key (id), with its comments
-	parts.push(path.call(print, 'id'));
+	parts.push(...printKey(node, path, options, print));
 
 	// Print the initializer if present
 	if (node.initializer) {
@@ -11999,7 +12222,7 @@ function isObjectPropertyWithShortKey(node, keyDoc, options) {
 		return false;
 	}
 	const key = getDocText(keyDoc);
-	return key !== null && key.length < (options.tabWidth ?? 2) + 3;
+	return key !== null && util.getStringWidth(key) < (options.tabWidth ?? 2) + 3;
 }
 
 /**
@@ -12192,11 +12415,7 @@ function printTSPropertySignature(node, path, options, print) {
 	}
 
 	// Computed keys keep their brackets — `[Symbol.iterator]` is not `Symbol.iterator`
-	if (node.computed) {
-		parts.push('[', path.call(print, 'key'), ']');
-	} else {
-		parts.push(path.call(print, 'key'));
-	}
+	parts.push(...printKey(node, path, options, print));
 
 	if (node.optional) {
 		parts.push('?');
@@ -12228,11 +12447,7 @@ function printTSMethodSignature(node, path, options, print) {
 	}
 
 	// Print the method name/key, keeping brackets on computed keys
-	if (node.computed) {
-		parts.push('[', path.call(print, 'key'), ']');
-	} else {
-		parts.push(path.call(print, 'key'));
-	}
+	parts.push(...printKey(node, path, options, print));
 
 	// Add optional marker if present
 	if (node.optional) {
@@ -12430,6 +12645,11 @@ function printTSMappedType(node, path, options, print) {
 }
 
 /**
+ * Print a qualified name (`A.B.C`). Type references print it on one line, like
+ * Prettier. In an interface's `extends` or a class's `implements`, Prettier's
+ * AST has a member expression instead, which `printMemberExpression` can
+ * break before a `.`: there, like it, `.right` goes in
+ * `group(indent([softline, …]))` unless the name is a lone `a.b`.
  * @param {AST.TSQualifiedName} node
  * @param {AstPath<AST.TSQualifiedName>} path
  * @param {TsrxFormatOptions} options
@@ -12437,7 +12657,41 @@ function printTSMappedType(node, path, options, print) {
  * @returns {Doc}
  */
 function printTSQualifiedName(node, path, options, print) {
-	return [path.call(print, 'left'), '.', path.call(print, 'right')];
+	const left = path.call(print, 'left');
+	const right = ['.', path.call(print, 'right')];
+	if (!isHeritageClauseName(path)) {
+		return [left, right];
+	}
+	const shouldInline =
+		node.left.type === 'Identifier' &&
+		/** @type {AST.Node} */ (path.parent).type !== 'TSQualifiedName';
+	return [left, lineSuffixBoundary, shouldInline ? right : group(indent([softline, right]))];
+}
+
+/**
+ * Whether a qualified name is the name, or the left side of the name, of a
+ * type in an interface's `extends` or a class's `implements`.
+ * @param {AstPath<AST.TSQualifiedName>} path
+ * @returns {boolean}
+ */
+function isHeritageClauseName(path) {
+	/** @type {AST.Node} */
+	let child = path.node;
+	for (let level = 0; ; level++) {
+		const ancestor = /** @type {AST.Node | null} */ (path.getParentNode(level));
+		if (ancestor?.type === 'TSQualifiedName' && ancestor.left === child) {
+			child = ancestor;
+			continue;
+		}
+		const clauseOwner = /** @type {AST.Node | null} */ (path.getParentNode(level + 1));
+		return (
+			ancestor?.type === 'TSExpressionWithTypeArguments' &&
+			ancestor.expression === child &&
+			(clauseOwner?.type === 'TSInterfaceDeclaration' ||
+				clauseOwner?.type === 'ClassDeclaration' ||
+				clauseOwner?.type === 'ClassExpression')
+		);
+	}
 }
 
 /**

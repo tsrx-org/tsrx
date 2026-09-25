@@ -8555,6 +8555,262 @@ let m: {
 		});
 	});
 
+	// Prettier's `printKey` with the `typescript` parser: `quoteProps` decides
+	// which keys lose or gain quotes, for objects, classes, interfaces, type
+	// literals, enums, and import attributes alike.
+	describe('property keys are quoted like Prettier', () => {
+		/**
+		 * Assert the input is already formatted and comes back byte-identical.
+		 * @param {string} source
+		 */
+		const expectKeysUnchanged = async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		};
+
+		it('unquotes the keys that are identifiers with quoteProps as-needed', async () => {
+			const input = `interface A {
+  "a": string;
+  readonly "b-c"?: number;
+  "m"(): void;
+  get "g"(): string;
+  "1": boolean;
+}
+type B = { "c": boolean; "d-e": string };
+enum E {
+  "x" = 1,
+  "y-z" = 2,
+  "w",
+}
+const o = { "a": 1, "b"() {}, get "c"() { return 1; }, "café": 2 };
+const { "p": q, "r-s": t } = o;
+import data from "./data.json" with { "type": "json" };`;
+
+			expect(await format(input)).toBeWithNewline(`interface A {
+  a: string;
+  readonly "b-c"?: number;
+  m(): void;
+  get g(): string;
+  "1": boolean;
+}
+type B = { c: boolean; "d-e": string };
+enum E {
+  x = 1,
+  "y-z" = 2,
+  w,
+}
+const o = {
+  a: 1,
+  b() {},
+  get c() {
+    return 1;
+  },
+  café: 2,
+};
+const { p: q, "r-s": t } = o;
+import data from "./data.json" with { type: "json" };`);
+		});
+
+		// `{ 1: a }` and `{ "1": a }` have different `keyof` types, `new(): T` is
+		// a construct signature, an escape stays as written, and a letter outside
+		// ES5's identifiers (Unicode 9, no astral planes) keeps its quotes
+		it('keeps the quotes that change a key or that ES5 needs', async () => {
+			await expectKeysUnchanged(`interface A {
+  "new"(): A;
+  "1": string;
+  2: string;
+}
+const o = { "\\u0061": 1, "1": 2, 1.5: 3, "𝒶": 4 };`);
+		});
+
+		// With `strictPropertyInitialization`, TypeScript reports a field named
+		// by an identifier that isn't assigned (`d: number` without a value), but
+		// not a field named by a string (`"d": number`, microsoft/TypeScript#20075).
+		// Unquoting it would add that error, so class fields keep their quotes,
+		// like Prettier with the `typescript` parser. Methods and abstract
+		// fields, which TypeScript never checks, unquote.
+		it('keeps the quotes of class fields, which TypeScript checks differently', async () => {
+			const input = `class C {
+  "d": number;
+  "e" = 1;
+  static "f" = 2;
+  declare "g": string;
+  "h"() {}
+  get "i"() { return 1; }
+}
+abstract class D {
+  abstract "j": string;
+  private "k" = 1;
+}`;
+
+			expect(await format(input)).toBeWithNewline(`class C {
+  "d": number;
+  "e" = 1;
+  static "f" = 2;
+  declare "g": string;
+  h() {}
+  get i() {
+    return 1;
+  }
+}
+abstract class D {
+  abstract j: string;
+  private "k" = 1;
+}`);
+		});
+
+		// Unlike Prettier, which unquotes it: TypeScript checks that an `accessor`
+		// field named by an identifier is assigned, like any other field
+		it('keeps the quotes of an accessor field', async () => {
+			await expectKeysUnchanged(`class C {
+  accessor "a": number;
+  accessor b = 1;
+}`);
+		});
+
+		it('quotes every key it can when one needs quotes with quoteProps consistent', async () => {
+			const input = `const o = { a: 1, "b-c": 2, 1: 3, "d": 4 };
+const p = { "a": 1, b: 2 };
+interface I {
+  a: string;
+  "b-c": number;
+}
+enum E {
+  a = 1,
+  "b" = 2,
+}`;
+
+			expect(await format(input, { quoteProps: 'consistent' }))
+				.toBeWithNewline(`const o = { "a": 1, "b-c": 2, 1: 3, "d": 4 };
+const p = { a: 1, b: 2 };
+interface I {
+  "a": string;
+  "b-c": number;
+}
+enum E {
+  a = 1,
+  b = 2,
+}`);
+			expect(await format(input, { quoteProps: 'consistent', singleQuote: true }))
+				.toBeWithNewline(`const o = { 'a': 1, 'b-c': 2, 1: 3, 'd': 4 };
+const p = { a: 1, b: 2 };
+interface I {
+  'a': string;
+  'b-c': number;
+}
+enum E {
+  a = 1,
+  b = 2,
+}`);
+		});
+
+		// Unlike Prettier, which quotes `a` too: quoting a field changes what
+		// TypeScript checks just like unquoting it does
+		it('quotes the methods of a class but not its fields with quoteProps consistent', async () => {
+			const input = `class C {
+  a = 1;
+  "b-c" = 2;
+  m() {}
+}`;
+
+			expect(await format(input, { quoteProps: 'consistent' })).toBeWithNewline(`class C {
+  a = 1;
+  "b-c" = 2;
+  "m"() {}
+}`);
+		});
+
+		it('keeps every key as written with quoteProps preserve', async () => {
+			const source = `interface A {
+  "a": string;
+  b: number;
+}
+enum E {
+  "x" = 1,
+  y = 2,
+}
+const o = { "a": 1, b: 2 };
+import data from "./data.json" with { "type": "json" };`;
+
+			expect(await format(source, { quoteProps: 'preserve' })).toBeWithNewline(source);
+		});
+
+		it('keeps the comments of a key it unquotes', async () => {
+			const input = `const o = {
+  // leading
+  "a": 1,
+  "b" /* after the key */: 2,
+  /* before the key */ "c": 3,
+};
+enum E {
+  "x" /* after the key */ = 1,
+}`;
+
+			expect(await format(input)).toBeWithNewline(`const o = {
+  // leading
+  a: 1,
+  b /* after the key */: 2,
+  /* before the key */ c: 3,
+};
+enum E {
+  x /* after the key */ = 1,
+}`);
+		});
+
+		it('keeps the comment of a key after a modifier, get, async, or a decorator', async () => {
+			await expectKeysUnchanged(`class A {
+  @dec /* a */ "a-b" = 1;
+  static /* b */ "c-d" = 1;
+  get /* c */ "e-f"() {
+    return 1;
+  }
+}
+const o = {
+  async /* d */ "g-h"() {},
+};`);
+			const input = `class A {
+  static /* b */ "cd" = 1;
+  get /* c */ "ef"() {
+    return 1;
+  }
+}
+interface I {
+  readonly /* d */ "gh": string;
+}`;
+
+			expect(await format(input)).toBeWithNewline(`class A {
+  static /* b */ "cd" = 1;
+  get /* c */ ef() {
+    return 1;
+  }
+}
+interface I {
+  readonly /* d */ gh: string;
+}`);
+		});
+
+		// Without semicolons, a member named `get` or `in` needs one where it
+		// would read as a modifier or an operator, also when it's unquoted
+		it('keeps the semicolon a key needs once it is unquoted', async () => {
+			const input = `interface I {
+  "get"
+  a: string
+}
+class C {
+  x = a
+  "in"() {}
+}`;
+
+			expect(await format(input, { semi: false })).toBeWithNewline(`interface I {
+  get;
+  a: string
+}
+class C {
+  x = a;
+  in() {}
+}`);
+		});
+	});
+
 	describe('comments in empty arrays and objects', () => {
 		it('keeps a line comment inside an empty array or object', async () => {
 			const source = `const a = [
@@ -11457,15 +11713,18 @@ declare enum Level {
 			await expectUnchanged(source);
 		});
 
+		// A field keeps its quotes (see 'keeps the quotes of class fields, which
+		// TypeScript checks differently'), so only a method's key prints as a keyword
 		it('keeps the semicolon when a quoted key prints as a keyword', async () => {
-			const result = await format(`class A { "static"; run() {} x = a; 'in' = 1 }`, {
-				semi: false,
-			});
+			const input = `class A { "static"; run() {} x = a; 'in'() {} y = b; 'in' = 1 }`;
+			const result = await format(input, { semi: false });
 			expect(result).toBeWithNewline(`class A {
-  static;
+  "static"
   run() {}
   x = a;
-  in = 1
+  in() {}
+  y = b
+  "in" = 1
 }`);
 		});
 
@@ -12878,6 +13137,39 @@ type D = { a: string } &
 }`);
 		});
 
+		// Prettier's AST has a member expression there, which breaks before a
+		// `.` like a superclass's does, so the type parameters stay on the line
+		it('breaks a dotted interface extends or class implements name before a dot', async () => {
+			const input = `interface ReadableStream<R = any> extends Bun.__internal.LibEmptyOrNodeReadableStream<R> {}
+class WritableStream<W = any> implements Bun.__internal.LibEmptyOrNodeWritableStream<W> {}
+const Stream = class<W = any> implements Bun.__internal.LibEmptyOrNodeWritableStream<W> {};
+interface A extends a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z.aa.bb.cc.dd.ee.ff.gg.hh {}`;
+
+			expect(await format(input))
+				.toBeWithNewline(`interface ReadableStream<R = any> extends Bun.__internal
+  .LibEmptyOrNodeReadableStream<R> {}
+class WritableStream<W = any> implements Bun.__internal
+  .LibEmptyOrNodeWritableStream<W> {}
+const Stream = class<W = any> implements Bun.__internal
+  .LibEmptyOrNodeWritableStream<W> {};
+interface A
+  extends a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z.aa.bb.cc.dd.ee.ff
+    .gg.hh {}`);
+		});
+
+		// A lone `a.b` stays together, like a member expression, and a type
+		// reference prints its qualified name on one line
+		it.each([
+			`interface ReadableStream<
+  R = any,
+> extends Bun.LibEmptyOrNodeReadableStreamLongNameForThisTestOnly<R> {}`,
+			`type T =
+  | Bun.__internal.LibEmptyOrNodeReadableStream<R>
+  | Bun.__internal.LibEmptyOrNodeReadableStream<R>;`,
+		])('keeps a qualified name that Prettier keeps together: %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
 		// Prettier's `printSuperClass`: only the value of an assignment expression
 		it('moves a long superclass of an assigned class expression into parentheses', async () => {
 			const input = `Foo = class extends SomeNamespace.VeryLongBaseClassNameForTestingPurposesOnlyAbc.Def {
@@ -13258,7 +13550,6 @@ export interface SectionProps<T>
 			'({}).toString.call(value);',
 			'({ a } = source);',
 			'const head = () => ({}).toString();',
-			'export default (function () {}).call(this);',
 			'const created = new (factory())();',
 			'const created = new (factory().Widget)();',
 			'const created = new (class {})();',
@@ -17003,6 +17294,17 @@ const {
 			expect(result).toBeWithNewline(source);
 		});
 
+		// Like Prettier's `isObjectPropertyWithShortKey`, a key is short by its
+		// width, where a CJK character counts twice
+		it('measures a short key by its width', async () => {
+			const source = `const o = {
+  古今: "https://prettier.io/docs/en/rationale.html#what-prettier-is-concerned-about",
+  古体诗:
+    "https://prettier.io/docs/en/rationale.html#what-prettier-is-concerned-about",
+};`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
 		it('lays out a chain of three or more assignments', async () => {
 			const input = `window.aaaaaaaaaaaaaaaaaa = window.bbbbbbbbbbbbbbbbbbbbbbbb = window.cccccccccccccccccccc = someValue;
 a = b = c;`;
@@ -18443,6 +18745,54 @@ export const alias = Named;`;
 
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
+		});
+
+		// Prettier's `shouldWrapFunctionForExportDefault`: after `export default`,
+		// a function or class would start a declaration, so an expression that
+		// starts with one prints in parentheses
+		it('wraps the whole expression that starts with a function or class', async () => {
+			const input = `export default (class {}).getInstance();
+export default (function () {}).toString();
+export default (function log() {}) as typeof console.log;
+export default (class {})[1] = 1;
+export default (async function () {}) ? a : b;
+export default (function () {}).call(thisIsAVeryLongArgumentNameNumberOne, thisIsAVeryLongArgumentNameNumberTwo);`;
+
+			expect(await format(input)).toBeWithNewline(`export default (class {}.getInstance());
+export default (function () {}.toString());
+export default (function log() {} as typeof console.log);
+export default (class {}[1] = 1);
+export default (async function () {} ? a : b);
+export default (function () {}.call(
+  thisIsAVeryLongArgumentNameNumberOne,
+  thisIsAVeryLongArgumentNameNumberTwo,
+));`);
+		});
+
+		it.each([
+			'export default (function foo() {})();',
+			'export default (function templ() {})`foo`;',
+			'export default (function () {} + foo)``;',
+			'export default new (class {})();',
+			'export default (function () {}, b);',
+			// `(class {}<T>)` doesn't parse
+			'export default (class {})<string>;',
+		])('keeps the parentheses of a function or class that prints its own: %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		// Prettier prints the comment inside the parentheses, and moves it out on
+		// its next pass
+		it('prints the comments of the function or class ahead of the parentheses', async () => {
+			const input = `export default (/* a */ class {}).x;
+export default (
+  // b
+  function () {}
+).call(x);`;
+
+			expect(await format(input)).toBeWithNewline(`export default /* a */ (class {}.x);
+export default // b
+(function () {}.call(x));`);
 		});
 	});
 
