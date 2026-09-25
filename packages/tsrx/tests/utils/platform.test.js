@@ -123,6 +123,16 @@ describe('platform specialization', () => {
 		expect(result.map.sourcesContent?.[0]).toBe(source);
 	});
 
+	it('replaces flags in a module with a hashbang and syntax newer than ES2022', () => {
+		const source = `#!/usr/bin/env node
+using handle = open();
+const letters = /[\\p{L}--[a-z]]/v;
+const active = import.meta.env.platform.web;`;
+		const result = replacePlatformFlags(source, 'cli.ts', 'web');
+
+		expect(result.code).toBe(source.replace('import.meta.env.platform.web', 'true'));
+	});
+
 	it('preserves an incoming map when there is nothing to rewrite', () => {
 		const source = 'export const ready = true;';
 		const incoming = {

@@ -208,6 +208,15 @@ export namespace Parse {
 		): void;
 	}
 
+	/**
+	 * `Options` as passed to the static `parse`, which takes any `ecmaVersion`
+	 * acorn accepts (such as `'latest'`); acorn normalizes it to the number that
+	 * the parser then reads from `options`.
+	 */
+	export interface ParseInputOptions extends Omit<Options, 'ecmaVersion'> {
+		ecmaVersion: acorn.Options['ecmaVersion'];
+	}
+
 	export interface CommentMetaData {
 		containerId: number;
 		childIndex: number;
@@ -1890,7 +1899,7 @@ export namespace Parse {
 		/** TypeScript extensions when using acorn-typescript */
 		acornTypeScript: AcornTypeScriptExtensions;
 		/** Static parse method that returns TSRX's extended Program type */
-		parse(input: string, options: Options): AST.Program;
+		parse(input: string, options: ParseInputOptions): AST.Program;
 		/** Static parseExpressionAt method */
 		parseExpressionAt(input: string, pos: number, options: Options): AST.Expression;
 		/** Extend with plugins */
