@@ -1427,7 +1427,8 @@ function getExportDefaultLeadingFunction(path, options) {
  */
 function hoistExportDefaultComments(path, options) {
 	const leadingFunction = getExportDefaultLeadingFunction(path, options);
-	const comments = /** @type {AST.NodeWithMaybeComments | null} */ (leadingFunction)?.leadingComments ?? [];
+	const comments =
+		/** @type {AST.NodeWithMaybeComments | null} */ (leadingFunction)?.leadingComments ?? [];
 	for (const comment of comments) {
 		hoistedComments.add(comment);
 	}
@@ -2016,7 +2017,10 @@ function needsParens(path, options) {
 	}
 
 	const key = path.key;
-	if (key === 'superClass' && (parent.type === 'ClassDeclaration' || parent.type === 'ClassExpression')) {
+	if (
+		key === 'superClass' &&
+		(parent.type === 'ClassDeclaration' || parent.type === 'ClassExpression')
+	) {
 		return false;
 	}
 	if (key === 'declaration' && parent.type === 'ExportDefaultDeclaration') {
@@ -2623,7 +2627,9 @@ function getPrintedKeyName(node, siblings, options) {
 	if (key.type === 'Identifier') {
 		return quoting === 'quote' ? null : key.name;
 	}
-	return quoting === 'unquote' ? /** @type {string} */ (/** @type {AST.Literal} */ (key).value) : null;
+	return quoting === 'unquote'
+		? /** @type {string} */ (/** @type {AST.Literal} */ (key).value)
+		: null;
 }
 
 /**
