@@ -7411,6 +7411,58 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(statement.declarations[0].init.body).trailing).toBeUndefined();
 		expect(commentsOf(conditional).trailing).toBeUndefined();
 	});
+
+	// Prettier's `handleParenthesizedExpressionTrailingComment`
+	it('trails the last expression of a parenthesized sequence or the right side of an assignment with a comment after it', () => {
+		const arrow = firstStatement('const f = () => (a = b /* c */);').declarations[0].init;
+		const declarator = firstStatement('const x = (a, b /* c */);').declarations[0];
+		const returned = firstStatement('function f() {\n  return (a, b /* c */);\n}').body.body[0];
+		const assigned = firstStatement('x = (a, b /* c */);');
+		const statement = firstStatement('(a, b /* c */);');
+
+		expect(commentsOf(arrow.body.right).trailing).toEqual([' c ']);
+		expect(commentsOf(declarator.init.expressions[1]).trailing).toEqual([' c ']);
+		expect(commentsOf(declarator.init).trailing).toBeUndefined();
+		expect(commentsOf(returned.argument.expressions[1]).trailing).toEqual([' c ']);
+		expect(commentsOf(assigned.expression.right.expressions[1]).trailing).toEqual([' c ']);
+		expect(commentsOf(statement).trailing).toEqual([' c ']);
+		expect(commentsOf(statement.expression).trailing).toBeUndefined();
+	});
+
+	// Prettier prints these after the parentheses, or the value without them,
+	// and its next pass moves them after the `;`
+	it('trails the statement with a comment after a parenthesized throw argument or chained assignment', () => {
+		const thrown = firstStatement('throw (a, b /* c */);');
+		const chained = firstStatement('x = (y = z /* c */);');
+		const lineComment = firstStatement('const x = (a, b // c\n);');
+
+		expect(commentsOf(thrown).trailing).toEqual([' c ']);
+		expect(commentsOf(chained).trailing).toEqual([' c ']);
+		expect(commentsOf(lineComment).trailing).toEqual([' c']);
+	});
+
+	it('trails the constraint of a type parameter with a comment at the end of the line of its =', () => {
+		const [parameter] = firstStatement('type A<B extends C = // c\n  D> = R;').typeParameters
+			.params;
+		const [ignored] = firstStatement('type A<B extends C = // prettier-ignore\n  D> = R;')
+			.typeParameters.params;
+
+		expect(commentsOf(parameter.constraint).trailing).toEqual([' c']);
+		expect(commentsOf(parameter.default).leading).toBeUndefined();
+		expect(commentsOf(ignored.default).leading).toEqual([' prettier-ignore']);
+	});
+
+	// Prettier moves these after the constraint on its next pass
+	it('trails the constraint of a type parameter with a line comment on its own line around its =', () => {
+		const [after] = firstStatement('type A<B extends C =\n  // c\n  D> = R;').typeParameters.params;
+		const [second] = firstStatement('type A<B extends C = // a\n  // b\n  D> = R;').typeParameters
+			.params;
+
+		expect(commentsOf(after.constraint).trailing).toEqual([' c']);
+		expect(commentsOf(after.default).leading).toBeUndefined();
+		expect(commentsOf(second.constraint).trailing).toEqual([' a']);
+		expect(commentsOf(second.default).leading).toEqual([' b']);
+	});
 });
 
 describe('keywordTokens parse option', () => {
@@ -8650,10 +8702,170 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'class A { constructor(readonly readonly x: number) {} }',
-			errors: [["Duplicate modifier: 'readonly'.", 'x: number']],
-			throws: "Duplicate modifier: 'readonly'. (1:40)",
+			// At the repeated modifier (sveltejs/acorn-typescript#129).
+			errors: [["Duplicate modifier: 'readonly'.", 'readonly x']],
+			throws: "Duplicate modifier: 'readonly'. (1:31)",
 			valid: 'class A { constructor(readonly x: number) {} }',
 			pick: constructor_parameter,
+		},
+		{
+			source: 'class A { private private x = 1; }',
+			errors: [['Accessibility modifier already seen.', 'private x']],
+			throws: 'Accessibility modifier already seen. (1:18)',
+			valid: 'class A { private x = 1; }',
+			pick: first_member,
+		},
+		{
+			source: 'class A { public protected x = 1; }',
+			// The first one stays.
+			errors: [['Accessibility modifier already seen.', 'protected']],
+			throws: 'Accessibility modifier already seen. (1:17)',
+			valid: 'class A { public x = 1; }',
+			pick: first_member,
+		},
+		{
+			source: 'class A {\n\tconstructor(private public readonly x: number) {}\n}',
+			errors: [['Accessibility modifier already seen.', 'public']],
+			throws: 'Accessibility modifier already seen. (2:21)',
+			valid: 'class A {\n\tconstructor(private readonly x: number) {}\n}',
+			pick: constructor_parameter,
+		},
+		{
+			source: 'function f(...a?: number[]) {}',
+			errors: [['A rest parameter cannot be optional.', '?']],
+			throws: 'A rest parameter cannot be optional. (1:15)',
+			valid: 'declare function f(...a?: number[]): void;',
+			pick: first_parameter,
+		},
+		{
+			source: 'function f(a: string, ...b?: number[]): void;\nfunction f() {}',
+			errors: [['A rest parameter cannot be optional.', '?:']],
+			throws: 'A rest parameter cannot be optional. (1:26)',
+			valid: 'declare function f(a: string, ...b?: number[]): void;',
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'TSDeclareFunction').params,
+		},
+		{
+			source: 'class A { constructor(public ...rest: number[]) {} }',
+			errors: [['A parameter property cannot be declared using a rest parameter.', 'public']],
+			throws: 'Unexpected token (1:29)',
+			valid: 'class A { constructor(...rest: number[]) {} }',
+			pick: constructor_parameter,
+		},
+		{
+			source: 'class A { m(a: string, readonly ...rest: number[]) {} }',
+			errors: [['A parameter property cannot be declared using a rest parameter.', 'readonly']],
+			throws: 'Unexpected token (1:32)',
+			valid: 'class A { m(a: string, ...rest: number[]) {} }',
+			pick: first_member,
+		},
+		{
+			source: 'class A { constructor(@dec public ...rest: number[]) {} }',
+			errors: [['A parameter property cannot be declared using a rest parameter.', 'public']],
+			throws: 'Unexpected token (1:34)',
+			valid: 'class A { constructor(@dec ...rest: number[]) {} }',
+			pick: constructor_parameter,
+		},
+		{
+			source: 'class A { constructor(private readonly ...rest: number[], b) {} }',
+			errors: [
+				['A parameter property cannot be declared using a rest parameter.', 'private readonly ...'],
+				['Comma is not permitted after the rest element', ', b'],
+			],
+			throws: 'Unexpected token (1:39)',
+			pick: first_member,
+			match: {
+				value: {
+					params: [
+						{ type: 'RestElement', argument: { name: 'rest' } },
+						{ type: 'Identifier', name: 'b' },
+					],
+				},
+			},
+		},
+		{
+			source: '@dec function f() {}',
+			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
+			throws: 'Leading decorators must be attached to a class declaration. (1:5)',
+			valid: 'function f() {}',
+			pick: first,
+		},
+		{
+			source: '@a @b(1) const x = 1;',
+			errors: [['Leading decorators must be attached to a class declaration.', '@a']],
+			throws: 'Leading decorators must be attached to a class declaration. (1:9)',
+			valid: 'const x = 1;',
+			pick: first,
+		},
+		{
+			source: '@dec interface I {}',
+			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
+			throws: 'Leading decorators must be attached to a class declaration. (1:5)',
+			valid: 'interface I {}',
+			pick: first,
+		},
+		{
+			source: "@dec import a from 'a';",
+			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
+			throws: 'Leading decorators must be attached to a class declaration. (1:5)',
+			valid: "import a from 'a';",
+			pick: first,
+		},
+		{
+			source: 'export @dec function f() {}',
+			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
+			throws: 'Leading decorators must be attached to a class declaration. (1:12)',
+			valid: 'export function f() {}',
+			pick: first,
+		},
+		{
+			source: 'export default @dec async function f() {}',
+			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
+			throws: 'Leading decorators must be attached to a class declaration. (1:20)',
+			valid: 'export default async function f() {}',
+			pick: first,
+		},
+		{
+			// No other class takes the decorators written before `export`.
+			source: '@dec export const A = class {};',
+			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
+			throws: 'Leading decorators must be attached to a class declaration. (1:12)',
+			valid: 'export const A = class {};',
+			pick: first,
+		},
+		{
+			source: 'function f() {\n\t@dec const x = 1;\n}',
+			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
+			throws: 'Leading decorators must be attached to a class declaration. (2:6)',
+			valid: 'function f() {\n\tconst x = 1;\n}',
+			pick: first,
+		},
+		{
+			// No other class takes the decorators.
+			source: '@dec function f() {}\nclass A {}',
+			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
+			throws: 'Leading decorators must be attached to a class declaration. (1:5)',
+			valid: 'function f() {}\nclass A {}',
+			pick: (program) => program.body,
+		},
+		{
+			source: 'export function App() @{\n\t@dec const x = 1;\n\t<div>{x}</div>\n}',
+			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
+			throws: 'Leading decorators must be attached to a class declaration. (2:6)',
+		},
+		{
+			source: 'class A { @dec constructor() {} }',
+			errors: [
+				["Decorators can't be used with a constructor. Did you mean '@dec class { ... }'?", '@dec'],
+			],
+			throws:
+				"Decorators can't be used with a constructor. Did you mean '@dec class { ... }'? (1:10)",
+			pick: first_member,
+			match: {
+				type: 'MethodDefinition',
+				kind: 'constructor',
+				decorators: [{ type: 'Decorator', expression: { name: 'dec' } }],
+			},
 		},
 		{
 			source: 'class A { private #x = 1; }',
@@ -9139,6 +9351,9 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'const if (a) {}',
 			'var\n#x;',
 			'export function App() @{ const <div /> }',
+			// Decorators before a statement that isn't a declaration, in a function
+			// that has decorators of its own.
+			'@dec function f() {\n\t@inner x;\n}',
 		];
 		const modes = [undefined, ...collect_modes];
 		const inputs = sources.flatMap((source) => modes.map((options) => ({ source, options })));
@@ -9148,6 +9363,35 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		for (const [index, outcome] of outcomes.entries()) {
 			expect(outcome.ok, JSON.stringify(inputs[index])).toBe(false);
 		}
+	});
+
+	it('still throws decorators before anything but a declaration', async () => {
+		// TypeScript's parser expects a declaration after decorators (TS1146), or
+		// an expression after `=` (TS1109). Each throws where acorn-typescript
+		// raises it: after the decorators.
+		/** @type {Array<[source: string, at: string]>} */
+		const sources = [
+			['@dec x;', 'x;'],
+			['@dec if (a) {}', 'if'],
+			['@dec type;', 'type'],
+			['export @dec x;', 'x;'],
+			['const y = @dec 1;', '1'],
+			['const y = @dec function () {};', 'function'],
+		];
+		const modes = [undefined, ...collect_modes];
+		const inputs = sources.flatMap(([source]) => modes.map((options) => ({ source, options })));
+
+		const outcomes = await parse_in_worker(inputs);
+
+		expect(outcomes).toEqual(
+			sources.flatMap(([source, at]) =>
+				modes.map(() => ({
+					ok: false,
+					message: `Leading decorators must be attached to a class declaration. (1:${source.indexOf(at)})`,
+					pos: source.indexOf(at),
+				})),
+			),
+		);
 	});
 
 	it('records no error where TypeScript reports none', async () => {
@@ -9164,6 +9408,15 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// An overload signature may have an optional binding pattern.
 			'function f({ a }?: { a: number }): void;\nfunction f(options?: { a: number }) {}',
 			'namespace N {\n\texport const a = 1;\n}',
+			// Decorators on a class, and on a parameter (TS1206 only without
+			// `experimentalDecorators`), which the parser can't know.
+			'@dec export class A {}',
+			'export @dec abstract class A {}',
+			'@dec declare class A {}',
+			'const A = @dec class {};',
+			'class A {\n\tconstructor(@dec private x: number) {}\n\tm(@dec y: number) {}\n}',
+			// Parameter properties and parameters named after modifiers.
+			'class A {\n\tconstructor(public x: number, readonly: number, ...rest: number[]) {}\n}',
 		];
 		const outcomes = await parse_in_worker(
 			sources.flatMap((source) => collect_modes.map((options) => ({ source, options }))),
@@ -9306,6 +9559,83 @@ describe('JSX whitespace in template text', () => {
 			['<b>', '\u00a0', '<i>'],
 		],
 		['a tab on its own line', '<div>\n\t<b>x</b>\n\t\t\n</div>;', ['<b>']],
+		// An element in a `{…}` container reads its text as anywhere else (#612)
+		[
+			'a space after a closing tag in an element in a child container',
+			'export function App() @{\n\t<main>\n\t\t{x && <div><b>1</b> 2</div>}\n\t</main>\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'a space after a closing tag in an element in an attribute value',
+			'export function App() @{\n\t<main slot={<div><b>1</b> 2</div>} />\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'a space after a closing tag in an element in a container in TSX',
+			'const a = <main>{x && <div><b>1</b> 2</div>}</main>;',
+			['<b>', ' 2'],
+		],
+		[
+			'a non-breaking space after a closing tag in an element in a container',
+			'export function App() @{\n\t<main>\n\t\t{x && <div><b>1</b> 2</div>}\n\t</main>\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'a space after a closing tag in an element in a directive body in a container',
+			'export function App() @{\n\t<main>\n\t\t{x && <section>@if (y) { <div><b>1</b> 2</div> }</section>}\n\t</main>\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'a space after a child container in an element in a directive body in a container',
+			'export function App() @{\n\t<main>\n\t\t{x && <section>@if (y) { <div>{a} 2</div> }</section>}\n\t</main>\n}',
+			['JSXExpressionContainer', ' 2'],
+		],
+		[
+			'text after a closing tag, when the container goes on after the element',
+			'export function App() @{\n\t<main>\n\t\t{x ? <div><b>1</b> 2</div> : <p />}\n\t</main>\n}',
+			['<b>', ' 2'],
+		],
+		// So does an element in a `switch` case (#613)
+		[
+			'a space after an opening tag in an @switch case',
+			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\t<div> 1</div>\n\t\t\t}\n\t\t\t@case 2: {\n\t\t\t\t<p />\n\t\t\t}\n\t\t}\n\t</main>\n}',
+			[' 1'],
+		],
+		[
+			'a space after a closing tag in an @switch case',
+			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\t<div><b>3</b> 4</div>\n\t\t\t}\n\t\t}\n\t</main>\n}',
+			['<b>', ' 4'],
+		],
+		[
+			'a non-breaking space after a closing tag in an @switch case',
+			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\t<div><b>3</b> 4</div>\n\t\t\t}\n\t\t}\n\t</main>\n}',
+			['<b>', ' 4'],
+		],
+		[
+			'a non-breaking space after a nested closing tag in an @switch case',
+			'export function App() @{\n\t@switch (x) {\n\t\t@case 1: {\n\t\t\t<div>\n\t\t\t\t<span>\n\t\t\t\t\t<b>1</b>\n\t\t\t\t</span> 2\n\t\t\t</div>\n\t\t}\n\t}\n}',
+			['<span>', ' 2\n\t\t\t'],
+		],
+		[
+			'text before a tag in an @switch case',
+			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\t<div>1<b /></div>\n\t\t\t}\n\t\t}\n\t</main>\n}',
+			['1', '<b>'],
+		],
+		[
+			'a space after a child container in an @default case',
+			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@default: {\n\t\t\t\t<div>{a} 1</div>\n\t\t\t}\n\t\t}\n\t</main>\n}',
+			['JSXExpressionContainer', ' 1'],
+		],
+		[
+			'text before a tag in a switch case',
+			'function A() {\n\tswitch (x) {\n\t\tcase 1:\n\t\t\treturn <div> 1<b /></div>;\n\t}\n}',
+			[' 1', '<b>'],
+		],
+		[
+			'a space after a closing tag in a switch case in a container',
+			'export function App() @{\n\t<main>\n\t\t{(() => {\n\t\t\tswitch (x) {\n\t\t\t\tcase 1:\n\t\t\t\t\treturn <div><b>1</b> 2</div>;\n\t\t\t}\n\t\t})()}\n\t</main>\n}',
+			['<b>', ' 2'],
+		],
 	];
 
 	it.each(cases)('reads %s like JSX', async (_label, source, expected) => {
@@ -9316,6 +9646,17 @@ describe('JSX whitespace in template text', () => {
 			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
 			expect(outcome.errors ?? [], label).toEqual([]);
 			expect(children(outcome.ast), label).toEqual(expected);
+		}
+	});
+
+	it('reports a token that text cannot start at instead of reading it forever', async () => {
+		// The `<` of `<T,>` reads as a type parameter list's, where the text of
+		// `<b>` would start, so the text reads nothing
+		const source = 'const f = <b><T,>() => 1;';
+		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
+
+		for (const outcome of outcomes) {
+			expect(outcome).toMatchObject({ ok: false, message: 'Unexpected token (1:13)' });
 		}
 	});
 });

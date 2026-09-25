@@ -808,6 +808,15 @@ describe('parse errors', () => {
 			'function f() {\n  import a from "a";\n  export const b = a;\n}\n',
 		);
 		await expectFormat('function f() {\n  let\n}', 'function f() {\n  let;\n}\n');
+		// Prettier's typescript parser formats these the same way: a repeated
+		// modifier and an optional rest parameter's `?` aren't printed.
+		await expectFormat('class A { readonly readonly x = 1; }', 'class A {\n  readonly x = 1;\n}\n');
+		await expectFormat('function f(...a?: number[]) {}', 'function f(...a: number[]) {}\n');
+		// The tree keeps the decorator, which Prettier's parsers reject.
+		await expectFormat(
+			'class A { @dec constructor() {} }',
+			'class A {\n  @dec constructor() {}\n}\n',
+		);
 	});
 
 	test("mistakes Prettier's typescript parser rejects are errors, not left out", async () => {
@@ -825,6 +834,24 @@ describe('parse errors', () => {
 			[
 				'class C { in x = 1 }',
 				"'in' modifier can only appear on a type parameter of a class, interface or type alias. (1:11)",
+			],
+			['class A { public protected x = 1; }', 'Accessibility modifier already seen. (1:18)'],
+			[
+				'class A {\n  constructor(public ...rest: number[]) {}\n}',
+				'A parameter property cannot be declared using a rest parameter. (2:15)',
+			],
+			['@dec function f() {}', 'Leading decorators must be attached to a class declaration. (1:1)'],
+			[
+				'export @dec const x = 1;',
+				'Leading decorators must be attached to a class declaration. (1:8)',
+			],
+			[
+				'export default @dec function f() {}',
+				'Leading decorators must be attached to a class declaration. (1:16)',
+			],
+			[
+				'@dec export function f() {}',
+				'Leading decorators must be attached to a class declaration. (1:1)',
 			],
 		]) {
 			const error = await format(source).catch((/** @type {any} */ e) => e);
