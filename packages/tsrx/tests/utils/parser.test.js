@@ -3341,7 +3341,7 @@ foo();`;
 					const { line, column } = acorn.getLineInfo(source, source.length);
 					return {
 						ok: false,
-						message: `Unexpected token (${line}:${column})`,
+						message: `'}' expected. (${line}:${column})`,
 						pos: source.length,
 					};
 				}),
@@ -3364,7 +3364,7 @@ foo();`;
 				inputs.map(({ source, options }) => ({
 					ok: false,
 					message: options
-						? 'Unexpected token (4:15)'
+						? "'}' expected. (4:15)"
 						: "Unclosed tag '<section>'. Expected '</section>' before end of template. (4:15)",
 					pos: source.length,
 				})),
@@ -6683,6 +6683,33 @@ describe('comments around the commas of a list', () => {
 		expect(fn.id.trailingComments).toBeUndefined();
 		expect(fn.params[0].leadingComments?.map((comment) => comment.value)).toEqual([' first']);
 	});
+
+	// The cast's `(` is on the comment's line, but the element it casts starts
+	// on the next one. The comment used to trail the element before the comma
+	// (#579).
+	/** @type {Array<[string, string, (statement: any) => AST.Node[]]>} */
+	const castLists = [
+		[
+			'an array',
+			'x = [a, /** @type {T} */ (\n\tb\n)];',
+			(statement) => statement.expression.right.elements,
+		],
+		[
+			'call arguments',
+			'foo(a, /** @type {T} */ (\n\tb\n));',
+			(statement) => statement.expression.arguments,
+		],
+	];
+
+	it.each(castLists)(
+		'leads the next element with a JSDoc cast whose parentheses break in %s',
+		(_, source, list) => {
+			const [first, second] = list(firstStatement(source));
+
+			expect(first.trailingComments).toBeUndefined();
+			expect(second.leadingComments?.map((comment) => comment.value)).toEqual(['* @type {T} ']);
+		},
+	);
 });
 
 // Ports of Prettier's comment handlers (`handle-comments.js`)
@@ -6729,6 +6756,21 @@ describe('comments placed like Prettier', () => {
 
 		expect(commentsOf(statement.test).trailing).toEqual([' c']);
 		expect(commentsOf(statement.consequent).leading).toBeUndefined();
+	});
+
+	// The next attribute's name took it, and the printer dropped it (#517)
+	it('trails the argument of a spread with a comment on its own line before its }', () => {
+		/** @param {string} source */
+		const element = (source) =>
+			/** @type {any} */ (parseModule(source, 'App.tsrx').body[0]).expression.right;
+		const { openingElement } = element('x = <div {...a\n  // c\n} b="1" />;');
+		const { children, closingElement } = element('x = <div>{...a\n  // c\n}</div>;');
+
+		expect(commentsOf(openingElement.attributes[0].argument).trailing).toEqual([' c']);
+		expect(commentsOf(openingElement.attributes[0]).trailing).toBeUndefined();
+		expect(commentsOf(openingElement.attributes[1].name).leading).toBeUndefined();
+		expect(commentsOf(children[0].expression).trailing).toEqual([' c']);
+		expect(commentsOf(closingElement).leading).toBeUndefined();
 	});
 
 	// Prettier's `canAttachComment` rejects a template element, and its
@@ -6959,6 +7001,59 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(other).leading).toBeUndefined();
 	});
 
+	// Prettier's `handleMethodNameComments`
+	it('trails the decorator of a class member with a comment before its modifiers', () => {
+		const [field, accessor, method, inline] = firstStatement(
+			'class A {\n  @a\n  // b\n  static b;\n  @c\n  /* d */\n  accessor d;\n  @e // f\n  public static f() {}\n  @g /* h */ static h;\n}',
+		).body.body;
+
+		expect(commentsOf(field.decorators[0]).trailing).toEqual([' b']);
+		expect(commentsOf(field.key).leading).toBeUndefined();
+		expect(commentsOf(accessor.decorators[0]).trailing).toEqual([' d ']);
+		expect(commentsOf(method.decorators[0]).trailing).toEqual([' f']);
+		// A comment with code on both sides trails the decorator by the tie-break
+		expect(commentsOf(inline.decorators[0]).trailing).toEqual([' h ']);
+		expect(commentsOf(inline.key).leading).toBeUndefined();
+	});
+
+	it('leads the key of a class member with a comment between its modifiers and the key', () => {
+		const [field] = firstStatement('class A {\n  @a static /* b */ b;\n}').body.body;
+
+		expect(commentsOf(field.decorators[0]).trailing).toBeUndefined();
+		expect(commentsOf(field.key).leading).toEqual([' b ']);
+	});
+
+	// Prettier's `locStart` starts a node at its first decorator, which the
+	// parser keeps outside a parameter's span
+	it('keeps the comments after a parameter decorator in the parameter', () => {
+		const [method, ctor] = firstStatement(
+			'class A {\n  m(@a(/* a */ x) /* b */ y) {}\n  constructor(\n    @c\n    // c\n    private c: T,\n    @d /* d */ readonly d = 1,\n  ) {}\n}',
+		).body.body;
+		const [parameter] = method.value.params;
+		const [property, withDefault] = ctor.value.params;
+
+		expect(commentsOf(parameter.decorators[0].expression.arguments[0]).leading).toEqual([' a ']);
+		expect(commentsOf(parameter.decorators[0]).trailing).toEqual([' b ']);
+		expect(commentsOf(parameter).leading).toBeUndefined();
+		expect(commentsOf(property.parameter.decorators[0]).trailing).toEqual([' c']);
+		expect(commentsOf(property).leading).toBeUndefined();
+		expect(commentsOf(withDefault.parameter.decorators[0]).trailing).toEqual([' d ']);
+		expect(commentsOf(withDefault).leading).toBeUndefined();
+	});
+
+	// Prettier's tie-break, with the name after the comment
+	it('leads the parameter of a parameter property with a comment between its modifiers and name', () => {
+		const [ctor] = firstStatement(
+			'class A {\n  constructor(@a /* a */ private /* b */ readonly /* c */ x: T, @d private /* d */ y) {}\n}',
+		).body.body;
+		const [first, second] = ctor.value.params;
+
+		expect(commentsOf(first.parameter.decorators[0]).trailing).toEqual([' a ', ' b ']);
+		expect(commentsOf(first.parameter).leading).toEqual([' c ']);
+		expect(commentsOf(second.parameter.decorators[0]).trailing).toBeUndefined();
+		expect(commentsOf(second.parameter).leading).toEqual([' d ']);
+	});
+
 	it('leads the type annotation of an object pattern with a comment before its colon', () => {
 		const { id } = firstStatement('const { a } /* c */ : T = o;').declarations[0];
 
@@ -7079,6 +7174,27 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(noParams.id).trailing).toEqual([' c']);
 	});
 
+	// Prettier's `babel` parser keeps a JSDoc cast's parentheses as a
+	// `ParenthesizedExpression`, and the comments after its expression inside
+	// it trail that expression
+	it('trails the cast value with the comments inside the parentheses of its cast', () => {
+		const declaration = firstStatement('const a = /** @type {X} */ (foo /* c */) /* d */;');
+		const stacked = firstStatement(
+			'x = /** @type {A} */ (/** @type {B} */ (foo /* b */) /* a */);',
+		);
+		const awaited = firstStatement('x = /** @type {X} */ (await foo // c\n);');
+		const superClass = firstStatement('class A extends /** @type {X} */ (B // c\n) {}');
+
+		expect(commentsOf(declaration.declarations[0].init).trailing).toEqual([' c ']);
+		expect(commentsOf(declaration).trailing).toEqual([' d ']);
+		expect(commentsOf(stacked.expression.right).trailing).toEqual([' b ', ' a ']);
+		expect(commentsOf(awaited.expression.right).trailing).toEqual([' c']);
+		expect(commentsOf(awaited.expression.right.argument).trailing).toBeUndefined();
+		expect(commentsOf(awaited).trailing).toBeUndefined();
+		expect(commentsOf(superClass.superClass).trailing).toEqual([' c']);
+		expect(commentsOf(superClass.body).inner).toBeUndefined();
+	});
+
 	// Prettier's `handleCommentInEmptyParens`
 	it('keeps a comment in empty parameter parentheses on the function or signature', () => {
 		const fn = firstStatement('function f(/* c */): T {}');
@@ -7102,6 +7218,49 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(endOfLine.typeParameter).trailing).toEqual([' c']);
 		expect(commentsOf(endOfLine.typeAnnotation).leading).toBeUndefined();
 		expect(commentsOf(ownLine.typeParameter).trailing).toEqual([' c']);
+	});
+
+	// Prettier's parsers keep a type parameter's name as a node, which takes
+	// the comments around it; this parser keeps it as a string
+	it('keeps the comments around the name of a type parameter on the type parameter', () => {
+		const [constrained, defaulted] = firstStatement(
+			'function f<const /* a */ T /* b */ extends /* c */ U, K // d\n  = V>() {}',
+		).typeParameters.params;
+		const [modifier] = firstStatement('type A<in out /* a */ T> = T;').typeParameters.params;
+		const mapped = firstStatement('type M = { [K /* a */ in /* b */ T]: T[K] };').typeAnnotation;
+
+		expect(commentsOf(constrained).inner).toEqual([' a ', ' b ']);
+		expect(commentsOf(constrained.constraint).leading).toEqual([' c ']);
+		expect(commentsOf(defaulted).inner).toEqual([' d']);
+		expect(commentsOf(defaulted.default).leading).toBeUndefined();
+		expect(commentsOf(modifier).inner).toEqual([' a ']);
+		expect(commentsOf(modifier).trailing).toBeUndefined();
+		expect(commentsOf(mapped.typeParameter).inner).toEqual([' a ']);
+		expect(commentsOf(mapped.typeParameter.constraint).leading).toEqual([' b ']);
+	});
+
+	it('leads the constraint with a block comment on its own line before the extends of a type parameter', () => {
+		const [parameter] = firstStatement('function f<\n  T\n  /* a */ extends U,\n>() {}')
+			.typeParameters.params;
+		const [lineComment] = firstStatement('function f<\n  T\n  // a\n  extends U,\n>() {}')
+			.typeParameters.params;
+
+		expect(commentsOf(parameter).inner).toBeUndefined();
+		expect(commentsOf(parameter.constraint).leading).toEqual([' a ']);
+		// Prettier moves a line comment there after the name on its next pass
+		expect(commentsOf(lineComment).inner).toEqual([' a']);
+		expect(commentsOf(lineComment.constraint).leading).toBeUndefined();
+	});
+
+	// Prettier prints the arrow function's body without its parentheses, and
+	// the comment after it before the `;`, where its next pass moves it after
+	it('trails the statement with a comment after a parenthesized arrow function body', () => {
+		const statement = firstStatement('const f = () => (\n  a /* c */\n);');
+		const conditional = firstStatement('const f = () => (a ? b : c /* c */);');
+
+		expect(commentsOf(statement).trailing).toEqual([' c ']);
+		expect(commentsOf(statement.declarations[0].init.body).trailing).toBeUndefined();
+		expect(commentsOf(conditional).trailing).toBeUndefined();
 	});
 });
 
