@@ -11145,6 +11145,55 @@ type Checked<T> = T extends string
 			expect(result).toBeWithNewline(expected);
 		});
 
+		// Prettier keeps a JSDoc cast's parentheses as a node of their own, so
+		// the cast value lays out like any parenthesized value: it stays on the
+		// operator's line and breaks inside its parentheses.
+		it('keeps a JSDoc-cast value on the operator line and breaks inside its parentheses', async () => {
+			const input = `const x = /** @type {Foo} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);
+const sum = /** @type {number} */ (firstValueWithALongName + secondValueWithALongName + third);
+y = /** @type {Foo} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);
+const obj = { key: /** @type {Foo} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) };
+class A { field = /** @type {Foo} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb); }
+const message = /** @type {string} */ ("a long string value that does not fit on one line with the declaration");
+const value = /** @type {Value} */ (someObject.someProperty.anotherProperty.yetAnotherProperty.finalProp);
+const conf = /** @type {Config} */ (await loadTheConfigurationFileFromDisk(somePathVariable));
+const short = /** @type {Foo} */ (a && b);`;
+			const expected = `const x = /** @type {Foo} */ (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);
+const sum = /** @type {number} */ (
+  firstValueWithALongName + secondValueWithALongName + third
+);
+y = /** @type {Foo} */ (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);
+const obj = {
+  key: /** @type {Foo} */ (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  ),
+};
+class A {
+  field = /** @type {Foo} */ (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}
+const message = /** @type {string} */ (
+  "a long string value that does not fit on one line with the declaration"
+);
+const value = /** @type {Value} */ (
+  someObject.someProperty.anotherProperty.yetAnotherProperty.finalProp
+);
+const conf = /** @type {Config} */ (
+  await loadTheConfigurationFileFromDisk(somePathVariable)
+);
+const short = /** @type {Foo} */ (a && b);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('keeps declare on type aliases and interfaces', async () => {
 			const input = `declare type A = string;
 export declare type B = number;

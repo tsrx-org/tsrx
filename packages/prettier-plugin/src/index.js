@@ -8838,8 +8838,11 @@ function printAssignment(path, options, print, leftDoc, operator, rightPropertyN
 		return leftDoc;
 	}
 
+	// Prettier's parentheses node for a JSDoc cast prints its content without
+	// the layout
 	const rightDoc = path.call(
-		(rightPath) => print(rightPath, { assignmentLayout: layout }),
+		(rightPath) =>
+			print(rightPath, getTypeCastParens(rightPath, options) ? {} : { assignmentLayout: layout }),
 		rightPropertyName,
 	);
 
@@ -8904,8 +8907,15 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 		return 'only-left';
 	}
 
+	// Prettier keeps the parentheses of a JSDoc cast as a node of their own, so
+	// a cast value matches none of the checks on the value's type below
+	const isCast = path.call(
+		(rightPath) => getTypeCastParens(rightPath, options) !== null,
+		rightPropertyName,
+	);
+
 	// Short chains (`a = b = c` and `const a = b = c`) are not formatted as chains
-	const isTail = !isAssignment(rightNode);
+	const isTail = isCast || !isAssignment(rightNode);
 	const shouldUseChainFormatting = path.match(
 		isAssignment,
 		isAssignmentOrVariableDeclarator,
@@ -8916,7 +8926,8 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 		if (!isTail) {
 			return 'chain';
 		}
-		return rightNode.type === 'ArrowFunctionExpression' &&
+		return !isCast &&
+			rightNode.type === 'ArrowFunctionExpression' &&
 			rightNode.body.type === 'ArrowFunctionExpression'
 			? 'chain-tail-arrow-chain'
 			: 'chain-tail';
@@ -8938,7 +8949,8 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 
 	if (
 		/** @type {string} */ (node.type) === 'ImportAttribute' ||
-		(rightNode.type === 'CallExpression' &&
+		(!isCast &&
+			rightNode.type === 'CallExpression' &&
 			rightNode.callee.type === 'Identifier' &&
 			rightNode.callee.name === 'require')
 	) {
@@ -8949,7 +8961,7 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 	if (
 		isComplexDestructuring(node) ||
 		hasComplexTypeAnnotation(node) ||
-		(isArrowFunctionVariableDeclarator(node) && canBreakLeftDoc)
+		(isArrowFunctionVariableDeclarator(node) && !isCast && canBreakLeftDoc)
 	) {
 		return 'break-lhs';
 	}
@@ -8957,6 +8969,7 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 	// Wrapping an object property with a very short key rarely helps
 	const hasShortKey = isObjectPropertyWithShortKey(node, leftDoc, options);
 	if (
+		!isCast &&
 		path.call(
 			(rightPath) => shouldBreakAfterOperator(rightPath, options, print, hasShortKey),
 			rightPropertyName,
@@ -8972,11 +8985,12 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 	if (
 		!canBreakLeftDoc &&
 		(hasShortKey ||
-			rightNode.type === 'TemplateLiteral' ||
-			rightNode.type === 'TaggedTemplateExpression' ||
-			(rightNode.type === 'Literal' && typeof rightNode.value === 'boolean') ||
-			isNumericLiteral(rightNode) ||
-			rightNode.type === 'ClassExpression')
+			(!isCast &&
+				(rightNode.type === 'TemplateLiteral' ||
+					rightNode.type === 'TaggedTemplateExpression' ||
+					(rightNode.type === 'Literal' && typeof rightNode.value === 'boolean') ||
+					isNumericLiteral(rightNode) ||
+					rightNode.type === 'ClassExpression')))
 	) {
 		return 'never-break-after-operator';
 	}
