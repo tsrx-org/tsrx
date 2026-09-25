@@ -18950,18 +18950,31 @@ export default (function () {}.call(
 			await expectUnchanged(source);
 		});
 
-		// Prettier prints the comment inside the parentheses, and moves it out on
-		// its next pass
+		// Prettier prints the comments inside the parentheses, and moves them out
+		// on its next pass
 		it('prints the comments of the function or class ahead of the parentheses', async () => {
 			const input = `export default (/* a */ class {}).x;
 export default (
   // b
   function () {}
-).call(x);`;
+).call(x);
+export default (/* c */ (class {}).x).y;
+export default (/* d */ (function () {}).call(x)).y();`;
 
 			expect(await format(input)).toBeWithNewline(`export default /* a */ (class {}.x);
 export default // b
-(function () {}.call(x));`);
+(function () {}.call(x));
+export default /* c */ (class {}.x.y);
+export default /* d */ (function () {}.call(x).y());`);
+		});
+
+		// A JSDoc cast's comment stays right before its parenthesis
+		it('keeps the comments of the function or class inside the parentheses of a cast', async () => {
+			const input = `export default /** @type {X} */ ((/* a */ class {}).x);`;
+
+			expect(await format(input)).toBeWithNewline(
+				`export default /** @type {X} */ (/* a */ class {}.x);`,
+			);
 		});
 	});
 

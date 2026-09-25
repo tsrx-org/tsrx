@@ -777,12 +777,23 @@ function wasOriginallySingleLine(node) {
 }
 
 /**
- * Check if a node has any comments (leading, trailing, or inner)
+ * Check if a node has any comments (leading, trailing, or inner). Leading
+ * comments an ancestor prints (see {@link hoistedComments}) don't count.
  * @param {AST.Node & AST.NodeWithMaybeComments} node - The AST node to check
  * @returns {boolean} - True if the node has comments
  */
 function hasComment(node) {
-	return !!(node.leadingComments || node.trailingComments || node.innerComments);
+	return !!(hasOwnLeadingComments(node) || node.trailingComments || node.innerComments);
+}
+
+/**
+ * Whether a node has leading comments other than the ones an ancestor prints
+ * (see {@link hoistedComments}).
+ * @param {AST.Node & AST.NodeWithMaybeComments} node - The AST node to check
+ * @returns {boolean}
+ */
+function hasOwnLeadingComments(node) {
+	return !!node.leadingComments?.some((comment) => !hoistedComments.has(comment));
 }
 
 /**
@@ -1416,30 +1427,52 @@ function getExportDefaultLeadingFunction(path, options) {
 
 /**
  * The leading comments of the function or class a parenthesized default
- * export starts with (see {@link getExportDefaultLeadingFunction}). The export
- * prints them ahead of its parentheses, where they are once it's formatted
- * again, like Prettier's second pass: `export default (/* a *\/ class {}).x`
- * prints `export default /* a *\/ (class {}.x)`. They go in
- * {@link hoistedComments}, so the function or class leaves them out.
+ * export starts with (see {@link getExportDefaultLeadingFunction}), and of
+ * the operands between the export's expression and it. The export prints them
+ * ahead of its parentheses, where they are once it's formatted again, like
+ * Prettier's second pass: `export default (/* a *\/ class {}).x` prints
+ * `export default /* a *\/ (class {}.x)`. {@link hoistedComments} maps them to
+ * the export's expression, so the nodes they lead leave them out.
  * @param {AstPath} path - The path to the export's expression
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {AST.Comment[]}
  */
 function hoistExportDefaultComments(path, options) {
+	const expression = /** @type {AST.Node} */ (path.node);
 	const leadingFunction = getExportDefaultLeadingFunction(path, options);
-	const comments =
-		/** @type {AST.NodeWithMaybeComments | null} */ (leadingFunction)?.leadingComments ?? [];
-	for (const comment of comments) {
-		hoistedComments.add(comment);
+	/** @type {AST.Comment[]} */
+	const comments = [];
+	let node = expression;
+	while (leadingFunction && node !== leadingFunction) {
+		const key = /** @type {string} */ (getLeftmostChildKey(node));
+		node = /** @type {AST.Node} */ (/** @type {Record<string, unknown>} */ (node)[key]);
+		for (const comment of /** @type {AST.NodeWithMaybeComments} */ (node).leadingComments ?? []) {
+			hoistedComments.set(comment, expression);
+			comments.push(comment);
+		}
 	}
 	return comments;
 }
 
 /**
- * Leading comments an ancestor prints (see {@link hoistExportDefaultComments}).
- * @type {WeakSet<AST.Comment>}
+ * Leading comments that an ancestor prints, mapped to that ancestor (see
+ * {@link hoistExportDefaultComments}).
+ * @type {WeakMap<AST.Comment, AST.Node | AST.CSS.StyleSheet>}
  */
-const hoistedComments = new WeakSet();
+const hoistedComments = new WeakMap();
+
+/**
+ * A node's leading comments without the ones another node prints (see
+ * {@link hoistedComments}).
+ * @param {AST.Node | AST.CSS.StyleSheet} node
+ * @param {AST.Comment[]} comments
+ * @returns {AST.Comment[]}
+ */
+function withoutHoistedComments(node, comments) {
+	return comments.some((comment) => hoistedComments.has(comment))
+		? comments.filter((comment) => (hoistedComments.get(comment) ?? node) === node)
+		: comments;
+}
 
 /**
  * Whether the node sits anywhere inside a `for` statement's initializer,
@@ -2644,13 +2677,16 @@ function getPrintedKeyName(node, siblings, options) {
  */
 function printKey(node, path, options, print) {
 	const property = node.type === 'TSEnumMember' ? 'id' : 'key';
-	if (isComputedKey(node)) {
+	// An import attribute isn't in the AST node union
+	const member = /** @type {AST.Node} */ (/** @type {unknown} */ (node));
+	if (isComputedKey(member)) {
 		// computed are never converted to identifiers
 		return ['[', path.call(print, property), ']'];
 	}
 
-	const key = /** @type {AST.Node} */ (getKeyNode(node));
-	const quoting = getKeyQuoting(node, path.siblings ?? [node], options);
+	const key = /** @type {AST.Node} */ (getKeyNode(member));
+	const siblings = /** @type {AST.Node[]} */ (/** @type {unknown} */ (path.siblings)) ?? [member];
+	const quoting = getKeyQuoting(member, siblings, options);
 	/** @type {string | undefined} */
 	let printedKey;
 	if (quoting === 'quote') {
@@ -2961,14 +2997,16 @@ function printDanglingCommentsInList(comments, text) {
  * Print leading comments that come before a node, or before the next
  * parenthesis of the node's type casts (see {@link printTypeCastParens}).
  * @param {AST.Node | AST.CSS.StyleSheet} node - The node the comments lead
- * @param {AST.Comment[]} comments - The comments, in source order
+ * @param {AST.Comment[]} allComments - The comments, in source order, which
+ *   leave out the ones an ancestor prints (see {@link hoistedComments})
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {boolean} [semicolonBeforeLast] - Print the statement's leading `;`
  *   right before the last comment, a JSDoc cast that must touch its `(`
  * @returns {Doc[]}
  */
-function printLeadingComments(node, comments, options, semicolonBeforeLast) {
+function printLeadingComments(node, allComments, options, semicolonBeforeLast) {
 	const text = /** @type {string} */ (options.originalText);
+	const comments = withoutHoistedComments(node, allComments);
 	/** @type {Doc[]} */
 	const parts = [];
 	for (let i = 0; i < comments.length; i++) {
@@ -3163,10 +3201,15 @@ function printTsrxNode(node, path, options, print, args) {
 	// Handle leading comments (a union prints its own, inside its indentation)
 	if (!suppressLeadingComments && !unionPrintsOwnComments(path)) {
 		let allComments = typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []);
-		if (path.key === 'declaration' && path.parent?.type === 'ExportDefaultDeclaration') {
+		if (
+			path.key === 'declaration' &&
+			path.parent?.type === 'ExportDefaultDeclaration' &&
+			// A cast's comment must stay right before its parenthesis
+			!typeCastParens
+		) {
 			allComments = [...allComments, ...hoistExportDefaultComments(path, options)];
-		} else if (allComments.some((comment) => hoistedComments.has(comment))) {
-			allComments = allComments.filter((comment) => !hoistedComments.has(comment));
+		} else {
+			allComments = withoutHoistedComments(node, allComments);
 		}
 		// The ignored source may start before the node, at a decorator, and
 		// already hold the comments after it
@@ -8087,8 +8130,8 @@ function printMemberChain(path, options, print) {
 	const nodeHasComment =
 		flatGroups
 			.slice(1, -1)
-			.some(
-				({ node }) => /** @type {AST.NodeWithMaybeComments} */ (node).leadingComments?.length,
+			.some(({ node }) =>
+				hasOwnLeadingComments(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (node)),
 			) ||
 		flatGroups
 			.slice(0, -1)
@@ -8097,7 +8140,9 @@ function printMemberChain(path, options, print) {
 			) ||
 		Boolean(
 			groups[cutoff] &&
-			/** @type {AST.NodeWithMaybeComments} */ (groups[cutoff][0].node).leadingComments?.length,
+			hasOwnLeadingComments(
+				/** @type {AST.Node & AST.NodeWithMaybeComments} */ (groups[cutoff][0].node),
+			),
 		);
 
 	// A chain with a single `.` group prints as it is
@@ -12706,7 +12751,7 @@ function isHeritageClauseName(path) {
 		const clauseOwner = /** @type {AST.Node | null} */ (path.getParentNode(level + 1));
 		return (
 			ancestor?.type === 'TSExpressionWithTypeArguments' &&
-			ancestor.expression === child &&
+			/** @type {AST.Node} */ (ancestor.expression) === child &&
 			(clauseOwner?.type === 'TSInterfaceDeclaration' ||
 				clauseOwner?.type === 'ClassDeclaration' ||
 				clauseOwner?.type === 'ClassExpression')
