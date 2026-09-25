@@ -2182,11 +2182,24 @@ export function TSRXPlugin(config) {
 			 * tagged template follows it: a `(`, `[`, or template literal on the next
 			 * line starts a new statement, and `<b />.foo` fails at the `.`.
 			 * `(<b />).foo` and `(<b />)(x)` are still a member access and a call.
+			 *
+			 * A class or function expression is one, and takes type arguments right
+			 * after its body, as in TypeScript: `class<T> {}<string>` and
+			 * `function <T>() {}<string>()`. A `<` after a `}` reads as a tag start
+			 * (see `getTokenFromCode`), so read it again as `<` when it's on the same
+			 * line. On the next line it still starts an element (the line-start `<`
+			 * rule), and a closing tag's `</` stays a tag start.
 			 * @type {Parse.Parser['parseSubscripts']}
 			 */
 			parseSubscripts(base, startPos, startLoc, noCalls, forInit) {
 				if (is_tsrx_render_output_node(base) && !base.metadata?.parenthesized) {
 					return base;
+				}
+				if (
+					(base.type === 'ClassExpression' || base.type === 'FunctionExpression') &&
+					!this.hasPrecedingLineBreak()
+				) {
+					this.#readTagStartAsTypeArgumentStart();
 				}
 				return super.parseSubscripts(base, startPos, startLoc, noCalls, forInit);
 			}
@@ -3894,6 +3907,24 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * The same where a tag can't start but type arguments can: after a
+			 * superclass, and after a class or function expression on its line. A
+			 * closing tag's `</` stays a tag start, so an error stays at it, but not
+			 * a comment right after the `<` (`</* c *\/ T>`, `<// c`), as for a `</`
+			 * after an operand (see `getTokenFromCode`). Returns whether the token is
+			 * now `<`.
+			 */
+			#readTagStartAsTypeArgumentStart() {
+				if (this.type !== tstt.jsxTagStart) return false;
+				if (this.input.charCodeAt(this.start + 1) === CharCode.slash) {
+					const after_slash = this.input.charCodeAt(this.start + 2);
+					if (after_slash !== CharCode.slash && after_slash !== CharCode.asterisk) return false;
+				}
+				this.#readTagStartAsTypeParameterStart();
+				return true;
+			}
+
+			/**
 			 * @type {Parse.Parser['tsTryParseTypeParameters']}
 			 */
 			tsTryParseTypeParameters(parseModifiers) {
@@ -4002,6 +4033,52 @@ export function TSRXPlugin(config) {
 				super.parseClassId(node, isStatement);
 			}
 
+			/**
+			 * A superclass's type arguments belong to the class heading, as in
+			 * TypeScript, whatever follows them and on whichever line they start:
+			 *
+			 * - A `<` that starts its own line reads as a tag start (see
+			 *   `getTokenFromCode`), but after the superclass only type arguments can
+			 *   follow (`class A extends B` with `<T> {}` on the next line), so the
+			 *   heading stopped before the `<`. Read it again as `<`, then the type
+			 *   arguments and the `implements` clause as acorn-typescript does.
+			 * - acorn-typescript reads the superclass with the subscript parser, which
+			 *   makes `Base<T>` an instantiation expression when a line break follows
+			 *   it (`class D extends Base<T>` with the `{` or `implements` on the next
+			 *   line), so the class had no `superTypeParameters`. Take an
+			 *   unparenthesized one apart, as acorn-typescript's `parseNew` does for
+			 *   `new A<T>`: the heading then has the AST it has on one line
+			 *   (sveltejs/acorn-typescript#131).
+			 * @type {Parse.Parser['parseClassSuper']}
+			 */
+			parseClassSuper(node) {
+				super.parseClassSuper(node);
+				const heading = /** @type {AST.ClassDeclaration | AST.ClassExpression} */ (node);
+				const superClass = heading.superClass;
+				if (!superClass) return;
+				if (
+					this.type === tstt.jsxTagStart &&
+					superClass.type !== 'TSInstantiationExpression' &&
+					!heading.superTypeParameters &&
+					!heading.implements &&
+					this.#readTagStartAsTypeArgumentStart()
+				) {
+					heading.superTypeParameters = this.tsParseTypeArgumentsInExpression();
+					if (this.eatContextual('implements')) {
+						heading.implements = this.tsParseHeritageClause('implements');
+					}
+				}
+				// UPSTREAM(sveltejs/acorn-typescript#131): remove once a release includes the fix
+				if (
+					superClass.type === 'TSInstantiationExpression' &&
+					!superClass.metadata?.parenthesized &&
+					!heading.superTypeParameters
+				) {
+					heading.superClass = superClass.expression;
+					heading.superTypeParameters = superClass.typeArguments;
+				}
+			}
+
 			// UPSTREAM(sveltejs/acorn-typescript#113): remove once a release includes the fix
 			// UPSTREAM(sveltejs/acorn-typescript#124): remove once a release includes the fix
 			/**
@@ -4081,6 +4158,52 @@ export function TSRXPlugin(config) {
 				} finally {
 					this.#leadingDecoratorsStart = outer;
 				}
+			}
+
+			/**
+			 * An at-sign construct (`@{ … }`, `@if`, `@for`, `@switch`, `@try`) after
+			 * `export` isn't a declaration, though acorn-typescript takes any `@` there
+			 * for the decorators of one. It's then `Unexpected token`, as any other
+			 * token that starts neither a declaration nor the braces of an export
+			 * (`export foo`), and after `export declare` acorn-typescript's error for
+			 * a missing ambient declaration. It used to be parsed as a statement, and
+			 * the parser crashed with a TypeError when `parseExport` read its `id`.
+			 * @type {Parse.Parser['shouldParseExportStatement']}
+			 */
+			shouldParseExportStatement() {
+				if (
+					this.type === tstt.at &&
+					(this.#isCodeBlockStart(this.start) || this.#isJSXControlFlowDirectiveStart())
+				) {
+					return false;
+				}
+				return super.shouldParseExportStatement();
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#132): remove once a release includes the fix
+			/**
+			 * What follows `export` has to be a declaration. acorn-typescript's
+			 * `shouldParseExportStatement` takes `abstract`, `module`, `namespace` and
+			 * `type` for the start of one, but its `tsParseDeclaration` declines them
+			 * before a line break, as TypeScript does (`export abstract` with
+			 * `class A {}` on the next line is TS1128), or when no class or name
+			 * follows (`export abstract;`). `parseExportDeclaration` then parsed a
+			 * statement instead, which read the word as an expression, and
+			 * `parseExport` crashed with a TypeError reading that statement's `id`.
+			 * When the statement isn't a declaration, report `Unexpected token` where
+			 * it starts, as for `export foo`.
+			 * @type {Parse.Parser['parseExportDeclaration']}
+			 */
+			parseExportDeclaration(node) {
+				const start = this.start;
+				const declaration = super.parseExportDeclaration(node);
+				if (
+					declaration?.type !== 'VariableDeclaration' &&
+					!(/** @type {{ id?: unknown } | null} */ (declaration)?.id)
+				) {
+					this.unexpected(start);
+				}
+				return declaration;
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#125): remove once a release includes the fix
@@ -4200,7 +4323,15 @@ export function TSRXPlugin(config) {
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#126): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript#133): remove once a release includes the fix
 			/**
+			 * Only a parameter can have decorators. acorn-typescript read them on the
+			 * elements of an array pattern too (`const [@dec x] = y;`), since acorn
+			 * parses those with this method, and they were dropped from the output.
+			 * TypeScript rejects them (TS1181), so a decorator there is
+			 * `Unexpected token`, as in an object pattern, before a rest element too
+			 * (sveltejs/acorn-typescript#133).
+			 *
 			 * A rest parameter can have decorators, as in TypeScript:
 			 * `m(@dec ...rest: T[]) {}`. TypeScript's parser reads them like the
 			 * decorators of any other parameter, which this parser takes too, and
@@ -4213,17 +4344,17 @@ export function TSRXPlugin(config) {
 			 * does. Like other parameters, the element's range leaves them out. The
 			 * list takes the rest element for an ordinary one, so report a comma
 			 * after it here as acorn does (TS1013, TS1014), recording it when
-			 * collecting as `parseBindingList` does. In an array pattern, where
-			 * TypeScript takes no decorators at all, `...` after them stays an error.
-			 * Modifiers before a rest parameter are `#parseRestParameterProperty`'s.
+			 * collecting as `parseBindingList` does. Modifiers before a rest parameter
+			 * are `#parseRestParameterProperty`'s.
 			 * @type {Parse.Parser['parseAssignableListItem']}
 			 */
 			parseAssignableListItem(allowModifiers) {
 				if (this.type !== tstt.at) return this.#parseAssignableListItem(allowModifiers);
+				if (this.#bindingListClose === tt.bracketR) this.unexpected();
 				/** @type {AST.Decorator[]} */
 				const decorators = [];
 				while (this.type === tstt.at) decorators.push(this.parseDecorator());
-				if (this.type !== tt.ellipsis || this.#bindingListClose === tt.bracketR) {
+				if (this.type !== tt.ellipsis) {
 					const item = this.#parseAssignableListItem(allowModifiers);
 					// As in acorn-typescript, a parameter property's decorators hang off
 					// its parameter.
@@ -4428,8 +4559,9 @@ export function TSRXPlugin(config) {
 					this.type === tt.relational &&
 					this.value === '<'
 				) {
-					// Try to parse type parameters
-					const typeParameters = this.tsTryParseTypeParameters();
+					// Try to parse type parameters, `const` ones too (`m<const T>() {}`), as
+					// acorn-typescript does for the methods it parses.
+					const typeParameters = this.tsTryParseTypeParameters(this.tsParseConstModifier);
 					if (typeParameters && this.type === tt.parenL) {
 						// This is a method with type parameters
 						/** @type {AST.Property} */ (prop).method = true;
