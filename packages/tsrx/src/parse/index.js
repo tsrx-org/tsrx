@@ -679,7 +679,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 								node.type === 'StaticBlock' ||
 								node.type === 'TSModuleBlock') &&
 								hasOnlyEmptyStatements(node.body)) ||
-							(node.type === 'TSInterfaceBody' && node.body.length === 0) ||
+							((node.type === 'TSInterfaceBody' || node.type === 'ClassBody') &&
+								node.body.length === 0) ||
 							((node.type === 'TSTypeLiteral' || node.type === 'TSEnumDeclaration') &&
 								node.members.length === 0)
 						) {

@@ -2023,10 +2023,15 @@ function printTsrxNode(node, path, options, print, args) {
 			// Add it unless the code is completely empty
 			if (statements.length > 0) {
 				nodeContent = [...statements, hardline];
-			} else if (node.innerComments?.length) {
-				// The parser keeps a comment-only file's comments on the program. Each
-				// comment's docs start with a line break, which the first one drops.
+			} else if (node.body.length === 0 && node.innerComments?.length) {
+				// The parser keeps a comment-only file's comments on the program. Like
+				// Prettier, they keep their blank lines. Each comment's docs start with
+				// a line break, which the first one drops.
 				nodeContent = [...printElementBodyComments(node.innerComments).slice(1), hardline];
+			} else if (innerCommentParts.length > 0) {
+				// With only empty statements, they print on consecutive lines like
+				// the comments of an empty block
+				nodeContent = [join(hardline, innerCommentParts), hardline];
 			} else {
 				nodeContent = statements;
 			}
@@ -2569,91 +2574,19 @@ function printTsrxNode(node, path, options, print, args) {
 			const open = node.type === 'StaticBlock' ? 'static {' : '{';
 			const printedIndexes = getPrintedStatementIndexes(node.body ?? []);
 			if (printedIndexes.length === 0) {
-				// Handle innerComments for empty blocks
 				if (innerCommentParts.length > 0) {
-					const blockNode = /** @type {AST.BlockStatement} */ (node);
-					// Check if we need to preserve blank lines between comments
-					if (blockNode.innerComments && blockNode.innerComments.length > 0) {
-						const commentDocs = [];
-						const comments = blockNode.innerComments;
-
-						for (let i = 0; i < comments.length; i++) {
-							const comment = comments[i];
-							const prevComment = i > 0 ? comments[i - 1] : null;
-
-							// Check if there's a blank line before this comment
-							const hasBlankLineBefore =
-								prevComment && getBlankLinesBetweenNodes(prevComment, comment) > 0;
-
-							/** @type {Doc | undefined} */
-							let commentDoc;
-							if (comment.type === 'Line') {
-								commentDoc = '//' + comment.value;
-							} else if (comment.type === 'Block') {
-								commentDoc = '/*' + comment.value + '*/';
-							}
-
-							if (commentDoc !== undefined) {
-								commentDocs.push({ doc: commentDoc, hasBlankLineBefore });
-							}
-						}
-
-						// Build the content with proper spacing
-						const contentParts = [];
-						for (let i = 0; i < commentDocs.length; i++) {
-							const { doc, hasBlankLineBefore } = commentDocs[i];
-
-							if (i > 0) {
-								// Add blank line if needed (two hardlines = one blank line)
-								if (hasBlankLineBefore) {
-									contentParts.push(hardline);
-									contentParts.push(hardline);
-								} else {
-									contentParts.push(hardline);
-								}
-							}
-
-							contentParts.push(doc);
-						}
-
-						nodeContent = group([open, indent([hardline, contentParts]), hardline, '}']);
-						break;
-					} else {
-						// Fallback to simple join
-						nodeContent = group([
-							open,
-							indent([hardline, join(hardline, innerCommentParts)]),
-							hardline,
-							'}',
-						]);
-						break;
-					}
-				}
-
-				// Control flow statements (if, for, while, etc.) get expanded empty blocks
-				// to match standard Prettier behavior. Functions/methods keep `{}`.
-				const blockParent = path.getParentNode();
-				const isControlFlow =
-					blockParent &&
-					(blockParent.type === 'IfStatement' ||
-						blockParent.type === 'ForStatement' ||
-						blockParent.type === 'ForInStatement' ||
-						blockParent.type === 'ForOfStatement' ||
-						blockParent.type === 'WhileStatement' ||
-						blockParent.type === 'DoWhileStatement' ||
-						blockParent.type === 'TryStatement' ||
-						blockParent.type === 'CatchClause' ||
-						blockParent.type === 'SwitchCase' ||
-						blockParent.type === 'LabeledStatement' ||
-						blockParent.type === 'JSXIfExpression' ||
-						blockParent.type === 'JSXForExpression' ||
-						blockParent.type === 'JSXTryExpression' ||
-						blockParent.type === 'JSXSwitchExpression');
-
-				if (isControlFlow) {
-					nodeContent = [open, hardline, '}'];
-				} else {
+					// Like Prettier's `printDanglingComments`, the comments of an empty
+					// block print on consecutive lines
+					nodeContent = [
+						open,
+						indent([hardline, join(hardline, innerCommentParts)]),
+						hardline,
+						'}',
+					];
+				} else if (printsEmptyBlockOnOneLine(node, path)) {
 					nodeContent = [open, '}'];
+				} else {
+					nodeContent = [open, hardline, '}'];
 				}
 				break;
 			}
@@ -2974,19 +2907,31 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'TSPropertySignature':
-			nodeContent = printTSPropertySignature(node, path, options, print);
+			nodeContent = [
+				printTSPropertySignature(node, path, options, print),
+				printTypeMemberSemicolon(path, options),
+			];
 			break;
 
 		case 'TSMethodSignature':
-			nodeContent = printTSMethodSignature(node, path, options, print);
+			nodeContent = [
+				printTSMethodSignature(node, path, options, print),
+				printTypeMemberSemicolon(path, options),
+			];
 			break;
 
 		case 'TSCallSignatureDeclaration':
-			nodeContent = printTSCallSignatureDeclaration(node, path, options, print);
+			nodeContent = [
+				printTSCallSignatureDeclaration(node, path, options, print),
+				printTypeMemberSemicolon(path, options),
+			];
 			break;
 
 		case 'TSConstructSignatureDeclaration':
-			nodeContent = printTSConstructSignatureDeclaration(node, path, options, print);
+			nodeContent = [
+				printTSConstructSignatureDeclaration(node, path, options, print),
+				printTypeMemberSemicolon(path, options),
+			];
 			break;
 
 		case 'TSEnumMember':
@@ -3074,7 +3019,10 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'TSIndexSignature':
-			nodeContent = printTSIndexSignature(node, path, options, print);
+			nodeContent = [
+				printTSIndexSignature(node, path, options, print),
+				printTypeMemberSemicolon(path, options),
+			];
 			break;
 
 		case 'TSConstructorType':
@@ -4626,7 +4574,7 @@ function printForInStatement(node, path, options, print) {
 function printForOfStatement(node, path, options, print, directive = false) {
 	/** @type {Doc[]} */
 	const parts = [];
-	parts.push('for (');
+	parts.push(node.await ? 'for await (' : 'for (');
 	parts.push(path.call(print, 'left'));
 	parts.push(' of ');
 	parts.push(path.call(print, 'right'));
@@ -4657,35 +4605,33 @@ function printForOfStatement(node, path, options, print, directive = false) {
  * @param {AstPath<AST.ForStatement>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
+ * @returns {Doc}
  */
 function printForStatement(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = [];
-	parts.push('for (');
-
-	// Handle init part
-	if (node.init) {
-		parts.push(path.call(print, 'init'));
-	}
-	parts.push(';');
-
-	// Handle test part
-	if (node.test) {
-		parts.push(' ');
-		parts.push(path.call(print, 'test'));
-	}
-	parts.push(';');
-
-	// Handle update part
-	if (node.update) {
-		parts.push(' ');
-		parts.push(path.call(print, 'update'));
+	const body = printClause(node.body, path.call(print, 'body'));
+	if (!node.init && !node.test && !node.update) {
+		return group(['for (;;)', body]);
 	}
 
-	parts.push(')', printClause(node.body, path.call(print, 'body')));
-
-	return parts;
+	// Like Prettier, a header that doesn't fit puts each clause on its own
+	// line, and an empty clause still gets its line (`for (let i = 0; ;)`)
+	return group([
+		'for (',
+		group([
+			indent([
+				softline,
+				node.init ? path.call(print, 'init') : '',
+				';',
+				line,
+				node.test ? path.call(print, 'test') : '',
+				';',
+				node.update ? [line, path.call(print, 'update')] : '',
+			]),
+			softline,
+		]),
+		')',
+		body,
+	]);
 }
 
 /**
@@ -5022,42 +4968,33 @@ function printTryStatement(node, path, options, print, directive = false) {
  */
 function printClassBody(node, path, options, print) {
 	if (!node.body || node.body.length === 0) {
-		return '{}';
+		const comments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
+		// Like Prettier's `printDanglingComments`, on consecutive lines
+		return comments.length === 0
+			? '{}'
+			: ['{', indent([hardline, join(hardline, comments.map(printCommentText))]), hardline, '}'];
 	}
 
 	const members = path.map(print, 'body');
 
-	// Build content with proper blank line handling
-	const contentParts = [];
+	// Like Prettier, every member starts its own line, and one blank line
+	// stays where the source has one
+	/** @type {Doc[]} */
+	const parts = [];
 	for (let i = 0; i < members.length; i++) {
 		if (i > 0) {
-			// Check if we should add a blank line between members
-			const prevNode = node.body[i - 1];
-			const currNode = node.body[i];
-			if (shouldAddBlankLine(prevNode, currNode, options)) {
-				contentParts.push(line);
+			parts.push(hardline);
+			if (shouldAddBlankLine(node.body[i - 1], node.body[i], options)) {
+				parts.push(hardline);
 			}
 		}
-		contentParts.push(line);
-		contentParts.push(members[i]);
+		parts.push(members[i]);
 		if (options.semi === false && needsClassPropertySemicolon(node.body[i], node.body[i + 1])) {
-			contentParts.push(';');
+			parts.push(';');
 		}
 	}
 
-	// Without semicolons only a line break ends a field, an index signature or
-	// a bodiless method, so a class with one before another member can't
-	// collapse onto a single line
-	const shouldBreak =
-		options.semi === false &&
-		node.body.some(
-			(member, i) =>
-				i < node.body.length - 1 &&
-				member.type !== 'StaticBlock' &&
-				!(member.type === 'MethodDefinition' && member.value.body),
-		);
-
-	return group(['{', indent(contentParts), line, '}'], { shouldBreak });
+	return ['{', indent([hardline, parts]), hardline, '}'];
 }
 
 /**
@@ -5620,12 +5557,98 @@ function printTSInterfaceBody(node, path, options, print) {
 		return printEmptyMemberList(node);
 	}
 
-	const members = path.map(print, 'body');
+	// Each member prints its own `;` (see `printTypeMemberSemicolon`)
+	return group([
+		'{',
+		indent([hardline, printTypeMembers(node.body, path, 'body', options, print)]),
+		hardline,
+		'}',
+	]);
+}
 
-	// Add semicolons to all members
-	const membersWithSemicolons = members.map((member) => [member, semi(options)]);
+/**
+ * Print the members of an interface or type literal on their own lines, with
+ * a blank line where the source has one. Like Prettier's class body printer,
+ * a member that needs a `;` without semicolons gets it after its comments.
+ * @param {AST.Node[]} members - The members
+ * @param {AstPath} path - The path of the interface body or type literal
+ * @param {'body' | 'members'} key - The property that holds the members
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc[]}
+ */
+function printTypeMembers(members, path, key, options, print) {
+	const isInterface = path.node.type === 'TSInterfaceBody';
+	/** @type {Doc[]} */
+	const parts = [];
+	path.each((memberPath, index) => {
+		if (index > 0) {
+			parts.push(hardline);
+			if (shouldAddBlankLine(members[index - 1], members[index], options)) {
+				parts.push(hardline);
+			}
+		}
+		parts.push(print(memberPath));
+		if (
+			options.semi === false &&
+			isInterface &&
+			typeMemberNeedsSemicolon(members[index], members[index + 1])
+		) {
+			parts.push(';');
+		}
+	}, key);
+	return parts;
+}
 
-	return group(['{', indent([hardline, join(hardline, membersWithSemicolons)]), hardline, '}']);
+/**
+ * The `;` that ends an interface or type literal member. Like Prettier's
+ * `printClassMemberSemicolon`, it belongs to the member, so the member's
+ * trailing comments print after it. A type literal on one line has none after
+ * its last member, and without semicolons it keeps the others only on one line.
+ * @param {AstPath} path - The member's path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc}
+ */
+function printTypeMemberSemicolon(path, options) {
+	const parent = path.getParentNode();
+	if (parent?.type === 'TSInterfaceBody') {
+		return semi(options);
+	}
+	if (parent?.type !== 'TSTypeLiteral') {
+		return '';
+	}
+	if (path.isLast) {
+		return options.semi === false ? '' : ifBreak(';', '');
+	}
+	if (options.semi !== false || typeMemberNeedsSemicolon(path.node, path.next)) {
+		return ';';
+	}
+	return ifBreak('', ';');
+}
+
+/**
+ * Whether an interface or type literal member still needs its `;` without
+ * semicolons: a bare `static`, `get` or `set` property would become a modifier
+ * of the next member, and a property without a type would turn a call
+ * signature after it into a method (`a` then `(): void` reads as `a(): void`).
+ * Mirrors Prettier's `shouldPrintSemicolonAfterInterfaceProperty`.
+ * @param {AST.Node} node - The member
+ * @param {AST.Node | undefined} next - The member after it
+ * @returns {boolean}
+ */
+function typeMemberNeedsSemicolon(node, next) {
+	if (node.type !== 'TSPropertySignature') {
+		return false;
+	}
+	if (
+		!node.computed &&
+		!node.typeAnnotation &&
+		node.key.type === 'Identifier' &&
+		(node.key.name === 'static' || node.key.name === 'get' || node.key.name === 'set')
+	) {
+		return true;
+	}
+	return next?.type === 'TSCallSignatureDeclaration' && !node.typeAnnotation;
 }
 
 /**
@@ -5644,7 +5667,17 @@ function printEmptyMemberList(node) {
 	if (node.type !== 'TSInterfaceBody' && comments.length === 1 && comments[0].type === 'Block') {
 		return group(['{', indent([softline, '/*' + comments[0].value + '*/']), softline, '}']);
 	}
-	return ['{', indent(printElementBodyComments(comments)), hardline, '}'];
+	// Like Prettier's `printDanglingComments`, on consecutive lines
+	return ['{', indent([hardline, join(hardline, comments.map(printCommentText))]), hardline, '}'];
+}
+
+/**
+ * The source text of a comment
+ * @param {AST.Comment} comment
+ * @returns {string}
+ */
+function printCommentText(comment) {
+	return comment.type === 'Line' ? '//' + comment.value : '/*' + comment.value + '*/';
 }
 
 /**
@@ -5736,6 +5769,9 @@ function printTSEnumDeclaration(node, path, options, print) {
 			if (i < members.length - 1) {
 				membersWithCommas.push(',');
 				membersWithCommas.push(hardline);
+				if (shouldAddBlankLine(node.members[i], node.members[i + 1], options)) {
+					membersWithCommas.push(hardline);
+				}
 			}
 		}
 
@@ -5995,24 +6031,93 @@ function printJSXSwitchCase(node, path, options, print, index) {
 		? ['@case ', path.call(print, 'cases', index, 'test'), ':']
 		: '@default:';
 	const consequents = node.consequent || [];
-	const printedConsequents = [];
-
-	for (let i = 0; i < consequents.length; i++) {
-		const child = consequents[i];
-		if (!child || child.type === 'EmptyStatement') {
-			continue;
-		}
-		printedConsequents.push(
-			path.call((casePath) => casePath.call(print, 'consequent', i), 'cases', index),
-		);
-	}
+	const printedIndexes = getPrintedStatementIndexes(consequents);
 
 	const bodyDoc =
-		printedConsequents.length > 0
-			? [indent([hardline, join(hardline, printedConsequents)]), hardline]
+		printedIndexes.length > 0
+			? [
+					indent([
+						hardline,
+						printSwitchCaseStatements(consequents, printedIndexes, options, (i) =>
+							path.call((casePath) => casePath.call(print, 'consequent', i), 'cases', index),
+						),
+					]),
+					hardline,
+				]
 			: hardline;
 
-	return [header, ' {', bodyDoc, '}'];
+	// The case doesn't go through `print`, so it prints its own comments
+	return [
+		...printLeadingComments(node, node.leadingComments ?? [], options, false, false),
+		header,
+		' {',
+		bodyDoc,
+		'}',
+		...printSwitchCaseTrailingComments(node, options),
+	];
+}
+
+/**
+ * Print the statements of a switch case on their own lines, with a blank line
+ * where the source has one, like a block's statements
+ * @param {AST.Node[]} consequents - The case's statements
+ * @param {number[]} printedIndexes - The indexes of the ones that print
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {(index: number) => Doc} printAt - Prints the statement at an index
+ * @returns {Doc[]}
+ */
+function printSwitchCaseStatements(consequents, printedIndexes, options, printAt) {
+	/** @type {Doc[]} */
+	const statements = [];
+	printedIndexes.forEach((index, n) => {
+		if (n > 0) {
+			statements.push(hardline);
+			if (shouldAddBlankLine(consequents[printedIndexes[n - 1]], consequents[index], options)) {
+				statements.push(hardline);
+			}
+		}
+		statements.push(printAt(index));
+	});
+	return statements;
+}
+
+/**
+ * Print a switch case's trailing comments like Prettier's
+ * `printTrailingComment`: a comment on the case's last line stays there, and
+ * one on a later line keeps its own line.
+ * @param {AST.SwitchCase} node - The switch case
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc[]}
+ */
+function printSwitchCaseTrailingComments(node, options) {
+	const text = /** @type {string} */ (options.originalText);
+	/** @type {Doc[]} */
+	const parts = [];
+	/** @type {{ isBlock: boolean, hasLineSuffix: boolean } | null} */
+	let previous = null;
+	for (const comment of node.trailingComments ?? []) {
+		const start = /** @type {AST.NodeWithLocation} */ (comment).start;
+		const isBlock = comment.type === 'Block';
+		const commentDoc = isBlock ? '/*' + comment.value + '*/' : '//' + comment.value;
+		if (
+			(previous?.hasLineSuffix && !previous.isBlock) ||
+			hasNewline(text, start, { backwards: true })
+		) {
+			// Keep one blank line when the line before the comment is empty, not a
+			// line holding a `;` that isn't printed
+			parts.push(
+				lineSuffix([hardline, isPreviousLineEmpty(text, start) ? hardline : '', commentDoc]),
+			);
+			previous = { isBlock, hasLineSuffix: true };
+		} else if (!isBlock || previous?.hasLineSuffix) {
+			parts.push(lineSuffix([' ', commentDoc]), breakParent);
+			previous = { isBlock, hasLineSuffix: true };
+		} else {
+			parts.push(' ', commentDoc);
+			previous = { isBlock, hasLineSuffix: false };
+		}
+	}
+	return parts;
 }
 
 /**
@@ -6024,65 +6129,110 @@ function printJSXSwitchCase(node, path, options, print, index) {
  * @returns {Doc}
  */
 function printSwitchCase(node, path, options, print) {
-	const header = node.test ? ['case ', path.call(print, 'test'), ':'] : 'default:';
-
+	const text = /** @type {string} */ (options.originalText);
 	const consequents = node.consequent || [];
-	const printedConsequents = [];
-	const referencedConsequents = [];
+	const printedIndexes = getPrintedStatementIndexes(consequents);
+	const first = printedIndexes.length > 0 ? consequents[printedIndexes[0]] : null;
+	const singleBlock = printedIndexes.length === 1 && first?.type === 'BlockStatement';
 
-	for (let i = 0; i < consequents.length; i++) {
-		const child = consequents[i];
-		if (!child || child.type === 'EmptyStatement') {
-			continue;
-		}
-		referencedConsequents.push(child);
-		printedConsequents.push(path.call(print, 'consequent', i));
-	}
-
-	let bodyDoc = null;
-	if (printedConsequents.length > 0) {
-		const singleBlock =
-			printedConsequents.length === 1 && referencedConsequents[0].type === 'BlockStatement';
-		if (singleBlock) {
-			bodyDoc = [' ', printedConsequents[0]];
+	// The comments after `case x:` on its line. The parser gives them to the
+	// first statement. Prettier makes them trailing comments of the test, or
+	// dangling comments of a `default` case, so they stay on that line, except
+	// that a line comment moves into a lone block.
+	const headerComments = first ? takeSwitchCaseHeaderComments(first, text) : [];
+	/** @type {Doc[]} */
+	const headerBlockComments = [];
+	/** @type {Doc} */
+	let headerLineComment = '';
+	for (const comment of headerComments) {
+		if (comment.type === 'Block') {
+			headerBlockComments.push(' /*' + comment.value + '*/');
+		} else if (singleBlock) {
+			moveIntoBlock(/** @type {AST.BlockStatement} */ (first), comment);
 		} else {
-			bodyDoc = indent([hardline, join(hardline, printedConsequents)]);
+			headerLineComment = [lineSuffix([' //' + comment.value]), breakParent];
 		}
 	}
-
-	let trailingDoc = null;
-	if (node.trailingComments && node.trailingComments.length > 0) {
-		const text = /** @type {string} */ (options.originalText);
-		/** @type {Doc[]} */
-		const commentDocs = [];
-
-		for (let i = 0; i < node.trailingComments.length; i++) {
-			const comment = node.trailingComments[i];
-			commentDocs.push(hardline);
-			// Like Prettier, keep one blank line when the line before the comment
-			// is empty, not a line holding a `;` that isn't printed
-			if (isPreviousLineEmpty(text, /** @type {AST.NodeWithLocation} */ (comment).start)) {
-				commentDocs.push(hardline);
-			}
-			const commentDoc =
-				comment.type === 'Line' ? ['//', comment.value] : ['/*', comment.value, '*/'];
-			commentDocs.push(commentDoc);
-		}
-
-		trailingDoc = commentDocs;
-		delete node.trailingComments;
-	}
+	const header = node.test
+		? ['case ', path.call(print, 'test'), ...headerBlockComments, ':', headerLineComment]
+		: ['default:', ...headerBlockComments, headerLineComment];
 
 	/** @type {Doc[]} */
 	const parts = [header];
-	if (bodyDoc) {
-		parts.push(bodyDoc);
-	}
-	if (trailingDoc) {
-		parts.push(trailingDoc);
+	if (singleBlock) {
+		parts.push(' ', path.call(print, 'consequent', printedIndexes[0]));
+	} else if (printedIndexes.length > 0) {
+		parts.push(
+			indent([
+				hardline,
+				printSwitchCaseStatements(consequents, printedIndexes, options, (index) =>
+					path.call(print, 'consequent', index),
+				),
+			]),
+		);
 	}
 
+	// The case prints its trailing comments itself, not `finishTsrxNode`
+	parts.push(...printSwitchCaseTrailingComments(node, options));
+	delete node.trailingComments;
+
 	return parts;
+}
+
+/**
+ * Take a switch case's header comments off its first statement: the comments
+ * that start on the line of `case x:` or `default:`. Like Prettier's
+ * `breakTies`, the ones that only spaces separate from the statement stay
+ * with it (`case 1: /* c *\/ a();`).
+ * @param {AST.Node} first - The case's first printed statement
+ * @param {string} text - The original source
+ * @returns {AST.Comment[]}
+ */
+function takeSwitchCaseHeaderComments(first, text) {
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (first).leadingComments;
+	if (!comments) {
+		return [];
+	}
+	let count = 0;
+	while (
+		count < comments.length &&
+		!hasNewline(text, /** @type {AST.NodeWithLocation} */ (comments[count]).start, {
+			backwards: true,
+		})
+	) {
+		count++;
+	}
+	let gapEnd = /** @type {AST.NodeWithLocation} */ (comments[count] ?? first).start;
+	while (
+		count > 0 &&
+		/^[^\S\n]*$/.test(
+			text.slice(/** @type {AST.NodeWithLocation} */ (comments[count - 1]).end, gapEnd),
+		)
+	) {
+		count--;
+		gapEnd = /** @type {AST.NodeWithLocation} */ (comments[count]).start;
+	}
+	if (count === 0) {
+		return [];
+	}
+	const taken = comments.splice(0, count);
+	if (comments.length === 0) {
+		delete (/** @type {AST.NodeWithMaybeComments} */ (first).leadingComments);
+	}
+	return taken;
+}
+
+/**
+ * Make a comment the first comment inside a block, as Prettier's
+ * `addBlockStatementFirstComment` does.
+ * @param {AST.BlockStatement} block - The block
+ * @param {AST.Comment} comment - The comment
+ */
+function moveIntoBlock(block, comment) {
+	const firstStatement = block.body.find((statement) => statement.type !== 'EmptyStatement');
+	const holder = /** @type {AST.NodeWithMaybeComments} */ (firstStatement ?? block);
+	const key = firstStatement ? 'leadingComments' : 'innerComments';
+	holder[key] = [comment, ...(holder[key] ?? [])];
 }
 
 /**
@@ -6327,6 +6477,39 @@ function getPrintedStatementIndexes(statements) {
 }
 
 /**
+ * Whether an empty block prints as `{}`, as Prettier's `printBlock` decides: a
+ * function body, a `for (;;)`, `while` or `do` body, a `catch` block without
+ * `finally`, a namespace body, or a static block. Every other empty block
+ * prints its braces on two lines, and so does every template directive body.
+ * @param {AST.Node} node - The empty block
+ * @param {AstPath} path - Its path
+ * @returns {boolean}
+ */
+function printsEmptyBlockOnOneLine(node, path) {
+	if (node.type === 'StaticBlock') {
+		return true;
+	}
+	const parent = /** @type {AST.Node | null} */ (path.getParentNode());
+	switch (parent?.type) {
+		case 'ArrowFunctionExpression':
+		case 'FunctionExpression':
+		case 'FunctionDeclaration':
+		case 'ForStatement':
+		case 'WhileStatement':
+		case 'DoWhileStatement':
+		case 'TSModuleDeclaration':
+			return true;
+		case 'CatchClause': {
+			// `@catch` belongs to a template `@try`
+			const grandparent = /** @type {AST.Node | null} */ (path.getParentNode(1));
+			return grandparent?.type === 'TryStatement' && !grandparent.finalizer;
+		}
+		default:
+			return false;
+	}
+}
+
+/**
  * Where a statement's content ends when its source ends with a `;`: before
  * that `;` and the whitespace ahead of it, like Prettier's `__contentEnd`.
  * Code without semicolons writes the one before `[`, `(` or `` ` `` at the
@@ -6358,11 +6541,6 @@ function getContentEndBeforeSemicolon(node, text, nextStart) {
  * @returns {boolean}
  */
 function shouldAddBlankLine(currentNode, nextNode, options) {
-	// Always set imports apart from the code after them
-	if (currentNode.type === 'ImportDeclaration' && nextNode.type !== 'ImportDeclaration') {
-		return true;
-	}
-
 	const text = /** @type {string} */ (options.originalText);
 	// Like Prettier's `isNextLineEmpty`, only the line right after the node
 	// counts, so a line holding a `;` that isn't printed is not a blank line
@@ -6423,9 +6601,8 @@ function printObjectPattern(node, path, options, print) {
 				'typeAnnotation',
 			);
 
-			// Use softline for proper spacing - will become space when inline, line when breaking
-			// Format type members with semicolons between AND after the last member
-			const typeMemberDocs = join([';', line], typeMembers);
+			// Each member prints its own `;` (see `printTypeMemberSemicolon`)
+			const typeMemberDocs = join(line, typeMembers);
 
 			// Don't wrap in group - let the outer params group control breaking
 			const objectDoc = [
@@ -6435,9 +6612,7 @@ function printObjectPattern(node, path, options, print) {
 				'}',
 			];
 			const typeDoc =
-				typeMembers.length === 0
-					? '{}'
-					: ['{', indent([line, typeMemberDocs, ifBreak(';', '')]), line, '}'];
+				typeMembers.length === 0 ? '{}' : ['{', indent([line, typeMemberDocs]), line, '}'];
 
 			// Return combined
 			return [objectDoc, ': ', typeDoc];
@@ -6913,17 +7088,12 @@ function printTSTypeLiteral(node, path, options, print) {
 		return printEmptyMemberList(node);
 	}
 
-	const members = path.map(print, 'members');
-	const inlineMembers = members.map((member, index) =>
-		index < members.length - 1 ? [member, ';'] : member,
-	);
-	const multilineMembers = members.map((member) => [member, ';']);
-
-	const inlineDoc = group(['{', indent([line, join(line, inlineMembers)]), line, '}']);
+	// Each member prints its own `;` (see `printTypeMemberSemicolon`)
+	const inlineDoc = group(['{', indent([line, join(line, path.map(print, 'members'))]), line, '}']);
 
 	const multilineDoc = group([
 		'{',
-		indent([hardline, join(hardline, multilineMembers)]),
+		indent([hardline, printTypeMembers(node.members, path, 'members', options, print)]),
 		hardline,
 		'}',
 	]);
@@ -8208,15 +8378,19 @@ function printJSXCodeBlock(node, path, options, print) {
 		}
 		parts.push(path.call(print, 'render'));
 	}
-	// Trailing comments after the last statement/render inside the block.
-	parts.push(
-		...printElementBodyComments(
-			node.innerComments,
-			node.render ?? node.body[node.body.length - 1],
-			/** @type {string} */ (options.originalText),
-		),
-	);
-	if (parts.length === 0) {
+	if (parts.length > 0) {
+		// Trailing comments after the last statement/render inside the block
+		parts.push(
+			...printElementBodyComments(
+				node.innerComments,
+				node.render ?? node.body[node.body.length - 1],
+				/** @type {string} */ (options.originalText),
+			),
+		);
+	} else if (node.innerComments?.length) {
+		// Like the comments of an empty function body, on consecutive lines
+		parts.push(join(hardline, node.innerComments.map(printCommentText)));
+	} else {
 		return '@{}';
 	}
 	return group(['@{', indent([hardline, ...parts]), hardline, '}']);

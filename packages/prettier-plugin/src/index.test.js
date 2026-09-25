@@ -1811,6 +1811,29 @@ export function Pair() @{
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('keeps await on for await loops and @for await directives', async () => {
+			const input = `async function read(stream){for await(const chunk of stream){use(chunk)}}
+async function App({ items }) @{
+<ul>@for await(const item of items; index i){<li>{item}</li>}@empty{<li>none</li>}</ul>
+}`;
+			const expected = `async function read(stream) {
+  for await (const chunk of stream) {
+    use(chunk);
+  }
+}
+async function App({ items }) @{
+  <ul>
+    @for await (const item of items; index i) {
+      <li>{item}</li>
+    } @empty {
+      <li>none</li>
+    }
+  </ul>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should handle TypeScript function return type', async () => {
 			const input = `export function FooBar() { function Foo() : string { return ""; }}`;
 			const expected = `export function FooBar() {
@@ -2390,6 +2413,23 @@ import { Portal as RuntimePortal } from '@example/runtime';
 import { GetRootNode } from './somewhere';`;
 
 			const result = await format(expected, { singleQuote: true, printWidth: 100 });
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('adds no blank line after an import that the source does not have', async () => {
+			const expected = `import a from "a";
+b();
+import c from "c";
+// note
+d();
+function f() {}
+import e from "e";
+export { e };
+import g from "g";
+
+g();`;
+
+			const result = await format(expected);
 			expect(result).toBeWithNewline(expected);
 		});
 
@@ -3072,24 +3112,50 @@ files = [...(files ?? []), ...dt.files];`;
 			expect(result).toBeWithNewline(expected);
 		});
 
-		it('expands empty braces to new lines for for statements', async () => {
-			const expected = `for (let i = 0; i < 10; i++) {
-}`;
-			const result = await format(expected);
-			expect(result).toBeWithNewline(expected);
-		});
-
-		it('expands empty braces to new lines for while statements', async () => {
-			const expected = `while (true) {
-}`;
-			const result = await format(expected);
-			expect(result).toBeWithNewline(expected);
-		});
-
-		it('expands empty braces to new lines for do-while statements', async () => {
-			const expected = `do {
+		it('prints empty for, while, and do-while bodies as {} like Prettier', async () => {
+			const input = `for (let i = 0; i < 10; i++) {
+}
+for (;;) {
+}
+while (true) {
+}
+do {
 } while (true);`;
-			const result = await format(expected);
+			const expected = `for (let i = 0; i < 10; i++) {}
+for (;;) {}
+while (true) {}
+do {} while (true);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('expands an empty block in a statement list like Prettier', async () => {
+			const input = `{}
+function f() {
+  {}
+  label: {}
+}
+const g = () => {};
+class K {
+  static {}
+  m() {}
+}
+namespace N {}`;
+			const expected = `{
+}
+function f() {
+  {
+  }
+  label: {
+  }
+}
+const g = () => {};
+class K {
+  static {}
+  m() {}
+}
+namespace N {}`;
+			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
 
@@ -3158,8 +3224,7 @@ function Baz() {
 }
 function Qux() {
   try {
-  } catch {
-  }
+  } catch {}
 }`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
@@ -3497,6 +3562,42 @@ function test() {
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('puts every class member on its own line and keeps one blank line between members', async () => {
+			const input = `class A { a = 1; b = 2; }
+class B {
+  a = 1;
+
+
+  b = 2;
+}
+class C {
+  a = 1; /* note */
+  b = 2;
+}
+foo(class { a = 1 });`;
+			const expected = `class A {
+  a = 1;
+  b = 2;
+}
+class B {
+  a = 1;
+
+  b = 2;
+}
+class C {
+  a = 1; /* note */
+  b = 2;
+}
+foo(
+  class {
+    a = 1;
+  },
+);`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should preserve comments in object expressions', async () => {
 			const expected = `const obj = {
   /* comment 1 */
@@ -3531,6 +3632,143 @@ function test() {
 }`;
 
 			const result = await format(input, { singleQuote: true });
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps blank lines between the statements of a switch case', async () => {
+			const expected = `switch (x) {
+  case 1:
+    a();
+
+    // lead b
+    b();
+    break;
+
+  default:
+    c();
+
+    d();
+}`;
+
+			const result = await format(expected);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('drops a blank line after a case label or a stray semicolon line in a switch case', async () => {
+			const input = `switch (x) {
+  case 1:
+
+    a();
+    ;
+    b();
+}`;
+			const expected = `switch (x) {
+  case 1:
+    a();
+    b();
+}`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps same-line comments in switch cases on their line', async () => {
+			const expected = `switch (x) {
+  case 1: // after the label
+    a(); // after a statement
+  case 2: // after an empty case
+  case 3 /* before the colon */:
+    b(); /* block */
+  case 4 /* a */: // b
+    c();
+  default: /* d */
+    d(); // last
+  // own line
+}`;
+
+			const result = await format(expected);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps a comment after a case label with its first statement below it', async () => {
+			const input = `switch (x) {
+  case 1: // c
+    // d
+    a();
+  default: // e
+    b();
+  case 2: /* f */ c();
+  case 3 /* g */: d();
+  case 4: /* h */ /* i */
+    e();
+}`;
+			const expected = `switch (x) {
+  case 1: // c
+    // d
+    a();
+  default: // e
+    b();
+  case 2:
+    /* f */ c();
+  case 3 /* g */:
+    d();
+  case 4 /* h */ /* i */:
+    e();
+}`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('moves a line comment after a case label into the lone block that follows', async () => {
+			// Prettier prints \`case 1: { // c\` and then, on a second pass, this
+			const input = `switch (x) {
+  case 1: // c
+    {
+      a();
+    }
+  case 2: /* d */
+  {}
+  default: // e
+    {
+    }
+}`;
+			const expected = `switch (x) {
+  case 1: {
+    // c
+    a();
+  }
+  case 2 /* d */: {
+  }
+  default: {
+    // e
+  }
+}`;
+
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps blank lines and comments around @case bodies', async () => {
+			const expected = `function App() @{
+  <div>
+    @switch (x) {
+      // before case
+      @case 1: {
+        const a = 1;
+
+        <span>{a}</span>
+      } // after case
+
+      /* before default */
+      @default: {
+        <b />
+      }
+    }
+  </div>
+}`;
+
+			const result = await format(expected);
 			expect(result).toBeWithNewline(expected);
 		});
 
@@ -3575,8 +3813,8 @@ function test() {
 			expect(result).toBeWithNewline(expected);
 		});
 
-		it('should preserve comment if the whole function code is commented out, including blank lines', async () => {
-			const expected = `export function Test() {
+		it('prints the comments of a commented-out function body on consecutive lines', async () => {
+			const input = `export function Test() {
   // thing
   // thing
   /* thing */
@@ -3588,8 +3826,18 @@ function test() {
   /* thing */
   // thing
 }`;
+			const expected = `export function Test() {
+  // thing
+  // thing
+  /* thing */
+  // thing
+  /* thing */
+  // thing
+  /* thing */
+  // thing
+}`;
 
-			const result = await format(expected, { singleQuote: true });
+			const result = await format(input, { singleQuote: true });
 			expect(result).toBeWithNewline(expected);
 		});
 
@@ -3634,6 +3882,60 @@ function test() {
 			const expected = `for (let i = 0, len = array.length; i < len; i++) {
   console.log(i);
 }`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('puts each clause of a long for header on its own line', async () => {
+			const input = `for (let index = 0, length = items.length; index < length && !found; index += step) {
+  visit(items[index]);
+}
+label: for (let someLongVariableName = 0; someLongVariableName < limit; someLongVariableName++) {}
+function App() @{
+  <ul>
+    @for (let someLongVariableName = 0; someLongVariableName < limit; someLongVariableName++) {
+      <li />
+    }
+  </ul>
+}`;
+			const expected = `for (
+  let index = 0, length = items.length;
+  index < length && !found;
+  index += step
+) {
+  visit(items[index]);
+}
+label: for (
+  let someLongVariableName = 0;
+  someLongVariableName < limit;
+  someLongVariableName++
+) {}
+function App() @{
+  <ul>
+    @for (
+      let someLongVariableName = 0;
+      someLongVariableName < limit;
+      someLongVariableName++
+    ) {
+      <li />
+    }
+  </ul>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('prints the empty clauses of a for header like Prettier', async () => {
+			const input = `for (;;) {}
+for (; i < n;) {}
+for (;; i++) {}
+for (let i = 0;;) {}
+for (let i = 0; i < n;) {}`;
+			const expected = `for (;;) {}
+for (; i < n;) {}
+for (; ; i++) {}
+for (let i = 0; ;) {}
+for (let i = 0; i < n;) {}`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
@@ -7617,7 +7919,9 @@ function g() {
 		});
 
 		it('keeps the definite-assignment assertion on class fields', async () => {
-			await expectUnchanged(`export class Model { value!: string; }`);
+			await expectUnchanged(`export class Model {
+  value!: string;
+}`);
 			await expectUnchanged(`class Store extends Base {
   #id!: number;
   static instance!: Store;
@@ -7629,8 +7933,13 @@ function g() {
 		});
 
 		it('keeps static and the member separator on class index signatures', async () => {
-			await expectUnchanged('class Registry { [name: string]: number; count = 1; }');
-			await expectUnchanged('class Registry { static [name: string]: number; }');
+			await expectUnchanged(`class Registry {
+  [name: string]: number;
+  count = 1;
+}`);
+			await expectUnchanged(`class Registry {
+  static [name: string]: number;
+}`);
 			await expectUnchanged(`class Cache {
   static readonly [key: string]: number;
   readonly [index: number]: string;
@@ -7733,7 +8042,10 @@ declare enum Level {
 		});
 
 		it('keeps brackets on computed class field keys', async () => {
-			await expectUnchanged(`class Keyed { [key] = 1; readonly [other] = 2; }`);
+			await expectUnchanged(`class Keyed {
+  [key] = 1;
+  readonly [other] = 2;
+}`);
 		});
 
 		it('normalises readonly onto reformatted interface members', async () => {
@@ -7776,10 +8088,18 @@ declare enum Level {
 		});
 
 		it.each([
-			'class Point { x = 1 }',
-			'class List { first() {} last() {} }',
-			'class Lazy { static {} value = 1 }',
-		])('keeps a class on one line when no member needs a line break: %s', async (source) => {
+			`class Point {
+  x = 1
+}`,
+			`class List {
+  first() {}
+  last() {}
+}`,
+			`class Lazy {
+  static {}
+  value = 1
+}`,
+		])('puts every member of a class on its own line: %s', async (source) => {
 			await expectUnchanged(source);
 		});
 
@@ -8191,6 +8511,142 @@ log()
 				expect(await format(source)).toBeWithNewline(source);
 			},
 		);
+
+		it('prints the comments of a file with only empty statements on consecutive lines', async () => {
+			expect(await format('// a\n\n// b\n;\n')).toBeWithNewline('// a\n// b');
+			expect(await format(';\n// a\n\n// b\n')).toBeWithNewline('// a\n// b');
+		});
+	});
+
+	// Like Prettier's `printDanglingComments`, the comments of a body with no
+	// statements or members print on consecutive lines
+	describe('comments in empty bodies', () => {
+		it('drops the blank lines between the comments of an empty body', async () => {
+			const input = `{
+  // a
+
+  // b
+}
+function f() {
+  // a
+
+  /* b */
+}
+const g = () => {
+  // a
+  ;
+  // b
+};
+for (;;) {
+  // a
+
+  // b
+}
+interface A {
+  // a
+
+  // b
+}
+enum E {
+  // a
+
+  // b
+}
+type T = {
+  // a
+
+  // b
+};
+namespace N {
+  // a
+
+  // b
+}`;
+			const expected = `{
+  // a
+  // b
+}
+function f() {
+  // a
+  /* b */
+}
+const g = () => {
+  // a
+  // b
+};
+for (;;) {
+  // a
+  // b
+}
+interface A {
+  // a
+  // b
+}
+enum E {
+  // a
+  // b
+}
+type T = {
+  // a
+  // b
+};
+namespace N {
+  // a
+  // b
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps the comments of a class body with no members inside it', async () => {
+			const input = `class A {
+  // a
+
+  // b
+}
+const C = class {
+  /* only */
+};
+class D { /* x */ }`;
+			const expected = `class A {
+  // a
+  // b
+}
+const C = class {
+  /* only */
+};
+class D {
+  /* x */
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('starts the comments of a code block with no statements on its first line', async () => {
+			const input = `function App() @{
+  // note
+}
+const Arrow = () => @{
+  /* note */
+};
+function Two() @{
+  // a
+
+  // b
+}`;
+			const expected = `function App() @{
+  // note
+}
+const Arrow = () => @{
+  /* note */
+};
+function Two() @{
+  // a
+  // b
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
 	});
 
 	// Type arguments, `this` types, and heritage clauses decide what a
@@ -8427,7 +8883,7 @@ log()
 			['const fn = function () {}.call(null);', 'const fn = function () {}.call(null);'],
 			['const seq = ((a, b)).c;', 'const seq = (a, b).c;'],
 			['const body = () => (a, b);', 'const body = () => (a, b);'],
-			['for (i = 0, j = 0; i < 1; i++, j++) {}', 'for (i = 0, j = 0; i < 1; i++, j++) {\n}'],
+			['for (i = 0, j = 0; i < 1; i++, j++) {}', 'for (i = 0, j = 0; i < 1; i++, j++) {}'],
 		])('drops redundant parentheses: %s', async (source, expected) => {
 			const result = await format(source);
 			expect(result).toBeWithNewline(expected);
@@ -8470,7 +8926,7 @@ log()
 			'const power = (-a) ** 2;',
 			'const typed = (!a) in b;',
 			'const text = (1).toString();',
-			'for (i = ("key" in store) ? 1 : 0; i < 1; i++) {\n}',
+			'for (i = ("key" in store) ? 1 : 0; i < 1; i++) {}',
 			'const mixed = (a ?? b) || c;',
 			'const other = a ?? (b || c);',
 			'const regrouped = a - (b - c);',
@@ -9038,7 +9494,6 @@ declare global {
 			const expected = `class C {
   static {
     // one
-
     /* two */
   }
   static {
@@ -9135,6 +9590,128 @@ interface J {
 enum F {/* enum */}
 type U = {/* type */};`;
 			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
+	describe('interface, enum, and type literal members lay out like Prettier', () => {
+		it('keeps one blank line between members where the source has one', async () => {
+			const input = `interface I {
+  a: 1;
+
+
+  b(): void;
+
+  // c
+  [k: string]: unknown;
+}
+type T = {
+  a: 1;
+
+  // group
+
+  b: 2;
+};
+enum E {
+  A = 1, // one
+
+  // lead
+  B,
+
+  C,
+}
+let x: {
+  a: 1;
+
+  b: 2;
+} = null;`;
+			const expected = `interface I {
+  a: 1;
+
+  b(): void;
+
+  // c
+  [k: string]: unknown;
+}
+type T = {
+  a: 1;
+
+  // group
+
+  b: 2;
+};
+enum E {
+  A = 1, // one
+
+  // lead
+  B,
+
+  C,
+}
+let x: {
+  a: 1;
+
+  b: 2;
+} = null;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('prints a trailing comment after the semicolon of an interface or type literal member', async () => {
+			const expected = `interface I {
+  a: 1; /* note */
+  b(): void; // line
+  (x: number): string; /* call */
+  new (x: number): I; /* construct */
+  [k: string]: unknown; /* index */
+}
+type T = {
+  a: 1; /* note */
+  b: 2; // line
+};
+type U = { a: 1 /* c */; b: 2 };
+enum E {
+  A /* c */,
+  B, // d
+}`;
+			const result = await format(expected);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('prints the member semicolons of interfaces and type literals like Prettier without semicolons', async () => {
+			const input = `interface I {
+  a;
+  (): void;
+  get;
+  x: 1; /* note */
+  y: 2;
+}
+type T = {
+  a;
+  (): void;
+  get;
+  x: 1; /* note */
+  y: 2;
+};
+type U = { a: 1; b: 2 };
+function f({ a, b }: { a: string; b: number }) {}`;
+			const expected = `interface I {
+  a;
+  (): void
+  get;
+  x: 1 /* note */
+  y: 2
+}
+type T = {
+  a;
+  (): void
+  get;
+  x: 1 /* note */
+  y: 2
+}
+type U = { a: 1; b: 2 }
+function f({ a, b }: { a: string; b: number }) {}`;
+			const result = await format(input, { semi: false });
 			expect(result).toBeWithNewline(expected);
 		});
 	});
