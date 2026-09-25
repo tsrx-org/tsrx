@@ -7117,6 +7117,90 @@ function RowList({ rows, Row }) {
 		});
 	});
 
+	// Prettier's `printAwaitExpression` and `printBinaryCastExpression`: an
+	// await or a cast that is called or accessed breaks onto its own line
+	// inside its parentheses.
+	describe('parenthesized callees and member objects break inside their parentheses', () => {
+		it('moves a broken await onto its own line inside its parentheses', async () => {
+			const input = `async function load() {
+  const value = (await loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)).value;
+  const exportsOfModule = (await dynamicImport(pathToTheModule, { with: { type: "json" } })).exports;
+  const handler = (await getHandlerForTheCurrentRequest(requestIdentifier, anotherArgument))(event);
+  const optional = (await loadTheConfigurationFileFromDiskAndMore(somePathVariable, anotherArgum))?.value;
+}`;
+			const expected = `async function load() {
+  const value = (
+    await loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)
+  ).value;
+  const exportsOfModule = (
+    await dynamicImport(pathToTheModule, { with: { type: "json" } })
+  ).exports;
+  const handler = (
+    await getHandlerForTheCurrentRequest(requestIdentifier, anotherArgument)
+  )(event);
+  const optional = (
+    await loadTheConfigurationFileFromDiskAndMore(
+      somePathVariable,
+      anotherArgum,
+    )
+  )?.value;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps await (await together and leaves new, non-null, and yield as they were', async () => {
+			const input = `async function load() {
+  const value = await (await loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)).json();
+  const instance = new (await loadTheConfigurationFileFromDiskAndMore(somePathVariable, anotherArgument))();
+  const asserted = (await loadTheConfigurationFileFromDiskAndMore(somePathVariable, anotherArgum))!.value;
+}
+function* generate() {
+  const value = (yield loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)).value;
+}`;
+			const expected = `async function load() {
+  const value = await (
+    await loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)
+  ).json();
+  const instance = new (await loadTheConfigurationFileFromDiskAndMore(
+    somePathVariable,
+    anotherArgument,
+  ))();
+  const asserted = (await loadTheConfigurationFileFromDiskAndMore(
+    somePathVariable,
+    anotherArgum,
+  ))!.value;
+}
+function* generate() {
+  const value = (yield loadTheConfigurationFileFromDisk(
+    somePathVariable,
+    anotherArgument,
+  )).value;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('moves a broken as or satisfies cast onto its own line inside its parentheses', async () => {
+			const input = `const value = (someObject.someLongPropertyName as SomeVeryLongInterfaceName<WithTypeArgs>).value;
+const result = (handlerForTheRequest satisfies RequestHandlerFunctionType<Context>)(event, ctx);
+const inst = new (someFactoryFunctionResult as unknown as ConstructorTypeForTheThing<Aaaa>)();
+const short = (value as Entry).name;`;
+			const expected = `const value = (
+  someObject.someLongPropertyName as SomeVeryLongInterfaceName<WithTypeArgs>
+).value;
+const result = (
+  handlerForTheRequest satisfies RequestHandlerFunctionType<Context>
+)(event, ctx);
+const inst = new (
+  someFactoryFunctionResult as unknown as ConstructorTypeForTheThing<Aaaa>
+)();
+const short = (value as Entry).name;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	describe('definite assignment assertions', () => {
 		it('keeps the definite assignment assertion on variable declarations', async () => {
 			const input = `function App() {

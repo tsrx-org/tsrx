@@ -2298,12 +2298,9 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = printCallExpression(path, options, print);
 			break;
 
-		case 'AwaitExpression': {
-			/** @type {Doc[]} */
-			const parts = ['await ', path.call(print, 'argument')];
-			nodeContent = parts;
+		case 'AwaitExpression':
+			nodeContent = printAwaitExpression(node, path, options, print);
 			break;
-		}
 
 		case 'StyleSheet': {
 			// StyleSheet nodes inside <style> elements. When CSS is empty/whitespace-only,
@@ -2327,15 +2324,20 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'TSAsExpression':
-		case 'TSSatisfiesExpression':
+		case 'TSSatisfiesExpression': {
 			// Prettier's `printBinaryCastExpression`: a type that breaks lays out
 			// its own lines (a union moves below the operator)
-			nodeContent = [
+			/** @type {Doc[]} */
+			const parts = [
 				path.call(print, 'expression'),
 				node.type === 'TSAsExpression' ? ' as ' : ' satisfies ',
 				path.call(print, 'typeAnnotation'),
 			];
+			nodeContent = isParenthesizedCalleeOrObject(path, options, true)
+				? group([indent([softline, ...parts]), softline])
+				: parts;
 			break;
+		}
 
 		case 'TSNonNullExpression':
 			nodeContent = [path.call(print, 'expression'), '!'];
@@ -6594,6 +6596,88 @@ function printUnaryExpression(node, path, options, print) {
 	}
 
 	return parts;
+}
+
+/**
+ * Print an await expression like Prettier's `printAwaitExpression`. As the
+ * callee of a call or the object of a member access, it breaks onto its own
+ * indented line inside its parentheses, unless it starts the argument of an
+ * enclosing `await`, where the enclosing group lays out the lines so
+ * `await (await` stays together.
+ * @param {AST.AwaitExpression} node - The await expression node
+ * @param {AstPath<AST.AwaitExpression>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printAwaitExpression(node, path, options, print) {
+	/** @type {Doc[]} */
+	const parts = ['await ', path.call(print, 'argument')];
+	if (!isParenthesizedCalleeOrObject(path, options, false)) {
+		return parts;
+	}
+
+	const inner = [indent([softline, ...parts]), softline];
+	/** @type {AST.Node | null} */
+	let ancestor;
+	for (let level = 0; ; level++) {
+		ancestor = /** @type {AST.Node | null} */ (path.getParentNode(level));
+		if (!ancestor || ancestor.type === 'AwaitExpression' || ancestor.type === 'BlockStatement') {
+			break;
+		}
+	}
+	if (ancestor?.type === 'AwaitExpression' && startsWithNode(ancestor.argument, node)) {
+		return inner;
+	}
+	return group(inner);
+}
+
+/**
+ * Whether the node at `path` is the callee of a call (or of a `new`, with
+ * `includeNew`) or the object of a member access, which print it in its own
+ * parentheses. A JSDoc cast's parentheses lay the node out themselves.
+ * @param {AstPath} path - The path to the node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {boolean} includeNew - Whether the callee of a `new` counts
+ * @returns {boolean}
+ */
+function isParenthesizedCalleeOrObject(path, options, includeNew) {
+	const { key, parent } = path;
+	if (!parent || getTypeCastParens(path, options)) {
+		return false;
+	}
+	return (
+		(key === 'callee' &&
+			(parent.type === 'CallExpression' || (includeNew && parent.type === 'NewExpression'))) ||
+		(key === 'object' && parent.type === 'MemberExpression')
+	);
+}
+
+/**
+ * Prettier's `startsWithNoLookaheadToken` with an identity check: whether
+ * `target` is the leftmost part of `node`, where printing `node` starts.
+ * @param {AST.Node} node - The expression
+ * @param {AST.Node} target - The node to look for
+ * @returns {boolean}
+ */
+function startsWithNode(node, target) {
+	/** @type {AST.Node} */
+	let current = node;
+	while (current !== target) {
+		const key =
+			current.type === 'SequenceExpression' ? 'expressions' : getLeftmostChildKey(current);
+		if (!key) {
+			return false;
+		}
+		/** @type {AST.Node} */
+		const child = /** @type {Record<string, any>} */ (current)[key];
+		// A called or tagged function expression prints in its own parentheses
+		current = Array.isArray(child) ? child[0] : child;
+		if ((key === 'callee' || key === 'tag') && current.type === 'FunctionExpression') {
+			return false;
+		}
+	}
+	return true;
 }
 
 /**
