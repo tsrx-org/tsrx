@@ -135,6 +135,11 @@ export interface BaseNodeMetaData {
 	string_literal_source_span?: boolean;
 	is_capitalized?: boolean;
 	commentContainerId?: number;
+	/**
+	 * A `prettier-ignore` comment attached elsewhere keeps this node as written,
+	 * like Prettier's `prettierIgnore` for the union member after one.
+	 */
+	prettierIgnore?: boolean;
 	parenthesized?: boolean;
 	/**
 	 * Offset of the outermost `(` of a parenthesized expression. Only grouping
@@ -624,6 +629,11 @@ declare module 'estree' {
 
 	interface Comment {
 		context?: Parse.CommentMetaData | null;
+		/**
+		 * A `prettier-ignore` comment that marks another node instead of the
+		 * one it's attached to (see `BaseNodeMetaData.prettierIgnore`).
+		 */
+		unignore?: boolean;
 	}
 
 	// For now only ObjectExpression needs printInline
