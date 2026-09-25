@@ -680,6 +680,351 @@ export function get_comment_handlers(source, comments, index = 0) {
 		return null;
 	}
 
+	/**
+	 * Every comment by its start and by its end, to look past the comments next
+	 * to one on its line. Filled by `add_comments`.
+	 * @type {Map<number, AST.CommentWithLocation>}
+	 */
+	const commentsByStart = new Map();
+	/** @type {Map<number, AST.CommentWithLocation>} */
+	const commentsByEnd = new Map();
+
+	/**
+	 * Like Prettier's `ownLine` placement: only whitespace and other comments sit
+	 * between the start of the comment's line and the comment.
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {boolean}
+	 */
+	function isOwnLineComment(comment) {
+		let i = comment.start - 1;
+		while (i >= 0) {
+			const previous = commentsByEnd.get(i + 1);
+			if (previous) {
+				i = previous.start - 1;
+			} else if (source[i] === ' ' || source[i] === '\t') {
+				i--;
+			} else {
+				return source[i] === '\n' || source[i] === '\r';
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Like Prettier's `endOfLine` placement: only whitespace and other comments
+	 * sit between the comment and the end of its line.
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {boolean}
+	 */
+	function isEndOfLineComment(comment) {
+		let i = comment.end;
+		while (i < source.length) {
+			const next = commentsByStart.get(i);
+			if (next?.type === 'Line') {
+				return true;
+			} else if (next) {
+				i = next.end;
+			} else if (source[i] === ' ' || source[i] === '\t') {
+				i++;
+			} else {
+				return source[i] === '\n' || source[i] === '\r';
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * The child nodes a comment can attach to, like Prettier's
+	 * `getSortedChildNodes` with its `canAttachComment` (in key order, not
+	 * sorted)
+	 * @param {AST.Node} node
+	 * @param {(AST.Node & AST.NodeWithLocation)[]} [children]
+	 * @returns {(AST.Node & AST.NodeWithLocation)[]}
+	 */
+	function getAttachableChildren(node, children = []) {
+		for (const key in node) {
+			if (key === 'metadata' || key === 'loc' || /[cC]omments$/.test(key)) continue;
+			const value = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (node))[key];
+			for (const child of Array.isArray(value) ? value : [value]) {
+				if (
+					child &&
+					typeof child === 'object' &&
+					typeof child.type === 'string' &&
+					typeof child.start === 'number' &&
+					typeof child.end === 'number' &&
+					child.type !== 'TemplateElement' &&
+					child.type !== 'EmptyStatement'
+				) {
+					if (child.type === 'ChainExpression') {
+						getAttachableChildren(child, children);
+					} else {
+						children.push(child);
+					}
+				}
+			}
+		}
+		return children;
+	}
+
+	/**
+	 * Like Prettier's `decorateComment`, the children of `enclosing` right
+	 * before and after a comment that lies in `enclosing` outside all its
+	 * children, so that `enclosing` is the comment's enclosing node, or null
+	 * when it isn't.
+	 * @param {AST.CommentWithLocation} comment
+	 * @param {AST.Node | AST.CSS.StyleSheet | undefined} enclosing
+	 * @returns {{ preceding: (AST.Node & AST.NodeWithLocation) | null, following: (AST.Node & AST.NodeWithLocation) | null } | null}
+	 */
+	function getCommentNeighbors(comment, enclosing) {
+		if (!enclosing || enclosing.type === 'StyleSheet') {
+			return null;
+		}
+		const node = /** @type {AST.Node & AST.NodeWithLocation} */ (enclosing);
+		if (!(node.start <= comment.start && comment.end <= node.end)) {
+			return null;
+		}
+		/** @type {(AST.Node & AST.NodeWithLocation) | null} */
+		let preceding = null;
+		/** @type {(AST.Node & AST.NodeWithLocation) | null} */
+		let following = null;
+		for (const child of getAttachableChildren(node)) {
+			if (child.end <= comment.start) {
+				if (!preceding || child.end > preceding.end) preceding = child;
+			} else if (child.start >= comment.end) {
+				if (!following || child.start < following.start) following = child;
+			} else {
+				return null;
+			}
+		}
+		return { preceding, following };
+	}
+
+	/**
+	 * @param {AST.Node | null | undefined} node
+	 * @returns {node is AST.ClassDeclaration | AST.ClassExpression | AST.TSInterfaceDeclaration}
+	 */
+	function isClassLike(node) {
+		return (
+			node?.type === 'ClassDeclaration' ||
+			node?.type === 'ClassExpression' ||
+			node?.type === 'TSInterfaceDeclaration'
+		);
+	}
+
+	/**
+	 * @param {AST.Node} node
+	 * @param {AST.CommentWithLocation} comment
+	 */
+	function addLeadingComment(node, comment) {
+		const withComments = /** @type {AST.NodeWithMaybeComments} */ (node);
+		(withComments.leadingComments ||= []).push(comment);
+	}
+
+	/**
+	 * @param {AST.Node} node
+	 * @param {AST.CommentWithLocation} comment
+	 */
+	function addTrailingComment(node, comment) {
+		const withComments = /** @type {AST.NodeWithMaybeComments} */ (node);
+		(withComments.trailingComments ||= []).push(comment);
+	}
+
+	/**
+	 * Like Prettier's `isTypeCastComment`: a JSDoc comment with `@type` or
+	 * `@satisfies`
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {boolean}
+	 */
+	function isTypeCastComment(comment) {
+		return (
+			comment.type === 'Block' &&
+			comment.value[0] === '*' &&
+			/@(?:type|satisfies)\b/.test(comment.value)
+		);
+	}
+
+	/**
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {boolean}
+	 */
+	function isPrettierIgnoreComment(comment) {
+		return /^\s*prettier-ignore(?:\s|$)/.test(comment.value);
+	}
+
+	/**
+	 * Whether {@link handleComment} has a rule for comments in the node.
+	 * @param {AST.Node | AST.CSS.StyleSheet | undefined} node
+	 * @returns {boolean}
+	 */
+	function isHandledEnclosingNode(node) {
+		const type = /** @type {any} */ (node)?.statementType ?? node?.type;
+		return (
+			type === 'IfStatement' ||
+			type === 'WhileStatement' ||
+			type === 'WithStatement' ||
+			type === 'MemberExpression' ||
+			type === 'BinaryExpression' ||
+			type === 'LogicalExpression' ||
+			type === 'TSUnionType' ||
+			isClassLike(/** @type {AST.Node} */ (node))
+		);
+	}
+
+	/**
+	 * Whether the comments inside a node after its last child are its own: a
+	 * list or body keeps them inside, where its last entry or the node itself
+	 * takes them, and a template, a function (around its parameters and
+	 * body), and a template literal have their own rules
+	 * @param {AST.Node | AST.CSS.StyleSheet} node
+	 * @returns {boolean}
+	 */
+	function keepsCommentsAfterChildren(node) {
+		return (
+			node.type.startsWith('JSX') ||
+			isNativeTemplateNode(node) ||
+			isFunctionNode(node) ||
+			isClassLike(/** @type {AST.Node} */ (node)) ||
+			node.type === 'Program' ||
+			node.type === 'BlockStatement' ||
+			node.type === 'StaticBlock' ||
+			node.type === 'TSModuleBlock' ||
+			node.type === 'ClassBody' ||
+			node.type === 'TSInterfaceBody' ||
+			node.type === 'SwitchStatement' ||
+			node.type === 'SwitchCase' ||
+			node.type === 'TSTypeLiteral' ||
+			node.type === 'TSEnumDeclaration' ||
+			node.type === 'ObjectExpression' ||
+			node.type === 'ObjectPattern' ||
+			node.type === 'ArrayExpression' ||
+			node.type === 'ArrayPattern' ||
+			node.type === 'TemplateLiteral' ||
+			node.type === 'StyleSheet'
+		);
+	}
+
+	/**
+	 * A port of Prettier's comment handlers (`handleOwnLineComment`,
+	 * `handleEndOfLineComment`, and `handleRemainingComment` in
+	 * `src/language-js/comments/handle-comments.js`) for the places where this
+	 * parser's own rules differ from them. It runs before those rules.
+	 * @param {AST.CommentWithLocation} comment
+	 * @param {AST.Node} enclosing - The node the comment lies in
+	 * @param {AST.Node | null} preceding - The child of `enclosing` before it
+	 * @param {AST.Node | null} following - The child of `enclosing` after it
+	 * @returns {boolean} Whether the comment was attached
+	 */
+	function handleComment(comment, enclosing, preceding, following) {
+		// A JSDoc type cast keeps to the parentheses it casts, which Prettier's
+		// `babel` parser keeps as a node of their own for it
+		if (isTypeCastComment(comment) && getNextNonSpaceNonCommentCharacter(comment.end) === '(') {
+			return false;
+		}
+
+		const ownLine = isOwnLineComment(comment);
+		const endOfLine = !ownLine && isEndOfLineComment(comment);
+		const node = /** @type {any} */ (enclosing);
+		const type = node.statementType ?? node.type;
+
+		// `handleIfStatementComments` and `handleWhileLikeComments`: a comment
+		// before the `)` that closes the condition trails the condition
+		if (
+			(type === 'IfStatement' || type === 'WhileStatement' || type === 'WithStatement') &&
+			preceding &&
+			following &&
+			getNextNonSpaceNonCommentCharacter(comment.end) === ')'
+		) {
+			addTrailingComment(preceding, comment);
+			return true;
+		}
+
+		// `handleClassComments`: a comment in the heading of a decorated class
+		// trails the last decorator. One before the body moves into it, and one
+		// before the superclass or the first `implements`/`extends` type trails
+		// the name, the type parameters, or the superclass before it, so that it
+		// doesn't print after the keyword.
+		if ((ownLine || endOfLine) && isClassLike(enclosing) && following) {
+			const decorators = /** @type {AST.Node[] | undefined} */ (node.decorators);
+			if (decorators?.length && following.type !== 'Decorator') {
+				addTrailingComment(/** @type {AST.Node} */ (decorators.at(-1)), comment);
+				return true;
+			}
+			if (following === node.body) {
+				// Like `addBlockStatementFirstComment`
+				const first = node.body.body[0];
+				if (first) {
+					addLeadingComment(first, comment);
+				} else {
+					pushInnerComment(node.body, comment);
+				}
+				return true;
+			}
+			/** @type {unknown[]} */
+			const heading = [node.id, node.typeParameters];
+			if (preceding && following === node.superClass && heading.includes(preceding)) {
+				addTrailingComment(preceding, comment);
+				return true;
+			}
+			// The superclass's type arguments print with it
+			heading.push(node.superClass, node.superTypeParameters);
+			const heritage = node.type === 'TSInterfaceDeclaration' ? node.extends : node.implements;
+			if (preceding && following === heritage?.[0] && heading.includes(preceding)) {
+				addTrailingComment(preceding, comment);
+				return true;
+			}
+		}
+
+		// `handleMemberExpressionComments`: a comment on its own line before the
+		// name of a member lookup leads the lookup, so that a member chain prints
+		// it before the `.`
+		if (ownLine && node.type === 'MemberExpression' && following?.type === 'Identifier') {
+			addLeadingComment(node, comment);
+			return true;
+		}
+
+		// `handleUnionTypeComments`: a comment on its own line after a union
+		// member trails it, so that it prints before the next `|`. A
+		// `prettier-ignore` comment stays with the member it ignores.
+		if (node.type === 'TSUnionType' && isPrettierIgnoreComment(comment)) {
+			return false;
+		}
+		if (ownLine && node.type === 'TSUnionType' && preceding) {
+			addTrailingComment(preceding, comment);
+			return true;
+		}
+
+		// `handleUnionTypeLeadingComments`: a one-line block comment right before
+		// a union leads its first member, so it prints after the `|` that starts
+		// the member when the union breaks
+		if (
+			!endOfLine &&
+			following?.type === 'TSUnionType' &&
+			comment.type === 'Block' &&
+			!source.slice(comment.start, comment.end).includes('\n') &&
+			!isPrettierIgnoreComment(comment) &&
+			/^[ \t]*$/.test(source.slice(comment.end, following.start))
+		) {
+			addLeadingComment(/** @type {AST.TSUnionType} */ (following).types[0], comment);
+			return true;
+		}
+
+		// Prettier's default for a comment that ends its line: it trails the
+		// node before it, so that it stays after an operator (`a || // note`)
+		// instead of moving to its own line
+		if (
+			endOfLine &&
+			preceding &&
+			(node.type === 'BinaryExpression' ||
+				node.type === 'LogicalExpression' ||
+				node.type === 'TSUnionType')
+		) {
+			addTrailingComment(preceding, comment);
+			return true;
+		}
+
+		return false;
+	}
+
 	return {
 		/**
 		 * @type {Parse.Options['onComment']}
@@ -725,6 +1070,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 					loc,
 					context,
 				}));
+			for (const comment of comments) {
+				commentsByStart.set(comment.start, comment);
+				commentsByEnd.set(comment.end, comment);
+			}
 
 			walk(ast, null, {
 				_(node, { next, path, visit }) {
@@ -914,6 +1263,18 @@ export function get_comment_handlers(source, comments, index = 0) {
 							}
 						}
 
+						// Prettier's handlers for a comment before this node in its parent
+						const enclosing = /** @type {AST.Node} */ (path.at(-1));
+						if (isHandledEnclosingNode(enclosing) || node.type === 'TSUnionType') {
+							const neighbors = getCommentNeighbors(comment, enclosing);
+							if (
+								neighbors?.following === node &&
+								handleComment(comment, enclosing, neighbors.preceding, node)
+							) {
+								continue;
+							}
+						}
+
 						if (isCommentInsideAttributeExpression()) {
 							(node.leadingComments ||= []).push(comment);
 							continue;
@@ -1090,7 +1451,52 @@ export function get_comment_handlers(source, comments, index = 0) {
 							}
 						}
 
+						// Like Prettier, a comment inside this node after all its children,
+						// which none of them took, trails the last of them, as `// why` in
+						// `!(\n (a || b) // why\n)` trails `a || b`. It doesn't move out of
+						// the node to the next one. A statement that Prettier ends before
+						// its `;` doesn't hold the comments right before that `;`.
+						if (!keepsCommentsAfterChildren(node)) {
+							const nodeEnd = /** @type {AST.NodeWithLocation} */ (node).end;
+							const semicolon =
+								statementsEndingBeforeSemicolon.has(node.type) && source[nodeEnd - 1] === ';'
+									? nodeEnd - 1
+									: -1;
+							while (comments[0] && comments[0].end <= nodeEnd) {
+								if (semicolon >= 0 && isBlankBetween(comments[0].end, semicolon, false)) break;
+								const neighbors = getCommentNeighbors(comments[0], node);
+								if (!neighbors?.preceding || neighbors.following) break;
+								addTrailingComment(
+									neighbors.preceding,
+									/** @type {AST.CommentWithLocation} */ (comments.shift()),
+								);
+							}
+							if (comments.length === 0) {
+								return;
+							}
+						}
+
 						const parent = /** @type {AST.Node & AST.NodeWithLocation} */ (path.at(-1));
+
+						// Prettier's handlers for the comments between this node and the
+						// next child of its parent, which run before the rules below. The
+						// first comment they leave stops them, so that the comments a node
+						// takes stay in source order.
+						if (isHandledEnclosingNode(parent)) {
+							while (comments[0]) {
+								const neighbors = getCommentNeighbors(comments[0], parent);
+								if (
+									neighbors?.preceding !== node ||
+									!handleComment(comments[0], parent, node, neighbors.following)
+								) {
+									break;
+								}
+								comments.shift();
+							}
+							if (comments.length === 0) {
+								return;
+							}
+						}
 
 						// Like Prettier, which ends a statement before its `;`, the comments
 						// between the two, as in `if (a) return b // note` with the `;` on the
