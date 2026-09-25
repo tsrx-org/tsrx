@@ -849,7 +849,7 @@ describe('TSRX parser', () => {
 		}
 	});
 
-	it('reads a template literal after an element with children', () => {
+	it('ends the statement at an element before a template literal on the next line', () => {
 		for (const [element, type] of [
 			['<b>x</b>', 'JSXElement'],
 			['<>x</>', 'JSXFragment'],
@@ -860,15 +860,18 @@ describe('TSRX parser', () => {
 				parseModule(`function f() {\n  ${source}\n}`, 'App.tsrx'),
 				parseModule(`${source}\n`, 'App.tsrx'),
 			]) {
-				const [declaration] =
+				const [declaration, statement] =
 					ast.body[0].type === 'FunctionDeclaration' ? functionBody(ast) : ast.body;
-				// As after a self-closing element, and as in Babel, the template literal
-				// continues the element as a tagged template (TypeScript ends the
-				// statement at the element instead, #426).
-				const tagged = as_type(declaratorInit(declaration), 'TaggedTemplateExpression');
-				expect(tagged.tag.type).toBe(type);
-				expect(tagged.quasi.quasis.map((quasi) => quasi.value.raw)).toEqual(['t', '']);
-				expect(tagged.quasi.expressions.map((node) => node.type)).toEqual(['Identifier']);
+				// An element isn't a left-hand-side expression, as in TypeScript, so
+				// the template literal isn't a tagged template on it and starts the
+				// next statement (#426). Babel reads a tagged template here.
+				expect(declaratorInit(declaration).type).toBe(type);
+				const template = as_type(
+					as_type(statement, 'ExpressionStatement').expression,
+					'TemplateLiteral',
+				);
+				expect(template.quasis.map((quasi) => quasi.value.raw)).toEqual(['t', '']);
+				expect(template.expressions.map((node) => node.type)).toEqual(['Identifier']);
 			}
 		}
 	});
@@ -3534,9 +3537,10 @@ foo();`;
 		expect(regexLiteral(declaratorInit(block.body[0])).pattern).toBe('<span>');
 	});
 
-	it('reads `<value> /…/` in the setup section as a less-than against a regex', () => {
+	it('reads `<value> < /…/` in the setup section as a less-than against a regex', () => {
+		// Without the space, `</` starts a closing tag, as in TSX (#586).
 		const returned = getReturned(`function App() { return <div>@{
-			const x = 3</div>/
+			const x = 3 < /div>/
 			<>{x}</>
 		}</div>; }`);
 
