@@ -545,6 +545,50 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Where the outermost pair of parentheses around `node` that completes a
+	 * JSDoc type cast (`/** @type {T} *\/ (node)`) closes, or -1. The printer
+	 * keeps those, like Prettier's `babel` parser keeps them as a
+	 * `ParenthesizedExpression`.
+	 * @param {AST.Node & AST.NodeWithLocation} node
+	 * @returns {number}
+	 */
+	function getTypeCastEnd(node) {
+		const parenStart = node.metadata?.paren_start;
+		if (typeof parenStart !== 'number') return -1;
+		// The node's opening parens, and how many of them, from the outermost
+		// cast on, close after it
+		let parens = 0;
+		let closing = 0;
+		for (let i = parenStart; i < node.start; i++) {
+			const comment = commentsByStart.get(i);
+			if (comment) {
+				i = comment.end - 1;
+			} else if (source[i] === '(') {
+				parens++;
+				let before = i;
+				while (before > 0 && /\s/.test(source[before - 1])) before--;
+				const cast = commentsByEnd.get(before);
+				if (closing === 0 && cast && isTypeCastComment(cast)) {
+					closing = parens;
+				}
+			}
+		}
+		if (closing === 0) return -1;
+		closing = parens - closing + 1;
+		for (let i = node.end; i < source.length; i++) {
+			const comment = commentsByStart.get(i);
+			if (comment) {
+				i = comment.end - 1;
+			} else if (source[i] === ')') {
+				if (--closing === 0) return i;
+			} else if (!/\s/.test(source[i])) {
+				break;
+			}
+		}
+		return -1;
+	}
+
+	/**
 	 * @param {AST.Node | AST.CSS.StyleSheet | null | undefined} node
 	 * @returns {node is AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression}
 	 */
@@ -2217,6 +2261,34 @@ export function get_comment_handlers(source, comments, index = 0) {
 							}
 						}
 
+						// Like the expression of a `ParenthesizedExpression`, which Prettier's
+						// `babel` parser keeps for a JSDoc cast, a cast node trails the
+						// comments after it inside its cast's parentheses, even the ones
+						// after the last node it ends with (`(await foo /* c */)`). None of
+						// them moves to the statement's `;` or the class body after them.
+						const nodeEnd = /** @type {AST.NodeWithLocation} */ (node).end;
+						let castNode = /** @type {AST.Node & AST.NodeWithLocation} */ (node);
+						let castEnd = getTypeCastEnd(castNode);
+						for (
+							let i = path.length - 1;
+							castEnd < 0 &&
+							i >= 0 &&
+							/** @type {AST.NodeWithLocation} */ (path[i]).end === nodeEnd;
+							i--
+						) {
+							castNode = /** @type {AST.Node & AST.NodeWithLocation} */ (path[i]);
+							castEnd = getTypeCastEnd(castNode);
+						}
+						while (comments[0] && comments[0].start >= nodeEnd && comments[0].end <= castEnd) {
+							addTrailingComment(
+								castNode,
+								/** @type {AST.CommentWithLocation} */ (comments.shift()),
+							);
+						}
+						if (comments.length === 0) {
+							return;
+						}
+
 						const parent = /** @type {AST.Node & AST.NodeWithLocation} */ (path.at(-1));
 
 						// Like Prettier, whose `canAttachComment` rejects a template literal's
@@ -2664,8 +2736,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 											const commentEndLine = comments[0].loc?.end?.line;
 											const nextSiblingStartLine = nextSibling.loc?.start?.line;
 
-											// If comment ends on same line as next sibling starts, it's inline with next
-											if (commentEndLine === nextSiblingStartLine) {
+											// If comment ends on same line as next sibling starts, it's inline with next.
+											// A JSDoc type cast keeps to the parentheses it casts on any line.
+											if (
+												commentEndLine === nextSiblingStartLine ||
+												(isTypeCastComment(comments[0]) &&
+													getNextNonSpaceNonCommentCharacter(comments[0].end) === '(')
+											) {
 												// Leave it for next sibling's leading comments
 												return;
 											}
