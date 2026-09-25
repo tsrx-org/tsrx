@@ -5489,10 +5489,8 @@ function stripComments(text) {
  * while `export default class Named {}` binds it module-wide. Dropping them
  * silently turns the expression into a declaration.
  *
- * The node type alone cannot tell the two apart. Node spans exclude the
- * parens, and a decorated `export default @dec class Named {}` also parses as
- * a ClassExpression even though it is a declaration, so the source text
- * between the keyword and the declaration has to be consulted.
+ * Node spans exclude the parens, so the source text between the keyword and
+ * the declaration is consulted.
  *
  * @param {AST.TSRXExportDefaultDeclaration} node - The export default node
  * @param {TsrxFormatOptions} options - Prettier options
@@ -5541,10 +5539,9 @@ function isParenthesizedDefaultExport(node, options) {
  * `(function () {})();` silently becomes the single call
  * `export default foo(function () {})();`.
  *
- * The node type alone cannot decide this. A decorated
- * `export default @dec class Named {}` parses as a ClassExpression but is
- * still a declaration, so the two expression node types defer to
- * {@link isParenthesizedDefaultExport}, which reads the source.
+ * A class or function expression after the keyword is a parenthesized one
+ * (`export default (class Named {})`), which
+ * {@link isParenthesizedDefaultExport} confirms from the source.
  *
  * @param {AST.TSRXExportDefaultDeclaration} node - The export default node
  * @param {TsrxFormatOptions} options - Prettier options
