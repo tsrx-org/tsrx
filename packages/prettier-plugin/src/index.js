@@ -3701,19 +3701,14 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = path.call(print, 'expression');
 			break;
 
-		case 'ImportExpression': {
-			/** @type {Doc[]} */
-			const parts = [
-				node.phase === 'defer' ? 'import.defer(' : 'import(',
-				path.call(print, 'source'),
-			];
-			if (node.options) {
-				parts.push(', ', path.call(print, 'options'));
-			}
-			parts.push(')');
-			nodeContent = parts;
+		case 'ImportExpression':
+			// Like Prettier, the source and the options lay out like call
+			// arguments
+			nodeContent = group([
+				node.phase ? `import.${node.phase}` : 'import',
+				printCallArguments(path, options, print),
+			]);
 			break;
-		}
 
 		case 'CallExpression':
 			nodeContent = printCallExpression(path, options, print);
@@ -4333,12 +4328,16 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'JSXEmptyExpression':
-			// JSXEmptyExpression represents the empty expression in {/* comment */}
-			// The comments are attached as innerComments by the parser
-			if (innerCommentParts.length > 0) {
-				nodeContent = innerCommentParts;
-			} else {
+			// Prettier's `printJsxEmptyExpression`: the comments of `{/* note */}`,
+			// which the parser keeps as inner comments, print on consecutive lines.
+			// A line comment puts them on lines of their own, indented, with a line
+			// break after them, so that the `}` doesn't join the comment's line.
+			if (innerCommentParts.length === 0) {
 				nodeContent = '';
+			} else if (innerComments?.some((comment) => comment.type === 'Line')) {
+				nodeContent = [indent([hardline, join(hardline, innerCommentParts)]), hardline];
+			} else {
+				nodeContent = join(hardline, innerCommentParts);
 			}
 			break;
 
@@ -6009,9 +6008,10 @@ function isBlockBody(body) {
  * `printCallArguments`. A React hook call keeps its callback and dependency
  * array on the call's line, a leading function argument or an expandable last
  * argument hugs the parentheses, and anything else breaks every argument onto
- * its own line. Like Prettier, it also prints the module specifier and import
- * attributes of an import type, which take no trailing comma.
- * @param {AstPath<AST.CallExpression | AST.NewExpression | AST.TSImportType>} path - The call, new expression, or import type path
+ * its own line. Like Prettier, it also prints the source and options of an
+ * `import()` and the module specifier and import attributes of an import type,
+ * which take no trailing comma.
+ * @param {AstPath<AST.CallExpression | AST.NewExpression | AST.ImportExpression | AST.TSImportType>} path - The call, new expression, `import()`, or import type path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @param {boolean} [keepOnCallLine] - Whether the arguments may stay on the
@@ -6056,6 +6056,13 @@ function printCallArguments(path, options, print, keepOnCallLine = true) {
 				index === 0 ? 'argument' : 'options',
 			);
 		}
+		// An `import()`'s are its `source` and `options`
+		if (node.type === 'ImportExpression') {
+			return /** @type {AstPath<AST.ImportExpression>} */ (path).call(
+				printAt,
+				index === 0 ? 'source' : 'options',
+			);
+		}
 		return /** @type {AstPath<AST.CallExpression | AST.NewExpression>} */ (path).call(
 			printAt,
 			'arguments',
@@ -6067,7 +6074,7 @@ function printCallArguments(path, options, print, keepOnCallLine = true) {
 		keepOnCallLine &&
 		node.type !== 'TSImportType' &&
 		keepsArgumentsOnCallLine(
-			/** @type {AstPath<AST.CallExpression | AST.NewExpression>} */ (path),
+			/** @type {AstPath<AST.CallExpression | AST.NewExpression | AST.ImportExpression>} */ (path),
 			options,
 		)
 	) {
@@ -6112,7 +6119,11 @@ function printCallArguments(path, options, print, keepOnCallLine = true) {
 	}
 
 	const trailingComma =
-		node.type !== 'TSImportType' && shouldPrintComma(options, 'all') ? ifBreak(',') : '';
+		node.type !== 'ImportExpression' &&
+		node.type !== 'TSImportType' &&
+		shouldPrintComma(options, 'all')
+			? ifBreak(',')
+			: '';
 
 	const allArgsBrokenOut = () =>
 		group(['(', indent([line, ...printedArguments]), trailingComma, line, ')'], {
@@ -6204,14 +6215,18 @@ function printCallArguments(path, options, print, keepOnCallLine = true) {
 }
 
 /**
- * The arguments of a call or `new` expression, or the module specifier and
- * import attributes of an import type, like Prettier's `getCallArguments`.
- * @param {AST.CallExpression | AST.NewExpression | AST.TSImportType} node
+ * The arguments of a call or `new` expression, the source and options of an
+ * `import()`, or the module specifier and import attributes of an import
+ * type, like Prettier's `getCallArguments`.
+ * @param {AST.CallExpression | AST.NewExpression | AST.ImportExpression | AST.TSImportType} node
  * @returns {AST.Node[]}
  */
 function getCallArguments(node) {
 	if (node.type === 'TSImportType') {
 		return node.options ? [node.argument, node.options] : [node.argument];
+	}
+	if (node.type === 'ImportExpression') {
+		return node.options ? [node.source, node.options] : [node.source];
 	}
 	return node.arguments || [];
 }
@@ -6340,25 +6355,27 @@ function isTestCall(node, parent) {
 }
 
 /**
- * Prettier's `isSimpleModuleImport`: `require("…")`, `require.resolve("…")`,
- * and the like with one string argument.
- * @param {AST.CallExpression | AST.NewExpression} node
+ * Prettier's `isSimpleModuleImport`: `import("…")`, `require("…")`,
+ * `require.resolve("…")`, and the like with one string argument.
+ * @param {AST.CallExpression | AST.NewExpression | AST.ImportExpression} node
  * @returns {boolean}
  */
 function isSimpleModuleImport(node) {
-	return (
-		node.type === 'CallExpression' &&
-		!node.optional &&
-		isNodeMatches(node.callee, [
-			'require',
-			'require.resolve',
-			'require.resolve.paths',
-			'import.meta.resolve',
-		]) &&
-		node.arguments.length === 1 &&
-		isStringLiteral(node.arguments[0]) &&
-		!hasComment(node.arguments[0])
-	);
+	if (
+		node.type !== 'ImportExpression' &&
+		(node.type !== 'CallExpression' ||
+			node.optional ||
+			!isNodeMatches(node.callee, [
+				'require',
+				'require.resolve',
+				'require.resolve.paths',
+				'import.meta.resolve',
+			]))
+	) {
+		return false;
+	}
+	const args = getCallArguments(node);
+	return args.length === 1 && isStringLiteral(args[0]) && !hasComment(args[0]);
 }
 
 /**
@@ -8095,16 +8112,18 @@ function printCallExpression(path, options, print) {
 
 /**
  * Whether a call keeps its arguments on the call's line, as Prettier's
- * `printCallExpression` does for a test call, a `require` of one module, an
- * AMD module definition, and a call on one template literal that starts on its
- * line.
- * @param {AstPath} path - The path to the call or `new` expression
+ * `printCallExpression` does for a test call, an `import()` or `require` of
+ * one module, an AMD module definition, and a call on one template literal
+ * that starts on its line.
+ * @param {AstPath} path - The path to the call, `new` expression, or `import()`
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {boolean}
  */
 function keepsArgumentsOnCallLine(path, options) {
-	const node = /** @type {AST.CallExpression | AST.NewExpression} */ (path.node);
-	const args = node.arguments ?? [];
+	const node = /** @type {AST.CallExpression | AST.NewExpression | AST.ImportExpression} */ (
+		path.node
+	);
+	const args = getCallArguments(node);
 	const isTemplateLiteralSingleArg =
 		args.length === 1 &&
 		isTemplateOnItsOwnLine(args[0], /** @type {string} */ (options.originalText));
@@ -9788,17 +9807,25 @@ function getOwnLineCommentAhead(path, options, flags = {}) {
 
 /**
  * Print the value after an assignment-like operator (`=`, `:`) when the value
- * starts with a comment that ends its line, as Prettier does: a comment on the
- * operator's line stays there, one on its own line moves below the operator,
- * and the value indents under the operator instead of starting at column zero.
+ * starts with a comment that ends its line, in Prettier's
+ * `break-after-operator` layout: a comment on its own line moves below the
+ * operator, a block comment on the operator's line stays there when the value
+ * fits after it and otherwise moves below the operator too, and the value
+ * indents under the operator instead of starting at column zero. A line
+ * comment on the operator's line stays there, where Prettier's default gives it
+ * to the left side, and so does a block comment before an arrow chain that
+ * ends an assignment chain, where Prettier drops the space after the operator
+ * (`c =/* x *\/`). Otherwise, an assignment chain prints its value in its own
+ * layout, as Prettier does.
  * @param {AstPath} path - The path to the assignment-like node
  * @param {string} key - The property that holds the value
  * @param {Doc} valueDoc - The printed value, including its leading comments
  * @param {TsrxFormatOptions} options - Prettier options
+ * @param {AssignmentLayout} layout - The layout Prettier picks for the value
  * @returns {Doc | null} - The doc that follows the operator, or null when the
- * value starts with no such comment
+ * value prints in `layout`
  */
-function printValueAfterLeadingComment(path, key, valueDoc, options) {
+function printValueAfterLeadingComment(path, key, valueDoc, options, layout) {
 	const comment = path.call(
 		(valuePath) => getOwnLineCommentAhead(valuePath, options, { skipLookupComments: true }),
 		key,
@@ -9806,12 +9833,38 @@ function printValueAfterLeadingComment(path, key, valueDoc, options) {
 	if (!comment) {
 		return null;
 	}
+	const text = options.originalText ?? '';
 	const commentStart = /** @type {AST.NodeWithLocation} */ (comment).start;
-	if (hasNewline(options.originalText ?? '', commentStart, { backwards: true })) {
-		return indent([hardline, valueDoc]);
+	const startsLine = hasNewline(text, commentStart, { backwards: true });
+	if (
+		!startsLine &&
+		(layout === 'chain-tail-arrow-chain' || isLineEndedByLineComment(text, commentStart))
+	) {
+		return [' ', group(indent(valueDoc))];
 	}
-	// A block comment that only ends its line lets the value join it if it fits
-	return [' ', group(indent(valueDoc))];
+	if (layout === 'chain' || layout === 'chain-tail') {
+		return null;
+	}
+	return startsLine ? indent([hardline, valueDoc]) : group(indent([line, valueDoc]));
+}
+
+/**
+ * Whether only spaces and block comments come between `startIndex` and a line
+ * comment on the same line.
+ * @param {string} text - Source text
+ * @param {number} startIndex - Position to start from
+ * @returns {boolean}
+ */
+function isLineEndedByLineComment(text, startIndex) {
+	/** @type {number | false} */
+	let index = startIndex;
+	/** @type {number | false | null} */
+	let previousIndex = null;
+	while (index !== false && index !== previousIndex) {
+		previousIndex = index;
+		index = skipInlineComment(text, skipSpaces(text, index));
+	}
+	return index !== false && text.startsWith('//', index);
 }
 
 /**
@@ -11248,12 +11301,15 @@ function printBinaryishExpression(path, options, print) {
 		(parent.type === 'Property' && !parent.method && parent.kind === 'init');
 
 	const samePrecedenceSubExpression =
-		isBinaryish(node.left) && shouldFlatten(node.operator, node.left.operator);
+		isBinaryish(node.left) &&
+		shouldFlatten(node.operator, node.left.operator) &&
+		!hasTypeCastParens(path, options, 'left');
+	const shouldInline = shouldInlineLogicalExpression(path, options);
 
 	if (
 		shouldNotIndent ||
-		(shouldInlineLogicalExpression(node) && !samePrecedenceSubExpression) ||
-		(!shouldInlineLogicalExpression(node) && shouldIndentIfInlining)
+		(shouldInline && !samePrecedenceSubExpression) ||
+		(!shouldInline && shouldIndentIfInlining)
 	) {
 		return group(parts);
 	}
@@ -11263,13 +11319,13 @@ function printBinaryishExpression(path, options, print) {
 	}
 
 	// An element on the right prints in its own group, so it can break without
-	// breaking the whole chain:
+	// breaking the whole chain (unless it's in a JSDoc cast's parentheses):
 	//   foo && bar && (
 	//     <Foo>
 	//       <Bar />
 	//     </Foo>
 	//   )
-	const hasJsx = isTemplateExpression(node.right);
+	const hasJsx = isTemplateExpression(node.right) && !hasTypeCastParens(path, options, 'right');
 
 	// The leftmost operand, with any comments printed ahead of it, stays out of
 	// the indentation
@@ -11327,7 +11383,7 @@ function printBinaryishExpressions(path, options, print, isNested, isInsideParen
 		parts = [group(path.call(print, 'left'))];
 	}
 
-	const shouldInline = shouldInlineLogicalExpression(node);
+	const shouldInline = shouldInlineLogicalExpression(path, options);
 	const rightNode = node.right.type === 'ChainExpression' ? node.right.expression : node.right;
 	const rightDoc = path.call(print, 'right');
 
@@ -11346,7 +11402,8 @@ function printBinaryishExpressions(path, options, print, isNested, isInsideParen
 	}
 
 	// A lone operator gets its own group, so a short right operand like `-1`
-	// doesn't end up alone on the next line
+	// doesn't end up alone on the next line. An operand in a JSDoc cast's
+	// parentheses is a node of its own to Prettier, never of the same type.
 	const parent =
 		!isNested && getTypeCastParens(path, options)
 			? PARENTHESIZED_EXPRESSION
@@ -11358,8 +11415,8 @@ function printBinaryishExpressions(path, options, print, isNested, isInsideParen
 		shouldBreak ||
 		(!(isInsideParenthesis && node.type === 'LogicalExpression') &&
 			parent.type !== node.type &&
-			node.left.type !== node.type &&
-			node.right.type !== node.type);
+			(node.left.type !== node.type || hasTypeCastParens(path, options, 'left')) &&
+			(node.right.type !== node.type || hasTypeCastParens(path, options, 'right')));
 	if (shouldGroup) {
 		right = group(right, { shouldBreak });
 	}
@@ -11878,7 +11935,13 @@ function printAssignment(path, options, print, leftDoc, operator, rightPropertyN
 		rightPropertyName,
 	);
 
-	const commentedRight = printValueAfterLeadingComment(path, rightPropertyName, rightDoc, options);
+	const commentedRight = printValueAfterLeadingComment(
+		path,
+		rightPropertyName,
+		rightDoc,
+		options,
+		layout,
+	);
 	if (commentedRight) {
 		return [group(leftDoc), operator, commentedRight];
 	}
@@ -11939,12 +12002,8 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 		return 'only-left';
 	}
 
-	// Prettier keeps the parentheses of a JSDoc cast as a node of their own, so
-	// a cast value matches none of the checks on the value's type below
-	const isCast = path.call(
-		(rightPath) => getTypeCastParens(rightPath, options) !== null,
-		rightPropertyName,
-	);
+	// A cast value matches none of the checks on the value's type below
+	const isCast = hasTypeCastParens(path, options, rightPropertyName);
 
 	// Short chains (`a = b = c` and `const a = b = c`) are not formatted as chains
 	const isTail = isCast || !isAssignment(rightNode);
@@ -12042,7 +12101,7 @@ function chooseAssignmentLayout(path, options, print, leftDoc, rightPropertyName
 function shouldBreakAfterOperator(path, options, print, hasShortKey) {
 	const rightNode = /** @type {AST.Node} */ (path.node);
 
-	if (isBinaryish(rightNode) && !shouldInlineLogicalExpression(rightNode)) {
+	if (isBinaryish(rightNode) && !shouldInlineLogicalExpression(path, options)) {
 		return true;
 	}
 
@@ -12054,10 +12113,12 @@ function shouldBreakAfterOperator(path, options, print, hasShortKey) {
 				return true;
 			}
 			break;
-		case 'ConditionalExpression': {
-			const { test } = rightNode;
-			return isBinaryish(test) && !shouldInlineLogicalExpression(test);
-		}
+		case 'ConditionalExpression':
+			return (
+				isBinaryish(rightNode.test) &&
+				!hasTypeCastParens(path, options, 'test') &&
+				!path.call((testPath) => shouldInlineLogicalExpression(testPath, options), 'test')
+			);
 		case 'ClassExpression':
 			return getDecorators(rightNode).length > 0;
 	}
@@ -12261,20 +12322,38 @@ function isBinaryish(node) {
 /**
  * Prettier's `shouldInlineLogicalExpression`: a logical expression whose right
  * side is a non-empty object or array literal, or a template, breaks inside
- * that literal instead of at the operator.
- * @param {AST.Node} node
+ * that literal instead of at the operator. A right side in a JSDoc cast's
+ * parentheses breaks at the operator (see {@link hasTypeCastParens}).
+ * @param {AstPath} path - The path to the expression
+ * @param {TsrxFormatOptions} options - Prettier options
  * @returns {boolean}
  */
-function shouldInlineLogicalExpression(node) {
+function shouldInlineLogicalExpression(path, options) {
+	const node = /** @type {AST.Node} */ (path.node);
 	if (node.type !== 'LogicalExpression') {
 		return false;
 	}
 	const { right } = node;
 	return (
-		(right.type === 'ObjectExpression' && right.properties.length > 0) ||
-		(right.type === 'ArrayExpression' && right.elements.length > 0) ||
-		isTemplateExpression(right)
+		((right.type === 'ObjectExpression' && right.properties.length > 0) ||
+			(right.type === 'ArrayExpression' && right.elements.length > 0) ||
+			isTemplateExpression(right)) &&
+		!hasTypeCastParens(path, options, 'right')
 	);
+}
+
+/**
+ * Whether the child at `key` prints in the parentheses of a JSDoc type cast.
+ * Prettier's `babel` parser keeps those parentheses as a
+ * `ParenthesizedExpression`, so a cast child matches none of the checks on
+ * its own type.
+ * @param {AstPath} path - The path to the parent
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {string} key - The property that holds the child
+ * @returns {boolean}
+ */
+function hasTypeCastParens(path, options, key) {
+	return path.call((childPath) => getTypeCastParens(childPath, options) !== null, key);
 }
 
 /**
@@ -12596,6 +12675,16 @@ function printProperty(node, path, options, print) {
 		}
 
 		methodParts.push(...printKey(node, path, options, print));
+		// Like Prettier, which prints the function with its comments: the ones
+		// between the key and the type parameters or `(` that don't trail the
+		// key lead the function (`'m' /* c */ () {}`, `m /* c */ <T>() {}`)
+		methodParts.push(
+			...printLeadingComments(
+				funcValue,
+				/** @type {AST.NodeWithMaybeComments} */ (funcValue).leadingComments ?? [],
+				options,
+			),
+		);
 		methodParts.push(
 			...path.call(
 				(valuePath) =>
@@ -13996,6 +14085,27 @@ function getJSXAttributeStringValue(attr) {
 }
 
 /**
+ * Print the `{expr}` name of a dynamic tag's opening or closing tag, each from
+ * its own expression, so that the comments written in its braces print there
+ * once. The parser requires the expressions to match without the comments
+ * around them, so the tags print alike otherwise. With comments, the braces
+ * print like those of an attribute's value, and break around a line comment.
+ * @param {AstPath} path - The element's path
+ * @param {'openingElement' | 'closingElement'} key - The tag
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printJSXDynamicTagName(path, key, print) {
+	const name = /** @type {ESTreeJSX.JSXExpressionContainer} */ (path.node[key].name);
+	const expression = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (name.expression);
+	const expressionDoc = path.call(print, key, 'name', 'expression');
+	if (!hasComment(expression)) {
+		return ['{', expressionDoc, '}'];
+	}
+	return printJSXExpressionContainer(expression, expressionDoc, false);
+}
+
+/**
  * Print a JSX element
  * @param {AST.TSRXJSXElement | AST.JSXStyleElement} node - The JSX element node
  * @param {AstPath<AST.TSRXJSXElement>} path - The AST path
@@ -14006,12 +14116,11 @@ function getJSXAttributeStringValue(attr) {
 function printJSXElement(node, path, options, print) {
 	const openingElement = node.openingElement;
 
-	// Dynamic tags (`<{expr}>`) print the opening expression for both tags so
-	// they stay textually identical; static names print as plain strings.
-	const tagName =
-		openingElement.name.type === 'JSXExpressionContainer'
-			? ['{', path.call(print, 'openingElement', 'name', 'expression'), '}']
-			: printJSXElementName(openingElement.name);
+	// Static names print as plain strings, for both tags
+	const isDynamicTag = openingElement.name.type === 'JSXExpressionContainer';
+	const tagName = isDynamicTag
+		? printJSXDynamicTagName(path, 'openingElement', print)
+		: printJSXElementName(openingElement.name);
 
 	const isSelfClosing = openingElement.selfClosing;
 	const attributes = /** @type {AST.Node[]} */ (openingElement.attributes ?? []);
@@ -14136,7 +14245,11 @@ function printJSXElement(node, path, options, print) {
 		return openingTag;
 	}
 
-	const closingTag = printJSXClosingTag(node.closingElement, tagName, options);
+	const closingTag = printJSXClosingTag(
+		node.closingElement,
+		isDynamicTag ? printJSXDynamicTagName(path, 'closingElement', print) : tagName,
+		options,
+	);
 
 	// Raw-text `<script>` element: the body lives on `node.content`, mirrored as a
 	// single JSXText child (see the parser's `#parseScriptElement`). Print that

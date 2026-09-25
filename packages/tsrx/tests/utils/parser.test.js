@@ -6766,6 +6766,128 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(statement.consequent).leading).toBeUndefined();
 	});
 
+	/**
+	 * Parse each source in a worker, and fail on any that throws
+	 * @param {string[]} sources
+	 * @returns {Promise<any[]>} Each source's AST
+	 */
+	async function parseAllInWorker(sources) {
+		const outcomes = await parse_in_worker_with_ast(sources.map((source) => ({ source })));
+		return outcomes.map((outcome, index) => {
+			if (!outcome.ok) {
+				throw new Error(`${JSON.stringify(sources[index])} threw ${outcome.message}`);
+			}
+			return outcome.ast;
+		});
+	}
+
+	// Like typescript-estree, the function starts at the type parameters. It
+	// started at its `(`, so the comment trailed the key or led the function
+	// (#458).
+	it('starts an object method at its type parameters, which keep the comments in them', async () => {
+		const sources = [
+			'const o = { m</* c */ T>(b: T) {} };',
+			'const o = { async m</* c */ T>(b: T) {} };',
+			'const o = { *m</* c */ T>(b: T) {} };',
+			'const o = { get m</* c */ T>() {} };',
+			'const o = { set m</* c */ T>(v: T) {} };',
+			'const o = { m<\n  // c\n  T,\n>(b: T) {} };',
+			'const o = { m\n  <T /* c */>(b: T) {} };',
+		];
+		const asts = await parseAllInWorker(sources);
+
+		for (const [index, ast] of asts.entries()) {
+			const property = ast.body[0].declarations[0].init.properties[0];
+			const { value } = property;
+			const { typeParameters } = value;
+			const [parameter] = typeParameters.params;
+			const label = sources[index];
+			expect(value.start, label).toBe(typeParameters.start);
+			expect(value.loc.start, label).toEqual(typeParameters.loc.start);
+			expect(value.end, label).toBe(sources[index].indexOf('{} }') + '{}'.length);
+			expect(
+				[...(parameter.leadingComments ?? []), ...(parameter.trailingComments ?? [])].map(
+					(/** @type {AST.Comment} */ comment) => comment.value.trim(),
+				),
+				label,
+			).toEqual(['c']);
+			expect(commentsOf(property.key).trailing, label).toBeUndefined();
+			expect(commentsOf(value).leading, label).toBeUndefined();
+		}
+	});
+
+	it('keeps a method function that has no type parameters, and a class method, where they start', async () => {
+		const [object, classDeclaration] = await parseAllInWorker([
+			'const o = { m(b) {}, async n(b) {}, get g() { return 1; } };',
+			'class A { m<T>(a: T) {} }',
+		]);
+		const source = 'const o = { m(b) {}, async n(b) {}, get g() { return 1; } };';
+
+		expect(
+			object.body[0].declarations[0].init.properties.map(
+				(/** @type {any} */ property) => property.value.start,
+			),
+		).toEqual([source.indexOf('(b)'), source.lastIndexOf('(b)'), source.indexOf('()')]);
+		const [method] = classDeclaration.body[0].body.body;
+		expect(method.value.start).toBe('class A { m<T>'.length);
+		expect(method.typeParameters.start).toBe('class A { m'.length);
+	});
+
+	// With no line break after the `;` that ends the file, the program ends at
+	// the `;`, and neither it nor the statement took the comment (#488)
+	it('trails the last statement with a comment before the ; that ends the file', async () => {
+		const sources = [
+			'const x = 1\n// c\n;',
+			'foo()\n// c\n;',
+			'if (a) b()\n// c\n;',
+			'a();\nconst x = 1\n/* c */\n;',
+		];
+		const asts = await parseAllInWorker([...sources, ...sources.map((source) => `${source}\n`)]);
+
+		for (const [index, source] of sources.entries()) {
+			const ast = asts[index];
+			const statement = ast.body.at(-1);
+			expect(
+				commentsOf(statement).trailing?.map((/** @type {string} */ value) => value.trim()),
+				JSON.stringify(source),
+			).toEqual(['c']);
+			expect(commentsOf(ast).inner, JSON.stringify(source)).toBeUndefined();
+			// As when a line break follows the `;`
+			expect(commentsOf(asts[index + sources.length].body.at(-1))).toEqual(commentsOf(statement));
+		}
+	});
+
+	// Like Prettier, the comment leads the argument, which the spread prints
+	// before its `...`. It trailed the spread, or led the next attribute (#489).
+	it('leads the argument of a spread attribute with a comment in its braces before it', async () => {
+		const sources = [
+			'x = <div {.../* c */b} />;',
+			'x = <div {/* c */ ...b} />;',
+			'x = <div {... /* c */ b} d="1" />;',
+			'x = <div {...\n  // c\n  b} />;',
+			'function App(b) @{\n  <div {.../* c */b} d="1" />\n}',
+		];
+		const asts = await parseAllInWorker(sources);
+
+		for (const [index, ast] of asts.entries()) {
+			const statement = ast.body[0];
+			const { attributes } = (
+				statement.type === 'FunctionDeclaration'
+					? statement.body.render
+					: statement.expression.right
+			).openingElement;
+			const label = sources[index];
+			expect(
+				commentsOf(attributes[0].argument).leading?.map((/** @type {string} */ value) =>
+					value.trim(),
+				),
+				label,
+			).toEqual(['c']);
+			expect(commentsOf(attributes[0]).trailing, label).toBeUndefined();
+			expect(commentsOf(attributes[1]?.name).leading, label).toBeUndefined();
+		}
+	});
+
 	// The next attribute's name took it, and the printer dropped it (#517)
 	it('trails the argument of a spread with a comment on its own line before its }', () => {
 		/** @param {string} source */
@@ -6779,6 +6901,25 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(openingElement.attributes[1].name).leading).toBeUndefined();
 		expect(commentsOf(children[0].expression).trailing).toEqual([' c']);
 		expect(commentsOf(closingElement).leading).toBeUndefined();
+	});
+
+	// The next child or attribute took it, and the printer moved it out of the
+	// braces (#574)
+	it('trails the expression of a {…} with a comment on its own line before its }', () => {
+		/** @param {string} source */
+		const element = (source) =>
+			/** @type {any} */ (parseModule(source, 'App.tsrx').body[0]).expression.right;
+		const { openingElement } = element('x = <div b={a\n  // c\n} d="1" />;');
+		const { children } = element('x = <div>{a\n  // c\n}text</div>;');
+		const dynamic = element('x = <{A\n  // c\n}>text</{A\n  // d\n}>;');
+
+		expect(commentsOf(openingElement.attributes[0].value.expression).trailing).toEqual([' c']);
+		expect(commentsOf(openingElement.attributes[1].name).leading).toBeUndefined();
+		expect(commentsOf(children[0].expression).trailing).toEqual([' c']);
+		expect(commentsOf(children[1]).leading).toBeUndefined();
+		expect(commentsOf(dynamic.openingElement.name.expression).trailing).toEqual([' c']);
+		expect(commentsOf(dynamic.children[0]).leading).toBeUndefined();
+		expect(commentsOf(dynamic.closingElement.name.expression).trailing).toEqual([' d']);
 	});
 
 	// Prettier's `canAttachComment` rejects a template element, and its
@@ -8438,6 +8579,21 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			),
 			'MethodDefinition',
 		).value.body?.body[0];
+	/** @param {AST.Program} program */
+	const function_statements = (program) =>
+		as_type(/** @type {AST.Node} */ (first(program)), 'FunctionDeclaration').body.body;
+	/** @param {AST.Program} program */
+	const function_statement = (program) => function_statements(program)[0];
+	/** @param {AST.Program} program */
+	const interface_member = (program) =>
+		as_type(/** @type {AST.Node} */ (first(program)), 'TSInterfaceDeclaration').body.body[0];
+	/** @param {AST.Program} program */
+	const first_type_parameter = (program) => {
+		const declaration = /** @type {AST.Node & { typeParameters?: { params: unknown[] } }} */ (
+			first(program)
+		);
+		return declaration.typeParameters?.params[0];
+	};
 
 	/** @type {CheckerLevelCase[]} */
 	const cases = [
@@ -8514,6 +8670,65 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			match: { abstract: true, key: { type: 'PrivateIdentifier', name: 'x' } },
 		},
 		{
+			source: 'interface I { private x: number }',
+			errors: [["'private' modifier cannot appear on a type member.", 'private x']],
+			throws: "'private' modifier cannot appear on a type member. (1:14)",
+			pick: interface_member,
+			match: { type: 'TSPropertySignature', accessibility: 'private', key: { name: 'x' } },
+		},
+		{
+			source: 'type T = { static m(): void };',
+			errors: [["'static' modifier cannot appear on a type member.", 'static m']],
+			throws: "'static' modifier cannot appear on a type member. (1:11)",
+			pick: (program) =>
+				as_type(
+					as_type(/** @type {AST.Node} */ (first(program)), 'TSTypeAliasDeclaration')
+						.typeAnnotation,
+					'TSTypeLiteral',
+				).members[0],
+			match: { type: 'TSMethodSignature', static: true, key: { name: 'm' } },
+		},
+		{
+			source: 'interface I {\n\tstatic\n\tx: number;\n}',
+			errors: [["'static' modifier cannot appear on a type member.", 'static\n']],
+			throws: "'static' modifier cannot appear on a type member. (2:1)",
+			pick: interface_member,
+			match: { type: 'TSPropertySignature', static: true, key: { name: 'x' } },
+		},
+		{
+			source: 'interface I<public T> {}',
+			errors: [["'public' modifier cannot appear on a type parameter.", 'public T']],
+			throws: "'public' modifier cannot appear on a type parameter. (1:12)",
+			pick: first_type_parameter,
+			match: { type: 'TSTypeParameter', accessibility: 'public', name: 'T' },
+		},
+		{
+			source: 'function f<in T>() {}',
+			errors: [
+				[
+					"'in' modifier can only appear on a type parameter of a class, interface or type alias.",
+					'in T',
+				],
+			],
+			throws:
+				"'in' modifier can only appear on a type parameter of a class, interface or type alias. (1:11)",
+			valid: 'interface I<in T> {}',
+			pick: first_type_parameter,
+		},
+		{
+			source: 'class A { out x = 1; }',
+			errors: [
+				[
+					"'out' modifier can only appear on a type parameter of a class, interface or type alias.",
+					'out x',
+				],
+			],
+			throws:
+				"'out' modifier can only appear on a type parameter of a class, interface or type alias. (1:10)",
+			pick: first_member,
+			match: { type: 'PropertyDefinition', out: true, key: { name: 'x' } },
+		},
+		{
 			source: 'function f({ a }?: { a: number }) {}',
 			errors: [
 				[
@@ -8525,6 +8740,44 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				'A binding pattern parameter cannot be optional in an implementation signature. (1:11)',
 			valid: 'declare function f({ a }?: { a: number }): void;',
 			pick: first_parameter,
+		},
+		{
+			source: 'const o = { m([a]?: number[]) {} };',
+			errors: [
+				['A binding pattern parameter cannot be optional in an implementation signature.', '[a]?'],
+			],
+			throws:
+				'A binding pattern parameter cannot be optional in an implementation signature. (1:14)',
+			valid: 'declare function m([a]?: number[]): void;',
+			pick: (program) =>
+				as_type(
+					/** @type {AST.Property} */ (
+						as_type(
+							as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration')
+								.declarations[0].init,
+							'ObjectExpression',
+						).properties[0]
+					).value,
+					'FunctionExpression',
+				).params[0],
+			pickValid: first_parameter,
+		},
+		{
+			source: 'export function App({ a }?: { a: number }) @{\n\t<div />\n}',
+			errors: [
+				[
+					'A binding pattern parameter cannot be optional in an implementation signature.',
+					'{ a }?',
+				],
+			],
+			throws:
+				'A binding pattern parameter cannot be optional in an implementation signature. (1:20)',
+			pick: (program) =>
+				as_type(
+					as_type(/** @type {AST.Node} */ (first(program)), 'ExportNamedDeclaration').declaration,
+					'FunctionDeclaration',
+				).params[0],
+			match: { type: 'ObjectPattern', optional: true },
 		},
 		{
 			source: 'function f(...a: number[],) {}',
@@ -8717,6 +8970,83 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations,
 		},
+		{
+			source: 'function f() {\n\texport const a = 1;\n}',
+			errors: [["'import' and 'export' may only appear at the top level", 'export const']],
+			throws: "'import' and 'export' may only appear at the top level (2:1)",
+			valid: 'export const a = 1;',
+			pick: function_statement,
+			pickValid: first,
+		},
+		{
+			source: 'function f() {\n\texport default 1;\n}',
+			errors: [["'import' and 'export' may only appear at the top level", 'export default']],
+			throws: "'import' and 'export' may only appear at the top level (2:1)",
+			valid: 'export default 1;',
+			pick: function_statement,
+			pickValid: first,
+		},
+		{
+			source: "{\n\timport a from 'a';\n}",
+			errors: [["'import' and 'export' may only appear at the top level", 'import a']],
+			throws: "'import' and 'export' may only appear at the top level (2:1)",
+			valid: "import a from 'a';",
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'BlockStatement').body[0],
+			pickValid: first,
+		},
+		{
+			source: "function f() {\n\timport x = require('a');\n}",
+			errors: [["'import' and 'export' may only appear at the top level", 'import x']],
+			throws: "'import' and 'export' may only appear at the top level (2:1)",
+			valid: "import x = require('a');",
+			pick: function_statement,
+			pickValid: first,
+		},
+		{
+			source: "export function App() @{\n\timport a from 'a';\n\t<div>{a}</div>\n}",
+			errors: [["'import' and 'export' may only appear at the top level", 'import a']],
+			throws: "'import' and 'export' may only appear at the top level (2:1)",
+		},
+		{
+			source: 'function f() {\n\tconst\n}',
+			// Right after `const`, as TypeScript reports it.
+			errors: [['Variable declaration list cannot be empty.', '\n}']],
+			throws: 'Unexpected token (3:0)',
+			pick: function_statement,
+			match: { type: 'VariableDeclaration', kind: 'const', declarations: [] },
+		},
+		{
+			source: 'var;',
+			errors: [['Variable declaration list cannot be empty.', ';']],
+			throws: 'Unexpected token (1:3)',
+			pick: first,
+			match: { type: 'VariableDeclaration', kind: 'var', declarations: [] },
+		},
+		{
+			source: 'function f() {\n\tconst\n\treturn 1;\n}',
+			errors: [['Variable declaration list cannot be empty.', '\n\treturn']],
+			throws: "Unexpected keyword 'return' (3:1)",
+			pick: (program) => ({ statements: function_statements(program) }),
+			match: {
+				statements: [
+					{ type: 'VariableDeclaration', kind: 'const', declarations: [] },
+					{ type: 'ReturnStatement' },
+				],
+			},
+		},
+		{
+			source: 'export function App() @{\n\tconst\n\t<div />\n}',
+			errors: [['Variable declaration list cannot be empty.', '\n\t<div']],
+			throws: 'Unexpected token (3:1)',
+		},
+		{
+			source: 'function f() {\n\tlet\n}',
+			errors: [["The keyword 'let' is reserved", 'let']],
+			throws: "The keyword 'let' is reserved (2:1)",
+			pick: function_statement,
+			match: { type: 'ExpressionStatement', expression: { type: 'Identifier', name: 'let' } },
+		},
 	];
 
 	/** @type {Array<ParseOptions>} */
@@ -8804,6 +9134,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'let d: string?;',
 			'let f: !string;',
 			'let g: string!;',
+			// TypeScript's parser reads a declarator here, or expects one.
+			'const 1;',
+			'const if (a) {}',
+			'var\n#x;',
+			'export function App() @{ const <div /> }',
 		];
 		const modes = [undefined, ...collect_modes];
 		const inputs = sources.flatMap((source) => modes.map((options) => ({ source, options })));
@@ -8824,6 +9159,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'for (const x of y) {}',
 			'class A {\n\t#x;\n\tm() {\n\t\treturn #x in this;\n\t}\n}',
 			'async function f() {\n\tnamespace N {}\n\tawait g();\n}',
+			// A declarator on the line after `const`.
+			'const\n\t[a] = b;',
+			// An overload signature may have an optional binding pattern.
+			'function f({ a }?: { a: number }): void;\nfunction f(options?: { a: number }) {}',
+			'namespace N {\n\texport const a = 1;\n}',
 		];
 		const outcomes = await parse_in_worker(
 			sources.flatMap((source) => collect_modes.map((options) => ({ source, options }))),
@@ -8831,6 +9171,28 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 
 		expect(outcomes).toEqual(
 			sources.flatMap(() => collect_modes.map(() => ({ ok: true, errors: [] }))),
+		);
+	});
+
+	it('records an empty declaration list with no width, right after its keyword', async () => {
+		/** @type {Array<[source: string, keyword_end: number]>} */
+		const cases = [
+			['function f() {\n\tconst\n}', 21],
+			['var /* none */;', 3],
+			['const', 5],
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			cases.map(([source]) => ({ source, options: collect_modes[0] })),
+		);
+
+		expect(outcomes.map((outcome) => (outcome.ok ? outcome.errors : outcome.message))).toEqual(
+			cases.map(([, keyword_end]) => [
+				{
+					message: 'Variable declaration list cannot be empty.',
+					pos: keyword_end,
+					end: keyword_end,
+				},
+			]),
 		);
 	});
 

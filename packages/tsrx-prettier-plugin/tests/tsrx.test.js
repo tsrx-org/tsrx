@@ -803,5 +803,33 @@ describe('parse errors', () => {
 
 	test('mistakes TypeScript only reports as diagnostics still format', async () => {
 		await expectFormat('let a = 1;\nlet a = 2;', 'let a = 1;\nlet a = 2;\n');
+		await expectFormat(
+			"function f() {\n  import a from 'a';\n  export const b = a;\n}",
+			'function f() {\n  import a from "a";\n  export const b = a;\n}\n',
+		);
+		await expectFormat('function f() {\n  let\n}', 'function f() {\n  let;\n}\n');
+	});
+
+	test("mistakes Prettier's typescript parser rejects are errors, not left out", async () => {
+		for (const [source, message] of [
+			['function f() {\n  const\n}', 'Variable declaration list cannot be empty. (2:8)'],
+			[
+				'export function App() @{\n  var\n  <div />\n}',
+				'Variable declaration list cannot be empty. (2:6)',
+			],
+			[
+				'interface I { private x: number }',
+				"'private' modifier cannot appear on a type member. (1:15)",
+			],
+			['interface I<public T> {}', "'public' modifier cannot appear on a type parameter. (1:13)"],
+			[
+				'class C { in x = 1 }',
+				"'in' modifier can only appear on a type parameter of a class, interface or type alias. (1:11)",
+			],
+		]) {
+			const error = await format(source).catch((/** @type {any} */ e) => e);
+			expect(error, source).toBeInstanceOf(SyntaxError);
+			expect(error.message.split('\n')[0], source).toBe(message);
+		}
 	});
 });
