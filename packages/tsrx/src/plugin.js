@@ -3911,6 +3911,14 @@ export function TSRXPlugin(config) {
 					(this.type === tt._in || (this.options.ecmaVersion >= 6 && this.isContextual('of'))) &&
 					init.declarations.length === 1
 				) {
+					// Like Acorn's `parseForAfterInit`, which this replaces
+					if (
+						this.type === tt._in &&
+						(init.kind === 'using' || init.kind === 'await using') &&
+						!init.declarations[0].init
+					) {
+						this.raise(this.start, 'Using declaration is not allowed in for-in loops');
+					}
 					if (this.options.ecmaVersion >= 9) {
 						if (this.type === tt._in) {
 							if (awaitAt > -1) {
@@ -5555,10 +5563,9 @@ export function TSRXPlugin(config) {
 			 * `import.defer(specifier, options?)`, starting at the opening paren.
 			 *
 			 * This mirrors Acorn's ES2025 `import(...)` grammar (optional `options`
-			 * argument, optional trailing comma), which neither inherited parser
-			 * produces here: acorn-typescript's `parseDynamicImport` emits legacy
-			 * `arguments`, and Acorn's own only enables the `options` shape at
-			 * `ecmaVersion >= 16` while TSRX parses at 13.
+			 * argument, optional trailing comma), which the inherited parser does
+			 * not produce here: acorn-typescript's `parseDynamicImport`, which
+			 * emits legacy `arguments`, replaces Acorn's own.
 			 *
 			 * @param {AST.ImportExpression} node
 			 * @returns {AST.ImportExpression}
