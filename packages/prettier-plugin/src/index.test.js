@@ -13391,6 +13391,67 @@ export default a ? b : c ? d : e;`;
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// Like Prettier, a comment in a `${…}` never goes to the template's text,
+		// which prints as written
+		it('keeps a comment on its own line after the expression in its ${…}', async () => {
+			const source = `x = \`\${
+  foo
+  /* comment */
+}\`;
+y = \`a \${
+  foo
+  // comment
+} b \${bar}\`;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a comment beside the expression or on its own line before it', async () => {
+			const source = `z = \`\${foo /* c */} and \${
+  // lead
+  bar
+}\`;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps comments in the ${…} of CSS and GraphQL templates', async () => {
+			const source = `const Box = styled.div\`
+  color: \${
+    foo
+    // comment
+  };
+\`;
+const query = gql\`
+  query {
+    user(id: \${
+      id
+      /* the id */
+    }) {
+      name
+    }
+  }
+\`;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Prettier keeps a comment in a template literal's ${…}, but not in a
+		// template literal type's: an own-line one leads the next type
+		it('moves a comment on its own line to the next type of a template literal type', async () => {
+			const result = await format(`type A = \`\${
+  B
+  // b
+}x\${C}\${
+  D
+  // d
+}\`;`);
+			expect(result).toBeWithNewline(`type A = \`\${B}x\${
+  // b
+  C
+}\${
+  D
+  // d
+}\`;`);
+		});
+
 		it('indents a breaking expression from the template line it starts on', async () => {
 			const result = await format(`const s = \`a \${foo(() => {
   return 1;
