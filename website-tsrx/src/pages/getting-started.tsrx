@@ -1104,29 +1104,21 @@ export function GettingStartedPage() @{
 						<section class="doc-section" id="zed">
 							<h2 class="section-heading">Zed</h2>
 							<p class="section-body">
-								Install the
-								{' '}
+								Install the{' '}
 								<a
 									class="inline-link"
 									href="https://zed.dev/extensions/tsrx"
 									target="_blank"
 									rel="noopener noreferrer"
-								>TSRX extension for Zed</a>
-								{' '}
+								>TSRX extension for Zed</a>{' '}
 								from the Zed Extension Marketplace for syntax highlighting and language-server
-								support. Open Zed's Extensions view and search for
-								{' '}
-								<code class="inline-code">TSRX</code>
-								{' '}
-								to install it.
+								support. Open Zed's Extensions view and search for{' '}
+								<code class="inline-code">TSRX</code> to install it.
 							</p>
 							<p class="section-body">
-								The extension uses a project-local
-								{' '}
-								<code class="inline-code">@tsrx/language-server</code>
-								{' '}
-								when available and otherwise downloads its pinned language-server version
-								automatically.
+								The extension uses a project-local{' '}
+								<code class="inline-code">@tsrx/language-server</code> when available and otherwise
+								downloads its pinned language-server version automatically.
 							</p>
 						</section>
 

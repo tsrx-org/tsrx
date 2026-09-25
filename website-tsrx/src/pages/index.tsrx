@@ -132,15 +132,13 @@ export const IndexPage = () => @{
 					<aside class="alpha-notice" role="note" aria-label="Beta release notice">
 						<span class="alpha-badge">Beta</span>
 						<p class="alpha-notice-body">
-							TSRX is in active beta development. Feedback on the
-							{' '}
+							TSRX is in active beta development. Feedback on the{' '}
 							<a
 								class="alpha-notice-link"
 								href="https://github.com/tsrx-org/tsrx/issues"
 								target="_blank"
 								rel="noopener noreferrer"
-							>issue tracker</a>
-							{' '}
+							>issue tracker</a>{' '}
 							is very welcome.
 						</p>
 					</aside>
@@ -203,8 +201,7 @@ export const IndexPage = () => @{
 						TSRX ships with a language server for editor diagnostics, navigation, and completion.
 						Prettier and ESLint plugins keep formatting and linting consistent inside existing
 						repositories, so the language can be adopted seriously instead of treated like a
-						compiler experiment. Install the
-						{' '}
+						compiler experiment. Install the{' '}
 						<a
 							class="supporting-link"
 							href="https://zed.dev/extensions/tsrx"
@@ -212,10 +209,8 @@ export const IndexPage = () => @{
 							rel="noopener noreferrer"
 						>
 							TSRX extension for Zed
-						</a>
-						{' '}
-						from the Zed Extension Marketplace. The
-						{' '}
+						</a>{' '}
+						from the Zed Extension Marketplace. The{' '}
 						<a
 							class="supporting-link"
 							href="https://plugins.jetbrains.com/plugin/33991-tsrx"
@@ -223,8 +218,7 @@ export const IndexPage = () => @{
 							rel="noopener noreferrer"
 						>
 							TSRX plugin for JetBrains IDEs
-						</a>
-						{' '}
+						</a>{' '}
 						has been submitted to JetBrains Marketplace and is under review. Integrations for VS
 						Code, Neovim, and Sublime are also maintained here.
 					</p>

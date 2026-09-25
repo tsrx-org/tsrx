@@ -639,35 +639,26 @@ export const FeaturesPage = () => @{
 								markup.
 							</p>
 							<p class="section-body">
-								In practice, components are ordinary TypeScript functions or
-								{' '}
-								<code class="inline-code">const</code>
-								{' '}
-								values. A component can use
-								{' '}
-								<code class="inline-code">{'@{...}'}</code>
-								{' '}
-								as the function body, giving you one place for local state, derived values, template
-								control flow, rendered elements, and scoped styles.
+								In practice, components are ordinary TypeScript functions or{' '}
+								<code class="inline-code">const</code> values. A component can use{' '}
+								<code class="inline-code">{'@{...}'}</code> as the function body, giving you one
+								place for local state, derived values, template control flow, rendered elements, and
+								scoped styles.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={COMPONENT_HTML} />
 							</pre>
 							<p class="section-body">
-								Export them like any other function:
-								{' '}
+								Export them like any other function:{' '}
 								<code class="inline-code">{'export function Name() @{ <div /> }'}</code>
 								. The compiler turns that into the right component shape for the target you're
 								using.
 							</p>
 							<p class="section-body">
 								When a bit of logic should stay plain JavaScript rather than render into the
-								template, put it in a normal function beside the markup. Use
-								{' '}
-								<code class="inline-code">{'function fn() { ... }'}</code>
-								{' '}
-								for ordinary control flow, then call helpers from event handlers or expressions:
-								{' '}
+								template, put it in a normal function beside the markup. Use{' '}
+								<code class="inline-code">{'function fn() { ... }'}</code> for ordinary control
+								flow, then call helpers from event handlers or expressions:{' '}
 								<code class="inline-code">{'onClick={fn}'}</code>
 								.
 							</p>
@@ -684,18 +675,11 @@ export const FeaturesPage = () => @{
 								container must finish with exactly one output node.
 							</p>
 							<p class="section-body muted">
-								That final output can be a JSX element, a JSX fragment, or JSX control flow like
-								{' '}
+								That final output can be a JSX element, a JSX fragment, or JSX control flow like{' '}
 								<code class="inline-code">{'@if'}</code>
-								,
-								{' '}
-								<code class="inline-code">{'@for'}</code>
-								,
-								{' '}
-								<code class="inline-code">{'@switch'}</code>
-								, or
-								{' '}
-								<code class="inline-code">{'@try'}</code>
+								, <code class="inline-code">{'@for'}</code>
+								, <code class="inline-code">{'@switch'}</code>
+								, or <code class="inline-code">{'@try'}</code>
 								. It cannot be a bare expression container, and no script statements can appear
 								after it.
 							</p>
