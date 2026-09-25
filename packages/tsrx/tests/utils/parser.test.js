@@ -10206,10 +10206,14 @@ describe('syntax errors in an element that is a value', () => {
 			'export function App() @{\n\tconst a = <div><b>1</b</div>;\n\t<p>{a}</p>\n}',
 			"'>' expected. (2:23)",
 		],
-		['a closing tag as an argument', 'x = import(</>);', 'Unexpected token (1:12)'],
-		['a closing tag as an index', 'x = a[(</>)];', 'Unexpected token (1:8)'],
-		['a closing tag as an operand', 'x = -(< />);', 'Unexpected token (1:8)'],
-		['a closing tag after yield', 'function* g() {\n\tyield </>;\n}', 'Unexpected token (2:8)'],
+		// A closing tag where an element starts is reported at its `<`, where
+		// TypeScript expects an expression (#653)
+		['a closing tag as an argument', 'x = import(</>);', 'Unexpected token (1:11)'],
+		['a closing tag as an index', 'x = a[(</>)];', 'Unexpected token (1:7)'],
+		['a closing tag as an operand', 'x = -(< />);', 'Unexpected token (1:6)'],
+		['a closing tag after yield', 'function* g() {\n\tyield </>;\n}', 'Unexpected token (2:7)'],
+		['a closing tag in parentheses', 'x = (</>);', 'Unexpected token (1:5)'],
+		['a closing tag where a statement starts', 'a;\n</div>', 'Unexpected token (2:0)'],
 		[
 			'text that reads nothing in a setup statement',
 			'export function App() @{\n\tconst f = <b><T,>() => 1;\n\t<main />\n}',
@@ -10222,6 +10226,251 @@ describe('syntax errors in an element that is a value', () => {
 
 		for (const outcome of outcomes) {
 			expect(outcome).toMatchObject({ ok: false, message });
+		}
+	});
+});
+
+describe('an element as an attribute value without braces (#654)', () => {
+	const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+
+	/**
+	 * The children of the value of the `attr` attribute: each text by its value,
+	 * each element by its tag and children.
+	 *
+	 * @param {unknown} ast
+	 * @returns {unknown[]}
+	 */
+	function value_children(ast) {
+		const attribute = /** @type {ESTreeJSX.JSXAttribute} */ (
+			find_first(
+				ast,
+				(node) =>
+					node.type === 'JSXAttribute' &&
+					/** @type {ESTreeJSX.JSXAttribute} */ (node).name.name === 'attr',
+			)
+		);
+		/** @param {AST.Node} node @returns {unknown[]} */
+		const read = (node) =>
+			node_children(node).map((child) =>
+				child.type === 'JSXText'
+					? child.value
+					: child.type === 'JSXElement'
+						? {
+								[/** @type {{ name: string }} */ (child.openingElement.name).name]: read(child),
+							}
+						: child.type,
+			);
+		return read(/** @type {AST.Node} */ (/** @type {unknown} */ (attribute.value)));
+	}
+
+	// acorn-typescript's JSX parser reads the element, taking each text token as
+	// a child. Its text was read as a template's, which ends at a comment, so
+	// the parser read the same empty text there until memory ran out. A comment
+	// is text there, as in TSX.
+	/** @type {Array<[string, string, unknown[]]>} */
+	const cases = [
+		['a block comment', 'const el = <div attr=<b>/* c */</b> />;', ['/* c */']],
+		['a block comment after text', 'const el = <div attr=<b>a /* c */ b</b> />;', ['a /* c */ b']],
+		['a line comment', 'const el = <div attr=<b>// c\n</b> />;', ['// c\n']],
+		['a line comment after text', 'const el = <div attr=<b> // c\n</b> />;', [' // c\n']],
+		// It was text on main too, but a text of its own
+		['a line comment on its own line', 'const el = <div attr=<b>\n// c\n</b> />;', ['\n// c\n']],
+		['a comment in a fragment', 'const el = <div attr=<>/* c */</> />;', ['/* c */']],
+		[
+			'a comment in a nested element',
+			'const el = <div attr=<b>a<i>/* c */</i></b> />;',
+			['a', { i: ['/* c */'] }],
+		],
+		[
+			'a comment in an element in a template',
+			'export function App() @{\n\t<main>\n\t\t<div attr=<b>/* c */</b> />\n\t</main>\n}',
+			['/* c */'],
+		],
+		[
+			'a comment in an element in a setup statement',
+			'export function App() @{\n\tconst el = <div attr=<b>/* c */</b> />;\n\t<main>{el}</main>\n}',
+			['/* c */'],
+		],
+		[
+			'a comment in an element in a function',
+			'function App() {\n\treturn <div attr=<b>// c\n</b> />;\n}',
+			['// c\n'],
+		],
+		// The other children read as they did
+		['text', 'const el = <div attr=<b>text</b> />;', ['text']],
+		['an element', 'const el = <div attr=<b><i /></b> />;', [{ i: [] }]],
+		['a container', 'const el = <div attr=<b>{x}</b> />;', ['JSXExpressionContainer']],
+	];
+
+	it.each(cases)('reads %s', async (_label, source, expected) => {
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], label).toEqual([]);
+			expect(value_children(outcome.ast), label).toEqual(expected);
+		}
+	});
+
+	it('reports a closing tag that does not match it', async () => {
+		const source = 'const el = <div attr= <b>// c\n"foo">text</div>;';
+		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
+
+		for (const outcome of outcomes) {
+			expect(outcome).toMatchObject({
+				ok: false,
+				message: 'Expected corresponding JSX closing tag for <b> (2:10)',
+			});
+		}
+	});
+});
+
+describe('a `/` in the opening tag of an element in a template (#655)', () => {
+	const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+
+	/**
+	 * A node without its locations.
+	 * @param {unknown} node
+	 */
+	function without_locations(node) {
+		return JSON.parse(
+			JSON.stringify(node, (key, value) =>
+				key === 'start' || key === 'end' || key === 'loc' || key === 'range' || key === 'metadata'
+					? undefined
+					: value,
+			),
+		);
+	}
+
+	// While an opening tag is read, its element isn't on the path yet, so the
+	// rule that reads a `/` or `#` in a template's text as text took the tag's
+	// `/` and a spread argument's for text.
+	/** @type {Array<[string, string, string]>} */
+	const self_closing = [
+		[
+			'a space before the `>`',
+			'export function App() @{\n\t<main>\n\t\t<div / >\n\t</main>\n}',
+			'export function App() @{\n\t<main>\n\t\t<div />\n\t</main>\n}',
+		],
+		[
+			'a line break before the `>`',
+			'export function App() @{\n\t<main>\n\t\t<div a="1" /\n\t\t>\n\t</main>\n}',
+			'export function App() @{\n\t<main>\n\t\t<div a="1" />\n\t</main>\n}',
+		],
+		[
+			'a comment before the `/`',
+			'export function App() @{\n\t<main>\n\t\t<div /* c */ / >\n\t</main>\n}',
+			'export function App() @{\n\t<main>\n\t\t<div /* c */ />\n\t</main>\n}',
+		],
+		[
+			'text after the tag',
+			'export function App() @{\n\t<main><div / >/path #tag</main>\n}',
+			'export function App() @{\n\t<main><div />/path #tag</main>\n}',
+		],
+		[
+			'an element in a function',
+			'function App() {\n\treturn <main><div {...a} / ></main>;\n}',
+			'function App() {\n\treturn <main><div {...a} /></main>;\n}',
+		],
+		[
+			'an element in a setup statement',
+			'export function App() @{\n\tconst el = <main><div / ></main>;\n\t<p>{el}</p>\n}',
+			'export function App() @{\n\tconst el = <main><div /></main>;\n\t<p>{el}</p>\n}',
+		],
+		[
+			'an element in an attribute value',
+			'export function App() @{\n\t<main>\n\t\t<div a=<b / > />\n\t</main>\n}',
+			'export function App() @{\n\t<main>\n\t\t<div a=<b /> />\n\t</main>\n}',
+		],
+	];
+
+	it.each(self_closing)(
+		'reads a self-closing tag with %s like one without',
+		async (_label, source, valid) => {
+			const outcomes = await parse_in_worker_with_ast(
+				[source, valid].flatMap((input) => modes.map((options) => ({ source: input, options }))),
+			);
+
+			for (const [index, options] of modes.entries()) {
+				const outcome = outcomes[index];
+				const valid_outcome = outcomes[modes.length + index];
+				const label = `${JSON.stringify(source)} with ${JSON.stringify(options)}`;
+				if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+				if (!valid_outcome.ok) throw new Error(`${JSON.stringify(valid)} threw`);
+				expect(outcome.errors ?? [], label).toEqual([]);
+				expect(without_locations(outcome.ast), label).toEqual(without_locations(valid_outcome.ast));
+			}
+		},
+	);
+
+	/** @type {Array<[string, string, object]>} */
+	const spread_arguments = [
+		[
+			'a division',
+			'export function App() @{\n\t<main>\n\t\t<div {...{ a: b / 2 }} />\n\t</main>\n}',
+			{
+				type: 'ObjectExpression',
+				properties: [{ value: { type: 'BinaryExpression', operator: '/' } }],
+			},
+		],
+		[
+			'a division in an element in a function',
+			'function App() {\n\treturn <main><div {...[b / 2]} /></main>;\n}',
+			{ type: 'ArrayExpression', elements: [{ type: 'BinaryExpression', operator: '/' }] },
+		],
+		[
+			'a division in a setup statement',
+			'export function App() @{\n\tconst el = <main><div {...[b / 2]} /></main>;\n\t<p>{el}</p>\n}',
+			{ type: 'ArrayExpression', elements: [{ type: 'BinaryExpression', operator: '/' }] },
+		],
+		[
+			'a regular expression',
+			'export function App() @{\n\t<main>\n\t\t<div {...{ a: /re/.test(s) }} />\n\t</main>\n}',
+			{ type: 'ObjectExpression', properties: [{ value: { type: 'CallExpression' } }] },
+		],
+		[
+			'a private name',
+			'class C {\n\t#p = {};\n\trender() @{\n\t\t<main>\n\t\t\t<div {...this.#p} />\n\t\t</main>\n\t}\n}',
+			{ type: 'MemberExpression', property: { type: 'PrivateIdentifier', name: 'p' } },
+		],
+	];
+
+	it.each(spread_arguments)(
+		"reads %s in a spread attribute's argument as code",
+		async (_label, source, argument) => {
+			const outcomes = await parse_in_worker_with_ast(
+				modes.map((options) => ({ source, options })),
+			);
+
+			for (const [index, outcome] of outcomes.entries()) {
+				const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+				if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+				expect(outcome.errors ?? [], label).toEqual([]);
+				const spread = /** @type {ESTreeJSX.JSXSpreadAttribute} */ (
+					find_first(outcome.ast, (node) => node.type === 'JSXSpreadAttribute')
+				);
+				expect(spread.argument, label).toMatchObject(argument);
+			}
+		},
+	);
+
+	it('still reads a `/` and a `#` that start a child as text', async () => {
+		const source = 'export function App() @{\n\t<main><div>/path #tag</div> / 2</main>\n}';
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const outcome of outcomes) {
+			if (!outcome.ok) throw new Error(outcome.message);
+			const main = /** @type {ESTreeJSX.JSXElement} */ (
+				find_first(outcome.ast, (node) => node.type === 'JSXElement')
+			);
+			expect(
+				node_children(/** @type {AST.Node} */ (/** @type {unknown} */ (main))).map((child) =>
+					child.type === 'JSXText'
+						? child.value
+						: node_children(child).map((c) => c.type === 'JSXText' && c.value),
+				),
+			).toEqual([['/path #tag'], ' / 2']);
 		}
 	});
 });
