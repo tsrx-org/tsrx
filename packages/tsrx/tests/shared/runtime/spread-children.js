@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+	ExpressionChildrenInterleavedApp,
 	SpreadChildrenApp,
 	SpreadChildrenComponentApp,
 	SpreadChildrenFragmentApp,
+	SpreadChildrenInterleavedApp,
 } from './spread-children-components.tsrx';
 
 /**
@@ -51,6 +53,14 @@ export function runSpreadChildrenRuntimeTests() {
 		it('passes spread children to a component', async () => {
 			await mount(SpreadChildrenComponentApp, { items: ['a', 'b'] });
 			expect(texts('.spread-children-box > i')).toEqual(['a', 'b', 'end']);
+		});
+
+		it('renders a spread child at its source position before a later setup statement', async () => {
+			await mount(ExpressionChildrenInterleavedApp, { items: ['a', 'b'] });
+			expect(texts('.expression-children-interleaved > li')).toEqual(['a', 'b', '3']);
+
+			await mount(SpreadChildrenInterleavedApp, { items: ['a', 'b'] });
+			expect(texts('.spread-children-interleaved > li')).toEqual(['a', 'b', '3']);
 		});
 	});
 }

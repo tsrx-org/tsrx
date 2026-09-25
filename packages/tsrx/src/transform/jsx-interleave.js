@@ -12,6 +12,7 @@
 /** @import * as ESTreeJSX from 'estree-jsx' */
 
 import * as b from '../utils/builders.js';
+import { has_location } from '../utils/ast.js';
 
 /**
  * Returns true when the body contains a non-JSX statement that appears
@@ -40,7 +41,8 @@ export function is_interleaved_body(body_nodes, is_jsx_child) {
 
 /**
  * Only JSX nodes that evaluate to a single expression can be hoisted into a
- * `const`. Static text children (`JSXText`) and comment-only containers
+ * `const`: elements, fragments, `{expr}` containers, and `{...expr}` spread
+ * children. Static text children (`JSXText`) and comment-only containers
  * (`{/* … *\/}`) are inert and don't need capturing — their position relative
  * to mutations doesn't change output, and neither has an expression to bind.
  *
@@ -55,34 +57,41 @@ export function is_capturable_jsx_child(jsx) {
 	if (jsx.metadata?.tsrx_reactive_block === true) return false;
 	const t = jsx.type;
 	if (t === 'JSXExpressionContainer') return jsx.expression.type !== 'JSXEmptyExpression';
-	return t === 'JSXElement' || t === 'JSXFragment';
+	return t === 'JSXElement' || t === 'JSXFragment' || t === 'JSXSpreadChild';
 }
 
 /**
  * Build a `VariableDeclaration` that captures a JSX child into a const at
- * its source position, along with a JSXExpressionContainer referencing the
- * capture. The caller inserts the declaration into the enclosing block's
- * statements in source order and uses the reference in place of the JSX
- * child inside the returned fragment.
+ * its source position, along with a child referencing the capture: a
+ * JSXExpressionContainer, or a JSXSpreadChild for a spread child, which
+ * captures the value it spreads. The caller inserts the declaration into the
+ * enclosing block's statements in source order and uses the reference in
+ * place of the JSX child inside the returned fragment.
  *
  * @param {ESTreeJSX.JSXCapturableChild} jsx
  * @param {number} capture_index
  * @param {(id: AST.Identifier, init: AST.Expression) => AST.Identifier} [anchor_id] gives the
  *   capture's NAME an authored origin — the only anchorable token when the captured
  *   expression itself starts with punctuation
- * @returns {{ declaration: AST.VariableDeclaration, reference: ESTreeJSX.JSXExpressionContainer }}
+ * @returns {{ declaration: AST.VariableDeclaration, reference: ESTreeJSX.JSXExpressionContainer | ESTreeJSX.JSXSpreadChild }}
  */
 export function capture_jsx_child(jsx, capture_index, anchor_id) {
 	const name = `_tsrx_child_${capture_index}`;
-	const init = jsx.type === 'JSXExpressionContainer' ? jsx.expression : jsx;
+	const init =
+		jsx.type === 'JSXExpressionContainer' || jsx.type === 'JSXSpreadChild' ? jsx.expression : jsx;
 
 	const declaration = b.const(anchor_id ? anchor_id(b.id(name), init) : b.id(name), init);
 
 	// NOTE: JSXExpressionContainer nodes are intentionally created without
 	// loc — they're synthetic wrappers whose source positions don't
 	// correspond to source-map entries and adding loc causes Volar mapping
-	// failures.
-	const reference = b.jsx_expression_container(b.id(name));
+	// failures. A spread child keeps its authored `{...}` location, which the
+	// reference still prints, so a platform that reports spread children
+	// points at the source.
+	const reference =
+		jsx.type === 'JSXSpreadChild'
+			? b.jsx_spread_child(b.id(name), has_location(jsx) ? jsx : undefined)
+			: b.jsx_expression_container(b.id(name));
 
 	return { declaration, reference };
 }

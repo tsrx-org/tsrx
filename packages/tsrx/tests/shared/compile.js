@@ -2213,6 +2213,36 @@ export function App() @{
 				expect(virtual_parse_diagnostics(code), code).toEqual([]);
 			});
 		}
+
+		// A setup statement after the spread child makes the body interleaved:
+		// the spread's value is captured at its source position, like an
+		// expression child's, so the reassignment after it doesn't change it.
+		it('captures a spread child before a later setup statement', () => {
+			const source = `export function App({ items }: { items: string[] }) @{
+	<ul>
+		{...items}
+		@{
+			items = [...items, 'late'];
+		}
+		<li>{items.length}</li>
+	</ul>
+}`;
+			const { code, errors } = compile(source, 'App.tsrx', { collect: true });
+
+			const capture = code.indexOf('const _tsrx_child_0 = items;');
+			expect(capture, code).toBeGreaterThan(-1);
+			expect(code.indexOf("items = [...items, 'late'];")).toBeGreaterThan(capture);
+			expect(code).toContain(
+				`return <>${name === 'solid' ? '{_tsrx_child_0}' : '{..._tsrx_child_0}'}{_tsrx_child_1}</>;`,
+			);
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+
+			// Vue still reports the captured spread child at its authored location.
+			const start = source.indexOf('{...items}');
+			expect(errors.map((error) => [error.pos, error.end])).toEqual(
+				name === 'vue' ? [[start, start + '{...items}'.length]] : [],
+			);
+		});
 	});
 
 	describe(`[${name}] component export shapes`, () => {

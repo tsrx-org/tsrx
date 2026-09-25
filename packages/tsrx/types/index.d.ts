@@ -1004,7 +1004,8 @@ declare module 'estree-jsx' {
 	type JSXCapturableChild =
 		| AST.TSRXJSXElement
 		| AST.TSRXJSXFragment
-		| (JSXExpressionContainer & { expression: AST.Expression });
+		| (JSXExpressionContainer & { expression: AST.Expression })
+		| JSXSpreadChild;
 
 	/** An attribute accepted by and emitted from the shared JSX transformer. */
 	type JSXAttributeNode = JSXAttribute | JSXSpreadAttribute;
