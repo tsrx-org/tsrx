@@ -1095,3 +1095,56 @@ export const lazy = import.defer('./lazy.js', { with: { type: 'json' } },);
 		);
 	});
 });
+
+describe('`@` after `yield` (sveltejs/acorn-typescript#128)', () => {
+	/**
+	 * The first `yield` in `value`, depth first.
+	 * @param {unknown} value
+	 * @returns {AST.YieldExpression | undefined}
+	 */
+	function find_yield(value) {
+		if (!value || typeof value !== 'object') return undefined;
+		const node = /** @type {Record<string, unknown>} */ (value);
+		if (node.type === 'YieldExpression') return /** @type {AST.YieldExpression} */ (value);
+		for (const [key, child] of Object.entries(node)) {
+			if (key === 'loc' || key === 'metadata') continue;
+			const found = Array.isArray(child) ? child.map(find_yield).find(Boolean) : find_yield(child);
+			if (found) return found;
+		}
+		return undefined;
+	}
+
+	it('takes a decorated class as the argument of `yield`', () => {
+		/** @type {Array<[source: string, name: string | null]>} */
+		const cases = [
+			['function* g() { yield @dec class {}; }', null],
+			['function* g() { f(yield @dec class {}); }', null],
+			['function* g() { yield /* c */ @dec class A {} }', 'A'],
+		];
+		for (const [source, name] of cases) {
+			const { ast, errors } = parse(source);
+			expect(errors).toEqual([]);
+			const yielded = as_type(find_yield(ast), 'YieldExpression');
+			expect(yielded.delegate).toBe(false);
+			const argument = as_type(yielded.argument, 'ClassExpression');
+			expect(argument.id?.name ?? null).toBe(name);
+			expect(
+				/** @type {{ decorators: Array<{ expression: AST.Identifier }> }} */ (
+					/** @type {unknown} */ (argument)
+				).decorators.map((decorator) => decorator.expression.name),
+			).toEqual(['dec']);
+		}
+	});
+
+	it('ends `yield` at a line break before the `@`', () => {
+		const { ast, errors } = parse('function* g() {\n  yield\n  @dec class A {}\n}');
+		expect(errors).toEqual([]);
+		const body = as_type(as_type(ast.body[0], 'FunctionDeclaration').body, 'BlockStatement').body;
+		expect(body.map((statement) => statement.type)).toEqual([
+			'ExpressionStatement',
+			'ClassDeclaration',
+		]);
+		const yielded = as_type(as_type(body[0], 'ExpressionStatement').expression, 'YieldExpression');
+		expect(yielded.argument).toBe(null);
+	});
+});

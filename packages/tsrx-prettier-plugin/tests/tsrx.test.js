@@ -321,6 +321,60 @@ function D() @{
 `,
 		);
 	});
+
+	// Like an element, a `@{ … }` value or a directive isn't a left-hand-side
+	// expression (#426): it hugs its parentheses as a callee, and breaks inside
+	// them before a member access, index, non-null assertion, or tag.
+	test('a value before a subscript keeps its parentheses', async () => {
+		for (const [input, expected] of [
+			['const a = (@{ <b /> })(x);', 'const a = (@{\n  <b />\n})(x);\n'],
+			[
+				'const a = (@for (const x of xs) { <b /> })(x);',
+				'const a = (@for (const x of xs) {\n  <b />\n})(x);\n',
+			],
+			[
+				'const a = (@switch (x) { @case 1: { <b /> } })(x);',
+				'const a = (@switch (x) {\n  @case 1: {\n    <b />\n  }\n})(x);\n',
+			],
+			[
+				'const a = (@try { <b /> } @catch { <i /> })(x);',
+				'const a = (@try {\n  <b />\n} @catch {\n  <i />\n})(x);\n',
+			],
+			['const a = new (@{ <b /> })();', 'const a = new (@{\n  <b />\n})();\n'],
+			['const a = (@{ <b /> }).foo;', 'const a = (\n  @{\n    <b />\n  }\n).foo;\n'],
+			['const a = (@{ <b /> })`t`;', 'const a = (\n  @{\n    <b />\n  }\n)`t`;\n'],
+			['const a = (@if (x) { <b /> })!;', 'const a = (\n  @if (x) {\n    <b />\n  }\n)!;\n'],
+			['const a = (@if (x) { <b /> })[0];', 'const a = (\n  @if (x) {\n    <b />\n  }\n)[0];\n'],
+		]) {
+			await expectFormat(input, expected);
+		}
+	});
+
+	test('`yield` takes a value as its argument (#547)', async () => {
+		await expectFormat(
+			'export function* nodes() { yield @{ <div /> }; yield @if (ok) { <b /> }; }',
+			`export function* nodes() {
+  yield (
+    @{
+      <div />
+    }
+  );
+  yield (
+    @if (ok) {
+      <b />
+    }
+  );
+}
+`,
+		);
+	});
+
+	test('a comment after a directive keyword stays where Prettier keeps it after the statement keyword (#477)', async () => {
+		await expectFormat(
+			'function A() @{\n  @try /* c */ {\n    @if /* d */ (x) {\n      <b />\n    }\n  } @catch (e) {\n    <p />\n  }\n}',
+			'function A() @{\n  @try /* c */ {\n    @if (/* d */ x) {\n      <b />\n    }\n  } @catch (e) {\n    <p />\n  }\n}\n',
+		);
+	});
 });
 
 describe('elements', () => {
@@ -390,6 +444,33 @@ const A = () => (
 );
 `,
 		);
+	});
+
+	// An element isn't a left-hand-side expression, as in TypeScript (#426).
+	test('a `(`, `[`, or template literal on the line after an element starts a statement', async () => {
+		const input = 'const a = <b>x</b>\n(foo)\nconst c = <b />\n[1].map(f)\nconst d = <b />\n`t`\n';
+		const expected =
+			'const a = <b>x</b>;\nfoo;\nconst c = <b />;\n[1].map(f);\nconst d = <b />;\n`t`;\n';
+		await expectFormat(input, expected);
+		expect(await prettier.format(input, { parser: 'typescript', filepath: 'a.tsx' })).toBe(
+			expected,
+		);
+	});
+
+	test('an element before a subscript keeps its parentheses', async () => {
+		for (const source of [
+			'const a = (<b>x</b>)(foo);\n',
+			'const c = (<b />)[1].map(f);\n',
+			'const d = (<b />)`t`;\n',
+			'const e = (<b />)?.foo;\n',
+			'(<b />)(x);\n',
+			'const a = (<div>\n  <b>x</b>\n</div>)(foo);\n',
+		]) {
+			await expectFormat(source, source);
+			expect(await prettier.format(source, { parser: 'typescript', filepath: 'a.tsx' })).toBe(
+				source,
+			);
+		}
 	});
 });
 
