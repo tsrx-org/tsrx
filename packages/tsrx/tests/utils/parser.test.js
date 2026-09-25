@@ -401,15 +401,15 @@ describe('TSRX parser', () => {
 			expect(as_type(declaration, 'ImportDeclaration').specifiers[0].local.name).toBe('defer');
 		});
 
-		it('keeps the existing AST shape for ordinary dynamic import options', () => {
+		it('gives an ordinary dynamic import the same `options` shape', () => {
 			const expression = findNode(
 				"const feature = import('./feature.json', { with: { type: 'json' } });",
 				'ImportExpression',
 			);
 
 			expect(expression.phase).toBeUndefined();
-			expect(expression.options).toBeUndefined();
-			expect(expression.arguments).toHaveLength(1);
+			expect(expression.options?.type).toBe('ObjectExpression');
+			expect(expression).not.toHaveProperty('arguments');
 		});
 
 		it('rejects deferred default, named, and bare imports', () => {
@@ -2335,7 +2335,9 @@ abc
 	tail</div>
 }`);
 
-		expect(texts).toEqual(['z', 'tail']);
+		// The text starts at the closing tag, as after a self-closing tag, and
+		// leaves the comment out
+		expect(texts).toEqual(['z', ' \n\ttail']);
 		expect(comments.map((comment) => comment.type + ':' + comment.value)).toEqual(['Line: note']);
 	});
 
@@ -3963,7 +3965,9 @@ foo();`;
 		const text = pre.children.find(
 			(child) => child.type === 'JSXText' && child.value.includes('1'),
 		);
-		expect(as_type(text, 'JSXText').value).toBe('1');
+		// The text keeps the whitespace after the closing tag before it, which
+		// JSX trims as layout
+		expect(as_type(text, 'JSXText').value).toBe(' \n    \n    1');
 	});
 
 	it('parses parenthesized conditional JSX spread attributes in render output', () => {
@@ -8212,6 +8216,67 @@ describe('wrapped destructuring assignment targets', () => {
 	});
 });
 
+describe('`var` redeclaring a catch parameter', () => {
+	// Annex B lets `var` in a catch block redeclare a catch parameter that is a
+	// plain name, as acorn and TypeScript allow. Parsed in a worker, so a parse
+	// that never returns fails the test instead of stalling the run.
+	const modes = [
+		undefined,
+		{ collect: true, comments: [], preserveParens: true },
+		{ loose: true, comments: [] },
+	];
+	/** @param {string[]} sources */
+	const in_every_mode = (sources) =>
+		sources.flatMap((source) => modes.map((options) => ({ source, options })));
+
+	it('lets `var` redeclare a catch parameter that is a plain name', async () => {
+		const sources = [
+			'export function read() {\n\ttry { throw 1; }\n\tcatch (error) { var error = 2; return error; }\n}',
+			'try {} catch (e: unknown) { var e; }',
+			'try {} catch (e) { for (var e of []) {} }',
+			'try {} catch (e) { { var e; } }',
+			'try {} catch (e) { try {} catch (e) { var e; } }',
+			'function App() @{ @try { <div /> } @catch (e) { var e = 1; <span>{e}</span> } }',
+			'function App() { return @try { <div /> } @catch (e) { var e = 1; <span>{e}</span> }; }',
+		];
+
+		const outcomes = await parse_in_worker(in_every_mode(sources));
+
+		expect(outcomes).toEqual(
+			sources.flatMap(() => [
+				{ ok: true, errors: undefined },
+				{ ok: true, errors: [] },
+				{ ok: true, errors: [] },
+			]),
+		);
+	});
+
+	it('still rejects the redeclarations Annex B does not allow', async () => {
+		// A destructured parameter and a function declaration are ECMAScript early
+		// errors that TypeScript doesn't report; `let` conflicts in TypeScript too.
+		const sources = [
+			['try {} catch ({ e }) { var e; }', 'e'],
+			['try {} catch ([e]) { var e; }', 'e'],
+			['try {} catch (e) { let e; }', 'e'],
+			['try {} catch (e) { function e() {} }', 'e'],
+			['function App() @{ @try { <div /> } @catch (e, reset) { var reset; <span /> } }', 'reset'],
+		];
+
+		const outcomes = await parse_in_worker(in_every_mode(sources.map(([source]) => source)));
+
+		expect(outcomes).toEqual(
+			sources.flatMap(([, name]) => {
+				const message = `Identifier '${name}' has already been declared`;
+				return [
+					{ ok: false, message, pos: expect.any(Number) },
+					{ ok: true, errors: [message] },
+					{ ok: true, errors: [message] },
+				];
+			}),
+		);
+	});
+});
+
 describe('comments around empty statements', () => {
 	/**
 	 * @param {AST.Comment[] | undefined} comments
@@ -8796,5 +8861,114 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				pos: 11,
 			})),
 		);
+	});
+});
+
+describe('JSX whitespace in template text', () => {
+	const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+
+	/**
+	 * The children of the first `<div>` or fragment: each text by its value,
+	 * each element by its tag.
+	 *
+	 * @param {unknown} ast
+	 * @returns {string[]}
+	 */
+	function children(ast) {
+		const container = find_first(
+			ast,
+			(node) =>
+				node.type === 'JSXFragment' ||
+				(node.type === 'JSXElement' &&
+					/** @type {AST.TSRXJSXElement} */ (node).openingElement.name.type === 'JSXIdentifier' &&
+					/** @type {{ name: string }} */ (
+						/** @type {AST.TSRXJSXElement} */ (node).openingElement.name
+					).name === 'div'),
+		);
+		return node_children(/** @type {AST.Node} */ (container)).map((child) =>
+			child.type === 'JSXText'
+				? child.value
+				: child.type === 'JSXElement'
+					? `<${/** @type {{ name: string }} */ (child.openingElement.name).name}>`
+					: child.type,
+		);
+	}
+
+	/** @type {Array<[string, string, string[]]>} */
+	const cases = [
+		// The text after a closing tag starts at the tag, so a space there stays
+		// in it whatever the closed element's body ends with (#442)
+		[
+			'a space after a closing tag whose body ends in a line break',
+			'export function App() @{\n\t<div>\n\t\t<span>\n\t\t\t<b>1</b>\n\t\t</span> 2\n\t</div>\n}',
+			['<span>', ' 2\n\t'],
+		],
+		[
+			'the same in a fragment',
+			'export function App() @{\n\t<>\n\t\t<span>\n\t\t\t<b>1</b>\n\t\t</span> 2\n\t</>\n}',
+			['<span>', ' 2\n\t'],
+		],
+		// As after a self-closing tag, the text keeps the line break that JSX
+		// trims as layout
+		[
+			'text on the line after a closing tag',
+			'<div>\n\t<b>1</b>\n\ttwo\n</div>;',
+			['<b>', '\n\ttwo\n'],
+		],
+		[
+			'text on the line after a self-closing tag',
+			'<div>\n\t<b />\n\ttwo\n</div>;',
+			['<b>', '\n\ttwo\n'],
+		],
+		// A comment adds nothing to the text: the whitespace on its two sides is
+		// one run, layout when it has a line break (#540)
+		[
+			'a block comment on the line after a closing tag',
+			'<div>\n\t<b>t</b>\n\t/* c */ <i />\n</div>;',
+			['<b>', '<i>'],
+		],
+		[
+			'a block comment on the line after a self-closing tag',
+			'<div>\n\t<b />\n\t/* c */ <i />\n</div>;',
+			['<b>', '<i>'],
+		],
+		[
+			'a line comment after a closing tag',
+			'<div>\n\t<b>t</b> // c\n\t<i />\n</div>;',
+			['<b>', '<i>'],
+		],
+		[
+			'a block comment between children on one line',
+			'<div><b>t</b> /* c */ <i /></div>;',
+			['<b>', '  ', '<i>'],
+		],
+		// JSX whitespace is ASCII: a non-breaking space is text (#444)
+		[
+			'a non-breaking space at the start of a line',
+			'<div>\n\t\u00a0<b>x</b>\n</div>;',
+			['\n\t\u00a0', '<b>'],
+		],
+		[
+			'a non-breaking space on its own line',
+			'<div>\n\t<b>x</b>\n\t\u00a0\n</div>;',
+			['<b>', '\n\t\u00a0\n'],
+		],
+		[
+			'a non-breaking space between children',
+			'<div><b>x</b>\u00a0<i /></div>;',
+			['<b>', '\u00a0', '<i>'],
+		],
+		['a tab on its own line', '<div>\n\t<b>x</b>\n\t\t\n</div>;', ['<b>']],
+	];
+
+	it.each(cases)('reads %s like JSX', async (_label, source, expected) => {
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], label).toEqual([]);
+			expect(children(outcome.ast), label).toEqual(expected);
+		}
 	});
 });
