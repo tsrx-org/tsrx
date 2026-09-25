@@ -2804,11 +2804,22 @@ function printTsrxNode(node, path, options, print, args) {
 					[line, path.call((childPath) => print(childPath, { isConditionalTest: true }), 'right')],
 				]);
 			} else {
+				// Like Prettier's `shouldIndentIfInlining`, the value of a declarator,
+				// an assignment, a class field, or an object property is already
+				// indented after the operator (see `printAssignment`)
+				const parent = /** @type {AST.Node | null} */ (path.parent);
+				const isIndentedByParent =
+					!shouldInlineLogicalExpression(node) &&
+					(parent?.type === 'VariableDeclarator' ||
+						parent?.type === 'AssignmentExpression' ||
+						parent?.type === 'PropertyDefinition' ||
+						parent?.type === 'Property');
+				const right = [line, path.call(print, 'right')];
 				logicalResult = group([
 					path.call(print, 'left'),
 					' ',
 					node.operator,
-					indent([line, path.call(print, 'right')]),
+					isIndentedByParent ? right : indent(right),
 				]);
 			}
 

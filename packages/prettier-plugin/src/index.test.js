@@ -8899,6 +8899,35 @@ class A {
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('breaks after : or = before a logical value without indenting it twice', async () => {
+			const input = `class A {
+  enabled = someVeryLongVariableNameNumberOne && someVeryLongVariableNameNumberTwoooooooo;
+}
+const options = {
+  enabled: someVeryLongVariableNameNumberOne || someVeryLongVariableNameNumberTwoooooooo,
+};
+options.enabled = someVeryLongVariableNameNumberOne ?? someVeryLongVariableNameNumberTwoooooooooo;
+const enabled = someVeryLongVariableNameNumberOne && someVeryLongVariableNameNumberTwoooooooooooo;`;
+			const expected = `class A {
+  enabled =
+    someVeryLongVariableNameNumberOne &&
+    someVeryLongVariableNameNumberTwoooooooo;
+}
+const options = {
+  enabled:
+    someVeryLongVariableNameNumberOne ||
+    someVeryLongVariableNameNumberTwoooooooo,
+};
+options.enabled =
+  someVeryLongVariableNameNumberOne ??
+  someVeryLongVariableNameNumberTwoooooooooo;
+const enabled =
+  someVeryLongVariableNameNumberOne &&
+  someVeryLongVariableNameNumberTwoooooooooooo;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('keeps a value that can break by itself on the operator line', async () => {
 			const source = `const result = someFunction(
   argumentNumberOne,
