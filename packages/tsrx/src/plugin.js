@@ -3773,8 +3773,15 @@ export function TSRXPlugin(config) {
 				const is_default = next.type === tt._default;
 				if (is_default) next = this.lookahead(++ahead);
 				const declaration_start = next.start;
-				// Decorators after `export` as well are checked when they are read.
-				if (next.type === tstt.at) return;
+				// Decorators after `export` as well are checked when they are read. An
+				// at-sign construct (`@if (a) { … }`, `@{ … }`) is no decorator.
+				if (
+					next.type === tstt.at &&
+					!this.#isCodeBlockStart(declaration_start) &&
+					!this.#isJSXControlFlowDirectiveAt(declaration_start)
+				) {
+					return;
+				}
 				if (!is_default && next.type === tstt.declare && !next.containsEsc) {
 					next = this.lookahead(++ahead);
 				}

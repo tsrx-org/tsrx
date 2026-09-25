@@ -590,6 +590,11 @@ describe('decorators before `export` (sveltejs/acorn-typescript#125)', () => {
 			['@dec export interface I {}', 'interface'],
 			['@dec export { a };', '{ a }'],
 			['@dec export default abstract;', 'abstract'],
+			// At-sign constructs aren't decorators, so they don't take the ones
+			// before `export` either (a class after them would).
+			['@dec export default @if (a) { <div /> };\nclass A {}', '@if'],
+			['@dec export default @{ <div /> };\nclass A {}', '@{'],
+			['@dec export @if (a) { <div /> };', '@if'],
 		]);
 		const outcomes = await parseBothModes(cases.map(([source]) => source));
 		for (const [index, [source, declaration]] of cases.entries()) {
