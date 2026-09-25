@@ -600,6 +600,67 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * A JSX space, `{" "}`
+	 * @param {AST.Node | AST.CSS.StyleSheet} node
+	 * @returns {boolean}
+	 */
+	function isJSXSpace(node) {
+		const expression = /** @type {any} */ (node).expression;
+		return (
+			node.type === 'JSXExpressionContainer' &&
+			expression?.type === 'Literal' &&
+			expression.value === ' '
+		);
+	}
+
+	/**
+	 * JSX text that renders more than whitespace
+	 * @param {AST.Node | AST.CSS.Node | null | undefined} node
+	 * @returns {node is ESTreeJSX.JSXText & AST.NodeWithLocation}
+	 */
+	function isTextWithWords(node) {
+		return node?.type === 'JSXText' && /[^ \t\r\n]/.test(node.value);
+	}
+
+	/**
+	 * Whether JSX text with words keeps a comment that lies in it. A
+	 * `prettier-ignore` after its last word leads the next child instead, which
+	 * it keeps as written.
+	 * @param {AST.CommentWithLocation} comment
+	 * @param {AST.Node | AST.CSS.Node | null | undefined} node
+	 * @returns {boolean}
+	 */
+	function isCommentInText(comment, node) {
+		if (!isTextWithWords(node) || comment.start < node.start || comment.end > node.end) {
+			return false;
+		}
+		if (!isPrettierIgnoreComment(comment)) {
+			return true;
+		}
+		return /[^ \t\r\n]/.test(stripCommentsFromSource(comment.end, node.end));
+	}
+
+	/**
+	 * The source from `start` to `end` without its comments
+	 * @param {number} start
+	 * @param {number} end
+	 * @returns {string}
+	 */
+	function stripCommentsFromSource(start, end) {
+		let result = '';
+		let index = start;
+		while (index < end) {
+			const comment = commentsByStart.get(index);
+			if (comment) {
+				index = comment.end;
+			} else {
+				result += source[index++];
+			}
+		}
+		return result;
+	}
+
+	/**
 	 * @param {AST.Node | AST.CSS.Node | null | undefined} node
 	 * @returns {node is AST.NativeTSRXTemplateNode & AST.NodeWithLocation}
 	 */
@@ -1567,9 +1628,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 								return;
 							}
 						}
-						// Like Prettier, the comments between a fragment's `<` and `>`
-						// dangle on its opening tag: `</* note */>`
-						if (node.type === 'JSXOpeningFragment') {
+						// Like Prettier, the comments between a fragment's `<` and `>`, or
+						// its `</` and `>`, dangle on that tag: `</* note */>`, `</ /* note */>`
+						if (node.type === 'JSXOpeningFragment' || node.type === 'JSXClosingFragment') {
 							while (
 								comments[0] &&
 								comments[0].start > /** @type {AST.NodeWithLocation} */ (node).start &&
@@ -1580,6 +1641,41 @@ export function get_comment_handlers(source, comments, index = 0) {
 							if (comments.length === 0) {
 								return;
 							}
+						}
+						// The comments after an opening tag's `>` are in the element's body,
+						// where a child or the closing tag takes them, even on the tag's line
+						// (`<div>/* note */ text`)
+						if (
+							((node.type === 'JSXOpeningElement' && !node.selfClosing) ||
+								node.type === 'JSXOpeningFragment') &&
+							comments[0].start >= /** @type {AST.NodeWithLocation} */ (node).end
+						) {
+							return;
+						}
+						// A comment in JSX text (`text /* note */ more`) lies inside the text
+						// node, which the parser keeps whole around it, so no child starts
+						// after it. It dangles on the text, which prints it in place, even
+						// on the line of the child before (`{a} /* note */ text`), unless
+						// that child is a JSX space (`{" "}`), which keeps it and so prints
+						// as written. Text of only whitespace leaves its comments to the
+						// children around it, and so does text for a `prettier-ignore`
+						// after its last word (see `isCommentInText`).
+						const jsxParent = /** @type {AST.Node | undefined} */ (path.at(-1));
+						if (
+							(jsxParent?.type === 'JSXElement' || jsxParent?.type === 'JSXFragment') &&
+							!isJSXSpace(node)
+						) {
+							const siblings = /** @type {AST.Node[]} */ (jsxParent.children);
+							const next = siblings[siblings.indexOf(/** @type {AST.Node} */ (node)) + 1];
+							if (isCommentInText(comments[0], next)) {
+								return;
+							}
+						}
+						while (comments[0] && isCommentInText(comments[0], node)) {
+							pushInnerComment(node, /** @type {AST.CommentWithLocation} */ (comments.shift()));
+						}
+						if (comments.length === 0) {
+							return;
 						}
 						// Handle JSXEmptyExpression - these represent {/* comment */} in JSX
 						if (node.type === 'JSXEmptyExpression') {
