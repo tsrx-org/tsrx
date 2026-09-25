@@ -172,9 +172,10 @@ export const printers = {
 		},
 		/**
 		 * @param {AstPath<AST.Node | AST.CSS.StyleSheet>} path
+		 * @param {Options} options
 		 * @returns {((textToDoc: TextToDoc, print: PrintFn, path: AstPath, options: Options) => Promise<Doc | undefined>) | null}
 		 */
-		embed(path) {
+		embed(path, options) {
 			const node = path.node;
 
 			// CSS, GraphQL, HTML, and Markdown in template literals
@@ -204,17 +205,24 @@ export const printers = {
 			}
 
 			// Raw-text `<script>` bodies: the parser mirrors the element's `content` as
-			// a single JSXText child. Format it with Prettier's TypeScript parser (a
-			// superset of JS, so plain bodies format identically) the same way <style>
-			// bodies are formatted as CSS above.
+			// a single JSXText child. Format it with the parser for the script's type
+			// (see inferScriptParser) the same way <style> bodies are formatted as CSS
+			// above, and keep a body of any other type as written.
 			if (node.type === 'JSXText') {
 				const parent = /** @type {AST.TSRXJSXElement | null} */ (path.getParentNode());
 				if (isRawScriptElement(parent)) {
+					const parser = inferScriptParser(/** @type {AST.TSRXJSXElement} */ (parent), options);
 					return async (textToDoc) => {
 						try {
-							const body = await textToDoc(node.value, {
-								parser: 'typescript',
-							});
+							if (!parser) {
+								return printUnformattedRawText(node.value);
+							}
+							const body = await textToDoc(
+								parser === 'markdown'
+									? dedentString(node.value.replace(/^[^\S\n]*\n/u, ''))
+									: node.value,
+								{ parser },
+							);
 							// Drop the program's trailing hardline; printElement places the
 							// closing tag on its own line already.
 							return stripTrailingHardline(body);
@@ -489,6 +497,127 @@ function isRawScriptElement(node) {
 }
 
 /**
+ * The parser for the body of a raw-text `<script>`, like Prettier's HTML
+ * `inferScriptParser`: none for a script with `src`, the parser of its `lang`
+ * or `type`, and, like a script with neither, JavaScript's for code. This
+ * plugin formats JavaScript with Prettier's TypeScript parser (a superset of
+ * it, so plain bodies format the same) instead of Babel's. A body without a
+ * parser, like a template's, prints as written, and so does one whose `lang`
+ * or `type` is an expression.
+ * @param {AST.TSRXJSXElement} element
+ * @param {Options} options
+ * @returns {string | undefined}
+ */
+function inferScriptParser(element, options) {
+	/** @type {Map<string, string | null>} */
+	const attributes = new Map();
+	for (const attribute of element.openingElement.attributes) {
+		if (attribute.type !== 'JSXAttribute' || attribute.name.type !== 'JSXIdentifier') {
+			continue;
+		}
+		const { value } = attribute;
+		const literal = value?.type === 'JSXExpressionContainer' ? value.expression : value;
+		attributes.set(
+			attribute.name.name,
+			!literal
+				? ''
+				: literal.type === 'Literal' && typeof literal.value === 'string'
+					? literal.value
+					: null,
+		);
+	}
+	if (attributes.has('src')) {
+		return undefined;
+	}
+	const type = attributes.get('type');
+	const lang = attributes.get('lang');
+	if (type === null || lang === null) {
+		return undefined;
+	}
+	const parser =
+		!lang && !type
+			? 'babel'
+			: (inferParserByLanguageName(options, lang) ?? inferParserByTypeAttribute(type));
+	return parser === 'babel' ? 'typescript' : parser;
+}
+
+/**
+ * The parser of the language named `languageName`, like Prettier's
+ * `inferParser` with a `language`: by name, then alias, then extension.
+ * @param {Options} options
+ * @param {string | undefined} languageName
+ * @returns {string | undefined}
+ */
+function inferParserByLanguageName(options, languageName) {
+	if (!languageName) {
+		return undefined;
+	}
+	const languages = /** @type {import('prettier').Plugin[]} */ (options.plugins ?? [])
+		.filter((plugin) => typeof plugin === 'object')
+		.toReversed()
+		.flatMap((plugin) => plugin.languages ?? []);
+	const language =
+		languages.find(({ name }) => name.toLowerCase() === languageName) ??
+		languages.find(({ aliases }) => aliases?.includes(languageName)) ??
+		languages.find(({ extensions }) => extensions?.includes(`.${languageName}`));
+	return language?.parsers[0];
+}
+
+/**
+ * Prettier's HTML `inferParserByTypeAttribute`: the parser for a `<script>`
+ * of this `type`, with JSON's for JSON, an import map, or speculation rules.
+ * @param {string | undefined} type
+ * @returns {string | undefined}
+ */
+function inferParserByTypeAttribute(type) {
+	switch (type) {
+		case undefined:
+		case '':
+			return undefined;
+		case 'module':
+		case 'text/javascript':
+		case 'text/babel':
+		case 'text/jsx':
+		case 'application/javascript':
+			return 'babel';
+		case 'application/x-typescript':
+			return 'typescript';
+		case 'text/markdown':
+			return 'markdown';
+		case 'text/html':
+			return 'html';
+		case 'text/x-handlebars-template':
+			return 'glimmer';
+		default:
+			return type.endsWith('json') || type.endsWith('importmap') || type === 'speculationrules'
+				? 'json'
+				: undefined;
+	}
+}
+
+/**
+ * Prettier's HTML `dedentString`: the text without the indentation its
+ * lines share.
+ * @param {string} text
+ * @returns {string}
+ */
+function dedentString(text) {
+	let minIndentation = Number.POSITIVE_INFINITY;
+	for (const lineText of text.split('\n')) {
+		const indentation = /** @type {RegExpMatchArray} */ (lineText.match(/^[\t\f\r ]*/u))[0].length;
+		if (indentation < lineText.length) {
+			minIndentation = Math.min(minIndentation, indentation);
+		}
+	}
+	return minIndentation === Number.POSITIVE_INFINITY
+		? text
+		: text
+				.split('\n')
+				.map((lineText) => lineText.slice(minIndentation))
+				.join('\n');
+}
+
+/**
  * Format a string literal according to Prettier options
  * @param {string | number | bigint | boolean | RegExp | null | undefined} value - value to format
  * @param {TsrxFormatOptions} options - Prettier options
@@ -688,6 +817,89 @@ function hasPrettierIgnore(node) {
 		node.leadingComments?.some(isPrettierIgnoreComment) ||
 		node.trailingComments?.some(isPrettierIgnoreComment) ||
 		(!isTemplateContainer && node.innerComments?.some(isPrettierIgnoreComment)),
+	);
+}
+
+/**
+ * Whether `prettier-ignore` keeps the node at `path` as written, like
+ * Prettier's `isIgnored`: a directive attached to the node (see
+ * {@link hasPrettierIgnore}), one in the `{…}` child before an element (see
+ * {@link hasJSXIgnoreComment}), or one after the last node of a `@{ … }` code
+ * block (see {@link hasCodeBlockIgnoreComment}).
+ * @param {AstPath} path - The path to the node
+ * @returns {boolean}
+ */
+function isIgnored(path) {
+	return (
+		hasPrettierIgnore(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node)) ||
+		hasJSXIgnoreComment(path) ||
+		hasCodeBlockIgnoreComment(path)
+	);
+}
+
+/**
+ * Prettier's `hasJsxIgnoreComment`: an element or fragment child of an
+ * element or fragment is kept as written when the child before it, past
+ * whitespace with a line break, is `{/* prettier-ignore *\/}`.
+ * @param {AstPath} path - The path to the node
+ * @returns {boolean}
+ */
+function hasJSXIgnoreComment(path) {
+	const { node, parent } = path;
+	if (!isJSXElementOrFragment(node) || !isJSXElementOrFragment(parent) || path.key !== 'children') {
+		return false;
+	}
+	const siblings = /** @type {AST.Node[]} */ (parent.children);
+	let index = /** @type {number} */ (path.index);
+	while (index > 0) {
+		const sibling = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (siblings[--index]);
+		if (sibling.type === 'JSXText' && !isMeaningfulJSXText(sibling.value)) {
+			continue;
+		}
+		return (
+			sibling.type === 'JSXExpressionContainer' &&
+			sibling.expression.type === 'JSXEmptyExpression' &&
+			hasPrettierIgnore(
+				/** @type {AST.Node & AST.NodeWithMaybeComments} */ (
+					/** @type {unknown} */ (sibling.expression)
+				),
+			)
+		);
+	}
+	return false;
+}
+
+/**
+ * Prettier's `isJsxElement`: a JSX element or fragment, which a TSRX template
+ * `<style>` element is too.
+ * @param {unknown} node
+ * @returns {node is AST.TSRXJSXElement | AST.TSRXJSXFragment | AST.JSXStyleElement}
+ */
+function isJSXElementOrFragment(node) {
+	const type = /** @type {AST.Node | null | undefined} */ (node)?.type;
+	return type === 'JSXElement' || type === 'JSXFragment' || type === 'JSXStyleElement';
+}
+
+/**
+ * Whether a `prettier-ignore` after the last node of a `@{ … }` code block
+ * keeps that node as written. Prettier gives the comments after a block's
+ * last statement, past any empty statement, to it as trailing comments, which
+ * `hasNodeIgnoreComment` counts. The parser keeps the ones after a code
+ * block's last node as the block's inner comments (see
+ * {@link printJSXCodeBlock}) instead.
+ * @param {AstPath} path - The path to the node
+ * @returns {boolean}
+ */
+function hasCodeBlockIgnoreComment(path) {
+	const { node, parent } = path;
+	return (
+		parent?.type === 'JSXCodeBlock' &&
+		node ===
+			(parent.render ??
+				parent.body.findLast(
+					(/** @type {AST.Node} */ statement) => statement.type !== 'EmptyStatement',
+				)) &&
+		Boolean(parent.innerComments?.some(isPrettierIgnoreComment))
 	);
 }
 
@@ -2709,7 +2921,7 @@ function printTsrxNode(node, path, options, print, args) {
 	// A `prettier-ignore` directive keeps the node's original source verbatim
 	const commentNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node);
 	const ignoredSource =
-		hasPrettierIgnore(commentNode) &&
+		isIgnored(path) &&
 		typeof options.originalText === 'string' &&
 		typeof (/** @type {AST.NodeWithLocation} */ (node).start) === 'number' &&
 		typeof (/** @type {AST.NodeWithLocation} */ (node).end) === 'number'
@@ -9908,7 +10120,8 @@ function printDebuggerStatement(node, path, options) {
  * when it fits and breaks at every `?` and `:` when it doesn't. A nested
  * conditional in the true branch gets parentheses only on one line, and one
  * in the test (a conditional type's check or extends type) breaks inside the
- * parentheses it needs there.
+ * parentheses it needs there. A conditional expression chain with an element
+ * or another template value in it prints in Prettier's JSX mode instead.
  * @param {AstPath<AST.ConditionalExpression | AST.TSConditionalType>} path
  * @param {TsrxFormatOptions} options
  * @param {PrintFn} print
@@ -9932,7 +10145,7 @@ function printConditionalExpression(path, options, print) {
 		testKeys.some((key) => /** @type {Record<string, unknown>} */ (ancestor)[key] === child);
 	const parent = /** @type {AST.Node} */ (path.getParentNode());
 	const isParentTest = parent.type === node.type && isTestOf(parent, node);
-	const forceNoIndent = parent.type === node.type && !isParentTest;
+	let forceNoIndent = parent.type === node.type && !isParentTest;
 
 	// The outermost conditional of the chain groups it
 	/** @type {AST.Node} */
@@ -9948,33 +10161,62 @@ function printConditionalExpression(path, options, print) {
 		child = ancestor;
 	}
 
-	/**
-	 * Align a branch with the first character after `? ` or `: `
-	 * @param {string} key
-	 */
-	const printBranch = (key) => {
-		const printed = nodePath.call(print, key);
-		return options.useTabs ? indent(printed) : align(2, printed);
-	};
-	const consequentIsConditional = nodePath.node[consequentKey].type === node.type;
-	const branches = [
-		line,
-		'? ',
-		consequentIsConditional ? ifBreak('', '(') : '',
-		printBranch(consequentKey),
-		consequentIsConditional ? ifBreak('', ')') : '',
-		line,
-		': ',
-		printBranch(alternateKey),
-	];
+	const consequentNode = /** @type {AST.Node} */ (nodePath.node[consequentKey]);
+	const alternateNode = /** @type {AST.Node} */ (nodePath.node[alternateKey]);
 	const isParentAlternate = parent.type === node.type && nodePath.parent[alternateKey] === node;
 	/** @type {Doc} */
-	let parts = branches;
-	if (parent.type === node.type && !isParentAlternate && !isParentTest) {
-		// A conditional consequent indents its branches past its parent's
-		parts = options.useTabs
-			? dedent(indent(branches))
-			: align(Math.max(0, (options.tabWidth ?? 2) - 2), branches);
+	let parts;
+	// JSX mode: a chain with an element or another template value anywhere
+	// in it doesn't indent, and each branch breaks inside parentheses of its
+	// own, which are analogous to an `if` statement's braces
+	const jsxMode =
+		isConditionalExpression &&
+		(isTemplateExpression(/** @type {AST.ConditionalExpression} */ (node).test) ||
+			isTemplateExpression(consequentNode) ||
+			isTemplateExpression(alternateNode) ||
+			conditionalChainContainsTemplate(/** @type {AST.ConditionalExpression} */ (child)));
+	if (jsxMode) {
+		forceNoIndent = true;
+		/** @param {Doc} doc */
+		const wrap = (doc) => [ifBreak('('), indent([softline, doc]), softline, ifBreak(')')];
+		// Except for `null`, `undefined`, and a conditional alternate
+		parts = [
+			' ? ',
+			isNilLiteral(consequentNode)
+				? nodePath.call(print, consequentKey)
+				: wrap(nodePath.call(print, consequentKey)),
+			' : ',
+			alternateNode.type === node.type || isNilLiteral(alternateNode)
+				? nodePath.call(print, alternateKey)
+				: wrap(nodePath.call(print, alternateKey)),
+		];
+	} else {
+		/**
+		 * Align a branch with the first character after `? ` or `: `
+		 * @param {string} key
+		 */
+		const printBranch = (key) => {
+			const printed = nodePath.call(print, key);
+			return options.useTabs ? indent(printed) : align(2, printed);
+		};
+		const consequentIsConditional = consequentNode.type === node.type;
+		const branches = [
+			line,
+			'? ',
+			consequentIsConditional ? ifBreak('', '(') : '',
+			printBranch(consequentKey),
+			consequentIsConditional ? ifBreak('', ')') : '',
+			line,
+			': ',
+			printBranch(alternateKey),
+		];
+		parts = branches;
+		if (parent.type === node.type && !isParentAlternate && !isParentTest) {
+			// A conditional consequent indents its branches past its parent's
+			parts = options.useTabs
+				? dedent(indent(branches))
+				: align(Math.max(0, (options.tabWidth ?? 2) - 2), branches);
+		}
 	}
 
 	// Break before the closing parenthesis to keep the chain right after it:
@@ -9983,7 +10225,7 @@ function printConditionalExpression(path, options, print) {
 	//     : c
 	//   ).call()
 	const breakClosingParen =
-		isConditionalExpression && parent.type === 'MemberExpression' && !parent.computed;
+		!jsxMode && isConditionalExpression && parent.type === 'MemberExpression' && !parent.computed;
 	const shouldExtraIndent =
 		isConditionalExpression &&
 		shouldExtraIndentForConditionalExpression(
@@ -10004,6 +10246,43 @@ function printConditionalExpression(path, options, print) {
 	const result = parent === firstNonConditionalParent ? group(contents) : contents;
 
 	return isParentTest || shouldExtraIndent ? group([indent([softline, result]), softline]) : result;
+}
+
+/**
+ * Whether a chain of nested conditionals has an element or another template
+ * value as a test or branch at any depth (Prettier's
+ * `conditionalExpressionChainContainsJsx`), which prints the whole chain in
+ * JSX mode.
+ * @param {AST.ConditionalExpression} node - The outermost conditional of the chain
+ * @returns {boolean}
+ */
+function conditionalChainContainsTemplate(node) {
+	const conditionals = [node];
+	for (let index = 0; index < conditionals.length; index++) {
+		const conditional = conditionals[index];
+		for (const child of [conditional.test, conditional.consequent, conditional.alternate]) {
+			if (isTemplateExpression(child)) {
+				return true;
+			}
+			if (child.type === 'ConditionalExpression') {
+				conditionals.push(child);
+			}
+		}
+	}
+	return false;
+}
+
+/**
+ * `null` or `undefined`, the branches a conditional in JSX mode doesn't put
+ * in parentheses.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function isNilLiteral(node) {
+	return (
+		(node.type === 'Literal' && node.value === null) ||
+		(node.type === 'Identifier' && node.name === 'undefined')
+	);
 }
 
 /**
@@ -12519,27 +12798,18 @@ function printTemplateInParens(path, options, printed) {
 }
 
 /**
- * The text of a string attribute value as it prints, or `null`: a string
- * literal, or a string container that `printJSXAttribute` prints as one.
+ * The value of an attribute string (`title="Hello"`), or `null`. A string
+ * in braces (`title={'Hello'}`) is an expression container, as in Prettier.
  * @param {AST.Node} attr
- * @param {TsrxFormatOptions} options
  * @returns {string | null}
  */
-function getJSXAttributeStringValue(attr, options) {
+function getJSXAttributeStringValue(attr) {
 	if (attr.type !== 'JSXAttribute' || !attr.value) {
 		return null;
 	}
 	const value = /** @type {AST.Node} */ (attr.value);
 	if (value.type === 'Literal' && typeof value.value === 'string') {
 		return value.value;
-	}
-	if (
-		value.type === 'JSXExpressionContainer' &&
-		value.expression.type === 'Literal' &&
-		typeof value.expression.value === 'string' &&
-		getJSXAttributeStringQuote(/** @type {AST.Literal} */ (value.expression), options)
-	) {
-		return value.expression.value;
 	}
 	return null;
 }
@@ -12618,7 +12888,7 @@ function printJSXElement(node, path, options, print) {
 			path.call(print, 'openingElement', 'attributes', i),
 		);
 		const singleStringValue =
-			attributes.length === 1 ? getJSXAttributeStringValue(attributes[0], options) : null;
+			attributes.length === 1 ? getJSXAttributeStringValue(attributes[0]) : null;
 		if (
 			singleStringValue !== null &&
 			!singleStringValue.includes('\n') &&
@@ -12638,7 +12908,7 @@ function printJSXElement(node, path, options, print) {
 			// An attribute string with a line break breaks the opening element, and
 			// so does a value that breaks, as the break would propagate to it
 			const shouldBreak =
-				attributes.some((attr) => getJSXAttributeStringValue(attr, options)?.includes('\n')) ||
+				attributes.some((attr) => getJSXAttributeStringValue(attr)?.includes('\n')) ||
 				attributeDocs.some((attributeDoc) => willBreak(attributeDoc));
 			const attributeLine =
 				options.singleAttributePerLine && attributes.length > 1 ? hardline : line;
@@ -13034,12 +13304,6 @@ function printJSXAttribute(attr, path, options, print) {
 
 	if (attr.value.type === 'JSXExpressionContainer') {
 		const expression = attr.value.expression;
-		if (expression.type === 'Literal' && typeof expression.value === 'string') {
-			const quote = getJSXAttributeStringQuote(expression, options);
-			if (quote) {
-				return [name, '=', quote, expression.value, quote];
-			}
-		}
 		const exprDoc = path.call(print, 'value', 'expression');
 		return [name, '=', printJSXExpressionContainer(expression, exprDoc, false)];
 	}
@@ -13128,36 +13392,6 @@ function printJSXAttributeString(literal, options) {
 		.replaceAll('&quot;', '"');
 	const quote = getPreferredQuote(content, options.jsxSingleQuote);
 	return quote + content.replaceAll(quote, quote === '"' ? '&quot;' : '&apos;') + quote;
-}
-
-/**
- * Pick the quote for printing a string expression container
- * (`title={"Hello"}`) as a plain attribute string (`title="Hello"`), or
- * `null` when the container has to stay. An attribute string has no escape
- * sequences and decodes HTML entities, so the value moves over unchanged
- * only when the literal spells it out verbatim (escaped quotes aside), it has
- * no `&`, and one quote character is free to delimit it.
- * @param {AST.Literal} literal
- * @param {TsrxFormatOptions} options
- * @returns {'"' | "'" | null}
- */
-function getJSXAttributeStringQuote(literal, options) {
-	const value = literal.value;
-	const raw = literal.raw;
-	if (
-		typeof value !== 'string' ||
-		!isQuotedStringRaw(raw) ||
-		value.includes('&') ||
-		raw.slice(1, -1).replace(/\\(["'])/g, '$1') !== value
-	) {
-		return null;
-	}
-
-	const preferred = options.jsxSingleQuote ? "'" : '"';
-	const alternate = options.jsxSingleQuote ? '"' : "'";
-	if (!value.includes(preferred)) return preferred;
-	if (!value.includes(alternate)) return alternate;
-	return null;
 }
 
 /**
