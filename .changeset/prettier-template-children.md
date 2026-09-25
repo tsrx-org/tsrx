@@ -11,3 +11,7 @@ plain space.
 
 A non-breaking space (U+00A0) in template text is text, as in JSX, so the
 formatter no longer collapses it into a plain space or drops it.
+
+A `<script>` body that doesn't parse is no longer given extra blank lines on
+every pass. Like Prettier's HTML printer, the formatter keeps its lines and
+their relative indentation, and indents them under the element.

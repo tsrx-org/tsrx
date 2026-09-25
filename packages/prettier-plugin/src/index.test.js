@@ -6485,6 +6485,60 @@ if(n<2){go("now")}</script>`;
 			expect(result).toContain('const broken = ;');
 		});
 
+		it('keeps an unparseable <script> body on its own lines without adding blank lines', async () => {
+			const result = await format(`export function App() @{
+  <script>const broken = ;</script>
+}`);
+			expect(result).toBeWithNewline(`export function App() @{
+  <script>
+    const broken = ;
+  </script>
+}`);
+			expect(await format(result)).toBe(result);
+		});
+
+		it('re-indents an unparseable <script> body and keeps its relative indentation', async () => {
+			// Like Prettier's HTML printer: the indentation the lines share is
+			// replaced with the element's, and a second pass reads back the same lines.
+			const result = await format(`export function App() @{
+  <div>
+    <script>
+
+            const a = 1;
+            const broken = ;
+              if (a) {
+                go();
+              }
+
+    </script>
+  </div>
+}`);
+			expect(result).toBeWithNewline(`export function App() @{
+  <div>
+    <script>
+
+      const a = 1;
+      const broken = ;
+        if (a) {
+          go();
+        }
+    </script>
+  </div>
+}`);
+			expect(await format(result)).toBe(result);
+		});
+
+		it('indents an unparseable <script> body with tabs under useTabs', async () => {
+			const result = await format(
+				`export function App() @{\n  <script>\n    const broken = ;\n      go();\n  </script>\n}`,
+				{ useTabs: true },
+			);
+			expect(result).toBeWithNewline(
+				`export function App() @{\n\t<script>\n\t\tconst broken = ;\n\t\t  go();\n\t</script>\n}`,
+			);
+			expect(await format(result, { useTabs: true })).toBe(result);
+		});
+
 		it('should preserve the blank line between a function and text literal sibling inside element', async () => {
 			const expected = `function Something({ children }) {
   const test = 'yo';

@@ -164,8 +164,8 @@ export const printers = {
 							return stripTrailingHardline(body);
 						} catch {
 							// A body that doesn't parse (e.g. mid-edit code) is an expected
-							// state, not an error: keep it verbatim and stay quiet.
-							return replaceEndOfLine(node.value);
+							// state, not an error: keep its lines and stay quiet.
+							return printUnformattedRawText(node.value);
 						}
 					};
 				}
@@ -202,6 +202,35 @@ export const printers = {
 		},
 	},
 };
+
+/**
+ * Print a raw-text body that doesn't parse the way Prettier's HTML printer
+ * prints the text of a `<script>` it can't format (`getTextValueParts`): drop
+ * the blank line before it and the whitespace after it, remove the
+ * indentation its lines share, and print each line at the element's
+ * indentation. The body's own line breaks and relative indentation stay, and
+ * a second pass reads back the same lines.
+ * @param {string} text
+ * @returns {Doc}
+ */
+function printUnformattedRawText(text) {
+	const lines = text
+		.replace(/[\t\n\f\r ]+$/u, '')
+		.replace(/^[\t\f\r ]*\n/u, '')
+		.split('\n');
+	let minIndentation = Number.POSITIVE_INFINITY;
+	for (const lineText of lines) {
+		const indentation = /** @type {RegExpMatchArray} */ (lineText.match(/^[\t\f\r ]*/u))[0].length;
+		if (indentation < lineText.length) {
+			minIndentation = Math.min(minIndentation, indentation);
+		}
+	}
+	const dedent = minIndentation === Number.POSITIVE_INFINITY ? 0 : minIndentation;
+	return join(
+		hardline,
+		lines.map((lineText) => lineText.slice(dedent)),
+	);
+}
 
 /**
  * Raw-text `<script>` element: the parser stores the verbatim JS/TS body on
