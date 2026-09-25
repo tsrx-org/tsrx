@@ -13902,6 +13902,81 @@ export interface SectionProps<T>
 			await expectUnchanged(source);
 		});
 
+		// An element isn't a left-hand-side expression, as in TypeScript (#426):
+		// a `(`, `[`, or template literal on the next line starts a statement of
+		// its own, as Prettier's `typescript` parser reads it, and an element
+		// called, indexed, or used as a tag keeps its parentheses.
+		it('starts a statement at a `(`, `[`, or template literal on the line after an element', async () => {
+			const input =
+				'const a = <b>x</b>\n(foo)\nconst c = <b />\n[1].map(f)\nconst d = <b />\n`t`\n';
+			const expected =
+				'const a = <b>x</b>;\nfoo;\nconst c = <b />;\n[1].map(f);\nconst d = <b />;\n`t`;';
+			expect(await format(input)).toBeWithNewline(expected);
+			expect(await normalize(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const a = (<b>x</b>)(foo);',
+			'const c = (<b />)[1].map(f);',
+			'const d = (<b />)`t`;',
+			'const e = (<b />)?.foo;',
+			'(<b />)(x);',
+			'const a = (<div>\n  <b>x</b>\n</div>)(foo);',
+		])('keeps the parentheses around an element before a subscript in %s', async (source) => {
+			await expectUnchanged(source);
+			expect(await normalize(source)).toBeWithNewline(source);
+		});
+
+		// A `@{ … }` value or a directive isn't one either, so it keeps its
+		// parentheses there too: hugging them as a callee, like an element, and
+		// inside them before a member access, index, non-null assertion, or tag.
+		it.each([
+			['const a = (@{ <b /> })(x);', 'const a = (@{\n  <b />\n})(x);'],
+			[
+				'const a = (@for (const x of xs) { <b /> })(x);',
+				'const a = (@for (const x of xs) {\n  <b />\n})(x);',
+			],
+			[
+				'const a = (@switch (x) { @case 1: { <b /> } })(x);',
+				'const a = (@switch (x) {\n  @case 1: {\n    <b />\n  }\n})(x);',
+			],
+			[
+				'const a = (@try { <b /> } @catch { <i /> })(x);',
+				'const a = (@try {\n  <b />\n} @catch {\n  <i />\n})(x);',
+			],
+			['const a = new (@{ <b /> })();', 'const a = new (@{\n  <b />\n})();'],
+			['const a = (@{ <b /> }).foo;', 'const a = (\n  @{\n    <b />\n  }\n).foo;'],
+			['const a = (@{ <b /> })`t`;', 'const a = (\n  @{\n    <b />\n  }\n)`t`;'],
+			['const a = (@if (x) { <b /> })!;', 'const a = (\n  @if (x) {\n    <b />\n  }\n)!;'],
+			['const a = (@if (x) { <b /> })[0];', 'const a = (\n  @if (x) {\n    <b />\n  }\n)[0];'],
+		])(
+			'keeps the parentheses around a TSRX value before a subscript in %s',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		// `yield` takes a TSRX expression as its argument (#547)
+		it('keeps a TSRX expression after yield', async () => {
+			expect(
+				await format('export function* nodes() { yield @{ <div /> }; yield @if (ok) { <b /> }; }'),
+			).toBeWithNewline(
+				'export function* nodes() {\n  yield (\n    @{\n      <div />\n    }\n  );\n  yield (\n    @if (ok) {\n      <b />\n    }\n  );\n}',
+			);
+		});
+
+		// A comment after a directive's keyword is kept where Prettier keeps it
+		// after the statement's keyword: `try /* c */ {`, `if (/* c */ x)` (#477)
+		it('keeps a comment after a directive keyword', async () => {
+			expect(
+				await format(
+					'function A() @{\n  @try /* c */ {\n    @if /* d */ (x) {\n      <b />\n    }\n  } @catch (e) {\n    <p />\n  }\n}',
+				),
+			).toBeWithNewline(
+				'function A() @{\n  @try /* c */ {\n    @if (/* d */ x) {\n      <b />\n    }\n  } @catch (e) {\n    <p />\n  }\n}',
+			);
+		});
+
 		// A template element is a statement of its own, with no
 		// `ExpressionStatement` around it. `path.key` is the list's name
 		// (`body`), not the element's index, and a directive body is always a

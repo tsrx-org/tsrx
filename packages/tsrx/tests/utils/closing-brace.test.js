@@ -228,6 +228,10 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 			{ source: 'x = <div>{...a b}</div>;', at: 'b}' },
 			{ source: 'export function App() @{\n  <b>{text name}</b>\n}', at: 'name}' },
 			{ source: 'export function App() @{\n  <div class={style "root"}>hi</div>\n}', at: '"root"' },
+			// As in TSX, `</` after the expression starts a closing tag (#586)
+			{ source: 'x = <div>{a</div>;', at: '</div>' },
+			{ source: 'x = <div id={a>b</div>;', at: '</div>' },
+			{ source: 'export function App() @{\n  <p>{count</p>\n}', at: '</p>' },
 		]);
 	});
 
@@ -312,13 +316,11 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 
 	it('keeps the error where the parse fails before it reaches the missing `}`', async () => {
 		// TypeScript reports `'}' expected` for these, but TSRX fails first for a
-		// cause of its own: a `</` read as less-than and a regular expression (#586),
-		// an `export` inside a block (#587), a `const` or `let` with nothing after it
-		// (#588), `get` read as a getter's keyword, and an import attribute read
-		// after a trailing comma.
+		// cause of its own: an `export` inside a block (#587), a `const` or `let`
+		// with nothing after it (#588), `get` read as a getter's keyword, and an
+		// import attribute read after a trailing comma.
 		/** @type {Array<[source: string, message: string]>} */
 		const cases = [
-			['x = <div>{a</div>;', 'Unterminated regular expression (1:13)'],
 			[
 				'function f() {\n  a();\nexport function g() {}\n',
 				"'import' and 'export' may only appear at the top level (3:0)",

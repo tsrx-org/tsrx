@@ -1067,8 +1067,6 @@ export namespace Parse {
 			startPos: number,
 			startLoc: AST.Position,
 			noCalls?: boolean,
-			maybeAsyncArrow?: boolean,
-			optionalChained?: boolean,
 			forInit?: ForInit,
 		): AST.Expression;
 
