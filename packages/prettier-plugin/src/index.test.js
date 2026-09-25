@@ -1299,15 +1299,19 @@ export default   class  B {}`;
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// Like Prettier, a comment between the decorators and `export` trails
+		// the last decorator, so it ignores only the decorator (#445)
 		it('prints a comment between the decorators and export once', async () => {
-			// The ignored source starts at the decorator and holds the comment.
-			// Prettier formats the class here; the source stays as written.
 			const source = `@dec
 // prettier-ignore
 export class A {  }
 @dec /* prettier-ignore */
 export default class {  }`;
-			expect(await format(source)).toBeWithNewline(source);
+			expect(await format(source)).toBeWithNewline(`@dec
+// prettier-ignore
+export class A {}
+@dec /* prettier-ignore */
+export default class {}`);
 		});
 
 		it.each([
@@ -13030,6 +13034,39 @@ item
 				expect(await format(input)).toBeWithNewline(expected);
 			},
 		);
+	});
+
+	// Like Prettier, whose export starts at the decorators written before it,
+	// a comment between them and the class keyword trails the last decorator,
+	// which prints it before `export` (#445)
+	describe('comments between the decorators of an exported class and the class keyword', () => {
+		it.each([
+			['@dec export /* c */ class A {}', '@dec /* c */\nexport class A {}'],
+			['@dec\nexport\n// c\nclass B {}', '@dec\n// c\nexport class B {}'],
+			['@dec\nexport // c\nclass B {}', '@dec // c\nexport class B {}'],
+			['@dec export default /* c */ class A {}', '@dec /* c */\nexport default class A {}'],
+			['@dec export default /* c */ class {}', '@dec /* c */\nexport default class {}'],
+			['@dec /* c */ export class A {}', '@dec /* c */\nexport class A {}'],
+			['@a @b export /* c */ class A {}', '@a\n@b /* c */\nexport class A {}'],
+			[
+				'@dec\nexport\n/** doc */\nabstract class A {}',
+				'@dec\n/** doc */\nexport abstract class A {}',
+			],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'@dec\n// c\nexport class A {}',
+			'@dec\n/** doc */\nexport class A {}',
+			'// c\n@dec\nexport class A {}',
+			'foo();\n@dec // c\nexport class A {}',
+			'@a // c\n@b\nexport class A {}',
+			'@dec\nexport class /* c */ A {}',
+			'export /* c */ class A {}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
 	});
 
 	// These comments sit where no node took them, so the parser gave them to

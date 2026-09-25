@@ -830,6 +830,20 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Where a node starts for the comments before it, like Prettier's
+	 * `locStart`: an export whose declaration's decorators come before
+	 * `export` starts at the first of them, so that the comments after them
+	 * lie in the declaration (`@dec /* c *\/ export class A {}`)
+	 * @param {AST.Node | AST.CSS.StyleSheet} node
+	 * @returns {number}
+	 */
+	function getCommentStart(node) {
+		const { start } = /** @type {AST.NodeWithLocation} */ (node);
+		const [decorator] = /** @type {any} */ (node).declaration?.decorators ?? [];
+		return decorator && decorator.start < start ? decorator.start : start;
+	}
+
+	/**
 	 * @param {AST.Node | null | undefined} node
 	 * @returns {node is AST.ClassDeclaration | AST.ClassExpression | AST.TSInterfaceDeclaration}
 	 */
@@ -1027,6 +1041,23 @@ export function get_comment_handlers(source, comments, index = 0) {
 					.includes('\n'))
 		) {
 			addLeadingComment(following, comment);
+			return true;
+		}
+
+		// Prettier's tie-break for a comment between a class's last decorator
+		// and the node after it: with a keyword between them, like the
+		// `export` and `class` of `@dec export /* c */ class A {}`, it trails
+		// the decorator, which prints it before `export`
+		if (
+			!ownLine &&
+			!endOfLine &&
+			isClassLike(enclosing) &&
+			preceding?.type === 'Decorator' &&
+			following &&
+			following.type !== 'Decorator' &&
+			!isBlankBetween(comment.end, /** @type {AST.NodeWithLocation} */ (following).start, false)
+		) {
+			addTrailingComment(preceding, comment);
 			return true;
 		}
 
@@ -1318,10 +1349,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 						}
 					}
 
-					while (
-						comments[0] &&
-						comments[0].start < /** @type {AST.NodeWithLocation} */ (node).start
-					) {
+					while (comments[0] && comments[0].start < getCommentStart(node)) {
 						// Skip comments that are inside an attribute of an ancestor JSX element.
 						// Since zimmerframe visits children before attributes, we need to leave
 						// these comments for when the attribute nodes are visited.
