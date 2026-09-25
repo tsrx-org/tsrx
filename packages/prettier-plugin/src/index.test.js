@@ -22668,6 +22668,33 @@ export { theme };`;
 		});
 	});
 
+	// `abstract` before a line break after `export default` is the exported
+	// value, and the class on the next line a declaration of its own (#608).
+	describe('`abstract` before a line break after `export default`', () => {
+		it.each([
+			['export default abstract\nclass A {}', 'export default abstract;\nclass A {}\n'],
+			[
+				'declare module "m" {\n  export default abstract\n  class A {}\n}',
+				'declare module "m" {\n  export default abstract;\n  class A {}\n}\n',
+			],
+		])('formats %j like Prettier', async (input, expected) => {
+			const output = await format(input);
+			expect(output).toBe(expected);
+			expect(output).toBe(await prettier.format(input, { parser: 'typescript' }));
+			expect(await format(output)).toBe(output);
+		});
+
+		// #651: `abstract` before a function or variable used to be left out.
+		it.each(['export abstract function f() {}', 'export abstract const x = 1;'])(
+			'refuses %j',
+			async (input) => {
+				await expect(format(input)).rejects.toThrow(
+					"'abstract' modifier can only appear on a class, method, or property declaration.",
+				);
+			},
+		);
+	});
+
 	// Type arguments on the line after a superclass (#545), right after a class
 	// or function expression (#578), and a `const` type parameter on an object
 	// method (#631) failed to parse; the output of the first two failed on the

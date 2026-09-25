@@ -885,11 +885,34 @@ describe('parse errors', () => {
 				'@dec export function f() {}',
 				'Leading decorators must be attached to a class declaration. (1:1)',
 			],
+			[
+				'export abstract function f() {}',
+				"'abstract' modifier can only appear on a class, method, or property declaration. (1:8)",
+			],
+			[
+				'export abstract const x = 1;',
+				"'abstract' modifier can only appear on a class, method, or property declaration. (1:8)",
+			],
 		]) {
 			const error = await format(source).catch((/** @type {any} */ e) => e);
 			expect(error, source).toBeInstanceOf(SyntaxError);
 			expect(error.message.split('\n')[0], source).toBe(message);
 		}
+	});
+});
+
+// `abstract` before a line break after `export default` is the exported value,
+// and the class on the next line a declaration of its own (#608).
+describe('`abstract` before a line break after `export default`', () => {
+	test.each([
+		['export default abstract\nclass A {}', 'export default abstract;\nclass A {}\n'],
+		[
+			'declare module "m" {\n  export default abstract\n  class A {}\n}',
+			'declare module "m" {\n  export default abstract;\n  class A {}\n}\n',
+		],
+	])('formats %j like Prettier', async (input, expected) => {
+		await expectFormat(input, expected);
+		expect(expected).toBe(await prettier.format(input, { parser: 'typescript' }));
 	});
 });
 
