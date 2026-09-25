@@ -3566,18 +3566,15 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'JSXElement':
-			nodeContent = maybeWrapJSXElementInParens(
-				path,
-				printJSXElement(/** @type {AST.TSRXJSXElement} */ (node), path, options, print),
-				options,
-			);
+			nodeContent = printJSXElement(/** @type {AST.TSRXJSXElement} */ (node), path, options, print);
 			break;
 
 		case 'JSXFragment':
-			nodeContent = maybeWrapJSXElementInParens(
+			nodeContent = printJSXFragment(
+				/** @type {AST.TSRXJSXFragment} */ (node),
 				path,
-				printJSXFragment(/** @type {AST.TSRXJSXFragment} */ (node), path, options, print),
 				options,
+				print,
 			);
 			break;
 
@@ -3628,6 +3625,23 @@ function printTsrxNode(node, path, options, print, args) {
 		nodeContent = [...printDecorators(decorated, path, options, print), nodeContent];
 	}
 
+	// Like Prettier's `printJsxElement`, an element's comments print inside
+	// the parentheses around a multi-line element, so a comment on its own
+	// line opens them
+	let suppressTrailingComments = args?.suppressTrailingComments;
+	if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
+		const trailingParts = suppressTrailingComments ? [] : printTrailingComments(node, options);
+		nodeContent = maybeWrapJSXElementInParens(
+			path,
+			parts.length > 0 || trailingParts.length > 0
+				? [...parts, nodeContent, ...trailingParts]
+				: nodeContent,
+			options,
+		);
+		parts.length = 0;
+		suppressTrailingComments = true;
+	}
+
 	// A cast's parens belong to the cast, so they print even where a parent
 	// lays out the node's other parens (`suppressOwnParens`)
 	if (typeCastParens) {
@@ -3647,7 +3661,7 @@ function printTsrxNode(node, path, options, print, args) {
 		parts,
 		nodeContent,
 		options,
-		args?.suppressTrailingComments,
+		suppressTrailingComments,
 	);
 }
 

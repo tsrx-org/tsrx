@@ -8878,6 +8878,45 @@ const b = (
 );`);
 		});
 
+		it('prints the comments of a multi-line element inside its parentheses', async () => {
+			// A line break after `return` would end the statement, so the comment
+			// has to open the parentheses (#456)
+			const input = `const aDiv = (
+  /* $FlowFixMe */
+  <div className="foo">
+    Foo bar
+  </div>
+);
+function f() {
+  return (
+    // note
+    <JSX />
+  );
+}
+function g() {
+  throw (
+    // note
+    <JSX />
+  );
+}`;
+			expect(await format(input)).toBeWithNewline(`const aDiv = (
+  /* $FlowFixMe */
+  <div className="foo">Foo bar</div>
+);
+function f() {
+  return (
+    // note
+    <JSX />
+  );
+}
+function g() {
+  throw (
+    // note
+    <JSX />
+  );
+}`);
+		});
+
 		it('joins text to the element it touches and fills the lines', async () => {
 			// A line break between `</code>` and `.` renders as nothing, so the
 			// period stays against the element, and `{' '}` ends a line.
