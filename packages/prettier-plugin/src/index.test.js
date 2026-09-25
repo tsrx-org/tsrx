@@ -9515,6 +9515,56 @@ function Two() @{
 		});
 	});
 
+	// Parentheses written around a type stay as they are; these are the ones
+	// Prettier adds where the type parses the same without them.
+	describe('type parentheses follow Prettier', () => {
+		it.each([
+			[
+				'const f = (journal: Journal): () => void => {\n  return () => {};\n};',
+				'const f = (journal: Journal): (() => void) => {\n  return () => {};\n};',
+			],
+			[
+				'class C {\n  m = <T,>(): <U>(u: U) => T => null!;\n}',
+				'class C {\n  m = <T,>(): (<U>(u: U) => T) => null!;\n}',
+			],
+			['type A = typeof a[];', 'type A = (typeof a)[];'],
+			['type A = typeof a[number];', 'type A = (typeof a)[number];'],
+			['type A = keyof keyof T;', 'type A = keyof (keyof T);'],
+			['type A = [...A | B];', 'type A = [...(A | B)];'],
+			[
+				'type A = <X extends B extends C ? D : E>() => X;',
+				'type A = <X extends (B extends C ? D : E)>() => X;',
+			],
+		])('prints %s as %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const f = (): (() => void) => () => {};',
+			'const f = (): (() => void) | null => null;',
+			'const f = (): Promise<() => void> => load();',
+			'const f = (): new () => Foo => Foo;',
+			'const f = (): A extends B ? C : D => value;',
+			'const f = (): value is () => void => true;',
+			'function f(): () => void {}',
+			'const f = function (): () => void {};',
+			'let callback: () => void;',
+			'type A = (keyof T)[];',
+			'type A = keyof T[];',
+			'type A = readonly (typeof a)[];',
+			'type A = keyof typeof a;',
+			'type A = (() => void)[];',
+			'type A = [(() => void)?];',
+			'type A = [...infer U];',
+			'type A = B extends (C extends D ? E : F) ? G : H;',
+			'type A = (B extends C ? D : E) extends F ? G : H;',
+			'type A = B extends (() => infer R extends string) ? R : never;',
+			'type A = B extends () => infer R ? R : never;',
+		])('keeps %s as written', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
 	// `extends` only takes a left-hand-side expression, so a superclass that
 	// binds looser than that is a syntax error without its parens.
 	describe('superclass expressions keep required parentheses', () => {

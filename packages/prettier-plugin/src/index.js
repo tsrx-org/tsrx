@@ -1136,6 +1136,83 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 				(key === 'left' && parent.type === 'BinaryExpression' && parent.operator === '<')
 			);
 
+		// Types, like Prettier's `needsParens`. Parentheses written in the source
+		// stay as a `TSParenthesizedType`, so these rules only add the ones
+		// Prettier adds for readability: `(): (() => void) => {}` and
+		// `(typeof a)[]` parse the same without them.
+		case 'TSFunctionType':
+			if (
+				key === 'typeAnnotation' &&
+				parent.type === 'TSTypeAnnotation' &&
+				grandparent?.type === 'ArrowFunctionExpression' &&
+				grandparent.returnType === parent
+			) {
+				return true;
+			}
+		// fallthrough
+		case 'TSConditionalType':
+		case 'TSConstructorType':
+			if (
+				(key === 'extendsType' &&
+					node.type === 'TSConditionalType' &&
+					parent.type === 'TSConditionalType') ||
+				(key === 'constraint' &&
+					node.type === 'TSConditionalType' &&
+					parent.type === 'TSTypeParameter') ||
+				(key === 'checkType' && parent.type === 'TSConditionalType')
+			) {
+				return true;
+			}
+			if (
+				key === 'extendsType' &&
+				parent.type === 'TSConditionalType' &&
+				node.type !== 'TSConditionalType'
+			) {
+				// `A extends (() => infer R extends B) ? R : C`
+				let returnType = node.typeAnnotation?.typeAnnotation;
+				if (returnType?.type === 'TSTypePredicate' && returnType.typeAnnotation) {
+					returnType = returnType.typeAnnotation.typeAnnotation;
+				}
+				if (returnType?.type === 'TSInferType' && returnType.typeParameter.constraint) {
+					return true;
+				}
+			}
+		// fallthrough
+		case 'TSUnionType':
+		case 'TSIntersectionType':
+			if (parent.type === 'TSUnionType' || parent.type === 'TSIntersectionType') {
+				return true;
+			}
+		// fallthrough
+		case 'TSInferType':
+			if (node.type === 'TSInferType') {
+				if (parent.type === 'TSRestType') {
+					return false;
+				}
+				if (
+					key === 'types' &&
+					(parent.type === 'TSUnionType' || parent.type === 'TSIntersectionType') &&
+					node.typeParameter.constraint
+				) {
+					return true;
+				}
+			}
+		// fallthrough
+		case 'TSTypeOperator':
+			return (
+				parent.type === 'TSArrayType' ||
+				parent.type === 'TSOptionalType' ||
+				parent.type === 'TSRestType' ||
+				(key === 'objectType' && parent.type === 'TSIndexedAccessType') ||
+				parent.type === 'TSTypeOperator'
+			);
+
+		case 'TSTypeQuery':
+			return (
+				(key === 'objectType' && parent.type === 'TSIndexedAccessType') ||
+				(key === 'elementType' && parent.type === 'TSArrayType')
+			);
+
 		default:
 			return false;
 	}
