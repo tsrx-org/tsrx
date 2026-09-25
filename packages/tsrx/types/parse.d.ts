@@ -1439,6 +1439,12 @@ export namespace Parse {
 		isAbstractClass(): boolean;
 
 		/**
+		 * Whether the current token is `declare` before `class` or `abstract class`
+		 * (@sveltejs/acorn-typescript).
+		 */
+		isDeclareClass(): boolean;
+
+		/**
 		 * Get property kind from name
 		 * @param prop Property node
 		 * @returns "init", "get", or "set"
