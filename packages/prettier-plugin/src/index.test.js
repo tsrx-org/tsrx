@@ -22672,6 +22672,23 @@ export { theme };`;
 	// or function expression (#578), and a `const` type parameter on an object
 	// method (#631) failed to parse; the output of the first two failed on the
 	// next pass. They print as Prettier's `typescript` parser prints them.
+	describe('text keeps its characters as written', () => {
+		// A `>` in an element in a container dropped the text before it, or
+		// failed after a child container (#694). In an element in a spread
+		// argument or an unbraced attribute value in a container, character
+		// references were printed decoded: `&#123;x&#125;` became `{x}` (#693).
+		it.each([
+			'export function App() @{\n  <main>{c && <b>a > b</b>}</main>\n}\n',
+			'export function App() @{\n  <main>{c && <b>{y} a > b</b>}</main>\n}\n',
+			'export function App() @{\n  <main>{c && <b>a => b</b>}</main>\n}\n',
+			'export function App() @{\n  <div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />\n}\n',
+			'export function App() @{\n  <main>{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}</main>\n}\n',
+			'export function App() @{\n  <div title=<b>a &#123; @if (x) &#123;x&#125;</b> />\n}\n',
+		])('keeps the text of %j', async (source) => {
+			expect(await format(source)).toBe(source);
+		});
+	});
+
 	describe('type arguments and parameters the parser used to reject', () => {
 		it.each([
 			['class A extends B\n<T> {}', 'class A extends B<T> {}\n'],

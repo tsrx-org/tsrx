@@ -425,6 +425,15 @@ export function App() @{
 				name: 'a partially typed `@if`',
 				source: 'export function App() {\n\t<>\n\t\t@if\n\t</>\n}',
 			},
+			// The output writes a `>` or `<` in text as a character reference
+			{
+				name: 'a `@`-leading child with a `>`',
+				source: 'export function App() {\n\t<div>@if > x</div>\n}',
+			},
+			{
+				name: 'a `@`-leading child with a `<`',
+				source: 'export function App() {\n\t<div>@if < x</div>\n}',
+			},
 		]) {
 			it(`emits a well-formed completion-only mapping for ${name}`, () => {
 				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
@@ -449,6 +458,31 @@ export function App() @{
 				}
 			});
 		}
+
+		it('maps a `@`-leading child with a `>` after an `@switch` to its own text', () => {
+			// The text's start also maps into the `@switch`'s output, so the mapping is
+			// found by its text, which stops before the `>` that the output escapes.
+			const source =
+				'export function App() {\n\t<div>\n\t\t@switch (k) {\n\t\t\t@case 1: {\n\t\t\t\t<b />\n\t\t\t}\n\t\t}\n\t\t@if > x\n\t</div>\n}';
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const cursor = source.indexOf('@if') + 1;
+
+			const covering = result.mappings.filter(
+				(m) =>
+					m.data?.completion &&
+					cursor >= m.sourceOffsets[0] &&
+					cursor <= m.sourceOffsets[0] + m.lengths[0],
+			);
+
+			expect(covering.length).toBeGreaterThan(0);
+			for (const m of covering) {
+				const mapped = source.slice(m.sourceOffsets[0], m.sourceOffsets[0] + m.lengths[0]);
+				expect(
+					result.code.slice(m.generatedOffsets[0], m.generatedOffsets[0] + m.generatedLengths[0]),
+				).toBe(mapped);
+				expect(mapped.trim()).toBe('@if');
+			}
+		});
 
 		it('does not map ordinary template text (no stray completions in plain text)', () => {
 			const source = 'export function App() {\n\t<div>hello world</div>\n}';
@@ -2108,6 +2142,115 @@ export function App() @{
 
 			expect(code).toContain('<script>if (a &lt; b) x();</script>');
 		});
+	});
+
+	describe(`[${name}] characters that JSX text can't hold`, () => {
+		/**
+		 * @param {string} body
+		 * @param {string} [before]
+		 */
+		const component = (body, before = '') =>
+			`export function App() @{\n\t${before}<main>${body}</main>\n}`;
+
+		// A `>` is text in a template, as a `<` that can't start a tag is. JSX
+		// rejects both in text (TS1382), so each is written as a character
+		// reference. In a `{…}` container, the text before a `>` was dropped
+		// when it followed a tag, and after a child container the `>` failed
+		// (#694).
+		/** @type {Array<[string, string, string]>} */
+		const greater_than = [
+			['a template', component('<b>a > b</b>'), '<b>a &gt; b</b>'],
+			['a template after a tag', component('<b><i />a > b</b>'), '<i />a &gt; b</b>'],
+			['a container', component('{c && <b>a > b</b>}'), '<b>a &gt; b</b>'],
+			['a container, first', component('{c && <b>> b</b>}'), '<b>&gt; b</b>'],
+			['a container, an arrow', component('{c && <b>a => b</b>}'), '<b>a =&gt; b</b>'],
+			['a container after a tag', component('{c && <b><i />a > b</b>}'), '<i />a &gt; b</b>'],
+			[
+				'a container after a child container',
+				component('{c && <b>{y} a > b</b>}'),
+				'{y} a &gt; b</b>',
+			],
+			['an attribute value', component('<div title={<b>a > b</b>} />'), '<b>a &gt; b</b>'],
+			['an unbraced attribute value', component('<div title=<b>a > b</b> />'), '<b>a &gt; b</b>'],
+			['an @if body', component('@if (c) { <b>a > b</b> }'), '<b>a &gt; b</b>'],
+			[
+				'an @if body in a container',
+				component('{c && <p>@if (d) { <b>a > b</b> }</p>}'),
+				'<b>a &gt; b</b>',
+			],
+			[
+				'an @switch body',
+				component('@switch (c) { @case 1: { <b>a > b</b> } }'),
+				'<b>a &gt; b</b>',
+			],
+			['an @for body', component('@for (const i of c) { <b>a > b</b> }'), '<b>a &gt; b</b>'],
+			[
+				'a setup statement',
+				component('{v}', 'const v = <b>{y} a > b</b>;\n\t'),
+				'{y} a &gt; b</b>',
+			],
+			[
+				'a function',
+				'export function App() {\n\treturn <main>{c && <b>a > b</b>}</main>;\n}',
+				'<b>a &gt; b</b>',
+			],
+			[
+				'a raw-text script body, with braces',
+				component('<script>if (a > b) { go(); }</script>'),
+				'<script>if (a &gt; b) &#123; go(); &#125;</script>',
+			],
+		];
+
+		it.each(greater_than)('writes a `>` in text in %s as `&gt;`', (_label, source, expected) => {
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code).toContain(expected);
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+		});
+
+		// Text is written as it is in the source, character references included.
+		// In an element that acorn-typescript's JSX parser reads, in a spread
+		// attribute's argument or an unbraced attribute value in a container,
+		// they were decoded, so `&#123;x&#125;` compiled to the expression `{x}`,
+		// and `&gt;` to a bare `>` (#693).
+		/** @type {Array<[string, string, string]>} */
+		const references = [
+			[
+				'a spread argument',
+				component('<div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />'),
+				'<b>&#123;x&#125; &amp;lt; &gt;</b>',
+			],
+			[
+				'an unbraced attribute value in a container',
+				component('{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}'),
+				'<b>&#123;x&#125; &amp;lt; &gt;</b>',
+			],
+			[
+				'an unbraced attribute value, from a directive on',
+				component('<div title=<b>a &#123; @if (x) &#123;x&#125;</b> />'),
+				'<b>a &#123; @if (x) &#123;x&#125;</b>',
+			],
+			[
+				'a template',
+				component('<b>&#123;x&#125; &amp;lt; &gt;</b>'),
+				'<b>&#123;x&#125; &amp;lt; &gt;</b>',
+			],
+			[
+				'an attribute value',
+				component('<div title={<b>&#123;x&#125; &amp;lt; &gt;</b>} />'),
+				'<b>&#123;x&#125; &amp;lt; &gt;</b>',
+			],
+		];
+
+		it.each(references)(
+			'keeps the character references in text in %s',
+			(_label, source, expected) => {
+				const { code } = compile(source, 'App.tsrx');
+
+				expect(code).toContain(expected);
+				expect(virtual_parse_diagnostics(code)).toEqual([]);
+			},
+		);
 	});
 
 	describe(`[${name}] fragment expression children`, () => {

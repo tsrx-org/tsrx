@@ -6470,6 +6470,16 @@ export function TSRXPlugin(config) {
 
 						case CharCode.greaterThan:
 						case CharCode.closeBrace: {
+							// Where template text is read, a `>` is text, as it is outside a
+							// container: the text of `{c && <b>a > b</b>}` is `a > b`, which
+							// the printer writes as `a &gt; b`. Like the default case below,
+							// keep scanning. Right after a tag the element is still being
+							// opened, and reading the `>` as code dropped the text before it;
+							// after a child container it was an error.
+							if (ch === CharCode.greaterThan && this.#shouldReadTemplateRawTextToken(true)) {
+								++this.pos;
+								break;
+							}
 							if (
 								ch === CharCode.greaterThan &&
 								this.input.charCodeAt(this.pos - 1) === CharCode.equals &&
@@ -6552,6 +6562,11 @@ export function TSRXPlugin(config) {
 			 * reads nothing leaves the next token where it was, so the loop would read
 			 * it again until memory runs out; report it instead, as `parseTemplateBody`
 			 * does for template text.
+			 *
+			 * The text's `value` is its source, character references kept, as for
+			 * template text. acorn-typescript decodes them into the token's value, and
+			 * the printer, which writes `value` as JSX text, would turn `&#123;x&#125;`
+			 * into the expression `{x}`.
 			 * @type {Parse.Parser['jsx_parseText']}
 			 */
 			jsx_parseText() {
@@ -6560,6 +6575,7 @@ export function TSRXPlugin(config) {
 				if (node.end === start && this.start === start && this.type === tstt.jsxText) {
 					this.unexpected(start);
 				}
+				node.value = /** @type {string} */ (node.raw);
 				return node;
 			}
 

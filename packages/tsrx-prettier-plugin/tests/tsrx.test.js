@@ -474,6 +474,22 @@ const A = () => (
 	});
 });
 
+describe('text keeps its characters as written', () => {
+	// A `>` in an element in a container failed after a child container (#694),
+	// and the text of an element in a spread argument or an unbraced attribute
+	// value in a container is read with its character references decoded (#693).
+	test.each([
+		'export function App() @{\n  <main>{c && <b>a > b</b>}</main>\n}\n',
+		'export function App() @{\n  <main>{c && <b>{y} a > b</b>}</main>\n}\n',
+		'export function App() @{\n  <main>{c && <b>a => b</b>}</main>\n}\n',
+		'export function App() @{\n  <div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />\n}\n',
+		'export function App() @{\n  <main>{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}</main>\n}\n',
+		'export function App() @{\n  <div title=<b>a &#123; @if (x) &#123;x&#125;</b> />\n}\n',
+	])('keeps the text of %j', async (source) => {
+		await expectFormat(source, source);
+	});
+});
+
 // `//` and `/* */` between JSX children are comments in TSRX, where TSX reads
 // them as text. They keep their place among the children.
 describe('comments between JSX children', () => {
