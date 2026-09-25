@@ -938,13 +938,18 @@ function getIgnoredSource(node, path, options) {
 	// before it belong to the export, which prints the others when it isn't
 	// ignored itself (see printDeclarationDecorators). Like Prettier's
 	// `locStart`, a parameter starts at its decorators, which the parser keeps
-	// outside its span, and a parameter property at its parameter's.
+	// outside its span, and a parameter property at its parameter's. That
+	// parameter itself starts at its name: the parameter property prints its
+	// decorators and modifiers.
 	const { declaration } = /** @type {{ declaration?: AST.Node | null }} */ (node);
-	const [firstDecorator] = getDecorators(
-		node.type === 'TSParameterProperty'
-			? /** @type {AST.Node} */ (/** @type {unknown} */ (node.parameter))
-			: (declaration ?? node),
-	);
+	const [firstDecorator] =
+		path.parent?.type === 'TSParameterProperty'
+			? []
+			: getDecorators(
+					node.type === 'TSParameterProperty'
+						? /** @type {AST.Node} */ (/** @type {unknown} */ (node.parameter))
+						: (declaration ?? node),
+				);
 	const nodeStart = /** @type {AST.NodeWithLocation} */ (node).start;
 	const start = firstDecorator
 		? Math.min(/** @type {AST.NodeWithLocation} */ (firstDecorator).start, nodeStart)

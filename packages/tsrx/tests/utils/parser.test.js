@@ -6999,6 +6999,19 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(withDefault).leading).toBeUndefined();
 	});
 
+	// Prettier's tie-break, with the name after the comment
+	it('leads the parameter of a parameter property with a comment between its modifiers and name', () => {
+		const [ctor] = firstStatement(
+			'class A {\n  constructor(@a /* a */ private /* b */ readonly /* c */ x: T, @d private /* d */ y) {}\n}',
+		).body.body;
+		const [first, second] = ctor.value.params;
+
+		expect(commentsOf(first.parameter.decorators[0]).trailing).toEqual([' a ', ' b ']);
+		expect(commentsOf(first.parameter).leading).toEqual([' c ']);
+		expect(commentsOf(second.parameter.decorators[0]).trailing).toBeUndefined();
+		expect(commentsOf(second.parameter).leading).toEqual([' d ']);
+	});
+
 	it('leads the type annotation of an object pattern with a comment before its colon', () => {
 		const { id } = firstStatement('const { a } /* c */ : T = o;').declarations[0];
 

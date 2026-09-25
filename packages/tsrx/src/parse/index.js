@@ -1314,14 +1314,40 @@ export function get_comment_handlers(source, comments, index = 0) {
 		// `accessor`, `private`, …) rather than between them and the name,
 		// where it would break the line after them. The parser hangs a
 		// parameter property's decorators off its parameter.
+		const isParameterPropertyParameter =
+			ancestor?.type === /** @type {string} */ ('TSParameterProperty') &&
+			/** @type {any} */ (ancestor).parameter === enclosing;
 		if (
 			preceding?.type === 'Decorator' &&
-			(isPropertyLike(enclosing) ||
-				(ancestor?.type === /** @type {string} */ ('TSParameterProperty') &&
-					/** @type {any} */ (ancestor).parameter === enclosing)) &&
+			(isPropertyLike(enclosing) || isParameterPropertyParameter) &&
 			(comment.type === 'Line' || ownLine)
 		) {
 			addTrailingComment(preceding, comment);
+			return true;
+		}
+
+		// Prettier's tie-break for a comment with code on both sides between a
+		// parameter property's decorators and its name, which follows it in
+		// Prettier's parameter property, where the decorators are. Here a
+		// parameter without a default is the name the decorators hang off, so
+		// no child follows the comment: like the tie-break, it leads the
+		// parameter when only whitespace and comments sit before the name, so
+		// it stays after the modifiers (`@dec private /* c */ x`), and trails
+		// the decorator before the modifiers otherwise (`@dec /* c */ private
+		// x`). With a default, the name is the pattern's `left`, and the
+		// tie-break below places the comment.
+		const enclosingStart = /** @type {AST.NodeWithLocation} */ (enclosing).start;
+		if (
+			preceding?.type === 'Decorator' &&
+			isParameterPropertyParameter &&
+			enclosing.type === 'Identifier' &&
+			comment.end <= enclosingStart
+		) {
+			if (!ownLine && !endOfLine && isBlankBetween(comment.end, enclosingStart, false)) {
+				addLeadingComment(enclosing, comment);
+			} else {
+				addTrailingComment(preceding, comment);
+			}
 			return true;
 		}
 

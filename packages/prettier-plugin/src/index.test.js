@@ -1498,6 +1498,8 @@ export default   class  B {}`;
 		it.each([
 			'class A {\n  m(\n    // prettier-ignore\n    @a   x  : T,\n  ) {}\n}',
 			'class A {\n  constructor(\n    // prettier-ignore\n    @a  @b()   private   x  : T,\n  ) {}\n}',
+			// The parameter property prints the decorators and the modifiers
+			'class A {\n  constructor(@dec private /* prettier-ignore */ x  : T) {}\n}',
 		])('keeps the decorators of an ignored parameter in %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});
@@ -15823,6 +15825,10 @@ item
 			'class A {\n  m(@a /* c */ @b x: T) {}\n}',
 			'class A {\n  m(\n    @a // c\n    x: T,\n  ) {}\n}',
 			'class A {\n  m(\n    @a\n    // c\n    x,\n  ) {}\n}',
+			// A comment between a parameter property's modifiers and its name stays there
+			'class A {\n  constructor(@dec private /* c */ x: T) {}\n}',
+			'class A {\n  constructor(@a /* a */ @b /* b */ private /* c */ x) {}\n}',
+			'class A {\n  constructor(@dec private /* c */ x = 1) {}\n}',
 		])('keeps %j like Prettier', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});
@@ -15835,6 +15841,12 @@ item
 			[
 				'class A {\n  @dec()\n\n  // comment\n\n  static b;\n}',
 				'class A {\n  @dec()\n\n  // comment\n  static b;\n}',
+			],
+			// A comment between two modifiers moves before them, like the tie-break
+			// with the name after it in Prettier
+			[
+				'class A {\n  constructor(@dec /* a */ private /* b */ readonly /* c */ x: T) {}\n}',
+				'class A {\n  constructor(@dec /* a */ /* b */ private readonly /* c */ x: T) {}\n}',
 			],
 			// Prettier's own layout for an own-line comment before a parameter's type
 			[
@@ -15864,6 +15876,34 @@ item
 
 			expect(membersOf(once)).toEqual(['static b', 'static c']);
 			expect(membersOf(await format(once))).toEqual(membersOf(source));
+		});
+
+		it('keeps the modifiers and decorators of a parameter property on every pass', async () => {
+			/**
+			 * The first constructor's parameter properties, as `@decorators modifiers name`
+			 * @param {string} source
+			 * @returns {string[]}
+			 */
+			const parametersOf = (source) => {
+				const ast = /** @type {any} */ (parsers.tsrx.parse(source, /** @type {any} */ ({})));
+				return ast.body[0].body.body[0].value.params.map(
+					(/** @type {any} */ { accessibility, readonly, parameter }) =>
+						[
+							...parameter.decorators.map((/** @type {any} */ d) => `@${d.expression.name}`),
+							accessibility,
+							readonly && 'readonly',
+							parameter.name,
+						]
+							.filter(Boolean)
+							.join(' '),
+				);
+			};
+			const source =
+				'class A {\n  constructor(\n    @a\n    // a\n    private readonly x: T,\n    @b /* b */ protected /* c */ y: T,\n  ) {}\n}';
+			const once = await format(source);
+
+			expect(parametersOf(once)).toEqual(['@a private readonly x', '@b protected y']);
+			expect(parametersOf(await format(once))).toEqual(parametersOf(source));
 		});
 	});
 
