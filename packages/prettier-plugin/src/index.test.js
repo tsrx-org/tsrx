@@ -10027,6 +10027,62 @@ function k() {
 	</>
 }`);
 		});
+
+		// A comment before a child is a child of its own in TSX, `{/* c */}`, so
+		// whether the text after the child starts a line depends on the child
+		// alone. A comment on a line of its own before a child that breaks kept
+		// that text on the child's last line, and a comment that joined the
+		// opening tag's line moved it on the next format (#640).
+		it.each([
+			'<div>\n\t/* c */\n\t<span>\n\t\t<b>1</b>\n\t</span> 3\n</div>',
+			'<div>\n\t/* a */\n\t/* b */\n\t<span>\n\t\t<b>1</b>\n\t</span> 3\n</div>',
+			'<div>\n\t/* c */\n\t{cond && (\n\t\t<b>\n\t\t\t<i />\n\t\t</b>\n\t)} 3\n</div>',
+			'<main>\n\t{x && (\n\t\t<div>\n\t\t\t/* c */\n\t\t\t<span>\n\t\t\t\t<b>1</b>\n\t\t\t</span> 3\n\t\t</div>\n\t)}\n</main>',
+			// A child that fits keeps the text on its line
+			'<div>\n\t/* c */\n\t<i /> 3\n</div>',
+		])(
+			'lays out the text after the child with a comment before it in %j like TSX',
+			async (element) => {
+				const template = await format(
+					`export function Page() @{\n\t${element.replace(/\n/g, '\n\t')}\n}`,
+					repoOptions,
+				);
+				const tsx = await prettier.format(
+					`export function Page() {\n\t${element.replace(/\/\* \w \*\//g, '{$&}').replace(/\n/g, '\n\t')};\n}`,
+					{ parser: 'typescript', ...repoOptions },
+				);
+				expect(template).toBe(
+					tsx
+						.replace('Page() {', 'Page() @{')
+						.replace(/;\n}\n$/, '\n}\n')
+						.replace(/\{(\/\* \w \*\/)\}/g, '$1'),
+				);
+			},
+		);
+
+		it.each([
+			[
+				'export function App() @{\n  <div> /* c */\n    <span>\n      <b>1</b>\n    </span> 3</div>\n}',
+				'export function App() @{\n  <div>\n    /* c */\n    <span>\n      <b>1</b>\n    </span>{" "}\n    3\n  </div>\n}',
+			],
+			[
+				'export function App() @{\n  <div>\n    /* c */\n    <span>\n      <b>1</b>\n    </span> 3</div>\n}',
+				'export function App() @{\n  <div>\n    /* c */\n    <span>\n      <b>1</b>\n    </span>{" "}\n    3\n  </div>\n}',
+			],
+			[
+				'export function App() @{\n  <div>\n    // c\n    <span>\n      <b>1</b>\n    </span> 3</div>\n}',
+				'export function App() @{\n  <div>\n    // c\n    <span>\n      <b>1</b>\n    </span>{" "}\n    3\n  </div>\n}',
+			],
+			[
+				'const a = <div>\n  // c\n  {cond && (\n    <b>\n      <i />\n    </b>\n  )} 3</div>;',
+				'const a = (\n  <div>\n    // c\n    {cond && (\n      <b>\n        <i />\n      </b>\n    )}{" "}\n    3\n  </div>\n);',
+			],
+		])(
+			'starts the text after the multi-line child with a comment before it in %j on a line',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
 	});
 
 	// A space at a template child boundary renders, like in JSX, while
@@ -17257,6 +17313,47 @@ item
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// In an element in a `{…}` container, a comment before the first child,
+		// or after a `{…}` child, went to the element's body, which printed it
+		// before the closing tag. It stays before the child after it, as in a
+		// template (#637).
+		it.each([
+			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {" "}\n        /* c */ <i />\n      </div>\n    )}\n  </main>\n}',
+			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {y}\n        /* c */\n        <i />\n      </div>\n    )}\n  </main>\n}',
+			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {y}\n        // c\n        {z}\n      </div>\n    )}\n  </main>\n}',
+			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        /* c */\n        <i />\n      </div>\n    )}\n  </main>\n}',
+			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        // c\n        <i />\n      </div>\n    )}\n  </main>\n}',
+			'export function App() @{\n  <main\n    a={\n      <b>\n        {" "}\n        /* c */ <i />\n      </b>\n    }\n  />\n}',
+			'export function App() @{\n  @switch (x) {\n    @case 1: {\n      <p>\n        {y && (\n          <div>\n            {z}\n            // c\n            <i />\n          </div>\n        )}\n      </p>\n    }\n  }\n}',
+			// After the last child, as before
+			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {y}\n        // c\n      </div>\n    )}\n  </main>\n}',
+		])(
+			'keeps the comment between the children of the element in a container of %j',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
+
+		it.each([
+			[
+				'export function App() @{\n  <main>{x && <div> /* c */ <i /></div>}</main>\n}',
+				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {" "}\n        /* c */ <i />\n      </div>\n    )}\n  </main>\n}',
+			],
+			[
+				'export function App() @{\n  <main a={<b> /* c */ <i /></b>} />\n}',
+				'export function App() @{\n  <main\n    a={\n      <b>\n        {" "}\n        /* c */ <i />\n      </b>\n    }\n  />\n}',
+			],
+			[
+				'export function App() @{\n  <main>{x && <div>/* c */<i /></div>}</main>\n}',
+				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        /* c */ <i />\n      </div>\n    )}\n  </main>\n}',
+			],
+		])(
+			'formats the comment in the element in a container of %j like in a template',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
+
 		// A block comment after a child used to print after a space, which was
 		// new text on the child's line (#538)
 		it.each([
@@ -17329,6 +17426,33 @@ item
 			'const a = <div>x{" "} /* c */ /* d */ y</div>;',
 		])('keeps the spaces around the block comment after the {" "} of %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// In an element in a `{…}` container, the parser keeps no text for the
+		// space between a `{" "}` and a block comment that a tag or the closing
+		// tag follows (#667), which then starts a line of its own after the
+		// comment. A space printed before the comment was read as a line's
+		// trailing space on the next format, which dropped it.
+		it.each([
+			[
+				'export function App() @{\n  <main>{x && <div>{" "} /* c */</div>}</main>\n}',
+				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {" "}/* c */\n      </div>\n    )}\n  </main>\n}',
+			],
+			[
+				'export function App() @{\n  <main>{x && <div>a{" "} /* c */</div>}</main>\n}',
+				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        a{" "}/* c */\n      </div>\n    )}\n  </main>\n}',
+			],
+			[
+				'export function App() @{\n  <main>{x && <div>{" "} /* a */ /* b */<i /></div>}</main>\n}',
+				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {" "}/* a *//* b */\n        <i />\n      </div>\n    )}\n  </main>\n}',
+			],
+			// Outside a container the space is text, and stays
+			[
+				'export function App() @{\n  <div>{" "} /* c */<i /></div>\n}',
+				'export function App() @{\n  <div>\n    {" "} /* c */ <i />\n  </div>\n}',
+			],
+		])('prints the block comment after the {" "} of %j against it', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
 		});
 
 		// Like Prettier's `printJsxClosingElement` and

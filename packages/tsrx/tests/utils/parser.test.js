@@ -6469,6 +6469,29 @@ describe('comments in element bodies and closing tags', () => {
 		}
 	});
 
+	// Inside a `{…}` container, the parser records a comment in an element's
+	// body as before its first child until a child is finished, which a `{…}`
+	// child isn't until the token after its `}` is read. The comment went to the
+	// element's body, which the formatter prints before the closing tag (#637).
+	it('gives a comment in the body of an element in a container to the child after it', () => {
+		for (const source of [
+			'export function App() @{\n  <main>{x && <div>{" "}\n/* c */ <i /></div>}</main>\n}',
+			'export function App() @{\n  <main a={<div>{" "}\n/* c */ <i /></div>} />\n}',
+			'export function App() @{\n  <main>{x && <div>{y}\n/* c */\n<i /></div>}</main>\n}',
+			'export function App() @{\n  <main>{x && <div>\n/* c */\n<i /></div>}</main>\n}',
+			'export function App() @{\n  <main>{x && <p>{y && <div>{z}\n/* c */\n<i /></div>}</p>}</main>\n}',
+		]) {
+			const div = findElement(source, 'div');
+			const child = div.children.find((node) => node.type === 'JSXElement');
+			expect(commentsOf(child).leading, source).toEqual([' c ']);
+			expect(div.metadata.elementLeadingComments, source).toBeUndefined();
+		}
+
+		// After the last child, the comment leads the closing tag
+		const div = findElement('export function App() @{\n  {x && <div>{y}\n// c\n</div>}\n}', 'div');
+		expect(commentsOf(div.closingElement).leading).toEqual([' c']);
+	});
+
 	it("keeps a comment between a closing fragment's `</` and `>` on it, as Prettier does", () => {
 		const program = parseModule('<>x</ /* note */>;\nfoo();', 'App.tsrx');
 		const fragment = find_first(program, (node) => node.type === 'JSXFragment');

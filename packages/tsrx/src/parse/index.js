@@ -9,7 +9,7 @@
 import * as acorn from 'acorn';
 import { tsPlugin } from '@sveltejs/acorn-typescript';
 import { walk } from 'zimmerframe';
-import { has_location, node_children } from '../utils/ast.js';
+import { has_location } from '../utils/ast.js';
 
 /** @type {Parse.BindingType} */
 export const BINDING_TYPES = {
@@ -1921,8 +1921,6 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 			walk(ast, null, {
 				_(node, { next, path, visit }) {
-					const metadata = /** @type {AST.Node} */ (node)?.metadata;
-
 					/** @returns {boolean} */
 					function isCommentInsideAttributeExpression() {
 						for (let i = path.length - 1; i >= 0; i--) {
@@ -2035,41 +2033,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 						return;
 					}
 
-					if (metadata && metadata.commentContainerId !== undefined) {
-						// For empty template elements, keep comments as `innerComments`.
-						// The Prettier plugin uses `innerComments` to preserve them and
-						// to avoid collapsing the element into self-closing syntax.
-						const isEmptyElement = isEmptyTemplateNode(node);
-						if (!isEmptyElement) {
-							while (
-								comments[0] &&
-								comments[0].context &&
-								comments[0].context.containerId === metadata.commentContainerId &&
-								comments[0].context.beforeMeaningfulChild
-							) {
-								// Check that the comment is actually in this element's own content
-								// area, not positionally inside a child element. This handles the
-								// case where jsx_parseOpeningElementAt() triggers jsx_readToken()
-								// before the child element is pushed to the parser's #path, causing
-								// comments inside the child to get the parent's containerId.
-								const commentStart = comments[0].start;
-								const isInsideChildElement = node_children(node).some(
-									(child) =>
-										child &&
-										child.start !== undefined &&
-										child.end !== undefined &&
-										commentStart >= child.start &&
-										commentStart < child.end,
-								);
-								if (isInsideChildElement) break;
-
-								const elementComment = /** @type {AST.CommentWithLocation} */ (comments.shift());
-
-								(metadata.elementLeadingComments ||= []).push(elementComment);
-							}
-						}
-					}
-
+					// A comment in an element's body goes to the child or closing tag
+					// after it by position, whichever tokenizer path read it. The
+					// `context` the parser gives a comment in an element in a `{…}`
+					// container marks it as before the first child until a child is
+					// finished, which a `{…}` child isn't when the token after it is
+					// read, so it can't tell a comment after such a child from one
+					// before the first child (#637).
 					while (comments[0] && comments[0].start < getCommentStart(node)) {
 						// Skip comments that are inside an attribute of an ancestor JSX element.
 						// Since zimmerframe visits children before attributes, we need to leave
