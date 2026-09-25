@@ -1103,12 +1103,16 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * trail the body and print inside them. Prettier gives the comments after
 	 * any other body to it too, but prints that body without the parentheses,
 	 * so the next pass moves them after the statement: they go there at once.
+	 * Like Prettier, the comments after a spread's argument, before its `}`,
+	 * trail the argument, which the spread prints inside its braces.
 	 * @param {AST.Node | AST.CSS.StyleSheet} node
 	 * @returns {boolean}
 	 */
 	function keepsCommentsAfterChildren(node) {
 		return (
-			node.type.startsWith('JSX') ||
+			(node.type.startsWith('JSX') &&
+				node.type !== 'JSXSpreadAttribute' &&
+				node.type !== 'JSXSpreadChild') ||
 			isNativeTemplateNode(node) ||
 			(isFunctionNode(node) && !isArrowWithElementBody(node)) ||
 			isClassLike(/** @type {AST.Node} */ (node)) ||
