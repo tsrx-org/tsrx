@@ -591,6 +591,47 @@ const b = (
 		);
 	});
 
+	// A comment adds nothing to the text around it: the whitespace on its two
+	// sides is one run, which renders a space without a line break, and nothing
+	// with one beside an element or the start or end of the children (#639).
+	test('the whitespace around a comment renders the same after formatting (#639)', async () => {
+		await expectFormat(
+			`export function App() @{
+  <>
+    <div><b>t</b> /* c */ </div>
+    <div> /* c */ <i /></div>
+    <div>
+      /* c */ 2</div>
+    <div>{x} /* c */
+    </div>
+    <p><i /> {" "}// c
+    </p>
+  </>
+}`,
+			`export function App() @{
+  <>
+    <div>
+      <b>t</b> /* c */{" "}
+    </div>
+    <div>
+      {" "}
+      /* c */ <i />
+    </div>
+    <div>
+      /* c */ 2
+    </div>
+    <div>
+      {x} /* c */
+    </div>
+    <p>
+      <i />{" "}// c
+    </p>
+  </>
+}
+`,
+		);
+	});
+
 	test('in a fragment, and a JSDoc-style block comment is re-indented', async () => {
 		await expectFormat(
 			`const a = <>

@@ -15,8 +15,18 @@
 
 import { builders, utils } from 'prettier/doc';
 
-const { conditionalGroup, cursor, fill, group, hardline, ifBreak, indent, line, softline } =
-	builders;
+const {
+	breakParent,
+	conditionalGroup,
+	cursor,
+	fill,
+	group,
+	hardline,
+	ifBreak,
+	indent,
+	line,
+	softline,
+} = builders;
 const { findInDoc, willBreak } = utils;
 
 /**
@@ -76,16 +86,21 @@ function isJsxWhitespaceExpression(node) {
 	);
 }
 
-/** @param {Doc} doc */
+/**
+ * Prettier's `isEmptyDoc`: no text, and no line or other printed part.
+ * `findInDoc` stops at the first result that isn't `undefined`, so an empty
+ * string must not return one.
+ * @param {Doc} doc
+ */
 function isEmptyDoc(doc) {
 	return !findInDoc(
 		doc,
 		(part) =>
-			typeof part === 'string'
+			(typeof part === 'string'
 				? part !== ''
 				: ['trim', 'line-suffix-boundary', 'line', 'break-parent'].includes(
 						/** @type {{ type: string }} */ (part).type,
-					),
+					)) || undefined,
 		false,
 	);
 }
@@ -126,7 +141,14 @@ export function printJsxElementInternal(path, options, print) {
 	// can then print as either a space or `{" "}` when breaking.
 	node.children = node.children.map((/** @type {Node} */ child) => {
 		if (isJsxWhitespaceExpression(child)) {
-			return { type: 'JSXText', value: ' ', raw: ' ' };
+			// TSRX: a comment prints the `{" "}` beside it (`printCommentChild`).
+			return {
+				type: 'JSXText',
+				value: ' ',
+				raw: ' ',
+				tsrxCommentSpace: child.tsrxCommentSpace,
+				tsrxInCommentRun: child.tsrxInCommentRun,
+			};
 		}
 		return child;
 	});
@@ -152,8 +174,12 @@ export function printJsxElementInternal(path, options, print) {
 
 	const children = printJsxChildren(path, options, print, whitespace, isFacebookTranslationTag);
 
-	const containsText = node.children.some((/** @type {Node} */ child) =>
-		isMeaningfulJsxText(child),
+	// TSRX: a comment whose run renders a space prints it as JSX whitespace,
+	// which needs `fill`, like text.
+	const containsText = node.children.some(
+		(/** @type {Node} */ child) =>
+			isMeaningfulJsxText(child) ||
+			(child.type === 'TSRXJSXComment' && child.run.space && !child.run.lineBreak),
 	);
 
 	// We can end up we multiple whitespace elements with empty string
@@ -307,6 +333,8 @@ export function printJsxElementInternal(path, options, print) {
  * @returns {Doc[]}
  */
 function printJsxChildren(path, options, print, whitespace, isFacebookTranslationTag) {
+	// TSRX: `{" "}`, written out.
+	const rawWhitespace = options.singleQuote ? "{' '}" : '{" "}';
 	/** @type {Doc} */
 	let prevPart = '';
 	/** @type {Doc[]} */
@@ -335,8 +363,16 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 			printCommentChild(node);
 			return;
 		}
+		// TSRX: the comment beside a `{" "}` prints it, and whitespace in a
+		// comment's run keeps what the comment printed after itself.
+		if (
+			node.tsrxCommentSpace ||
+			(node.tsrxInCommentRun && node.type === 'JSXText' && !/\n/u.test(getRaw(node)))
+		) {
+			return;
+		}
 		const followsComment = afterComment;
-		afterComment = false;
+		if (!node.tsrxInCommentRun) afterComment = false;
 
 		if (node.type === 'JSXText') {
 			const text = getRaw(node);
@@ -418,23 +454,86 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 	 * stays on its own line; one after other content on the same line stays
 	 * there, with the space the source has before it. A line comment always
 	 * ends its line; a block comment keeps what followed it on its line.
+	 *
+	 * The whitespace around a group of comments renders as one run
+	 * (`describeCommentRuns` in `parse.js`), so its outer sides are printed to
+	 * render the same: a run that renders a space keeps it where a line may
+	 * break (as `{" "}` there, like Prettier's JSX whitespace, or a line
+	 * between two words), and a run with a line break keeps one, which the
+	 * start or end of the children only has when the element breaks.
 	 * @param {Node} comment
 	 */
 	function printCommentChild(comment) {
+		const { run } = comment;
+		const lineAfter = comment.commentType === 'Line' || comment.newlineAfter;
 		/** @type {Doc} */
-		const before = comment.newlineBefore ? hardline : comment.spaceBefore ? ' ' : '';
+		let before = comment.newlineBefore ? hardline : comment.spaceBefore ? ' ' : '';
+		/** @type {Doc} */
+		let after = lineAfter ? hardline : comment.spaceAfter ? ' ' : '';
+		const outerBefore = run.first;
+		const outerAfter = run.last;
+		if (!outerBefore) {
+			// A line comment after another comment starts its own line: on the same
+			// line, the parser reads it as text.
+			before =
+				run.gapBefore === 'line' || comment.commentType === 'Line'
+					? hardline
+					: run.gapBefore === 'space'
+						? ' '
+						: '';
+		}
+		if (
+			run.space &&
+			!run.lineBreak &&
+			run.lineComment &&
+			!(run.before === 'text' && run.after === 'text')
+		) {
+			// A line comment puts a line break in the run, so the space it renders
+			// is written out, before the comments.
+			if (outerBefore) before = rawWhitespace;
+			if (outerAfter && !lineAfter) after = comment.spaceAfter ? ' ' : '';
+		} else if (run.space && !run.lineBreak) {
+			if (run.before === 'text' && run.after === 'text') {
+				// Between two words, a line break renders the space too.
+				if (outerBefore && comment.spaceBefore) before = line;
+				if (outerAfter && comment.spaceAfter) after = line;
+			} else if (run.after === 'boundary' || run.before === 'boundary') {
+				// The start or end of the children has a line break when the element
+				// breaks, so the space goes there, where it prints as `{" "}`.
+				if (run.after === 'boundary') {
+					if (outerAfter) after = whitespace;
+					if (outerBefore && run.before === 'boundary') before = '';
+				} else if (outerBefore) {
+					before = whitespace;
+				}
+			} else {
+				// The space stays on its side; a line break there prints `{" "}`.
+				const side = outerAfter && comment.spaceAfter ? 'after' : 'before';
+				if (side === 'after') after = whitespace;
+				else if (outerBefore && comment.spaceBefore) before = whitespace;
+			}
+		} else if (run.lineBreak) {
+			// A space beside the start or end of the children renders nothing here.
+			if (outerBefore && run.before === 'boundary' && !comment.newlineBefore) before = '';
+			if (outerAfter && run.after === 'boundary' && !lineAfter) after = '';
+		}
+		// The line break at the start or end of the children is only there when
+		// the element breaks. Without it, a space left in the run would render.
+		const breaksAtEdge =
+			run.lineBreak &&
+			((outerBefore &&
+				run.before === 'boundary' &&
+				comment.newlineBefore &&
+				(after === ' ' || !outerAfter)) ||
+				(outerAfter && run.after === 'boundary' && lineAfter && (before === ' ' || !outerBefore)));
+
 		if (parts.length > 1 && parts.at(-1) === '') {
 			// Replace the separator printed after the previous child.
 			parts[parts.length - 2] = before;
+		} else {
+			pushLine(before);
 		}
-		push(print());
-		/** @type {Doc} */
-		const after =
-			comment.commentType === 'Line' || comment.newlineAfter
-				? hardline
-				: comment.spaceAfter
-					? ' '
-					: '';
+		push(breaksAtEdge ? [print(), breakParent] : print());
 		prevPart = after;
 		parts.push(after, '');
 		afterComment = true;
