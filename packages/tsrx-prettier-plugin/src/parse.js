@@ -224,10 +224,22 @@ class Adapter {
 	}
 
 	/**
-	 * The source with every comment blanked out, for `setContentEnd`.
+	 * The source with every comment blanked out, to find a token without
+	 * matching one inside a comment.
 	 * @type {string | undefined}
 	 */
-	#textWithoutComments;
+	#blankedText;
+
+	get textWithoutComments() {
+		this.#blankedText ??= this.comments.reduce(
+			(text, comment) =>
+				text.slice(0, comment.start) +
+				' '.repeat(comment.end - comment.start) +
+				text.slice(comment.end),
+			this.text,
+		);
+		return this.#blankedText;
+	}
 
 	/**
 	 * Prettier's parsers record where a statement's content ends when comments
@@ -238,14 +250,7 @@ class Adapter {
 	setContentEnd(node) {
 		const end = node.end - 1;
 		if (this.text[end] !== ';') return;
-		this.#textWithoutComments ??= this.comments.reduce(
-			(text, comment) =>
-				text.slice(0, comment.start) +
-				' '.repeat(comment.end - comment.start) +
-				text.slice(comment.end),
-			this.text,
-		);
-		const content = this.#textWithoutComments.slice(node.start, end);
+		const content = this.textWithoutComments.slice(node.start, end);
 		node.__contentEnd = end - (content.length - content.trimEnd().length);
 	}
 
@@ -387,8 +392,10 @@ class Adapter {
 		if (node.type === 'JSXStyleElement' || isRawScriptElement(node)) {
 			// `embed()` prints the CSS or TypeScript body from `node.css` or
 			// `node.content`. (A stylesheet's own positions are CSS offsets.)
+			// Without embedded formatting, the body is printed as written.
 			if (node.closingElement) {
 				this.rawTextRanges.push([node.openingElement.end, node.closingElement.start]);
+				node.tsrxRawText = this.text.slice(node.openingElement.end, node.closingElement.start);
 			}
 			if (node.type === 'JSXStyleElement') node.children = [];
 		}
@@ -462,7 +469,10 @@ class Adapter {
 			// (blank lines, comments, empty bodies).
 			case 'JSXSwitchExpression':
 				for (const switchCase of node.cases) {
-					const start = this.text.indexOf('{', switchCase.test?.end ?? switchCase.start);
+					const start = this.textWithoutComments.indexOf(
+						'{',
+						switchCase.test?.end ?? switchCase.start,
+					);
 					switchCase.consequent = [
 						{
 							type: 'BlockStatement',
@@ -516,7 +526,7 @@ class Adapter {
 						exportKind: 'value',
 						attributes: [],
 					};
-					node.start = this.text.indexOf('import', node.start);
+					node.start = this.textWithoutComments.indexOf('import', node.start);
 					this.setContentEnd(exportDeclaration);
 					return exportDeclaration;
 				}

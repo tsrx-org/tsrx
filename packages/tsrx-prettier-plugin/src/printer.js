@@ -55,9 +55,65 @@ const TSRX_VISITOR_KEYS = /** @type {Record<string, string[]>} */ ({
 /** `@catch (error, reset)` has a second parameter. */
 const CATCH_CLAUSE_KEYS = ['param', 'resetParam', 'body'];
 
+/**
+ * Directives whose comments Prettier places as in the statements they're
+ * written like: a comment before `@else` or `@catch` stays after the `}` (a
+ * line comment before `@catch` moves into its body), and one before a body's
+ * `{` moves into the body.
+ */
+const COMMENT_STATEMENT_DIRECTIVES = new Set(['JSXIfExpression', 'JSXTryExpression']);
+
+/**
+ * One of Prettier's comment handlers, run while a directive enclosing the
+ * comment presents itself as its statement.
+ * @param {((context: any) => boolean) | undefined} handle
+ * @returns {((context: any) => boolean) | undefined}
+ */
+function withDirectivesAsStatements(handle) {
+	if (!handle) return handle;
+	return (context) => {
+		if (handleCommentBeforeEmpty(context)) return true;
+		const node = context.enclosingNode;
+		if (!COMMENT_STATEMENT_DIRECTIVES.has(node?.tsrxType)) return handle(context);
+		return asStatement(node, () => handle(context));
+	};
+}
+
+/**
+ * A comment between a `@for` body and `@empty` stays there, as a comment
+ * before `else` does: it becomes a dangling comment of the `@for`, which
+ * `printFor` prints before `@empty`.
+ * @param {{ comment: Node, precedingNode?: Node, enclosingNode?: Node, followingNode?: Node, text: string }} context
+ * @returns {boolean}
+ */
+function handleCommentBeforeEmpty({ comment, precedingNode, enclosingNode, followingNode, text }) {
+	if (
+		enclosingNode?.tsrxType !== 'JSXForExpression' ||
+		!followingNode ||
+		precedingNode !== enclosingNode.body ||
+		followingNode !== enclosingNode.empty ||
+		!text.slice(comment.end, followingNode.start).includes('@empty')
+	) {
+		return false;
+	}
+	comment.leading = false;
+	comment.trailing = false;
+	(enclosingNode.comments ??= []).push(comment);
+	return true;
+}
+
+const estreeCommentHandlers = /** @type {Record<string, any>} */ (estree.handleComments);
+
 /** @type {Printer<Node>} */
 export const printer = {
 	...estree,
+
+	handleComments: {
+		...estreeCommentHandlers,
+		ownLine: withDirectivesAsStatements(estreeCommentHandlers.ownLine),
+		endOfLine: withDirectivesAsStatements(estreeCommentHandlers.endOfLine),
+		remaining: withDirectivesAsStatements(estreeCommentHandlers.remaining),
+	},
 
 	// A comment between JSX children is printed as a node, and no other comment
 	// attaches to it.
@@ -78,7 +134,7 @@ export const printer = {
 	 * @param {...unknown} rest
 	 */
 	willPrintOwnComments(path, ...rest) {
-		if (isTsrxValue(path) || isCommentedTagName(path)) return true;
+		if (isTsrxValue(path) || isCommentedTagName(path) || isCatchDirective(path)) return true;
 		if (path.node?.tsrxCommentChildren) return false;
 		const willPrintOwnComments = /** @type {(...args: unknown[]) => boolean} */ (
 			estree.willPrintOwnComments
@@ -130,9 +186,7 @@ export const printer = {
 			// body (JSON, an import map, a template) is kept as written.
 			return async (textToDoc, print) => {
 				if (!node.content.trim()) return printRawTextElement(path, print, '');
-				if (!isCodeScript(node)) {
-					return [print('openingElement'), replaceEndOfLine(node.content), print('closingElement')];
-				}
+				if (!isCodeScript(node)) return printRawTextAsWritten(path, print);
 				return printRawTextElement(path, print, await textToDoc(node.content, { parser: 'tsrx' }));
 			};
 		}
@@ -197,6 +251,29 @@ const JSX_LAYOUT_PARENTS = new Set([
 ]);
 
 /**
+ * `@catch`, whose comments `printTsrx` prints before its `@`.
+ * @param {AstPath<Node>} path
+ * @returns {boolean}
+ */
+function isCatchDirective(path) {
+	return path.key === 'handler' && path.parent?.tsrxType === 'JSXTryExpression';
+}
+
+/**
+ * A comment, printed as Prettier prints it, and marked as printed.
+ * @param {Node} comment
+ * @param {ParserOptions<Node>} options
+ * @returns {Doc}
+ */
+function printCommentNode(comment, options) {
+	comment.printed = true;
+	return /** @type {NonNullable<Printer<Node>['printComment']>} */ (estree.printComment)(
+		/** @type {AstPath<Node>} */ (/** @type {unknown} */ ({ node: comment })),
+		options,
+	);
+}
+
+/**
  * A node's leading and trailing comments around its doc, laid out as Prettier's
  * `printComments` does (which plugins can't call).
  * @param {AstPath<Node>} path
@@ -212,13 +289,7 @@ function printOwnComments(path, options, doc, { afterText = false } = {}) {
 	if (!comments?.length) return doc;
 	const text = options.originalText;
 	const first = comments.find((comment) => comment.leading);
-	const printComment = (/** @type {Node} */ comment) => {
-		comment.printed = true;
-		return /** @type {NonNullable<Printer<Node>['printComment']>} */ (estree.printComment)(
-			/** @type {AstPath<Node>} */ (/** @type {unknown} */ ({ node: comment })),
-			options,
-		);
-	};
+	const printComment = (/** @type {Node} */ comment) => printCommentNode(comment, options);
 
 	/** @type {Doc[]} */
 	const leading = [];
@@ -307,11 +378,17 @@ function isTsrxValueNode(node, parent, key) {
 	const { tsrxType, tsrxCodeBlock } = /** @type {Node} */ (node);
 	if (TSRX_DIRECTIVES.has(tsrxType)) return true;
 	if (!tsrxCodeBlock) return false;
+	// A function's `@{ … }` body, and a `@{ … }` that is a statement (a nested
+	// template output), aren't values.
 	return !(
-		key === 'body' &&
-		(parent?.type === 'FunctionDeclaration' ||
-			parent?.type === 'FunctionExpression' ||
-			parent?.type === 'ArrowFunctionExpression')
+		(key === 'body' &&
+			(parent?.type === 'FunctionDeclaration' ||
+				parent?.type === 'FunctionExpression' ||
+				parent?.type === 'ArrowFunctionExpression' ||
+				parent?.type === 'BlockStatement' ||
+				parent?.type === 'StaticBlock' ||
+				parent?.type === 'Program')) ||
+		(key === 'consequent' && parent?.type === 'SwitchCase')
 	);
 }
 
@@ -432,8 +509,16 @@ function printTsrx(path, options, print) {
 		case 'ExpressionStatement':
 			return node.tsrxOutput ? print('expression') : null;
 
+		// With embedded formatting off, Prettier doesn't call `embed()`, and a
+		// `<style>` or `<script>` body is printed as written.
+		case 'JSXStyleElement':
+			return node.tsrxRawText === undefined ? null : printRawTextAsWritten(path, print);
+
 		case 'JSXElement':
 		case 'JSXFragment':
+			if (node.tsrxRawText !== undefined && isRawScriptElement(node)) {
+				return printRawTextAsWritten(path, print);
+			}
 			if (!node.tsrxCommentChildren) return null;
 			return maybeWrapJsxElementInParens(path, printJsxElementInternal(path, options, print));
 
@@ -461,17 +546,17 @@ function printTsrx(path, options, print) {
 			return node.shorthand ? ['{', print(['value', 'expression']), '}'] : null;
 
 		case 'IfStatement':
-			return node.tsrxElseIf ? printIf(path, print, 'if') : null;
+			return node.tsrxElseIf ? printIf(path, options, print, 'if') : null;
 
 		case 'JSXIfExpression':
-			return printIf(path, print, '@if');
+			return printIf(path, options, print, '@if');
 
 		case 'CatchClause':
 			if (!node.resetParam) return null;
 			return ['catch (', print('param'), ', ', print('resetParam'), ') ', print('body')];
 
 		case 'JSXForExpression':
-			return printFor(path, print);
+			return printFor(path, options, print);
 
 		case 'JSXSwitchExpression':
 			return [
@@ -512,7 +597,14 @@ function printTsrx(path, options, print) {
 				'@try ',
 				print('block'),
 				node.pending ? [' @pending ', print('pending')] : '',
-				node.handler ? [' @', print('handler')] : '',
+				// A comment before `@catch` is the clause's, as in Prettier's
+				// `try`, and goes before the `@`.
+				node.handler
+					? [
+							' ',
+							path.call((handler) => printOwnComments(handler, options, ['@', print()]), 'handler'),
+						]
+					: '',
 				node.finalizer ? [' @finally ', print('finalizer')] : '',
 			];
 	}
@@ -523,13 +615,15 @@ function printTsrx(path, options, print) {
 /**
  * `@if (test) { … } @else …`, with the head laid out like Prettier's `if`.
  * @param {AstPath<Node>} path
+ * @param {ParserOptions<Node>} options
  * @param {Print} print
  * @param {string} keyword
  * @returns {Doc}
  */
-function printIf(path, print, keyword) {
+function printIf(path, options, print, keyword) {
 	const { node } = path;
-	return [
+	/** @type {Doc[]} */
+	const parts = [
 		group([
 			keyword,
 			' (',
@@ -538,7 +632,39 @@ function printIf(path, print, keyword) {
 		]),
 		' ',
 		print('consequent'),
-		node.alternate ? [' @else ', print('alternate')] : '',
+	];
+	if (!node.alternate) return parts;
+	parts.push(printBeforeBranch(node, options), '@else ', print('alternate'));
+	return parts;
+}
+
+/**
+ * What goes between a directive's `}` and its next branch (`@else`, `@empty`):
+ * a space, or the comments written there, laid out as Prettier's `if` prints a
+ * comment before `else` (a dangling comment of the `if`).
+ * @param {Node} node
+ * @param {ParserOptions<Node>} options
+ * @returns {Doc}
+ */
+function printBeforeBranch(node, options) {
+	const text = options.originalText;
+	const dangling = /** @type {Node[]} */ (node.comments ?? []).filter(
+		(comment) => !comment.leading && !comment.trailing,
+	);
+	if (dangling.length === 0) return ' ';
+	const first = /** @type {Node} */ (dangling[0]);
+	const last = /** @type {Node} */ (dangling.at(-1));
+	return [
+		isPreviousLineEmpty(text, first.start)
+			? [hardline, hardline]
+			: hasNewline(text, first.start, true)
+				? hardline
+				: ' ',
+		join(
+			hardline,
+			dangling.map((comment) => printCommentNode(comment, options)),
+		),
+		last.type === 'Line' || hasNewline(text, last.end) ? hardline : ' ',
 	];
 }
 
@@ -547,10 +673,11 @@ function printIf(path, print, keyword) {
  * Prettier's `for`: a `for…of`/`for…in` head stays on one line, and a head with
  * several clauses breaks after each `;`.
  * @param {AstPath<Node>} path
+ * @param {ParserOptions<Node>} options
  * @param {Print} print
  * @returns {Doc}
  */
-function printFor(path, print) {
+function printFor(path, options, print) {
 	const { node } = path;
 	const clauses = asStatement(node, () => {
 		/** @type {Doc[]} */
@@ -576,7 +703,7 @@ function printFor(path, print) {
 		group(['@for', node.await ? ' await' : '', ' (', head, ')']),
 		' ',
 		print('body'),
-		node.empty ? [' @empty ', print('empty')] : '',
+		node.empty ? [printBeforeBranch(node, options), '@empty ', print('empty')] : '',
 	];
 }
 
@@ -614,6 +741,20 @@ function printRawTextElement(path, print, body) {
 		print('closingElement'),
 	];
 	return maybeWrapJsxElementInParens(path, element);
+}
+
+/**
+ * A `<style>` or `<script>` element with its body as written.
+ * @param {AstPath<Node>} path
+ * @param {Print} print
+ * @returns {Doc}
+ */
+function printRawTextAsWritten(path, print) {
+	return maybeWrapJsxElementInParens(path, [
+		print('openingElement'),
+		replaceEndOfLine(path.node.tsrxRawText),
+		print('closingElement'),
+	]);
 }
 
 /** Parents that never need parentheses around a multi-line JSX element. */

@@ -64,6 +64,19 @@ function f() {
 		);
 	});
 
+	test('a nested `@{ … }` in a template is a statement, without parentheses (#504)', async () => {
+		await expectFormat(
+			`export function App() @{ @{ const x = 2; <b>{x}</b> } }`,
+			`export function App() @{
+  @{
+    const x = 2;
+    <b>{x}</b>
+  }
+}
+`,
+		);
+	});
+
 	test('keeps comments and blank lines between setup statements', async () => {
 		await expectFormat(
 			`function App() @{
@@ -227,6 +240,68 @@ list.map((item) => (
     <B />
   }
 ));
+`,
+		);
+	});
+
+	// As Prettier places the same comments before `catch` and `else`.
+	test('comments before @catch, @else, and @empty (#505)', async () => {
+		await expectFormat(
+			`function A() @{ @try { <b /> } /* one */ @catch (error) { <i /> } }
+function B() @{ @try { <b /> } // two
+@catch (error) { <i /> } }
+function C() @{ @if (a) { <b /> } // three
+@else { <i /> } }
+function D() @{ @for (const x of xs) { <b /> } // four
+@empty { <i /> } }`,
+			`function A() @{
+  @try {
+    <b />
+  } /* one */ @catch (error) {
+    <i />
+  }
+}
+function B() @{
+  @try {
+    <b />
+  } @catch (error) {
+    // two
+    <i />
+  }
+}
+function C() @{
+  @if (a) {
+    <b />
+  } // three
+  @else {
+    <i />
+  }
+}
+function D() @{
+  @for (const x of xs) {
+    <b />
+  } // four
+  @empty {
+    <i />
+  }
+}
+`,
+		);
+	});
+
+	test('a brace in a comment before an @case body (#509)', async () => {
+		await expectFormat(
+			`const S = () => @switch (1) { @case 1: /* { */ { <b /> } @default: /* } */ { <i /> } }`,
+			`const S = () => (
+  @switch (1) {
+    @case 1: /* { */ {
+      <b />
+    }
+    @default: /* } */ {
+      <i />
+    }
+  }
+);
 `,
 		);
 	});
@@ -538,6 +613,20 @@ const b = <div>text</ /* note */ div>;
 });
 
 describe('<script> bodies', () => {
+	test('with embedded formatting off, <style> and <script> bodies are kept as written (#503)', async () => {
+		await expectFormat(
+			`function App() @{ <><style>.x {  color: red }</style><script>const  x=1</script></> }`,
+			`function App() @{
+  <>
+    <style>.x {  color: red }</style>
+    <script>const  x=1</script>
+  </>
+}
+`,
+			{ embeddedLanguageFormatting: 'off' },
+		);
+	});
+
 	test('only JavaScript and TypeScript bodies are formatted', async () => {
 		await expectFormat(
 			`const s = <>

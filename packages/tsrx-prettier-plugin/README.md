@@ -49,7 +49,11 @@ props, `<style>`/`<script>` bodies, and comments between JSX children.
     tags. A block comment prints straight after `<` (`</* note */ div />`).
   - `<style>` bodies are formatted as CSS. A `<script>` body is formatted with
     this plugin's own parser when it holds JavaScript or TypeScript, and kept as
-    written otherwise (JSON, import maps).
+    written otherwise (JSON, import maps). With
+    `embeddedLanguageFormatting: "off"`, both are kept as written.
+  - Comments between a directive's branches are placed by Prettier's own comment
+    handling for `if` and `try`, while `@if` and `@try` present themselves as
+    those statements. A comment before `@empty` is handled like one before `else`.
 - **JSX children** (`src/jsx.js`): an element whose children include TSRX comments
   is laid out by a copy of Prettier's `printJsxElementInternal` and
   `printJsxChildren`, in which a comment keeps its line. Every other element is
