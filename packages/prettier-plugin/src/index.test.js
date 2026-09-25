@@ -703,7 +703,7 @@ const items=[1,2,3];
   return <div>{value}</div>;
 }
 function App() {
-  return <Box<string> value="hello" />;
+  return <Box<string> value={"hello"} />;
 }`;
 
 		const result = await format(input);
@@ -8525,8 +8525,10 @@ b";`);
   return <input ${attribute} />;
 }`;
 
+		// Like Prettier, a string in braces stays an expression container, and
+		// its quotes follow `singleQuote` rather than `jsxSingleQuote` (#408)
 		it.each([
-			[`title={'Say "hello"'}`, `title='Say "hello"'`],
+			[`title={'Say "hello"'}`, `title={'Say "hello"'}`],
 			[`title="Say &quot;hello&quot;"`, `title='Say "hello"'`],
 			[`title='x "y" &apos;z&apos;'`, `title="x &quot;y&quot; 'z'"`],
 			[`title="&amp;amp;"`, `title="&amp;amp;"`],
@@ -8535,18 +8537,72 @@ b";`);
 			[`title={"It's \\"both\\""}`, `title={'It\\'s "both"'}`],
 			[`title={'\\ud800'}`, `title={"\\ud800"}`],
 			[`title={'a\\nb'}`, `title={"a\\nb"}`],
-			[`title={'It\\'s'}`, `title="It's"`],
-			[`title={'hello'}`, `title="hello"`],
+			[`title={'It\\'s'}`, `title={"It's"}`],
+			[`title={'hello'}`, `title={"hello"}`],
+			[`title={/* c */ 'x'} alt={'y' /* d */}`, `title={/* c */ "x"} alt={"y" /* d */}`],
 		])('prints %s as %s', async (input, expected) => {
 			const result = await format(wrap(input));
 			expect(result).toBeWithNewline(wrap(expected));
 		});
 
-		it('switches quotes instead of breaking the attribute with jsxSingleQuote', async () => {
+		it('keeps the braces around a string with jsxSingleQuote', async () => {
 			const result = await format(wrap(`title={"It's ready"} alt="Say &apos;hi&apos;"`), {
 				jsxSingleQuote: true,
 			});
-			expect(result).toBeWithNewline(wrap(`title="It's ready" alt="Say 'hi'"`));
+			expect(result).toBeWithNewline(wrap(`title={"It's ready"} alt="Say 'hi'"`));
+		});
+
+		it('keeps the braces around a string in a template', async () => {
+			const input = `export function App() @{
+  <div class={"foo"} title={'It\\'s'}>{"text"}</div>
+}`;
+			const expected = `export function App() @{
+  <div class={'foo'} title={"It's"}>
+    {'text'}
+  </div>
+}`;
+			expect(await format(input, { singleQuote: true })).toBeWithNewline(expected);
+		});
+
+		// Prettier keeps an opening element with one string attribute on one
+		// line, but not one with a string in braces, which breaks like any
+		// other expression container
+		it('breaks a long string in braces like an expression container', async () => {
+			const input = `export function App() {
+  return <div title={"a very long string value that goes on and on and on and on and on and on and on"}>x</div>;
+}
+export function B() {
+  return <div title={"a very long string value that goes on and on and on and on and on and on and on and on"}>x</div>;
+}
+export function C() {
+  return <div title="a very long string value that goes on and on and on and on and on and on and on and on">x</div>;
+}`;
+			const expected = `export function App() {
+  return (
+    <div title={"a very long string value that goes on and on and on and on and on and on and on"}>
+      x
+    </div>
+  );
+}
+export function B() {
+  return (
+    <div
+      title={
+        "a very long string value that goes on and on and on and on and on and on and on and on"
+      }
+    >
+      x
+    </div>
+  );
+}
+export function C() {
+  return (
+    <div title="a very long string value that goes on and on and on and on and on and on and on and on">
+      x
+    </div>
+  );
+}`;
+			expect(await format(input, { printWidth: 100 })).toBeWithNewline(expected);
 		});
 	});
 

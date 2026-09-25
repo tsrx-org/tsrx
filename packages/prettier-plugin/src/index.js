@@ -12508,27 +12508,18 @@ function printTemplateInParens(path, options, printed) {
 }
 
 /**
- * The text of a string attribute value as it prints, or `null`: a string
- * literal, or a string container that `printJSXAttribute` prints as one.
+ * The value of an attribute string (`title="Hello"`), or `null`. A string
+ * in braces (`title={'Hello'}`) is an expression container, as in Prettier.
  * @param {AST.Node} attr
- * @param {TsrxFormatOptions} options
  * @returns {string | null}
  */
-function getJSXAttributeStringValue(attr, options) {
+function getJSXAttributeStringValue(attr) {
 	if (attr.type !== 'JSXAttribute' || !attr.value) {
 		return null;
 	}
 	const value = /** @type {AST.Node} */ (attr.value);
 	if (value.type === 'Literal' && typeof value.value === 'string') {
 		return value.value;
-	}
-	if (
-		value.type === 'JSXExpressionContainer' &&
-		value.expression.type === 'Literal' &&
-		typeof value.expression.value === 'string' &&
-		getJSXAttributeStringQuote(/** @type {AST.Literal} */ (value.expression), options)
-	) {
-		return value.expression.value;
 	}
 	return null;
 }
@@ -12607,7 +12598,7 @@ function printJSXElement(node, path, options, print) {
 			path.call(print, 'openingElement', 'attributes', i),
 		);
 		const singleStringValue =
-			attributes.length === 1 ? getJSXAttributeStringValue(attributes[0], options) : null;
+			attributes.length === 1 ? getJSXAttributeStringValue(attributes[0]) : null;
 		if (
 			singleStringValue !== null &&
 			!singleStringValue.includes('\n') &&
@@ -12627,7 +12618,7 @@ function printJSXElement(node, path, options, print) {
 			// An attribute string with a line break breaks the opening element, and
 			// so does a value that breaks, as the break would propagate to it
 			const shouldBreak =
-				attributes.some((attr) => getJSXAttributeStringValue(attr, options)?.includes('\n')) ||
+				attributes.some((attr) => getJSXAttributeStringValue(attr)?.includes('\n')) ||
 				attributeDocs.some((attributeDoc) => willBreak(attributeDoc));
 			const attributeLine =
 				options.singleAttributePerLine && attributes.length > 1 ? hardline : line;
@@ -13023,12 +13014,6 @@ function printJSXAttribute(attr, path, options, print) {
 
 	if (attr.value.type === 'JSXExpressionContainer') {
 		const expression = attr.value.expression;
-		if (expression.type === 'Literal' && typeof expression.value === 'string') {
-			const quote = getJSXAttributeStringQuote(expression, options);
-			if (quote) {
-				return [name, '=', quote, expression.value, quote];
-			}
-		}
 		const exprDoc = path.call(print, 'value', 'expression');
 		return [name, '=', printJSXExpressionContainer(expression, exprDoc, false)];
 	}
@@ -13117,36 +13102,6 @@ function printJSXAttributeString(literal, options) {
 		.replaceAll('&quot;', '"');
 	const quote = getPreferredQuote(content, options.jsxSingleQuote);
 	return quote + content.replaceAll(quote, quote === '"' ? '&quot;' : '&apos;') + quote;
-}
-
-/**
- * Pick the quote for printing a string expression container
- * (`title={"Hello"}`) as a plain attribute string (`title="Hello"`), or
- * `null` when the container has to stay. An attribute string has no escape
- * sequences and decodes HTML entities, so the value moves over unchanged
- * only when the literal spells it out verbatim (escaped quotes aside), it has
- * no `&`, and one quote character is free to delimit it.
- * @param {AST.Literal} literal
- * @param {TsrxFormatOptions} options
- * @returns {'"' | "'" | null}
- */
-function getJSXAttributeStringQuote(literal, options) {
-	const value = literal.value;
-	const raw = literal.raw;
-	if (
-		typeof value !== 'string' ||
-		!isQuotedStringRaw(raw) ||
-		value.includes('&') ||
-		raw.slice(1, -1).replace(/\\(["'])/g, '$1') !== value
-	) {
-		return null;
-	}
-
-	const preferred = options.jsxSingleQuote ? "'" : '"';
-	const alternate = options.jsxSingleQuote ? '"' : "'";
-	if (!value.includes(preferred)) return preferred;
-	if (!value.includes(alternate)) return alternate;
-	return null;
 }
 
 /**
