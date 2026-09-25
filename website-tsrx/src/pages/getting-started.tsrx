@@ -375,7 +375,7 @@ const NAV_GROUPS = [
 	},
 	{
 		heading: 'Next',
-		items: [{ id: 'next', label: 'What\'s next?' }],
+		items: [{ id: 'next', label: "What's next?" }],
 	},
 ];
 
@@ -511,7 +511,7 @@ export function GettingStartedPage() @{
 								is imported from
 								<code class="inline-code">preact/compat</code>
 								by default; pass
-								<code class="inline-code">{'{ suspenseSource: \'preact-suspense\' }'}</code>
+								<code class="inline-code">{"{ suspenseSource: 'preact-suspense' }"}</code>
 								to
 								<code class="inline-code">tsrxPreact()</code>
 								if you want to avoid pulling in the full compat layer.
@@ -550,7 +550,7 @@ export function GettingStartedPage() @{
 								for the final JSX transform and routes per-component
 								<code class="inline-code">{'<style>'}</code>
 								blocks through Rspack's built-in CSS module type. You can also pass
-								<code class="inline-code">{'{ suspenseSource: \'preact-suspense\' }'}</code>
+								<code class="inline-code">{"{ suspenseSource: 'preact-suspense' }"}</code>
 								if you want to avoid the default
 								<code class="inline-code">preact/compat</code>
 								Suspense import.
