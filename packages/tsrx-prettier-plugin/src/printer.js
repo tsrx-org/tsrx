@@ -3,12 +3,13 @@
  * @import { Node } from './parse.js'
  */
 
-import { builders } from 'prettier/doc';
+import { builders, utils } from 'prettier/doc';
 import * as estreePlugin from 'prettier/plugins/estree';
 import { printJsxElementInternal } from './jsx.js';
 import { isRawScriptElement } from './parse.js';
 
 const { breakParent, group, hardline, ifBreak, indent, join, line, softline } = builders;
+const { replaceEndOfLine } = utils;
 
 /**
  * Prettier's own JS/TS printer. Everything that isn't TSRX syntax is printed by
@@ -112,17 +113,42 @@ export const printer = {
 		}
 
 		if (isRawScriptElement(node)) {
-			return async (textToDoc, print) =>
-				printRawTextElement(
-					path,
-					print,
-					node.content.trim() ? await textToDoc(node.content, { parser: 'typescript' }) : '',
-				);
+			// A JavaScript or TypeScript body is formatted with this plugin's own
+			// parser, so `prettier/standalone` needs no other plugin; any other
+			// body (JSON, an import map, a template) is kept as written.
+			return async (textToDoc, print) => {
+				if (!node.content.trim()) return printRawTextElement(path, print, '');
+				if (!isCodeScript(node)) {
+					return [print('openingElement'), replaceEndOfLine(node.content), print('closingElement')];
+				}
+				return printRawTextElement(path, print, await textToDoc(node.content, { parser: 'tsrx' }));
+			};
 		}
 
 		return estree.embed?.(path, asTypeScript(options)) ?? null;
 	},
 };
+
+/**
+ * `type` values of a `<script>` whose body is JavaScript or TypeScript, as in
+ * Prettier's HTML printer. No `type` means JavaScript.
+ */
+const CODE_SCRIPT_TYPE =
+	/^(?:module|text\/babel|(?:text|application)\/(?:javascript|ecmascript|typescript|x-typescript))$/iu;
+
+/**
+ * @param {Node} node A `<script>` element.
+ * @returns {boolean}
+ */
+function isCodeScript(node) {
+	const type = node.openingElement.attributes.find(
+		(/** @type {Node} */ attribute) =>
+			attribute.type === 'JSXAttribute' && attribute.name.name === 'type',
+	);
+	if (!type) return true;
+	const value = type.value?.type === 'Literal' ? type.value.value : undefined;
+	return typeof value === 'string' && (value === '' || CODE_SCRIPT_TYPE.test(value));
+}
 
 /**
  * Print a TSRX node, or return `null` to let Prettier's estree printer print it.

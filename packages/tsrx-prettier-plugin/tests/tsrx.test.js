@@ -1,6 +1,7 @@
 // TSRX syntax, which Prettier's own tests don't cover.
 
 import * as prettier from 'prettier';
+import * as standalone from 'prettier/standalone';
 import { describe, expect, test } from 'vitest';
 import plugin from '../src/index.js';
 
@@ -410,6 +411,52 @@ const b = (
 );
 `,
 		);
+	});
+});
+
+describe('<script> bodies', () => {
+	test('only JavaScript and TypeScript bodies are formatted', async () => {
+		await expectFormat(
+			`const s = <>
+<script>let  y = 2</script>
+<script type="module">import a from "a"</script>
+<script type="application/json">[1,2]</script>
+</>;`,
+			`const s = (
+  <>
+    <script>
+      let y = 2;
+    </script>
+    <script type="module">
+      import a from "a";
+    </script>
+    <script type="application/json">[1,2]</script>
+  </>
+);
+`,
+		);
+	});
+});
+
+describe('prettier/standalone', () => {
+	test('formats with only this plugin, including <style> and <script> bodies', async () => {
+		const source = `export function App() @{ <div class="x"><style>.x{color:red}</style><script>let  y = 2</script></div> }`;
+		const options = { parser: 'tsrx', plugins: [plugin] };
+		const output = await standalone.format(source, options);
+		expect(output).toBe(`export function App() @{
+  <div class="x">
+    <style>
+      .x {
+        color: red;
+      }
+    </style>
+    <script>
+      let y = 2;
+    </script>
+  </div>
+}
+`);
+		expect(output).toBe(await prettier.format(source, options));
 	});
 });
 
