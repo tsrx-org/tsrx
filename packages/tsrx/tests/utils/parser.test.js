@@ -9636,6 +9636,128 @@ describe('JSX whitespace in template text', () => {
 			'export function App() @{\n\t<main>\n\t\t{(() => {\n\t\t\tswitch (x) {\n\t\t\t\tcase 1:\n\t\t\t\t\treturn <div><b>1</b> 2</div>;\n\t\t\t}\n\t\t})()}\n\t</main>\n}',
 			['<b>', ' 2'],
 		],
+		// So does an element in a setup statement, wherever the statement holds it (#636)
+		[
+			'text before a tag in an element in a setup statement',
+			'export function App() @{\n\tconst a = <div>Hello<b /></div>;\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'a space after an opening tag in an element in a setup statement',
+			'export function App() @{\n\tlet a = <div> 1</div>;\n\t<main>{a}</main>\n}',
+			[' 1'],
+		],
+		[
+			'a space after a closing tag in an element in a setup statement',
+			'export function App() @{\n\tconst a = <div><b>1</b> 2</div>;\n\t<main>{a}</main>\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'a non-breaking space after a closing tag in an element in a setup statement',
+			'export function App() @{\n\tconst a = <div><b>1</b>\u00a02</div>;\n\t<main>{a}</main>\n}',
+			['<b>', '\u00a02'],
+		],
+		[
+			'a space after a child container in an element in a setup statement',
+			'export function App() @{\n\tconst a = <div>{x} 2</div>;\n\t<main>{a}</main>\n}',
+			['JSXExpressionContainer', ' 2'],
+		],
+		[
+			'text before a tag in a function declared in a setup statement',
+			'export function App() @{\n\tfunction f() {\n\t\treturn <div>Hello<b /></div>;\n\t}\n\t<main>{f()}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a return in a setup statement',
+			'export function App() @{\n\tif (x) {\n\t\treturn <div>Hello<b /></div>;\n\t}\n\t<main />\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a call argument in a setup statement',
+			'export function App() @{\n\tconst a = f(<div>Hello<b /></div>);\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in an array in a setup statement',
+			'export function App() @{\n\tconst a = [<div>Hello<b /></div>];\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in an object in a setup statement',
+			'export function App() @{\n\tconst a = { k: <div>Hello<b /></div> };\n\t<main>{a.k}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a conditional in a setup statement',
+			'export function App() @{\n\tconst a = x ? <div>Hello<b /></div> : null;\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in an arrow body in a setup statement',
+			'export function App() @{\n\tconst a = () => <div>Hello<b /></div>;\n\t<main>{a()}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in an @if in a setup statement',
+			'export function App() @{\n\tconst a = @if (x) {\n\t\t<div>Hello<b /></div>\n\t};\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in an @for in a setup statement',
+			'export function App() @{\n\tconst a = @for (const i of xs) {\n\t\t<div>Hello<b /></div>\n\t};\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in an @switch in a setup statement',
+			'export function App() @{\n\tconst a = @switch (x) {\n\t\t@case 1: {\n\t\t\t<div>Hello<b /></div>\n\t\t}\n\t};\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a setup statement of a @{ … } in a setup statement',
+			'export function App() @{\n\tconst a = @{\n\t\tconst b = <div>Hello<b /></div>;\n\t\t<p>{b}</p>\n\t};\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a component declared in a setup statement',
+			'export function App() @{\n\tfunction B() @{\n\t\t<div>Hello<b /></div>\n\t}\n\t<main><B /></main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a switch case in a setup statement',
+			'export function App() @{\n\tswitch (y) {\n\t\tcase 1: {\n\t\t\tconst a = <div>Hello<b /></div>;\n\t\t}\n\t}\n\t<main />\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'a space after a closing tag in an element in a container in a setup statement',
+			'export function App() @{\n\tconst a = <p>{x && <div><b>1</b> 2</div>}</p>;\n\t<main>{a}</main>\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'a space after a closing tag in an element in an attribute value in a setup statement',
+			'export function App() @{\n\tconst a = <p slot={<div><b>1</b> 2</div>} />;\n\t<main>{a}</main>\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'text before a tag in a setup statement of an @if body',
+			'export function App() @{\n\t<main>\n\t\t@if (x) {\n\t\t\tconst a = <div>Hello<b /></div>;\n\t\t\t<p>{a}</p>\n\t\t}\n\t</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a setup statement of a @{ … } child',
+			'export function App() @{\n\t<main>\n\t\t@{\n\t\t\tconst a = <div>Hello<b /></div>;\n\t\t\t<p>{a}</p>\n\t\t}\n\t</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'a space after a closing tag in a setup statement of an @case',
+			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tconst a = <div><b>1</b> 2<i /></div>;\n\t\t\t\t<p>{a}</p>\n\t\t\t}\n\t\t}\n\t</main>\n}',
+			['<b>', ' 2', '<i>'],
+		],
+		// A spread attribute's argument stays code
+		[
+			'text in an element with a spread attribute',
+			'export function App() @{\n\t<main>\n\t\t<div {...{ a: b ? c : d, e: <i>1</i> }}> 3</div>\n\t</main>\n}',
+			[' 3'],
+		],
 	];
 
 	it.each(cases)('reads %s like JSX', async (_label, source, expected) => {
@@ -9657,6 +9779,55 @@ describe('JSX whitespace in template text', () => {
 
 		for (const outcome of outcomes) {
 			expect(outcome).toMatchObject({ ok: false, message: 'Unexpected token (1:13)' });
+		}
+	});
+
+	it('reads the token after a self-closing tag with a space before its `>` as code', async () => {
+		const sources = [
+			'const a = <div / >;\nconst b = 1;',
+			'export function App() @{\n\tconst a = <b / >;\n\tconst c = 1;\n\t<main>{a}</main>\n}',
+		];
+		const inputs = sources.flatMap((source) => modes.map((options) => ({ source, options })));
+		const outcomes = await parse_in_worker(inputs);
+
+		expect(outcomes).toEqual(inputs.map(({ options }) => ({ ok: true, errors: options && [] })));
+	});
+});
+
+describe('syntax errors in an element that is a value', () => {
+	const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+
+	// acorn-typescript first parses a value that starts with `<` as an element,
+	// in an attempt that is undone when it fails. A syntax error in the element
+	// still reports as that error, where TypeScript reports it (#638).
+	/** @type {Array<[string, string, string]>} */
+	const cases = [
+		['a closing tag without its `>`', 'const el = <div>x</div;', "'>' expected. (1:22)"],
+		['the same in parentheses', 'const el = (<div>x</div);', "'>' expected. (1:23)"],
+		['the same at the end of the input', 'const a = cond ? <span>a</span', "'>' expected. (1:30)"],
+		['the same in a default export', 'export default <div>B</div', "'>' expected. (1:26)"],
+		['a self-closing tag without its `>`', 'const el = <div/;', "'>' expected. (1:16)"],
+		[
+			'a closing tag without its `>` in a setup statement',
+			'export function App() @{\n\tconst a = <div><b>1</b</div>;\n\t<p>{a}</p>\n}',
+			"'>' expected. (2:23)",
+		],
+		['a closing tag as an argument', 'x = import(</>);', 'Unexpected token (1:12)'],
+		['a closing tag as an index', 'x = a[(</>)];', 'Unexpected token (1:8)'],
+		['a closing tag as an operand', 'x = -(< />);', 'Unexpected token (1:8)'],
+		['a closing tag after yield', 'function* g() {\n\tyield </>;\n}', 'Unexpected token (2:8)'],
+		[
+			'text that reads nothing in a setup statement',
+			'export function App() @{\n\tconst f = <b><T,>() => 1;\n\t<main />\n}',
+			'Unexpected token (2:14)',
+		],
+	];
+
+	it.each(cases)('reports %s as a syntax error', async (_label, source, message) => {
+		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
+
+		for (const outcome of outcomes) {
+			expect(outcome).toMatchObject({ ok: false, message });
 		}
 	});
 });
