@@ -8820,6 +8820,19 @@ let aaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
 			expect(result).toBeWithNewline(source);
 		});
 
+		// Prettier ignores a statement that a `prettier-ignore` comment trails
+		it('keeps a declaration with a trailing prettier-ignore comment as written', async () => {
+			const source = `function g(a, x) {
+  const Xl = msg[x], Xh = msg[x + 1]; // prettier-ignore
+  let Al = BBUF[2 * a],   Ah = BBUF[2 * a + 1]; // prettier-ignore
+}
+export const b = 1,   c = 2; // prettier-ignore
+let   q = [1,2,
+  3]; // prettier-ignore`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
 		it('keeps the comments between declarators in order', async () => {
 			const source = `var a, // first
   // second
@@ -10431,6 +10444,29 @@ foo(
   },
   bar(a, b),
 );`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks every argument rather than breaking the parameter type of a hugged callback', async () => {
+			const input = `cluster.on('open', (tunnel: { destroy: () => void; once: (event: string, handler: () => void) => void }) => {
+  count++;
+});
+emitter.on("change", (value: { a: string; b: number }) => {
+  count++;
+});`;
+			const expected = `cluster.on(
+  "open",
+  (tunnel: {
+    destroy: () => void;
+    once: (event: string, handler: () => void) => void;
+  }) => {
+    count++;
+  },
+);
+emitter.on("change", (value: { a: string; b: number }) => {
+  count++;
+});`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});

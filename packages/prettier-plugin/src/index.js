@@ -45,7 +45,7 @@ const {
 	lineSuffixBoundary,
 	align,
 } = builders;
-const { replaceEndOfLine, stripTrailingHardline, willBreak, canBreak, removeLines } = utils;
+const { replaceEndOfLine, stripTrailingHardline, willBreak, canBreak, removeLines, mapDoc } = utils;
 
 /** @type {import('prettier').Plugin['languages']} */
 export const languages = [
@@ -3560,6 +3560,14 @@ function printVariableDeclaration(node, path, options, print) {
 				? parentNode.init === node
 				: parentNode.left === node));
 
+	// Like Prettier (`hasNodeIgnoreComment`), a `prettier-ignore` comment that
+	// trails the declaration on its line keeps the declaration as written
+	const statement = parentNode?.type === 'ExportNamedDeclaration' ? parentNode : node;
+	if (!isForLoopInit && hasSameLinePrettierIgnoreAfter(statement, options)) {
+		const { start, end } = /** @type {AST.NodeWithLocation} */ (/** @type {unknown} */ (node));
+		return replaceEndOfLine(/** @type {string} */ (options.originalText).slice(start, end));
+	}
+
 	const printed = path.map(print, 'declarations');
 
 	// Like Prettier, once any declarator has a value every declarator after the
@@ -3584,6 +3592,43 @@ function printVariableDeclaration(node, path, options, print) {
 		indent(rest),
 		isForLoopInit ? '' : semi(options),
 	]);
+}
+
+/**
+ * Whether a `prettier-ignore` comment trails the node on the line it ends.
+ * @param {AST.Node & AST.NodeWithMaybeComments} node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {boolean}
+ */
+function hasSameLinePrettierIgnoreAfter(node, options) {
+	const text = /** @type {string} */ (options.originalText);
+	return (node.trailingComments ?? []).some(
+		(comment) =>
+			isPrettierIgnoreComment(comment) &&
+			!hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).start, { backwards: true }),
+	);
+}
+
+/**
+ * Prettier's `removeLines` for a hugged call argument's signature. Some of the
+ * plugin's printers offer a broken layout as a later state of a
+ * conditionalGroup, which `removeLines` leaves in place, so the signature
+ * could still break inside a hugged argument. Keep only the first state.
+ * @param {Doc} doc
+ * @returns {Doc}
+ */
+function removeLinesForHug(doc) {
+	return removeLines(
+		mapDoc(doc, (part) =>
+			typeof part === 'object' &&
+			part !== null &&
+			!Array.isArray(part) &&
+			part.type === 'group' &&
+			part.expandedStates
+				? part.contents
+				: part,
+		),
+	);
 }
 
 /**
@@ -3849,12 +3894,12 @@ function printArrowFunctionSignature(path, options, print, args) {
 		if (willBreak(returnTypeDoc)) {
 			throw new ArgExpansionBailout();
 		}
-		returnTypeDoc = group(removeLines(returnTypeDoc));
+		returnTypeDoc = group(removeLinesForHug(returnTypeDoc));
 		if (getFunctionParameters(node).length > 0 && !isDecoratedFunction(path)) {
 			if (willBreak(typeParametersDoc)) {
 				throw new ArgExpansionBailout();
 			}
-			typeParametersDoc = removeLines(typeParametersDoc);
+			typeParametersDoc = removeLinesForHug(typeParametersDoc);
 		}
 	}
 
@@ -4315,7 +4360,7 @@ function printFunctionParameters(path, options, print, shouldExpandParameters = 
 		if (willBreak(printed)) {
 			throw new ArgExpansionBailout();
 		}
-		return [group(['(', removeLines(printed), ')'])];
+		return [group(['(', removeLinesForHug(printed), ')'])];
 	}
 
 	const hasNotParameterDecorator = parameters.every(
