@@ -25,13 +25,6 @@ import {
 	GeneratorSpreadRefApp,
 	generator_spread_ref_nodes,
 } from '@tsrx/core/test-harness/runtime/generator-spread-ref-components.tsrx';
-import {
-	ExpressionChildrenInterleavedApp,
-	SpreadChildrenApp,
-	SpreadChildrenComponentApp,
-	SpreadChildrenFragmentApp,
-	SpreadChildrenInterleavedApp,
-} from '@tsrx/core/test-harness/runtime/spread-children-components.tsrx';
 
 let container: HTMLDivElement;
 let resolveValue: (value: string) => void;
@@ -338,46 +331,6 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 		]);
 		expect(generator_spread_ref_nodes).toEqual(elements);
 	});
-
-	for (const [label, app, selector, rendered] of [
-		[
-			'between their siblings',
-			() => <SpreadChildrenApp items={['a', 'b']} />,
-			'.spread-children > li',
-			['first', 'a', 'b', 'last'],
-		],
-		[
-			'as the only child of a fragment',
-			() => <SpreadChildrenFragmentApp items={['a', 'b']} />,
-			'.spread-children-fragment > b',
-			['a', 'b'],
-		],
-		[
-			'as component children',
-			() => <SpreadChildrenComponentApp items={['a', 'b']} />,
-			'.spread-children-box > i',
-			['a', 'b', 'end'],
-		],
-		[
-			'at their source position, like an expression child, before a later setup statement',
-			() => <SpreadChildrenInterleavedApp items={['a', 'b']} />,
-			'.spread-children-interleaved > li',
-			['a', 'b', '3'],
-		],
-		[
-			'(expression child in the same place)',
-			() => <ExpressionChildrenInterleavedApp items={['a', 'b']} />,
-			'.expression-children-interleaved > li',
-			['a', 'b', '3'],
-		],
-	] as const) {
-		it(`renders JSX spread children ${label}`, () => {
-			render(app(), container);
-
-			const texts = Array.from(container.querySelectorAll(selector), (node) => node.textContent);
-			expect(texts).toEqual(rendered);
-		});
-	}
 
 	for (const [directive, App, reverse] of [
 		['@if', ForKeyedIfApp, '.reverse-keyed-if'],

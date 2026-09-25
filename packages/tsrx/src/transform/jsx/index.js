@@ -750,21 +750,6 @@ export function createJsxTransform(platform) {
 					: produced;
 			},
 
-			JSXSpreadChild(node, { next, state }) {
-				const spread = /** @type {ESTreeJSX.JSXSpreadChild} */ (next() ?? node);
-				const unsupported = state.platform.validation.unsupportedSpreadChildMessage;
-				if (unsupported) {
-					error(unsupported, state.filename, node, state.errors, state.comments);
-					return spread;
-				}
-				// Type-only output keeps the spread, so TypeScript still checks that
-				// the spread value is an array.
-				if (state.platform.jsx.spreadChildStrategy === 'expression' && !state.typeOnly) {
-					return to_jsx_expression_container(spread.expression, spread);
-				}
-				return spread;
-			},
-
 			JSXExpressionContainer(node, { next, state }) {
 				const result = /** @type {ESTreeJSX.JSXExpressionContainer} */ (next() ?? node);
 				const expression = result.expression;
@@ -6967,7 +6952,8 @@ export function build_return_expression(render_nodes, in_jsx_child = false, type
 			return set_loc(b.jsx_fragment([only]), has_location(only) ? only : undefined);
 		}
 		if (only.type === 'JSXSpreadChild') {
-			// `{...items}` has no single-value form, so it stays a fragment child.
+			// Analysis reports spread children; the editor's output keeps
+			// `{...items}`, which has no single-value form, as a fragment child.
 			return set_loc(b.jsx_fragment([only]), has_location(only) ? only : undefined);
 		}
 		return only;

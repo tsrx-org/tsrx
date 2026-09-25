@@ -5,7 +5,6 @@ import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtim
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
-import { runSpreadChildrenRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-children';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
@@ -1677,4 +1676,3 @@ runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
-runSpreadChildrenRuntimeTests();

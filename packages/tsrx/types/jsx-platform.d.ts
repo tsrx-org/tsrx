@@ -476,20 +476,6 @@ export interface JsxPlatform {
 		 *   before the spread or evaluates the spread lazily, such as Solid's.
 		 */
 		hostSpreadRefBinding?: 'in-place';
-		/**
-		 * How runtime output emits a JSX spread child (`{...children}`).
-		 *
-		 * - `undefined`: keep `{...children}` for the host JSX compiler, which
-		 *   spreads the array into the element's children (React, Preact, Hono).
-		 * - `'expression'`: emit `{children}`, for a host compiler that inserts a
-		 *   spread child like an expression child anyway (Solid's
-		 *   dom-expressions, which also misplaces a spread child that has static
-		 *   siblings after it).
-		 *
-		 * Type-only output always keeps the spread, so TypeScript checks that the
-		 * spread value is an array.
-		 */
-		spreadChildStrategy?: 'expression';
 	};
 
 	validation: {
@@ -523,12 +509,6 @@ export interface JsxPlatform {
 		 * `<Suspense fallback={...}>` wrapper.
 		 */
 		unsupportedTryPendingMessage?: string;
-		/**
-		 * Optional compiler error for targets whose JSX compiler cannot render a
-		 * JSX spread child (`{...children}`). When provided, the shared transform
-		 * reports it at every spread child.
-		 */
-		unsupportedSpreadChildMessage?: string;
 	};
 
 	/**

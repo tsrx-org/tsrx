@@ -1,6 +1,7 @@
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { DIAGNOSTIC_CODES } from '../../src/diagnostics.js';
+import { TSRX_JSX_SPREAD_CHILD_ERROR } from '../../src/analyze/validation.js';
 import { runSharedScopedStyleTests } from './scoped-styles.js';
 import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformance.js';
 
@@ -107,7 +108,9 @@ export function App() @{
 	});
 
 	describe(`[${name}] JSX spread children in virtual code`, () => {
-		it('keeps the spread and maps its expression', () => {
+		// Analysis reports spread children, but the editor still gets typed
+		// code that keeps the spread and maps its expression.
+		it('reports each spread child and keeps it in the virtual code', () => {
 			const source = `export function App({ items }: { items: any[] }) @{
 	<div>
 		{...items}
@@ -116,19 +119,21 @@ export function App() @{
 }`;
 			const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
 
-			// Vue reports spread children but still gives the editor typed code.
-			expect(errors.length).toBe(name === 'vue' ? 2 : 0);
+			const first = source.indexOf('{...items}');
+			const second = source.indexOf('{...items}', first + 1);
+			expect(errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				[DIAGNOSTIC_CODES.JSX_SPREAD_CHILD, first, first + '{...items}'.length],
+				[DIAGNOSTIC_CODES.JSX_SPREAD_CHILD, second, second + '{...items}'.length],
+			]);
 			expect(code).toContain('<div>{...items}<>{...items}</></div>');
 			expect(virtual_parse_diagnostics(code), code).toEqual([]);
 
-			let from = source.indexOf('{...items}');
-			for (let i = 0; i < 2; i++) {
-				const items = source.indexOf('items', from);
+			for (const spread of [first, second]) {
+				const items = source.indexOf('items', spread);
 				const mapping = mappings.find((candidate) => candidate.sourceOffsets[0] === items);
 				expect(mapping).toBeDefined();
 				const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
 				expect(code.slice(generated, generated + 'items'.length)).toBe('items');
-				from = items + 1;
 			}
 		});
 	});
@@ -2152,97 +2157,57 @@ export function App() @{
 	});
 
 	describe(`[${name}] JSX spread children`, () => {
-		// React, Preact, and Hono leave `{...items}` to the host JSX compiler,
-		// which spreads the array into the children. Solid's dom-expressions
-		// inserts a spread child like `{items}` but places it after the static
-		// siblings that follow it, so Solid emits `{items}`. vue-jsx-vapor drops
-		// spread children, so Vue reports them.
-		const spread = name === 'solid' ? '{items}' : '{...items}';
+		// Spread children parse, but analysis reports them on every target: a
+		// normal compile throws, and collect mode records the diagnostic and
+		// still produces code.
 		const cases = [
-			{
-				label: 'an element child before a sibling',
-				source: `export function App({ items }: { items: any[] }) @{
+			[
+				'a template child',
+				`export function App({ items }: { items: any[] }) @{
 	<div>
 		{...items}
 		<span />
 	</div>
 }`,
-				output: `<div>${spread}<span /></div>`,
-			},
-			{
-				label: 'the only child of a fragment',
-				source: `export function App({ items }: { items: any[] }) @{
-	<>{...items}</>
-}`,
-				output: `<>${spread}</>`,
-			},
-			{
-				label: 'a child in plain TSX',
-				source: `export function List({ items }: { items: any[] }) {
-	return <ul>{...items}</ul>;
-}`,
-				output: `<ul>${spread}</ul>`,
-			},
+			],
+			[
+				'the only child of a fragment',
+				`export function App({ items }: { items: any[] }) @{\n\t<>{...items}</>\n}`,
+			],
+			[
+				'a child in plain TSX',
+				`export function List({ items }: { items: any[] }) {\n\treturn <ul>{...items}</ul>;\n}`,
+			],
+			[
+				'a child of an element in an attribute value',
+				`export function App({ items }: { items: any[] }) @{\n\t<Card content={<i>{...items}</i>} />\n}`,
+			],
 		];
 
-		for (const { label, source, output } of cases) {
-			if (name === 'vue') {
-				it(`reports ${label} at its location`, () => {
-					const start = source.indexOf('{...items}');
-					expect(() => compile(source, 'App.tsrx')).toThrow(
-						expect.objectContaining({
-							message:
-								'Vue TSRX does not support JSX spread children (`{...children}`). Render the array as an expression child instead: `{children}`.',
-							pos: start,
-							end: start + '{...items}'.length,
-						}),
-					);
+		for (const [label, source] of cases) {
+			const start = source.indexOf('{...items}');
+			const end = start + '{...items}'.length;
 
-					const { errors } = compile(source, 'App.tsrx', { collect: true });
-					expect(errors.map((error) => [error.pos, error.end])).toEqual([
-						[start, start + '{...items}'.length],
-					]);
-				});
-				continue;
-			}
+			it(`throws for ${label}`, () => {
+				expect(() => compile(source, 'App.tsrx')).toThrow(
+					expect.objectContaining({
+						message: TSRX_JSX_SPREAD_CHILD_ERROR,
+						code: DIAGNOSTIC_CODES.JSX_SPREAD_CHILD,
+						pos: start,
+						end,
+					}),
+				);
+			});
 
-			it(`compiles ${label}`, () => {
-				const { code } = compile(source, 'App.tsrx');
+			it(`records ${label} in collect mode`, () => {
+				const { code, errors } = compile(source, 'App.tsrx', { collect: true });
 
-				expect(code).toContain(`return ${output};`);
+				expect(errors.map((error) => [error.code, error.message, error.pos, error.end])).toEqual([
+					[DIAGNOSTIC_CODES.JSX_SPREAD_CHILD, TSRX_JSX_SPREAD_CHILD_ERROR, start, end],
+				]);
 				expect(virtual_parse_diagnostics(code), code).toEqual([]);
 			});
 		}
-
-		// A setup statement after the spread child makes the body interleaved:
-		// the spread's value is captured at its source position, like an
-		// expression child's, so the reassignment after it doesn't change it.
-		it('captures a spread child before a later setup statement', () => {
-			const source = `export function App({ items }: { items: string[] }) @{
-	<ul>
-		{...items}
-		@{
-			items = [...items, 'late'];
-		}
-		<li>{items.length}</li>
-	</ul>
-}`;
-			const { code, errors } = compile(source, 'App.tsrx', { collect: true });
-
-			const capture = code.indexOf('const _tsrx_child_0 = items;');
-			expect(capture, code).toBeGreaterThan(-1);
-			expect(code.indexOf("items = [...items, 'late'];")).toBeGreaterThan(capture);
-			expect(code).toContain(
-				`return <>${name === 'solid' ? '{_tsrx_child_0}' : '{..._tsrx_child_0}'}{_tsrx_child_1}</>;`,
-			);
-			expect(virtual_parse_diagnostics(code), code).toEqual([]);
-
-			// Vue still reports the captured spread child at its authored location.
-			const start = source.indexOf('{...items}');
-			expect(errors.map((error) => [error.pos, error.end])).toEqual(
-				name === 'vue' ? [[start, start + '{...items}'.length]] : [],
-			);
-		});
 	});
 
 	describe(`[${name}] component export shapes`, () => {

@@ -1380,21 +1380,6 @@ export function jsx_expression_container(expression, loc_info) {
 }
 
 /**
- * @param {AST.Expression} expression
- * @param {AST.NodeWithLocation} [loc_info]
- * @returns {ESTreeJSX.JSXSpreadChild}
- */
-export function jsx_spread_child(expression, loc_info) {
-	const node = /** @type {ESTreeJSX.JSXSpreadChild} */ ({
-		type: 'JSXSpreadChild',
-		expression,
-		metadata: { path: [] },
-	});
-
-	return set_location(node, loc_info);
-}
-
-/**
  * @param {string} name
  * @param {AST.NodeWithLocation} [loc_info]
  * @returns {ESTreeJSX.JSXIdentifier}

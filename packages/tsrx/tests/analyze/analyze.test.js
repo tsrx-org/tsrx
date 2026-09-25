@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from 'vitest';
 import { analyzeTsrx, DIAGNOSTIC_CODES, parseModule } from '../../src/index.js';
-import { TSRX_FORGOTTEN_STATEMENT_CONTAINER_ERROR } from '../../src/analyze/validation.js';
+import {
+	TSRX_FORGOTTEN_STATEMENT_CONTAINER_ERROR,
+	TSRX_JSX_SPREAD_CHILD_ERROR,
+} from '../../src/analyze/validation.js';
 
 const filename = 'App.tsrx';
 
@@ -284,6 +287,74 @@ describe('target-neutral TSRX analysis', () => {
 
 		it('does not apply function-body semantics at module scope', () => {
 			expect(forgotten_output_errors(analyze('<div />'))).toEqual([]);
+		});
+	});
+
+	describe('JSX spread children', () => {
+		// They parse, as in TypeScript, but no target supports them.
+		const source = `function App({ items }) @{
+	<div>
+		{...items}
+		<>{...items}</>
+		<Card content={<i>{...items}</i>} />
+		@if (items.length) {
+			<b>{...items}</b>
+		}
+	</div>
+}
+function List({ items }) {
+	return <ul>{...items}</ul>;
+}`;
+
+		/** @returns {number[]} */
+		function spread_starts() {
+			/** @type {number[]} */
+			const starts = [];
+			for (
+				let at = source.indexOf('{...items}');
+				at !== -1;
+				at = source.indexOf('{...items}', at + 1)
+			) {
+				starts.push(at);
+			}
+			return starts;
+		}
+
+		it('reports every spread child at its braces', () => {
+			const result = analyze(source);
+
+			expect(
+				result.errors.map((error) => [error.code, error.message, error.pos, error.end]),
+			).toEqual(
+				spread_starts().map((start) => [
+					DIAGNOSTIC_CODES.JSX_SPREAD_CHILD,
+					TSRX_JSX_SPREAD_CHILD_ERROR,
+					start,
+					start + '{...items}'.length,
+				]),
+			);
+			expect(result.errors[0].loc).toEqual({
+				start: { line: 3, column: 2 },
+				end: { line: 3, column: 12 },
+			});
+		});
+
+		it('throws during strict analysis', () => {
+			const ast = parseModule(source, filename);
+
+			expect(() => analyzeTsrx(ast, filename)).toThrow(
+				expect.objectContaining({
+					message: TSRX_JSX_SPREAD_CHILD_ERROR,
+					code: DIAGNOSTIC_CODES.JSX_SPREAD_CHILD,
+					pos: spread_starts()[0],
+				}),
+			);
+		});
+
+		it('collects for editor and type-only analysis modes', () => {
+			for (const options of [{ loose: true }, { typeOnly: true }, { to_ts: true }]) {
+				expect(analyze(source, options).errors, JSON.stringify(options)).toHaveLength(5);
+			}
 		});
 	});
 

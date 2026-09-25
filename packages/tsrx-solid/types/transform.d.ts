@@ -11,7 +11,6 @@ export type SolidRenderSource =
 	| AST.TSRXJSXElement
 	| AST.TSRXJSXFragment
 	| ESTreeJSX.JSXExpressionContainer
-	| ESTreeJSX.JSXSpreadChild
 	| ESTreeJSX.JSXText
 	| AST.JSXTemplateDirective
 	| AST.IfStatement
