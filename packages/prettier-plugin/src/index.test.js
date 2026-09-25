@@ -10397,6 +10397,23 @@ const policy =
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		it('breaks at non-null lookups but not at non-null callees, like Prettier', async () => {
+			const source = `foo.bar!(firstArgumentWithALongName).baz!(secondArgumentWithALongName).qux!(
+  thirdArgumentName,
+);
+someObject!
+  .someMethod(firstArgumentWithALongName)
+  .other(secondArgumentWithALongName)
+  .last(x);
+promise
+  .then((result) => result.value)!
+  .catch((error) => console.error(error))!
+  .finally(() => done());
+a!.b().c();
+x.y!.z();`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
 		it('keeps short chains and chains that break inside a call on one line', async () => {
 			const source = `const x = a.b().c().d();
 wrapper.find("SomeSelector").prop("children")(defaultValue).toBe(1);
@@ -10473,6 +10490,17 @@ item
 			['x = !/* c */ a;', 'x = !(/* c */ a);'],
 			['x = !(a || b /* c */);', 'x = !(a || b /* c */);'],
 			['x = typeof (/* c */ a + b);', 'x = typeof (/* c */ a + b);'],
+			// Prettier keeps the operand's own parentheses inside the unary's
+			['x = !(/* c */ a ? b : c);', 'x = !(/* c */ (a ? b : c));'],
+			['x = -(/* c */ (a = b));', 'x = -(/* c */ (a = b));'],
+			[
+				'async function f() {\n  x = !/* c */ (await x);\n}',
+				'async function f() {\n  x = !(/* c */ (await x));\n}',
+			],
+			[
+				'function* g() {\n  x = !(/* c */ yield y);\n}',
+				'function* g() {\n  x = !(/* c */ (yield y));\n}',
+			],
 		])('prints %s like Prettier', async (input, expected) => {
 			expect(await format(input)).toBeWithNewline(expected);
 		});
