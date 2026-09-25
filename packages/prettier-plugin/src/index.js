@@ -9778,9 +9778,7 @@ function printConditionalExpression(path, options, print) {
 		': ',
 		printBranch(alternateKey),
 	];
-	const isParentAlternate =
-		parent.type === node.type &&
-		/** @type {Record<string, unknown>} */ (parent)[alternateKey] === node;
+	const isParentAlternate = parent.type === node.type && nodePath.parent[alternateKey] === node;
 	/** @type {Doc} */
 	let parts = branches;
 	if (parent.type === node.type && !isParentAlternate && !isParentTest) {
