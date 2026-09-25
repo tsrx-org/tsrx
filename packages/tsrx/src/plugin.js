@@ -1694,6 +1694,10 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * The `@` and the keyword touch, but after the keyword (and after the
+			 * `await` of `@for await`) the header is code, where a comment is
+			 * whitespace: a block comment before the `{` of `@try` or the `(` of
+			 * `@if`, or `@if // c` with the `(` on the next line.
 			 * @param {number} index
 			 */
 			#isJSXControlFlowDirectiveAt(index) {
@@ -1709,8 +1713,9 @@ export function TSRXPlugin(config) {
 				}
 
 				const word = this.input.slice(word_start, cursor);
-				const next_non_whitespace = skip_whitespace_from(this.input, cursor);
-				const next = this.input.charCodeAt(next_non_whitespace);
+				const next_token_start = skip_space_and_comments_from(this.input, cursor);
+				if (next_token_start === -1) return false;
+				const next = this.input.charCodeAt(next_token_start);
 				if (this.#isIdentifierChar(this.input.charCodeAt(cursor))) {
 					return false;
 				}
@@ -1720,11 +1725,11 @@ export function TSRXPlugin(config) {
 				if (word === 'for') {
 					if (next === CharCode.openParen) return true;
 					if (
-						this.input.slice(next_non_whitespace, next_non_whitespace + 5) === 'await' &&
-						!this.#isIdentifierChar(this.input.charCodeAt(next_non_whitespace + 5))
+						this.input.slice(next_token_start, next_token_start + 5) === 'await' &&
+						!this.#isIdentifierChar(this.input.charCodeAt(next_token_start + 5))
 					) {
-						const after_await = skip_whitespace_from(this.input, next_non_whitespace + 5);
-						return this.input.charCodeAt(after_await) === CharCode.openParen;
+						const after_await = skip_space_and_comments_from(this.input, next_token_start + 5);
+						return after_await !== -1 && this.input.charCodeAt(after_await) === CharCode.openParen;
 					}
 					return false;
 				}
@@ -2055,6 +2060,48 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * `yield` takes an argument that starts with `@`, like any other
+			 * expression: `yield @{ … }`, `yield @if (…) { … }`, or a decorated class.
+			 * TypeScript reads `@` as the start of an expression, but acorn-typescript's
+			 * `parseYield` reads an argument only when the next token has
+			 * `startsExpr`, which its `@` token doesn't, so it ended the `yield`
+			 * before the `@`. A line break after `yield` still ends it.
+			 * @type {Parse.Parser['parseYield']}
+			 */
+			parseYield(forInit) {
+				// UPSTREAM(sveltejs/acorn-typescript#128): remove once a release includes the fix
+				const next = skip_space_and_comments_from(this.input, this.end);
+				if (next === -1 || this.input.charCodeAt(next) !== CharCode.at) {
+					return super.parseYield(forInit);
+				}
+				// As acorn records the first `yield` of a function's parameters.
+				const parser = /** @type {Parse.Parser} */ (this);
+				if (!parser.yieldPos) parser.yieldPos = this.start;
+				const node = /** @type {AST.YieldExpression} */ (this.startNode());
+				this.next();
+				node.delegate = false;
+				node.argument = this.canInsertSemicolon() ? null : this.parseMaybeAssign(forInit);
+				return this.finishNode(node, 'YieldExpression');
+			}
+
+			/**
+			 * An element or fragment isn't a left-hand-side expression, as in
+			 * TypeScript's TSX parser, and neither is a TSRX value that lays out like
+			 * one (`@{ … }`, `@if`, `@for`, `@switch`, `@try`). Unless it's
+			 * parenthesized, no call, member access, index, non-null assertion, or
+			 * tagged template follows it: a `(`, `[`, or template literal on the next
+			 * line starts a new statement, and `<b />.foo` fails at the `.`.
+			 * `(<b />).foo` and `(<b />)(x)` are still a member access and a call.
+			 * @type {Parse.Parser['parseSubscripts']}
+			 */
+			parseSubscripts(base, startPos, startLoc, noCalls, forInit) {
+				if (is_tsrx_render_output_node(base) && !base.metadata?.parenthesized) {
+					return base;
+				}
+				return super.parseSubscripts(base, startPos, startLoc, noCalls, forInit);
+			}
+
+			/**
 			 * Retype a parsed control-flow statement in place as its directive
 			 * expression form (`IfStatement` -> `JSXIfExpression`, …), keeping the
 			 * original statement type in `statementType`.
@@ -2309,7 +2356,12 @@ export function TSRXPlugin(config) {
 					return false;
 				}
 
-				const continuationStart = skip_whitespace_from(this.input, keywordStart + keyword.length);
+				// A comment is whitespace here too (`} else /* c */ {`).
+				const continuationStart = skip_space_and_comments_from(
+					this.input,
+					keywordStart + keyword.length,
+				);
+				if (continuationStart === -1) return false;
 				for (const continuation of continuations) {
 					if (continuation.length === 1 && this.input[continuationStart] === continuation) {
 						return true;
@@ -4427,9 +4479,12 @@ export function TSRXPlugin(config) {
 				// Callback props that return native templates without a semicolon can
 				// leave the attribute expression context above the still-open tag. Drop
 				// it before tokenizing `/>`, otherwise Acorn treats `/` as a regexp.
+				// Where an expression may start outside a tag (`const re = />/g`,
+				// `f(/>/)`, `{/>/.test(s)}`), the `/` starts that regexp instead.
 				if (
 					code === CharCode.slash &&
-					this.input.charCodeAt(this.pos + 1) === CharCode.greaterThan
+					this.input.charCodeAt(this.pos + 1) === CharCode.greaterThan &&
+					(!this.exprAllowed || this.curContext() === tstc.tc_oTag)
 				) {
 					while (
 						this.context.length > 0 &&
@@ -4479,6 +4534,18 @@ export function TSRXPlugin(config) {
 					let prevNonWhitespaceChar = null;
 					const nextChar =
 						this.pos + 1 < this.input.length ? this.input.charCodeAt(this.pos + 1) : -1;
+
+					// As in TSX, `</` starts a closing tag even after an operand, where a
+					// `<` is otherwise less-than and a `/` after it would start a regular
+					// expression. The expression ends there, so `<p>{count</p>` reports
+					// the missing `}` at the `</`. `a < /re/` with a space is less-than.
+					if (!this.exprAllowed && nextChar === CharCode.slash) {
+						const after_slash = this.input.charCodeAt(this.pos + 2);
+						if (after_slash !== CharCode.slash && after_slash !== CharCode.asterisk) {
+							++this.pos;
+							return this.finishToken(tstt.jsxTagStart);
+						}
+					}
 
 					// Check if this could be TypeScript generics instead of JSX
 					// TypeScript generics usually appear adjacent to an expression token,

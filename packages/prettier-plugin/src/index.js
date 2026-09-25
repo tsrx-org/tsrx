@@ -1980,6 +1980,21 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 				)
 			);
 
+		// Like an element, a `@{ … }` value or a directive isn't a left-hand-side
+		// expression, so it's the base of a call, member access, index, non-null
+		// assertion, or tagged template only in parentheses: `(@{ … })(x)`.
+		case 'JSXCodeBlock':
+		case 'JSXIfExpression':
+		case 'JSXForExpression':
+		case 'JSXSwitchExpression':
+		case 'JSXTryExpression':
+			return (
+				(key === 'callee' && isCallOrNewExpression(parent)) ||
+				(key === 'object' && parent.type === 'MemberExpression') ||
+				(key === 'tag' && parent.type === 'TaggedTemplateExpression') ||
+				(key === 'expression' && parent.type === 'TSNonNullExpression')
+			);
+
 		// Types, like Prettier's `needsParens`. The printer drops the parentheses
 		// written around a type (see `dropParenthesizedTypes`), so these rules
 		// add every pair a type prints with: the ones the grammar requires,
