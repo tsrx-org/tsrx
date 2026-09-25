@@ -164,6 +164,10 @@ function is_dynamic_tag_wrapper(node) {
 	return DYNAMIC_TAG_WRAPPER_TYPES.has(node.type);
 }
 
+// TypeScript's message for a missing `}` (TS1005). The parser reports it in
+// place of acorn's `Unexpected token` wherever TypeScript's parser reports it.
+const CLOSING_BRACE_EXPECTED = "'}' expected.";
+
 /** @type {WeakMap<Record<string, boolean>, Map<string, number>>} */
 const argument_clash_first_positions = new WeakMap();
 /** @type {WeakMap<Record<string, boolean>, Set<string>>} */
@@ -573,6 +577,7 @@ export function TSRXPlugin(config) {
 		const b_stat = tc.b_stat || acorn.tokContexts.b_stat;
 		const b_expr = tc.b_expr || acorn.tokContexts.b_expr;
 		const q_tmpl = tc.q_tmpl || acorn.tokContexts.q_tmpl;
+		const b_tmpl = tc.b_tmpl || acorn.tokContexts.b_tmpl;
 		const tstt = Parser.acornTypeScript.tokTypes;
 		const tstc = Parser.acornTypeScript.tokContexts;
 
@@ -638,6 +643,13 @@ export function TSRXPlugin(config) {
 			#elementContextDepths = new WeakMap();
 			#readingJSXControlFlowDirectiveKeyword = false;
 			#readingJSXControlFlowHeader = false;
+			// Where the last element of a `{ … }` list ended, so that `expect` can
+			// tell a comma expected after it at the end of the input is the list's
+			// missing `}`.
+			#braceListElementEnd = -1;
+			// Where the last decorator ended: a class member missing after one is not
+			// a missing `}`.
+			#decoratorEnd = -1;
 
 			/**
 			 * @type {Parse.Parser['finishNode']}
@@ -789,6 +801,10 @@ export function TSRXPlugin(config) {
 				try {
 					this.expect(tt.braceL);
 					this.#parseCodeBlockBody(node.body);
+					// The body stops at the end of the input too.
+					if (this.type !== tt.braceR) {
+						this.#raiseClosingBraceExpected();
+					}
 				} finally {
 					if (createNewLexicalScope) {
 						this.exitScope();
@@ -1852,6 +1868,10 @@ export function TSRXPlugin(config) {
 					this.exitScope();
 					this.#path = enclosing_path;
 				}
+				// The body stops at the end of the input too.
+				if (this.type !== tt.braceR) {
+					this.#raiseClosingBraceExpected();
+				}
 
 				const last = flat[flat.length - 1];
 				if (is_tsrx_render_output_node(last)) {
@@ -1864,9 +1884,6 @@ export function TSRXPlugin(config) {
 					this.#report_invalid_template_return_statements(node.body);
 				}
 
-				if (this.type !== tt.braceR) {
-					this.unexpected();
-				}
 				// Restore the enclosing template context, then consume `}` and read the
 				// following token (typically the parent's `</tag>`) against it. Finish the
 				// node after the `}` so its range spans the whole `@{ … }` (this is what
@@ -2298,6 +2315,9 @@ export function TSRXPlugin(config) {
 						continue;
 					}
 
+					if (this.type === tt.eof) {
+						this.#raiseClosingBraceExpected();
+					}
 					this.unexpected();
 				}
 
@@ -4282,7 +4302,7 @@ export function TSRXPlugin(config) {
 						if (this.type === tt.braceR && this.context.length >= container_context_depth) {
 							this.context.length = container_context_depth - 1;
 						}
-						this.expect(tt.braceR);
+						this.#expectContainerClosingBrace();
 					}
 				} finally {
 					this.#jsxExpressionContainerDepth--;
@@ -4293,7 +4313,7 @@ export function TSRXPlugin(config) {
 				}
 
 				if (consumeBraceAfterScope) {
-					this.expect(tt.braceR);
+					this.#expectContainerClosingBrace();
 				}
 
 				return this.finishNode(node, is_spread ? 'JSXSpreadChild' : 'JSXExpressionContainer');
@@ -4408,7 +4428,7 @@ export function TSRXPlugin(config) {
 						} finally {
 							this.#templateScriptParsingDepth--;
 						}
-						this.expect(tt.braceR);
+						this.#expectContainerClosingBrace();
 						return this.finishNode(node, 'JSXSpreadAttribute');
 					} else if (this.lookahead().type === tt.ellipsis) {
 						this.#suppressTemplateRawTextToken = true;
@@ -4419,7 +4439,7 @@ export function TSRXPlugin(config) {
 						} finally {
 							this.#templateScriptParsingDepth--;
 						}
-						this.expect(tt.braceR);
+						this.#expectContainerClosingBrace();
 						return this.finishNode(node, 'JSXSpreadAttribute');
 					} else {
 						if (!(this.type === tt.name || this.type.keyword || this.type === tstt.jsxName)) {
@@ -4456,7 +4476,7 @@ export function TSRXPlugin(config) {
 						);
 						/** @type {ESTreeJSX.JSXAttribute} */ (node).shorthand = true;
 						this.next();
-						this.expect(tt.braceR);
+						this.#expectContainerClosingBrace();
 						return this.finishNode(node, 'JSXAttribute');
 					}
 				}
@@ -5965,6 +5985,15 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['parseStatement']}
 			 */
 			parseStatement(context, topLevel, exports) {
+				// A statement without a `context` is the next one in a block, `case`, or
+				// module body (the program's own loop stops at the end of the input): at
+				// the end of the input, the body's `}` is missing. A statement that
+				// follows `if (…)`, `else`, a loop head, or a label (`context`) keeps
+				// acorn's `Unexpected token`, where TypeScript reports a missing
+				// expression.
+				if (context == null && this.type === tt.eof) {
+					this.#raiseClosingBraceExpected();
+				}
 				if (
 					context !== 'for' &&
 					context !== 'if' &&
@@ -6066,6 +6095,139 @@ export function TSRXPlugin(config) {
 				}
 
 				return super.parseBlock(createNewLexicalScope, node, exitStrict);
+			}
+
+			/**
+			 * Report a missing `}` at the current token as TypeScript does, with
+			 * `'}' expected.` instead of acorn's `Unexpected token`.
+			 * @returns {never}
+			 */
+			#raiseClosingBraceExpected() {
+				return this.raise(this.start, CLOSING_BRACE_EXPECTED);
+			}
+
+			/**
+			 * Consume the `}` of an expression container (`{value}`, `{...spread}`, or
+			 * a `{name}` attribute), which holds a single expression: whatever token
+			 * is in its place, the `}` is missing, as TypeScript reports.
+			 */
+			#expectContainerClosingBrace() {
+				if (!this.eat(tt.braceR)) {
+					this.#raiseClosingBraceExpected();
+				}
+			}
+
+			/**
+			 * Parse an element of a `{ … }` list: a property, a named import or
+			 * export, or an enum, interface, or type literal member. At the end of the
+			 * input, the list's `}` is missing. Records where the element ends for
+			 * `expect`.
+			 * @template T
+			 * @param {() => T} parse
+			 * @returns {T}
+			 */
+			#parseBraceListElement(parse) {
+				if (this.type === tt.eof) {
+					this.#raiseClosingBraceExpected();
+				}
+				const element = parse();
+				this.#braceListElementEnd = this.lastTokEnd;
+				return element;
+			}
+
+			/**
+			 * Report a missing `}` like TypeScript wherever acorn expects one: at
+			 * the end of the input, and at any token after the expression of a
+			 * template literal's `${ … }`. Elsewhere a token in place of the `}` is
+			 * one TypeScript reads differently (another member of a mapped type, or
+			 * an import attribute without its comma) and keeps `Unexpected token`.
+			 * At the end of the input, the comma expected after an element of a
+			 * comma-separated `{ … }` list, and the first element of a list opened
+			 * by an expected `{`, are the list's missing `}` too.
+			 * @param {Parse.TokenType} type
+			 */
+			expect(type) {
+				if (this.type !== type) {
+					if (
+						type === tt.braceR &&
+						(this.type === tt.eof ||
+							this.context.at(-1 - this.#currentTokenContextCount()) === b_tmpl)
+					) {
+						this.#raiseClosingBraceExpected();
+					}
+					if (
+						type === tt.comma &&
+						this.type === tt.eof &&
+						this.lastTokEnd === this.#braceListElementEnd
+					) {
+						this.#raiseClosingBraceExpected();
+					}
+				}
+				super.expect(type);
+				// Every `{` that acorn expects opens a list, such as a `switch` body,
+				// which would otherwise read its first `case` at the end of the input.
+				if (type === tt.braceL && this.type === tt.eof) {
+					this.#raiseClosingBraceExpected();
+				}
+			}
+
+			/**
+			 * @type {Parse.Parser['parseProperty']}
+			 */
+			parseProperty(isPattern, refDestructuringErrors) {
+				return this.#parseBraceListElement(() =>
+					super.parseProperty(isPattern, refDestructuringErrors),
+				);
+			}
+
+			/**
+			 * @type {Parse.Parser['parseImportSpecifier']}
+			 */
+			parseImportSpecifier() {
+				return this.#parseBraceListElement(() => super.parseImportSpecifier());
+			}
+
+			/**
+			 * @type {Parse.Parser['parseExportSpecifier']}
+			 */
+			parseExportSpecifier(exports) {
+				return this.#parseBraceListElement(() => super.parseExportSpecifier(exports));
+			}
+
+			/**
+			 * @type {Parse.Parser['tsParseEnumMember']}
+			 */
+			tsParseEnumMember() {
+				return this.#parseBraceListElement(() => super.tsParseEnumMember());
+			}
+
+			/**
+			 * @type {Parse.Parser['tsParseTypeMember']}
+			 */
+			tsParseTypeMember() {
+				return this.#parseBraceListElement(() => super.tsParseTypeMember());
+			}
+
+			/**
+			 * @type {Parse.Parser['parseDecorator']}
+			 */
+			parseDecorator() {
+				const decorator = super.parseDecorator();
+				this.#decoratorEnd = this.lastTokEnd;
+				return decorator;
+			}
+
+			/**
+			 * A class member at the end of the input: the class body's `}` is
+			 * missing, unless a decorator came right before it, where TypeScript
+			 * reports the member as missing instead.
+			 * @type {Parse.Parser['parseClassElement']}
+			 */
+			parseClassElement(constructorAllowsSuper) {
+				if (this.type === tt.eof && this.lastTokEnd !== this.#decoratorEnd) {
+					this.#raiseClosingBraceExpected();
+				}
+				return super.parseClassElement(constructorAllowsSuper);
 			}
 		}
 

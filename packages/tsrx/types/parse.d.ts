@@ -1347,6 +1347,12 @@ export namespace Parse {
 		/** Parse one interface or type literal member (@sveltejs/acorn-typescript). */
 		tsParseTypeMember(): AST.Node;
 
+		/** Parse one enum member (@sveltejs/acorn-typescript). */
+		tsParseEnumMember(): AST.TSEnumMember;
+
+		/** Parse one decorator, `@expression` (@sveltejs/acorn-typescript). */
+		parseDecorator(): AST.Decorator;
+
 		/**
 		 * Get property kind from name
 		 * @param prop Property node
@@ -1694,6 +1700,9 @@ export namespace Parse {
 
 		/** Parse export specifiers */
 		parseExportSpecifiers(exports?: Exports): AST.ExportSpecifier[];
+
+		/** Parse single export specifier */
+		parseExportSpecifier(exports?: Exports): AST.ExportSpecifier;
 
 		/** Parse export default declaration */
 		parseExportDefaultDeclaration(): AST.Declaration | AST.Expression;
