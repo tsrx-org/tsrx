@@ -690,6 +690,244 @@ describe('TSRX parser', () => {
 		).toThrow();
 	});
 
+	it('reads an element with attributes after a semicolon-less element with children', () => {
+		for (const previous of [
+			'const render = (item) => <><Item /></>',
+			'const render = <b>x</b>',
+			'const render = <b>{x}</b>',
+		]) {
+			const body = functionBody(
+				parseModule(
+					`function Test(props) {\n  ${previous}\n  <List renderItem={render} key="a" />\n}`,
+					'App.tsrx',
+				),
+			);
+			const program = parseModule(
+				`${previous}\n<List renderItem={render} key="a" />\n`,
+				'App.tsrx',
+			);
+			for (const statements of [body, program.body]) {
+				expect(statements.map((node) => node.type)).toEqual(['VariableDeclaration', 'JSXElement']);
+				const list = as_type(statements[1], 'JSXElement');
+				expect(
+					list.openingElement.attributes.map(
+						(attribute) => as_type(as_type(attribute, 'JSXAttribute').name, 'JSXIdentifier').name,
+					),
+				).toEqual(['renderItem', 'key']);
+			}
+		}
+	});
+
+	it('reads a template literal after an element with children', () => {
+		for (const [element, type] of [
+			['<b>x</b>', 'JSXElement'],
+			['<>x</>', 'JSXFragment'],
+			['<b />', 'JSXElement'],
+		]) {
+			const source = `const a = ${element}\n\`t\${a}\``;
+			for (const ast of [
+				parseModule(`function f() {\n  ${source}\n}`, 'App.tsrx'),
+				parseModule(`${source}\n`, 'App.tsrx'),
+			]) {
+				const [declaration] =
+					ast.body[0].type === 'FunctionDeclaration' ? functionBody(ast) : ast.body;
+				// As after a self-closing element, and as in Babel, the template literal
+				// continues the element as a tagged template (TypeScript ends the
+				// statement at the element instead, #426).
+				const tagged = as_type(declaratorInit(declaration), 'TaggedTemplateExpression');
+				expect(tagged.tag.type).toBe(type);
+				expect(tagged.quasi.quasis.map((quasi) => quasi.value.raw)).toEqual(['t', '']);
+				expect(tagged.quasi.expressions.map((node) => node.type)).toEqual(['Identifier']);
+			}
+		}
+	});
+
+	it('divides after an element outside a template', () => {
+		for (const [element, type] of [
+			['<span />', 'JSXElement'],
+			['<span>x</span>', 'JSXElement'],
+			['<>x</>', 'JSXFragment'],
+		]) {
+			const declaration = firstStatement(
+				parseModule(`const half = ${element} / 2\n`, 'App.tsrx'),
+				'VariableDeclaration',
+			);
+			const [returned] = functionBody(
+				parseModule(`function f() {\n  return ${element} / 2\n}`, 'App.tsrx'),
+			);
+			for (const expression of [
+				declaratorInit(declaration),
+				found(as_type(returned, 'ReturnStatement').argument),
+			]) {
+				const division = as_type(expression, 'BinaryExpression');
+				expect(division.operator).toBe('/');
+				expect(division.left.type).toBe(type);
+				expect(as_type(division.right, 'Literal').value).toBe(2);
+			}
+		}
+
+		// A regular expression on the next line divides too, as in TypeScript.
+		const declaration = firstStatement(
+			parseModule('const b = <b>x</b>\n/re/g\n', 'App.tsrx'),
+			'VariableDeclaration',
+		);
+		const outer = as_type(declaratorInit(declaration), 'BinaryExpression');
+		const inner = as_type(outer.left, 'BinaryExpression');
+		expect([inner.left.type, inner.operator, outer.operator]).toEqual(['JSXElement', '/', '/']);
+		expect(as_type(outer.right, 'Identifier').name).toBe('g');
+
+		// Inside a template, a `/` after an element is still text.
+		const container = firstStatement(
+			parseModule('<div><span /> / 2<b>x</b>/3</div>\n', 'App.tsrx'),
+			'JSXElement',
+		);
+		expect(
+			container.children.map((node) =>
+				node.type === 'JSXText' ? node.value : openingName(as_type(node, 'JSXElement')).name,
+			),
+		).toEqual(['span', ' / 2', 'b', '/3']);
+	});
+
+	it('reads an element after await as the awaited value', () => {
+		const [declaration, statement] = functionBody(
+			parseModule(
+				'async function load() {\n  const view = await <div>a</div>\n  await <div />\n}',
+				'App.tsrx',
+			),
+		);
+		const top_level = firstStatement(
+			parseModule('await <></>\n', 'App.tsrx'),
+			'ExpressionStatement',
+		);
+		for (const [expression, type] of [
+			[declaratorInit(declaration), 'JSXElement'],
+			[as_type(statement, 'ExpressionStatement').expression, 'JSXElement'],
+			[top_level.expression, 'JSXFragment'],
+		]) {
+			expect(as_type(expression, 'AwaitExpression').argument.type).toBe(type);
+		}
+
+		// Where `await` is a name, `<` after it still compares.
+		const [returned] = functionBody(
+			parseModule('async function f() {\n  return x.await < y\n}', 'App.tsrx'),
+		);
+		const comparison = as_type(
+			found(as_type(returned, 'ReturnStatement').argument),
+			'BinaryExpression',
+		);
+		expect(comparison.operator).toBe('<');
+	});
+
+	it('divides after the first token of a code block setup statement', () => {
+		for (const statement of ['total / count > 1 && log();', 'a / b;', '(a) / b;']) {
+			for (const setup of [[statement], ['const q = 1;', statement]]) {
+				const block = findNode(
+					`export function App() @{\n  ${setup.join('\n  ')}\n  <span />\n}`,
+					'JSXCodeBlock',
+				);
+				const directive = findNode(
+					`export function App() @{\n  <>\n    @if (x) {\n      ${setup.join('\n      ')}\n      <span />\n    }\n  </>\n}`,
+					'JSXIfExpression',
+				);
+				const directive_body = blockBody(directive.consequent);
+				expect(directive_body.at(-1)?.type).toBe('JSXElement');
+				for (const body of [block.body, directive_body.slice(0, -1)]) {
+					const division = find_first(
+						as_type(body.at(-1), 'ExpressionStatement').expression,
+						(node) => node.type === 'BinaryExpression' && node.operator === '/',
+					);
+					expect(as_type(division, 'BinaryExpression').left.type).toBe('Identifier');
+				}
+				expect(codeBlockRender(block).type).toBe('JSXElement');
+			}
+		}
+
+		// A statement that starts with a regular expression still reads it.
+		const block = findNode(
+			'export function App() @{\n  /a/.test(s);\n  <span />\n}',
+			'JSXCodeBlock',
+		);
+		const call = as_type(
+			as_type(block.body[0], 'ExpressionStatement').expression,
+			'CallExpression',
+		);
+		expect(regexLiteral(as_type(call.callee, 'MemberExpression').object).pattern).toBe('a');
+
+		// A `/` after a name on the next line divides, as in a function body, so
+		// `a / b / .test(s)` is a syntax error.
+		expect(() =>
+			parseModule('export function App() @{\n  a\n  /b/.test(s)\n  <span />\n}', 'App.tsrx'),
+		).toThrow();
+	});
+
+	it('starts an element after a semicolon-less statement that ends with a type', () => {
+		for (const [statement, type] of [
+			['const x = y as Foo', 'VariableDeclaration'],
+			['const x = y satisfies Foo', 'VariableDeclaration'],
+			['const x = y as Map<A, B>', 'VariableDeclaration'],
+			['const x = y as () => void', 'VariableDeclaration'],
+			['let x: Foo', 'VariableDeclaration'],
+			['let x: Foo[]', 'VariableDeclaration'],
+			['type T = Foo', 'TSTypeAliasDeclaration'],
+		]) {
+			const block = findNode(
+				`export function App() @{\n  ${statement}\n  <Bar a={1} />\n}`,
+				'JSXCodeBlock',
+			);
+			expect(block.body.map((node) => node.type)).toEqual([type]);
+			expect(codeBlockRender(block).type).toBe('JSXElement');
+
+			const body = functionBody(
+				parseModule(`function f() {\n  ${statement}\n  <Bar a={1} />\n}`, 'App.tsrx'),
+			);
+			const program = parseModule(`${statement}\n/* note */ <Bar a={1} />\n`, 'App.tsrx');
+			for (const statements of [body, program.body]) {
+				expect(statements.map((node) => node.type)).toEqual([type, 'JSXElement']);
+			}
+		}
+	});
+
+	it('keeps a `<` that starts a line inside a type, or that a type can end at, a type operator', () => {
+		const alias = firstStatement(
+			parseModule('type F =\n  <T>(x: T) => T\n', 'App.tsrx'),
+			'TSTypeAliasDeclaration',
+		);
+		expect(as_type(alias.typeAnnotation, 'TSFunctionType').typeParameters?.params).toHaveLength(1);
+
+		const signatures = [
+			firstStatement(
+				parseModule('interface I {\n  a: Foo\n  <T>(x: T): void\n}\n', 'App.tsrx'),
+				'TSInterfaceDeclaration',
+			).body.body,
+			as_type(
+				firstStatement(
+					parseModule('type L = {\n  a: Foo\n  <T>(x: T): void\n}\n', 'App.tsrx'),
+					'TSTypeAliasDeclaration',
+				).typeAnnotation,
+				'TSTypeLiteral',
+			).members,
+		];
+		for (const members of signatures) {
+			expect(members.map((node) => node.type)).toEqual([
+				'TSPropertySignature',
+				'TSCallSignatureDeclaration',
+			]);
+		}
+
+		const comparison = firstStatement(
+			parseModule('const b = x as number\n< y\n', 'App.tsrx'),
+			'VariableDeclaration',
+		);
+		expect(as_type(declaratorInit(comparison), 'BinaryExpression').operator).toBe('<');
+
+		const program = parseModule('let x: Foo\n<T,>(a: T) => a\n', 'App.tsrx');
+		const arrow = as_type(
+			as_type(program.body[1], 'ExpressionStatement').expression,
+			'ArrowFunctionExpression',
+		);
+		expect(arrow.typeParameters?.params).toHaveLength(1);
+	});
+
 	it('parses mixed scalar and JSX return branches', () => {
 		const ast = parseModule(
 			`function MyApp() {

@@ -628,6 +628,10 @@ export function TSRXPlugin(config) {
 			/** @type {AST.NativeTSRXTemplateNode | null} */
 			#openingNativeTemplateNode = null;
 			#closingNativeTemplateNode = false;
+			// Tokenizer context depth before each element's opening `<` (see
+			// `parseElement`), for its closing tag to restore.
+			/** @type {WeakMap<AST.Node, number>} */
+			#elementContextDepths = new WeakMap();
 			#readingJSXControlFlowDirectiveKeyword = false;
 			#readingJSXControlFlowHeader = false;
 
@@ -1641,43 +1645,55 @@ export function TSRXPlugin(config) {
 			#parseCodeBlockSetupStatement() {
 				const previous_context = this.context;
 				const at_template_literal = this.type === tt.backQuote;
-				let pushed_statement_context = false;
+				// The statement's first token is already read, and a `(`, `{`, `function`,
+				// or `class` has pushed its own context. The statement context goes under
+				// it, so the token that closes it (`)` of `(a) / b`) pops its own context.
+				const first_token_context_depth =
+					previous_context.length - this.#currentTokenContextCount();
 				if (at_template_literal) {
 					if (this.curContext() !== q_tmpl) {
 						this.context.push(q_tmpl);
 					}
 				} else {
-					this.context = previous_context.filter(
-						(context) =>
-							context !== tstc.tc_expr && context !== tstc.tc_oTag && context !== tstc.tc_cTag,
-					);
+					this.context = previous_context
+						.slice(0, first_token_context_depth)
+						.filter(
+							(context) =>
+								context !== tstc.tc_expr && context !== tstc.tc_oTag && context !== tstc.tc_cTag,
+						);
 					if (this.curContext() !== b_stat) {
 						this.context.push(b_stat);
-						pushed_statement_context = true;
 					}
+					this.context.push(...previous_context.slice(first_token_context_depth));
 				}
-				this.exprAllowed = true;
 				const previous_path = this.#path;
 				this.#path = [];
 				this.#templateScriptParsingDepth++;
 				let node;
 				try {
 					if (this.type === tstt.jsxText || this.type === tstt.jsxName) {
+						// Read as template text; re-read it as the code token that starts a
+						// statement. Only this re-read gets `exprAllowed`: for a token already
+						// read as code, it decides how the token after it reads.
 						const loc = get_line_info(this, this.start);
 						this.pos = this.start;
 						this.curLine = loc.line;
 						this.lineStart = this.start - loc.column;
+						this.exprAllowed = true;
 						this.nextToken();
 					}
 					node = this.parseStatement(null);
 				} finally {
 					this.#templateScriptParsingDepth--;
 					this.#path = previous_path;
-					if (pushed_statement_context && this.curContext() === b_stat) {
-						this.context.pop();
-					}
 					if (!at_template_literal) {
-						this.context = previous_context;
+						// The token after the statement is already read too: keep the
+						// contexts it pushed (the `(` that starts the next statement).
+						const next_token_contexts = this.context.slice(
+							this.context.length - this.#currentTokenContextCount(),
+						);
+						this.context = previous_context.slice(0, first_token_context_depth);
+						this.context.push(...next_token_contexts);
 					}
 				}
 				if (this.curContext() === tstc.tc_expr) {
@@ -2774,6 +2790,28 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * How many contexts the current token's own `updateContext` pushed on top
+			 * of the stack: two for a tag start (`tc_expr` and `tc_oTag`), one for
+			 * `(`, `{`, `${`, `function`, `class`, and an opening backquote. Code that
+			 * resets the stack after this token was read keeps these on top.
+			 */
+			#currentTokenContextCount() {
+				if (this.type === tstt.jsxTagStart) return 2;
+				if (
+					this.type === tt.parenL ||
+					this.type === tt.braceL ||
+					this.type === tt.dollarBraceL ||
+					this.type === tt._function ||
+					this.type === tt._class
+				) {
+					return 1;
+				}
+				// A closing backquote pops the template's context instead.
+				if (this.type === tt.backQuote && this.curContext() === q_tmpl) return 1;
+				return 0;
+			}
+
+			/**
 			 * @param {number} index
 			 * @returns {number}
 			 */
@@ -3327,6 +3365,52 @@ export function TSRXPlugin(config) {
 					if (this.#containsDisallowedDynamicTagSyntax(value, seen)) return true;
 				}
 				return false;
+			}
+
+			/**
+			 * Acorn allows an expression after a name only for `of` and `yield`.
+			 * Where `await` is a keyword (an async function, or the module top level),
+			 * it is a unary operator like `yield`, so the token after it starts an
+			 * expression: `await <div />` awaits an element instead of comparing.
+			 * @type {Parse.Parser['updateContext']}
+			 */
+			updateContext(prevType) {
+				super.updateContext(prevType);
+				if (
+					this.type === tt.name &&
+					this.value === 'await' &&
+					prevType !== tt.dot &&
+					prevType !== tt.questionDot &&
+					this.canAwait
+				) {
+					this.exprAllowed = true;
+				}
+			}
+
+			/**
+			 * The token after a type is read while still inside the type, where `<`
+			 * is always a type operator. Once the outermost type has ended, a `<` that
+			 * starts its own line is read again by the rules for code, so an element
+			 * there starts a new statement after `const x = y as T` or `let x: T`, as
+			 * it does after `const x = y`. Inside a type (`type F =\n  <T>() => T`,
+			 * a call signature after a member) the `<` stays a type operator.
+			 * @type {Parse.Parser['tsInType']}
+			 */
+			tsInType(cb) {
+				if (this.inType) return super.tsInType(cb);
+				const type = super.tsInType(cb);
+				if (
+					this.type === tt.relational &&
+					this.value === '<' &&
+					this.hasPrecedingLineBreak() &&
+					can_start_tag_after_lt(this.input, this.start)
+				) {
+					this.pos = this.start;
+					// As after the value that ends `const x = y`.
+					this.exprAllowed = false;
+					this.nextToken();
+				}
+				return type;
 			}
 
 			/**
@@ -4854,6 +4938,11 @@ export function TSRXPlugin(config) {
 
 				const opening_template_node = this.#openingNativeTemplateNode;
 				let pushed_opening_template_node = false;
+				// `>` reads the next token: the first child, or, after `/>`, the token
+				// after the element. Outside a template that token is code, so a
+				// self-closing element stays off `#path` (`<span /> / 2` divides).
+				const reads_next_token_as_code =
+					node.selfClosing && !this.#isNativeTemplateNode(this.#path.at(-1));
 				if (opening_template_node) {
 					// The enclosing `parseElement` started this node before the opening tag
 					// said what it is; stamp its shape now that the tag has been read.
@@ -4873,8 +4962,10 @@ export function TSRXPlugin(config) {
 						template_node.openingFragment = this.#toOpeningFragment(node);
 						template_node.closingFragment = null;
 					}
-					this.#path.push(opening_template_node);
-					pushed_opening_template_node = true;
+					if (!reads_next_token_as_code) {
+						this.#path.push(opening_template_node);
+						pushed_opening_template_node = true;
+					}
 				}
 
 				try {
@@ -5022,6 +5113,7 @@ export function TSRXPlugin(config) {
 					);
 					this.#path.pop();
 				} else {
+					this.#elementContextDepths.set(node, pre_element_context_depth);
 					this.#parseNativeTemplateBody(node, /** @type {AST.Node[]} */ (node.children), {
 						enterScope: true,
 						resetFunctionBodyDepth: true,
@@ -5059,8 +5151,15 @@ export function TSRXPlugin(config) {
 					const parent = this.#path.at(-1);
 					const insideTemplate = this.#isNativeTemplateNode(parent);
 
-					if (!insideTemplate && this.context.length > pre_element_context_depth) {
-						this.context.length = pre_element_context_depth;
+					// The token after the closing tag is already read, so only the residue
+					// under the contexts it pushed goes (a sibling's `<`, a template
+					// literal's backquote).
+					const token_context_depth = this.context.length - this.#currentTokenContextCount();
+					if (!insideTemplate && token_context_depth > pre_element_context_depth) {
+						this.context.splice(
+							pre_element_context_depth,
+							token_context_depth - pre_element_context_depth,
+						);
 					}
 				}
 
@@ -5279,7 +5378,31 @@ export function TSRXPlugin(config) {
 						if (!(inside_parent_template && current_name === closing_name_str)) {
 							this.#closingNativeTemplateNode = true;
 						}
-						this.expect(tstt.jsxTagEnd);
+						// `>` reads the token after the element. When the element closes and no
+						// template encloses it, that token is code: the element leaves `#path`
+						// (`<b>x</b> / 2` divides; it is popped for good below), and the
+						// tokenizer context returns to where the element began, as after a
+						// balanced closing tag, dropping residue its body left (a control-flow
+						// block's contexts). parseElement keeps the contexts the token pushes.
+						const closes_outside_template =
+							this.#isNativeTemplateNode(current) &&
+							current_name === closing_name_str &&
+							!this.#isNativeTemplateNode(this.#path.at(-2));
+						if (closes_outside_template) {
+							this.#path.pop();
+							const context_depth = this.#elementContextDepths.get(current);
+							if (context_depth !== undefined && this.context.length > context_depth) {
+								this.context.length = context_depth;
+								this.exprAllowed = false;
+							}
+						}
+						try {
+							this.expect(tstt.jsxTagEnd);
+						} finally {
+							if (closes_outside_template) {
+								this.#path.push(current);
+							}
+						}
 						this.#closingNativeTemplateNode = false;
 						const closingElement =
 							/** @type {ESTreeJSX.TSRXJSXClosingElement & AST.NodeWithLocation} */ (

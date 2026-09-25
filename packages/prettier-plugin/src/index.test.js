@@ -9177,6 +9177,78 @@ function render() {
 }`);
 		});
 
+		it('keeps an element with attributes after an element with children', async () => {
+			const source = `function Test(props) {
+  const render = (item) => <><Item /></>
+  <List renderItem={render} />
+  const field = <b>{label}</b>
+  <List renderItem={render} key="a" />
+}
+const render = <b>x</b>
+<List renderItem={render} />`;
+			await expectUnchanged(source);
+			const with_semicolons = source.replace(/(<\/>|<\/b>)$/gm, '$1;');
+			expect(await format(with_semicolons)).toBeWithNewline(with_semicolons);
+			expect(await format(with_semicolons, { semi: false })).toBeWithNewline(source);
+		});
+
+		it('keeps an element after a statement that ends with a type', async () => {
+			const source = `export function App() @{
+  const x = y as Foo
+  const z = y satisfies Foo
+  let w: Foo
+  type T = Foo
+  <Bar />
+}
+function render() {
+  const x = y as Map<A, B>
+  <Bar a={1} />
+}
+let v: Foo
+<Bar />`;
+			await expectUnchanged(source);
+			const with_semicolons = source.replace(/^(\s*(?:const|let|type) .*)$/gm, '$1;');
+			expect(await format(with_semicolons)).toBeWithNewline(with_semicolons);
+			expect(await format(with_semicolons, { semi: false })).toBeWithNewline(source);
+		});
+
+		it('guards a template literal after an element with children', async () => {
+			expect(
+				await format('function f() {\n  const a = <b>x</b>;\n  `t`;\n}', { semi: false }),
+			).toBeWithNewline('function f() {\n  const a = <b>x</b>\n  ;`t`\n}');
+		});
+
+		it('divides after an element and in code block setup statements', async () => {
+			await expectUnchanged(`const half = <span /> / 2
+const third = <span>x</span> / 3
+function f() {
+  return <>x</> / 2
+}
+export function App() @{
+  total / count > 1 && log()
+  a / b
+  <>
+    @if (x) {
+      a / b
+      <span />
+    }
+  </>
+}`);
+		});
+
+		// Prettier prints `await (<div />)` (#425); the output must
+		// parse again either way.
+		it('formats an awaited element', async () => {
+			for (const semi of [true, false]) {
+				await format(
+					'async function f() {\n  await (<div />);\n  const view = await <b>a</b>;\n}',
+					{
+						semi,
+					},
+				);
+			}
+		});
+
 		it('puts the semicolon after comments and before a JSDoc cast', async () => {
 			await expectUnchanged(`log()
 // note
