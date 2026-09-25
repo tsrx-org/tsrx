@@ -6003,10 +6003,9 @@ describe('comments placed like Prettier', () => {
 	// Without a `;`, the declaration ends at the `)`, and the parenthesized
 	// value ends before it
 	it('trails the declaration with a comment after the ) that ends it', () => {
-		const [first, second] = parseModule(
-			'const x = a | (b >> 6) // c\nconst y = (a >> 6) // d\n',
-			'App.ts',
-		).body;
+		const [first, second] = /** @type {any[]} */ (
+			parseModule('const x = a | (b >> 6) // c\nconst y = (a >> 6) // d\n', 'App.ts').body
+		);
 
 		expect(commentsOf(first).trailing).toEqual([' c']);
 		expect(commentsOf(first.declarations[0].init.right).trailing).toBeUndefined();
