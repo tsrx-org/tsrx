@@ -483,12 +483,47 @@ function printNode(path, options, print, args) {
 				),
 		);
 	}
+	if (!isTsrxValue(path)) return doc;
+	const printed = printOwnComments(path, options, doc);
+	// Like an element, a `@{ … }` value or a directive isn't a left-hand-side
+	// expression, so it's the base of a call, member access, index, non-null
+	// assertion, or tagged template only in parentheses, which Prettier's
+	// `needsParens` prints around a JSX element there.
+	switch (subscriptBaseKind(path)) {
+		case 'callee':
+			return ['(', printed, ')'];
+		case 'object':
+			return group(['(', indent([softline, printed]), softline, ')']);
+	}
 	// A `@{ … }` value or a directive gets JSX's parentheses where it is
 	// assigned, returned, thrown, or an arrow's body, with its comments inside
 	// them, as Prettier prints a JSX element.
-	return isTsrxValue(path)
-		? maybeWrapJsxElementInParens(path, printOwnComments(path, options, doc))
-		: doc;
+	return maybeWrapJsxElementInParens(path, printed);
+}
+
+/**
+ * Whether the node at `path` is the callee of a call or `new`, or the object
+ * of a member access, index, non-null assertion, or tagged template.
+ * @param {AstPath<Node>} path
+ * @returns {'callee' | 'object' | null}
+ */
+function subscriptBaseKind(path) {
+	const { key, parent } = path;
+	switch (parent?.type) {
+		case 'CallExpression':
+		case 'OptionalCallExpression':
+		case 'NewExpression':
+			return key === 'callee' ? 'callee' : null;
+		case 'MemberExpression':
+		case 'OptionalMemberExpression':
+			return key === 'object' ? 'object' : null;
+		case 'TaggedTemplateExpression':
+			return key === 'tag' ? 'object' : null;
+		case 'TSNonNullExpression':
+			return key === 'expression' ? 'object' : null;
+		default:
+			return null;
+	}
 }
 
 /**
