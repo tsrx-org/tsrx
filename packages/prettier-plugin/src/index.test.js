@@ -8829,6 +8829,150 @@ let aaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
 		});
 	});
 
+	// Prettier's `chooseLayout` picks one layout for declarators, assignments,
+	// class fields, object properties, and type aliases.
+	describe('assignment layouts follow Prettier', () => {
+		it('breaks after = before a string or a member chain that does not fit', async () => {
+			const input = `const message = "a long string value that does not fit on one line with the declaration";
+class A {
+  static message = "a long string value that does not fit on one line with the field";
+}
+const value = someObject.someProperty.anotherProperty.yetAnotherProperty.finalProp;
+message = "a long string value that does not fit on one line with the assignment exp";`;
+			const expected = `const message =
+  "a long string value that does not fit on one line with the declaration";
+class A {
+  static message =
+    "a long string value that does not fit on one line with the field";
+}
+const value =
+  someObject.someProperty.anotherProperty.yetAnotherProperty.finalProp;
+message =
+  "a long string value that does not fit on one line with the assignment exp";`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks after = before an awaited, negated, or short-argument call chain', async () => {
+			const input = `const entries = await someObject.someProperty.anotherProperty.collectAllEntries();
+const negated = !someObject.someProperty.anotherProperty.yetAnotherProperty.flag;
+const count = someObject.someProperty.anotherProperty.yetAnotherProperty.count(id);`;
+			const expected = `const entries =
+  await someObject.someProperty.anotherProperty.collectAllEntries();
+const negated =
+  !someObject.someProperty.anotherProperty.yetAnotherProperty.flag;
+const count =
+  someObject.someProperty.anotherProperty.yetAnotherProperty.count(id);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks after : or = before a binary value without indenting it twice', async () => {
+			const input = `const options = {
+  description: someVeryLongVariableNameNumberOne + someVeryLongVariableNameNumberTwoooooooo,
+};
+class A {
+  description = someVeryLongVariableNameNumberOne + someVeryLongVariableNameNumberTwoooooooo;
+}`;
+			const expected = `const options = {
+  description:
+    someVeryLongVariableNameNumberOne +
+    someVeryLongVariableNameNumberTwoooooooo,
+};
+class A {
+  description =
+    someVeryLongVariableNameNumberOne +
+    someVeryLongVariableNameNumberTwoooooooo;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps a value that can break by itself on the operator line', async () => {
+			const source = `const result = someFunction(
+  argumentNumberOne,
+  argumentNumberTwo,
+  argumentNumber3,
+);
+const greeting = \`a long template literal value that does not fit on one line \${name}\`;
+const options = {
+  id: "a long string value that does not fit on one line with the short key",
+};
+const {
+  aaaaaaaaaa,
+  bbbbbbbbbb = 1,
+  cccccccccc: renamed,
+} = someObject.withSomeProperty;`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('lays out a chain of three or more assignments', async () => {
+			const input = `window.aaaaaaaaaaaaaaaaaa = window.bbbbbbbbbbbbbbbbbbbbbbbb = window.cccccccccccccccccccc = someValue;
+a = b = c;`;
+			const expected = `window.aaaaaaaaaaaaaaaaaa =
+  window.bbbbbbbbbbbbbbbbbbbbbbbb =
+  window.cccccccccccccccccccc =
+    someValue;
+a = b = c;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks a type alias inside its type when the type can break', async () => {
+			const input = `type T = Foo<aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccc>;
+type Pair<Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, Cccccccccccccc> = Foo<Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>;
+type Props = BaseProps & { children: string; onClick: () => void; className: string };`;
+			const expected = `type T = Foo<
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ccccccccccccccc
+>;
+type Pair<
+  Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  Cccccccccccccc,
+> = Foo<Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>;
+type Props = BaseProps & {
+  children: string;
+  onClick: () => void;
+  className: string;
+};`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks a type alias after = before a union or a generic conditional type', async () => {
+			const input = `type Choice = "aaaaaaaaaaaaaaaaaaaa" | "bbbbbbbbbbbbbbbbbbbbbbbb" | "cccccccccccccccccccccccccc";
+type Unwrapped<T> = T extends Promise<infer U> ? UnwrapTheValueOfThisPromise<U> : NotAPromise<T>;
+type Checked<T> = T extends string ? SomeVeryLongTypeNameForStrings<T> : SomeOtherVeryLongType<T>;`;
+			const expected = `type Choice =
+  | "aaaaaaaaaaaaaaaaaaaa"
+  | "bbbbbbbbbbbbbbbbbbbbbbbb"
+  | "cccccccccccccccccccccccccc";
+type Unwrapped<T> =
+  T extends Promise<infer U> ? UnwrapTheValueOfThisPromise<U> : NotAPromise<T>;
+type Checked<T> = T extends string
+  ? SomeVeryLongTypeNameForStrings<T>
+  : SomeOtherVeryLongType<T>;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps declare on type aliases and interfaces', async () => {
+			const input = `declare type A = string;
+export declare type B = number;
+declare interface I { a: string }`;
+			const expected = `declare type A = string;
+export declare type B = number;
+declare interface I {
+  a: string;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	describe('comments that start an assigned value', () => {
 		it('prints an own-line comment below the = with the value indented', async () => {
 			const input = `const value = (
