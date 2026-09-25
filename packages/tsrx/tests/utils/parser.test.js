@@ -9774,6 +9774,15 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			valid: 'type T = { (...rest: number[]): void };',
 			pick: type_alias_type,
 		},
+		{
+			// A signature's parameters now go through `parseBindingList`, which reads
+			// the parameters after a rest parameter, as for a function.
+			source: 'type F = (...a: number[], b: string) => void;',
+			errors: [['Comma is not permitted after the rest element', ', b']],
+			throws: 'Comma is not permitted after the rest element (1:24)',
+			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
+			match: [{ type: 'RestElement' }, { type: 'Identifier', name: 'b' }],
+		},
 		// A parameter property modifier on an arrow function's parameter (#663).
 		{
 			source: 'const k = (public x: number) => x;',
