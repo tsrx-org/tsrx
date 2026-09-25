@@ -1676,7 +1676,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 		// of leading the default, which would print its own `hardline` without
 		// indenting the default. A `prettier-ignore` comment after the `=` keeps
 		// ignoring the default.
-		if (node.type === 'TSTypeParameter' && preceding && following && preceding === node.constraint) {
+		if (
+			node.type === 'TSTypeParameter' &&
+			preceding &&
+			following &&
+			preceding === node.constraint
+		) {
 			const hasLineComment = !!(
 				/** @type {AST.NodeWithMaybeComments} */ (preceding).trailingComments?.some(
 					(trailing) => trailing.type === 'Line',

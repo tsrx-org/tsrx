@@ -10399,9 +10399,8 @@ function printTSTypeParameter(node, path, options, print) {
 		const groupId = Symbol('constraint');
 		// The comments that trail the constraint before the default print on
 		// its line, like the ones after the name
-		const trailing = node.default
-			? (/** @type {AST.NodeWithMaybeComments} */ (node.constraint).trailingComments ?? [])
-			: [];
+		const constraint = /** @type {AST.NodeWithMaybeComments} */ (node.constraint);
+		const trailing = node.default ? (constraint.trailingComments ?? []) : [];
 		parts.push(
 			' extends',
 			group(indent(line), { id: groupId }),

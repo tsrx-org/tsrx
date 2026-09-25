@@ -7305,8 +7305,7 @@ describe('comments placed like Prettier', () => {
 
 	// Prettier moves these after the constraint on its next pass
 	it('trails the constraint of a type parameter with a line comment on its own line around its =', () => {
-		const [after] = firstStatement('type A<B extends C =\n  // c\n  D> = R;').typeParameters
-			.params;
+		const [after] = firstStatement('type A<B extends C =\n  // c\n  D> = R;').typeParameters.params;
 		const [second] = firstStatement('type A<B extends C = // a\n  // b\n  D> = R;').typeParameters
 			.params;
 

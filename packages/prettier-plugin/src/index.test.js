@@ -11691,9 +11691,12 @@ let m: Map<string /* key */, number> = new Map<string, number>();`;
 				'type A<\n  B extends C = // c\n    VeryLongTypeName<\n      WithArguments,\n      AndMoreArguments,\n      AndEvenMoreArguments,\n      AndMore\n    >,\n> = R;',
 			],
 			['type A<B extends C = /* c */\n  D> = R;', 'type A<B extends C /* c */ = D> = R;'],
-		])('formats the comment around the = of a type parameter in %j like Prettier', async (source, expected) => {
-			expect(await format(source)).toBeWithNewline(expected);
-		});
+		])(
+			'formats the comment around the = of a type parameter in %j like Prettier',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
 
 		it.each([
 			'type A<B extends C /* c */ = D> = R;',
@@ -11720,9 +11723,12 @@ let m: Map<string /* key */, number> = new Map<string, number>();`;
 				'type A<B extends C /* a */\n  // b\n  = D> = R;',
 				'type A<\n  B extends C /* a */ = // b\n    D,\n> = R;',
 			],
-		])('formats the comment around the = of a type parameter in %j in one pass', async (source, expected) => {
-			expect(await format(source)).toBeWithNewline(expected);
-		});
+		])(
+			'formats the comment around the = of a type parameter in %j in one pass',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
 
 		it('keeps a prettier-ignore comment on its own line after the = of a type parameter on the default like Prettier', async () => {
 			expect(
@@ -17484,7 +17490,10 @@ item
 			['(a + b /* note */);', 'a + b; /* note */'],
 			['(function () {} /* note */);', '(function () {}); /* note */'],
 			['if (a) (b, c /* note */);', 'if (a) (b, c); /* note */'],
-			['function f() {\n  return (a, b // note\n  );\n}', 'function f() {\n  return (\n    a,\n    b // note\n  );\n}'],
+			[
+				'function f() {\n  return (a, b // note\n  );\n}',
+				'function f() {\n  return (\n    a,\n    b // note\n  );\n}',
+			],
 			['f(() => (a, b // note\n));', 'f(\n  () => (\n    a,\n    b // note\n  ),\n);'],
 		])('formats %j like Prettier', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
@@ -17494,7 +17503,10 @@ item
 		// assignments, the value without them, and moves the comment after the
 		// `;` on the next pass. The formatter prints the fixpoint.
 		it.each([
-			['function f() {\n  throw (a, b /* note */);\n}', 'function f() {\n  throw (a, b); /* note */\n}'],
+			[
+				'function f() {\n  throw (a, b /* note */);\n}',
+				'function f() {\n  throw (a, b); /* note */\n}',
+			],
 			['export default (a, b /* note */);', 'export default (a, b); /* note */'],
 			['x = (y = z /* note */);', 'x = y = z; /* note */'],
 			['const x = (a, b // note\n);', 'const x = (a, b); // note'],
