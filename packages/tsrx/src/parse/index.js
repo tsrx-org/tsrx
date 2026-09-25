@@ -984,13 +984,28 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 		// `handleUnionTypeComments`: a comment on its own line after a union
 		// member trails it, so that it prints before the next `|`. A
+		// `prettier-ignore` comment there, or on its own line before a union,
+		// ignores the member after it: it marks that member and no longer
+		// counts itself (Prettier's `prettierIgnore` and `unignore`). Any other
 		// `prettier-ignore` comment stays with the member it ignores.
-		if (node.type === 'TSUnionType' && isPrettierIgnoreComment(comment)) {
-			return false;
+		if (ownLine && isPrettierIgnoreComment(comment)) {
+			const ignored =
+				node.type === 'TSUnionType'
+					? following
+					: following?.type === 'TSUnionType'
+						? /** @type {AST.TSUnionType} */ (following).types[0]
+						: null;
+			if (ignored) {
+				getNodeMetadata(ignored).prettierIgnore = true;
+				comment.unignore = true;
+			}
 		}
 		if (ownLine && node.type === 'TSUnionType' && preceding) {
 			addTrailingComment(preceding, comment);
 			return true;
+		}
+		if (node.type === 'TSUnionType' && isPrettierIgnoreComment(comment)) {
+			return false;
 		}
 
 		// `handleUnionTypeLeadingComments`: a one-line block comment right before
