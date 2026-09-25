@@ -9014,6 +9014,39 @@ let m: Map<string /* key */, number> = new Map<string, number>();`;
 		});
 	});
 
+	// The parser adds some keys out of source order: a call's type arguments
+	// after its arguments, a switch case's test after its body, and a generic
+	// arrow function's type parameters after its body. The comments in them
+	// stay where they are (#389).
+	describe('comments in type arguments, type parameters, and case tests stay there', () => {
+		it.each([
+			'const z = f<\n  // only\n  A\n>(1);',
+			'const x = dual<\n  /** a */\n  A,\n  /** b */\n  B\n>(2, f);',
+			'f</* c */ T>(1);',
+			'f<T /* c */>(1);',
+			'new Foo</* c */ T>(1);',
+			'tag</* c */ T>`x`;',
+			'const f = </* c */ T,>(a: T): T => a;',
+			'const f = <T,>(/* c */ a: T): T => a;',
+			'const f = <T,>(a: T /* c */, b): T => a;',
+			'switch (x) {\n  case /* c */ 1:\n    y;\n}',
+			'class A {\n  m</* c */ T>(a: T): T {\n    return a;\n  }\n}',
+		])('keeps the comment in %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// The parser adds a template `@try`'s `@catch` before its `@pending`,
+		// whose comments the `@catch` took and never printed
+		it.each([
+			'function A() @{\n  @try {\n    <B />\n  } @pending {\n    // loading\n    <p>{"loading"}</p>\n  } @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
+			'function A() @{\n  @try {\n    <B />\n  } @pending {\n    <p>{"loading"}</p>\n    // after loading\n  } @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
+			'function A() @{\n  @try {\n    <B />\n  } @pending {\n    <p>{"loading"}</p>\n  } /* after pending */ @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
+			'function A(x) @{\n  @switch (x) {\n    @case /* c */ 1: {\n      <p>{"one"}</p>\n    }\n  }\n}',
+		])('keeps the comment in the template %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
 	// A formatter may never change what the source declares. Every modifier
 	// below is load-bearing: dropping it silently retypes or redefines the
 	// member, and the result still compiles, so nothing catches it downstream.
@@ -9495,6 +9528,33 @@ calls`);
 		])('starts the statement with a semicolon: %s', async (statement) => {
 			await expectUnchanged(`const value = 1\n${statement}`);
 		});
+
+		// Without a `;`, a statement whose value ends in parentheses ends at
+		// the `)`. Like Prettier, a comment after it trails the statement, so it
+		// doesn't break the value (#366).
+		it.each([
+			['const x = a | (b >> 6) // c\nconst y = 1', 'const x = a | (b >> 6); // c\nconst y = 1;'],
+			['const x = (a >> 6) // c\nconst y = 1', 'const x = a >> 6; // c\nconst y = 1;'],
+			['const x = !(a) // c\nconst y = 1', 'const x = !a; // c\nconst y = 1;'],
+			['const f = () => (a >> 6) // c\nfoo()', 'const f = () => a >> 6; // c\nfoo();'],
+			['function f() {\n  return (a >> 6) // c\n}', 'function f() {\n  return a >> 6; // c\n}'],
+			[
+				'function f() {\n  throw (a >> 6) // c\n  x()\n}',
+				'function f() {\n  throw a >> 6; // c\n  x();\n}',
+			],
+			['const o = {\n  a: (b >> 6) // c\n}', 'const o = {\n  a: b >> 6, // c\n};'],
+			['class A {\n  x = (a >> 6) // c\n  y = 1\n}', 'class A {\n  x = a >> 6; // c\n  y = 1;\n}'],
+			[
+				'const x = a | (b >> 6) /* c */\nconst y = 1',
+				'const x = a | (b >> 6); /* c */\nconst y = 1;',
+			],
+		])(
+			'trails the statement with the comment after the ) that ends %j',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+				await expectUnchanged(expected.replaceAll(';', ''));
+			},
+		);
 
 		it('adds no semicolon before statements that cannot continue the previous one', async () => {
 			await expectUnchanged(`const value = 1
@@ -12556,9 +12616,37 @@ item
 			'class A // c\n  extends B {}',
 			'interface I\n  // c\n  extends J {}',
 			'interface I<T> // c\n  extends J {}',
+			// With nothing before the clause, the comment dangles on the class,
+			// which prints it before the keyword (#434)
+			'const X = class\n  // c\n  implements D, E {};',
+			'const X = class\n  /* c */\n  implements D, E {};',
+			'const X = class\n  // c\n  // d\n  implements D, E\n{\n  x = 1;\n};',
+			'const X = class\n  // c\n  implements\n    VeryLongInterfaceNameNumberOne,\n    VeryLongInterfaceNameNumberTwo,\n    VeryLongInterfaceNameNumberThree {};',
 		])('keeps the comment of %j before the heritage clause', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});
+
+		// With one type, Prettier prints the comment after the keyword and the
+		// type right after it, which comments the type out after a line comment
+		// (`implements // cD`), and runs a block comment into it (`/* c */D`).
+		// A line comment ends its line instead, and a block comment is followed
+		// by a space, as it is when Prettier formats its output again.
+		it.each([
+			['const X = class\n  // c\n  implements D {};', 'const X = class implements // c\nD {};'],
+			[
+				'const X = class\n  /* c */\n  implements D {};',
+				'const X = class implements /* c */ D {};',
+			],
+			[
+				'const X = class\n  // c\n  implements D.E {};',
+				'const X = class\n  implements // c\n  D.E {};',
+			],
+		])(
+			'prints the comment of %j after the keyword of one heritage type',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
 	});
 
 	// These comments sit where no node took them, so the parser gave them to
@@ -14249,6 +14337,15 @@ import f from "./f" /* c */ with { type: "json" };`);
 				'import /* d */ a, * as /* ns */ b from "mod";',
 			],
 			['a comment before a comma', 'import def /* d */, { a } from "mod";'],
+			// Like Prettier, the first comment trails the default import (#384)
+			[
+				'a line comment after the brace of the named imports',
+				'import d, { // first\n  // second\n  a,\n} from "mod";',
+			],
+			[
+				'line comments after the brace and after a named import',
+				'import d, { // first\n  a, // second\n  b,\n} from "mod";',
+			],
 			['a comment before from', 'import a /* c */ from "mod";'],
 			['a comment on an alias', 'export { a as /* c */ b } from "mod";'],
 			['a comment on a namespace re-export', 'export * as ns /* c */ from "mod";'],
@@ -14263,6 +14360,18 @@ import f from "./f" /* c */ with { type: "json" };`);
 			],
 		])('keeps %s', async (_, source) => {
 			await expectUnchanged(source);
+		});
+
+		// Prettier trails the default import with the first comment and prints
+		// it after the `{`, where it trails the default import again (#384)
+		it.each([
+			[
+				'import d, // first\n// second\n{ a } from "mod";',
+				'import d, { // first\n  // second\n  a,\n} from "mod";',
+			],
+			['import d, { // first\n  a,\n} from "mod";', 'import d, { a } from "mod"; // first'],
+		])('prints the comments of %j where Prettier does', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
 		});
 
 		it('moves a comment after the braces inside them', async () => {

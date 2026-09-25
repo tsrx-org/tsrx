@@ -770,6 +770,48 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * The nodes that zimmerframe's `next()` visits in `node`, with the ones in
+	 * the source in source order, like Prettier's `getSortedChildNodes`, or
+	 * null when they're in order already. The parser doesn't always add a
+	 * node's keys in source order: it adds a call's type arguments after its
+	 * arguments, a switch case's test after its body, and a generic arrow
+	 * function's type parameters after its body. The walker gives a comment to
+	 * the first node it visits that starts after it, so it must visit them in
+	 * order.
+	 * @param {AST.Node} node
+	 * @returns {AST.Node[] | null}
+	 */
+	function getChildrenInSourceOrder(node) {
+		/** @type {AST.Node[]} */
+		const children = [];
+		for (const key in node) {
+			if (key === 'type') continue;
+			const value = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (node))[key];
+			if (!value || typeof value !== 'object') continue;
+			for (const child of Array.isArray(value) ? value : [value]) {
+				if (child && typeof child === 'object' && child.type) {
+					children.push(child);
+				}
+			}
+		}
+		// Comments stay where they are, and so does a style sheet, whose
+		// positions count from the start of its `<style>` element
+		/** @param {AST.Node} child */
+		const isSorted = (child) =>
+			typeof (/** @type {AST.NodeWithLocation} */ (child).start) === 'number' &&
+			child.type !== /** @type {string} */ ('Line') &&
+			child.type !== /** @type {string} */ ('Block') &&
+			child.type !== /** @type {string} */ ('StyleSheet');
+		const located = /** @type {(AST.Node & AST.NodeWithLocation)[]} */ (children.filter(isSorted));
+		const sorted = [...located].sort((a, b) => a.start - b.start);
+		if (sorted.every((child, i) => child === located[i])) {
+			return null;
+		}
+		let next = 0;
+		return children.map((child) => (isSorted(child) ? sorted[next++] : child));
+	}
+
+	/**
 	 * Like Prettier's `decorateComment`, the children of `enclosing` right
 	 * before and after a comment that lies in `enclosing` outside all its
 	 * children, so that `enclosing` is the comment's enclosing node, or null
@@ -971,8 +1013,15 @@ export function get_comment_handlers(source, comments, index = 0) {
 			// The superclass's type arguments print with it
 			heading.push(node.superClass, node.superTypeParameters);
 			const heritage = node.type === 'TSInterfaceDeclaration' ? node.extends : node.implements;
-			if (preceding && following === heritage?.[0] && heading.includes(preceding)) {
-				addTrailingComment(preceding, comment);
+			if (following === heritage?.[0]) {
+				if (preceding && heading.includes(preceding)) {
+					addTrailingComment(preceding, comment);
+				} else {
+					// With nothing before the clause, as in a class expression with
+					// no name, the comment dangles on the class, and the clause
+					// prints it (Prettier's dangling comment marked `implements`)
+					pushInnerComment(node, comment);
+				}
 				return true;
 			}
 		}
@@ -1345,7 +1394,14 @@ export function get_comment_handlers(source, comments, index = 0) {
 							visit(attribute);
 						}
 					} else {
-						next();
+						const children = comments[0] ? getChildrenInSourceOrder(node) : null;
+						if (children) {
+							for (const child of children) {
+								visit(child);
+							}
+						} else {
+							next();
+						}
 					}
 
 					if (comments[0]) {
@@ -1777,7 +1833,22 @@ export function get_comment_handlers(source, comments, index = 0) {
 									slice.includes(')') &&
 									endsStatementHeader(node, parent) &&
 									getNextNonSpaceNonCommentCharacter(comments[0].end) !== ')';
-								const onlySimpleWhitespace = !isAfterStatementHeader && /^[,) \t]*$/.test(slice);
+								// A comment after the `)` that ends the parent, as in
+								// `const x = (a >> 6) // c` without a `;`, lies outside the
+								// parent, so this node isn't the one before it. Like
+								// Prettier, an ancestor that ends before it takes it.
+								const isAfterParent = !!parent && parent.end <= comments[0].start;
+								// The `{` of an import's named specifiers may follow its default
+								// one, and a comment after it still trails that one, as Prettier
+								// does with a comment at the end of the line: `import d, { // c`
+								const opensNamedSpecifiers =
+									parent?.type === 'ImportDeclaration' &&
+									node.type !== 'ImportSpecifier' &&
+									nextSibling?.type === 'ImportSpecifier';
+								const onlySimpleWhitespace =
+									!isAfterStatementHeader &&
+									!isAfterParent &&
+									(opensNamedSpecifiers ? /^[,{ \t]*$/ : /^[,) \t]*$/).test(slice);
 								const onlyWhitespace = /^\s*$/.test(slice);
 								const hasBlankLine = /\n\s*\n/.test(slice);
 								const nodeEndLine = end_node.loc?.end?.line ?? null;
