@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { acorn, parseModule } from '../../src/index.js';
 import { node_children } from '../../src/utils/ast.js';
 import { as_type, assert_type } from '../shared/node-types.js';
+import { parse_in_worker } from '../shared/parse-in-worker.js';
 import { STYLE_SYNTAX_CASES } from './fixtures/style-syntax.js';
 
 /**
@@ -3188,6 +3189,103 @@ foo();`;
 				'App.tsrx',
 			),
 		).toThrow();
+	});
+
+	describe('input that ends inside an @switch arm', () => {
+		// Parsed in a worker, so a parse that never returns fails the test instead
+		// of stalling the run.
+		/** @type {Array<ParseOptions | undefined>} */
+		const modes = [undefined, { collect: true }, { loose: true }];
+
+		it('reports the missing `}` at the end of the input in every parse mode', async () => {
+			const sources = [
+				'function App({ mode }) @{\n  @switch (mode) {\n    @case 1: {',
+				'function App({ mode }) @{\n  @switch (mode) {\n    @default: {',
+				"function App({ mode }) @{\n  @switch (mode) {\n    @case 1: {\n      const label = 'one';",
+				'function App({ mode }) @{\n  @switch (mode) {\n    @case 1: {\n      <b>one</b>',
+				'function App({ mode }) @{\n  @switch (mode) {\n    @case 1: {\n      <b>one</b>\n    }\n    @default: {\n      ',
+				'function App({ mode }) @{\n  const node = @switch (mode) { @case 1: {',
+				'function App({ mode }) { return <div>@switch (mode) { @case 1: {',
+			];
+			const inputs = sources.flatMap((source) => modes.map((options) => ({ source, options })));
+
+			const outcomes = await parse_in_worker(inputs);
+
+			expect(outcomes).toEqual(
+				inputs.map(({ source }) => {
+					const { line, column } = acorn.getLineInfo(source, source.length);
+					return {
+						ok: false,
+						message: `Unexpected token (${line}:${column})`,
+						pos: source.length,
+					};
+				}),
+			);
+		});
+
+		it('reports an unclosed element before the missing `}`', async () => {
+			const sources = [
+				'function App({ mode }) @{\n  @switch (mode) {\n    @case 1: {\n      <section>',
+				'function App({ mode }) @{\n  @switch (mode) {\n    @default: {\n      <section>',
+			];
+			const inputs = sources.flatMap((source) => modes.map((options) => ({ source, options })));
+
+			const outcomes = await parse_in_worker(inputs);
+
+			// As in an `@if` body: the default mode throws the unclosed tag, and
+			// collect and loose mode, which keep parsing past it, then stop at the
+			// missing `}` at the end of the input.
+			expect(outcomes).toEqual(
+				inputs.map(({ source, options }) => ({
+					ok: false,
+					message: options
+						? 'Unexpected token (4:15)'
+						: "Unclosed tag '<section>'. Expected '</section>' before end of template. (4:15)",
+					pos: source.length,
+				})),
+			);
+		});
+
+		it('returns for every prefix of a template with @switch arms', async () => {
+			const source = `function App({ mode, items }) @{
+	const label = @switch (mode) { @case 'a': { <b>a</b> } @default: { <i>b</i> } };
+	<div>
+		@switch (mode) {
+			@case 'list': {
+				const first = items[0];
+				<ul>
+					@for (const item of items) {
+						<li>{item}</li>
+					}
+				</ul>
+			}
+			@case 'one': {
+				@if (items[0]) { <p>{items[0]}</p> }
+			}
+			@default: {
+				doThing();
+				<>{label} none</>
+			}
+		}
+	</div>
+}`;
+			/** @type {Array<{ source: string, options: ParseOptions | undefined }>} */
+			const inputs = [];
+			for (let end = 0; end <= source.length; end++) {
+				for (const options of modes) {
+					inputs.push({ source: source.slice(0, end), options });
+				}
+			}
+
+			const outcomes = await parse_in_worker(inputs);
+
+			expect(outcomes).toHaveLength(inputs.length);
+			expect(outcomes.slice(-modes.length)).toEqual([
+				{ ok: true, errors: undefined },
+				{ ok: true, errors: [] },
+				{ ok: true, errors: [] },
+			]);
+		});
 	});
 
 	it('treats keyword and symbol-looking element children as JSXText', () => {
