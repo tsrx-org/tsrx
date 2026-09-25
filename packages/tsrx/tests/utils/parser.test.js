@@ -6469,6 +6469,29 @@ describe('comments in element bodies and closing tags', () => {
 		}
 	});
 
+	// Inside a `{…}` container, the parser records a comment in an element's
+	// body as before its first child until a child is finished, which a `{…}`
+	// child isn't until the token after its `}` is read. The comment went to the
+	// element's body, which the formatter prints before the closing tag (#637).
+	it('gives a comment in the body of an element in a container to the child after it', () => {
+		for (const source of [
+			'export function App() @{\n  <main>{x && <div>{" "}\n/* c */ <i /></div>}</main>\n}',
+			'export function App() @{\n  <main a={<div>{" "}\n/* c */ <i /></div>} />\n}',
+			'export function App() @{\n  <main>{x && <div>{y}\n/* c */\n<i /></div>}</main>\n}',
+			'export function App() @{\n  <main>{x && <div>\n/* c */\n<i /></div>}</main>\n}',
+			'export function App() @{\n  <main>{x && <p>{y && <div>{z}\n/* c */\n<i /></div>}</p>}</main>\n}',
+		]) {
+			const div = findElement(source, 'div');
+			const child = div.children.find((node) => node.type === 'JSXElement');
+			expect(commentsOf(child).leading, source).toEqual([' c ']);
+			expect(div.metadata.elementLeadingComments, source).toBeUndefined();
+		}
+
+		// After the last child, the comment leads the closing tag
+		const div = findElement('export function App() @{\n  {x && <div>{y}\n// c\n</div>}\n}', 'div');
+		expect(commentsOf(div.closingElement).leading).toEqual([' c']);
+	});
+
 	it("keeps a comment between a closing fragment's `</` and `>` on it, as Prettier does", () => {
 		const program = parseModule('<>x</ /* note */>;\nfoo();', 'App.tsrx');
 		const fragment = find_first(program, (node) => node.type === 'JSXFragment');
@@ -7476,6 +7499,82 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(after.default).leading).toBeUndefined();
 		expect(commentsOf(second.constraint).trailing).toEqual([' a']);
 		expect(commentsOf(second.default).leading).toEqual([' b']);
+	});
+
+	// Prettier's `handleAssignmentLikeComments`
+	it('leads an object, array, or template value, or a type alias value, with a comment that ends the line of its =', () => {
+		const object = firstStatement('const a = // c\n  { a: 1 };').declarations[0];
+		const before = firstStatement('let a // c\n= [1];').declarations[0];
+		const assigned = firstStatement('a = // c\n  `x`;').expression;
+		const block = firstStatement('const a = /* c */\n  b;').declarations[0];
+		const alias = firstStatement('type A = // c\n  B;');
+		const aliasBefore = firstStatement('type A<T> // c\n= B;');
+		const aliasName = firstStatement('type A // c\n<T> = B;');
+		const union = firstStatement('type A = /* c */ B | C;');
+
+		expect(commentsOf(object.init).leading).toEqual([' c']);
+		expect(commentsOf(object.id).trailing).toBeUndefined();
+		expect(commentsOf(before.init).leading).toEqual([' c']);
+		expect(commentsOf(before.id).trailing).toBeUndefined();
+		expect(commentsOf(assigned.right).leading).toEqual([' c']);
+		expect(commentsOf(block.init).leading).toEqual([' c ']);
+		expect(commentsOf(alias.typeAnnotation).leading).toEqual([' c']);
+		// Prettier's default gives these to the name first, and its next pass
+		// to the value
+		expect(commentsOf(aliasBefore.typeAnnotation).leading).toEqual([' c']);
+		expect(commentsOf(aliasName.typeAnnotation).leading).toEqual([' c']);
+		expect(commentsOf(aliasName.id).trailing).toBeUndefined();
+		expect(commentsOf(union.typeAnnotation.types[0]).leading).toEqual([' c ']);
+	});
+
+	it('trails the left side with a line comment at the end of the line of an = before any other value', () => {
+		const call = firstStatement('const a = // c\n  foo();').declarations[0];
+		const logical = firstStatement('a = // c\n  b || c;').expression;
+		const cast = firstStatement('const a = // c\n  /** @type {X} */ ({});').declarations[0];
+		const both = firstStatement('const a = /* a */ // b\n  value;').declarations[0];
+		const field = firstStatement('class A {\n  f = // c\n    1;\n  g = /* c */\n    2;\n}').body
+			.body;
+
+		expect(commentsOf(call.id).trailing).toEqual([' c']);
+		expect(commentsOf(call.init).leading).toBeUndefined();
+		expect(commentsOf(logical.left).trailing).toEqual([' c']);
+		expect(commentsOf(cast.id).trailing).toEqual([' c']);
+		expect(commentsOf(both.id).trailing).toEqual([' b']);
+		expect(commentsOf(both.init).leading).toEqual([' a ']);
+		expect(commentsOf(field[0].key).trailing).toEqual([' c']);
+		expect(commentsOf(field[1].key).trailing).toEqual([' c ']);
+		expect(commentsOf(field[1].value).leading).toBeUndefined();
+	});
+
+	// Prettier's `handlePropertyComments`
+	it('leads an object property with a comment that ends a line inside it', () => {
+		const [line, block, method] = firstStatement(
+			'const o = {\n  a: // c\n    1,\n  b: /* c */\n    2,\n  m // c\n  () {},\n};',
+		).declarations[0].init.properties;
+		const [pattern] = firstStatement('const { a: // c\n  b } = x;').declarations[0].id.properties;
+		const [kept] = firstStatement('const o = { a: /* c */ 1 };').declarations[0].init.properties;
+
+		expect(commentsOf(line).leading).toEqual([' c']);
+		expect(commentsOf(line.value).leading).toBeUndefined();
+		expect(commentsOf(block).leading).toEqual([' c ']);
+		expect(commentsOf(method).leading).toBeUndefined();
+		expect(commentsOf(pattern).leading).toEqual([' c']);
+		expect(commentsOf(kept).leading).toBeUndefined();
+		expect(commentsOf(kept.value).leading).toEqual([' c ']);
+	});
+
+	it('trails an import attribute key or a for header clause with a comment that ends the line after it', () => {
+		const [attribute] = firstStatement(
+			'import a from "a" with { type: // c\n  "json" };',
+		).attributes;
+		const loop = firstStatement('for (let i = 0; // a\n  i < 1; // b\n  i++) {}');
+
+		expect(commentsOf(attribute.key).trailing).toEqual([' c']);
+		expect(commentsOf(attribute.value).leading).toBeUndefined();
+		expect(commentsOf(loop.init).trailing).toEqual([' a']);
+		expect(commentsOf(loop.test).leading).toBeUndefined();
+		expect(commentsOf(loop.test).trailing).toEqual([' b']);
+		expect(commentsOf(loop.update).leading).toBeUndefined();
 	});
 });
 
