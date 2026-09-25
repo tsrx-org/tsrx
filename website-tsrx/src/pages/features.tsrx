@@ -1253,7 +1253,7 @@ export const FeaturesPage = () => @{
 										<td>
 											<code class="inline-code">:global(.theme-dark) .card</code>
 											or
-											<code class="inline-code">{':global([data-theme=\'dark\']) .card'}</code>
+											<code class="inline-code">{":global([data-theme='dark']) .card"}</code>
 										</td>
 									</tr>
 									<tr>

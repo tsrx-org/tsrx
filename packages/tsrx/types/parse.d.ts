@@ -845,6 +845,12 @@ export namespace Parse {
 		canInsertSemicolon(): boolean;
 
 		/**
+		 * Whether a line break separates the current token from the previous one
+		 * (@sveltejs/acorn-typescript)
+		 */
+		hasPrecedingLineBreak(): boolean;
+
+		/**
 		 * Insert a semicolon if allowed by ASI rules
 		 * returns true if semicolon was inserted
 		 */
