@@ -270,7 +270,10 @@ export const printers = {
  * @returns {Doc}
  */
 function printUnformattedRawText(text) {
+	// Prettier normalizes line endings before parsing; normalize anyway, so a
+	// `\r` never stays at the end of a line
 	const lines = text
+		.replace(/\r\n?/gu, '\n')
 		.replace(/[\t\n\f\r ]+$/u, '')
 		.replace(/^[\t\f\r ]*\n/u, '')
 		.split('\n');

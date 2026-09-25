@@ -6906,6 +6906,18 @@ if(n<2){go("now")}</script>`;
 			expect(await format(result)).toBe(result);
 		});
 
+		it('keeps an unparseable <script> body with CRLF line endings clean', async () => {
+			const source =
+				'export function App() @{\r\n  <script>\r\n    const a = 1;\r\n    const broken = ;\r\n      go();\r\n  </script>\r\n}\r\n';
+			const lf =
+				'export function App() @{\n  <script>\n    const a = 1;\n    const broken = ;\n      go();\n  </script>\n}';
+			for (const endOfLine of /** @type {const} */ (['auto', 'lf', 'crlf'])) {
+				const result = await format(source, { endOfLine });
+				expect(result).toBe(endOfLine === 'lf' ? lf + '\n' : lf.replace(/\n/g, '\r\n') + '\r\n');
+				expect(await format(result, { endOfLine })).toBe(result);
+			}
+		});
+
 		it('indents an unparseable <script> body with tabs under useTabs', async () => {
 			const result = await format(
 				`export function App() @{\n  <script>\n    const broken = ;\n      go();\n  </script>\n}`,
@@ -8588,6 +8600,30 @@ b";`);
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
+		it('breaks new, import(), and await of a fragment inside the braces like Prettier', async () => {
+			// Prettier's shouldInline hugs calls, not `new` or `import()`, and only
+			// `await` of an element
+			const input = `f(<div aaaa={new SomeConstructorName(aaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbb)} />);
+f(<div aaaa={import("some-very-long-module-specifier-name/that/does/not/fit/on/one/line")} />);`;
+			expect(await format(input)).toBeWithNewline(`f(
+  <div
+    aaaa={
+      new SomeConstructorName(
+        aaaaaaaaaaaaaaaaaaaaaaaaa,
+        bbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+      )
+    }
+  />,
+);
+f(
+  <div
+    aaaa={
+      import("some-very-long-module-specifier-name/that/does/not/fit/on/one/line")
+    }
+  />,
+);`);
+		});
+
 		it('keeps a comment inside the braces', async () => {
 			const input = `export function App(props) @{
   <div
@@ -8917,6 +8953,61 @@ function g() {
   throw (
     // note
     <JSX />
+  );
+}`);
+		});
+
+		it('keeps the parentheses of a returned template that starts with a comment', async () => {
+			// A line break after `return`, `throw`, or `yield` would end the
+			// statement, so a <style> block or template control flow keeps its
+			// parentheses like an element does
+			const input = `function f() {
+  return (
+    // note
+    <style>.a { color: red; }</style>
+  );
+}
+function g(rows) {
+  throw (
+    // note
+    @for (const row of rows) {
+      <li>{row}</li>
+    }
+  );
+}
+function* h() {
+  yield (
+    // note
+    <style>.a { color: red; }</style>
+  );
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(`function f() {
+  return (
+    // note
+    <style>
+      .a {
+        color: red;
+      }
+    </style>
+  );
+}
+function g(rows) {
+  throw (
+    // note
+    @for (const row of rows) {
+      <li>{row}</li>
+    }
+  );
+}
+function* h() {
+  yield (
+    // note
+    <style>
+      .a {
+        color: red;
+      }
+    </style>
   );
 }`);
 		});
