@@ -1372,6 +1372,16 @@ export namespace Parse {
 		parseDecorator(): AST.Decorator;
 
 		/**
+		 * Parse the decorators before a class or a class declaration's `export`,
+		 * which the class they decorate takes (@sveltejs/acorn-typescript).
+		 * @param allowExport Whether `export` may follow them
+		 */
+		parseDecorators(allowExport?: boolean): void;
+
+		/** Whether the current token is `abstract` before `class` (@sveltejs/acorn-typescript). */
+		isAbstractClass(): boolean;
+
+		/**
 		 * Get property kind from name
 		 * @param prop Property node
 		 * @returns "init", "get", or "set"

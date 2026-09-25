@@ -87,6 +87,8 @@ const regex_line_break = /\r\n?|[\n\u2028\u2029]/;
 const REST_ELEMENT_TRAILING_COMMA = 'Comma is not permitted after the rest element';
 const OPTIONAL_BINDING_PATTERN_PARAMETER =
 	'A binding pattern parameter cannot be optional in an implementation signature.';
+// acorn-typescript's error for decorators before something other than a class.
+const UNEXPECTED_LEADING_DECORATOR = 'Leading decorators must be attached to a class declaration.';
 // acorn-typescript raises these at the modifier's column instead of its offset.
 const regex_modifier_order_error =
 	/^'\w+' modifier (?:must precede|cannot be used with) '\w+' modifier\.$/;
@@ -3808,20 +3810,165 @@ export function TSRXPlugin(config) {
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#110): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript#113): remove once a release includes the fix
 			/**
-			 * A class can be named after a TypeScript contextual keyword
-			 * (`class global {}`, `class type {}`), as in TypeScript and acorn.
-			 * acorn-typescript gives these words their own token types, which acorn's
-			 * `parseClassId` doesn't take as a name, so read the word as a plain name.
-			 * The AST matches the fix in sveltejs/acorn-typescript#110. The rest stays
-			 * with acorn-typescript, including anonymous classes and type parameters.
+			 * Two fixes to the class name, each with the AST of its upstream fix:
+			 *
+			 * - A class can be named after a TypeScript contextual keyword
+			 *   (`class global {}`, `class type {}`), as in TypeScript and acorn.
+			 *   acorn-typescript gives these words their own token types, which
+			 *   acorn's `parseClassId` doesn't take as a name, so read the word as a
+			 *   plain name (sveltejs/acorn-typescript#110).
+			 * - Where the name is optional, `implements` starts the heritage clause
+			 *   and the class has no name (`id: null`). acorn-typescript checked for
+			 *   that only in a class expression, so acorn read `implements` as the
+			 *   name of `export default class implements I {}`, whose name is also
+			 *   optional (`'nullableID'`), and rejected it as reserved. A class
+			 *   statement still rejects it (sveltejs/acorn-typescript#113).
+			 *
+			 * The rest stays with acorn-typescript, including type parameters.
 			 * @type {Parse.Parser['parseClassId']}
 			 */
 			parseClassId(node, isStatement) {
+				if (isStatement !== true && this.isContextual('implements')) {
+					/** @type {AST.ClassDeclaration | AST.ClassExpression} */ (node).id = null;
+					return;
+				}
 				if (this.type !== tt.name && Parser.acornTypeScript.tokenIsIdentifier(this.type)) {
 					this.type = tt.name;
 				}
 				super.parseClassId(node, isStatement);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#113): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript#124): remove once a release includes the fix
+			/**
+			 * A class after `export default` is a declaration whose name is optional,
+			 * with or without `abstract` and decorators, as in TypeScript:
+			 *
+			 * - `export default abstract class {}`: acorn-typescript parsed the
+			 *   abstract class with a required name (sveltejs/acorn-typescript#113,
+			 *   also in #110).
+			 * - `export default @dec class B {}` and
+			 *   `export default @dec abstract class {}`: acorn-typescript left the `@`
+			 *   to acorn, which parses an expression there, so the class became a
+			 *   class expression, and `abstract` an identifier followed by an
+			 *   unexpected `class`. Read the decorators first, as `parseStatement`
+			 *   does, then parse the class declaration, which takes them and starts at
+			 *   the first one (sveltejs/acorn-typescript#124).
+			 *
+			 * A class after `export default (` stays an expression, and so do the
+			 * at-sign constructs (`export default @if (a) { … }`), which aren't
+			 * decorators (see `parseExprAtom`).
+			 * @type {Parse.Parser['parseExportDefaultDeclaration']}
+			 */
+			parseExportDefaultDeclaration() {
+				const decorated =
+					this.type === tstt.at &&
+					!this.#isCodeBlockStart(this.start) &&
+					!this.#isJSXControlFlowDirectiveStart();
+				// Throws unless a class follows, as for decorators before a statement.
+				if (decorated) this.parseDecorators();
+				if (this.isAbstractClass()) {
+					const node = /** @type {AST.ClassDeclaration} */ (this.startNode());
+					this.next(); // `abstract`
+					node.abstract = true;
+					return this.parseClass(node, 'nullableID');
+				}
+				if (decorated && this.type === tt._class) {
+					return this.parseClass(this.startNode(), 'nullableID');
+				}
+				return super.parseExportDefaultDeclaration();
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#125): remove once a release includes the fix
+			/**
+			 * Decorators written before `export` decorate the class it exports, so
+			 * only a class declaration can follow: `@dec export class A {}`,
+			 * `@dec export default abstract class {}`. acorn-typescript checks what
+			 * follows other leading decorators, but accepted any export after them,
+			 * and the next class parsed took them: the class expression in
+			 * `@dec export default (class {})` or `@dec export const A = class {}`.
+			 * With no class, as in `@dec export function f() {}`, they were dropped.
+			 * Report them at the exported declaration with acorn-typescript's error
+			 * for leading decorators before something else (TypeScript's TS1206).
+			 * @type {Parse.Parser['parseDecorators']}
+			 */
+			parseDecorators(allowExport) {
+				super.parseDecorators(allowExport);
+				if (this.type !== tt._export) return;
+				let ahead = 1;
+				let next = this.lookahead(ahead);
+				const is_default = next.type === tt._default;
+				if (is_default) next = this.lookahead(++ahead);
+				const declaration_start = next.start;
+				// Decorators after `export` as well are checked when they are read. An
+				// at-sign construct (`@if (a) { … }`, `@{ … }`) is no decorator.
+				if (
+					next.type === tstt.at &&
+					!this.#isCodeBlockStart(declaration_start) &&
+					!this.#isJSXControlFlowDirectiveAt(declaration_start)
+				) {
+					return;
+				}
+				if (!is_default && next.type === tstt.declare && !next.containsEsc) {
+					next = this.lookahead(++ahead);
+				}
+				if (next.type === tstt.abstract && !next.containsEsc) {
+					next = this.lookahead(++ahead);
+				}
+				if (next.type !== tt._class) {
+					this.raise(declaration_start, UNEXPECTED_LEADING_DECORATOR);
+				}
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#126): remove once a release includes the fix
+			/**
+			 * A rest parameter can have decorators, as in TypeScript:
+			 * `m(@dec ...rest: T[]) {}`. TypeScript's parser reads them like the
+			 * decorators of any other parameter, which this parser takes too, and
+			 * its checker decides whether they are allowed (TS1206 unless
+			 * `experimentalDecorators` allows parameter decorators). acorn's
+			 * `parseBindingList` checks for `...` before it calls this method, where
+			 * acorn-typescript reads the decorators, so a `...` after them reached
+			 * `parseMaybeDefault`, which rejects it. Read the decorators here, and
+			 * before `...` hang them off the `RestElement`, as typescript-estree
+			 * does. Like other parameters, the element's range leaves them out. The
+			 * list takes the rest element for an ordinary one, so report a comma
+			 * after it here as acorn does (TS1013, TS1014), recording it when
+			 * collecting as `parseBindingList` does. In an array pattern, where
+			 * TypeScript takes no decorators at all, `...` after them stays an error.
+			 * @type {Parse.Parser['parseAssignableListItem']}
+			 */
+			parseAssignableListItem(allowModifiers) {
+				if (this.type !== tstt.at) return super.parseAssignableListItem(allowModifiers);
+				/** @type {AST.Decorator[]} */
+				const decorators = [];
+				while (this.type === tstt.at) decorators.push(this.parseDecorator());
+				if (this.type !== tt.ellipsis || this.#bindingListClose === tt.bracketR) {
+					const item = super.parseAssignableListItem(allowModifiers);
+					// As in acorn-typescript, a parameter property's decorators hang off
+					// its parameter.
+					const node = /** @type {AST.Node} */ (item);
+					const decorated = /** @type {AST.Node & { decorators?: AST.Decorator[] }} */ (
+						node.type === 'TSParameterProperty' ? node.parameter : node
+					);
+					decorated.decorators = decorators;
+					return item;
+				}
+				const rest = /** @type {AST.RestElement & { decorators?: AST.Decorator[] }} */ (
+					this.parseRestBinding()
+				);
+				this.parseBindingListItem(rest);
+				rest.decorators = decorators;
+				if (this.type === tt.comma && !this.#isAmbientRestParameterTrailingComma()) {
+					if (this.#collect) {
+						this.#recordCheckerLevelError(this.start, this.start + 1, REST_ELEMENT_TRAILING_COMMA);
+					} else {
+						this.raiseRecoverable(this.start, REST_ELEMENT_TRAILING_COMMA);
+					}
+				}
+				return rest;
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#110): remove once a release includes the fix
