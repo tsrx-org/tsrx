@@ -10795,6 +10795,39 @@ item
 			);
 		});
 
+		// A comment before `=>` must leave `=>` on its line: Babel parses the
+		// output, and a second pass changes nothing (`format` checks that).
+		// Prettier puts a line break between two comments there, before `=>`.
+		it.each(['always', 'avoid'])(
+			'keeps => after the comments before it with arrowParens: %s',
+			async (arrowParens) => {
+				for (const [source, expected] of [
+					['const f = (a) /* c */ => a;', 'const f = (a) /* c */ => a;'],
+					['const f = () /* c */ => a;', 'const f = () /* c */ => a;'],
+					['const f = x /* c */ => x;', 'const f = (x) /* c */ => x;'],
+					[
+						'const f = async (a) /* b */ /* c */ => a;',
+						'const f = async (a) /* b */ /* c */ => a;',
+					],
+				]) {
+					const result = await format(source, { arrowParens });
+					expect(result).toBeWithNewline(expected);
+					await expect(prettier.format(result, { parser: 'babel' })).resolves.toContain('=>');
+				}
+			},
+		);
+
+		// No line break may come between an arrow's parameters and `=>`, so the
+		// comments before `=>` are always one-line block comments. A line comment
+		// or a multi-line block comment there doesn't parse, as in Babel and Node.
+		it.each([
+			'const f = (a) // c\n  => a;',
+			'const f = () // c\n  => a;',
+			'const f = (a) /* c\n */ => a;',
+		])('rejects %j, which has a line break before =>', async (source) => {
+			await expect(format(source)).rejects.toThrow(/Unexpected token/);
+		});
+
 		it('keeps a component body comment out of the parameter list', async () => {
 			const source = `function Component(props) @{
   <div>{sum(props.items /* kept */)}</div>

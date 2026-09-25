@@ -3771,23 +3771,18 @@ function printArrowFunctionSignature(path, options, print, args) {
 
 /**
  * Add the comments before an arrow's `=>`, which the parser keeps in the
- * arrow's `comments`, to its printed signature, as Prettier's
- * `printArrowFunctionSignature` prints them: one per line.
+ * arrow's `comments`, to its printed signature. No line break may come
+ * before `=>`, so they stay on its line, one after another: source with a
+ * line comment there doesn't parse. Prettier 3.9.6 prints each on its own
+ * line, which puts a line break before `=>` and doesn't parse either.
  * @param {AST.ArrowFunctionExpression} node - The arrow
  * @param {Doc[]} parts - The printed signature
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {Doc[]}
  */
 function printCommentsBeforeArrow(node, parts, options) {
-	const comments = /** @type {AST.Comment[] | undefined} */ (node.comments) ?? [];
-	if (comments.length > 0) {
-		parts.push(
-			' ',
-			join(
-				hardline,
-				comments.map((comment) => printComment(comment, options.originalText)),
-			),
-		);
+	for (const comment of /** @type {AST.Comment[] | undefined} */ (node.comments) ?? []) {
+		parts.push(' ', printComment(comment, options.originalText));
 	}
 	return parts;
 }
