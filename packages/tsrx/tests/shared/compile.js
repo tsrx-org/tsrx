@@ -105,6 +105,39 @@ export function App() @{
 			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
 			expect(code.slice(generated, generated + 'handle'.length)).toBe('handle');
 		});
+
+		it('keeps and maps the import attributes of import types', () => {
+			const source = `type Data = import('./data.json', { with: { type: 'json' } }).Data;
+export function App() @{
+	const mode: import('pkg', { with: { 'resolution-mode': 'require' } }).Mode = load();
+	<div>{String(mode)}</div>
+}
+`;
+			const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(code).toContain("import('./data.json', { with: { type: 'json' } }).Data");
+			expect(code).toContain("import('pkg', { with: { 'resolution-mode': 'require' } }).Mode");
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+
+			const attributes = source.indexOf('{ with');
+			for (const text of [
+				"{ with: { type: 'json' } }",
+				'with',
+				'type',
+				"'json'",
+				"'resolution-mode'",
+				"'require'",
+			]) {
+				const start = source.indexOf(text, attributes);
+				const mapping = mappings.find((candidate) => candidate.sourceOffsets[0] === start);
+				expect(mapping, text).toBeDefined();
+				const { generatedOffsets, generatedLengths, lengths } =
+					/** @type {NonNullable<typeof mapping>} */ (mapping);
+				const length = generatedLengths?.[0] ?? lengths[0];
+				expect(code.slice(generatedOffsets[0], generatedOffsets[0] + length)).toBe(text);
+			}
+		});
 	});
 
 	describe(`[${name}] JSX spread children in virtual code`, () => {
@@ -2610,6 +2643,28 @@ export import path = require('node:path');`,
 			expect(module.exports.Square).toEqual({ sides: 4 });
 			expect(module.exports.Outer.Inner).toEqual({ sides: 4 });
 			expect(module.exports.path).toEqual({ sep: '/' });
+		});
+
+		// esrap's import type printer drops the import attributes (#422).
+		it('keeps the import attributes of import types', () => {
+			const { code } = compile(
+				`type Data = import('./data.json', { with: { type: 'json' } });
+export type Mode = import('pkg', { with: { 'resolution-mode': 'require' } }).ns.Mode<string>;
+export function App() @{
+	const loaded: typeof import('./data.json', { with: { type: 'json' } }).default = load();
+	<div>{String(loaded)}</div>
+}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain("type Data = import('./data.json', { with: { type: 'json' } });");
+			expect(code).toContain(
+				"export type Mode = import('pkg', { with: { 'resolution-mode': 'require' } }).ns.Mode<string>;",
+			);
+			expect(code).toContain(
+				"const loaded: typeof import('./data.json', { with: { type: 'json' } }).default = load();",
+			);
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
 		});
 
 		it('keeps JavaScript block scopes inside component-local callables', () => {

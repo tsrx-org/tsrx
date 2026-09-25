@@ -1,18 +1,9 @@
 [
-  "js/classes/multiple-static.js format 1",
-  "js/import-assertions/not-import-assertions.js format 1",
   "typescript/call/callee-comments.ts format 1",
-  "typescript/comments/type-parameters.ts format 1",
-  "typescript/compiler/globalIsContextualKeyword.ts format 1",
-  "typescript/conformance/classes/classDeclarations/classAbstractKeyword/classAbstractAsIdentifier.ts format 1",
-  "typescript/custom/typeParameters/callAndConstructSignatureLong.ts format 1",
   "typescript/error-recovery/index-signature.ts - {\"trailingComma\":\"all\"} format 1",
   "typescript/error-recovery/index-signature.ts - {\"trailingComma\":\"es5\"} format 1",
   "typescript/error-recovery/index-signature.ts format 1",
   "typescript/error-recovery/jsdoc_only_types.ts - {\"trailingComma\":\"all\"} format 1",
   "typescript/error-recovery/jsdoc_only_types.ts - {\"trailingComma\":\"es5\"} format 1",
-  "typescript/error-recovery/jsdoc_only_types.ts format 1",
-  "typescript/import-type/attributes/import-type-attributes.ts format 1",
-  "typescript/import-type/comma/comma.ts format 1",
-  "typescript/import-type/long-module-name/long-module-name5.ts format 1"
+  "typescript/error-recovery/jsdoc_only_types.ts format 1"
 ]
