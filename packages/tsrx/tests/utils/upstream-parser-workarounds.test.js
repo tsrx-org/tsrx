@@ -698,6 +698,56 @@ describe('decorators on an object literal member (sveltejs/acorn-typescript#135)
 	});
 });
 
+describe('a closing tag where an expression starts (sveltejs/acorn-typescript#134)', () => {
+	// When the element attempt fails, `parseMaybeAssign` drops the two contexts
+	// the tag start pushed and tries a generic arrow from the same `<`. That
+	// attempt reads the `/` again, and `updateContext` dropped the two contexts a
+	// second time, below the start of the stack at the top of a statement, so a
+	// `RangeError: Invalid array length` replaced the syntax error. TypeScript
+	// expects an expression at the `<` (TS1109).
+	const sources = [
+		'x = </>;',
+		'x = </a>;',
+		'export default </>;',
+		'const a = </>;',
+		'a = </>',
+		'[</>];',
+		'x = y ? </> : 1;',
+		'x = (</>);',
+		'f(</>);',
+	];
+	const modes = [undefined, { collect: true }, { loose: true }];
+
+	it('reports a syntax error at the `<` in every mode', async () => {
+		const outcomes = await parse_in_worker(
+			sources.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes).toEqual(
+			sources.flatMap((source) => {
+				const pos = source.indexOf('<');
+				return modes.map(() => ({ ok: false, message: `Unexpected token (1:${pos})`, pos }));
+			}),
+		);
+	});
+
+	it('still reads a generic arrow and an element where an expression starts', async () => {
+		const valid = [
+			'x = <T,>() => 1;',
+			'x = <T extends U>(a: T) => a;',
+			'x = <a></a>;',
+			'x = <>a</>;',
+		];
+		const outcomes = await parse_in_worker(
+			valid.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes).toEqual(
+			valid.flatMap(() => modes.map((options) => ({ ok: true, errors: options && [] }))),
+		);
+	});
+});
+
 describe('`assert` on the line after an import (sveltejs/acorn-typescript#121)', () => {
 	/**
 	 * @param {AST.Node} node
