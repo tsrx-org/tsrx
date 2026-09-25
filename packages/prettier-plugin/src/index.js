@@ -3139,19 +3139,24 @@ function printDanglingCommentsInList(comments, text) {
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {boolean} [semicolonBeforeLast] - Print the statement's leading `;`
  *   right before the last comment, a JSDoc cast that must touch its `(`
+ * @param {boolean} [followsCode] - The node prints right after code on its
+ *   line (see {@link isPrintedAfterCode})
  * @returns {Doc[]}
  */
-function printLeadingComments(node, allComments, options, semicolonBeforeLast) {
+function printLeadingComments(node, allComments, options, semicolonBeforeLast, followsCode) {
 	const text = /** @type {string} */ (options.originalText);
 	const comments = withoutHoistedComments(node, allComments);
 	/** @type {Doc[]} */
 	const parts = [];
+	// Whether the next comment prints on the line of the code before the node
+	let isOnCodeLine = !!followsCode;
 	for (let i = 0; i < comments.length; i++) {
 		const comment = comments[i];
 		const nextComment = comments[i + 1];
 		const isLastComment = i === comments.length - 1;
 
 		if (comment.type === 'Line') {
+			isOnCodeLine = false;
 			parts.push(printComment(comment, text));
 			parts.push(hardline);
 
@@ -3170,15 +3175,20 @@ function printLeadingComments(node, allComments, options, semicolonBeforeLast) {
 			// Like Prettier's `printLeadingComment`, a block comment keeps what
 			// follows it on its line. One that ends its line breaks it when it
 			// also starts its line, and otherwise only when what follows doesn't
-			// fit.
+			// fit. After code on its line, as in `keyof /* c */ T`, it no longer
+			// starts its line, so it breaks it only when what follows doesn't fit,
+			// as it does on the next pass: Prettier breaks it, and its next pass
+			// joins the lines.
 			const commentEnd = /** @type {AST.NodeWithLocation} */ (comment).end;
 			if (hasNewline(text, commentEnd)) {
 				const commentStart = /** @type {AST.NodeWithLocation} */ (comment).start;
-				parts.push(hasNewline(text, commentStart, { backwards: true }) ? hardline : line);
+				const breaks = !isOnCodeLine && hasNewline(text, commentStart, { backwards: true });
+				parts.push(breaks ? hardline : line);
 
 				// Preserve a blank line before the next comment or the node
 				if (isLineAfterCommentEmpty(text, comment)) {
 					parts.push(hardline);
+					isOnCodeLine = false;
 				}
 			} else {
 				parts.push(' ');
@@ -3186,6 +3196,41 @@ function printLeadingComments(node, allComments, options, semicolonBeforeLast) {
 		}
 	}
 	return parts;
+}
+
+/**
+ * The types that print right after a keyword or punctuation of their parent,
+ * on its line, with nothing between them that breaks: after `keyof`,
+ * `typeof`, `infer`, `is`, `as`, `satisfies`, a `:` or `=>`, a type
+ * parameter's `extends`, `in`, or `=`, and a conditional type's `extends`,
+ * `?`, or `:`, or inside the `[` of an indexed access type
+ */
+const typesPrintedAfterCode = new Map([
+	['TSTypeOperator', ['typeAnnotation']],
+	['TSTypeQuery', ['exprName']],
+	['TSInferType', ['typeParameter']],
+	['TSTypePredicate', ['typeAnnotation']],
+	['TSTypeAnnotation', ['typeAnnotation']],
+	['TSAsExpression', ['typeAnnotation']],
+	['TSSatisfiesExpression', ['typeAnnotation']],
+	['TSTypeParameter', ['constraint', 'default']],
+	['TSConditionalType', ['extendsType', 'trueType', 'falseType']],
+	['TSMappedType', ['nameType', 'typeAnnotation']],
+	['TSIndexedAccessType', ['indexType']],
+	['TSNamedTupleMember', ['elementType']],
+	['TSRestType', ['typeAnnotation']],
+]);
+
+/**
+ * Whether the node at `path` prints right after code on its line (see
+ * {@link typesPrintedAfterCode}), so that a comment before it can't start its
+ * line
+ * @param {AstPath} path - The path to the node
+ * @returns {boolean}
+ */
+function isPrintedAfterCode(path) {
+	const keys = typesPrintedAfterCode.get(path.parent?.type);
+	return !!keys && typeof path.key === 'string' && keys.includes(path.key);
 }
 
 /**
@@ -3404,7 +3449,15 @@ function printTsrxNode(node, path, options, print, args) {
 			isCommentFollowedBySameLineParen(lastComment, options) &&
 			needsLeadingSemicolon(path, options),
 		);
-		parts.push(...printLeadingComments(node, printedComments, options, leadingSemicolonPrinted));
+		parts.push(
+			...printLeadingComments(
+				node,
+				printedComments,
+				options,
+				leadingSemicolonPrinted,
+				isPrintedAfterCode(path),
+			),
+		);
 	}
 	// The cast an ancestor handed to this operand prints right before its `(`
 	const handedTypeCast = typeCastParens
@@ -10361,13 +10414,26 @@ function printTypeParameterName(node, options) {
 	return [
 		...printLeadingComments(node, comments.filter(isBeforeName), options),
 		node.name,
-		...comments
-			.filter((comment) => !isBeforeName(comment))
-			.map((comment) => {
-				const printed = printComment(comment, text);
-				return comment.type === 'Line' ? [lineSuffix([' ', printed]), breakParent] : [' ', printed];
-			}),
+		...printCommentsOnLine(
+			comments.filter((comment) => !isBeforeName(comment)),
+			text,
+		),
 	];
+}
+
+/**
+ * Print comments that trail a part of a type parameter, its name or its
+ * constraint, on that part's line, even one written on a line of its own
+ * (see the parser's `takeTypeParameterNameComments`)
+ * @param {AST.Comment[]} comments - The comments
+ * @param {string} text - The source text
+ * @returns {Doc[]}
+ */
+function printCommentsOnLine(comments, text) {
+	return comments.map((comment) => {
+		const printed = printComment(comment, text);
+		return comment.type === 'Line' ? [lineSuffix([' ', printed]), breakParent] : [' ', printed];
+	});
 }
 
 /**
@@ -10396,11 +10462,26 @@ function printTSTypeParameter(node, path, options, print) {
 
 	if (node.constraint) {
 		const groupId = Symbol('constraint');
+		// The comments that trail the constraint before the default print on
+		// its line, like the ones after the name
+		const constraint = /** @type {AST.NodeWithMaybeComments} */ (node.constraint);
+		const trailing = node.default ? (constraint.trailingComments ?? []) : [];
 		parts.push(
 			' extends',
 			group(indent(line), { id: groupId }),
 			lineSuffixBoundary,
-			indentIfBreak(path.call(print, 'constraint'), { groupId }),
+			indentIfBreak(
+				trailing.length
+					? [
+							path.call(
+								(constraintPath) => print(constraintPath, { suppressTrailingComments: true }),
+								'constraint',
+							),
+							...printCommentsOnLine(trailing, /** @type {string} */ (options.originalText)),
+						]
+					: path.call(print, 'constraint'),
+				{ groupId },
+			),
 		);
 	}
 
@@ -11652,7 +11733,11 @@ function shouldAddBlankLine(currentNode, nextNode, options) {
 	const currentTrailing = /** @type {AST.Node} */ (currentNode).trailingComments;
 	if (currentTrailing && currentTrailing.length > 0) {
 		const lastTrailing = /** @type {AST.NodeWithLocation} */ (currentTrailing.at(-1));
-		return isNextLineEmptyAfterIndex(text, lastTrailing.end);
+		// A comment that moved after the statement's `;` from before it, as in
+		// `let x = 1 // c` with the `;` on the next line, ends before the
+		// statement does
+		const { end } = /** @type {AST.NodeWithLocation} */ (currentNode);
+		return isNextLineEmptyAfterIndex(text, Math.max(lastTrailing.end, end));
 	}
 
 	// Measure from the content before a final `;` as well as from the `;`,
