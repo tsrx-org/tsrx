@@ -473,13 +473,6 @@ class Adapter {
 				}
 				break;
 
-			case 'ImportExpression':
-				if (node.arguments) {
-					node.options ??= node.arguments[0] ?? null;
-					delete node.arguments;
-				}
-				break;
-
 			case 'TSImportEqualsDeclaration':
 				if (node.isExport) {
 					delete node.isExport;
