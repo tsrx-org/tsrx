@@ -8229,8 +8229,8 @@ describe('`var` redeclaring a catch parameter', () => {
 	});
 
 	it('still rejects the redeclarations Annex B does not allow', async () => {
-		// A destructured parameter is an ECMAScript early error that TypeScript
-		// doesn't report; `let` and a function declaration conflict in TypeScript too.
+		// A destructured parameter and a function declaration are ECMAScript early
+		// errors that TypeScript doesn't report; `let` conflicts in TypeScript too.
 		const sources = [
 			['try {} catch ({ e }) { var e; }', 'e'],
 			['try {} catch ([e]) { var e; }', 'e'],
