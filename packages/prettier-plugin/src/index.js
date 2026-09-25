@@ -10469,12 +10469,18 @@ function printTSConditionalType(node, path, options, print) {
 	const shouldIndentTrueType = node.trueType.type !== 'TSConditionalType';
 	const shouldIndentFalseType = node.falseType.type !== 'TSConditionalType';
 
+	// Like Prettier's ternaries, a conditional true type gets parentheses only
+	// on one line
+	const isTrueType = path.key === 'trueType' && path.parent?.type === 'TSConditionalType';
+
 	return group([
+		isTrueType ? ifBreak('', '(') : '',
 		path.call(print, 'checkType'),
 		' extends ',
 		path.call(print, 'extendsType'),
 		indent([line, '? ', shouldIndentTrueType ? indent(trueType) : trueType]),
 		indent([line, ': ', shouldIndentFalseType ? indent(falseType) : falseType]),
+		isTrueType ? ifBreak('', ')') : '',
 	]);
 }
 

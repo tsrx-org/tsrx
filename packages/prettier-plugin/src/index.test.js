@@ -9904,6 +9904,26 @@ type D = [/* prettier-ignore */ (B   |   C)?];`;
 			expect(await format(input)).toBeWithNewline(input);
 		});
 
+		// Like Prettier's ternaries, only on one line
+		it('parenthesizes a conditional true type that stays on one line', async () => {
+			const input = `type A<T> = T extends string ? T extends "a" ? 1 : 2 : 3;
+type B<T> = T extends string ? (T extends "aaaaaaaaaaaaaaaaaaaaaa" ? "bbbbbbbbbbbbbbbbbbbbbbbbbb" : "cccccccccccccccccccccc") : never;
+type C = IfAny<T, false, T extends object ? (keyof T extends K ? true : false) : false>;`;
+
+			expect(await format(input))
+				.toBeWithNewline(`type A<T> = T extends string ? (T extends "a" ? 1 : 2) : 3;
+type B<T> = T extends string
+  ? T extends "aaaaaaaaaaaaaaaaaaaaaa"
+    ? "bbbbbbbbbbbbbbbbbbbbbbbbbb"
+    : "cccccccccccccccccccccc"
+  : never;
+type C = IfAny<
+  T,
+  false,
+  T extends object ? (keyof T extends K ? true : false) : false
+>;`);
+		});
+
 		it('keeps the comments around dropped parentheses', async () => {
 			const input = `type A = /* c */ (B | C);
 type D = (/* c */ B | C);
