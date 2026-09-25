@@ -1095,11 +1095,7 @@ export const FeaturesPage = () => @{
 							<h3 class="subsection-heading">Unused selectors are removed</h3>
 							<p class="section-body">
 								A selector that matches nothing the block can reach is removed from the output and
-								left behind as a
-								<code class="inline-code">
-									/* (unused) */
-								</code>
-								comment. That includes a selector that only matches the element containing the
+								left behind as a <code class="inline-code">{'/* (unused) */'}</code> comment. That includes a selector that only matches the element containing the
 								block: the block cannot reach it.
 							</p>
 							<h3 class="subsection-heading">Escape the scope with :global()</h3>
