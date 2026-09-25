@@ -11117,6 +11117,7 @@ let m: Map<string /* key */, number> = new Map<string, number>();`;
 			'type A<in out /* c */ T> = T;',
 			'type M = { [K /* a */ in T]: T[K] };',
 			'type M = { readonly [K /* a */ in keyof T as `get${K}`]?: T[K] };',
+			'type X<A> = A extends [infer T /* a */ extends string] ? T : never;',
 		])('keeps the comment around the type parameter name in %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});
