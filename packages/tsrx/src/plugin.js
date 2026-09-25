@@ -96,6 +96,18 @@ const UNEXPECTED_PARAMETER_MODIFIER =
 	'A parameter property is only allowed in a constructor implementation.';
 // acorn-typescript's error for decorators before something other than a class.
 const UNEXPECTED_LEADING_DECORATOR = 'Leading decorators must be attached to a class declaration.';
+// TypeScript's parser errors for what follows `export` when it starts no
+// declaration (TS1128), for a missing name (TS1003, or TS1359 for a reserved
+// word), for a type alias name on the line after `declare type` (TS1142), and
+// for `export type` before `=` (TS1005).
+const DECLARATION_OR_STATEMENT_EXPECTED = 'Declaration or statement expected.';
+const IDENTIFIER_EXPECTED = 'Identifier expected.';
+const LINE_BREAK_NOT_PERMITTED = 'Line break not permitted here.';
+const OPENING_BRACE_EXPECTED = "'{' expected.";
+// TypeScript's checker error for `abstract` before a declaration other than a
+// class (TS1242).
+const ABSTRACT_MODIFIER_NOT_ALLOWED =
+	"'abstract' modifier can only appear on a class, method, or property declaration.";
 // The modifiers acorn-typescript reads before a parameter.
 const PARAMETER_MODIFIERS = ['public', 'private', 'protected', 'override', 'readonly'];
 // The statements TypeScript's parser reads after decorators, as declarations
@@ -199,6 +211,9 @@ const CHECKER_LEVEL_ERRORS = [
 	regex_let_binding_error,
 	// acorn-typescript: `abstract` members in a class that isn't abstract (TS1244).
 	'Abstract methods can only appear within an abstract class.',
+	// `export abstract function f() {}` (TS1242), raised by
+	// `#checkExportDeclarationStart`.
+	ABSTRACT_MODIFIER_NOT_ALLOWED,
 	// acorn-typescript: `declare class A { x = 1 }`, `declare let x = 1` (TS1039).
 	'Initializers are not allowed in ambient contexts.',
 	// acorn-typescript: modifiers out of order, incompatible, or repeated
@@ -4176,6 +4191,50 @@ export function TSRXPlugin(config) {
 				}
 			}
 
+			// UPSTREAM(sveltejs/acorn-typescript#137): remove once a release includes the fix
+			/**
+			 * TypeScript reads `abstract` as a modifier only before a token on the same
+			 * line. acorn-typescript's check for an abstract class ignored a line break
+			 * after `abstract`, so `export default abstract` with `class A {}` on the
+			 * next line parsed as one abstract class, the default export, where
+			 * TypeScript exports the value of `abstract` and declares the class `A`
+			 * on its own. After decorators (`canHaveLeadingDecorator`), such as
+			 * `@dec abstract` with the class on the next line, the decorators went to
+			 * the class, where TypeScript reports TS1146 `Declaration expected.`.
+			 * @type {Parse.Parser['isAbstractClass']}
+			 */
+			isAbstractClass() {
+				return super.isAbstractClass() && !this.#lineBreakAfter(this.end);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#137): remove once a release includes the fix
+			/**
+			 * `declare`, and `abstract` after it, are modifiers only before a token on
+			 * the same line too. acorn-typescript's check, which only
+			 * `canHaveLeadingDecorator` uses, ignored line breaks, so `@dec declare`
+			 * with `class A {}` on the next line gave the decorators to the class,
+			 * where TypeScript reports TS1146.
+			 * @type {Parse.Parser['isDeclareClass']}
+			 */
+			isDeclareClass() {
+				if (!super.isDeclareClass() || this.#lineBreakAfter(this.end)) return false;
+				const next = this.nextTokenStart();
+				// `class`, or `abstract` and then `class`.
+				return (
+					this.input.startsWith('class', next) || !this.#lineBreakAfter(next + 'abstract'.length)
+				);
+			}
+
+			/**
+			 * Whether a line break comes between `end` and the next token, which
+			 * ends a modifier: TypeScript reads a word as one only before a token on
+			 * the same line.
+			 * @param {number} end
+			 */
+			#lineBreakAfter(end) {
+				return regex_line_break.test(this.input.slice(end, this.nextTokenStartSince(end)));
+			}
+
 			// UPSTREAM(sveltejs/acorn-typescript#113): remove once a release includes the fix
 			// UPSTREAM(sveltejs/acorn-typescript#124): remove once a release includes the fix
 			/**
@@ -4278,29 +4337,159 @@ export function TSRXPlugin(config) {
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#132): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript#137): remove once a release includes the fix
 			/**
-			 * What follows `export` has to be a declaration. acorn-typescript's
-			 * `shouldParseExportStatement` takes `abstract`, `module`, `namespace` and
-			 * `type` for the start of one, but its `tsParseDeclaration` declines them
-			 * before a line break, as TypeScript does (`export abstract` with
-			 * `class A {}` on the next line is TS1128), or when no class or name
-			 * follows (`export abstract;`). `parseExportDeclaration` then parsed a
-			 * statement instead, which read the word as an expression, and
-			 * `parseExport` crashed with a TypeError reading that statement's `id`.
-			 * When the statement isn't a declaration, report `Unexpected token` where
-			 * it starts, as for `export foo`.
+			 * What follows `export` has to be a declaration. Where TypeScript's parser
+			 * finds none, report its error, TS1128 `Declaration or statement
+			 * expected.` at `export`:
+			 *
+			 * - `abstract`, `module`, `namespace` or `type` before a line break
+			 *   (`export abstract` with `class A {}` on the next line), or before a
+			 *   token that starts no declaration (`export abstract;`).
+			 *   acorn-typescript's `shouldParseExportStatement` takes these words for
+			 *   the start of one, but its `tsParseDeclaration` declines them, as
+			 *   TypeScript does. `parseExportDeclaration` then parsed a statement,
+			 *   which read the word as an expression, and `parseExport` crashed with
+			 *   a TypeError reading that statement's `id`
+			 *   (sveltejs/acorn-typescript#132).
+			 * - `export declare` with a declaration on the next line, which
+			 *   acorn-typescript read as an ambient declaration: TypeScript reads a
+			 *   word as a modifier only before a token on the same line (see
+			 *   `isAbstractClass`), so `declare` is an expression there
+			 *   (sveltejs/acorn-typescript#137).
+			 *
+			 * `#checkExportDeclarationStart` reports the second before
+			 * acorn-typescript reads `declare`, and the words that the declaration
+			 * after them used to lose.
 			 * @type {Parse.Parser['parseExportDeclaration']}
 			 */
 			parseExportDeclaration(node) {
-				const start = this.start;
+				// `parseExport` has just read `export`.
+				const export_start = this.lastTokStart;
+				this.#checkExportDeclarationStart(export_start);
 				const declaration = super.parseExportDeclaration(node);
 				if (
 					declaration?.type !== 'VariableDeclaration' &&
 					!(/** @type {{ id?: unknown } | null} */ (declaration)?.id)
 				) {
-					this.unexpected(start);
+					this.raise(export_start, DECLARATION_OR_STATEMENT_EXPECTED);
 				}
 				return declaration;
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#132): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript#137): remove once a release includes the fix
+			/**
+			 * Report `export declare` before a line break (see
+			 * `parseExportDeclaration`) before acorn-typescript reads `declare` as a
+			 * modifier.
+			 *
+			 * acorn-typescript's `tsParseDeclaration` reads `abstract`, `module`,
+			 * `namespace` or `type` after `export` (or `export declare`) before it
+			 * checks what follows on the same line. When that isn't a class or a name
+			 * (or a string after `module`), it declines, and `parseExportDeclaration`
+			 * parses the rest as a statement without the word: `export abstract
+			 * function f() {}`, `export type const x = 1;` and `export namespace
+			 * class A {}` gave the plain exported declaration. Report the word
+			 * before it's lost, as TypeScript's parser does:
+			 *
+			 * - `abstract` before a function, a variable or an import declaration is
+			 *   a modifier of that declaration, which TypeScript's checker reports
+			 *   (TS1242). A strict parse throws it; a collecting parse records it and
+			 *   parses the declaration without the modifier.
+			 * - `type` after `declare`, or before `default` or `@`, starts a type
+			 *   alias, whose name is missing (TS1003, or TS1359 for a reserved word),
+			 *   or on the next line (TS1142). Before `=`, TypeScript expects the
+			 *   braces of `export type { … }` (TS1005).
+			 * - `namespace` before a string starts a namespace without a name
+			 *   (TS1003).
+			 * - Otherwise the word starts no declaration (TS1128).
+			 *
+			 * A word before any other line break starts no declaration either, which
+			 * `parseExportDeclaration` reports.
+			 * @param {number} export_start
+			 */
+			#checkExportDeclarationStart(export_start) {
+				const is_identifier = Parser.acornTypeScript.tokenIsIdentifier;
+				let ahead = 0;
+				let word = this.getCurLookaheadState();
+				const declared = word.type === tstt.declare && !word.containsEsc;
+				if (declared) {
+					if (this.#lineBreakAfter(word.end)) {
+						this.raise(export_start, DECLARATION_OR_STATEMENT_EXPECTED);
+					}
+					word = this.lookahead(++ahead);
+				}
+				const value = word.value;
+				if (
+					!is_identifier(word.type) ||
+					(value !== 'abstract' && value !== 'type' && value !== 'namespace' && value !== 'module')
+				) {
+					return;
+				}
+				const next = this.lookahead(++ahead);
+				const line_break = regex_line_break.test(this.input.slice(word.end, next.start));
+				if (value === 'type') {
+					// TypeScript's parser reads `export type` before `=` as the start of
+					// `export type { … }`, and a type alias after `declare type` or before
+					// `default` or `@`, on the same line or not.
+					if (!declared && next.type === tt.eq) this.raise(next.start, OPENING_BRACE_EXPECTED);
+					const alias = declared || next.type === tt._default || next.type === tstt.at;
+					if (alias && line_break) this.raise(next.start, LINE_BREAK_NOT_PERMITTED);
+					if (alias && !is_identifier(next.type)) this.#raiseIdentifierExpected(next);
+				}
+				if (line_break) return;
+				// What `tsParseDeclaration` reads after the word.
+				if (
+					is_identifier(next.type) ||
+					(value === 'abstract' && next.type === tt._class) ||
+					(value === 'module' && next.type === tt.string)
+				) {
+					return;
+				}
+				if (value === 'abstract' && this.#isDeclarationAfterModifier(next.type, ahead)) {
+					this.raise(word.start, ABSTRACT_MODIFIER_NOT_ALLOWED);
+					return;
+				}
+				if (value === 'namespace' && next.type === tt.string) this.#raiseIdentifierExpected(next);
+				this.raise(export_start, DECLARATION_OR_STATEMENT_EXPECTED);
+			}
+
+			/**
+			 * Report TypeScript's error for a missing name at `token`: TS1359 for a
+			 * reserved word, TS1003 for anything else.
+			 * @param {Parse.LookaheadState} token
+			 */
+			#raiseIdentifierExpected(token) {
+				this.raise(
+					token.start,
+					token.type.keyword
+						? `Identifier expected. '${token.value}' is a reserved word that cannot be used here.`
+						: IDENTIFIER_EXPECTED,
+				);
+			}
+
+			/**
+			 * Whether the token `ahead` tokens on, of type `type`, starts a
+			 * declaration that TypeScript's parser reads after a modifier, and that
+			 * can follow `export` here: a function, a variable, or an import
+			 * declaration (not `import(…)` or `import.meta`). TypeScript's parser
+			 * reads no declaration at decorators after a modifier, and the tree has
+			 * no place for a second `export`.
+			 * @param {acorn.TokenType} type
+			 * @param {number} ahead
+			 */
+			#isDeclarationAfterModifier(type, ahead) {
+				if (type === tt._function || type === tt._const || type === tt._var) return true;
+				if (type !== tt._import) return false;
+				const after = this.lookahead(ahead + 1).type;
+				return (
+					after === tt.string ||
+					after === tt.star ||
+					after === tt.braceL ||
+					!!after.keyword ||
+					Parser.acornTypeScript.tokenIsIdentifier(after)
+				);
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#125): remove once a release includes the fix
@@ -4331,10 +4520,15 @@ export function TSRXPlugin(config) {
 				) {
 					return;
 				}
-				if (!is_default && next.type === tstt.declare && !next.containsEsc) {
+				// `declare` and `abstract` are modifiers only before a token on the same
+				// line (see `isAbstractClass`): `@dec export default abstract` with
+				// `class A {}` on the next line exports the value of `abstract`.
+				/** @param {typeof next} modifier */
+				const modifies = (modifier) => !modifier.containsEsc && !this.#lineBreakAfter(modifier.end);
+				if (!is_default && next.type === tstt.declare && modifies(next)) {
 					next = this.lookahead(++ahead);
 				}
-				if (next.type === tstt.abstract && !next.containsEsc) {
+				if (next.type === tstt.abstract && modifies(next)) {
 					next = this.lookahead(++ahead);
 				}
 				if (next.type !== tt._class) {

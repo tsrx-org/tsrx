@@ -1567,32 +1567,45 @@ describe("a superclass's type arguments before a line break (sveltejs/acorn-type
 	});
 });
 
+/**
+ * The outcome of a parse that throws `message` at `pos` in `source`, in each of
+ * `PARSE_MODES`.
+ * @param {string} source
+ * @param {number} pos
+ * @param {string} message
+ */
+function thrown_in_every_mode(source, pos, message) {
+	const { line, column } = acorn.getLineInfo(source, pos);
+	return PARSE_MODES.map(() => ({ ok: false, message: `${message} (${line}:${column})`, pos }));
+}
+
 describe('`abstract`, `module`, `namespace` or `type` after `export` that starts no declaration (sveltejs/acorn-typescript#132)', () => {
-	it('reports `Unexpected token` at the word instead of crashing', async () => {
-		// TypeScript reports TS1128 `Declaration or statement expected.` for each.
+	it('reports TS1128 at `export` instead of crashing', async () => {
+		// TypeScript's parser reports TS1128 `Declaration or statement expected.`
+		// at `export` for each.
 		const sources = [
 			'export abstract\nclass A {}',
 			'export abstract\ninterface I {}',
 			'export abstract;',
 			'export abstract 1',
 			'export abstract',
+			'export abstract /* c\n */ class A {}',
 			'export type\nFoo = 1;',
 			'export namespace\nN {}',
 			'export module\nM {}',
 			'export declare abstract\nclass A {}',
+			'export declare namespace\nN {}',
 			'declare module "m" {\n\texport abstract\n\tclass A {}\n}',
 		];
 		const outcomes = await parse_in_worker(in_every_mode(sources));
 		expect(outcomes).toEqual(
-			sources.flatMap((source) => {
-				const pos = source.indexOf('export') + 'export '.length;
-				const { line, column } = acorn.getLineInfo(source, pos);
-				return PARSE_MODES.map(() => ({
-					ok: false,
-					message: `Unexpected token (${line}:${column})`,
-					pos,
-				}));
-			}),
+			sources.flatMap((source) =>
+				thrown_in_every_mode(
+					source,
+					source.indexOf('export'),
+					'Declaration or statement expected.',
+				),
+			),
 		);
 	});
 
@@ -1603,12 +1616,10 @@ describe('`abstract`, `module`, `namespace` or `type` after `export` that starts
 			['export type Foo = 1;', 'TSTypeAliasDeclaration'],
 			['export namespace N {}', 'TSModuleDeclaration'],
 			['export module M {}', 'TSModuleDeclaration'],
+			['export module "m" {}', 'TSModuleDeclaration'],
 			['export declare abstract class A {}', 'ClassDeclaration'],
+			['export declare type Foo = 1;', 'TSTypeAliasDeclaration'],
 			['declare module "m" {\n\texport abstract class A {}\n}', 'TSModuleDeclaration'],
-			// A line break after `declare` or after `export default abstract` doesn't
-			// end the modifier here, unlike TypeScript; #608 decides whether it should
-			['export declare\nclass A {}', 'ClassDeclaration'],
-			['export default abstract\nclass A {}', 'ClassDeclaration'],
 		];
 		const outcomes = await parseBothModes(cases.map(([source]) => source));
 		for (const [index, { source, strict, collect }] of outcomes.entries()) {
@@ -1622,6 +1633,295 @@ describe('`abstract`, `module`, `namespace` or `type` after `export` that starts
 						? statement.declaration
 						: statement;
 				expect(declaration?.type, source).toBe(cases[index][1]);
+			}
+		}
+	});
+
+	// #651: the word was read, then the declaration after it parsed without it.
+	it('reports the word before a declaration it does not start, as TypeScript does', async () => {
+		/** @type {Array<[source: string, at: string, message: string]>} */
+		const cases = [
+			// TS1128 at `export`: the word starts no declaration.
+			['export type const x = 1;', 'export', 'Declaration or statement expected.'],
+			['export type function f() {}', 'export', 'Declaration or statement expected.'],
+			['export type class A {}', 'export', 'Declaration or statement expected.'],
+			['export type var x = 1;', 'export', 'Declaration or statement expected.'],
+			['export type const enum E {}', 'export', 'Declaration or statement expected.'],
+			['export type import x = y;', 'export', 'Declaration or statement expected.'],
+			['export type export class A {}', 'export', 'Declaration or statement expected.'],
+			['export type 1;', 'export', 'Declaration or statement expected.'],
+			['export namespace function f() {}', 'export', 'Declaration or statement expected.'],
+			['export namespace class A {}', 'export', 'Declaration or statement expected.'],
+			['export namespace @dec class A {}', 'export', 'Declaration or statement expected.'],
+			['export module const x = 1;', 'export', 'Declaration or statement expected.'],
+			['export module default class {}', 'export', 'Declaration or statement expected.'],
+			[
+				'export declare namespace function f(): void;',
+				'export',
+				'Declaration or statement expected.',
+			],
+			['export declare module class A {}', 'export', 'Declaration or statement expected.'],
+			['export abstract @dec class A {}', 'export', 'Declaration or statement expected.'],
+			['export declare abstract @dec class A {}', 'export', 'Declaration or statement expected.'],
+			['export abstract export class A {}', 'export', 'Declaration or statement expected.'],
+			['export abstract default class {}', 'export', 'Declaration or statement expected.'],
+			['export abstract * from "m";', 'export', 'Declaration or statement expected.'],
+			['export abstract {}', 'export', 'Declaration or statement expected.'],
+			['export abstract import("m");', 'export', 'Declaration or statement expected.'],
+			[
+				'declare module "m" {\n\texport type const x: number;\n}',
+				'export',
+				'Declaration or statement expected.',
+			],
+			// A type alias or namespace whose name is missing: TypeScript reads one
+			// after `declare type`, and after `export type` before `default` or `@`.
+			['export type @dec class A {}', '@dec', 'Identifier expected.'],
+			[
+				'export type default class {}',
+				'default',
+				"Identifier expected. 'default' is a reserved word that cannot be used here.",
+			],
+			[
+				'export declare type const x: number;',
+				'const',
+				"Identifier expected. 'const' is a reserved word that cannot be used here.",
+			],
+			[
+				'export declare type function f(): void;',
+				'function',
+				"Identifier expected. 'function' is a reserved word that cannot be used here.",
+			],
+			['export declare type @dec class A {}', '@dec', 'Identifier expected.'],
+			['export declare type = 1;', '=', 'Identifier expected.'],
+			['export namespace "m" {}', '"m"', 'Identifier expected.'],
+			// The braces of `export type { … }`.
+			['export type = 1;', '=', "'{' expected."],
+			['export type\n= 1;', '=', "'{' expected."],
+			// TypeScript reads these type aliases across a line break too.
+			['export declare type\nFoo = 1;', 'Foo', 'Line break not permitted here.'],
+			['export type\ndefault class {}', 'default', 'Line break not permitted here.'],
+			['export type\n@dec class A {}', '@dec', 'Line break not permitted here.'],
+		];
+		const sources = cases.map(([source]) => source);
+		const outcomes = await parse_in_worker(in_every_mode(sources));
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, at, message]) =>
+				thrown_in_every_mode(source, source.indexOf(at), message),
+			),
+		);
+	});
+
+	it('records `abstract` before a function, variable or import declaration, which TypeScript reports from its checker (TS1242)', async () => {
+		const message =
+			"'abstract' modifier can only appear on a class, method, or property declaration.";
+		/** @type {Array<[source: string, type: string]>} */
+		const cases = [
+			['export abstract function f() {}', 'FunctionDeclaration'],
+			['export abstract function* g() {}', 'FunctionDeclaration'],
+			['export abstract const x = 1;', 'VariableDeclaration'],
+			['export abstract var x = 1;', 'VariableDeclaration'],
+			['export abstract const enum E {}', 'TSEnumDeclaration'],
+			['export declare abstract function f(): void;', 'TSDeclareFunction'],
+			['export declare abstract const x: number;', 'VariableDeclaration'],
+			['export abstract import x = y;', 'TSImportEqualsDeclaration'],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			const pos = source.indexOf('abstract');
+			expect(strict, source).toEqual({
+				ok: false,
+				message: `${message} (1:${pos})`,
+				pos,
+			});
+			if (!collect.ok) throw new Error(`${JSON.stringify(source)} threw ${collect.message}`);
+			// The declaration, without `abstract`, which the formatter refuses.
+			expect(collect.errors?.[0], source).toEqual({ message, pos, end: pos + 1 });
+			const [statement] = collect.ast.body;
+			assert_type(statement, 'ExportNamedDeclaration');
+			expect(statement.declaration?.type, source).toBe(cases[index][1]);
+		}
+	});
+
+	it('still throws when the declaration after `abstract` is no export', async () => {
+		// TypeScript reports TS1242 from its checker for these, but an import
+		// declaration after `export` has no place in the tree.
+		const sources = ['export abstract import { a } from "m";', 'export abstract import "m";'];
+		const outcomes = await parse_in_worker(
+			sources.map((source) => ({ source, options: PARSE_MODES[1] })),
+		);
+		expect(outcomes).toEqual(
+			sources.map(() => ({
+				ok: false,
+				message: 'Declaration or statement expected. (1:0)',
+				pos: 0,
+			})),
+		);
+	});
+});
+
+// #608
+describe('`abstract` or `declare` followed by a line break (sveltejs/acorn-typescript#137)', () => {
+	it('exports the value of `abstract` after `export default`, and declares the class on its own', async () => {
+		const sources = [
+			'export default abstract\nclass A {}',
+			'export default abstract // c\nclass A {}',
+			'export default abstract /* c\n */ class A {}',
+			'declare module "m" {\n\texport default abstract\n\tclass A {}\n}',
+		];
+		const outcomes = await parseBothModes(sources);
+		for (const { source, strict, collect } of outcomes) {
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				// The module's statements in the last case.
+				const first = /** @type {{ type: string, body?: { body?: AST.Statement[] } }} */ (
+					ast.body[0]
+				);
+				const body = first.type === 'TSModuleDeclaration' ? (first.body?.body ?? []) : ast.body;
+				const [exported, declared] = body;
+				assert_type(exported, 'ExportDefaultDeclaration');
+				expect(exported.declaration, source).toMatchObject({
+					type: 'Identifier',
+					name: 'abstract',
+				});
+				assert_type(declared, 'ClassDeclaration');
+				expect(declared.id?.name, source).toBe('A');
+				expect(/** @type {{ abstract?: boolean }} */ (declared).abstract, source).toBeFalsy();
+			}
+		}
+	});
+
+	it('reports TS1128 at `export` for `export declare` before a line break', async () => {
+		const sources = [
+			'export declare\nclass A {}',
+			'export declare\nabstract class A {}',
+			'export declare\nfunction f(): void;',
+			'export declare\nconst x: number;',
+			'export declare\nenum E {}',
+			'export declare\nnamespace N {}',
+			"export declare\nmodule 'm' {}",
+			'export declare\ninterface I {}',
+			'export declare\ntype T = 1;',
+			'export declare\nglobal {}',
+			'export declare // c\nclass A {}',
+			'export declare /* c\n */ class A {}',
+			'declare namespace N {\n\texport declare\n\tclass A {}\n}',
+		];
+		const outcomes = await parse_in_worker(in_every_mode(sources));
+		expect(outcomes).toEqual(
+			sources.flatMap((source) =>
+				thrown_in_every_mode(
+					source,
+					source.indexOf('export'),
+					'Declaration or statement expected.',
+				),
+			),
+		);
+	});
+
+	it('rejects decorators before `abstract` or `declare` and a line break', async () => {
+		// TypeScript's parser expects a declaration after the decorators (TS1146).
+		/** @type {Array<[source: string, at: string]>} */
+		const cases = [
+			['export default @dec abstract\nclass A {}', 'abstract'],
+			['export default @dec declare\nclass A {}', 'declare'],
+			['export @dec abstract\nclass A {}', 'abstract'],
+			['export @dec declare\nclass A {}', 'declare'],
+			['@dec abstract\nclass A {}', 'abstract'],
+			['@dec declare\nclass A {}', 'declare'],
+			['@dec declare\nabstract class A {}', 'declare'],
+		];
+		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, at]) =>
+				thrown_in_every_mode(
+					source,
+					source.indexOf(at),
+					'Leading decorators must be attached to a class declaration.',
+				),
+			),
+		);
+	});
+
+	it('reports decorators before `export`, `abstract` or `declare` and a line break', async () => {
+		/** @type {Array<[source: string, at: string]>} */
+		const cases = [
+			['@dec export abstract\nclass A {}', 'abstract'],
+			['@dec export declare\nclass A {}', 'declare'],
+			['@dec export declare abstract\nclass A {}', 'declare'],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			const pos = source.indexOf(cases[index][1]);
+			expect(strict, source).toEqual({
+				ok: false,
+				message: `Leading decorators must be attached to a class declaration. (1:${pos})`,
+				pos,
+			});
+			// When collecting, the decorators are recorded (TS1206), and what follows
+			// `export` starts no declaration (TS1128).
+			expect(collect, source).toEqual({
+				ok: false,
+				message: 'Declaration or statement expected. (1:5)',
+				pos: 5,
+			});
+		}
+
+		// The value of `abstract` is the default export, which the decorators
+		// can't decorate. TypeScript reports them from its checker (TS1206).
+		const source = '@dec export default abstract\nclass A {}';
+		const [{ strict, collect }] = await parseBothModes([source]);
+		expect(strict).toEqual({
+			ok: false,
+			message: 'Leading decorators must be attached to a class declaration. (1:20)',
+			pos: 20,
+		});
+		const { ast, errors } = parsed(collect, source);
+		expect(errors).toEqual(['Leading decorators must be attached to a class declaration.']);
+		const [exported, declared] = ast.body;
+		assert_type(exported, 'ExportDefaultDeclaration');
+		expect(exported.declaration).toMatchObject({ type: 'Identifier', name: 'abstract' });
+		assert_type(declared, 'ClassDeclaration');
+		expect(decoratorTexts(declared, source)).toEqual([]);
+	});
+
+	it('still reads them as modifiers before a token on the same line', async () => {
+		/** @type {Array<[source: string, modifiers: { abstract?: boolean, declare?: boolean }, decorators: string[]]>} */
+		const cases = [
+			['export default abstract class A {}', { abstract: true }, []],
+			['export default abstract /* c */ class A {}', { abstract: true }, []],
+			['export declare /* c */ class A {}', { declare: true }, []],
+			['export declare abstract /* c */ class A {}', { abstract: true, declare: true }, []],
+			['export default @dec abstract class A {}', { abstract: true }, ['@dec']],
+			['@dec export default abstract class A {}', { abstract: true }, ['@dec']],
+			['@dec export default\nabstract class A {}', { abstract: true }, ['@dec']],
+			['@dec export declare abstract class A {}', { abstract: true, declare: true }, ['@dec']],
+			['@dec abstract class A {}', { abstract: true }, ['@dec']],
+			['@dec declare class A {}', { declare: true }, ['@dec']],
+			['@dec declare abstract class A {}', { abstract: true, declare: true }, ['@dec']],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			const [, modifiers, decorators] = cases[index];
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				expect(ast.body, source).toHaveLength(1);
+				const [statement] = ast.body;
+				const declaration =
+					statement.type === 'ExportNamedDeclaration' ||
+					statement.type === 'ExportDefaultDeclaration'
+						? statement.declaration
+						: statement;
+				assert_type(declaration, 'ClassDeclaration');
+				const { abstract, declare } = /** @type {{ abstract?: boolean, declare?: boolean }} */ (
+					declaration
+				);
+				expect({ abstract, declare }, source).toEqual({
+					abstract: modifiers.abstract,
+					declare: modifiers.declare,
+				});
+				expect(decoratorTexts(declaration, source), source).toEqual(decorators);
 			}
 		}
 	});
