@@ -10433,6 +10433,89 @@ export interface SectionProps<T>
 			await expectUnchanged(source);
 		});
 
+		// Prettier parenthesizes an element unless its parent prints it bare
+		it.each([
+			['x = !<div />;', 'x = !(<div />);'],
+			['x = typeof <div />;', 'x = typeof (<div />);'],
+			['x = -<b />;', 'x = -(<b />);'],
+			['x = void <></>;', 'x = void (<></>);'],
+			['x = <b /> as any;', 'x = (<b />) as any;'],
+			['x = <b /> satisfies T;', 'x = (<b />) satisfies T;'],
+			['x = [...<b />];', 'x = [...(<b />)];'],
+			['x = { ...<b /> };', 'x = { ...(<b />) };'],
+			['x = <div {...<b />} />;', 'x = <div {...(<b />)} />;'],
+			['x = `${<b />}`;', 'x = `${(<b />)}`;'],
+			['x = a[<b />];', 'x = a[(<b />)];'],
+			['x = (a, <b />);', 'x = (a, (<b />));'],
+			['x = import(<b />);', 'x = import((<b />));'],
+			['class A {\n  p = <b />;\n}', 'class A {\n  p = (<b />);\n}'],
+			['for (const x of <b />) {\n}', 'for (const x of (<b />)) {\n}'],
+			['const a = (<style>.a {}</style>).a;', 'const a = (<style>\n  .a {\n  }\n</style>).a;'],
+		])('parenthesizes the element operand in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'x = <div />;',
+			'x = [<b />, <i />];',
+			'x = () => <b />;',
+			'x = a ?? <b />;',
+			'x = <b /> + 1;',
+			'x = cond ? <b /> : <i />;',
+			'x = { a: <b />, [<i />]: 1 };',
+			'f(<a />, new F(<b />));',
+			'let y = <b />;',
+			'function f(a = <b />) {\n  return <b />;\n}',
+			'export default <div />;',
+			'x = <div c={<d />} />;',
+			'async function f() {\n  await (<div />);\n}',
+			'x = (<b />).props;',
+			'x = (<b />)!;',
+			'x = new (<b />)();',
+			`function* g() {
+  yield <div />;
+}`,
+		])('keeps the element bare or parenthesized as Prettier does in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it('keeps template elements, code blocks, and style blocks bare', async () => {
+			await expectUnchanged(`export function Button({ label }) @{
+  const theme = <style>
+    .btn {
+      padding: 0;
+    }
+  </style>;
+  if (label) {
+    <span />
+  }
+  <>
+    <button class="btn">{label}</button>
+    <div>
+      {@{
+        const a = 1;
+        <b>{a}</b>
+      }}
+    </div>
+    @if (label) {
+      <i />
+    } @else {
+      <u />
+    }
+    @switch (label) {
+      @case "a": {
+        <p />
+      }
+    }
+    <style>
+      .btn {
+        color: red;
+      }
+    </style>
+  </>
+}`);
+		});
+
 		it.each([
 			'const result = new (a?.b)();',
 			'const result = (a?.b)`x`;',

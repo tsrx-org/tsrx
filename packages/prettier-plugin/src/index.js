@@ -1318,15 +1318,23 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 					Boolean(/** @type {{ typeArguments?: unknown }} */ (parent).typeArguments))
 			);
 
+		// Like Prettier, an element is parenthesized unless its parent prints it
+		// bare: `await (<div />)`, `!(<div />)`, `(<div />) as T`, `[...(<div />)]`.
+		// A `<style>` block is an element too.
 		case 'JSXElement':
 		case 'JSXFragment':
+		case 'JSXStyleElement':
 			return (
 				key === 'callee' ||
-				key === 'tag' ||
-				(key === 'object' && parent.type === 'MemberExpression') ||
-				parent.type === 'TSNonNullExpression' ||
-				parent.type === 'TSInstantiationExpression' ||
-				(key === 'left' && parent.type === 'BinaryExpression' && parent.operator === '<')
+				(key === 'left' && parent.type === 'BinaryExpression' && parent.operator === '<') ||
+				!(
+					ELEMENT_BARE_PARENTS.has(parent.type) ||
+					isCallOrNewExpression(parent) ||
+					(parent.type === 'Property' && !parent.method && parent.kind === 'init') ||
+					isReturnOrThrowStatement(parent) ||
+					(key === 'declaration' && parent.type === 'ExportDefaultDeclaration') ||
+					isStatementSlot(key, parent)
+				)
 			);
 
 		// Types, like Prettier's `needsParens`. The printer drops the parentheses
@@ -1349,6 +1357,62 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 				(key === 'elementType' && parent.type === 'TSArrayType')
 			);
 
+		default:
+			return false;
+	}
+}
+
+/**
+ * The parents that print an element operand without parentheses, from
+ * Prettier's `needsParens`, besides call arguments, object property values,
+ * `return`/`throw` arguments, and `export default`.
+ */
+const ELEMENT_BARE_PARENTS = new Set([
+	'ArrayExpression',
+	'ArrowFunctionExpression',
+	'AssignmentExpression',
+	'AssignmentPattern',
+	'BinaryExpression',
+	'ConditionalExpression',
+	'ExpressionStatement',
+	'JSXAttribute',
+	'JSXElement',
+	'JSXExpressionContainer',
+	'JSXFragment',
+	'LogicalExpression',
+	'VariableDeclarator',
+	'YieldExpression',
+]);
+
+/**
+ * Whether `key` of `parent` holds a statement. TSRX elements are statements
+ * of their own in a template body, with no `ExpressionStatement` around them:
+ * the statements and output of a `@{ … }` code block, of a block, a `case`,
+ * or the body of an `if` or a loop.
+ * @param {string | number | null} key - The child's key in `parent`
+ * @param {AST.Node} parent - The parent node
+ * @returns {boolean}
+ */
+function isStatementSlot(key, parent) {
+	switch (parent.type) {
+		case 'JSXCodeBlock':
+			return key === 'body' || key === 'render';
+		case 'SwitchCase':
+			return key === 'consequent';
+		case 'IfStatement':
+			return key === 'consequent' || key === 'alternate';
+		case 'Program':
+		case 'BlockStatement':
+		case 'StaticBlock':
+		case 'TSModuleBlock':
+		case 'ForStatement':
+		case 'ForInStatement':
+		case 'ForOfStatement':
+		case 'WhileStatement':
+		case 'DoWhileStatement':
+		case 'LabeledStatement':
+		case 'WithStatement':
+			return key === 'body';
 		default:
 			return false;
 	}
