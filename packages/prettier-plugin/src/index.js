@@ -5821,15 +5821,18 @@ function printObject(node, path, options, print) {
 	}
 
 	// A pattern that is the only, hugged parameter breaks with the parameter
-	// list rather than on its own. (Prettier also leaves the pattern on the
-	// left of an assignment ungrouped, for its assignment layouts to group;
-	// the declarator and assignment printers here don't port those layouts
-	// yet, so the pattern keeps its own group there.)
+	// list rather than on its own, and `printAssignment` groups the left side
+	// of an assignment when its layout needs it (`break-lhs` doesn't).
 	if (
 		path.match(
 			(node) => node.type === 'ObjectPattern' && getDecorators(node).length === 0,
 			shouldHugTheOnlyParameter,
-		)
+		) ||
+		(!shouldBreak &&
+			path.match(
+				(node) => node.type === 'ObjectPattern',
+				(node) => node.type === 'AssignmentExpression' || node.type === 'VariableDeclarator',
+			))
 	) {
 		return content;
 	}

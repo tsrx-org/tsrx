@@ -7480,6 +7480,27 @@ const fn = ({ a, b: [c] }) => a;`;
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
+		it('breaks a complex destructuring pattern before the value on its right', async () => {
+			const input = `const { aaaa, bbbb: cccc, dddd = 1 } = getOptions(aaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbb, ccc);
+({ aaaa, bbbb: cccc, dddd } = getOptions(aaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccc));
+const { aaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbb } = await someFunctionCall(aaaaaaaaaaa, bbbbbbbbbbb);`;
+			const expected = `const {
+  aaaa,
+  bbbb: cccc,
+  dddd = 1,
+} = getOptions(aaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbb, ccc);
+({
+  aaaa,
+  bbbb: cccc,
+  dddd,
+} = getOptions(aaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccc));
+const { aaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbb } = await someFunctionCall(
+  aaaaaaaaaaa,
+  bbbbbbbbbbb,
+);`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		it('hugs a destructured parameter with a default or an object type', async () => {
 			const input = `function foo({ aaaaaaaaaaaa, bbbbbbbbbbbbbbbb, ccccccccccccccccccc, dddddddddddddddd } = {}) {}
 function bar({ aaaaaaaaaaaa, bbbbbbbbbbbbbbbb, ccccccccccccccccccc }: { aaaaaaaaaaaa: string }) {}`;

@@ -23,7 +23,8 @@ More bracketed lists now break the way Prettier breaks them.
   collapses when it fits, and `objectWrap: "collapse"` is now supported. The
   same rule applies to type literals, mapped types, and import attributes.
   An object pattern that destructures a nested pattern breaks, except in a
-  parameter list. A union type now breaks only when one of its members must,
+  parameter list, and a destructuring pattern with renamed or defaulted
+  properties breaks before the value on its right does. A union type now breaks only when one of its members must,
   not because a member spanned lines in the source.
 - Object patterns, type literals, mapped types, and import attributes follow
   `bracketSpacing`.
