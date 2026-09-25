@@ -1284,6 +1284,13 @@ export namespace Parse {
 			parseModifiers?: (node: AST.Node) => void | null,
 		): AST.TSTypeParameterDeclaration;
 
+		/**
+		 * Read a type parameter's `const` modifier, reporting `in` and `out`: the
+		 * modifier parser acorn-typescript gives `tsTryParseTypeParameters` for
+		 * functions, methods and classes (@sveltejs/acorn-typescript)
+		 */
+		tsParseConstModifier: (node: AST.Node) => void;
+
 		tsCheckTypeAnnotationForReadOnly(node: AST.TSTypeOperator): void;
 
 		/**
@@ -1320,6 +1327,12 @@ export namespace Parse {
 		 * when the rescan does not yield a `<`.
 		 */
 		tsParseTypeArgumentsInExpression(): AST.TSTypeParameterInstantiation | undefined;
+
+		/**
+		 * Parse the list of types after a class's `implements`, the current token
+		 * being the first of them (@sveltejs/acorn-typescript)
+		 */
+		tsParseHeritageClause(token: 'implements'): AST.TSClassImplements[];
 
 		/**
 		 * Run a parser callback, restoring the tokenizer and returning `undefined`
