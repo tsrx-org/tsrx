@@ -9583,6 +9583,89 @@ const target = event.target as HTMLElement | null;`;
 		});
 	});
 
+	// Prettier's `printIntersectionType`: types that aren't object types break
+	// after the `&` between them; an object type stays on the line of its `&`.
+	describe('intersection types break like Prettier', () => {
+		it('breaks a long intersection after each &', async () => {
+			const input = `type MethodsType = typeof Attributes & typeof Traversing & typeof Manipulation & typeof Css & typeof Forms;
+type Merged = FirstVeryLongTypeName<WithArgument> & SecondVeryLongTypeName & ThirdTypeName<X>;`;
+			const expected = `type MethodsType = typeof Attributes &
+  typeof Traversing &
+  typeof Manipulation &
+  typeof Css &
+  typeof Forms;
+type Merged = FirstVeryLongTypeName<WithArgument> &
+  SecondVeryLongTypeName &
+  ThirdTypeName<X>;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps an object type on the line of its &', async () => {
+			const input = `type Props = BaseProps & { aaaaaaaaaaaaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number };
+type Props2 = BaseProps & OtherPropsWithAVeryLongName & { aaaaaaaaaaaaaaaaaaaaaaa: string; bbbbbbbbbbb: number };
+type Props3 = { aaaaaaaaaaaaaaaaaaaaaaa: string } & { bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number };
+type Props4 = { aaaaaaaaaaaaaaaaaaaaaaa: string } & BaseProps & { bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number };`;
+			const expected = `type Props = BaseProps & {
+  aaaaaaaaaaaaaaaaaaaaaaa: string;
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+};
+type Props2 = BaseProps &
+  OtherPropsWithAVeryLongName & {
+    aaaaaaaaaaaaaaaaaaaaaaa: string;
+    bbbbbbbbbbb: number;
+  };
+type Props3 = { aaaaaaaaaaaaaaaaaaaaaaa: string } & {
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+};
+type Props4 = { aaaaaaaaaaaaaaaaaaaaaaa: string } & BaseProps & {
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+  };`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks an intersection in a parameter, an annotation, or a union member', async () => {
+			const input = `function f(options: Aaaaaaaaaaaaaaaaaaaaaaaaaaaa & Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb & Cccccccccccccccccc) {}
+let x: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa & Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb & Ccccccccccc = y;
+type U =
+  | (ManagedIdentityCredentialClientIdOptions & ManagedIdentityDisableProbeOptions)
+  | (ManagedIdentityCredentialResourceIdOptions & ManagedIdentityDisableProbeOptions);`;
+			const expected = `function f(
+  options: Aaaaaaaaaaaaaaaaaaaaaaaaaaaa &
+    Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &
+    Cccccccccccccccccc,
+) {}
+let x: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &
+  Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &
+  Ccccccccccc = y;
+type U =
+  | (ManagedIdentityCredentialClientIdOptions &
+      ManagedIdentityDisableProbeOptions)
+  | (ManagedIdentityCredentialResourceIdOptions &
+      ManagedIdentityDisableProbeOptions);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('moves a type after an own-line comment to the next line', async () => {
+			const input = `type A = B &
+// comment
+C;
+type D = { a: string } &
+// comment
+E;`;
+			const expected = `type A = B &
+  // comment
+  C;
+type D = { a: string } &
+  // comment
+  E;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	// `extends` only takes a left-hand-side expression, so a superclass that
 	// binds looser than that is a syntax error without its parens.
 	describe('superclass expressions keep required parentheses', () => {

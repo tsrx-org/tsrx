@@ -2760,11 +2760,9 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 		}
 
-		case 'TSIntersectionType': {
-			const types = path.map(print, 'types');
-			nodeContent = join(' & ', types);
+		case 'TSIntersectionType':
+			nodeContent = printTSIntersectionType(node, path, options, print);
 			break;
-		}
 
 		case 'TSTypeReference':
 			nodeContent = printTSTypeReference(node, path, options, print);
@@ -7162,6 +7160,57 @@ function printTSUnionType(node, path, options, print, args) {
 	}
 
 	return group(indent([softline, printed]));
+}
+
+/**
+ * Print a TypeScript intersection type like Prettier's `printIntersectionType`.
+ * Two types that aren't object types break after the `&` between them, with
+ * the next type on an indented line. An object type stays on the line of the
+ * `&` before it and breaks inside its braces, indented once the chain has
+ * broken before it.
+ * @param {AST.TSIntersectionType} node - The intersection node
+ * @param {AstPath<AST.TSIntersectionType>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printTSIntersectionType(node, path, options, print) {
+	let wasIndented = false;
+	return group(
+		path.map((typePath, index) => {
+			const doc = print(typePath);
+			if (index === 0) {
+				return doc;
+			}
+
+			const type = node.types[index];
+			const currentIsObjectType = isObjectType(type);
+			const previousIsObjectType = isObjectType(node.types[index - 1]);
+
+			// Two object types stay together
+			if (previousIsObjectType && currentIsObjectType) {
+				return [' & ', wasIndented ? indent(doc) : doc];
+			}
+
+			// Without an object type, the next type moves to its own line
+			if (
+				(!previousIsObjectType && !currentIsObjectType) ||
+				hasLeadingOwnLineComment(
+					type,
+					/** @type {AST.NodeWithMaybeComments} */ (type).leadingComments ?? [],
+					options,
+				)
+			) {
+				return indent([' &', line, doc]);
+			}
+
+			// Between an object type and another type, the object type stays inline
+			if (index > 1) {
+				wasIndented = true;
+			}
+			return [' & ', index > 1 ? indent(doc) : doc];
+		}, 'types'),
+	);
 }
 
 /**
