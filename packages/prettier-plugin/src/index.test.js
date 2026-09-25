@@ -13537,6 +13537,151 @@ item
 		});
 	});
 
+	// Like Prettier's `printJsxElement`, an element prints its comments inside
+	// its own parentheses, and a comment that breaks the line breaks them onto
+	// lines of their own. The element used to print right after a `return`,
+	// `throw`, `yield`, or `await` with the comment in between, so the
+	// statement ended at the comment and returned `undefined` (#456). Each case
+	// also parses the output and checks that the syntax tree is unchanged.
+	describe('elements print comments that break the line inside their parentheses', () => {
+		const positionKeys = new Set([
+			'start',
+			'end',
+			'loc',
+			'range',
+			'metadata',
+			'leadingComments',
+			'trailingComments',
+			'innerComments',
+			'comments',
+		]);
+
+		/**
+		 * The syntax tree without positions, comments, or parser metadata.
+		 * @param {string} code
+		 */
+		const parseShape = (code) =>
+			JSON.stringify(parsers?.tsrx.parse(code, /** @type {any} */ ({})), (key, value) =>
+				positionKeys.has(key) ? undefined : value,
+			);
+
+		/**
+		 * @param {string} input
+		 * @param {string} [expected]
+		 */
+		const expectFormatted = async (input, expected = input) => {
+			const output = await format(input);
+			expect(output).toBeWithNewline(expected);
+			expect(parseShape(output)).toBe(parseShape(input));
+		};
+
+		it.each([
+			'function g() {\n  return (\n    // note\n    <Note />\n  );\n}',
+			'function g() {\n  throw (\n    // note\n    <Note />\n  );\n}',
+			'function g() {\n  return (\n    /* note */\n    <Note />\n  );\n}',
+			'function g() {\n  return (\n    // note\n    <>\n      <a />\n    </>\n  );\n}',
+			'function g() {\n  throw (\n    /* note */\n    <>\n      <a />\n    </>\n  );\n}',
+			'function g() {\n  return (\n    // note\n    <div>\n      @if (x) {\n        <a />\n      }\n    </div>\n  );\n}',
+			'function* g() {\n  yield (\n    // note\n    <Note />\n  );\n}',
+			'async function g() {\n  await (\n    // note\n    <Note />\n  );\n}',
+			'export default (\n  // note\n  <Note />\n);',
+			'x = a && (\n  // note\n  <Note />\n);',
+			'function g() {\n  return (\n    // note\n    <Note />\n  ).props;\n}',
+			'function g() {\n  return (// note\n  <Note />)();\n}',
+			'function g() {\n  return (\n    // note\n    /** @type {X} */ (<Note />)\n  );\n}',
+			// A block comment over several lines on the element's line
+			'function g() {\n  return (\n    /**\n     * note\n     */ <Note />\n  );\n}',
+			'function g() {\n  throw (\n    /* note\n    more */ <Note />\n  );\n}',
+			'function* g() {\n  yield (\n    /**\n     * note\n     */ <></>\n  );\n}',
+		])('keeps %j', async (source) => {
+			await expectFormatted(source);
+		});
+
+		it.each([
+			'const x = (\n  <Note />\n  // note\n);',
+			'const x = (\n  <Note />\n  /* note */\n);',
+			'x = a && (\n  <Note /> // note\n);',
+			'x = a && (\n  <Note /> /* note\n  more */\n);',
+		])('keeps the trailing comment inside the parentheses in %j', async (source) => {
+			await expectFormatted(source);
+		});
+
+		it.each([
+			[
+				'function g() {\n  return ( // note\n    <Note />\n  );\n}',
+				'function g() {\n  return (\n    // note\n    <Note />\n  );\n}',
+			],
+			[
+				'function g() {\n  return (\n    (\n      // note\n      <Note />\n    )\n  );\n}',
+				'function g() {\n  return (\n    // note\n    <Note />\n  );\n}',
+			],
+			[
+				'function g() {\n  throw (\n    (\n      /* note */\n      <Note />\n    )\n  );\n}',
+				'function g() {\n  throw (\n    /* note */\n    <Note />\n  );\n}',
+			],
+			[
+				'function g() {\n  return (\n    // note\n    (<Note />)\n  );\n}',
+				'function g() {\n  return (\n    // note\n    <Note />\n  );\n}',
+			],
+			[
+				'function* g() {\n  yield (\n    (\n      /* note */\n      <></>\n    )\n  );\n}',
+				'function* g() {\n  yield (\n    /* note */\n    <></>\n  );\n}',
+			],
+			['const f = () =>\n  // note\n  <Note />;', 'const f = () => (\n  // note\n  <Note />\n);'],
+			[
+				'const f = (a) => (b) =>\n  // note\n  <Note />;',
+				'const f = (a) => (b) => (\n  // note\n  <Note />\n);',
+			],
+			['const x =\n  // note\n  <Note />;', 'const x = (\n  // note\n  <Note />\n);'],
+			[
+				'x = {\n  a:\n    // note\n    <Note />,\n};',
+				'x = {\n  a: (\n    // note\n    <Note />\n  ),\n};',
+			],
+			[
+				'class A {\n  x =\n    // note\n    <Note />;\n}',
+				'class A {\n  x = (\n    // note\n    <Note />\n  );\n}',
+			],
+			[
+				'function g() {\n  return (\n    (\n      // note\n      <Note />\n    ).props\n  );\n}',
+				'function g() {\n  return (\n    // note\n    <Note />\n  ).props;\n}',
+			],
+			[
+				'function g() {\n  return (\n    (\n      // note\n      <Note />\n    )()\n  );\n}',
+				'function g() {\n  return (// note\n  <Note />)();\n}',
+			],
+			[
+				'function g() {\n  return (/**\n   * note\n   */ <Note />);\n}',
+				'function g() {\n  return (\n    /**\n     * note\n     */ <Note />\n  );\n}',
+			],
+			[
+				'const f = () => (/**\n * note\n */ <Note />);',
+				'const f = () => (\n  /**\n   * note\n   */ <Note />\n);',
+			],
+		])('prints %j like Prettier', async (input, expected) => {
+			await expectFormatted(input, expected);
+		});
+
+		it('keeps the elements of a component body', async () => {
+			await expectFormatted(
+				'function C() @{\n  const render = () =>\n    // note\n    <a />;\n  function other() {\n    return (\n      // note\n      <b />\n    );\n  }\n  // note\n  <div>{render()}</div>\n}',
+				'function C() @{\n  const render = () => (\n    // note\n    <a />\n  );\n  function other() {\n    return (\n      // note\n      <b />\n    );\n  }\n  // note\n  <div>{render()}</div>\n}',
+			);
+		});
+
+		// Prettier prints these without parentheses around the element
+		it.each([
+			'function g() {\n  return /* note */ <Note />;\n}',
+			'foo(\n  // note\n  <Note />,\n);',
+			'const x = [\n  // note\n  <Note />,\n];',
+			'const x =\n  // note\n  /** @type {X} */ (<Note />);',
+			'x = a && <Note />; // note',
+			'const x = <Note />; /* note */',
+			'function C() @{\n  const a = 1;\n  <>\n    @if (a) {\n      // note\n      <a />\n    }\n    // note\n    <b />\n  </>\n}',
+		])('prints %j without parentheses of its own', async (source) => {
+			await expectFormatted(source);
+		});
+	});
+
 	// A labeled statement used to print as an `Unknown` comment, deleting the
 	// loop or block it labels.
 	describe('labeled statements', () => {
