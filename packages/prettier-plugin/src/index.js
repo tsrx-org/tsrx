@@ -76,7 +76,9 @@ export const parsers = {
 		 * @returns {AST.Program}
 		 */
 		parse(text, options) {
-			return parseModule(text, options.filepath || 'PrettierPlugin.tsrx');
+			const ast = parseModule(text, options.filepath || 'PrettierPlugin.tsrx');
+			markHashbangComment(ast, text);
+			return ast;
 		},
 
 		/**
@@ -96,6 +98,34 @@ export const parsers = {
 		},
 	},
 };
+
+/**
+ * The hashbang comments of parsed files (see {@link markHashbangComment}).
+ * @type {WeakSet<AST.Comment>}
+ */
+const hashbangComments = new WeakSet();
+
+/**
+ * Remember a file's hashbang (`#!…` on its first line) so {@link printComment}
+ * prints it back as written. The parser reports it as a `Line` comment at offset
+ * 0 whose value is the text after `#!`, and attaches it like any other comment:
+ * to the first statement, or to the program when it has none.
+ * @param {AST.Program} ast
+ * @param {string} text
+ */
+function markHashbangComment(ast, text) {
+	if (!text.startsWith('#!')) {
+		return;
+	}
+	const program = /** @type {AST.Program & AST.NodeWithMaybeComments} */ (ast);
+	const first = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (program.body[0]);
+	const hashbang = [...(program.innerComments ?? []), ...(first?.leadingComments ?? [])].find(
+		(comment) => /** @type {AST.NodeWithLocation} */ (comment).start === 0,
+	);
+	if (hashbang) {
+		hashbangComments.add(hashbang);
+	}
+}
 
 /** @type {import('prettier').Plugin['printers']} */
 export const printers = {
@@ -1918,7 +1948,7 @@ function printDeclarationDecorators(node, path, options, print) {
  */
 function printComment(comment, text) {
 	if (comment.type === 'Line') {
-		return '//' + comment.value;
+		return (hashbangComments.has(comment) ? '#!' : '//') + comment.value;
 	}
 	if (!comment.value.includes('\n')) {
 		return '/*' + comment.value + '*/';

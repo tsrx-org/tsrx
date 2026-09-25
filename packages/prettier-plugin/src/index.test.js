@@ -9571,6 +9571,65 @@ log()
 		});
 	});
 
+	// The parser reports a hashbang as a line comment at offset 0; like Prettier,
+	// print it back as written
+	describe('hashbangs', () => {
+		it.each([
+			'#!/usr/bin/env node',
+			'#!/usr/bin/env node\n// A comment',
+			'#!/usr/bin/env node\nconsole.log(1);',
+			'#!/usr/bin/env node\n\nimport { x } from "./x";',
+			'#!/usr/bin/env -S node --no-warnings\n/** Docs */\nexport function App() @{\n  <div />\n}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps the hashbang of a file with only empty statements', async () => {
+			expect(await format('#!/usr/bin/env node\n;\n')).toBeWithNewline('#!/usr/bin/env node');
+		});
+
+		it('keeps a line comment that starts with a slash a comment', async () => {
+			const source = '///usr/bin/env node\nconsole.log(1);';
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	describe('using declarations', () => {
+		it('keeps using and await using declarations', async () => {
+			const source = `using moduleHandle = open();
+
+async function run(items: Iterable<Disposable>) {
+  using handle: Disposable = open();
+  await using connection = await connect();
+  for (using item of items) {
+    use(item);
+  }
+  for await (await using item of stream) {
+    use(item);
+  }
+}
+
+export function App() @{
+  using handle = open();
+  <div>{handle.name}</div>
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('puts each declarator on its own line once one has a value', async () => {
+			expect(await format('using a = open(), b = open();')).toBeWithNewline(
+				'using a = open(),\n  b = open();',
+			);
+		});
+	});
+
+	describe('regular expressions', () => {
+		it('keeps the v flag and modifiers', async () => {
+			const source = 'const set = /[\\p{L}--[a-z]]/v;\nconst modified = /(?i:a)b/;';
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
 	// Like Prettier's `printDanglingComments`, the comments of a body with no
 	// statements or members print on consecutive lines
 	describe('comments in empty bodies', () => {
