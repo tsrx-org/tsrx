@@ -2207,6 +2207,27 @@ const [obj1, obj2] = arrayOfObjects;`;
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('formats top-level markup with a style or script block to a fixpoint', async () => {
+			for (const source of [
+				`<head>
+  <style>
+    div {
+      color: red;
+    }
+  </style>
+</head>
+`,
+				`<div>
+  <script>
+    const a = 1;
+  </script>
+</div>
+`,
+			]) {
+				expect(await format(source)).toBe(source);
+			}
+		});
+
 		it('should keep style tag intact when wrapped in parent inside component', async () => {
 			const expected = `function App() {
   <head>
@@ -9087,6 +9108,75 @@ export function App() @{
 }`);
 		});
 
+		it('guards statements in @switch case bodies', async () => {
+			const source = `export function App() @{
+  <>
+    @switch (count) {
+      @case 1: {
+        ;/a/.test(text)
+        const half = count / 2
+        ;\`x\`.trim()
+        ;(first || second).run()
+        <span />
+      }
+      @default: {
+        const next = count
+        ;\`y\${next}\`.trim()
+        <i />
+      }
+    }
+  </>
+}`;
+			await expectUnchanged(source);
+			const with_semicolons = source
+				.replace(/^(\s*);/gm, '$1')
+				.replace(/^(\s*(?:const|\/|`|\().*)$/gm, '$1;');
+			expect(await format(with_semicolons)).toBeWithNewline(with_semicolons);
+			expect(await format(with_semicolons, { semi: false })).toBeWithNewline(source);
+		});
+
+		it('starts no guard before a template element after a comment', async () => {
+			await expectUnchanged(`export function App() @{
+  const x = a
+  /* render */ <div />
+}
+function render() {
+  const x = a
+  /* render */ <div />
+}`);
+			expect(
+				await format(
+					`export function App() @{
+  const x = a;
+  /* render */ <div />
+}`,
+					{ semi: false },
+				),
+			).toBeWithNewline(`export function App() @{
+  const x = a
+  /* render */ <div />
+}`);
+		});
+
+		it('keeps a return of an element after an element with children', async () => {
+			await expectUnchanged(`function Field() {
+  const field = <span>{label}</span>
+  return <div>{field}</div>
+}`);
+			expect(
+				await format(
+					`function Field() {
+  const field = <span>{label}</span>;
+  throw <div>{field}</div>;
+}`,
+					{ semi: false },
+				),
+			).toBeWithNewline(`function Field() {
+  const field = <span>{label}</span>
+  throw <div>{field}</div>
+}`);
+		});
+
 		it('puts the semicolon after comments and before a JSDoc cast', async () => {
 			await expectUnchanged(`log()
 // note
@@ -13628,6 +13718,33 @@ const object = {
     <div>{"hi"}</div>
   </>
 }`);
+		});
+
+		it('keeps the lines after an assigned block as authored', async () => {
+			const module_source = `const theme = <style>
+  .card {
+    color: red;
+  }
+</style>;
+export { theme };`;
+			const spaced_module_source = module_source.replace('\nexport', '\n\nexport');
+			const component_source = `export function Themed() @{
+  const theme = <style>
+    .card {
+      color: red;
+    }
+  </style>;
+
+  <div class={theme.card}>{"card"}</div>
+}`;
+			for (const source of [module_source, spaced_module_source, component_source]) {
+				await expectUnchanged(source);
+				const without_semicolons = source.replace(/(<\/style>|\{ theme \});$/gm, '$1');
+				expect(await format(without_semicolons, { semi: false })).toBeWithNewline(
+					without_semicolons,
+				);
+				expect(await format(source, { semi: false })).toBeWithNewline(without_semicolons);
+			}
 		});
 
 		it('keeps a leading comment on a style block', async () => {
