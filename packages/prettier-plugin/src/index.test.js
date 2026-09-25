@@ -7539,6 +7539,14 @@ let d: { /* note */ [K in keyof T]: T[K] } = x;`;
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
+		it('breaks a union only for a member that must break, not for how the source wrapped it', async () => {
+			const input = `let x: { a: string;
+  b: number } | { c: string } = v;`;
+			expect(await format(input)).toBeWithNewline(
+				'let x: { a: string; b: number } | { c: string } = v;',
+			);
+		});
+
 		it('keeps a type literal expanded only when a line break follows its {', async () => {
 			const input = `type T = { a: string;
   b: number };

@@ -6711,9 +6711,9 @@ function printTSUnionType(node, path, print, args) {
 			types.map((typeDoc) => align(2, typeDoc)),
 		),
 	];
-	const shouldBreak = node.types.some(
-		(typeNode, index) => !wasOriginallySingleLine(typeNode) || willBreak(types[index]),
-	);
+	// Like Prettier, only a member that must break (such as an object type kept
+	// expanded by `objectWrap`) breaks the union, not how the source wrapped it
+	const shouldBreak = types.some((typeDoc) => willBreak(typeDoc));
 
 	if (args?.preferInlineSimpleUnionType && !types.some((typeDoc) => willBreak(typeDoc))) {
 		return inlineDoc;
