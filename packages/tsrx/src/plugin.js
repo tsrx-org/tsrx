@@ -707,12 +707,13 @@ export function TSRXPlugin(config) {
 			// `#filterTemplateScriptContexts`.
 			/** @type {number[]} */
 			#expressionContainerContextBaselines = [];
-			// `#path` length at the start of each open `{ … }` expression container.
-			// Raw template text inside a container belongs only to an element opened
-			// inside it (`{<div>   a</div>}`); at the container's own expression level
-			// (`{cond ? (<Outer>…</Outer>) : null}` after the `)`) the next characters
-			// are JS, and reading them as raw text would swallow tokens like `: null`.
-			/** @type {number[]} */
+			// `#path` and its length at the start of each open `{ … }` expression
+			// container. Raw template text inside a container belongs only to an
+			// element opened inside it (`{<div>   a</div>}`); at the container's own
+			// expression level (`{cond ? (<Outer>…</Outer>) : null}` after the `)`)
+			// the next characters are JS, and reading them as raw text would swallow
+			// tokens like `: null`. See `#containerPathBaseline`.
+			/** @type {Array<{ path: AST.Node[], length: number }>} */
 			#expressionContainerPathBaselines = [];
 			#consumeContainerBraceAfterScope = false;
 			#scriptJSXElementDepth = 0;
@@ -742,6 +743,10 @@ export function TSRXPlugin(config) {
 			// `parseElement`), for its closing tag to restore.
 			/** @type {WeakMap<AST.Node, number>} */
 			#elementContextDepths = new WeakMap();
+			// `this.labels` and its length when each element started (see
+			// `#insideSwitchStartedAfter`).
+			/** @type {WeakMap<AST.Node, { labels: Parse.Parser['labels'], length: number }>} */
+			#elementLabels = new WeakMap();
 			#readingJSXControlFlowDirectiveKeyword = false;
 			#readingJSXControlFlowHeader = false;
 			// Where the last element of a `{ … }` list ended, so that `expect` can
@@ -954,6 +959,34 @@ export function TSRXPlugin(config) {
 					this.#openingNativeTemplateNode ??
 					this.#path.findLast((node) => this.#isNativeTemplateNode(node))
 				);
+			}
+
+			/**
+			 * Whether a `switch` (`@switch` or JS) started after `node`: the position is
+			 * then in the switch's own body, between its cases, which is code. In an
+			 * element opened in a case, it is that element's children. A function body
+			 * starts a new `this.labels`, so a switch in it started after any element
+			 * outside it.
+			 * @param {AST.Node} node
+			 */
+			#insideSwitchStartedAfter(node) {
+				const at_start = this.#elementLabels.get(node);
+				const from = at_start?.labels === this.labels ? at_start.length : 0;
+				for (let i = from; i < this.labels.length; i++) {
+					if (this.labels[i].kind === 'switch') return true;
+				}
+				return false;
+			}
+
+			/**
+			 * Where the nodes opened inside the innermost `{ … }` expression container
+			 * start in `#path`: after the nodes around the container, or at 0 once a
+			 * directive body or a setup statement in the container has replaced
+			 * `#path`, since every node on it opened inside the container.
+			 */
+			#containerPathBaseline() {
+				const baseline = this.#expressionContainerPathBaselines.at(-1);
+				return baseline?.path === this.#path ? baseline.length : 0;
 			}
 
 			/**
@@ -1461,13 +1494,12 @@ export function TSRXPlugin(config) {
 				if (current_context_token === '<tag' || current_context_token === '</tag') {
 					return false;
 				}
-				if (!ignore_directive_start && this.labels.some((label) => label.kind === 'switch')) {
-					return false;
-				}
 				const current_template_node = this.#currentNativeTemplateNode();
 				if (
 					!current_template_node ||
-					(!ignore_directive_start && this.#isJSXControlFlowDirectiveAt(this.pos))
+					(!ignore_directive_start &&
+						(this.#insideSwitchStartedAfter(current_template_node) ||
+							this.#isJSXControlFlowDirectiveAt(this.pos)))
 				) {
 					return false;
 				}
@@ -1479,7 +1511,7 @@ export function TSRXPlugin(config) {
 				// `{cond ? (<Outer>…</Outer>) : null}` — and the following characters are
 				// JS tokens, not template text.
 				if (this.#jsxExpressionContainerDepth > 0 && !this.#openingNativeTemplateNode) {
-					const path_baseline = this.#expressionContainerPathBaselines.at(-1) ?? 0;
+					const path_baseline = this.#containerPathBaseline();
 					let inside_container = false;
 					for (let i = this.#path.length - 1; i >= path_baseline; i--) {
 						if (this.#isNativeTemplateNode(this.#path[i])) {
@@ -4676,7 +4708,10 @@ export function TSRXPlugin(config) {
 					// container must not strip anything below this floor (see
 					// `#filterTemplateScriptContexts`).
 					this.#expressionContainerContextBaselines.push(this.context.length);
-					this.#expressionContainerPathBaselines.push(this.#path.length);
+					this.#expressionContainerPathBaselines.push({
+						path: this.#path,
+						length: this.#path.length,
+					});
 					pushed_context_baseline = true;
 
 					node.expression =
@@ -5649,6 +5684,7 @@ export function TSRXPlugin(config) {
 					templateMode: 'script',
 				};
 				node.children = [];
+				this.#elementLabels.set(node, { labels: this.labels, length: this.labels.length });
 
 				const previous_opening_native_template_node = this.#openingNativeTemplateNode;
 				this.#openingNativeTemplateNode = node;
@@ -5913,10 +5949,15 @@ export function TSRXPlugin(config) {
 						this.next();
 
 						const closingNode = this.startNodeAt(startPos, startLoc);
+						// Whether the element's parent is a template node, so that the token
+						// after the `>` is the parent's text. In a `{ … }` container only a
+						// parent opened in the container counts: above it, the container's
+						// expression goes on.
 						const inside_parent_template =
-							this.#jsxExpressionContainerDepth === 0 &&
 							this.#templateScriptParsingDepth === 0 &&
-							this.#path.slice(0, -1).some((node) => this.#isNativeTemplateNode(node));
+							this.#path
+								.slice(this.#containerPathBaseline(), -1)
+								.some((node) => this.#isNativeTemplateNode(node));
 						this.#closingNativeTemplateNode = true;
 						/** @type {ReturnType<Parse.Parser['jsx_parseElementName']>} */
 						let closingName;
@@ -6105,7 +6146,14 @@ export function TSRXPlugin(config) {
 				} else if (this.type === tt.eof) {
 					return;
 				} else {
+					const start = this.start;
+					const type = this.type;
 					const text = this.#parseTemplateRawText();
+					// Text that reads nothing and leaves the same token would be read
+					// again until the stack runs out.
+					if (text.end === start && this.start === start && this.type === type) {
+						this.unexpected(start);
+					}
 					if (this.#shouldKeepTemplateTextNode(text)) {
 						body.push(text);
 					}

@@ -2563,6 +2563,26 @@ export function App() @{
 			expect(code).toContain('\u00a0<b>x</b>');
 		});
 
+		it('keeps the space after a closing tag in an element in a container', () => {
+			const { code } = compile(
+				'export function App() @{\n\t<main>\n\t\t{show && <div><b>1</b> 2</div>}\n\t\t<p slot={<div><i>3</i> 4</div>} />\n\t</main>\n}',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('</b> 2');
+			expect(code).toContain('</i> 4');
+		});
+
+		it('keeps the text of an element in an @switch case', () => {
+			const { code } = compile(
+				'export function App() @{\n\t@switch (kind) {\n\t\t@case 1: {\n\t\t\t<div><b>3</b> 4<i />\u00a05</div>\n\t\t}\n\t}\n}',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('</b> 4<i');
+			expect(code).toContain('\u00a05');
+		});
+
 		it('keeps double-quoted strings inside expression containers as JavaScript strings', () => {
 			const { code } = compile(
 				`export function App() @{

@@ -8940,6 +8940,83 @@ describe('JSX whitespace in template text', () => {
 			['<b>', '\u00a0', '<i>'],
 		],
 		['a tab on its own line', '<div>\n\t<b>x</b>\n\t\t\n</div>;', ['<b>']],
+		// An element in a `{…}` container reads its text as anywhere else (#612)
+		[
+			'a space after a closing tag in an element in a child container',
+			'export function App() @{\n\t<main>\n\t\t{x && <div><b>1</b> 2</div>}\n\t</main>\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'a space after a closing tag in an element in an attribute value',
+			'export function App() @{\n\t<main slot={<div><b>1</b> 2</div>} />\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'a space after a closing tag in an element in a container in TSX',
+			'const a = <main>{x && <div><b>1</b> 2</div>}</main>;',
+			['<b>', ' 2'],
+		],
+		[
+			'a non-breaking space after a closing tag in an element in a container',
+			'export function App() @{\n\t<main>\n\t\t{x && <div><b>1</b> 2</div>}\n\t</main>\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'a space after a closing tag in an element in a directive body in a container',
+			'export function App() @{\n\t<main>\n\t\t{x && <section>@if (y) { <div><b>1</b> 2</div> }</section>}\n\t</main>\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'a space after a child container in an element in a directive body in a container',
+			'export function App() @{\n\t<main>\n\t\t{x && <section>@if (y) { <div>{a} 2</div> }</section>}\n\t</main>\n}',
+			['JSXExpressionContainer', ' 2'],
+		],
+		[
+			'text after a closing tag, when the container goes on after the element',
+			'export function App() @{\n\t<main>\n\t\t{x ? <div><b>1</b> 2</div> : <p />}\n\t</main>\n}',
+			['<b>', ' 2'],
+		],
+		// So does an element in a `switch` case (#613)
+		[
+			'a space after an opening tag in an @switch case',
+			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\t<div> 1</div>\n\t\t\t}\n\t\t\t@case 2: {\n\t\t\t\t<p />\n\t\t\t}\n\t\t}\n\t</main>\n}',
+			[' 1'],
+		],
+		[
+			'a space after a closing tag in an @switch case',
+			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\t<div><b>3</b> 4</div>\n\t\t\t}\n\t\t}\n\t</main>\n}',
+			['<b>', ' 4'],
+		],
+		[
+			'a non-breaking space after a closing tag in an @switch case',
+			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\t<div><b>3</b> 4</div>\n\t\t\t}\n\t\t}\n\t</main>\n}',
+			['<b>', ' 4'],
+		],
+		[
+			'a non-breaking space after a nested closing tag in an @switch case',
+			'export function App() @{\n\t@switch (x) {\n\t\t@case 1: {\n\t\t\t<div>\n\t\t\t\t<span>\n\t\t\t\t\t<b>1</b>\n\t\t\t\t</span> 2\n\t\t\t</div>\n\t\t}\n\t}\n}',
+			['<span>', ' 2\n\t\t\t'],
+		],
+		[
+			'text before a tag in an @switch case',
+			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\t<div>1<b /></div>\n\t\t\t}\n\t\t}\n\t</main>\n}',
+			['1', '<b>'],
+		],
+		[
+			'a space after a child container in an @default case',
+			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@default: {\n\t\t\t\t<div>{a} 1</div>\n\t\t\t}\n\t\t}\n\t</main>\n}',
+			['JSXExpressionContainer', ' 1'],
+		],
+		[
+			'text before a tag in a switch case',
+			'function A() {\n\tswitch (x) {\n\t\tcase 1:\n\t\t\treturn <div> 1<b /></div>;\n\t}\n}',
+			[' 1', '<b>'],
+		],
+		[
+			'a space after a closing tag in a switch case in a container',
+			'export function App() @{\n\t<main>\n\t\t{(() => {\n\t\t\tswitch (x) {\n\t\t\t\tcase 1:\n\t\t\t\t\treturn <div><b>1</b> 2</div>;\n\t\t\t}\n\t\t})()}\n\t</main>\n}',
+			['<b>', ' 2'],
+		],
 	];
 
 	it.each(cases)('reads %s like JSX', async (_label, source, expected) => {
@@ -8950,6 +9027,17 @@ describe('JSX whitespace in template text', () => {
 			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
 			expect(outcome.errors ?? [], label).toEqual([]);
 			expect(children(outcome.ast), label).toEqual(expected);
+		}
+	});
+
+	it('reports a token that text cannot start at instead of reading it forever', async () => {
+		// The `<` of `<T,>` reads as a type parameter list's, where the text of
+		// `<b>` would start, so the text reads nothing
+		const source = 'const f = <b><T,>() => 1;';
+		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
+
+		for (const outcome of outcomes) {
+			expect(outcome).toMatchObject({ ok: false, message: 'Unexpected token (1:13)' });
 		}
 	});
 });
