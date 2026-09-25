@@ -172,9 +172,10 @@ export const printers = {
 		},
 		/**
 		 * @param {AstPath<AST.Node | AST.CSS.StyleSheet>} path
+		 * @param {Options} options
 		 * @returns {((textToDoc: TextToDoc, print: PrintFn, path: AstPath, options: Options) => Promise<Doc | undefined>) | null}
 		 */
-		embed(path) {
+		embed(path, options) {
 			const node = path.node;
 
 			// CSS, GraphQL, HTML, and Markdown in template literals
@@ -204,17 +205,24 @@ export const printers = {
 			}
 
 			// Raw-text `<script>` bodies: the parser mirrors the element's `content` as
-			// a single JSXText child. Format it with Prettier's TypeScript parser (a
-			// superset of JS, so plain bodies format identically) the same way <style>
-			// bodies are formatted as CSS above.
+			// a single JSXText child. Format it with the parser for the script's type
+			// (see inferScriptParser) the same way <style> bodies are formatted as CSS
+			// above, and keep a body of any other type as written.
 			if (node.type === 'JSXText') {
 				const parent = /** @type {AST.TSRXJSXElement | null} */ (path.getParentNode());
 				if (isRawScriptElement(parent)) {
+					const parser = inferScriptParser(/** @type {AST.TSRXJSXElement} */ (parent), options);
 					return async (textToDoc) => {
 						try {
-							const body = await textToDoc(node.value, {
-								parser: 'typescript',
-							});
+							if (!parser) {
+								return printUnformattedRawText(node.value);
+							}
+							const body = await textToDoc(
+								parser === 'markdown'
+									? dedentString(node.value.replace(/^[^\S\n]*\n/u, ''))
+									: node.value,
+								{ parser },
+							);
 							// Drop the program's trailing hardline; printElement places the
 							// closing tag on its own line already.
 							return stripTrailingHardline(body);
@@ -486,6 +494,127 @@ function isRawScriptElement(node) {
 		node.openingElement.name.name === 'script' &&
 		typeof node.content === 'string'
 	);
+}
+
+/**
+ * The parser for the body of a raw-text `<script>`, like Prettier's HTML
+ * `inferScriptParser`: none for a script with `src`, the parser of its `lang`
+ * or `type`, and, like a script with neither, JavaScript's for code. This
+ * plugin formats JavaScript with Prettier's TypeScript parser (a superset of
+ * it, so plain bodies format the same) instead of Babel's. A body without a
+ * parser, like a template's, prints as written, and so does one whose `lang`
+ * or `type` is an expression.
+ * @param {AST.TSRXJSXElement} element
+ * @param {Options} options
+ * @returns {string | undefined}
+ */
+function inferScriptParser(element, options) {
+	/** @type {Map<string, string | null>} */
+	const attributes = new Map();
+	for (const attribute of element.openingElement.attributes) {
+		if (attribute.type !== 'JSXAttribute' || attribute.name.type !== 'JSXIdentifier') {
+			continue;
+		}
+		const { value } = attribute;
+		const literal = value?.type === 'JSXExpressionContainer' ? value.expression : value;
+		attributes.set(
+			attribute.name.name,
+			!literal
+				? ''
+				: literal.type === 'Literal' && typeof literal.value === 'string'
+					? literal.value
+					: null,
+		);
+	}
+	if (attributes.has('src')) {
+		return undefined;
+	}
+	const type = attributes.get('type');
+	const lang = attributes.get('lang');
+	if (type === null || lang === null) {
+		return undefined;
+	}
+	const parser =
+		!lang && !type
+			? 'babel'
+			: (inferParserByLanguageName(options, lang) ?? inferParserByTypeAttribute(type));
+	return parser === 'babel' ? 'typescript' : parser;
+}
+
+/**
+ * The parser of the language named `languageName`, like Prettier's
+ * `inferParser` with a `language`: by name, then alias, then extension.
+ * @param {Options} options
+ * @param {string | undefined} languageName
+ * @returns {string | undefined}
+ */
+function inferParserByLanguageName(options, languageName) {
+	if (!languageName) {
+		return undefined;
+	}
+	const languages = /** @type {import('prettier').Plugin[]} */ (options.plugins ?? [])
+		.filter((plugin) => typeof plugin === 'object')
+		.toReversed()
+		.flatMap((plugin) => plugin.languages ?? []);
+	const language =
+		languages.find(({ name }) => name.toLowerCase() === languageName) ??
+		languages.find(({ aliases }) => aliases?.includes(languageName)) ??
+		languages.find(({ extensions }) => extensions?.includes(`.${languageName}`));
+	return language?.parsers[0];
+}
+
+/**
+ * Prettier's HTML `inferParserByTypeAttribute`: the parser for a `<script>`
+ * of this `type`, with JSON's for JSON, an import map, or speculation rules.
+ * @param {string | undefined} type
+ * @returns {string | undefined}
+ */
+function inferParserByTypeAttribute(type) {
+	switch (type) {
+		case undefined:
+		case '':
+			return undefined;
+		case 'module':
+		case 'text/javascript':
+		case 'text/babel':
+		case 'text/jsx':
+		case 'application/javascript':
+			return 'babel';
+		case 'application/x-typescript':
+			return 'typescript';
+		case 'text/markdown':
+			return 'markdown';
+		case 'text/html':
+			return 'html';
+		case 'text/x-handlebars-template':
+			return 'glimmer';
+		default:
+			return type.endsWith('json') || type.endsWith('importmap') || type === 'speculationrules'
+				? 'json'
+				: undefined;
+	}
+}
+
+/**
+ * Prettier's HTML `dedentString`: the text without the indentation its
+ * lines share.
+ * @param {string} text
+ * @returns {string}
+ */
+function dedentString(text) {
+	let minIndentation = Number.POSITIVE_INFINITY;
+	for (const lineText of text.split('\n')) {
+		const indentation = /** @type {RegExpMatchArray} */ (lineText.match(/^[\t\f\r ]*/u))[0].length;
+		if (indentation < lineText.length) {
+			minIndentation = Math.min(minIndentation, indentation);
+		}
+	}
+	return minIndentation === Number.POSITIVE_INFINITY
+		? text
+		: text
+				.split('\n')
+				.map((lineText) => lineText.slice(minIndentation))
+				.join('\n');
 }
 
 /**

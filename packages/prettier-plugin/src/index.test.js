@@ -6973,14 +6973,14 @@ render(App);`;
 		});
 
 		it('should format a TypeScript <script> body with prettier options applied', async () => {
-			const expected = `<script type="text/typescript">
+			const expected = `<script lang="ts">
   const n: number = 1 < 2 ? 3 : 4;
   if (n < 2) {
     go('now');
   }
 </script>`;
 
-			const source = `<script type="text/typescript">const n:number=1<2?3:4;
+			const source = `<script lang="ts">const n:number=1<2?3:4;
 if(n<2){go("now")}</script>`;
 
 			const result = await format(source, { singleQuote: true, printWidth: 100 });
@@ -7067,6 +7067,112 @@ if(n<2){go("now")}</script>`;
 				`export function App() @{\n\t<script>\n\t\tconst broken = ;\n\t\t  go();\n\t</script>\n}`,
 			);
 			expect(await format(result, { useTabs: true })).toBe(result);
+		});
+
+		it('formats a JSON <script> body as JSON, like Prettier', async () => {
+			// Prettier's HTML `inferScriptParser`: JSON, an import map, or speculation rules
+			const result = await format(`export function App() @{
+  <div>
+    <script type="application/json">[1,2]</script>
+    <script type="application/json">"on"</script>
+    <script type="importmap">{"imports":{"a":"./a.js"}}</script>
+    <script type="application/ld+json">
+      { "@context": "https://schema.org",
+        "name": 'x' }
+    </script>
+    <script type="speculationrules">{"prerender":[{"source":"list"}]}</script>
+    <script type="application/json">true</script>
+  </div>
+}`);
+			expect(result).toBeWithNewline(`export function App() @{
+  <div>
+    <script type="application/json">
+      [1, 2]
+    </script>
+    <script type="application/json">
+      "on"
+    </script>
+    <script type="importmap">
+      { "imports": { "a": "./a.js" } }
+    </script>
+    <script type="application/ld+json">
+      { "@context": "https://schema.org", "name": "x" }
+    </script>
+    <script type="speculationrules">
+      { "prerender": [{ "source": "list" }] }
+    </script>
+    <script type="application/json">
+      true
+    </script>
+  </div>
+}`);
+		});
+
+		it('keeps a <script> body of another type, or with src, as written', async () => {
+			// Like Prettier's HTML printer, which has no parser for them
+			const result = await format(`export function App() @{
+  <div>
+    <script type="text/template">
+          <div>
+            x   y
+          </div>
+    </script>
+    <script type="text/typescript">let   a: number = 1</script>
+    <script src="x.js">let   a = 1</script>
+    <script type={kind}>[1,2]</script>
+    <script type="application/json">[1,2</script>
+  </div>
+}`);
+			expect(result).toBeWithNewline(`export function App() @{
+  <div>
+    <script type="text/template">
+      <div>
+        x   y
+      </div>
+    </script>
+    <script type="text/typescript">
+      let   a: number = 1
+    </script>
+    <script src="x.js">
+      let   a = 1
+    </script>
+    <script type={kind}>
+      [1,2]
+    </script>
+    <script type="application/json">
+      [1,2
+    </script>
+  </div>
+}`);
+		});
+
+		it('formats a <script> body of a code, Markdown, or HTML type like Prettier', async () => {
+			const result = await format(`export function App() @{
+  <div>
+    <script type="module">let   a = 1</script>
+    <script type="">let   a = 1</script>
+    <script type="text/markdown">
+      #   Title
+    </script>
+    <script type="text/html"><div><p>hi</p></div></script>
+  </div>
+}`);
+			expect(result).toBeWithNewline(`export function App() @{
+  <div>
+    <script type="module">
+      let a = 1;
+    </script>
+    <script type="">
+      let a = 1;
+    </script>
+    <script type="text/markdown">
+      # Title
+    </script>
+    <script type="text/html">
+      <div><p>hi</p></div>
+    </script>
+  </div>
+}`);
 		});
 
 		it('should preserve the blank line between a function and text literal sibling inside element', async () => {
