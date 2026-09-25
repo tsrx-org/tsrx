@@ -52,6 +52,61 @@ function pickBySwitch(kind: string) {
 	return null;
 }
 
+function SetupText(props: { kind: string }) @{
+	// prettier-ignore
+	const afterOpen = <span class="ws-setup-after-open"> 1</span>;
+	// prettier-ignore
+	const afterClose = <span class="ws-setup-after-close"><b>2</b> 3</span>;
+	// prettier-ignore
+	const beforeTag = <span class="ws-setup-before-tag">4<b /></span>;
+	// prettier-ignore
+	const afterContainer = <span class="ws-setup-after-container">{'5'} 6</span>;
+	// prettier-ignore
+	const nbspOwnLine = <span class="ws-setup-nbsp-own-line">
+		<b>x</b>
+		 
+		<i />
+	</span>;
+	function inFunction() {
+		// prettier-ignore
+		return <span class="ws-setup-function">Hello<b /> 2</span>;
+	}
+	// prettier-ignore
+	const inArrow = () => <span class="ws-setup-arrow"><b>1</b> 2</span>;
+	const inIf = (
+		@if (props.kind === 'a') {
+			// prettier-ignore
+			<span class="ws-setup-if">Hello<b /> 2</span>
+		}
+	);
+	const inCodeBlock = (
+		@{
+			// prettier-ignore
+			const inner = <span class="ws-setup-code-block"><b>1</b> 2</span>;
+			<>{inner}</>
+		}
+	);
+
+	<div>
+		{afterOpen}
+		{afterClose}
+		{beforeTag}
+		{afterContainer}
+		{nbspOwnLine}
+		{inFunction()}
+		{inArrow()}
+		{inIf}
+		{inCodeBlock}
+		@switch (props.kind) {
+			@case 'a': {
+				// prettier-ignore
+				const inCase = <span class="ws-case-setup">Hello<b /> 2</span>;
+				<>{inCase}</>
+			}
+		}
+	</div>
+}
+
 export function JsxTextWhitespaceApp() @{
 	const show = true;
 
@@ -117,6 +172,8 @@ export function JsxTextWhitespaceApp() @{
 		<SwitchText kind="a" />
 		<SwitchText kind="z" />
 		<div>{pickBySwitch('a')}</div>
+		// An element in a setup statement reads its text as anywhere else too
+		<SetupText kind="a" />
 	</>
 }
 
@@ -174,6 +231,23 @@ export const jsx_text_whitespace_cases = [
 		'<span><b>1</b></span> 2',
 	],
 	['text before a tag in a switch case', '.ws-js-switch', ' 1<b></b>'],
+	['a space after an opening tag in a setup statement', '.ws-setup-after-open', ' 1'],
+	['a space after a closing tag in a setup statement', '.ws-setup-after-close', '<b>2</b> 3'],
+	['text before a tag in a setup statement', '.ws-setup-before-tag', '4<b></b>'],
+	['a space after a container in a setup statement', '.ws-setup-after-container', '5 6'],
+	[
+		'text before a tag in a function declared in a setup statement',
+		'.ws-setup-function',
+		'Hello<b></b> 2',
+	],
+	['a space after a closing tag in an arrow in a setup statement', '.ws-setup-arrow', '<b>1</b> 2'],
+	['text before a tag in an @if in a setup statement', '.ws-setup-if', 'Hello<b></b> 2'],
+	[
+		'a space after a closing tag in a setup statement of a @{ … } in a setup statement',
+		'.ws-setup-code-block',
+		'<b>1</b> 2',
+	],
+	['text before a tag in a setup statement of an @case', '.ws-case-setup', 'Hello<b></b> 2'],
 ] as const;
 
 /**
@@ -205,6 +279,12 @@ export const jsx_text_nbsp_cases = [
 	[
 		'a non-breaking space on its own line in an @switch case',
 		'.ws-switch-nbsp-own-line',
+		'<b>x</b>&nbsp;<i></i>',
+		'<b>x</b><i></i>',
+	],
+	[
+		'a non-breaking space on its own line in a setup statement',
+		'.ws-setup-nbsp-own-line',
 		'<b>x</b>&nbsp;<i></i>',
 		'<b>x</b><i></i>',
 	],
