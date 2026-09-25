@@ -10560,6 +10560,7 @@ export interface SectionProps<T>
 
 		// Prettier parenthesizes an element unless its parent prints it bare
 		it.each([
+			['async function f() {\n  await <div />;\n}', 'async function f() {\n  await (<div />);\n}'],
 			['x = !<div />;', 'x = !(<div />);'],
 			['x = typeof <div />;', 'x = typeof (<div />);'],
 			['x = -<b />;', 'x = -(<b />);'],
