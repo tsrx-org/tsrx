@@ -387,17 +387,127 @@ function isPrettierIgnoreComment(comment) {
 }
 
 /**
- * Check whether a node is immediately preceded by a `prettier-ignore` directive.
- * Only the last leading comment counts, matching Prettier core.
+ * Check whether a `prettier-ignore` directive keeps a node as written. Like
+ * Prettier's `hasNodeIgnoreComment`, any comment attached to the node counts:
+ * leading (even when another comment follows it), trailing (such as
+ * `foo(  a ); // prettier-ignore`), or dangling.
  * @param {AST.Node & AST.NodeWithMaybeComments} node - The AST node to check
  * @returns {boolean} - True if the node should be printed verbatim
  */
 function hasPrettierIgnore(node) {
-	const comments = node.leadingComments;
-	if (!comments || comments.length === 0) {
-		return false;
+	return Boolean(
+		node.leadingComments?.some(isPrettierIgnoreComment) ||
+		node.trailingComments?.some(isPrettierIgnoreComment) ||
+		node.innerComments?.some(isPrettierIgnoreComment),
+	);
+}
+
+/**
+ * The statements whose source Prettier's `locEnd` ends before a written `;`
+ * (its `nodeTypesWithContentEnd`).
+ */
+const IGNORED_CONTENT_END_TYPES = new Set([
+	'ExpressionStatement',
+	'ImportDeclaration',
+	'ExportDefaultDeclaration',
+	'ExportNamedDeclaration',
+	'ExportAllDeclaration',
+	'ReturnStatement',
+	'ThrowStatement',
+	'DoWhileStatement',
+]);
+
+/**
+ * The source of a node that `prettier-ignore` keeps, like Prettier's
+ * `printIgnored`. It starts at the node's first decorator, even one written
+ * before `export`. A statement's source ends where Prettier's `locEnd` does,
+ * before its `;`, which then prints by the `semi` option: after a declaration,
+ * `break`, `continue`, or `debugger` always, and after another statement only
+ * when it was written. A compound statement ends like its body.
+ * @param {AST.Node} node - The ignored node
+ * @param {AstPath} path - The path to the node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {string}
+ */
+function printIgnoredSource(node, path, options) {
+	const text = /** @type {string} */ (options.originalText);
+	const { declaration } = /** @type {{ declaration?: AST.Node | null }} */ (node);
+	const [firstDecorator] = getDecorators(declaration ?? node);
+	const nodeStart = /** @type {AST.NodeWithLocation} */ (node).start;
+	const start = firstDecorator
+		? Math.min(/** @type {AST.NodeWithLocation} */ (firstDecorator).start, nodeStart)
+		: nodeStart;
+
+	let statement = node;
+	while (true) {
+		if (statement.type === 'IfStatement') {
+			statement = statement.alternate ?? statement.consequent;
+		} else if (
+			statement.type === 'ForStatement' ||
+			statement.type === 'ForInStatement' ||
+			statement.type === 'ForOfStatement' ||
+			statement.type === 'LabeledStatement' ||
+			statement.type === 'WhileStatement' ||
+			statement.type === 'WithStatement'
+		) {
+			statement = statement.body;
+		} else {
+			break;
+		}
 	}
-	return isPrettierIgnoreComment(comments[comments.length - 1]);
+
+	const { end } = /** @type {AST.NodeWithLocation} */ (statement);
+	/** @type {number} */
+	let contentEnd = end;
+	let semicolon = true;
+	if (statement.type === 'BreakStatement' || statement.type === 'ContinueStatement') {
+		contentEnd = statement.label
+			? /** @type {AST.NodeWithLocation} */ (statement.label).end
+			: /** @type {AST.NodeWithLocation} */ (statement).start +
+				(statement.type === 'BreakStatement' ? 'break' : 'continue').length;
+	} else if (statement.type === 'DebuggerStatement') {
+		contentEnd = /** @type {AST.NodeWithLocation} */ (statement).start + 'debugger'.length;
+	} else if (statement.type === 'VariableDeclaration') {
+		contentEnd = /** @type {AST.NodeWithLocation} */ (statement.declarations.at(-1)).end;
+		semicolon = !isForHeadDeclaration(statement, statement === node ? path.parent : null);
+	} else if (IGNORED_CONTENT_END_TYPES.has(statement.type) && text[end - 1] === ';') {
+		// Prettier's `__contentEnd`: before the `;`, and the whitespace and
+		// comments ahead of it. The parser gives those comments to the outermost
+		// node that ends at the `;` (see `takeCommentsBeforeFinalSemicolon`),
+		// which prints them after it.
+		/** @type {AST.Comment[]} */
+		const comments = [];
+		for (
+			let level = -1, owner = /** @type {AST.Node | null} */ (node);
+			owner && /** @type {AST.NodeWithLocation} */ (owner).end === end;
+			owner = /** @type {AST.Node | null} */ (path.getParentNode(++level))
+		) {
+			const { trailingComments } = /** @type {AST.NodeWithMaybeComments} */ (owner);
+			comments.push(...(trailingComments ?? []));
+		}
+		if (statement !== node) {
+			const { trailingComments } = /** @type {AST.NodeWithMaybeComments} */ (statement);
+			comments.push(...(trailingComments ?? []));
+		}
+		contentEnd = end - 1;
+		while (true) {
+			while (/\s/.test(text[contentEnd - 1])) {
+				contentEnd--;
+			}
+			const comment = comments.find(
+				(comment) => /** @type {AST.NodeWithLocation} */ (comment).end === contentEnd,
+			);
+			if (!comment) {
+				break;
+			}
+			contentEnd = /** @type {AST.NodeWithLocation} */ (comment).start;
+		}
+	} else {
+		semicolon = false;
+	}
+
+	const source = text.slice(start, contentEnd);
+	return semicolon && options.semi !== false ? source + ';' : source;
 }
 
 /**
@@ -2184,17 +2294,16 @@ function printTsrxNode(node, path, options, print, args) {
 
 	// A `prettier-ignore` directive keeps the node's original source verbatim.
 	const commentNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node);
-	const ignoreStart = /** @type {AST.NodeWithLocation} */ (node).start;
-	const ignoreEnd = /** @type {AST.NodeWithLocation} */ (node).end;
 	if (
 		hasPrettierIgnore(commentNode) &&
 		typeof options.originalText === 'string' &&
-		typeof ignoreStart === 'number' &&
-		typeof ignoreEnd === 'number'
+		typeof (/** @type {AST.NodeWithLocation} */ (node).start) === 'number' &&
+		typeof (/** @type {AST.NodeWithLocation} */ (node).end) === 'number'
 	) {
-		const ignoredText = options.originalText.slice(ignoreStart, ignoreEnd);
+		// Like Prettier, a plain string, which doesn't break the groups around it
+		const ignoredText = printIgnoredSource(commentNode, path, options);
 		/** @type {Doc} */
-		let ignored = replaceEndOfLine(ignoredText);
+		let ignored = ignoredText;
 		// The node's span excludes its own parentheses, so put back any it had
 		if (typeCastParens) {
 			ignored = printTypeCastParens(commentNode, typeCastParens, ignored, options, args);
@@ -3504,26 +3613,10 @@ function printVariableDeclaration(node, path, options, print) {
 	const kind = node.kind || 'let';
 
 	// Don't add semicolon ONLY if this is part of a for loop header
-	// - ForStatement: the init part
-	// - ForOfStatement: the left part
-	const parentNode = /** @type {AST.Node | null} */ (path.getParentNode());
-	const isForLoopInit =
-		(parentNode && parentNode.type === 'ForStatement' && parentNode.init === node) ||
-		(parentNode && parentNode.type === 'ForOfStatement' && parentNode.left === node) ||
-		(parentNode && parentNode.type === 'ForInStatement' && parentNode.left === node) ||
-		(parentNode &&
-			parentNode.type === 'JSXForExpression' &&
-			(parentNode.statementType === 'ForStatement'
-				? parentNode.init === node
-				: parentNode.left === node));
-
-	// Like Prettier (`hasNodeIgnoreComment`), a `prettier-ignore` comment that
-	// trails the declaration on its line keeps the declaration as written
-	const statement = parentNode?.type === 'ExportNamedDeclaration' ? parentNode : node;
-	if (!isForLoopInit && hasSameLinePrettierIgnoreAfter(statement, options)) {
-		const { start, end } = /** @type {AST.NodeWithLocation} */ (/** @type {unknown} */ (node));
-		return replaceEndOfLine(/** @type {string} */ (options.originalText).slice(start, end));
-	}
+	const isForLoopInit = isForHeadDeclaration(
+		node,
+		/** @type {AST.Node | null} */ (path.getParentNode()),
+	);
 
 	const printed = path.map(print, 'declarations');
 
@@ -3552,18 +3645,27 @@ function printVariableDeclaration(node, path, options, print) {
 }
 
 /**
- * Whether a `prettier-ignore` comment trails the node on the line it ends.
- * @param {AST.Node & AST.NodeWithMaybeComments} node
- * @param {TsrxFormatOptions} options - Prettier options
+ * Whether a variable declaration is the head of a `for` loop (its init, or the
+ * left side of `in`/`of`), which takes no `;`.
+ * @param {AST.Node} node - The variable declaration
+ * @param {AST.Node | null | undefined} parent - Its parent
  * @returns {boolean}
  */
-function hasSameLinePrettierIgnoreAfter(node, options) {
-	const text = /** @type {string} */ (options.originalText);
-	return (node.trailingComments ?? []).some(
-		(comment) =>
-			isPrettierIgnoreComment(comment) &&
-			!hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).start, { backwards: true }),
-	);
+function isForHeadDeclaration(node, parent) {
+	if (!parent) {
+		return false;
+	}
+	switch (parent.type) {
+		case 'ForStatement':
+			return parent.init === node;
+		case 'ForOfStatement':
+		case 'ForInStatement':
+			return parent.left === node;
+		case 'JSXForExpression':
+			return parent.statementType === 'ForStatement' ? parent.init === node : parent.left === node;
+		default:
+			return false;
+	}
 }
 
 /**
@@ -8316,8 +8418,7 @@ function printLabeledStatement(node, path, options, print) {
 	// A moved `prettier-ignore` is the last comment before the label, so it
 	// keeps the whole statement's source.
 	if (isPrettierIgnoreComment(moved.at(-1))) {
-		const { start, end } = /** @type {AST.NodeWithLocation} */ (node);
-		return replaceEndOfLine(text.slice(start, end));
+		return printIgnoredSource(node, path, options);
 	}
 
 	const body = path.call((bodyPath) => print(bodyPath, { suppressLeadingComments: true }), 'body');

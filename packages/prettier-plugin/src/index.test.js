@@ -1184,6 +1184,180 @@ const items=[1,2,3];
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
+
+		// Like Prettier's `hasNodeIgnoreComment`, any comment attached to the node
+		// counts, not only the last leading one
+		it('keeps a statement that a prettier-ignore comment trails on its line', async () => {
+			const source = `foo(  a,b  ); // prettier-ignore
+matrix = [1,0,
+          0,1]; // prettier-ignore
+function f() {
+  return   [1,2,
+    3]; // prettier-ignore
+}
+if (a)
+  b(  1 ); // prettier-ignore
+else c(2);
+for (const  x of y) foo( x ); // prettier-ignore
+foo(  a,b  ); /* prettier-ignore */`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps members that a prettier-ignore comment trails on their line', async () => {
+			const source = `const x = {
+  a:   1, // prettier-ignore
+  b: 2,
+};
+class A {
+  x   =  1; // prettier-ignore
+  m(  a ) { } // prettier-ignore
+}
+type T = {
+  a:   string; // prettier-ignore
+  b: number;
+};`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps an element that a prettier-ignore comment trails on its line', async () => {
+			const source = `export function App() @{
+  <div>
+    <span   a="1" /> // prettier-ignore
+    <b />
+  </div>
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps the last statement of a block that an own-line prettier-ignore follows', async () => {
+			// Prettier attaches the comment to the statement before it
+			const source = `{
+  foo(  1 );
+  // prettier-ignore
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a node whose prettier-ignore comment another comment follows', async () => {
+			const source = `foo(
+  // prettier-ignore
+  /* #__PURE__ */ bar(  1,2 ),
+);
+const o = {
+  // prettier-ignore
+  /* keep */ a:   [1,2],
+  b: 1,
+};`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a node whose dangling comment is prettier-ignore', async () => {
+			const source = `for (let i = 0; i < 1; i++) { /* prettier-ignore */ }`;
+			expect(await format(source)).toBeWithNewline(source);
+			expect(await format('\n\n// prettier-ignore\n\n\n')).toBe('\n\n// prettier-ignore\n\n\n');
+		});
+
+		it('keeps the decorators written before export', async () => {
+			const source = `// prettier-ignore
+@dec
+export   class  A {}
+// prettier-ignore
+@dec
+export default   class  B {}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it("doesn't break the list around an ignored node over several lines", async () => {
+			// Prettier prints the ignored source as a plain string
+			const source = `foo(/* prettier-ignore */ [1,
+   2], b);
+const x = { a: /* prettier-ignore */ [1,
+   2], b: 2 };`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier's `printIgnored`, a statement's source ends before its `;`,
+		// which prints by the `semi` option
+		it('prints the semicolon of an ignored statement like Prettier', async () => {
+			const source = `// prettier-ignore
+let a  = 1
+// prettier-ignore
+foo(  1 )
+// prettier-ignore
+foo(  2 ) /* c */;
+// prettier-ignore
+foo(  3 ) // c
+;
+// prettier-ignore
+if (a) foo(  4 ) /* c */;
+switch (x) {
+  case 1:
+    // prettier-ignore
+    foo(  5 ) /* c */;
+}
+while (x) {
+  // prettier-ignore
+  break
+}
+// prettier-ignore
+type A =   B;
+for (/* prettier-ignore */ let i  = 0; i < 1; i++) {}`;
+			expect(await format(source)).toBeWithNewline(`// prettier-ignore
+let a  = 1;
+// prettier-ignore
+foo(  1 )
+// prettier-ignore
+foo(  2 ); /* c */
+// prettier-ignore
+foo(  3 ); // c
+// prettier-ignore
+if (a) foo(  4 ); /* c */
+switch (x) {
+  case 1:
+    // prettier-ignore
+    foo(  5 ); /* c */
+}
+while (x) {
+  // prettier-ignore
+  break;
+}
+// prettier-ignore
+type A =   B;
+for (/* prettier-ignore */ let i  = 0; i < 1; i++) {}`);
+		});
+
+		it('drops the semicolon of an ignored statement without semi', async () => {
+			const source = `// prettier-ignore
+let a  = 1;
+// prettier-ignore
+foo(  1 );
+// prettier-ignore
+foo(  2 ) /* c */;
+foo(  a,b  ); // prettier-ignore
+while (x) {
+  // prettier-ignore
+  break;
+}
+// prettier-ignore
+type A =   B;
+// prettier-ignore
+export type C =   D;`;
+			expect(await format(source, { semi: false })).toBeWithNewline(`// prettier-ignore
+let a  = 1
+// prettier-ignore
+foo(  1 )
+// prettier-ignore
+foo(  2 ) /* c */
+foo(  a,b  ) // prettier-ignore
+while (x) {
+  // prettier-ignore
+  break
+}
+// prettier-ignore
+type A =   B;
+// prettier-ignore
+export type C =   D`);
+		});
 	});
 
 	describe('recovered', () => {
