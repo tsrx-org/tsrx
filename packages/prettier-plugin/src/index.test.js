@@ -10268,6 +10268,281 @@ class B {}`);
 		});
 	});
 
+	// Prettier's `printCallArguments` hugs a function or a literal as the first
+	// or last argument only in a few shapes, and otherwise breaks every argument.
+	describe('call arguments hug like Prettier', () => {
+		it('breaks after => in a last-argument arrow with an expression body', async () => {
+			const input = `const p2 = makePromise<void>((resolve) => setTimeout(resolve, 1000000000000000000000000000000000000000));
+const p6 = runLater(firstArgument, secondArgument, (resolve) => setTimeout(resolve, 100000000000000000000));
+const p3 = makePromise<void>((resolve) => resolve?.(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbb));
+const p4 = makePromise<void>((resolve) => setTimeout(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbb)!);
+const p5 = makePromise<void>((resolve) => (condition ? resolve(aaaaaaaaaaaaaaaaaaaaaaaaaa) : reject(bbbbbbbbbbbb)));
+const p9 = new Promise((resolve) => setTimeout(resolve, 100000000000000000000000000000000000000000));`;
+			const expected = `const p2 = makePromise<void>((resolve) =>
+  setTimeout(resolve, 1000000000000000000000000000000000000000),
+);
+const p6 = runLater(firstArgument, secondArgument, (resolve) =>
+  setTimeout(resolve, 100000000000000000000),
+);
+const p3 = makePromise<void>((resolve) =>
+  resolve?.(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbb),
+);
+const p4 = makePromise<void>((resolve) =>
+  setTimeout(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbb)!,
+);
+const p5 = makePromise<void>((resolve) =>
+  condition ? resolve(aaaaaaaaaaaaaaaaaaaaaaaaaa) : reject(bbbbbbbbbbbb),
+);
+const p9 = new Promise((resolve) =>
+  setTimeout(resolve, 100000000000000000000000000000000000000000),
+);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps the opening of an object or array body on the call line', async () => {
+			const input = `const p7 = items.map((item) => ({ id: item.id, label: item.label, description: item.description, x: 1 }));
+const p8 = items.map((item) => [item.id, item.label, item.description, item.somethingElse, item.more]);`;
+			const expected = `const p7 = items.map((item) => ({
+  id: item.id,
+  label: item.label,
+  description: item.description,
+  x: 1,
+}));
+const p8 = items.map((item) => [
+  item.id,
+  item.label,
+  item.description,
+  item.somethingElse,
+  item.more,
+]);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks every argument when a last-argument function would break its parameters', async () => {
+			const input = `const p10 = items.map((item) => item.someProperty.anotherProperty.yetAnotherProperty.finalProperty);
+template = template.replace(/\\{([^\\{\\}]+)\\}|([^\\{\\}]+)/g, function (_, expression, literal) {
+  return 1;
+});
+const runConfig = makeWeakCache(function* runConfigWithAVeryLongName(options, cache) {
+  return 1;
+});`;
+			const expected = `const p10 = items.map(
+  (item) => item.someProperty.anotherProperty.yetAnotherProperty.finalProperty,
+);
+template = template.replace(
+  /\\{([^\\{\\}]+)\\}|([^\\{\\}]+)/g,
+  function (_, expression, literal) {
+    return 1;
+  },
+);
+const runConfig = makeWeakCache(
+  function* runConfigWithAVeryLongName(options, cache) {
+    return 1;
+  },
+);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks every argument around a leading function unless one short argument follows', async () => {
+			const input = `const obs = makeObserver((entries) => { for (const entry of entries) console.log(entry); }, { threshold: 0.5 });
+foo(() => { doSomething(); }, a, b);
+foo(a, () => { doSomething(); }, { x: 1 });
+useCallback((event) => { handle(event); }, [a, b]);
+foo(() => { doSomething(); }, cond ? a : b);
+foo(() => { doSomething(); }, bar(a, b));`;
+			const expected = `const obs = makeObserver(
+  (entries) => {
+    for (const entry of entries) console.log(entry);
+  },
+  { threshold: 0.5 },
+);
+foo(
+  () => {
+    doSomething();
+  },
+  a,
+  b,
+);
+foo(
+  a,
+  () => {
+    doSomething();
+  },
+  { x: 1 },
+);
+useCallback(
+  (event) => {
+    handle(event);
+  },
+  [a, b],
+);
+foo(
+  () => {
+    doSomething();
+  },
+  cond ? a : b,
+);
+foo(
+  () => {
+    doSomething();
+  },
+  bar(a, b),
+);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('hugs a leading function followed by one short argument', async () => {
+			const source = `setTimeout(() => {
+  doSomething();
+}, 500);
+fn(() => {
+  doSomething();
+}, options);
+fn(() => {
+  doSomething();
+}, bar(a));
+fn(function () {
+  doSomething();
+}, 500);`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('lets the dependency array of a React hook break by itself', async () => {
+			const input = `useEffect(() => { doSomething(); }, [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb]);
+useImperativeHandle(ref, () => { return api; }, [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb]);
+useMemo(async () => { await doSomething(); }, [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb]);
+useEffect(() => { doSomething(); }, [a, b]);`;
+			const expected = `useEffect(() => {
+  doSomething();
+}, [
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+]);
+useImperativeHandle(ref, () => {
+  return api;
+}, [
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+]);
+useMemo(async () => {
+  await doSomething();
+}, [
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+]);
+useEffect(() => {
+  doSomething();
+}, [a, b]);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks every argument of function compositions', async () => {
+			const input = `source.pipe(map((x) => x + x), filter((x) => x % 2 === 0));`;
+			const expected = `source.pipe(
+  map((x) => x + x),
+  filter((x) => x % 2 === 0),
+);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		// The object stays on one line in the first pass. That the second pass
+		// keeps it there too depends on the object's own layout (#314).
+		it('breaks every argument instead of hugging a function after a broken object', async () => {
+			const input = `function plugin() {
+  return {
+    setup(build) {
+      build.onLoad({ filter: TSRX_EXTENSION_PATTERN, namespace: "file" }, async (args) => {
+        return readFile(args.path, "utf-8");
+      });
+    },
+  };
+}
+build.onLoad({ filter: TSRX_EXTENSION_PATTERN, namespace: "file" }, async (args) => {
+  return readFile(args.path, "utf-8");
+});`;
+			const expected = `function plugin() {
+  return {
+    setup(build) {
+      build.onLoad(
+        { filter: TSRX_EXTENSION_PATTERN, namespace: "file" },
+        async (args) => {
+          return readFile(args.path, "utf-8");
+        },
+      );
+    },
+  };
+}
+build.onLoad(
+  { filter: TSRX_EXTENSION_PATTERN, namespace: "file" },
+  async (args) => {
+    return readFile(args.path, "utf-8");
+  },
+);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('hugs a function after a short object', async () => {
+			const source = `build.onLoad({ filter: PATTERN }, async (args) => {
+  return readFile(args.path, "utf-8");
+});`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('keeps the arguments of test calls, require calls, and AMD definitions on one line', async () => {
+			const input = `it("does something really interesting with the value that it receives", async () => {
+  expect(await run()).toBe(true);
+});
+describe.only("a long description of the behavior that this suite covers", () => {
+  it("works", (done) => done());
+});
+it("encodes emojis", () => expect(entities.encodeNonAsciiHTML("aaaaaaaa")).toBe("bbbbbbbbbbbb"));
+const policy = require("./policies/a/very/long/path/to/some/module/decompressResponsePolicy.js");
+const resolved = require.resolve("./policies/a/very/long/path/to/some/module/that/does/not/fit.js");
+define(["some/lib", "some/other/lib", "yet/another/lib/with/a/long/name"], (lib, other, yet) => {
+  return lib;
+});`;
+			const expected = `it("does something really interesting with the value that it receives", async () => {
+  expect(await run()).toBe(true);
+});
+describe.only("a long description of the behavior that this suite covers", () => {
+  it("works", (done) => done());
+});
+it("encodes emojis", () =>
+  expect(entities.encodeNonAsciiHTML("aaaaaaaa")).toBe("bbbbbbbbbbbb"));
+const policy = require("./policies/a/very/long/path/to/some/module/decompressResponsePolicy.js");
+const resolved =
+  require.resolve("./policies/a/very/long/path/to/some/module/that/does/not/fit.js");
+define(["some/lib", "some/other/lib", "yet/another/lib/with/a/long/name"], (
+  lib,
+  other,
+  yet,
+) => {
+  return lib;
+});`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks the arguments of a long curried call before the call on it', async () => {
+			const input = `export default connect(mapStateToPropsWithAVeryLongName, mapDispatchToPropsWithALongName)(Component);`;
+			const expected = `export default connect(
+  mapStateToPropsWithAVeryLongName,
+  mapDispatchToPropsWithALongName,
+)(Component);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	describe('new expression arguments break like call arguments', () => {
 		it('puts each argument on its own line when they do not fit', async () => {
 			const input = `const x = new Foo(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccc);`;
