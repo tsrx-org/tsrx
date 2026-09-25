@@ -191,19 +191,25 @@ export function BlogSimplifyingTsrxAfterFeedbackPage() @{
 						<a href="/features">Features</a>
 						<a href="/specification">Specification</a>
 						<a href="/playground">Playground</a>
-						<a href="/blog" aria-current="page">Blog</a>
+						<a href="/blog" aria-current="page">
+							Blog
+						</a>
 						<a href="https://discord.gg/HCYpT5QHQR" target="_blank" rel="noopener noreferrer">
 							Discord
 						</a>
 						<a href="https://github.com/tsrx-org/tsrx" target="_blank" rel="noopener noreferrer">
 							GitHub
 						</a>
-						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a>
+						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">
+							llms.txt
+						</a>
 					</nav>
 				</header>
 
 				<main class="article-shell">
-					<a class="back-link" href="/blog">Back to blog</a>
+					<a class="back-link" href="/blog">
+						Back to blog
+					</a>
 					<article>
 						<header class="article-header">
 							<p class="eyebrow">May 29, 2026</p>
@@ -220,7 +226,9 @@ export function BlogSimplifyingTsrxAfterFeedbackPage() @{
 								href="https://github.com/Ripple-TS/ripple/pull/1177"
 								target="_blank"
 								rel="noopener noreferrer"
-							>#1177</a>
+							>
+								#1177
+							</a>
 							is a big cleanup pass for TSRX. The goal is simple: keep the parts that make UI
 							authoring nicer, and remove the parts that made the language feel unfamiliar.
 						</p>
@@ -272,20 +280,17 @@ export function BlogSimplifyingTsrxAfterFeedbackPage() @{
 						<p>
 							When you return a fragment, its body is statement-driven: you can declare values,
 							branch with
-							<code>if</code>
-							, loop with
-							<code>for...of</code>
-							, and emit UI in order.
+							<code>if</code>, loop with
+							<code>for...of</code>, and emit UI in order.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={STATEMENT_CONTROL_FLOW_HTML} />
 						</pre>
 						<p>
 							All the useful TSRX control flow remains as-is: lists can still be rendered with
-							<code>for...of</code>
-							, async boundaries can still use
-							<code>try / pending / catch</code>
-							, and the template still reads in the order the UI is produced.
+							<code>for...of</code>, async boundaries can still use
+							<code>try / pending / catch</code>, and the template still reads in the order the UI
+							is produced.
 						</p>
 
 						<h2>No more return magic inside templates</h2>
@@ -335,19 +340,15 @@ export function BlogSimplifyingTsrxAfterFeedbackPage() @{
 							on DOM elements. Ripple and Solid can also use
 							<code>{'<Fragment innerHTML={...} />'}</code>
 							when you want to insert HTML without a wrapper element. React and Preact use
-							<code>dangerouslySetInnerHTML</code>
-							. Refs use
-							<code>{'ref={...}'}</code>
-							, and scoped classes can be shared with children through
-							<code>{'const styles = <style>...</style>'}</code>
-							.
+							<code>dangerouslySetInnerHTML</code>. Refs use
+							<code>{'ref={...}'}</code>, and scoped classes can be shared with children through
+							<code>{'const styles = <style>...</style>'}</code>.
 						</p>
 						<p>
 							React TSRX does not rewrite an authored
 							<code>class</code>
 							prop into
-							<code>className</code>
-							. Use
+							<code>className</code>. Use
 							<code>className</code>
 							when your React component expects it; the compiler will not hide that difference for
 							you.
@@ -384,18 +385,12 @@ export function BlogSimplifyingTsrxAfterFeedbackPage() @{
 						</p>
 						<p>
 							Inside
-							<code>{'<style>'}</code>
-							, write static CSS. The TSRX rules for JavaScript statements and expressions inside
-							elements do not apply there: no
-							<code>if</code>
-							,
-							<code>for</code>
-							, or
-							<code>{'{expr}'}</code>
-							. When a style value needs to change at runtime, set a CSS custom property on the
-							element and read it with
-							<code>var(...)</code>
-							.
+							<code>{'<style>'}</code>, write static CSS. The TSRX rules for JavaScript statements
+							and expressions inside elements do not apply there: no
+							<code>if</code>,<code>for</code>, or
+							<code>{'{expr}'}</code>. When a style value needs to change at runtime, set a CSS
+							custom property on the element and read it with
+							<code>var(...)</code>.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={SCOPED_STYLE_HTML} />

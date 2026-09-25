@@ -18,7 +18,9 @@ export function PlaygroundPage() @{
 					<a href="/getting-started">Getting Started</a>
 					<a href="/features">Features</a>
 					<a href="/specification">Specification</a>
-					<a href="/playground" aria-current="page">Playground</a>
+					<a href="/playground" aria-current="page">
+						Playground
+					</a>
 					<a href="/blog">Blog</a>
 					<a href="https://discord.gg/HCYpT5QHQR" target="_blank" rel="noopener noreferrer">
 						Discord
@@ -26,7 +28,9 @@ export function PlaygroundPage() @{
 					<a href="https://github.com/tsrx-org/tsrx" target="_blank" rel="noopener noreferrer">
 						GitHub
 					</a>
-					<a href="/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a>
+					<a href="/llms.txt" target="_blank" rel="noopener noreferrer">
+						llms.txt
+					</a>
 				</nav>
 			</header>
 
