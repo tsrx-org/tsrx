@@ -648,7 +648,12 @@ describe('TSRX parser', () => {
 	});
 
 	it('starts an element after comments on the line after a semicolon-less statement', () => {
-		for (const comment of ['/* render */', '/* a */ /* b */', '// note\n  /* render */']) {
+		for (const comment of [
+			'/* render */',
+			'/* a */ /* b */',
+			'/* a /* b */',
+			'// note\n  /* render */',
+		]) {
 			const block = findNode(
 				`export function App() @{\n  const x = a\n  ${comment} <div />\n}`,
 				'JSXCodeBlock',

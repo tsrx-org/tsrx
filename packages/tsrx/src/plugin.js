@@ -888,31 +888,27 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Like `#previousNonSpaceTabIndex`, but also steps back over block
-			 * comments between the previous token and `index`. A block comment that
-			 * spans lines returns the index of its last line break instead: as for
-			 * ASI, a line break inside a comment still separates the tokens around it.
-			 * Line comments need no handling, since one always ends at a line break.
+			 * Like `#previousNonSpaceTabIndex`, but also skips the comments between
+			 * the previous token and `index`. When that gap holds a line break
+			 * (including one inside a block comment, which separates tokens as for
+			 * ASI), returns the index of its last line break; otherwise the index of
+			 * the previous token's last character.
+			 *
+			 * The gap starts at `lastTokEnd` and is scanned forward, so comments read
+			 * exactly as the tokenizer read them (`/* a /* b *\/` is one comment).
+			 * When `lastTokEnd` doesn't mark the gap, because a token was re-read
+			 * after a rewind, comments are not skipped.
 			 * @param {number} index
 			 */
 			#previousNonSpaceTabCommentIndex(index) {
-				let cursor = this.#previousNonSpaceTabIndex(index);
-				while (
-					cursor > 2 &&
-					this.input.charCodeAt(cursor) === CharCode.slash &&
-					this.input.charCodeAt(cursor - 1) === CharCode.asterisk
-				) {
-					const open = this.input.lastIndexOf('/*', cursor - 3);
-					// Only a comment in the gap before `index` counts: from its start, only
-					// whitespace and comments may lead to `index`. A `*/` that ends a regex
-					// or a string's text fails this check.
-					if (open === -1 || skip_space_and_comments_from(this.input, open) !== index) break;
-					for (let i = cursor - 2; i > open + 1; i--) {
-						if (this.#isNewlineCharCode(i)) return i;
-					}
-					cursor = this.#previousNonSpaceTabIndex(open);
+				const gap_start = this.lastTokEnd;
+				if (gap_start > index || skip_space_and_comments_from(this.input, gap_start) !== index) {
+					return this.#previousNonSpaceTabIndex(index);
 				}
-				return cursor;
+				for (let i = index - 1; i >= gap_start; i--) {
+					if (this.#isNewlineCharCode(i)) return i;
+				}
+				return gap_start - 1;
 			}
 
 			/**
