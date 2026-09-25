@@ -2855,6 +2855,9 @@ function printTsrxNode(node, path, options, print, args) {
 		case 'TryStatement':
 			nodeContent = printTryStatement(node, path, options, print);
 			break;
+		case 'CatchClause':
+			nodeContent = printCatchClause(node, path, options, print);
+			break;
 		case 'JSXTryExpression':
 			nodeContent = [
 				'@',
@@ -3149,9 +3152,7 @@ function printTsrxNode(node, path, options, print, args) {
 		case 'RestElement': {
 			/** @type {Doc[]} */
 			const parts = ['...', path.call(print, 'argument')];
-			if (node.typeAnnotation) {
-				parts.push(': ', path.call(print, 'typeAnnotation'));
-			}
+			parts.push(...printTypeAnnotationProperty(path, print));
 			nodeContent = parts;
 			break;
 		}
@@ -3180,8 +3181,7 @@ function printTsrxNode(node, path, options, print, args) {
 					node.name,
 					definiteMarker,
 					optionalMarker,
-					': ',
-					path.call(print, 'typeAnnotation'),
+					...printTypeAnnotationProperty(path, print),
 				];
 			} else {
 				nodeContent = definiteMarker ? [node.name, definiteMarker] : node.name;
@@ -3355,7 +3355,9 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'TSTypeAnnotation': {
-			nodeContent = path.call(print, 'typeAnnotation');
+			const token = getTypeAnnotationToken(path.parent, path.key);
+			const type = path.call(print, 'typeAnnotation');
+			nodeContent = token ? [token, ' ', type] : type;
 			break;
 		}
 
@@ -4322,7 +4324,7 @@ function printArrowFunctionSignature(path, options, print, args) {
 	/** @type {Doc} */
 	let typeParametersDoc = node.typeParameters ? path.call(print, 'typeParameters') : '';
 	/** @type {Doc} */
-	let returnTypeDoc = node.returnType ? [': ', path.call(print, 'returnType')] : '';
+	let returnTypeDoc = printTypeAnnotationProperty(path, print, 'returnType');
 	if (shouldExpandParameters) {
 		if (willBreak(returnTypeDoc)) {
 			throw new ArgExpansionBailout();
@@ -4867,6 +4869,50 @@ function printFunctionParameters(
 }
 
 /**
+ * The token a `TSTypeAnnotation` starts with, like Prettier's
+ * `getTypeAnnotationFirstToken`: the `=>` of a function or constructor type,
+ * none in a type predicate (`x is T`), and `:` everywhere else
+ * @param {AST.Node | null} parent - The node that holds the annotation
+ * @param {string | number | null} key - The property that holds it
+ * @returns {string}
+ */
+function getTypeAnnotationToken(parent, key) {
+	if (
+		(parent?.type === 'TSFunctionType' || parent?.type === 'TSConstructorType') &&
+		(key === 'typeAnnotation' || key === 'returnType')
+	) {
+		return '=>';
+	}
+	return parent?.type === 'TSTypePredicate' ? '' : ':';
+}
+
+/**
+ * Print a type annotation or return type with its `:` (or `=>`), like
+ * Prettier's `printTypeAnnotationProperty`. The `TSTypeAnnotation` prints
+ * the token itself, after its leading comments, so that a comment before
+ * the `:` stays there (`let x /* c *\/ : T`). A space goes before those
+ * comments, and always before a `=>`.
+ * @param {AstPath} path - The path to the node that holds the annotation
+ * @param {PrintFn} print - Print callback
+ * @param {string} [key] - The property that holds the annotation
+ * @returns {Doc[]}
+ */
+function printTypeAnnotationProperty(path, print, key = 'typeAnnotation') {
+	const annotation = /** @type {AST.Node & AST.NodeWithMaybeComments | null | undefined} */ (
+		path.node[key]
+	);
+	if (!annotation) {
+		return [];
+	}
+	if (annotation.type !== 'TSTypeAnnotation') {
+		return [': ', path.call(print, key)];
+	}
+	return getTypeAnnotationToken(path.node, key) === '=>' || annotation.leadingComments?.length
+		? [' ', path.call(print, key)]
+		: [path.call(print, key)];
+}
+
+/**
  * The return type of a function-like node, without its `TSTypeAnnotation`
  * wrapper. TypeScript signatures keep it in `typeAnnotation`.
  * @param {FunctionLikeNode} functionNode - The function-like node
@@ -4951,7 +4997,7 @@ function printFunctionSignature(node, path, options, print, shouldExpandParamete
 		return group(paramsPart);
 	}
 	/** @type {Doc[]} */
-	const returnTypeDoc = [': ', path.call(print, 'returnType')];
+	const returnTypeDoc = printTypeAnnotationProperty(path, print, 'returnType');
 	if (shouldGroupFunctionParameters(node, returnTypeDoc)) {
 		return group([group(paramsPart), ...returnTypeDoc]);
 	}
@@ -4973,8 +5019,7 @@ function printFunctionSignature(node, path, options, print, shouldExpandParamete
 function printMethodValue(path, options, print, typeParameters = path.node.typeParameters) {
 	const node = path.node;
 	const parametersDoc = printFunctionParameters(path, options, print);
-	/** @type {Doc} */
-	const returnTypeDoc = node.returnType ? [': ', path.call(print, 'returnType')] : '';
+	const returnTypeDoc = printTypeAnnotationProperty(path, print, 'returnType');
 	/** @type {Doc[]} */
 	const parts = [
 		node.typeParameters ? path.call(print, 'typeParameters') : '',
@@ -5026,12 +5071,11 @@ function printFunctionType(node, path, options, print) {
 
 	const isArrowType = node.type === 'TSFunctionType' || node.type === 'TSConstructorType';
 	/** @type {Doc[]} */
-	const returnTypeDoc = [];
-	if (node.typeAnnotation) {
-		returnTypeDoc.push(isArrowType ? ' => ' : ': ', path.call(print, 'typeAnnotation'));
-	} else if (isArrowType) {
-		returnTypeDoc.push(' => ');
-	}
+	const returnTypeDoc = node.typeAnnotation
+		? printTypeAnnotationProperty(path, print)
+		: isArrowType
+			? [' => ']
+			: [];
 
 	if (shouldGroupFunctionParameters(node, returnTypeDoc)) {
 		parametersDoc = group(parametersDoc);
@@ -5877,50 +5921,6 @@ function printFunctionDeclaration(node, path, options, print) {
 }
 
 /**
- * Extract and print leading comments from a node before a control flow statement keyword
- * @param {AST.Node} node - The node that may have leading comments
- * @returns {Doc[]} - Array of doc parts for the comments
- */
-function extractAndPrintLeadingComments(node) {
-	const leadingComments = node && node.leadingComments;
-	/** @type {Doc[]} */
-	const parts = [];
-
-	if (leadingComments && leadingComments.length > 0) {
-		for (let i = 0; i < leadingComments.length; i++) {
-			const comment = leadingComments[i];
-			const nextComment = leadingComments[i + 1];
-
-			if (comment.type === 'Line') {
-				parts.push(printComment(comment));
-				parts.push(hardline);
-
-				// Check if there should be blank lines between comments
-				if (nextComment) {
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
-				}
-			} else if (comment.type === 'Block') {
-				parts.push(printComment(comment));
-				parts.push(hardline);
-
-				// Check if there should be blank lines between comments
-				if (nextComment) {
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
-				}
-			}
-		}
-	}
-
-	return parts;
-}
-
-/**
  * Print a loop, `if` or `else` body after its header, like Prettier's
  * `printClause`. A block, or the `if` of an `else if`, stays on the header's
  * line. Another statement moves to its own indented line when the enclosing
@@ -6306,9 +6306,7 @@ function printObject(node, path, options, print) {
 		if (/** @type {{ optional?: boolean }} */ (node).optional) {
 			annotationParts.push('?');
 		}
-		if (node.typeAnnotation) {
-			annotationParts.push(': ', path.call(print, 'typeAnnotation'));
-		}
+		annotationParts.push(...printTypeAnnotationProperty(path, print));
 	}
 
 	/** @type {Doc[]} */
@@ -6582,7 +6580,8 @@ function printHeritageClauses(node, path, options, print, groupMode) {
 }
 
 /**
- * Print a try statement (with TSRX pending block extension)
+ * Print a try statement (with TSRX pending block extension), like Prettier's
+ * `printTryStatement`
  * @param {AST.TryStatement} node - The try statement node
  * @param {AstPath<AST.TryStatement>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
@@ -6591,50 +6590,75 @@ function printHeritageClauses(node, path, options, print, groupMode) {
  * @returns {Doc[]}
  */
 function printTryStatement(node, path, options, print, directive = false) {
-	// Extract leading comments from block node to print them before 'try' keyword
-	const blockNode = node.block;
-
-	// Print block without its leading comments (they'll be printed before 'try')
-	const block = path.call(
-		(blockPath) => print(blockPath, { suppressLeadingComments: true }),
-		'block',
-	);
-
 	/** @type {Doc[]} */
-	const parts = [];
-
-	// Print leading comments from block node before 'try' keyword
-	parts.push(...extractAndPrintLeadingComments(blockNode));
-
-	parts.push('try ');
-	parts.push(block);
+	const parts = ['try ', path.call(print, 'block')];
 
 	if (node.pending) {
-		parts.push(directive ? ' @pending ' : ' pending ');
-		parts.push(path.call(print, 'pending'));
+		parts.push(directive ? ' @pending ' : ' pending ', path.call(print, 'pending'));
 	}
 
 	if (node.handler) {
-		parts.push(directive ? ' @catch' : ' catch');
-		if (node.handler.param) {
-			parts.push(' (');
-			parts.push(path.call(print, 'handler', 'param'));
-			if (node.handler.resetParam) {
-				parts.push(', ');
-				parts.push(path.call(print, 'handler', 'resetParam'));
-			}
-			parts.push(')');
-		}
-		parts.push(' ');
-		parts.push(path.call(print, 'handler', 'body'));
+		parts.push(' ', path.call(print, 'handler'));
 	}
 
 	if (node.finalizer) {
-		parts.push(' finally ');
-		parts.push(path.call(print, 'finalizer'));
+		parts.push(' finally ', path.call(print, 'finalizer'));
 	}
 
 	return parts;
+}
+
+/**
+ * Print a `catch` clause (`@catch` in a template `@try`), like Prettier's
+ * `printCatchClause`: parameters with a line comment, or a block comment on
+ * a line of its own, go on their own indented line
+ * @param {AST.CatchClause} node - The catch clause
+ * @param {AstPath<AST.CatchClause>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc[]}
+ */
+function printCatchClause(node, path, options, print) {
+	const parent = /** @type {AST.Node | null} */ (path.parent);
+	const keyword = parent?.type === 'JSXTryExpression' ? '@catch ' : 'catch ';
+	if (!node.param) {
+		return [keyword, path.call(print, 'body')];
+	}
+
+	const text = /** @type {string} */ (options.originalText);
+	const params = [node.param, node.resetParam].filter((param) => !!param);
+	const parameterHasComments = params.some((param) => {
+		const { leadingComments = [], trailingComments = [] } =
+			/** @type {AST.NodeWithMaybeComments} */ (param);
+		return (
+			leadingComments.some(
+				(comment) =>
+					comment.type !== 'Block' ||
+					hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).end),
+			) ||
+			trailingComments.some(
+				(comment) =>
+					comment.type !== 'Block' ||
+					hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).start, {
+						backwards: true,
+					}),
+			)
+		);
+	});
+	// A template `@catch` may also name its reset function, which breaks onto
+	// its own line like a second function parameter
+	const printed = [path.call(print, 'param')];
+	if (node.resetParam) {
+		printed.push(path.call(print, 'resetParam'));
+	}
+
+	return [
+		keyword,
+		parameterHasComments
+			? ['(', indent([softline, join([',', line], printed)]), softline, ') ']
+			: ['(', join(', ', printed), ') '],
+		path.call(print, 'body'),
+	];
 }
 
 /**
@@ -6827,11 +6851,7 @@ function printPropertyDefinition(node, path, options, print) {
 		parts.push('!');
 	}
 
-	// Type annotation
-	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
+	parts.push(...printTypeAnnotationProperty(path, print));
 
 	return [printAssignment(path, options, print, parts, ' =', 'value'), semi(options)];
 }
@@ -10455,9 +10475,7 @@ function printArray(node, path, options, print) {
 		if (/** @type {{ optional?: boolean }} */ (node).optional) {
 			parts.push('?');
 		}
-		if (node.typeAnnotation) {
-			parts.push(': ', path.call(print, 'typeAnnotation'));
-		}
+		parts.push(...printTypeAnnotationProperty(path, print));
 	}
 
 	return parts;
@@ -11429,10 +11447,7 @@ function printTSPropertySignature(node, path, options, print) {
 		parts.push('?');
 	}
 
-	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
+	parts.push(...printTypeAnnotationProperty(path, print));
 
 	return parts;
 }
@@ -11473,7 +11488,7 @@ function printTSMethodSignature(node, path, options, print) {
 	// `printMethodSignature`
 	const parametersDoc = printFunctionParameters(path, options, print, false, true);
 	/** @type {Doc} */
-	const returnTypeDoc = node.typeAnnotation ? [': ', path.call(print, 'typeAnnotation')] : '';
+	const returnTypeDoc = printTypeAnnotationProperty(path, print);
 	parts.push(
 		shouldGroupFunctionParameters(node, returnTypeDoc) ? group(parametersDoc) : parametersDoc,
 	);
@@ -11555,10 +11570,7 @@ function printTSIndexSignature(node, path, options, print) {
 	}
 	parts.push(']');
 
-	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
+	parts.push(...printTypeAnnotationProperty(path, print));
 
 	// Interfaces and type literals separate their members, but class members
 	// end themselves — without this the class body runs into the next member
