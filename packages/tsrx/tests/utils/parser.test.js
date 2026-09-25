@@ -8774,7 +8774,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	 *   valid?: string,
 	 *   pick?: (program: AST.Program) => unknown,
 	 *   pickValid?: (program: AST.Program) => unknown,
-	 *   match?: Record<string, unknown>,
+	 *   match?: Record<string, unknown> | unknown[],
 	 * }} CheckerLevelCase
 	 * `errors` pairs each collected message with the source text at its position.
 	 * The node that `pick` takes from the AST is the node that `pickValid` (or
@@ -8829,6 +8829,18 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		);
 		return declaration.typeParameters?.params[0];
 	};
+	/** @param {AST.Program} program */
+	const constructor_parameters = (program) =>
+		as_type(/** @type {AST.Node} */ (first_member(program)), 'MethodDefinition').value.params;
+	/** @param {AST.Program} program */
+	const declarator_init = (program) =>
+		as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations[0].init;
+	/** @param {AST.Program} program */
+	const arrow_parameters = (program) =>
+		as_type(declarator_init(program), 'ArrowFunctionExpression').params;
+	/** @param {AST.Program} program */
+	const type_alias_type = (program) =>
+		as_type(/** @type {AST.Node} */ (first(program)), 'TSTypeAliasDeclaration').typeAnnotation;
 
 	/** @type {CheckerLevelCase[]} */
 	const cases = [
@@ -9658,6 +9670,302 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: first_parameter,
 			match: { type: 'TSParameterProperty', parameter: { type: 'ArrayPattern' } },
 		},
+		// A parameter property with a pattern and a default (#665).
+		{
+			source: 'class A {\n\tconstructor(public [a] = [1]) {}\n}',
+			errors: [['A parameter property may not be declared using a binding pattern.', 'public [a]']],
+			throws: 'A parameter property may not be declared using a binding pattern. (2:13)',
+			pick: constructor_parameter,
+			match: {
+				type: 'TSParameterProperty',
+				accessibility: 'public',
+				parameter: { type: 'AssignmentPattern', left: { type: 'ArrayPattern' } },
+			},
+		},
+		{
+			source: 'class A { constructor(readonly { a }: { a: number } = { a: 1 }) {} }',
+			errors: [['A parameter property may not be declared using a binding pattern.', 'readonly {']],
+			throws: 'A parameter property may not be declared using a binding pattern. (1:22)',
+			pick: constructor_parameter,
+			match: {
+				type: 'TSParameterProperty',
+				readonly: true,
+				parameter: {
+					type: 'AssignmentPattern',
+					left: { type: 'ObjectPattern', typeAnnotation: { type: 'TSTypeAnnotation' } },
+				},
+			},
+		},
+		{
+			source: 'function f(public [a] = [1]) {}',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				['A parameter property may not be declared using a binding pattern.', 'public'],
+			],
+			throws: "The keyword 'public' is reserved (1:11)",
+			pick: first_parameter,
+			match: {
+				type: 'TSParameterProperty',
+				parameter: { type: 'AssignmentPattern', left: { type: 'ArrayPattern' } },
+			},
+		},
+		// A parameter property modifier on a signature's parameter (#664).
+		{
+			source: 'type F = (public x: number) => void;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public x'],
+			],
+			// acorn-typescript reads `(public x` as a parenthesized type.
+			throws: 'Unexpected token (1:17)',
+			valid: 'class A { constructor(public x: number) {} }',
+			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
+			pickValid: constructor_parameters,
+		},
+		{
+			source: 'type C = new (protected x: number) => object;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'protected x'],
+			],
+			throws: "The keyword 'protected' is reserved (1:14)",
+			valid: 'class A { constructor(protected x: number) {} }',
+			pick: (program) => as_type(type_alias_type(program), 'TSConstructorType').parameters,
+			pickValid: constructor_parameters,
+		},
+		{
+			source:
+				'interface I {\n\tm(private readonly x: number): void;\n\t(override y: number): void;\n\tnew (readonly z: number): I;\n}',
+			errors: [
+				[
+					'A parameter property is only allowed in a constructor implementation.',
+					'private readonly',
+				],
+				['A parameter property is only allowed in a constructor implementation.', 'override y'],
+				['A parameter property is only allowed in a constructor implementation.', 'readonly z'],
+			],
+			throws: "The keyword 'private' is reserved (2:3)",
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'TSInterfaceDeclaration').body.body,
+			match: [
+				{
+					type: 'TSMethodSignature',
+					parameters: [{ type: 'TSParameterProperty', accessibility: 'private', readonly: true }],
+				},
+				{
+					type: 'TSCallSignatureDeclaration',
+					parameters: [{ type: 'TSParameterProperty', override: true }],
+				},
+				{
+					type: 'TSConstructSignatureDeclaration',
+					parameters: [{ type: 'TSParameterProperty', readonly: true }],
+				},
+			],
+		},
+		{
+			source: 'type T = { m?(public [a]: number[]): void };',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				['A parameter property may not be declared using a binding pattern.', 'public'],
+			],
+			throws: "The keyword 'public' is reserved (1:14)",
+			pick: (program) =>
+				as_type(as_type(type_alias_type(program), 'TSTypeLiteral').members[0], 'TSMethodSignature')
+					.parameters,
+			match: [
+				{
+					type: 'TSParameterProperty',
+					accessibility: 'public',
+					parameter: { type: 'ArrayPattern', typeAnnotation: { type: 'TSTypeAnnotation' } },
+				},
+			],
+		},
+		{
+			source: 'type T = { (public ...rest: number[]): void };',
+			errors: [
+				['A parameter property cannot be declared using a rest parameter.', 'public'],
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+			],
+			throws: "The keyword 'public' is reserved (1:12)",
+			valid: 'type T = { (...rest: number[]): void };',
+			pick: type_alias_type,
+		},
+		{
+			// A signature's parameters now go through `parseBindingList`, which reads
+			// the parameters after a rest parameter, as for a function.
+			source: 'type F = (...a: number[], b: string) => void;',
+			errors: [['Comma is not permitted after the rest element', ', b']],
+			throws: 'Comma is not permitted after the rest element (1:24)',
+			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
+			match: [{ type: 'RestElement' }, { type: 'Identifier', name: 'b' }],
+		},
+		// A parameter property modifier on an arrow function's parameter (#663).
+		{
+			source: 'const k = (public x: number) => x;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public x'],
+			],
+			throws: "The keyword 'public' is reserved (1:11)",
+			valid: 'class A { constructor(public x: number) {} }',
+			pick: arrow_parameters,
+			pickValid: constructor_parameters,
+		},
+		{
+			source: 'const m = async (readonly x: number) => x;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'readonly x'],
+			],
+			throws: 'Unexpected token (1:26)',
+			valid: 'class A { constructor(readonly x: number) {} }',
+			pick: arrow_parameters,
+			pickValid: constructor_parameters,
+		},
+		{
+			// After type parameters, a modifier can come before a pattern too.
+			source: 'const n = <T,>(a: T, private readonly b?: T, protected [c]: T[] = []) => a;',
+			errors: [
+				[
+					'A parameter property is only allowed in a constructor implementation.',
+					'private readonly',
+				],
+				['A parameter property is only allowed in a constructor implementation.', 'protected'],
+				['A parameter property may not be declared using a binding pattern.', 'protected'],
+			],
+			// acorn-typescript throws the error of reading `<T,>` as an element.
+			throws: 'Unexpected token (1:10)',
+			pick: arrow_parameters,
+			match: [
+				{ type: 'Identifier', name: 'a' },
+				{
+					type: 'TSParameterProperty',
+					accessibility: 'private',
+					readonly: true,
+					parameter: { type: 'Identifier', name: 'b', optional: true },
+				},
+				{
+					type: 'TSParameterProperty',
+					accessibility: 'protected',
+					parameter: {
+						type: 'AssignmentPattern',
+						left: { type: 'ArrayPattern', typeAnnotation: { type: 'TSTypeAnnotation' } },
+						right: { type: 'ArrayExpression' },
+					},
+				},
+			],
+		},
+		{
+			source: 'const o = async <T,>(override x: T) => x;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'override'],
+			],
+			throws: 'Unexpected token (1:19)',
+			valid: 'class A { constructor(override x: T) {} }',
+			pick: arrow_parameters,
+			pickValid: constructor_parameters,
+		},
+		{
+			source:
+				'const g = (\n\ta: number,\n\treadonly b = 1,\n\tpublic { c }: { c: number },\n): number => a;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'readonly b'],
+				['A parameter property is only allowed in a constructor implementation.', 'public {'],
+				['A parameter property may not be declared using a binding pattern.', 'public {'],
+			],
+			throws: 'Unexpected token (3:10)',
+			pick: declarator_init,
+			match: {
+				type: 'ArrowFunctionExpression',
+				params: [
+					{ type: 'Identifier', name: 'a' },
+					{
+						type: 'TSParameterProperty',
+						readonly: true,
+						parameter: { type: 'AssignmentPattern', left: { name: 'b' } },
+					},
+					{
+						type: 'TSParameterProperty',
+						accessibility: 'public',
+						parameter: { type: 'ObjectPattern', typeAnnotation: { type: 'TSTypeAnnotation' } },
+					},
+				],
+				returnType: { type: 'TSTypeAnnotation' },
+			},
+		},
+		{
+			// TypeScript reports both, as for a function's parameter.
+			source: 'const f = (a: number, public ...rest: number[]) => a;',
+			errors: [
+				['A parameter property cannot be declared using a rest parameter.', 'public'],
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+			],
+			throws: "The keyword 'public' is reserved (1:22)",
+			valid: 'const f = (a: number, ...rest: number[]) => a;',
+			pick: arrow_parameters,
+		},
+		{
+			source: 'const f = (a, public ...r,) => a;',
+			errors: [
+				['A parameter property cannot be declared using a rest parameter.', 'public'],
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				['Comma is not permitted after the rest element', ',)'],
+			],
+			throws: "The keyword 'public' is reserved (1:14)",
+			valid: 'const f = (a, ...r) => a;',
+			pick: arrow_parameters,
+		},
+		{
+			source: 'export const App = (public x: number) => @{\n\t<div>{x}</div>\n};',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public x'],
+			],
+			throws: "The keyword 'public' is reserved (1:20)",
+		},
+		// An arrow function's optional rest or pattern parameter (#663), as other
+		// functions' (#616, #557).
+		{
+			source: 'const f = (...a?: number[]) => a;',
+			errors: [['A rest parameter cannot be optional.', '?:']],
+			throws: 'A rest parameter cannot be optional. (1:15)',
+			valid: 'declare function f(...a?: number[]): void;',
+			pick: arrow_parameters,
+			pickValid: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'TSDeclareFunction').params,
+		},
+		{
+			source: 'const f = ({ a }?: { a: number }) => a;',
+			errors: [
+				[
+					'A binding pattern parameter cannot be optional in an implementation signature.',
+					'{ a }?',
+				],
+			],
+			throws:
+				'A binding pattern parameter cannot be optional in an implementation signature. (1:11)',
+			valid: 'declare function f({ a }?: { a: number }): void;',
+			pick: arrow_parameters,
+			pickValid: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'TSDeclareFunction').params,
+		},
+		{
+			source: 'const f = async (x, [a]?: number[]) => a;',
+			errors: [
+				['A binding pattern parameter cannot be optional in an implementation signature.', '[a]?'],
+			],
+			throws:
+				'A binding pattern parameter cannot be optional in an implementation signature. (1:20)',
+			pick: arrow_parameters,
+			match: [{ type: 'Identifier' }, { type: 'ArrayPattern', optional: true }],
+		},
+		{
+			source: 'const f = <T,>({ a }?: T) => a;',
+			errors: [
+				[
+					'A binding pattern parameter cannot be optional in an implementation signature.',
+					'{ a }?',
+				],
+			],
+			throws: 'Unexpected token (1:10)',
+			pick: arrow_parameters,
+			match: [{ type: 'ObjectPattern', optional: true }],
+		},
 	];
 
 	/** @type {Array<ParseOptions>} */
@@ -9758,6 +10066,24 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'for (const of x.y) {}',
 			// Modifiers on the line before a parameter's name are its name.
 			'function f(readonly\n\tx: number) {}',
+			'const f = (public\n\tx) => x;',
+			// TypeScript reads `(` and a modifier as an arrow function's parameters
+			// only before a name other than `as`, and as a parenthesized expression
+			// otherwise.
+			'const f = (public [a]) => a;',
+			'const f = async (readonly { a }) => a;',
+			'const f = (public ...r) => r;',
+			'const f = (readonly as) => 1;',
+			// Modifiers where no arrow function follows.
+			'(public x);',
+			'(a, readonly b);',
+			'f(public x);',
+			'async (a, public b);',
+			'const f = (a, public b)\n=> a;',
+			// TypeScript reads a parenthesized type here.
+			'type F = (public ...rest: number[]) => void;',
+			// TypeScript reads `x` as the name after the modifiers, then fails.
+			'const f = (a, public x y) => a;',
 		];
 		const modes = [undefined, ...collect_modes];
 		const inputs = sources.flatMap((source) => modes.map((options) => ({ source, options })));
@@ -9825,6 +10151,15 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// A declarator named `of`.
 			'for (const of of x) {}',
 			'for (var of = 1; ; ) {}',
+			// Names and expressions that start with a modifier's name.
+			'const f = (readonly, override = 1, public$: number) => readonly;',
+			'const g = (a, readonly [b]);',
+			'const h = async (readonly) => readonly;',
+			'f(readonly, readonly[0], override * 2);',
+			'type P = (readonly [string]) | (readonly string[]);',
+			'type Q = (readonly: number) => void;',
+			// A parameter property with a default that isn't a pattern.
+			'class A {\n\tconstructor(public x = 1, readonly y: number[] = []) {}\n}',
 		];
 		const outcomes = await parse_in_worker(
 			sources.flatMap((source) => collect_modes.map((options) => ({ source, options }))),

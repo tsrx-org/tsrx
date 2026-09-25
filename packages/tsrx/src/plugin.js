@@ -94,6 +94,10 @@ const REST_PARAMETER_PROPERTY = 'A parameter property cannot be declared using a
 // parameter when `parseBindingList` passes `allowModifiers: false`.
 const UNEXPECTED_PARAMETER_MODIFIER =
 	'A parameter property is only allowed in a constructor implementation.';
+// TypeScript's TS1187, acorn-typescript's error for a parameter property with a
+// binding pattern.
+const PATTERN_PARAMETER_PROPERTY =
+	'A parameter property may not be declared using a binding pattern.';
 // acorn-typescript's error for decorators before something other than a class.
 const UNEXPECTED_LEADING_DECORATOR = 'Leading decorators must be attached to a class declaration.';
 // TypeScript's parser errors for what follows `export` when it starts no
@@ -172,7 +176,8 @@ const regex_let_binding_error =
  * (`parseVarStatement`, `parseForStatement`), `await` in a namespace
  * (`canAwait`), a private name outside a class (the constructor and
  * `parsePrivateIdent`), a modifier on a rest parameter
- * (`#parseRestParameterProperty`), and decorators before a declaration other
+ * (`#parseRestParameterProperty`), a modifier on an arrow function's parameter
+ * (`#parseArrowParameterProperty`), and decorators before a declaration other
  * than a class (`parseDecorators`, `#parseDecoratedStatement`).
  *
  * acorn's errors here are ECMAScript early errors, which acorn rightly raises;
@@ -227,10 +232,12 @@ const CHECKER_LEVEL_ERRORS = [
 	/^'\w+' modifier cannot appear on a type (?:member|parameter)\.$/,
 	/^'\w+' modifier can only appear on a type parameter of a class, interface or type alias\.$/,
 	// acorn-typescript: a parameter property with a binding pattern,
-	// `constructor(public [a]: T) {}` (TS1187).
-	'A parameter property may not be declared using a binding pattern.',
-	// acorn-typescript: a parameter property modifier on a function's parameter,
-	// `function f(public x) {}` (TS2369), when collecting. See `parseBindingList`.
+	// `constructor(public [a]: T) {}` (TS1187), also with a default (see
+	// `#parseAssignableListItem`).
+	PATTERN_PARAMETER_PROPERTY,
+	// acorn-typescript: a parameter property modifier on a function's or a
+	// signature's parameter, `function f(public x) {}` (TS2369), when collecting.
+	// See `parseBindingList` and `tsParseBindingListForSignature`.
 	UNEXPECTED_PARAMETER_MODIFIER,
 	// acorn-typescript: `private #x` (TS18010), `abstract #x` (TS18019).
 	/^Private elements cannot have an accessibility modifier \('\w+'\)\.$/,
@@ -257,6 +264,31 @@ function get_error_message(message) {
 		: typeof message?.message === 'string'
 			? message.message
 			: String(message);
+}
+
+/**
+ * Whether an arrow function's parameter, read as an expression before `=>`,
+ * becomes a binding pattern, with or without a type annotation and a default.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_pattern_parameter_expression(node) {
+	/** @typedef {{ type: string, left?: unknown, expression?: unknown }} ParameterExpression */
+	let target = /** @type {ParameterExpression} */ (node);
+	// A default: acorn makes the left side of `=` a pattern already.
+	if (target.type === 'AssignmentExpression') {
+		target = /** @type {ParameterExpression} */ (target.left);
+	}
+	// A type annotation.
+	if (target.type === 'TSTypeCastExpression') {
+		target = /** @type {ParameterExpression} */ (target.expression);
+	}
+	return (
+		target.type === 'ArrayExpression' ||
+		target.type === 'ObjectExpression' ||
+		target.type === 'ArrayPattern' ||
+		target.type === 'ObjectPattern'
+	);
 }
 
 /**
@@ -836,6 +868,15 @@ export function TSRXPlugin(config) {
 			// Where the binding list item being read starts, after its decorators (see
 			// `#parseAssignableListItem`).
 			#assignableListItemStart = -1;
+			// When collecting, the list being read that can be an arrow function's
+			// parameters: a parenthesized expression or the arguments of `async (…)`.
+			// Where its `(` is, whether type parameters come before it, and how many
+			// `parseMaybeAssign` calls deep the parser is in one of its items (see
+			// `#parseArrowParameterProperty`).
+			/** @type {{ parenStart: number, generic: boolean, depth: number } | null} */
+			#arrowParameterList = null;
+			// Where the last type parameter list ended (see `tsParseTypeParameters`).
+			#typeParametersEnd = -1;
 			// When collecting, where the leading decorators of the statement being read
 			// start, while `parseDecorators` reads them (-1 otherwise), and the error
 			// recorded for them when no class follows (see `parseDecorators`).
@@ -3896,6 +3937,63 @@ export function TSRXPlugin(config) {
 				return elements;
 			}
 
+			// UPSTREAM(sveltejs/acorn-typescript#136): remove once a release includes the fix
+			/**
+			 * The parameters of a function or constructor type, or of a method, call,
+			 * or construct signature. TypeScript's parser reads parameter property
+			 * modifiers before them too, and its checker reports them (TS2369).
+			 * acorn-typescript reads them with acorn's `parseBindingList`, past
+			 * `parseBindingList` above, with no `allowModifiers`, so `public` failed as
+			 * a reserved word and the name after `readonly` as unexpected. When
+			 * collecting, read them through `parseBindingList`, which reads the
+			 * modifiers there and records TS2369 at the first one, as for a function's
+			 * parameters. A strict parse still fails.
+			 *
+			 * This is acorn-typescript's method with that change. Its check of each
+			 * parameter looks through a parameter property to its parameter, which
+			 * can't have a default in a signature either.
+			 * @type {Parse.Parser['tsParseBindingListForSignature']}
+			 */
+			tsParseBindingListForSignature() {
+				if (!this.#collect) return super.tsParseBindingListForSignature();
+				return this.parseBindingList(tt.parenR, true, true).map((item) => {
+					const node = /** @type {AST.Node} */ (item);
+					const parameter = /** @type {AST.Node & AST.NodeWithLocation} */ (
+						node.type === 'TSParameterProperty' ? node.parameter : node
+					);
+					if (
+						parameter.type !== 'Identifier' &&
+						parameter.type !== 'RestElement' &&
+						parameter.type !== 'ObjectPattern' &&
+						parameter.type !== 'ArrayPattern'
+					) {
+						this.raise(
+							parameter.start,
+							`Name in a signature must be an Identifier, ObjectPattern or ArrayPattern, instead got ${parameter.type}.`,
+						);
+					}
+					return item;
+				});
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#139): remove once a release includes the fix
+			/**
+			 * Whether a parameter starts at the current token, for the lookahead that
+			 * tells a function type from a parenthesized type. TypeScript's
+			 * `skipParameterStart` skips modifiers first, so
+			 * `(public x: number) => void` is a function type, with TS2369 from its
+			 * checker. When collecting, skip parameter property modifiers too, so
+			 * that `tsParseBindingListForSignature` reads them. A strict parse still
+			 * reads `(public x` as a parenthesized type and fails at `x`.
+			 * @type {Parse.Parser['tsSkipParameterStart']}
+			 */
+			tsSkipParameterStart() {
+				if (this.#collect) {
+					this.tsParseModifiers({ modified: {}, allowedModifiers: PARAMETER_MODIFIERS });
+				}
+				return super.tsSkipParameterStart();
+			}
+
 			/**
 			 * acorn-typescript gives a namespace body acorn's class static block scope
 			 * flag, so acorn reads `await` there as an identifier and throws `Cannot use
@@ -4681,17 +4779,32 @@ export function TSRXPlugin(config) {
 			 * the rest element after parameter property modifiers
 			 * (`#parseRestParameterProperty`). Records where the item starts for
 			 * `raise`.
+			 *
+			 * acorn-typescript raises TS1187 for a parameter property whose parameter
+			 * is a binding pattern, but not for one with a default
+			 * (`constructor(public [a] = [1])`), whose output then keeps the pattern
+			 * after the modifier. TypeScript's checker reports both. Raise it for the
+			 * pattern before the default too, at the same place.
 			 * @param {boolean | undefined} allowModifiers
 			 * @returns {AST.Pattern}
 			 */
 			#parseAssignableListItem(allowModifiers) {
 				this.#assignableListItemStart = this.start;
-				return (
+				const item = /** @type {AST.Node} */ (
 					(this.#collect &&
 						allowModifiers !== undefined &&
 						this.#parseRestParameterProperty(allowModifiers)) ||
-					super.parseAssignableListItem(allowModifiers)
+						super.parseAssignableListItem(allowModifiers)
 				);
+				if (
+					item.type === 'TSParameterProperty' &&
+					item.parameter.type === 'AssignmentPattern' &&
+					item.parameter.left.type !== 'Identifier'
+				) {
+					// UPSTREAM(sveltejs/acorn-typescript#138): remove once a release includes the fix
+					this.raise(/** @type {number} */ (item.start), PATTERN_PARAMETER_PROPERTY);
+				}
+				return /** @type {AST.Pattern} */ (item);
 			}
 
 			/**
@@ -5484,7 +5597,14 @@ export function TSRXPlugin(config) {
 			 */
 			parseParenAndDistinguishExpression(canBeArrow, forInit) {
 				const startPos = this.start;
-				const expr = super.parseParenAndDistinguishExpression(canBeArrow, forInit);
+				const expr =
+					canBeArrow && this.#collect
+						? this.#parseArrowParameterList(
+								// `<T,>(`: type parameters make it an arrow function.
+								this.#typeParametersEnd === this.lastTokEnd,
+								() => super.parseParenAndDistinguishExpression(canBeArrow, forInit),
+							)
+						: super.parseParenAndDistinguishExpression(canBeArrow, forInit);
 
 				// If the expression's start position is after the opening paren,
 				// it means it was wrapped in parentheses. Mark it in metadata.
@@ -5496,6 +5616,247 @@ export function TSRXPlugin(config) {
 				}
 
 				return expr;
+			}
+
+			/**
+			 * The arguments of `async (…)` can be an async arrow function's
+			 * parameters (see `#parseArrowParameterProperty`).
+			 * @type {Parse.Parser['parseSubscript']}
+			 */
+			parseSubscript(base, startPos, startLoc, noCalls, maybeAsyncArrow, optionalChained, forInit) {
+				if (
+					this.#collect &&
+					maybeAsyncArrow &&
+					!noCalls &&
+					base.type === 'Identifier' &&
+					this.type === tt.parenL
+				) {
+					return this.#parseArrowParameterList(false, () =>
+						super.parseSubscript(
+							base,
+							startPos,
+							startLoc,
+							noCalls,
+							maybeAsyncArrow,
+							optionalChained,
+							forInit,
+						),
+					);
+				}
+				return super.parseSubscript(
+					base,
+					startPos,
+					startLoc,
+					noCalls,
+					maybeAsyncArrow,
+					optionalChained,
+					forInit,
+				);
+			}
+
+			/**
+			 * Records where type parameters end: after them, a parenthesized list is
+			 * an arrow function's parameters (`<T,>(public x: T) => x`).
+			 * @type {Parse.Parser['tsParseTypeParameters']}
+			 */
+			tsParseTypeParameters(parseModifiers) {
+				const node = super.tsParseTypeParameters(parseModifiers);
+				this.#typeParametersEnd = this.lastTokEnd;
+				return node;
+			}
+
+			/**
+			 * Reads, with `parse`, a list that can be an arrow function's parameters,
+			 * for `#parseArrowParameterProperty`.
+			 * @template T
+			 * @param {boolean} generic Whether type parameters come before its `(`
+			 * @param {() => T} parse
+			 * @returns {T}
+			 */
+			#parseArrowParameterList(generic, parse) {
+				const outer = this.#arrowParameterList;
+				this.#arrowParameterList = { parenStart: this.start, generic, depth: 0 };
+				try {
+					return parse();
+				} finally {
+					this.#arrowParameterList = outer;
+				}
+			}
+
+			/**
+			 * Tracks how deep the parser is in an item of the list that
+			 * `#parseArrowParameterList` reads. acorn reads each item with
+			 * `parseParenItem` after it; before one, read parameter property
+			 * modifiers (`#parseArrowParameterProperty`).
+			 * @type {Parse.Parser['parseMaybeAssign']}
+			 */
+			parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse) {
+				const list = this.#arrowParameterList;
+				if (list === null) {
+					return super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse);
+				}
+				if (list.depth === 0 && afterLeftParse === this.parseParenItem) {
+					const item = this.#parseArrowParameterProperty(list, refDestructuringErrors);
+					if (item) return item;
+				}
+				list.depth++;
+				try {
+					return super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse);
+				} finally {
+					list.depth--;
+				}
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#136): remove once a release includes the fix
+			/**
+			 * TypeScript's parser reads parameter property modifiers before an arrow
+			 * function's parameters too, and its checker reports them: TS2369, and
+			 * TS1187 or TS1317 as for other parameters. acorn reads an arrow
+			 * function's parameters as the items of a parenthesized expression, or as
+			 * the arguments of `async (…)`, and makes them patterns once `=>` follows,
+			 * so `public` failed as a reserved word and the name after `readonly` as
+			 * unexpected.
+			 *
+			 * When collecting, where TypeScript reads the list as an arrow function's
+			 * parameters with modifiers here (`#startsArrowParameterProperty`), read
+			 * them before the item, record the errors, and build the
+			 * `TSParameterProperty` that a function's parameter gets (see
+			 * `parseBindingList`). Its parameter is an expression until `toAssignable`
+			 * makes it a pattern. Before a rest element, keep the rest element without
+			 * them, as `#parseRestParameterProperty` does. Anywhere else, return
+			 * `null`, having read nothing, so that the item reads as before, and a
+			 * strict parse fails as before.
+			 * @param {{ parenStart: number, generic: boolean, depth: number }} list
+			 * @param {Parse.DestructuringErrors | undefined} refDestructuringErrors
+			 * @returns {AST.Expression | null}
+			 */
+			#parseArrowParameterProperty(list, refDestructuringErrors) {
+				if (
+					this.containsEsc ||
+					!PARAMETER_MODIFIERS.includes(/** @type {string} */ (this.value)) ||
+					!Parser.acornTypeScript.tokenIsIdentifier(this.type) ||
+					!this.#startsArrowParameterProperty(
+						!list.generic && this.lastTokStart === list.parenStart,
+					)
+				) {
+					return null;
+				}
+				const start = this.start;
+				const startLoc = this.startLoc;
+				/** @type {{ accessibility?: AST.TSParameterProperty['accessibility'], readonly?: boolean, override?: boolean }} */
+				const modified = {};
+				this.tsParseModifiers({ modified, allowedModifiers: PARAMETER_MODIFIERS });
+				if (this.type === tt.ellipsis) {
+					this.#recordCheckerLevelError(start, this.lastTokEnd, REST_PARAMETER_PROPERTY);
+					this.#recordCheckerLevelError(start, start + 1, UNEXPECTED_PARAMETER_MODIFIER);
+					const rest = this.parseParenItem(this.parseRestBinding());
+					// As acorn does after a rest element in a parenthesized expression.
+					if (this.type === tt.comma) this.raise(this.start, REST_ELEMENT_TRAILING_COMMA);
+					return /** @type {AST.Expression} */ (/** @type {unknown} */ (rest));
+				}
+				this.#recordCheckerLevelError(start, start + 1, UNEXPECTED_PARAMETER_MODIFIER);
+				/** @type {AST.Expression} */
+				let parameter;
+				list.depth++;
+				try {
+					parameter = super.parseMaybeAssign(false, refDestructuringErrors, this.parseParenItem);
+				} finally {
+					list.depth--;
+				}
+				if (is_pattern_parameter_expression(parameter)) {
+					this.#recordCheckerLevelError(start, start + 1, PATTERN_PARAMETER_PROPERTY);
+				}
+				const node = /** @type {AST.TSParameterProperty} */ (this.startNodeAt(start, startLoc));
+				if (modified.accessibility) node.accessibility = modified.accessibility;
+				if (modified.readonly) node.readonly = true;
+				if (modified.override) node.override = true;
+				node.parameter = /** @type {AST.TSParameterProperty['parameter']} */ (
+					/** @type {unknown} */ (parameter)
+				);
+				return /** @type {AST.Expression} */ (
+					/** @type {unknown} */ (
+						this.finishNode(
+							node,
+							/** @type {AST.TSParameterProperty['type']} */ ('TSParameterProperty'),
+						)
+					)
+				);
+			}
+
+			/**
+			 * Whether TypeScript reads the list as an arrow function's parameters, with
+			 * parameter property modifiers from the current token: the rest of the
+			 * list reads as parameters, the first of them with modifiers, and `=>`
+			 * follows it (after a return type). At the list's first item, TypeScript
+			 * reads `(` and a modifier as an arrow function's parameters only when a
+			 * name other than `as` follows the modifier
+			 * (`isParenthesizedArrowFunctionExpressionWorker`), and as a
+			 * parenthesized expression otherwise, as in `(public [a]) => a`. After
+			 * another item, or after type parameters, it reads parameters.
+			 * @param {boolean} first Whether the item is the list's first, with no
+			 * type parameters before the list
+			 * @returns {boolean}
+			 */
+			#startsArrowParameterProperty(first) {
+				if (first) {
+					const next = this.lookahead();
+					if (
+						!Parser.acornTypeScript.tokenIsIdentifier(next.type) ||
+						this.isContextualWithState('as', next)
+					) {
+						return false;
+					}
+				}
+				const start = this.start;
+				const errors = this.#errors;
+				const errors_length = errors?.length ?? 0;
+				try {
+					return this.tsLookAhead(() => {
+						try {
+							const [item] = /** @type {AST.Node[]} */ (
+								this.parseBindingList(tt.parenR, false, true, false)
+							);
+							// Modifiers leave a parameter property, or a rest element after them.
+							if (!item || (item.type !== 'TSParameterProperty' && item.start === start)) {
+								return false;
+							}
+							if (this.type === tt.colon) this.tsParseTypeOrTypePredicateAnnotation(tt.colon);
+							return this.type === tt.arrow && !this.canInsertSemicolon();
+						} catch {
+							return false;
+						}
+					});
+				} finally {
+					// `error` records some errors outside the lookahead's undo log.
+					if (errors) errors.length = errors_length;
+				}
+			}
+
+			/**
+			 * A parameter property that `#parseArrowParameterProperty` reads holds
+			 * its parameter as an expression: make that a pattern, as for any other
+			 * parameter of the arrow function. One that `parseBindingList` reads for
+			 * a generic async arrow function holds a pattern already.
+			 * UPSTREAM(sveltejs/acorn-typescript#136)
+			 * @type {Parse.Parser['toAssignable']}
+			 */
+			toAssignable(node, isBinding, refDestructuringErrors, preserveTypeScriptWrapper) {
+				if (node?.type !== 'TSParameterProperty') {
+					return super.toAssignable(
+						node,
+						isBinding,
+						refDestructuringErrors,
+						preserveTypeScriptWrapper,
+					);
+				}
+				let parameter = /** @type {AST.Node} */ (/** @type {unknown} */ (node.parameter));
+				if (/** @type {string} */ (parameter.type) === 'TSTypeCastExpression') {
+					parameter = this.typeCastToParameter(parameter);
+				}
+				node.parameter = /** @type {AST.TSParameterProperty['parameter']} */ (
+					/** @type {unknown} */ (this.toAssignable(parameter, isBinding, refDestructuringErrors))
+				);
+				return /** @type {AST.Pattern} */ (/** @type {unknown} */ (node));
 			}
 
 			/**
@@ -5808,6 +6169,10 @@ export function TSRXPlugin(config) {
 			 */
 			parseFunctionBody(node, isArrowFunction, isMethod, forInit, ...args) {
 				this.#functionBodyDepth++;
+				// A body isn't part of a list that can be an arrow function's parameters,
+				// though an arrow function's is read before that list is done.
+				const arrow_parameter_list = this.#arrowParameterList;
+				this.#arrowParameterList = null;
 				try {
 					// Allow a `@{ … }` code block as the body of a function, method, or
 					// arrow function, so components can be written as `function Something()
@@ -5822,7 +6187,10 @@ export function TSRXPlugin(config) {
 						node.returnType = this.tsParseTypeOrTypePredicateAnnotation(tt.colon);
 					}
 					const is_code_block = this.#isCodeBlockStart(this.start);
-					if (!isArrowFunction && (is_code_block || !this.#isBodilessSignature(args[0]))) {
+					if (isArrowFunction) {
+						this.#reportOptionalRestParameter(/** @type {AST.ArrowFunctionExpression} */ (node));
+						this.#reportOptionalPatternParameters(node);
+					} else if (is_code_block || !this.#isBodilessSignature(args[0])) {
 						this.#reportOptionalPatternParameters(node);
 					}
 					if (is_code_block) {
@@ -5834,6 +6202,30 @@ export function TSRXPlugin(config) {
 					return super.parseFunctionBody(node, isArrowFunction, isMethod, forInit, ...args);
 				} finally {
 					this.#functionBodyDepth--;
+					this.#arrowParameterList = arrow_parameter_list;
+				}
+			}
+
+			/**
+			 * Raise TS1047 for an optional rest parameter of an arrow function, at its
+			 * `?`, outside an ambient context, as `parseBindingListItem` does for
+			 * other functions. An arrow function's parameters are read as
+			 * expressions, which acorn-typescript never checked.
+			 * @param {AST.ArrowFunctionExpression} node
+			 */
+			#reportOptionalRestParameter(node) {
+				if (this.isAmbientContext) return;
+				for (const param of node.params) {
+					if (
+						param.type === 'RestElement' &&
+						/** @type {{ optional?: boolean }} */ (param).optional
+					) {
+						const question = skip_space_and_comments_from(
+							this.input,
+							/** @type {number} */ (param.argument.end),
+						);
+						this.raise(question, OPTIONAL_REST_PARAMETER);
+					}
 				}
 			}
 
@@ -5858,8 +6250,9 @@ export function TSRXPlugin(config) {
 			 * that has a body, outside an ambient context, with the message and
 			 * position acorn-typescript gave it while reading the parameter (see
 			 * `parseBindingListItem`). A signature without a body, such as an
-			 * overload, may have one. An arrow function's parameters are read as
-			 * expressions, and acorn-typescript never checked them.
+			 * overload, may have one. An arrow function always has a body; its
+			 * parameters are read as expressions, which acorn-typescript never
+			 * checked.
 			 * @param {AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression} node
 			 */
 			#reportOptionalPatternParameters(node) {
