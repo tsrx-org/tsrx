@@ -9560,6 +9560,8 @@ function Two() @{
 			'type A = (B extends C ? D : E) extends F ? G : H;',
 			'type A = B extends (() => infer R extends string) ? R : never;',
 			'type A = B extends () => infer R ? R : never;',
+			'type A = { [K in B extends "" ? "index" : B]: 1 };',
+			'type A<T> = T extends [infer U extends (B extends C ? D : E)] ? U : never;',
 		])('keeps %s as written', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});

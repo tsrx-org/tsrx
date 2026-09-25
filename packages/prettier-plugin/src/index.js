@@ -1156,9 +1156,12 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 				(key === 'extendsType' &&
 					node.type === 'TSConditionalType' &&
 					parent.type === 'TSConditionalType') ||
+				// Not the `in` type of a mapped type, which this parser keeps as
+				// the constraint of a type parameter
 				(key === 'constraint' &&
 					node.type === 'TSConditionalType' &&
-					parent.type === 'TSTypeParameter') ||
+					parent.type === 'TSTypeParameter' &&
+					grandparent?.type !== 'TSMappedType') ||
 				(key === 'checkType' && parent.type === 'TSConditionalType')
 			) {
 				return true;
