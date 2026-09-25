@@ -12493,10 +12493,33 @@ function printJSXElement(node, path, options, print) {
 	if (openingElement.typeArguments) {
 		typeArgsDoc = path.call(print, 'openingElement', 'typeArguments');
 	}
-	// A comment after the tag name, as in `<div // note`, prints after it
-	const openingTagName = finishTsrxNode(openingElement.name, [], tagName, options);
+	// A comment before the tag name, as in `</* note */ div>`, prints before
+	// it, and one after it, as in `<div // note`, prints after it
+	const nameNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (openingElement.name);
+	const nameLeadingComments = nameNode.leadingComments ?? [];
+	const printedName = finishTsrxNode(
+		nameNode,
+		printLeadingComments(nameNode, nameLeadingComments, options),
+		tagName,
+		options,
+	);
+	// When the first of those comments is a line comment, or a block comment on
+	// a line of its own, it starts on the line after the `<`, like the comments
+	// of Prettier's closing tags and fragments. Right after the `<`, a line
+	// comment would read as a closing tag (`<// note`), and a block comment
+	// would join the `<`'s line on the next format.
+	const sourceText = /** @type {string} */ (options.originalText);
+	const firstNameComment = /** @type {(AST.Comment & AST.NodeWithLocation) | undefined} */ (
+		nameLeadingComments[0]
+	);
+	const nameCommentStartsLine =
+		firstNameComment !== undefined &&
+		(firstNameComment.type === 'Line' ||
+			(hasNewline(sourceText, firstNameComment.start, { backwards: true }) &&
+				hasNewline(sourceText, firstNameComment.end)));
+	const openingTagName = nameCommentStartsLine ? indent([hardline, printedName]) : printedName;
 	const nameHasComments =
-		hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (openingElement.name)) ||
+		hasComment(nameNode) ||
 		Boolean(
 			openingElement.typeArguments &&
 			hasComment(
@@ -12662,6 +12685,7 @@ function printJSXElement(node, path, options, print) {
  */
 function printJSXFragment(node, path, options, print) {
 	const hasChildren = node.children && node.children.length > 0;
+	const openingTag = printJSXOpeningFragment(node.openingFragment, options);
 
 	// Comments before `</>` and the comments of a comment-only fragment.
 	const { closingCommentDocs, innerCommentDocs } = collectElementBodyCommentDocs(
@@ -12673,17 +12697,45 @@ function printJSXFragment(node, path, options, print) {
 	if (!hasChildren) {
 		const bodyComments = [...innerCommentDocs, ...closingCommentDocs];
 		if (bodyComments.length > 0) {
-			return group(['<>', indent(bodyComments), hardline, '</>']);
+			return group([openingTag, indent(bodyComments), hardline, '</>']);
 		}
-		return '<></>';
+		return [openingTag, '</>'];
 	}
 
 	// A `@{ … }` code block is the whole body and hugs the tags: `<>@{ … }</>`.
 	if (node.children.length === 1 && node.children[0].type === 'JSXCodeBlock') {
-		return group(['<>', path.call(print, 'children', 0), '</>']);
+		return group([openingTag, path.call(print, 'children', 0), '</>']);
 	}
 
-	return printJSXElementBody(node, path, options, print, '<>', '</>', closingCommentDocs, 0);
+	return printJSXElementBody(node, path, options, print, openingTag, '</>', closingCommentDocs, 0);
+}
+
+/**
+ * Print a fragment's `<>` with the comments between its `<` and `>`, which
+ * dangle on it, like Prettier's `printJsxOpeningClosingFragment`: `</* note *\/>`,
+ * or a line comment on a line of its own.
+ * @param {AST.TSRXJSXFragment['openingFragment']} openingFragment
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc}
+ */
+function printJSXOpeningFragment(openingFragment, options) {
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (openingFragment)?.innerComments ?? [];
+	if (comments.length === 0) {
+		return '<>';
+	}
+	const hasLineComment = comments.some((comment) => comment.type === 'Line');
+	return [
+		'<',
+		indent([
+			hasLineComment ? hardline : '',
+			join(
+				hardline,
+				comments.map((comment) => printComment(comment, options.originalText)),
+			),
+		]),
+		hasLineComment ? hardline : '',
+		'>',
+	];
 }
 
 /**
