@@ -5928,6 +5928,32 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(union.types[1]).leading).toBeUndefined();
 	});
 
+	it('marks the union member after a prettier-ignore comment on its own line', () => {
+		const union = firstStatement('type K =\n  | A\n  // prettier-ignore\n  | B;').typeAnnotation;
+		const [comment] = /** @type {any[]} */ (union.types[0].trailingComments);
+
+		expect(comment.value).toBe(' prettier-ignore');
+		expect(comment.unignore).toBe(true);
+		expect(union.types[0].metadata?.prettierIgnore).toBeUndefined();
+		expect(union.types[1].metadata.prettierIgnore).toBe(true);
+	});
+
+	it('marks the first member of a union after a prettier-ignore comment on its own line', () => {
+		const union = firstStatement('type K =\n  // prettier-ignore\n  | A\n  | B;').typeAnnotation;
+
+		expect(commentsOf(union).leading).toEqual([' prettier-ignore']);
+		expect(union.types[0].metadata.prettierIgnore).toBe(true);
+		expect(union.types[1].metadata?.prettierIgnore).toBeUndefined();
+	});
+
+	it('leaves a prettier-ignore comment that ends a union member on that member', () => {
+		const union = firstStatement('type K =\n  | A // prettier-ignore\n  | B;').typeAnnotation;
+		const [comment] = /** @type {any[]} */ (union.types[0].trailingComments);
+
+		expect(comment.unignore).toBeUndefined();
+		expect(union.types[1].metadata?.prettierIgnore).toBeUndefined();
+	});
+
 	it('leads the first member of a union with a block comment right before it', () => {
 		const union = firstStatement('type K = /* c */ A | B;').typeAnnotation;
 

@@ -1321,6 +1321,32 @@ export default class {  }`;
 			},
 		);
 
+		// Like Prettier's `handleUnionTypeComments`, an own-line `prettier-ignore`
+		// between union members ignores the member after it and stays before its `|`
+		it('keeps the union member after an own-line prettier-ignore as written', async () => {
+			const source = `type A =
+  | B<  1 >
+  // prettier-ignore
+  | {  a:1 };
+type C =
+  // prettier-ignore
+  | D<  1 >
+  | E<  2 >;
+type F =
+  | G<  1 > // prettier-ignore
+  | H<  2 >;`;
+			expect(await format(source)).toBeWithNewline(`type A =
+  | B<1>
+  // prettier-ignore
+  | {  a:1 };
+type C =
+  // prettier-ignore
+  D<  1 > | E<2>;
+type F =
+  | G<  1 > // prettier-ignore
+  | H<2>;`);
+		});
+
 		it("doesn't break the list around an ignored node over several lines", async () => {
 			// Prettier prints the ignored source as a plain string
 			const source = `foo(/* prettier-ignore */ [1,
