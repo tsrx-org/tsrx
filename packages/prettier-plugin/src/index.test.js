@@ -4828,7 +4828,10 @@ const deleteButton = container.querySelector(
 			expect(await format(result, options)).toBe(result);
 		});
 
-		it('should hug a lone object type argument against the angle brackets', async () => {
+		// Like Prettier, only an object or mapped type hugs a lone parameter's
+		// parentheses, so props typed as a generic with an object type argument
+		// break the parameter list
+		it('should break the parameters around a lone object type argument of the props type', async () => {
 			const input = `function Button(props: PropsWithExtras<{
 	variant: string;
 	label: string;
@@ -4838,10 +4841,20 @@ const deleteButton = container.querySelector(
 		{props.label}
 	</button>
 }`;
+			const expected = `function Button(
+	props: PropsWithExtras<{
+		variant: string;
+		label: string;
+		onClick: EventListener;
+	}>,
+) @{
+	<button class={props.variant} onClick={props.onClick}>
+		{props.label}
+	</button>
+}`;
 			const options = { useTabs: true, tabWidth: 2, singleQuote: true, printWidth: 100 };
 			const result = await format(input, options);
-			expect(result).toBeWithNewline(input);
-			expect(await format(result, options)).toBe(result);
+			expect(result).toBeWithNewline(expected);
 		});
 
 		it('should not overindent multiline object type aliases', async () => {
@@ -10665,6 +10678,65 @@ let fn: (
 			expect(await format(input, { trailingComma: 'es5' })).toBeWithNewline(expected);
 		});
 
+		// Like Prettier's `shouldHugTheOnlyFunctionParameter`, only an object or
+		// mapped type hugs a lone parameter's parentheses, not an intersection or
+		// a generic type that ends in one
+		it('breaks the parameters around a lone parameter typed as an intersection or generic with an object type', async () => {
+			const input = `function g(e: E & { currentTarget: Tttttttttttttttttt; target: Tttttttttttttttttttttttttttttt }) {}
+function f(args: VoidIfEmpty<{ readonly aaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number }>) {}
+const h = (args: VoidIfEmpty<{ readonly aaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number }>) => {};
+type H = { (e: E & { currentTarget: Tttttttttttttttttt; target: Tttttttttttttttttttttttttttttt }): void };
+type F = (args: VoidIfEmpty<{ readonly aaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number }>) => A;`;
+			const expected = `function g(
+  e: E & {
+    currentTarget: Tttttttttttttttttt;
+    target: Tttttttttttttttttttttttttttttt;
+  },
+) {}
+function f(
+  args: VoidIfEmpty<{
+    readonly aaaaaaaaaaaaa: string;
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+  }>,
+) {}
+const h = (
+  args: VoidIfEmpty<{
+    readonly aaaaaaaaaaaaa: string;
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+  }>,
+) => {};
+type H = {
+  (
+    e: E & {
+      currentTarget: Tttttttttttttttttt;
+      target: Tttttttttttttttttttttttttttttt;
+    },
+  ): void;
+};
+type F = (
+  args: VoidIfEmpty<{
+    readonly aaaaaaaaaaaaa: string;
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+  }>,
+) => A;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('hugs a lone parameter typed as an object or mapped type, or destructured', async () => {
+			const source = `function g(props: {
+  readonly aaaaaaaaaaaaa: string;
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+}) {}
+function m(props: {
+  [Key in keyof Aaaaaaaaaaaaaaaaaaaaaa]: Bbbbbbbbbbbbbbbbbbbbbbbbb<Key>;
+}) {}
+function d({
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+}: Props & { extra: string }) {}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
 		it('keeps short signatures and hugged parameters on one line', async () => {
 			const source = `class C {
   method(a: string): void {
@@ -11029,6 +11101,84 @@ let m: Map<string /* key */, number> = new Map<string, number>();`;
 			'switch (x) {\n  case /* c */ 1:\n    y;\n}',
 			'class A {\n  m</* c */ T>(a: T): T {\n    return a;\n  }\n}',
 		])('keeps the comment in %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Prettier's parsers keep a type parameter's name as a node, which the
+		// comments around it lead or trail, so they stay before the `extends`,
+		// `=`, or mapped type's `in` and after a `const`, `in`, or `out` modifier
+		it.each([
+			'function f<T /* a */ extends U, K /* b */ = V>() {}',
+			'class A<T /* a */ /* b */ extends U> {}',
+			'const f = <T /* a */ extends U>() => {};',
+			'function f<T /* a */ extends /* b */ U /* c */ = /* d */ V /* e */>() {}',
+			'function f<const /* c */ T extends U>() {}',
+			'interface I<in /* i */ K /* b */ = V, out /* o */ X> {}',
+			'type A<in out /* c */ T> = T;',
+			'type M = { [K /* a */ in T]: T[K] };',
+			'type M = { readonly [K /* a */ in keyof T as `get${K}`]?: T[K] };',
+			'type X<A> = A extends [infer T /* a */ extends string] ? T : never;',
+		])('keeps the comment around the type parameter name in %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'function f<\n  T // a\n    extends U,\n  K // b\n    = V,\n>() {}',
+				'function f<\n  T extends // a\n    U,\n  K = // b\n    V,\n>() {}',
+			],
+			[
+				'function f<T /* a */ extends Uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu>() {}',
+				'function f<\n  T /* a */ extends\n    Uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu,\n>() {}',
+			],
+			[
+				'type M = {\n  [K // a\n    in T]: T[K];\n};',
+				'type M = {\n  [\n    K in T // a\n  ]: T[K];\n};',
+			],
+			// On its own line, the comment leads the type after the keyword
+			['function f<\n  T\n  /* a */ extends U,\n>() {}', 'function f<T extends /* a */ U>() {}'],
+			[
+				'type A<\n  B = // inline\n  // above\n  C\n> = R;',
+				'type A<\n  B = // inline\n    // above\n    C,\n> = R;',
+			],
+			[
+				'type M = {\n  [\n    A in\n    // prettier-ignore\n    B\n  ]: C;\n};',
+				'type M = {\n  [\n    A in // prettier-ignore\n    B\n  ]: C;\n};',
+			],
+		])(
+			'formats the comment around the type parameter name in %j like Prettier',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
+
+		// Prettier prints these after the keyword, where they end the line, and
+		// moves them after the name on the next pass. The formatter prints the
+		// fixpoint.
+		it.each([
+			[
+				'function f<\n  T\n  // a\n  extends U,\n  K\n  /* b */\n  = V,\n>() {}',
+				'function f<\n  T extends // a\n    U,\n  K /* b */ = V,\n>() {}',
+			],
+			[
+				'function f<\n  T extends\n  // a\n  U,\n>() {}',
+				'function f<\n  T extends // a\n    U,\n>() {}',
+			],
+			[
+				'type M = {\n  [K\n    // a\n    in T]: T[K];\n};',
+				'type M = {\n  [\n    K in T // a\n  ]: T[K];\n};',
+			],
+		])(
+			'formats the comment around the type parameter name in %j in one pass',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
+
+		// Prettier's next pass gives this `prettier-ignore` comment to the key,
+		// where it no longer ignores the type after `in`
+		it('keeps a prettier-ignore comment at the end of the line of a mapped type key on the type after it', async () => {
+			const source = 'type M = {\n  [\n    A in // prettier-ignore\n    B\n  ]: C;\n};';
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
@@ -16253,11 +16403,30 @@ item
 			['function f() {\n  return (a /* c */);\n}', 'function f() {\n  return a; /* c */\n}'],
 			['x = (a /* c */);', 'x = a; /* c */'],
 			['export default (a /* c */);', 'export default a; /* c */'],
+			// The parentheses around an arrow function's body print as nothing,
+			// or, around an object, before the comment
+			['const f = () => (\n  a /* c */\n);', 'const f = () => a; /* c */'],
+			['const f = () => (\n  a // c\n);', 'const f = () => a; // c'],
+			['x = () => (a.b /* c */);', 'x = () => a.b; /* c */'],
+			['const f = () => (a + b /* c */);', 'const f = () => a + b; /* c */'],
+			['const f = () => ({ a } /* c */);', 'const f = () => ({ a }); /* c */'],
+			['export default () => (\n  call(x) // c\n);', 'export default () => call(x); // c'],
+			['const f = (() => (\n  a // c\n));', 'const f = () => a; // c'],
+			[
+				'function g() {\n  return () => () => (a /* c */);\n}',
+				'function g() {\n  return () => () => a; /* c */\n}',
+			],
 		])('formats %j in one pass', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
 		});
 
 		it.each([
+			// An arrow function's body in a call's parentheses keeps its comments
+			'f(() => a /* c */);',
+			'const f = () => a /* x */ + 1;',
+			// A conditional body prints in parentheses that keep the comment
+			'const f = () => (a ? b : c /* c */);',
+			'const f = () => (\n  <div /> // c\n);',
 			'import /* a */ Alias /* b */ = /* c */ Foo /* d */;',
 			'if (x) /* c */ ;',
 			'class A {\n  a = 1; // c\n  b = 2;\n}',
