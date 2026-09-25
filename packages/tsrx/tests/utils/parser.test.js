@@ -6226,6 +6226,101 @@ describe('comments after the `<` of an element or fragment', () => {
 	});
 });
 
+describe('comments in element bodies and closing tags', () => {
+	/**
+	 * @param {unknown} node
+	 * @returns {{ leading?: string[], trailing?: string[], inner?: string[] }}
+	 */
+	function commentsOf(node) {
+		const withComments = /** @type {AST.NodeWithMaybeComments | undefined} */ (node);
+		/** @param {AST.Comment[] | undefined} list */
+		const values = (list) => list?.map((comment) => comment.value);
+		return {
+			leading: values(withComments?.leadingComments),
+			trailing: values(withComments?.trailingComments),
+			inner: values(withComments?.innerComments),
+		};
+	}
+
+	/**
+	 * @param {string} source
+	 * @returns {any}
+	 */
+	function firstTemplate(source) {
+		return find_first(
+			parseModule(source, 'App.tsrx'),
+			(node) => node.type === 'JSXElement' || node.type === 'JSXFragment',
+		);
+	}
+
+	it('gives a comment right after an opening tag to the body, not the tag', () => {
+		for (const source of ['<div>/* note */x</div>;', '<>/* note */ x</>;']) {
+			const element = firstTemplate(source);
+			expect(commentsOf(element.openingElement ?? element.openingFragment), source).toEqual({});
+			// The text starts at the `>`, so the comment is in it
+			expect(commentsOf(element.children[0]).inner, source).toEqual([' note ']);
+		}
+
+		const element = firstTemplate('const a = <p>/* note */{name}</p>;');
+		expect(commentsOf(element.openingElement)).toEqual({});
+		expect(commentsOf(element.children[0]).leading).toEqual([' note ']);
+	});
+
+	it('keeps a comment in JSX text on the text, not the closing tag', () => {
+		for (const source of [
+			'const a = <div>\n  /* note */\n  text\n</div>;',
+			'const a = <div>\n  text\n  // note\n  more\n</div>;',
+			'const a = <div>text /* note */ more</div>;',
+		]) {
+			const element = firstTemplate(source);
+			expect(commentsOf(element.closingElement), source).toEqual({});
+			expect(
+				commentsOf(element.children[0]).inner?.map((value) => value.trim()),
+				source,
+			).toEqual(['note']);
+		}
+	});
+
+	it("gives a comment in the text after a child to the text, even on the child's line", () => {
+		for (const source of [
+			'const a = <div>{a} /* note */ text</div>;',
+			'const a = <div><b />/* note */text</div>;',
+		]) {
+			const element = firstTemplate(source);
+			expect(commentsOf(element.children[0]), source).toEqual({});
+			expect(commentsOf(element.children[1]).inner, source).toEqual([' note ']);
+		}
+
+		// A `prettier-ignore` after the text's last word leads the next child,
+		// which it keeps as written
+		const element = firstTemplate(
+			'const a = <div>\n  text\n  // prettier-ignore\n  <b />\n</div>;',
+		);
+		expect(commentsOf(element.children[0])).toEqual({});
+		expect(commentsOf(element.children[1]).leading).toEqual([' prettier-ignore']);
+
+		// A `{" "}` keeps it, and so does a child before text of only whitespace
+		for (const source of [
+			'const a = <div>x{" "}/* note */ y</div>;',
+			'const a = <div><b /> /* note */ <i /></div>;',
+		]) {
+			const element = firstTemplate(source);
+			const child = element.children.find(
+				(/** @type {AST.Node} */ node) => node.type !== 'JSXText',
+			);
+			expect(commentsOf(child).trailing, source).toEqual([' note ']);
+		}
+	});
+
+	it("keeps a comment between a closing fragment's `</` and `>` on it, as Prettier does", () => {
+		const program = parseModule('<>x</ /* note */>;\nfoo();', 'App.tsrx');
+		const fragment = find_first(program, (node) => node.type === 'JSXFragment');
+		assert_type(fragment, 'JSXFragment');
+		expect(commentsOf(fragment.closingFragment).inner).toEqual([' note ']);
+		expect(commentsOf(program.body.at(-1))).toEqual({});
+	});
+});
+
 describe('comments in empty arrays and objects', () => {
 	it('keeps the comments of an empty array or object as inner comments', () => {
 		const ast = parseModule(
@@ -6371,7 +6466,7 @@ describe('comments around the commas of a list', () => {
 		['an enum', 'enum E { A /* c */, B }', (statement) => statement.members],
 		[
 			'import specifiers',
-			"import def /* c */, { b } from 'mod';",
+			"import { a /* c */, b } from 'mod';",
 			(statement) => statement.specifiers,
 		],
 		[
@@ -6485,6 +6580,31 @@ describe('comments placed like Prettier', () => {
 
 		expect(commentsOf(statement.test).trailing).toEqual([' c']);
 		expect(commentsOf(statement.consequent).leading).toBeUndefined();
+	});
+
+	// Prettier's `canAttachComment` rejects a template element, and its
+	// `findExpressionIndexForComment` keeps a comment in its `${…}`
+	it('trails the expression with a comment after it in the ${…} of a template literal', () => {
+		const { expression } = firstStatement('x = `a ${\n  b\n  // c\n  /* d */\n} e ${f}`;');
+		const template = expression.right;
+
+		expect(commentsOf(template.expressions[0]).trailing).toEqual([' c', ' d ']);
+		expect(commentsOf(template.expressions[1]).leading).toBeUndefined();
+		expect(template.quasis.map(/** @param {any} quasi */ (quasi) => commentsOf(quasi))).toEqual([
+			{},
+			{},
+			{},
+		]);
+	});
+
+	it('leads the next type with a comment on its own line in a template literal type', () => {
+		const { literal } = firstStatement(
+			'type A = `${\n  B // b\n  // c\n}x${C}${\n  D\n  // d\n}`;',
+		).typeAnnotation;
+
+		expect(commentsOf(literal.expressions[0]).trailing).toEqual([' b']);
+		expect(commentsOf(literal.expressions[1]).leading).toEqual([' c']);
+		expect(commentsOf(literal.expressions[2]).trailing).toEqual([' d']);
 	});
 
 	it('leads the lookup with a comment on its own line before its name', () => {
@@ -6695,6 +6815,144 @@ describe('comments placed like Prettier', () => {
 
 		expect(commentsOf(id.typeAnnotation).leading).toEqual([' c ']);
 		expect(commentsOf(id.properties[0]).trailing).toBeUndefined();
+	});
+
+	// Prettier's `breakTies`: a comment with code on both sides leads the node
+	// after it when only whitespace or `(` sits between them, and trails the
+	// node before it otherwise
+	it('leads the node after a comment with only whitespace between them', () => {
+		const tagged = firstStatement('tag<T>/* c */`x`;').expression;
+		const sequence = firstStatement('x = (a, /* c */ b);').expression.right;
+		const property = firstStatement('class A {\n  x /* c */ : T;\n}').body.body[0];
+		const rest = firstStatement('function f(...x /* c */ : T) {}').params[0];
+		const signature = firstStatement('type F = (a: T) /* c */ => void;').typeAnnotation;
+
+		expect(commentsOf(tagged.quasi).leading).toEqual([' c ']);
+		expect(commentsOf(tagged.typeArguments).trailing).toBeUndefined();
+		expect(commentsOf(sequence.expressions[1]).leading).toEqual([' c ']);
+		expect(commentsOf(sequence.expressions[0]).trailing).toBeUndefined();
+		expect(commentsOf(property.typeAnnotation).leading).toEqual([' c ']);
+		expect(commentsOf(rest.typeAnnotation).leading).toEqual([' c ']);
+		expect(commentsOf(signature.typeAnnotation).leading).toEqual([' c ']);
+		expect(commentsOf(signature.parameters[0]).trailing).toBeUndefined();
+	});
+
+	it('trails the node before a comment with other code between it and the next node', () => {
+		const [def, named] = firstStatement("import def, /* c */ { b } from 'mod';").specifiers;
+		const { expression } = firstStatement('a /* a */ + /* b */ b;');
+		const property = firstStatement('interface I {\n  x /* c */ : T;\n}').body.body[0];
+
+		expect(commentsOf(def).trailing).toEqual([' c ']);
+		expect(commentsOf(named).leading).toBeUndefined();
+		expect(commentsOf(expression.left).trailing).toEqual([' a ']);
+		expect(commentsOf(expression.right).leading).toEqual([' b ']);
+		// Like Prettier's `canAttachComment`, the type annotation of a property
+		// signature takes no comments, so the next node is its type
+		expect(commentsOf(property.key).trailing).toEqual([' c ']);
+	});
+
+	// Like Prettier, whose `printCommentsForFunction` prints the comment inside
+	// the parentheses of a function called right away or used as a tag
+	it('trails a function called right away or used as a tag with a comment before its )', () => {
+		const arrow = firstStatement('(m => m /* c */)(x);').expression;
+		const fn = firstStatement('(function () {} /* a */ /* b */)(x);').expression;
+		const tag = firstStatement('(m => m /* c */)`x`;').expression;
+		const plain = firstStatement('(a /* c */)(x);').expression;
+
+		expect(commentsOf(arrow.callee).trailing).toEqual([' c ']);
+		expect(commentsOf(arrow.arguments[0]).leading).toBeUndefined();
+		expect(commentsOf(fn.callee).trailing).toEqual([' a ', ' b ']);
+		expect(commentsOf(tag.tag).trailing).toEqual([' c ']);
+		expect(commentsOf(tag.quasi).leading).toBeUndefined();
+		// Any other callee keeps the comment's place (see `breakTies`)
+		expect(commentsOf(plain.arguments[0]).leading).toEqual([' c ']);
+	});
+
+	it('trails the name of a function or method with a comment before its (', () => {
+		const fn = firstStatement('function f /* c */ (a) {}');
+		const { init } = firstStatement('const o = { m /* c */ (a) {} };').declarations[0];
+
+		expect(commentsOf(fn.id).trailing).toEqual([' c ']);
+		expect(commentsOf(fn.params[0]).leading).toBeUndefined();
+		expect(commentsOf(init.properties[0].key).trailing).toEqual([' c ']);
+	});
+
+	// Prettier's `handleAssignmentPatternComments` and its default for a
+	// comment at the end of a line
+	it('leads a default value pattern with a comment on its own line in it', () => {
+		const fn = firstStatement(
+			'function f(\n  a = (\n    // c\n    1\n  ),\n  b = // d\n  2,\n) {}',
+		);
+		const [first, second] = fn.params;
+
+		expect(commentsOf(first).leading).toEqual([' c']);
+		expect(commentsOf(first.right).leading).toBeUndefined();
+		expect(commentsOf(second.left).trailing).toEqual([' d']);
+		expect(commentsOf(second.right).leading).toBeUndefined();
+	});
+
+	it('leads a parameter property with a comment on its own line in its default value', () => {
+		const constructor = firstStatement(
+			'class A {\n  constructor(\n    private a = (\n      // c\n      1\n    ),\n  ) {}\n}',
+		).body.body[0];
+		const [param] = constructor.value.params;
+
+		expect(commentsOf(param).leading).toEqual([' c']);
+		expect(commentsOf(param.parameter).leading).toBeUndefined();
+	});
+
+	it('leaves the comments around the key of a shorthand property with a default value to the default', () => {
+		const { id } = firstStatement('const { a /* c */ = 1 } = x;').declarations[0];
+		const [property] = id.properties;
+
+		expect(commentsOf(property.key).trailing).toBeUndefined();
+		expect(commentsOf(property.value.left).trailing).toEqual([' c ']);
+	});
+
+	it('trails an arrow function body that is an element with a comment below it', () => {
+		const element = firstStatement('const f = () => (\n  <Note />\n  // c\n);').declarations[0];
+		const other = firstStatement('const f = () => (\n  a\n  // c\n);\n');
+
+		expect(commentsOf(element.init.body).trailing).toEqual([' c']);
+		expect(commentsOf(other.declarations[0].init.body).trailing).toBeUndefined();
+		expect(commentsOf(other).trailing).toEqual([' c']);
+	});
+
+	// Prettier's default for a comment at the end of a line
+	it('trails the last parameter with a comment at the end of the line after its )', () => {
+		const fn = firstStatement('function f(a) // c\n  : T {}');
+		const signature = firstStatement('interface I {\n  m(a: T) // c\n  : void;\n}').body.body[0];
+		const noParams = firstStatement('function f() // c\n  : T {}');
+
+		expect(commentsOf(fn.params[0]).trailing).toEqual([' c']);
+		expect(commentsOf(fn.returnType).leading).toBeUndefined();
+		expect(commentsOf(signature.parameters[0]).trailing).toEqual([' c']);
+		expect(commentsOf(noParams.id).trailing).toEqual([' c']);
+	});
+
+	// Prettier's `handleCommentInEmptyParens`
+	it('keeps a comment in empty parameter parentheses on the function or signature', () => {
+		const fn = firstStatement('function f(/* c */): T {}');
+		const type = firstStatement('type F = (/* c */) => void;').typeAnnotation;
+		const signature = firstStatement('interface I {\n  m(/* c */);\n}').body.body[0];
+
+		expect(commentsOf(fn).inner).toEqual([' c ']);
+		expect(commentsOf(fn.returnType).leading).toBeUndefined();
+		expect(commentsOf(type).inner).toEqual([' c ']);
+		expect(commentsOf(signature).inner).toEqual([' c ']);
+		expect(commentsOf(signature.key).trailing).toBeUndefined();
+	});
+
+	it('trails the type parameter of a mapped type with a comment after the type its key ranges over', () => {
+		const type = firstStatement('type M = { [K in keyof T /* c */]: T[K] };').typeAnnotation;
+		const endOfLine = firstStatement('type M = {\n  [K in T] // c\n  : T[K];\n};').typeAnnotation;
+
+		expect(commentsOf(type.typeParameter).trailing).toEqual([' c ']);
+		const ownLine = firstStatement('type M = {\n  [K in T\n  // c\n  ]: T[K];\n};').typeAnnotation;
+
+		expect(commentsOf(endOfLine.typeParameter).trailing).toEqual([' c']);
+		expect(commentsOf(endOfLine.typeAnnotation).leading).toBeUndefined();
+		expect(commentsOf(ownLine.typeParameter).trailing).toEqual([' c']);
 	});
 });
 
