@@ -9900,6 +9900,29 @@ const mixed =
 			},
 		);
 
+		it('lines up the operands of an assigned value after the operator breaks', async () => {
+			const result =
+				await format(`total = firstOperandWithALongName + secondOperandWithALongName + thirdOperandWithALongName;
+const options = { enabled: isEnabledForTheCurrentUser && hasPermissionToEdit && !isLockedByAnotherSession };
+class Session { ready = isEnabledForTheCurrentUser && hasPermissionToEdit && !isLockedByAnotherSession; }`);
+			expect(result).toBeWithNewline(`total =
+  firstOperandWithALongName +
+  secondOperandWithALongName +
+  thirdOperandWithALongName;
+const options = {
+  enabled:
+    isEnabledForTheCurrentUser &&
+    hasPermissionToEdit &&
+    !isLockedByAnotherSession,
+};
+class Session {
+  ready =
+    isEnabledForTheCurrentUser &&
+    hasPermissionToEdit &&
+    !isLockedByAnotherSession;
+}`);
+		});
+
 		it.each([
 			[
 				'const b = !!(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);',
@@ -10352,6 +10375,27 @@ function f() {
 				expect(await format(input)).toBeWithNewline(expected);
 			},
 		);
+
+		it('keeps the head of a chain on the = line and breaks after = before a chain of lookups', async () => {
+			const result =
+				await format(`const x = aaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccc().dddddddddddddddddd().eeeeeee();
+const value = someObject.someMethod().someProperty.someOtherProperty.yetAnotherProperty;`);
+			expect(result).toBeWithNewline(`const x = aaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbb
+  .cccccccccccccccccc()
+  .dddddddddddddddddd()
+  .eeeeeee();
+const value =
+  someObject.someMethod().someProperty.someOtherProperty.yetAnotherProperty;`);
+		});
+
+		it('keeps test and require calls on a member out of the member chain', async () => {
+			const source = `describe.only("does something really interesting with the value that it receives", () => {
+  run();
+});
+const policy =
+  require.resolve("./policies/a/very/long/path/to/some/module/decompressResponsePolicy.js");`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
 
 		it('keeps short chains and chains that break inside a call on one line', async () => {
 			const source = `const x = a.b().c().d();
