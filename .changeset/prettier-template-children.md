@@ -8,3 +8,6 @@ becomes a line break, which dropped it and changed the rendered text. Like
 Prettier, children separated by a space stay on one line when they fit, and a
 space prints as `{" "}` where a line breaks. `{" "}` itself is treated as a
 plain space.
+
+A non-breaking space (U+00A0) in template text is text, as in JSX, so the
+formatter no longer collapses it into a plain space or drops it.

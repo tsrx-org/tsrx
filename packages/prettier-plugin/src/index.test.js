@@ -8189,6 +8189,21 @@ const b = <p>hello {a}</p>;`);
 </>;`);
 		});
 
+		it('keeps non-breaking spaces as text', async () => {
+			// U+00A0 is text in JSX, not whitespace, so it is neither collapsed
+			// into a plain space nor dropped.
+			const input = `const a = <div>a  b</div>;
+const b = <div>
+  <b>x</b> <b>y</b>
+</div>;
+const c = <> hi </>;
+const d = <div> hi </div>;
+const e = <p>
+  hello <b>x</b>
+</p>;`;
+			expect(await format(input)).toBeWithNewline(input);
+		});
+
 		it('prints {" "} with the singleQuote quote', async () => {
 			const result = await format(`const a = <div> <b>1</b> </div>;`, { singleQuote: true });
 			expect(result).toBeWithNewline(`const a = <div>

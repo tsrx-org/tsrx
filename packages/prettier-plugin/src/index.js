@@ -10357,6 +10357,16 @@ function printTSIndexedAccessType(node, path, options, print) {
 }
 
 /**
+ * Remove JSX whitespace from both ends of text. Unlike `String#trim`, it keeps
+ * a non-breaking space and the other Unicode spaces, which are text in JSX.
+ * @param {string} text
+ * @returns {string}
+ */
+function trimJSXWhitespace(text) {
+	return text.replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, '');
+}
+
+/**
  * Print direct TSRX text so it can wrap like JSX text when an element body breaks.
  * @param {string} raw
  * @param {Doc} [suffix] - Printed right after the last word, like the `{" "}`
@@ -10364,17 +10374,17 @@ function printTSIndexedAccessType(node, path, options, print) {
  * @returns {Doc}
  */
 function printRawText(raw, suffix = '') {
-	const text = raw.trim().replace(/(?:\r\n|\r|\n)[^\S\r\n]+/gu, ' ');
+	const text = trimJSXWhitespace(raw).replace(/(?:\r\n|\r|\n)[ \t]+/gu, ' ');
 	if (!text) {
 		return suffix;
 	}
 
 	/** @type {Doc[]} */
 	const parts = text
-		.split(/([^\S\r\n]+)/u)
+		.split(/([ \t]+)/u)
 		.filter(Boolean)
 		.map((part) => {
-			return /^[^\S\r\n]+$/u.test(part) ? line : replaceEndOfLine(part);
+			return /^[ \t]+$/u.test(part) ? line : replaceEndOfLine(part);
 		});
 	if (suffix) {
 		parts.push([/** @type {Doc} */ (parts.pop()), suffix]);
@@ -10441,14 +10451,14 @@ function isJSXWhitespaceExpression(child) {
  * @returns {Doc | Doc[] | string}
  */
 function printJSXTextChild(raw) {
-	const text = raw.trim();
+	const text = trimJSXWhitespace(raw);
 	if (!text) {
 		return '';
 	}
 
 	const lines = text
 		.split(/\r\n|\r|\n/u)
-		.map((line) => line.trim())
+		.map((line) => trimJSXWhitespace(line))
 		.filter(Boolean);
 	if (lines.length <= 1) {
 		return lines[0] ?? '';
@@ -10477,10 +10487,10 @@ function isGluedJSXPair(prevNode, nextNode) {
 	if (hasComment(prevNode) || hasComment(nextNode)) {
 		return false;
 	}
-	if (prevNode.type === 'JSXText' && /\s$/u.test(prevNode.value)) {
+	if (prevNode.type === 'JSXText' && /[ \t\r\n]$/u.test(prevNode.value)) {
 		return false;
 	}
-	if (nextNode.type === 'JSXText' && /^\s/u.test(nextNode.value)) {
+	if (nextNode.type === 'JSXText' && /^[ \t\r\n]/u.test(nextNode.value)) {
 		return false;
 	}
 	return true;
@@ -10530,7 +10540,7 @@ function printGluedJSXChildren(entries, jsxWhitespace, suffix = '') {
 			parts.push(jsxWhitespace);
 		}
 		if (typeof entry.glue === 'string') {
-			const words = entry.glue.trim().split(/\s+/u);
+			const words = trimJSXWhitespace(entry.glue).split(/[ \t\r\n]+/u);
 			for (let i = 0; i < words.length; i++) {
 				if (i > 0) {
 					flush();
@@ -10621,8 +10631,8 @@ function printJSXChildLines(items, options) {
  * @returns {string}
  */
 function normalizeInlineJSXText(raw) {
-	const text = raw.replace(/[^\S\r\n]+/gu, ' ');
-	return text.trim() || !/[\r\n]/u.test(text) ? text : '';
+	const text = raw.replace(/[ \t]+/gu, ' ');
+	return trimJSXWhitespace(text) || !/[\r\n]/u.test(text) ? text : '';
 }
 
 /**
@@ -11039,7 +11049,7 @@ function printJSXChildrenOnOneLine(entries) {
 		if (hasSpace || entry.leadingSpace) {
 			parts.push(' ');
 		}
-		parts.push(typeof entry.glue === 'string' ? entry.glue.trim() : entry.glue);
+		parts.push(typeof entry.glue === 'string' ? trimJSXWhitespace(entry.glue) : entry.glue);
 		hasSpace = !!entry.trailingSpace;
 	}
 	if (hasSpace) {
