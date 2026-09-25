@@ -913,6 +913,19 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * The type inside any parentheses written around a type
+	 * (`TSParenthesizedType`), or the node itself.
+	 * @param {AST.Node | null} node
+	 * @returns {AST.Node | null}
+	 */
+	function skipParenthesizedTypes(node) {
+		while (node?.type === 'TSParenthesizedType') {
+			node = /** @type {AST.Node} */ (/** @type {unknown} */ (node.typeAnnotation));
+		}
+		return node;
+	}
+
+	/**
 	 * Whether {@link handleComment} has a rule for comments in the node.
 	 * @param {AST.Node | AST.CSS.StyleSheet | undefined} node
 	 * @returns {boolean}
@@ -1112,12 +1125,15 @@ export function get_comment_handlers(source, comments, index = 0) {
 		// ignores the member after it: it marks that member and no longer
 		// counts itself (Prettier's `prettierIgnore` and `unignore`). Any other
 		// `prettier-ignore` comment stays with the member it ignores.
+		// Prettier's parsers keep no node for a type's parentheses, so a union
+		// written in them is the node after the comment there.
 		if (ownLine && isPrettierIgnoreComment(comment)) {
+			const followingType = skipParenthesizedTypes(following);
 			const ignored =
 				node.type === 'TSUnionType'
 					? following
-					: following?.type === 'TSUnionType'
-						? /** @type {AST.TSUnionType} */ (following).types[0]
+					: followingType?.type === 'TSUnionType'
+						? /** @type {AST.TSUnionType} */ (followingType).types[0]
 						: null;
 			if (ignored) {
 				getNodeMetadata(ignored).prettierIgnore = true;
@@ -1403,7 +1419,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 						// Prettier's handlers for a comment before this node in its parent
 						const enclosing = /** @type {AST.Node} */ (path.at(-1));
-						if (isHandledEnclosingNode(enclosing) || node.type === 'TSUnionType') {
+						if (
+							isHandledEnclosingNode(enclosing) ||
+							skipParenthesizedTypes(node)?.type === 'TSUnionType'
+						) {
 							const neighbors = getCommentNeighbors(comment, enclosing);
 							if (
 								neighbors?.following === node &&
@@ -1728,6 +1747,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 									node_array = parent.properties;
 								} else if (parent.type === 'TSTypeLiteral') {
 									node_array = parent.members;
+								} else if (
+									parent.type === 'TSTypeParameterInstantiation' ||
+									parent.type === 'TSTypeParameterDeclaration'
+								) {
+									node_array = parent.params;
+								} else if (parent.type === 'TSTupleType') {
+									node_array = parent.elementTypes;
 								} else if (parent.type === 'TSEnumDeclaration') {
 									// The enum's name is not a member. With no members, it would
 									// count as the last one and take the body's comments.
@@ -1990,6 +2016,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 									parent?.type === 'ObjectExpression' ||
 									parent?.type === 'ObjectPattern' ||
 									parent?.type === 'TSEnumDeclaration' ||
+									parent?.type === 'TSTypeParameterInstantiation' ||
+									parent?.type === 'TSTypeParameterDeclaration' ||
+									parent?.type === 'TSTupleType' ||
 									parent?.type === 'ImportDeclaration' ||
 									parent?.type === 'ExportNamedDeclaration';
 								// `next_index` is 0 for a callee or a function's name, which aren't
