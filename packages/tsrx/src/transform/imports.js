@@ -77,10 +77,9 @@ export function with_deferred_imports(visitors) {
 			context.write('import.defer(');
 			context.visit(node.source);
 
-			const options = node.options ?? node.arguments?.[0];
-			if (options) {
+			if (node.options) {
 				context.write(', ');
-				context.visit(options);
+				context.visit(node.options);
 			}
 
 			context.write(')');

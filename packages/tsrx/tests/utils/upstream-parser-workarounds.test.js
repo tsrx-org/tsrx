@@ -546,3 +546,187 @@ describe('`assert` on the line after an import (sveltejs/acorn-typescript#121)',
 		expect(() => parse('import "x"\nassert { type: "json" };')).toThrow('Unexpected token');
 	});
 });
+
+/**
+ * A strict parse, and the two modes that collect errors and keep parsing.
+ * @type {Array<import('../../types/index').ParseOptions | undefined>}
+ */
+const PARSE_MODES = [
+	undefined,
+	{ collect: true, comments: [], preserveParens: true },
+	{ loose: true, comments: [] },
+];
+
+/**
+ * Each source in each of `PARSE_MODES`.
+ * @param {string[]} sources
+ */
+function in_every_mode(sources) {
+	return sources.flatMap((source) => PARSE_MODES.map((options) => ({ source, options })));
+}
+
+describe('quoted import attribute keys (sveltejs/acorn-typescript#116)', () => {
+	/**
+	 * The keys of the first statement's import attributes, as written.
+	 * @param {AST.Program} program
+	 */
+	function attribute_keys(program) {
+		const [declaration] = program.body;
+		const { attributes } = /** @type {{ attributes: AST.ImportAttribute[] }} */ (
+			/** @type {unknown} */ (declaration)
+		);
+		return attributes.map(({ key }) =>
+			key.type === 'Literal' ? `'${key.value}'` : as_type(key, 'Identifier').name,
+		);
+	}
+
+	it('parses attributes with more than one quoted key', async () => {
+		/** @type {Array<[string, string[]]>} */
+		const cases = [
+			["import a from './a' with { 'a': 'x', 'b': 'y' };", ["'a'", "'b'"]],
+			["import './a' with { 'a': 'x', b: 'y', 'c': 'z' };", ["'a'", 'b', "'c'"]],
+			["export * from './a' with { 'a': 'x', 'b': 'y' };", ["'a'", "'b'"]],
+			["export { a } from './a' with { 'a': 'x', 'b': 'y' };", ["'a'", "'b'"]],
+			["import a from './a' assert { 'a': 'x', 'b': 'y' };", ["'a'", "'b'"]],
+		];
+		const inputs = in_every_mode(cases.map(([source]) => source));
+
+		const outcomes = await parse_in_worker_with_ast(inputs);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const label = JSON.stringify(inputs[index]);
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], label).toEqual([]);
+			expect(attribute_keys(outcome.ast), label).toEqual(
+				cases[Math.floor(index / PARSE_MODES.length)][1],
+			);
+		}
+	});
+
+	it('reports a key written once quoted and once as a name as a duplicate', async () => {
+		/** @type {Array<[string, string]>} */
+		const cases = [
+			[
+				"import a from './a' with { type: 'a', 'type': 'b' };",
+				'Duplicated key in attributes (1:49)',
+			],
+			[
+				"import a from './a' with { 'type': 'a', type: 'b' };",
+				'Duplicated key in attributes (1:49)',
+			],
+			[
+				"import a from './a' with { 'typ\\u0065': 'a', type: 'b' };",
+				'Duplicated key in attributes (1:54)',
+			],
+			["import a from './a' with { 'a': 'x', 'a': 'y' };", 'Duplicated key in attributes (1:45)'],
+			["import a from './a' with { type: 'a', type: 'b' };", 'Duplicated key in attributes (1:47)'],
+		];
+		const inputs = in_every_mode(cases.map(([source]) => source));
+
+		const outcomes = await parse_in_worker(inputs);
+
+		expect(outcomes).toEqual(
+			cases.flatMap(([, message]) => [
+				{ ok: false, message, pos: expect.any(Number) },
+				{ ok: true, errors: ['Duplicated key in attributes'] },
+				{ ok: true, errors: ['Duplicated key in attributes'] },
+			]),
+		);
+	});
+});
+
+describe('trailing commas in `import()` (sveltejs/acorn-typescript#110)', () => {
+	/**
+	 * The dynamic import in the first statement, and the source text of its options.
+	 * @param {AST.Program} program
+	 * @param {string} source
+	 */
+	function dynamic_import(program, source) {
+		const [statement] = program.body;
+		const expression = as_type(
+			as_type(statement, 'ExpressionStatement').expression,
+			'ImportExpression',
+		);
+		const { options } = expression;
+		return {
+			expression,
+			options: options && source.slice(/** @type {number} */ (options.start), options.end),
+		};
+	}
+
+	it('allows a trailing comma after the specifier and after the options', async () => {
+		/** @type {Array<[string, string | null]>} */
+		const cases = [
+			["import('./a.js',);", null],
+			["import('./a.js', { with: { type: 'json' } },);", "{ with: { type: 'json' } }"],
+			["import(\n\t'./a.js',\n\toptions,\n);", 'options'],
+			["import.defer('./a.js',);", null],
+			["import.defer('./a.js', options,);", 'options'],
+			// The forms that already parsed.
+			["import('./a.js');", null],
+			["import('./a.js', { with: { type: 'json' } });", "{ with: { type: 'json' } }"],
+		];
+		const inputs = in_every_mode(cases.map(([source]) => source));
+
+		const outcomes = await parse_in_worker_with_ast(inputs);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const { source } = inputs[index];
+			const label = JSON.stringify(inputs[index]);
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], label).toEqual([]);
+			const { expression, options } = dynamic_import(outcome.ast, source);
+			expect(options, label).toBe(cases[Math.floor(index / PARSE_MODES.length)][1]);
+			expect(as_type(expression.source, 'Literal').value, label).toBe('./a.js');
+			expect(expression.phase, label).toBe(source.startsWith('import.defer') ? 'defer' : undefined);
+			// The options are only on `options`, as acorn puts them.
+			expect(expression, label).not.toHaveProperty('arguments');
+		}
+	});
+
+	it('rejects a third argument, as acorn does', async () => {
+		const sources = [
+			"import('./a.js', b, c);",
+			"import('./a.js', b, c,);",
+			"import.defer('./a.js', b, c);",
+			"import('./a.js',,);",
+		];
+
+		const outcomes = await parse_in_worker(in_every_mode(sources));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			expect(outcome.ok, JSON.stringify(in_every_mode(sources)[index])).toBe(false);
+		}
+	});
+
+	it('prints the options once', () => {
+		/** @type {JsxPlatform} */
+		const platform = {
+			name: 'upstream-workaround-test',
+			imports: {
+				fragment: 'test-platform',
+				suspense: 'test-platform',
+				dynamic: 'test-platform/dynamic',
+				errorBoundary: 'test-platform/error-boundary',
+			},
+			jsx: { rewriteClassAttr: false, classAttrName: 'class' },
+			validation: { requireUseServerForAwait: false },
+		};
+		const source = `export const data = import('./data.json', { with: { type: 'json' } },);
+export const bare = import('./a.js',);
+export const lazy = import.defer('./lazy.js', { with: { type: 'json' } },);
+`;
+		const { code } = createJsxTransform(platform)(
+			parseModule(source, 'App.tsrx'),
+			source,
+			'App.tsrx',
+		);
+		expect(code).toContain(
+			"export const data = import('./data.json', { with: { type: 'json' } });",
+		);
+		expect(code).toContain("export const bare = import('./a.js');");
+		expect(code).toContain(
+			"export const lazy = import.defer('./lazy.js', { with: { type: 'json' } });",
+		);
+	});
+});
