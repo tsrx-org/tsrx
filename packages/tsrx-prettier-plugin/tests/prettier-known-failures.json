@@ -24,7 +24,6 @@
   "js/source-phase-imports/import-source-attributes-expression.js format 1",
   "js/source-phase-imports/import-source-dynamic-import.js format 1",
   "jsx/fragment/fragment.js format 1",
-  "jsx/spread/child.js format 1",
   "typescript/abstract-construct-types/abstract-construct-types.ts format 1",
   "typescript/call-signature/call-signature.ts format 1",
   "typescript/call/callee-comments.ts format 1",

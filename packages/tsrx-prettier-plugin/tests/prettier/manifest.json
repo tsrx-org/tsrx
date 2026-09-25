@@ -37,7 +37,6 @@
     "js/private-in/private-in.js format 1": "Unexpected token (1:4)",
     "js/source-phase-imports/import-source-attributes-expression.js format 1": "The only valid meta property for import is 'import.meta' (1:7)",
     "js/source-phase-imports/import-source-dynamic-import.js format 1": "The only valid meta property for import is 'import.meta' (1:7)",
-    "jsx/spread/child.js format 1": "Unexpected token (1:6)",
     "typescript/abstract-construct-types/abstract-construct-types.ts format 1": "type 'T' has already been declared. (2:5)",
     "typescript/call-signature/call-signature.ts format 1": "type 'T' has already been declared. (6:5)",
     "typescript/call/callee-comments.ts format 1": "Unclosed tag '<string>'. Expected '</string>' before end of template.",
