@@ -560,6 +560,16 @@ export namespace Parse {
 		inFunction: boolean;
 		/** Whether @sveltejs/acorn-typescript is currently parsing a TypeScript type */
 		inType: boolean;
+		/** Whether @sveltejs/acorn-typescript is parsing an ambient (`declare`) context */
+		isAmbientContext: boolean;
+		/**
+		 * @sveltejs/acorn-typescript's record of the state a speculative parse
+		 * changes, undone when the parse is abandoned
+		 */
+		parseEffects?: {
+			/** Record `target`'s length, to restore if the current speculative parse is abandoned */
+			willAppend(target: unknown[]): void;
+		};
 		/**
 		 * `value`/`type` kind of the import or export declaration currently being
 		 * parsed (@sveltejs/acorn-typescript). `undefined` when not inside one.
@@ -1327,6 +1337,15 @@ export namespace Parse {
 		 */
 		parseBindingAtom(): AST.Pattern;
 
+		/**
+		 * Parse a binding list element, with its default value
+		 * @param allowModifiers Whether modifiers allowed (TS parameter properties)
+		 */
+		parseAssignableListItem(allowModifiers?: boolean): AST.Pattern;
+
+		/** Finish a binding list element: TypeScript's `?` and type annotation */
+		parseBindingListItem(param: AST.Pattern): AST.Pattern;
+
 		// ============================================================
 		// Statement Parsing
 		// ============================================================
@@ -1457,16 +1476,26 @@ export namespace Parse {
 		// Variable Declaration Parsing
 		// ============================================================
 		/** Parse variable statement (var, let, const) */
-		parseVarStatement(node: AST.Node, kind: string): AST.VariableDeclaration;
+		parseVarStatement(
+			node: AST.Node,
+			kind: string,
+			allowMissingInitializer?: boolean,
+		): AST.VariableDeclaration;
 
 		/**
 		 * Parse variable declarations
 		 * @param node Declaration node
 		 * @param isFor Whether in for-loop initializer
 		 * @param kind "var", "let", "const", "using", or "await using"
+		 * @param allowMissingInitializer Whether declarators may omit the initializer
 		 * @returns VariableDeclaration node
 		 */
-		parseVar(node: AST.Node, isFor: boolean, kind: string): AST.VariableDeclaration;
+		parseVar(
+			node: AST.Node,
+			isFor: boolean,
+			kind: string,
+			allowMissingInitializer?: boolean,
+		): AST.VariableDeclaration;
 
 		/**
 		 * Parse variable ID (identifier or pattern)
