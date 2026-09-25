@@ -1493,6 +1493,17 @@ export default   class  B {}`;
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// Like Prettier's `locStart`, an ignored parameter starts at its first
+		// decorator, which the parser keeps outside its span
+		it.each([
+			'class A {\n  m(\n    // prettier-ignore\n    @a   x  : T,\n  ) {}\n}',
+			'class A {\n  constructor(\n    // prettier-ignore\n    @a  @b()   private   x  : T,\n  ) {}\n}',
+			// The parameter property prints the decorators and the modifiers
+			'class A {\n  constructor(@dec private /* prettier-ignore */ x  : T) {}\n}',
+		])('keeps the decorators of an ignored parameter in %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
 		// Like Prettier, a comment between the decorators and `export` trails
 		// the last decorator, so it ignores only the decorator (#445)
 		it('prints a comment between the decorators and export once', async () => {
@@ -16071,6 +16082,125 @@ item
 		});
 	});
 
+	// Like Prettier's `handleMethodNameComments`, a line comment or an own-line
+	// comment after a class member's or a parameter property's decorator
+	// trails it, so it stays before the modifiers. After them, it would break
+	// the line after `static`, which the parser then reads as a field (#535).
+	// Like Prettier's `locStart`, a parameter starts at its first decorator, so
+	// the comments after one stay after it.
+	describe('comments between decorators and the modifiers of a class member or parameter', () => {
+		/**
+		 * The class members of a source's first class, as `static name`
+		 * @param {string} source
+		 * @returns {string[]}
+		 */
+		const membersOf = (source) => {
+			const ast = /** @type {any} */ (parsers.tsrx.parse(source, /** @type {any} */ ({})));
+			return ast.body[0].body.body.map(
+				(/** @type {any} */ member) => `${member.static ? 'static ' : ''}${member.key.name}`,
+			);
+		};
+
+		it.each([
+			'class A {\n  @dec()\n  // comment\n  static b;\n}',
+			'class A {\n  @dec()\n  /* comment */\n  static b;\n}',
+			'class A {\n  @dec()\n  // comment\n  accessor b;\n}',
+			'class A {\n  @dec()\n  // comment\n  readonly b: number;\n}',
+			'class A {\n  @dec()\n  // comment\n  public static m() {}\n}',
+			'class A {\n  @dec()\n  // comment\n  static async *m() {}\n}',
+			'class A {\n  @dec()\n  // comment\n  get x() {\n    return 1;\n  }\n}',
+			'class A {\n  @dec()\n  // comment\n  [computed] = 1;\n}',
+			'class A {\n  // lead\n  @dec()\n  // comment\n  static b;\n}',
+			'class A {\n  constructor(\n    @inject(Bar)\n    // c\n    private readonly bar: IBar,\n  ) {}\n}',
+			'class A {\n  constructor(\n    @a\n    /* c */\n    private x = 1,\n  ) {}\n}',
+			'class A {\n  constructor(\n    @a // c\n    private x: T,\n  ) {}\n}',
+			'class A {\n  constructor(@a /* c */ private x: T) {}\n}',
+			'class A {\n  constructor(@inject(/* c */ Bar) private bar: IBar) {}\n}',
+			'class A {\n  m(@a /* c */ @b x: T) {}\n}',
+			'class A {\n  m(\n    @a // c\n    x: T,\n  ) {}\n}',
+			'class A {\n  m(\n    @a\n    // c\n    x,\n  ) {}\n}',
+			// A comment between a parameter property's modifiers and its name stays there
+			'class A {\n  constructor(@dec private /* c */ x: T) {}\n}',
+			'class A {\n  constructor(@a /* a */ @b /* b */ private /* c */ x) {}\n}',
+			'class A {\n  constructor(@dec private /* c */ x = 1) {}\n}',
+		])('keeps %j like Prettier', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'class A {\n  @dec()\n  /* c */ static b;\n}',
+				'class A {\n  @dec()\n  /* c */\n  static b;\n}',
+			],
+			[
+				'class A {\n  @dec()\n\n  // comment\n\n  static b;\n}',
+				'class A {\n  @dec()\n\n  // comment\n  static b;\n}',
+			],
+			// A comment between two modifiers moves before them, like the tie-break
+			// with the name after it in Prettier
+			[
+				'class A {\n  constructor(@dec /* a */ private /* b */ readonly /* c */ x: T) {}\n}',
+				'class A {\n  constructor(@dec /* a */ /* b */ private readonly /* c */ x: T) {}\n}',
+			],
+			// Prettier's own layout for an own-line comment before a parameter's type
+			[
+				'class A {\n  m(\n    @a\n    // c\n    x: T,\n  ) {}\n}',
+				'class A {\n  m(\n    @a\n    x // c\n    : T,\n  ) {}\n}',
+			],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'class A {\n  @dec() // comment\n  static b;\n}',
+			'class A {\n  @dec() /* comment */ static b;\n}',
+			'class A {\n  @dec() /* a */ /* b */ static x;\n}',
+			'class A {\n  @dec() static /* c */ b;\n}',
+			'class A {\n  @a\n  // c\n  @b\n  static x;\n}',
+			'class A {\n  @dec()\n  // comment\n  m() {}\n}',
+			'class A {\n  @dec()\n  // comment\n  #priv = 1;\n}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a static field static on every pass', async () => {
+			const source =
+				'class A {\n  @dec()\n  // comment\n  static b;\n  @dec() /* c */ static c;\n}';
+			const once = await format(source);
+
+			expect(membersOf(once)).toEqual(['static b', 'static c']);
+			expect(membersOf(await format(once))).toEqual(membersOf(source));
+		});
+
+		it('keeps the modifiers and decorators of a parameter property on every pass', async () => {
+			/**
+			 * The first constructor's parameter properties, as `@decorators modifiers name`
+			 * @param {string} source
+			 * @returns {string[]}
+			 */
+			const parametersOf = (source) => {
+				const ast = /** @type {any} */ (parsers.tsrx.parse(source, /** @type {any} */ ({})));
+				return ast.body[0].body.body[0].value.params.map(
+					(/** @type {any} */ { accessibility, readonly, parameter }) =>
+						[
+							...parameter.decorators.map((/** @type {any} */ d) => `@${d.expression.name}`),
+							accessibility,
+							readonly && 'readonly',
+							parameter.name,
+						]
+							.filter(Boolean)
+							.join(' '),
+				);
+			};
+			const source =
+				'class A {\n  constructor(\n    @a\n    // a\n    private readonly x: T,\n    @b /* b */ protected /* c */ y: T,\n  ) {}\n}';
+			const once = await format(source);
+
+			expect(parametersOf(once)).toEqual(['@a private readonly x', '@b protected y']);
+			expect(parametersOf(await format(once))).toEqual(parametersOf(source));
+		});
+	});
+
 	// These comments sit where no node took them, so the parser gave them to
 	// the function, which never printed them.
 	describe('comments between function parameters and bodies', () => {
@@ -19177,6 +19307,41 @@ class Widget {}`);
     this.ready = true;
   }
 }`);
+		});
+
+		// Like Prettier's `printDecorators`, a parameter's decorators group with
+		// the parameter: a line break written after one of them stays, and the
+		// parameter starts a new line when they break or don't fit (#534)
+		it.each([
+			[
+				'class A {\n  m(@inject({ aaaaaaaaaaaaaaaaaaa: 1, bbbbbbbbbbbbbbbbbbbbbb: 2, cccccccccccccc: 3 }) bar: IBar) {}\n}',
+				'class A {\n  m(\n    @inject({\n      aaaaaaaaaaaaaaaaaaa: 1,\n      bbbbbbbbbbbbbbbbbbbbbb: 2,\n      cccccccccccccc: 3,\n    })\n    bar: IBar,\n  ) {}\n}',
+			],
+			[
+				'class A {\n  constructor(@Inject(forwardRef(() => SomeVeryLongServiceNameHereToForceBreak)) private readonly service: SomeService) {}\n}',
+				'class A {\n  constructor(\n    @Inject(forwardRef(() => SomeVeryLongServiceNameHereToForceBreak))\n    private readonly service: SomeService,\n  ) {}\n}',
+			],
+			['class A {\n  m(@a\n    @b x) {}\n}', 'class A {\n  m(\n    @a\n    @b\n    x,\n  ) {}\n}'],
+			[
+				'class A {\n  m(@a\n  x: T, y) {}\n}',
+				'class A {\n  m(\n    @a\n    x: T,\n    y,\n  ) {}\n}',
+			],
+			[
+				'class A {\n  m(@a() { bbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccccccccccccccccc, ddddddddddddddddddd }: T) {}\n}',
+				'class A {\n  m(\n    @a()\n    {\n      bbbbbbbbbbbbbbbbbbbbbbbbbbbbb,\n      ccccccccccccccccccccccccccccc,\n      ddddddddddddddddddd,\n    }: T,\n  ) {}\n}',
+			],
+		])('breaks the parameter decorators of %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'class A {\n  constructor(\n    @inject(Bar)\n    private readonly bar: IBar,\n  ) {}\n}',
+			'class Foo {\n  constructor(\n    @inject(Bar)\n    private readonly bar: IBar,\n\n    @inject(MyProcessor)\n    private readonly myProcessor: IMyProcessor,\n  ) {}\n}',
+			'class A {\n  m(\n    @a\n    @b()\n    x: T,\n  ) {}\n}',
+			'class A {\n  m(@a @b x, @c y) {}\n}',
+			'class A {\n  m(@a({ b: 1 }) { c }: T) {}\n}',
+		])('keeps the parameter decorators of %j', async (source) => {
+			await expectUnchanged(source);
 		});
 
 		it('keeps decorators above the export keyword', async () => {
