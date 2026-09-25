@@ -754,6 +754,23 @@ describe('decorators before `export` (sveltejs/acorn-typescript#125)', () => {
 		}
 	});
 
+	it('gives the class the decorators on both sides of `export default`', async () => {
+		const sources = [
+			'@a export default @b class {}',
+			'@a @c export default @b abstract class B {}',
+		];
+		for (const { source, strict, collect } of await parseBothModes(sources)) {
+			for (const outcome of [strict, collect]) {
+				const declaration = defaultExported(parsed(outcome, source).ast);
+				expect(declaration.type, source).toBe('ClassDeclaration');
+				expect(decoratorTexts(declaration, source), source).toEqual(
+					source.startsWith('@a @c') ? ['@a', '@c', '@b'] : ['@a', '@b'],
+				);
+				expect(declaration.start, source).toBe(0);
+			}
+		}
+	});
+
 	it('keeps the range of a class decorated before `export`', async () => {
 		const source = '@dec export default class {}';
 		const [{ strict }] = await parseBothModes([source]);
