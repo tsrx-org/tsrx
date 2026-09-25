@@ -287,21 +287,6 @@ export function createParser(...plugins) {
  */
 export function get_comment_handlers(source, comments, index = 0) {
 	/**
-	 * @param {string} text
-	 * @param {number} startIndex
-	 * @returns {string | null}
-	 */
-	function getNextNonWhitespaceCharacter(text, startIndex) {
-		for (let i = startIndex; i < text.length; i++) {
-			const char = text[i];
-			if (char !== ' ' && char !== '\t' && char !== '\n' && char !== '\r') {
-				return char;
-			}
-		}
-		return null;
-	}
-
-	/**
 	 * Find the first `token` between two positions that isn't inside a comment,
 	 * such as the comma after a list element or the `from` of an import. Only
 	 * punctuation, whitespace, and comments can come before it there.
@@ -1816,8 +1801,17 @@ export function get_comment_handlers(source, comments, index = 0) {
 											continue;
 										}
 
-										const nextChar = getNextNonWhitespaceCharacter(source, potentialComment.end);
-										if (nextChar === ')') {
+										// Like Prettier, the comments before the `)` all trail the last
+										// one, even with other comments or a trailing comma between
+										// (`f(a, b /* c */ /* d */)`, `f(a, b /* c */,)`)
+										const nextChar = getNextNonSpaceNonCommentCharacter(potentialComment.end);
+										if (
+											nextChar === ')' ||
+											(nextChar === ',' &&
+												getNextNonSpaceNonCommentCharacter(
+													findOutsideComments(',', potentialComment.end, source.length) + 1,
+												) === ')')
+										) {
 											(node.trailingComments ||= []).push(
 												/** @type {AST.CommentWithLocation} */ (comments.shift()),
 											);

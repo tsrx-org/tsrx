@@ -14756,6 +14756,33 @@ import f from "./f" /* c */ with { type: "json" };`);
 ];`);
 			expect(result).toBeWithNewline('const y = [a /* c */, b];');
 		});
+
+		// Like Prettier, the comments before the `)` trail the last parameter
+		// or argument, even with a trailing comma or another comment between
+		// (#435)
+		it.each([
+			['function f(\n  a,\n  b /* c */,\n) {}', 'function f(a, b /* c */) {}'],
+			['const f = (\n  a,\n  b /* c */,\n) => {};', 'const f = (a, b /* c */) => {};'],
+			['class A {\n  m(\n    a,\n    b /* c */,\n  ) {}\n}', 'class A {\n  m(a, b /* c */) {}\n}'],
+			['function f(\n  a,\n  b /* c */,\n): void {}', 'function f(a, b /* c */): void {}'],
+			['function f<T>(\n  a,\n  b = 1 /* c */,\n) {}', 'function f<T>(a, b = 1 /* c */) {}'],
+			['function f(\n  a,\n  b /* c */, /* d */\n) {}', 'function f(a, b /* c */ /* d */) {}'],
+			['function f(\n  a,\n  b /* c */, // d\n) {}', 'function f(\n  a,\n  b /* c */, // d\n) {}'],
+			['const x = run(\n  a,\n  b /* c */,\n);', 'const x = run(a, b /* c */);'],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'function f(a, b /* c */ /* d */) {}',
+			'const f = (a /* c */ /* d */) => a;',
+			'run(a, b /* c */ /* d */);',
+			'function f(\n  a,\n  b, // c\n) {}',
+			'function f(\n  a,\n  b,\n  // c\n) {}',
+			'function f(a, ...b /* c */) {}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
 	});
 
 	// `export default (class Named {})` is an expression: `Named` is bound only
