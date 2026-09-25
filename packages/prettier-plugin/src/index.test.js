@@ -1836,6 +1836,22 @@ export type C =   D`);
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('drops the trailing comma of a dynamic import and keeps its options once', async () => {
+			const input = `const a=import("./a.js",)
+const data=import("./data.json",{with:{type:"json"}},)`;
+			const expected = `const a = import("./a.js");
+const data = import("./data.json", { with: { type: "json" } });`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('formats import attributes with more than one quoted key', async () => {
+			const input = `import a from './a' with { 'a': 'x', 'b': 'y' };`;
+			const expected = `import a from "./a" with { a: "x", b: "y" };`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should format destructured dynamic import() in Promise.all', async () => {
 			const input = `const [{ EditorState }, { oneDark }] = await Promise.all([import('@codemirror/state'), import('@codemirror/theme-one-dark')]);`;
 			const expected = `const [{ EditorState }, { oneDark }] = await Promise.all([

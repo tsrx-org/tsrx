@@ -3687,19 +3687,13 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'ImportExpression': {
-			const importExpression =
-				/** @type {AST.ImportExpression & { phase?: 'defer' | null, arguments?: AST.Expression[] }} */ (
-					node
-				);
 			/** @type {Doc[]} */
 			const parts = [
-				importExpression.phase === 'defer' ? 'import.defer(' : 'import(',
+				node.phase === 'defer' ? 'import.defer(' : 'import(',
 				path.call(print, 'source'),
 			];
 			if (node.options) {
 				parts.push(', ', path.call(print, 'options'));
-			} else if (importExpression.arguments?.length) {
-				parts.push(', ', path.call(print, 'arguments', 0));
 			}
 			parts.push(')');
 			nodeContent = parts;
