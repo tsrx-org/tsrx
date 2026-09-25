@@ -3363,11 +3363,13 @@ function printTrailingComments(node, options, comments = node.trailingComments ?
 		const commentStart = /** @type {AST.NodeWithLocation} */ (comment).start;
 		// Like Prettier, a comment stays on the line it shares with code, even
 		// a `;` that isn't printed, unless a line comment ends that line first
+		/** @type {boolean} */
 		const isInlineComment =
 			!(previousHasLineSuffix && previousIsLine) &&
 			!hasNewline(text, commentStart, { backwards: true });
 
 		const commentDoc = printComment(comment, text);
+		/** @type {boolean} */
 		const hasLineSuffix = !isInlineComment || comment.type === 'Line' || previousHasLineSuffix;
 
 		if (isInlineComment) {
