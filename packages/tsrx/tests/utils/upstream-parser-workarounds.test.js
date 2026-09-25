@@ -603,6 +603,101 @@ describe("a repeated modifier's error (sveltejs/acorn-typescript#129)", () => {
 	});
 });
 
+describe('a parameter property modifier on a function parameter (sveltejs/acorn-typescript#136)', () => {
+	// TypeScript's parser reads the modifiers before any parameter, and its
+	// checker reports TS2369 outside a constructor. acorn-typescript reads a
+	// function's parameters without them, so `public` failed as a reserved word
+	// and the name after `readonly` was unexpected. Its own error for them is
+	// raised at the modifier's column. When collecting, it's recorded at the
+	// first modifier.
+	const message = 'A parameter property is only allowed in a constructor implementation.';
+	/** @type {Array<[source: string, modifiers: string[]]>} */
+	const cases = [
+		['function f(public x: number) {}', ['public x']],
+		['function f(a: number, protected override b: number) {}', ['protected']],
+		[
+			'const g = function (\n\tprivate x: number,\n\treadonly y: number,\n) {};',
+			['private', 'readonly'],
+		],
+		['declare function h(public x?: number): void;', ['public']],
+		['function f(@dec readonly x: number) {}', ['readonly']],
+	];
+
+	it('records it at the first modifier when collecting', async () => {
+		const outcomes = await parse_in_worker_with_ast(
+			cases.map(([source]) => ({ source, options: { collect: true } })),
+		);
+
+		expect(outcomes.map((outcome) => (outcome.ok ? outcome.errors : outcome.message))).toEqual(
+			cases.map(([source, modifiers]) =>
+				modifiers.map((modifier) => {
+					const pos = source.indexOf(modifier);
+					return { message, pos, end: pos + 1 };
+				}),
+			),
+		);
+	});
+
+	it("leaves a method's parameters alone", async () => {
+		// acorn-typescript reads modifiers there and reports nothing, leaving TS2369
+		// to TypeScript.
+		const sources = [
+			'class A { m(public x: number) {} }',
+			'const o = { m(readonly x: number) {} };',
+			'class A { constructor(private x: number) {} }',
+		];
+		const outcomes = await parse_in_worker(
+			sources.map((source) => ({ source, options: { collect: true } })),
+		);
+
+		expect(outcomes).toEqual(sources.map(() => ({ ok: true, errors: [] })));
+	});
+});
+
+describe('decorators on an object literal member (sveltejs/acorn-typescript#135)', () => {
+	// TypeScript's parser expects a property at the `@` (TS1136), as acorn does
+	// in an object pattern. acorn-typescript took the decorators and hung them
+	// off the property, which the output left out.
+	const sources = [
+		'const o = { @dec m() {} };',
+		'const o = { a: 1, @dec b: 2 };',
+		'const o = { @dec get x() { return 1; } };',
+		'const o = { @a @b() [c]: 1 };',
+		'f({ @dec a });',
+		// acorn-typescript failed at the `...`, after the decorators.
+		'const o = { @dec ...s };',
+		'const { @dec a } = b;',
+	];
+	const modes = [undefined, { collect: true }, { loose: true }];
+
+	it('throws at the `@` in every mode', async () => {
+		const outcomes = await parse_in_worker(
+			[...sources, 'const o = {\n\ta: 1,\n\t@dec b() {},\n};'].flatMap((source) =>
+				modes.map((options) => ({ source, options })),
+			),
+		);
+
+		expect(outcomes).toEqual([
+			...sources.flatMap((source) => {
+				const pos = source.indexOf('@');
+				return modes.map(() => ({ ok: false, message: `Unexpected token (1:${pos})`, pos }));
+			}),
+			...modes.map(() => ({ ok: false, message: 'Unexpected token (3:1)', pos: 20 })),
+		]);
+	});
+
+	it('still takes decorators on a class member and on a class that is a value', async () => {
+		const valid = ['class A { @dec m() {} }', 'const o = { A: @dec class {} };'];
+		const outcomes = await parse_in_worker(
+			valid.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes.map((outcome) => outcome.ok)).toEqual(
+			valid.flatMap(() => modes.map(() => true)),
+		);
+	});
+});
+
 describe('`assert` on the line after an import (sveltejs/acorn-typescript#121)', () => {
 	/**
 	 * @param {AST.Node} node
