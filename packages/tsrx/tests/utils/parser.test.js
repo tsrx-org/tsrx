@@ -7534,6 +7534,20 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(conditional.expression.callee).trailing).toBeUndefined();
 	});
 
+	// Like Prettier, which ends these statements before their `;`
+	it('trails the statement with a comment after a statement that is only its keyword, before its ;', () => {
+		const loop = firstStatement('for (;;) continue // c\n;\nfoo();');
+		const [, next] = parseModule('while (a) break /* c */\n;\nfoo();', 'App.ts').body;
+		const returned = firstStatement('function f() {\n  return // c\n  ;\n  foo();\n}').body.body[0];
+		const debug = firstStatement('debugger /* c */ /* d */\n;');
+
+		expect(commentsOf(loop).trailing).toEqual([' c']);
+		expect(commentsOf(loop.body).trailing).toBeUndefined();
+		expect(commentsOf(next).leading).toBeUndefined();
+		expect(commentsOf(returned).trailing).toEqual([' c']);
+		expect(commentsOf(debug).trailing).toEqual([' c ', ' d ']);
+	});
+
 	it('trails the constraint of a type parameter with a comment at the end of the line of its =', () => {
 		const [parameter] = firstStatement('type A<B extends C = // c\n  D> = R;').typeParameters
 			.params;
