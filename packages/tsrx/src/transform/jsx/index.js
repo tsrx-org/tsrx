@@ -56,6 +56,7 @@ import {
 } from '../jsx-interleave.js';
 import { is_hoist_safe_jsx_node } from '../jsx-hoist.js';
 import { lower_server_module_for_types } from './server-module.js';
+import { get_hashbang } from '../../comment-utils.js';
 import {
 	child_nodes,
 	has_location,
@@ -889,6 +890,7 @@ export function createJsxTransform(platform) {
 			tsx_with_ts_locations(
 				transform_context.typeOnly,
 				transform_context.typeOnly ? transform_context.comments : undefined,
+				get_hashbang(source),
 			),
 			{
 				sourceMapSource: filename,

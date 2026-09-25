@@ -628,6 +628,10 @@ export function TSRXPlugin(config) {
 			/** @type {AST.NativeTSRXTemplateNode | null} */
 			#openingNativeTemplateNode = null;
 			#closingNativeTemplateNode = false;
+			// Tokenizer context depth before each element's opening `<` (see
+			// `parseElement`), for its closing tag to restore.
+			/** @type {WeakMap<AST.Node, number>} */
+			#elementContextDepths = new WeakMap();
 			#readingJSXControlFlowDirectiveKeyword = false;
 			#readingJSXControlFlowHeader = false;
 
@@ -885,6 +889,30 @@ export function TSRXPlugin(config) {
 					cursor--;
 				}
 				return cursor;
+			}
+
+			/**
+			 * Like `#previousNonSpaceTabIndex`, but also skips the comments between
+			 * the previous token and `index`. When that gap holds a line break
+			 * (including one inside a block comment, which separates tokens as for
+			 * ASI), returns the index of its last line break; otherwise the index of
+			 * the previous token's last character.
+			 *
+			 * The gap starts at `lastTokEnd` and is scanned forward, so comments read
+			 * exactly as the tokenizer read them (`/* a /* b *\/` is one comment).
+			 * When `lastTokEnd` doesn't mark the gap, because a token was re-read
+			 * after a rewind, comments are not skipped.
+			 * @param {number} index
+			 */
+			#previousNonSpaceTabCommentIndex(index) {
+				const gap_start = this.lastTokEnd;
+				if (gap_start > index || skip_space_and_comments_from(this.input, gap_start) !== index) {
+					return this.#previousNonSpaceTabIndex(index);
+				}
+				for (let i = index - 1; i >= gap_start; i--) {
+					if (this.#isNewlineCharCode(i)) return i;
+				}
+				return gap_start - 1;
 			}
 
 			/**
@@ -1617,43 +1645,55 @@ export function TSRXPlugin(config) {
 			#parseCodeBlockSetupStatement() {
 				const previous_context = this.context;
 				const at_template_literal = this.type === tt.backQuote;
-				let pushed_statement_context = false;
+				// The statement's first token is already read, and a `(`, `{`, `function`,
+				// or `class` has pushed its own context. The statement context goes under
+				// it, so the token that closes it (`)` of `(a) / b`) pops its own context.
+				const first_token_context_depth =
+					previous_context.length - this.#currentTokenContextCount();
 				if (at_template_literal) {
 					if (this.curContext() !== q_tmpl) {
 						this.context.push(q_tmpl);
 					}
 				} else {
-					this.context = previous_context.filter(
-						(context) =>
-							context !== tstc.tc_expr && context !== tstc.tc_oTag && context !== tstc.tc_cTag,
-					);
+					this.context = previous_context
+						.slice(0, first_token_context_depth)
+						.filter(
+							(context) =>
+								context !== tstc.tc_expr && context !== tstc.tc_oTag && context !== tstc.tc_cTag,
+						);
 					if (this.curContext() !== b_stat) {
 						this.context.push(b_stat);
-						pushed_statement_context = true;
 					}
+					this.context.push(...previous_context.slice(first_token_context_depth));
 				}
-				this.exprAllowed = true;
 				const previous_path = this.#path;
 				this.#path = [];
 				this.#templateScriptParsingDepth++;
 				let node;
 				try {
 					if (this.type === tstt.jsxText || this.type === tstt.jsxName) {
+						// Read as template text; re-read it as the code token that starts a
+						// statement. Only this re-read gets `exprAllowed`: for a token already
+						// read as code, it decides how the token after it reads.
 						const loc = get_line_info(this, this.start);
 						this.pos = this.start;
 						this.curLine = loc.line;
 						this.lineStart = this.start - loc.column;
+						this.exprAllowed = true;
 						this.nextToken();
 					}
 					node = this.parseStatement(null);
 				} finally {
 					this.#templateScriptParsingDepth--;
 					this.#path = previous_path;
-					if (pushed_statement_context && this.curContext() === b_stat) {
-						this.context.pop();
-					}
 					if (!at_template_literal) {
-						this.context = previous_context;
+						// The token after the statement is already read too: keep the
+						// contexts it pushed (the `(` that starts the next statement).
+						const next_token_contexts = this.context.slice(
+							this.context.length - this.#currentTokenContextCount(),
+						);
+						this.context = previous_context.slice(0, first_token_context_depth);
+						this.context.push(...next_token_contexts);
 					}
 				}
 				if (this.curContext() === tstc.tc_expr) {
@@ -1690,7 +1730,9 @@ export function TSRXPlugin(config) {
 					return this.#parseJSXControlFlowExpression();
 				}
 
-				// Re-read the `<` so its `jsxTagStart` pushes the opening-tag contexts.
+				// Re-read the `<` so its `jsxTagStart` pushes the opening-tag contexts,
+				// in place of the ones it pushed when it was first read.
+				this.context.length -= this.#currentTokenContextCount();
 				this.pos = at_index;
 				this.exprAllowed = true;
 				this.next();
@@ -2226,14 +2268,24 @@ export function TSRXPlugin(config) {
 						} finally {
 							this.#readingJSXControlFlowHeader = previous_reading_header;
 						}
-						this.expect(tt.braceL);
-						// Each arm's braces are its own template block, so setup locals
-						// in separate arms may share names, like `@if`/`@else` branches.
-						this.enterScope(0);
-						while (this.type !== tt.braceR) {
-							this.#parseJSXSwitchCaseConsequent(current.consequent);
+						// Like an `@if` body, the arm's `{ }` is code: hide the enclosing
+						// template from `#path` while its tokens are read, so a `/` reads as
+						// a regex or division and a `#` as a private name instead of template
+						// text. Render nodes re-establish their own path via `parseElement`.
+						const enclosing_path = this.#path;
+						this.#path = [];
+						try {
+							this.expect(tt.braceL);
+							// Each arm's braces are its own template block, so setup locals
+							// in separate arms may share names, like `@if`/`@else` branches.
+							this.enterScope(0);
+							while (this.type !== tt.braceR) {
+								this.#parseJSXSwitchCaseConsequent(current.consequent);
+							}
+							this.exitScope();
+						} finally {
+							this.#path = enclosing_path;
 						}
-						this.exitScope();
 						this.expect(tt.braceR);
 						node.cases.push(this.finishNode(current, 'SwitchCase'));
 						continue;
@@ -2368,8 +2420,17 @@ export function TSRXPlugin(config) {
 				// code.
 				if (this.type !== tstt.jsxText && this.type !== tt.eof) {
 					this.#filterTemplateScriptContexts();
+					// The statement's first token is already read. A template literal's
+					// backtick or an opening paren pushed its own context, which must stay
+					// on top, or the rest of the template reads as code and the closing
+					// paren pops the statement context instead.
+					const token_context =
+						this.type === tt.backQuote || this.type === tt.parenL ? this.context.pop() : undefined;
 					if (this.curContext() !== b_stat) {
 						this.context.push(b_stat);
+					}
+					if (token_context) {
+						this.context.push(token_context);
 					}
 					this.#parsingJSXSwitchCaseScriptStatementDepth++;
 					try {
@@ -2524,6 +2585,16 @@ export function TSRXPlugin(config) {
 				const closingEndInfo = get_line_info(this, closingEnd);
 				this.curLine = closingEndInfo.line;
 				this.lineStart = closingEnd - closingEndInfo.column;
+				// The current token is still the first one read after the opening tag,
+				// inside the raw body. `next()` below records it as the last token, and
+				// nodes that finish after this element (the declarator and declaration
+				// of `const theme = <style>…</style>`) end at the last token's end, so
+				// make the closing tag the current token first.
+				const closingStartInfo = get_line_info(this, closingStart);
+				this.start = closingStart;
+				this.startLoc = new acorn.Position(closingStartInfo.line, closingStartInfo.column);
+				this.end = closingEnd;
+				this.endLoc = new acorn.Position(closingEndInfo.line, closingEndInfo.column);
 				if (insideTemplate && relativeCloseStart === 0) {
 					// Acorn has already tokenized the adjacent tag start (this element's
 					// closing tag, or, when unclosed, the next sibling or parent close);
@@ -2534,6 +2605,11 @@ export function TSRXPlugin(config) {
 					if (this.curContext() === tstc.tc_expr) {
 						this.context.pop();
 					}
+				}
+				if (insideTemplate && this.curContext() === tstc.tc_expr) {
+					// This element's own children context, pushed by its opening tag. Its
+					// closing tag is never tokenized, so nothing else pops it.
+					this.context.pop();
 				}
 				if (!insideTemplate && this.#path.at(-1) === node) {
 					// Outside a template (a `@{ … }` body, a `@case` body, a statement),
@@ -2716,6 +2792,28 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * How many contexts the current token's own `updateContext` pushed on top
+			 * of the stack: two for a tag start (`tc_expr` and `tc_oTag`), one for
+			 * `(`, `{`, `${`, `function`, `class`, and an opening backquote. Code that
+			 * resets the stack after this token was read keeps these on top.
+			 */
+			#currentTokenContextCount() {
+				if (this.type === tstt.jsxTagStart) return 2;
+				if (
+					this.type === tt.parenL ||
+					this.type === tt.braceL ||
+					this.type === tt.dollarBraceL ||
+					this.type === tt._function ||
+					this.type === tt._class
+				) {
+					return 1;
+				}
+				// A closing backquote pops the template's context instead.
+				if (this.type === tt.backQuote && this.curContext() === q_tmpl) return 1;
+				return 0;
+			}
+
+			/**
 			 * @param {number} index
 			 * @returns {number}
 			 */
@@ -2778,35 +2876,13 @@ export function TSRXPlugin(config) {
 			 * @param {number} enclosing_context_depth
 			 */
 			#popTokenContextsAfterTemplateExpressionElement(node, enclosing_context_depth) {
-				// A fragment in expression position (`() => <>…</>`) leaves the tokenizer
-				// at `exprAllowed === false`, unlike a self-closing element. When the next
-				// token is a `;` or ASI can insert one, the following statement may
-				// legitimately open with a JSX tag (`<List/>`), so restore expression
-				// position to match the element path.
-				if ((this.type === tt.semi || this.canInsertSemicolon()) && node.type === 'JSXFragment') {
-					this.exprAllowed = true;
-				}
-				// A JSX element/fragment used as a ternary consequent (`cond ? <a>…</a> : …`)
-				// likewise leaves the tokenizer at `exprAllowed === false`, so the `<` after
-				// the `:` would not start a tag. Restore expression position so the alternate
-				// branch parses as JSX too. This applies to both elements and fragments,
-				// unlike the `;`/ASI case above (a `:` only follows a value, so the next
-				// token always begins the alternate expression).
-				if (this.type === tt.colon) {
-					this.exprAllowed = true;
-				}
+				// The token after the element (`;`, `:`, `,`, `return`, …) is already
+				// read, and its own context update set `exprAllowed` for the token after
+				// it.
 				const ctx = this.context;
 				const ci = ctx.length - 1;
 				const top = ctx[ci];
 				const second = ctx[ci - 1];
-
-				// A paired JSX element/fragment finishes on the closing tag's `>`, which
-				// leaves `exprAllowed` false even when the already-read next token is a
-				// comma. Re-arm expression mode for the value after that comma, matching
-				// the tokenizer state produced by a self-closing JSX element.
-				if (this.type === tt.comma) {
-					this.exprAllowed = true;
-				}
 
 				// Expression-bodied templates (no statement child) followed by `,`
 				// in an object/array literal need surgical fixups; statement-bodied
@@ -3294,6 +3370,52 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Acorn allows an expression after a name only for `of` and `yield`.
+			 * Where `await` is a keyword (an async function, or the module top level),
+			 * it is a unary operator like `yield`, so the token after it starts an
+			 * expression: `await <div />` awaits an element instead of comparing.
+			 * @type {Parse.Parser['updateContext']}
+			 */
+			updateContext(prevType) {
+				super.updateContext(prevType);
+				if (
+					this.type === tt.name &&
+					this.value === 'await' &&
+					prevType !== tt.dot &&
+					prevType !== tt.questionDot &&
+					this.canAwait
+				) {
+					this.exprAllowed = true;
+				}
+			}
+
+			/**
+			 * The token after a type is read while still inside the type, where `<`
+			 * is always a type operator. Once the outermost type has ended, a `<` that
+			 * starts its own line is read again by the rules for code, so an element
+			 * there starts a new statement after `const x = y as T` or `let x: T`, as
+			 * it does after `const x = y`. Inside a type (`type F =\n  <T>() => T`,
+			 * a call signature after a member) the `<` stays a type operator.
+			 * @type {Parse.Parser['tsInType']}
+			 */
+			tsInType(cb) {
+				if (this.inType) return super.tsInType(cb);
+				const type = super.tsInType(cb);
+				if (
+					this.type === tt.relational &&
+					this.value === '<' &&
+					this.hasPrecedingLineBreak() &&
+					can_start_tag_after_lt(this.input, this.start)
+				) {
+					this.pos = this.start;
+					// As after the value that ends `const x = y`.
+					this.exprAllowed = false;
+					this.nextToken();
+				}
+				return type;
+			}
+
+			/**
 			 * `<T,>(x: T) => x` and `<T>(x: T): T => x` should parse as generic
 			 * arrow functions, not JSX elements. acorn-typescript's `readToken`
 			 * can otherwise tokenize `<` as `jsxTagStart` when expression parsing
@@ -3450,8 +3572,10 @@ export function TSRXPlugin(config) {
 
 					// Check what character/token precedes the <
 					if (lookback >= 0) {
-						const prevChar = this.input.charCodeAt(lookback);
-						prevNonWhitespaceChar = prevChar;
+						// Comments are skipped, so `/* note */ <div />` on its own line still
+						// starts a tag after a statement without a semicolon.
+						const previous = this.#previousNonSpaceTabCommentIndex(this.pos);
+						prevNonWhitespaceChar = previous >= 0 ? this.input.charCodeAt(previous) : null;
 
 						if (
 							nextChar !== CharCode.slash &&
@@ -3787,6 +3911,14 @@ export function TSRXPlugin(config) {
 					(this.type === tt._in || (this.options.ecmaVersion >= 6 && this.isContextual('of'))) &&
 					init.declarations.length === 1
 				) {
+					// Like Acorn's `parseForAfterInit`, which this replaces
+					if (
+						this.type === tt._in &&
+						(init.kind === 'using' || init.kind === 'await using') &&
+						!init.declarations[0].init
+					) {
+						this.raise(this.start, 'Using declaration is not allowed in for-in loops');
+					}
 					if (this.options.ecmaVersion >= 9) {
 						if (this.type === tt._in) {
 							if (awaitAt > -1) {
@@ -4816,6 +4948,11 @@ export function TSRXPlugin(config) {
 
 				const opening_template_node = this.#openingNativeTemplateNode;
 				let pushed_opening_template_node = false;
+				// `>` reads the next token: the first child, or, after `/>`, the token
+				// after the element. Outside a template that token is code, so a
+				// self-closing element stays off `#path` (`<span /> / 2` divides).
+				const reads_next_token_as_code =
+					node.selfClosing && !this.#isNativeTemplateNode(this.#path.at(-1));
 				if (opening_template_node) {
 					// The enclosing `parseElement` started this node before the opening tag
 					// said what it is; stamp its shape now that the tag has been read.
@@ -4835,8 +4972,10 @@ export function TSRXPlugin(config) {
 						template_node.openingFragment = this.#toOpeningFragment(node);
 						template_node.closingFragment = null;
 					}
-					this.#path.push(opening_template_node);
-					pushed_opening_template_node = true;
+					if (!reads_next_token_as_code) {
+						this.#path.push(opening_template_node);
+						pushed_opening_template_node = true;
+					}
 				}
 
 				try {
@@ -4865,8 +5004,9 @@ export function TSRXPlugin(config) {
 				// tc_oTag/tc_expr) stripped off. A balanced element should leave the
 				// stack here; the body (especially a control-flow block) can otherwise
 				// leave residue that breaks tokenizing the following JS token when the
-				// element is in expression position.
-				let pre_element_context_depth = this.context.length;
+				// element is in expression position. The token after `<` is already read,
+				// so the `{` of a dynamic tag name (`<{tag}>`) doesn't count.
+				let pre_element_context_depth = this.context.length - this.#currentTokenContextCount();
 				while (pre_element_context_depth > 0) {
 					const ctx = this.context[pre_element_context_depth - 1];
 					if (ctx === tstc.tc_expr || ctx === tstc.tc_oTag || ctx === tstc.tc_cTag) {
@@ -4984,6 +5124,7 @@ export function TSRXPlugin(config) {
 					);
 					this.#path.pop();
 				} else {
+					this.#elementContextDepths.set(node, pre_element_context_depth);
 					this.#parseNativeTemplateBody(node, /** @type {AST.Node[]} */ (node.children), {
 						enterScope: true,
 						resetFunctionBodyDepth: true,
@@ -5021,8 +5162,15 @@ export function TSRXPlugin(config) {
 					const parent = this.#path.at(-1);
 					const insideTemplate = this.#isNativeTemplateNode(parent);
 
-					if (!insideTemplate && this.context.length > pre_element_context_depth) {
-						this.context.length = pre_element_context_depth;
+					// The token after the closing tag is already read, so only the residue
+					// under the contexts it pushed goes (a sibling's `<`, a template
+					// literal's backquote).
+					const token_context_depth = this.context.length - this.#currentTokenContextCount();
+					if (!insideTemplate && token_context_depth > pre_element_context_depth) {
+						this.context.splice(
+							pre_element_context_depth,
+							token_context_depth - pre_element_context_depth,
+						);
 					}
 				}
 
@@ -5241,7 +5389,31 @@ export function TSRXPlugin(config) {
 						if (!(inside_parent_template && current_name === closing_name_str)) {
 							this.#closingNativeTemplateNode = true;
 						}
-						this.expect(tstt.jsxTagEnd);
+						// `>` reads the token after the element. When the element closes and no
+						// template encloses it, that token is code: the element leaves `#path`
+						// (`<b>x</b> / 2` divides; it is popped for good below), and the
+						// tokenizer context returns to where the element began, as after a
+						// balanced closing tag, dropping residue its body left (a control-flow
+						// block's contexts). parseElement keeps the contexts the token pushes.
+						const closes_outside_template =
+							this.#isNativeTemplateNode(current) &&
+							current_name === closing_name_str &&
+							!this.#isNativeTemplateNode(this.#path.at(-2));
+						if (closes_outside_template) {
+							this.#path.pop();
+							const context_depth = this.#elementContextDepths.get(current);
+							if (context_depth !== undefined && this.context.length > context_depth) {
+								this.context.length = context_depth;
+								this.exprAllowed = false;
+							}
+						}
+						try {
+							this.expect(tstt.jsxTagEnd);
+						} finally {
+							if (closes_outside_template) {
+								this.#path.push(current);
+							}
+						}
 						this.#closingNativeTemplateNode = false;
 						const closingElement =
 							/** @type {ESTreeJSX.TSRXJSXClosingElement & AST.NodeWithLocation} */ (
@@ -5253,7 +5425,6 @@ export function TSRXPlugin(config) {
 						if (this.#isDynamicJSXElementName(closingElement.name)) {
 							closingElement.isDynamic = true;
 						}
-						this.exprAllowed = false;
 
 						// Validate that the closing tag matches the opening tag
 						const currentElement = /** @type {AST.NativeTSRXTemplateNode} */ (
@@ -5392,10 +5563,9 @@ export function TSRXPlugin(config) {
 			 * `import.defer(specifier, options?)`, starting at the opening paren.
 			 *
 			 * This mirrors Acorn's ES2025 `import(...)` grammar (optional `options`
-			 * argument, optional trailing comma), which neither inherited parser
-			 * produces here: acorn-typescript's `parseDynamicImport` emits legacy
-			 * `arguments`, and Acorn's own only enables the `options` shape at
-			 * `ecmaVersion >= 16` while TSRX parses at 13.
+			 * argument, optional trailing comma), which the inherited parser does
+			 * not produce here: acorn-typescript's `parseDynamicImport`, which
+			 * emits legacy `arguments`, replaces Acorn's own.
 			 *
 			 * @param {AST.ImportExpression} node
 			 * @returns {AST.ImportExpression}

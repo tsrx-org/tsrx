@@ -19,12 +19,14 @@ let console_error_spy: MockInstance | undefined;
 let console_warn_spy: MockInstance | undefined;
 
 function is_expected_error_log(args: unknown[]) {
-	const message = args.map((arg) => {
-		if (arg instanceof Error) {
-			return `${arg.name}: ${arg.message}`;
-		}
-		return String(arg);
-	}).join(' ');
+	const message = args
+		.map((arg) => {
+			if (arg instanceof Error) {
+				return `${arg.name}: ${arg.message}`;
+			}
+			return String(arg);
+		})
+		.join(' ');
 
 	return EXPECTED_ERROR_LOG_SNIPPETS.some((snippet) => message.includes(snippet));
 }

@@ -81,6 +81,31 @@ const TSRX_TEMPLATE_RETURN_ERROR =
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] virtual code for syntax newer than ES2022`, () => {
+		it('keeps a hashbang as the first line and maps the code after it', () => {
+			const source = `#!/usr/bin/env node
+/** Docs */
+export function App() @{
+	using handle: Disposable = open();
+	<div>{handle.name}</div>
+}
+`;
+			const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(code.startsWith('#!/usr/bin/env node\n')).toBe(true);
+			expect(count_substring(code, '/usr/bin/env node')).toBe(1);
+			expect(code).toContain('using handle: Disposable = open();');
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+
+			const handle = source.indexOf('handle');
+			const mapping = mappings.find((candidate) => candidate.sourceOffsets[0] === handle);
+			expect(mapping).toBeDefined();
+			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
+			expect(code.slice(generated, generated + 'handle'.length)).toBe('handle');
+		});
+	});
+
 	describe(`[${name}] platform flag virtual types`, () => {
 		it('types every retained flag with the selected boolean literal', () => {
 			const result = compile_to_volar_mappings(
@@ -1909,6 +1934,69 @@ export function runSharedCompileTests({
 
 			expect(code).toContain("import defer * as feature from './feature.js';");
 			expect(code).toContain("import.defer('./lazy.js', { with: { type: 'json' } })");
+		});
+	});
+
+	describe(`[${name}] syntax newer than ES2022`, () => {
+		// The parser reports a hashbang as the `Line` comment at offset 0; the
+		// output keeps it as written, once, and ahead of any injected import.
+		it('keeps a hashbang as the first line', () => {
+			const source = `#!/usr/bin/env node
+// A comment after the hashbang
+import { value } from './value.js';
+
+export function App() @{
+	<div>{value}</div>
+}
+`;
+
+			for (const options of [undefined, { collect: true }]) {
+				const { code } = compile(source, 'App.tsrx', options);
+
+				expect(code.startsWith('#!/usr/bin/env node\n')).toBe(true);
+				expect(count_substring(code, '/usr/bin/env node')).toBe(1);
+				expect(virtual_parse_diagnostics(code)).toEqual([]);
+			}
+		});
+
+		it('keeps the hashbang of a file without statements', () => {
+			expect(compile('#!/usr/bin/env node\n', 'App.tsrx').code).toBe('#!/usr/bin/env node');
+		});
+
+		it('prints using and await using declarations unchanged', () => {
+			const { code } = compile(
+				`using module_handle = open();
+
+				export function App() @{
+					using handle: Disposable = open();
+					<div>{handle.name}</div>
+				}
+
+				export async function load(items: Iterable<Disposable>, stream: AsyncIterable<AsyncDisposable>) {
+					await using connection = await connect(), other = open();
+					for (using item of items) {}
+					for await (await using item of stream) {}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('using module_handle = open();');
+			expect(code).toContain('using handle: Disposable = open();');
+			expect(code).toMatch(/await using connection = await connect\(\),\s+other = open\(\);/);
+			expect(code).toContain('for (using item of items) {}');
+			expect(code).toContain('for await (await using item of stream) {}');
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+		});
+
+		it('keeps regular expressions with the v flag and modifiers', () => {
+			const { code } = compile(
+				`export const set = /[\\p{L}--[a-z]]/v;
+				export const modified = /(?i:a)b/;`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('/[\\p{L}--[a-z]]/v');
+			expect(code).toContain('/(?i:a)b/');
 		});
 	});
 

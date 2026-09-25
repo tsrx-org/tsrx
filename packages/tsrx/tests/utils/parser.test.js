@@ -1,6 +1,6 @@
 /** @import * as AST from 'estree' */
 /** @import { TSESTree } from '@typescript-eslint/types' */
-/** @import { CompileError, NodeOfType, NodeTypeName } from '../../types/index' */
+/** @import { CompileError, NodeOfType, NodeTypeName, ParseOptions } from '../../types/index' */
 /** @import * as ESTreeJSX from 'estree-jsx' */
 
 import { describe, expect, it } from 'vitest';
@@ -424,6 +424,136 @@ describe('TSRX parser', () => {
 		});
 	});
 
+	// The parser accepts everything the installed acorn supports, not only ES2022.
+	describe('syntax newer than ES2022', () => {
+		/** @type {Array<[string, () => ParseOptions | undefined]>} */
+		const option_sets = [
+			['without options', () => undefined],
+			['with the formatter options', () => ({ collect: true, comments: [] })],
+			['in loose mode', () => ({ loose: true, errors: [], comments: [] })],
+		];
+
+		/**
+		 * Every node of `type` in the parsed source, in source order.
+		 *
+		 * @template {NodeTypeName} T
+		 * @param {string} source
+		 * @param {T} type
+		 * @param {ParseOptions} [options]
+		 * @returns {NodeOfType<T>[]}
+		 */
+		function find_all(source, type, options) {
+			/** @type {NodeOfType<T>[]} */
+			const found = [];
+			find_first(parseModule(source, 'App.tsrx', options), (node) => {
+				if (node.type === type) found.push(/** @type {NodeOfType<T>} */ (node));
+				return false;
+			});
+			return found;
+		}
+
+		describe.each(option_sets)('%s', (_, options) => {
+			it('parses using and await using declarations with type annotations', () => {
+				const declarations = find_all(
+					`{
+						using handle: Disposable = open();
+					}
+					async function load() {
+						await using connection: AsyncDisposable = await connect(), other = g();
+					}`,
+					'VariableDeclaration',
+					options(),
+				);
+
+				expect(declarations.map((declaration) => declaration.kind)).toEqual([
+					'using',
+					'await using',
+				]);
+				const handle = as_type(declarations[0].declarations[0].id, 'Identifier');
+				expect(handle.name).toBe('handle');
+				expect(handle.typeAnnotation?.typeAnnotation.type).toBe('TSTypeReference');
+				expect(declarations[1].declarations).toHaveLength(2);
+			});
+
+			it('parses using and await using declarations in for...of heads', () => {
+				const loops = find_all(
+					`async function load(items, stream) {
+						for (using item of items) {}
+						for await (await using item of stream) {}
+					}`,
+					'ForOfStatement',
+					options(),
+				);
+
+				expect(
+					loops.map((loop) => [as_type(loop.left, 'VariableDeclaration').kind, loop.await]),
+				).toEqual([
+					['using', false],
+					['await using', true],
+				]);
+			});
+
+			it('parses using declarations in a component body', () => {
+				const declarations = find_all(
+					`function App() @{
+						using handle = open();
+						<div>{handle.name}</div>
+					}`,
+					'VariableDeclaration',
+					options(),
+				);
+
+				expect(declarations.map((declaration) => declaration.kind)).toEqual(['using']);
+			});
+
+			it('parses a hashbang as the line comment at offset 0', () => {
+				const parse_options = options();
+				const ast = parseModule(
+					'#!/usr/bin/env node\nconsole.log(1);\n',
+					'App.tsrx',
+					parse_options,
+				);
+				const hashbang = { type: 'Line', value: '/usr/bin/env node', start: 0, end: 19 };
+
+				expect(ast.body.map((node) => node.type)).toEqual(['ExpressionStatement']);
+				expect(ast.body[0].leadingComments).toEqual([expect.objectContaining(hashbang)]);
+				if (parse_options?.comments) {
+					expect(parse_options.comments).toEqual([expect.objectContaining(hashbang)]);
+				}
+			});
+
+			it('parses the regex v flag and modifiers', () => {
+				const literals = find_all(
+					'const set = /[\\p{L}--[a-z]]/v;\nconst modified = /(?i:a)b/;',
+					'Literal',
+					options(),
+				);
+
+				expect(literals.map((literal) => 'regex' in literal && literal.regex)).toEqual([
+					{ pattern: '[\\p{L}--[a-z]]', flags: 'v' },
+					{ pattern: '(?i:a)b', flags: '' },
+				]);
+			});
+		});
+
+		it('rejects a hashbang that does not start the file', () => {
+			for (const source of ['\n#!/usr/bin/env node\n', 'foo();\n#!/usr/bin/env node\n']) {
+				expect(() => parseModule(source, 'App.tsrx')).toThrow();
+			}
+		});
+
+		it('rejects a using declaration in a for...in head, like acorn', () => {
+			for (const source of [
+				'for (using item in items) {}',
+				'async function f() { for (await using item in items) {} }',
+			]) {
+				expect(() => parseModule(source, 'App.tsrx')).toThrow(
+					'Using declaration is not allowed in for-in loops',
+				);
+			}
+		});
+	});
+
 	it('parses returned tags as JSXElement nodes', () => {
 		const returned = getReturned('function MyApp() { return <div />; }');
 
@@ -578,6 +708,57 @@ describe('TSRX parser', () => {
 		expect(statement.argument?.type).toBe('JSXFragment');
 	});
 
+	it('parses a return or throw of an element after a semicolon-less element with children', () => {
+		for (const [previous, next] of [
+			['const a = <span>x</span>', 'return <div />'],
+			['const a = <span>{x}</span>', 'return <div />'],
+			['a = <span>x</span>', 'return <div />'],
+			['const a = <span>x</span>', 'return <div>{a}</div>'],
+			['const a = <span>x</span>', 'throw <div />'],
+		]) {
+			for (const close of ['\n}', ' }']) {
+				const ast = parseModule(
+					`function MyComponent() {\n  ${previous}\n  ${next}${close}`,
+					'App.tsrx',
+				);
+				const [first, statement] = functionBody(ast);
+				expect(first.type).toBe(
+					previous.startsWith('const') ? 'VariableDeclaration' : 'ExpressionStatement',
+				);
+				const argument =
+					statement.type === 'ThrowStatement'
+						? statement.argument
+						: as_type(statement, 'ReturnStatement').argument;
+				expect(argument?.type).toBe('JSXElement');
+			}
+		}
+	});
+
+	it('reads an element after an expression keyword that follows a semicolon-less element', () => {
+		const ast = parseModule(
+			`function* items(kind) {
+  let a = <span>x</span>
+  yield <li />
+  switch (kind) {
+    case 1: a = <span>y</span>
+    case <li />: break
+  }
+  if (kind) a = <span>z</span>
+  else <li />
+}`,
+			'App.tsrx',
+		);
+
+		const [, yielded, switched, branch] = functionBody(ast);
+		const yield_expression = as_type(
+			as_type(yielded, 'ExpressionStatement').expression,
+			'YieldExpression',
+		);
+		expect(yield_expression.argument?.type).toBe('JSXElement');
+		expect(as_type(switched, 'SwitchStatement').cases[1].test?.type).toBe('JSXElement');
+		expect(as_type(branch, 'IfStatement').alternate?.type).toBe('JSXElement');
+	});
+
 	it('honors ASI for returned tags after a newline', () => {
 		const ast = parseModule(
 			`function MyApp() {
@@ -594,6 +775,306 @@ describe('TSRX parser', () => {
 		expect(as_type(as_type(body[1], 'JSXElement').openingElement.name, 'JSXIdentifier').name).toBe(
 			'div',
 		);
+	});
+
+	it('starts an element after comments on the line after a semicolon-less statement', () => {
+		for (const comment of [
+			'/* render */',
+			'/* a */ /* b */',
+			'/* a /* b */',
+			'// note\n  /* render */',
+		]) {
+			const block = findNode(
+				`export function App() @{\n  const x = a\n  ${comment} <div />\n}`,
+				'JSXCodeBlock',
+			);
+			expect(block.body.map((node) => node.type)).toEqual(['VariableDeclaration']);
+			expect(declaratorInit(block.body[0]).type).toBe('Identifier');
+			expect(codeBlockRender(block).type).toBe('JSXElement');
+
+			const body = functionBody(
+				parseModule(`function f() {\n  const x = a\n  ${comment} <div />\n}`, 'App.tsrx'),
+			);
+			expect(body.map((node) => node.type)).toEqual(['VariableDeclaration', 'JSXElement']);
+
+			const program = parseModule(`a\n${comment} <div />\n`, 'App.tsrx');
+			expect(program.body.map((node) => node.type)).toEqual(['ExpressionStatement', 'JSXElement']);
+		}
+
+		// A comment that spans lines separates the statements like a line break.
+		const block = findNode(
+			'export function App() @{\n  const x = a /* a\n  b */ <div />\n}',
+			'JSXCodeBlock',
+		);
+		expect(codeBlockRender(block).type).toBe('JSXElement');
+	});
+
+	it('keeps a `<` after a comment on the same line as the previous value a comparison', () => {
+		for (const source of ['x = a /* note */ < b', 'x = a\n/* note */ < b']) {
+			const statement = firstStatement(parseModule(source, 'App.tsrx'), 'ExpressionStatement');
+			const assignment = as_type(statement.expression, 'AssignmentExpression');
+			expect(as_type(assignment.right, 'BinaryExpression').operator).toBe('<');
+		}
+		expect(() =>
+			parseModule('export function App() @{\n  const x = a /* note */ <div />\n}', 'App.tsrx'),
+		).toThrow();
+	});
+
+	it('reads an element with attributes after a semicolon-less element with children', () => {
+		for (const previous of [
+			'const render = (item) => <><Item /></>',
+			'const render = <b>x</b>',
+			'const render = <b>{x}</b>',
+		]) {
+			const body = functionBody(
+				parseModule(
+					`function Test(props) {\n  ${previous}\n  <List renderItem={render} key="a" />\n}`,
+					'App.tsrx',
+				),
+			);
+			const program = parseModule(
+				`${previous}\n<List renderItem={render} key="a" />\n`,
+				'App.tsrx',
+			);
+			for (const statements of [body, program.body]) {
+				expect(statements.map((node) => node.type)).toEqual(['VariableDeclaration', 'JSXElement']);
+				const list = as_type(statements[1], 'JSXElement');
+				expect(
+					list.openingElement.attributes.map(
+						(attribute) => as_type(as_type(attribute, 'JSXAttribute').name, 'JSXIdentifier').name,
+					),
+				).toEqual(['renderItem', 'key']);
+			}
+		}
+	});
+
+	it('reads a template literal after an element with children', () => {
+		for (const [element, type] of [
+			['<b>x</b>', 'JSXElement'],
+			['<>x</>', 'JSXFragment'],
+			['<b />', 'JSXElement'],
+		]) {
+			const source = `const a = ${element}\n\`t\${a}\``;
+			for (const ast of [
+				parseModule(`function f() {\n  ${source}\n}`, 'App.tsrx'),
+				parseModule(`${source}\n`, 'App.tsrx'),
+			]) {
+				const [declaration] =
+					ast.body[0].type === 'FunctionDeclaration' ? functionBody(ast) : ast.body;
+				// As after a self-closing element, and as in Babel, the template literal
+				// continues the element as a tagged template (TypeScript ends the
+				// statement at the element instead, #426).
+				const tagged = as_type(declaratorInit(declaration), 'TaggedTemplateExpression');
+				expect(tagged.tag.type).toBe(type);
+				expect(tagged.quasi.quasis.map((quasi) => quasi.value.raw)).toEqual(['t', '']);
+				expect(tagged.quasi.expressions.map((node) => node.type)).toEqual(['Identifier']);
+			}
+		}
+	});
+
+	it('divides after an element outside a template', () => {
+		for (const [element, type] of [
+			['<span />', 'JSXElement'],
+			['<span>x</span>', 'JSXElement'],
+			['<>x</>', 'JSXFragment'],
+			['<{tag}>\n  <b>x</b>\n</{tag}>', 'JSXElement'],
+		]) {
+			const declaration = firstStatement(
+				parseModule(`const half = ${element} / 2\n`, 'App.tsrx'),
+				'VariableDeclaration',
+			);
+			const [returned] = functionBody(
+				parseModule(`function f() {\n  return ${element} / 2\n}`, 'App.tsrx'),
+			);
+			for (const expression of [
+				declaratorInit(declaration),
+				found(as_type(returned, 'ReturnStatement').argument),
+			]) {
+				const division = as_type(expression, 'BinaryExpression');
+				expect(division.operator).toBe('/');
+				expect(division.left.type).toBe(type);
+				expect(as_type(division.right, 'Literal').value).toBe(2);
+			}
+		}
+
+		// A regular expression on the next line divides too, as in TypeScript.
+		const declaration = firstStatement(
+			parseModule('const b = <b>x</b>\n/re/g\n', 'App.tsrx'),
+			'VariableDeclaration',
+		);
+		const outer = as_type(declaratorInit(declaration), 'BinaryExpression');
+		const inner = as_type(outer.left, 'BinaryExpression');
+		expect([inner.left.type, inner.operator, outer.operator]).toEqual(['JSXElement', '/', '/']);
+		expect(as_type(outer.right, 'Identifier').name).toBe('g');
+
+		// Inside a template, a `/` after an element is still text.
+		const container = firstStatement(
+			parseModule('<div><span /> / 2<b>x</b>/3</div>\n', 'App.tsrx'),
+			'JSXElement',
+		);
+		expect(
+			container.children.map((node) =>
+				node.type === 'JSXText' ? node.value : openingName(as_type(node, 'JSXElement')).name,
+			),
+		).toEqual(['span', ' / 2', 'b', '/3']);
+
+		// The `}` after a code block's rendered dynamic element closes the block.
+		const block = findNode(
+			'export function Panel() @{\n  <{tag} class="panel">\n    <h2>{title}</h2>\n  </{tag}>\n}',
+			'JSXCodeBlock',
+		);
+		expect(dynamicName(as_type(codeBlockRender(block), 'JSXElement')).type).toBe('Identifier');
+	});
+
+	it('reads an element after await as the awaited value', () => {
+		const [declaration, statement] = functionBody(
+			parseModule(
+				'async function load() {\n  const view = await <div>a</div>\n  await <div />\n}',
+				'App.tsrx',
+			),
+		);
+		const top_level = firstStatement(
+			parseModule('await <></>\n', 'App.tsrx'),
+			'ExpressionStatement',
+		);
+		for (const [expression, type] of [
+			[declaratorInit(declaration), 'JSXElement'],
+			[as_type(statement, 'ExpressionStatement').expression, 'JSXElement'],
+			[top_level.expression, 'JSXFragment'],
+		]) {
+			expect(as_type(expression, 'AwaitExpression').argument.type).toBe(type);
+		}
+
+		// Where `await` is a name, `<` after it still compares.
+		const [returned] = functionBody(
+			parseModule('async function f() {\n  return x.await < y\n}', 'App.tsrx'),
+		);
+		const comparison = as_type(
+			found(as_type(returned, 'ReturnStatement').argument),
+			'BinaryExpression',
+		);
+		expect(comparison.operator).toBe('<');
+	});
+
+	it('divides after the first token of a code block setup statement', () => {
+		for (const statement of ['total / count > 1 && log();', 'a / b;', '(a) / b;']) {
+			for (const setup of [[statement], ['const q = 1;', statement]]) {
+				const block = findNode(
+					`export function App() @{\n  ${setup.join('\n  ')}\n  <span />\n}`,
+					'JSXCodeBlock',
+				);
+				const directive = findNode(
+					`export function App() @{\n  <>\n    @if (x) {\n      ${setup.join('\n      ')}\n      <span />\n    }\n  </>\n}`,
+					'JSXIfExpression',
+				);
+				const directive_body = blockBody(directive.consequent);
+				expect(directive_body.at(-1)?.type).toBe('JSXElement');
+				for (const body of [block.body, directive_body.slice(0, -1)]) {
+					const division = find_first(
+						as_type(body.at(-1), 'ExpressionStatement').expression,
+						(node) => node.type === 'BinaryExpression' && node.operator === '/',
+					);
+					expect(as_type(division, 'BinaryExpression').left.type).toBe('Identifier');
+				}
+				expect(codeBlockRender(block).type).toBe('JSXElement');
+			}
+		}
+
+		// A statement that starts with a regular expression still reads it.
+		const block = findNode(
+			'export function App() @{\n  /a/.test(s);\n  <span />\n}',
+			'JSXCodeBlock',
+		);
+		const call = as_type(
+			as_type(block.body[0], 'ExpressionStatement').expression,
+			'CallExpression',
+		);
+		expect(regexLiteral(as_type(call.callee, 'MemberExpression').object).pattern).toBe('a');
+
+		// A `/` after a name on the next line divides, as in a function body, so
+		// `a / b / .test(s)` is a syntax error.
+		expect(() =>
+			parseModule('export function App() @{\n  a\n  /b/.test(s)\n  <span />\n}', 'App.tsrx'),
+		).toThrow();
+
+		// A code block used as a value divides after its `}`, with or without
+		// setup statements before its render node.
+		for (const setup of ['', 'const q = 1; ']) {
+			const declaration = firstStatement(
+				parseModule(`const a = @{ ${setup}<b /> } / 2\n`, 'App.tsrx'),
+				'VariableDeclaration',
+			);
+			const division = as_type(declaratorInit(declaration), 'BinaryExpression');
+			expect([division.left.type, division.operator]).toEqual(['JSXCodeBlock', '/']);
+		}
+	});
+
+	it('starts an element after a semicolon-less statement that ends with a type', () => {
+		for (const [statement, type] of [
+			['const x = y as Foo', 'VariableDeclaration'],
+			['const x = y satisfies Foo', 'VariableDeclaration'],
+			['const x = y as Map<A, B>', 'VariableDeclaration'],
+			['const x = y as () => void', 'VariableDeclaration'],
+			['let x: Foo', 'VariableDeclaration'],
+			['let x: Foo[]', 'VariableDeclaration'],
+			['type T = Foo', 'TSTypeAliasDeclaration'],
+		]) {
+			const block = findNode(
+				`export function App() @{\n  ${statement}\n  <Bar a={1} />\n}`,
+				'JSXCodeBlock',
+			);
+			expect(block.body.map((node) => node.type)).toEqual([type]);
+			expect(codeBlockRender(block).type).toBe('JSXElement');
+
+			const body = functionBody(
+				parseModule(`function f() {\n  ${statement}\n  <Bar a={1} />\n}`, 'App.tsrx'),
+			);
+			const program = parseModule(`${statement}\n/* note */ <Bar a={1} />\n`, 'App.tsrx');
+			for (const statements of [body, program.body]) {
+				expect(statements.map((node) => node.type)).toEqual([type, 'JSXElement']);
+			}
+		}
+	});
+
+	it('keeps a `<` that starts a line inside a type, or that a type can end at, a type operator', () => {
+		const alias = firstStatement(
+			parseModule('type F =\n  <T>(x: T) => T\n', 'App.tsrx'),
+			'TSTypeAliasDeclaration',
+		);
+		expect(as_type(alias.typeAnnotation, 'TSFunctionType').typeParameters?.params).toHaveLength(1);
+
+		const signatures = [
+			firstStatement(
+				parseModule('interface I {\n  a: Foo\n  <T>(x: T): void\n}\n', 'App.tsrx'),
+				'TSInterfaceDeclaration',
+			).body.body,
+			as_type(
+				firstStatement(
+					parseModule('type L = {\n  a: Foo\n  <T>(x: T): void\n}\n', 'App.tsrx'),
+					'TSTypeAliasDeclaration',
+				).typeAnnotation,
+				'TSTypeLiteral',
+			).members,
+		];
+		for (const members of signatures) {
+			expect(members.map((node) => node.type)).toEqual([
+				'TSPropertySignature',
+				'TSCallSignatureDeclaration',
+			]);
+		}
+
+		const comparison = firstStatement(
+			parseModule('const b = x as number\n< y\n', 'App.tsrx'),
+			'VariableDeclaration',
+		);
+		expect(as_type(declaratorInit(comparison), 'BinaryExpression').operator).toBe('<');
+
+		const program = parseModule('let x: Foo\n<T,>(a: T) => a\n', 'App.tsrx');
+		const arrow = as_type(
+			as_type(program.body[1], 'ExpressionStatement').expression,
+			'ArrowFunctionExpression',
+		);
+		expect(arrow.typeParameters?.params).toHaveLength(1);
 	});
 
 	it('parses mixed scalar and JSX return branches', () => {
@@ -1956,6 +2437,50 @@ export function App() @{ <div /> }`;
 		expect(style.css).toContain('.card');
 	});
 
+	it('ends an assigned style block declarator after the closing tag', () => {
+		for (const terminator of ['', ';']) {
+			const source = `const theme = <style>\n  .card {\n    color: red;\n  }\n</style>${terminator}\nexport { theme }\n`;
+			const ast = parseModule(source, 'App.tsrx');
+			const declaration = firstStatement(ast, 'VariableDeclaration');
+			const [declarator] = declaration.declarations;
+			const style = as_type(declarator.init, 'JSXStyleElement');
+			const style_end = source.indexOf('</style>') + '</style>'.length;
+
+			expect(style.end).toBe(style_end);
+			expect(declarator.end).toBe(style_end);
+			expect(found(declarator.loc).end).toEqual(found(style.loc).end);
+			expect(declaration.end).toBe(style_end + terminator.length);
+			expect(found(declaration.loc).end).toEqual({ line: 5, column: 8 + terminator.length });
+		}
+
+		const object = findNode(
+			'const themes = {\n  card: <style>\n    .card { color: red; }\n  </style>,\n};',
+			'Property',
+		);
+		expect(object.end).toBe(as_type(object.value, 'JSXStyleElement').end);
+	});
+
+	it('parses top-level markup holding a style or script block before a final newline', () => {
+		for (const [tag, type] of [
+			['style', 'JSXStyleElement'],
+			['script', 'JSXElement'],
+		]) {
+			for (const body of ['p { color: red; }', '']) {
+				for (const sibling of ['', '\n  <span>x</span>']) {
+					const ast = parseModule(
+						`<div>\n  <${tag}>${body}</${tag}>${sibling}\n</div>\n`,
+						'App.tsrx',
+					);
+					const element = firstStatement(ast, 'JSXElement');
+					expect(ast.body).toHaveLength(1);
+					expect(
+						element.children.filter((node) => node.type !== 'JSXText').map((node) => node.type),
+					).toEqual(sibling ? [type, 'JSXElement'] : [type]);
+				}
+			}
+		}
+	});
+
 	it('does not add component style scope metadata to head styles', () => {
 		const returned = getReturned(`function App() { return <head>
 			<style>
@@ -2433,6 +2958,62 @@ foo();`;
 				'App.tsrx',
 			),
 		).toThrow("Identifier 'label' has already been declared");
+	});
+
+	it('parses regex, division, template literal, and parenthesized statements in case bodies', () => {
+		const switchExpression = findNode(
+			`export function App() @{
+  <>
+    @switch (x) {
+      @case 1: {
+        /a/.test(s);
+        const half = total / 2;
+        \`x\`;
+        (a || b).run();
+        <span />
+      }
+      @default: {
+        \`y\${s}\`.trim();
+        /b/g.test(s);
+        <i />
+      }
+    }
+  </>
+}`,
+			'JSXSwitchExpression',
+		);
+
+		const [first, fallback] = switchExpression.cases;
+		expect(first.consequent.map((node) => node.type)).toEqual([
+			'ExpressionStatement',
+			'VariableDeclaration',
+			'ExpressionStatement',
+			'ExpressionStatement',
+			'JSXElement',
+		]);
+		const [regexTest, half, template] = first.consequent;
+		const regexCall = as_type(
+			as_type(regexTest, 'ExpressionStatement').expression,
+			'CallExpression',
+		);
+		expect(regexLiteral(as_type(regexCall.callee, 'MemberExpression').object).pattern).toBe('a');
+		expect(as_type(declaratorInit(half), 'BinaryExpression').operator).toBe('/');
+		expect(
+			as_type(as_type(template, 'ExpressionStatement').expression, 'TemplateLiteral').quasis[0]
+				.value.raw,
+		).toBe('x');
+
+		expect(fallback.consequent.map((node) => node.type)).toEqual([
+			'ExpressionStatement',
+			'ExpressionStatement',
+			'JSXElement',
+		]);
+		const trimCall = as_type(
+			as_type(fallback.consequent[0], 'ExpressionStatement').expression,
+			'CallExpression',
+		);
+		const trimmed = as_type(as_type(trimCall.callee, 'MemberExpression').object, 'TemplateLiteral');
+		expect(trimmed.expressions.map((node) => node.type)).toEqual(['Identifier']);
 	});
 
 	it('requires switch case and default bodies to be blocks', () => {
@@ -5234,6 +5815,46 @@ type T = {
 	});
 });
 
+describe('comments in empty arrays and objects', () => {
+	it('keeps the comments of an empty array or object as inner comments', () => {
+		const ast = parseModule(
+			`const a = [
+	// array
+];
+const o = {/* object */};
+const [/* pattern */] = a;
+foo({
+	// argument
+});`,
+			'App.ts',
+		);
+		const [array, object, pattern, argument] = [
+			find_first(ast, (node) => node.type === 'ArrayExpression'),
+			find_first(ast, (node) => node.type === 'ObjectExpression'),
+			find_first(ast, (node) => node.type === 'ArrayPattern'),
+			find_first(ast, (node) => node.type === 'CallExpression'),
+		];
+
+		expect(array?.innerComments?.map((comment) => comment.value)).toEqual([' array']);
+		expect(object?.innerComments?.map((comment) => comment.value)).toEqual([' object ']);
+		expect(pattern?.innerComments?.map((comment) => comment.value)).toEqual([' pattern ']);
+		const [objectArgument] = as_type(argument, 'CallExpression').arguments;
+		expect(objectArgument.innerComments?.map((comment) => comment.value)).toEqual([' argument']);
+	});
+
+	it('leaves a comment before an empty array in a template child to its attribute', () => {
+		const ast = parseModule(
+			`export function App() @{
+	<div title={/* title */ title}>{[]}</div>
+}`,
+			'App.tsrx',
+		);
+		const array = find_first(ast, (node) => node.type === 'ArrayExpression');
+
+		expect(array?.innerComments).toBeUndefined();
+	});
+});
+
 describe('comments in import and export specifier lists', () => {
 	/**
 	 * @param {string} source
@@ -5285,14 +5906,16 @@ describe('comments in import and export specifier lists', () => {
 		expect(declaration.specifiers[1].leadingComments).toBeUndefined();
 	});
 
-	it('leaves the comments after the module source to the source and the declaration', () => {
+	// Like Prettier, which ends the declaration before its `;`
+	it('gives the comments after the module source to the declaration', () => {
 		const declaration = lastDeclaration("import { a } from 'mod' /* source */; // declaration");
 
 		expect(declaration.specifiers[0].trailingComments).toBeUndefined();
-		expect(declaration.source?.trailingComments?.map((comment) => comment.value)).toEqual([
+		expect(declaration.source?.trailingComments).toBeUndefined();
+		expect(declaration.trailingComments?.map((comment) => comment.value)).toEqual([
 			' source ',
+			' declaration',
 		]);
-		expect(declaration.trailingComments?.map((comment) => comment.value)).toEqual([' declaration']);
 	});
 });
 
@@ -5371,6 +5994,118 @@ describe('comments around the commas of a list', () => {
 		const fn = firstStatement('function f(\n\t// first\n\ta,\n) {}');
 		expect(fn.id.trailingComments).toBeUndefined();
 		expect(fn.params[0].leadingComments?.map((comment) => comment.value)).toEqual([' first']);
+	});
+});
+
+// Ports of Prettier's comment handlers (`handle-comments.js`)
+describe('comments placed like Prettier', () => {
+	/**
+	 * @param {AST.Node | undefined} node
+	 * @returns {{ leading?: string[], trailing?: string[], inner?: string[] }}
+	 */
+	function commentsOf(node) {
+		const withComments = /** @type {AST.NodeWithMaybeComments | undefined} */ (node);
+		/** @param {AST.Comment[] | undefined} list */
+		const values = (list) => list?.map((comment) => comment.value);
+		return {
+			leading: values(withComments?.leadingComments),
+			trailing: values(withComments?.trailingComments),
+			inner: values(withComments?.innerComments),
+		};
+	}
+
+	/**
+	 * @param {string} source
+	 * @returns {any}
+	 */
+	function firstStatement(source) {
+		return parseModule(source, 'App.ts').body[0];
+	}
+
+	it('trails the operand before a comment at the end of an operator line', () => {
+		const { init } = firstStatement('const x =\n  a || // c\n  b;').declarations[0];
+
+		expect(commentsOf(init.left).trailing).toEqual([' c']);
+		expect(commentsOf(init.right).leading).toBeUndefined();
+	});
+
+	it('trails the last operand with a comment below it in the parentheses of a unary', () => {
+		const statement = firstStatement('x = !(\n  (\n    a ||\n    b\n  ) // c\n);');
+
+		expect(commentsOf(statement.expression.right.argument).trailing).toEqual([' c']);
+		expect(commentsOf(statement).trailing).toBeUndefined();
+	});
+
+	it('trails the condition with a comment before the ) of an if statement', () => {
+		const statement = firstStatement('if (\n  a\n  // c\n) {\n  b();\n}');
+
+		expect(commentsOf(statement.test).trailing).toEqual([' c']);
+		expect(commentsOf(statement.consequent).leading).toBeUndefined();
+	});
+
+	it('leads the lookup with a comment on its own line before its name', () => {
+		const statement = firstStatement('item\n  // c\n  .foo();');
+		const member = statement.expression.callee;
+
+		expect(commentsOf(member).leading).toEqual([' c']);
+		expect(commentsOf(member.property).leading).toBeUndefined();
+	});
+
+	it('trails the union member before a comment on its own line', () => {
+		const union = firstStatement('type K =\n  | A\n  // c\n  | B;').typeAnnotation;
+
+		expect(commentsOf(union.types[0]).trailing).toEqual([' c']);
+		expect(commentsOf(union.types[1]).leading).toBeUndefined();
+	});
+
+	it('marks the union member after a prettier-ignore comment on its own line', () => {
+		const union = firstStatement('type K =\n  | A\n  // prettier-ignore\n  | B;').typeAnnotation;
+		const [comment] = /** @type {any[]} */ (union.types[0].trailingComments);
+
+		expect(comment.value).toBe(' prettier-ignore');
+		expect(comment.unignore).toBe(true);
+		expect(union.types[0].metadata?.prettierIgnore).toBeUndefined();
+		expect(union.types[1].metadata.prettierIgnore).toBe(true);
+	});
+
+	it('marks the first member of a union after a prettier-ignore comment on its own line', () => {
+		const union = firstStatement('type K =\n  // prettier-ignore\n  | A\n  | B;').typeAnnotation;
+
+		expect(commentsOf(union).leading).toEqual([' prettier-ignore']);
+		expect(union.types[0].metadata.prettierIgnore).toBe(true);
+		expect(union.types[1].metadata?.prettierIgnore).toBeUndefined();
+	});
+
+	it('leaves a prettier-ignore comment that ends a union member on that member', () => {
+		const union = firstStatement('type K =\n  | A // prettier-ignore\n  | B;').typeAnnotation;
+		const [comment] = /** @type {any[]} */ (union.types[0].trailingComments);
+
+		expect(comment.unignore).toBeUndefined();
+		expect(union.types[1].metadata?.prettierIgnore).toBeUndefined();
+	});
+
+	it('leads the first member of a union with a block comment right before it', () => {
+		const union = firstStatement('type K = /* c */ A | B;').typeAnnotation;
+
+		expect(commentsOf(union.types[0]).leading).toEqual([' c ']);
+		expect(commentsOf(union).leading).toBeUndefined();
+	});
+
+	it('moves a comment between a class heading and its body into the body', () => {
+		const withMember = firstStatement('class A extends B // c\n{\n  x = 1;\n}');
+		const empty = firstStatement('interface I extends J // c\n{}');
+
+		expect(commentsOf(withMember.superClass).trailing).toBeUndefined();
+		expect(commentsOf(withMember.body.body[0]).leading).toEqual([' c']);
+		expect(commentsOf(empty.extends[0]).trailing).toBeUndefined();
+		expect(commentsOf(empty.body).inner).toEqual([' c']);
+	});
+
+	it('trails the class name with a comment before the first implements type', () => {
+		const declaration = firstStatement('class C implements\n  // c\n  D, E {}');
+
+		expect(commentsOf(declaration.id).trailing).toEqual([' c']);
+		expect(commentsOf(declaration.implements[0]).leading).toBeUndefined();
 	});
 });
 

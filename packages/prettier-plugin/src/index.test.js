@@ -1184,6 +1184,260 @@ const items=[1,2,3];
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
+
+		// Like Prettier's `hasNodeIgnoreComment`, any comment attached to the node
+		// counts, not only the last leading one
+		it('keeps a statement that a prettier-ignore comment trails on its line', async () => {
+			const source = `foo(  a,b  ); // prettier-ignore
+matrix = [1,0,
+          0,1]; // prettier-ignore
+function f() {
+  return   [1,2,
+    3]; // prettier-ignore
+}
+if (a)
+  b(  1 ); // prettier-ignore
+else c(2);
+for (const  x of y) foo( x ); // prettier-ignore
+foo(  a,b  ); /* prettier-ignore */`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps members that a prettier-ignore comment trails on their line', async () => {
+			const source = `const x = {
+  a:   1, // prettier-ignore
+  b: 2,
+};
+class A {
+  x   =  1; // prettier-ignore
+  m(  a ) { } // prettier-ignore
+}
+type T = {
+  a:   string; // prettier-ignore
+  b: number;
+};`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps an element that a prettier-ignore comment trails on its line', async () => {
+			const source = `export function App() @{
+  <div>
+    <span   a="1" /> // prettier-ignore
+    <b />
+  </div>
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps the last statement of a block that an own-line prettier-ignore follows', async () => {
+			// Prettier attaches the comment to the statement before it
+			const source = `{
+  foo(  1 );
+  // prettier-ignore
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a node whose prettier-ignore comment another comment follows', async () => {
+			const source = `foo(
+  // prettier-ignore
+  /* #__PURE__ */ bar(  1,2 ),
+);
+const o = {
+  // prettier-ignore
+  /* keep */ a:   [1,2],
+  b: 1,
+};`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a node whose dangling comment is prettier-ignore', async () => {
+			const source = `for (let i = 0; i < 1; i++) { /* prettier-ignore */ }`;
+			expect(await format(source)).toBeWithNewline(source);
+			expect(await format('\n\n// prettier-ignore\n\n\n')).toBe('\n\n// prettier-ignore\n\n\n');
+		});
+
+		it('still formats an element or code block whose only comments are its children', async () => {
+			// Like a JSX comment child, the comment doesn't dangle on the element
+			const result = await format(`function App() @{
+  const  x = 1;
+  <div   a="1">
+    // prettier-ignore
+  </div>
+  // prettier-ignore
+}`);
+			expect(result).toBeWithNewline(`function App() @{
+  const x = 1;
+  <div a="1">
+    // prettier-ignore
+  </div>
+  // prettier-ignore
+}`);
+		});
+
+		it('keeps the decorators written before export', async () => {
+			const source = `// prettier-ignore
+@dec
+export   class  A {}
+// prettier-ignore
+@dec
+export default   class  B {}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// The decorators print once, where they were written, as in Prettier
+		it.each([
+			'// prettier-ignore\n@dec export class A {  }',
+			'// prettier-ignore\nexport @dec class A {  }',
+			'// prettier-ignore\n@dec export default class {  }',
+			'// prettier-ignore\n@dec class A {  }',
+			'export /* prettier-ignore */ @dec class A {  }',
+			'export default /* prettier-ignore */ @dec class {  }',
+			'@a @b\nexport class A {  } // prettier-ignore',
+			'class B {\n  // prettier-ignore\n  @dec   m(  ) {}\n}',
+		])('keeps an ignored decorated declaration as written in %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('prints a comment between the decorators and export once', async () => {
+			// The ignored source starts at the decorator and holds the comment.
+			// Prettier formats the class here; the source stays as written.
+			const source = `@dec
+// prettier-ignore
+export class A {  }
+@dec /* prettier-ignore */
+export default class {  }`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			'class A<T  > // prettier-ignore\n  extends B {}',
+			'type T = A /* prettier-ignore */ | B;',
+			'type T =\n  | A<  1 > // prettier-ignore\n  | B;',
+		])(
+			'prints the trailing comments of an ignored node once when its parent prints them in %s',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
+
+		// Like Prettier's `handleUnionTypeComments`, an own-line `prettier-ignore`
+		// between union members ignores the member after it and stays before its `|`
+		it('keeps the union member after an own-line prettier-ignore as written', async () => {
+			const source = `type A =
+  | B<  1 >
+  // prettier-ignore
+  | {  a:1 };
+type C =
+  // prettier-ignore
+  | D<  1 >
+  | E<  2 >;
+type F =
+  | G<  1 > // prettier-ignore
+  | H<  2 >;`;
+			expect(await format(source)).toBeWithNewline(`type A =
+  | B<1>
+  // prettier-ignore
+  | {  a:1 };
+type C =
+  // prettier-ignore
+  D<  1 > | E<2>;
+type F =
+  | G<  1 > // prettier-ignore
+  | H<2>;`);
+		});
+
+		it("doesn't break the list around an ignored node over several lines", async () => {
+			// Prettier prints the ignored source as a plain string
+			const source = `foo(/* prettier-ignore */ [1,
+   2], b);
+const x = { a: /* prettier-ignore */ [1,
+   2], b: 2 };`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier's `printIgnored`, a statement's source ends before its `;`,
+		// which prints by the `semi` option
+		it('prints the semicolon of an ignored statement like Prettier', async () => {
+			const source = `// prettier-ignore
+let a  = 1
+// prettier-ignore
+foo(  1 )
+// prettier-ignore
+foo(  2 ) /* c */;
+// prettier-ignore
+foo(  3 ) // c
+;
+// prettier-ignore
+if (a) foo(  4 ) /* c */;
+switch (x) {
+  case 1:
+    // prettier-ignore
+    foo(  5 ) /* c */;
+}
+while (x) {
+  // prettier-ignore
+  break
+}
+// prettier-ignore
+type A =   B;
+for (/* prettier-ignore */ let i  = 0; i < 1; i++) {}`;
+			expect(await format(source)).toBeWithNewline(`// prettier-ignore
+let a  = 1;
+// prettier-ignore
+foo(  1 )
+// prettier-ignore
+foo(  2 ); /* c */
+// prettier-ignore
+foo(  3 ); // c
+// prettier-ignore
+if (a) foo(  4 ); /* c */
+switch (x) {
+  case 1:
+    // prettier-ignore
+    foo(  5 ); /* c */
+}
+while (x) {
+  // prettier-ignore
+  break;
+}
+// prettier-ignore
+type A =   B;
+for (/* prettier-ignore */ let i  = 0; i < 1; i++) {}`);
+		});
+
+		it('drops the semicolon of an ignored statement without semi', async () => {
+			const source = `// prettier-ignore
+let a  = 1;
+// prettier-ignore
+foo(  1 );
+// prettier-ignore
+foo(  2 ) /* c */;
+foo(  a,b  ); // prettier-ignore
+while (x) {
+  // prettier-ignore
+  break;
+}
+// prettier-ignore
+type A =   B;
+// prettier-ignore
+export type C =   D;`;
+			expect(await format(source, { semi: false })).toBeWithNewline(`// prettier-ignore
+let a  = 1
+// prettier-ignore
+foo(  1 )
+// prettier-ignore
+foo(  2 ) /* c */
+foo(  a,b  ) // prettier-ignore
+while (x) {
+  // prettier-ignore
+  break
+}
+// prettier-ignore
+type A =   B;
+// prettier-ignore
+export type C =   D`);
+		});
 	});
 
 	describe('recovered', () => {
@@ -2205,6 +2459,27 @@ const [obj1, obj2] = arrayOfObjects;`;
 
 			const result = await format(expected, { singleQuote: true, printWidth: 100 });
 			expect(result).toBeWithNewline(expected);
+		});
+
+		it('formats top-level markup with a style or script block to a fixpoint', async () => {
+			for (const source of [
+				`<head>
+  <style>
+    div {
+      color: red;
+    }
+  </style>
+</head>
+`,
+				`<div>
+  <script>
+    const a = 1;
+  </script>
+</div>
+`,
+			]) {
+				expect(await format(source)).toBe(source);
+			}
 		});
 
 		it('should keep style tag intact when wrapped in parent inside component', async () => {
@@ -4411,7 +4686,7 @@ const deleteButton = container.querySelector(
 
 		it('should preserve explicit plus mapped modifiers in TypeScript mapped types', async () => {
 			const input = `type ExplicitReadonlyOptional<T> = { +readonly [K in keyof T]+?: T[K] }`;
-			const expected = `type ExplicitReadonlyOptional<T> = { readonly [K in keyof T]?: T[K] };`;
+			const expected = `type ExplicitReadonlyOptional<T> = { +readonly [K in keyof T]+?: T[K] };`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
@@ -7117,6 +7392,90 @@ function RowList({ rows, Row }) {
 		});
 	});
 
+	// Prettier's `printAwaitExpression` and `printBinaryCastExpression`: an
+	// await or a cast that is called or accessed breaks onto its own line
+	// inside its parentheses.
+	describe('parenthesized callees and member objects break inside their parentheses', () => {
+		it('moves a broken await onto its own line inside its parentheses', async () => {
+			const input = `async function load() {
+  const value = (await loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)).value;
+  const exportsOfModule = (await dynamicImport(pathToTheModule, { with: { type: "json" } })).exports;
+  const handler = (await getHandlerForTheCurrentRequest(requestIdentifier, anotherArgument))(event);
+  const optional = (await loadTheConfigurationFileFromDiskAndMore(somePathVariable, anotherArgum))?.value;
+}`;
+			const expected = `async function load() {
+  const value = (
+    await loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)
+  ).value;
+  const exportsOfModule = (
+    await dynamicImport(pathToTheModule, { with: { type: "json" } })
+  ).exports;
+  const handler = (
+    await getHandlerForTheCurrentRequest(requestIdentifier, anotherArgument)
+  )(event);
+  const optional = (
+    await loadTheConfigurationFileFromDiskAndMore(
+      somePathVariable,
+      anotherArgum,
+    )
+  )?.value;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps await (await together and leaves new, non-null, and yield as they were', async () => {
+			const input = `async function load() {
+  const value = await (await loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)).json();
+  const instance = new (await loadTheConfigurationFileFromDiskAndMore(somePathVariable, anotherArgument))();
+  const asserted = (await loadTheConfigurationFileFromDiskAndMore(somePathVariable, anotherArgum))!.value;
+}
+function* generate() {
+  const value = (yield loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)).value;
+}`;
+			const expected = `async function load() {
+  const value = await (
+    await loadTheConfigurationFileFromDisk(somePathVariable, anotherArgument)
+  ).json();
+  const instance = new (await loadTheConfigurationFileFromDiskAndMore(
+    somePathVariable,
+    anotherArgument,
+  ))();
+  const asserted = (await loadTheConfigurationFileFromDiskAndMore(
+    somePathVariable,
+    anotherArgum,
+  ))!.value;
+}
+function* generate() {
+  const value = (yield loadTheConfigurationFileFromDisk(
+    somePathVariable,
+    anotherArgument,
+  )).value;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('moves a broken as or satisfies cast onto its own line inside its parentheses', async () => {
+			const input = `const value = (someObject.someLongPropertyName as SomeVeryLongInterfaceName<WithTypeArgs>).value;
+const result = (handlerForTheRequest satisfies RequestHandlerFunctionType<Context>)(event, ctx);
+const inst = new (someFactoryFunctionResult as unknown as ConstructorTypeForTheThing<Aaaa>)();
+const short = (value as Entry).name;`;
+			const expected = `const value = (
+  someObject.someLongPropertyName as SomeVeryLongInterfaceName<WithTypeArgs>
+).value;
+const result = (
+  handlerForTheRequest satisfies RequestHandlerFunctionType<Context>
+)(event, ctx);
+const inst = new (
+  someFactoryFunctionResult as unknown as ConstructorTypeForTheThing<Aaaa>
+)();
+const short = (value as Entry).name;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	describe('definite assignment assertions', () => {
 		it('keeps the definite assignment assertion on variable declarations', async () => {
 			const input = `function App() {
@@ -7349,6 +7708,359 @@ const commented = [
   }),
 ];`);
 		});
+
+		it('breaks array patterns one element per line when they do not fit', async () => {
+			const input = `const [aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccccccc] = useThing();
+function f([aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccccccc, ddddd]) {}
+[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccc] = [1, 2, 3];`;
+			const expected = `const [
+  aaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccccccccccc,
+] = useThing();
+function f([
+  aaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccccccccccc,
+  ddddd,
+]) {}
+[
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ccccccccccccccc,
+] = [1, 2, 3];`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('prints no trailing comma after a rest element and the type annotation after the brackets', async () => {
+			const input = `const [aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb, ...ccccccccccccccccccccccccccccccc] = useThing();
+function g([aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb]: [Aaaaaaaaaaaaaaaaa, Bbbbbbbbbbbbbbbbbbbbbb]) {}`;
+			const expected = `const [
+  aaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ...ccccccccccccccccccccccccccccccc
+] = useThing();
+function g([aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb]: [
+  Aaaaaaaaaaaaaaaaa,
+  Bbbbbbbbbbbbbbbbbbbbbb,
+]) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks tuple types one member per line, keeping the comma after a rest type', async () => {
+			const input = `let t: [Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ...Ccccccccccccccccccccccc[]];
+function h(row: [aaaaaaaaaaaaaaaaaaaaaa: string, bbbbbbbbbbbbbbbbbbbbbbbbbbb: number, ccccccccccccc: boolean]) {}`;
+			const expected = `let t: [
+  Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ...Ccccccccccccccccccccccc[],
+];
+function h(
+  row: [
+    aaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+    ccccccccccccc: boolean,
+  ],
+) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps short patterns and tuples on one line', async () => {
+			const source = `const [a, , b] = x;
+const [c, ,] = y;
+let u: [a?: string, ...rest: number[]] = [];
+const {
+  aaaaaaaaaaaaaaaaaa: [
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+    ccccccccccccccccccccccccccccccccc,
+  ],
+} = x;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	describe('objects lay out like Prettier', () => {
+		it('keeps an object expanded only when a line break follows its {', async () => {
+			const input = `const o = { a: 1,
+  b: 2 };
+const p = { list: [
+  'a',
+  'b',
+] };
+const q = {
+  a: 1, b: 2 };
+foo({ a: 1,
+  b: 2 });`;
+			const expected = `const o = { a: 1, b: 2 };
+const p = { list: ["a", "b"] };
+const q = {
+  a: 1,
+  b: 2,
+};
+foo({ a: 1, b: 2 });`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('collapses every object that fits with objectWrap collapse', async () => {
+			const input = `const o = {
+  a: 1, b: 2 };
+type U = {
+  a: string; b: number };
+let m: {
+  [K in keyof T]: T[K] } = x;`;
+			const expected = `const o = { a: 1, b: 2 };
+type U = { a: string; b: number };
+let m: { [K in keyof T]: T[K] } = x;`;
+			expect(await format(input, { objectWrap: 'collapse' })).toBeWithNewline(expected);
+		});
+
+		it('keeps a blank line after a property, past its comments', async () => {
+			const source = `const r = {
+  a: 1,
+
+  b: 2, // trailing
+
+  // leading
+  c: 3,
+};`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('breaks a pattern that destructures a nested pattern, except in parameters', async () => {
+			const input = `const { a, b: { c } } = x;
+function f({ a, b: { c } }) {}
+const fn = ({ a, b: [c] }) => a;`;
+			const expected = `const {
+  a,
+  b: { c },
+} = x;
+function f({ a, b: { c } }) {}
+const fn = ({ a, b: [c] }) => a;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a complex destructuring pattern before the value on its right', async () => {
+			const input = `const { aaaa, bbbb: cccc, dddd = 1 } = getOptions(aaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbb, ccc);
+({ aaaa, bbbb: cccc, dddd } = getOptions(aaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccc));
+const { aaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbb } = await someFunctionCall(aaaaaaaaaaa, bbbbbbbbbbb);`;
+			const expected = `const {
+  aaaa,
+  bbbb: cccc,
+  dddd = 1,
+} = getOptions(aaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbb, ccc);
+({
+  aaaa,
+  bbbb: cccc,
+  dddd,
+} = getOptions(aaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccc));
+const { aaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbb } = await someFunctionCall(
+  aaaaaaaaaaa,
+  bbbbbbbbbbb,
+);`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a nested pattern among the parameters of a TypeScript signature', async () => {
+			// Prettier's printObject only skips the break for patterns whose parent
+			// is a function with a body, so signatures and function types expand
+			const input = `type F = (a: string, { b: { c } }: T) => void;
+declare function f(a, { b: { c } }): void;
+interface I {
+  m(a: string, { b: { c } }: T): void;
+}
+function g(a: string, { b: { c } }: T): void {}`;
+			const expected = `type F = (
+  a: string,
+  {
+    b: { c },
+  }: T,
+) => void;
+declare function f(
+  a,
+  {
+    b: { c },
+  },
+): void;
+interface I {
+  m(
+    a: string,
+    {
+      b: { c },
+    }: T,
+  ): void;
+}
+function g(a: string, { b: { c } }: T): void {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('hugs a destructured parameter with a default or an object type', async () => {
+			const input = `function foo({ aaaaaaaaaaaa, bbbbbbbbbbbbbbbb, ccccccccccccccccccc, dddddddddddddddd } = {}) {}
+function bar({ aaaaaaaaaaaa, bbbbbbbbbbbbbbbb, ccccccccccccccccccc }: { aaaaaaaaaaaa: string }) {}`;
+			const expected = `function foo({
+  aaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbb,
+  ccccccccccccccccccc,
+  dddddddddddddddd,
+} = {}) {}
+function bar({
+  aaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbb,
+  ccccccccccccccccccc,
+}: {
+  aaaaaaaaaaaa: string;
+}) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('follows bracketSpacing in object patterns, type literals, and mapped types', async () => {
+			const input = `type M = { [K in keyof T]: T[K] };
+const { a, b } = obj;
+function f({ a }: { a: string }) {}
+let t: { a: string; b: number } = x;`;
+			const expected = `type M = {[K in keyof T]: T[K]};
+const {a, b} = obj;
+function f({a}: {a: string}) {}
+let t: {a: string; b: number} = x;`;
+			expect(await format(input, { bracketSpacing: false })).toBeWithNewline(expected);
+		});
+
+		it('breaks mapped types like Prettier and keeps their modifiers and comments', async () => {
+			const input = `let g: { readonly [K in keyof Tttttttttttttttttttttttttt as \`get\${Capitalize<K & string>}\`]-?: () => T[K] };
+let m: {
+  [K in keyof T]: T[K];
+} = x;
+type P = { +readonly [K in keyof T]+?: T[K] };
+let c: {
+  // note
+  [K in keyof T]: T[K];
+} = x;
+let d: { /* note */ [K in keyof T]: T[K] } = x;`;
+			const expected = `let g: {
+  readonly [
+    K in keyof Tttttttttttttttttttttttttt as \`get\${Capitalize<K & string>}\`
+  ]-?: () => T[K];
+};
+let m: {
+  [K in keyof T]: T[K];
+} = x;
+type P = { +readonly [K in keyof T]+?: T[K] };
+let c: {
+  // note
+  [K in keyof T]: T[K];
+} = x;
+let d: { /* note */ [K in keyof T]: T[K] } = x;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a union only for a member that must break, not for how the source wrapped it', async () => {
+			const input = `let x: { a: string;
+  b: number } | { c: string } = v;`;
+			expect(await format(input)).toBeWithNewline(
+				'let x: { a: string; b: number } | { c: string } = v;',
+			);
+		});
+
+		it('keeps a type literal expanded only when a line break follows its {', async () => {
+			const input = `type T = { a: string;
+  b: number };
+type U = {
+  a: string; b: number };
+function g(options: {
+  a: string; b: number }) {}
+let m: {
+  [K in keyof T]: T[K] } = x;`;
+			const expected = `type T = { a: string; b: number };
+type U = {
+  a: string;
+  b: number;
+};
+function g(options: { a: string; b: number }) {}
+let m: {
+  [K in keyof T]: T[K];
+} = x;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+	});
+
+	describe('comments in empty arrays and objects', () => {
+		it('keeps a line comment inside an empty array or object', async () => {
+			const source = `const a = [
+  // pending
+];
+const o = {
+  // pending
+};
+foo([
+  // pending
+]);
+const x = {
+  a: [], // trailing
+  b: {
+    // inner
+  },
+};`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a block comment inline between the brackets', async () => {
+			const source = `const a = [/* pending */];
+const o = {/* pending */};
+const { /* c */ } = x;
+function f([/* c */]) {}`;
+			const expected = `const a = [/* pending */];
+const o = {/* pending */};
+const {/* c */} = x;
+function f([/* c */]) {}`;
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it('puts several comments on their own lines', async () => {
+			const input = `const a = [/* a */ /* b */];
+const b = [ // one
+
+  // two
+];`;
+			const expected = `const a = [
+  /* a */
+  /* b */
+];
+const b = [
+  // one
+  // two
+];`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the call arguments around an object with a line comment', async () => {
+			const input = `foo({
+  // pending
+}, 1);`;
+			const expected = `foo(
+  {
+    // pending
+  },
+  1,
+);`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps comments in empty arrays and objects in templates', async () => {
+			const input = `export function App() @{
+  const none = {/* x */};
+  <div list={[
+    // nothing
+  ]} />
+}`;
+			const expected = `export function App() @{
+  const none = {/* x */};
+  <div
+    list={[
+      // nothing
+    ]}
+  />
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
 	});
 
 	// The comma after a trailing hole creates an array slot (or an iterator
@@ -7432,17 +8144,68 @@ enum Keys {
 const text = "\\x1b[31m" + "\\u00e9" + "\\0";`);
 		});
 
-		it('escapes only the enclosing quote', async () => {
-			const input = `const a = 'say "hi"';
-const b = "it's";
-const c = 'it\\'s';`;
+		// Like Prettier's `printString`: the configured quote, unless the string
+		// holds more of it than of the other one, and only the chosen quote is
+		// escaped.
+		it('switches to the other quote when the string holds more of the configured one', async () => {
+			const input = String.raw`const a = "\"";
+const b = "say \"hi\"";
+const c = 'it\'s';
+const d = "it's \"x\"";
+const e = 'say "hi"';
+const f = "it's";`;
 
-			expect(await format(input)).toBeWithNewline(`const a = "say \\"hi\\"";
-const b = "it's";
-const c = "it's";`);
-			expect(await format(input, { singleQuote: true })).toBeWithNewline(`const a = 'say "hi"';
-const b = 'it\\'s';
-const c = 'it\\'s';`);
+			expect(await format(input)).toBeWithNewline(String.raw`const a = '"';
+const b = 'say "hi"';
+const c = "it's";
+const d = 'it\'s "x"';
+const e = 'say "hi"';
+const f = "it's";`);
+			expect(await format(input, { singleQuote: true })).toBeWithNewline(String.raw`const a = '"';
+const b = 'say "hi"';
+const c = "it's";
+const d = 'it\'s "x"';
+const e = 'say "hi"';
+const f = "it's";`);
+		});
+
+		it('keeps the configured quote on a tie', async () => {
+			const input = String.raw`const a = 'a"b\'c';
+const b = "a\"b'c";`;
+
+			expect(await format(input)).toBeWithNewline(String.raw`const a = "a\"b'c";
+const b = "a\"b'c";`);
+			expect(await format(input, { singleQuote: true }))
+				.toBeWithNewline(String.raw`const a = 'a"b\'c';
+const b = 'a"b\'c';`);
+		});
+
+		it('keeps a string as written when its quote does not change', async () => {
+			const input = String.raw`const a = "it\'s";
+const b = 'a\"b';
+const c = '\d\n\\"';
+const d = "\\\"";`;
+
+			expect(await format(input)).toBeWithNewline(String.raw`const a = "it\'s";
+const b = 'a\"b';
+const c = '\d\n\\"';
+const d = '\\"';`);
+		});
+
+		it('picks the quote of keys, module names, and literal types the same way', async () => {
+			const input = String.raw`import x from 'it\'s.js';
+const o = { 'it\'s': 1, "say \"hi\"": 2 };
+type T = 'it\'s' | "say \"hi\"";
+enum E {
+  'it\'s' = 1,
+}`;
+
+			expect(await format(input)).toBeWithNewline(String.raw`import x from "it's.js";
+const o = { "it's": 1, 'say "hi"': 2 };
+type T = "it's" | 'say "hi"';
+enum E {
+  "it's" = 1,
+}`);
 		});
 	});
 
@@ -7464,7 +8227,7 @@ const c = 'it\\'s';`);
 			[`title="&amp;amp;"`, `title="&amp;amp;"`],
 			[`title="a &#34;b&#34;"`, `title="a &#34;b&#34;"`],
 			[`title={'&amp;'}`, `title={"&amp;"}`],
-			[`title={"It's \\"both\\""}`, `title={"It's \\"both\\""}`],
+			[`title={"It's \\"both\\""}`, `title={'It\\'s "both"'}`],
 			[`title={'\\ud800'}`, `title={"\\ud800"}`],
 			[`title={'a\\nb'}`, `title={"a\\nb"}`],
 			[`title={'It\\'s'}`, `title="It's"`],
@@ -7537,6 +8300,35 @@ const c = 'it\\'s';`);
 			return once;
 		};
 
+		it('puts mixed text and expression children on their own lines when the element does not fit', async () => {
+			const input = `function App() { return <div title="aaaaaaaa" alt="bbbbbbbbbb">xxxxx yyyyy zzzzzzzzzzzzzzzzzzzzz {"x"}</div>; }
+function Long() { return <div title="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" alt="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb">text {x} more</div>; }`;
+			const expected = `function App() {
+  return <div title="aaaaaaaa" alt="bbbbbbbbbb">
+    xxxxx yyyyy zzzzzzzzzzzzzzzzzzzzz
+    {"x"}
+  </div>;
+}
+function Long() {
+  return <div
+    title="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    alt="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  >
+    text
+    {x}
+    more
+  </div>;
+}`;
+			expect(await expectStable(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps mixed text and expression children on the line when the element fits', async () => {
+			const source = `function App() {
+  return <div title="a">Hello {name}!</div>;
+}`;
+			expect(await expectStable(source)).toBeWithNewline(source);
+		});
+
 		it('keeps a return argument with leading line comments after the return keyword', async () => {
 			const input = `function isXOrYInValid(xOrY: string | number | undefined) {
 	return (
@@ -7584,8 +8376,18 @@ function g() {
 			generatedOffsets: number[];
 		}) =>
 			mapping.sourceOffsets[0] === source_offset &&
-				mapping.generatedOffsets[0] === generated_offset &&
-				mapping.lengths[0] === identifier.length,
+			mapping.generatedOffsets[0] === generated_offset &&
+			mapping.lengths[0] === identifier.length,
+	);
+}`;
+			// Like Prettier, the type of a hugged only parameter joins the
+			// parameter list and collapses when it fits.
+			const expected = `function f() {
+	const mapping = result.mappings.find(
+		(mapping: { sourceOffsets: number[]; generatedOffsets: number[] }) =>
+			mapping.sourceOffsets[0] === source_offset &&
+			mapping.generatedOffsets[0] === generated_offset &&
+			mapping.lengths[0] === identifier.length,
 	);
 }`;
 
@@ -7597,7 +8399,7 @@ function g() {
 				singleQuote: true,
 				printWidth: 100,
 			});
-			expect(result).toBeWithNewline(input);
+			expect(result).toBeWithNewline(expected);
 		});
 
 		it('stabilizes long arrow bodies with logical expressions in one pass', async () => {
@@ -7639,6 +8441,283 @@ function g() {
 				singleQuote: true,
 				printWidth: 100,
 			});
+		});
+	});
+
+	describe('parameter lists of methods, signatures, and function types', () => {
+		const params =
+			'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number';
+
+		it('breaks the parameters of every kind of class method', async () => {
+			const input = `class C {
+  constructor(${params}) {}
+  method(${params}): void {}
+  set value(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string) {}
+  static method2(${params}): void {}
+  *gen(${params}) {}
+  #priv(${params}) {}
+}`;
+			const expected = `class C {
+  constructor(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) {}
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void {}
+  set value(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  ) {}
+  static method2(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void {}
+  *gen(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) {}
+  #priv(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) {}
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters before type parameters or return type arguments', async () => {
+			const input = `class G {
+  method<T>(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: T, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number) {}
+  async load(${params}): Promise<void> {}
+}`;
+			const expected = `class G {
+  method<T>(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: T,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) {}
+  async load(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): Promise<void> {}
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a lone method parameter and keeps an object return type hugged', async () => {
+			const input = `class Q {
+  async load(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): Promise<void> {}
+  m<T>(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): { aaaaaaaaaaa: string; b: number } {}
+  x(...rest: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa[]) {}
+}`;
+			const expected = `class Q {
+  async load(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  ): Promise<void> {}
+  m<T>(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): {
+    aaaaaaaaaaa: string;
+    b: number;
+  } {}
+  x(
+    ...rest: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa[]
+  ) {}
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('always breaks a constructor with parameter properties and more than one parameter', async () => {
+			const input = `class D {
+  constructor(private readonly a: string, public b: number) {}
+}
+class E {
+  constructor(@Inject() private readonly a: string) {
+    init();
+  }
+}`;
+			const expected = `class D {
+  constructor(
+    private readonly a: string,
+    public b: number,
+  ) {}
+}
+class E {
+  constructor(@Inject() private readonly a: string) {
+    init();
+  }
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of abstract methods, overloads, and declared classes', async () => {
+			const input = `abstract class A {
+  abstract method(${params}): void;
+  overload(${params}): void;
+  overload(a: string): void;
+  overload(a: any) {}
+}
+declare class X {
+  method(${params}): void;
+}`;
+			const expected = `abstract class A {
+  abstract method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  overload(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  overload(a: string): void;
+  overload(a: any) {}
+}
+declare class X {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of object methods before their return type', async () => {
+			const input = `const o = {
+  method(${params}): void {},
+  m(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): Promise<Aaaaaaaaaaaaaaaaaaaaaaaaa> {},
+  async *gen<T>(a: T): AsyncGenerator<T> {},
+};`;
+			const expected = `const o = {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void {},
+  m(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  ): Promise<Aaaaaaaaaaaaaaaaaaaaaaaaa> {},
+  async *gen<T>(a: T): AsyncGenerator<T> {},
+};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of interface signatures', async () => {
+			const input = `interface I {
+  method(${params}): void;
+  method2?(${params}): void;
+  set x(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string);
+  (${params}): void;
+  new (${params}): I;
+  <T>(aaaaaaaaaaaaaaaaaaaaaaaa: T, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number): void;
+  n(options: { aaaaaaaaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbbbbbbb: number; cccccccccccccc: boolean }): void;
+}`;
+			const expected = `interface I {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  method2?(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  set x(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  );
+  (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  new (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): I;
+  <T>(
+    aaaaaaaaaaaaaaaaaaaaaaaa: T,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  n(options: {
+    aaaaaaaaaaaaaaaaaaa: string;
+    bbbbbbbbbbbbbbbbbbbbbbbbb: number;
+    cccccccccccccc: boolean;
+  }): void;
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of type literal methods and function-typed properties', async () => {
+			const input = `type T = {
+  method(${params}): void;
+  prop: (${params}) => void;
+};`;
+			const expected = `type T = {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  prop: (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) => void;
+};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of function and constructor types', async () => {
+			const input = `let fn: (${params}) => void;
+let ctor: new (${params}) => I;
+let actor: abstract new (${params}) => I;
+function f(cb: (${params}) => void) {}`;
+			const expected = `let fn: (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+) => void;
+let ctor: new (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+) => I;
+let actor: abstract new (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+) => I;
+function f(
+  cb: (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) => void,
+) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('leaves out the parameter trailing comma unless trailingComma is all', async () => {
+			const input = `interface I {
+  method(${params}): void;
+}
+let fn: (${params}) => void;`;
+			const expected = `interface I {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number
+  ): void;
+}
+let fn: (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number
+) => void;`;
+			expect(await format(input, { trailingComma: 'es5' })).toBeWithNewline(expected);
+		});
+
+		it('keeps short signatures and hugged parameters on one line', async () => {
+			const source = `class C {
+  method(a: string): void {
+    run(a);
+  }
+  m2({ a, b }: Props) {}
+}
+interface I {
+  method(a: string): void;
+  (b: number): void;
+  new (c: string): I;
+}
+type Fn = () => void;
+let x: (a: string) => void = (a) => {};
+let y: abstract new () => Foo;`;
+			expect(await format(source)).toBeWithNewline(source);
 		});
 	});
 
@@ -7800,6 +8879,90 @@ function g() {
 
 			const result = await formatStable(input, { trailingComma: 'es5' });
 			expect(result).toBeWithNewline(expected);
+		});
+	});
+
+	describe('type argument lists', () => {
+		it('keeps a lone simple type argument against its brackets', async () => {
+			const input = `const w = (a) => a as unknown as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbb>;
+function f(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbbbbbb> {}
+foo(bar as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbb>);
+function g() {
+  return value satisfies Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<string>;
+}
+const q = useMemo<Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>(() => compute(aaaaaaa, bbbbbbbbbb), []);`;
+			const expected = `const w = (a) =>
+  a as unknown as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbb>;
+function f(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbbbbbb> {}
+foo(
+  bar as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbb>,
+);
+function g() {
+  return value satisfies Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<string>;
+}
+const q = useMemo<Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>(
+  () => compute(aaaaaaa, bbbbbbbbbb),
+  [],
+);`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps a lone object type or a hugged union against its brackets', async () => {
+			const input = `let o: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<{ aaaaaaaaaa: string; bbbbbbbbbbbbbb: number }> = v;
+function h(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbb | null> {}`;
+			const expected = `let o: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<{
+  aaaaaaaaaa: string;
+  bbbbbbbbbbbbbb: number;
+}> = v;
+function h(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbb | null> {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks lists of several types, nested type arguments, and other unions', async () => {
+			const input = `let y: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, Cccc> = v;
+let z: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbb<Cccc>> = v;
+let u: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<"aaaaaa" | "bbbbbbb"> = v;`;
+			const expected = `let y: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  Cccc
+> = v;
+let z: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  Bbbbbbbbbbb<Cccc>
+> = v;
+let u: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  "aaaaaa" | "bbbbbbb"
+> = v;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the brackets around a lone array type, which is not simple', async () => {
+			const input = `let x: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<string[]> = value;
+const w = (a) => a as unknown as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<string[]>;`;
+			const expected = `let x: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  string[]
+> = value;
+const w = (a) =>
+  a as unknown as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+    string[]
+  >;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a lone type argument in the type of an arrow function variable', async () => {
+			const input = `const fn: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbb> = () => {};`;
+			const expected = `const fn: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  Bbbbbbbbbbbbbbbbbbbb
+> = () => {};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a lone type argument with a line comment', async () => {
+			const source = `let k: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  // comment
+  string
+> = value;
+let m: Map<string /* key */, number> = new Map<string, number>();`;
+			expect(await format(source)).toBeWithNewline(source);
 		});
 	});
 
@@ -7975,7 +9138,10 @@ function g() {
 		it('keeps modifiers on constructor parameter properties', async () => {
 			await expectUnchanged(`class Point {
   readonly origin = 0;
-  constructor(private readonly x: number, public y: string) {}
+  constructor(
+    private readonly x: number,
+    public y: string,
+  ) {}
 }`);
 		});
 
@@ -8331,6 +9497,147 @@ export function App() @{
 }`);
 		});
 
+		it('guards statements in @switch case bodies', async () => {
+			const source = `export function App() @{
+  <>
+    @switch (count) {
+      @case 1: {
+        ;/a/.test(text)
+        const half = count / 2
+        ;\`x\`.trim()
+        ;(first || second).run()
+        <span />
+      }
+      @default: {
+        const next = count
+        ;\`y\${next}\`.trim()
+        <i />
+      }
+    }
+  </>
+}`;
+			await expectUnchanged(source);
+			const with_semicolons = source
+				.replace(/^(\s*);/gm, '$1')
+				.replace(/^(\s*(?:const|\/|`|\().*)$/gm, '$1;');
+			expect(await format(with_semicolons)).toBeWithNewline(with_semicolons);
+			expect(await format(with_semicolons, { semi: false })).toBeWithNewline(source);
+		});
+
+		it('starts no guard before a template element after a comment', async () => {
+			await expectUnchanged(`export function App() @{
+  const x = a
+  /* render */ <div />
+}
+function render() {
+  const x = a
+  /* render */ <div />
+}`);
+			expect(
+				await format(
+					`export function App() @{
+  const x = a;
+  /* render */ <div />
+}`,
+					{ semi: false },
+				),
+			).toBeWithNewline(`export function App() @{
+  const x = a
+  /* render */ <div />
+}`);
+		});
+
+		it('keeps a return of an element after an element with children', async () => {
+			await expectUnchanged(`function Field() {
+  const field = <span>{label}</span>
+  return <div>{field}</div>
+}`);
+			expect(
+				await format(
+					`function Field() {
+  const field = <span>{label}</span>;
+  throw <div>{field}</div>;
+}`,
+					{ semi: false },
+				),
+			).toBeWithNewline(`function Field() {
+  const field = <span>{label}</span>
+  throw <div>{field}</div>
+}`);
+		});
+
+		it('keeps an element with attributes after an element with children', async () => {
+			const source = `function Test(props) {
+  const render = (item) => <><Item /></>
+  <List renderItem={render} />
+  const field = <b>{label}</b>
+  <List renderItem={render} key="a" />
+}
+const render = <b>x</b>
+<List renderItem={render} />`;
+			await expectUnchanged(source);
+			const with_semicolons = source.replace(/(<\/>|<\/b>)$/gm, '$1;');
+			expect(await format(with_semicolons)).toBeWithNewline(with_semicolons);
+			expect(await format(with_semicolons, { semi: false })).toBeWithNewline(source);
+		});
+
+		it('keeps an element after a statement that ends with a type', async () => {
+			const source = `export function App() @{
+  const x = y as Foo
+  const z = y satisfies Foo
+  let w: Foo
+  type T = Foo
+  <Bar />
+}
+function render() {
+  const x = y as Map<A, B>
+  <Bar a={1} />
+}
+let v: Foo
+<Bar />`;
+			await expectUnchanged(source);
+			const with_semicolons = source.replace(/^(\s*(?:const|let|type) .*)$/gm, '$1;');
+			expect(await format(with_semicolons)).toBeWithNewline(with_semicolons);
+			expect(await format(with_semicolons, { semi: false })).toBeWithNewline(source);
+		});
+
+		it('guards a template literal after an element with children', async () => {
+			expect(
+				await format('function f() {\n  const a = <b>x</b>;\n  `t`;\n}', { semi: false }),
+			).toBeWithNewline('function f() {\n  const a = <b>x</b>\n  ;`t`\n}');
+		});
+
+		it('divides after an element and in code block setup statements', async () => {
+			await expectUnchanged(`const half = <span /> / 2
+const third = <span>x</span> / 3
+function f() {
+  return <>x</> / 2
+}
+export function App() @{
+  total / count > 1 && log()
+  a / b
+  <>
+    @if (x) {
+      a / b
+      <span />
+    }
+  </>
+}`);
+		});
+
+		// Prettier prints `await (<div />)` (#425); the output must
+		// parse again either way.
+		it('formats an awaited element', async () => {
+			for (const semi of [true, false]) {
+				await format(
+					'async function f() {\n  await (<div />);\n  const view = await <b>a</b>;\n}',
+					{
+						semi,
+					},
+				);
+			}
+		});
+
 		it('puts the semicolon after comments and before a JSDoc cast', async () => {
 			await expectUnchanged(`log()
 // note
@@ -8515,6 +9822,86 @@ log()
 		it('prints the comments of a file with only empty statements on consecutive lines', async () => {
 			expect(await format('// a\n\n// b\n;\n')).toBeWithNewline('// a\n// b');
 			expect(await format(';\n// a\n\n// b\n')).toBeWithNewline('// a\n// b');
+		});
+	});
+
+	// The parser reports a hashbang as a line comment at offset 0; like Prettier,
+	// print it back as written
+	describe('hashbangs', () => {
+		it.each([
+			'#!/usr/bin/env node',
+			'#!/usr/bin/env node\n// A comment',
+			'#!/usr/bin/env node\nconsole.log(1);',
+			'#!/usr/bin/env node\n\nimport { x } from "./x";',
+			'#!/usr/bin/env -S node --no-warnings\n/** Docs */\nexport function App() @{\n  <div />\n}',
+			'#!/usr/bin/env node\n"use strict";\nconsole.log(1);',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps the hashbang of a file with only empty statements', async () => {
+			expect(await format('#!/usr/bin/env node\n;\n')).toBeWithNewline('#!/usr/bin/env node');
+		});
+
+		// Empty statements take no comments, so the parser attaches the hashbang
+		// to the first statement after them
+		it.each([
+			['#!/usr/bin/env node\n;\nconsole.log(1);', '#!/usr/bin/env node\nconsole.log(1);'],
+			[
+				'#!/usr/bin/env node\n;\n// A comment\nconsole.log(1);',
+				'#!/usr/bin/env node\n// A comment\nconsole.log(1);',
+			],
+			[
+				'#!/usr/bin/env node\n;;\n"use strict";\nconsole.log(1);',
+				'#!/usr/bin/env node\n("use strict");\nconsole.log(1);',
+			],
+			[
+				'#!/usr/bin/env node\n;\nexport function App() @{\n  <div />\n}',
+				'#!/usr/bin/env node\nexport function App() @{\n  <div />\n}',
+			],
+		])('keeps the hashbang before empty statements in %j', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it('keeps a line comment that starts with a slash a comment', async () => {
+			const source = '///usr/bin/env node\nconsole.log(1);';
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	describe('using declarations', () => {
+		it('keeps using and await using declarations', async () => {
+			const source = `using moduleHandle = open();
+
+async function run(items: Iterable<Disposable>) {
+  using handle: Disposable = open();
+  await using connection = await connect();
+  for (using item of items) {
+    use(item);
+  }
+  for await (await using item of stream) {
+    use(item);
+  }
+}
+
+export function App() @{
+  using handle = open();
+  <div>{handle.name}</div>
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('puts each declarator on its own line once one has a value', async () => {
+			expect(await format('using a = open(), b = open();')).toBeWithNewline(
+				'using a = open(),\n  b = open();',
+			);
+		});
+	});
+
+	describe('regular expressions', () => {
+		it('keeps the v flag and modifiers', async () => {
+			const source = 'const set = /[\\p{L}--[a-z]]/v;\nconst modified = /(?i:a)b/;';
+			expect(await format(source)).toBeWithNewline(source);
 		});
 	});
 
@@ -8708,6 +10095,293 @@ function Two() @{
 		});
 	});
 
+	// Parentheses written around a type stay as they are; these are the ones
+	// Prettier adds where the type parses the same without them.
+	describe('type parentheses follow Prettier', () => {
+		it.each([
+			[
+				'const f = (journal: Journal): () => void => {\n  return () => {};\n};',
+				'const f = (journal: Journal): (() => void) => {\n  return () => {};\n};',
+			],
+			[
+				'class C {\n  m = <T,>(): <U>(u: U) => T => null!;\n}',
+				'class C {\n  m = <T,>(): (<U>(u: U) => T) => null!;\n}',
+			],
+			['type A = typeof a[];', 'type A = (typeof a)[];'],
+			['type A = typeof a[number];', 'type A = (typeof a)[number];'],
+			['type A = keyof keyof T;', 'type A = keyof (keyof T);'],
+			['type A = [...A | B];', 'type A = [...(A | B)];'],
+			[
+				'type A = <X extends B extends C ? D : E>() => X;',
+				'type A = <X extends (B extends C ? D : E)>() => X;',
+			],
+		])('prints %s as %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const f = (): (() => void) => () => {};',
+			'const f = (): (() => void) | null => null;',
+			'const f = (): Promise<() => void> => load();',
+			'const f = (): new () => Foo => Foo;',
+			'const f = (): A extends B ? C : D => value;',
+			'const f = (): value is () => void => true;',
+			'function f(): () => void {}',
+			'const f = function (): () => void {};',
+			'let callback: () => void;',
+			'type A = (keyof T)[];',
+			'type A = keyof T[];',
+			'type A = readonly (typeof a)[];',
+			'type A = keyof typeof a;',
+			'type A = (() => void)[];',
+			'type A = [(() => void)?];',
+			'type A = [...infer U];',
+			'type A = B extends (C extends D ? E : F) ? G : H;',
+			'type A = (B extends C ? D : E) extends F ? G : H;',
+			'type A = B extends (() => infer R extends string) ? R : never;',
+			'type A = B extends () => infer R ? R : never;',
+			'type A = { [K in B extends "" ? "index" : B]: 1 };',
+			'type A<T> = T extends [infer U extends (B extends C ? D : E)] ? U : never;',
+		])('keeps %s as written', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	// Prettier's `printUnionType`: a union that doesn't fit moves to its own
+	// indented lines, one member per line after a leading `|`, unless its
+	// context already indents it or keeps it in place.
+	describe('union types break like Prettier', () => {
+		// A comment between members used to print after the next member's `|`,
+		// and a block comment before a union before its first `|` (#397)
+		it.each([
+			'type Kind =\n  | "first" // the first kind\n  // the second kind, on its own line\n  | "second"\n  | "third";',
+			'type Kind =\n  | "first"\n  /* the second kind */\n  | "second";',
+			'type Kind =\n  | "first"\n\n  // the second kind\n  | "second";',
+			'type K = (\n  | "first"\n  // the second kind\n  | "second"\n)[];',
+			'function f(\n  kind:\n    | "first"\n    // the second kind\n    | "second",\n) {}',
+			'type A =\n  | B // c\n  | C;',
+			'let value: /* either */ A | B;',
+		])('keeps the comments of %j where they are', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'interface Props {\n  value: /* either */ Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbb;\n}',
+				'interface Props {\n  value:\n    | /* either */ Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n    | Bbbbbbbbbbbbbbbbbbb;\n}',
+			],
+			[
+				'type T = /* either */ Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;',
+				'type T =\n  | /* either */ Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;',
+			],
+			['type A = B | // c\n  C;', 'type A =\n  | B // c\n  | C;'],
+			['type A =\n  | B | // c\n  C', 'type A =\n  | B // c\n  | C;'],
+			[
+				'type Kind =\n  | "first"\n  // the second kind\n\n  | "second";',
+				'type Kind =\n  | "first"\n  // the second kind\n  | "second";',
+			],
+		])('prints the comments of %j before the next |, like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('moves a broken union in a type annotation to its own indented lines', async () => {
+			const input = `let x: Foooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo | null | undefined = 1;
+interface I { value: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbb }`;
+			const expected = `let x:
+  | Foooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
+  | null
+  | undefined = 1;
+interface I {
+  value:
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbb;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('indents a broken union in parameters, return types, and class fields', async () => {
+			const input = `function f(value: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | Ccccc) {}
+function g(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb {}
+class C {
+  value: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | null = null;
+}`;
+			const expected = `function f(
+  value:
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    | Ccccc,
+) {}
+function g():
+  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb {}
+class C {
+  value:
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    | null = null;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks a union in place in type arguments and conditional type branches', async () => {
+			const input = `let list: Array<Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb>;
+type Pick<T> = T extends string ? Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb : never;
+type K<T> = T extends string ? Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | Ccccccccccc : never;`;
+			const expected = `let list: Array<
+  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+>;
+type Pick<T> = T extends string
+  ? Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  : never;
+type K<T> = T extends string
+  ? | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    | Ccccccccccc
+  : never;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks a parenthesized union inside its parentheses', async () => {
+			const input = `type Items = (Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)[];`;
+			const expected = `type Items = (
+  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+)[];`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('moves a cast union below as or satisfies, and keeps a hugged one inline', async () => {
+			const input = `const input = element as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
+const value = options satisfies Aaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbb | Cccccccccccc;
+const target = event.target as HTMLElement | null;`;
+			const expected = `const input = element as
+  HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
+const value = options satisfies
+  Aaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbb | Cccccccccccc;
+const target = event.target as HTMLElement | null;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('prints the comments before a union inside its indentation', async () => {
+			const input = `interface Props {
+  // What the field holds
+  value: // Either kind of value
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb;
+  items: (// Either kind of item
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb)[];
+  short: string | null;
+  config: { enabled: boolean; name: string } | null;
+}`;
+			const expected = `interface Props {
+  // What the field holds
+  value:
+    // Either kind of value
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb;
+  items: (
+    // Either kind of item
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  )[];
+  short: string | null;
+  config: { enabled: boolean; name: string } | null;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
+	// Prettier's `printIntersectionType`: types that aren't object types break
+	// after the `&` between them; an object type stays on the line of its `&`.
+	describe('intersection types break like Prettier', () => {
+		it('breaks a long intersection after each &', async () => {
+			const input = `type MethodsType = typeof Attributes & typeof Traversing & typeof Manipulation & typeof Css & typeof Forms;
+type Merged = FirstVeryLongTypeName<WithArgument> & SecondVeryLongTypeName & ThirdTypeName<X>;`;
+			const expected = `type MethodsType = typeof Attributes &
+  typeof Traversing &
+  typeof Manipulation &
+  typeof Css &
+  typeof Forms;
+type Merged = FirstVeryLongTypeName<WithArgument> &
+  SecondVeryLongTypeName &
+  ThirdTypeName<X>;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps an object type on the line of its &', async () => {
+			const input = `type Props = BaseProps & { aaaaaaaaaaaaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number };
+type Props2 = BaseProps & OtherPropsWithAVeryLongName & { aaaaaaaaaaaaaaaaaaaaaaa: string; bbbbbbbbbbb: number };
+type Props3 = { aaaaaaaaaaaaaaaaaaaaaaa: string } & { bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number };
+type Props4 = { aaaaaaaaaaaaaaaaaaaaaaa: string } & BaseProps & { bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number };`;
+			const expected = `type Props = BaseProps & {
+  aaaaaaaaaaaaaaaaaaaaaaa: string;
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+};
+type Props2 = BaseProps &
+  OtherPropsWithAVeryLongName & {
+    aaaaaaaaaaaaaaaaaaaaaaa: string;
+    bbbbbbbbbbb: number;
+  };
+type Props3 = { aaaaaaaaaaaaaaaaaaaaaaa: string } & {
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+};
+type Props4 = { aaaaaaaaaaaaaaaaaaaaaaa: string } & BaseProps & {
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+  };`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks an intersection in a parameter, an annotation, or a union member', async () => {
+			const input = `function f(options: Aaaaaaaaaaaaaaaaaaaaaaaaaaaa & Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb & Cccccccccccccccccc) {}
+let x: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa & Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb & Ccccccccccc = y;
+type U =
+  | (ManagedIdentityCredentialClientIdOptions & ManagedIdentityDisableProbeOptions)
+  | (ManagedIdentityCredentialResourceIdOptions & ManagedIdentityDisableProbeOptions);`;
+			const expected = `function f(
+  options: Aaaaaaaaaaaaaaaaaaaaaaaaaaaa &
+    Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &
+    Cccccccccccccccccc,
+) {}
+let x: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &
+  Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &
+  Ccccccccccc = y;
+type U =
+  | (ManagedIdentityCredentialClientIdOptions &
+      ManagedIdentityDisableProbeOptions)
+  | (ManagedIdentityCredentialResourceIdOptions &
+      ManagedIdentityDisableProbeOptions);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('moves a type after an own-line comment to the next line', async () => {
+			const input = `type A = B &
+// comment
+C;
+type D = { a: string } &
+// comment
+E;`;
+			const expected = `type A = B &
+  // comment
+  C;
+type D = { a: string } &
+  // comment
+  E;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	// `extends` only takes a left-hand-side expression, so a superclass that
 	// binds looser than that is a syntax error without its parens.
 	describe('superclass expressions keep required parentheses', () => {
@@ -8774,6 +10448,178 @@ function Two() @{
 			'class Derived extends class {} {}',
 			'class Derived extends Base! {}',
 		])('does not add parentheses in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+	});
+
+	// Like Prettier's `printClass`: the heading groups its heritage clauses
+	// when it has more than one heritage type or a single qualified name, and
+	// a class whose heading breaks starts its body on a new line.
+	describe('class and interface headings break like Prettier', () => {
+		/**
+		 * Assert the input is already formatted and comes back byte-identical.
+		 * @param {string} source
+		 */
+		const expectUnchanged = async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		};
+
+		it('puts each class heritage clause on its own line and { on the next', async () => {
+			const input = `export class BrowserPerformanceClient extends PerformanceClient implements IPerformanceClient, IDisposable {
+  x = 1;
+}`;
+
+			expect(await format(input)).toBeWithNewline(`export class BrowserPerformanceClient
+  extends PerformanceClient
+  implements IPerformanceClient, IDisposable
+{
+  x = 1;
+}`);
+		});
+
+		it('keeps { on the heading line of a class with an empty body', async () => {
+			const input = `export class VeryLongClassNameForTestingPurposesOnlyHereAbc extends Base implements One {}`;
+
+			expect(await format(input))
+				.toBeWithNewline(`export class VeryLongClassNameForTestingPurposesOnlyHereAbc
+  extends Base
+  implements One {}`);
+		});
+
+		it('breaks a heading with one qualified heritage name', async () => {
+			await expectUnchanged(`export class VeryLongClassNameForTestingPurposesOnlyHere
+  extends SomeNamespace.BaseClass
+{
+  x = 1;
+}`);
+			await expectUnchanged(`export class VeryLongClassNameForTesting
+  implements SomeNamespace.SomeInterfaceName.Deep
+{
+  x = 1;
+}`);
+			await expectUnchanged(`export interface VeryLongInterfaceNameForTestingPurposes
+  extends SomeNamespace.BaseInterface {
+  x: 1;
+}`);
+		});
+
+		// Prettier's `printSuperClass`: only the value of an assignment expression
+		it('moves a long superclass of an assigned class expression into parentheses', async () => {
+			const input = `Foo = class extends SomeNamespace.VeryLongBaseClassNameForTestingPurposesOnlyAbc.Def {
+  x = 1;
+};
+module.exports = class extends mixin(SomeVeryLongBaseClassName, AnotherVeryLongMixinClassName) {
+  x = 1;
+};
+a.b = class extends (SomeVeryLongBaseClassNameThatIsReallyLong || SomeOtherBaseClassName) {
+  x = 1;
+};
+Foo = class extends SomeNamespace.VeryLongBaseClassNameForTestingPurposes<TypeArg> {
+  x = 1;
+};`;
+
+			expect(await format(input)).toBeWithNewline(`Foo = class extends (
+  SomeNamespace.VeryLongBaseClassNameForTestingPurposesOnlyAbc.Def
+) {
+  x = 1;
+};
+module.exports = class extends (
+  mixin(SomeVeryLongBaseClassName, AnotherVeryLongMixinClassName)
+) {
+  x = 1;
+};
+a.b = class extends (
+  (SomeVeryLongBaseClassNameThatIsReallyLong || SomeOtherBaseClassName)
+) {
+  x = 1;
+};
+Foo = class extends (
+  SomeNamespace.VeryLongBaseClassNameForTestingPurposes
+)<TypeArg> {
+  x = 1;
+};`);
+		});
+
+		it.each([
+			'Foo = class extends Base {};',
+			'Foo = class extends (Base || Object) {};',
+			`const Foo = class extends SomeVeryLongBaseClassNameThatIsReallyLongForTestingAbcdef {
+  x = 1;
+};`,
+		])('keeps the superclass of %s as it is', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it('breaks the heading of a class expression', async () => {
+			const input = `const Foo = class VeryLongClassNameForTestingPurposesOnly extends Base implements IFoo, IBar {
+  x = 1;
+};`;
+
+			expect(await format(input))
+				.toBeWithNewline(`const Foo = class VeryLongClassNameForTestingPurposesOnly
+  extends Base
+  implements IFoo, IBar
+{
+  x = 1;
+};`);
+		});
+
+		it('keeps declare and abstract on the heading line', async () => {
+			const input = `declare abstract class VeryLongClassNameForTestingPurposesOnly extends Base implements One {
+  x: 1;
+}`;
+
+			expect(await format(input))
+				.toBeWithNewline(`declare abstract class VeryLongClassNameForTestingPurposesOnly
+  extends Base
+  implements One
+{
+  x: 1;
+}`);
+		});
+
+		it('puts interface extends on its own line and each type on its own line when they do not fit', async () => {
+			const input = `interface AbortSignal extends EventTarget, InternalEventTargetEventProperties<AbortSignalEventMap> {
+  readonly aborted: boolean;
+}
+export interface SectionProps<T> extends Omit<SharedSectionProps<T>, "children" | "title">, StyleProps, GlobalDOMAttributes<HTMLElement> {
+  id?: Key;
+}`;
+
+			expect(await format(input)).toBeWithNewline(`interface AbortSignal
+  extends EventTarget, InternalEventTargetEventProperties<AbortSignalEventMap> {
+  readonly aborted: boolean;
+}
+export interface SectionProps<T>
+  extends
+    Omit<SharedSectionProps<T>, "children" | "title">,
+    StyleProps,
+    GlobalDOMAttributes<HTMLElement> {
+  id?: Key;
+}`);
+		});
+
+		it.each([
+			'class A extends B implements C, D {}',
+			'interface I extends J, K {}',
+			'const X = class extends B implements C, D {};',
+			`export class VeryLongClassNameForTestingPurposesOnlyHere extends SomeBaseClassNameThatIsLong {
+  x = 1;
+}`,
+			`class Foo extends aVeryLongFunctionCallThatReturnsAClass(
+  withSomeArguments,
+  andMore,
+  andMoreArgs,
+) {
+  x = 1;
+}`,
+			`export class VeryLongClassNameForTestingPurposesOnly<
+  TypeParameterOne,
+  TypeParameterTwo,
+> extends Base<TypeParameterOne> {
+  x = 1;
+}`,
+		])('keeps a heading that fits or has one simple clause: %s', async (source) => {
 			await expectUnchanged(source);
 		});
 	});
@@ -8988,8 +10834,9 @@ const called = (
 			expect(result).toContain('(a   ||   b)();');
 		});
 
-		it('keeps a parenthesized nested ternary branch as written', async () => {
-			await expectUnchanged('x = a ? (b ? c : d) : e;\ny = a ? b : (c ? d : e);');
+		it('parenthesizes a nested ternary consequent, not an alternate, like Prettier', async () => {
+			const result = await format('x = a ? (b ? c : d) : e;\ny = a ? b : (c ? d : e);');
+			expect(result).toBeWithNewline('x = a ? (b ? c : d) : e;\ny = a ? b : c ? d : e;');
 		});
 
 		it('preserves execution when formatting parenthesized operands', async () => {
@@ -9043,6 +10890,888 @@ const called = (
 		});
 	});
 
+	describe('binary and logical expressions lay out like Prettier', () => {
+		// A comment that ends the line of an operator used to lead the next
+		// operand and move to a line of its own (#371)
+		it.each([
+			'const total =\n  first + // the base\n  second;\nconst ok =\n  isReady || // cached\n  isLoading;',
+			'function f() {\n  return (\n    a + // x\n    b + // y\n    c\n  );\n}',
+			'if (\n  a || // first\n  b\n) {\n  run();\n}',
+			'foo(\n  first + // the base\n    second,\n);',
+			'x = !(\n  cond1 || // foo\n  cond2 || // bar\n  cond3 // baz\n);',
+			'const total =\n  first +\n  // own line\n  second;',
+			'const total = first + /* inline */ second;',
+		])('keeps the comments of %j where they are, like Prettier', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'const ok = a && // first\n  b && // second\n  c;',
+				'const ok =\n  a && // first\n  b && // second\n  c;',
+			],
+			['const x = a + /* c */\n  b;', 'const x = a /* c */ + b;'],
+			['x = a ?? // fallback\n  b;', 'x =\n  a ?? // fallback\n  b;'],
+			['const x = (a + // c\n  b) * c;', 'const x =\n  (a + // c\n    b) *\n  c;'],
+		])(
+			'keeps a comment that ends the line of an operator after it in %j',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		it('parenthesizes a logical operand of another logical operator', async () => {
+			const result = await format(`const z = a && b || c;
+const y = a || b && c;
+const q = aaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb || cccccccccccccccccccccccccc && ddddddddddddddd;`);
+			expect(result).toBeWithNewline(`const z = (a && b) || c;
+const y = a || (b && c);
+const q =
+  (aaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) ||
+  (cccccccccccccccccccccccccc && ddddddddddddddd);`);
+		});
+
+		it.each([
+			[
+				'const ok = isEnabledForTheCurrentUser && hasPermissionToEdit && !isLockedByAnotherSession && isOnline;',
+				`const ok =
+  isEnabledForTheCurrentUser &&
+  hasPermissionToEdit &&
+  !isLockedByAnotherSession &&
+  isOnline;`,
+			],
+			[
+				'const total = firstOperandWithALongName + secondOperandWithALongName + thirdOperandWithALongName;',
+				`const total =
+  firstOperandWithALongName +
+  secondOperandWithALongName +
+  thirdOperandWithALongName;`,
+			],
+			[
+				'const value = firstFallbackWithALongName ?? secondFallbackWithALongName ?? thirdFallbackWithALongName;',
+				`const value =
+  firstFallbackWithALongName ??
+  secondFallbackWithALongName ??
+  thirdFallbackWithALongName;`,
+			],
+			[
+				'const flags = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | ccccccccccccccccccccccccccccc;',
+				`const flags =
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa |
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb |
+  ccccccccccccccccccccccccccccc;`,
+			],
+			[
+				'foo(firstOperandWithALongName + secondOperandWithALongName + thirdOperandWithALongName, other);',
+				`foo(
+  firstOperandWithALongName +
+    secondOperandWithALongName +
+    thirdOperandWithALongName,
+  other,
+);`,
+			],
+		])('breaks before every operand of a same-precedence chain in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a mixed-precedence chain only at its loosest operator', async () => {
+			const result = await format(`const short = a + b * c - d;
+const mixed = aaaaaaaaaaaaaaaaaaaaaaa * bbbbbbbbbbbbbbbbbbbbbbbbbbb + ccccccccccccccccccccccc * dddddddddddddddd;`);
+			expect(result).toBeWithNewline(`const short = a + b * c - d;
+const mixed =
+  aaaaaaaaaaaaaaaaaaaaaaa * bbbbbbbbbbbbbbbbbbbbbbbbbbb +
+  ccccccccccccccccccccccc * dddddddddddddddd;`);
+		});
+
+		it.each([
+			[
+				'const f = (resolve) => aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;',
+				`const f = (resolve) =>
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;`,
+			],
+			[
+				'const x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;',
+				`const x =
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;`,
+			],
+			[
+				'if (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) {\n  run();\n}',
+				`if (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+) {
+  run();
+}`,
+			],
+			[
+				'const b = Boolean(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);',
+				`const b = Boolean(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+);`,
+			],
+		])(
+			'lines up the operands where Prettier does not indent them in %s',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		it('lines up the operands of an assigned value after the operator breaks', async () => {
+			const result =
+				await format(`total = firstOperandWithALongName + secondOperandWithALongName + thirdOperandWithALongName;
+const options = { enabled: isEnabledForTheCurrentUser && hasPermissionToEdit && !isLockedByAnotherSession };
+class Session { ready = isEnabledForTheCurrentUser && hasPermissionToEdit && !isLockedByAnotherSession; }`);
+			expect(result).toBeWithNewline(`total =
+  firstOperandWithALongName +
+  secondOperandWithALongName +
+  thirdOperandWithALongName;
+const options = {
+  enabled:
+    isEnabledForTheCurrentUser &&
+    hasPermissionToEdit &&
+    !isLockedByAnotherSession,
+};
+class Session {
+  ready =
+    isEnabledForTheCurrentUser &&
+    hasPermissionToEdit &&
+    !isLockedByAnotherSession;
+}`);
+		});
+
+		it.each([
+			[
+				'const b = !!(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);',
+				`const b = !!(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);`,
+			],
+			[
+				'const b = typeof (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);',
+				`const b = typeof (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);`,
+			],
+			[
+				'const b = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb).length;',
+				`const b = (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+).length;`,
+			],
+			[
+				'const b = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)();',
+				`const b = (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+)();`,
+			],
+		])('breaks after the opening parenthesis in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('indents the operands of a call argument and a computed member object', async () => {
+			const source = `foo(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  c,
+);
+const b = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)[0];`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'function g() {\n  return aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;\n}',
+				`function g() {
+  return (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}`,
+			],
+			[
+				'function g() {\n  throw aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;\n}',
+				`function g() {
+  throw (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}`,
+			],
+			[
+				'function g() {\n  return (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa instanceof bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);\n}',
+				`function g() {
+  return (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa instanceof
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}`,
+			],
+			[
+				'function g() {\n  return (first ?? second);\n}',
+				`function g() {
+  return first ?? second;
+}`,
+			],
+		])(
+			'wraps a return or throw argument in parentheses only when it breaks in %s',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		it('keeps a JSDoc cast around a broken return argument as the only parentheses', async () => {
+			const source = `function g() {
+  return /** @type {Foo} */ (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	describe('statement conditions lay out like Prettier', () => {
+		it.each([
+			[
+				'while (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) {\n  step();\n}',
+				`while (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+) {
+  step();
+}`,
+			],
+			[
+				'do {\n  step();\n} while (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);',
+				`do {
+  step();
+} while (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);`,
+			],
+			[
+				'while (someObject.someMethodWithAVeryLongName(argumentNumberOne, argumentNumberTwo, three)) {\n  step();\n}',
+				`while (
+  someObject.someMethodWithAVeryLongName(
+    argumentNumberOne,
+    argumentNumberTwo,
+    three,
+  )
+) {
+  step();
+}`,
+			],
+			[
+				'while (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) {\n  step();\n}',
+				`while (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+) {
+  step();
+}`,
+			],
+		])('moves a long condition onto its own lines in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			`if (!(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+)) {
+  step();
+}`,
+			`while (!!(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+)) {
+  step();
+}`,
+			`if (
+  !(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  )
+) {
+  step();
+}`,
+			`while (ready && count < limit) {
+  step();
+}`,
+		])('keeps only a negated logical condition on the keyword line in %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	describe('sequence expressions lay out like Prettier', () => {
+		it.each([
+			[
+				'const f = (a) => (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);',
+				`const f = (a) => (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);`,
+			],
+			[
+				'function g() {\n  return (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);\n}',
+				`function g() {
+  return (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}`,
+			],
+			[
+				'function g() {\n  throw (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);\n}',
+				`function g() {
+  throw (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}`,
+			],
+			[
+				'firstVariableWithLongName = computeSomething(), secondVariableWithLongName = computeOther();',
+				`((firstVariableWithLongName = computeSomething()),
+  (secondVariableWithLongName = computeOther()));`,
+			],
+			[
+				'foo((aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb));',
+				`foo(
+  (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb),
+);`,
+			],
+		])('breaks after the commas in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps a sequence that fits on one line', async () => {
+			const source = `(a, b);
+const f = (a) => (a, b);
+for (i = 0, j = 1; i < 10; i++, j++) {
+  step();
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	describe('conditional expressions lay out like Prettier', () => {
+		it('keeps a nested conditional that fits on one line after return, throw, and export default', async () => {
+			const source = `function pick() {
+  return a ? b : c ? d : e;
+}
+function fail() {
+  throw a ? b : c ? d : e;
+}
+a ? b() : c ? d() : e();
+export default a ? b : c ? d : e;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('breaks every branch of a chain that does not fit', async () => {
+			const source = `const animal = isBird
+  ? "bird"
+  : isCat
+    ? "cat"
+    : isDog
+      ? "dog"
+      : isFish
+        ? "fish"
+        : "unknown animal type";`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('parenthesizes a nested consequent only on one line', async () => {
+			const result = await format(
+				'const value = aaaaaaaaaaaaaaaaaaaaaaaa ? (bbbbbbbbbbbbbbbbbbbbbbbbbbbb ? ccccccccccccccccccccc : ddddddddddddd) : eeeee;',
+			);
+			expect(result).toBeWithNewline(`const value = aaaaaaaaaaaaaaaaaaaaaaaa
+  ? bbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    ? ccccccccccccccccccccc
+    : ddddddddddddd
+  : eeeee;`);
+		});
+
+		it('breaks inside the parentheses of a conditional test', async () => {
+			const result = await format(
+				'const value = (aaaaaaaaaaaaaaaaaaaaaaaaaa ? bbbbbbbbbbbbbbbbbbbbbbbbbbb : ccccccccccccccccccccccccccc) ? d : e;',
+			);
+			expect(result).toBeWithNewline(`const value = (
+  aaaaaaaaaaaaaaaaaaaaaaaaaa
+    ? bbbbbbbbbbbbbbbbbbbbbbbbbbb
+    : ccccccccccccccccccccccccccc
+)
+  ? d
+  : e;`);
+		});
+
+		it.each([
+			[
+				'const x = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ? bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb : cccccccccccccccccccccccccc).prop;',
+				`const x = (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    ? bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    : cccccccccccccccccccccccccc
+).prop;`,
+			],
+			[
+				'const x = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ? bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb : cccccccccccccccccccccccccc).prop.call();',
+				`const x = (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    ? bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    : cccccccccccccccccccccccccc
+).prop.call();`,
+			],
+		])(
+			'breaks before the closing parenthesis of a member object in %s',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		it('aligns a broken branch with the text after `? `', async () => {
+			const source = `const value = test
+  ? aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  : c;`;
+			expect(await format(source)).toBeWithNewline(source);
+			const tabbed = `function f() {
+\tconst value = test
+\t\t? aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+\t\t\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+\t\t: c;
+}`;
+			expect(await format(tabbed, { useTabs: true })).toBeWithNewline(tabbed);
+		});
+	});
+
+	describe('template literal expressions stay as written', () => {
+		it.each([
+			'const message = `Projects: ${[...configured].map((platform) => JSON.stringify(platform)).join(", ")}. Select one.`;',
+			`throw new Error(
+  \`Projects select multiple platforms for \${integration}: \${[...configured].map((platform) => JSON.stringify(platform)).join(", ")}. Select one.\`,
+);`,
+			'const s = `${aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ? bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb : cccccccccccccccccccccccccc}`;',
+			`function f() {
+  const q = \`
+    select * from \${table}
+    where \${aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+  \`;
+}`,
+		])('keeps an expression written on one line on one line in %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps the line breaks of an expression written across lines', async () => {
+			const source = `const s = \`\${
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+} and \${bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}\`;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('indents a breaking expression from the template line it starts on', async () => {
+			const result = await format(`const s = \`a \${foo(() => {
+  return 1;
+})} b\`;
+function f() {
+  const q = \`
+    list:
+    \${items.map((item) => {
+      return item.name;
+    })}
+  \`;
+}`);
+			expect(result).toBeWithNewline(`const s = \`a \${foo(() => {
+  return 1;
+})} b\`;
+function f() {
+  const q = \`
+    list:
+    \${items.map((item) => {
+      return item.name;
+    })}
+  \`;
+}`);
+		});
+	});
+
+	// Like Prettier, a line break in a template's text is a `literalline`, which
+	// breaks the groups around the template
+	describe('multi-line template literals break the lists around them', () => {
+		it('breaks the call arguments and array around a template over several lines', async () => {
+			const result = await format(`foo(\`line one
+line two \${x}\`, second);
+const values = [\`first
+second\`, other];`);
+			expect(result).toBeWithNewline(`foo(
+  \`line one
+line two \${x}\`,
+  second,
+);
+const values = [
+  \`first
+second\`,
+  other,
+];`);
+		});
+
+		it.each([
+			[
+				'x = { a: `a\nb`, b: 1 };',
+				`x = {
+  a: \`a
+b\`,
+  b: 1,
+};`,
+			],
+			[
+				'foo(tag`a\nb ${c}`, d);',
+				`foo(
+  tag\`a
+b \${c}\`,
+  d,
+);`,
+			],
+			['foo(\n  `first\nsecond`);', 'foo(\n  `first\nsecond`,\n);'],
+			[
+				'const s = cond ? `first\nsecond` : other;',
+				'const s = cond\n  ? `first\nsecond`\n  : other;',
+			],
+			['const a = b || `x\ny`;', 'const a =\n  b ||\n  `x\ny`;'],
+			[
+				'function f() {\n  return `a\nb` + c;\n}',
+				'function f() {\n  return (\n    `a\nb` + c\n  );\n}',
+			],
+			[
+				'if (x) throw new Error(`line one\nline two ${value}`);',
+				'if (x)\n  throw new Error(`line one\nline two ${value}`);',
+			],
+			['f(`a ${b(`c\nd`)} e`);', 'f(\n  `a ${b(`c\nd`)} e`,\n);'],
+			// Prettier keeps only a call printed on its own on the template's line,
+			// not one in a member chain
+			['foo.bar(`a\nb`).baz(1);', 'foo\n  .bar(\n    `a\nb`,\n  )\n  .baz(1);'],
+		])('breaks around the template in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'run(`first\nsecond`);',
+			'const s = `first\nsecond`;',
+			'const fn = () => `a\nb`;',
+			'const x = tag`a\nb ${c}`;',
+			'describe(`a\nb`, () => {});',
+			'foo(`a\nb`)(c);',
+			'type T = `a\n${B}`;',
+		])(
+			'keeps a template that starts on the line of the code before it there in %s',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
+	});
+
+	describe('member chains break like Prettier', () => {
+		// A comment before the `.name` of a lookup used to print after the `.`
+		// (#377). Like Prettier, it leads the lookup, and the chain breaks.
+		it.each([
+			'item\n  // explain the call\n  .foo()\n  .bar();\nconst x = item\n  /* note */ .foo()\n  .bar();',
+			'const x = item\n  // one\n  .foo()\n  // two\n  .bar();',
+			'promise\n  .then((result) => result.value)\n  // handle errors\n  .catch((error) => console.error(error));',
+			'x = this\n  // c\n  .foo();',
+			'obj = {\n  key: item\n    // c\n    .foo(),\n};',
+			'function f() {\n  return (\n    this\n      // c\n      .foo()\n  );\n}',
+			'export default item\n  // c\n  .foo();',
+			'z.object({ a: 1 })\n  // c\n  .strict();',
+			'x = item // c\n  .foo()\n  .bar();',
+		])('keeps the comments of %j before their lookups', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			['x = item.\n  // c\n  foo();', 'x = item\n  // c\n  .foo();'],
+			// Outside a member chain, the lookup prints its comment before itself
+			['const x = item\n  // why\n  .foo;', 'const x =\n  // why\n  item.foo;'],
+			['x = a[\n  // c\n  b\n];', 'x =\n  // c\n  a[b];'],
+			[
+				"wrapper.find('SomeSelector')\n  // assert the prop\n  .prop('children')(1);",
+				'wrapper\n  .find("SomeSelector")\n  // assert the prop\n  .prop("children")(1);',
+			],
+		])('prints the comment of %j before its lookup, like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps a JSDoc cast in a computed lookup with its parentheses', async () => {
+			const source = `function replace(value) {
+  return (
+    "&" +
+    characterReferences[
+      /** @type {keyof typeof characterReferences} */ (value)
+    ] +
+    ";"
+  );
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'promise.then((result) => result.value).catch((error) => console.error(error)).finally(() => done());',
+				`promise
+  .then((result) => result.value)
+  .catch((error) => console.error(error))
+  .finally(() => done());`,
+			],
+			[
+				'const names = users.filter((user) => user.isActive).map((user) => user.name).join(", ");',
+				`const names = users
+  .filter((user) => user.isActive)
+  .map((user) => user.name)
+  .join(", ");`,
+			],
+			[
+				'function load() {\n  return fetch(url).then((response) => response.json()).then((data) => data.items);\n}',
+				`function load() {
+  return fetch(url)
+    .then((response) => response.json())
+    .then((data) => data.items);
+}`,
+			],
+			[
+				'async function load() {\n  const data = await fetch(url).then((response) => response.json()).then((data) => data.items);\n}',
+				`async function load() {
+  const data = await fetch(url)
+    .then((response) => response.json())
+    .then((data) => data.items);
+}`,
+			],
+			[
+				'array.map((element) => element * 2).filter(Boolean)[0].toString().padStart(someWidth, "0");',
+				`array
+  .map((element) => element * 2)
+  .filter(Boolean)[0]
+  .toString()
+  .padStart(someWidth, "0");`,
+			],
+			[
+				'const handler = event.target.closest("[data-some-attribute]")?.getAttribute("data-some-attribute");',
+				`const handler = event.target
+  .closest("[data-some-attribute]")
+  ?.getAttribute("data-some-attribute");`,
+			],
+		])('puts each call of a long chain on its own line in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			[
+				'const schema = z.object({ name: z.string(), email: z.string().email(), age: z.number().int().positive() }).strict().optional();',
+				`const schema = z
+  .object({
+    name: z.string(),
+    email: z.string().email(),
+    age: z.number().int().positive(),
+  })
+  .strict()
+  .optional();`,
+			],
+			[
+				'const result = Object.keys(someObjectWithALongName).filter((key) => key.startsWith("a")).map((key) => key.toUpperCase());',
+				`const result = Object.keys(someObjectWithALongName)
+  .filter((key) => key.startsWith("a"))
+  .map((key) => key.toUpperCase());`,
+			],
+			[
+				'd3.scaleLinear().domain([0, 100]).range([0, width]).clamp(true).nice().ticks(someTickCount);',
+				`d3.scaleLinear()
+  .domain([0, 100])
+  .range([0, width])
+  .clamp(true)
+  .nice()
+  .ticks(someTickCount);`,
+			],
+			[
+				'this.server.listen(port).on("error", (error) => handleTheError(error)).on("close", () => cleanup());',
+				`this.server
+  .listen(port)
+  .on("error", (error) => handleTheError(error))
+  .on("close", () => cleanup());`,
+			],
+		])(
+			'keeps a factory or short head on the first line only where Prettier does in %s',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		it('keeps the head of a chain on the = line and breaks after = before a chain of lookups', async () => {
+			const result =
+				await format(`const x = aaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccc().dddddddddddddddddd().eeeeeee();
+const value = someObject.someMethod().someProperty.someOtherProperty.yetAnotherProperty;`);
+			expect(result).toBeWithNewline(`const x = aaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbb
+  .cccccccccccccccccc()
+  .dddddddddddddddddd()
+  .eeeeeee();
+const value =
+  someObject.someMethod().someProperty.someOtherProperty.yetAnotherProperty;`);
+		});
+
+		it('keeps test and require calls on a member out of the member chain', async () => {
+			const source = `describe.only("does something really interesting with the value that it receives", () => {
+  run();
+});
+const policy =
+  require.resolve("./policies/a/very/long/path/to/some/module/decompressResponsePolicy.js");`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('breaks at non-null lookups but not at non-null callees, like Prettier', async () => {
+			const source = `foo.bar!(firstArgumentWithALongName).baz!(secondArgumentWithALongName).qux!(
+  thirdArgumentName,
+);
+someObject!
+  .someMethod(firstArgumentWithALongName)
+  .other(secondArgumentWithALongName)
+  .last(x);
+promise
+  .then((result) => result.value)!
+  .catch((error) => console.error(error))!
+  .finally(() => done());
+a!.b().c();
+x.y!.z();`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps short chains and chains that break inside a call on one line', async () => {
+			const source = `const x = a.b().c().d();
+wrapper.find("SomeSelector").prop("children")(defaultValue).toBe(1);
+object.foo.bar.baz.qux();
+expect(
+  screen.getByRole("button", { name: "Submit the form now please" }),
+).toBeInTheDocument();`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps each line comment of a chain after its own call', async () => {
+			const result = await format(`const b = value.replace(a, '-') // first
+  .replace(b, '_') // second
+  .replace(c, '');
+const c = value // first
+  .trim() // second
+  .toLowerCase();`);
+			expect(result).toBeWithNewline(`const b = value
+  .replace(a, "-") // first
+  .replace(b, "_") // second
+  .replace(c, "");
+const c = value // first
+  .trim() // second
+  .toLowerCase();`);
+		});
+
+		it('keeps a blank line and a trailing comment inside a chain', async () => {
+			const source = `app
+  .use(express.json())
+
+  .use(cors());
+item
+  .foo() // trailing
+  .bar()
+  .baz();`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('breaks a long chain of property lookups before its last lookup', async () => {
+			const result = await format(
+				'foo(someObject.someProperty.someOtherProperty.yetAnotherProperty.finalProperty.last);',
+			);
+			expect(result).toBeWithNewline(`foo(
+  someObject.someProperty.someOtherProperty.yetAnotherProperty.finalProperty
+    .last,
+);`);
+		});
+
+		it('keeps a component template chain idempotent', async () => {
+			const result = await format(`export function List(props) @{
+  const visible = props.items.filter((item) => item.includes(props.filter)).map((item) => item.toUpperCase()).slice(0, 10);
+  <ul>
+    @for (const item of visible) {
+      <li>{item.toUpperCase().split("").reverse().join("")}</li>
+    }
+  </ul>
+}`);
+			expect(result).toBeWithNewline(`export function List(props) @{
+  const visible = props.items
+    .filter((item) => item.includes(props.filter))
+    .map((item) => item.toUpperCase())
+    .slice(0, 10);
+  <ul>
+    @for (const item of visible) {
+      <li>{item.toUpperCase().split("").reverse().join("")}</li>
+    }
+  </ul>
+}`);
+		});
+	});
+
+	describe('unary operands with comments print in their own parentheses', () => {
+		it.each([
+			['x = !/* c */ a;', 'x = !(/* c */ a);'],
+			['x = !(a || b /* c */);', 'x = !(a || b /* c */);'],
+			['x = typeof (/* c */ a + b);', 'x = typeof (/* c */ a + b);'],
+			// Prettier keeps the operand's own parentheses inside the unary's
+			['x = !(/* c */ a ? b : c);', 'x = !(/* c */ (a ? b : c));'],
+			['x = -(/* c */ (a = b));', 'x = -(/* c */ (a = b));'],
+			[
+				'async function f() {\n  x = !/* c */ (await x);\n}',
+				'async function f() {\n  x = !(/* c */ (await x));\n}',
+			],
+			[
+				'function* g() {\n  x = !(/* c */ yield y);\n}',
+				'function* g() {\n  x = !(/* c */ (yield y));\n}',
+			],
+		])('prints %s like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// A comment after the last operand, below it, used to leave the
+		// parentheses and trail the statement or lead the next node (#372)
+		it.each([
+			[
+				'x = !(\n  (\n    ready ||\n    waiting\n  ) // why\n);',
+				'x = !(\n  ready || waiting // why\n);',
+			],
+			['x = -(\n  a\n  // c\n);', 'x = -(\n  a\n  // c\n);'],
+			['a = [\n  !(\n    b\n    // c\n  ),\n];', 'a = [\n  !(\n    b\n    // c\n  ),\n];'],
+			['x = {\n  a: !(\n    b\n    // c\n  ),\n};', 'x = {\n  a: !(\n    b\n    // c\n  ),\n};'],
+			[
+				'foo(\n  !(\n    (\n      ready ||\n      waiting\n    ) // why\n  ),\n);',
+				'foo(\n  !(\n    ready || waiting // why\n  ),\n);',
+			],
+		])('keeps the comment inside the parentheses of %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parentheses around a long commented operand', async () => {
+			const source = `function f() {
+  return !(
+    (before >= 48 /* 0 */ && before <= 57) ||
+    (before >= 65 /* A */ && before <= 90) ||
+    before === 36 /* $ */ ||
+    before === 95 /* _ */
+  );
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
 	// Dropping the `;` of an empty body makes the next statement the body, so the
 	// formatted program runs different code and a trailing loop stops parsing.
 	describe('empty statement bodies keep their semicolon', () => {
@@ -9070,6 +11799,686 @@ const called = (
 		it('puts while on its own line after a non-block do body', async () => {
 			const result = await format('do count++; while (next());');
 			expect(result).toBeWithNewline('do count++;\nwhile (next());');
+		});
+
+		// The comments of an empty body print around its `;`, as in Prettier.
+		// A trailing block comment used to move in front of the `;`, and the
+		// next pass moved it again.
+		it.each([
+			['if (x) ; /* c */ else y();', 'if (x); /* c */\nelse y();'],
+			['do ; /* c */ while (x);', 'do; /* c */\nwhile (x);'],
+			['while (x) ; /* c */', 'while (x); /* c */'],
+			['for (;;) ; /* c */', 'for (;;); /* c */'],
+			['if (x) ; // c', 'if (x); // c'],
+			['if (x) /* c */ ;', 'if (x) /* c */ ;'],
+			['for (;;) /* c */ ;', 'for (;;) /* c */ ;'],
+			['label: /* c */ ;', 'label: /* c */ ;'],
+		])('keeps the comments of the empty body in %j', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+	});
+
+	// Like Prettier, a body without braces stays on the header's line only
+	// while the whole statement fits. A comment that starts it on its own line
+	// or after a line comment moves it to its own indented line.
+	describe('unbraced bodies lay out like Prettier', () => {
+		it.each([
+			'if (a) b();\nelse c();',
+			'if (a) if (b) c();',
+			'if (a) b();\nelse if (c) d();\nelse e();',
+			'while (a) b();',
+			'for (const x of xs) b(x);',
+			'for (const k in obj) b(k);',
+			'for (let i = 0; i < n; i++) b(i);',
+			'do b();\nwhile (a);',
+			'if (a) /* note */ b();',
+		])('keeps %j on one line', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			['if (a) foo(() => { x(); });', 'if (a)\n  foo(() => {\n    x();\n  });'],
+			[
+				'while (a) someVeryLongFunctionCallName(argument1, argument2, argument3, argument4, arg5);',
+				'while (a)\n  someVeryLongFunctionCallName(\n    argument1,\n    argument2,\n    argument3,\n    argument4,\n    arg5,\n  );',
+			],
+			[
+				'for (const item of items) process(function () { return item; });',
+				'for (const item of items)\n  process(function () {\n    return item;\n  });',
+			],
+			[
+				'if (a) b();\nelse foo(() => { x(); });',
+				'if (a) b();\nelse\n  foo(() => {\n    x();\n  });',
+			],
+			['do foo(() => { x(); });\nwhile (a);', 'do\n  foo(() => {\n    x();\n  });\nwhile (a);'],
+		])('moves the body of %j to its own line when it breaks', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['if (a) // note\n  b();', 'if (a)\n  // note\n  b();'],
+			['if (a)\n  // note\n  b();'],
+			['if (a)\n  /* note */\n  b();'],
+			['if (a) b();\nelse // note\n  c();', 'if (a) b();\nelse\n  // note\n  c();'],
+			['while (a) // note\n  b();', 'while (a)\n  // note\n  b();'],
+			['for (const x of xs) // note\n  b(x);', 'for (const x of xs)\n  // note\n  b(x);'],
+			['if (a)\n// note\n{\n  b();\n}'],
+			['if (a) // note\n{\n  b();\n}'],
+		])('indents the body under a comment that starts it: %j', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected ?? source);
+		});
+	});
+
+	// A comment inside a statement's parentheses stays there, as in Prettier,
+	// so a JSDoc cast keeps its parentheses and its meaning.
+	describe('comments in if, loop, and switch headers stay inside the parentheses', () => {
+		it.each([
+			'if (/** @type {Node} */ (node).end > limit) {\n  stop();\n}',
+			'if (done) {\n  stop();\n} else if (/** @type {Node} */ (node).end > limit) {\n  skip();\n}',
+			'if (/** @type {boolean} */ (ready)) run();',
+			'if (a) run();\nelse if (/** @type {number} */ (count) > 1) stop();',
+			'while (/** @type {Node} */ (node).next) {\n  step();\n}',
+			'while (/** @type {boolean} */ (ready)) run();',
+			'do {\n  step();\n} while (/** @type {boolean} */ (ready));',
+			'switch (/** @type {Kind} */ (kind)) {\n  case 1:\n    break;\n}',
+			'if (/* note */ ready) run();',
+			'if (ready /* note */) run();',
+			'if (a /* one */ && /* two */ b) run();',
+			'do {\n  step();\n} while (/* note */ ready);',
+			'if (\n  // note\n  ready\n) {\n  run();\n}',
+			'switch (\n  // note\n  kind\n) {\n  case 1:\n    break;\n}',
+			'while (\n  // note\n  ready\n) {\n  run();\n}',
+			'do {\n  run();\n} while (\n  // note\n  ready\n);',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// A comment before the `)` of a condition, on a line after it, used to
+		// lead the body and print between `)` and `{` (#372)
+		it.each([
+			'if (\n  ready\n  // why\n) {\n  run();\n}',
+			'while (\n  ready\n  // why\n) {\n  run();\n}',
+			'if (\n  !(\n    ready // why\n  )\n) {\n  run();\n}',
+		])('keeps the comment before the ) of %j inside the parentheses', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a comment after the parenthesized operand of a condition inside it', async () => {
+			expect(
+				await format(`if (
+  !(
+    (
+      ready ||
+      waiting
+    ) // why
+  )
+) {
+  run();
+}`),
+			).toBeWithNewline(`if (!(
+  ready || waiting // why
+)) {
+  run();
+}`);
+		});
+
+		it('moves a comment between the keyword and ( inside the parentheses', async () => {
+			expect(await format('if /* note */ (ready) run();')).toBeWithNewline(
+				'if (/* note */ ready) run();',
+			);
+		});
+
+		it('keeps comments inside @if and @switch tests', async () => {
+			const source = `export function App(props) @{
+  <div>
+    @if (/* note */ props.open) {
+      <span />
+    } @else if (/** @type {boolean} */ (props.closed)) {
+      <b />
+    }
+    @switch (/* kind */ props.kind) {
+      @case 'a': {
+        <i />
+      }
+    }
+  </div>
+}`;
+			expect(await format(source, { singleQuote: true })).toBeWithNewline(source);
+		});
+
+		// A comment after the `)` of the header starts the body. It used to
+		// trail the condition and move inside the parentheses.
+		it.each([
+			'if (ready) /** @type {Api} */ (api).insert(value);',
+			'while (ready) /** @type {Api} */ (api).insert(value);',
+			'for (const value of values) /** @type {Api} */ (api).insert(value);',
+			'for (const key in values) /** @type {Api} */ (api).insert(key);',
+			'for (let i = 0; i < n; i++) /** @type {Api} */ (api).insert(i);',
+			'if (a) /* note */ b();',
+			'if (x) /* note */ {\n  y();\n}',
+			'while (x) /* note */ {\n  y();\n}',
+			'for (const v of vs) /* note */ {\n  y();\n}',
+			'try {\n  x();\n} catch (error) /* note */ {\n  y();\n}',
+		])('keeps a comment after the header of %j in the body', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a comment inside the parentheses of the condition', async () => {
+			expect(await format('if ((a) /* note */) b();')).toBeWithNewline('if (a /* note */) b();');
+		});
+
+		it('keeps a comment after the ) of a do…while test after the statement', async () => {
+			expect(await format('do x(); while (a) /* note */')).toBeWithNewline(
+				'do x();\nwhile (a); /* note */',
+			);
+		});
+
+		it('keeps a comment between a switch test and { inside the parentheses, like Prettier', async () => {
+			expect(await format('switch (a) /* note */ {\n  case 1:\n    break;\n}')).toBeWithNewline(
+				'switch (a /* note */) {\n  case 1:\n    break;\n}',
+			);
+		});
+	});
+
+	// A comment before `else` used to become a trailing comment of the block
+	// before it, or a leading comment of the `else` branch, and print after
+	// the `else` keyword.
+	describe('comments before else stay before it', () => {
+		it.each([
+			'if (a) {\n  b();\n} // c\nelse {\n  d();\n}',
+			'if (a) {\n  b();\n}\n// c\nelse {\n  d();\n}',
+			'if (a) {\n  b();\n}\n\n// c\nelse {\n  d();\n}',
+			'if (a) {\n  b();\n} /* c */ else {\n  d();\n}',
+			'if (a) b();\n// c\nelse d();',
+			'if (a) b(); /* c */\nelse d();',
+			'if (a) {\n  b();\n} else if (c) {\n  d();\n}\n// e\nelse {\n  f();\n}',
+			'if (a) {\n  b();\n} else /* c */ {\n  d();\n}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			['if (a) b(); // c\nelse d();', 'if (a)\n  b(); // c\nelse d();'],
+			[
+				'if (a) {\n  b();\n} /* c */\nelse {\n  d();\n}',
+				'if (a) {\n  b();\n} /* c */\nelse {\n  d();\n}',
+			],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it('keeps a comment before @else', async () => {
+			const source = `export function App(props) @{
+  <div>
+    @if (props.a) {
+      <b />
+    }
+    // c
+    @else {
+      <i />
+    }
+    @if (props.b) {
+      <b />
+    } // d
+    @else if (props.c) {
+      <i />
+    }
+  </div>
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	// A comment in a function's body used to become a trailing comment of the
+	// function's last parameter, or of its name when it had none.
+	describe('comments in function bodies stay in the body', () => {
+		it.each([
+			'function named() {\n  check(value /* kept */);\n}',
+			'function withParams(a, b) {\n  check(value /* kept */);\n}',
+			'const anonymous = function () {\n  check(value /* kept */);\n};',
+			'const arrow = (a) => {\n  check(value /* kept */);\n};',
+			'class A {\n  method(a) {\n    check(value /* kept */);\n  }\n}',
+			'function generic<T>() {\n  check(value /* kept */);\n}',
+			'function deep(a) {\n  for (const x of xs) {\n    if (x) {\n      check(x /* kept */);\n    }\n  }\n}',
+			'function f(a /* param */) {}',
+			'function f(a /* one */, b /* two */) {}',
+			'function f(a: string /* typed */) {}',
+			'function f(\n  a, // first\n  b, // second\n) {}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// An arrow's lone parameter without parentheses used to take the body's
+		// comments up to the end of the arrow
+		it.each(['always', 'avoid'])(
+			'keeps body comments out of an unparenthesized arrow parameter with arrowParens: %s',
+			async (arrowParens) => {
+				const x = arrowParens === 'always' ? '(x)' : 'x';
+				for (const source of [
+					`const f = ${x} => check(value /* c */);`,
+					`const f = ${x} => {\n  check(value /* c */);\n};`,
+					`const f = async ${x} => {\n  check(value /* c */);\n};`,
+					`foo(${x} => check(value /* c */));`,
+					`const f = ${x} =>\n  check(\n    value, // c\n  );`,
+					`const f = ${x} => /* c */ x;`,
+					`const f = ${x} =>\n  // c\n  x;`,
+					`const f = async ${x} => {\n  /* c */\n};`,
+				]) {
+					expect(await format(source.replace(/\(x\)/g, 'x'), { arrowParens })).toBeWithNewline(
+						source,
+					);
+				}
+			},
+		);
+
+		// Like Prettier's `canPrintParamsWithoutParens`
+		it('keeps the parentheses of a parameter with a comment before =>', async () => {
+			expect(await format('const f = x /* c */ => x;', { arrowParens: 'avoid' })).toBeWithNewline(
+				'const f = (x) /* c */ => x;',
+			);
+		});
+
+		// A comment before `=>` must leave `=>` on its line: Babel parses the
+		// output, and a second pass changes nothing (`format` checks that).
+		// Prettier puts a line break between two comments there, before `=>`.
+		it.each(['always', 'avoid'])(
+			'keeps => after the comments before it with arrowParens: %s',
+			async (arrowParens) => {
+				for (const [source, expected] of [
+					['const f = (a) /* c */ => a;', 'const f = (a) /* c */ => a;'],
+					['const f = () /* c */ => a;', 'const f = () /* c */ => a;'],
+					['const f = x /* c */ => x;', 'const f = (x) /* c */ => x;'],
+					[
+						'const f = async (a) /* b */ /* c */ => a;',
+						'const f = async (a) /* b */ /* c */ => a;',
+					],
+				]) {
+					const result = await format(source, { arrowParens });
+					expect(result).toBeWithNewline(expected);
+					await expect(prettier.format(result, { parser: 'babel' })).resolves.toContain('=>');
+				}
+			},
+		);
+
+		// No line break may come between an arrow's parameters and `=>`, so the
+		// comments before `=>` are always one-line block comments. A line comment
+		// or a multi-line block comment there doesn't parse, as in Babel and Node.
+		it.each([
+			'const f = (a) // c\n  => a;',
+			'const f = () // c\n  => a;',
+			'const f = (a) /* c\n */ => a;',
+		])('rejects %j, which has a line break before =>', async (source) => {
+			await expect(format(source)).rejects.toThrow(/Unexpected token/);
+		});
+
+		it('keeps a component body comment out of the parameter list', async () => {
+			const source = `function Component(props) @{
+  <div>{sum(props.items /* kept */)}</div>
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			'foo(/* none */);',
+			'new Foo(/* none */);',
+			'foo(\n  // none\n);',
+			'foo /* callee */();',
+			'foo(a, b /* last */);',
+		])('keeps the comment of %j where it is, like Prettier', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	// The printers used to print a declaration's name as a string, dropping
+	// the comments attached to it.
+	describe('comments after declaration names', () => {
+		it.each([
+			'function f /* note */() {}',
+			'const g = function h /* note */() {};',
+			'function /* note */ f() {}',
+			'declare function f /* note */(): void;',
+			'class C /* note */ extends B {}',
+			'class C /* note */ {}',
+			'abstract class C /* note */ {}',
+			'const e = class C /* note */ {};',
+			'class /* note */ C {}',
+			'enum E /* note */ {\n  A,\n}',
+			'enum E {\n  A /* note */ = 1,\n  B,\n}',
+			'interface I /* note */ {\n  a: 1;\n}',
+			'interface I /* note */ extends J {\n  a: 1;\n}',
+			'interface /* note */ I {\n  a: 1;\n}',
+			'type T /* note */ = { a: 1 };',
+			'type T<U> /* note */ = { a: U };',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('moves a comment between a function name and ( against the (, like Prettier', async () => {
+			expect(await format('function f /* note */ (a) {}')).toBeWithNewline(
+				'function f /* note */(a) {}',
+			);
+		});
+	});
+
+	// A comment between a class or interface heading and its body used to trail
+	// the heading and print after the {, or before it on the next pass (#406).
+	// Like Prettier's handleClassComments, it moves into the body.
+	describe('comments in class and interface headings', () => {
+		it.each([
+			[
+				'class A extends B // extends B\n{\n  x = 1;\n}\ninterface I extends J // extends J\n{\n  x: 1;\n}',
+				'class A extends B {\n  // extends B\n  x = 1;\n}\ninterface I extends J {\n  // extends J\n  x: 1;\n}',
+			],
+			['class A extends B\n// c\n{\n  x = 1;\n}', 'class A extends B {\n  // c\n  x = 1;\n}'],
+			['class A\n// c\n{}', 'class A {\n  // c\n}'],
+			['interface I\n// c\n{}', 'interface I {\n  // c\n}'],
+			['export class A extends B // c\n{}', 'export class A extends B {\n  // c\n}'],
+			['export default class extends B // c\n{}', 'export default class extends B {\n  // c\n}'],
+			[
+				'const X = class extends B // c\n{\n  y() {}\n};',
+				'const X = class extends B {\n  // c\n  y() {}\n};',
+			],
+			[
+				'class A extends B // one\n// two\n{\n  x = 1;\n}',
+				'class A extends B {\n  // one\n  // two\n  x = 1;\n}',
+			],
+			// With decorators, a comment in the heading trails the last one
+			['@dec\nclass A extends B // c\n{}', '@dec // c\nclass A extends B {}'],
+		])('moves the comment of %j like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'class A extends B /* c */ {}',
+			'class A /* c */ extends B {}',
+			'@dec\nclass A /* c */ extends B {}',
+			'@dec\n// c\nclass A extends B {}',
+			'class A extends B {\n  // c\n}',
+			'class A implements B /* c */, C {}',
+		])('keeps the comment of %j where it is', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// A comment before a heritage clause trails the name, the type
+		// parameters, or the superclass before it, so it doesn't print after
+		// `implements` or `extends`, and the heading breaks
+		it.each([
+			[
+				'class C implements\n  // the interfaces\n  D, E {}',
+				'class C\n  // the interfaces\n  implements D, E {}',
+			],
+			[
+				'class C implements\n  // the interface\n  D {}',
+				'class C\n  // the interface\n  implements D {}',
+			],
+			['class A extends B // c\n  implements C {}', 'class A\n  extends B // c\n  implements C {}'],
+			[
+				'class A extends B<T>\n  // c\n  implements C {}',
+				'class A\n  extends B<T>\n  // c\n  implements C {}',
+			],
+			['interface I extends\n  // c\n  J, K {}', 'interface I\n  // c\n  extends J, K {}'],
+		])('moves the comment of %j before the heritage clause', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'class A\n  // c\n  extends B {}',
+			'class A<T>\n  // c\n  extends B {}',
+			'class A // c\n  extends B {}',
+			'interface I\n  // c\n  extends J {}',
+			'interface I<T> // c\n  extends J {}',
+		])('keeps the comment of %j before the heritage clause', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	// These comments sit where no node took them, so the parser gave them to
+	// the function, which never printed them.
+	describe('comments between function parameters and bodies', () => {
+		it.each([
+			'function f(/* none */) {}',
+			'function f(\n  // none\n) {}',
+			'async function f(/* none */) {}',
+			'const g = (/* none */) => {};',
+			'const g = async (/* none */) => {};',
+			'const o = {\n  m(/* none */) {},\n};',
+			'function f(a) /* body */ {}',
+			'function f(a): T /* body */ {}',
+			'function f<T> /* params */() {}',
+			'const g = (a) /* arrow */ => {};',
+			'const g = () /* arrow */ => {};',
+			'const g = (a): T /* arrow */ => {};',
+			'const g = (a) /* arrow */ => a;',
+			'const g = (a) => /* body */ {};',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps the comment in the empty parameter list of a class method', async () => {
+			const source = 'class A {\n  m(/* none */) {\n    run();\n  }\n}';
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			['function f(a) // body\n{\n  x();\n}', 'function f(a) {\n  // body\n  x();\n}'],
+			['function f() // body\n{}', 'function f() {\n  // body\n}'],
+		])('moves a line comment before the body of %j into it', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+	});
+
+	// A stray `;` in a class body isn't a node, so the member before it used
+	// to miss the comment after it, which then led the next member.
+	describe('comments after a stray semicolon in a class body', () => {
+		it.each([
+			['class A {\n  a = 1; ; // c\n  b = 2;\n}', 'class A {\n  a = 1; // c\n  b = 2;\n}'],
+			['class A {\n  a = 1;;; // c\n  b = 2;\n}', 'class A {\n  a = 1; // c\n  b = 2;\n}'],
+			['class A {\n  m() {}; // c\n  b = 2;\n}', 'class A {\n  m() {} // c\n  b = 2;\n}'],
+			['class A {\n  a = 1;\n  ; // c\n  b = 2;\n}', 'class A {\n  a = 1; // c\n  b = 2;\n}'],
+			['class A {\n  a = 1; ; // c\n}', 'class A {\n  a = 1; // c\n}'],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'class A {\n  a = 1;\n  // c\n  b = 2;\n}',
+			'class A {\n  a = 1;\n\n  // c\n  b = 2;\n}',
+			'class A {\n  // c\n  b = 2;\n}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	// The parser visited an element's children before its opening tag, and a
+	// tag's attributes before its name, so a comment in an attribute held up
+	// the comments after it until the closing tag took them.
+	describe('comments in JSX opening tags and children stay there', () => {
+		it.each([
+			'const el = <div title={/* a */ title}>{/* b */ label}</div>;',
+			'const el = <div title={title /* a */}>{label /* b */}</div>;',
+			'const el = <b title={/** @type {X} */ (title)}>{/** @type {X} */ (label)}</b>;',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps every comment of nested elements with attributes', async () => {
+			const source = `export function App() @{
+  <div a={/* a */ x} b={/* b */ y}>
+    <span c={/* c */ z}>{/* d */ w}</span>
+    {/* e */ v}
+  </div>
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			'function App() {\n  return <div a="1" /* c */ b="2">\n    test\n  </div>;\n}',
+			'function App() {\n  return <div {...props} /* c */ a="1">\n    test\n  </div>;\n}',
+			'function App() {\n  return <div\n    a="1"\n    // c\n  >\n    test\n  </div>;\n}',
+			'function App() {\n  return <div // c\n    a="1"\n  >\n    test\n  </div>;\n}',
+			'function App() {\n  return <div\n    something="test" // after\n  >\n    test\n  </div>;\n}',
+			'function App() {\n  return <div\n    a="1"\n    // c\n  />;\n}',
+		])('keeps the comment in the opening tag of %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	// Like Prettier's `printLeadingComment`, a block comment keeps what follows
+	// it on its line. The formatter used to break the line after every block
+	// comment but the last one before a node.
+	describe('block comments that share a line', () => {
+		it.each([
+			'/* a */ /* b */ run();',
+			'const v = /* a */ /* b */ x;',
+			'function f() {\n  return /* a */ /* b */ x;\n}',
+			'function f() {\n  throw /* a */ /* b */ new Error();\n}',
+			'const a = [/* a */ /* b */ 1, 2];',
+			'call(/* a */ /* b */ x);',
+			'/* a */ /* b */\nrun();',
+			'/* a */\n/* b */ run();',
+			'/* a */\n\n/* b */ run();',
+			'const v = /** @type {A} */ (/** @type {B} */ (x));',
+			'/** @type {A} */ /** @type {B} */ (x).y();',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('joins a value to a comment that ends the line after = when it fits', async () => {
+			expect(await format('const x = /* c */\n  5;')).toBeWithNewline('const x = /* c */ 5;');
+		});
+
+		// A statement used to take only the first comment after it on its line
+		it.each([
+			'{\n  a(); /* c */ /* d */\n  b();\n}',
+			'const x = 1; /* c */ /* d */\nconst y = 2;',
+			'a(); /* c */ // d\nb();',
+		])('keeps every comment after %j on its line', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	// Like Prettier, which ends a statement before its `;`, a comment between
+	// the two prints after the `;`. One before a `;` on the next line used to
+	// trail the expression inside and break the unbraced body around it.
+	describe("comments before a statement's semicolon", () => {
+		it.each([
+			['const x = 1 /* c */;', 'const x = 1; /* c */'],
+			['foo() /* c */;', 'foo(); /* c */'],
+			['function f() {\n  return x /* c */;\n}', 'function f() {\n  return x; /* c */\n}'],
+			['let x = 1 // c\n;', 'let x = 1; // c'],
+			['if (a) return -1 // c\n;\nb();', 'if (a) return -1; // c\nb();'],
+			['while (a) foo() // c\n;', 'while (a) foo(); // c'],
+			[
+				'function f() {\n  return x // a\n  // b\n  ;\n}',
+				'function f() {\n  return x; // a\n  // b\n}',
+			],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// Prettier prints these with the comment before the `;` and moves it
+		// after the `;` on the next pass. The formatter prints the fixpoint.
+		it.each([
+			['function f() {\n  return (a /* c */);\n}', 'function f() {\n  return a; /* c */\n}'],
+			['x = (a /* c */);', 'x = a; /* c */'],
+			['export default (a /* c */);', 'export default a; /* c */'],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'import /* a */ Alias /* b */ = /* c */ Foo /* d */;',
+			'if (x) /* c */ ;',
+			'class A {\n  a = 1; // c\n  b = 2;\n}',
+			'foo(a /* c */);',
+			'x = foo(a /* c */);',
+			'do x();\nwhile (a /* c */);',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	// Like Prettier's `printIndentableBlockComment`, a multi-line block comment
+	// whose lines all start with `*` takes the indentation of where it prints.
+	// Any other block comment prints as written.
+	describe('multi-line block comments keep their indentation', () => {
+		it.each([
+			'function save() {\n  if (dirty) {\n    /*\n     * Flush before closing.\n     */\n    flush();\n  }\n}',
+			'class A {\n  /**\n   * Doc.\n   * @param {string} a\n   */\n  m(a) {}\n}',
+			'const o = {\n  /**\n   * Doc.\n   */\n  a: 1,\n};',
+			'function f() {\n  const x = 1; /*\n   * trailing\n   */\n  return x;\n}',
+			'function save() {\n  if (dirty) {\n    /* not\n       indentable\n         at all */\n    flush();\n  }\n}',
+			'function f() {\n  /**\n   * Markdown break  \n   * next line\n   */\n  x();\n}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('lines up a misaligned comment under its first line', async () => {
+			const source =
+				'function save() {\n  if (dirty) {\n      /*\n         * Misaligned.\n             */\n    flush();\n  }\n}';
+			expect(await format(source)).toBeWithNewline(
+				'function save() {\n  if (dirty) {\n    /*\n     * Misaligned.\n     */\n    flush();\n  }\n}',
+			);
+		});
+
+		it('reindents a comment in a template expression container', async () => {
+			const source = `export function App() @{
+  <div>
+    {/*
+      * inside
+      */}
+  </div>
+}`;
+			expect(await format(source)).toBeWithNewline(`export function App() @{
+  <div>
+    {/*
+     * inside
+     */}
+  </div>
+}`);
+		});
+	});
+
+	// The parser used the cases as the discriminant's siblings, so with no
+	// cases it took the body's comments and printed them in the parentheses.
+	describe('comments in a switch with no cases', () => {
+		it.each([
+			'switch (x) {\n  // a\n}',
+			'switch (x) {\n  /* a */\n}',
+			'switch (x) {\n  // a\n  // b\n}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a comment between ) and { inside the parentheses, like Prettier', async () => {
+			expect(await format('switch (x) /* c */ {\n}')).toBeWithNewline('switch (x /* c */) {\n}');
+		});
+	});
+
+	// `yield` ends at a line break, like `return`, so an argument that starts
+	// with a comment ending its line keeps its parentheses. Prettier drops
+	// them here and yields `undefined`.
+	describe('yield arguments that start with a comment', () => {
+		it.each([
+			'function* values() {\n  yield (\n    // the next value\n    42\n  );\n}',
+			'function* values() {\n  yield (\n    /* own line */\n    42\n  );\n}',
+			'function* values() {\n  const x = yield (\n    // pick one\n    a || b\n  );\n}',
+		])('keeps the parentheses of %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps the parentheses when the comment belongs to the leftmost operand', async () => {
+			const source = 'function* values() {\n  yield (\n    // the next value\n    a\n  ).b;\n}';
+			expect(await format(source)).toBeWithNewline(
+				'function* values() {\n  yield (\n    // the next value\n    a.b\n  );\n}',
+			);
+		});
+
+		it.each([
+			'function* values() {\n  yield /* inline */ 42;\n}',
+			'function* values() {\n  yield* // delegate\n  other();\n}',
+		])('prints %j like Prettier', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
 		});
 	});
 
@@ -9464,6 +12873,55 @@ type Unwrapped<T> =
 type Checked<T> = T extends string
   ? SomeVeryLongTypeNameForStrings<T>
   : SomeOtherVeryLongType<T>;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		// Prettier keeps a JSDoc cast's parentheses as a node of their own, so
+		// the cast value lays out like any parenthesized value: it stays on the
+		// operator's line and breaks inside its parentheses.
+		it('keeps a JSDoc-cast value on the operator line and breaks inside its parentheses', async () => {
+			const input = `const x = /** @type {Foo} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);
+const sum = /** @type {number} */ (firstValueWithALongName + secondValueWithALongName + third);
+y = /** @type {Foo} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);
+const obj = { key: /** @type {Foo} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) };
+class A { field = /** @type {Foo} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb); }
+const message = /** @type {string} */ ("a long string value that does not fit on one line with the declaration");
+const value = /** @type {Value} */ (someObject.someProperty.anotherProperty.yetAnotherProperty.finalProp);
+const conf = /** @type {Config} */ (await loadTheConfigurationFileFromDisk(somePathVariable));
+const short = /** @type {Foo} */ (a && b);`;
+			const expected = `const x = /** @type {Foo} */ (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);
+const sum = /** @type {number} */ (
+  firstValueWithALongName + secondValueWithALongName + third
+);
+y = /** @type {Foo} */ (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);
+const obj = {
+  key: /** @type {Foo} */ (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  ),
+};
+class A {
+  field = /** @type {Foo} */ (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}
+const message = /** @type {string} */ (
+  "a long string value that does not fit on one line with the declaration"
+);
+const value = /** @type {Value} */ (
+  someObject.someProperty.anotherProperty.yetAnotherProperty.finalProp
+);
+const conf = /** @type {Config} */ (
+  await loadTheConfigurationFileFromDisk(somePathVariable)
+);
+const short = /** @type {Foo} */ (a && b);`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
@@ -10396,6 +13854,48 @@ export ${list};`);
 			});
 		});
 
+		it('follows bracketSpacing in import attributes', async () => {
+			const input = `export * from './b.json' with { type: 'json' };
+export { x } from './x.json' with { type: 'json', other: 'x' };
+import a from './a.json' with { type: 'json' };`;
+			const expected = `export * from "./b.json" with {type: "json"};
+export {x} from "./x.json" with {type: "json", other: "x"};
+import a from "./a.json" with {type: "json"};`;
+			expect(await format(input, { bracketSpacing: false })).toBeWithNewline(expected);
+		});
+
+		it('breaks long import attributes like an object, but never a lone type attribute', async () => {
+			const input = `import data from './data.json' with { type: 'json', integrity: 'sha384-0123456789abcdef' };
+import e from './eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.json' with { type: 'json' };
+import c from './c' with {
+  type: 'json' };`;
+			const expected = `import data from "./data.json" with {
+  type: "json",
+  integrity: "sha384-0123456789abcdef",
+};
+import e from "./eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.json" with { type: "json" };
+import c from "./c" with { type: "json" };`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps import attributes expanded when a line break follows their {', async () => {
+			const input = `import d from './d' with {
+  type: 'json', other: 'x' };`;
+			expect(await format(input)).toBeWithNewline(`import d from "./d" with {
+  type: "json",
+  other: "x",
+};`);
+			expect(await format(input, { objectWrap: 'collapse' })).toBeWithNewline(
+				`import d from "./d" with { type: "json", other: "x" };`,
+			);
+		});
+
+		it('keeps the assert keyword and an empty attribute list', async () => {
+			await expectUnchanged(`import a from "./a.json" assert { type: "json" };
+import b from "./b" with {};
+import f from "./f" /* c */ with { type: "json" };`);
+		});
+
 		it('keeps an alias that repeats the name', async () => {
 			await expectUnchanged('import { a as a } from "mod";');
 			await expectUnchanged('const b = 1;\nexport { b as b };');
@@ -10441,9 +13941,12 @@ export ${list};`);
 			expect(result).toBeWithNewline(`import { a /* after */ } from "mod";`);
 		});
 
-		// Prettier prints `/* d */` after the `;`. It stays next to the source here.
+		// Like Prettier, which ends the statement before its `;`, a comment
+		// between the source and the `;` prints after the `;`
 		it('keeps a comment after the module source', async () => {
-			await expectUnchanged('import a from /* c */ "mod" /* d */;');
+			expect(await format('import a from /* c */ "mod" /* d */;')).toBeWithNewline(
+				'import a from /* c */ "mod"; /* d */',
+			);
 		});
 	});
 
@@ -11529,6 +15032,33 @@ const object = {
     <div>{"hi"}</div>
   </>
 }`);
+		});
+
+		it('keeps the lines after an assigned block as authored', async () => {
+			const module_source = `const theme = <style>
+  .card {
+    color: red;
+  }
+</style>;
+export { theme };`;
+			const spaced_module_source = module_source.replace('\nexport', '\n\nexport');
+			const component_source = `export function Themed() @{
+  const theme = <style>
+    .card {
+      color: red;
+    }
+  </style>;
+
+  <div class={theme.card}>{"card"}</div>
+}`;
+			for (const source of [module_source, spaced_module_source, component_source]) {
+				await expectUnchanged(source);
+				const without_semicolons = source.replace(/(<\/style>|\{ theme \});$/gm, '$1');
+				expect(await format(without_semicolons, { semi: false })).toBeWithNewline(
+					without_semicolons,
+				);
+				expect(await format(source, { semi: false })).toBeWithNewline(without_semicolons);
+			}
 		});
 
 		it('keeps a leading comment on a style block', async () => {

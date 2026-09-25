@@ -151,9 +151,11 @@ function ContextApp() @{
 function StyledApp() @{
 	<div>
 		<Style />
-		<div class={css`
+		<div
+			class={css`
 			color: red;
-		`}>{'styled'}</div>
+		`}
+		>{'styled'}</div>
 	</div>
 }
 
