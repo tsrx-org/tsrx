@@ -10363,6 +10363,22 @@ expect(
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		it('keeps each line comment of a chain after its own call', async () => {
+			const result = await format(`const b = value.replace(a, '-') // first
+  .replace(b, '_') // second
+  .replace(c, '');
+const c = value // first
+  .trim() // second
+  .toLowerCase();`);
+			expect(result).toBeWithNewline(`const b = value
+  .replace(a, "-") // first
+  .replace(b, "_") // second
+  .replace(c, "");
+const c = value // first
+  .trim() // second
+  .toLowerCase();`);
+		});
+
 		it('keeps a blank line and a trailing comment inside a chain', async () => {
 			const source = `app
   .use(express.json())
