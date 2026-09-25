@@ -7501,6 +7501,39 @@ const { aaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbb } = await someFunctionCall(
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
+		it('breaks a nested pattern among the parameters of a TypeScript signature', async () => {
+			// Prettier's printObject only skips the break for patterns whose parent
+			// is a function with a body, so signatures and function types expand
+			const input = `type F = (a: string, { b: { c } }: T) => void;
+declare function f(a, { b: { c } }): void;
+interface I {
+  m(a: string, { b: { c } }: T): void;
+}
+function g(a: string, { b: { c } }: T): void {}`;
+			const expected = `type F = (
+  a: string,
+  {
+    b: { c },
+  }: T,
+) => void;
+declare function f(
+  a,
+  {
+    b: { c },
+  },
+): void;
+interface I {
+  m(
+    a: string,
+    {
+      b: { c },
+    }: T,
+  ): void;
+}
+function g(a: string, { b: { c } }: T): void {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		it('hugs a destructured parameter with a default or an object type', async () => {
 			const input = `function foo({ aaaaaaaaaaaa, bbbbbbbbbbbbbbbb, ccccccccccccccccccc, dddddddddddddddd } = {}) {}
 function bar({ aaaaaaaaaaaa, bbbbbbbbbbbbbbbb, ccccccccccccccccccc }: { aaaaaaaaaaaa: string }) {}`;
@@ -8489,6 +8522,19 @@ let z: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 let u: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
   "aaaaaa" | "bbbbbbb"
 > = v;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the brackets around a lone array type, which is not simple', async () => {
+			const input = `let x: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<string[]> = value;
+const w = (a) => a as unknown as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<string[]>;`;
+			const expected = `let x: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  string[]
+> = value;
+const w = (a) =>
+  a as unknown as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+    string[]
+  >;`;
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
