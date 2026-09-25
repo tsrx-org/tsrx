@@ -72,6 +72,19 @@ describe('createDepScanTransformPlugin', () => {
 		expect(result.code).toBe('import "react/jsx-runtime";\nimport "some/other-runtime";\nsource');
 	});
 
+	it('prepends the extra imports after a hashbang, which must stay the first line', async () => {
+		const plugin = createDepScanTransformPlugin({
+			name: 'test:dep-scan',
+			filter: TSRX,
+			compile: echo,
+			imports: ['react/jsx-runtime'],
+		});
+
+		const result = await plugin.transform.handler('#!/usr/bin/env node\nsource', '/app/App.tsrx');
+
+		expect(result.code).toBe('#!/usr/bin/env node\nimport "react/jsx-runtime";\n\nsource');
+	});
+
 	it('emits nothing extra when no imports are configured', async () => {
 		const plugin = createDepScanTransformPlugin({
 			name: 'test:dep-scan',
@@ -167,6 +180,15 @@ describe('createDepScanLoadPlugin', () => {
 		const result = await create({ imports: ['solid-js/web'] }).load(real_path + '.tsx');
 
 		expect(result?.code).toBe('import "solid-js/web";\nthe source');
+	});
+
+	it('prepends the extra imports after a hashbang', async () => {
+		const real_path = join(dir, 'App.tsrx');
+		writeFileSync(real_path, '#!/usr/bin/env node\nthe source');
+
+		const result = await create({ imports: ['solid-js/web'] }).load(real_path + '.tsx');
+
+		expect(result?.code).toBe('#!/usr/bin/env node\nimport "solid-js/web";\n\nthe source');
 	});
 
 	it('returns an empty module when compile throws', async () => {

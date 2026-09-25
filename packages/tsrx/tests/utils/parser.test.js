@@ -1,6 +1,6 @@
 /** @import * as AST from 'estree' */
 /** @import { TSESTree } from '@typescript-eslint/types' */
-/** @import { CompileError, NodeOfType, NodeTypeName } from '../../types/index' */
+/** @import { CompileError, NodeOfType, NodeTypeName, ParseOptions } from '../../types/index' */
 /** @import * as ESTreeJSX from 'estree-jsx' */
 
 import { describe, expect, it } from 'vitest';
@@ -419,6 +419,136 @@ describe('TSRX parser', () => {
 			]) {
 				expect(() => parseModule(source, 'App.tsrx')).toThrow(
 					'`import defer` only supports a namespace import from a string literal.',
+				);
+			}
+		});
+	});
+
+	// The parser accepts everything the installed acorn supports, not only ES2022.
+	describe('syntax newer than ES2022', () => {
+		/** @type {Array<[string, () => ParseOptions | undefined]>} */
+		const option_sets = [
+			['without options', () => undefined],
+			['with the formatter options', () => ({ collect: true, comments: [] })],
+			['in loose mode', () => ({ loose: true, errors: [], comments: [] })],
+		];
+
+		/**
+		 * Every node of `type` in the parsed source, in source order.
+		 *
+		 * @template {NodeTypeName} T
+		 * @param {string} source
+		 * @param {T} type
+		 * @param {ParseOptions} [options]
+		 * @returns {NodeOfType<T>[]}
+		 */
+		function find_all(source, type, options) {
+			/** @type {NodeOfType<T>[]} */
+			const found = [];
+			find_first(parseModule(source, 'App.tsrx', options), (node) => {
+				if (node.type === type) found.push(/** @type {NodeOfType<T>} */ (node));
+				return false;
+			});
+			return found;
+		}
+
+		describe.each(option_sets)('%s', (_, options) => {
+			it('parses using and await using declarations with type annotations', () => {
+				const declarations = find_all(
+					`{
+						using handle: Disposable = open();
+					}
+					async function load() {
+						await using connection: AsyncDisposable = await connect(), other = g();
+					}`,
+					'VariableDeclaration',
+					options(),
+				);
+
+				expect(declarations.map((declaration) => declaration.kind)).toEqual([
+					'using',
+					'await using',
+				]);
+				const handle = as_type(declarations[0].declarations[0].id, 'Identifier');
+				expect(handle.name).toBe('handle');
+				expect(handle.typeAnnotation?.typeAnnotation.type).toBe('TSTypeReference');
+				expect(declarations[1].declarations).toHaveLength(2);
+			});
+
+			it('parses using and await using declarations in for...of heads', () => {
+				const loops = find_all(
+					`async function load(items, stream) {
+						for (using item of items) {}
+						for await (await using item of stream) {}
+					}`,
+					'ForOfStatement',
+					options(),
+				);
+
+				expect(
+					loops.map((loop) => [as_type(loop.left, 'VariableDeclaration').kind, loop.await]),
+				).toEqual([
+					['using', false],
+					['await using', true],
+				]);
+			});
+
+			it('parses using declarations in a component body', () => {
+				const declarations = find_all(
+					`function App() @{
+						using handle = open();
+						<div>{handle.name}</div>
+					}`,
+					'VariableDeclaration',
+					options(),
+				);
+
+				expect(declarations.map((declaration) => declaration.kind)).toEqual(['using']);
+			});
+
+			it('parses a hashbang as the line comment at offset 0', () => {
+				const parse_options = options();
+				const ast = parseModule(
+					'#!/usr/bin/env node\nconsole.log(1);\n',
+					'App.tsrx',
+					parse_options,
+				);
+				const hashbang = { type: 'Line', value: '/usr/bin/env node', start: 0, end: 19 };
+
+				expect(ast.body.map((node) => node.type)).toEqual(['ExpressionStatement']);
+				expect(ast.body[0].leadingComments).toEqual([expect.objectContaining(hashbang)]);
+				if (parse_options?.comments) {
+					expect(parse_options.comments).toEqual([expect.objectContaining(hashbang)]);
+				}
+			});
+
+			it('parses the regex v flag and modifiers', () => {
+				const literals = find_all(
+					'const set = /[\\p{L}--[a-z]]/v;\nconst modified = /(?i:a)b/;',
+					'Literal',
+					options(),
+				);
+
+				expect(literals.map((literal) => 'regex' in literal && literal.regex)).toEqual([
+					{ pattern: '[\\p{L}--[a-z]]', flags: 'v' },
+					{ pattern: '(?i:a)b', flags: '' },
+				]);
+			});
+		});
+
+		it('rejects a hashbang that does not start the file', () => {
+			for (const source of ['\n#!/usr/bin/env node\n', 'foo();\n#!/usr/bin/env node\n']) {
+				expect(() => parseModule(source, 'App.tsrx')).toThrow();
+			}
+		});
+
+		it('rejects a using declaration in a for...in head, like acorn', () => {
+			for (const source of [
+				'for (using item in items) {}',
+				'async function f() { for (await using item in items) {} }',
+			]) {
+				expect(() => parseModule(source, 'App.tsrx')).toThrow(
+					'Using declaration is not allowed in for-in loops',
 				);
 			}
 		});
@@ -5767,6 +5897,19 @@ describe('comments in import and export specifier lists', () => {
 		]);
 	});
 
+	// Like Prettier, which trails the node before a comment at the end of a
+	// line, a comment after the `{` of the named imports trails the default one
+	it('trails the default import with a line comment after the brace of the named ones', () => {
+		const declaration = lastDeclaration("import d, { // first\n\t// second\n\ta,\n} from 'mod';");
+
+		expect(declaration.specifiers[0].trailingComments?.map((comment) => comment.value)).toEqual([
+			' first',
+		]);
+		expect(declaration.specifiers[1].leadingComments?.map((comment) => comment.value)).toEqual([
+			' second',
+		]);
+	});
+
 	it('leaves a block comment before a comma with the specifier before it', () => {
 		const declaration = lastDeclaration("import def /* d */, { a } from 'mod';");
 
@@ -5976,6 +6119,63 @@ describe('comments placed like Prettier', () => {
 
 		expect(commentsOf(declaration.id).trailing).toEqual([' c']);
 		expect(commentsOf(declaration.implements[0]).leading).toBeUndefined();
+	});
+
+	// Prettier's dangling comment marked `implements`
+	it('keeps a comment before implements in a class with no name on the class', () => {
+		const { init } = firstStatement('const X = class\n  // c\n  implements D, E {};')
+			.declarations[0];
+
+		expect(commentsOf(init).inner).toEqual([' c']);
+		expect(commentsOf(init.implements[0]).leading).toBeUndefined();
+	});
+
+	// Without a `;`, the declaration ends at the `)`, and the parenthesized
+	// value ends before it
+	it('trails the declaration with a comment after the ) that ends it', () => {
+		const [first, second] = /** @type {any[]} */ (
+			parseModule('const x = a | (b >> 6) // c\nconst y = (a >> 6) // d\n', 'App.ts').body
+		);
+
+		expect(commentsOf(first).trailing).toEqual([' c']);
+		expect(commentsOf(first.declarations[0].init.right).trailing).toBeUndefined();
+		expect(commentsOf(second).trailing).toEqual([' d']);
+		expect(commentsOf(second.declarations[0].init).trailing).toBeUndefined();
+	});
+
+	// Like Prettier's `getSortedChildNodes`, the walker visits a node's
+	// children in source order, whatever order the parser adds their keys in
+	it.each([
+		['the type arguments of a call', 'f<\n  // c\n  A\n>(1);', 'expression.typeArguments.params.0'],
+		[
+			'the type arguments of a tagged template',
+			'tag</* c */ T>`x`;',
+			'expression.typeArguments.params.0',
+		],
+		['the test of a switch case', 'switch (x) {\n  case /* c */ 1:\n    y;\n}', 'cases.0.test'],
+		[
+			'the type parameters of an arrow function',
+			'const f = </* c */ T,>(a: T): T => a;',
+			'declarations.0.init.typeParameters.params.0',
+		],
+		[
+			'the parameters of a generic arrow function',
+			'const f = <T,>(/* c */ a: T): T => a;',
+			'declarations.0.init.params.0',
+		],
+	])('leads the node after a comment in %s', (_, source, path) => {
+		const statement = firstStatement(source);
+		const node = path.split('.').reduce((parent, key) => parent[key], statement);
+
+		expect(commentsOf(node).leading).toEqual([source.includes('//') ? ' c' : ' c ']);
+	});
+
+	it('keeps a comment in the type arguments of a call off its arguments', () => {
+		const { expression } = firstStatement('dual<\n  /** a */\n  A,\n  /** b */\n  B\n>(2, f);');
+
+		expect(commentsOf(expression.typeArguments.params[0]).leading).toEqual(['* a ']);
+		expect(commentsOf(expression.typeArguments.params[1]).leading).toEqual(['* b ']);
+		expect(commentsOf(expression.arguments[0]).leading).toBeUndefined();
 	});
 });
 
