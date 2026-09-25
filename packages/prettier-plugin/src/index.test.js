@@ -1184,6 +1184,260 @@ const items=[1,2,3];
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
+
+		// Like Prettier's `hasNodeIgnoreComment`, any comment attached to the node
+		// counts, not only the last leading one
+		it('keeps a statement that a prettier-ignore comment trails on its line', async () => {
+			const source = `foo(  a,b  ); // prettier-ignore
+matrix = [1,0,
+          0,1]; // prettier-ignore
+function f() {
+  return   [1,2,
+    3]; // prettier-ignore
+}
+if (a)
+  b(  1 ); // prettier-ignore
+else c(2);
+for (const  x of y) foo( x ); // prettier-ignore
+foo(  a,b  ); /* prettier-ignore */`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps members that a prettier-ignore comment trails on their line', async () => {
+			const source = `const x = {
+  a:   1, // prettier-ignore
+  b: 2,
+};
+class A {
+  x   =  1; // prettier-ignore
+  m(  a ) { } // prettier-ignore
+}
+type T = {
+  a:   string; // prettier-ignore
+  b: number;
+};`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps an element that a prettier-ignore comment trails on its line', async () => {
+			const source = `export function App() @{
+  <div>
+    <span   a="1" /> // prettier-ignore
+    <b />
+  </div>
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps the last statement of a block that an own-line prettier-ignore follows', async () => {
+			// Prettier attaches the comment to the statement before it
+			const source = `{
+  foo(  1 );
+  // prettier-ignore
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a node whose prettier-ignore comment another comment follows', async () => {
+			const source = `foo(
+  // prettier-ignore
+  /* #__PURE__ */ bar(  1,2 ),
+);
+const o = {
+  // prettier-ignore
+  /* keep */ a:   [1,2],
+  b: 1,
+};`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a node whose dangling comment is prettier-ignore', async () => {
+			const source = `for (let i = 0; i < 1; i++) { /* prettier-ignore */ }`;
+			expect(await format(source)).toBeWithNewline(source);
+			expect(await format('\n\n// prettier-ignore\n\n\n')).toBe('\n\n// prettier-ignore\n\n\n');
+		});
+
+		it('still formats an element or code block whose only comments are its children', async () => {
+			// Like a JSX comment child, the comment doesn't dangle on the element
+			const result = await format(`function App() @{
+  const  x = 1;
+  <div   a="1">
+    // prettier-ignore
+  </div>
+  // prettier-ignore
+}`);
+			expect(result).toBeWithNewline(`function App() @{
+  const x = 1;
+  <div a="1">
+    // prettier-ignore
+  </div>
+  // prettier-ignore
+}`);
+		});
+
+		it('keeps the decorators written before export', async () => {
+			const source = `// prettier-ignore
+@dec
+export   class  A {}
+// prettier-ignore
+@dec
+export default   class  B {}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// The decorators print once, where they were written, as in Prettier
+		it.each([
+			'// prettier-ignore\n@dec export class A {  }',
+			'// prettier-ignore\nexport @dec class A {  }',
+			'// prettier-ignore\n@dec export default class {  }',
+			'// prettier-ignore\n@dec class A {  }',
+			'export /* prettier-ignore */ @dec class A {  }',
+			'export default /* prettier-ignore */ @dec class {  }',
+			'@a @b\nexport class A {  } // prettier-ignore',
+			'class B {\n  // prettier-ignore\n  @dec   m(  ) {}\n}',
+		])('keeps an ignored decorated declaration as written in %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('prints a comment between the decorators and export once', async () => {
+			// The ignored source starts at the decorator and holds the comment.
+			// Prettier formats the class here; the source stays as written.
+			const source = `@dec
+// prettier-ignore
+export class A {  }
+@dec /* prettier-ignore */
+export default class {  }`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			'class A<T  > // prettier-ignore\n  extends B {}',
+			'type T = A /* prettier-ignore */ | B;',
+			'type T =\n  | A<  1 > // prettier-ignore\n  | B;',
+		])(
+			'prints the trailing comments of an ignored node once when its parent prints them in %s',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
+
+		// Like Prettier's `handleUnionTypeComments`, an own-line `prettier-ignore`
+		// between union members ignores the member after it and stays before its `|`
+		it('keeps the union member after an own-line prettier-ignore as written', async () => {
+			const source = `type A =
+  | B<  1 >
+  // prettier-ignore
+  | {  a:1 };
+type C =
+  // prettier-ignore
+  | D<  1 >
+  | E<  2 >;
+type F =
+  | G<  1 > // prettier-ignore
+  | H<  2 >;`;
+			expect(await format(source)).toBeWithNewline(`type A =
+  | B<1>
+  // prettier-ignore
+  | {  a:1 };
+type C =
+  // prettier-ignore
+  D<  1 > | E<2>;
+type F =
+  | G<  1 > // prettier-ignore
+  | H<2>;`);
+		});
+
+		it("doesn't break the list around an ignored node over several lines", async () => {
+			// Prettier prints the ignored source as a plain string
+			const source = `foo(/* prettier-ignore */ [1,
+   2], b);
+const x = { a: /* prettier-ignore */ [1,
+   2], b: 2 };`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier's `printIgnored`, a statement's source ends before its `;`,
+		// which prints by the `semi` option
+		it('prints the semicolon of an ignored statement like Prettier', async () => {
+			const source = `// prettier-ignore
+let a  = 1
+// prettier-ignore
+foo(  1 )
+// prettier-ignore
+foo(  2 ) /* c */;
+// prettier-ignore
+foo(  3 ) // c
+;
+// prettier-ignore
+if (a) foo(  4 ) /* c */;
+switch (x) {
+  case 1:
+    // prettier-ignore
+    foo(  5 ) /* c */;
+}
+while (x) {
+  // prettier-ignore
+  break
+}
+// prettier-ignore
+type A =   B;
+for (/* prettier-ignore */ let i  = 0; i < 1; i++) {}`;
+			expect(await format(source)).toBeWithNewline(`// prettier-ignore
+let a  = 1;
+// prettier-ignore
+foo(  1 )
+// prettier-ignore
+foo(  2 ); /* c */
+// prettier-ignore
+foo(  3 ); // c
+// prettier-ignore
+if (a) foo(  4 ); /* c */
+switch (x) {
+  case 1:
+    // prettier-ignore
+    foo(  5 ); /* c */
+}
+while (x) {
+  // prettier-ignore
+  break;
+}
+// prettier-ignore
+type A =   B;
+for (/* prettier-ignore */ let i  = 0; i < 1; i++) {}`);
+		});
+
+		it('drops the semicolon of an ignored statement without semi', async () => {
+			const source = `// prettier-ignore
+let a  = 1;
+// prettier-ignore
+foo(  1 );
+// prettier-ignore
+foo(  2 ) /* c */;
+foo(  a,b  ); // prettier-ignore
+while (x) {
+  // prettier-ignore
+  break;
+}
+// prettier-ignore
+type A =   B;
+// prettier-ignore
+export type C =   D;`;
+			expect(await format(source, { semi: false })).toBeWithNewline(`// prettier-ignore
+let a  = 1
+// prettier-ignore
+foo(  1 )
+// prettier-ignore
+foo(  2 ) /* c */
+foo(  a,b  ) // prettier-ignore
+while (x) {
+  // prettier-ignore
+  break
+}
+// prettier-ignore
+type A =   B;
+// prettier-ignore
+export type C =   D`);
+		});
 	});
 
 	describe('recovered', () => {
@@ -11127,6 +11381,81 @@ function f() {
   \`;
 }`);
 		});
+	});
+
+	// Like Prettier, a line break in a template's text is a `literalline`, which
+	// breaks the groups around the template
+	describe('multi-line template literals break the lists around them', () => {
+		it('breaks the call arguments and array around a template over several lines', async () => {
+			const result = await format(`foo(\`line one
+line two \${x}\`, second);
+const values = [\`first
+second\`, other];`);
+			expect(result).toBeWithNewline(`foo(
+  \`line one
+line two \${x}\`,
+  second,
+);
+const values = [
+  \`first
+second\`,
+  other,
+];`);
+		});
+
+		it.each([
+			[
+				'x = { a: `a\nb`, b: 1 };',
+				`x = {
+  a: \`a
+b\`,
+  b: 1,
+};`,
+			],
+			[
+				'foo(tag`a\nb ${c}`, d);',
+				`foo(
+  tag\`a
+b \${c}\`,
+  d,
+);`,
+			],
+			['foo(\n  `first\nsecond`);', 'foo(\n  `first\nsecond`,\n);'],
+			[
+				'const s = cond ? `first\nsecond` : other;',
+				'const s = cond\n  ? `first\nsecond`\n  : other;',
+			],
+			['const a = b || `x\ny`;', 'const a =\n  b ||\n  `x\ny`;'],
+			[
+				'function f() {\n  return `a\nb` + c;\n}',
+				'function f() {\n  return (\n    `a\nb` + c\n  );\n}',
+			],
+			[
+				'if (x) throw new Error(`line one\nline two ${value}`);',
+				'if (x)\n  throw new Error(`line one\nline two ${value}`);',
+			],
+			['f(`a ${b(`c\nd`)} e`);', 'f(\n  `a ${b(`c\nd`)} e`,\n);'],
+			// Prettier keeps only a call printed on its own on the template's line,
+			// not one in a member chain
+			['foo.bar(`a\nb`).baz(1);', 'foo\n  .bar(\n    `a\nb`,\n  )\n  .baz(1);'],
+		])('breaks around the template in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'run(`first\nsecond`);',
+			'const s = `first\nsecond`;',
+			'const fn = () => `a\nb`;',
+			'const x = tag`a\nb ${c}`;',
+			'describe(`a\nb`, () => {});',
+			'foo(`a\nb`)(c);',
+			'type T = `a\n${B}`;',
+		])(
+			'keeps a template that starts on the line of the code before it there in %s',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
 	});
 
 	describe('member chains break like Prettier', () => {
