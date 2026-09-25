@@ -2207,6 +2207,27 @@ const [obj1, obj2] = arrayOfObjects;`;
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('formats top-level markup with a style or script block to a fixpoint', async () => {
+			for (const source of [
+				`<head>
+  <style>
+    div {
+      color: red;
+    }
+  </style>
+</head>
+`,
+				`<div>
+  <script>
+    const a = 1;
+  </script>
+</div>
+`,
+			]) {
+				expect(await format(source)).toBe(source);
+			}
+		});
+
 		it('should keep style tag intact when wrapped in parent inside component', async () => {
 			const expected = `function App() {
   <head>

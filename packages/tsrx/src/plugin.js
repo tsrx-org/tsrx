@@ -2592,6 +2592,11 @@ export function TSRXPlugin(config) {
 						this.context.pop();
 					}
 				}
+				if (insideTemplate && this.curContext() === tstc.tc_expr) {
+					// This element's own children context, pushed by its opening tag. Its
+					// closing tag is never tokenized, so nothing else pops it.
+					this.context.pop();
+				}
 				if (!insideTemplate && this.#path.at(-1) === node) {
 					// Outside a template (a `@{ … }` body, a `@case` body, a statement),
 					// the element must leave the tokenizer context exactly where it

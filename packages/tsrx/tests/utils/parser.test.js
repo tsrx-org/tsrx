@@ -2068,6 +2068,27 @@ export function App() @{ <div /> }`;
 		expect(object.end).toBe(as_type(object.value, 'JSXStyleElement').end);
 	});
 
+	it('parses top-level markup holding a style or script block before a final newline', () => {
+		for (const [tag, type] of [
+			['style', 'JSXStyleElement'],
+			['script', 'JSXElement'],
+		]) {
+			for (const body of ['p { color: red; }', '']) {
+				for (const sibling of ['', '\n  <span>x</span>']) {
+					const ast = parseModule(
+						`<div>\n  <${tag}>${body}</${tag}>${sibling}\n</div>\n`,
+						'App.tsrx',
+					);
+					const element = firstStatement(ast, 'JSXElement');
+					expect(ast.body).toHaveLength(1);
+					expect(
+						element.children.filter((node) => node.type !== 'JSXText').map((node) => node.type),
+					).toEqual(sibling ? [type, 'JSXElement'] : [type]);
+				}
+			}
+		}
+	});
+
 	it('does not add component style scope metadata to head styles', () => {
 		const returned = getReturned(`function App() { return <head>
 			<style>

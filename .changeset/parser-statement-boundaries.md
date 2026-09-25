@@ -21,3 +21,6 @@ the formatter's `semi: false` output parses again:
   without a semicolon) ends after `</style>` instead of inside the CSS, so the
   formatter keeps the blank lines after an assigned `<style>` block with
   `semi: false`, and mappings and lint ranges cover the whole declarator.
+- Top-level markup that holds a `<style>` or `<script>` element parses when the
+  file ends with a newline, so the formatter's output for it parses again. It
+  used to fail with `Unterminated JSX contents`.
