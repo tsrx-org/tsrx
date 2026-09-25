@@ -3199,11 +3199,13 @@ function printLeadingComments(node, allComments, options, semicolonBeforeLast, f
 }
 
 /**
- * The types that print right after a keyword or punctuation of their parent,
- * on its line, with nothing between them that breaks: after `keyof`,
- * `typeof`, `infer`, `is`, `as`, `satisfies`, a `:` or `=>`, a type
- * parameter's `extends`, `in`, or `=`, and a conditional type's `extends`,
- * `?`, or `:`, or inside the `[` of an indexed access type
+ * The node types whose children at these keys print right after a keyword or
+ * punctuation of theirs, on its line, with nothing between them that breaks.
+ * Types: after `keyof`, `typeof`, `infer`, `is`, `as`, `satisfies`, a `:` or
+ * `=>`, a type parameter's `extends`, `in`, or `=`, and a conditional type's
+ * `extends`, `?`, or `:`, or inside the `[` of an indexed access type.
+ * Expressions: after `new`, `await`, `yield*`, a spread's or rest element's
+ * `...`, and a conditional's `?` or `:` (see {@link isPrintedAfterCode}).
  */
 const typesPrintedAfterCode = new Map([
 	['TSTypeOperator', ['typeAnnotation']],
@@ -3219,18 +3221,48 @@ const typesPrintedAfterCode = new Map([
 	['TSIndexedAccessType', ['indexType']],
 	['TSNamedTupleMember', ['elementType']],
 	['TSRestType', ['typeAnnotation']],
+	['NewExpression', ['callee']],
+	['AwaitExpression', ['argument']],
+	['YieldExpression', ['argument']],
+	['SpreadElement', ['argument']],
+	['RestElement', ['argument']],
+	['ConditionalExpression', ['consequent', 'alternate']],
 ]);
 
 /**
  * Whether the node at `path` prints right after code on its line (see
  * {@link typesPrintedAfterCode}), so that a comment before it can't start its
- * line
+ * line. These don't:
+ * - The argument of a spread in an object. The line break after the comment
+ *   breaks the object, which Prettier then keeps expanded, so it stays.
+ * - The argument of `yield` without `*`, which prints on a line of its own in
+ *   parentheses after a comment that ends its line.
+ * - A branch of a conditional in JSX mode that prints in parentheses of its
+ *   own (see {@link printConditionalExpression}).
  * @param {AstPath} path - The path to the node
  * @returns {boolean}
  */
 function isPrintedAfterCode(path) {
-	const keys = typesPrintedAfterCode.get(path.parent?.type);
-	return !!keys && typeof path.key === 'string' && keys.includes(path.key);
+	const { key, parent } = path;
+	const keys = typesPrintedAfterCode.get(parent?.type);
+	if (!keys || typeof key !== 'string' || !keys.includes(key)) {
+		return false;
+	}
+	switch (parent?.type) {
+		case 'SpreadElement':
+			return path.grandparent?.type !== 'ObjectExpression';
+		case 'YieldExpression':
+			return !!(/** @type {AST.YieldExpression} */ (parent).delegate);
+		case 'ConditionalExpression': {
+			const node = /** @type {AST.Node} */ (path.node);
+			return (
+				isNilLiteral(node) ||
+				(key === 'alternate' && node.type === 'ConditionalExpression') ||
+				!path.callParent(isJsxModeConditional)
+			);
+		}
+	}
+	return true;
 }
 
 /**
@@ -3290,7 +3322,8 @@ function printTypeCastParens(node, typeCastParens, nodeContent, options, args, w
 /**
  * Print a node's trailing comments, to follow its printed body. Like
  * Prettier's `printTrailingComment`, one on the node's line stays there, and
- * one on a line of its own moves to a line of its own after the node's line.
+ * one on a line of its own moves to a line of its own after the node's line,
+ * and so does one after a line comment, as in `a // b` / `; // c`.
  * @param {AST.Node} node - The AST node
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {AST.Comment[]} [comments] - The comments to print, when not all of them
@@ -3300,17 +3333,24 @@ function printTrailingComments(node, options, comments = node.trailingComments ?
 	const text = /** @type {string} */ (options.originalText);
 	/** @type {Doc[]} */
 	const trailingParts = [];
+	// Whether the comment before printed at the end of the line, and whether
+	// it was a line comment
+	let previousHasLineSuffix = false;
+	let previousIsLine = false;
 
 	for (const comment of comments) {
 		const commentStart = /** @type {AST.NodeWithLocation} */ (comment).start;
 		// Like Prettier, a comment stays on the line it shares with code, even
-		// a `;` that isn't printed
-		const isInlineComment = !hasNewline(text, commentStart, { backwards: true });
+		// a `;` that isn't printed, unless a line comment ends that line first
+		const isInlineComment =
+			!(previousHasLineSuffix && previousIsLine) &&
+			!hasNewline(text, commentStart, { backwards: true });
 
 		const commentDoc = printComment(comment, text);
+		const hasLineSuffix = !isInlineComment || comment.type === 'Line' || previousHasLineSuffix;
 
 		if (isInlineComment) {
-			if (comment.type === 'Line') {
+			if (hasLineSuffix) {
 				trailingParts.push(lineSuffix([' ', commentDoc]));
 				trailingParts.push(breakParent);
 			} else {
@@ -3327,6 +3367,8 @@ function printTrailingComments(node, options, comments = node.trailingComments ?
 			refs.push(commentDoc);
 			trailingParts.push(lineSuffix(refs));
 		}
+		previousHasLineSuffix = hasLineSuffix;
+		previousIsLine = comment.type === 'Line';
 	}
 	return trailingParts;
 }
@@ -4187,9 +4229,9 @@ function printTsrxNode(node, path, options, print, args) {
 			/** @type {Doc[]} */
 			const predicateParts = [];
 			if (node.asserts) predicateParts.push('asserts ');
-			predicateParts.push(
-				node.parameterName.type === 'TSThisType' ? 'this' : node.parameterName.name,
-			);
+			// Like Prettier's `printTypePredicate`, the name prints as a node, with
+			// its comments: `asserts /* c */ x`, `x /* c */ is T`
+			predicateParts.push(path.call(print, 'parameterName'));
 			if (node.typeAnnotation) {
 				predicateParts.push(' is ', path.call(print, 'typeAnnotation'));
 			}
@@ -4456,7 +4498,9 @@ function printTsrxNode(node, path, options, print, args) {
 		}
 	}
 
-	let suppressTrailingComments = args?.suppressTrailingComments;
+	// A union may print its trailing comments itself, inside its indentation
+	let suppressTrailingComments =
+		args?.suppressTrailingComments || unionPrintsOwnComments(path, true);
 	// A cast's parens belong to the cast, so they print even where a parent
 	// lays out the node's other parens (`suppressOwnParens`)
 	if (typeCastParens) {
@@ -10148,8 +10192,13 @@ function printTSUnionType(node, path, options, print, args) {
 		}, 'types'),
 	);
 
+	// Like Prettier's `printUnionType`, the union's comments print inside its
+	// indentation, so a line comment after it breaks the line before it
 	if (unionPrintsOwnComments(path) && !args?.suppressLeadingComments) {
 		printed = [...printLeadingComments(node, node.leadingComments ?? [], options), printed];
+	}
+	if (unionPrintsOwnComments(path, true) && !args?.suppressTrailingComments) {
+		printed = [printed, ...printUnionTrailingComments(path, options)];
 	}
 
 	if (needsParens(path, options)) {
@@ -10220,20 +10269,51 @@ function printTSIntersectionType(node, path, options, print) {
 
 /**
  * Prettier's `shouldUnionTypePrintOwnComments`: a union that breaks onto its
- * own lines prints its leading comments inside its indentation, so they move
- * with it. A union member of a tuple leaves them outside its parentheses.
+ * own lines prints its comments, leading and trailing, inside its
+ * indentation, so they move with it. A union member of a tuple leaves them
+ * outside its parentheses. Unlike Prettier, a union member of a union or
+ * intersection prints its leading comments inside its parentheses too: the
+ * parser keeps the parentheses, which take the comments inside them, and
+ * outside them, a line comment before the first member isn't idempotent. A
+ * union member of a union prints its trailing comments after its
+ * parentheses, where it keeps the comments after them (see
+ * {@link printTSUnionType}).
  * @param {AstPath} path - The path to the node
+ * @param {boolean} [trailing] - Whether the trailing comments print, rather
+ *   than the leading ones
  * @returns {boolean}
  */
-function unionPrintsOwnComments(path) {
+function unionPrintsOwnComments(path, trailing) {
 	const node = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node);
 	return (
 		node.type === 'TSUnionType' &&
-		!!node.leadingComments &&
+		!!(trailing ? node.trailingComments : node.leadingComments)?.length &&
 		!hasPrettierIgnore(node) &&
 		!shouldHugUnionType(node) &&
-		!isMultipleTupleTypeElement(path)
+		!isMultipleTupleTypeElement(path) &&
+		!(trailing && path.key === 'types' && path.parent?.type === 'TSUnionType')
 	);
+}
+
+/**
+ * Print the trailing comments of a union that prints its own comments (see
+ * {@link unionPrintsOwnComments}). As a type parameter's constraint before a
+ * default, it prints them on its line, like other constraints (see
+ * {@link printTSTypeParameter}).
+ * @param {AstPath} path - The path to the union
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc[]}
+ */
+function printUnionTrailingComments(path, options) {
+	const node = /** @type {AST.TSUnionType & AST.NodeWithMaybeComments} */ (path.node);
+	const { key, parent } = path;
+	if (key === 'constraint' && parent?.type === 'TSTypeParameter' && parent.default) {
+		return printCommentsOnLine(
+			node.trailingComments ?? [],
+			/** @type {string} */ (options.originalText),
+		);
+	}
+	return printTrailingComments(node, options);
 }
 
 /**
@@ -10463,7 +10543,8 @@ function printTSTypeParameter(node, path, options, print) {
 	if (node.constraint) {
 		const groupId = Symbol('constraint');
 		// The comments that trail the constraint before the default print on
-		// its line, like the ones after the name
+		// its line, like the ones after the name. A union prints them itself,
+		// inside its indentation (see `printUnionTrailingComments`).
 		const constraint = /** @type {AST.NodeWithMaybeComments} */ (node.constraint);
 		const trailing = node.default ? (constraint.trailingComments ?? []) : [];
 		parts.push(
@@ -10471,15 +10552,16 @@ function printTSTypeParameter(node, path, options, print) {
 			group(indent(line), { id: groupId }),
 			lineSuffixBoundary,
 			indentIfBreak(
-				trailing.length
-					? [
-							path.call(
-								(constraintPath) => print(constraintPath, { suppressTrailingComments: true }),
-								'constraint',
-							),
-							...printCommentsOnLine(trailing, /** @type {string} */ (options.originalText)),
-						]
-					: path.call(print, 'constraint'),
+				path.call(
+					(constraintPath) =>
+						trailing.length && !unionPrintsOwnComments(constraintPath, true)
+							? [
+									print(constraintPath, { suppressTrailingComments: true }),
+									...printCommentsOnLine(trailing, /** @type {string} */ (options.originalText)),
+								]
+							: print(constraintPath),
+					'constraint',
+				),
 				{ groupId },
 			),
 		);
@@ -11056,12 +11138,7 @@ function printConditionalExpression(path, options, print) {
 	// JSX mode: a chain with an element or another template value anywhere
 	// in it doesn't indent, and each branch breaks inside parentheses of its
 	// own, which are analogous to an `if` statement's braces
-	const jsxMode =
-		isConditionalExpression &&
-		(isTemplateExpression(/** @type {AST.ConditionalExpression} */ (node).test) ||
-			isTemplateExpression(consequentNode) ||
-			isTemplateExpression(alternateNode) ||
-			conditionalChainContainsTemplate(/** @type {AST.ConditionalExpression} */ (child)));
+	const jsxMode = isConditionalExpression && isJsxModeConditional(nodePath);
 	if (jsxMode) {
 		forceNoIndent = true;
 		/** @param {Doc} doc */
@@ -11133,6 +11210,33 @@ function printConditionalExpression(path, options, print) {
 	const result = parent === firstNonConditionalParent ? group(contents) : contents;
 
 	return isParentTest || shouldExtraIndent ? group([indent([softline, result]), softline]) : result;
+}
+
+/**
+ * Whether the conditional expression at `path` prints in JSX mode (see
+ * {@link printConditionalExpression}): its own test or a branch, or any in
+ * its chain, is an element or another template value.
+ * @param {AstPath<AST.ConditionalExpression>} path
+ * @returns {boolean}
+ */
+function isJsxModeConditional(path) {
+	const node = path.node;
+	// The outermost conditional of the chain
+	/** @type {AST.Node} */
+	let root = node;
+	for (let level = 0; ; level++) {
+		const ancestor = /** @type {AST.Node | null} */ (path.getParentNode(level));
+		if (ancestor?.type !== 'ConditionalExpression' || ancestor.test === root) {
+			break;
+		}
+		root = ancestor;
+	}
+	return (
+		isTemplateExpression(node.test) ||
+		isTemplateExpression(node.consequent) ||
+		isTemplateExpression(node.alternate) ||
+		conditionalChainContainsTemplate(/** @type {AST.ConditionalExpression} */ (root))
+	);
 }
 
 /**
