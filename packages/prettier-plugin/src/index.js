@@ -108,8 +108,9 @@ const hashbangComments = new WeakSet();
 /**
  * Remember a file's hashbang (`#!…` on its first line) so {@link printComment}
  * prints it back as written. The parser reports it as a `Line` comment at offset
- * 0 whose value is the text after `#!`, and attaches it like any other comment:
- * to the first statement, or to the program when it has none.
+ * 0 whose value is the text after `#!`, and attaches it like any other comment,
+ * so it can end up on any node: the first statement, a later one when empty
+ * statements come first, or the program. Find it by its position instead.
  * @param {AST.Program} ast
  * @param {string} text
  */
@@ -117,13 +118,31 @@ function markHashbangComment(ast, text) {
 	if (!text.startsWith('#!')) {
 		return;
 	}
-	const program = /** @type {AST.Program & AST.NodeWithMaybeComments} */ (ast);
-	const first = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (program.body[0]);
-	const hashbang = [...(program.innerComments ?? []), ...(first?.leadingComments ?? [])].find(
-		(comment) => /** @type {AST.NodeWithLocation} */ (comment).start === 0,
-	);
-	if (hashbang) {
-		hashbangComments.add(hashbang);
+	/** @type {unknown[]} */
+	const stack = [ast];
+	const seen = new Set();
+	while (stack.length > 0) {
+		const value = stack.pop();
+		if (!value || typeof value !== 'object' || seen.has(value)) {
+			continue;
+		}
+		seen.add(value);
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				stack.push(item);
+			}
+			continue;
+		}
+		const node = /** @type {Record<string, unknown>} */ (value);
+		if (node.type === 'Line' && node.start === 0) {
+			hashbangComments.add(/** @type {AST.Comment} */ (/** @type {unknown} */ (node)));
+			continue;
+		}
+		for (const key in node) {
+			if (key !== 'metadata' && key !== 'loc' && key !== 'parent') {
+				stack.push(node[key]);
+			}
+		}
 	}
 }
 

@@ -9834,12 +9834,33 @@ log()
 			'#!/usr/bin/env node\nconsole.log(1);',
 			'#!/usr/bin/env node\n\nimport { x } from "./x";',
 			'#!/usr/bin/env -S node --no-warnings\n/** Docs */\nexport function App() @{\n  <div />\n}',
+			'#!/usr/bin/env node\n"use strict";\nconsole.log(1);',
 		])('keeps %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
 		it('keeps the hashbang of a file with only empty statements', async () => {
 			expect(await format('#!/usr/bin/env node\n;\n')).toBeWithNewline('#!/usr/bin/env node');
+		});
+
+		// Empty statements take no comments, so the parser attaches the hashbang
+		// to the first statement after them
+		it.each([
+			['#!/usr/bin/env node\n;\nconsole.log(1);', '#!/usr/bin/env node\nconsole.log(1);'],
+			[
+				'#!/usr/bin/env node\n;\n// A comment\nconsole.log(1);',
+				'#!/usr/bin/env node\n// A comment\nconsole.log(1);',
+			],
+			[
+				'#!/usr/bin/env node\n;;\n"use strict";\nconsole.log(1);',
+				'#!/usr/bin/env node\n("use strict");\nconsole.log(1);',
+			],
+			[
+				'#!/usr/bin/env node\n;\nexport function App() @{\n  <div />\n}',
+				'#!/usr/bin/env node\nexport function App() @{\n  <div />\n}',
+			],
+		])('keeps the hashbang before empty statements in %j', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
 		});
 
 		it('keeps a line comment that starts with a slash a comment', async () => {
