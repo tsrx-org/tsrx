@@ -6103,7 +6103,7 @@ function printClassDeclaration(node, path, options, print) {
 
 	// Heritage type arguments and implements clauses are what TypeScript
 	// checks the class against, so dropping them silently loses those checks
-	heritage.push(printHeritageClauses(node, path, print, groupMode));
+	heritage.push(printHeritageClauses(node, path, options, print, groupMode));
 
 	if (!groupMode) {
 		return [...parts, ...heritage, ' ', path.call(print, 'body')];
@@ -6206,13 +6206,22 @@ function hasMultipleHeritage(node) {
  * heritage type, the keyword starts its own line when the heading breaks, and
  * the types follow it on one line or, when they do not fit, one per line
  * below it.
+ *
+ * The comments before the keyword of a class with nothing before the clause
+ * (the class's inner comments, Prettier's dangling comments marked with the
+ * clause's name) print on their own lines before the keyword, or after it
+ * with only one heritage type. There, unlike Prettier, which prints the type
+ * right after them, a line comment ends its line, so that it doesn't comment
+ * the type out, and a block comment is followed by a space, as it is once
+ * Prettier formats its output again.
  * @param {AST.ClassDeclaration | AST.ClassExpression | AST.TSInterfaceDeclaration} node
  * @param {AstPath} path - The path to `node`
+ * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @param {boolean} groupMode - Whether the heading groups its clauses
  * @returns {Doc}
  */
-function printHeritageClauses(node, path, print, groupMode) {
+function printHeritageClauses(node, path, options, print, groupMode) {
 	const [listName, list] =
 		node.type === 'TSInterfaceDeclaration'
 			? ['extends', node.extends]
@@ -6221,13 +6230,28 @@ function printHeritageClauses(node, path, print, groupMode) {
 		return '';
 	}
 
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
 	const clauses = join([',', line], path.map(print, listName));
 	if (!hasMultipleHeritage(node)) {
 		/** @type {Doc[]} */
-		const printed = [listName, ' ', clauses];
+		const printed = [listName, ' '];
+		for (const comment of comments) {
+			printed.push(
+				printComment(comment, options.originalText),
+				comment.type === 'Line' ? hardline : ' ',
+			);
+		}
+		printed.push(clauses);
 		return groupMode ? [line, group(printed)] : [' ', printed];
 	}
-	return [line, listName, group(indent([line, clauses]))];
+	/** @type {Doc[]} */
+	const printedComments = comments.map((comment) => printComment(comment, options.originalText));
+	return [
+		line,
+		printedComments.length > 0 ? [join(hardline, printedComments), hardline] : '',
+		listName,
+		group(indent([line, clauses])),
+	];
 }
 
 /**
@@ -7577,7 +7601,7 @@ function printTSInterfaceDeclaration(node, path, options, print) {
 	// Handle extends clause. Unlike a class body, an interface body stays on
 	// the heading's last line when the heading breaks, like Prettier.
 	const groupMode = shouldPrintHeritageInGroupMode(node, path);
-	const heritage = printHeritageClauses(node, path, print, groupMode);
+	const heritage = printHeritageClauses(node, path, options, print, groupMode);
 	return [
 		groupMode ? group([...parts, indent(heritage)]) : [...parts, heritage],
 		' ',
