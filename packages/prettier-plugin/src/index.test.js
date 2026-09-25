@@ -537,7 +537,8 @@ const items=[1,2,3];
 		expect(result).toBeWithNewline(expected);
 	});
 
-	it('keeps whitespace-separated and directly adjacent expressions on their own lines', async () => {
+	it('keeps space-separated children on one line and directly adjacent expressions on their own lines', async () => {
+		// The spaces around the slash render, so a line break there would drop them.
 		const input = `function Test() {
   return <div>
     {a} / {b}
@@ -547,9 +548,7 @@ const items=[1,2,3];
 }`;
 		const expected = `function Test() {
   return <div>
-    {a}
-    /
-    {b}
+    {a} / {b}
     {c}
     {d}
     <Foo />
@@ -710,8 +709,12 @@ function App() {
 
 	it('formats returned TSRX fragments', async () => {
 		const result = await format('function App() { return <> <div /> </>; }');
+		// The spaces around <div /> render, so they print as {" "} on broken lines.
 		expect(result).toBeWithNewline(`function App() {
-  return <><div /></>;
+  return <>
+    {" "}
+    <div />{" "}
+  </>;
 }`);
 	});
 
@@ -7940,6 +7943,210 @@ const c = 'it\\'s';`);
 		});
 	});
 
+	// A space at a template child boundary renders, like in JSX, while
+	// whitespace with a line break is layout. A significant space stays a space
+	// when its neighbors share a line and prints as {" "} where a line breaks,
+	// like Prettier's jsxWhitespace.
+	describe('significant spaces between template children survive formatting', () => {
+		/**
+		 * Render each exported component of a module compiled with @tsrx/react
+		 * to markup, with whitespace runs collapsed the way the page shows them.
+		 * @param {string} source
+		 * @returns {Promise<string[]>}
+		 */
+		const render = async (source) => {
+			const [{ compile }, { default: ts }] = await Promise.all([
+				import('@tsrx/react'),
+				import('typescript'),
+			]);
+			const { outputText } = ts.transpileModule(compile(source, 'App.tsrx').code, {
+				compilerOptions: {
+					jsx: ts.JsxEmit.ReactJSX,
+					module: ts.ModuleKind.CommonJS,
+					target: ts.ScriptTarget.ES2022,
+				},
+			});
+			const Fragment = Symbol('Fragment');
+			/**
+			 * @param {unknown} type
+			 * @param {Record<string, unknown>} props
+			 */
+			const jsx = (type, props) => ({ type, props });
+			/** @type {Record<string, (props: object) => unknown>} */
+			const exports = {};
+			new Function('require', 'exports', outputText)(() => ({ jsx, jsxs: jsx, Fragment }), exports);
+			/**
+			 * @param {any} node
+			 * @returns {string}
+			 */
+			const toMarkup = (node) => {
+				if (node == null || typeof node === 'boolean') return '';
+				if (Array.isArray(node)) return node.map(toMarkup).join('');
+				if (typeof node !== 'object') return String(node);
+				const children = toMarkup(node.props.children);
+				return node.type === Fragment ? children : `<${node.type}>${children}</${node.type}>`;
+			};
+			return Object.values(exports).map((component) =>
+				toMarkup(component({})).replace(/[ \t\r\n]+/g, ' '),
+			);
+		};
+
+		it('renders the same markup after formatting', async () => {
+			const input = `export function Between() @{
+  <div>
+    <b>1</b> <b>2</b>
+  </div>
+}
+export function Edges() @{
+  <div> <b>1</b> </div>
+}
+export function Text() @{
+  <p>hello <b>x</b> world</p>
+}
+export function Wrapped() @{
+  <p>
+    Some text that goes past the print width once it is indented, <b>bold</b> and more text.
+  </p>
+}
+export function TextEdges() @{
+  <span> hello </span>
+}
+export function Lone() @{
+  <span> </span>
+}
+export function Fragment() @{
+  <>a <b>1</b> b</>
+}
+export function CodeBlock() @{
+  <>   @{<b>123</b>}   </>
+}`;
+			const result = await format(input);
+			expect(await render(result)).toEqual(await render(input));
+			expect(await render(input)).toEqual([
+				'<div><b>1</b> <b>2</b></div>',
+				'<div> <b>1</b> </div>',
+				'<p>hello <b>x</b> world</p>',
+				'<p>Some text that goes past the print width once it is indented, <b>bold</b> and more text.</p>',
+				'<span> hello </span>',
+				'<span> </span>',
+				'a <b>1</b> b',
+				' <b>123</b> ',
+			]);
+		});
+
+		it('keeps a space between children on their line', async () => {
+			const input = `export function App() @{
+  <div>
+    <b>1</b> <b>2</b>
+  </div>
+}`;
+			expect(await format(input)).toBeWithNewline(input);
+		});
+
+		it('keeps text and elements separated by spaces on one line', async () => {
+			const result = await format(`const a = <div>hello <b>x</b> world</div>;
+const b = <>a <b>1</b> b</>;`);
+			expect(result).toBeWithNewline(`const a = <div>
+  hello <b>x</b> world
+</div>;
+const b = <>
+  a <b>1</b> b
+</>;`);
+		});
+
+		it('prints a space against a broken tag as {" "}', async () => {
+			const result = await format(`const a = <div> <b>1</b> </div>;
+const b = <> <b>1</b></>;`);
+			expect(result).toBeWithNewline(`const a = <div>
+  {" "}
+  <b>1</b>{" "}
+</div>;
+const b = <>
+  {" "}
+  <b>1</b>
+</>;`);
+		});
+
+		it('keeps a lone space', async () => {
+			const result = await format(`export function App() @{
+  <>
+    <> </>
+    <span> </span>
+    <span>{" "}</span>
+  </>
+}`);
+			expect(result).toBeWithNewline(`export function App() @{
+  <>
+    <> </>
+    <span> </span>
+    <span> </span>
+  </>
+}`);
+		});
+
+		it('keeps the spaces around text that fits against its tags', async () => {
+			const input = `const a = <div> hello</div>;
+const b = <div>hello </div>;
+const c = <> hi </>;
+const d = <p> {a} </p>;`;
+			expect(await format(input)).toBeWithNewline(input);
+		});
+
+		it('prints the spaces around text that moves onto its own lines as {" "}', async () => {
+			const result = await format(
+				`const a = <div> This is some long text that will not fit on one line because it is long </div>;`,
+			);
+			expect(result).toBeWithNewline(`const a = <div>
+  {" "}
+  This is some long text that will not fit on one line because it is long{" "}
+</div>;`);
+		});
+
+		it('breaks a line at a space as {" "} when the children do not fit', async () => {
+			const result = await format(`export function App() @{
+  <p>
+    Some very long text here that goes past the print width for sure, <b>bold</b> and more.
+  </p>
+}`);
+			expect(result).toBeWithNewline(`export function App() @{
+  <p>
+    Some very long text here that goes past the print width for sure,{" "}
+    <b>bold</b> and more.
+  </p>
+}`);
+		});
+
+		it('joins {" "} with its neighbors when they fit on one line', async () => {
+			const result = await format(`const a = <div>
+  <b>1</b>{" "}
+  <b>2</b>
+</div>;
+const b = <p>hello {" "}{a}</p>;`);
+			expect(result).toBeWithNewline(`const a = <div>
+  <b>1</b> <b>2</b>
+</div>;
+const b = <p>hello {a}</p>;`);
+		});
+
+		it('keeps the spaces around a code block', async () => {
+			const result = await format(`let a = <>   @{<b>123</b>}   </>;`);
+			expect(result).toBeWithNewline(`let a = <>
+  {" "}
+  @{
+    <b>123</b>
+  }{" "}
+</>;`);
+		});
+
+		it('prints {" "} with the singleQuote quote', async () => {
+			const result = await format(`const a = <div> <b>1</b> </div>;`, { singleQuote: true });
+			expect(result).toBeWithNewline(`const a = <div>
+  {' '}
+  <b>1</b>{' '}
+</div>;`);
+		});
+	});
+
 	// A directive is the exact text of its string, so printing it from the
 	// cooked value could turn `"use\x20strict"` into a real strict-mode directive.
 	describe('directives keep their meaning', () => {
@@ -7995,13 +8202,12 @@ const c = 'it\\'s';`);
 			return once;
 		};
 
-		it('puts mixed text and expression children on their own lines when the element does not fit', async () => {
+		it('moves mixed text and expression children below the tags when the element does not fit', async () => {
 			const input = `function App() { return <div title="aaaaaaaa" alt="bbbbbbbbbb">xxxxx yyyyy zzzzzzzzzzzzzzzzzzzzz {"x"}</div>; }
 function Long() { return <div title="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" alt="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb">text {x} more</div>; }`;
 			const expected = `function App() {
   return <div title="aaaaaaaa" alt="bbbbbbbbbb">
-    xxxxx yyyyy zzzzzzzzzzzzzzzzzzzzz
-    {"x"}
+    xxxxx yyyyy zzzzzzzzzzzzzzzzzzzzz {"x"}
   </div>;
 }
 function Long() {
@@ -8009,9 +8215,7 @@ function Long() {
     title="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     alt="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   >
-    text
-    {x}
-    more
+    text {x} more
   </div>;
 }`;
 			expect(await expectStable(input)).toBeWithNewline(expected);

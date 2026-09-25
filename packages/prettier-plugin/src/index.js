@@ -10132,21 +10132,80 @@ function printTSIndexedAccessType(node, path, options, print) {
 /**
  * Print direct TSRX text so it can wrap like JSX text when an element body breaks.
  * @param {string} raw
+ * @param {Doc} [suffix] - Printed right after the last word, like the `{" "}`
+ *   that keeps a trailing space, so the fill measures the two together
  * @returns {Doc}
  */
-function printRawText(raw) {
+function printRawText(raw, suffix = '') {
 	const text = raw.trim().replace(/(?:\r\n|\r|\n)[^\S\r\n]+/gu, ' ');
 	if (!text) {
-		return '';
+		return suffix;
 	}
 
-	return fill(
-		text
-			.split(/([^\S\r\n]+)/u)
-			.filter(Boolean)
-			.map((part) => {
-				return /^[^\S\r\n]+$/u.test(part) ? line : replaceEndOfLine(part);
-			}),
+	/** @type {Doc[]} */
+	const parts = text
+		.split(/([^\S\r\n]+)/u)
+		.filter(Boolean)
+		.map((part) => {
+			return /^[^\S\r\n]+$/u.test(part) ? line : replaceEndOfLine(part);
+		});
+	if (suffix) {
+		parts.push([/** @type {Doc} */ (parts.pop()), suffix]);
+	}
+	return fill(parts);
+}
+
+/**
+ * Whether JSX text starts or ends with whitespace that renders as a space: a
+ * run of spaces and tabs that doesn't reach a line break. Whitespace with a
+ * line break is layout and renders as nothing, and like Prettier's
+ * `jsxWhitespace`, only space, tab, and line breaks count as JSX whitespace.
+ * @param {string} text
+ * @returns {{ leading: boolean, trailing: boolean }}
+ */
+function getJSXTextEdgeSpaces(text) {
+	return {
+		leading: /^[ \t]+(?![ \t\r\n])/u.test(text),
+		trailing: /(?<![ \t\r\n])[ \t]+$/u.test(text),
+	};
+}
+
+/**
+ * Whether JSX text is whitespace and nothing else. Empty text, like the
+ * printed body of an empty `<style>`, isn't.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isJSXWhitespaceOnly(text) {
+	return text !== '' && !/[^ \t\r\n]/u.test(text);
+}
+
+/**
+ * The `{" "}` Prettier prints for a significant space where a line breaks.
+ * @param {TsrxFormatOptions} options
+ * @returns {string}
+ */
+function getRawJSXWhitespace(options) {
+	return options.singleQuote ? "{' '}" : '{" "}';
+}
+
+/**
+ * A `{" "}` child. Like Prettier's `printJsxElementInternal`, the element and
+ * fragment printers treat it as a plain significant space, which prints as
+ * ` ` when its neighbors share a line and as `{" "}` where a line breaks.
+ * @param {AST.Node} child
+ * @returns {boolean}
+ */
+function isJSXWhitespaceExpression(child) {
+	if (child.type !== 'JSXExpressionContainer') {
+		return false;
+	}
+	const expression = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (child.expression);
+	return (
+		!hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (child)) &&
+		!hasComment(expression) &&
+		expression.type === 'Literal' &&
+		expression.value === ' '
 	);
 }
 
@@ -10201,12 +10260,33 @@ function isGluedJSXPair(prevNode, nextNode) {
 }
 
 /**
- * Print a run of glued JSX children as one unit. Words inside text entries can
- * still wrap at their own spaces, but glued boundaries get no break opportunity.
- * @param {(Doc | string)[]} entries
+ * A child of a multi-line element or fragment body.
+ * @typedef {object} JSXChildEntry
+ * @property {Doc} doc - The child printed on a line of its own
+ * @property {Doc} glue - The child printed next to a neighbor: text as a
+ *   string, which wraps at its own spaces
+ * @property {any} node - The first source node behind the child
+ * @property {any} endNode - The last source node behind the child
+ * @property {boolean} [space] - A significant space and nothing else, like
+ *   ` ` between two tags or `{" "}`
+ * @property {boolean} [leadingSpace] - Text that starts with a significant space
+ * @property {boolean} [trailingSpace] - Text that ends with a significant space
+ * @property {boolean} [spaceBefore] - Set by `printJSXChildLines` when a
+ *   significant space separates the child from the previous one
+ */
+
+/**
+ * Print a run of JSX children that stay together as one unit: children glued
+ * without whitespace, or separated by a significant space. Words inside text
+ * entries can still wrap at their own spaces, and a significant space breaks
+ * as `{" "}` at the end of a line like Prettier's `jsxWhitespace`, but glued
+ * boundaries get no break opportunity.
+ * @param {JSXChildEntry[]} entries
+ * @param {Doc} jsxWhitespace - The separator for a significant space
+ * @param {Doc} [suffix] - Printed after the last child, like a trailing `{" "}`
  * @returns {Doc}
  */
-function printGluedJSXChildren(entries) {
+function printGluedJSXChildren(entries, jsxWhitespace, suffix = '') {
 	/** @type {Doc[]} */
 	const parts = [];
 	/** @type {Doc[]} */
@@ -10217,9 +10297,13 @@ function printGluedJSXChildren(entries) {
 			current = [];
 		}
 	};
-	for (const entry of entries) {
-		if (typeof entry === 'string') {
-			const words = entry.trim().split(/\s+/u);
+	for (const [index, entry] of entries.entries()) {
+		if (index > 0 && entry.spaceBefore) {
+			flush();
+			parts.push(jsxWhitespace);
+		}
+		if (typeof entry.glue === 'string') {
+			const words = entry.glue.trim().split(/\s+/u);
 			for (let i = 0; i < words.length; i++) {
 				if (i > 0) {
 					flush();
@@ -10228,11 +10312,81 @@ function printGluedJSXChildren(entries) {
 				current.push(words[i]);
 			}
 		} else {
-			current.push(entry);
+			current.push(entry.glue);
 		}
+	}
+	if (suffix) {
+		current.push(suffix);
 	}
 	flush();
 	return parts.length === 1 ? parts[0] : fill(parts);
+}
+
+/**
+ * Lay out the children of a multi-line element or fragment body, one unit per
+ * line. Children glued without whitespace (`{a}/{b}`) or separated by a
+ * significant space (`<b>1</b> <b>2</b>`) stay in one unit, and one authored
+ * blank line between units is kept. A significant space never becomes a line
+ * break, which would drop it: like Prettier's `printJsxChildren`, a leading
+ * space prints as `{" "}` on a line of its own, and a trailing one as `{" "}`
+ * after the last child.
+ * @param {JSXChildEntry[]} items - The children, with significant spaces as
+ *   `space` entries or as text edge flags
+ * @param {TsrxFormatOptions} options
+ * @returns {Doc[]}
+ */
+function printJSXChildLines(items, options) {
+	const rawJsxWhitespace = getRawJSXWhitespace(options);
+	const jsxWhitespace = ifBreak([rawJsxWhitespace, softline], ' ');
+
+	// Fold each significant space into the boundary it sits on.
+	/** @type {JSXChildEntry[]} */
+	const entries = [];
+	let hasSpace = false;
+	let hasLeadingSpace = false;
+	for (const item of items) {
+		if (item.space) {
+			hasSpace = true;
+			continue;
+		}
+		hasSpace ||= !!item.leadingSpace;
+		if (entries.length === 0) {
+			hasLeadingSpace = hasSpace;
+		}
+		entries.push({ ...item, spaceBefore: entries.length > 0 && hasSpace });
+		hasSpace = !!item.trailingSpace;
+	}
+	if (entries.length === 0) {
+		return hasSpace ? [rawJsxWhitespace] : [];
+	}
+	const hasTrailingSpace = hasSpace;
+
+	/** @type {Doc[]} */
+	const lines = hasLeadingSpace ? [rawJsxWhitespace, hardline] : [];
+	for (let i = 0; i < entries.length; i++) {
+		const unit = [entries[i]];
+		while (
+			i < entries.length - 1 &&
+			(entries[i + 1].spaceBefore || isGluedJSXPair(entries[i].endNode, entries[i + 1].node))
+		) {
+			i++;
+			unit.push(entries[i]);
+		}
+		const isLast = i === entries.length - 1;
+		const suffix = isLast && hasTrailingSpace ? rawJsxWhitespace : '';
+		lines.push(
+			unit.length === 1 && !suffix
+				? unit[0].doc
+				: printGluedJSXChildren(unit, jsxWhitespace, suffix),
+		);
+		if (!isLast) {
+			// Preserve a single authored blank line between children (2+ collapse to 1).
+			const blank =
+				getBlankLinesBetweenNodes(entries[i].node, leadingAnchor(entries[i + 1].node)) > 0;
+			lines.push(blank ? [hardline, hardline] : hardline);
+		}
+	}
+	return lines;
 }
 
 /**
@@ -10458,7 +10612,12 @@ function printJSXElement(node, path, options, print) {
 				currentTextEndNode = null;
 			}
 
-			if (child.type === 'JSXExpressionContainer') {
+			if (isJSXWhitespaceExpression(child)) {
+				// `{" "}` is a significant space, like a space-only text child
+				childrenDocs.push(' ');
+				childNodes.push(child);
+				childEndNodes.push(child);
+			} else if (child.type === 'JSXExpressionContainer') {
 				// Handle JSX expression containers
 				childrenDocs.push([
 					...printTemplateChildLeadingComments(child),
@@ -10505,13 +10664,7 @@ function printJSXElement(node, path, options, print) {
 		childrenDocs.length === 1 &&
 		typeof childrenDocs[0] === 'string'
 	) {
-		// The open tag breaks for attributes independently; the text+closing get
-		// their own group so the text only drops to its own (filled) lines when it
-		// itself overflows — otherwise it hugs `>text</tag>`.
-		return [
-			openingTag,
-			group([indent([softline, printRawText(childrenDocs[0])]), softline, '</', tagName, '>']),
-		];
+		return printSingleTextJSXChild(openingTag, tagName, childrenDocs[0], options);
 	}
 	const meaningfulChildren = node.children.filter(
 		(child) => child.type !== 'JSXText' || child.value.trim(),
@@ -10540,16 +10693,35 @@ function printJSXElement(node, path, options, print) {
 	) {
 		return group([openingTag, childrenDocs[0], '</', tagName, '>']);
 	}
+	/** @type {JSXChildEntry[]} */
+	const childEntries = childrenDocs.map((childDoc, index) => {
+		const node = childNodes[index];
+		const endNode = childEndNodes[index];
+		if (typeof childDoc !== 'string') {
+			return { doc: childDoc, glue: childDoc, node, endNode };
+		}
+		if (isJSXWhitespaceOnly(childDoc)) {
+			return { doc: '', glue: '', node, endNode, space: true };
+		}
+		const { leading, trailing } = getJSXTextEdgeSpaces(childDoc);
+		return {
+			doc: printRawText(childDoc),
+			glue: childDoc,
+			node,
+			endNode,
+			leadingSpace: leading,
+			trailingSpace: trailing,
+		};
+	});
 	// Multiple children or complex children - format with line breaks. Text runs
 	// fill/wrap to printWidth. Children with no whitespace between them in the
 	// source (`{a}/{b}`) stay glued as a single unit.
 	const multilineElement = printMultilineJSXChildren(
 		openingTag,
 		tagName,
-		childrenDocs,
-		childNodes,
-		childEndNodes,
+		childEntries,
 		closingCommentDocs,
+		options,
 	);
 
 	// Text mixed with simple expressions, written on one line, stays on one line
@@ -10567,7 +10739,7 @@ function printJSXElement(node, path, options, print) {
 		)
 	) {
 		return conditionalGroup([
-			group([openingTag, ...childrenDocs, '</', tagName, '>']),
+			group([openingTag, ...printJSXChildrenOnOneLine(childEntries), '</', tagName, '>']),
 			multilineElement,
 		]);
 	}
@@ -10576,50 +10748,96 @@ function printJSXElement(node, path, options, print) {
 }
 
 /**
- * Print an element with its children on their own lines between the tags.
- * Text runs fill/wrap to printWidth, children with no whitespace between them
- * in the source (`{a}/{b}`) stay glued as a single unit, and one authored
- * blank line between children is kept.
+ * Print an element whose only child is text written on one line. The text
+ * hugs the tags when it fits and otherwise fills its own lines. A space at
+ * either end of the text is significant: it stays a space against the tags
+ * and, like Prettier's `jsxWhitespace`, prints as `{" "}` once the text moves
+ * onto its own lines, where a plain space would be dropped.
  * @param {Doc} openingTag - The printed opening tag
  * @param {Doc} tagName - The printed tag name
- * @param {Doc[]} childrenDocs - The printed children, text runs as strings
- * @param {any[]} childNodes - The first source node behind each printed child
- * @param {any[]} childEndNodes - The last source node behind each printed child
- * @param {Doc[]} closingCommentDocs - Comments before the closing tag
+ * @param {string} text - The text, with whitespace runs collapsed
+ * @param {TsrxFormatOptions} options
  * @returns {Doc}
  */
-function printMultilineJSXChildren(
-	openingTag,
-	tagName,
-	childrenDocs,
-	childNodes,
-	childEndNodes,
-	closingCommentDocs,
-) {
-	const formattedChildren = [];
-	for (let i = 0; i < childrenDocs.length; i++) {
-		const unitEntries = [childrenDocs[i]];
-		while (i < childrenDocs.length - 1 && isGluedJSXPair(childEndNodes[i], childNodes[i + 1])) {
-			i++;
-			unitEntries.push(childrenDocs[i]);
-		}
-		if (unitEntries.length === 1) {
-			const childDoc = unitEntries[0];
-			formattedChildren.push(typeof childDoc === 'string' ? printRawText(childDoc) : childDoc);
-		} else {
-			formattedChildren.push(printGluedJSXChildren(unitEntries));
-		}
-		if (i < childrenDocs.length - 1) {
-			// Preserve a single authored blank line between children (2+ collapse to 1).
-			const blank = getBlankLinesBetweenNodes(childNodes[i], leadingAnchor(childNodes[i + 1])) > 0;
-			formattedChildren.push(blank ? [hardline, hardline] : hardline);
-		}
+function printSingleTextJSXChild(openingTag, tagName, text, options) {
+	if (isJSXWhitespaceOnly(text)) {
+		return [openingTag, ' </', tagName, '>'];
 	}
+	const { leading, trailing } = getJSXTextEdgeSpaces(text);
+	if (!leading && !trailing) {
+		// The open tag breaks for attributes independently; the text+closing get
+		// their own group so the text only drops to its own (filled) lines when it
+		// itself overflows — otherwise it hugs `>text</tag>`.
+		return [
+			openingTag,
+			group([indent([softline, printRawText(text)]), softline, '</', tagName, '>']),
+		];
+	}
+	const rawJsxWhitespace = getRawJSXWhitespace(options);
+	return [
+		openingTag,
+		conditionalGroup([
+			[leading ? ' ' : '', printRawText(text), trailing ? ' ' : '', '</', tagName, '>'],
+			[
+				indent([
+					hardline,
+					leading ? [rawJsxWhitespace, hardline] : '',
+					printRawText(text, trailing ? rawJsxWhitespace : ''),
+				]),
+				hardline,
+				'</',
+				tagName,
+				'>',
+			],
+		]),
+	];
+}
 
-	// Build the final element
+/**
+ * Print the children of an element written on one line, for the layout that
+ * keeps them there. Text prints as written, and each significant space, from
+ * text or from `{" "}`, prints as one space.
+ * @param {JSXChildEntry[]} entries
+ * @returns {Doc[]}
+ */
+function printJSXChildrenOnOneLine(entries) {
+	/** @type {Doc[]} */
+	const parts = [];
+	let hasSpace = false;
+	for (const entry of entries) {
+		if (entry.space) {
+			hasSpace = true;
+			continue;
+		}
+		if (hasSpace || entry.leadingSpace) {
+			parts.push(' ');
+		}
+		parts.push(typeof entry.glue === 'string' ? entry.glue.trim() : entry.glue);
+		hasSpace = !!entry.trailingSpace;
+	}
+	if (hasSpace) {
+		parts.push(' ');
+	}
+	return parts;
+}
+
+/**
+ * Print an element with its children on their own lines between the tags.
+ * Text runs fill/wrap to printWidth, children with no whitespace between them
+ * in the source (`{a}/{b}`) or with a significant space between them stay
+ * together as a single unit, and one authored blank line between children is
+ * kept.
+ * @param {Doc} openingTag - The printed opening tag
+ * @param {Doc} tagName - The printed tag name
+ * @param {JSXChildEntry[]} childEntries - The children
+ * @param {Doc[]} closingCommentDocs - Comments before the closing tag
+ * @param {TsrxFormatOptions} options
+ * @returns {Doc}
+ */
+function printMultilineJSXChildren(openingTag, tagName, childEntries, closingCommentDocs, options) {
 	return group([
 		openingTag,
-		indent([hardline, ...formattedChildren, ...closingCommentDocs]),
+		indent([hardline, ...printJSXChildLines(childEntries, options), ...closingCommentDocs]),
 		hardline,
 		'</',
 		tagName,
@@ -10658,10 +10876,10 @@ function printJSXFragment(node, path, options, print) {
 		return group(['<>', path.call(print, 'children', 0), '</>']);
 	}
 
-	// Format children - filter out empty text nodes. childNodes tracks the source
-	// node behind each doc so the join can preserve authored blank lines.
-	const childrenDocs = [];
-	const childNodes = [];
+	// Format children - filter out empty text nodes. Each entry tracks the source
+	// node behind its doc so the join can preserve authored blank lines.
+	/** @type {JSXChildEntry[]} */
+	const childEntries = [];
 	for (let i = 0; i < node.children.length; i++) {
 		const child = node.children[i];
 
@@ -10669,86 +10887,92 @@ function printJSXFragment(node, path, options, print) {
 			if (hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (child))) {
 				const printedChild = path.call(print, 'children', i);
 				if (printedChild !== '') {
-					childrenDocs.push(printedChild);
-					childNodes.push(child);
+					childEntries.push({ doc: printedChild, glue: printedChild, node: child, endNode: child });
+				}
+				continue;
+			}
+			if (isJSXWhitespaceOnly(child.value)) {
+				// A space between children, or against the tags, is significant.
+				// Whitespace with a line break is layout.
+				if (!/[\r\n]/u.test(child.value)) {
+					childEntries.push({ doc: '', glue: '', node: child, endNode: child, space: true });
 				}
 				continue;
 			}
 			// Handle JSX text nodes - trim whitespace and only include if not empty
 			const text = printJSXTextChild(child.value);
 			if (text) {
-				childrenDocs.push(text);
-				childNodes.push(child);
+				const { leading, trailing } = getJSXTextEdgeSpaces(child.value);
+				childEntries.push({
+					doc: text,
+					glue: text,
+					node: child,
+					endNode: child,
+					leadingSpace: leading,
+					trailingSpace: trailing,
+				});
 			}
+		} else if (isJSXWhitespaceExpression(child)) {
+			// `{" "}` is a significant space, like a space-only text child
+			childEntries.push({ doc: '', glue: '', node: child, endNode: child, space: true });
 		} else if (child.type === 'JSXExpressionContainer') {
 			// Handle JSX expression containers
-			childrenDocs.push([
+			const printedChild = [
 				...printTemplateChildLeadingComments(child),
 				'{',
 				path.call(print, 'children', i, 'expression'),
 				'}',
 				...printTemplateChildTrailingComments(child),
-			]);
-			childNodes.push(child);
+			];
+			childEntries.push({ doc: printedChild, glue: printedChild, node: child, endNode: child });
 		} else {
 			// Handle nested JSX elements and fragments
-			childrenDocs.push(path.call(print, 'children', i));
-			childNodes.push(child);
+			const printedChild = path.call(print, 'children', i);
+			childEntries.push({ doc: printedChild, glue: printedChild, node: child, endNode: child });
 		}
 	}
 
 	// Check if content can be inlined (single text node or single expression)
-	if (
-		childrenDocs.length === 1 &&
-		typeof childrenDocs[0] === 'string' &&
-		closingCommentDocs.length === 0
-	) {
-		return ['<>', childrenDocs[0], '</>'];
+	const singleEntry = childEntries.length === 1 ? childEntries[0] : null;
+	if (singleEntry && typeof singleEntry.doc === 'string' && closingCommentDocs.length === 0) {
+		// A significant space against the tags stays: `<> </>`, `<> text </>`.
+		if (singleEntry.space) {
+			return '<> </>';
+		}
+		return [
+			'<>',
+			singleEntry.leadingSpace ? ' ' : '',
+			singleEntry.doc,
+			singleEntry.trailingSpace ? ' ' : '',
+			'</>',
+		];
 	}
 	const meaningfulChildren = node.children.filter(
 		(child) => child.type !== 'JSXText' || child.value.trim(),
 	);
 	if (
-		childrenDocs.length === 1 &&
+		singleEntry &&
 		meaningfulChildren.length === 1 &&
 		meaningfulChildren[0].type === 'JSXElement' &&
 		wasOriginallySingleLine(node) &&
 		closingCommentDocs.length === 0 &&
-		!willBreak(childrenDocs[0])
+		!willBreak(singleEntry.doc)
 	) {
 		// Keep the fragment inline when it fits; otherwise expand `<>` onto its own
 		// lines so a breaking single child reads as `<>\n  <Child …/>\n</>` rather than
 		// `<><Child` with only the child's attributes broken.
 		return conditionalGroup([
-			['<>', childrenDocs[0], '</>'],
-			group(['<>', indent([hardline, childrenDocs[0]]), hardline, '</>']),
+			['<>', singleEntry.doc, '</>'],
+			group(['<>', indent([hardline, singleEntry.doc]), hardline, '</>']),
 		]);
 	}
 
 	// Multiple children or complex children - format with line breaks. Children
-	// with no whitespace between them in the source (`{a}/{b}`) stay glued as a
-	// single unit.
-	const formattedChildren = [];
-	for (let i = 0; i < childrenDocs.length; i++) {
-		const unitEntries = [childrenDocs[i]];
-		while (i < childrenDocs.length - 1 && isGluedJSXPair(childNodes[i], childNodes[i + 1])) {
-			i++;
-			unitEntries.push(childrenDocs[i]);
-		}
-		formattedChildren.push(
-			unitEntries.length === 1 ? unitEntries[0] : printGluedJSXChildren(unitEntries),
-		);
-		if (i < childrenDocs.length - 1) {
-			// Preserve a single authored blank line between children (2+ collapse to 1).
-			const blank = getBlankLinesBetweenNodes(childNodes[i], leadingAnchor(childNodes[i + 1])) > 0;
-			formattedChildren.push(blank ? [hardline, hardline] : hardline);
-		}
-	}
-
-	// Build the final fragment
+	// with no whitespace between them in the source (`{a}/{b}`), or with a
+	// significant space between them, stay together as a single unit.
 	return group([
 		'<>',
-		indent([hardline, ...formattedChildren, ...closingCommentDocs]),
+		indent([hardline, ...printJSXChildLines(childEntries, options), ...closingCommentDocs]),
 		hardline,
 		'</>',
 	]);
