@@ -82,7 +82,9 @@ function DynamicSwitchApp() @{
 			onClick={() => {
 				tag.value = tag.value === 'section' ? 'article' : 'section';
 			}}
-		>{'toggle'}</button>
+		>
+			{'toggle'}
+		</button>
 	</>
 }
 
@@ -94,12 +96,8 @@ function ExplicitTextApp() @{
 	<>
 		<div class="explicit-text-markup">{String(markup)}</div>
 		<div class="explicit-text-boolean">{String(hidden)}</div>
-		<div class="explicit-text-null">
-			{empty == null ? '' : String(empty)}
-		</div>
-		<div class="explicit-text-undefined">
-			{missing == null ? '' : String(missing)}
-		</div>
+		<div class="explicit-text-null">{empty == null ? '' : String(empty)}</div>
+		<div class="explicit-text-undefined">{missing == null ? '' : String(missing)}</div>
 	</>
 }
 
@@ -112,7 +110,9 @@ function ExplicitHtmlApp() @{
 			onClick={() => {
 				markup.value = '<strong class="html-node">updated</strong>';
 			}}
-		>update</button>
+		>
+			update
+		</button>
 	</>
 }
 
@@ -128,13 +128,17 @@ function SpreadHtmlApp() @{
 			onClick={() => {
 				spreadProps.value = { innerHTML: '<i class="html-node">spread update</i>' };
 			}}
-		>spread</button>
+		>
+			spread
+		</button>
 		<button
 			class="spread-html-update-markup"
 			onClick={() => {
 				markup.value = '<strong class="html-node">updated</strong>';
 			}}
-		>markup</button>
+		>
+			markup
+		</button>
 	</>
 }
 
@@ -152,14 +156,18 @@ function ElementRefApp() @{
 			element_ref_captured = node;
 		}}
 		class="ref-target"
-	>ref test</div>
+	>
+		ref test
+	</div>
 }
 
 function KeywordRefCallbackApp() @{
 	function capture(node: HTMLDivElement | null) {
 		keyword_ref_callback_captured = node;
 	}
-	<div ref={capture} class="keyword-ref-target">{'keyword ref'}</div>
+	<div ref={capture} class="keyword-ref-target">
+		{'keyword ref'}
+	</div>
 }
 
 function MultiDomRefApp() @{
@@ -348,7 +356,9 @@ function CounterApp() @{
 	const count = ref(0);
 	<>
 		<p class="count">{count.value}</p>
-		<button class="inc" onClick={() => count.value++}>{'+'}</button>
+		<button class="inc" onClick={() => count.value++}>
+			{'+'}
+		</button>
 	</>
 }
 
@@ -361,7 +371,9 @@ function ReactiveStateToDestructuredParamApp() @{
 	<>
 		<p class="reactive-local-count">{state.count}</p>
 		<DestructuredParamChild count={state.count} />
-		<button class="reactive-inc" onClick={() => state.count++}>{'+'}</button>
+		<button class="reactive-inc" onClick={() => state.count++}>
+			{'+'}
+		</button>
 	</>
 }
 
@@ -369,14 +381,20 @@ function ConditionalRefsApp() @{
 	const count = ref(0);
 	const skip = ref(false);
 	<>
-		<button class="early-skip" onClick={() => (skip.value = !skip.value)}>{'skip'}</button>
+		<button class="early-skip" onClick={() => (skip.value = !skip.value)}>
+			{'skip'}
+		</button>
 		@if (!skip.value) {
 			const doubled = ref(0);
 			<>
 				<p class="early-count">{count.value}</p>
 				<p class="early-doubled">{doubled.value}</p>
-				<button class="early-inc" onClick={() => count.value++}>{'inc'}</button>
-				<button class="early-double" onClick={() => doubled.value++}>{'double'}</button>
+				<button class="early-inc" onClick={() => count.value++}>
+					{'inc'}
+				</button>
+				<button class="early-double" onClick={() => doubled.value++}>
+					{'double'}
+				</button>
 			</>
 		}
 	</>
@@ -392,7 +410,9 @@ function ProvideChild() @{
 function BareJsxConditionalApp() @{
 	const skip = ref(true);
 	<>
-		<button class="bare-toggle" onClick={() => (skip.value = !skip.value)}>{'toggle'}</button>
+		<button class="bare-toggle" onClick={() => (skip.value = !skip.value)}>
+			{'toggle'}
+		</button>
 		@if (!skip.value) {
 			<p class="bare-continuation">{'visible'}</p>
 		}
@@ -402,7 +422,9 @@ function BareJsxConditionalApp() @{
 function ProvideConditionalApp() @{
 	const skip = ref(true);
 	<>
-		<button class="provide-toggle" onClick={() => (skip.value = !skip.value)}>{'toggle'}</button>
+		<button class="provide-toggle" onClick={() => (skip.value = !skip.value)}>
+			{'toggle'}
+		</button>
 		@if (!skip.value) {
 			provide('provide-test-key', 'dark');
 			<ProvideChild />
@@ -414,8 +436,12 @@ function WatchConditionalApp() @{
 	const skip = ref(true);
 	const value = ref(0);
 	<>
-		<button class="watch-toggle" onClick={() => (skip.value = !skip.value)}>{'toggle'}</button>
-		<button class="watch-inc" onClick={() => value.value++}>{'inc'}</button>
+		<button class="watch-toggle" onClick={() => (skip.value = !skip.value)}>
+			{'toggle'}
+		</button>
+		<button class="watch-inc" onClick={() => value.value++}>
+			{'inc'}
+		</button>
 		@if (!skip.value) {
 			watch(value, () => {
 				watch_fire_count++;
@@ -429,11 +455,12 @@ function WatchEffectConditionalApp() @{
 	const skip = ref(true);
 	const value = ref(0);
 	<>
-		<button
-			class="watch-effect-toggle"
-			onClick={() => (skip.value = !skip.value)}
-		>{'toggle'}</button>
-		<button class="watch-effect-inc" onClick={() => value.value++}>{'inc'}</button>
+		<button class="watch-effect-toggle" onClick={() => (skip.value = !skip.value)}>
+			{'toggle'}
+		</button>
+		<button class="watch-effect-inc" onClick={() => value.value++}>
+			{'inc'}
+		</button>
 		@if (!skip.value) {
 			watchEffect(() => {
 				void value.value;
@@ -452,7 +479,9 @@ function IfReactiveApp() @{
 		} @else {
 			<span class="hidden">{'hidden'}</span>
 		}
-		<button class="toggle" onClick={() => (show.value = !show.value)}>{'toggle'}</button>
+		<button class="toggle" onClick={() => (show.value = !show.value)}>
+			{'toggle'}
+		</button>
 	</>
 }
 
@@ -506,10 +535,16 @@ function ForReactiveApp() @{
 	const items = ref(['a', 'b', 'c']);
 	<>
 		@for (const item of items.value) {
-			<li class="item" key={item}>{item}</li>
+			<li class="item" key={item}>
+				{item}
+			</li>
 		}
-		<button class="add" onClick={() => (items.value = [...items.value, 'd'])}>{'add'}</button>
-		<button class="remove" onClick={() => (items.value = items.value.slice(1))}>{'remove'}</button>
+		<button class="add" onClick={() => (items.value = [...items.value, 'd'])}>
+			{'add'}
+		</button>
+		<button class="remove" onClick={() => (items.value = items.value.slice(1))}>
+			{'remove'}
+		</button>
 	</>
 }
 
@@ -517,7 +552,9 @@ function ForFilteredApp() @{
 	const items = ref(['a', '', 'c']);
 	const visibleItems = () => items.value.filter(Boolean);
 	@for (const item of visibleItems()) {
-		<li class="continue-item" key={item}>{item}</li>
+		<li class="continue-item" key={item}>
+			{item}
+		</li>
 	}
 }
 
@@ -527,18 +564,18 @@ function ForIndexReactiveApp() @{
 		@for (const item of items.value; index i) {
 			<li class="indexed-item">{`${i}:${item}`}</li>
 		}
-		<button
-			class="prepend"
-			onClick={() => (items.value = ['z', ...items.value])}
-		>{'prepend'}</button>
+		<button class="prepend" onClick={() => (items.value = ['z', ...items.value])}>
+			{'prepend'}
+		</button>
 		<button
 			class="drop-middle"
 			onClick={() => (items.value = [items.value[0], ...items.value.slice(2)])}
-		>{'drop middle'}</button>
-		<button
-			class="reverse"
-			onClick={() => (items.value = [...items.value].reverse())}
-		>{'reverse'}</button>
+		>
+			{'drop middle'}
+		</button>
+		<button class="reverse" onClick={() => (items.value = [...items.value].reverse())}>
+			{'reverse'}
+		</button>
 	</>
 }
 
@@ -560,10 +597,9 @@ function ForKeyedStateApp() @{
 		@for (const item of items.value; key item.id) {
 			<KeyedRow {item} />
 		}
-		<button
-			class="reverse-keyed"
-			onClick={() => (items.value = [...items.value].reverse())}
-		>{'reverse'}</button>
+		<button class="reverse-keyed" onClick={() => (items.value = [...items.value].reverse())}>
+			{'reverse'}
+		</button>
 		<button
 			class="rename-beta"
 			onClick={() =>
@@ -571,7 +607,9 @@ function ForKeyedStateApp() @{
 					item.id === 'b' ? { ...item, label: 'Bravo' } : item,
 				))
 			}
-		>{'rename'}</button>
+		>
+			{'rename'}
+		</button>
 	</>
 }
 
@@ -585,10 +623,9 @@ function ForJsxKeyedStateApp() @{
 		@for (const item of items.value) {
 			<KeyedRow key={item.id} {item} />
 		}
-		<button
-			class="reverse-jsx-keyed"
-			onClick={() => (items.value = [...items.value].reverse())}
-		>{'reverse'}</button>
+		<button class="reverse-jsx-keyed" onClick={() => (items.value = [...items.value].reverse())}>
+			{'reverse'}
+		</button>
 		<button
 			class="rename-jsx-keyed-beta"
 			onClick={() =>
@@ -596,7 +633,9 @@ function ForJsxKeyedStateApp() @{
 					item.id === 'b' ? { ...item, label: 'Bravo' } : item,
 				))
 			}
-		>{'rename'}</button>
+		>
+			{'rename'}
+		</button>
 	</>
 }
 
@@ -610,10 +649,9 @@ function ForIndexKeyedStateApp() @{
 		@for (const item of items.value; index i; key item.id) {
 			<p class={`indexed-keyed-row row-${item.id}`}>{`${i}:${item.label}`}</p>
 		}
-		<button
-			class="reverse-index-keyed"
-			onClick={() => (items.value = [...items.value].reverse())}
-		>{'reverse'}</button>
+		<button class="reverse-index-keyed" onClick={() => (items.value = [...items.value].reverse())}>
+			{'reverse'}
+		</button>
 	</>
 }
 
@@ -630,7 +668,9 @@ function ForJsxIndexKeyedApp() @{
 		<button
 			class="reverse-jsx-index-keyed"
 			onClick={() => (items.value = [...items.value].reverse())}
-		>{'reverse'}</button>
+		>
+			{'reverse'}
+		</button>
 	</>
 }
 
@@ -651,7 +691,9 @@ function ForNestedIndexKeyedApp() @{
 		<button
 			class="reverse-nested-index-keyed"
 			onClick={() => (items.value = [...items.value].reverse())}
-		>{'reverse'}</button>
+		>
+			{'reverse'}
+		</button>
 		<button
 			class="rename-nested-index-keyed-beta"
 			onClick={() =>
@@ -659,7 +701,9 @@ function ForNestedIndexKeyedApp() @{
 					item.id === 'b' ? { ...item, label: 'Bravo' } : item,
 				))
 			}
-		>{'rename'}</button>
+		>
+			{'rename'}
+		</button>
 	</>
 }
 
@@ -675,7 +719,9 @@ function ForImplicitIndexKeyFragmentApp() @{
 		<button
 			class="reverse-fragment-index"
 			onClick={() => (items.value = [...items.value].reverse())}
-		>{'reverse'}</button>
+		>
+			{'reverse'}
+		</button>
 	</>
 }
 
@@ -700,7 +746,9 @@ function ForDestructuredKeyedStateApp() @{
 		<button
 			class="reverse-destructured-keyed"
 			onClick={() => (items.value = [...items.value].reverse())}
-		>{'reverse'}</button>
+		>
+			{'reverse'}
+		</button>
 		<button
 			class="rename-destructured-keyed-beta"
 			onClick={() =>
@@ -708,7 +756,9 @@ function ForDestructuredKeyedStateApp() @{
 					item.id === 'b' ? { ...item, label: 'Bravo' } : item,
 				))
 			}
-		>{'rename'}</button>
+		>
+			{'rename'}
+		</button>
 	</>
 }
 
@@ -726,8 +776,12 @@ function SwitchReactiveApp() @{
 				<div class="page">{'404'}</div>
 			}
 		}
-		<button class="go-about" onClick={() => (page.value = 'about')}>{'about'}</button>
-		<button class="go-unknown" onClick={() => (page.value = 'other')}>{'other'}</button>
+		<button class="go-about" onClick={() => (page.value = 'about')}>
+			{'about'}
+		</button>
+		<button class="go-unknown" onClick={() => (page.value = 'other')}>
+			{'other'}
+		</button>
 	</>
 }
 
@@ -776,10 +830,14 @@ function ErrorToggleApp() @{
 						fail.value = false;
 						reset();
 					}}
-				>{'reset'}</button>
+				>
+					{'reset'}
+				</button>
 			</>
 		}
-		<button class="trigger-error" onClick={() => (fail.value = true)}>{'break'}</button>
+		<button class="trigger-error" onClick={() => (fail.value = true)}>
+			{'break'}
+		</button>
 	</>
 }
 
@@ -814,7 +872,9 @@ function IfInsideTryApp() @{
 		} @catch (err) {
 			<p class="caught">{'error'}</p>
 		}
-		<button class="toggle" onClick={() => (show.value = !show.value)}>{'toggle'}</button>
+		<button class="toggle" onClick={() => (show.value = !show.value)}>
+			{'toggle'}
+		</button>
 	</>
 }
 
@@ -823,12 +883,16 @@ function ForInsideTryApp() @{
 	<>
 		@try {
 			@for (const item of items.value) {
-				<span class="try-item" key={item}>{item}</span>
+				<span class="try-item" key={item}>
+					{item}
+				</span>
 			}
 		} @catch (err) {
 			<p class="caught">{'error'}</p>
 		}
-		<button class="add" onClick={() => (items.value = [...items.value, 'z'])}>{'add'}</button>
+		<button class="add" onClick={() => (items.value = [...items.value, 'z'])}>
+			{'add'}
+		</button>
 	</>
 }
 
@@ -850,8 +914,12 @@ function SwitchInsideTryApp() @{
 		} @catch (err) {
 			<p class="caught">{'error'}</p>
 		}
-		<button class="go-about" onClick={() => (page.value = 'about')}>{'about'}</button>
-		<button class="go-unknown" onClick={() => (page.value = 'other')}>{'other'}</button>
+		<button class="go-about" onClick={() => (page.value = 'about')}>
+			{'about'}
+		</button>
+		<button class="go-unknown" onClick={() => (page.value = 'other')}>
+			{'other'}
+		</button>
 	</>
 }
 

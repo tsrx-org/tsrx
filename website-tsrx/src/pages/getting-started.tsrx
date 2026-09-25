@@ -395,7 +395,9 @@ export function GettingStartedPage() @{
 						<img class="header-logo" src="/images/tsrx-mark.svg?v=4" alt="TSRX logo" />
 					</a>
 					<nav class="masthead-nav">
-						<a href="/getting-started" aria-current="page">Getting Started</a>
+						<a href="/getting-started" aria-current="page">
+							Getting Started
+						</a>
 						<a href="/features">Features</a>
 						<a href="/specification">Specification</a>
 						<a href="/playground">Playground</a>
@@ -406,7 +408,9 @@ export function GettingStartedPage() @{
 						<a href="https://github.com/tsrx-org/tsrx" target="_blank" rel="noopener noreferrer">
 							GitHub
 						</a>
-						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a>
+						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">
+							llms.txt
+						</a>
 					</nav>
 				</header>
 
@@ -448,7 +452,9 @@ export function GettingStartedPage() @{
 								<>
 									<p class="side-nav-heading">{group.heading}</p>
 									@for (const item of group.items) {
-										<a class="side-nav-link" href={`#${item.id}`}>{item.label}</a>
+										<a class="side-nav-link" href={`#${item.id}`}>
+											{item.label}
+										</a>
 									}
 								</>
 							}
@@ -475,8 +481,7 @@ export function GettingStartedPage() @{
 								modules into standard React components with sibling-scoped CSS.
 							</p>
 							<p class="section-body">
-								Assigning a
-								<code class="inline-code">{'<style>'}</code>
+								Assigning a<code class="inline-code">{'<style>'}</code>
 								block to a variable gives you a theme with
 								<code class="inline-code">$class</code>, its hash class.
 								<code class="inline-code">{'<style apply={theme} />'}</code>
@@ -517,8 +522,7 @@ export function GettingStartedPage() @{
 								if you want to avoid pulling in the full compat layer.
 							</p>
 							<p class="section-body">
-								Assigning a
-								<code class="inline-code">{'<style>'}</code>
+								Assigning a<code class="inline-code">{'<style>'}</code>
 								block to a variable gives you a theme with
 								<code class="inline-code">$class</code>, its hash class.
 								<code class="inline-code">{'<style apply={theme} />'}</code>
@@ -746,8 +750,7 @@ export function GettingStartedPage() @{
 								set
 								<code class="inline-code">jsxImportSource: "vue-jsx-vapor"</code>
 								in your
-								<code class="inline-code">tsconfig.json</code>
-								.
+								<code class="inline-code">tsconfig.json</code>.
 							</p>
 							<p class="section-body">
 								Sibling-scoped
@@ -790,8 +793,7 @@ export function GettingStartedPage() @{
 								Like the Vite setup, editor typechecking should set
 								<code class="inline-code">jsxImportSource: "vue-jsx-vapor"</code>
 								in your
-								<code class="inline-code">tsconfig.json</code>
-								.
+								<code class="inline-code">tsconfig.json</code>.
 							</p>
 						</section>
 
@@ -819,8 +821,7 @@ export function GettingStartedPage() @{
 								Like the Vite and Rspack Vue setups, editor typechecking should set
 								<code class="inline-code">jsxImportSource: "vue-jsx-vapor"</code>
 								in your
-								<code class="inline-code">tsconfig.json</code>
-								.
+								<code class="inline-code">tsconfig.json</code>.
 							</p>
 						</section>
 
@@ -829,10 +830,7 @@ export function GettingStartedPage() @{
 							<h2 class="section-heading">Compile-time platform flags</h2>
 							<p class="section-body">
 								Select exactly one of
-								<code class="inline-code">web</code>
-								,
-								<code class="inline-code">ios</code>
-								, or
+								<code class="inline-code">web</code>,<code class="inline-code">ios</code>, or
 								<code class="inline-code">android</code>
 								in the active TypeScript project. The Vite, Rspack, Bun, and available React
 								Turbopack integrations read that inherited or project-referenced tsconfig setting
@@ -900,8 +898,7 @@ export function GettingStartedPage() @{
 							<p class="section-body">
 								The Ripple framework ships with TSRX support as standard. If you're using Ripple
 								with
-								<code class="inline-code">@ripple-ts/vite-plugin</code>
-								,
+								<code class="inline-code">@ripple-ts/vite-plugin</code>,
 								<code class="inline-code">.tsrx</code>
 								files work out of the box — no additional packages needed.
 							</p>
@@ -918,23 +915,17 @@ export function GettingStartedPage() @{
 								<code innerHTML={OCTANE_INSTALL_HTML} />
 							</pre>
 							<p class="section-body">
-								Add the Octane plugin to a normal Vite app. A
-								<code class="inline-code">.tsrx</code>
+								Add the Octane plugin to a normal Vite app. A<code class="inline-code">.tsrx</code>
 								file is always compiled by Octane; the same integration can also compile
 								Octane-owned
-								<code class="inline-code">.tsx</code>
-								,
-								<code class="inline-code">.ts</code>
-								, and
+								<code class="inline-code">.tsx</code>,<code class="inline-code">.ts</code>, and
 								<code class="inline-code">.js</code>
 								modules.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={OCTANE_VITE_CONFIG_HTML} />
 							</pre>
-							<p class="section-body">
-								Mount a TSRX component with Octane's root API:
-							</p>
+							<p class="section-body">Mount a TSRX component with Octane's root API:</p>
 							<pre class="code-block">
 								<code innerHTML={OCTANE_MOUNT_HTML} />
 							</pre>
@@ -944,10 +935,9 @@ export function GettingStartedPage() @{
 								and
 								<code class="inline-code">useEffect</code>
 								from
-								<code class="inline-code">octane</code>
-								. Octane derives omitted effect and memo dependency lists from their closures and
-								tracks hooks by call site, so conditional hooks are supported. DOM events are
-								native: use
+								<code class="inline-code">octane</code>. Octane derives omitted effect and memo
+								dependency lists from their closures and tracks hooks by call site, so conditional
+								hooks are supported. DOM events are native: use
 								<code class="inline-code">onInput</code>
 								for per-keystroke text updates, while
 								<code class="inline-code">onChange</code>
@@ -958,14 +948,15 @@ export function GettingStartedPage() @{
 								multiple TSRX target compilers, set
 								<code class="inline-code">{'"tsrx": { "compiler": "octane" }'}</code>
 								in the applicable
-								<code class="inline-code">tsconfig.json</code>
-								. See the
+								<code class="inline-code">tsconfig.json</code>. See the
 								<a
 									class="inline-link"
 									href="https://octanejs.dev/docs/build-tools"
 									target="_blank"
 									rel="noopener noreferrer"
-								>Octane build tools guide</a>
+								>
+									Octane build tools guide
+								</a>
 								for Rspack, Rsbuild, SSR, and mixed-toolchain setups.
 							</p>
 						</section>
@@ -1024,8 +1015,7 @@ export function GettingStartedPage() @{
 								when you want TypeScript itself to understand
 								<code class="inline-code">.tsrx</code>
 								files, especially outside TSRX Syntax for VS Code: other editors,
-								<code class="inline-code">tsserver</code>
-								, and command-line
+								<code class="inline-code">tsserver</code>, and command-line
 								<code class="inline-code">tsc</code>
 								workflows.
 							</p>
@@ -1034,12 +1024,11 @@ export function GettingStartedPage() @{
 							</pre>
 							<p class="section-body">
 								Then register it in your
-								<code class="inline-code">tsconfig.json</code>
-								. Keep your existing compiler options and add the
+								<code class="inline-code">tsconfig.json</code>. Keep your existing compiler options
+								and add the
 								<code class="inline-code">plugins</code>
 								entry under
-								<code class="inline-code">compilerOptions</code>
-								:
+								<code class="inline-code">compilerOptions</code>:
 							</p>
 							<pre class="code-block">
 								<code innerHTML={TYPESCRIPT_PLUGIN_CONFIG_HTML} />
@@ -1051,8 +1040,7 @@ export function GettingStartedPage() @{
 							</p>
 							<h3 class="subsection-heading">Command-line type checking</h3>
 							<p class="section-body">
-								The package also ships a
-								<code class="inline-code">tsrx-tsc</code>
+								The package also ships a<code class="inline-code">tsrx-tsc</code>
 								binary — a drop-in
 								<code class="inline-code">tsc</code>
 								wrapper that understands
@@ -1062,8 +1050,7 @@ export function GettingStartedPage() @{
 								workflow that needs to see your TSRX modules. Add a
 								<code class="inline-code">typecheck</code>
 								script to your
-								<code class="inline-code">package.json</code>
-								:
+								<code class="inline-code">package.json</code>:
 							</p>
 							<pre class="code-block">
 								<code innerHTML={TYPECHECK_SCRIPT_HTML} />
@@ -1074,8 +1061,7 @@ export function GettingStartedPage() @{
 								to type check the whole project, including
 								<code class="inline-code">.tsrx</code>
 								files, without emitting any output. It accepts the same flags as
-								<code class="inline-code">tsc</code>
-								.
+								<code class="inline-code">tsc</code>.
 							</p>
 						</section>
 
@@ -1088,14 +1074,15 @@ export function GettingStartedPage() @{
 									href="https://marketplace.visualstudio.com/items?itemName=TSRX.tsrx-vscode-plugin"
 									target="_blank"
 									rel="noopener noreferrer"
-								>TSRX Syntax for VS Code</a>
+								>
+									TSRX Syntax for VS Code
+								</a>
 								from the Visual Studio Code Marketplace for diagnostics, navigation, completions,
 								and TypeScript-aware editor support. Pair it with the official Prettier extension if
 								you want format-on-save support inside the editor.
 							</p>
 							<p class="section-body">
-								After that, opening a
-								<code class="inline-code">.tsrx</code>
+								After that, opening a<code class="inline-code">.tsrx</code>
 								file should give you syntax highlighting, diagnostics, go-to-definition, formatting,
 								and the rest of the normal editor loop without extra manual setup.
 							</p>
@@ -1104,29 +1091,23 @@ export function GettingStartedPage() @{
 						<section class="doc-section" id="zed">
 							<h2 class="section-heading">Zed</h2>
 							<p class="section-body">
-								Install the
-								{' '}
+								Install the{' '}
 								<a
 									class="inline-link"
 									href="https://zed.dev/extensions/tsrx"
 									target="_blank"
 									rel="noopener noreferrer"
-								>TSRX extension for Zed</a>
-								{' '}
+								>
+									TSRX extension for Zed
+								</a>{' '}
 								from the Zed Extension Marketplace for syntax highlighting and language-server
-								support. Open Zed's Extensions view and search for
-								{' '}
-								<code class="inline-code">TSRX</code>
-								{' '}
-								to install it.
+								support. Open Zed's Extensions view and search for{' '}
+								<code class="inline-code">TSRX</code> to install it.
 							</p>
 							<p class="section-body">
-								The extension uses a project-local
-								{' '}
-								<code class="inline-code">@tsrx/language-server</code>
-								{' '}
-								when available and otherwise downloads its pinned language-server version
-								automatically.
+								The extension uses a project-local{' '}
+								<code class="inline-code">@tsrx/language-server</code> when available and otherwise
+								downloads its pinned language-server version automatically.
 							</p>
 						</section>
 
@@ -1177,8 +1158,7 @@ export function GettingStartedPage() @{
 							<h3 class="subsection-heading">Codex</h3>
 							<p class="section-body">
 								For Codex, add the server to
-								<code class="inline-code">~/.codex/config.toml</code>
-								:
+								<code class="inline-code">~/.codex/config.toml</code>:
 							</p>
 							<pre class="code-block">
 								<code innerHTML={MCP_CODEX_CONFIG_HTML} />
@@ -1215,10 +1195,8 @@ export function GettingStartedPage() @{
 								<code class="inline-code">inspect-project</code>
 								so the agent can detect the runtime target, installed TSRX packages, and likely
 								project commands. For generated code, run
-								<code class="inline-code">format-tsrx</code>
-								,
-								<code class="inline-code">compile-tsrx</code>
-								, and then
+								<code class="inline-code">format-tsrx</code>,
+								<code class="inline-code">compile-tsrx</code>, and then
 								<code class="inline-code">analyze-tsrx</code>
 								when diagnostics need syntax-aware advice. For existing files, use
 								<code class="inline-code">validate-tsrx-file</code>
@@ -1233,7 +1211,9 @@ export function GettingStartedPage() @{
 								Now that TSRX is set up, explore the language syntax — components, control flow,
 								error boundaries, and more.
 							</p>
-							<a class="cta-link" href="/features">Explore the features →</a>
+							<a class="cta-link" href="/features">
+								Explore the features →
+							</a>
 						</section>
 					</main>
 				</div>

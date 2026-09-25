@@ -53,7 +53,9 @@ afterEach(() => {
 function Counter() @{
 	const [count, setCount] = useState(0);
 
-	<button class="count" onClick={() => setCount((current) => current + 1)}>{count}</button>
+	<button class="count" onClick={() => setCount((current) => current + 1)}>
+		{count}
+	</button>
 }
 
 function ConditionalHook({ visible }: { visible: boolean }) @{
@@ -85,10 +87,9 @@ function ForKeyedIfApp() @{
 				}
 			}
 		</ul>
-		<button
-			class="reverse-keyed-if"
-			onClick={() => setItems([...items].reverse())}
-		>{'reverse'}</button>
+		<button class="reverse-keyed-if" onClick={() => setItems([...items].reverse())}>
+			{'reverse'}
+		</button>
 	</>
 }
 
@@ -111,10 +112,9 @@ function ForKeyedSwitchApp() @{
 				}
 			}
 		</ul>
-		<button
-			class="reverse-keyed-switch"
-			onClick={() => setItems([...items].reverse())}
-		>{'reverse'}</button>
+		<button class="reverse-keyed-switch" onClick={() => setItems([...items].reverse())}>
+			{'reverse'}
+		</button>
 	</>
 }
 
@@ -162,7 +162,9 @@ function StyledApp() @{
 			class={css`
 				color: red;
 			`}
-		>{'styled'}</div>
+		>
+			{'styled'}
+		</div>
 	</div>
 }
 

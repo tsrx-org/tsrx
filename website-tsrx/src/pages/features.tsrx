@@ -590,7 +590,9 @@ export const FeaturesPage = () => @{
 					</a>
 					<nav class="masthead-nav">
 						<a href="/getting-started">Getting Started</a>
-						<a href="/features" aria-current="page">Features</a>
+						<a href="/features" aria-current="page">
+							Features
+						</a>
 						<a href="/specification">Specification</a>
 						<a href="/playground">Playground</a>
 						<a href="/blog">Blog</a>
@@ -600,7 +602,9 @@ export const FeaturesPage = () => @{
 						<a href="https://github.com/tsrx-org/tsrx" target="_blank" rel="noopener noreferrer">
 							GitHub
 						</a>
-						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">llms.txt</a>
+						<a href="/llms.txt" target="_blank" rel="noopener noreferrer">
+							llms.txt
+						</a>
 					</nav>
 				</header>
 				<div class="docs-layout">
@@ -625,7 +629,9 @@ export const FeaturesPage = () => @{
 						<nav>
 							<p class="side-nav-heading">Features</p>
 							@for (const item of NAV_ITEMS) {
-								<a class="side-nav-link" href={`#${item.id}`}>{item.label}</a>
+								<a class="side-nav-link" href={`#${item.id}`}>
+									{item.label}
+								</a>
 							}
 						</nav>
 					</aside>
@@ -639,37 +645,26 @@ export const FeaturesPage = () => @{
 								markup.
 							</p>
 							<p class="section-body">
-								In practice, components are ordinary TypeScript functions or
-								{' '}
-								<code class="inline-code">const</code>
-								{' '}
-								values. A component can use
-								{' '}
-								<code class="inline-code">{'@{...}'}</code>
-								{' '}
-								as the function body, giving you one place for local state, derived values, template
-								control flow, rendered elements, and scoped styles.
+								In practice, components are ordinary TypeScript functions or{' '}
+								<code class="inline-code">const</code> values. A component can use{' '}
+								<code class="inline-code">{'@{...}'}</code> as the function body, giving you one
+								place for local state, derived values, template control flow, rendered elements, and
+								scoped styles.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={COMPONENT_HTML} />
 							</pre>
 							<p class="section-body">
-								Export them like any other function:
-								{' '}
-								<code class="inline-code">{'export function Name() @{ <div /> }'}</code>
-								. The compiler turns that into the right component shape for the target you're
-								using.
+								Export them like any other function:{' '}
+								<code class="inline-code">{'export function Name() @{ <div /> }'}</code>. The
+								compiler turns that into the right component shape for the target you're using.
 							</p>
 							<p class="section-body">
 								When a bit of logic should stay plain JavaScript rather than render into the
-								template, put it in a normal function beside the markup. Use
-								{' '}
-								<code class="inline-code">{'function fn() { ... }'}</code>
-								{' '}
-								for ordinary control flow, then call helpers from event handlers or expressions:
-								{' '}
-								<code class="inline-code">{'onClick={fn}'}</code>
-								.
+								template, put it in a normal function beside the markup. Use{' '}
+								<code class="inline-code">{'function fn() { ... }'}</code> for ordinary control
+								flow, then call helpers from event handlers or expressions:{' '}
+								<code class="inline-code">{'onClick={fn}'}</code>.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={BAILOUT_HTML} />
@@ -679,25 +674,16 @@ export const FeaturesPage = () => @{
 							<h2 class="section-heading">Statement containers</h2>
 							<p class="section-body">
 								When a template scope mixes TypeScript setup with rendered output, wrap the setup in
-								<code class="inline-code">{'@{...}'}</code>
-								. TSRX treats everything before the final renderable child as script, then the
-								container must finish with exactly one output node.
+								<code class="inline-code">{'@{...}'}</code>. TSRX treats everything before the final
+								renderable child as script, then the container must finish with exactly one output
+								node.
 							</p>
 							<p class="section-body muted">
-								That final output can be a JSX element, a JSX fragment, or JSX control flow like
-								{' '}
-								<code class="inline-code">{'@if'}</code>
-								,
-								{' '}
-								<code class="inline-code">{'@for'}</code>
-								,
-								{' '}
-								<code class="inline-code">{'@switch'}</code>
-								, or
-								{' '}
-								<code class="inline-code">{'@try'}</code>
-								. It cannot be a bare expression container, and no script statements can appear
-								after it.
+								That final output can be a JSX element, a JSX fragment, or JSX control flow like{' '}
+								<code class="inline-code">{'@if'}</code>, <code class="inline-code">{'@for'}</code>,{' '}
+								<code class="inline-code">{'@switch'}</code>, or{' '}
+								<code class="inline-code">{'@try'}</code>. It cannot be a bare expression container,
+								and no script statements can appear after it.
 							</p>
 							<p class="section-body muted">
 								If the rendered part needs multiple siblings or text next to elements, wrap those
@@ -708,12 +694,8 @@ export const FeaturesPage = () => @{
 							</p>
 							<p class="section-body muted">
 								Control-flow bodies are implicit statement containers too:
-								<code class="inline-code">@if</code>
-								,
-								<code class="inline-code">@for</code>
-								,
-								<code class="inline-code">@switch</code>
-								, and
+								<code class="inline-code">@if</code>,<code class="inline-code">@for</code>,
+								<code class="inline-code">@switch</code>, and
 								<code class="inline-code">@try</code>
 								arms all use
 								<code class="inline-code">{'{}'}</code>
@@ -723,10 +705,9 @@ export const FeaturesPage = () => @{
 								If you write setup statements and then a bare JSX element inside a normal
 								<code class="inline-code">{'{}'}</code>
 								function body, the compiler will ask you to add the missing
-								<code class="inline-code">@</code>
-								. Plain braces are JavaScript; statement-container braces are
-								<code class="inline-code">{'@{...}'}</code>
-								.
+								<code class="inline-code">@</code>. Plain braces are JavaScript; statement-container
+								braces are
+								<code class="inline-code">{'@{...}'}</code>.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={TEMPLATE_STRUCTURE_HTML} />
@@ -749,10 +730,9 @@ export const FeaturesPage = () => @{
 								When a prop name matches the variable you're passing, you can use the shorthand
 								<code class="inline-code">{'{name}'}</code>
 								instead of
-								<code class="inline-code">{'name={name}'}</code>
-								. This works for any attribute or prop — including event handlers like
-								<code class="inline-code">{'{onClick}'}</code>
-								.
+								<code class="inline-code">{'name={name}'}</code>. This works for any attribute or
+								prop — including event handlers like
+								<code class="inline-code">{'{onClick}'}</code>.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={SHORTHAND_HTML} />
@@ -770,14 +750,8 @@ export const FeaturesPage = () => @{
 							</pre>
 							<p class="section-body">
 								This applies to all block-like contexts: statement containers and control flow
-								branches (
-								<code class="inline-code">@if</code>
-								,
-								<code class="inline-code">@for</code>
-								,
-								<code class="inline-code">@switch</code>
-								,
-								<code class="inline-code">@try</code>
+								branches (<code class="inline-code">@if</code>,<code class="inline-code">@for</code>
+								,<code class="inline-code">@switch</code>,<code class="inline-code">@try</code>
 								). Each one has its own scope.
 							</p>
 						</section>
@@ -785,19 +759,14 @@ export const FeaturesPage = () => @{
 							<h2 class="section-heading">Conditional rendering</h2>
 							<p class="section-body">
 								Use
-								<code class="inline-code">@if</code>
-								/
-								<code class="inline-code">else if</code>
-								/
+								<code class="inline-code">@if</code>/<code class="inline-code">else if</code>/
 								<code class="inline-code">else</code>
 								template expressions directly inside templates, or return them directly from a
 								component. Branches render their template output, while ordinary
 								<code class="inline-code">if</code>
 								statements in setup stay plain JavaScript for guard returns. Direct
-								<code class="inline-code">return</code>
-								,
-								<code class="inline-code">continue</code>
-								, and
+								<code class="inline-code">return</code>,<code class="inline-code">continue</code>,
+								and
 								<code class="inline-code">break</code>
 								are not allowed inside
 								<code class="inline-code">@if</code>
@@ -827,10 +796,8 @@ export const FeaturesPage = () => @{
 								when some items should not render. Use
 								<code class="inline-code">@empty</code>
 								for the no-items branch. Direct
-								<code class="inline-code">continue</code>
-								,
-								<code class="inline-code">break</code>
-								, and
+								<code class="inline-code">continue</code>,<code class="inline-code">break</code>,
+								and
 								<code class="inline-code">return</code>
 								statements are not allowed in
 								<code class="inline-code">@for</code>
@@ -838,17 +805,12 @@ export const FeaturesPage = () => @{
 							</p>
 							<p class="section-body">
 								Other JavaScript loops are not template rendering constructs: regular
-								<code class="inline-code">for</code>
-								,
-								<code class="inline-code">for...in</code>
-								,
-								<code class="inline-code">while</code>
-								, and
+								<code class="inline-code">for</code>,<code class="inline-code">for...in</code>,
+								<code class="inline-code">while</code>, and
 								<code class="inline-code">do...while</code>
 								are rejected in TSRX template scope. Move imperative loops into a nested function or
 								effect, or render collections with
-								<code class="inline-code">{'@for (... of ...)'}</code>
-								.
+								<code class="inline-code">{'@for (... of ...)'}</code>.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={FOR_HTML} />
@@ -879,9 +841,7 @@ export const FeaturesPage = () => @{
 							<h2 class="section-heading">Error boundaries</h2>
 							<p class="section-body">
 								Wrap components in
-								<code class="inline-code">@try</code>
-								/
-								<code class="inline-code">catch</code>
+								<code class="inline-code">@try</code>/<code class="inline-code">catch</code>
 								to create error boundaries. If a child component throws, the catch block renders its
 								fallback children.
 							</p>
@@ -891,8 +851,7 @@ export const FeaturesPage = () => @{
 							<p class="section-body">
 								The
 								<code class="inline-code">catch</code>
-								block also receives a
-								<code class="inline-code">reset</code>
+								block also receives a<code class="inline-code">reset</code>
 								function as its second argument. Calling
 								<code class="inline-code">reset()</code>
 								clears the error state and re-renders the children, which is useful for building
@@ -906,10 +865,7 @@ export const FeaturesPage = () => @{
 							<h2 class="section-heading">Async boundaries</h2>
 							<p class="section-body">
 								Wrap a component subtree in
-								<code class="inline-code">@try</code>
-								/
-								<code class="inline-code">pending</code>
-								/
+								<code class="inline-code">@try</code>/<code class="inline-code">pending</code>/
 								<code class="inline-code">catch</code>
 								to handle async children. While a lazy child or resource is in flight, the
 								<code class="inline-code">pending</code>
@@ -928,29 +884,20 @@ export const FeaturesPage = () => @{
 								Async work itself is expressed using the target's own lazy-loading primitive —
 								<code class="inline-code">lazy()</code>
 								from
-								<code class="inline-code">react</code>
-								,
-								<code class="inline-code">octane</code>
-								,
-								<code class="inline-code">preact/compat</code>
-								, or
-								<code class="inline-code">solid-js</code>
-								,
+								<code class="inline-code">react</code>,<code class="inline-code">octane</code>,
+								<code class="inline-code">preact/compat</code>, or
+								<code class="inline-code">solid-js</code>,
 								<code class="inline-code">defineVaporAsyncComponent()</code>
 								on Vue Vapor, and
 								<code class="inline-code">trackAsync()</code>
 								on Ripple. In Solid, Vue, and Ripple targets, returned TSRX templates are
 								synchronous and do not allow inline
-								<code class="inline-code">await</code>
-								. On React and Preact, template-body
+								<code class="inline-code">await</code>. On React and Preact, template-body
 								<code class="inline-code">await</code>
 								is supported and TSRX emits an async component function. An
 								<code class="inline-code">await</code>
 								inside an
-								<code class="inline-code">@for</code>
-								,
-								<code class="inline-code">@switch</code>
-								, or
+								<code class="inline-code">@for</code>,<code class="inline-code">@switch</code>, or
 								<code class="inline-code">@if</code>
 								body is awaited by that component, and a loop body finishes one item before it
 								starts the next.
@@ -974,9 +921,8 @@ export const FeaturesPage = () => @{
 								expression can evaluate to a string tag name like
 								<code class="inline-code">'section'</code>
 								or a component value, and the closing tag repeats the same expression:
-								<code class="inline-code">{'</{expression}>'}</code>
-								. No import is required; each target compiler lowers the tag to its own runtime
-								helper.
+								<code class="inline-code">{'</{expression}>'}</code>. No import is required; each
+								target compiler lowers the tag to its own runtime helper.
 							</p>
 							<p class="section-body">
 								The tag expression must be able to resolve to an element name: an identifier, member
@@ -1002,8 +948,7 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="scoped-styles">
 							<h2 class="section-heading">Scoped styles</h2>
 							<p class="section-body">
-								A
-								<code class="inline-code">{'<style>'}</code>
+								A<code class="inline-code">{'<style>'}</code>
 								block styles only the elements next to it and below it. The compiler rewrites every
 								selector in the block to also require a hash class: a class it adds to each element
 								the block reaches, so the block's selectors match only there. Rules never leak into
@@ -1013,8 +958,7 @@ export const FeaturesPage = () => @{
 								A block styles its siblings and everything below them
 							</h3>
 							<p class="section-body">
-								A
-								<code class="inline-code">{'<style>'}</code>
+								A<code class="inline-code">{'<style>'}</code>
 								block is a child of an element or a fragment. It styles the other children of that
 								list and everything below them. It never styles the element that contains it. To
 								style an element, put the block and the element side by side in a fragment.
@@ -1044,11 +988,9 @@ export const FeaturesPage = () => @{
 							</p>
 							<h3 class="subsection-heading">Put a block and its output in one fragment</h3>
 							<p class="section-body">
-								A
-								<code class="inline-code">{'@{ ... }'}</code>
+								A<code class="inline-code">{'@{ ... }'}</code>
 								body and every
-								<code class="inline-code">@if</code>,
-								<code class="inline-code">@for</code>,
+								<code class="inline-code">@if</code>,<code class="inline-code">@for</code>,
 								<code class="inline-code">@switch</code>, or
 								<code class="inline-code">@try</code>
 								branch render exactly one output node, and a
@@ -1083,8 +1025,7 @@ export const FeaturesPage = () => @{
 							</p>
 							<h3 class="subsection-heading">A block in a branch styles only that branch</h3>
 							<p class="section-body">
-								A
-								<code class="inline-code">{'<style>'}</code>
+								A<code class="inline-code">{'<style>'}</code>
 								block inside an
 								<code class="inline-code">@if</code>
 								or
@@ -1111,12 +1052,9 @@ export const FeaturesPage = () => @{
 							<h3 class="subsection-heading">Unused selectors are removed</h3>
 							<p class="section-body">
 								A selector that matches nothing the block can reach is removed from the output and
-								left behind as a
-								<code class="inline-code">
-									/* (unused) */
-								</code>
-								comment. That includes a selector that only matches the element containing the
-								block: the block cannot reach it.
+								left behind as a <code class="inline-code">{'/* (unused) */'}</code> comment. That
+								includes a selector that only matches the element containing the block: the block
+								cannot reach it.
 							</p>
 							<h3 class="subsection-heading">Escape the scope with :global()</h3>
 							<p class="section-body">
@@ -1170,8 +1108,7 @@ export const FeaturesPage = () => @{
 								<code class="inline-code">.note</code>
 								(0,2,0) beats a bare
 								<code class="inline-code">:global(.note)</code>
-								(0,1,0) from anywhere on the page; a
-								<code class="inline-code">theme.$class</code>
+								(0,1,0) from anywhere on the page; a<code class="inline-code">theme.$class</code>
 								or class-map rule carries its hash too, so it also beats a bare global; and a
 								prefixed
 								<code class="inline-code">.card :global(.note)</code>
@@ -1225,8 +1162,7 @@ export const FeaturesPage = () => @{
 									<tr>
 										<td>Style my own elements</td>
 										<td>
-											A
-											<code class="inline-code">{'<style>'}</code>
+											A<code class="inline-code">{'<style>'}</code>
 											block beside them; nothing global
 										</td>
 									</tr>
@@ -1268,8 +1204,7 @@ export const FeaturesPage = () => @{
 											<code class="inline-code">body</code>, resets, fonts
 										</td>
 										<td>
-											A
-											<code class="inline-code">.css</code>
+											A<code class="inline-code">.css</code>
 											file; a bare
 											<code class="inline-code">:global(body)</code>
 											only for page-level elements
@@ -1277,7 +1212,9 @@ export const FeaturesPage = () => @{
 									</tr>
 								</tbody>
 							</table>
-							<h3 class="subsection-heading" id="global-keyframes">Global Keyframes</h3>
+							<h3 class="subsection-heading" id="global-keyframes">
+								Global Keyframes
+							</h3>
 							<p class="section-body">
 								Keyframes are scoped by default: the compiler adds the style block's hash to each
 								animation name and rewrites matching
@@ -1316,14 +1253,12 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="style-composition">
 							<h2 class="section-heading">Style composition</h2>
 							<p class="section-body">
-								Assign a
-								<code class="inline-code">{'<style>'}</code>
+								Assign a<code class="inline-code">{'<style>'}</code>
 								block to a variable to get a theme you can hand to other scopes and components.
 							</p>
 							<h3 class="subsection-heading">Assigning a block gives you an object</h3>
 							<p class="section-body">
-								Assigning a
-								<code class="inline-code">{'<style>'}</code>
+								Assigning a<code class="inline-code">{'<style>'}</code>
 								expression to a variable turns it into an object instead of a scoped block. The
 								object has
 								<code class="inline-code">$class</code>, the block's own hash class, plus one key

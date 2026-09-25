@@ -39,7 +39,9 @@ function DynamicSwitchApp() @{
 		<button
 			class="dynamic-switch-toggle"
 			onClick={() => setTag(tag === 'section' ? 'article' : 'section')}
-		>{'toggle'}</button>
+		>
+			{'toggle'}
+		</button>
 	</>
 }
 
@@ -52,7 +54,9 @@ function ExplicitHtmlApp() @{
 			onClick={() => {
 				setMarkup('<strong class="html-node">updated</strong>');
 			}}
-		>{'update'}</button>
+		>
+			{'update'}
+		</button>
 	</>
 }
 
@@ -70,13 +74,17 @@ function SpreadHtmlApp() @{
 					dangerouslySetInnerHTML: { __html: '<i class="html-node">spread update</i>' },
 				});
 			}}
-		>{'spread'}</button>
+		>
+			{'spread'}
+		</button>
 		<button
 			class="spread-html-update-markup"
 			onClick={() => {
 				setMarkup('<strong class="html-node">updated</strong>');
 			}}
-		>{'markup'}</button>
+		>
+			{'markup'}
+		</button>
 	</>
 }
 
@@ -94,14 +102,18 @@ function ForFilteredApp() @{
 	const items = ['a', '', 'c'];
 	const visibleItems = items.filter(Boolean);
 	@for (const item of visibleItems) {
-		<li class="continue-item" key={item}>{item}</li>
+		<li class="continue-item" key={item}>
+			{item}
+		</li>
 	}
 }
 
 function ForOverSetApp() @{
 	const items = new Set<string>(['x', 'y', 'z']);
 	@for (const item of items) {
-		<li class="set-item" key={item}>{item}</li>
+		<li class="set-item" key={item}>
+			{item}
+		</li>
 	}
 }
 
@@ -112,7 +124,9 @@ function ForOverMapApp() @{
 		['c', 3],
 	]);
 	@for (const [key, value] of entries) {
-		<li class="map-item" {key}>{key + ':' + value}</li>
+		<li class="map-item" {key}>
+			{key + ':' + value}
+		</li>
 	}
 }
 
@@ -124,7 +138,9 @@ function ForOverCustomIterableApp() @{
 	}
 	const items = iter();
 	@for (const item of items) {
-		<li class="generator-item" key={item}>{item}</li>
+		<li class="generator-item" key={item}>
+			{item}
+		</li>
 	}
 }
 
@@ -294,7 +310,9 @@ function TsrxExpressionHookApp() @{
 		<button class="tsrx-expression-hook-toggle" onClick={() => setActive(!active)}>
 			{active ? 'hide' : 'show'}
 		</button>
-		<button class="tsrx-expression-hook-label" onClick={() => setLabel('second')}>{'label'}</button>
+		<button class="tsrx-expression-hook-label" onClick={() => setLabel('second')}>
+			{'label'}
+		</button>
 		<TsrxExpressionHookPanel {active} {label} />
 	</>
 }
@@ -321,10 +339,9 @@ function ForKeyedIfApp() @{
 				}
 			}
 		</ul>
-		<button
-			class="reverse-keyed-if"
-			onClick={() => setItems([...items].reverse())}
-		>{'reverse'}</button>
+		<button class="reverse-keyed-if" onClick={() => setItems([...items].reverse())}>
+			{'reverse'}
+		</button>
 	</>
 }
 
@@ -347,10 +364,9 @@ function ForKeyedSwitchApp() @{
 				}
 			}
 		</ul>
-		<button
-			class="reverse-keyed-switch"
-			onClick={() => setItems([...items].reverse())}
-		>{'reverse'}</button>
+		<button class="reverse-keyed-switch" onClick={() => setItems([...items].reverse())}>
+			{'reverse'}
+		</button>
 	</>
 }
 
