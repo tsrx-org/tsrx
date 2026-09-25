@@ -579,7 +579,14 @@ export namespace Parse {
 		parseEffects?: {
 			/** Record `target`'s length, to restore if the current speculative parse is abandoned */
 			willAppend(target: unknown[]): void;
+			/** Record `target[key]`, to restore if the current speculative parse is abandoned */
+			willSet(target: object, key: string): void;
 		};
+		/**
+		 * The decorators read and not yet taken by a class, one list per nesting
+		 * level (@sveltejs/acorn-typescript)
+		 */
+		decoratorStack: AST.Decorator[][];
 		/**
 		 * `value`/`type` kind of the import or export declaration currently being
 		 * parsed (@sveltejs/acorn-typescript). `undefined` when not inside one.
