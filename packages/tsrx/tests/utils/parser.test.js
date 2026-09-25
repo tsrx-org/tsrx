@@ -5867,6 +5867,118 @@ describe('comments around the commas of a list', () => {
 	});
 });
 
+// Ports of Prettier's comment handlers (`handle-comments.js`)
+describe('comments placed like Prettier', () => {
+	/**
+	 * @param {AST.Node | undefined} node
+	 * @returns {{ leading?: string[], trailing?: string[], inner?: string[] }}
+	 */
+	function commentsOf(node) {
+		const withComments = /** @type {AST.NodeWithMaybeComments | undefined} */ (node);
+		/** @param {AST.Comment[] | undefined} list */
+		const values = (list) => list?.map((comment) => comment.value);
+		return {
+			leading: values(withComments?.leadingComments),
+			trailing: values(withComments?.trailingComments),
+			inner: values(withComments?.innerComments),
+		};
+	}
+
+	/**
+	 * @param {string} source
+	 * @returns {any}
+	 */
+	function firstStatement(source) {
+		return parseModule(source, 'App.ts').body[0];
+	}
+
+	it('trails the operand before a comment at the end of an operator line', () => {
+		const { init } = firstStatement('const x =\n  a || // c\n  b;').declarations[0];
+
+		expect(commentsOf(init.left).trailing).toEqual([' c']);
+		expect(commentsOf(init.right).leading).toBeUndefined();
+	});
+
+	it('trails the last operand with a comment below it in the parentheses of a unary', () => {
+		const statement = firstStatement('x = !(\n  (\n    a ||\n    b\n  ) // c\n);');
+
+		expect(commentsOf(statement.expression.right.argument).trailing).toEqual([' c']);
+		expect(commentsOf(statement).trailing).toBeUndefined();
+	});
+
+	it('trails the condition with a comment before the ) of an if statement', () => {
+		const statement = firstStatement('if (\n  a\n  // c\n) {\n  b();\n}');
+
+		expect(commentsOf(statement.test).trailing).toEqual([' c']);
+		expect(commentsOf(statement.consequent).leading).toBeUndefined();
+	});
+
+	it('leads the lookup with a comment on its own line before its name', () => {
+		const statement = firstStatement('item\n  // c\n  .foo();');
+		const member = statement.expression.callee;
+
+		expect(commentsOf(member).leading).toEqual([' c']);
+		expect(commentsOf(member.property).leading).toBeUndefined();
+	});
+
+	it('trails the union member before a comment on its own line', () => {
+		const union = firstStatement('type K =\n  | A\n  // c\n  | B;').typeAnnotation;
+
+		expect(commentsOf(union.types[0]).trailing).toEqual([' c']);
+		expect(commentsOf(union.types[1]).leading).toBeUndefined();
+	});
+
+	it('marks the union member after a prettier-ignore comment on its own line', () => {
+		const union = firstStatement('type K =\n  | A\n  // prettier-ignore\n  | B;').typeAnnotation;
+		const [comment] = /** @type {any[]} */ (union.types[0].trailingComments);
+
+		expect(comment.value).toBe(' prettier-ignore');
+		expect(comment.unignore).toBe(true);
+		expect(union.types[0].metadata?.prettierIgnore).toBeUndefined();
+		expect(union.types[1].metadata.prettierIgnore).toBe(true);
+	});
+
+	it('marks the first member of a union after a prettier-ignore comment on its own line', () => {
+		const union = firstStatement('type K =\n  // prettier-ignore\n  | A\n  | B;').typeAnnotation;
+
+		expect(commentsOf(union).leading).toEqual([' prettier-ignore']);
+		expect(union.types[0].metadata.prettierIgnore).toBe(true);
+		expect(union.types[1].metadata?.prettierIgnore).toBeUndefined();
+	});
+
+	it('leaves a prettier-ignore comment that ends a union member on that member', () => {
+		const union = firstStatement('type K =\n  | A // prettier-ignore\n  | B;').typeAnnotation;
+		const [comment] = /** @type {any[]} */ (union.types[0].trailingComments);
+
+		expect(comment.unignore).toBeUndefined();
+		expect(union.types[1].metadata?.prettierIgnore).toBeUndefined();
+	});
+
+	it('leads the first member of a union with a block comment right before it', () => {
+		const union = firstStatement('type K = /* c */ A | B;').typeAnnotation;
+
+		expect(commentsOf(union.types[0]).leading).toEqual([' c ']);
+		expect(commentsOf(union).leading).toBeUndefined();
+	});
+
+	it('moves a comment between a class heading and its body into the body', () => {
+		const withMember = firstStatement('class A extends B // c\n{\n  x = 1;\n}');
+		const empty = firstStatement('interface I extends J // c\n{}');
+
+		expect(commentsOf(withMember.superClass).trailing).toBeUndefined();
+		expect(commentsOf(withMember.body.body[0]).leading).toEqual([' c']);
+		expect(commentsOf(empty.extends[0]).trailing).toBeUndefined();
+		expect(commentsOf(empty.body).inner).toEqual([' c']);
+	});
+
+	it('trails the class name with a comment before the first implements type', () => {
+		const declaration = firstStatement('class C implements\n  // c\n  D, E {}');
+
+		expect(commentsOf(declaration.id).trailing).toEqual([' c']);
+		expect(commentsOf(declaration.implements[0]).leading).toBeUndefined();
+	});
+});
+
 describe('keywordTokens parse option', () => {
 	it('collects async/function keyword tokens from the lexer', () => {
 		const source = `async function load() {}\nfunction plain() {}`;
