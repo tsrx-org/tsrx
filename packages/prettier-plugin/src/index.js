@@ -2457,11 +2457,36 @@ function getDecorators(node) {
 }
 
 /**
+ * Whether an export's declaration has decorators written before the `export`
+ * keyword (`@dec export class A {}`), like Prettier's
+ * `hasDecoratorsBeforeExport`. The export prints those, while the declaration
+ * prints the ones written after the keyword (`export @dec class A {}`). The
+ * export node starts at its keyword, so decorators before it start earlier.
+ * @param {AST.Node} node - The AST node
+ * @returns {boolean}
+ */
+function hasDecoratorsBeforeExport(node) {
+	if (node.type !== 'ExportDefaultDeclaration' && node.type !== 'ExportNamedDeclaration') {
+		return false;
+	}
+
+	const [firstDecorator] = getDecorators(
+		/** @type {AST.Node | null | undefined} */ (node.declaration),
+	);
+	return (
+		!!firstDecorator &&
+		/** @type {AST.NodeWithLocation} */ (firstDecorator).start <
+			/** @type {AST.NodeWithLocation} */ (node).start
+	);
+}
+
+/**
  * Whether an ancestor prints this node's decorators, so the node must not print
  * them again. Two positions hoist decorators out of the node that owns them:
  *
- * - `@dec export class A {}` and `export @dec class A {}` produce identical
- *   ASTs, so the export printer emits them above the `export` keyword.
+ * - Decorators written before `export` (`@dec export class A {}`) print
+ *   above the keyword, from the export printer. Like Prettier, the ones
+ *   written after it stay with the declaration.
  * - A parameter property's decorators live on the inner parameter, but belong
  *   before the modifiers: `@inject private readonly x: Foo`.
  *
@@ -2481,11 +2506,15 @@ function decoratorsPrintedByParent(node, path, options) {
 	}
 
 	if (parent.type === 'ExportDefaultDeclaration') {
-		return parent.declaration === node && !isParenthesizedDefaultExport(parent, options);
+		return (
+			parent.declaration === node &&
+			hasDecoratorsBeforeExport(parent) &&
+			!isParenthesizedDefaultExport(parent, options)
+		);
 	}
 
 	if (parent.type === 'ExportNamedDeclaration') {
-		return parent.declaration === node;
+		return parent.declaration === node && hasDecoratorsBeforeExport(parent);
 	}
 
 	if (parent.type === 'TSParameterProperty') {
@@ -2528,11 +2557,13 @@ function shouldBreakDecorators(node, options) {
  * Print a decorator list as a prefix for the node it decorates, including the
  * separator that follows the last decorator.
  *
- * Classes always put each decorator on its own line. A class member keeps the
- * lines it was written with, and when it was written inline the decorators get
- * their own group, so a decorator too long to share the member's line moves to
- * its own line rather than breaking apart. Everywhere else — parameters, most
- * notably — decorators stay inline.
+ * Classes always put each decorator on its own line. An exported class's
+ * decorators written after `export` also start on a new line, like Prettier's
+ * `printDecorators`: `export`, each decorator, and `class` get a line each. A
+ * class member keeps the lines it was written with, and when it was written
+ * inline the decorators get their own group, so a decorator too long to share
+ * the member's line moves to its own line rather than breaking apart.
+ * Everywhere else — parameters, most notably — decorators stay inline.
  * @param {AST.Node} node - The decorated node
  * @param {AstPath} path - The AST path, positioned at the decorated node
  * @param {TsrxFormatOptions} options - Prettier options
@@ -2546,6 +2577,28 @@ function printDecorators(node, path, options, print) {
 
 	const printed = /** @type {Doc[]} */ (path.map(print, 'decorators'));
 	const isClass = node.type === 'ClassDeclaration' || node.type === 'ClassExpression';
+	const parent = /** @type {AST.Node | null} */ (path.getParentNode());
+
+	// A parenthesized default export breaks around its parens' contents
+	// itself (see printExportDefaultDeclaration)
+	if (
+		path.key === 'declaration' &&
+		(parent?.type === 'ExportNamedDeclaration' ||
+			(parent?.type === 'ExportDefaultDeclaration' &&
+				!isParenthesizedDefaultExport(parent, options)))
+	) {
+		// A leading comment that ends its line already breaks it. Prettier
+		// breaks it again, which adds a blank line on every pass.
+		const lastComment = /** @type {AST.NodeWithMaybeComments} */ (node).leadingComments?.at(-1);
+		const commentEndsLine =
+			!!lastComment &&
+			(lastComment.type === 'Line' ||
+				hasNewline(
+					/** @type {string} */ (options.originalText),
+					/** @type {AST.NodeWithLocation} */ (lastComment).end,
+				));
+		return [commentEndsLine ? '' : hardline, join(hardline, printed), hardline];
+	}
 
 	if (isClass || (isClassMember(node) && shouldBreakDecorators(node, options))) {
 		return [join(hardline, printed), hardline];
@@ -2559,10 +2612,12 @@ function printDecorators(node, path, options, print) {
 }
 
 /**
- * Print the decorators of an exported declaration, which belong above the
- * `export` keyword rather than on the declaration itself. A parenthesized
- * default export keeps its decorators inside the parens, so it prints none
- * here — see {@link decoratorsPrintedByParent}.
+ * Print the decorators written before an export's `export` keyword, each on
+ * its own line above it, like Prettier's `printDecoratorsBeforeExport`. The
+ * declaration prints the ones written after the keyword (see
+ * {@link printDecorators}). A parenthesized default export keeps its
+ * decorators inside the parens, so it prints none here — see
+ * {@link decoratorsPrintedByParent}.
  * @param {AST.ExportNamedDeclaration | AST.ExportDefaultDeclaration} node - The export node
  * @param {AstPath} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
@@ -2570,20 +2625,18 @@ function printDecorators(node, path, options, print) {
  * @returns {Doc[]} The prefix parts, or an empty array when there are none
  */
 function printDeclarationDecorators(node, path, options, print) {
-	const declaration = /** @type {AST.Node | null | undefined} */ (node.declaration);
-	const [firstDecorator] = getDecorators(declaration);
-
-	if (!firstDecorator) {
+	if (!hasDecoratorsBeforeExport(node)) {
 		return [];
 	}
 
-	// An ignored declaration keeps the decorators written after `export` in its
-	// source, where Prettier keeps them too
-	const declarationNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (declaration);
+	// An ignored declaration that starts at its first decorator keeps the
+	// decorators in its source
+	const declaration = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node.declaration);
+	const [firstDecorator] = getDecorators(declaration);
 	if (
-		hasPrettierIgnore(declarationNode) &&
+		hasPrettierIgnore(declaration) &&
 		/** @type {AST.NodeWithLocation} */ (firstDecorator).start >=
-			/** @type {AST.NodeWithLocation} */ (declarationNode).start
+			/** @type {AST.NodeWithLocation} */ (declaration).start
 	) {
 		return [];
 	}
@@ -2595,13 +2648,10 @@ function printDeclarationDecorators(node, path, options, print) {
 		return [];
 	}
 
-	return /** @type {Doc[]} */ (
-		path.call(
-			(declarationPath) =>
-				printDecorators(/** @type {AST.Node} */ (declaration), declarationPath, options, print),
-			'declaration',
-		)
-	);
+	return [
+		join(hardline, /** @type {Doc[]} */ (path.map(print, 'declaration', 'decorators'))),
+		hardline,
+	];
 }
 
 /**
@@ -3880,6 +3930,16 @@ function printTsrxNode(node, path, options, print, args) {
 	const decorated = /** @type {AST.Node} */ (node);
 	if (getDecorators(decorated).length > 0 && !decoratorsPrintedByParent(decorated, path, options)) {
 		nodeContent = [...printDecorators(decorated, path, options, print), nodeContent];
+		// Like Prettier's `printClass`, a class expression in parentheses puts
+		// its decorators on their own lines inside them
+		if (
+			decorated.type === 'ClassExpression' &&
+			!typeCastParens &&
+			!args?.suppressOwnParens &&
+			needsParens(path, options)
+		) {
+			nodeContent = [indent([softline, nodeContent]), softline];
+		}
 	}
 
 	let suppressTrailingComments = args?.suppressTrailingComments;
@@ -9694,13 +9754,19 @@ function printTSTypeParameterDeclaration(node, path, options, print) {
 	const paramList = path.map(print, 'params');
 
 	// In JSX-shaped files a lone `<T>` on an arrow function is ambiguous with a JSX
-	// element, so a source-level trailing comma (`<T,>`) is syntactically meaningful
-	// there. Keep single-param arrow generics flat and preserve that comma; breaking
-	// them would add a trailing comma that flattens back on the next pass.
+	// element, so a trailing comma (`<T,>`) is syntactically meaningful there. Like
+	// Prettier's `shouldForceTrailingComma`, it prints whatever the `trailingComma`
+	// option: always when it was written, and otherwise when the list breaks. A
+	// constraint makes the list unambiguous, so its comma follows the option.
 	const parent = /** @type {AST.Node | null} */ (path.getParentNode());
 	if (parent?.type === 'ArrowFunctionExpression' && node.params.length === 1) {
-		const trailing = node.extra?.trailingComma !== undefined ? ',' : '';
-		return ['<', paramList[0], trailing, '>'];
+		const hasConstraint = !!(/** @type {AST.TSTypeParameter} */ (node.params[0]).constraint);
+		const comma = hasConstraint
+			? ifBreak(shouldPrintComma(options) ? ',' : '')
+			: node.extra?.trailingComma !== undefined
+				? ','
+				: ifBreak(',');
+		return group(['<', indent([softline, paramList[0]]), comma, softline, '>']);
 	}
 
 	return group([
@@ -9712,12 +9778,14 @@ function printTSTypeParameterDeclaration(node, path, options, print) {
 }
 
 /**
- * Print a single TypeScript type parameter
+ * Print a single TypeScript type parameter, like Prettier's
+ * `printTypeParameter`. A constraint or default that doesn't fit after
+ * `extends` or `=` moves to the next line, indented, before it breaks inside.
  * @param {AST.TSTypeParameter} node - The type parameter node
  * @param {AstPath<AST.TSTypeParameter>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
+ * @returns {Doc}
  */
 function printTSTypeParameter(node, path, options, print) {
 	/** @type {Doc[]} */
@@ -9734,16 +9802,26 @@ function printTSTypeParameter(node, path, options, print) {
 	parts.push(node.name);
 
 	if (node.constraint) {
-		parts.push(' extends ');
-		parts.push(path.call(print, 'constraint'));
+		const groupId = Symbol('constraint');
+		parts.push(
+			' extends',
+			group(indent(line), { id: groupId }),
+			lineSuffixBoundary,
+			indentIfBreak(path.call(print, 'constraint'), { groupId }),
+		);
 	}
 
 	if (node.default) {
-		parts.push(' = ');
-		parts.push(path.call(print, 'default'));
+		const groupId = Symbol('default');
+		parts.push(
+			' =',
+			group(indent(line), { id: groupId }),
+			lineSuffixBoundary,
+			indentIfBreak(path.call(print, 'default'), { groupId }),
+		);
 	}
 
-	return parts;
+	return group(parts);
 }
 
 /**
