@@ -1,5 +1,81 @@
 # @tsrx/mcp
 
+## 0.1.12
+
+### Patch Changes
+
+- [#251](https://github.com/tsrx-org/tsrx/pull/251)
+  [`dcc53cb`](https://github.com/tsrx-org/tsrx/commit/dcc53cba3da00d5f9c155ae48c11cc89764b8333)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Assigned `<style>` blocks
+  (`const theme = <style>…</style>`) now always keep every selector. Before, a
+  block that wasn't exported, applied, or read as `theme.$class` was treated as a
+  class map, and its element and descendant rules were emitted only as
+  `/* (unused) … */` comments, with no diagnostic. But `$class` is an ordinary
+  string that JavaScript carries anywhere. A theme whose `$class` was destructured
+  (`const { $class: cls } = theme`), read through an object (`themes.red.$class`),
+  passed to a component, returned from a helper, or iterated lost its styles while
+  its elements still carried the hash class.
+
+  Every assigned block is now a theme: `metadata.styleKind` is always `'theme'`,
+  and `prepareStylesheetForRender` prunes nothing in any mode (`'class-map'` and
+  the boolean form render as `'theme'`). Target compilers that choose the render
+  mode from `styleKind` (Ripple, Octane) keep every selector after upgrading
+  `@tsrx/core`. An element that carries a class entry such as `styles.card` also
+  carries the hash, so the block's element rules now match it too. The
+  classification-only `metadata.styleExported` and `metadata.styleClassRead`
+  fields are gone.
+
+  `createScopes` now records `value as T`, `value!`, `value satisfies T`, and
+  `fn<T>` as references to `value` and `fn`. It used to skip every identifier
+  whose parent was a TypeScript node, so these runtime reads were missing from
+  `binding.references`.
+
+- Updated dependencies
+  [[`dcc53cb`](https://github.com/tsrx-org/tsrx/commit/dcc53cba3da00d5f9c155ae48c11cc89764b8333),
+  [`bc68cb9`](https://github.com/tsrx-org/tsrx/commit/bc68cb947f616fb83c45f35977156d9a51b6cba7),
+  [`36e131a`](https://github.com/tsrx-org/tsrx/commit/36e131ab416f96647a6b2fbe8b6c2dcdc7a39f6c),
+  [`ce6bd8d`](https://github.com/tsrx-org/tsrx/commit/ce6bd8dae8693096f344c5b0b9bfa9abe66cdcdf),
+  [`baaad3d`](https://github.com/tsrx-org/tsrx/commit/baaad3db8a5ec9add8c584351c2d2040bdee6f49),
+  [`e927446`](https://github.com/tsrx-org/tsrx/commit/e9274468033a347f4b54b4c5b0a37e725f242da6),
+  [`68d5218`](https://github.com/tsrx-org/tsrx/commit/68d5218d154c3090fe5b40dec5c254db0a780efe),
+  [`3b3e128`](https://github.com/tsrx-org/tsrx/commit/3b3e12800e419cadd5e59a9738d724d14e0bd5ee),
+  [`b30a4ed`](https://github.com/tsrx-org/tsrx/commit/b30a4ed8769958b86fda39d1492a35b4a229d363),
+  [`bff5325`](https://github.com/tsrx-org/tsrx/commit/bff53256b05142b033d7e1753862e518901bc15f),
+  [`a7246b9`](https://github.com/tsrx-org/tsrx/commit/a7246b96d409708f3dedcab75f0dc045240e29c8),
+  [`24f0184`](https://github.com/tsrx-org/tsrx/commit/24f018462d33856dae1f0452e1432a8a5a535a55),
+  [`cb59a43`](https://github.com/tsrx-org/tsrx/commit/cb59a4378cf2403eef1b895343f92648e3112f3b),
+  [`73a5cd8`](https://github.com/tsrx-org/tsrx/commit/73a5cd821e190d36d17b1dcd8decd588cf0ef037),
+  [`24df857`](https://github.com/tsrx-org/tsrx/commit/24df857170f90418d10a42f0838d82bc16ba7d78),
+  [`b0cb8dd`](https://github.com/tsrx-org/tsrx/commit/b0cb8ddb72bdd2804ae7aad06bb6cc2e83fd2bec),
+  [`e404adf`](https://github.com/tsrx-org/tsrx/commit/e404adfa3bd3961092d593d01a20ea7edbe6bd72),
+  [`3e09ec2`](https://github.com/tsrx-org/tsrx/commit/3e09ec26a6783ddc8d3b19bdf38bed7c27249a08),
+  [`c491400`](https://github.com/tsrx-org/tsrx/commit/c49140047c104cb0e46a3e6736e3fb275753548f),
+  [`d734bfa`](https://github.com/tsrx-org/tsrx/commit/d734bfa8178bda5708b171a32917913b5f56f023),
+  [`b932928`](https://github.com/tsrx-org/tsrx/commit/b93292872bfa355a4a1adec58de1be5c8890d9e5),
+  [`b4ea5ca`](https://github.com/tsrx-org/tsrx/commit/b4ea5ca80ca4d258d808840c514e4afd898bab71),
+  [`d77c039`](https://github.com/tsrx-org/tsrx/commit/d77c03906426810ba44dbe473d74d6cd474be716),
+  [`62ed470`](https://github.com/tsrx-org/tsrx/commit/62ed4705ba54a471d684ec8c5a6be400a5f38448),
+  [`4cb3595`](https://github.com/tsrx-org/tsrx/commit/4cb3595928f828404315eae60324be3e80c0013b),
+  [`f0db679`](https://github.com/tsrx-org/tsrx/commit/f0db6790949d9e106b412fec09e2d8caf13b53b7),
+  [`e1c068d`](https://github.com/tsrx-org/tsrx/commit/e1c068d088b613796a4f6b3b3d761103c1061086),
+  [`cf14836`](https://github.com/tsrx-org/tsrx/commit/cf14836fb0983c713d2e8d5a0f706238f5ce35cf),
+  [`0c33754`](https://github.com/tsrx-org/tsrx/commit/0c33754e4e32d92302c11fb6a45f056f67f8e0d4),
+  [`48f971f`](https://github.com/tsrx-org/tsrx/commit/48f971f5e84676b9eecaec3716745b1b0da00ad1),
+  [`dbe1851`](https://github.com/tsrx-org/tsrx/commit/dbe18512a4e41a2535dd605ebcea1a5188c8ee5e),
+  [`16e6428`](https://github.com/tsrx-org/tsrx/commit/16e64288aa14dc006c5aedc2b0e3a444291390f3),
+  [`75944c9`](https://github.com/tsrx-org/tsrx/commit/75944c9e8903bd2cee8ac54ac1f22a93fc688799),
+  [`1b7ec4b`](https://github.com/tsrx-org/tsrx/commit/1b7ec4b45e55d8960b89e2610ddff7094a99d9a3),
+  [`f080207`](https://github.com/tsrx-org/tsrx/commit/f080207f5e7ae86e94ccd01ff14b052ef87cf7ad),
+  [`68d5218`](https://github.com/tsrx-org/tsrx/commit/68d5218d154c3090fe5b40dec5c254db0a780efe),
+  [`270fddc`](https://github.com/tsrx-org/tsrx/commit/270fddc0358d0c9a969d95fd41cc5efed74e9d86),
+  [`9fdebc1`](https://github.com/tsrx-org/tsrx/commit/9fdebc11b133bcf9c7fa20c484cc19eb9d8054ae),
+  [`a83efb4`](https://github.com/tsrx-org/tsrx/commit/a83efb4e89267c406e530b4f1dcc21175becc952),
+  [`6c390ca`](https://github.com/tsrx-org/tsrx/commit/6c390ca482a8e8dc1dc57c98585b8838039cc84b),
+  [`62ef14a`](https://github.com/tsrx-org/tsrx/commit/62ef14a7cbf2a2984849889f52e59d17babd4d2d),
+  [`3d9fd90`](https://github.com/tsrx-org/tsrx/commit/3d9fd90d3e052eba3a468101e7497db21fc2e3e7)]:
+  - @tsrx/core@0.4.0
+  - @tsrx/prettier-plugin@0.4.12
+
 ## 0.1.11
 
 ### Patch Changes
