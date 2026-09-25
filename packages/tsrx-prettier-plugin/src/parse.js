@@ -2,7 +2,7 @@
  * @import { ParserOptions } from 'prettier'
  */
 
-import { parseModule } from '@tsrx/core';
+import { DIAGNOSTIC_CODES, parseModule } from '@tsrx/core';
 
 /**
  * A loosely typed AST node. The parser's acorn-typescript output is reshaped in
@@ -21,6 +21,12 @@ export const TSRX_DIRECTIVES = new Set([
 	'JSXForExpression',
 	'JSXSwitchExpression',
 	'JSXTryExpression',
+]);
+
+/** Errors after which the parser guessed at the markup's structure. */
+const BROKEN_MARKUP_CODES = new Set([
+	DIAGNOSTIC_CODES.UNCLOSED_TAG,
+	DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG,
 ]);
 
 /** The statements whose `__contentEnd` Prettier's comment handling reads. */
@@ -49,15 +55,31 @@ const TSRX_OUTPUT = new Set(['JSXElement', 'JSXFragment', 'JSXStyleElement', ...
 export function parse(text, options) {
 	/** @type {Comment[]} */
 	const comments = [];
+	/** @type {Array<Error & { code?: string, loc?: { start: { line: number, column: number } } }>} */
+	const errors = [];
 	const ast = /** @type {Node} */ (
 		/** @type {unknown} */ (
 			parseModule(text, options.filepath || 'Component.tsrx', {
+				// Collecting keeps parsing past mistakes TypeScript reports only as
+				// diagnostics, such as a redeclared variable, which don't change the
+				// tree. Recovered markup does, so it is still an error here.
 				collect: true,
+				errors: /** @type {any} */ (errors),
 				comments: /** @type {any} */ (comments),
 				preserveParens: true,
 			})
 		)
 	);
+	const brokenMarkup = errors.find((error) => error.code && BROKEN_MARKUP_CODES.has(error.code));
+	if (brokenMarkup) {
+		throw Object.assign(new SyntaxError(brokenMarkup.message), {
+			// Prettier reports parse errors with 1-based columns.
+			loc: brokenMarkup.loc && {
+				start: { line: brokenMarkup.loc.start.line, column: brokenMarkup.loc.start.column + 1 },
+			},
+			cause: brokenMarkup,
+		});
+	}
 	const adapter = new Adapter(text, comments);
 	const program = adapter.visit(ast);
 	program.start = 0;
@@ -512,6 +534,27 @@ class Adapter {
 
 			case 'TSExpressionWithTypeArguments':
 				rename(node, 'typeParameters', 'typeArguments');
+				// `extends a.b.C` names an expression, not a type.
+				node.expression = qualifiedNameToMemberExpression(node.expression);
+				break;
+
+			case 'TSParameterProperty':
+				// `constructor(@d private x)`: the decorators belong to the property.
+				if (node.parameter.decorators?.length) {
+					node.decorators = node.parameter.decorators;
+					node.parameter.decorators = [];
+				}
+				break;
+
+			case 'ExportDefaultDeclaration':
+				// `export default @d class {}` declares an anonymous class; only a
+				// parenthesized class stays an expression.
+				if (
+					node.declaration.type === 'ClassExpression' &&
+					!this.text.slice(node.start, locStart(node.declaration)).includes('(')
+				) {
+					node.declaration.type = 'ClassDeclaration';
+				}
 				break;
 
 			case 'TSFunctionType':
@@ -579,6 +622,23 @@ class Adapter {
 
 		return node;
 	}
+}
+
+/**
+ * @param {Node} node
+ * @returns {Node}
+ */
+function qualifiedNameToMemberExpression(node) {
+	if (node.type !== 'TSQualifiedName') return node;
+	return {
+		type: 'MemberExpression',
+		start: node.start,
+		end: node.end,
+		object: qualifiedNameToMemberExpression(node.left),
+		property: node.right,
+		computed: false,
+		optional: false,
+	};
 }
 
 /**

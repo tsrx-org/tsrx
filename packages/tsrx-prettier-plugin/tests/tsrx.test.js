@@ -412,3 +412,14 @@ const b = (
 		);
 	});
 });
+
+describe('parse errors', () => {
+	test('unclosed or mismatched tags are errors, not guessed markup', async () => {
+		await expect(format('const x = 1;\nconst y = <div>\n')).rejects.toThrow(/Unclosed tag '<div>'/);
+		await expect(format('const a = <div></span>;\n')).rejects.toThrow();
+	});
+
+	test('mistakes TypeScript only reports as diagnostics still format', async () => {
+		await expectFormat('let a = 1;\nlet a = 2;', 'let a = 1;\nlet a = 2;\n');
+	});
+});
