@@ -7103,6 +7103,49 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(endOfLine.typeAnnotation).leading).toBeUndefined();
 		expect(commentsOf(ownLine.typeParameter).trailing).toEqual([' c']);
 	});
+
+	// Prettier's parsers keep a type parameter's name as a node, which takes
+	// the comments around it; this parser keeps it as a string
+	it('keeps the comments around the name of a type parameter on the type parameter', () => {
+		const [constrained, defaulted] = firstStatement(
+			'function f<const /* a */ T /* b */ extends /* c */ U, K // d\n  = V>() {}',
+		).typeParameters.params;
+		const [modifier] = firstStatement('type A<in out /* a */ T> = T;').typeParameters.params;
+		const mapped = firstStatement('type M = { [K /* a */ in /* b */ T]: T[K] };').typeAnnotation;
+
+		expect(commentsOf(constrained).inner).toEqual([' a ', ' b ']);
+		expect(commentsOf(constrained.constraint).leading).toEqual([' c ']);
+		expect(commentsOf(defaulted).inner).toEqual([' d']);
+		expect(commentsOf(defaulted.default).leading).toBeUndefined();
+		expect(commentsOf(modifier).inner).toEqual([' a ']);
+		expect(commentsOf(modifier).trailing).toBeUndefined();
+		expect(commentsOf(mapped.typeParameter).inner).toEqual([' a ']);
+		expect(commentsOf(mapped.typeParameter.constraint).leading).toEqual([' b ']);
+	});
+
+	it('leads the constraint with a block comment on its own line before the extends of a type parameter', () => {
+		const [parameter] = firstStatement('function f<\n  T\n  /* a */ extends U,\n>() {}')
+			.typeParameters.params;
+		const [lineComment] = firstStatement('function f<\n  T\n  // a\n  extends U,\n>() {}')
+			.typeParameters.params;
+
+		expect(commentsOf(parameter).inner).toBeUndefined();
+		expect(commentsOf(parameter.constraint).leading).toEqual([' a ']);
+		// Prettier moves a line comment there after the name on its next pass
+		expect(commentsOf(lineComment).inner).toEqual([' a']);
+		expect(commentsOf(lineComment.constraint).leading).toBeUndefined();
+	});
+
+	// Prettier prints the arrow function's body without its parentheses, and
+	// the comment after it before the `;`, where its next pass moves it after
+	it('trails the statement with a comment after a parenthesized arrow function body', () => {
+		const statement = firstStatement('const f = () => (\n  a /* c */\n);');
+		const conditional = firstStatement('const f = () => (a ? b : c /* c */);');
+
+		expect(commentsOf(statement).trailing).toEqual([' c ']);
+		expect(commentsOf(statement.declarations[0].init.body).trailing).toBeUndefined();
+		expect(commentsOf(conditional).trailing).toBeUndefined();
+	});
 });
 
 describe('keywordTokens parse option', () => {
