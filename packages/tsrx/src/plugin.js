@@ -82,7 +82,11 @@ const REGEX_PRECEDING_KEYWORDS = new Set([
 ]);
 const regex_identifier = /[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*/uy;
 
+const regex_line_break = /\r\n?|[\n\u2028\u2029]/;
+
 const REST_ELEMENT_TRAILING_COMMA = 'Comma is not permitted after the rest element';
+const OPTIONAL_BINDING_PATTERN_PARAMETER =
+	'A binding pattern parameter cannot be optional in an implementation signature.';
 // acorn-typescript raises these at the modifier's column instead of its offset.
 const regex_modifier_order_error =
 	/^'\w+' modifier (?:must precede|cannot be used with) '\w+' modifier\.$/;
@@ -99,8 +103,9 @@ const regex_modifier_order_error =
  * node it builds for valid code. Mistakes whose raise site can't continue are
  * handled by narrow overrides instead: a comma after a rest element
  * (`#collectCheckerLevelError`, `parseBindingList`), `const` without an
- * initializer (`parseVarId`), `await` in a namespace (`canAwait`), and a private
- * name outside a class (the constructor and `parsePrivateIdent`).
+ * initializer (`parseVarId`), `const` or `var` without a declarator
+ * (`parseVarStatement`), `await` in a namespace (`canAwait`), and a private name
+ * outside a class (the constructor and `parsePrivateIdent`).
  *
  * acorn's errors here are ECMAScript early errors, which acorn rightly raises;
  * acorn-typescript's are TypeScript checker diagnostics.
@@ -128,6 +133,11 @@ const CHECKER_LEVEL_ERRORS = [
 	'super() call outside constructor of a subclass',
 	// acorn: `function f(...a,) {}` (TS1013).
 	REST_ELEMENT_TRAILING_COMMA,
+	// acorn: an import or export inside a block (TS1184, TS1231, TS1232, TS1233,
+	// TS1258, TS1316).
+	"'import' and 'export' may only appear at the top level",
+	// acorn: `let` used as a name in strict code, such as a bare `let` (TS1214).
+	"The keyword 'let' is reserved",
 	// acorn-typescript: `abstract` members in a class that isn't abstract (TS1244).
 	'Abstract methods can only appear within an abstract class.',
 	// acorn-typescript: `declare class A { x = 1 }`, `declare let x = 1` (TS1039).
@@ -136,12 +146,17 @@ const CHECKER_LEVEL_ERRORS = [
 	// (TS1029, TS1243, TS1030).
 	regex_modifier_order_error,
 	/^Duplicate modifier: '\w+'\.$/,
+	// acorn-typescript: a modifier where TypeScript doesn't allow one, on a type
+	// member (TS1070) or a type parameter (TS1273), or `in` or `out` outside the
+	// type parameters of a class, interface, or type alias (TS1274). See `raise`.
+	/^'\w+' modifier cannot appear on a type (?:member|parameter)\.$/,
+	/^'\w+' modifier can only appear on a type parameter of a class, interface or type alias\.$/,
 	// acorn-typescript: `private #x` (TS18010), `abstract #x` (TS18019).
 	/^Private elements cannot have an accessibility modifier \('\w+'\)\.$/,
 	"Private elements cannot have the 'abstract' modifier.",
-	// acorn-typescript: `function f({ a }?: T) {}` (TS2463).
-	// UPSTREAM(sveltejs/acorn-typescript#110): accepts the optional pattern.
-	'A binding pattern parameter cannot be optional in an implementation signature.',
+	// `function f({ a }?: T) {}` (TS2463), raised by `parseFunctionBody` for a
+	// function with a body, and acorn-typescript's `[{ a }?]`.
+	OPTIONAL_BINDING_PATTERN_PARAMETER,
 	// acorn-typescript: `with { type: 'json', type: 'json' }`, an ECMAScript early
 	// error that TypeScript doesn't report at all.
 	'Duplicated key in attributes',
@@ -173,6 +188,9 @@ function is_checker_level_error(message) {
 // package exports.
 const SCOPE_FUNCTION = 2;
 const SCOPE_ASYNC = 4;
+// The scope of a catch clause whose parameter is a plain name, where Annex B lets
+// `var` redeclare that name.
+const SCOPE_SIMPLE_CATCH = 32;
 const SCOPE_CLASS_STATIC_BLOCK = 256;
 const SCOPE_CLASS_FIELD_INIT = 512;
 const TS_SCOPE_TS_MODULE = 1 << 21;
@@ -689,7 +707,7 @@ export function TSRXPlugin(config) {
 			#errors = undefined;
 			/** @type {string | null} */
 			#filename = null;
-			/** @type {WeakMap<object, { names: Set<string>, lexicalLength: number, varLength: number }>} */
+			/** @type {WeakMap<object, { names: Set<string>, lengths: number[] }>} */
 			#localExportNamesByScope = new WeakMap();
 			#functionBodyDepth = 0;
 			#allowExpressionContainerTrailingSemicolon = false;
@@ -723,6 +741,10 @@ export function TSRXPlugin(config) {
 			// `tsParseModifier` can tell whether it has already read `static`.
 			/** @type {{ static?: unknown } | null} */
 			#modifiersNode = null;
+			// The closing token of the binding list being read (see
+			// `parseBindingListItem`).
+			/** @type {Parse.TokenType | null} */
+			#bindingListClose = null;
 			#templateScriptParsingDepth = 0;
 			#controlFlowBlockAllowsNativeReturn = false;
 			#parsingJSXSwitchCaseScriptStatementDepth = 0;
@@ -1158,48 +1180,19 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * JSX significant-whitespace rule for a template text child. Non-whitespace
-			 * text is always kept; whitespace-only text is kept only when it is an
-			 * intentional inline space (no newline) separating two siblings, and dropped
-			 * when it is layout indentation (contains a newline).
+			 * JSX significant-whitespace rule for a template text child. Text with a
+			 * character other than JSX whitespace is always kept; whitespace-only text
+			 * is kept only when it is an intentional inline space (no line break)
+			 * separating two siblings, and dropped when it is layout indentation (has a
+			 * line break). JSX whitespace is space, tab, and line breaks, as Babel and
+			 * Prettier read it: a non-breaking space is text, which the JSX compiler
+			 * may still trim at the edge of a line, as it does in TSX.
 			 *
 			 * @param {ESTreeJSX.JSXText} node
 			 */
 			#shouldKeepTemplateTextNode(node) {
-				if (!isWhitespaceTextNode(node)) {
-					return true;
-				}
-				return node.value !== '' && !regex_newline_characters.test(node.value);
-			}
-
-			#skipTrailingLayoutWhitespace() {
-				let index = this.start;
-				let has_newline = false;
-				while (index < this.input.length) {
-					const ch = this.input.charCodeAt(index);
-					if (ch === CharCode.lineFeed || ch === CharCode.carriageReturn) {
-						has_newline = true;
-						index++;
-					} else if (ch === CharCode.space || ch === CharCode.tab) {
-						index++;
-					} else if (ch === CharCode.slash && this.input.charCodeAt(index + 1) === CharCode.slash) {
-						const comment_start = index;
-						while (index < this.input.length && !this.#isNewlineCharCode(index)) {
-							index++;
-						}
-						this.#emitTemplateLineComment(comment_start, index, null);
-					} else {
-						break;
-					}
-				}
-				if (!has_newline) return;
-				const loc = get_line_info(this, index);
-				this.start = index;
-				this.startLoc = new acorn.Position(loc.line, loc.column);
-				if (this.pos <= index) {
-					this.curLine = loc.line;
-					this.lineStart = index - loc.column;
-				}
+				const value = node.value;
+				return regex_not_whitespace.test(value) || (value !== '' && !/[\n\r]/.test(value));
 			}
 
 			/**
@@ -3236,10 +3229,21 @@ export function TSRXPlugin(config) {
 			 * When collecting, record a checker-level error (`CHECKER_LEVEL_ERRORS`) and
 			 * keep parsing, so editor tooling and the formatter still get an AST.
 			 * @param {number} position
-			 * @param {string} message
+			 * @param {string | ((values: { modifier: string }) => string)} message
 			 * @returns {never}
 			 */
 			raise(position, message) {
+				if (typeof message === 'function') {
+					// UPSTREAM(sveltejs/acorn-typescript#123): remove once a release includes
+					// the fix. `tsParseModifiers` raises a disallowed modifier's error with
+					// the error template itself, which would make the function's source
+					// the message, at the token after the modifier. It is the only raise
+					// site that passes a template; the modifier is the token just read.
+					message = message({
+						modifier: this.input.slice(this.lastTokStart, this.lastTokEnd),
+					});
+					position = this.lastTokStart;
+				}
 				if (this.#collectCheckerLevelError(position, message)) {
 					// The raise site goes on parsing (see `CHECKER_LEVEL_ERRORS`).
 					return /** @type {never} */ (undefined);
@@ -3390,9 +3394,63 @@ export function TSRXPlugin(config) {
 			 * @param {boolean} [allowMissingInitializer]
 			 */
 			parseVarStatement(node, kind, allowMissingInitializer) {
+				if (
+					this.#collect &&
+					(kind === 'const' || kind === 'var') &&
+					this.#isEmptyDeclarationList()
+				) {
+					return this.#parseEmptyVarStatement(node, kind);
+				}
 				return this.#parseConstWithoutInitializer(kind, allowMissingInitializer, (allow) =>
 					super.parseVarStatement(node, kind, allow),
 				);
+			}
+
+			/**
+			 * Whether no declarator follows the `const` or `var` at the current token
+			 * where TypeScript's parser ends an empty declaration list: the next token
+			 * can't start a declarator, and it is `;`, `}`, or the end of the input,
+			 * or a line break comes before it (`isVariableDeclaratorListTerminator`).
+			 */
+			#isEmptyDeclarationList() {
+				const next = this.lookahead();
+				if (
+					Parser.acornTypeScript.tokenIsIdentifier(next.type) ||
+					next.type === tt.braceL ||
+					next.type === tt.bracketL ||
+					next.type === tt.privateId
+				) {
+					return false;
+				}
+				return (
+					next.type === tt.semi ||
+					next.type === tt.braceR ||
+					next.type === tt.eof ||
+					regex_line_break.test(this.input.slice(this.end, next.start))
+				);
+			}
+
+			/**
+			 * acorn reads a declarator right after `const` or `var`, and throws
+			 * `Unexpected token` when none follows, as while a declaration is being
+			 * typed. TypeScript parses an empty declaration list and reports TS1123
+			 * from the checker. When collecting, finish the declaration with no
+			 * declarators, as acorn-typescript's `parseVarStatement` would, and record
+			 * the error right after the keyword, where TypeScript reports it.
+			 * @param {AST.VariableDeclaration} node
+			 * @param {'const' | 'var'} kind
+			 */
+			#parseEmptyVarStatement(node, kind) {
+				this.next();
+				node.declarations = [];
+				node.kind = kind;
+				this.#recordCheckerLevelError(
+					this.lastTokEnd,
+					this.lastTokEnd,
+					'Variable declaration list cannot be empty.',
+				);
+				this.semicolon();
+				return this.finishNode(node, 'VariableDeclaration');
 			}
 
 			/**
@@ -3432,6 +3490,28 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Records the list's closing token for `parseBindingListItem`: `)` for
+			 * parameters, `]` for an array pattern.
+			 * @type {Parse.Parser['parseBindingList']}
+			 */
+			parseBindingList(close, allowEmpty, allowTrailingComma, allowModifiers) {
+				const outer = this.#bindingListClose;
+				this.#bindingListClose = close;
+				try {
+					return this.#collect
+						? this.#parseBindingListPastRestElement(
+								close,
+								allowEmpty,
+								allowTrailingComma,
+								allowModifiers,
+							)
+						: super.parseBindingList(close, allowEmpty, allowTrailingComma, allowModifiers);
+				} finally {
+					this.#bindingListClose = outer;
+				}
+			}
+
+			/**
 			 * acorn ends a binding list at its rest element: it raises for a comma
 			 * after it and expects the list to close. TypeScript parses the elements
 			 * after a rest element and reports them from the checker (TS1014, TS2462).
@@ -3439,10 +3519,7 @@ export function TSRXPlugin(config) {
 			 * list; this is acorn's `parseBindingList` with that one change.
 			 * @type {Parse.Parser['parseBindingList']}
 			 */
-			parseBindingList(close, allowEmpty, allowTrailingComma, allowModifiers) {
-				if (!this.#collect) {
-					return super.parseBindingList(close, allowEmpty, allowTrailingComma, allowModifiers);
-				}
+			#parseBindingListPastRestElement(close, allowEmpty, allowTrailingComma, allowModifiers) {
 				/** @type {AST.Pattern[]} */
 				const elements = [];
 				let first = true;
@@ -3695,6 +3772,30 @@ export function TSRXPlugin(config) {
 				super.parseClassId(node, isStatement);
 			}
 
+			// UPSTREAM(sveltejs/acorn-typescript#110): remove once a release includes the fix
+			/**
+			 * A parameter that is a binding pattern can be optional (`{ a }?: T`), as
+			 * in TypeScript's parser. acorn-typescript raises TS2463 for it while it
+			 * reads the parameter, before it knows whether a body follows, so an
+			 * overload signature gets the error too. Accept the `?` as
+			 * sveltejs/acorn-typescript#110 does, with the same AST;
+			 * `parseFunctionBody` reports it for a function with a body. The rest keeps
+			 * acorn-typescript's error: an element of an array pattern (`[{ a }?]`),
+			 * where TypeScript's parser doesn't take a `?`, and an optional rest
+			 * parameter (TypeScript's TS1047, from its checker, in a signature too).
+			 * @type {Parse.Parser['parseBindingListItem']}
+			 */
+			parseBindingListItem(param) {
+				if (
+					this.#bindingListClose === tt.parenR &&
+					(param.type === 'ObjectPattern' || param.type === 'ArrayPattern') &&
+					this.eat(tt.question)
+				) {
+					/** @type {AST.Pattern & { optional?: boolean }} */ (param).optional = true;
+				}
+				return super.parseBindingListItem(param);
+			}
+
 			// UPSTREAM(sveltejs/acorn-typescript#121): remove once a release includes the fix
 			/**
 			 * `assert` starts import assertions only on the line the import or
@@ -3707,6 +3808,47 @@ export function TSRXPlugin(config) {
 			parseMaybeImportAttributes(node) {
 				if (this.type === tstt.assert && this.hasPrecedingLineBreak()) return;
 				super.parseMaybeImportAttributes(node);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#116): remove once a release includes the fix
+			/**
+			 * Reads the entries of import attributes, `with { … }`, comparing keys by
+			 * their value, as ECMAScript and acorn do: `'type'` is the same key as
+			 * `type`. acorn-typescript compared `key.name`, which a quoted key doesn't
+			 * have, so a second quoted key was a duplicate and `type` never matched
+			 * `'type'`. Otherwise this is acorn-typescript's method, as fixed in
+			 * sveltejs/acorn-typescript#116 (and #110), error message included.
+			 * @type {Parse.Parser['parseWithEntries']}
+			 */
+			parseWithEntries() {
+				/** @type {AST.ImportAttribute[]} */
+				const attributes = [];
+				/** @type {Set<unknown>} */
+				const keys = new Set();
+				do {
+					if (this.type === tt.braceR) break;
+					const node = this.startNode();
+					// estree's `Node` types leave out `ImportAttribute`.
+					const attribute = /** @type {AST.ImportAttribute} */ (/** @type {unknown} */ (node));
+					attribute.key =
+						this.type === tt.string ? this.parseLiteral(this.value) : this.parseIdent(true);
+					this.next();
+					const key = attribute.key.type === 'Literal' ? attribute.key.value : attribute.key.name;
+					if (keys.has(key)) {
+						this.raise(this.pos, 'Duplicated key in attributes');
+					}
+					keys.add(key);
+					if (this.type !== tt.string) {
+						this.raise(this.pos, 'Only string is supported as an attribute value');
+					}
+					attribute.value = this.parseLiteral(this.value);
+					this.finishNode(
+						node,
+						/** @type {AST.Node['type']} */ (/** @type {string} */ ('ImportAttribute')),
+					);
+					attributes.push(attribute);
+				} while (this.eat(tt.comma));
+				return attributes;
 			}
 
 			/**
@@ -4344,28 +4486,31 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * The names declared in `scope`, as a cached Set. Acorn only ever
-			 * appends to a scope's `lexical` and `var` arrays during the scope's
-			 * lifetime, so syncing from the last-seen lengths is enough to keep the
-			 * Set current.
+			 * The names declared in `scope`, as a cached Set: acorn's `lexical` and
+			 * `var` names, and the ones acorn-typescript keeps apart, in `types`
+			 * (type aliases and interfaces) and `exportOnlyBindings` (namespaces and
+			 * top-level ambient functions). An export specifier can name any of them,
+			 * as acorn-typescript's own `checkLocalExport` allows. Names are appended
+			 * to these arrays as they are declared, so syncing from the last-seen
+			 * lengths keeps the Set current.
 			 *
-			 * @param {{ lexical: string[], var: string[] }} scope
+			 * @param {Parse.Scope} scope
 			 * @returns {Set<string>}
 			 */
 			#scopeDeclaredNames(scope) {
 				let cached = this.#localExportNamesByScope.get(scope);
 				if (!cached) {
-					cached = { names: new Set(), lexicalLength: 0, varLength: 0 };
+					cached = { names: new Set(), lengths: [0, 0, 0, 0] };
 					this.#localExportNamesByScope.set(scope, cached);
 				}
-				for (let i = cached.lexicalLength; i < scope.lexical.length; i++) {
-					cached.names.add(scope.lexical[i]);
+				const lists = [scope.lexical, scope.var, scope.types, scope.exportOnlyBindings];
+				for (let list = 0; list < lists.length; list++) {
+					const declared = lists[list];
+					for (let i = cached.lengths[list]; i < declared.length; i++) {
+						cached.names.add(declared[i]);
+					}
+					cached.lengths[list] = declared.length;
 				}
-				for (let i = cached.varLength; i < scope.var.length; i++) {
-					cached.names.add(scope.var[i]);
-				}
-				cached.lexicalLength = scope.lexical.length;
-				cached.varLength = scope.var.length;
 				return cached.names;
 			}
 
@@ -4608,7 +4753,11 @@ export function TSRXPlugin(config) {
 					if (!isArrowFunction && this.match(tt.colon)) {
 						node.returnType = this.tsParseTypeOrTypePredicateAnnotation(tt.colon);
 					}
-					if (this.#isCodeBlockStart(this.start)) {
+					const is_code_block = this.#isCodeBlockStart(this.start);
+					if (!isArrowFunction && (is_code_block || !this.#isBodilessSignature(args[0]))) {
+						this.#reportOptionalPatternParameters(node);
+					}
+					if (is_code_block) {
 						node.body = this.#parseCodeBlock({ allowReturnStatements: true });
 						this.checkParams(node, false);
 						this.exitScope();
@@ -4617,6 +4766,47 @@ export function TSRXPlugin(config) {
 					return super.parseFunctionBody(node, isArrowFunction, isMethod, forInit, ...args);
 				} finally {
 					this.#functionBodyDepth--;
+				}
+			}
+
+			/**
+			 * Whether acorn-typescript's `parseFunctionBody` finishes a function
+			 * declaration or class method here as a signature without a body
+			 * (`TSDeclareFunction`, `TSDeclareMethod`): its condition, without eating
+			 * the `;`. Its `isLineTerminator` calls acorn's `canInsertSemicolon`, which
+			 * `super` reaches too.
+			 * @param {Parse.AcornTypeScriptFunctionBodyConfig | undefined} tsConfig
+			 */
+			#isBodilessSignature(tsConfig) {
+				return (
+					!!(tsConfig?.isFunctionDeclaration || tsConfig?.isClassMethod) &&
+					this.type !== tt.braceL &&
+					(this.type === tt.semi || super.canInsertSemicolon())
+				);
+			}
+
+			/**
+			 * Raise TS2463 for each optional binding pattern parameter of a function
+			 * that has a body, outside an ambient context, with the message and
+			 * position acorn-typescript gave it while reading the parameter (see
+			 * `parseBindingListItem`). A signature without a body, such as an
+			 * overload, may have one. An arrow function's parameters are read as
+			 * expressions, and acorn-typescript never checked them.
+			 * @param {AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression} node
+			 */
+			#reportOptionalPatternParameters(node) {
+				if (this.isAmbientContext) return;
+				for (const param of node.params) {
+					// A default comes after the `?` and the type annotation.
+					const pattern = /** @type {AST.Pattern & { optional?: boolean }} */ (
+						param.type === 'AssignmentPattern' ? param.left : param
+					);
+					if (
+						pattern.optional &&
+						(pattern.type === 'ObjectPattern' || pattern.type === 'ArrayPattern')
+					) {
+						this.raise(/** @type {number} */ (pattern.start), OPTIONAL_BINDING_PATTERN_PARAMETER);
+					}
 				}
 			}
 
@@ -5077,7 +5267,7 @@ export function TSRXPlugin(config) {
 								if (this.eat(tt.parenL)) {
 									const param = this.parseBindingAtom();
 									const simple = param.type === 'Identifier';
-									this.enterScope(simple ? BINDING_TYPES.BIND_SIMPLE_CATCH : 0);
+									this.enterScope(simple ? SCOPE_SIMPLE_CATCH : 0);
 									this.checkLValPattern(
 										param,
 										simple ? BINDING_TYPES.BIND_SIMPLE_CATCH : BINDING_TYPES.BIND_LEXICAL,
@@ -5150,7 +5340,7 @@ export function TSRXPlugin(config) {
 						// We can't use parseCatchClauseParam() because it eats the closing paren.
 						const param = this.parseBindingAtom();
 						const simple = param.type === 'Identifier';
-						this.enterScope(simple ? BINDING_TYPES.BIND_SIMPLE_CATCH : 0);
+						this.enterScope(simple ? SCOPE_SIMPLE_CATCH : 0);
 						this.checkLValPattern(
 							param,
 							simple ? BINDING_TYPES.BIND_SIMPLE_CATCH : BINDING_TYPES.BIND_LEXICAL,
@@ -5842,66 +6032,6 @@ export function TSRXPlugin(config) {
 				if (this.type === tt.braceL) {
 					body.push(this.#parseNativeTemplateExpressionContainer());
 				} else if (this.type === tstt.jsxText) {
-					// A nested element with its own body can leak a JSX expression context,
-					// so the whitespace after its closing tag is mis-tokenized as a stale
-					// text token whose start was advanced onto the following `<`. Text never
-					// starts at a `<` that can open a tag, so drop the leaked context and
-					// re-read the tag instead of emitting an empty node.
-					if (
-						this.input.charCodeAt(this.start) === CharCode.lessThan &&
-						can_start_tag_after_lt(this.input, this.start)
-					) {
-						if (this.#jsxExpressionContainerDepth > 0) {
-							// Inside a `{ … }` container the whole-stack counts below are
-							// blind: the enclosing template's `tc_expr` contexts sit on the
-							// stack but their elements are not on the container-scoped
-							// `#path`. Scope both counts to the container instead — each
-							// element opened inside it (all on `#path` above the container's
-							// baseline) still owns one `tc_expr` that its closing tag's
-							// `jsxTagEnd` pops itself, so only the run's excess above that
-							// quota is leaked. Popping deeper would make a re-read closing
-							// tag pop the container's brace or the enclosing tag context.
-							const path_baseline = this.#expressionContainerPathBaselines.at(-1) ?? 0;
-							let open_elements = 0;
-							for (let i = path_baseline; i < this.#path.length; i++) {
-								if (this.#isNativeTemplateNode(this.#path[i])) open_elements++;
-							}
-							let run = 0;
-							for (
-								let i = this.context.length - 1;
-								i >= 0 && this.context[i] === tstc.tc_expr;
-								i--
-							) {
-								run++;
-							}
-							while (run > open_elements && this.curContext() === tstc.tc_expr) {
-								this.context.pop();
-								run--;
-							}
-						} else if (this.input.charCodeAt(this.start + 1) === CharCode.slash) {
-							while (this.curContext() === tstc.tc_expr) {
-								this.context.pop();
-							}
-						} else {
-							let native_depth = 0;
-							for (const node of this.#path) {
-								if (this.#isNativeTemplateNode(node)) native_depth++;
-							}
-							let tc_expr_depth = 0;
-							for (const context of this.context) {
-								if (context === tstc.tc_expr) tc_expr_depth++;
-							}
-							while (tc_expr_depth > native_depth && this.curContext() === tstc.tc_expr) {
-								this.context.pop();
-								tc_expr_depth--;
-							}
-						}
-						this.pos = this.start;
-						this.exprAllowed = true;
-						this.next();
-						this.parseTemplateBody(body);
-						return;
-					}
 					const text = this.#parseTemplateRawText();
 					if (this.#shouldKeepTemplateTextNode(text)) {
 						body.push(text);
@@ -6138,7 +6268,6 @@ export function TSRXPlugin(config) {
 						}
 
 						this.#path.pop();
-						this.#skipTrailingLayoutWhitespace();
 						return;
 					}
 					const node = this.parseElement();
@@ -6157,35 +6286,23 @@ export function TSRXPlugin(config) {
 				this.parseTemplateBody(body);
 			}
 
+			// UPSTREAM(sveltejs/acorn-typescript#110): remove once a release includes the fix
 			/**
-			 * Parse the argument list of a deferred dynamic import,
-			 * `import.defer(specifier, options?)`, starting at the opening paren.
+			 * Parse the arguments of `import(…)` and `import.defer(…)` with acorn's
+			 * own grammar, starting at the `(`. acorn-typescript replaces it with an
+			 * older one that rejected a trailing comma after either argument
+			 * (`import("./a.js",)`), read `import(a, b, c)` as `import(a, (b, c))`,
+			 * and put the options on `arguments`. acorn puts them on `options`, the
+			 * name typescript-estree and import types here use, or `null` without
+			 * them, and rejects a third argument.
 			 *
-			 * This mirrors Acorn's ES2025 `import(...)` grammar (optional `options`
-			 * argument, optional trailing comma), which the inherited parser does
-			 * not produce here: acorn-typescript's `parseDynamicImport`, which
-			 * emits legacy `arguments`, replaces Acorn's own.
-			 *
-			 * @param {AST.ImportExpression} node
-			 * @returns {AST.ImportExpression}
+			 * sveltejs/acorn-typescript#110 defers to acorn the same way, but also
+			 * copies `options` onto `arguments`, and esrap prints both. If the
+			 * release still does, drop `arguments` from the AST when removing this.
+			 * @type {Parse.Parser['parseDynamicImport']}
 			 */
-			parseDeferredDynamicImport(node) {
-				this.next(); // `(`
-				node.source = this.parseMaybeAssign();
-				node.options = null;
-
-				if (!this.eat(tt.parenR)) {
-					this.expect(tt.comma);
-					if (!this.afterTrailingComma(tt.parenR)) {
-						node.options = this.parseMaybeAssign();
-						if (!this.eat(tt.parenR)) {
-							this.expect(tt.comma);
-							if (!this.afterTrailingComma(tt.parenR)) this.unexpected();
-						}
-					}
-				}
-
-				return this.finishNode(node, 'ImportExpression');
+			parseDynamicImport(node) {
+				return original.parseDynamicImport.call(this, node);
 			}
 
 			/**
@@ -6211,7 +6328,7 @@ export function TSRXPlugin(config) {
 					this.next(); // `defer`
 					node.phase = 'defer';
 					if (this.type !== tt.parenL) this.unexpected();
-					return this.parseDeferredDynamicImport(node);
+					return this.parseDynamicImport(node);
 				}
 
 				return super.parseExprImport(forNew);

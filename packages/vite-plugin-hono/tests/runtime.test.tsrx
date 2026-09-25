@@ -25,6 +25,11 @@ import {
 	GeneratorSpreadRefApp,
 	generator_spread_ref_nodes,
 } from '@tsrx/core/test-harness/runtime/generator-spread-ref-components.tsrx';
+import {
+	JsxTextWhitespaceApp,
+	jsx_text_nbsp_cases,
+	jsx_text_whitespace_cases,
+} from '@tsrx/core/test-harness/runtime/jsx-text-whitespace-components.tsrx';
 
 let container: HTMLDivElement;
 let resolveValue: (value: string) => void;
@@ -239,6 +244,21 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 
 		expect(container.innerHTML).toBe('<p class="error">boom</p>');
 	});
+
+	// oxc, which compiles the target's JSX, trims a non-breaking space at the
+	// edge of a line, like TypeScript
+	for (const [label, selector, html] of [
+		...jsx_text_whitespace_cases,
+		...jsx_text_nbsp_cases.map(
+			([label, selector, , trimmed]) => [label, selector, trimmed] as const,
+		),
+	]) {
+		it(`renders ${label} like TSX`, () => {
+			render(<JsxTextWhitespaceApp />, container);
+
+			expect(container.querySelector(selector)?.innerHTML).toBe(html);
+		});
+	}
 
 	for (const [label, App, selector] of [
 		['', NullishSpreadRefApp, '.nullish-spread-ref'],
