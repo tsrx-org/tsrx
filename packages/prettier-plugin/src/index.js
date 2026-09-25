@@ -363,7 +363,8 @@ function isParenthesizedType(node) {
  * the comments of each pair of parentheses moved onto it: the ones before the
  * `(` lead it, the ones after the `)` trail it. It is marked parenthesized, like
  * a parenthesized expression, so a `prettier-ignore` comment keeps the
- * parentheses along with the rest of its source.
+ * parentheses along with the rest of its source, and it takes over the
+ * parser's `prettierIgnore` mark of a union member written in parentheses.
  * @param {AST.TSParenthesizedType & AST.NodeWithMaybeComments & { typeAnnotation: AST.TypeNode & AST.NodeWithMaybeComments }} node
  * @returns {AST.TypeNode & AST.NodeWithMaybeComments}
  */
@@ -372,7 +373,11 @@ function unwrapParenthesizedType(node) {
 		? unwrapParenthesizedType(node.typeAnnotation)
 		: node.typeAnnotation;
 	const innerNode = /** @type {AST.Node} */ (/** @type {unknown} */ (inner));
+	const wrapperNode = /** @type {AST.Node} */ (/** @type {unknown} */ (node));
 	innerNode.metadata = { ...innerNode.metadata, parenthesized: true };
+	if (wrapperNode.metadata?.prettierIgnore) {
+		innerNode.metadata.prettierIgnore = true;
+	}
 	if (node.leadingComments?.length) {
 		inner.leadingComments = [...node.leadingComments, ...(inner.leadingComments ?? [])];
 	}

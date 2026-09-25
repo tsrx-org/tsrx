@@ -10225,7 +10225,12 @@ foo(x as A[], b);`);
 
 		it('keeps the parentheses of a type kept by prettier-ignore', async () => {
 			const input = `type A = keyof /* prettier-ignore */ (B   |   C);
-type D = [/* prettier-ignore */ (B   |   C)?];`;
+type D = [/* prettier-ignore */ (B   |   C)?];
+type E =
+  | B
+  // prettier-ignore
+  | (C   &   D)
+  | E;`;
 
 			expect(await format(input)).toBeWithNewline(input);
 		});
