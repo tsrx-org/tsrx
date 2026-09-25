@@ -12117,6 +12117,97 @@ function Two() @{
 			await expectUnchanged('type Entry = import("./module").Entry<string>;');
 		});
 
+		// Like Prettier, the module specifier and the import attributes of an
+		// import type lay out like call arguments, without a trailing comma (#422).
+		describe('import attributes in import types', () => {
+			it.each([
+				'type A = import("foo", { with: { type: "json" } });',
+				'type B = import("foo", { with: { "resolution-mode": "import" } }).Bar;',
+				'let c: typeof import("foo", { with: { type: "json" } });',
+				'type D = typeof import("foo", { with: { type: "json" } }).value<string>;',
+				'type E = import("foo", { assert: { "resolution-mode": "require" } }).ns.Bar<T>;',
+			])('keeps them: %s', async (source) => {
+				await expectUnchanged(source);
+			});
+
+			it('adds the spaces inside the braces', async () => {
+				const result = await format('type A = import("foo", {with: {type: "json"}})');
+				expect(result).toBeWithNewline('type A = import("foo", { with: { type: "json" } });');
+			});
+
+			it('keeps an object broken where it was written broken', async () => {
+				const input = `type A = import("foo", {
+  with: {
+  type: "json",}})
+type B = import("foo", {
+  with: {
+  type: "json"},})`;
+				const expected = `type A = import("foo", {
+  with: {
+    type: "json",
+  },
+});
+type B = import("foo", {
+  with: {
+    type: "json",
+  },
+});`;
+				expect(await format(input)).toBeWithNewline(expected);
+				expect(await format(input, { trailingComma: 'none' })).toBeWithNewline(
+					expected.replace(/,\n/g, '\n'),
+				);
+			});
+
+			it('breaks a long import type like call arguments, without a trailing comma', async () => {
+				const input = `type A = import("./long/long/long/long/long/long/long/long/long/long/path/to/module")
+type B = import("./long/long/long/long/long/long/long/long/long/long/path/to/module",{with:{type:'json'}})
+type C = import("./long/long/long/long/long/long/long/long/long/long/path/to/module",{with:{
+type:'json'}})
+type D = import("./long/long/long/long/long/long/long/long/long/long/path/to/module",{
+with:{type:'json'}})`;
+				const expected = `type A =
+  import("./long/long/long/long/long/long/long/long/long/long/path/to/module");
+type B = import(
+  "./long/long/long/long/long/long/long/long/long/long/path/to/module",
+  { with: { type: "json" } }
+);
+type C = import(
+  "./long/long/long/long/long/long/long/long/long/long/path/to/module",
+  {
+    with: {
+      type: "json",
+    },
+  }
+);
+type D = import(
+  "./long/long/long/long/long/long/long/long/long/long/path/to/module",
+  {
+    with: { type: "json" },
+  }
+);`;
+				expect(await format(input, { trailingComma: 'all' })).toBeWithNewline(expected);
+			});
+
+			it('hugs the import attributes when only they break', async () => {
+				const result = await format(
+					'type Mode = import("pkg", { with: { "resolution-mode": "require" } }).Mode<string>;',
+					{ printWidth: 40, singleQuote: true },
+				);
+				expect(result).toBeWithNewline(`type Mode = import('pkg', {
+  with: {
+    'resolution-mode': 'require',
+  },
+}).Mode<string>;`);
+			});
+
+			it('keeps them in a template body', async () => {
+				await expectUnchanged(`export function App() {
+  const data: import("./data.json", { with: { type: "json" } }).Data = load();
+  <div>{data.name}</div>
+}`);
+			});
+		});
+
 		it('keeps polymorphic this types', async () => {
 			await expectUnchanged(`interface Builder {
   self: this;

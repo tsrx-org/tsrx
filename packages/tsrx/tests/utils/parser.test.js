@@ -6038,6 +6038,155 @@ const p: Point = { x: 1 }; // trailing`,
 	});
 });
 
+// The import attributes of an import type go on `options`, as acorn's
+// `ImportExpression` and typescript-estree store them, and as
+// sveltejs/acorn-typescript#110 does upstream (#422).
+describe('import attributes in import types', () => {
+	/** @type {Array<[string, () => ParseOptions | undefined]>} */
+	const option_sets = [
+		['without options', () => undefined],
+		[
+			'with the formatter options',
+			() => ({ collect: true, errors: [], comments: [], preserveParens: true }),
+		],
+		['in loose mode', () => ({ loose: true, errors: [], comments: [] })],
+	];
+
+	/**
+	 * Every import type in the parsed source, in source order, with the source
+	 * text of its import attributes.
+	 *
+	 * @param {string} source
+	 * @param {ParseOptions} [options]
+	 */
+	function import_types(source, options) {
+		/** @type {AST.TSImportType[]} */
+		const found = [];
+		find_first(parseModule(source, 'App.tsrx', options), (node) => {
+			if (node.type === 'TSImportType') found.push(/** @type {AST.TSImportType} */ (node));
+			return false;
+		});
+		return found.map((node) => ({
+			node,
+			options:
+				node.options &&
+				source.slice(
+					/** @type {number} */ (node.options.start),
+					/** @type {number} */ (node.options.end),
+				),
+		}));
+	}
+
+	describe.each(option_sets)('%s', (_, options) => {
+		it('parses import attributes as an object expression on `options`', () => {
+			const [a, b, c] = import_types(
+				`type A = import("foo", { with: { type: "json" } });
+type B = import("foo", { with: { "resolution-mode": "import" } }).Bar;
+let c: typeof import("foo", { with: { type: "json" } });`,
+				options(),
+			);
+
+			expect(a.options).toBe('{ with: { type: "json" } }');
+			expect(as_type(a.node.argument, 'Literal').value).toBe('foo');
+			const attributes = as_type(a.node.options, 'ObjectExpression');
+			const with_property = as_type(attributes.properties[0], 'Property');
+			expect(as_type(with_property.key, 'Identifier').name).toBe('with');
+			const type_property = as_type(
+				as_type(with_property.value, 'ObjectExpression').properties[0],
+				'Property',
+			);
+			expect(as_type(type_property.key, 'Identifier').name).toBe('type');
+			expect(as_type(type_property.value, 'Literal').value).toBe('json');
+			expect(a.node.qualifier).toBeUndefined();
+
+			expect(b.options).toBe('{ with: { "resolution-mode": "import" } }');
+			const resolution_mode = as_type(
+				as_type(
+					as_type(as_type(b.node.options, 'ObjectExpression').properties[0], 'Property').value,
+					'ObjectExpression',
+				).properties[0],
+				'Property',
+			);
+			expect(as_type(resolution_mode.key, 'Literal').value).toBe('resolution-mode');
+			expect(as_type(b.node.qualifier, 'Identifier').name).toBe('Bar');
+
+			expect(c.options).toBe('{ with: { type: "json" } }');
+		});
+
+		it('parses import attributes with trailing commas and line breaks inside them', () => {
+			const [single, multiple] = import_types(
+				`type A = import("foo", { with: { type: "json", }, });
+type B = import("foo", {
+  with: {
+    type: "json",
+  },
+});`,
+				options(),
+			);
+
+			expect(single.options).toBe('{ with: { type: "json", }, }');
+			expect(multiple.options).toBe('{\n  with: {\n    type: "json",\n  },\n}');
+		});
+
+		it('parses a qualifier and type arguments after the import attributes', () => {
+			const [qualified, query] = import_types(
+				`type A = import("foo", { with: { "resolution-mode": "require" } }).ns.Bar<string, number>;
+type B = typeof import("foo", { with: { type: "json" } }).value;`,
+				options(),
+			);
+
+			expect(qualified.options).toBe('{ with: { "resolution-mode": "require" } }');
+			const qualifier = as_type(qualified.node.qualifier, 'TSQualifiedName');
+			expect(as_type(qualifier.left, 'Identifier').name).toBe('ns');
+			expect(as_type(qualifier.right, 'Identifier').name).toBe('Bar');
+			expect(qualified.node.typeArguments?.params.map((param) => param.type)).toEqual([
+				'TSStringKeyword',
+				'TSNumberKeyword',
+			]);
+
+			expect(query.options).toBe('{ with: { type: "json" } }');
+			expect(as_type(query.node.qualifier, 'Identifier').name).toBe('value');
+		});
+
+		it('parses import attributes in a template body', () => {
+			const [data] = import_types(
+				`export function App() @{
+	const data: import("./data.json", { with: { type: "json" } }).Data = load();
+	<div>{data.name}</div>
+}`,
+				options(),
+			);
+
+			expect(data.options).toBe('{ with: { type: "json" } }');
+		});
+
+		it('gives an import type without import attributes `options: null`', () => {
+			const [plain, qualified] = import_types(
+				`type A = import("foo");
+type B = import("foo").Bar<string>;`,
+				options(),
+			);
+
+			expect(plain.node.options).toBeNull();
+			expect(plain.node.qualifier).toBeUndefined();
+			expect(qualified.node.options).toBeNull();
+			expect(as_type(qualified.node.qualifier, 'Identifier').name).toBe('Bar');
+			expect(qualified.node.typeArguments?.params.map((param) => param.type)).toEqual([
+				'TSStringKeyword',
+			]);
+		});
+
+		// Like TypeScript (microsoft/TypeScript#61489), unlike `import()`.
+		it.each([
+			'type A = import("foo",);',
+			'type A = import("foo", { with: { type: "json" } },);',
+			'type A = import("foo", attributes);',
+		])('rejects what TypeScript rejects: %s', (source) => {
+			expect(() => parseModule(source, 'App.tsrx', options())).toThrow('Unexpected token');
+		});
+	});
+});
+
 describe('comments in statement lists', () => {
 	// A block comment on the next statement's line leads that statement, so a
 	// JSDoc cast stays with the parentheses it casts. The semicolon-less form

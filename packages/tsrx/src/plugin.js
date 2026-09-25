@@ -3412,6 +3412,42 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Parse an import type, `import("./data.json", { with: { type: "json" } }).Data`.
+			 * acorn-typescript expects the `)` right after the module specifier, so
+			 * it rejects the import attributes TypeScript 5.3 allows as a second
+			 * argument. They go on `options`, the name acorn's `ImportExpression` and
+			 * typescript-estree use: the object expression, or `null` without one.
+			 * TypeScript requires an object literal there, and unlike `import()` it
+			 * takes no trailing comma after either argument
+			 * (microsoft/TypeScript#61489), so neither does this.
+			 * @type {Parse.Parser['tsParseImportType']}
+			 */
+			tsParseImportType() {
+				// UPSTREAM(sveltejs/acorn-typescript#110): remove once a release includes the fix
+				const node = /** @type {AST.TSImportType} */ (this.startNode());
+				this.expect(tt._import);
+				this.expect(tt.parenL);
+				if (!this.match(tt.string)) {
+					this.raise(this.start, 'Argument in a type import must be a string literal.');
+				}
+				// For estree compatibility the specifier is a `Literal`, as in acorn-typescript.
+				node.argument = /** @type {AST.TSImportType['argument']} */ (this.parseExprAtom());
+				node.options = null;
+				if (this.eat(tt.comma)) {
+					if (!this.match(tt.braceL)) this.unexpected();
+					node.options = /** @type {AST.ObjectExpression} */ (this.parseObj(false));
+				}
+				this.expect(tt.parenR);
+				if (this.eat(tt.dot)) {
+					node.qualifier = this.tsParseEntityName();
+				}
+				if (this.tsMatchLeftRelational()) {
+					node.typeArguments = this.tsParseTypeArguments();
+				}
+				return this.finishNode(node, /** @type {AST.TSImportType['type']} */ ('TSImportType'));
+			}
+
+			/**
 			 * The token after a type is read while still inside the type, where `<`
 			 * is always a type operator. Once the outermost type has ended, a `<` that
 			 * starts its own line is read again by the rules for code, so an element

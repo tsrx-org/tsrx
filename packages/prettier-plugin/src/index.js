@@ -5477,8 +5477,9 @@ function isBlockBody(body) {
  * `printCallArguments`. A React hook call keeps its callback and dependency
  * array on the call's line, a leading function argument or an expandable last
  * argument hugs the parentheses, and anything else breaks every argument onto
- * its own line.
- * @param {AstPath<AST.CallExpression | AST.NewExpression>} path - The call or new expression path
+ * its own line. Like Prettier, it also prints the module specifier and import
+ * attributes of an import type, which take no trailing comma.
+ * @param {AstPath<AST.CallExpression | AST.NewExpression | AST.TSImportType>} path - The call, new expression, or import type path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @param {boolean} [keepOnCallLine] - Whether the arguments may stay on the
@@ -5489,7 +5490,7 @@ function isBlockBody(body) {
 function printCallArguments(path, options, print, keepOnCallLine = true) {
 	const { node } = path;
 	const parent = /** @type {AST.Node | null} */ (path.parent);
-	const args = node.arguments || [];
+	const args = getCallArguments(node);
 
 	if (args.length === 0) {
 		return group(['(', printDanglingCommentsInList(node.innerComments, options.originalText), ')']);
@@ -5510,17 +5511,34 @@ function printCallArguments(path, options, print, keepOnCallLine = true) {
 	 * @param {PrintArgs} [extra]
 	 * @returns {Doc}
 	 */
-	const printArgument = (index, extra) =>
-		path.call(
-			(argumentPath) => {
-				const printArgs = argumentPrintArgs(index, extra);
-				return printArgs ? print(argumentPath, printArgs) : print(argumentPath);
-			},
+	const printArgument = (index, extra) => {
+		/** @param {AstPath} argumentPath */
+		const printAt = (argumentPath) => {
+			const printArgs = argumentPrintArgs(index, extra);
+			return printArgs ? print(argumentPath, printArgs) : print(argumentPath);
+		};
+		// An import type's arguments are its `argument` and `options`
+		if (node.type === 'TSImportType') {
+			return /** @type {AstPath<AST.TSImportType>} */ (path).call(
+				printAt,
+				index === 0 ? 'argument' : 'options',
+			);
+		}
+		return /** @type {AstPath<AST.CallExpression | AST.NewExpression>} */ (path).call(
+			printAt,
 			'arguments',
 			index,
 		);
+	};
 
-	if (keepOnCallLine && keepsArgumentsOnCallLine(path, options)) {
+	if (
+		keepOnCallLine &&
+		node.type !== 'TSImportType' &&
+		keepsArgumentsOnCallLine(
+			/** @type {AstPath<AST.CallExpression | AST.NewExpression>} */ (path),
+			options,
+		)
+	) {
 		return [
 			'(',
 			join(
@@ -5561,7 +5579,8 @@ function printCallArguments(path, options, print, keepOnCallLine = true) {
 		printedArguments.push(argDoc);
 	}
 
-	const trailingComma = shouldPrintComma(options, 'all') ? ifBreak(',') : '';
+	const trailingComma =
+		node.type !== 'TSImportType' && shouldPrintComma(options, 'all') ? ifBreak(',') : '';
 
 	const allArgsBrokenOut = () =>
 		group(['(', indent([line, ...printedArguments]), trailingComma, line, ')'], {
@@ -5650,6 +5669,19 @@ function printCallArguments(path, options, print, keepOnCallLine = true) {
 	return group(contents, {
 		shouldBreak: printedArguments.some(willBreak) || anyArgEmptyLine,
 	});
+}
+
+/**
+ * The arguments of a call or `new` expression, or the module specifier and
+ * import attributes of an import type, like Prettier's `getCallArguments`.
+ * @param {AST.CallExpression | AST.NewExpression | AST.TSImportType} node
+ * @returns {AST.Node[]}
+ */
+function getCallArguments(node) {
+	if (node.type === 'TSImportType') {
+		return node.options ? [node.argument, node.options] : [node.argument];
+	}
+	return node.arguments || [];
 }
 
 /**
@@ -12197,7 +12229,11 @@ function printTSQualifiedName(node, path, options, print) {
  */
 function printTSImportType(node, path, options, print) {
 	/** @type {Doc[]} */
-	const parts = ['import(', path.call(print, 'argument'), ')'];
+	const parts = node.options
+		? // Like Prettier, the module specifier and the import attributes lay out
+			// like call arguments
+			[group(['import', printCallArguments(path, options, print, false)])]
+		: ['import(', path.call(print, 'argument'), ')'];
 
 	if (node.qualifier) {
 		parts.push('.', path.call(print, 'qualifier'));
