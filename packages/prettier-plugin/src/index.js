@@ -4170,14 +4170,10 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = printJSXAttribute(node, path, options, print);
 			break;
 
-		case 'JSXSpreadAttribute': {
-			nodeContent = ['{...', path.call(print, 'argument'), '}'];
-			break;
-		}
-
+		case 'JSXSpreadAttribute':
 		case 'JSXSpreadChild':
-			nodeContent = printJSXSpreadChild(
-				/** @type {AstPath<ESTreeJSX.JSXSpreadChild>} */ (path),
+			nodeContent = printJSXSpread(
+				/** @type {AstPath<ESTreeJSX.JSXSpreadAttribute | ESTreeJSX.JSXSpreadChild>} */ (path),
 				options,
 				print,
 			);
@@ -12821,7 +12817,29 @@ function printRawText(raw) {
 	if (!text) {
 		return '';
 	}
-	return fill(join(line, text.split(/[ \t\r\n]+/u)));
+	/** @type {Doc[]} */
+	const parts = [];
+	for (const word of text.split(/[ \t\r\n]+/u)) {
+		if (parts.length === 0) {
+			parts.push(word);
+		} else if (startsWithLineComment(word)) {
+			parts.push([/** @type {Doc} */ (parts.pop()), ' ', word]);
+		} else {
+			parts.push(line, word);
+		}
+	}
+	return fill(parts);
+}
+
+/**
+ * Whether a word of text starts with `//`, which TSRX reads as a line comment
+ * at the start of a line. Such a word never starts a line: it stays on the
+ * line of the word before it, after a space that doesn't break.
+ * @param {string} word
+ * @returns {boolean}
+ */
+function startsWithLineComment(word) {
+	return word.startsWith('//');
 }
 
 /**
@@ -12943,6 +12961,10 @@ function printJSXChildren(items, jsxWhitespace) {
 					words.shift();
 					if (/\n/u.test(words[0])) {
 						pushLine(separatorWithWhitespace(words[1], item.node, next?.node));
+					} else if (startsWithLineComment(words[1])) {
+						// TSRX: the word stays on the line of the child before it (see
+						// below)
+						push(' ');
 					} else {
 						pushLine(jsxWhitespace);
 					}
@@ -12962,10 +12984,13 @@ function printJSXChildren(items, jsxWhitespace) {
 				}
 
 				for (const [wordIndex, word] of words.entries()) {
-					if (wordIndex % 2 === 1) {
-						pushLine(line);
-					} else {
+					if (wordIndex % 2 === 0) {
 						push(word);
+					} else if (startsWithLineComment(words[wordIndex + 1])) {
+						// TSRX: the word would read as a comment at the start of a line
+						push(' ');
+					} else {
+						pushLine(line);
 					}
 				}
 
@@ -12990,7 +13015,18 @@ function printJSXChildren(items, jsxWhitespace) {
 			push(item.doc);
 			if (next && 'text' in next && isMeaningfulJSXText(next.text)) {
 				const [firstWord] = trimJSXWhitespace(next.text).split(/[ \t\r\n]+/u);
-				pushLine(separatorNoWhitespace(firstWord, item.node, next.node));
+				// TSRX: a word that starts with `//` would read as a comment at the
+				// start of a line, so it stays on the line of the child before it,
+				// which ends with a comment for it to be text (`{" "}/* c */ //x`).
+				// The sides of a comment in text keep it there (see
+				// `pushJSXTextWithComments`).
+				if (
+					!startsWithLineComment(firstWord) ||
+					isCommentNode(item.node) ||
+					/^[ \t]*[\r\n]/u.test(next.text)
+				) {
+					pushLine(separatorNoWhitespace(firstWord, item.node, next.node));
+				}
 			} else {
 				pushLine(hardline);
 			}
@@ -12998,6 +13034,15 @@ function printJSXChildren(items, jsxWhitespace) {
 	}
 
 	return parts;
+}
+
+/**
+ * Whether a child item of {@link printJSXChildren} is a comment in text.
+ * @param {any} node
+ * @returns {boolean}
+ */
+function isCommentNode(node) {
+	return node?.type === 'Block' || node?.type === 'Line';
 }
 
 /**
@@ -13180,14 +13225,23 @@ function pushJSXTextWithComments(items, child, previous, gap, text, isLastChild,
 			}
 			return whitespace === '' ? 'glue' : 'line';
 		};
+		const textAfter = stringAt(index + 1);
+		const whitespaceAfter = leadingWhitespace(textAfter);
+		/** @type {JSXTextCommentSide} */
+		let after =
+			token.type === 'Line'
+				? 'hardline'
+				: getSide(whitespaceAfter, index === run.last, run.wordAfter);
+		// A word after the comment that starts with `//` would read as a comment
+		// at the start of a line
+		if (after === 'line' && startsWithLineComment(textAfter.slice(whitespaceAfter.length))) {
+			after = 'literal';
+		}
 		/** @type {Doc} */
 		const doc = [printComment(token, text), token.type === 'Line' ? breakParent : ''];
 		sides.set(doc, {
 			before: getSide(trailingWhitespace(stringAt(index - 1)), index === run.first, run.wordBefore),
-			after:
-				token.type === 'Line'
-					? 'hardline'
-					: getSide(leadingWhitespace(stringAt(index + 1)), index === run.last, run.wordAfter),
+			after,
 		});
 		items.push({ doc, node: token });
 	}
@@ -13239,15 +13293,16 @@ function getJSXChildEnd(node) {
  * @param {AstPath} path - The path to the element or fragment
  * @param {number} index - The child's index
  * @param {PrintFn} print
+ * @param {string} text - The source text
  * @returns {Doc}
  */
-function printJSXChildExpressionContainer(path, index, print) {
+function printJSXChildExpressionContainer(path, index, print, text) {
 	const child = path.node.children[index];
 	const expressionDoc = path.call(print, 'children', index, 'expression');
 	return [
 		...printTemplateChildLeadingComments(child),
 		printJSXExpressionContainer(child.expression, expressionDoc, true),
-		...printTemplateChildTrailingComments(child),
+		...printTemplateChildTrailingComments(child, text),
 	];
 }
 
@@ -13268,41 +13323,48 @@ function printJSXExpressionContainer(expression, expressionDoc, isChild) {
 }
 
 /**
- * Print a spread child, `{...expr}`, like Prettier's JSX spread printer: the
- * expression's leading comments print ahead of the `...`, and a line comment
- * breaks the braces open so it stays inside them. The comments of a type cast
- * stay on its parentheses.
- * @param {AstPath<ESTreeJSX.JSXSpreadChild>} path - The spread child's path
+ * Print a spread attribute or child, `{...expr}`, like Prettier's
+ * `printJsxSpreadAttributeOrChild`: the comments of the argument print inside
+ * the braces, the leading ones ahead of the `...`, and the braces break open
+ * around a line comment so it stays inside them. The comments of a type cast
+ * stay on its parentheses. A spread child prints as a group of its own, and
+ * the braces of an attribute break with the opening tag.
+ * @param {AstPath<ESTreeJSX.JSXSpreadAttribute | ESTreeJSX.JSXSpreadChild>} path - The spread's path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @returns {Doc}
  */
-function printJSXSpreadChild(path, options, print) {
-	const expression = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node.expression);
-	const isTypeCast = path.call(
-		(expressionPath) => getTypeCastParens(expressionPath, options) !== null,
-		'expression',
+function printJSXSpread(path, options, print) {
+	const key = path.node.type === 'JSXSpreadAttribute' ? 'argument' : 'expression';
+	const argument = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (
+		path.node.type === 'JSXSpreadAttribute' ? path.node.argument : path.node.expression
 	);
-	const leadingComments = isTypeCast ? [] : (expression.leadingComments ?? []);
-	if (leadingComments.length === 0 && !expression.trailingComments?.length) {
-		return ['{...', path.call(print, 'expression'), '}'];
+	const isTypeCast = path.call(
+		(argumentPath) => getTypeCastParens(argumentPath, options) !== null,
+		key,
+	);
+	const leadingComments = isTypeCast ? [] : (argument.leadingComments ?? []);
+	if (leadingComments.length === 0 && !argument.trailingComments?.length) {
+		return ['{...', path.call(print, key), '}'];
 	}
-	return group([
+	/** @type {Doc[]} */
+	const printed = [
 		'{',
 		indent([
 			softline,
-			...printLeadingComments(expression, leadingComments, options),
+			...printLeadingComments(argument, leadingComments, options),
 			'...',
 			path.call(
-				(expressionPath) =>
-					print(expressionPath, { suppressLeadingComments: leadingComments.length > 0 }),
-				'expression',
+				(argumentPath) =>
+					print(argumentPath, { suppressLeadingComments: leadingComments.length > 0 }),
+				key,
 			),
 		]),
 		softline,
 		lineSuffixBoundary,
 		'}',
-	]);
+	];
+	return path.node.type === 'JSXSpreadChild' ? group(printed) : printed;
 }
 
 /**
@@ -13332,6 +13394,7 @@ function printJSXElementBody(
 	attributeCount,
 ) {
 	const children = /** @type {AST.Node[]} */ (node.children);
+	const text = /** @type {string} */ (options.originalText);
 
 	if (
 		children.length === 1 &&
@@ -13340,10 +13403,9 @@ function printJSXElementBody(
 			children[0].expression.type === 'TaggedTemplateExpression') &&
 		closingCommentDocs.length === 0
 	) {
-		return [openingLines, printJSXChildExpressionContainer(path, 0, print), closingLines];
+		return [openingLines, printJSXChildExpressionContainer(path, 0, print, text), closingLines];
 	}
 
-	const text = /** @type {string} */ (options.originalText);
 	/** @type {JSXChildItem[]} */
 	const items = [];
 	// What prints on the sides of the comments in text and of the children
@@ -13384,7 +13446,7 @@ function printJSXElementBody(
 			// `{" "}` is a significant space, like Prettier reads it
 			items.push({ text: ' ', node: { type: 'JSXText' } });
 		} else if (child.type === 'JSXExpressionContainer') {
-			items.push({ doc: printJSXChildExpressionContainer(path, index, print), node: child });
+			items.push({ doc: printJSXChildExpressionContainer(path, index, print, text), node: child });
 		} else {
 			items.push({ doc: path.call(print, 'children', index), node: child });
 		}
@@ -13512,7 +13574,12 @@ function printJSXElementBody(
 			return isBefore ? [rawJsxWhitespace, hardline] : [hardline, rawJsxWhitespace];
 		};
 		for (let i = 0; i < parts.length; i += 2) {
-			const part = parts[i];
+			// A child that a word starting with `//` joins (see `printJSXChildren`)
+			// is the first doc of its part
+			let part = parts[i];
+			while (Array.isArray(part) && part.length === 2 && Array.isArray(part[0])) {
+				part = part[0];
+			}
 			const sides =
 				Array.isArray(part) && part.length === 2 && part[0] === ''
 					? commentSides.get(part[1])
@@ -13780,7 +13847,8 @@ function printJSXElement(node, path, options, print) {
 			singleStringValue !== null &&
 			!singleStringValue.includes('\n') &&
 			!nameHasComments &&
-			!hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (attributes[0]))
+			!hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (attributes[0])) &&
+			!hasLineCommentInAttribute(attributes[0])
 		) {
 			// Don't break up an opening element with a single long text attribute
 			openingTag = group([
@@ -13810,7 +13878,8 @@ function printJSXElement(node, path, options, print) {
 					/** @type {{ jsxBracketSameLine?: boolean }} */ (options).jsxBracketSameLine,
 				) &&
 					(!nameHasComments || attributes.length > 0) &&
-					!lastAttribute?.trailingComments?.length);
+					!lastAttribute?.trailingComments?.length &&
+					!hasLineCommentInAttribute(lastAttribute));
 			openingTag = group(
 				[
 					'<',
@@ -14046,13 +14115,45 @@ function printTemplateChildLeadingComments(child) {
  * line as the child). Used for `{expr}` children, whose `{ … }` form is printed
  * inline by the JSX printers and so would otherwise skip the node's attached
  * trailing comments.
+ *
+ * A `{" "}` keeps the block comments on its line even in the text after it
+ * (see `isCommentInText` in the parser), where the whitespace around them is
+ * one run of the text's whitespace. A space printed before one of them is in
+ * that run, so it prints only where the source has one and the run has no
+ * line break, which would make its spaces insignificant.
  * @param {AST.Node & AST.NodeWithMaybeComments} child
+ * @param {string} text - The source text
  * @returns {Doc[]}
  */
-function printTemplateChildTrailingComments(child) {
+function printTemplateChildTrailingComments(child, text) {
 	const comments = child.trailingComments;
 	if (!comments || comments.length === 0) {
 		return [];
+	}
+	const expression = /** @type {ESTreeJSX.JSXExpressionContainer} */ (child).expression;
+	const isJSXSpace = expression?.type === 'Literal' && expression.value === ' ';
+	/** @type {Set<AST.Comment>} */
+	const glued = new Set();
+	if (isJSXSpace) {
+		let end = /** @type {AST.NodeWithLocation} */ (child).end;
+		let whitespace = '';
+		for (const comment of comments) {
+			if (comment.type !== 'Block') {
+				break;
+			}
+			const { start } = /** @type {AST.NodeWithLocation} */ (comment);
+			if (start === end) {
+				glued.add(comment);
+			}
+			whitespace += text.slice(end, start);
+			end = /** @type {AST.NodeWithLocation} */ (comment).end;
+		}
+		whitespace += /** @type {string} */ (/^[ \t\r\n]*/u.exec(text.slice(end))?.[0]);
+		if (whitespace.includes('\n')) {
+			for (const comment of comments) {
+				glued.add(comment);
+			}
+		}
 	}
 	/** @type {Doc[]} */
 	const parts = [];
@@ -14061,7 +14162,7 @@ function printTemplateChildTrailingComments(child) {
 			parts.push(lineSuffix([' ', printComment(comment)]));
 			parts.push(breakParent);
 		} else if (comment.type === 'Block') {
-			parts.push(' ', printComment(comment));
+			parts.push(glued.has(comment) ? '' : ' ', printComment(comment));
 		}
 	}
 	return parts;
@@ -14219,26 +14320,141 @@ function printJSXAttribute(attr, path, options, print) {
 		return printJSXShorthandAttribute(attr, name, path, options, print);
 	}
 
+	// Like Prettier's `print("name")`, the name prints with its comments
+	const nameNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (
+		/** @type {unknown} */ (attr.name)
+	);
+	const printedName = hasComment(nameNode)
+		? finishTsrxNode(
+				nameNode,
+				printLeadingComments(nameNode, nameNode.leadingComments ?? [], options),
+				name,
+				options,
+			)
+		: name;
+
 	if (!attr.value) {
-		return name;
+		return printedName;
 	}
 
-	if (attr.value.type === 'Literal') {
-		return [
-			name,
-			'=',
-			printJSXAttributeString(/** @type {AST.SimpleLiteral} */ (attr.value), options),
-		];
-	}
+	// The comments between the `=` and the value lead the value
+	const value = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (attr.value);
+	const valueComments = value.leadingComments ?? [];
+	const hasLineComment = valueComments.some((comment) => comment.type === 'Line');
 
-	if (attr.value.type === 'JSXExpressionContainer') {
-		const expression = attr.value.expression;
+	if (value.type === 'JSXExpressionContainer') {
+		const expression = /** @type {ESTreeJSX.JSXExpressionContainer} */ (value).expression;
 		const exprDoc = path.call(print, 'value', 'expression');
-		return [name, '=', printJSXExpressionContainer(expression, exprDoc, false)];
+		/** @type {Doc} */
+		let container;
+		if (hasLineComment) {
+			// Where Prettier's output settles: inside the braces, where the comments
+			// lead the expression
+			container = group([
+				'{',
+				indent([softline, ...printLeadingComments(value, valueComments, options), exprDoc]),
+				softline,
+				lineSuffixBoundary,
+				'}',
+			]);
+		} else {
+			container = [
+				...printValueBlockComments(valueComments),
+				printJSXExpressionContainer(expression, exprDoc, false),
+			];
+		}
+		return [printedName, '=', container, ...printTrailingComments(value, options)];
 	}
 
-	// An element or fragment written without braces (`prop=<Bar />`)
-	return [name, '=', path.call(print, 'value')];
+	// A string, or an element or fragment written without braces
+	// (`prop=<Bar />`), whose comments stay where the print callback puts them
+	// when a type cast or a `prettier-ignore` needs them before it
+	/** @type {Doc} */
+	let printed;
+	if (value.type === 'Literal') {
+		printed = finishTsrxNode(
+			value,
+			[],
+			printJSXAttributeString(/** @type {AST.SimpleLiteral} */ (value), options),
+			options,
+		);
+	} else if (
+		path.call(
+			(valuePath) => getTypeCastParens(valuePath, options) === null && !isIgnored(valuePath),
+			'value',
+		)
+	) {
+		printed = path.call(
+			(valuePath) => print(valuePath, { suppressLeadingComments: true }),
+			'value',
+		);
+	} else {
+		return [printedName, '=', path.call(print, 'value')];
+	}
+	const firstLineComment = valueComments.findIndex((comment) => comment.type === 'Line');
+	if (firstLineComment === -1) {
+		return [printedName, '=', ...printValueBlockComments(valueComments), printed];
+	}
+	return [
+		printedName,
+		'=',
+		...printValueBlockComments(valueComments.slice(0, firstLineComment)),
+		printed,
+		...printValueCommentsAfter(valueComments.slice(firstLineComment)),
+	];
+}
+
+/**
+ * Print the block comments between an attribute's `=` and its value, each
+ * followed by a space, like Prettier's `attr=/* note *\/ "value"`. They stay
+ * on the value's line, where Prettier moves one that ends its line before the
+ * `=` on the next format.
+ * @param {AST.Comment[]} comments
+ * @returns {Doc[]}
+ */
+function printValueBlockComments(comments) {
+	return comments.flatMap((comment) => [printComment(comment), ' ']);
+}
+
+/**
+ * Print the comments between an attribute's `=` and a value without braces
+ * from the first line comment on, which can't stay before the value. They
+ * print after it like trailing comments of the attribute, the line comment on
+ * the attribute's line, where Prettier's output settles (Prettier moves a line
+ * comment on the `=`'s line after the element, where it trails the attribute
+ * on the next format): `attr="value" // note`. The ones after it go on lines
+ * of their own.
+ * @param {AST.Comment[]} comments - The comments, starting with a line comment
+ * @returns {Doc[]}
+ */
+function printValueCommentsAfter(comments) {
+	return comments.map((comment, index) =>
+		index === 0
+			? [lineSuffix([' ', printComment(comment)]), breakParent]
+			: lineSuffix([hardline, printComment(comment)]),
+	);
+}
+
+/**
+ * Whether an attribute has a line comment on its name, or before a value
+ * without braces, which then prints after the value (see
+ * {@link printValueCommentsAfter}). Like a trailing line comment of the
+ * attribute, it keeps the opening tag broken, so that the `>` and what follows
+ * it don't join the comment's line.
+ * @param {AST.Node | undefined} attribute
+ * @returns {boolean}
+ */
+function hasLineCommentInAttribute(attribute) {
+	if (attribute?.type !== 'JSXAttribute' || attribute.shorthand) {
+		return false;
+	}
+	const name = /** @type {AST.NodeWithMaybeComments} */ (/** @type {unknown} */ (attribute.name));
+	const value = /** @type {(AST.Node & AST.NodeWithMaybeComments) | null} */ (attribute.value);
+	return [
+		...(name.leadingComments ?? []),
+		...(name.trailingComments ?? []),
+		...(value && value.type !== 'JSXExpressionContainer' ? (value.leadingComments ?? []) : []),
+	].some((comment) => comment.type === 'Line');
 }
 
 /**
