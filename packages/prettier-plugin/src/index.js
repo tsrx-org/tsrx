@@ -2258,7 +2258,9 @@ function hasDecoratorsBeforeExport(node) {
 		return false;
 	}
 
-	const [firstDecorator] = getDecorators(/** @type {AST.Node | null | undefined} */ (node.declaration));
+	const [firstDecorator] = getDecorators(
+		/** @type {AST.Node | null | undefined} */ (node.declaration),
+	);
 	return (
 		!!firstDecorator &&
 		/** @type {AST.NodeWithLocation} */ (firstDecorator).start <
