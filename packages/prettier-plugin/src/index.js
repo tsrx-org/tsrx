@@ -3658,7 +3658,9 @@ function printTsrxNode(node, path, options, print, args) {
 		// inside the parentheses around it, so a comment on its own line opens
 		// them and a `return` keeps its value (#456). Template values (control
 		// flow, code blocks) get the same parentheses.
-		const trailingParts = suppressTrailingComments ? [] : printTrailingComments(node, options);
+		const trailingParts = suppressTrailingComments
+			? []
+			: printTrailingComments(/** @type {AST.Node} */ (node), options);
 		nodeContent = printTemplateInParens(
 			path,
 			options,
