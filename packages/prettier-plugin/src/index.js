@@ -47,6 +47,8 @@ const {
 	align,
 	addAlignmentToDoc,
 	label,
+	literalline,
+	markAsRoot,
 } = builders;
 const { replaceEndOfLine, stripTrailingHardline, willBreak, canBreak, removeLines, mapDoc } = utils;
 const { printDocToString } = doc.printer;
@@ -1786,19 +1788,85 @@ function printDeclarationDecorators(node, path, options, print) {
 }
 
 /**
- * Print the comments inside an empty array or object as Prettier's
- * `printDanglingCommentsInList` does: block comments stay inline between the
- * brackets when they fit, and a line comment breaks the list.
- * @param {AST.NodeWithMaybeComments} node - The empty array or object
+ * Print a comment, like Prettier's `printComment`. A multi-line block comment
+ * whose every line starts with `*` takes the indentation of where it prints
+ * (see {@link printIndentableBlockComment}). Any other block comment prints as
+ * written.
+ * @param {AST.Comment} comment - The comment
+ * @param {string} [text] - The source text
  * @returns {Doc}
  */
-function printDanglingCommentsInList(node) {
-	const comments = node.innerComments ?? [];
-	if (comments.length === 0) {
+function printComment(comment, text) {
+	if (comment.type === 'Line') {
+		return '//' + comment.value;
+	}
+	if (!comment.value.includes('\n')) {
+		return '/*' + comment.value + '*/';
+	}
+	if (isIndentableBlockComment(comment)) {
+		return printIndentableBlockComment(comment);
+	}
+	// The parser removes the comment's own indentation from its value, so
+	// print the source, which keeps every line where it was
+	const { start, end } = /** @type {AST.NodeWithLocation} */ (comment);
+	const source =
+		typeof text === 'string' && typeof start === 'number' && typeof end === 'number'
+			? text.slice(start, end)
+			: '/*' + comment.value + '*/';
+	return replaceEndOfLine(source);
+}
+
+/**
+ * Print a block comment whose lines all start with `*` (see
+ * {@link isIndentableBlockComment}), like Prettier's
+ * `printIndentableBlockComment`: each line after the first lines its `*` up
+ * under the first line's, at the indentation where the comment prints. A
+ * JSDoc line that ends with two spaces keeps them.
+ * @param {AST.Comment} comment - The comment
+ * @returns {Doc}
+ */
+function printIndentableBlockComment(comment) {
+	const lines = `*${comment.value}*`.split('\n').map((line) => line.trimStart());
+	const isJsdoc = comment.value[0] === '*' && comment.value[1] !== '*';
+	return [
+		'/',
+		lines.map((line, index) => {
+			if (index === 0) {
+				return [line.trimEnd(), hardline];
+			}
+			if (index === lines.length - 1) {
+				return [' ', line];
+			}
+			const trimmed = line.trimEnd();
+			if (isJsdoc && trimmed !== '*' && line.endsWith('  ')) {
+				return [' ', trimmed, '  ', markAsRoot(literalline)];
+			}
+			return [' ', trimmed, hardline];
+		}),
+		'/',
+	];
+}
+
+/**
+ * Print the comments inside an empty list's brackets, like Prettier's
+ * `printDanglingCommentsInList`: `run(/* none *\/)`, or on their own lines
+ * when one is a line comment.
+ * @param {AST.Comment[] | undefined} comments - The comments, in source order
+ * @param {string} [text] - The source text
+ * @returns {Doc}
+ */
+function printDanglingCommentsInList(comments, text) {
+	if (!comments?.length) {
 		return '';
 	}
 	return [
-		indent([softline, join(hardline, comments.map(printCommentText))]),
+		indent([
+			softline,
+			join(
+				hardline,
+				comments.map((comment) => printComment(comment, text)),
+			),
+		]),
 		comments.some((comment) => comment.type === 'Line') ? hardline : softline,
 	];
 }
@@ -1809,12 +1877,11 @@ function printDanglingCommentsInList(node) {
  * @param {AST.Node | AST.CSS.StyleSheet} node - The node the comments lead
  * @param {AST.Comment[]} comments - The comments, in source order
  * @param {TsrxFormatOptions} options - Prettier options
- * @param {boolean | undefined} isInlineContext - Whether block comments stay on the line
  * @param {boolean} [semicolonBeforeLast] - Print the statement's leading `;`
  *   right before the last comment, a JSDoc cast that must touch its `(`
  * @returns {Doc[]}
  */
-function printLeadingComments(node, comments, options, isInlineContext, semicolonBeforeLast) {
+function printLeadingComments(node, comments, options, semicolonBeforeLast) {
 	const text = /** @type {string} */ (options.originalText);
 	/** @type {Doc[]} */
 	const parts = [];
@@ -1824,7 +1891,7 @@ function printLeadingComments(node, comments, options, isInlineContext, semicolo
 		const isLastComment = i === comments.length - 1;
 
 		if (comment.type === 'Line') {
-			parts.push('//' + comment.value);
+			parts.push(printComment(comment, text));
 			parts.push(hardline);
 
 			// Preserve a blank line before the next comment or the node. Like
@@ -1837,17 +1904,16 @@ function printLeadingComments(node, comments, options, isInlineContext, semicolo
 			if (isLastComment && semicolonBeforeLast) {
 				parts.push(';');
 			}
-			parts.push('/*' + comment.value + '*/');
+			parts.push(printComment(comment, text));
 
-			// Check if comment and node are on the same line (for inline JSDoc comments)
-			const isCommentInlineWithParen =
-				isLastComment && isCommentFollowedBySameLineParen(comment, options);
-			const isCommentOnSameLine =
-				isLastComment && comment.loc && node.loc && comment.loc.end.line === node.loc.start.line;
-			const shouldKeepOnSameLine = isCommentOnSameLine || isCommentInlineWithParen;
-
-			if (!isInlineContext && !shouldKeepOnSameLine) {
-				parts.push(hardline);
+			// Like Prettier's `printLeadingComment`, a block comment keeps what
+			// follows it on its line. One that ends its line breaks it when it
+			// also starts its line, and otherwise only when what follows doesn't
+			// fit.
+			const commentEnd = /** @type {AST.NodeWithLocation} */ (comment).end;
+			if (hasNewline(text, commentEnd)) {
+				const commentStart = /** @type {AST.NodeWithLocation} */ (comment).start;
+				parts.push(hasNewline(text, commentStart, { backwards: true }) ? hardline : line);
 
 				// Preserve a blank line before the next comment or the node
 				if (isLineAfterCommentEmpty(text, comment)) {
@@ -1883,10 +1949,7 @@ function printTypeCastParens(node, typeCastParens, nodeContent, options, args) {
 			comments.length === 0 &&
 			index === inside.length - 1 &&
 			(node.type === 'ObjectExpression' || node.type === 'ArrayExpression');
-		const inner = [
-			...printLeadingComments(node, comments, options, args?.isInlineContext),
-			printed,
-		];
+		const inner = [...printLeadingComments(node, comments, options), printed];
 		printed = hug ? ['(', inner, ')'] : group(['(', indent([softline, inner]), softline, ')']);
 	}
 	return printed;
@@ -1914,15 +1977,14 @@ function finishTsrxNode(node, parts, nodeContent, options) {
 			// a `;` that isn't printed
 			const isInlineComment = !hasNewline(text, commentStart, { backwards: true });
 
-			const commentDoc =
-				comment.type === 'Line' ? '//' + comment.value : '/*' + comment.value + '*/';
+			const commentDoc = printComment(comment, text);
 
 			if (isInlineComment) {
 				if (comment.type === 'Line') {
 					trailingParts.push(lineSuffix([' ', commentDoc]));
 					trailingParts.push(breakParent);
 				} else {
-					trailingParts.push(' ' + commentDoc);
+					trailingParts.push([' ', commentDoc]);
 				}
 			} else {
 				const refs = [];
@@ -1970,7 +2032,6 @@ function printTsrxNode(node, path, options, print, args) {
 	/** @type {Doc[]} */
 	const parts = [];
 
-	const isInlineContext = args && args.isInlineContext;
 	const suppressLeadingComments = args && args.suppressLeadingComments;
 	// A cast's comments print between its parentheses, not ahead of the node
 	const typeCastParens = getTypeCastParens(path, options);
@@ -1989,9 +2050,7 @@ function printTsrxNode(node, path, options, print, args) {
 			isCommentFollowedBySameLineParen(lastComment, options) &&
 			needsLeadingSemicolon(path, options),
 		);
-		parts.push(
-			...printLeadingComments(node, comments, options, isInlineContext, leadingSemicolonPrinted),
-		);
+		parts.push(...printLeadingComments(node, comments, options, leadingSemicolonPrinted));
 	}
 
 	// Handle inner comments (for nodes with no children to attach to)
@@ -1999,11 +2058,7 @@ function printTsrxNode(node, path, options, print, args) {
 	const innerComments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments;
 	if (innerComments) {
 		for (const comment of innerComments) {
-			if (comment.type === 'Line') {
-				innerCommentParts.push('//' + comment.value);
-			} else if (comment.type === 'Block') {
-				innerCommentParts.push('/*' + comment.value + '*/');
-			}
+			innerCommentParts.push(printComment(comment, options.originalText));
 		}
 	}
 
@@ -2446,7 +2501,8 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'EmptyStatement':
-			nodeContent = '';
+			// Statement lists skip empty statements, so this is a body
+			nodeContent = ';';
 			break;
 
 		case 'TSInterfaceBody':
@@ -3449,10 +3505,10 @@ function printFunctionExpression(node, path, options, print, args) {
 		parts.push('*');
 	}
 
-	// Function name (if any)
+	// Function name (if any), with its comments
 	if (node.id) {
 		parts.push(' ');
-		parts.push(node.id.name);
+		parts.push(path.call(print, 'id'));
 	}
 
 	// Add TypeScript generics if present
@@ -3484,7 +3540,9 @@ function printFunctionExpression(node, path, options, print, args) {
 /**
  * Whether an arrow function prints its single parameter without parentheses
  * (`x => x`), which `arrowParens: "avoid"` allows only when nothing but the
- * name is written: no type annotation, return type, or type parameters.
+ * name is written: no type annotation, return type, or type parameters, and,
+ * like Prettier's `canPrintParamsWithoutParens`, no comment on the parameter
+ * or before `=>`.
  * @param {AST.ArrowFunctionExpression} node - The arrow function node
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {boolean}
@@ -3496,7 +3554,9 @@ function printsArrowParamWithoutParens(node, options) {
 		node.params[0].type === 'Identifier' &&
 		!node.params[0].typeAnnotation &&
 		!node.returnType &&
-		!node.typeParameters
+		!node.typeParameters &&
+		!(/** @type {AST.Comment[] | undefined} */ (node.comments)?.length) &&
+		!hasComment(node.params[0])
 	);
 }
 
@@ -3540,7 +3600,7 @@ function printArrowFunction(node, path, options, print, args) {
 		} else {
 			// The chain prints the comments of the arrows inside it
 			signatureDocs.push([
-				printLeadingComments(arrow, arrow.leadingComments ?? [], options, false),
+				printLeadingComments(arrow, arrow.leadingComments ?? [], options),
 				signatureDoc,
 			]);
 			bodyComments.unshift(finishTsrxNode(arrow, [], '', options));
@@ -3663,7 +3723,7 @@ function printArrowFunctionSignature(path, options, print, args) {
 
 	if (printsArrowParamWithoutParens(node, options)) {
 		parts.push(path.call(print, 'params', 0));
-		return parts;
+		return printCommentsBeforeArrow(node, parts, options);
 	}
 
 	const shouldExpandParameters = Boolean(args?.expandLastArg || args?.expandFirstArg);
@@ -3691,6 +3751,24 @@ function printArrowFunctionSignature(path, options, print, args) {
 			returnTypeDoc,
 		]),
 	);
+	return printCommentsBeforeArrow(node, parts, options);
+}
+
+/**
+ * Add the comments before an arrow's `=>`, which the parser keeps in the
+ * arrow's `comments`, to its printed signature. No line break may come
+ * before `=>`, so they stay on its line, one after another: source with a
+ * line comment there doesn't parse. Prettier 3.9.6 prints each on its own
+ * line, which puts a line break before `=>` and doesn't parse either.
+ * @param {AST.ArrowFunctionExpression} node - The arrow
+ * @param {Doc[]} parts - The printed signature
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc[]}
+ */
+function printCommentsBeforeArrow(node, parts, options) {
+	for (const comment of /** @type {AST.Comment[] | undefined} */ (node.comments) ?? []) {
+		parts.push(' ', printComment(comment, options.originalText));
+	}
 	return parts;
 }
 
@@ -4130,7 +4208,12 @@ function printFunctionParameters(
 			: '';
 
 	if (parameters.length === 0) {
-		return [typeParametersDoc, '(', ')'];
+		return [
+			typeParametersDoc,
+			'(',
+			printDanglingCommentsInList(functionNode.innerComments, options.originalText),
+			')',
+		];
 	}
 
 	// Like Prettier, a test call's function keeps its parameters on one line
@@ -4406,7 +4489,7 @@ function printCallArguments(path, options, print) {
 	const args = node.arguments || [];
 
 	if (args.length === 0) {
-		return '()';
+		return group(['(', printDanglingCommentsInList(node.innerComments, options.originalText), ')']);
 	}
 
 	const lastArgIndex = args.length - 1;
@@ -5110,7 +5193,7 @@ function printTSDeclareFunction(node, path, options, print) {
 	// Handle function name (may be null for anonymous default exports)
 	if (node.id) {
 		parts.push(' ');
-		parts.push(node.id.name);
+		parts.push(path.call(print, 'id'));
 	}
 
 	// Add TypeScript generics if present
@@ -5162,7 +5245,7 @@ function printFunctionDeclaration(node, path, options, print) {
 	// one position where the name is optional. The space stays either way, so
 	// the parameter list is not glued to the keyword.
 	if (node.id) {
-		parts.push(node.id.name);
+		parts.push(path.call(print, 'id'));
 	}
 
 	// Add TypeScript generics if present
@@ -5200,7 +5283,7 @@ function extractAndPrintLeadingComments(node) {
 			const nextComment = leadingComments[i + 1];
 
 			if (comment.type === 'Line') {
-				parts.push('//' + comment.value);
+				parts.push(printComment(comment));
 				parts.push(hardline);
 
 				// Check if there should be blank lines between comments
@@ -5211,7 +5294,7 @@ function extractAndPrintLeadingComments(node) {
 					}
 				}
 			} else if (comment.type === 'Block') {
-				parts.push('/*' + comment.value + '*/');
+				parts.push(printComment(comment));
 				parts.push(hardline);
 
 				// Check if there should be blank lines between comments
@@ -5229,15 +5312,50 @@ function extractAndPrintLeadingComments(node) {
 }
 
 /**
- * Print a loop, `if` or label body after its header. An empty statement body
- * prints as `;` against the header, as Prettier does: printing nothing would
- * make the next statement the body.
- * @param {AST.Statement} body - The body statement
- * @param {Doc} bodyDoc - The printed body
+ * Print a loop, `if` or `else` body after its header, like Prettier's
+ * `printClause`. A block, or the `if` of an `else if`, stays on the header's
+ * line. Another statement moves to its own indented line when the enclosing
+ * group breaks. A body whose first comment starts its line or spans lines
+ * starts on a new line. An empty statement body prints its `;` against the
+ * header, with its comments around it.
+ * @param {AstPath} path - The path to the statement
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @param {string} [property] - The property that holds the body
  * @returns {Doc}
  */
-function printClause(body, bodyDoc) {
-	return body.type === 'EmptyStatement' ? [bodyDoc, ';'] : [' ', bodyDoc];
+function printClause(path, options, print, property = 'body') {
+	return path.call((bodyPath) => {
+		const body = /** @type {AST.Statement & AST.NodeWithMaybeComments} */ (bodyPath.node);
+		const doc = print(bodyPath);
+		const comments = getTypeCastParens(bodyPath, options)?.ahead ?? body.leadingComments ?? [];
+
+		if (body.type === 'EmptyStatement') {
+			return comments.length > 0 ? [' ', doc] : doc;
+		}
+
+		const isBlock = body.type === 'BlockStatement';
+		const firstComment = /** @type {AST.NodeWithLocation | undefined} */ (comments[0]);
+		const text = options.originalText ?? '';
+		if (
+			firstComment &&
+			(hasNewline(text, firstComment.start, { backwards: true }) ||
+				text.slice(firstComment.start, firstComment.end).includes('\n'))
+		) {
+			return isBlock ? [hardline, doc] : indent([hardline, doc]);
+		}
+
+		if (
+			isBlock ||
+			(body.type === 'IfStatement' &&
+				bodyPath.getParentNode()?.type === 'IfStatement' &&
+				bodyPath.key === 'alternate')
+		) {
+			return [' ', doc];
+		}
+
+		return indent([line, doc]);
+	}, property);
 }
 
 /**
@@ -5282,45 +5400,51 @@ function shouldInlineCondition(node) {
  * @returns {Doc[]}
  */
 function printIfStatement(node, path, options, print, directive = false) {
-	// Extract leading comments from test node to print them before 'if' keyword
-	const testNode = node.test;
-
-	// Print test without its leading comments (they'll be printed before 'if')
-	const test = path.call((testPath) => print(testPath, { suppressLeadingComments: true }), 'test');
-	const consequent = path.call(print, 'consequent');
+	// Like Prettier, the test's comments stay inside the parentheses, where a
+	// JSDoc cast keeps its meaning
+	const test = path.call(print, 'test');
 
 	const testDoc = group(['if (', printStatementCondition(node.test, test), ')']);
 
-	// Check if consequent is a block statement or another if statement
-	const consequentIsBlock = node.consequent.type === 'BlockStatement';
-	const consequentIsIf = node.consequent.type === 'IfStatement';
-
 	/** @type {Doc[]} */
-	const parts = [];
-
-	// Print leading comments from test node before 'if' keyword
-	parts.push(...extractAndPrintLeadingComments(testNode));
-
-	parts.push(testDoc);
-
-	// Handle the consequent
-	if (consequentIsIf) {
-		// For nested if statements, add a line break and indent
-		parts.push(indent([hardline, consequent]));
-	} else {
-		parts.push(printClause(node.consequent, consequent));
-	}
+	const parts = [group([testDoc, printClause(path, options, print, 'consequent')])];
 
 	// Handle the alternate
 	if (node.alternate) {
-		// If consequent is not a block, add a hardline before else
-		if (!consequentIsBlock) {
+		// Like Prettier, `else` follows a block on its line, and anything else
+		// on the next line. The comments before `else`, which the parser keeps
+		// on the statement, go between them.
+		const isConsequentBlock = node.consequent.type === 'BlockStatement';
+		const comments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
+		const text = options.originalText ?? '';
+		/** @type {Doc} */
+		let separator = isConsequentBlock ? ' ' : '';
+		if (!isConsequentBlock) {
 			parts.push(hardline);
-		} else {
-			parts.push(' ');
+		}
+		if (comments.length > 0) {
+			const first = /** @type {AST.NodeWithLocation} */ (comments[0]);
+			const last = /** @type {AST.NodeWithLocation} */ (comments[comments.length - 1]);
+			if (isPreviousLineEmpty(text, first.start)) {
+				parts.push(isConsequentBlock ? [hardline, hardline] : hardline);
+			} else if (hasNewline(text, first.start, { backwards: true })) {
+				parts.push(isConsequentBlock ? hardline : '');
+			} else {
+				parts.push(' ');
+			}
+			parts.push(
+				join(
+					hardline,
+					comments.map((comment) => printComment(comment, text)),
+				),
+			);
+			separator =
+				comments[comments.length - 1].type === 'Line' || hasNewline(text, last.end)
+					? hardline
+					: ' ';
 		}
 
-		parts.push(directive ? '@else' : 'else');
+		parts.push(separator, directive ? '@else' : 'else');
 		if (directive && node.alternate.type === 'IfStatement') {
 			parts.push(
 				' ',
@@ -5337,7 +5461,7 @@ function printIfStatement(node, path, options, print, directive = false) {
 				),
 			);
 		} else {
-			parts.push(printClause(node.alternate, path.call(print, 'alternate')));
+			parts.push(group(printClause(path, options, print, 'alternate')));
 		}
 	}
 
@@ -5350,7 +5474,7 @@ function printIfStatement(node, path, options, print, directive = false) {
  * @param {AstPath<AST.ForInStatement>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
+ * @returns {Doc}
  */
 function printForInStatement(node, path, options, print) {
 	/** @type {Doc[]} */
@@ -5360,9 +5484,9 @@ function printForInStatement(node, path, options, print) {
 	parts.push(' in ');
 	parts.push(path.call(print, 'right'));
 
-	parts.push(')', printClause(node.body, path.call(print, 'body')));
+	parts.push(')', printClause(path, options, print));
 
-	return parts;
+	return group(parts);
 }
 
 /**
@@ -5372,7 +5496,7 @@ function printForInStatement(node, path, options, print) {
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @param {boolean} [directive]
- * @returns {Doc[]}
+ * @returns {Doc}
  */
 function printForOfStatement(node, path, options, print, directive = false) {
 	/** @type {Doc[]} */
@@ -5393,13 +5517,13 @@ function printForOfStatement(node, path, options, print, directive = false) {
 		parts.push(path.call(print, 'key'));
 	}
 
-	parts.push(')', printClause(node.body, path.call(print, 'body')));
+	parts.push(')', printClause(path, options, print));
 	if (node.empty) {
 		parts.push(directive ? ' @empty ' : ' empty ');
 		parts.push(path.call(print, 'empty'));
 	}
 
-	return parts;
+	return group(parts);
 }
 
 /**
@@ -5411,7 +5535,7 @@ function printForOfStatement(node, path, options, print, directive = false) {
  * @returns {Doc}
  */
 function printForStatement(node, path, options, print) {
-	const body = printClause(node.body, path.call(print, 'body'));
+	const body = printClause(path, options, print);
 	if (!node.init && !node.test && !node.update) {
 		return group(['for (;;)', body]);
 	}
@@ -5443,27 +5567,21 @@ function printForStatement(node, path, options, print) {
  * @param {AstPath<AST.WhileStatement>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
+ * @returns {Doc}
  */
 function printWhileStatement(node, path, options, print) {
-	// Extract leading comments from test node to print them before 'while' keyword
-	const testNode = node.test;
-
-	// Print test without its leading comments (they'll be printed before 'while')
-	const test = path.call((testPath) => print(testPath, { suppressLeadingComments: true }), 'test');
+	const test = path.call(print, 'test');
 
 	/** @type {Doc[]} */
 	const parts = [];
-
-	// Print leading comments from test node before 'while' keyword
-	parts.push(...extractAndPrintLeadingComments(testNode));
-
 	parts.push(
-		group(['while (', printStatementCondition(node.test, test), ')']),
-		printClause(node.body, path.call(print, 'body')),
+		'while (',
+		printStatementCondition(node.test, test),
+		')',
+		printClause(path, options, print),
 	);
 
-	return parts;
+	return group(parts);
 }
 
 /**
@@ -5475,21 +5593,13 @@ function printWhileStatement(node, path, options, print) {
  * @returns {Doc[]}
  */
 function printDoWhileStatement(node, path, options, print) {
-	// Extract leading comments from test node to print them before 'while' keyword
-	const testNode = node.test;
-
-	// Print test without its leading comments (they'll be printed before 'while')
-	const test = path.call((testPath) => print(testPath, { suppressLeadingComments: true }), 'test');
+	const test = path.call(print, 'test');
 
 	/** @type {Doc[]} */
 	const parts = [];
-	parts.push('do', printClause(node.body, path.call(print, 'body')));
+	parts.push(group(['do', printClause(path, options, print)]));
 	// Like Prettier, only a block body keeps `while` on its closing line
 	parts.push(node.body.type === 'BlockStatement' ? ' ' : hardline);
-
-	// Print leading comments from test node before 'while' keyword
-	parts.push(...extractAndPrintLeadingComments(testNode));
-
 	parts.push('while (', printStatementCondition(node.test, test), ')');
 	parts.push(semi(options));
 
@@ -5598,7 +5708,10 @@ function printObject(node, path, options, print) {
 		content = [
 			group([
 				'{',
-				printDanglingCommentsInList(/** @type {AST.NodeWithMaybeComments} */ (node)),
+				printDanglingCommentsInList(
+					/** @type {AST.NodeWithMaybeComments} */ (node).innerComments,
+					options.originalText,
+				),
 				'}',
 			]),
 			...annotationParts,
@@ -5658,10 +5771,10 @@ function printClassDeclaration(node, path, options, print) {
 
 	parts.push('class');
 
-	// Class name (optional for ClassExpression)
+	// Class name (optional for ClassExpression), with its comments
 	if (node.id) {
 		parts.push(' ');
-		parts.push(node.id.name);
+		parts.push(path.call(print, 'id'));
 	}
 
 	// Add TypeScript generics if present
@@ -5780,7 +5893,18 @@ function printClassBody(node, path, options, print) {
 		// Like Prettier's `printDanglingComments`, on consecutive lines
 		return comments.length === 0
 			? '{}'
-			: ['{', indent([hardline, join(hardline, comments.map(printCommentText))]), hardline, '}'];
+			: [
+					'{',
+					indent([
+						hardline,
+						join(
+							hardline,
+							comments.map((comment) => printComment(comment, options.originalText)),
+						),
+					]),
+					hardline,
+					'}',
+				];
 	}
 
 	const members = path.map(print, 'body');
@@ -6535,7 +6659,7 @@ function printChainNodeComments(node, doc, options) {
 	}
 	return finishTsrxNode(
 		commentNode,
-		printLeadingComments(commentNode, commentNode.leadingComments ?? [], options, false),
+		printLeadingComments(commentNode, commentNode.leadingComments ?? [], options),
 		doc,
 		options,
 	);
@@ -6697,9 +6821,29 @@ function printYieldExpression(node, path, options, print) {
 		parts.push('*');
 	}
 
-	if (node.argument) {
-		parts.push(' ');
-		parts.push(path.call(print, 'argument'));
+	if (!node.argument) {
+		return parts;
+	}
+
+	// A line break right after `yield` ends the expression, as after `return`,
+	// so a comment that ends its line keeps the argument in parentheses. These
+	// replace any the argument would print for itself. Prettier drops them
+	// and changes the yielded value; `yield*` may break before its argument.
+	if (
+		!node.delegate &&
+		path.call((argumentPath) => getOwnLineCommentAhead(argumentPath, options), 'argument')
+	) {
+		parts.push(
+			' (',
+			indent([
+				hardline,
+				path.call((argumentPath) => print(argumentPath, { suppressOwnParens: true }), 'argument'),
+			]),
+			hardline,
+			')',
+		);
+	} else {
+		parts.push(' ', path.call(print, 'argument'));
 	}
 
 	return parts;
@@ -6936,25 +7080,6 @@ function printReturnOrThrowArgument(path, options, print) {
 }
 
 /**
- * Whether printTsrxNode ends a node's leading comments with a line break. It
- * does after a line comment, and after a block comment unless that is the last
- * comment and shares its line with the node or with a type cast's `(`.
- * @param {AST.Node} node - The node
- * @param {AST.Comment[]} comments - The comments printed ahead of the node
- * @param {TsrxFormatOptions} options - Prettier options
- * @returns {boolean}
- */
-function hasOwnLineLeadingComment(node, comments, options) {
-	return comments.some((comment, index) => {
-		if (comment.type === 'Line' || index < comments.length - 1) {
-			return true;
-		}
-		const isOnNodeLine = comment.loc && node.loc && comment.loc.end.line === node.loc.start.line;
-		return !isOnNodeLine && !isCommentFollowedBySameLineParen(comment, options);
-	});
-}
-
-/**
  * The first comment printed ahead of the node at `path`, when the comments
  * printed ahead of it end with a line break. The leftmost operand's comments
  * print ahead of the node too (a comment inside the parentheses of
@@ -6969,7 +7094,7 @@ function getOwnLineCommentAhead(path, options) {
 	const typeCastParens = getTypeCastParens(path, options);
 	const comments = typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []);
 	const firstComment = comments[0] ?? null;
-	if (hasOwnLineLeadingComment(node, comments, options)) {
+	if (hasLeadingOwnLineComment(node, comments, options)) {
 		return firstComment;
 	}
 	const key = getLeftmostChildKey(node);
@@ -7001,7 +7126,8 @@ function printValueAfterLeadingComment(path, key, valueDoc, options) {
 	if (hasNewline(options.originalText ?? '', commentStart, { backwards: true })) {
 		return indent([hardline, valueDoc]);
 	}
-	return [' ', indent(valueDoc)];
+	// A block comment that only ends its line lets the value join it if it fits
+	return [' ', group(indent(valueDoc))];
 }
 
 /**
@@ -7019,7 +7145,7 @@ function printTSInterfaceDeclaration(node, path, options, print) {
 		parts.push('declare ');
 	}
 	parts.push('interface ');
-	parts.push(node.id.name);
+	parts.push(path.call(print, 'id'));
 
 	if (node.typeParameters) {
 		parts.push(path.call(print, 'typeParameters'));
@@ -7161,19 +7287,21 @@ function printEmptyMemberList(node) {
 		return '{}';
 	}
 	if (node.type !== 'TSInterfaceBody' && comments.length === 1 && comments[0].type === 'Block') {
-		return group(['{', indent([softline, '/*' + comments[0].value + '*/']), softline, '}']);
+		return group(['{', indent([softline, printComment(comments[0])]), softline, '}']);
 	}
 	// Like Prettier's `printDanglingComments`, on consecutive lines
-	return ['{', indent([hardline, join(hardline, comments.map(printCommentText))]), hardline, '}'];
-}
-
-/**
- * The source text of a comment
- * @param {AST.Comment} comment
- * @returns {string}
- */
-function printCommentText(comment) {
-	return comment.type === 'Line' ? '//' + comment.value : '/*' + comment.value + '*/';
+	return [
+		'{',
+		indent([
+			hardline,
+			join(
+				hardline,
+				comments.map((comment) => printComment(comment)),
+			),
+		]),
+		hardline,
+		'}',
+	];
 }
 
 /**
@@ -7186,7 +7314,7 @@ function printCommentText(comment) {
  */
 function printTSTypeAliasDeclaration(node, path, options, print) {
 	/** @type {Doc[]} */
-	const head = [node.declare ? 'declare type ' : 'type ', node.id.name];
+	const head = [node.declare ? 'declare type ' : 'type ', path.call(print, 'id')];
 
 	if (node.typeParameters) {
 		head.push(path.call(print, 'typeParameters'));
@@ -7365,7 +7493,7 @@ function printTSEnumDeclaration(node, path, options, print) {
 	}
 
 	parts.push('enum ');
-	parts.push(node.id.name);
+	parts.push(path.call(print, 'id'));
 	parts.push(' ');
 
 	// Print enum body
@@ -7412,13 +7540,8 @@ function printTSEnumMember(node, path, options, print) {
 	/** @type {Doc[]} */
 	const parts = [];
 
-	// Print the key (id)
-	if (node.id.type === 'Identifier') {
-		parts.push(node.id.name);
-	} else {
-		// Handle computed or string literal keys
-		parts.push(path.call(print, 'id'));
-	}
+	// Print the key (id), with its comments
+	parts.push(path.call(print, 'id'));
 
 	// Print the initializer if present
 	if (node.initializer) {
@@ -7579,20 +7702,10 @@ function printTSTypeParameterInstantiation(node, path, options, print) {
  * @returns {Doc[]}
  */
 function printSwitchStatement(node, path, options, print) {
-	// Extract leading comments from discriminant node to print them before 'switch' keyword
-	const discriminantNode = node.discriminant;
-
-	// Print discriminant without its leading comments (they'll be printed before 'switch')
-	const discriminant = path.call(
-		(discriminantPath) => print(discriminantPath, { suppressLeadingComments: true }),
-		'discriminant',
-	);
+	const discriminant = path.call(print, 'discriminant');
 
 	/** @type {Doc[]} */
 	const parts = [];
-
-	// Print leading comments from discriminant node before 'switch' keyword
-	parts.push(...extractAndPrintLeadingComments(discriminantNode));
 
 	const discriminantDoc = group(['switch (', indent([softline, discriminant]), softline, ')']);
 
@@ -7607,8 +7720,23 @@ function printSwitchStatement(node, path, options, print) {
 		cases.push(caseDoc);
 	}
 
+	// Like Prettier, the comments of a switch with no cases go inside its braces
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
 	const bodyDoc =
-		cases.length > 0 ? [indent([hardline, join(hardline, cases)]), hardline] : hardline;
+		cases.length > 0
+			? [indent([hardline, join(hardline, cases)]), hardline]
+			: comments.length > 0
+				? [
+						indent([
+							hardline,
+							join(
+								hardline,
+								comments.map((comment) => printComment(comment, options.originalText)),
+							),
+						]),
+						hardline,
+					]
+				: hardline;
 
 	parts.push(' {', bodyDoc, '}');
 
@@ -7625,10 +7753,7 @@ function printSwitchStatement(node, path, options, print) {
  * @returns {Doc[]}
  */
 function printJSXSwitchExpression(node, path, options, print) {
-	const discriminant = path.call(
-		(discriminantPath) => print(discriminantPath, { suppressLeadingComments: true }),
-		'discriminant',
-	);
+	const discriminant = path.call(print, 'discriminant');
 
 	/** @type {Doc[]} */
 	const cases = [];
@@ -7645,13 +7770,7 @@ function printJSXSwitchExpression(node, path, options, print) {
 
 	const discriminantDoc = group(['@switch (', indent([softline, discriminant]), softline, ')']);
 
-	return [
-		...extractAndPrintLeadingComments(node.discriminant),
-		discriminantDoc,
-		' {',
-		bodyDoc,
-		'}',
-	];
+	return [discriminantDoc, ' {', bodyDoc, '}'];
 }
 
 /**
@@ -7684,7 +7803,7 @@ function printJSXSwitchCase(node, path, options, print, index) {
 
 	// The case doesn't go through `print`, so it prints its own comments
 	return [
-		...printLeadingComments(node, node.leadingComments ?? [], options, false, false),
+		...printLeadingComments(node, node.leadingComments ?? [], options),
 		header,
 		' {',
 		bodyDoc,
@@ -7734,7 +7853,7 @@ function printSwitchCaseTrailingComments(node, options) {
 	for (const comment of node.trailingComments ?? []) {
 		const start = /** @type {AST.NodeWithLocation} */ (comment).start;
 		const isBlock = comment.type === 'Block';
-		const commentDoc = isBlock ? '/*' + comment.value + '*/' : '//' + comment.value;
+		const commentDoc = printComment(comment, text);
 		if (
 			(previous?.hasLineSuffix && !previous.isBlock) ||
 			hasNewline(text, start, { backwards: true })
@@ -7782,11 +7901,11 @@ function printSwitchCase(node, path, options, print) {
 	let headerLineComment = '';
 	for (const comment of headerComments) {
 		if (comment.type === 'Block') {
-			headerBlockComments.push(' /*' + comment.value + '*/');
+			headerBlockComments.push([' ', printComment(comment, text)]);
 		} else if (singleBlock) {
 			moveIntoBlock(/** @type {AST.BlockStatement} */ (first), comment);
 		} else {
-			headerLineComment = [lineSuffix([' //' + comment.value]), breakParent];
+			headerLineComment = [lineSuffix([' ', printComment(comment)]), breakParent];
 		}
 	}
 	const header = node.test
@@ -7966,7 +8085,7 @@ function printLabeledStatement(node, path, options, print) {
 			moved.push(comment);
 		} else {
 			// A line comment always ends its line, so this is a block comment
-			(pastColon ? afterColon : beforeColon).push('/*' + comment.value + '*/');
+			(pastColon ? afterColon : beforeColon).push(printComment(comment, text));
 		}
 	}
 
@@ -7979,22 +8098,16 @@ function printLabeledStatement(node, path, options, print) {
 
 	const body = path.call((bodyPath) => print(bodyPath, { suppressLeadingComments: true }), 'body');
 	/** @type {Doc[]} */
-	const parts = [
-		...printLeadingComments(node.body, moved, options, false),
-		path.call(print, 'label'),
-	];
+	const parts = [...printLeadingComments(node.body, moved, options), path.call(print, 'label')];
 	for (const commentDoc of beforeColon) {
 		parts.push(' ', commentDoc);
 	}
 	parts.push(':');
-	if (afterColon.length === 0) {
-		parts.push(printClause(node.body, body));
-	} else {
-		parts.push(' ', join(' ', afterColon), ' ', body);
-		if (node.body.type === 'EmptyStatement') {
-			parts.push(';');
-		}
+	if (afterColon.length > 0) {
+		parts.push(' ', join(' ', afterColon));
 	}
+	// Like Prettier, an empty body's `;` touches the colon: `label:;`
+	parts.push(node.body.type === 'EmptyStatement' && afterColon.length === 0 ? '' : ' ', body);
 	return parts;
 }
 
@@ -8224,23 +8337,6 @@ function isBooleanTypeCoercion(node) {
 }
 
 /**
- * Whether a node starts with a leading comment that ends its line (Prettier's
- * `hasLeadingOwnLineComment`).
- * @param {AST.Node & AST.NodeWithMaybeComments} node
- * @param {TsrxFormatOptions} options
- * @returns {boolean}
- */
-function hasLeadingCommentEndingLine(node, options) {
-	if (isTemplateExpression(node)) {
-		return hasPrettierIgnore(node);
-	}
-	const text = options.originalText ?? '';
-	return (node.leadingComments ?? []).some((comment) =>
-		hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).end),
-	);
-}
-
-/**
  * Print a binary or logical expression like Prettier's
  * `printBinaryishExpression`. Operators of one precedence level print in one
  * group (see {@link printBinaryishExpressions}), and the parent decides how
@@ -8403,8 +8499,8 @@ function printBinaryishExpressions(path, options, print, isNested, isInsideParen
 	if (shouldInline) {
 		right = [
 			node.operator,
-			hasLeadingCommentEndingLine(rightNode, options) ||
-			hasLeadingCommentEndingLine(node.right, options)
+			hasLeadingOwnLineComment(rightNode, rightNode.leadingComments ?? [], options) ||
+			hasLeadingOwnLineComment(node.right, node.right.leadingComments ?? [], options)
 				? indent([line, rightDoc])
 				: [' ', rightDoc],
 		];
@@ -8437,7 +8533,7 @@ function printBinaryishExpressions(path, options, print, isNested, isInsideParen
 	if (isNested && hasComment(node)) {
 		const printed = finishTsrxNode(
 			node,
-			printLeadingComments(node, node.leadingComments ?? [], options, false),
+			printLeadingComments(node, node.leadingComments ?? [], options),
 			parts,
 			options,
 		);
@@ -8693,7 +8789,10 @@ function printArray(node, path, options, print) {
 		parts.push(
 			group([
 				'[',
-				printDanglingCommentsInList(/** @type {AST.NodeWithMaybeComments} */ (node)),
+				printDanglingCommentsInList(
+					/** @type {AST.NodeWithMaybeComments} */ (node).innerComments,
+					options.originalText,
+				),
 				']',
 			]),
 		);
@@ -8884,7 +8983,7 @@ function printArrayElementsConcisely(path, options, print, trailingComma) {
 			parts.push(
 				isLineAfterElementEmpty(elements[index - 1], options)
 					? [hardline, hardline]
-					: hasOwnLineLeadingComment(elements[index], commentsAhead, options)
+					: hasLeadingOwnLineComment(elements[index], commentsAhead, options)
 						? hardline
 						: line,
 			);
@@ -9943,7 +10042,7 @@ function printTSMappedType(node, path, options, print) {
 	const commentsDoc = [];
 	const comments = /** @type {AST.NodeWithMaybeComments} */ (typeParam).leadingComments ?? [];
 	if (comments.length > 0) {
-		const printed = comments.map(printCommentText);
+		const printed = comments.map((comment) => printComment(comment, text));
 		const lastComment = /** @type {AST.CommentWithLocation} */ (comments[comments.length - 1]);
 		commentsDoc.push(
 			...printed.slice(0, -1).map((comment) => [comment, hardline]),
@@ -10201,52 +10300,18 @@ function printJSXElement(node, path, options, print) {
 		typeArgsDoc = path.call(print, 'openingElement', 'typeArguments');
 	}
 
-	// Comments that sit inside the opening tag (before an attribute) are attached
-	// by the parser to a body child; pull them out and key them by the attribute
-	// they precede so they print in the opening tag, not jammed into the body.
-	const openingTagCommentsByAttr = collectOpeningTagComments(node);
-	const hasOpeningTagComments = openingTagCommentsByAttr.size > 0;
-
 	// Format attributes
 	/** @type {Doc} */
 	let attributesDoc = '';
 	let hasBreakingAttribute = false;
 	if (hasAttributes) {
 		/** @type {Doc[]} */
+		// Each attribute prints with its comments
 		const attrs = openingElement.attributes.map(
 			(/** @type {AST.Node} */ attr, /** @type {number} */ i) => {
-				/** @type {Doc} */
-				let attrDoc = '';
-				if (attr.type === 'JSXAttribute') {
-					attrDoc = path.call(
-						(attrPath) =>
-							printJSXAttribute(
-								/** @type {ESTreeJSX.JSXAttribute} */ (attrPath.node),
-								/** @type {AstPath<ESTreeJSX.JSXAttribute>} */ (attrPath),
-								options,
-								print,
-							),
-						'openingElement',
-						'attributes',
-						i,
-					);
-				} else if (attr.type === 'JSXSpreadAttribute') {
-					attrDoc = ['{...', path.call(print, 'openingElement', 'attributes', i, 'argument'), '}'];
-				}
-				if (!hasBreakingAttribute && attrDoc && willBreak(attrDoc)) {
+				const attrDoc = path.call(print, 'openingElement', 'attributes', i);
+				if (!hasBreakingAttribute && willBreak(attrDoc)) {
 					hasBreakingAttribute = true;
-				}
-				const lead = openingTagCommentsByAttr.get(i);
-				if (lead) {
-					/** @type {Doc[]} */
-					const parts = [];
-					for (const comment of lead) {
-						parts.push(
-							comment.type === 'Line' ? '//' + comment.value : '/*' + comment.value + '*/',
-						);
-						parts.push(hardline);
-					}
-					return [...parts, attrDoc];
 				}
 				return attrDoc;
 			},
@@ -10254,18 +10319,23 @@ function printJSXElement(node, path, options, print) {
 		const attrLineBreak = options.singleAttributePerLine ? hardline : line;
 		attributesDoc = indent([attrLineBreak, join(attrLineBreak, attrs)]);
 	}
-	const shouldForceBreak = hasBreakingAttribute || hasOpeningTagComments;
+	const shouldForceBreak = hasBreakingAttribute;
+	// A comment after the tag name, as in `<div // note`, prints after it
+	const openingTagName = finishTsrxNode(openingElement.name, [], tagName, options);
 
 	if (isSelfClosing) {
-		return group(['<', tagName, typeArgsDoc, attributesDoc, hasAttributes ? line : ' ', '/>'], {
-			shouldBreak: shouldForceBreak,
-		});
+		return group(
+			['<', openingTagName, typeArgsDoc, attributesDoc, hasAttributes ? line : ' ', '/>'],
+			{
+				shouldBreak: shouldForceBreak,
+			},
+		);
 	}
 
 	const openingTag = group(
 		[
 			'<',
-			tagName,
+			openingTagName,
 			typeArgsDoc,
 			attributesDoc,
 			hasAttributes && !options.bracketSameLine ? softline : '',
@@ -10688,57 +10758,6 @@ function printJSXFragment(node, path, options, print) {
 }
 
 /**
- * Comments written inside an opening tag, before an attribute, are attached by
- * the parser to the next visited body child (positionally they sort before the
- * opening tag's end, but the child is visited first). Pull those out of the
- * children and return a map from attribute index to the comments that precede it,
- * so the element printer can render them in the opening tag instead of the body.
- * @param {AST.TSRXJSXElement | AST.JSXStyleElement} node
- * @returns {Map<number, AST.Comment[]>}
- */
-function collectOpeningTagComments(node) {
-	/** @type {Map<number, AST.Comment[]>} */
-	const byAttr = new Map();
-	const openingElement = /** @type {AST.NodeWithLocation} */ (node.openingElement);
-	const attributes = node.openingElement?.attributes ?? [];
-	if (!openingElement || attributes.length === 0 || !Array.isArray(node.children)) {
-		return byAttr;
-	}
-	const openingEnd = openingElement.end;
-	/** @type {AST.Comment[]} */
-	const collected = [];
-	for (const child of node.children) {
-		const lead = /** @type {AST.NodeWithMaybeComments} */ (child).leadingComments;
-		if (!Array.isArray(lead) || lead.length === 0) continue;
-		const keep = [];
-		for (const comment of lead) {
-			if (typeof comment.start === 'number' && comment.start < openingEnd) {
-				collected.push(comment);
-			} else {
-				keep.push(comment);
-			}
-		}
-		if (keep.length !== lead.length) {
-			child.leadingComments = keep;
-		}
-	}
-	if (collected.length === 0) return byAttr;
-	collected.sort((a, b) => /** @type {number} */ (a.start) - /** @type {number} */ (b.start));
-	let ci = 0;
-	for (let ai = 0; ai < attributes.length; ai++) {
-		const attrStart = /** @type {AST.NodeWithLocation} */ (attributes[ai]).start;
-		/** @type {AST.Comment[]} */
-		const forAttr = [];
-		while (ci < collected.length && /** @type {number} */ (collected[ci].start) < attrStart) {
-			forAttr.push(collected[ci]);
-			ci++;
-		}
-		if (forAttr.length > 0) byAttr.set(ai, forAttr);
-	}
-	return byAttr;
-}
-
-/**
  * Build doc parts for a template child's leading comments (each on its own line).
  * Used for `{expr}` children, whose `{ … }` form is printed inline by the JSX
  * printers and so would otherwise skip the node's attached leading comments.
@@ -10754,11 +10773,7 @@ function printTemplateChildLeadingComments(child) {
 	const parts = [];
 	for (let i = 0; i < comments.length; i++) {
 		const comment = comments[i];
-		if (comment.type === 'Line') {
-			parts.push('//' + comment.value);
-		} else if (comment.type === 'Block') {
-			parts.push('/*' + comment.value + '*/');
-		}
+		parts.push(printComment(comment));
 		parts.push(hardline);
 		const next = comments[i + 1];
 		if (next && getBlankLinesBetweenNodes(comment, next) > 0) {
@@ -10785,10 +10800,10 @@ function printTemplateChildTrailingComments(child) {
 	const parts = [];
 	for (const comment of comments) {
 		if (comment.type === 'Line') {
-			parts.push(lineSuffix([' ', '//' + comment.value]));
+			parts.push(lineSuffix([' ', printComment(comment)]));
 			parts.push(breakParent);
 		} else if (comment.type === 'Block') {
-			parts.push(' /*' + comment.value + '*/');
+			parts.push(' ', printComment(comment));
 		}
 	}
 	return parts;
@@ -10859,9 +10874,7 @@ function printElementBodyComments(commentList, previousNode = null, text) {
 		) {
 			parts.push(hardline);
 		}
-		parts.push(
-			comments[i].type === 'Line' ? '//' + comments[i].value : '/*' + comments[i].value + '*/',
-		);
+		parts.push(printComment(comments[i], text));
 		prev = comments[i];
 	}
 	return parts;
@@ -10910,7 +10923,12 @@ function printJSXCodeBlock(node, path, options, print) {
 		);
 	} else if (node.innerComments?.length) {
 		// Like the comments of an empty function body, on consecutive lines
-		parts.push(join(hardline, node.innerComments.map(printCommentText)));
+		parts.push(
+			join(
+				hardline,
+				node.innerComments.map((comment) => printComment(comment, options.originalText)),
+			),
+		);
 	} else {
 		return '@{}';
 	}
