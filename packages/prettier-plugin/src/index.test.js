@@ -9635,6 +9635,131 @@ function Two() @{
 		});
 	});
 
+	// Like Prettier's `printClass`: the heading groups its heritage clauses
+	// when it has more than one heritage type or a single qualified name, and
+	// a class whose heading breaks starts its body on a new line.
+	describe('class and interface headings break like Prettier', () => {
+		/**
+		 * Assert the input is already formatted and comes back byte-identical.
+		 * @param {string} source
+		 */
+		const expectUnchanged = async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		};
+
+		it('puts each class heritage clause on its own line and { on the next', async () => {
+			const input = `export class BrowserPerformanceClient extends PerformanceClient implements IPerformanceClient, IDisposable {
+  x = 1;
+}`;
+
+			expect(await format(input)).toBeWithNewline(`export class BrowserPerformanceClient
+  extends PerformanceClient
+  implements IPerformanceClient, IDisposable
+{
+  x = 1;
+}`);
+		});
+
+		it('keeps { on the heading line of a class with an empty body', async () => {
+			const input = `export class VeryLongClassNameForTestingPurposesOnlyHereAbc extends Base implements One {}`;
+
+			expect(await format(input))
+				.toBeWithNewline(`export class VeryLongClassNameForTestingPurposesOnlyHereAbc
+  extends Base
+  implements One {}`);
+		});
+
+		it('breaks a heading with one qualified heritage name', async () => {
+			await expectUnchanged(`export class VeryLongClassNameForTestingPurposesOnlyHere
+  extends SomeNamespace.BaseClass
+{
+  x = 1;
+}`);
+			await expectUnchanged(`export class VeryLongClassNameForTesting
+  implements SomeNamespace.SomeInterfaceName.Deep
+{
+  x = 1;
+}`);
+			await expectUnchanged(`export interface VeryLongInterfaceNameForTestingPurposes
+  extends SomeNamespace.BaseInterface {
+  x: 1;
+}`);
+		});
+
+		it('breaks the heading of a class expression', async () => {
+			const input = `const Foo = class VeryLongClassNameForTestingPurposesOnly extends Base implements IFoo, IBar {
+  x = 1;
+};`;
+
+			expect(await format(input))
+				.toBeWithNewline(`const Foo = class VeryLongClassNameForTestingPurposesOnly
+  extends Base
+  implements IFoo, IBar
+{
+  x = 1;
+};`);
+		});
+
+		it('keeps declare and abstract on the heading line', async () => {
+			const input = `declare abstract class VeryLongClassNameForTestingPurposesOnly extends Base implements One {
+  x: 1;
+}`;
+
+			expect(await format(input))
+				.toBeWithNewline(`declare abstract class VeryLongClassNameForTestingPurposesOnly
+  extends Base
+  implements One
+{
+  x: 1;
+}`);
+		});
+
+		it('puts interface extends on its own line and each type on its own line when they do not fit', async () => {
+			const input = `interface AbortSignal extends EventTarget, InternalEventTargetEventProperties<AbortSignalEventMap> {
+  readonly aborted: boolean;
+}
+export interface SectionProps<T> extends Omit<SharedSectionProps<T>, "children" | "title">, StyleProps, GlobalDOMAttributes<HTMLElement> {
+  id?: Key;
+}`;
+
+			expect(await format(input)).toBeWithNewline(`interface AbortSignal
+  extends EventTarget, InternalEventTargetEventProperties<AbortSignalEventMap> {
+  readonly aborted: boolean;
+}
+export interface SectionProps<T>
+  extends
+    Omit<SharedSectionProps<T>, "children" | "title">,
+    StyleProps,
+    GlobalDOMAttributes<HTMLElement> {
+  id?: Key;
+}`);
+		});
+
+		it.each([
+			'class A extends B implements C, D {}',
+			'interface I extends J, K {}',
+			'const X = class extends B implements C, D {};',
+			`export class VeryLongClassNameForTestingPurposesOnlyHere extends SomeBaseClassNameThatIsLong {
+  x = 1;
+}`,
+			`class Foo extends aVeryLongFunctionCallThatReturnsAClass(
+  withSomeArguments,
+  andMore,
+  andMoreArgs,
+) {
+  x = 1;
+}`,
+			`export class VeryLongClassNameForTestingPurposesOnly<
+  TypeParameterOne,
+  TypeParameterTwo,
+> extends Base<TypeParameterOne> {
+  x = 1;
+}`,
+		])('keeps a heading that fits or has one simple clause: %s', async (source) => {
+			await expectUnchanged(source);
+		});
+	});
+
 	describe('expression parentheses follow Prettier', () => {
 		/**
 		 * Assert the input is already formatted and comes back byte-identical.

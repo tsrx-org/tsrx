@@ -5780,8 +5780,12 @@ function printClassDeclaration(node, path, options, print) {
 		}
 	}
 
+	const groupMode = shouldPrintHeritageInGroupMode(node, path);
+	/** @type {Doc[]} */
+	const heritage = [];
 	if (node.superClass) {
-		parts.push(' extends ');
+		/** @type {Doc[]} */
+		const superClassParts = ['extends '];
 		if (superClassNeedsParens(node.superClass)) {
 			// The class owns these parens, so the superclass must not add its own
 			const superClass = path.call(
@@ -5791,29 +5795,125 @@ function printClassDeclaration(node, path, options, print) {
 			if (getDecorators(node.superClass).length > 0) {
 				// Each decorator prints on its own line, so the class is indented
 				// inside the parens to keep them off column zero.
-				parts.push('(', indent([hardline, superClass]), hardline, ')');
+				superClassParts.push('(', indent([hardline, superClass]), hardline, ')');
 			} else {
-				parts.push('(', superClass, ')');
+				superClassParts.push('(', superClass, ')');
 			}
 		} else {
-			parts.push(path.call(print, 'superClass'));
+			superClassParts.push(path.call(print, 'superClass'));
 		}
 		if (node.superTypeParameters) {
-			parts.push(path.call(print, 'superTypeParameters'));
+			superClassParts.push(path.call(print, 'superTypeParameters'));
 		}
+		heritage.push(groupMode ? [line, group(superClassParts)] : [' ', superClassParts]);
 	}
 
 	// Heritage type arguments and implements clauses are what TypeScript
 	// checks the class against, so dropping them silently loses those checks
-	if (node.implements && node.implements.length > 0) {
-		parts.push(' implements ');
-		parts.push(join(', ', path.map(print, 'implements')));
+	heritage.push(printHeritageClauses(node, path, print, groupMode));
+
+	if (!groupMode) {
+		return [...parts, ...heritage, ' ', path.call(print, 'body')];
 	}
 
-	parts.push(' ');
-	parts.push(path.call(print, 'body'));
+	// Like Prettier, a class whose heading breaks starts its body on a new
+	// line, so the body does not read as one more heritage clause
+	const heritageGroupId = Symbol('heritageGroup');
+	return [
+		group([...parts, indent(heritage)], { id: heritageGroupId }),
+		node.body.body.length > 0 ? ifBreak(hardline, ' ', { groupId: heritageGroupId }) : ' ',
+		path.call(print, 'body'),
+	];
+}
 
-	return parts;
+/**
+ * Whether a class or interface heading prints its heritage clauses in a group
+ * that puts each clause on its own line when the heading does not fit, like
+ * Prettier's `shouldPrintClassInGroupMode`. A heading with one clause keeps it
+ * on the heading's line unless that clause is a plain qualified name, which
+ * has nowhere else to break.
+ * @param {AST.ClassDeclaration | AST.ClassExpression | AST.TSInterfaceDeclaration} node
+ * @param {AstPath} path - The path to `node`
+ * @returns {boolean}
+ */
+function shouldPrintHeritageInGroupMode(node, path) {
+	const superClass = node.type === 'TSInterfaceDeclaration' ? null : node.superClass;
+	if (
+		node.id?.trailingComments?.length ||
+		node.typeParameters?.trailingComments?.length ||
+		(superClass && hasComment(superClass)) ||
+		hasMultipleHeritage(node)
+	) {
+		return true;
+	}
+
+	if (superClass) {
+		if (path.getParentNode()?.type === 'AssignmentExpression') {
+			return false;
+		}
+		let expression = superClass;
+		while (expression.type === 'ChainExpression' || expression.type === 'TSNonNullExpression') {
+			expression = expression.expression;
+		}
+		return (
+			!(/** @type {AST.ClassDeclaration} */ (node).superTypeParameters) &&
+			expression.type === 'MemberExpression'
+		);
+	}
+
+	// The parser gives `implements` clauses the same shape as `extends` ones,
+	// with a qualified name (`ns.Base`) as a `TSQualifiedName`
+	const clause = /** @type {AST.TSExpressionWithTypeArguments | undefined} */ (
+		node.type === 'TSInterfaceDeclaration' ? node.extends?.[0] : node.implements?.[0]
+	);
+	const expression = /** @type {AST.Node | undefined} */ (clause?.expression);
+	return (
+		!clause?.typeParameters &&
+		(expression?.type === 'MemberExpression' || expression?.type === 'TSQualifiedName')
+	);
+}
+
+/**
+ * Whether a class or interface names more than one heritage type, counting
+ * the superclass.
+ * @param {AST.ClassDeclaration | AST.ClassExpression | AST.TSInterfaceDeclaration} node
+ * @returns {boolean}
+ */
+function hasMultipleHeritage(node) {
+	if (node.type === 'TSInterfaceDeclaration') {
+		return (node.extends?.length ?? 0) > 1;
+	}
+	return (node.superClass ? 1 : 0) + (node.implements?.length ?? 0) > 1;
+}
+
+/**
+ * Print the `implements` clause of a class or the `extends` clause of an
+ * interface, like Prettier's `printHeritageClauses`. With more than one
+ * heritage type, the keyword starts its own line when the heading breaks, and
+ * the types follow it on one line or, when they do not fit, one per line
+ * below it.
+ * @param {AST.ClassDeclaration | AST.ClassExpression | AST.TSInterfaceDeclaration} node
+ * @param {AstPath} path - The path to `node`
+ * @param {PrintFn} print - Print callback
+ * @param {boolean} groupMode - Whether the heading groups its clauses
+ * @returns {Doc}
+ */
+function printHeritageClauses(node, path, print, groupMode) {
+	const [listName, list] =
+		node.type === 'TSInterfaceDeclaration'
+			? ['extends', node.extends]
+			: ['implements', node.implements];
+	if (!list || list.length === 0) {
+		return '';
+	}
+
+	const clauses = join([',', line], path.map(print, listName));
+	if (!hasMultipleHeritage(node)) {
+		/** @type {Doc[]} */
+		const printed = [listName, ' ', clauses];
+		return groupMode ? [line, group(printed)] : [' ', printed];
+	}
+	return [line, listName, group(indent([line, clauses]))];
 }
 
 /**
@@ -7049,17 +7149,15 @@ function printTSInterfaceDeclaration(node, path, options, print) {
 		parts.push(path.call(print, 'typeParameters'));
 	}
 
-	// Handle extends clause
-	if (node.extends && node.extends.length > 0) {
-		parts.push(' extends ');
-		const extendsTypes = path.map(print, 'extends');
-		parts.push(join(', ', extendsTypes));
-	}
-
-	parts.push(' ');
-	parts.push(path.call(print, 'body'));
-
-	return parts;
+	// Handle extends clause. Unlike a class body, an interface body stays on
+	// the heading's last line when the heading breaks, like Prettier.
+	const groupMode = shouldPrintHeritageInGroupMode(node, path);
+	const heritage = printHeritageClauses(node, path, print, groupMode);
+	return [
+		groupMode ? group([...parts, indent(heritage)]) : [...parts, heritage],
+		' ',
+		path.call(print, 'body'),
+	];
 }
 
 /**
