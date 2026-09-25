@@ -1252,14 +1252,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * @param {AST.CommentWithLocation} comment
 	 */
 	function addLeadingCommentToPossibleUnionType(node, comment) {
-		const union = /** @type {AST.TSUnionType} */ (node);
 		addLeadingComment(
 			node.type === 'TSUnionType' &&
 				comment.type === 'Block' &&
 				!source.slice(comment.start, comment.end).includes('\n') &&
 				!isPrettierIgnoreComment(comment) &&
 				/^[ \t]*$/.test(source.slice(comment.end, node.start))
-				? /** @type {AST.Node} */ (union.types[0])
+				? getUnionCommentTarget(/** @type {AST.TSUnionType} */ (node), comment)
 				: node,
 			comment,
 		);
@@ -1333,6 +1332,36 @@ export function get_comment_handlers(source, comments, index = 0) {
 			node = /** @type {AST.Node} */ (/** @type {unknown} */ (node.typeAnnotation));
 		}
 		return node;
+	}
+
+	/**
+	 * The node a one-line block comment right before a union leads, like
+	 * Prettier's `shouldAttachToUnionTypeFirstElement`: the union's first
+	 * member. Prettier's parser postprocess, which the formatter follows, drops
+	 * parentheses and replaces a union or intersection of one type with that
+	 * type, so when only those wrap a union of more types (`| (| A | B)`), with
+	 * no other comments among them, the comment leads that union's first
+	 * member. Prettier's first format leaves it before the union's `|`, and its
+	 * next format moves it there.
+	 * @param {AST.TSUnionType} union
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {AST.Node}
+	 */
+	function getUnionCommentTarget(union, comment) {
+		/** @type {any} */
+		let node = union;
+		while (
+			node.type === 'TSParenthesizedType' ||
+			((node.type === 'TSUnionType' || node.type === 'TSIntersectionType') &&
+				node.types.length === 1)
+		) {
+			node = node.type === 'TSParenthesizedType' ? node.typeAnnotation : node.types[0];
+		}
+		return node !== union &&
+			node.type === 'TSUnionType' &&
+			/^[\s|&(]*$/.test(source.slice(comment.end, node.types[0].start))
+			? node.types[0]
+			: /** @type {AST.Node} */ (union.types[0]);
 	}
 
 	/**
@@ -1688,7 +1717,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 			!isPrettierIgnoreComment(comment) &&
 			/^[ \t]*$/.test(source.slice(comment.end, following.start))
 		) {
-			addLeadingComment(/** @type {AST.TSUnionType} */ (following).types[0], comment);
+			addLeadingComment(
+				getUnionCommentTarget(/** @type {AST.TSUnionType} */ (following), comment),
+				comment,
+			);
 			return true;
 		}
 

@@ -13620,6 +13620,31 @@ type D = /* c */ B;
 let x: A = 1;`;
 			expect(await format(input)).toBeWithNewline(expected);
 		});
+
+		// Like Prettier's `handleUnionTypeLeadingComments`, a one-line block
+		// comment right before a union leads its first member, through any
+		// wrappers. Prettier's first format of the nested unions from its
+		// `union/consistent-with-flow/single-type.ts` test prints the comment
+		// before the `|`, and its next format moves it after the `|`: the
+		// formatter prints that form at once.
+		it('moves a comment before one-member unions around a union after its first |', async () => {
+			const input = `type A6 = | (
+  /*1*/ | (
+    | (
+          | A
+          // A comment to force break
+          | B
+        )
+  )
+  );
+type C = /* c */ | (| D | E);`;
+			const expected = `type A6 =
+  | /*1*/ A
+    // A comment to force break
+  | B;
+type C = /* c */ D | E;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
 	});
 
 	// `extends` only takes a left-hand-side expression, so a superclass that
