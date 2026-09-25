@@ -7464,6 +7464,76 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(lineComment).trailing).toEqual([' c']);
 	});
 
+	// Prettier prints these before the `;`, after the parentheses around the
+	// operand, and its next pass moves them after it (#622)
+	it('trails the statement with a comment in the parentheses at the end of a binary or logical value', () => {
+		const declared = firstStatement('const x = a || (b /* c */);');
+		const nested = firstStatement('x = a * (b + (c /* c */));');
+		const lineComment = firstStatement('x = a + (b // c\n);');
+		const withoutSemicolon = firstStatement('const x = a || (b /* c */)\nfoo()');
+
+		expect(commentsOf(declared).trailing).toEqual([' c ']);
+		expect(commentsOf(declared.declarations[0].init.right).trailing).toBeUndefined();
+		expect(commentsOf(nested).trailing).toEqual([' c ']);
+		expect(commentsOf(lineComment).trailing).toEqual([' c']);
+		expect(commentsOf(withoutSemicolon).trailing).toEqual([' c ']);
+	});
+
+	// The printer prints these in the parentheses around the argument when it
+	// breaks, and after the `;` when it doesn't
+	it('trails a binary or logical return argument with a comment in the parentheses at its end', () => {
+		const returned = firstStatement('function f() {\n  return a || (b /* c */);\n}').body.body[0];
+		const own = firstStatement('function f() {\n  return (a || b /* c */) /* d */;\n}').body
+			.body[0];
+
+		expect(commentsOf(returned.argument).trailing).toEqual([' c ']);
+		expect(commentsOf(returned).trailing).toBeUndefined();
+		expect(commentsOf(own.argument).trailing).toEqual([' c ']);
+		expect(commentsOf(own).trailing).toEqual([' d ']);
+	});
+
+	it('keeps a comment in the parentheses of a JSDoc cast or an element at the end of a value', () => {
+		const cast = firstStatement('x = a || /** @type {T} */ (b /* c */);');
+		const element = firstStatement('x = a && (\n  <Note /> // c\n);');
+
+		expect(commentsOf(cast).trailing).toBeUndefined();
+		expect(commentsOf(element).trailing).toBeUndefined();
+		expect(commentsOf(element.expression.right.right).trailing).toEqual([' c']);
+	});
+
+	// Prettier's next passes find it after the parentheses, and a line
+	// comment after the operator that follows them (#626)
+	it('trails the left operand of the next operator with a comment before the ) of its last operand', () => {
+		const statement = firstStatement('x = 30 * (month - 1 // c\n) + day;');
+		const block = firstStatement('x = (a && (b /* c */)) || d;');
+		const call = firstStatement('x = f(a // c\n) + d;');
+
+		expect(commentsOf(statement.expression.right.left).trailing).toEqual([' c']);
+		expect(commentsOf(statement.expression.right.left.right).trailing).toBeUndefined();
+		expect(commentsOf(block.expression.right.left).trailing).toEqual([' c ']);
+		expect(commentsOf(call.expression.right.left.arguments[0]).trailing).toEqual([' c']);
+	});
+
+	// Prettier's next pass moves the line comment alone after the `;` (#624)
+	it('trails the statement with a line comment after block comments at the end of a parenthesized sequence', () => {
+		const statement = firstStatement('const x = (a, b /* c */ // d\n);');
+
+		expect(commentsOf(statement.declarations[0].init.expressions[1]).trailing).toEqual([' c ']);
+		expect(commentsOf(statement).trailing).toEqual([' d']);
+	});
+
+	// Prettier's next pass finds it before the `)` around the arrow function,
+	// which takes it (#634)
+	it('trails an arrow function called right away with a comment after its parenthesized body', () => {
+		const called = firstStatement('((a) => (b /* c */))(1);');
+		const conditional = firstStatement('((a) => (a ? b : c /* c */))(1);');
+
+		expect(commentsOf(called.expression.callee).trailing).toEqual([' c ']);
+		expect(commentsOf(called.expression.callee.body).trailing).toBeUndefined();
+		expect(commentsOf(conditional.expression.callee.body).trailing).toEqual([' c ']);
+		expect(commentsOf(conditional.expression.callee).trailing).toBeUndefined();
+	});
+
 	it('trails the constraint of a type parameter with a comment at the end of the line of its =', () => {
 		const [parameter] = firstStatement('type A<B extends C = // c\n  D> = R;').typeParameters
 			.params;
