@@ -313,21 +313,39 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 	it('keeps the error where the parse fails before it reaches the missing `}`', async () => {
 		// TypeScript reports `'}' expected` for these, but TSRX fails first for a
 		// cause of its own: a `</` read as less-than and a regular expression (#586),
-		// an `export` inside a block (#587), a `const` or `let` with nothing after it
-		// (#588), `get` read as a getter's keyword, and an import attribute read
-		// after a trailing comma.
+		// `get` read as a getter's keyword, and an import attribute read after a
+		// trailing comma.
 		/** @type {Array<[source: string, message: string]>} */
 		const cases = [
 			['x = <div>{a</div>;', 'Unterminated regular expression (1:13)'],
+			['x = { get', 'Unexpected token (1:9)'],
+			["import a from './a.json' with { type: 'json',", 'Unexpected token (1:45)'],
+		];
+		await expect_messages(cases);
+	});
+
+	it('reports it after a mistake that TypeScript reports only from its checker, when collecting', async () => {
+		// An `export` inside a block (#587), and a `const` or `let` with nothing
+		// after it (#588). A strict parse throws the mistake itself.
+		/** @type {Array<[source: string, message: string]>} */
+		const cases = [
 			[
 				'function f() {\n  a();\nexport function g() {}\n',
 				"'import' and 'export' may only appear at the top level (3:0)",
 			],
 			['{ const', 'Unexpected token (1:7)'],
 			['{ let', "The keyword 'let' is reserved (1:2)"],
-			['x = { get', 'Unexpected token (1:9)'],
-			["import a from './a.json' with { type: 'json',", 'Unexpected token (1:45)'],
 		];
-		await expect_messages(cases);
+		const outcomes = await parse_in_worker(
+			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes.map((outcome) => (outcome.ok ? 'parses' : outcome.message))).toEqual(
+			cases.flatMap(([source, message]) =>
+				modes.map((options) =>
+					options ? thrown(source, "'}' expected.", source.length).message : message,
+				),
+			),
+		);
 	});
 });
