@@ -416,10 +416,8 @@ function isParenthesizedType(node) {
 /**
  * The type inside a `TSParenthesizedType` and any directly nested ones, with
  * the comments of each pair of parentheses moved onto it: the ones before the
- * `(` lead it, the ones after the `)` trail it. It is marked parenthesized, like
- * a parenthesized expression, so a `prettier-ignore` comment keeps the
- * parentheses along with the rest of its source, and it takes over the
- * parser's `prettierIgnore` mark of a union member written in parentheses.
+ * `(` lead it, the ones after the `)` trail it. It takes over the parser's
+ * `prettierIgnore` mark of a union member written in parentheses.
  * @param {AST.TSParenthesizedType & AST.NodeWithMaybeComments & { typeAnnotation: AST.TypeNode & AST.NodeWithMaybeComments }} node
  * @returns {AST.TypeNode & AST.NodeWithMaybeComments}
  */
@@ -429,9 +427,8 @@ function unwrapParenthesizedType(node) {
 		: node.typeAnnotation;
 	const innerNode = /** @type {AST.Node} */ (/** @type {unknown} */ (inner));
 	const wrapperNode = /** @type {AST.Node} */ (/** @type {unknown} */ (node));
-	innerNode.metadata = { ...innerNode.metadata, parenthesized: true };
 	if (wrapperNode.metadata?.prettierIgnore) {
-		innerNode.metadata.prettierIgnore = true;
+		innerNode.metadata = { ...innerNode.metadata, prettierIgnore: true };
 	}
 	if (node.leadingComments?.length) {
 		inner.leadingComments = [...node.leadingComments, ...(inner.leadingComments ?? [])];
@@ -2672,10 +2669,14 @@ function printTsrxNode(node, path, options, print, args) {
 		const ignoredText = ignoredSource.text;
 		/** @type {Doc} */
 		let ignored = ignoredText;
-		// The node's span excludes its own parentheses, so put back any it had
+		// Like Prettier, the node's span excludes its parentheses, and it prints
+		// in the ones it needs where it is, not the ones it was written with
 		if (typeCastParens) {
 			ignored = printTypeCastParens(commentNode, typeCastParens, ignored, options, args);
-		} else if (commentNode.metadata?.parenthesized && !args?.suppressOwnParens) {
+		} else if (
+			!args?.suppressOwnParens &&
+			(needsParens(path, options) || sequencePrintsOwnParens(path, args))
+		) {
 			ignored = ['(', ignored, ')'];
 		}
 		// The previous statement may have lost the `;` that ended it
@@ -3461,7 +3462,7 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'TSConditionalType':
-			nodeContent = printTSConditionalType(node, path, options, print);
+			nodeContent = printConditionalExpression(path, options, print);
 			break;
 		case 'TSInferType':
 			nodeContent = ['infer ', path.call(print, 'typeParameter')];
@@ -9712,21 +9713,37 @@ function printDebuggerStatement(node, path, options) {
 }
 
 /**
- * Print a conditional expression like Prettier's ternary printer (without
- * `experimentalTernaries`). A chain of nested conditionals prints in one
- * group, so it stays on one line when it fits and breaks at every `?` and `:`
- * when it doesn't. A nested conditional consequent gets parentheses only on
- * one line.
- * @param {AstPath<AST.ConditionalExpression>} path
+ * Print a conditional expression or a conditional type like Prettier's
+ * ternary printer (`printTernaryOld`, without `experimentalTernaries`). A
+ * chain of nested conditionals prints in one group, so it stays on one line
+ * when it fits and breaks at every `?` and `:` when it doesn't. A nested
+ * conditional in the true branch gets parentheses only on one line, and one
+ * in the test (a conditional type's check or extends type) breaks inside the
+ * parentheses it needs there.
+ * @param {AstPath<AST.ConditionalExpression | AST.TSConditionalType>} path
  * @param {TsrxFormatOptions} options
  * @param {PrintFn} print
  * @returns {Doc}
  */
 function printConditionalExpression(path, options, print) {
 	const node = path.node;
+	// The keys differ between the two node types
+	/** @type {AstPath} */
+	const nodePath = path;
+	const isConditionalExpression = node.type === 'ConditionalExpression';
+	const consequentKey = isConditionalExpression ? 'consequent' : 'trueType';
+	const alternateKey = isConditionalExpression ? 'alternate' : 'falseType';
+	const testKeys = isConditionalExpression ? ['test'] : ['checkType', 'extendsType'];
+	/**
+	 * @param {AST.Node} ancestor
+	 * @param {AST.Node} child
+	 * @returns {boolean}
+	 */
+	const isTestOf = (ancestor, child) =>
+		testKeys.some((key) => /** @type {Record<string, unknown>} */ (ancestor)[key] === child);
 	const parent = /** @type {AST.Node} */ (path.getParentNode());
-	const isParentTest = parent.type === 'ConditionalExpression' && parent.test === node;
-	const forceNoIndent = parent.type === 'ConditionalExpression' && !isParentTest;
+	const isParentTest = parent.type === node.type && isTestOf(parent, node);
+	const forceNoIndent = parent.type === node.type && !isParentTest;
 
 	// The outermost conditional of the chain groups it
 	/** @type {AST.Node} */
@@ -9735,7 +9752,7 @@ function printConditionalExpression(path, options, print) {
 	let firstNonConditionalParent = parent;
 	for (let level = 0; ; level++) {
 		const ancestor = /** @type {AST.Node | null} */ (path.getParentNode(level));
-		if (!ancestor || ancestor.type !== 'ConditionalExpression' || ancestor.test === child) {
+		if (!ancestor || ancestor.type !== node.type || isTestOf(ancestor, child)) {
 			firstNonConditionalParent = ancestor ?? parent;
 			break;
 		}
@@ -9744,26 +9761,29 @@ function printConditionalExpression(path, options, print) {
 
 	/**
 	 * Align a branch with the first character after `? ` or `: `
-	 * @param {'consequent' | 'alternate'} key
+	 * @param {string} key
 	 */
 	const printBranch = (key) => {
-		const printed = path.call(print, key);
+		const printed = nodePath.call(print, key);
 		return options.useTabs ? indent(printed) : align(2, printed);
 	};
-	const consequentIsConditional = node.consequent.type === 'ConditionalExpression';
+	const consequentIsConditional = nodePath.node[consequentKey].type === node.type;
 	const branches = [
 		line,
 		'? ',
 		consequentIsConditional ? ifBreak('', '(') : '',
-		printBranch('consequent'),
+		printBranch(consequentKey),
 		consequentIsConditional ? ifBreak('', ')') : '',
 		line,
 		': ',
-		printBranch('alternate'),
+		printBranch(alternateKey),
 	];
+	const isParentAlternate =
+		parent.type === node.type &&
+		/** @type {Record<string, unknown>} */ (parent)[alternateKey] === node;
 	/** @type {Doc} */
 	let parts = branches;
-	if (parent.type === 'ConditionalExpression' && parent.alternate !== node && !isParentTest) {
+	if (parent.type === node.type && !isParentAlternate && !isParentTest) {
 		// A conditional consequent indents its branches past its parent's
 		parts = options.useTabs
 			? dedent(indent(branches))
@@ -9775,16 +9795,22 @@ function printConditionalExpression(path, options, print) {
 	//     ? b
 	//     : c
 	//   ).call()
-	const breakClosingParen = parent.type === 'MemberExpression' && !parent.computed;
-	const shouldExtraIndent = shouldExtraIndentForConditionalExpression(path);
+	const breakClosingParen =
+		isConditionalExpression && parent.type === 'MemberExpression' && !parent.computed;
+	const shouldExtraIndent =
+		isConditionalExpression &&
+		shouldExtraIndentForConditionalExpression(
+			/** @type {AstPath<AST.ConditionalExpression>} */ (path),
+		);
 
-	const testDoc = path.call(print, 'test');
+	/** @type {Doc} */
+	const testDoc = isConditionalExpression
+		? nodePath.call(print, 'test')
+		: [nodePath.call(print, 'checkType'), ' extends ', nodePath.call(print, 'extendsType')];
 	/** @type {Doc[]} */
 	const contents = [
 		// A multiline test in an alternate lines up with the branches
-		parent.type === 'ConditionalExpression' && parent.alternate === node
-			? align(2, testDoc)
-			: testDoc,
+		isParentAlternate ? align(2, testDoc) : testDoc,
 		forceNoIndent ? parts : indent(parts),
 		breakClosingParen && !shouldExtraIndent ? softline : '',
 	];
@@ -10148,6 +10174,22 @@ function canFlattenOperand(path, options) {
 }
 
 /**
+ * Whether the node at `path` is a sequence expression that prints its own
+ * parentheses. Like Prettier, sequences keep them everywhere except in a
+ * `for` head, unless the parent prints them (`return` with a comment).
+ * @param {AstPath} path - The path to the node
+ * @param {PrintArgs} [args] - The node's print arguments
+ * @returns {boolean}
+ */
+function sequencePrintsOwnParens(path, args) {
+	return (
+		path.node.type === 'SequenceExpression' &&
+		!isForStatement(/** @type {AST.Node | null} */ (path.getParentNode())) &&
+		!args?.suppressOwnParens
+	);
+}
+
+/**
  * Print a sequence expression like Prettier's `printSequenceExpression`. As a
  * statement or in a `for` head, the expressions after the first indent when
  * they break. As an arrow body or a `return` or `throw` argument, the
@@ -10162,9 +10204,7 @@ function canFlattenOperand(path, options) {
  */
 function printSequenceExpression(node, path, options, print, args) {
 	const parent = /** @type {AST.Node} */ (path.getParentNode());
-	// Sequences keep their parentheses everywhere except a `for` head, like
-	// Prettier, unless the parent prints them (`return` with a comment)
-	const printsOwnParens = !isForStatement(parent) && !args?.suppressOwnParens;
+	const printsOwnParens = sequencePrintsOwnParens(path, args);
 
 	/** @type {Doc} */
 	let printed;
@@ -11568,36 +11608,6 @@ function printTSIndexSignature(node, path, options, print) {
 	}
 
 	return parts;
-}
-
-/**
- * Print a TypeScript conditional type
- * @param {AST.TSConditionalType} node - The conditional type node
- * @param {AstPath<AST.TSConditionalType>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc}
- */
-function printTSConditionalType(node, path, options, print) {
-	const trueType = path.call(print, 'trueType');
-	const falseType = path.call(print, 'falseType');
-
-	const shouldIndentTrueType = node.trueType.type !== 'TSConditionalType';
-	const shouldIndentFalseType = node.falseType.type !== 'TSConditionalType';
-
-	// Like Prettier's ternaries, a conditional true type gets parentheses only
-	// on one line
-	const isTrueType = path.key === 'trueType' && path.parent?.type === 'TSConditionalType';
-
-	return group([
-		isTrueType ? ifBreak('', '(') : '',
-		path.call(print, 'checkType'),
-		' extends ',
-		path.call(print, 'extendsType'),
-		indent([line, '? ', shouldIndentTrueType ? indent(trueType) : trueType]),
-		indent([line, ': ', shouldIndentFalseType ? indent(falseType) : falseType]),
-		isTrueType ? ifBreak('', ')') : '',
-	]);
 }
 
 /**
