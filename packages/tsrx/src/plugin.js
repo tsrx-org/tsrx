@@ -3362,6 +3362,9 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * acorn-typescript's `parseVarStatement` calls acorn's `parseVar` itself
+			 * (`super.parseVar`), not the `parseVar` below, so the two never apply to
+			 * the same declaration.
 			 * @param {AST.VariableDeclaration} node
 			 * @param {string} kind
 			 * @param {boolean} [allowMissingInitializer]
