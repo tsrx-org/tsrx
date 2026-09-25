@@ -6582,6 +6582,31 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(statement.consequent).leading).toBeUndefined();
 	});
 
+	// Prettier's `canAttachComment` rejects a template element, and its
+	// `findExpressionIndexForComment` keeps a comment in its `${…}`
+	it('trails the expression with a comment after it in the ${…} of a template literal', () => {
+		const { expression } = firstStatement('x = `a ${\n  b\n  // c\n  /* d */\n} e ${f}`;');
+		const template = expression.right;
+
+		expect(commentsOf(template.expressions[0]).trailing).toEqual([' c', ' d ']);
+		expect(commentsOf(template.expressions[1]).leading).toBeUndefined();
+		expect(template.quasis.map(/** @param {any} quasi */ (quasi) => commentsOf(quasi))).toEqual([
+			{},
+			{},
+			{},
+		]);
+	});
+
+	it('leads the next type with a comment on its own line in a template literal type', () => {
+		const { literal } = firstStatement(
+			'type A = `${\n  B // b\n  // c\n}x${C}${\n  D\n  // d\n}`;',
+		).typeAnnotation;
+
+		expect(commentsOf(literal.expressions[0]).trailing).toEqual([' b']);
+		expect(commentsOf(literal.expressions[1]).leading).toEqual([' c']);
+		expect(commentsOf(literal.expressions[2]).trailing).toEqual([' d']);
+	});
+
 	it('leads the lookup with a comment on its own line before its name', () => {
 		const statement = firstStatement('item\n  // c\n  .foo();');
 		const member = statement.expression.callee;
