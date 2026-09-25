@@ -18169,6 +18169,23 @@ item
 			expect(await format(source)).toBeWithNewline(expected);
 		});
 
+		// A block comment after one on a line of its own followed it on its
+		// line, ahead of it, and ended it early, so the output didn't parse.
+		// Prettier keeps touching JSDoc comments together (#689).
+		it.each([
+			[
+				'const o = {\n  a: 1\n  /** b *//**\n  * c\n  */\n};',
+				'const o = {\n  a: 1,\n  /** b */ /**\n   * c\n   */\n};',
+			],
+			['function f() {}\n/** a\n *//** b\n */', 'function f() {}\n/** a\n */ /** b\n */'],
+			[
+				'const o = {\n  a: 1,\n  /** b *//** c */\n};',
+				'const o = {\n  a: 1,\n  /** b */ /** c */\n};',
+			],
+		])('keeps the comments of %j in order', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
 		it.each([
 			['let x = 1 /* a */ // b\n;', 'let x = 1; /* a */ // b'],
 			['foo() /* a */ /* b */;', 'foo(); /* a */ /* b */'],
