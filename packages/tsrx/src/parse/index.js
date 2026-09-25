@@ -545,6 +545,50 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Where the outermost pair of parentheses around `node` that completes a
+	 * JSDoc type cast (`/** @type {T} *\/ (node)`) closes, or -1. The printer
+	 * keeps those, like Prettier's `babel` parser keeps them as a
+	 * `ParenthesizedExpression`.
+	 * @param {AST.Node & AST.NodeWithLocation} node
+	 * @returns {number}
+	 */
+	function getTypeCastEnd(node) {
+		const parenStart = node.metadata?.paren_start;
+		if (typeof parenStart !== 'number') return -1;
+		// The node's opening parens, and how many of them, from the outermost
+		// cast on, close after it
+		let parens = 0;
+		let closing = 0;
+		for (let i = parenStart; i < node.start; i++) {
+			const comment = commentsByStart.get(i);
+			if (comment) {
+				i = comment.end - 1;
+			} else if (source[i] === '(') {
+				parens++;
+				let before = i;
+				while (before > 0 && /\s/.test(source[before - 1])) before--;
+				const cast = commentsByEnd.get(before);
+				if (closing === 0 && cast && isTypeCastComment(cast)) {
+					closing = parens;
+				}
+			}
+		}
+		if (closing === 0) return -1;
+		closing = parens - closing + 1;
+		for (let i = node.end; i < source.length; i++) {
+			const comment = commentsByStart.get(i);
+			if (comment) {
+				i = comment.end - 1;
+			} else if (source[i] === ')') {
+				if (--closing === 0) return i;
+			} else if (!/\s/.test(source[i])) {
+				break;
+			}
+		}
+		return -1;
+	}
+
+	/**
 	 * @param {AST.Node | AST.CSS.StyleSheet | null | undefined} node
 	 * @returns {node is AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression}
 	 */
@@ -980,7 +1024,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			return null;
 		}
 		const node = /** @type {AST.Node & AST.NodeWithLocation} */ (enclosing);
-		if (!(node.start <= comment.start && comment.end <= node.end)) {
+		if (!(getCommentStart(node) <= comment.start && comment.end <= node.end)) {
 			return null;
 		}
 		const { children, precedingIndexes } = getSortedAttachableChildren(node);
@@ -991,7 +1035,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 		let high = children.length;
 		while (low < high) {
 			const middle = (low + high) >> 1;
-			if (children[middle].start < comment.end) {
+			if (getCommentStart(children[middle]) < comment.end) {
 				low = middle + 1;
 			} else {
 				high = middle;
@@ -1013,7 +1057,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 	/**
 	 * A node's attachable children (see {@link getAttachableChildren}) sorted
-	 * by their start, like Prettier's `getSortedChildNodes`, with, for each
+	 * by their start (see {@link getCommentStart}), like Prettier's
+	 * `getSortedChildNodes`, with, for each
 	 * index, the index of the child up to it that ends last (the first such
 	 * one)
 	 * @param {AST.Node} node
@@ -1022,7 +1067,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 	function getSortedAttachableChildren(node) {
 		let sorted = sortedChildrenCache.get(node);
 		if (!sorted) {
-			const children = getAttachableChildren(node).sort((a, b) => a.start - b.start);
+			const children = getAttachableChildren(node).sort(
+				(a, b) => getCommentStart(a) - getCommentStart(b),
+			);
 			/** @type {number[]} */
 			const precedingIndexes = [];
 			children.forEach((child, index) => {
@@ -1037,15 +1084,23 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 	/**
 	 * Where a node starts for the comments before it, like Prettier's
-	 * `locStart`: an export whose declaration's decorators come before
-	 * `export` starts at the first of them, so that the comments after them
-	 * lie in the declaration (`@dec /* c *\/ export class A {}`)
+	 * `locStart`: a node whose decorators come before it starts at the first
+	 * of them, so that the comments after them lie in the node. That's an
+	 * export whose declaration's decorators come before `export`
+	 * (`@dec /* c *\/ export class A {}`), and a parameter, whose decorators
+	 * the parser keeps outside its span (`@dec /* c *\/ x`). A parameter
+	 * property's decorators hang off its parameter (`@dec private x`).
 	 * @param {AST.Node | AST.CSS.StyleSheet} node
 	 * @returns {number}
 	 */
 	function getCommentStart(node) {
 		const { start } = /** @type {AST.NodeWithLocation} */ (node);
-		const [decorator] = /** @type {any} */ (node).declaration?.decorators ?? [];
+		const decorated = /** @type {any} */ (node).declaration ?? node;
+		const [decorator] =
+			(node.type === /** @type {string} */ ('TSParameterProperty')
+				? /** @type {any} */ (node).parameter
+				: decorated
+			)?.decorators ?? [];
 		return decorator && decorator.start < start ? decorator.start : start;
 	}
 
@@ -1058,6 +1113,26 @@ export function get_comment_handlers(source, comments, index = 0) {
 			node?.type === 'ClassDeclaration' ||
 			node?.type === 'ClassExpression' ||
 			node?.type === 'TSInterfaceDeclaration'
+		);
+	}
+
+	/**
+	 * Like Prettier's `isPropertyLikeNode`: a class member, or a parameter
+	 * property, whose modifiers print between its decorators and its key
+	 * @param {AST.Node | AST.CSS.StyleSheet | null | undefined} node
+	 * @returns {boolean}
+	 */
+	function isPropertyLike(node) {
+		const type = /** @type {string | undefined} */ (node?.type);
+		return (
+			type === 'PropertyDefinition' ||
+			type === 'MethodDefinition' ||
+			type === 'AccessorProperty' ||
+			type === 'TSAbstractPropertyDefinition' ||
+			type === 'TSAbstractMethodDefinition' ||
+			type === 'TSAbstractAccessorProperty' ||
+			type === 'TSDeclareMethod' ||
+			type === 'TSParameterProperty'
 		);
 	}
 
@@ -1153,7 +1228,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 			type === 'AssignmentPattern' ||
 			type === 'TSMappedType' ||
 			getSignatureParameters(node) !== null ||
-			isClassLike(/** @type {AST.Node} */ (node))
+			isClassLike(/** @type {AST.Node} */ (node)) ||
+			isPropertyLike(node) ||
+			// A parameter property's decorators hang off its parameter
+			!!(/** @type {any} */ (node)?.decorators?.length)
 		);
 	}
 
@@ -1190,12 +1268,16 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * trail the body and print inside them. Prettier gives the comments after
 	 * any other body to it too, but prints that body without the parentheses,
 	 * so the next pass moves them after the statement: they go there at once.
+	 * Like Prettier, the comments after a spread's argument, before its `}`,
+	 * trail the argument, which the spread prints inside its braces.
 	 * @param {AST.Node | AST.CSS.StyleSheet} node
 	 * @returns {boolean}
 	 */
 	function keepsCommentsAfterChildren(node) {
 		return (
-			node.type.startsWith('JSX') ||
+			(node.type.startsWith('JSX') &&
+				node.type !== 'JSXSpreadAttribute' &&
+				node.type !== 'JSXSpreadChild') ||
 			isNativeTemplateNode(node) ||
 			(isFunctionNode(node) && !isArrowWithElementBody(node)) ||
 			isClassLike(/** @type {AST.Node} */ (node)) ||
@@ -1359,6 +1441,49 @@ export function get_comment_handlers(source, comments, index = 0) {
 				}
 				return true;
 			}
+		}
+
+		// `handleMethodNameComments`: a line comment, or a comment on its own
+		// line, after a class member's or a parameter property's decorator
+		// trails it, so that it prints before the modifiers (`static`,
+		// `accessor`, `private`, …) rather than between them and the name,
+		// where it would break the line after them. The parser hangs a
+		// parameter property's decorators off its parameter.
+		const isParameterPropertyParameter =
+			ancestor?.type === /** @type {string} */ ('TSParameterProperty') &&
+			/** @type {any} */ (ancestor).parameter === enclosing;
+		if (
+			preceding?.type === 'Decorator' &&
+			(isPropertyLike(enclosing) || isParameterPropertyParameter) &&
+			(comment.type === 'Line' || ownLine)
+		) {
+			addTrailingComment(preceding, comment);
+			return true;
+		}
+
+		// Prettier's tie-break for a comment with code on both sides between a
+		// parameter property's decorators and its name, which follows it in
+		// Prettier's parameter property, where the decorators are. Here a
+		// parameter without a default is the name the decorators hang off, so
+		// no child follows the comment: like the tie-break, it leads the
+		// parameter when only whitespace and comments sit before the name, so
+		// it stays after the modifiers (`@dec private /* c */ x`), and trails
+		// the decorator before the modifiers otherwise (`@dec /* c */ private
+		// x`). With a default, the name is the pattern's `left`, and the
+		// tie-break below places the comment.
+		const enclosingStart = /** @type {AST.NodeWithLocation} */ (enclosing).start;
+		if (
+			preceding?.type === 'Decorator' &&
+			isParameterPropertyParameter &&
+			enclosing.type === 'Identifier' &&
+			comment.end <= enclosingStart
+		) {
+			if (!ownLine && !endOfLine && isBlankBetween(comment.end, enclosingStart, false)) {
+				addLeadingComment(enclosing, comment);
+			} else {
+				addTrailingComment(preceding, comment);
+			}
+			return true;
 		}
 
 		// `handleMemberExpressionComments`: a comment on its own line before the
@@ -2136,6 +2261,34 @@ export function get_comment_handlers(source, comments, index = 0) {
 							}
 						}
 
+						// Like the expression of a `ParenthesizedExpression`, which Prettier's
+						// `babel` parser keeps for a JSDoc cast, a cast node trails the
+						// comments after it inside its cast's parentheses, even the ones
+						// after the last node it ends with (`(await foo /* c */)`). None of
+						// them moves to the statement's `;` or the class body after them.
+						const nodeEnd = /** @type {AST.NodeWithLocation} */ (node).end;
+						let castNode = /** @type {AST.Node & AST.NodeWithLocation} */ (node);
+						let castEnd = getTypeCastEnd(castNode);
+						for (
+							let i = path.length - 1;
+							castEnd < 0 &&
+							i >= 0 &&
+							/** @type {AST.NodeWithLocation} */ (path[i]).end === nodeEnd;
+							i--
+						) {
+							castNode = /** @type {AST.Node & AST.NodeWithLocation} */ (path[i]);
+							castEnd = getTypeCastEnd(castNode);
+						}
+						while (comments[0] && comments[0].start >= nodeEnd && comments[0].end <= castEnd) {
+							addTrailingComment(
+								castNode,
+								/** @type {AST.CommentWithLocation} */ (comments.shift()),
+							);
+						}
+						if (comments.length === 0) {
+							return;
+						}
+
 						const parent = /** @type {AST.Node & AST.NodeWithLocation} */ (path.at(-1));
 
 						// Like Prettier, whose `canAttachComment` rejects a template literal's
@@ -2583,8 +2736,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 											const commentEndLine = comments[0].loc?.end?.line;
 											const nextSiblingStartLine = nextSibling.loc?.start?.line;
 
-											// If comment ends on same line as next sibling starts, it's inline with next
-											if (commentEndLine === nextSiblingStartLine) {
+											// If comment ends on same line as next sibling starts, it's inline with next.
+											// A JSDoc type cast keeps to the parentheses it casts on any line.
+											if (
+												commentEndLine === nextSiblingStartLine ||
+												(isTypeCastComment(comments[0]) &&
+													getNextNonSpaceNonCommentCharacter(comments[0].end) === '(')
+											) {
 												// Leave it for next sibling's leading comments
 												return;
 											}
