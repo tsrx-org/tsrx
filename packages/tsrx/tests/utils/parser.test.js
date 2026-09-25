@@ -7514,6 +7514,18 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(call.expression.right.left.arguments[0]).trailing).toEqual([' c']);
 	});
 
+	// The parentheses around the inner operand are not the cast's, but the cast
+	// still closes after the comment, so it stays with that operand
+	it('keeps a comment inside a JSDoc cast when an operator follows the cast', () => {
+		const logical = firstStatement('x = (a && /** @type {T} */ (b && (c /* c */))) || d;');
+		const binary = firstStatement('x = a * /** @type {T} */ (b + (c /* c */)) + d;');
+
+		expect(commentsOf(logical.expression.right.left).trailing).toBeUndefined();
+		expect(commentsOf(logical.expression.right.left.right.right).trailing).toEqual([' c ']);
+		expect(commentsOf(binary.expression.right.left).trailing).toBeUndefined();
+		expect(commentsOf(binary.expression.right.left.right.right).trailing).toEqual([' c ']);
+	});
+
 	// Prettier's next pass moves the line comment alone after the `;` (#624)
 	it('trails the statement with a line comment after block comments at the end of a parenthesized sequence', () => {
 		const statement = firstStatement('const x = (a, b /* c */ // d\n);');

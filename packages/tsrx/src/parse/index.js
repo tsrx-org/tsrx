@@ -662,11 +662,18 @@ export function get_comment_handlers(source, comments, index = 0) {
 			return false;
 		}
 		// The left operand that the comment ends, up the right operands that
-		// end it, which only `)`s separate from the operator after it
+		// end it, which only `)`s separate from the operator after it. A JSDoc
+		// cast keeps a comment inside its parentheses, the way an element
+		// keeps one in its own: `a && /** @type {T} */ (b && (c /* c */)) || d`
+		// prints the comment in the cast, not after it on the next operand.
 		for (; index >= 1; index--) {
-			const operand = /** @type {AST.Node} */ (path[index]);
+			const operand = /** @type {AST.Node & AST.NodeWithLocation} */ (path[index]);
 			if (!isBinaryish(operand) || operand.right !== child) {
 				break;
+			}
+			const castEnd = getTypeCastEnd(operand);
+			if (castEnd !== -1 && comment.end <= castEnd) {
+				return false;
 			}
 			const binary = /** @type {AST.Node} */ (path[index - 1]);
 			if (isBinaryish(binary) && binary.left === operand) {
