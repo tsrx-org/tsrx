@@ -776,12 +776,11 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * @returns {{ preceding: (AST.Node & AST.NodeWithLocation) | null, following: (AST.Node & AST.NodeWithLocation) | null } | null}
 	 */
 	function getCommentNeighbors(comment, enclosing) {
-		const node = /** @type {(AST.Node & AST.NodeWithLocation) | undefined} */ (enclosing);
-		if (
-			!node ||
-			node.type === 'StyleSheet' ||
-			!(node.start <= comment.start && comment.end <= node.end)
-		) {
+		if (!enclosing || enclosing.type === 'StyleSheet') {
+			return null;
+		}
+		const node = /** @type {AST.Node & AST.NodeWithLocation} */ (enclosing);
+		if (!(node.start <= comment.start && comment.end <= node.end)) {
 			return null;
 		}
 		/** @type {(AST.Node & AST.NodeWithLocation) | null} */
@@ -944,7 +943,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 		// before the superclass or the first `implements`/`extends` type trails
 		// the name, the type parameters, or the superclass before it, so that it
 		// doesn't print after the keyword.
-		if ((ownLine || endOfLine) && isClassLike(node) && following) {
+		if ((ownLine || endOfLine) && isClassLike(enclosing) && following) {
 			const decorators = /** @type {AST.Node[] | undefined} */ (node.decorators);
 			if (decorators?.length && following.type !== 'Decorator') {
 				addTrailingComment(/** @type {AST.Node} */ (decorators.at(-1)), comment);
@@ -960,6 +959,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 				}
 				return true;
 			}
+			/** @type {unknown[]} */
 			const heading = [node.id, node.typeParameters];
 			if (preceding && following === node.superClass && heading.includes(preceding)) {
 				addTrailingComment(preceding, comment);
