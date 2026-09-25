@@ -7948,6 +7948,10 @@ const short = (value as Entry).name;`;
 			['(/* c */ function () {})();', '(\n  /* c */ function () {}\n)();'],
 			['(/* c */ () => {})();', '(\n  /* c */ () => {}\n)();'],
 			['(function () {} /* c */)();', '(\n  function () {} /* c */\n)();'],
+			['(m => m /* c */)(x);', '(\n  (m) => m /* c */\n)(x);'],
+			['(function () {} /* a */ /* b */)(x);', '(\n  function () {} /* a */ /* b */\n)(x);'],
+			['(m => m /* c */)`x`;', '(\n  (m) => m /* c */\n)`x`;'],
+			['x = (m => m /* c */)(x);', 'x = ((m) => m /* c */)(x);'],
 			['(/* c */ function () {})`x`;', '(\n  /* c */ function () {}\n)`x`;'],
 			['(/* c */ async () => {})?.();', '(\n  /* c */ async () => {}\n)?.();'],
 			['(function () {} // c\n)();', '(\n  function () {} // c\n)();'],
@@ -15331,6 +15335,11 @@ item
 			[
 				'class D extends aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb /* c */ {\n  x = 1;\n}',
 				'class D\n  extends aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb /* c */ {\n  x = 1;\n}',
+			],
+			// The comment leads the body here, and prints before its `{`
+			[
+				'class A implements Iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii, Jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj /* c */ {\n  x = 1;\n}',
+				'class A\n  implements\n    Iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii,\n    Jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj /* c */ {\n  x = 1;\n}',
 			],
 		])('keeps the comment after the superclass in %j stable', async (input, expected) => {
 			expect(await format(input)).toBeWithNewline(expected);

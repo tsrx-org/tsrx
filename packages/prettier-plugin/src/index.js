@@ -6879,12 +6879,14 @@ function printClassDeclaration(node, path, options, print) {
 
 	// Like Prettier, a class whose heading breaks starts its body on a new
 	// line, so the body does not read as one more heritage clause. A comment
-	// that ended the heading's line would move into the body on the next
-	// format, as it does in Prettier, so the body starts on its line.
+	// that ended the heading's line, after the superclass or before the `{`,
+	// would move into the body on the next format, as it does in Prettier, so
+	// the body starts on its line.
 	const heritageGroupId = Symbol('heritageGroup');
+	const bodyNode = /** @type {AST.NodeWithMaybeComments} */ (node.body);
 	return [
 		group([...parts, indent(heritage)], { id: heritageGroupId }),
-		node.body.body.length > 0 && !endsWithComment
+		node.body.body.length > 0 && !endsWithComment && !bodyNode.leadingComments?.length
 			? ifBreak(hardline, ' ', { groupId: heritageGroupId })
 			: ' ',
 		body,

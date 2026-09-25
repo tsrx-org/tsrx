@@ -1,4 +1,5 @@
 ---
+'@tsrx/core': patch
 '@tsrx/prettier-plugin': patch
 ---
 
@@ -12,3 +13,7 @@ parentheses, and a comment after the superclass no longer moves into the class
 body on the next format. An element in a JSDoc cast prints in parentheses of its
 own inside the cast's when it breaks or has a comment that breaks the line, like
 Prettier's `babel` output.
+
+The parser gives a comment before the `)` of a function called right away or
+used as a tag to the function, like Prettier, so it prints inside those
+parentheses instead of moving into the call's arguments.
