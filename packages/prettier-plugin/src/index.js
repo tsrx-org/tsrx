@@ -22,7 +22,7 @@
  * @typedef {AST.Node & { decorators?: AST.Decorator[] }} MaybeDecoratedNode
  */
 
-/** @typedef {{ suppressLeadingComments?: boolean, suppressExpressionLeadingComments?: boolean, suppressOwnParens?: boolean, isInlineContext?: boolean, isStatement?: boolean, isLogicalAndOr?: boolean, allowShorthandProperty?: boolean, isFirstChild?: boolean, noBreakInside?: boolean, expandLastArg?: boolean, expandFirstArg?: boolean, assignmentLayout?: AssignmentLayout }} PrintArgs */
+/** @typedef {{ suppressLeadingComments?: boolean, suppressTrailingComments?: boolean, suppressExpressionLeadingComments?: boolean, suppressOwnParens?: boolean, isInlineContext?: boolean, isStatement?: boolean, isLogicalAndOr?: boolean, allowShorthandProperty?: boolean, isFirstChild?: boolean, noBreakInside?: boolean, expandLastArg?: boolean, expandFirstArg?: boolean, assignmentLayout?: AssignmentLayout }} PrintArgs */
 
 import { parseModule } from '@tsrx/core';
 import { doc } from 'prettier';
@@ -2332,55 +2332,67 @@ function printTypeCastParens(node, typeCastParens, nodeContent, options, args) {
 }
 
 /**
+ * Print a node's trailing comments, to follow its printed body. Like
+ * Prettier's `printTrailingComment`, one on the node's line stays there, and
+ * one on a line of its own moves to a line of its own after the node's line.
+ * @param {AST.Node} node - The AST node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc[]}
+ */
+function printTrailingComments(node, options) {
+	const text = /** @type {string} */ (options.originalText);
+	/** @type {Doc[]} */
+	const trailingParts = [];
+
+	for (const comment of node.trailingComments ?? []) {
+		const commentStart = /** @type {AST.NodeWithLocation} */ (comment).start;
+		// Like Prettier, a comment stays on the line it shares with code, even
+		// a `;` that isn't printed
+		const isInlineComment = !hasNewline(text, commentStart, { backwards: true });
+
+		const commentDoc = printComment(comment, text);
+
+		if (isInlineComment) {
+			if (comment.type === 'Line') {
+				trailingParts.push(lineSuffix([' ', commentDoc]));
+				trailingParts.push(breakParent);
+			} else {
+				trailingParts.push([' ', commentDoc]);
+			}
+		} else {
+			const refs = [];
+			refs.push(hardline);
+
+			if (isPreviousLineEmpty(text, commentStart)) {
+				refs.push(hardline);
+			}
+
+			refs.push(commentDoc);
+			trailingParts.push(lineSuffix(refs));
+		}
+	}
+	return trailingParts;
+}
+
+/**
  * Combine already-printed leading comment parts, a node's printed body, and its
  * trailing comments into the final Doc returned by {@link printTsrxNode}.
  * @param {AST.Node} node - The AST node
  * @param {Doc[]} parts - Leading-comment parts already collected for the node
  * @param {Doc[] | Doc} nodeContent - The printed body of the node
  * @param {TsrxFormatOptions} options - Prettier options
+ * @param {boolean} [suppressTrailingComments] - Leave out the trailing
+ *   comments, which the parent prints
  * @returns {Doc[] | Doc}
  */
-function finishTsrxNode(node, parts, nodeContent, options) {
-	// Handle trailing comments
-	if (node.trailingComments) {
-		const text = /** @type {string} */ (options.originalText);
-		const trailingParts = [];
-
-		for (let i = 0; i < node.trailingComments.length; i++) {
-			const comment = node.trailingComments[i];
-			const commentStart = /** @type {AST.NodeWithLocation} */ (comment).start;
-			// Like Prettier, a comment stays on the line it shares with code, even
-			// a `;` that isn't printed
-			const isInlineComment = !hasNewline(text, commentStart, { backwards: true });
-
-			const commentDoc = printComment(comment, text);
-
-			if (isInlineComment) {
-				if (comment.type === 'Line') {
-					trailingParts.push(lineSuffix([' ', commentDoc]));
-					trailingParts.push(breakParent);
-				} else {
-					trailingParts.push([' ', commentDoc]);
-				}
-			} else {
-				const refs = [];
-				refs.push(hardline);
-
-				if (isPreviousLineEmpty(text, commentStart)) {
-					refs.push(hardline);
-				}
-
-				refs.push(commentDoc);
-				trailingParts.push(lineSuffix(refs));
-			}
-		}
-
-		if (trailingParts.length > 0) {
-			parts.push(nodeContent);
-			parts.push(...trailingParts);
-			return parts;
-		}
-	} // Return with or without leading comments
+function finishTsrxNode(node, parts, nodeContent, options, suppressTrailingComments) {
+	const trailingParts = suppressTrailingComments ? [] : printTrailingComments(node, options);
+	if (trailingParts.length > 0) {
+		parts.push(nodeContent);
+		parts.push(...trailingParts);
+		return parts;
+	}
+	// Return with or without leading comments
 	if (parts.length > 0) {
 		// Don't add blank line between leading comments and node
 		// because they're meant to be attached together
@@ -3395,7 +3407,13 @@ function printTsrxNode(node, path, options, print, args) {
 		nodeContent = ['(', nodeContent, ')'];
 	}
 
-	return finishTsrxNode(/** @type {AST.Node} */ (node), parts, nodeContent, options);
+	return finishTsrxNode(
+		/** @type {AST.Node} */ (node),
+		parts,
+		nodeContent,
+		options,
+		args?.suppressTrailingComments,
+	);
 }
 
 /**
@@ -6145,17 +6163,12 @@ function printClassDeclaration(node, path, options, print) {
 	// Class name (optional for ClassExpression), with its comments
 	if (node.id) {
 		parts.push(' ');
-		parts.push(path.call(print, 'id'));
+		parts.push(printHeadingPart(path, options, print, 'id'));
 	}
 
 	// Add TypeScript generics if present
 	if (node.typeParameters) {
-		const typeParams = path.call(print, 'typeParameters');
-		if (Array.isArray(typeParams)) {
-			parts.push(...typeParams);
-		} else {
-			parts.push(typeParams);
-		}
+		parts.push(printHeadingPart(path, options, print, 'typeParameters'));
 	}
 
 	const groupMode = shouldPrintHeritageInGroupMode(node, path);
@@ -6210,6 +6223,27 @@ function printClassDeclaration(node, path, options, print) {
 		group([...parts, indent(heritage)], { id: heritageGroupId }),
 		node.body.body.length > 0 ? ifBreak(hardline, ' ', { groupId: heritageGroupId }) : ' ',
 		path.call(print, 'body'),
+	];
+}
+
+/**
+ * Print the name or the type parameters of a class or interface heading. Like
+ * Prettier's `printClass`, their trailing comments indent, so one on a line of
+ * its own lines up with the heritage clauses after it.
+ * @param {AstPath} path - The path to the class or interface
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @param {'id' | 'typeParameters'} key - The part to print
+ * @returns {Doc}
+ */
+function printHeadingPart(path, options, print, key) {
+	const part = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node[key]);
+	if (!part.trailingComments?.length) {
+		return path.call(print, key);
+	}
+	return [
+		path.call((partPath) => print(partPath, { suppressTrailingComments: true }), key),
+		indent(printTrailingComments(part, options)),
 	];
 }
 
@@ -7567,12 +7601,23 @@ function printReturnOrThrowArgument(path, options, print) {
  * parentheses or its source verbatim.
  * @param {AstPath} path - The path to the node
  * @param {TsrxFormatOptions} options - Prettier options
+ * @param {boolean} [skipLookupComments] - Leave out the comments a lookup in
+ *   the leftmost operand takes from inside itself (`item\n  // note\n  .run()`),
+ *   which a member chain prints before its `.`, like Prettier's
+ *   `hasLeadingOwnLineComment`, which looks at the value's own comments only
+ * @param {boolean} [isOperand] - Whether the node is a leftmost operand
  * @returns {AST.Comment | null}
  */
-function getOwnLineCommentAhead(path, options) {
+function getOwnLineCommentAhead(path, options, skipLookupComments = false, isOperand = false) {
 	const node = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node);
 	const typeCastParens = getTypeCastParens(path, options);
-	const comments = typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []);
+	const nodeStart = /** @type {AST.NodeWithLocation} */ (node).start;
+	const comments = (typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? [])).filter(
+		(comment) =>
+			!skipLookupComments ||
+			!isOperand ||
+			/** @type {AST.NodeWithLocation} */ (comment).start < nodeStart,
+	);
 	const firstComment = comments[0] ?? null;
 	if (hasLeadingOwnLineComment(node, comments, options)) {
 		return firstComment;
@@ -7581,7 +7626,10 @@ function getOwnLineCommentAhead(path, options) {
 	if (!key || hasPrettierIgnore(node) || typeCastParens || needsParens(path, options)) {
 		return null;
 	}
-	const comment = path.call((childPath) => getOwnLineCommentAhead(childPath, options), key);
+	const comment = path.call(
+		(childPath) => getOwnLineCommentAhead(childPath, options, skipLookupComments, true),
+		key,
+	);
 	return comment && (firstComment ?? comment);
 }
 
@@ -7598,7 +7646,7 @@ function getOwnLineCommentAhead(path, options) {
  * value starts with no such comment
  */
 function printValueAfterLeadingComment(path, key, valueDoc, options) {
-	const comment = path.call((valuePath) => getOwnLineCommentAhead(valuePath, options), key);
+	const comment = path.call((valuePath) => getOwnLineCommentAhead(valuePath, options, true), key);
 	if (!comment) {
 		return null;
 	}
@@ -7625,10 +7673,10 @@ function printTSInterfaceDeclaration(node, path, options, print) {
 		parts.push('declare ');
 	}
 	parts.push('interface ');
-	parts.push(path.call(print, 'id'));
+	parts.push(printHeadingPart(path, options, print, 'id'));
 
 	if (node.typeParameters) {
-		parts.push(path.call(print, 'typeParameters'));
+		parts.push(printHeadingPart(path, options, print, 'typeParameters'));
 	}
 
 	// Handle extends clause. Unlike a class body, an interface body stays on
@@ -7822,10 +7870,21 @@ function printTSUnionType(node, path, options, print, args) {
 
 	/** @type {Doc} */
 	let printed = group(
-		path.map(
-			(typePath, index) => [index === 0 ? ifBreak('| ') : [line, '| '], align(2, print(typePath))],
-			'types',
-		),
+		path.map((typePath, index) => {
+			const bar = index === 0 ? ifBreak('| ') : [line, '| '];
+			const type = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (typePath.node);
+			// Like Prettier, a member without leading comments prints its trailing
+			// ones outside its alignment, so that one on its own line lines up
+			// with the `|`s
+			if (type.leadingComments?.length || !type.trailingComments?.length) {
+				return [bar, align(2, print(typePath))];
+			}
+			return [
+				bar,
+				align(2, print(typePath, { suppressTrailingComments: true })),
+				printTrailingComments(type, options),
+			];
+		}, 'types'),
 	);
 
 	if (unionPrintsOwnComments(path) && !args?.suppressLeadingComments) {
