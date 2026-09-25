@@ -1701,6 +1701,12 @@ describe('`abstract`, `module`, `namespace` or `type` after `export` that starts
 			['export declare type\nFoo = 1;', 'Foo', 'Line break not permitted here.'],
 			['export type\ndefault class {}', 'default', 'Line break not permitted here.'],
 			['export type\n@dec class A {}', '@dec', 'Line break not permitted here.'],
+			// An escaped modifier (TS1260), which `abstract` before a function is.
+			[
+				'export \\u0061bstract function f() {}',
+				'\\u0061bstract',
+				'Keywords cannot contain escape characters.',
+			],
 		];
 		const sources = cases.map(([source]) => source);
 		const outcomes = await parse_in_worker(in_every_mode(sources));

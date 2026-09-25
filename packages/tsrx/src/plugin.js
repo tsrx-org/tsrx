@@ -98,12 +98,13 @@ const UNEXPECTED_PARAMETER_MODIFIER =
 const UNEXPECTED_LEADING_DECORATOR = 'Leading decorators must be attached to a class declaration.';
 // TypeScript's parser errors for what follows `export` when it starts no
 // declaration (TS1128), for a missing name (TS1003, or TS1359 for a reserved
-// word), for a type alias name on the line after `declare type` (TS1142), and
-// for `export type` before `=` (TS1005).
+// word), for a type alias name on the line after `declare type` (TS1142), for
+// `export type` before `=` (TS1005), and for an escaped modifier (TS1260).
 const DECLARATION_OR_STATEMENT_EXPECTED = 'Declaration or statement expected.';
 const IDENTIFIER_EXPECTED = 'Identifier expected.';
 const LINE_BREAK_NOT_PERMITTED = 'Line break not permitted here.';
 const OPENING_BRACE_EXPECTED = "'{' expected.";
+const KEYWORD_ESCAPE = 'Keywords cannot contain escape characters.';
 // TypeScript's checker error for `abstract` before a declaration other than a
 // class (TS1242).
 const ABSTRACT_MODIFIER_NOT_ALLOWED =
@@ -4451,7 +4452,8 @@ export function TSRXPlugin(config) {
 					return;
 				}
 				if (value === 'abstract' && this.#isDeclarationAfterModifier(next.type, ahead)) {
-					this.raise(word.start, ABSTRACT_MODIFIER_NOT_ALLOWED);
+					// TypeScript's parser rejects an escaped modifier (TS1260).
+					this.raise(word.start, word.containsEsc ? KEYWORD_ESCAPE : ABSTRACT_MODIFIER_NOT_ALLOWED);
 					return;
 				}
 				if (value === 'namespace' && next.type === tt.string) this.#raiseIdentifierExpected(next);
