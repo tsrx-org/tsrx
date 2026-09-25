@@ -429,12 +429,16 @@ export function get_comment_handlers(source, comments, index = 0) {
 		if (!isBlankBetween(comments[0].end, statement.end - 1, false)) {
 			// Only the parentheses around the statement's value may close after
 			// the comment. Any other pair, like the one in `x = !(a /* c */);`,
-			// stays, and so does the comment inside it.
-			const value = getParenthesizedStatementValue(statement, comments[0]);
+			// stays, and so does the comment inside it. The value ends where the
+			// node does, so the `)`s between the comment and the `;` all close
+			// the value's own parentheses (or the ones around the statement's
+			// other parts that end there, like an arrow function's), never a
+			// pair inside the value.
+			const values = getParenthesizedStatementValues(statement, comments[0]);
 			if (
-				!value ||
-				value.end !== node.end ||
-				(value !== node && !path.includes(value)) ||
+				!values.some(
+					(value) => value.end === node.end && (value === node || path.includes(value)),
+				) ||
 				!isBlankBetween(comments[0].end, statement.end - 1, true)
 			) {
 				return false;
@@ -483,18 +487,20 @@ export function get_comment_handlers(source, comments, index = 0) {
 	]);
 
 	/**
-	 * The value of a statement, like the argument of `return (a)` or the right
-	 * side of `x = (a)`, when it's written in parentheses that print as
-	 * nothing (see {@link valuesPrintedWithoutParens}) or that `comment`, after
-	 * the value in them, ends up after (see {@link movesCommentAfterParens}),
-	 * or the expression body of an arrow function that is the value, as in
-	 * `const f = () => (a);`, when the comments after it in its parentheses
-	 * print before the `;` (see {@link keepsCommentsInArrowBodyParens}).
+	 * The values of a statement, like the argument of `return (a)`, the
+	 * expression of `(a);`, or the right side of `x = (a)`, that are written in
+	 * parentheses that print as nothing (see {@link valuesPrintedWithoutParens})
+	 * or that `comment`, after the value in them, ends up after (see
+	 * {@link movesCommentAfterParens}), and the expression body of an arrow
+	 * function that is the value, as in `const f = () => (a);`, when the
+	 * comments after it in its parentheses print before the `;` (see
+	 * {@link keepsCommentsInArrowBodyParens}). The one the comment follows
+	 * takes it.
 	 * @param {AST.Node} statement
 	 * @param {AST.CommentWithLocation} comment
-	 * @returns {(AST.Node & AST.NodeWithLocation) | null}
+	 * @returns {(AST.Node & AST.NodeWithLocation)[]}
 	 */
-	function getParenthesizedStatementValue(statement, comment) {
+	function getParenthesizedStatementValues(statement, comment) {
 		const node = /** @type {any} */ (statement);
 		/** @type {(AST.Node & AST.NodeWithLocation)[]} */
 		const candidates = [];
@@ -507,6 +513,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 		} else if (node.type === 'ExportDefaultDeclaration') {
 			candidates.push(node.declaration);
 		}
+		/** @type {(AST.Node & AST.NodeWithLocation)[]} */
+		const values = [];
 		for (const value of candidates) {
 			let candidate = value;
 			let isArrowBody = false;
@@ -520,15 +528,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 					? !keepsCommentsInArrowBodyParens(candidate)
 					: valuesPrintedWithoutParens.has(candidate.type))
 			) {
-				return candidate;
-			}
-			// The parentheses around an arrow function's body come first: the
-			// ones around the whole arrow function close after them
-			if (value?.metadata?.parenthesized && movesCommentAfterParens(node, value, comment)) {
-				return value;
+				values.push(candidate);
+			} else if (value?.metadata?.parenthesized && movesCommentAfterParens(node, value, comment)) {
+				values.push(value);
 			}
 		}
-		return null;
+		return values;
 	}
 
 	/**

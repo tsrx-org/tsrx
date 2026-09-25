@@ -17938,6 +17938,10 @@ item
 			// parentheses
 			['(() => (a, b /* note */));', '() => (a, b /* note */);'],
 			['(() => a /* note */);', '() => a; /* note */'],
+			// Parentheses inside the value keep the comment
+			['const v = f((a, b /* note */));', 'const v = f((a, b) /* note */);'],
+			['x = (a, (b /* note */));', 'x = (a, b /* note */);'],
+			['x = (y = (a, b /* note */));', 'x = y = (a, b /* note */);'],
 			[
 				'function f() {\n  return (a, b // note\n  );\n}',
 				'function f() {\n  return (\n    a,\n    b // note\n  );\n}',
@@ -17958,8 +17962,11 @@ item
 			['export default (a, b /* note */);', 'export default (a, b); /* note */'],
 			['x = (y = z /* note */);', 'x = y = z; /* note */'],
 			// The parentheses around the arrow function's body print as nothing,
-			// as they do without the ones around the arrow function (#529)
+			// as they do without the ones around the arrow function (#529), and
+			// so do the ones around the expression's right operand
 			['(() => (a /* note */));', '() => a; /* note */'],
+			['(a + (b /* note */));', 'a + b; /* note */'],
+			['((a, b) + (c /* note */));', '(a, b) + c; /* note */'],
 			['const x = (a, b // note\n);', 'const x = (a, b); // note'],
 			['x = (a, b // note\n);', 'x = (a, b); // note'],
 		])('formats %j in one pass', async (source, expected) => {
@@ -17967,6 +17974,7 @@ item
 		});
 
 		it.each([
+			'function f() {\n  return !(a && b /* note */);\n}',
 			'function f() {\n  return (a, b); /* note */\n}',
 			'function f() {\n  throw (a, b); // note\n}',
 			'const x = (a = b); // note',
