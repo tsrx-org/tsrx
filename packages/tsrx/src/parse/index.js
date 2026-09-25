@@ -1245,9 +1245,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 												/** @type {AST.NodeWithLocation} */ (parent.source).start,
 											)
 										: isParam
-											? (getParameterParens(
+											? // An arrow's lone parameter without parentheses ends the list
+												(getParameterParens(
 													/** @type {AST.FunctionDeclaration} */ (/** @type {unknown} */ (parent)),
-												)?.close ?? parent.end)
+												)?.close ?? /** @type {AST.NodeWithLocation} */ (node).end)
 											: parent?.end;
 
 							if (is_last_in_array) {

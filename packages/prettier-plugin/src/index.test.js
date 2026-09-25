@@ -10765,6 +10765,36 @@ item
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// An arrow's lone parameter without parentheses used to take the body's
+		// comments up to the end of the arrow
+		it.each(['always', 'avoid'])(
+			'keeps body comments out of an unparenthesized arrow parameter with arrowParens: %s',
+			async (arrowParens) => {
+				const x = arrowParens === 'always' ? '(x)' : 'x';
+				for (const source of [
+					`const f = ${x} => check(value /* c */);`,
+					`const f = ${x} => {\n  check(value /* c */);\n};`,
+					`const f = async ${x} => {\n  check(value /* c */);\n};`,
+					`foo(${x} => check(value /* c */));`,
+					`const f = ${x} =>\n  check(\n    value, // c\n  );`,
+					`const f = ${x} => /* c */ x;`,
+					`const f = ${x} =>\n  // c\n  x;`,
+					`const f = async ${x} => {\n  /* c */\n};`,
+				]) {
+					expect(await format(source.replace(/\(x\)/g, 'x'), { arrowParens })).toBeWithNewline(
+						source,
+					);
+				}
+			},
+		);
+
+		// Like Prettier's `canPrintParamsWithoutParens`
+		it('keeps the parentheses of a parameter with a comment before =>', async () => {
+			expect(await format('const f = x /* c */ => x;', { arrowParens: 'avoid' })).toBeWithNewline(
+				'const f = (x) /* c */ => x;',
+			);
+		});
+
 		it('keeps a component body comment out of the parameter list', async () => {
 			const source = `function Component(props) @{
   <div>{sum(props.items /* kept */)}</div>

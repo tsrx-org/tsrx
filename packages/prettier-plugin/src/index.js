@@ -3555,7 +3555,9 @@ function printFunctionExpression(node, path, options, print, args) {
 /**
  * Whether an arrow function prints its single parameter without parentheses
  * (`x => x`), which `arrowParens: "avoid"` allows only when nothing but the
- * name is written: no type annotation, return type, or type parameters.
+ * name is written: no type annotation, return type, or type parameters, and,
+ * like Prettier's `canPrintParamsWithoutParens`, no comment on the parameter
+ * or before `=>`.
  * @param {AST.ArrowFunctionExpression} node - The arrow function node
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {boolean}
@@ -3567,7 +3569,9 @@ function printsArrowParamWithoutParens(node, options) {
 		node.params[0].type === 'Identifier' &&
 		!node.params[0].typeAnnotation &&
 		!node.returnType &&
-		!node.typeParameters
+		!node.typeParameters &&
+		!(/** @type {AST.Comment[] | undefined} */ (node.comments)?.length) &&
+		!hasComment(node.params[0])
 	);
 }
 
@@ -3768,15 +3772,22 @@ function printArrowFunctionSignature(path, options, print, args) {
 /**
  * Add the comments before an arrow's `=>`, which the parser keeps in the
  * arrow's `comments`, to its printed signature, as Prettier's
- * `printArrowFunctionSignature` prints them.
+ * `printArrowFunctionSignature` prints them: one per line.
  * @param {AST.ArrowFunctionExpression} node - The arrow
  * @param {Doc[]} parts - The printed signature
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {Doc[]}
  */
 function printCommentsBeforeArrow(node, parts, options) {
-	for (const comment of /** @type {AST.Comment[] | undefined} */ (node.comments) ?? []) {
-		parts.push(' ', printComment(comment, options.originalText));
+	const comments = /** @type {AST.Comment[] | undefined} */ (node.comments) ?? [];
+	if (comments.length > 0) {
+		parts.push(
+			' ',
+			join(
+				hardline,
+				comments.map((comment) => printComment(comment, options.originalText)),
+			),
+		);
 	}
 	return parts;
 }
