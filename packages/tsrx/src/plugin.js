@@ -87,9 +87,52 @@ const regex_line_break = /\r\n?|[\n\u2028\u2029]/;
 const REST_ELEMENT_TRAILING_COMMA = 'Comma is not permitted after the rest element';
 const OPTIONAL_BINDING_PATTERN_PARAMETER =
 	'A binding pattern parameter cannot be optional in an implementation signature.';
+// TypeScript's TS1047, TS1317, and TS1206 (in acorn-typescript's words).
+const OPTIONAL_REST_PARAMETER = 'A rest parameter cannot be optional.';
+const REST_PARAMETER_PROPERTY = 'A parameter property cannot be declared using a rest parameter.';
+const UNEXPECTED_LEADING_DECORATOR = 'Leading decorators must be attached to a class declaration.';
+// The modifiers acorn-typescript reads before a parameter.
+const PARAMETER_MODIFIERS = ['public', 'private', 'protected', 'override', 'readonly'];
+// The statements TypeScript's parser reads after decorators, as declarations
+// (`parseDeclarationWorker`). Before anything else it expects a declaration.
+const DECORATED_DECLARATION_TYPES = new Set([
+	'VariableDeclaration',
+	'FunctionDeclaration',
+	'TSDeclareFunction',
+	'ClassDeclaration',
+	'TSInterfaceDeclaration',
+	'TSTypeAliasDeclaration',
+	'TSEnumDeclaration',
+	'TSModuleDeclaration',
+	'ImportDeclaration',
+	'TSImportEqualsDeclaration',
+	'ExportNamedDeclaration',
+	'ExportDefaultDeclaration',
+	'ExportAllDeclaration',
+	'TSExportAssignment',
+	'TSNamespaceExportDeclaration',
+]);
+// The words besides reserved words that start one of those declarations.
+const DECLARATION_KEYWORDS = new Set([
+	'abstract',
+	'async',
+	'await',
+	'declare',
+	'enum',
+	'global',
+	'interface',
+	'let',
+	'module',
+	'namespace',
+	'type',
+	'using',
+]);
 // acorn-typescript raises these at the modifier's column instead of its offset.
 const regex_modifier_order_error =
 	/^'\w+' modifier (?:must precede|cannot be used with) '\w+' modifier\.$/;
+// acorn-typescript raises these at the token after the repeated modifier.
+const regex_repeated_modifier_error =
+	/^(?:Accessibility modifier already seen\.|Duplicate modifier: '\w+'\.)$/;
 
 /**
  * Errors that acorn and `@sveltejs/acorn-typescript` raise while parsing, but that
@@ -104,8 +147,10 @@ const regex_modifier_order_error =
  * handled by narrow overrides instead: a comma after a rest element
  * (`#collectCheckerLevelError`, `parseBindingList`), `const` without an
  * initializer (`parseVarId`), `const` or `var` without a declarator
- * (`parseVarStatement`), `await` in a namespace (`canAwait`), and a private name
- * outside a class (the constructor and `parsePrivateIdent`).
+ * (`parseVarStatement`), `await` in a namespace (`canAwait`), a private name
+ * outside a class (the constructor and `parsePrivateIdent`), a modifier on a rest
+ * parameter (`parseAssignableListItem`), and decorators before a declaration
+ * other than a class (`parseDecorators`, `parseStatement`).
  *
  * acorn's errors here are ECMAScript early errors, which acorn rightly raises;
  * acorn-typescript's are TypeScript checker diagnostics.
@@ -143,9 +188,9 @@ const CHECKER_LEVEL_ERRORS = [
 	// acorn-typescript: `declare class A { x = 1 }`, `declare let x = 1` (TS1039).
 	'Initializers are not allowed in ambient contexts.',
 	// acorn-typescript: modifiers out of order, incompatible, or repeated
-	// (TS1029, TS1243, TS1030).
+	// (TS1029, TS1243, TS1030, TS1028). See `raise` for the repeated ones.
 	regex_modifier_order_error,
-	/^Duplicate modifier: '\w+'\.$/,
+	regex_repeated_modifier_error,
 	// acorn-typescript: a modifier where TypeScript doesn't allow one, on a type
 	// member (TS1070) or a type parameter (TS1273), or `in` or `out` outside the
 	// type parameters of a class, interface, or type alias (TS1274). See `raise`.
@@ -155,8 +200,12 @@ const CHECKER_LEVEL_ERRORS = [
 	/^Private elements cannot have an accessibility modifier \('\w+'\)\.$/,
 	"Private elements cannot have the 'abstract' modifier.",
 	// `function f({ a }?: T) {}` (TS2463), raised by `parseFunctionBody` for a
-	// function with a body, and acorn-typescript's `[{ a }?]`.
+	// function with a body.
 	OPTIONAL_BINDING_PATTERN_PARAMETER,
+	// `function f(...a?: T[]) {}` (TS1047), raised by `parseBindingListItem`.
+	OPTIONAL_REST_PARAMETER,
+	// acorn-typescript: `class A { @dec constructor() {} }` (TS1206).
+	"Decorators can't be used with a constructor. Did you mean '@dec class { ... }'?",
 	// acorn-typescript: `with { type: 'json', type: 'json' }`, an ECMAScript early
 	// error that TypeScript doesn't report at all.
 	'Duplicated key in attributes',
@@ -745,6 +794,12 @@ export function TSRXPlugin(config) {
 			// `parseBindingListItem`).
 			/** @type {Parse.TokenType | null} */
 			#bindingListClose = null;
+			// When collecting, where the leading decorators of the statement being read
+			// start, while `parseDecorators` reads them (-1 otherwise), and the error
+			// recorded for them when no class follows (see `parseDecorators`).
+			#leadingDecoratorsStart = -1;
+			/** @type {{ position: number, message: string } | null} */
+			#droppedDecoratorsError = null;
 			#templateScriptParsingDepth = 0;
 			#controlFlowBlockAllowsNativeReturn = false;
 			#parsingJSXSwitchCaseScriptStatementDepth = 0;
@@ -3243,6 +3298,18 @@ export function TSRXPlugin(config) {
 						modifier: this.input.slice(this.lastTokStart, this.lastTokEnd),
 					});
 					position = this.lastTokStart;
+				} else if (regex_repeated_modifier_error.test(message)) {
+					// UPSTREAM(sveltejs/acorn-typescript#129): remove once a release includes
+					// the fix. `tsParseModifiers` raises a repeated modifier's error at the
+					// token after it, collected or thrown; the modifier is the token just
+					// read.
+					position = this.lastTokStart;
+				} else if (
+					message === UNEXPECTED_LEADING_DECORATOR &&
+					this.#dropLeadingDecorators(position)
+				) {
+					// See `parseDecorators`.
+					return /** @type {never} */ (undefined);
 				}
 				if (this.#collectCheckerLevelError(position, message)) {
 					// The raise site goes on parsing (see `CHECKER_LEVEL_ERRORS`).
@@ -3772,28 +3839,91 @@ export function TSRXPlugin(config) {
 				super.parseClassId(node, isStatement);
 			}
 
-			// UPSTREAM(sveltejs/acorn-typescript#110): remove once a release includes the fix
 			/**
-			 * A parameter that is a binding pattern can be optional (`{ a }?: T`), as
-			 * in TypeScript's parser. acorn-typescript raises TS2463 for it while it
-			 * reads the parameter, before it knows whether a body follows, so an
-			 * overload signature gets the error too. Accept the `?` as
-			 * sveltejs/acorn-typescript#110 does, with the same AST;
-			 * `parseFunctionBody` reports it for a function with a body. The rest keeps
-			 * acorn-typescript's error: an element of an array pattern (`[{ a }?]`),
-			 * where TypeScript's parser doesn't take a `?`, and an optional rest
-			 * parameter (TypeScript's TS1047, from its checker, in a signature too).
+			 * acorn-typescript takes a `?` after any element of a binding list and
+			 * raises TS2463's message for anything but a name. TypeScript's parser
+			 * takes it only after a parameter:
+			 *
+			 * - A parameter that is a binding pattern can be optional (`{ a }?: T`).
+			 *   acorn-typescript raises TS2463 for it while it reads the parameter,
+			 *   before it knows whether a body follows, so an overload signature got
+			 *   the error too. Accept the `?` as sveltejs/acorn-typescript#110 does,
+			 *   with the same AST; `parseFunctionBody` reports it for a function with a
+			 *   body.
+			 * - An optional rest parameter (`...a?: T[]`) is TypeScript's TS1047, from
+			 *   its checker. Report that where acorn-typescript raised TS2463's message
+			 *   (not in a type or an ambient context), at the `?`, and keep the node
+			 *   #110 gives it (`optional: true`).
+			 * - An element of an array pattern (`[a?]`, `[{ a }?]`, `[...a?]`) takes no
+			 *   `?`: TypeScript's parser expects a `,` there, and this throws acorn's
+			 *   `Unexpected token` at the `?` in every mode
+			 *   (sveltejs/acorn-typescript#130, where #110 accepts it with no error).
 			 * @type {Parse.Parser['parseBindingListItem']}
 			 */
 			parseBindingListItem(param) {
-				if (
-					this.#bindingListClose === tt.parenR &&
-					(param.type === 'ObjectPattern' || param.type === 'ArrayPattern') &&
-					this.eat(tt.question)
-				) {
-					/** @type {AST.Pattern & { optional?: boolean }} */ (param).optional = true;
+				if (this.type === tt.question) {
+					if (this.#bindingListClose === tt.bracketR) {
+						// UPSTREAM(sveltejs/acorn-typescript#130): remove once a release includes the fix
+						this.unexpected();
+					}
+					if (this.#bindingListClose === tt.parenR) {
+						const optional = /** @type {AST.Pattern & { optional?: boolean }} */ (param);
+						if (param.type === 'ObjectPattern' || param.type === 'ArrayPattern') {
+							// UPSTREAM(sveltejs/acorn-typescript#110): remove once a release includes the fix
+							this.next();
+							optional.optional = true;
+						} else if (param.type === 'RestElement' && !this.isAmbientContext && !this.inType) {
+							const question = this.start;
+							this.next();
+							optional.optional = true;
+							this.raise(question, OPTIONAL_REST_PARAMETER);
+						}
+					}
 				}
 				return super.parseBindingListItem(param);
+			}
+
+			/**
+			 * TypeScript's parser reads parameter property modifiers before a rest
+			 * parameter too (`constructor(public ...rest: T[]) {}`), and its checker
+			 * reports TS1317. acorn-typescript reads the modifiers and then a name or
+			 * a pattern, and fails at the `...`. When collecting, record TS1317 at the
+			 * modifiers and keep the rest element as the parameter, without them:
+			 * typescript-estree rejects a rest parameter property, so there is no
+			 * node to mirror. A strict parse still fails at the `...`.
+			 * UPSTREAM(sveltejs/acorn-typescript#89)
+			 * @type {Parse.Parser['parseAssignableListItem']}
+			 */
+			parseAssignableListItem(allowModifiers) {
+				return (
+					(this.#collect && allowModifiers !== undefined && this.#parseRestParameterProperty()) ||
+					super.parseAssignableListItem(allowModifiers)
+				);
+			}
+
+			/**
+			 * The rest element after parameter property modifiers, with TS1317
+			 * recorded at the modifiers, or `null`, having read nothing, when no rest
+			 * element follows the modifiers (see `parseAssignableListItem`).
+			 * @returns {AST.RestElement | null}
+			 */
+			#parseRestParameterProperty() {
+				if (!PARAMETER_MODIFIERS.includes(/** @type {string} */ (this.value))) return null;
+				const start = this.start;
+				const modifiers_end = this.tsTryParse(() => {
+					this.tsParseModifiers({ modified: {}, allowedModifiers: PARAMETER_MODIFIERS });
+					return this.type === tt.ellipsis && this.lastTokEnd;
+				});
+				if (modifiers_end === undefined) return null;
+				this.#recordCheckerLevelError(start, modifiers_end, REST_PARAMETER_PROPERTY);
+				const rest = this.parseRestBinding();
+				this.parseBindingListItem(rest);
+				// The list takes the rest element for an ordinary one, so report a comma
+				// after it here, as `#parseBindingListPastRestElement` does.
+				if (this.type === tt.comma && !this.#isAmbientRestParameterTrailingComma()) {
+					this.#recordCheckerLevelError(this.start, this.start + 1, REST_ELEMENT_TRAILING_COMMA);
+				}
+				return rest;
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#121): remove once a release includes the fix
@@ -6556,6 +6686,13 @@ export function TSRXPlugin(config) {
 					);
 				}
 
+				if (this.#collect && this.type === tstt.at) {
+					// Decorators (see `parseDecorators`).
+					return this.#parseDecoratedStatement(() =>
+						super.parseStatement(context, topLevel, exports),
+					);
+				}
+
 				return super.parseStatement(context, topLevel, exports);
 			}
 
@@ -6719,6 +6856,102 @@ export function TSRXPlugin(config) {
 				const decorator = super.parseDecorator();
 				this.#decoratorEnd = this.lastTokEnd;
 				return decorator;
+			}
+
+			/**
+			 * TypeScript's parser takes decorators before any declaration and reports
+			 * those before something other than a class from its checker (TS1206,
+			 * whatever `experimentalDecorators` says): `@dec function f() {}`,
+			 * `@dec const x = 1;`, `@dec interface I {}`, `export @dec function f() {}`.
+			 * acorn-typescript throws `Leading decorators must be attached to a class
+			 * declaration.` for them. When collecting and a declaration follows,
+			 * `raise` records it at the decorators instead and takes them off the
+			 * decorator stack, so that no later class takes them, and the statement is
+			 * parsed without them. Before anything else it still throws, as
+			 * TypeScript's parser expects a declaration there: `parseStatement` throws
+			 * it if the statement after all isn't one (`@dec type;`). Decorators in an
+			 * expression (`const y = @dec 1;`) still throw.
+			 * UPSTREAM(sveltejs/acorn-typescript#89)
+			 * @type {Parse.Parser['parseDecorators']}
+			 */
+			parseDecorators(allowExport) {
+				const outer = this.#leadingDecoratorsStart;
+				// acorn-typescript's `parseStatement` is the only caller that allows
+				// `export` after the decorators.
+				this.#leadingDecoratorsStart = this.#collect && allowExport ? this.start : -1;
+				try {
+					super.parseDecorators(allowExport);
+				} finally {
+					this.#leadingDecoratorsStart = outer;
+				}
+			}
+
+			/**
+			 * When the decorators before a statement are being read, collecting, and
+			 * a declaration follows them, record their error at the first decorator,
+			 * as TypeScript does, and take them off the decorator stack (see
+			 * `parseDecorators`).
+			 * @param {number} position Where acorn-typescript raises the error
+			 * @returns {boolean} Whether the error was recorded, and parsing goes on
+			 */
+			#dropLeadingDecorators(position) {
+				const start = this.#leadingDecoratorsStart;
+				if (start === -1 || !this.#atDeclarationKeyword()) return false;
+				this.#recordCheckerLevelError(start, start + 1, UNEXPECTED_LEADING_DECORATOR);
+				this.#droppedDecoratorsError = { position, message: UNEXPECTED_LEADING_DECORATOR };
+				const index = this.decoratorStack.length - 1;
+				this.parseEffects?.willSet(this.decoratorStack, String(index));
+				this.decoratorStack[index] = [];
+				return true;
+			}
+
+			/**
+			 * Whether the current token starts a declaration in TypeScript's parser
+			 * after decorators (`parseDeclarationWorker`, and the modifiers
+			 * `parseModifiers` reads before one). Some of these words start an
+			 * expression here (`type;`), which `#parseDecoratedStatement` checks.
+			 */
+			#atDeclarationKeyword() {
+				switch (this.type) {
+					case tt._var:
+					case tt._const:
+					case tt._function:
+					case tt._class:
+					case tt._import:
+					case tt._export:
+						return true;
+				}
+				return (
+					Parser.acornTypeScript.tokenIsIdentifier(this.type) &&
+					!this.containsEsc &&
+					DECLARATION_KEYWORDS.has(/** @type {string} */ (this.value))
+				);
+			}
+
+			/**
+			 * Parse a statement that starts with decorators, when collecting, and throw
+			 * the error `#dropLeadingDecorators` recorded for them, where acorn-typescript
+			 * raises it, unless the statement is a declaration.
+			 * @template {{ type: string }} T
+			 * @param {() => T} parse
+			 * @returns {T}
+			 */
+			#parseDecoratedStatement(parse) {
+				const outer = this.#droppedDecoratorsError;
+				this.#droppedDecoratorsError = null;
+				try {
+					const node = parse();
+					// Set by `#dropLeadingDecorators` while `parse` runs.
+					const error = /** @type {{ position: number, message: string } | null} */ (
+						this.#droppedDecoratorsError
+					);
+					if (error && !DECORATED_DECLARATION_TYPES.has(node.type)) {
+						super.raise(error.position, error.message);
+					}
+					return node;
+				} finally {
+					this.#droppedDecoratorsError = outer;
+				}
 			}
 
 			/**

@@ -477,22 +477,128 @@ describe('optional binding pattern parameter in a signature (sveltejs/acorn-type
 		]);
 	});
 
-	it('keeps the error on an element of an array pattern and on a rest parameter', async () => {
-		const message =
-			'A binding pattern parameter cannot be optional in an implementation signature.';
-		const sources = [
-			'const [{ a }?] = b;',
-			'function f([{ a }?]?: T): void;',
+	it("reports an optional rest parameter as TypeScript's TS1047, at the `?`", async () => {
+		// TypeScript's checker reports it in a type and an ambient context too;
+		// acorn-typescript didn't, and neither does this.
+		const reported = [
+			'function f(...a?: number[]) {}',
 			'function f(...a?: number[]): void;',
+			'class A { m(...a?: number[]): void; }',
 		];
-		const outcomes = await parse_in_worker(sources.map((source) => ({ source })));
+		const unreported = [
+			'declare function f(...a?: number[]): void;',
+			'type F = (...a?: number[]) => void;',
+			'interface I { m(...a?: number[]): void }',
+		];
+		const outcomes = await parse_in_worker([
+			...reported.map((source) => ({ source })),
+			...reported.map((source) => ({ source, options: { collect: true } })),
+			...unreported.map((source) => ({ source })),
+		]);
 
-		expect(outcomes.map((outcome) => (outcome.ok ? 'parsed' : outcome.message))).toEqual(
-			sources.map((source) => {
-				const pos = source.search(/\{ a \}\?|\.\.\./);
-				return `${message} (1:${pos})`;
+		const message = 'A rest parameter cannot be optional.';
+		expect(outcomes).toEqual([
+			...reported.map((source) => ({
+				ok: false,
+				message: `${message} (1:${source.indexOf('?')})`,
+				pos: source.indexOf('?'),
+			})),
+			...reported.map(() => ({ ok: true, errors: [message] })),
+			...unreported.map(() => ({ ok: true, errors: undefined })),
+		]);
+	});
+});
+
+describe('`?` after an element of an array pattern (sveltejs/acorn-typescript#130)', () => {
+	// Only a parameter can be optional. TypeScript's parser expects a `,` after
+	// an array pattern's element; acorn-typescript took the `?` and reported
+	// TS2463, a checker error about parameters, for a pattern or rest element,
+	// and nothing for a name.
+	const sources = [
+		'const [a?] = b;',
+		'const [{ a }?] = b;',
+		'const [...a?] = b;',
+		'function f([a?]: number[]) {}',
+		'declare function f([a?]: number[]): void;',
+		'function f([{ a }?]?: T): void;',
+		'for (const [a, b?] of c) {}',
+	];
+
+	it('rejects it at the `?` in every mode', async () => {
+		const modes = [undefined, { collect: true }, { loose: true }];
+		const outcomes = await parse_in_worker(
+			sources.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes).toEqual(
+			sources.flatMap((source) => {
+				const pos = source.search(/[a-z}]\?[\],]/) + 1;
+				return modes.map(() => ({ ok: false, message: `Unexpected token (1:${pos})`, pos }));
 			}),
 		);
+	});
+
+	it('still accepts a `?` after a parameter and in a tuple type', async () => {
+		const valid = [
+			'function f(a?: number, [b]?: number[]): void;',
+			'function f([a, b]: number[], c?: number) {}',
+			'type T = [a?: number, b?];',
+			'const [a = 1, , ...b] = c;',
+		];
+		const outcomes = await parse_in_worker(valid.map((source) => ({ source })));
+
+		expect(outcomes).toEqual(valid.map(() => ({ ok: true, errors: undefined })));
+	});
+});
+
+describe("a repeated modifier's error (sveltejs/acorn-typescript#129)", () => {
+	// acorn-typescript raises these at the token after the repeated modifier.
+	// TypeScript reports them from its checker (TS1028, TS1030), at the modifier.
+	const cases = [
+		['class A { private private x = 1; }', 'private x', 'Accessibility modifier already seen.'],
+		['class A { public protected x = 1; }', 'protected', 'Accessibility modifier already seen.'],
+		['class A { readonly readonly x = 1; }', 'readonly x', "Duplicate modifier: 'readonly'."],
+		[
+			'class A { constructor(readonly readonly x: number) {} }',
+			'readonly x',
+			"Duplicate modifier: 'readonly'.",
+		],
+		['class A { accessor accessor x = 1; }', 'accessor x', "Duplicate modifier: 'accessor'."],
+		['type T<in in U> = U;', 'in U', "Duplicate modifier: 'in'."],
+		['function f<const const T>() {}', 'const T', "Duplicate modifier: 'const'."],
+	];
+
+	it('throws it at the modifier', async () => {
+		const outcomes = await parse_in_worker([
+			...cases.map(([source]) => ({ source })),
+			{ source: 'class A {\n\tpublic readonly readonly x = 1;\n}' },
+		]);
+
+		expect(outcomes).toEqual([
+			...cases.map(([source, modifier, message]) => {
+				const pos = source.indexOf(modifier);
+				return { ok: false, message: `${message} (1:${pos})`, pos };
+			}),
+			{ ok: false, message: "Duplicate modifier: 'readonly'. (2:17)", pos: 27 },
+		]);
+	});
+
+	it('records it at the modifier when collecting, and keeps the first one', async () => {
+		const outcomes = await parse_in_worker_with_ast(
+			cases.map(([source]) => ({ source, options: { collect: true } })),
+		);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const [source, modifier, message] = cases[index];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			const pos = source.indexOf(modifier);
+			expect(outcome.errors, source).toEqual([{ message, pos, end: pos + 1 }]);
+		}
+		const public_protected = outcomes[1];
+		if (!public_protected.ok) throw new Error('public protected threw');
+		expect(public_protected.ast.body[0]).toMatchObject({
+			body: { body: [{ accessibility: 'public', key: { name: 'x' } }] },
+		});
 	});
 });
 
