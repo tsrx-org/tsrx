@@ -692,6 +692,89 @@ function hasPrettierIgnore(node) {
 }
 
 /**
+ * Whether `prettier-ignore` keeps the node at `path` as written, like
+ * Prettier's `isIgnored`: a directive attached to the node (see
+ * {@link hasPrettierIgnore}), one in the `{…}` child before an element (see
+ * {@link hasJSXIgnoreComment}), or one after the last node of a `@{ … }` code
+ * block (see {@link hasCodeBlockIgnoreComment}).
+ * @param {AstPath} path - The path to the node
+ * @returns {boolean}
+ */
+function isIgnored(path) {
+	return (
+		hasPrettierIgnore(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node)) ||
+		hasJSXIgnoreComment(path) ||
+		hasCodeBlockIgnoreComment(path)
+	);
+}
+
+/**
+ * Prettier's `hasJsxIgnoreComment`: an element or fragment child of an
+ * element or fragment is kept as written when the child before it, past
+ * whitespace with a line break, is `{/* prettier-ignore *\/}`.
+ * @param {AstPath} path - The path to the node
+ * @returns {boolean}
+ */
+function hasJSXIgnoreComment(path) {
+	const { node, parent } = path;
+	if (!isJSXElementOrFragment(node) || !isJSXElementOrFragment(parent) || path.key !== 'children') {
+		return false;
+	}
+	const siblings = /** @type {AST.Node[]} */ (parent.children);
+	let index = /** @type {number} */ (path.index);
+	while (index > 0) {
+		const sibling = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (siblings[--index]);
+		if (sibling.type === 'JSXText' && !isMeaningfulJSXText(sibling.value)) {
+			continue;
+		}
+		return (
+			sibling.type === 'JSXExpressionContainer' &&
+			sibling.expression.type === 'JSXEmptyExpression' &&
+			hasPrettierIgnore(
+				/** @type {AST.Node & AST.NodeWithMaybeComments} */ (
+					/** @type {unknown} */ (sibling.expression)
+				),
+			)
+		);
+	}
+	return false;
+}
+
+/**
+ * Prettier's `isJsxElement`: a JSX element or fragment, which a TSRX template
+ * `<style>` element is too.
+ * @param {unknown} node
+ * @returns {node is AST.TSRXJSXElement | AST.TSRXJSXFragment | AST.JSXStyleElement}
+ */
+function isJSXElementOrFragment(node) {
+	const type = /** @type {AST.Node | null | undefined} */ (node)?.type;
+	return type === 'JSXElement' || type === 'JSXFragment' || type === 'JSXStyleElement';
+}
+
+/**
+ * Whether a `prettier-ignore` after the last node of a `@{ … }` code block
+ * keeps that node as written. Prettier gives the comments after a block's
+ * last statement, past any empty statement, to it as trailing comments, which
+ * `hasNodeIgnoreComment` counts. The parser keeps the ones after a code
+ * block's last node as the block's inner comments (see
+ * {@link printJSXCodeBlock}) instead.
+ * @param {AstPath} path - The path to the node
+ * @returns {boolean}
+ */
+function hasCodeBlockIgnoreComment(path) {
+	const { node, parent } = path;
+	return (
+		parent?.type === 'JSXCodeBlock' &&
+		node ===
+			(parent.render ??
+				parent.body.findLast(
+					(/** @type {AST.Node} */ statement) => statement.type !== 'EmptyStatement',
+				)) &&
+		Boolean(parent.innerComments?.some(isPrettierIgnoreComment))
+	);
+}
+
+/**
  * The statements whose source Prettier's `locEnd` ends before a written `;`
  * (its `nodeTypesWithContentEnd`).
  */
@@ -2659,7 +2742,7 @@ function printTsrxNode(node, path, options, print, args) {
 	// A `prettier-ignore` directive keeps the node's original source verbatim
 	const commentNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node);
 	const ignoredSource =
-		hasPrettierIgnore(commentNode) &&
+		isIgnored(path) &&
 		typeof options.originalText === 'string' &&
 		typeof (/** @type {AST.NodeWithLocation} */ (node).start) === 'number' &&
 		typeof (/** @type {AST.NodeWithLocation} */ (node).end) === 'number'

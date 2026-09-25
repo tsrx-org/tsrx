@@ -1356,21 +1356,124 @@ const o = {
 			expect(await format('\n\n// prettier-ignore\n\n\n')).toBe('\n\n// prettier-ignore\n\n\n');
 		});
 
-		it('still formats an element or code block whose only comments are its children', async () => {
+		it('still formats an element whose only comment is its child', async () => {
 			// Like a JSX comment child, the comment doesn't dangle on the element
 			const result = await format(`function App() @{
   const  x = 1;
   <div   a="1">
     // prettier-ignore
   </div>
-  // prettier-ignore
 }`);
 			expect(result).toBeWithNewline(`function App() @{
   const x = 1;
   <div a="1">
     // prettier-ignore
   </div>
+}`);
+		});
+
+		it('keeps the last node of a code block that an own-line prettier-ignore follows', async () => {
+			// Like the last statement of a block, and not the whole code block
+			const result = await format(`function App() @{
+  const  x = 1;
+  <span   a="1" />
   // prettier-ignore
+}
+function Setup() @{
+  const  x = 1;
+  const  y = 2;;
+  // note
+  // prettier-ignore
+}
+function Branch() @{
+  @if (x) {
+    <span   a="1" />
+    // prettier-ignore
+  }
+}`);
+			expect(result).toBeWithNewline(`function App() @{
+  const x = 1;
+  <span   a="1" />
+  // prettier-ignore
+}
+function Setup() @{
+  const x = 1;
+  const  y = 2;
+  // note
+  // prettier-ignore
+}
+function Branch() @{
+  @if (x) {
+    <span   a="1" />
+    // prettier-ignore
+  }
+}`);
+		});
+
+		it('still formats the last node of a code block that another comment follows', async () => {
+			const result = await format(`function App() @{
+  <span   a="1" />
+  // prettier-ignore-start
+}`);
+			expect(result).toBeWithNewline(`function App() @{
+  <span a="1" />
+  // prettier-ignore-start
+}`);
+		});
+
+		it('keeps an element after a prettier-ignore JSX comment child as written', async () => {
+			// Prettier's \`hasJsxIgnoreComment\`, past whitespace with a line break
+			const source = `function App() {
+  return (
+    <div>
+      {/* prettier-ignore */}
+      <span   a = "1"
+        b =  "2">
+          text   here
+      </span>
+      <b c="3" />
+      {/* note */ /* prettier-ignore */}
+
+      <>
+        <i   x = "1" />
+      </>
+    </div>
+  );
+}
+function Template() @{
+  <div>
+    {/* prettier-ignore */}
+    <span   a = "1">
+      {x}
+    </span>
+    <p> hi </p>
+  </div>
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('still formats an element after a space or a {…} child that a prettier-ignore comment is in', async () => {
+			const result = await format(`function App() {
+  return (
+    <div>
+      {/* prettier-ignore */} <span   a = "1" />
+      {/* prettier-ignore */}
+      {x   +   y}
+      {x /* prettier-ignore */}
+      <b   c = "1" />
+    </div>
+  );
+}`);
+			expect(result).toBeWithNewline(`function App() {
+  return (
+    <div>
+      {/* prettier-ignore */} <span a="1" />
+      {/* prettier-ignore */}
+      {x + y}
+      {x /* prettier-ignore */}
+      <b c="1" />
+    </div>
+  );
 }`);
 		});
 
