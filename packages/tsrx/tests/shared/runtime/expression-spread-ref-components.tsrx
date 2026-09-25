@@ -47,7 +47,7 @@ function List(props: { items: unknown }) @{
 	<ul>{props.items}</ul>
 }
 
-// JSX in a spread argument is parsed as plain JSX rather than a template node.
+// JSX in a spread argument is template markup, as in a braced value.
 export function SpreadArgumentSpreadRefApp({ bags }: { bags: SpreadBag[] }) {
 	const list = (
 		<List

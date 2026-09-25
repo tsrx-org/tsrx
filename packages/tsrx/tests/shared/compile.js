@@ -2615,6 +2615,19 @@ export function App() @{
 			expect(code).toContain('\u00a03');
 		});
 
+		it("keeps the text of an element in a spread attribute's argument and in an attribute value without braces", () => {
+			const { code } = compile(
+				'export function App() @{\n\t<main>\n\t\t<p {...{ k: <div><b>1</b> /* c */ 2</div> }} />\n\t\t<p k=<div><i>3</i> /* c */ 4</div> />\n\t\t<p {...(x ? <div>@if (y) { <s>5</s> } 6</div> : {})} />\n\t</main>\n}',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('</b>  2');
+			expect(code).toContain('</i>  4');
+			expect(code).toContain('5</s>');
+			expect(code).not.toContain('/* c */');
+			expect(code).not.toContain('@if');
+		});
+
 		it('keeps double-quoted strings inside expression containers as JavaScript strings', () => {
 			const { code } = compile(
 				`export function App() @{

@@ -845,6 +845,14 @@ export function TSRXPlugin(config) {
 			// `parseElement`), for its closing tag to restore.
 			/** @type {WeakMap<AST.Node, number>} */
 			#elementContextDepths = new WeakMap();
+			// The context depth before the `<` of an element that is an attribute
+			// value without braces, for `parseElement` to keep: the host's opening
+			// tag contexts. -1 otherwise.
+			#tagValueContextDepth = -1;
+			// The elements that are attribute values without braces: each closes in
+			// its host's opening tag, not in a template.
+			/** @type {WeakSet<AST.Node>} */
+			#tagValueElements = new WeakSet();
 			// What enclosed each element when it started: `this.labels` and its length
 			// (see `#insideSwitchStartedAfter`), and the setup-statement depths (see
 			// `#elementStart`).
@@ -1087,8 +1095,7 @@ export function TSRXPlugin(config) {
 			 * started after `node`, and the position is in that statement's code. In
 			 * an element opened in the statement, it is that element's children.
 			 * `scriptDepth` is `#templateScriptParsingDepth`, raised by a setup
-			 * statement of a `@{ … }` or directive body and by a spread attribute's
-			 * argument; `switchCaseScriptDepth` is
+			 * statement of a `@{ … }` or directive body; `switchCaseScriptDepth` is
 			 * `#parsingJSXSwitchCaseScriptStatementDepth`, raised by one of an `@case`.
 			 * `scriptJSXDepth` is `#scriptJSXElementDepth` (see
 			 * `#insideScriptJSXElement`). A node that no element start recorded counts
@@ -1110,7 +1117,7 @@ export function TSRXPlugin(config) {
 			/**
 			 * Whether the position is in an element that acorn-typescript's JSX parser
 			 * reads (see `jsx_parseElement`) and that started after the innermost TSRX
-			 * element: an element in an unbraced attribute value (`<div a=<b>…</b> />`).
+			 * element: an element in a dynamic tag name (`<{c ? <b>…</b> : 'i'}>`).
 			 * Its children are read as template text, but that parser takes each text
 			 * token as a child as it is, so a template's comments are text there, as
 			 * in TSX.
@@ -1638,9 +1645,8 @@ export function TSRXPlugin(config) {
 				if (!current_template_node) {
 					return false;
 				}
-				// Code that started after the innermost element, a setup statement or a
-				// spread attribute's argument (`<div {...props}>`), isn't its text. An
-				// element opened in that code reads its own children as text
+				// Code that started after the innermost element, a setup statement, isn't
+				// its text. An element opened in that code reads its own children as text
 				// (`const a = <b> 1</b>;` in a `@{ … }` body).
 				const element_start = this.#elementStart(current_template_node);
 				if (
@@ -5079,10 +5085,11 @@ export function TSRXPlugin(config) {
 				// literal character (`<div>5/2</div>`, `<div>#tag</div>`). This must
 				// not fire in the JS positions that can sit under a template element
 				// on the path: inside a `{ … }` expression container (an attribute or
-				// child expression — `<rect x={a / 2}/>`, `{this.#x}`), inside a
+				// child expression — `<rect x={a / 2}/>`, `{this.#x}`) or a spread
+				// attribute's argument, read as one (`{...(a / 2)}`), inside a
 				// control-flow directive header (`@if (a / 2 > 1)`), or in an opening
-				// tag (`<div / >`, a spread attribute's `{...(a / 2)}`), where `/` is
-				// division or a self-closing tag's and `#` is a private-field access.
+				// tag (`<div / >`), where `/` is division or a self-closing tag's and
+				// `#` is a private-field access.
 				// The element being opened goes on `#path` only for the token after
 				// its `>`, which is its first child.
 				const template_parent = this.#path.at(-1);
@@ -5866,25 +5873,19 @@ export function TSRXPlugin(config) {
 				}
 
 				if (this.eat(tt.braceL)) {
-					if (this.type === tt.ellipsis) {
+					if (this.type === tt.ellipsis || this.lookahead().type === tt.ellipsis) {
+						// The brace's context is on top
+						const brace_context_depth = this.context.length;
 						this.#suppressTemplateRawTextToken = true;
 						this.expect(tt.ellipsis);
-						this.#templateScriptParsingDepth++;
-						try {
-							/** @type {ESTreeJSX.JSXSpreadAttribute} */ (node).argument = this.parseMaybeAssign();
-						} finally {
-							this.#templateScriptParsingDepth--;
-						}
-						this.#expectContainerClosingBrace();
-						return this.finishNode(node, 'JSXSpreadAttribute');
-					} else if (this.lookahead().type === tt.ellipsis) {
-						this.#suppressTemplateRawTextToken = true;
-						this.expect(tt.ellipsis);
-						this.#templateScriptParsingDepth++;
-						try {
-							/** @type {ESTreeJSX.JSXSpreadAttribute} */ (node).argument = this.parseMaybeAssign();
-						} finally {
-							this.#templateScriptParsingDepth--;
+						/** @type {ESTreeJSX.JSXSpreadAttribute} */ (node).argument = this.#parseOpeningTagCode(
+							() => this.parseMaybeAssign(),
+						);
+						// A control-flow directive in an element in the argument can leave
+						// contexts above the brace's, as in a container (see
+						// `jsx_parseExpressionContainer`). The `}` read pops the brace's.
+						if (this.type === tt.braceR) {
+							this.#truncateContext(brace_context_depth - 1);
 						}
 						this.#expectContainerClosingBrace();
 						return this.finishNode(node, 'JSXSpreadAttribute');
@@ -6061,10 +6062,53 @@ export function TSRXPlugin(config) {
 						}
 					}
 					case tstt.jsxTagStart:
+						return this.#parseOpeningTagCode(() => {
+							// The element's `<` pushed its contexts on the opening tag's, which
+							// the tag goes on in after the element.
+							this.#tagValueContextDepth = this.context.length - 2;
+							try {
+								return this.parseExprAtom();
+							} finally {
+								this.#tagValueContextDepth = -1;
+							}
+						});
 					case tt.string:
 						return this.parseExprAtom();
 					default:
 						this.raise(this.start, 'value should be either an expression or a quoted text');
+				}
+			}
+
+			/**
+			 * Parses code in an opening tag outside a `{ … }` container: a spread
+			 * attribute's argument, whose first token is read, or an element that is an
+			 * attribute value without braces (`<div a=<b>…</b> />`). While the tag is
+			 * read, the element it opens is `#openingNativeTemplateNode`, still in
+			 * script mode, so `jsx_parseElement` would hand an element in that code to
+			 * acorn-typescript's JSX parser. Hide it and read the code as a container's
+			 * (see `jsx_parseExpressionContainer`), as a braced value is read: its
+			 * elements are template markup, and the code around them is not template
+			 * text. The token after the code is read in the tag again.
+			 * @template T
+			 * @param {() => T} parse
+			 * @returns {T}
+			 */
+			#parseOpeningTagCode(parse) {
+				const opening_node = this.#openingNativeTemplateNode;
+				this.#openingNativeTemplateNode = null;
+				this.#jsxExpressionContainerDepth++;
+				this.#expressionContainerContextBaselines.push(this.context.length);
+				this.#expressionContainerPathBaselines.push({
+					path: this.#path,
+					length: this.#path.length,
+				});
+				try {
+					return parse();
+				} finally {
+					this.#jsxExpressionContainerDepth--;
+					this.#expressionContainerContextBaselines.pop();
+					this.#expressionContainerPathBaselines.pop();
+					this.#openingNativeTemplateNode = opening_node;
 				}
 			}
 
@@ -6684,9 +6728,13 @@ export function TSRXPlugin(config) {
 				// stack here; the body (especially a control-flow block) can otherwise
 				// leave residue that breaks tokenizing the following JS token when the
 				// element is in expression position. The token after `<` is already read,
-				// so the `{` of a dynamic tag name (`<{tag}>`) doesn't count.
+				// so the `{` of a dynamic tag name (`<{tag}>`) doesn't count. An element
+				// that is an attribute value without braces keeps its host's opening tag
+				// contexts below it (see `jsx_parseAttributeValue`).
+				const tag_value_context_depth = this.#tagValueContextDepth;
+				this.#tagValueContextDepth = -1;
 				let pre_element_context_depth = this.context.length - this.#currentTokenContextCount();
-				while (pre_element_context_depth > 0) {
+				while (pre_element_context_depth > Math.max(0, tag_value_context_depth)) {
 					const ctx = this.context[pre_element_context_depth - 1];
 					if (ctx === tstc.tc_expr || ctx === tstc.tc_oTag || ctx === tstc.tc_cTag) {
 						pre_element_context_depth--;
@@ -6719,6 +6767,9 @@ export function TSRXPlugin(config) {
 					switchCaseScriptDepth: this.#parsingJSXSwitchCaseScriptStatementDepth,
 					scriptJSXDepth: this.#scriptJSXElementDepth,
 				});
+				if (tag_value_context_depth >= 0) {
+					this.#tagValueElements.add(node);
+				}
 
 				const previous_opening_native_template_node = this.#openingNativeTemplateNode;
 				this.#openingNativeTemplateNode = node;
@@ -7024,7 +7075,8 @@ export function TSRXPlugin(config) {
 							this.#closingNativeTemplateNode = true;
 						}
 						// `>` reads the token after the element. When the element closes and no
-						// template encloses it, that token is code: the element leaves `#path`
+						// template encloses it, or in its host's opening tag as an attribute
+						// value without braces, that token is code: the element leaves `#path`
 						// (`<b>x</b> / 2` divides; it is popped for good below), and the
 						// tokenizer context returns to where the element began, as after a
 						// balanced closing tag, dropping residue its body left (a control-flow
@@ -7032,7 +7084,8 @@ export function TSRXPlugin(config) {
 						const closes_outside_template =
 							this.#isNativeTemplateNode(current) &&
 							current_name === closing_name_str &&
-							!this.#isNativeTemplateNode(this.#path.at(-2));
+							(!this.#isNativeTemplateNode(this.#path.at(-2)) ||
+								this.#tagValueElements.has(current));
 						if (closes_outside_template) {
 							this.#path.pop();
 							const context_depth = this.#elementContextDepths.get(current);

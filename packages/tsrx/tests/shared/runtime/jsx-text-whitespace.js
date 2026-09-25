@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	JsxTextWhitespaceApp,
+	jsx_text_braced_value_cases,
 	jsx_text_nbsp_cases,
 	jsx_text_whitespace_cases,
 } from './jsx-text-whitespace-components.tsrx';
@@ -37,6 +38,14 @@ export function runJsxTextWhitespaceRuntimeTests({ nbsp }) {
 		for (const [label, selector, kept, trimmed] of jsx_text_nbsp_cases) {
 			it(`renders ${label} like TSX`, async () => {
 				expect(await render(selector)).toBe(nbsp === 'kept' ? kept : trimmed);
+			});
+		}
+
+		for (const [label, selector, braced] of jsx_text_braced_value_cases) {
+			it(`renders ${label} like the same markup in a braced value`, async () => {
+				const html = await render(selector);
+				expect(html).toBeTypeOf('string');
+				expect(html).toBe(globalThis.container.querySelector(braced)?.innerHTML);
 			});
 		}
 	});

@@ -410,8 +410,8 @@ describe('type-only JSX analysis', () => {
 	it.each(REF_SPREAD_OUTPUTS)(
 		'declares the binding of a host inside a spread argument within its callback (%s)',
 		(_output, type_only, platform) => {
-			// JSX in a spread argument is parsed as plain JSX, not a native template
-			// node; its binding must stay in the callback that declares `row`.
+			// A host in a callback in a spread argument: its binding must stay in
+			// the callback that declares `row`.
 			const svg =
 				'<svg {...{ children: props.rows.map((row: number) => <text key={row} ref={props.nodeRef} {...props.rest} />) }} />';
 			for (const [name, source] of [
