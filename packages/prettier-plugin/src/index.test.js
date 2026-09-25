@@ -11233,7 +11233,7 @@ function Two() @{
 
 		it.each([
 			'const query = sql<Row>`select 1`;',
-			'const Title = styled.h1<Props>`color: red;`;',
+			'const Title = styled.h1<Props>`\n  color: red;\n`;',
 			'const nested = tag<Map<string, number>, Key>`a${value}c`;',
 			'const explicit = (tag<T>)<U>`x`;',
 		])('keeps type arguments on tagged templates: %s', async (source) => {
@@ -12932,6 +12932,266 @@ b \${c}\`,
 				expect(await format(source)).toBeWithNewline(source);
 			},
 		);
+	});
+
+	// Like Prettier's JS `embed`, with `embeddedLanguageFormatting: "auto"`
+	describe('code embedded in template literals formats like Prettier', () => {
+		it.each([
+			[
+				'CSS in styled-components and GraphQL in gql templates',
+				'const Button = styled.button`\ncolor:red;padding:0 4px;\n`;\nconst query = gql`\n  query { user(id: 1) { name } }\n`;',
+				`const Button = styled.button\`
+  color: red;
+  padding: 0 4px;
+\`;
+const query = gql\`
+  query {
+    user(id: 1) {
+      name
+    }
+  }
+\`;`,
+			],
+			[
+				'CSS in styled(Component), .attrs(), and typed tags',
+				'const Link = styled(Anchor)`color:${(props) => props.color};`;\nconst Input = styled.input.attrs({ type: "text" })`border:0;`;\nconst Title = styled.h1<Props>`color: red;`;',
+				`const Link = styled(Anchor)\`
+  color: \${(props) => props.color};
+\`;
+const Input = styled.input.attrs({ type: "text" })\`
+  border: 0;
+\`;
+const Title = styled.h1<Props>\`
+  color: red;
+\`;`,
+			],
+			[
+				'CSS with placeholders, comments, and a nested css template',
+				'const Box = styled.div`\n  ${Child}:hover & { color:red }\n  margin:${(props) => props.gap}px 0;\n  /* a comment */\n  ${(props) => props.active && css`font-weight:bold;`}\n`;',
+				`const Box = styled.div\`
+  \${Child}:hover & {
+    color: red;
+  }
+  margin: \${(props) => props.gap}px 0;
+  /* a comment */
+  \${(props) =>
+    props.active &&
+    css\`
+      font-weight: bold;
+    \`}
+\`;`,
+			],
+			[
+				'CSS in styled-jsx css.global',
+				'const global = css.global`body{margin:0}`;',
+				`const global = css.global\`
+  body {
+    margin: 0;
+  }
+\`;`,
+			],
+			[
+				'GraphQL in graphql(), and marked with a comment',
+				'const query = graphql(schema, `{ user { ...UserParts } }`);\nconst other = /* GraphQL */ `\n  query Q { user { ...UserParts } }\n  ${fragment}\n`;',
+				`const query = graphql(
+  schema,
+  \`
+    {
+      user {
+        ...UserParts
+      }
+    }
+  \`,
+);
+const other = /* GraphQL */ \`
+  query Q {
+    user {
+      ...UserParts
+    }
+  }
+  \${fragment}
+\`;`,
+			],
+			[
+				'HTML in html templates and marked with a comment',
+				'const view = html`<div><p>${message}</p><span>hello</span></div>`;\nconst marked = /* HTML */ `<ul><li>one</li><li>two</li></ul>`;',
+				`const view = html\`<div>
+  <p>\${message}</p>
+  <span>hello</span>
+</div>\`;
+const marked = /* HTML */ \`<ul>
+  <li>one</li>
+  <li>two</li>
+</ul>\`;`,
+			],
+			[
+				'Markdown in markdown templates',
+				'const doc = markdown`\n  # Title\n  Some *text*   here.\n`;',
+				`const doc = markdown\`
+  # Title
+
+  Some _text_ here.
+\`;`,
+			],
+			['a whitespace-only CSS template', 'const empty = css`   `;', 'const empty = css``;'],
+			[
+				'a template after a line comment on its tag',
+				'const t = styled.div // comment\n`color:red;`;',
+				`const t = styled.div // comment
+\`
+  color: red;
+\`;`,
+			],
+		])('formats %s', async (_, input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			[
+				'an arrow body stays on the arrow line',
+				'const f = () => css`color:red;`;',
+				'const f = () => css`\n  color: red;\n`;',
+			],
+			[
+				'a lone argument hugs the parentheses',
+				'foo(css`color:red;`);\nfoo.bar(gql`query { a }`);',
+				'foo(css`\n  color: red;\n`);\nfoo.bar(gql`\n  query {\n    a\n  }\n`);',
+			],
+			[
+				'a call with a lone template on its line prints in its member chain',
+				"wrapper.find('SomeSelector').first().props().style(css`\n  color: red;\n`);",
+				`wrapper
+  .find("SomeSelector")
+  .first()
+  .props()
+  .style(css\`
+    color: red;
+  \`);`,
+			],
+			[
+				'HTML without whitespace at its ends does not hug',
+				'render(html`<div>${a}</div><span>${b}</span>`);\nrender(html` <div>${a}</div><span>${b}</span> `);',
+				`render(
+  html\`<div>\${a}</div>
+    <span>\${b}</span>\`,
+);
+render(html\`
+  <div>\${a}</div>
+  <span>\${b}</span>
+\`);`,
+			],
+			[
+				'an HTML arrow body without whitespace at its ends breaks after the arrow',
+				'const view = (items) => html`<ul>${items.map((item) => html`<li>${item}</li>`)}</ul><p>${footer}</p>`;',
+				`const view = (items) =>
+  html\`<ul>
+      \${items.map((item) => html\`<li>\${item}</li>\`)}
+    </ul>
+    <p>\${footer}</p>\`;`,
+			],
+		])('lays out embedded code like Prettier: %s', async (_, input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['CSS that does not parse', 'const stays = css`color:red;${x}{color:blue`;'],
+			['a template with an invalid escape', 'const bad = css`color: \\u{zz};`;'],
+			[
+				'createGlobalStyle and keyframes, which Prettier 3.9.6 does not format',
+				'const G = createGlobalStyle`body{margin:0}`;\nconst fade = keyframes`from{opacity:0}to{opacity:1}`;',
+			],
+			[
+				'templates kept by prettier-ignore',
+				'foo(/* prettier-ignore */ css`color:red;`);\n// prettier-ignore\nconst kept = gql`query { a }`;',
+			],
+			['a plain template in a call', 'foo(`\ncolor:red;\n`);'],
+		])('keeps %s as written', async (_, source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps templates as written when embedded formatting is disabled', async () => {
+			const source =
+				'const Button = styled.button`\ncolor:red;padding:0 4px;\n`;\nconst f = () => css`color:red;`;\nfoo(gql`query { a }`);';
+			expect(await format(source, { embeddedLanguageFormatting: 'off' })).toBeWithNewline(source);
+		});
+
+		it('formats CSS in template attributes and code blocks like the equivalent TSX', async () => {
+			const input = `function StyledApp() @{
+	const color = css\`
+	color: red;
+\`;
+	<div>
+		<Style />
+		<div
+			class={css\`
+			color: red;
+		\`}
+		>{'styled'}</div>
+		<p css={\`margin:0;padding:\${pad}px\`} />
+		<style jsx>{\`div{color:green}\`}</style>
+	</div>
+}
+
+function Toggle(props) @{
+	@if (props.on) {
+		<div class={css\`color:red;\`} />
+	} @else {
+		<>
+			<div class="off" />
+			<style>
+				.off{color:blue}
+			</style>
+		</>
+	}
+}`;
+			const expected = `function StyledApp() @{
+	const color = css\`
+		color: red;
+	\`;
+	<div>
+		<Style />
+		<div
+			class={css\`
+				color: red;
+			\`}
+		>
+			{'styled'}
+		</div>
+		<p
+			css={\`
+				margin: 0;
+				padding: \${pad}px;
+			\`}
+		/>
+		<style jsx>{\`
+			div {
+				color: green;
+			}
+		\`}</style>
+	</div>
+}
+
+function Toggle(props) @{
+	@if (props.on) {
+		<div
+			class={css\`
+				color: red;
+			\`}
+		/>
+	} @else {
+		<>
+			<div class="off" />
+			<style>
+				.off {
+					color: blue;
+				}
+			</style>
+		</>
+	}
+}`;
+			const result = await format(input, { useTabs: true, singleQuote: true, printWidth: 100 });
+			expect(result).toBeWithNewline(expected);
+		});
 	});
 
 	describe('member chains break like Prettier', () => {

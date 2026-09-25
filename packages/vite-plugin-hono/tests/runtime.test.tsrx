@@ -153,8 +153,8 @@ function StyledApp() @{
 		<Style />
 		<div
 			class={css`
-			color: red;
-		`}
+				color: red;
+			`}
 		>
 			{'styled'}
 		</div>

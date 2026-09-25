@@ -1077,6 +1077,159 @@ describe('TSRX parser', () => {
 		expect(arrow.typeParameters?.params).toHaveLength(1);
 	});
 
+	it('continues an expression after an element that starts a statement', () => {
+		/** @type {Array<[string, NodeTypeName, string | null]>} */
+		const cases = [
+			['<div /> > 5;', 'BinaryExpression', '>'],
+			['<div></div> >= 5;', 'BinaryExpression', '>='],
+			['<div /> + 1;', 'BinaryExpression', '+'],
+			['<div /> - 1;', 'BinaryExpression', '-'],
+			['<div /> / 2;', 'BinaryExpression', '/'],
+			['<div /> ** 2;', 'BinaryExpression', '**'],
+			['<div /> === b;', 'BinaryExpression', '==='],
+			['<div /> && b;', 'LogicalExpression', '&&'],
+			['<></> ?? b;', 'LogicalExpression', '??'],
+			['<div /> ? a : "b";', 'ConditionalExpression', null],
+			['<div />, b;', 'SequenceExpression', null],
+			['<div /> as any;', 'TSAsExpression', null],
+		];
+		for (const [source, type, operator] of cases) {
+			for (const options of [undefined, { collect: true, comments: [] }]) {
+				const program = parseModule(source, 'App.tsrx', options);
+				const wrapped = `function f() {\n  ${source}\n}`;
+				const body = functionBody(parseModule(wrapped, 'App.tsrx', options));
+				for (const [statements, start] of /** @type {const} */ ([
+					[program.body, 0],
+					[body, wrapped.indexOf(source)],
+				])) {
+					expect(statements).toHaveLength(1);
+					const statement = as_type(statements[0], 'ExpressionStatement');
+					expect([statement.start, statement.end]).toEqual([start, start + source.length]);
+					const expression = as_type(statement.expression, type);
+					if (operator !== null) {
+						expect(/** @type {AST.BinaryExpression} */ (expression).operator).toBe(operator);
+					}
+					// The element is the leftmost operand.
+					const element = find_first(
+						expression,
+						(node) => node.type === 'JSXElement' || node.type === 'JSXFragment',
+					);
+					expect(element?.start).toBe(statement.start);
+				}
+			}
+		}
+
+		// The element is an operand like any other: operators bind by precedence.
+		const [statement] = parseModule('<div /> > 5 && <b>x</b>;', 'App.tsrx').body;
+		const logical = as_type(
+			as_type(statement, 'ExpressionStatement').expression,
+			'LogicalExpression',
+		);
+		expect(as_type(logical.left, 'BinaryExpression').left.type).toBe('JSXElement');
+		expect(logical.right.type).toBe('JSXElement');
+
+		// Without a semicolon, an element on the next line starts the next statement.
+		expect(
+			parseModule('<div /> > 5\n<span />\n', 'App.tsrx').body.map((node) => node.type),
+		).toEqual(['ExpressionStatement', 'JSXElement']);
+	});
+
+	it('ends an element statement at a line break, a tag start, or a code block render node', () => {
+		// On the next line, the element ends its statement.
+		expect(
+			parseModule('<div />\n+ 1;', 'App.tsrx').body.map((node) =>
+				node.type === 'ExpressionStatement' ? node.expression.type : node.type,
+			),
+		).toEqual(['JSXElement', 'UnaryExpression']);
+		// A `<` that starts a tag is the next element, not a comparison.
+		expect(parseModule('<div /> <span />\n', 'App.tsrx').body.map((node) => node.type)).toEqual([
+			'JSXElement',
+			'JSXElement',
+		]);
+
+		// A code block's render node is an element, never an operand.
+		expect(() => parseModule('export function App() @{ <div /> > 5 }', 'App.tsrx')).toThrow(
+			'Unexpected token',
+		);
+		const source = 'export function App() @{\n  const a = 1\n  <div /> + 1\n}';
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			'statements cannot follow the rendered output',
+		);
+		/** @type {CompileError[]} */
+		const errors = [];
+		const program = parseModule(source, 'App.tsrx', { loose: true, errors });
+		const loose_block = codeBlock(
+			as_type(
+				as_type(
+					firstStatement(program, 'ExportNamedDeclaration').declaration,
+					'FunctionDeclaration',
+				).body,
+				'JSXCodeBlock',
+			),
+		);
+		expect(loose_block.body.map((node) => node.type)).toEqual([
+			'VariableDeclaration',
+			'JSXElement',
+			'ExpressionStatement',
+		]);
+		expect(errors.map((error) => error.message)).toEqual([
+			"Code must be at the top of '@{ }'; statements cannot follow the rendered output.",
+		]);
+
+		// Inside a template, what follows an element is text.
+		const container = firstStatement(
+			parseModule('<div><span /> > 5</div>', 'App.tsrx'),
+			'JSXElement',
+		);
+		expect(container.children.map((node) => node.type)).toEqual(['JSXElement', 'JSXText']);
+	});
+
+	it('reads type parameters on the line after a declaration name', () => {
+		/**
+		 * @param {AST.Node} node
+		 * @returns {unknown}
+		 */
+		const typeParameters = (node) =>
+			/** @type {{ typeParameters?: { params: unknown[] } }} */ (node).typeParameters?.params;
+		/** @type {Array<[string, (program: AST.Program) => AST.Node]>} */
+		const cases = [
+			['class G\n<T> {}', (program) => program.body[0]],
+			['class G // comment\n<T> implements I<T> {}', (program) => program.body[0]],
+			['const C = class\n<T> {};', (program) => declaratorInit(program.body[0])],
+			['interface I\n<T> {}', (program) => program.body[0]],
+			['type A\n<T> = T;', (program) => program.body[0]],
+			['function f\n<T>() {}', (program) => program.body[0]],
+			['const f = function\n<T>() {};', (program) => declaratorInit(program.body[0])],
+			[
+				'class A {\n  m\n  <T>() {}\n}',
+				(program) => firstStatement(program, 'ClassDeclaration').body.body[0],
+			],
+			[
+				'const o = {\n  m\n  <T>() {}\n};',
+				(program) =>
+					as_type(
+						as_type(declaratorInit(program.body[0]), 'ObjectExpression').properties[0],
+						'Property',
+					).value,
+			],
+		];
+		for (const [source, declaration] of cases) {
+			for (const options of [undefined, { collect: true, comments: [] }]) {
+				const program = parseModule(source, 'App.tsrx', options);
+				expect(program.body).toHaveLength(1);
+				expect(typeParameters(declaration(program))).toHaveLength(1);
+			}
+		}
+
+		// After a declaration's body, an element on the next line starts a new statement.
+		for (const source of ['class G {}\n<div />\n', 'function f() {}\n<div />\n']) {
+			expect(parseModule(source, 'App.tsrx').body.map((node) => node.type)).toEqual([
+				source.startsWith('class') ? 'ClassDeclaration' : 'FunctionDeclaration',
+				'JSXElement',
+			]);
+		}
+	});
+
 	it('parses mixed scalar and JSX return branches', () => {
 		const ast = parseModule(
 			`function MyApp() {
