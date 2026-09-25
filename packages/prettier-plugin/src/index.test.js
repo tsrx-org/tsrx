@@ -11743,6 +11743,53 @@ export default a ? b : c ? d : e;`;
 		});
 	});
 
+	// Like Prettier's `handleConditionalExpressionComments`, a comment on its
+	// own line leads the branch after it, and one at the end of the line of
+	// the node before it trails that node, before the `?` or `:` (#465)
+	describe('comments after the ? or : of a conditional', () => {
+		it.each([
+			['const x = cond ? // why\n  a : b;', 'const x = cond // why\n  ? a\n  : b;'],
+			['const x = cond\n  ? a : // why\n  b;', 'const x = cond\n  ? a // why\n  : b;'],
+			['type X = A extends B ? // why\n  C : D;', 'type X = A extends B // why\n  ? C\n  : D;'],
+			['type X = A extends B\n  ? C : // why\n  D;', 'type X = A extends B\n  ? C // why\n  : D;'],
+			['foo(cond ? // why\n  a : b);', 'foo(\n  cond // why\n    ? a\n    : b,\n);'],
+			[
+				'function f() {\n  return cond ? // why\n    a : b;\n}',
+				'function f() {\n  return cond // why\n    ? a\n    : b;\n}',
+			],
+			[
+				'const x = cond ? // why\n  a : c2 ? // two\n  b : d;',
+				'const x = cond // why\n  ? a\n  : c2 // two\n    ? b\n    : d;',
+			],
+			[
+				'type X<T> = T extends string ? // str\n  "a" : T extends number ? // num\n  "b" : never;',
+				'type X<T> = T extends string // str\n  ? "a"\n  : T extends number // num\n    ? "b"\n    : never;',
+			],
+			[
+				'const x = cond ?\n  // own line\n  a : b;',
+				'const x = cond\n  ? // own line\n    a\n  : b;',
+			],
+			[
+				'const x = cond ? a :\n  // own line\n  b;',
+				'const x = cond\n  ? a\n  : // own line\n    b;',
+			],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const x = cond // why\n  ? a\n  : b;',
+			'const x = cond\n  ? a // why\n  : b;',
+			'const x = cond\n  ? // why\n    a\n  : b;',
+			'const x = cond\n  ? a\n  : // why\n    b;',
+			'const x = cond ? /* c */ a : b;',
+			'const x = cond ? a /* c */ : b;',
+			'const x = cond ? a : /* c */ b;',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
 	describe('template literal expressions stay as written', () => {
 		it.each([
 			'const message = `Projects: ${[...configured].map((platform) => JSON.stringify(platform)).join(", ")}. Select one.`;',

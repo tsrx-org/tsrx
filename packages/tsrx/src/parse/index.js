@@ -911,6 +911,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 			type === 'WithStatement' ||
 			type === 'TryStatement' ||
 			type === 'CatchClause' ||
+			type === 'ConditionalExpression' ||
+			type === 'TSConditionalType' ||
 			type === 'MemberExpression' ||
 			type === 'BinaryExpression' ||
 			type === 'LogicalExpression' ||
@@ -1011,6 +1013,23 @@ export function get_comment_handlers(source, comments, index = 0) {
 			}
 		}
 
+		// `handleConditionalExpressionComments`: a comment on its own line or at
+		// the end of a line in a conditional leads the branch after it, unless
+		// it's on the line of the node before it. That one trails the node by
+		// the default below, so it stays before the `?` or `:`.
+		if (
+			(ownLine || endOfLine) &&
+			(type === 'ConditionalExpression' || type === 'TSConditionalType') &&
+			following &&
+			(!preceding ||
+				source
+					.slice(/** @type {AST.NodeWithLocation} */ (preceding).end, comment.start)
+					.includes('\n'))
+		) {
+			addLeadingComment(following, comment);
+			return true;
+		}
+
 		// `handleClassComments`: a comment in the heading of a decorated class
 		// trails the last decorator. One before the body moves into it, and one
 		// before the superclass or the first `implements`/`extends` type trails
@@ -1105,6 +1124,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 			preceding &&
 			(node.type === 'BinaryExpression' ||
 				node.type === 'LogicalExpression' ||
+				node.type === 'ConditionalExpression' ||
+				node.type === 'TSConditionalType' ||
 				node.type === 'TSUnionType')
 		) {
 			addTrailingComment(preceding, comment);
