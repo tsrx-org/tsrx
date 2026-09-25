@@ -15,3 +15,8 @@ formatter no longer collapses it into a plain space or drops it.
 A `<script>` body that doesn't parse is no longer given extra blank lines on
 every pass. Like Prettier's HTML printer, the formatter keeps its lines and
 their relative indentation, and indents them under the element.
+
+A JSX attribute value in `{…}` that doesn't fit now breaks onto its own lines
+inside the braces, like Prettier, instead of staying attached to `={` and
+`}` with its continuation lines at the attribute's column. Arrays, objects,
+functions, calls, and templates still hug the braces.

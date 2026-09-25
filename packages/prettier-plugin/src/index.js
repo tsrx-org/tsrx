@@ -11469,10 +11469,50 @@ function printJSXAttribute(attr, path, options, print) {
 			}
 		}
 		const exprDoc = path.call(print, 'value', 'expression');
-		return [name, '={', exprDoc, '}'];
+		// Prettier's `printJsxExpressionContainer`: a value that can break
+		// after its first token hugs the braces, and any other value breaks
+		// onto its own lines inside them.
+		if (shouldHugJSXExpression(expression)) {
+			return [name, '=', group(['{', exprDoc, lineSuffixBoundary, '}'])];
+		}
+		return [
+			name,
+			'=',
+			group(['{', indent([softline, exprDoc]), softline, lineSuffixBoundary, '}']),
+		];
 	}
 
 	return name;
+}
+
+/**
+ * Prettier's `shouldInline` for a JSX attribute's expression container: an
+ * empty expression, or a value without comments that can break after its
+ * first token, like an array, object, function, call, or template (also
+ * after `await`), stays against the braces.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function shouldHugJSXExpression(node) {
+	if (node.type === 'JSXEmptyExpression') {
+		return true;
+	}
+	if (hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (node))) {
+		return false;
+	}
+	switch (node.type) {
+		case 'ArrayExpression':
+		case 'ObjectExpression':
+		case 'ArrowFunctionExpression':
+		case 'FunctionExpression':
+		case 'TemplateLiteral':
+		case 'TaggedTemplateExpression':
+			return true;
+		case 'AwaitExpression':
+			return shouldHugJSXExpression(node.argument) || node.argument.type === 'JSXElement';
+		default:
+			return stripChainElementWrappers(node).type === 'CallExpression';
+	}
 }
 
 /**

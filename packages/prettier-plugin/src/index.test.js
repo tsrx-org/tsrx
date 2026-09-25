@@ -441,10 +441,15 @@ const items=[1,2,3];
 		const input = `export function App() @{
   <h2 firstLongAttributeName={firstLongAttributeValue} secondLongAttributeName={secondLongAttributeValue}>{a + b}</h2>
 }`;
+		// Like Prettier, an attribute value that doesn't fit breaks inside its braces.
 		const expected = `export function App() @{
   <h2
-    firstLongAttributeName={firstLongAttributeValue}
-    secondLongAttributeName={secondLongAttributeValue}
+    firstLongAttributeName={
+      firstLongAttributeValue
+    }
+    secondLongAttributeName={
+      secondLongAttributeValue
+    }
   >
     {a + b}
   </h2>
@@ -7854,12 +7859,15 @@ const b = [
     // nothing
   ]} />
 }`;
+			// Like Prettier, an array with a comment doesn't hug the braces.
 			const expected = `export function App() @{
   const none = {/* x */};
   <div
-    list={[
-      // nothing
-    ]}
+    list={
+      [
+        // nothing
+      ]
+    }
   />
 }`;
 			expect(await format(input)).toBeWithNewline(expected);
@@ -8045,6 +8053,158 @@ enum E {
 				jsxSingleQuote: true,
 			});
 			expect(result).toBeWithNewline(wrap(`title="It's ready" alt="Say 'hi'"`));
+		});
+	});
+
+	// Prettier's printJsxExpressionContainer: an attribute value that can break
+	// after its first token hugs the braces, and any other value that doesn't
+	// fit breaks onto its own lines inside them.
+	describe('JSX attribute values break like Prettier', () => {
+		it('breaks a value that does not fit onto its own lines inside the braces', async () => {
+			const input = `export function App(props) @{
+  <div
+    class={props.items.length > 0 && props.filter.length > 0 && visible.length > 0 ? 'some-long-class-name' : 'other-class'}
+    title={aaaaaaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb + cccccccccccccccccccccc}
+    hidden={props.someVeryLongConditionName || props.anotherVeryLongConditionName || props.x}
+    data={someObject.someProperty.anotherProperty.yetAnotherProperty.finalPropertyName}
+    icon={<Icon name="something" size="large" color="red" onClick={handleClickEvent} />}
+  />
+}`;
+			const expected = `export function App(props) @{
+  <div
+    class={
+      props.items.length > 0 && props.filter.length > 0 && visible.length > 0
+        ? "some-long-class-name"
+        : "other-class"
+    }
+    title={
+      aaaaaaaaaaaaaaaaaaaaaaaaaa +
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb +
+      cccccccccccccccccccccc
+    }
+    hidden={
+      props.someVeryLongConditionName ||
+      props.anotherVeryLongConditionName ||
+      props.x
+    }
+    data={
+      someObject.someProperty.anotherProperty.yetAnotherProperty
+        .finalPropertyName
+    }
+    icon={
+      <Icon
+        name="something"
+        size="large"
+        color="red"
+        onClick={handleClickEvent}
+      />
+    }
+  />
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps a value that can break after its first token against the braces', async () => {
+			const input = `export function App(props) @{
+  <div
+    onClick={() => {
+      doSomething(props.first, props.second);
+    }}
+    style={{ color: "red", backgroundColor: "blue", borderColor: "green", margin: 0 }}
+    items={[aaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccccc]}
+    value={computeSomething(aaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, cc)}
+    label={\`template \${aaaaaaaaaaaaaaaaaaaaaaaaa} with \${bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb} parts\`}
+  />
+}`;
+			const expected = `export function App(props) @{
+  <div
+    onClick={() => {
+      doSomething(props.first, props.second);
+    }}
+    style={{
+      color: "red",
+      backgroundColor: "blue",
+      borderColor: "green",
+      margin: 0,
+    }}
+    items={[
+      aaaaaaaaaaaaaaaaaaaaaaaa,
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+      ccccccccccccccccc,
+    ]}
+    value={computeSomething(
+      aaaaaaaaaaaaaaaaaaaaaaaaa,
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+      cc,
+    )}
+    label={\`template \${aaaaaaaaaaaaaaaaaaaaaaaaa} with \${bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb} parts\`}
+  />
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps a comment inside the braces', async () => {
+			const input = `export function App(props) @{
+  <div
+    value={props.value // why
+    }
+    list={[1, 2] // how
+    }
+    note={/* what */ props.someVeryLongValueNameThatDoesNotFitOnTheLineWithTheAttribute}
+  />
+}`;
+			const expected = `export function App(props) @{
+  <div
+    value={
+      props.value // why
+    }
+    list={
+      [1, 2] // how
+    }
+    note={
+      /* what */ props.someVeryLongValueNameThatDoesNotFitOnTheLineWithTheAttribute
+    }
+  />
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks TSRX attribute values the same way', async () => {
+			const input = `export function App(props) @{
+  const theme = <style>.card { color: red; }</style>;
+  <>
+    <style apply={[theme, props.someOtherThemeWithAVeryLongName, props.yetAnotherThemeName]} />
+    <div class={theme.$class} ref={props.someVeryLongReferenceName ?? props.fallbackReferenceNameHere} />
+    <div {...props.spread} class={props.isActiveAndHighlighted ? theme.$class : props.inactiveClassName} />
+  </>
+}`;
+			const expected = `export function App(props) @{
+  const theme = <style>
+    .card {
+      color: red;
+    }
+  </style>;
+  <>
+    <style
+      apply={[
+        theme,
+        props.someOtherThemeWithAVeryLongName,
+        props.yetAnotherThemeName,
+      ]}
+    />
+    <div
+      class={theme.$class}
+      ref={props.someVeryLongReferenceName ?? props.fallbackReferenceNameHere}
+    />
+    <div
+      {...props.spread}
+      class={
+        props.isActiveAndHighlighted ? theme.$class : props.inactiveClassName
+      }
+    />
+  </>
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
 		});
 	});
 
