@@ -15018,6 +15018,9 @@ item
 			['tag<T>/* c */`x`;', 'tag<T> /* c */ `x`;'],
 			['tag /* c */ /* d */ `x`;', 'tag /* c */ /* d */ `x`;'],
 			['tag\n/* c */ `x`;', 'tag\n/* c */ `x`;'],
+			// Prettier prints `tag/* c */ \`x\``, and its next pass adds the space
+			['const x = tag\n/* c */ `x`;', 'const x = tag /* c */ `x`;'],
+			['foo(tag<T>\n/* c */ `x`);', 'foo(tag<T> /* c */ `x`);'],
 		])('prints a space before the comment in %j', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
 		});
@@ -15036,6 +15039,9 @@ item
 		it.each([
 			['interface I {\n  m /* c */ (a): void;\n}', 'interface I {\n  m(/* c */ a): void;\n}'],
 			['foo /* c */ (a);', 'foo(/* c */ a);'],
+			// Prettier's handler for a comment before the `(` covers functions and
+			// methods, not declared functions
+			['declare function f /* c */ (a): void;', 'declare function f(/* c */ a): void;'],
 		])('moves the comment in %j into the parentheses', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
 		});

@@ -8708,13 +8708,16 @@ function printTaggedTemplateExpression(node, path, options, print) {
 		parts.push(path.call(print, 'typeArguments'));
 	}
 	// Like Prettier, a space goes before the template's leading comments, or a
-	// line break that fits on one line when they start a line
+	// line break when they start a line. Prettier's line break is a `softline`,
+	// which joins the comment to the tag when it fits (`tag/* c *\/ \`x\``), and
+	// its next pass then adds the space: a `line` prints that second form at
+	// once.
 	const quasiComment = /** @type {AST.NodeWithMaybeComments} */ (node.quasi).leadingComments?.[0];
 	if (quasiComment) {
 		const end = /** @type {AST.NodeWithLocation} */ (node.typeArguments ?? node.tag).end;
 		const start = /** @type {AST.NodeWithLocation} */ (quasiComment).start;
 		const text = /** @type {string} */ (options.originalText);
-		parts.push(text.slice(end, start).includes('\n') ? softline : ' ');
+		parts.push(text.slice(end, start).includes('\n') ? line : ' ');
 	}
 	// Like Prettier, a line comment after the tag prints before the backtick,
 	// which an embedded template's doc doesn't print first
