@@ -5234,6 +5234,46 @@ type T = {
 	});
 });
 
+describe('comments in empty arrays and objects', () => {
+	it('keeps the comments of an empty array or object as inner comments', () => {
+		const ast = parseModule(
+			`const a = [
+	// array
+];
+const o = {/* object */};
+const [/* pattern */] = a;
+foo({
+	// argument
+});`,
+			'App.ts',
+		);
+		const [array, object, pattern, argument] = [
+			find_first(ast, (node) => node.type === 'ArrayExpression'),
+			find_first(ast, (node) => node.type === 'ObjectExpression'),
+			find_first(ast, (node) => node.type === 'ArrayPattern'),
+			find_first(ast, (node) => node.type === 'CallExpression'),
+		];
+
+		expect(array?.innerComments?.map((comment) => comment.value)).toEqual([' array']);
+		expect(object?.innerComments?.map((comment) => comment.value)).toEqual([' object ']);
+		expect(pattern?.innerComments?.map((comment) => comment.value)).toEqual([' pattern ']);
+		const [objectArgument] = as_type(argument, 'CallExpression').arguments;
+		expect(objectArgument.innerComments?.map((comment) => comment.value)).toEqual([' argument']);
+	});
+
+	it('leaves a comment before an empty array in a template child to its attribute', () => {
+		const ast = parseModule(
+			`export function App() @{
+	<div title={/* title */ title}>{[]}</div>
+}`,
+			'App.tsrx',
+		);
+		const array = find_first(ast, (node) => node.type === 'ArrayExpression');
+
+		expect(array?.innerComments).toBeUndefined();
+	});
+});
+
 describe('comments in import and export specifier lists', () => {
 	/**
 	 * @param {string} source

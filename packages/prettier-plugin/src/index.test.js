@@ -4411,7 +4411,7 @@ const deleteButton = container.querySelector(
 
 		it('should preserve explicit plus mapped modifiers in TypeScript mapped types', async () => {
 			const input = `type ExplicitReadonlyOptional<T> = { +readonly [K in keyof T]+?: T[K] }`;
-			const expected = `type ExplicitReadonlyOptional<T> = { readonly [K in keyof T]?: T[K] };`;
+			const expected = `type ExplicitReadonlyOptional<T> = { +readonly [K in keyof T]+?: T[K] };`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
@@ -7349,6 +7349,359 @@ const commented = [
   }),
 ];`);
 		});
+
+		it('breaks array patterns one element per line when they do not fit', async () => {
+			const input = `const [aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccccccc] = useThing();
+function f([aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccccccc, ddddd]) {}
+[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccc] = [1, 2, 3];`;
+			const expected = `const [
+  aaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccccccccccc,
+] = useThing();
+function f([
+  aaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccccccccccc,
+  ddddd,
+]) {}
+[
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ccccccccccccccc,
+] = [1, 2, 3];`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('prints no trailing comma after a rest element and the type annotation after the brackets', async () => {
+			const input = `const [aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb, ...ccccccccccccccccccccccccccccccc] = useThing();
+function g([aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb]: [Aaaaaaaaaaaaaaaaa, Bbbbbbbbbbbbbbbbbbbbbb]) {}`;
+			const expected = `const [
+  aaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ...ccccccccccccccccccccccccccccccc
+] = useThing();
+function g([aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbb]: [
+  Aaaaaaaaaaaaaaaaa,
+  Bbbbbbbbbbbbbbbbbbbbbb,
+]) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks tuple types one member per line, keeping the comma after a rest type', async () => {
+			const input = `let t: [Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ...Ccccccccccccccccccccccc[]];
+function h(row: [aaaaaaaaaaaaaaaaaaaaaa: string, bbbbbbbbbbbbbbbbbbbbbbbbbbb: number, ccccccccccccc: boolean]) {}`;
+			const expected = `let t: [
+  Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  ...Ccccccccccccccccccccccc[],
+];
+function h(
+  row: [
+    aaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+    ccccccccccccc: boolean,
+  ],
+) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps short patterns and tuples on one line', async () => {
+			const source = `const [a, , b] = x;
+const [c, ,] = y;
+let u: [a?: string, ...rest: number[]] = [];
+const {
+  aaaaaaaaaaaaaaaaaa: [
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+    ccccccccccccccccccccccccccccccccc,
+  ],
+} = x;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	describe('objects lay out like Prettier', () => {
+		it('keeps an object expanded only when a line break follows its {', async () => {
+			const input = `const o = { a: 1,
+  b: 2 };
+const p = { list: [
+  'a',
+  'b',
+] };
+const q = {
+  a: 1, b: 2 };
+foo({ a: 1,
+  b: 2 });`;
+			const expected = `const o = { a: 1, b: 2 };
+const p = { list: ["a", "b"] };
+const q = {
+  a: 1,
+  b: 2,
+};
+foo({ a: 1, b: 2 });`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('collapses every object that fits with objectWrap collapse', async () => {
+			const input = `const o = {
+  a: 1, b: 2 };
+type U = {
+  a: string; b: number };
+let m: {
+  [K in keyof T]: T[K] } = x;`;
+			const expected = `const o = { a: 1, b: 2 };
+type U = { a: string; b: number };
+let m: { [K in keyof T]: T[K] } = x;`;
+			expect(await format(input, { objectWrap: 'collapse' })).toBeWithNewline(expected);
+		});
+
+		it('keeps a blank line after a property, past its comments', async () => {
+			const source = `const r = {
+  a: 1,
+
+  b: 2, // trailing
+
+  // leading
+  c: 3,
+};`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('breaks a pattern that destructures a nested pattern, except in parameters', async () => {
+			const input = `const { a, b: { c } } = x;
+function f({ a, b: { c } }) {}
+const fn = ({ a, b: [c] }) => a;`;
+			const expected = `const {
+  a,
+  b: { c },
+} = x;
+function f({ a, b: { c } }) {}
+const fn = ({ a, b: [c] }) => a;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a complex destructuring pattern before the value on its right', async () => {
+			const input = `const { aaaa, bbbb: cccc, dddd = 1 } = getOptions(aaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbb, ccc);
+({ aaaa, bbbb: cccc, dddd } = getOptions(aaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccc));
+const { aaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbb } = await someFunctionCall(aaaaaaaaaaa, bbbbbbbbbbb);`;
+			const expected = `const {
+  aaaa,
+  bbbb: cccc,
+  dddd = 1,
+} = getOptions(aaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbb, ccc);
+({
+  aaaa,
+  bbbb: cccc,
+  dddd,
+} = getOptions(aaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccc));
+const { aaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbb } = await someFunctionCall(
+  aaaaaaaaaaa,
+  bbbbbbbbbbb,
+);`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a nested pattern among the parameters of a TypeScript signature', async () => {
+			// Prettier's printObject only skips the break for patterns whose parent
+			// is a function with a body, so signatures and function types expand
+			const input = `type F = (a: string, { b: { c } }: T) => void;
+declare function f(a, { b: { c } }): void;
+interface I {
+  m(a: string, { b: { c } }: T): void;
+}
+function g(a: string, { b: { c } }: T): void {}`;
+			const expected = `type F = (
+  a: string,
+  {
+    b: { c },
+  }: T,
+) => void;
+declare function f(
+  a,
+  {
+    b: { c },
+  },
+): void;
+interface I {
+  m(
+    a: string,
+    {
+      b: { c },
+    }: T,
+  ): void;
+}
+function g(a: string, { b: { c } }: T): void {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('hugs a destructured parameter with a default or an object type', async () => {
+			const input = `function foo({ aaaaaaaaaaaa, bbbbbbbbbbbbbbbb, ccccccccccccccccccc, dddddddddddddddd } = {}) {}
+function bar({ aaaaaaaaaaaa, bbbbbbbbbbbbbbbb, ccccccccccccccccccc }: { aaaaaaaaaaaa: string }) {}`;
+			const expected = `function foo({
+  aaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbb,
+  ccccccccccccccccccc,
+  dddddddddddddddd,
+} = {}) {}
+function bar({
+  aaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbb,
+  ccccccccccccccccccc,
+}: {
+  aaaaaaaaaaaa: string;
+}) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('follows bracketSpacing in object patterns, type literals, and mapped types', async () => {
+			const input = `type M = { [K in keyof T]: T[K] };
+const { a, b } = obj;
+function f({ a }: { a: string }) {}
+let t: { a: string; b: number } = x;`;
+			const expected = `type M = {[K in keyof T]: T[K]};
+const {a, b} = obj;
+function f({a}: {a: string}) {}
+let t: {a: string; b: number} = x;`;
+			expect(await format(input, { bracketSpacing: false })).toBeWithNewline(expected);
+		});
+
+		it('breaks mapped types like Prettier and keeps their modifiers and comments', async () => {
+			const input = `let g: { readonly [K in keyof Tttttttttttttttttttttttttt as \`get\${Capitalize<K & string>}\`]-?: () => T[K] };
+let m: {
+  [K in keyof T]: T[K];
+} = x;
+type P = { +readonly [K in keyof T]+?: T[K] };
+let c: {
+  // note
+  [K in keyof T]: T[K];
+} = x;
+let d: { /* note */ [K in keyof T]: T[K] } = x;`;
+			const expected = `let g: {
+  readonly [
+    K in keyof Tttttttttttttttttttttttttt as \`get\${Capitalize<K & string>}\`
+  ]-?: () => T[K];
+};
+let m: {
+  [K in keyof T]: T[K];
+} = x;
+type P = { +readonly [K in keyof T]+?: T[K] };
+let c: {
+  // note
+  [K in keyof T]: T[K];
+} = x;
+let d: { /* note */ [K in keyof T]: T[K] } = x;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a union only for a member that must break, not for how the source wrapped it', async () => {
+			const input = `let x: { a: string;
+  b: number } | { c: string } = v;`;
+			expect(await format(input)).toBeWithNewline(
+				'let x: { a: string; b: number } | { c: string } = v;',
+			);
+		});
+
+		it('keeps a type literal expanded only when a line break follows its {', async () => {
+			const input = `type T = { a: string;
+  b: number };
+type U = {
+  a: string; b: number };
+function g(options: {
+  a: string; b: number }) {}
+let m: {
+  [K in keyof T]: T[K] } = x;`;
+			const expected = `type T = { a: string; b: number };
+type U = {
+  a: string;
+  b: number;
+};
+function g(options: { a: string; b: number }) {}
+let m: {
+  [K in keyof T]: T[K];
+} = x;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+	});
+
+	describe('comments in empty arrays and objects', () => {
+		it('keeps a line comment inside an empty array or object', async () => {
+			const source = `const a = [
+  // pending
+];
+const o = {
+  // pending
+};
+foo([
+  // pending
+]);
+const x = {
+  a: [], // trailing
+  b: {
+    // inner
+  },
+};`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a block comment inline between the brackets', async () => {
+			const source = `const a = [/* pending */];
+const o = {/* pending */};
+const { /* c */ } = x;
+function f([/* c */]) {}`;
+			const expected = `const a = [/* pending */];
+const o = {/* pending */};
+const {/* c */} = x;
+function f([/* c */]) {}`;
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it('puts several comments on their own lines', async () => {
+			const input = `const a = [/* a */ /* b */];
+const b = [ // one
+
+  // two
+];`;
+			const expected = `const a = [
+  /* a */
+  /* b */
+];
+const b = [
+  // one
+  // two
+];`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the call arguments around an object with a line comment', async () => {
+			const input = `foo({
+  // pending
+}, 1);`;
+			const expected = `foo(
+  {
+    // pending
+  },
+  1,
+);`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps comments in empty arrays and objects in templates', async () => {
+			const input = `export function App() @{
+  const none = {/* x */};
+  <div list={[
+    // nothing
+  ]} />
+}`;
+			const expected = `export function App() @{
+  const none = {/* x */};
+  <div
+    list={[
+      // nothing
+    ]}
+  />
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
 	});
 
 	// The comma after a trailing hole creates an array slot (or an iterator
@@ -7537,6 +7890,35 @@ const c = 'it\\'s';`);
 			return once;
 		};
 
+		it('puts mixed text and expression children on their own lines when the element does not fit', async () => {
+			const input = `function App() { return <div title="aaaaaaaa" alt="bbbbbbbbbb">xxxxx yyyyy zzzzzzzzzzzzzzzzzzzzz {"x"}</div>; }
+function Long() { return <div title="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" alt="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb">text {x} more</div>; }`;
+			const expected = `function App() {
+  return <div title="aaaaaaaa" alt="bbbbbbbbbb">
+    xxxxx yyyyy zzzzzzzzzzzzzzzzzzzzz
+    {"x"}
+  </div>;
+}
+function Long() {
+  return <div
+    title="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    alt="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  >
+    text
+    {x}
+    more
+  </div>;
+}`;
+			expect(await expectStable(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps mixed text and expression children on the line when the element fits', async () => {
+			const source = `function App() {
+  return <div title="a">Hello {name}!</div>;
+}`;
+			expect(await expectStable(source)).toBeWithNewline(source);
+		});
+
 		it('keeps a return argument with leading line comments after the return keyword', async () => {
 			const input = `function isXOrYInValid(xOrY: string | number | undefined) {
 	return (
@@ -7588,6 +7970,16 @@ function g() {
 				mapping.lengths[0] === identifier.length,
 	);
 }`;
+			// Like Prettier, the type of a hugged only parameter joins the
+			// parameter list and collapses when it fits.
+			const expected = `function f() {
+	const mapping = result.mappings.find(
+		(mapping: { sourceOffsets: number[]; generatedOffsets: number[] }) =>
+			mapping.sourceOffsets[0] === source_offset &&
+				mapping.generatedOffsets[0] === generated_offset &&
+				mapping.lengths[0] === identifier.length,
+	);
+}`;
 
 			// The multiline param type used to hide its hardlines from enclosing
 			// groups (fits() short-circuits on hardlines inside conditionalGroup
@@ -7597,7 +7989,7 @@ function g() {
 				singleQuote: true,
 				printWidth: 100,
 			});
-			expect(result).toBeWithNewline(input);
+			expect(result).toBeWithNewline(expected);
 		});
 
 		it('stabilizes long arrow bodies with logical expressions in one pass', async () => {
@@ -7639,6 +8031,283 @@ function g() {
 				singleQuote: true,
 				printWidth: 100,
 			});
+		});
+	});
+
+	describe('parameter lists of methods, signatures, and function types', () => {
+		const params =
+			'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number';
+
+		it('breaks the parameters of every kind of class method', async () => {
+			const input = `class C {
+  constructor(${params}) {}
+  method(${params}): void {}
+  set value(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string) {}
+  static method2(${params}): void {}
+  *gen(${params}) {}
+  #priv(${params}) {}
+}`;
+			const expected = `class C {
+  constructor(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) {}
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void {}
+  set value(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  ) {}
+  static method2(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void {}
+  *gen(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) {}
+  #priv(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) {}
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters before type parameters or return type arguments', async () => {
+			const input = `class G {
+  method<T>(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: T, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number) {}
+  async load(${params}): Promise<void> {}
+}`;
+			const expected = `class G {
+  method<T>(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: T,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) {}
+  async load(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): Promise<void> {}
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a lone method parameter and keeps an object return type hugged', async () => {
+			const input = `class Q {
+  async load(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): Promise<void> {}
+  m<T>(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): { aaaaaaaaaaa: string; b: number } {}
+  x(...rest: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa[]) {}
+}`;
+			const expected = `class Q {
+  async load(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  ): Promise<void> {}
+  m<T>(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): {
+    aaaaaaaaaaa: string;
+    b: number;
+  } {}
+  x(
+    ...rest: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa[]
+  ) {}
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('always breaks a constructor with parameter properties and more than one parameter', async () => {
+			const input = `class D {
+  constructor(private readonly a: string, public b: number) {}
+}
+class E {
+  constructor(@Inject() private readonly a: string) {
+    init();
+  }
+}`;
+			const expected = `class D {
+  constructor(
+    private readonly a: string,
+    public b: number,
+  ) {}
+}
+class E {
+  constructor(@Inject() private readonly a: string) {
+    init();
+  }
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of abstract methods, overloads, and declared classes', async () => {
+			const input = `abstract class A {
+  abstract method(${params}): void;
+  overload(${params}): void;
+  overload(a: string): void;
+  overload(a: any) {}
+}
+declare class X {
+  method(${params}): void;
+}`;
+			const expected = `abstract class A {
+  abstract method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  overload(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  overload(a: string): void;
+  overload(a: any) {}
+}
+declare class X {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of object methods before their return type', async () => {
+			const input = `const o = {
+  method(${params}): void {},
+  m(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): Promise<Aaaaaaaaaaaaaaaaaaaaaaaaa> {},
+  async *gen<T>(a: T): AsyncGenerator<T> {},
+};`;
+			const expected = `const o = {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void {},
+  m(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  ): Promise<Aaaaaaaaaaaaaaaaaaaaaaaaa> {},
+  async *gen<T>(a: T): AsyncGenerator<T> {},
+};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of interface signatures', async () => {
+			const input = `interface I {
+  method(${params}): void;
+  method2?(${params}): void;
+  set x(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string);
+  (${params}): void;
+  new (${params}): I;
+  <T>(aaaaaaaaaaaaaaaaaaaaaaaa: T, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number): void;
+  n(options: { aaaaaaaaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbbbbbbb: number; cccccccccccccc: boolean }): void;
+}`;
+			const expected = `interface I {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  method2?(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  set x(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  );
+  (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  new (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): I;
+  <T>(
+    aaaaaaaaaaaaaaaaaaaaaaaa: T,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  n(options: {
+    aaaaaaaaaaaaaaaaaaa: string;
+    bbbbbbbbbbbbbbbbbbbbbbbbb: number;
+    cccccccccccccc: boolean;
+  }): void;
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of type literal methods and function-typed properties', async () => {
+			const input = `type T = {
+  method(${params}): void;
+  prop: (${params}) => void;
+};`;
+			const expected = `type T = {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ): void;
+  prop: (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) => void;
+};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parameters of function and constructor types', async () => {
+			const input = `let fn: (${params}) => void;
+let ctor: new (${params}) => I;
+let actor: abstract new (${params}) => I;
+function f(cb: (${params}) => void) {}`;
+			const expected = `let fn: (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+) => void;
+let ctor: new (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+) => I;
+let actor: abstract new (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+) => I;
+function f(
+  cb: (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number,
+  ) => void,
+) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('leaves out the parameter trailing comma unless trailingComma is all', async () => {
+			const input = `interface I {
+  method(${params}): void;
+}
+let fn: (${params}) => void;`;
+			const expected = `interface I {
+  method(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number
+  ): void;
+}
+let fn: (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number
+) => void;`;
+			expect(await format(input, { trailingComma: 'es5' })).toBeWithNewline(expected);
+		});
+
+		it('keeps short signatures and hugged parameters on one line', async () => {
+			const source = `class C {
+  method(a: string): void {
+    run(a);
+  }
+  m2({ a, b }: Props) {}
+}
+interface I {
+  method(a: string): void;
+  (b: number): void;
+  new (c: string): I;
+}
+type Fn = () => void;
+let x: (a: string) => void = (a) => {};
+let y: abstract new () => Foo;`;
+			expect(await format(source)).toBeWithNewline(source);
 		});
 	});
 
@@ -7800,6 +8469,90 @@ function g() {
 
 			const result = await formatStable(input, { trailingComma: 'es5' });
 			expect(result).toBeWithNewline(expected);
+		});
+	});
+
+	describe('type argument lists', () => {
+		it('keeps a lone simple type argument against its brackets', async () => {
+			const input = `const w = (a) => a as unknown as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbb>;
+function f(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbbbbbb> {}
+foo(bar as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbb>);
+function g() {
+  return value satisfies Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<string>;
+}
+const q = useMemo<Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>(() => compute(aaaaaaa, bbbbbbbbbb), []);`;
+			const expected = `const w = (a) =>
+  a as unknown as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbb>;
+function f(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbbbbbb> {}
+foo(
+  bar as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbb>,
+);
+function g() {
+  return value satisfies Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<string>;
+}
+const q = useMemo<Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>(
+  () => compute(aaaaaaa, bbbbbbbbbb),
+  [],
+);`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps a lone object type or a hugged union against its brackets', async () => {
+			const input = `let o: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<{ aaaaaaaaaa: string; bbbbbbbbbbbbbb: number }> = v;
+function h(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbb | null> {}`;
+			const expected = `let o: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<{
+  aaaaaaaaaa: string;
+  bbbbbbbbbbbbbb: number;
+}> = v;
+function h(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbb | null> {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks lists of several types, nested type arguments, and other unions', async () => {
+			const input = `let y: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, Cccc> = v;
+let z: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbb<Cccc>> = v;
+let u: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<"aaaaaa" | "bbbbbbb"> = v;`;
+			const expected = `let y: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  Cccc
+> = v;
+let z: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  Bbbbbbbbbbb<Cccc>
+> = v;
+let u: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  "aaaaaa" | "bbbbbbb"
+> = v;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the brackets around a lone array type, which is not simple', async () => {
+			const input = `let x: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<string[]> = value;
+const w = (a) => a as unknown as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<string[]>;`;
+			const expected = `let x: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  string[]
+> = value;
+const w = (a) =>
+  a as unknown as Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+    string[]
+  >;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a lone type argument in the type of an arrow function variable', async () => {
+			const input = `const fn: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<Bbbbbbbbbbbbbbbbbbbb> = () => {};`;
+			const expected = `const fn: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  Bbbbbbbbbbbbbbbbbbbb
+> = () => {};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a lone type argument with a line comment', async () => {
+			const source = `let k: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<
+  // comment
+  string
+> = value;
+let m: Map<string /* key */, number> = new Map<string, number>();`;
+			expect(await format(source)).toBeWithNewline(source);
 		});
 	});
 
@@ -7975,7 +8728,10 @@ function g() {
 		it('keeps modifiers on constructor parameter properties', async () => {
 			await expectUnchanged(`class Point {
   readonly origin = 0;
-  constructor(private readonly x: number, public y: string) {}
+  constructor(
+    private readonly x: number,
+    public y: string,
+  ) {}
 }`);
 		});
 
@@ -10394,6 +11150,48 @@ export ${list};`);
 			await expectUnchanged(`const a = 1;\nexport {a};\nexport {b as c, d} from "mod";`, {
 				bracketSpacing: false,
 			});
+		});
+
+		it('follows bracketSpacing in import attributes', async () => {
+			const input = `export * from './b.json' with { type: 'json' };
+export { x } from './x.json' with { type: 'json', other: 'x' };
+import a from './a.json' with { type: 'json' };`;
+			const expected = `export * from "./b.json" with {type: "json"};
+export {x} from "./x.json" with {type: "json", other: "x"};
+import a from "./a.json" with {type: "json"};`;
+			expect(await format(input, { bracketSpacing: false })).toBeWithNewline(expected);
+		});
+
+		it('breaks long import attributes like an object, but never a lone type attribute', async () => {
+			const input = `import data from './data.json' with { type: 'json', integrity: 'sha384-0123456789abcdef' };
+import e from './eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.json' with { type: 'json' };
+import c from './c' with {
+  type: 'json' };`;
+			const expected = `import data from "./data.json" with {
+  type: "json",
+  integrity: "sha384-0123456789abcdef",
+};
+import e from "./eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.json" with { type: "json" };
+import c from "./c" with { type: "json" };`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps import attributes expanded when a line break follows their {', async () => {
+			const input = `import d from './d' with {
+  type: 'json', other: 'x' };`;
+			expect(await format(input)).toBeWithNewline(`import d from "./d" with {
+  type: "json",
+  other: "x",
+};`);
+			expect(await format(input, { objectWrap: 'collapse' })).toBeWithNewline(
+				`import d from "./d" with { type: "json", other: "x" };`,
+			);
+		});
+
+		it('keeps the assert keyword and an empty attribute list', async () => {
+			await expectUnchanged(`import a from "./a.json" assert { type: "json" };
+import b from "./b" with {};
+import f from "./f" /* c */ with { type: "json" };`);
 		});
 
 		it('keeps an alias that repeats the name', async () => {

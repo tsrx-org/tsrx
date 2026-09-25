@@ -14,7 +14,7 @@
  * @typedef {((path: AstPath) => Doc) & ((path: AstPath, args: PrintArgs) => Doc)} PrintFn
  */
 
-/** @typedef {Partial<Pick<ParserOptions, 'singleQuote' | 'jsxSingleQuote' | 'semi' | 'trailingComma' | 'useTabs' | 'tabWidth' | 'singleAttributePerLine' | 'bracketSameLine' | 'bracketSpacing' | 'arrowParens' | 'originalText' | 'printWidth'>> & { locStart: (node: AST.NodeWithLocation) => number, locEnd: (node: AST.NodeWithLocation) => number }} TsrxFormatOptions */
+/** @typedef {Partial<Pick<ParserOptions, 'singleQuote' | 'jsxSingleQuote' | 'semi' | 'trailingComma' | 'useTabs' | 'tabWidth' | 'singleAttributePerLine' | 'bracketSameLine' | 'bracketSpacing' | 'objectWrap' | 'arrowParens' | 'originalText' | 'printWidth'>> & { locStart: (node: AST.NodeWithLocation) => number, locEnd: (node: AST.NodeWithLocation) => number }} TsrxFormatOptions */
 
 /**
  * Any node the parser may hang decorators off. The individual node types do not
@@ -381,36 +381,40 @@ function hasPrettierIgnore(node) {
 }
 
 /**
- * @param {AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction} node - The function node
+ * Any node with a parameter list: functions and methods keep it in `params`,
+ * while TypeScript signatures and function or constructor types keep it in
+ * `parameters` (and their return type in `typeAnnotation`).
+ * @typedef {AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction | AST.TSMethodSignature | AST.TSCallSignatureDeclaration | AST.TSConstructSignatureDeclaration | AST.TSFunctionType | AST.TSConstructorType} FunctionLikeNode
+ */
+
+/**
+ * @param {FunctionLikeNode} node - The function-like node
  * @returns {Array<AST.Pattern | AST.Parameter>} - Array of parameter patterns
  */
 function getFunctionParameters(node) {
-	/** @type {(AST.Pattern | AST.Parameter)[]} */
-	const parameters = [];
-
-	if (node.params) {
-		parameters.push(...node.params);
-	}
-
-	return parameters;
+	const parameters =
+		'params' in node
+			? node.params
+			: /** @type {{ parameters?: Array<AST.Pattern | AST.Parameter> }} */ (node).parameters;
+	return parameters ? [...parameters] : [];
 }
 
 /**
  * Iterate over function parameters with path callbacks.
- * TypeScript/TSRX functions can have additional `this` and `rest` parameters.
- * @param {AstPath<AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction | AST.FunctionDeclaration>} path - The function path
- * @param {(paramPath: AstPath<AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction | AST.FunctionDeclaration>, index: number) => void} iteratee - Callback for each parameter
+ * @param {AstPath<FunctionLikeNode>} path - The function-like node's path
+ * @param {(paramPath: AstPath<FunctionLikeNode>, index: number) => void} iteratee - Callback for each parameter
  * @returns {void}
  */
 function iterateFunctionParametersPath(path, iteratee) {
-	/** @type {AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction | AST.FunctionDeclaration} */
 	const node = path.node;
 	let index = 0;
 	/** @type {(paramPath: AstPath) => void} */
 	const callback = (paramPath) => iteratee(paramPath, index++);
 
-	if (node.params) {
+	if ('params' in node) {
 		path.each(callback, 'params');
+	} else if (/** @type {{ parameters?: unknown[] }} */ (node).parameters) {
+		path.each(callback, 'parameters');
 	}
 }
 
@@ -1332,6 +1336,7 @@ function createSkip(characters) {
 }
 
 const skipSpaces = createSkip(' \t');
+const skipWhitespace = createSkip(/\s/u);
 const skipToLineEnd = createSkip(',; \t');
 const skipEverythingButNewLine = createSkip(/[^\n\r\u2028\u2029]/u);
 
@@ -1426,6 +1431,27 @@ function skipTrailingComment(text, startIndex) {
 	}
 
 	return startIndex;
+}
+
+/**
+ * The position of the next token at or after `startIndex`, past whitespace
+ * and comments
+ * @param {string} text - Source text
+ * @param {number} startIndex - Position to start from
+ * @returns {number}
+ */
+function skipWhitespaceAndComments(text, startIndex) {
+	/** @type {number | false} */
+	let index = startIndex;
+	/** @type {number | false | null} */
+	let previousIndex = null;
+	while (index !== false && index !== previousIndex) {
+		previousIndex = index;
+		index = skipWhitespace(text, index);
+		index = skipInlineComment(text, index);
+		index = skipTrailingComment(text, index);
+	}
+	return index === false ? text.length : index;
 }
 
 /**
@@ -1549,15 +1575,11 @@ function isLineAfterCommentEmpty(text, comment) {
 
 /**
  * Check if a function has a rest parameter
- * @param {AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction} node - The function node
+ * @param {FunctionLikeNode} node - The function-like node
  * @returns {boolean}
  */
 function hasRestParameter(node) {
-	return (
-		!!node.params &&
-		node.params.length > 0 &&
-		node.params[node.params.length - 1].type === 'RestElement'
-	);
+	return getFunctionParameters(node).at(-1)?.type === 'RestElement';
 }
 
 /**
@@ -1759,6 +1781,24 @@ function printDeclarationDecorators(node, path, options, print) {
 			'declaration',
 		)
 	);
+}
+
+/**
+ * Print the comments inside an empty array or object as Prettier's
+ * `printDanglingCommentsInList` does: block comments stay inline between the
+ * brackets when they fit, and a line comment breaks the list.
+ * @param {AST.NodeWithMaybeComments} node - The empty array or object
+ * @returns {Doc}
+ */
+function printDanglingCommentsInList(node) {
+	const comments = node.innerComments ?? [];
+	if (comments.length === 0) {
+		return '';
+	}
+	return [
+		indent([softline, join(hardline, comments.map(printCommentText))]),
+		comments.some((comment) => comment.type === 'Line') ? hardline : softline,
+	];
 }
 
 /**
@@ -2175,11 +2215,13 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'ArrayExpression':
-			nodeContent = printArrayExpression(node, path, options, print);
+		case 'ArrayPattern':
+		case 'TSTupleType':
+			nodeContent = printArray(node, path, options, print);
 			break;
 
 		case 'ObjectExpression':
-			nodeContent = printObjectExpression(node, path, options, print);
+			nodeContent = printObject(node, path, options, print);
 			break;
 
 		case 'ClassBody':
@@ -2867,11 +2909,7 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'ObjectPattern':
-			nodeContent = printObjectPattern(node, path, options, print);
-			break;
-
-		case 'ArrayPattern':
-			nodeContent = printArrayPattern(node, path, options, print);
+			nodeContent = printObject(node, path, options, print);
 			break;
 
 		case 'Property':
@@ -2924,17 +2962,16 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'TSCallSignatureDeclaration':
+		case 'TSConstructSignatureDeclaration':
 			nodeContent = [
-				printTSCallSignatureDeclaration(node, path, options, print),
+				printFunctionType(node, path, options, print),
 				printTypeMemberSemicolon(path, options),
 			];
 			break;
 
-		case 'TSConstructSignatureDeclaration':
-			nodeContent = [
-				printTSConstructSignatureDeclaration(node, path, options, print),
-				printTypeMemberSemicolon(path, options),
-			];
+		case 'TSFunctionType':
+		case 'TSConstructorType':
+			nodeContent = printFunctionType(node, path, options, print);
 			break;
 
 		case 'TSEnumMember':
@@ -2976,39 +3013,6 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 		}
 
-		case 'TSFunctionType': {
-			/** @type {Doc[]} */
-			const parts = [];
-
-			if (node.typeParameters) {
-				parts.push(path.call(print, 'typeParameters'));
-			}
-
-			// Handle parameters
-			parts.push('(');
-			if (node.parameters && node.parameters.length > 0) {
-				const params = path.map(print, 'parameters');
-				for (let i = 0; i < params.length; i++) {
-					if (i > 0) parts.push(', ');
-					parts.push(params[i]);
-				}
-			}
-			parts.push(')');
-
-			// Handle return type
-			parts.push(' => ');
-			if (node.typeAnnotation) {
-				parts.push(path.call(print, 'typeAnnotation'));
-			}
-
-			nodeContent = parts;
-			break;
-		}
-
-		case 'TSTupleType':
-			nodeContent = printTSTupleType(node, path, options, print);
-			break;
-
 		case 'TSNamedTupleMember':
 			nodeContent = printTSNamedTupleMember(node, path, options, print);
 			break;
@@ -3026,10 +3030,6 @@ function printTsrxNode(node, path, options, print, args) {
 				printTSIndexSignature(node, path, options, print),
 				printTypeMemberSemicolon(path, options),
 			];
-			break;
-
-		case 'TSConstructorType':
-			nodeContent = printTSConstructorType(node, path, options, print);
 			break;
 
 		case 'TSConditionalType':
@@ -3385,31 +3385,90 @@ function printModuleSource(path, options, print) {
 		path.call(print, 'source'),
 	];
 
-	const attributeNodes = /** @type {AST.Node[] | undefined} */ (
-		/** @type {any} */ (node).attributes ?? /** @type {any} */ (node).assertions
-	);
-	if (attributeNodes && attributeNodes.length > 0) {
-		const attributes = path.map(
-			print,
-			/** @type {any} */ (/** @type {any} */ (node).attributes ? 'attributes' : 'assertions'),
-		);
-		// Like a commented specifier, a commented attribute lets the braces break,
-		// so a line comment doesn't end up in front of the next attribute
-		parts.push(
-			' with ',
-			attributeNodes.some((attribute) => hasComment(attribute))
-				? group([
-						'{',
-						indent([line, join([',', line], attributes)]),
-						ifBreak(shouldPrintComma(options) ? ',' : ''),
-						line,
-						'}',
-					])
-				: ['{ ', join(', ', attributes), ' }'],
-		);
-	}
+	parts.push(printImportAttributes(path, options, print));
 
 	return parts;
+}
+
+/**
+ * @typedef {{ keyword: 'with' | 'assert', braceIndex: number }} ImportAttributesClause
+ * @typedef {AST.TSRXImportDeclaration | AST.ExportNamedDeclaration | AST.ExportAllDeclaration} ModuleDeclarationWithSource
+ */
+
+/**
+ * Find the attributes clause after an import or re-export's source, like
+ * Prettier's `getImportAttributesKeyword`: the parser gives `with { … }` and
+ * the older `assert { … }` the same node, so the keyword comes from the source
+ * text. Returns null when the source has no clause.
+ * @param {ModuleDeclarationWithSource} node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {ImportAttributesClause | null}
+ */
+function getImportAttributesClause(node, options) {
+	const text = /** @type {string} */ (options.originalText);
+	const source = /** @type {AST.NodeWithLocation} */ (/** @type {unknown} */ (node.source));
+	const keywordIndex = skipWhitespaceAndComments(text, options.locEnd(source));
+	const keyword = text.startsWith('assert', keywordIndex)
+		? 'assert'
+		: text.startsWith('with', keywordIndex)
+			? 'with'
+			: null;
+	if (!keyword) {
+		return null;
+	}
+	const braceIndex = skipWhitespaceAndComments(text, keywordIndex + keyword.length);
+	return text.charAt(braceIndex) === '{' ? { keyword, braceIndex } : null;
+}
+
+/**
+ * Whether the attributes are a lone `type: "…"` with no comments, which
+ * Prettier never breaks
+ * @param {AST.ImportAttribute[]} attributes
+ * @returns {boolean}
+ */
+function isSingleTypeImportAttributes(attributes) {
+	if (attributes.length !== 1) {
+		return false;
+	}
+	const [attribute] = attributes;
+	const { key, value } = attribute;
+	return (
+		((key.type === 'Identifier' && key.name === 'type') ||
+			(key.type === 'Literal' && key.value === 'type')) &&
+		value.type === 'Literal' &&
+		typeof value.value === 'string' &&
+		!hasComment(
+			/** @type {AST.Node & AST.NodeWithMaybeComments} */ (/** @type {unknown} */ (attribute)),
+		) &&
+		!hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (key)) &&
+		!hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (value))
+	);
+}
+
+/**
+ * Print the attributes clause of an import or re-export, like Prettier's
+ * `printImportAttributes`: the keyword from the source, then the attributes
+ * as an object literal, so `bracketSpacing`, `objectWrap`, and breaking
+ * apply. A lone `type` attribute never breaks.
+ * @param {AstPath<ModuleDeclarationWithSource>} path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printImportAttributes(path, options, print) {
+	const { node } = path;
+	const clause = node.source ? getImportAttributesClause(node, options) : null;
+	if (!clause) {
+		return '';
+	}
+
+	/** @type {Doc} */
+	let attributesDoc = printObject(node, path, options, print);
+	if (isSingleTypeImportAttributes(node.attributes ?? [])) {
+		attributesDoc = removeLines(attributesDoc);
+	}
+
+	return [' ', clause.keyword, ' ', attributesDoc];
 }
 
 /**
@@ -4199,7 +4258,7 @@ function printExportDefaultDeclaration(node, path, options, print) {
 
 /**
  * Check if the only function parameter should be hugged (no extra parens)
- * @param {AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction} node - The function node
+ * @param {FunctionLikeNode} node - The function-like node
  * @returns {boolean}
  */
 function shouldHugTheOnlyFunctionParameter(node) {
@@ -4218,7 +4277,14 @@ function shouldHugTheOnlyFunctionParameter(node) {
 			(parameter.type === 'Identifier' &&
 				!!parameter.typeAnnotation &&
 				parameter.typeAnnotation.type === 'TSTypeAnnotation' &&
-				isHuggableParameterType(parameter.typeAnnotation.typeAnnotation)))
+				isHuggableParameterType(parameter.typeAnnotation.typeAnnotation)) ||
+			// `({ a, b } = {})`: a destructured parameter with a trivial default
+			(parameter.type === 'AssignmentPattern' &&
+				(parameter.left.type === 'ObjectPattern' || parameter.left.type === 'ArrayPattern') &&
+				(parameter.right.type === 'Identifier' ||
+					(parameter.right.type === 'ObjectExpression' &&
+						parameter.right.properties.length === 0) ||
+					(parameter.right.type === 'ArrayExpression' && parameter.right.elements.length === 0))))
 	);
 }
 
@@ -4262,20 +4328,35 @@ function isHuggableParameterType(node) {
 }
 
 /**
- * Print function parameters with proper formatting
- * @param {AstPath<AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction | AST.FunctionDeclaration>} path - The function path
+ * Print a parameter list like Prettier's `printFunctionParameters`, for
+ * functions, methods, TypeScript signatures, and function and constructor
+ * types. The list breaks one parameter per line (with a trailing comma under
+ * `trailingComma: "all"`) unless its only parameter hugs the parentheses.
+ * @param {AstPath<FunctionLikeNode>} path - The function-like node's path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @param {boolean} [shouldExpandParameters] - Whether the function is a hugged
  * call argument, which keeps its parameters on one line
+ * @param {boolean} [shouldPrintTypeParameters] - Print the node's type parameters before `(`
  * @returns {Doc[]}
  */
-function printFunctionParameters(path, options, print, shouldExpandParameters = false) {
+function printFunctionParameters(
+	path,
+	options,
+	print,
+	shouldExpandParameters = false,
+	shouldPrintTypeParameters = false,
+) {
 	const functionNode = path.node;
 	const parameters = getFunctionParameters(functionNode);
+	/** @type {Doc} */
+	const typeParametersDoc =
+		shouldPrintTypeParameters && functionNode.typeParameters
+			? path.call(print, 'typeParameters')
+			: '';
 
 	if (parameters.length === 0) {
-		return ['(', ')'];
+		return [typeParametersDoc, '(', ')'];
 	}
 
 	// Like Prettier, a test call's function keeps its parameters on one line
@@ -4305,10 +4386,10 @@ function printFunctionParameters(path, options, print, shouldExpandParameters = 
 	// on the call's line: breaking them would read worse than putting the
 	// whole function on a line of its own
 	if (shouldExpandParameters && !isDecoratedFunction(path)) {
-		if (willBreak(printed)) {
+		if (willBreak(typeParametersDoc) || willBreak(printed)) {
 			throw new ArgExpansionBailout();
 		}
-		return [group(['(', removeLinesForHug(printed), ')'])];
+		return [group([removeLinesForHug(typeParametersDoc), '(', removeLinesForHug(printed), ')'])];
 	}
 
 	const hasNotParameterDecorator = parameters.every(
@@ -4318,10 +4399,11 @@ function printFunctionParameters(path, options, print, shouldExpandParameters = 
 	);
 
 	if ((shouldHugParameters && hasNotParameterDecorator) || isParametersInTestCall) {
-		return ['(', ...printed, ')'];
+		return [typeParametersDoc, '(', ...printed, ')'];
 	}
 
 	return [
+		typeParametersDoc,
 		'(',
 		indent([softline, ...printed]),
 		ifBreak(shouldPrintComma(options, 'all') && !hasRestParameter(functionNode) ? ',' : ''),
@@ -4331,21 +4413,46 @@ function printFunctionParameters(path, options, print, shouldExpandParameters = 
 }
 
 /**
+ * The return type of a function-like node, without its `TSTypeAnnotation`
+ * wrapper. TypeScript signatures keep it in `typeAnnotation`.
+ * @param {FunctionLikeNode} functionNode - The function-like node
+ * @returns {AST.Node | undefined}
+ */
+function getReturnTypeNode(functionNode) {
+	const returnType =
+		/** @type {{ returnType?: AST.Node }} */ (functionNode).returnType ??
+		/** @type {{ typeAnnotation?: AST.Node }} */ (functionNode).typeAnnotation;
+	if (returnType?.type === 'TSTypeAnnotation') {
+		return /** @type {AST.TSTypeAnnotation} */ (returnType).typeAnnotation;
+	}
+	return returnType;
+}
+
+/**
  * Check whether the parameter list should be grouped separately from the return
  * type, so a breaking return type does not force the parameters to break too.
- * @param {AST.FunctionExpression | AST.ArrowFunctionExpression | AST.TSDeclareFunction | AST.FunctionDeclaration} functionNode - The function node
+ * @param {FunctionLikeNode} functionNode - The function-like node
  * @param {Doc} returnTypeDoc - The printed return type
+ * @param {AST.TSTypeParameterDeclaration | null | undefined} [typeParameters] - The
+ *   type parameters, which a class method keeps on the method rather than its value
  * @returns {boolean}
  */
-function shouldGroupFunctionParameters(functionNode, returnTypeDoc) {
-	const returnTypeNode = functionNode.returnType?.typeAnnotation;
-	const typeParameters = functionNode.typeParameters?.params;
-	if (typeParameters) {
-		if (typeParameters.length > 1) {
+function shouldGroupFunctionParameters(
+	functionNode,
+	returnTypeDoc,
+	typeParameters = functionNode.typeParameters,
+) {
+	const returnTypeNode = getReturnTypeNode(functionNode);
+	if (!returnTypeNode) {
+		return false;
+	}
+	const typeParameterList = typeParameters?.params;
+	if (typeParameterList) {
+		if (typeParameterList.length > 1) {
 			return false;
 		}
-		if (typeParameters.length === 1) {
-			const typeParameter = typeParameters[0];
+		if (typeParameterList.length === 1) {
+			const typeParameter = typeParameterList[0];
 			if (typeParameter.constraint || typeParameter.default) {
 				return false;
 			}
@@ -4354,6 +4461,21 @@ function shouldGroupFunctionParameters(functionNode, returnTypeDoc) {
 	return (
 		getFunctionParameters(functionNode).length === 1 &&
 		(isObjectType(returnTypeNode) || willBreak(returnTypeDoc))
+	);
+}
+
+/**
+ * Like Prettier, a constructor with more than one parameter that declares a
+ * parameter property (`private readonly a: string`) always breaks its
+ * parameters, one per line.
+ * @param {FunctionLikeNode} functionNode - The function-like node
+ * @returns {boolean}
+ */
+function shouldBreakFunctionParameters(functionNode) {
+	const parameters = getFunctionParameters(functionNode);
+	return (
+		parameters.length > 1 &&
+		parameters.some((parameter) => parameter.type === 'TSParameterProperty')
 	);
 }
 
@@ -4380,6 +4502,90 @@ function printFunctionSignature(node, path, options, print, shouldExpandParamete
 		return group([group(paramsPart), ...returnTypeDoc]);
 	}
 	return group([...paramsPart, ...returnTypeDoc]);
+}
+
+/**
+ * Print the function of a class or object method from its parameters on, like
+ * Prettier's `printMethodValue`: the parameters and return type as one group,
+ * then the body, or a semicolon for a bodiless (abstract, declared, or
+ * overload) method.
+ * @param {AstPath<AST.FunctionExpression>} path - The path of the method's function
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @param {AST.TSTypeParameterDeclaration | null | undefined} [typeParameters] - The
+ *   method's type parameters, which the caller prints before the function
+ * @returns {Doc[]}
+ */
+function printMethodValue(path, options, print, typeParameters = path.node.typeParameters) {
+	const node = path.node;
+	const parametersDoc = printFunctionParameters(path, options, print);
+	/** @type {Doc} */
+	const returnTypeDoc = node.returnType ? [': ', path.call(print, 'returnType')] : '';
+	/** @type {Doc[]} */
+	const parts = [
+		node.typeParameters ? path.call(print, 'typeParameters') : '',
+		group([
+			shouldBreakFunctionParameters(node)
+				? group(parametersDoc, { shouldBreak: true })
+				: shouldGroupFunctionParameters(node, returnTypeDoc, typeParameters)
+					? group(parametersDoc)
+					: parametersDoc,
+			returnTypeDoc,
+		]),
+	];
+
+	// Bodiless members terminate with a semicolon: inventing an empty body
+	// makes an abstract method concrete.
+	if (node.body) {
+		parts.push(' ', path.call(print, 'body'));
+	} else {
+		parts.push(semi(options));
+	}
+
+	return parts;
+}
+
+/**
+ * Print a function type, constructor type, call signature, or construct
+ * signature like Prettier's `printFunctionType`: the type parameters,
+ * parameters, and return type as one group.
+ * @param {AST.TSFunctionType | AST.TSConstructorType | AST.TSCallSignatureDeclaration | AST.TSConstructSignatureDeclaration} node - The node
+ * @param {AstPath<AST.TSFunctionType | AST.TSConstructorType | AST.TSCallSignatureDeclaration | AST.TSConstructSignatureDeclaration>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printFunctionType(node, path, options, print) {
+	/** @type {Doc[]} */
+	const parts = [];
+
+	// `abstract new () => T` only accepts abstract constructors
+	if (node.type === 'TSConstructorType' && node.abstract) {
+		parts.push('abstract ');
+	}
+	if (node.type === 'TSConstructorType' || node.type === 'TSConstructSignatureDeclaration') {
+		parts.push('new ');
+	}
+
+	/** @type {Doc} */
+	let parametersDoc = printFunctionParameters(path, options, print, false, true);
+
+	const isArrowType = node.type === 'TSFunctionType' || node.type === 'TSConstructorType';
+	/** @type {Doc[]} */
+	const returnTypeDoc = [];
+	if (node.typeAnnotation) {
+		returnTypeDoc.push(isArrowType ? ' => ' : ': ', path.call(print, 'typeAnnotation'));
+	} else if (isArrowType) {
+		returnTypeDoc.push(' => ');
+	}
+
+	if (shouldGroupFunctionParameters(node, returnTypeDoc)) {
+		parametersDoc = group(parametersDoc);
+	}
+
+	parts.push(parametersDoc, returnTypeDoc);
+
+	return group(parts);
 }
 
 /**
@@ -5496,136 +5702,142 @@ function printDoWhileStatement(node, path, options, print) {
 }
 
 /**
- * Print an object expression
- * @param {AST.ObjectExpression} node - The object expression node
- * @param {AstPath<AST.ObjectExpression>} path - The AST path
+ * Whether a node is the only parameter of the function holding it and hugs
+ * its parentheses. Mirrors Prettier's `shouldHugTheOnlyParameter`, for use as
+ * a `path.match` predicate on the function.
+ * @param {AST.Node} node - The possible function
+ * @param {string | null} name - The key of the parameter in `node`
+ * @returns {boolean}
+ */
+function shouldHugTheOnlyParameter(node, name) {
+	return (
+		(name === 'params' || name === 'parameters') &&
+		shouldHugTheOnlyFunctionParameter(/** @type {FunctionLikeNode} */ (node))
+	);
+}
+
+/**
+ * Whether the source has a line break between an object's `{` and its first
+ * member, which keeps the object expanded under `objectWrap: "preserve"`.
+ * @param {number} openingBraceIndex - The position of the `{`
+ * @param {AST.Node} firstMember - The first property or attribute
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {boolean}
+ */
+function hasNewLineAfterOpeningBrace(openingBraceIndex, firstMember, options) {
+	const text = /** @type {string} */ (options.originalText);
+	const firstMemberStart = options.locStart(/** @type {AST.NodeWithLocation} */ (firstMember));
+	return text.slice(openingBraceIndex, firstMemberStart).includes('\n');
+}
+
+/**
+ * Print an object literal, an object pattern, or the attributes of an import
+ * or re-export like Prettier's `printObject`. Under `objectWrap: "preserve"`
+ * (the default) an object literal stays expanded when the source has a line
+ * break between `{` and its first property; otherwise it breaks only when it
+ * doesn't fit. A pattern breaks when it destructures a nested pattern, except
+ * in a parameter list. A blank line after a property is kept.
+ * @param {AST.ObjectExpression | AST.ObjectPattern | ModuleDeclarationWithSource} node - The object node, or the declaration whose attributes to print
+ * @param {AstPath<AST.ObjectExpression | AST.ObjectPattern | ModuleDeclarationWithSource>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @returns {Doc}
  */
-function printObjectExpression(node, path, options, print) {
-	const open_brace = '{';
-	const close_brace = '}';
-	const skip_offset = 1;
-	const closing_offset = 1;
+function printObject(node, path, options, print) {
+	const parent = /** @type {AST.Node} */ (path.parent);
+	const isImportAttributes = node.type !== 'ObjectExpression' && node.type !== 'ObjectPattern';
+	const property = isImportAttributes ? 'attributes' : 'properties';
+	/** @type {AST.Node[]} */
+	const children = /** @type {Record<string, AST.Node[]>} */ (/** @type {unknown} */ (node))[
+		property
+	];
+	const openingBraceIndex = isImportAttributes
+		? /** @type {ImportAttributesClause} */ (getImportAttributesClause(node, options)).braceIndex
+		: options.locStart(/** @type {AST.NodeWithLocation} */ (node));
 
-	if (!node.properties || node.properties.length === 0) {
-		return open_brace + close_brace;
-	}
+	const shouldBreak =
+		(node.type === 'ObjectPattern' &&
+			parent.type !== 'FunctionDeclaration' &&
+			parent.type !== 'FunctionExpression' &&
+			parent.type !== 'ArrowFunctionExpression' &&
+			parent.type !== 'AssignmentPattern' &&
+			parent.type !== 'CatchClause' &&
+			node.properties.some(
+				(property) =>
+					property.type === 'Property' &&
+					(property.value.type === 'ObjectPattern' || property.value.type === 'ArrayPattern'),
+			)) ||
+		(node.type !== 'ObjectPattern' &&
+			options.objectWrap === 'preserve' &&
+			children.length > 0 &&
+			hasNewLineAfterOpeningBrace(openingBraceIndex, children[0], options));
 
-	// Check if there are blank lines between any properties
-	let hasBlankLinesBetweenProperties = false;
-	for (let i = 0; i < node.properties.length - 1; i++) {
-		const current = node.properties[i];
-		const next = node.properties[i + 1];
-		if (current && next && getBlankLinesBetweenNodes(current, next) > 0) {
-			hasBlankLinesBetweenProperties = true;
-			break;
+	/** @type {Doc[]} */
+	let separatorParts = [];
+	/** @type {Doc[]} */
+	const parts = /** @type {AstPath} */ (path).map((childPath) => {
+		const result = [...separatorParts, print(childPath)];
+		separatorParts = [',', line];
+		if (isNextLineEmpty(/** @type {AST.Node} */ (childPath.node), options)) {
+			separatorParts.push(hardline);
 		}
-	}
+		return result;
+	}, property);
 
-	// Check if object was originally multi-line
-	let isOriginallyMultiLine = false;
-	if (node.loc && node.loc.start && node.loc.end) {
-		isOriginallyMultiLine = node.loc.start.line !== node.loc.end.line;
-	}
+	const canHaveTrailingSeparator = children[children.length - 1]?.type !== 'RestElement';
 
-	// Also check for blank lines at edges (after { or before })
-	// If the original code has blank lines anywhere in the object, format multi-line
-	let hasAnyBlankLines = hasBlankLinesBetweenProperties;
-	if (!hasAnyBlankLines && node.properties.length > 0 && options.originalText) {
-		const firstProp = node.properties[0];
-		const lastProp = node.properties[node.properties.length - 1];
-
-		// Check for blank line after opening brace (before first property)
-		if (firstProp && firstProp.loc && node.loc && node.loc.start) {
-			hasAnyBlankLines =
-				getBlankLinesBetweenPositions(
-					/** @type {acorn.Position} */ (node.loc.start).offset(skip_offset),
-					firstProp.loc.start,
-				) > 0;
+	/** @type {Doc[]} */
+	const annotationParts = [];
+	if (node.type === 'ObjectPattern') {
+		if (/** @type {{ optional?: boolean }} */ (node).optional) {
+			annotationParts.push('?');
 		}
-
-		// Check for blank line before closing brace (after last property)
-		if (!hasAnyBlankLines && lastProp && lastProp.loc && node.loc && node.loc.end) {
-			hasAnyBlankLines =
-				getBlankLinesBetweenPositions(
-					lastProp.loc.end,
-					/** @type {acorn.Position} */ (node.loc.end).offset(-closing_offset),
-				) > 0; // Skip closing delimiter(s): either '}' or '})'.
+		if (node.typeAnnotation) {
+			annotationParts.push(': ', path.call(print, 'typeAnnotation'));
 		}
-	}
-
-	// Use AST builders and respect trailing commas
-	const properties = path.map(print, 'properties');
-	const shouldUseTrailingComma = options.trailingComma !== 'none' && properties.length > 0;
-
-	// For objects that were originally inline (single-line) and don't have blank lines,
-	// allow inline formatting if it fits printWidth
-	// This handles cases like `const T0: t17 = { x: 1 };` staying inline when it fits
-	// The group() will automatically break to multi-line if it doesn't fit
-	if (!hasAnyBlankLines && !isOriginallyMultiLine) {
-		const separator = [',', line];
-		const propertyDoc = join(separator, properties);
-		const spacing = options.bracketSpacing === false ? softline : line;
-		const trailingDoc = shouldUseTrailingComma ? ifBreak(',', '') : '';
-
-		return group([open_brace, indent([spacing, propertyDoc, trailingDoc]), spacing, close_brace]);
 	}
 
 	/** @type {Doc[]} */
-	let content = [hardline];
-	if (properties.length > 0) {
-		// Build properties with blank line preservation
-		/** @type {Doc[]} */
-		const propertyParts = [];
-		for (let i = 0; i < properties.length; i++) {
-			if (i > 0) {
-				propertyParts.push(',');
-
-				// Check for blank lines between properties and preserve them
-				// Need to account for trailing comments on previous property and
-				// leading comments on current property
-				const prevProp = node.properties[i - 1];
-				const currentProp = node.properties[i];
-
-				// Determine the source node (end of previous property or its trailing comments)
-				/** @type {AST.Property | AST.SpreadElement | AST.Comment} */
-				let sourceNode = prevProp;
-				if (prevProp && prevProp.trailingComments && prevProp.trailingComments.length > 0) {
-					sourceNode = prevProp.trailingComments[prevProp.trailingComments.length - 1];
-				}
-
-				// Determine the target node (start of current property or its leading comments)
-				/** @type {AST.Property | AST.SpreadElement | AST.Comment} */
-				let targetNode = currentProp;
-				if (currentProp && currentProp.leadingComments && currentProp.leadingComments.length > 0) {
-					targetNode = currentProp.leadingComments[0];
-				}
-
-				if (sourceNode && targetNode && getBlankLinesBetweenNodes(sourceNode, targetNode) > 0) {
-					propertyParts.push(hardline);
-					propertyParts.push(hardline); // Two hardlines = blank line
-				} else {
-					propertyParts.push(hardline);
-				}
-			}
-			propertyParts.push(properties[i]);
-		}
-
-		content.push(...propertyParts);
-		if (shouldUseTrailingComma) {
-			content.push(',');
-		}
-		content.push(hardline);
+	let content;
+	if (parts.length === 0) {
+		content = [
+			group([
+				'{',
+				printDanglingCommentsInList(/** @type {AST.NodeWithMaybeComments} */ (node)),
+				'}',
+			]),
+			...annotationParts,
+		];
+	} else {
+		const spacing = options.bracketSpacing === false ? softline : line;
+		content = [
+			'{',
+			indent([spacing, ...parts]),
+			canHaveTrailingSeparator && shouldPrintComma(options) ? ifBreak(',') : '',
+			spacing,
+			'}',
+			...annotationParts,
+		];
 	}
 
-	return group([
-		open_brace,
-		indent(content.slice(0, -1)),
-		content[content.length - 1],
-		close_brace,
-	]);
+	// A pattern that is the only, hugged parameter breaks with the parameter
+	// list rather than on its own, and `printAssignment` groups the left side
+	// of an assignment when its layout needs it (`break-lhs` doesn't).
+	if (
+		path.match(
+			(node) => node.type === 'ObjectPattern' && getDecorators(node).length === 0,
+			shouldHugTheOnlyParameter,
+		) ||
+		(!shouldBreak &&
+			path.match(
+				(node) => node.type === 'ObjectPattern',
+				(node) => node.type === 'AssignmentExpression' || node.type === 'VariableDeclarator',
+			))
+	) {
+		return content;
+	}
+
+	return group(content, { shouldBreak });
 }
 
 /**
@@ -6005,41 +6217,23 @@ function printMethodDefinition(node, path, options, print) {
 		parts.push('?');
 	}
 
-	// Add TypeScript generics if present (always on the method node, not on value)
+	// TypeScript generics live on the method node, not on its value
 	if (node.typeParameters) {
-		const typeParams = path.call(print, 'typeParameters');
-		if (Array.isArray(typeParams)) {
-			parts.push(...typeParams);
-		} else {
-			parts.push(typeParams);
-		}
+		parts.push(path.call(print, 'typeParameters'));
 	}
 
-	// Parameters - use proper path.map for TypeScript support
-	parts.push('(');
-	if (node.value && node.value.params && node.value.params.length > 0) {
-		const params = path.map(print, 'value', 'params');
-		for (let i = 0; i < params.length; i++) {
-			if (i > 0) parts.push(', ');
-			parts.push(params[i]);
-		}
-	}
-	parts.push(')');
-
-	// Return type
-	if (node.value && node.value.returnType) {
-		parts.push(': ', path.call(print, 'value', 'returnType'));
-	}
-
-	// Method body. Bodiless members (abstract, declared, overload signatures)
-	// terminate with a semicolon — inventing an empty body makes an abstract
-	// method concrete.
-	if (node.value && node.value.body) {
-		parts.push(' ');
-		parts.push(path.call(print, 'value', 'body'));
-	} else {
-		parts.push(semi(options));
-	}
+	parts.push(
+		...path.call(
+			(valuePath) =>
+				printMethodValue(
+					/** @type {AstPath<AST.FunctionExpression>} */ (valuePath),
+					options,
+					print,
+					node.typeParameters,
+				),
+			'value',
+		),
+	);
 
 	return parts;
 }
@@ -6370,15 +6564,17 @@ function printTSInterfaceBody(node, path, options, print) {
  * @param {'body' | 'members'} key - The property that holds the members
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
+ * @param {Doc} [separator] - The line between members: `line` lets a type
+ *   literal stay on one line
  * @returns {Doc[]}
  */
-function printTypeMembers(members, path, key, options, print) {
+function printTypeMembers(members, path, key, options, print, separator = hardline) {
 	const isInterface = path.node.type === 'TSInterfaceBody';
 	/** @type {Doc[]} */
 	const parts = [];
 	path.each((memberPath, index) => {
 		if (index > 0) {
-			parts.push(hardline);
+			parts.push(separator);
 			if (shouldAddBlankLine(members[index - 1], members[index], options)) {
 				parts.push(hardline);
 			}
@@ -6505,6 +6701,12 @@ function printTSTypeAliasDeclaration(node, path, options, print) {
 function printTSUnionType(node, path, print, args) {
 	const types = path.map(print, 'types');
 	const inlineDoc = join(' | ', types);
+
+	// `{ ... } | null` stays inline, like Prettier
+	if (shouldHugUnionType(node)) {
+		return inlineDoc;
+	}
+
 	const multilineDoc = [
 		'| ',
 		join(
@@ -6512,9 +6714,9 @@ function printTSUnionType(node, path, print, args) {
 			types.map((typeDoc) => align(2, typeDoc)),
 		),
 	];
-	const shouldBreak = node.types.some(
-		(typeNode, index) => !wasOriginallySingleLine(typeNode) || willBreak(types[index]),
-	);
+	// Like Prettier, only a member that must break (such as an object type kept
+	// expanded by `objectWrap`) breaks the union, not how the source wrapped it
+	const shouldBreak = types.some((typeDoc) => willBreak(typeDoc));
 
 	if (args?.preferInlineSimpleUnionType && !types.some((typeDoc) => willBreak(typeDoc))) {
 		return inlineDoc;
@@ -6677,7 +6879,27 @@ function printTSTypeParameter(node, path, options, print) {
 }
 
 /**
- * Print TypeScript type parameter instantiation (<string, number>)
+ * Whether a type can stay against the brackets around it. Mirrors Prettier's
+ * `shouldHugType`.
+ * @param {AST.Node} node - The type node
+ * @returns {boolean}
+ */
+function shouldHugType(node) {
+	if (isSimpleType(node) || isObjectType(node)) {
+		return true;
+	}
+	if (node.type === 'TSUnionType') {
+		return shouldHugUnionType(/** @type {AST.TSUnionType} */ (node));
+	}
+	return false;
+}
+
+/**
+ * Print TypeScript type arguments (`<string, number>`) like Prettier's
+ * `printTypeParameters`. A lone argument that hugs (a keyword type, a type
+ * name without type arguments, an object type) stays inline with no group, so
+ * the brackets never break around it. Other lists break one argument per line,
+ * without a trailing comma.
  * @param {AST.TSTypeParameterInstantiation} node - The type parameter instantiation node
  * @param {AstPath<AST.TSTypeParameterInstantiation>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
@@ -6690,39 +6912,44 @@ function printTSTypeParameterInstantiation(node, path, options, print) {
 	}
 
 	const paramList = path.map(print, 'params');
+	const text = /** @type {string} */ (options.originalText);
 
-	// Hug a lone object-type argument against the brackets: Foo<{ ... }>
-	if (
+	// The type of an arrow function variable (`const f: Fn<A> = () => {}`)
+	// breaks its arguments like any other list, unless it's one object type.
+	const grandparent = /** @type {AST.Node | null} */ (path.getParentNode(1));
+	const identifier = /** @type {AST.Node | null} */ (path.getParentNode(2));
+	const declarator = /** @type {AST.Node | null} */ (path.getParentNode(3));
+	const isArrowFunctionVariable =
+		!(node.params.length === 1 && isObjectType(node.params[0])) &&
+		grandparent?.type === 'TSTypeAnnotation' &&
+		identifier?.type === 'Identifier' &&
+		identifier.typeAnnotation === grandparent &&
+		declarator?.type === 'VariableDeclarator' &&
+		declarator.init?.type === 'ArrowFunctionExpression';
+
+	const shouldInline =
+		!isArrowFunctionVariable &&
 		node.params.length === 1 &&
-		isObjectType(node.params[0]) &&
-		!hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (node.params[0]))
-	) {
-		return ['<', paramList[0], '>'];
+		shouldHugType(node.params[0]) &&
+		!node.params.some((param) => {
+			const { leadingComments = [], trailingComments = [] } =
+				/** @type {AST.NodeWithMaybeComments} */ (param);
+			const comments = [...leadingComments, ...trailingComments];
+			return (
+				comments.length > 0 &&
+				(comments.some((comment) => comment.type === 'Line') ||
+					hasNewline(
+						text,
+						/** @type {AST.CommentWithLocation} */ (comments[comments.length - 1]).end,
+					))
+			);
+		});
+
+	if (shouldInline) {
+		return ['<', join(', ', paramList), '>'];
 	}
 
-	// Check if any param has line breaks (e.g., contains object types)
-	const hasBreakingParam = paramList.some((param) => willBreak(param));
-
-	// If any param breaks, use the breaking version with proper indentation
-	if (hasBreakingParam) {
-		// Build breaking version: <\n  T,\n  U\n>
-		const breakingParts = [];
-		for (let i = 0; i < paramList.length; i++) {
-			if (i > 0) breakingParts.push(',', hardline);
-			breakingParts.push(paramList[i]);
-		}
-		return group(['<', indent([hardline, ...breakingParts]), hardline, '>']);
-	}
-
-	// Otherwise use group to allow natural breaking
-	/** @type {Doc[]} */
-	const parts = [];
-	for (let i = 0; i < paramList.length; i++) {
-		if (i > 0) parts.push(',', line);
-		parts.push(paramList[i]);
-	}
-
-	return group(['<', indent([softline, ...parts]), softline, '>']);
+	return group(['<', indent([softline, join([',', line], paramList)]), softline, '>']);
 }
 
 /**
@@ -7355,146 +7582,111 @@ function shouldAddBlankLine(currentNode, nextNode, options) {
 }
 
 /**
- * Print an object pattern (destructuring)
- * @param {AST.ObjectPattern} node - The object pattern node
- * @param {AstPath<AST.ObjectPattern>} path - The AST path
+ * Print an array literal, array pattern, or tuple type like Prettier's
+ * `printArray`. The array breaks only when it doesn't fit, or when every
+ * element is an object (or every element an array) with more than one entry.
+ * A blank line between elements is kept only in a broken array, and
+ * number-only array literals pack as many elements per line as fit.
+ * @param {AST.ArrayExpression | AST.ArrayPattern | AST.TSTupleType} node - The node
+ * @param {AstPath<AST.ArrayExpression | AST.ArrayPattern | AST.TSTupleType>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @returns {Doc}
  */
-function printObjectPattern(node, path, options, print) {
-	const propList = path.map(print, 'properties');
-	if (propList.length === 0) {
-		if (node.typeAnnotation) {
-			return ['{}', ': ', path.call(print, 'typeAnnotation')];
-		}
-		return '{}';
-	}
+function printArray(node, path, options, print) {
+	/** @type {Doc[]} */
+	const parts = [];
+	const elementsProperty = node.type === 'TSTupleType' ? 'elementTypes' : 'elements';
+	/** @type {Array<AST.Node | null>} */
+	const elements =
+		/** @type {Record<string, Array<AST.Node | null> | undefined>} */ (
+			/** @type {unknown} */ (node)
+		)[elementsProperty] ?? [];
 
-	const allowTrailingComma =
-		node.properties &&
-		node.properties.length > 0 &&
-		node.properties[node.properties.length - 1].type !== 'RestElement';
-
-	const trailingCommaDoc =
-		allowTrailingComma && options.trailingComma !== 'none' ? ifBreak(',', '') : '';
-
-	// When the pattern has a type annotation, we need to format them together
-	// so they break at the same time
-	if (node.typeAnnotation) {
-		const typeAnn = node.typeAnnotation.typeAnnotation;
-
-		// If it's a TSTypeLiteral, format both object and type
-		if (typeAnn && typeAnn.type === 'TSTypeLiteral') {
-			const typeMembers = path.call(
-				(path) => path.map(print, 'members'),
-				'typeAnnotation',
-				'typeAnnotation',
-			);
-
-			// Each member prints its own `;` (see `printTypeMemberSemicolon`)
-			const typeMemberDocs = join(line, typeMembers);
-
-			// Don't wrap in group - let the outer params group control breaking
-			const objectDoc = [
-				'{',
-				indent([line, join([',', line], propList), trailingCommaDoc]),
-				line,
-				'}',
-			];
-			const typeDoc =
-				typeMembers.length === 0 ? '{}' : ['{', indent([line, typeMemberDocs]), line, '}'];
-
-			// Return combined
-			return [objectDoc, ': ', typeDoc];
-		}
-
-		// For other type annotations, just concatenate
-		const objectContent = group([
-			'{',
-			indent([line, join([',', line], propList), trailingCommaDoc]),
-			line,
-			'}',
-		]);
-		return [objectContent, ': ', path.call(print, 'typeAnnotation')];
-	}
-
-	// No type annotation - just format the object pattern
-	const objectContent = group([
-		'{',
-		indent([line, join([',', line], propList), trailingCommaDoc]),
-		line,
-		'}',
-	]);
-
-	return objectContent;
-}
-
-/**
- * Print an array literal like Prettier's `printArray`. The array breaks only
- * when it doesn't fit, or when every element is an object (or every element
- * an array) with more than one entry. A blank line between elements is kept
- * only in a broken array, and number-only arrays pack as many elements per
- * line as fit.
- * @param {AST.ArrayExpression} node - The array expression node
- * @param {AstPath<AST.ArrayExpression>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc}
- */
-function printArrayExpression(node, path, options, print) {
-	const { elements } = node;
 	if (elements.length === 0) {
-		return '[]';
+		parts.push(
+			group([
+				'[',
+				printDanglingCommentsInList(/** @type {AST.NodeWithMaybeComments} */ (node)),
+				']',
+			]),
+		);
+	} else {
+		const lastElement = elements[elements.length - 1];
+		const canHaveTrailingComma = lastElement?.type !== 'RestElement';
+
+		// A trailing hole (`[1, ,]`) is an array slot, and its comma is what
+		// creates it: dropping that comma shortens the array. It prints in
+		// every layout and regardless of `trailingComma`.
+		const needsForcedTrailingComma = lastElement === null;
+		const groupId = Symbol('array');
+
+		const shouldBreak =
+			elements.length > 1 &&
+			elements.every((element, index) => {
+				if (
+					!element ||
+					(element.type !== 'ArrayExpression' && element.type !== 'ObjectExpression')
+				) {
+					return false;
+				}
+
+				const nextElement = elements[index + 1];
+				if (nextElement && nextElement.type !== element.type) {
+					return false;
+				}
+
+				const items = element.type === 'ArrayExpression' ? element.elements : element.properties;
+				return items.length > 1;
+			});
+
+		const shouldUseConciseFormatting =
+			node.type === 'ArrayExpression' && isConciselyPrintedArray(node, options);
+
+		/** @type {Doc} */
+		const trailingComma = !canHaveTrailingComma
+			? ''
+			: needsForcedTrailingComma
+				? ','
+				: !shouldPrintComma(options)
+					? ''
+					: shouldUseConciseFormatting
+						? ifBreak(',', '', { groupId })
+						: ifBreak(',');
+
+		parts.push(
+			group(
+				[
+					'[',
+					indent([
+						softline,
+						shouldUseConciseFormatting
+							? printArrayElementsConcisely(
+									/** @type {AstPath<AST.ArrayExpression>} */ (path),
+									options,
+									print,
+									trailingComma,
+								)
+							: [printArrayElements(path, options, print, elementsProperty), trailingComma],
+					]),
+					softline,
+					']',
+				],
+				{ shouldBreak, id: groupId },
+			),
+		);
 	}
 
-	// A trailing hole (`[1, ,]`) is an array slot, and its comma is what
-	// creates it: dropping that comma shortens the array. It prints in
-	// every layout and regardless of `trailingComma`.
-	const needsForcedTrailingComma = elements[elements.length - 1] === null;
-	const groupId = Symbol('array');
+	if (node.type === 'ArrayPattern') {
+		if (/** @type {{ optional?: boolean }} */ (node).optional) {
+			parts.push('?');
+		}
+		if (node.typeAnnotation) {
+			parts.push(': ', path.call(print, 'typeAnnotation'));
+		}
+	}
 
-	const shouldBreak =
-		elements.length > 1 &&
-		elements.every((element, index) => {
-			if (!element || (element.type !== 'ArrayExpression' && element.type !== 'ObjectExpression')) {
-				return false;
-			}
-
-			const nextElement = elements[index + 1];
-			if (nextElement && nextElement.type !== element.type) {
-				return false;
-			}
-
-			const items = element.type === 'ArrayExpression' ? element.elements : element.properties;
-			return items.length > 1;
-		});
-
-	const shouldUseConciseFormatting = isConciselyPrintedArray(node, options);
-
-	/** @type {Doc} */
-	const trailingComma = needsForcedTrailingComma
-		? ','
-		: options.trailingComma === 'none'
-			? ''
-			: shouldUseConciseFormatting
-				? ifBreak(',', '', { groupId })
-				: ifBreak(',');
-
-	return group(
-		[
-			'[',
-			indent([
-				softline,
-				shouldUseConciseFormatting
-					? printArrayElementsConcisely(path, options, print, trailingComma)
-					: [printArrayElements(path, options, print), trailingComma],
-			]),
-			softline,
-			']',
-		],
-		{ shouldBreak, id: groupId },
-	);
+	return parts;
 }
 
 /**
@@ -7556,13 +7748,17 @@ function isLineAfterElementEmpty(element, options) {
 /**
  * Print array elements separated by `line`, keeping a blank line after an
  * element as a `softline` that only shows when the array breaks
- * @param {AstPath<AST.ArrayExpression>} path - The AST path
+ * @param {AstPath<AST.ArrayExpression | AST.ArrayPattern | AST.TSTupleType>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
+ * @param {'elements' | 'elementTypes'} elementsProperty - The key of the elements
  * @returns {Doc[]}
  */
-function printArrayElements(path, options, print) {
-	const { elements } = path.node;
+function printArrayElements(path, options, print, elementsProperty) {
+	/** @type {Array<AST.Node | null>} */
+	const elements = /** @type {Record<string, Array<AST.Node | null>>} */ (
+		/** @type {unknown} */ (path.node)
+	)[elementsProperty];
 	/** @type {Doc[]} */
 	const parts = [];
 
@@ -7573,7 +7769,7 @@ function printArrayElements(path, options, print) {
 		if (index < elements.length - 1) {
 			parts.push([',', line, element && isLineAfterElementEmpty(element, options) ? softline : '']);
 		}
-	}, 'elements');
+	}, elementsProperty);
 
 	return parts;
 }
@@ -7612,38 +7808,6 @@ function printArrayElementsConcisely(path, options, print, trailingComma) {
 	}, 'elements');
 
 	return fill(parts);
-}
-
-/**
- * Print an array pattern (destructuring)
- * @param {AST.ArrayPattern} node - The array pattern node
- * @param {AstPath<AST.ArrayPattern>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
- */
-function printArrayPattern(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = [];
-	parts.push('[');
-	const elementList = path.map(print, 'elements');
-	for (let i = 0; i < elementList.length; i++) {
-		if (i > 0) parts.push(', ');
-		parts.push(elementList[i]);
-	}
-	// A trailing elision (`[a, ,]`) advances the iterator one more step; its
-	// comma is the only thing that marks it.
-	if (node.elements[node.elements.length - 1] === null) {
-		parts.push(',');
-	}
-	parts.push(']');
-
-	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
-
-	return parts;
 }
 
 /**
@@ -8484,44 +8648,19 @@ function printProperty(node, path, options, print) {
 		return path.call(print, 'key');
 	}
 
-	// Handle getter/setter methods
-	if (node.kind === 'get' || node.kind === 'set') {
+	// Getters, setters, and method shorthand (`increment() {}`) print like
+	// class methods
+	if (
+		(node.kind === 'get' || node.kind === 'set' || node.method) &&
+		node.value.type === 'FunctionExpression'
+	) {
+		/** @type {Doc[]} */
 		const methodParts = [];
 		const funcValue = /** @type {AST.FunctionExpression} */ (node.value);
 
-		// Add get/set keyword
-		methodParts.push(node.kind, ' ');
-
-		methodParts.push(...printKey(node, path, options, print));
-
-		// Print parameters by calling into the value path
-		const paramsPart = path.call(
-			(valuePath) =>
-				printFunctionParameters(
-					/** @type {Parameters<typeof printFunctionParameters>[0]} */ (valuePath),
-					options,
-					print,
-				),
-			'value',
-		);
-		methodParts.push(group(paramsPart));
-
-		// Handle return type annotation
-		if (funcValue.returnType) {
-			methodParts.push(': ', path.call(print, 'value', 'returnType'));
-		}
-
-		methodParts.push(' ', path.call(print, 'value', 'body'));
-		return methodParts;
-	}
-
-	// Handle method shorthand: increment() {} instead of increment: function() {}
-	if (node.method && node.value.type === 'FunctionExpression') {
-		const methodParts = [];
-		const funcValue = /** @type {AST.FunctionExpression} */ (node.value);
-
-		// Handle async and generator
-		if (funcValue.async) {
+		if (node.kind === 'get' || node.kind === 'set') {
+			methodParts.push(node.kind, ' ');
+		} else if (funcValue.async) {
 			methodParts.push('async ');
 		}
 
@@ -8530,30 +8669,17 @@ function printProperty(node, path, options, print) {
 		}
 
 		methodParts.push(...printKey(node, path, options, print));
-
-		// Handle type parameters (generics)
-		if (funcValue.typeParameters) {
-			methodParts.push(path.call(print, 'value', 'typeParameters'));
-		}
-
-		// Print parameters by calling into the value path
-		const paramsPart = path.call(
-			(valuePath) =>
-				printFunctionParameters(
-					/** @type {Parameters<typeof printFunctionParameters>[0]} */ (valuePath),
-					options,
-					print,
-				),
-			'value',
+		methodParts.push(
+			...path.call(
+				(valuePath) =>
+					printMethodValue(
+						/** @type {AstPath<AST.FunctionExpression>} */ (valuePath),
+						options,
+						print,
+					),
+				'value',
+			),
 		);
-		methodParts.push(group(paramsPart));
-
-		// Handle return type annotation
-		if (funcValue.returnType) {
-			methodParts.push(': ', path.call(print, 'value', 'returnType'));
-		}
-
-		methodParts.push(' ', path.call(print, 'value', 'body'));
 		return methodParts;
 	}
 
@@ -8598,26 +8724,37 @@ function printTSTypeLiteral(node, path, options, print) {
 		return printEmptyMemberList(node);
 	}
 
-	// Each member prints its own `;` (see `printTypeMemberSemicolon`)
-	const inlineDoc = group(['{', indent([line, join(line, path.map(print, 'members'))]), line, '}']);
+	// Each member prints its own `;` (see `printTypeMemberSemicolon`), and
+	// `line` separates them, so the literal can stay on one line
+	const members = printTypeMembers(node.members, path, 'members', options, print, line);
 
-	const multilineDoc = group([
-		'{',
-		indent([hardline, printTypeMembers(node.members, path, 'members', options, print)]),
-		hardline,
-		'}',
-	]);
+	// Like Prettier, under `objectWrap: "preserve"` a type literal stays
+	// expanded when the source has a line break between `{` and its first
+	// member; otherwise it breaks only when it doesn't fit.
+	const shouldBreak =
+		options.objectWrap === 'preserve' &&
+		hasNewLineAfterOpeningBrace(
+			options.locStart(/** @type {AST.NodeWithLocation} */ (node)),
+			node.members[0],
+			options,
+		);
+	const spacing = options.bracketSpacing === false ? softline : line;
+	const content = ['{', indent([spacing, ...members]), spacing, '}'];
 
-	if (!wasOriginallySingleLine(node)) {
-		// A hardline-first conditionalGroup always picks that state (fits()
-		// short-circuits to true on hardlines) while hiding the hardlines from
-		// enclosing groups' break propagation — ancestors then stay flat and
-		// print following siblings past printWidth. The multiline doc alone is
-		// equivalent and propagates its breaks correctly.
-		return multilineDoc;
+	// The type of a hugged only parameter breaks with the parameter list:
+	// `({ a, b }: { a: A; b: B })` breaks both braces together.
+	if (
+		path.match(
+			() => true,
+			(node, name) => name === 'typeAnnotation',
+			(node, name) => name === 'typeAnnotation',
+			shouldHugTheOnlyParameter,
+		)
+	) {
+		return content;
 	}
 
-	return conditionalGroup([inlineDoc, multilineDoc]);
+	return group(content, { shouldBreak });
 }
 
 /**
@@ -8663,7 +8800,7 @@ function printTSPropertySignature(node, path, options, print) {
  * @param {AstPath<AST.TSMethodSignature>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
+ * @returns {Doc}
  */
 function printTSMethodSignature(node, path, options, print) {
 	/** @type {Doc[]} */
@@ -8689,113 +8826,19 @@ function printTSMethodSignature(node, path, options, print) {
 		parts.push('?');
 	}
 
-	// Add TypeScript generics/type parameters if present
-	if (node.typeParameters) {
-		const typeParams = path.call(print, 'typeParameters');
-		if (Array.isArray(typeParams)) {
-			parts.push(...typeParams);
-		} else {
-			parts.push(typeParams);
-		}
-	}
-
-	// Print parameters - use 'parameters' property for TypeScript signature nodes
-	parts.push('(');
-	if (node.parameters && node.parameters.length > 0) {
-		const params = path.map(print, 'parameters');
-		for (let i = 0; i < params.length; i++) {
-			if (i > 0) parts.push(', ');
-			parts.push(params[i]);
-		}
-	}
-	parts.push(')');
-
-	// Return type annotation
+	// Type parameters, parameters, and return type, like Prettier's
+	// `printMethodSignature`
+	const parametersDoc = printFunctionParameters(path, options, print, false, true);
+	/** @type {Doc} */
+	const returnTypeDoc = node.typeAnnotation ? [': ', path.call(print, 'typeAnnotation')] : '';
+	parts.push(
+		shouldGroupFunctionParameters(node, returnTypeDoc) ? group(parametersDoc) : parametersDoc,
+	);
 	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
+		parts.push(group(returnTypeDoc));
 	}
 
-	return parts;
-}
-
-/**
- * Print a TypeScript call signature in an interface
- * @param {AST.TSCallSignatureDeclaration} node - The call signature node
- * @param {AstPath<AST.TSCallSignatureDeclaration>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
- */
-function printTSCallSignatureDeclaration(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = [];
-
-	// Add TypeScript generics/type parameters if present
-	if (node.typeParameters) {
-		const type_params = path.call(print, 'typeParameters');
-		if (Array.isArray(type_params)) {
-			parts.push(...type_params);
-		} else {
-			parts.push(type_params);
-		}
-	}
-
-	parts.push('(');
-	if (node.parameters && node.parameters.length > 0) {
-		const params = path.map(print, 'parameters');
-		for (let i = 0; i < params.length; i++) {
-			if (i > 0) parts.push(', ');
-			parts.push(params[i]);
-		}
-	}
-	parts.push(')');
-
-	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
-
-	return parts;
-}
-
-/**
- * Print a TypeScript construct signature in an interface or type literal
- * @param {AST.TSConstructSignatureDeclaration} node - The construct signature node
- * @param {AstPath<AST.TSConstructSignatureDeclaration>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
- */
-function printTSConstructSignatureDeclaration(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = ['new '];
-
-	if (node.typeParameters) {
-		const type_params = path.call(print, 'typeParameters');
-		if (Array.isArray(type_params)) {
-			parts.push(...type_params);
-		} else {
-			parts.push(type_params);
-		}
-	}
-
-	parts.push('(');
-	if (node.parameters && node.parameters.length > 0) {
-		const params = path.map(print, 'parameters');
-		for (let i = 0; i < params.length; i++) {
-			if (i > 0) parts.push(', ');
-			parts.push(params[i]);
-		}
-	}
-	parts.push(')');
-
-	if (node.typeAnnotation) {
-		parts.push(': ');
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
-
-	return parts;
+	return group(parts);
 }
 
 /**
@@ -8822,26 +8865,6 @@ function printTSTypeReference(node, path, options, print) {
 		parts.push(path.call(print, 'typeParameters'));
 	}
 
-	return parts;
-}
-
-/**
- * Print a TypeScript tuple type
- * @param {AST.TSTupleType} node - The tuple type node
- * @param {AstPath<AST.TSTupleType>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
- */
-function printTSTupleType(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = ['['];
-	const elements = node.elementTypes ? path.map(print, 'elementTypes') : [];
-	for (let i = 0; i < elements.length; i++) {
-		if (i > 0) parts.push(', ');
-		parts.push(elements[i]);
-	}
-	parts.push(']');
 	return parts;
 }
 
@@ -8905,42 +8928,6 @@ function printTSIndexSignature(node, path, options, print) {
 }
 
 /**
- * Print a TypeScript constructor type
- * @param {AST.TSConstructorType} node - The constructor type node
- * @param {AstPath<AST.TSConstructorType>} path - The AST path
- * @param {TsrxFormatOptions} options - Prettier options
- * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
- */
-function printTSConstructorType(node, path, options, print) {
-	/** @type {Doc[]} */
-	const parts = [];
-	// `abstract new () => T` only accepts abstract constructors
-	if (node.abstract) {
-		parts.push('abstract ');
-	}
-	parts.push('new ');
-	if (node.typeParameters) {
-		parts.push(path.call(print, 'typeParameters'));
-	}
-	parts.push('(');
-	const hasParameters = Array.isArray(node.parameters) && node.parameters.length > 0;
-	if (hasParameters) {
-		const params = path.map(print, 'parameters');
-		for (let i = 0; i < params.length; i++) {
-			if (i > 0) parts.push(', ');
-			parts.push(params[i]);
-		}
-	}
-	parts.push(')');
-	parts.push(' => ');
-	if (node.typeAnnotation) {
-		parts.push(path.call(print, 'typeAnnotation'));
-	}
-	return parts;
-}
-
-/**
  * Print a TypeScript conditional type
  * @param {AST.TSConditionalType} node - The conditional type node
  * @param {AstPath<AST.TSConditionalType>} path - The AST path
@@ -8973,46 +8960,75 @@ function printTSConditionalType(node, path, options, print) {
  * @returns {Doc[] | Doc}
  */
 function printTSMappedType(node, path, options, print) {
-	const readonlyMod =
-		node.readonly === true || node.readonly === '+'
-			? 'readonly '
-			: node.readonly === '-'
-				? '-readonly '
-				: '';
+	const text = /** @type {string} */ (options.originalText);
 
-	let optionalMod = '';
-	if (node.optional === true || node.optional === '+') {
-		optionalMod = '?';
-	} else if (node.optional === '-') {
-		optionalMod = '-?';
+	// Like Prettier, under `objectWrap: "preserve"` a mapped type stays
+	// expanded when the source has a line break after its `{`
+	let shouldBreak = false;
+	if (options.objectWrap === 'preserve') {
+		const start = options.locStart(/** @type {AST.NodeWithLocation} */ (node)) + 1;
+		shouldBreak = text.slice(start, skipWhitespaceAndComments(text, start)).includes('\n');
 	}
 
-	/** @type {Doc[]} */
-	const innerParts = [];
+	/**
+	 * @param {boolean | '+' | '-' | undefined} token
+	 * @param {string} keyword
+	 * @returns {string}
+	 */
+	const printModifier = (token, keyword) =>
+		token === '+' || token === '-' ? token + keyword : keyword;
+
 	const typeParam = node.typeParameter;
-	innerParts.push('[');
-	if (typeParam) {
-		// name
-		innerParts.push(typeParam.name);
-		innerParts.push(' in ');
-		if (typeParam.constraint) {
-			innerParts.push(path.call(print, 'typeParameter', 'constraint'));
-		} else {
-			innerParts.push(path.call(print, 'typeParameter'));
-		}
-		if (node.nameType) {
-			innerParts.push(' as ');
-			innerParts.push(path.call(print, 'nameType'));
-		}
-	}
-	innerParts.push(']');
-	innerParts.push(optionalMod);
-	if (node.typeAnnotation) {
-		innerParts.push(': ');
-		innerParts.push(path.call(print, 'typeAnnotation'));
+	const spacing = options.bracketSpacing === false ? softline : line;
+
+	// A comment after `{` attaches to the type parameter, whose name this
+	// printer prints directly, so print it here, like Prettier prints the
+	// mapped type's dangling comments
+	/** @type {Doc[]} */
+	const commentsDoc = [];
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (typeParam).leadingComments ?? [];
+	if (comments.length > 0) {
+		const printed = comments.map(printCommentText);
+		const lastComment = /** @type {AST.CommentWithLocation} */ (comments[comments.length - 1]);
+		commentsDoc.push(
+			...printed.slice(0, -1).map((comment) => [comment, hardline]),
+			group([
+				printed[printed.length - 1],
+				lastComment.type === 'Line' || hasNewline(text, lastComment.end) ? hardline : line,
+			]),
+		);
 	}
 
-	return group(['{ ', readonlyMod, innerParts, ' }']);
+	return group(
+		[
+			'{',
+			indent([
+				spacing,
+				...commentsDoc,
+				node.readonly ? [printModifier(node.readonly, 'readonly'), ' '] : '',
+				group([
+					'[',
+					indent([
+						softline,
+						typeParam.name,
+						' in ',
+						typeParam.constraint
+							? path.call(print, 'typeParameter', 'constraint')
+							: path.call(print, 'typeParameter'),
+						node.nameType ? [' as ', path.call(print, 'nameType')] : '',
+					]),
+					softline,
+					']',
+				]),
+				node.optional ? printModifier(node.optional, '?') : '',
+				node.typeAnnotation ? [': ', path.call(print, 'typeAnnotation')] : '',
+				options.semi !== false ? ifBreak(';') : '',
+			]),
+			spacing,
+			'}',
+		],
+		{ shouldBreak },
+	);
 }
 
 /**
@@ -9502,6 +9518,22 @@ function printJSXElement(node, path, options, print) {
 	) {
 		return group([openingTag, childrenDocs[0], '</', tagName, '>']);
 	}
+	// Multiple children or complex children - format with line breaks. Text runs
+	// fill/wrap to printWidth. Children with no whitespace between them in the
+	// source (`{a}/{b}`) stay glued as a single unit.
+	const multilineElement = printMultilineJSXChildren(
+		openingTag,
+		tagName,
+		childrenDocs,
+		childNodes,
+		childEndNodes,
+		closingCommentDocs,
+	);
+
+	// Text mixed with simple expressions, written on one line, stays on one line
+	// when it fits. Otherwise, like Prettier, the whole element takes the
+	// multi-line layout, which a second pass keeps, rather than breaking only
+	// the attributes and leaving the children against the tags.
 	if (
 		!forceMultiline &&
 		childrenDocs.length > 1 &&
@@ -9512,12 +9544,36 @@ function printJSXElement(node, path, options, print) {
 				child.type === 'JSXText' || isSimpleJSXExpressionChild(/** @type {AST.Node} */ (child)),
 		)
 	) {
-		return group([openingTag, ...childrenDocs, '</', tagName, '>']);
+		return conditionalGroup([
+			group([openingTag, ...childrenDocs, '</', tagName, '>']),
+			multilineElement,
+		]);
 	}
 
-	// Multiple children or complex children - format with line breaks. Text runs
-	// fill/wrap to printWidth. Children with no whitespace between them in the
-	// source (`{a}/{b}`) stay glued as a single unit.
+	return multilineElement;
+}
+
+/**
+ * Print an element with its children on their own lines between the tags.
+ * Text runs fill/wrap to printWidth, children with no whitespace between them
+ * in the source (`{a}/{b}`) stay glued as a single unit, and one authored
+ * blank line between children is kept.
+ * @param {Doc} openingTag - The printed opening tag
+ * @param {Doc} tagName - The printed tag name
+ * @param {Doc[]} childrenDocs - The printed children, text runs as strings
+ * @param {any[]} childNodes - The first source node behind each printed child
+ * @param {any[]} childEndNodes - The last source node behind each printed child
+ * @param {Doc[]} closingCommentDocs - Comments before the closing tag
+ * @returns {Doc}
+ */
+function printMultilineJSXChildren(
+	openingTag,
+	tagName,
+	childrenDocs,
+	childNodes,
+	childEndNodes,
+	closingCommentDocs,
+) {
 	const formattedChildren = [];
 	for (let i = 0; i < childrenDocs.length; i++) {
 		const unitEntries = [childrenDocs[i]];
