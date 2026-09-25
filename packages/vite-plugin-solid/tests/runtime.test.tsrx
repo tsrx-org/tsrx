@@ -1097,15 +1097,12 @@ describe('tsrx-solid runtime', () => {
 		expect(composite_ref_captured!.type).toBe('text');
 	});
 
-	it(
-		'ref={expr} on a composite component forwards through {...props} to the DOM element',
-		async () => {
-			spread_ref_captured = null;
-			await render(SpreadRefApp);
-			expect(spread_ref_captured).toBeInstanceOf(HTMLInputElement);
-			expect(spread_ref_captured!.type).toBe('text');
-		},
-	);
+	it('ref={expr} on a composite component forwards through {...props} to the DOM element', async () => {
+		spread_ref_captured = null;
+		await render(SpreadRefApp);
+		expect(spread_ref_captured).toBeInstanceOf(HTMLInputElement);
+		expect(spread_ref_captured!.type).toBe('text');
+	});
 
 	it('supports multiple ref={...} on the same DOM element', async () => {
 		multi_dom_a = null;
@@ -1338,9 +1335,10 @@ describe('tsrx-solid runtime', () => {
 
 	it('shows pending fallback then resolves (<Loading> + lazy)', async () => {
 		let resolve_fn: (mod: { default: typeof ResolvedChild }) => void;
-		const loader = () => new Promise<{ default: typeof ResolvedChild }>((r) => {
-			resolve_fn = r;
-		});
+		const loader = () =>
+			new Promise<{ default: typeof ResolvedChild }>((r) => {
+				resolve_fn = r;
+			});
 
 		await render(SuspenseApp, { loader });
 		expect(text('.pending')).toBe('loading...');
@@ -1355,9 +1353,10 @@ describe('tsrx-solid runtime', () => {
 
 	it('renders nothing for an empty pending fallback then resolves (<Loading> + lazy)', async () => {
 		let resolve_fn: (mod: { default: typeof ResolvedChild }) => void;
-		const loader = () => new Promise<{ default: typeof ResolvedChild }>((r) => {
-			resolve_fn = r;
-		});
+		const loader = () =>
+			new Promise<{ default: typeof ResolvedChild }>((r) => {
+				resolve_fn = r;
+			});
 
 		await render(EmptyPendingSuspenseApp, { loader });
 		expect(container.innerHTML).toBe('');
@@ -1396,9 +1395,10 @@ describe('tsrx-solid runtime', () => {
 
 	it('resolves successfully through Loading + Errored', async () => {
 		let resolve_fn: (mod: { default: typeof ResolvedChild }) => void;
-		const loader = () => new Promise<{ default: typeof ResolvedChild }>((r) => {
-			resolve_fn = r;
-		});
+		const loader = () =>
+			new Promise<{ default: typeof ResolvedChild }>((r) => {
+				resolve_fn = r;
+			});
 
 		await render(SuspenseErrorApp, { loader });
 		expect(text('.pending')).toBe('loading...');
@@ -1507,25 +1507,22 @@ describe('tsrx-solid runtime', () => {
 		expect(text('.scope-result')).toBe('18');
 	});
 
-	it(
-		'keeps reactive expressions after a plain guard return, but the guard is setup-once',
-		async () => {
-			await render(GuardReturnWithSignalsApp);
-			expect(text('.early-count')).toBe('0');
-			expect(text('.early-doubled')).toBe('0');
+	it('keeps reactive expressions after a plain guard return, but the guard is setup-once', async () => {
+		await render(GuardReturnWithSignalsApp);
+		expect(text('.early-count')).toBe('0');
+		expect(text('.early-doubled')).toBe('0');
 
-			// Reactive JSX expressions in the trailing output still update...
-			await click('.early-inc');
-			expect(text('.early-count')).toBe('1');
-			expect(text('.early-doubled')).toBe('2');
+		// Reactive JSX expressions in the trailing output still update...
+		await click('.early-inc');
+		expect(text('.early-count')).toBe('1');
+		expect(text('.early-doubled')).toBe('2');
 
-			// ...but `if (skip()) return null` ran once at setup, so flipping `skip`
-			// does not unmount the early output.
-			await click('.early-skip');
-			expect(text('.early-count')).toBe('1');
-			expect(text('.early-doubled')).toBe('2');
-		},
-	);
+		// ...but `if (skip()) return null` ran once at setup, so flipping `skip`
+		// does not unmount the early output.
+		await click('.early-skip');
+		expect(text('.early-count')).toBe('1');
+		expect(text('.early-doubled')).toBe('2');
+	});
 
 	it('conditional branch template updates reactively', async () => {
 		await render(ConditionalBranchTemplateApp);

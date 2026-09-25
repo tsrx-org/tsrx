@@ -207,8 +207,7 @@ export function CompilerDemo() @{
 				}
 
 				if (source.length > MAX_SOURCE_LENGTH) {
-					error_message.value =
-						`Source is limited to ${MAX_SOURCE_LENGTH} characters for the live demo.`;
+					error_message.value = `Source is limited to ${MAX_SOURCE_LENGTH} characters for the live demo.`;
 					status.value = 'Source limit reached';
 					return;
 				}

@@ -333,10 +333,8 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 		['@switch', ForKeyedSwitchApp, '.reverse-keyed-switch'],
 	] as const) {
 		it(`keeps row state with its item when a keyed loop renders through ${directive}`, async () => {
-			const rows = () => Array.from(
-				container.querySelectorAll('.keyed-branch-row'),
-				(row) => row.textContent,
-			);
+			const rows = () =>
+				Array.from(container.querySelectorAll('.keyed-branch-row'), (row) => row.textContent);
 
 			render(<App />, container);
 			expect(rows()).toEqual(['a:a', 'b:b']);
