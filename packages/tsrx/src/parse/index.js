@@ -498,9 +498,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			previousEnd = comment.end;
 			// The ones after the argument's parentheses trail the statement
 			const takes = /** @type {AST.NodeWithMaybeComments} */ (
-				target === statement || isBlankBetween(comment.end, semicolon, false)
-					? outermost
-					: target
+				target === statement || isBlankBetween(comment.end, semicolon, false) ? outermost : target
 			);
 			(takes.trailingComments ||= []).push(comment);
 		}
@@ -2657,10 +2655,11 @@ export function get_comment_handlers(source, comments, index = 0) {
 							if (neighbors?.preceding !== node) {
 								break;
 							}
+							const operand = /** @type {AST.NodeWithLocation} */ (node);
 							if (
 								!neighbors.following &&
-								(takeCommentsBeforeOperandParens(/** @type {AST.NodeWithLocation} */ (node), path) ||
-									takeCommentsInCalledArrowBody(/** @type {AST.NodeWithLocation} */ (node), path))
+								(takeCommentsBeforeOperandParens(operand, path) ||
+									takeCommentsInCalledArrowBody(operand, path))
 							) {
 								continue;
 							}

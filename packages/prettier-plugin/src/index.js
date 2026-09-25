@@ -9872,14 +9872,13 @@ function printReturnOrThrowArgument(path, options, print) {
 	}
 	const comments = printTrailingComments(argument, options);
 	const groupId = Symbol('argument');
-	return [
-		' ',
-		group([ifBreak('('), indent([softline, argumentDoc, ifBreak(comments)]), softline, ifBreak(')')], {
-			id: groupId,
-		}),
-		semi(options),
-		ifBreak('', comments, { groupId }),
+	const inParens = [
+		ifBreak('('),
+		indent([softline, argumentDoc, ifBreak(comments)]),
+		softline,
+		ifBreak(')'),
 	];
+	return [' ', group(inParens, { id: groupId }), semi(options), ifBreak('', comments, { groupId })];
 }
 
 /**

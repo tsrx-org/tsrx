@@ -14106,11 +14106,14 @@ export interface SectionProps<T>
 		it.each([
 			['(<div />);', ';(<div />)'],
 			['a;\n(<div />);', 'a\n;(<div />)'],
-		])('puts the leading semicolon before the element statement %j with semi: false', async (input, expected) => {
-			const output = await format(input, { semi: false });
-			expect(output).toBeWithNewline(expected);
-			expect(parseStatements(output)).toBe(parseStatements(input));
-		});
+		])(
+			'puts the leading semicolon before the element statement %j with semi: false',
+			async (input, expected) => {
+				const output = await format(input, { semi: false });
+				expect(output).toBeWithNewline(expected);
+				expect(parseStatements(output)).toBe(parseStatements(input));
+			},
+		);
 
 		// A template value that is an expression statement reads the same
 		// without its parentheses, and a comment after it moves after the `;`
@@ -14857,7 +14860,10 @@ const b = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
 				'const jd = Math.floor(\n  30 * (month - 1 // c\n  ) + day\n);',
 				'const jd = Math.floor(\n  30 * (month - 1) + // c\n    day,\n);',
 			],
-			['x = 30 * (month - 1 /* c */ // d\n) + day;', 'x =\n  30 * (month - 1) /* c */ + // d\n  day;'],
+			[
+				'x = 30 * (month - 1 /* c */ // d\n) + day;',
+				'x =\n  30 * (month - 1) /* c */ + // d\n  day;',
+			],
 			// Prettier's next pass takes a block comment out of the parentheses
 			// that print around the operand too (#673)
 			['x = (a && (b /* c */)) || d;', 'x = (a && b) /* c */ || d;'],
