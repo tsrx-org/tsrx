@@ -3640,9 +3640,10 @@ function printTsrxNode(node, path, options, print, args) {
 
 	// Like Prettier's `printJsxElement`, an element's comments print inside
 	// the parentheses around a multi-line element, so a comment on its own
-	// line opens them
+	// line opens them. Template values (control flow, code blocks) get the
+	// same parentheses, but a code block that is a function's body doesn't.
 	let suppressTrailingComments = args?.suppressTrailingComments;
-	if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
+	if (isTemplateExpression(/** @type {AST.Node} */ (node)) && !isFunctionBodyCodeBlock(path)) {
 		const trailingParts = suppressTrailingComments ? [] : printTrailingComments(node, options);
 		nodeContent = maybeWrapJSXElementInParens(
 			path,
@@ -4586,13 +4587,46 @@ function isCallLikeExpression(node) {
 	);
 }
 
+/** Template values that lay out like an element in a JS expression position. */
+const TEMPLATE_VALUE_TYPES = new Set([
+	'JSXElement',
+	'JSXFragment',
+	'JSXIfExpression',
+	'JSXForExpression',
+	'JSXSwitchExpression',
+	'JSXTryExpression',
+	'JSXCodeBlock',
+]);
+
 /**
- * Check whether an expression is one of TSRX's template expression wrappers.
+ * Check whether an expression is a TSRX template value: an element or
+ * fragment, template control flow (`@if`, `@for`, `@switch`, `@try`), or a
+ * `@{ … }` code block. Where Prettier treats a JSX element specially, the
+ * formatter treats these the same way, so a multi-line one after `=`,
+ * `return`, or `=>` gets parentheses like an element.
  * @param {AST.Node} node - The node to check
  * @returns {boolean}
  */
 function isTemplateExpression(node) {
-	return node.type === 'JSXElement' || node.type === 'JSXFragment';
+	return TEMPLATE_VALUE_TYPES.has(node.type);
+}
+
+/**
+ * A `@{ … }` code block that is the body of a function, like
+ * `function App() @{ … }` or `(props) => @{ … }`, rather than a value.
+ * @param {AstPath} path
+ * @returns {boolean}
+ */
+function isFunctionBodyCodeBlock(path) {
+	const parent = /** @type {AST.Node | null} */ (path.parent);
+	return (
+		path.node.type === 'JSXCodeBlock' &&
+		path.key === 'body' &&
+		(parent?.type === 'FunctionDeclaration' ||
+			parent?.type === 'FunctionExpression' ||
+			/** @type {string | undefined} */ (parent?.type) === 'TSDeclareFunction' ||
+			(parent?.type === 'ArrowFunctionExpression' && !parent.expression))
+	);
 }
 
 /**

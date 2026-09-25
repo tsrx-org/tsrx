@@ -920,13 +920,15 @@ const items=[1,2,3];
 	it('should format direct @{} assignment formatting with fragments', async () => {
 		const input = `function App(){const content=@{const label="Hi";<><div>Hello {label}</div>{content}</>};}`;
 		const expected = `function App() {
-  const content = @{
-    const label = 'Hi';
-    <>
-      <div>Hello {label}</div>
-      {content}
-    </>
-  };
+  const content = (
+    @{
+      const label = 'Hi';
+      <>
+        <div>Hello {label}</div>
+        {content}
+      </>
+    }
+  );
 }`;
 		const result = await format(input, { singleQuote: true });
 		expect(result).toBeWithNewline(expected);
@@ -935,13 +937,15 @@ const items=[1,2,3];
 	it('should format direct @if assignment formatting with fragments', async () => {
 		const input = `function App(){const content=@if(a>b){const label="Hi";<><div>Hello {label}</div>{content}</>};}`;
 		const expected = `function App() {
-  const content = @if (a > b) {
-    const label = 'Hi';
-    <>
-      <div>Hello {label}</div>
-      {content}
-    </>
-  };
+  const content = (
+    @if (a > b) {
+      const label = 'Hi';
+      <>
+        <div>Hello {label}</div>
+        {content}
+      </>
+    }
+  );
 }`;
 		const result = await format(input, { singleQuote: true });
 		expect(result).toBeWithNewline(expected);
@@ -7246,16 +7250,18 @@ if(n<2){go("now")}</script>`;
     throw new Error('Async error');
   }
 
-  return @try {
-    items = ReactiveArray.fromAsync(throwingIterable());
-    @for (const item of items) {
-      <li>{item}</li>
+  return (
+    @try {
+      items = ReactiveArray.fromAsync(throwingIterable());
+      @for (const item of items) {
+        <li>{item}</li>
+      }
+    } @pending {
+      <div>{'Loading...'}</div>
+    } @catch (e) {
+      error = (e as Error).message;
     }
-  } @pending {
-    <div>{'Loading...'}</div>
-  } @catch (e) {
-    error = (e as Error).message;
-  };
+  );
 }`;
 
 			const result = await format(expected, { singleQuote: true, printWidth: 100 });
@@ -7454,17 +7460,19 @@ function Child({ something }) {
 
 		it('should format catch block with reset param and type annotation', async () => {
 			const expected = `function Test() {
-  return @try {
-    const data = fetchData();
-    <div>{data}</div>
-  } @pending {
-    <div>Loading...</div>
-  } @catch (error: Error, reset: () => void) {
-    <>
-      <div>{error.message}</div>
-      <button onClick={reset}>Retry</button>
-    </>
-  };
+  return (
+    @try {
+      const data = fetchData();
+      <div>{data}</div>
+    } @pending {
+      <div>Loading...</div>
+    } @catch (error: Error, reset: () => void) {
+      <>
+        <div>{error.message}</div>
+        <button onClick={reset}>Retry</button>
+      </>
+    }
+  );
 }`;
 
 			const result = await format(expected, { singleQuote: true, printWidth: 100 });
@@ -7486,17 +7494,19 @@ function Child({ something }) {
   }
 }`;
 			const expected = `export function Test(props: { status: 'ok' | 'error' }) {
-  return @switch (props.status) {
-    @case 'ok': {
-      <div>ok</div>
+  return (
+    @switch (props.status) {
+      @case 'ok': {
+        <div>ok</div>
+      }
+      @case 'error': {
+        <div>error</div>
+      }
+      @default: {
+        props.status satisfies never;
+      }
     }
-    @case 'error': {
-      <div>error</div>
-    }
-    @default: {
-      props.status satisfies never;
-    }
-  };
+  );
 }`;
 			const result = await format(input, { singleQuote: true });
 			expect(result).toBeWithNewline(expected);
@@ -7590,9 +7600,11 @@ function Child({ something }) {
 }
 
 function RowList({ rows, Row }) {
-  return @for (const { id } of rows; index i) {
-    <Row index={i} {id} />
-  };
+  return (
+    @for (const { id } of rows; index i) {
+      <Row index={i} {id} />
+    }
+  );
 }`;
 
 			const result = await format(expected, {
@@ -9059,6 +9071,155 @@ function* h() {
 }`);
 		});
 
+		it('puts a multi-line template value in parentheses like an element', async () => {
+			// A user decision: `@if`, `@for`, `@switch`, `@try`, and a `@{ … }` value get
+			// the parentheses Prettier gives a multi-line element after `=`, `return`,
+			// `throw`, an expression-bodied `=>`, a class field, an object value,
+			// `export default`, and `&&`. A code block that is a function body, and a
+			// value in a call, an array, or a conditional branch, stays bare.
+			const input = `const x = @if (something === true) { <div>Hello</div> };
+function f(p) { return @{ const a = p.a; <div>{a}</div> }; }
+function g(items) { throw @for (const i of items) { <li>{i}</li> }; }
+const h = (p) => @{ const a = 1; <div>{a}</div> };
+const k = (p) => (@{ const a = 1; <div>{a}</div> });
+const m = (p) => @if (p.a) { <b /> };
+function A() @{ <div /> }
+const s = @switch (v) { @case 1: { <b /> } };
+const t = @try { <b /> } @catch (e) { <i /> };
+class C { field = @if (a) { <div /> }; render() @{ <div /> } }
+const o = { a: @if (a) { <div /> }, b: @{ <i /> } };
+let z; z = @if (a) { <div /> };
+export default @if (a) { <div /> };
+foo(@if (a) { <div /> });
+const arr = [@if (a) { <div /> }];
+const cond = a ? @if (b) { <c /> } : null;
+const logical = a && @if (b) { <c /> };
+items.map((i) => @if (i) { <c /> });`;
+			const expected = `const x = (
+  @if (something === true) {
+    <div>Hello</div>
+  }
+);
+function f(p) {
+  return (
+    @{
+      const a = p.a;
+      <div>{a}</div>
+    }
+  );
+}
+function g(items) {
+  throw (
+    @for (const i of items) {
+      <li>{i}</li>
+    }
+  );
+}
+const h = (p) => @{
+  const a = 1;
+  <div>{a}</div>
+};
+const k = (p) => (
+  @{
+    const a = 1;
+    <div>{a}</div>
+  }
+);
+const m = (p) => (
+  @if (p.a) {
+    <b />
+  }
+);
+function A() @{
+  <div />
+}
+const s = (
+  @switch (v) {
+    @case 1: {
+      <b />
+    }
+  }
+);
+const t = (
+  @try {
+    <b />
+  } @catch (e) {
+    <i />
+  }
+);
+class C {
+  field = (
+    @if (a) {
+      <div />
+    }
+  );
+  render() @{
+    <div />
+  }
+}
+const o = {
+  a: (
+    @if (a) {
+      <div />
+    }
+  ),
+  b: (
+    @{
+      <i />
+    }
+  ),
+};
+let z;
+z = (
+  @if (a) {
+    <div />
+  }
+);
+export default (
+  @if (a) {
+    <div />
+  }
+);
+foo(
+  @if (a) {
+    <div />
+  },
+);
+const arr = [
+  @if (a) {
+    <div />
+  },
+];
+const cond = a
+  ? @if (b) {
+      <c />
+    }
+  : null;
+const logical = a && (
+  @if (b) {
+    <c />
+  }
+);
+items.map((i) => (
+  @if (i) {
+    <c />
+  }
+));`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+			/** @param {unknown} node */
+			const strip = (node) =>
+				JSON.stringify(node, (key, value) =>
+					['start', 'end', 'loc', 'range', 'metadata', 'raw'].includes(key) ||
+					key.endsWith('Comments')
+						? undefined
+						: value,
+				);
+			/** @param {string} text */
+			const parse = (text) => /** @type {any} */ (parsers)?.tsrx.parse(text, {}).body;
+			expect(strip(parse(result))).toBe(strip(parse(input)));
+		});
+
 		it('joins text to the element it touches and fills the lines', async () => {
 			// A line break between `</code>` and `.` renders as nothing, so the
 			// period stays against the element, and `{' '}` ends a line.
@@ -9308,6 +9469,25 @@ export function Notice() @{
 			);
 			expect(markup.join('')).toContain('Feedback on the <a>issue tracker</a> is very welcome.');
 			expect(await render(result)).toEqual(markup);
+		});
+
+		it('renders template values in parentheses the same', async () => {
+			const input = `export function Returned() {
+  return @{ const label = 'a'; <div>{label}</div> };
+}
+export const Arrow = () => (@if (true) { <b>yes</b> } @else { <i>no</i> });
+export function Assigned() {
+  const view = @switch ('b') { @case 'a': { <i>a</i> } @default: { <b>other</b> } };
+  return <p>{view}</p>;
+}`;
+			const result = await format(input);
+			expect(result).toContain('return (\n    @{');
+			expect(await render(result)).toEqual(await render(input));
+			expect((await render(input)).toSorted()).toEqual([
+				'<b>yes</b>',
+				'<div>a</div>',
+				'<p><b>other</b></p>',
+			]);
 		});
 
 		it('keeps a space between children on their line', async () => {
