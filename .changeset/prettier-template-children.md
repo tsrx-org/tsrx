@@ -10,9 +10,10 @@ their own lines when it has more than one attribute, a child element, more
 than one `{…}` child, or an opening tag that breaks, and otherwise stays on one
 line when it fits. A multi-line element after `return`, `=`, `=>`, or `&&`
 prints between parentheses, and so does a template value there (`@if`, `@for`,
-`@switch`, `@try`, or a `@{ … }` value, but not a function's `@{ … }` body), and a `{…}` child that starts with a comment breaks
-inside its braces. The opening tag follows Prettier too: a lone string
-attribute never breaks the tag, and a blank line between attributes stays.
+`@switch`, `@try`, or a `@{ … }` value, but not a function's `@{ … }` body). A
+`{…}` child that starts with a comment breaks inside its braces. The opening
+tag follows Prettier too: a lone string attribute never breaks the tag, and a
+blank line between attributes stays.
 
 The formatter also keeps every significant space between template children. A
 space between two children, or between a child and a tag, renders, so it no
