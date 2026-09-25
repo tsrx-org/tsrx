@@ -8973,6 +8973,224 @@ declare interface I {
 		});
 	});
 
+	// Prettier's `printArrowFunction`: a chain of arrows prints its signatures
+	// together, and an expression body moves below the `=>` as a whole.
+	describe('arrow function chains and bodies follow Prettier', () => {
+		it('moves an arrow chain that does not fit below the operator', async () => {
+			const input = `export const parseWithLongName = (_Err) => (schema, value, _ctx, _params, other, more, evenMore) => { return run(schema); };
+export const _parse: (_Err: $ZodErrorClass) => $Parse = (_Err) => (schema, value, _ctx, _params) => { return run(schema, value); };
+obj.parse = (_Err) => (schema, value, _ctx, _params, other, more, evenMore, andMore) => { return run(schema); };
+class Parser {
+  parse = (_Err) => (schema, value, _ctx, _params, other, more, evenMore, andMore) => { return run(schema); };
+}`;
+			const expected = `export const parseWithLongName =
+  (_Err) => (schema, value, _ctx, _params, other, more, evenMore) => {
+    return run(schema);
+  };
+export const _parse: (_Err: $ZodErrorClass) => $Parse =
+  (_Err) => (schema, value, _ctx, _params) => {
+    return run(schema, value);
+  };
+obj.parse =
+  (_Err) => (schema, value, _ctx, _params, other, more, evenMore, andMore) => {
+    return run(schema);
+  };
+class Parser {
+  parse =
+    (_Err) =>
+    (schema, value, _ctx, _params, other, more, evenMore, andMore) => {
+      return run(schema);
+    };
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('gives each arrow of a chain its own line outside an assignment', async () => {
+			const input = `export default (_Err) => (schema, value, _ctx, _params, other, more, evenMore, andMore) => { return run(schema); };
+compose((aaaaaaaaaaaaaaaaa) => (bbbbbbbbbbbbbbbbbbbbbbbb) => (cccccccccccccccccccccc) => { return 1; });
+function curry() {
+  return (aaaaaaaaaaaaaaaaaaaaaa) => (bbbbbbbbbbbbbbbbbbbbbbbbbb) => (ccccccccccccccccccccc) => 1;
+}`;
+			const expected = `export default (_Err) =>
+  (schema, value, _ctx, _params, other, more, evenMore, andMore) => {
+    return run(schema);
+  };
+compose(
+  (aaaaaaaaaaaaaaaaa) =>
+    (bbbbbbbbbbbbbbbbbbbbbbbb) =>
+    (cccccccccccccccccccccc) => {
+      return 1;
+    },
+);
+function curry() {
+  return (aaaaaaaaaaaaaaaaaaaaaa) =>
+    (bbbbbbbbbbbbbbbbbbbbbbbbbb) =>
+    (ccccccccccccccccccccc) =>
+      1;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('always breaks a chain with a return type or a pattern parameter', async () => {
+			const input = `const typed = (a) => (b): string => a + b;
+const destructured = ({ a }) => (b) => a + b;`;
+			const expected = `const typed =
+  (a) =>
+  (b): string =>
+    a + b;
+const destructured =
+  ({ a }) =>
+  (b) =>
+    a + b;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps a chain that fits and prints the comments inside it', async () => {
+			const input = `const middleware = (store) => (next) => (action) => { return next(action); };
+export const parseExpression = (_Err) => (schema, value, _ctx, _params) => run(schema, value, _ctx);
+const curried = (a) =>
+  // explain the inner function
+  (b) => a + b;`;
+			const expected = `const middleware = (store) => (next) => (action) => {
+  return next(action);
+};
+export const parseExpression = (_Err) => (schema, value, _ctx, _params) =>
+  run(schema, value, _ctx);
+const curried =
+  (a) =>
+  // explain the inner function
+  (b) =>
+    a + b;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks after => before an expression body that does not fit', async () => {
+			const input = `const create = (key: TArg<Uint8Array>, opts: TArg<cShakeOpts> = {}) => makeKmac(blockLen, chooseLen(opts, outputLen), xof, key);
+kmac.create = (key: TArg<Uint8Array>, opts: TArg<cShakeOpts> = {}) => makeKmac(blockLen, chooseLen(opts, outputLen), xof, key);
+const api = { create: (key: TArg<Uint8Array>, opts: TArg<cShakeOpts> = {}) => makeKmac(blockLen, chooseLen(opts, outputLen), xof, key) };
+const handler = async (resolve) => await setTimeout(resolve, 1000000000000000000000000000000000000000);
+const check = (value) => !isValidValueForThisParticularCheck(value, someOtherArgument, more);
+function make() {
+  return (key: TArg<Uint8Array>, opts: TArg<cShakeOpts> = {}) => makeKmac(blockLen, chooseLen(opts, outputLen), xof, key);
+}`;
+			const expected = `const create = (key: TArg<Uint8Array>, opts: TArg<cShakeOpts> = {}) =>
+  makeKmac(blockLen, chooseLen(opts, outputLen), xof, key);
+kmac.create = (key: TArg<Uint8Array>, opts: TArg<cShakeOpts> = {}) =>
+  makeKmac(blockLen, chooseLen(opts, outputLen), xof, key);
+const api = {
+  create: (key: TArg<Uint8Array>, opts: TArg<cShakeOpts> = {}) =>
+    makeKmac(blockLen, chooseLen(opts, outputLen), xof, key),
+};
+const handler = async (resolve) =>
+  await setTimeout(resolve, 1000000000000000000000000000000000000000);
+const check = (value) =>
+  !isValidValueForThisParticularCheck(value, someOtherArgument, more);
+function make() {
+  return (key: TArg<Uint8Array>, opts: TArg<cShakeOpts> = {}) =>
+    makeKmac(blockLen, chooseLen(opts, outputLen), xof, key);
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks inside the body after => when it does not fit on its own line either', async () => {
+			const input = `const build = (value) => someFunctionWithALongName(value, anotherArgument, yetAnotherArgument, more, andMore);
+foo((a) => setTimeout(aaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb), b);`;
+			const expected = `const build = (value) =>
+  someFunctionWithALongName(
+    value,
+    anotherArgument,
+    yetAnotherArgument,
+    more,
+    andMore,
+  );
+foo(
+  (a) =>
+    setTimeout(
+      aaaaaaaaaaaaaaaaaaaaaaaaaaa,
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+    ),
+  b,
+);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps an object, array, or member body on its line after =>', async () => {
+			const input = `const pick = (item) => item.someProperty.anotherProperty.yetAnotherProperty.finalProperty;
+const make = (item) => ({ id: item.id, label: item.label, description: item.description });
+const list = (item) => [item.id, item.label, item.description, item.somethingElse, item.more];`;
+			const expected = `const pick = (item) =>
+  item.someProperty.anotherProperty.yetAnotherProperty.finalProperty;
+const make = (item) => ({
+  id: item.id,
+  label: item.label,
+  description: item.description,
+});
+const list = (item) => [
+  item.id,
+  item.label,
+  item.description,
+  item.somethingElse,
+  item.more,
+];`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('parenthesizes a conditional body only while it fits', async () => {
+			const input = `const f = (a) => a ? b : c;
+const g = (a) => (a ? b : c);
+const h = (resolve) => (condition ? resolve(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) : rejectIt(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb));
+const i = (resolve) => condition ? resolve(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) : rejectIt(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);
+foo((resolve) => (condition ? resolve(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) : rejectIt(bbbbbbbbbbbb)), b);`;
+			const expected = `const f = (a) => (a ? b : c);
+const g = (a) => (a ? b : c);
+const h = (resolve) =>
+  condition
+    ? resolve(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+    : rejectIt(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);
+const i = (resolve) =>
+  condition
+    ? resolve(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+    : rejectIt(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);
+foo(
+  (resolve) =>
+    condition
+      ? resolve(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+      : rejectIt(bbbbbbbbbbbb),
+  b,
+);`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('adds no parentheses around a conditional body that starts with an object', async () => {
+			const source = `const h = (a) => ({ x: 1 }).x ? b : c;`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('breaks after => in a JSX attribute and puts the closing brace on its own line', async () => {
+			const input = `function App(props) @{
+  <button onClick={() => doSomethingWithAVeryLongName(props.value, props.otherValue, more)}>{'Hi'}</button>
+}`;
+			const expected = `function App(props) @{
+  <button
+    onClick={() =>
+      doSomethingWithAVeryLongName(props.value, props.otherValue, more)
+    }
+  >{"Hi"}</button>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	describe('comments that start an assigned value', () => {
 		it('prints an own-line comment below the = with the value indented', async () => {
 			const input = `const value = (
