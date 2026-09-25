@@ -10396,25 +10396,28 @@ function trimJSXWhitespace(text) {
 }
 
 /**
- * Print direct TSRX text so it can wrap like JSX text when an element body breaks.
+ * Print direct TSRX text so it can wrap like JSX text when an element body
+ * breaks. Every whitespace run, line breaks and blank lines included, renders
+ * as one space, so like Prettier's `printJsxChildren` the words fill the lines.
  * @param {string} raw
  * @param {Doc} [suffix] - Printed right after the last word, like the `{" "}`
  *   that keeps a trailing space, so the fill measures the two together
  * @returns {Doc}
  */
 function printRawText(raw, suffix = '') {
-	const text = trimJSXWhitespace(raw).replace(/(?:\r\n|\r|\n)[ \t]+/gu, ' ');
+	const text = trimJSXWhitespace(raw);
 	if (!text) {
 		return suffix;
 	}
 
 	/** @type {Doc[]} */
-	const parts = text
-		.split(/([ \t]+)/u)
-		.filter(Boolean)
-		.map((part) => {
-			return /^[ \t]+$/u.test(part) ? line : replaceEndOfLine(part);
-		});
+	const parts = [];
+	for (const word of text.split(/[ \t\r\n]+/u)) {
+		if (parts.length > 0) {
+			parts.push(line);
+		}
+		parts.push(word);
+	}
 	if (suffix) {
 		parts.push([/** @type {Doc} */ (parts.pop()), suffix]);
 	}
@@ -10932,6 +10935,14 @@ function printJSXElement(node, path, options, print) {
 	) {
 		return printSingleTextJSXChild(openingTag, tagName, childrenDocs[0], options);
 	}
+	// Spaces and nothing else (`{" "}{" "}`) render one space, like a lone space.
+	if (
+		!forceMultiline &&
+		childrenDocs.length > 0 &&
+		childrenDocs.every((childDoc) => typeof childDoc === 'string' && isJSXWhitespaceOnly(childDoc))
+	) {
+		return printSingleTextJSXChild(openingTag, tagName, ' ', options);
+	}
 	const meaningfulChildren = node.children.filter(
 		(child) => child.type !== 'JSXText' || child.value.trim(),
 	);
@@ -11198,13 +11209,19 @@ function printJSXFragment(node, path, options, print) {
 		}
 	}
 
+	// A significant space against the tags stays: `<> </>`. Spaces and nothing
+	// else (`{" "}{" "}`) render one space.
+	if (
+		childEntries.length > 0 &&
+		childEntries.every((entry) => entry.space) &&
+		closingCommentDocs.length === 0
+	) {
+		return '<> </>';
+	}
 	// Check if content can be inlined (single text node or single expression)
 	const singleEntry = childEntries.length === 1 ? childEntries[0] : null;
 	if (singleEntry && typeof singleEntry.doc === 'string' && closingCommentDocs.length === 0) {
-		// A significant space against the tags stays: `<> </>`, `<> text </>`.
-		if (singleEntry.space) {
-			return '<> </>';
-		}
+		// The spaces around the text stay against the tags: `<> text </>`.
 		return [
 			'<>',
 			singleEntry.leadingSpace ? ' ' : '',
@@ -11482,7 +11499,8 @@ function printJSXAttribute(attr, path, options, print) {
 		];
 	}
 
-	return name;
+	// An element or fragment written without braces (`prop=<Bar />`)
+	return [name, '=', path.call(print, 'value')];
 }
 
 /**

@@ -8169,6 +8169,17 @@ enum E {
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
+		it('keeps an element written as an attribute value without braces', async () => {
+			const result = await format(`const a = <Foo prop=<Bar><Baz /></Bar> />;
+const c = <LeftRight left=<a /> right=<b>monkeys</b> />;`);
+			expect(result).toBeWithNewline(`const a = <Foo
+  prop=<Bar>
+    <Baz />
+  </Bar>
+/>;
+const c = <LeftRight left=<a /> right=<b>monkeys</b> />;`);
+		});
+
 		it('breaks TSRX attribute values the same way', async () => {
 			const input = `export function App(props) @{
   const theme = <style>.card { color: red; }</style>;
@@ -8333,11 +8344,16 @@ const b = <>
 		});
 
 		it('keeps a lone space', async () => {
+			// Repeated {" "} render one space, like Prettier prints them.
 			const result = await format(`export function App() @{
   <>
     <> </>
     <span> </span>
     <span>{" "}</span>
+    <span>
+      {" "}{" "}
+    </span>
+    <>{" "}{" "}</>
   </>
 }`);
 			expect(result).toBeWithNewline(`export function App() @{
@@ -8345,6 +8361,8 @@ const b = <>
     <> </>
     <span> </span>
     <span> </span>
+    <span> </span>
+    <> </>
   </>
 }`);
 		});
@@ -8401,6 +8419,30 @@ const b = <p>hello {a}</p>;`);
     <b>123</b>
   }{" "}
 </>;`);
+		});
+
+		it('fills text across a blank line or an unindented line', async () => {
+			// A line break in text renders as one space, however many there are.
+			const result = await format(`export function App() @{
+  <p>
+    hi
+    there
+
+    are you fine today?
+  </p>
+}
+const t = <div>
+hello
+world
+</div>;`);
+			expect(result).toBeWithNewline(`export function App() @{
+  <p>
+    hi there are you fine today?
+  </p>
+}
+const t = <div>
+  hello world
+</div>;`);
 		});
 
 		it('keeps non-breaking spaces as text', async () => {

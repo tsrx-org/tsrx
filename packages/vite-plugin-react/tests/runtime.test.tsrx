@@ -64,6 +64,7 @@ function JsxTextApp() @{
 	<>
 		<div className="jsx-text-entities">Rock &amp; &quot;Roll&quot;</div>
 		<div className="jsx-text-backslash">line\nbreak</div>
+		// prettier-ignore
 		<pre className="jsx-text-multiline">
 			first
 second

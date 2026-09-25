@@ -20,3 +20,8 @@ A JSX attribute value in `{…}` that doesn't fit now breaks onto its own lines
 inside the braces, like Prettier, instead of staying attached to `={` and
 `}` with its continuation lines at the attribute's column. Arrays, objects,
 functions, calls, and templates still hug the braces.
+
+A JSX attribute value written as an element or fragment without braces
+(`prop=<Bar />`) is no longer deleted. Element text with a blank line or an
+unindented line in it fills its lines like other text instead of printing a
+line at the wrong column.
