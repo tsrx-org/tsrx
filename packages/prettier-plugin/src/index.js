@@ -12112,6 +12112,199 @@ function printJSXChildren(items, jsxWhitespace) {
 }
 
 /**
+ * What prints on one side of a comment in JSX text: nothing (`glue`), a
+ * space (`literal`), a space that may break (`line`), a line break
+ * (`hardline`), a JSX space (`space`), which prints as `{" "}` where it
+ * breaks, at the start or end of the element's body a JSX space when the
+ * body breaks and nothing otherwise (`edge`), or what the children's layout
+ * gives (`keep`).
+ * @typedef {'glue' | 'literal' | 'line' | 'hardline' | 'space' | 'edge' | 'keep'} JSXTextCommentSide
+ */
+
+/**
+ * Push the items of JSX text with comments in it (`text /* note *\/ more`)
+ * for {@link printJSXChildren}: the text between the comments, and each
+ * comment as an item of its own. The parser keeps the text whole around a
+ * comment, and a comment adds nothing to the text's value, so the whitespace
+ * on its sides is one run with the comment: a word break between two words,
+ * and at the text's edge a significant space unless the run has a line
+ * break. A comment takes the whitespace next to it, and `sides` records what
+ * prints on each of its sides so that the run keeps its meaning, which
+ * {@link printJSXElementBody} sets once the children are printed:
+ *
+ * - nothing where the comment touches its neighbor;
+ * - in a run with a line break, a line break where the whitespace has one,
+ *   and a space that may break otherwise, since the run's spaces don't
+ *   count at a line's end;
+ * - between two words, a space that may break;
+ * - at the text's edge next to a child, a space that doesn't break, so that
+ *   the significant space stays in the text;
+ * - at the start or end of the element's body, a JSX space on the body's
+ *   side, which prints as `{" "}` when the body breaks, and a space that may
+ *   break on the side of the words. With no whitespace on the body's side,
+ *   the JSX space prints only when the body breaks.
+ *
+ * A line comment ends its line.
+ * @param {JSXChildItem[]} items
+ * @param {AST.Node & AST.NodeWithMaybeComments} child - The text
+ * @param {(AST.Node & AST.NodeWithMaybeComments) | undefined} previous - The child before it
+ * @param {string} gap - The whitespace before the text that the parser dropped
+ * @param {string} text - The source text
+ * @param {boolean} isLastChild - Whether the text ends the element's body
+ * @param {Map<Doc, { before: JSXTextCommentSide, after: JSXTextCommentSide }>} sides
+ */
+function pushJSXTextWithComments(items, child, previous, gap, text, isLastChild, sides) {
+	const isFirstChild = items.length === 0;
+	const { start, end } = /** @type {AST.NodeWithLocation} */ (child);
+	const comments = /** @type {(AST.Comment & AST.NodeWithLocation)[]} */ ([
+		...(child.leadingComments ?? []),
+		...(child.innerComments ?? []),
+	]).sort((a, b) => a.start - b.start);
+	// A comment in the text that a `{" "}` before it on its line keeps
+	const othersBefore = /** @type {(AST.Comment & AST.NodeWithLocation)[]} */ (
+		previous?.trailingComments ?? []
+	).filter((comment) => comment.start >= start && comment.end <= end);
+	/**
+	 * The source from `from` to `to`, without those comments
+	 * @param {number} from
+	 * @param {number} to
+	 */
+	const sliceText = (from, to) => {
+		let result = '';
+		for (const comment of othersBefore) {
+			if (comment.start >= from && comment.end <= to) {
+				result += text.slice(from, comment.start);
+				from = comment.end;
+			}
+		}
+		return result + text.slice(from, to);
+	};
+	// The text around the comments: strings at even indexes and comments at
+	// odd ones. After the last comment, the rest of the text's value, which
+	// leaves out a `prettier-ignore` after its last word and the comments
+	// after it, which lead the next child.
+	/** @type {(string | (AST.Comment & AST.NodeWithLocation))[]} */
+	const tokens = [];
+	let cursor = getJSXChildStart(child);
+	for (const comment of comments) {
+		tokens.push((tokens.length === 0 ? gap : '') + sliceText(cursor, comment.start), comment);
+		cursor = comment.end;
+	}
+	let valueBefore = cursor - start;
+	for (const comment of [...comments, ...othersBefore]) {
+		if (comment.start >= start && comment.end <= cursor) {
+			valueBefore -= comment.end - comment.start;
+		}
+	}
+	tokens.push(
+		/** @type {string} */ (/** @type {ESTreeJSX.JSXText} */ (child).value).slice(valueBefore),
+	);
+
+	/** @param {number} index */
+	const stringAt = (index) => /** @type {string} */ (tokens[index]);
+	/** @param {string} string */
+	const leadingWhitespace = (string) => /** @type {string} */ (/^[ \t\r\n]*/u.exec(string)?.[0]);
+	/** @param {string} string */
+	const trailingWhitespace = (string) => /** @type {string} */ (/[ \t\r\n]*$/u.exec(string)?.[0]);
+	/** @param {string} string */
+	const isWhitespace = (string) => !/[^ \t\r\n]/u.test(string);
+
+	// The comments of the run around the comment at `index`, from `first` to
+	// `last`, and the whitespace in it
+	/** @param {number} index */
+	const getRun = (index) => {
+		let first = index;
+		while (first > 1 && isWhitespace(stringAt(first - 1))) {
+			first -= 2;
+		}
+		let last = index;
+		while (last < tokens.length - 2 && isWhitespace(stringAt(last + 1))) {
+			last += 2;
+		}
+		const before = stringAt(first - 1);
+		const after = stringAt(last + 1);
+		const whitespace = [trailingWhitespace(before), leadingWhitespace(after)];
+		let hasLineComment = false;
+		for (let i = first; i <= last; i += 2) {
+			hasLineComment ||= /** @type {AST.Comment} */ (tokens[i]).type === 'Line';
+			if (i < last) {
+				whitespace.push(stringAt(i + 1));
+			}
+		}
+		return {
+			first,
+			last,
+			hasLineBreak: hasLineComment || whitespace.some((part) => part.includes('\n')),
+			hasWhitespace: whitespace.some((part) => part !== ''),
+			wordBefore: !isWhitespace(before),
+			wordAfter: !isWhitespace(after),
+		};
+	};
+
+	for (let index = 0; index < tokens.length; index++) {
+		const token = tokens[index];
+		if (typeof token === 'string') {
+			const isFirst = index === 0;
+			const isLast = index === tokens.length - 1;
+			if (!isWhitespace(token)) {
+				const start = isFirst ? 0 : leadingWhitespace(token).length;
+				const end = isLast ? token.length : token.length - trailingWhitespace(token).length;
+				items.push({ text: token.slice(start, end), node: child });
+			} else if (
+				// Whitespace alone keeps a blank line, the way whitespace between
+				// children does, and at the start or end of the body a significant
+				// space
+				(token.match(/\n/gu) ?? []).length > 1 ||
+				(token !== '' &&
+					((isFirst && isFirstChild) || (isLast && isLastChild)) &&
+					!getRun(isFirst ? 1 : index - 1).hasLineBreak)
+			) {
+				items.push({ text: token, node: child });
+			}
+			continue;
+		}
+
+		const run = getRun(index);
+		// Whether the run is at the start or end of the element's body, where
+		// its significant space always prints as `{" "}` when the body breaks
+		const isAtBodyEdge = (!run.wordBefore && isFirstChild) || (!run.wordAfter && isLastChild);
+		/**
+		 * @param {string} whitespace - The whitespace on this side
+		 * @param {boolean} isOuter - Whether this side is the run's
+		 * @param {boolean} hasWord - Whether a word is on this side of the run
+		 * @returns {JSXTextCommentSide}
+		 */
+		const getSide = (whitespace, isOuter, hasWord) => {
+			if (run.hasLineBreak) {
+				return whitespace === '' ? 'glue' : whitespace.includes('\n') ? 'hardline' : 'line';
+			}
+			if (run.wordBefore && run.wordAfter) {
+				return whitespace === '' ? 'glue' : 'line';
+			}
+			// Next to a child, the run doesn't break, so its space stays in the
+			// text
+			if (!isAtBodyEdge) {
+				return whitespace === '' ? 'glue' : 'literal';
+			}
+			if (isOuter && !hasWord) {
+				return whitespace !== '' ? 'space' : run.hasWhitespace ? 'edge' : 'glue';
+			}
+			return whitespace === '' ? 'glue' : 'line';
+		};
+		/** @type {Doc} */
+		const doc = [printComment(token, text), token.type === 'Line' ? breakParent : ''];
+		sides.set(doc, {
+			before: getSide(trailingWhitespace(stringAt(index - 1)), index === run.first, run.wordBefore),
+			after:
+				token.type === 'Line'
+					? 'hardline'
+					: getSide(leadingWhitespace(stringAt(index + 1)), index === run.last, run.wordAfter),
+		});
+		items.push({ doc, node: token });
+	}
+}
+
+/**
  * @param {Doc} doc
  * @returns {boolean}
  */
@@ -12264,6 +12457,10 @@ function printJSXElementBody(
 	const text = /** @type {string} */ (options.originalText);
 	/** @type {JSXChildItem[]} */
 	const items = [];
+	// What prints on the sides of the comments in text and of the children
+	// that end with a line comment
+	/** @type {Map<Doc, { before: JSXTextCommentSide, after: JSXTextCommentSide }>} */
+	const commentSides = new Map();
 	for (let index = 0; index < children.length; index++) {
 		const child = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (children[index]);
 		const previous = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (
@@ -12284,6 +12481,11 @@ function printJSXElementBody(
 			items.push({ text: gap + child.value, node: child });
 			continue;
 		}
+		if (child.type === 'JSXText' && child.innerComments && !child.trailingComments) {
+			const isLastChild = index === children.length - 1;
+			pushJSXTextWithComments(items, child, previous, gap, text, isLastChild, commentSides);
+			continue;
+		}
 		if (gap !== '') {
 			items.push({ text: gap, node: { type: 'JSXText' } });
 		}
@@ -12297,6 +12499,29 @@ function printJSXElementBody(
 		} else {
 			items.push({ doc: path.call(print, 'children', index), node: child });
 		}
+		// A child that starts with a comment on a line of its own starts its
+		// line, so that a JSX space before it prints as `{" "}`, and one that
+		// ends with a line comment ends its line, even before a one-letter word,
+		// which would otherwise join its line ahead of the comment
+		const item = /** @type {JSXChildItem} */ (items.at(-1));
+		if ('doc' in item && item.node === child) {
+			const leadingComments = child.leadingComments ?? [];
+			const startsLine =
+				leadingComments.length > 0 &&
+				(child.type === 'JSXExpressionContainer' ||
+					leadingComments.some(
+						(comment) =>
+							comment.type === 'Line' ||
+							hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).end),
+					));
+			const endsLine = child.trailingComments?.some((comment) => comment.type === 'Line');
+			if (startsLine || endsLine) {
+				commentSides.set(item.doc, {
+					before: startsLine ? 'hardline' : 'keep',
+					after: endsLine ? 'hardline' : 'keep',
+				});
+			}
+		}
 	}
 
 	const containsTag = children.some(
@@ -12309,13 +12534,19 @@ function printJSXElementBody(
 		children.filter(
 			(child) => child.type === 'JSXExpressionContainer' && !isJSXWhitespaceExpression(child),
 		).length > 1;
+	// A comment after the last child prints after a space, which would be
+	// text before the closing tag on the same line
+	const lastChild = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (
+		children.findLast((child) => child.type !== 'JSXText' || isMeaningfulJSXText(child.value))
+	);
 	// Record any breaks. Should never go from true to false, only false to true.
 	let forcedBreak =
 		willBreak(openingLines) ||
 		containsTag ||
 		attributeCount > 1 ||
 		containsMultipleExpressions ||
-		closingCommentDocs.length > 0;
+		closingCommentDocs.length > 0 ||
+		(lastChild?.type !== 'JSXText' && Boolean(lastChild?.trailingComments?.length));
 
 	const rawJsxWhitespace = options.singleQuote ? "{' '}" : '{" "}';
 	const jsxWhitespace = ifBreak([rawJsxWhitespace, softline], ' ');
@@ -12366,11 +12597,65 @@ function printJSXElementBody(
 		parts.shift();
 	}
 
+	// What prints on the sides of a comment in text (see
+	// `pushJSXTextWithComments`), each a part of its own, and after a child
+	// that ends with a line comment. A JSX space already there comes from
+	// whitespace next to the comment, like a `{" "}` child, and stays, before
+	// or after a line break the comment needs.
+	let spaceAtStart = false;
+	let spaceAtEnd = false;
+	if (commentSides.size > 0) {
+		/** @type {Record<Exclude<JSXTextCommentSide, 'keep'>, Doc>} */
+		const sideDocs = { glue: '', literal: ' ', line, hardline, space: jsxWhitespace, edge: '' };
+		/**
+		 * @param {Doc} separator - The separator the children's layout gives
+		 * @param {Exclude<JSXTextCommentSide, 'keep'>} side
+		 * @param {boolean} isBefore - Whether it's before the comment
+		 * @returns {Doc}
+		 */
+		const getSeparator = (separator, side, isBefore) => {
+			if (separator !== jsxWhitespace) {
+				return sideDocs[side];
+			}
+			if (side !== 'hardline') {
+				return jsxWhitespace;
+			}
+			return isBefore ? [rawJsxWhitespace, hardline] : [hardline, rawJsxWhitespace];
+		};
+		for (let i = 0; i < parts.length; i += 2) {
+			const part = parts[i];
+			const sides =
+				Array.isArray(part) && part.length === 2 && part[0] === ''
+					? commentSides.get(part[1])
+					: undefined;
+			if (!sides) {
+				continue;
+			}
+			// A line break the comment keeps, even where the body starts or ends
+			if (sides.before === 'hardline' || sides.after === 'hardline') {
+				forcedBreak = true;
+			}
+			if (i === 0 && sides.before === 'edge') {
+				spaceAtStart = true;
+			} else if (i > 0 && sides.before !== 'keep') {
+				parts[i - 1] = getSeparator(parts[i - 1], sides.before, true);
+			}
+			if (i === parts.length - 1 && sides.after === 'edge') {
+				spaceAtEnd = true;
+			} else if (i + 1 < parts.length && sides.after !== 'keep') {
+				parts[i + 1] = getSeparator(parts[i + 1], sides.after, false);
+			}
+		}
+	}
+
 	// Over several lines, whitespace at the start or end of the children, or
 	// after a line break, prints as `{" "}`. Line-like docs stay at odd indexes,
 	// as `fill` needs.
 	/** @type {Doc[]} */
 	const multilineChildren = [''];
+	if (spaceAtStart) {
+		multilineChildren.push([rawJsxWhitespace, hardline], '');
+	}
 	for (const [i, child] of parts.entries()) {
 		if (child === jsxWhitespace) {
 			if (i === 1 && isEmptyJSXChildDoc(parts[i - 1])) {
@@ -12404,6 +12689,9 @@ function printJSXElementBody(
 		if (willBreak(child)) {
 			forcedBreak = true;
 		}
+	}
+	if (spaceAtEnd) {
+		multilineChildren.push([/** @type {Doc} */ (multilineChildren.pop()), rawJsxWhitespace]);
 	}
 
 	// With text, `fill` puts as much on each line as fits. Without it, each
@@ -12663,7 +12951,7 @@ function printJSXElement(node, path, options, print) {
 		return openingTag;
 	}
 
-	const closingTag = ['</', tagName, '>'];
+	const closingTag = printJSXClosingTag(node.closingElement, tagName, options);
 
 	// Raw-text `<script>` element: the body lives on `node.content`, mirrored as a
 	// single JSXText child (see the parser's `#parseScriptElement`). Print that
@@ -12743,7 +13031,8 @@ function printJSXElement(node, path, options, print) {
  */
 function printJSXFragment(node, path, options, print) {
 	const hasChildren = node.children && node.children.length > 0;
-	const openingTag = printJSXOpeningFragment(node.openingFragment, options);
+	const openingTag = printJSXFragmentTag(node.openingFragment, options);
+	const closingTag = printJSXFragmentTag(node.closingFragment, options);
 
 	// Comments before `</>` and the comments of a comment-only fragment.
 	const { closingCommentDocs, innerCommentDocs } = collectElementBodyCommentDocs(
@@ -12755,37 +13044,48 @@ function printJSXFragment(node, path, options, print) {
 	if (!hasChildren) {
 		const bodyComments = [...innerCommentDocs, ...closingCommentDocs];
 		if (bodyComments.length > 0) {
-			return group([openingTag, indent(bodyComments), hardline, '</>']);
+			return group([openingTag, indent(bodyComments), hardline, closingTag]);
 		}
-		return [openingTag, '</>'];
+		return [openingTag, closingTag];
 	}
 
 	// A `@{ … }` code block is the whole body and hugs the tags: `<>@{ … }</>`.
 	if (node.children.length === 1 && node.children[0].type === 'JSXCodeBlock') {
-		return group([openingTag, path.call(print, 'children', 0), '</>']);
+		return group([openingTag, path.call(print, 'children', 0), closingTag]);
 	}
 
-	return printJSXElementBody(node, path, options, print, openingTag, '</>', closingCommentDocs, 0);
+	return printJSXElementBody(
+		node,
+		path,
+		options,
+		print,
+		openingTag,
+		closingTag,
+		closingCommentDocs,
+		0,
+	);
 }
 
 /**
- * Print a fragment's `<>` with the comments between its `<` and `>`, which
- * dangle on it, like Prettier's `printJsxOpeningClosingFragment`: `</* note *\/>`,
- * or a line comment on a line of its own.
- * @param {AST.TSRXJSXFragment['openingFragment']} openingFragment
+ * Print a fragment's `<>` or `</>` with the comments between its `<` or `</`
+ * and its `>`, which dangle on it, like Prettier's
+ * `printJsxOpeningClosingFragment`: `</* note *\/>` and `</ /* note *\/>`, or a
+ * line comment on a line of its own.
+ * @param {AST.TSRXJSXFragment['openingFragment'] | AST.TSRXJSXFragment['closingFragment']} tag
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {Doc}
  */
-function printJSXOpeningFragment(openingFragment, options) {
-	const comments = /** @type {AST.NodeWithMaybeComments} */ (openingFragment)?.innerComments ?? [];
+function printJSXFragmentTag(tag, options) {
+	const isOpening = tag?.type !== 'JSXClosingFragment';
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (tag)?.innerComments ?? [];
 	if (comments.length === 0) {
-		return '<>';
+		return isOpening ? '<>' : '</>';
 	}
 	const hasLineComment = comments.some((comment) => comment.type === 'Line');
 	return [
-		'<',
+		isOpening ? '<' : '</',
 		indent([
-			hasLineComment ? hardline : '',
+			hasLineComment ? hardline : isOpening ? '' : ' ',
 			join(
 				hardline,
 				comments.map((comment) => printComment(comment, options.originalText)),
@@ -12794,6 +13094,36 @@ function printJSXOpeningFragment(openingFragment, options) {
 		hasLineComment ? hardline : '',
 		'>',
 	];
+}
+
+/**
+ * Print an element's closing tag, like Prettier's `printJsxClosingElement`:
+ * the comments of its name print around the name (`</div /* note *\/>`), a
+ * block comment before it after a space (`</ /* note *\/ div>`), and a line
+ * comment before it on a line of its own.
+ * @param {AST.TSRXJSXElement['closingElement'] | AST.JSXStyleElement['closingElement']} closingElement
+ * @param {Doc} tagName - The printed name
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc}
+ */
+function printJSXClosingTag(closingElement, tagName, options) {
+	const nameNode = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (
+		closingElement?.name
+	);
+	if (!nameNode || !hasComment(nameNode)) {
+		return ['</', tagName, '>'];
+	}
+	const leadingComments = nameNode.leadingComments ?? [];
+	const printed = finishTsrxNode(
+		nameNode,
+		printLeadingComments(nameNode, leadingComments, options),
+		tagName,
+		options,
+	);
+	if (leadingComments.some((comment) => comment.type === 'Line')) {
+		return ['</', indent([hardline, printed]), hardline, '>'];
+	}
+	return ['</', leadingComments.length > 0 ? ' ' : '', printed, '>'];
 }
 
 /**
@@ -12997,7 +13327,7 @@ function printJSXAttribute(attr, path, options, print) {
 			: /** @type {ESTreeJSX.JSXIdentifier} */ (attr.name).name;
 
 	if (attr.shorthand) {
-		return ['{', name, '}'];
+		return printJSXShorthandAttribute(attr, name, path, options, print);
 	}
 
 	if (!attr.value) {
@@ -13020,6 +13350,43 @@ function printJSXAttribute(attr, path, options, print) {
 
 	// An element or fragment written without braces (`prop=<Bar />`)
 	return [name, '=', path.call(print, 'value')];
+}
+
+/**
+ * Print a shorthand attribute, `{name}`, TSRX's form of `name={name}`. With
+ * comments, whether on the braces, the name, or the value, it prints its
+ * value like the container of `name={/* note *\/ name}` in Prettier, with the
+ * comments inside the braces.
+ * @param {ESTreeJSX.JSXAttribute} attr - The attribute
+ * @param {string} name - The printed name
+ * @param {AstPath<ESTreeJSX.JSXAttribute>} path - The attribute's path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printJSXShorthandAttribute(attr, name, path, options, print) {
+	const container = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (
+		/** @type {unknown} */ (attr.value)
+	);
+	const nameNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (
+		/** @type {unknown} */ (attr.name)
+	);
+	const expression = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (
+		container?.type === 'JSXExpressionContainer' ? container.expression : undefined
+	);
+	if (!expression || !(hasComment(container) || hasComment(nameNode) || hasComment(expression))) {
+		return ['{', name, '}'];
+	}
+	/** @type {Doc[]} */
+	const leading = [];
+	/** @type {Doc[]} */
+	const trailing = [];
+	for (const node of [container, nameNode]) {
+		leading.push(...printLeadingComments(node, node.leadingComments ?? [], options));
+		trailing.unshift(...printTrailingComments(node, options));
+	}
+	const value = [...leading, path.call(print, 'value', 'expression'), ...trailing];
+	return group(['{', indent([softline, value]), softline, lineSuffixBoundary, '}']);
 }
 
 /**
