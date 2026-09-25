@@ -282,7 +282,7 @@ export function BlogRethinkingTsrxPage() @{
 							We also heard loud and clear that forcing static text through
 							<code>""</code>
 							or
-							<code>{'{\'\'}'}</code>
+							<code>{"{''}"}</code>
 							was annoying and unintuitive. JSX text is one of JSX's most useful affordances, and
 							TSRX should preserve backwards compatibility with JSX instead of asking people to
 							relearn something that already works. The same applies to composition: teams want to

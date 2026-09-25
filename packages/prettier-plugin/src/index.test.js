@@ -7890,17 +7890,68 @@ enum Keys {
 const text = "\\x1b[31m" + "\\u00e9" + "\\0";`);
 		});
 
-		it('escapes only the enclosing quote', async () => {
-			const input = `const a = 'say "hi"';
-const b = "it's";
-const c = 'it\\'s';`;
+		// Like Prettier's `printString`: the configured quote, unless the string
+		// holds more of it than of the other one, and only the chosen quote is
+		// escaped.
+		it('switches to the other quote when the string holds more of the configured one', async () => {
+			const input = String.raw`const a = "\"";
+const b = "say \"hi\"";
+const c = 'it\'s';
+const d = "it's \"x\"";
+const e = 'say "hi"';
+const f = "it's";`;
 
-			expect(await format(input)).toBeWithNewline(`const a = "say \\"hi\\"";
-const b = "it's";
-const c = "it's";`);
-			expect(await format(input, { singleQuote: true })).toBeWithNewline(`const a = 'say "hi"';
-const b = 'it\\'s';
-const c = 'it\\'s';`);
+			expect(await format(input)).toBeWithNewline(String.raw`const a = '"';
+const b = 'say "hi"';
+const c = "it's";
+const d = 'it\'s "x"';
+const e = 'say "hi"';
+const f = "it's";`);
+			expect(await format(input, { singleQuote: true })).toBeWithNewline(String.raw`const a = '"';
+const b = 'say "hi"';
+const c = "it's";
+const d = 'it\'s "x"';
+const e = 'say "hi"';
+const f = "it's";`);
+		});
+
+		it('keeps the configured quote on a tie', async () => {
+			const input = String.raw`const a = 'a"b\'c';
+const b = "a\"b'c";`;
+
+			expect(await format(input)).toBeWithNewline(String.raw`const a = "a\"b'c";
+const b = "a\"b'c";`);
+			expect(await format(input, { singleQuote: true }))
+				.toBeWithNewline(String.raw`const a = 'a"b\'c';
+const b = 'a"b\'c';`);
+		});
+
+		it('keeps a string as written when its quote does not change', async () => {
+			const input = String.raw`const a = "it\'s";
+const b = 'a\"b';
+const c = '\d\n\\"';
+const d = "\\\"";`;
+
+			expect(await format(input)).toBeWithNewline(String.raw`const a = "it\'s";
+const b = 'a\"b';
+const c = '\d\n\\"';
+const d = '\\"';`);
+		});
+
+		it('picks the quote of keys, module names, and literal types the same way', async () => {
+			const input = String.raw`import x from 'it\'s.js';
+const o = { 'it\'s': 1, "say \"hi\"": 2 };
+type T = 'it\'s' | "say \"hi\"";
+enum E {
+  'it\'s' = 1,
+}`;
+
+			expect(await format(input)).toBeWithNewline(String.raw`import x from "it's.js";
+const o = { "it's": 1, 'say "hi"': 2 };
+type T = "it's" | 'say "hi"';
+enum E {
+  "it's" = 1,
+}`);
 		});
 	});
 
@@ -7922,7 +7973,7 @@ const c = 'it\\'s';`);
 			[`title="&amp;amp;"`, `title="&amp;amp;"`],
 			[`title="a &#34;b&#34;"`, `title="a &#34;b&#34;"`],
 			[`title={'&amp;'}`, `title={"&amp;"}`],
-			[`title={"It's \\"both\\""}`, `title={"It's \\"both\\""}`],
+			[`title={"It's \\"both\\""}`, `title={'It\\'s "both"'}`],
 			[`title={'\\ud800'}`, `title={"\\ud800"}`],
 			[`title={'a\\nb'}`, `title={"a\\nb"}`],
 			[`title={'It\\'s'}`, `title="It's"`],
@@ -9710,6 +9761,58 @@ function Two() @{
 		});
 	});
 
+	// Parentheses written around a type stay as they are; these are the ones
+	// Prettier adds where the type parses the same without them.
+	describe('type parentheses follow Prettier', () => {
+		it.each([
+			[
+				'const f = (journal: Journal): () => void => {\n  return () => {};\n};',
+				'const f = (journal: Journal): (() => void) => {\n  return () => {};\n};',
+			],
+			[
+				'class C {\n  m = <T,>(): <U>(u: U) => T => null!;\n}',
+				'class C {\n  m = <T,>(): (<U>(u: U) => T) => null!;\n}',
+			],
+			['type A = typeof a[];', 'type A = (typeof a)[];'],
+			['type A = typeof a[number];', 'type A = (typeof a)[number];'],
+			['type A = keyof keyof T;', 'type A = keyof (keyof T);'],
+			['type A = [...A | B];', 'type A = [...(A | B)];'],
+			[
+				'type A = <X extends B extends C ? D : E>() => X;',
+				'type A = <X extends (B extends C ? D : E)>() => X;',
+			],
+		])('prints %s as %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const f = (): (() => void) => () => {};',
+			'const f = (): (() => void) | null => null;',
+			'const f = (): Promise<() => void> => load();',
+			'const f = (): new () => Foo => Foo;',
+			'const f = (): A extends B ? C : D => value;',
+			'const f = (): value is () => void => true;',
+			'function f(): () => void {}',
+			'const f = function (): () => void {};',
+			'let callback: () => void;',
+			'type A = (keyof T)[];',
+			'type A = keyof T[];',
+			'type A = readonly (typeof a)[];',
+			'type A = keyof typeof a;',
+			'type A = (() => void)[];',
+			'type A = [(() => void)?];',
+			'type A = [...infer U];',
+			'type A = B extends (C extends D ? E : F) ? G : H;',
+			'type A = (B extends C ? D : E) extends F ? G : H;',
+			'type A = B extends (() => infer R extends string) ? R : never;',
+			'type A = B extends () => infer R ? R : never;',
+			'type A = { [K in B extends "" ? "index" : B]: 1 };',
+			'type A<T> = T extends [infer U extends (B extends C ? D : E)] ? U : never;',
+		])('keeps %s as written', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
 	// Prettier's `printUnionType`: a union that doesn't fit moves to its own
 	// indented lines, one member per line after a leading `|`, unless its
 	// context already indents it or keeps it in place.
@@ -9978,6 +10081,178 @@ type D = { a: string } &
 			'class Derived extends class {} {}',
 			'class Derived extends Base! {}',
 		])('does not add parentheses in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+	});
+
+	// Like Prettier's `printClass`: the heading groups its heritage clauses
+	// when it has more than one heritage type or a single qualified name, and
+	// a class whose heading breaks starts its body on a new line.
+	describe('class and interface headings break like Prettier', () => {
+		/**
+		 * Assert the input is already formatted and comes back byte-identical.
+		 * @param {string} source
+		 */
+		const expectUnchanged = async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		};
+
+		it('puts each class heritage clause on its own line and { on the next', async () => {
+			const input = `export class BrowserPerformanceClient extends PerformanceClient implements IPerformanceClient, IDisposable {
+  x = 1;
+}`;
+
+			expect(await format(input)).toBeWithNewline(`export class BrowserPerformanceClient
+  extends PerformanceClient
+  implements IPerformanceClient, IDisposable
+{
+  x = 1;
+}`);
+		});
+
+		it('keeps { on the heading line of a class with an empty body', async () => {
+			const input = `export class VeryLongClassNameForTestingPurposesOnlyHereAbc extends Base implements One {}`;
+
+			expect(await format(input))
+				.toBeWithNewline(`export class VeryLongClassNameForTestingPurposesOnlyHereAbc
+  extends Base
+  implements One {}`);
+		});
+
+		it('breaks a heading with one qualified heritage name', async () => {
+			await expectUnchanged(`export class VeryLongClassNameForTestingPurposesOnlyHere
+  extends SomeNamespace.BaseClass
+{
+  x = 1;
+}`);
+			await expectUnchanged(`export class VeryLongClassNameForTesting
+  implements SomeNamespace.SomeInterfaceName.Deep
+{
+  x = 1;
+}`);
+			await expectUnchanged(`export interface VeryLongInterfaceNameForTestingPurposes
+  extends SomeNamespace.BaseInterface {
+  x: 1;
+}`);
+		});
+
+		// Prettier's `printSuperClass`: only the value of an assignment expression
+		it('moves a long superclass of an assigned class expression into parentheses', async () => {
+			const input = `Foo = class extends SomeNamespace.VeryLongBaseClassNameForTestingPurposesOnlyAbc.Def {
+  x = 1;
+};
+module.exports = class extends mixin(SomeVeryLongBaseClassName, AnotherVeryLongMixinClassName) {
+  x = 1;
+};
+a.b = class extends (SomeVeryLongBaseClassNameThatIsReallyLong || SomeOtherBaseClassName) {
+  x = 1;
+};
+Foo = class extends SomeNamespace.VeryLongBaseClassNameForTestingPurposes<TypeArg> {
+  x = 1;
+};`;
+
+			expect(await format(input)).toBeWithNewline(`Foo = class extends (
+  SomeNamespace.VeryLongBaseClassNameForTestingPurposesOnlyAbc.Def
+) {
+  x = 1;
+};
+module.exports = class extends (
+  mixin(SomeVeryLongBaseClassName, AnotherVeryLongMixinClassName)
+) {
+  x = 1;
+};
+a.b = class extends (
+  (SomeVeryLongBaseClassNameThatIsReallyLong || SomeOtherBaseClassName)
+) {
+  x = 1;
+};
+Foo = class extends (
+  SomeNamespace.VeryLongBaseClassNameForTestingPurposes
+)<TypeArg> {
+  x = 1;
+};`);
+		});
+
+		it.each([
+			'Foo = class extends Base {};',
+			'Foo = class extends (Base || Object) {};',
+			`const Foo = class extends SomeVeryLongBaseClassNameThatIsReallyLongForTestingAbcdef {
+  x = 1;
+};`,
+		])('keeps the superclass of %s as it is', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it('breaks the heading of a class expression', async () => {
+			const input = `const Foo = class VeryLongClassNameForTestingPurposesOnly extends Base implements IFoo, IBar {
+  x = 1;
+};`;
+
+			expect(await format(input))
+				.toBeWithNewline(`const Foo = class VeryLongClassNameForTestingPurposesOnly
+  extends Base
+  implements IFoo, IBar
+{
+  x = 1;
+};`);
+		});
+
+		it('keeps declare and abstract on the heading line', async () => {
+			const input = `declare abstract class VeryLongClassNameForTestingPurposesOnly extends Base implements One {
+  x: 1;
+}`;
+
+			expect(await format(input))
+				.toBeWithNewline(`declare abstract class VeryLongClassNameForTestingPurposesOnly
+  extends Base
+  implements One
+{
+  x: 1;
+}`);
+		});
+
+		it('puts interface extends on its own line and each type on its own line when they do not fit', async () => {
+			const input = `interface AbortSignal extends EventTarget, InternalEventTargetEventProperties<AbortSignalEventMap> {
+  readonly aborted: boolean;
+}
+export interface SectionProps<T> extends Omit<SharedSectionProps<T>, "children" | "title">, StyleProps, GlobalDOMAttributes<HTMLElement> {
+  id?: Key;
+}`;
+
+			expect(await format(input)).toBeWithNewline(`interface AbortSignal
+  extends EventTarget, InternalEventTargetEventProperties<AbortSignalEventMap> {
+  readonly aborted: boolean;
+}
+export interface SectionProps<T>
+  extends
+    Omit<SharedSectionProps<T>, "children" | "title">,
+    StyleProps,
+    GlobalDOMAttributes<HTMLElement> {
+  id?: Key;
+}`);
+		});
+
+		it.each([
+			'class A extends B implements C, D {}',
+			'interface I extends J, K {}',
+			'const X = class extends B implements C, D {};',
+			`export class VeryLongClassNameForTestingPurposesOnlyHere extends SomeBaseClassNameThatIsLong {
+  x = 1;
+}`,
+			`class Foo extends aVeryLongFunctionCallThatReturnsAClass(
+  withSomeArguments,
+  andMore,
+  andMoreArgs,
+) {
+  x = 1;
+}`,
+			`export class VeryLongClassNameForTestingPurposesOnly<
+  TypeParameterOne,
+  TypeParameterTwo,
+> extends Base<TypeParameterOne> {
+  x = 1;
+}`,
+		])('keeps a heading that fits or has one simple clause: %s', async (source) => {
 			await expectUnchanged(source);
 		});
 	});

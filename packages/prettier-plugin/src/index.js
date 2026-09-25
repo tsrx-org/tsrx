@@ -237,7 +237,7 @@ function formatStringLiteral(value, options) {
 		return JSON.stringify(value);
 	}
 
-	const quote = options.singleQuote ? "'" : '"';
+	const quote = getPreferredQuote(value, options.singleQuote);
 	const escapedValue = value
 		.replace(/\\/g, '\\\\')
 		.replace(new RegExp(quote, 'g'), '\\' + quote)
@@ -270,9 +270,11 @@ function isQuotedStringRaw(raw) {
 
 /**
  * Print a string literal from its source text, changing only the quotes the
- * way Prettier does. Reprinting the cooked value would drop the author's
- * escapes, and an escaped lone surrogate (`'\ud800'`) cannot be written back
- * as a raw character. Literals without source text fall back to the value.
+ * way Prettier's `printString` does: the configured quote, unless the string
+ * holds more of it than of the other one. Reprinting the cooked value would
+ * drop the author's escapes, and an escaped lone surrogate (`'\ud800'`)
+ * cannot be written back as a raw character. Literals without source text
+ * fall back to the value.
  * @param {AST.Literal} node - The literal
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {string} - The formatted string literal with quotes
@@ -283,25 +285,37 @@ function printStringLiteral(node, options) {
 		return formatStringLiteral(node.value, options);
 	}
 
-	const quote = options.singleQuote ? "'" : '"';
+	const content = raw.slice(1, -1);
+	const quote = getPreferredQuote(content, options.singleQuote);
+	return raw[0] === quote ? raw : makeString(content, quote);
+}
+
+/**
+ * Enclose a string's source text in `quote`, like Prettier's `makeString`:
+ * escape that quote wherever it appears bare, drop the backslash of an escaped
+ * other quote, and leave every other escape as written.
+ * @param {string} content - The string's source text without its quotes
+ * @param {'"' | "'"} quote - The enclosing quote
+ * @returns {string}
+ */
+function makeString(content, quote) {
 	const otherQuote = quote === '"' ? "'" : '"';
-	const content = raw.slice(1, -1).replace(
-		/\\(.)|(["'])/gs,
+	// `\\` is matched as a pair, so the quote in `\\"` counts as bare
+	const escaped = content.replace(
+		/\\(["'\\])|(["'])/g,
 		/**
 		 * @param {string} match
-		 * @param {string | undefined} escaped
+		 * @param {string | undefined} escapedChar
 		 * @param {string | undefined} bareQuote
 		 */
-		(match, escaped, bareQuote) => {
-			if (escaped !== undefined) {
-				// `\'` inside double quotes no longer needs its backslash.
-				return escaped === otherQuote ? escaped : match;
+		(match, escapedChar, bareQuote) => {
+			if (escapedChar !== undefined) {
+				return escapedChar === otherQuote ? escapedChar : match;
 			}
 			return bareQuote === quote ? '\\' + quote : /** @type {string} */ (bareQuote);
 		},
 	);
-
-	return quote + content + quote;
+	return quote + escaped + quote;
 }
 
 /**
@@ -1124,9 +1138,115 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 				(key === 'left' && parent.type === 'BinaryExpression' && parent.operator === '<')
 			);
 
+		// Types, like Prettier's `needsParens`. Parentheses written in the source
+		// stay as a `TSParenthesizedType`, so these rules only add the ones
+		// Prettier adds for readability: `(): (() => void) => {}` and
+		// `(typeof a)[]` parse the same without them.
+		case 'TSFunctionType':
+		case 'TSConditionalType':
+		case 'TSConstructorType':
+		case 'TSUnionType':
+		case 'TSIntersectionType':
+		case 'TSInferType':
+		case 'TSTypeOperator':
+			return typeOperandNeedsParens(node, key, parent, grandparent);
+
+		case 'TSTypeQuery':
+			return (
+				(key === 'objectType' && parent.type === 'TSIndexedAccessType') ||
+				(key === 'elementType' && parent.type === 'TSArrayType')
+			);
+
 		default:
 			return false;
 	}
+}
+
+/**
+ * The type part of {@link nodeNeedsParens}. Prettier's `needsParens` lists
+ * these types as one chain of `switch` cases that fall through from function
+ * types down to type operators: each type adds its own rules and then shares
+ * every rule below it.
+ * @param {AST.TSFunctionType | AST.TSConditionalType | AST.TSConstructorType | AST.TSUnionType | AST.TSIntersectionType | AST.TSInferType | AST.TSTypeOperator} node
+ * @param {string | number | null} key - The child's key in `parent`
+ * @param {AST.Node} parent - The parent node
+ * @param {AST.Node | null} grandparent - The parent's parent
+ * @returns {boolean}
+ */
+function typeOperandNeedsParens(node, key, parent, grandparent) {
+	if (
+		node.type === 'TSFunctionType' &&
+		key === 'typeAnnotation' &&
+		parent.type === 'TSTypeAnnotation' &&
+		grandparent?.type === 'ArrowFunctionExpression' &&
+		grandparent.returnType === parent
+	) {
+		return true;
+	}
+
+	if (
+		node.type === 'TSFunctionType' ||
+		node.type === 'TSConditionalType' ||
+		node.type === 'TSConstructorType'
+	) {
+		if (
+			(key === 'extendsType' &&
+				node.type === 'TSConditionalType' &&
+				parent.type === 'TSConditionalType') ||
+			// Not the `in` type of a mapped type, which this parser keeps as
+			// the constraint of a type parameter
+			(key === 'constraint' &&
+				node.type === 'TSConditionalType' &&
+				parent.type === 'TSTypeParameter' &&
+				grandparent?.type !== 'TSMappedType') ||
+			(key === 'checkType' && parent.type === 'TSConditionalType')
+		) {
+			return true;
+		}
+		if (
+			key === 'extendsType' &&
+			parent.type === 'TSConditionalType' &&
+			node.type !== 'TSConditionalType'
+		) {
+			// `A extends (() => infer R extends B) ? R : C`
+			let returnType = node.typeAnnotation?.typeAnnotation;
+			if (returnType?.type === 'TSTypePredicate' && returnType.typeAnnotation) {
+				returnType = returnType.typeAnnotation.typeAnnotation;
+			}
+			if (returnType?.type === 'TSInferType' && returnType.typeParameter.constraint) {
+				return true;
+			}
+		}
+	}
+
+	if (
+		node.type !== 'TSInferType' &&
+		node.type !== 'TSTypeOperator' &&
+		(parent.type === 'TSUnionType' || parent.type === 'TSIntersectionType')
+	) {
+		return true;
+	}
+
+	if (node.type === 'TSInferType') {
+		if (parent.type === 'TSRestType') {
+			return false;
+		}
+		if (
+			key === 'types' &&
+			(parent.type === 'TSUnionType' || parent.type === 'TSIntersectionType') &&
+			node.typeParameter.constraint
+		) {
+			return true;
+		}
+	}
+
+	return (
+		parent.type === 'TSArrayType' ||
+		parent.type === 'TSOptionalType' ||
+		parent.type === 'TSRestType' ||
+		(key === 'objectType' && parent.type === 'TSIndexedAccessType') ||
+		parent.type === 'TSTypeOperator'
+	);
 }
 
 /**
@@ -5787,40 +5907,149 @@ function printClassDeclaration(node, path, options, print) {
 		}
 	}
 
+	const groupMode = shouldPrintHeritageInGroupMode(node, path);
+	/** @type {Doc[]} */
+	const heritage = [];
 	if (node.superClass) {
-		parts.push(' extends ');
+		/** @type {Doc} */
+		let superClassDoc;
 		if (superClassNeedsParens(node.superClass)) {
 			// The class owns these parens, so the superclass must not add its own
 			const superClass = path.call(
 				(superPath) => print(superPath, { suppressOwnParens: true }),
 				'superClass',
 			);
-			if (getDecorators(node.superClass).length > 0) {
-				// Each decorator prints on its own line, so the class is indented
-				// inside the parens to keep them off column zero.
-				parts.push('(', indent([hardline, superClass]), hardline, ')');
-			} else {
-				parts.push('(', superClass, ')');
-			}
+			// Each decorator prints on its own line, so the class is indented
+			// inside the parens to keep them off column zero.
+			superClassDoc =
+				getDecorators(node.superClass).length > 0
+					? ['(', indent([hardline, superClass]), hardline, ')']
+					: ['(', superClass, ')'];
 		} else {
-			parts.push(path.call(print, 'superClass'));
+			superClassDoc = path.call(print, 'superClass');
 		}
+		const parent = /** @type {AST.Node | null} */ (path.getParentNode());
+		if (parent?.type === 'AssignmentExpression') {
+			// Like Prettier's `printSuperClass`, a superclass that doesn't fit
+			// after `= class extends` moves into parentheses of its own
+			superClassDoc = group(
+				ifBreak(['(', indent([softline, superClassDoc]), softline, ')'], superClassDoc),
+			);
+		}
+		/** @type {Doc[]} */
+		const superClassParts = ['extends ', superClassDoc];
 		if (node.superTypeParameters) {
-			parts.push(path.call(print, 'superTypeParameters'));
+			superClassParts.push(path.call(print, 'superTypeParameters'));
 		}
+		heritage.push(groupMode ? [line, group(superClassParts)] : [' ', superClassParts]);
 	}
 
 	// Heritage type arguments and implements clauses are what TypeScript
 	// checks the class against, so dropping them silently loses those checks
-	if (node.implements && node.implements.length > 0) {
-		parts.push(' implements ');
-		parts.push(join(', ', path.map(print, 'implements')));
+	heritage.push(printHeritageClauses(node, path, print, groupMode));
+
+	if (!groupMode) {
+		return [...parts, ...heritage, ' ', path.call(print, 'body')];
 	}
 
-	parts.push(' ');
-	parts.push(path.call(print, 'body'));
+	// Like Prettier, a class whose heading breaks starts its body on a new
+	// line, so the body does not read as one more heritage clause
+	const heritageGroupId = Symbol('heritageGroup');
+	return [
+		group([...parts, indent(heritage)], { id: heritageGroupId }),
+		node.body.body.length > 0 ? ifBreak(hardline, ' ', { groupId: heritageGroupId }) : ' ',
+		path.call(print, 'body'),
+	];
+}
 
-	return parts;
+/**
+ * Whether a class or interface heading prints its heritage clauses in a group
+ * that puts each clause on its own line when the heading does not fit, like
+ * Prettier's `shouldPrintClassInGroupMode`. A heading with one clause keeps it
+ * on the heading's line unless that clause is a plain qualified name, which
+ * has nowhere else to break.
+ * @param {AST.ClassDeclaration | AST.ClassExpression | AST.TSInterfaceDeclaration} node
+ * @param {AstPath} path - The path to `node`
+ * @returns {boolean}
+ */
+function shouldPrintHeritageInGroupMode(node, path) {
+	const superClass = node.type === 'TSInterfaceDeclaration' ? null : node.superClass;
+	if (
+		node.id?.trailingComments?.length ||
+		node.typeParameters?.trailingComments?.length ||
+		(superClass && hasComment(superClass)) ||
+		hasMultipleHeritage(node)
+	) {
+		return true;
+	}
+
+	if (superClass) {
+		if (path.getParentNode()?.type === 'AssignmentExpression') {
+			return false;
+		}
+		let expression = superClass;
+		while (expression.type === 'ChainExpression' || expression.type === 'TSNonNullExpression') {
+			expression = expression.expression;
+		}
+		return (
+			!(/** @type {AST.ClassDeclaration} */ (node).superTypeParameters) &&
+			expression.type === 'MemberExpression'
+		);
+	}
+
+	// The parser gives `implements` clauses the same shape as `extends` ones,
+	// with a qualified name (`ns.Base`) as a `TSQualifiedName`
+	const clause = /** @type {AST.TSExpressionWithTypeArguments | undefined} */ (
+		node.type === 'TSInterfaceDeclaration' ? node.extends?.[0] : node.implements?.[0]
+	);
+	const expression = /** @type {AST.Node | undefined} */ (clause?.expression);
+	return (
+		!clause?.typeParameters &&
+		(expression?.type === 'MemberExpression' || expression?.type === 'TSQualifiedName')
+	);
+}
+
+/**
+ * Whether a class or interface names more than one heritage type, counting
+ * the superclass.
+ * @param {AST.ClassDeclaration | AST.ClassExpression | AST.TSInterfaceDeclaration} node
+ * @returns {boolean}
+ */
+function hasMultipleHeritage(node) {
+	if (node.type === 'TSInterfaceDeclaration') {
+		return (node.extends?.length ?? 0) > 1;
+	}
+	return (node.superClass ? 1 : 0) + (node.implements?.length ?? 0) > 1;
+}
+
+/**
+ * Print the `implements` clause of a class or the `extends` clause of an
+ * interface, like Prettier's `printHeritageClauses`. With more than one
+ * heritage type, the keyword starts its own line when the heading breaks, and
+ * the types follow it on one line or, when they do not fit, one per line
+ * below it.
+ * @param {AST.ClassDeclaration | AST.ClassExpression | AST.TSInterfaceDeclaration} node
+ * @param {AstPath} path - The path to `node`
+ * @param {PrintFn} print - Print callback
+ * @param {boolean} groupMode - Whether the heading groups its clauses
+ * @returns {Doc}
+ */
+function printHeritageClauses(node, path, print, groupMode) {
+	const [listName, list] =
+		node.type === 'TSInterfaceDeclaration'
+			? ['extends', node.extends]
+			: ['implements', node.implements];
+	if (!list || list.length === 0) {
+		return '';
+	}
+
+	const clauses = join([',', line], path.map(print, listName));
+	if (!hasMultipleHeritage(node)) {
+		/** @type {Doc[]} */
+		const printed = [listName, ' ', clauses];
+		return groupMode ? [line, group(printed)] : [' ', printed];
+	}
+	return [line, listName, group(indent([line, clauses]))];
 }
 
 /**
@@ -7151,17 +7380,15 @@ function printTSInterfaceDeclaration(node, path, options, print) {
 		parts.push(path.call(print, 'typeParameters'));
 	}
 
-	// Handle extends clause
-	if (node.extends && node.extends.length > 0) {
-		parts.push(' extends ');
-		const extendsTypes = path.map(print, 'extends');
-		parts.push(join(', ', extendsTypes));
-	}
-
-	parts.push(' ');
-	parts.push(path.call(print, 'body'));
-
-	return parts;
+	// Handle extends clause. Unlike a class body, an interface body stays on
+	// the heading's last line when the heading breaks, like Prettier.
+	const groupMode = shouldPrintHeritageInGroupMode(node, path);
+	const heritage = printHeritageClauses(node, path, print, groupMode);
+	return [
+		groupMode ? group([...parts, indent(heritage)]) : [...parts, heritage],
+		' ',
+		path.call(print, 'body'),
+	];
 }
 
 /**
