@@ -430,7 +430,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			// Only the parentheses around the statement's value may close after
 			// the comment. Any other pair, like the one in `x = !(a /* c */);`,
 			// stays, and so does the comment inside it.
-			const value = getParenthesizedStatementValue(statement);
+			const value = getParenthesizedStatementValue(statement, comments[0]);
 			if (
 				!value ||
 				value.end !== node.end ||
@@ -485,14 +485,16 @@ export function get_comment_handlers(source, comments, index = 0) {
 	/**
 	 * The value of a statement, like the argument of `return (a)` or the right
 	 * side of `x = (a)`, when it's written in parentheses that print as
-	 * nothing (see {@link valuesPrintedWithoutParens}), or the expression body
-	 * of an arrow function that is the value, as in `const f = () => (a);`,
-	 * when the comments after it in its parentheses print before the `;` (see
-	 * {@link keepsCommentsInArrowBodyParens}).
+	 * nothing (see {@link valuesPrintedWithoutParens}) or that `comment`, after
+	 * the value in them, ends up after (see {@link movesCommentAfterParens}),
+	 * or the expression body of an arrow function that is the value, as in
+	 * `const f = () => (a);`, when the comments after it in its parentheses
+	 * print before the `;` (see {@link keepsCommentsInArrowBodyParens}).
 	 * @param {AST.Node} statement
+	 * @param {AST.CommentWithLocation} comment
 	 * @returns {(AST.Node & AST.NodeWithLocation) | null}
 	 */
-	function getParenthesizedStatementValue(statement) {
+	function getParenthesizedStatementValue(statement, comment) {
 		const node = /** @type {any} */ (statement);
 		/** @type {(AST.Node & AST.NodeWithLocation)[]} */
 		const candidates = [];
@@ -506,6 +508,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 			candidates.push(node.declaration);
 		}
 		for (let candidate of candidates) {
+			if (candidate?.metadata?.parenthesized && movesCommentAfterParens(node, candidate, comment)) {
+				return candidate;
+			}
 			let isArrowBody = false;
 			while (candidate?.type === 'ArrowFunctionExpression') {
 				candidate = /** @type {AST.Node & AST.NodeWithLocation} */ (candidate.body);
@@ -524,12 +529,53 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Whether a comment after a statement's value, in the parentheses around
+	 * it, ends up after the statement's `;` in Prettier, at once or on its
+	 * next pass, so that it goes there at once:
+	 * - After an expression statement's expression, other than an element or
+	 *   template, `handleParenthesizedExpressionTrailingComment` gives it to
+	 *   the statement: `(a, b /* c *\/);` prints `(a, b); /* c *\/`.
+	 * - After a sequence or assignment that is the argument of a `throw` or
+	 *   the declaration of an `export default`, which the handler leaves out,
+	 *   it trails the value, which prints it after its parentheses.
+	 * - After an assignment on the right side of another, the handler gives it
+	 *   to the right side, but the chain prints without the parentheses:
+	 *   `x = (y = z /* c *\/);` prints `x = y = z /* c *\/;`.
+	 * - A line comment after the sequence of a declarator's value or an
+	 *   assignment's right side trails its last expression, but those
+	 *   parentheses don't break, so it prints after the `;`.
+	 * @param {AST.Node} statement
+	 * @param {AST.Node} value
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {boolean}
+	 */
+	function movesCommentAfterParens(statement, value, comment) {
+		if (statement.type === 'ExpressionStatement' && statement.expression === value) {
+			return !value.type.startsWith('JSX');
+		}
+		if (value.type !== 'SequenceExpression' && value.type !== 'AssignmentExpression') {
+			return false;
+		}
+		if (statement.type === 'ThrowStatement' || statement.type === 'ExportDefaultDeclaration') {
+			return true;
+		}
+		const isAssignmentRight =
+			statement.type === 'ExpressionStatement' &&
+			statement.expression.type === 'AssignmentExpression' &&
+			statement.expression.right === value;
+		return value.type === 'AssignmentExpression'
+			? isAssignmentRight
+			: comment.type === 'Line' && (isAssignmentRight || statement.type === 'VariableDeclaration');
+	}
+
+	/**
 	 * Whether the comments after an arrow function's expression body, in the
 	 * parentheses it's written in, print inside parentheses, as they do after
 	 * an element or other template value (see {@link elementValueTypes}), a
 	 * conditional, which Prettier prints in parentheses when it fits, and a
 	 * sequence or assignment, where Prettier gives them to the last
-	 * expression (`handleParenthesizedExpressionTrailingComment`). After any
+	 * expression (`handleParenthesizedExpressionTrailingComment`, which
+	 * `handleComment` ports). After any
 	 * other body, they print before the statement's `;`: its parentheses print
 	 * as nothing, or, around an object, before them.
 	 * @param {AST.Node} node
@@ -657,6 +703,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 *   line, and its next pass trails the name with it, so it trails the name
 	 *   at once. After a line comment that trails the name, though, the type
 	 *   moves to the next line, and the comment stays on its own line there.
+	 * The comments between the constraint and the `=` of the default, and
+	 * after the `=`, follow the same rules for the constraint (see
+	 * {@link trailsTypeParameterPart}).
 	 * @param {AST.TSTypeParameter & AST.NodeWithLocation} node
 	 * @param {AST.Node | AST.CSS.StyleSheet | undefined} parent
 	 */
@@ -667,18 +716,31 @@ export function get_comment_handlers(source, comments, index = 0) {
 		let hasLineComment = false;
 		while (comments[0] && comments[0].end <= end) {
 			const comment = comments[0];
-			if (keyword) {
-				const isAfterKeyword = findOutsideComments(keyword, comment.end, end) >= end;
-				const ignoresType =
-					isPrettierIgnoreComment(comment) && (isAfterKeyword || isOwnLineComment(comment));
-				const trailsName = isOwnLineComment(comment)
-					? !hasLineComment && (comment.type === 'Line' || isEndOfLineComment(comment))
-					: isEndOfLineComment(comment) || !isAfterKeyword;
-				if (ignoresType || !trailsName) break;
-			}
+			if (keyword && !trailsTypeParameterPart(comment, keyword, end, hasLineComment)) break;
 			hasLineComment ||= comment.type === 'Line';
 			pushInnerComment(node, /** @type {AST.CommentWithLocation} */ (comments.shift()));
 		}
+	}
+
+	/**
+	 * Whether a comment after part of a type parameter, its name or its
+	 * constraint, and before the type after the next keyword, trails that part
+	 * rather than leading the type (see {@link takeTypeParameterNameComments})
+	 * @param {AST.CommentWithLocation} comment
+	 * @param {string} keyword - The keyword before the type
+	 * @param {number} end - Where the type starts
+	 * @param {boolean} hasLineComment - Whether a line comment after the part
+	 *   trails it already
+	 * @returns {boolean}
+	 */
+	function trailsTypeParameterPart(comment, keyword, end, hasLineComment) {
+		const isAfterKeyword = findOutsideComments(keyword, comment.end, end) >= end;
+		if (isPrettierIgnoreComment(comment) && (isAfterKeyword || isOwnLineComment(comment))) {
+			return false;
+		}
+		return isOwnLineComment(comment)
+			? !hasLineComment && (comment.type === 'Line' || isEndOfLineComment(comment))
+			: isEndOfLineComment(comment) || !isAfterKeyword;
 	}
 
 	/**
@@ -1227,6 +1289,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 			type === 'TSUnionType' ||
 			type === 'AssignmentPattern' ||
 			type === 'TSMappedType' ||
+			type === 'TSTypeParameter' ||
+			type === 'VariableDeclarator' ||
+			type === 'ReturnStatement' ||
+			type === 'AssignmentExpression' ||
 			getSignatureParameters(node) !== null ||
 			isClassLike(/** @type {AST.Node} */ (node)) ||
 			isPropertyLike(node) ||
@@ -1553,6 +1619,40 @@ export function get_comment_handlers(source, comments, index = 0) {
 			return true;
 		}
 
+		// `handleParenthesizedExpressionTrailingComment`: a comment that isn't on
+		// a line of its own, after a sequence or assignment in the parentheses
+		// around an arrow function's body, a declarator's value, a `return`
+		// argument, or the right side of an assignment, trails the sequence's
+		// last expression or the assignment's right side, so that it prints
+		// inside the parentheses the printer keeps there:
+		// `const f = () => (a = b /* note */);`. The handler's first case, for
+		// an expression statement, is in `movesCommentAfterParens`.
+		if (
+			!ownLine &&
+			preceding &&
+			!following &&
+			(preceding.type === 'SequenceExpression' || preceding.type === 'AssignmentExpression') &&
+			(node.type === 'ArrowFunctionExpression'
+				? node.body === preceding
+				: node.type === 'VariableDeclarator'
+					? node.init === preceding
+					: node.type === 'ReturnStatement'
+						? node.argument === preceding
+						: node.type === 'AssignmentExpression' && node.right === preceding) &&
+			// Before the `)` of those parentheses. A comment before the `;` of a
+			// `return` without them lies outside the statement for Prettier,
+			// which ends it before the `;` (see `takeCommentsBeforeFinalSemicolon`)
+			getNextNonSpaceNonCommentCharacter(comment.end) === ')'
+		) {
+			addTrailingComment(
+				preceding.type === 'SequenceExpression'
+					? /** @type {AST.Node} */ (preceding.expressions.at(-1))
+					: preceding.right,
+				comment,
+			);
+			return true;
+		}
+
 		// A comment on its own line before the `]` of a mapped type's key trails
 		// the node before it, where the printer keeps it. Prettier gives it to
 		// the type after the `]`, which prints it after the `:`, and its next
@@ -1563,6 +1663,29 @@ export function get_comment_handlers(source, comments, index = 0) {
 			preceding &&
 			getNextNonSpaceNonCommentCharacter(comment.end) === ']'
 		) {
+			addTrailingComment(preceding, comment);
+			return true;
+		}
+
+		// Like the comments after a type parameter's name (see
+		// `takeTypeParameterNameComments`), the ones between its constraint and
+		// its default trail the constraint, which prints them on its line, before
+		// the `=`, or after it at the end of that line. As in Prettier, whose
+		// default below trails the constraint with a comment that ends its line,
+		// one after the `=` then stays there (`T extends C = // note`) instead
+		// of leading the default, which would print its own `hardline` without
+		// indenting the default. A `prettier-ignore` comment after the `=` keeps
+		// ignoring the default.
+		if (node.type === 'TSTypeParameter' && preceding && following && preceding === node.constraint) {
+			const hasLineComment = !!(
+				/** @type {AST.NodeWithMaybeComments} */ (preceding).trailingComments?.some(
+					(trailing) => trailing.type === 'Line',
+				)
+			);
+			const defaultStart = /** @type {AST.NodeWithLocation} */ (following).start;
+			if (!trailsTypeParameterPart(comment, '=', defaultStart, hasLineComment)) {
+				return false;
+			}
 			addTrailingComment(preceding, comment);
 			return true;
 		}
