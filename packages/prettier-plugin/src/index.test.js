@@ -1348,21 +1348,124 @@ const o = {
 			expect(await format('\n\n// prettier-ignore\n\n\n')).toBe('\n\n// prettier-ignore\n\n\n');
 		});
 
-		it('still formats an element or code block whose only comments are its children', async () => {
+		it('still formats an element whose only comment is its child', async () => {
 			// Like a JSX comment child, the comment doesn't dangle on the element
 			const result = await format(`function App() @{
   const  x = 1;
   <div   a="1">
     // prettier-ignore
   </div>
-  // prettier-ignore
 }`);
 			expect(result).toBeWithNewline(`function App() @{
   const x = 1;
   <div a="1">
     // prettier-ignore
   </div>
+}`);
+		});
+
+		it('keeps the last node of a code block that an own-line prettier-ignore follows', async () => {
+			// Like the last statement of a block, and not the whole code block
+			const result = await format(`function App() @{
+  const  x = 1;
+  <span   a="1" />
   // prettier-ignore
+}
+function Setup() @{
+  const  x = 1;
+  const  y = 2;;
+  // note
+  // prettier-ignore
+}
+function Branch() @{
+  @if (x) {
+    <span   a="1" />
+    // prettier-ignore
+  }
+}`);
+			expect(result).toBeWithNewline(`function App() @{
+  const x = 1;
+  <span   a="1" />
+  // prettier-ignore
+}
+function Setup() @{
+  const x = 1;
+  const  y = 2;
+  // note
+  // prettier-ignore
+}
+function Branch() @{
+  @if (x) {
+    <span   a="1" />
+    // prettier-ignore
+  }
+}`);
+		});
+
+		it('still formats the last node of a code block that another comment follows', async () => {
+			const result = await format(`function App() @{
+  <span   a="1" />
+  // prettier-ignore-start
+}`);
+			expect(result).toBeWithNewline(`function App() @{
+  <span a="1" />
+  // prettier-ignore-start
+}`);
+		});
+
+		it('keeps an element after a prettier-ignore JSX comment child as written', async () => {
+			// Prettier's \`hasJsxIgnoreComment\`, past whitespace with a line break
+			const source = `function App() {
+  return (
+    <div>
+      {/* prettier-ignore */}
+      <span   a = "1"
+        b =  "2">
+          text   here
+      </span>
+      <b c="3" />
+      {/* note */ /* prettier-ignore */}
+
+      <>
+        <i   x = "1" />
+      </>
+    </div>
+  );
+}
+function Template() @{
+  <div>
+    {/* prettier-ignore */}
+    <span   a = "1">
+      {x}
+    </span>
+    <p> hi </p>
+  </div>
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('still formats an element after a space or a {…} child that a prettier-ignore comment is in', async () => {
+			const result = await format(`function App() {
+  return (
+    <div>
+      {/* prettier-ignore */} <span   a = "1" />
+      {/* prettier-ignore */}
+      {x   +   y}
+      {x /* prettier-ignore */}
+      <b   c = "1" />
+    </div>
+  );
+}`);
+			expect(result).toBeWithNewline(`function App() {
+  return (
+    <div>
+      {/* prettier-ignore */} <span a="1" />
+      {/* prettier-ignore */}
+      {x + y}
+      {x /* prettier-ignore */}
+      <b c="1" />
+    </div>
+  );
 }`);
 		});
 
@@ -6862,14 +6965,14 @@ render(App);`;
 		});
 
 		it('should format a TypeScript <script> body with prettier options applied', async () => {
-			const expected = `<script type="text/typescript">
+			const expected = `<script lang="ts">
   const n: number = 1 < 2 ? 3 : 4;
   if (n < 2) {
     go('now');
   }
 </script>`;
 
-			const source = `<script type="text/typescript">const n:number=1<2?3:4;
+			const source = `<script lang="ts">const n:number=1<2?3:4;
 if(n<2){go("now")}</script>`;
 
 			const result = await format(source, { singleQuote: true, printWidth: 100 });
@@ -6956,6 +7059,112 @@ if(n<2){go("now")}</script>`;
 				`export function App() @{\n\t<script>\n\t\tconst broken = ;\n\t\t  go();\n\t</script>\n}`,
 			);
 			expect(await format(result, { useTabs: true })).toBe(result);
+		});
+
+		it('formats a JSON <script> body as JSON, like Prettier', async () => {
+			// Prettier's HTML `inferScriptParser`: JSON, an import map, or speculation rules
+			const result = await format(`export function App() @{
+  <div>
+    <script type="application/json">[1,2]</script>
+    <script type="application/json">"on"</script>
+    <script type="importmap">{"imports":{"a":"./a.js"}}</script>
+    <script type="application/ld+json">
+      { "@context": "https://schema.org",
+        "name": 'x' }
+    </script>
+    <script type="speculationrules">{"prerender":[{"source":"list"}]}</script>
+    <script type="application/json">true</script>
+  </div>
+}`);
+			expect(result).toBeWithNewline(`export function App() @{
+  <div>
+    <script type="application/json">
+      [1, 2]
+    </script>
+    <script type="application/json">
+      "on"
+    </script>
+    <script type="importmap">
+      { "imports": { "a": "./a.js" } }
+    </script>
+    <script type="application/ld+json">
+      { "@context": "https://schema.org", "name": "x" }
+    </script>
+    <script type="speculationrules">
+      { "prerender": [{ "source": "list" }] }
+    </script>
+    <script type="application/json">
+      true
+    </script>
+  </div>
+}`);
+		});
+
+		it('keeps a <script> body of another type, or with src, as written', async () => {
+			// Like Prettier's HTML printer, which has no parser for them
+			const result = await format(`export function App() @{
+  <div>
+    <script type="text/template">
+          <div>
+            x   y
+          </div>
+    </script>
+    <script type="text/typescript">let   a: number = 1</script>
+    <script src="x.js">let   a = 1</script>
+    <script type={kind}>[1,2]</script>
+    <script type="application/json">[1,2</script>
+  </div>
+}`);
+			expect(result).toBeWithNewline(`export function App() @{
+  <div>
+    <script type="text/template">
+      <div>
+        x   y
+      </div>
+    </script>
+    <script type="text/typescript">
+      let   a: number = 1
+    </script>
+    <script src="x.js">
+      let   a = 1
+    </script>
+    <script type={kind}>
+      [1,2]
+    </script>
+    <script type="application/json">
+      [1,2
+    </script>
+  </div>
+}`);
+		});
+
+		it('formats a <script> body of a code, Markdown, or HTML type like Prettier', async () => {
+			const result = await format(`export function App() @{
+  <div>
+    <script type="module">let   a = 1</script>
+    <script type="">let   a = 1</script>
+    <script type="text/markdown">
+      #   Title
+    </script>
+    <script type="text/html"><div><p>hi</p></div></script>
+  </div>
+}`);
+			expect(result).toBeWithNewline(`export function App() @{
+  <div>
+    <script type="module">
+      let a = 1;
+    </script>
+    <script type="">
+      let a = 1;
+    </script>
+    <script type="text/markdown">
+      # Title
+    </script>
+    <script type="text/html">
+      <div><p>hi</p></div>
+    </script>
+  </div>
+}`);
 		});
 
 		it('should preserve the blank line between a function and text literal sibling inside element', async () => {
@@ -13704,6 +13913,67 @@ const c = <div>{cond ? <span>a</span> : <span>b</span>}</div>;`;
   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 } and \${bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}\`;`;
 			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier, a comment in a `${…}` never goes to the template's text,
+		// which prints as written
+		it('keeps a comment on its own line after the expression in its ${…}', async () => {
+			const source = `x = \`\${
+  foo
+  /* comment */
+}\`;
+y = \`a \${
+  foo
+  // comment
+} b \${bar}\`;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps a comment beside the expression or on its own line before it', async () => {
+			const source = `z = \`\${foo /* c */} and \${
+  // lead
+  bar
+}\`;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps comments in the ${…} of CSS and GraphQL templates', async () => {
+			const source = `const Box = styled.div\`
+  color: \${
+    foo
+    // comment
+  };
+\`;
+const query = gql\`
+  query {
+    user(id: \${
+      id
+      /* the id */
+    }) {
+      name
+    }
+  }
+\`;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Prettier keeps a comment in a template literal's ${…}, but not in a
+		// template literal type's: an own-line one leads the next type
+		it('moves a comment on its own line to the next type of a template literal type', async () => {
+			const result = await format(`type A = \`\${
+  B
+  // b
+}x\${C}\${
+  D
+  // d
+}\`;`);
+			expect(result).toBeWithNewline(`type A = \`\${B}x\${
+  // b
+  C
+}\${
+  D
+  // d
+}\`;`);
 		});
 
 		it('indents a breaking expression from the template line it starts on', async () => {

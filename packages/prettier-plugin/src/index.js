@@ -172,9 +172,10 @@ export const printers = {
 		},
 		/**
 		 * @param {AstPath<AST.Node | AST.CSS.StyleSheet>} path
+		 * @param {Options} options
 		 * @returns {((textToDoc: TextToDoc, print: PrintFn, path: AstPath, options: Options) => Promise<Doc | undefined>) | null}
 		 */
-		embed(path) {
+		embed(path, options) {
 			const node = path.node;
 
 			// CSS, GraphQL, HTML, and Markdown in template literals
@@ -204,17 +205,24 @@ export const printers = {
 			}
 
 			// Raw-text `<script>` bodies: the parser mirrors the element's `content` as
-			// a single JSXText child. Format it with Prettier's TypeScript parser (a
-			// superset of JS, so plain bodies format identically) the same way <style>
-			// bodies are formatted as CSS above.
+			// a single JSXText child. Format it with the parser for the script's type
+			// (see inferScriptParser) the same way <style> bodies are formatted as CSS
+			// above, and keep a body of any other type as written.
 			if (node.type === 'JSXText') {
 				const parent = /** @type {AST.TSRXJSXElement | null} */ (path.getParentNode());
 				if (isRawScriptElement(parent)) {
+					const parser = inferScriptParser(/** @type {AST.TSRXJSXElement} */ (parent), options);
 					return async (textToDoc) => {
 						try {
-							const body = await textToDoc(node.value, {
-								parser: 'typescript',
-							});
+							if (!parser) {
+								return printUnformattedRawText(node.value);
+							}
+							const body = await textToDoc(
+								parser === 'markdown'
+									? dedentString(node.value.replace(/^[^\S\n]*\n/u, ''))
+									: node.value,
+								{ parser },
+							);
 							// Drop the program's trailing hardline; printElement places the
 							// closing tag on its own line already.
 							return stripTrailingHardline(body);
@@ -489,6 +497,127 @@ function isRawScriptElement(node) {
 }
 
 /**
+ * The parser for the body of a raw-text `<script>`, like Prettier's HTML
+ * `inferScriptParser`: none for a script with `src`, the parser of its `lang`
+ * or `type`, and, like a script with neither, JavaScript's for code. This
+ * plugin formats JavaScript with Prettier's TypeScript parser (a superset of
+ * it, so plain bodies format the same) instead of Babel's. A body without a
+ * parser, like a template's, prints as written, and so does one whose `lang`
+ * or `type` is an expression.
+ * @param {AST.TSRXJSXElement} element
+ * @param {Options} options
+ * @returns {string | undefined}
+ */
+function inferScriptParser(element, options) {
+	/** @type {Map<string, string | null>} */
+	const attributes = new Map();
+	for (const attribute of element.openingElement.attributes) {
+		if (attribute.type !== 'JSXAttribute' || attribute.name.type !== 'JSXIdentifier') {
+			continue;
+		}
+		const { value } = attribute;
+		const literal = value?.type === 'JSXExpressionContainer' ? value.expression : value;
+		attributes.set(
+			attribute.name.name,
+			!literal
+				? ''
+				: literal.type === 'Literal' && typeof literal.value === 'string'
+					? literal.value
+					: null,
+		);
+	}
+	if (attributes.has('src')) {
+		return undefined;
+	}
+	const type = attributes.get('type');
+	const lang = attributes.get('lang');
+	if (type === null || lang === null) {
+		return undefined;
+	}
+	const parser =
+		!lang && !type
+			? 'babel'
+			: (inferParserByLanguageName(options, lang) ?? inferParserByTypeAttribute(type));
+	return parser === 'babel' ? 'typescript' : parser;
+}
+
+/**
+ * The parser of the language named `languageName`, like Prettier's
+ * `inferParser` with a `language`: by name, then alias, then extension.
+ * @param {Options} options
+ * @param {string | undefined} languageName
+ * @returns {string | undefined}
+ */
+function inferParserByLanguageName(options, languageName) {
+	if (!languageName) {
+		return undefined;
+	}
+	const languages = /** @type {import('prettier').Plugin[]} */ (options.plugins ?? [])
+		.filter((plugin) => typeof plugin === 'object')
+		.toReversed()
+		.flatMap((plugin) => plugin.languages ?? []);
+	const language =
+		languages.find(({ name }) => name.toLowerCase() === languageName) ??
+		languages.find(({ aliases }) => aliases?.includes(languageName)) ??
+		languages.find(({ extensions }) => extensions?.includes(`.${languageName}`));
+	return language?.parsers[0];
+}
+
+/**
+ * Prettier's HTML `inferParserByTypeAttribute`: the parser for a `<script>`
+ * of this `type`, with JSON's for JSON, an import map, or speculation rules.
+ * @param {string | undefined} type
+ * @returns {string | undefined}
+ */
+function inferParserByTypeAttribute(type) {
+	switch (type) {
+		case undefined:
+		case '':
+			return undefined;
+		case 'module':
+		case 'text/javascript':
+		case 'text/babel':
+		case 'text/jsx':
+		case 'application/javascript':
+			return 'babel';
+		case 'application/x-typescript':
+			return 'typescript';
+		case 'text/markdown':
+			return 'markdown';
+		case 'text/html':
+			return 'html';
+		case 'text/x-handlebars-template':
+			return 'glimmer';
+		default:
+			return type.endsWith('json') || type.endsWith('importmap') || type === 'speculationrules'
+				? 'json'
+				: undefined;
+	}
+}
+
+/**
+ * Prettier's HTML `dedentString`: the text without the indentation its
+ * lines share.
+ * @param {string} text
+ * @returns {string}
+ */
+function dedentString(text) {
+	let minIndentation = Number.POSITIVE_INFINITY;
+	for (const lineText of text.split('\n')) {
+		const indentation = /** @type {RegExpMatchArray} */ (lineText.match(/^[\t\f\r ]*/u))[0].length;
+		if (indentation < lineText.length) {
+			minIndentation = Math.min(minIndentation, indentation);
+		}
+	}
+	return minIndentation === Number.POSITIVE_INFINITY
+		? text
+		: text
+				.split('\n')
+				.map((lineText) => lineText.slice(minIndentation))
+				.join('\n');
+}
+
+/**
  * Format a string literal according to Prettier options
  * @param {string | number | bigint | boolean | RegExp | null | undefined} value - value to format
  * @param {TsrxFormatOptions} options - Prettier options
@@ -688,6 +817,89 @@ function hasPrettierIgnore(node) {
 		node.leadingComments?.some(isPrettierIgnoreComment) ||
 		node.trailingComments?.some(isPrettierIgnoreComment) ||
 		(!isTemplateContainer && node.innerComments?.some(isPrettierIgnoreComment)),
+	);
+}
+
+/**
+ * Whether `prettier-ignore` keeps the node at `path` as written, like
+ * Prettier's `isIgnored`: a directive attached to the node (see
+ * {@link hasPrettierIgnore}), one in the `{…}` child before an element (see
+ * {@link hasJSXIgnoreComment}), or one after the last node of a `@{ … }` code
+ * block (see {@link hasCodeBlockIgnoreComment}).
+ * @param {AstPath} path - The path to the node
+ * @returns {boolean}
+ */
+function isIgnored(path) {
+	return (
+		hasPrettierIgnore(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node)) ||
+		hasJSXIgnoreComment(path) ||
+		hasCodeBlockIgnoreComment(path)
+	);
+}
+
+/**
+ * Prettier's `hasJsxIgnoreComment`: an element or fragment child of an
+ * element or fragment is kept as written when the child before it, past
+ * whitespace with a line break, is `{/* prettier-ignore *\/}`.
+ * @param {AstPath} path - The path to the node
+ * @returns {boolean}
+ */
+function hasJSXIgnoreComment(path) {
+	const { node, parent } = path;
+	if (!isJSXElementOrFragment(node) || !isJSXElementOrFragment(parent) || path.key !== 'children') {
+		return false;
+	}
+	const siblings = /** @type {AST.Node[]} */ (parent.children);
+	let index = /** @type {number} */ (path.index);
+	while (index > 0) {
+		const sibling = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (siblings[--index]);
+		if (sibling.type === 'JSXText' && !isMeaningfulJSXText(sibling.value)) {
+			continue;
+		}
+		return (
+			sibling.type === 'JSXExpressionContainer' &&
+			sibling.expression.type === 'JSXEmptyExpression' &&
+			hasPrettierIgnore(
+				/** @type {AST.Node & AST.NodeWithMaybeComments} */ (
+					/** @type {unknown} */ (sibling.expression)
+				),
+			)
+		);
+	}
+	return false;
+}
+
+/**
+ * Prettier's `isJsxElement`: a JSX element or fragment, which a TSRX template
+ * `<style>` element is too.
+ * @param {unknown} node
+ * @returns {node is AST.TSRXJSXElement | AST.TSRXJSXFragment | AST.JSXStyleElement}
+ */
+function isJSXElementOrFragment(node) {
+	const type = /** @type {AST.Node | null | undefined} */ (node)?.type;
+	return type === 'JSXElement' || type === 'JSXFragment' || type === 'JSXStyleElement';
+}
+
+/**
+ * Whether a `prettier-ignore` after the last node of a `@{ … }` code block
+ * keeps that node as written. Prettier gives the comments after a block's
+ * last statement, past any empty statement, to it as trailing comments, which
+ * `hasNodeIgnoreComment` counts. The parser keeps the ones after a code
+ * block's last node as the block's inner comments (see
+ * {@link printJSXCodeBlock}) instead.
+ * @param {AstPath} path - The path to the node
+ * @returns {boolean}
+ */
+function hasCodeBlockIgnoreComment(path) {
+	const { node, parent } = path;
+	return (
+		parent?.type === 'JSXCodeBlock' &&
+		node ===
+			(parent.render ??
+				parent.body.findLast(
+					(/** @type {AST.Node} */ statement) => statement.type !== 'EmptyStatement',
+				)) &&
+		Boolean(parent.innerComments?.some(isPrettierIgnoreComment))
 	);
 }
 
@@ -2672,7 +2884,7 @@ function printTsrxNode(node, path, options, print, args) {
 	// A `prettier-ignore` directive keeps the node's original source verbatim
 	const commentNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node);
 	const ignoredSource =
-		hasPrettierIgnore(commentNode) &&
+		isIgnored(path) &&
 		typeof options.originalText === 'string' &&
 		typeof (/** @type {AST.NodeWithLocation} */ (node).start) === 'number' &&
 		typeof (/** @type {AST.NodeWithLocation} */ (node).end) === 'number'

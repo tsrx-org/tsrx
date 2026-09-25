@@ -1324,9 +1324,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 					// list never owns a comment: it prints as nothing, so the comment would
 					// lose its place. The statement before or after it, or the list's
 					// container, takes it. A `;` body (`if (x) ;`) prints in place and keeps
-					// its comments.
+					// its comments. Nor does a template literal's text, which prints as
+					// written, so the expression in the `${…}` takes a comment in it.
 					const emptyParent = path.at(-1);
-					if (node.type === 'EmptyStatement' && isListEntry(node, emptyParent)) {
+					if (
+						(node.type === 'EmptyStatement' && isListEntry(node, emptyParent)) ||
+						node.type === 'TemplateElement'
+					) {
 						return;
 					}
 
@@ -1655,6 +1659,33 @@ export function get_comment_handlers(source, comments, index = 0) {
 						}
 
 						const parent = /** @type {AST.Node & AST.NodeWithLocation} */ (path.at(-1));
+
+						// Like Prettier, whose `canAttachComment` rejects a template literal's
+						// text, the comments after an expression in its `${…}` trail it. In a
+						// template literal type, which Prettier doesn't keep to its `${…}`
+						// (`findExpressionIndexForComment` checks `TemplateLiteral` only), an
+						// own-line one leads the next type instead, if there is one.
+						if (parent?.type === 'TemplateLiteral') {
+							const index = parent.expressions.indexOf(/** @type {any} */ (node));
+							if (index >= 0) {
+								const nextQuasi = /** @type {AST.NodeWithLocation} */ (parent.quasis[index + 1]);
+								const nextType =
+									path.at(-2)?.type === 'TSLiteralType' ? parent.expressions[index + 1] : null;
+								while (
+									comments[0] &&
+									comments[0].end <= nextQuasi.start &&
+									!(nextType && isOwnLineComment(comments[0]))
+								) {
+									addTrailingComment(
+										/** @type {AST.Node} */ (node),
+										/** @type {AST.CommentWithLocation} */ (comments.shift()),
+									);
+								}
+								if (comments.length === 0) {
+									return;
+								}
+							}
+						}
 
 						// Prettier's handlers for the comments between this node and the
 						// next child of its parent, which run before the rules below. The
