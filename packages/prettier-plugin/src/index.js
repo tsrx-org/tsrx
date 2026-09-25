@@ -4318,12 +4318,16 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'JSXEmptyExpression':
-			// JSXEmptyExpression represents the empty expression in {/* comment */}
-			// The comments are attached as innerComments by the parser
-			if (innerCommentParts.length > 0) {
-				nodeContent = innerCommentParts;
-			} else {
+			// Prettier's `printJsxEmptyExpression`: the comments of `{/* note */}`,
+			// which the parser keeps as inner comments, print on consecutive lines.
+			// A line comment puts them on lines of their own, indented, with a line
+			// break after them, so that the `}` doesn't join the comment's line.
+			if (innerCommentParts.length === 0) {
 				nodeContent = '';
+			} else if (innerComments?.some((comment) => comment.type === 'Line')) {
+				nodeContent = [indent([hardline, join(hardline, innerCommentParts)]), hardline];
+			} else {
+				nodeContent = join(hardline, innerCommentParts);
 			}
 			break;
 
@@ -13639,10 +13643,10 @@ function printJSXElementBody(
 		const previous = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (
 			children[index - 1]
 		);
-		// The parser drops the whitespace with a line break after a closing tag,
-		// alone or at the start of the text that follows. Prettier's separators
-		// depend on it, and it can hold a blank line, which Prettier keeps, so
-		// read it back from the source.
+		// The parser drops text that is only whitespace with a line break, which
+		// JSX renders as nothing. Prettier's separators depend on it, and it can
+		// hold a blank line, which Prettier keeps, so read it back from the
+		// source.
 		let gap = '';
 		if (previous && previous.type !== 'JSXText') {
 			const whitespace = text.slice(getJSXChildEnd(previous), getJSXChildStart(child));
@@ -13991,6 +13995,27 @@ function getJSXAttributeStringValue(attr) {
 }
 
 /**
+ * Print the `{expr}` name of a dynamic tag's opening or closing tag, each from
+ * its own expression, so that the comments written in its braces print there
+ * once. The parser requires the expressions to match without the comments
+ * around them, so the tags print alike otherwise. With comments, the braces
+ * print like those of an attribute's value, and break around a line comment.
+ * @param {AstPath} path - The element's path
+ * @param {'openingElement' | 'closingElement'} key - The tag
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printJSXDynamicTagName(path, key, print) {
+	const name = /** @type {ESTreeJSX.JSXExpressionContainer} */ (path.node[key].name);
+	const expression = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (name.expression);
+	const expressionDoc = path.call(print, key, 'name', 'expression');
+	if (!hasComment(expression)) {
+		return ['{', expressionDoc, '}'];
+	}
+	return printJSXExpressionContainer(expression, expressionDoc, false);
+}
+
+/**
  * Print a JSX element
  * @param {AST.TSRXJSXElement | AST.JSXStyleElement} node - The JSX element node
  * @param {AstPath<AST.TSRXJSXElement>} path - The AST path
@@ -14001,12 +14026,11 @@ function getJSXAttributeStringValue(attr) {
 function printJSXElement(node, path, options, print) {
 	const openingElement = node.openingElement;
 
-	// Dynamic tags (`<{expr}>`) print the opening expression for both tags so
-	// they stay textually identical; static names print as plain strings.
-	const tagName =
-		openingElement.name.type === 'JSXExpressionContainer'
-			? ['{', path.call(print, 'openingElement', 'name', 'expression'), '}']
-			: printJSXElementName(openingElement.name);
+	// Static names print as plain strings, for both tags
+	const isDynamicTag = openingElement.name.type === 'JSXExpressionContainer';
+	const tagName = isDynamicTag
+		? printJSXDynamicTagName(path, 'openingElement', print)
+		: printJSXElementName(openingElement.name);
 
 	const isSelfClosing = openingElement.selfClosing;
 	const attributes = /** @type {AST.Node[]} */ (openingElement.attributes ?? []);
@@ -14131,7 +14155,11 @@ function printJSXElement(node, path, options, print) {
 		return openingTag;
 	}
 
-	const closingTag = printJSXClosingTag(node.closingElement, tagName, options);
+	const closingTag = printJSXClosingTag(
+		node.closingElement,
+		isDynamicTag ? printJSXDynamicTagName(path, 'closingElement', print) : tagName,
+		options,
+	);
 
 	// Raw-text `<script>` element: the body lives on `node.content`, mirrored as a
 	// single JSXText child (see the parser's `#parseScriptElement`). Print that
