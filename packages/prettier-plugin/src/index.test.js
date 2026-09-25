@@ -16981,6 +16981,60 @@ item
 			expect(await format(source)).toBeWithNewline(expected);
 		});
 
+		// Each tag of a dynamic tag prints its own expression, with the comments
+		// written in its braces. The closing tag printed the opening tag's
+		// comments again and dropped its own, and a comment on its own line in
+		// the opening tag moved into the children (#573).
+		it.each([
+			'const a = <{Comp /* c */}>text</{Comp}>;',
+			'const a = <{/* c */ Comp}>text</{Comp}>;',
+			'const a = <{Comp /* c */}>text</{Comp /* d */}>;',
+			'const a = <{Comp /* c */} x="1">text</{Comp}>;',
+			'const a = <{Comp /* c */}></{Comp}>;',
+			'export function App() @{\n  <{Comp /* c */}>text</{Comp}>\n}',
+		])('keeps the comments of the dynamic tag of %j once', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'const a = <{Comp // c\n}>text</{Comp}>;',
+				'const a = (\n  <{\n    Comp // c\n  }>\n    text\n  </{Comp}>\n);',
+			],
+			[
+				'const a = <{// c\nComp}>text</{Comp}>;',
+				'const a = (\n  <{\n    // c\n    Comp\n  }>\n    text\n  </{Comp}>\n);',
+			],
+			[
+				'const b = <{Comp\n// c\n}>text</{Comp}>;',
+				'const b = (\n  <{\n    Comp\n    // c\n  }>\n    text\n  </{Comp}>\n);',
+			],
+			[
+				'const a = <{Comp\n// c\n} a="1" b="2">text</{Comp}>;',
+				'const a = (\n  <{\n    Comp\n    // c\n  }\n    a="1"\n    b="2"\n  >\n    text\n  </{Comp}>\n);',
+			],
+			// Like a line comment in a closing tag, as in `</\n// c\ndiv>`
+			[
+				'const a = <{Comp}>text</{Comp // d\n}>;',
+				'const a = <{Comp}>text</{\n    Comp // d\n  }>;',
+			],
+			[
+				'const a = <{Comp}>text</{Comp\n// d\n}>;',
+				'const a = <{Comp}>text</{\n    Comp\n    // d\n  }>;',
+			],
+			[
+				'export function App() @{ <{Comp\n// c\n}>text</{Comp}> }',
+				'export function App() @{\n  <{\n    Comp\n    // c\n  }>\n    text\n  </{Comp}>\n}',
+			],
+			// A comment inside the expression is in both tags
+			[
+				'const a = <{a /* x */ .b}>text</{a /* x */ .b}>;',
+				'const a = <{a /* x */.b}>text</{a /* x */.b}>;',
+			],
+		])('formats the comments in the braces of the dynamic tag of %j', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
 		// A comment in a shorthand attribute prints inside its braces, like the
 		// one in the container of `key={/* c */ key}`. It used to be deleted
 		// (#462).
@@ -17126,6 +17180,132 @@ item
 				expect(await format(source)).toBeWithNewline(source);
 			},
 		);
+
+		// Like Prettier, a comment after the expression of a `{…}` stays in its
+		// braces. It moved after the `}`, or, before another attribute, was
+		// deleted (#574).
+		it.each([
+			[
+				'e = <div>{a\n// g\n}</div>;',
+				'e = (\n  <div>\n    {\n      a\n      // g\n    }\n  </div>\n);',
+			],
+			[
+				'f = <div b={a\n// g\n} c="1" />;',
+				'f = (\n  <div\n    b={\n      a\n      // g\n    }\n    c="1"\n  />\n);',
+			],
+			[
+				'e = <div>{a\n/* g */\n}</div>;',
+				'e = (\n  <div>\n    {\n      a\n      /* g */\n    }\n  </div>\n);',
+			],
+			[
+				'e = <div b={a\n/* g */\n} />;',
+				'e = (\n  <div\n    b={\n      a\n      /* g */\n    }\n  />\n);',
+			],
+			[
+				'e = <div>{a\n// g\n// h\n}</div>;',
+				'e = (\n  <div>\n    {\n      a\n      // g\n      // h\n    }\n  </div>\n);',
+			],
+			[
+				'e = <div>text {a\n// g\n} more</div>;',
+				'e = (\n  <div>\n    text{" "}\n    {\n      a\n      // g\n    }{" "}\n    more\n  </div>\n);',
+			],
+			[
+				'e = <div a={<b />\n// c\n} />;',
+				'e = (\n  <div\n    a={\n      <b />\n      // c\n    }\n  />\n);',
+			],
+			[
+				'e = <div>{f(a)\n// g\n}</div>;',
+				'e = (\n  <div>\n    {\n      f(a)\n      // g\n    }\n  </div>\n);',
+			],
+			[
+				'e = <div>{" "\n// c\n}text</div>;',
+				'e = (\n  <div>\n    {\n      " "\n      // c\n    }\n    text\n  </div>\n);',
+			],
+			// Prettier's `jsx/comments/eslint-disable.js`
+			[
+				'const render = items => (\n  <div>{ /* eslint-disable */\n    \t items.map(item => null)\n      /* eslint-enable */    }</div>\n)',
+				'const render = (items) => (\n  <div>\n    {\n      /* eslint-disable */\n      items.map((item) => null)\n      /* eslint-enable */\n    }\n  </div>\n);',
+			],
+			[
+				'export function App() @{\n  <div>\n    {a}\n    {b\n    // c\n    }\n  </div>\n}',
+				'export function App() @{\n  <div>\n    {a}\n    {\n      b\n      // c\n    }\n  </div>\n}',
+			],
+			[
+				'export function App() @{ <div a={x\n/* c */} b={y} /> }',
+				'export function App() @{\n  <div\n    a={\n      x\n      /* c */\n    }\n    b={y}\n  />\n}',
+			],
+			[
+				'export function App() @{\n  const a = 1;\n  <div>\n    text {a\n    // g\n    } more\n  </div>\n}',
+				'export function App() @{\n  const a = 1;\n  <div>\n    text{" "}\n    {\n      a\n      // g\n    }{" "}\n    more\n  </div>\n}',
+			],
+		])('keeps the comment after the expression of the braces in %j', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['e = <div>{a // g\n}</div>;', 'e = (\n  <div>\n    {\n      a // g\n    }\n  </div>\n);'],
+			['e = <div b={a // g\n} />;', 'e = (\n  <div\n    b={\n      a // g\n    }\n  />\n);'],
+			// After the `}`, it stays there
+			['e = <div>{a}\n// g\n</div>;', 'e = (\n  <div>\n    {a}\n    // g\n  </div>\n);'],
+		])('formats the comment after the expression of %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// Like Prettier's `printJsxEmptyExpression`, the comments alone in braces
+		// print on lines of their own when one of them is a line comment, and the
+		// `}` on the next line. The `}` joined the line comment, which then didn't
+		// parse (#572).
+		it.each([
+			[
+				'const c = <div>{\n// only\n}</div>;',
+				'const c = (\n  <div>\n    {\n      // only\n    }\n  </div>\n);',
+			],
+			[
+				'const d = <div a={\n// only\n} />;',
+				'const d = (\n  <div\n    a={\n      // only\n    }\n  />\n);',
+			],
+			[
+				'const a = <div a={// a\n} b="1">x</div>;',
+				'const a = (\n  <div\n    a={\n      // a\n    }\n    b="1"\n  >\n    x\n  </div>\n);',
+			],
+			[
+				'const a = <div>{/* a */ // b\n}</div>;',
+				'const a = (\n  <div>\n    {\n      /* a */\n      // b\n    }\n  </div>\n);',
+			],
+			[
+				'const a = <div>{\n// a\n// b\n}</div>;',
+				'const a = (\n  <div>\n    {\n      // a\n      // b\n    }\n  </div>\n);',
+			],
+			[
+				'const a = <div>text {// a\n} more</div>;',
+				'const a = (\n  <div>\n    text{" "}\n    {\n      // a\n    }{" "}\n    more\n  </div>\n);',
+			],
+			['const a = <>{// a\n}</>;', 'const a = (\n  <>\n    {\n      // a\n    }\n  </>\n);'],
+			// Block comments go on consecutive lines
+			[
+				'const a = <div>{/* a */ /* b */}</div>;',
+				'const a = (\n  <div>\n    {/* a */\n    /* b */}\n  </div>\n);',
+			],
+			['const a = <div>{\n/* a */\n}</div>;', 'const a = <div>{/* a */}</div>;'],
+			[
+				'export function App() @{ <div>{\n// only\n}</div> }',
+				'export function App() @{\n  <div>\n    {\n      // only\n    }\n  </div>\n}',
+			],
+			[
+				'export function App() @{\n  @if (x) { <div a={// a\n  }>{// b\n  }</div> }\n}',
+				'export function App() @{\n  @if (x) {\n    <div\n      a={\n        // a\n      }\n    >\n      {\n        // b\n      }\n    </div>\n  }\n}',
+			],
+		])('formats the comments alone in the braces of %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const a = <div>{/* a */}</div>;',
+			'const a = <div a={/* a */} />;',
+			'export function App() @{\n  <div>{/* a */}</div>\n}',
+		])('keeps the block comment alone in the braces of %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
 
 		it('joins an operator on the next line to the element it continues, like Prettier', async () => {
 			const source = '<div />\n+ 1;\n\nfunction f() {\n  <div />\n  > 5;\n}';
