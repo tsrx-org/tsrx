@@ -564,9 +564,11 @@ function ForKeyedStateApp() @{
 		>{'reverse'}</button>
 		<button
 			class="rename-beta"
-			onClick={() => (items.value = items.value.map(
-				(item) => item.id === 'b' ? { ...item, label: 'Bravo' } : item,
-			))}
+			onClick={() =>
+				(items.value = items.value.map((item) =>
+					item.id === 'b' ? { ...item, label: 'Bravo' } : item,
+				))
+			}
 		>{'rename'}</button>
 	</>
 }
@@ -587,9 +589,11 @@ function ForJsxKeyedStateApp() @{
 		>{'reverse'}</button>
 		<button
 			class="rename-jsx-keyed-beta"
-			onClick={() => (items.value = items.value.map(
-				(item) => item.id === 'b' ? { ...item, label: 'Bravo' } : item,
-			))}
+			onClick={() =>
+				(items.value = items.value.map((item) =>
+					item.id === 'b' ? { ...item, label: 'Bravo' } : item,
+				))
+			}
 		>{'rename'}</button>
 	</>
 }
@@ -648,9 +652,11 @@ function ForNestedIndexKeyedApp() @{
 		>{'reverse'}</button>
 		<button
 			class="rename-nested-index-keyed-beta"
-			onClick={() => (items.value = items.value.map(
-				(item) => item.id === 'b' ? { ...item, label: 'Bravo' } : item,
-			))}
+			onClick={() =>
+				(items.value = items.value.map((item) =>
+					item.id === 'b' ? { ...item, label: 'Bravo' } : item,
+				))
+			}
 		>{'rename'}</button>
 	</>
 }
@@ -695,9 +701,11 @@ function ForDestructuredKeyedStateApp() @{
 		>{'reverse'}</button>
 		<button
 			class="rename-destructured-keyed-beta"
-			onClick={() => (items.value = items.value.map(
-				(item) => item.id === 'b' ? { ...item, label: 'Bravo' } : item,
-			))}
+			onClick={() =>
+				(items.value = items.value.map((item) =>
+					item.id === 'b' ? { ...item, label: 'Bravo' } : item,
+				))
+			}
 		>{'rename'}</button>
 	</>
 }

@@ -356,9 +356,10 @@ function ForKeyedSwitchApp() @{
 describe('@tsrx/vite-plugin-preact runtime', () => {
 	it('renders nothing for an empty pending fallback then resolves', async () => {
 		let resolve_fn: (mod: { default: typeof ResolvedChild }) => void;
-		const loader = () => new Promise<{ default: typeof ResolvedChild }>((r) => {
-			resolve_fn = r;
-		});
+		const loader = () =>
+			new Promise<{ default: typeof ResolvedChild }>((r) => {
+				resolve_fn = r;
+			});
 
 		await render(EmptyPendingSuspenseApp, { loader });
 		expect(container.innerHTML).toBe('');
@@ -551,10 +552,8 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 		['@switch', ForKeyedSwitchApp, '.reverse-keyed-switch'],
 	] as const) {
 		it(`keeps row state with its item when a keyed loop renders through ${directive}`, async () => {
-			const rows = () => Array.from(
-				container.querySelectorAll('.keyed-branch-row'),
-				(row) => row.textContent,
-			);
+			const rows = () =>
+				Array.from(container.querySelectorAll('.keyed-branch-row'), (row) => row.textContent);
 
 			await render(App);
 			expect(rows()).toEqual(['a:a', 'b:b']);
