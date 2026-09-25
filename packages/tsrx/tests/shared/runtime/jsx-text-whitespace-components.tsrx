@@ -174,6 +174,22 @@ export function JsxTextWhitespaceApp() @{
 		<div>{pickBySwitch('a')}</div>
 		// An element in a setup statement reads its text as anywhere else too
 		<SetupText kind="a" />
+		// So does an element in a spread attribute's argument, and one that is an
+		// attribute value without braces: its comments are comments, and its `@if`
+		// a directive, as in a braced value
+		// prettier-ignore
+		<Slot {...{ content: <span class="ws-spread-comment"><b>t</b> /* c */2</span> }} />
+		// prettier-ignore
+		<Slot {...{ content: <span class="ws-spread-line-comment"><b>t</b> // c
+			two</span> }} />
+		// prettier-ignore
+		<Slot {...(show ? { content: <span class="ws-spread-directive">@if (show) { <b>1</b> } 2</span> } : { content: null })} />
+		// prettier-ignore
+		<Slot content=<span class="ws-unbraced-comment"><b>t</b> /* c */2</span> />
+		// prettier-ignore
+		<Slot content=<span class="ws-unbraced-directive">@if (show) { <b>1</b> } 2</span> />
+		// prettier-ignore
+		<Slot content={<span class="ws-braced-directive">@if (show) { <b>1</b> } 2</span>} />
 	</>
 }
 
@@ -248,6 +264,39 @@ export const jsx_text_whitespace_cases = [
 		'<b>1</b> 2',
 	],
 	['text before a tag in a setup statement of an @case', '.ws-case-setup', 'Hello<b></b> 2'],
+	[
+		"a block comment in an element in a spread attribute's argument",
+		'.ws-spread-comment',
+		'<b>t</b> 2',
+	],
+	[
+		"a line comment in an element in a spread attribute's argument",
+		'.ws-spread-line-comment',
+		'<b>t</b>two',
+	],
+	[
+		'a block comment in an element that is an attribute value without braces',
+		'.ws-unbraced-comment',
+		'<b>t</b> 2',
+	],
+] as const;
+
+/**
+ * Markup in a spread attribute's argument or in an attribute value without
+ * braces, and the same markup in a braced value, which it renders like. A
+ * directive renders differently on each target (Vue adds an anchor comment).
+ */
+export const jsx_text_braced_value_cases = [
+	[
+		"an @if in an element in a spread attribute's argument",
+		'.ws-spread-directive',
+		'.ws-braced-directive',
+	],
+	[
+		'an @if in an element that is an attribute value without braces',
+		'.ws-unbraced-directive',
+		'.ws-braced-directive',
+	],
 ] as const;
 
 /**
