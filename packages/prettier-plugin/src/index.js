@@ -4365,10 +4365,22 @@ function printArrowFunction(node, path, options, print, args) {
 		bodyHasOwnLineComment =
 			arrowPath.call((bodyPath) => getOwnLineCommentAhead(bodyPath, options), 'body') !== null;
 		// An arrow body that is itself an arrow is printed as the last argument
-		// of a call too
+		// of a call too. The arguments about the outer arrow's own comments and
+		// parentheses (a superclass's) don't apply to it.
 		bodyDoc =
 			arrow.body.type === 'ArrowFunctionExpression'
-				? arrowPath.call((bodyPath) => (args ? print(bodyPath, args) : print(bodyPath)), 'body')
+				? arrowPath.call(
+						(bodyPath) =>
+							args
+								? print(bodyPath, {
+										...args,
+										suppressLeadingComments: false,
+										suppressTrailingComments: false,
+										suppressOwnParens: false,
+									})
+								: print(bodyPath),
+						'body',
+					)
 				: arrowPath.call(print, 'body');
 	};
 	rec(path);

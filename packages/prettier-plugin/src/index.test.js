@@ -14703,6 +14703,9 @@ item
 			'class E extends /* c */ a {}',
 			'class F extends a /* c */ {}',
 			'class H\n  // c\n  extends (a || b) {}',
+			// The comments of an arrow body that is an arrow are its own
+			'class D extends (() => /* c */ /** @type {X} */ (() => Base)) {}',
+			'class D extends (() => /* prettier-ignore */ () =>   Base) {}',
 		])('keeps the comment of the superclass in %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});
