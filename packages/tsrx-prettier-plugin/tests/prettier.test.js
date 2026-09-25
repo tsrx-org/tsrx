@@ -82,9 +82,9 @@ for (const snapshotFile of snapshotFiles) {
 }
 
 test('overrides and known failures name imported cases', () => {
-	const stale = [...Object.keys(overrides), ...knownFailures].filter(
-		(key) => !importedCases.has(key),
-	);
+	// The known failures are being rewritten in update mode.
+	const listed = [...Object.keys(overrides), ...(updateKnownFailures ? [] : knownFailures)];
+	const stale = listed.filter((key) => !importedCases.has(key));
 	expect(stale).toEqual([]);
 });
 

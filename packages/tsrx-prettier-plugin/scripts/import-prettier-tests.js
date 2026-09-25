@@ -28,7 +28,7 @@ const PACKAGE_DIR = path.resolve(import.meta.dirname, '..');
 const OUTPUT_DIR = path.join(PACKAGE_DIR, 'tests/prettier');
 /** Parse errors that a `.tsrx` file, a strict-mode ES module, rightly raises. */
 const STRICT_MODULE_ERROR =
-	/The keyword '\w+' is reserved|in strict mode|Argument name clash|Cannot use keyword 'await' outside an async function/u;
+	/The keyword '\w+' is reserved|in strict mode|Argument name clash|Cannot use keyword 'await' outside an async function|'interface' declarations must be followed by an identifier/u;
 
 const { values } = parseArgs({ options: { source: { type: 'string' } } });
 const version = prettier.version;
@@ -137,8 +137,9 @@ async function exclusionReason(dir, entry) {
 		parse(input, /** @type {import('prettier').ParserOptions} */ ({ filepath: 'Fixture.tsrx' }));
 	} catch (error) {
 		const message = String(/** @type {Error} */ (error).message).split('\n')[0];
-		// A `.tsrx` file is a strict-mode ES module.
-		if (STRICT_MODULE_ERROR.test(message)) {
+		// A `.tsrx` file is a strict-mode ES module; Prettier's `sloppy-mode`
+		// tests are sloppy-mode scripts.
+		if (STRICT_MODULE_ERROR.test(message) || dir.split('/').includes('sloppy-mode')) {
 			return 'not valid in a strict-mode module';
 		}
 		if (message.startsWith('Namespaced elements are not supported in TSRX templates')) {
