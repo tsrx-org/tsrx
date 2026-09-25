@@ -23,6 +23,18 @@ export const TSRX_DIRECTIVES = new Set([
 	'JSXTryExpression',
 ]);
 
+/** The statements whose `__contentEnd` Prettier's comment handling reads. */
+const CONTENT_END_STATEMENTS = new Set([
+	'ExpressionStatement',
+	'ImportDeclaration',
+	'ExportDefaultDeclaration',
+	'ExportNamedDeclaration',
+	'ExportAllDeclaration',
+	'ReturnStatement',
+	'ThrowStatement',
+	'DoWhileStatement',
+]);
+
 /** Nodes that can be the output of a `@{ … }` or directive body. */
 const TSRX_OUTPUT = new Set(['JSXElement', 'JSXFragment', 'JSXStyleElement', ...TSRX_DIRECTIVES]);
 
@@ -69,11 +81,33 @@ export function locStart(node) {
 }
 
 /**
+ * Prettier's `locEnd`, which comment attachment relies on: a statement ends
+ * where its content ends, before a semicolon that comments separate from it,
+ * and a compound statement ends where its body does.
  * @param {Node} node
  * @returns {number}
  */
 export function locEnd(node) {
-	return node.range?.[1] ?? node.end;
+	switch (node.type) {
+		case 'IfStatement':
+			return locEnd(node.alternate ?? node.consequent);
+		case 'ForInStatement':
+		case 'ForOfStatement':
+		case 'ForStatement':
+		case 'LabeledStatement':
+		case 'WithStatement':
+		case 'WhileStatement':
+			return locEnd(node.body);
+		case 'BreakStatement':
+			return node.label ? locEnd(node.label) : locStart(node) + 'break'.length;
+		case 'ContinueStatement':
+			return node.label ? locEnd(node.label) : locStart(node) + 'continue'.length;
+		case 'DebuggerStatement':
+			return locStart(node) + 'debugger'.length;
+		case 'VariableDeclaration':
+			return locEnd(node.declarations.at(-1));
+	}
+	return node.__contentEnd ?? node.range?.[1] ?? node.end;
 }
 
 class Adapter {
@@ -90,6 +124,32 @@ class Adapter {
 		 * @type {Array<[number, number]>}
 		 */
 		this.rawTextRanges = [];
+	}
+
+	/**
+	 * The source with every comment blanked out, for `setContentEnd`.
+	 * @type {string | undefined}
+	 */
+	#textWithoutComments;
+
+	/**
+	 * Prettier's parsers record where a statement's content ends when comments
+	 * separate it from its semicolon (`foo // c` + newline + `;`); Prettier's
+	 * comment handling reads it.
+	 * @param {Node} node
+	 */
+	setContentEnd(node) {
+		const end = node.end - 1;
+		if (this.text[end] !== ';') return;
+		this.#textWithoutComments ??= this.comments.reduce(
+			(text, comment) =>
+				text.slice(0, comment.start) +
+				' '.repeat(comment.end - comment.start) +
+				text.slice(comment.end),
+			this.text,
+		);
+		const content = this.#textWithoutComments.slice(node.start, end);
+		node.__contentEnd = end - (content.length - content.trimEnd().length);
 	}
 
 	/**
@@ -170,6 +230,10 @@ class Adapter {
 	 * @returns {Node}
 	 */
 	reshape(node) {
+		if (CONTENT_END_STATEMENTS.has(node.type)) {
+			this.setContentEnd(node);
+		}
+
 		switch (node.type) {
 			case 'Program':
 				// A module-level JSX statement is a plain expression statement.
