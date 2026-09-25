@@ -2541,20 +2541,32 @@ function printLeadingComments(node, comments, options, semicolonBeforeLast) {
  * @param {Doc} nodeContent - The node's printed content
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintArgs | undefined} args - The node's print arguments
+ * @param {boolean} [wrapsTemplate] - Whether an element or template value
+ *   prints in parentheses of its own inside the innermost pair when it breaks
  * @returns {Doc}
  */
-function printTypeCastParens(node, typeCastParens, nodeContent, options, args) {
+function printTypeCastParens(node, typeCastParens, nodeContent, options, args, wrapsTemplate) {
 	// A parent that prints the node's leading comments prints all of them ahead
 	// of the outermost pair, so the inner pairs lose their casts
 	const inside = args?.suppressLeadingComments ? [[]] : typeCastParens.inside;
 	let printed = nodeContent;
 	for (let index = inside.length - 1; index >= 0; index--) {
 		const comments = inside[index];
+		const isInnermost = index === inside.length - 1;
 		const hug =
 			comments.length === 0 &&
-			index === inside.length - 1 &&
+			isInnermost &&
 			(node.type === 'ObjectExpression' || node.type === 'ArrayExpression');
-		const inner = [...printLeadingComments(node, comments, options), printed];
+		/** @type {Doc} */
+		let inner = [...printLeadingComments(node, comments, options), printed];
+		if (wrapsTemplate && isInnermost) {
+			// Prettier's `babel` parser keeps a cast's parentheses as a
+			// `ParenthesizedExpression`, which isn't one of the parents that
+			// `maybeWrapJsxElementInParens` prints an element bare in, so the
+			// element and its comments print in parentheses of their own when they
+			// break
+			inner = group([ifBreak('('), indent([softline, inner]), softline, ifBreak(')')]);
+		}
 		printed = hug ? ['(', inner, ')'] : group(['(', indent([softline, inner]), softline, ')']);
 	}
 	return printed;
@@ -2703,19 +2715,30 @@ function printTsrxNode(node, path, options, print, args) {
 		let ignored = ignoredText;
 		// Like Prettier, the node's span excludes its parentheses, and it prints
 		// in the ones it needs where it is, not the ones it was written with
+		let suppressTrailingComments = args?.suppressTrailingComments;
 		if (typeCastParens) {
 			ignored = printTypeCastParens(commentNode, typeCastParens, ignored, options, args);
-		} else if (
-			!args?.suppressOwnParens &&
-			(needsParens(path, options) || sequencePrintsOwnParens(path, args))
-		) {
-			ignored = ['(', ignored, ')'];
+		} else if (!args?.suppressOwnParens) {
+			const withComments = printCommentsForFunction(
+				path,
+				parts,
+				ignored,
+				options,
+				suppressTrailingComments,
+			);
+			if (withComments) {
+				ignored = withComments;
+				suppressTrailingComments = true;
+			}
+			if (needsParens(path, options) || sequencePrintsOwnParens(path, args)) {
+				ignored = ['(', ignored, ')'];
+			}
 		}
 		// The previous statement may have lost the `;` that ended it
 		if (!leadingSemicolonPrinted && needsLeadingSemicolon(path, options, ignoredText)) {
 			ignored = [';', ignored];
 		}
-		return finishTsrxNode(commentNode, parts, ignored, options, args?.suppressTrailingComments);
+		return finishTsrxNode(commentNode, parts, ignored, options, suppressTrailingComments);
 	}
 
 	/** @type {Doc[] | Doc} */
@@ -3656,6 +3679,7 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent,
 			options,
 			args,
+			isTemplateExpression(/** @type {AST.Node} */ (node)),
 		);
 	} else if (
 		isTemplateExpression(/** @type {AST.Node} */ (node)) &&
@@ -3678,8 +3702,21 @@ function printTsrxNode(node, path, options, print, args) {
 		);
 		parts.length = 0;
 		suppressTrailingComments = true;
-	} else if (!args?.suppressOwnParens && needsParens(path, options)) {
-		nodeContent = ['(', nodeContent, ')'];
+	} else if (!args?.suppressOwnParens) {
+		const withComments = printCommentsForFunction(
+			path,
+			parts,
+			nodeContent,
+			options,
+			suppressTrailingComments,
+		);
+		if (withComments) {
+			nodeContent = withComments;
+			suppressTrailingComments = true;
+		}
+		if (needsParens(path, options)) {
+			nodeContent = ['(', nodeContent, ')'];
+		}
 	}
 
 	return finishTsrxNode(
@@ -3688,6 +3725,51 @@ function printTsrxNode(node, path, options, print, args) {
 		nodeContent,
 		options,
 		suppressTrailingComments,
+	);
+}
+
+/**
+ * Prettier's `printCommentsForFunction`: a function called right away or used
+ * as a tag prints its comments inside its parentheses, which break around
+ * them. Takes the leading comments out of `parts`.
+ * @param {AstPath} path - The path to the node
+ * @param {Doc[]} parts - The node's printed leading comments
+ * @param {Doc} nodeContent - The node's printed content
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {boolean | undefined} suppressTrailingComments - Whether the parent
+ *   prints the node's trailing comments
+ * @returns {Doc | null} - The content with its comments, or null when the
+ *   node isn't such a function or has no comments to print
+ */
+function printCommentsForFunction(path, parts, nodeContent, options, suppressTrailingComments) {
+	if (!isIifeCalleeOrTag(path)) {
+		return null;
+	}
+	const trailingParts = suppressTrailingComments
+		? []
+		: printTrailingComments(/** @type {AST.Node} */ (path.node), options);
+	if (parts.length === 0 && trailingParts.length === 0) {
+		return null;
+	}
+	const printed = [indent([softline, ...parts, nodeContent, ...trailingParts]), softline];
+	parts.length = 0;
+	return printed;
+}
+
+/**
+ * Prettier's `isIifeCalleeOrTaggedTemplateExpressionTag`: whether the node at
+ * `path` is a function or arrow function that is called right away or tags a
+ * template literal.
+ * @param {AstPath} path
+ * @returns {boolean}
+ */
+function isIifeCalleeOrTag(path) {
+	const node = /** @type {AST.Node} */ (path.node);
+	const parent = /** @type {AST.Node | null} */ (path.parent);
+	return (
+		(node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression') &&
+		((path.key === 'callee' && parent?.type === 'CallExpression') ||
+			(path.key === 'tag' && parent?.type === 'TaggedTemplateExpression'))
 	);
 }
 
@@ -6484,23 +6566,38 @@ function printClassDeclaration(node, path, options, print) {
 	const groupMode = shouldPrintHeritageInGroupMode(node, path);
 	/** @type {Doc[]} */
 	const heritage = [];
+	// Whether the heading ends with a comment after the superclass
+	let endsWithComment = false;
 	if (node.superClass) {
+		const superClassNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node.superClass);
+		// A JSDoc cast prints its comments, and parentheses the superclass needs
+		// no others around
+		const isTypeCast = Boolean(
+			path.call((superPath) => getTypeCastParens(superPath, options), 'superClass'),
+		);
+		// Like Prettier's `printClass`, the class prints the superclass's
+		// comments, around the parentheses it adds and the type arguments
+		const printsComments = !isTypeCast;
+		const addsParens = !isTypeCast && superClassNeedsParens(superClassNode);
+		const superClass = path.call(
+			(superPath) =>
+				print(superPath, {
+					// The class owns these parens, so the superclass must not add its own
+					suppressOwnParens: addsParens,
+					suppressLeadingComments: printsComments,
+					suppressTrailingComments: printsComments,
+				}),
+			'superClass',
+		);
 		/** @type {Doc} */
-		let superClassDoc;
-		if (superClassNeedsParens(node.superClass)) {
-			// The class owns these parens, so the superclass must not add its own
-			const superClass = path.call(
-				(superPath) => print(superPath, { suppressOwnParens: true }),
-				'superClass',
-			);
+		let superClassDoc = superClass;
+		if (addsParens) {
 			// Each decorator prints on its own line, so the class is indented
 			// inside the parens to keep them off column zero.
 			superClassDoc =
-				getDecorators(node.superClass).length > 0
+				getDecorators(superClassNode).length > 0
 					? ['(', indent([hardline, superClass]), hardline, ')']
 					: ['(', superClass, ')'];
-		} else {
-			superClassDoc = path.call(print, 'superClass');
 		}
 		const parent = /** @type {AST.Node | null} */ (path.getParentNode());
 		if (parent?.type === 'AssignmentExpression') {
@@ -6511,10 +6608,28 @@ function printClassDeclaration(node, path, options, print) {
 			);
 		}
 		/** @type {Doc[]} */
-		const superClassParts = ['extends ', superClassDoc];
+		const superClassParts = [
+			'extends ',
+			...(printsComments
+				? printLeadingComments(superClassNode, superClassNode.leadingComments ?? [], options)
+				: []),
+			superClassDoc,
+		];
 		if (node.superTypeParameters) {
 			superClassParts.push(path.call(print, 'superTypeParameters'));
 		}
+		if (printsComments) {
+			superClassParts.push(...printTrailingComments(superClassNode, options));
+		}
+		const typeArguments = /** @type {AST.NodeWithMaybeComments | undefined} */ (
+			node.superTypeParameters
+		);
+		endsWithComment =
+			!node.implements?.length &&
+			Boolean(
+				(printsComments && superClassNode.trailingComments?.length) ||
+				typeArguments?.trailingComments?.length,
+			);
 		heritage.push(groupMode ? [line, group(superClassParts)] : [' ', superClassParts]);
 	}
 
@@ -6527,11 +6642,15 @@ function printClassDeclaration(node, path, options, print) {
 	}
 
 	// Like Prettier, a class whose heading breaks starts its body on a new
-	// line, so the body does not read as one more heritage clause
+	// line, so the body does not read as one more heritage clause. A comment
+	// that ended the heading's line would move into the body on the next
+	// format, as it does in Prettier, so the body starts on its line.
 	const heritageGroupId = Symbol('heritageGroup');
 	return [
 		group([...parts, indent(heritage)], { id: heritageGroupId }),
-		node.body.body.length > 0 ? ifBreak(hardline, ' ', { groupId: heritageGroupId }) : ' ',
+		node.body.body.length > 0 && !endsWithComment
+			? ifBreak(hardline, ' ', { groupId: heritageGroupId })
+			: ' ',
 		path.call(print, 'body'),
 	];
 }
@@ -6572,7 +6691,11 @@ function shouldPrintHeritageInGroupMode(node, path) {
 	if (
 		node.id?.trailingComments?.length ||
 		node.typeParameters?.trailingComments?.length ||
-		(superClass && hasComment(superClass)) ||
+		// A comment after the superclass ends the heading, after the type
+		// arguments. The next format may attach it to them or to the body, so,
+		// unlike Prettier, whose output then changes, it doesn't break the
+		// heading.
+		superClass?.leadingComments?.length ||
 		hasMultipleHeritage(node)
 	) {
 		return true;
@@ -7708,7 +7831,10 @@ function printYieldExpression(node, path, options, print) {
 	// and changes the yielded value; `yield*` may break before its argument.
 	if (
 		!node.delegate &&
-		path.call((argumentPath) => getOwnLineCommentAhead(argumentPath, options), 'argument')
+		path.call(
+			(argumentPath) => getOwnLineCommentAhead(argumentPath, options, { endsStatement: true }),
+			'argument',
+		)
 	) {
 		parts.push(
 			' (',
@@ -8728,8 +8854,9 @@ function printThrowStatement(node, path, options, print) {
 /**
  * Print the argument of a `return` or `throw` statement, with the space after
  * the keyword, like Prettier's `printReturnOrThrowArgument`. An argument that
- * starts with a comment on its own line prints in parentheses, since a line
- * break after the keyword would end the statement. A binary or logical
+ * starts with a comment that ends its line or spans lines prints in
+ * parentheses, since a line break after the keyword would end the statement
+ * (Prettier's `returnArgumentHasLeadingComment`). A binary or logical
  * argument that breaks prints in parentheses, with its operands on their own
  * lines.
  * @param {AstPath<AST.ReturnStatement | AST.ThrowStatement>} path - The path to the statement
@@ -8738,7 +8865,16 @@ function printThrowStatement(node, path, options, print) {
  * @returns {Doc}
  */
 function printReturnOrThrowArgument(path, options, print) {
-	if (path.call((argumentPath) => getOwnLineCommentAhead(argumentPath, options), 'argument')) {
+	if (
+		path.call(
+			(argumentPath) =>
+				getOwnLineCommentAhead(argumentPath, options, {
+					endsStatement: true,
+					isReturnArgument: true,
+				}),
+			'argument',
+		)
+	) {
 		// These parens replace any the argument would print for itself
 		return [
 			' (',
@@ -8771,25 +8907,49 @@ function printReturnOrThrowArgument(path, options, print) {
  * parentheses or its source verbatim.
  * @param {AstPath} path - The path to the node
  * @param {TsrxFormatOptions} options - Prettier options
- * @param {boolean} [skipLookupComments] - Leave out the comments a lookup in
- *   the leftmost operand takes from inside itself (`item\n  // note\n  .run()`),
- *   which a member chain prints before its `.`, like Prettier's
+ * @param {{ skipLookupComments?: boolean, isOperand?: boolean, endsStatement?: boolean, isReturnArgument?: boolean }} [flags]
+ *   - `skipLookupComments`: leave out the comments a lookup in the leftmost
+ *   operand takes from inside itself (`item\n  // note\n  .run()`), which a
+ *   member chain prints before its `.`, like Prettier's
  *   `hasLeadingOwnLineComment`, which looks at the value's own comments only
- * @param {boolean} [isOperand] - Whether the node is a leftmost operand
+ *   - `isOperand`: whether the node is a leftmost operand
+ *   - `endsStatement`: the node follows a keyword that a line break ends
+ *   (`return`, `throw`, `yield`), so a block comment spanning lines counts
+ *   too, like in Prettier's `returnArgumentHasLeadingComment`
+ *   - `isReturnArgument`: the node is a `return` or `throw` argument, which
+ *   also counts the comments a function called right away prints inside its
+ *   parentheses, like Prettier's `returnArgumentHasLeadingComment`
  * @returns {AST.Comment | null}
  */
-function getOwnLineCommentAhead(path, options, skipLookupComments = false, isOperand = false) {
+function getOwnLineCommentAhead(path, options, flags = {}) {
 	const node = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node);
 	const typeCastParens = getTypeCastParens(path, options);
 	const nodeStart = /** @type {AST.NodeWithLocation} */ (node).start;
 	const comments = (typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? [])).filter(
 		(comment) =>
-			!skipLookupComments ||
-			!isOperand ||
+			!flags.skipLookupComments ||
+			!flags.isOperand ||
 			/** @type {AST.NodeWithLocation} */ (comment).start < nodeStart,
 	);
 	const firstComment = comments[0] ?? null;
-	if (hasLeadingOwnLineComment(node, comments, options, Boolean(typeCastParens))) {
+	const isTypeCast = Boolean(typeCastParens);
+	// A function called right away prints its comments inside its parentheses.
+	// Like Prettier's `returnArgumentHasLeadingComment`, which looks at the
+	// leftmost operand's comments that end their line, a `return` still counts
+	// those.
+	const printsCommentsInParens = !isTypeCast && isIifeCalleeOrTag(path);
+	if (printsCommentsInParens && !flags.isReturnArgument) {
+		return null;
+	}
+	if (
+		hasLeadingOwnLineComment(node, comments, options, isTypeCast) ||
+		// Unlike Prettier, which checks only the argument's own comments, the
+		// leftmost operand's count too, since `foo` in `return (/* a⏎ b */
+		// foo).bar` would print right after the `return` as well
+		(flags.endsStatement &&
+			!printsCommentsInParens &&
+			hasLeadingMultilineComment(node, comments, isTypeCast))
+	) {
 		return firstComment;
 	}
 	const key = getLeftmostChildKey(node);
@@ -8797,7 +8957,7 @@ function getOwnLineCommentAhead(path, options, skipLookupComments = false, isOpe
 		return null;
 	}
 	const comment = path.call(
-		(childPath) => getOwnLineCommentAhead(childPath, options, skipLookupComments, true),
+		(childPath) => getOwnLineCommentAhead(childPath, options, { ...flags, isOperand: true }),
 		key,
 	);
 	return comment && (firstComment ?? comment);
@@ -8816,7 +8976,10 @@ function getOwnLineCommentAhead(path, options, skipLookupComments = false, isOpe
  * value starts with no such comment
  */
 function printValueAfterLeadingComment(path, key, valueDoc, options) {
-	const comment = path.call((valuePath) => getOwnLineCommentAhead(valuePath, options, true), key);
+	const comment = path.call(
+		(valuePath) => getOwnLineCommentAhead(valuePath, options, { skipLookupComments: true }),
+		key,
+	);
 	if (!comment) {
 		return null;
 	}
@@ -11217,6 +11380,25 @@ function hasLeadingOwnLineComment(node, comments, options, isTypeCast = false) {
 	const text = /** @type {string} */ (options.originalText);
 	return comments.some((comment) =>
 		hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).end),
+	);
+}
+
+/**
+ * Whether a comment the node prints ahead of itself is a block comment over
+ * several lines, which ends a `return` like a line break. An element prints
+ * its comments inside its parentheses (see {@link hasLeadingOwnLineComment}).
+ * @param {AST.Node} node
+ * @param {AST.Comment[]} comments - The comments the node prints ahead of itself
+ * @param {boolean} isTypeCast - Whether the comments go ahead of the node's
+ *   type-cast parentheses
+ * @returns {boolean}
+ */
+function hasLeadingMultilineComment(node, comments, isTypeCast) {
+	if (isTemplateExpression(node) && !isTypeCast) {
+		return false;
+	}
+	return comments.some(
+		(comment) => comment.type === 'Block' && /[\n\r\u2028\u2029]/.test(comment.value),
 	);
 }
 
