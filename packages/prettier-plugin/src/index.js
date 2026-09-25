@@ -9327,13 +9327,19 @@ function printTSTypeParameterDeclaration(node, path, options, print) {
 	const paramList = path.map(print, 'params');
 
 	// In JSX-shaped files a lone `<T>` on an arrow function is ambiguous with a JSX
-	// element, so a source-level trailing comma (`<T,>`) is syntactically meaningful
-	// there. Keep single-param arrow generics flat and preserve that comma; breaking
-	// them would add a trailing comma that flattens back on the next pass.
+	// element, so a trailing comma (`<T,>`) is syntactically meaningful there. Like
+	// Prettier's `shouldForceTrailingComma`, it prints whatever the `trailingComma`
+	// option: always when it was written, and otherwise when the list breaks. A
+	// constraint makes the list unambiguous, so its comma follows the option.
 	const parent = /** @type {AST.Node | null} */ (path.getParentNode());
 	if (parent?.type === 'ArrowFunctionExpression' && node.params.length === 1) {
-		const trailing = node.extra?.trailingComma !== undefined ? ',' : '';
-		return ['<', paramList[0], trailing, '>'];
+		const hasConstraint = !!(/** @type {AST.TSTypeParameter} */ (node.params[0]).constraint);
+		const comma = hasConstraint
+			? ifBreak(shouldPrintComma(options) ? ',' : '')
+			: node.extra?.trailingComma !== undefined
+				? ','
+				: ifBreak(',');
+		return group(['<', indent([softline, paramList[0]]), comma, softline, '>']);
 	}
 
 	return group([
@@ -9345,12 +9351,14 @@ function printTSTypeParameterDeclaration(node, path, options, print) {
 }
 
 /**
- * Print a single TypeScript type parameter
+ * Print a single TypeScript type parameter, like Prettier's
+ * `printTypeParameter`. A constraint or default that doesn't fit after
+ * `extends` or `=` moves to the next line, indented, before it breaks inside.
  * @param {AST.TSTypeParameter} node - The type parameter node
  * @param {AstPath<AST.TSTypeParameter>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
- * @returns {Doc[]}
+ * @returns {Doc}
  */
 function printTSTypeParameter(node, path, options, print) {
 	/** @type {Doc[]} */
@@ -9367,16 +9375,26 @@ function printTSTypeParameter(node, path, options, print) {
 	parts.push(node.name);
 
 	if (node.constraint) {
-		parts.push(' extends ');
-		parts.push(path.call(print, 'constraint'));
+		const groupId = Symbol('constraint');
+		parts.push(
+			' extends',
+			group(indent(line), { id: groupId }),
+			lineSuffixBoundary,
+			indentIfBreak(path.call(print, 'constraint'), { groupId }),
+		);
 	}
 
 	if (node.default) {
-		parts.push(' = ');
-		parts.push(path.call(print, 'default'));
+		const groupId = Symbol('default');
+		parts.push(
+			' =',
+			group(indent(line), { id: groupId }),
+			lineSuffixBoundary,
+			indentIfBreak(path.call(print, 'default'), { groupId }),
+		);
 	}
 
-	return parts;
+	return group(parts);
 }
 
 /**

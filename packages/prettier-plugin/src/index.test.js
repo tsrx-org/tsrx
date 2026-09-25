@@ -10349,6 +10349,88 @@ let y: abstract new () => Foo;`;
 			const result = await formatStable(input, { trailingComma: 'es5' });
 			expect(result).toBeWithNewline(expected);
 		});
+
+		// Like Prettier's `printTypeParameter`, a constraint or default that
+		// doesn't fit moves to the next line after `extends` or `=`, indented,
+		// before it breaks inside (#485)
+		it.each([
+			[
+				'declare function f<RuntimePropsOptions extends ComponentObjectPropsOptions = ComponentObjectPropsOptions, B = 1>(): void;',
+				'declare function f<\n  RuntimePropsOptions extends ComponentObjectPropsOptions =\n    ComponentObjectPropsOptions,\n  B = 1,\n>(): void;',
+			],
+			[
+				'type Fooooooooooooo<Tttttttttttttttttttttttt extends Recordddddddddddddddddddddddddddddddddddddddddd<string, unknown>> = 1;',
+				'type Fooooooooooooo<\n  Tttttttttttttttttttttttt extends\n    Recordddddddddddddddddddddddddddddddddddddddddd<string, unknown>,\n> = 1;',
+			],
+			[
+				'type Barrrrrrrrrrrr<Tttttttttttttttttttttttt = Recordddddddddddddddddddddddddddddddddddddddddddddd<string>> = 1;',
+				'type Barrrrrrrrrrrr<\n  Tttttttttttttttttttttttt =\n    Recordddddddddddddddddddddddddddddddddddddddddddddd<string>,\n> = 1;',
+			],
+			[
+				'class Foo<TTTTTTTTTTTTTTTTTTTTTTTTTTT extends Recorddddddddddddddddddddddddddddddddddddddddd<string, unknown>> {}',
+				'class Foo<\n  TTTTTTTTTTTTTTTTTTTTTTTTTTT extends\n    Recorddddddddddddddddddddddddddddddddddddddddd<string, unknown>,\n> {}',
+			],
+			[
+				'interface Foo<TTTTTTTTTTTTTTTTTTTTTTTTTTT extends Recorddddddddddddddddddddddddddddddddddddddddd<string, unknown>> {}',
+				'interface Foo<\n  TTTTTTTTTTTTTTTTTTTTTTTTTTT extends\n    Recorddddddddddddddddddddddddddddddddddddddddd<string, unknown>,\n> {}',
+			],
+			[
+				'function foo<TTTTTTTTTTTTTTTTTTTTTTTTTTT extends Recorddddddddddddddddddddddddddddddddddddddddd<string, unknown>>() {}',
+				'function foo<\n  TTTTTTTTTTTTTTTTTTTTTTTTTTT extends\n    Recorddddddddddddddddddddddddddddddddddddddddd<string, unknown>,\n>() {}',
+			],
+			// A lone arrow type parameter breaks its brackets too (#531)
+			[
+				'const foo = <TTTTTTTTTTTTTTTTTTTTTTTTTTT extends Recorddddddddddddddddddddddddddddddddddddddddd<string, unknown>>() => {};',
+				'const foo = <\n  TTTTTTTTTTTTTTTTTTTTTTTTTTT extends\n    Recorddddddddddddddddddddddddddddddddddddddddd<string, unknown>,\n>() => {};',
+			],
+			[
+				'const f = <T = Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,>() => {};',
+				'const f = <\n  T =\n    Xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,\n>() => {};',
+			],
+			// With a constraint, the comma isn't needed to tell the list from JSX (#531)
+			['const f = <T extends X,>() => {};', 'const f = <T extends X>() => {};'],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'type A<\n  T extends {\n    aaaaaaaaaaaaaaaa: string;\n    bbbbbbbbbbbbbbbbbbbbbbb: number;\n    ccccccccccccccccc: boolean;\n  },\n> = T;',
+			'type A<\n  T extends\n    | "aaaaaaaaaaaaaaa"\n    | "bbbbbbbbbbbbbbbbbbbbb"\n    | "cccccccccccccccccccccc"\n    | "ddddddddddddddd",\n> = T;',
+			'type A<\n  T =\n    | "aaaaaaaaaaaaaaa"\n    | "bbbbbbbbbbbbbbbbbbbbb"\n    | "cccccccccccccccccccccc"\n    | "ddddddddddddddd"\n    | "eeeeeeeeeeeeeeeeeeeeeeee",\n> = T;',
+			'type A<\n  TTTTTTTTTTTTTTTTTTTTTTTTTTT = Recorddddddddddddddddddddddddddddddddddddddddd<\n    string,\n    unknown\n  >,\n> = T;',
+			'function useThing<\n  TData extends Record<string, unknown> = Record<string, unknown>,\n  TError = Error,\n>(options: UseThingOptions<TData, TError>): UseThingResult<TData, TError> {}',
+			'type X<T> =\n  T extends Array<\n    infer Uuuuuuuuuuuuuuuuuuuuuuuuuuu extends Recordddddddddddddddddddddddddd<\n      string,\n      unknown\n    >\n  >\n    ? Uuuuuuuuuuuuuuuuuuuuuuuuuuu\n    : never;',
+			'type A<T extends /* c */ Foo> = T;',
+			'const f = <T = X,>() => {};',
+			'const f = <T extends X>() => {};',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('breaks a lone arrow type parameter without a trailing comma when trailingComma is none', async () => {
+			const source =
+				'const foo = <TTTTTTTTTTTTTTTTTTTTTTTTTTT extends Recorddddddddddddddddddddddddddddddddddddddddd<string, unknown>>() => {};';
+			const expected =
+				'const foo = <\n  TTTTTTTTTTTTTTTTTTTTTTTTTTT extends\n    Recorddddddddddddddddddddddddddddddddddddddddd<string, unknown>\n>() => {};';
+			expect(await format(source, { trailingComma: 'none' })).toBeWithNewline(expected);
+		});
+
+		// Like Prettier's `shouldForceTrailingComma`, the comma tells the list
+		// from JSX, so it prints whatever the trailingComma option (#531)
+		it.each(['all', 'none'])(
+			'breaks a long lone arrow type parameter with a comma when trailingComma is %s',
+			async (trailingComma) => {
+				const source =
+					'const f2 = <Tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt>() => 1;';
+				const expected =
+					'const f2 = <\n  Tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt,\n>() => 1;';
+				expect(
+					await format(source, {
+						trailingComma: /** @type {'all' | 'none'} */ (trailingComma),
+					}),
+				).toBeWithNewline(expected);
+			},
+		);
 	});
 
 	describe('type argument lists', () => {
