@@ -16946,8 +16946,9 @@ export const alias = Named;`;
 		// declaration, so it must not pick up a terminator.
 		it('leaves a decorated class declaration unterminated', async () => {
 			const input = `export default @dec class Named {}`;
-			const expected = `@dec
-export default class Named {}`;
+			const expected = `export default
+@dec
+class Named {}`;
 
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
@@ -17129,13 +17130,51 @@ class Widget {}`);
 export class Widget {}`);
 		});
 
-		it('hoists decorators written after the export keyword', async () => {
-			const input = `export @sealed class Widget {}`;
-			const expected = `@sealed
-export class Widget {}`;
+		// Like Prettier's `hasDecoratorsBeforeExport`, decorators written after
+		// `export` stay after it, and `export`, each decorator, and `class` get a
+		// line each (#478)
+		it.each([
+			['export @sealed class Widget {}', 'export\n@sealed\nclass Widget {}'],
+			['export default @sealed class Widget {}', 'export default\n@sealed\nclass Widget {}'],
+			['export default @sealed class {}', 'export default\n@sealed\nclass {}'],
+			['export @a @b() @c.d(1, 2) class A {}', 'export\n@a\n@b()\n@c.d(1, 2)\nclass A {}'],
+			['export @dec abstract class A {}', 'export\n@dec\nabstract class A {}'],
+			['export @dec @dec2\nclass A {\n  x = 1;\n}', 'export\n@dec\n@dec2\nclass A {\n  x = 1;\n}'],
+			[
+				'export @dec() @withLongArguments({ a: 1, bbbbbbbbbbbbbbbb: 2, cccccccccccccccccccc: 3, ddddddddddd: 4 }) class A {}',
+				'export\n@dec()\n@withLongArguments({\n  a: 1,\n  bbbbbbbbbbbbbbbb: 2,\n  cccccccccccccccccccc: 3,\n  ddddddddddd: 4,\n})\nclass A {}',
+			],
+			['export @dec /* c */ class A {}', 'export\n@dec /* c */\nclass A {}'],
+			['export @dec // c\nclass A {}', 'export\n@dec // c\nclass A {}'],
+			['export /* c */ @dec class A {}', 'export /* c */\n@dec\nclass A {}'],
+			['export default /* c */ @dec class {}', 'export default /* c */\n@dec\nclass {}'],
+			['/* x */ export @dec class A {}', '/* x */ export\n@dec\nclass A {}'],
+		])('keeps the decorators of %j after export like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
 
-			const result = await format(input);
-			expect(result).toBeWithNewline(expected);
+		// Prettier breaks the line after such a comment a second time, which
+		// adds a blank line on every pass
+		it.each([
+			['export // c\n@dec class A {}', 'export // c\n@dec\nclass A {}'],
+			['export default // c\n@dec class {}', 'export default // c\n@dec\nclass {}'],
+			['export /* a */\n// b\n@dec class A {}', 'export /* a */\n// b\n@dec\nclass A {}'],
+			['export /* c */\n@dec\nclass A {}', 'export /* c */\n@dec\nclass A {}'],
+			['export // c\n\n@dec\nclass A {}', 'export // c\n\n@dec\nclass A {}'],
+		])(
+			'breaks the line once after the comment before the decorators of %j',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
+
+		it.each([
+			'// prettier-ignore\nexport @dec   class A   {}',
+			'// prettier-ignore\n@dec   export class A   {}',
+			'export // prettier-ignore\n@dec   class A   {}',
+			'@dec\nexport class A {}\n@dec\nexport default class B {}',
+		])('keeps %j', async (source) => {
+			await expectUnchanged(source);
 		});
 
 		it('keeps decorators on a default-exported class', async () => {
@@ -17169,6 +17208,31 @@ export default class Widget {}`);
 			await expectUnchanged(`const Widget =
   @sealed
   class {};`);
+		});
+
+		// Like Prettier's `printClass`, the decorators of a class expression
+		// in parentheses go on their own lines inside them (#532)
+		it.each([
+			['(@deco class Foo {});', '(\n  @deco\n  class Foo {}\n);'],
+			['(@deco class {}).name;', '(\n  @deco\n  class {}\n).name;'],
+			['new (@dec class {})();', 'new (\n  @dec\n  class {}\n)();'],
+			['(@dec class {})();', '(\n  @dec\n  class {}\n)();'],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it('breaks inside the parentheses of a decorated class expression with semi: false', async () => {
+			expect(await format('(@deco class Foo {}).name', { semi: false })).toBeWithNewline(
+				';(\n  @deco\n  class Foo {}\n).name',
+			);
+		});
+
+		it.each([
+			'class A extends (\n  @dec\n  class {}\n) {}',
+			'foo(\n  @dec\n  class {},\n);',
+			'const b = /** @type {X} */ (\n  @dec\n  class {}\n);',
+		])('keeps %j', async (source) => {
+			await expectUnchanged(source);
 		});
 
 		it('keeps decorators alongside leading comments', async () => {
