@@ -9220,6 +9220,44 @@ items.map((i) => (
 			expect(strip(parse(result))).toBe(strip(parse(input)));
 		});
 
+		it('wraps a commented element after return or throw in one pair of parentheses', async () => {
+			// One wrap puts the comments inside the parentheses: a \`return\` that
+			// opens them isn't wrapped again, and each comment prints once
+			const input = `function g() {
+  return (
+    // lead
+    <Note /> // trail
+  );
+}
+function h() {
+  throw (
+    /* lead */
+    <Note />
+    // trail
+  );
+}
+function k() {
+  return (
+    // lead
+    <div>
+      <b />
+    </div>
+  ); // after
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(input);
+			expect(result).not.toContain('((');
+			for (const comment of ['// lead', '/* lead */', '// trail', '// after']) {
+				expect(result.split(comment).length - 1).toBe(input.split(comment).length - 1);
+			}
+			/** @param {string} text */
+			const parse = (text) =>
+				JSON.stringify(/** @type {any} */ (parsers)?.tsrx.parse(text, {}).body, (key, value) =>
+					['start', 'end', 'loc', 'range', 'metadata', 'raw'].includes(key) ? undefined : value,
+				);
+			expect(parse(result)).toBe(parse(input));
+		});
+
 		it('joins text to the element it touches and fills the lines', async () => {
 			// A line break between `</code>` and `.` renders as nothing, so the
 			// period stays against the element, and `{' '}` ends a line.
