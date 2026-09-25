@@ -7527,7 +7527,9 @@ describe('comments placed like Prettier', () => {
 	});
 
 	it('trails an import attribute key or a for header clause with a comment that ends the line after it', () => {
-		const [attribute] = firstStatement('import a from "a" with { type: // c\n  "json" };').attributes;
+		const [attribute] = firstStatement(
+			'import a from "a" with { type: // c\n  "json" };',
+		).attributes;
 		const loop = firstStatement('for (let i = 0; // a\n  i < 1; // b\n  i++) {}');
 
 		expect(commentsOf(attribute.key).trailing).toEqual([' c']);
