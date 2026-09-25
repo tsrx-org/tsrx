@@ -109,6 +109,7 @@ export const printers = {
 		 * @returns {Doc}
 		 */
 		print(path, options, print, args) {
+			dropParenthesizedTypes(path);
 			const node = path.node;
 			const parts = printTsrxNode(node, path, options, print, args);
 			// If printTsrxNode returns doc parts, return them directly
@@ -202,6 +203,183 @@ export const printers = {
 		},
 	},
 };
+
+/**
+ * Drop the parentheses the parser keeps around a type (`TSParenthesizedType`),
+ * as Prettier's parser postprocess does. Prettier's AST has no such node, so
+ * its type rules see a type's real parent, and `needsParens` puts back only the
+ * parentheses the type needs there. The parentheses' comments move to the type
+ * inside them.
+ *
+ * This runs as the printer reaches each node rather than as a walk of its own.
+ * A node is printed after its parent, and the checks that pick a layout look
+ * ahead at most through a child and a grandchild into a type (a parameter's
+ * type annotation, a declarator's annotated type), so this drops the
+ * parentheses in the node's children and grandchildren and in the whole of
+ * every type among them. The node itself is replaced too, in case its parent
+ * printed it through a path that skips a level.
+ * @param {AstPath} path - The path to the node about to print
+ */
+function dropParenthesizedTypes(path) {
+	const stack = path.stack;
+	let node = path.node;
+	if (isParenthesizedType(node)) {
+		node = unwrapParenthesizedType(node);
+		// The slot the node came from: the parent node or list, then the key
+		stack[stack.length - 3][stack[stack.length - 2]] = node;
+		stack[stack.length - 1] = node;
+	}
+
+	for (const child of unwrapParenthesizedChildren(node)) {
+		if (isTypeTreeNode(child)) {
+			dropParenthesizedTypesInType(child);
+			continue;
+		}
+		for (const grandchild of unwrapParenthesizedChildren(child)) {
+			if (isTypeTreeNode(grandchild)) {
+				dropParenthesizedTypesInType(grandchild);
+			}
+		}
+	}
+}
+
+/** Types whose parentheses are already dropped throughout. */
+const typesWithoutParentheses = new WeakSet();
+
+/**
+ * Drop the parentheses throughout a type (see {@link dropParenthesizedTypes}).
+ * @param {object} node - A node of a type
+ */
+function dropParenthesizedTypesInType(node) {
+	if (typesWithoutParentheses.has(node)) {
+		return;
+	}
+	typesWithoutParentheses.add(node);
+	for (const child of unwrapParenthesizedChildren(node)) {
+		dropParenthesizedTypesInType(child);
+	}
+}
+
+/** Node properties that don't hold child nodes. */
+const NON_CHILD_KEYS = new Set([
+	'start',
+	'end',
+	'loc',
+	'range',
+	'metadata',
+	'raw',
+	'regex',
+	'leadingComments',
+	'trailingComments',
+	'innerComments',
+]);
+
+/**
+ * Replace each `TSParenthesizedType` among a node's children with the type
+ * inside it, and list the children.
+ * @param {unknown} node
+ * @returns {Record<string, unknown>[]}
+ */
+function unwrapParenthesizedChildren(node) {
+	/** @type {Record<string, unknown>[]} */
+	const children = [];
+	if (!node || typeof node !== 'object' || Array.isArray(node)) {
+		return children;
+	}
+	const record = /** @type {Record<string, unknown>} */ (node);
+	for (const key of Object.keys(record)) {
+		if (NON_CHILD_KEYS.has(key)) {
+			continue;
+		}
+		const value = record[key];
+		if (Array.isArray(value)) {
+			for (let index = 0; index < value.length; index++) {
+				if (isParenthesizedType(value[index])) {
+					value[index] = unwrapParenthesizedType(value[index]);
+				}
+				if (value[index] && typeof value[index] === 'object') {
+					children.push(value[index]);
+				}
+			}
+		} else if (value && typeof value === 'object') {
+			if (isParenthesizedType(value)) {
+				record[key] = unwrapParenthesizedType(value);
+			}
+			children.push(/** @type {Record<string, unknown>} */ (record[key]));
+		}
+	}
+	return children;
+}
+
+/**
+ * TypeScript nodes that aren't part of a type: expressions and statements
+ * that hold expressions, which the printer reaches node by node.
+ */
+const NON_TYPE_TS_NODES = new Set([
+	'TSAsExpression',
+	'TSSatisfiesExpression',
+	'TSNonNullExpression',
+	'TSInstantiationExpression',
+	'TSTypeAssertion',
+	'TSModuleDeclaration',
+	'TSModuleBlock',
+	'TSEnumDeclaration',
+	'TSEnumBody',
+	'TSEnumMember',
+	'TSExportAssignment',
+	'TSImportEqualsDeclaration',
+	'TSExternalModuleReference',
+	'TSNamespaceExportDeclaration',
+	'TSParameterProperty',
+	'TSDeclareFunction',
+	'TSAbstractMethodDefinition',
+	'TSAbstractPropertyDefinition',
+	'TSAbstractAccessorProperty',
+	'TSDeclareMethod',
+]);
+
+/**
+ * Whether a node is part of a type, or holds one (`TSTypeAnnotation`, a type
+ * parameter or argument list), so everything under it is a type.
+ * @param {Record<string, unknown>} node
+ * @returns {boolean}
+ */
+function isTypeTreeNode(node) {
+	return (
+		typeof node.type === 'string' && node.type.startsWith('TS') && !NON_TYPE_TS_NODES.has(node.type)
+	);
+}
+
+/**
+ * @param {unknown} node
+ * @returns {node is AST.TSParenthesizedType & AST.NodeWithMaybeComments & { typeAnnotation: AST.TypeNode & AST.NodeWithMaybeComments }}
+ */
+function isParenthesizedType(node) {
+	return /** @type {AST.Node | null | undefined} */ (node)?.type === 'TSParenthesizedType';
+}
+
+/**
+ * The type inside a `TSParenthesizedType` and any directly nested ones, with
+ * the comments of each pair of parentheses moved onto it: the ones before the
+ * `(` lead it, the ones after the `)` trail it. It is marked parenthesized, like
+ * a parenthesized expression, so a `prettier-ignore` comment keeps the
+ * parentheses along with the rest of its source.
+ * @param {AST.TSParenthesizedType & AST.NodeWithMaybeComments & { typeAnnotation: AST.TypeNode & AST.NodeWithMaybeComments }} node
+ * @returns {AST.TypeNode & AST.NodeWithMaybeComments}
+ */
+function unwrapParenthesizedType(node) {
+	const inner = isParenthesizedType(node.typeAnnotation)
+		? unwrapParenthesizedType(node.typeAnnotation)
+		: node.typeAnnotation;
+	inner.metadata = { ...inner.metadata, parenthesized: true };
+	if (node.leadingComments?.length) {
+		inner.leadingComments = [...node.leadingComments, ...(inner.leadingComments ?? [])];
+	}
+	if (node.trailingComments?.length) {
+		inner.trailingComments = [...(inner.trailingComments ?? []), ...node.trailingComments];
+	}
+	return inner;
+}
 
 /**
  * Raw-text `<script>` element: the parser stores the verbatim JS/TS body on
@@ -1151,10 +1329,11 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 				(key === 'left' && parent.type === 'BinaryExpression' && parent.operator === '<')
 			);
 
-		// Types, like Prettier's `needsParens`. Parentheses written in the source
-		// stay as a `TSParenthesizedType`, so these rules only add the ones
-		// Prettier adds for readability: `(): (() => void) => {}` and
-		// `(typeof a)[]` parse the same without them.
+		// Types, like Prettier's `needsParens`. The printer drops the parentheses
+		// written around a type (see `dropParenthesizedTypes`), so these rules
+		// add every pair a type prints with: the ones the grammar requires,
+		// like `(A | B)[]`, and the ones Prettier adds for readability, like
+		// `(): (() => void) => {}` and `(typeof a)[]`.
 		case 'TSFunctionType':
 		case 'TSConditionalType':
 		case 'TSConstructorType':
@@ -3017,11 +3196,6 @@ function printTsrxNode(node, path, options, print, args) {
 		case 'TSIndexedAccessType':
 			nodeContent = printTSIndexedAccessType(node, path, options, print);
 			break;
-
-		case 'TSParenthesizedType': {
-			nodeContent = ['(', path.call(print, 'typeAnnotation'), ')'];
-			break;
-		}
 
 		case 'TSParameterProperty': {
 			// A constructor parameter property declares a class field. Losing
@@ -7594,9 +7768,7 @@ function printTSUnionType(node, path, options, print, args) {
 		printed = [...printLeadingComments(node, node.leadingComments ?? [], options), printed];
 	}
 
-	// The parser keeps the parentheses as a node of their own, which prints
-	// them around this doc
-	if (/** @type {AST.Node | null} */ (path.parent)?.type === 'TSParenthesizedType') {
+	if (needsParens(path, options)) {
 		return group([indent([softline, printed]), softline]);
 	}
 

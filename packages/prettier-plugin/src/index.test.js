@@ -9737,8 +9737,10 @@ function Two() @{
 		});
 	});
 
-	// Parentheses written around a type stay as they are; these are the ones
-	// Prettier adds where the type parses the same without them.
+	// Like Prettier, the parentheses written around a type are dropped, and a
+	// type prints with the ones its parent needs: the ones the grammar
+	// requires and the ones Prettier adds where the type parses the same
+	// without them.
 	describe('type parentheses follow Prettier', () => {
 		it.each([
 			[
@@ -9786,6 +9788,137 @@ function Two() @{
 			'type A<T> = T extends [infer U extends (B extends C ? D : E)] ? U : never;',
 		])('keeps %s as written', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			['type A = (B | C);', 'type A = B | C;'],
+			['let x: (A | B) = 1;', 'let x: A | B = 1;'],
+			['type D = ((E));', 'type D = E;'],
+			['type A = (string);', 'type A = string;'],
+			['type A = Foo<(B | C)>;', 'type A = Foo<B | C>;'],
+			['type A = ReturnType<(typeof f)>;', 'type A = ReturnType<typeof f>;'],
+			['type A = { [K in (keyof T)]: T[K] };', 'type A = { [K in keyof T]: T[K] };'],
+			[
+				'type A = B extends C ? D : (E extends F ? G : H);',
+				'type A = B extends C ? D : E extends F ? G : H;',
+			],
+			[
+				'type A = (B | C) extends (D | E) ? (F | G) : H;',
+				'type A = B | C extends D | E ? F | G : H;',
+			],
+			['type A = ({ a: string }) | null;', 'type A = { a: string } | null;'],
+			['const g = (): (A | B) => x;', 'const g = (): A | B => x;'],
+			['function f(): (() => void) {}', 'function f(): () => void {}'],
+			[
+				'function f(a: (A | B), b: ((x: string) => void)) {}',
+				'function f(a: A | B, b: (x: string) => void) {}',
+			],
+			['let v = x as (A | B);', 'let v = x as A | B;'],
+			['let v = x satisfies (A);', 'let v = x satisfies A;'],
+			[
+				'class C<T extends (A | B) = (C)> implements I<(X)> {}',
+				'class C<T extends A | B = C> implements I<X> {}',
+			],
+			[
+				'interface I { a: (string | number); b(): (A | B); }',
+				'interface I {\n  a: string | number;\n  b(): A | B;\n}',
+			],
+		])('drops the redundant parentheses in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'type A = (B | C)[];',
+			'type A = (B & C) | D;',
+			'type A = B & (C | D);',
+			'type A = keyof (B | C);',
+			'type A = (new () => X) | Y;',
+			'type A = (abstract new () => void) | X;',
+			'type A = ((a: string) => void) | null;',
+			'type A = (B extends C ? D : E)[];',
+			'type A = B extends (infer U)[] ? U : never;',
+			'type A = [(B | C)?];',
+			'type A = (B | C)["x"];',
+			'type A = (readonly string[])[];',
+			'const x = y as (typeof z)[number];',
+		])('keeps the needed parentheses in %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('lays out a type as if its parentheses were not written', async () => {
+			const input = `type A = (Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | Cccccccccccccccccccccccccccccccccccccccccc);
+type B = (Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | Cccccccccccccccccccccccccccccccccccccccccc)[];
+type C = [(Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb), (Cccccccccccccccccccccccc | D)];
+function foo(a: (Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)) {}
+type D = (
+  | { kind: "a"; value: string }
+  | { kind: "b"; value: number }
+);`;
+
+			expect(await format(input)).toBeWithNewline(`type A =
+  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  | Cccccccccccccccccccccccccccccccccccccccccc;
+type B = (
+  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  | Cccccccccccccccccccccccccccccccccccccccccc
+)[];
+type C = [
+  Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  Cccccccccccccccccccccccc | D,
+];
+function foo(
+  a:
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+) {}
+type D = { kind: "a"; value: string } | { kind: "b"; value: number };`);
+		});
+
+		// The layout checks look through a parameter or declarator into its type
+		it('picks the layout from the type inside the parentheses', async () => {
+			const input = `function foo(options: ({ aaaaaaaaaaaaaaa: string; bbbbbbbbbbbbbbbbbbbbbbbb: number; ccccccccc: boolean })) {}
+const fooooooooooooooooooooooooo = (aaaaaaa: string, bbbbbbbbbbbbbbb: number): ({ a: string; b: number }) => {};
+export const selectorByInstance: (Map<Selector, WeakMap<Instance, Value>>) = new Map();
+foo(x as (A)[], b);`;
+
+			expect(await format(input)).toBeWithNewline(`function foo(options: {
+  aaaaaaaaaaaaaaa: string;
+  bbbbbbbbbbbbbbbbbbbbbbbb: number;
+  ccccccccc: boolean;
+}) {}
+const fooooooooooooooooooooooooo = (
+  aaaaaaa: string,
+  bbbbbbbbbbbbbbb: number,
+): { a: string; b: number } => {};
+export const selectorByInstance: Map<
+  Selector,
+  WeakMap<Instance, Value>
+> = new Map();
+foo(x as A[], b);`);
+		});
+
+		it('keeps the parentheses of a type kept by prettier-ignore', async () => {
+			const input = `type A = keyof /* prettier-ignore */ (B   |   C);
+type D = [/* prettier-ignore */ (B   |   C)?];`;
+
+			expect(await format(input)).toBeWithNewline(input);
+		});
+
+		it('keeps the comments around dropped parentheses', async () => {
+			const input = `type A = /* c */ (B | C);
+type D = (/* c */ B | C);
+type E = (B | C) /* c */;
+type X = (
+  /* leading */ A
+);
+type Y = (A // trailing
+);`;
+
+			expect(await format(input)).toBeWithNewline(`type A = /* c */ B | C;
+type D = /* c */ B | C;
+type E = B | C /* c */;
+type X = /* leading */ A;
+type Y = A; // trailing`);
 		});
 	});
 
