@@ -1,0 +1,16 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`argument-name-clash.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function f(a,a){return a}
+
+=====================================output=====================================
+function f(a, a) {
+  return a;
+}
+
+================================================================================
+`;

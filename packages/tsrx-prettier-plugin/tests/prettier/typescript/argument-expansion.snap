@@ -1,0 +1,72 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`arrow-with-return-type.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+longfunctionWithCall1("bla", foo, (thing: string): complex<type<something>> => {
+  code();
+});
+
+longfunctionWithCall12("bla", foo, (thing: string): complex<type<something>> => {
+  code();
+});
+
+longfunctionWithCallBack("blabla", foobarbazblablablablabla, (thing: string): complex<type<something>> => {
+  code();
+});
+
+longfunctionWithCallBack("blabla", foobarbazblablabla, (thing: string): complex<type<something>> => {
+  code();
+});
+
+longfunctionWithCall1("bla", foo, (thing: string): complex<type<\`
+\`>> => {
+  code();
+});
+
+=====================================output=====================================
+longfunctionWithCall1("bla", foo, (thing: string): complex<type<something>> => {
+  code();
+});
+
+longfunctionWithCall12(
+  "bla",
+  foo,
+  (thing: string): complex<type<something>> => {
+    code();
+  },
+);
+
+longfunctionWithCallBack(
+  "blabla",
+  foobarbazblablablablabla,
+  (thing: string): complex<type<something>> => {
+    code();
+  },
+);
+
+longfunctionWithCallBack(
+  "blabla",
+  foobarbazblablabla,
+  (thing: string): complex<type<something>> => {
+    code();
+  },
+);
+
+longfunctionWithCall1(
+  "bla",
+  foo,
+  (
+    thing: string,
+  ): complex<
+    type<\`
+\`>
+  > => {
+    code();
+  },
+);
+
+================================================================================
+`;
