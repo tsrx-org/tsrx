@@ -8175,6 +8175,13 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			},
 		},
 		{
+			source: 'function f(...a: number[], /* last */\n) {}',
+			errors: [['Comma is not permitted after the rest element', ', /*']],
+			throws: 'Comma is not permitted after the rest element (1:25)',
+			valid: 'function f(...a: number[] /* last */\n) {}',
+			pick: first,
+		},
+		{
 			source: 'const f = (...a: number[],) => a;',
 			errors: [['Comma is not permitted after the rest element', ',)']],
 			throws: 'Comma is not permitted after the rest element (1:25)',
@@ -8435,6 +8442,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		const sources = [
 			// A rest parameter may have a trailing comma in an ambient context.
 			'declare function f(...a: number[],): void;',
+			'declare function g(...a: number[],\n\t// last\n): void;',
 			'declare const v: string;',
 			'for (const x of y) {}',
 			'class A {\n\t#x;\n\tm() {\n\t\treturn #x in this;\n\t}\n}',
