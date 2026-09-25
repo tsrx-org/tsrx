@@ -979,6 +979,18 @@ export namespace Parse {
 		): AST.Expression;
 
 		/**
+		 * Finish a conditional expression (`test ? a : b`) whose test is already
+		 * parsed, or return the test when no `?` follows (acorn-typescript)
+		 */
+		parseConditional(
+			expr: AST.Expression,
+			startPos: number,
+			startLoc: AST.Position,
+			forInit?: ForInit,
+			refDestructuringErrors?: DestructuringErrors,
+		): AST.Expression;
+
+		/**
 		 * Parse expression with operators (handles precedence)
 		 */
 		parseExprOps(forInit?: ForInit, refDestructuringErrors?: DestructuringErrors): AST.Expression;
@@ -993,6 +1005,18 @@ export namespace Parse {
 			minPrec: number,
 			forInit?: ForInit,
 		): AST.Expression;
+
+		/**
+		 * Finish a binary or logical expression from its parsed operands
+		 */
+		buildBinary(
+			startPos: number,
+			startLoc: AST.Position,
+			left: AST.Expression,
+			right: AST.Expression,
+			op: string,
+			logical: boolean,
+		): AST.BinaryExpression | AST.LogicalExpression;
 
 		/**
 		 * Parse maybe-unary expression (prefix operators)
