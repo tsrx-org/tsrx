@@ -5921,50 +5921,6 @@ function printFunctionDeclaration(node, path, options, print) {
 }
 
 /**
- * Extract and print leading comments from a node before a control flow statement keyword
- * @param {AST.Node} node - The node that may have leading comments
- * @returns {Doc[]} - Array of doc parts for the comments
- */
-function extractAndPrintLeadingComments(node) {
-	const leadingComments = node && node.leadingComments;
-	/** @type {Doc[]} */
-	const parts = [];
-
-	if (leadingComments && leadingComments.length > 0) {
-		for (let i = 0; i < leadingComments.length; i++) {
-			const comment = leadingComments[i];
-			const nextComment = leadingComments[i + 1];
-
-			if (comment.type === 'Line') {
-				parts.push(printComment(comment));
-				parts.push(hardline);
-
-				// Check if there should be blank lines between comments
-				if (nextComment) {
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
-				}
-			} else if (comment.type === 'Block') {
-				parts.push(printComment(comment));
-				parts.push(hardline);
-
-				// Check if there should be blank lines between comments
-				if (nextComment) {
-					const blankLinesBetween = getBlankLinesBetweenNodes(comment, nextComment);
-					if (blankLinesBetween > 0) {
-						parts.push(hardline);
-					}
-				}
-			}
-		}
-	}
-
-	return parts;
-}
-
-/**
  * Print a loop, `if` or `else` body after its header, like Prettier's
  * `printClause`. A block, or the `if` of an `else if`, stays on the header's
  * line. Another statement moves to its own indented line when the enclosing
