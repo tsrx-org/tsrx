@@ -11639,6 +11639,48 @@ let m: Map<string /* key */, number> = new Map<string, number>();`;
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// An object method's function started at its `(`, after its type
+		// parameters, so a comment in them trailed the key or led the function,
+		// which printed nothing of it (#458)
+		it.each([
+			'const o = {\n  m</* c */ T>(b: T): T {\n    return b;\n  },\n};',
+			'const o = { async m</* c */ T>(b: T) {} };',
+			'const o = { *m</* c */ T>(b: T) {} };',
+			'const o = { async *m</* c */ T>(b: T) {} };',
+			'const o = { get m</* c */ T>() {} };',
+			'const o = { set m</* c */ T>(v: T) {} };',
+			'const o = { [k]</* c */ T>(b: T) {} };',
+			'const o = { m<T /* c */>(b: T) {} };',
+			'const o = {\n  m<\n    // c\n    T,\n  >(b: T) {},\n};',
+			'const o = {\n  m<\n    T,\n    // c\n  >(b: T) {},\n};',
+		])('keeps the comment in the type parameters of the object method in %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'const o = { m</* c */ T>(b: T): T { return b; } };',
+				'const o = {\n  m</* c */ T>(b: T): T {\n    return b;\n  },\n};',
+			],
+			[
+				'const o = { m<\n// c\nT,\n>(b: T) {} };',
+				'const o = {\n  m<\n    // c\n    T,\n  >(b: T) {},\n};',
+			],
+			// Like Prettier, a comment before the type parameters leads the
+			// function, which prints it after the key
+			['const o = { m /* a */ <T>(b: T) {} };', 'const o = { m/* a */ <T>(b: T) {} };'],
+			['const o = { "m" /* a */ <T>(b: T) {} };', 'const o = { m/* a */ <T>(b: T) {} };'],
+			[
+				'const o = { m /* a */ </* c */ T /* d */> /* e */ (b: T) {} };',
+				'const o = { m/* a */ </* c */ T /* d */> /* e */(b: T) {} };',
+			],
+		])(
+			'formats the comments of the generic object method in %j like Prettier',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
+
 		// Prettier's parsers keep a type parameter's name as a node, which the
 		// comments around it lead or trail, so they stay before the `extends`,
 		// `=`, or mapped type's `in` and after a `const`, `in`, or `out` modifier
@@ -17208,6 +17250,32 @@ item
 			);
 		});
 
+		// Like Prettier, a comment in a spread's braces before its argument leads
+		// the argument and prints before the `...`. It trailed the spread, or led
+		// the next attribute, so it moved out of the braces, and a
+		// `prettier-ignore` printed again after the ignored spread (#489).
+		it.each([
+			['a = <div {.../* note */b}/>;', 'a = <div {/* note */ ...b} />;'],
+			['a = <div {/* note */...b}/>;', 'a = <div {/* note */ ...b} />;'],
+			['a = <div {.../* prettier-ignore */b}/>;', 'a = <div {/* prettier-ignore */ ...b} />;'],
+			['a = <div {... /* note */ b} c="1"/>;', 'a = <div {/* note */ ...b} c="1" />;'],
+			['a = <div c="1" {.../* note */b} d />;', 'a = <div c="1" {/* note */ ...b} d />;'],
+			[
+				'a = <div {...// note\nb}/>;',
+				'a = (\n  <div\n    {\n      // note\n      ...b\n    }\n  />\n);',
+			],
+			[
+				'a = <div {...\n  // prettier-ignore\n  b}/>;',
+				'a = (\n  <div\n    {\n      // prettier-ignore\n      ...b\n    }\n  />\n);',
+			],
+			[
+				'export function App(props) @{\n  <div {.../* prettier-ignore */props} />\n}',
+				'export function App(props) @{\n  <div {/* prettier-ignore */ ...props} />\n}',
+			],
+		])('keeps the comment before the argument of the spread in %j', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
 		// Like Prettier, a comment after a spread's argument stays in its braces.
 		// Before another attribute, it was deleted, and otherwise it moved after
 		// the `}` (#517).
@@ -17566,6 +17634,21 @@ item
 			'do x();\nwhile (a /* c */);',
 		])('keeps %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// With no line break after the `;` that ends the file, the program ends
+		// at the `;`, and the comment was deleted (#488)
+		it.each([
+			['const x = 1\n// c\n;', 'const x = 1;\n// c'],
+			['foo()\n// c\n;', 'foo();\n// c'],
+			['const maps = {\n}\n// c\n;', 'const maps = {};\n// c'],
+			['const x = 1\n/* c */\n;', 'const x = 1;\n/* c */'],
+			['const x = 1\n// prettier-ignore\n;', 'const x = 1;\n// prettier-ignore'],
+			['if (a) b()\n// c\n;', 'if (a) b();\n// c'],
+			['export default foo\n// c\n;', 'export default foo;\n// c'],
+		])('keeps the comment before the ; that ends the file in %j', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+			expect(await format(`${source}\n`)).toBeWithNewline(expected);
 		});
 	});
 

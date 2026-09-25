@@ -12585,6 +12585,16 @@ function printProperty(node, path, options, print) {
 		}
 
 		methodParts.push(...printKey(node, path, options, print));
+		// Like Prettier, which prints the function with its comments: the ones
+		// between the key and the type parameters or `(` that don't trail the
+		// key lead the function (`'m' /* c */ () {}`, `m /* c */ <T>() {}`)
+		methodParts.push(
+			...printLeadingComments(
+				funcValue,
+				/** @type {AST.NodeWithMaybeComments} */ (funcValue).leadingComments ?? [],
+				options,
+			),
+		);
 		methodParts.push(
 			...path.call(
 				(valuePath) =>
