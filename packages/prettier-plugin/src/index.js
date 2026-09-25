@@ -371,7 +371,8 @@ function unwrapParenthesizedType(node) {
 	const inner = isParenthesizedType(node.typeAnnotation)
 		? unwrapParenthesizedType(node.typeAnnotation)
 		: node.typeAnnotation;
-	inner.metadata = { ...inner.metadata, parenthesized: true };
+	const innerNode = /** @type {AST.Node} */ (/** @type {unknown} */ (inner));
+	innerNode.metadata = { ...innerNode.metadata, parenthesized: true };
 	if (node.leadingComments?.length) {
 		inner.leadingComments = [...node.leadingComments, ...(inner.leadingComments ?? [])];
 	}
