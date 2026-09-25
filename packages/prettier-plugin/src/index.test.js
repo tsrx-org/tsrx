@@ -15242,6 +15242,8 @@ item
 			'const f = () => (\n  <Note />\n  // note\n);',
 			'const f = () => (\n  <>\n    <Note />\n  </>\n  /* note */\n);',
 			'foo(() => (\n  <Note />\n  // note\n));',
+			'function App() {\n  return (\n    <ul>\n      {items.map((item) => (\n        <li>{item}</li>\n        // note\n      ))}\n    </ul>\n  );\n}',
+			'function App() {\n  return (\n    <Button\n      onClick={() => (\n        <a />\n        // note\n      )}\n    />\n  );\n}',
 			'function C() @{\n  const f = () => (\n    @if (a) {\n      <Note />\n    }\n    // note\n  );\n  <div />\n}',
 		])('keeps the comment after the arrow body inside the parentheses in %j', async (source) => {
 			await expectFormatted(source);
