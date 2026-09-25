@@ -120,6 +120,20 @@ export function is_file_level_pragma(comment) {
 }
 
 /**
+ * The hashbang line (`#!…`) that starts `source`, without its line break.
+ * The parser reports a hashbang to `onComment` as a `Line` comment at offset 0
+ * whose value is the text after `#!`, so a printer that writes line comments as
+ * `//…` has to print this line itself.
+ * @param {string} source
+ * @returns {string | null}
+ */
+export function get_hashbang(source) {
+	if (!source.startsWith('#!')) return null;
+	// Acorn ends the hashbang at the first line terminator, like a line comment.
+	return /^#![^\n\r\u2028\u2029]*/.exec(source)?.[0] ?? null;
+}
+
+/**
  * Format a comment for output
  * @param {AST.CommentWithLocation} comment
  * @returns {string}

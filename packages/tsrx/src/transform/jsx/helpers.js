@@ -80,8 +80,15 @@ export function set_node_path_metadata(node, path) {
  * annotations stay with their declarations, members, or statements. A sparse
  * print with explicitly supplied comments retains its existing leading-pragma
  * behavior. Ordinary build callers supply no comments.
+ * @param {string | null} [hashbang] The source's hashbang line (`#!…`, see
+ * `get_hashbang`), printed as the output's first line. The parser also reports
+ * it as the `Line` comment at offset 0, which is then never printed as `//…`.
  */
-export function tsx_with_ts_locations(boundary_tokens = false, comments = undefined) {
+export function tsx_with_ts_locations(
+	boundary_tokens = false,
+	comments = undefined,
+	hashbang = null,
+) {
 	const base = with_deferred_imports(tsx({ boundaryTokens: boundary_tokens }));
 	const { _: base_visitor, ...base_visitors } = base;
 	const preserve_comments = comments !== undefined;
@@ -96,6 +103,7 @@ export function tsx_with_ts_locations(boundary_tokens = false, comments = undefi
 	const write_preserved_comment = (comment, context) => {
 		if (
 			!emitted_comments ||
+			(hashbang !== null && comment.start === 0) ||
 			!(preserve_owner_comments
 				? should_preserve_jsx_tooling_comment(comment)
 				: should_preserve_comment(comment))
@@ -144,6 +152,12 @@ export function tsx_with_ts_locations(boundary_tokens = false, comments = undefi
 	/** @type {ESRap.Visitors<AST.Node>} */
 	const wrappers = {
 		Program: (node, context) => {
+			// A hashbang is only valid as the very first line of a module.
+			if (hashbang !== null) {
+				context.location(1, 0);
+				context.write(hashbang);
+				context.newline();
+			}
 			for (const comment of leading_preserved(node)) {
 				write_preserved_comment(comment, context);
 			}
