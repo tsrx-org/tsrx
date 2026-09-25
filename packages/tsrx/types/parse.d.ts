@@ -1074,8 +1074,6 @@ export namespace Parse {
 			startPos: number,
 			startLoc: AST.Position,
 			noCalls?: boolean,
-			maybeAsyncArrow?: boolean,
-			optionalChained?: boolean,
 			forInit?: ForInit,
 		): AST.Expression;
 
@@ -1386,6 +1384,9 @@ export namespace Parse {
 		 * @param allowExport Whether `export` may follow them
 		 */
 		parseDecorators(allowExport?: boolean): void;
+
+		/** Whether the current token is `abstract` before `class` (@sveltejs/acorn-typescript). */
+		isAbstractClass(): boolean;
 
 		/**
 		 * Get property kind from name

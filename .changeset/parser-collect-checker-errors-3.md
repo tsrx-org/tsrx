@@ -8,8 +8,9 @@ and other editor tooling), which keep parsing, while a compile still throws them
 
 - A repeated accessibility modifier (`public protected x`).
 - Decorators before a declaration other than a class, such as
-  `@dec function f() {}`, `@dec const x = 1;`, or `export @dec function f() {}`,
-  and decorators on a constructor. Decorators before a statement that isn't a
+  `@dec function f() {}`, `@dec const x = 1;`, `export @dec function f() {}`,
+  `export default @dec function f() {}`, or `@dec export function f() {}`, and
+  decorators on a constructor. Decorators before a statement that isn't a
   declaration (`@dec x;`) still throw in every mode, as TypeScript's parser
   rejects them.
 - A modifier on a rest parameter (`constructor(public ...rest: T[])`).

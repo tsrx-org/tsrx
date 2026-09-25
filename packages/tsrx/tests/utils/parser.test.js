@@ -849,7 +849,7 @@ describe('TSRX parser', () => {
 		}
 	});
 
-	it('reads a template literal after an element with children', () => {
+	it('ends the statement at an element before a template literal on the next line', () => {
 		for (const [element, type] of [
 			['<b>x</b>', 'JSXElement'],
 			['<>x</>', 'JSXFragment'],
@@ -860,15 +860,18 @@ describe('TSRX parser', () => {
 				parseModule(`function f() {\n  ${source}\n}`, 'App.tsrx'),
 				parseModule(`${source}\n`, 'App.tsrx'),
 			]) {
-				const [declaration] =
+				const [declaration, statement] =
 					ast.body[0].type === 'FunctionDeclaration' ? functionBody(ast) : ast.body;
-				// As after a self-closing element, and as in Babel, the template literal
-				// continues the element as a tagged template (TypeScript ends the
-				// statement at the element instead, #426).
-				const tagged = as_type(declaratorInit(declaration), 'TaggedTemplateExpression');
-				expect(tagged.tag.type).toBe(type);
-				expect(tagged.quasi.quasis.map((quasi) => quasi.value.raw)).toEqual(['t', '']);
-				expect(tagged.quasi.expressions.map((node) => node.type)).toEqual(['Identifier']);
+				// An element isn't a left-hand-side expression, as in TypeScript, so
+				// the template literal isn't a tagged template on it and starts the
+				// next statement (#426). Babel reads a tagged template here.
+				expect(declaratorInit(declaration).type).toBe(type);
+				const template = as_type(
+					as_type(statement, 'ExpressionStatement').expression,
+					'TemplateLiteral',
+				);
+				expect(template.quasis.map((quasi) => quasi.value.raw)).toEqual(['t', '']);
+				expect(template.expressions.map((node) => node.type)).toEqual(['Identifier']);
 			}
 		}
 	});
@@ -3534,9 +3537,10 @@ foo();`;
 		expect(regexLiteral(declaratorInit(block.body[0])).pattern).toBe('<span>');
 	});
 
-	it('reads `<value> /…/` in the setup section as a less-than against a regex', () => {
+	it('reads `<value> < /…/` in the setup section as a less-than against a regex', () => {
+		// Without the space, `</` starts a closing tag, as in TSX (#586).
 		const returned = getReturned(`function App() { return <div>@{
-			const x = 3</div>/
+			const x = 3 < /div>/
 			<>{x}</>
 		}</div>; }`);
 
@@ -6762,6 +6766,128 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(statement.consequent).leading).toBeUndefined();
 	});
 
+	/**
+	 * Parse each source in a worker, and fail on any that throws
+	 * @param {string[]} sources
+	 * @returns {Promise<any[]>} Each source's AST
+	 */
+	async function parseAllInWorker(sources) {
+		const outcomes = await parse_in_worker_with_ast(sources.map((source) => ({ source })));
+		return outcomes.map((outcome, index) => {
+			if (!outcome.ok) {
+				throw new Error(`${JSON.stringify(sources[index])} threw ${outcome.message}`);
+			}
+			return outcome.ast;
+		});
+	}
+
+	// Like typescript-estree, the function starts at the type parameters. It
+	// started at its `(`, so the comment trailed the key or led the function
+	// (#458).
+	it('starts an object method at its type parameters, which keep the comments in them', async () => {
+		const sources = [
+			'const o = { m</* c */ T>(b: T) {} };',
+			'const o = { async m</* c */ T>(b: T) {} };',
+			'const o = { *m</* c */ T>(b: T) {} };',
+			'const o = { get m</* c */ T>() {} };',
+			'const o = { set m</* c */ T>(v: T) {} };',
+			'const o = { m<\n  // c\n  T,\n>(b: T) {} };',
+			'const o = { m\n  <T /* c */>(b: T) {} };',
+		];
+		const asts = await parseAllInWorker(sources);
+
+		for (const [index, ast] of asts.entries()) {
+			const property = ast.body[0].declarations[0].init.properties[0];
+			const { value } = property;
+			const { typeParameters } = value;
+			const [parameter] = typeParameters.params;
+			const label = sources[index];
+			expect(value.start, label).toBe(typeParameters.start);
+			expect(value.loc.start, label).toEqual(typeParameters.loc.start);
+			expect(value.end, label).toBe(sources[index].indexOf('{} }') + '{}'.length);
+			expect(
+				[...(parameter.leadingComments ?? []), ...(parameter.trailingComments ?? [])].map(
+					(/** @type {AST.Comment} */ comment) => comment.value.trim(),
+				),
+				label,
+			).toEqual(['c']);
+			expect(commentsOf(property.key).trailing, label).toBeUndefined();
+			expect(commentsOf(value).leading, label).toBeUndefined();
+		}
+	});
+
+	it('keeps a method function that has no type parameters, and a class method, where they start', async () => {
+		const [object, classDeclaration] = await parseAllInWorker([
+			'const o = { m(b) {}, async n(b) {}, get g() { return 1; } };',
+			'class A { m<T>(a: T) {} }',
+		]);
+		const source = 'const o = { m(b) {}, async n(b) {}, get g() { return 1; } };';
+
+		expect(
+			object.body[0].declarations[0].init.properties.map(
+				(/** @type {any} */ property) => property.value.start,
+			),
+		).toEqual([source.indexOf('(b)'), source.lastIndexOf('(b)'), source.indexOf('()')]);
+		const [method] = classDeclaration.body[0].body.body;
+		expect(method.value.start).toBe('class A { m<T>'.length);
+		expect(method.typeParameters.start).toBe('class A { m'.length);
+	});
+
+	// With no line break after the `;` that ends the file, the program ends at
+	// the `;`, and neither it nor the statement took the comment (#488)
+	it('trails the last statement with a comment before the ; that ends the file', async () => {
+		const sources = [
+			'const x = 1\n// c\n;',
+			'foo()\n// c\n;',
+			'if (a) b()\n// c\n;',
+			'a();\nconst x = 1\n/* c */\n;',
+		];
+		const asts = await parseAllInWorker([...sources, ...sources.map((source) => `${source}\n`)]);
+
+		for (const [index, source] of sources.entries()) {
+			const ast = asts[index];
+			const statement = ast.body.at(-1);
+			expect(
+				commentsOf(statement).trailing?.map((/** @type {string} */ value) => value.trim()),
+				JSON.stringify(source),
+			).toEqual(['c']);
+			expect(commentsOf(ast).inner, JSON.stringify(source)).toBeUndefined();
+			// As when a line break follows the `;`
+			expect(commentsOf(asts[index + sources.length].body.at(-1))).toEqual(commentsOf(statement));
+		}
+	});
+
+	// Like Prettier, the comment leads the argument, which the spread prints
+	// before its `...`. It trailed the spread, or led the next attribute (#489).
+	it('leads the argument of a spread attribute with a comment in its braces before it', async () => {
+		const sources = [
+			'x = <div {.../* c */b} />;',
+			'x = <div {/* c */ ...b} />;',
+			'x = <div {... /* c */ b} d="1" />;',
+			'x = <div {...\n  // c\n  b} />;',
+			'function App(b) @{\n  <div {.../* c */b} d="1" />\n}',
+		];
+		const asts = await parseAllInWorker(sources);
+
+		for (const [index, ast] of asts.entries()) {
+			const statement = ast.body[0];
+			const { attributes } = (
+				statement.type === 'FunctionDeclaration'
+					? statement.body.render
+					: statement.expression.right
+			).openingElement;
+			const label = sources[index];
+			expect(
+				commentsOf(attributes[0].argument).leading?.map((/** @type {string} */ value) =>
+					value.trim(),
+				),
+				label,
+			).toEqual(['c']);
+			expect(commentsOf(attributes[0]).trailing, label).toBeUndefined();
+			expect(commentsOf(attributes[1]?.name).leading, label).toBeUndefined();
+		}
+	});
+
 	// The next attribute's name took it, and the printer dropped it (#517)
 	it('trails the argument of a spread with a comment on its own line before its }', () => {
 		/** @param {string} source */
@@ -8582,6 +8708,13 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: first_member,
 		},
 		{
+			source: 'class A { constructor(@dec public ...rest: number[]) {} }',
+			errors: [['A parameter property cannot be declared using a rest parameter.', 'public']],
+			throws: 'Unexpected token (1:34)',
+			valid: 'class A { constructor(@dec ...rest: number[]) {} }',
+			pick: constructor_parameter,
+		},
+		{
 			source: 'class A { constructor(private readonly ...rest: number[], b) {} }',
 			errors: [
 				['A parameter property cannot be declared using a rest parameter.', 'private readonly ...'],
@@ -8631,6 +8764,21 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
 			throws: 'Leading decorators must be attached to a class declaration. (1:12)',
 			valid: 'export function f() {}',
+			pick: first,
+		},
+		{
+			source: 'export default @dec async function f() {}',
+			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
+			throws: 'Leading decorators must be attached to a class declaration. (1:20)',
+			valid: 'export default async function f() {}',
+			pick: first,
+		},
+		{
+			// No other class takes the decorators written before `export`.
+			source: '@dec export const A = class {};',
+			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
+			throws: 'Leading decorators must be attached to a class declaration. (1:12)',
+			valid: 'export const A = class {};',
 			pick: first,
 		},
 		{

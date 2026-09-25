@@ -1808,8 +1808,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 					function isCommentInsideUnvisitedAttribute(comment) {
 						for (let i = path.length - 1; i >= 0; i--) {
 							const ancestor = path[i];
-							// we would definitely reach the attribute first before getting to the element
-							if (ancestor.type === 'JSXAttribute') {
+							// Inside an attribute, which is visited before the element, the
+							// comments in it are its own: one in a spread attribute's braces
+							// (`{.../* c */ b}`) leads the argument
+							if (ancestor.type === 'JSXAttribute' || ancestor.type === 'JSXSpreadAttribute') {
 								return false;
 							}
 							if (isNativeTemplateElement(ancestor)) {
@@ -2391,7 +2393,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 							return;
 						}
 
-						if (parent === undefined || node.end !== parent.end) {
+						// A node that ends where its parent does leaves the comments to the
+						// parent, except the last statement of a file that ends right after
+						// it: the program keeps no comments after its statements, so the
+						// statement takes them, as it does when a line break follows it
+						// (`const x = 1` / `// c` / `;`)
+						if (parent === undefined || node.end !== parent.end || parent.type === 'Program') {
 							// Check if this node is the last item in an array-like structure
 							let is_last_in_array = false;
 							/** @type {(AST.Node | null)[] | null} */

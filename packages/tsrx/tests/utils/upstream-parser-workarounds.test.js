@@ -1,5 +1,6 @@
 /** @import * as AST from 'estree' */
 /** @import { CompileError, JsxPlatform } from '../../types/index' */
+/** @import { DetailedParseOutcome } from '../shared/parse-in-worker.js' */
 
 import { describe, expect, it } from 'vitest';
 import { createJsxTransform, parseModule } from '../../src/index.js';
@@ -654,6 +655,386 @@ describe('`assert` on the line after an import (sveltejs/acorn-typescript#121)',
 });
 
 /**
+ * Parse each source strictly and when collecting, in a worker that a parse
+ * that never returns can't stall.
+ * @param {string[]} sources
+ */
+async function parseBothModes(sources) {
+	const outcomes = await parse_in_worker_with_ast(
+		sources.flatMap((source) => [
+			{ source },
+			{ source, options: { collect: true, errors: [], comments: [], preserveParens: true } },
+		]),
+	);
+	return sources.map((source, index) => ({
+		source,
+		strict: outcomes[2 * index],
+		collect: outcomes[2 * index + 1],
+	}));
+}
+
+/**
+ * The program of a parse that returned, with its collected errors' messages.
+ * @param {DetailedParseOutcome} outcome
+ * @param {string} source
+ */
+function parsed(outcome, source) {
+	if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+	return { ast: outcome.ast, errors: (outcome.errors ?? []).map((error) => error.message) };
+}
+
+/**
+ * The source text of each of a node's decorators.
+ * @param {unknown} node
+ * @param {string} source
+ */
+function decoratorTexts(node, source) {
+	const { decorators } = /** @type {{ decorators?: AST.Decorator[] }} */ (node);
+	return (decorators ?? []).map((decorator) =>
+		source.slice(/** @type {number} */ (decorator.start), /** @type {number} */ (decorator.end)),
+	);
+}
+
+/**
+ * The declaration of the default export that ends `source`.
+ * @param {AST.Program} ast
+ */
+function defaultExported(ast) {
+	const exported = ast.body.at(-1);
+	assert_type(exported, 'ExportDefaultDeclaration');
+	return exported.declaration;
+}
+
+describe('anonymous default-exported class with `implements` or `abstract` (sveltejs/acorn-typescript#113)', () => {
+	it('parses the class as a declaration without a name', async () => {
+		const sources = [
+			'export default class implements I {}',
+			'export default abstract class {}',
+			'export default abstract class implements I {}',
+			'export default abstract class extends B {}',
+			'export default abstract class<T> {}',
+		];
+		for (const { source, strict, collect } of await parseBothModes(sources)) {
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				const declaration = as_type(defaultExported(ast), 'ClassDeclaration');
+				expect(declaration.id, source).toBeNull();
+				expect(declaration.abstract, source).toBe(source.includes('abstract') || undefined);
+				expect(declaration.start, source).toBe('export default '.length);
+			}
+		}
+	});
+
+	it('keeps the type parameters and heritage clauses', async () => {
+		const source =
+			'export default abstract class<T> extends B implements I, J {\n\tabstract m(): T;\n}';
+		const [{ strict }] = await parseBothModes([source]);
+		const declaration = as_type(defaultExported(parsed(strict, source).ast), 'ClassDeclaration');
+		const params = declaration.typeParameters?.params ?? [];
+		expect(params.map((param) => source.slice(param.start, param.end))).toEqual(['T']);
+		expect(as_type(declaration.superClass, 'Identifier').name).toBe('B');
+		expect(declaration.implements?.length).toBe(2);
+		expect(as_type(declaration.body.body[0], 'MethodDefinition').abstract).toBe(true);
+	});
+
+	it('still binds the name of a named one', async () => {
+		const source = 'export default abstract class A implements I {}\nlet A;';
+		const [{ strict, collect }] = await parseBothModes([source]);
+		expect(strict.ok).toBe(false);
+		const { ast, errors } = parsed(collect, source);
+		expect(as_type(ast.body[0], 'ExportDefaultDeclaration').declaration).toMatchObject({
+			type: 'ClassDeclaration',
+			id: { name: 'A' },
+		});
+		expect(errors).toEqual(["Identifier 'A' has already been declared"]);
+	});
+
+	it('gives a class expression that starts with `implements` a null name', async () => {
+		const source = 'const X = class implements I {};';
+		const [{ strict }] = await parseBothModes([source]);
+		const [statement] = parsed(strict, source).ast.body;
+		assert_type(statement, 'VariableDeclaration');
+		expect(statement.declarations[0].init).toHaveProperty('id', null);
+	});
+
+	it('still rejects `implements` as the name of a class statement', async () => {
+		const [{ strict, collect }] = await parseBothModes(['class implements I {}']);
+		for (const outcome of [strict, collect]) {
+			expect(outcome).toMatchObject({
+				ok: false,
+				message: "The keyword 'implements' is reserved (1:6)",
+			});
+		}
+	});
+});
+
+describe('decorated default-exported class (sveltejs/acorn-typescript#124)', () => {
+	it('parses the class as a declaration that starts at its first decorator', async () => {
+		const cases = /** @type {Array<[string, string | null, boolean, string[]]>} */ ([
+			['export default @dec class B {}', 'B', false, ['@dec']],
+			['export default @dec class {}', null, false, ['@dec']],
+			['export default @dec abstract class B {}', 'B', true, ['@dec']],
+			['export default @dec abstract class {}', null, true, ['@dec']],
+			['export default @a @b.c() class implements I {}', null, false, ['@a', '@b.c()']],
+			['export default\n@dec\nabstract class<T> extends B {}', null, true, ['@dec']],
+		]);
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, [source, name, abstract, decorators]] of cases.entries()) {
+			for (const outcome of [outcomes[index].strict, outcomes[index].collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				const declaration = as_type(defaultExported(ast), 'ClassDeclaration');
+				expect(declaration.id?.name ?? null, source).toBe(name);
+				expect(declaration.abstract ?? false, source).toBe(abstract);
+				expect(decoratorTexts(declaration, source), source).toEqual(decorators);
+				expect(declaration.start, source).toBe(source.indexOf('@'));
+				expect(declaration.end, source).toBe(source.length);
+			}
+		}
+	});
+
+	it('binds the class name and ends the statement, like an undecorated class', async () => {
+		const redeclared = 'export default @dec class B {}\nlet B;';
+		const followed = 'export default @dec class {}\n(foo)';
+		const [binding, statement] = await parseBothModes([redeclared, followed]);
+		expect(binding.strict).toMatchObject({ ok: false });
+		expect(parsed(binding.collect, redeclared).errors).toEqual([
+			"Identifier 'B' has already been declared",
+		]);
+		expect(parsed(statement.strict, followed).ast.body.map((node) => node.type)).toEqual([
+			'ExportDefaultDeclaration',
+			'ExpressionStatement',
+		]);
+	});
+
+	it('keeps a parenthesized class and the at-sign constructs expressions', async () => {
+		const cases = [
+			['export default (@dec class {});', 'ClassExpression'],
+			['export default @if (a) { <div /> };', 'JSXIfExpression'],
+			['export default @{ <div /> };', 'JSXCodeBlock'],
+			['export default @for (const x of y) { <div /> };', 'JSXForExpression'],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, [source, type]] of cases.entries()) {
+			expect(defaultExported(parsed(outcomes[index].strict, source).ast).type, source).toBe(type);
+		}
+	});
+
+	it('still rejects decorators before anything but a class', async () => {
+		const message = 'Leading decorators must be attached to a class declaration.';
+		// When collecting, TypeScript's checker error before another declaration
+		// is recorded at the decorators instead (TS1206).
+		const declarations = [
+			'export default @dec function f() {}',
+			'export default @dec interface I {}',
+		];
+		const expression = 'export default @dec 1;';
+		const outcomes = await parseBothModes([...declarations, expression]);
+		for (const { source, strict } of outcomes) {
+			expect(strict, source).toMatchObject({ ok: false, message: `${message} (1:20)` });
+		}
+		for (const { source, collect } of outcomes.slice(0, declarations.length)) {
+			expect(collect, source).toMatchObject({ ok: true, errors: [{ message, pos: 15 }] });
+			const declaration = defaultExported(parsed(collect, source).ast);
+			expect(decoratorTexts(declaration, source), source).toEqual([]);
+		}
+		expect(outcomes.at(-1)?.collect, expression).toMatchObject({
+			ok: false,
+			message: `${message} (1:20)`,
+		});
+	});
+});
+
+describe('decorators before `export` (sveltejs/acorn-typescript#125)', () => {
+	it('accepts them before an exported class, which takes them', async () => {
+		const sources = [
+			'@dec export class A {}',
+			'@dec export default class {}',
+			'@dec export abstract class A {}',
+			'@dec export default abstract class {}',
+			'@dec export declare class A {}',
+			'@dec export declare abstract class A {}',
+		];
+		for (const { source, strict, collect } of await parseBothModes(sources)) {
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				const [exported] = ast.body;
+				const declaration = /** @type {AST.ExportNamedDeclaration} */ (exported).declaration;
+				expect(declaration?.type, source).toBe('ClassDeclaration');
+				expect(decoratorTexts(declaration, source), source).toEqual(['@dec']);
+			}
+		}
+	});
+
+	it('keeps the range of a class decorated before `export`', async () => {
+		const source = '@dec export default class {}';
+		const [{ strict }] = await parseBothModes([source]);
+		const [exported] = parsed(strict, source).ast.body;
+		assert_type(exported, 'ExportDefaultDeclaration');
+		expect([exported.start, exported.declaration.start]).toEqual([5, 0]);
+	});
+
+	it('rejects them before any other export, at the exported declaration, or records them when collecting', async () => {
+		const cases = /** @type {Array<[string, string]>} */ ([
+			['@dec export default (class {});', '(class'],
+			['@dec export const A = class {};', 'const'],
+			['@dec export function f() {}', 'function'],
+			['@dec export default function f() {}', 'function'],
+			['@dec export default 1;', '1'],
+			['@dec export interface I {}', 'interface'],
+			['@dec export { a };', '{ a }'],
+			['@dec export default abstract;', 'abstract'],
+			// At-sign constructs aren't decorators, so they don't take the ones
+			// before `export` either (a class after them would).
+			['@dec export default @if (a) { <div /> };\nclass A {}', '@if'],
+			['@dec export default @{ <div /> };\nclass A {}', '@{'],
+			['@dec export @if (a) { <div /> };', '@if'],
+		]);
+		const message = 'Leading decorators must be attached to a class declaration.';
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, [source, declaration]] of cases.entries()) {
+			const { strict, collect } = outcomes[index];
+			const column = source.indexOf(declaration);
+			const thrown = { ok: false, message: `${message} (1:${column})`, pos: column };
+			expect(strict, source).toMatchObject(thrown);
+			// When collecting, the error before an export is recorded at the
+			// decorators instead, as TypeScript reports it from its checker
+			// (TS1206), and no class takes them. An at-sign construct is no
+			// declaration, so the error is still thrown there.
+			if (/@if|@\{/.test(declaration)) {
+				expect(collect, source).toMatchObject(thrown);
+			} else {
+				const { ast, errors } = parsed(collect, source);
+				expect(errors[0], source).toBe(message);
+				expect(JSON.stringify(ast), source).not.toContain('"Decorator"');
+			}
+		}
+	});
+});
+
+describe('decorators on a rest parameter (sveltejs/acorn-typescript#126)', () => {
+	/**
+	 * The parameters of the only function or class method in `ast`.
+	 * @param {AST.Program} ast
+	 */
+	function parameters(ast) {
+		const [statement] = ast.body;
+		if (statement.type === 'ClassDeclaration') {
+			return as_type(statement.body.body[0], 'MethodDefinition').value.params;
+		}
+		return /** @type {AST.FunctionDeclaration} */ (statement).params;
+	}
+
+	it('hangs them off the rest element, which starts at `...`', async () => {
+		const cases = /** @type {Array<[string, string[]]>} */ ([
+			['class A {\n\tm(@a ...rest: unknown[]) {}\n}', ['@a']],
+			['class A {\n\tconstructor(@a @b.c() ...[x, y]: unknown[]) {}\n}', ['@a', '@b.c()']],
+			['declare class A {\n\tm(@a ...rest: unknown[]): void;\n}', ['@a']],
+			['function f(@a ...rest: unknown[]) {}', ['@a']],
+		]);
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, [source, decorators]] of cases.entries()) {
+			for (const outcome of [outcomes[index].strict, outcomes[index].collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				const rest = as_type(parameters(ast).at(-1), 'RestElement');
+				expect(decoratorTexts(rest, source), source).toEqual(decorators);
+				expect(rest.start, source).toBe(source.indexOf('...'));
+				expect(source.slice(rest.start, rest.end), source).toMatch(/: unknown\[\]$/);
+			}
+		}
+	});
+
+	it('keeps the decorators of the other parameters where they were', async () => {
+		const source =
+			'class A {\n\tconstructor(@a x: number, @b private y = 1, @c ...rest: unknown[]) {}\n}';
+		const [{ strict }] = await parseBothModes([source]);
+		const [x, y, rest] = parameters(parsed(strict, source).ast);
+		expect(decoratorTexts(x, source)).toEqual(['@a']);
+		const property = as_type(y, 'TSParameterProperty');
+		expect(decoratorTexts(property.parameter, source)).toEqual(['@b']);
+		expect(decoratorTexts(rest, source)).toEqual(['@c']);
+	});
+
+	it('reports a comma after it like one after an undecorated rest parameter', async () => {
+		const decorated = 'function f(@a ...rest, b) {}';
+		const plain = 'function f(...rest, b) {}';
+		const ambient = 'declare function f(@a ...rest: number[],): void;';
+		const [withDecorator, without, trailing] = await parseBothModes([decorated, plain, ambient]);
+		for (const [{ source, strict, collect }, comma] of /** @type {const} */ ([
+			[withDecorator, decorated.indexOf(', b')],
+			[without, plain.indexOf(', b')],
+		])) {
+			expect(strict, source).toMatchObject({
+				ok: false,
+				message: `Comma is not permitted after the rest element (1:${comma})`,
+			});
+			const { ast, errors } = parsed(collect, source);
+			expect(errors, source).toEqual(['Comma is not permitted after the rest element']);
+			expect(
+				parameters(ast).map((param) => param.type),
+				source,
+			).toEqual(['RestElement', 'Identifier']);
+		}
+		for (const outcome of [trailing.strict, trailing.collect]) {
+			expect(parsed(outcome, ambient).errors).toEqual([]);
+		}
+	});
+
+	it('reports the errors inside it where it reports them without the decorator', async () => {
+		// Each pair differs only by `@a `, so the errors move by its length.
+		const pairs = [
+			['class A {\n\tm(@a ...rest?: any[]) {}\n}', 'class A {\n\tm(...rest?: any[]) {}\n}'],
+			['class A {\n\tm(@a ...[b, b]: any[]) {}\n}', 'class A {\n\tm(...[b, b]: any[]) {}\n}'],
+			['class A {\n\tm(@a ...rest = []) {}\n}', 'class A {\n\tm(...rest = []) {}\n}'],
+		];
+		const outcomes = await parseBothModes(pairs.flat());
+		/**
+		 * @param {DetailedParseOutcome} outcome
+		 * @param {number} shift
+		 */
+		const errorsOf = (outcome, shift) =>
+			outcome.ok
+				? (outcome.errors ?? []).map((error) => [error.message, (error.pos ?? 0) - shift])
+				: [outcome.message.replace(/ \(\d+:\d+\)$/, ''), (outcome.pos ?? 0) - shift];
+		for (const [index, [decorated, plain]] of pairs.entries()) {
+			const [withDecorator, without] = [outcomes[2 * index], outcomes[2 * index + 1]];
+			for (const mode of /** @type {const} */ (['strict', 'collect'])) {
+				expect(errorsOf(withDecorator[mode], '@a '.length), `${decorated} (${mode})`).toEqual(
+					errorsOf(without[mode], 0),
+				);
+			}
+			expect(errorsOf(without.collect, 0), plain).not.toEqual([]);
+		}
+	});
+
+	it('still rejects `...` after decorators in an array pattern', async () => {
+		for (const { source, strict, collect } of await parseBothModes([
+			'const [@a ...x] = y;',
+			'function f([@a ...x]) {}',
+		])) {
+			for (const outcome of [strict, collect]) {
+				expect(outcome, source).toMatchObject({ ok: false, pos: source.indexOf('...') });
+			}
+		}
+	});
+
+	it('keeps an optional decorated pattern parameter in an overload', async () => {
+		const source = 'class A {\n\tm(@a { b }?: T): void;\n\tm() {}\n}';
+		const [{ strict, collect }] = await parseBothModes([source]);
+		for (const outcome of [strict, collect]) {
+			const { ast, errors } = parsed(outcome, source);
+			expect(errors).toEqual([]);
+			const [pattern] = parameters(ast);
+			expect(pattern).toMatchObject({ type: 'ObjectPattern', optional: true });
+			expect(decoratorTexts(pattern, source)).toEqual(['@a']);
+		}
+	});
+});
+
+/**
  * A strict parse, and the two modes that collect errors and keep parsing.
  * @type {Array<import('../../types/index').ParseOptions | undefined>}
  */
@@ -834,5 +1215,58 @@ export const lazy = import.defer('./lazy.js', { with: { type: 'json' } },);
 		expect(code).toContain(
 			"export const lazy = import.defer('./lazy.js', { with: { type: 'json' } });",
 		);
+	});
+});
+
+describe('`@` after `yield` (sveltejs/acorn-typescript#128)', () => {
+	/**
+	 * The first `yield` in `value`, depth first.
+	 * @param {unknown} value
+	 * @returns {AST.YieldExpression | undefined}
+	 */
+	function find_yield(value) {
+		if (!value || typeof value !== 'object') return undefined;
+		const node = /** @type {Record<string, unknown>} */ (value);
+		if (node.type === 'YieldExpression') return /** @type {AST.YieldExpression} */ (value);
+		for (const [key, child] of Object.entries(node)) {
+			if (key === 'loc' || key === 'metadata') continue;
+			const found = Array.isArray(child) ? child.map(find_yield).find(Boolean) : find_yield(child);
+			if (found) return found;
+		}
+		return undefined;
+	}
+
+	it('takes a decorated class as the argument of `yield`', () => {
+		/** @type {Array<[source: string, name: string | null]>} */
+		const cases = [
+			['function* g() { yield @dec class {}; }', null],
+			['function* g() { f(yield @dec class {}); }', null],
+			['function* g() { yield /* c */ @dec class A {} }', 'A'],
+		];
+		for (const [source, name] of cases) {
+			const { ast, errors } = parse(source);
+			expect(errors).toEqual([]);
+			const yielded = as_type(find_yield(ast), 'YieldExpression');
+			expect(yielded.delegate).toBe(false);
+			const argument = as_type(yielded.argument, 'ClassExpression');
+			expect(argument.id?.name ?? null).toBe(name);
+			expect(
+				/** @type {{ decorators: Array<{ expression: AST.Identifier }> }} */ (
+					/** @type {unknown} */ (argument)
+				).decorators.map((decorator) => decorator.expression.name),
+			).toEqual(['dec']);
+		}
+	});
+
+	it('ends `yield` at a line break before the `@`', () => {
+		const { ast, errors } = parse('function* g() {\n  yield\n  @dec class A {}\n}');
+		expect(errors).toEqual([]);
+		const body = as_type(as_type(ast.body[0], 'FunctionDeclaration').body, 'BlockStatement').body;
+		expect(body.map((statement) => statement.type)).toEqual([
+			'ExpressionStatement',
+			'ClassDeclaration',
+		]);
+		const yielded = as_type(as_type(body[0], 'ExpressionStatement').expression, 'YieldExpression');
+		expect(yielded.argument).toBe(null);
 	});
 });
