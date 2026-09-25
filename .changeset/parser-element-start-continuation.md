@@ -24,4 +24,6 @@ The parser reads two more element shapes the way TypeScript does:
 
 The formatter keeps a comment between `<` and the tag name, or between a
 fragment's `<` and `>`, where it is, like Prettier (`</* note */ div>`), instead
-of moving it before the element.
+of moving it before the element. A line comment before the tag name, or a block
+comment on a line of its own, starts on the line after the `<`, since `<//`
+would read as a closing tag.

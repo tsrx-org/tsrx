@@ -12496,12 +12496,28 @@ function printJSXElement(node, path, options, print) {
 	// A comment before the tag name, as in `</* note */ div>`, prints before
 	// it, and one after it, as in `<div // note`, prints after it
 	const nameNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (openingElement.name);
-	const openingTagName = finishTsrxNode(
+	const nameLeadingComments = nameNode.leadingComments ?? [];
+	const printedName = finishTsrxNode(
 		nameNode,
-		printLeadingComments(nameNode, nameNode.leadingComments ?? [], options),
+		printLeadingComments(nameNode, nameLeadingComments, options),
 		tagName,
 		options,
 	);
+	// When the first of those comments is a line comment, or a block comment on
+	// a line of its own, it starts on the line after the `<`, like the comments
+	// of Prettier's closing tags and fragments. Right after the `<`, a line
+	// comment would read as a closing tag (`<// note`), and a block comment
+	// would join the `<`'s line on the next format.
+	const sourceText = /** @type {string} */ (options.originalText);
+	const firstNameComment = /** @type {(AST.Comment & AST.NodeWithLocation) | undefined} */ (
+		nameLeadingComments[0]
+	);
+	const nameCommentStartsLine =
+		firstNameComment !== undefined &&
+		(firstNameComment.type === 'Line' ||
+			(hasNewline(sourceText, firstNameComment.start, { backwards: true }) &&
+				hasNewline(sourceText, firstNameComment.end)));
+	const openingTagName = nameCommentStartsLine ? indent([hardline, printedName]) : printedName;
 	const nameHasComments =
 		hasComment(nameNode) ||
 		Boolean(

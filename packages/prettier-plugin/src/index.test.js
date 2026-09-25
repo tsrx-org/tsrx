@@ -14784,6 +14784,35 @@ item
 			expect(await format(source)).toBeWithNewline(expected);
 		});
 
+		// A line comment before the tag name, or a block comment on a line of its
+		// own, starts on the line after the `<`: right after it, `<//` would read
+		// as a closing tag in TSX, and the block comment would join the `<`'s line
+		// on the next format. (Prettier prints both right after the `<`.)
+		it.each([
+			'function App() {\n  return (\n    <\n      // c\n      div\n      a="1"\n    >\n      test\n    </div>\n  );\n}',
+			'function App() {\n  return (\n    <\n      // c\n      // d\n      Foo.Bar\n    />\n  );\n}',
+			'function App() {\n  return (\n    <\n      // c\n      Foo<T>\n    />\n  );\n}',
+			'function App() {\n  return (\n    <\n      // c\n      {Tag}\n    >\n      test\n    </{Tag}>\n  );\n}',
+			'function App() {\n  return (\n    <\n      /* c */\n      div\n    />\n  );\n}',
+			'function App() @{\n  <\n    // c\n    div\n  >\n    test\n  </div>\n}',
+		])('starts a line comment before the tag name of %j on its own line', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'const a = <// c\ndiv id="x" title="y" />;',
+				'const a = (\n  <\n    // c\n    div\n    id="x"\n    title="y"\n  />\n);',
+			],
+			[
+				'const a = < // c\n  Foo>x</Foo>;',
+				'const a = (\n  <\n    // c\n    Foo\n  >\n    x\n  </Foo>\n);',
+			],
+			['const a = <\n  /* c */\n  div />;', 'const a = (\n  <\n    /* c */\n    div\n  />\n);'],
+		])('moves a line comment after the `<` of %j to its own line', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
 		it('joins an operator on the next line to the element it continues, like Prettier', async () => {
 			const source = '<div />\n+ 1;\n\nfunction f() {\n  <div />\n  > 5;\n}';
 			expect(await format(source)).toBeWithNewline(
