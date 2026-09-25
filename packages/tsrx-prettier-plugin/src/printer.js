@@ -6,9 +6,10 @@
 import { builders, utils } from 'prettier/doc';
 import * as estreePlugin from 'prettier/plugins/estree';
 import { printJsxElementInternal } from './jsx.js';
-import { isRawScriptElement } from './parse.js';
+import { TSRX_DIRECTIVES, isRawScriptElement } from './parse.js';
 
-const { breakParent, group, hardline, ifBreak, indent, join, line, softline } = builders;
+const { breakParent, group, hardline, ifBreak, indent, join, line, lineSuffix, softline } =
+	builders;
 const { replaceEndOfLine } = utils;
 
 /**
@@ -68,14 +69,16 @@ export const printer = {
 		return canAttachComment(node, ...rest);
 	},
 
-	// Prettier's JSX printer prints an element's own comments; for an element
-	// with comment children, `jsx.js` prints the element and Prettier prints its
-	// comments around it.
+	// Prettier's JSX printer prints an element's own comments. This plugin prints
+	// the comments of a `@{ … }` value or a directive (inside its parentheses);
+	// for an element with comment children, which `jsx.js` prints, Prettier
+	// prints its comments around it.
 	/**
 	 * @param {AstPath<Node>} path
 	 * @param {...unknown} rest
 	 */
 	willPrintOwnComments(path, ...rest) {
+		if (isTsrxValue(path)) return true;
 		if (path.node?.tsrxCommentChildren) return false;
 		const willPrintOwnComments = /** @type {(...args: unknown[]) => boolean} */ (
 			estree.willPrintOwnComments
@@ -95,9 +98,18 @@ export const printer = {
 	},
 
 	print(path, options, print, args) {
-		return (
-			printTsrx(path, options, print) ?? estree.print(path, asTypeScript(options), print, args)
-		);
+		// A value that presents itself as a JSX element while its parent prints
+		// (`withTsrxValuesAsJsx`) prints itself as what it is.
+		const presentedAs = presentedAsJsx.get(path.node);
+		if (presentedAs !== undefined) {
+			path.node.type = presentedAs;
+			try {
+				return printNode(path, options, print, args);
+			} finally {
+				path.node.type = 'JSXElement';
+			}
+		}
+		return printNode(path, options, print, args);
 	},
 
 	embed(path, options) {
@@ -130,6 +142,176 @@ export const printer = {
 };
 
 /**
+ * Prettier lays out a JSX element specially where it is assigned, returned,
+ * thrown, an arrow's body, or a call's last argument (inside `(` … `)`, with its
+ * comments), and checks for JSX by node type. A `@{ … }` value or a directive
+ * lays out the same way, so while Prettier prints its parent, it presents
+ * itself as a JSX element. So does a directive that is the body of a call's
+ * last-argument arrow, which the call checks (`list.map((item) => (` … `))`).
+ * @template T
+ * @param {AstPath<Node>} path
+ * @param {() => T} callback
+ * @returns {T}
+ */
+function withTsrxValuesAsJsx(path, callback) {
+	const { node } = path;
+	if (JSX_LAYOUT_PARENTS.has(node.type)) return callback();
+
+	/** @type {Node[]} */
+	const values = [];
+	for (const key of Object.keys(node)) {
+		if (key === 'comments' || key === 'loc') continue;
+		for (const child of [node[key]].flat()) {
+			if (isTsrxValueNode(child, node, key)) values.push(child);
+		}
+	}
+	const lastArgument = node.arguments?.at(-1);
+	if (
+		lastArgument?.type === 'ArrowFunctionExpression' &&
+		TSRX_DIRECTIVES.has(lastArgument.body.tsrxType)
+	) {
+		values.push(lastArgument.body);
+	}
+	if (values.length === 0) return callback();
+
+	for (const value of values) {
+		presentedAsJsx.set(value, value.type);
+		value.type = 'JSXElement';
+	}
+	try {
+		return callback();
+	} finally {
+		for (const value of values) {
+			value.type = /** @type {string} */ (presentedAsJsx.get(value));
+			presentedAsJsx.delete(value);
+		}
+	}
+}
+
+/** Parents whose layout of a TSRX value child isn't JSX-specific. */
+const JSX_LAYOUT_PARENTS = new Set([
+	'JSXElement',
+	'JSXFragment',
+	'ExpressionStatement',
+	'BlockStatement',
+]);
+
+/**
+ * A node's leading and trailing comments around its doc, laid out as Prettier's
+ * `printComments` does (which plugins can't call).
+ * @param {AstPath<Node>} path
+ * @param {ParserOptions<Node>} options
+ * @param {Doc} doc
+ * @returns {Doc}
+ */
+function printOwnComments(path, options, doc) {
+	const comments = /** @type {Node[] | undefined} */ (path.node.comments);
+	if (!comments?.length) return doc;
+	const text = options.originalText;
+	const printComment = (/** @type {Node} */ comment) => {
+		comment.printed = true;
+		return /** @type {NonNullable<Printer<Node>['printComment']>} */ (estree.printComment)(
+			/** @type {AstPath<Node>} */ (/** @type {unknown} */ ({ node: comment })),
+			options,
+		);
+	};
+
+	/** @type {Doc[]} */
+	const leading = [];
+	/** @type {Doc[]} */
+	const trailing = [];
+	/** @type {{ isBlock: boolean, hasLineSuffix: boolean } | undefined} */
+	let previous;
+	for (const comment of comments) {
+		const isBlock = comment.type === 'Block';
+		if (comment.leading) {
+			leading.push(printComment(comment));
+			if (isBlock) {
+				leading.push(
+					hasNewline(text, comment.end)
+						? hasNewline(text, comment.start, true)
+							? hardline
+							: line
+						: ' ',
+				);
+			} else {
+				leading.push(hardline);
+			}
+			if (isNextLineEmpty(text, comment.end)) leading.push(hardline);
+		} else if (comment.trailing) {
+			const printed = printComment(comment);
+			if ((previous?.hasLineSuffix && !previous.isBlock) || hasNewline(text, comment.start, true)) {
+				trailing.push(
+					lineSuffix([hardline, isPreviousLineEmpty(text, comment.start) ? hardline : '', printed]),
+				);
+				previous = { isBlock, hasLineSuffix: true };
+			} else if (!isBlock || previous?.hasLineSuffix) {
+				trailing.push(lineSuffix([' ', printed]), isBlock ? '' : breakParent);
+				previous = { isBlock, hasLineSuffix: true };
+			} else {
+				trailing.push([' ', printed]);
+				previous = { isBlock, hasLineSuffix: false };
+			}
+		}
+	}
+	return [...leading, doc, ...trailing];
+}
+
+/**
+ * Whether a line break follows `index` (or precedes it, `backwards`) with only
+ * spaces and tabs between.
+ * @param {string} text
+ * @param {number} index
+ * @param {boolean} [backwards]
+ * @returns {boolean}
+ */
+function hasNewline(text, index, backwards = false) {
+	let i = backwards ? index - 1 : index;
+	while (i >= 0 && i < text.length && (text[i] === ' ' || text[i] === '\t'))
+		i += backwards ? -1 : 1;
+	return text[i] === '\n' || text[i] === '\r';
+}
+
+/**
+ * Whether the line before the one at `index` is blank.
+ * @param {string} text
+ * @param {number} index
+ * @returns {boolean}
+ */
+function isPreviousLineEmpty(text, index) {
+	const before = text.slice(0, index);
+	return /\n[ \t]*\r?\n[ \t]*$/u.test(before);
+}
+
+/**
+ * A directive, or a `@{ … }` block used as a value (not a function's body).
+ * @param {AstPath<Node>} path
+ * @returns {boolean}
+ */
+function isTsrxValue(path) {
+	return isTsrxValueNode(path.node, path.parent, path.key);
+}
+
+/**
+ * @param {unknown} node
+ * @param {Node | null} parent
+ * @param {PropertyKey | null} key
+ * @returns {boolean}
+ */
+function isTsrxValueNode(node, parent, key) {
+	if (!node || typeof node !== 'object') return false;
+	const { tsrxType, tsrxCodeBlock } = /** @type {Node} */ (node);
+	if (TSRX_DIRECTIVES.has(tsrxType)) return true;
+	if (!tsrxCodeBlock) return false;
+	return !(
+		key === 'body' &&
+		(parent?.type === 'FunctionDeclaration' ||
+			parent?.type === 'FunctionExpression' ||
+			parent?.type === 'ArrowFunctionExpression')
+	);
+}
+
+/**
  * `type` values of a `<script>` whose body is JavaScript or TypeScript, as in
  * Prettier's HTML printer. No `type` means JavaScript.
  */
@@ -148,6 +330,39 @@ function isCodeScript(node) {
 	if (!type) return true;
 	const value = type.value?.type === 'Literal' ? type.value.value : undefined;
 	return typeof value === 'string' && (value === '' || CODE_SCRIPT_TYPE.test(value));
+}
+
+/**
+ * Values that present themselves as JSX elements while their parent prints,
+ * with their own type.
+ * @type {WeakMap<object, string>}
+ */
+const presentedAsJsx = new WeakMap();
+
+/**
+ * @param {AstPath<Node>} path
+ * @param {ParserOptions<Node>} options
+ * @param {Print} print
+ * @param {unknown} [args]
+ * @returns {Doc}
+ */
+function printNode(path, options, print, args) {
+	const doc = printTsrx(path, options, print);
+	if (doc === null) {
+		return withTsrxValuesAsJsx(
+			path,
+			() =>
+				/** @type {Doc} */ (
+					estree.print(path, asTypeScript(options), print, /** @type {any} */ (args))
+				),
+		);
+	}
+	// A `@{ … }` value or a directive gets JSX's parentheses where it is
+	// assigned, returned, thrown, or an arrow's body, with its comments inside
+	// them, as Prettier prints a JSX element.
+	return isTsrxValue(path)
+		? maybeWrapJsxElementInParens(path, printOwnComments(path, options, doc))
+		: doc;
 }
 
 /**

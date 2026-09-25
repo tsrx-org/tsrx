@@ -38,18 +38,28 @@ describe('code blocks', () => {
 		);
 	});
 
-	test('arrow body and assigned value', async () => {
+	test('an arrow body stays on the arrow line; an assigned or returned value gets parentheses like JSX', async () => {
 		await expectFormat(
 			`const A = () => @{ const a = 1
 <b>{a}</b> }
-const c = @{ <i /> }`,
+const c = @{ <i /> }
+function f() { return @{ <i /> } }`,
 			`const A = () => @{
   const a = 1;
   <b>{a}</b>
 };
-const c = @{
-  <i />
-};
+const c = (
+  @{
+    <i />
+  }
+);
+function f() {
+  return (
+    @{
+      <i />
+    }
+  );
+}
 `,
 		);
 	});
@@ -95,17 +105,19 @@ describe('directives', () => {
 		);
 	});
 
-	test('@if breaks a long condition inside its parentheses', async () => {
+	test('@if breaks a long condition like Prettier breaks an if', async () => {
 		await expectFormat(
-			`const A = () => @if (someCondition && anotherCondition && yetAnotherCondition && oneMore) { <b /> }`,
-			`const A = () => @if (
-  someCondition &&
-  anotherCondition &&
-  yetAnotherCondition &&
-  oneMore
-) {
-  <b />
-};
+			`const A = () => @if (someCondition && anotherCondition && yetAnotherCondition && oneMoreCondition) { <b /> }`,
+			`const A = () => (
+  @if (
+    someCondition &&
+    anotherCondition &&
+    yetAnotherCondition &&
+    oneMoreCondition
+  ) {
+    <b />
+  }
+);
 `,
 		);
 	});
@@ -148,14 +160,16 @@ describe('directives', () => {
 	test('@switch with @case and @default', async () => {
 		await expectFormat(
 			`const S = ({ status }) => @switch (status) { @case 'loading': { <Spinner /> } @default: { <p>Done</p> } }`,
-			`const S = ({ status }) => @switch (status) {
-  @case "loading": {
-    <Spinner />
+			`const S = ({ status }) => (
+  @switch (status) {
+    @case "loading": {
+      <Spinner />
+    }
+    @default: {
+      <p>Done</p>
+    }
   }
-  @default: {
-    <p>Done</p>
-  }
-};
+);
 `,
 		);
 	});
@@ -171,18 +185,48 @@ describe('directives', () => {
   @case 'b': {}
   @default: { <p>Done</p> }
 }`,
-			`const S = ({ status }) => @switch (status) {
-  @case "a": {
-    // first
-    <A />
-  }
+			`const S = ({ status }) => (
+  @switch (status) {
+    @case "a": {
+      // first
+      <A />
+    }
 
-  @case "b": {
+    @case "b": {
+    }
+    @default: {
+      <p>Done</p>
+    }
   }
-  @default: {
-    <p>Done</p>
+);
+`,
+		);
+	});
+
+	test('directives get parentheses like JSX where assigned, thrown, or a last-argument arrow body', async () => {
+		await expectFormat(
+			`const x = @if (a) { <b /> };
+function g() { throw @if (a) { <b /> } }
+list.map((item) => /* one */ @if (item.ok) { <A {item} /> } @else { <B /> });`,
+			`const x = (
+  @if (a) {
+    <b />
   }
-};
+);
+function g() {
+  throw (
+    @if (a) {
+      <b />
+    }
+  );
+}
+list.map((item) => (
+  /* one */ @if (item.ok) {
+    <A {item} />
+  } @else {
+    <B />
+  }
+));
 `,
 		);
 	});
@@ -190,13 +234,15 @@ describe('directives', () => {
 	test('@try with @pending and @catch (error, reset)', async () => {
 		await expectFormat(
 			`export const App = () => @try { <Child /> } @pending { <Loading /> } @catch (e, reset) { <button onClick={reset}>{String(e)}</button> }`,
-			`export const App = () => @try {
-  <Child />
-} @pending {
-  <Loading />
-} @catch (e, reset) {
-  <button onClick={reset}>{String(e)}</button>
-};
+			`export const App = () => (
+  @try {
+    <Child />
+  } @pending {
+    <Loading />
+  } @catch (e, reset) {
+    <button onClick={reset}>{String(e)}</button>
+  }
+);
 `,
 		);
 	});
