@@ -1207,6 +1207,65 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Like Prettier's `isObjectProperty`: a property of an object literal or
+	 * pattern that isn't a method, getter, or setter
+	 * @param {AST.Node | AST.CSS.StyleSheet | null | undefined} node
+	 * @returns {boolean}
+	 */
+	function isObjectProperty(node) {
+		const property = /** @type {any} */ (node);
+		return (
+			node?.type === 'Property' &&
+			!(
+				(property.method && property.kind === 'init') ||
+				property.kind === 'get' ||
+				property.kind === 'set'
+			)
+		);
+	}
+
+	/**
+	 * Like Prettier's `isAssignmentLikeNode` and `isComplexExprNode`: whether
+	 * a declarator, an assignment, or a type alias gives its value the
+	 * comments that end their line before it (see {@link handleComment}). A
+	 * value in a JSDoc cast's parentheses isn't complex, since Prettier's
+	 * `babel` parser keeps those as a node of their own.
+	 * @param {AST.Node & AST.NodeWithLocation} value
+	 * @returns {boolean}
+	 */
+	function isComplexAssignedValue(value) {
+		return (
+			(value.type === 'ObjectExpression' ||
+				value.type === 'ArrayExpression' ||
+				value.type === 'TemplateLiteral' ||
+				value.type === 'TaggedTemplateExpression' ||
+				value.type === 'TSTypeLiteral') &&
+			getTypeCastEnd(value) < 0
+		);
+	}
+
+	/**
+	 * Like Prettier's `addLeadingCommentToPossibleUnionType`: a one-line block
+	 * comment right before a union, on its line, leads the union's first
+	 * member, and any other comment leads the node
+	 * @param {AST.Node & AST.NodeWithLocation} node
+	 * @param {AST.CommentWithLocation} comment
+	 */
+	function addLeadingCommentToPossibleUnionType(node, comment) {
+		const union = /** @type {AST.TSUnionType} */ (node);
+		addLeadingComment(
+			node.type === 'TSUnionType' &&
+				comment.type === 'Block' &&
+				!source.slice(comment.start, comment.end).includes('\n') &&
+				!isPrettierIgnoreComment(comment) &&
+				/^[ \t]*$/.test(source.slice(comment.end, node.start))
+				? /** @type {AST.Node} */ (union.types[0])
+				: node,
+			comment,
+		);
+	}
+
+	/**
 	 * @param {AST.Node} node
 	 * @param {AST.CommentWithLocation} comment
 	 */
@@ -1301,6 +1360,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 			type === 'VariableDeclarator' ||
 			type === 'ReturnStatement' ||
 			type === 'AssignmentExpression' ||
+			type === 'TSTypeAliasDeclaration' ||
+			type === 'ImportAttribute' ||
+			type === 'ForStatement' ||
+			isObjectProperty(node) ||
 			getSignatureParameters(node) !== null ||
 			isClassLike(/** @type {AST.Node} */ (node)) ||
 			isPropertyLike(node) ||
@@ -1705,11 +1768,65 @@ export function get_comment_handlers(source, comments, index = 0) {
 			return true;
 		}
 
+		// `handlePropertyComments`: a comment that ends its line inside an
+		// object property leads the property, so that it prints before the key
+		// (`// note` / `key: value`) instead of after the `:`
+		if (endOfLine && isObjectProperty(enclosing)) {
+			addLeadingComment(enclosing, comment);
+			return true;
+		}
+
+		// `handleAssignmentLikeComments`: in a declarator, an assignment, or a
+		// type alias, a comment that ends its line before the value leads the
+		// value when it's a block comment or the value is an object, array,
+		// template, or type literal, and so does any comment after a type
+		// alias's `=` that doesn't start its line. Such a value prints below the
+		// operator. The default below makes any other line comment there trail
+		// the left side, which prints it at the end of the operator's line, or
+		// of the statement when the value stays on that line. Unlike Prettier, a
+		// line comment that ends its line before a type alias's `=`, after its
+		// name or its type parameters, leads the value too: Prettier's default
+		// prints it after the `=`, and its next pass gives it to the value.
+		if (
+			(type === 'VariableDeclarator' ||
+				type === 'AssignmentExpression' ||
+				type === 'TSTypeAliasDeclaration') &&
+			following
+		) {
+			const value = /** @type {AST.Node & AST.NodeWithLocation} */ (following);
+			const isAlias = type === 'TSTypeAliasDeclaration';
+			if (
+				isAlias &&
+				endOfLine &&
+				comment.type === 'Line' &&
+				preceding &&
+				(following === node.typeAnnotation || following === node.typeParameters)
+			) {
+				addLeadingComment(node.typeAnnotation, comment);
+				return true;
+			}
+			if (
+				(endOfLine && (comment.type === 'Block' || isComplexAssignedValue(value))) ||
+				(isAlias &&
+					following === node.typeAnnotation &&
+					!ownLine &&
+					comment.start >=
+						findOutsideComments('=', (node.typeParameters ?? node.id).end, value.start))
+			) {
+				addLeadingCommentToPossibleUnionType(value, comment);
+				return true;
+			}
+		}
+
 		// Prettier's default for a comment that ends its line: it trails the
 		// node before it, so that it stays after an operator (`a || // note`)
 		// instead of moving to its own line, and before the `)` of a parameter
 		// list (`function f(a) // note` with the return type on the next line)
-		// or the `]` of a mapped type's key instead of after the `:`
+		// or the `]` of a mapped type's key instead of after the `:`. After the
+		// `=` or `:` of a declarator, an assignment, a class field, or an import
+		// attribute, it trails the name, which prints it before the `=` or `:`
+		// or at the end of the line, and after a `;` in a `for` header, it
+		// trails the part before the `;`.
 		if (endOfLine && preceding && following && following === getReturnType(enclosing)) {
 			addTrailingComment(preceding, comment);
 			return true;
@@ -1723,7 +1840,17 @@ export function get_comment_handlers(source, comments, index = 0) {
 				node.type === 'TSConditionalType' ||
 				node.type === 'TSUnionType' ||
 				node.type === 'AssignmentPattern' ||
-				node.type === 'TSMappedType')
+				node.type === 'TSMappedType' ||
+				(following &&
+					(type === 'VariableDeclarator' ||
+						type === 'AssignmentExpression' ||
+						type === 'TSTypeAliasDeclaration' ||
+						type === 'ImportAttribute' ||
+						type === 'PropertyDefinition' ||
+						type === 'AccessorProperty' ||
+						type === 'TSAbstractPropertyDefinition' ||
+						type === 'TSAbstractAccessorProperty' ||
+						(type === 'ForStatement' && following !== node.body))))
 		) {
 			addTrailingComment(preceding, comment);
 			return true;
