@@ -11110,6 +11110,81 @@ function f() {
 		});
 	});
 
+	// Like Prettier, a line break in a template's text is a `literalline`, which
+	// breaks the groups around the template
+	describe('multi-line template literals break the lists around them', () => {
+		it('breaks the call arguments and array around a template over several lines', async () => {
+			const result = await format(`foo(\`line one
+line two \${x}\`, second);
+const values = [\`first
+second\`, other];`);
+			expect(result).toBeWithNewline(`foo(
+  \`line one
+line two \${x}\`,
+  second,
+);
+const values = [
+  \`first
+second\`,
+  other,
+];`);
+		});
+
+		it.each([
+			[
+				'x = { a: `a\nb`, b: 1 };',
+				`x = {
+  a: \`a
+b\`,
+  b: 1,
+};`,
+			],
+			[
+				'foo(tag`a\nb ${c}`, d);',
+				`foo(
+  tag\`a
+b \${c}\`,
+  d,
+);`,
+			],
+			['foo(\n  `first\nsecond`);', 'foo(\n  `first\nsecond`,\n);'],
+			[
+				'const s = cond ? `first\nsecond` : other;',
+				'const s = cond\n  ? `first\nsecond`\n  : other;',
+			],
+			['const a = b || `x\ny`;', 'const a =\n  b ||\n  `x\ny`;'],
+			[
+				'function f() {\n  return `a\nb` + c;\n}',
+				'function f() {\n  return (\n    `a\nb` + c\n  );\n}',
+			],
+			[
+				'if (x) throw new Error(`line one\nline two ${value}`);',
+				'if (x)\n  throw new Error(`line one\nline two ${value}`);',
+			],
+			['f(`a ${b(`c\nd`)} e`);', 'f(\n  `a ${b(`c\nd`)} e`,\n);'],
+			// Prettier keeps only a call printed on its own on the template's line,
+			// not one in a member chain
+			['foo.bar(`a\nb`).baz(1);', 'foo\n  .bar(\n    `a\nb`,\n  )\n  .baz(1);'],
+		])('breaks around the template in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'run(`first\nsecond`);',
+			'const s = `first\nsecond`;',
+			'const fn = () => `a\nb`;',
+			'const x = tag`a\nb ${c}`;',
+			'describe(`a\nb`, () => {});',
+			'foo(`a\nb`)(c);',
+			'type T = `a\n${B}`;',
+		])(
+			'keeps a template that starts on the line of the code before it there in %s',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
+	});
+
 	describe('member chains break like Prettier', () => {
 		it.each([
 			[

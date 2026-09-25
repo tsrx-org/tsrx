@@ -4703,9 +4703,12 @@ function isBlockBody(body) {
  * @param {AstPath<AST.CallExpression | AST.NewExpression>} path - The call or new expression path
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
+ * @param {boolean} [keepOnCallLine] - Whether the arguments may stay on the
+ *   call's line (see {@link keepsArgumentsOnCallLine}). Like Prettier, only a
+ *   call printed on its own may, not one in a member chain.
  * @returns {Doc}
  */
-function printCallArguments(path, options, print) {
+function printCallArguments(path, options, print, keepOnCallLine = true) {
 	const { node } = path;
 	const parent = /** @type {AST.Node | null} */ (path.parent);
 	const args = node.arguments || [];
@@ -4739,7 +4742,7 @@ function printCallArguments(path, options, print) {
 			index,
 		);
 
-	if (keepsArgumentsOnCallLine(path, options)) {
+	if (keepOnCallLine && keepsArgumentsOnCallLine(path, options)) {
 		return [
 			'(',
 			join(
@@ -6714,7 +6717,7 @@ function printMemberChain(path, options, print) {
 		return [
 			call.optional ? '?.' : '',
 			call.typeArguments ? chainPath.call(print, 'typeArguments') : '',
-			printCallArguments(chainPath, options, print),
+			printCallArguments(chainPath, options, print, false),
 		];
 	};
 
@@ -7216,7 +7219,9 @@ function printTemplateLiteral(node, path, options, print) {
 	const parts = [lineSuffixBoundary, '`'];
 	const indents = getTemplateLiteralExpressionIndents(node, options);
 	node.quasis.forEach((quasi, index) => {
-		parts.push(quasi.value.raw);
+		// Like Prettier, a line break in the text is a `literalline`, which
+		// breaks the groups around the template and restarts the column
+		parts.push(replaceEndOfLine(quasi.value.raw));
 		if (index < node.expressions.length) {
 			parts.push(
 				path.call(
