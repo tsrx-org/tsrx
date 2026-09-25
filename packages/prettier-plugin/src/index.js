@@ -5317,7 +5317,11 @@ function printExportDefaultDeclaration(node, path, options, print) {
 }
 
 /**
- * Check if the only function parameter should be hugged (no extra parens)
+ * Whether the only parameter of a function hugs its parentheses, like
+ * Prettier's `shouldHugTheOnlyFunctionParameter`: a destructuring pattern
+ * (with at most a trivial default) or a name typed as an object or mapped
+ * type. Anything else, like `props: Props<{ … }>` or `e: E & { … }`, breaks
+ * the parameter list instead.
  * @param {FunctionLikeNode} node - The function-like node
  * @returns {boolean}
  */
@@ -5337,7 +5341,7 @@ function shouldHugTheOnlyFunctionParameter(node) {
 			(parameter.type === 'Identifier' &&
 				!!parameter.typeAnnotation &&
 				parameter.typeAnnotation.type === 'TSTypeAnnotation' &&
-				isHuggableParameterType(parameter.typeAnnotation.typeAnnotation)) ||
+				isObjectType(parameter.typeAnnotation.typeAnnotation)) ||
 			// `({ a, b } = {})`: a destructured parameter with a trivial default
 			(parameter.type === 'AssignmentPattern' &&
 				(parameter.left.type === 'ObjectPattern' || parameter.left.type === 'ArrayPattern') &&
@@ -5355,36 +5359,6 @@ function shouldHugTheOnlyFunctionParameter(node) {
  */
 function isObjectType(node) {
 	return !!node && (node.type === 'TSTypeLiteral' || node.type === 'TSMappedType');
-}
-
-/**
- * Check if a parameter's type annotation should keep the parameter hugged.
- * Object-like types hug like vanilla prettier; additionally a type reference
- * wrapping a single object type (`props: Props<{ ... }>`) hugs, since that is
- * the common TSRX component-props shape. Other references, like a plain
- * `initialState: State`, leave the parameter list free to break.
- * @param {AST.Node | undefined} node - The type node
- * @returns {boolean}
- */
-function isHuggableParameterType(node) {
-	if (isObjectType(node)) {
-		return true;
-	}
-	if (node?.type === 'TSIntersectionType') {
-		const types = /** @type {AST.TSIntersectionType} */ (node).types;
-		return types?.length > 0 && isHuggableParameterType(types[types.length - 1]);
-	}
-	if (node?.type === 'TSTypeReference') {
-		const typeArguments =
-			/** @type {AST.TSTypeReference & { typeParameters?: AST.TSTypeParameterInstantiation }} */ (
-				node
-			).typeArguments ??
-			/** @type {AST.TSTypeReference & { typeParameters?: AST.TSTypeParameterInstantiation }} */ (
-				node
-			).typeParameters;
-		return typeArguments?.params?.length === 1 && isObjectType(typeArguments.params[0]);
-	}
-	return false;
 }
 
 /**
@@ -10008,6 +9982,46 @@ function printTSTypeParameterDeclaration(node, path, options, print) {
 }
 
 /**
+ * Print a type parameter's name, which the parser keeps as a string, with
+ * the comments that dangle on the type parameter around it (Prettier's
+ * parsers keep the name as a node, which takes them). The ones before the
+ * name lead it, and the ones after it trail it on its line, even one written
+ * on a line of its own (see the parser's `takeTypeParameterNameComments`).
+ * @param {AST.TSTypeParameter} node - The type parameter
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc[]}
+ */
+function printTypeParameterName(node, options) {
+	const text = /** @type {string} */ (options.originalText);
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
+	// The name follows the modifiers, which are keywords
+	let nameStart = skipWhitespaceAndComments(
+		text,
+		options.locStart(/** @type {AST.NodeWithLocation} */ (node)),
+	);
+	for (const modifier of [node.const, node.in, node.out]) {
+		if (modifier) {
+			while (/[\w$]/.test(text[nameStart] ?? '')) {
+				nameStart++;
+			}
+			nameStart = skipWhitespaceAndComments(text, nameStart);
+		}
+	}
+	/** @param {AST.Comment} comment */
+	const isBeforeName = (comment) => /** @type {AST.NodeWithLocation} */ (comment).end <= nameStart;
+	return [
+		...printLeadingComments(node, comments.filter(isBeforeName), options),
+		node.name,
+		...comments
+			.filter((comment) => !isBeforeName(comment))
+			.map((comment) => {
+				const printed = printComment(comment, text);
+				return comment.type === 'Line' ? [lineSuffix([' ', printed]), breakParent] : [' ', printed];
+			}),
+	];
+}
+
+/**
  * Print a single TypeScript type parameter, like Prettier's
  * `printTypeParameter`. A constraint or default that doesn't fit after
  * `extends` or `=` moves to the next line, indented, before it breaks inside.
@@ -10029,7 +10043,7 @@ function printTSTypeParameter(node, path, options, print) {
 	if (node.out) {
 		parts.push('out ');
 	}
-	parts.push(node.name);
+	parts.push(...printTypeParameterName(node, options));
 
 	if (node.constraint) {
 		const groupId = Symbol('constraint');
@@ -12603,7 +12617,7 @@ function printTSMappedType(node, path, options, print) {
 					indent([
 						softline,
 						...printLeadingComments(typeParam, keyComments, options),
-						typeParam.name,
+						...printTypeParameterName(typeParam, options),
 						' in ',
 						typeParam.constraint
 							? path.call(print, 'typeParameter', 'constraint')

@@ -485,7 +485,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 	/**
 	 * The value of a statement, like the argument of `return (a)` or the right
 	 * side of `x = (a)`, when it's written in parentheses that print as
-	 * nothing (see {@link valuesPrintedWithoutParens}).
+	 * nothing (see {@link valuesPrintedWithoutParens}), or the expression body
+	 * of an arrow function that is the value, as in `const f = () => (a);`,
+	 * when the comments after it in its parentheses print before the `;` (see
+	 * {@link keepsCommentsInArrowBodyParens}).
 	 * @param {AST.Node} statement
 	 * @returns {(AST.Node & AST.NodeWithLocation) | null}
 	 */
@@ -502,11 +505,42 @@ export function get_comment_handlers(source, comments, index = 0) {
 		} else if (node.type === 'ExportDefaultDeclaration') {
 			candidates.push(node.declaration);
 		}
+		for (let candidate of candidates) {
+			let isArrowBody = false;
+			while (candidate?.type === 'ArrowFunctionExpression') {
+				candidate = /** @type {AST.Node & AST.NodeWithLocation} */ (candidate.body);
+				isArrowBody = true;
+			}
+			if (
+				candidate?.metadata?.parenthesized &&
+				(isArrowBody
+					? !keepsCommentsInArrowBodyParens(candidate)
+					: valuesPrintedWithoutParens.has(candidate.type))
+			) {
+				return candidate;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Whether the comments after an arrow function's expression body, in the
+	 * parentheses it's written in, print inside parentheses, as they do after
+	 * an element or other template value (see {@link elementValueTypes}), a
+	 * conditional, which Prettier prints in parentheses when it fits, and a
+	 * sequence or assignment, where Prettier gives them to the last
+	 * expression (`handleParenthesizedExpressionTrailingComment`). After any
+	 * other body, they print before the statement's `;`: its parentheses print
+	 * as nothing, or, around an object, before them.
+	 * @param {AST.Node} node
+	 * @returns {boolean}
+	 */
+	function keepsCommentsInArrowBodyParens(node) {
 		return (
-			candidates.find(
-				(candidate) =>
-					candidate?.metadata?.parenthesized && valuesPrintedWithoutParens.has(candidate.type),
-			) ?? null
+			node.type.startsWith('JSX') ||
+			node.type === 'ConditionalExpression' ||
+			node.type === 'SequenceExpression' ||
+			node.type === 'AssignmentExpression'
 		);
 	}
 
@@ -592,6 +626,59 @@ export function get_comment_handlers(source, comments, index = 0) {
 		if (open >= (firstParam?.start ?? end)) return null;
 		const close = findOutsideComments(')', lastParam?.end ?? open + 1, end);
 		return close < end ? { open, close } : null;
+	}
+
+	/**
+	 * The keyword between a type parameter's name and its first child: the
+	 * `in` of a mapped type's key, the `extends` before a constraint, or the
+	 * `=` before a default. Null when there's no child.
+	 * @param {AST.TSTypeParameter} node
+	 * @param {AST.Node | AST.CSS.StyleSheet | undefined} parent
+	 * @returns {string | null}
+	 */
+	function getTypeParameterKeyword(node, parent) {
+		if (parent?.type === 'TSMappedType') return 'in';
+		return node.constraint ? 'extends' : node.default ? '=' : null;
+	}
+
+	/**
+	 * Prettier's parsers keep a type parameter's name as a node, which takes
+	 * the comments around it. The ones between the modifiers and the name lead
+	 * it. After it, before the type after the `extends`, `=`, or mapped type's
+	 * `in` (see {@link getTypeParameterKeyword}), the ones that end their line
+	 * trail it, and so do the other ones before the keyword that aren't on a
+	 * line of their own. This parser keeps the name as a string, so those
+	 * comments dangle on the type parameter, which prints them around its
+	 * name. The rest lead the type after the keyword, with two exceptions:
+	 * - A `prettier-ignore` comment on its own line, or after the keyword,
+	 *   keeps ignoring that type.
+	 * - A line comment, or a block comment that ends its line, on a line of
+	 *   its own: Prettier prints it right after the keyword, where it ends the
+	 *   line, and its next pass trails the name with it, so it trails the name
+	 *   at once. After a line comment that trails the name, though, the type
+	 *   moves to the next line, and the comment stays on its own line there.
+	 * @param {AST.TSTypeParameter & AST.NodeWithLocation} node
+	 * @param {AST.Node | AST.CSS.StyleSheet | undefined} parent
+	 */
+	function takeTypeParameterNameComments(node, parent) {
+		const keyword = getTypeParameterKeyword(node, parent);
+		const first = /** @type {AST.NodeWithLocation | undefined} */ (node.constraint ?? node.default);
+		const end = first?.start ?? node.end;
+		let hasLineComment = false;
+		while (comments[0] && comments[0].end <= end) {
+			const comment = comments[0];
+			if (keyword) {
+				const isAfterKeyword = findOutsideComments(keyword, comment.end, end) >= end;
+				const ignoresType =
+					isPrettierIgnoreComment(comment) && (isAfterKeyword || isOwnLineComment(comment));
+				const trailsName = isOwnLineComment(comment)
+					? !hasLineComment && (comment.type === 'Line' || isEndOfLineComment(comment))
+					: isEndOfLineComment(comment) || !isAfterKeyword;
+				if (ignoresType || !trailsName) break;
+			}
+			hasLineComment ||= comment.type === 'Line';
+			pushInnerComment(node, /** @type {AST.CommentWithLocation} */ (comments.shift()));
+		}
 	}
 
 	/**
@@ -1850,6 +1937,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 						}
 
 						(node.leadingComments ||= []).push(comment);
+					}
+
+					if (node.type === 'TSTypeParameter') {
+						takeTypeParameterNameComments(
+							/** @type {AST.TSTypeParameter & AST.NodeWithLocation} */ (node),
+							path.at(-1),
+						);
 					}
 
 					// The parser puts an element's children before its opening tag, and
