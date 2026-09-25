@@ -8575,6 +8575,21 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			),
 			'MethodDefinition',
 		).value.body?.body[0];
+	/** @param {AST.Program} program */
+	const function_statements = (program) =>
+		as_type(/** @type {AST.Node} */ (first(program)), 'FunctionDeclaration').body.body;
+	/** @param {AST.Program} program */
+	const function_statement = (program) => function_statements(program)[0];
+	/** @param {AST.Program} program */
+	const interface_member = (program) =>
+		as_type(/** @type {AST.Node} */ (first(program)), 'TSInterfaceDeclaration').body.body[0];
+	/** @param {AST.Program} program */
+	const first_type_parameter = (program) => {
+		const declaration = /** @type {AST.Node & { typeParameters?: { params: unknown[] } }} */ (
+			first(program)
+		);
+		return declaration.typeParameters?.params[0];
+	};
 
 	/** @type {CheckerLevelCase[]} */
 	const cases = [
@@ -8651,6 +8666,65 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			match: { abstract: true, key: { type: 'PrivateIdentifier', name: 'x' } },
 		},
 		{
+			source: 'interface I { private x: number }',
+			errors: [["'private' modifier cannot appear on a type member.", 'private x']],
+			throws: "'private' modifier cannot appear on a type member. (1:14)",
+			pick: interface_member,
+			match: { type: 'TSPropertySignature', accessibility: 'private', key: { name: 'x' } },
+		},
+		{
+			source: 'type T = { static m(): void };',
+			errors: [["'static' modifier cannot appear on a type member.", 'static m']],
+			throws: "'static' modifier cannot appear on a type member. (1:11)",
+			pick: (program) =>
+				as_type(
+					as_type(/** @type {AST.Node} */ (first(program)), 'TSTypeAliasDeclaration')
+						.typeAnnotation,
+					'TSTypeLiteral',
+				).members[0],
+			match: { type: 'TSMethodSignature', static: true, key: { name: 'm' } },
+		},
+		{
+			source: 'interface I {\n\tstatic\n\tx: number;\n}',
+			errors: [["'static' modifier cannot appear on a type member.", 'static\n']],
+			throws: "'static' modifier cannot appear on a type member. (2:1)",
+			pick: interface_member,
+			match: { type: 'TSPropertySignature', static: true, key: { name: 'x' } },
+		},
+		{
+			source: 'interface I<public T> {}',
+			errors: [["'public' modifier cannot appear on a type parameter.", 'public T']],
+			throws: "'public' modifier cannot appear on a type parameter. (1:12)",
+			pick: first_type_parameter,
+			match: { type: 'TSTypeParameter', accessibility: 'public', name: 'T' },
+		},
+		{
+			source: 'function f<in T>() {}',
+			errors: [
+				[
+					"'in' modifier can only appear on a type parameter of a class, interface or type alias.",
+					'in T',
+				],
+			],
+			throws:
+				"'in' modifier can only appear on a type parameter of a class, interface or type alias. (1:11)",
+			valid: 'interface I<in T> {}',
+			pick: first_type_parameter,
+		},
+		{
+			source: 'class A { out x = 1; }',
+			errors: [
+				[
+					"'out' modifier can only appear on a type parameter of a class, interface or type alias.",
+					'out x',
+				],
+			],
+			throws:
+				"'out' modifier can only appear on a type parameter of a class, interface or type alias. (1:10)",
+			pick: first_member,
+			match: { type: 'PropertyDefinition', out: true, key: { name: 'x' } },
+		},
+		{
 			source: 'function f({ a }?: { a: number }) {}',
 			errors: [
 				[
@@ -8662,6 +8736,44 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				'A binding pattern parameter cannot be optional in an implementation signature. (1:11)',
 			valid: 'declare function f({ a }?: { a: number }): void;',
 			pick: first_parameter,
+		},
+		{
+			source: 'const o = { m([a]?: number[]) {} };',
+			errors: [
+				['A binding pattern parameter cannot be optional in an implementation signature.', '[a]?'],
+			],
+			throws:
+				'A binding pattern parameter cannot be optional in an implementation signature. (1:14)',
+			valid: 'declare function m([a]?: number[]): void;',
+			pick: (program) =>
+				as_type(
+					/** @type {AST.Property} */ (
+						as_type(
+							as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration')
+								.declarations[0].init,
+							'ObjectExpression',
+						).properties[0]
+					).value,
+					'FunctionExpression',
+				).params[0],
+			pickValid: first_parameter,
+		},
+		{
+			source: 'export function App({ a }?: { a: number }) @{\n\t<div />\n}',
+			errors: [
+				[
+					'A binding pattern parameter cannot be optional in an implementation signature.',
+					'{ a }?',
+				],
+			],
+			throws:
+				'A binding pattern parameter cannot be optional in an implementation signature. (1:20)',
+			pick: (program) =>
+				as_type(
+					as_type(/** @type {AST.Node} */ (first(program)), 'ExportNamedDeclaration').declaration,
+					'FunctionDeclaration',
+				).params[0],
+			match: { type: 'ObjectPattern', optional: true },
 		},
 		{
 			source: 'function f(...a: number[],) {}',
@@ -8854,6 +8966,83 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations,
 		},
+		{
+			source: 'function f() {\n\texport const a = 1;\n}',
+			errors: [["'import' and 'export' may only appear at the top level", 'export const']],
+			throws: "'import' and 'export' may only appear at the top level (2:1)",
+			valid: 'export const a = 1;',
+			pick: function_statement,
+			pickValid: first,
+		},
+		{
+			source: 'function f() {\n\texport default 1;\n}',
+			errors: [["'import' and 'export' may only appear at the top level", 'export default']],
+			throws: "'import' and 'export' may only appear at the top level (2:1)",
+			valid: 'export default 1;',
+			pick: function_statement,
+			pickValid: first,
+		},
+		{
+			source: "{\n\timport a from 'a';\n}",
+			errors: [["'import' and 'export' may only appear at the top level", 'import a']],
+			throws: "'import' and 'export' may only appear at the top level (2:1)",
+			valid: "import a from 'a';",
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'BlockStatement').body[0],
+			pickValid: first,
+		},
+		{
+			source: "function f() {\n\timport x = require('a');\n}",
+			errors: [["'import' and 'export' may only appear at the top level", 'import x']],
+			throws: "'import' and 'export' may only appear at the top level (2:1)",
+			valid: "import x = require('a');",
+			pick: function_statement,
+			pickValid: first,
+		},
+		{
+			source: "export function App() @{\n\timport a from 'a';\n\t<div>{a}</div>\n}",
+			errors: [["'import' and 'export' may only appear at the top level", 'import a']],
+			throws: "'import' and 'export' may only appear at the top level (2:1)",
+		},
+		{
+			source: 'function f() {\n\tconst\n}',
+			// Right after `const`, as TypeScript reports it.
+			errors: [['Variable declaration list cannot be empty.', '\n}']],
+			throws: 'Unexpected token (3:0)',
+			pick: function_statement,
+			match: { type: 'VariableDeclaration', kind: 'const', declarations: [] },
+		},
+		{
+			source: 'var;',
+			errors: [['Variable declaration list cannot be empty.', ';']],
+			throws: 'Unexpected token (1:3)',
+			pick: first,
+			match: { type: 'VariableDeclaration', kind: 'var', declarations: [] },
+		},
+		{
+			source: 'function f() {\n\tconst\n\treturn 1;\n}',
+			errors: [['Variable declaration list cannot be empty.', '\n\treturn']],
+			throws: "Unexpected keyword 'return' (3:1)",
+			pick: (program) => ({ statements: function_statements(program) }),
+			match: {
+				statements: [
+					{ type: 'VariableDeclaration', kind: 'const', declarations: [] },
+					{ type: 'ReturnStatement' },
+				],
+			},
+		},
+		{
+			source: 'export function App() @{\n\tconst\n\t<div />\n}',
+			errors: [['Variable declaration list cannot be empty.', '\n\t<div']],
+			throws: 'Unexpected token (3:1)',
+		},
+		{
+			source: 'function f() {\n\tlet\n}',
+			errors: [["The keyword 'let' is reserved", 'let']],
+			throws: "The keyword 'let' is reserved (2:1)",
+			pick: function_statement,
+			match: { type: 'ExpressionStatement', expression: { type: 'Identifier', name: 'let' } },
+		},
 	];
 
 	/** @type {Array<ParseOptions>} */
@@ -8941,6 +9130,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'let d: string?;',
 			'let f: !string;',
 			'let g: string!;',
+			// TypeScript's parser reads a declarator here, or expects one.
+			'const 1;',
+			'const if (a) {}',
+			'var\n#x;',
+			'export function App() @{ const <div /> }',
 		];
 		const modes = [undefined, ...collect_modes];
 		const inputs = sources.flatMap((source) => modes.map((options) => ({ source, options })));
@@ -8961,6 +9155,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'for (const x of y) {}',
 			'class A {\n\t#x;\n\tm() {\n\t\treturn #x in this;\n\t}\n}',
 			'async function f() {\n\tnamespace N {}\n\tawait g();\n}',
+			// A declarator on the line after `const`.
+			'const\n\t[a] = b;',
+			// An overload signature may have an optional binding pattern.
+			'function f({ a }?: { a: number }): void;\nfunction f(options?: { a: number }) {}',
+			'namespace N {\n\texport const a = 1;\n}',
 		];
 		const outcomes = await parse_in_worker(
 			sources.flatMap((source) => collect_modes.map((options) => ({ source, options }))),
@@ -8968,6 +9167,28 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 
 		expect(outcomes).toEqual(
 			sources.flatMap(() => collect_modes.map(() => ({ ok: true, errors: [] }))),
+		);
+	});
+
+	it('records an empty declaration list with no width, right after its keyword', async () => {
+		/** @type {Array<[source: string, keyword_end: number]>} */
+		const cases = [
+			['function f() {\n\tconst\n}', 21],
+			['var /* none */;', 3],
+			['const', 5],
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			cases.map(([source]) => ({ source, options: collect_modes[0] })),
+		);
+
+		expect(outcomes.map((outcome) => (outcome.ok ? outcome.errors : outcome.message))).toEqual(
+			cases.map(([, keyword_end]) => [
+				{
+					message: 'Variable declaration list cannot be empty.',
+					pos: keyword_end,
+					end: keyword_end,
+				},
+			]),
 		);
 	});
 
