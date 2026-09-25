@@ -8092,6 +8092,34 @@ const short = (value as Entry).name;`;
 			);
 		});
 
+		// Prettier prints the parentheses around the arrow function's body as
+		// nothing, with the comment in them before the `)` around the arrow
+		// function, and its next pass gives the comment to the arrow function,
+		// which prints it inside those parentheses. The formatter prints the
+		// fixpoint (#634).
+		it.each([
+			['((a) => (b /* c */))(1);', '(\n  (a) => b /* c */\n)(1);'],
+			['((a) => ((b /* c */)))(1);', '(\n  (a) => b /* c */\n)(1);'],
+			['((a) => (b /* c */\n))(1);', '(\n  (a) => b /* c */\n)(1);'],
+			['((a) => (b.c /* c */))(1);', '(\n  (a) => b.c /* c */\n)(1);'],
+			['((a) => ({} /* c */))(1);', '(\n  (a) => ({}) /* c */\n)(1);'],
+			['((a) => (b /* c */))`x`;', '(\n  (a) => b /* c */\n)`x`;'],
+			['((a) => (b // c\n))(1);', '(\n  (a) => b // c\n)(1);'],
+			['const x = ((a) => (b // c\n))(1);', 'const x = (\n  (a) => b // c\n)(1);'],
+		])('prints %j in one pass', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const x = ((a) => b /* c */)(1);',
+			'((a) => (b, c /* c */))(1);',
+			'((a) => (a ? b : c /* c */))(1);',
+			'(\n  (a) => b /* c */ /* d */\n)(1);',
+			'f((a) => b /* c */);',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
 		// Only a call's callee or a tag counts: the comments of a function
 		// that is a member object or a `new` callee print outside
 		it.each([
@@ -14014,6 +14042,105 @@ export interface SectionProps<T>
 		// a `(`, `[`, or template literal on the next line starts a statement of
 		// its own, as Prettier's `typescript` parser reads it, and an element
 		// called, indexed, or used as a tag keeps its parentheses.
+		// Unlike in TSX, an element alone at the start of a statement is a
+		// template element, and the `;` after it an empty statement, so an
+		// element that is an expression statement keeps its parentheses, and
+		// its `;`. In a template body, an operator after the element doesn't
+		// continue the statement either (#625). The statements compared leave
+		// out the empty ones, like the `;` that starts a line with semi: false.
+		/** @param {string} text */
+		const parseStatements = (text) =>
+			JSON.stringify(
+				/** @type {any[]} */ (/** @type {any} */ (parsers)?.tsrx.parse(text, {}).body).filter(
+					(node) => node.type !== 'EmptyStatement',
+				),
+				(key, value) =>
+					['start', 'end', 'loc', 'range', 'metadata', 'raw'].includes(key) ||
+					key.endsWith('Comments')
+						? undefined
+						: value,
+			);
+		it.each([
+			['(<div />);', '(<div />);'],
+			['(<></>);', '(<></>);'],
+			['(<style>{css}</style>);', '(<style>{css}</style>);'],
+			['(<div>\n<span />\n</div>);', '(\n  <div>\n    <span />\n  </div>\n);'],
+			['function f() {\n  (<div />);\n}', 'function f() {\n  (<div />);\n}'],
+			['if (a) (<div />);\nelse (<span />);', 'if (a) (<div />);\nelse (<span />);'],
+			['for (const a of b) (<div />);', 'for (const a of b) (<div />);'],
+			['label: (<div />);', 'label: (<div />);'],
+			[
+				'function C() @{\n  (<div />);\n  (<div />) + 1;\n  (<div />) || x;\n  (<div />) ? a : b;\n  <i />\n}',
+				'function C() @{\n  (<div />);\n  (<div />) + 1;\n  (<div />) || x;\n  (<div />) ? a : b;\n  <i />\n}',
+			],
+			[
+				'function C() @{\n  @if (a) {\n    (<div />) + 1;\n    <i />\n  } @else {\n    (<div />) + 1;\n    <i />\n  }\n}',
+				'function C() @{\n  @if (a) {\n    (<div />) + 1;\n    <i />\n  } @else {\n    (<div />) + 1;\n    <i />\n  }\n}',
+			],
+			[
+				'function C() @{\n  @for (const a of b) {\n    (<div />) * 2;\n    <i />\n  }\n}',
+				'function C() @{\n  @for (const a of b) {\n    (<div />) * 2;\n    <i />\n  }\n}',
+			],
+			[
+				'function C() @{\n  @switch (x) {\n    @case 1: {\n      (<div />) + 1;\n      <i />\n    }\n  }\n}',
+				'function C() @{\n  @switch (x) {\n    @case 1: {\n      (<div />) + 1;\n      <i />\n    }\n  }\n}',
+			],
+			[
+				'function C() @{\n  @try {\n    (<div />) + 1;\n    <i />\n  } @catch (e) {\n    (<div />) + 1;\n    <i />\n  }\n}',
+				'function C() @{\n  @try {\n    (<div />) + 1;\n    <i />\n  } @catch (e) {\n    (<div />) + 1;\n    <i />\n  }\n}',
+			],
+			// Like Prettier, which gives a comment after the expression in the
+			// parentheses to the statement, it moves after the `;`
+			['(<div /> /* c */);', '(<div />); /* c */'],
+			['(<div /> // c\n);', '(<div />); // c'],
+			['(<div>\n<span />\n</div> /* c */);', '(\n  <div>\n    <span />\n  </div>\n); /* c */'],
+			// An element prints its other comments inside the parentheses
+			['(\n// c\n<div />);', '(\n  // c\n  <div />\n);'],
+			['(<div />\n// c\n);', '(\n  <div />\n  // c\n);'],
+		])('keeps the parentheses around the element statement in %j', async (input, expected) => {
+			const output = await format(input);
+			expect(output).toBeWithNewline(expected);
+			expect(parseStatements(output)).toBe(parseStatements(input));
+		});
+
+		it.each([
+			['(<div />);', ';(<div />)'],
+			['a;\n(<div />);', 'a\n;(<div />)'],
+		])('puts the leading semicolon before the element statement %j with semi: false', async (input, expected) => {
+			const output = await format(input, { semi: false });
+			expect(output).toBeWithNewline(expected);
+			expect(parseStatements(output)).toBe(parseStatements(input));
+		});
+
+		// A template value that is an expression statement reads the same
+		// without its parentheses, and a comment after it moves after the `;`
+		// as it does on the next pass
+		it.each([
+			['(@{ <div /> });', '@{\n  <div />\n};'],
+			['(@if (a) { <div /> });', '@if (a) {\n  <div />\n};'],
+			['(@{ <div /> } /* c */);', '@{\n  <div />\n}; /* c */'],
+			['(@if (a) { <div /> } /* c */);', '@if (a) {\n  <div />\n}; /* c */'],
+		])('prints the template statement %j without parentheses', async (input, expected) => {
+			const output = await format(input);
+			expect(output).toBeWithNewline(expected);
+			expect(parseStatements(output)).toBe(parseStatements(input));
+		});
+
+		// Outside a template body, an operator after an element that starts a
+		// statement continues it, as in TSX
+		it.each([
+			['(<div />) + 1;', '<div /> + 1;'],
+			['function f() {\n  (<div />) ? a : b;\n}', 'function f() {\n  <div /> ? a : b;\n}'],
+			[
+				'function C() @{\n  if (a) {\n    (<div />) + 1;\n  }\n  <i />\n}',
+				'function C() @{\n  if (a) {\n    <div /> + 1;\n  }\n  <i />\n}',
+			],
+		])('prints the element that starts %j bare like Prettier', async (input, expected) => {
+			const output = await format(input);
+			expect(output).toBeWithNewline(expected);
+			expect(parseStatements(output)).toBe(parseStatements(input));
+		});
+
 		it('starts a statement at a `(`, `[`, or template literal on the line after an element', async () => {
 			const input =
 				'const a = <b>x</b>\n(foo)\nconst c = <b />\n[1].map(f)\nconst d = <b />\n`t`\n';
@@ -14713,6 +14840,36 @@ const b = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
 			],
 		])('lays out a JSDoc-cast operand as its own node in %j', async (input, expected) => {
 			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Prettier prints a line comment before the `)` of the parentheses
+		// around an operand after the operator that follows them, and breaks
+		// the operator before them with its line break. Its next pass gives the
+		// comment to the operand before the operator, which joins the operator
+		// before them again. The formatter prints the fixpoint (#626).
+		it.each([
+			['x = 30 * (month - 1 // c\n) + day;', 'x =\n  30 * (month - 1) + // c\n  day;'],
+			['x = 30 * ((month - 1 // c\n)) + day;', 'x =\n  30 * (month - 1) + // c\n  day;'],
+			['x = 30 * (2 * (month - 1 // c\n)) + day;', 'x =\n  30 * (2 * (month - 1)) + // c\n  day;'],
+			['x = 30 * (month - (1 // c\n)) + day;', 'x =\n  30 * (month - 1) + // c\n  day;'],
+			['f(30 * (month - 1 // c\n) + day);', 'f(\n  30 * (month - 1) + // c\n    day,\n);'],
+			[
+				'const jd = Math.floor(\n  30 * (month - 1 // c\n  ) + day\n);',
+				'const jd = Math.floor(\n  30 * (month - 1) + // c\n    day,\n);',
+			],
+			['x = 30 * (month - 1 /* c */ // d\n) + day;', 'x =\n  30 * (month - 1) /* c */ + // d\n  day;'],
+		])('formats %j in one pass', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'x =\n  a &&\n  (b || c) && // c\n  d;',
+			'x =\n  (a || b) + // c\n  d;',
+			'x =\n  f(\n    a, // c\n  ) + d;',
+			'x = 30 * (month - 1) /* c */ + day;',
+			'x =\n  a && (\n    <Note /> // note\n  ) &&\n  b;',
+		])('keeps %j like Prettier', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
 		});
 
 		it('keeps a JSDoc cast around a broken return argument as the only parentheses', async () => {
@@ -17981,6 +18138,107 @@ item
 			'const f = () => (a = b); // note',
 			'x = a = b; /* note */',
 		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Prettier prints a comment in the parentheses around the last operand
+		// of a statement's binary or logical value after them, where they print
+		// as nothing or not, and moves it after the `;` on the next pass. The
+		// formatter prints the fixpoint (#622).
+		it.each([
+			['const x = a || (b /* c */);', 'const x = a || b; /* c */'],
+			['x = a + (b /* c */);', 'x = a + b; /* c */'],
+			['x = a * (b + c /* c */);', 'x = a * (b + c); /* c */'],
+			['x = a || (b && c /* c */);', 'x = a || (b && c); /* c */'],
+			['x = a || b && (c /* c */);', 'x = a || (b && c); /* c */'],
+			// Prettier takes the comment out of one pair of parentheses a pass
+			['x = a * (b + (c /* c */));', 'x = a * (b + c); /* c */'],
+			['x = a || (b + (c /* c */));', 'x = a || b + c; /* c */'],
+			['x = a || (await b /* c */);', 'x = a || (await b); /* c */'],
+			['x = a ?? (b ? c : d /* c */);', 'x = a ?? (b ? c : d); /* c */'],
+			['const x = (a || b /* c */);', 'const x = a || b; /* c */'],
+			['a || (b /* c */);', 'a || b; /* c */'],
+			['export default a || (b /* c */);', 'export default a || b; /* c */'],
+			['const f = () => a || (b /* c */);', 'const f = () => a || b; /* c */'],
+			['if (a) x = a || (b /* c */);', 'if (a) x = a || b; /* c */'],
+			// A line comment, which Prettier's line break after it breaks the
+			// operator before
+			['const x = a || (b // c\n);', 'const x = a || b; // c'],
+			['x = a + (b // c\n);', 'x = a + b; // c'],
+			['const x = (a || b // c\n);', 'const x = a || b; // c'],
+			['const x = a || (b /* c */ // d\n);', 'const x = a || b; /* c */ // d'],
+			// A `return` or `throw` argument that fits
+			[
+				'function f(c) {\n  return (c === 0x0A/* LF */) || (c === 0x0D/* CR */);\n}',
+				'function f(c) {\n  return c === 0x0a /* LF */ || c === 0x0d; /* CR */\n}',
+			],
+			[
+				'function f() {\n  return (a || b /* c */);\n}',
+				'function f() {\n  return a || b; /* c */\n}',
+			],
+			[
+				'function f() {\n  throw a || (b /* c */);\n}',
+				'function f() {\n  throw a || b; /* c */\n}',
+			],
+			[
+				'function f() {\n  return (a || b /* c */) /* d */;\n}',
+				'function f() {\n  return a || b; /* c */ /* d */\n}',
+			],
+			[
+				'function f() {\n  if (x) return a || (b /* c */);\n  else return 1;\n}',
+				'function f() {\n  if (x) return a || b; /* c */\n  else return 1;\n}',
+			],
+			// A line comment breaks the parentheses, outside the argument
+			[
+				'function f() {\n  return a || (b // c\n  );\n}',
+				'function f() {\n  return (\n    a || b // c\n  );\n}',
+			],
+			[
+				'function f() {\n  return a || (b /* c */ // d\n  );\n}',
+				'function f() {\n  return (\n    a || b /* c */ // d\n  );\n}',
+			],
+			// Without a `;`, at the end of the statement, where the `;` goes
+			['const x = a || (b /* c */)\nfoo()', 'const x = a || b; /* c */\nfoo();'],
+			['const x = (b /* c */)\nfoo()', 'const x = b; /* c */\nfoo();'],
+			['function f() {\n  return (b /* c */)\n}', 'function f() {\n  return b; /* c */\n}'],
+			['const x = a || (b // c\n)', 'const x = a || b; // c'],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			// In the parentheses the argument breaks in, like Prettier
+			'function is_WS_OR_EOL(c) {\n  return (\n    c === 0x09 /* Tab */ ||\n    c === 0x20 /* Space */ ||\n    c === 0x0a /* LF */ ||\n    c === 0x0d /* CR */\n  );\n}',
+			'function f() {\n  return (\n    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||\n    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb /* c */\n  ); /* d */\n}',
+			// In parentheses that print, around an operand before the last one
+			'x = a * (b + c) /* c */ + d;',
+			// In a JSDoc cast's parentheses
+			'x = a || /** @type {T} */ (b /* c */);',
+			'function f() {\n  return /** @type {T} */ (a || b /* c */);\n}',
+			'x = !(a || b /* c */);',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Prettier prints the block comments in the parentheses of a
+		// declarator's or an assignment's sequence, and breaks them with the
+		// line comment after them, which its next pass moves after the `;`.
+		// The formatter prints the fixpoint (#624).
+		it.each([
+			['const x = (a, b /* c */ // d\n);', 'const x = (a, b /* c */); // d'],
+			['const x = (a, b /* c */ /* e */ // d\n);', 'const x = (a, b /* c */ /* e */); // d'],
+			['x = (a, b /* c */ // d\n);', 'x = (a, b /* c */); // d'],
+			['const x = (a, b.c /* c */ // d\n);', 'const x = (a, b.c /* c */); // d'],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const x = (a = b /* c */); // d',
+			'(a, b); /* c */ // d',
+			'const f = () => (\n  a,\n  b /* c */ // d\n);',
+			'function f() {\n  return (\n    a,\n    b /* c */ // d\n  );\n}',
+		])('keeps %j like Prettier', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
