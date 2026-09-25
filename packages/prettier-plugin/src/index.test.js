@@ -18444,6 +18444,20 @@ for (
 			// Prettier takes the comment out of one pair of parentheses a pass
 			['x = a * (b + (c /* c */));', 'x = a * (b + c); /* c */'],
 			['x = a || (b + (c /* c */));', 'x = a || b + c; /* c */'],
+			// After the parentheses of a JSDoc cast, which keep the ones in them
+			['x = a || (/** @type {T} */ (b) /* c */);', 'x = a || /** @type {T} */ (b); /* c */'],
+			[
+				'const x = (/** @type {T} */ (a || b) /* c */);',
+				'const x = /** @type {T} */ (a || b); /* c */',
+			],
+			[
+				'x = a || /** @type {T} */ (b && (c /* c */));',
+				'x = a || /** @type {T} */ (b && c /* c */);',
+			],
+			[
+				'x = a || /** @type {T} */ (b && (c // c\n));',
+				'x =\n  a ||\n  /** @type {T} */ (\n    b && c // c\n  );',
+			],
 			['x = a || (await b /* c */);', 'x = a || (await b); /* c */'],
 			['x = a ?? (b ? c : d /* c */);', 'x = a ?? (b ? c : d); /* c */'],
 			['const x = (a || b /* c */);', 'const x = a || b; /* c */'],
@@ -18505,6 +18519,10 @@ for (
 			// In a JSDoc cast's parentheses
 			'x = a || /** @type {T} */ (b /* c */);',
 			'function f() {\n  return /** @type {T} */ (a || b /* c */);\n}',
+			'x = a || (b && /** @type {T} */ (c /* c */));',
+			'x = a || /** @type {T} */ (b && c /* c */);',
+			'x = (a && /** @type {T} */ (b /* c */)) || d;',
+			'((a) => /** @type {T} */ (b /* c */))(1);',
 			'x = !(a || b /* c */);',
 		])('keeps %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);

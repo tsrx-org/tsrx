@@ -601,7 +601,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * `x = a * (b + c) /* c *\/;`, and the next pass moves the comment after
 	 * the `;` (#622). Each pass takes it out of one more pair, so it ends there
 	 * from any depth of the chain. A pair that completes a JSDoc cast keeps the
-	 * comments in it (see {@link getTypeCastEnd}), and so does the pair an
+	 * comments in it (see {@link getTypeCastEnd}), which the walk takes before
+	 * this runs, so the operands inside it don't count, and so does the pair an
 	 * element or other template value prints its comments in (see
 	 * {@link keepsCommentsInArrowBodyParens}).
 	 * @param {AST.Node | null | undefined} value
@@ -610,7 +611,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 	function getBinaryishValueEnds(value) {
 		/** @type {(AST.Node & AST.NodeWithLocation)[]} */
 		const ends = [];
-		if (!isBinaryish(value) || getTypeCastEnd(/** @type {any} */ (value)) !== -1) {
+		if (!isBinaryish(value)) {
 			return ends;
 		}
 		if (value.metadata?.parenthesized) {
@@ -618,9 +619,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 		}
 		/** @type {AST.Node} */
 		let operand = value;
-		while (isBinaryish(operand)) {
+		while (isBinaryish(operand) && getTypeCastEnd(/** @type {any} */ (operand)) === -1) {
 			const right = /** @type {AST.Node & AST.NodeWithLocation} */ (operand.right);
-			if (getTypeCastEnd(right) !== -1 || right.type.startsWith('JSX')) break;
+			if (right.type.startsWith('JSX')) break;
 			ends.push(right);
 			operand = right;
 		}
@@ -662,14 +663,16 @@ export function get_comment_handlers(source, comments, index = 0) {
 			return false;
 		}
 		// The left operand that the comment ends, up the right operands that
-		// end it, which only `)`s separate from the operator after it
+		// end it, which only `)`s separate from the operator after it. One in a
+		// JSDoc cast's parentheses keeps the comment in them, where the printer
+		// prints the ones that trail it (see `getTypeCastEnd`).
 		for (; index >= 1; index--) {
-			const operand = /** @type {AST.Node} */ (path[index]);
+			const operand = /** @type {AST.Node & AST.NodeWithLocation} */ (path[index]);
 			if (!isBinaryish(operand) || operand.right !== child) {
 				break;
 			}
 			const binary = /** @type {AST.Node} */ (path[index - 1]);
-			if (isBinaryish(binary) && binary.left === operand) {
+			if ((isBinaryish(binary) && binary.left === operand) || getTypeCastEnd(operand) !== -1) {
 				addTrailingComment(operand, /** @type {AST.CommentWithLocation} */ (comments.shift()));
 				return true;
 			}
