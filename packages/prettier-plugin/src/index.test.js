@@ -7939,6 +7939,69 @@ const short = (value as Entry).name;`;
 		});
 	});
 
+	// Like Prettier's `printCommentsForFunction`, a function called right away
+	// or used as a template tag prints its comments inside its parentheses,
+	// which break around them where nothing groups them. They used to print
+	// outside (#482).
+	describe('comments on a function called right away or used as a tag', () => {
+		it.each([
+			['(/* c */ function () {})();', '(\n  /* c */ function () {}\n)();'],
+			['(/* c */ () => {})();', '(\n  /* c */ () => {}\n)();'],
+			['(function () {} /* c */)();', '(\n  function () {} /* c */\n)();'],
+			['(m => m /* c */)(x);', '(\n  (m) => m /* c */\n)(x);'],
+			['(function () {} /* a */ /* b */)(x);', '(\n  function () {} /* a */ /* b */\n)(x);'],
+			['(m => m /* c */)`x`;', '(\n  (m) => m /* c */\n)`x`;'],
+			['x = (m => m /* c */)(x);', 'x = ((m) => m /* c */)(x);'],
+			['(/* c */ function () {})`x`;', '(\n  /* c */ function () {}\n)`x`;'],
+			['(/* c */ async () => {})?.();', '(\n  /* c */ async () => {}\n)?.();'],
+			['(function () {} // c\n)();', '(\n  function () {} // c\n)();'],
+			['!(/* c */ function () {})();', '!(\n  /* c */ function () {}\n)();'],
+			['x = (/* c */ function () {})();', 'x = (/* c */ function () {})();'],
+			['x = (/* c */ () => {})`x`;', 'x = (/* c */ () => {})`x`;'],
+			[
+				'(/* c */ function () {\n  run();\n})();',
+				'(\n  /* c */ function () {\n    run();\n  }\n)();',
+			],
+			[
+				'(\n  // prettier-ignore\n  function () {  }\n)();',
+				'(\n  // prettier-ignore\n  function () {  }\n)();',
+			],
+		])('prints %j like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'(\n  // c\n  function () {}\n)();',
+			'x = (\n  // c\n  function () {}\n)();',
+			'const y = (\n  // c\n  () => {\n    run();\n  }\n)();',
+			'foo((/* c */ () => {})());',
+			'export default (\n  /* c */ function () {}\n)();',
+			// Like Prettier's `returnArgumentHasLeadingComment`, a `return` counts
+			// the comments of the leftmost operand
+			'function g() {\n  return (\n    (\n      // c\n      function () {}\n    )()\n  );\n}',
+			'function* g() {\n  yield (\n    // c\n    function () {}\n  )();\n}',
+			'a;\n(\n  /* c */ function () {}\n)();',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('puts the leading semicolon before the parentheses with semi: false', async () => {
+			expect(await format('a\n;(/* c */ function () {})()', { semi: false })).toBeWithNewline(
+				'a\n;(\n  /* c */ function () {}\n)()',
+			);
+		});
+
+		// Only a call's callee or a tag counts: the comments of a function
+		// that is a member object or a `new` callee print outside
+		it.each([
+			'/* c */ (function () {}).call(this);',
+			'new /* c */ (function () {})();',
+			'x = /* c */ function () {};',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
 	describe('definite assignment assertions', () => {
 		it('keeps the definite assignment assertion on variable declarations', async () => {
 			const input = `function App() {
@@ -12746,6 +12809,22 @@ type D = { a: string } &
 		])('does not add parentheses in %s', async (source) => {
 			await expectUnchanged(source);
 		});
+
+		// Like Prettier's `babel` output, a JSDoc cast's parentheses are enough.
+		// The class used to add a second pair around them (#519).
+		it.each([
+			'class Store extends /** @type {Base} */ (new Base()) {}',
+			'class Derived extends /** @type {Constructor} */ (Base || Object) {}',
+			'class Derived extends /** @type {A} */ (/** @type {B} */ (Base || Object)) {}',
+			'class Derived extends /* note */ /** @type {Constructor} */ (Base || Object) {}',
+		])('adds no parentheses around the cast in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it('drops parentheses around a cast', async () => {
+			const result = await format('class Derived extends (/** @type {C} */ (Base || Object)) {}');
+			expect(result).toBeWithNewline('class Derived extends /** @type {C} */ (Base || Object) {}');
+		});
 	});
 
 	// Like Prettier's `printClass`: the heading groups its heritage clauses
@@ -15487,6 +15566,123 @@ item
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// Like Prettier's `printClass`, the class prints the comments of the
+		// superclass around the parentheses it adds and the type arguments. They
+		// used to print inside the parentheses (#483).
+		it.each([
+			['class A extends (/* c */ a || b) {}', 'class A extends /* c */ (a || b) {}'],
+			['class D extends (a || b /* c */) {}', 'class D extends (a || b) /* c */ {}'],
+			['class J extends (/* c */ a || b)<T> {}', 'class J extends /* c */ (a || b)<T> {}'],
+			['class J extends (a || b /* c */)<T> {}', 'class J extends (a || b)<T> /* c */ {}'],
+			[
+				'class L extends (/* c */ a || b) implements X {}',
+				'class L extends /* c */ (a || b) implements X {}',
+			],
+			['x = class extends (/* c */ a || b) {};', 'x = class extends /* c */ (a || b) {};'],
+			[
+				'class A extends (/* c */ (/* d */ a || b)) {}',
+				'class A extends /* c */ /* d */ (a || b) {}',
+			],
+			[
+				'class K extends (/* c */ @dec class {}) {}',
+				'class K\n  extends /* c */ (\n    @dec\n    class {}\n  ) {}',
+			],
+			[
+				'x = class extends /* c */ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccc {};',
+				'x = class\n  extends /* c */ (\n    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccc\n  ) {};',
+			],
+			[
+				'x = class extends aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccc /* c */ {};',
+				'x = class extends (\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n    .bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccc\n) /* c */ {};',
+			],
+			[
+				'class A extends (/* prettier-ignore */ a   ||   b) {}',
+				'class A extends /* prettier-ignore */ (a   ||   b) {}',
+			],
+		])('prints the comment of the superclass in %j like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'class B extends /* c */ (a || b) {}',
+			'class G extends (a || b) /* c */ {}',
+			'class L extends (a || b) /* c */ implements X {}',
+			'class E extends /* c */ a {}',
+			'class F extends a /* c */ {}',
+			'class H\n  // c\n  extends (a || b) {}',
+			// A `prettier-ignore` after it stays inside the parentheses, where it
+			// keeps ignoring it on the next format
+			'class A extends (a   ||   b /* prettier-ignore */) {}',
+			'class A extends (a   ||   b /* prettier-ignore */)<T> {\n  x = 1;\n}',
+			// The comments of an arrow body that is an arrow are its own
+			'class D extends (() => /* c */ /** @type {X} */ (() => Base)) {}',
+			'class D extends (() => /* prettier-ignore */ () =>   Base) {}',
+		])('keeps the comment of the superclass in %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Prettier's output for these changes when it formats it again: the
+		// comment breaks the heading, and a nonempty body starts on the line
+		// after it, which moves the comment into the body. Here a comment after
+		// the superclass doesn't break the heading, and the body stays on the
+		// comment's line, so the output is stable (#520).
+		it.each([
+			[
+				'class D extends (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb /* c */) {}',
+				'class D extends (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) /* c */ {}',
+			],
+			[
+				'class D extends (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb /* c */)<T> {\n  x = 1;\n}',
+				'class D extends (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)<T> /* c */ {\n  x = 1;\n}',
+			],
+			[
+				'class D extends aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb /* c */ {\n  x = 1;\n}',
+				'class D\n  extends aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb /* c */ {\n  x = 1;\n}',
+			],
+			// The comment leads the body here, and prints before its `{`
+			[
+				'class A implements Iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii, Jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj /* c */ {\n  x = 1;\n}',
+				'class A\n  implements\n    Iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii,\n    Jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj /* c */ {\n  x = 1;\n}',
+			],
+		])('keeps the comment after the superclass in %j stable', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// A line comment after the superclass and its type arguments ends the
+		// heading, and the next format moves it into the body, as the parser
+		// does with one before the body, so it prints there. Prettier prints it
+		// after the type arguments, with the body on the next line, and moves it
+		// into the body on its next pass.
+		it.each([
+			[
+				'class A extends (a || b // c\n)<T> {\n  x = 1;\n}',
+				'class A extends (a || b)<T> {\n  // c\n  x = 1;\n}',
+			],
+			['class A extends (a || b // c\n)<T> {}', 'class A extends (a || b)<T> {\n  // c\n}'],
+			[
+				'class A extends (a || b // c\n)<T> {\n  // d\n}',
+				'class A extends (a || b)<T> {\n  // c\n  // d\n}',
+			],
+			[
+				'x = class extends (a || b // c\n)<T> {\n  x = 1;\n};',
+				'x = class extends (a || b)<T> {\n  // c\n  x = 1;\n};',
+			],
+			[
+				'class A extends (a || b /* e */ // c\n)<T> {\n  x = 1;\n}',
+				'class A extends (a || b)<T> /* e */ {\n  // c\n  x = 1;\n}',
+			],
+			[
+				'class A extends /** @type {X} */ (a // c\n)<T> {\n  x = 1;\n}',
+				'class A extends /** @type {X} */ (a)<T> {\n  // c\n  x = 1;\n}',
+			],
+			['class A extends (B) // c\n{\n  x = 1;\n}', 'class A extends B {\n  // c\n  x = 1;\n}'],
+		])(
+			'moves the line comment after the superclass in %j into the body',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
 		// A comment before a heritage clause trails the name, the type
 		// parameters, or the superclass before it, so it doesn't print after
 		// `implements` or `extends`, and the heading breaks
@@ -16130,6 +16326,107 @@ item
 		});
 	});
 
+	// A block comment over several lines ends a `return`, `throw`, or `yield`
+	// like a line break does, so, like Prettier's
+	// `returnArgumentHasLeadingComment`, an argument that starts with one keeps
+	// its parentheses. They used to be dropped, and the function returned
+	// `undefined` (#473). Each case also parses the output and checks that the
+	// syntax tree is unchanged.
+	describe('return, throw, and yield arguments that start with a comment over several lines', () => {
+		const positionKeys = new Set([
+			'start',
+			'end',
+			'loc',
+			'range',
+			'metadata',
+			'leadingComments',
+			'trailingComments',
+			'innerComments',
+			'comments',
+		]);
+
+		/**
+		 * The syntax tree without positions, comments, or parser metadata.
+		 * @param {string} code
+		 */
+		const parseShape = (code) =>
+			JSON.stringify(parsers?.tsrx.parse(code, /** @type {any} */ ({})), (key, value) =>
+				positionKeys.has(key) ? undefined : value,
+			);
+
+		/**
+		 * @param {string} input
+		 * @param {string} [expected]
+		 */
+		const expectFormatted = async (input, expected = input) => {
+			const output = await format(input);
+			expect(output).toBeWithNewline(expected);
+			expect(parseShape(output)).toBe(parseShape(input));
+		};
+
+		it.each([
+			[
+				'function g() {\n  return (/* a\n    b */ foo);\n}',
+				'function g() {\n  return (\n    /* a\n    b */ foo\n  );\n}',
+			],
+			[
+				'function g() {\n  throw (/* a\n    b */ foo);\n}',
+				'function g() {\n  throw (\n    /* a\n    b */ foo\n  );\n}',
+			],
+			[
+				'function h() {\n  return (\n    /**\n     * doc\n     */ "result"\n  );\n}',
+				'function h() {\n  return (\n    /**\n     * doc\n     */ "result"\n  );\n}',
+			],
+			[
+				'function g() {\n  return (/* a\n    b */ a ? b : c);\n}',
+				'function g() {\n  return (\n    /* a\n    b */ a ? b : c\n  );\n}',
+			],
+			[
+				'function g() {\n  return (/* a\n    b */ a, b);\n}',
+				'function g() {\n  return (\n    /* a\n    b */ a, b\n  );\n}',
+			],
+		])('prints %j like Prettier', async (input, expected) => {
+			await expectFormatted(input, expected);
+		});
+
+		// Prettier looks only at the argument's own comments, so it drops these
+		// parentheses and returns or yields `undefined`
+		it.each([
+			[
+				'function* g() {\n  yield (/* a\n    b */ foo);\n}',
+				'function* g() {\n  yield (\n    /* a\n    b */ foo\n  );\n}',
+			],
+			[
+				'function g() {\n  return (/* a\n    b */ foo).bar;\n}',
+				'function g() {\n  return (\n    /* a\n    b */ foo.bar\n  );\n}',
+			],
+			[
+				'function g() {\n  return (/* a\n    b */ foo)();\n}',
+				'function g() {\n  return (\n    /* a\n    b */ foo()\n  );\n}',
+			],
+			[
+				'function g() {\n  throw (/* a\n    b */ a || b).c;\n}',
+				'function g() {\n  throw (\n    /* a\n    b */ (a || b).c\n  );\n}',
+			],
+		])('keeps the parentheses of %j', async (input, expected) => {
+			await expectFormatted(input, expected);
+		});
+
+		it.each([
+			'function g() {\n  return /* a b */ foo;\n}',
+			'function g() {\n  return (\n    /* a\n    b */ foo + bar\n  );\n}',
+			'function g() {\n  return (\n    /* a\n    b */ <div />\n  );\n}',
+			'function g() {\n  return /** @type {X} */ (\n    /* a\n    b */ foo\n  );\n}',
+			'function g() {\n  return (\n    /**\n     * @type {X}\n     */ (foo)\n  );\n}',
+			'function* g() {\n  yield* /* a\n    b */ foo;\n}',
+			// A function called right away prints the comment inside its parentheses
+			'function g() {\n  return (\n    /* a\n    b */ function () {}\n  )();\n}',
+			'function* g() {\n  yield (\n    /* a\n    b */ function () {}\n  )();\n}',
+		])('keeps %j', async (source) => {
+			await expectFormatted(source);
+		});
+	});
+
 	// `yield` ends at a line break, like `return`, so an argument that starts
 	// with a comment ending its line keeps its parentheses. Prettier drops
 	// them here and yields `undefined`.
@@ -16304,6 +16601,41 @@ item
 				'const f = () => (\n  /**\n   * note\n   */ <Note />\n);',
 			],
 		])('prints %j like Prettier', async (input, expected) => {
+			await expectFormatted(input, expected);
+		});
+
+		// Prettier's `babel` parser keeps a JSDoc cast's parentheses as a
+		// `ParenthesizedExpression`, which isn't a parent that prints an element
+		// bare, so an element that breaks, or has a comment that breaks the line,
+		// prints in parentheses of its own inside the innermost cast's (#476)
+		it.each([
+			'function g() {\n  return /** @type {X} */ (\n    (\n      // note\n      <Note />\n    )\n  );\n}',
+			'const a = /** @type {X} */ (\n  (\n    /* note */\n    <Note />\n  )\n);',
+			'const a = /** @type {X} */ (\n  /** @type {Y} */ (\n    (\n      // note\n      <Note />\n    )\n  )\n);',
+			'f(\n  /** @type {X} */ (\n    (\n      // note\n      <Note />\n    )\n  ),\n);',
+			'const a = (\n  <b\n    x={\n      /** @type {X} */ (\n        (\n          // note\n          <Note />\n        )\n      )\n    }\n  />\n);',
+			'function g() {\n  return /** @type {X} */ (\n    (\n      <div>\n        <a />\n        <b />\n      </div>\n    )\n  );\n}',
+			'const a = /** @type {X} */ (/* note */ <Note />);',
+			'const a = /** @type {X} */ (<Note />);',
+			'const a = /** @type {X} */ (\n  (\n    // note\n    <Note />\n  ).props\n);',
+		])('keeps the element in a cast in %j', async (source) => {
+			await expectFormatted(source);
+		});
+
+		it.each([
+			[
+				'function g() {\n  return /** @type {X} */ (\n    // note\n    <Note />\n  );\n}',
+				'function g() {\n  return /** @type {X} */ (\n    (\n      // note\n      <Note />\n    )\n  );\n}',
+			],
+			[
+				'const a = /** @type {X} */ (\n  // note\n  <>\n    <a />\n  </>\n);',
+				'const a = /** @type {X} */ (\n  (\n    // note\n    <>\n      <a />\n    </>\n  )\n);',
+			],
+			[
+				'function g() {\n  return /** @type {X} */ (<div>\n    <a />\n    <b />\n  </div>);\n}',
+				'function g() {\n  return /** @type {X} */ (\n    (\n      <div>\n        <a />\n        <b />\n      </div>\n    )\n  );\n}',
+			],
+		])('prints the element in a cast in %j like Prettier', async (input, expected) => {
 			await expectFormatted(input, expected);
 		});
 
@@ -17112,8 +17444,9 @@ function fail() {
 		});
 
 		// A JSDoc cast needs its own parentheses, so a parent that lays out the
-		// argument's parentheses itself must still print them.
-		it('keeps a type cast inside parentheses that return, throw, or a superclass add', async () => {
+		// argument's parentheses itself must still print them. Like Prettier's
+		// `babel` output, a superclass needs no others around them.
+		it('keeps a type cast inside parentheses that return or throw add, and a superclass cast in its own', async () => {
 			const input = `function unwrap(node) {
   return (
     // unwrap the entry
@@ -17151,7 +17484,7 @@ function fail(error) {
     /** @type {Error} */ (error)
   );
 }
-class Store extends (/** @type {Base} */ (new Base())) {}`;
+class Store extends /** @type {Base} */ (new Base()) {}`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
 		});
