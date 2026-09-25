@@ -6806,13 +6806,18 @@ function printClassDeclaration(node, path, options, print) {
 		// comments, around the parentheses it adds and the type arguments
 		const printsComments = !isTypeCast;
 		const addsParens = !isTypeCast && superClassNeedsParens(superClassNode);
+		// A `prettier-ignore` after the superclass stays inside the parentheses,
+		// where it keeps ignoring the superclass on the next format. After them,
+		// it would lead the body.
+		const trailingComments = superClassNode.trailingComments ?? [];
+		const printsTrailingComments = !(addsParens && trailingComments.some(isPrettierIgnoreComment));
 		const superClass = path.call(
 			(superPath) =>
 				print(superPath, {
 					// The class owns these parens, so the superclass must not add its own
 					suppressOwnParens: addsParens,
 					suppressLeadingComments: printsComments,
-					suppressTrailingComments: true,
+					suppressTrailingComments: printsTrailingComments,
 				}),
 			'superClass',
 		);
@@ -6820,11 +6825,12 @@ function printClassDeclaration(node, path, options, print) {
 		// heading, and the next format moves it into the body, as the parser
 		// does with one before the body (Prettier moves it on its next pass
 		// too), so it prints there
-		const trailingComments = superClassNode.trailingComments ?? [];
-		if (!node.implements?.length) {
+		if (!node.implements?.length && printsTrailingComments) {
 			bodyComments = trailingComments.filter((comment) => comment.type === 'Line');
 		}
-		const headingComments = trailingComments.filter((comment) => !bodyComments.includes(comment));
+		const headingComments = printsTrailingComments
+			? trailingComments.filter((comment) => !bodyComments.includes(comment))
+			: [];
 		/** @type {Doc} */
 		let superClassDoc = superClass;
 		if (addsParens) {

@@ -15311,6 +15311,10 @@ item
 			'class E extends /* c */ a {}',
 			'class F extends a /* c */ {}',
 			'class H\n  // c\n  extends (a || b) {}',
+			// A `prettier-ignore` after it stays inside the parentheses, where it
+			// keeps ignoring it on the next format
+			'class A extends (a   ||   b /* prettier-ignore */) {}',
+			'class A extends (a   ||   b /* prettier-ignore */)<T> {\n  x = 1;\n}',
 			// The comments of an arrow body that is an arrow are its own
 			'class D extends (() => /* c */ /** @type {X} */ (() => Base)) {}',
 			'class D extends (() => /* prettier-ignore */ () =>   Base) {}',
