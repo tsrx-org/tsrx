@@ -1,0 +1,17 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`with-other-comments.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+;/* 2 */ /** @type {{bar: string[]}} */ ({}).bar.forEach(doStuff)
+;/** @type {{bar: string[]}} */ /* 2 */ ({}).bar.forEach(doStuff)
+
+=====================================output=====================================
+/* 2 */ ;/** @type {{bar: string[]}} */ ({}).bar.forEach(doStuff)
+/** @type {{bar: string[]}} */ /* 2 */ ;({}).bar.forEach(doStuff)
+
+================================================================================
+`;

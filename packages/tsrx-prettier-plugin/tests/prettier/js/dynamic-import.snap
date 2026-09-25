@@ -1,0 +1,79 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`assertions.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import("./foo.json", { assert: { type: "json" } });
+
+=====================================output=====================================
+import("./foo.json", { assert: { type: "json" } });
+
+================================================================================
+`;
+
+exports[`import-phase.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import.source(\`data:text/javascript,
+    console.log("RUN");
+\`)
+
+import.source(String.raw\`data:text/javascript,
+    console.log("RUN");
+\`)
+
+=====================================output=====================================
+import.source(\`data:text/javascript,
+    console.log("RUN");
+\`);
+
+import.source(String.raw\`data:text/javascript,
+    console.log("RUN");
+\`);
+
+================================================================================
+`;
+
+exports[`template-literal.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+module   =   await import(\`data:text/javascript,
+    console.log("RUN");
+\`);
+
+module   =   await import(String.raw\`data:text/javascript,
+    console.log("RUN");
+\`);
+
+=====================================output=====================================
+module = await import(\`data:text/javascript,
+    console.log("RUN");
+\`);
+
+module = await import(String.raw\`data:text/javascript,
+    console.log("RUN");
+\`);
+
+================================================================================
+`;
+
+exports[`test.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import("module.js");
+import("module.js").then((a) => a);
+
+=====================================output=====================================
+import("module.js");
+import("module.js").then((a) => a);
+
+================================================================================
+`;

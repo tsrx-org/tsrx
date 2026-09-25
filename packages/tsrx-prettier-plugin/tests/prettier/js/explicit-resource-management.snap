@@ -1,0 +1,504 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`for-await-using-of-comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/*1*/ for /* 2 */ await /*3*/ ( /*4*/ using /*5*/ fo /*6*/ of /*7*/ of /*8*/) /*9*/;
+
+=====================================output=====================================
+/*1*/ for await (/* 2 */ /*3*/ /*4*/ using /*5*/ fo /*6*/ of /*7*/ of /*8*/) /*9*/ ;
+
+================================================================================
+`;
+
+exports[`invalid-duplicate-using-bindings.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{
+  using f = foo(), f = foo();
+}
+{
+  using g = foo();
+  using g = foo();
+}
+
+=====================================output=====================================
+{
+  using f = foo(),
+    f = foo();
+}
+{
+  using g = foo();
+  using g = foo();
+}
+
+================================================================================
+`;
+
+exports[`invalid-script-top-level-using-binding.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+using x = bar();
+
+=====================================output=====================================
+using x = bar();
+
+================================================================================
+`;
+
+exports[`using-declarations.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{
+  using /* 1 */ a = foo(), /* 2 */ b = foo()
+}
+
+for(using /* 1 */ a = foo(), /* 2 */ b = foo();;);
+
+for(using /* 1 */ foo of bar());
+
+=====================================output=====================================
+{
+  using /* 1 */ a = foo(),
+    /* 2 */ b = foo();
+}
+
+for (using /* 1 */ a = foo(), /* 2 */ b = foo(); ;);
+
+for (using /* 1 */ foo of bar());
+
+================================================================================
+`;
+
+exports[`valid-await-expr-using.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f() {
+  await using[x];
+  await using.x + await using(x) ? await using?.x : await using\`x\`;
+}
+
+=====================================output=====================================
+async function f() {
+  await using[x];
+  (await using.x) + (await using(x)) ? await using?.x : await using\`x\`;
+}
+
+================================================================================
+`;
+
+exports[`valid-await-expr-using-in.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f() {
+  await using in foo;
+}
+
+=====================================output=====================================
+async function f() {
+  (await using) in foo;
+}
+
+================================================================================
+`;
+
+exports[`valid-await-expr-using-instanceof.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f() {
+  await using instanceof foo;
+}
+
+=====================================output=====================================
+async function f() {
+  (await using) instanceof foo;
+}
+
+================================================================================
+`;
+
+exports[`valid-await-using-asi-assignment.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f() {
+  await using
+  using = h();
+}
+
+=====================================output=====================================
+async function f() {
+  await using;
+  using = h();
+}
+
+================================================================================
+`;
+
+exports[`valid-await-using-binding-basic.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f() {
+  await using basic = getReader();
+}
+
+=====================================output=====================================
+async function f() {
+  await using basic = getReader();
+}
+
+================================================================================
+`;
+
+exports[`valid-await-using-binding-escaped.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f() {
+  await using \\u0061b = c;
+}
+
+=====================================output=====================================
+async function f() {
+  await using ab = c;
+}
+
+================================================================================
+`;
+
+exports[`valid-await-using-binding-non-bmp.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f() {
+  await using 𠮷 = foo();
+}
+
+=====================================output=====================================
+async function f() {
+  await using 𠮷 = foo();
+}
+
+================================================================================
+`;
+
+exports[`valid-await-using-binding-using.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f() {
+  await using using = of;
+  for (await using using of of);
+}
+
+=====================================output=====================================
+async function f() {
+  await using using = of;
+  for (await using using of of);
+}
+
+================================================================================
+`;
+
+exports[`valid-await-using-comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f() {
+{
+  /*0*/await/*1*/using/*2*/b/*3*/=/*4*/f()/*5*/;
+}
+{
+  /*0*/for/*1*/(/*2*/await/*3*/using/*4*/b/*5*/=/*6*/x/*7*/;/*8*/;/*9*/)/*10*/;
+}
+{
+  /*0*/for/*1*/(/*2*/await/*3*/using/*4*/b/*5*/of/*6*/x/*7*/)/*8*/;
+}
+{
+  /*0*/for/*1*/await/*2*/(/*3*/await/*4*/using/*5*/b/*6*/of/*7*/x/*8*/)/*9*/;
+}
+}
+
+=====================================output=====================================
+async function f() {
+  {
+    /*0*/ await using /*1*/ /*2*/ b /*3*/ = /*4*/ f(); /*5*/
+  }
+  {
+    /*0*/ for (
+      /*1*/ /*2*/ await using /*3*/ /*4*/ b /*5*/ = /*6*/ x /*7*/ /*8*/ /*9*/;
+      ;
+    ) /*10*/ ;
+  }
+  {
+    /*0*/ for (/*1*/ /*2*/ await using /*3*/ /*4*/ b /*5*/ of /*6*/ x /*7*/) /*8*/ ;
+  }
+  {
+    /*0*/ for await (/*1*/ /*2*/ /*3*/ await using /*4*/ /*5*/ b /*6*/ of /*7*/ x /*8*/) /*9*/ ;
+  }
+}
+
+================================================================================
+`;
+
+exports[`valid-for-await-using-binding-escaped-of-of.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// TODO: Fix this test
+// for await (using \\u006ff of of);
+
+=====================================output=====================================
+// TODO: Fix this test
+// for await (using \\u006ff of of);
+
+================================================================================
+`;
+
+exports[`valid-for-using-binding-escaped-of-of.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// TODO: Fix this test
+// for (using o\\u0066 of of);
+
+=====================================output=====================================
+// TODO: Fix this test
+// for (using o\\u0066 of of);
+
+================================================================================
+`;
+
+exports[`valid-for-using-binding-of-of.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f() {
+  for (await using of of of);
+  for await (await using of of of);
+}
+
+=====================================output=====================================
+async function f() {
+  for (await using of of of);
+  for await (await using of of of);
+}
+
+================================================================================
+`;
+
+exports[`valid-for-using-declaration.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f() {
+  for (await using basic = reader();;);
+}
+
+=====================================output=====================================
+async function f() {
+  for (await using basic = reader(); ;);
+}
+
+================================================================================
+`;
+
+exports[`valid-using-as-identifier-computed-member.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+using [x] = 0;
+for (using [x] of []);
+
+=====================================output=====================================
+using[x] = 0;
+for (using[x] of []);
+
+================================================================================
+`;
+
+exports[`valid-using-as-identifier-expression-statement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+using
+reader = getReader()
+
+=====================================output=====================================
+using;
+reader = getReader();
+
+================================================================================
+`;
+
+exports[`valid-using-as-identifier-for-await-of.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for await (using of of);
+
+=====================================output=====================================
+for await (using of of);
+
+================================================================================
+`;
+
+exports[`valid-using-as-identifier-for-in.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (using in []);
+for (using.foo in []);
+for (using().foo in []);
+for (using\`\`.foo in []);
+
+=====================================output=====================================
+for (using in []);
+for (using.foo in []);
+for (using().foo in []);
+for (using\`\`.foo in []);
+
+================================================================================
+`;
+
+exports[`valid-using-as-identifier-for-init.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (
+  using;
+  reader = getReader(););
+
+=====================================output=====================================
+for (using; (reader = getReader()););
+
+================================================================================
+`;
+
+exports[`valid-using-as-identifier-for-of.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (using of of);
+for (using.foo of of);
+for (using().foo of of);
+for (using\`\`.foo of of);
+
+=====================================output=====================================
+for (using of of);
+for (using.foo of of);
+for (using().foo of of);
+for (using\`\`.foo of of);
+
+================================================================================
+`;
+
+exports[`valid-using-as-identifier-in.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+using in using instanceof using;
+
+=====================================output=====================================
+using in using instanceof using;
+
+================================================================================
+`;
+
+exports[`valid-using-binding-basic.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{
+  using basic = getReader();
+}
+
+=====================================output=====================================
+{
+  using basic = getReader();
+}
+
+================================================================================
+`;
+
+exports[`valid-using-binding-escaped.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{ using \\u0061b = c; }
+
+=====================================output=====================================
+{
+  using ab = c;
+}
+
+================================================================================
+`;
+
+exports[`valid-using-binding-non-bmp.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{ using 𠮷 = foo(); }
+
+=====================================output=====================================
+{
+  using 𠮷 = foo();
+}
+
+================================================================================
+`;
+
+exports[`valid-using-binding-using.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{
+  using using = of;
+  for (using using of of);
+}
+
+=====================================output=====================================
+{
+  using using = of;
+  for (using using of of);
+}
+
+================================================================================
+`;

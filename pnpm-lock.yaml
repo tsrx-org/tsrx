@@ -815,6 +815,19 @@ importers:
         specifier: '>=10'
         version: 10.29.1
 
+  packages/tsrx-prettier-plugin:
+    dependencies:
+      '@tsrx/core':
+        specifier: workspace:*
+        version: link:../tsrx
+    devDependencies:
+      '@types/node':
+        specifier: catalog:default
+        version: 24.11.0
+      prettier:
+        specifier: catalog:default
+        version: 3.9.6
+
   packages/tsrx-react:
     dependencies:
       '@tsrx/core':

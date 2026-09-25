@@ -387,6 +387,14 @@ export default defineConfig({
 			},
 			{
 				test: {
+					name: 'tsrx-prettier-plugin',
+					include: ['packages/tsrx-prettier-plugin/tests/*.test.js'],
+					environment: 'node',
+				},
+				plugins: [],
+			},
+			{
+				test: {
 					name: 'eslint-plugin',
 					include: ['packages/eslint-plugin/tests/**/*.test.ts'],
 					environment: 'jsdom',

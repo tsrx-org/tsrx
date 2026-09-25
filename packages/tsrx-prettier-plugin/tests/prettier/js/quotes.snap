@@ -1,0 +1,87 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`functions.js - {"singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a = () => "Foo bar";
+
+function b(object, key) {
+  return object['key'];
+}
+
+=====================================output=====================================
+const a = () => 'Foo bar';
+
+function b(object, key) {
+  return object['key'];
+}
+
+================================================================================
+`;
+
+exports[`functions.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a = () => "Foo bar";
+
+function b(object, key) {
+  return object['key'];
+}
+
+=====================================output=====================================
+const a = () => "Foo bar";
+
+function b(object, key) {
+  return object["key"];
+}
+
+================================================================================
+`;
+
+exports[`objects.js - {"singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const obj = {
+ 'a': true,
+ b: true,
+ "𐊧": true,
+}
+
+=====================================output=====================================
+const obj = {
+  a: true,
+  b: true,
+  '𐊧': true,
+};
+
+================================================================================
+`;
+
+exports[`objects.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const obj = {
+ 'a': true,
+ b: true,
+ "𐊧": true,
+}
+
+=====================================output=====================================
+const obj = {
+  a: true,
+  b: true,
+  "𐊧": true,
+};
+
+================================================================================
+`;

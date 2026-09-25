@@ -1,0 +1,247 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`arguments.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+console.log(@deco class Foo {})
+console.log(@deco class {})
+
+=====================================output=====================================
+console.log(
+  @deco
+  class Foo {},
+)
+console.log(
+  @deco
+  class {},
+)
+
+================================================================================
+`;
+
+exports[`arguments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+console.log(@deco class Foo {})
+console.log(@deco class {})
+
+=====================================output=====================================
+console.log(
+  @deco
+  class Foo {},
+);
+console.log(
+  @deco
+  class {},
+);
+
+================================================================================
+`;
+
+exports[`class-expression.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a1 = (@deco class Foo {});
+const a2 = (@deco class {});
+
+(@deco class Foo {});
+(@deco class {});
+
+const b1 = []
+;(@deco class Foo {})
+
+const b2 = []
+;(@deco class {})
+
+// This is not a \`ClassExpression\` but \`ClassDeclaration\`
+@deco class Foo {}
+
+=====================================output=====================================
+const a1 =
+  @deco
+  class Foo {}
+const a2 =
+  @deco
+  class {}
+
+;(
+  @deco
+  class Foo {}
+)
+;(
+  @deco
+  class {}
+)
+
+const b1 = []
+;(
+  @deco
+  class Foo {}
+)
+
+const b2 = []
+;(
+  @deco
+  class {}
+)
+
+// This is not a \`ClassExpression\` but \`ClassDeclaration\`
+@deco
+class Foo {}
+
+================================================================================
+`;
+
+exports[`class-expression.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a1 = (@deco class Foo {});
+const a2 = (@deco class {});
+
+(@deco class Foo {});
+(@deco class {});
+
+const b1 = []
+;(@deco class Foo {})
+
+const b2 = []
+;(@deco class {})
+
+// This is not a \`ClassExpression\` but \`ClassDeclaration\`
+@deco class Foo {}
+
+=====================================output=====================================
+const a1 =
+  @deco
+  class Foo {};
+const a2 =
+  @deco
+  class {};
+
+(
+  @deco
+  class Foo {}
+);
+(
+  @deco
+  class {}
+);
+
+const b1 = [];
+(
+  @deco
+  class Foo {}
+);
+
+const b2 = [];
+(
+  @deco
+  class {}
+);
+
+// This is not a \`ClassExpression\` but \`ClassDeclaration\`
+@deco
+class Foo {}
+
+================================================================================
+`;
+
+exports[`member-expression.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(@deco class Foo {}).name;
+(@deco class {}).name;
+
+=====================================output=====================================
+;(
+  @deco
+  class Foo {}
+).name
+;(
+  @deco
+  class {}
+).name
+
+================================================================================
+`;
+
+exports[`member-expression.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(@deco class Foo {}).name;
+(@deco class {}).name;
+
+=====================================output=====================================
+(
+  @deco
+  class Foo {}
+).name;
+(
+  @deco
+  class {}
+).name;
+
+================================================================================
+`;
+
+exports[`super-class.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Foo extends (@deco class Foo {}){}
+
+class Fo2 extends (@deco class {}){}
+
+=====================================output=====================================
+class Foo extends (
+  @deco
+  class Foo {}
+) {}
+
+class Fo2 extends (
+  @deco
+  class {}
+) {}
+
+================================================================================
+`;
+
+exports[`super-class.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Foo extends (@deco class Foo {}){}
+
+class Fo2 extends (@deco class {}){}
+
+=====================================output=====================================
+class Foo extends (
+  @deco
+  class Foo {}
+) {}
+
+class Fo2 extends (
+  @deco
+  class {}
+) {}
+
+================================================================================
+`;

@@ -1,0 +1,106 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`keywords.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+module Y4 {
+    enum Color { Blue, Red }
+}
+
+module YY3 {
+    module Module {
+        class A { s: string }
+    }
+}
+
+module YY4 {
+    enum Color { Blue, Red }
+}
+
+module YYY3 {
+    module Module {
+        class A { s: string }
+    }
+}
+
+module YYY4 {
+    enum Color { Blue, Red }
+}
+
+=====================================output=====================================
+module Y4 {
+  enum Color {
+    Blue,
+    Red,
+  }
+}
+
+module YY3 {
+  module Module {
+    class A {
+      s: string;
+    }
+  }
+}
+
+module YY4 {
+  enum Color {
+    Blue,
+    Red,
+  }
+}
+
+module YYY3 {
+  module Module {
+    class A {
+      s: string;
+    }
+  }
+}
+
+module YYY4 {
+  enum Color {
+    Blue,
+    Red,
+  }
+}
+
+================================================================================
+`;
+
+exports[`module.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+module Y3 {
+  module Module {
+      class A { s: string }
+  }
+
+  export enum X { }
+
+  interface x {
+      readonly [x: any]: any;
+  }
+}
+
+=====================================output=====================================
+module Y3 {
+  module Module {
+    class A {
+      s: string;
+    }
+  }
+
+  export enum X {}
+
+  interface x {
+    readonly [x: any]: any;
+  }
+}
+
+================================================================================
+`;
