@@ -893,7 +893,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			return null;
 		}
 		const node = /** @type {AST.Node & AST.NodeWithLocation} */ (enclosing);
-		if (!(node.start <= comment.start && comment.end <= node.end)) {
+		if (!(getCommentStart(node) <= comment.start && comment.end <= node.end)) {
 			return null;
 		}
 		const { children, precedingIndexes } = getSortedAttachableChildren(node);
@@ -904,7 +904,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 		let high = children.length;
 		while (low < high) {
 			const middle = (low + high) >> 1;
-			if (children[middle].start < comment.end) {
+			if (getCommentStart(children[middle]) < comment.end) {
 				low = middle + 1;
 			} else {
 				high = middle;
@@ -926,7 +926,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 	/**
 	 * A node's attachable children (see {@link getAttachableChildren}) sorted
-	 * by their start, like Prettier's `getSortedChildNodes`, with, for each
+	 * by their start (see {@link getCommentStart}), like Prettier's
+	 * `getSortedChildNodes`, with, for each
 	 * index, the index of the child up to it that ends last (the first such
 	 * one)
 	 * @param {AST.Node} node
@@ -935,7 +936,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 	function getSortedAttachableChildren(node) {
 		let sorted = sortedChildrenCache.get(node);
 		if (!sorted) {
-			const children = getAttachableChildren(node).sort((a, b) => a.start - b.start);
+			const children = getAttachableChildren(node).sort(
+				(a, b) => getCommentStart(a) - getCommentStart(b),
+			);
 			/** @type {number[]} */
 			const precedingIndexes = [];
 			children.forEach((child, index) => {
@@ -950,15 +953,23 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 	/**
 	 * Where a node starts for the comments before it, like Prettier's
-	 * `locStart`: an export whose declaration's decorators come before
-	 * `export` starts at the first of them, so that the comments after them
-	 * lie in the declaration (`@dec /* c *\/ export class A {}`)
+	 * `locStart`: a node whose decorators come before it starts at the first
+	 * of them, so that the comments after them lie in the node. That's an
+	 * export whose declaration's decorators come before `export`
+	 * (`@dec /* c *\/ export class A {}`), and a parameter, whose decorators
+	 * the parser keeps outside its span (`@dec /* c *\/ x`). A parameter
+	 * property's decorators hang off its parameter (`@dec private x`).
 	 * @param {AST.Node | AST.CSS.StyleSheet} node
 	 * @returns {number}
 	 */
 	function getCommentStart(node) {
 		const { start } = /** @type {AST.NodeWithLocation} */ (node);
-		const [decorator] = /** @type {any} */ (node).declaration?.decorators ?? [];
+		const decorated = /** @type {any} */ (node).declaration ?? node;
+		const [decorator] =
+			(node.type === /** @type {string} */ ('TSParameterProperty')
+				? /** @type {any} */ (node).parameter
+				: decorated
+			)?.decorators ?? [];
 		return decorator && decorator.start < start ? decorator.start : start;
 	}
 
@@ -971,6 +982,26 @@ export function get_comment_handlers(source, comments, index = 0) {
 			node?.type === 'ClassDeclaration' ||
 			node?.type === 'ClassExpression' ||
 			node?.type === 'TSInterfaceDeclaration'
+		);
+	}
+
+	/**
+	 * Like Prettier's `isPropertyLikeNode`: a class member, or a parameter
+	 * property, whose modifiers print between its decorators and its key
+	 * @param {AST.Node | AST.CSS.StyleSheet | null | undefined} node
+	 * @returns {boolean}
+	 */
+	function isPropertyLike(node) {
+		const type = /** @type {string | undefined} */ (node?.type);
+		return (
+			type === 'PropertyDefinition' ||
+			type === 'MethodDefinition' ||
+			type === 'AccessorProperty' ||
+			type === 'TSAbstractPropertyDefinition' ||
+			type === 'TSAbstractMethodDefinition' ||
+			type === 'TSAbstractAccessorProperty' ||
+			type === 'TSDeclareMethod' ||
+			type === 'TSParameterProperty'
 		);
 	}
 
@@ -1066,7 +1097,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 			type === 'AssignmentPattern' ||
 			type === 'TSMappedType' ||
 			getSignatureParameters(node) !== null ||
-			isClassLike(/** @type {AST.Node} */ (node))
+			isClassLike(/** @type {AST.Node} */ (node)) ||
+			isPropertyLike(node) ||
+			// A parameter property's decorators hang off its parameter
+			!!(/** @type {any} */ (node)?.decorators?.length)
 		);
 	}
 
@@ -1272,6 +1306,23 @@ export function get_comment_handlers(source, comments, index = 0) {
 				}
 				return true;
 			}
+		}
+
+		// `handleMethodNameComments`: a line comment, or a comment on its own
+		// line, after a class member's or a parameter property's decorator
+		// trails it, so that it prints before the modifiers (`static`,
+		// `accessor`, `private`, …) rather than between them and the name,
+		// where it would break the line after them. The parser hangs a
+		// parameter property's decorators off its parameter.
+		if (
+			preceding?.type === 'Decorator' &&
+			(isPropertyLike(enclosing) ||
+				(ancestor?.type === /** @type {string} */ ('TSParameterProperty') &&
+					/** @type {any} */ (ancestor).parameter === enclosing)) &&
+			(comment.type === 'Line' || ownLine)
+		) {
+			addTrailingComment(preceding, comment);
+			return true;
 		}
 
 		// `handleMemberExpressionComments`: a comment on its own line before the

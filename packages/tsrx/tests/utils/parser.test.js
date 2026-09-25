@@ -6959,6 +6959,46 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(other).leading).toBeUndefined();
 	});
 
+	// Prettier's `handleMethodNameComments`
+	it('trails the decorator of a class member with a comment before its modifiers', () => {
+		const [field, accessor, method, inline] = firstStatement(
+			'class A {\n  @a\n  // b\n  static b;\n  @c\n  /* d */\n  accessor d;\n  @e // f\n  public static f() {}\n  @g /* h */ static h;\n}',
+		).body.body;
+
+		expect(commentsOf(field.decorators[0]).trailing).toEqual([' b']);
+		expect(commentsOf(field.key).leading).toBeUndefined();
+		expect(commentsOf(accessor.decorators[0]).trailing).toEqual([' d ']);
+		expect(commentsOf(method.decorators[0]).trailing).toEqual([' f']);
+		// A comment with code on both sides trails the decorator by the tie-break
+		expect(commentsOf(inline.decorators[0]).trailing).toEqual([' h ']);
+		expect(commentsOf(inline.key).leading).toBeUndefined();
+	});
+
+	it('leads the key of a class member with a comment between its modifiers and the key', () => {
+		const [field] = firstStatement('class A {\n  @a static /* b */ b;\n}').body.body;
+
+		expect(commentsOf(field.decorators[0]).trailing).toBeUndefined();
+		expect(commentsOf(field.key).leading).toEqual([' b ']);
+	});
+
+	// Prettier's `locStart` starts a node at its first decorator, which the
+	// parser keeps outside a parameter's span
+	it('keeps the comments after a parameter decorator in the parameter', () => {
+		const [method, ctor] = firstStatement(
+			'class A {\n  m(@a(/* a */ x) /* b */ y) {}\n  constructor(\n    @c\n    // c\n    private c: T,\n    @d /* d */ readonly d = 1,\n  ) {}\n}',
+		).body.body;
+		const [parameter] = method.value.params;
+		const [property, withDefault] = ctor.value.params;
+
+		expect(commentsOf(parameter.decorators[0].expression.arguments[0]).leading).toEqual([' a ']);
+		expect(commentsOf(parameter.decorators[0]).trailing).toEqual([' b ']);
+		expect(commentsOf(parameter).leading).toBeUndefined();
+		expect(commentsOf(property.parameter.decorators[0]).trailing).toEqual([' c']);
+		expect(commentsOf(property).leading).toBeUndefined();
+		expect(commentsOf(withDefault.parameter.decorators[0]).trailing).toEqual([' d ']);
+		expect(commentsOf(withDefault).leading).toBeUndefined();
+	});
+
 	it('leads the type annotation of an object pattern with a comment before its colon', () => {
 		const { id } = firstStatement('const { a } /* c */ : T = o;').declarations[0];
 
