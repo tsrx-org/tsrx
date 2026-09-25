@@ -76,7 +76,9 @@ export const parsers = {
 		 * @returns {AST.Program}
 		 */
 		parse(text, options) {
-			return parseModule(text, options.filepath || 'PrettierPlugin.tsrx');
+			const ast = parseModule(text, options.filepath || 'PrettierPlugin.tsrx');
+			markHashbangComment(ast, text);
+			return ast;
 		},
 
 		/**
@@ -96,6 +98,53 @@ export const parsers = {
 		},
 	},
 };
+
+/**
+ * The hashbang comments of parsed files (see {@link markHashbangComment}).
+ * @type {WeakSet<AST.Comment>}
+ */
+const hashbangComments = new WeakSet();
+
+/**
+ * Remember a file's hashbang (`#!…` on its first line) so {@link printComment}
+ * prints it back as written. The parser reports it as a `Line` comment at offset
+ * 0 whose value is the text after `#!`, and attaches it like any other comment,
+ * so it can end up on any node: the first statement, a later one when empty
+ * statements come first, or the program. Find it by its position instead.
+ * @param {AST.Program} ast
+ * @param {string} text
+ */
+function markHashbangComment(ast, text) {
+	if (!text.startsWith('#!')) {
+		return;
+	}
+	/** @type {unknown[]} */
+	const stack = [ast];
+	const seen = new Set();
+	while (stack.length > 0) {
+		const value = stack.pop();
+		if (!value || typeof value !== 'object' || seen.has(value)) {
+			continue;
+		}
+		seen.add(value);
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				stack.push(item);
+			}
+			continue;
+		}
+		const node = /** @type {Record<string, unknown>} */ (value);
+		if (node.type === 'Line' && node.start === 0) {
+			hashbangComments.add(/** @type {AST.Comment} */ (/** @type {unknown} */ (node)));
+			continue;
+		}
+		for (const key in node) {
+			if (key !== 'metadata' && key !== 'loc' && key !== 'parent') {
+				stack.push(node[key]);
+			}
+		}
+	}
+}
 
 /** @type {import('prettier').Plugin['printers']} */
 export const printers = {
@@ -2086,7 +2135,7 @@ function printDeclarationDecorators(node, path, options, print) {
  */
 function printComment(comment, text) {
 	if (comment.type === 'Line') {
-		return '//' + comment.value;
+		return (hashbangComments.has(comment) ? '#!' : '//') + comment.value;
 	}
 	if (!comment.value.includes('\n')) {
 		return '/*' + comment.value + '*/';

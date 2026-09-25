@@ -31,6 +31,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { get_hashbang } from '../comment-utils.js';
 
 /**
  * Render `imports` as a side-effect import prelude. Used for runtime modules
@@ -45,6 +46,20 @@ function render_prelude(imports) {
 	if (imports === undefined || imports.length === 0) return '';
 
 	return imports.map((source) => `import ${JSON.stringify(source)};`).join('\n') + '\n';
+}
+
+/**
+ * Put `prelude` at the top of the compiled module, after its hashbang line if it
+ * has one: a hashbang is only valid as a module's very first line.
+ *
+ * @param {string} prelude
+ * @param {string} code
+ * @returns {string}
+ */
+function with_prelude(prelude, code) {
+	const hashbang = get_hashbang(code);
+	if (hashbang === null) return prelude + code;
+	return `${hashbang}\n${prelude}${code.slice(hashbang.length)}`;
 }
 
 /**
@@ -75,7 +90,7 @@ export function createDepScanTransformPlugin({
 			async handler(/** @type {string} */ code, /** @type {string} */ id) {
 				try {
 					const { code: compiled } = await compile(code, id);
-					return { code: prelude + compiled, moduleType };
+					return { code: with_prelude(prelude, compiled), moduleType };
 				} catch {
 					return { code: '', moduleType };
 				}
@@ -126,7 +141,7 @@ export function createDepScanLoadPlugin({
 				// report either at request time.
 				const source = await readFile(real_path, 'utf-8');
 				const { code } = await compile(source, real_path);
-				return { code: prelude + code, moduleType };
+				return { code: with_prelude(prelude, code), moduleType };
 			} catch {
 				return { code: '', moduleType };
 			}
