@@ -401,15 +401,15 @@ describe('TSRX parser', () => {
 			expect(as_type(declaration, 'ImportDeclaration').specifiers[0].local.name).toBe('defer');
 		});
 
-		it('keeps the existing AST shape for ordinary dynamic import options', () => {
+		it('gives an ordinary dynamic import the same `options` shape', () => {
 			const expression = findNode(
 				"const feature = import('./feature.json', { with: { type: 'json' } });",
 				'ImportExpression',
 			);
 
 			expect(expression.phase).toBeUndefined();
-			expect(expression.options).toBeUndefined();
-			expect(expression.arguments).toHaveLength(1);
+			expect(expression.options?.type).toBe('ObjectExpression');
+			expect(expression).not.toHaveProperty('arguments');
 		});
 
 		it('rejects deferred default, named, and bare imports', () => {
@@ -8194,6 +8194,67 @@ describe('wrapped destructuring assignment targets', () => {
 			'AssignmentExpression',
 		);
 		expect(assignment.left.type).toBe('ArrayPattern');
+	});
+});
+
+describe('`var` redeclaring a catch parameter', () => {
+	// Annex B lets `var` in a catch block redeclare a catch parameter that is a
+	// plain name, as acorn and TypeScript allow. Parsed in a worker, so a parse
+	// that never returns fails the test instead of stalling the run.
+	const modes = [
+		undefined,
+		{ collect: true, comments: [], preserveParens: true },
+		{ loose: true, comments: [] },
+	];
+	/** @param {string[]} sources */
+	const in_every_mode = (sources) =>
+		sources.flatMap((source) => modes.map((options) => ({ source, options })));
+
+	it('lets `var` redeclare a catch parameter that is a plain name', async () => {
+		const sources = [
+			'export function read() {\n\ttry { throw 1; }\n\tcatch (error) { var error = 2; return error; }\n}',
+			'try {} catch (e: unknown) { var e; }',
+			'try {} catch (e) { for (var e of []) {} }',
+			'try {} catch (e) { { var e; } }',
+			'try {} catch (e) { try {} catch (e) { var e; } }',
+			'function App() @{ @try { <div /> } @catch (e) { var e = 1; <span>{e}</span> } }',
+			'function App() { return @try { <div /> } @catch (e) { var e = 1; <span>{e}</span> }; }',
+		];
+
+		const outcomes = await parse_in_worker(in_every_mode(sources));
+
+		expect(outcomes).toEqual(
+			sources.flatMap(() => [
+				{ ok: true, errors: undefined },
+				{ ok: true, errors: [] },
+				{ ok: true, errors: [] },
+			]),
+		);
+	});
+
+	it('still rejects the redeclarations Annex B does not allow', async () => {
+		// A destructured parameter and a function declaration are ECMAScript early
+		// errors that TypeScript doesn't report; `let` conflicts in TypeScript too.
+		const sources = [
+			['try {} catch ({ e }) { var e; }', 'e'],
+			['try {} catch ([e]) { var e; }', 'e'],
+			['try {} catch (e) { let e; }', 'e'],
+			['try {} catch (e) { function e() {} }', 'e'],
+			['function App() @{ @try { <div /> } @catch (e, reset) { var reset; <span /> } }', 'reset'],
+		];
+
+		const outcomes = await parse_in_worker(in_every_mode(sources.map(([source]) => source)));
+
+		expect(outcomes).toEqual(
+			sources.flatMap(([, name]) => {
+				const message = `Identifier '${name}' has already been declared`;
+				return [
+					{ ok: false, message, pos: expect.any(Number) },
+					{ ok: true, errors: [message] },
+					{ ok: true, errors: [message] },
+				];
+			}),
+		);
 	});
 });
 
