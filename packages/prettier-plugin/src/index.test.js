@@ -9464,6 +9464,125 @@ function Two() @{
 		});
 	});
 
+	// Prettier's `printUnionType`: a union that doesn't fit moves to its own
+	// indented lines, one member per line after a leading `|`, unless its
+	// context already indents it or keeps it in place.
+	describe('union types break like Prettier', () => {
+		it('moves a broken union in a type annotation to its own indented lines', async () => {
+			const input = `let x: Foooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo | null | undefined = 1;
+interface I { value: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbb }`;
+			const expected = `let x:
+  | Foooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
+  | null
+  | undefined = 1;
+interface I {
+  value:
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbb;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('indents a broken union in parameters, return types, and class fields', async () => {
+			const input = `function f(value: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | Ccccc) {}
+function g(): Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb {}
+class C {
+  value: Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | null = null;
+}`;
+			const expected = `function f(
+  value:
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    | Ccccc,
+) {}
+function g():
+  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb {}
+class C {
+  value:
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    | null = null;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks a union in place in type arguments and conditional type branches', async () => {
+			const input = `let list: Array<Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb>;
+type Pick<T> = T extends string ? Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb : never;
+type K<T> = T extends string ? Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | Ccccccccccc : never;`;
+			const expected = `let list: Array<
+  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+>;
+type Pick<T> = T extends string
+  ? Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  : never;
+type K<T> = T extends string
+  ? | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    | Ccccccccccc
+  : never;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks a parenthesized union inside its parentheses', async () => {
+			const input = `type Items = (Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)[];`;
+			const expected = `type Items = (
+  | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  | Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+)[];`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('moves a cast union below as or satisfies, and keeps a hugged one inline', async () => {
+			const input = `const input = element as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
+const value = options satisfies Aaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbb | Cccccccccccc;
+const target = event.target as HTMLElement | null;`;
+			const expected = `const input = element as
+  HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
+const value = options satisfies
+  Aaaaaaaaaaaaaaaaaaaaaaaa | Bbbbbbbbbbbbbbbbbbbbbbbbbb | Cccccccccccc;
+const target = event.target as HTMLElement | null;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('prints the comments before a union inside its indentation', async () => {
+			const input = `interface Props {
+  // What the field holds
+  value: // Either kind of value
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb;
+  items: (// Either kind of item
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb)[];
+  short: string | null;
+  config: { enabled: boolean; name: string } | null;
+}`;
+			const expected = `interface Props {
+  // What the field holds
+  value:
+    // Either kind of value
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb;
+  items: (
+    // Either kind of item
+    | Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    | Bbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  )[];
+  short: string | null;
+  config: { enabled: boolean; name: string } | null;
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+	});
+
 	// `extends` only takes a left-hand-side expression, so a superclass that
 	// binds looser than that is a syntax error without its parens.
 	describe('superclass expressions keep required parentheses', () => {
