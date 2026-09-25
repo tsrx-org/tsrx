@@ -8919,6 +8919,18 @@ function printTaggedTemplateExpression(node, path, options, print) {
 	if (node.typeArguments) {
 		parts.push(path.call(print, 'typeArguments'));
 	}
+	// Like Prettier, a space goes before the template's leading comments, or a
+	// line break when they start a line. Prettier's line break is a `softline`,
+	// which joins the comment to the tag when it fits (`tag/* c *\/ \`x\``), and
+	// its next pass then adds the space: a `line` prints that second form at
+	// once.
+	const quasiComment = /** @type {AST.NodeWithMaybeComments} */ (node.quasi).leadingComments?.[0];
+	if (quasiComment) {
+		const end = /** @type {AST.NodeWithLocation} */ (node.typeArguments ?? node.tag).end;
+		const start = /** @type {AST.NodeWithLocation} */ (quasiComment).start;
+		const text = /** @type {string} */ (options.originalText);
+		parts.push(text.slice(end, start).includes('\n') ? line : ' ');
+	}
 	// Like Prettier, a line comment after the tag prints before the backtick,
 	// which an embedded template's doc doesn't print first
 	parts.push(lineSuffixBoundary, path.call(print, 'quasi'));
@@ -12027,10 +12039,18 @@ function printTSMappedType(node, path, options, print) {
 
 	// A comment after `{` attaches to the type parameter, whose name this
 	// printer prints directly, so print it here, like Prettier prints the
-	// mapped type's dangling comments
+	// mapped type's dangling comments. One after the `[` stays before the
+	// name, as Prettier prints the leading comments of its key.
 	/** @type {Doc[]} */
 	const commentsDoc = [];
-	const comments = /** @type {AST.NodeWithMaybeComments} */ (typeParam).leadingComments ?? [];
+	const leadingComments =
+		/** @type {AST.NodeWithMaybeComments} */ (typeParam).leadingComments ?? [];
+	/** @param {AST.Comment} comment */
+	const isAfterBracket = (comment) =>
+		skipWhitespaceAndComments(text, /** @type {AST.NodeWithLocation} */ (comment).end) ===
+		/** @type {AST.NodeWithLocation} */ (typeParam).start;
+	const keyComments = leadingComments.filter(isAfterBracket);
+	const comments = leadingComments.filter((comment) => !isAfterBracket(comment));
 	if (comments.length > 0) {
 		const printed = comments.map((comment) => printComment(comment, text));
 		const lastComment = /** @type {AST.CommentWithLocation} */ (comments[comments.length - 1]);
@@ -12054,11 +12074,15 @@ function printTSMappedType(node, path, options, print) {
 					'[',
 					indent([
 						softline,
+						...printLeadingComments(typeParam, keyComments, options),
 						typeParam.name,
 						' in ',
 						typeParam.constraint
 							? path.call(print, 'typeParameter', 'constraint')
 							: path.call(print, 'typeParameter'),
+						// The comments after the constraint trail the type parameter,
+						// which holds it: like Prettier, they stay after it
+						...printTrailingComments(typeParam, options),
 						node.nameType ? [' as ', path.call(print, 'nameType')] : '',
 					]),
 					softline,
