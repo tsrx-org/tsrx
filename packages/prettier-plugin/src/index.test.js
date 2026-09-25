@@ -703,7 +703,7 @@ const items=[1,2,3];
   return <div>{value}</div>;
 }
 function App() {
-  return <Box<string> value="hello" />;
+  return <Box<string> value={"hello"} />;
 }`;
 
 		const result = await format(input);
@@ -782,16 +782,8 @@ function App() {
     </>
   );
 }`;
-		const expected = `function ElementToFragment(condition) {
-  return condition
-    ? <Item />
-    : <>
-        <Item />
-      </>;
-}`;
-
 		const result = await format(input);
-		expect(result).toBeWithNewline(expected);
+		expect(result).toBeWithNewline(input);
 		expect(await format(result)).toBe(result);
 	});
 
@@ -8742,8 +8734,10 @@ b";`);
   return <input ${attribute} />;
 }`;
 
+		// Like Prettier, a string in braces stays an expression container, and
+		// its quotes follow `singleQuote` rather than `jsxSingleQuote` (#408)
 		it.each([
-			[`title={'Say "hello"'}`, `title='Say "hello"'`],
+			[`title={'Say "hello"'}`, `title={'Say "hello"'}`],
 			[`title="Say &quot;hello&quot;"`, `title='Say "hello"'`],
 			[`title='x "y" &apos;z&apos;'`, `title="x &quot;y&quot; 'z'"`],
 			[`title="&amp;amp;"`, `title="&amp;amp;"`],
@@ -8752,18 +8746,72 @@ b";`);
 			[`title={"It's \\"both\\""}`, `title={'It\\'s "both"'}`],
 			[`title={'\\ud800'}`, `title={"\\ud800"}`],
 			[`title={'a\\nb'}`, `title={"a\\nb"}`],
-			[`title={'It\\'s'}`, `title="It's"`],
-			[`title={'hello'}`, `title="hello"`],
+			[`title={'It\\'s'}`, `title={"It's"}`],
+			[`title={'hello'}`, `title={"hello"}`],
+			[`title={/* c */ 'x'} alt={'y' /* d */}`, `title={/* c */ "x"} alt={"y" /* d */}`],
 		])('prints %s as %s', async (input, expected) => {
 			const result = await format(wrap(input));
 			expect(result).toBeWithNewline(wrap(expected));
 		});
 
-		it('switches quotes instead of breaking the attribute with jsxSingleQuote', async () => {
+		it('keeps the braces around a string with jsxSingleQuote', async () => {
 			const result = await format(wrap(`title={"It's ready"} alt="Say &apos;hi&apos;"`), {
 				jsxSingleQuote: true,
 			});
-			expect(result).toBeWithNewline(wrap(`title="It's ready" alt="Say 'hi'"`));
+			expect(result).toBeWithNewline(wrap(`title={"It's ready"} alt="Say 'hi'"`));
+		});
+
+		it('keeps the braces around a string in a template', async () => {
+			const input = `export function App() @{
+  <div class={"foo"} title={'It\\'s'}>{"text"}</div>
+}`;
+			const expected = `export function App() @{
+  <div class={'foo'} title={"It's"}>
+    {'text'}
+  </div>
+}`;
+			expect(await format(input, { singleQuote: true })).toBeWithNewline(expected);
+		});
+
+		// Prettier keeps an opening element with one string attribute on one
+		// line, but not one with a string in braces, which breaks like any
+		// other expression container
+		it('breaks a long string in braces like an expression container', async () => {
+			const input = `export function App() {
+  return <div title={"a very long string value that goes on and on and on and on and on and on and on"}>x</div>;
+}
+export function B() {
+  return <div title={"a very long string value that goes on and on and on and on and on and on and on and on"}>x</div>;
+}
+export function C() {
+  return <div title="a very long string value that goes on and on and on and on and on and on and on and on">x</div>;
+}`;
+			const expected = `export function App() {
+  return (
+    <div title={"a very long string value that goes on and on and on and on and on and on and on"}>
+      x
+    </div>
+  );
+}
+export function B() {
+  return (
+    <div
+      title={
+        "a very long string value that goes on and on and on and on and on and on and on and on"
+      }
+    >
+      x
+    </div>
+  );
+}
+export function C() {
+  return (
+    <div title="a very long string value that goes on and on and on and on and on and on and on and on">
+      x
+    </div>
+  );
+}`;
+			expect(await format(input, { printWidth: 100 })).toBeWithNewline(expected);
 		});
 	});
 
@@ -9285,7 +9333,8 @@ function* h() {
 			// the parentheses Prettier gives a multi-line element after `=`, `return`,
 			// `throw`, an expression-bodied `=>`, a class field, an object value,
 			// `export default`, and `&&`. A code block that is a function body, and a
-			// value in a call, an array, or a conditional branch, stays bare.
+			// value in a call or an array, stays bare. A conditional branch breaks
+			// inside the parentheses of the conditional's JSX mode, like an element.
 			const input = `const x = @if (something === true) { <div>Hello</div> };
 function f(p) { return @{ const a = p.a; <div>{a}</div> }; }
 function g(items) { throw @for (const i of items) { <li>{i}</li> }; }
@@ -9399,11 +9448,11 @@ const arr = [
     <div />
   },
 ];
-const cond = a
-  ? @if (b) {
-      <c />
-    }
-  : null;
+const cond = a ? (
+  @if (b) {
+    <c />
+  }
+) : null;
 const logical = a && (
   @if (b) {
     <c />
@@ -13526,6 +13575,197 @@ export default a ? b : c ? d : e;`;
 \t\t: c;
 }`;
 			expect(await format(tabbed, { useTabs: true })).toBeWithNewline(tabbed);
+		});
+
+		// Prettier's JSX mode (#446): a conditional chain with an element in it
+		// doesn't indent, and each branch but \`null\`, \`undefined\`, and a nested
+		// alternate breaks inside parentheses of its own
+		it('breaks the branches of a conditional with an element inside parentheses', async () => {
+			const input = `const a = cond ? <span>aaaaaaaaaaaaaaaaaaaaaaaa</span> : <span>bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</span>;
+const b = cond ? <span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</span> : null;
+const c = cond ? undefined : <span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</span>;
+const d = cond ? <span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</span> : "";
+const animal = isBird ? "bird" : isCat ? "cat" : <span className="warning">Unknown animal type</span>;
+const shape = isA ? <b>A</b> : isB ? <b>BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB</b> : null;`;
+			expect(await format(input)).toBeWithNewline(`const a = cond ? (
+  <span>aaaaaaaaaaaaaaaaaaaaaaaa</span>
+) : (
+  <span>bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</span>
+);
+const b = cond ? (
+  <span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</span>
+) : null;
+const c = cond ? undefined : (
+  <span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</span>
+);
+const d = cond ? (
+  <span>
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  </span>
+) : (
+  ""
+);
+const animal = isBird ? (
+  "bird"
+) : isCat ? (
+  "cat"
+) : (
+  <span className="warning">Unknown animal type</span>
+);
+const shape = isA ? (
+  <b>A</b>
+) : isB ? (
+  <b>BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB</b>
+) : null;`);
+		});
+
+		it('breaks a conditional with an element in JSX mode in children, attributes, returns, arrows, arguments, and member objects', async () => {
+			const input = `function List({ items, filter }) {
+  return <ul title={filter ? <span>filtered by {filter.name} and {filter.value}</span> : <span>all</span>}>{items.length ? items.map((item) => <li>{item}</li>) : <li className="empty">Nothing to show here yet</li>}</ul>;
+}
+function F() {
+  return cond ? <div className="aaaaaaaaaaaaaaaaaaaa">aaaaaaaa</div> : <div className="b">bbbbbbbbb</div>;
+}
+const G = () => cond ? <div className="aaaaaaaaaaaaaaaaaaaa">aaaaaaaa</div> : <div className="b">bb</div>;
+foo(cond ? <div className="aaaaaaaaaaaaaaaaaaaa">aaaaaaaaaaaaa</div> : <div className="b">bbbbbbbbbbbbb</div>);
+const props = (cond ? <div className="aaaaaaaaaaaaaaaaaaaa">aaaaaaaaaaaaa</div> : <div className="b">bbb</div>).props;`;
+			expect(await format(input)).toBeWithNewline(`function List({ items, filter }) {
+  return (
+    <ul
+      title={
+        filter ? (
+          <span>
+            filtered by {filter.name} and {filter.value}
+          </span>
+        ) : (
+          <span>all</span>
+        )
+      }
+    >
+      {items.length ? (
+        items.map((item) => <li>{item}</li>)
+      ) : (
+        <li className="empty">Nothing to show here yet</li>
+      )}
+    </ul>
+  );
+}
+function F() {
+  return cond ? (
+    <div className="aaaaaaaaaaaaaaaaaaaa">aaaaaaaa</div>
+  ) : (
+    <div className="b">bbbbbbbbb</div>
+  );
+}
+const G = () =>
+  cond ? (
+    <div className="aaaaaaaaaaaaaaaaaaaa">aaaaaaaa</div>
+  ) : (
+    <div className="b">bb</div>
+  );
+foo(
+  cond ? (
+    <div className="aaaaaaaaaaaaaaaaaaaa">aaaaaaaaaaaaa</div>
+  ) : (
+    <div className="b">bbbbbbbbbbbbb</div>
+  ),
+);
+const props = (
+  cond ? (
+    <div className="aaaaaaaaaaaaaaaaaaaa">aaaaaaaaaaaaa</div>
+  ) : (
+    <div className="b">bbb</div>
+  )
+).props;`);
+		});
+
+		it('keeps comments after the ? of a conditional in JSX mode like Prettier', async () => {
+			const input = `const x = cond ? // why
+  <div /> : null;
+const y = cond ?
+  // own line
+  <div /> : <span />;`;
+			expect(await format(input)).toBeWithNewline(`const x = cond ? ( // why
+  <div />
+) : null;
+const y = cond ? (
+  // own line
+  <div />
+) : (
+  <span />
+);`);
+		});
+
+		it('breaks template values in conditional branches and template children in JSX mode', async () => {
+			const input = `export function App({ cond, items }) @{
+  const label = cond ? <span>aaaaaaaaaaaaaaaaaaaaaaaaaaa</span> : <span>bbbbbbbbbbbbbbbbbbbbbbbb</span>;
+  <div>{cond ? <span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</span> : <span>bbbbbbbbbbbbbbbbbbbbbbbbbbbbb</span>}</div>
+}
+const x = cond ? @{ const a = 1; <div>{a}</div> } : null;
+const y = cond ? <div /> : @for (const a of b) { <div>{a}</div> };`;
+			expect(await format(input)).toBeWithNewline(`export function App({ cond, items }) @{
+  const label = cond ? (
+    <span>aaaaaaaaaaaaaaaaaaaaaaaaaaa</span>
+  ) : (
+    <span>bbbbbbbbbbbbbbbbbbbbbbbb</span>
+  );
+  <div>
+    {cond ? (
+      <span>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</span>
+    ) : (
+      <span>bbbbbbbbbbbbbbbbbbbbbbbbbbbbb</span>
+    )}
+  </div>
+}
+const x = cond ? (
+  @{
+    const a = 1;
+    <div>{a}</div>
+  }
+) : null;
+const y = cond ? (
+  <div />
+) : (
+  @for (const a of b) {
+    <div>{a}</div>
+  }
+);`);
+		});
+
+		it('breaks a conditional without an element in normal mode in children and attributes', async () => {
+			const input = `function F({ cond, items }) {
+  return (
+    <div className={cond ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}>
+      {cond ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+      {items.map((item) => (item.done ? <li className="done">{item.label}</li> : null))}
+    </div>
+  );
+}`;
+			expect(await format(input)).toBeWithNewline(`function F({ cond, items }) {
+  return (
+    <div
+      className={
+        cond
+          ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    >
+      {cond
+        ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+      {items.map((item) =>
+        item.done ? <li className="done">{item.label}</li> : null,
+      )}
+    </div>
+  );
+}`);
+		});
+
+		it('keeps a conditional with an element that fits on one line', async () => {
+			const source = `const a = cond ? <span>a</span> : null;
+const b = cond ? <b /> : isOther ? <i /> : undefined;
+const c = <div>{cond ? <span>a</span> : <span>b</span>}</div>;`;
+			expect(await format(source)).toBeWithNewline(source);
 		});
 	});
 
