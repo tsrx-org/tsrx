@@ -18593,7 +18593,10 @@ const member =
 				'type A =\n  /* some comment here */\n  Foooooooooooooooooooooooooo<Barrrrrrrrrrrrrrrrr, Bazzzzzzzzzzzzzzzzzzzz>;',
 			],
 			['const foo = /** @type {string} */\n  (bar);', 'const foo = /** @type {string} */ (bar);'],
-			['const test = /* some comment here */\n  goog;', 'const test = /* some comment here */ goog;'],
+			[
+				'const test = /* some comment here */\n  goog;',
+				'const test = /* some comment here */ goog;',
+			],
 		])(
 			'breaks after the operator before a block comment that ends its line in %j',
 			async (input, expected) => {
