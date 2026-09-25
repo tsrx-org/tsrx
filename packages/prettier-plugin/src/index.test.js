@@ -7976,8 +7976,8 @@ function g() {
 	const mapping = result.mappings.find(
 		(mapping: { sourceOffsets: number[]; generatedOffsets: number[] }) =>
 			mapping.sourceOffsets[0] === source_offset &&
-				mapping.generatedOffsets[0] === generated_offset &&
-				mapping.lengths[0] === identifier.length,
+			mapping.generatedOffsets[0] === generated_offset &&
+			mapping.lengths[0] === identifier.length,
 	);
 }`;
 
