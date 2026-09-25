@@ -2543,6 +2543,26 @@ export function App() @{
 			expect(code).toContain('line\\nbreak');
 		});
 
+		it('keeps the space after a closing tag whose body ends in a line break', () => {
+			const { code } = compile(
+				'export function App() @{\n\t<div>\n\t\t<span>\n\t\t\t<b>1</b>\n\t\t</span> 2\n\t</div>\n}',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('</span> 2');
+		});
+
+		it('keeps a non-breaking space next to a line break as text for the JSX compiler', () => {
+			// JSX whitespace is ASCII, so the character is text. The JSX compiler
+			// decides whether it renders at the edge of a line, as it does for TSX.
+			const { code } = compile(
+				'export function App() @{\n\t<div>\n\t\t\u00a0<b>x</b>\n\t</div>\n}',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('\u00a0<b>x</b>');
+		});
+
 		it('keeps double-quoted strings inside expression containers as JavaScript strings', () => {
 			const { code } = compile(
 				`export function App() @{
