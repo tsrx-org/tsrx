@@ -8120,6 +8120,15 @@ const short = (value as Entry).name;`;
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// A comment on a line of its own after the body isn't one of these,
+		// and keeps the place it had, which the next pass keeps too
+		it.each([
+			['((a) => (b\n  /* c */))(1);', '((a) => b)(/* c */ 1);'],
+			['((a) => (b\n  // c\n))(1);', '((a) => b)(\n  // c\n  1,\n);'],
+		])('formats %j as before', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		// Only a call's callee or a tag counts: the comments of a function
 		// that is a member object or a `new` callee print outside
 		it.each([

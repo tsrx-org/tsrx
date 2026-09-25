@@ -696,10 +696,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 		const arrow = /** @type {AST.Node & AST.NodeWithLocation} */ (path.at(-1));
 		const call = /** @type {any} */ (path.at(-2));
 		// A chain of arrow functions breaks before its last body when a comment
-		// follows it, which keeps the comment there
+		// follows it, which keeps the comment there. The comments go with the
+		// first one, on the body's line.
 		if (
 			arrow?.type !== 'ArrowFunctionExpression' ||
 			arrow.body !== body ||
+			source.slice(body.end, comments[0].start).includes('\n') ||
 			!body.metadata?.parenthesized ||
 			keepsCommentsInArrowBodyParens(body) ||
 			body.type === 'ArrowFunctionExpression' ||
