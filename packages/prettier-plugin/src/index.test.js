@@ -7953,6 +7953,54 @@ enum E {
   "it's" = 1,
 }`);
 		});
+
+		// Like Prettier's `replaceEndOfLine(printString(…))`: the line break in a
+		// string continued with a backslash breaks the groups around it
+		it('breaks the code around a string that continues onto the next line', async () => {
+			const input = `const message = "first line \\
+second line";
+foo("first line \\
+second line", other);
+x = ["a\\
+b", c];
+function f() { return "a \\
+b" + c; }`;
+
+			expect(await format(input)).toBeWithNewline(`const message =
+  "first line \\
+second line";
+foo(
+  "first line \\
+second line",
+  other,
+);
+x = [
+  "a\\
+b",
+  c,
+];
+function f() {
+  return (
+    "a \\
+b" + c
+  );
+}`);
+		});
+
+		it('breaks an object around a key that continues onto the next line', async () => {
+			const input = `const o = { "a \\
+b": 1, c: 2 };
+type T = "a \\
+b";`;
+
+			expect(await format(input)).toBeWithNewline(`const o = {
+  "a \\
+b": 1,
+  c: 2,
+};
+type T = "a \\
+b";`);
+		});
 	});
 
 	// A JSX attribute string has no escapes and decodes HTML entities, so it is

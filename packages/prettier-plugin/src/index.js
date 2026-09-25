@@ -291,6 +291,19 @@ function printStringLiteral(node, options) {
 }
 
 /**
+ * A printed string literal as a doc, like Prettier's
+ * `replaceEndOfLine(printString(…))`. A string that continues onto the next
+ * line (a backslash at the end of the line) joins its lines with a
+ * `literalline`, which breaks the groups around it: an assignment breaks
+ * after its `=` and a call breaks its arguments.
+ * @param {string} printed - The printed string literal
+ * @returns {Doc}
+ */
+function printMultilineString(printed) {
+	return printed.includes('\n') ? replaceEndOfLine(printed) : printed;
+}
+
+/**
  * Enclose a string's source text in `quote`, like Prettier's `makeString`:
  * escape that quote wherever it appears bare, drop the backslash of an escaped
  * other quote, and leave every other escape as written.
@@ -1752,7 +1765,7 @@ function printKey(node, path, options, print) {
 			parts.push(key);
 		} else {
 			// Quote keys that need it (e.g., contain special characters)
-			parts.push(printStringLiteral(node.key, options));
+			parts.push(printMultilineString(printStringLiteral(node.key, options)));
 		}
 	} else {
 		parts.push(path.call(print, 'key'));
@@ -2728,7 +2741,7 @@ function printTsrxNode(node, path, options, print, args) {
 				nodeContent = printDirective(node_typed.raw, options);
 			} else {
 				// String, boolean, or null literal
-				nodeContent = printStringLiteral(node, options);
+				nodeContent = printMultilineString(printStringLiteral(node, options));
 			}
 			break;
 		}
