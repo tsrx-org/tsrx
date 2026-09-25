@@ -616,6 +616,10 @@ export function TSRXPlugin(config) {
 			// `?` allows an expression next, so the tokenizer would otherwise read the
 			// `<` of the type parameters as a JSX tag.
 			#afterOptionalMemberName = false;
+			// The node `tsParseModifiers` is reading modifiers for, so that
+			// `tsParseModifier` can tell whether it has already read `static`.
+			/** @type {{ static?: unknown } | null} */
+			#modifiersNode = null;
 			#templateScriptParsingDepth = 0;
 			#controlFlowBlockAllowsNativeReturn = false;
 			#parsingJSXSwitchCaseScriptStatementDepth = 0;
@@ -3195,6 +3199,107 @@ export function TSRXPlugin(config) {
 			tsTryParseTypeParameters(parseModifiers) {
 				this.#readTagStartAsTypeParameterStart();
 				return super.tsTryParseTypeParameters(parseModifiers);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#119): remove once a release includes the fix
+			/**
+			 * Records the node whose modifiers are being read, so that
+			 * `tsParseModifier` can tell whether it has already read `static`.
+			 * @type {Parse.Parser['tsParseModifiers']}
+			 */
+			tsParseModifiers(options) {
+				const outer = this.#modifiersNode;
+				this.#modifiersNode = options.modified;
+				try {
+					return super.tsParseModifiers(options);
+				} finally {
+					this.#modifiersNode = outer;
+				}
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#119): remove once a release includes the fix
+			/**
+			 * `static` is a modifier even when the next token is on a later line, as
+			 * in TypeScript (`nextTokenCanFollowModifier`) and acorn: `static` with
+			 * `count = 0` on the next line is one static field. acorn-typescript
+			 * requires the token after every modifier to be on the same line, so it
+			 * read `static` as a field name and made the next member an instance
+			 * member. Other modifiers keep that rule (`readonly` with `x` on the next
+			 * line is two fields). As in TypeScript, `static` after a `static`
+			 * modifier is a name, so `static` / `static` / `a() {}` on three lines
+			 * is a static field named `static` and an instance method.
+			 * @type {Parse.Parser['tsParseModifier']}
+			 */
+			tsParseModifier(allowedModifiers, stopOnStartOfClassStaticBlock) {
+				if (!this.isContextual('static') || !allowedModifiers.includes('static')) {
+					return super.tsParseModifier(allowedModifiers, stopOnStartOfClassStaticBlock);
+				}
+				if (this.#modifiersNode?.static) return undefined;
+				if (stopOnStartOfClassStaticBlock && this.tsIsStartOfStaticBlocks()) return undefined;
+				const is_modifier = this.tsTryParse(() => {
+					this.next(true);
+					// TypeScript's `canFollowModifier`: acorn-typescript's
+					// `tsTokenCanFollowModifier` without the same-line check.
+					return (
+						this.type === tt.bracketL ||
+						this.type === tt.braceL ||
+						this.type === tt.star ||
+						this.type === tt.ellipsis ||
+						this.type === tt.privateId ||
+						this.isLiteralPropertyName()
+					);
+				});
+				return is_modifier ? 'static' : undefined;
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#120): remove once a release includes the fix
+			/**
+			 * Reads the token after an interface's `{` inside the type, like the
+			 * tokens of later members. acorn-typescript enters the type only after
+			 * `{`, so with JSX the `<` of a generic call signature that is the first
+			 * member (`interface I { <T>(x: T): T }`) was read as a tag start. The
+			 * token after the closing `}` is still read outside the type, as
+			 * acorn-typescript does.
+			 * @type {Parse.Parser['tsParseInterfaceBody']}
+			 */
+			tsParseInterfaceBody() {
+				const members = this.tsInType(() => {
+					this.expect(tt.braceL);
+					return this.tsParseList('TypeMembers', this.tsParseTypeMember.bind(this));
+				});
+				this.expect(tt.braceR);
+				return members;
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#110): remove once a release includes the fix
+			/**
+			 * A class can be named after a TypeScript contextual keyword
+			 * (`class global {}`, `class type {}`), as in TypeScript and acorn.
+			 * acorn-typescript gives these words their own token types, which acorn's
+			 * `parseClassId` doesn't take as a name, so read the word as a plain name.
+			 * The AST matches the fix in sveltejs/acorn-typescript#110. The rest stays
+			 * with acorn-typescript, including anonymous classes and type parameters.
+			 * @type {Parse.Parser['parseClassId']}
+			 */
+			parseClassId(node, isStatement) {
+				if (this.type !== tt.name && Parser.acornTypeScript.tokenIsIdentifier(this.type)) {
+					this.type = tt.name;
+				}
+				super.parseClassId(node, isStatement);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#121): remove once a release includes the fix
+			/**
+			 * `assert` starts import assertions only on the line the import or
+			 * export ends on, as in TypeScript and the import assertions grammar.
+			 * After a line break it starts the next statement: `import "x"` with
+			 * `assert(ok)` on the next line is an import and a call. `with` has no
+			 * such rule.
+			 * @type {Parse.Parser['parseMaybeImportAttributes']}
+			 */
+			parseMaybeImportAttributes(node) {
+				if (this.type === tstt.assert && this.hasPrecedingLineBreak()) return;
+				super.parseMaybeImportAttributes(node);
 			}
 
 			/**

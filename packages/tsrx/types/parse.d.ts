@@ -667,8 +667,11 @@ export namespace Parse {
 		/** Read and return the next token */
 		nextToken(): void;
 
-		/** Advance to next token (wrapper around nextToken) */
-		next(): void;
+		/**
+		 * Advance to next token (wrapper around nextToken). Passing `true` lets
+		 * the next token be a keyword written with escapes.
+		 */
+		next(ignoreEscapeSequenceInKeyword?: boolean): void;
 
 		/**
 		 * Get token from character code
@@ -1299,7 +1302,50 @@ export namespace Parse {
 		 */
 		tsTryParseAndCatch<T>(fn: () => T): T | undefined;
 
+		/**
+		 * Run a parser callback, keeping what it read when it returns something
+		 * other than `undefined` or `false`, and restoring the tokenizer otherwise
+		 * (@sveltejs/acorn-typescript).
+		 */
+		tsTryParse<T>(fn: () => T | undefined | false): T | undefined;
+
 		tsTryParseTypeAnnotation(): AST.TSTypeAnnotation;
+
+		/**
+		 * Read TypeScript modifiers (`static`, `readonly`, `public`, …) into
+		 * `options.modified` (@sveltejs/acorn-typescript).
+		 */
+		tsParseModifiers(options: {
+			modified: Record<string, unknown>;
+			allowedModifiers: readonly string[];
+			disallowedModifiers?: readonly string[];
+			stopOnStartOfClassStaticBlock?: boolean;
+			errorTemplate?: unknown;
+		}): Record<string, unknown>;
+
+		/**
+		 * Read one modifier named in `allowedModifiers`, or return `undefined`
+		 * when the current token isn't one (@sveltejs/acorn-typescript).
+		 */
+		tsParseModifier(
+			allowedModifiers: readonly string[],
+			stopOnStartOfClassStaticBlock?: boolean,
+		): string | undefined;
+
+		/** Whether the current token is `static` followed by `{` (@sveltejs/acorn-typescript). */
+		tsIsStartOfStaticBlocks(): boolean;
+
+		/** Whether the current token can be a literal property name (@sveltejs/acorn-typescript). */
+		isLiteralPropertyName(): boolean;
+
+		/** Parse an interface's `{ … }` and return its members (@sveltejs/acorn-typescript). */
+		tsParseInterfaceBody(): AST.Node[];
+
+		/** Parse list elements until the `kind` list ends (@sveltejs/acorn-typescript). */
+		tsParseList<T>(kind: string, parseElement: () => T): T[];
+
+		/** Parse one interface or type literal member (@sveltejs/acorn-typescript). */
+		tsParseTypeMember(): AST.Node;
 
 		/**
 		 * Get property kind from name
