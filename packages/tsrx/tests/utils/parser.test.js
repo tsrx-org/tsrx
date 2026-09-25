@@ -6756,6 +6756,23 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(property.key).trailing).toEqual([' c ']);
 	});
 
+	// Like Prettier, whose `printCommentsForFunction` prints the comment inside
+	// the parentheses of a function called right away or used as a tag
+	it('trails a function called right away or used as a tag with a comment before its )', () => {
+		const arrow = firstStatement('(m => m /* c */)(x);').expression;
+		const fn = firstStatement('(function () {} /* a */ /* b */)(x);').expression;
+		const tag = firstStatement('(m => m /* c */)`x`;').expression;
+		const plain = firstStatement('(a /* c */)(x);').expression;
+
+		expect(commentsOf(arrow.callee).trailing).toEqual([' c ']);
+		expect(commentsOf(arrow.arguments[0]).leading).toBeUndefined();
+		expect(commentsOf(fn.callee).trailing).toEqual([' a ', ' b ']);
+		expect(commentsOf(tag.tag).trailing).toEqual([' c ']);
+		expect(commentsOf(tag.quasi).leading).toBeUndefined();
+		// Any other callee keeps the comment's place (see `breakTies`)
+		expect(commentsOf(plain.arguments[0]).leading).toEqual([' c ']);
+	});
+
 	it('trails the name of a function or method with a comment before its (', () => {
 		const fn = firstStatement('function f /* c */ (a) {}');
 		const { init } = firstStatement('const o = { m /* c */ (a) {} };').declarations[0];

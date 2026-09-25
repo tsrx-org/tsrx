@@ -1393,6 +1393,20 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 		const nextIndex = getNextNonSpaceNonCommentCharacterIndex(first.end);
 		const next = source[nextIndex];
+		// Like Prettier, a comment before the `)` of a function called right away
+		// or used as a tag trails the function, which prints it inside those
+		// parentheses (Prettier's `printCommentsForFunction`):
+		// `(() => {} /* c */)(x)`
+		const call = /** @type {any} */ (parent);
+		if (
+			next === ')' &&
+			(node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression') &&
+			((parent.type === 'CallExpression' && call.callee === node) ||
+				(parent.type === 'TaggedTemplateExpression' && call.tag === node))
+		) {
+			addTrailingComment(node, /** @type {AST.CommentWithLocation} */ (comments.shift()));
+			return 'trail';
+		}
 		if (
 			// Prettier gives a comment before a `)` to the node before it too, but
 			// prints it after the parentheses, where its next pass may give it to
