@@ -694,6 +694,31 @@ describe('prettier/standalone', () => {
 	});
 });
 
+// Where core's tree differs from typescript-estree's, the adapter reshapes it.
+describe('the typescript-estree shape', () => {
+	test("a comment in a class method's type parameters stays in them (#630)", async () => {
+		await expectFormat(
+			`class A {
+  m</* c */ T>(a: T) {}
+  n<
+    // c
+    T,
+  >(a: T) {}
+  static async *o /* a */ <T>(a: T) {}
+}`,
+			`class A {
+  m</* c */ T>(a: T) {}
+  n<
+    // c
+    T,
+  >(a: T) {}
+  static async *o/* a */ <T>(a: T) {}
+}
+`,
+		);
+	});
+});
+
 describe('parse errors', () => {
 	test('unclosed or mismatched tags are errors, not guessed markup', async () => {
 		await expect(format('const x = 1;\nconst y = <div>\n')).rejects.toThrow(/Unclosed tag '<div>'/);

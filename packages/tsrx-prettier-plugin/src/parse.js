@@ -568,7 +568,11 @@ class Adapter {
 			case 'MethodDefinition':
 			case 'TSAbstractMethodDefinition':
 				if (node.typeParameters) {
+					// The function starts at its type parameters, as in typescript-estree,
+					// so a comment inside them belongs to the function.
 					node.value.typeParameters = node.typeParameters;
+					node.value.start = node.typeParameters.start;
+					if (node.value.range) node.value.range = [node.value.start, node.value.range[1]];
 					delete node.typeParameters;
 				}
 				break;
