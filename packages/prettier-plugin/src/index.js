@@ -1636,6 +1636,87 @@ function isStatementSlot(key, parent) {
 }
 
 /**
+ * The parents that print an element without parentheses of its own, from
+ * Prettier's `maybeWrapJsxElementInParens`.
+ */
+const ELEMENT_NO_WRAP_PARENTS = new Set([
+	'ArrayExpression',
+	'CallExpression',
+	'ConditionalExpression',
+	'ExpressionStatement',
+	'JSXAttribute',
+	'JSXElement',
+	'JSXExpressionContainer',
+	'JSXFragment',
+	'NewExpression',
+]);
+
+/**
+ * Whether the element or fragment at `path` prints its comments inside its
+ * parentheses, like Prettier's `printJsxElement`: it prints the comments
+ * itself, then adds the parentheses from `needsParens` around them, or else
+ * the ones from `maybeWrapJsxElementInParens`, which print only when the
+ * element breaks. A comment that prints a line break breaks it: a leading
+ * comment that ends its line or spans lines, so a `return`, `throw`, `yield`,
+ * or `await` keeps the element (#456), and a trailing line comment, one on a
+ * line of its own, or one that spans lines. Only such an element does this
+ * here: the parentheses around an element that breaks without one are #369,
+ * and other comments stay outside them (#449).
+ * @param {AstPath} path - The path to the node
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintArgs | undefined} args - The node's print arguments
+ * @returns {boolean}
+ */
+function elementPrintsCommentsInParens(path, options, args) {
+	const node = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node);
+	if (
+		!isTemplateExpression(node) ||
+		// A parent that prints the comments or the parentheses lays them out
+		args?.suppressLeadingComments ||
+		args?.suppressOwnParens ||
+		getTypeCastParens(path, options)
+	) {
+		return false;
+	}
+	const text = /** @type {string} */ (options.originalText);
+	/** @param {AST.Comment} comment */
+	const spansLines = (comment) => comment.type === 'Block' && comment.value.includes('\n');
+	return (
+		(node.leadingComments ?? []).some(
+			(comment) =>
+				spansLines(comment) || hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).end),
+		) ||
+		(!args?.suppressTrailingComments &&
+			(node.trailingComments ?? []).some(
+				(comment) =>
+					comment.type === 'Line' ||
+					spansLines(comment) ||
+					hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).start, {
+						backwards: true,
+					}),
+			))
+	);
+}
+
+/**
+ * Put an element's printed comments and content in its parentheses (see
+ * {@link elementPrintsCommentsInParens}).
+ * @param {AstPath} path - The path to the element
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {Doc} printed - The element with its comments
+ * @returns {Doc}
+ */
+function printElementInParens(path, options, printed) {
+	const parent = /** @type {AST.Node | null} */ (path.parent);
+	const hasParens = needsParens(path, options);
+	if (!parent || ELEMENT_NO_WRAP_PARENTS.has(parent.type) || isStatementSlot(path.key, parent)) {
+		return hasParens ? ['(', printed, ')'] : printed;
+	}
+	const contents = [indent([softline, printed]), softline];
+	return hasParens ? ['(', group(contents), ')'] : group([ifBreak('('), ...contents, ifBreak(')')]);
+}
+
+/**
  * The type part of {@link nodeNeedsParens}. Prettier's `needsParens` lists
  * these types as one chain of `switch` cases that fall through from function
  * types down to type operators: each type adds its own rules and then shares
@@ -3665,6 +3746,18 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent,
 			options,
 			args,
+		);
+	} else if (elementPrintsCommentsInParens(path, options, args)) {
+		return printElementInParens(
+			path,
+			options,
+			finishTsrxNode(
+				/** @type {AST.Node} */ (node),
+				parts,
+				nodeContent,
+				options,
+				args?.suppressTrailingComments,
+			),
 		);
 	} else if (!args?.suppressOwnParens && needsParens(path, options)) {
 		nodeContent = ['(', nodeContent, ')'];
@@ -8777,7 +8870,7 @@ function getOwnLineCommentAhead(path, options, skipLookupComments = false, isOpe
 			/** @type {AST.NodeWithLocation} */ (comment).start < nodeStart,
 	);
 	const firstComment = comments[0] ?? null;
-	if (hasLeadingOwnLineComment(node, comments, options)) {
+	if (hasLeadingOwnLineComment(node, comments, options, Boolean(typeCastParens))) {
 		return firstComment;
 	}
 	const key = getLeftmostChildKey(node);
@@ -11187,14 +11280,19 @@ function getCommentsAhead(path, options) {
 
 /**
  * Prettier's `hasLeadingOwnLineComment`: whether a comment the node prints
- * ahead of itself ends its line.
+ * ahead of itself ends its line. An element prints its comments inside its
+ * parentheses (see {@link elementPrintsCommentsInParens}), unless they go
+ * ahead of a type cast's parentheses, which Prettier's `babel` parser keeps as
+ * a `ParenthesizedExpression`.
  * @param {AST.Node} node
  * @param {AST.Comment[]} comments - The comments the node prints ahead of itself
  * @param {TsrxFormatOptions} options - Prettier options
+ * @param {boolean} [isTypeCast] - Whether the comments go ahead of the
+ *   node's type-cast parentheses
  * @returns {boolean}
  */
-function hasLeadingOwnLineComment(node, comments, options) {
-	if (isTemplateExpression(node)) {
+function hasLeadingOwnLineComment(node, comments, options, isTypeCast = false) {
+	if (isTemplateExpression(node) && !isTypeCast) {
 		return hasPrettierIgnore(node);
 	}
 	const text = /** @type {string} */ (options.originalText);
