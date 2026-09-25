@@ -395,6 +395,56 @@ class Adapter {
 				}
 				break;
 
+			case 'PropertyDefinition':
+			case 'TSAbstractPropertyDefinition':
+				if (node.accessor) {
+					node.type =
+						node.type === 'PropertyDefinition' ? 'AccessorProperty' : 'TSAbstractAccessorProperty';
+					delete node.accessor;
+				}
+				break;
+
+			case 'ImportExpression':
+				if (node.arguments) {
+					node.options ??= node.arguments[0] ?? null;
+					delete node.arguments;
+				}
+				break;
+
+			case 'TSImportEqualsDeclaration':
+				if (node.isExport) {
+					delete node.isExport;
+					const exportDeclaration = {
+						type: 'ExportNamedDeclaration',
+						start: node.start,
+						end: node.end,
+						declaration: node,
+						specifiers: [],
+						source: null,
+						exportKind: 'value',
+						attributes: [],
+					};
+					node.start = this.text.indexOf('import', node.start);
+					this.setContentEnd(exportDeclaration);
+					return exportDeclaration;
+				}
+				break;
+
+			case 'TSModuleDeclaration':
+				// `namespace A.B {}` is one declaration named by a qualified name.
+				while (node.body?.type === 'TSModuleDeclaration') {
+					const inner = node.body;
+					node.id = {
+						type: 'TSQualifiedName',
+						start: node.id.start,
+						end: inner.id.end,
+						left: node.id,
+						right: inner.id,
+					};
+					node.body = inner.body;
+				}
+				break;
+
 			case 'MethodDefinition':
 			case 'TSAbstractMethodDefinition':
 				if (node.typeParameters) {

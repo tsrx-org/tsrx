@@ -20,6 +20,27 @@ const estree = /** @type {Printer<Node>} */ (estreePlugin.printers.estree);
  * @typedef {(selector?: string | number | Array<string | number> | AstPath) => Doc} Print
  */
 
+/** @type {WeakMap<object, object>} */
+const typescriptOptions = new WeakMap();
+
+/**
+ * The options as Prettier's printer sees them for its own `typescript` parser.
+ * The printer checks the parser's name in a few places, such as keeping the
+ * quotes of a class property's key, and the TSRX AST has the typescript-estree
+ * shape.
+ * @template {object} T
+ * @param {T} options
+ * @returns {T}
+ */
+function asTypeScript(options) {
+	let result = typescriptOptions.get(options);
+	if (!result) {
+		result = { ...options, parser: 'typescript' };
+		typescriptOptions.set(options, result);
+	}
+	return /** @type {T} */ (result);
+}
+
 /** Child keys of the TSRX nodes, which Prettier's visitor keys don't know. */
 const TSRX_VISITOR_KEYS = /** @type {Record<string, string[]>} */ ({
 	JSXIfExpression: ['test', 'consequent', 'alternate'],
@@ -46,7 +67,9 @@ export const printer = {
 	},
 
 	print(path, options, print, args) {
-		return printTsrx(path, options, print) ?? estree.print(path, options, print, args);
+		return (
+			printTsrx(path, options, print) ?? estree.print(path, asTypeScript(options), print, args)
+		);
 	},
 
 	embed(path, options) {
@@ -70,7 +93,7 @@ export const printer = {
 				);
 		}
 
-		return estree.embed?.(path, options) ?? null;
+		return estree.embed?.(path, asTypeScript(options)) ?? null;
 	},
 };
 
@@ -87,7 +110,7 @@ function printTsrx(path, options, print) {
 	switch (node.tsrxType ?? node.type) {
 		case 'BlockStatement':
 			return node.tsrxCodeBlock
-				? ['@', /** @type {Doc} */ (estree.print(path, options, print))]
+				? ['@', /** @type {Doc} */ (estree.print(path, asTypeScript(options), print))]
 				: null;
 
 		case 'ExpressionStatement':
