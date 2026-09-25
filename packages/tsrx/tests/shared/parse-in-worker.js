@@ -19,9 +19,12 @@ import(workerData.parser).then(({ parseModule }) => {
 		// A fresh errors array per parse: inputs may share one options object.
 		const parse_options = options && { ...options, errors: [] };
 		try {
-			parseModule(source, 'App.tsrx', parse_options);
+			const ast = parseModule(source, 'App.tsrx', parse_options);
 			const errors = parse_options?.collect || parse_options?.loose ? parse_options.errors : undefined;
-			parentPort.postMessage({ outcome: { ok: true, errors: errors?.map((e) => e.message) } });
+			const outcome = workerData.details
+				? { ok: true, errors: errors?.map((e) => ({ message: e.message, pos: e.pos, end: e.end })), ast }
+				: { ok: true, errors: errors?.map((e) => e.message) };
+			parentPort.postMessage({ outcome });
 		} catch (error) {
 			parentPort.postMessage({ outcome: { ok: false, message: String(error?.message), pos: error?.pos } });
 		}
@@ -31,6 +34,8 @@ import(workerData.parser).then(({ parseModule }) => {
 
 /**
  * @typedef {{ ok: true, errors: string[] | undefined } | { ok: false, message: string, pos: number | undefined }} ParseOutcome
+ * @typedef {{ message: string, pos: number | undefined, end: number | undefined }} CollectedError
+ * @typedef {{ ok: true, errors: CollectedError[] | undefined, ast: import('estree').Program } | { ok: false, message: string, pos: number | undefined }} DetailedParseOutcome
  */
 
 /**
@@ -43,14 +48,36 @@ import(workerData.parser).then(({ parseModule }) => {
  * @param {{ timeout?: number }} [settings]
  * @returns {Promise<ParseOutcome[]>}
  */
-export function parse_in_worker(inputs, { timeout = DEFAULT_TIMEOUT_MS } = {}) {
+export function parse_in_worker(inputs, settings) {
+	return /** @type {Promise<ParseOutcome[]>} */ (run_parse_worker(inputs, false, settings));
+}
+
+/**
+ * Like `parse_in_worker`, but a parse that returns also gives its AST, and each
+ * collected error its position.
+ *
+ * @param {Array<{ source: string, options?: ParseOptions }>} inputs
+ * @param {{ timeout?: number }} [settings]
+ * @returns {Promise<DetailedParseOutcome[]>}
+ */
+export function parse_in_worker_with_ast(inputs, settings) {
+	return /** @type {Promise<DetailedParseOutcome[]>} */ (run_parse_worker(inputs, true, settings));
+}
+
+/**
+ * @param {Array<{ source: string, options?: ParseOptions }>} inputs
+ * @param {boolean} details
+ * @param {{ timeout?: number }} [settings]
+ * @returns {Promise<Array<ParseOutcome | DetailedParseOutcome>>}
+ */
+function run_parse_worker(inputs, details, { timeout = DEFAULT_TIMEOUT_MS } = {}) {
 	return new Promise((resolve, reject) => {
 		const worker = new Worker(WORKER_SOURCE, {
 			eval: true,
-			workerData: { parser: PARSER_URL, inputs },
+			workerData: { parser: PARSER_URL, inputs, details },
 			resourceLimits: { maxOldGenerationSizeMb: WORKER_HEAP_LIMIT_MB },
 		});
-		/** @type {ParseOutcome[]} */
+		/** @type {Array<ParseOutcome | DetailedParseOutcome>} */
 		const outcomes = [];
 		let ready = false;
 		let settled = false;
@@ -79,7 +106,7 @@ export function parse_in_worker(inputs, { timeout = DEFAULT_TIMEOUT_MS } = {}) {
 
 		worker.on(
 			'message',
-			/** @param {{ ready?: true, outcome?: ParseOutcome }} message */
+			/** @param {{ ready?: true, outcome?: ParseOutcome | DetailedParseOutcome }} message */
 			(message) => {
 				if (message.ready) {
 					ready = true;
