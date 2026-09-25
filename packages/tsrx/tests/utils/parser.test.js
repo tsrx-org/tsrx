@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { acorn, parseModule } from '../../src/index.js';
 import { node_children } from '../../src/utils/ast.js';
 import { as_type, assert_type } from '../shared/node-types.js';
-import { parse_in_worker } from '../shared/parse-in-worker.js';
+import { parse_in_worker, parse_in_worker_with_ast } from '../shared/parse-in-worker.js';
 import { STYLE_SYNTAX_CASES } from './fixtures/style-syntax.js';
 
 /**
@@ -7118,6 +7118,49 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(endOfLine.typeAnnotation).leading).toBeUndefined();
 		expect(commentsOf(ownLine.typeParameter).trailing).toEqual([' c']);
 	});
+
+	// Prettier's parsers keep a type parameter's name as a node, which takes
+	// the comments around it; this parser keeps it as a string
+	it('keeps the comments around the name of a type parameter on the type parameter', () => {
+		const [constrained, defaulted] = firstStatement(
+			'function f<const /* a */ T /* b */ extends /* c */ U, K // d\n  = V>() {}',
+		).typeParameters.params;
+		const [modifier] = firstStatement('type A<in out /* a */ T> = T;').typeParameters.params;
+		const mapped = firstStatement('type M = { [K /* a */ in /* b */ T]: T[K] };').typeAnnotation;
+
+		expect(commentsOf(constrained).inner).toEqual([' a ', ' b ']);
+		expect(commentsOf(constrained.constraint).leading).toEqual([' c ']);
+		expect(commentsOf(defaulted).inner).toEqual([' d']);
+		expect(commentsOf(defaulted.default).leading).toBeUndefined();
+		expect(commentsOf(modifier).inner).toEqual([' a ']);
+		expect(commentsOf(modifier).trailing).toBeUndefined();
+		expect(commentsOf(mapped.typeParameter).inner).toEqual([' a ']);
+		expect(commentsOf(mapped.typeParameter.constraint).leading).toEqual([' b ']);
+	});
+
+	it('leads the constraint with a block comment on its own line before the extends of a type parameter', () => {
+		const [parameter] = firstStatement('function f<\n  T\n  /* a */ extends U,\n>() {}')
+			.typeParameters.params;
+		const [lineComment] = firstStatement('function f<\n  T\n  // a\n  extends U,\n>() {}')
+			.typeParameters.params;
+
+		expect(commentsOf(parameter).inner).toBeUndefined();
+		expect(commentsOf(parameter.constraint).leading).toEqual([' a ']);
+		// Prettier moves a line comment there after the name on its next pass
+		expect(commentsOf(lineComment).inner).toEqual([' a']);
+		expect(commentsOf(lineComment.constraint).leading).toBeUndefined();
+	});
+
+	// Prettier prints the arrow function's body without its parentheses, and
+	// the comment after it before the `;`, where its next pass moves it after
+	it('trails the statement with a comment after a parenthesized arrow function body', () => {
+		const statement = firstStatement('const f = () => (\n  a /* c */\n);');
+		const conditional = firstStatement('const f = () => (a ? b : c /* c */);');
+
+		expect(commentsOf(statement).trailing).toEqual([' c ']);
+		expect(commentsOf(statement.declarations[0].init.body).trailing).toBeUndefined();
+		expect(commentsOf(conditional).trailing).toBeUndefined();
+	});
 });
 
 describe('keywordTokens parse option', () => {
@@ -8168,5 +8211,470 @@ describe('parenthesized expression metadata', () => {
 			);
 		}
 		expect(findIdentifier('foo(n);', 'n').metadata?.paren_start).toBeUndefined();
+	});
+});
+
+describe('mistakes that TypeScript reports only from its checker', () => {
+	// TypeScript's parser accepts these and reports them as checker diagnostics.
+	// `collect` and `loose` mode record them and keep parsing; a strict parse
+	// throws them. Parsed in a worker, so a parse that never returns fails the
+	// test instead of stalling the run.
+
+	/**
+	 * @typedef {{
+	 *   source: string,
+	 *   errors: Array<[message: string, at: string]>,
+	 *   throws: string,
+	 *   valid?: string,
+	 *   pick?: (program: AST.Program) => unknown,
+	 *   pickValid?: (program: AST.Program) => unknown,
+	 *   match?: Record<string, unknown>,
+	 * }} CheckerLevelCase
+	 * `errors` pairs each collected message with the source text at its position.
+	 * The node that `pick` takes from the AST is the node that `pickValid` (or
+	 * `pick`) takes from the AST of the `valid` source, apart from locations, or
+	 * matches `match`.
+	 */
+
+	/** @param {AST.Program} program */
+	const first = (program) => program.body[0];
+	/** @param {AST.Program} program */
+	const last = (program) => program.body[program.body.length - 1];
+	/** @param {AST.Program} program */
+	const first_member = (program) =>
+		as_type(/** @type {AST.Node} */ (first(program)), 'ClassDeclaration').body.body[0];
+	/** @param {AST.Program} program */
+	const first_parameter = (program) => {
+		const fn = /** @type {AST.Node} */ (first(program));
+		if (fn.type !== 'FunctionDeclaration' && fn.type !== 'TSDeclareFunction') {
+			throw new Error(`Expected a function, got ${fn.type}`);
+		}
+		return fn.params[0];
+	};
+	/** @param {AST.Program} program */
+	const constructor_parameter = (program) =>
+		as_type(/** @type {AST.Node} */ (first_member(program)), 'MethodDefinition').value.params[0];
+	/** @param {AST.Program} program */
+	const namespace_statement = (program) =>
+		as_type(
+			as_type(/** @type {AST.Node} */ (first(program)), 'TSModuleDeclaration').body,
+			'TSModuleBlock',
+		).body[0];
+	/** @param {AST.Program} program */
+	const class_method_statement = (program) =>
+		as_type(
+			/** @type {AST.Node} */ (
+				as_type(/** @type {AST.Node} */ (first(program)), 'ClassDeclaration').body.body.at(-1)
+			),
+			'MethodDefinition',
+		).value.body?.body[0];
+
+	/** @type {CheckerLevelCase[]} */
+	const cases = [
+		{
+			source: 'type T = 1;\ntype T = 2;',
+			errors: [["type 'T' has already been declared.", 'T = 2']],
+			throws: "type 'T' has already been declared. (2:5)",
+			valid: 'type U = 1;\ntype T = 2;',
+			pick: last,
+		},
+		{
+			source: "import a from 'a';\nimport a from 'b';",
+			errors: [["Identifier 'a' has already been declared", "a from 'b'"]],
+			throws: "Identifier 'a' has already been declared",
+			valid: "import b from 'a';\nimport a from 'b';",
+			pick: last,
+		},
+		{
+			source: 'class A { abstract m(): void; }',
+			errors: [['Abstract methods can only appear within an abstract class.', 'abstract m']],
+			throws: 'Abstract methods can only appear within an abstract class. (1:10)',
+			valid: 'abstract class A { abstract m(): void; }',
+			pick: first_member,
+		},
+		{
+			source: 'declare class A { x = 1; }',
+			errors: [['Initializers are not allowed in ambient contexts.', '= 1']],
+			throws: 'Initializers are not allowed in ambient contexts. (1:20)',
+			valid: 'class A { x = 1; }',
+			pick: first_member,
+		},
+		{
+			source: 'declare let x = 1;',
+			errors: [['Initializers are not allowed in ambient contexts.', '1;']],
+			throws: 'Initializers are not allowed in ambient contexts. (1:16)',
+			valid: 'let x = 1;',
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations,
+		},
+		{
+			source: 'abstract class A { static abstract x: number; }',
+			errors: [["'static' modifier cannot be used with 'abstract' modifier.", 'abstract x']],
+			throws: "'static' modifier cannot be used with 'abstract' modifier. (1:26)",
+			pick: first_member,
+			match: { static: true, abstract: true, key: { name: 'x' } },
+		},
+		{
+			source: 'class A {\n\tconstructor(readonly public x: number) {}\n}',
+			errors: [["'public' modifier must precede 'readonly' modifier.", 'public x']],
+			// acorn-typescript throws it at the modifier's column (sveltejs/acorn-typescript#122).
+			throws: "'public' modifier must precede 'readonly' modifier. (2:12)",
+			valid: 'class A {\n\tconstructor(public readonly x: number) {}\n}',
+			pick: constructor_parameter,
+		},
+		{
+			source: 'class A { constructor(readonly readonly x: number) {} }',
+			errors: [["Duplicate modifier: 'readonly'.", 'x: number']],
+			throws: "Duplicate modifier: 'readonly'. (1:40)",
+			valid: 'class A { constructor(readonly x: number) {} }',
+			pick: constructor_parameter,
+		},
+		{
+			source: 'class A { private #x = 1; }',
+			errors: [["Private elements cannot have an accessibility modifier ('private').", 'private']],
+			throws: "Private elements cannot have an accessibility modifier ('private'). (1:10)",
+			pick: first_member,
+			match: { type: 'PropertyDefinition', accessibility: 'private', key: { name: 'x' } },
+		},
+		{
+			source: 'abstract class A { abstract #x: number; }',
+			errors: [["Private elements cannot have the 'abstract' modifier.", 'abstract #x']],
+			throws: "Private elements cannot have the 'abstract' modifier. (1:19)",
+			pick: first_member,
+			match: { abstract: true, key: { type: 'PrivateIdentifier', name: 'x' } },
+		},
+		{
+			source: 'function f({ a }?: { a: number }) {}',
+			errors: [
+				[
+					'A binding pattern parameter cannot be optional in an implementation signature.',
+					'{ a }?',
+				],
+			],
+			throws:
+				'A binding pattern parameter cannot be optional in an implementation signature. (1:11)',
+			valid: 'declare function f({ a }?: { a: number }): void;',
+			pick: first_parameter,
+		},
+		{
+			source: 'function f(...a: number[],) {}',
+			errors: [['Comma is not permitted after the rest element', ',)']],
+			throws: 'Comma is not permitted after the rest element (1:25)',
+			valid: 'function f(...a: number[]) {}',
+			pick: first,
+		},
+		{
+			source: 'function f(...a: number[], b: string) {}',
+			errors: [['Comma is not permitted after the rest element', ', b']],
+			throws: 'Comma is not permitted after the rest element (1:25)',
+			pick: first,
+			match: { params: [{ type: 'RestElement' }, { type: 'Identifier', name: 'b' }] },
+		},
+		{
+			source: 'const [...a, b] = c;',
+			errors: [['Comma is not permitted after the rest element', ', b']],
+			throws: 'Comma is not permitted after the rest element (1:11)',
+			pick: first,
+			match: {
+				declarations: [
+					{ id: { elements: [{ type: 'RestElement' }, { type: 'Identifier', name: 'b' }] } },
+				],
+			},
+		},
+		{
+			source: 'function f(...a: number[], /* last */\n) {}',
+			errors: [['Comma is not permitted after the rest element', ', /*']],
+			throws: 'Comma is not permitted after the rest element (1:25)',
+			valid: 'function f(...a: number[] /* last */\n) {}',
+			pick: first,
+		},
+		{
+			source: 'const f = (...a: number[],) => a;',
+			errors: [['Comma is not permitted after the rest element', ',)']],
+			throws: 'Comma is not permitted after the rest element (1:25)',
+			valid: 'const f = (...a: number[]) => a;',
+			pick: first,
+		},
+		{
+			source: "import j from './a.json' with { type: 'json', type: 'x' };",
+			// acorn-typescript reports it after the repeated attribute's value.
+			errors: [['Duplicated key in attributes', ' };']],
+			throws: 'Duplicated key in attributes (1:55)',
+			pick: first,
+			match: { attributes: [{ value: { value: 'json' } }, { value: { value: 'x' } }] },
+		},
+		{
+			source: 'export { missing };',
+			errors: [["Export 'missing' is not defined", 'missing }']],
+			throws: "Export 'missing' is not defined (1:9)",
+			valid: 'const missing = 1;\nexport { missing };',
+			pick: last,
+		},
+		{
+			source: 'a?.b = c;',
+			errors: [['Optional chaining cannot appear in left-hand side', 'a?.b']],
+			throws: 'Optional chaining cannot appear in left-hand side (1:0)',
+			pick: first,
+			match: {
+				expression: { type: 'AssignmentExpression', left: { type: 'ChainExpression' } },
+			},
+		},
+		{
+			source: 'a?.b += c;',
+			errors: [['Optional chaining cannot appear in left-hand side', 'a?.b']],
+			throws: 'Optional chaining cannot appear in left-hand side (1:0)',
+			pick: first,
+			match: {
+				expression: {
+					type: 'AssignmentExpression',
+					operator: '+=',
+					left: { type: 'ChainExpression' },
+				},
+			},
+		},
+		{
+			source: "import.source('x');",
+			errors: [["The only valid meta property for import is 'import.meta'", "source('x')"]],
+			throws: "The only valid meta property for import is 'import.meta' (1:7)",
+			pick: first,
+			match: {
+				expression: {
+					type: 'CallExpression',
+					callee: { type: 'MetaProperty', meta: { name: 'import' }, property: { name: 'source' } },
+				},
+			},
+		},
+		{
+			source: 'const x = new.target;',
+			errors: [["'new.target' can only be used in functions and class static block", 'new.target']],
+			throws: "'new.target' can only be used in functions and class static block (1:10)",
+			valid: 'function f() {\n\tconst x = new.target;\n}',
+			pick: first,
+			pickValid: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'FunctionDeclaration').body.body[0],
+		},
+		{
+			source: 'super();',
+			errors: [
+				["'super' keyword outside a method", 'super'],
+				['super() call outside constructor of a subclass', 'super'],
+			],
+			throws: "'super' keyword outside a method (1:0)",
+			valid: 'class A extends B {\n\tconstructor() {\n\t\tsuper();\n\t}\n}',
+			pick: first,
+			pickValid: (program) =>
+				as_type(/** @type {AST.Node} */ (first_member(program)), 'MethodDefinition').value.body
+					?.body[0],
+		},
+		{
+			source: 'class A {\n\tconstructor() {\n\t\tsuper();\n\t}\n}',
+			errors: [['super() call outside constructor of a subclass', 'super']],
+			throws: 'super() call outside constructor of a subclass (3:2)',
+			valid: 'class A extends B {\n\tconstructor() {\n\t\tsuper();\n\t}\n}',
+			pick: class_method_statement,
+		},
+		{
+			source: 'namespace N {\n\tconst x = await 42;\n}',
+			errors: [
+				[
+					"'await' expressions are only allowed within async functions and at the top levels of modules.",
+					'await 42',
+				],
+			],
+			throws: 'Cannot use await in class static initialization block (2:11)',
+			valid: 'const x = await 42;',
+			pick: namespace_statement,
+			pickValid: first,
+		},
+		{
+			source: 'namespace N {\n\tfor await (const x of y) {}\n}',
+			errors: [
+				[
+					"'for await' loops are only allowed within async functions and at the top levels of modules.",
+					'await (',
+				],
+			],
+			throws: 'Unexpected token (2:5)',
+			valid: 'for await (const x of y) {}',
+			pick: namespace_statement,
+			pickValid: first,
+		},
+		{
+			source: 'namespace N {\n\tawait using x = y;\n}',
+			errors: [
+				[
+					"'await using' statements are only allowed within async functions and at the top levels of modules.",
+					'await using',
+				],
+			],
+			throws: 'Await using cannot appear outside of async function (2:1)',
+			valid: 'await using x = y;',
+			pick: namespace_statement,
+			pickValid: first,
+		},
+		{
+			source: '#x in obj;',
+			errors: [["Private field '#x' must be declared in an enclosing class", '#x in']],
+			throws: 'Unexpected token (1:0)',
+			valid: 'class A {\n\t#x;\n\tm() {\n\t\t#x in obj;\n\t}\n}',
+			pick: first,
+			pickValid: class_method_statement,
+		},
+		{
+			source: 'obj.#x;',
+			errors: [["Private field '#x' must be declared in an enclosing class", '#x;']],
+			throws: "Private field '#x' must be declared in an enclosing class (1:4)",
+			valid: 'class A {\n\t#x;\n\tm() {\n\t\tobj.#x;\n\t}\n}',
+			pick: first,
+			pickValid: class_method_statement,
+		},
+		{
+			source: 'export const v: string;',
+			errors: [["'const' declarations must be initialized.", 'v: string']],
+			throws: 'Unexpected token (1:22)',
+			valid: 'export declare const v: string;',
+			pick: (program) =>
+				as_type(
+					as_type(/** @type {AST.Node} */ (first(program)), 'ExportNamedDeclaration').declaration,
+					'VariableDeclaration',
+				).declarations,
+		},
+		{
+			source: 'const a = 1,\n\tb: number;',
+			errors: [["'const' declarations must be initialized.", 'b: number']],
+			throws: 'Unexpected token (2:10)',
+			valid: 'declare const a = 1,\n\tb: number;',
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations,
+		},
+	];
+
+	/** @type {Array<ParseOptions>} */
+	const collect_modes = [{ collect: true, preserveParens: true }, { loose: true }];
+
+	/**
+	 * A node without its locations.
+	 * @param {unknown} node
+	 */
+	function without_locations(node) {
+		return JSON.parse(
+			JSON.stringify(node, (key, value) =>
+				key === 'start' ||
+				key === 'end' ||
+				key === 'loc' ||
+				key === 'range' ||
+				key === 'metadata' ||
+				key === 'extra'
+					? undefined
+					: typeof value === 'bigint'
+						? `${value}n`
+						: value,
+			),
+		);
+	}
+
+	it('records them and keeps parsing in collect and loose mode', async () => {
+		const inputs = cases.flatMap(({ source }) =>
+			collect_modes.map((options) => ({ source, options })),
+		);
+		const valid_inputs = cases.flatMap(({ valid }) =>
+			valid ? collect_modes.map((options) => ({ source: valid, options })) : [],
+		);
+		const outcomes = await parse_in_worker_with_ast([...inputs, ...valid_inputs]);
+		const valid_outcomes = outcomes.slice(inputs.length);
+
+		for (const [index, { source, options }] of inputs.entries()) {
+			const test_case = cases[Math.floor(index / collect_modes.length)];
+			const outcome = outcomes[index];
+			const label = `${JSON.stringify(source)} with ${JSON.stringify(options)}`;
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(
+				outcome.errors?.map(({ message, pos }, i) => [
+					message,
+					source.slice(pos, (pos ?? 0) + (test_case.errors[i]?.[1].length ?? 0)),
+				]),
+				label,
+			).toEqual(test_case.errors);
+
+			const node = test_case.pick?.(outcome.ast);
+			if (test_case.match) {
+				expect(node, label).toMatchObject(test_case.match);
+			}
+			if (test_case.valid) {
+				const valid_outcome = valid_outcomes.shift();
+				if (!valid_outcome?.ok) throw new Error(`${JSON.stringify(test_case.valid)} threw`);
+				const valid_node = (test_case.pickValid ?? test_case.pick)?.(valid_outcome.ast);
+				expect(valid_node, label).toBeDefined();
+				expect(without_locations(node), label).toEqual(without_locations(valid_node));
+			}
+		}
+	});
+
+	it('still throws them without collecting', async () => {
+		const outcomes = await parse_in_worker(cases.map(({ source }) => ({ source })));
+
+		expect(outcomes.map((outcome) => (outcome.ok ? 'parsed' : outcome.message))).toEqual(
+			cases.map(({ throws }) => throws),
+		);
+	});
+
+	it('compares them with valid code', async () => {
+		const sources = cases.flatMap(({ valid }) => (valid ? [valid] : []));
+		const outcomes = await parse_in_worker(sources.map((source) => ({ source })));
+
+		expect(outcomes).toEqual(sources.map(() => ({ ok: true, errors: undefined })));
+	});
+
+	it('still throws input that only TypeScript error recovery accepts', async () => {
+		const sources = [
+			'type B = {\n\t[a: string, b: string]: string;\n};',
+			'let a: *;',
+			'function b(x: ?) {}',
+			'let c: ?string;',
+			'let d: string?;',
+			'let f: !string;',
+			'let g: string!;',
+		];
+		const modes = [undefined, ...collect_modes];
+		const inputs = sources.flatMap((source) => modes.map((options) => ({ source, options })));
+
+		const outcomes = await parse_in_worker(inputs);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			expect(outcome.ok, JSON.stringify(inputs[index])).toBe(false);
+		}
+	});
+
+	it('records no error where TypeScript reports none', async () => {
+		const sources = [
+			// A rest parameter may have a trailing comma in an ambient context.
+			'declare function f(...a: number[],): void;',
+			'declare function g(...a: number[],\n\t// last\n): void;',
+			'declare const v: string;',
+			'for (const x of y) {}',
+			'class A {\n\t#x;\n\tm() {\n\t\treturn #x in this;\n\t}\n}',
+			'async function f() {\n\tnamespace N {}\n\tawait g();\n}',
+		];
+		const outcomes = await parse_in_worker(
+			sources.flatMap((source) => collect_modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes).toEqual(
+			sources.flatMap(() => collect_modes.map(() => ({ ok: true, errors: [] }))),
+		);
+	});
+
+	it('still throws a const pattern without an initializer', async () => {
+		const outcomes = await parse_in_worker(
+			[undefined, ...collect_modes].map((options) => ({ source: 'const { a };', options })),
+		);
+
+		expect(outcomes).toEqual(
+			[undefined, ...collect_modes].map(() => ({
+				ok: false,
+				message: 'Unexpected token (1:11)',
+				pos: 11,
+			})),
+		);
 	});
 });
