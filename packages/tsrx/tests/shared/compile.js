@@ -2604,6 +2604,17 @@ export function App() @{
 			expect(code).toContain('\u00a05');
 		});
 
+		it('keeps the text of an element in a setup statement', () => {
+			const { code } = compile(
+				'export function App() @{\n\tconst a = <div>Hello<b /> 2<i />\u00a03</div>;\n\t<main>{a}</main>\n}',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('Hello<b');
+			expect(code).toContain('/> 2<i');
+			expect(code).toContain('\u00a03');
+		});
+
 		it('keeps double-quoted strings inside expression containers as JavaScript strings', () => {
 			const { code } = compile(
 				`export function App() @{

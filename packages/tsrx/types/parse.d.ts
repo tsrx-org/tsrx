@@ -581,6 +581,10 @@ export namespace Parse {
 			willAppend(target: unknown[]): void;
 			/** Record `target[key]`, to restore if the current speculative parse is abandoned */
 			willSet(target: object, key: string): void;
+			/** Pop `target`'s last entry, recording it to restore if the current speculative parse is abandoned */
+			pop<T>(target: T[]): T | undefined;
+			/** Shorten `target` to `length`, recording what it removes to restore if the current speculative parse is abandoned */
+			truncate(target: unknown[], length: number): void;
 		};
 		/**
 		 * The decorators read and not yet taken by a class, one list per nesting

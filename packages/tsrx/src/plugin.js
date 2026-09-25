@@ -349,6 +349,8 @@ function is_dynamic_tag_wrapper(node) {
 // TypeScript's message for a missing `}` (TS1005). The parser reports it in
 // place of acorn's `Unexpected token` wherever TypeScript's parser reports it.
 const CLOSING_BRACE_EXPECTED = "'}' expected.";
+// TypeScript's message for a tag's missing `>` (TS1005).
+const TAG_END_EXPECTED = "'>' expected.";
 
 /** @type {WeakMap<Record<string, boolean>, Map<string, number>>} */
 const argument_clash_first_positions = new WeakMap();
@@ -843,10 +845,11 @@ export function TSRXPlugin(config) {
 			// `parseElement`), for its closing tag to restore.
 			/** @type {WeakMap<AST.Node, number>} */
 			#elementContextDepths = new WeakMap();
-			// `this.labels` and its length when each element started (see
-			// `#insideSwitchStartedAfter`).
-			/** @type {WeakMap<AST.Node, { labels: Parse.Parser['labels'], length: number }>} */
-			#elementLabels = new WeakMap();
+			// What enclosed each element when it started: `this.labels` and its length
+			// (see `#insideSwitchStartedAfter`), and the setup-statement depths (see
+			// `#elementStart`).
+			/** @type {WeakMap<AST.Node, { labels: Parse.Parser['labels'], labelsLength: number, scriptDepth: number, switchCaseScriptDepth: number }>} */
+			#elementStarts = new WeakMap();
 			#readingJSXControlFlowDirectiveKeyword = false;
 			#readingJSXControlFlowHeader = false;
 			// Where the last element of a `{ … }` list ended, so that `expect` can
@@ -1070,12 +1073,35 @@ export function TSRXPlugin(config) {
 			 * @param {AST.Node} node
 			 */
 			#insideSwitchStartedAfter(node) {
-				const at_start = this.#elementLabels.get(node);
-				const from = at_start?.labels === this.labels ? at_start.length : 0;
+				const at_start = this.#elementStarts.get(node);
+				const from = at_start?.labels === this.labels ? at_start.labelsLength : 0;
 				for (let i = from; i < this.labels.length; i++) {
 					if (this.labels[i].kind === 'switch') return true;
 				}
 				return false;
+			}
+
+			/**
+			 * The setup-statement depths when `node` started, to compare with the
+			 * current ones: a depth above its value there means a setup statement
+			 * started after `node`, and the position is in that statement's code. In
+			 * an element opened in the statement, it is that element's children.
+			 * `scriptDepth` is `#templateScriptParsingDepth`, raised by a setup
+			 * statement of a `@{ … }` or directive body and by a spread attribute's
+			 * argument; `switchCaseScriptDepth` is
+			 * `#parsingJSXSwitchCaseScriptStatementDepth`, raised by one of an `@case`.
+			 * A node that no element start recorded counts from 0.
+			 * @param {AST.Node} node
+			 */
+			#elementStart(node) {
+				return (
+					this.#elementStarts.get(node) ?? {
+						labels: null,
+						labelsLength: 0,
+						scriptDepth: 0,
+						switchCaseScriptDepth: 0,
+					}
+				);
 			}
 
 			/**
@@ -1439,7 +1465,7 @@ export function TSRXPlugin(config) {
 				const start = this.#switchCaseLabelStart();
 				if (start === -1) return false;
 				while (this.curContext() === tstc.tc_expr) {
-					this.context.pop();
+					this.#popContext();
 				}
 				this.pos = start;
 				this.start = start;
@@ -1584,8 +1610,6 @@ export function TSRXPlugin(config) {
 					this.#closingNativeTemplateNode ||
 					this.#readingJSXControlFlowDirectiveKeyword ||
 					this.#readingJSXControlFlowHeader ||
-					this.#parsingJSXSwitchCaseScriptStatementDepth > 0 ||
-					(!ignore_directive_start && this.#templateScriptParsingDepth > 0) ||
 					(!allow_inside_expression_container && this.#jsxExpressionContainerDepth > 0)
 				) {
 					return false;
@@ -1595,10 +1619,19 @@ export function TSRXPlugin(config) {
 					return false;
 				}
 				const current_template_node = this.#currentNativeTemplateNode();
+				if (!current_template_node) {
+					return false;
+				}
+				// Code that started after the innermost element, a setup statement or a
+				// spread attribute's argument (`<div {...props}>`), isn't its text. An
+				// element opened in that code reads its own children as text
+				// (`const a = <b> 1</b>;` in a `@{ … }` body).
+				const element_start = this.#elementStart(current_template_node);
 				if (
-					!current_template_node ||
+					this.#parsingJSXSwitchCaseScriptStatementDepth > element_start.switchCaseScriptDepth ||
 					(!ignore_directive_start &&
-						(this.#insideSwitchStartedAfter(current_template_node) ||
+						(this.#templateScriptParsingDepth > element_start.scriptDepth ||
+							this.#insideSwitchStartedAfter(current_template_node) ||
 							this.#isJSXControlFlowDirectiveAt(this.pos)))
 				) {
 					return false;
@@ -1656,15 +1689,15 @@ export function TSRXPlugin(config) {
 				// enclosing template (e.g. a top-level `return <div />`), the trailing
 				// text is plain JS and must not be read as template raw text.
 				// Inter-token whitespace has already advanced `pos`; `lastTokEnd` still
-				// identifies the consumed `/>` boundary.
+				// identifies the consumed `>`, which whitespace or a comment can separate
+				// from the `/` (`<div / >`).
 				const opening = this.#openingNativeTemplateNode;
 				if (
 					opening &&
 					current_template_node === opening &&
 					opening.type !== 'JSXFragment' &&
 					opening.openingElement?.selfClosing &&
-					this.input.charCodeAt(this.lastTokEnd - 1) === CharCode.greaterThan &&
-					this.input.charCodeAt(this.lastTokEnd - 2) === CharCode.slash
+					this.input.charCodeAt(this.lastTokEnd - 1) === CharCode.greaterThan
 				) {
 					const enclosing = this.#path.findLast(
 						(node) => node !== opening && this.#isNativeTemplateNode(node),
@@ -1935,7 +1968,7 @@ export function TSRXPlugin(config) {
 					}
 				}
 				if (this.curContext() === tstc.tc_expr) {
-					this.context.pop();
+					this.#popContext();
 				}
 				return node;
 			}
@@ -1970,7 +2003,7 @@ export function TSRXPlugin(config) {
 
 				// Re-read the `<` so its `jsxTagStart` pushes the opening-tag contexts,
 				// in place of the ones it pushed when it was first read.
-				this.context.length -= this.#currentTokenContextCount();
+				this.#truncateContext(this.context.length - this.#currentTokenContextCount());
 				this.pos = at_index;
 				this.exprAllowed = true;
 				this.next();
@@ -1986,7 +2019,7 @@ export function TSRXPlugin(config) {
 					this.unexpected();
 				}
 				if (this.curContext() === tstc.tc_expr) {
-					this.context.pop();
+					this.#popContext();
 				}
 				return node;
 			}
@@ -2731,7 +2764,7 @@ export function TSRXPlugin(config) {
 				// on top, or the rest of the template reads as code and the closing
 				// paren pops the statement context instead.
 				const token_context =
-					this.type === tt.backQuote || this.type === tt.parenL ? this.context.pop() : undefined;
+					this.type === tt.backQuote || this.type === tt.parenL ? this.#popContext() : undefined;
 				if (this.curContext() !== b_stat) {
 					this.context.push(b_stat);
 				}
@@ -2877,7 +2910,7 @@ export function TSRXPlugin(config) {
 				}
 
 				if (this.curContext() === tstc.tc_expr && !insideTemplate) {
-					this.context.pop();
+					this.#popContext();
 				}
 				this.exprAllowed = false;
 				this.pos = closingEnd;
@@ -2899,16 +2932,16 @@ export function TSRXPlugin(config) {
 					// closing tag, or, when unclosed, the next sibling or parent close);
 					// the element resumes there manually, so drop the stale tag context.
 					if (this.curContext() === tstc.tc_oTag) {
-						this.context.pop();
+						this.#popContext();
 					}
 					if (this.curContext() === tstc.tc_expr) {
-						this.context.pop();
+						this.#popContext();
 					}
 				}
 				if (insideTemplate && this.curContext() === tstc.tc_expr) {
 					// This element's own children context, pushed by its opening tag. Its
 					// closing tag is never tokenized, so nothing else pops it.
-					this.context.pop();
+					this.#popContext();
 				}
 				if (!insideTemplate && this.#path.at(-1) === node) {
 					// Outside a template (a `@{ … }` body, a `@case` body, a statement),
@@ -2916,8 +2949,8 @@ export function TSRXPlugin(config) {
 					// began — like a balanced element does after its closing tag — so
 					// the following `}`, `@case`, or sibling tokenizes as code, not as
 					// JSX text of a children context this element's `<` opened.
-					if (contextDepth !== undefined && this.context.length > contextDepth) {
-						this.context.length = contextDepth;
+					if (contextDepth !== undefined) {
+						this.#truncateContext(contextDepth);
 					}
 					this.#path.pop();
 					try {
@@ -3080,13 +3113,41 @@ export function TSRXPlugin(config) {
 
 				const context_index = this.context.lastIndexOf(tstc.tc_expr);
 				if (context_index !== -1) {
-					this.context.length = context_index;
+					this.#truncateContext(context_index);
 				}
 			}
 
 			#popTemplateLiteralTokenContext() {
 				while (this.curContext()?.token === '`') {
-					this.context.pop();
+					this.#popContext();
+				}
+			}
+
+			/**
+			 * Pop the token context stack's top. acorn-typescript parses some
+			 * values speculatively (a `<` in `parseMaybeAssign` first tries an
+			 * element), recording what the parse changes so that a failed attempt
+			 * can be undone. It treats the stack as append-only unless a shortening
+			 * goes through `parseEffects`, and a failed attempt that finds the stack
+			 * shorter than it recorded throws its own error in place of the syntax
+			 * error. Outside an attempt, this is a plain pop.
+			 * @returns {Parse.Parser['context'][number] | undefined}
+			 */
+			#popContext() {
+				return this.parseEffects ? this.parseEffects.pop(this.context) : this.context.pop();
+			}
+
+			/**
+			 * Shorten the token context stack to `length`, if it is longer, as
+			 * `#popContext` does.
+			 * @param {number} length
+			 */
+			#truncateContext(length) {
+				if (length >= this.context.length) return;
+				if (this.parseEffects) {
+					this.parseEffects.truncate(this.context, length);
+				} else {
+					this.context.length = length;
 				}
 			}
 
@@ -3919,7 +3980,7 @@ export function TSRXPlugin(config) {
 			 */
 			#readTagStartAsTypeParameterStart() {
 				if (this.type !== tstt.jsxTagStart) return;
-				this.context.length -= this.#currentTokenContextCount();
+				this.#truncateContext(this.context.length - this.#currentTokenContextCount());
 				this.finishToken(tt.relational, '<');
 			}
 
@@ -4647,7 +4708,7 @@ export function TSRXPlugin(config) {
 			 */
 			nextToken() {
 				while (this.context.length && this.context[this.context.length - 1] == null) {
-					this.context.pop();
+					this.#popContext();
 				}
 				if (this.context.length === 0) {
 					this.context.push(b_stat);
@@ -4955,10 +5016,12 @@ export function TSRXPlugin(config) {
 				// leave the attribute expression context above the still-open tag. Drop
 				// it before tokenizing `/>`, otherwise Acorn treats `/` as a regexp.
 				// Where an expression may start outside a tag (`const re = />/g`,
-				// `f(/>/)`, `{/>/.test(s)}`), the `/` starts that regexp instead.
+				// `f(/>/)`, `{/>/.test(s)}`), the `/` starts that regexp instead. Right
+				// after a tag start, it is the `/` of a closing tag (`</>`).
 				if (
 					code === CharCode.slash &&
 					this.input.charCodeAt(this.pos + 1) === CharCode.greaterThan &&
+					this.type !== tstt.jsxTagStart &&
 					(!this.exprAllowed || this.curContext() === tstc.tc_oTag)
 				) {
 					while (
@@ -4966,7 +5029,7 @@ export function TSRXPlugin(config) {
 						this.curContext() !== tstc.tc_oTag &&
 						this.curContext() !== tstc.tc_expr
 					) {
-						this.context.pop();
+						this.#popContext();
 					}
 					if (this.curContext() !== tstc.tc_oTag) {
 						this.context.push(tstc.tc_oTag);
@@ -5639,8 +5702,8 @@ export function TSRXPlugin(config) {
 						// below the container's depth (its own brace context popped); drop
 						// anything above that so the token after `}` (e.g. the `>` finishing
 						// the enclosing opening tag) tokenizes in the right context.
-						if (this.type === tt.braceR && this.context.length >= container_context_depth) {
-							this.context.length = container_context_depth - 1;
+						if (this.type === tt.braceR) {
+							this.#truncateContext(container_context_depth - 1);
 						}
 						this.#expectContainerClosingBrace();
 					}
@@ -5741,7 +5804,7 @@ export function TSRXPlugin(config) {
 							this.curLine = endLoc.line;
 							this.lineStart = end - endLoc.column;
 							if (this.curContext()?.token === '{') {
-								this.context.pop();
+								this.#popContext();
 							}
 							this.exprAllowed = false;
 							this.next();
@@ -6201,7 +6264,7 @@ export function TSRXPlugin(config) {
 						const inside_open_template = this.#path.findLast((n) => this.#isNativeTemplateNode(n));
 						if (!inside_open_template) {
 							while (this.curContext() === tstc.tc_expr) {
-								this.context.pop();
+								this.#popContext();
 							}
 							return this.finishToken(tt.eof);
 						}
@@ -6584,7 +6647,12 @@ export function TSRXPlugin(config) {
 					templateMode: 'script',
 				};
 				node.children = [];
-				this.#elementLabels.set(node, { labels: this.labels, length: this.labels.length });
+				this.#elementStarts.set(node, {
+					labels: this.labels,
+					labelsLength: this.labels.length,
+					scriptDepth: this.#templateScriptParsingDepth,
+					switchCaseScriptDepth: this.#parsingJSXSwitchCaseScriptStatementDepth,
+				});
 
 				const previous_opening_native_template_node = this.#openingNativeTemplateNode;
 				this.#openingNativeTemplateNode = node;
@@ -6720,10 +6788,9 @@ export function TSRXPlugin(config) {
 					// literal's backquote).
 					const token_context_depth = this.context.length - this.#currentTokenContextCount();
 					if (!insideTemplate && token_context_depth > pre_element_context_depth) {
-						this.context.splice(
-							pre_element_context_depth,
-							token_context_depth - pre_element_context_depth,
-						);
+						const token_contexts = this.context.slice(token_context_depth);
+						this.#truncateContext(pre_element_context_depth);
+						this.context.push(...token_contexts);
 					}
 				}
 
@@ -6837,7 +6904,7 @@ export function TSRXPlugin(config) {
 					// If we don't reset this here, the following `next()` can read EOF using
 					// `jsx_readToken()` and throw "Unterminated JSX contents".
 					while (this.curContext() === tstc.tc_expr) {
-						this.context.pop();
+						this.#popContext();
 					}
 					return;
 				} else if (this.type === tstt.jsxTagStart) {
@@ -6852,12 +6919,15 @@ export function TSRXPlugin(config) {
 						// Whether the element's parent is a template node, so that the token
 						// after the `>` is the parent's text. In a `{ … }` container only a
 						// parent opened in the container counts: above it, the container's
-						// expression goes on.
+						// expression goes on. Nor does a parent opened before the code the
+						// element is in (see `#elementStart`), whose text that code isn't.
+						const parent_template_node = this.#path
+							.slice(this.#containerPathBaseline(), -1)
+							.findLast((node) => this.#isNativeTemplateNode(node));
 						const inside_parent_template =
-							this.#templateScriptParsingDepth === 0 &&
-							this.#path
-								.slice(this.#containerPathBaseline(), -1)
-								.some((node) => this.#isNativeTemplateNode(node));
+							!!parent_template_node &&
+							this.#templateScriptParsingDepth <=
+								this.#elementStart(parent_template_node).scriptDepth;
 						this.#closingNativeTemplateNode = true;
 						/** @type {ReturnType<Parse.Parser['jsx_parseElementName']>} */
 						let closingName;
@@ -6901,7 +6971,7 @@ export function TSRXPlugin(config) {
 							this.#path.pop();
 							const context_depth = this.#elementContextDepths.get(current);
 							if (context_depth !== undefined && this.context.length > context_depth) {
-								this.context.length = context_depth;
+								this.#truncateContext(context_depth);
 								this.exprAllowed = false;
 							}
 						}
@@ -7306,12 +7376,12 @@ export function TSRXPlugin(config) {
 						node.type === 'JSXFragment' &&
 						this.curContext() === b_stat
 					) {
-						this.context.pop();
+						this.#popContext();
 						if (this.curContext() === tstc.tc_expr) {
-							this.context.pop();
+							this.#popContext();
 						}
 						if (this.curContext() === b_stat) {
-							this.context.pop();
+							this.#popContext();
 						}
 					}
 					if (this.#continuesElementExpression()) {
@@ -7376,7 +7446,7 @@ export function TSRXPlugin(config) {
 						return super.parseBlock(createNewLexicalScope, node, exitStrict);
 					} finally {
 						if (pushed_statement_context && this.curContext() === b_stat) {
-							this.context.pop();
+							this.#popContext();
 						}
 					}
 				}
@@ -7430,11 +7500,16 @@ export function TSRXPlugin(config) {
 			 * an import attribute without its comma) and keeps `Unexpected token`.
 			 * At the end of the input, the comma expected after an element of a
 			 * comma-separated `{ … }` list, and the first element of a list opened
-			 * by an expected `{`, are the list's missing `}` too.
+			 * by an expected `{`, are the list's missing `}` too. A tag's `>`, expected
+			 * after a closing tag's name or a self-closing tag's `/`, is missing
+			 * whatever token is in its place, as TypeScript reports too.
 			 * @param {Parse.TokenType} type
 			 */
 			expect(type) {
 				if (this.type !== type) {
+					if (type === tstt.jsxTagEnd) {
+						this.raise(this.start, TAG_END_EXPECTED);
+					}
 					if (
 						type === tt.braceR &&
 						(this.type === tt.eof ||
