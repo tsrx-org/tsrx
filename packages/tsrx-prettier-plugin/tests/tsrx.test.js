@@ -270,3 +270,145 @@ const A = () => (
 		);
 	});
 });
+
+// `//` and `/* */` between JSX children are comments in TSRX, where TSX reads
+// them as text. They keep their place among the children.
+describe('comments between JSX children', () => {
+	test('own-line, trailing, and after-text comments stay where they are', async () => {
+		await expectFormat(
+			`export function App() @{
+  <div>
+    // before a child
+    <span>{a}</span>
+    <b /> // after an element
+    /* on its own line */
+    text here // after text
+    {value} // after an expression
+    @if (a) {
+      <i />
+    } // after a directive
+    // last
+  </div>
+}`,
+			`export function App() @{
+  <div>
+    // before a child
+    <span>{a}</span>
+    <b /> // after an element
+    /* on its own line */
+    text here // after text
+    {value} // after an expression
+    @if (a) {
+      <i />
+    } // after a directive
+    // last
+  </div>
+}
+`,
+		);
+	});
+
+	test('a comment as the only child keeps the element open', async () => {
+		await expectFormat(
+			`const a = <div>// only
+</div>;`,
+			`const a = (
+  <div>
+    // only
+  </div>
+);
+`,
+		);
+	});
+
+	test('text after a line comment stays on its own line', async () => {
+		await expectFormat(
+			`const a = <p>
+  // note
+  x
+</p>;`,
+			`const a = (
+  <p>
+    // note
+    x
+  </p>
+);
+`,
+		);
+	});
+
+	test('blank lines around a comment are kept', async () => {
+		await expectFormat(
+			`const a = <div>
+  <a />
+
+  // section
+
+  <b />
+</div>;`,
+			`const a = (
+  <div>
+    <a />
+
+    // section
+
+    <b />
+  </div>
+);
+`,
+		);
+	});
+
+	test('inline block comments keep the spacing around them', async () => {
+		await expectFormat(
+			`const a = <p>one /* two */ three</p>;
+const b = <p><a />/* c */<b /></p>;`,
+			`const a = <p>one /* two */ three</p>;
+const b = (
+  <p>
+    <a />/* c */<b />
+  </p>
+);
+`,
+		);
+	});
+
+	test('a comment after wrapped text stays at the end of its line', async () => {
+		await expectFormat(
+			`const a = <p>
+  This is a long sentence that keeps going and going until it needs to wrap onto more lines // end
+</p>;`,
+			`const a = (
+  <p>
+    This is a long sentence that keeps going and going until it needs to wrap
+    onto more lines // end
+  </p>
+);
+`,
+		);
+	});
+
+	test('in a fragment, and a JSDoc-style block comment is re-indented', async () => {
+		await expectFormat(
+			`const a = <>
+  // in a fragment
+      /*
+       * several
+       * lines
+       */
+  <b />
+</>;`,
+			`const a = (
+  <>
+    // in a fragment
+    /*
+     * several
+     * lines
+     */
+    <b />
+  </>
+);
+`,
+		);
+	});
+});

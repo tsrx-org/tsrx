@@ -5,9 +5,10 @@
 
 import { builders } from 'prettier/doc';
 import * as estreePlugin from 'prettier/plugins/estree';
+import { printJsxElementInternal } from './jsx.js';
 import { isRawScriptElement } from './parse.js';
 
-const { group, hardline, ifBreak, indent, join, line, softline } = builders;
+const { breakParent, group, hardline, ifBreak, indent, join, line, softline } = builders;
 
 /**
  * Prettier's own JS/TS printer. Everything that isn't TSRX syntax is printed by
@@ -56,7 +57,33 @@ const CATCH_CLAUSE_KEYS = ['param', 'resetParam', 'body'];
 export const printer = {
 	...estree,
 
+	// A comment between JSX children is printed as a node, and no other comment
+	// attaches to it.
+	canAttachComment(node, ...rest) {
+		if (node.type === 'TSRXJSXComment') return false;
+		const canAttachComment = /** @type {(...args: unknown[]) => boolean} */ (
+			estree.canAttachComment
+		);
+		return canAttachComment(node, ...rest);
+	},
+
+	// Prettier's JSX printer prints an element's own comments; for an element
+	// with comment children, `jsx.js` prints the element and Prettier prints its
+	// comments around it.
+	/**
+	 * @param {AstPath<Node>} path
+	 * @param {...unknown} rest
+	 */
+	willPrintOwnComments(path, ...rest) {
+		if (path.node?.tsrxCommentChildren) return false;
+		const willPrintOwnComments = /** @type {(...args: unknown[]) => boolean} */ (
+			estree.willPrintOwnComments
+		);
+		return willPrintOwnComments(path, ...rest);
+	},
+
 	getVisitorKeys(node, nonTraversableKeys) {
+		if (node.type === 'TSRXJSXComment') return [];
 		const keys = TSRX_VISITOR_KEYS[node.tsrxType ?? node.type];
 		if (keys) return keys;
 		if (node.type === 'CatchClause' && node.resetParam) return CATCH_CLAUSE_KEYS;
@@ -115,6 +142,26 @@ function printTsrx(path, options, print) {
 
 		case 'ExpressionStatement':
 			return node.tsrxOutput ? print('expression') : null;
+
+		case 'JSXElement':
+		case 'JSXFragment':
+			if (!node.tsrxCommentChildren) return null;
+			return maybeWrapJsxElementInParens(path, printJsxElementInternal(path, options, print));
+
+		case 'TSRXJSXComment': {
+			// Printed like any comment: a line comment ends its line, and a
+			// JSDoc-style block comment is re-indented.
+			const comment = {
+				type: node.commentType,
+				value: node.value,
+				start: node.start,
+				end: node.end,
+			};
+			const printed = /** @type {NonNullable<Printer<Node>['printComment']>} */ (
+				estree.printComment
+			)(/** @type {AstPath<Node>} */ (/** @type {unknown} */ ({ node: comment })), options);
+			return node.commentType === 'Line' ? [printed, breakParent] : printed;
+		}
 
 		case 'JSXAttribute':
 			return node.shorthand ? ['{', print(['value', 'expression']), '}'] : null;

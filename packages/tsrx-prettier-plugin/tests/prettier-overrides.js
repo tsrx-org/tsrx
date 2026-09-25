@@ -25,6 +25,18 @@ const commonJsAwait = {
 	skip: true,
 };
 
+/** @type {Override} */
+const commentInJsxChildren = {
+	reason:
+		'In TSRX, `//` and `/* */` between JSX children are comments, which keep their line; TSX reads them as text',
+	output: `<Foo>
+  text
+  // comment
+  text
+</Foo>;
+`,
+};
+
 /**
  * Prettier test cases whose TSRX result deliberately differs from Prettier's
  * snapshot, keyed like `prettier-known-failures.json` (`<dir>/<snapshot
@@ -36,6 +48,9 @@ const commonJsAwait = {
  */
 export default {
 	'typescript/tsx/comma/snippet: test.ts format 1': tsxTypeParameter,
+
+	'jsx/comments/like-a-comment-in-jsx-text.js - {"bracketSameLine":true} format 1':
+		commentInJsxChildren,
 
 	'js/top-level-await/test.cjs format 1': commonJsAwait,
 	'typescript/top-level-await/test.cts format 1': commonJsAwait,

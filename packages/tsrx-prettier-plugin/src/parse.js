@@ -64,7 +64,7 @@ export function parse(text, options) {
 	program.end = text.length;
 	program.comments = mergeNestledJsdocComments(
 		comments
-			.filter((comment) => !adapter.isInsideRawText(comment))
+			.filter((comment) => !adapter.isInsideRawText(comment) && !adapter.jsxComments.has(comment))
 			.map(({ type, value, start, end }) => ({ type, value, start, end })),
 	);
 	return program;
@@ -156,12 +156,26 @@ class Adapter {
 	constructor(text, comments) {
 		this.text = text;
 		this.comments = comments;
+		// The core parser dedents a multi-line block comment's value for its own
+		// printer; Prettier prints comments from their source text.
+		for (const comment of comments) {
+			comment.value =
+				comment.type === 'Block'
+					? text.slice(comment.start + 2, comment.end - 2)
+					: text.slice(comment.start + 2, comment.end);
+		}
 		/**
 		 * Source ranges of `<style>` and `<script>` bodies. Comments inside them
 		 * belong to the embedded CSS/TypeScript, not to the TSRX AST.
 		 * @type {Array<[number, number]>}
 		 */
 		this.rawTextRanges = [];
+		/**
+		 * Comments between JSX children, which are `TSRXJSXComment` nodes instead
+		 * of comments for Prettier to attach.
+		 * @type {Set<Comment>}
+		 */
+		this.jsxComments = new Set();
 	}
 
 	/**
@@ -191,13 +205,14 @@ class Adapter {
 	}
 
 	/**
-	 * The parser leaves the whitespace between JSX children out of its text
-	 * nodes, but Prettier reads it to keep blank lines and to choose line
-	 * breaks, so rebuild the text nodes from the source between children.
-	 * Text around a comment keeps the parser's shape.
+	 * Rebuild a JSX element's text children from the source. The parser leaves
+	 * the whitespace between children out of its text nodes, and Prettier reads
+	 * it to keep blank lines and to choose line breaks. A TSRX comment between
+	 * children (`// …` or `/* … *\/`, which TSX would read as text) becomes a
+	 * `TSRXJSXComment` child that `jsx.js` prints in place.
 	 * @param {Node} node
 	 */
-	restoreJsxWhitespace(node) {
+	rebuildJsxChildren(node) {
 		const opening = node.openingElement ?? node.openingFragment;
 		const closing = node.closingElement ?? node.closingFragment;
 		if (!closing) return;
@@ -205,38 +220,70 @@ class Adapter {
 		/** @type {Node[]} */
 		const children = [];
 		let position = opening.end;
-		const addText = (/** @type {number} */ end) => {
-			if (end <= position) return;
-			if (this.comments.some((comment) => comment.start < end && comment.end > position)) {
-				return;
+		/**
+		 * The text and comments from `position` to `end`.
+		 * @param {number} end
+		 */
+		const addSource = (end) => {
+			const comments = this.comments.filter(
+				(comment) => comment.start >= position && comment.end <= end,
+			);
+			for (const comment of comments) {
+				this.addJsxText(children, position, comment.start, true);
+				children.push(this.jsxComment(comment));
+				this.jsxComments.add(comment);
+				position = comment.end;
 			}
-			const previous = children.at(-1);
-			const start =
-				previous?.type === 'JSXText' && previous.end === position ? previous.start : position;
-			if (start !== position) children.pop();
-			const raw = this.text.slice(start, end);
-			children.push({ type: 'JSXText', start, end, value: raw, raw });
+			this.addJsxText(children, position, end, comments.length > 0);
+			position = end;
 		};
 		for (const child of node.children) {
-			if (child.type === 'JSXText') {
-				addText(child.start);
-				const containsComment = this.comments.some(
-					(comment) => comment.start >= child.start && comment.end <= child.end,
-				);
-				if (containsComment) {
-					children.push(child);
-				} else {
-					position = child.start;
-					addText(child.end);
-				}
-			} else {
-				addText(child.start);
-				children.push(child);
-			}
-			position = Math.max(position, child.end);
+			if (child.type === 'JSXText') continue;
+			addSource(child.start);
+			children.push(child);
+			position = child.end;
 		}
-		addText(closing.start);
+		addSource(closing.start);
 		node.children = children;
+		if (children.some((child) => child.type === 'TSRXJSXComment')) {
+			node.tsrxCommentChildren = true;
+		}
+	}
+
+	/**
+	 * @param {Node[]} children
+	 * @param {number} start
+	 * @param {number} end
+	 * @param {boolean} besideComment Whether a comment is right before or after
+	 *   the text. Spaces on a comment's line are then kept by the comment.
+	 */
+	addJsxText(children, start, end, besideComment) {
+		if (end <= start) return;
+		const raw = this.text.slice(start, end);
+		if (besideComment && /^[ \t]*$/u.test(raw)) return;
+		children.push({ type: 'JSXText', start, end, value: raw, raw });
+	}
+
+	/**
+	 * @param {Comment} comment
+	 * @returns {Node}
+	 */
+	jsxComment(comment) {
+		const before = /[ \t]*$/u.exec(this.text.slice(0, comment.start))?.[0] ?? '';
+		const after = /^[ \t]*/u.exec(this.text.slice(comment.end))?.[0] ?? '';
+		const charBefore = this.text[comment.start - before.length - 1];
+		const charAfter = this.text[comment.end + after.length];
+		return {
+			type: 'TSRXJSXComment',
+			start: comment.start,
+			end: comment.end,
+			commentType: comment.type,
+			value: comment.value,
+			spaceBefore: before.length > 0,
+			spaceAfter: after.length > 0,
+			newlineBefore: charBefore === '\n' || charBefore === '\r',
+			newlineAfter: charAfter === '\n' || charAfter === '\r' || charAfter === undefined,
+		};
 	}
 
 	/**
@@ -334,7 +381,7 @@ class Adapter {
 
 			case 'JSXElement':
 			case 'JSXFragment':
-				if (!isRawScriptElement(node)) this.restoreJsxWhitespace(node);
+				if (!isRawScriptElement(node)) this.rebuildJsxChildren(node);
 				break;
 
 			case 'Program':
