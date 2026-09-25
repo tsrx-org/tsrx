@@ -9830,7 +9830,8 @@ function printDebuggerStatement(node, path, options) {
  * when it fits and breaks at every `?` and `:` when it doesn't. A nested
  * conditional in the true branch gets parentheses only on one line, and one
  * in the test (a conditional type's check or extends type) breaks inside the
- * parentheses it needs there.
+ * parentheses it needs there. A conditional expression chain with an element
+ * or another template value in it prints in Prettier's JSX mode instead.
  * @param {AstPath<AST.ConditionalExpression | AST.TSConditionalType>} path
  * @param {TsrxFormatOptions} options
  * @param {PrintFn} print
@@ -9854,7 +9855,7 @@ function printConditionalExpression(path, options, print) {
 		testKeys.some((key) => /** @type {Record<string, unknown>} */ (ancestor)[key] === child);
 	const parent = /** @type {AST.Node} */ (path.getParentNode());
 	const isParentTest = parent.type === node.type && isTestOf(parent, node);
-	const forceNoIndent = parent.type === node.type && !isParentTest;
+	let forceNoIndent = parent.type === node.type && !isParentTest;
 
 	// The outermost conditional of the chain groups it
 	/** @type {AST.Node} */
@@ -9870,33 +9871,62 @@ function printConditionalExpression(path, options, print) {
 		child = ancestor;
 	}
 
-	/**
-	 * Align a branch with the first character after `? ` or `: `
-	 * @param {string} key
-	 */
-	const printBranch = (key) => {
-		const printed = nodePath.call(print, key);
-		return options.useTabs ? indent(printed) : align(2, printed);
-	};
-	const consequentIsConditional = nodePath.node[consequentKey].type === node.type;
-	const branches = [
-		line,
-		'? ',
-		consequentIsConditional ? ifBreak('', '(') : '',
-		printBranch(consequentKey),
-		consequentIsConditional ? ifBreak('', ')') : '',
-		line,
-		': ',
-		printBranch(alternateKey),
-	];
+	const consequentNode = /** @type {AST.Node} */ (nodePath.node[consequentKey]);
+	const alternateNode = /** @type {AST.Node} */ (nodePath.node[alternateKey]);
 	const isParentAlternate = parent.type === node.type && nodePath.parent[alternateKey] === node;
 	/** @type {Doc} */
-	let parts = branches;
-	if (parent.type === node.type && !isParentAlternate && !isParentTest) {
-		// A conditional consequent indents its branches past its parent's
-		parts = options.useTabs
-			? dedent(indent(branches))
-			: align(Math.max(0, (options.tabWidth ?? 2) - 2), branches);
+	let parts;
+	// JSX mode: a chain with an element or another template value anywhere
+	// in it doesn't indent, and each branch breaks inside parentheses of its
+	// own, which are analogous to an `if` statement's braces
+	const jsxMode =
+		isConditionalExpression &&
+		(isTemplateExpression(/** @type {AST.ConditionalExpression} */ (node).test) ||
+			isTemplateExpression(consequentNode) ||
+			isTemplateExpression(alternateNode) ||
+			conditionalChainContainsTemplate(/** @type {AST.ConditionalExpression} */ (child)));
+	if (jsxMode) {
+		forceNoIndent = true;
+		/** @param {Doc} doc */
+		const wrap = (doc) => [ifBreak('('), indent([softline, doc]), softline, ifBreak(')')];
+		// Except for `null`, `undefined`, and a conditional alternate
+		parts = [
+			' ? ',
+			isNilLiteral(consequentNode)
+				? nodePath.call(print, consequentKey)
+				: wrap(nodePath.call(print, consequentKey)),
+			' : ',
+			alternateNode.type === node.type || isNilLiteral(alternateNode)
+				? nodePath.call(print, alternateKey)
+				: wrap(nodePath.call(print, alternateKey)),
+		];
+	} else {
+		/**
+		 * Align a branch with the first character after `? ` or `: `
+		 * @param {string} key
+		 */
+		const printBranch = (key) => {
+			const printed = nodePath.call(print, key);
+			return options.useTabs ? indent(printed) : align(2, printed);
+		};
+		const consequentIsConditional = consequentNode.type === node.type;
+		const branches = [
+			line,
+			'? ',
+			consequentIsConditional ? ifBreak('', '(') : '',
+			printBranch(consequentKey),
+			consequentIsConditional ? ifBreak('', ')') : '',
+			line,
+			': ',
+			printBranch(alternateKey),
+		];
+		parts = branches;
+		if (parent.type === node.type && !isParentAlternate && !isParentTest) {
+			// A conditional consequent indents its branches past its parent's
+			parts = options.useTabs
+				? dedent(indent(branches))
+				: align(Math.max(0, (options.tabWidth ?? 2) - 2), branches);
+		}
 	}
 
 	// Break before the closing parenthesis to keep the chain right after it:
@@ -9905,7 +9935,7 @@ function printConditionalExpression(path, options, print) {
 	//     : c
 	//   ).call()
 	const breakClosingParen =
-		isConditionalExpression && parent.type === 'MemberExpression' && !parent.computed;
+		!jsxMode && isConditionalExpression && parent.type === 'MemberExpression' && !parent.computed;
 	const shouldExtraIndent =
 		isConditionalExpression &&
 		shouldExtraIndentForConditionalExpression(
@@ -9926,6 +9956,43 @@ function printConditionalExpression(path, options, print) {
 	const result = parent === firstNonConditionalParent ? group(contents) : contents;
 
 	return isParentTest || shouldExtraIndent ? group([indent([softline, result]), softline]) : result;
+}
+
+/**
+ * Whether a chain of nested conditionals has an element or another template
+ * value as a test or branch at any depth (Prettier's
+ * `conditionalExpressionChainContainsJsx`), which prints the whole chain in
+ * JSX mode.
+ * @param {AST.ConditionalExpression} node - The outermost conditional of the chain
+ * @returns {boolean}
+ */
+function conditionalChainContainsTemplate(node) {
+	const conditionals = [node];
+	for (let index = 0; index < conditionals.length; index++) {
+		const conditional = conditionals[index];
+		for (const child of [conditional.test, conditional.consequent, conditional.alternate]) {
+			if (isTemplateExpression(child)) {
+				return true;
+			}
+			if (child.type === 'ConditionalExpression') {
+				conditionals.push(child);
+			}
+		}
+	}
+	return false;
+}
+
+/**
+ * `null` or `undefined`, the branches a conditional in JSX mode doesn't put
+ * in parentheses.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function isNilLiteral(node) {
+	return (
+		(node.type === 'Literal' && node.value === null) ||
+		(node.type === 'Identifier' && node.name === 'undefined')
+	);
 }
 
 /**
