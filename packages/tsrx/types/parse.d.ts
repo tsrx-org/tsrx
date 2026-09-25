@@ -34,6 +34,9 @@ declare module 'acorn' {
 
 	interface Parser {
 		readToken(...args: Parameters<ReadToken>): ReturnType<ReadToken>;
+		parseDynamicImport(
+			...args: Parameters<Parse.Parser['parseDynamicImport']>
+		): ReturnType<Parse.Parser['parseDynamicImport']>;
 	}
 
 	interface Token {
@@ -496,6 +499,13 @@ export namespace Parse {
 		var: string[];
 		lexical: string[];
 		functions: string[];
+		/** acorn-typescript: the type aliases and interfaces declared in the scope. */
+		types: string[];
+		/**
+		 * acorn-typescript: names that can merge with a value of the same name,
+		 * such as namespaces and top-level ambient functions.
+		 */
+		exportOnlyBindings: string[];
 	}
 
 	type Exports = Record<string, boolean>;
@@ -578,7 +588,7 @@ export namespace Parse {
 		/** Stack of label names for break/continue statements */
 		labels: Array<{ kind: string | null; name?: string; statementStart?: number }>;
 		/** Current scope flags stack */
-		scopeStack: Array<{ flags: number; var: string[]; lexical: string[]; functions: string[] }>;
+		scopeStack: Scope[];
 		/** Regular expression validation state */
 		regexpState: RegExpValidationState | null;
 		/** Whether we can use await keyword */
@@ -1721,6 +1731,12 @@ export namespace Parse {
 
 		/** Parse an optional import-attributes clause (`with { … }` / `assert { … }`) */
 		parseMaybeImportAttributes(node: AST.Node): void;
+
+		/**
+		 * Parse the entries between the braces of an import-attributes clause
+		 * (@sveltejs/acorn-typescript)
+		 */
+		parseWithEntries(): AST.ImportAttribute[];
 
 		/** Parse import specifiers */
 		parseImportSpecifiers(): AST.ImportSpecifier[];

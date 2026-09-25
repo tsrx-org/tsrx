@@ -1836,6 +1836,22 @@ export type C =   D`);
 			expect(result).toBeWithNewline(expected);
 		});
 
+		it('drops the trailing comma of a dynamic import and keeps its options once', async () => {
+			const input = `const a=import("./a.js",)
+const data=import("./data.json",{with:{type:"json"}},)`;
+			const expected = `const a = import("./a.js");
+const data = import("./data.json", { with: { type: "json" } });`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('formats import attributes with more than one quoted key', async () => {
+			const input = `import a from './a' with { 'a': 'x', 'b': 'y' };`;
+			const expected = `import a from "./a" with { a: "x", b: "y" };`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
 		it('should format destructured dynamic import() in Promise.all', async () => {
 			const input = `const [{ EditorState }, { oneDark }] = await Promise.all([import('@codemirror/state'), import('@codemirror/theme-one-dark')]);`;
 			const expected = `const [{ EditorState }, { oneDark }] = await Promise.all([
@@ -10203,7 +10219,7 @@ export function AfterLastChild() @{
 }
 export function LineAfterChild() @{
   <p>
-    <b>t</b> // c
+    <b>t</b>// c
     c
   </p>
 }
@@ -10228,6 +10244,53 @@ export function SpaceBeforeComment() @{
 				'<p><b>t</b>c</p>',
 				'<p>a b</p>',
 			]);
+		});
+
+		// The text after a closing tag starts at the tag, so the parser keeps a
+		// space there (#442), and a comment on the next line leaves the line
+		// break in the text (#540)
+		it('renders the same markup with text after closing tags after formatting', async () => {
+			const input = `export function NestedClose() @{
+  <div>
+    <span>
+      <b>1</b>
+    </span> 2
+  </div>
+}
+export function CommentAfterClose() @{
+  <div>
+    <b>t</b>
+    /* c */<i />
+  </div>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(`export function NestedClose() @{
+  <div>
+    <span>
+      <b>1</b>
+    </span>{" "}
+    2
+  </div>
+}
+export function CommentAfterClose() @{
+  <div>
+    <b>t</b>
+    /* c */ <i />
+  </div>
+}`);
+			expect(await render(result)).toEqual(await render(input));
+			expect(await render(input)).toEqual([
+				'<div><span><b>1</b></span> 2</div>',
+				'<div><b>t</b><i></i></div>',
+			]);
+		});
+
+		// A non-breaking space is text, not JSX whitespace, so it stays when the
+		// body breaks and it starts a line (#444)
+		it('keeps a non-breaking space that starts a line after formatting', async () => {
+			expect(
+				await format('export function App() @{\n  <div>\u00a0<b>x</b></div>\n}'),
+			).toBeWithNewline('export function App() @{\n  <div>\n    \u00a0<b>x</b>\n  </div>\n}');
 		});
 
 		// `//` at the start of a line of text is a comment, so a word that starts
@@ -16911,11 +16974,16 @@ item
 
 		// A line comment after a child used to join a one-letter word on the next
 		// line, which made it text, and a `{" "}` before a comment on its own
-		// line was lost (#539)
+		// line was lost (#539). A line comment glued to a closing tag is in the
+		// text after it, as after a self-closing tag, and stays glued (#442).
 		it.each([
 			[
 				'const a = <div><b>t</b>// c\n  c</div>;',
-				'const a = (\n  <div>\n    <b>t</b> // c\n    c\n  </div>\n);',
+				'const a = (\n  <div>\n    <b>t</b>// c\n    c\n  </div>\n);',
+			],
+			[
+				'const a = <div><b />// c\n  c</div>;',
+				'const a = (\n  <div>\n    <b />// c\n    c\n  </div>\n);',
 			],
 			[
 				'const a = <div>{a}{" "}\n// c\n{b}</div>;',

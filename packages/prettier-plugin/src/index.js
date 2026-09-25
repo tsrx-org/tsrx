@@ -3687,19 +3687,13 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'ImportExpression': {
-			const importExpression =
-				/** @type {AST.ImportExpression & { phase?: 'defer' | null, arguments?: AST.Expression[] }} */ (
-					node
-				);
 			/** @type {Doc[]} */
 			const parts = [
-				importExpression.phase === 'defer' ? 'import.defer(' : 'import(',
+				node.phase === 'defer' ? 'import.defer(' : 'import(',
 				path.call(print, 'source'),
 			];
 			if (node.options) {
 				parts.push(', ', path.call(print, 'options'));
-			} else if (importExpression.arguments?.length) {
-				parts.push(', ', path.call(print, 'arguments', 0));
 			}
 			parts.push(')');
 			nodeContent = parts;
@@ -13632,10 +13626,10 @@ function printJSXElementBody(
 		const previous = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (
 			children[index - 1]
 		);
-		// The parser drops the whitespace with a line break after a closing tag,
-		// alone or at the start of the text that follows. Prettier's separators
-		// depend on it, and it can hold a blank line, which Prettier keeps, so
-		// read it back from the source.
+		// The parser drops text that is only whitespace with a line break, which
+		// JSX renders as nothing. Prettier's separators depend on it, and it can
+		// hold a blank line, which Prettier keeps, so read it back from the
+		// source.
 		let gap = '';
 		if (previous && previous.type !== 'JSXText') {
 			const whitespace = text.slice(getJSXChildEnd(previous), getJSXChildStart(child));
