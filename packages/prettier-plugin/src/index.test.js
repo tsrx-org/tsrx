@@ -7966,8 +7966,8 @@ function g() {
 			generatedOffsets: number[];
 		}) =>
 			mapping.sourceOffsets[0] === source_offset &&
-				mapping.generatedOffsets[0] === generated_offset &&
-				mapping.lengths[0] === identifier.length,
+			mapping.generatedOffsets[0] === generated_offset &&
+			mapping.lengths[0] === identifier.length,
 	);
 }`;
 			// Like Prettier, the type of a hugged only parameter joins the
@@ -7976,8 +7976,8 @@ function g() {
 	const mapping = result.mappings.find(
 		(mapping: { sourceOffsets: number[]; generatedOffsets: number[] }) =>
 			mapping.sourceOffsets[0] === source_offset &&
-				mapping.generatedOffsets[0] === generated_offset &&
-				mapping.lengths[0] === identifier.length,
+			mapping.generatedOffsets[0] === generated_offset &&
+			mapping.lengths[0] === identifier.length,
 	);
 }`;
 
@@ -9744,8 +9744,9 @@ const called = (
 			expect(result).toContain('(a   ||   b)();');
 		});
 
-		it('keeps a parenthesized nested ternary branch as written', async () => {
-			await expectUnchanged('x = a ? (b ? c : d) : e;\ny = a ? b : (c ? d : e);');
+		it('parenthesizes a nested ternary consequent, not an alternate, like Prettier', async () => {
+			const result = await format('x = a ? (b ? c : d) : e;\ny = a ? b : (c ? d : e);');
+			expect(result).toBeWithNewline('x = a ? (b ? c : d) : e;\ny = a ? b : c ? d : e;');
 		});
 
 		it('preserves execution when formatting parenthesized operands', async () => {
@@ -9796,6 +9797,724 @@ const called = (
 					expect(await normalize(formatted), source).toBe(expected);
 				}
 			}
+		});
+	});
+
+	describe('binary and logical expressions lay out like Prettier', () => {
+		it('parenthesizes a logical operand of another logical operator', async () => {
+			const result = await format(`const z = a && b || c;
+const y = a || b && c;
+const q = aaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb || cccccccccccccccccccccccccc && ddddddddddddddd;`);
+			expect(result).toBeWithNewline(`const z = (a && b) || c;
+const y = a || (b && c);
+const q =
+  (aaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) ||
+  (cccccccccccccccccccccccccc && ddddddddddddddd);`);
+		});
+
+		it.each([
+			[
+				'const ok = isEnabledForTheCurrentUser && hasPermissionToEdit && !isLockedByAnotherSession && isOnline;',
+				`const ok =
+  isEnabledForTheCurrentUser &&
+  hasPermissionToEdit &&
+  !isLockedByAnotherSession &&
+  isOnline;`,
+			],
+			[
+				'const total = firstOperandWithALongName + secondOperandWithALongName + thirdOperandWithALongName;',
+				`const total =
+  firstOperandWithALongName +
+  secondOperandWithALongName +
+  thirdOperandWithALongName;`,
+			],
+			[
+				'const value = firstFallbackWithALongName ?? secondFallbackWithALongName ?? thirdFallbackWithALongName;',
+				`const value =
+  firstFallbackWithALongName ??
+  secondFallbackWithALongName ??
+  thirdFallbackWithALongName;`,
+			],
+			[
+				'const flags = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb | ccccccccccccccccccccccccccccc;',
+				`const flags =
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa |
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb |
+  ccccccccccccccccccccccccccccc;`,
+			],
+			[
+				'foo(firstOperandWithALongName + secondOperandWithALongName + thirdOperandWithALongName, other);',
+				`foo(
+  firstOperandWithALongName +
+    secondOperandWithALongName +
+    thirdOperandWithALongName,
+  other,
+);`,
+			],
+		])('breaks before every operand of a same-precedence chain in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks a mixed-precedence chain only at its loosest operator', async () => {
+			const result = await format(`const short = a + b * c - d;
+const mixed = aaaaaaaaaaaaaaaaaaaaaaa * bbbbbbbbbbbbbbbbbbbbbbbbbbb + ccccccccccccccccccccccc * dddddddddddddddd;`);
+			expect(result).toBeWithNewline(`const short = a + b * c - d;
+const mixed =
+  aaaaaaaaaaaaaaaaaaaaaaa * bbbbbbbbbbbbbbbbbbbbbbbbbbb +
+  ccccccccccccccccccccccc * dddddddddddddddd;`);
+		});
+
+		it.each([
+			[
+				'const f = (resolve) => aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;',
+				`const f = (resolve) =>
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;`,
+			],
+			[
+				'const x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;',
+				`const x =
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;`,
+			],
+			[
+				'if (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) {\n  run();\n}',
+				`if (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+) {
+  run();
+}`,
+			],
+			[
+				'const b = Boolean(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);',
+				`const b = Boolean(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+);`,
+			],
+		])(
+			'lines up the operands where Prettier does not indent them in %s',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		it('lines up the operands of an assigned value after the operator breaks', async () => {
+			const result =
+				await format(`total = firstOperandWithALongName + secondOperandWithALongName + thirdOperandWithALongName;
+const options = { enabled: isEnabledForTheCurrentUser && hasPermissionToEdit && !isLockedByAnotherSession };
+class Session { ready = isEnabledForTheCurrentUser && hasPermissionToEdit && !isLockedByAnotherSession; }`);
+			expect(result).toBeWithNewline(`total =
+  firstOperandWithALongName +
+  secondOperandWithALongName +
+  thirdOperandWithALongName;
+const options = {
+  enabled:
+    isEnabledForTheCurrentUser &&
+    hasPermissionToEdit &&
+    !isLockedByAnotherSession,
+};
+class Session {
+  ready =
+    isEnabledForTheCurrentUser &&
+    hasPermissionToEdit &&
+    !isLockedByAnotherSession;
+}`);
+		});
+
+		it.each([
+			[
+				'const b = !!(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);',
+				`const b = !!(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);`,
+			],
+			[
+				'const b = typeof (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);',
+				`const b = typeof (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);`,
+			],
+			[
+				'const b = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb).length;',
+				`const b = (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+).length;`,
+			],
+			[
+				'const b = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)();',
+				`const b = (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+)();`,
+			],
+		])('breaks after the opening parenthesis in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('indents the operands of a call argument and a computed member object', async () => {
+			const source = `foo(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  c,
+);
+const b = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)[0];`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'function g() {\n  return aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;\n}',
+				`function g() {
+  return (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}`,
+			],
+			[
+				'function g() {\n  throw aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa + bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;\n}',
+				`function g() {
+  throw (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}`,
+			],
+			[
+				'function g() {\n  return (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa instanceof bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);\n}',
+				`function g() {
+  return (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa instanceof
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}`,
+			],
+			[
+				'function g() {\n  return (first ?? second);\n}',
+				`function g() {
+  return first ?? second;
+}`,
+			],
+		])(
+			'wraps a return or throw argument in parentheses only when it breaks in %s',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		it('keeps a JSDoc cast around a broken return argument as the only parentheses', async () => {
+			const source = `function g() {
+  return /** @type {Foo} */ (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	describe('statement conditions lay out like Prettier', () => {
+		it.each([
+			[
+				'while (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) {\n  step();\n}',
+				`while (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+) {
+  step();
+}`,
+			],
+			[
+				'do {\n  step();\n} while (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);',
+				`do {
+  step();
+} while (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);`,
+			],
+			[
+				'while (someObject.someMethodWithAVeryLongName(argumentNumberOne, argumentNumberTwo, three)) {\n  step();\n}',
+				`while (
+  someObject.someMethodWithAVeryLongName(
+    argumentNumberOne,
+    argumentNumberTwo,
+    three,
+  )
+) {
+  step();
+}`,
+			],
+			[
+				'while (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) {\n  step();\n}',
+				`while (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+) {
+  step();
+}`,
+			],
+		])('moves a long condition onto its own lines in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			`if (!(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+)) {
+  step();
+}`,
+			`while (!!(
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+)) {
+  step();
+}`,
+			`if (
+  !(
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  )
+) {
+  step();
+}`,
+			`while (ready && count < limit) {
+  step();
+}`,
+		])('keeps only a negated logical condition on the keyword line in %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	describe('sequence expressions lay out like Prettier', () => {
+		it.each([
+			[
+				'const f = (a) => (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);',
+				`const f = (a) => (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+);`,
+			],
+			[
+				'function g() {\n  return (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);\n}',
+				`function g() {
+  return (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}`,
+			],
+			[
+				'function g() {\n  throw (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);\n}',
+				`function g() {
+  throw (
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  );
+}`,
+			],
+			[
+				'firstVariableWithLongName = computeSomething(), secondVariableWithLongName = computeOther();',
+				`((firstVariableWithLongName = computeSomething()),
+  (secondVariableWithLongName = computeOther()));`,
+			],
+			[
+				'foo((aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb));',
+				`foo(
+  (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb),
+);`,
+			],
+		])('breaks after the commas in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps a sequence that fits on one line', async () => {
+			const source = `(a, b);
+const f = (a) => (a, b);
+for (i = 0, j = 1; i < 10; i++, j++) {
+  step();
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	describe('conditional expressions lay out like Prettier', () => {
+		it('keeps a nested conditional that fits on one line after return, throw, and export default', async () => {
+			const source = `function pick() {
+  return a ? b : c ? d : e;
+}
+function fail() {
+  throw a ? b : c ? d : e;
+}
+a ? b() : c ? d() : e();
+export default a ? b : c ? d : e;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('breaks every branch of a chain that does not fit', async () => {
+			const source = `const animal = isBird
+  ? "bird"
+  : isCat
+    ? "cat"
+    : isDog
+      ? "dog"
+      : isFish
+        ? "fish"
+        : "unknown animal type";`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('parenthesizes a nested consequent only on one line', async () => {
+			const result = await format(
+				'const value = aaaaaaaaaaaaaaaaaaaaaaaa ? (bbbbbbbbbbbbbbbbbbbbbbbbbbbb ? ccccccccccccccccccccc : ddddddddddddd) : eeeee;',
+			);
+			expect(result).toBeWithNewline(`const value = aaaaaaaaaaaaaaaaaaaaaaaa
+  ? bbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    ? ccccccccccccccccccccc
+    : ddddddddddddd
+  : eeeee;`);
+		});
+
+		it('breaks inside the parentheses of a conditional test', async () => {
+			const result = await format(
+				'const value = (aaaaaaaaaaaaaaaaaaaaaaaaaa ? bbbbbbbbbbbbbbbbbbbbbbbbbbb : ccccccccccccccccccccccccccc) ? d : e;',
+			);
+			expect(result).toBeWithNewline(`const value = (
+  aaaaaaaaaaaaaaaaaaaaaaaaaa
+    ? bbbbbbbbbbbbbbbbbbbbbbbbbbb
+    : ccccccccccccccccccccccccccc
+)
+  ? d
+  : e;`);
+		});
+
+		it.each([
+			[
+				'const x = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ? bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb : cccccccccccccccccccccccccc).prop;',
+				`const x = (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    ? bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    : cccccccccccccccccccccccccc
+).prop;`,
+			],
+			[
+				'const x = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ? bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb : cccccccccccccccccccccccccc).prop.call();',
+				`const x = (
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    ? bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    : cccccccccccccccccccccccccc
+).prop.call();`,
+			],
+		])(
+			'breaks before the closing parenthesis of a member object in %s',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		it('aligns a broken branch with the text after `? `', async () => {
+			const source = `const value = test
+  ? aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  : c;`;
+			expect(await format(source)).toBeWithNewline(source);
+			const tabbed = `function f() {
+\tconst value = test
+\t\t? aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +
+\t\t\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+\t\t: c;
+}`;
+			expect(await format(tabbed, { useTabs: true })).toBeWithNewline(tabbed);
+		});
+	});
+
+	describe('template literal expressions stay as written', () => {
+		it.each([
+			'const message = `Projects: ${[...configured].map((platform) => JSON.stringify(platform)).join(", ")}. Select one.`;',
+			`throw new Error(
+  \`Projects select multiple platforms for \${integration}: \${[...configured].map((platform) => JSON.stringify(platform)).join(", ")}. Select one.\`,
+);`,
+			'const s = `${aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ? bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb : cccccccccccccccccccccccccc}`;',
+			`function f() {
+  const q = \`
+    select * from \${table}
+    where \${aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+  \`;
+}`,
+		])('keeps an expression written on one line on one line in %s', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps the line breaks of an expression written across lines', async () => {
+			const source = `const s = \`\${
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+} and \${bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}\`;`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('indents a breaking expression from the template line it starts on', async () => {
+			const result = await format(`const s = \`a \${foo(() => {
+  return 1;
+})} b\`;
+function f() {
+  const q = \`
+    list:
+    \${items.map((item) => {
+      return item.name;
+    })}
+  \`;
+}`);
+			expect(result).toBeWithNewline(`const s = \`a \${foo(() => {
+  return 1;
+})} b\`;
+function f() {
+  const q = \`
+    list:
+    \${items.map((item) => {
+      return item.name;
+    })}
+  \`;
+}`);
+		});
+	});
+
+	describe('member chains break like Prettier', () => {
+		it.each([
+			[
+				'promise.then((result) => result.value).catch((error) => console.error(error)).finally(() => done());',
+				`promise
+  .then((result) => result.value)
+  .catch((error) => console.error(error))
+  .finally(() => done());`,
+			],
+			[
+				'const names = users.filter((user) => user.isActive).map((user) => user.name).join(", ");',
+				`const names = users
+  .filter((user) => user.isActive)
+  .map((user) => user.name)
+  .join(", ");`,
+			],
+			[
+				'function load() {\n  return fetch(url).then((response) => response.json()).then((data) => data.items);\n}',
+				`function load() {
+  return fetch(url)
+    .then((response) => response.json())
+    .then((data) => data.items);
+}`,
+			],
+			[
+				'async function load() {\n  const data = await fetch(url).then((response) => response.json()).then((data) => data.items);\n}',
+				`async function load() {
+  const data = await fetch(url)
+    .then((response) => response.json())
+    .then((data) => data.items);
+}`,
+			],
+			[
+				'array.map((element) => element * 2).filter(Boolean)[0].toString().padStart(someWidth, "0");',
+				`array
+  .map((element) => element * 2)
+  .filter(Boolean)[0]
+  .toString()
+  .padStart(someWidth, "0");`,
+			],
+			[
+				'const handler = event.target.closest("[data-some-attribute]")?.getAttribute("data-some-attribute");',
+				`const handler = event.target
+  .closest("[data-some-attribute]")
+  ?.getAttribute("data-some-attribute");`,
+			],
+		])('puts each call of a long chain on its own line in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			[
+				'const schema = z.object({ name: z.string(), email: z.string().email(), age: z.number().int().positive() }).strict().optional();',
+				`const schema = z
+  .object({
+    name: z.string(),
+    email: z.string().email(),
+    age: z.number().int().positive(),
+  })
+  .strict()
+  .optional();`,
+			],
+			[
+				'const result = Object.keys(someObjectWithALongName).filter((key) => key.startsWith("a")).map((key) => key.toUpperCase());',
+				`const result = Object.keys(someObjectWithALongName)
+  .filter((key) => key.startsWith("a"))
+  .map((key) => key.toUpperCase());`,
+			],
+			[
+				'd3.scaleLinear().domain([0, 100]).range([0, width]).clamp(true).nice().ticks(someTickCount);',
+				`d3.scaleLinear()
+  .domain([0, 100])
+  .range([0, width])
+  .clamp(true)
+  .nice()
+  .ticks(someTickCount);`,
+			],
+			[
+				'this.server.listen(port).on("error", (error) => handleTheError(error)).on("close", () => cleanup());',
+				`this.server
+  .listen(port)
+  .on("error", (error) => handleTheError(error))
+  .on("close", () => cleanup());`,
+			],
+		])(
+			'keeps a factory or short head on the first line only where Prettier does in %s',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		it('keeps the head of a chain on the = line and breaks after = before a chain of lookups', async () => {
+			const result =
+				await format(`const x = aaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccc().dddddddddddddddddd().eeeeeee();
+const value = someObject.someMethod().someProperty.someOtherProperty.yetAnotherProperty;`);
+			expect(result).toBeWithNewline(`const x = aaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbb
+  .cccccccccccccccccc()
+  .dddddddddddddddddd()
+  .eeeeeee();
+const value =
+  someObject.someMethod().someProperty.someOtherProperty.yetAnotherProperty;`);
+		});
+
+		it('keeps test and require calls on a member out of the member chain', async () => {
+			const source = `describe.only("does something really interesting with the value that it receives", () => {
+  run();
+});
+const policy =
+  require.resolve("./policies/a/very/long/path/to/some/module/decompressResponsePolicy.js");`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('breaks at non-null lookups but not at non-null callees, like Prettier', async () => {
+			const source = `foo.bar!(firstArgumentWithALongName).baz!(secondArgumentWithALongName).qux!(
+  thirdArgumentName,
+);
+someObject!
+  .someMethod(firstArgumentWithALongName)
+  .other(secondArgumentWithALongName)
+  .last(x);
+promise
+  .then((result) => result.value)!
+  .catch((error) => console.error(error))!
+  .finally(() => done());
+a!.b().c();
+x.y!.z();`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps short chains and chains that break inside a call on one line', async () => {
+			const source = `const x = a.b().c().d();
+wrapper.find("SomeSelector").prop("children")(defaultValue).toBe(1);
+object.foo.bar.baz.qux();
+expect(
+  screen.getByRole("button", { name: "Submit the form now please" }),
+).toBeInTheDocument();`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps each line comment of a chain after its own call', async () => {
+			const result = await format(`const b = value.replace(a, '-') // first
+  .replace(b, '_') // second
+  .replace(c, '');
+const c = value // first
+  .trim() // second
+  .toLowerCase();`);
+			expect(result).toBeWithNewline(`const b = value
+  .replace(a, "-") // first
+  .replace(b, "_") // second
+  .replace(c, "");
+const c = value // first
+  .trim() // second
+  .toLowerCase();`);
+		});
+
+		it('keeps a blank line and a trailing comment inside a chain', async () => {
+			const source = `app
+  .use(express.json())
+
+  .use(cors());
+item
+  .foo() // trailing
+  .bar()
+  .baz();`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('breaks a long chain of property lookups before its last lookup', async () => {
+			const result = await format(
+				'foo(someObject.someProperty.someOtherProperty.yetAnotherProperty.finalProperty.last);',
+			);
+			expect(result).toBeWithNewline(`foo(
+  someObject.someProperty.someOtherProperty.yetAnotherProperty.finalProperty
+    .last,
+);`);
+		});
+
+		it('keeps a component template chain idempotent', async () => {
+			const result = await format(`export function List(props) @{
+  const visible = props.items.filter((item) => item.includes(props.filter)).map((item) => item.toUpperCase()).slice(0, 10);
+  <ul>
+    @for (const item of visible) {
+      <li>{item.toUpperCase().split("").reverse().join("")}</li>
+    }
+  </ul>
+}`);
+			expect(result).toBeWithNewline(`export function List(props) @{
+  const visible = props.items
+    .filter((item) => item.includes(props.filter))
+    .map((item) => item.toUpperCase())
+    .slice(0, 10);
+  <ul>
+    @for (const item of visible) {
+      <li>{item.toUpperCase().split("").reverse().join("")}</li>
+    }
+  </ul>
+}`);
+		});
+	});
+
+	describe('unary operands with comments print in their own parentheses', () => {
+		it.each([
+			['x = !/* c */ a;', 'x = !(/* c */ a);'],
+			['x = !(a || b /* c */);', 'x = !(a || b /* c */);'],
+			['x = typeof (/* c */ a + b);', 'x = typeof (/* c */ a + b);'],
+			// Prettier keeps the operand's own parentheses inside the unary's
+			['x = !(/* c */ a ? b : c);', 'x = !(/* c */ (a ? b : c));'],
+			['x = -(/* c */ (a = b));', 'x = -(/* c */ (a = b));'],
+			[
+				'async function f() {\n  x = !/* c */ (await x);\n}',
+				'async function f() {\n  x = !(/* c */ (await x));\n}',
+			],
+			[
+				'function* g() {\n  x = !(/* c */ yield y);\n}',
+				'function* g() {\n  x = !(/* c */ (yield y));\n}',
+			],
+		])('prints %s like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('breaks the parentheses around a long commented operand', async () => {
+			const source = `function f() {
+  return !(
+    (before >= 48 /* 0 */ && before <= 57) ||
+    (before >= 65 /* A */ && before <= 90) ||
+    before === 36 /* $ */ ||
+    before === 95 /* _ */
+  );
+}`;
+			expect(await format(source)).toBeWithNewline(source);
 		});
 	});
 

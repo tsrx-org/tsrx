@@ -49,7 +49,9 @@ function decode_hash(hash: string): { source: string; target: string } | null {
 		const json = new TextDecoder().decode(Uint8Array.from(atob(hash), (c) => c.charCodeAt(0)));
 		const parsed = JSON.parse(json);
 		if (
-			typeof parsed?.s === 'string' && typeof parsed?.t === 'string' && VALID_TARGETS.has(parsed.t)
+			typeof parsed?.s === 'string' &&
+			typeof parsed?.t === 'string' &&
+			VALID_TARGETS.has(parsed.t)
 		) {
 			return { source: parsed.s, target: parsed.t };
 		}
