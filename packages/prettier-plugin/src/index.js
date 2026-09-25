@@ -5784,24 +5784,33 @@ function printClassDeclaration(node, path, options, print) {
 	/** @type {Doc[]} */
 	const heritage = [];
 	if (node.superClass) {
-		/** @type {Doc[]} */
-		const superClassParts = ['extends '];
+		/** @type {Doc} */
+		let superClassDoc;
 		if (superClassNeedsParens(node.superClass)) {
 			// The class owns these parens, so the superclass must not add its own
 			const superClass = path.call(
 				(superPath) => print(superPath, { suppressOwnParens: true }),
 				'superClass',
 			);
-			if (getDecorators(node.superClass).length > 0) {
-				// Each decorator prints on its own line, so the class is indented
-				// inside the parens to keep them off column zero.
-				superClassParts.push('(', indent([hardline, superClass]), hardline, ')');
-			} else {
-				superClassParts.push('(', superClass, ')');
-			}
+			// Each decorator prints on its own line, so the class is indented
+			// inside the parens to keep them off column zero.
+			superClassDoc =
+				getDecorators(node.superClass).length > 0
+					? ['(', indent([hardline, superClass]), hardline, ')']
+					: ['(', superClass, ')'];
 		} else {
-			superClassParts.push(path.call(print, 'superClass'));
+			superClassDoc = path.call(print, 'superClass');
 		}
+		const parent = /** @type {AST.Node | null} */ (path.getParentNode());
+		if (parent?.type === 'AssignmentExpression') {
+			// Like Prettier's `printSuperClass`, a superclass that doesn't fit
+			// after `= class extends` moves into parentheses of its own
+			superClassDoc = group(
+				ifBreak(['(', indent([softline, superClassDoc]), softline, ')'], superClassDoc),
+			);
+		}
+		/** @type {Doc[]} */
+		const superClassParts = ['extends ', superClassDoc];
 		if (node.superTypeParameters) {
 			superClassParts.push(path.call(print, 'superTypeParameters'));
 		}

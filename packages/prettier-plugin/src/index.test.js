@@ -9686,6 +9686,53 @@ function Two() @{
 }`);
 		});
 
+		// Prettier's `printSuperClass`: only the value of an assignment expression
+		it('moves a long superclass of an assigned class expression into parentheses', async () => {
+			const input = `Foo = class extends SomeNamespace.VeryLongBaseClassNameForTestingPurposesOnlyAbc.Def {
+  x = 1;
+};
+module.exports = class extends mixin(SomeVeryLongBaseClassName, AnotherVeryLongMixinClassName) {
+  x = 1;
+};
+a.b = class extends (SomeVeryLongBaseClassNameThatIsReallyLong || SomeOtherBaseClassName) {
+  x = 1;
+};
+Foo = class extends SomeNamespace.VeryLongBaseClassNameForTestingPurposes<TypeArg> {
+  x = 1;
+};`;
+
+			expect(await format(input)).toBeWithNewline(`Foo = class extends (
+  SomeNamespace.VeryLongBaseClassNameForTestingPurposesOnlyAbc.Def
+) {
+  x = 1;
+};
+module.exports = class extends (
+  mixin(SomeVeryLongBaseClassName, AnotherVeryLongMixinClassName)
+) {
+  x = 1;
+};
+a.b = class extends (
+  (SomeVeryLongBaseClassNameThatIsReallyLong || SomeOtherBaseClassName)
+) {
+  x = 1;
+};
+Foo = class extends (
+  SomeNamespace.VeryLongBaseClassNameForTestingPurposes
+)<TypeArg> {
+  x = 1;
+};`);
+		});
+
+		it.each([
+			'Foo = class extends Base {};',
+			'Foo = class extends (Base || Object) {};',
+			`const Foo = class extends SomeVeryLongBaseClassNameThatIsReallyLongForTestingAbcdef {
+  x = 1;
+};`,
+		])('keeps the superclass of %s as it is', async (source) => {
+			await expectUnchanged(source);
+		});
+
 		it('breaks the heading of a class expression', async () => {
 			const input = `const Foo = class VeryLongClassNameForTestingPurposesOnly extends Base implements IFoo, IBar {
   x = 1;
