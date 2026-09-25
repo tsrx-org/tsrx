@@ -246,7 +246,8 @@ export function tsx_with_ts_locations(
 		},
 		// esrap's TSImportType printer drops `options`, the import attributes in
 		// `import('./data.json', { with: { type: 'json' } })`, which TypeScript
-		// reads, for instance to pick the module's `resolution-mode`.
+		// reads, for instance to pick the module's `resolution-mode`
+		// (sveltejs/esrap#231). Remove this once esrap prints them.
 		TSImportType: (node, context) => {
 			if (!node.options) {
 				/** @type {NonNullable<typeof base.TSImportType>} */ (base.TSImportType)(node, context);
