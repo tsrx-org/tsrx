@@ -82,6 +82,101 @@ const REGEX_PRECEDING_KEYWORDS = new Set([
 ]);
 const regex_identifier = /[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*/uy;
 
+const REST_ELEMENT_TRAILING_COMMA = 'Comma is not permitted after the rest element';
+// acorn-typescript raises these at the modifier's column instead of its offset.
+const regex_modifier_order_error =
+	/^'\w+' modifier (?:must precede|cannot be used with) '\w+' modifier\.$/;
+
+/**
+ * Errors that acorn and `@sveltejs/acorn-typescript` raise while parsing, but that
+ * TypeScript's parser accepts and reports only as checker (type-check) diagnostics
+ * (#415). In `collect` and `loose` mode the parser records them in `errors` and
+ * keeps parsing, as TypeScript does; a strict parse still throws them. Every other
+ * error still throws.
+ *
+ * `raise` and `raiseRecoverable` return for these messages, so each one is listed
+ * only after checking that the code raising it upstream goes on to build the same
+ * node it builds for valid code. Mistakes whose raise site can't continue are
+ * handled by narrow overrides instead: a comma after a rest element
+ * (`#collectCheckerLevelError`, `parseBindingList`), `const` without an
+ * initializer (`parseVarId`), `await` in a namespace (`canAwait`), and a private
+ * name outside a class (the constructor and `parsePrivateIdent`).
+ *
+ * acorn's errors here are ECMAScript early errors, which acorn rightly raises;
+ * acorn-typescript's are TypeScript checker diagnostics.
+ * UPSTREAM(sveltejs/acorn-typescript#89): whether acorn-typescript should report
+ * TypeScript diagnostics as parse errors at all.
+ *
+ * @type {Array<string | RegExp>}
+ */
+const CHECKER_LEVEL_ERRORS = [
+	// acorn and acorn-typescript: a redeclared variable, import, type alias, or
+	// private name (TS2300, TS2451), and a repeated parameter name (TS2300).
+	/^(?:Identifier|type) '#?[^']+' has already been declared\.?$/,
+	'Argument name clash',
+	// acorn: `export { missing }` (TS2304).
+	/^Export '[^']+' is not defined$/,
+	// acorn: `a?.b = c` (TS2779).
+	'Optional chaining cannot appear in left-hand side',
+	// acorn: `import.source('x')` (TS18061).
+	"The only valid meta property for import is 'import.meta'",
+	// acorn: `new.target` outside a function (TS17013).
+	"'new.target' can only be used in functions and class static block",
+	// acorn: `super` outside a method, or `super()` outside a derived class's
+	// constructor (TS2337, TS2335).
+	"'super' keyword outside a method",
+	'super() call outside constructor of a subclass',
+	// acorn: `function f(...a,) {}` (TS1013).
+	REST_ELEMENT_TRAILING_COMMA,
+	// acorn-typescript: `abstract` members in a class that isn't abstract (TS1244).
+	'Abstract methods can only appear within an abstract class.',
+	// acorn-typescript: `declare class A { x = 1 }`, `declare let x = 1` (TS1039).
+	'Initializers are not allowed in ambient contexts.',
+	// acorn-typescript: modifiers out of order, incompatible, or repeated
+	// (TS1029, TS1243, TS1030).
+	regex_modifier_order_error,
+	/^Duplicate modifier: '\w+'\.$/,
+	// acorn-typescript: `private #x` (TS18010), `abstract #x` (TS18019).
+	/^Private elements cannot have an accessibility modifier \('\w+'\)\.$/,
+	"Private elements cannot have the 'abstract' modifier.",
+	// acorn-typescript: `function f({ a }?: T) {}` (TS2463).
+	// UPSTREAM(sveltejs/acorn-typescript#110): accepts the optional pattern.
+	'A binding pattern parameter cannot be optional in an implementation signature.',
+	// acorn-typescript: `with { type: 'json', type: 'json' }`, an ECMAScript early
+	// error that TypeScript doesn't report at all.
+	'Duplicated key in attributes',
+];
+
+/**
+ * @param {string | { message?: string }} message
+ * @returns {string}
+ */
+function get_error_message(message) {
+	return typeof message === 'string'
+		? message
+		: typeof message?.message === 'string'
+			? message.message
+			: String(message);
+}
+
+/**
+ * @param {string} message
+ * @returns {boolean}
+ */
+function is_checker_level_error(message) {
+	return CHECKER_LEVEL_ERRORS.some((entry) =>
+		typeof entry === 'string' ? entry === message : entry.test(message),
+	);
+}
+
+// acorn's scope flags and acorn-typescript's namespace scope flag, which neither
+// package exports.
+const SCOPE_FUNCTION = 2;
+const SCOPE_ASYNC = 4;
+const SCOPE_CLASS_STATIC_BLOCK = 256;
+const SCOPE_CLASS_FIELD_INIT = 512;
+const TS_SCOPE_TS_MODULE = 1 << 21;
+
 /** @type {WeakMap<Parse.Parser, number[]>} */
 const parser_line_starts = new WeakMap();
 
@@ -587,6 +682,9 @@ export function TSRXPlugin(config) {
 			#commentContextId = 0;
 			#collect = false;
 			#loose = false;
+			// Set while `parseVarStatement` or `parseVar` lets `const` declarators omit
+			// the initializer (see `#parseConstWithoutInitializer`).
+			#collectingConstWithoutInitializer = false;
 			/** @type {import('../types/index').CompileError[] | undefined} */
 			#errors = undefined;
 			/** @type {string | null} */
@@ -656,6 +754,7 @@ export function TSRXPlugin(config) {
 			 */
 			finishNode(node, type) {
 				const finished = super.finishNode(node, type);
+				if (this.#collect) this.#reportAwaitInNamespace(finished);
 				if (DECORATABLE_NODE_TYPES.has(type)) {
 					// acorn-typescript sets `decorators` only when there is one. Give every
 					// class and class member the array ESTree specifies; a member's
@@ -705,6 +804,14 @@ export function TSRXPlugin(config) {
 				this.#loose = tsrx_options?.loose === true;
 				this.#errors = tsrx_options?.errors;
 				this.#filename = tsrx_options?.filename || null;
+				if (this.#collect) {
+					// With private-field checks on, acorn rejects `#x in obj` outside a class
+					// with `Unexpected token`. TypeScript parses it and reports TS18016 from
+					// the checker. `parsePrivateIdent` records a private name outside a class
+					// instead; one a class uses without declaring it TypeScript reports as
+					// TS2339.
+					this.options.checkPrivateFields = false;
+				}
 			}
 
 			/** @this {Parse.Parser} */
@@ -3126,28 +3233,308 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * When collecting, keep parsing after duplicate declaration diagnostics so
-			 * editor tooling can continue producing AST and mappings.
+			 * When collecting, record a checker-level error (`CHECKER_LEVEL_ERRORS`) and
+			 * keep parsing, so editor tooling and the formatter still get an AST.
+			 * @param {number} position
+			 * @param {string} message
+			 * @returns {never}
+			 */
+			raise(position, message) {
+				if (this.#collectCheckerLevelError(position, message)) {
+					// The raise site goes on parsing (see `CHECKER_LEVEL_ERRORS`).
+					return /** @type {never} */ (undefined);
+				}
+				return super.raise(position, message);
+			}
+
+			/**
 			 * @param {number} position
 			 * @param {string | { message?: string }} message
 			 */
 			raiseRecoverable(position, message) {
-				const error_message =
-					typeof message === 'string'
-						? message
-						: typeof message?.message === 'string'
-							? message.message
-							: String(message);
-
+				if (this.#collectCheckerLevelError(position, message)) {
+					return;
+				}
+				const error_message = get_error_message(message);
 				if (
 					error_message.includes('has already been declared') ||
 					error_message === 'Argument name clash'
 				) {
+					// A strict parse throws these as a `CompileError`, without acorn's
+					// location suffix.
 					this.#report_recoverable_error(position, error_message);
 					return;
 				}
-
 				return super.raiseRecoverable(position, error_message);
+			}
+
+			/**
+			 * Record `message` in `errors` when collecting and it is a checker-level
+			 * error (`CHECKER_LEVEL_ERRORS`).
+			 * @param {number} position
+			 * @param {string | { message?: string }} message
+			 * @returns {boolean} Whether the error was recorded, and parsing goes on
+			 */
+			#collectCheckerLevelError(position, message) {
+				if (!this.#collect) return false;
+				const error_message = get_error_message(message);
+				if (!is_checker_level_error(error_message)) return false;
+
+				if (error_message === REST_ELEMENT_TRAILING_COMMA && this.type === tt.comma) {
+					// acorn raises this at the comma, then expects the list to close. Skip a
+					// trailing comma, as acorn-typescript does in ambient contexts (where
+					// it's allowed after a rest parameter); a comma that another element
+					// follows is still an error.
+					if (this.#isAmbientRestParameterTrailingComma()) return false;
+					const next = this.lookaheadCharCode();
+					if (
+						next !== CharCode.closeParen &&
+						next !== CharCode.closeBracket &&
+						next !== CharCode.closeBrace
+					) {
+						return false;
+					}
+					this.#recordCheckerLevelError(position, position + 1, error_message);
+					this.next();
+					return true;
+				}
+
+				if (regex_modifier_order_error.test(error_message)) {
+					// UPSTREAM(sveltejs/acorn-typescript#122): `tsParseModifiers` passes the
+					// modifier's column as the position; remove once a release includes the
+					// fix. The modifier is the token just read.
+					position = this.lastTokStart;
+				}
+
+				this.#recordCheckerLevelError(position, position + 1, error_message);
+				return true;
+			}
+
+			/**
+			 * Whether the current token is a comma between a rest parameter and `)` in
+			 * an ambient context, which TypeScript allows and acorn-typescript skips.
+			 */
+			#isAmbientRestParameterTrailingComma() {
+				return (
+					this.isAmbientContext &&
+					this.type === tt.comma &&
+					this.lookaheadCharCode() === CharCode.closeParen
+				);
+			}
+
+			/**
+			 * Record a checker-level error once: acorn checks an assignment target
+			 * both when converting it and when validating it. An error recorded while
+			 * acorn-typescript tries a parse that it then abandons is dropped with the
+			 * rest of that parse's effects.
+			 * @param {number} start
+			 * @param {number} end
+			 * @param {string} message
+			 */
+			#recordCheckerLevelError(start, end, message) {
+				if (this.#errors) {
+					if (this.#errors.some((error) => error.pos === start && error.message === message)) {
+						return;
+					}
+					this.parseEffects?.willAppend(this.#errors);
+				}
+				this.#report_recoverable_error_range(start, end, message);
+			}
+
+			/**
+			 * When collecting, private-field checks are off (see the constructor):
+			 * record a private name outside any class, which acorn would raise.
+			 * @type {Parse.Parser['parsePrivateIdent']}
+			 */
+			parsePrivateIdent() {
+				const node = super.parsePrivateIdent();
+				if (this.#collect && this.privateNameStack.length === 0) {
+					this.#recordCheckerLevelError(
+						/** @type {number} */ (node.start),
+						/** @type {number} */ (node.end),
+						`Private field '#${node.name}' must be declared in an enclosing class`,
+					);
+				}
+				return node;
+			}
+
+			/**
+			 * acorn throws `Unexpected token` for a `const` without an initializer
+			 * outside an ambient context. TypeScript parses it and reports TS1155 from
+			 * the checker. When collecting, `parseVarStatement` and `parseVar` (a `for`
+			 * head) let `const` declarators omit the initializer, and `parseVarId`
+			 * records the error for a name, or throws acorn's error for a pattern.
+			 * @template T
+			 * @param {string} kind
+			 * @param {boolean | undefined} allowMissingInitializer
+			 * @param {(allowMissingInitializer: boolean) => T} parse
+			 * @returns {T}
+			 */
+			#parseConstWithoutInitializer(kind, allowMissingInitializer, parse) {
+				const outer = this.#collectingConstWithoutInitializer;
+				this.#collectingConstWithoutInitializer =
+					this.#collect && kind === 'const' && !allowMissingInitializer && !this.isAmbientContext;
+				try {
+					return parse(!!allowMissingInitializer || this.#collectingConstWithoutInitializer);
+				} finally {
+					this.#collectingConstWithoutInitializer = outer;
+				}
+			}
+
+			/**
+			 * acorn-typescript's `parseVarStatement` calls acorn's `parseVar` itself
+			 * (`super.parseVar`), not the `parseVar` below, so the two never apply to
+			 * the same declaration.
+			 * @param {AST.VariableDeclaration} node
+			 * @param {string} kind
+			 * @param {boolean} [allowMissingInitializer]
+			 */
+			parseVarStatement(node, kind, allowMissingInitializer) {
+				return this.#parseConstWithoutInitializer(kind, allowMissingInitializer, (allow) =>
+					super.parseVarStatement(node, kind, allow),
+				);
+			}
+
+			/**
+			 * @param {AST.VariableDeclaration} node
+			 * @param {boolean} isFor
+			 * @param {string} kind
+			 * @param {boolean} [allowMissingInitializer]
+			 */
+			parseVar(node, isFor, kind, allowMissingInitializer) {
+				return this.#parseConstWithoutInitializer(kind, allowMissingInitializer, (allow) =>
+					super.parseVar(node, isFor, kind, allow),
+				);
+			}
+
+			/**
+			 * @param {AST.VariableDeclarator} decl
+			 * @param {AST.VariableDeclaration['kind']} kind
+			 */
+			parseVarId(decl, kind) {
+				super.parseVarId(decl, kind);
+				// acorn's check in `parseVar`, which reads the initializer next.
+				if (
+					!this.#collectingConstWithoutInitializer ||
+					this.type === tt.eq ||
+					this.type === tt._in ||
+					this.isContextual('of')
+				) {
+					return;
+				}
+				if (decl.id.type !== 'Identifier') this.unexpected();
+				const start = /** @type {number} */ (decl.id.start);
+				this.#recordCheckerLevelError(
+					start,
+					start + decl.id.name.length,
+					"'const' declarations must be initialized.",
+				);
+			}
+
+			/**
+			 * acorn ends a binding list at its rest element: it raises for a comma
+			 * after it and expects the list to close. TypeScript parses the elements
+			 * after a rest element and reports them from the checker (TS1014, TS2462).
+			 * When collecting, record acorn's error at the comma and keep parsing the
+			 * list; this is acorn's `parseBindingList` with that one change.
+			 * @type {Parse.Parser['parseBindingList']}
+			 */
+			parseBindingList(close, allowEmpty, allowTrailingComma, allowModifiers) {
+				if (!this.#collect) {
+					return super.parseBindingList(close, allowEmpty, allowTrailingComma, allowModifiers);
+				}
+				/** @type {AST.Pattern[]} */
+				const elements = [];
+				let first = true;
+				while (!this.eat(close)) {
+					if (first) first = false;
+					else this.expect(tt.comma);
+					if (allowEmpty && this.type === tt.comma) {
+						elements.push(/** @type {AST.Pattern} */ (/** @type {unknown} */ (null)));
+					} else if (allowTrailingComma && this.afterTrailingComma(close)) {
+						break;
+					} else if (this.type === tt.ellipsis) {
+						const rest = this.parseRestBinding();
+						this.parseBindingListItem(rest);
+						elements.push(rest);
+						if (this.type === tt.comma && !this.#isAmbientRestParameterTrailingComma()) {
+							this.#recordCheckerLevelError(
+								this.start,
+								this.start + 1,
+								REST_ELEMENT_TRAILING_COMMA,
+							);
+						}
+					} else {
+						elements.push(this.parseAssignableListItem(allowModifiers));
+					}
+				}
+				return elements;
+			}
+
+			/**
+			 * acorn-typescript gives a namespace body acorn's class static block scope
+			 * flag, so acorn reads `await` there as an identifier and throws `Cannot use
+			 * await in class static initialization block`. TypeScript parses an `await`
+			 * expression, `for await` loop, or `await using` declaration there and
+			 * reports it from the checker (TS1308, TS1103, TS2852). When collecting,
+			 * look through namespaces as TypeScript does; `finishNode` records the error.
+			 * UPSTREAM(sveltejs/acorn-typescript#89)
+			 */
+			get canAwait() {
+				const can_await = super.canAwait;
+				if (can_await || !this.#collect) return can_await;
+				return this.#awaitContext() === 'namespace';
+			}
+
+			/**
+			 * Whether `await` may be used here, going by acorn's `canAwait` with
+			 * namespace scopes looked through.
+			 * @returns {'none' | 'allowed' | 'namespace'} `namespace` when it may be
+			 * used only because a namespace scope was looked through
+			 */
+			#awaitContext() {
+				let in_namespace = false;
+				for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+					const { flags } = this.scopeStack[i];
+					if (flags & TS_SCOPE_TS_MODULE) {
+						in_namespace = true;
+					} else if (flags & (SCOPE_CLASS_STATIC_BLOCK | SCOPE_CLASS_FIELD_INIT)) {
+						return 'none';
+					} else if (flags & SCOPE_FUNCTION) {
+						return !(flags & SCOPE_ASYNC) ? 'none' : in_namespace ? 'namespace' : 'allowed';
+					}
+				}
+				const allowed =
+					(this.inModule && this.options.ecmaVersion >= 13) ||
+					this.options.allowAwaitOutsideFunction;
+				return !allowed ? 'none' : in_namespace ? 'namespace' : 'allowed';
+			}
+
+			/**
+			 * Record TypeScript's error for an `await` that only parses because
+			 * `canAwait` looks through namespaces.
+			 * @param {AST.Node} node
+			 */
+			#reportAwaitInNamespace(node) {
+				/** @type {string | null} */
+				let message = null;
+				if (node.type === 'AwaitExpression') {
+					message =
+						"'await' expressions are only allowed within async functions and at the top levels of modules.";
+				} else if (node.type === 'ForOfStatement' && node.await) {
+					message =
+						"'for await' loops are only allowed within async functions and at the top levels of modules.";
+				} else if (node.type === 'VariableDeclaration' && node.kind === 'await using') {
+					message =
+						"'await using' statements are only allowed within async functions and at the top levels of modules.";
+				}
+				if (message === null || this.#awaitContext() !== 'namespace') return;
+				// The `await` keyword, after `for` in a loop.
+				const start =
+					node.type === 'ForOfStatement'
+						? skip_space_and_comments_from(this.input, /** @type {number} */ (node.start) + 3)
+						: /** @type {number} */ (node.start);
+				this.#recordCheckerLevelError(start, start + 'await'.length, message);
 			}
 
 			/**
