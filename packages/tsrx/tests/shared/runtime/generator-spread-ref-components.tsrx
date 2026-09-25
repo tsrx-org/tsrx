@@ -12,9 +12,9 @@ function capture(node: Element | null) {
 }
 
 function* spread_ref_field(enabled: boolean, bag: SpreadBag) {
-	return enabled
-		? <input class="generator-spread-ref" {...bag} ref={capture} title={yield bag.title} />
-		: null;
+	return enabled ? (
+		<input class="generator-spread-ref" {...bag} ref={capture} title={yield bag.title} />
+	) : null;
 }
 
 export function GeneratorSpreadRefApp({ enabled, bag }: { enabled: boolean; bag: SpreadBag }) {
