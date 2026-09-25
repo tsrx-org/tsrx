@@ -589,6 +589,26 @@ describe('parse errors', () => {
 		await expect(format('const a = <div></span>;\n')).rejects.toThrow();
 	});
 
+	test("errors are reported like Prettier's parsers report them", async () => {
+		for (const [source, message, start] of [
+			[
+				'function App() @{\n  @if (x) {\n    <b />\n',
+				"'}' expected. (4:1)",
+				{ line: 4, column: 1 },
+			],
+			[
+				'const y = <div>\n',
+				"Unclosed tag '<div>'. Expected '</div>' before end of template. (2:1)",
+				{ line: 2, column: 1 },
+			],
+		]) {
+			const error = await format(/** @type {string} */ (source)).catch((/** @type {any} */ e) => e);
+			expect(error).toBeInstanceOf(SyntaxError);
+			expect(error.message.split('\n')[0]).toBe(message);
+			expect(error.loc).toEqual({ start });
+		}
+	});
+
 	test('mistakes TypeScript only reports as diagnostics still format', async () => {
 		await expectFormat('let a = 1;\nlet a = 2;', 'let a = 1;\nlet a = 2;\n');
 	});
