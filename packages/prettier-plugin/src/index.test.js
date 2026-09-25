@@ -1299,6 +1299,28 @@ export default   class  B {}`;
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		it('prints a comment between the decorators and export once', async () => {
+			// The ignored source starts at the decorator and holds the comment.
+			// Prettier formats the class here; the source stays as written.
+			const source = `@dec
+// prettier-ignore
+export class A {  }
+@dec /* prettier-ignore */
+export default class {  }`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			'class A<T  > // prettier-ignore\n  extends B {}',
+			'type T = A /* prettier-ignore */ | B;',
+			'type T =\n  | A<  1 > // prettier-ignore\n  | B;',
+		])(
+			'prints the trailing comments of an ignored node once when its parent prints them in %s',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
+
 		it("doesn't break the list around an ignored node over several lines", async () => {
 			// Prettier prints the ignored source as a plain string
 			const source = `foo(/* prettier-ignore */ [1,

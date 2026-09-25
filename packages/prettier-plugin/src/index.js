@@ -424,16 +424,18 @@ const IGNORED_CONTENT_END_TYPES = new Set([
 /**
  * The source of a node that `prettier-ignore` keeps, like Prettier's
  * `printIgnored`. An export's source starts at its declaration's first
- * decorator, even one written before `export`. A statement's source ends where Prettier's `locEnd` does,
- * before its `;`, which then prints by the `semi` option: after a declaration,
- * `break`, `continue`, or `debugger` always, and after another statement only
- * when it was written. A compound statement ends like its body.
+ * decorator, even one written before `export`. A statement's source ends
+ * where Prettier's `locEnd` does, before its `;`, which then prints by the
+ * `semi` option: after a declaration, `break`, `continue`, or `debugger`
+ * always, and after another statement only when it was written. A compound
+ * statement ends like its body. Like Prettier, the comments between `start`
+ * and `end` print with the source, not again on their own.
  * @param {AST.Node} node - The ignored node
  * @param {AstPath} path - The path to the node
  * @param {TsrxFormatOptions} options - Prettier options
- * @returns {string}
+ * @returns {{ start: number, end: number, text: string }}
  */
-function printIgnoredSource(node, path, options) {
+function getIgnoredSource(node, path, options) {
 	const text = /** @type {string} */ (options.originalText);
 	// A node's own span has the decorators written after `export`. The ones
 	// before it belong to the export, which prints the others when it isn't
@@ -514,7 +516,11 @@ function printIgnoredSource(node, path, options) {
 	}
 
 	const source = text.slice(start, contentEnd);
-	return semicolon && options.semi !== false ? source + ';' : source;
+	return {
+		start,
+		end: contentEnd,
+		text: semicolon && options.semi !== false ? source + ';' : source,
+	};
 }
 
 /**
@@ -2300,9 +2306,26 @@ function printTsrxNode(node, path, options, print, args) {
 	// went out ahead of its comments
 	let leadingSemicolonPrinted = false;
 
+	// A `prettier-ignore` directive keeps the node's original source verbatim
+	const commentNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node);
+	const ignoredSource =
+		hasPrettierIgnore(commentNode) &&
+		typeof options.originalText === 'string' &&
+		typeof (/** @type {AST.NodeWithLocation} */ (node).start) === 'number' &&
+		typeof (/** @type {AST.NodeWithLocation} */ (node).end) === 'number'
+			? getIgnoredSource(commentNode, path, options)
+			: null;
+
 	// Handle leading comments (a union prints its own, inside its indentation)
 	if (!suppressLeadingComments && !unionPrintsOwnComments(path)) {
-		const comments = typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []);
+		const allComments = typeCastParens ? typeCastParens.ahead : (node.leadingComments ?? []);
+		// The ignored source may start before the node, at a decorator, and
+		// already hold the comments after it
+		const comments = ignoredSource
+			? allComments.filter(
+					(comment) => /** @type {AST.NodeWithLocation} */ (comment).end <= ignoredSource.start,
+				)
+			: allComments;
 		const lastComment = comments.at(-1);
 		// A JSDoc cast must stay right before the parenthesis it casts
 		leadingSemicolonPrinted = Boolean(
@@ -2323,16 +2346,9 @@ function printTsrxNode(node, path, options, print, args) {
 		}
 	}
 
-	// A `prettier-ignore` directive keeps the node's original source verbatim.
-	const commentNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node);
-	if (
-		hasPrettierIgnore(commentNode) &&
-		typeof options.originalText === 'string' &&
-		typeof (/** @type {AST.NodeWithLocation} */ (node).start) === 'number' &&
-		typeof (/** @type {AST.NodeWithLocation} */ (node).end) === 'number'
-	) {
+	if (ignoredSource) {
 		// Like Prettier, a plain string, which doesn't break the groups around it
-		const ignoredText = printIgnoredSource(commentNode, path, options);
+		const ignoredText = ignoredSource.text;
 		/** @type {Doc} */
 		let ignored = ignoredText;
 		// The node's span excludes its own parentheses, so put back any it had
@@ -2345,7 +2361,7 @@ function printTsrxNode(node, path, options, print, args) {
 		if (!leadingSemicolonPrinted && needsLeadingSemicolon(path, options, ignoredText)) {
 			ignored = [';', ignored];
 		}
-		return finishTsrxNode(commentNode, parts, ignored, options);
+		return finishTsrxNode(commentNode, parts, ignored, options, args?.suppressTrailingComments);
 	}
 
 	/** @type {Doc[] | Doc} */
@@ -8501,7 +8517,7 @@ function printLabeledStatement(node, path, options, print) {
 	// A moved `prettier-ignore` is the last comment before the label, so it
 	// keeps the whole statement's source.
 	if (isPrettierIgnoreComment(moved.at(-1))) {
-		return printIgnoredSource(node, path, options);
+		return getIgnoredSource(node, path, options).text;
 	}
 
 	const body = path.call((bodyPath) => print(bodyPath, { suppressLeadingComments: true }), 'body');
