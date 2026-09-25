@@ -848,7 +848,7 @@ export function TSRXPlugin(config) {
 			// What enclosed each element when it started: `this.labels` and its length
 			// (see `#insideSwitchStartedAfter`), and the setup-statement depths (see
 			// `#elementStart`).
-			/** @type {WeakMap<AST.Node, { labels: Parse.Parser['labels'], labelsLength: number, scriptDepth: number, switchCaseScriptDepth: number }>} */
+			/** @type {WeakMap<AST.Node, { labels: Parse.Parser['labels'], labelsLength: number, scriptDepth: number, switchCaseScriptDepth: number, scriptJSXDepth: number }>} */
 			#elementStarts = new WeakMap();
 			#readingJSXControlFlowDirectiveKeyword = false;
 			#readingJSXControlFlowHeader = false;
@@ -1090,7 +1090,9 @@ export function TSRXPlugin(config) {
 			 * statement of a `@{ … }` or directive body and by a spread attribute's
 			 * argument; `switchCaseScriptDepth` is
 			 * `#parsingJSXSwitchCaseScriptStatementDepth`, raised by one of an `@case`.
-			 * A node that no element start recorded counts from 0.
+			 * `scriptJSXDepth` is `#scriptJSXElementDepth` (see
+			 * `#insideScriptJSXElement`). A node that no element start recorded counts
+			 * from 0.
 			 * @param {AST.Node} node
 			 */
 			#elementStart(node) {
@@ -1100,8 +1102,22 @@ export function TSRXPlugin(config) {
 						labelsLength: 0,
 						scriptDepth: 0,
 						switchCaseScriptDepth: 0,
+						scriptJSXDepth: 0,
 					}
 				);
+			}
+
+			/**
+			 * Whether the position is in an element that acorn-typescript's JSX parser
+			 * reads (see `jsx_parseElement`) and that started after the innermost TSRX
+			 * element: an element in an unbraced attribute value (`<div a=<b>…</b> />`).
+			 * Its children are read as template text, but that parser takes each text
+			 * token as a child as it is, so a template's comments are text there, as
+			 * in TSX.
+			 */
+			#insideScriptJSXElement() {
+				const node = this.#path.findLast((node) => this.#isNativeTemplateNode(node));
+				return this.#scriptJSXElementDepth > (node ? this.#elementStart(node).scriptJSXDepth : 0);
 			}
 
 			/**
@@ -1732,7 +1748,7 @@ export function TSRXPlugin(config) {
 
 			#readTemplateRawTextToken() {
 				const start = this.pos;
-				const index = this.#templateRawTextEnd(start);
+				const index = this.#templateRawTextEnd(start, this.#insideScriptJSXElement());
 
 				const endLoc = get_line_info(this, index);
 				const value = this.input.slice(start, index);
@@ -1785,8 +1801,10 @@ export function TSRXPlugin(config) {
 
 			/**
 			 * @param {number} start
+			 * @param {boolean} comments_are_text Whether a comment is part of the text
+			 *   (see `#insideScriptJSXElement`) instead of ending it.
 			 */
-			#templateRawTextEnd(start) {
+			#templateRawTextEnd(start, comments_are_text) {
 				let index = start;
 				while (index < this.input.length) {
 					const ch = this.input.charCodeAt(index);
@@ -1795,8 +1813,9 @@ export function TSRXPlugin(config) {
 						ch === CharCode.openBrace ||
 						ch === CharCode.closeBrace ||
 						this.#isJSXControlFlowDirectiveAt(index) ||
-						this.#isTemplateLineCommentStart(index, start) ||
-						this.#isTemplateBlockCommentStart(index)
+						(!comments_are_text &&
+							(this.#isTemplateLineCommentStart(index, start) ||
+								this.#isTemplateBlockCommentStart(index)))
 					) {
 						break;
 					}
@@ -4844,9 +4863,28 @@ export function TSRXPlugin(config) {
 			 * Where `await` is a keyword (an async function, or the module top level),
 			 * it is a unary operator like `yield`, so the token after it starts an
 			 * expression: `await <div />` awaits an element instead of comparing.
+			 *
+			 * acorn-typescript takes a `/` right after a tag start for a closing tag's
+			 * and drops the two contexts the tag start pushed. When an element attempt
+			 * fails, `parseMaybeAssign` drops them itself and tries a generic arrow
+			 * from the same `<`, which reads that `/` again: the second drop goes below
+			 * the stack's start at the top of a statement (`x = </>;`), and the
+			 * `RangeError` replaces the element attempt's syntax error. Without the
+			 * tag start's `tc_oTag` on top, the `/` is no closing tag's and updates the
+			 * context as acorn's does.
 			 * @type {Parse.Parser['updateContext']}
 			 */
 			updateContext(prevType) {
+				if (
+					this.type === tt.slash &&
+					prevType === tstt.jsxTagStart &&
+					this.curContext() !== tstc.tc_oTag
+				) {
+					// UPSTREAM(sveltejs/acorn-typescript#134): remove once a release includes the fix
+					// acorn's own `updateContext` for `/`, which is `beforeExpr`.
+					this.exprAllowed = true;
+					return;
+				}
 				super.updateContext(prevType);
 				if (
 					this.type === tt.name &&
@@ -5041,15 +5079,21 @@ export function TSRXPlugin(config) {
 				// literal character (`<div>5/2</div>`, `<div>#tag</div>`). This must
 				// not fire in the JS positions that can sit under a template element
 				// on the path: inside a `{ … }` expression container (an attribute or
-				// child expression — `<rect x={a / 2}/>`, `{this.#x}`) or inside a
-				// control-flow directive header (`@if (a / 2 > 1)`), where `/` is
-				// division and `#` is a private-field access.
+				// child expression — `<rect x={a / 2}/>`, `{this.#x}`), inside a
+				// control-flow directive header (`@if (a / 2 > 1)`), or in an opening
+				// tag (`<div / >`, a spread attribute's `{...(a / 2)}`), where `/` is
+				// division or a self-closing tag's and `#` is a private-field access.
+				// The element being opened goes on `#path` only for the token after
+				// its `>`, which is its first child.
+				const template_parent = this.#path.at(-1);
 				if (
 					(code === CharCode.numberSign || code === CharCode.slash) &&
 					this.#functionBodyDepth === 0 &&
 					this.#jsxExpressionContainerDepth === 0 &&
 					!this.#readingJSXControlFlowHeader &&
-					this.#isNativeTemplateNode(this.#path.at(-1)) &&
+					this.#isNativeTemplateNode(template_parent) &&
+					(!this.#openingNativeTemplateNode ||
+						this.#openingNativeTemplateNode === template_parent) &&
 					!(
 						code === CharCode.slash &&
 						(this.input.charCodeAt(this.pos - 1) === CharCode.lessThan ||
@@ -6503,6 +6547,23 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * acorn-typescript's JSX parser reads an element's children until its
+			 * closing tag and takes each text token as a child. A text token that
+			 * reads nothing leaves the next token where it was, so the loop would read
+			 * it again until memory runs out; report it instead, as `parseTemplateBody`
+			 * does for template text.
+			 * @type {Parse.Parser['jsx_parseText']}
+			 */
+			jsx_parseText() {
+				const start = this.start;
+				const node = super.jsx_parseText();
+				if (node.end === start && this.start === start && this.type === tstt.jsxText) {
+					this.unexpected(start);
+				}
+				return node;
+			}
+
+			/**
 			 * Override jsx_parseElement to use TSRX template parsing only where the
 			 * fragment/element body can contain TSRX-only syntax.
 			 * @type {Parse.Parser['jsx_parseElement']}
@@ -6528,7 +6589,11 @@ export function TSRXPlugin(config) {
 				// `tc_oTag`, so everything below them is the enclosing expression's
 				// stack — the depth a balanced element parse must return to.
 				const enclosing_context_depth = this.context.length - 2;
+				const tag_start = this.start;
 				this.next();
+				// A closing tag where an element starts (`x = (</>);`) is no expression.
+				// TypeScript reports it at the `<`.
+				if (this.type === tt.slash) this.unexpected(tag_start);
 				const parsed = /** @type {import('estree-jsx').JSXElement} */ (
 					/** @type {unknown} */ (this.parseElement())
 				);
@@ -6652,6 +6717,7 @@ export function TSRXPlugin(config) {
 					labelsLength: this.labels.length,
 					scriptDepth: this.#templateScriptParsingDepth,
 					switchCaseScriptDepth: this.#parsingJSXSwitchCaseScriptStatementDepth,
+					scriptJSXDepth: this.#scriptJSXElementDepth,
 				});
 
 				const previous_opening_native_template_node = this.#openingNativeTemplateNode;
@@ -7364,8 +7430,11 @@ export function TSRXPlugin(config) {
 						);
 					}
 
+					const tag_start = this.start;
 					this.next();
-					if (this.value === '/') this.unexpected();
+					// A closing tag where a statement starts, reported at its `<` as in an
+					// expression (see `jsx_parseElement`).
+					if (this.value === '/') this.unexpected(tag_start);
 					const node = this.parseElement();
 
 					if (!node) {
