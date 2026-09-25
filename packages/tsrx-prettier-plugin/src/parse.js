@@ -60,10 +60,48 @@ export function parse(text, options) {
 	);
 	const adapter = new Adapter(text, comments);
 	const program = adapter.visit(ast);
-	program.comments = comments
-		.filter((comment) => !adapter.isInsideRawText(comment))
-		.map(({ type, value, start, end }) => ({ type, value, start, end }));
+	program.start = 0;
+	program.end = text.length;
+	program.comments = mergeNestledJsdocComments(
+		comments
+			.filter((comment) => !adapter.isInsideRawText(comment))
+			.map(({ type, value, start, end }) => ({ type, value, start, end })),
+	);
 	return program;
+}
+
+/**
+ * Prettier's parsers join JSDoc-style block comments that touch
+ * (`/** a *\//** b *\/`) into one comment.
+ * @param {Comment[]} comments
+ * @returns {Comment[]}
+ */
+function mergeNestledJsdocComments(comments) {
+	for (let i = comments.length - 2; i >= 0; i--) {
+		const comment = comments[i];
+		const following = comments[i + 1];
+		if (
+			comment.end === following.start &&
+			isIndentableBlockComment(comment) &&
+			isIndentableBlockComment(following)
+		) {
+			comment.value += `*//*${following.value}`;
+			comment.end = following.end;
+			comments.splice(i + 1, 1);
+		}
+	}
+	return comments;
+}
+
+/**
+ * A block comment whose every line starts with `*`, like a JSDoc comment.
+ * @param {Comment} comment
+ * @returns {boolean}
+ */
+function isIndentableBlockComment(comment) {
+	if (comment.type !== 'Block') return false;
+	const lines = `*${comment.value}*`.split('\n');
+	return lines.length > 1 && lines.every((line) => line.trimStart()[0] === '*');
 }
 
 /**
@@ -153,6 +191,55 @@ class Adapter {
 	}
 
 	/**
+	 * The parser leaves the whitespace between JSX children out of its text
+	 * nodes, but Prettier reads it to keep blank lines and to choose line
+	 * breaks, so rebuild the text nodes from the source between children.
+	 * Text around a comment keeps the parser's shape.
+	 * @param {Node} node
+	 */
+	restoreJsxWhitespace(node) {
+		const opening = node.openingElement ?? node.openingFragment;
+		const closing = node.closingElement ?? node.closingFragment;
+		if (!closing) return;
+
+		/** @type {Node[]} */
+		const children = [];
+		let position = opening.end;
+		const addText = (/** @type {number} */ end) => {
+			if (end <= position) return;
+			if (this.comments.some((comment) => comment.start < end && comment.end > position)) {
+				return;
+			}
+			const previous = children.at(-1);
+			const start =
+				previous?.type === 'JSXText' && previous.end === position ? previous.start : position;
+			if (start !== position) children.pop();
+			const raw = this.text.slice(start, end);
+			children.push({ type: 'JSXText', start, end, value: raw, raw });
+		};
+		for (const child of node.children) {
+			if (child.type === 'JSXText') {
+				addText(child.start);
+				const containsComment = this.comments.some(
+					(comment) => comment.start >= child.start && comment.end <= child.end,
+				);
+				if (containsComment) {
+					children.push(child);
+				} else {
+					position = child.start;
+					addText(child.end);
+				}
+			} else {
+				addText(child.start);
+				children.push(child);
+			}
+			position = Math.max(position, child.end);
+		}
+		addText(closing.start);
+		node.children = children;
+	}
+
+	/**
 	 * @param {Comment} comment
 	 * @returns {boolean}
 	 */
@@ -235,6 +322,21 @@ class Adapter {
 		}
 
 		switch (node.type) {
+			// Prettier's parsers rebalance `a || (b || c)` into `(a || b) || c`.
+			case 'LogicalExpression':
+				return rebalanceLogicalTree(node);
+
+			// …and drop a union or intersection of one type.
+			case 'TSUnionType':
+			case 'TSIntersectionType':
+				if (node.types.length === 1) return node.types[0];
+				break;
+
+			case 'JSXElement':
+			case 'JSXFragment':
+				if (!isRawScriptElement(node)) this.restoreJsxWhitespace(node);
+				break;
+
 			case 'Program':
 				// A module-level JSX statement is a plain expression statement.
 				node.body = node.body.map((/** @type {Node} */ child) =>
@@ -380,6 +482,32 @@ class Adapter {
 
 		return node;
 	}
+}
+
+/**
+ * @param {Node} node
+ * @returns {Node}
+ */
+function rebalanceLogicalTree(node) {
+	const { left, right, operator } = node;
+	if (right.type !== 'LogicalExpression' || right.operator !== operator) {
+		return node;
+	}
+	return rebalanceLogicalTree({
+		type: 'LogicalExpression',
+		operator,
+		left: rebalanceLogicalTree({
+			type: 'LogicalExpression',
+			operator,
+			left,
+			right: right.left,
+			start: locStart(left),
+			end: locEnd(right.left),
+		}),
+		right: right.right,
+		start: locStart(node),
+		end: locEnd(node),
+	});
 }
 
 /**
