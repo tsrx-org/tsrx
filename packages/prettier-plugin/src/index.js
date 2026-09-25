@@ -11012,7 +11012,9 @@ function printJSXElement(node, path, options, print) {
 	// JSXText) so the join can preserve authored blank lines; childEndNodes tracks
 	// the last source node so glued neighbors can be detected by position.
 	const childrenDocs = [];
+	/** @type {any[]} */
 	const childNodes = [];
+	/** @type {any[]} */
 	const childEndNodes = [];
 	let currentText = '';
 	let currentTextNode = null;
@@ -11085,7 +11087,7 @@ function printJSXElement(node, path, options, print) {
 				currentTextEndNode = null;
 			}
 
-			if (isJSXWhitespaceExpression(child)) {
+			if (isJSXWhitespaceExpression(/** @type {AST.Node} */ (child))) {
 				// `{" "}` is a significant space, like a space-only text child
 				childrenDocs.push(' ');
 				childNodes.push(child);
