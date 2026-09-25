@@ -1141,74 +1141,13 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 		// Prettier adds for readability: `(): (() => void) => {}` and
 		// `(typeof a)[]` parse the same without them.
 		case 'TSFunctionType':
-			if (
-				key === 'typeAnnotation' &&
-				parent.type === 'TSTypeAnnotation' &&
-				grandparent?.type === 'ArrowFunctionExpression' &&
-				grandparent.returnType === parent
-			) {
-				return true;
-			}
-		// fallthrough
 		case 'TSConditionalType':
 		case 'TSConstructorType':
-			if (
-				(key === 'extendsType' &&
-					node.type === 'TSConditionalType' &&
-					parent.type === 'TSConditionalType') ||
-				// Not the `in` type of a mapped type, which this parser keeps as
-				// the constraint of a type parameter
-				(key === 'constraint' &&
-					node.type === 'TSConditionalType' &&
-					parent.type === 'TSTypeParameter' &&
-					grandparent?.type !== 'TSMappedType') ||
-				(key === 'checkType' && parent.type === 'TSConditionalType')
-			) {
-				return true;
-			}
-			if (
-				key === 'extendsType' &&
-				parent.type === 'TSConditionalType' &&
-				node.type !== 'TSConditionalType'
-			) {
-				// `A extends (() => infer R extends B) ? R : C`
-				let returnType = node.typeAnnotation?.typeAnnotation;
-				if (returnType?.type === 'TSTypePredicate' && returnType.typeAnnotation) {
-					returnType = returnType.typeAnnotation.typeAnnotation;
-				}
-				if (returnType?.type === 'TSInferType' && returnType.typeParameter.constraint) {
-					return true;
-				}
-			}
-		// fallthrough
 		case 'TSUnionType':
 		case 'TSIntersectionType':
-			if (parent.type === 'TSUnionType' || parent.type === 'TSIntersectionType') {
-				return true;
-			}
-		// fallthrough
 		case 'TSInferType':
-			if (node.type === 'TSInferType') {
-				if (parent.type === 'TSRestType') {
-					return false;
-				}
-				if (
-					key === 'types' &&
-					(parent.type === 'TSUnionType' || parent.type === 'TSIntersectionType') &&
-					node.typeParameter.constraint
-				) {
-					return true;
-				}
-			}
-		// fallthrough
 		case 'TSTypeOperator':
-			return (
-				parent.type === 'TSArrayType' ||
-				parent.type === 'TSOptionalType' ||
-				parent.type === 'TSRestType' ||
-				(key === 'objectType' && parent.type === 'TSIndexedAccessType') ||
-				parent.type === 'TSTypeOperator'
-			);
+			return typeOperandNeedsParens(node, key, parent, grandparent);
 
 		case 'TSTypeQuery':
 			return (
@@ -1219,6 +1158,93 @@ function nodeNeedsParens(node, key, parent, grandparent) {
 		default:
 			return false;
 	}
+}
+
+/**
+ * The type part of {@link nodeNeedsParens}. Prettier's `needsParens` lists
+ * these types as one chain of `switch` cases that fall through from function
+ * types down to type operators: each type adds its own rules and then shares
+ * every rule below it.
+ * @param {AST.TSFunctionType | AST.TSConditionalType | AST.TSConstructorType | AST.TSUnionType | AST.TSIntersectionType | AST.TSInferType | AST.TSTypeOperator} node
+ * @param {string | number | null} key - The child's key in `parent`
+ * @param {AST.Node} parent - The parent node
+ * @param {AST.Node | null} grandparent - The parent's parent
+ * @returns {boolean}
+ */
+function typeOperandNeedsParens(node, key, parent, grandparent) {
+	if (
+		node.type === 'TSFunctionType' &&
+		key === 'typeAnnotation' &&
+		parent.type === 'TSTypeAnnotation' &&
+		grandparent?.type === 'ArrowFunctionExpression' &&
+		grandparent.returnType === parent
+	) {
+		return true;
+	}
+
+	if (
+		node.type === 'TSFunctionType' ||
+		node.type === 'TSConditionalType' ||
+		node.type === 'TSConstructorType'
+	) {
+		if (
+			(key === 'extendsType' &&
+				node.type === 'TSConditionalType' &&
+				parent.type === 'TSConditionalType') ||
+			// Not the `in` type of a mapped type, which this parser keeps as
+			// the constraint of a type parameter
+			(key === 'constraint' &&
+				node.type === 'TSConditionalType' &&
+				parent.type === 'TSTypeParameter' &&
+				grandparent?.type !== 'TSMappedType') ||
+			(key === 'checkType' && parent.type === 'TSConditionalType')
+		) {
+			return true;
+		}
+		if (
+			key === 'extendsType' &&
+			parent.type === 'TSConditionalType' &&
+			node.type !== 'TSConditionalType'
+		) {
+			// `A extends (() => infer R extends B) ? R : C`
+			let returnType = node.typeAnnotation?.typeAnnotation;
+			if (returnType?.type === 'TSTypePredicate' && returnType.typeAnnotation) {
+				returnType = returnType.typeAnnotation.typeAnnotation;
+			}
+			if (returnType?.type === 'TSInferType' && returnType.typeParameter.constraint) {
+				return true;
+			}
+		}
+	}
+
+	if (
+		node.type !== 'TSInferType' &&
+		node.type !== 'TSTypeOperator' &&
+		(parent.type === 'TSUnionType' || parent.type === 'TSIntersectionType')
+	) {
+		return true;
+	}
+
+	if (node.type === 'TSInferType') {
+		if (parent.type === 'TSRestType') {
+			return false;
+		}
+		if (
+			key === 'types' &&
+			(parent.type === 'TSUnionType' || parent.type === 'TSIntersectionType') &&
+			node.typeParameter.constraint
+		) {
+			return true;
+		}
+	}
+
+	return (
+		parent.type === 'TSArrayType' ||
+		parent.type === 'TSOptionalType' ||
+		parent.type === 'TSRestType' ||
+		(key === 'objectType' && parent.type === 'TSIndexedAccessType') ||
+		parent.type === 'TSTypeOperator'
+	);
 }
 
 /**
