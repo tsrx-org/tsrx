@@ -8775,6 +8775,60 @@ const u = cond
 		});
 	});
 
+	// Like Prettier's `printVariableDeclaration`: once a declarator has a value,
+	// every declarator after the first starts its own line.
+	describe('declarations with several declarators', () => {
+		it('puts each declarator on its own line once one has a value', async () => {
+			const input = `const a = 1, b = 2, c = 3;
+var g = 1, h;
+export const i = 1, j = 2;
+let x = {
+  a: 1,
+}, y = [1, 2];`;
+			const expected = `const a = 1,
+  b = 2,
+  c = 3;
+var g = 1,
+  h;
+export const i = 1,
+  j = 2;
+let x = {
+    a: 1,
+  },
+  y = [1, 2];`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('breaks declarators without values only when they do not fit', async () => {
+			const input = `let d, e, f;
+declare const k: string, l: number;
+let aaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccccccccccc;`;
+			const expected = `let d, e, f;
+declare const k: string, l: number;
+let aaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccccccccccccccc;`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(expected);
+		});
+
+		it('keeps a line comment after a declarator in place', async () => {
+			const source = `const first = 1, // one
+  second = 2;`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+
+		it('keeps the declarators of a for head on one line while they fit', async () => {
+			const source = `for (let i = 0, j = 10; i < j; i++) {
+  run(i, j);
+}`;
+			const result = await format(source);
+			expect(result).toBeWithNewline(source);
+		});
+	});
+
 	describe('comments that start an assigned value', () => {
 		it('prints an own-line comment below the = with the value indented', async () => {
 			const input = `const value = (

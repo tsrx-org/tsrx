@@ -3557,17 +3557,30 @@ function printVariableDeclaration(node, path, options, print) {
 				? parentNode.init === node
 				: parentNode.left === node));
 
-	const declarations = path.map(print, 'declarations');
-	const declarationParts = join(', ', declarations);
+	const printed = path.map(print, 'declarations');
+
+	// Like Prettier, once any declarator has a value every declarator after the
+	// first starts its own line; they share a line only in a `for` head or while
+	// none has a value, and then only while they fit. The first declarator
+	// indents with the rest whenever it can break next to them.
+	const hasValue = node.declarations.some((declarator) => declarator.init);
+	const firstVariable =
+		printed.length === 1 && !hasComment(node.declarations[0]) ? printed[0] : indent(printed[0]);
+	const rest = printed
+		.slice(1)
+		.map((declarator) => [',', hasValue && !isForLoopInit ? hardline : line, declarator]);
 
 	// `declare` makes the binding ambient (no emit) — never a for-loop head
-	const declarePrefix = node.declare ? 'declare ' : '';
+	const declarePrefix = node.declare && !isForLoopInit ? 'declare ' : '';
 
-	if (!isForLoopInit) {
-		return [declarePrefix, kind, ' ', declarationParts, semi(options)];
-	}
-
-	return [kind, ' ', declarationParts];
+	return group([
+		declarePrefix,
+		kind,
+		' ',
+		firstVariable,
+		indent(rest),
+		isForLoopInit ? '' : semi(options),
+	]);
 }
 
 /**
