@@ -6777,6 +6777,25 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(closingElement).leading).toBeUndefined();
 	});
 
+	// The next child or attribute took it, and the printer moved it out of the
+	// braces (#574)
+	it('trails the expression of a {…} with a comment on its own line before its }', () => {
+		/** @param {string} source */
+		const element = (source) =>
+			/** @type {any} */ (parseModule(source, 'App.tsrx').body[0]).expression.right;
+		const { openingElement } = element('x = <div b={a\n  // c\n} d="1" />;');
+		const { children } = element('x = <div>{a\n  // c\n}text</div>;');
+		const dynamic = element('x = <{A\n  // c\n}>text</{A\n  // d\n}>;');
+
+		expect(commentsOf(openingElement.attributes[0].value.expression).trailing).toEqual([' c']);
+		expect(commentsOf(openingElement.attributes[1].name).leading).toBeUndefined();
+		expect(commentsOf(children[0].expression).trailing).toEqual([' c']);
+		expect(commentsOf(children[1]).leading).toBeUndefined();
+		expect(commentsOf(dynamic.openingElement.name.expression).trailing).toEqual([' c']);
+		expect(commentsOf(dynamic.children[0]).leading).toBeUndefined();
+		expect(commentsOf(dynamic.closingElement.name.expression).trailing).toEqual([' d']);
+	});
+
 	// Prettier's `canAttachComment` rejects a template element, and its
 	// `findExpressionIndexForComment` keeps a comment in its `${…}`
 	it('trails the expression with a comment after it in the ${…} of a template literal', () => {
