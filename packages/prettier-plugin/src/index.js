@@ -13888,9 +13888,7 @@ function printJSXElementBody(
 				));
 		const endsLine = child.trailingComments?.some((comment) => comment.type === 'Line');
 		const commentItem =
-			startsLine && child.type !== 'JSXText'
-				? getJSXChildCommentItem(child, options)
-				: null;
+			startsLine && child.type !== 'JSXText' ? getJSXChildCommentItem(child, options) : null;
 		/** @type {Doc} */
 		let doc;
 		if (commentItem) {

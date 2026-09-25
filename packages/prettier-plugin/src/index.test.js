@@ -10040,22 +10040,25 @@ function k() {
 			'<main>\n\t{x && (\n\t\t<div>\n\t\t\t/* c */\n\t\t\t<span>\n\t\t\t\t<b>1</b>\n\t\t\t</span> 3\n\t\t</div>\n\t)}\n</main>',
 			// A child that fits keeps the text on its line
 			'<div>\n\t/* c */\n\t<i /> 3\n</div>',
-		])('lays out the text after the child with a comment before it in %j like TSX', async (element) => {
-			const template = await format(
-				`export function Page() @{\n\t${element.replace(/\n/g, '\n\t')}\n}`,
-				repoOptions,
-			);
-			const tsx = await prettier.format(
-				`export function Page() {\n\t${element.replace(/\/\* \w \*\//g, '{$&}').replace(/\n/g, '\n\t')};\n}`,
-				{ parser: 'typescript', ...repoOptions },
-			);
-			expect(template).toBe(
-				tsx
-					.replace('Page() {', 'Page() @{')
-					.replace(/;\n}\n$/, '\n}\n')
-					.replace(/\{(\/\* \w \*\/)\}/g, '$1'),
-			);
-		});
+		])(
+			'lays out the text after the child with a comment before it in %j like TSX',
+			async (element) => {
+				const template = await format(
+					`export function Page() @{\n\t${element.replace(/\n/g, '\n\t')}\n}`,
+					repoOptions,
+				);
+				const tsx = await prettier.format(
+					`export function Page() {\n\t${element.replace(/\/\* \w \*\//g, '{$&}').replace(/\n/g, '\n\t')};\n}`,
+					{ parser: 'typescript', ...repoOptions },
+				);
+				expect(template).toBe(
+					tsx
+						.replace('Page() {', 'Page() @{')
+						.replace(/;\n}\n$/, '\n}\n')
+						.replace(/\{(\/\* \w \*\/)\}/g, '$1'),
+				);
+			},
+		);
 
 		it.each([
 			[
@@ -10074,9 +10077,12 @@ function k() {
 				'const a = <div>\n  // c\n  {cond && (\n    <b>\n      <i />\n    </b>\n  )} 3</div>;',
 				'const a = (\n  <div>\n    // c\n    {cond && (\n      <b>\n        <i />\n      </b>\n    )}{" "}\n    3\n  </div>\n);',
 			],
-		])('starts the text after the multi-line child with a comment before it in %j on a line', async (source, expected) => {
-			expect(await format(source)).toBeWithNewline(expected);
-		});
+		])(
+			'starts the text after the multi-line child with a comment before it in %j on a line',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
 	});
 
 	// A space at a template child boundary renders, like in JSX, while
@@ -17321,9 +17327,12 @@ item
 			'export function App() @{\n  @switch (x) {\n    @case 1: {\n      <p>\n        {y && (\n          <div>\n            {z}\n            // c\n            <i />\n          </div>\n        )}\n      </p>\n    }\n  }\n}',
 			// After the last child, as before
 			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {y}\n        // c\n      </div>\n    )}\n  </main>\n}',
-		])('keeps the comment between the children of the element in a container of %j', async (source) => {
-			expect(await format(source)).toBeWithNewline(source);
-		});
+		])(
+			'keeps the comment between the children of the element in a container of %j',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
 
 		it.each([
 			[
@@ -17338,9 +17347,12 @@ item
 				'export function App() @{\n  <main>{x && <div>/* c */<i /></div>}</main>\n}',
 				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        /* c */ <i />\n      </div>\n    )}\n  </main>\n}',
 			],
-		])('formats the comment in the element in a container of %j like in a template', async (source, expected) => {
-			expect(await format(source)).toBeWithNewline(expected);
-		});
+		])(
+			'formats the comment in the element in a container of %j like in a template',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
 
 		// A block comment after a child used to print after a space, which was
 		// new text on the child's line (#538)
