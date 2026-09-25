@@ -1483,8 +1483,10 @@ function getLeftmostChildKey(node) {
  * body), or a superclass (TypeScript reads the `{` of `extends {}.Base {}` as
  * the class body). An `export default` wraps its whole expression instead
  * (see {@link getExportDefaultLeadingFunction}), unless the function or class
- * has type arguments (`(class {})<T>`).
- * @param {AstPath} path - The path to the object, function or class expression
+ * has type arguments (`(class {})<T>`). It also tells whether an element
+ * starts a statement (see {@link startsElementStatement}).
+ * @param {AstPath} path - The path to the object, function or class
+ *   expression, or element
  * @returns {boolean}
  */
 function startsAmbiguousHead(path) {
@@ -1528,6 +1530,51 @@ function startsAmbiguousHead(path) {
 			return false;
 		}
 		child = parent;
+	}
+}
+
+/**
+ * Whether an element starts an expression statement that TSRX would read
+ * differently without parentheses around it. Unlike in TSX, a statement that
+ * is an element alone is that element, a template element, and its `;` an
+ * empty statement, so `(<div />);` keeps its parentheses where Prettier
+ * prints `<div />;` (#625). An operator after it continues the expression
+ * (`<div /> + 1;`), except in a template body, where the element ends the
+ * statement, so there `(<div />) + 1;` keeps them too.
+ * @param {AstPath} path - The path to the element
+ * @returns {boolean}
+ */
+function startsElementStatement(path) {
+	if (path.key === 'expression' && path.parent?.type === 'ExpressionStatement') {
+		return true;
+	}
+	if (!startsAmbiguousHead(path)) {
+		return false;
+	}
+	let level = 0;
+	while (path.getParentNode(level) && path.getParentNode(level).type !== 'ExpressionStatement') {
+		level++;
+	}
+	const body = /** @type {AST.Node | null} */ (path.getParentNode(level + 1));
+	const owner = /** @type {AST.Node | null} */ (path.getParentNode(level + 2));
+	switch (body?.type) {
+		case 'JSXCodeBlock':
+			return true;
+		case 'SwitchCase':
+			return owner?.type === 'JSXSwitchExpression';
+		case 'BlockStatement': {
+			const template =
+				owner?.type === 'CatchClause'
+					? /** @type {AST.Node | null} */ (path.getParentNode(level + 3))
+					: owner;
+			return (
+				template?.type === 'JSXIfExpression' ||
+				template?.type === 'JSXForExpression' ||
+				template?.type === 'JSXTryExpression'
+			);
+		}
+		default:
+			return false;
 	}
 }
 
@@ -2218,6 +2265,13 @@ function needsParens(path, options) {
 		case 'FunctionExpression':
 		case 'ClassExpression':
 			if (startsAmbiguousHead(path)) {
+				return true;
+			}
+			break;
+		case 'JSXElement':
+		case 'JSXFragment':
+		case 'JSXStyleElement':
+			if (startsElementStatement(path)) {
 				return true;
 			}
 			break;
@@ -4191,11 +4245,7 @@ function printTsrxNode(node, path, options, print, args) {
 		}
 
 		case 'ReturnStatement':
-			nodeContent = [
-				'return',
-				node.argument ? printReturnOrThrowArgument(path, options, print) : '',
-				semi(options),
-			];
+			nodeContent = ['return', printReturnOrThrowArgument(path, options, print)];
 			break;
 
 		case 'BinaryExpression':
@@ -9828,23 +9878,27 @@ function printTaggedTemplateExpression(node, path, options, print) {
  * @returns {Doc[]}
  */
 function printThrowStatement(node, path, options, print) {
-	return ['throw', printReturnOrThrowArgument(path, options, print), semi(options)];
+	return ['throw', printReturnOrThrowArgument(path, options, print)];
 }
 
 /**
  * Print the argument of a `return` or `throw` statement, with the space after
- * the keyword, like Prettier's `printReturnOrThrowArgument`. An argument that
- * starts with a comment that ends its line or spans lines prints in
- * parentheses, since a line break after the keyword would end the statement
- * (Prettier's `returnArgumentHasLeadingComment`). A binary or logical
- * argument that breaks prints in parentheses, with its operands on their own
- * lines.
+ * the keyword, and the `;` after it, like Prettier's
+ * `printReturnOrThrowArgument`. An argument that starts with a comment that
+ * ends its line or spans lines prints in parentheses, since a line break
+ * after the keyword would end the statement (Prettier's
+ * `returnArgumentHasLeadingComment`). A binary or logical argument that
+ * breaks prints in parentheses, with its operands on their own lines.
  * @param {AstPath<AST.ReturnStatement | AST.ThrowStatement>} path - The path to the statement
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @returns {Doc}
  */
 function printReturnOrThrowArgument(path, options, print) {
+	const argument = path.node.argument;
+	if (!argument) {
+		return semi(options);
+	}
 	if (
 		path.call(
 			(argumentPath) =>
@@ -9864,19 +9918,55 @@ function printReturnOrThrowArgument(path, options, print) {
 			]),
 			hardline,
 			')',
+			semi(options),
 		];
 	}
-	const argumentDoc = path.call(print, 'argument');
 	// A JSDoc cast prints its own parentheses around the expression
-	const argument = path.node.argument;
 	if (
-		argument &&
-		isBinaryish(argument) &&
-		!path.call((argumentPath) => getTypeCastParens(argumentPath, options), 'argument')
+		!isBinaryish(argument) ||
+		path.call((argumentPath) => getTypeCastParens(argumentPath, options), 'argument')
 	) {
-		return [' ', group([ifBreak('('), indent([softline, argumentDoc]), softline, ifBreak(')')])];
+		return [' ', path.call(print, 'argument'), semi(options)];
 	}
-	return [' ', argumentDoc];
+	// The comments at the end of the argument, in the parentheses it's
+	// written in or in the ones around its last operand, trail it (see
+	// `takeCommentsBeforeFinalSemicolon` in the parser). Like Prettier, they
+	// print inside the parentheses when they break. When they don't, the
+	// block comments on the argument's line print after the `;`, where
+	// Prettier's next pass moves them from before it (#622).
+	const text = /** @type {string} */ (options.originalText);
+	const trailingComments = argument.trailingComments ?? [];
+	const movesAfterSemicolon =
+		trailingComments.length > 0 &&
+		trailingComments.every(
+			(comment) =>
+				comment.type === 'Block' &&
+				!hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).start, {
+					backwards: true,
+				}),
+		);
+	const argumentDoc = movesAfterSemicolon
+		? path.call(
+				(argumentPath) => print(argumentPath, { suppressTrailingComments: true }),
+				'argument',
+			)
+		: path.call(print, 'argument');
+	if (!movesAfterSemicolon) {
+		return [
+			' ',
+			group([ifBreak('('), indent([softline, argumentDoc]), softline, ifBreak(')')]),
+			semi(options),
+		];
+	}
+	const comments = printTrailingComments(argument, options);
+	const groupId = Symbol('argument');
+	const inParens = [
+		ifBreak('('),
+		indent([softline, argumentDoc, ifBreak(comments)]),
+		softline,
+		ifBreak(')'),
+	];
+	return [' ', group(inParens, { id: groupId }), semi(options), ifBreak('', comments, { groupId })];
 }
 
 /**
@@ -14285,7 +14375,11 @@ function printTemplateInParens(path, options, printed) {
 	const hasParens = needsParens(path, options);
 	if (
 		!parent ||
-		JSX_NO_WRAP_PARENTS.has(parent.type) ||
+		// An element that is an expression statement keeps its parentheses
+		// (see `needsParens`), which break around it as they do around any
+		// other element that needs them: `(\n  <div>…</div>\n);`
+		(JSX_NO_WRAP_PARENTS.has(parent.type) &&
+			!(hasParens && parent.type === 'ExpressionStatement')) ||
 		isStatementSlot(/** @type {string} */ (path.key), parent)
 	) {
 		return hasParens ? ['(', printed, ')'] : printed;
