@@ -5,6 +5,7 @@ import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtim
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
+import { runSpreadChildrenRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-children';
 import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
 
@@ -1715,5 +1716,6 @@ runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
+runSpreadChildrenRuntimeTests();
 runGeneratorSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();

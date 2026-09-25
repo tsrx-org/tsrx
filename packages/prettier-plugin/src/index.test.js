@@ -12998,6 +12998,38 @@ item
 		});
 	});
 
+	// A spread child (`{...children}`) prints like an expression container
+	// child. Like Prettier, the comments of its expression print around the
+	// `...` inside the braces.
+	describe('JSX spread children', () => {
+		it.each([
+			'const x = <div>{...a}</div>;',
+			'function f() {\n  return <div>{...children}</div>;\n}',
+			'const x = <div>text {...a} more</div>;',
+			'const x = <div>{/* c */ ...a}</div>;',
+			'const x = <div>{...a /* c */}</div>;',
+			'const x = <div>{.../** @type {any[]} */ (a)}</div>;',
+			'export function App({ items }: { items: any[] }) @{\n  <div>{...items}</div>\n}',
+			'export function App({ items }: { items: any[] }) @{\n  <div>\n    {...items}\n    <span />\n  </div>\n}',
+			'export function App({ items }: { items: any[] }) @{\n  <>\n    {...items}\n  </>\n}',
+			'export function App({ items }: { items: any[] }) @{\n  <div>\n    // before\n    {...items}\n  </div>\n}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			['const x = <div>{... /* c */ a}</div>;', 'const x = <div>{/* c */ ...a}</div>;'],
+			['const x = <div>{// c\n...a}</div>;', 'const x = <div>{\n  // c\n  ...a\n}</div>;'],
+			['const x = <div>{...a // c\n}</div>;', 'const x = <div>{\n  ...a // c\n}</div>;'],
+			[
+				'export function App({ items }: { items: any[] }) @{\n  <div>{...items}{...items}</div>\n}',
+				'export function App({ items }: { items: any[] }) @{\n  <div>\n    {...items}\n    {...items}\n  </div>\n}',
+			],
+		])('formats %j', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+	});
+
 	// Like Prettier's `printLeadingComment`, a block comment keeps what follows
 	// it on its line. The formatter used to break the line after every block
 	// comment but the last one before a node.

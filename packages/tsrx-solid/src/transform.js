@@ -105,6 +105,9 @@ const solid_platform = {
 		// `ref` attributes collapse to `ref={[a, b, ...]}` rather than
 		// going through a `mergeRefs` helper.
 		multiRefStrategy: 'array',
+		// dom-expressions inserts `{...children}` like `{children}`, but places
+		// it after any static siblings that follow it.
+		spreadChildStrategy: 'expression',
 	},
 	validation: {
 		requireUseServerForAwait: true,

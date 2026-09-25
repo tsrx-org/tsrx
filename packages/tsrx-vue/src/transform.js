@@ -58,6 +58,9 @@ const vue_platform = {
 	validation: {
 		requireUseServerForAwait: true,
 		scanUseServerDirectiveForAwaitWithCustomValidator: false,
+		// vue-jsx-vapor drops a JSX spread child without an error.
+		unsupportedSpreadChildMessage:
+			'Vue TSRX does not support JSX spread children (`{...children}`). Render the array as an expression child instead: `{children}`.',
 	},
 	hooks: {
 		// Hoist to module scope

@@ -4076,7 +4076,10 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * @return {ESTreeJSX.JSXExpressionContainer}
+			 * Parses `{ … }`, or a spread child `{...children}` like acorn-typescript
+			 * does. Callers outside child position (attribute values, dynamic tag
+			 * names) reject the `JSXSpreadChild`.
+			 * @return {ESTreeJSX.JSXExpressionContainer | ESTreeJSX.JSXSpreadChild}
 			 */
 			jsx_parseExpressionContainer() {
 				// Template child containers consume `}` after leaving container scope, so
@@ -4087,7 +4090,10 @@ export function TSRXPlugin(config) {
 				// never template text.
 				const consumeBraceAfterScope = this.#consumeContainerBraceAfterScope;
 				this.#consumeContainerBraceAfterScope = false;
-				let node = /** @type {ESTreeJSX.JSXExpressionContainer} */ (this.startNode());
+				let node = /** @type {ESTreeJSX.JSXExpressionContainer | ESTreeJSX.JSXSpreadChild} */ (
+					this.startNode()
+				);
+				let is_spread = false;
 				this.#jsxExpressionContainerDepth++;
 				let pushed_context_baseline = false;
 				// The stack depth with the container's `{` brace context on top, taken
@@ -4098,6 +4104,9 @@ export function TSRXPlugin(config) {
 				const container_context_depth = this.context.length;
 				try {
 					this.next();
+					// A spread child, `{...children}`. The `...` pushes no token context,
+					// so the baseline below still lands on the first expression token.
+					is_spread = this.eat(tt.ellipsis);
 
 					// Record the context-stack depth now that the first expression token
 					// has been read. A control-flow directive parsed inside this
@@ -4108,7 +4117,9 @@ export function TSRXPlugin(config) {
 					pushed_context_baseline = true;
 
 					node.expression =
-						this.type === tt.braceR ? this.jsx_parseEmptyExpression() : this.parseExpression();
+						!is_spread && this.type === tt.braceR
+							? this.jsx_parseEmptyExpression()
+							: this.parseExpression();
 					if (this.#allowExpressionContainerTrailingSemicolon && this.type === tt.semi) {
 						if (this.#collect) {
 							this.#report_recoverable_error(
@@ -4147,7 +4158,7 @@ export function TSRXPlugin(config) {
 					this.expect(tt.braceR);
 				}
 
-				return this.finishNode(node, 'JSXExpressionContainer');
+				return this.finishNode(node, is_spread ? 'JSXSpreadChild' : 'JSXExpressionContainer');
 			}
 
 			/**
@@ -4354,13 +4365,20 @@ export function TSRXPlugin(config) {
 
 			#parseJSXDynamicElementName() {
 				const container = this.jsx_parseExpressionContainer();
-				container.isDynamic = true;
-				if (!this.#isValidDynamicTagExpression(container.expression)) {
+				if (
+					container.type === 'JSXSpreadChild' ||
+					!this.#isValidDynamicTagExpression(container.expression)
+				) {
 					this.raise(
-						/** @type {number} */ (container.expression?.start ?? container.start),
+						/** @type {number} */ (
+							container.type === 'JSXSpreadChild'
+								? container.start
+								: (container.expression?.start ?? container.start)
+						),
 						'Dynamic element names must be an identifier, member expression, static string, or runtime expression; calls, spreads, string concatenation, string interpolation, and static null, undefined, boolean, number, object, and array literals are not valid tag names.',
 					);
 				}
+				container.isDynamic = true;
 				return container;
 			}
 
@@ -4424,7 +4442,14 @@ export function TSRXPlugin(config) {
 						this.#openingNativeTemplateNode = null;
 						this.#jsxAttributeValueExpressionDepth++;
 						try {
-							return this.jsx_parseExpressionContainer();
+							const value = this.jsx_parseExpressionContainer();
+							if (value.type === 'JSXSpreadChild') {
+								this.raise(
+									/** @type {number} */ (value.start),
+									'Attribute values cannot be spread. Use a spread attribute (`{...props}`) instead.',
+								);
+							}
+							return value;
 						} finally {
 							this.#jsxAttributeValueExpressionDepth--;
 							this.#openingNativeTemplateNode = opening_node;

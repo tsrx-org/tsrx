@@ -3579,6 +3579,14 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 		}
 
+		case 'JSXSpreadChild':
+			nodeContent = printJSXSpreadChild(
+				/** @type {AstPath<ESTreeJSX.JSXSpreadChild>} */ (path),
+				options,
+				print,
+			);
+			break;
+
 		case 'Decorator':
 			nodeContent = ['@', path.call(print, 'expression')];
 			break;
@@ -11847,7 +11855,7 @@ function normalizeInlineJSXText(raw) {
  * @returns {boolean}
  */
 function isSimpleJSXExpressionChild(child) {
-	if (child?.type !== 'JSXExpressionContainer') {
+	if (child?.type !== 'JSXExpressionContainer' && child?.type !== 'JSXSpreadChild') {
 		return false;
 	}
 
@@ -12056,15 +12064,9 @@ function printJSXElement(node, path, options, print) {
 				currentTextEndNode = null;
 			}
 
-			if (child.type === 'JSXExpressionContainer') {
-				// Handle JSX expression containers
-				childrenDocs.push([
-					...printTemplateChildLeadingComments(child),
-					'{',
-					path.call(print, 'children', i, 'expression'),
-					'}',
-					...printTemplateChildTrailingComments(child),
-				]);
+			if (child.type === 'JSXExpressionContainer' || child.type === 'JSXSpreadChild') {
+				// Handle JSX expression containers and spread children
+				childrenDocs.push(printJSXExpressionChild(path, options, print, i));
 				childNodes.push(child);
 				childEndNodes.push(child);
 			} else {
@@ -12116,7 +12118,8 @@ function printJSXElement(node, path, options, print) {
 	);
 	const singleMeaningfulChild = meaningfulChildren.length === 1 ? meaningfulChildren[0] : null;
 	const singleExpression =
-		singleMeaningfulChild?.type === 'JSXExpressionContainer'
+		singleMeaningfulChild?.type === 'JSXExpressionContainer' ||
+		singleMeaningfulChild?.type === 'JSXSpreadChild'
 			? singleMeaningfulChild.expression
 			: null;
 	if (
@@ -12133,7 +12136,6 @@ function printJSXElement(node, path, options, print) {
 	if (
 		!forceMultiline &&
 		childrenDocs.length === 1 &&
-		singleMeaningfulChild?.type === 'JSXExpressionContainer' &&
 		isSimpleJSXExpressionChild(/** @type {AST.Node} */ (singleMeaningfulChild))
 	) {
 		return group([openingTag, childrenDocs[0], '</', tagName, '>']);
@@ -12278,15 +12280,9 @@ function printJSXFragment(node, path, options, print) {
 				childrenDocs.push(text);
 				childNodes.push(child);
 			}
-		} else if (child.type === 'JSXExpressionContainer') {
-			// Handle JSX expression containers
-			childrenDocs.push([
-				...printTemplateChildLeadingComments(child),
-				'{',
-				path.call(print, 'children', i, 'expression'),
-				'}',
-				...printTemplateChildTrailingComments(child),
-			]);
+		} else if (child.type === 'JSXExpressionContainer' || child.type === 'JSXSpreadChild') {
+			// Handle JSX expression containers and spread children
+			childrenDocs.push(printJSXExpressionChild(path, options, print, i));
 			childNodes.push(child);
 		} else {
 			// Handle nested JSX elements and fragments
@@ -12349,6 +12345,71 @@ function printJSXFragment(node, path, options, print) {
 		indent([hardline, ...formattedChildren, ...closingCommentDocs]),
 		hardline,
 		'</>',
+	]);
+}
+
+/**
+ * Print the `{expr}` or `{...expr}` child at `children[index]` with the
+ * comments attached to the child itself.
+ * @param {AstPath<AST.TSRXJSXElement | AST.TSRXJSXFragment>} path - The parent's path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @param {number} index - The child's index
+ * @returns {Doc}
+ */
+function printJSXExpressionChild(path, options, print, index) {
+	const child = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node.children[index]);
+	return [
+		...printTemplateChildLeadingComments(child),
+		child.type === 'JSXSpreadChild'
+			? path.call(
+					(childPath) =>
+						printJSXSpreadChild(
+							/** @type {AstPath<ESTreeJSX.JSXSpreadChild>} */ (childPath),
+							options,
+							print,
+						),
+					'children',
+					index,
+				)
+			: ['{', path.call(print, 'children', index, 'expression'), '}'],
+		...printTemplateChildTrailingComments(child),
+	];
+}
+
+/**
+ * Print a spread child, `{...expr}`. Like Prettier, the expression's leading
+ * comments print ahead of the `...`, and a line comment breaks the braces open
+ * so it stays inside them. The comments of a type cast stay on its parentheses.
+ * @param {AstPath<ESTreeJSX.JSXSpreadChild>} path - The spread child's path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printJSXSpreadChild(path, options, print) {
+	const expression = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node.expression);
+	const isTypeCast = path.call(
+		(expressionPath) => getTypeCastParens(expressionPath, options) !== null,
+		'expression',
+	);
+	const leadingComments = isTypeCast ? [] : (expression.leadingComments ?? []);
+	if (leadingComments.length === 0 && !expression.trailingComments?.length) {
+		return ['{...', path.call(print, 'expression'), '}'];
+	}
+	return group([
+		'{',
+		indent([
+			softline,
+			...printLeadingComments(expression, leadingComments, options),
+			'...',
+			path.call(
+				(expressionPath) =>
+					print(expressionPath, { suppressLeadingComments: leadingComments.length > 0 }),
+				'expression',
+			),
+		]),
+		softline,
+		'}',
 	]);
 }
 

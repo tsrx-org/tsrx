@@ -6705,6 +6705,112 @@ describe('expression-container children inside JSX attribute values', () => {
 	});
 });
 
+describe('JSX spread children', () => {
+	/** @type {Array<ParseOptions | undefined>} */
+	const parse_options = [undefined, { collect: true, comments: [] }];
+
+	/**
+	 * Every `JSXSpreadChild` in the parsed tree, in source order.
+	 *
+	 * @param {string} source
+	 * @param {ParseOptions} [options]
+	 * @returns {ESTreeJSX.JSXSpreadChild[]}
+	 */
+	function spreadChildren(source, options) {
+		const ast = parseModule(source, 'App.tsrx', options);
+		return allNodes(ast)
+			.filter((node) => node.type === 'JSXSpreadChild')
+			.map((node) => as_type(node, 'JSXSpreadChild'));
+	}
+
+	it.each(parse_options)(
+		'parses a spread child in statement, initializer, and return position (%o)',
+		(options) => {
+			for (const [source, text] of [
+				['<div>{...a}</div>;', '{...a}'],
+				['const x = <div>{...a}</div>;', '{...a}'],
+				['function f() {\n  return <div>{...children}</div>;\n}', '{...children}'],
+			]) {
+				const [spread, ...rest] = spreadChildren(source, options);
+				expect(rest, source).toEqual([]);
+				expect(source.slice(spread.start, spread.end), source).toBe(text);
+				const expression = as_type(spread.expression, 'Identifier');
+				expect(source.slice(expression.start, expression.end)).toBe(text.slice(4, -1));
+			}
+		},
+	);
+
+	it.each(parse_options)(
+		'parses spread children in template bodies next to other children (%o)',
+		(options) => {
+			const source = `export function App({ items, more }: { items: any[]; more: any[] }) @{
+	<div>
+		{...items}
+		text
+		{...more.map((item) => <b>{item}</b>)}
+		<span />
+	</div>
+}`;
+			const [first, second] = spreadChildren(source, options);
+			expect(source.slice(first.start, first.end)).toBe('{...items}');
+			expect(source.slice(second.start, second.end)).toBe('{...more.map((item) => <b>{item}</b>)}');
+			assert_type(second.expression, 'CallExpression');
+
+			const div = findElement(source, 'div');
+			expect(
+				node_children(div)
+					.filter((node) => node.type !== 'JSXText' || node.value.trim())
+					.map((node) => node.type),
+			).toEqual(['JSXSpreadChild', 'JSXText', 'JSXSpreadChild', 'JSXElement']);
+		},
+	);
+
+	it('parses spread children in fragments, nested containers, and attribute-value elements', () => {
+		for (const source of [
+			'function App({ items }: any) @{\n\t<>{...items}</>\n}',
+			'function App({ items }: any) @{\n\t<div>{<span>{...items}</span>}</div>\n}',
+			'function App({ items }: any) @{\n\t<Card content={<i>{...items}</i>} />\n}',
+			'const x = <ul>{...items}{...items}</ul>;',
+		]) {
+			const spreads = spreadChildren(source);
+			expect(spreads.length, source).toBeGreaterThan(0);
+			for (const spread of spreads) {
+				expect(source.slice(spread.start, spread.end), source).toBe('{...items}');
+			}
+		}
+	});
+
+	it('keeps a comment inside the braces on the spread expression', () => {
+		const source = 'const x = <div>{... /* c */ a}</div>;';
+		const [spread] = spreadChildren(source);
+		const expression = as_type(spread.expression, 'Identifier');
+		expect(expression.leadingComments?.map((comment) => comment.value)).toEqual([' c ']);
+	});
+
+	it.each(parse_options)('rejects a spread without an argument (%o)', (options) => {
+		expect(() => parseModule('const x = <div>{...}</div>;', 'App.tsrx', options)).toThrow(
+			'Unexpected token (1:19)',
+		);
+	});
+
+	it.each(parse_options)('rejects a spread as an attribute value (%o)', (options) => {
+		for (const [source, position] of [
+			['const x = <a b={...c} />;', '1:15'],
+			['function App() @{\n\t<a b={...c} />\n}', '2:6'],
+		]) {
+			expect(() => parseModule(source, 'App.tsrx', options), source).toThrow(
+				`Attribute values cannot be spread. Use a spread attribute (\`{...props}\`) instead. (${position})`,
+			);
+		}
+	});
+
+	it.each(parse_options)('rejects a spread as a dynamic tag name (%o)', (options) => {
+		expect(() => parseModule('const x = <{...a} />;', 'App.tsrx', options)).toThrow(
+			/^Dynamic element names must be .* \(1:11\)$/,
+		);
+	});
+});
+
 // A `<` in markup child position only opens a tag when the next character can
 // begin one. Anything else — a digit, an operator, an emoji, whitespace — is a
 // literal `<` in the text, the same rule the HTML tokenizer uses. Every case

@@ -594,6 +594,7 @@ declare module 'estree' {
 		| ESTreeJSX.JSXElement
 		| ESTreeJSX.JSXFragment
 		| ESTreeJSX.JSXExpressionContainer
+		| ESTreeJSX.JSXSpreadChild
 		| ESTreeJSX.JSXText
 		| JSXTemplateDirective
 		| JSXTemplateStatement;
@@ -993,7 +994,8 @@ declare module 'estree-jsx' {
 	 * fragments carry the parser's widened TSRX shape, which plain estree-jsx
 	 * elements are assignable to.
 	 */
-	type JSXRenderChild = AST.TSRXJSXElement | AST.TSRXJSXFragment | JSXExpressionContainer | JSXText;
+	type JSXRenderChild =
+		AST.TSRXJSXElement | AST.TSRXJSXFragment | JSXExpressionContainer | JSXSpreadChild | JSXText;
 
 	/**
 	 * A JSX child that evaluates to a single expression, so it can be captured

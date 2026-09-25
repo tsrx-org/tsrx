@@ -274,6 +274,7 @@ export function is_jsx_child(node) {
 		t === 'JSXElement' ||
 		t === 'JSXFragment' ||
 		t === 'JSXExpressionContainer' ||
+		t === 'JSXSpreadChild' ||
 		t === 'JSXText' ||
 		t === 'JSXIfExpression' ||
 		t === 'JSXForExpression' ||
