@@ -87,9 +87,10 @@ const regex_line_break = /\r\n?|[\n\u2028\u2029]/;
 const REST_ELEMENT_TRAILING_COMMA = 'Comma is not permitted after the rest element';
 const OPTIONAL_BINDING_PATTERN_PARAMETER =
 	'A binding pattern parameter cannot be optional in an implementation signature.';
-// TypeScript's TS1047, TS1317, and TS1206 (in acorn-typescript's words).
+// TypeScript's TS1047 and TS1317.
 const OPTIONAL_REST_PARAMETER = 'A rest parameter cannot be optional.';
 const REST_PARAMETER_PROPERTY = 'A parameter property cannot be declared using a rest parameter.';
+// acorn-typescript's error for decorators before something other than a class.
 const UNEXPECTED_LEADING_DECORATOR = 'Leading decorators must be attached to a class declaration.';
 // The modifiers acorn-typescript reads before a parameter.
 const PARAMETER_MODIFIERS = ['public', 'private', 'protected', 'override', 'readonly'];
@@ -149,8 +150,8 @@ const regex_repeated_modifier_error =
  * initializer (`parseVarId`), `const` or `var` without a declarator
  * (`parseVarStatement`), `await` in a namespace (`canAwait`), a private name
  * outside a class (the constructor and `parsePrivateIdent`), a modifier on a rest
- * parameter (`parseAssignableListItem`), and decorators before a declaration
- * other than a class (`parseDecorators`, `parseStatement`).
+ * parameter (`#parseRestParameterProperty`), and decorators before a
+ * declaration other than a class (`parseDecorators`, `#parseDecoratedStatement`).
  *
  * acorn's errors here are ECMAScript early errors, which acorn rightly raises;
  * acorn-typescript's are TypeScript checker diagnostics.
