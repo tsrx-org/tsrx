@@ -5325,14 +5325,16 @@ describe('comments in import and export specifier lists', () => {
 		expect(declaration.specifiers[1].leadingComments).toBeUndefined();
 	});
 
-	it('leaves the comments after the module source to the source and the declaration', () => {
+	// Like Prettier, which ends the declaration before its `;`
+	it('gives the comments after the module source to the declaration', () => {
 		const declaration = lastDeclaration("import { a } from 'mod' /* source */; // declaration");
 
 		expect(declaration.specifiers[0].trailingComments).toBeUndefined();
-		expect(declaration.source?.trailingComments?.map((comment) => comment.value)).toEqual([
+		expect(declaration.source?.trailingComments).toBeUndefined();
+		expect(declaration.trailingComments?.map((comment) => comment.value)).toEqual([
 			' source ',
+			' declaration',
 		]);
-		expect(declaration.trailingComments?.map((comment) => comment.value)).toEqual([' declaration']);
 	});
 });
 
