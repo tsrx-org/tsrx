@@ -393,7 +393,8 @@ function isTsrxValueNode(node, parent, key) {
 }
 
 /**
- * A tag's name with a comment before it (`<` `// note` `div`).
+ * A tag's name with a comment before it (`<` `// note` `div`), including a
+ * dynamic tag's `{Tag}`.
  * @param {AstPath<Node>} path
  * @returns {boolean}
  */
@@ -540,6 +541,7 @@ function printTsrx(path, options, print) {
 		case 'JSXIdentifier':
 		case 'JSXMemberExpression':
 		case 'JSXNamespacedName':
+		case 'JSXExpressionContainer':
 			return isCommentedTagName(path) ? printTagNameComments(path, options, print) : null;
 
 		case 'JSXAttribute':

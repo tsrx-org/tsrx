@@ -596,6 +596,28 @@ function App() @{
 		);
 	});
 
+	test('a dynamic tag name keeps its comments the same way', async () => {
+		await expectFormat(
+			`const a = <
+  // c
+  {Tag} x={1}>y</{Tag}>;
+const b = </* c */ {Tag} />;
+const c = <{Tag}>x</ /* c */ {Tag}>;`,
+			`const a = (
+  <
+    // c
+    {Tag}
+    x={1}
+  >
+    y
+  </{Tag}>
+);
+const b = </* c */ {Tag} />;
+const c = <{Tag}>x</ /* c */ {Tag}>;
+`,
+		);
+	});
+
 	// Prettier prints this on its second format; its first keeps the line breaks.
 	test('a block comment on its own line prints straight after `<` or `</`', async () => {
 		await expectFormat(
