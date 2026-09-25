@@ -10944,6 +10944,45 @@ export interface SectionProps<T>
 			await expectUnchanged(source);
 		});
 
+		// A template element is a statement of its own, with no
+		// `ExpressionStatement` around it. `path.key` is the list's name
+		// (`body`), not the element's index, and a directive body is always a
+		// block.
+		it.each([
+			['a program', '<div />\n<span />'],
+			['a block', 'function C() @{\n  if (x) {\n    <div />\n  }\n  <span />\n}'],
+			['an if and else body', 'function C() @{\n  if (x) <div />\n  else <b />\n  <span />\n}'],
+			['a case', 'function C() @{\n  switch (x) {\n    case 1:\n      <div />\n  }\n  <span />\n}'],
+			[
+				'a loop body',
+				'function C() @{\n  for (const a of b) <div />\n  while (x) <i />\n  <span />\n}',
+			],
+			['a labeled statement', 'function C() @{\n  label: <div />\n  <span />\n}'],
+			['a static block', 'class K {\n  static {\n    <div />\n  }\n}'],
+			['a namespace', 'namespace N {\n  <div />\n}'],
+			[
+				'@for, @empty, @try, @pending, and @catch bodies',
+				`function C() @{
+  <div>
+    @for (const i of items) {
+      <span />
+    } @empty {
+      <b />
+    }
+    @try {
+      <i />
+    } @pending {
+      <u />
+    } @catch (e) {
+      <s />
+    }
+  </div>
+}`,
+			],
+		])('keeps an element bare as a statement of %s', async (_, source) => {
+			await expectUnchanged(source);
+		});
+
 		it('keeps template elements, code blocks, and style blocks bare', async () => {
 			await expectUnchanged(`export function Button({ label }) @{
   const theme = <style>
