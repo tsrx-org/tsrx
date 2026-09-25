@@ -8713,7 +8713,8 @@ function printTaggedTemplateExpression(node, path, options, print) {
 	if (quasiComment) {
 		const end = /** @type {AST.NodeWithLocation} */ (node.typeArguments ?? node.tag).end;
 		const start = /** @type {AST.NodeWithLocation} */ (quasiComment).start;
-		parts.push(options.originalText.slice(end, start).includes('\n') ? softline : ' ');
+		const text = /** @type {string} */ (options.originalText);
+		parts.push(text.slice(end, start).includes('\n') ? softline : ' ');
 	}
 	// Like Prettier, a line comment after the tag prints before the backtick,
 	// which an embedded template's doc doesn't print first
