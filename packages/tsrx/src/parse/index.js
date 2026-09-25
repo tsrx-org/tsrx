@@ -1567,6 +1567,20 @@ export function get_comment_handlers(source, comments, index = 0) {
 								return;
 							}
 						}
+						// Like Prettier, the comments between a fragment's `<` and `>`
+						// dangle on its opening tag: `</* note */>`
+						if (node.type === 'JSXOpeningFragment') {
+							while (
+								comments[0] &&
+								comments[0].start > /** @type {AST.NodeWithLocation} */ (node).start &&
+								comments[0].end < /** @type {AST.NodeWithLocation} */ (node).end
+							) {
+								pushInnerComment(node, /** @type {AST.CommentWithLocation} */ (comments.shift()));
+							}
+							if (comments.length === 0) {
+								return;
+							}
+						}
 						// Handle JSXEmptyExpression - these represent {/* comment */} in JSX
 						if (node.type === 'JSXEmptyExpression') {
 							// Collect all comments that fall within this JSXEmptyExpression

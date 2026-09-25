@@ -5069,16 +5069,17 @@ export function TSRXPlugin(config) {
 					}
 				}
 
-				// Adjust the start so we capture the `<` as part of the element
-				const start = this.start - 1;
-				const position = new acorn.Position(this.curLine, start - this.lineStart);
+				// The element and its opening tag start at the `<`, the token just
+				// consumed. Whitespace or a comment can separate it from the tag name
+				// (`< div>`, `<\n  // c\n>`), so this can't be derived from the current
+				// token.
+				const start = this.lastTokStart;
+				const position = new acorn.Position(this.lastTokStartLoc.line, this.lastTokStartLoc.column);
 
 				const node =
 					/** @type {ESTreeJSX.JSXElement | ESTreeJSX.JSXFragment | AST.JSXStyleElement} */ (
-						/** @type {unknown} */ (this.startNode())
+						/** @type {unknown} */ (this.startNodeAt(start, position))
 					);
-				node.start = start;
-				/** @type {AST.NodeWithLocation} */ (node).loc.start = position;
 				node.metadata = {
 					path: [],
 					native_tsrx: true,
@@ -5757,19 +5758,27 @@ export function TSRXPlugin(config) {
 			/**
 			 * True when the token after an element that starts a statement continues
 			 * an expression with it, as in TSX: a binary, logical, or relational
-			 * operator, `**`, `?`, `,`, `as`, or `satisfies` on the element's own line
-			 * (`<div /> > 5;`, `<div /> + 1;`). On the next line the element ends its
-			 * statement, and a tag start (`<div /> <span />`) is the next element.
+			 * operator, `**`, `?`, or `,`, on the element's line or a later one
+			 * (`<div /> > 5;`, `<div />\n+ 1;`), and `as` or `satisfies` only on the
+			 * element's line, since TypeScript stops at a line break before them. A
+			 * tag start is the next element (`<div /> <span />`), and so is any `<`
+			 * that starts a later line, which TypeScript reads as a tag start after
+			 * an element too.
 			 */
 			#continuesElementExpression() {
-				if (this.hasPrecedingLineBreak()) return false;
-				return (
+				if (
 					this.type.binop != null ||
 					this.type === tt.starstar ||
 					this.type === tt.question ||
-					this.type === tt.comma ||
-					this.isContextual('as') ||
-					this.isContextual('satisfies')
+					this.type === tt.comma
+				) {
+					return (
+						!this.hasPrecedingLineBreak() || !(this.type === tt.relational && this.value === '<')
+					);
+				}
+				return (
+					!this.hasPrecedingLineBreak() &&
+					(this.isContextual('as') || this.isContextual('satisfies'))
 				);
 			}
 

@@ -14764,8 +14764,34 @@ item
 			'function App() {\n  return (\n    <div // c\n      a="1"\n    >\n      test\n    </div>\n  );\n}',
 			'function App() {\n  return (\n    <div\n      something="test" // after\n    >\n      test\n    </div>\n  );\n}',
 			'function App() {\n  return (\n    <div\n      a="1"\n      // c\n    />\n  );\n}',
+			'function App() {\n  return </* c */ div>test</div>;\n}',
+			'function App() {\n  return </* a */ /* b */ div a="1" />;\n}',
+			'function App() {\n  return </* c */>test</>;\n}',
+			'function App() {\n  return (\n    <\n      // c\n    >\n      test\n    </>\n  );\n}',
 		])('keeps the comment in the opening tag of %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier, a comment between `<` and the tag name, or between a
+		// fragment's `<` and `>`, stays there.
+		it.each([
+			[
+				'function App() {\n  return <\n    /* c */ div\n  >test</div>;\n}',
+				'function App() {\n  return </* c */ div>test</div>;\n}',
+			],
+			['const a = <\n  // c\n>\n  x\n</>;', 'const a = (\n  <\n    // c\n  >\n    x\n  </>\n);'],
+		])('keeps the comment after the `<` of %j', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it('joins an operator on the next line to the element it continues, like Prettier', async () => {
+			const source = '<div />\n+ 1;\n\nfunction f() {\n  <div />\n  > 5;\n}';
+			expect(await format(source)).toBeWithNewline(
+				'<div /> + 1;\n\nfunction f() {\n  <div /> > 5;\n}',
+			);
+			expect(await format(source, { semi: false })).toBeWithNewline(
+				';<div /> + 1\n\nfunction f() {\n  ;<div /> > 5\n}',
+			);
 		});
 	});
 

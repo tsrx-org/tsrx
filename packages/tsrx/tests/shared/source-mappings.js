@@ -309,6 +309,49 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		});
 	});
 
+	describe(`[${name}] whitespace or a comment after an element's \`<\``, () => {
+		it('maps the element from its `<`, not from the gap', () => {
+			const source = [
+				'export function App() @{',
+				'\tconst a = < div>x</div>;',
+				'\tconst b = </* note */span>y</span>;',
+				'\t<',
+				'\t\t// note',
+				'\t\tsection>',
+				'\t\t{a}',
+				'\t\t{b}',
+				'\t</section>',
+				'}',
+			].join('\n');
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const mapped = result.mappings.flatMap((mapping) =>
+				mapping.sourceOffsets.map((offset, index) => ({
+					offset,
+					generated: mapping.generatedOffsets[index],
+				})),
+			);
+
+			for (const [open, tag] of [
+				['< div', 'div'],
+				['</* note */span', 'span'],
+				['<\n\t\t// note\n\t\tsection', 'section'],
+			]) {
+				const start = source.indexOf(open);
+				const name_start = start + open.length - tag.length;
+				expect(
+					mapped.filter(({ offset }) => offset > start && offset < name_start),
+					open,
+				).toEqual([]);
+				const at_start = mapped.filter(({ offset }) => offset === start);
+				expect(at_start.length, open).toBeGreaterThan(0);
+				for (const { generated } of at_start) {
+					expect(result.code[generated], open).toMatch(/[<{(]/);
+				}
+			}
+		});
+	});
+
 	describe(`[${name}] source mappings do not crash for`, () => {
 		/**
 		 * @param {string} source
