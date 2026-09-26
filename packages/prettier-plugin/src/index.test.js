@@ -16303,6 +16303,224 @@ function Toggle(props) @{
 			const result = await format(input, { useTabs: true, singleQuote: true, printWidth: 100 });
 			expect(result).toBeWithNewline(expected);
 		});
+
+		// Prettier aligns a breaking ${…} with the line it was written on, which
+		// the embedded printer re-indents, so its next pass moves the expression
+		// again (#516). The formatter prints Prettier's stable layout at once.
+		it.each([
+			[
+				'CSS',
+				'const a = css`\n${() => {\n  return 1;\n}}\n`;',
+				`const a = css\`
+  \${() => {
+    return 1;
+  }}
+\`;`,
+			],
+			[
+				'CSS, with a comment after the expression',
+				'const a = css`\n${\n  foo\n  /* comment */\n}\n`;',
+				`const a = css\`
+  \${
+    foo
+    /* comment */
+  }
+\`;`,
+			],
+			[
+				'GraphQL',
+				'const query = gql`\n  query {\n    user\n  }\n${(fragment) => {\n  return fragment;\n}}\n`;',
+				`const query = gql\`
+  query {
+    user
+  }
+  \${(fragment) => {
+    return fragment;
+  }}
+\`;`,
+			],
+			[
+				'HTML',
+				'const view = html`\n<ul>\n${items.map((item) => {\n  return html`<li>${item}</li>`;\n})}\n</ul>\n`;',
+				`const view = html\`
+  <ul>
+    \${items.map((item) => {
+      return html\`<li>\${item}</li>\`;
+    })}
+  </ul>
+\`;`,
+			],
+			[
+				'an HTML attribute',
+				'class Counter {\n  render() {\n    return html`\n      <button @click=${() => {\n        this.count++;\n      }}>\n        ${this.count}\n      </button>\n    `;\n  }\n}',
+				`class Counter {
+  render() {
+    return html\`
+      <button
+        @click=\${() => {
+          this.count++;
+        }}
+      >
+        \${this.count}
+      </button>
+    \`;
+  }
+}`,
+			],
+			[
+				'CSS written further in',
+				'function styles() {\n  return css`\n          ${(props) => {\n            return props.color;\n          }}\n  `;\n}',
+				`function styles() {
+  return css\`
+    \${(props) => {
+      return props.color;
+    }}
+  \`;
+}`,
+			],
+			[
+				'CSS nested in an expression',
+				'const Box = styled.div`\n${(props) => props.active && css`\ncolor: ${() => {\n  return 1;\n}};\n`}\n`;',
+				`const Box = styled.div\`
+  \${(props) =>
+    props.active &&
+    css\`
+      color: \${() => {
+        return 1;
+      }};
+    \`}
+\`;`,
+			],
+		])('aligns a breaking expression with the line of its ${ in %s', async (_, input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// The line can start before an indent that the embedded printer opens
+		// ahead of the ${: the expression aligns with the line, not the indent
+		it.each([
+			[
+				'a CSS at-rule',
+				'const a = css`\n@media ${() => {\n  return query;\n}} {\n  a { color: red; }\n}\n`;',
+				`const a = css\`
+  @media \${() => {
+    return query;
+  }} {
+    a {
+      color: red;
+    }
+  }
+\`;`,
+			],
+			[
+				'a CSS value list',
+				'const a = css`\ntransition: opacity ${a} 1s, ${() => {\n  return 1;\n}} 2s;\n`;',
+				`const a = css\`
+  transition:
+    opacity \${a} 1s,
+    \${() => {
+      return 1;
+    }}
+      2s;
+\`;`,
+			],
+		])('aligns a breaking expression in %s with its line', async (_, input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// A line the embedded printer keeps as written (a comment, <pre>) starts
+		// at the start of the output, and Prettier is stable there
+		it.each([
+			[
+				'a CSS comment',
+				'const a = css`\n    /* see\n    ${() => {\n      return 1;\n    }} */\n`;',
+				`const a = css\`
+  /* see
+    \${() => {
+      return 1;
+    }} */
+\`;`,
+			],
+			[
+				'an HTML pre',
+				'const view = html`\n  <pre>\n${() => {\n  return 1;\n}}\n  x ${() => {\n    return 2;\n  }}</pre\n  >\n`;',
+				`const view = html\`
+  <pre>
+\${() => {
+  return 1;
+}}
+  x \${() => {
+    return 2;
+  }}</pre>
+\`;`,
+			],
+			[
+				'a CSS value',
+				'const a = css`\n  color: ${(props) => {\n    return props.color;\n  }};\n`;',
+				`const a = css\`
+  color: \${(props) => {
+    return props.color;
+  }};
+\`;`,
+			],
+		])('keeps a breaking expression in %s aligned with its line', async (_, input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('aligns a breaking expression in a template attribute like the equivalent TSX', async () => {
+			const input = `function Styled() @{
+<div>
+<div class={css\`
+\${(props) => {
+  return props.color;
+}}
+\`} />
+<p css={\`
+@media \${() => {
+  return query;
+}} { a { color: red; } }
+\`} />
+<i class={html\`
+<span @click=\${() => {
+  count++;
+}}>x</span>
+\`} />
+</div>
+}`;
+			const expected = `function Styled() @{
+	<div>
+		<div
+			class={css\`
+				\${(props) => {
+					return props.color;
+				}}
+			\`}
+		/>
+		<p
+			css={\`
+				@media \${() => {
+					return query;
+				}} {
+					a {
+						color: red;
+					}
+				}
+			\`}
+		/>
+		<i
+			class={html\`
+				<span
+					@click=\${() => {
+						count++;
+					}}
+					>x</span
+				>
+			\`}
+		/>
+	</div>
+}`;
+			const result = await format(input, { useTabs: true, singleQuote: true, printWidth: 100 });
+			expect(result).toBeWithNewline(expected);
+		});
 	});
 
 	describe('member chains break like Prettier', () => {
