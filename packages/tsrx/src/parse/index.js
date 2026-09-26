@@ -1759,8 +1759,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
-	 * `handleClosureTypeCastComments`: a JSDoc type cast comment at the end of
-	 * a line leads the node after it rather than trailing the one before it:
+	 * Whether Prettier's `handleClosureTypeCastComments` gives a comment to the
+	 * node after it: a JSDoc type cast comment at the end of a line leads that
+	 * node rather than trailing the one before it, so that
 	 * `[a, /** @type {X} *\/⏎b]` prints `[a, /** @type {X} *\/ b]`. One right
 	 * before a `(` keeps to those parentheses by the rules for a cast (see
 	 * {@link getTypeCastEnd}). Unlike Prettier, one before a node that can
@@ -1770,16 +1771,29 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * node a JSDoc type it didn't have.
 	 * @param {AST.CommentWithLocation} comment
 	 * @param {AST.Node} enclosing
+	 * @param {AST.Node | null | undefined} following
+	 * @returns {following is AST.Node}
+	 */
+	function isClosureTypeCastComment(comment, enclosing, following) {
+		return (
+			!!following &&
+			isTypeCastComment(comment) &&
+			!isOwnLineComment(comment) &&
+			isEndOfLineComment(comment) &&
+			!isOwnLineJsdocOwner(following, enclosing) &&
+			getNextNonSpaceNonCommentCharacter(comment.end) !== '('
+		);
+	}
+
+	/**
+	 * `handleClosureTypeCastComments` (see {@link isClosureTypeCastComment})
+	 * @param {AST.CommentWithLocation} comment
+	 * @param {AST.Node} enclosing
 	 * @param {AST.Node | null} following
 	 * @returns {boolean} Whether the comment was attached
 	 */
 	function handleClosureTypeCastComments(comment, enclosing, following) {
-		if (
-			following &&
-			isTypeCastComment(comment) &&
-			!isOwnLineJsdocOwner(following, enclosing) &&
-			getNextNonSpaceNonCommentCharacter(comment.end) !== '('
-		) {
+		if (isClosureTypeCastComment(comment, enclosing, following)) {
 			addLeadingComment(following, comment);
 			return true;
 		}
@@ -1977,7 +1991,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			}
 		}
 
-		if (endOfLine && handleClosureTypeCastComments(comment, enclosing, following)) {
+		if (handleClosureTypeCastComments(comment, enclosing, following)) {
 			return true;
 		}
 
@@ -3085,8 +3099,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 							if (
 								isHandledEnclosingNode(parent)
 									? handleComment(comments[0], parent, node, neighbors.following, path.at(-2))
-									: isEndOfLineComment(comments[0]) &&
-										handleClosureTypeCastComments(comments[0], parent, neighbors.following)
+									: handleClosureTypeCastComments(comments[0], parent, neighbors.following)
 							) {
 								comments.shift();
 								continue;
@@ -3436,7 +3449,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 									commentStartLine === nodeEndLine + 1;
 
 								// Like Prettier, the comments that follow a node on its line all
-								// trail it, except a block comment on the next sibling's line
+								// trail it, except a block comment on the next sibling's line and
+								// a type cast comment that leads the node after it
 								const takeSameLineComments = () => {
 									const trailing = [/** @type {AST.CommentWithLocation} */ (comments.shift())];
 									while (
@@ -3449,6 +3463,11 @@ export function get_comment_handlers(source, comments, index = 0) {
 											comments[0].type === 'Block' &&
 											nextSibling?.loc &&
 											comments[0].loc.end.line === nextSibling.loc.start.line
+										) &&
+										!isClosureTypeCastComment(
+											comments[0],
+											parent,
+											getCommentNeighbors(comments[0], parent)?.following,
 										)
 									) {
 										trailing.push(/** @type {AST.CommentWithLocation} */ (comments.shift()));

@@ -15864,6 +15864,7 @@ const c = <div>{cond ? <span>a</span> : <span>b</span>}</div>;`;
 		it.each([
 			['x = a ? /** @type {X} */\nb : c;', 'x = a ? /** @type {X} */ b : c;'],
 			['x = a ? b /** @type {X} */\n: c;', 'x = a ? b : /** @type {X} */ c;'],
+			['x = a ? b /* d */ /** @type {X} */\n: c;', 'x = a ? b /* d */ : /** @type {X} */ c;'],
 		])('leads the branch with the JSDoc type cast comment in %j', async (input, expected) => {
 			expect(await format(input)).toBeWithNewline(expected);
 		});
@@ -21768,6 +21769,7 @@ import b from "./b.json" with { type /* c */: "json" };`);
 			],
 			['f(a, /** @type {X} */ // c\nb);', 'f(\n  a, // c\n  /** @type {X} */ b,\n);'],
 			['f(a, /** @type {X} */ /* d */\nb);', 'f(a /* d */, /** @type {X} */ b);'],
+			['f(a, /* d */ /** @type {X} */\nb);', 'f(a /* d */, /** @type {X} */ b);'],
 		])(
 			'leads the element after the comma with the JSDoc type cast comment in %j',
 			async (input, expected) => {
