@@ -382,7 +382,9 @@ export function JsxTextCharactersApp() @{
 		<Slot content=<span class="ch-attr-unbraced">> b &#123;x&#125; &amp;lt;</span> />
 		<div>
 			{show && (
-				<Slot content=<span class="ch-attr-unbraced-container">&#123;x&#125; &amp;lt; &gt; a > b</span> />
+				<Slot
+					content=<span class="ch-attr-unbraced-container">&#123;x&#125; &amp;lt; &gt; a > b</span>
+				/>
 			)}
 		</div>
 		<Slot {...{ content: <span class="ch-spread">&#123;x&#125; &amp;lt; &gt; a > b</span> }} />
