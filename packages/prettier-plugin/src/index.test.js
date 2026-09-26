@@ -19240,7 +19240,10 @@ for (
 				'class K {\n  a = 1 /* c */; b = 2;\n  m(): void /* c */; n(): void;\n}',
 				'class K {\n  a = 1; /* c */\n  b = 2;\n  m(): void; /* c */\n  n(): void;\n}',
 			],
-			['class K {\n  a = 1 /* c */\n  b = 2 /* d */;\n}', 'class K {\n  a = 1; /* c */\n  b = 2; /* d */\n}'],
+			[
+				'class K {\n  a = 1 /* c */\n  b = 2 /* d */;\n}',
+				'class K {\n  a = 1; /* c */\n  b = 2; /* d */\n}',
+			],
 			[
 				'class K {\n  x = (a, b) /* c */;\n  y = (1 /* c */);\n  q = (a || b /* c */);\n  r = (a, b /* c */);\n  u = (a ? b : c /* c */);\n  w = <T,>(a) => a /* c */;\n}',
 				'class K {\n  x = (a, b); /* c */\n  y = 1; /* c */\n  q = a || b; /* c */\n  r = (a, b); /* c */\n  u = a ? b : c; /* c */\n  w = <T,>(a) => a; /* c */\n}',
@@ -19275,8 +19278,14 @@ for (
 				'class K {\n  s = a + b; /* c */\n  t = () => a; /* c */\n}',
 			],
 			['class K {\n  q = (a || b // c\n  );\n}', 'class K {\n  q = a || b; // c\n}'],
-			['class K {\n  constructor(a: string) /* c */\n  ;\n}', 'class K {\n  constructor(a: string); /* c */\n}'],
-			['class K {\n  constructor(a: string /* c */\n  );\n}', 'class K {\n  constructor(a: string); /* c */\n}'],
+			[
+				'class K {\n  constructor(a: string) /* c */\n  ;\n}',
+				'class K {\n  constructor(a: string); /* c */\n}',
+			],
+			[
+				'class K {\n  constructor(a: string /* c */\n  );\n}',
+				'class K {\n  constructor(a: string); /* c */\n}',
+			],
 			[
 				'class K {\n  x: (B /* c */);\n  m(): B | (C /* c */);\n}',
 				'class K {\n  x: B; /* c */\n  m(): B | C; /* c */\n}',
@@ -19288,7 +19297,10 @@ for (
 		});
 
 		it.each([
-			['class K {\n  a = 1 // c\n  ;\n  m(): void // c\n  ;\n  n() // c\n  ;\n}', 'class K {\n  a = 1; // c\n  m(): void; // c\n  n(); // c\n}'],
+			[
+				'class K {\n  a = 1 // c\n  ;\n  m(): void // c\n  ;\n  n() // c\n  ;\n}',
+				'class K {\n  a = 1; // c\n  m(): void; // c\n  n(); // c\n}',
+			],
 			['class K {\n  x: B | C // c\n  // d\n  ;\n}', 'class K {\n  x: B | C; // c\n  // d\n}'],
 			['class K {\n  x: B | C\n  // c\n  ;\n}', 'class K {\n  x: B | C;\n  // c\n}'],
 			['class K {\n  d = 1\n  /* c */;\n}', 'class K {\n  d = 1;\n  /* c */\n}'],
