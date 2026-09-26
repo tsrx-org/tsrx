@@ -1,5 +1,116 @@
 # @tsrx/mcp
 
+## 0.1.13
+
+### Patch Changes
+
+- [#782](https://github.com/tsrx-org/tsrx/pull/782)
+  [`de88f59`](https://github.com/tsrx-org/tsrx/commit/de88f59036b5ff6824d85b15d032f79d0b9e36bc)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A dynamic tag expression
+  (`<{expr}>`) must now be one of three forms: an identifier (`tag`), a member
+  access (`props.as`, `this.tag`, `registry[name]`, `items[0]`, where each
+  computed key is an identifier, a string or number literal, or a member access),
+  or a string literal (`'section'`). Anything else is reported as
+  `tsrx-dynamic-tag-expression`, including code that compiled before: a
+  conditional, `||`, `??` or `&&` (`<{c ? A : B} />`), parentheses and type-only
+  wrappers (`<{tag as any} />`), optional member access, a template literal, an
+  arrow function, and an element. A non-self-closing element repeats the
+  expression in its closing tag, so compute the tag above the element instead:
+  `const Tag = c ? Child : Fallback;` followed by `<{Tag} />`.
+
+  Any expression parses, and the check doesn't change the tree. A normal compile
+  throws the error, and `collect` and `loose` mode record it once per element at
+  the part of the expression that isn't allowed and go on, so the editor
+  underlines the tag and keeps working. A call or a concatenation in a tag used to
+  fail the whole file in `collect` mode.
+
+- [#790](https://github.com/tsrx-org/tsrx/pull/790)
+  [`c70964d`](https://github.com/tsrx-org/tsrx/commit/c70964d76055f1bea742bc15b66044042ef5bfcd)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A `<script>` element is raw
+  text, like `<style>`, in templates and in plain JSX. Its body is `content`,
+  taken as written, and the element has no children: the `JSXText` child that
+  mirrored the body is gone. None of JSX text's rules apply to the body: comments,
+  `<`, `>`, character references, and line breaks stay as written, and
+  `<script>{code}</script>` is a script whose text is `{code}`, not an expression
+  container.
+
+  Each target now outputs the body in the form that renders it exactly, on the
+  client and in server HTML:
+
+  - React: `<script>{"…"}</script>`, a string child.
+  - Preact and Hono: `<script dangerouslySetInnerHTML={{ __html: "…" }} />`.
+  - Solid: `<script innerHTML={"…"} />`.
+  - Vue: `<script v-html={"…"} />`.
+
+  Before, the body compiled to JSX text: its lines were joined, so a `// c` line
+  commented out the rest of the script, and `&amp;` rendered `&`. In Solid and
+  Vue, a `<` rendered `&lt;`. `<script>{code}</script>` threw
+  `ReferenceError: code is not defined`. Whether a script runs is still each
+  target's decision: a client render runs it in Preact and `hono/jsx/dom`, not in
+  React, Solid, and Vue, and server HTML runs it.
+
+  A body ends where HTML ends it: at `</script`, optional whitespace, and `>`, so
+  `</script >` closes it. Any other `</script` in the body, in any letter case
+  (`</SCRIPT>`), is the `tsrx-script-end-tag-in-body` error, with a hint to write
+  `<\/script`. A body of only whitespace outputs an empty script, as the formatter
+  prints it.
+
+  The formatter formats a script body from `content`, and the TypeScript plugin's
+  fallback for a file that doesn't compile ends a body where the parser does.
+
+- Updated dependencies
+  [[`1b3bbe5`](https://github.com/tsrx-org/tsrx/commit/1b3bbe5722dec196f54632e768a920904581568a),
+  [`20b17fd`](https://github.com/tsrx-org/tsrx/commit/20b17fd8b8a255e1b32eef17183f710b5b04d4af),
+  [`de88f59`](https://github.com/tsrx-org/tsrx/commit/de88f59036b5ff6824d85b15d032f79d0b9e36bc),
+  [`c70964d`](https://github.com/tsrx-org/tsrx/commit/c70964d76055f1bea742bc15b66044042ef5bfcd),
+  [`1555269`](https://github.com/tsrx-org/tsrx/commit/1555269944da6e0bdbc7623afea8339d8b737af4),
+  [`41be7e8`](https://github.com/tsrx-org/tsrx/commit/41be7e80e576b548448ee836b0e14d9747e63512),
+  [`fcc3dc8`](https://github.com/tsrx-org/tsrx/commit/fcc3dc8151d9da9ae7813854de6876aa69c655f6),
+  [`d9e9110`](https://github.com/tsrx-org/tsrx/commit/d9e911015458d677a342f70699e4ce45406b785b),
+  [`1091170`](https://github.com/tsrx-org/tsrx/commit/10911705ab6ab4203c42f4bf329f00b16334fc00),
+  [`4005d38`](https://github.com/tsrx-org/tsrx/commit/4005d382dba64b7b2e570b3b135a1687139d7aba),
+  [`2c964db`](https://github.com/tsrx-org/tsrx/commit/2c964dbe23fe1bdae42e9f9c6329dc3bf1ec03b8),
+  [`8eeec66`](https://github.com/tsrx-org/tsrx/commit/8eeec666600f8fc431f78c0040103a1c1314ce09),
+  [`c8ec9cc`](https://github.com/tsrx-org/tsrx/commit/c8ec9cc0bfa3c1986ac23f6e3bd67cddf971848b),
+  [`c9469b3`](https://github.com/tsrx-org/tsrx/commit/c9469b3bfe1ab5fd1f8ed615fe84ba094ac8ffac),
+  [`d746930`](https://github.com/tsrx-org/tsrx/commit/d7469303cbc6ca6c4679251a0ee30eda04f744c8),
+  [`e3a627a`](https://github.com/tsrx-org/tsrx/commit/e3a627ae47a5b7440959e174eeb78c07778f6148),
+  [`c4fa258`](https://github.com/tsrx-org/tsrx/commit/c4fa258840b04b226f9f527d22b8b5401bdb13af),
+  [`b98651c`](https://github.com/tsrx-org/tsrx/commit/b98651c0173b3cacc9d53650a6625e08afedb48f),
+  [`d16852a`](https://github.com/tsrx-org/tsrx/commit/d16852a725f7ed3114ba52a9f78b7fec163c4169),
+  [`5508243`](https://github.com/tsrx-org/tsrx/commit/5508243824b9984184dd936684a76e67d669d931),
+  [`3ea944c`](https://github.com/tsrx-org/tsrx/commit/3ea944c41c0fb35d9118f337cfa68cee1b1424ac),
+  [`d1785a1`](https://github.com/tsrx-org/tsrx/commit/d1785a10fda6517901795dc19e8560a09d1bb50e),
+  [`f73b676`](https://github.com/tsrx-org/tsrx/commit/f73b676036673cb81975dae7f50ae65c6e4af358),
+  [`4701beb`](https://github.com/tsrx-org/tsrx/commit/4701beb167f160945836bb9cc122aa6779bd682d),
+  [`4b38c47`](https://github.com/tsrx-org/tsrx/commit/4b38c47d28e84437e074306c31d90324ccac4ffa),
+  [`4a5d385`](https://github.com/tsrx-org/tsrx/commit/4a5d3859e47e6a9ad82cb8a7343f52b56bf23218),
+  [`b3f3b03`](https://github.com/tsrx-org/tsrx/commit/b3f3b0384ac7ac94dcc4c6efb6b1c455433cd1bc),
+  [`1dd7288`](https://github.com/tsrx-org/tsrx/commit/1dd728863fa9f945c972e94b85925e62854ede52),
+  [`a5beb97`](https://github.com/tsrx-org/tsrx/commit/a5beb9773e9169d546a1a10623806ea2ec811404),
+  [`944a943`](https://github.com/tsrx-org/tsrx/commit/944a943394c9fea12ea72a4e871726c172613136),
+  [`9338fdd`](https://github.com/tsrx-org/tsrx/commit/9338fdd35760c4743cf1a79373c8dd2e27849e3b),
+  [`2933f42`](https://github.com/tsrx-org/tsrx/commit/2933f427c289a958d108208262716d828d7dbd67),
+  [`cb113e6`](https://github.com/tsrx-org/tsrx/commit/cb113e67567317c6467fedaebc62c239e6d6a262),
+  [`d02b7e6`](https://github.com/tsrx-org/tsrx/commit/d02b7e6119462890b27f4506d9c5d8eb5258e650),
+  [`6d9ffdb`](https://github.com/tsrx-org/tsrx/commit/6d9ffdb42d83fd214ed2ee98b65f37cb2b268f60),
+  [`a7327be`](https://github.com/tsrx-org/tsrx/commit/a7327be124f3a5f8870acd28b46b67aac9d9691d),
+  [`d1f89bd`](https://github.com/tsrx-org/tsrx/commit/d1f89bdd27e60ed41b103e546b7b8c280f24fff8),
+  [`e82305f`](https://github.com/tsrx-org/tsrx/commit/e82305f84078a5f21f902a30b5cd65e8cb7f633f),
+  [`0baf613`](https://github.com/tsrx-org/tsrx/commit/0baf613171836b4071c36f29856051a1304cf103),
+  [`94b9f91`](https://github.com/tsrx-org/tsrx/commit/94b9f91a6279cd3ff03f9c9bf54fe39cf64835e0),
+  [`55b4150`](https://github.com/tsrx-org/tsrx/commit/55b4150a45d6ccd277e7675bbf868108927c67aa),
+  [`24386ca`](https://github.com/tsrx-org/tsrx/commit/24386ca40f8f890480bf25201b0c0e94a0c4b6bc),
+  [`03de656`](https://github.com/tsrx-org/tsrx/commit/03de6568eedb5e8897e5dd3385416d56084b1e6c),
+  [`883a8b6`](https://github.com/tsrx-org/tsrx/commit/883a8b622c5e830433244155e13029038fae26a7),
+  [`935dfe4`](https://github.com/tsrx-org/tsrx/commit/935dfe4242a07abf54d994afe3e87b9582c3ac2a),
+  [`927aa91`](https://github.com/tsrx-org/tsrx/commit/927aa91ae42f06dca2a1a8809bc4149600eb60c9),
+  [`e63c530`](https://github.com/tsrx-org/tsrx/commit/e63c530acc382a38474c96d932c406303a3291e4),
+  [`3a33f71`](https://github.com/tsrx-org/tsrx/commit/3a33f7154fb8995e5cd5dc60847c8b07ce98eee9),
+  [`b51a77e`](https://github.com/tsrx-org/tsrx/commit/b51a77e08ebf686ca23eddcee6ae2ac26128e58a)]:
+  - @tsrx/core@0.5.0
+  - @tsrx/prettier-plugin@0.4.13
+
 ## 0.1.12
 
 ### Patch Changes
