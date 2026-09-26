@@ -2149,8 +2149,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 		// operand, trails the operand, so that it prints inside the expression,
 		// which keeps it broken: `!(⏎  a &&⏎  b // c⏎)` (#801). Prettier's
 		// parser has turned `a && (b && c)` into the chain `a && b && c` by then
-		// (`rebalanceLogicalTree`, which the printer ports), whose last operand
-		// is `c`.
+		// (`rebalanceLogicalTree`), whose last operand is `c`. The same operand
+		// is the end of the right-nested group this tree still has (#809).
 		if (endOfLine && !following && type === 'UnaryExpression' && isBinaryish(preceding)) {
 			/** @type {any} */
 			let right = preceding.right;

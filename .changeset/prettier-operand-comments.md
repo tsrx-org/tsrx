@@ -19,6 +19,8 @@ Prettier puts them:
 - A line comment at the end of the last operand's line, in an expression that
   breaks before that operand inside a unary operator's parentheses
   (`!(\n  a &&\n  b // c\n)`), keeps every operand on its own line instead of
-  joining them.
+  joining them. On a same-operator group written on the right
+  (`!(\n  a &&\n  (b &&\n  c) // comment\n)`), that operand stays on the
+  chain's indent.
 - Only a comment that reads `prettier-ignore` keeps a union member as written,
   not one with more words after it (`// prettier-ignore because …`).

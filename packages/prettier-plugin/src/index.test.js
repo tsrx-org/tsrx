@@ -16734,6 +16734,31 @@ item
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// A same-operator chain grouped on the right is still nested (#809). The
+		// comment breaks that group with the surrounding chain, and the last
+		// operand stays on the chain's indent.
+		it.each([
+			[
+				'x = !(\n  a &&\n  (b &&\n  c) // comment\n);',
+				'x = !(\n  a &&\n  b &&\n  c // comment\n);',
+			],
+			['x = !(\n  a &&\n  (b && c) // comment\n);', 'x = !(\n  a &&\n  b &&\n  c // comment\n);'],
+			[
+				'x = !(\n  a &&\n  b &&\n  (c && d) // comment\n);',
+				'x = !(\n  a &&\n  b &&\n  c &&\n  d // comment\n);',
+			],
+			[
+				'x = !(\n  longName &&\n  (other &&\n    last) // c\n);',
+				'x = !(\n  longName &&\n  other &&\n  last // c\n);',
+			],
+			[
+				'x = !(\n  a ||\n  (b ||\n    (c || d)) // comment\n);',
+				'x = !(\n  a ||\n  b ||\n  c ||\n  d // comment\n);',
+			],
+		])('lines the last operand of %j up with the chain', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		it.each([
 			['x = !(aaaa &&\n  bbbb // c\n);', 'x = !(\n  aaaa &&\n  bbbb // c\n);'],
 			// Pins: written on one line, below the operand, or in a block comment

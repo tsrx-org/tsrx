@@ -11736,8 +11736,19 @@ function printBinaryishExpression(path, options, print) {
 		!hasTypeCastParens(path, options, 'left');
 	const shouldInline = shouldInlineLogicalExpression(path, options);
 
+	// A same-operator logical group written on the right (`a && (b && c)`) is
+	// still nested (#809). It belongs to the surrounding chain: indenting its
+	// tail again would place the last operand one level under the others when
+	// a trailing line comment breaks the group.
+	const isSameOperatorLogicalTail =
+		key === 'right' &&
+		node.type === 'LogicalExpression' &&
+		parent.type === 'LogicalExpression' &&
+		parent.operator === node.operator;
+
 	if (
 		shouldNotIndent ||
+		isSameOperatorLogicalTail ||
 		(shouldInline && !samePrecedenceSubExpression) ||
 		(!shouldInline && shouldIndentIfInlining)
 	) {
