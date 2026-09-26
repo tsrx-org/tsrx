@@ -13914,28 +13914,53 @@ function getJSXChildEnd(node) {
 }
 
 /**
- * The leading comments of an element's child as a child item of their own
- * for {@link printJSXChildren}, with what prints after the last comment as
- * the item's separator, or `null` when nothing does.
+ * The leading comments of an element's child as child items of their own for
+ * {@link printJSXChildren}, like `{/* c *\/}` children in Prettier, or `null`
+ * when they print with the child. The comments on a line are an item, which a
+ * line break follows, as it follows a child with no text after it, and a
+ * blank line after them is whitespace text between the children, which
+ * `printJSXElementBody` keeps only when the element has no text. A block
+ * comment that doesn't end its line keeps a space after it, which puts the
+ * child after the last one on its line. A `{…}` child, which starts its line
+ * whenever a comment comes before it, takes items even when all its comments
+ * stay on its line, and a comment that touches the next comment or the `{`
+ * ends its line there, like `{/* c *\/}{x}` in Prettier.
  * @param {AST.Node & AST.NodeWithMaybeComments} child
  * @param {TsrxFormatOptions} options
- * @returns {{ doc: Doc[], node: AST.Node, separator: Doc } | null}
+ * @returns {[{ doc: Doc[], node: AST.Node }, ...JSXChildItem[]] | null}
  */
-function getJSXChildCommentItem(child, options) {
-	const leadingComments = child.leadingComments ?? [];
-	const doc =
-		child.type === 'JSXExpressionContainer'
-			? printTemplateChildLeadingComments(child)
-			: printLeadingComments(child, withoutHoistedComments(child, leadingComments), options);
+function getJSXChildCommentItems(child, options) {
+	const text = /** @type {string} */ (options.originalText);
+	const isExpressionContainer = child.type === 'JSXExpressionContainer';
+	/** @type {JSXChildItem[]} */
+	const items = [];
 	/** @type {Doc[]} */
-	const separator = [];
-	while (doc.length > 0 && (doc.at(-1) === hardline || doc.at(-1) === line || doc.at(-1) === ' ')) {
-		separator.unshift(/** @type {Doc} */ (doc.pop()));
+	let doc = [];
+	for (const comment of withoutHoistedComments(child, child.leadingComments ?? [])) {
+		const { end } = /** @type {AST.NodeWithLocation} */ (comment);
+		doc.push(printComment(comment, text));
+		if (
+			comment.type === 'Block' &&
+			!hasNewline(text, end) &&
+			(!isExpressionContainer || /[ \t]/u.test(text.charAt(end)))
+		) {
+			doc.push(' ');
+			continue;
+		}
+		items.push({ doc, node: child });
+		doc = [];
+		if (isLineAfterCommentEmpty(text, comment)) {
+			items.push({ text: '\n\n', node: { type: 'JSXText' } });
+		}
 	}
-	if (doc.length === 0 || separator.length === 0) {
+	if (items.length === 0 && (doc.length === 0 || !isExpressionContainer)) {
 		return null;
 	}
-	return { doc, node: child, separator: separator.length === 1 ? separator[0] : separator };
+	if (doc.length > 0) {
+		doc.pop();
+		items.push({ doc, node: child, separator: ' ' });
+	}
+	return /** @type {[{ doc: Doc[], node: AST.Node }, ...JSXChildItem[]]} */ (items);
 }
 
 /**
@@ -13946,7 +13971,7 @@ function getJSXChildCommentItem(child, options) {
  * @param {PrintFn} print
  * @param {string} text - The source text
  * @param {boolean} [withLeadingComments] - Whether to print the container's
- *   leading comments, which {@link getJSXChildCommentItem} prints otherwise
+ *   leading comments, which {@link getJSXChildCommentItems} prints otherwise
  * @returns {Doc}
  */
 function printJSXChildExpressionContainer(path, index, print, text, withLeadingComments = true) {
@@ -14112,17 +14137,17 @@ function printJSXElementBody(
 						hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).end),
 				));
 		const endsLine = child.trailingComments?.some((comment) => comment.type === 'Line');
-		const commentItem =
-			startsLine && child.type !== 'JSXText' ? getJSXChildCommentItem(child, options) : null;
+		const commentItems =
+			startsLine && child.type !== 'JSXText' ? getJSXChildCommentItems(child, options) : null;
 		/** @type {Doc} */
 		let doc;
-		if (commentItem) {
-			// Like a `{/* c */}` child in Prettier, the comments are a part of the
+		if (commentItems) {
+			// Like `{/* c */}` children in Prettier, the comments are parts of the
 			// `fill` of their own, so that whether the text after the child
 			// starts a line depends on the child alone: the break of the comment's
 			// line would otherwise make the child and that text fit on one line
-			items.push(commentItem);
-			commentSides.set(commentItem.doc, { before: 'hardline', after: 'keep' });
+			items.push(...commentItems);
+			commentSides.set(commentItems[0].doc, { before: 'hardline', after: 'keep' });
 			doc =
 				child.type === 'JSXExpressionContainer'
 					? printJSXChildExpressionContainer(path, index, print, text, false)
@@ -14137,9 +14162,9 @@ function printJSXElementBody(
 			doc = path.call(print, 'children', index);
 		}
 		items.push({ doc, node: child });
-		if ((startsLine && !commentItem) || endsLine) {
+		if ((startsLine && !commentItems) || endsLine) {
 			commentSides.set(doc, {
-				before: startsLine && !commentItem ? 'hardline' : 'keep',
+				before: startsLine && !commentItems ? 'hardline' : 'keep',
 				after: endsLine ? 'hardline' : 'keep',
 			});
 		}
