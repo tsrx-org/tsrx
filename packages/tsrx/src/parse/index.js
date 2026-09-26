@@ -484,10 +484,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 		// One on a line of its own moves only out of the value's parentheses
 		// before the `;`. Before a `,`, Prettier's next pass gives it to the next
 		// declarator (#750).
-		if (
-			source.slice(nodeEnd, comments[0].start).includes('\n') &&
-			(!inParens || declarator)
-		) {
+		if (source.slice(nodeEnd, comments[0].start).includes('\n') && (!inParens || declarator)) {
 			return false;
 		}
 		/** @type {AST.Node & AST.NodeWithLocation} */

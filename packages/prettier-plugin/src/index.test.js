@@ -18858,7 +18858,10 @@ for (
 			['const x = (a, b\n/* c */);', 'const x = (a, b);\n/* c */'],
 			['const x = (a, b /* c */\n// d\n);', 'const x = (a, b /* c */);\n// d'],
 			['const f = () => a ? b : (c\n// c\n);', 'const f = () => (a ? b : c);\n// c'],
-			['const f = () => a ? b : (c /* c */\n// d\n);', 'const f = () => (a ? b : c); /* c */\n// d'],
+			[
+				'const f = () => a ? b : (c /* c */\n// d\n);',
+				'const f = () => (a ? b : c); /* c */\n// d',
+			],
 			// With the comments before it on the operand's line
 			['const x = a || (b /* c */\n/* d */);', 'const x = a || b; /* c */\n/* d */'],
 			['const x = a || (b // c\n// d\n);', 'const x = a || b; // c\n// d'],
