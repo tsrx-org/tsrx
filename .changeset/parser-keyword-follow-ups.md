@@ -17,7 +17,7 @@ The parser reads more TypeScript keyword forms as TypeScript does:
   import attributes, as TypeScript requires. Any other object literal
   (`import("m", { foo: {} })`) is TypeScript's syntax error now; it compiled.
 - `type` written with a Unicode escape in an import or export clause
-  (`import type { a } from "m";`, `import { type a } from "m";`) is a
+  (`import \u0074ype { a } from "m";`, `import { \u0074ype a } from "m";`) is a
   type-only import or export, as in TypeScript; it failed to parse.
 - A class member's modifier, or a repeated or misplaced one, before a
   declaration (`public class A {}`, `readonly function f() {}`,
