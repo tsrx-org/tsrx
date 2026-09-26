@@ -13618,22 +13618,33 @@ function isMeaningfulJSXText(text) {
 }
 
 /**
- * A `{" "}` child. Like Prettier's `printJsxElementInternal`, the element and
- * fragment printers treat it as a plain significant space, which prints as
- * ` ` when its neighbors share a line and as `{" "}` where a line breaks.
+ * A `{" "}` child with no comments in its braces, which Prettier's
+ * `isJsxWhitespaceExpression` reads as a space. The comments TSRX attaches
+ * to the braces themselves are outside them, where TSX has `{/* c *\/}`
+ * children next to the `{" "}`.
  * @param {AST.Node} child
  * @returns {boolean}
  */
-function isJSXWhitespaceExpression(child) {
+function isJSXSpaceChild(child) {
 	if (child.type !== 'JSXExpressionContainer') {
 		return false;
 	}
 	const expression = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (child.expression);
+	return !hasComment(expression) && expression.type === 'Literal' && expression.value === ' ';
+}
+
+/**
+ * A `{" "}` child without comments. Like Prettier's `printJsxElementInternal`,
+ * the element and fragment printers treat it as a plain significant space,
+ * which prints as ` ` when its neighbors share a line and as `{" "}` where a
+ * line breaks.
+ * @param {AST.Node} child
+ * @returns {boolean}
+ */
+function isJSXWhitespaceExpression(child) {
 	return (
-		!hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (child)) &&
-		!hasComment(expression) &&
-		expression.type === 'Literal' &&
-		expression.value === ' '
+		isJSXSpaceChild(child) &&
+		!hasComment(/** @type {AST.Node & AST.NodeWithMaybeComments} */ (child))
 	);
 }
 
@@ -14338,7 +14349,11 @@ function printJSXElementBody(
 	const rawJsxWhitespace = options.singleQuote ? "{' '}" : '{" "}';
 	const jsxWhitespace = ifBreak([rawJsxWhitespace, softline], ' ');
 	const parts = printJSXChildren(items, jsxWhitespace);
-	const containsText = items.some((item) => 'text' in item && isMeaningfulJSXText(item.text));
+	// A `{" "}` with comments prints with them, but it's text as it is in TSX,
+	// where its comments are `{/* c */}` children of their own
+	const containsText =
+		items.some((item) => 'text' in item && isMeaningfulJSXText(item.text)) ||
+		children.some(isJSXSpaceChild);
 
 	// We can end up with multiple whitespace elements with empty string content
 	// between them. Remove empty whitespace and softlines before JSX whitespace
