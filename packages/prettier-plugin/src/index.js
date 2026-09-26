@@ -216,12 +216,12 @@ export const printers = {
 					return async (textToDoc) => {
 						try {
 							if (!parser) {
-								return printUnformattedRawText(node.value);
+								return printUnformattedRawText(getJSXTextRaw(node));
 							}
 							const body = await textToDoc(
 								parser === 'markdown'
-									? dedentString(node.value.replace(/^[^\S\n]*\n/u, ''))
-									: node.value,
+									? dedentString(getJSXTextRaw(node).replace(/^[^\S\n]*\n/u, ''))
+									: getJSXTextRaw(node),
 								{ parser },
 							);
 							// Drop the program's trailing hardline; printElement places the
@@ -230,7 +230,7 @@ export const printers = {
 						} catch {
 							// A body that doesn't parse (e.g. mid-edit code) is an expected
 							// state, not an error: keep its lines and stay quiet.
-							return printUnformattedRawText(node.value);
+							return printUnformattedRawText(getJSXTextRaw(node));
 						}
 					};
 				}
@@ -886,7 +886,7 @@ function hasJSXIgnoreComment(path) {
 	let index = /** @type {number} */ (path.index);
 	while (index > 0) {
 		const sibling = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (siblings[--index]);
-		if (sibling.type === 'JSXText' && !isMeaningfulJSXText(sibling.value)) {
+		if (sibling.type === 'JSXText' && !isMeaningfulJSXText(getJSXTextRaw(sibling))) {
 			continue;
 		}
 		return (
@@ -4493,7 +4493,7 @@ function printTsrxNode(node, path, options, print, args) {
 			break;
 
 		case 'JSXText':
-			nodeContent = printRawText(node.value);
+			nodeContent = printRawText(getJSXTextRaw(node));
 			break;
 
 		case 'JSXEmptyExpression':
@@ -13457,6 +13457,17 @@ function startsWithLineComment(word) {
 }
 
 /**
+ * A JSX text's text as written, which prints: `raw` keeps its character
+ * references, and `value` has them decoded (`&#123;x&#125;` is `{x}` there).
+ * @param {AST.Node} node - A `JSXText` node
+ * @returns {string}
+ */
+function getJSXTextRaw(node) {
+	const text = /** @type {ESTreeJSX.JSXText} */ (/** @type {unknown} */ (node));
+	return text.raw ?? text.value;
+}
+
+/**
  * Whether JSX text renders anything, like Prettier's `isMeaningfulJsxText`: it
  * has a character other than JSX whitespace, or whitespace without a line
  * break, which renders as a space.
@@ -13731,7 +13742,7 @@ function pushJSXTextWithComments(items, child, previous, gap, text, isLastChild,
 		return result + text.slice(from, to);
 	};
 	// The text around the comments: strings at even indexes and comments at
-	// odd ones. After the last comment, the rest of the text's value, which
+	// odd ones. After the last comment, the rest of the text as written, which
 	// leaves out a `prettier-ignore` after its last word and the comments
 	// after it, which lead the next child.
 	/** @type {(string | (AST.Comment & AST.NodeWithLocation))[]} */
@@ -13747,9 +13758,7 @@ function pushJSXTextWithComments(items, child, previous, gap, text, isLastChild,
 			valueBefore -= comment.end - comment.start;
 		}
 	}
-	tokens.push(
-		/** @type {string} */ (/** @type {ESTreeJSX.JSXText} */ (child).value).slice(valueBefore),
-	);
+	tokens.push(getJSXTextRaw(/** @type {ESTreeJSX.JSXText} */ (child)).slice(valueBefore));
 
 	/** @param {number} index */
 	const stringAt = (index) => /** @type {string} */ (tokens[index]);
@@ -14073,7 +14082,7 @@ function printJSXElementBody(
 			}
 		}
 		if (child.type === 'JSXText' && !hasComment(child)) {
-			items.push({ text: gap + child.value, node: child });
+			items.push({ text: gap + getJSXTextRaw(child), node: child });
 			continue;
 		}
 		if (child.type === 'JSXText' && child.innerComments && !child.trailingComments) {
@@ -14149,7 +14158,9 @@ function printJSXElementBody(
 	// A comment after the last child prints after a space, which would be
 	// text before the closing tag on the same line
 	const lastChild = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (
-		children.findLast((child) => child.type !== 'JSXText' || isMeaningfulJSXText(child.value))
+		children.findLast(
+			(child) => child.type !== 'JSXText' || isMeaningfulJSXText(getJSXTextRaw(child)),
+		)
 	);
 	// Record any breaks. Should never go from true to false, only false to true.
 	let forcedBreak =
@@ -14627,7 +14638,7 @@ function printJSXElement(node, path, options, print) {
 		(node.children.length === 1 &&
 			node.children[0].type === 'JSXText' &&
 			!hasComment(node.children[0]) &&
-			!isMeaningfulJSXText(node.children[0].value))
+			!isMeaningfulJSXText(getJSXTextRaw(node.children[0])))
 	) {
 		const bodyComments = [...innerCommentDocs, ...closingCommentDocs];
 		if (bodyComments.length > 0) {
@@ -14874,7 +14885,7 @@ function collectElementBodyCommentDocs(node, closingNode) {
 	const trailingComments = closingNode?.leadingComments ?? [];
 	const lastMeaningfulChild = [...(node.children ?? [])]
 		.reverse()
-		.find((child) => child.type !== 'JSXText' || child.value.trim());
+		.find((child) => child.type !== 'JSXText' || getJSXTextRaw(child).trim());
 	return {
 		closingCommentDocs: printElementBodyComments(trailingComments, lastMeaningfulChild),
 		innerCommentDocs: printElementBodyComments(node.innerComments),

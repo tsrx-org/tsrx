@@ -1411,9 +1411,11 @@ export function TSRXPlugin(config) {
 				const endLoc = get_line_info(this, index);
 				const node = /** @type {ESTreeJSX.JSXText} */ (this.startNodeAt(start, this.startLoc));
 				node.value = value;
-				node.raw = this.input.slice(start, index);
+				// The text as written, which the printers print. A comment between
+				// children isn't part of it: it is a comment, not text as in TSX.
+				node.raw = value;
 
-				if (node.raw.match(regex_newline_characters)) {
+				if (this.input.slice(start, index).match(regex_newline_characters)) {
 					this.curLine = endLoc.line;
 					this.lineStart = index - endLoc.column;
 				}
@@ -7711,6 +7713,16 @@ export function TSRXPlugin(config) {
 
 						case CharCode.greaterThan:
 						case CharCode.closeBrace: {
+							// Where template text is read, a `>` is text, as it is outside a
+							// container: the text of `{c && <b>a > b</b>}` is `a > b`, which
+							// the printer writes as `a &gt; b`. Like the default case below,
+							// keep scanning. Right after a tag the element is still being
+							// opened, and reading the `>` as code dropped the text before it;
+							// after a child container it was an error.
+							if (ch === CharCode.greaterThan && this.#shouldReadTemplateRawTextToken(true)) {
+								++this.pos;
+								break;
+							}
 							if (
 								ch === CharCode.greaterThan &&
 								this.input.charCodeAt(this.pos - 1) === CharCode.equals &&
