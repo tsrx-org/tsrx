@@ -6826,6 +6826,30 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(alias.typeAnnotation).trailing).toEqual([' b ']);
 	});
 
+	// A comment before the `)` around the last type of a type alias's value
+	// goes after the `;` too, where Prettier's next pass puts it (#758), but
+	// not a line comment after a union in parentheses in a union or an
+	// intersection, which Prettier's `handleLastUnionElementInExpression`
+	// keeps in them, with the union's last member
+	it('trails a type alias with a comment before the ) around its last type', () => {
+		const ownLine = firstStatement('type K = X | (B | C\n// c\n);');
+		const endOfLine = firstStatement('type K = X & (A // c\n);');
+
+		expect(commentsOf(ownLine).trailing).toEqual([' c']);
+		expect(commentsOf(endOfLine).trailing).toEqual([' c']);
+
+		for (const source of [
+			'type K = X | (B | C // c\n);',
+			'export type K = X & (B | C // c\n);',
+			'class K {\n  a: X | ((B | C) // c\n  );\n}',
+		]) {
+			const statement = firstStatement(source);
+
+			expect(commentsOf(statement).trailing).toBeUndefined();
+			expect(commentsOf(statement.body?.body[0]).trailing).toBeUndefined();
+		}
+	});
+
 	/**
 	 * Parse each source in a worker, and fail on any that throws
 	 * @param {string[]} sources

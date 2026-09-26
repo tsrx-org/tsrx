@@ -712,7 +712,43 @@ export function get_comment_handlers(source, comments, index = 0) {
 				/** @type {AST.NodeWithLocation} */ (ancestor).end > comment.end &&
 				/** @type {AST.NodeWithLocation} */ (ancestor).end <= end,
 		);
-		return parens > 0 && parens === typeParens.length;
+		if (parens === 0 || parens !== typeParens.length) {
+			return false;
+		}
+		// Prettier's `handleLastUnionElementInExpression` gives a line comment
+		// after a union in parentheses in a union or an intersection to the
+		// union's last member, and the union breaks in its parentheses around
+		// it, where it stays: `X | (B | C // c⏎);`
+		const innermost = /** @type {any} */ (typeParens.at(-1));
+		let index = path.indexOf(innermost);
+		while (path[index - 1]?.type === 'TSParenthesizedType') {
+			index--;
+		}
+		const parent = path[index - 1];
+		return !(
+			skipParenthesizedTypes(innermost.typeAnnotation)?.type === 'TSUnionType' &&
+			(parent?.type === 'TSUnionType' || parent?.type === 'TSIntersectionType') &&
+			!isOwnLineComment(comment) &&
+			endsLineWithLineComment(comment)
+		);
+	}
+
+	/**
+	 * Whether `comment`, or a comment after it on its line, is a line comment
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {boolean}
+	 */
+	function endsLineWithLineComment(comment) {
+		for (
+			let index = comments.indexOf(comment), previousEnd = comment.start;
+			comments[index] && /^[ \t]*$/.test(source.slice(previousEnd, comments[index].start));
+			previousEnd = comments[index++].end
+		) {
+			if (comments[index].type === 'Line') {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**

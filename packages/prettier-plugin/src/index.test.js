@@ -19387,6 +19387,14 @@ for (
 			['type S = X & (A // c\n);', 'type S = X & A; // c'],
 			['export type S = X & (A\n// c\n);', 'export type S = X & A;\n// c'],
 			['class K {\n  s: X & (A\n  // c\n  );\n}', 'class K {\n  s: X & A;\n  // c\n}'],
+			['export type A = X & (B | C\n// c\n);', 'export type A = X & (B | C);\n// c'],
+			// A comment that ends its line before the `)` of parentheses that
+			// print as nothing, or that print it after them
+			['export type S = X & (A // c\n);', 'export type S = X & A; // c'],
+			['class K {\n  s: X | (A // c\n  );\n}', 'class K {\n  s: X | A; // c\n}'],
+			['type A = (B | C // c\n);', 'type A = B | C; // c'],
+			['export type A = (B | C // c\n);', 'export type A = B | C; // c'],
+			['export type A = X | (B | C /* c */\n);', 'export type A = X | (B | C); /* c */'],
 		])('formats %j in one pass', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
 		});
