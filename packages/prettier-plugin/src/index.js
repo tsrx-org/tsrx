@@ -10930,26 +10930,41 @@ function printSwitchStatement(node, path, options, print) {
 	}
 
 	// Like Prettier, the comments of a switch with no cases go inside its braces
-	const comments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
 	const bodyDoc =
 		cases.length > 0
 			? [indent([hardline, join(hardline, cases)]), hardline]
-			: comments.length > 0
-				? [
-						indent([
-							hardline,
-							join(
-								hardline,
-								comments.map((comment) => printComment(comment, options.originalText)),
-							),
-						]),
-						hardline,
-					]
-				: hardline;
+			: printEmptyBodyComments(
+					/** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [],
+					options,
+				);
 
 	parts.push(' {', bodyDoc, '}');
 
 	return parts;
+}
+
+/**
+ * Print what goes between the braces of a switch with no cases, or of a
+ * template case with no children: like Prettier's `printBlock`, each of their
+ * comments on its own line, indented, or a line break when they have none.
+ * @param {AST.Comment[]} comments - The comments, in source order
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc}
+ */
+function printEmptyBodyComments(comments, options) {
+	if (comments.length === 0) {
+		return hardline;
+	}
+	return [
+		indent([
+			hardline,
+			join(
+				hardline,
+				comments.map((comment) => printComment(comment, options.originalText)),
+			),
+		]),
+		hardline,
+	];
 }
 
 /**
@@ -10974,8 +10989,14 @@ function printJSXSwitchExpression(node, path, options, print) {
 		cases.push(caseDoc);
 	}
 
+	// Like a switch's, the comments of one with no cases go inside its braces
 	const bodyDoc =
-		cases.length > 0 ? [indent([hardline, join(hardline, cases)]), hardline] : hardline;
+		cases.length > 0
+			? [indent([hardline, join(hardline, cases)]), hardline]
+			: printEmptyBodyComments(
+					/** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [],
+					options,
+				);
 
 	const discriminantDoc = group(['@switch (', indent([softline, discriminant]), softline, ')']);
 
@@ -10991,9 +11012,26 @@ function printJSXSwitchExpression(node, path, options, print) {
  * @returns {Doc[]}
  */
 function printJSXSwitchCase(node, path, options, print, index) {
+	const text = /** @type {string} */ (options.originalText);
+	// The parser keeps the block comments between the `:` and the `{` on the
+	// case, which prints them there, like Prettier's leading comments of the
+	// block in `case 1: /* c */ {`, and the comments in an empty body, which
+	// print inside the braces
+	const bodyStart = getTemplateCaseBodyStart(node, text);
+	/** @type {Doc[]} */
+	const headerComments = [];
+	/** @type {AST.Comment[]} */
+	const bodyComments = [];
+	for (const comment of /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? []) {
+		if (comment.type === 'Block' && /** @type {AST.NodeWithLocation} */ (comment).end <= bodyStart) {
+			headerComments.push(' ', printComment(comment, text));
+		} else {
+			bodyComments.push(comment);
+		}
+	}
 	const header = node.test
-		? ['@case ', path.call(print, 'cases', index, 'test'), ':']
-		: '@default:';
+		? ['@case ', path.call(print, 'cases', index, 'test'), ':', ...headerComments]
+		: ['@default:', ...headerComments];
 	const consequents = node.consequent || [];
 	const printedIndexes = getPrintedStatementIndexes(consequents);
 
@@ -11008,7 +11046,7 @@ function printJSXSwitchCase(node, path, options, print, index) {
 					]),
 					hardline,
 				]
-			: hardline;
+			: printEmptyBodyComments(bodyComments, options);
 
 	// The case doesn't go through `print`, so it prints its own comments
 	return [
@@ -11019,6 +11057,26 @@ function printJSXSwitchCase(node, path, options, print, index) {
 		'}',
 		...printSwitchCaseTrailingComments(node, options),
 	];
+}
+
+/**
+ * The position of the `{` that opens a template case's body: after its test,
+ * or after `@default`, only the test's closing parentheses, the `:`, spaces,
+ * and comments come before it
+ * @param {AST.SwitchCase} node - The template case
+ * @param {string} text - The original source
+ * @returns {number}
+ */
+function getTemplateCaseBodyStart(node, text) {
+	const header = /** @type {AST.NodeWithLocation | null | undefined} */ (node.test ?? node.keyword);
+	let index = getNextNonSpaceNonCommentCharacterIndex(
+		text,
+		header ? header.end : /** @type {AST.NodeWithLocation} */ (node).start,
+	);
+	while (index !== false && (text[index] === ')' || text[index] === ':')) {
+		index = getNextNonSpaceNonCommentCharacterIndex(text, index + 1);
+	}
+	return index === false ? text.length : index;
 }
 
 /**
