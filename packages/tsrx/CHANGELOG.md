@@ -1,5 +1,994 @@
 # @tsrx/core
 
+## 0.5.0
+
+### Minor Changes
+
+- [#782](https://github.com/tsrx-org/tsrx/pull/782)
+  [`de88f59`](https://github.com/tsrx-org/tsrx/commit/de88f59036b5ff6824d85b15d032f79d0b9e36bc)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A dynamic tag expression
+  (`<{expr}>`) must now be one of three forms: an identifier (`tag`), a member
+  access (`props.as`, `this.tag`, `registry[name]`, `items[0]`, where each
+  computed key is an identifier, a string or number literal, or a member access),
+  or a string literal (`'section'`). Anything else is reported as
+  `tsrx-dynamic-tag-expression`, including code that compiled before: a
+  conditional, `||`, `??` or `&&` (`<{c ? A : B} />`), parentheses and type-only
+  wrappers (`<{tag as any} />`), optional member access, a template literal, an
+  arrow function, and an element. A non-self-closing element repeats the
+  expression in its closing tag, so compute the tag above the element instead:
+  `const Tag = c ? Child : Fallback;` followed by `<{Tag} />`.
+
+  Any expression parses, and the check doesn't change the tree. A normal compile
+  throws the error, and `collect` and `loose` mode record it once per element at
+  the part of the expression that isn't allowed and go on, so the editor
+  underlines the tag and keeps working. A call or a concatenation in a tag used to
+  fail the whole file in `collect` mode.
+
+- [#790](https://github.com/tsrx-org/tsrx/pull/790)
+  [`c70964d`](https://github.com/tsrx-org/tsrx/commit/c70964d76055f1bea742bc15b66044042ef5bfcd)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A `<script>` element is raw
+  text, like `<style>`, in templates and in plain JSX. Its body is `content`,
+  taken as written, and the element has no children: the `JSXText` child that
+  mirrored the body is gone. None of JSX text's rules apply to the body: comments,
+  `<`, `>`, character references, and line breaks stay as written, and
+  `<script>{code}</script>` is a script whose text is `{code}`, not an expression
+  container.
+
+  Each target now outputs the body in the form that renders it exactly, on the
+  client and in server HTML:
+
+  - React: `<script>{"…"}</script>`, a string child.
+  - Preact and Hono: `<script dangerouslySetInnerHTML={{ __html: "…" }} />`.
+  - Solid: `<script innerHTML={"…"} />`.
+  - Vue: `<script v-html={"…"} />`.
+
+  Before, the body compiled to JSX text: its lines were joined, so a `// c` line
+  commented out the rest of the script, and `&amp;` rendered `&`. In Solid and
+  Vue, a `<` rendered `&lt;`. `<script>{code}</script>` threw
+  `ReferenceError: code is not defined`. Whether a script runs is still each
+  target's decision: a client render runs it in Preact and `hono/jsx/dom`, not in
+  React, Solid, and Vue, and server HTML runs it.
+
+  A body ends where HTML ends it: at `</script`, optional whitespace, and `>`, so
+  `</script >` closes it. Any other `</script` in the body, in any letter case
+  (`</SCRIPT>`), is the `tsrx-script-end-tag-in-body` error, with a hint to write
+  `<\/script`. A body of only whitespace outputs an empty script, as the formatter
+  prints it.
+
+  The formatter formats a script body from `content`, and the TypeScript plugin's
+  fallback for a file that doesn't compile ends a body where the parser does.
+
+- [#713](https://github.com/tsrx-org/tsrx/pull/713)
+  [`f73b676`](https://github.com/tsrx-org/tsrx/commit/f73b676036673cb81975dae7f50ae65c6e4af358)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - An element in a spread
+  attribute's argument (`<div {...{ k: <b>…</b> }} />`,
+  `<div {...(c ? <b>…</b> : null)} />`) and an element that is an attribute value
+  without braces (`<div k=<b>…</b> />`) are template markup, as an element in a
+  braced value (`<div k={<b>…</b>} />`) is. They were parsed as plain JSX:
+
+  - A comment in them is a comment instead of text (`<b><i /> /* c */ 2</b>`
+    rendered `/* c */ 2`).
+  - `@if`, `@for`, `@switch`, `@try`, and `@{ … }` in them are directives instead
+    of text followed by a `{…}` container.
+  - Their text follows the template text rules, and a mismatched closing tag
+    reports the template's message.
+
+### Patch Changes
+
+- [#530](https://github.com/tsrx-org/tsrx/pull/530)
+  [`1b3bbe5`](https://github.com/tsrx-org/tsrx/commit/1b3bbe5722dec196f54632e768a920904581568a)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Comments keep the places
+  Prettier gives them in five more spots:
+
+  - A block comment with code on both sides of it on one line follows Prettier's
+    tie-break: it leads the node after it when only whitespace or `(` sits between
+    them, and trails the node before it otherwise. A comment between a tag and its
+    template leads the template, which prints a space before it
+    (`` tag /* c */ `x` ``), one after the comma of a sequence stays there
+    (`(a, /* c */ b)`), one before a type annotation's colon stays before it
+    (`x /* c */ : T` on a class property or rest element), and one between a
+    default import and the `{` of the named ones trails the default import
+    (`import d /* c */, { a }`).
+  - An own-line comment in a default value (`a = (\n  // c\n  1\n)`) moves before
+    the parameter or property, and one at the end of the line after the `=` trails
+    the name before it. It used to stay after the `=`, with the value on the next
+    line. In a parameter property, it moves before the modifier.
+  - A comment after an arrow function's element body, in the parentheses around
+    it, stays inside them instead of moving after the statement.
+  - A comment between a parameter list's `)` and the return type stays there in
+    function types and TypeScript signatures, and one at the end of that line in a
+    function trails the last parameter. A comment in empty parameter parentheses
+    stays in them when a return type follows, and in function types and
+    signatures.
+  - A comment after the type a mapped type's key ranges over is no longer deleted,
+    a comment right after the `[` stays after it, one at the end of the line after
+    the `]` moves before it, and one on its own line before the `]` stays there
+    instead of moving after the `:`.
+
+  A comment before the `=` of a shorthand property's default value
+  (`{ a /* c */ = 1 }`) is no longer deleted.
+
+- [#633](https://github.com/tsrx-org/tsrx/pull/633)
+  [`20b17fd`](https://github.com/tsrx-org/tsrx/commit/20b17fd8b8a255e1b32eef17183f710b5b04d4af)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The parser attaches three
+  kinds of comments where Prettier does, so the formatter no longer moves or
+  deletes them:
+
+  - The function of a generic method, getter, or setter in an object literal
+    (`{ m<T>() {} }`) now starts at its type parameters, as in typescript-estree,
+    instead of at its `(`. A comment in the type parameters (`m</* c */ T>() {}`)
+    stays there instead of moving after the name, or being deleted when it is a
+    line comment on its own line.
+  - A comment on its own line before the `;` that ends a file with no line break
+    after it (`const x = 1` / `// c` / `;`) now trails the statement, as it does
+    when a line break follows, instead of being deleted.
+  - A comment in a spread attribute's braces before its argument
+    (`{.../* note */ b}`) now leads the argument, and prints before the `...`,
+    instead of moving after the attribute or to the next attribute. A
+    `prettier-ignore` there no longer prints twice.
+
+  The formatter also prints the comments that lead an object method's function,
+  like the one in `"m" /* c */ () {}`, right after the key, like Prettier, instead
+  of deleting them. A comment before the type parameters (`m /* c */ <T>() {}`)
+  now leads the function too and prints the same way.
+
+- [#711](https://github.com/tsrx-org/tsrx/pull/711)
+  [`1555269`](https://github.com/tsrx-org/tsrx/commit/1555269944da6e0bdbc7623afea8339d8b737af4)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Text compiles to output that
+  renders what it says and that each target's JSX compiler builds:
+
+  - A `>` in template text compiles to `&gt;`, as a `<` compiles to `&lt;`. The
+    bare `>` in the output failed to build with esbuild, oxc, and TypeScript, and
+    vue-jsx-vapor gave no output.
+  - In an element in a `{…}` container, a `>` is text, as outside one. The text
+    before it is no longer dropped when it follows a tag (`{c && <b>a > b</b>}`
+    compiled to `<b>> b</b>`), and after a child container it no longer reports
+    `Unexpected token`.
+  - Text prints from its `raw`, the text as written, as JSX printers do, in the
+    compiled output and in the formatter. Text in an element in a spread
+    attribute's argument, or in an unbraced attribute value in a container, has
+    its character references decoded in `value`, and printing `value` compiled
+    `&[#123](https://github.com/tsrx-org/tsrx/issues/123);x&[#125](https://github.com/tsrx-org/tsrx/issues/125);`
+    to the expression `{x}` and `&amp;lt;` to `&lt;`, which render something else.
+    The formatter printed those texts decoded too.
+  - The `raw` of template text leaves out the comments between children, as its
+    `value` does.
+
+- [#555](https://github.com/tsrx-org/tsrx/pull/555)
+  [`41be7e8`](https://github.com/tsrx-org/tsrx/commit/41be7e80e576b548448ee836b0e14d9747e63512)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The parser reads the import
+  attributes of an import type, which failed with `Unexpected token`:
+  `import("./data.json", { with: { type: "json" } })`,
+  `import("pkg", { with: { "resolution-mode": "require" } }).Name`, and the same
+  after `typeof`. They go on the `TSImportType` node's `options`, the name
+  typescript-estree and acorn's `ImportExpression` use, and an import type without
+  them has `options: null`. As in TypeScript, the attributes are an object
+  literal, and neither argument takes a trailing comma. The compiled and type-only
+  TypeScript keep the attributes, and the editor maps them back to the source.
+
+  The formatter prints the import attributes of an import type, like Prettier: the
+  module specifier and the attributes lay out like call arguments, without a
+  trailing comma.
+
+- [#777](https://github.com/tsrx-org/tsrx/pull/777)
+  [`fcc3dc8`](https://github.com/tsrx-org/tsrx/commit/fcc3dc8151d9da9ae7813854de6876aa69c655f6)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Arrow function parameters,
+  rest parameters, and `for` heads parse as TypeScript parses them in four more
+  cases:
+
+  - A type assertion in the head of a `for…in` or `for…of` loop
+    (`for ((a as T) of x)`, `for ([a!] of x)`) parses, and the tree keeps it, as
+    it does for an assignment target. It used to fail with
+    `Unexpected type cast in parameter position.` in every mode.
+  - An async arrow function's rest parameter covers its `?` and its type
+    annotation (`async (...a: number[]) => a`), as other rest parameters do, so
+    the formatter keeps a comment before the annotation where it is.
+  - A rest parameter's default (`function f(...a = []) {}`, `(...a = []) => a`,
+    `type F = (...a = []) => void`) is recorded in `collect` and `loose` mode (the
+    language server, the formatter, and other editor tooling) as TypeScript's
+    `A rest parameter cannot have an initializer.`, and the tree leaves the
+    default out, as typescript-estree does. A compile throws that message. It used
+    to fail with `Unexpected token` in every mode.
+  - A parameter after an arrow function's rest parameter (`(...a, b) => 1`) is
+    recorded in `collect` and `loose` mode, as it is for other functions, and the
+    arrow function keeps all its parameters. A compile still throws.
+
+  Code that used to parse is now a syntax error, as in TypeScript: a `?` or a type
+  annotation after an item of a parenthesized expression, of a call's or `new`'s
+  arguments, of an array literal, or of a decorator's arguments, where no `=>`
+  follows (`(x: number)`, `f(x?)`, `f(...x: number[])`, `[x: number]`). It fails
+  with `Did not expect a type annotation here.` or `Unexpected token` there. The
+  compile used to crash with `Not implemented: TSTypeCastExpression`, or print the
+  mistake back.
+
+- [#728](https://github.com/tsrx-org/tsrx/pull/728)
+  [`d9e9110`](https://github.com/tsrx-org/tsrx/commit/d9e911015458d677a342f70699e4ce45406b785b)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Arrow functions and
+  signatures parse as TypeScript parses them in five more cases:
+
+  - An async arrow function's optional rest parameter
+    (`async (...a?: number[]) => a`) parses. `collect` and `loose` mode (the
+    language server, the formatter, and other editor tooling) record TypeScript's
+    `A rest parameter cannot be optional.` at the `?`, and a compile throws it, as
+    for other functions. It used to fail with `Unexpected token` in every mode.
+  - A syntax error in a generic arrow function (`<T,>(x: T) => { x = ; }`) is
+    reported where it is, instead of as `Unexpected token` at the type parameters,
+    once the arrow function is read past its `=>`. So are the errors the parser
+    reports on its parameters, such as an optional rest or binding pattern
+    parameter, async ones included.
+  - A parameter's default in a function or constructor type, or in a method, call,
+    or construct signature (`type F = (a = 1) => void`), is recorded in `collect`
+    and `loose` mode as TypeScript's
+    `A parameter initializer is only allowed in a function or constructor implementation.`,
+    and the tree keeps it. A compile throws that message, instead of the parser's
+    own.
+
+  Two kinds of code that used to compile are now syntax errors, as in TypeScript:
+
+  - A call after `async (…)` followed by `=>` (`async(a)(b) => 1`), which compiled
+    to `async (b) => 1`, fails at the `=>`.
+  - A type assertion in an arrow function's parameters (`(x as number) => x`,
+    `(x!) => x`, `async ([a satisfies number]) => a`), which the output kept,
+    fails with `Unexpected type cast in parameter position.` at the assertion. A
+    type assertion in an assignment target (`(x as number) = 1`) still parses.
+
+- [#650](https://github.com/tsrx-org/tsrx/pull/650)
+  [`1091170`](https://github.com/tsrx-org/tsrx/commit/10911705ab6ab4203c42f4bf329f00b16334fc00)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The parser reads type
+  arguments after a superclass and after class and function expressions as
+  TypeScript does, and no longer crashes or drops code after `export` or in array
+  patterns:
+
+  - A superclass's type arguments stay on the class (`superTypeParameters`) when a
+    line break follows them (`class D extends Base<T>` with the `{` or
+    `implements` on the next line), instead of making the superclass an
+    instantiation expression. The class then has the AST it has on one line, and
+    compiled code prints `extends Base<T>` instead of `extends (Base<T>)`.
+  - A superclass's type arguments can start on the line after the superclass
+    (`class A extends B` with `<T> {}` on the next line), which the formatter
+    prints for a comment before them.
+  - Type arguments right after a class or function expression parse as an
+    instantiation expression, call, `new`, or tagged template:
+    `class<T> {}<string>`, `function <T>() {}<string>()`. On the next line, a `<`
+    still starts an element, and an element still takes no type arguments.
+  - `export` followed by `abstract`, `type`, `namespace` or `module` and a line
+    break (`export abstract` with `class A {}` on the next line),
+    `export abstract;`, and `export @if (…) { … }` or another at-sign construct
+    report `Unexpected token` instead of crashing with a TypeError.
+  - A decorator on an element of an array pattern (`const [@dec x] = y;`) is a
+    syntax error at the `@`, as in TypeScript and in an object pattern. It used to
+    be accepted and dropped from the output.
+  - An object method's type parameters can be `const` (`{ m<const T>(x: T) {} }`).
+
+- [#590](https://github.com/tsrx-org/tsrx/pull/590)
+  [`4005d38`](https://github.com/tsrx-org/tsrx/commit/4005d382dba64b7b2e570b3b135a1687139d7aba)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A missing `}` is now reported
+  as TypeScript reports it, `'}' expected.`, instead of `Unexpected token`, for
+  JavaScript and template blocks alike: function and statement blocks, class
+  bodies, object literals and patterns, `switch` bodies, namespaces, enums,
+  interfaces, type literals, import and export lists, and `@{ … }`, `@if`, `@for`,
+  `@switch`, and `@try` bodies, at the end of the input; and after the expression
+  of a template literal's `${ … }` or an expression container (`{value}`,
+  `{...spread}`), at whatever token is found in its place. The position doesn't
+  change. Every other syntax error keeps its message, and the error is thrown in
+  every parse mode, as before.
+
+  An `@if`, `@else`, `@for`, `@empty`, `@try`, `@pending`, or `@catch` body that
+  is still open at the end of the input, with nothing around it
+  (`const v = @if (ok) {` and then the end of the file), used to be accepted as if
+  it were closed: it compiled, and the formatter printed a `}` that was never
+  written. It now reports `'}' expected.` too, and an open `@try` body reports it
+  instead of a missing `@catch`.
+
+- [#618](https://github.com/tsrx-org/tsrx/pull/618)
+  [`2c964db`](https://github.com/tsrx-org/tsrx/commit/2c964dbe23fe1bdae42e9f9c6329dc3bf1ec03b8)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - More mistakes that
+  TypeScript's parser accepts and reports only from its checker are recorded in
+  `collect` and `loose` mode (the language server, the formatter, and other editor
+  tooling), which keep parsing, while a compile still throws them:
+
+  - An `import` or `export` inside a block, such as a function body or a `@{ … }`
+    body, or the next top-level `export` when a function is missing its `}`. A
+    collecting parse now goes on to report the missing `}`.
+  - A `const` or `var` with nothing after it, and a bare `let`, as while a
+    declaration is being typed. The declaration has no declarators, and
+    `Variable declaration list cannot be empty.` is recorded right after the
+    keyword, where TypeScript reports it.
+  - A modifier where TypeScript doesn't allow one: on an interface or type literal
+    member (`interface I { private x: number }`), on a type parameter
+    (`interface I<public T> {}`), or `in` and `out` outside the type parameters of
+    a class, interface, or type alias (`function f<in T>() {}`). The error used to
+    show the source of a JavaScript function instead of a message, at the token
+    after the modifier, in every mode. It now reads
+    `'private' modifier cannot appear on a type member.`, at the modifier.
+
+  An optional binding pattern parameter in a signature without a body, such as an
+  overload (`function f({ a }?: T): void;`) or an abstract method, is valid
+  TypeScript and now parses in every mode. It's still an error in a function with
+  a body.
+
+- [#647](https://github.com/tsrx-org/tsrx/pull/647)
+  [`8eeec66`](https://github.com/tsrx-org/tsrx/commit/8eeec666600f8fc431f78c0040103a1c1314ce09)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - More mistakes that
+  TypeScript's parser accepts and reports only from its checker are recorded in
+  `collect` and `loose` mode (the language server, the formatter, and other editor
+  tooling), which keep parsing, while a compile still throws them:
+
+  - A repeated accessibility modifier (`public protected x`).
+  - Decorators before a declaration other than a class, such as
+    `@dec function f() {}`, `@dec const x = 1;`, `export @dec function f() {}`,
+    `export default @dec function f() {}`, or `@dec export function f() {}`, and
+    decorators on a constructor. Decorators before a statement that isn't a
+    declaration (`@dec x;`) still throw in every mode, as TypeScript's parser
+    rejects them.
+  - A modifier on a rest parameter (`constructor(public ...rest: T[])`).
+
+  A repeated modifier is now reported at the modifier instead of at the token
+  after it, in every mode. An optional rest parameter (`...rest?: T[]`) is
+  reported as `A rest parameter cannot be optional.`, at the `?`, instead of as an
+  optional binding pattern. A `?` after an element of an array pattern
+  (`const [a?] = b;`) is a syntax error in every mode, as in TypeScript; it used
+  to parse, or report the optional binding pattern error.
+
+- [#666](https://github.com/tsrx-org/tsrx/pull/666)
+  [`c8ec9cc`](https://github.com/tsrx-org/tsrx/commit/c8ec9cc0bfa3c1986ac23f6e3bd67cddf971848b)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - More mistakes that
+  TypeScript's parser accepts and reports only from its checker are recorded in
+  `collect` and `loose` mode (the language server, the formatter, and other editor
+  tooling), which keep parsing, while a compile still throws them:
+
+  - A parameter property with a binding pattern
+    (`constructor(public [a]: number[])`).
+  - A parameter property modifier on a function's parameter
+    (`function f(public x: number) {}`), at the first modifier.
+  - A `for` head's declaration with no name (`for (var; ;)`,
+    `for (const of items)`, also in `@for`), as for a statement.
+  - `let` as a binding name or an assignment target (`var let`, `class let {}`),
+    reported once for each `let`.
+
+  Decorators on a member of an object literal (`{ @dec m() {} }`) are a syntax
+  error in every mode, as in TypeScript. They used to parse, and the output left
+  them out.
+
+- [#558](https://github.com/tsrx-org/tsrx/pull/558)
+  [`c9469b3`](https://github.com/tsrx-org/tsrx/commit/c9469b3bfe1ab5fd1f8ed615fe84ba094ac8ffac)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - In `collect` and `loose` mode
+  (the language server, the formatter, and other editor tooling), the parser now
+  records mistakes that TypeScript's own parser accepts and reports only from its
+  checker, and keeps parsing, instead of throwing. It already did this for a
+  redeclared variable. Now it also does it for a redeclared type alias, `abstract`
+  members in a class that isn't abstract, initializers in ambient contexts,
+  modifiers out of order, repeated, or used together where they can't be,
+  accessibility or `abstract` modifiers on private names, an optional binding
+  pattern parameter, a comma or another parameter after a rest parameter, a
+  repeated import attribute, `export` of an undefined name, optional-chaining
+  assignment targets, `import.source(…)`, `new.target` outside a function, `super`
+  outside a method or a derived class's constructor, `await` in a namespace,
+  `#x in obj` outside a class, and a `const` without an initializer. Each is
+  recorded in `errors` with its message, and the file gets an AST as TypeScript
+  would read it. A compile, which doesn't collect, still throws for all of them.
+
+- [#614](https://github.com/tsrx-org/tsrx/pull/614)
+  [`d746930`](https://github.com/tsrx-org/tsrx/commit/d7469303cbc6ca6c4679251a0ee30eda04f744c8)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The parser reads
+  default-exported classes and decorators the way TypeScript does. Each change
+  works around a bug in `@sveltejs/acorn-typescript` until a release fixes it:
+
+  - An anonymous default-exported class can start with `implements` or be
+    `abstract` (`export default class implements I {}`,
+    `export default abstract class<T> extends B {}`) instead of failing with
+    `The keyword 'implements' is reserved` or `Unexpected token`. A class
+    expression that starts with `implements` now has `id: null`, like any other
+    anonymous class.
+  - A decorated default-exported class (`export default @dec class B {}`) is a
+    class declaration instead of a class expression: its name is a module binding,
+    and the class ends the statement, as without the decorator. With `abstract`
+    (`export default @dec abstract class {}`) it parses instead of failing with
+    `Unexpected token`.
+  - Decorators written before `export` must be followed by an exported class, as
+    TypeScript requires. Before anything else (`@dec export function f() {}`,
+    `@dec export const A = class {}`, `@dec export default (class {})`) they used
+    to be dropped or moved onto a class expression inside; they are now an error,
+    `Leading decorators must be attached to a class declaration.`, as they already
+    were before a statement that isn't a class.
+  - A rest parameter can have decorators (`m(@dec ...rest: T[]) {}`), like any
+    other parameter, instead of failing with `Unexpected token`.
+
+- [#695](https://github.com/tsrx-org/tsrx/pull/695)
+  [`e3a627a`](https://github.com/tsrx-org/tsrx/commit/e3a627ae47a5b7440959e174eeb78c07778f6148)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Three element shapes that
+  crashed, ran out of memory, or failed to parse now parse or report a syntax
+  error:
+
+  - An element as an attribute value without braces
+    (`<div attr=<b>/* c */</b> />`) no longer runs out of memory when its text
+    holds a block comment or starts with a line comment. The comment is text
+    there, as in TSX, and as a line comment on its own line already was. A text
+    read there that reads nothing now reports `Unexpected token` instead of
+    repeating.
+  - A closing tag where an expression starts (`x = </>;`, `export default </>;`)
+    reports `Unexpected token` at its `<`, where TypeScript expects an expression,
+    instead of failing with `RangeError: Invalid array length`. This works around
+    a bug in `@sveltejs/acorn-typescript` until a release fixes it. A closing tag
+    in parentheses, in an argument, or where a statement starts is now reported at
+    its `<` too, instead of at its `/`.
+  - In a template, a `/` in an opening tag reads as code, as it does in an element
+    that is a value. A self-closing tag with a space or line break before its `>`
+    (`<div / >`) is self-closing instead of reporting a mismatched closing tag,
+    and a division, regular expression, or private name in a spread attribute's
+    argument (`<div {...(b / 2)} />`, `<div {...this.#p} />`) no longer fails with
+    `Unexpected token`.
+
+- [#696](https://github.com/tsrx-org/tsrx/pull/696)
+  [`c4fa258`](https://github.com/tsrx-org/tsrx/commit/c4fa258840b04b226f9f527d22b8b5401bdb13af)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The parser reads the words
+  after `export` as TypeScript does:
+
+  - `abstract` or `declare` followed by a line break is no modifier.
+    `export default abstract` with `class A {}` on the next line exports the value
+    of `abstract` and declares the class `A` on its own; it used to parse as one
+    abstract class, the default export. `export declare` with a declaration on the
+    next line, and decorators before `abstract` or `declare` and a line break
+    (`@dec abstract` with `class A {}` on the next line), are syntax errors. The
+    decorators used to go to the class, and `declare` made it ambient.
+  - `abstract`, `type`, `namespace` or `module` after `export`, before a
+    declaration it doesn't start, is an error instead of being left out of the
+    output. `export abstract function f() {}` used to compile to
+    `export function f() {}`. `abstract` before a function, variable, or import
+    declaration is an error that TypeScript reports from its checker, so it's
+    recorded in `collect` and `loose` mode, and a compile throws it. The others,
+    such as `export type const x = 1;`, are syntax errors.
+  - The syntax errors are TypeScript's, at its positions. Where what follows
+    `export` starts no declaration, including `export abstract` before a line
+    break, that's `Declaration or statement expected.` at `export`, instead of
+    `Unexpected token` at the word after it.
+
+- [#615](https://github.com/tsrx-org/tsrx/pull/615)
+  [`b98651c`](https://github.com/tsrx-org/tsrx/commit/b98651c0173b3cacc9d53650a6625e08afedb48f)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Template text follows JSX's
+  whitespace rules after closing tags, around comments, and for non-breaking
+  spaces:
+
+  - The text after a closing tag starts at the tag, as it does after a
+    self-closing tag. A space there is no longer lost when the closed element's
+    body ends in a line break (`<span>` … `</span> 2` rendered `12` instead of
+    `1 2`). The text keeps its leading whitespace, which JSX trims as layout when
+    it has a line break.
+  - A comment between children adds nothing to the text around it: the whitespace
+    on its two sides is one run, which is layout when it has a line break. A block
+    comment on the line after a closing tag (`<b>t</b>` then `/* c */ <i />`) no
+    longer makes the space after it render, as it didn't after a self-closing tag.
+  - JSX whitespace is space, tab, and line breaks. Text that is a non-breaking
+    space next to a line break is text, and is no longer dropped. The target's JSX
+    compiler decides whether it renders at the edge of a line, as it does for TSX.
+
+  The formatter prints a line comment glued to a closing tag glued to it
+  (`<b>t</b>// c`), as it does after a self-closing tag, and formats a
+  non-breaking space that starts a line the same way on the next pass.
+
+- [#721](https://github.com/tsrx-org/tsrx/pull/721)
+  [`d16852a`](https://github.com/tsrx-org/tsrx/commit/d16852a725f7ed3114ba52a9f78b7fec163c4169)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The parser reads more
+  TypeScript keyword forms as TypeScript does:
+
+  - `abstract declare class A {}` is an abstract ambient class, as
+    `declare abstract class A {}` is; it failed to parse. `abstract` before any
+    other declaration (`abstract function f() {}`, `abstract interface I {}`,
+    `export abstract let x = 1;`, `declare abstract type T = 1;`) is an error that
+    TypeScript reports from its checker, so it's recorded in `collect` and `loose`
+    mode, and a compile throws it. It used to fail in every mode, or, before an
+    interface, compile without an error.
+  - `export default interface` with the interface's name on the next line is the
+    default-exported interface; it failed to parse.
+  - `type as = 1;` and `type satisfies = 1;` are type aliases; they failed to
+    parse. `type as number;` is now an error (a type alias missing its `=`), as in
+    TypeScript, instead of an `as` expression, and so is `export type as = 1;`
+    (`'{' expected.`), which used to compile as a type alias.
+  - `export global {}` and `export declare global {}` are global augmentations
+    that TypeScript reports from its checker
+    (`'export' modifier cannot be applied to ambient modules and module augmentations since they are always visible.`),
+    recorded when collecting and thrown by a compile. They failed to parse.
+  - A TypeScript keyword written with a Unicode escape where TypeScript reads the
+    keyword (`\u0061bstract class A {}`, `export d\u0065clare class A {}`,
+    `\u0074ype T = 1;`, `let x: \u0073tring;`, `class A { \u0073tatic x = 1; }`,
+    `x \u0061s T`, `class A { \u0063onstructor() {} }`) is TypeScript's syntax
+    error `Keywords cannot contain escape characters.` at the word. Several used
+    to compile as the keyword written out. Where TypeScript reads the word as a
+    name (`let \u0061bstract = 1;`, `declare \u0067lobal {}`), it stays one.
+
+- [#788](https://github.com/tsrx-org/tsrx/pull/788)
+  [`5508243`](https://github.com/tsrx-org/tsrx/commit/5508243824b9984184dd936684a76e67d669d931)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The parser reads more
+  TypeScript keyword forms as TypeScript does:
+
+  - A TypeScript word in parentheses at the start of a statement is an expression,
+    so `(abstract) class A {}`, `(declare) class A {}` and `(type) T = 1;` are
+    syntax errors, as in TypeScript. A compile read the word as the keyword.
+  - `type T = intrinsic;` is the `intrinsic` keyword, and `type T = interface;` a
+    reference to a type named `interface`; the two were swapped. `intrinsic`
+    written with an escape is an error, and so is anything after the keyword but
+    `;` (`type T = intrinsic[];`), as in TypeScript.
+  - The options of an import type are `{ with: … }` or `{ assert: … }` around the
+    import attributes, as TypeScript requires. Any other object literal
+    (`import("m", { foo: {} })`) is TypeScript's syntax error now; it compiled.
+  - `type` written with a Unicode escape in an import or export clause
+    (`import \u0074ype { a } from "m";`, `import { \u0074ype a } from "m";`) is a
+    type-only import or export, as in TypeScript; it failed to parse.
+  - A class member's modifier, or a repeated or misplaced one, before a
+    declaration (`public class A {}`, `readonly function f() {}`,
+    `async class A {}`, `declare declare class A {}`,
+    `abstract export class A {}`, `declare import x from "m";`) is an error that
+    TypeScript reports from its checker, so it's recorded in `collect` and `loose`
+    mode, and a compile throws it. It failed to parse in every mode. `async` in an
+    ambient declaration is one of these errors, so a compile of
+    `export declare async function f(): void;` throws it now.
+  - `export default @dec declare class A {}` (also with `abstract`) is a
+    default-exported ambient class; it failed to parse.
+
+  `@tsrx/prettier-plugin` prints the `intrinsic` keyword, which it printed as an
+  unknown node.
+
+- [#701](https://github.com/tsrx-org/tsrx/pull/701)
+  [`3ea944c`](https://github.com/tsrx-org/tsrx/commit/3ea944c41c0fb35d9118f337cfa68cee1b1424ac)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - More parameter mistakes that
+  TypeScript's parser accepts and reports only from its checker are recorded in
+  `collect` and `loose` mode (the language server, the formatter, and other editor
+  tooling), which keep parsing, while a compile still throws them:
+
+  - A parameter property modifier on the parameter of a function or constructor
+    type, or of a method, call, or construct signature
+    (`type F = (public x: number) => void`), at the first modifier.
+  - A parameter property modifier on an arrow function's parameter
+    (`(public x: number) => x`, `async (readonly x: number) => x`), where
+    TypeScript reads the list as the arrow function's parameters.
+
+  Three mistakes that used to compile are now reported, and a compile throws them,
+  as TypeScript's checker reports them:
+
+  - A parameter property whose binding pattern has a default
+    (`constructor(public [a] = [1])`), as one without a default is. Its output
+    didn't build.
+  - An arrow function's optional rest parameter (`(...a?: number[]) => a`), as a
+    function's is.
+  - An arrow function's optional binding pattern parameter (`({ a }?: T) => a`),
+    as a function's is.
+
+- [#657](https://github.com/tsrx-org/tsrx/pull/657)
+  [`d1785a1`](https://github.com/tsrx-org/tsrx/commit/d1785a10fda6517901795dc19e8560a09d1bb50e)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Template text in an element
+  inside a setup statement of a `@{ … }` or control-flow body, or of an `@case`,
+  reads as it does everywhere else, wherever the statement holds the element (a
+  declaration, a `return`, an argument, an array or object, a conditional, an
+  arrow, a nested function or component, or an `@if`, `@for`, `@switch`, or
+  `@{ … }` value):
+
+  - Leading spaces after an opening tag, a closing tag, and a child container are
+    kept (`const a = <span><b>1</b> 2</span>;` rendered `12` instead of `1 2`),
+    and a non-breaking space there no longer fails with `Unexpected character`.
+  - Text right before a tag (`const a = <span>Hello<b /></span>;`) no longer fails
+    with `Not enough stack space to parse input`.
+
+  A syntax error in an element that is a value now reports that error instead of
+  an internal one (`A parse effect shortened an append-only array`,
+  `A parse branch shortened the token context stack below its checkpoint`). A
+  tag's missing `>` (`const el = <div>x</div;`) reports `'>' expected.` at the
+  token in its place, as TypeScript does, instead of `Unexpected token`.
+
+  The token after a self-closing tag with a space before its `>` (`<div / >`) in a
+  value reads as code, as after `<div />`.
+
+- [#641](https://github.com/tsrx-org/tsrx/pull/641)
+  [`4701beb`](https://github.com/tsrx-org/tsrx/commit/4701beb167f160945836bb9cc122aa6779bd682d)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Template text in an element
+  inside a `{…}` container or a `switch` case reads as it does everywhere else:
+
+  - In an element inside a `{…}` container, a child container or an attribute
+    value, the text after a closing tag keeps its leading space
+    (`{x && <div><b>1</b> 2</div>}` rendered `12` instead of `1 2`), and a
+    non-breaking space there no longer fails with `Unexpected character`. The same
+    holds in an element in a control-flow body inside a container, after a closing
+    tag or a child container.
+  - In an element in an `@switch` case, or in a `switch` case of a function
+    (`case 1: return <div> 1<b /></div>;`), text is no longer read as code: its
+    leading spaces are kept, a non-breaking space parses, and text before a tag
+    (`<div>1<b /></div>`) no longer overflows the stack.
+
+  Template text that the parser can't read now fails with `Unexpected token`
+  instead of `Not enough stack space to parse input`.
+
+- [#635](https://github.com/tsrx-org/tsrx/pull/635)
+  [`4b38c47`](https://github.com/tsrx-org/tsrx/commit/4b38c47d28e84437e074306c31d90324ccac4ffa)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The parser reads five kinds
+  of code by the token's context, as TypeScript's TSX parser does:
+
+  - A comment between a directive's keyword and what follows it parses, as it does
+    after the statement's keyword: `@try /* c */ {`, `@if /* c */ (x) {`,
+    `@for /* c */ await (…)`, `@switch // c` with the `(` on the next line. The
+    `@` and the keyword still have to touch. In element children, such a directive
+    used to be read as text and an expression container.
+  - `yield` takes an argument that starts with `@`: `yield @{ <div /> }`,
+    `yield @if (ok) { <b /> }`, and a decorated class (`yield @dec class {}`). A
+    line break after `yield` still ends it.
+  - A regular expression that starts with `>` (`/>/g`) no longer breaks the code
+    after it; `/>` still ends an open tag.
+  - `</` right after an operand starts a closing tag, as in TSX, instead of a
+    less-than and a regular expression. A missing `}` before a closing tag
+    (`<p>{count</p>`) now reports `'}' expected.` at the `</` instead of
+    `Unterminated regular expression` after the tag. `a < /re/` with a space is
+    still a comparison; `a </re/` is now a syntax error, as in TSX.
+  - An element or fragment isn't a left-hand-side expression, and neither is a
+    `@{ … }` value or a directive used as a value. A `(`, `[`, or template literal
+    on the line after one starts a new statement instead of calling, indexing, or
+    tagging it, and a call, member access, index, non-null assertion, or tagged
+    template right after one (`<b />.foo`) is a syntax error. In parentheses
+    (`(<b />).foo`, `(@{ … })(x)`) they work as before. Operators after one,
+    including on the next line, are unchanged.
+
+  The formatter keeps the parentheses around a `@{ … }` value or a directive that
+  is called, indexed, or used as a tag, as it does for an element.
+
+- [#551](https://github.com/tsrx-org/tsrx/pull/551)
+  [`4a5d385`](https://github.com/tsrx-org/tsrx/commit/4a5d3859e47e6a9ad82cb8a7343f52b56bf23218)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The parser reads four
+  TypeScript forms the way TypeScript does. Each works around a bug in
+  `@sveltejs/acorn-typescript` until a release fixes it:
+
+  - `static` followed by a line break is a modifier. `static` with `count = 0` or
+    `create() {}` on the next line used to become an instance field named `static`
+    and an instance member, so the compiled class lost its static members.
+    `static` still names a member when the next line can't continue it (`static`
+    then `()`, `=`, `;`, or `}`), a second `static` is still a name, and the other
+    modifiers (`readonly`, `public`, …) still need the next token on their own
+    line. In an interface, `static` before a line break is now an error, like
+    `static` with the member on its line.
+  - An interface whose first member is a generic call signature
+    (`interface I { <T>(x: T): T }`) parses instead of failing with
+    `Unexpected token`.
+  - A class can be named after a TypeScript contextual keyword (`class global {}`,
+    `class abstract {}`, `class type {}`, …), as a declaration or an expression,
+    instead of failing with `Unexpected token`.
+  - `assert` on the line after an `import` or `export … from` without a semicolon
+    starts the next statement (`assert(ok)`) instead of import assertions.
+    `assert { … }` after a line break is now an error, as in TypeScript.
+
+- [#602](https://github.com/tsrx-org/tsrx/pull/602)
+  [`b3f3b03`](https://github.com/tsrx-org/tsrx/commit/b3f3b0384ac7ac94dcc4c6efb6b1c455433cd1bc)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The parser accepts four kinds
+  of valid code that it rejected:
+
+  - `var` in a `catch` block can redeclare a catch parameter that is a plain name
+    (`catch (error) { var error = 2; }`), as Annex B allows, instead of failing
+    with `Identifier 'error' has already been declared`. A destructured parameter
+    still can't be redeclared, as in JavaScript.
+  - An `export { … }` or `export type { … }` list can name a namespace, an
+    interface, a type alias, or an ambient function declared in the module
+    (`interface Props {} export type { Props };`), instead of failing with
+    `Export 'Props' is not defined`.
+  - Import attributes can have more than one quoted key
+    (`with { 'a': 'x', 'b': 'y' }`) instead of failing with
+    `Duplicated key in attributes`, and a key written once quoted and once as a
+    name (`type` and `'type'`) is now reported as a duplicate.
+  - `import()` takes a trailing comma after the module specifier or after the
+    options (`import("./a.js",)`), like `import.defer()`. As in acorn and
+    typescript-estree, the options of an ordinary `import()` are now on the
+    `ImportExpression`'s `options` instead of `arguments`, and a third argument is
+    a syntax error instead of a sequence expression.
+
+  The formatter formats these, and prints `import()` without the trailing comma,
+  like Prettier.
+
+- [#687](https://github.com/tsrx-org/tsrx/pull/687)
+  [`1dd7288`](https://github.com/tsrx-org/tsrx/commit/1dd728863fa9f945c972e94b85925e62854ede52)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Comments after an `=` or a
+  key, and in the parentheses of an import, go where Prettier puts them:
+
+  - A comment at the end of the line of a type alias's `=`, or before an object,
+    array, template, or type literal value of a declaration or assignment, moves
+    below the `=` with the value. A line comment before the `=` does the same.
+    Before any other value, a line comment after the `=` stays at the end of that
+    line, or moves to the end of the statement when the value fits on the line
+    (`const a = b || c; // note`).
+  - A comment at the end of a line inside an object property moves before the key.
+    After a class field's `=`, a block comment there moves before the `=`, and a
+    line comment follows the rule for declarations above.
+  - A comment between an import attribute's key and its value moves below the `:`
+    with the value when it's on its own line, and before the `:` or to the end of
+    the line otherwise.
+  - The parentheses of an import type or an `import … = require(…)` break around a
+    comment like call arguments, instead of keeping the comment after the `(`.
+  - A union or intersection of one type (`| A`, `& A`) prints as that type, so a
+    comment after its `|` or `&` moves below the `=` with the value, and the
+    parentheses around it are dropped.
+  - A line comment after a callee or its type arguments stays there instead of
+    moving after the arguments, and one at the end of the line after a `;` of a
+    `for` header stays after the `;`.
+
+- [#768](https://github.com/tsrx-org/tsrx/pull/768)
+  [`a5beb97`](https://github.com/tsrx-org/tsrx/commit/a5beb9773e9169d546a1a10623806ea2ec811404)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A comment after the
+  parenthesized body of an arrow function that prints in parentheses of its own
+  goes in one pass where Prettier's next passes leave it:
+
+  - After an element body of an arrow function called right away or used as a tag,
+    `((a) => (<div /> /* c */))(1);`, the parentheses around the arrow function
+    break around the comment when the call fits on its line with the element, as
+    they do after other bodies. When it doesn't, the element breaks and keeps the
+    comment in its parentheses, as before. The comment moved out of the element on
+    the next format.
+  - After the last body of a chain of arrow functions called right away, which
+    prints below its `=>`, the comment leads the first argument on a line of its
+    own. With no argument, it stays after the body. It moved to a line of its own
+    after the chain on the next format, over-indenting the body, and into the
+    arguments on the one after.
+  - After the body of an arrow function that is a `new` callee, a member object,
+    or in parentheses before a `!`, `as`, `satisfies`, an operator, or a `?`, a
+    block comment prints after the arrow function's parentheses, and leads the
+    first argument of a `new`. It moved there on the next formats.
+  - A comment after the parenthesized body of an arrow function called right away
+    that `prettier-ignore` keeps as written stays in its kept source. It printed
+    again after it on each format.
+
+- [#585](https://github.com/tsrx-org/tsrx/pull/585)
+  [`944a943`](https://github.com/tsrx-org/tsrx/commit/944a943394c9fea12ea72a4e871726c172613136)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A comment after the value
+  inside a JSDoc cast's parentheses stays inside them, like Prettier's `babel`
+  output, instead of moving after them and, after an element, moving again on the
+  next format. An element kept by `prettier-ignore` inside a JSDoc cast stays
+  after the `=`. Parentheses printed around a value that starts with a JSDoc-cast
+  operand go around the cast too (`(/** @type {T} */ (a) ?? b)`), so the cast
+  keeps casting that operand instead of the whole value, which Prettier's output
+  does.
+
+  The parser gives a comment inside a JSDoc cast's parentheses to the cast value,
+  not to the statement's `;` or the class body after them, and a JSDoc cast after
+  a comma to the element it casts when its parentheses break, instead of the
+  element before the comma, which dropped the cast.
+
+- [#524](https://github.com/tsrx-org/tsrx/pull/524)
+  [`9338fdd`](https://github.com/tsrx-org/tsrx/commit/9338fdd35760c4743cf1a79373c8dd2e27849e3b)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A `return`, `throw`, or
+  `yield` argument that starts with a block comment spanning lines keeps its
+  parentheses, like Prettier, instead of ending at the comment and returning
+  `undefined`. A function called right away or used as a template tag prints its
+  comments inside its parentheses, and a parenthesized superclass prints its
+  comments outside the parentheses the class adds, like Prettier. A superclass in
+  a JSDoc cast no longer gets a second pair of parentheses, and a comment after
+  the superclass no longer moves into the class body on the next format. An
+  element in a JSDoc cast prints in parentheses of its own inside the cast's when
+  it breaks or has a comment that breaks the line, like Prettier's `babel` output.
+
+  The parser gives a comment before the `)` of a function called right away or
+  used as a tag to the function, like Prettier, so it prints inside those
+  parentheses instead of moving into the call's arguments.
+
+- [#629](https://github.com/tsrx-org/tsrx/pull/629)
+  [`2933f42`](https://github.com/tsrx-org/tsrx/commit/2933f427c289a958d108208262716d828d7dbd67)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Comments keep their places in
+  one pass in three more spots:
+
+  - A comment after a sequence or assignment in parentheses, as an arrow
+    function's body, a declarator's value, a `return` argument, or an assignment's
+    right side, stays inside the parentheses
+    (`const f = () => (a = b /* note */);`), like Prettier. After the
+    parenthesized expression of an expression statement, the argument of a
+    `throw`, the declaration of an `export default`, or an assignment on another
+    assignment's right side, it moves after the `;` at once, where Prettier moves
+    it on its next pass, and so does a line comment after a declarator's or
+    assignment's parenthesized sequence.
+  - A comment at the end of the line of a type parameter's `=` stays after the
+    `=`, with the default on the next line, indented, like Prettier. One on a line
+    of its own before or after the `=` moves after the constraint at once, as
+    Prettier's next pass does.
+  - A block comment on a line of its own before a type after a keyword or colon
+    (`keyof`, `typeof`, `infer`, `is`, `as`, `satisfies`, `:`, `=>`, `extends`,
+    `in`, a conditional type's `?` or `:`, an indexed access type's `[`) stays
+    before the type, on the keyword's line, where Prettier's next pass puts it
+    (`type X = keyof /* c */ T;`).
+
+  The blank line after a statement also stays when a comment written before its
+  `;`, on an earlier line, moves after it.
+
+- [#518](https://github.com/tsrx-org/tsrx/pull/518)
+  [`d02b7e6`](https://github.com/tsrx-org/tsrx/commit/d02b7e6119462890b27f4506d9c5d8eb5258e650)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A comment on its own line
+  after the expression in a template literal's `${…}` is no longer deleted. The
+  parser gave it to the template's next text, which prints as written, and it now
+  trails the expression, like Prettier, so the formatter keeps it in the `${…}`
+  (also in CSS, GraphQL, HTML, and Markdown templates). In a template literal
+  type, a comment on its own line before the next type leads that type, as in
+  Prettier.
+
+  The formatter honors two more `prettier-ignore` comments, like Prettier:
+
+  - `{/* prettier-ignore */}` keeps the element or fragment after it as written,
+    in JSX and in templates, when only whitespace with a line break separates
+    them.
+  - A `// prettier-ignore` after the last node of a `@{ … }` code block keeps that
+    node as written, as it does after the last statement of a block. The rest of
+    the code block still formats.
+
+  A `<script>` body now formats by the script's `type` or `lang`, like Prettier's
+  HTML printer, instead of always as TypeScript, which added a `;` to JSON bodies
+  such as `[1,2]` and made them invalid. JSON, `importmap`, `ld+json`, and
+  `speculationrules` bodies format as JSON, `text/markdown` and `text/html` bodies
+  as Markdown and HTML, and a body with no type, an empty type, `module`, or
+  another JavaScript type, or with `lang="ts"`, formats as TypeScript. A body of
+  any other type (such as `text/template` or `text/typescript`), or of a script
+  with `src`, stays as written.
+
+- [#576](https://github.com/tsrx-org/tsrx/pull/576)
+  [`a7327be`](https://github.com/tsrx-org/tsrx/commit/a7327be124f3a5f8870acd28b46b67aac9d9691d)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Comments in JSX attributes
+  and next to template text now stay where they were written:
+
+  - A comment between an attribute's `=` and its value is no longer deleted. A
+    block comment prints before the value (`attr=/* c */ "foo"`), and a line
+    comment after a string or element value, like a trailing comment of the
+    attribute, or inside the braces of a `{…}` value.
+  - A comment after an attribute's name (`attr /* c */="x"`) is no longer deleted.
+  - A comment on its own line after a spread's argument, before its `}`, stays
+    inside the braces. Before another attribute it was deleted, and otherwise it
+    moved after the `}`. A spread attribute's braces break with the opening tag,
+    like Prettier's.
+  - A word of text that starts with `//` no longer wraps to the start of a line,
+    where it would read as a comment and the rest of the line would be lost.
+  - A block comment right after a `{" "}` child keeps the spacing it was written
+    with, so the output no longer needs a second format.
+
+  The parser now gives a comment after a spread's argument to the argument, like
+  Prettier, instead of the next attribute or the closing tag.
+
+- [#549](https://github.com/tsrx-org/tsrx/pull/549)
+  [`d1f89bd`](https://github.com/tsrx-org/tsrx/commit/d1f89bdd27e60ed41b103e546b7b8c280f24fff8)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Comments in the tags and
+  children of an element now stay where they were written. A comment right after
+  an opening tag (`<div>/* c */x</div>`), inside a closing tag (`</div /* c */>`,
+  `</ /* c */ div>`, `</ /* c */>`), or in a shorthand attribute (`{/* c */ key}`)
+  is no longer deleted, and a comment between words of text no longer moves to the
+  closing tag. A comment in text keeps the text's meaning: the formatter no longer
+  adds or drops a space next to it, and a line comment after a child no longer
+  ends up after the next word, where it would read as text.
+
+  The parser now gives a comment in text to the text (`innerComments`), even on
+  the line of the child or opening tag before it, but a `prettier-ignore` after
+  the text's last word still leads the next child. A comment between a closing
+  fragment's `</` and `>` dangles on the closing fragment.
+
+- [#595](https://github.com/tsrx-org/tsrx/pull/595)
+  [`e82305f`](https://github.com/tsrx-org/tsrx/commit/e82305f84078a5f21f902a30b5cd65e8cb7f633f)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A line comment alone in the
+  braces of a JSX child or attribute value prints on a line of its own with the
+  `}` on the next line, like Prettier, instead of taking the `}` into the comment,
+  which didn't parse. Several comments alone in braces print on consecutive lines.
+
+  A comment after the expression of a `{…}` stays inside its braces, like
+  Prettier, instead of moving after them, or, before another attribute, being
+  deleted. The parser gives it to the expression as a trailing comment.
+
+  A comment in the braces of a dynamic tag (`<{Comp /* c */}>`) prints once, in
+  the tag it was written in, instead of again in the closing tag, and a comment in
+  the closing tag's braces is no longer dropped. One on its own line stays in the
+  braces instead of moving into the element's children.
+
+- [#686](https://github.com/tsrx-org/tsrx/pull/686)
+  [`94b9f91`](https://github.com/tsrx-org/tsrx/commit/94b9f91a6279cd3ff03f9c9bf54fe39cf64835e0)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Comments between the children
+  of an element keep their places in one pass:
+
+  - In an element inside a `{…}` container or an attribute value, a comment before
+    the first child, or after a `{…}` child, leads the child after it, as in a
+    template. It went to the element's body, which the formatter printed before
+    the closing tag (`{x && <div>{y} /* c */ <i /></div>}` formatted with the
+    comment after `<i />` on the next pass).
+  - Text after a child that breaks over several lines starts a line of its own
+    (`</span>{" "}` then `3`) when a comment on a line of its own comes before the
+    child, like Prettier with a `{/* c */}` child. It stayed on the child's last
+    line (`</span> 3`), and a block comment on the opening tag's line gave one
+    layout and then the other.
+  - In an element inside a `{…}` container, a block comment after a `{" "}` that a
+    tag or the closing tag follows prints against the `{" "}`, where the next pass
+    puts it.
+
+- [#568](https://github.com/tsrx-org/tsrx/pull/568)
+  [`883a8b6`](https://github.com/tsrx-org/tsrx/commit/883a8b622c5e830433244155e13029038fae26a7)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Class member and parameter
+  decorators, and the comments after them, format like Prettier.
+
+  - A line comment, or a comment on its own line, between a class member's
+    decorators and its modifiers (`static`, `accessor`, `readonly`, `get`, …)
+    stays after the decorators. It used to move after the modifiers, where it
+    broke the line after `static`, which the parser then read as a field of its
+    own. The same holds for a parameter property's decorators and its `private`,
+    `readonly`, or other modifiers.
+  - A comment after a parameter's decorator, or inside the decorator's arguments,
+    stays there instead of moving before the decorator.
+  - A parameter's decorators keep a line break written after them, and the
+    parameter moves to the next line when the decorators don't fit on its line.
+    They used to stay on the parameter's line.
+  - `prettier-ignore` before a decorated parameter keeps its decorators. They used
+    to be deleted.
+
+- [#571](https://github.com/tsrx-org/tsrx/pull/571)
+  [`935dfe4`](https://github.com/tsrx-org/tsrx/commit/935dfe4242a07abf54d994afe3e87b9582c3ac2a)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Format parameters and type
+  parameters like Prettier: a lone parameter typed as an intersection or a generic
+  type with an object type argument (such as `props: Props<{ … }>`) no longer hugs
+  the parentheses, and the parameter list breaks instead. A comment between a type
+  parameter's name and its `extends`, `=`, or mapped type `in`, or between a
+  `const`, `in`, or `out` modifier and the name, stays there. A comment after the
+  parenthesized expression body of an arrow function moves after the statement's
+  `;` in one pass.
+
+- [#688](https://github.com/tsrx-org/tsrx/pull/688)
+  [`927aa91`](https://github.com/tsrx-org/tsrx/commit/927aa91ae42f06dca2a1a8809bc4149600eb60c9)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - An element that is an
+  expression statement keeps its parentheses, and comments in the parentheses of a
+  statement's value keep their places in one pass:
+
+  - `(<div />);` keeps its parentheses and its `;`, which it used to lose, so that
+    the next format read a template element and an empty statement. In a template
+    body (a `@{ … }` code block or a template control-flow branch), an element
+    that starts a longer expression statement, like `(<div />) + 1;`, keeps them
+    too. A multi-line element breaks them around it, and a comment after the
+    element in them moves after the `;`, like Prettier's.
+  - A comment in the parentheses around the last operand of a statement's binary
+    or logical value (`const x = a || (b /* c */);`) moves after the `;` at once,
+    where Prettier moves it on its next pass. After a `return` or `throw`
+    argument, it prints inside the parentheses the argument breaks in, and after
+    the `;` when it fits. The same goes for a comment at the end of a statement
+    without a `;`.
+  - A comment before the `)` of the parentheses around an operand's last operand
+    moves after them at once, and a line comment there no longer breaks the
+    operator before them (`30 * (month - 1 // c⏎) + day`).
+  - A line comment after block comments at the end of a declarator's or
+    assignment's parenthesized sequence moves after the `;` alone, and the block
+    comments stay in the parentheses.
+  - A comment after the parenthesized body of an arrow function called right away
+    prints inside the parentheses around the arrow function at once.
+
+- [#690](https://github.com/tsrx-org/tsrx/pull/690)
+  [`3a33f71`](https://github.com/tsrx-org/tsrx/commit/3a33f7154fb8995e5cd5dc60847c8b07ce98eee9)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Comments keep their places in
+  five more spots:
+
+  - A comment next to the parameter name of a type predicate (`asserts /* c */ x`,
+    `x /* c */ is T`) is no longer deleted.
+  - A union prints its trailing comments inside its indentation, like Prettier, so
+    a line comment after a type parameter's union constraint moves the union to
+    the line after `extends`.
+  - A block comment on a line of its own before the expression after `new`,
+    `await`, `yield*`, a spread's or rest element's `...`, or a conditional's `?`
+    or `:` stays on that line before the expression, where Prettier's next pass
+    puts it (`const x = new /* c */ Foo();`). A spread in an object still breaks
+    the object, which Prettier keeps expanded.
+  - A comment after a `continue`, `break`, `debugger`, or `return` with nothing
+    after its keyword, before a `;` on the next line, moves after the `;` like
+    Prettier instead of leading the next statement.
+  - A comment after a line comment goes on a line of its own, like Prettier, even
+    when it shared a line with a statement's `;` (`foo() // a` / `; // b`),
+    instead of joining the line comment, and a block comment after a comment that
+    prints at the end of the line keeps its order.
+
+- [#759](https://github.com/tsrx-org/tsrx/pull/759)
+  [`b51a77e`](https://github.com/tsrx-org/tsrx/commit/b51a77e08ebf686ca23eddcee6ae2ac26128e58a)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Comments in the parentheses
+  at the end of a statement's value now reach the place Prettier's later passes
+  give them in one format:
+
+  - A comment after a conditional's alternate, in the parentheses around it, moves
+    after the `;` (`const x = a ? b : (c /* c */);` prints
+    `const x = a ? b : c; /* c */`), as it does after the last operand of a binary
+    or logical value. After an arrow function's conditional body, block comments
+    stay in the parentheses the body prints in, unless a line comment, or one on a
+    line of its own, breaks the body.
+  - A comment on a line of its own before the `)` moves after the `;`, on a line
+    of its own, and no longer breaks the value (`const x = a || (b\n/* c */);`
+    prints `const x = a || b;\n/* c */`). After a `return` or `throw` argument, it
+    stays in the argument's parentheses.
+  - A line comment before the `)` of a declarator's value that another declarator
+    follows moves after the `,` and no longer breaks the value
+    (`const x = (a, b // d\n), y = 1;` prints `const x = (a, b), // d`).
+
 ## 0.4.0
 
 ### Minor Changes
