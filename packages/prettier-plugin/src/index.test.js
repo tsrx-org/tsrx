@@ -13557,6 +13557,16 @@ type Y = A; // trailing`);
 			['type S = ((// ref\nFoo<T>) & Y) & X;', 'type S =\n  // ref\n  (Foo<T> & Y) & X;'],
 			['type S = (// c\nA)[];', 'type S =\n  // c\n  A[];'],
 			['type S = (// c\nA)["x"];', 'type S =\n  // c\n  A["x"];'],
+			// An array or indexed access needs no parentheses in an intersection.
+			// After another type the break already prints the comment under the
+			// `&`, where Prettier keeps it. After an object type the `&` stays
+			// on that line, and Prettier's next pass puts the comment at its end.
+			['type S = X & (// c\nA)[];', 'type S = X &\n  // c\n  A[];'],
+			['type S = X & (// c\nA)["x"];', 'type S = X &\n  // c\n  A["x"];'],
+			['type S = { a: 1 } & (// c\nA)[];', 'type S = { a: 1 } & A[]; // c'],
+			['type S = { a: 1 } & (// c\nA)["x"];', 'type S = { a: 1 } & A["x"]; // c'],
+			['type S = { a: 1 } & (// c\n// d\nA)[];', 'type S = { a: 1 } & // c\n  // d\n  A[];'],
+			['function f(a: { a: 1 } & (// c\nA)[]) {}', 'function f(\n  a: { a: 1 } & A[], // c\n) {}'],
 			['type S = (// c\nA) extends B ? C : D;', 'type S =\n  // c\n  A extends B ? C : D;'],
 			[
 				'export type S = (// ref\n{\n  ref: string;\n} | {\n  type: string;\n}) & {\n  nullable?: boolean;\n};',

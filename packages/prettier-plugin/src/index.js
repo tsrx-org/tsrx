@@ -503,9 +503,15 @@ const hoistedTypeComments = new WeakSet();
  * That's a member after a union's `|` (`X | ((// c` / `A) & B)`), an
  * intersection's member in parentheses (`X & ((// c` / `A) & B)`), where the
  * comment was on the line of a `(`, a type parameter's constraint or default,
- * and a conditional type's `extends` type. The comment then ends the line
- * after the node before, which it trails: the member before, or that
- * member's last member when it's a union (like the parser's
+ * and a conditional type's `extends` type. An array or indexed access needs
+ * no parentheses as an intersection member, but the same comment after an
+ * object type (`{ a: 1 } & (// c` / `A)[]`) would otherwise lead the member
+ * and break after the `&`. Prettier's next pass puts it at the end of the
+ * object type's line (`{ a: 1 } & A[]; // c`). After any other type the
+ * intersection already breaks, and the comment stays above the member
+ * (`X &` / `// c` / `A[]`). The comment then ends the line after the node
+ * before, which it trails: the member before, or that member's last member
+ * when it's a union (like the parser's
  * `handleLastUnionElementInExpression`), where the comments after it, on
  * their own lines, go too in a union; a type parameter's name, or its
  * constraint before the `=` (like the parser's
@@ -554,9 +560,14 @@ function placeHoistedTypeComments(node, options) {
 		const isUnion = node.type === 'TSUnionType';
 		node.types.forEach((type, index) => {
 			const before = node.types[index - 1];
-			// An intersection's member that prints no parentheses moves to its
-			// own line after a comment on its own line
-			if (before && (isUnion || nodeNeedsParens(type, 'types', node, null))) {
+			// A comment on its own line before a member that prints no
+			// parentheses stays there, and the member moves to the next line.
+			// One that ends the line after `(` does too, except after an object
+			// type: the `&` stays on that type's line, so the comment trails it.
+			if (
+				before &&
+				(isUnion || nodeNeedsParens(type, 'types', node, null) || isObjectType(before))
+			) {
 				moveHoistedComments(
 					type,
 					isUnion,
