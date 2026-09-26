@@ -1,6 +1,5 @@
 ---
 '@tsrx/core': minor
-'@tsrx/prettier-plugin': patch
 '@tsrx/mcp': patch
 ---
 
@@ -19,5 +18,4 @@ Any expression parses, and the check doesn't change the tree. A normal compile
 throws the error, and `collect` and `loose` mode record it once per element at
 the part of the expression that isn't allowed and go on, so the editor
 underlines the tag and keeps working. A call or a concatenation in a tag used
-to fail the whole file in `collect` mode. `@tsrx/prettier-plugin` still formats
-a file whose only error is a reported tag.
+to fail the whole file in `collect` mode.

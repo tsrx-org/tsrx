@@ -2,7 +2,6 @@
  * @import * as acorn from '@tsrx/core/types/acorn';
  * @import * as AST from '@tsrx/core/types/estree';
  * @import * as ESTreeJSX from '@tsrx/core/types/estree-jsx';
- * @import { CompileError } from '@tsrx/core/types';
  * @import { Doc, AstPath, Options, ParserOptions } from 'prettier';
  */
 
@@ -25,7 +24,7 @@
 
 /** @typedef {{ suppressLeadingComments?: boolean, suppressTrailingComments?: boolean, suppressExpressionLeadingComments?: boolean, suppressOwnParens?: boolean, isInlineContext?: boolean, isStatement?: boolean, isLogicalAndOr?: boolean, allowShorthandProperty?: boolean, isFirstChild?: boolean, noBreakInside?: boolean, expandLastArg?: boolean, expandFirstArg?: boolean, assignmentLayout?: AssignmentLayout, firstComments?: AST.Comment[], printedKey?: string }} PrintArgs */
 
-import { DIAGNOSTIC_CODES, parseModule } from '@tsrx/core';
+import { parseModule } from '@tsrx/core';
 import { doc, util } from 'prettier';
 import postcssPlugin from 'prettier/parser-postcss.js';
 import isEs5IdentifierName from './is-es5-identifier-name.js';
@@ -80,7 +79,7 @@ export const parsers = {
 		 * @returns {AST.Program}
 		 */
 		parse(text, options) {
-			const ast = parseTsrx(text, options.filepath || 'PrettierPlugin.tsrx');
+			const ast = parseModule(text, options.filepath || 'PrettierPlugin.tsrx');
 			prepareComments(ast, text);
 			return ast;
 		},
@@ -102,33 +101,6 @@ export const parsers = {
 		},
 	},
 };
-
-/**
- * Parse a `.tsrx` file. A dynamic tag expression that isn't an allowed form
- * (`<{c ? A : B} />`) is only reported: the tree is complete, so a strict parse
- * that throws for one is repeated collecting errors, and the file is formatted
- * as long as nothing else is wrong with it.
- * @param {string} text
- * @param {string} filename
- * @returns {AST.Program}
- */
-function parseTsrx(text, filename) {
-	try {
-		return parseModule(text, filename);
-	} catch (error) {
-		if (
-			/** @type {{ code?: string }} */ (error)?.code !== DIAGNOSTIC_CODES.DYNAMIC_TAG_EXPRESSION
-		) {
-			throw error;
-		}
-	}
-	/** @type {CompileError[]} */
-	const errors = [];
-	const ast = parseModule(text, filename, { collect: true, errors });
-	const other = errors.find((error) => error.code !== DIAGNOSTIC_CODES.DYNAMIC_TAG_EXPRESSION);
-	if (other) throw other;
-	return ast;
-}
 
 /**
  * The hashbang comments of parsed files (see {@link prepareComments}).
