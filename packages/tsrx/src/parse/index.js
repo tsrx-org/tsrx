@@ -977,7 +977,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 				let before = i;
 				while (before > 0 && /\s/.test(source[before - 1])) before--;
 				const cast = commentsByEnd.get(before);
-				if (closing === 0 && cast && isTypeCastComment(cast)) {
+				if (closing === 0 && cast && isTypeCastCommentChain(cast)) {
 					closing = parens;
 				}
 			}
@@ -1669,6 +1669,124 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Like Prettier's `isIndentableBlockComment`: a block comment over several
+	 * lines, each of which starts with `*`
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {boolean}
+	 */
+	function isIndentableBlockComment(comment) {
+		return (
+			comment.type === 'Block' &&
+			comment.value.includes('\n') &&
+			`*${comment.value}*`.split('\n').every((line) => line.trimStart().startsWith('*'))
+		);
+	}
+
+	/**
+	 * Whether the comment that ends right before a `(` makes its parentheses a
+	 * JSDoc type cast. Like Prettier, which merges touching multi-line `*`
+	 * comments into one (`mergeNestledJsdocComments`) before it looks for
+	 * casts, either that comment or one in the chain of such comments that
+	 * touch it (`*\/` then `/*`) before it has `@type` or `@satisfies`.
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {boolean}
+	 */
+	function isTypeCastCommentChain(comment) {
+		/** @type {AST.CommentWithLocation | undefined} */
+		let current = comment;
+		while (current) {
+			if (isTypeCastComment(current)) {
+				return true;
+			}
+			const previous = commentsByEnd.get(current.start);
+			if (!previous || !isIndentableBlockComment(previous) || !isIndentableBlockComment(current)) {
+				return false;
+			}
+			current = previous;
+		}
+		return false;
+	}
+
+	/**
+	 * Whether a JSDoc comment that leads `node` can start a line before it,
+	 * where TypeScript reads it as the node's own: the node is one of the
+	 * children that `enclosing` prints one per line (a statement, a class,
+	 * interface, type literal, or enum member, a `case`, or a template's
+	 * child), a member of an object literal, which the compilers print after
+	 * its JSDoc comments on a line of their own, or a class expression, a
+	 * function or constructor type, or a named tuple member, which a broken
+	 * list starts a line with. On the line of the token before it, TypeScript
+	 * reads a JSDoc comment as the node's own only for a parameter, a type
+	 * parameter, a variable declarator, an export specifier, and a function or
+	 * arrow function expression, and it reads none for most other nodes.
+	 * @param {AST.Node} node
+	 * @param {AST.Node} enclosing - The node's parent
+	 * @returns {boolean}
+	 */
+	function isOwnLineJsdocOwner(node, enclosing) {
+		const parent = /** @type {any} */ (enclosing);
+		/** @type {unknown[] | null} */
+		let list = null;
+		if (parent.type === 'SwitchStatement') {
+			list = parent.cases;
+		} else if (parent.type === 'SwitchCase') {
+			list = parent.consequent;
+		} else if (parent.type === 'JSXCodeBlock') {
+			list = [...parent.body, parent.render];
+		} else if (parent.type === 'TSTypeLiteral' || parent.type === 'TSEnumDeclaration') {
+			list = parent.members;
+		} else if (parent.type === 'ObjectExpression') {
+			list = parent.properties;
+		} else if (parent.type === 'JSXElement' || parent.type === 'JSXFragment') {
+			list = parent.children;
+		} else if (
+			parent.type === 'Program' ||
+			parent.type === 'BlockStatement' ||
+			parent.type === 'StaticBlock' ||
+			parent.type === 'TSModuleBlock' ||
+			parent.type === 'ClassBody' ||
+			parent.type === 'TSInterfaceBody'
+		) {
+			list = parent.body;
+		}
+		return (
+			!!list?.includes(node) ||
+			node.type === 'ClassExpression' ||
+			node.type === 'TSFunctionType' ||
+			node.type === 'TSConstructorType' ||
+			node.type === 'TSNamedTupleMember'
+		);
+	}
+
+	/**
+	 * `handleClosureTypeCastComments`: a JSDoc type cast comment at the end of
+	 * a line leads the node after it rather than trailing the one before it:
+	 * `[a, /** @type {X} *\/⏎b]` prints `[a, /** @type {X} *\/ b]`. One right
+	 * before a `(` keeps to those parentheses by the rules for a cast (see
+	 * {@link getTypeCastEnd}). Unlike Prettier, one before a node that can
+	 * take it at the start of a line (see {@link isOwnLineJsdocOwner}) stays
+	 * where it is, on a line TypeScript doesn't read as that node's JSDoc:
+	 * Prettier can print it at the start of the node's line, which gives the
+	 * node a JSDoc type it didn't have.
+	 * @param {AST.CommentWithLocation} comment
+	 * @param {AST.Node} enclosing
+	 * @param {AST.Node | null} following
+	 * @returns {boolean} Whether the comment was attached
+	 */
+	function handleClosureTypeCastComments(comment, enclosing, following) {
+		if (
+			following &&
+			isTypeCastComment(comment) &&
+			!isOwnLineJsdocOwner(following, enclosing) &&
+			getNextNonSpaceNonCommentCharacter(comment.end) !== '('
+		) {
+			addLeadingComment(following, comment);
+			return true;
+		}
+		return false;
+	}
+
+	/**
 	 * @param {AST.CommentWithLocation} comment
 	 * @returns {boolean}
 	 */
@@ -1857,6 +1975,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 				pushInnerComment(enclosing, comment);
 				return true;
 			}
+		}
+
+		if (endOfLine && handleClosureTypeCastComments(comment, enclosing, following)) {
+			return true;
 		}
 
 		// `handleIfStatementComments` and `handleWhileLikeComments`: a comment
@@ -2961,8 +3083,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 								continue;
 							}
 							if (
-								isHandledEnclosingNode(parent) &&
-								handleComment(comments[0], parent, node, neighbors.following, path.at(-2))
+								isHandledEnclosingNode(parent)
+									? handleComment(comments[0], parent, node, neighbors.following, path.at(-2))
+									: isEndOfLineComment(comments[0]) &&
+										handleClosureTypeCastComments(comments[0], parent, neighbors.following)
 							) {
 								comments.shift();
 								continue;
@@ -3282,10 +3406,22 @@ export function get_comment_handlers(source, comments, index = 0) {
 									parent?.type === 'ImportDeclaration' &&
 									node.type !== 'ImportSpecifier' &&
 									nextSibling?.type === 'ImportSpecifier';
+								// The comments before this one that another rule has placed
+								// don't count, like one before the comma or a type cast comment
+								// that leads the next node
+								let code = '';
+								for (let i = end_node.end; i < comments[0].start; i++) {
+									const taken = commentsByStart.get(i);
+									if (taken) {
+										i = taken.end - 1;
+									} else {
+										code += source[i];
+									}
+								}
 								const onlySimpleWhitespace =
 									!isAfterStatementHeader &&
 									!isAfterParent &&
-									(opensNamedSpecifiers ? /^[,{ \t]*$/ : /^[,) \t]*$/).test(slice);
+									(opensNamedSpecifiers ? /^[,{ \t]*$/ : /^[,) \t]*$/).test(code);
 								const onlyWhitespace = /^\s*$/.test(slice);
 								const hasBlankLine = /\n\s*\n/.test(slice);
 								const nodeEndLine = end_node.loc?.end?.line ?? null;
@@ -3392,9 +3528,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 									// Comments on next line after comma should be leading comments of next parameter
 									if (isParam) {
 										if (commentOnSameLine) {
-											(node.trailingComments ||= []).push(
-												/** @type {AST.CommentWithLocation} */ (comments.shift()),
-											);
+											takeSameLineComments();
 										}
 										// Otherwise leave it for next parameter's leading comments
 									} else {
