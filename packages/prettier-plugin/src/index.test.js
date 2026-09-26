@@ -10588,6 +10588,50 @@ export function AfterFragment() @{
 			);
 		});
 
+		// Block comments after a `{" "}` that a line break follows keep the spaces
+		// between them, which render nothing (#789). Text that joins their line
+		// takes none.
+		it('renders the same markup with block comments after a {" "} before a line break', async () => {
+			const input = `export function Tag() @{
+  <div>
+    {" "}/* a */ /* b */
+    <i />
+  </div>
+}
+export function Closing() @{
+  <div>
+    x{" "}/* a */ /* b */
+  </div>
+}
+export function Text() @{
+  <div>
+    x{" "}/* a */ /* b */
+    y
+  </div>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(`export function Tag() @{
+  <div>
+    {" "}/* a */ /* b */
+    <i />
+  </div>
+}
+export function Closing() @{
+  <div>
+    x{" "}/* a */ /* b */
+  </div>
+}
+export function Text() @{
+  <div>x{" "}/* a *//* b */y</div>
+}`);
+			expect(await render(result)).toEqual(await render(input));
+			expect(await render(input)).toEqual([
+				'<div> <i></i></div>',
+				'<div>x </div>',
+				'<div>x y</div>',
+			]);
+		});
+
 		// A block comment after a `{" "}` keeps the spaces around it (#542)
 		it('renders the same markup with a block comment after a {" "}', async () => {
 			const input = `export function Glued() @{
@@ -10872,6 +10916,77 @@ const b = <p>hello {a}</p>;`);
     }{" "}
   </>
 );`);
+		});
+
+		// A comment before a lone code block joined the opening tag's line, where
+		// its run of whitespace has no line break and renders a space (#776), and
+		// one after it joined the closing tag's line (#811)
+		it('renders the same markup with a comment next to a lone code block', async () => {
+			const input = `export function Before() @{
+  <div>
+    /* a */ @{
+      <span />
+    }
+  </div>
+}
+export function Touching() @{
+  <div>/* a */@{
+    <span />
+  }</div>
+}
+export function Fragment() @{
+  <>
+    /* a */ @{
+      <span />
+    }
+  </>
+}
+export function After() @{
+  <div>
+    @{
+      <span />
+    } /* b */
+  </div>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(`export function Before() @{
+  <div>
+    /* a */ @{
+      <span />
+    }
+  </div>
+}
+export function Touching() @{
+  <div>
+    /* a */ @{
+      <span />
+    }
+  </div>
+}
+export function Fragment() @{
+  <>
+    /* a */ @{
+      <span />
+    }
+  </>
+}
+export function After() @{
+  <div>
+    @{
+      <span />
+    } /* b */
+  </div>
+}`);
+			expect(await render(result)).toEqual(await render(input));
+			expect(await render(input)).toEqual([
+				'<div><span></span></div>',
+				'<div><span></span></div>',
+				'<span></span>',
+				'<div><span></span></div>',
+			]);
+			expect(
+				await render('export function Hugged() @{\n  <div>/* a */ @{\n    <span />\n  }</div>\n}'),
+			).toEqual(['<div> <span></span></div>']);
 		});
 
 		it('fills text across a blank line or an unindented line', async () => {
@@ -17945,6 +18060,53 @@ for (
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// A lone `@{ … }` child hugs the tags, but a comment before it joined the
+		// opening tag's line, and the next format moved it again (#776). A
+		// comment before the closing tag was dropped, and one after the code
+		// block joined the closing tag's line (#811). The comments stay next to
+		// the code block, as next to any other child.
+		it.each([
+			'export function App() @{\n  <div>\n    /* a */ @{\n      <span />\n    }\n  </div>\n}',
+			'export function App() @{\n  <>\n    /* a */ @{\n      <span />\n    }\n  </>\n}',
+			'export function App() @{\n  <div>\n    // a\n    @{\n      <span />\n    }\n  </div>\n}',
+			'export function App() @{\n  <div>\n    /* a */\n    @{\n      <span />\n    }\n  </div>\n}',
+			'export function App() @{\n  <div class="a">\n    /* a */ /* b */ @{\n      <span />\n    }\n  </div>\n}',
+			'export function App() @{\n  <div>\n    @{\n      <span />\n    } /* b */\n  </div>\n}',
+			'export function App() @{\n  <div>\n    @{\n      <span />\n    } // b\n  </div>\n}',
+			'export function App() @{\n  <div>\n    @{\n      <span />\n    }\n    /* b */\n  </div>\n}',
+			'export function App() @{\n  <>\n    @{\n      <span />\n    }\n    // b\n  </>\n}',
+			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        // a\n        @{\n          <span />\n        }\n      </div>\n    )}\n  </main>\n}',
+			'function App() {\n  return (\n    <div>\n      /* a */ @{\n        <span />\n      }\n    </div>\n  );\n}',
+		])('keeps the comment next to the lone code block of %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'export function App() @{\n  <div>/* a */@{\n      <span />\n    }</div>\n}',
+				'export function App() @{\n  <div>\n    /* a */ @{\n      <span />\n    }\n  </div>\n}',
+			],
+			[
+				'export function App() @{\n  <div>@{\n      <span />\n    }/* b */</div>\n}',
+				'export function App() @{\n  <div>\n    @{\n      <span />\n    } /* b */\n  </div>\n}',
+			],
+		])(
+			'prints the lone code block with a comment next to it of %j on lines of its own',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
+
+		// Without comments next to it, even with comments inside it, it still
+		// hugs the tags
+		it.each([
+			'export function App() @{\n  <div>@{\n    <span />\n  }</div>\n}',
+			'export function App() @{\n  <div>@{\n    // c\n  }</div>\n}',
+			'export function App() @{\n  <>@{\n    /* c */\n    <span />\n  }</>\n}',
+		])('hugs the lone code block of %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
 		// In an element in a `{…}` container, a comment before the first child,
 		// or after a `{…}` child, went to the element's body, which printed it
 		// before the closing tag. It stays before the child after it, as in a
@@ -18076,7 +18238,7 @@ for (
 			],
 			[
 				'export function App() @{\n  <main>{x && <div>{" "} /* a */ /* b */<i /></div>}</main>\n}',
-				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {" "}/* a *//* b */\n        <i />\n      </div>\n    )}\n  </main>\n}',
+				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {" "}/* a */ /* b */\n        <i />\n      </div>\n    )}\n  </main>\n}',
 			],
 			// Outside a container the space is text, and stays
 			[
@@ -18086,6 +18248,44 @@ for (
 		])('prints the block comment after the {" "} of %j against it', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
 		});
+
+		// Only the first of the block comments after a `{" "}` prints against it
+		// when a line break ends their run. The spaces between them render
+		// nothing there, and stay, as between `{/* a */} {/* b */}` in Prettier's
+		// output. They were dropped too (#789).
+		it.each([
+			[
+				'const a = <div>{" "}/* a */ /* b */\n<i /></div>;',
+				'const a = (\n  <div>\n    {" "}/* a */ /* b */\n    <i />\n  </div>\n);',
+			],
+			[
+				'const a = <div>x{" "}/* a */ /* b */\n</div>;',
+				'const a = (\n  <div>\n    x{" "}/* a */ /* b */\n  </div>\n);',
+			],
+			[
+				'export function App() @{\n  <div>\n    {" "}/* a */ /* b */\n    <i />\n  </div>\n}',
+				'export function App() @{\n  <div>\n    {" "}/* a */ /* b */\n    <i />\n  </div>\n}',
+			],
+			[
+				'export function App() @{\n  <div>\n    {" "} /* a */  /* b */ /* c */\n    {y}\n  </div>\n}',
+				'export function App() @{\n  <div>\n    {" "}/* a */ /* b */ /* c */\n    {y}\n  </div>\n}',
+			],
+			// Comments that touch stay together
+			[
+				'const a = (\n  <div>\n    {" "}/* a *//* b */ /* c */\n    <i />\n  </div>\n);',
+				'const a = (\n  <div>\n    {" "}/* a *//* b */ /* c */\n    <i />\n  </div>\n);',
+			],
+			// Text after them joins their line, where the spaces would render
+			[
+				'const a = <div>x{" "}/* a */ /* b */\n  y</div>;',
+				'const a = <div>x{" "}/* a *//* b */y</div>;',
+			],
+		])(
+			'keeps the spaces between the block comments after the {" "} of %j',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
 
 		// Like Prettier's `printJsxClosingElement` and
 		// `printJsxOpeningClosingFragment`. They used to be deleted, and the one
