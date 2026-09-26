@@ -10120,6 +10120,92 @@ function k() {
 				expect(await format(source)).toBeWithNewline(expected);
 			},
 		);
+
+		// Comments before a child are `{/* c */}` children in TSX: a line break
+		// in the source after one keeps the next child on a line of its own, and
+		// a blank line after one is kept only when the element has no text. A
+		// comment that ended its line after other code joined the next line when
+		// the element had text, and the child after it on the next format (#669).
+		// A blank line after a comment stayed in an element with text (#684). The
+		// comments before a `{…}` child took a line each, and a blank line after
+		// them was dropped even without text (#736).
+		it.each([
+			'<div>/* a */\n/* b */\n<i /> 3</div>',
+			'<div>\n/* a */ /* b */\n\n<i /> 3</div>',
+			'<div>/* a */\n<i /> 3</div>',
+			'<div>\n/* a */ /* b */\n<i /> 3</div>',
+			'<div>\n/* c */\n\n<b /> text\n</div>',
+			'<div>\n/* a */\n\n/* b */\n<b /> text\n</div>',
+			'<div>\n<i />\n/* c */\n\n<b /> text\n</div>',
+			'<div>\n/* c */\n\n{x}\n</div>',
+			'<div>\n/* a */ /* b */\n{x} text\n</div>',
+			'<div>\n/* c */ {x}\n</div>',
+			'<div>\n/* a */\n/* b */ {x} 3\n</div>',
+			'<div>\n/* a */ /* b */{x}\n</div>',
+			// Already like TSX
+			'<div>/* a */\n/* b */\n<i /></div>',
+			'<div>\n/* c */\n\n<b />\n</div>',
+			'<div>\n/* c */\n\n{x} text\n</div>',
+			'<div>\n/* a */\n/* b */ <i /> 3</div>',
+			'<div>\n<i /> /* a */\n/* b */\n<b /> text\n</div>',
+			'<p>/* c */{name}</p>',
+		])('lays out the comments before the child in %j like TSX', async (element) => {
+			const template = await format(
+				`export function Page() @{\n\t${element.replace(/\n/g, '\n\t')}\n}`,
+				repoOptions,
+			);
+			const tsx = await prettier.format(
+				`export function Page() {\n\t${element.replace(/\/\* \w \*\//g, '{$&}').replace(/\n/g, '\n\t')};\n}`,
+				{ parser: 'typescript', ...repoOptions },
+			);
+			expect(template).toBe(
+				tsx
+					.replace('Page() {', 'Page() @{')
+					.replace(/;\n}\n$/, '\n}\n')
+					.replace(/\{(\/\* \w \*\/)\}/g, '$1'),
+			);
+		});
+
+		it.each([
+			[
+				'const a = <div>/* a */\n/* b */\n<i /> 3</div>;',
+				'const a = (\n  <div>\n    /* a */\n    /* b */\n    <i /> 3\n  </div>\n);',
+			],
+			[
+				'const b = <div>\n/* a */ /* b */\n\n<i /> 3</div>;',
+				'const b = (\n  <div>\n    /* a */ /* b */\n    <i /> 3\n  </div>\n);',
+			],
+			[
+				'export function App() @{ <div>/* a */\n/* b */\n<i /> 3</div> }',
+				'export function App() @{\n  <div>\n    /* a */\n    /* b */\n    <i /> 3\n  </div>\n}',
+			],
+			[
+				'const a = (\n  <div>\n    // c\n\n    <b /> text\n  </div>\n);',
+				'const a = (\n  <div>\n    // c\n    <b /> text\n  </div>\n);',
+			],
+			[
+				'const a = (\n  <div>\n    {y}\n    // c\n\n    {z} text\n  </div>\n);',
+				'const a = (\n  <div>\n    {y}\n    // c\n    {z} text\n  </div>\n);',
+			],
+			[
+				'const a = (\n  <div>\n    // a\n    /* b */ {z} text\n  </div>\n);',
+				'const a = (\n  <div>\n    // a\n    /* b */ {z} text\n  </div>\n);',
+			],
+		])(
+			'keeps the line breaks after the comments before the child in %j like TSX',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
+
+		// Without text, a blank line after a line comment stays, as between
+		// children
+		it.each([
+			'const a = (\n  <div>\n    // c\n\n    <b />\n  </div>\n);',
+			'const a = (\n  <div>\n    {y}\n    // c\n\n    {z}\n  </div>\n);',
+		])('keeps the blank line after the comment before the child in %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
 	});
 
 	// A space at a template child boundary renders, like in JSX, while
@@ -13878,6 +13964,49 @@ type C = /* c */ D | E;`;
 			await expectUnchanged(source);
 		});
 
+		// Like Prettier, an element keeps its parentheses in a class heading, as
+		// it does in any parent that doesn't print it bare. TypeScript doesn't
+		// read `class A extends <div /> {}` (#680).
+		it.each([
+			'class Derived extends (<div />) {}',
+			'class Derived extends (<></>) {}',
+			'class Derived extends (<style>{css}</style>) {}',
+			'class Derived extends (<div />)<T> {}',
+			'class Derived extends (<div />) implements Contract {}',
+			'const Derived = class extends (<div />) {};',
+			'export default class extends (<></>) {}',
+			'class Derived extends (<div />).Base {}',
+		])('keeps the parentheses around the element in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it.each([
+			['class Derived extends <div /> {}', 'class Derived extends (<div />) {}'],
+			['class Derived extends <></> {}', 'class Derived extends (<></>) {}'],
+		])('adds the parentheses around the element in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Like Prettier's `maybeWrapJsxElementInParens`, an element that breaks
+		// starts on a line of its own inside them
+		it.each([
+			'class Derived extends (\n  <div\n    className="aaaaaaaaaaaaaaaaaaaaaaaa"\n    id="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"\n  />\n) {}',
+			'class Derived extends (\n  <div>\n    <span>aaaaaaaaaaaaaaaaaaaaaaaaaaaa</span>\n    <span>bbbbbbbbbbbbbbbbbbbbbbbbbb</span>\n  </div>\n) {}',
+			'x = class extends (\n  (\n    <div\n      className="aaaaaaaaaaaaaaaaaaaaaaaa"\n      id="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"\n    />\n  )\n) {};',
+		])('breaks the element inside the parentheses in %j', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		// Prettier prints these comments twice, once more on each pass. Like
+		// the comments of any other superclass, they print outside the
+		// parentheses.
+		it.each([
+			['class A extends (/* c */ <div />) {}', 'class A extends /* c */ (<div />) {}'],
+			['class A extends (<div /> /* c */) {}', 'class A extends (<div />) /* c */ {}'],
+		])('prints the comment of the element in %j once', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		// Like Prettier's `babel` output, a JSDoc cast's parentheses are enough.
 		// The class used to add a second pair around them (#519).
 		it.each([
@@ -17254,21 +17383,27 @@ for (
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
-		// A line comment after the superclass and its type arguments ends the
-		// heading, and the next format moves it into the body, as the parser
-		// does with one before the body, so it prints there. Prettier prints it
-		// after the type arguments, with the body on the next line, and moves it
-		// into the body on its next pass.
+		// A line comment between the superclass and its type arguments ends the
+		// heading after them. Prettier prints it there, with a nonempty body on
+		// the next line, and its next pass moves the comment into the body, as
+		// the parser does with one before the body, so it prints there. On a
+		// line of its own before the type arguments, Prettier's first pass keeps
+		// it there (#652).
 		it.each([
 			[
 				'class A extends (a || b // c\n)<T> {\n  x = 1;\n}',
 				'class A extends (a || b)<T> {\n  // c\n  x = 1;\n}',
 			],
-			['class A extends (a || b // c\n)<T> {}', 'class A extends (a || b)<T> {\n  // c\n}'],
+			['class A extends B // c\n<T> {\n  x = 1;\n}', 'class A extends B<T> {\n  // c\n  x = 1;\n}'],
+			[
+				'class A extends B\n// c\n<T> {\n  x = 1;\n}',
+				'class A extends B<T> {\n  // c\n  x = 1;\n}',
+			],
 			[
 				'class A extends (a || b // c\n)<T> {\n  // d\n}',
 				'class A extends (a || b)<T> {\n  // c\n  // d\n}',
 			],
+			['class A extends B<T> // c\n{}', 'class A extends B<T> {\n  // c\n}'],
 			[
 				'x = class extends (a || b // c\n)<T> {\n  x = 1;\n};',
 				'x = class extends (a || b)<T> {\n  // c\n  x = 1;\n};',
@@ -17284,6 +17419,26 @@ for (
 				expect(await format(input)).toBeWithNewline(expected);
 			},
 		);
+
+		// With an empty body, Prettier's next pass finds the comment after the
+		// class's `{}`, where the body doesn't take it, so it prints there. Two
+		// comments stay in their order on lines of their own, where Prettier
+		// joins them in the opposite order (`// d // c`) (#652).
+		it.each([
+			['class A extends B // c\n<T> {}', 'class A extends B<T> {} // c'],
+			['class A extends (a || b // c\n)<T> {}', 'class A extends (a || b)<T> {} // c'],
+			['class A extends B\n// c\n<T> {}', 'class A extends B<T> {} // c'],
+			['class A extends (a || b\n// c\n)<T> {}', 'class A extends (a || b)<T> {} // c'],
+			['class A extends B /* d */ // c\n<T> {}', 'class A extends B<T> /* d */ {} // c'],
+			['class A extends B // c\n<T> {} // d', 'class A extends B<T> {} // c // d'],
+			['class A extends B // c\n// d\n<T> {}', 'class A extends B<T> {} // c\n// d'],
+			['const X = class extends B // c\n<T> {};', 'const X = class extends B<T> {}; // c'],
+			['export default class extends B // c\n<T> {}', 'export default class extends B<T> {} // c'],
+			['(class extends B // c\n<T> {}).foo();', '(class extends B<T> {}).foo(); // c'],
+			['foo(class extends B // c\n<T> {}, d);', 'foo(\n  class extends B<T> {}, // c\n  d,\n);'],
+		])('prints the line comment of %j after the empty class', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
 
 		// A comment inside a JSDoc cast's parentheses stays there, like in
 		// Prettier's `babel-ts` output, which keeps them as a node. It isn't after
@@ -17326,6 +17481,11 @@ for (
 			['class A extends B // c\n  implements C {}', 'class A\n  extends B // c\n  implements C {}'],
 			[
 				'class A extends B<T>\n  // c\n  implements C {}',
+				'class A\n  extends B<T>\n  // c\n  implements C {}',
+			],
+			// Prettier's first pass prints it before the type arguments (#652)
+			[
+				'class A extends B\n// c\n<T> implements C {}',
 				'class A\n  extends B<T>\n  // c\n  implements C {}',
 			],
 			['interface I extends\n  // c\n  J, K {}', 'interface I\n  // c\n  extends J, K {}'],

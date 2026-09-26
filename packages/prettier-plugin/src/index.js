@@ -1212,11 +1212,16 @@ function skipArgumentCasts(node) {
  * looser no longer parses without its parens: `class A extends B || C {}` is
  * a syntax error. Like Prettier, `new`, object literal and tagged template
  * superclasses are wrapped for readability too. Sequence expressions always
- * print their own parens.
+ * print their own parens. Any other superclass follows
+ * {@link nodeNeedsParens}, as Prettier's `needsParentheses` goes on to the
+ * node's own rules, so an element keeps its parens: TypeScript doesn't read
+ * `class A extends <div /> {}`.
  * @param {AST.Node} expression - The superclass expression
+ * @param {AST.ClassDeclaration | AST.ClassExpression} classNode - The class
+ * @param {AST.Node | null} grandparent - The class's parent
  * @returns {boolean} - True if parentheses are printed
  */
-function superClassNeedsParens(expression) {
+function superClassNeedsParens(expression, classNode, grandparent) {
 	switch (expression.type) {
 		case 'ArrowFunctionExpression':
 		case 'AssignmentExpression':
@@ -1237,7 +1242,7 @@ function superClassNeedsParens(expression) {
 			// `extends @dec class {}` does not parse; the decorator needs the parens
 			return getDecorators(expression).length > 0;
 		default:
-			return false;
+			return nodeNeedsParens(expression, 'superClass', classNode, grandparent);
 	}
 }
 
@@ -7528,6 +7533,9 @@ function printClassDeclaration(node, path, options, print) {
 	let endsWithComment = false;
 	/** @type {AST.Comment[]} */
 	let bodyComments = [];
+	/** @type {AST.Comment[]} */
+	let afterClassComments = [];
+	const bodyNode = /** @type {AST.NodeWithMaybeComments} */ (node.body);
 	if (node.superClass) {
 		const superClassNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node.superClass);
 		// A JSDoc cast prints its comments, and parentheses the superclass needs
@@ -7540,7 +7548,13 @@ function printClassDeclaration(node, path, options, print) {
 		// Like Prettier's `printClass`, the class prints the superclass's
 		// comments, around the parentheses it adds and the type arguments
 		const printsComments = !isTypeCast;
-		const addsParens = !isTypeCast && superClassNeedsParens(superClassNode);
+		const addsParens =
+			!isTypeCast &&
+			superClassNeedsParens(
+				superClassNode,
+				node,
+				/** @type {AST.Node | null} */ (path.getParentNode()),
+			);
 		// A `prettier-ignore` after the superclass stays inside the parentheses,
 		// where it keeps ignoring the superclass on the next format. After them,
 		// it would lead the body. A cast prints the comments inside its own
@@ -7586,26 +7600,51 @@ function printClassDeclaration(node, path, options, print) {
 				}),
 			'superClass',
 		);
-		// A line comment after the superclass and its type arguments ends the
-		// heading, and the next format moves it into the body, as the parser
-		// does with one before the body (Prettier moves it on its next pass
-		// too), so it prints there
-		if (!node.implements?.length && printsTrailingComments) {
-			bodyComments = trailingComments.filter((comment) => comment.type === 'Line');
+		const typeArguments = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (
+			node.superTypeParameters
+		);
+		// A line comment after the superclass, or on a line of its own before
+		// its type arguments, ends the heading after them: Prettier prints it
+		// there, or moves it there on its next pass. Unless `implements`
+		// follows, Prettier breaks the heading around it, and its next pass
+		// moves the comment into a nonempty body, as the parser does with one
+		// before the body, or finds it after an empty body's `{}`. It prints
+		// there right away (#652).
+		const typeArgumentsComments = (typeArguments?.leadingComments ?? []).filter(
+			(comment) => comment.type === 'Line',
+		);
+		const lineComments = [
+			...(printsTrailingComments
+				? trailingComments.filter((comment) => comment.type === 'Line')
+				: []),
+			...typeArgumentsComments,
+		];
+		if (!node.implements?.length) {
+			if (typeArguments && node.body.body.length === 0 && !bodyNode.innerComments?.length) {
+				afterClassComments = lineComments;
+			} else {
+				bodyComments = lineComments;
+			}
 		}
-		const headingComments = printsTrailingComments
-			? trailingComments.filter((comment) => !bodyComments.includes(comment))
-			: [];
+		const headingComments = [
+			...(printsTrailingComments ? trailingComments : []),
+			...typeArgumentsComments,
+		].filter((comment) => !bodyComments.includes(comment) && !afterClassComments.includes(comment));
 		/** @type {Doc} */
 		let superClassDoc = superClass;
 		if (addsParens) {
 			// Each decorator prints on its own line, so the class is indented
-			// inside the parentheses to keep them off column zero. The cast of the
-			// operand of an ignored superclass goes inside them.
-			superClassDoc =
-				getDecorators(superClassNode).length > 0
-					? ['(', indent([hardline, superClass]), hardline, ')']
-					: ['(', ...ignoredOperandCast, superClass, ')'];
+			// inside the parentheses to keep them off column zero. Like Prettier's
+			// `maybeWrapJsxElementInParens`, an element that breaks starts on a
+			// line of its own inside them. The cast of the operand of an ignored
+			// superclass goes inside them.
+			if (getDecorators(superClassNode).length > 0) {
+				superClassDoc = ['(', indent([hardline, superClass]), hardline, ')'];
+			} else if (isTemplateExpression(superClassNode)) {
+				superClassDoc = ['(', group([indent([softline, superClass]), softline]), ')'];
+			} else {
+				superClassDoc = ['(', ...ignoredOperandCast, superClass, ')'];
+			}
 		}
 		if (isAssigned) {
 			// Like Prettier's `printSuperClass`, a superclass that doesn't fit
@@ -7624,13 +7663,26 @@ function printClassDeclaration(node, path, options, print) {
 			),
 			superClassDoc,
 		];
-		if (node.superTypeParameters) {
-			superClassParts.push(path.call(print, 'superTypeParameters'));
+		if (typeArguments) {
+			superClassParts.push(
+				typeArgumentsComments.length > 0
+					? [
+							...printLeadingComments(
+								typeArguments,
+								/** @type {AST.Comment[]} */ (typeArguments.leadingComments).filter(
+									(comment) => comment.type !== 'Line',
+								),
+								options,
+							),
+							path.call(
+								(typeArgumentsPath) => print(typeArgumentsPath, { suppressLeadingComments: true }),
+								'superTypeParameters',
+							),
+						]
+					: path.call(print, 'superTypeParameters'),
+			);
 		}
 		superClassParts.push(...printTrailingComments(superClassNode, options, headingComments));
-		const typeArguments = /** @type {AST.NodeWithMaybeComments | undefined} */ (
-			node.superTypeParameters
-		);
 		endsWithComment =
 			!node.implements?.length &&
 			Boolean(headingComments.length || typeArguments?.trailingComments?.length);
@@ -7646,8 +7698,16 @@ function printClassDeclaration(node, path, options, print) {
 			bodyComments.length > 0 ? print(bodyPath, { firstComments: bodyComments }) : print(bodyPath),
 		'body',
 	);
+	// Like comments that follow the class, the first one ends its line, and
+	// the next ones print on lines of their own
+	const text = /** @type {string} */ (options.originalText);
+	const afterClass = afterClassComments.map((comment, index) =>
+		index === 0
+			? [lineSuffix([' ', printComment(comment, text)]), breakParent]
+			: lineSuffix([hardline, printComment(comment, text)]),
+	);
 	if (!groupMode) {
-		return [...parts, ...heritage, ' ', body];
+		return [...parts, ...heritage, ' ', body, ...afterClass];
 	}
 
 	// Like Prettier, a class whose heading breaks starts its body on a new
@@ -7656,13 +7716,13 @@ function printClassDeclaration(node, path, options, print) {
 	// would move into the body on the next format, as it does in Prettier, so
 	// the body starts on its line.
 	const heritageGroupId = Symbol('heritageGroup');
-	const bodyNode = /** @type {AST.NodeWithMaybeComments} */ (node.body);
 	return [
 		group([...parts, indent(heritage)], { id: heritageGroupId }),
 		node.body.body.length > 0 && !endsWithComment && !bodyNode.leadingComments?.length
 			? ifBreak(hardline, ' ', { groupId: heritageGroupId })
 			: ' ',
 		body,
+		...afterClass,
 	];
 }
 
@@ -13914,28 +13974,53 @@ function getJSXChildEnd(node) {
 }
 
 /**
- * The leading comments of an element's child as a child item of their own
- * for {@link printJSXChildren}, with what prints after the last comment as
- * the item's separator, or `null` when nothing does.
+ * The leading comments of an element's child as child items of their own for
+ * {@link printJSXChildren}, like `{/* c *\/}` children in Prettier, or `null`
+ * when they print with the child. The comments on a line are an item, which a
+ * line break follows, as it follows a child with no text after it, and a
+ * blank line after them is whitespace text between the children, which
+ * `printJSXElementBody` keeps only when the element has no text. A block
+ * comment that doesn't end its line keeps a space after it, which puts the
+ * child after the last one on its line. A `{…}` child, which starts its line
+ * whenever a comment comes before it, takes items even when all its comments
+ * stay on its line, and a comment that touches the next comment or the `{`
+ * ends its line there, like `{/* c *\/}{x}` in Prettier.
  * @param {AST.Node & AST.NodeWithMaybeComments} child
  * @param {TsrxFormatOptions} options
- * @returns {{ doc: Doc[], node: AST.Node, separator: Doc } | null}
+ * @returns {[{ doc: Doc[], node: AST.Node }, ...JSXChildItem[]] | null}
  */
-function getJSXChildCommentItem(child, options) {
-	const leadingComments = child.leadingComments ?? [];
-	const doc =
-		child.type === 'JSXExpressionContainer'
-			? printTemplateChildLeadingComments(child)
-			: printLeadingComments(child, withoutHoistedComments(child, leadingComments), options);
+function getJSXChildCommentItems(child, options) {
+	const text = /** @type {string} */ (options.originalText);
+	const isExpressionContainer = child.type === 'JSXExpressionContainer';
+	/** @type {JSXChildItem[]} */
+	const items = [];
 	/** @type {Doc[]} */
-	const separator = [];
-	while (doc.length > 0 && (doc.at(-1) === hardline || doc.at(-1) === line || doc.at(-1) === ' ')) {
-		separator.unshift(/** @type {Doc} */ (doc.pop()));
+	let doc = [];
+	for (const comment of withoutHoistedComments(child, child.leadingComments ?? [])) {
+		const { end } = /** @type {AST.NodeWithLocation} */ (comment);
+		doc.push(printComment(comment, text));
+		if (
+			comment.type === 'Block' &&
+			!hasNewline(text, end) &&
+			(!isExpressionContainer || /[ \t]/u.test(text.charAt(end)))
+		) {
+			doc.push(' ');
+			continue;
+		}
+		items.push({ doc, node: child });
+		doc = [];
+		if (isLineAfterCommentEmpty(text, comment)) {
+			items.push({ text: '\n\n', node: { type: 'JSXText' } });
+		}
 	}
-	if (doc.length === 0 || separator.length === 0) {
+	if (items.length === 0 && (doc.length === 0 || !isExpressionContainer)) {
 		return null;
 	}
-	return { doc, node: child, separator: separator.length === 1 ? separator[0] : separator };
+	if (doc.length > 0) {
+		doc.pop();
+		items.push({ doc, node: child, separator: ' ' });
+	}
+	return /** @type {[{ doc: Doc[], node: AST.Node }, ...JSXChildItem[]]} */ (items);
 }
 
 /**
@@ -13946,7 +14031,7 @@ function getJSXChildCommentItem(child, options) {
  * @param {PrintFn} print
  * @param {string} text - The source text
  * @param {boolean} [withLeadingComments] - Whether to print the container's
- *   leading comments, which {@link getJSXChildCommentItem} prints otherwise
+ *   leading comments, which {@link getJSXChildCommentItems} prints otherwise
  * @returns {Doc}
  */
 function printJSXChildExpressionContainer(path, index, print, text, withLeadingComments = true) {
@@ -14112,17 +14197,17 @@ function printJSXElementBody(
 						hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).end),
 				));
 		const endsLine = child.trailingComments?.some((comment) => comment.type === 'Line');
-		const commentItem =
-			startsLine && child.type !== 'JSXText' ? getJSXChildCommentItem(child, options) : null;
+		const commentItems =
+			startsLine && child.type !== 'JSXText' ? getJSXChildCommentItems(child, options) : null;
 		/** @type {Doc} */
 		let doc;
-		if (commentItem) {
-			// Like a `{/* c */}` child in Prettier, the comments are a part of the
+		if (commentItems) {
+			// Like `{/* c */}` children in Prettier, the comments are parts of the
 			// `fill` of their own, so that whether the text after the child
 			// starts a line depends on the child alone: the break of the comment's
 			// line would otherwise make the child and that text fit on one line
-			items.push(commentItem);
-			commentSides.set(commentItem.doc, { before: 'hardline', after: 'keep' });
+			items.push(...commentItems);
+			commentSides.set(commentItems[0].doc, { before: 'hardline', after: 'keep' });
 			doc =
 				child.type === 'JSXExpressionContainer'
 					? printJSXChildExpressionContainer(path, index, print, text, false)
@@ -14137,9 +14222,9 @@ function printJSXElementBody(
 			doc = path.call(print, 'children', index);
 		}
 		items.push({ doc, node: child });
-		if ((startsLine && !commentItem) || endsLine) {
+		if ((startsLine && !commentItems) || endsLine) {
 			commentSides.set(doc, {
-				before: startsLine && !commentItem ? 'hardline' : 'keep',
+				before: startsLine && !commentItems ? 'hardline' : 'keep',
 				after: endsLine ? 'hardline' : 'keep',
 			});
 		}
