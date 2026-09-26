@@ -19412,6 +19412,207 @@ for (
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// Prettier prints a comment in the parentheses around the alternate of a
+		// conditional at the end of a statement's value after them, where they
+		// print as nothing, and moves it after the `;` on the next pass. The
+		// formatter prints the fixpoint (#674).
+		it.each([
+			['const x = a ? b : (c /* c */);', 'const x = a ? b : c; /* c */'],
+			['x = a ? b : (c /* c */);', 'x = a ? b : c; /* c */'],
+			['a ? b : (c /* c */);', 'a ? b : c; /* c */'],
+			[
+				'function f() {\n  return a ? b : (c /* c */);\n}',
+				'function f() {\n  return a ? b : c; /* c */\n}',
+			],
+			[
+				'function f() {\n  throw a ? b : (c /* c */);\n}',
+				'function f() {\n  throw a ? b : c; /* c */\n}',
+			],
+			['export default a ? b : (c /* c */);', 'export default a ? b : c; /* c */'],
+			['const x = (a ? b : c /* c */);', 'const x = a ? b : c; /* c */'],
+			[
+				'function f() {\n  return (a ? b : c /* c */);\n}',
+				'function f() {\n  return a ? b : c; /* c */\n}',
+			],
+			['const x = a ? b : c ? d : (e /* c */);', 'const x = a ? b : c ? d : e; /* c */'],
+			['const x = a ? b : c || (d /* c */);', 'const x = a ? b : c || d; /* c */'],
+			['const x = a || (b ? c : (d /* c */));', 'const x = a || (b ? c : d); /* c */'],
+			[
+				'function f() {\n  return a || (b ? c : (d /* c */));\n}',
+				'function f() {\n  return a || (b ? c : d); /* c */\n}',
+			],
+			['const x = a ? b : (c, d /* c */);', 'const x = a ? b : (c, d); /* c */'],
+			['if (a) x = a ? b : (c /* c */);', 'if (a) x = a ? b : c; /* c */'],
+			['const x = a ? b : (c /* c */)\nfoo()', 'const x = a ? b : c; /* c */\nfoo();'],
+			// A line comment, which Prettier's line break after it breaks the
+			// conditional with
+			['const x = a ? b : (c // c\n);', 'const x = a ? b : c; // c'],
+			['const x = a ? b : (c /* c */ // d\n);', 'const x = a ? b : c; /* c */ // d'],
+			// In JSX mode, a `null` or `undefined` branch prints without
+			// parentheses of its own
+			['const x = a ? <div /> : (null // c\n);', 'const x = a ? <div /> : null; // c'],
+			[
+				'const x = a ? <div /> : b ? <i /> : (undefined /* c */);',
+				'const x = a ? <div /> : b ? <i /> : undefined; /* c */',
+			],
+			// An arrow function's conditional body prints in parentheses only when
+			// it doesn't break, which a line comment after it does
+			['const f = () => a ? b : (c // c\n);', 'const f = () => (a ? b : c); // c'],
+			['const f = () => (a ? b : c // c\n);', 'const f = () => (a ? b : c); // c'],
+			['const f = () => a ? b : (c /* c */ // d\n);', 'const f = () => (a ? b : c); /* c */ // d'],
+			['export default () => a ? b : (c // c\n);', 'export default () => (a ? b : c); // c'],
+			['const f = () => a || (b ? c : (d /* c */));', 'const f = () => a || (b ? c : d); /* c */'],
+			[
+				'const f = () => (a ? b : (c /* c */) // d\n);',
+				'const f = () => (a ? b : c); /* c */ // d',
+			],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			// In the parentheses around an arrow function's conditional body,
+			// which the comments after the arrow function don't break
+			['const f = () => a ? b : (c /* c */);', 'const f = () => (a ? b : c /* c */);'],
+			['const f = () => a ? b : (c /* c */) // d\n;', 'const f = () => (a ? b : c /* c */); // d'],
+			['const f = () => (a ? b : c /* c */) // d\n;', 'const f = () => (a ? b : c /* c */); // d'],
+			[
+				'const f = (() => a ? b : (c /* c */) // d\n);',
+				'const f = () => (a ? b : c /* c */); // d',
+			],
+			[
+				'const f = () => a ? b : (c /* c */)\n// d\n;',
+				'const f = () => (a ? b : c /* c */);\n// d',
+			],
+			// In the parentheses a conditional in JSX mode prints a branch in
+			[
+				'const x = a ? <div /> : (<span /> // c\n);',
+				'const x = a ? (\n  <div />\n) : (\n  <span /> // c\n);',
+			],
+			['const x = a ? <div /> : (c // c\n);', 'const x = a ? (\n  <div />\n) : (\n  c // c\n);'],
+			// Before the `,` after a declarator
+			['let x = a ? b : (c /* c */), y = 1;', 'let x = a ? b : c /* c */,\n  y = 1;'],
+			// Before the `:`, or in parentheses that print
+			['const x = a ? (b /* c */) : c;', 'const x = a ? b /* c */ : c;'],
+			['x = !(a ? b : c /* c */);', 'x = !((a ? b : c) /* c */);'],
+			['x = f(a ? b : (c /* c */));', 'x = f(a ? b : c /* c */);'],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const f = () => (a ? b : c /* c */ /* d */);',
+			// In a JSDoc cast's parentheses
+			'const x = a ? b : /** @type {T} */ (c /* c */);',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Prettier prints a comment on a line of its own in those parentheses on
+		// a line of its own after the `;`, and breaks the value with it, which
+		// its next pass joins. The formatter prints the fixpoint (#691).
+		it.each([
+			['const x = a || (b\n/* c */);', 'const x = a || b;\n/* c */'],
+			['x = a + (b\n// c\n);', 'x = a + b;\n// c'],
+			['const x = (a.b\n// c\n);', 'const x = a.b;\n// c'],
+			['const x = (a || b\n// c\n);', 'const x = a || b;\n// c'],
+			['const x = a * (b + (c\n// c\n));', 'const x = a * (b + c);\n// c'],
+			['const x = a ? b : (c\n// c\n);', 'const x = a ? b : c;\n// c'],
+			['const x = a || (b\n/* c */\n/* d */);', 'const x = a || b;\n/* c */\n/* d */'],
+			['const x = a || (b\n/* c */ /* d */);', 'const x = a || b;\n/* c */ /* d */'],
+			['const x = a || (b\n\n/* c */);', 'const x = a || b;\n\n/* c */'],
+			['const x = a || (b\n/* c */)\nfoo()', 'const x = a || b;\n/* c */\nfoo();'],
+			['const x = a || (b\n// c\n);\n\nfoo();', 'const x = a || b;\n// c\n\nfoo();'],
+			['const f = () => a || (b\n// c\n);', 'const f = () => a || b;\n// c'],
+			['export default a || (b\n// c\n);', 'export default a || b;\n// c'],
+			['a || (b\n// c\n);', 'a || b;\n// c'],
+			['if (a) x = a || (b\n// c\n);', 'if (a) x = a || b;\n// c'],
+			['x = (a, b\n/* c */);', 'x = (a, b);\n/* c */'],
+			['const x = (a, b\n/* c */);', 'const x = (a, b);\n/* c */'],
+			['const x = (a, b /* c */\n// d\n);', 'const x = (a, b /* c */);\n// d'],
+			['const f = () => a ? b : (c\n// c\n);', 'const f = () => (a ? b : c);\n// c'],
+			[
+				'const f = () => a ? b : (c /* c */\n// d\n);',
+				'const f = () => (a ? b : c); /* c */\n// d',
+			],
+			// With the comments before it on the operand's line
+			['const x = a || (b /* c */\n/* d */);', 'const x = a || b; /* c */\n/* d */'],
+			['const x = a || (b // c\n// d\n);', 'const x = a || b; // c\n// d'],
+			['const x = a || (b // c\n/* d */);', 'const x = a || b; // c\n/* d */'],
+			// A `return` or `throw` argument breaks in its parentheses
+			[
+				'function f() {\n  return a || (b\n  /* c */);\n}',
+				'function f() {\n  return (\n    a || b\n    /* c */\n  );\n}',
+			],
+			[
+				'function f() {\n  throw a || (b\n  // c\n  );\n}',
+				'function f() {\n  throw (\n    a || b\n    // c\n  );\n}',
+			],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['const x = (b\n/* c */);', 'const x = b;\n/* c */'],
+			['const x = (foo(a, b)\n/* c */);', 'const x = foo(a, b);\n/* c */'],
+			['function f() {\n  return (b\n  // c\n  );\n}', 'function f() {\n  return b;\n  // c\n}'],
+			['(a, b\n// c\n);', '(a, b);\n// c'],
+			['const f = () => (b\n// c\n);', 'const f = () => b;\n// c'],
+			['const f = () => (a ? b : c\n// c\n);', 'const f = () => (a ? b : c);\n// c'],
+			['const x = a || b\n// c\n;', 'const x = a || b;\n// c'],
+			// In parentheses that print
+			['x = !(a\n// c\n);', 'x = !(\n  a\n  // c\n);'],
+			['x = f(a\n// c\n);', 'x = f(\n  a,\n  // c\n);'],
+			// In the parentheses an element prints its comments in
+			['const x = (<div />\n// c\n);', 'const x = (\n  <div />\n  // c\n);'],
+			['x = a && (<Note />\n// c\n);', 'x = a && (\n  <Note />\n  // c\n);'],
+			[
+				'const x = a ? <div /> : (c\n// c\n);',
+				'const x = a ? (\n  <div />\n) : (\n  c\n  // c\n);',
+			],
+		])('formats %j like Prettier, as before', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// Prettier prints a line comment in the parentheses around a
+		// declarator's value after the `,` that follows them, and breaks the
+		// value with it, which its next pass joins. The formatter prints the
+		// fixpoint (#677).
+		it.each([
+			['const x = (a, b // d\n), y = 1;', 'const x = (a, b), // d\n  y = 1;'],
+			['const x = (a, b /* c */ // d\n), y = 1;', 'const x = (a, b /* c */), // d\n  y = 1;'],
+			['const x = (a.b // d\n), y = 1;', 'const x = a.b, // d\n  y = 1;'],
+			['const x = (a || b // d\n), y = 1;', 'const x = a || b, // d\n  y = 1;'],
+			['const x = a || (b // d\n), y = 1;', 'const x = a || b, // d\n  y = 1;'],
+			['const x = a ? b : (c // d\n), y = 1;', 'const x = a ? b : c, // d\n  y = 1;'],
+			['const f = () => a ? b : (c // d\n), y = 1;', 'const f = () => (a ? b : c), // d\n  y = 1;'],
+			['const x = (a, b // d\n), y = 1, z = 2;', 'const x = (a, b), // d\n  y = 1,\n  z = 2;'],
+			['const x = 1, y = (a, b // d\n), z = 2;', 'const x = 1,\n  y = (a, b), // d\n  z = 2;'],
+			['const x = (a, b // d\n), y = (c, d // e\n);', 'const x = (a, b), // d\n  y = (c, d); // e'],
+			['let x = (a, b // d\n), y;', 'let x = (a, b), // d\n  y;'],
+			[
+				'for (let x = (a, b // d\n), y = 1; ;) {}',
+				'for (\n  let x = (a, b), // d\n    y = 1;\n  ;\n) {}',
+			],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['const x = (a, b /* c */), y = 1;', 'const x = (a, b /* c */),\n  y = 1;'],
+			['const x = a || (b /* c */), y = 1;', 'const x = a || b /* c */,\n  y = 1;'],
+			['const x = (b // d\n), y = 1;', 'const x = b, // d\n  y = 1;'],
+			['const x = (a = b // d\n), y = 1;', 'const x = (a = b), // d\n  y = 1;'],
+			['const x = (a, b) // d\n, y = 1;', 'const x = (a, b), // d\n  y = 1;'],
+			[
+				'const x = () => (a, b // d\n), y = 1;',
+				'const x = () => (\n    a,\n    b // d\n  ),\n  y = 1;',
+			],
+			['let x = f(1 // c\n), y = 2;', 'let x = f(\n    1, // c\n  ),\n  y = 2;'],
+		])('formats %j like Prettier, as before', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
 		// Like Prettier, which measures from the end of the statement, the
 		// blank line after a statement stays when the comment that moves after
 		// its `;` was written on a line before it. It used to measure from the
