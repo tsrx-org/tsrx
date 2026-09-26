@@ -4442,8 +4442,9 @@ foo(
 			`function App() @{\n  <div>\n    @switch (x) {\n      ${cases}\n    }\n  </div>\n}`;
 
 		// Like the comments in `case 1: { … }`, which Prettier prints in the
-		// block, or, from before the `{`, as in the second pass of its
-		// non-idempotent output, before the `{` or the `:`
+		// block, before the `{`, or before the `:`. Where Prettier needs more
+		// than one pass, one pass prints a stable form: an own-line block comment
+		// before the `{` stays before it.
 		it.each([
 			['@case 1: { /* a */ }', '@case 1: {\n        /* a */\n      }'],
 			['@case 1: { // a\n      }', '@case 1: {\n        // a\n      }'],
