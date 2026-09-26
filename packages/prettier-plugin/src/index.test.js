@@ -4447,8 +4447,14 @@ foo(
 		it.each([
 			['@case 1: { /* a */ }', '@case 1: {\n        /* a */\n      }'],
 			['@case 1: { // a\n      }', '@case 1: {\n        // a\n      }'],
-			['@case 1: {\n        // a\n\n        // b\n      }', '@case 1: {\n        // a\n        // b\n      }'],
-			['@default /* a */: {\n        <span />\n      }', '@default: /* a */ {\n        <span />\n      }'],
+			[
+				'@case 1: {\n        // a\n\n        // b\n      }',
+				'@case 1: {\n        // a\n        // b\n      }',
+			],
+			[
+				'@default /* a */: {\n        <span />\n      }',
+				'@default: /* a */ {\n        <span />\n      }',
+			],
 			[
 				'@case 1: /* a */\n      {\n        <span />\n      }',
 				'@case 1 /* a */: {\n        <span />\n      }',
@@ -4463,7 +4469,10 @@ foo(
 			],
 			['@case 1: // a\n      {\n      }', '@case 1: {\n        // a\n      }'],
 			['@default: /* a */ // b\n      {\n      }', '@default: /* a */ {\n        // b\n      }'],
-			['@case 1: { // a\n        <span />\n      }', '@case 1: {\n        // a\n        <span />\n      }'],
+			[
+				'@case 1: { // a\n        <span />\n      }',
+				'@case 1: {\n        // a\n        <span />\n      }',
+			],
 		])('places the comment in %j where Prettier places it in a case', async (input, expected) => {
 			expect(await format(inSwitch(input))).toBeWithNewline(inSwitch(expected));
 		});

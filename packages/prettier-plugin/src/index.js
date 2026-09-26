@@ -11023,7 +11023,10 @@ function printJSXSwitchCase(node, path, options, print, index) {
 	/** @type {AST.Comment[]} */
 	const bodyComments = [];
 	for (const comment of /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? []) {
-		if (comment.type === 'Block' && /** @type {AST.NodeWithLocation} */ (comment).end <= bodyStart) {
+		if (
+			comment.type === 'Block' &&
+			/** @type {AST.NodeWithLocation} */ (comment).end <= bodyStart
+		) {
 			headerComments.push(' ', printComment(comment, text));
 		} else {
 			bodyComments.push(comment);

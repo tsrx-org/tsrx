@@ -6329,10 +6329,7 @@ describe('comments in switch cases', () => {
 	it('keeps the comments of a template @switch with no cases as its inner comments', () => {
 		const switchExpression = templateSwitch('\t\t@switch (a) {\n\t\t\t// a\n\t\t\t/* b */\n\t\t}');
 
-		expect(switchExpression.innerComments?.map((comment) => comment.value)).toEqual([
-			' a',
-			' b ',
-		]);
+		expect(switchExpression.innerComments?.map((comment) => comment.value)).toEqual([' a', ' b ']);
 	});
 
 	it('keeps the comments before the { of a template case and in its empty body on the case', () => {
