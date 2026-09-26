@@ -17581,8 +17581,14 @@ for (
 		// heading breaks. They used to stay at the end of the `extends` line,
 		// and a second line comment could join the first (`// d // c`) (#742).
 		it.each([
-			['class A extends B<T> // c\nimplements C {}', 'class A\n  extends B<T>\n  // c\n  implements C {}'],
-			['class A extends B // c\n<T> implements C {}', 'class A\n  extends B<T>\n  // c\n  implements C {}'],
+			[
+				'class A extends B<T> // c\nimplements C {}',
+				'class A\n  extends B<T>\n  // c\n  implements C {}',
+			],
+			[
+				'class A extends B // c\n<T> implements C {}',
+				'class A\n  extends B<T>\n  // c\n  implements C {}',
+			],
 			[
 				'class A extends B<T> // c\n// d\nimplements C {}',
 				'class A\n  extends B<T>\n  // c\n  // d\n  implements C {}',
