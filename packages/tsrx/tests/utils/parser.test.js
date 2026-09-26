@@ -10090,6 +10090,193 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				},
 			],
 		},
+		// A rest parameter's default (#726, TS1048, at the parameter's name).
+		// ESTree's rest element has no place for it, and typescript-estree leaves
+		// it out of the tree, as this does.
+		{
+			source: 'function f(...a = []) {}',
+			errors: [['A rest parameter cannot have an initializer.', 'a =']],
+			throws: 'A rest parameter cannot have an initializer. (1:14)',
+			valid: 'function f(...a) {}',
+			pick: first_parameter,
+		},
+		{
+			source: 'function f(...[a, b] = []) {}',
+			errors: [['A rest parameter cannot have an initializer.', '[a, b]']],
+			throws: 'A rest parameter cannot have an initializer. (1:14)',
+			valid: 'function f(...[a, b]) {}',
+			pick: first_parameter,
+		},
+		{
+			source: 'const g = (...a: number[] = []) => a;',
+			errors: [['A rest parameter cannot have an initializer.', 'a:']],
+			throws: 'A rest parameter cannot have an initializer. (1:14)',
+			valid: 'const g = (...a: number[]) => a;',
+			pick: arrow_parameters,
+		},
+		{
+			source: `const h = async (
+	x,
+	...a = [1]
+) => a;`,
+			errors: [['A rest parameter cannot have an initializer.', 'a = [1]']],
+			throws: 'A rest parameter cannot have an initializer. (3:4)',
+			valid: `const h = async (
+	x,
+	...a
+) => a;`,
+			pick: arrow_parameters,
+		},
+		{
+			source: 'const i = async (...a: number[] = []) => a;',
+			errors: [['A rest parameter cannot have an initializer.', 'a:']],
+			throws: 'A rest parameter cannot have an initializer. (1:20)',
+			valid: 'const i = async (...a: number[]) => a;',
+			pick: arrow_parameters,
+		},
+		{
+			source: 'const k = <T,>(...a: T[] = []) => a;',
+			errors: [['A rest parameter cannot have an initializer.', 'a:']],
+			throws: 'A rest parameter cannot have an initializer. (1:18)',
+			valid: 'const k = <T,>(...a: T[]) => a;',
+			pick: arrow_parameters,
+		},
+		{
+			source: 'const l = async <T,>(...a = []) => a;',
+			errors: [['A rest parameter cannot have an initializer.', 'a =']],
+			throws: 'A rest parameter cannot have an initializer. (1:24)',
+			valid: 'const l = async <T,>(...a) => a;',
+			pick: arrow_parameters,
+		},
+		{
+			source: `export function App() @{
+	const m = (...a = []) => a;
+	<div>{m.length}</div>
+}`,
+			errors: [['A rest parameter cannot have an initializer.', 'a =']],
+			throws: 'A rest parameter cannot have an initializer. (2:15)',
+		},
+		{
+			// TypeScript reports TS2371 too, at the parameter.
+			source: 'type H = (...a = []) => void;',
+			errors: [
+				['A rest parameter cannot have an initializer.', 'a ='],
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'...a = []',
+				],
+			],
+			throws: 'A rest parameter cannot have an initializer. (1:13)',
+			valid: 'type H = (...a) => void;',
+			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
+		},
+		{
+			source: `interface I {
+	m(...a = []): void;
+	new (...b: string[] = []): I;
+}`,
+			errors: [
+				['A rest parameter cannot have an initializer.', 'a ='],
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'...a = []',
+				],
+				['A rest parameter cannot have an initializer.', 'b:'],
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'...b: string[] = []',
+				],
+			],
+			throws: 'A rest parameter cannot have an initializer. (2:6)',
+			valid: `interface I {
+	m(...a): void;
+	new (...b: string[]): I;
+}`,
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'TSInterfaceDeclaration').body.body,
+		},
+		{
+			source: 'class A { constructor(public ...a = []) {} }',
+			errors: [
+				['A parameter property cannot be declared using a rest parameter.', 'public'],
+				['A rest parameter cannot have an initializer.', 'a ='],
+			],
+			// acorn-typescript expects a name after the modifier.
+			throws: 'Unexpected token (1:29)',
+			valid: 'class A { constructor(...a) {} }',
+			pick: constructor_parameters,
+		},
+		// A parameter after an arrow function's rest parameter (#727, TS1014),
+		// recorded at the comma as for other functions' parameters.
+		{
+			source: 'const f = (...a, b) => [a, b];',
+			errors: [['Comma is not permitted after the rest element', ', b']],
+			throws: 'Comma is not permitted after the rest element (1:15)',
+			pick: arrow_parameters,
+			match: [
+				{ type: 'RestElement', argument: { name: 'a' } },
+				{ type: 'Identifier', name: 'b' },
+			],
+		},
+		{
+			source: 'const g = (...a, ...b, c,) => c;',
+			errors: [
+				['Comma is not permitted after the rest element', ', ...b'],
+				['Comma is not permitted after the rest element', ', c'],
+			],
+			throws: 'Comma is not permitted after the rest element (1:15)',
+			pick: arrow_parameters,
+			match: [
+				{ type: 'RestElement', argument: { name: 'a' } },
+				{ type: 'RestElement', argument: { name: 'b' } },
+				{ type: 'Identifier', name: 'c' },
+			],
+		},
+		{
+			source: 'const h = (...a, b = 1, { c }): void => c;',
+			errors: [['Comma is not permitted after the rest element', ', b']],
+			throws: 'Comma is not permitted after the rest element (1:15)',
+			pick: arrow_parameters,
+			match: [
+				{ type: 'RestElement' },
+				{ type: 'AssignmentPattern', left: { name: 'b' } },
+				{ type: 'ObjectPattern' },
+			],
+		},
+		{
+			source: `export function App() @{
+	const m = (
+		...a: string[],
+		b: string
+	) => b;
+	<div>{m()}</div>
+}`,
+			errors: [['Comma is not permitted after the rest element', ',']],
+			throws: 'Comma is not permitted after the rest element (3:16)',
+		},
+		{
+			// After a rest parameter with modifiers, async too.
+			source: 'const i = (x, public ...a, b) => b;',
+			errors: [
+				['A parameter property cannot be declared using a rest parameter.', 'public'],
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				['Comma is not permitted after the rest element', ', b'],
+			],
+			throws: "The keyword 'public' is reserved (1:14)",
+			pick: arrow_parameters,
+			match: [{ name: 'x' }, { type: 'RestElement' }, { name: 'b' }],
+		},
+		{
+			source: 'const j = async (x, public ...a, b) => b;',
+			errors: [
+				['A parameter property cannot be declared using a rest parameter.', 'public'],
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				['Comma is not permitted after the rest element', ', b'],
+			],
+			throws: "The keyword 'public' is reserved (1:20)",
+			pick: arrow_parameters,
+			match: [{ name: 'x' }, { type: 'RestElement' }, { name: 'b' }],
+		},
 	];
 
 	/** @type {Array<ParseOptions>} */
@@ -10246,6 +10433,69 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				})),
 			),
 		);
+	});
+
+	it("still throws a rest parameter's default, or a parameter after it, where no arrow function follows", async () => {
+		// Only a parameter can have these (#726, #727). A rest element without an
+		// arrow function fails at its `...`, as before.
+		/** @type {Array<[source: string, message: string, at: string]>} */
+		const sources = [
+			['const a = (...b, c);', 'Comma is not permitted after the rest element', ', c'],
+			[
+				`const a = (...b, c)
+=> 1;`,
+				'Comma is not permitted after the rest element',
+				', c',
+			],
+			['const a = (...b, c()) => 1;', 'Comma is not permitted after the rest element', ', c'],
+			['const a = x || (...b, c) => b;', 'Comma is not permitted after the rest element', ', c'],
+			['const a = (...b = []);', 'Unexpected token', '...'],
+			['const a = x || (...b = []) => b;', 'Unexpected token', '= []'],
+			['const a = async(...b: T = []);', 'Did not expect a type annotation here.', ': T'],
+		];
+		const modes = [undefined, ...collect_modes];
+		const inputs = sources.flatMap(([source]) => modes.map((options) => ({ source, options })));
+
+		const outcomes = await parse_in_worker(inputs);
+
+		expect(outcomes).toEqual(
+			sources.flatMap(([source, message, at]) =>
+				modes.map(() => ({
+					ok: false,
+					message: `${message} (1:${source.indexOf(at)})`,
+					pos: source.indexOf(at),
+				})),
+			),
+		);
+	});
+
+	it('still reads an assignment as the argument of a spread in a call of `async`', async () => {
+		// `async (...a = []) => a` has a rest parameter with a default (#726), but
+		// without the `=>` it's a call, whose argument is the assignment.
+		const outcomes = await parse_in_worker_with_ast(
+			['const a = async(...b = []);', 'const a = async(...(b = [])) => b;'].flatMap((source) =>
+				[undefined, ...collect_modes].map((options) => ({ source, options })),
+			),
+		);
+
+		expect(outcomes.slice(0, 3).map((outcome) => outcome.ok && outcome.errors)).toEqual([
+			undefined,
+			[],
+			[],
+		]);
+		for (const outcome of outcomes.slice(0, 3)) {
+			if (!outcome.ok) throw new Error(outcome.message);
+			expect(declarator_init(outcome.ast)).toMatchObject({
+				type: 'CallExpression',
+				arguments: [{ type: 'SpreadElement', argument: { type: 'AssignmentExpression' } }],
+			});
+		}
+		// A parenthesized pattern isn't a parameter.
+		expect(outcomes.slice(3).map((outcome) => !outcome.ok && outcome.message)).toEqual([
+			'Parenthesized pattern (1:19)',
+			'Parenthesized pattern (1:19)',
+			'Parenthesized pattern (1:19)',
+		]);
 	});
 
 	it('records no error where TypeScript reports none', async () => {
