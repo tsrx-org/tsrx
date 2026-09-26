@@ -501,9 +501,10 @@ const hoistedTypeComments = new WeakSet();
  * {@link hoistLeftmostTypeComments}) to the node Prettier's next pass gives
  * them, when the first is a line comment that prints after code on its line.
  * That's a member after a union's `|` (`X | ((// c` / `A) & B)`), an
- * intersection's member in parentheses (`X & ((// c` / `A) & B)`), where the
- * comment was on the line of a `(`, a type parameter's constraint or default,
- * and a conditional type's `extends` type. The comment then ends the line
+ * intersection's member in parentheses (`X & ((// c` / `A) & B)`) or after an
+ * object type (`{} & (// c` / `A)[]`), where the comment was on the line of a
+ * `(`, a type parameter's constraint or default, and a conditional type's
+ * `extends` type. The comment then ends the line
  * after the node before, which it trails: the member before, or that
  * member's last member when it's a union (like the parser's
  * `handleLastUnionElementInExpression`), where the comments after it, on
@@ -554,9 +555,13 @@ function placeHoistedTypeComments(node, options) {
 		const isUnion = node.type === 'TSUnionType';
 		node.types.forEach((type, index) => {
 			const before = node.types[index - 1];
-			// An intersection's member that prints no parentheses moves to its
-			// own line after a comment on its own line
-			if (before && (isUnion || nodeNeedsParens(type, 'types', node, null))) {
+			// An intersection's member stays on the line of its `&` in its
+			// parentheses or after an object type. Otherwise it moves to its own
+			// line after the comment, which Prettier's next pass keeps.
+			if (
+				before &&
+				(isUnion || nodeNeedsParens(type, 'types', node, null) || isObjectType(before))
+			) {
 				moveHoistedComments(
 					type,
 					isUnion,

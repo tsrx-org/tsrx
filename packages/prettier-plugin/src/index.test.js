@@ -13565,6 +13565,9 @@ type Y = A; // trailing`);
 			['type S = ((// ref\nFoo<T>) & X) | Y;', 'type S =\n  | // ref\n    (Foo<T> & X)\n  | Y;'],
 			['type S = A | ((// ref\nFoo<T>) & X);', 'type S =\n  | A // ref\n  | (Foo<T> & X);'],
 			['type S = X & ((// c\nA) & B);', 'type S = X & // c\n  (A & B);'],
+			['type S = X & (// c\nA)[];', 'type S = X &\n  // c\n  A[];'],
+			['type S = { a: 1 } & (// c\nA)[];', 'type S = { a: 1 } & A[]; // c'],
+			['type S = { a: 1 } & ((// c\nA) & B);', 'type S = { a: 1 } & (A & B); // c'],
 			['type S = A extends (// c\nB)[] ? C : D;', 'type S = A extends B[] // c\n  ? C\n  : D;'],
 			[
 				'type S = <T extends (// c\nA) & B>() => T;',
