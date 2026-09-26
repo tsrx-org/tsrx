@@ -33,4 +33,6 @@ export const DIAGNOSTIC_CODES = {
 	CSS_GLOBAL_PLACEMENT: 'tsrx-css-global-placement',
 	/** An `@import` rule in a `<style>` block, whose rules would not be scoped. */
 	CSS_IMPORT: 'tsrx-css-import',
+	/** A `</script` in a `<script>` body that isn't its closing tag, where HTML would end the script. */
+	SCRIPT_END_TAG_IN_BODY: 'tsrx-script-end-tag-in-body',
 };

@@ -3789,6 +3789,53 @@ function create_helper_props_type_literal_with_typeof_flags(bindings, aliases, u
 }
 
 /**
+ * Whether a node is a raw-text `<script>` element: its body is `content`, as
+ * written, and it has no children.
+ *
+ * @param {AST.Node | null | undefined} node
+ * @returns {node is AST.TSRXJSXElement & { content: string }}
+ */
+export function is_raw_script_element(node) {
+	return (
+		node?.type === 'JSXElement' &&
+		node.openingElement?.name?.type === 'JSXIdentifier' &&
+		node.openingElement.name.name === 'script' &&
+		typeof (/** @type {AST.TSRXJSXElement} */ (node).content) === 'string'
+	);
+}
+
+/**
+ * The output of a raw-text `<script>` element's body, in the form the target
+ * renders exactly, on the client and from server HTML:
+ *
+ * - `'children'`: one string child, `<script>{"…"}</script>`.
+ * - `'dangerouslySetInnerHTML'`: `<script dangerouslySetInnerHTML={{ __html: "…" }} />`.
+ * - `'innerHTML'`: `<script innerHTML={"…"} />`.
+ * - `'v-html'`: `<script v-html={"…"} />`.
+ *
+ * JSX text can't hold the body: a JSX compiler joins its lines and decodes its
+ * character references. `null` for any other element, and for a body of only
+ * whitespace, which renders as an empty script, as the formatter prints it.
+ *
+ * @param {AST.TSRXJSXElement} node
+ * @param {NonNullable<JsxPlatform['jsx']['scriptBody']>} [form]
+ * @returns {{ attributes: ESTreeJSX.JSXAttribute[], children: ESTreeJSX.JSXExpressionContainer[], selfClosing: boolean } | null}
+ */
+export function create_script_body(node, form = 'children') {
+	if (!is_raw_script_element(node) || node.content.trim() === '') return null;
+	const body = b.literal(node.content);
+	if (form === 'children') {
+		return { attributes: [], children: [b.jsx_expression_container(body)], selfClosing: false };
+	}
+	const value = form === 'dangerouslySetInnerHTML' ? b.object([b.init('__html', body)]) : body;
+	return {
+		attributes: [b.jsx_attribute(b.jsx_id(form), b.jsx_expression_container(value))],
+		children: [],
+		selfClosing: true,
+	};
+}
+
+/**
  * @param {AST.TSRXJSXElement | AST.TSRXJSXFragment | AST.JSXStyleElement} node
  * @param {TransformContext} transform_context
  * @param {AST.Node[]} [raw_children]
@@ -3818,27 +3865,33 @@ function to_jsx_element(
 		transform_context,
 		/** @type {AST.TSRXJSXElement} */ (node),
 	);
-	let walked_children = node_children(node);
-	// A raw-text `<script>` body (mirrored by the parser as a JSXText child of
-	// `node.content`) must not appear in the type-only editor TSX: raw JS/TS
-	// (`{`, `<`) doesn't lex as JSX text there and would surface bogus syntactic
-	// diagnostics. The embedded TS document built from `scriptMappings` covers
-	// the body in the editor; runtime output keeps the text child.
-	if (transform_context.typeOnly && typeof node.content === 'string') {
-		walked_children = [];
-		raw_children = [];
-	}
+	const walked_children = node_children(node);
 	let selfClosing = !!source_opening.selfClosing;
 	let children;
-	const child_transform = transform_context.platform.hooks?.transformElementChildren?.(
-		/** @type {AST.TSRXJSXElement} */ (node),
-		walked_children,
-		raw_children,
-		attributes,
-		transform_context,
-	);
+	// A raw-text `<script>` body is `node.content`, printed in the form the
+	// target renders exactly. The type-only editor TSX leaves it out: the
+	// embedded TS document built from `scriptMappings` covers it there.
+	const script_body = transform_context.typeOnly
+		? null
+		: create_script_body(
+				/** @type {AST.TSRXJSXElement} */ (node),
+				transform_context.platform.jsx?.scriptBody,
+			);
+	const child_transform = script_body
+		? null
+		: transform_context.platform.hooks?.transformElementChildren?.(
+				/** @type {AST.TSRXJSXElement} */ (node),
+				walked_children,
+				raw_children,
+				attributes,
+				transform_context,
+			);
 
-	if (child_transform) {
+	if (script_body) {
+		attributes.push(...script_body.attributes);
+		children = script_body.children;
+		selfClosing = script_body.selfClosing;
+	} else if (child_transform) {
 		children = child_transform.children;
 		if (typeof child_transform.selfClosing === 'boolean') {
 			selfClosing = child_transform.selfClosing;

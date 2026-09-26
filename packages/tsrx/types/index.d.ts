@@ -464,12 +464,11 @@ declare module 'estree' {
 		/** Loose-mode recovery: the element was never closed. */
 		unclosed?: boolean;
 		/**
-		 * Raw-text `<script>` body captured verbatim by the parser's
-		 * `#parseScriptElement` (analogous to {@link JSXStyleElement.css}). Present only
-		 * on `<script>` elements that have a body. The parser also mirrors the body as
-		 * a single `JSXText` child so generic element consumers emit it; consumers that
-		 * handle `content` directly (target transforms, the Prettier plugin, the
-		 * type-only editor output) skip the children instead of emitting both.
+		 * Raw-text `<script>` body, everything up to the closing tag, as written
+		 * (analogous to {@link JSXStyleElement.css}): no comments, no character
+		 * references, no `{…}` expressions. Present on every `<script>` element
+		 * that has a closing tag (an empty string for `<script></script>`), and
+		 * such an element has no children: `content` is its only body.
 		 */
 		content?: string;
 		/**

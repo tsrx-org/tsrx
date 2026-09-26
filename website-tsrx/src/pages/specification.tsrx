@@ -133,6 +133,34 @@ const STYLE_GRAMMAR = [
 	'  StyleApplyTarget . IdentifierName',
 ].join('\n');
 
+const SCRIPT_GRAMMAR = [
+	'JSXElement :',
+	'  <script JSXAttributesopt> ScriptSourceopt ScriptEndTag',
+	'  <script JSXAttributesopt />',
+	'',
+	'ScriptEndTag :',
+	'  </script HTMLWhitespaceopt >',
+	'',
+	'ScriptSource :',
+	'  any source text that does not contain </script, in any letter case',
+].join('\n');
+
+const SCRIPT_EXAMPLE = [
+	'export function Page() @{',
+	'  <>',
+	'    <script type="importmap">',
+	'      { "imports": { "app": "/app.js" } }',
+	'    </script>',
+	'    <script>',
+	'      // The body is text: {code} is not an expression container,',
+	'      // and a < or an &amp; stays as written.',
+	'      if (a < b) log("&amp;");',
+	'    </script>',
+	'    <script type="module" src="/app.js" />',
+	'  </>',
+	'}',
+].join('\n');
+
 const STYLE_SCOPE_EXAMPLE = [
 	'export function Panel() @{',
 	'  <>',
@@ -319,6 +347,7 @@ const AST_NODE_MAPPING = [
 	'<style> CSSSource </style> -> JSXStyleElement',
 	'<style JSXAttributesopt /> -> JSXStyleElement with a self-closing opening element and no StyleSheet child',
 	'<style> { AssignmentExpression } </style> -> JSXElement (an ordinary element whose children are expression containers)',
+	'<script> ScriptSourceopt </script> -> JSXElement with content: ScriptSource ("" when empty) and no children',
 	'@if -> JSXIfExpression',
 	'@for -> JSXForExpression',
 	'@switch -> JSXSwitchExpression',
@@ -348,6 +377,8 @@ const TEMPLATE_AST_SHAPE = [
 	'  openingElement: JSXOpeningElement;',
 	'  closingElement: JSXClosingElement | null;',
 	'  children: TemplateChild[];',
+	'  // A <script> with a closing tag: its body as written; children is empty.',
+	'  content?: string;',
 	'  metadata?: { native_tsrx?: true };',
 	'}',
 	'',
@@ -508,6 +539,7 @@ const NAV_ITEMS = [
 	{ id: 'templates', label: 'Template Elements' },
 	{ id: 'expression-values', label: 'Expression Values' },
 	{ id: 'style', label: 'Style Elements' },
+	{ id: 'script', label: 'Script Elements' },
 	{ id: 'server-profile', label: 'Server Extensions' },
 	{ id: 'early-errors', label: 'Early Errors' },
 	{ id: 'host-defined', label: 'Host-defined Semantics' },
@@ -857,9 +889,9 @@ export function SpecificationPage() @{
 								</li>
 							</ul>
 							<p class="section-body">
-								The raw style element is also part of this syntax. A style body is captured as raw
-								text for host-defined stylesheet processing rather than being parsed as nested
-								template children.
+								The raw style and script elements are also part of this syntax. A style body is
+								captured as raw text for host-defined stylesheet processing, and a script body as
+								raw text (4.6), rather than being parsed as nested template children.
 							</p>
 						</section>
 
@@ -1144,8 +1176,55 @@ export function SpecificationPage() @{
 							</ul>
 						</section>
 
+						<section class="doc-section" id="script">
+							<h2 class="section-heading">4.6 Script Elements</h2>
+							<p class="section-body">
+								A<code class="inline-code">{'<script>'}</code>
+								element with a closing tag is a raw-text element, like a style element, in a
+								template and in plain TSX alike. Its body is every character up to its end tag, kept
+								as written. None of the rules of JSX text apply to it: it has no comments, no
+								character references, and no expression containers, and its line breaks and
+								whitespace stay. So
+								<code class="inline-code">{'<script>{code}</script>'}</code>
+								is a script whose text is
+								<code class="inline-code">{'{code}'}</code>, as it would be in an HTML file, and
+								<code class="inline-code">&amp;amp;</code>
+								in a body is those five characters.
+							</p>
+							<pre class="code-block plain">
+								<code>{SCRIPT_GRAMMAR}</code>
+							</pre>
+							<p class="section-body">
+								A body ends where HTML ends it: at
+								<code class="inline-code">{'</script'}</code>, optional HTML whitespace, and
+								<code class="inline-code">{'>'}</code>. Any other
+								<code class="inline-code">{'</script'}</code>
+								in the body, in any letter case, would end the script in a browser, and is an early
+								error (5.2). Write it as
+								<code class="inline-code">{'<\\/script'}</code>, which is the same string, regular
+								expression, or JSON text.
+							</p>
+							<p class="section-body">
+								A self-closing script element has no body and is an ordinary element. Its code comes
+								from its attributes, such as
+								<code class="inline-code">src</code>, or from the host's property for a dynamic
+								body, such as
+								<code class="inline-code">{'dangerouslySetInnerHTML={{ __html: code }}'}</code>
+								or<code class="inline-code">{'innerHTML={code}'}</code>.
+							</p>
+							<pre class="code-block plain">
+								<code>{SCRIPT_EXAMPLE}</code>
+							</pre>
+							<p class="section-body">
+								A host outputs a body so that the rendered script's text is the body as written, on
+								the client and in server HTML; a body of only whitespace may render as an empty
+								script. Whether the script runs, on a client render and from server HTML, is the
+								host's decision (6).
+							</p>
+						</section>
+
 						<section class="doc-section" id="server-profile">
-							<h2 class="section-heading">4.6 Host-defined Server Extensions</h2>
+							<h2 class="section-heading">4.7 Host-defined Server Extensions</h2>
 							<p class="section-body">
 								Submodule declarations are documented in the first edition as a generic extension
 								surface aligned with the TC39 module declarations proposal. Ripple and Octane both
@@ -1317,6 +1396,16 @@ export function SpecificationPage() @{
 							<pre class="code-block plain">
 								<code>{STYLE_STATIC_CONSTRAINTS}</code>
 							</pre>
+							<h3 class="appendix-heading">5.2 Script elements</h3>
+							<ul class="spec-list">
+								<li>
+									A script body containing
+									<code class="inline-code">{'</script'}</code>, in any letter case, anywhere but
+									its end tag (4.6) is
+									<code class="inline-code">tsrx-script-end-tag-in-body</code>: a browser would end
+									the script there.
+								</li>
+							</ul>
 						</section>
 
 						<section class="doc-section" id="host-defined">
@@ -1350,6 +1439,11 @@ export function SpecificationPage() @{
 									constructors at runtime.
 								</li>
 								<li>
+									How a script body is output, provided that the rendered script's text is the body
+									as written (4.6), whether a script runs on a client render and from server HTML,
+									and which property sets a dynamic body.
+								</li>
+								<li>
 									How submodule declarations and their associated import forms are compiled or
 									executed by a host profile that enables them.
 								</li>
@@ -1364,7 +1458,7 @@ export function SpecificationPage() @{
 								JSXAttribute, and JSXSpreadAttribute. TSRX-specific additions are limited to
 								JSXCodeBlock, JSXStyleElement, JSXIfExpression, JSXForExpression,
 								JSXSwitchExpression, JSXTryExpression, TSModuleDeclaration, and TSModuleBlock. The
-								grammar in sections 4.1 through 4.6 is normative; the node shapes in this appendix
+								grammar in sections 4.1 through 4.7 is normative; the node shapes in this appendix
 								are informative and describe the parser contract exposed to tooling.
 							</p>
 							<h3 class="appendix-heading">A.1 Grammar-to-node correspondence</h3>
@@ -1487,6 +1581,12 @@ export function SpecificationPage() @{
 									tag whose first non-whitespace child character is
 									<code class="inline-code">{'{'}</code>
 									is an ordinary JSXElement named style with expression-container children.
+								</li>
+								<li>
+									A<code class="inline-code">{'<script>'}</code>
+									tag with a closing tag is a JSXElement whose content field holds its body as
+									written (4.6), an empty string for an empty body, and whose children array is
+									empty. A self-closing script tag has no content field.
 								</li>
 							</ul>
 							<h3 class="appendix-heading">A.4 Expression value nodes</h3>

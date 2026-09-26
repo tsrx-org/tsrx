@@ -48,6 +48,16 @@ resolve statically within the module. It does not infer arbitrary Promise return
 inter-module values, or object members that may have been overwritten by unknown
 spreads or computed properties.
 
+## Scripts
+
+A `<script>` body is raw text, written into the output as it is in the source:
+comments, `<`, `&amp;`, and line breaks stay, and `{code}` is text, not an
+expression. Both modes output it as `dangerouslySetInnerHTML`, because Hono's
+server renderer escapes a string child like text. Server HTML runs the script when
+the browser reads the page. The DOM renderer runs a script when it inserts it, as
+it does for the same TSX. For a body computed at runtime, write
+`<script dangerouslySetInnerHTML={{ __html: code }} />`.
+
 ## Build integrations
 
 Use [@tsrx/vite-plugin-hono](../vite-plugin-hono/README.md) or

@@ -5,6 +5,7 @@ import { mergeRefs } from '@tsrx/preact/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
 import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtime/jsx-text-whitespace';
+import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
 import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
@@ -586,6 +587,7 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
+runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
 runGeneratorSpreadRefRuntimeTests();
