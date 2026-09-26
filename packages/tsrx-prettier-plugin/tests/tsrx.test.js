@@ -898,6 +898,20 @@ describe('parse errors', () => {
 				'export abstract const x = 1;',
 				"'abstract' modifier can only appear on a class, method, or property declaration. (1:8)",
 			],
+			// #697: `abstract` before an interface was kept without an error, and
+			// before a function outside an export failed to parse.
+			[
+				'abstract interface I {}',
+				"'abstract' modifier can only appear on a class, method, or property declaration. (1:1)",
+			],
+			[
+				'export abstract interface I {}',
+				"'abstract' modifier can only appear on a class, method, or property declaration. (1:8)",
+			],
+			[
+				'abstract function f() {}',
+				"'abstract' modifier can only appear on a class, method, or property declaration. (1:1)",
+			],
 		]) {
 			const error = await format(source).catch((/** @type {any} */ e) => e);
 			expect(error, source).toBeInstanceOf(SyntaxError);
@@ -915,6 +929,40 @@ describe('`abstract` before a line break after `export default`', () => {
 			'declare module "m" {\n  export default abstract\n  class A {}\n}',
 			'declare module "m" {\n  export default abstract;\n  class A {}\n}\n',
 		],
+	])('formats %j like Prettier', async (input, expected) => {
+		await expectFormat(input, expected);
+		expect(expected).toBe(await prettier.format(input, { parser: 'typescript' }));
+	});
+});
+
+// Declarations that TypeScript reads and the parser failed on: `abstract
+// declare class` (#697), `export default interface` with the name on the next
+// line (#698), a type alias named `as` or `satisfies` (#699), and a global
+// augmentation after `export` (#700), which TypeScript reports from its
+// checker and Prettier's `typescript` parser prints.
+describe('declarations after TypeScript keywords', () => {
+	test.each([
+		['abstract declare class A {}', 'declare abstract class A {}\n'],
+		['export abstract declare class A {}', 'export declare abstract class A {}\n'],
+		[
+			`export default interface
+I {}`,
+			'export default interface I {}\n',
+		],
+		[
+			`declare module "m" {
+  export default interface
+  I {}
+}`,
+			`declare module "m" {
+  export default interface I {}
+}
+`,
+		],
+		['type as = 1;', 'type as = 1;\n'],
+		['type satisfies<T> = T;', 'type satisfies<T> = T;\n'],
+		['export global {}', 'export global {}\n'],
+		['export declare global {}', 'export declare global {}\n'],
 	])('formats %j like Prettier', async (input, expected) => {
 		await expectFormat(input, expected);
 		expect(expected).toBe(await prettier.format(input, { parser: 'typescript' }));
