@@ -2147,27 +2147,16 @@ export function get_comment_handlers(source, comments, index = 0) {
 		// line of the last operand of a binary or logical expression in a unary
 		// operator's parentheses, when the expression breaks before that
 		// operand, trails the operand, so that it prints inside the expression,
-		// which keeps it broken: `!(⏎  a &&⏎  b // c⏎)` (#801). Prettier's
-		// parser has turned `a && (b && c)` into the chain `a && b && c` by then
-		// (`rebalanceLogicalTree`, which the printer ports), whose last operand
-		// is `c`.
+		// which keeps it broken: `!(⏎  a &&⏎  b // c⏎)` (#801)
 		if (endOfLine && !following && type === 'UnaryExpression' && isBinaryish(preceding)) {
-			/** @type {any} */
-			let right = preceding.right;
-			while (
-				right.type === 'LogicalExpression' &&
-				right.operator === preceding.operator &&
-				getTypeCastEnd(right) === -1
-			) {
-				right = right.right;
-			}
 			const argumentStart = /** @type {AST.NodeWithLocation} */ (node.argument).start;
+			const rightStart = /** @type {AST.NodeWithLocation} */ (preceding.right).start;
 			if (
-				source.slice(argumentStart, right.start).includes('\n') &&
-				!source.slice(right.start, comment.start).includes('\n') &&
+				source.slice(argumentStart, rightStart).includes('\n') &&
+				!source.slice(rightStart, comment.start).includes('\n') &&
 				!source.slice(comment.start, comment.end).includes('\n')
 			) {
-				addTrailingComment(right, comment);
+				addTrailingComment(preceding.right, comment);
 				return true;
 			}
 		}
