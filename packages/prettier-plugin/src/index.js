@@ -9053,18 +9053,28 @@ function printTemplateLiteral(node, path, options, print) {
 
 /**
  * Print the expressions of a template literal, like Prettier's
- * `printTemplateExpressions`.
+ * `printTemplateExpressions`. The expressions of a template whose code another
+ * language's printer formats aren't aligned yet: see
+ * {@link alignEmbeddedTemplateExpressions}.
  * @param {AstPath} path - The path to the template literal
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
+ * @param {boolean} [embedded] - Whether the template is printed as embedded code
  * @returns {Doc[]}
  */
-function printTemplateExpressions(path, options, print) {
+function printTemplateExpressions(path, options, print, embedded = false) {
 	const node = /** @type {AST.TemplateLiteral} */ (path.node);
-	const indents = getTemplateLiteralExpressionIndents(node, options);
+	const indents = embedded ? null : getTemplateLiteralExpressionIndents(node, options);
 	return path.map(
 		(expressionPath, index) =>
-			printTemplateExpression(expressionPath, node, index, indents[index], options, print),
+			printTemplateExpression(
+				expressionPath,
+				node,
+				index,
+				indents?.[index] ?? null,
+				options,
+				print,
+			),
 		'expressions',
 	);
 }
@@ -9075,11 +9085,11 @@ function printTemplateExpressions(path, options, print) {
  * change nothing in the string, and the next pass would read the breaks as
  * written ones. One written across lines, or one that breaks anyway (a
  * function body), prints normally, aligned with the line of the template it
- * starts on.
+ * starts on. With no `lineIndent`, it isn't aligned.
  * @param {AstPath} path - The path to the expression
  * @param {AST.TemplateLiteral} templateLiteral - The template literal
  * @param {number} index - The expression's index
- * @param {{ indentSize: number, previousQuasiText: string }} lineIndent - See {@link getTemplateLiteralExpressionIndents}
+ * @param {{ indentSize: number, previousQuasiText: string } | null} lineIndent - See {@link getTemplateLiteralExpressionIndents}
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @returns {Doc}
@@ -9129,12 +9139,34 @@ function printTemplateExpression(path, templateLiteral, index, lineIndent, optio
 
 	// An expression that starts a line of the template indents from that line
 	// instead of from the backtick's
-	expressionDoc =
-		lineIndent.indentSize === 0 && lineIndent.previousQuasiText.endsWith('\n')
-			? align(Number.NEGATIVE_INFINITY, expressionDoc)
-			: addAlignmentToDoc(expressionDoc, lineIndent.indentSize, options.tabWidth ?? 2);
+	if (lineIndent) {
+		expressionDoc = alignTemplateExpression(
+			expressionDoc,
+			lineIndent.indentSize,
+			lineIndent.previousQuasiText.endsWith('\n'),
+			options,
+		);
+	}
 
 	return group(['${', expressionDoc, lineSuffixBoundary, '}']);
+}
+
+/**
+ * Align an expression with the template line its `${` is on, like Prettier's
+ * `printTemplateExpression`: from the start of the line, by the width of the
+ * line's indentation. On an unindented line, an expression right at its start
+ * goes to the start of the line, and one after other text keeps the
+ * indentation of the code around it.
+ * @param {Doc} expressionDoc
+ * @param {number} indentSize - The width of the line's indentation
+ * @param {boolean} startsLine - Whether the `${` starts the line
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc}
+ */
+function alignTemplateExpression(expressionDoc, indentSize, startsLine, options) {
+	return indentSize === 0 && startsLine
+		? align(Number.NEGATIVE_INFINITY, expressionDoc)
+		: addAlignmentToDoc(expressionDoc, indentSize, options.tabWidth ?? 2);
 }
 
 /**
@@ -9175,6 +9207,310 @@ function getAlignmentSize(text, tabWidth) {
 		size = character === '\t' ? size + tabWidth - (size % tabWidth) : size + 1;
 	}
 	return size;
+}
+
+/**
+ * The indentation of a line in an embedded template's doc, as the `indent`
+ * (`width: null`) and `align` docs it's made of, from the indentation of the
+ * code around the template (`base: 'template'`) or from the root
+ * (`base: 'root'`). `base: null` is one that can't be told.
+ * @typedef {{ base: 'template' | 'root' | null, parts: { key: object, width: number | string | null }[] }} EmbedIndentation
+ */
+
+/**
+ * A line of an embedded template's doc: its indentation, and the text
+ * printed on it so far.
+ * @typedef {{ indentation: EmbedIndentation, text: string }} EmbedLine
+ */
+
+/**
+ * Align the expressions of a template that another language's printer
+ * formats. Prettier aligns a `${…}` with the template line it's written on
+ * (see {@link printTemplateExpression}), but the embedded printer re-indents
+ * the template's lines, so the next pass aligns the expression with the new
+ * line and moves it again (#516). This prints Prettier's stable layout at
+ * once: it follows the doc the way Prettier's doc printer prints it to find
+ * the line each `${` lands on, and aligns each expression that can print
+ * over several lines with that line, the way the next pass would. When such
+ * an expression breaks, so does every group around it; any other group is
+ * taken to break only when it has to.
+ * @param {Doc} doc - The embedded code's doc, with the expressions in place
+ * @param {Doc[]} expressionDocs - The expressions, from {@link printTemplateExpressions}
+ * @param {TsrxFormatOptions} options - Prettier options
+ */
+function alignEmbeddedTemplateExpressions(doc, expressionDocs, options) {
+	// An expression kept on one line is a string (see printTemplateExpression)
+	const expressions = new Set(
+		expressionDocs.filter(
+			(expressionDoc) =>
+				typeof (/** @type {Record<string, any>} */ (expressionDoc).contents[1]) !== 'string',
+		),
+	);
+	if (expressions.size === 0) {
+		return;
+	}
+
+	/** @type {Map<Doc, number>} */
+	const scanned = new Map();
+	/**
+	 * Like Prettier's `propagateBreaks`: 1 for a doc that holds a
+	 * `breakParent` outside a group, 2 for one that holds a group that
+	 * breaks, and for a group, 2 when it breaks.
+	 * @param {Doc} current
+	 * @returns {number}
+	 */
+	const scan = (current) => {
+		if (typeof current === 'string') {
+			return 0;
+		}
+		let result = scanned.get(current);
+		if (result !== undefined) {
+			return result;
+		}
+		if (Array.isArray(current)) {
+			result = 0;
+			for (const part of current) {
+				result |= scan(part);
+			}
+		} else if (expressions.has(current)) {
+			result = 2;
+		} else {
+			const currentDoc = /** @type {Record<string, any>} */ (current);
+			switch (currentDoc.type) {
+				case 'break-parent':
+					result = 1;
+					break;
+				case 'group':
+					// Like Prettier, a break doesn't leave a conditional group
+					result = scan(currentDoc.contents) && !currentDoc.expandedStates ? 2 : 0;
+					if (currentDoc.break) {
+						result = 2;
+					}
+					break;
+				case 'fill':
+					result = scan(currentDoc.parts);
+					break;
+				case 'if-break':
+					result = scan(currentDoc.breakContents) | scan(currentDoc.flatContents);
+					break;
+				case 'indent':
+				case 'align':
+				case 'indent-if-break':
+				case 'label':
+				case 'line-suffix':
+					result = scan(currentDoc.contents);
+					break;
+				default:
+					result = 0;
+			}
+		}
+		scanned.set(current, result);
+		return result;
+	};
+
+	/** @type {EmbedIndentation} */
+	const rootIndentation = { base: 'root', parts: [] };
+	/** @type {Map<symbol, boolean>} */
+	const flatGroups = new Map();
+	/**
+	 * The line being printed, or null before the template's first line break
+	 * @type {EmbedLine | null}
+	 */
+	let currentLine = null;
+
+	/**
+	 * @param {Doc} current
+	 * @param {EmbedIndentation} indentation
+	 * @param {EmbedIndentation} root - Where a literal line starts and `dedentToRoot` goes
+	 * @param {boolean} flat - Whether the lines print flat
+	 */
+	const walk = (current, indentation, root, flat) => {
+		if (typeof current === 'string') {
+			// A raw line break starts a line at the start of the output
+			const lastNewline = current.lastIndexOf('\n');
+			if (lastNewline !== -1) {
+				currentLine = { indentation: rootIndentation, text: current.slice(lastNewline + 1) };
+			} else if (currentLine) {
+				currentLine.text += current;
+			}
+			return;
+		}
+		if (Array.isArray(current)) {
+			for (const part of current) {
+				walk(part, indentation, root, flat);
+			}
+			return;
+		}
+		if (expressions.has(current)) {
+			const contents = /** @type {Doc[]} */ (/** @type {Record<string, any>} */ (current).contents);
+			contents[1] = alignEmbeddedTemplateExpression(contents[1], currentLine, indentation, options);
+			if (currentLine) {
+				currentLine.text += '${}';
+			}
+			return;
+		}
+		const currentDoc = /** @type {Record<string, any>} */ (current);
+		switch (currentDoc.type) {
+			case 'line':
+				if (currentDoc.hard || !flat) {
+					currentLine = { indentation: currentDoc.literal ? root : indentation, text: '' };
+				} else if (!currentDoc.soft && currentLine) {
+					currentLine.text += ' ';
+				}
+				break;
+			case 'group': {
+				const groupFlat = scan(current) !== 2;
+				if (currentDoc.id) {
+					flatGroups.set(currentDoc.id, groupFlat);
+				}
+				walk(
+					currentDoc.expandedStates && !groupFlat
+						? currentDoc.expandedStates.at(-1)
+						: currentDoc.contents,
+					indentation,
+					root,
+					groupFlat,
+				);
+				break;
+			}
+			case 'fill':
+				// Like Prettier's `fill`, a separator breaks when a content next to
+				// it holds a group that breaks
+				currentDoc.parts.forEach((/** @type {Doc} */ part, /** @type {number} */ index) => {
+					const breaks =
+						index % 2 === 0
+							? scan(part)
+							: scan(currentDoc.parts[index - 1]) | scan(currentDoc.parts[index + 1] ?? '');
+					walk(part, indentation, root, !(breaks & 2));
+				});
+				break;
+			case 'if-break':
+			case 'indent-if-break': {
+				const groupFlat = currentDoc.groupId ? (flatGroups.get(currentDoc.groupId) ?? true) : flat;
+				if (currentDoc.type === 'if-break') {
+					walk(
+						groupFlat ? currentDoc.flatContents : currentDoc.breakContents,
+						indentation,
+						root,
+						flat,
+					);
+				} else {
+					walk(
+						currentDoc.contents,
+						groupFlat === Boolean(currentDoc.negate)
+							? addEmbedIndentation(indentation, currentDoc, null)
+							: indentation,
+						root,
+						flat,
+					);
+				}
+				break;
+			}
+			case 'indent':
+				walk(currentDoc.contents, addEmbedIndentation(indentation, currentDoc, null), root, flat);
+				break;
+			case 'align': {
+				const width = currentDoc.n;
+				if (width === Number.NEGATIVE_INFINITY) {
+					walk(currentDoc.contents, root, root, flat);
+				} else if (width?.type === 'root') {
+					walk(currentDoc.contents, indentation, indentation, flat);
+				} else if (typeof width === 'number' && width < 0) {
+					walk(
+						currentDoc.contents,
+						indentation.parts.length > 0
+							? { base: indentation.base, parts: indentation.parts.slice(0, -1) }
+							: { base: indentation.base === 'root' ? 'root' : null, parts: [] },
+						root,
+						flat,
+					);
+				} else {
+					walk(
+						currentDoc.contents,
+						width ? addEmbedIndentation(indentation, currentDoc, width) : indentation,
+						root,
+						flat,
+					);
+				}
+				break;
+			}
+			case 'label':
+			case 'line-suffix':
+				walk(currentDoc.contents, indentation, root, flat);
+				break;
+			case 'trim':
+				if (currentLine) {
+					currentLine.text = currentLine.text.replace(/[\t ]+$/, '');
+				}
+				break;
+		}
+	};
+	walk(doc, { base: 'template', parts: [] }, rootIndentation, false);
+}
+
+/**
+ * @param {EmbedIndentation} indentation
+ * @param {object} key - The `indent` or `align` doc
+ * @param {number | string | null} width - The `align` doc's width, or null for an `indent`
+ * @returns {EmbedIndentation}
+ */
+function addEmbedIndentation(indentation, key, width) {
+	return { base: indentation.base, parts: [...indentation.parts, { key, width }] };
+}
+
+/**
+ * Align an expression of an embedded template with the line its `${` lands
+ * on, the way Prettier's next pass aligns it with that line (see
+ * {@link alignTemplateExpression}): from the start of the line, or, from the
+ * line's indentation in the template, by leaving the `indent` and `align`
+ * docs that start after the line does and adding those that end before the
+ * `${`.
+ * @param {Doc} expressionDoc
+ * @param {EmbedLine | null} lineStart - The line, with the text before the `${`
+ * @param {EmbedIndentation} indentation - The indentation around the `${`
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {Doc}
+ */
+function alignEmbeddedTemplateExpression(expressionDoc, lineStart, indentation, options) {
+	// On the template's first line, the expression keeps the indentation of
+	// the code around it
+	if (!lineStart) {
+		return expressionDoc;
+	}
+	const tabWidth = options.tabWidth ?? 2;
+	const leadingSpace = /** @type {RegExpMatchArray} */ (lineStart.text.match(/^[\t ]*/))[0];
+	const target = lineStart.indentation;
+	if (target.base === 'root') {
+		const size = target.parts.reduce(
+			(sum, { width }) =>
+				sum + (width === null ? tabWidth : typeof width === 'string' ? width.length : width),
+			getAlignmentSize(leadingSpace, tabWidth),
+		);
+		return alignTemplateExpression(expressionDoc, size, lineStart.text === '', options);
+	}
+	if (target.base === null || indentation.base !== 'template') {
+		return expressionDoc;
+	}
+	let common = 0;
+	while (
+		common < target.parts.length &&
+		common < indentation.parts.length &&
+		target.parts[common].key === indentation.parts[common].key
+	) {
+		common++;
+	}
+	/** @type {Doc} */
+	let aligned = leadingSpace
+		? align(getAlignmentSize(leadingSpace, tabWidth), expressionDoc)
+		: expressionDoc;
+	for (let index = target.parts.length - 1; index >= common; index--) {
+		const { width } = target.parts[index];
+		aligned = width === null ? indent(aligned) : align(width, aligned);
+	}
+	for (let index = common; index < indentation.parts.length; index++) {
+		aligned = dedent(aligned);
+	}
+	return aligned;
 }
 
 /**
@@ -9304,12 +9640,14 @@ async function printEmbedCss(textToDoc, print, path, options) {
 		)
 		.join('');
 	const quasisDoc = await textToDoc(text, { parser: 'scss' });
-	const expressionDocs = printTemplateExpressions(path, options, print);
+	const expressionDocs = printTemplateExpressions(path, options, print, true);
 	const newDoc = replaceCssPlaceholders(quasisDoc, expressionDocs);
 	if (!newDoc) {
 		throw new Error("Couldn't insert all the expressions");
 	}
-	return ['`', indent([hardline, newDoc]), softline, '`'];
+	const embedDoc = ['`', indent([hardline, newDoc]), softline, '`'];
+	alignEmbeddedTemplateExpressions(embedDoc, expressionDocs, options);
+	return embedDoc;
 }
 
 /**
@@ -9669,7 +10007,7 @@ function isAsConstExpression(node) {
 async function printEmbedGraphQL(textToDoc, print, path, options) {
 	const node = /** @type {AST.TemplateLiteral} */ (path.node);
 	const numQuasis = node.quasis.length;
-	const expressionDocs = printTemplateExpressions(path, options, print);
+	const expressionDocs = printTemplateExpressions(path, options, print, true);
 	/** @type {Doc[]} */
 	const parts = [];
 
@@ -9715,7 +10053,9 @@ async function printEmbedGraphQL(textToDoc, print, path, options) {
 		}
 	}
 
-	return ['`', indent([hardline, join(hardline, parts)]), hardline, '`'];
+	const embedDoc = ['`', indent([hardline, join(hardline, parts)]), hardline, '`'];
+	alignEmbeddedTemplateExpressions(embedDoc, expressionDocs, options);
+	return embedDoc;
 }
 
 /**
@@ -9831,7 +10171,7 @@ async function printEmbedHtmlLike(parser, textToDoc, print, path, options) {
 		)
 		.join('');
 
-	const expressionDocs = printTemplateExpressions(path, options, print);
+	const expressionDocs = printTemplateExpressions(path, options, print, true);
 
 	const placeholderRegex = new RegExp(composePlaceholder(String.raw`(\d+)`), 'g');
 	let topLevelCount = 0;
@@ -9877,20 +10217,20 @@ async function printEmbedHtmlLike(parser, textToDoc, print, path, options) {
 				? line
 				: null;
 
-	if (linebreak) {
-		return group(['`', indent([linebreak, group(contentDoc)]), linebreak, '`']);
-	}
-
-	return label(
-		{ hug: false },
-		group([
-			'`',
-			leadingWhitespace,
-			topLevelCount > 1 ? indent(group(contentDoc)) : group(contentDoc),
-			trailingWhitespace,
-			'`',
-		]),
-	);
+	const embedDoc = linebreak
+		? group(['`', indent([linebreak, group(contentDoc)]), linebreak, '`'])
+		: label(
+				{ hug: false },
+				group([
+					'`',
+					leadingWhitespace,
+					topLevelCount > 1 ? indent(group(contentDoc)) : group(contentDoc),
+					trailingWhitespace,
+					'`',
+				]),
+			);
+	alignEmbeddedTemplateExpressions(embedDoc, expressionDocs, options);
+	return embedDoc;
 }
 
 /**
