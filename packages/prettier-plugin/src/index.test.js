@@ -19249,6 +19249,12 @@ for (
 				'class K {\n  x = (a, b); /* c */\n  y = 1; /* c */\n  q = a || b; /* c */\n  r = (a, b); /* c */\n  u = a ? b : c; /* c */\n  w = <T,>(a) => a; /* c */\n}',
 			],
 			['class K {\n  x = 1 /* c */ // d\n  ;\n}', 'class K {\n  x = 1; /* c */ // d\n}'],
+			// A method signature's value starts at the `(` of its parameters, so
+			// the parentheses in its computed key or type parameters don't count
+			[
+				'abstract class A {\n  abstract [(a)]() /* c */;\n  abstract n<T extends (a: string) => void>() /* d */;\n  [f(b)]() /* e */;\n  x = 1;\n}',
+				'abstract class A {\n  abstract [a](); /* c */\n  abstract n<T extends (a: string) => void>(); /* d */\n  [f(b)](); /* e */\n  x = 1;\n}',
+			],
 			[
 				'class K {\n  constructor(a: string /* c */);\n  m(a, b /* c */);\n  r(...a /* c */);\n  o(a?: string /* c */);\n}',
 				'class K {\n  constructor(a: string); /* c */\n  m(a, b); /* c */\n  r(...a); /* c */\n  o(a?: string); /* c */\n}',
