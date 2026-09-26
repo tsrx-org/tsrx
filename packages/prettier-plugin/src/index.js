@@ -7609,7 +7609,15 @@ function printClassDeclaration(node, path, options, print) {
 	let bodyComments = [];
 	/** @type {AST.Comment[]} */
 	let afterClassComments = [];
+	// The comments that print before `implements` in place of the class's
+	// inner comments, and whether they print there only when the heading
+	// breaks
+	/** @type {AST.Comment[] | undefined} */
+	let implementsComments;
+	let printsImplementsCommentsOnBreak = false;
 	const bodyNode = /** @type {AST.NodeWithMaybeComments} */ (node.body);
+	const text = /** @type {string} */ (options.originalText);
+	const heritageGroupId = Symbol('heritageGroup');
 	if (node.superClass) {
 		const superClassNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node.superClass);
 		// A JSDoc cast prints its comments, and parentheses the superclass needs
@@ -7677,33 +7685,85 @@ function printClassDeclaration(node, path, options, print) {
 		const typeArguments = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (
 			node.superTypeParameters
 		);
-		// A line comment after the superclass, or on a line of its own before
-		// its type arguments, ends the heading after them: Prettier prints it
-		// there, or moves it there on its next pass. Unless `implements`
-		// follows, Prettier breaks the heading around it, and its next pass
-		// moves the comment into a nonempty body, as the parser does with one
-		// before the body, or finds it after an empty body's `{}`. It prints
-		// there right away (#652).
-		const typeArgumentsComments = (typeArguments?.leadingComments ?? []).filter(
-			(comment) => comment.type === 'Line',
-		);
+		const hasImplements = Boolean(node.implements?.length);
+		// The comments on lines of their own before the type arguments print
+		// before them, and those that end their line keep the line break after
+		// them (see `printLeadingComments`): a line comment, a block comment
+		// that starts and ends its line, and, with the heading's lines, one
+		// after another comment on its line. Then Prettier's next pass reads the
+		// comments on the superclass's line as comments after the superclass,
+		// which print after the type arguments, and so on, until only the
+		// comments on the line of the type arguments lead them. The others print
+		// after them right away (#652, #743).
+		const typeArgumentsLeadingComments = typeArguments?.leadingComments ?? [];
+		const breaksBeforeTypeArguments =
+			!groupMode ||
+			typeArgumentsLeadingComments.some(
+				(comment) =>
+					comment.type === 'Line' ||
+					(hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).start, {
+						backwards: true,
+					}) &&
+						hasNewline(text, /** @type {AST.NodeWithLocation} */ (comment).end)),
+			);
+		const typeArgumentsComments = breaksBeforeTypeArguments
+			? typeArgumentsLeadingComments.filter((comment) =>
+					text
+						.slice(
+							/** @type {AST.NodeWithLocation} */ (comment).end,
+							/** @type {AST.NodeWithLocation} */ (typeArguments).start,
+						)
+						.includes('\n'),
+				)
+			: [];
+		// A line comment after the superclass, or before its type arguments,
+		// ends the heading after them. Unless `implements` follows, Prettier
+		// breaks the heading around it, and its next pass moves the comment into
+		// a nonempty body, as the parser does with one before the body, or finds
+		// it after an empty body's `{}`. It prints there right away (#652).
 		const lineComments = [
-			...(printsTrailingComments
-				? trailingComments.filter((comment) => comment.type === 'Line')
-				: []),
+			...(printsTrailingComments ? trailingComments : []),
 			...typeArgumentsComments,
-		];
-		if (!node.implements?.length) {
+		].filter((comment) => comment.type === 'Line');
+		if (!hasImplements) {
 			if (typeArguments && node.body.body.length === 0 && !bodyNode.innerComments?.length) {
 				afterClassComments = lineComments;
 			} else {
 				bodyComments = lineComments;
 			}
 		}
+		// The comments that end the heading after the type arguments, in source
+		// order
 		const headingComments = [
 			...(printsTrailingComments ? trailingComments : []),
 			...typeArgumentsComments,
 		].filter((comment) => !bodyComments.includes(comment) && !afterClassComments.includes(comment));
+		if (typeArguments && hasImplements) {
+			// Prettier leaves the type arguments out of the heading parts that
+			// `handleClassComments` gives the comments before `implements`, so on
+			// its next pass, those that end their line dangle on the class, which
+			// prints them on lines of their own before the keyword. They print
+			// there right away, with the type arguments' own comments and the
+			// class's, in source order. Block comments that stay on one line
+			// print after the type arguments while the heading fits, where the
+			// next pass keeps them (#742).
+			const innerComments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
+			implementsComments = [
+				...headingComments,
+				...(typeArguments.trailingComments ?? []),
+				...innerComments,
+			].sort(
+				(a, b) =>
+					/** @type {AST.NodeWithLocation} */ (a).start -
+					/** @type {AST.NodeWithLocation} */ (b).start,
+			);
+			printsImplementsCommentsOnBreak =
+				implementsComments.length > 0 &&
+				innerComments.length === 0 &&
+				implementsComments.every(
+					(comment) => comment.type === 'Block' && !comment.value.includes('\n'),
+				);
+		}
 		/** @type {Doc} */
 		let superClassDoc = superClass;
 		if (addsParens) {
@@ -7738,34 +7798,73 @@ function printClassDeclaration(node, path, options, print) {
 			superClassDoc,
 		];
 		if (typeArguments) {
+			const movesTrailingComments = Boolean(
+				implementsComments && typeArguments.trailingComments?.length,
+			);
 			superClassParts.push(
-				typeArgumentsComments.length > 0
+				typeArgumentsComments.length > 0 || movesTrailingComments
 					? [
-							...printLeadingComments(
-								typeArguments,
-								/** @type {AST.Comment[]} */ (typeArguments.leadingComments).filter(
-									(comment) => comment.type !== 'Line',
-								),
-								options,
-							),
+							...(typeArgumentsComments.length > 0
+								? printLeadingComments(
+										typeArguments,
+										/** @type {AST.Comment[]} */ (typeArguments.leadingComments).filter(
+											(comment) => !typeArgumentsComments.includes(comment),
+										),
+										options,
+									)
+								: []),
 							path.call(
-								(typeArgumentsPath) => print(typeArgumentsPath, { suppressLeadingComments: true }),
+								(typeArgumentsPath) =>
+									print(typeArgumentsPath, {
+										suppressLeadingComments: typeArgumentsComments.length > 0,
+										suppressTrailingComments: movesTrailingComments,
+									}),
 								'superTypeParameters',
 							),
 						]
 					: path.call(print, 'superTypeParameters'),
 			);
 		}
-		superClassParts.push(...printTrailingComments(superClassNode, options, headingComments));
+		if (!implementsComments) {
+			superClassParts.push(
+				...printTrailingComments(
+					superClassNode,
+					options,
+					headingComments.filter((comment) => !typeArgumentsComments.includes(comment)),
+				),
+				// A block comment from before the type arguments prints after them,
+				// on their line
+				...headingComments
+					.filter((comment) => typeArgumentsComments.includes(comment))
+					.map((comment) => [' ', printComment(comment, text)]),
+			);
+		} else if (printsImplementsCommentsOnBreak) {
+			superClassParts.push(
+				ifBreak(
+					'',
+					implementsComments.map((comment) => [' ', printComment(comment, text)]),
+					{ groupId: heritageGroupId },
+				),
+			);
+		}
 		endsWithComment =
-			!node.implements?.length &&
-			Boolean(headingComments.length || typeArguments?.trailingComments?.length);
+			!hasImplements && Boolean(headingComments.length || typeArguments?.trailingComments?.length);
 		heritage.push(groupMode ? [line, group(superClassParts)] : [' ', superClassParts]);
 	}
 
 	// Heritage type arguments and implements clauses are what TypeScript
 	// checks the class against, so dropping them silently loses those checks
-	heritage.push(printHeritageClauses(node, path, options, print, groupMode));
+	heritage.push(
+		printHeritageClauses(
+			node,
+			path,
+			options,
+			print,
+			groupMode,
+			implementsComments,
+			printsImplementsCommentsOnBreak,
+		),
+	);
 
 	const body = path.call(
 		(bodyPath) =>
@@ -7774,7 +7873,6 @@ function printClassDeclaration(node, path, options, print) {
 	);
 	// Like comments that follow the class, the first one ends its line, and
 	// the next ones print on lines of their own
-	const text = /** @type {string} */ (options.originalText);
 	const afterClass = afterClassComments.map((comment, index) =>
 		index === 0
 			? [lineSuffix([' ', printComment(comment, text)]), breakParent]
@@ -7789,7 +7887,6 @@ function printClassDeclaration(node, path, options, print) {
 	// that ended the heading's line, after the superclass or before the `{`,
 	// would move into the body on the next format, as it does in Prettier, so
 	// the body starts on its line.
-	const heritageGroupId = Symbol('heritageGroup');
 	return [
 		group([...parts, indent(heritage)], { id: heritageGroupId }),
 		node.body.body.length > 0 && !endsWithComment && !bodyNode.leadingComments?.length
@@ -7892,10 +7989,10 @@ function hasMultipleHeritage(node) {
  * the types follow it on one line or, when they do not fit, one per line
  * below it.
  *
- * The comments before the keyword of a class with nothing before the clause
- * (the class's inner comments, Prettier's dangling comments marked with the
- * clause's name) print on their own lines before the keyword, or after it
- * with only one heritage type. There, unlike Prettier, which prints the type
+ * The comments before the keyword of a class with nothing before the clause,
+ * or only a superclass's type arguments (the class's inner comments,
+ * Prettier's dangling comments marked with the clause's name), print on their
+ * own lines before the keyword, or after it with only one heritage type. There, unlike Prettier, which prints the type
  * right after them, a line comment ends its line, so that it doesn't comment
  * the type out, and a block comment is followed by a space, as it is once
  * Prettier formats its output again.
@@ -7904,9 +8001,22 @@ function hasMultipleHeritage(node) {
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
  * @param {boolean} groupMode - Whether the heading groups its clauses
+ * @param {AST.Comment[]} [superClassComments] - The comments to print before
+ *   the keyword in place of the class's inner comments, which they include,
+ *   after a superclass with type arguments (see {@link printClassDeclaration})
+ * @param {boolean} [printsCommentsOnBreak] - Print the comments only when the
+ *   heading breaks. The superclass prints them otherwise.
  * @returns {Doc}
  */
-function printHeritageClauses(node, path, options, print, groupMode) {
+function printHeritageClauses(
+	node,
+	path,
+	options,
+	print,
+	groupMode,
+	superClassComments,
+	printsCommentsOnBreak,
+) {
 	const [listName, list] =
 		node.type === 'TSInterfaceDeclaration'
 			? ['extends', node.extends]
@@ -7915,7 +8025,8 @@ function printHeritageClauses(node, path, options, print, groupMode) {
 		return '';
 	}
 
-	const comments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
+	const comments =
+		superClassComments ?? /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
 	const clauses = join([',', line], path.map(print, listName));
 	if (!hasMultipleHeritage(node)) {
 		/** @type {Doc[]} */
@@ -7931,12 +8042,16 @@ function printHeritageClauses(node, path, options, print, groupMode) {
 	}
 	/** @type {Doc[]} */
 	const printedComments = comments.map((comment) => printComment(comment, options.originalText));
-	return [
-		line,
-		printedComments.length > 0 ? [join(hardline, printedComments), hardline] : '',
-		listName,
-		group(indent([line, clauses])),
-	];
+	/** @type {Doc} */
+	let printedBefore = '';
+	if (printedComments.length > 0) {
+		// A hard line would break the heading, so, printed only when it breaks,
+		// the comments end their lines with the heading's lines
+		printedBefore = printsCommentsOnBreak
+			? ifBreak([join(line, printedComments), line], '')
+			: [join(hardline, printedComments), hardline];
+	}
+	return [line, printedBefore, listName, group(indent([line, clauses]))];
 }
 
 /**

@@ -1933,7 +1933,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 		// trails the last decorator. One before the body moves into it, and one
 		// before the superclass or the first `implements`/`extends` type trails
 		// the name, the type parameters, or the superclass before it, so that it
-		// doesn't print after the keyword.
+		// doesn't print after the keyword. After the superclass's type
+		// arguments, it dangles on the class, which prints it on a line of its
+		// own before `implements`.
 		if ((ownLine || endOfLine) && isClassLike(enclosing) && following) {
 			const decorators = /** @type {AST.Node[] | undefined} */ (node.decorators);
 			if (decorators?.length && following.type !== 'Decorator') {
@@ -1950,16 +1952,16 @@ export function get_comment_handlers(source, comments, index = 0) {
 				addTrailingComment(preceding, comment);
 				return true;
 			}
-			// The superclass's type arguments print with it
-			heading.push(node.superClass, node.superTypeParameters);
+			heading.push(node.superClass);
 			const heritage = node.type === 'TSInterfaceDeclaration' ? node.extends : node.implements;
 			if (following === heritage?.[0]) {
 				if (preceding && heading.includes(preceding)) {
 					addTrailingComment(preceding, comment);
 				} else {
 					// With nothing before the clause, as in a class expression with
-					// no name, the comment dangles on the class, and the clause
-					// prints it (Prettier's dangling comment marked `implements`)
+					// no name, or with the superclass's type arguments before it, the
+					// comment dangles on the class, and the clause prints it
+					// (Prettier's dangling comment marked `implements`)
 					pushInnerComment(node, comment);
 				}
 				return true;
