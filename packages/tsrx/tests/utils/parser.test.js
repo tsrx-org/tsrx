@@ -6184,13 +6184,14 @@ type B = import("foo").Bar<string>;`,
 			]);
 		});
 
-		// Like TypeScript (microsoft/TypeScript#61489), unlike `import()`.
+		// Like TypeScript (microsoft/TypeScript#61489), unlike `import()`. Where
+		// the options' `{` is missing, TypeScript reports it (TS1005, #717).
 		it.each([
-			'type A = import("foo",);',
-			'type A = import("foo", { with: { type: "json" } },);',
-			'type A = import("foo", attributes);',
-		])('rejects what TypeScript rejects: %s', (source) => {
-			expect(() => parseModule(source, 'App.tsrx', options())).toThrow('Unexpected token');
+			['type A = import("foo",);', "'{' expected."],
+			['type A = import("foo", { with: { type: "json" } },);', 'Unexpected token'],
+			['type A = import("foo", attributes);', "'{' expected."],
+		])('rejects what TypeScript rejects: %s', (source, message) => {
+			expect(() => parseModule(source, 'App.tsrx', options())).toThrow(message);
 		});
 	});
 });

@@ -464,6 +464,8 @@ export namespace Parse {
 		tokenIsIdentifier(token: TokenType): boolean;
 		/** Whether a token type can be a literal property name: a name, a keyword, a string or a number */
 		tokenIsLiteralPropertyName(token: TokenType): boolean;
+		/** Whether a token type is a name or a keyword (incl. TS soft keywords) */
+		tokenIsKeywordOrIdentifier(token: TokenType): boolean;
 		/** Whether a token type is a type operator: `keyof`, `readonly` or `unique` */
 		tokenIsTSTypeOperator(token: TokenType): boolean;
 	}
@@ -1491,6 +1493,33 @@ export namespace Parse {
 
 		/** Parse a type alias after `type`, which has been read (@sveltejs/acorn-typescript). */
 		tsParseTypeAliasDeclaration(node: AST.Node): AST.TSTypeAliasDeclaration;
+
+		/**
+		 * Parse the declaration that the name `expr`, read as the expression of
+		 * the statement `node`, starts (`declare`, `global`, `abstract`,
+		 * `module`, `namespace` or `type`), or return `undefined`
+		 * (@sveltejs/acorn-typescript).
+		 */
+		tsParseExpressionStatement(node: AST.Node, expr: AST.Identifier): AST.Node | undefined;
+
+		/** Run a parser callback in an ambient context (@sveltejs/acorn-typescript). */
+		tsInAmbientContext<T>(cb: () => T): T;
+
+		/** Parse a type (@sveltejs/acorn-typescript). */
+		tsParseType(): AST.TypeNode;
+
+		/**
+		 * Read the `in` and `out` modifiers of a type parameter: the modifier
+		 * parser acorn-typescript gives `tsTryParseTypeParameters` for a type
+		 * alias (@sveltejs/acorn-typescript)
+		 */
+		tsParseInOutModifiers: (node: AST.Node) => void;
+
+		/**
+		 * Mark `name` as defined in `scope` for the check of exported names
+		 * (@sveltejs/acorn-typescript).
+		 */
+		maybeExportDefined(scope: Scope, name: string): void;
 
 		/**
 		 * Parse a namespace or module with a name after `namespace` or `module`,

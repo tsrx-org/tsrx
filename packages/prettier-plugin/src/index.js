@@ -4031,6 +4031,11 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = 'string';
 			break;
 
+		// `type Uppercase<S extends string> = intrinsic;`
+		case 'TSIntrinsicKeyword':
+			nodeContent = 'intrinsic';
+			break;
+
 		case 'TSThisType':
 			nodeContent = 'this';
 			break;

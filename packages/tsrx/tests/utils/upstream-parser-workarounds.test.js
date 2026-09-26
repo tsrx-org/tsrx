@@ -2151,7 +2151,6 @@ describe('`abstract`, `module`, `namespace` or `type` after `export` that starts
 			['export declare module class A {}', 'export', 'Declaration or statement expected.'],
 			['export abstract @dec class A {}', 'export', 'Declaration or statement expected.'],
 			['export declare abstract @dec class A {}', 'export', 'Declaration or statement expected.'],
-			['export abstract export class A {}', 'export', 'Declaration or statement expected.'],
 			['export abstract default class {}', 'export', 'Declaration or statement expected.'],
 			['export abstract * from "m";', 'export', 'Declaration or statement expected.'],
 			['export abstract {}', 'export', 'Declaration or statement expected.'],
@@ -2856,5 +2855,547 @@ class A {}`,
 				expect(parsed(outcome, source).errors, source).toEqual([]);
 			}
 		}
+	});
+});
+
+// #715
+describe('a TypeScript word in parentheses at the start of a statement (sveltejs/acorn-typescript#151)', () => {
+	it('reads the word as an expression, which the token after it ends, as TypeScript does', async () => {
+		// TypeScript reports TS1005 `';' expected.` (`'=>' expected.` after
+		// `(global)`) at the token after the parentheses.
+		/** @type {Array<[source: string, at: string]>} */
+		const cases = [
+			['(abstract) class A {}', 'class'],
+			['(declare) class A {}', 'class'],
+			['(declare) function f(): void;', 'function'],
+			['(type) T = 1;', 'T'],
+			['(namespace) N {}', 'N'],
+			['(module) "m" {}', '"m"'],
+			['(global) {}', '{'],
+			['((abstract)) class A {}', 'class'],
+		];
+		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, at]) =>
+				thrown_in_every_mode(source, source.indexOf(at), 'Unexpected token'),
+			),
+		);
+	});
+
+	it('still reads the word in parentheses before a line break or `;` as an expression', async () => {
+		const sources = [
+			'(abstract);',
+			`(declare)
+class A {}`,
+		];
+		const outcomes = await parseBothModes(sources);
+		for (const { source, strict, collect } of outcomes) {
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				expect(ast.body[0].type, source).toBe('ExpressionStatement');
+			}
+		}
+	});
+});
+
+// #716
+describe('the `intrinsic` keyword of a type alias (sveltejs/acorn-typescript#152)', () => {
+	it('reads `intrinsic` after the `=` as the keyword unless a `.` follows, as TypeScript does', async () => {
+		/** @type {Array<[source: string, type: string]>} */
+		const cases = [
+			['type T = intrinsic;', 'TSIntrinsicKeyword'],
+			['type Uppercase<S extends string> = intrinsic;', 'TSIntrinsicKeyword'],
+			['declare type T = intrinsic;', 'TSIntrinsicKeyword'],
+			[
+				`type T =
+	intrinsic;`,
+				'TSIntrinsicKeyword',
+			],
+			// A type name, as before.
+			['type T = intrinsic.X;', 'TSTypeReference'],
+			['type T = \\u0069ntrinsic.X;', 'TSTypeReference'],
+			// The keyword was read in place of `interface`, which TypeScript reads
+			// as a type name (and reports from its checker, TS1214).
+			['type T = interface;', 'TSTypeReference'],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				expect(declarationOf(ast.body[0]), source).toMatchObject({
+					type: 'TSTypeAliasDeclaration',
+					typeAnnotation: { type: cases[index][1] },
+				});
+			}
+		}
+	});
+
+	it('keeps `intrinsic` a type name anywhere else', async () => {
+		const sources = ['let x: intrinsic;', 'type T<X = intrinsic> = X;', 'type T = (intrinsic);'];
+		const outcomes = await parse_in_worker(in_every_mode(sources));
+		expect(outcomes.filter((outcome) => !outcome.ok)).toEqual([]);
+		expect(parseModule('type T = (intrinsic);', 'App.tsrx').body[0]).toMatchObject({
+			type: 'TSTypeAliasDeclaration',
+			typeAnnotation: { typeAnnotation: { type: 'TSTypeReference' } },
+		});
+	});
+
+	it('rejects what TypeScript rejects after the keyword, and the keyword written with an escape', async () => {
+		/** @type {Array<[source: string, at: string, message: string]>} */
+		const cases = [
+			// TypeScript reports TS1005 `';' expected.` after the keyword.
+			['type T = intrinsic[];', '[', 'Unexpected token'],
+			['type T = intrinsic | X;', '|', 'Unexpected token'],
+			['type T = \\u0069ntrinsic;', '\\u0069ntrinsic', KEYWORD_ESCAPE],
+		];
+		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, at, message]) =>
+				thrown_in_every_mode(source, source.indexOf(at), message),
+			),
+		);
+	});
+});
+
+// #717
+describe('the options of an import type (sveltejs/acorn-typescript#153)', () => {
+	it('reads `with` or `assert` and the import attributes, as TypeScript does', async () => {
+		const sources = [
+			'let x: import("m", { with: { type: "json" } });',
+			'let x: import("m", { assert: { type: "json" } });',
+			'let x: import("m", { with: {} });',
+			'let x: import("m", { with: { "resolution-mode": "import", }, });',
+			'let x: import("m", { with: { class: "x", \\u0074ype: "json" } });',
+			'let x: typeof import("m", { with: { type: "json" } }).X<Y>;',
+		];
+		const outcomes = await parseBothModes(sources);
+		for (const { source, strict, collect } of outcomes) {
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				const [declaration] = /** @type {AST.VariableDeclaration} */ (ast.body[0]).declarations;
+				const annotation = /** @type {{ typeAnnotation: { typeAnnotation: any } }} */ (
+					/** @type {unknown} */ (declaration.id)
+				).typeAnnotation.typeAnnotation;
+				const importType = annotation.type === 'TSTypeQuery' ? annotation.exprName : annotation;
+				const { options } = /** @type {{ options: AST.ObjectExpression }} */ (importType);
+				assert_type(options, 'ObjectExpression');
+				expect(options.properties, source).toHaveLength(1);
+				const [option] = options.properties;
+				assert_type(option, 'Property');
+				expect(keyName(option.key), source).toBe(source.includes('assert') ? 'assert' : 'with');
+				expect(option.value.type, source).toBe('ObjectExpression');
+			}
+		}
+	});
+
+	it('reports what TypeScript reports for anything else', async () => {
+		/** @type {Array<[source: string, at: string, message: string]>} */
+		const cases = [
+			['let x: import("m", { foo: {} });', 'foo', "'with' expected."],
+			['let x: import("m", { ...o });', '...', "'with' expected."],
+			['let x: import("m", { "with": {} });', '"with"', "'with' expected."],
+			['let x: import("m", {});', '}', "'with' expected."],
+			['let x: import("m", { \\u0077ith: {} });', '\\u0077ith', KEYWORD_ESCAPE],
+			['let x: import("m", { \\u0061ssert: {} });', '\\u0061ssert', KEYWORD_ESCAPE],
+			['let x: import("m", { with });', '}', "':' expected."],
+			['let x: import("m", { with() {} });', '() {}', "':' expected."],
+			['let x: import("m", { with: x });', 'x }', "'{' expected."],
+			['let x: import("m", x);', 'x)', "'{' expected."],
+			['let x: import("m", { with: {}, foo: 1 });', 'foo', "'}' expected."],
+			['let x: import("m", { with: {}, assert: {} });', 'assert', "'}' expected."],
+			['let x: import("m", { with: { a } });', '} }', "':' expected."],
+			['let x: import("m", { with: { a() {} } });', '() {}', "':' expected."],
+			['let x: import("m", { with: { [a]: 1 } });', '[', 'Identifier or string literal expected.'],
+			['let x: import("m", { with: { ...a } });', '...', 'Identifier or string literal expected.'],
+			['let x: import("m", { with: { 1: "x" } });', '1', 'Identifier or string literal expected.'],
+			['let x: import("m", { with: { a: "x" b: "y" } });', 'b:', "',' expected."],
+		];
+		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, at, message]) =>
+				thrown_in_every_mode(source, source.indexOf(at), message),
+			),
+		);
+	});
+});
+
+// #718
+describe('`type` written with an escape in an import or export clause (sveltejs/acorn-typescript#154)', () => {
+	it('reads it as `type`, as TypeScript does, without an error', async () => {
+		/** @type {Array<[source: string, kinds: string[]]>} */
+		const cases = [
+			['import \\u0074ype { a } from "m";', ['type', 'value']],
+			['import \\u0074ype a from "m";', ['type']],
+			['import \\u0074ype * as ns from "m";', ['type']],
+			['import { \\u0074ype a } from "m";', ['value', 'type']],
+			['export { \\u0074ype a } from "m";', ['value', 'type']],
+			['import \\u0074ype a = require("m");', ['type']],
+			['export import \\u0074ype a = require("m");', ['type']],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				const statement = /** @type {any} */ (ast.body[0]);
+				const kinds = [
+					statement.importKind ?? statement.exportKind,
+					...(statement.specifiers ?? [])
+						.filter((/** @type {any} */ specifier) => specifier.type !== 'ImportDefaultSpecifier')
+						.filter((/** @type {any} */ specifier) => specifier.type !== 'ImportNamespaceSpecifier')
+						.map((/** @type {any} */ specifier) => specifier.importKind ?? specifier.exportKind),
+				];
+				expect(kinds, source).toEqual(cases[index][1]);
+			}
+		}
+	});
+
+	it('still reads it as a name where `type` is one', async () => {
+		/** @type {Array<[source: string, name: string]>} */
+		const cases = [
+			['import \\u0074ype from "m";', 'type'],
+			['import { \\u0074ype } from "m";', 'type'],
+			['import { \\u0074ype as b } from "m";', 'b'],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				const statement = /** @type {any} */ (ast.body[0]);
+				expect(statement.importKind, source).toBe('value');
+				const [specifier] = statement.specifiers;
+				expect(specifier.local.name, source).toBe(cases[index][1]);
+				expect(specifier.importKind ?? 'value', source).toBe('value');
+			}
+		}
+	});
+});
+
+// #719
+describe('modifiers before a declaration that TypeScript reports from its checker (sveltejs/acorn-typescript#155)', () => {
+	/**
+	 * @param {string} modifier
+	 */
+	const moduleElement = (modifier) =>
+		`'${modifier}' modifier cannot appear on a module or namespace element.`;
+
+	it('records the error TypeScript reports, which a strict parse throws', async () => {
+		/** @type {Array<[source: string, pos: number, message: string, type: string]>} */
+		const cases = [
+			['public class A {}', 0, moduleElement('public'), 'ClassDeclaration'],
+			['static class A {}', 0, moduleElement('static'), 'ClassDeclaration'],
+			[
+				`static
+class A {}`,
+				0,
+				moduleElement('static'),
+				'ClassDeclaration',
+			],
+			['export public class A {}', 7, moduleElement('public'), 'ExportNamedDeclaration'],
+			['abstract public class A {}', 9, moduleElement('public'), 'ClassDeclaration'],
+			['private interface I {}', 0, moduleElement('private'), 'TSInterfaceDeclaration'],
+			['protected let x = 1;', 0, moduleElement('protected'), 'VariableDeclaration'],
+			['public import x from "m";', 0, moduleElement('public'), 'ImportDeclaration'],
+			[
+				'readonly function f() {}',
+				0,
+				"'readonly' modifier can only appear on a property declaration or index signature.",
+				'FunctionDeclaration',
+			],
+			[
+				'accessor class A {}',
+				0,
+				"'accessor' modifier can only appear on a property declaration.",
+				'ClassDeclaration',
+			],
+			['async class A {}', 0, "'async' modifier cannot be used here.", 'ClassDeclaration'],
+			[
+				'async interface I {}',
+				0,
+				"'async' modifier cannot be used here.",
+				'TSInterfaceDeclaration',
+			],
+			[
+				'declare async function f(): void;',
+				8,
+				"'async' modifier cannot be used in an ambient context.",
+				'TSDeclareFunction',
+			],
+			[
+				'export declare async function f(): void;',
+				15,
+				"'async' modifier cannot be used in an ambient context.",
+				'ExportNamedDeclaration',
+			],
+			['declare declare class A {}', 8, "'declare' modifier already seen.", 'ClassDeclaration'],
+			['abstract abstract class A {}', 9, "'abstract' modifier already seen.", 'ClassDeclaration'],
+			['export export class A {}', 7, "'export' modifier already seen.", 'ExportNamedDeclaration'],
+			[
+				'export abstract export class A {}',
+				16,
+				"'export' modifier already seen.",
+				'ExportNamedDeclaration',
+			],
+			[
+				'abstract export class A {}',
+				9,
+				"'export' modifier must precede 'abstract' modifier.",
+				'ExportNamedDeclaration',
+			],
+			[
+				'async export default function () {}',
+				6,
+				"'export' modifier must precede 'async' modifier.",
+				'ExportDefaultDeclaration',
+			],
+			[
+				'declare import x from "m";',
+				0,
+				"A 'declare' modifier cannot be used with an import declaration.",
+				'ImportDeclaration',
+			],
+			[
+				'declare using x = y;',
+				0,
+				"'declare' modifier cannot appear on a 'using' declaration.",
+				'VariableDeclaration',
+			],
+			[
+				`function f() {
+	public class A {}
+}`,
+				16,
+				'Modifiers cannot appear here.',
+				'FunctionDeclaration',
+			],
+			[
+				`namespace N {
+	static let x = 1;
+}`,
+				15,
+				moduleElement('static'),
+				'TSModuleDeclaration',
+			],
+			[
+				`declare namespace N {
+	declare public class A {}
+}`,
+				23,
+				"A 'declare' modifier cannot be used in an already ambient context.",
+				'TSModuleDeclaration',
+			],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			const [, pos, message, type] = cases[index];
+			const { line, column } = acorn.getLineInfo(source, pos);
+			expect(strict, source).toEqual({ ok: false, message: `${message} (${line}:${column})`, pos });
+			if (!collect.ok) throw new Error(`${JSON.stringify(source)} threw ${collect.message}`);
+			expect(collect.errors?.[0], source).toEqual({ message, pos, end: pos + 1 });
+			expect(collect.ast.body[0].type, source).toBe(type);
+		}
+	});
+
+	it('records an error for each modifier the tree leaves out, which the formatter refuses', async () => {
+		/** @type {Array<[source: string, errors: Array<[pos: number, message: string]>]>} */
+		const cases = [
+			[
+				'public private class A {}',
+				[
+					[0, moduleElement('public')],
+					[7, moduleElement('private')],
+				],
+			],
+			[
+				'abstract export public class A {}',
+				[
+					[9, "'export' modifier must precede 'abstract' modifier."],
+					[16, moduleElement('public')],
+				],
+			],
+			[
+				'async export class A {}',
+				[
+					[6, "'export' modifier must precede 'async' modifier."],
+					[0, "'async' modifier cannot be used here."],
+				],
+			],
+			[
+				'declare accessor class A {}',
+				[
+					[8, "'accessor' modifier cannot be used with 'declare' modifier."],
+					[8, "'accessor' modifier can only appear on a property declaration."],
+				],
+			],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, collect }] of outcomes.entries()) {
+			if (!collect.ok) throw new Error(`${JSON.stringify(source)} threw ${collect.message}`);
+			expect(
+				collect.errors?.map((error) => [error.pos, error.message]),
+				source,
+			).toEqual(cases[index][1]);
+		}
+	});
+
+	it('keeps the modifiers the tree has a place for', async () => {
+		const outcomes = await parseBothModes([
+			'abstract export declare class A {}',
+			'declare export const x: number;',
+			'async declare function f(): Promise<void>;',
+			'public export default abstract class {}',
+			`declare public abstract class A {
+	abstract m(): void;
+}`,
+		]);
+		const [reordered, ambient, async_ambient, exported_default, abstract_ambient] = outcomes.map(
+			({ source, collect }) => {
+				if (!collect.ok) throw new Error(`${JSON.stringify(source)} threw ${collect.message}`);
+				return /** @type {any} */ (collect.ast.body[0]);
+			},
+		);
+		expect(reordered).toMatchObject({
+			type: 'ExportNamedDeclaration',
+			start: 0,
+			exportKind: 'type',
+			declaration: { type: 'ClassDeclaration', abstract: true, declare: true, start: 16 },
+		});
+		expect(ambient).toMatchObject({
+			type: 'ExportNamedDeclaration',
+			start: 0,
+			exportKind: 'type',
+			declaration: { type: 'VariableDeclaration', declare: true, kind: 'const' },
+		});
+		expect(async_ambient).toMatchObject({ type: 'TSDeclareFunction', async: true, declare: true });
+		expect(exported_default).toMatchObject({
+			type: 'ExportDefaultDeclaration',
+			start: 0,
+			declaration: { type: 'ClassDeclaration', abstract: true, id: null, start: 22 },
+		});
+		expect(abstract_ambient).toMatchObject({
+			type: 'ClassDeclaration',
+			abstract: true,
+			declare: true,
+			start: 0,
+		});
+		// An abstract member in the abstract class isn't an error.
+		expect(outcomes[4].collect.ok && outcomes[4].collect.errors?.map((error) => error.pos)).toEqual(
+			[8],
+		);
+	});
+
+	it('reports a second `static`, where TypeScript expects a declaration (TS1146)', async () => {
+		/** @type {Array<[source: string, pos: number]>} */
+		const cases = [
+			['static static class A {}', 6],
+			['static public static class A {}', 13],
+			['export static static class A {}', 13],
+		];
+		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, pos]) => thrown_in_every_mode(source, pos, 'Declaration expected.')),
+		);
+	});
+
+	it('reports a modifier written with an escape (TS1260)', async () => {
+		/** @type {Array<[source: string, at: string]>} */
+		const cases = [
+			['p\\u0075blic class A {}', 'p\\u0075blic'],
+			['public p\\u0072ivate class A {}', 'p\\u0072ivate'],
+			['export \\u0070ublic class A {}', '\\u0070ublic'],
+		];
+		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, at]) =>
+				thrown_in_every_mode(source, source.indexOf(at), KEYWORD_ESCAPE),
+			),
+		);
+	});
+
+	it('still reads the words as names before a line break', async () => {
+		/** @type {Array<[source: string, types: string[]]>} */
+		const cases = [
+			[
+				`async
+class A {}`,
+				['ExpressionStatement', 'ClassDeclaration'],
+			],
+			[
+				`readonly
+function f() {}`,
+				['ExpressionStatement', 'FunctionDeclaration'],
+			],
+			[
+				`declare
+async function f() {}`,
+				['ExpressionStatement', 'FunctionDeclaration'],
+			],
+			['accessor = 1;', ['ExpressionStatement']],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				expect(
+					ast.body.map((statement) => statement.type),
+					source,
+				).toEqual(cases[index][1]);
+			}
+		}
+	});
+});
+
+// #720
+describe('`declare` after decorators after `export default` (sveltejs/acorn-typescript#156)', () => {
+	it('reads an ambient class, as TypeScript does', async () => {
+		/** @type {Array<[source: string, abstract: boolean, name: string | null]>} */
+		const cases = [
+			['export default @dec declare class A {}', false, 'A'],
+			['export default @dec declare abstract class A {}', true, 'A'],
+			['export default @dec abstract declare class A {}', true, 'A'],
+			['export default @dec declare class {}', false, null],
+			[
+				`export default @dec declare abstract class A {
+	abstract m(): void;
+	x: number;
+}`,
+				true,
+				'A',
+			],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				const declaration = defaultExported(ast);
+				assert_type(declaration, 'ClassDeclaration');
+				const { abstract, declare } = /** @type {{ abstract?: boolean, declare?: boolean }} */ (
+					declaration
+				);
+				expect({ abstract: abstract ?? false, declare }, source).toEqual({
+					abstract: cases[index][1],
+					declare: true,
+				});
+				expect(declaration.id?.name ?? null, source).toBe(cases[index][2]);
+				expect(decoratorTexts(declaration, source), source).toEqual(['@dec']);
+				// The class starts at its decorator.
+				expect(declaration.start, source).toBe(source.indexOf('@dec'));
+			}
+		}
+	});
+
+	it('still reads `declare` as the exported value without decorators', async () => {
+		// TypeScript reports TS1005 `';' expected.` at `class`.
+		const source = 'export default declare class A {}';
+		const outcomes = await parse_in_worker(in_every_mode([source]));
+		expect(outcomes).toEqual(
+			thrown_in_every_mode(source, source.indexOf('class'), 'Unexpected token'),
+		);
 	});
 });

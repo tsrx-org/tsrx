@@ -1011,6 +1011,41 @@ describe('parse errors', () => {
 				'abstract function f() {}',
 				"'abstract' modifier can only appear on a class, method, or property declaration. (1:1)",
 			],
+			// #719: modifiers the tree has no place for, which TypeScript reports from
+			// its checker, and which the output would leave out.
+			[
+				'public class A {}',
+				"'public' modifier cannot appear on a module or namespace element. (1:1)",
+			],
+			[
+				'export static let x = 1;',
+				"'static' modifier cannot appear on a module or namespace element. (1:8)",
+			],
+			[
+				'readonly function f() {}',
+				"'readonly' modifier can only appear on a property declaration or index signature. (1:1)",
+			],
+			[
+				'accessor class A {}',
+				"'accessor' modifier can only appear on a property declaration. (1:1)",
+			],
+			['async class A {}', "'async' modifier cannot be used here. (1:1)"],
+			['declare declare class A {}', "'declare' modifier already seen. (1:9)"],
+			[
+				`function f() {
+  public class A {}
+}`,
+				'Modifiers cannot appear here. (2:3)',
+			],
+			[
+				'declare import x from "m";',
+				"A 'declare' modifier cannot be used with an import declaration. (1:1)",
+			],
+			['declare using x = y;', "'declare' modifier cannot appear on a 'using' declaration. (1:1)"],
+			[
+				'abstract export public class A {}',
+				"'public' modifier cannot appear on a module or namespace element. (1:17)",
+			],
 		]) {
 			const error = await format(source).catch((/** @type {any} */ e) => e);
 			expect(error, source).toBeInstanceOf(SyntaxError);
@@ -1062,9 +1097,37 @@ I {}`,
 		['type satisfies<T> = T;', 'type satisfies<T> = T;\n'],
 		['export global {}', 'export global {}\n'],
 		['export declare global {}', 'export declare global {}\n'],
+		// #716, #717, #718 and #720.
+		[
+			'type Uppercase<S extends string> = intrinsic;',
+			'type Uppercase<S extends string> = intrinsic;\n',
+		],
+		[
+			'let x: import("m", { with: { "resolution-mode": "import" } }).X;',
+			'let x: import("m", { with: { "resolution-mode": "import" } }).X;\n',
+		],
+		['import \\u0074ype { a } from "m";', 'import type { a } from "m";\n'],
+		['import { \\u0074ype a } from "m";', 'import { type a } from "m";\n'],
+		[
+			'export default @dec declare abstract class A {}',
+			`export default
+@dec
+declare abstract class A {}
+`,
+		],
 	])('formats %j like Prettier', async (input, expected) => {
 		await expectFormat(input, expected);
 		expect(expected).toBe(await prettier.format(input, { parser: 'typescript' }));
+	});
+
+	// #719: modifiers out of order that the tree keeps print in order. Prettier's
+	// `typescript` parser leaves out the `export` of the first two.
+	test.each([
+		['abstract export class A {}', 'export abstract class A {}\n'],
+		['async export function f() {}', 'export async function f() {}\n'],
+		['declare export const x: number;', 'export declare const x: number;\n'],
+	])('keeps the modifiers of %j', async (input, expected) => {
+		await expectFormat(input, expected);
 	});
 });
 
