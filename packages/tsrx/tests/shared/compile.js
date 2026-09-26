@@ -1,7 +1,10 @@
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { DIAGNOSTIC_CODES } from '../../src/diagnostics.js';
-import { TSRX_JSX_SPREAD_CHILD_ERROR } from '../../src/analyze/validation.js';
+import {
+	TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
+	TSRX_JSX_SPREAD_CHILD_ERROR,
+} from '../../src/analyze/validation.js';
 import { runSharedScopedStyleTests } from './scoped-styles.js';
 import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformance.js';
 
@@ -168,6 +171,38 @@ export function App() @{
 				const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
 				expect(code.slice(generated, generated + 'items'.length)).toBe('items');
 			}
+		});
+	});
+
+	describe(`[${name}] reported dynamic tags in virtual code`, () => {
+		// The parser reports a dynamic tag expression other than an identifier, a
+		// member access, or a string literal (#737), once for each element, and
+		// the editor still gets virtual code that keeps and maps the expression.
+		it('reports each dynamic tag and keeps it in the virtual code', () => {
+			const source = `export function App({ c, A, B, getTag }: any) @{
+	<main>
+		<{c ? A : B}>
+			<p>{c}</p>
+		</{c ? A : B}>
+		<{getTag()} />
+		<{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : 'i'} />
+	</main>
+}`;
+			const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			const tags = ['c ? A : B', 'getTag()', "c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : 'i'"];
+			expect(errors.map((error) => [error.code, source.slice(error.pos, error.end)])).toEqual(
+				tags.map((tag) => [DIAGNOSTIC_CODES.DYNAMIC_TAG_EXPRESSION, tag]),
+			);
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			// Text keeps its character references (#693).
+			expect(code).toContain('<b>&#123;x&#125; &amp;lt; &gt;</b>');
+
+			const call = source.indexOf('getTag');
+			const mapping = mappings.find((candidate) => candidate.sourceOffsets[0] === call);
+			expect(mapping).toBeDefined();
+			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
+			expect(code.slice(generated, generated + 'getTag'.length)).toBe('getTag');
 		});
 	});
 
@@ -2444,7 +2479,8 @@ export function App() @{
 		// container, the output printed the decoded `value`, so `&#123;x&#125;`
 		// compiled to the expression `{x}`, and `&gt;` to a bare `>` (#693).
 		// Since #656 those are template text, and that parser reads only an
-		// element in a dynamic tag name.
+		// element in a dynamic tag name, which is reported (#737): see the virtual
+		// code of reported dynamic tags.
 		/** @type {Array<[string, string, string]>} */
 		const references = [
 			[
@@ -2455,11 +2491,6 @@ export function App() @{
 			[
 				'an unbraced attribute value in a container',
 				component('{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}'),
-				'<b>&#123;x&#125; &amp;lt; &gt;</b>',
-			],
-			[
-				'an element in a dynamic tag name',
-				component(`<{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : 'i'} />`),
 				'<b>&#123;x&#125; &amp;lt; &gt;</b>',
 			],
 			[
@@ -2637,6 +2668,72 @@ export function App() @{
 				expect(virtual_parse_diagnostics(code), code).toEqual([]);
 			});
 		}
+	});
+
+	describe(`[${name}] dynamic tag expressions (#737)`, () => {
+		// A dynamic tag expression is an identifier, a member access, or a string
+		// literal. The parser reports anything else on every target: a normal
+		// compile throws, and collect mode records the diagnostic, once for the
+		// opening and closing tag, and still produces code.
+		/** @type {Array<[string, string]>} */
+		const reported = [
+			['a conditional', 'c ? A : B'],
+			['a call', 'getTag()'],
+			['a concatenation', "'h' + level"],
+			['an arrow function', '() => <b>x</b>'],
+			['an element', "c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : 'i'"],
+			['a parenthesized identifier', '(tag)'],
+			['a type assertion', 'tag as any'],
+		];
+
+		for (const [label, tag] of reported) {
+			const source = `export function App({ c, A, B, getTag, level, tag }: any) @{
+	<main>
+		<{${tag}} title="t">
+			<p>{c}</p>
+		</{${tag}}>
+	</main>
+}`;
+			const start = source.indexOf(tag);
+			const end = start + tag.length;
+
+			it(`throws for ${label}`, () => {
+				expect(() => compile(source, 'App.tsrx')).toThrow(
+					expect.objectContaining({
+						message: TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
+						code: DIAGNOSTIC_CODES.DYNAMIC_TAG_EXPRESSION,
+						pos: start,
+						end,
+					}),
+				);
+			});
+
+			it(`records ${label} in collect mode`, () => {
+				const { code, errors } = compile(source, 'App.tsrx', { collect: true });
+
+				expect(errors.map((error) => [error.code, error.message, error.pos, error.end])).toEqual([
+					[DIAGNOSTIC_CODES.DYNAMIC_TAG_EXPRESSION, TSRX_DYNAMIC_TAG_EXPRESSION_ERROR, start, end],
+				]);
+				expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			});
+		}
+
+		it('compiles an identifier, a member access, and a string literal', () => {
+			const { code } = compile(
+				`export function App({ tag, props, registry, items, kind }: any) @{
+	<main>
+		<{tag} />
+		<{props.as}>x</{props.as}>
+		<{registry[kind].tag} />
+		<{items[0]} />
+		<{'section'} />
+	</main>
+}`,
+				'App.tsrx',
+			);
+
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+		});
 	});
 
 	describe(`[${name}] component export shapes`, () => {

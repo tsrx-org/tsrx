@@ -761,12 +761,26 @@ const Body = expanded ? ExpandedBody : CompactBody;
 <{Body} item={item} />
 ```
 
-The tag expression must resolve to an element name: an identifier, member
-access, static string, or a runtime expression composed of those. Calls,
-spreads, string concatenation, and string interpolation are not valid tag
-names. Do not use removed dynamic tag syntax such as `<@tag />`,
-`<@Component />`, or the imported `Dynamic` component with an `is` prop. Use
-`<{tag}>` instead.
+The tag expression must be one of three forms:
+
+- an identifier: `tag`, `Comp`;
+- a member access, including chains: `props.as`, `this.tag`, `registry[name]`,
+  `items[0]`. The chain starts at an identifier or `this`, and each computed key
+  is an identifier, a string or number literal, or a member access;
+- a string literal: `'section'`.
+
+Any other expression is a compile error, and the editor underlines it. That
+includes a conditional, `||`, `??` and `&&`, even when every branch or operand
+is one of the three forms; parentheses and type-only wrappers (`as`,
+`satisfies`, `!`); optional member access (`a?.b`); calls, `new`, spreads,
+string concatenation, template literals, assignments and sequences; functions,
+elements and fragments; and every literal other than a string. A
+non-self-closing element repeats the expression in its closing tag, so compute
+anything more above the element, as `Body` is in the example above, and use the
+result: `const Tag = c ? Child : Fallback;` followed by `<{Tag} />`.
+
+Do not use removed dynamic tag syntax such as `<@tag />`, `<@Component />`, or
+the imported `Dynamic` component with an `is` prop. Use `<{tag}>` instead.
 
 ## Control Flow
 
