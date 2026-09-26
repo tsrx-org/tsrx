@@ -7028,6 +7028,48 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(union).leading).toBeUndefined();
 	});
 
+	// Prettier's parsers keep no node for a type's parentheses, so a comment
+	// in them lies in the node around them, next to the nodes around them
+	// (#679)
+	it('trails the member before parentheses with a comment on its own line after their (', () => {
+		const union = firstStatement('type K = X | (\n  // c\n  B | C);').typeAnnotation;
+
+		expect(commentsOf(union.types[0]).trailing).toEqual([' c']);
+		expect(commentsOf(union.types[1].typeAnnotation).leading).toBeUndefined();
+	});
+
+	it('trails the member before parentheses with a comment that ends the line after their (', () => {
+		const intersection = firstStatement('type K = X & (// c\n  B | C);').typeAnnotation;
+		const union = firstStatement('type K = X | (// c\n  B | C);').typeAnnotation;
+
+		expect(commentsOf(intersection.types[0]).trailing).toEqual([' c']);
+		expect(commentsOf(union.types[0]).trailing).toEqual([' c']);
+	});
+
+	it('trails the last member of a union with a comment that ends its line after it', () => {
+		const inUnion = firstStatement('type K = X | (B | C // c\n);').typeAnnotation;
+		const inArray = firstStatement('type K = (B | C // c\n)[];').typeAnnotation;
+		const afterParens = firstStatement('type K = (B | C) // c\n  & X;').typeAnnotation;
+
+		expect(commentsOf(inUnion.types[1].typeAnnotation.types[1]).trailing).toEqual([' c']);
+		expect(commentsOf(inArray.elementType.typeAnnotation.types[1]).trailing).toEqual([' c']);
+		expect(commentsOf(afterParens.types[0].typeAnnotation.types[1]).trailing).toEqual([' c']);
+	});
+
+	it('leads the member after parentheses with a comment on its own line before their )', () => {
+		const intersection = firstStatement('type K = (A\n  // c\n) & X;').typeAnnotation;
+
+		expect(commentsOf(intersection.types[1]).leading).toEqual([' c']);
+		expect(commentsOf(intersection.types[0].typeAnnotation).trailing).toBeUndefined();
+	});
+
+	it('trails an intersection member with a comment that ends the line after its &', () => {
+		const intersection = firstStatement('type K = X & // c\n  Y;').typeAnnotation;
+
+		expect(commentsOf(intersection.types[0]).trailing).toEqual([' c']);
+		expect(commentsOf(intersection.types[1]).leading).toBeUndefined();
+	});
+
 	it('moves a comment between a class heading and its body into the body', () => {
 		const withMember = firstStatement('class A extends B // c\n{\n  x = 1;\n}');
 		const empty = firstStatement('interface I extends J // c\n{}');
