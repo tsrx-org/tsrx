@@ -454,9 +454,7 @@ function placeHoistedTypeComments(node, options) {
 		const withComments = /** @type {AST.NodeWithMaybeComments | null | undefined} */ (type);
 		const comments = withComments?.leadingComments ?? [];
 		const index = comments.findIndex((comment) => hoistedTypeComments.has(comment));
-		const first = /** @type {(AST.Comment & AST.NodeWithLocation) | undefined} */ (
-			comments[index]
-		);
+		const first = /** @type {(AST.Comment & AST.NodeWithLocation) | undefined} */ (comments[index]);
 		if (
 			!withComments ||
 			!first ||
@@ -10551,10 +10549,7 @@ function unionPrintsOwnComments(path, trailing) {
 		!hasPrettierIgnore(node) &&
 		!shouldHugUnionType(node) &&
 		!isMultipleTupleTypeElement(path) &&
-		!(
-			key === 'types' &&
-			(parent?.type === 'TSUnionType' || parent?.type === 'TSIntersectionType')
-		)
+		!(key === 'types' && (parent?.type === 'TSUnionType' || parent?.type === 'TSIntersectionType'))
 	);
 }
 

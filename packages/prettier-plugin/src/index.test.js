@@ -13566,7 +13566,10 @@ type Y = A; // trailing`);
 			['type S = A | ((// ref\nFoo<T>) & X);', 'type S =\n  | A // ref\n  | (Foo<T> & X);'],
 			['type S = X & ((// c\nA) & B);', 'type S = X & // c\n  (A & B);'],
 			['type S = A extends (// c\nB)[] ? C : D;', 'type S = A extends B[] // c\n  ? C\n  : D;'],
-			['type S = <T extends (// c\nA) & B>() => T;', 'type S = <\n  T extends // c\n    A & B,\n>() => T;'],
+			[
+				'type S = <T extends (// c\nA) & B>() => T;',
+				'type S = <\n  T extends // c\n    A & B,\n>() => T;',
+			],
 			['type S<T = (// c\nA) & B> = T;', 'type S<\n  T = // c\n    A & B,\n> = T;'],
 			[
 				'type S<T extends X = (// c\nA) & B> = T;',
@@ -13786,16 +13789,10 @@ const target = event.target as HTMLElement | null;`;
 			['type A = X & (// c\nB | C);', 'type A = X & // c\n  (B | C);'],
 			['type A = X | (// c\nB | C);', 'type A =\n  | X // c\n  | (B | C);'],
 			['type A = X & (/* c */\nB | C);', 'type A = X /* c */ & (B | C);'],
-			[
-				'type A = X | (B | C // c\n);',
-				'type A =\n  | X\n  | (\n      | B\n      | C // c\n    );',
-			],
+			['type A = X | (B | C // c\n);', 'type A =\n  | X\n  | (\n      | B\n      | C // c\n    );'],
 			['type A = X & (B | C // c\n);', 'type A = X &\n  (\n    | B\n    | C // c\n  );'],
 			['type A = (B | C // c\n)[];', 'type A = (\n  | B\n  | C // c\n)[];'],
-			[
-				'type A = (B | C // c\n) | X;',
-				'type A =\n  | (\n      | B\n      | C // c\n    )\n  | X;',
-			],
+			['type A = (B | C // c\n) | X;', 'type A =\n  | (\n      | B\n      | C // c\n    )\n  | X;'],
 			['type A = (B | C) // c\n  & X;', 'type A = (\n  | B\n  | C // c\n) &\n  X;'],
 			['type A = (B | C) & // c\n  X;', 'type A = (\n  | B\n  | C // c\n) &\n  X;'],
 			['type A = (B | C) & (// c\nX);', 'type A = (\n  | B\n  | C // c\n) &\n  X;'],
