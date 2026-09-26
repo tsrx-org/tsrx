@@ -7534,6 +7534,45 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(conditional.expression.callee).trailing).toBeUndefined();
 	});
 
+	// Prettier's next passes put it on a line of its own after the body, and
+	// then give it to the first argument, or, with no argument, never end
+	// (#676)
+	it('leads the first argument with a comment after the last body of a chain called right away', () => {
+		const called = firstStatement('((a) => (b) => (c /* c */))(1);').expression;
+		const unparenthesized = firstStatement('(\n  (a) => (b) =>\n    c /* c */\n)(1);').expression;
+		const bare = firstStatement('((a) => (b) => (c /* c */))();').expression;
+		const object = firstStatement('((a) => (b) => ({} /* c */))(1);').expression;
+
+		expect(commentsOf(called.arguments[0]).leading).toEqual([' c ']);
+		expect(called.arguments[0].leadingComments?.[0]?.ownLine).toBe(true);
+		expect(commentsOf(called.callee.body.body).trailing).toBeUndefined();
+		expect(commentsOf(unparenthesized.arguments[0]).leading).toEqual([' c ']);
+		expect(commentsOf(unparenthesized.callee).trailing).toBeUndefined();
+		expect(commentsOf(bare.callee.body).trailing).toEqual([' c ']);
+		expect(commentsOf(object.callee).trailing).toEqual([' c ']);
+	});
+
+	// Prettier's next pass finds it before the `)` around the arrow function,
+	// which prints it after its parentheses, where the pass after that gives
+	// it to the first argument of a `new` (#683, #760)
+	it('trails an arrow function in parentheses with a comment after its parenthesized body', () => {
+		const constructed = firstStatement('new ((a) => (b /* c */))(1);').expression;
+		const bare = firstStatement('new ((a) => (b /* c */))();').expression;
+		const member = firstStatement('((a) => (b /* c */)).call(x);').expression;
+		const chain = firstStatement('((a) => (b) => (c /* c */)).call(x);').expression;
+		const operand = firstStatement('((a) => (b /* c */)) || x;').expression;
+		const line = firstStatement('((a) => (b // c\n)).call(x);').expression;
+
+		expect(commentsOf(constructed.arguments[0]).leading).toEqual([' c ']);
+		expect(constructed.arguments[0].leadingComments?.[0]?.ownLine).toBeUndefined();
+		expect(commentsOf(bare.callee).trailing).toEqual([' c ']);
+		expect(commentsOf(member.callee.object).trailing).toEqual([' c ']);
+		expect(commentsOf(member.callee.object.body).trailing).toBeUndefined();
+		expect(commentsOf(chain.callee.object).trailing).toEqual([' c ']);
+		expect(commentsOf(operand.left).trailing).toEqual([' c ']);
+		expect(commentsOf(line.callee.object.body).trailing).toEqual([' c']);
+	});
+
 	// Like Prettier, which ends these statements before their `;`
 	it('trails the statement with a comment after a statement that is only its keyword, before its ;', () => {
 		const loop = firstStatement('for (;;) continue // c\n;\nfoo();');
