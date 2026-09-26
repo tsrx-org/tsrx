@@ -707,6 +707,46 @@ const b = (
 		);
 	});
 
+	// A `{" "}` is the space in the run, but it is not a space or tab touching
+	// the comment, and a comment inside it is that expression's.
+	test('a {" "} beside a comment keeps its space, and a comment inside it', async () => {
+		await expectFormat(
+			`export function App() @{
+  <>
+    <div>hello{" "}/* c */world</div>
+    <div>hello/* c */{" "}world</div>
+    <div><b />{" "}/* c */<i /></div>
+    <div><b />/* c */{" "}<i /></div>
+    <div>hello{" "}// c
+    world</div>
+    <div>hello{" " /* note */}/* c */world</div>
+    <div>hello/* c */{" " /* note */}world</div>
+    <div>{/* note */ " "}/* c */x</div>
+  </>
+}`,
+			`export function App() @{
+  <>
+    <div>hello /* c */world</div>
+    <div>hello/* c */ world</div>
+    <div>
+      <b /> /* c */<i />
+    </div>
+    <div>
+      <b />/* c */ <i />
+    </div>
+    <div>
+      hello{" "}// c
+      world
+    </div>
+    <div>hello{" " /* note */}/* c */world</div>
+    <div>hello/* c */{" " /* note */}world</div>
+    <div>{/* note */ " "}/* c */x</div>
+  </>
+}
+`,
+		);
+	});
+
 	test('in a fragment, and a JSDoc-style block comment is re-indented', async () => {
 		await expectFormat(
 			`const a = <>

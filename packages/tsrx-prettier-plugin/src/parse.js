@@ -349,11 +349,18 @@ class Adapter {
 	describeCommentRuns(children, start, end) {
 		const isBlank = (/** @type {Node | undefined} */ child) =>
 			child?.type === 'JSXText' && /^[ \t\r\n]*$/u.test(child.value);
+		// A comment inside `{" " /* note */}` belongs to that expression. It is not
+		// a gap the comment run reprints: printing the expression keeps the space
+		// and the comment (`isJsxWhitespaceExpression` leaves it as an expression).
+		const hasInnerComment = (/** @type {Node} */ child) =>
+			this.comments.some((comment) => comment.start > child.start && comment.end < child.end);
 		// `{" "}` renders a space whatever is around it.
 		const isSpace = (/** @type {Node | undefined} */ child) =>
-			child?.type === 'JSXExpressionContainer' &&
+			!!child &&
+			child.type === 'JSXExpressionContainer' &&
 			child.expression.type === 'Literal' &&
-			child.expression.value === ' ';
+			child.expression.value === ' ' &&
+			!hasInnerComment(child);
 		const isGap = (/** @type {Node | undefined} */ child) => isBlank(child) || isSpace(child);
 		const kind = (/** @type {Node | undefined} */ child) =>
 			!child ? 'boundary' : child.type === 'JSXText' ? 'text' : 'node';
@@ -375,13 +382,19 @@ class Adapter {
 			const before = children[previous];
 			const after = children[following];
 			// The whitespace and `{" "}`s beside the comments are the run, which the
-			// comments print.
+			// comments print. A `{" "}` is not whitespace beside the comment, so
+			// record which outer side it is on: `spaceBefore` / `spaceAfter` only
+			// see spaces and tabs touching the comment.
 			let explicitSpace = false;
+			let explicitBefore = false;
+			let explicitAfter = false;
 			for (let index = previous + 1; index < following; index++) {
 				children[index].tsrxInCommentRun = true;
 				if (isSpace(children[index])) {
 					children[index].tsrxCommentSpace = true;
 					explicitSpace = true;
+					if (index < first) explicitBefore = true;
+					else if (index > last) explicitAfter = true;
 				}
 			}
 			const runStart = !before
@@ -415,6 +428,9 @@ class Adapter {
 				lineBreak: lineBreak && !explicitSpace,
 				// Whether a line comment in the group puts a line break in the run.
 				lineComment: group.some((comment) => comment.commentType === 'Line'),
+				// A `{" "}` before the first comment or after the last one.
+				explicitBefore,
+				explicitAfter,
 			};
 			for (const [index, comment] of group.entries()) {
 				// Between two comments, whatever the source had there (whitespace or

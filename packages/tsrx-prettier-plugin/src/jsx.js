@@ -364,9 +364,11 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 			return;
 		}
 		// TSRX: the comment beside a `{" "}` prints it, and whitespace in a
-		// comment's run keeps what the comment printed after itself.
+		// comment's run keeps what the comment printed after itself. An
+		// expression that still has comments (`{" " /* note */}`) prints itself:
+		// skipping it would drop those comments, and its space with them.
 		if (
-			node.tsrxCommentSpace ||
+			(node.tsrxCommentSpace && !node.expression?.comments?.length && !node.comments?.length) ||
 			(node.tsrxInCommentRun && node.type === 'JSXText' && !/\n/u.test(getRaw(node)))
 		) {
 			return;
@@ -482,21 +484,21 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 						? ' '
 						: '';
 		}
-		if (
-			run.space &&
-			!run.lineBreak &&
-			run.lineComment &&
-			!(run.before === 'text' && run.after === 'text')
-		) {
+		// A `{" "}` renders a space without being a space or tab next to the
+		// comment, so `spaceBefore` / `spaceAfter` miss it.
+		const explicitBefore = outerBefore && run.explicitBefore;
+		const explicitAfter = outerAfter && run.explicitAfter;
+		if (run.space && !run.lineBreak && run.lineComment) {
 			// A line comment puts a line break in the run, so the space it renders
-			// is written out, before the comments.
+			// is written out, before the comments, between two words too. A plain
+			// space there would make `//` text (`hello// c`).
 			if (outerBefore) before = rawWhitespace;
 			if (outerAfter && !lineAfter) after = comment.spaceAfter ? ' ' : '';
 		} else if (run.space && !run.lineBreak) {
 			if (run.before === 'text' && run.after === 'text') {
 				// Between two words, a line break renders the space too.
-				if (outerBefore && comment.spaceBefore) before = line;
-				if (outerAfter && comment.spaceAfter) after = line;
+				if (outerBefore && (comment.spaceBefore || explicitBefore)) before = line;
+				if (outerAfter && (comment.spaceAfter || explicitAfter)) after = line;
 			} else if (run.after === 'boundary' || run.before === 'boundary') {
 				// The start or end of the children has a line break when the element
 				// breaks, so the space goes there, where it prints as `{" "}`.
@@ -508,9 +510,13 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 				}
 			} else {
 				// The space stays on its side; a line break there prints `{" "}`.
-				const side = outerAfter && comment.spaceAfter ? 'after' : 'before';
+				const side = outerAfter && (comment.spaceAfter || explicitAfter) ? 'after' : 'before';
 				if (side === 'after') after = whitespace;
-				else if (outerBefore && comment.spaceBefore) before = whitespace;
+				else if (outerBefore && (comment.spaceBefore || explicitBefore)) before = whitespace;
+				// The other side's `{" "}` is its own space.
+				if (side === 'after' && explicitBefore && !comment.spaceBefore) before = whitespace;
+				if (side === 'before' && explicitAfter && !comment.spaceAfter && !lineAfter)
+					after = whitespace;
 			}
 		} else if (run.lineBreak) {
 			// A space beside the start or end of the children renders nothing here.
