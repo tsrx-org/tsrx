@@ -14953,6 +14953,148 @@ const q =
   (cccccccccccccccccccccccccc && ddddddddddddddd);`);
 		});
 
+		// Like Prettier's parse postprocess, a parenthesized right operand with
+		// the same logical operator joins the chain, so every operator of it
+		// breaks together. The operand used to print as a group of its own that
+		// stayed on one line, and the next pass split it (#744).
+		it.each([
+			[
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbb && (cccccccccccccccccccc && dddddddddd);',
+				'x =\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n  bbbbbbbbbbbbbbbbbbbbbbbbb &&\n  cccccccccccccccccccc &&\n  dddddddddd;',
+			],
+			[
+				'if (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb || cccccccccccccccccccccc)) {}',
+				'if (\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ||\n  cccccccccccccccccccccc\n) {\n}',
+			],
+			[
+				'const f = () => aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || (bbbbbbbbbbbbbbbbbbbbbbbbbbbb || cccccccccccccccccccccc);',
+				'const f = () =>\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbb ||\n  cccccccccccccccccccccc;',
+			],
+			[
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ?? (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ?? cccccccccccccccccccccc);',
+				'x =\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ??\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ??\n  cccccccccccccccccccccc;',
+			],
+			[
+				'foo(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccccc), d);',
+				'foo(\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&\n    cccccccccccccccccccccc,\n  d,\n);',
+			],
+			[
+				'y = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccccc)).z;',
+				'y = (\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&\n  cccccccccccccccccccccc\n).z;',
+			],
+			[
+				'y = !(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccccc));',
+				'y = !(\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&\n  cccccccccccccccccccccc\n);',
+			],
+			[
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaa && (bbbbbbbbbbbbbbbbbbbbbbbbb && (cccccccccccccccccccc && dddddddddd));',
+				'x =\n  aaaaaaaaaaaaaaaaaaaaaaaaa &&\n  bbbbbbbbbbbbbbbbbbbbbbbbb &&\n  cccccccccccccccccccc &&\n  dddddddddd;',
+			],
+			[
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaa && ((bbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccc) && dddddddddd);',
+				'x =\n  aaaaaaaaaaaaaaaaaaaaaaaaa &&\n  bbbbbbbbbbbbbbbbbbbbbbbbb &&\n  cccccccccccccccccccc &&\n  dddddddddd;',
+			],
+			[
+				'x = aaaaaaaaaaaaaaaaaa && (bbbbbbbbbbbbbbbbbbbb || cccccccccccccccccc) && (dddddddddddddd && eeeeeeeeee);',
+				'x =\n  aaaaaaaaaaaaaaaaaa &&\n  (bbbbbbbbbbbbbbbbbbbb || cccccccccccccccccc) &&\n  dddddddddddddd &&\n  eeeeeeeeee;',
+			],
+			[
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa || (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb || { a: 1, bbbbbbbbbb: 2, cccccccc: 3 });',
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb || { a: 1, bbbbbbbbbb: 2, cccccccc: 3 };',
+			],
+			[
+				'function App() {\n  return <div>{aaaaaaaaaaaaaaaaaaaaaaaaa && (bbbbbbbbbbbbbbbbbbbbbbbbbb && <span>cccccccccccccccccc</span>)}</div>;\n}',
+				'function App() {\n  return (\n    <div>\n      {aaaaaaaaaaaaaaaaaaaaaaaaa && bbbbbbbbbbbbbbbbbbbbbbbbbb && (\n        <span>cccccccccccccccccc</span>\n      )}\n    </div>\n  );\n}',
+			],
+			[
+				'function App() @{\n  @if (aaaaaaaaaaaaaaaaaaaaaaaaaa && (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccccc)) {\n    <div />\n  }\n}',
+				'function App() @{\n  @if (\n    aaaaaaaaaaaaaaaaaaaaaaaaaa &&\n    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&\n    cccccccccccccccccccccc\n  ) {\n    <div />\n  }\n}',
+			],
+			[
+				'x = /** @type {X} */ (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && (bbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccc));',
+				'x = /** @type {X} */ (\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n    bbbbbbbbbbbbbbbbbbbbbbbbbbbb &&\n    cccccccccccccccc\n);',
+			],
+			[
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && (/** @type {X} */ (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) && cccccccccccccccccccccc);',
+				'x =\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n  /** @type {X} */ (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) &&\n  cccccccccccccccccccccc;',
+			],
+			[
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && /** @type {X} */ (cccccccccccccccccccccc));',
+				'x =\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&\n  /** @type {X} */ (cccccccccccccccccccccc);',
+			],
+		])(
+			'breaks the parenthesized operand of the same operator with the chain in %j',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		// The comments of the parenthesized operand print where Prettier prints
+		// them, without the parentheses (#744)
+		it.each([
+			[
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && (\n  // c\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccccc);',
+				'x =\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n  // c\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&\n  cccccccccccccccccccccc;',
+			],
+			[
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n  // c\n  (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccccc);',
+				'x =\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n  // c\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&\n  cccccccccccccccccccccc;',
+			],
+			[
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && // c\n  cccccccccccccccccccccc);',
+				'x =\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && // c\n  cccccccccccccccccccccc;',
+			],
+			[
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb // c\n  && cccccccccccccccccccccc);',
+				'x =\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && // c\n  cccccccccccccccccccccc;',
+			],
+			[
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccccc // c\n);',
+				'x =\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&\n  cccccccccccccccccccccc; // c',
+			],
+			// Like Prettier, a directive keeps only the operand it comes with as
+			// written
+			['x = a && /* prettier-ignore */ (b   &&   c);', 'x = a && /* prettier-ignore */ b && c;'],
+			['x = a && (b // prettier-ignore\n  && c);', 'x =\n  a &&\n  b && // prettier-ignore\n  c;'],
+			[
+				'f(a && (b && c // prettier-ignore\n), d);',
+				'f(\n  a &&\n    b &&\n    c, // prettier-ignore\n  d,\n);',
+			],
+		])('keeps the comments of the parenthesized operand in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Pins: comments of the parenthesized operand that already printed where
+		// Prettier prints them, JSDoc casts around the operand or its operands,
+		// which keep their parentheses, and operands of another operator
+		it.each([
+			['x = a && (b && c);', 'x = a && b && c;'],
+			['x = a && /* c */ (b && c);', 'x = a && /* c */ b && c;'],
+			['x = a && (/* c */ b && c) && d;', 'x = a && /* c */ b && c && d;'],
+			['x = a && (b /* c */ && c);', 'x = a && b /* c */ && c;'],
+			['foo(a && (b && c /* c */));', 'foo(a && b && c /* c */);'],
+			['x = a && (b && c /* c */) && d;', 'x = a && b && c /* c */ && d;'],
+			['x = a && (b /* prettier-ignore */ && c);', 'x = a && b /* prettier-ignore */ && c;'],
+			['f(a && (b && c /* prettier-ignore */), d);', 'f(a && b && c /* prettier-ignore */, d);'],
+			[
+				'f(a && (b && c /* c */) /* prettier-ignore */, d);',
+				'f(a && (b && c /* c */) /* prettier-ignore */, d);',
+			],
+			['x = a && /** @type {X} */ (b && c);', 'x = a && /** @type {X} */ (b && c);'],
+			['x = a && (/** @type {X} */ (b) && c);', 'x = a && /** @type {X} */ (b) && c;'],
+			['x = a && (/** @type {X} */ (b).c && d);', 'x = a && /** @type {X} */ (b).c && d;'],
+			['x = /** @type {X} */ (a) && (b && c);', 'x = /** @type {X} */ (a) && b && c;'],
+			[
+				'x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa && /** @type {X} */ (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccccc);',
+				'x =\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa &&\n  /** @type {X} */ (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && cccccccccccccccccccccc);',
+			],
+			['x = a || (b && c);', 'x = a || (b && c);'],
+			['x = a ?? (b || c);', 'x = a ?? (b || c);'],
+			['x = a + (b + c);', 'x = a + (b + c);'],
+		])('formats %j like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		it.each([
 			[
 				'const ok = isEnabledForTheCurrentUser && hasPermissionToEdit && !isLockedByAnotherSession && isOnline;',

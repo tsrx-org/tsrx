@@ -108,8 +108,9 @@ export const parsers = {
 const hashbangComments = new WeakSet();
 
 /**
- * Prepare the comments the parser attached for printing, in one walk that
- * only runs when there is something to do:
+ * Prepare the parsed tree and the comments the parser attached for printing,
+ * like Prettier's parse postprocess, in one walk that only runs when there is
+ * something to do:
  * - Remember a file's hashbang (`#!…` on its first line) so
  *   {@link printComment} prints it back as written. The parser reports it as
  *   a `Line` comment at offset 0 whose value is the text after `#!`, and
@@ -118,13 +119,18 @@ const hashbangComments = new WeakSet();
  *   program. Find it by its position instead.
  * - Merge the JSDoc comments that touch (`*\/` right before `/*`), see
  *   {@link mergeNestledJsdocComments}.
+ * - Turn `a && (b && c)` into the chain `a && b && c`, with the comments,
+ *   see {@link rebalanceLogicalTree}.
  * @param {AST.Program} ast
  * @param {string} text
  */
 function prepareComments(ast, text) {
 	const hasHashbang = text.startsWith('#!');
 	const hasTouchingComments = text.includes('*//*');
-	if (!hasHashbang && !hasTouchingComments) {
+	// Only parentheses give a logical operator a right operand with the same
+	// operator, so one follows the operator, maybe after comments
+	const hasLogicalParens = /(?:&&|\|\||\?\?)\s*[(/]/.test(text);
+	if (!hasHashbang && !hasTouchingComments && !hasLogicalParens) {
 		return;
 	}
 	/**
@@ -162,6 +168,13 @@ function prepareComments(ast, text) {
 			continue;
 		}
 		const node = /** @type {Record<string, unknown>} */ (value);
+		// Before the walk reaches its operands, whose comments may move
+		if (hasLogicalParens && node.type === 'LogicalExpression') {
+			rebalanceLogicalTree(
+				/** @type {LocatedLogicalExpression} */ (/** @type {unknown} */ (node)),
+				text,
+			);
+		}
 		for (const key in node) {
 			if (key !== 'metadata' && key !== 'loc' && key !== 'parent') {
 				stack.push(node[key]);
@@ -169,6 +182,177 @@ function prepareComments(ast, text) {
 		}
 	}
 	mergeNestledJsdocComments(lists);
+}
+
+/**
+ * @typedef {AST.LogicalExpression & AST.NodeWithLocation & AST.NodeWithMaybeComments} LocatedLogicalExpression
+ */
+
+/**
+ * Prettier's `rebalanceLogicalTree`, a parse postprocess step: a logical
+ * expression whose right operand is a logical expression with the same
+ * operator, which only parses with parentheses (`a && (b && c)`), becomes the
+ * chain the operands parse to without them (`a && b && c`). The operator is
+ * associative, so the chain evaluates the same. The printer drops those
+ * parentheses (see {@link nodeNeedsParens}) and prints the chain as one list
+ * of operands (see {@link printBinaryishExpressions}), so every operator of it
+ * breaks together. Parentheses that complete a JSDoc cast stay, as Prettier's
+ * `babel` parser keeps them as a node of their own.
+ *
+ * The node itself stays the whole chain, and the parenthesized operand goes
+ * away. The parser has already attached the comments, so its comments move
+ * where the parser attaches them in the chain written without the
+ * parentheses, which the next format reads:
+ * - The ones ahead of it lead its first operand.
+ * - The ones after its first operand, like `/* c *\/` in
+ *   `a && (b /* c *\/ && c)`, trail the new left operand `a && b`.
+ * - The ones at the end of its parentheses trail the chain. Prettier gives
+ *   them to the last operand, and its next pass to the chain (#622, #673).
+ *
+ * The source of the new left operand or of the chain holds the parentheses,
+ * so a `prettier-ignore` comment, which keeps the node it trails as written,
+ * never moves to them. One after the first operand stays with it, and the
+ * comments at the end of the parentheses with one trail the last operand, as
+ * in Prettier. A chain kept as written keeps its parenthesized operand.
+ * @param {LocatedLogicalExpression} node
+ * @param {string} text
+ */
+function rebalanceLogicalTree(node, text) {
+	while (isUnbalancedLogicalTree(node, text)) {
+		const right = /** @type {LocatedLogicalExpression} */ (node.right);
+		const first = /** @type {AST.Expression & AST.NodeWithLocation & AST.NodeWithMaybeComments} */ (
+			right.left
+		);
+		const last = /** @type {AST.Expression & AST.NodeWithMaybeComments} */ (right.right);
+		const end = getParenthesizedEnd(first, text);
+		/** @type {LocatedLogicalExpression} */
+		const left = {
+			type: 'LogicalExpression',
+			operator: node.operator,
+			left: node.left,
+			right: first,
+			start: node.start,
+			end,
+			loc: { start: node.loc.start, end: first.loc.end },
+			metadata: { path: [] },
+		};
+		if (right.leadingComments?.length) {
+			first.leadingComments = [...right.leadingComments, ...(first.leadingComments ?? [])];
+		}
+		const firstTrailing = first.trailingComments ?? [];
+		const leftTrailing = firstTrailing.filter(
+			(comment) => /** @type {AST.NodeWithLocation} */ (comment).start >= end,
+		);
+		if (leftTrailing.length > 0 && !leftTrailing.some(isPrettierIgnoreComment)) {
+			left.trailingComments = leftTrailing;
+			const kept = firstTrailing.filter((comment) => !leftTrailing.includes(comment));
+			first.trailingComments = kept.length > 0 ? kept : undefined;
+		}
+		const rightTrailing = right.trailingComments ?? [];
+		if (rightTrailing.some(isPrettierIgnoreComment)) {
+			last.trailingComments = [...(last.trailingComments ?? []), ...rightTrailing];
+		} else if (rightTrailing.length > 0) {
+			node.trailingComments = [...rightTrailing, ...(node.trailingComments ?? [])];
+		}
+		rebalanceLogicalTree(left, text);
+		node.left = left;
+		node.right = last;
+	}
+}
+
+/**
+ * Prettier's `isUnbalancedLogicalTree`: whether a logical expression's right
+ * operand is a logical expression with the same operator, here unless that
+ * operand's parentheses complete a JSDoc cast or `prettier-ignore` keeps the
+ * expression as written (see {@link rebalanceLogicalTree}).
+ * @param {LocatedLogicalExpression} node
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isUnbalancedLogicalTree(node, text) {
+	const right = /** @type {AST.Node & AST.NodeWithLocation & AST.NodeWithMaybeComments} */ (
+		node.right
+	);
+	if (
+		right.type !== 'LogicalExpression' ||
+		right.operator !== node.operator ||
+		right.innerComments ||
+		// Kept as written, with the comments in it
+		hasPrettierIgnore(node)
+	) {
+		return false;
+	}
+	const parenStart = right.metadata?.paren_start;
+	if (typeof parenStart !== 'number') {
+		return true;
+	}
+	// A cast comment sits right before one of the operand's opening parens. The
+	// parser attaches it to the operand or to the operand before the operator.
+	const left = /** @type {AST.NodeWithMaybeComments} */ (node.left);
+	return ![...(right.leadingComments ?? []), ...(left.trailingComments ?? [])].some((comment) => {
+		if (!isTypeCastComment(comment)) {
+			return false;
+		}
+		const commentEnd = /** @type {AST.NodeWithLocation} */ (comment).end;
+		const paren = commentEnd + text.slice(commentEnd, right.start).search(/\S|$/);
+		return paren >= parenStart && paren < right.start && text.charAt(paren) === '(';
+	});
+}
+
+/**
+ * Where a node ends with the parentheses around it. The parser leaves them
+ * out of the node, but not out of an expression that ends with it: `a && (b)`
+ * ends after the `)`.
+ * @param {AST.Node & AST.NodeWithLocation} node
+ * @param {string} text
+ * @returns {number}
+ */
+function getParenthesizedEnd(node, text) {
+	const parenStart = node.metadata?.paren_start;
+	if (typeof parenStart !== 'number') {
+		return node.end;
+	}
+	let parens = 0;
+	for (
+		let index = skipCommentsAt(text, parenStart);
+		index < node.start;
+		index = skipCommentsAt(text, index + 1)
+	) {
+		if (text.charAt(index) === '(') {
+			parens++;
+		}
+	}
+	let end = node.end;
+	for (let index = skipCommentsAt(text, end); parens > 0 && text.charAt(index) === ')';) {
+		parens--;
+		end = index + 1;
+		index = skipCommentsAt(text, end);
+	}
+	return end;
+}
+
+/**
+ * The index of the first character at or after `index` that isn't
+ * whitespace or in a comment.
+ * @param {string} text
+ * @param {number} index
+ * @returns {number}
+ */
+function skipCommentsAt(text, index) {
+	while (index < text.length) {
+		if (text.startsWith('/*', index)) {
+			const end = text.indexOf('*/', index + 2);
+			index = end < 0 ? text.length : end + 2;
+		} else if (text.startsWith('//', index)) {
+			const end = text.slice(index).search(/[\n\r\u2028\u2029]/);
+			index = end < 0 ? text.length : index + end;
+		} else if (/\s/.test(text.charAt(index))) {
+			index++;
+		} else {
+			break;
+		}
+	}
+	return index;
 }
 
 /**
