@@ -2365,6 +2365,16 @@ export function get_comment_handlers(source, comments, index = 0) {
 						return element;
 					}
 
+					// Like Prettier, whose child nodes never include comments, a comment
+					// takes no comments and holds none. The walker still reaches the
+					// comments attached to a node, after the node's children: one before
+					// an empty body, as `/* a */` in `class A /* a */ { // b }`, would
+					// take the comments in the body, which nothing prints (#741).
+					const nodeType = /** @type {string} */ (node.type);
+					if (nodeType === 'Line' || nodeType === 'Block') {
+						return;
+					}
+
 					// Skip CSS nodes entirely - they use CSS-local positions (relative to
 					// the <style> tag content) which would incorrectly match against
 					// absolute source positions of JS/HTML comments. Also consume any
@@ -2590,11 +2600,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 								return;
 							}
 						}
-						// Like Prettier, comments in an empty array or object stay inside
-						// its brackets
+						// Like Prettier, comments in an empty array, tuple type, or object
+						// stay inside its brackets
 						if (
 							((node.type === 'ArrayExpression' || node.type === 'ArrayPattern') &&
 								node.elements.length === 0) ||
+							(node.type === 'TSTupleType' && node.elementTypes.length === 0) ||
 							((node.type === 'ObjectExpression' || node.type === 'ObjectPattern') &&
 								node.properties.length === 0)
 						) {

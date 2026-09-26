@@ -9031,6 +9031,314 @@ const b = [
 }`;
 			expect(await format(input)).toBeWithNewline(expected);
 		});
+
+		// A comment right before an empty array or object took the comments
+		// inside it, and nothing printed them (#741)
+		it('keeps the comments of an empty array or object after a comment before it', async () => {
+			const input = `const a = /* a */ [/* array */];
+f(a, /* a */ [
+  // argument
+]);
+x = // a
+[
+  // array
+];
+const o = /* a */ {
+  // object
+};
+f(/* a */ {
+  // argument
+});
+const { b } = /* a */ {
+  // object
+};
+x = [
+  /* a */ {
+    // element
+  },
+];
+x = {
+  a: /* a */ {
+    // value
+  },
+};`;
+			const expected = `const a = /* a */ [/* array */];
+f(
+  a,
+  /* a */ [
+    // argument
+  ],
+);
+x =
+  // a
+  [
+    // array
+  ];
+const o = /* a */ {
+  // object
+};
+f(
+  /* a */ {
+    // argument
+  },
+);
+const { b } = /* a */ {
+  // object
+};
+x = [
+  /* a */ {
+    // element
+  },
+];
+x = {
+  a: /* a */ {
+    // value
+  },
+};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps the comments of an empty array or object operand after a comment before it', async () => {
+			const input = `x = a ? /* a */ {
+  // consequent
+} : b;
+x = a || /* a */ {
+  // operand
+};
+x = /* a */ ({
+  // parenthesized
+});
+async function f() {
+  await /* a */ {
+    // argument
+  };
+}
+for (const x of /* a */ [
+  // iterable
+]) {
+}
+if (/* a */ {
+  // test
+}) {
+}
+x = { ...(/* a */ {
+  // spread
+}) };
+x = \`\${/* a */ {
+  // template
+}}\`;
+export default /* a */ {
+  // default
+};`;
+			const expected = `x = a
+  ? /* a */ {
+      // consequent
+    }
+  : b;
+x =
+  a ||
+  /* a */ {
+    // operand
+  };
+x = /* a */ {
+  // parenthesized
+};
+async function f() {
+  await /* a */ {
+    // argument
+  };
+}
+for (const x of /* a */ [
+  // iterable
+]) {
+}
+if (
+  /* a */ {
+    // test
+  }
+) {
+}
+x = {
+  .../* a */ {
+    // spread
+  },
+};
+x = \`\${
+  /* a */ {
+    // template
+  }
+}\`;
+export default /* a */ {
+  // default
+};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps the comments of an empty type literal after a comment before it', async () => {
+			const input = `type T = /* a */ {
+  // type
+};
+let x: /* a */ {
+  // annotation
+};
+type U = { a: /* a */ {
+  // member
+} };
+function f(): /* a */ {
+  // return
+} {}
+type A = B</* a */ {
+  // argument
+}>;
+function g<T extends /* a */ {
+  // constraint
+}>() {}`;
+			const expected = `type T = /* a */ {
+  // type
+};
+let x: /* a */ {
+  // annotation
+};
+type U = {
+  a: /* a */ {
+    // member
+  };
+};
+function f(): /* a */ {
+  // return
+} {}
+type A = B</* a */ {
+  // argument
+}>;
+function g<
+  T extends /* a */ {
+    // constraint
+  },
+>() {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// The comments in an empty tuple type moved out of its brackets (#772)
+		it('keeps the comments of an empty tuple type inside its brackets', async () => {
+			const input = `type A = [
+  // a
+];
+type B = [/* b */];
+type C = [/* c */ /* d */];
+let x: [
+  // x
+] = a;
+function f(a: [
+  // a
+]) {}
+type D = E<[
+  // d
+]>;
+type F = readonly [
+  // f
+];
+type G = [
+  // g
+] | H;
+type I = /* e */ [
+  // i
+];`;
+			const expected = `type A = [
+  // a
+];
+type B = [/* b */];
+type C = [
+  /* c */
+  /* d */
+];
+let x: [
+  // x
+] = a;
+function f(
+  a: [
+    // a
+  ],
+) {}
+type D = E<
+  [
+    // d
+  ]
+>;
+type F = readonly [
+  // f
+];
+type G =
+  | [
+      // g
+    ]
+  | H;
+type I = /* e */ [
+  // i
+];`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Prettier hugs the only parameter's object type and prints its line
+		// comment on one line, \`function f(a: /* a */ { // type }) {}\`, which
+		// comments out the rest of the line. The broken braces are stable.
+		it('keeps the only parameter of a function broken around an empty type literal with a comment', async () => {
+			const source = `function f(a: /* a */ {
+  // type
+}) {}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps the comments of an empty array or object in a template attribute or child after a comment before it', async () => {
+			const input = `function App() @{
+  <div
+    a={/* a */ {
+      // object
+    }}
+    b={/* a */ [
+      // array
+    ]}
+    c={() => /* a */ {
+      // arrow
+    }}
+    {.../* a */ {
+      // spread
+    }}
+  >
+    {/* a */ {
+      // child
+    }}
+  </div>
+}`;
+			const expected = `function App() @{
+  <div
+    a={
+      /* a */ {
+        // object
+      }
+    }
+    b={
+      /* a */ [
+        // array
+      ]
+    }
+    c={() => /* a */ {
+      // arrow
+    }}
+    {
+      /* a */ ...{
+        // spread
+      }
+    }
+  >
+    {
+      /* a */ {
+        // child
+      }
+    }
+  </div>
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
 	});
 
 	// The comma after a trailing hole creates an array slot (or an iterator
@@ -13118,6 +13426,166 @@ function Two() @{
 }`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
+		});
+
+		// A comment right before an empty body took the comments inside it,
+		// and nothing printed them (#741). Prettier keeps them all as written.
+		it('keeps the comments of an empty body after a comment before it', async () => {
+			const source = `class A /* a */ {
+  // class
+}
+function f() /* a */ {
+  // function
+}
+const g = () => /* a */ {
+  // arrow
+};
+if (a) /* a */ {
+  // if
+}
+// a
+{
+  // block
+}
+while (a) /* a */ {
+  /* while */
+}
+for (;;) /* a */ {
+  // for
+}
+do /* a */ {
+  // do
+} while (a);
+try /* a */ {
+  // try
+} catch (e) /* a */ {
+  // catch
+} finally /* a */ {
+  // finally
+}
+label: /* a */ {
+  // label
+}
+interface I /* a */ {
+  // interface
+}
+namespace N /* a */ {
+  // namespace
+}
+declare module "m" /* a */ {
+  // module
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps the comments of a body with members, an enum, or a switch after a comment before it', async () => {
+			const input = `class A /* a */ {
+  x = 1; // class
+}
+function f() /* a */ {
+  a(); // function
+}
+enum E /* a */ {
+  // enum
+}
+switch (a) /* a */ {
+  // switch
+}
+f(/* a */ () => {
+  // arrow
+});
+const o = /* a */ {
+  a, // object
+};`;
+			const expected = `class A /* a */ {
+  x = 1; // class
+}
+function f() /* a */ {
+  a(); // function
+}
+enum E /* a */ {
+  // enum
+}
+switch (a /* a */) {
+  // switch
+}
+f(
+  /* a */ () => {
+    // arrow
+  },
+);
+const o = /* a */ {
+  a, // object
+};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps the comments of an empty member or function body after a comment before it', async () => {
+			const source = `class A {
+  /* a */ static {
+    // static
+  }
+  m() /* a */ {
+    // method
+  }
+  constructor() /* a */ {
+    // constructor
+  }
+  x = /* a */ {
+    // field
+  };
+}
+const o = {
+  m() /* a */ {
+    // method
+  },
+};
+const C = class /* a */ {
+  // class
+};
+const h = function () /* a */ {
+  // function
+};
+export function e() /* a */ {
+  // export
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it('keeps the comments of an empty template body after a comment before it', async () => {
+			const source = `export function App() @{
+  const x = /* a */ {
+    // object
+  };
+  if (a) /* a */ {
+    // if
+  }
+  <div>
+    @if (a) /* a */ {
+      // if
+    } @else /* a */ {
+      // else
+    }
+    @for (const item of items) /* a */ {
+      // for
+    } @empty /* a */ {
+      // empty
+    }
+    @try /* a */ {
+      // try
+    } @pending /* a */ {
+      // pending
+    } @catch (e) /* a */ {
+      // catch
+    }
+  </div>
+}
+const Arrow = () => (
+  @if (a) /* a */ {
+    // arrow
+  }
+);`;
+			expect(await format(source)).toBeWithNewline(source);
 		});
 	});
 
