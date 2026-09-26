@@ -795,6 +795,18 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * After a conditional's alternate, only the ones that go after the `;`
 	 * move, before `handleComment` gives a line comment there to the
 	 * alternate (#674).
+	 *
+	 * A `prettier-ignore` comment keeps the node it trails as written, with
+	 * the comments in its source. Prettier's first pass keeps the operand
+	 * before the comment, and its next passes the left operand the comment
+	 * moves to, as that first pass printed it:
+	 * `x = a * (b   +   c /* prettier-ignore *\/) + d;` prints
+	 * `x = a * (b   +   c) /* prettier-ignore *\/ + d;`. So the comment marks
+	 * the operand and moves without keeping the left operand, like
+	 * `handleUnionTypeComments` does (#803). A left operand that a
+	 * `prettier-ignore` comment keeps already, one before it or after its
+	 * parentheses (see {@link isKeptByIgnoreCommentAfter}), keeps the
+	 * comments in its source (#814).
 	 * @param {AST.NodeWithLocation} node - The operand the comment follows
 	 * @param {(AST.Node | AST.CSS.StyleSheet)[]} path - The node's ancestors
 	 * @returns {boolean} Whether it took the comment
@@ -827,14 +839,63 @@ export function get_comment_handlers(source, comments, index = 0) {
 			if (!isBinaryish(operand) || operand.right !== child) {
 				break;
 			}
+			// One that `prettier-ignore` keeps as written prints the comment in
+			// its source
+			if (
+				operand.metadata?.prettierIgnore ||
+				/** @type {AST.NodeWithMaybeComments} */ (operand).leadingComments?.some((leading) =>
+					isPrettierIgnoreComment(/** @type {AST.CommentWithLocation} */ (leading)),
+				)
+			) {
+				return false;
+			}
 			const binary = /** @type {AST.Node} */ (path[index - 1]);
-			if ((isBinaryish(binary) && binary.left === operand) || getTypeCastEnd(operand) !== -1) {
-				addTrailingComment(operand, /** @type {AST.CommentWithLocation} */ (comments.shift()));
+			const isLeft = isBinaryish(binary) && binary.left === operand;
+			if (isLeft || getTypeCastEnd(operand) !== -1) {
+				if (isLeft && isKeptByIgnoreCommentAfter(operand, /** @type {any} */ (binary).right)) {
+					return false;
+				}
+				const taken = /** @type {AST.CommentWithLocation} */ (comments.shift());
+				if (isPrettierIgnoreComment(taken)) {
+					getNodeMetadata(/** @type {AST.Node} */ (node)).prettierIgnore = true;
+					taken.unignore = true;
+				}
+				addTrailingComment(operand, taken);
 				return true;
 			}
 			child = operand;
 		}
 		return takeCommentsBeforeFinalSemicolon(node, path);
+	}
+
+	/**
+	 * Whether a `prettier-ignore` comment after the left operand of a binary
+	 * or logical expression, before its right operand, trails the operand,
+	 * which it then keeps as written: one before the operator, or one that
+	 * ends the line after it (see {@link breakTies} and the end-of-line default
+	 * in {@link handleComment}). One on a line of its own, or with code after
+	 * it on its line, leads the right operand instead.
+	 * @param {AST.NodeWithLocation} left
+	 * @param {AST.NodeWithLocation} right
+	 * @returns {boolean}
+	 */
+	function isKeptByIgnoreCommentAfter(left, right) {
+		let operator = getNextNonSpaceNonCommentCharacterIndex(left.end);
+		while (source[operator] === ')') {
+			operator = getNextNonSpaceNonCommentCharacterIndex(operator + 1);
+		}
+		for (let index = 1; comments[index] && comments[index].end <= right.start; index++) {
+			const comment = comments[index];
+			if (
+				comment.start >= left.end &&
+				isPrettierIgnoreComment(comment) &&
+				!isOwnLineComment(comment) &&
+				(comment.end <= operator || isEndOfLineComment(comment))
+			) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -1669,11 +1730,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Like Prettier's `isPrettierIgnoreComment` and the printer, a comment that
+	 * reads exactly `prettier-ignore`, not `prettier-ignore` and a reason
 	 * @param {AST.CommentWithLocation} comment
 	 * @returns {boolean}
 	 */
 	function isPrettierIgnoreComment(comment) {
-		return /^\s*prettier-ignore(?:\s|$)/.test(comment.value);
+		return comment.value.trim() === 'prettier-ignore';
 	}
 
 	/**
@@ -1737,6 +1800,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			type === 'MemberExpression' ||
 			type === 'BinaryExpression' ||
 			type === 'LogicalExpression' ||
+			type === 'UnaryExpression' ||
 			type === 'TSUnionType' ||
 			type === 'AssignmentPattern' ||
 			type === 'TSMappedType' ||
@@ -2077,6 +2141,24 @@ export function get_comment_handlers(source, comments, index = 0) {
 				comment,
 			);
 			return true;
+		}
+
+		// `handleLastBinaryOperatorOperand`: a one-line comment that ends the
+		// line of the last operand of a binary or logical expression in a unary
+		// operator's parentheses, when the expression breaks before that
+		// operand, trails the operand, so that it prints inside the expression,
+		// which keeps it broken: `!(⏎  a &&⏎  b // c⏎)` (#801)
+		if (endOfLine && !following && type === 'UnaryExpression' && isBinaryish(preceding)) {
+			const argumentStart = /** @type {AST.NodeWithLocation} */ (node.argument).start;
+			const rightStart = /** @type {AST.NodeWithLocation} */ (preceding.right).start;
+			if (
+				source.slice(argumentStart, rightStart).includes('\n') &&
+				!source.slice(rightStart, comment.start).includes('\n') &&
+				!source.slice(comment.start, comment.end).includes('\n')
+			) {
+				addTrailingComment(preceding.right, comment);
+				return true;
+			}
 		}
 
 		// `handleParenthesizedExpressionTrailingComment`: a comment that isn't on

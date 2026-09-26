@@ -1556,6 +1556,27 @@ type F =
   | H<2>;`);
 		});
 
+		// Like Prettier, only a comment that reads `prettier-ignore` counts. The
+		// parser counted one with more words after it, which kept the union
+		// member after it as written (#813).
+		it('formats the union member after a comment that only starts with prettier-ignore', async () => {
+			const source = `type A =
+  | B
+  // prettier-ignore because
+  | Array<   C   >;
+type D =
+  // prettier-ignore because
+  | Array<   E   >
+  | F;`;
+			expect(await format(source)).toBeWithNewline(`type A =
+  | B
+  // prettier-ignore because
+  | Array<C>;
+type D =
+  // prettier-ignore because
+  Array<E> | F;`);
+		});
+
 		// Prettier's parsers keep no node for the parentheses, so the union
 		// inside them is the node after the comment
 		it('ignores the first member of a union written in parentheses', async () => {
@@ -15293,6 +15314,106 @@ const b = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// A `prettier-ignore` comment before the `)` around a last operand keeps
+		// that operand as written, like Prettier's first pass, and moves after
+		// the parentheses, where its next passes keep the left operand as that
+		// first pass printed it. It used to keep the left operand, with the
+		// comment in its source, and print the comment again after it (#803).
+		it.each([
+			['x = a + (b /* prettier-ignore */) + d;', 'x = a + b /* prettier-ignore */ + d;'],
+			[
+				'x = a && (b || c /* prettier-ignore */) && d;',
+				'x = a && (b || c) /* prettier-ignore */ && d;',
+			],
+			[
+				'x = a && (b && c /* prettier-ignore */) && d;',
+				'x = a && b && c /* prettier-ignore */ && d;',
+			],
+			[
+				'x = a * (b   +   c /* prettier-ignore */) + d;',
+				'x = a * (b   +   c) /* prettier-ignore */ + d;',
+			],
+			[
+				'x = (a * (b   +   c /* prettier-ignore */)) + d;',
+				'x = a * (b   +   c) /* prettier-ignore */ + d;',
+			],
+			// Prettier's second pass
+			[
+				'x = a + (b + (c /* prettier-ignore */)) + d;',
+				'x = a + (b + c) /* prettier-ignore */ + d;',
+			],
+			[
+				'x = a + (b /* c */ /* prettier-ignore */) + d;',
+				'x = a + b /* c */ /* prettier-ignore */ + d;',
+			],
+			[
+				'x = a + (b /* prettier-ignore */ /* c */) + d;',
+				'x = a + b /* prettier-ignore */ /* c */ + d;',
+			],
+			['if (a + (b /* prettier-ignore */) + d) {\n}', 'if (a + b /* prettier-ignore */ + d) {\n}'],
+			// Prettier's first pass. Its next pass formats `b * c`, since it
+			// never keeps a left operand that joins the chain after it (#816).
+			[
+				'x = a  +  (b   *   c /* prettier-ignore */) + d;',
+				'x = a + b   *   c /* prettier-ignore */ + d;',
+			],
+			// Prettier's first pass breaks `30 *` with the comment's line
+			// break, and its next passes keep the left operand broken
+			[
+				'x = 30 * (month   -   1 // prettier-ignore\n) + day;',
+				'x =\n  30 * (month   -   1) + // prettier-ignore\n  day;',
+			],
+			// Not a `prettier-ignore` comment (#813)
+			[
+				'x = a * (b   +   c /* prettier-ignore because */) + d;',
+				'x = a * (b + c) /* prettier-ignore because */ + d;',
+			],
+		])('keeps only the operand before a prettier-ignore comment in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// A left operand that a `prettier-ignore` comment after its parentheses,
+		// or before it, keeps as written keeps the comment before its `)` in its
+		// source. That comment used to print again after it (#814).
+		it.each([
+			'x = a * (b /* c */) /* prettier-ignore */ + d;',
+			'x =\n  a * (b /* c */) + // prettier-ignore\n  d;',
+			'x = /* prettier-ignore */ a * (b /* c */) + d;',
+			'x = a * (b   +   c /* c */) /* prettier-ignore */ + d;',
+			'x = a * (b /* prettier-ignore */) /* prettier-ignore */ + d;',
+			// Prettier formats a left operand that joins the chain after it (#816)
+			'x = a + (b /* c */) /* prettier-ignore */ + d;',
+			'x = a && (b /* c */) /* prettier-ignore */ && d;',
+		])('keeps the comments in the source of %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			[
+				'x = (/* prettier-ignore */ a * (b /* c */)) + d;',
+				'x = /* prettier-ignore */ a * (b /* c */) + d;',
+			],
+			[
+				'x = (a * (b /* c */) /* prettier-ignore */) + d;',
+				'x = a * (b /* c */) /* prettier-ignore */ + d;',
+			],
+			[
+				'x = a * (b /* c */) // prettier-ignore\n  + d;',
+				'x =\n  a * (b /* c */) + // prettier-ignore\n  d;',
+			],
+			// One that leads `d` keeps it instead
+			[
+				'x = a * (b /* c */) + /* prettier-ignore */ d;',
+				'x = a * b /* c */ + /* prettier-ignore */ d;',
+			],
+			[
+				'x = a * (b /* c */)\n  // prettier-ignore\n  + d;',
+				'x =\n  a * b /* c */ +\n  // prettier-ignore\n  d;',
+			],
+		])('prints %j like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		it('keeps a JSDoc cast around a broken return argument as the only parentheses', async () => {
 			const source = `function g() {
   return /** @type {Foo} */ (
@@ -16593,6 +16714,35 @@ item
 				'foo(\n  !(\n    ready || waiting // why\n  ),\n);',
 			],
 		])('keeps the comment inside the parentheses of %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Like Prettier's `handleLastBinaryOperatorOperand`, a one-line comment
+		// at the end of the last operand's line, in an expression that breaks
+		// before that operand, trails the operand and keeps the expression
+		// broken. It used to trail the expression, which joined (#801).
+		it.each([
+			'x = !(\n  aaaa &&\n  bbbb // c\n);',
+			'if (\n  a &&\n  !(\n    rs &&\n    rs.ended &&\n    !rs.destroyed // c\n  )\n)\n  f();',
+			'x = -(\n  aaaa +\n  bbbb // c\n);',
+			'x = typeof (\n  aaaa +\n  bbbb // c\n);',
+			'x = !(\n  aaaa ||\n  (bbbb && cccc) // c\n);',
+			'x = !(\n  aaaa &&\n  bbbb /* c */ // d\n);',
+			'x = !(\n  aaaa &&\n  bbbb // c\n  // d\n);',
+			'x = !(\n  aaaa &&\n  bbbb   +   1 // prettier-ignore\n);',
+		])('keeps %j broken like Prettier', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		it.each([
+			['x = !(aaaa &&\n  bbbb // c\n);', 'x = !(\n  aaaa &&\n  bbbb // c\n);'],
+			// Pins: written on one line, below the operand, or in a block comment
+			['x = !(aaaa && bbbb // c\n);', 'x = !(\n  aaaa && bbbb // c\n);'],
+			['x = !(\n  aaaa && bbbb // c\n);', 'x = !(\n  aaaa && bbbb // c\n);'],
+			['x = !(\n  aaaa &&\n  bbbb /* c */\n);', 'x = !(aaaa && bbbb /* c */);'],
+			['x = !(\n  aaaa &&\n  bbbb\n  // c\n);', 'x = !(\n  aaaa && bbbb\n  // c\n);'],
+			['x = !(\n  aaaa &&\n  bbbb /* c\n  d */\n);', 'x = !(\n  aaaa && bbbb /* c\n  d */\n);'],
+		])('prints %j like Prettier', async (input, expected) => {
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
