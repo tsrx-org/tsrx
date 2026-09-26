@@ -13602,6 +13602,10 @@ type Y = A; // trailing`);
 			['type S = [A, (// c\nB)];', 'type S = [\n  A, // c\n  B,\n];'],
 			['type S = X extends Y ? (// c\nA) : B;', 'type S = X extends Y // c\n  ? A\n  : B;'],
 			['type S = X | (// c\n() => void);', 'type S =\n  | X // c\n  | (() => void);'],
+			['type S<T extends (// c\nA)> = T;', 'type S<\n  T extends // c\n    A,\n> = T;'],
+			['type S<T extends (\n// c\nA)> = T;', 'type S<\n  T extends // c\n    A,\n> = T;'],
+			['type S<T = (// c\nA)> = T;', 'type S<\n  T = // c\n    A,\n> = T;'],
+			['type S = { [K in (// c\nA)]: B };', 'type S = {\n  [\n    K in A // c\n  ]: B;\n};'],
 		])('formats %j like Prettier', async (input, expected) => {
 			expect(await format(input)).toBeWithNewline(expected);
 		});
