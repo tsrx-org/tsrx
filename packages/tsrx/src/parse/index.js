@@ -955,7 +955,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 */
 	function isIgnoredNode(node) {
 		return Boolean(
-			node.metadata?.prettierIgnore || node.leadingComments?.some(isPrettierIgnoreComment),
+			node.metadata?.prettierIgnore ||
+			node.leadingComments?.some((comment) =>
+				isPrettierIgnoreComment(/** @type {AST.CommentWithLocation} */ (comment)),
+			),
 		);
 	}
 
