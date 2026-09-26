@@ -33,6 +33,8 @@ export const TSRX_FORGOTTEN_STATEMENT_CONTAINER_ERROR =
 	"This TSRX template output is unused. Return it, assign it to a value that is rendered, or make it part of the rendered output of a function '@{...}' body.";
 export const TSRX_JSX_SPREAD_CHILD_ERROR =
 	'JSX spread children (`{...items}`) are not supported. Render the array as an expression child instead: `{items}`.';
+export const TSRX_DYNAMIC_TAG_EXPRESSION_ERROR =
+	'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.';
 export const TSRX_STYLE_APPLY_VALUE_ERROR =
 	"The 'apply' attribute of a <style> block requires an expression value: apply={theme} or apply={[a, b]}.";
 export const TSRX_STYLE_APPLY_DUPLICATE_ERROR =

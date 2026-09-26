@@ -925,10 +925,14 @@ export const FeaturesPage = () => @{
 								target compiler lowers the tag to its own runtime helper.
 							</p>
 							<p class="section-body">
-								The tag expression must be able to resolve to an element name: an identifier, member
-								access, static string, or a runtime expression composed of those. Calls, spreads,
-								string concatenation, string interpolation, and static non-string literals are not
-								valid tag names.
+								The tag expression is an identifier, a member access such as
+								<code class="inline-code">props.as</code>
+								or
+								<code class="inline-code">registry[name]</code>, or a string literal. Anything more,
+								such as a conditional, a call, or a cast, is an error: compute the tag above the
+								element instead, as
+								<code class="inline-code">Body</code>
+								is below, and use the result.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={DYNAMIC_HTML} />

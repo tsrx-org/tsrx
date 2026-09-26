@@ -10,7 +10,10 @@ import { parse_style } from './parse/style.js';
 import { regex_newline_characters, regex_not_whitespace } from './utils/patterns.js';
 import { error } from './errors.js';
 import { DIAGNOSTIC_CODES } from './diagnostics.js';
-import { TSRX_RETURN_STATEMENT_ERROR } from './analyze/validation.js';
+import {
+	TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
+	TSRX_RETURN_STATEMENT_ERROR,
+} from './analyze/validation.js';
 import { is_tsrx_render_output_node } from './utils/ast.js';
 
 /**
@@ -48,6 +51,32 @@ import { is_tsrx_render_output_node } from './utils/ast.js';
  * The kinds of declaration TypeScript's checker tells apart when it checks
  * their modifiers.
  * @typedef {'class' | 'function' | 'variable' | 'using' | 'await using' | 'enum' | 'interface' | 'type' | 'module' | 'import'} ModifiedDeclarationKind
+ */
+
+/**
+ * A list of expressions being read: the items of a parenthesized expression,
+ * or a list that `parseExprList` reads, such as a call's arguments. Whether it
+ * can be an arrow function's parameters, and where the first `?` or type
+ * annotation that only a parameter can have is in it, with its error (-1 and
+ * `''` when there is none). See `#checkParameterSyntax`.
+ * @typedef {{ parameters: boolean, position: number, message: string }} ExpressionList
+ */
+
+/**
+ * When collecting, a list being read that can be an arrow function's
+ * parameters (see `#parseArrowParameterList`): where its `(` is, whether type
+ * parameters come before it, how many `parseMaybeAssign` calls deep the parser
+ * is in one of its items, and the items read after a rest element, with their
+ * destructuring errors (see `#readArrowParametersPastRestElement`).
+ * @typedef {{
+ *   parenStart: number,
+ *   generic: boolean,
+ *   depth: number,
+ *   pastRest: {
+ *     items: AST.Expression[],
+ *     refDestructuringErrors: Parse.DestructuringErrors,
+ *   } | null,
+ * }} ArrowParameterList
  */
 
 const CharCode = Object.freeze({
@@ -144,6 +173,26 @@ const SIGNATURE_PARAMETER_INITIALIZER =
 // acorn-typescript's and @babel/parser's error for a type assertion in an arrow
 // function's parameters.
 const TYPE_CAST_IN_PARAMETER = 'Unexpected type cast in parameter position.';
+// The expressions that assert a type, which an assignment target can be.
+const TYPE_ASSERTIONS = new Set([
+	'TSAsExpression',
+	'TSSatisfiesExpression',
+	'TSNonNullExpression',
+	'TSTypeAssertion',
+]);
+// acorn-typescript's and @babel/parser's error for a type annotation that isn't
+// on a parameter, such as one on a call's argument.
+const UNEXPECTED_TYPE_ANNOTATION = 'Did not expect a type annotation here.';
+// acorn's error for a token it doesn't expect (`unexpected`).
+const UNEXPECTED_TOKEN = 'Unexpected token';
+/**
+ * A list of expressions that can't be an arrow function's parameters (see
+ * `#checkParameterSyntax`), which nothing notes anything in.
+ * @type {Readonly<ExpressionList>}
+ */
+const NON_PARAMETER_LIST = Object.freeze({ parameters: false, position: -1, message: '' });
+// TypeScript's TS1048, for a rest parameter with a default.
+const REST_PARAMETER_INITIALIZER = 'A rest parameter cannot have an initializer.';
 // acorn-typescript's error for decorators before something other than a class.
 const UNEXPECTED_LEADING_DECORATOR = 'Leading decorators must be attached to a class declaration.';
 // TypeScript's parser errors for what follows `export` when it starts no
@@ -273,7 +322,9 @@ const regex_let_binding_error =
  * only after checking that the code raising it upstream goes on to build the same
  * node it builds for valid code. Mistakes whose raise site can't continue are
  * handled by narrow overrides instead: a comma after a rest element
- * (`#collectCheckerLevelError`, `parseBindingList`), `const` without an
+ * (`#collectCheckerLevelError`, `parseBindingList`,
+ * `#readArrowParametersPastRestElement`), a rest parameter's default
+ * (`#readRestParameterDefault`), `const` without an
  * initializer (`parseVarId`), a declaration list without a declarator
  * (`parseVarStatement`, `parseForStatement`), `await` in a namespace
  * (`canAwait`), a private name outside a class (the constructor and
@@ -354,6 +405,10 @@ const CHECKER_LEVEL_ERRORS = [
 	OPTIONAL_BINDING_PATTERN_PARAMETER,
 	// `function f(...a?: T[]) {}` (TS1047), raised by `parseBindingListItem`.
 	OPTIONAL_REST_PARAMETER,
+	// `function f(...a = []) {}` (TS1048), raised by `parseBindingListItem`, or
+	// by `parseFunctionBody` for an arrow function. See
+	// `#readRestParameterDefault`.
+	REST_PARAMETER_INITIALIZER,
 	// acorn-typescript: `class A { @dec constructor() {} }` (TS1206).
 	"Decorators can't be used with a constructor. Did you mean '@dec class { ... }'?",
 	// acorn-typescript: `with { type: 'json', type: 'json' }`, an ECMAScript early
@@ -584,32 +639,62 @@ function get_line_info(parser, offset) {
 	return new acorn.Position(low + 1, offset - starts[low]);
 }
 
-// Transparent wrappers to look through when validating a dynamic tag
-// expression (`<{expr}>`), and syntax that disqualifies one outright.
-const DYNAMIC_TAG_WRAPPER_TYPES = new Set([
-	'TSAsExpression',
-	'TSTypeAssertion',
-	'TSNonNullExpression',
-	'ParenthesizedExpression',
-	'ChainExpression',
-]);
-const DYNAMIC_TAG_DISALLOWED_TYPES = new Set([
-	'SpreadElement',
-	'ExperimentalSpreadProperty',
-	'ObjectExpression',
-	'ArrayExpression',
-	'CallExpression',
-	'NewExpression',
-	'TaggedTemplateExpression',
-]);
+/**
+ * The part of a dynamic tag expression (`<{expr}>`) that isn't one of the
+ * allowed forms, or `null` when the whole expression is one: an identifier, a
+ * member access (`props.as`, `this.tag`, `registry[name]`, `items[0]`), or a
+ * string literal. A non-self-closing element repeats the expression in its
+ * closing tag, so anything more, parentheses and type-only wrappers included,
+ * is computed above the element instead (`const Tag = c ? A : B;`).
+ * @param {AST.Node} node
+ * @returns {AST.Node | null}
+ */
+function find_invalid_dynamic_tag_part(node) {
+	if (node.metadata?.parenthesized) return node;
+	if (node.type === 'Identifier') return node.name === 'undefined' ? node : null;
+	if (node.type === 'Literal') return typeof node.value === 'string' ? null : node;
+	// `a?.b` is a `ChainExpression`, so a member access here is never optional.
+	if (node.type !== 'MemberExpression') return node;
+	// A chain starts at an identifier or `this`.
+	const object = node.object;
+	const invalid_object =
+		object.type === 'Identifier' || object.type === 'MemberExpression'
+			? find_invalid_dynamic_tag_part(object)
+			: object.type !== 'ThisExpression' || object.metadata?.parenthesized
+				? object
+				: null;
+	if (invalid_object || !node.computed) return invalid_object;
+	// A computed key is an identifier, a string or number literal, or a member
+	// access.
+	const key = node.property;
+	if (key.metadata?.parenthesized) return key;
+	if (key.type === 'Identifier') return null;
+	if (key.type === 'Literal') {
+		return typeof key.value === 'string' || typeof key.value === 'number' ? null : key;
+	}
+	if (key.type === 'MemberExpression') return find_invalid_dynamic_tag_part(key);
+	return key;
+}
 
 /**
- * The expression wrappers a dynamic tag (`<{expr}>`) may be written through.
- * @param {AST.Node} node
- * @returns {node is AST.TSAsExpression | AST.TSTypeAssertion | AST.TSNonNullExpression | AST.ParenthesizedExpression | AST.ChainExpression}
+ * Where `node` ends, after the parentheses around it that a parse without
+ * `preserveParens` leaves out of its range (see
+ * `parseParenAndDistinguishExpression`).
+ * @param {string} input
+ * @param {AST.Node & AST.NodeWithLocation} node
  */
-function is_dynamic_tag_wrapper(node) {
-	return DYNAMIC_TAG_WRAPPER_TYPES.has(node.type);
+function end_after_parentheses(input, node) {
+	let end = node.end;
+	const paren_start = node.metadata?.paren_start;
+	if (paren_start === undefined) return end;
+	for (let i = paren_start; i !== -1 && i < node.start;) {
+		if (input.charCodeAt(i) !== CharCode.openParen) break;
+		i = skip_space_and_comments_from(input, i + 1);
+		const close = skip_space_and_comments_from(input, end);
+		if (close === -1 || input.charCodeAt(close) !== CharCode.closeParen) break;
+		end = close + 1;
+	}
+	return end;
 }
 
 // TypeScript's message for a missing `}` (TS1005). The parser reports it in
@@ -1087,12 +1172,18 @@ export function TSRXPlugin(config) {
 			// `#parseAssignableListItem`).
 			#assignableListItemStart = -1;
 			// When collecting, the list being read that can be an arrow function's
-			// parameters: a parenthesized expression or the arguments of `async (…)`.
-			// Where its `(` is, whether type parameters come before it, and how many
-			// `parseMaybeAssign` calls deep the parser is in one of its items (see
-			// `#parseArrowParameterProperty`).
-			/** @type {{ parenStart: number, generic: boolean, depth: number } | null} */
+			// parameters: a parenthesized expression or the arguments of `async (…)`
+			// (see `#parseArrowParameterProperty`).
+			/** @type {ArrowParameterList | null} */
 			#arrowParameterList = null;
+			// The innermost list of expressions being read (see
+			// `#checkParameterSyntax`).
+			/** @type {ExpressionList | null} */
+			#expressionList = null;
+			// The rest parameters whose default `#readRestParameterDefault` read and
+			// left out of the tree.
+			/** @type {WeakSet<AST.Node>} */
+			#restParameterDefaults = new WeakSet();
 			// Where the last type parameter list ended (see `tsParseTypeParameters`).
 			#typeParametersEnd = -1;
 			// The innermost expression being read that can be a generic arrow
@@ -1103,11 +1194,9 @@ export function TSRXPlugin(config) {
 			// arrow function being read (see `parseBindingListItem`).
 			#readingGenericArrowParameters = false;
 			// While the arguments of `async (…)` are read: where the `(` is, and the
-			// first `?` after a spread among them (see `parseSpread`).
-			/** @type {{ start: number, question: number } | null} */
+			// list of them (see `#parseAsyncArguments`).
+			/** @type {ExpressionList & { start: number } | null} */
 			#asyncArguments = null;
-			// Whether the list that `parseExprList` is reading is those arguments.
-			#readingAsyncArguments = false;
 			// When collecting, where the leading decorators of the statement being read
 			// start, while `parseDecorators` reads them (-1 otherwise), and the error
 			// recorded for them when no class follows (see `parseDecorators`).
@@ -3875,7 +3964,7 @@ export function TSRXPlugin(config) {
 					// acorn raises this at the comma, then expects the list to close. Skip a
 					// trailing comma, as acorn-typescript does in ambient contexts (where
 					// it's allowed after a rest parameter); a comma that another element
-					// follows is still an error.
+					// follows is still an error, unless it's an arrow function's parameter.
 					if (this.#isAmbientRestParameterTrailingComma()) return false;
 					const next = this.lookaheadCharCode();
 					if (
@@ -3883,7 +3972,7 @@ export function TSRXPlugin(config) {
 						next !== CharCode.closeBracket &&
 						next !== CharCode.closeBrace
 					) {
-						return false;
+						return this.#readArrowParametersPastRestElement(position);
 					}
 					this.#recordCheckerLevelError(position, position + 1, error_message);
 					this.next();
@@ -4209,22 +4298,25 @@ export function TSRXPlugin(config) {
 			 * (TS2371). acorn-typescript rejected the `AssignmentPattern` with its own
 			 * message, in every mode. Raise TS2371 at the parameter instead, which
 			 * `raise` records when collecting, keeping the default as typescript-estree
-			 * does. A strict parse throws it.
+			 * does. A strict parse throws it. So is a rest parameter's default, which
+			 * the tree leaves out (see `#readRestParameterDefault`), after TS1048.
 			 *
 			 * This is acorn-typescript's method with those changes. Its check of each
-			 * parameter looks through a parameter property to its parameter.
+			 * parameter looks through a parameter property to its parameter. A strict
+			 * parse reads the list through `parseBindingList` too, for
+			 * `parseBindingListItem` to know it's a parameter list.
 			 * @type {Parse.Parser['tsParseBindingListForSignature']}
 			 */
 			tsParseBindingListForSignature() {
-				const items = this.#collect
-					? this.parseBindingList(tt.parenR, true, true)
-					: super.parseBindingList(tt.parenR, true, true);
-				return items.map((item) => {
+				return this.parseBindingList(tt.parenR, true, true).map((item) => {
 					const node = /** @type {AST.Node} */ (item);
 					const parameter = /** @type {AST.Node & AST.NodeWithLocation} */ (
 						node.type === 'TSParameterProperty' ? node.parameter : node
 					);
-					if (parameter.type === 'AssignmentPattern') {
+					if (
+						parameter.type === 'AssignmentPattern' ||
+						this.#restParameterDefaults.has(parameter)
+					) {
 						this.raise(parameter.start, SIGNATURE_PARAMETER_INITIALIZER);
 					} else if (
 						parameter.type !== 'Identifier' &&
@@ -6352,9 +6444,36 @@ export function TSRXPlugin(config) {
 			 *   `?`: TypeScript's parser expects a `,` there, and this throws acorn's
 			 *   `Unexpected token` at the `?` in every mode
 			 *   (sveltejs/acorn-typescript#130, where #110 accepts it with no error).
+			 *
+			 * A rest parameter can have a default in TypeScript's parser too
+			 * (`function f(...a = []) {}`), and its checker reports TS1048 at the
+			 * parameter's name. acorn expects the list to close after a rest element,
+			 * and failed at the `=`. Raise TS1048 there, which `raise` records when
+			 * collecting, and read the default (see `#readRestParameterDefault`). A
+			 * strict parse throws it. `parseFunctionBody` raises it for an arrow
+			 * function, after its `=>`.
 			 * @type {Parse.Parser['parseBindingListItem']}
 			 */
 			parseBindingListItem(param) {
+				const item = this.#parseBindingListItem(param);
+				if (
+					item.type === 'RestElement' &&
+					this.type === tt.eq &&
+					this.#bindingListClose === tt.parenR
+				) {
+					if (!this.#readingGenericArrowParameters) {
+						this.raise(/** @type {number} */ (item.argument.start), REST_PARAMETER_INITIALIZER);
+					}
+					this.#readRestParameterDefault(item);
+				}
+				return item;
+			}
+
+			/**
+			 * `parseBindingListItem`, before any default of a rest parameter.
+			 * @type {Parse.Parser['parseBindingListItem']}
+			 */
+			#parseBindingListItem(param) {
 				if (this.type === tt.question) {
 					if (this.#bindingListClose === tt.bracketR) {
 						// UPSTREAM(sveltejs/acorn-typescript#130): remove once a release includes the fix
@@ -6383,6 +6502,24 @@ export function TSRXPlugin(config) {
 					}
 				}
 				return super.parseBindingListItem(param);
+			}
+
+			/**
+			 * Reads the default after a rest parameter, from its `=`: TypeScript's
+			 * parser reads one, and its checker reports TS1048. ESTree's rest element
+			 * has no place for it, and typescript-estree leaves it out of the tree
+			 * while the parameter's range covers it; so does this. The rest element
+			 * is kept in `#restParameterDefaults`, for the errors to be reported
+			 * where they're known to be a parameter's (see `parseFunctionBody` and
+			 * `tsParseBindingListForSignature`).
+			 * @param {AST.Node} rest The rest parameter, a `RestElement`, or the
+			 * `SpreadElement` that becomes one
+			 */
+			#readRestParameterDefault(rest) {
+				this.next();
+				this.parseMaybeAssign();
+				this.resetEndLocation(rest);
+				this.#restParameterDefaults.add(rest);
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#121): remove once a release includes the fix
@@ -6619,56 +6756,6 @@ export function TSRXPlugin(config) {
 					name.type === 'JSXExpressionContainer' &&
 					name.isDynamic === true
 				);
-			}
-
-			/**
-			 * Dynamic tag expressions must be able to resolve to an element name:
-			 * an identifier, member access, static string, or a runtime expression
-			 * composed of those. Constructed values (calls, spreads, concatenation,
-			 * interpolation, object/array literals) and static non-string literals
-			 * can never be valid tag names.
-			 * @param {AST.Node | null | undefined} expression
-			 * @returns {boolean}
-			 */
-			#isValidDynamicTagExpression(expression) {
-				let node = expression;
-				while (node && is_dynamic_tag_wrapper(node)) {
-					node = node.expression;
-				}
-				if (!node || node.type.startsWith('JSX')) return false;
-				if (node.type === 'Identifier') return node.name !== 'undefined';
-				if (node.type === 'Literal') return typeof node.value === 'string';
-				if (node.type === 'UnaryExpression' && node.operator === 'void') return false;
-				return !this.#containsDisallowedDynamicTagSyntax(node);
-			}
-
-			/**
-			 * Walks every property of the tag expression, so it receives whatever the
-			 * AST holds — nodes, arrays of nodes, and the primitives in between.
-			 * @param {unknown} node
-			 * @param {Set<unknown>} [seen]
-			 * @returns {boolean}
-			 */
-			#containsDisallowedDynamicTagSyntax(node, seen = new Set()) {
-				if (!node || typeof node !== 'object' || seen.has(node)) return false;
-				seen.add(node);
-				if (Array.isArray(node)) {
-					return node.some((child) => this.#containsDisallowedDynamicTagSyntax(child, seen));
-				}
-				const ast_node = /** @type {AST.Node} */ (node);
-				if (
-					DYNAMIC_TAG_DISALLOWED_TYPES.has(ast_node.type) ||
-					(ast_node.type === 'TemplateLiteral' && ast_node.expressions.length > 0) ||
-					(ast_node.type === 'BinaryExpression' && ast_node.operator === '+')
-				) {
-					return true;
-				}
-				for (const key of Object.keys(ast_node)) {
-					if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
-					const value = /** @type {Record<string, unknown>} */ (ast_node)[key];
-					if (this.#containsDisallowedDynamicTagSyntax(value, seen)) return true;
-				}
-				return false;
 			}
 
 			/**
@@ -7169,18 +7256,38 @@ export function TSRXPlugin(config) {
 			/**
 			 * Override to track parenthesized expressions in metadata
 			 * This allows the prettier plugin to preserve parentheses where they existed
+			 *
+			 * The items can be an arrow function's parameters, and when they aren't,
+			 * a `?` or a type annotation in them is an error (see
+			 * `#checkParameterSyntax`).
 			 * @type {Parse.Parser['parseParenAndDistinguishExpression']}
 			 */
 			parseParenAndDistinguishExpression(canBeArrow, forInit) {
 				const startPos = this.start;
-				const expr =
-					canBeArrow && this.#collect
-						? this.#parseArrowParameterList(
-								// `<T,>(`: type parameters make it an arrow function.
-								this.#typeParametersEnd === this.lastTokEnd,
-								() => super.parseParenAndDistinguishExpression(canBeArrow, forInit),
-							)
-						: super.parseParenAndDistinguishExpression(canBeArrow, forInit);
+				const outer_list = this.#expressionList;
+				/** @type {ExpressionList} */
+				const list = canBeArrow
+					? { parameters: true, position: -1, message: '' }
+					: NON_PARAMETER_LIST;
+				this.#expressionList = list;
+				/** @type {AST.Expression} */
+				let expr;
+				try {
+					expr =
+						canBeArrow && this.#collect
+							? this.#parseArrowParameterList(
+									// `<T,>(`: type parameters make it an arrow function.
+									this.#typeParametersEnd === this.lastTokEnd,
+									() => super.parseParenAndDistinguishExpression(canBeArrow, forInit),
+								)
+							: super.parseParenAndDistinguishExpression(canBeArrow, forInit);
+				} finally {
+					this.#expressionList = outer_list;
+				}
+				// UPSTREAM(sveltejs/acorn-typescript#149): remove once a release includes the fix
+				if (list.position !== -1 && expr.type !== 'ArrowFunctionExpression') {
+					this.raise(list.position, list.message);
+				}
 
 				// If the expression's start position is after the opening paren,
 				// it means it was wrapped in parentheses. Mark it in metadata.
@@ -7242,19 +7349,23 @@ export function TSRXPlugin(config) {
 			/**
 			 * Reads, with `parse`, `async (…)`, whose arguments can be an async arrow
 			 * function's parameters (see `#parseArrowParameterProperty` and
-			 * `parseSpread`).
+			 * `parseSpread`). When no `=>` follows them, it fails at the first `?` or
+			 * type annotation in them, which only a parameter can have (see
+			 * `#checkParameterSyntax`).
 			 * @param {() => AST.Expression} parse
 			 * @returns {AST.Expression}
 			 */
 			#parseAsyncArguments(parse) {
 				const outer = this.#asyncArguments;
-				const async_arguments = { start: this.start, question: -1 };
+				/** @type {ExpressionList & { start: number }} */
+				const async_arguments = { start: this.start, parameters: true, position: -1, message: '' };
 				this.#asyncArguments = async_arguments;
 				try {
 					const node = this.#collect ? this.#parseArrowParameterList(false, parse) : parse();
-					// A `?` after a spread belongs to a rest parameter only.
-					if (async_arguments.question !== -1 && node.type !== 'ArrowFunctionExpression') {
-						this.unexpected(async_arguments.question);
+					// UPSTREAM(sveltejs/acorn-typescript#140): remove once a release includes the fix
+					// UPSTREAM(sveltejs/acorn-typescript#149): remove once a release includes the fix
+					if (async_arguments.position !== -1 && node.type !== 'ArrowFunctionExpression') {
+						this.raise(async_arguments.position, async_arguments.message);
 					}
 					return node;
 				} finally {
@@ -7263,21 +7374,28 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Marks the arguments of `async (…)` for `parseSpread`.
+			 * The list of expressions being read, for `#checkParameterSyntax`: the
+			 * arguments of `async (…)` can be an async arrow function's parameters
+			 * (see `#parseAsyncArguments`), and no other list that this reads can be.
 			 * @type {Parse.Parser['parseExprList']}
 			 */
 			parseExprList(close, allowTrailingComma, allowEmpty, refDestructuringErrors) {
-				const outer = this.#readingAsyncArguments;
-				this.#readingAsyncArguments =
-					close === tt.parenR && this.#asyncArguments?.start === this.lastTokStart;
+				const outer = this.#expressionList;
+				const async_arguments = this.#asyncArguments;
+				this.#expressionList =
+					close === tt.parenR && async_arguments?.start === this.lastTokStart
+						? async_arguments
+						: NON_PARAMETER_LIST;
 				try {
 					return super.parseExprList(close, allowTrailingComma, allowEmpty, refDestructuringErrors);
 				} finally {
-					this.#readingAsyncArguments = outer;
+					this.#expressionList = outer;
 				}
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#140): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript#149): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript#150): remove once a release includes the fix
 			/**
 			 * A spread among the arguments of `async (…)` can be an async arrow
 			 * function's rest parameter. TypeScript's parser reads a `?` after it, as
@@ -7285,29 +7403,135 @@ export function TSRXPlugin(config) {
 			 * acorn-typescript's `parseExprList` reads a type annotation after the
 			 * spread there, but not the `?`, which failed as unexpected. Take it, as
 			 * `parseParenItem` does for the items of a parenthesized list, so that
-			 * the rest parameter is `optional` and `parseFunctionBody` reports TS1047.
+			 * the rest parameter is `optional` and `parseFunctionBody` reports TS1047
+			 * (sveltejs/acorn-typescript#140).
+			 *
+			 * Read the type annotation here too, before `parseExprList` does, and move
+			 * the spread's end past the `?` and the annotation, as a rest parameter's
+			 * is elsewhere. acorn-typescript set the annotation without moving the
+			 * end, so the rest parameter ended before it
+			 * (sveltejs/acorn-typescript#150). A default can follow them
+			 * (`#readRestParameterDefault`, #726).
+			 *
 			 * When no `=>` follows the arguments, `#parseAsyncArguments` fails at the
-			 * `?`, as before.
+			 * `?` or the annotation. acorn-typescript read the annotation after a
+			 * spread in any other list too, where it now fails
+			 * (sveltejs/acorn-typescript#149, see `#checkParameterSyntax`).
 			 * @type {Parse.Parser['parseSpread']}
 			 */
 			parseSpread(refDestructuringErrors) {
-				const in_async_arguments = this.#readingAsyncArguments;
-				// A spread in an item is in another list.
-				this.#readingAsyncArguments = false;
-				/** @type {AST.SpreadElement & { optional?: boolean }} */
-				let node;
-				try {
-					node = super.parseSpread(refDestructuringErrors);
-				} finally {
-					this.#readingAsyncArguments = in_async_arguments;
-				}
-				const async_arguments = this.#asyncArguments;
-				if (in_async_arguments && async_arguments && this.type === tt.question) {
-					if (async_arguments.question === -1) async_arguments.question = this.start;
+				/** @type {AST.SpreadElement & { optional?: boolean, typeAnnotation?: AST.TSTypeAnnotation }} */
+				const node = super.parseSpread(refDestructuringErrors);
+				const list = this.#expressionList;
+				const rest_parameter = list !== null && list === this.#asyncArguments;
+				if (rest_parameter && this.type === tt.question) {
+					this.#checkParameterSyntax(this.start, UNEXPECTED_TOKEN);
 					this.next();
 					node.optional = true;
+					this.resetEndLocation(node);
 				}
+				// Where acorn-typescript's `parseExprList` reads it.
+				if (this.maybeInArrowParameters && this.type === tt.colon) {
+					this.#checkParameterSyntax(this.start, UNEXPECTED_TYPE_ANNOTATION);
+					node.typeAnnotation = this.tsParseTypeAnnotation();
+					this.resetEndLocation(node);
+				}
+				// After a `?` or an annotation: `...a = []` is the spread's argument.
+				if (rest_parameter && this.type === tt.eq) this.#readRestParameterDefault(node);
 				return node;
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#149): remove once a release includes the fix
+			/**
+			 * acorn-typescript reads a `?` and a type annotation after each item of a
+			 * parenthesized expression, and of each list that `parseExprList` reads,
+			 * for an arrow function's parameters, whose `optional` and
+			 * `typeAnnotation` they become. When the list wasn't an arrow function's
+			 * parameters, the item kept them: `(x: number)` crashed the compile, and
+			 * `f(x?)` was printed back. TypeScript's parser rejects them there. See
+			 * `#checkParameterSyntax`.
+			 *
+			 * TypeScript's parser reads a default after an arrow function's rest
+			 * parameter too, `(...a = []) => a`, and its checker reports TS1048. acorn
+			 * expects a parenthesized list to close after its rest element, and
+			 * failed at the `=`. Where the list can be an arrow function's parameters,
+			 * read it (`#readRestParameterDefault`), for `parseFunctionBody` to report
+			 * TS1048 once the arrow function is read (#726). When no `=>` follows,
+			 * the rest element still fails.
+			 * @type {Parse.Parser['parseParenItem']}
+			 */
+			parseParenItem(node) {
+				const question = this.type === tt.question ? this.start : -1;
+				let item = super.parseParenItem(node);
+				const type_cast = /** @type {string} */ (item.type) === 'TSTypeCastExpression';
+				if (question !== -1) {
+					this.#checkParameterSyntax(question, UNEXPECTED_TOKEN);
+				} else if (type_cast) {
+					const annotation = /** @type {{ typeAnnotation: AST.NodeWithLocation }} */ (
+						/** @type {unknown} */ (item)
+					).typeAnnotation;
+					this.#checkParameterSyntax(annotation.start, UNEXPECTED_TYPE_ANNOTATION);
+				}
+				if (
+					node.type === 'RestElement' &&
+					this.type === tt.eq &&
+					this.#expressionList?.parameters
+				) {
+					if (type_cast) item = this.typeCastToParameter(item);
+					this.#readRestParameterDefault(item);
+				}
+				return item;
+			}
+
+			/**
+			 * A `?` or a type annotation after an item of the list being read, or a
+			 * type annotation after a spread, at `position`. Only an arrow function's
+			 * parameters can have them: TypeScript's parser rejects them anywhere
+			 * else, and @babel/parser reports `message`. Raise it now when the list
+			 * can't be an arrow function's parameters, and otherwise note the first
+			 * one, for the list to raise when it isn't one (see
+			 * `parseParenAndDistinguishExpression` and `#parseAsyncArguments`).
+			 * @param {number} position
+			 * @param {string} message
+			 */
+			#checkParameterSyntax(position, message) {
+				const list = this.#expressionList;
+				if (list === null || !list.parameters) {
+					this.raise(position, message);
+				} else if (list.position === -1) {
+					// Undone with an abandoned speculative parse that noted it.
+					this.parseEffects?.willSet(list, 'position');
+					this.parseEffects?.willSet(list, 'message');
+					list.position = position;
+					list.message = message;
+				}
+			}
+
+			/**
+			 * `async (...a = []) => a`: acorn read the rest parameter's default as
+			 * part of the spread's argument among the arguments of `async (…)`, and
+			 * failed as it made them the parameters (`Rest elements cannot have a
+			 * default value`). TypeScript's parser reads the default, and its checker
+			 * reports TS1048. Leave it out, as `#readRestParameterDefault` does, for
+			 * `parseFunctionBody` to report TS1048 (#726). A parenthesized
+			 * assignment, `...(a = [])`, isn't a parameter.
+			 * @type {Parse.Parser['parseSubscriptAsyncArrow']}
+			 */
+			parseSubscriptAsyncArrow(startPos, startLoc, exprList, forInit) {
+				for (const item of exprList) {
+					if (item?.type !== 'SpreadElement') continue;
+					const spread = /** @type {AST.SpreadElement} */ (item);
+					const argument = spread.argument;
+					if (
+						argument.type === 'AssignmentExpression' &&
+						argument.operator === '=' &&
+						!argument.metadata?.parenthesized
+					) {
+						spread.argument = /** @type {AST.Expression} */ (argument.left);
+						this.#restParameterDefaults.add(spread);
+					}
+				}
+				return super.parseSubscriptAsyncArrow(startPos, startLoc, exprList, forInit);
 			}
 
 			/**
@@ -7393,7 +7617,8 @@ export function TSRXPlugin(config) {
 
 			/**
 			 * Reads, with `parse`, a list that can be an arrow function's parameters,
-			 * for `#parseArrowParameterProperty`.
+			 * for `#parseArrowParameterProperty` and
+			 * `#readArrowParametersPastRestElement`.
 			 * @template T
 			 * @param {boolean} generic Whether type parameters come before its `(`
 			 * @param {() => T} parse
@@ -7401,12 +7626,28 @@ export function TSRXPlugin(config) {
 			 */
 			#parseArrowParameterList(generic, parse) {
 				const outer = this.#arrowParameterList;
-				this.#arrowParameterList = { parenStart: this.start, generic, depth: 0 };
+				this.#arrowParameterList = { parenStart: this.start, generic, depth: 0, pastRest: null };
 				try {
 					return parse();
 				} finally {
 					this.#arrowParameterList = outer;
 				}
+			}
+
+			/**
+			 * Adds the parameters that `#readArrowParametersPastRestElement` read
+			 * after a rest parameter to the arrow function's.
+			 * @type {Parse.Parser['parseParenArrowList']}
+			 */
+			parseParenArrowList(startPos, startLoc, exprList, forInit) {
+				const list = this.#arrowParameterList;
+				const past_rest = list?.pastRest;
+				if (list && past_rest) {
+					list.pastRest = null;
+					exprList.push(...past_rest.items);
+					this.checkPatternErrors(past_rest.refDestructuringErrors, false);
+				}
+				return super.parseParenArrowList(startPos, startLoc, exprList, forInit);
 			}
 
 			/**
@@ -7464,10 +7705,11 @@ export function TSRXPlugin(config) {
 			 * `TSParameterProperty` that a function's parameter gets (see
 			 * `parseBindingList`). Its parameter is an expression until `toAssignable`
 			 * makes it a pattern. Before a rest element, keep the rest element without
-			 * them, as `#parseRestParameterProperty` does. Anywhere else, return
-			 * `null`, having read nothing, so that the item reads as before, and a
-			 * strict parse fails as before.
-			 * @param {{ parenStart: number, generic: boolean, depth: number }} list
+			 * them, as `#parseRestParameterProperty` does, and record a comma after it
+			 * as that does, for the list to go on. Anywhere else, return `null`,
+			 * having read nothing, so that the item reads as before, and a strict
+			 * parse fails as before.
+			 * @param {ArrowParameterList} list
 			 * @param {Parse.DestructuringErrors | undefined} refDestructuringErrors
 			 * @returns {AST.Expression | null}
 			 */
@@ -7491,8 +7733,8 @@ export function TSRXPlugin(config) {
 					this.#recordCheckerLevelError(start, this.lastTokEnd, REST_PARAMETER_PROPERTY);
 					this.#recordCheckerLevelError(start, start + 1, UNEXPECTED_PARAMETER_MODIFIER);
 					const rest = this.parseParenItem(this.parseRestBinding());
-					// As acorn does after a rest element in a parenthesized expression.
-					if (this.type === tt.comma) this.raise(this.start, REST_ELEMENT_TRAILING_COMMA);
+					// The list goes on after it: a parameter after it is TS1014 (#727).
+					this.#reportCommaAfterRestParameter();
 					return /** @type {AST.Expression} */ (/** @type {unknown} */ (rest));
 				}
 				this.#recordCheckerLevelError(start, start + 1, UNEXPECTED_PARAMETER_MODIFIER);
@@ -7549,18 +7791,29 @@ export function TSRXPlugin(config) {
 					}
 				}
 				const start = this.start;
+				return this.#readsAsArrowParameters(() => {
+					const [item] = /** @type {AST.Node[]} */ (
+						this.parseBindingList(tt.parenR, false, true, false)
+					);
+					// Modifiers leave a parameter property, or a rest element after them.
+					return !!item && (item.type === 'TSParameterProperty' || item.start !== start);
+				});
+			}
+
+			/**
+			 * Whether the rest of the list reads as an arrow function's parameters:
+			 * `read` reads them, up to the list's `)`, and returns whether they can
+			 * be, and `=>` follows (after a return type). Reads nothing.
+			 * @param {() => boolean} read
+			 * @returns {boolean}
+			 */
+			#readsAsArrowParameters(read) {
 				const errors = this.#errors;
 				const errors_length = errors?.length ?? 0;
 				try {
 					return this.tsLookAhead(() => {
 						try {
-							const [item] = /** @type {AST.Node[]} */ (
-								this.parseBindingList(tt.parenR, false, true, false)
-							);
-							// Modifiers leave a parameter property, or a rest element after them.
-							if (!item || (item.type !== 'TSParameterProperty' && item.start === start)) {
-								return false;
-							}
+							if (!read()) return false;
 							if (this.type === tt.colon) this.tsParseTypeOrTypePredicateAnnotation(tt.colon);
 							return this.type === tt.arrow && !this.canInsertSemicolon();
 						} catch {
@@ -7574,14 +7827,92 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * TypeScript's parser reads the parameters after an arrow function's rest
+			 * parameter, `(...a, b) => 1`, and its checker reports TS1014. acorn's
+			 * `parseParenAndDistinguishExpression` ends a parenthesized list at its
+			 * rest element: it raises `Comma is not permitted after the rest element`
+			 * at a comma after it and expects the `)`. A function's parameters, and
+			 * an async arrow function's, which are a call's arguments, go on (see
+			 * `#parseBindingListPastRestElement`).
+			 *
+			 * When collecting, at that comma in a list that can be an arrow function's
+			 * parameters, where the rest of the list reads as parameters and `=>`
+			 * follows it, record the error at the comma and read the items after it,
+			 * as `#parseBindingListPastRestElement` does, for `parseParenArrowList` to
+			 * add them to the parameters (#727). Otherwise the error is thrown, as
+			 * before. It's raised in a strict parse.
+			 * @param {number} position The comma
+			 * @returns {boolean} Whether the items were read, and parsing goes on
+			 */
+			#readArrowParametersPastRestElement(position) {
+				const list = this.#arrowParameterList;
+				if (
+					list === null ||
+					list.depth !== 0 ||
+					!this.#readsAsArrowParameters(() => {
+						this.next();
+						this.parseBindingList(tt.parenR, false, true, false);
+						return true;
+					})
+				) {
+					return false;
+				}
+				this.#recordCheckerLevelError(position, position + 1, REST_ELEMENT_TRAILING_COMMA);
+				const refDestructuringErrors = new /** @type {new () => Parse.DestructuringErrors} */ (
+					/** @type {unknown} */ (DestructuringErrors)
+				)();
+				/** @type {AST.Expression[]} */
+				const items = [];
+				while (this.eat(tt.comma) && this.type !== tt.parenR) {
+					if (this.type === tt.ellipsis) {
+						items.push(
+							/** @type {AST.Expression} */ (this.parseParenItem(this.parseRestBinding())),
+						);
+						this.#reportCommaAfterRestParameter();
+					} else {
+						items.push(this.parseMaybeAssign(false, refDestructuringErrors, this.parseParenItem));
+					}
+				}
+				list.pastRest = { items, refDestructuringErrors };
+				return true;
+			}
+
+			/**
 			 * A parameter property that `#parseArrowParameterProperty` reads holds
 			 * its parameter as an expression: make that a pattern, as for any other
 			 * parameter of the arrow function. One that `parseBindingList` reads for
 			 * a generic async arrow function holds a pattern already.
 			 * UPSTREAM(sveltejs/acorn-typescript#136)
+			 *
+			 * A type assertion in the head of a `for…in` or `for…of` loop,
+			 * `for ((a as T) of x)` or `for ([a!] of x)`, is an assignment target,
+			 * which TypeScript accepts. acorn converts the head with `isBinding:
+			 * false`, and acorn-typescript raised `Unexpected type cast in parameter
+			 * position.` for an assertion then. The code comes from @babel/parser,
+			 * whose flag means the opposite: it raises for an arrow function's
+			 * parameters, which acorn converts with `isBinding: true`, as
+			 * acorn-typescript does an assignment target. Convert the assertion's
+			 * expression as acorn-typescript does for an assignment target, without
+			 * the error, and keep the assertion where it keeps it. `checkLValPattern`
+			 * rejects an assertion in an arrow function's parameters (#706).
+			 * UPSTREAM(sveltejs/acorn-typescript#148): remove once a release includes the fix
 			 * @type {Parse.Parser['toAssignable']}
 			 */
 			toAssignable(node, isBinding, refDestructuringErrors, preserveTypeScriptWrapper) {
+				if (!isBinding && node && TYPE_ASSERTIONS.has(node.type)) {
+					const assertion = /** @type {AST.Node & { expression: AST.Node }} */ (
+						/** @type {unknown} */ (node)
+					);
+					const expression = this.toAssignable(
+						assertion.expression,
+						isBinding,
+						refDestructuringErrors,
+						preserveTypeScriptWrapper,
+					);
+					if (!preserveTypeScriptWrapper) return expression;
+					assertion.expression = /** @type {AST.Node} */ (expression);
+					return /** @type {AST.Pattern} */ (/** @type {unknown} */ (node));
+				}
 				if (node?.type !== 'TSParameterProperty') {
 					return super.toAssignable(
 						node,
@@ -7789,7 +8120,9 @@ export function TSRXPlugin(config) {
 							/** @type {AST.NodeWithLocation} */ (init_expr).start,
 							"The left-hand side of a for-of loop may not start with 'let'.",
 						);
-					const init = this.toAssignable(init_expr, false, refDestructuringErrors);
+					// Keep a type assertion, and the parentheses around it, as for an
+					// assignment target (see `toAssignable`).
+					const init = this.toAssignable(init_expr, false, refDestructuringErrors, true);
 					this.checkLValPattern(init);
 					return this.parseForInWithIndex(
 						/** @type {AST.ForInStatement | AST.ForOfStatement} */ (node),
@@ -7943,7 +8276,7 @@ export function TSRXPlugin(config) {
 					}
 					const is_code_block = this.#isCodeBlockStart(this.start);
 					if (isArrowFunction) {
-						this.#reportOptionalRestParameter(/** @type {AST.ArrowFunctionExpression} */ (node));
+						this.#reportRestParameterMistakes(/** @type {AST.ArrowFunctionExpression} */ (node));
 						this.#reportOptionalPatternParameters(node);
 					} else if (is_code_block || !this.#isBodilessSignature(args[0])) {
 						this.#reportOptionalPatternParameters(node);
@@ -7963,23 +8296,24 @@ export function TSRXPlugin(config) {
 
 			/**
 			 * Raise TS1047 for an optional rest parameter of an arrow function, at its
-			 * `?`, outside an ambient context, as `parseBindingListItem` does for
-			 * other functions. An arrow function's parameters are read as
+			 * `?`, outside an ambient context, and TS1048 for one with a default, at
+			 * its name (see `#readRestParameterDefault`), as `parseBindingListItem`
+			 * does for other functions. An arrow function's parameters are read as
 			 * expressions, which acorn-typescript never checked.
 			 * @param {AST.ArrowFunctionExpression} node
 			 */
-			#reportOptionalRestParameter(node) {
-				if (this.isAmbientContext) return;
+			#reportRestParameterMistakes(node) {
 				for (const param of node.params) {
-					if (
-						param.type === 'RestElement' &&
-						/** @type {{ optional?: boolean }} */ (param).optional
-					) {
+					if (param.type !== 'RestElement') continue;
+					if (!this.isAmbientContext && /** @type {{ optional?: boolean }} */ (param).optional) {
 						const question = skip_space_and_comments_from(
 							this.input,
 							/** @type {number} */ (param.argument.end),
 						);
 						this.raise(question, OPTIONAL_REST_PARAMETER);
+					}
+					if (this.#restParameterDefaults.has(param)) {
+						this.raise(/** @type {number} */ (param.argument.start), REST_PARAMETER_INITIALIZER);
 					}
 				}
 			}
@@ -8316,23 +8650,49 @@ export function TSRXPlugin(config) {
 				return this.finishNode(node, 'JSXIdentifier');
 			}
 
+			/**
+			 * A dynamic tag name, `{ AssignmentExpression }`. A spread or an empty
+			 * container is no expression, so it can't be read as a tag at all. Which
+			 * expressions make a valid tag is checked once per element, at the
+			 * opening tag (see `#reportInvalidDynamicTag`).
+			 */
 			#parseJSXDynamicElementName() {
 				const container = this.jsx_parseExpressionContainer();
 				if (
 					container.type === 'JSXSpreadChild' ||
-					!this.#isValidDynamicTagExpression(container.expression)
+					container.expression.type === 'JSXEmptyExpression'
 				) {
 					this.raise(
 						/** @type {number} */ (
 							container.type === 'JSXSpreadChild'
 								? container.start
-								: (container.expression?.start ?? container.start)
+								: (container.expression.start ?? container.start)
 						),
-						'Dynamic element names must be an identifier, member expression, static string, or runtime expression; calls, spreads, string concatenation, string interpolation, and static null, undefined, boolean, number, object, and array literals are not valid tag names.',
+						TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
 					);
 				}
 				container.isDynamic = true;
 				return container;
+			}
+
+			/**
+			 * Report a dynamic tag expression that isn't an allowed form (see
+			 * `find_invalid_dynamic_tag_part`) at its invalid part. The check doesn't
+			 * change the parse: collecting records the error and goes on, and a
+			 * strict parse throws it. The closing tag repeats the expression, so only
+			 * the opening tag is checked.
+			 * @param {ESTreeJSX.JSXExpressionContainer} name
+			 */
+			#reportInvalidDynamicTag(name) {
+				const invalid = find_invalid_dynamic_tag_part(/** @type {AST.Node} */ (name.expression));
+				if (!invalid) return;
+				const node = /** @type {AST.Node & AST.NodeWithLocation} */ (invalid);
+				this.#report_recoverable_error_range(
+					node.metadata?.paren_start ?? node.start,
+					end_after_parentheses(this.input, node),
+					TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
+					DIAGNOSTIC_CODES.DYNAMIC_TAG_EXPRESSION,
+				);
 			}
 
 			/**
@@ -9014,6 +9374,7 @@ export function TSRXPlugin(config) {
 				if (nodeName) node.name = nodeName;
 				if (this.#isDynamicJSXElementName(nodeName)) {
 					node.isDynamic = true;
+					this.#reportInvalidDynamicTag(nodeName);
 				}
 				if (this.match(tt.relational) || this.match(tt.bitShift)) {
 					const typeArguments = this.tsTryParseAndCatch(() =>

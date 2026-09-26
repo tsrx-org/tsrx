@@ -34,8 +34,9 @@ const BROKEN_MARKUP_CODES = new Set([
  * parser rejects: a declaration list without a declarator (`const` on its own,
  * `for (const of x)`), and code that the output would leave out: a modifier
  * where TypeScript doesn't allow one, which Prettier's printer doesn't print,
- * and a second accessibility modifier, a modifier on a rest parameter,
- * decorators before a declaration other than a class, `abstract` before one
+ * and a second accessibility modifier, a modifier on a rest parameter, a rest
+ * parameter's default (`function f(...a = []) {}`), decorators before a
+ * declaration other than a class, `abstract` before one
  * (`export abstract function f() {}`), and the other modifiers the tree of a
  * declaration doesn't keep: a class member's (`public class A {}`), `async`
  * before anything but a function, any inside a block, a repeated one
@@ -49,6 +50,7 @@ const REJECTED_MISTAKES = [
 	/^'\w+' modifier can only appear on a type parameter of a class, interface or type alias\.$/,
 	'Accessibility modifier already seen.',
 	'A parameter property cannot be declared using a rest parameter.',
+	'A rest parameter cannot have an initializer.',
 	'Leading decorators must be attached to a class declaration.',
 	"'abstract' modifier can only appear on a class, method, or property declaration.",
 	/^'\w+' modifier cannot appear on a module or namespace element\.$/,

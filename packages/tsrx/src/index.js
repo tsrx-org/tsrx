@@ -261,6 +261,7 @@ export { prune_css as pruneCss } from './analyze/prune.js';
 export { create_scope_root as createScopeRoot } from './transform/jsx/style-scopes.js';
 export {
 	TSRX_DO_WHILE_STATEMENT_ERROR,
+	TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
 	TSRX_FORGOTTEN_STATEMENT_CONTAINER_ERROR,
 	TSRX_FOR_IN_STATEMENT_ERROR,
 	TSRX_FOR_STATEMENT_ERROR,
