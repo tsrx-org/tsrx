@@ -8,10 +8,11 @@ import { as_type, assert_type } from '../shared/node-types.js';
 import { parse_in_worker, parse_in_worker_with_ast } from '../shared/parse-in-worker.js';
 
 /**
- * Bugs in @sveltejs/acorn-typescript that the TSRX parser works around by
- * overriding one method each in `TSRXPlugin`. Each override is marked
- * `UPSTREAM(sveltejs/acorn-typescript#<n>)` in `src/plugin.js`; when a release
- * includes the upstream fix, the override goes and these tests stay.
+ * Bugs in @sveltejs/acorn-typescript, and one in acorn, that the TSRX parser
+ * works around by overriding one method each in `TSRXPlugin`. Each override is
+ * marked `UPSTREAM(sveltejs/acorn-typescript#<n>)` or `UPSTREAM(acornjs/acorn#<n>)`
+ * in `src/plugin.js`; when a release includes the upstream fix, the override
+ * goes and these tests stay.
  */
 
 /**
@@ -783,6 +784,334 @@ describe("a parameter property modifier before a function type's first parameter
 			if (index < 2) expect(text, source).not.toContain('TSFunctionType');
 			expect(text, source).not.toContain('TSParameterProperty');
 		}
+	});
+});
+
+/**
+ * acorn's `line:column` for a position in `source`.
+ * @param {string} source
+ * @param {number} pos
+ */
+function line_column(source, pos) {
+	const lines = source.slice(0, pos).split('\n');
+	return `${lines.length}:${lines[lines.length - 1].length}`;
+}
+
+/**
+ * The parameters of the first arrow function in `node`.
+ * @param {unknown} node
+ * @returns {unknown[] | undefined}
+ */
+function first_arrow_parameters(node) {
+	if (!node || typeof node !== 'object') return undefined;
+	const object = /** @type {{ type?: unknown, params?: unknown[] }} */ (node);
+	if (object.type === 'ArrowFunctionExpression') return object.params;
+	for (const [key, value] of Object.entries(object)) {
+		if (key === 'metadata' || key === 'loc') continue;
+		const params = first_arrow_parameters(value);
+		if (params) return params;
+	}
+	return undefined;
+}
+
+describe("an async arrow function's optional rest parameter (sveltejs/acorn-typescript#140)", () => {
+	// acorn reads an async arrow function's parameters as the arguments of
+	// `async (…)`. acorn-typescript read a type annotation after a spread there,
+	// but not a `?`, so the parameter failed to parse in every mode. TypeScript's
+	// parser reads it, and its checker reports TS1047 at the `?`, as for any
+	// other rest parameter.
+	const message = 'A rest parameter cannot be optional.';
+	const sources = [
+		'const f = async (...a?: number[]) => a;',
+		'const g = async (x, ...rest?) => x;',
+		`const h = async (
+	x: number,
+	...rest?: string[]
+): Promise<number> => x;`,
+		`export function App() @{
+	const k = async (...a?: string[]) => a;
+	<div>{String(k)}</div>
+}`,
+	];
+
+	it('records TS1047 at the `?` when collecting, and keeps the parameter', async () => {
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) =>
+				[{ collect: true, preserveParens: true }, { loose: true }].map((options) => ({
+					source,
+					options,
+				})),
+			),
+		);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const source = sources[Math.floor(index / 2)];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			const pos = source.indexOf('?');
+			expect(outcome.errors, source).toEqual([{ message, pos, end: pos + 1 }]);
+			expect(first_arrow_parameters(outcome.ast)?.at(-1), source).toMatchObject({
+				type: 'RestElement',
+				argument: { type: 'Identifier' },
+				optional: true,
+			});
+		}
+	});
+
+	it('throws it without collecting', async () => {
+		const outcomes = await parse_in_worker(sources.map((source) => ({ source })));
+
+		expect(outcomes).toEqual(
+			sources.map((source) => {
+				const pos = source.indexOf('?');
+				return { ok: false, message: `${message} (${line_column(source, pos)})`, pos };
+			}),
+		);
+	});
+
+	it('still fails at a `?` after a spread where no `=>` follows', async () => {
+		const failing = [
+			'async(...a?);',
+			'async(...a?: number[]);',
+			'f(...a?);',
+			'async(x, ...a?)\n=> x;',
+			// Only the arguments of `async (…)` themselves.
+			'async(f(...b?)) => 1;',
+			'async([...b?]) => 1;',
+		];
+		const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+		const outcomes = await parse_in_worker(
+			failing.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes).toEqual(
+			failing.flatMap((source) =>
+				modes.map(() => {
+					const pos = source.indexOf('?');
+					return { ok: false, message: `Unexpected token (1:${pos})`, pos };
+				}),
+			),
+		);
+	});
+});
+
+describe('a syntax error in a generic arrow function (sveltejs/acorn-typescript#141)', () => {
+	// acorn-typescript reads an expression that starts with `<` as an element,
+	// then as a generic arrow function, and when both failed it threw the
+	// element's error. It reads `async <T,>(…) => …` in a `tsTryParseAndCatch`
+	// that took any error to mean "not an arrow function". So an error in the
+	// arrow function's parameters or body was reported as `Unexpected token` at
+	// its type parameters, or after them. Once the arrow function is read past
+	// its `=>`, its own error is reported, where TypeScript reports it.
+	/** @type {Array<[source: string, message: string, at: string]>} */
+	const syntax_errors = [
+		['const f = <T,>(x: T) => { x = ; };', 'Unexpected token', '; }'],
+		['const g = async <T,>(x: T) => { x = ; };', 'Unexpected token', '; }'],
+		[
+			`export function App() @{
+	const h = <T,>(x: T) => x +;
+	<div />
+}`,
+			'Unexpected token',
+			';\n',
+		],
+		['const i = <T,>() => <U,>(y: U) => { y = ; };', 'Unexpected token', '; }'],
+		['const j = async <T,>() => async <U,>(y: U) => { await ; };', 'Unexpected token', '; }'],
+		['const k = <div>{<T,>(x: T) => { x = ; }}</div>;', 'Unexpected token', '; }'],
+		// A type assertion in its parameters (sveltejs/acorn-typescript#142).
+		['const l = <T,>(x as T) => x;', 'Unexpected type cast in parameter position.', 'x as'],
+	];
+
+	it("throws the arrow function's syntax error in every mode", async () => {
+		const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+		const outcomes = await parse_in_worker(
+			syntax_errors.flatMap(([source]) => modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes).toEqual(
+			syntax_errors.flatMap(([source, message, at]) =>
+				modes.map(() => {
+					const pos = source.indexOf(at);
+					return { ok: false, message: `${message} (${line_column(source, pos)})`, pos };
+				}),
+			),
+		);
+	});
+
+	it('throws the checker errors it reports on the parameters without collecting', async () => {
+		/** @type {Array<[source: string, message: string, at: string]>} */
+		const checker_errors = [
+			[
+				'const a = <T,>({ a }?: T) => a;',
+				'A binding pattern parameter cannot be optional in an implementation signature.',
+				'{ a }',
+			],
+			['const b = <T,>(...a?: T[]) => a;', 'A rest parameter cannot be optional.', '?:'],
+			[
+				'const c = async <T,>([a]?: T[]) => a;',
+				'A binding pattern parameter cannot be optional in an implementation signature.',
+				'[a]',
+			],
+			['const d = async <T,>(x, ...a?: T[]) => a;', 'A rest parameter cannot be optional.', '?:'],
+		];
+		const outcomes = await parse_in_worker([
+			...checker_errors.map(([source]) => ({ source })),
+			...checker_errors.map(([source]) => ({ source, options: { collect: true } })),
+		]);
+
+		expect(outcomes).toEqual([
+			...checker_errors.map(([source, message, at]) => {
+				const pos = source.indexOf(at);
+				return { ok: false, message: `${message} (1:${pos})`, pos };
+			}),
+			...checker_errors.map(([, message]) => ({ ok: true, errors: [message] })),
+		]);
+	});
+
+	it('still reads generic arrow functions, elements, and comparisons', async () => {
+		const valid = [
+			'const f = <T,>(x: T) => x;',
+			'const g = async <T,>(x: T): Promise<T> => x;',
+			'const h = <T extends object>(x: T) => x;',
+			'const i = <const T,>(x: T) => x;',
+			'const j = <div>{(x: number) => x}</div>;',
+			'const k = async<T>(x);',
+			'const l = a < b > c;',
+		];
+		const outcomes = await parse_in_worker(valid.map((source) => ({ source })));
+
+		expect(outcomes).toEqual(valid.map(() => ({ ok: true, errors: undefined })));
+	});
+});
+
+describe("a type assertion in an arrow function's parameters (sveltejs/acorn-typescript#142)", () => {
+	// TypeScript's parser doesn't read a type assertion as an arrow function's
+	// parameter, and fails (TS1005). acorn reads the parameters as expressions,
+	// and acorn-typescript's `toAssignable` accepted an assertion in them, so the
+	// parameter kept it, and the output did too. It's @babel/parser's
+	// `Unexpected type cast in parameter position.` now, in every mode.
+	const message = 'Unexpected type cast in parameter position.';
+	/** @type {Array<[source: string, at: string]>} */
+	const cases = [
+		['export const f = (x as number) => x;', 'x as'],
+		['export const g = (x!) => x;', 'x!'],
+		['export const h = async ([a satisfies number]) => a;', 'a satisfies'],
+		['export const i = async (x!) => x;', 'x!'],
+		['export const j = ({ a: b as string }) => b;', 'b as'],
+		// A pattern that a default made a pattern already.
+		['export const k = ([b as string] = []) => b;', 'b as'],
+		['export const l = (x!: number) => x;', 'x!'],
+		[
+			`export const App = (
+	props as { name: string },
+) => @{
+	<div>{props.name}</div>
+};`,
+			'props as',
+		],
+	];
+
+	it('throws it at the assertion in every mode', async () => {
+		const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+		const outcomes = await parse_in_worker(
+			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, at]) =>
+				modes.map(() => {
+					const pos = source.indexOf(at);
+					return { ok: false, message: `${message} (${line_column(source, pos)})`, pos };
+				}),
+			),
+		);
+	});
+
+	it('still reads a type assertion in an assignment target or an expression', async () => {
+		const valid = [
+			'let x; (x as number) = 1;',
+			'let a, b; [a as number, b!] = [1, 2];',
+			'let o; [{ a: o } as { a: unknown }] = [];',
+			'let b; ({ a: b! } = { a: 1 });',
+			'export const f = (x = 1 as number) => x;',
+			'export const g = ({ [String(1) as string]: v }) => v;',
+			'export const h = (x as number);',
+		];
+		const modes = [undefined, { collect: true, preserveParens: true }];
+		const outcomes = await parse_in_worker(
+			valid.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes).toEqual(
+			valid.flatMap(() => [
+				{ ok: true, errors: undefined },
+				{ ok: true, errors: [] },
+			]),
+		);
+	});
+});
+
+describe('a call after `async (…)` followed by `=>` (acornjs/acorn#1460)', () => {
+	// acorn's `parseSubscripts` works out once, for the `async` identifier,
+	// whether a call can be an async arrow function's head, and passed that to
+	// every subscript. So `async(a)(b) => 1` was an async arrow function with
+	// `b` for its parameter, and `async (b) => 1` was its output. Only the call
+	// right after `async` can be one, as in TypeScript, which fails at the `=>`.
+	const failing = [
+		'export const k = async(a)(b) => 1;',
+		'export const m = async(a)[0](b) => 1;',
+		'export const n = async(a)`t`(b) => 1;',
+		'export const o = async!(a) => 1;',
+		'export const p = async<T>(a)(b) => 1;',
+	];
+
+	it('throws at the `=>` in every mode', async () => {
+		const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+		const outcomes = await parse_in_worker(
+			failing.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes).toEqual(
+			failing.flatMap((source) =>
+				modes.map(() => {
+					const pos = source.indexOf('=>');
+					return { ok: false, message: `Unexpected token (1:${pos})`, pos };
+				}),
+			),
+		);
+	});
+
+	it('still reads async arrow functions and calls of `async`', async () => {
+		const outcomes = await parse_in_worker_with_ast(
+			[
+				'export const f = async(a) => 1;',
+				'export const g = async (a, ...b) => 1;',
+				'export const h = async(a)(b)((c) => 1);',
+			].map((source) => ({ source })),
+		);
+
+		const inits = outcomes.map((outcome) => {
+			if (!outcome.ok) throw new Error(outcome.message);
+			const declaration = as_type(outcome.ast.body[0], 'ExportNamedDeclaration').declaration;
+			return as_type(/** @type {AST.Node} */ (declaration), 'VariableDeclaration').declarations[0]
+				.init;
+		});
+		expect(inits).toMatchObject([
+			{ type: 'ArrowFunctionExpression', async: true, params: [{ name: 'a' }] },
+			{
+				type: 'ArrowFunctionExpression',
+				async: true,
+				params: [{ name: 'a' }, { type: 'RestElement' }],
+			},
+			{
+				type: 'CallExpression',
+				callee: {
+					type: 'CallExpression',
+					callee: { type: 'CallExpression', callee: { name: 'async' }, arguments: [{ name: 'a' }] },
+					arguments: [{ name: 'b' }],
+				},
+				arguments: [{ type: 'ArrowFunctionExpression', async: false }],
+			},
+		]);
 	});
 });
 

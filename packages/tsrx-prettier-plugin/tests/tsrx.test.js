@@ -795,6 +795,16 @@ describe('parse errors', () => {
 			],
 			// Prettier's typescript parser: `Property assignment expected. (1:13)`.
 			['const o = { @dec m() {} };', 'Unexpected token (1:13)', { line: 1, column: 13 }],
+			// Prettier's typescript parser: `';' expected. (1:25)`.
+			[
+				'const f = (x as number) => x;',
+				'Unexpected type cast in parameter position. (1:12)',
+				{ line: 1, column: 12 },
+			],
+			// Prettier's typescript parser: `';' expected. (1:23)`.
+			['const k = async(a)(b) => 1;', 'Unexpected token (1:23)', { line: 1, column: 23 }],
+			// Prettier's typescript parser: `Expression expected. (1:31)`.
+			['const g = <T,>(x: T) => { x = ; };', 'Unexpected token (1:31)', { line: 1, column: 31 }],
 		]) {
 			const error = await format(/** @type {string} */ (source)).catch((/** @type {any} */ e) => e);
 			expect(error).toBeInstanceOf(SyntaxError);
@@ -844,8 +854,22 @@ describe('parse errors', () => {
 			'class A {\n  constructor(public [a] = [1]) {}\n}\n',
 		);
 		// Prettier's typescript parser formats an arrow function's optional rest
-		// parameter the same way.
+		// parameter the same way, async too.
 		await expectFormat('const f = (...a?: number[]) => a;', 'const f = (...a: number[]) => a;\n');
+		await expectFormat(
+			'const f = async (x, ...a?: number[]) => a;',
+			'const f = async (x, ...a: number[]) => a;\n',
+		);
+		// And a parameter's default in a signature.
+		await expectFormat('type F = (a = 1) => void;', 'type F = (a = 1) => void;\n');
+		await expectFormat(
+			'interface I { m(a: number = 1): void; new ({ b } = { b: 2 }): I }',
+			`interface I {
+  m(a: number = 1): void;
+  new ({ b } = { b: 2 }): I;
+}
+`,
+		);
 		// Prettier's typescript parser formats `let` as a name the same way.
 		await expectFormat('var let = 1;\nclass let {}', 'var let = 1;\nclass let {}\n');
 	});

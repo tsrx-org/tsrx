@@ -13,6 +13,20 @@ import { DIAGNOSTIC_CODES } from './diagnostics.js';
 import { TSRX_RETURN_STATEMENT_ERROR } from './analyze/validation.js';
 import { is_tsrx_render_output_node } from './utils/ast.js';
 
+/**
+ * An expression being read that can be a generic arrow function (see
+ * `#parseGenericArrowFunction`): where its type parameters start, where its
+ * parameter list starts (known once the type parameters are read), where the
+ * arrow function starts (its `(`, or `async`), and the error that the arrow
+ * function threw after its `=>`.
+ * @typedef {{
+ *   typeParametersStart: number,
+ *   parametersStart: number,
+ *   arrowStart: number,
+ *   error: SyntaxError | null,
+ * }} GenericArrowFunction
+ */
+
 const CharCode = Object.freeze({
 	tab: 9,
 	lineFeed: 10,
@@ -98,6 +112,13 @@ const UNEXPECTED_PARAMETER_MODIFIER =
 // binding pattern.
 const PATTERN_PARAMETER_PROPERTY =
 	'A parameter property may not be declared using a binding pattern.';
+// TypeScript's TS2371, for a parameter with a default in a function or
+// constructor type, or in a method, call, or construct signature.
+const SIGNATURE_PARAMETER_INITIALIZER =
+	'A parameter initializer is only allowed in a function or constructor implementation.';
+// acorn-typescript's and @babel/parser's error for a type assertion in an arrow
+// function's parameters.
+const TYPE_CAST_IN_PARAMETER = 'Unexpected type cast in parameter position.';
 // acorn-typescript's error for decorators before something other than a class.
 const UNEXPECTED_LEADING_DECORATOR = 'Leading decorators must be attached to a class declaration.';
 // TypeScript's parser errors for what follows `export` when it starts no
@@ -239,6 +260,9 @@ const CHECKER_LEVEL_ERRORS = [
 	// signature's parameter, `function f(public x) {}` (TS2369), when collecting.
 	// See `parseBindingList` and `tsParseBindingListForSignature`.
 	UNEXPECTED_PARAMETER_MODIFIER,
+	// A parameter's default in a signature, `type F = (a = 1) => void` (TS2371),
+	// raised by `tsParseBindingListForSignature`.
+	SIGNATURE_PARAMETER_INITIALIZER,
 	// acorn-typescript: `private #x` (TS18010), `abstract #x` (TS18019).
 	/^Private elements cannot have an accessibility modifier \('\w+'\)\.$/,
 	"Private elements cannot have the 'abstract' modifier.",
@@ -877,6 +901,19 @@ export function TSRXPlugin(config) {
 			#arrowParameterList = null;
 			// Where the last type parameter list ended (see `tsParseTypeParameters`).
 			#typeParametersEnd = -1;
+			// The innermost expression being read that can be a generic arrow
+			// function (see `#parseGenericArrowFunction`).
+			/** @type {GenericArrowFunction | null} */
+			#genericArrowFunction = null;
+			// Whether the binding list being read is the parameters of the generic
+			// arrow function being read (see `parseBindingListItem`).
+			#readingGenericArrowParameters = false;
+			// While the arguments of `async (…)` are read: where the `(` is, and the
+			// first `?` after a spread among them (see `parseSpread`).
+			/** @type {{ start: number, question: number } | null} */
+			#asyncArguments = null;
+			// Whether the list that `parseExprList` is reading is those arguments.
+			#readingAsyncArguments = false;
 			// When collecting, where the leading decorators of the statement being read
 			// start, while `parseDecorators` reads them (-1 otherwise), and the error
 			// recorded for them when no class follows (see `parseDecorators`).
@@ -3885,7 +3922,12 @@ export function TSRXPlugin(config) {
 					allowModifiers = false;
 				}
 				const outer = this.#bindingListClose;
+				const outer_generic_arrow = this.#readingGenericArrowParameters;
 				this.#bindingListClose = close;
+				// acorn-typescript reads the parameters of `async <T,>(…) =>` with
+				// `parseBindingList` (see `parseBindingListItem`).
+				this.#readingGenericArrowParameters =
+					close === tt.parenR && this.#genericArrowFunction?.parametersStart === this.lastTokStart;
 				try {
 					return this.#collect
 						? this.#parseBindingListPastRestElement(
@@ -3897,6 +3939,7 @@ export function TSRXPlugin(config) {
 						: super.parseBindingList(close, allowEmpty, allowTrailingComma, allowModifiers);
 				} finally {
 					this.#bindingListClose = outer;
+					this.#readingGenericArrowParameters = outer_generic_arrow;
 				}
 			}
 
@@ -3938,6 +3981,7 @@ export function TSRXPlugin(config) {
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#136): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript#89)
 			/**
 			 * The parameters of a function or constructor type, or of a method, call,
 			 * or construct signature. TypeScript's parser reads parameter property
@@ -3949,19 +3993,28 @@ export function TSRXPlugin(config) {
 			 * modifiers there and records TS2369 at the first one, as for a function's
 			 * parameters. A strict parse still fails.
 			 *
-			 * This is acorn-typescript's method with that change. Its check of each
-			 * parameter looks through a parameter property to its parameter, which
-			 * can't have a default in a signature either.
+			 * TypeScript's parser reads a default there too, and its checker reports it
+			 * (TS2371). acorn-typescript rejected the `AssignmentPattern` with its own
+			 * message, in every mode. Raise TS2371 at the parameter instead, which
+			 * `raise` records when collecting, keeping the default as typescript-estree
+			 * does. A strict parse throws it.
+			 *
+			 * This is acorn-typescript's method with those changes. Its check of each
+			 * parameter looks through a parameter property to its parameter.
 			 * @type {Parse.Parser['tsParseBindingListForSignature']}
 			 */
 			tsParseBindingListForSignature() {
-				if (!this.#collect) return super.tsParseBindingListForSignature();
-				return this.parseBindingList(tt.parenR, true, true).map((item) => {
+				const items = this.#collect
+					? this.parseBindingList(tt.parenR, true, true)
+					: super.parseBindingList(tt.parenR, true, true);
+				return items.map((item) => {
 					const node = /** @type {AST.Node} */ (item);
 					const parameter = /** @type {AST.Node & AST.NodeWithLocation} */ (
 						node.type === 'TSParameterProperty' ? node.parameter : node
 					);
-					if (
+					if (parameter.type === 'AssignmentPattern') {
+						this.raise(parameter.start, SIGNATURE_PARAMETER_INITIALIZER);
+					} else if (
 						parameter.type !== 'Identifier' &&
 						parameter.type !== 'RestElement' &&
 						parameter.type !== 'ObjectPattern' &&
@@ -4892,7 +4945,15 @@ export function TSRXPlugin(config) {
 							const question = this.start;
 							this.next();
 							optional.optional = true;
-							this.raise(question, OPTIONAL_REST_PARAMETER);
+							// acorn-typescript reads a generic async arrow function's
+							// parameters in a `tsTryParseAndCatch`, before its `=>`, and takes
+							// an error there to mean that it isn't one. `parseFunctionBody`
+							// raises it after the `=>`, as for other arrow functions (see
+							// `#parseGenericArrowFunction`).
+							// UPSTREAM(sveltejs/acorn-typescript#141): remove once a release includes the fix
+							if (!this.#readingGenericArrowParameters) {
+								this.raise(question, OPTIONAL_REST_PARAMETER);
+							}
 						}
 					}
 				}
@@ -5619,19 +5680,25 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * The arguments of `async (…)` can be an async arrow function's
-			 * parameters (see `#parseArrowParameterProperty`).
+			 * A subscript, which can start an async arrow function after `async`:
+			 * the arguments of `async (…)` can be its parameters (see
+			 * `#parseAsyncArguments`), and acorn-typescript reads `async <T,>(…) =>`
+			 * as a generic one (see `#parseGenericArrowFunction`).
+			 *
+			 * acorn's `parseSubscripts` works out once, for the `async` identifier,
+			 * whether a call can be an async arrow function's head, and passes that
+			 * to every subscript in its loop. So an `=>` after a later call made the
+			 * whole chain an async arrow function with that call's arguments for
+			 * parameters, and `async(a)(b) => 1` compiled to `async (b) => 1`. Only
+			 * the first subscript, while the base is still `async`, can be one, as in
+			 * TypeScript, which fails at the `=>`.
 			 * @type {Parse.Parser['parseSubscript']}
 			 */
 			parseSubscript(base, startPos, startLoc, noCalls, maybeAsyncArrow, optionalChained, forInit) {
-				if (
-					this.#collect &&
-					maybeAsyncArrow &&
-					!noCalls &&
-					base.type === 'Identifier' &&
-					this.type === tt.parenL
-				) {
-					return this.#parseArrowParameterList(false, () =>
+				// UPSTREAM(acornjs/acorn#1460): remove once a release includes the fix
+				if (base.type !== 'Identifier') maybeAsyncArrow = false;
+				if (maybeAsyncArrow && !noCalls) {
+					const parse = () =>
 						super.parseSubscript(
 							base,
 							startPos,
@@ -5640,8 +5707,11 @@ export function TSRXPlugin(config) {
 							maybeAsyncArrow,
 							optionalChained,
 							forInit,
-						),
-					);
+						);
+					if (this.type === tt.parenL) return this.#parseAsyncArguments(parse);
+					if (this.tsMatchLeftRelational()) {
+						return this.#parseGenericArrowFunction(startPos, parse);
+					}
 				}
 				return super.parseSubscript(
 					base,
@@ -5655,14 +5725,155 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Reads, with `parse`, `async (…)`, whose arguments can be an async arrow
+			 * function's parameters (see `#parseArrowParameterProperty` and
+			 * `parseSpread`).
+			 * @param {() => AST.Expression} parse
+			 * @returns {AST.Expression}
+			 */
+			#parseAsyncArguments(parse) {
+				const outer = this.#asyncArguments;
+				const async_arguments = { start: this.start, question: -1 };
+				this.#asyncArguments = async_arguments;
+				try {
+					const node = this.#collect ? this.#parseArrowParameterList(false, parse) : parse();
+					// A `?` after a spread belongs to a rest parameter only.
+					if (async_arguments.question !== -1 && node.type !== 'ArrowFunctionExpression') {
+						this.unexpected(async_arguments.question);
+					}
+					return node;
+				} finally {
+					this.#asyncArguments = outer;
+				}
+			}
+
+			/**
+			 * Marks the arguments of `async (…)` for `parseSpread`.
+			 * @type {Parse.Parser['parseExprList']}
+			 */
+			parseExprList(close, allowTrailingComma, allowEmpty, refDestructuringErrors) {
+				const outer = this.#readingAsyncArguments;
+				this.#readingAsyncArguments =
+					close === tt.parenR && this.#asyncArguments?.start === this.lastTokStart;
+				try {
+					return super.parseExprList(close, allowTrailingComma, allowEmpty, refDestructuringErrors);
+				} finally {
+					this.#readingAsyncArguments = outer;
+				}
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#140): remove once a release includes the fix
+			/**
+			 * A spread among the arguments of `async (…)` can be an async arrow
+			 * function's rest parameter. TypeScript's parser reads a `?` after it, as
+			 * after any rest parameter, and its checker reports TS1047.
+			 * acorn-typescript's `parseExprList` reads a type annotation after the
+			 * spread there, but not the `?`, which failed as unexpected. Take it, as
+			 * `parseParenItem` does for the items of a parenthesized list, so that
+			 * the rest parameter is `optional` and `parseFunctionBody` reports TS1047.
+			 * When no `=>` follows the arguments, `#parseAsyncArguments` fails at the
+			 * `?`, as before.
+			 * @type {Parse.Parser['parseSpread']}
+			 */
+			parseSpread(refDestructuringErrors) {
+				const in_async_arguments = this.#readingAsyncArguments;
+				// A spread in an item is in another list.
+				this.#readingAsyncArguments = false;
+				/** @type {AST.SpreadElement & { optional?: boolean }} */
+				let node;
+				try {
+					node = super.parseSpread(refDestructuringErrors);
+				} finally {
+					this.#readingAsyncArguments = in_async_arguments;
+				}
+				const async_arguments = this.#asyncArguments;
+				if (in_async_arguments && async_arguments && this.type === tt.question) {
+					if (async_arguments.question === -1) async_arguments.question = this.start;
+					this.next();
+					node.optional = true;
+				}
+				return node;
+			}
+
+			/**
 			 * Records where type parameters end: after them, a parenthesized list is
-			 * an arrow function's parameters (`<T,>(public x: T) => x`).
+			 * an arrow function's parameters (`<T,>(public x: T) => x`), and the
+			 * parameters of the generic arrow function that
+			 * `#parseGenericArrowFunction` reads start there.
 			 * @type {Parse.Parser['tsParseTypeParameters']}
 			 */
 			tsParseTypeParameters(parseModifiers) {
+				const start = this.start;
 				const node = super.tsParseTypeParameters(parseModifiers);
 				this.#typeParametersEnd = this.lastTokEnd;
+				const arrow = this.#genericArrowFunction;
+				if (arrow?.typeParametersStart === start) {
+					arrow.parametersStart = this.start;
+					// Without `async`, the arrow function starts at its `(`.
+					if (arrow.arrowStart === -1) arrow.arrowStart = this.start;
+				}
 				return node;
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#141): remove once a release includes the fix
+			/**
+			 * Reads, with `parse`, an expression that can be a generic arrow
+			 * function, and throws the arrow function's own error once it was read
+			 * past its `=>`, where TypeScript reads an arrow function.
+			 *
+			 * acorn-typescript reads an expression that starts with `<` as an element
+			 * first, then as a generic arrow function, and when both fail it throws
+			 * the element's error (see `#parseMaybeAssign`). It reads
+			 * `async <T,>(…) => …` in a `tsTryParseAndCatch` that takes any error to
+			 * mean "not an arrow function", and reads `async < T` as a comparison
+			 * instead (see `parseSubscript`). Either way, an error in the arrow
+			 * function's parameters or body was reported as `Unexpected token` at its
+			 * type parameters, or after them. `parseArrowExpression` records the error
+			 * here, and it's thrown instead. An error before the `=>` is still
+			 * acorn-typescript's.
+			 * @param {number} arrowStart Where the arrow function starts: `async`, or
+			 * -1 for its `(`, which comes after the type parameters at the current
+			 * token
+			 * @param {() => AST.Expression} parse
+			 * @returns {AST.Expression}
+			 */
+			#parseGenericArrowFunction(arrowStart, parse) {
+				const outer = this.#genericArrowFunction;
+				/** @type {GenericArrowFunction} */
+				const arrow = {
+					typeParametersStart: this.start,
+					parametersStart: -1,
+					arrowStart,
+					error: null,
+				};
+				this.#genericArrowFunction = arrow;
+				try {
+					const node = parse();
+					if (arrow.error) throw arrow.error;
+					return node;
+				} catch (error) {
+					throw arrow.error && error instanceof SyntaxError ? arrow.error : error;
+				} finally {
+					this.#genericArrowFunction = outer;
+				}
+			}
+
+			/**
+			 * Records the error that the generic arrow function
+			 * `#parseGenericArrowFunction` reads throws after its `=>`.
+			 * @type {Parse.Parser['parseArrowExpression']}
+			 */
+			parseArrowExpression(node, params, isAsync, forInit) {
+				const arrow = this.#genericArrowFunction;
+				if (arrow === null || arrow.arrowStart !== node.start) {
+					return super.parseArrowExpression(node, params, isAsync, forInit);
+				}
+				try {
+					return super.parseArrowExpression(node, params, isAsync, forInit);
+				} catch (error) {
+					if (error instanceof SyntaxError) arrow.error = error;
+					throw error;
+				}
 			}
 
 			/**
@@ -5693,7 +5904,7 @@ export function TSRXPlugin(config) {
 			parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse) {
 				const list = this.#arrowParameterList;
 				if (list === null) {
-					return super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse);
+					return this.#parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse);
 				}
 				if (list.depth === 0 && afterLeftParse === this.parseParenItem) {
 					const item = this.#parseArrowParameterProperty(list, refDestructuringErrors);
@@ -5701,10 +5912,25 @@ export function TSRXPlugin(config) {
 				}
 				list.depth++;
 				try {
-					return super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse);
+					return this.#parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse);
 				} finally {
 					list.depth--;
 				}
+			}
+
+			/**
+			 * acorn-typescript reads an expression that starts with `<` as an element
+			 * first, then as a generic arrow function (see
+			 * `#parseGenericArrowFunction`).
+			 * @type {Parse.Parser['parseMaybeAssign']}
+			 */
+			#parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse) {
+				if (this.type !== tstt.jsxTagStart && !this.tsMatchLeftRelational()) {
+					return super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse);
+				}
+				return this.#parseGenericArrowFunction(-1, () =>
+					super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse),
+				);
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#136): remove once a release includes the fix
@@ -5868,6 +6094,16 @@ export function TSRXPlugin(config) {
 			 * "Assigning to rvalue". Unwrap here so wrapped patterns take the
 			 * pattern lane.
 			 *
+			 * A binding is different: TypeScript's parser doesn't read a type
+			 * assertion as an arrow function's parameter (`(x as number) => x`,
+			 * `(x!) => x`, `async ([a satisfies number]) => a`), so it's a syntax
+			 * error there (TS1005). acorn reads the parameters as expressions, and
+			 * acorn-typescript's `toAssignable` accepted a type assertion in them where
+			 * @babel/parser reports it, so the parameter kept the assertion. Raise
+			 * @babel/parser's error at the assertion, in every mode. A binding type
+			 * tells a parameter from an assignment target: acorn-typescript's
+			 * `toAssignable` gets `isBinding` for an assignment target too.
+			 *
 			 * @type {Parse.Parser['checkLValPattern']}
 			 */
 			checkLValPattern(expr, bindingType, checkClashes) {
@@ -5878,6 +6114,10 @@ export function TSRXPlugin(config) {
 					node.type === 'TSSatisfiesExpression' ||
 					node.type === 'TSTypeAssertion'
 				) {
+					if (bindingType !== undefined && bindingType !== BINDING_TYPES.BIND_NONE) {
+						// UPSTREAM(sveltejs/acorn-typescript#142): remove once a release includes the fix
+						this.raise(/** @type {number} */ (node.start), TYPE_CAST_IN_PARAMETER);
+					}
 					node = /** @type {AST.Node} */ (
 						/** @type {{ expression: AST.Node }} */ (/** @type {unknown} */ (node)).expression
 					);
