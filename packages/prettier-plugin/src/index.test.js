@@ -23377,6 +23377,28 @@ I {}`,
 			],
 			['type as = 1;', 'type as = 1;\n'],
 			['type satisfies<T> = T;', 'type satisfies<T> = T;\n'],
+			// `intrinsic` is a keyword there (#716), which was printed as an unknown
+			// node.
+			[
+				'type Uppercase<S extends string> = intrinsic;',
+				'type Uppercase<S extends string> = intrinsic;\n',
+			],
+			// Import attributes in an import type (#717), `type` written with an
+			// escape (#718), and `declare` after decorators after `export default`
+			// (#720).
+			[
+				'let x: import("m", { with: { "resolution-mode": "import" } }).X;',
+				'let x: import("m", { with: { "resolution-mode": "import" } }).X;\n',
+			],
+			['import \\u0074ype { a } from "m";', 'import type { a } from "m";\n'],
+			['export { \\u0074ype a } from "m";', 'export { type a } from "m";\n'],
+			[
+				'export default @dec declare class A {}',
+				`export default
+@dec
+declare class A {}
+`,
+			],
 		])('formats %j like Prettier', async (input, expected) => {
 			const output = await format(input);
 			expect(output).toBe(expected);
@@ -23398,6 +23420,14 @@ I {}`,
 			[
 				'export global {}',
 				"'export' modifier cannot be applied to ambient modules and module augmentations since they are always visible.",
+			],
+			// #719: modifiers TypeScript reports from its checker.
+			['public class A {}', "'public' modifier cannot appear on a module or namespace element."],
+			['declare declare class A {}', "'declare' modifier already seen."],
+			['abstract export class A {}', "'export' modifier must precede 'abstract' modifier."],
+			[
+				'export declare async function f(): void;',
+				"'async' modifier cannot be used in an ambient context.",
 			],
 		])('refuses %j', async (input, message) => {
 			await expect(format(input)).rejects.toThrow(message);
