@@ -14630,6 +14630,28 @@ function printJSXDynamicTagName(path, key, print) {
 }
 
 /**
+ * Whether the body of an element or fragment is a lone `@{ … }` code block,
+ * which hugs the tags: `<div>@{ … }</div>`. A comment before or after the code
+ * block, or before the closing tag, keeps the body on lines of its own, where
+ * it prints like one before or after any other child. Hugged, a comment before
+ * the code block joined the opening tag's line, where the whitespace around it
+ * renders a space, and a comment before the closing tag was dropped (#776).
+ * @param {AST.TSRXJSXElement | AST.TSRXJSXFragment | AST.JSXStyleElement} node
+ * @param {Doc[]} closingCommentDocs - Comments before the closing tag
+ * @returns {boolean}
+ */
+function isHuggedCodeBlockBody(node, closingCommentDocs) {
+	const child = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node.children[0]);
+	return (
+		node.children.length === 1 &&
+		child.type === 'JSXCodeBlock' &&
+		!hasOwnLeadingComments(child) &&
+		!child.trailingComments?.length &&
+		closingCommentDocs.length === 0
+	);
+}
+
+/**
  * Print a JSX element
  * @param {AST.TSRXJSXElement | AST.JSXStyleElement} node - The JSX element node
  * @param {AstPath<AST.TSRXJSXElement>} path - The AST path
@@ -14826,7 +14848,7 @@ function printJSXElement(node, path, options, print) {
 	}
 
 	// A `@{ … }` code block is the whole body and hugs the tags: `<div>@{ … }</div>`.
-	if (node.children.length === 1 && node.children[0].type === 'JSXCodeBlock') {
+	if (isHuggedCodeBlockBody(node, closingCommentDocs)) {
 		return group([openingTag, path.call(print, 'children', 0), closingTag]);
 	}
 
@@ -14870,7 +14892,7 @@ function printJSXFragment(node, path, options, print) {
 	}
 
 	// A `@{ … }` code block is the whole body and hugs the tags: `<>@{ … }</>`.
-	if (node.children.length === 1 && node.children[0].type === 'JSXCodeBlock') {
+	if (isHuggedCodeBlockBody(node, closingCommentDocs)) {
 		return group([openingTag, path.call(print, 'children', 0), closingTag]);
 	}
 
@@ -14982,10 +15004,14 @@ function printTemplateChildLeadingComments(child) {
  * (see `isCommentInText` in the parser), where the whitespace around them is
  * one run of the text's whitespace. A space printed before one of them is in
  * that run, so it prints only where the source has one and the run has no
- * line break, which would make its spaces insignificant. Nor does it print
- * when a tag or `{…}` child, which starts a line of its own after them, or
- * the closing tag follows the comments with no text for the run: that line
- * break ends the run.
+ * line break, which would make its spaces insignificant: the text after the
+ * comments can join their line, where a space would render.
+ *
+ * A tag or `{…}` child, which starts a line of its own after them, or the
+ * closing tag can follow the comments instead, with no text for the run. The
+ * line break before it ends the run, so the spaces in the run render nothing.
+ * The first comment still prints against the `{" "}` (#667), and the later
+ * ones keep the spaces the source has between them (#789).
  * @param {AST.Node & AST.NodeWithMaybeComments} child
  * @param {string} text - The source text
  * @param {AST.Node} [next] - The child after it
@@ -15017,10 +15043,12 @@ function printTemplateChildTrailingComments(child, text, next) {
 		whitespace += /** @type {string} */ (/^[ \t\r\n]*/u.exec(text.slice(end))?.[0]);
 		const isTextNext =
 			next !== undefined && (next.type === 'JSXText' || isJSXWhitespaceExpression(next));
-		if (whitespace.includes('\n') || (!isTextNext && /^[<{]/u.test(text.slice(end)))) {
+		if (whitespace.includes('\n') && isTextNext) {
 			for (const comment of comments) {
 				glued.add(comment);
 			}
+		} else if (whitespace.includes('\n') || (!isTextNext && /^[<{]/u.test(text.slice(end)))) {
+			glued.add(comments[0]);
 		}
 	}
 	/** @type {Doc[]} */
