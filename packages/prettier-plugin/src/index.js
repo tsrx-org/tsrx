@@ -235,7 +235,7 @@ export const printers = {
 		 * @returns {Doc}
 		 */
 		print(path, options, print, args) {
-			dropParenthesizedTypes(path);
+			dropParenthesizedTypes(path, options);
 			const node = path.node;
 			const parts = printTsrxNode(node, path, options, print, args);
 			// If printTsrxNode returns doc parts, return them directly
@@ -392,8 +392,9 @@ function printUnformattedRawText(text) {
  * every type among them. The node itself is replaced too, in case its parent
  * printed it through a path that skips a level.
  * @param {AstPath} path - The path to the node about to print
+ * @param {TsrxFormatOptions} options - Prettier options
  */
-function dropParenthesizedTypes(path) {
+function dropParenthesizedTypes(path, options) {
 	const stack = path.stack;
 	let node = path.node;
 	if (isRedundantTypeWrapper(node)) {
@@ -405,12 +406,12 @@ function dropParenthesizedTypes(path) {
 
 	for (const child of unwrapParenthesizedChildren(node)) {
 		if (isTypeTreeNode(child)) {
-			dropParenthesizedTypesInType(child);
+			dropParenthesizedTypesInType(child, options);
 			continue;
 		}
 		for (const grandchild of unwrapParenthesizedChildren(child)) {
 			if (isTypeTreeNode(grandchild)) {
-				dropParenthesizedTypesInType(grandchild);
+				dropParenthesizedTypesInType(grandchild, options);
 			}
 		}
 	}
@@ -422,14 +423,164 @@ const typesWithoutParentheses = new WeakSet();
 /**
  * Drop the parentheses throughout a type (see {@link dropParenthesizedTypes}).
  * @param {object} node - A node of a type
+ * @param {TsrxFormatOptions} options - Prettier options
  */
-function dropParenthesizedTypesInType(node) {
+function dropParenthesizedTypesInType(node, options) {
 	if (typesWithoutParentheses.has(node)) {
 		return;
 	}
 	typesWithoutParentheses.add(node);
 	for (const child of unwrapParenthesizedChildren(node)) {
-		dropParenthesizedTypesInType(child);
+		dropParenthesizedTypesInType(child, options);
+	}
+	const type = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node);
+	hoistLeftmostTypeComments(type);
+	placeHoistedTypeComments(type, options);
+}
+
+/**
+ * The key of the type that a type prints first, with nothing before it: an
+ * intersection's first member (`types`), an array's element type, an indexed
+ * access's object type, and a conditional type's check type.
+ * @type {Record<string, string>}
+ */
+const LEFTMOST_TYPE_KEYS = {
+	TSIntersectionType: 'types',
+	TSArrayType: 'elementType',
+	TSIndexedAccessType: 'objectType',
+	TSConditionalType: 'checkType',
+};
+
+/**
+ * Give a type the leading comments of the type it prints first (see
+ * {@link LEFTMOST_TYPE_KEYS}). Those come after the type's start only in the
+ * parentheses around the first type, `(// c` / `A) & B`, or after an
+ * intersection's leading `&`. Prettier prints them where the type starts, and
+ * its next pass gives them to the type, whose parent then lays it out
+ * differently: a type alias breaks after its `=`, and an intersection no
+ * longer breaks after its `&`s for a line comment. This prints that layout at
+ * once. It runs from the innermost type out, so the comments move up to the
+ * outermost type that starts with them. A union prints its own comments
+ * inside its parentheses, except as an intersection's member (see
+ * {@link unionPrintsOwnComments}), and a `prettier-ignore` comment keeps to
+ * the type it ignores.
+ * @param {AST.Node & AST.NodeWithMaybeComments} node - A type
+ */
+function hoistLeftmostTypeComments(node) {
+	const key = LEFTMOST_TYPE_KEYS[node.type];
+	if (!key || hasPrettierIgnore(node)) {
+		return;
+	}
+	const record = /** @type {Record<string, any>} */ (/** @type {unknown} */ (node));
+	const child = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (
+		key === 'types' ? record.types[0] : record[key]
+	);
+	if (
+		!child?.leadingComments?.length ||
+		hasPrettierIgnore(child) ||
+		(child.type === 'TSUnionType' &&
+			node.type !== 'TSIntersectionType' &&
+			!shouldHugUnionType(child))
+	) {
+		return;
+	}
+	for (const comment of child.leadingComments) {
+		hoistedTypeComments.add(comment);
+	}
+	node.leadingComments = [...(node.leadingComments ?? []), ...child.leadingComments];
+	child.leadingComments = [];
+}
+
+/**
+ * The comments that {@link hoistLeftmostTypeComments} moved up to a type.
+ * @type {WeakSet<AST.Comment>}
+ */
+const hoistedTypeComments = new WeakSet();
+
+/**
+ * Give the comments that the members of a type moved up to them (see
+ * {@link hoistLeftmostTypeComments}) to the node Prettier's next pass gives
+ * them, when the first is a line comment that prints after code on its line.
+ * That's a member after a union's `|` (`X | ((// c` / `A) & B)`), an
+ * intersection's member in parentheses (`X & ((// c` / `A) & B)`) or after an
+ * object type (`{} & (// c` / `A)[]`), where the comment was on the line of a
+ * `(`, a type parameter's constraint or default, and a conditional type's
+ * `extends` type. The comment then ends the line
+ * after the node before, which it trails: the member before, or that
+ * member's last member when it's a union (like the parser's
+ * `handleLastUnionElementInExpression`), where the comments after it, on
+ * their own lines, go too in a union; a type parameter's name, or its
+ * constraint before the `=` (like the parser's
+ * `takeTypeParameterNameComments`); or the check type.
+ * @param {AST.Node & AST.NodeWithMaybeComments} node - A type
+ * @param {TsrxFormatOptions} options - Prettier options
+ */
+function placeHoistedTypeComments(node, options) {
+	const text = /** @type {string} */ (options.originalText);
+	/**
+	 * Move the comments `type` took from the types in it, from the first one,
+	 * when that's a line comment the type prints after code on its line
+	 * @param {AST.Node | null | undefined} type
+	 * @param {boolean} isAfterCode - Whether the type prints after code on its
+	 *   line, rather than on a line of its own after a comment on its own line
+	 * @param {boolean} all - Whether the comments after the first move too
+	 * @param {(comments: AST.Comment[]) => void} place
+	 */
+	const moveHoistedComments = (type, isAfterCode, all, place) => {
+		const withComments = /** @type {AST.NodeWithMaybeComments | null | undefined} */ (type);
+		const comments = withComments?.leadingComments ?? [];
+		const index = comments.findIndex((comment) => hoistedTypeComments.has(comment));
+		const first = /** @type {(AST.Comment & AST.NodeWithLocation) | undefined} */ (comments[index]);
+		if (
+			!withComments ||
+			!first ||
+			first.type !== 'Line' ||
+			(!isAfterCode && hasNewline(text, first.start, { backwards: true }))
+		) {
+			return;
+		}
+		const end = all ? comments.length : index + 1;
+		place(comments.slice(index, end));
+		withComments.leadingComments = [...comments.slice(0, index), ...comments.slice(end)];
+	};
+	/**
+	 * @param {AST.Node | null | undefined} target
+	 * @returns {(comments: AST.Comment[]) => void}
+	 */
+	const trail = (target) => (comments) => {
+		const withComments = /** @type {AST.NodeWithMaybeComments} */ (target);
+		withComments.trailingComments = [...(withComments.trailingComments ?? []), ...comments];
+	};
+
+	if (node.type === 'TSUnionType' || node.type === 'TSIntersectionType') {
+		const isUnion = node.type === 'TSUnionType';
+		node.types.forEach((type, index) => {
+			const before = node.types[index - 1];
+			// An intersection's member stays on the line of its `&` in its
+			// parentheses or after an object type. Otherwise it moves to its own
+			// line after the comment, which Prettier's next pass keeps.
+			if (
+				before &&
+				(isUnion || nodeNeedsParens(type, 'types', node, null) || isObjectType(before))
+			) {
+				moveHoistedComments(
+					type,
+					isUnion,
+					isUnion,
+					trail(before.type === 'TSUnionType' ? before.types.at(-1) : before),
+				);
+			}
+		});
+	} else if (node.type === 'TSTypeParameter') {
+		const { constraint, default: defaultType } = node;
+		/** @param {AST.Comment[]} comments */
+		const dangle = (comments) => {
+			node.innerComments = [...(node.innerComments ?? []), ...comments];
+		};
+		moveHoistedComments(constraint, true, false, dangle);
+		moveHoistedComments(defaultType, true, false, constraint ? trail(constraint) : dangle);
+	} else if (node.type === 'TSConditionalType') {
+		moveHoistedComments(node.extendsType, true, false, trail(node.checkType));
 	}
 }
 
@@ -10615,13 +10766,10 @@ function printTSIntersectionType(node, path, options, print) {
 /**
  * Prettier's `shouldUnionTypePrintOwnComments`: a union that breaks onto its
  * own lines prints its comments, leading and trailing, inside its
- * indentation, so they move with it. A union member of a tuple leaves them
- * outside its parentheses. Unlike Prettier, a union member of a union or
- * intersection prints its leading comments inside its parentheses too: the
- * parser keeps the parentheses, which take the comments inside them, and
- * outside them, a line comment before the first member isn't idempotent. A
- * union member of a union prints its trailing comments after its
- * parentheses, where it keeps the comments after them (see
+ * indentation, so they move with it. A union member of a tuple, a union, or
+ * an intersection leaves them outside its parentheses, where the parser's
+ * rules for the comments in them put them too (`handleParenthesizedTypeComment`
+ * in `@tsrx/core`), and where the union or intersection prints them (see
  * {@link printTSUnionType}).
  * @param {AstPath} path - The path to the node
  * @param {boolean} [trailing] - Whether the trailing comments print, rather
@@ -10630,13 +10778,14 @@ function printTSIntersectionType(node, path, options, print) {
  */
 function unionPrintsOwnComments(path, trailing) {
 	const node = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (path.node);
+	const { key, parent } = path;
 	return (
 		node.type === 'TSUnionType' &&
 		!!(trailing ? node.trailingComments : node.leadingComments)?.length &&
 		!hasPrettierIgnore(node) &&
 		!shouldHugUnionType(node) &&
 		!isMultipleTupleTypeElement(path) &&
-		!(trailing && path.key === 'types' && path.parent?.type === 'TSUnionType')
+		!(key === 'types' && (parent?.type === 'TSUnionType' || parent?.type === 'TSIntersectionType'))
 	);
 }
 

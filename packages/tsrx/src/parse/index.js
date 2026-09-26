@@ -1292,13 +1292,17 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 *   moves to the next line, and the comment stays on its own line there.
 	 * The comments between the constraint and the `=` of the default, and
 	 * after the `=`, follow the same rules for the constraint (see
-	 * {@link trailsTypeParameterPart}).
+	 * {@link trailsTypeParameterPart}). Prettier's parsers keep no node for
+	 * the parentheses around the type, so the comments after their `(` count
+	 * as ones before the type too.
 	 * @param {AST.TSTypeParameter & AST.NodeWithLocation} node
 	 * @param {AST.Node | AST.CSS.StyleSheet | undefined} parent
 	 */
 	function takeTypeParameterNameComments(node, parent) {
 		const keyword = getTypeParameterKeyword(node, parent);
-		const first = /** @type {AST.NodeWithLocation | undefined} */ (node.constraint ?? node.default);
+		const first = /** @type {AST.NodeWithLocation | null} */ (
+			skipParenthesizedTypes(node.constraint ?? node.default ?? null)
+		);
 		const end = first?.start ?? node.end;
 		let hasLineComment = false;
 		while (comments[0] && comments[0].end <= end) {
@@ -1914,6 +1918,58 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Place a comment in the parentheses around a type (`TSParenthesizedType`),
+	 * outside the type in them, where Prettier does. Prettier's parsers keep no
+	 * node for the parentheses, so for Prettier the comment lies in the node
+	 * around them, as one right before their `(` or right after their `)`
+	 * does: its handlers see that node as the enclosing one, with the node
+	 * before the parentheses and the one after them as the comment's
+	 * neighbors. After the `(`, they see the parentheses as the node after the
+	 * comment, and by Prettier's default, one that ends its line trails the
+	 * node before them (`X & (// c` / `A)` trails `X`). Before the `)`, they
+	 * see the parentheses as the node before the comment, and by the default,
+	 * one on its own line leads the node after them. The formatter drops the
+	 * parentheses and gives their comments to the type in them.
+	 * @param {AST.CommentWithLocation} comment
+	 * @param {(AST.Node | AST.CSS.StyleSheet)[]} path - The ancestors of the
+	 *   type in the parentheses, which end with them
+	 * @param {boolean} isAfterType - Whether the comment is before the `)`,
+	 *   after the type, rather than after the `(`
+	 * @returns {boolean} Whether the comment was attached
+	 */
+	function handleParenthesizedTypeComment(comment, path, isAfterType) {
+		let index = path.length - 1;
+		while (index > 1 && path[index - 1].type === 'TSParenthesizedType') {
+			index--;
+		}
+		const parentheses = /** @type {AST.Node & AST.NodeWithLocation} */ (path[index]);
+		const enclosing = /** @type {AST.Node} */ (path[index - 1]);
+		const position = isAfterType ? parentheses.end : parentheses.start;
+		const neighbors = getCommentNeighbors(
+			/** @type {AST.CommentWithLocation} */ ({ start: position, end: position }),
+			enclosing,
+		);
+		if (!neighbors) {
+			return false;
+		}
+		const preceding = isAfterType ? parentheses : neighbors.preceding;
+		const following = isAfterType ? neighbors.following : parentheses;
+		if (handleComment(comment, enclosing, preceding, following, path[index - 2])) {
+			return true;
+		}
+		const ownLine = isOwnLineComment(comment);
+		if (isAfterType && following && ownLine) {
+			addLeadingComment(following, comment);
+			return true;
+		}
+		if (!isAfterType && preceding && !ownLine && isEndOfLineComment(comment)) {
+			addTrailingComment(preceding, comment);
+			return true;
+		}
+		return false;
+	}
+
+	/**
 	 * The node a one-line block comment right before a union leads, like
 	 * Prettier's `shouldAttachToUnionTypeFirstElement`: the union's first
 	 * member. Prettier's parser postprocess, which the formatter follows, drops
@@ -1962,6 +2018,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 			type === 'BinaryExpression' ||
 			type === 'LogicalExpression' ||
 			type === 'TSUnionType' ||
+			type === 'TSIntersectionType' ||
+			type === 'TSArrayType' ||
 			type === 'AssignmentPattern' ||
 			type === 'TSMappedType' ||
 			type === 'TSTypeParameter' ||
@@ -2264,8 +2322,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 		// `prettier-ignore` comment stays with the member it ignores.
 		// Prettier's parsers keep no node for a type's parentheses, so a union
 		// written in them is the node after the comment there.
+		const followingType = skipParenthesizedTypes(following);
 		if (ownLine && isPrettierIgnoreComment(comment)) {
-			const followingType = skipParenthesizedTypes(following);
 			const ignored =
 				node.type === 'TSUnionType'
 					? following
@@ -2287,17 +2345,20 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 		// `handleUnionTypeLeadingComments`: a one-line block comment right before
 		// a union leads its first member, so it prints after the `|` that starts
-		// the member when the union breaks
+		// the member when the union breaks. The union may be in parentheses the
+		// comment is in (see `handleParenthesizedTypeComment`).
 		if (
 			!endOfLine &&
-			following?.type === 'TSUnionType' &&
+			followingType?.type === 'TSUnionType' &&
 			comment.type === 'Block' &&
 			!source.slice(comment.start, comment.end).includes('\n') &&
 			!isPrettierIgnoreComment(comment) &&
-			/^[ \t]*$/.test(source.slice(comment.end, following.start))
+			/^[ \t]*$/.test(
+				source.slice(comment.end, /** @type {AST.NodeWithLocation} */ (followingType).start),
+			)
 		) {
 			addLeadingComment(
-				getUnionCommentTarget(/** @type {AST.TSUnionType} */ (following), comment),
+				getUnionCommentTarget(/** @type {AST.TSUnionType} */ (followingType), comment),
 				comment,
 			);
 			return true;
@@ -2429,15 +2490,36 @@ export function get_comment_handlers(source, comments, index = 0) {
 			}
 		}
 
+		// `handleLastUnionElementInExpression`: a comment that ends its line
+		// after a union in an intersection, a union, or an array type (with no
+		// `[]` after it), which Prettier's parsers see as the node before it
+		// even in the union's parentheses, trails the union's last member. The
+		// union then breaks in its parentheses, where it prints the comment:
+		// `(A | B // c` / `) & X`.
+		const precedingType = skipParenthesizedTypes(preceding);
+		if (
+			endOfLine &&
+			precedingType?.type === 'TSUnionType' &&
+			((node.type === 'TSArrayType' && !following) ||
+				node.type === 'TSIntersectionType' ||
+				node.type === 'TSUnionType')
+		) {
+			addTrailingComment(
+				/** @type {AST.Node} */ (/** @type {AST.TSUnionType} */ (precedingType).types.at(-1)),
+				comment,
+			);
+			return true;
+		}
+
 		// Prettier's default for a comment that ends its line: it trails the
-		// node before it, so that it stays after an operator (`a || // note`)
-		// instead of moving to its own line, and before the `)` of a parameter
-		// list (`function f(a) // note` with the return type on the next line)
-		// or the `]` of a mapped type's key instead of after the `:`. After the
-		// `=` or `:` of a declarator, an assignment, a class field, or an import
-		// attribute, it trails the name, which prints it before the `=` or `:`
-		// or at the end of the line, and after a `;` in a `for` header, it
-		// trails the part before the `;`.
+		// node before it, so that it stays after an operator (`a || // note`,
+		// `A & // note`) instead of moving to its own line, and before the `)`
+		// of a parameter list (`function f(a) // note` with the return type on
+		// the next line) or the `]` of a mapped type's key instead of after the
+		// `:`. After the `=` or `:` of a declarator, an assignment, a class
+		// field, or an import attribute, it trails the name, which prints it
+		// before the `=` or `:` or at the end of the line, and after a `;` in a
+		// `for` header, it trails the part before the `;`.
 		if (endOfLine && preceding && following && following === getReturnType(enclosing)) {
 			addTrailingComment(preceding, comment);
 			return true;
@@ -2450,6 +2532,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 				node.type === 'ConditionalExpression' ||
 				node.type === 'TSConditionalType' ||
 				node.type === 'TSUnionType' ||
+				node.type === 'TSIntersectionType' ||
 				node.type === 'AssignmentPattern' ||
 				node.type === 'TSMappedType' ||
 				(following &&
@@ -2832,7 +2915,11 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 						// Prettier's handlers for a comment before this node in its parent
 						const enclosing = /** @type {AST.Node} */ (path.at(-1));
-						if (
+						if (enclosing?.type === 'TSParenthesizedType') {
+							if (handleParenthesizedTypeComment(comment, path, false)) {
+								continue;
+							}
+						} else if (
 							isHandledEnclosingNode(enclosing) ||
 							skipParenthesizedTypes(node)?.type === 'TSUnionType'
 						) {
@@ -3163,6 +3250,23 @@ export function get_comment_handlers(source, comments, index = 0) {
 								if (comments.length === 0) {
 									return;
 								}
+							}
+						}
+
+						// The comments between a type and the `)` of the parentheses around
+						// it go where Prettier puts them (see
+						// `handleParenthesizedTypeComment`)
+						if (parent?.type === 'TSParenthesizedType') {
+							while (
+								comments[0] &&
+								comments[0].start >= nodeEnd &&
+								comments[0].end <= parent.end &&
+								handleParenthesizedTypeComment(comments[0], path, true)
+							) {
+								comments.shift();
+							}
+							if (comments.length === 0) {
+								return;
 							}
 						}
 

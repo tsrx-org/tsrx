@@ -13711,6 +13711,85 @@ type E = B | C /* c */;
 type X = /* leading */ A;
 type Y = A; // trailing`);
 		});
+
+		// Without the parentheses, a comment at the start of the ones around the
+		// type an intersection, an array or indexed access type, or a conditional
+		// type starts with, or after an intersection's leading `&`, prints where
+		// that type starts. Prettier's next pass gives it to that type, so a type
+		// alias breaks after its `=` and an intersection no longer breaks after
+		// its `&`, or to the node before it when code comes before it on its
+		// line. That layout prints at once. It printed Prettier's first pass,
+		// and the next format changed it (#678).
+		it.each([
+			['type S = (// ref\nFoo<T>) & X;', 'type S =\n  // ref\n  Foo<T> & X;'],
+			['type S = (\n  // ref\n  Foo<T>) & X;', 'type S =\n  // ref\n  Foo<T> & X;'],
+			['let s: (// ref\nFoo<T>) & X;', 'let s: // ref\nFoo<T> & X;'],
+			['function f(a: (// ref\nFoo<T>) & X) {}', 'function f(\n  a: // ref\n  Foo<T> & X,\n) {}'],
+			[
+				'interface I {\n  a: (// ref\n  Foo<T>) & X;\n}',
+				'interface I {\n  a: // ref\n  Foo<T> & X;\n}',
+			],
+			['type S = Foo<X, (// c\nA) & B>;', 'type S = Foo<\n  X,\n  // c\n  A & B\n>;'],
+			['type S = (// ref\nA | B) & X;', 'type S =\n  // ref\n  (A | B) & X;'],
+			['type S = & // ref\nA & B;', 'type S =\n  // ref\n  A & B;'],
+			['type S = ((// ref\nFoo<T>) & Y) & X;', 'type S =\n  // ref\n  (Foo<T> & Y) & X;'],
+			['type S = (// c\nA)[];', 'type S =\n  // c\n  A[];'],
+			['type S = (// c\nA)["x"];', 'type S =\n  // c\n  A["x"];'],
+			['type S = (// c\nA) extends B ? C : D;', 'type S =\n  // c\n  A extends B ? C : D;'],
+			[
+				'export type S = (// ref\n{\n  ref: string;\n} | {\n  type: string;\n}) & {\n  nullable?: boolean;\n};',
+				'export type S =\n  // ref\n  (\n    | {\n        ref: string;\n      }\n    | {\n        type: string;\n      }\n  ) & {\n    nullable?: boolean;\n  };',
+			],
+			['type S = ((// ref\nFoo<T>) & X) | Y;', 'type S =\n  | // ref\n    (Foo<T> & X)\n  | Y;'],
+			['type S = A | ((// ref\nFoo<T>) & X);', 'type S =\n  | A // ref\n  | (Foo<T> & X);'],
+			['type S = X & ((// c\nA) & B);', 'type S = X & // c\n  (A & B);'],
+			['type S = X & (// c\nA)[];', 'type S = X &\n  // c\n  A[];'],
+			['type S = { a: 1 } & (// c\nA)[];', 'type S = { a: 1 } & A[]; // c'],
+			['type S = { a: 1 } & ((// c\nA) & B);', 'type S = { a: 1 } & (A & B); // c'],
+			['type S = A extends (// c\nB)[] ? C : D;', 'type S = A extends B[] // c\n  ? C\n  : D;'],
+			[
+				'type S = <T extends (// c\nA) & B>() => T;',
+				'type S = <\n  T extends // c\n    A & B,\n>() => T;',
+			],
+			['type S<T = (// c\nA) & B> = T;', 'type S<\n  T = // c\n    A & B,\n> = T;'],
+			[
+				'type S<T extends X = (// c\nA) & B> = T;',
+				'type S<\n  T extends X = // c\n    A & B,\n> = T;',
+			],
+		])('formats %j in one pass like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'type S = /* ref */ Foo<T> & X;',
+			'type S =\n  | // c\n    A[]\n  | B;',
+			'type S =\n  | // ref\n    Foo<T>\n  | X;',
+			'type S = keyof // ref\nFoo<T> &\n  X;',
+			'type S = (\n  // c\n  A | B\n)[];',
+		])('keeps %j, where Prettier keeps it', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Prettier's parsers keep no node for a type's parentheses, so a comment
+		// in them goes to the node before or after them where the rules for a
+		// comment next to them put it: one that ends the line after the `(`
+		// trails the type before them, and one on its own line before the `)`
+		// leads the type after them. It stayed with the type in them (#679).
+		it.each([
+			['type S = X & (// c\nFoo);', 'type S = X & // c\n  Foo;'],
+			['type S = (A & B) & (// c\nX);', 'type S = (A & B) & // c\n  X;'],
+			['type S = (A\n// c\n) & X;', 'type S = A &\n  // c\n  X;'],
+			['type S = Foo<X, (// c\nA)>;', 'type S = Foo<\n  X, // c\n  A\n>;'],
+			['type S = [A, (// c\nB)];', 'type S = [\n  A, // c\n  B,\n];'],
+			['type S = X extends Y ? (// c\nA) : B;', 'type S = X extends Y // c\n  ? A\n  : B;'],
+			['type S = X | (// c\n() => void);', 'type S =\n  | X // c\n  | (() => void);'],
+			['type S<T extends (// c\nA)> = T;', 'type S<\n  T extends // c\n    A,\n> = T;'],
+			['type S<T extends (\n// c\nA)> = T;', 'type S<\n  T extends // c\n    A,\n> = T;'],
+			['type S<T = (// c\nA)> = T;', 'type S<\n  T = // c\n    A,\n> = T;'],
+			['type S = { [K in (// c\nA)]: B };', 'type S = {\n  [\n    K in A // c\n  ]: B;\n};'],
+		])('formats %j like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
 	});
 
 	// Prettier's `printUnionType`: a union that doesn't fit moves to its own
@@ -13879,6 +13958,43 @@ const target = event.target as HTMLElement | null;`;
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// Like Prettier's `shouldUnionTypePrintOwnComments`, a union member of a
+		// union or an intersection prints its comments outside its parentheses.
+		// Prettier's parsers keep no node for the parentheses, so a comment in
+		// them goes to the members around them, and a comment that ends its line
+		// after such a union, or after one in an array type, trails its last
+		// member (`handleLastUnionElementInExpression`). They stayed in the
+		// parentheses, and one after a union in a union moved on the next format
+		// (#679).
+		it.each([
+			['type A = X & /* c */ (B | C);', 'type A = X & /* c */ (B | C);'],
+			['type A = X | /* c */ (B | C);', 'type A = X | /* c */ (B | C);'],
+			['type A = X & (\n  // c\n  B | C);', 'type A = X &\n  // c\n  (B | C);'],
+			['type A = X | (\n  // c\n  B | C);', 'type A =\n  | X\n  // c\n  | (B | C);'],
+			['type A = X & (// c\nB | C);', 'type A = X & // c\n  (B | C);'],
+			['type A = X | (// c\nB | C);', 'type A =\n  | X // c\n  | (B | C);'],
+			['type A = X & (/* c */\nB | C);', 'type A = X /* c */ & (B | C);'],
+			['type A = X | (B | C // c\n);', 'type A =\n  | X\n  | (\n      | B\n      | C // c\n    );'],
+			['type A = X & (B | C // c\n);', 'type A = X &\n  (\n    | B\n    | C // c\n  );'],
+			['type A = (B | C // c\n)[];', 'type A = (\n  | B\n  | C // c\n)[];'],
+			['type A = (B | C // c\n) | X;', 'type A =\n  | (\n      | B\n      | C // c\n    )\n  | X;'],
+			['type A = (B | C) // c\n  & X;', 'type A = (\n  | B\n  | C // c\n) &\n  X;'],
+			['type A = (B | C) & // c\n  X;', 'type A = (\n  | B\n  | C // c\n) &\n  X;'],
+			['type A = (B | C) & (// c\nX);', 'type A = (\n  | B\n  | C // c\n) &\n  X;'],
+			['type A = (B | C\n// c\n) & X;', 'type A = (B | C) &\n  // c\n  X;'],
+			['type A = X & (B | C /* c */);', 'type A = X & (B | C) /* c */;'],
+			[
+				'type A = X & (\n  // prettier-ignore\n  B |   C);',
+				'type A = X &\n  // prettier-ignore\n  (B | C);',
+			],
+			[
+				'type A = X | (\n  // prettier-ignore\n  B |   C);',
+				'type A =\n  | X\n  // prettier-ignore\n  | (B |   C);',
+			],
+		])('formats %j like Prettier, with the comment outside the union', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		it('prints the comments before a union inside its indentation', async () => {
 			const input = `interface Props {
   // What the field holds
@@ -13990,6 +14106,17 @@ type D = { a: string } &
   E;`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
+		});
+
+		// Prettier's default for a comment that ends its line trails the type
+		// before it, so it stays after the `&`. It led the type after it, which
+		// moved to its own line below it (#756).
+		it.each([
+			['type A = B & // comment\n  C;', 'type A = B & // comment\n  C;'],
+			['type A = B & // comment\n  (C | D);', 'type A = B & // comment\n  (C | D);'],
+			['type A = B & /* a */ // b\n  C;', 'type A = B /* a */ & // b\n  C;'],
+		])('formats %j like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
 		});
 
 		// Like Prettier's parser postprocess, an intersection or union of one
