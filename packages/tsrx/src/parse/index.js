@@ -415,7 +415,15 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * moves too, since the printer drops those parentheses: Prettier prints
 	 * `return (b /* note *\/);` as `return b /* note *\/;`, and moves it after
 	 * the `;` on the next pass. So does one before that parenthesis at the end
-	 * of a statement without a `;`, which the printer adds after it (#672).
+	 * of a statement without a `;`, which the printer adds after it (#672),
+	 * and one on a line of its own before it, with the ones after it there,
+	 * which keep their line breaks: Prettier prints `x = a || (b⏎/* c *\/);`
+	 * with the comment on a line of its own after the `;`, and breaks
+	 * `a || b` with it, which its next pass joins (#691). Before the `,` that
+	 * ends a declarator, the comments on the node's line trail the declarator,
+	 * which prints them after the `,`: Prettier prints
+	 * `const x = (a, b // c⏎), y;` with the line comment after the `,`, and
+	 * breaks the sequence with it, which its next pass joins (#677).
 	 * @param {AST.NodeWithLocation} node - The node the comment follows
 	 * @param {(AST.Node | AST.CSS.StyleSheet)[]} path - The node's ancestors
 	 * @returns {boolean} Whether it took the comments
@@ -441,24 +449,49 @@ export function get_comment_handlers(source, comments, index = 0) {
 			index--;
 		}
 		const statement = /** @type {(AST.Node & AST.NodeWithLocation) | undefined} */ (path[index]);
+		const nodeEnd = keywordEnd < 0 ? node.end : keywordEnd;
 		if (
 			!comments[0] ||
 			!statement ||
 			!statementsEndingBeforeSemicolon.has(statement.type) ||
 			statement.end <= comments[0].end ||
-			// The comment must follow the node on its line
-			!/^[ \t)]*$/.test(source.slice(keywordEnd < 0 ? node.end : keywordEnd, comments[0].start))
+			// The comment must follow the node, after the parentheses that the node
+			// ends in and the comments that other nodes took
+			!isBlankBetween(nodeEnd, comments[0].start, true)
 		) {
 			return false;
 		}
+		// The declarator the comment is in, when a `,` follows it
+		const declarations = /** @type {any} */ (statement).declarations;
+		const declarator = /** @type {(AST.Node & AST.NodeWithLocation) | undefined} */ (
+			declarations
+				?.slice(0, -1)
+				.find(
+					(/** @type {AST.NodeWithLocation} */ declarator) =>
+						declarator.start < comments[0].start && comments[0].end <= declarator.end,
+				)
+		);
 		// Where the statement's value ends: at its `;`, or at its end without
-		// one, where only the value's parentheses can follow the comment
-		const semicolon = source[statement.end - 1] === ';' ? statement.end - 1 : statement.end;
+		// one, where only the value's parentheses can follow the comment, or at
+		// the end of the declarator
+		const semicolon = declarator
+			? declarator.end
+			: source[statement.end - 1] === ';'
+				? statement.end - 1
+				: statement.end;
+		// Whether the comment is in parentheses that close before the `;`
+		const inParens = !isBlankBetween(comments[0].end, semicolon, false);
+		// One on a line of its own moves only out of the value's parentheses
+		// before the `;`. Before a `,`, Prettier's next pass gives it to the next
+		// declarator (#750).
+		if (source.slice(nodeEnd, comments[0].start).includes('\n') && (!inParens || declarator)) {
+			return false;
+		}
 		/** @type {AST.Node & AST.NodeWithLocation} */
-		let target = statement;
+		let target = declarator ?? statement;
 		// Where the comments to take start in `comments`
 		let first = 0;
-		if (!isBlankBetween(comments[0].end, semicolon, false)) {
+		if (inParens) {
 			// Only the parentheses around the statement's value may close after
 			// the comment. Any other pair, like the one in `x = !(a /* c */);`,
 			// stays, and so does the comment inside it. The value ends where the
@@ -515,12 +548,14 @@ export function get_comment_handlers(source, comments, index = 0) {
 			if (ancestor.type === 'Program' || ancestor.end !== statement.end) break;
 			outermost = ancestor;
 		}
-		let previousEnd =
-			first !== 0 ? comments[first - 1].end : keywordEnd < 0 ? node.end : keywordEnd;
+		let previousEnd = first !== 0 ? comments[first - 1].end : nodeEnd;
+		// The ones on the node's line, and, before the `;`, the ones on lines of
+		// their own before the last `)` of the value's parentheses
 		while (
 			comments[first] &&
-			comments[first].end < statement.end &&
-			!source.slice(previousEnd, comments[first].start).includes('\n')
+			comments[first].end <= semicolon &&
+			(!source.slice(previousEnd, comments[first].start).includes('\n') ||
+				(!declarator && !isBlankBetween(comments[first].end, semicolon, false)))
 		) {
 			const comment = /** @type {AST.CommentWithLocation} */ (comments.splice(first, 1)[0]);
 			previousEnd = comment.end;
@@ -564,9 +599,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * {@link movesCommentAfterParens}), and the expression body of an arrow
 	 * function that is the value, as in `const f = () => (a);`, when the
 	 * comments after it in its parentheses print before the `;` (see
-	 * {@link keepsCommentsInArrowBodyParens}), and a binary or logical value
-	 * and the operands at its end (see {@link getBinaryishValueEnds}). The one
-	 * the comment follows takes it.
+	 * {@link keepsCommentsInArrowBodyParens}), and a binary, logical, or
+	 * conditional value and the operands at its end (see {@link getValueEnds}).
+	 * Prettier prints a conditional body in parentheses when it doesn't break,
+	 * which keep the comments after its alternate, but a comment that breaks
+	 * it (see {@link commentsBreakLine}) prints before the `;` (Prettier's
+	 * `shouldAddParensIfNotBreak`). In a declaration, the value is the one of
+	 * the declarator the comment is in. The one the comment follows takes it.
 	 * @param {AST.Node} statement
 	 * @param {AST.CommentWithLocation} comment
 	 * @returns {(AST.Node & AST.NodeWithLocation)[]}
@@ -580,7 +619,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 		} else if (node.type === 'ExpressionStatement') {
 			candidates.push(node.expression, node.expression.right);
 		} else if (node.type === 'VariableDeclaration') {
-			candidates.push(node.declarations.at(-1)?.init);
+			candidates.push(
+				node.declarations.find(
+					(/** @type {AST.VariableDeclarator & AST.NodeWithLocation} */ declarator) =>
+						declarator.start < comment.start && comment.end <= declarator.end,
+				)?.init,
+			);
 		} else if (node.type === 'ExportDefaultDeclaration') {
 			candidates.push(node.declaration);
 		}
@@ -588,24 +632,58 @@ export function get_comment_handlers(source, comments, index = 0) {
 		const values = [];
 		for (const value of candidates) {
 			let candidate = value;
-			let isArrowBody = false;
+			/** @type {(AST.Node & AST.NodeWithLocation) | null} */
+			let arrow = null;
 			while (candidate?.type === 'ArrowFunctionExpression') {
+				arrow = candidate;
 				candidate = /** @type {AST.Node & AST.NodeWithLocation} */ (candidate.body);
-				isArrowBody = true;
 			}
+			const isArrowBody = arrow !== null;
+			// Whether the conditional body prints in parentheses around it. The
+			// comments after the arrow function don't break it.
+			const inBodyParens =
+				arrow !== null &&
+				candidate?.type === 'ConditionalExpression' &&
+				!commentsBreakLine(comment, arrow.end);
 			if (
 				candidate?.metadata?.parenthesized &&
 				(isArrowBody
-					? !keepsCommentsInArrowBodyParens(candidate)
+					? !keepsCommentsInArrowBodyParens(candidate) ||
+						(candidate.type === 'ConditionalExpression' && !inBodyParens)
 					: valuesPrintedWithoutParens.has(candidate.type))
 			) {
 				values.push(candidate);
 			} else if (value?.metadata?.parenthesized && movesCommentAfterParens(node, value, comment)) {
 				values.push(value);
 			}
-			values.push(...getBinaryishValueEnds(candidate));
+			if (!inBodyParens) {
+				values.push(...getValueEnds(candidate));
+			}
 		}
 		return values;
+	}
+
+	/**
+	 * Whether `comment` or a comment after it, before the next code other
+	 * than `)` and before `end`, is a line comment or on a line of its own,
+	 * which prints with a line break that breaks the groups around it
+	 * @param {AST.CommentWithLocation} comment
+	 * @param {number} end
+	 * @returns {boolean}
+	 */
+	function commentsBreakLine(comment, end) {
+		for (
+			let index = comments.indexOf(comment), previousEnd = comment.start;
+			comments[index] &&
+			comments[index].end <= end &&
+			isBlankBetween(previousEnd, comments[index].start, true);
+			previousEnd = comments[index++].end
+		) {
+			if (comments[index].type === 'Line' || isOwnLineComment(comments[index])) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -617,41 +695,87 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
-	 * A binary or logical value of a statement, when it's in parentheses, and
-	 * the right operands down its chain, whose comments after them, in their
+	 * A binary, logical, or conditional value of a statement, when it's in
+	 * parentheses, and the operands at its end, the right operands and
+	 * alternates down its chain, whose comments after them, in their
 	 * parentheses, print at the value's end. Prettier prints a comment that
 	 * trails an operand after the operand's parentheses, where they print, and
 	 * the ones around the value print as nothing, or, around a `return` or
-	 * `throw` argument, only when it breaks: `x = a || (b /* c *\/);` and
-	 * `x = a * (b + c /* c *\/);` print `x = a || b /* c *\/;` and
-	 * `x = a * (b + c) /* c *\/;`, and the next pass moves the comment after
-	 * the `;` (#622). Each pass takes it out of one more pair, so it ends there
-	 * from any depth of the chain. A pair that completes a JSDoc cast keeps the
-	 * comments in it (see {@link getTypeCastEnd}), which the walk takes before
-	 * this runs, so the operands inside it don't count, and so does the pair an
-	 * element or other template value prints its comments in (see
-	 * {@link keepsCommentsInArrowBodyParens}).
+	 * `throw` argument, only when it breaks: `x = a || (b /* c *\/);`,
+	 * `x = a * (b + c /* c *\/);`, and `x = a ? b : (c /* c *\/);` print
+	 * `x = a || b /* c *\/;`, `x = a * (b + c) /* c *\/;`, and
+	 * `x = a ? b : c /* c *\/;`, and the next pass moves the comment after the
+	 * `;` (#622, #674). Each pass takes it out of one more pair, so it ends
+	 * there from any depth of the chain. A pair that completes a JSDoc cast
+	 * keeps the comments in it (see {@link getTypeCastEnd}), which the walk
+	 * takes before this runs, so the operands inside it don't count, and so
+	 * does the pair an element or other template value prints its comments in
+	 * (see {@link keepsCommentsInArrowBodyParens}), and the pair a conditional
+	 * in JSX mode prints a branch in when it breaks: any branch but `null`,
+	 * `undefined`, or another conditional (Prettier's `printTernaryOld`).
 	 * @param {AST.Node | null | undefined} value
 	 * @returns {(AST.Node & AST.NodeWithLocation)[]}
 	 */
-	function getBinaryishValueEnds(value) {
+	function getValueEnds(value) {
 		/** @type {(AST.Node & AST.NodeWithLocation)[]} */
 		const ends = [];
-		if (!isBinaryish(value)) {
+		if (!isBinaryish(value) && value?.type !== 'ConditionalExpression') {
 			return ends;
 		}
 		if (value.metadata?.parenthesized) {
 			ends.push(/** @type {AST.Node & AST.NodeWithLocation} */ (value));
 		}
-		/** @type {AST.Node} */
+		/** @type {any} */
 		let operand = value;
-		while (isBinaryish(operand) && getTypeCastEnd(/** @type {any} */ (operand)) === -1) {
-			const right = /** @type {AST.Node & AST.NodeWithLocation} */ (operand.right);
-			if (right.type.startsWith('JSX')) break;
-			ends.push(right);
-			operand = right;
+		// Whether the chain of conditionals the walk is in prints in JSX mode.
+		// The walk leaves such a chain only at its last alternate.
+		let jsxMode = false;
+		while (getTypeCastEnd(operand) === -1) {
+			/** @type {AST.Node & AST.NodeWithLocation} */
+			let end;
+			if (isBinaryish(operand)) {
+				end = /** @type {AST.Node & AST.NodeWithLocation} */ (operand.right);
+				if (end.type.startsWith('JSX')) break;
+			} else if (operand.type === 'ConditionalExpression') {
+				end = operand.alternate;
+				jsxMode ||= conditionalChainHasTemplate(operand);
+				if (
+					jsxMode &&
+					end.type !== 'ConditionalExpression' &&
+					!(end.type === 'Literal' && end.value === null) &&
+					!(end.type === 'Identifier' && end.name === 'undefined')
+				) {
+					break;
+				}
+			} else {
+				break;
+			}
+			ends.push(end);
+			operand = end;
 		}
 		return ends;
+	}
+
+	/**
+	 * Whether a chain of conditionals has an element or another template value
+	 * as a test or branch at any depth, which prints the chain in JSX mode
+	 * (Prettier's `conditionalExpressionChainContainsJsx`)
+	 * @param {AST.ConditionalExpression} node - The first conditional of the chain
+	 * @returns {boolean}
+	 */
+	function conditionalChainHasTemplate(node) {
+		const conditionals = [node];
+		for (const conditional of conditionals) {
+			for (const child of [conditional.test, conditional.consequent, conditional.alternate]) {
+				if (child.type.startsWith('JSX')) {
+					return true;
+				}
+				if (child.type === 'ConditionalExpression') {
+					conditionals.push(child);
+				}
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -668,6 +792,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * the line: it prints `x = 30 * (month - 1 // c⏎) + day;` with the
 	 * comment after the `+` and the `*` broken by its line break, and its next
 	 * pass gives it to `30 * (month - 1)`, which joins the `*` again (#626).
+	 * After a conditional's alternate, only the ones that go after the `;`
+	 * move, before `handleComment` gives a line comment there to the
+	 * alternate (#674).
 	 * @param {AST.NodeWithLocation} node - The operand the comment follows
 	 * @param {(AST.Node | AST.CSS.StyleSheet)[]} path - The node's ancestors
 	 * @returns {boolean} Whether it took the comment
@@ -678,6 +805,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 		let child = /** @type {AST.Node} */ (node);
 		let index = path.length - 1;
 		const parent = /** @type {AST.Node} */ (path[index]);
+		if (parent?.type === 'ConditionalExpression' && parent.alternate === child) {
+			return takeCommentsBeforeFinalSemicolon(node, path);
+		}
 		if (
 			!comment ||
 			!isBinaryish(parent) ||
@@ -983,7 +1113,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 *   `handleParenthesizedExpressionTrailingComment` gives it to the
 	 *   statement: `(a, b /* c *\/);` prints `(a, b); /* c *\/`, and
 	 *   `(<div /> /* c *\/);`, whose element keeps its parentheses (#625),
-	 *   prints `(<div />); /* c *\/`.
+	 *   prints `(<div />); /* c *\/`. The handler leaves out a comment on a
+	 *   line of its own, which trails the expression, and an element prints
+	 *   it inside those parentheses.
 	 * - After a sequence or assignment that is the argument of a `throw` or
 	 *   the declaration of an `export default`, which the handler leaves out,
 	 *   it trails the value, which prints it after its parentheses.
@@ -992,7 +1124,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 *   `x = (y = z /* c *\/);` prints `x = y = z /* c *\/;`.
 	 * - A line comment after the sequence of a declarator's value or an
 	 *   assignment's right side trails its last expression, but those
-	 *   parentheses don't break, so it prints after the `;`.
+	 *   parentheses don't break, so it prints after the `;`. One on a line of
+	 *   its own, which the handler leaves out, trails the sequence and prints
+	 *   after them.
 	 * @param {AST.Node} statement
 	 * @param {AST.Node} value
 	 * @param {AST.CommentWithLocation} comment
@@ -1000,7 +1134,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 */
 	function movesCommentAfterParens(statement, value, comment) {
 		if (statement.type === 'ExpressionStatement' && statement.expression === value) {
-			return true;
+			return !value.type.startsWith('JSX') || !isOwnLineComment(comment);
 		}
 		if (value.type !== 'SequenceExpression' && value.type !== 'AssignmentExpression') {
 			return false;
@@ -1014,7 +1148,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 			statement.expression.right === value;
 		return value.type === 'AssignmentExpression'
 			? isAssignmentRight
-			: comment.type === 'Line' && (isAssignmentRight || statement.type === 'VariableDeclaration');
+			: (comment.type === 'Line' || isOwnLineComment(comment)) &&
+					(isAssignmentRight || statement.type === 'VariableDeclaration');
 	}
 
 	/**
