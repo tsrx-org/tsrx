@@ -9359,7 +9359,7 @@ function alignEmbeddedTemplateExpressions(doc, expressionDocs, options) {
 				}
 				break;
 			case 'group': {
-				const groupFlat = scan(currentDoc) !== 2;
+				const groupFlat = scan(current) !== 2;
 				if (currentDoc.id) {
 					flatGroups.set(currentDoc.id, groupFlat);
 				}
