@@ -6539,6 +6539,77 @@ foo({
 
 		expect(array?.innerComments).toBeUndefined();
 	});
+
+	// Like an empty array's, they don't trail the node before them or lead
+	// the next one (#772)
+	it('keeps the comments of an empty tuple type as inner comments', () => {
+		const ast = parseModule(
+			`type A = [
+	// tuple
+];
+let x: [/* annotation */] = a;`,
+			'App.ts',
+		);
+		const [tuple, annotation] = allNodes(ast).filter((node) => node.type === 'TSTupleType');
+
+		expect(tuple?.innerComments?.map((comment) => comment.value)).toEqual([' tuple']);
+		expect(annotation?.innerComments?.map((comment) => comment.value)).toEqual([' annotation ']);
+		expect(comments_in(ast.body[1])).toEqual([' annotation ']);
+	});
+});
+
+describe('comments right before an empty body or list', () => {
+	// Like Prettier, whose child nodes never include comments, a comment
+	// neither takes comments nor holds any. The walker reaches a comment that
+	// leads a node after the node's children, so before an empty body it came
+	// before the body's own rules and took the comments inside (#741).
+	it.each([
+		['a class body', 'class A /* e */ {\n\t// c\n}', 'ClassBody'],
+		['a function body', 'function f() /* e */ {\n\t// c\n}', 'BlockStatement'],
+		['an arrow function body', 'x = () => /* e */ {\n\t// c\n};', 'BlockStatement'],
+		['an if body', 'if (a) /* e */ {\n\t// c\n}', 'BlockStatement'],
+		['a block after a line comment', '// e\n{\n\t// c\n}', 'BlockStatement'],
+		['a try block', 'try /* e */ {\n\t// c\n} finally {\n}', 'BlockStatement'],
+		['an interface body', 'interface I /* e */ {\n\t// c\n}', 'TSInterfaceBody'],
+		['a namespace body', 'namespace N /* e */ {\n\t// c\n}', 'TSModuleBlock'],
+		['a type literal', 'type T = /* e */ {\n\t// c\n};', 'TSTypeLiteral'],
+		['a tuple type', 'type T = /* e */ [\n\t// c\n];', 'TSTupleType'],
+		['an array', 'const a = /* e */ [/* c */];', 'ArrayExpression'],
+		['an array argument', 'f(a, /* e */ [\n\t// c\n]);', 'ArrayExpression'],
+		['an array after a line comment', 'x = // e\n[\n\t// c\n];', 'ArrayExpression'],
+		['an object', 'const a = /* e */ {\n\t// c\n};', 'ObjectExpression'],
+		[
+			'an object in an attribute',
+			'function App() @{\n\t<div a={/* e */ {\n\t\t// c\n\t}} />\n}',
+			'ObjectExpression',
+		],
+		[
+			'an @if body',
+			'function App() @{\n\t<div>\n\t\t@if (a) /* e */ {\n\t\t\t// c\n\t\t}\n\t</div>\n}',
+			'BlockStatement',
+		],
+		[
+			'a @for body',
+			'function App() @{\n\t<div>\n\t\t@for (const x of y) /* e */ {\n\t\t\t// c\n\t\t}\n\t</div>\n}',
+			'BlockStatement',
+		],
+		[
+			'a @try body',
+			'function App() @{\n\t<div>\n\t\t@try /* e */ {\n\t\t\t// c\n\t\t} @catch (e) {\n\t\t\t<span />\n\t\t}\n\t</div>\n}',
+			'BlockStatement',
+		],
+	])('keeps the comments in %s inside it', (_, source, type) => {
+		const ast = parseModule(source, 'App.tsrx');
+		const container = find_first(ast, (node) => node.type === type);
+		const comments = allNodes(ast).filter((node) => {
+			const nodeType = /** @type {string} */ (node.type);
+			return nodeType === 'Line' || nodeType === 'Block';
+		});
+
+		expect(container?.leadingComments?.map((comment) => comment.value.trim())).toEqual(['e']);
+		expect(container?.innerComments?.map((comment) => comment.value.trim())).toEqual(['c']);
+		expect(comments.flatMap((comment) => comments_in(comment))).toEqual([]);
+	});
 });
 
 describe('comments in import and export specifier lists', () => {
