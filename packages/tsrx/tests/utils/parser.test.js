@@ -6699,6 +6699,26 @@ describe('comments around the commas of a list', () => {
 		expect(second.leadingComments).toBeUndefined();
 	});
 
+	// Like Prettier, the comments at the end of a line after an element all
+	// trail it. The line comment led the next element when a block comment
+	// before the comma, or one after it in a parameter list, shared its line
+	// (#819).
+	/** @type {Array<[string, string, (statement: any) => AST.Node[]]>} */
+	const sameLineLists = [
+		['call arguments', 'foo(a /* c */, // d\nb);', (statement) => statement.expression.arguments],
+		['parameters', 'function f(a, /* c */ // d\nb) {}', (statement) => statement.params],
+	];
+
+	it.each(sameLineLists)(
+		'keeps every comment at the end of the line with the element before it in %s',
+		(_, source, list) => {
+			const [first, second] = list(firstStatement(source));
+
+			expect(first.trailingComments?.map((comment) => comment.value)).toEqual([' c ', ' d']);
+			expect(second.leadingComments).toBeUndefined();
+		},
+	);
+
 	// A callee or a function's name isn't in the argument or parameter list, so
 	// a comment before the first element stays with that element.
 	it('leads the first argument or parameter with a comment before it', () => {
@@ -6741,6 +6761,36 @@ describe('comments around the commas of a list', () => {
 			expect(second.leadingComments?.map((comment) => comment.value)).toEqual(['* @type {T} ']);
 		},
 	);
+
+	// Like Prettier's `handleClosureTypeCastComments`, a JSDoc type cast
+	// comment at the end of a line leads the element after the comma. It
+	// trailed the element before it (#806). One before the next member of an
+	// object literal or an enum stays with the member before it: TypeScript
+	// reads a JSDoc comment as a member's own only when it starts the member's
+	// line.
+	const ownLineJsdocLists = ['an object', 'an enum'];
+	/** @param {string} source */
+	const withCastAtLineEnd = (source) => source.replace(' /* c */,', ', /** @type {T} */\n');
+
+	it.each(lists.filter(([name]) => !ownLineJsdocLists.includes(name)))(
+		'leads the next element with a JSDoc type cast comment at the end of a line in %s',
+		(_, source, list) => {
+			const [first, second] = list(firstStatement(withCastAtLineEnd(source)));
+
+			expect(first.trailingComments).toBeUndefined();
+			expect(second.leadingComments?.map((comment) => comment.value)).toEqual(['* @type {T} ']);
+		},
+	);
+
+	it.each(lists.filter(([name]) => ownLineJsdocLists.includes(name)))(
+		'keeps a JSDoc type cast comment at the end of a line with the member before it in %s',
+		(_, source, list) => {
+			const [first, second] = list(firstStatement(withCastAtLineEnd(source)));
+
+			expect(first.trailingComments?.map((comment) => comment.value)).toEqual(['* @type {T} ']);
+			expect(second.leadingComments).toBeUndefined();
+		},
+	);
 });
 
 // Ports of Prettier's comment handlers (`handle-comments.js`)
@@ -6779,6 +6829,48 @@ describe('comments placed like Prettier', () => {
 		const statement = firstStatement('x = !(\n  (\n    a ||\n    b\n  ) // c\n);');
 
 		expect(commentsOf(statement.expression.right.argument).trailing).toEqual([' c']);
+		expect(commentsOf(statement).trailing).toBeUndefined();
+	});
+
+	// Prettier's `handleClosureTypeCastComments`, which comes before its other
+	// handlers for a comment at the end of a line (#806)
+	it('leads the node after a JSDoc type cast comment at the end of a line', () => {
+		const conditional = firstStatement('x = a ? /** @type {T} */\nb : c;').expression.right;
+		expect(commentsOf(conditional.test).trailing).toBeUndefined();
+		expect(commentsOf(conditional.consequent).leading).toEqual(['* @type {T} ']);
+
+		const binary = firstStatement('x = a + /** @type {T} */\nb;').expression.right;
+		expect(commentsOf(binary.left).trailing).toBeUndefined();
+		expect(commentsOf(binary.right).leading).toEqual(['* @type {T} ']);
+
+		const statement = firstStatement('try {\n} /** @type {T} */\nfinally {\n\ta();\n}');
+		expect(commentsOf(statement.finalizer).leading).toEqual(['* @type {T} ']);
+		expect(commentsOf(statement.finalizer.body[0]).leading).toBeUndefined();
+	});
+
+	// Unlike Prettier, which moves it onto the line of the statement or member
+	// after it, where TypeScript reads it as that node's JSDoc
+	it('keeps a JSDoc type cast comment at the end of a line with the statement or member before it', () => {
+		const ast = parseModule(
+			'a(); /** @type {T} */\nconst b = c;\nclass A {\n\ta = 1; /** @type {T} */\n\tb = 2;\n}',
+			'App.ts',
+		);
+		const [call, declaration, classDeclaration] = /** @type {any[]} */ (ast.body);
+		const [first, second] = classDeclaration.body.body;
+
+		expect(commentsOf(call).trailing).toEqual(['* @type {T} ']);
+		expect(commentsOf(declaration).leading).toBeUndefined();
+		expect(commentsOf(first).trailing).toEqual(['* @type {T} ']);
+		expect(commentsOf(second).leading).toBeUndefined();
+	});
+
+	// Like Prettier, which merges touching multi-line JSDoc comments into one
+	// before it keeps a cast's parentheses, the first of them makes a cast. The
+	// comment in the parentheses trailed the statement (#766).
+	it('trails the expression with a comment in the parentheses of a cast in touching JSDoc comments', () => {
+		const statement = firstStatement('x = /**\n * @type {A}\n *//**\n * y\n */ (b // c\n);');
+
+		expect(commentsOf(statement.expression.right).trailing).toEqual([' c']);
 		expect(commentsOf(statement).trailing).toBeUndefined();
 	});
 
