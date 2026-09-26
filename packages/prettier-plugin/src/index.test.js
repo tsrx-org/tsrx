@@ -21805,9 +21805,12 @@ import b from "./b.json" with { type /* c */: "json" };`);
 			['function f(a, /* x */ // c\nb) {}', 'function f(\n  a /* x */, // c\n  b,\n) {}'],
 			['const f = (a, /* x */ // c\nb) => {};', 'const f = (\n  a /* x */, // c\n  b,\n) => {};'],
 			['function f(a, /* x */ /* y */\nb) {}', 'function f(a /* x */ /* y */, b) {}'],
-		])('keeps the comments of %j on the line of the element before them', async (input, expected) => {
-			expect(await format(input)).toBeWithNewline(expected);
-		});
+		])(
+			'keeps the comments of %j on the line of the element before them',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
 
 		// Like Prettier's tie-break, a comment after the comma trails the default
 		// import when the `{` of the named ones sits between it and the next
