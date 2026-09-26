@@ -17471,6 +17471,55 @@ for (
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
+		// A block comment on a line of its own before the type arguments ends the
+		// superclass's line in Prettier's output (`B/* c */` / `<T> {}`). Its next
+		// pass reads it as a comment after the superclass and prints it after the
+		// type arguments, where it stays, so it prints there right away. Prettier
+		// joins two of them in the opposite order (`/* d */ /* c */`) (#743).
+		it.each([
+			['class A extends B\n/* c */\n<T> {}', 'class A extends B<T> /* c */ {}'],
+			[
+				'class A extends B\n/* c */\n<T> {\n  x = 1;\n}',
+				'class A extends B<T> /* c */ {\n  x = 1;\n}',
+			],
+			[
+				'class A extends B\n/* c */\n<T> implements C {}',
+				'class A extends B<T> /* c */ implements C {}',
+			],
+			[
+				'class A extends B\n/* c */\n<T> implements C {\n  x = 1;\n}',
+				'class A extends B<T> /* c */ implements C {\n  x = 1;\n}',
+			],
+			['const X = class extends B\n/* c */\n<T> {};', 'const X = class extends B<T> /* c */ {};'],
+			['class A extends (a || b)\n/* c */\n<T> {}', 'class A extends (a || b)<T> /* c */ {}'],
+			['class A extends B\n/**\n * c\n */\n<T> {}', 'class A extends B<T> /**\n * c\n */ {}'],
+			['class A extends B\n/* c */\n/* d */\n<T> {}', 'class A extends B<T> /* c */ /* d */ {}'],
+			['class A extends B\n/* c */\n// d\n<T> {}', 'class A extends B<T> /* c */ {} // d'],
+			['class A extends B\n// d\n/* c */\n<T> {}', 'class A extends B<T> /* c */ {} // d'],
+			['class A extends B // e\n/* c */\n<T> {}', 'class A extends B<T> /* c */ {} // e'],
+			['class A extends B\n/* c */\n/* d */ <T> {}', 'class A extends B/* d */ <T> /* c */ {}'],
+			// After another comment on its line, it keeps the line break after it
+			// when the heading breaks, as it always does without implements
+			['class A extends B\n/* c */ /* d */\n<T> {}', 'class A extends B<T> /* c */ /* d */ {}'],
+			['class A extends B\n/* c */ // d\n<T> {}', 'class A extends B<T> /* c */ {} // d'],
+		])('prints the block comment of %j after the type arguments', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// On the line of the type arguments, it stays before them, and so does
+		// one after another comment on its line while the heading fits, as in
+		// Prettier
+		it.each([
+			['class A extends B\n/* c */ <T> {}', 'class A extends B/* c */ <T> {}'],
+			[
+				'class A extends B\n/* c */ /* d */\n<T> implements C {}',
+				'class A extends B/* c */ /* d */ <T> implements C {}',
+			],
+			['class A extends B /* c */\n<T> {}', 'class A extends B<T> /* c */ {}'],
+		])('keeps the block comment of %j where Prettier does', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		// A comment inside a JSDoc cast's parentheses stays there, like in
 		// Prettier's `babel-ts` output, which keeps them as a node. It isn't after
 		// the superclass, so a line comment doesn't move into the body (#521).
@@ -17524,6 +17573,81 @@ for (
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
+		// Like Prettier's `handleClassComments`, a comment after the superclass's
+		// type arguments that ends its line dangles on the class, which prints it
+		// on a line of its own before `implements`. So does a line comment after
+		// the superclass, which Prettier prints after the type arguments, and
+		// then there on its next pass, and a block comment after them once the
+		// heading breaks. They used to stay at the end of the `extends` line,
+		// and a second line comment could join the first (`// d // c`) (#742).
+		it.each([
+			[
+				'class A extends B<T> // c\nimplements C {}',
+				'class A\n  extends B<T>\n  // c\n  implements C {}',
+			],
+			[
+				'class A extends B // c\n<T> implements C {}',
+				'class A\n  extends B<T>\n  // c\n  implements C {}',
+			],
+			[
+				'class A extends B<T> // c\n// d\nimplements C {}',
+				'class A\n  extends B<T>\n  // c\n  // d\n  implements C {}',
+			],
+			[
+				'class A extends B // c\n<T> // d\nimplements C {}',
+				'class A\n  extends B<T>\n  // c\n  // d\n  implements C {}',
+			],
+			[
+				'class A extends B<T> // c\n\n// d\nimplements C {}',
+				'class A\n  extends B<T>\n  // c\n  // d\n  implements C {}',
+			],
+			[
+				'class A extends B<T> /* c */ // d\nimplements C {}',
+				'class A\n  extends B<T>\n  /* c */\n  // d\n  implements C {}',
+			],
+			[
+				'class A extends B<T> /* c */\nimplements C {}',
+				'class A\n  extends B<T>\n  /* c */\n  implements C {}',
+			],
+			[
+				'class A extends B<T> /**\n * c\n */ implements C {}',
+				'class A\n  extends B<T>\n  /**\n   * c\n   */\n  implements C {}',
+			],
+			[
+				'class A extends B<T> /* c */ implements Cccccccccccccccccccc, Dddddddddddddddddddd {}',
+				'class A\n  extends B<T>\n  /* c */\n  implements Cccccccccccccccccccc, Dddddddddddddddddddd {}',
+			],
+			[
+				'class A extends B /* c */\n<T> implements Cccccccccccccccccccc, Dddddddddddddddddddd {}',
+				'class A\n  extends B<T>\n  /* c */\n  implements Cccccccccccccccccccc, Dddddddddddddddddddd {}',
+			],
+			[
+				'class A extends B<T> // c\nimplements C {\n  x = 1;\n}',
+				'class A\n  extends B<T>\n  // c\n  implements C\n{\n  x = 1;\n}',
+			],
+			[
+				'const X = class extends B<T> // c\nimplements C {};',
+				'const X = class\n  extends B<T>\n  // c\n  implements C {};',
+			],
+			[
+				'foo(class extends B<T> // c\nimplements C {}, d);',
+				'foo(\n  class\n    extends B<T>\n    // c\n    implements C {},\n  d,\n);',
+			],
+			// A `prettier-ignore` there ignores the class, as in Prettier
+			[
+				'class A extends B<T> // prettier-ignore\nimplements   C {}',
+				'class A extends B<T> // prettier-ignore\nimplements   C {}',
+			],
+			// They print in source order, where Prettier's third pass prints the
+			// line comment first
+			[
+				'class A extends B /* e */\n// c\n<T> implements C {}',
+				'class A\n  extends B<T>\n  /* e */\n  // c\n  implements C {}',
+			],
+		])('prints the comment of %j before implements', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		it.each([
 			'class A\n  // c\n  extends B {}',
 			'class A<T>\n  // c\n  extends B {}',
@@ -17536,6 +17660,13 @@ for (
 			'const X = class\n  /* c */\n  implements D, E {};',
 			'const X = class\n  // c\n  // d\n  implements D, E\n{\n  x = 1;\n};',
 			'const X = class\n  // c\n  implements\n    VeryLongInterfaceNameNumberOne,\n    VeryLongInterfaceNameNumberTwo,\n    VeryLongInterfaceNameNumberThree {};',
+			// Block comments after the type arguments stay there while the
+			// heading fits (#742)
+			'class A extends B<T> /* c */ implements C {}',
+			'class A extends B<T> /* c */ /* d */ implements C {}',
+			'class A extends B/* c */ <T> /* d */ implements C {}',
+			'class A\n  extends B<T>\n  /* c */\n  implements C {}',
+			'@dec // c\nclass A extends B<T> implements C {}',
 		])('keeps the comment of %j before the heritage clause', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});

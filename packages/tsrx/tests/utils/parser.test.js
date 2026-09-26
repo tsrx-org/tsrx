@@ -7054,6 +7054,19 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(init.implements[0]).leading).toBeUndefined();
 	});
 
+	// Prettier's `handleClassComments` trails only the name, the type
+	// parameters, or the superclass with it (#742)
+	it('keeps a comment between the superclass type arguments and implements on the class', () => {
+		const declaration = firstStatement('class A extends B<T> // c\n/* d */\nimplements C {}');
+		const inline = firstStatement('class A extends B<T> /* c */ implements C {}');
+
+		expect(commentsOf(declaration).inner).toEqual([' c', ' d ']);
+		expect(commentsOf(declaration.superTypeParameters).trailing).toBeUndefined();
+		expect(commentsOf(declaration.implements[0]).leading).toBeUndefined();
+		expect(commentsOf(inline).inner).toBeUndefined();
+		expect(commentsOf(inline.superTypeParameters).trailing).toEqual([' c ']);
+	});
+
 	// Without a `;`, the declaration ends at the `)`, and the parenthesized
 	// value ends before it
 	it('trails the declaration with a comment after the ) that ends it', () => {
