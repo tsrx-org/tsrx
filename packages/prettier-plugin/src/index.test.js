@@ -15218,6 +15218,37 @@ const b = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
+		// A line comment inside the left operand's cast parentheses trails the
+		// expression in Prettier's `ParenthesizedExpression`, not the operand,
+		// so the right operand stays on the line of the `)`. It used to break
+		// the line after the operator (#692).
+		it.each([
+			'x =\n  /** @type {T} */ (\n    a && b // c\n  ) || d;',
+			'x =\n  /** @type {T} */ (\n    a + b // c\n  ) * d;',
+			'x =\n  /** @type {T} */ (\n    a // c\n  ) ?? d;',
+			'x =\n  /** @type {T} */ (\n    a // c\n  ) instanceof D;',
+			'x =\n  /** @type {A} */ (\n    /** @type {B} */ (\n      a // c\n    )\n  ) || d;',
+			'x =\n  /** @type {T} */ (\n    a && b /* c */ // d\n  ) || e;',
+			'x =\n  /** @type {T} */ (\n    a && b // c\n  ) /* d */ || e;',
+			'f(\n  /** @type {T} */ (\n    a && b // c\n  ) || d,\n);',
+			'function f() {\n  return (\n    /** @type {T} */ (\n      a && b // c\n    ) || d\n  );\n}',
+		])('keeps the operator after the cast parentheses in %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Pins: a line comment after the parentheses still breaks the line after
+		// the operator, and so does a broken operand list
+		it.each([
+			'x =\n  /** @type {T} */ (a && b) || // c\n  d;',
+			'x =\n  a ||\n  /** @type {T} */ (\n    b // c\n  ) ||\n  d;',
+			'x =\n  /** @type {T} */ (\n    a // c\n  ) +\n  /** @type {U} */ (b) +\n  d;',
+			'x =\n  (y &&\n    /** @type {T} */ (\n      a && b // c\n    )) ||\n  d;',
+			'if (\n  /** @type {T} */ (\n    a && b // c\n  ) ||\n  d\n) {\n}',
+			'x =\n  /** @type {T} */ (\n    // c\n    a\n  ) || d;',
+		])('keeps %j like Prettier', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
 		// Prettier prints a line comment before the `)` of the parentheses
 		// around an operand after the operator that follows them, and breaks
 		// the operator before them with its line break. Its next pass gives the
@@ -18523,6 +18554,91 @@ for (
 			expect(await format('const x = /* c */\n  5;')).toBeWithNewline('const x = /* c */ 5;');
 		});
 
+		// Like Prettier's `mergeNestledJsdocComments`, two JSDoc comments that
+		// touch (`*//**`), each over several lines with every line starting with
+		// `*`, are one comment, which prints as written. The second one used to
+		// print after a space, or on a line of its own when the parser gave it
+		// to the next node (#689).
+		it.each([
+			[
+				'/**\n * @param {A} a\n *//**\n * @param {B} b\n */\nfunction f(a) {}',
+				'/**\n * @param {A} a\n *//**\n * @param {B} b\n */\nfunction f(a) {}',
+			],
+			[
+				'function f() {}\n\n/** Trailing nestled comment 1\n *//** Trailing nestled comment 2\n *//** Trailing nestled comment 3\n */',
+				'function f() {}\n\n/** Trailing nestled comment 1\n *//** Trailing nestled comment 2\n *//** Trailing nestled comment 3\n */',
+			],
+			[
+				'{{\no={\n  /**\n   * A\n   *//**\n   * B\n   */\n\n}\n}}',
+				'{\n  {\n    o = {\n      /**\n       * A\n       *//**\n       * B\n       */\n    };\n  }\n}',
+			],
+			[
+				'class A {\n    /**\n     * x\n     *//**\n     * y\n     */\n  m() {}\n}',
+				'class A {\n  /**\n   * x\n   *//**\n   * y\n   */\n  m() {}\n}',
+			],
+			[
+				'f(a, /**\n * x\n *//**\n * y\n */ b);',
+				'f(\n  a,\n  /**\n   * x\n   *//**\n   * y\n   */ b,\n);',
+			],
+			// The parser gives the first one to the node before and the second
+			// one to the next node, and the merged one stays with the first
+			['a; /**\n * x\n *//**\n * y\n */\nb;', 'a; /**\n * x\n *//**\n * y\n */\nb;'],
+			[
+				'const o = {\n  a: 1, /**\n   * x\n   *//**\n   * y\n   */\n  b: 2,\n};',
+				'const o = {\n  a: 1 /**\n   * x\n   *//**\n   * y\n   */,\n  b: 2,\n};',
+			],
+			[
+				'if (a) {\n  b();\n} /**\n * x\n *//**\n * y\n */\nelse {\n  c();\n}',
+				'if (a) {\n  b();\n} /**\n * x\n *//**\n * y\n */\nelse {\n  c();\n}',
+			],
+			[
+				'export function App() @{\n  <div>\n    {/**\n      * x\n      *//**\n      * y\n      */}\n  </div>\n}',
+				'export function App() @{\n  <div>\n    {/**\n     * x\n     *//**\n     * y\n     */}\n  </div>\n}',
+			],
+		])('keeps the touching JSDoc comments of %j together', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// A JSDoc cast in either one makes the merged comment a cast, like
+		// Prettier's, so the parentheses stay. They used to be dropped when only
+		// the first one had `@type`, which TypeScript doesn't read as a cast.
+		it.each([
+			[
+				'x = /**\n * @type {A}\n *//**\n * y\n */ (b);',
+				'x =\n  /**\n   * @type {A}\n   *//**\n   * y\n   */ (b);',
+			],
+			[
+				'x = /**\n * y\n *//**\n * @type {A}\n */ (b);',
+				'x =\n  /**\n   * y\n   *//**\n   * @type {A}\n   */ (b);',
+			],
+			[
+				'x = /**\n * y\n *//**\n * @type {A}\n */ (b // c\n);',
+				'x =\n  /**\n   * y\n   *//**\n   * @type {A}\n   */ (\n    b // c\n  );',
+			],
+			[
+				'foo(/**\n * @type {A}\n *//**\n * @type {B}\n */ (b), c);',
+				'foo(\n  /**\n   * @type {A}\n   *//**\n   * @type {B}\n   */ (b),\n  c,\n);',
+			],
+		])(
+			'keeps the cast parentheses after the touching JSDoc comments of %j',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		// Pins: like Prettier, a comment on one line, or one whose lines don't
+		// all start with `*`, stays a comment of its own
+		it.each([
+			['/** a *//**\n * b\n */\nx;', '/** a */ /**\n * b\n */\nx;'],
+			['/**\n * a\n *//* b *//**\n * c\n */\nx;', '/**\n * a\n */ /* b */ /**\n * c\n */\nx;'],
+			[
+				'/**\n * a\n *//*\n b\n*//**\n * c\n */\nx;',
+				'/**\n * a\n */ /*\n b\n*/ /**\n * c\n */\nx;',
+			],
+		])('prints a space between the touching comments of %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		// A statement used to take only the first comment after it on its line
 		it.each([
 			'{\n  a(); /* c */ /* d */\n  b();\n}',
@@ -19098,13 +19214,14 @@ for (
 
 		// A block comment after one on a line of its own followed it on its
 		// line, ahead of it, and ended it early, so the output didn't parse.
-		// Prettier keeps touching JSDoc comments together (#689).
+		// Like Prettier, touching JSDoc comments over several lines are one
+		// comment (#689).
 		it.each([
 			[
 				'const o = {\n  a: 1\n  /** b *//**\n  * c\n  */\n};',
 				'const o = {\n  a: 1,\n  /** b */ /**\n   * c\n   */\n};',
 			],
-			['function f() {}\n/** a\n *//** b\n */', 'function f() {}\n/** a\n */ /** b\n */'],
+			['function f() {}\n/** a\n *//** b\n */', 'function f() {}\n/** a\n *//** b\n */'],
 			[
 				'const o = {\n  a: 1,\n  /** b *//** c */\n};',
 				'const o = {\n  a: 1,\n  /** b */ /** c */\n};',
