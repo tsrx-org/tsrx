@@ -5078,11 +5078,29 @@ function printExportNamedDeclaration(node, path, options, print) {
 		return parts;
 	}
 
+	// Like Prettier's `printExportDeclaration`, the comments in an empty
+	// export list print after `export`, with a line break after a line
+	// comment: `export { /* c */ };` prints `export /* c */ {};` (#671)
+	const comments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
+	/** @type {Doc} */
+	const danglingComments = comments.length
+		? [
+				' ',
+				join(
+					hardline,
+					comments.map((comment) => printComment(comment, options.originalText)),
+				),
+				comments.at(-1)?.type === 'Line' ? hardline : '',
+			]
+		: '';
+
 	// `export {};` still marks the file as a module, and `export {} from "x"`
 	// still loads `x`, so an empty list keeps its braces. A bare `export` would
 	// export the next declaration or fail to parse at the end of the file.
 	return [
-		node.exportKind === 'type' ? 'export type' : 'export',
+		'export',
+		danglingComments,
+		node.exportKind === 'type' ? ' type' : '',
 		printModuleSpecifiers(path, options, print),
 		printModuleSource(path, options, print),
 		semi(options),

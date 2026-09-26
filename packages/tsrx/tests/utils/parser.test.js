@@ -6616,6 +6616,17 @@ describe('comments in import and export specifier lists', () => {
 			' declaration',
 		]);
 	});
+
+	// Like Prettier, the comments in an empty export list dangle on it, and the
+	// ones after its `}` trail it (#671)
+	it('keeps the comments in and after an empty export list on the declaration', () => {
+		const ast = parseModule('export { /* inner */ } /* after */;\nfoo();', 'App.ts');
+		const declaration = as_type(ast.body[0], 'ExportNamedDeclaration');
+
+		expect(declaration.innerComments?.map((comment) => comment.value)).toEqual([' inner ']);
+		expect(declaration.trailingComments?.map((comment) => comment.value)).toEqual([' after ']);
+		expect(ast.body[1].leadingComments).toBeUndefined();
+	});
 });
 
 describe('comments around the commas of a list', () => {
@@ -6787,6 +6798,32 @@ describe('comments placed like Prettier', () => {
 
 		expect(commentsOf(statement.test).trailing).toEqual([' c']);
 		expect(commentsOf(statement.consequent).leading).toBeUndefined();
+	});
+
+	// Like Prettier's `handleMethodNameComments`, a class member takes the
+	// comments before its `;`, and so does an exported type alias, which
+	// Prettier's export ends before them (#685)
+	it('trails a class member or an exported type alias with a comment before its ;', () => {
+		const [field, method] = firstStatement('class K {\n  a = 1 /* a */;\n  m(): void /* m */;\n}')
+			.body.body;
+
+		expect(commentsOf(field).trailing).toEqual([' a ']);
+		expect(commentsOf(field.value).trailing).toBeUndefined();
+		expect(commentsOf(method).trailing).toEqual([' m ']);
+
+		const exported = firstStatement('export type A = B /* c */;');
+
+		expect(commentsOf(exported).trailing).toEqual([' c ']);
+		expect(commentsOf(exported.declaration.typeAnnotation).trailing).toBeUndefined();
+	});
+
+	// A type alias that isn't exported keeps the block comment before its `;`
+	// on the value, like Prettier, and takes the line comment after it (#681)
+	it('trails a type alias with a line comment before its ;, but not a block comment', () => {
+		const alias = firstStatement('type A = B | C /* b */ // c\n;');
+
+		expect(commentsOf(alias).trailing).toEqual([' c']);
+		expect(commentsOf(alias.typeAnnotation).trailing).toEqual([' b ']);
 	});
 
 	/**

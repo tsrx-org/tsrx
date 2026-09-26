@@ -19195,6 +19195,184 @@ for (
 			expect(await format(source)).toBeWithNewline(expected);
 		});
 
+		// An empty export list has no child either, so the comment after its
+		// `}` trails it. It used to lead the next statement (#671).
+		it.each([
+			['export {} /* c */;\nfoo();', 'export {}; /* c */\nfoo();'],
+			['export {} // c\n;\nfoo();', 'export {}; // c\nfoo();'],
+			['export type {} /* c */ /* d */;\nfoo();', 'export type {}; /* c */ /* d */\nfoo();'],
+			['export {/* a */} /* b */;\nfoo();', 'export /* a */ {}; /* b */\nfoo();'],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['export {}\n/* c */;\nfoo();', 'export {};\n/* c */ foo();'],
+			['export {} from "a" /* c */;\nfoo();', 'export {} from "a"; /* c */\nfoo();'],
+		])('formats %j like Prettier, as before', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// Like Prettier's `handleMethodNameComments`, a class member takes the
+		// comments after its last child, which print after its `;`, and so does
+		// an exported type alias or `import … = require(…)`, which Prettier's
+		// export ends before them. They printed before the `;` (#685). So do
+		// the ones after the last parameter of a method signature, before the
+		// `)` of its list (#794).
+		it.each([
+			[
+				'class K {\n  a = 1 /* c */;\n  declare b: T /* c */;\n  static s = 2 /* c */ /* d */;\n  #p = 3 /* c */;\n  accessor q = 4 /* c */;\n  r /* c */;\n}',
+				'class K {\n  a = 1; /* c */\n  declare b: T; /* c */\n  static s = 2; /* c */ /* d */\n  #p = 3; /* c */\n  accessor q = 4; /* c */\n  r; /* c */\n}',
+			],
+			[
+				'abstract class L {\n  abstract m(): void /* c */;\n  abstract p: T /* c */;\n  abstract accessor q: T /* c */;\n}',
+				'abstract class L {\n  abstract m(): void; /* c */\n  abstract p: T; /* c */\n  abstract accessor q: T; /* c */\n}',
+			],
+			[
+				'class K {\n  m(): void /* c */;\n  n() /* c */;\n  constructor(a: string) /* c */;\n  get g(): T /* c */;\n}',
+				'class K {\n  m(): void; /* c */\n  n(); /* c */\n  constructor(a: string); /* c */\n  get g(): T; /* c */\n}',
+			],
+			[
+				'declare class D {\n  m(): void /* c */;\n  p: T /* c */;\n}',
+				'declare class D {\n  m(): void; /* c */\n  p: T; /* c */\n}',
+			],
+			[
+				'class K {\n  a = 1 /* c */; b = 2;\n  m(): void /* c */; n(): void;\n}',
+				'class K {\n  a = 1; /* c */\n  b = 2;\n  m(): void; /* c */\n  n(): void;\n}',
+			],
+			['class K {\n  a = 1 /* c */\n  b = 2 /* d */;\n}', 'class K {\n  a = 1; /* c */\n  b = 2; /* d */\n}'],
+			[
+				'class K {\n  x = (a, b) /* c */;\n  y = (1 /* c */);\n  q = (a || b /* c */);\n  r = (a, b /* c */);\n  u = (a ? b : c /* c */);\n  w = <T,>(a) => a /* c */;\n}',
+				'class K {\n  x = (a, b); /* c */\n  y = 1; /* c */\n  q = a || b; /* c */\n  r = (a, b); /* c */\n  u = a ? b : c; /* c */\n  w = <T,>(a) => a; /* c */\n}',
+			],
+			['class K {\n  x = 1 /* c */ // d\n  ;\n}', 'class K {\n  x = 1; /* c */ // d\n}'],
+			[
+				'class K {\n  constructor(a: string /* c */);\n  m(a, b /* c */);\n  r(...a /* c */);\n  o(a?: string /* c */);\n}',
+				'class K {\n  constructor(a: string); /* c */\n  m(a, b); /* c */\n  r(...a); /* c */\n  o(a?: string); /* c */\n}',
+			],
+			[
+				'export type A = B /* c */;\nexport declare type A2 = B /* c */;\nexport import C = require("c") /* c */;\nexport import F = G.H /* c */;',
+				'export type A = B; /* c */\nexport declare type A2 = B; /* c */\nexport import C = require("c"); /* c */\nexport import F = G.H; /* c */',
+			],
+			['export type A = B /* c */ // d\n;', 'export type A = B; /* c */ // d'],
+			['export declare module "x" /* c */;', 'export declare module "x"; /* c */'],
+			['export type A = B | C\n// c\n;', 'export type A = B | C;\n// c'],
+			['export type A = B | C // c\n;', 'export type A = B | C; // c'],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// Prettier prints these with the comment before the `;`, or with a line
+		// break after the `=` or `:` that its next pass joins, and moves the
+		// comment after the `;` on its next pass. The formatter prints the
+		// fixpoint.
+		it.each([
+			['class K {\n  b = x + y // c\n  ;\n}', 'class K {\n  b = x + y; // c\n}'],
+			['class K {\n  c = 1 /* c */\n  ;\n}', 'class K {\n  c = 1; /* c */\n}'],
+			['class K {\n  y = 1 /* c */\n  /* d */;\n}', 'class K {\n  y = 1; /* c */\n  /* d */\n}'],
+			[
+				'class K {\n  s = a + (b /* c */);\n  t = () => (a /* c */);\n}',
+				'class K {\n  s = a + b; /* c */\n  t = () => a; /* c */\n}',
+			],
+			['class K {\n  q = (a || b // c\n  );\n}', 'class K {\n  q = a || b; // c\n}'],
+			['class K {\n  constructor(a: string) /* c */\n  ;\n}', 'class K {\n  constructor(a: string); /* c */\n}'],
+			['class K {\n  constructor(a: string /* c */\n  );\n}', 'class K {\n  constructor(a: string); /* c */\n}'],
+			[
+				'class K {\n  x: (B /* c */);\n  m(): B | (C /* c */);\n}',
+				'class K {\n  x: B; /* c */\n  m(): B | C; /* c */\n}',
+			],
+			['export type A = (B /* c */);', 'export type A = B; /* c */'],
+			['export type A = B | (C /* c */);', 'export type A = B | C; /* c */'],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['class K {\n  a = 1 // c\n  ;\n  m(): void // c\n  ;\n  n() // c\n  ;\n}', 'class K {\n  a = 1; // c\n  m(): void; // c\n  n(); // c\n}'],
+			['class K {\n  x: B | C // c\n  // d\n  ;\n}', 'class K {\n  x: B | C; // c\n  // d\n}'],
+			['class K {\n  x: B | C\n  // c\n  ;\n}', 'class K {\n  x: B | C;\n  // c\n}'],
+			['class K {\n  d = 1\n  /* c */;\n}', 'class K {\n  d = 1;\n  /* c */\n}'],
+			// A comment that breaks the line after a method signature's parameter
+			// list trails the last parameter, which prints it in the list
+			[
+				'class K {\n  constructor(a: string) // c\n  ;\n}',
+				'class K {\n  constructor(\n    a: string, // c\n  );\n}',
+			],
+			[
+				'class K {\n  constructor(a: string // c\n  );\n}',
+				'class K {\n  constructor(\n    a: string, // c\n  );\n}',
+			],
+			[
+				'class K {\n  constructor(a: string,\n  /* c */);\n}',
+				'class K {\n  constructor(\n    a: string,\n    /* c */\n  );\n}',
+			],
+			['type C = (D | E /* c */);', 'type C = D | E /* c */;'],
+		])('formats %j like Prettier, as before', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// An index signature, an interface member, a type alias or
+		// `import … = require(…)` that isn't exported, and the comments inside
+		// a call or before a method's body keep them, like Prettier
+		it.each([
+			'class K {\n  [k: string]: T /* c */;\n}',
+			'interface I {\n  a: T /* c */;\n  m(): void /* c */;\n}',
+			'class K {\n  v = f(a /* c */);\n  p(a) /* c */ {}\n}',
+			'type A = B /* c */;\nimport C = require("c") /* c */;\nexport = x /* c */;\ndeclare function h(): void /* c */;',
+			'type A = B | C /* c */;',
+			'class K {\n  d = 1;\n  /* c */\n}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// A type alias that isn't exported keeps the block comments on its
+		// value's line before its `;`, like Prettier, but a line comment there,
+		// or a comment on a line of its own before the `;`, goes after it.
+		// Prettier prints it there, but breaks a union after the `=` for it,
+		// and joins the union on its next pass, when the comment trails the
+		// type alias. It trailed the union, which broke the same way (#681).
+		it.each([
+			['type A = B | C // c\n;', 'type A = B | C; // c'],
+			[
+				'type AssignableValue = AggregateError | Error | Iterable<unknown> // c\n;',
+				'type AssignableValue = AggregateError | Error | Iterable<unknown>; // c',
+			],
+			['type C = (B | C) // c\n;', 'type C = B | C; // c'],
+			['type A = B | C /* c */ // d\n;', 'type A = B | C /* c */; // d'],
+			['type A = B | C // c\n// d\n;', 'type A = B | C; // c\n// d'],
+			['type A = B | C\n// c\n;', 'type A = B | C;\n// c'],
+			['type A = B | C\n/* c */;', 'type A = B | C;\n/* c */'],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['type A = B // c\n;\ntype A2 = B /* c */\n;', 'type A = B; // c\ntype A2 = B /* c */;'],
+			[
+				'type Long = AaaaaaaaaaaaaaaaaaaaaaaaaA | BbbbbbbbbbbbbbbbbbbbbbbbbB | CccccccccccccccccC // c\n;',
+				'type Long =\n  AaaaaaaaaaaaaaaaaaaaaaaaaA | BbbbbbbbbbbbbbbbbbbbbbbbbB | CccccccccccccccccC; // c',
+			],
+			['type S = (A\n/* c */);', 'type S = A;\n/* c */'],
+		])('formats %j like Prettier, as before', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// A comment on its own line before the `)` around the last type of a
+		// type alias or annotation, or a line comment there, broke the type,
+		// and the next format joined it, like Prettier's. It goes after the `;`
+		// at once, where Prettier's next pass puts it (#758).
+		it.each([
+			['type S = X & (A\n// c\n);', 'type S = X & A;\n// c'],
+			['let s: X & (A\n// c\n);', 'let s: X & A;\n// c'],
+			['type S = X | (A | B\n// c\n);', 'type S = X | (A | B);\n// c'],
+			['type S = X & (A | B\n// c\n);', 'type S = X & (A | B);\n// c'],
+			['type S = X & (A // c\n);', 'type S = X & A; // c'],
+			['export type S = X & (A\n// c\n);', 'export type S = X & A;\n// c'],
+			['class K {\n  s: X & (A\n  // c\n  );\n}', 'class K {\n  s: X & A;\n  // c\n}'],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
 		// Like Prettier's `printTrailingComment`, a comment after a line comment
 		// goes on a line of its own, even when it shared its line with the
 		// `;`, and a block comment after one keeps its place. The line comment
@@ -21338,6 +21516,33 @@ declare global {
     value: number;
   }
 }`);
+		});
+
+		// Like Prettier's `printExportDeclaration`, the comments in an empty
+		// export list print after `export`, with a line break after a line
+		// comment. They moved after the `;` or to the next line (#671).
+		it.each([
+			['export { /* a */ };', 'export /* a */ {};'],
+			['export {\n  // a\n};', 'export // a\n {};'],
+			['export {\n  /* a */\n};', 'export /* a */ {};'],
+			['export /* a */ {};', 'export /* a */ {};'],
+			['export type { /* a */ };', 'export /* a */ type {};'],
+			['export { /* a */ /* b */ };', 'export /* a */\n/* b */ {};'],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it('prints the comments in an empty export list without a semicolon', async () => {
+			expect(await format('export { /* a */ };', { semi: false })).toBeWithNewline(
+				'export /* a */ {}',
+			);
+		});
+
+		// With a source, the comment leads it, like Prettier
+		it('keeps the comment before the source of an empty export list', async () => {
+			expect(await format('export { /* a */ } from "a";')).toBeWithNewline(
+				'export {} from /* a */ "a";',
+			);
 		});
 
 		it('follows quote and semicolon options', async () => {

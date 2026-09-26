@@ -388,14 +388,61 @@ export function get_comment_handlers(source, comments, index = 0) {
 	]);
 
 	/**
+	 * Whether the comments right before the `;` that ends `node` print after
+	 * it: a statement that Prettier ends before its `;` (see
+	 * {@link statementsEndingBeforeSemicolon}), an exported
+	 * `import … = require(…)`, which Prettier's export ends there too, and a
+	 * class member, which Prettier's `handleMethodNameComments` gives the
+	 * comments after its last child: `a = 1 /* c *\/;` prints
+	 * `a = 1; /* c *\/` (#685).
+	 * @param {AST.Node | AST.CSS.StyleSheet} node
+	 * @returns {boolean}
+	 */
+	function endsBeforeSemicolon(node) {
+		return (
+			statementsEndingBeforeSemicolon.has(node.type) ||
+			(node.type === 'TSImportEqualsDeclaration' && /** @type {any} */ (node).isExport) ||
+			(isPropertyLike(node) && node.type !== 'TSParameterProperty')
+		);
+	}
+
+	/**
+	 * Whether a node is an export list with nothing in its braces and no
+	 * source, like `export {};`, which has no child for a comment to follow
+	 * @param {AST.Node} node
+	 * @returns {boolean}
+	 */
+	function isEmptyExportList(node) {
+		return (
+			node.type === 'ExportNamedDeclaration' &&
+			!node.declaration &&
+			!node.source &&
+			node.specifiers.length === 0
+		);
+	}
+
+	/**
 	 * The end of the keyword of a statement that is only its keyword and `;`:
 	 * `continue` or `break` without a label, `debugger`, and `return` without
-	 * an argument. Other nodes give -1.
+	 * an argument, or of the part before the `;` of another statement with no
+	 * child there: the `}` of an empty export list (see
+	 * {@link isEmptyExportList}), and the `)` of a method signature with no
+	 * parameters or return type. Other nodes give -1.
 	 * @param {AST.NodeWithLocation} node
 	 * @returns {number}
 	 */
 	function getKeywordOnlyStatementEnd(node) {
 		const statement = /** @type {any} */ (node);
+		if (isEmptyExportList(statement)) {
+			return findOutsideComments('}', node.start, node.end) + 1;
+		}
+		if (
+			statement.type === 'TSDeclareMethod' &&
+			statement.params.length === 0 &&
+			!statement.returnType
+		) {
+			return findOutsideComments(')', node.start, node.end) + 1;
+		}
 		const keyword =
 			(statement.type === 'ContinueStatement' && !statement.label && 'continue') ||
 			(statement.type === 'BreakStatement' && !statement.label && 'break') ||
@@ -423,7 +470,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * ends a declarator, the comments on the node's line trail the declarator,
 	 * which prints them after the `,`: Prettier prints
 	 * `const x = (a, b // c⏎), y;` with the line comment after the `,`, and
-	 * breaks the sequence with it, which its next pass joins (#677).
+	 * breaks the sequence with it, which its next pass joins (#677). A class
+	 * member, whose `;` Prettier doesn't leave out, takes the comments before
+	 * it too (`handleMethodNameComments`), and so does an exported declaration
+	 * that holds the export's `;`, like a type alias (#685). Before the `)`
+	 * around a type, they print after it, like Prettier, whose next pass
+	 * moves them after the `;`, and so do the ones on lines of their own
+	 * there, which break the type (#758).
 	 * @param {AST.NodeWithLocation} node - The node the comment follows
 	 * @param {(AST.Node | AST.CSS.StyleSheet)[]} path - The node's ancestors
 	 * @returns {boolean} Whether it took the comments
@@ -443,20 +496,47 @@ export function get_comment_handlers(source, comments, index = 0) {
 		let index = path.length - 1;
 		while (
 			index >= 0 &&
-			!statementsEndingBeforeSemicolon.has(path[index].type) &&
+			!endsBeforeSemicolon(path[index]) &&
 			!/Statement$|Declaration$|^Program$|^(Call|New|Import)Expression$|^JSX/.test(path[index].type)
 		) {
 			index--;
 		}
+		// A class member or declaration that holds its `;`, unlike the
+		// statements that Prettier ends before it, takes the comments on lines
+		// of their own before the `;` too. Its last child would take them, and
+		// print them before the `;`, where their line break breaks the groups
+		// around them, as in Prettier, whose next pass finds them after the `;`:
+		// `x: A | B⏎// c⏎;` prints `x: A | B;⏎// c` at once, where Prettier
+		// first prints `x:⏎  A | B;⏎  // c`.
+		const holdsSemicolon = !!path[index] && !statementsEndingBeforeSemicolon.has(path[index].type);
+		// A declaration that an export ends with, like a type alias, holds the
+		// export's `;`, where Prettier ends the export (#685)
+		const exported = /** @type {(AST.Node & AST.NodeWithLocation) | undefined} */ (path[index - 1]);
+		if (
+			exported?.type === 'ExportNamedDeclaration' &&
+			holdsSemicolon &&
+			exported.end === /** @type {AST.NodeWithLocation} */ (path[index]).end &&
+			source[exported.end - 1] === ';'
+		) {
+			index--;
+		}
 		const statement = /** @type {(AST.Node & AST.NodeWithLocation) | undefined} */ (path[index]);
+		// A type alias that isn't exported keeps the block comments on its
+		// value's line before its `;`, like Prettier. Prettier prints a line
+		// comment there after the `;`, and breaks the line after the `=` for a
+		// union, and its next pass gives the comment to the type alias, where
+		// it goes at once (#681).
+		const keepsBlockComments = statement?.type === 'TSTypeAliasDeclaration';
 		const nodeEnd = keywordEnd < 0 ? node.end : keywordEnd;
 		if (
 			!comments[0] ||
 			!statement ||
-			!statementsEndingBeforeSemicolon.has(statement.type) ||
+			!(endsBeforeSemicolon(statement) || keepsBlockComments) ||
 			statement.end <= comments[0].end ||
 			// The comment must follow the node, after the parentheses that the node
-			// ends in and the comments that other nodes took
+			// ends in and the comments that other nodes took, and not lie inside
+			// the braces of an empty export list
+			nodeEnd > comments[0].start ||
 			!isBlankBetween(nodeEnd, comments[0].start, true)
 		) {
 			return false;
@@ -484,14 +564,41 @@ export function get_comment_handlers(source, comments, index = 0) {
 		// One on a line of its own moves only out of the value's parentheses
 		// before the `;`. Before a `,`, Prettier's next pass gives it to the next
 		// declarator (#750).
-		if (source.slice(nodeEnd, comments[0].start).includes('\n') && (!inParens || declarator)) {
+		if (
+			source.slice(nodeEnd, comments[0].start).includes('\n') &&
+			(!inParens || declarator) &&
+			!holdsSemicolon
+		) {
+			return false;
+		}
+		// The comments after the last parameter of a method signature, before or
+		// after the `)` of its list, lie in the member for Prettier, whose
+		// `TSEmptyBodyFunctionExpression` takes none, and go after the `;`
+		// (#794). One that breaks the line trails the parameter, and prints in
+		// the list, which breaks with it, like Prettier.
+		const endsParams = /** @type {any} */ (statement).params?.at(-1)?.end === nodeEnd;
+		if (endsParams && commentsBreakLine(comments[0], semicolon)) {
 			return false;
 		}
 		/** @type {AST.Node & AST.NodeWithLocation} */
 		let target = declarator ?? statement;
 		// Where the comments to take start in `comments`
 		let first = 0;
-		if (inParens) {
+		if (keepsBlockComments) {
+			while (
+				comments[first]?.type === 'Block' &&
+				!source.slice(nodeEnd, comments[first].start).includes('\n')
+			) {
+				first++;
+			}
+			if (
+				!comments[first] ||
+				comments[first].end > semicolon ||
+				(inParens && !closesTypeParens(comments[first], semicolon, path))
+			) {
+				return false;
+			}
+		} else if (inParens) {
 			// Only the parentheses around the statement's value may close after
 			// the comment. Any other pair, like the one in `x = !(a /* c */);`,
 			// stays, and so does the comment inside it. The value ends where the
@@ -507,7 +614,11 @@ export function get_comment_handlers(source, comments, index = 0) {
 				getParenthesizedStatementValues(statement, comment).some(
 					(value) => value.end === node.end && (value === node || path.includes(value)),
 				);
-			if (!followsValue(comments[0])) {
+			if (
+				!endsParams &&
+				!closesTypeParens(comments[0], semicolon, path) &&
+				!followsValue(comments[0])
+			) {
 				// Block comments that a line comment follows on their line stay in
 				// the parentheses, and the line comment alone may move: after a
 				// declarator's sequence value, Prettier prints
@@ -550,12 +661,14 @@ export function get_comment_handlers(source, comments, index = 0) {
 		}
 		let previousEnd = first !== 0 ? comments[first - 1].end : nodeEnd;
 		// The ones on the node's line, and, before the `;`, the ones on lines of
-		// their own before the last `)` of the value's parentheses
+		// their own before the last `)` of the value's parentheses, or, in a node
+		// that holds its `;`, all the ones before it
 		while (
 			comments[first] &&
 			comments[first].end <= semicolon &&
 			(!source.slice(previousEnd, comments[first].start).includes('\n') ||
-				(!declarator && !isBlankBetween(comments[first].end, semicolon, false)))
+				(!declarator && !isBlankBetween(comments[first].end, semicolon, false)) ||
+				holdsSemicolon)
 		) {
 			const comment = /** @type {AST.CommentWithLocation} */ (comments.splice(first, 1)[0]);
 			previousEnd = comment.end;
@@ -567,6 +680,39 @@ export function get_comment_handlers(source, comments, index = 0) {
 		}
 		// It leaves the block comments before a line comment it takes
 		return first === 0;
+	}
+
+	/**
+	 * Whether only the `)`s of the parentheses around types that end with the
+	 * node the comment follows, and whitespace and comments, sit between the
+	 * comment and `end`. The printer prints the comments in a type's
+	 * parentheses after the type after them, like Prettier, whose next pass
+	 * finds them there: `export type A = (B /* c *\/);` prints
+	 * `export type A = B /* c *\/;`, and then `export type A = B; /* c *\/`.
+	 * @param {AST.CommentWithLocation} comment
+	 * @param {number} end
+	 * @param {(AST.Node | AST.CSS.StyleSheet)[]} path - The node's ancestors
+	 * @returns {boolean}
+	 */
+	function closesTypeParens(comment, end, path) {
+		if (!isBlankBetween(comment.end, end, true)) {
+			return false;
+		}
+		let parens = 0;
+		for (
+			let i = findOutsideComments(')', comment.end, end);
+			i < end;
+			i = findOutsideComments(')', i + 1, end)
+		) {
+			parens++;
+		}
+		const typeParens = path.filter(
+			(ancestor) =>
+				ancestor.type === 'TSParenthesizedType' &&
+				/** @type {AST.NodeWithLocation} */ (ancestor).end > comment.end &&
+				/** @type {AST.NodeWithLocation} */ (ancestor).end <= end,
+		);
+		return parens > 0 && parens === typeParens.length;
 	}
 
 	/**
@@ -627,6 +773,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 			);
 		} else if (node.type === 'ExportDefaultDeclaration') {
 			candidates.push(node.declaration);
+		} else if (isPropertyLike(node)) {
+			candidates.push(node.value);
 		}
 		/** @type {(AST.Node & AST.NodeWithLocation)[]} */
 		const values = [];
@@ -895,6 +1043,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 *   prints `(<div />); /* c *\/`. The handler leaves out a comment on a
 	 *   line of its own, which trails the expression, and an element prints
 	 *   it inside those parentheses.
+	 * - After a class member's value, `handleMethodNameComments` gives it to
+	 *   the member, whatever the value: `a = (b, c /* c *\/);` prints
+	 *   `a = (b, c); /* c *\/` (#685). One on a line of its own trails the
+	 *   value, as after an expression statement's expression.
 	 * - After a sequence or assignment that is the argument of a `throw` or
 	 *   the declaration of an `export default`, which the handler leaves out,
 	 *   it trails the value, which prints it after its parentheses.
@@ -912,7 +1064,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * @returns {boolean}
 	 */
 	function movesCommentAfterParens(statement, value, comment) {
-		if (statement.type === 'ExpressionStatement' && statement.expression === value) {
+		if (
+			(statement.type === 'ExpressionStatement' && statement.expression === value) ||
+			isPropertyLike(statement)
+		) {
 			return !value.type.startsWith('JSX') || !isOwnLineComment(comment);
 		}
 		if (value.type !== 'SequenceExpression' && value.type !== 'AssignmentExpression') {
@@ -2757,6 +2912,22 @@ export function get_comment_handlers(source, comments, index = 0) {
 								end,
 							);
 							while (comments[0] && comments[0].start > open && comments[0].end < end) {
+								pushInnerComment(node, /** @type {AST.CommentWithLocation} */ (comments.shift()));
+							}
+							if (comments.length === 0) {
+								return;
+							}
+						}
+						// Like Prettier, the comments in an empty export list, up to its
+						// `}`, dangle on the declaration, which prints them after `export`:
+						// `export { /* c */ };` prints `export /* c */ {};` (#671)
+						if (isEmptyExportList(node)) {
+							const close = findOutsideComments(
+								'}',
+								/** @type {AST.NodeWithLocation} */ (node).start,
+								/** @type {AST.NodeWithLocation} */ (node).end,
+							);
+							while (comments[0] && comments[0].end <= close) {
 								pushInnerComment(node, /** @type {AST.CommentWithLocation} */ (comments.shift()));
 							}
 							if (comments.length === 0) {
