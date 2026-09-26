@@ -292,7 +292,7 @@ const Body = expanded ? ExpandedBody : CompactBody;
 <{Body} item={item} />
 \`\`\`
 
-The tag expression must resolve to an element name: an identifier, member access, static string, or a runtime expression composed of those. Calls, spreads, string concatenation, string interpolation, and static non-string literals are not valid dynamic tag expressions.
+The tag expression must be an identifier (\`tag\`), a member access including chains (\`props.as\`, \`this.tag\`, \`registry[name]\`, \`items[0]\`, where each computed key is an identifier, a string or number literal, or a member access), or a string literal (\`'section'\`). Any other expression is a compile error: a conditional, \`||\`, \`??\` or \`&&\`, parentheses and type-only wrappers (\`as\`, \`satisfies\`, \`!\`), optional member access, calls, \`new\`, spreads, string concatenation, template literals, assignments, sequences, functions, elements, and literals other than strings. A non-self-closing element repeats the expression in its closing tag, so compute anything more above the element and use the result: \`const Tag = c ? Child : Fallback;\` followed by \`<{Tag} />\`.
 
 For React host classes, use \`className\`. For Preact, Solid, Vue, and Ripple host classes, use \`class\`.
 

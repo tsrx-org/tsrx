@@ -100,20 +100,44 @@ describe('prettier-plugin', () => {
 	});
 
 	it('formats dynamic element tag expressions', async () => {
-		const input = `function App(){return <><{registry.item}/><{items[0]}/><{'section'}/><{\`article\`}/></>;}`;
+		const input = `function App(){return <><{registry.item}/><{items[0]}/><{'section'}/><{registry[props.kind]}/></>;}`;
 		const expected = `function App() {
   return (
     <>
       <{registry.item} />
       <{items[0]} />
       <{"section"} />
-      <{\`article\`} />
+      <{registry[props.kind]} />
     </>
   );
 }`;
 
 		const result = await format(input);
 		expect(result).toBeWithNewline(expected);
+	});
+
+	// A dynamic tag expression other than an identifier, a member access, or a
+	// string literal is reported (#737), but the tree is complete, so the file
+	// is formatted.
+	it('formats a file whose dynamic tag expressions are only reported', async () => {
+		const input = `export function App({ c }) @{ <main><{c?A:B}   title="t"><p>{c}</p></{c?A:B}><{getTag()}/></main> }`;
+		const expected = `export function App({ c }) @{
+  <main>
+    <{c ? A : B} title="t">
+      <p>{c}</p>
+    </{c ? A : B}>
+    <{getTag()} />
+  </main>
+}`;
+
+		const result = await format(input);
+		expect(result).toBeWithNewline(expected);
+	});
+
+	it('still rejects a file with a reported dynamic tag and another error', async () => {
+		await expect(format('export function App() @{ <{c ? A : B} /><div> }')).rejects.toThrow(
+			"Unclosed tag '<div>'. Expected '</div>' before end of template.",
+		);
 	});
 
 	it('formats a fragment code block with setup and template control flow', async () => {
@@ -22799,7 +22823,7 @@ I {}`,
 `,
 			],
 			[
-				'references in an element in a dynamic tag name',
+				'references in an element in a reported dynamic tag name',
 				`export function App() @{
   <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} />
 }

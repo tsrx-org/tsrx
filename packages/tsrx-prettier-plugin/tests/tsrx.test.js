@@ -389,6 +389,24 @@ describe('elements', () => {
 		await expectFormat(`const d = <{Tag} a="1">x</{Tag}>;`, `const d = <{Tag} a="1">x</{Tag}>;\n`);
 	});
 
+	// A dynamic tag expression other than an identifier, a member access, or a
+	// string literal is reported (#737), but the tree is complete, so the file
+	// is formatted.
+	test('dynamic tags that are only reported', async () => {
+		await expectFormat(
+			`export function App({ c }) @{ <main><{c?A:B}   title="t"><p>{c}</p></{c?A:B}><{getTag()}/></main> }`,
+			`export function App({ c }) @{
+  <main>
+    <{c ? A : B} title="t">
+      <p>{c}</p>
+    </{c ? A : B}>
+    <{getTag()} />
+  </main>
+}
+`,
+		);
+	});
+
 	test('<style> bodies are formatted as CSS, with their comments', async () => {
 		await expectFormat(
 			`function App() @{ <div><style>/* theme */ .a { color: red } .b{margin:0}</style><p class="a" /></div> }`,
@@ -531,7 +549,7 @@ describe('text keeps its characters as written', () => {
 `,
 		],
 		[
-			'references in an element in a dynamic tag name',
+			'references in an element in a reported dynamic tag name',
 			`export function App() @{
   <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} />
 }

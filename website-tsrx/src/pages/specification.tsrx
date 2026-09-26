@@ -777,11 +777,45 @@ export function SpecificationPage() @{
 							<pre class="code-block plain">
 								<code>{DYNAMIC_TAG_EXAMPLE}</code>
 							</pre>
+							<p class="section-body">The tag expression must be one of three forms:</p>
+							<ul class="spec-list">
+								<li>
+									an identifier, such as
+									<code class="inline-code">tag</code>;
+								</li>
+								<li>
+									a member access, including chains, such as
+									<code class="inline-code">props.as</code>,
+									<code class="inline-code">this.tag</code>,
+									<code class="inline-code">registry[name]</code>
+									or
+									<code class="inline-code">items[0]</code>. The chain starts at an identifier or
+									<code class="inline-code">this</code>, and each computed key is an identifier, a
+									string or number literal, or a member access;
+								</li>
+								<li>
+									a string literal, such as
+									<code class="inline-code">'section'</code>.
+								</li>
+							</ul>
 							<p class="section-body">
-								The tag expression must be able to resolve to an element name: an identifier, member
-								access, static string, or a runtime expression composed of those. Calls, spreads,
-								string concatenation, string interpolation, and static non-string literals are not
-								valid dynamic tag expressions. Forms such as
+								Any other expression parses, and is reported as an early error (5). That includes a
+								conditional,
+								<code class="inline-code">||</code>,<code class="inline-code">??</code>
+								and
+								<code class="inline-code">&&</code>, even when every branch or operand is one of the
+								three forms; parentheses and the type-only wrappers
+								<code class="inline-code">as</code>,<code class="inline-code">satisfies</code>
+								and
+								<code class="inline-code">!</code>; optional member access; calls,
+								<code class="inline-code">new</code>, string concatenation, template literals,
+								assignments and sequences; functions, elements and fragments; and every literal
+								other than a string. A non-self-closing element repeats the expression in its
+								closing tag, so anything more is computed above the element and the result used as
+								the tag:
+								<code class="inline-code">{'const Tag = c ? Child : Fallback;'}</code>
+								followed by
+								<code class="inline-code">{'<{Tag} />'}</code>. Forms such as
 								<code class="inline-code">{'<@tag />'}</code>
 								and
 								<code class="inline-code">{'<@Component />'}</code>
@@ -1184,6 +1218,13 @@ export function SpecificationPage() @{
 									points described in 4.3.1.
 								</li>
 								<li>Opening and closing tags for TSRX elements and fragments must match.</li>
+								<li>
+									A dynamic tag expression must be one of the three forms listed in 4.3; any other
+									expression is
+									<code class="inline-code">tsrx-dynamic-tag-expression</code>, reported once for
+									each element at the part of the expression that isn't one of them. The check
+									doesn't change the parse.
+								</li>
 								<li>
 									A JSXCodeBlock or template control-flow block that contains TypeScript setup
 									statements and rendered output must place those statements before the output node

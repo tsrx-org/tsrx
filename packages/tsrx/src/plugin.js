@@ -10,7 +10,10 @@ import { parse_style } from './parse/style.js';
 import { regex_newline_characters, regex_not_whitespace } from './utils/patterns.js';
 import { error } from './errors.js';
 import { DIAGNOSTIC_CODES } from './diagnostics.js';
-import { TSRX_RETURN_STATEMENT_ERROR } from './analyze/validation.js';
+import {
+	TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
+	TSRX_RETURN_STATEMENT_ERROR,
+} from './analyze/validation.js';
 import { is_tsrx_render_output_node } from './utils/ast.js';
 
 /**
@@ -412,32 +415,62 @@ function get_line_info(parser, offset) {
 	return new acorn.Position(low + 1, offset - starts[low]);
 }
 
-// Transparent wrappers to look through when validating a dynamic tag
-// expression (`<{expr}>`), and syntax that disqualifies one outright.
-const DYNAMIC_TAG_WRAPPER_TYPES = new Set([
-	'TSAsExpression',
-	'TSTypeAssertion',
-	'TSNonNullExpression',
-	'ParenthesizedExpression',
-	'ChainExpression',
-]);
-const DYNAMIC_TAG_DISALLOWED_TYPES = new Set([
-	'SpreadElement',
-	'ExperimentalSpreadProperty',
-	'ObjectExpression',
-	'ArrayExpression',
-	'CallExpression',
-	'NewExpression',
-	'TaggedTemplateExpression',
-]);
+/**
+ * The part of a dynamic tag expression (`<{expr}>`) that isn't one of the
+ * allowed forms, or `null` when the whole expression is one: an identifier, a
+ * member access (`props.as`, `this.tag`, `registry[name]`, `items[0]`), or a
+ * string literal. A non-self-closing element repeats the expression in its
+ * closing tag, so anything more, parentheses and type-only wrappers included,
+ * is computed above the element instead (`const Tag = c ? A : B;`).
+ * @param {AST.Node} node
+ * @returns {AST.Node | null}
+ */
+function find_invalid_dynamic_tag_part(node) {
+	if (node.metadata?.parenthesized) return node;
+	if (node.type === 'Identifier') return node.name === 'undefined' ? node : null;
+	if (node.type === 'Literal') return typeof node.value === 'string' ? null : node;
+	// `a?.b` is a `ChainExpression`, so a member access here is never optional.
+	if (node.type !== 'MemberExpression') return node;
+	// A chain starts at an identifier or `this`.
+	const object = node.object;
+	const invalid_object =
+		object.type === 'Identifier' || object.type === 'MemberExpression'
+			? find_invalid_dynamic_tag_part(object)
+			: object.type !== 'ThisExpression' || object.metadata?.parenthesized
+				? object
+				: null;
+	if (invalid_object || !node.computed) return invalid_object;
+	// A computed key is an identifier, a string or number literal, or a member
+	// access.
+	const key = node.property;
+	if (key.metadata?.parenthesized) return key;
+	if (key.type === 'Identifier') return null;
+	if (key.type === 'Literal') {
+		return typeof key.value === 'string' || typeof key.value === 'number' ? null : key;
+	}
+	if (key.type === 'MemberExpression') return find_invalid_dynamic_tag_part(key);
+	return key;
+}
 
 /**
- * The expression wrappers a dynamic tag (`<{expr}>`) may be written through.
- * @param {AST.Node} node
- * @returns {node is AST.TSAsExpression | AST.TSTypeAssertion | AST.TSNonNullExpression | AST.ParenthesizedExpression | AST.ChainExpression}
+ * Where `node` ends, after the parentheses around it that a parse without
+ * `preserveParens` leaves out of its range (see
+ * `parseParenAndDistinguishExpression`).
+ * @param {string} input
+ * @param {AST.Node & AST.NodeWithLocation} node
  */
-function is_dynamic_tag_wrapper(node) {
-	return DYNAMIC_TAG_WRAPPER_TYPES.has(node.type);
+function end_after_parentheses(input, node) {
+	let end = node.end;
+	const paren_start = node.metadata?.paren_start;
+	if (paren_start === undefined) return end;
+	for (let i = paren_start; i !== -1 && i < node.start;) {
+		if (input.charCodeAt(i) !== CharCode.openParen) break;
+		i = skip_space_and_comments_from(input, i + 1);
+		const close = skip_space_and_comments_from(input, end);
+		if (close === -1 || input.charCodeAt(close) !== CharCode.closeParen) break;
+		end = close + 1;
+	}
+	return end;
 }
 
 // TypeScript's message for a missing `}` (TS1005). The parser reports it in
@@ -5795,56 +5828,6 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Dynamic tag expressions must be able to resolve to an element name:
-			 * an identifier, member access, static string, or a runtime expression
-			 * composed of those. Constructed values (calls, spreads, concatenation,
-			 * interpolation, object/array literals) and static non-string literals
-			 * can never be valid tag names.
-			 * @param {AST.Node | null | undefined} expression
-			 * @returns {boolean}
-			 */
-			#isValidDynamicTagExpression(expression) {
-				let node = expression;
-				while (node && is_dynamic_tag_wrapper(node)) {
-					node = node.expression;
-				}
-				if (!node || node.type.startsWith('JSX')) return false;
-				if (node.type === 'Identifier') return node.name !== 'undefined';
-				if (node.type === 'Literal') return typeof node.value === 'string';
-				if (node.type === 'UnaryExpression' && node.operator === 'void') return false;
-				return !this.#containsDisallowedDynamicTagSyntax(node);
-			}
-
-			/**
-			 * Walks every property of the tag expression, so it receives whatever the
-			 * AST holds — nodes, arrays of nodes, and the primitives in between.
-			 * @param {unknown} node
-			 * @param {Set<unknown>} [seen]
-			 * @returns {boolean}
-			 */
-			#containsDisallowedDynamicTagSyntax(node, seen = new Set()) {
-				if (!node || typeof node !== 'object' || seen.has(node)) return false;
-				seen.add(node);
-				if (Array.isArray(node)) {
-					return node.some((child) => this.#containsDisallowedDynamicTagSyntax(child, seen));
-				}
-				const ast_node = /** @type {AST.Node} */ (node);
-				if (
-					DYNAMIC_TAG_DISALLOWED_TYPES.has(ast_node.type) ||
-					(ast_node.type === 'TemplateLiteral' && ast_node.expressions.length > 0) ||
-					(ast_node.type === 'BinaryExpression' && ast_node.operator === '+')
-				) {
-					return true;
-				}
-				for (const key of Object.keys(ast_node)) {
-					if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
-					const value = /** @type {Record<string, unknown>} */ (ast_node)[key];
-					if (this.#containsDisallowedDynamicTagSyntax(value, seen)) return true;
-				}
-				return false;
-			}
-
-			/**
 			 * Acorn allows an expression after a name only for `of` and `yield`.
 			 * Where `await` is a keyword (an async function, or the module top level),
 			 * it is a unary operator like `yield`, so the token after it starts an
@@ -7408,23 +7391,49 @@ export function TSRXPlugin(config) {
 				return this.finishNode(node, 'JSXIdentifier');
 			}
 
+			/**
+			 * A dynamic tag name, `{ AssignmentExpression }`. A spread or an empty
+			 * container is no expression, so it can't be read as a tag at all. Which
+			 * expressions make a valid tag is checked once per element, at the
+			 * opening tag (see `#reportInvalidDynamicTag`).
+			 */
 			#parseJSXDynamicElementName() {
 				const container = this.jsx_parseExpressionContainer();
 				if (
 					container.type === 'JSXSpreadChild' ||
-					!this.#isValidDynamicTagExpression(container.expression)
+					container.expression.type === 'JSXEmptyExpression'
 				) {
 					this.raise(
 						/** @type {number} */ (
 							container.type === 'JSXSpreadChild'
 								? container.start
-								: (container.expression?.start ?? container.start)
+								: (container.expression.start ?? container.start)
 						),
-						'Dynamic element names must be an identifier, member expression, static string, or runtime expression; calls, spreads, string concatenation, string interpolation, and static null, undefined, boolean, number, object, and array literals are not valid tag names.',
+						TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
 					);
 				}
 				container.isDynamic = true;
 				return container;
+			}
+
+			/**
+			 * Report a dynamic tag expression that isn't an allowed form (see
+			 * `find_invalid_dynamic_tag_part`) at its invalid part. The check doesn't
+			 * change the parse: collecting records the error and goes on, and a
+			 * strict parse throws it. The closing tag repeats the expression, so only
+			 * the opening tag is checked.
+			 * @param {ESTreeJSX.JSXExpressionContainer} name
+			 */
+			#reportInvalidDynamicTag(name) {
+				const invalid = find_invalid_dynamic_tag_part(/** @type {AST.Node} */ (name.expression));
+				if (!invalid) return;
+				const node = /** @type {AST.Node & AST.NodeWithLocation} */ (invalid);
+				this.#report_recoverable_error_range(
+					node.metadata?.paren_start ?? node.start,
+					end_after_parentheses(this.input, node),
+					TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
+					DIAGNOSTIC_CODES.DYNAMIC_TAG_EXPRESSION,
+				);
 			}
 
 			/**
@@ -8106,6 +8115,7 @@ export function TSRXPlugin(config) {
 				if (nodeName) node.name = nodeName;
 				if (this.#isDynamicJSXElementName(nodeName)) {
 					node.isDynamic = true;
+					this.#reportInvalidDynamicTag(nodeName);
 				}
 				if (this.match(tt.relational) || this.match(tt.bitShift)) {
 					const typeArguments = this.tsTryParseAndCatch(() =>
