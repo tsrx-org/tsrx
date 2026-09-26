@@ -9,6 +9,8 @@ export const DIAGNOSTIC_CODES = {
 	FORGOTTEN_STATEMENT_CONTAINER: 'tsrx-forgotten-statement-container',
 	/** A JSX spread child (`{...items}`), which parses but no target supports. */
 	JSX_SPREAD_CHILD: 'tsrx-jsx-spread-child',
+	/** A dynamic tag expression (`<{expr}>`) other than an identifier, a member access, or a string literal. */
+	DYNAMIC_TAG_EXPRESSION: 'tsrx-dynamic-tag-expression',
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'tsrx-style-apply-value',
 	/** An `apply` entry is not an identifier, member, or array of those, or does not resolve to a style block. */

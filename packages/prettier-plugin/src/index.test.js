@@ -100,20 +100,32 @@ describe('prettier-plugin', () => {
 	});
 
 	it('formats dynamic element tag expressions', async () => {
-		const input = `function App(){return <><{registry.item}/><{items[0]}/><{'section'}/><{\`article\`}/></>;}`;
+		const input = `function App(){return <><{registry.item}/><{items[0]}/><{'section'}/><{registry[props.kind]}/></>;}`;
 		const expected = `function App() {
   return (
     <>
       <{registry.item} />
       <{items[0]} />
       <{"section"} />
-      <{\`article\`} />
+      <{registry[props.kind]} />
     </>
   );
 }`;
 
 		const result = await format(input);
 		expect(result).toBeWithNewline(expected);
+	});
+
+	// Dynamic tag expressions must be an identifier, a member access, or a
+	// string literal (#737). Formatting propagates the strict parser's error.
+	it.each([
+		'export function App({ c }) @{ <main><{c?A:B} title="t"><p>{c}</p></{c?A:B}></main> }',
+		'export function App() @{ <{getTag()}/> }',
+		'export function App() @{ <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} /> }',
+	])('rejects an invalid dynamic tag in %j', async (input) => {
+		await expect(format(input)).rejects.toMatchObject({
+			code: 'tsrx-dynamic-tag-expression',
+		});
 	});
 
 	it('formats a fragment code block with setup and template control flow', async () => {
@@ -23401,9 +23413,8 @@ I {}`,
 		// failed after a child container (#694). In an element in a spread
 		// argument or an unbraced attribute value in a container, character
 		// references were printed decoded: `&#123;x&#125;` became `{x}` (#693).
-		// Since #656 those are template text; only an element in a dynamic tag
-		// name is read that way. A text prints from its `raw`, the text as
-		// written.
+		// Since #656 those are template text. A text prints from its `raw`, the
+		// text as written.
 		it.each([
 			[
 				'a `>` in an element in a container',
@@ -23451,13 +23462,6 @@ I {}`,
 				'a `>` first in an unbraced attribute value in a container',
 				`export function App() @{
   <main>{c && <div title=<b>> b &#123;x&#125;</b> />}</main>
-}
-`,
-			],
-			[
-				'references in an element in a dynamic tag name',
-				`export function App() @{
-  <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} />
 }
 `,
 			],
