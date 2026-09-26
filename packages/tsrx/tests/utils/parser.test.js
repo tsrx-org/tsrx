@@ -9962,9 +9962,133 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 					'{ a }?',
 				],
 			],
-			throws: 'Unexpected token (1:10)',
+			// The arrow function's own error, past its `=>` (#703).
+			throws:
+				'A binding pattern parameter cannot be optional in an implementation signature. (1:15)',
 			pick: arrow_parameters,
 			match: [{ type: 'ObjectPattern', optional: true }],
+		},
+		// An async arrow function's optional rest parameter (#702), which acorn
+		// reads as a spread among the arguments of `async (…)`.
+		{
+			source: 'const f = async (...a?: number[]) => a;',
+			errors: [['A rest parameter cannot be optional.', '?:']],
+			throws: 'A rest parameter cannot be optional. (1:21)',
+			valid: 'declare function f(...a?: number[]): void;',
+			pick: arrow_parameters,
+			pickValid: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'TSDeclareFunction').params,
+		},
+		{
+			source: `const g = async (
+	x,
+	...[a] /* rest */ ?
+) => x;`,
+			errors: [['A rest parameter cannot be optional.', '?\n']],
+			throws: 'A rest parameter cannot be optional. (3:19)',
+			pick: arrow_parameters,
+			match: [
+				{ type: 'Identifier', name: 'x' },
+				{ type: 'RestElement', argument: { type: 'ArrayPattern' }, optional: true },
+			],
+		},
+		// A parameter's default in a function or constructor type, or in a
+		// method, call, or construct signature (#705, TS2371). The tree keeps it,
+		// as typescript-estree's does.
+		{
+			source: 'type F = (a = 1) => void;',
+			errors: [
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'a = 1',
+				],
+			],
+			throws:
+				'A parameter initializer is only allowed in a function or constructor implementation. (1:10)',
+			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
+			match: [
+				{
+					type: 'AssignmentPattern',
+					left: { type: 'Identifier', name: 'a' },
+					right: { type: 'Literal', value: 1 },
+				},
+			],
+		},
+		{
+			source: `interface I {
+	m(a: number = 1): void;
+	(b = 2): void;
+	new ({ c }: { c: number } = { c: 3 }): I;
+}`,
+			errors: [
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'a: number = 1',
+				],
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'b = 2',
+				],
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'{ c }',
+				],
+			],
+			throws:
+				'A parameter initializer is only allowed in a function or constructor implementation. (2:3)',
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'TSInterfaceDeclaration').body.body,
+			match: [
+				{
+					type: 'TSMethodSignature',
+					parameters: [
+						{
+							type: 'AssignmentPattern',
+							left: { type: 'Identifier', name: 'a', typeAnnotation: { type: 'TSTypeAnnotation' } },
+						},
+					],
+				},
+				{
+					type: 'TSCallSignatureDeclaration',
+					parameters: [{ type: 'AssignmentPattern', left: { name: 'b' } }],
+				},
+				{
+					type: 'TSConstructSignatureDeclaration',
+					parameters: [{ type: 'AssignmentPattern', left: { type: 'ObjectPattern' } }],
+				},
+			],
+		},
+		{
+			source: 'let f: new ([a]?: number[], b = 2) => object;',
+			errors: [
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'b = 2',
+				],
+			],
+			throws:
+				'A parameter initializer is only allowed in a function or constructor implementation. (1:28)',
+		},
+		{
+			// TypeScript reports both at the parameter.
+			source: 'type F = (public x = 1) => void;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'public x = 1',
+				],
+			],
+			// acorn-typescript reads `(public x` as a parenthesized type.
+			throws: 'Unexpected token (1:17)',
+			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
+			match: [
+				{
+					type: 'TSParameterProperty',
+					accessibility: 'public',
+					parameter: { type: 'AssignmentPattern', left: { name: 'x' } },
+				},
+			],
 		},
 	];
 
