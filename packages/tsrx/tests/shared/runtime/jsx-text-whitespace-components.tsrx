@@ -338,3 +338,98 @@ export const jsx_text_nbsp_cases = [
 		'<b>x</b><i></i>',
 	],
 ] as const;
+
+function SwitchCharacters(props: { kind: string }) @{
+	@switch (props.kind) {
+		@case 'a': {
+			<span class="ch-switch">a > b</span>
+		}
+	}
+}
+
+// The cases select the element in a container: the targets render the
+// container's own slot differently.
+function charactersInFunction(show: boolean) {
+	return <span>{show && <b class="ch-function">a > b</b>}</span>;
+}
+
+/**
+ * Text with characters that JSX text can't hold, or with character
+ * references, in each place an element's text is read. What renders is what
+ * the same TSX renders, with a `>` read as `&gt;`.
+ */
+export function JsxTextCharactersApp() @{
+	const show = true;
+	const setup = <span class="ch-setup">{'1'} a > b</span>;
+
+	<>
+		<span class="ch-template">1 < 2 > 0 &amp;lt; &#123;x&#125; &gt;</span>
+		<span class="ch-template-after-tag">
+			<b />a > b
+		</span>
+		<div>{show && <span class="ch-container">a > b</span>}</div>
+		<div>{show && <span class="ch-container-first">> b</span>}</div>
+		<div>{show && <span class="ch-container-arrow">a => b</span>}</div>
+		<div>
+			{show && (
+				<span class="ch-container-after-tag">
+					<b />a > b
+				</span>
+			)}
+		</div>
+		<div>{show && <span class="ch-container-after-container">{'1'} a > b</span>}</div>
+		<Slot content={<span class="ch-attr">a > b &#123;x&#125;</span>} />
+		<Slot content=<span class="ch-attr-unbraced">> b &#123;x&#125; &amp;lt;</span> />
+		<div>
+			{show && (
+				<Slot
+					content=<span class="ch-attr-unbraced-container">&#123;x&#125; &amp;lt; &gt; a > b</span>
+				/>
+			)}
+		</div>
+		<Slot {...{ content: <span class="ch-spread">&#123;x&#125; &amp;lt; &gt; a > b</span> }} />
+		<div>
+			@if (show) {
+				<span class="ch-if">a > b</span>
+			}
+		</div>
+		<div>
+			@for (const item of ['a']) {
+				<span class="ch-for">{item} > b</span>
+			}
+		</div>
+		<SwitchCharacters kind="a" />
+		<div>{setup}</div>
+		<div>{charactersInFunction(show)}</div>
+	</>
+}
+
+/**
+ * The text each case renders.
+ */
+export const jsx_text_character_cases = [
+	['`<`, `>`, and character references in a template', '.ch-template', '1 < 2 > 0 &lt; {x} >'],
+	['a `>` after a tag in a template', '.ch-template-after-tag', 'a > b'],
+	['a `>` in an element in a container', '.ch-container', 'a > b'],
+	['a `>` first in an element in a container', '.ch-container-first', '> b'],
+	['an arrow in an element in a container', '.ch-container-arrow', 'a => b'],
+	['a `>` after a tag in an element in a container', '.ch-container-after-tag', 'a > b'],
+	[
+		'a `>` after a child container in an element in a container',
+		'.ch-container-after-container',
+		'1 a > b',
+	],
+	['a `>` and a reference in an attribute value', '.ch-attr', 'a > b {x}'],
+	['a `>` and references in an unbraced attribute value', '.ch-attr-unbraced', '> b {x} &lt;'],
+	[
+		'references and a `>` in an unbraced attribute value in a container',
+		'.ch-attr-unbraced-container',
+		'{x} &lt; > a > b',
+	],
+	["references and a `>` in a spread attribute's argument", '.ch-spread', '{x} &lt; > a > b'],
+	['a `>` in an @if body', '.ch-if', 'a > b'],
+	['a `>` in an @for body', '.ch-for', 'a > b'],
+	['a `>` in an @switch case', '.ch-switch', 'a > b'],
+	['a `>` in a setup statement', '.ch-setup', '1 a > b'],
+	['a `>` in a container in a function', '.ch-function', 'a > b'],
+] as const;
