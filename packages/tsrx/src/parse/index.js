@@ -632,14 +632,19 @@ export function get_comment_handlers(source, comments, index = 0) {
 		const values = [];
 		for (const value of candidates) {
 			let candidate = value;
-			let isArrowBody = false;
+			/** @type {(AST.Node & AST.NodeWithLocation) | null} */
+			let arrow = null;
 			while (candidate?.type === 'ArrowFunctionExpression') {
+				arrow = candidate;
 				candidate = /** @type {AST.Node & AST.NodeWithLocation} */ (candidate.body);
-				isArrowBody = true;
 			}
-			// Whether the conditional body prints in parentheses around it
+			const isArrowBody = arrow !== null;
+			// Whether the conditional body prints in parentheses around it. The
+			// comments after the arrow function don't break it.
 			const inBodyParens =
-				isArrowBody && candidate?.type === 'ConditionalExpression' && !commentsBreakLine(comment);
+				arrow !== null &&
+				candidate?.type === 'ConditionalExpression' &&
+				!commentsBreakLine(comment, arrow.end);
 			if (
 				candidate?.metadata?.parenthesized &&
 				(isArrowBody
@@ -660,16 +665,19 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 	/**
 	 * Whether `comment` or a comment after it, before the next code other
-	 * than `)`, is a line comment or on a line of its own, which prints with a
-	 * line break that breaks the groups around it
+	 * than `)` and before `end`, is a line comment or on a line of its own,
+	 * which prints with a line break that breaks the groups around it
 	 * @param {AST.CommentWithLocation} comment
+	 * @param {number} end
 	 * @returns {boolean}
 	 */
-	function commentsBreakLine(comment) {
+	function commentsBreakLine(comment, end) {
 		for (
-			let index = comments.indexOf(comment), end = comment.start;
-			comments[index] && isBlankBetween(end, comments[index].start, true);
-			end = comments[index++].end
+			let index = comments.indexOf(comment), previousEnd = comment.start;
+			comments[index] &&
+			comments[index].end <= end &&
+			isBlankBetween(previousEnd, comments[index].start, true);
+			previousEnd = comments[index++].end
 		) {
 			if (comments[index].type === 'Line' || isOwnLineComment(comments[index])) {
 				return true;

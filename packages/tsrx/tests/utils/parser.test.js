@@ -7533,10 +7533,13 @@ describe('comments placed like Prettier', () => {
 	// doesn't break, and a JSX mode branch when it does
 	it('keeps a comment in the parentheses a conditional prints around its alternate or itself', () => {
 		const arrow = firstStatement('const f = () => a ? b : (c /* c */);');
+		const after = firstStatement('const f = () => a ? b : (c /* c */) // d\n;');
 		const jsx = firstStatement('const x = a ? <div /> : (c // c\n);');
 
 		expect(commentsOf(arrow).trailing).toBeUndefined();
 		expect(commentsOf(arrow.declarations[0].init.body.alternate).trailing).toEqual([' c ']);
+		expect(commentsOf(after).trailing).toEqual([' d']);
+		expect(commentsOf(after.declarations[0].init.body.alternate).trailing).toEqual([' c ']);
 		expect(commentsOf(jsx).trailing).toBeUndefined();
 		expect(commentsOf(jsx.declarations[0].init.alternate).trailing).toEqual([' c']);
 	});

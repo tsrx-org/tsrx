@@ -18878,13 +18878,28 @@ for (
 			['const f = () => a ? b : (c /* c */ // d\n);', 'const f = () => (a ? b : c); /* c */ // d'],
 			['export default () => a ? b : (c // c\n);', 'export default () => (a ? b : c); // c'],
 			['const f = () => a || (b ? c : (d /* c */));', 'const f = () => a || (b ? c : d); /* c */'],
+			[
+				'const f = () => (a ? b : (c /* c */) // d\n);',
+				'const f = () => (a ? b : c); /* c */ // d',
+			],
 		])('formats %j in one pass', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
 		});
 
 		it.each([
-			// In the parentheses around an arrow function's conditional body
+			// In the parentheses around an arrow function's conditional body,
+			// which the comments after the arrow function don't break
 			['const f = () => a ? b : (c /* c */);', 'const f = () => (a ? b : c /* c */);'],
+			['const f = () => a ? b : (c /* c */) // d\n;', 'const f = () => (a ? b : c /* c */); // d'],
+			['const f = () => (a ? b : c /* c */) // d\n;', 'const f = () => (a ? b : c /* c */); // d'],
+			[
+				'const f = (() => a ? b : (c /* c */) // d\n);',
+				'const f = () => (a ? b : c /* c */); // d',
+			],
+			[
+				'const f = () => a ? b : (c /* c */)\n// d\n;',
+				'const f = () => (a ? b : c /* c */);\n// d',
+			],
 			// In the parentheses a conditional in JSX mode prints a branch in
 			[
 				'const x = a ? <div /> : (<span /> // c\n);',
