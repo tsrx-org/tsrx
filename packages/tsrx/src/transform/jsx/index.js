@@ -4538,27 +4538,33 @@ export function wrap_edge_whitespace(nodes) {
 			out.push(node);
 			continue;
 		}
+		// The whitespace is read from the text as written, which the output
+		// prints, and taken off both forms of the text: spaces and tabs are the
+		// same in each.
 		let value = /** @type {string} */ (node.value);
+		let raw = node.raw ?? value;
 		if (at_start) {
-			const lead = LEADING_INLINE_WHITESPACE.exec(value);
-			if (lead && !is_newline_char(value[lead[0].length])) {
+			const lead = LEADING_INLINE_WHITESPACE.exec(raw);
+			if (lead && !is_newline_char(raw[lead[0].length])) {
 				out.push(to_jsx_expression_container(b.literal(lead[0]), node));
 				value = value.slice(lead[0].length);
+				raw = raw.slice(lead[0].length);
 			}
 		}
 		/** @type {ESTreeJSX.JSXExpressionContainer | null} */
 		let trailing = null;
 		if (at_end) {
-			const trail = TRAILING_INLINE_WHITESPACE.exec(value);
-			if (trail && !is_newline_char(value[value.length - trail[0].length - 1])) {
+			const trail = TRAILING_INLINE_WHITESPACE.exec(raw);
+			if (trail && !is_newline_char(raw[raw.length - trail[0].length - 1])) {
 				trailing = to_jsx_expression_container(b.literal(trail[0]), node);
 				value = value.slice(0, value.length - trail[0].length);
+				raw = raw.slice(0, raw.length - trail[0].length);
 			}
 		}
-		if (value !== '') {
+		if (raw !== '') {
 			// keep the location as we need it for @ autocomplete
 			// and perhaps other things in the future
-			out.push(b.jsx_text(value, value, has_location(node) ? node : undefined));
+			out.push(b.jsx_text(value, raw, has_location(node) ? node : undefined));
 		}
 		if (trailing) {
 			out.push(trailing);

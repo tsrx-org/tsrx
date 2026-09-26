@@ -34,20 +34,21 @@ const JSX_TEXT_ESCAPES = { '<': '&lt;', '>': '&gt;', '{': '&#123;', '}': '&#125;
 export const regex_jsx_text_escaped = /[<>{}]/g;
 
 /**
- * A `JSXText` value is its text as written, character references included
- * (`&amp;`), which JSX reads the same way. TSRX text can also hold characters
- * that JSX text can't: a `<` or `>` in template text (`<span><3</span>`,
- * `a > b`), and braces in a raw-text `<script>` body. The target's JSX
- * toolchain rejects a bare `<` or `>` (esbuild, oxc, TypeScript) or gives no
- * output (vue-jsx-vapor), and reads a brace as a container, so each is written
- * as a character reference, which JSX decodes back to the same character. The
- * references already in the text stay as written.
+ * JSX text as the output writes it. A `JSXText` node's `raw` is its text as
+ * written, character references included (`&amp;`), and JSX reads it the same
+ * way; `value` is what it renders, with the references decoded. TSRX text can
+ * also hold characters that JSX text can't: a `<` or `>` in template text
+ * (`<span><3</span>`, `a > b`), and braces in a raw-text `<script>` body. The
+ * target's JSX toolchain rejects a bare `<` or `>` (esbuild, oxc, TypeScript)
+ * or gives no output (vue-jsx-vapor), and reads a brace as a container, so
+ * each is written as a character reference, which JSX decodes back to the same
+ * character. The references already in the text stay as written.
  *
- * @param {string} value
+ * @param {string} raw
  * @returns {string}
  */
-export function escape_jsx_text(value) {
-	return value.replace(regex_jsx_text_escaped, (ch) => JSX_TEXT_ESCAPES[ch]);
+export function escape_jsx_text(raw) {
+	return raw.replace(regex_jsx_text_escaped, (ch) => JSX_TEXT_ESCAPES[ch]);
 }
 
 /**
@@ -231,8 +232,11 @@ export function tsx_with_ts_locations(
 			context.visit(value.body);
 		},
 
+		// Text prints from `raw`, as JSX printers do: `value` has its character
+		// references decoded, so `&#123;x&#125;` would print as the expression
+		// `{x}`.
 		JSXText: (node, context) => {
-			context.write(escape_jsx_text(node.value), node);
+			context.write(escape_jsx_text(node.raw ?? node.value), node);
 		},
 
 		// esrap's JSXOpeningElement printer doesn't emit `typeArguments`, so generic

@@ -974,13 +974,14 @@ export function convert_source_map_to_mappings(
 				// text itself — and get_mapping_from_node just takes the first, so its generated length
 				// spans the wrong region and the editor can't map a completion's edit back to source
 				// (it then drops the item). The token resolves to the position whose generated text
-				// matches the node's value, giving a well-formed same-length mapping. TSRX keeps text
-				// verbatim in to_ts, except for the characters JSX text can't hold, which it writes
-				// as character references (`escape_jsx_text`), so the token stops before the first
-				// of them. Other text stays unmapped.
-				if (node.loc && typeof node.value === 'string' && node.value.trimStart().startsWith('@')) {
-					const escaped_at = node.value.search(regex_jsx_text_escaped);
-					const verbatim = escaped_at === -1 ? node.value : node.value.slice(0, escaped_at);
+				// matches the node's text as written, giving a well-formed same-length mapping. TSRX
+				// prints that text verbatim in to_ts, except for the characters JSX text can't hold,
+				// which it writes as character references (`escape_jsx_text`), so the token stops
+				// before the first of them. Other text stays unmapped.
+				const text = node.raw ?? node.value;
+				if (node.loc && typeof text === 'string' && text.trimStart().startsWith('@')) {
+					const escaped_at = text.search(regex_jsx_text_escaped);
+					const verbatim = escaped_at === -1 ? text : text.slice(0, escaped_at);
 					tokens.push({
 						source: verbatim,
 						generated: verbatim,

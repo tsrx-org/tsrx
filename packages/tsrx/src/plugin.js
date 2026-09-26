@@ -1338,9 +1338,11 @@ export function TSRXPlugin(config) {
 				const endLoc = get_line_info(this, index);
 				const node = /** @type {ESTreeJSX.JSXText} */ (this.startNodeAt(start, this.startLoc));
 				node.value = value;
-				node.raw = this.input.slice(start, index);
+				// The text as written, which the printers print. A comment between
+				// children isn't part of it: it is a comment, not text as in TSX.
+				node.raw = value;
 
-				if (node.raw.match(regex_newline_characters)) {
+				if (this.input.slice(start, index).match(regex_newline_characters)) {
 					this.curLine = endLoc.line;
 					this.lineStart = index - endLoc.column;
 				}
@@ -6761,11 +6763,6 @@ export function TSRXPlugin(config) {
 			 * reads nothing leaves the next token where it was, so the loop would read
 			 * it again until memory runs out; report it instead, as `parseTemplateBody`
 			 * does for template text.
-			 *
-			 * The text's `value` is its source, character references kept, as for
-			 * template text. acorn-typescript decodes them into the token's value, and
-			 * the printer, which writes `value` as JSX text, would turn `&#123;x&#125;`
-			 * into the expression `{x}`.
 			 * @type {Parse.Parser['jsx_parseText']}
 			 */
 			jsx_parseText() {
@@ -6774,7 +6771,6 @@ export function TSRXPlugin(config) {
 				if (node.end === start && this.start === start && this.type === tstt.jsxText) {
 					this.unexpected(start);
 				}
-				node.value = /** @type {string} */ (node.raw);
 				return node;
 			}
 

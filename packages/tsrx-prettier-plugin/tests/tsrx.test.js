@@ -479,13 +479,56 @@ describe('text keeps its characters as written', () => {
 	// and the text of an element in a spread argument or an unbraced attribute
 	// value in a container is read with its character references decoded (#693).
 	test.each([
-		'export function App() @{\n  <main>{c && <b>a > b</b>}</main>\n}\n',
-		'export function App() @{\n  <main>{c && <b>{y} a > b</b>}</main>\n}\n',
-		'export function App() @{\n  <main>{c && <b>a => b</b>}</main>\n}\n',
-		'export function App() @{\n  <div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />\n}\n',
-		'export function App() @{\n  <main>{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}</main>\n}\n',
-		'export function App() @{\n  <div title=<b>a &#123; @if (x) &#123;x&#125;</b> />\n}\n',
-	])('keeps the text of %j', async (source) => {
+		[
+			'a `>` in an element in a container',
+			`export function App() @{
+  <main>{c && <b>a > b</b>}</main>
+}
+`,
+		],
+		[
+			'a `>` after a child container',
+			`export function App() @{
+  <main>{c && <b>{y} a > b</b>}</main>
+}
+`,
+		],
+		[
+			'an arrow in an element in a container',
+			`export function App() @{
+  <main>{c && <b>a => b</b>}</main>
+}
+`,
+		],
+		[
+			"references in a spread attribute's argument",
+			`export function App() @{
+  <div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />
+}
+`,
+		],
+		[
+			'references in an unbraced attribute value in a container',
+			`export function App() @{
+  <main>{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}</main>
+}
+`,
+		],
+		[
+			'references in an unbraced attribute value, from a directive on',
+			`export function App() @{
+  <div title=<b>a &#123; @if (x) &#123;x&#125;</b> />
+}
+`,
+		],
+		[
+			'references and a comment in template text',
+			`export function App() @{
+  <p>a &amp; b /* c */ &#123;x&#125;</p>
+}
+`,
+		],
+	])('keeps the text of %s', async (_label, source) => {
 		await expectFormat(source, source);
 	});
 });

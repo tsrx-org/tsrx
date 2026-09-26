@@ -10493,14 +10493,15 @@ describe('the text of an element in a template', () => {
 	const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
 
 	/**
-	 * The children of the first element named `name`: each text by its value,
-	 * each element by its tag, anything else by its type.
+	 * The children of the first element named `name`: each text by its `raw` or
+	 * `value`, each element by its tag, anything else by its type.
 	 *
 	 * @param {unknown} ast
 	 * @param {string} name
+	 * @param {'raw' | 'value'} [form]
 	 * @returns {string[]}
 	 */
-	function children(ast, name) {
+	function children(ast, name, form = 'raw') {
 		const element = find_first(
 			ast,
 			(node) =>
@@ -10512,7 +10513,7 @@ describe('the text of an element in a template', () => {
 		if (!element) throw new Error(`No <${name}>`);
 		return node_children(element).map((child) =>
 			child.type === 'JSXText'
-				? child.value
+				? child[form]
 				: child.type === 'JSXElement'
 					? `<${/** @type {{ name: string }} */ (child.openingElement.name).name}>`
 					: child.type,
@@ -10522,7 +10523,9 @@ describe('the text of an element in a template', () => {
 	/**
 	 * @param {string} body
 	 */
-	const component = (body) => `export function App() @{\n\t<main>${body}</main>\n}`;
+	const component = (body) => `export function App() @{
+	<main>${body}</main>
+}`;
 
 	// In a template a `>` is text. In an element in a `{…}` container, the `>`
 	// right after a tag was read as code, dropping the text before it, and
@@ -10541,8 +10544,14 @@ describe('the text of an element in a template', () => {
 		],
 		[
 			'on its own line in a container',
-			component('{c && <b>\n\t\ta > b\n\t</b>}'),
-			['\n\t\ta > b\n\t'],
+			component(`{c && <b>
+		a > b
+	</b>}`),
+			[
+				`
+		a > b
+	`,
+			],
 		],
 		[
 			'after type arguments in a container',
@@ -10558,7 +10567,9 @@ describe('the text of an element in a template', () => {
 		],
 		[
 			'in a container in a function',
-			'function App() {\n\treturn <main>{c && <b>a > b</b>}</main>;\n}',
+			`function App() {
+	return <main>{c && <b>a > b</b>}</main>;
+}`,
 			['a > b'],
 		],
 		// It was text here before
@@ -10612,51 +10623,100 @@ describe('the text of an element in a template', () => {
 		}
 	});
 
-	// The value of text is its source, character references kept. In an element
-	// that acorn-typescript's JSX parser reads, they were decoded (#693).
-	/** @type {Array<[string, string, string[]]>} */
+	// A text's `raw` is the text as written, which the printers print, with its
+	// character references. In an element that acorn-typescript's JSX parser
+	// reads, `value` has them decoded, and the output printed it, so
+	// `&#123;x&#125;` compiled to the expression `{x}` (#693). The `value` of
+	// template text keeps them for now (#710).
+	/** @type {Array<[string, string, string[], string[] | null]>} */
 	const references = [
 		[
 			"in a spread attribute's argument",
-			'export function App() @{\n\t<div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />\n}',
+			`export function App() @{
+	<div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />
+}`,
 			['&#123;x&#125; &amp;lt; &gt;'],
+			['{x} &lt; >'],
 		],
 		[
 			'in an unbraced attribute value in a container',
 			component('{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}'),
 			['&#123;x&#125; &amp;lt; &gt;'],
+			['{x} &lt; >'],
+		],
+		[
+			'across a line break',
+			`export function App() @{
+	<div {...{ title: <b>&#123;x&#125;
+&amp;lt;</b> }} />
+}`.replaceAll('\n', '\r\n'),
+			['&#123;x&#125;\r\n&amp;lt;'],
+			['{x}\n&lt;'],
 		],
 		[
 			'in an unbraced attribute value, from a directive on',
 			component('<div title=<b>a &#123; @if (x) &#123;x&#125;</b> />'),
 			['a &#123; ', '@if (x) &#123;x&#125;'],
+			null,
 		],
-		[
-			'across a line break',
-			'export function App() @{\n\t<div {...{ title: <b>&#123;x&#125;\r\n&amp;lt;</b> }} />\n}',
-			['&#123;x&#125;\r\n&amp;lt;'],
-		],
-		// As before
 		[
 			'in a template',
 			component('<b>&#123;x&#125; &amp;lt; &gt;</b>'),
 			['&#123;x&#125; &amp;lt; &gt;'],
+			null,
 		],
 		[
 			'in an attribute value',
 			component('<div title={<b>&#123;x&#125; &amp;lt; &gt;</b>} />'),
 			['&#123;x&#125; &amp;lt; &gt;'],
+			null,
 		],
 	];
 
-	it.each(references)('keeps the character references %s', async (_label, source, expected) => {
+	it.each(references)(
+		'keeps the character references %s in `raw`',
+		async (_label, source, raw, value) => {
+			const outcomes = await parse_in_worker_with_ast(
+				modes.map((options) => ({ source, options })),
+			);
+
+			for (const [index, outcome] of outcomes.entries()) {
+				const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+				if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+				expect(outcome.errors ?? [], label).toEqual([]);
+				expect(children(outcome.ast, 'b'), label).toEqual(raw);
+				if (value) expect(children(outcome.ast, 'b', 'value'), label).toEqual(value);
+			}
+		},
+	);
+
+	// A comment between children is a comment, not text as in TSX, so it is in
+	// neither form of the text, and doesn't print as text
+	/** @type {Array<[string, string, string]>} */
+	const comments = [
+		['a block comment', component('<b>a /* c */ b</b>'), 'a  b'],
+		['a block comment in a container', component('{c && <b>a /* c */ > b</b>}'), 'a  > b'],
+		[
+			'a line comment',
+			component(`<b>
+		// c
+		a
+	</b>`),
+			`
+		
+		a
+	`,
+		],
+	];
+
+	it.each(comments)('leaves %s out of the text', async (_label, source, text) => {
 		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
 
 		for (const [index, outcome] of outcomes.entries()) {
 			const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
 			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
-			expect(outcome.errors ?? [], label).toEqual([]);
-			expect(children(outcome.ast, 'b'), label).toEqual(expected);
+			expect(children(outcome.ast, 'b'), label).toEqual([text]);
+			expect(children(outcome.ast, 'b', 'value'), label).toEqual([text]);
 		}
 	});
 });

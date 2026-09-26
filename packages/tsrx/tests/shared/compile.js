@@ -428,11 +428,15 @@ export function App() @{
 			// The output writes a `>` or `<` in text as a character reference
 			{
 				name: 'a `@`-leading child with a `>`',
-				source: 'export function App() {\n\t<div>@if > x</div>\n}',
+				source: `export function App() {
+	<div>@if > x</div>
+}`,
 			},
 			{
 				name: 'a `@`-leading child with a `<`',
-				source: 'export function App() {\n\t<div>@if < x</div>\n}',
+				source: `export function App() {
+	<div>@if < x</div>
+}`,
 			},
 		]) {
 			it(`emits a well-formed completion-only mapping for ${name}`, () => {
@@ -462,8 +466,16 @@ export function App() @{
 		it('maps a `@`-leading child with a `>` after an `@switch` to its own text', () => {
 			// The text's start also maps into the `@switch`'s output, so the mapping is
 			// found by its text, which stops before the `>` that the output escapes.
-			const source =
-				'export function App() {\n\t<div>\n\t\t@switch (k) {\n\t\t\t@case 1: {\n\t\t\t\t<b />\n\t\t\t}\n\t\t}\n\t\t@if > x\n\t</div>\n}';
+			const source = `export function App() {
+	<div>
+		@switch (k) {
+			@case 1: {
+				<b />
+			}
+		}
+		@if > x
+	</div>
+}`;
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 			const cursor = source.indexOf('@if') + 1;
 
@@ -2149,8 +2161,9 @@ export function App() @{
 		 * @param {string} body
 		 * @param {string} [before]
 		 */
-		const component = (body, before = '') =>
-			`export function App() @{\n\t${before}<main>${body}</main>\n}`;
+		const component = (body, before = '') => `export function App() @{
+	${before}<main>${body}</main>
+}`;
 
 		// A `>` is text in a template, as a `<` that can't start a tag is. JSX
 		// rejects both in text (TS1382), so each is written as a character
@@ -2186,12 +2199,18 @@ export function App() @{
 			['an @for body', component('@for (const i of c) { <b>a > b</b> }'), '<b>a &gt; b</b>'],
 			[
 				'a setup statement',
-				component('{v}', 'const v = <b>{y} a > b</b>;\n\t'),
+				component(
+					'{v}',
+					`const v = <b>{y} a > b</b>;
+	`,
+				),
 				'{y} a &gt; b</b>',
 			],
 			[
 				'a function',
-				'export function App() {\n\treturn <main>{c && <b>a > b</b>}</main>;\n}',
+				`export function App() {
+	return <main>{c && <b>a > b</b>}</main>;
+}`,
 				'<b>a &gt; b</b>',
 			],
 			[
