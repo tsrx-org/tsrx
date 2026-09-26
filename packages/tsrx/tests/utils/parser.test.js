@@ -7663,6 +7663,66 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(call.expression.right.left.arguments[0]).trailing).toEqual([' c']);
 	});
 
+	// Prettier prints these before the `;`, after the parentheses around the
+	// alternate, and its next pass moves them after it (#674)
+	it('trails the statement with a comment in the parentheses at the end of a conditional value', () => {
+		const declared = firstStatement('const x = a ? b : (c /* c */);');
+		const lineComment = firstStatement('const x = a ? b : (c // c\n);');
+		const operand = firstStatement('x = a || (b ? c : (d /* c */));');
+		const arrow = firstStatement('const f = () => a ? b : (c // c\n);');
+
+		expect(commentsOf(declared).trailing).toEqual([' c ']);
+		expect(commentsOf(declared.declarations[0].init.alternate).trailing).toBeUndefined();
+		expect(commentsOf(lineComment).trailing).toEqual([' c']);
+		expect(commentsOf(operand).trailing).toEqual([' c ']);
+		expect(commentsOf(arrow).trailing).toEqual([' c']);
+	});
+
+	// Prettier prints a conditional arrow function body in parentheses when it
+	// doesn't break, and a JSX mode branch when it does
+	it('keeps a comment in the parentheses a conditional prints around its alternate or itself', () => {
+		const arrow = firstStatement('const f = () => a ? b : (c /* c */);');
+		const after = firstStatement('const f = () => a ? b : (c /* c */) // d\n;');
+		const jsx = firstStatement('const x = a ? <div /> : (c // c\n);');
+
+		expect(commentsOf(arrow).trailing).toBeUndefined();
+		expect(commentsOf(arrow.declarations[0].init.body.alternate).trailing).toEqual([' c ']);
+		expect(commentsOf(after).trailing).toEqual([' d']);
+		expect(commentsOf(after.declarations[0].init.body.alternate).trailing).toEqual([' c ']);
+		expect(commentsOf(jsx).trailing).toBeUndefined();
+		expect(commentsOf(jsx.declarations[0].init.alternate).trailing).toEqual([' c']);
+	});
+
+	// Prettier prints it after the `;`, on a line of its own, and its next
+	// pass joins the value it breaks (#691)
+	it('trails the statement with a comment on its own line in the parentheses at the end of its value', () => {
+		const declared = firstStatement('const x = a || (b\n/* c */);');
+		const both = firstStatement('x = a + (b // c\n// d\n);');
+		const returned = firstStatement('function f() {\n  return a || (b\n  // c\n  );\n}').body
+			.body[0];
+		const element = firstStatement('(<div />\n// c\n);');
+
+		expect(commentsOf(declared).trailing).toEqual([' c ']);
+		expect(commentsOf(declared.declarations[0].init.right).trailing).toBeUndefined();
+		expect(commentsOf(both).trailing).toEqual([' c', ' d']);
+		expect(commentsOf(returned.argument).trailing).toEqual([' c']);
+		expect(commentsOf(element).trailing).toBeUndefined();
+		expect(commentsOf(element.expression).trailing).toEqual([' c']);
+	});
+
+	// Prettier prints it after the `,`, and its next pass joins the value it
+	// breaks (#677)
+	it('trails a declarator with a line comment in the parentheses at the end of its value before a ,', () => {
+		const statement = firstStatement('const x = (a, b /* c */ // d\n), y = 1;');
+		const operand = firstStatement('const x = 1, y = a || (b // d\n), z = 2;');
+		const ownLine = firstStatement('const x = a || (b\n// d\n), y = 1;');
+
+		expect(commentsOf(statement.declarations[0]).trailing).toEqual([' d']);
+		expect(commentsOf(statement.declarations[0].init.expressions[1]).trailing).toEqual([' c ']);
+		expect(commentsOf(operand.declarations[1]).trailing).toEqual([' d']);
+		expect(commentsOf(ownLine.declarations[0]).trailing).toBeUndefined();
+	});
+
 	// Prettier's next pass moves the line comment alone after the `;` (#624)
 	it('trails the statement with a line comment after block comments at the end of a parenthesized sequence', () => {
 		const statement = firstStatement('const x = (a, b /* c */ // d\n);');
