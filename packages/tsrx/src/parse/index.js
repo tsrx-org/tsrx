@@ -838,48 +838,272 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
-	 * The comments after the expression body of an arrow function called
-	 * right away or used as a tag, in the parentheses around the body that
-	 * print as nothing (see {@link keepsCommentsInArrowBodyParens}), trail
-	 * the arrow function. Prettier prints `((a) => (b /* c *\/))(1);` as
-	 * `((a) => b /* c *\/)(1);`, where its next pass finds the comment before
-	 * the `)` around the arrow function, and prints it inside those
-	 * parentheses, which break around it (`printCommentsForFunction`, see
-	 * `breakTies`) (#634).
+	 * The comments after the expression body of an arrow function, or of the
+	 * last arrow function of a chain, on the body's line in the parentheses
+	 * around the body that print as nothing (see
+	 * {@link keepsCommentsInArrowBodyParens}), when the arrow function prints
+	 * in parentheses of its own, as a callee, a tag, or a member object.
+	 * Prettier prints them before the `)` around the arrow function, where its
+	 * next passes move them. They go where those passes end (see
+	 * {@link takeCommentsAfterArrowFunctionBody}).
 	 * @param {AST.NodeWithLocation} node - The body the comment follows
 	 * @param {(AST.Node | AST.CSS.StyleSheet)[]} path - The node's ancestors
 	 * @returns {boolean} Whether it took the comments
 	 */
-	function takeCommentsInCalledArrowBody(node, path) {
+	function takeCommentsInArrowBodyParens(node, path) {
 		const body = /** @type {AST.Node & AST.NodeWithLocation} */ (node);
-		const arrow = /** @type {AST.Node & AST.NodeWithLocation} */ (path.at(-1));
-		const call = /** @type {any} */ (path.at(-2));
-		// A chain of arrow functions breaks before its last body when a comment
-		// follows it, which keeps the comment there. The comments go with the
-		// first one, on the body's line.
+		let index = path.length - 1;
+		const last = /** @type {AST.ArrowFunctionExpression & AST.NodeWithLocation} */ (path[index]);
 		if (
-			arrow?.type !== 'ArrowFunctionExpression' ||
-			arrow.body !== body ||
+			last?.type !== 'ArrowFunctionExpression' ||
+			last.body !== body ||
 			source.slice(body.end, comments[0].start).includes('\n') ||
 			!body.metadata?.parenthesized ||
 			keepsCommentsInArrowBodyParens(body) ||
-			body.type === 'ArrowFunctionExpression' ||
-			!(
-				(call?.type === 'CallExpression' && call.callee === arrow) ||
-				(call?.type === 'TaggedTemplateExpression' && call.tag === arrow)
-			) ||
-			!isBlankBetween(comments[0].end, arrow.end, true)
+			body.type === 'ArrowFunctionExpression'
 		) {
 			return false;
 		}
-		let previousEnd = body.end;
+		// The first arrow function of the chain, which prints the others. One
+		// in a JSDoc cast's parentheses prints on its own.
 		while (
-			comments[0] &&
-			comments[0].end <= arrow.end &&
-			!source.slice(previousEnd, comments[0].start).includes('\n')
+			index > 0 &&
+			isArrowChainLink(
+				/** @type {AST.Node} */ (path[index - 1]),
+				/** @type {AST.Node & AST.NodeWithLocation} */ (path[index]),
+			)
 		) {
-			previousEnd = comments[0].end;
-			addTrailingComment(arrow, /** @type {AST.CommentWithLocation} */ (comments.shift()));
+			index--;
+		}
+		const first = /** @type {AST.ArrowFunctionExpression & AST.NodeWithLocation} */ (path[index]);
+		if (!isBlankBetween(comments[0].end, first.end, true)) {
+			return false;
+		}
+		return takeCommentsAfterArrowFunctionBody(
+			first,
+			last,
+			/** @type {AST.Node} */ (path[index - 1]),
+			body.end,
+			first.end,
+		);
+	}
+
+	/**
+	 * The comments after the last body of a chain of arrow functions called
+	 * right away or used as a `new` callee, on the body's line before the `)`
+	 * around the chain, when the body prints below its `=>` (see
+	 * {@link getArrowChainBodyPlace}), as Prettier's first pass prints
+	 * them: `(\n  (a) => (b) =>\n    c /* c *\/\n)(1);`. Its next passes move
+	 * them (see {@link takeCommentsAfterArrowFunctionBody}).
+	 * @param {AST.NodeWithLocation} node - The chain's first arrow function
+	 * @param {(AST.Node | AST.CSS.StyleSheet)[]} path - The node's ancestors
+	 * @returns {boolean} Whether it took the comments
+	 */
+	function takeCommentsAfterArrowChain(node, path) {
+		const first = /** @type {AST.ArrowFunctionExpression & AST.NodeWithLocation} */ (node);
+		const call = /** @type {AST.Node} */ (path.at(-1));
+		if (
+			first.type !== 'ArrowFunctionExpression' ||
+			!isArrowChainLink(first, /** @type {any} */ (first.body)) ||
+			!(
+				(call.type === 'CallExpression' || call.type === 'NewExpression') &&
+				call.callee === first
+			) ||
+			comments[0].start < first.end ||
+			source.slice(first.end, comments[0].start).includes('\n') ||
+			getNextNonSpaceNonCommentCharacter(comments[0].end) !== ')'
+		) {
+			return false;
+		}
+		let last = /** @type {AST.ArrowFunctionExpression & AST.NodeWithLocation} */ (first.body);
+		while (isArrowChainLink(last, /** @type {any} */ (last.body))) {
+			last = /** @type {any} */ (last.body);
+		}
+		if (getArrowChainBodyPlace(/** @type {AST.Node} */ (last.body)) !== 'below') {
+			return false;
+		}
+		return takeCommentsAfterArrowFunctionBody(
+			first,
+			last,
+			call,
+			first.end,
+			getNextNonSpaceNonCommentCharacterIndex(comments[0].end),
+		);
+	}
+
+	/**
+	 * Whether `child` is the body of the arrow function `parent` and prints in
+	 * its chain, which one with a JSDoc cast doesn't
+	 * @param {AST.Node} parent
+	 * @param {AST.Node & AST.NodeWithLocation} child
+	 * @returns {boolean}
+	 */
+	function isArrowChainLink(parent, child) {
+		return (
+			parent.type === 'ArrowFunctionExpression' &&
+			parent.body === child &&
+			child.type === 'ArrowFunctionExpression' &&
+			getTypeCastEnd(child) === -1
+		);
+	}
+
+	/**
+	 * Whether a `prettier-ignore` comment before the node, or one that marks
+	 * it, keeps it as written
+	 * @param {AST.Node & AST.NodeWithMaybeComments} node
+	 * @returns {boolean}
+	 */
+	function isIgnoredNode(node) {
+		return Boolean(
+			node.metadata?.prettierIgnore ||
+			node.leadingComments?.some((comment) =>
+				isPrettierIgnoreComment(/** @type {AST.CommentWithLocation} */ (comment)),
+			),
+		);
+	}
+
+	/**
+	 * Where the last body of a chain of arrow functions that is a callee
+	 * prints, like Prettier's `shouldPutBodyOnSameLine`: an array, an object, a
+	 * sequence, a conditional, an element or other template value, and a
+	 * template literal with a line break stay on the `=>` line (`'line'`), and
+	 * any other body prints below it (`'below'`). A tagged template on one
+	 * line, or a template with a comment before it, stays on the line when the
+	 * printer formats its code as CSS, GraphQL, or Markdown, which depends on
+	 * the options and the tag, so the parser can't tell (`null`).
+	 * @param {AST.Node & AST.NodeWithMaybeComments} body
+	 * @returns {'line' | 'below' | null}
+	 */
+	function getArrowChainBodyPlace(body) {
+		const template =
+			body.type === 'TemplateLiteral'
+				? body
+				: body.type === 'TaggedTemplateExpression'
+					? body.quasi
+					: null;
+		if (
+			body.type === 'ArrayExpression' ||
+			body.type === 'ObjectExpression' ||
+			body.type === 'ArrowFunctionExpression' ||
+			body.type === 'SequenceExpression' ||
+			body.type === 'ConditionalExpression' ||
+			body.type.startsWith('JSX') ||
+			template?.quasis.some((quasi) => quasi.value.raw.includes('\n'))
+		) {
+			return 'line';
+		}
+		return body.type === 'TaggedTemplateExpression' || (template && body.leadingComments?.length)
+			? null
+			: 'below';
+	}
+
+	/**
+	 * Take the comments from `from` on, up to `end` and each on the line of
+	 * the code or comment before it, after the last body of the chain of arrow
+	 * functions from `first` to `last` (the same function when there's no
+	 * chain), when `parent` prints `first` in parentheses with more of itself
+	 * after them. Prettier prints the comments before the `)` around `first`
+	 * and moves them on its next passes. They go where those passes end:
+	 * - A function called right away or used as a tag prints them inside its
+	 *   parentheses, which break around them (Prettier's
+	 *   `printCommentsForFunction`, see `breakTies`), so they trail `first`:
+	 *   `((a) => (b /* c *\/))(1);` prints `(\n  (a) => b /* c *\/\n)(1);`
+	 *   (#634).
+	 * - A chain called right away whose body prints below its `=>` (see
+	 *   {@link getArrowChainBodyPlace}) prints them there on a line of its
+	 *   own, which the pass after that gives to the first argument:
+	 *   `((a) => (b) => (c /* c *\/))(1);` prints
+	 *   `(\n  (a) => (b) =>\n    c\n)(\n  /* c *\/\n  1,\n);` (see
+	 *   `Comment.ownLine`). With no argument, Prettier's passes never end, and
+	 *   they trail `last`, which prints them after the body, as Prettier's
+	 *   first pass does (#676).
+	 * - A `new` callee, a member object, and an arrow function before a `!`,
+	 *   `as`, `satisfies`, an operator, or a `?` print them after their
+	 *   parentheses, and the pass after that gives them to the first argument
+	 *   of a `new`: `new ((a) => (b /* c *\/))(1);` prints
+	 *   `new ((a) => b)(/* c *\/ 1);`, and `((a) => (b /* c *\/)).x;` prints
+	 *   `((a) => b) /* c *\/.x;` (#683, #760). A line comment prints at the end
+	 *   of the line, past what follows the parentheses, and trails the body,
+	 *   as before.
+	 * @param {AST.ArrowFunctionExpression} first
+	 * @param {AST.ArrowFunctionExpression} last
+	 * @param {AST.Node | undefined} parent - The parent of `first`
+	 * @param {number} from
+	 * @param {number} end
+	 * @returns {boolean} Whether `first` is in one of those places
+	 */
+	function takeCommentsAfterArrowFunctionBody(first, last, parent, from, end) {
+		const node = /** @type {any} */ (parent);
+		const isCalled =
+			(node?.type === 'CallExpression' && node.callee === first) ||
+			(node?.type === 'TaggedTemplateExpression' && node.tag === first);
+		if (
+			!isCalled &&
+			!(node?.type === 'NewExpression' && node.callee === first) &&
+			!(node?.type === 'MemberExpression' && node.object === first) &&
+			!(
+				(node?.type === 'TSNonNullExpression' ||
+					node?.type === 'TSAsExpression' ||
+					node?.type === 'TSSatisfiesExpression') &&
+				node.expression === first
+			) &&
+			!(
+				(node?.type === 'BinaryExpression' || node?.type === 'LogicalExpression') &&
+				node.left === first
+			) &&
+			!(node?.type === 'ConditionalExpression' && node.test === first)
+		) {
+			return false;
+		}
+		// `prettier-ignore` keeps a node as written, with the comments in it
+		for (let arrow = first; ; arrow = /** @type {any} */ (arrow.body)) {
+			if (isIgnoredNode(arrow) || isIgnoredNode(/** @type {AST.Node} */ (arrow.body))) {
+				return false;
+			}
+			if (arrow === last) {
+				break;
+			}
+		}
+		const place =
+			node.type === 'CallExpression' && first !== last
+				? getArrowChainBodyPlace(/** @type {AST.Node} */ (last.body))
+				: 'line';
+		if (place === null) {
+			return false;
+		}
+		let count = 0;
+		for (
+			let previousEnd = from;
+			comments[count] &&
+			comments[count].end <= end &&
+			!source.slice(previousEnd, comments[count].start).includes('\n');
+			count++
+		) {
+			previousEnd = comments[count].end;
+			if (!isCalled && comments[count].type === 'Line') {
+				return false;
+			}
+		}
+		const argument = /** @type {AST.Node | undefined} */ (node.arguments?.[0]);
+		/** @type {AST.Node} */
+		let target = first;
+		let leads = false;
+		if (node.type === 'NewExpression' && argument) {
+			target = argument;
+			leads = true;
+		} else if (place === 'below') {
+			target = argument ?? last;
+			leads = Boolean(argument);
+		}
+		for (const comment of comments.splice(0, count)) {
+			if (leads) {
+				if (node.type === 'CallExpression') {
+					comment.ownLine = true;
+				}
+				addLeadingComment(target, comment);
+			} else {
+				addTrailingComment(target, comment);
+			}
 		}
 		return true;
 	}
@@ -3058,9 +3282,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 							}
 							const operand = /** @type {AST.NodeWithLocation} */ (node);
 							if (
-								!neighbors.following &&
-								(takeCommentsBeforeOperandParens(operand, path) ||
-									takeCommentsInCalledArrowBody(operand, path))
+								(!neighbors.following &&
+									(takeCommentsBeforeOperandParens(operand, path) ||
+										takeCommentsInArrowBodyParens(operand, path))) ||
+								takeCommentsAfterArrowChain(operand, path)
 							) {
 								continue;
 							}

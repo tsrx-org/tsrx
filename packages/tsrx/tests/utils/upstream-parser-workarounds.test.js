@@ -1142,6 +1142,237 @@ describe('a call after `async (…)` followed by `=>` (acornjs/acorn#1460)', () 
 	});
 });
 
+/**
+ * The left side of the first `for…in` or `for…of` loop in `node`, without the
+ * parentheses around it.
+ * @param {unknown} node
+ * @returns {unknown}
+ */
+function loop_head(node) {
+	if (!node || typeof node !== 'object') return undefined;
+	const object = /** @type {{ type?: unknown, left?: { type: string, expression?: unknown } }} */ (
+		node
+	);
+	if (object.type === 'ForOfStatement' || object.type === 'ForInStatement') {
+		const left = object.left;
+		return left?.type === 'ParenthesizedExpression' ? left.expression : left;
+	}
+	for (const [key, value] of Object.entries(object)) {
+		if (key === 'metadata' || key === 'loc') continue;
+		const head = loop_head(value);
+		if (head) return head;
+	}
+	return undefined;
+}
+
+describe('a type assertion in a `for…in` or `for…of` head (sveltejs/acorn-typescript#148)', () => {
+	// A type assertion in an assignment target, `(a as T) = x`, parses, and
+	// TypeScript accepts one in a loop's head too. acorn converts the head with
+	// `isBinding: false`, where acorn-typescript raised `Unexpected type cast in
+	// parameter position.` in every mode: its flag means the opposite of
+	// @babel/parser's, where the code comes from. The head keeps the assertion,
+	// as an assignment target does.
+	/** @type {Array<[source: string, head: Record<string, unknown>]>} */
+	const cases = [
+		[
+			'for ((a as number) of x);',
+			{ type: 'TSAsExpression', expression: { type: 'Identifier', name: 'a' } },
+		],
+		['for (a as number of x);', { type: 'TSAsExpression' }],
+		['for ([a as number] of x);', { type: 'ArrayPattern', elements: [{ type: 'TSAsExpression' }] }],
+		[
+			'for ({ a: b! } of x);',
+			{
+				type: 'ObjectPattern',
+				properties: [{ value: { type: 'TSNonNullExpression', expression: { name: 'b' } } }],
+			},
+		],
+		['for ((a!) in {});', { type: 'TSNonNullExpression' }],
+		['for ((a satisfies unknown) of x);', { type: 'TSSatisfiesExpression' }],
+		[
+			'for ((o.a as number) of x);',
+			{ type: 'TSAsExpression', expression: { type: 'MemberExpression' } },
+		],
+		['async function f(x) { for await ((a as number) of x); }', { type: 'TSAsExpression' }],
+		[
+			`export function App() @{
+	let a;
+	for ((a as string) of ['x']) {}
+	<div>{a}</div>
+}`,
+			{ type: 'TSAsExpression' },
+		],
+	];
+
+	it('reads them in every mode, and keeps the assertion', async () => {
+		const outcomes = await parse_in_worker_with_ast(in_every_mode(cases.map(([source]) => source)));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const [source, head] = cases[Math.floor(index / PARSE_MODES.length)];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], source).toEqual([]);
+			expect(loop_head(outcome.ast), source).toMatchObject(head);
+		}
+	});
+
+	it('keeps the parentheses around one when it keeps parentheses', async () => {
+		const { ast, errors } = parse('for ((a as number) of x);');
+
+		expect(errors).toEqual([]);
+		const loop = as_type(/** @type {AST.Node} */ (ast.body[0]), 'ForOfStatement');
+		expect(loop.left).toMatchObject({
+			type: 'ParenthesizedExpression',
+			expression: { type: 'TSAsExpression' },
+		});
+	});
+});
+
+describe("a `?` or a type annotation outside an arrow function's parameters (sveltejs/acorn-typescript#149)", () => {
+	// acorn-typescript reads a `?` and a type annotation after each item of a
+	// parenthesized expression and of a call's arguments, and a type annotation
+	// after a spread among them, for an arrow function's parameters. Where no
+	// `=>` followed, the item kept them in every mode: the compile crashed on
+	// `(x: number)` and printed `f(x?)` back. TypeScript's parser rejects them.
+	// They fail now with @babel/parser's errors, at the first one.
+	const annotation = 'Did not expect a type annotation here.';
+	const unexpected = 'Unexpected token';
+	/** @type {Array<[source: string, message: string, at: string]>} */
+	const cases = [
+		['export const a = (x: number);', annotation, ': number'],
+		['export const b = (x?: number);', unexpected, '?'],
+		['export const c = (x, y?);', unexpected, '?'],
+		['export const d = f(x?);', unexpected, '?'],
+		['export const e = f(x: number);', annotation, ': number'],
+		['export const g = f(...x: number[]);', annotation, ': number'],
+		['export const h = f?.(x: number);', annotation, ': number'],
+		['export const i = f<T>(x: number);', annotation, ': number'],
+		['export const j = new F(x: number);', annotation, ': number'],
+		['export const k = [x: number];', annotation, ': number'],
+		['export const l = ([...x: number[]]);', annotation, ': number'],
+		['export const m = ({ a: (b: number) });', annotation, ': number'],
+		['@dec(x: number) class A {}', annotation, ': number'],
+		// An array literal that would be a parameter's pattern.
+		['export const n = ([x: number]) => 1;', annotation, ': number'],
+		['export const o = ([x?]) => 1;', unexpected, '?'],
+		// The arguments of `async (…)` without `=>`.
+		['export const p = async(x: number);', annotation, ': number'],
+		['export const q = async(x?);', unexpected, '?'],
+		['export const r = async(...x: number[]);', annotation, ': number'],
+		[
+			`export const s = async(x: number)
+=> x;`,
+			annotation,
+			': number',
+		],
+		[
+			`export const t = f(
+	a,
+	b?: string,
+	c: number,
+);`,
+			unexpected,
+			'?',
+		],
+		[
+			`export function App() @{
+	const u = (value: string);
+	<div>{u}</div>
+}`,
+			annotation,
+			': string',
+		],
+	];
+
+	it('throws at the first one in every mode', async () => {
+		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
+
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, message, at]) =>
+				thrown_in_every_mode(source, source.indexOf(at), message),
+			),
+		);
+	});
+
+	it("still reads arrow functions' parameters and conditional expressions", async () => {
+		const valid = [
+			'export const a = (x?: number, y: string = "") => x;',
+			'export const b = async (x?: number, ...y: string[]) => x;',
+			'export const c = <T,>(x?: T) => x;',
+			'export const d = async <T,>(x?: T): Promise<T | undefined> => x;',
+			'export const e = f((x: number) => x, async (y?) => y);',
+			'export const g = (a ? (b) : c);',
+			'export const h = a ? (b): c => d : e;',
+			'export const i = f(a ? b : c, d?.e, ...g);',
+			'export const j = [a ? b : c, ...d];',
+			`export const k = (
+	x?: number,
+	...rest: string[]
+): void => {};`,
+		];
+		const outcomes = await parse_in_worker(in_every_mode(valid));
+
+		expect(outcomes).toEqual(
+			valid.flatMap(() => [
+				{ ok: true, errors: undefined },
+				{ ok: true, errors: [] },
+				{ ok: true, errors: [] },
+			]),
+		);
+	});
+});
+
+describe("an async arrow function's rest parameter's range (sveltejs/acorn-typescript#150)", () => {
+	// acorn reads an async arrow function's parameters as the arguments of
+	// `async (…)`, and acorn-typescript set a type annotation after a spread
+	// there without moving the spread's end. So the rest parameter ended before
+	// its annotation, and the formatter, which places comments by these ranges,
+	// moved a comment before the annotation to after it. The rest parameter
+	// covers its `?` and its annotation now, as any other rest parameter does.
+	/** @type {Array<[source: string, rest: string]>} */
+	const cases = [
+		['const f = async (...a: number[]) => a;', '...a: number[]'],
+		['const g = async (x, ...a /* c */: number[]) => a;', '...a /* c */: number[]'],
+		['const h = async (...a?) => a;', '...a?'],
+		['const i = async (x, ...a?: number[]) => a;', '...a?: number[]'],
+		[
+			`const j = async (
+	x: string,
+	...rest: string[]
+): Promise<void> => {};`,
+			'...rest: string[]',
+		],
+	];
+
+	it('covers them, as without `async`', async () => {
+		// Without `async`, as a parenthesized list.
+		const sources = cases.flatMap(([source]) => [source, source.replace('async ', '')]);
+		const modes = [
+			{ collect: true, comments: [], preserveParens: true },
+			{ loose: true, comments: [] },
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const source = sources[Math.floor(index / modes.length)];
+			const [, rest] = cases[Math.floor(index / modes.length / 2)];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			const parameter = /** @type {AST.RestElement} */ (
+				first_arrow_parameters(outcome.ast)?.at(-1)
+			);
+			expect(parameter.type, source).toBe('RestElement');
+			expect(
+				source.slice(
+					/** @type {number} */ (parameter.start),
+					/** @type {number} */ (parameter.end),
+				),
+				source,
+			).toBe(rest);
+		}
+	});
+});
+
 describe('decorators on an object literal member (sveltejs/acorn-typescript#135)', () => {
 	// TypeScript's parser expects a property at the `@` (TS1136), as acorn does
 	// in an object pattern. acorn-typescript took the decorators and hung them

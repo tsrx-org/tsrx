@@ -577,6 +577,11 @@ export namespace Parse {
 		/** Whether @sveltejs/acorn-typescript is parsing an ambient (`declare`) context */
 		isAmbientContext: boolean;
 		/**
+		 * Whether @sveltejs/acorn-typescript is reading a list that can be an arrow
+		 * function's parameters: a parenthesized expression or a call's arguments
+		 */
+		maybeInArrowParameters: boolean;
+		/**
 		 * @sveltejs/acorn-typescript's record of the state a speculative parse
 		 * changes, undone when the parse is abandoned
 		 */
@@ -1144,6 +1149,35 @@ export namespace Parse {
 		shouldParseArrow(exprList: AST.Node[]): boolean;
 
 		/**
+		 * Parse an arrow function whose parameters are the items of a
+		 * parenthesized expression, after its `=>`
+		 */
+		parseParenArrowList(
+			startPos: number,
+			startLoc: AST.Position,
+			exprList: AST.Node[],
+			forInit?: ForInit,
+		): AST.ArrowFunctionExpression;
+
+		/**
+		 * Parse an async arrow function whose parameters are the arguments of
+		 * `async (…)`, after its `=>` (@sveltejs/acorn-typescript)
+		 */
+		parseSubscriptAsyncArrow(
+			startPos: number,
+			startLoc: AST.Position,
+			exprList: AST.Node[],
+			forInit?: ForInit,
+		): AST.ArrowFunctionExpression;
+
+		/**
+		 * Raise the errors recorded for an expression that becomes a pattern
+		 * @param refDestructuringErrors Error collector
+		 * @param isAssign Whether the pattern is an assignment target
+		 */
+		checkPatternErrors(refDestructuringErrors: DestructuringErrors | null, isAssign: boolean): void;
+
+		/**
 		 * Parse spread element (...expr)
 		 */
 		parseSpread(refDestructuringErrors?: DestructuringErrors): AST.SpreadElement;
@@ -1343,6 +1377,11 @@ export namespace Parse {
 		 * Parse a TypeScript return type or type predicate annotation
 		 */
 		tsParseTypeOrTypePredicateAnnotation(returnToken: TokenType): AST.TSTypeAnnotation;
+
+		/**
+		 * Parse a type annotation, from its `:`
+		 */
+		tsParseTypeAnnotation(): AST.TSTypeAnnotation;
 
 		tsParseTypeArguments(): AST.TSTypeParameterInstantiation;
 
