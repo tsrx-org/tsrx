@@ -52,6 +52,7 @@ const {
 	literalline,
 	markAsRoot,
 	dedentToRoot,
+	hardlineWithoutBreakParent,
 } = builders;
 const { replaceEndOfLine, stripTrailingHardline, willBreak, canBreak, removeLines, mapDoc } = utils;
 const { printDocToString } = doc.printer;
@@ -3360,11 +3361,15 @@ function printLeadingComments(node, allComments, options, semicolonBeforeLast, f
 			// fit. After code on its line, as in `keyof /* c */ T`, it no longer
 			// starts its line, so it breaks it only when what follows doesn't fit,
 			// as it does on the next pass: Prettier breaks it, and its next pass
-			// joins the lines.
+			// joins the lines. The parser moves some comments to where Prettier's
+			// next pass finds them on a line of their own (see `Comment.ownLine`).
 			const commentEnd = /** @type {AST.NodeWithLocation} */ (comment).end;
-			if (hasNewline(text, commentEnd)) {
+			if (comment.ownLine ? !nextComment?.ownLine : hasNewline(text, commentEnd)) {
 				const commentStart = /** @type {AST.NodeWithLocation} */ (comment).start;
-				const breaks = !isOnCodeLine && hasNewline(text, commentStart, { backwards: true });
+				const startsLine = comment.ownLine
+					? !comments[i - 1]?.ownLine
+					: hasNewline(text, commentStart, { backwards: true });
+				const breaks = !isOnCodeLine && startsLine;
 				parts.push(breaks ? hardline : line);
 
 				// Preserve a blank line before the next comment or the node
@@ -4728,11 +4733,14 @@ function printTsrxNode(node, path, options, print, args) {
 			options,
 			suppressTrailingComments,
 		);
+		const calledArrow = withComments ? null : printCalledArrowInParens(path, options, nodeContent);
 		if (withComments) {
 			nodeContent = withComments;
 			suppressTrailingComments = true;
 		}
-		if (needsParens(path, options)) {
+		if (calledArrow) {
+			nodeContent = calledArrow;
+		} else if (needsParens(path, options)) {
 			nodeContent = ['(', nodeContent, ')'];
 		}
 	}
@@ -4788,6 +4796,95 @@ function isIifeCalleeOrTag(path) {
 		(node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression') &&
 		((path.key === 'callee' && parent?.type === 'CallExpression') ||
 			(path.key === 'tag' && parent?.type === 'TaggedTemplateExpression'))
+	);
+}
+
+/**
+ * An element or other template value prints the comments after it inside the
+ * parentheses around it, which print only when it breaks (see
+ * `printTemplateInParens`). As the body of an arrow function called right
+ * away or used as a tag, or the last body of a chain of them, it's the last
+ * thing before the `)` around the function, and when it doesn't break,
+ * Prettier's next pass gives its comments to the function, which prints them
+ * inside those parentheses, and they break around them where nothing groups
+ * them (`printCommentsForFunction`): `((a) => (<div /> /* c *\/))(1);` prints
+ * `((a) => <div /> /* c *\/)(1);`, and then `(\n  (a) => <div /> /* c *\/\n)(1);`.
+ * This prints where those passes end at once (#675):
+ * - Where a group around the call doesn't break, nor do the parentheses, and
+ *   the call prints on its line.
+ * - Elsewhere, the parentheses break around the function when the call fits
+ *   on its line, and otherwise the value breaks inside its own parentheses,
+ *   which keep the comments, as Prettier's first pass does.
+ * The conditional group measures the call on its line first, where a group
+ * that always breaks, but hasn't printed yet, keeps the line breaks that
+ * depend on it out of the measure.
+ * @param {AstPath} path - The path to the arrow function
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {Doc} nodeContent - The arrow function's printed content
+ * @returns {Doc | null} The function in its parentheses, or null when it
+ *   isn't such a function
+ */
+function printCalledArrowInParens(path, options, nodeContent) {
+	const node = /** @type {AST.Node} */ (path.node);
+	if (
+		node.type !== 'ArrowFunctionExpression' ||
+		!isIifeCalleeOrTag(path) ||
+		!Number.isFinite(options.printWidth) ||
+		willBreak(nodeContent)
+	) {
+		return null;
+	}
+	const body = getArrowChainBody(path, options);
+	const bodyGroupId = templateParensGroupIds.get(body);
+	if (!bodyGroupId || !body.trailingComments?.length) {
+		return null;
+	}
+	const inParens = ['(', indent([softline, nodeContent]), softline, ')'];
+	const breakId = Symbol('break');
+	const newline = ifBreak(hardlineWithoutBreakParent, '', { groupId: breakId });
+	return ifBreak(
+		conditionalGroup([
+			// Never fits, and keeps the states after it out of `willBreak`
+			[lineSuffix(''), lineSuffixBoundary],
+			[
+				group('', { id: breakId, shouldBreak: true }),
+				'(',
+				indent([newline, nodeContent]),
+				newline,
+				')',
+			],
+			[
+				'(',
+				mapDoc(nodeContent, (doc) =>
+					typeof doc === 'object' &&
+					!Array.isArray(doc) &&
+					doc.type === 'group' &&
+					doc.id === bodyGroupId
+						? conditionalGroup([{ ...doc, break: true }])
+						: doc,
+				),
+				')',
+			],
+			inParens,
+		]),
+		inParens,
+	);
+}
+
+/**
+ * The last body of the arrow function at `path`, through the arrow functions
+ * that print in its chain (see `canPrintInArrowChain`)
+ * @param {AstPath} path - The path to the arrow function
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {AST.Node & AST.NodeWithMaybeComments}
+ */
+function getArrowChainBody(path, options) {
+	return path.call(
+		(bodyPath) =>
+			bodyPath.node.type === 'ArrowFunctionExpression' && canPrintInArrowChain(bodyPath, options)
+				? getArrowChainBody(bodyPath, options)
+				: bodyPath.node,
+		'body',
 	);
 }
 
@@ -14614,10 +14711,20 @@ function printTemplateInParens(path, options, printed) {
 					key === 'expression' && node.type === 'JSXExpressionContainer',
 			));
 	const contents = [indent([softline, printed]), softline];
-	return hasParens
-		? ['(', group(contents, { shouldBreak }), ')']
-		: group([ifBreak('('), ...contents, ifBreak(')')], { shouldBreak });
+	if (hasParens) {
+		return ['(', group(contents, { shouldBreak }), ')'];
+	}
+	const id = Symbol('template-parens');
+	templateParensGroupIds.set(/** @type {AST.Node} */ (path.node), id);
+	return group([ifBreak('('), ...contents, ifBreak(')')], { shouldBreak, id });
 }
+
+/**
+ * The id of the group that `printTemplateInParens` last printed around each
+ * template value, whose parentheses print only when it breaks
+ * @type {WeakMap<AST.Node, symbol>}
+ */
+const templateParensGroupIds = new WeakMap();
 
 /**
  * The value of an attribute string (`title="Hello"`), or `null`. A string

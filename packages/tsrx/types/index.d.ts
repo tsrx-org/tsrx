@@ -635,6 +635,15 @@ declare module 'estree' {
 		 * one it's attached to (see `BaseNodeMetaData.prettierIgnore`).
 		 */
 		unignore?: boolean;
+		/**
+		 * A comment that the parser moved to where Prettier's next pass finds
+		 * it on a line of its own, with the comments next to it that have this
+		 * flag too, so that it prints as it would there: after the last body of
+		 * a chain of arrow functions called right away, which prints below its
+		 * `=>`, Prettier prints them on the line after that body, and its next
+		 * pass gives them to the first argument.
+		 */
+		ownLine?: boolean;
 	}
 
 	// For now only ObjectExpression needs printInline

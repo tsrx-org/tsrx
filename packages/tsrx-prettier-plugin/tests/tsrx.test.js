@@ -898,6 +898,14 @@ describe('parse errors', () => {
 			['const k = async(a)(b) => 1;', 'Unexpected token (1:23)', { line: 1, column: 23 }],
 			// Prettier's typescript parser: `Expression expected. (1:31)`.
 			['const g = <T,>(x: T) => { x = ; };', 'Unexpected token (1:31)', { line: 1, column: 31 }],
+			// Prettier's typescript parser: `'=>' expected. (1:22)`.
+			[
+				'const a = (x: number);',
+				'Did not expect a type annotation here. (1:13)',
+				{ line: 1, column: 13 },
+			],
+			// Prettier's typescript parser: `Expression expected. (1:15)`.
+			['const c = f(x?);', 'Unexpected token (1:14)', { line: 1, column: 14 }],
 		]) {
 			const error = await format(/** @type {string} */ (source)).catch((/** @type {any} */ e) => e);
 			expect(error).toBeInstanceOf(SyntaxError);
@@ -965,6 +973,12 @@ describe('parse errors', () => {
 		);
 		// Prettier's typescript parser formats `let` as a name the same way.
 		await expectFormat('var let = 1;\nclass let {}', 'var let = 1;\nclass let {}\n');
+		// And a parameter after an arrow function's rest parameter.
+		await expectFormat('const f = (...a, b) => [a, b];', 'const f = (...a, b) => [a, b];\n');
+		await expectFormat(
+			'const g = async (x, ...rest: string[], y) => x;',
+			'const g = async (x, ...rest: string[], y) => x;\n',
+		);
 	});
 
 	test("mistakes Prettier's typescript parser rejects are errors, not left out", async () => {
@@ -994,6 +1008,15 @@ describe('parse errors', () => {
 				'const f = (a: number, public ...rest: number[]) => a;',
 				'A parameter property cannot be declared using a rest parameter. (1:23)',
 			],
+			// Prettier's typescript parser leaves a rest parameter's default out
+			// (`function f(...a) {}`), as the tree does.
+			['function f(...a = []) {}', 'A rest parameter cannot have an initializer. (1:15)'],
+			[
+				'const g = (...a: number[] = []) => a;',
+				'A rest parameter cannot have an initializer. (1:15)',
+			],
+			['const h = async (...a = []) => a;', 'A rest parameter cannot have an initializer. (1:21)'],
+			['type H = (...a = []) => void;', 'A rest parameter cannot have an initializer. (1:14)'],
 			['@dec function f() {}', 'Leading decorators must be attached to a class declaration. (1:1)'],
 			[
 				'export @dec const x = 1;',
@@ -1034,6 +1057,43 @@ describe('parse errors', () => {
 			expect(error, source).toBeInstanceOf(SyntaxError);
 			expect(error.message.split('\n')[0], source).toBe(message);
 		}
+	});
+});
+
+// Prettier's typescript parser formats these the same way.
+describe('rest parameters and `for` heads', () => {
+	// An async arrow function's rest parameter ended before its type annotation,
+	// so a comment between them moved after the annotation (#725).
+	test("a comment before a rest parameter's type annotation stays there", async () => {
+		await expectFormat(
+			'const f = async (...a /* c */: number[]) => a;',
+			'const f = async (...a /* c */ : number[]) => a;\n',
+		);
+		await expectFormat(
+			'const g = (...a /* c */: number[]) => a;',
+			'const g = (...a /* c */ : number[]) => a;\n',
+		);
+		await expectFormat(
+			`const h = async (
+  x,
+  // rest
+  ...rest: string[] // after
+) => x;`,
+			`const h = async (
+  x,
+  // rest
+  ...rest: string[] // after
+) => x;
+`,
+		);
+	});
+
+	// A type assertion in a `for…in` or `for…of` head failed to parse (#723).
+	test('a type assertion in a `for…in` or `for…of` head', async () => {
+		await expectFormat('for ((a as number) of x);', 'for (a as number of x);\n');
+		await expectFormat('for ([a as number, b!] of x);', 'for ([a as number, b!] of x);\n');
+		await expectFormat('for ({ a: b! } in {});', 'for ({ a: b! } in {});\n');
+		await expectFormat('for ((a!) in {});', 'for (a! in {});\n');
 	});
 });
 

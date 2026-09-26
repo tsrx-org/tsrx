@@ -8144,6 +8144,184 @@ const short = (value as Entry).name;`;
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// An element or other template value prints the comments after it
+		// inside its own parentheses, which print as nothing when it fits, and
+		// Prettier's next pass gives them to the arrow function, as above. When
+		// it breaks, its parentheses keep them. The formatter prints the
+		// fixpoint (#675).
+		it.each([
+			['((a) => (<div /> /* c */))(1);', '(\n  (a) => <div /> /* c */\n)(1);'],
+			['((a) => (<div /> /* c */))();', '(\n  (a) => <div /> /* c */\n)();'],
+			['((a) => (<div /> /* c */))`x`;', '(\n  (a) => <div /> /* c */\n)`x`;'],
+			['((a) => (<div /> /* c */ /* d */))(1);', '(\n  (a) => <div /> /* c */ /* d */\n)(1);'],
+			['((a) => (<div>text</div> /* c */))(1);', '(\n  (a) => <div>text</div> /* c */\n)(1);'],
+			['((a) => (/* l */ <div /> /* c */))(1);', '(\n  (a) => /* l */ <div /> /* c */\n)(1);'],
+			['((a) => (b) => (<div /> /* c */))(1);', '(\n  (a) => (b) => <div /> /* c */\n)(1);'],
+			['await ((a) => (<div /> /* c */))(1);', 'await (\n  (a) => <div /> /* c */\n)(1);'],
+			[
+				'function f() {\n  return ((a) => (<div /> /* c */))(1);\n}',
+				'function f() {\n  return (\n    (a) => <div /> /* c */\n  )(1);\n}',
+			],
+			// The call just fits on its line with the element flat
+			[
+				`((a) => (<div id="${'x'.repeat(49)}" /> /* c */))(1);`,
+				`(\n  (a) => <div id="${'x'.repeat(49)}" /> /* c */\n)(1);`,
+			],
+			// The parameters break before the element does
+			[
+				'((aaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbb, ccccccccccccccccccccccc, ddddddddddddddddddd) => (<div /> /* c */))(1);',
+				'(\n  (\n    aaaaaaaaaaaaaaaa,\n    bbbbbbbbbbbbbbbbbbbbbb,\n    ccccccccccccccccccccccc,\n    ddddddddddddddddddd,\n  ) => <div /> /* c */\n)(1);',
+			],
+		])('prints %j in one pass', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			// A group around the call keeps the parentheses from breaking
+			['x = ((a) => (<div /> /* c */))(1);', 'x = ((a) => <div /> /* c */)(1);'],
+			['g(((a) => (<div /> /* c */))(1));', 'g(((a) => <div /> /* c */)(1));'],
+			['((a) => (<div /> /* c */))(1)(2);', '((a) => <div /> /* c */)(1)(2);'],
+			['((a) => <div /> /* c */)(1);', '(\n  (a) => <div /> /* c */\n)(1);'],
+			// The call doesn't fit on its line with the element flat, which
+			// breaks and keeps the comment in its parentheses
+			[
+				`((a) => (<div id="${'x'.repeat(50)}" /> /* c */))(1);`,
+				`((a) => (\n  <div id="${'x'.repeat(50)}" /> /* c */\n))(1);`,
+			],
+			[
+				'((a) => (b) => (<div className="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" id="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" /> /* c */))(1);',
+				'((a) => (b) => (\n  <div\n    className="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\n    id="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"\n  /> /* c */\n))(1);',
+			],
+			['((a) => (<div /> // c\n))(1);', '((a) => (\n  <div /> // c\n))(1);'],
+			[
+				'((a) => (<><div /></> /* c */))(1);',
+				'((a) => (\n  <>\n    <div />\n  </> /* c */\n))(1);',
+			],
+		])('prints %j like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// A chain of arrow functions called right away prints its last body
+		// below its `=>`, with the comment after it. Prettier's next pass
+		// prints the comment on a line of its own after the body, and the pass
+		// after that gives it to the first argument. The formatter prints the
+		// fixpoint, and, where there's no argument and Prettier's passes add a
+		// blank line each time, Prettier's first pass (#676).
+		it.each([
+			['((a) => (b) => (c /* c */))(1);', '(\n  (a) => (b) =>\n    c\n)(\n  /* c */\n  1,\n);'],
+			['((a) => (b) => (c // c\n))(1);', '(\n  (a) => (b) =>\n    c\n)(\n  // c\n  1,\n);'],
+			[
+				'((a) => (b) => (c /* c */ /* d */))(1);',
+				'(\n  (a) => (b) =>\n    c\n)(/* c */ /* d */ 1);',
+			],
+			[
+				'((a) => (b) => (c /* c */))(/* d */ 1);',
+				'(\n  (a) => (b) =>\n    c\n)(\n  /* c */\n  /* d */ 1,\n);',
+			],
+			[
+				'((a) => (b) => (c) => (d /* c */))(1, 2);',
+				'(\n  (a) => (b) => (c) =>\n    d\n)(\n  /* c */\n  1,\n  2,\n);',
+			],
+			['((a) => ((b) => (c)) /* c */)(1);', '(\n  (a) => (b) =>\n    c\n)(\n  /* c */\n  1,\n);'],
+			[
+				'(\n  (a) => (b) =>\n    c /* c */\n)(1);',
+				'(\n  (a) => (b) =>\n    c\n)(\n  /* c */\n  1,\n);',
+			],
+			[
+				'x = ((a) => (b) => (c /* c */))(1);',
+				'x = (\n  (a) => (b) =>\n    c\n)(\n  /* c */\n  1,\n);',
+			],
+			['((a) => (b) => (c /* c */))();', '(\n  (a) => (b) =>\n    c /* c */\n)();'],
+			['((a) => (b) => ({} /* c */))(1);', '(\n  (a) => (b) => ({}) /* c */\n)(1);'],
+			['((a) => (b) => ([] /* c */))(1);', '(\n  (a) => (b) => [] /* c */\n)(1);'],
+			['((a) => (b) => (c /* c */))`x`;', '(\n  (a) => (b) => c /* c */\n)`x`;'],
+		])('prints %j in one pass', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'(\n  (a) => (b) =>\n    c // c\n)();',
+			'((a) => (b) => (c ? d : e /* c */))(1);',
+			'(\n  (a) => (b) =>\n    (x = 1 /* c */)\n)(1);',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// A `new` callee, a member object, and the other arrow functions that
+		// print in parentheses with more of their parent after them print the
+		// comments after those parentheses. Prettier's next pass takes a
+		// comment after the parenthesized body out of them, and the pass after
+		// that gives it to the first argument of a `new`. The formatter prints
+		// the fixpoint (#683, #760).
+		it.each([
+			['new ((a) => (b /* c */))(1);', 'new ((a) => b)(/* c */ 1);'],
+			['new ((a) => (b /* c */ /* d */))(1);', 'new ((a) => b)(/* c */ /* d */ 1);'],
+			['new ((a) => (b /* c */))();', 'new ((a) => b) /* c */();'],
+			['new ((a) => (b /* c */));', 'new ((a) => b) /* c */();'],
+			['new ((a) => (b) => (c /* c */))(1);', 'new (\n  (a) => (b) =>\n    c\n)(/* c */ 1);'],
+			[
+				'new (\n  (a) => (b) =>\n    c /* c */\n)(1);',
+				'new (\n  (a) => (b) =>\n    c\n)(/* c */ 1);',
+			],
+			['((a) => (b /* c */)).call(x);', '((a) => b) /* c */\n  .call(x);'],
+			['((a) => (b /* c */ /* d */)).call(x);', '((a) => b) /* c */ /* d */\n  .call(x);'],
+			['((a) => ({} /* c */)).call(x);', '((a) => ({})) /* c */\n  .call(x);'],
+			['((a) => (b) => (c /* c */)).call(x);', '((a) => (b) => c) /* c */\n  .call(x);'],
+			['((a) => (b /* c */))[0];', '((a) => b) /* c */[0];'],
+			['((a) => (b /* c */))?.x;', '((a) => b) /* c */?.x;'],
+			['((a) => (b /* c */)).x;', '((a) => b) /* c */.x;'],
+			['((a) => (b /* c */))!;', '((a) => b) /* c */!;'],
+			['((a) => (b /* c */)) as T;', '((a) => b) /* c */ as T;'],
+			['((a) => (b /* c */)) satisfies T;', '((a) => b) /* c */ satisfies T;'],
+			['((a) => (b /* c */)) || x;', '((a) => b) /* c */ || x;'],
+			['((a) => (b /* c */)) + x;', '((a) => b) /* c */ + x;'],
+			['((a) => (b /* c */)) ? 1 : 2;', '((a) => b) /* c */ ? 1 : 2;'],
+		])('prints %j in one pass', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// A line comment prints at the end of the line, past what follows the
+		// parentheses, where Prettier's next pass finds it. A statement's last
+		// operand has a rule of its own (#622).
+		it.each([
+			['new ((a) => (b // c\n))(1);', 'new ((a) =>\n  b) // c\n(1);'],
+			['x || ((a) => (b /* c */));', 'x || ((a) => b); /* c */'],
+		])('prints %j like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// `prettier-ignore` keeps an arrow function in the chain as written,
+		// with the comments in it, and a JSDoc cast prints its arrow function
+		// on its own. They used to print the comment again after it (#780).
+		it.each([
+			[
+				'(\n  // prettier-ignore\n  (a) => (b /* c */)\n)(1);',
+				'(\n  // prettier-ignore\n  (a) => (b /* c */)\n)(1);',
+			],
+			[
+				'((a) =>\n  // prettier-ignore\n  (b) => (c /* c */))(1);',
+				'(\n  (a) =>\n    // prettier-ignore\n    (b) => (c /* c */)\n)(1);',
+			],
+			[
+				'new (\n  // prettier-ignore\n  (a) => (b /* c */)\n)(1);',
+				'new // prettier-ignore\n((a) => (b /* c */))(1);',
+			],
+			[
+				'x = (\n  // prettier-ignore\n  (a) => (b /* c */)\n).call(x);',
+				'x =\n  // prettier-ignore\n  ((a) => (b /* c */)).call(x);',
+			],
+			[
+				'((a) => /** @type {X} */ ((b) => (<div /> /* c */)))(1);',
+				'((a) => /** @type {X} */ ((b) => <div /> /* c */))(1);',
+			],
+			[
+				'((a) => /** @type {X} */ ((b) => (c /* c */)))(1);',
+				'((a) => /** @type {X} */ ((b) => c /* c */))(1);',
+			],
+		])('prints %j in one pass', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		// A comment on a line of its own after the body isn't one of these,
 		// and keeps the place it had, which the next pass keeps too
 		it.each([
