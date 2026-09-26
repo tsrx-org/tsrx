@@ -17309,7 +17309,10 @@ for (
 				'class A extends (a || b)<T> {\n  // c\n  x = 1;\n}',
 			],
 			['class A extends B // c\n<T> {\n  x = 1;\n}', 'class A extends B<T> {\n  // c\n  x = 1;\n}'],
-			['class A extends B\n// c\n<T> {\n  x = 1;\n}', 'class A extends B<T> {\n  // c\n  x = 1;\n}'],
+			[
+				'class A extends B\n// c\n<T> {\n  x = 1;\n}',
+				'class A extends B<T> {\n  // c\n  x = 1;\n}',
+			],
 			[
 				'class A extends (a || b // c\n)<T> {\n  // d\n}',
 				'class A extends (a || b)<T> {\n  // c\n  // d\n}',

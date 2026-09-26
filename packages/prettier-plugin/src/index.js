@@ -7629,9 +7629,7 @@ function printClassDeclaration(node, path, options, print) {
 		const headingComments = [
 			...(printsTrailingComments ? trailingComments : []),
 			...typeArgumentsComments,
-		].filter(
-			(comment) => !bodyComments.includes(comment) && !afterClassComments.includes(comment),
-		);
+		].filter((comment) => !bodyComments.includes(comment) && !afterClassComments.includes(comment));
 		/** @type {Doc} */
 		let superClassDoc = superClass;
 		if (addsParens) {
@@ -7677,8 +7675,7 @@ function printClassDeclaration(node, path, options, print) {
 								options,
 							),
 							path.call(
-								(typeArgumentsPath) =>
-									print(typeArgumentsPath, { suppressLeadingComments: true }),
+								(typeArgumentsPath) => print(typeArgumentsPath, { suppressLeadingComments: true }),
 								'superTypeParameters',
 							),
 						]
