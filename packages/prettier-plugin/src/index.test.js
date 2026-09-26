@@ -10120,6 +10120,92 @@ function k() {
 				expect(await format(source)).toBeWithNewline(expected);
 			},
 		);
+
+		// Comments before a child are `{/* c */}` children in TSX: a line break
+		// in the source after one keeps the next child on a line of its own, and
+		// a blank line after one is kept only when the element has no text. A
+		// comment that ended its line after other code joined the next line when
+		// the element had text, and the child after it on the next format (#669).
+		// A blank line after a comment stayed in an element with text (#684). The
+		// comments before a `{…}` child took a line each, and a blank line after
+		// them was dropped even without text (#736).
+		it.each([
+			'<div>/* a */\n/* b */\n<i /> 3</div>',
+			'<div>\n/* a */ /* b */\n\n<i /> 3</div>',
+			'<div>/* a */\n<i /> 3</div>',
+			'<div>\n/* a */ /* b */\n<i /> 3</div>',
+			'<div>\n/* c */\n\n<b /> text\n</div>',
+			'<div>\n/* a */\n\n/* b */\n<b /> text\n</div>',
+			'<div>\n<i />\n/* c */\n\n<b /> text\n</div>',
+			'<div>\n/* c */\n\n{x}\n</div>',
+			'<div>\n/* a */ /* b */\n{x} text\n</div>',
+			'<div>\n/* c */ {x}\n</div>',
+			'<div>\n/* a */\n/* b */ {x} 3\n</div>',
+			'<div>\n/* a */ /* b */{x}\n</div>',
+			// Already like TSX
+			'<div>/* a */\n/* b */\n<i /></div>',
+			'<div>\n/* c */\n\n<b />\n</div>',
+			'<div>\n/* c */\n\n{x} text\n</div>',
+			'<div>\n/* a */\n/* b */ <i /> 3</div>',
+			'<div>\n<i /> /* a */\n/* b */\n<b /> text\n</div>',
+			'<p>/* c */{name}</p>',
+		])('lays out the comments before the child in %j like TSX', async (element) => {
+			const template = await format(
+				`export function Page() @{\n\t${element.replace(/\n/g, '\n\t')}\n}`,
+				repoOptions,
+			);
+			const tsx = await prettier.format(
+				`export function Page() {\n\t${element.replace(/\/\* \w \*\//g, '{$&}').replace(/\n/g, '\n\t')};\n}`,
+				{ parser: 'typescript', ...repoOptions },
+			);
+			expect(template).toBe(
+				tsx
+					.replace('Page() {', 'Page() @{')
+					.replace(/;\n}\n$/, '\n}\n')
+					.replace(/\{(\/\* \w \*\/)\}/g, '$1'),
+			);
+		});
+
+		it.each([
+			[
+				'const a = <div>/* a */\n/* b */\n<i /> 3</div>;',
+				'const a = (\n  <div>\n    /* a */\n    /* b */\n    <i /> 3\n  </div>\n);',
+			],
+			[
+				'const b = <div>\n/* a */ /* b */\n\n<i /> 3</div>;',
+				'const b = (\n  <div>\n    /* a */ /* b */\n    <i /> 3\n  </div>\n);',
+			],
+			[
+				'export function App() @{ <div>/* a */\n/* b */\n<i /> 3</div> }',
+				'export function App() @{\n  <div>\n    /* a */\n    /* b */\n    <i /> 3\n  </div>\n}',
+			],
+			[
+				'const a = (\n  <div>\n    // c\n\n    <b /> text\n  </div>\n);',
+				'const a = (\n  <div>\n    // c\n    <b /> text\n  </div>\n);',
+			],
+			[
+				'const a = (\n  <div>\n    {y}\n    // c\n\n    {z} text\n  </div>\n);',
+				'const a = (\n  <div>\n    {y}\n    // c\n    {z} text\n  </div>\n);',
+			],
+			[
+				'const a = (\n  <div>\n    // a\n    /* b */ {z} text\n  </div>\n);',
+				'const a = (\n  <div>\n    // a\n    /* b */ {z} text\n  </div>\n);',
+			],
+		])(
+			'keeps the line breaks after the comments before the child in %j like TSX',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
+
+		// Without text, a blank line after a line comment stays, as between
+		// children
+		it.each([
+			'const a = (\n  <div>\n    // c\n\n    <b />\n  </div>\n);',
+			'const a = (\n  <div>\n    {y}\n    // c\n\n    {z}\n  </div>\n);',
+		])('keeps the blank line after the comment before the child in %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
 	});
 
 	// A space at a template child boundary renders, like in JSX, while
