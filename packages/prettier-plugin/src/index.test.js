@@ -15857,6 +15857,16 @@ const c = <div>{cond ? <span>a</span> : <span>b</span>}</div>;`;
 		])('keeps %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});
+
+		// Like Prettier's `handleClosureTypeCastComments`, a JSDoc type cast
+		// comment at the end of a line leads the branch after it. It used to
+		// trail the node before it (#806).
+		it.each([
+			['x = a ? /** @type {X} */\nb : c;', 'x = a ? /** @type {X} */ b : c;'],
+			['x = a ? b /** @type {X} */\n: c;', 'x = a ? b : /** @type {X} */ c;'],
+		])('leads the branch with the JSDoc type cast comment in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
 	});
 
 	describe('template literal expressions stay as written', () => {
@@ -16870,6 +16880,17 @@ for (
 				'if (a) {\n  b();\n} /* c */\nelse {\n  d();\n}',
 				'if (a) {\n  b();\n} /* c */\nelse {\n  d();\n}',
 			],
+			// Prettier's `handleClosureTypeCastComments` gives a JSDoc type cast
+			// comment at the end of a line to the `else` body, which prints it
+			// after `else` (#806)
+			[
+				'if (a) {\n  b();\n} /** @type {X} */\nelse {\n  d();\n}',
+				'if (a) {\n  b();\n} else /** @type {X} */\n{\n  d();\n}',
+			],
+			[
+				'function A() @{\n  @if (a) {\n    <B />\n  } /** @type {X} */\n  @else {\n    <C />\n  }\n}',
+				'function A() @{\n  @if (a) {\n    <B />\n  } @else /** @type {X} */\n  {\n    <C />\n  }\n}',
+			],
 		])('formats %j like Prettier', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
 		});
@@ -16936,6 +16957,23 @@ for (
 				'try {\n  a();\n} catch\n// c\n(e) {\n  b();\n}',
 				'try {\n  a();\n} catch (\n  // c\n  e\n) {\n  b();\n}',
 			],
+			// Prettier's `handleClosureTypeCastComments` comes first: a JSDoc type
+			// cast comment at the end of a line leads the clause or block after it,
+			// which prints it after its keyword or parameter. It used to move into
+			// the block, where TypeScript reads it as the JSDoc of the block's first
+			// statement (#806).
+			[
+				'try {\n  a();\n} /** @type {X} */\nfinally {\n  d();\n}',
+				'try {\n  a();\n} finally /** @type {X} */\n{\n  d();\n}',
+			],
+			[
+				'try {\n  a();\n} catch (e) /** @type {X} */\n{\n  b();\n}',
+				'try {\n  a();\n} catch (e) /** @type {X} */\n{\n  b();\n}',
+			],
+			[
+				'try {\n  a();\n} /** @type {X} */\ncatch (e) {\n  b();\n}',
+				'try {\n  a();\n} /** @type {X} */\ncatch (e) {\n  b();\n}',
+			],
 		])('formats %j like Prettier', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
 		});
@@ -16968,6 +17006,14 @@ for (
 			[
 				'function A() @{\n  @try {\n    <B />\n  } @catch (e, reset) // c\n  {\n    <p>{"error"}</p>\n  }\n}',
 				'function A() @{\n  @try {\n    <B />\n  } @catch (\n    e,\n    reset // c\n  ) {\n    <p>{"error"}</p>\n  }\n}',
+			],
+			[
+				'function A() @{\n  @try {\n    <B />\n  } /** @type {X} */\n  @pending {\n    <p>{"loading"}</p>\n  }\n}',
+				'function A() @{\n  @try {\n    <B />\n  } @pending /** @type {X} */\n  {\n    <p>{"loading"}</p>\n  }\n}',
+			],
+			[
+				'function A() @{\n  @try {\n    <B />\n  } /** @type {X} */\n  @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
+				'function A() @{\n  @try {\n    <B />\n  } /** @type {X} */\n  @catch (e) {\n    <p>{"error"}</p>\n  }\n}',
 			],
 		])('formats the template %j like a try statement', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
@@ -17317,6 +17363,15 @@ for (
 			],
 			// With decorators, a comment in the heading trails the last one
 			['@dec\nclass A extends B // c\n{}', '@dec // c\nclass A extends B {}'],
+			// Prettier's `handleClosureTypeCastComments` comes first: a JSDoc type
+			// cast comment at the end of a line leads the superclass's type
+			// arguments or the implemented type after it. It used to trail the
+			// superclass and print after the type arguments (#806).
+			['class A extends B /** @type {X} */\n<T> {}', 'class A extends B/** @type {X} */\n<T> {}'],
+			[
+				'class A extends B<T> /** @type {X} */\nimplements C {}',
+				'class A extends B<T> implements /** @type {X} */ C {}',
+			],
 		])('moves the comment of %j like Prettier', async (input, expected) => {
 			expect(await format(input)).toBeWithNewline(expected);
 		});
@@ -18619,12 +18674,45 @@ for (
 				'foo(/**\n * @type {A}\n *//**\n * @type {B}\n */ (b), c);',
 				'foo(\n  /**\n   * @type {A}\n   *//**\n   * @type {B}\n   */ (b),\n  c,\n);',
 			],
+			// The comments after the expression stay in the parentheses when only
+			// the first one has `@type`. The parser read only the comment right
+			// before the `(`, and gave them to the statement (#766).
+			[
+				'x = /**\n * @type {A}\n *//**\n * y\n */ (b // c\n);',
+				'x =\n  /**\n   * @type {A}\n   *//**\n   * y\n   */ (\n    b // c\n  );',
+			],
+			[
+				'x = /**\n * @type {A}\n *//**\n * y\n *//**\n * z\n */ (b // c\n);',
+				'x =\n  /**\n   * @type {A}\n   *//**\n   * y\n   *//**\n   * z\n   */ (\n    b // c\n  );',
+			],
+			[
+				'const x = /**\n * @satisfies {A}\n *//**\n * y\n */ (await b /* c */);',
+				'const x =\n  /**\n   * @satisfies {A}\n   *//**\n   * y\n   */ (await b /* c */);',
+			],
 		])(
 			'keeps the cast parentheses after the touching JSDoc comments of %j',
 			async (input, expected) => {
 				expect(await format(input)).toBeWithNewline(expected);
 			},
 		);
+
+		// Pins: like Prettier, a comment that doesn't touch the next one, or one
+		// on one line, ends the chain, and the last comment, which isn't a cast,
+		// doesn't keep the parentheses. TypeScript reads only that one as the
+		// JSDoc of the parentheses.
+		it.each([
+			[
+				'x = /**\n * @type {A}\n */ /**\n * y\n */ (b // c\n);',
+				'x =\n  /**\n   * @type {A}\n   */ /**\n   * y\n   */ b; // c',
+			],
+			[
+				'x = /**\n * @type {A}\n *//** y *//**\n * z\n */ (b // c\n);',
+				'x =\n  /**\n   * @type {A}\n   */ /** y */ /**\n   * z\n   */ b; // c',
+			],
+			['x = /** @type {A} *//** y */ (b // c\n);', 'x = /** @type {A} */ /** y */ b; // c'],
+		])('drops the parentheses after the comments of %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
 
 		// Pins: like Prettier, a comment on one line, or one whose lines don't
 		// all start with `*`, stays a comment of its own
@@ -19756,6 +19844,34 @@ c: /* empty */ ;`;
 		it('keeps an own-line block comment on the label line when the body follows it', async () => {
 			const result = await format('a:\n/* call */ run();');
 			expect(result).toBeWithNewline('/* call */ a: run();');
+		});
+
+		// Prettier's `handleClosureTypeCastComments` comes before its handler
+		// for labels: a JSDoc type cast comment at the end of a line leads the
+		// body. It used to move above the label, where TypeScript reads it as the
+		// labeled statement's JSDoc, and a cast of the body's parentheses with it
+		// (#806).
+		it.each([
+			['a: /** @type {X} */\nfor (;;) {}', 'a: /** @type {X} */\nfor (;;) {}'],
+			['a: /** @type {X} */ // c\nfor (;;) {}', '// c\na: /** @type {X} */ for (;;) {}'],
+			['a: /* b */ /** @type {X} */\nfor (;;) {}', '/* b */ a: /** @type {X} */\nfor (;;) {}'],
+			['a: /** @type {X} */\n(b).c();', 'a: /** @type {X} */\n(b).c();'],
+		])('keeps the JSDoc type cast comment after the label in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// A cast on a line of its own right before the body's parentheses stays
+		// with them too. Prettier moves it above the label, and its next pass
+		// drops the parentheses and the cast (#817).
+		it.each([
+			['a:\n/** @type {X} */ (b);', 'a: /** @type {X} */ (b);'],
+			['a:\n/** @type {X} */\n(b).c();', 'a: /** @type {X} */\n(b).c();'],
+		])('keeps the cast of the body in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('moves a JSDoc comment that is not a cast above the label', async () => {
+			expect(await format('a: /** c */\nfor (;;) {}')).toBeWithNewline('/** c */\na: for (;;) {}');
 		});
 
 		it('keeps the source of a statement whose label is followed by prettier-ignore', async () => {
@@ -21623,6 +21739,76 @@ import b from "./b.json" with { type /* c */: "json" };`);
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
+		// Like Prettier's `handleClosureTypeCastComments`, a JSDoc type cast
+		// comment at the end of a line leads the element after the comma, and the
+		// other comments after it on its line trail the element before it. It
+		// used to trail the element before the comma, where TypeScript no longer
+		// reads it as the JSDoc of a parameter, a declarator, or a function
+		// (#806).
+		it.each([
+			['const x = [a, /** @type {X} */\nb];', 'const x = [a, /** @type {X} */ b];'],
+			['f(a, /** @type {X} */\nb);', 'f(a, /** @type {X} */ b);'],
+			['new F(a, /** @satisfies {X} */\nb);', 'new F(a, /** @satisfies {X} */ b);'],
+			['f(a, /** @type {X} */\nfunction () {});', 'f(a, /** @type {X} */ function () {});'],
+			['function f(a, /** @type {X} */\nb) {}', 'function f(a, /** @type {X} */ b) {}'],
+			['const a = 1, /** @type {X} */\n  b = 2;', 'const a = 1,\n  /** @type {X} */\n  b = 2;'],
+			['import { a, /** @type {X} */\nb } from "c";', 'import { a, /** @type {X} */ b } from "c";'],
+			['const { a, /** @type {X} */\nb } = c;', 'const { a, /** @type {X} */ b } = c;'],
+			['x = (a, /** @type {X} */\nb);', 'x = (a, /** @type {X} */ b);'],
+			['type A = F<a, /** @type {X} */\nb>;', 'type A = F<a, /** @type {X} */ b>;'],
+			['function f<A, /** @type {X} */\nB>() {}', 'function f<A, /** @type {X} */ B>() {}'],
+			['type T = [a, /** @type {X} */\nb];', 'type T = [a, /** @type {X} */ b];'],
+			[
+				'f(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, /** @type {X} */\nc);',
+				'f(\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,\n  /** @type {X} */\n  c,\n);',
+			],
+			[
+				'const x = [a, /**\n * @type {X}\n */\nb];',
+				'const x = [\n  a,\n  /**\n   * @type {X}\n   */\n  b,\n];',
+			],
+			['f(a, /** @type {X} */ // c\nb);', 'f(\n  a, // c\n  /** @type {X} */ b,\n);'],
+			['f(a, /** @type {X} */ /* d */\nb);', 'f(a /* d */, /** @type {X} */ b);'],
+		])(
+			'leads the element after the comma with the JSDoc type cast comment in %j',
+			async (input, expected) => {
+				expect(await format(input)).toBeWithNewline(expected);
+			},
+		);
+
+		// Pins: like Prettier, a JSDoc comment that isn't a cast trails the
+		// element before the comma, and a cast keeps to its parentheses. Unlike
+		// Prettier, a cast comment before the next member of an object literal or
+		// an enum, a named tuple member, or a class expression stays before the
+		// comma: Prettier starts a line with it when the list breaks, where
+		// TypeScript reads it as the JSDoc of the node after it.
+		it.each([
+			['const x = [a, /** c */\nb];', 'const x = [a /** c */, b];'],
+			['const x = [a, /** @type {X} */\n(b)];', 'const x = [a, /** @type {X} */ (b)];'],
+			['const o = { a: 1, /** @type {X} */\nb: 2 };', 'const o = { a: 1 /** @type {X} */, b: 2 };'],
+			['enum E { A, /** @type {X} */\nB }', 'enum E {\n  A /** @type {X} */,\n  B,\n}'],
+			['type T = [a: A, /** @type {X} */\nb: B];', 'type T = [a: A /** @type {X} */, b: B];'],
+			['f(a, /** @type {X} */\nclass {});', 'f(a /** @type {X} */, class {});'],
+		])('keeps the comment before the comma in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Like Prettier, the comments at the end of a line after an element all
+		// trail it, also when a block comment before the comma shares their
+		// line, or one after it in a parameter list. The line comment used to
+		// move onto a line of its own, and a second block comment led the next
+		// parameter (#819).
+		it.each([
+			['f(a /* x */, // c\nb);', 'f(\n  a /* x */, // c\n  b,\n);'],
+			['x = [a /* x */, // c\nb];', 'x = [\n  a /* x */, // c\n  b,\n];'],
+			['x = { a: 1 /* x */, // c\nb: 2 };', 'x = {\n  a: 1 /* x */, // c\n  b: 2,\n};'],
+			['function f(a /* x */, // c\nb) {}', 'function f(\n  a /* x */, // c\n  b,\n) {}'],
+			['function f(a, /* x */ // c\nb) {}', 'function f(\n  a /* x */, // c\n  b,\n) {}'],
+			['const f = (a, /* x */ // c\nb) => {};', 'const f = (\n  a /* x */, // c\n  b,\n) => {};'],
+			['function f(a, /* x */ /* y */\nb) {}', 'function f(a /* x */ /* y */, b) {}'],
+		])('keeps the comments of %j on the line of the element before them', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		// Like Prettier's tie-break, a comment after the comma trails the default
 		// import when the `{` of the named ones sits between it and the next
 		// specifier. It used to move into the braces (#460).
@@ -21725,6 +21911,48 @@ type T = [A, /* y */ B];`);
 			'function f(\n  a,\n  b, // c\n) {}',
 			'function f(\n  a,\n  b,\n  // c\n) {}',
 			'function f(a, ...b /* c */) {}',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+	});
+
+	// Like Prettier's `handleClosureTypeCastComments`, which comes before its
+	// other handlers for a comment at the end of a line, a JSDoc type cast
+	// comment there leads the node after it. It used to trail the node before
+	// it (#806).
+	describe('JSDoc type cast comments at the end of a line', () => {
+		it.each([
+			['x = a + /** @type {X} */\nb;', 'x = a + /** @type {X} */ b;'],
+			['x = a && /** @type {X} */\nb;', 'x = a && /** @type {X} */ b;'],
+			['type A = a | /** @type {X} */\nb;', 'type A = a | /** @type {X} */ b;'],
+			['function f(a = /** @type {X} */\nb) {}', 'function f(a = /** @type {X} */ b) {}'],
+			// It used to move before the key
+			['x = { a: /** @type {X} */\nb };', 'x = { a: /** @type {X} */ b };'],
+			[
+				'function F() @{\n  const x = [a, /** @type {X} */\n  b];\n  <div>{x}</div>\n}',
+				'function F() @{\n  const x = [a, /** @type {X} */ b];\n  <div>{x}</div>\n}',
+			],
+			[
+				'function F() @{\n  <div a={f(a, /** @type {X} */\n  b)} />\n}',
+				'function F() @{\n  <div a={f(a, /** @type {X} */ b)} />\n}',
+			],
+		])('leads the node after it in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Pins: unlike Prettier, it stays at the end of its line before a
+		// statement, a class or interface member, a `case`, or a template's
+		// output or child. Prettier moves it onto the line of the node after it,
+		// where TypeScript reads it as that node's JSDoc. In a template's
+		// children, leading the next child also printed a space before it.
+		it.each([
+			'foo(); /** @type {X} */\nconst b = c;',
+			'class A {\n  a = 1; /** @type {X} */\n  b = 2;\n}',
+			'interface I {\n  a: 1; /** @type {X} */\n  b: 2;\n}',
+			'switch (a) {\n  case 1: /** @type {X} */\n  case 2:\n    break;\n}',
+			'function F() @{\n  g(); /** @type {X} */\n  <div />\n}',
+			'function F() @{\n  <div>\n    {a} /** @type {X} */\n    <span />\n  </div>\n}',
+			'function F() @{\n  <div>\n    <b /> /** @type {X} */\n    <span />\n  </div>\n}',
 		])('keeps %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});

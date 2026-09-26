@@ -11240,14 +11240,16 @@ function printContinueStatement(node, path, options, print) {
 }
 
 /**
- * Whether a comment starts or ends its line, counting the comments beside it
- * on that line, as Prettier's comment placement does.
+ * Where a comment lies on its line, counting the comments beside it on that
+ * line, as Prettier's comment placement does: on a line of its own
+ * (`ownLine`), at the end of a line after code (`endOfLine`), or with code on
+ * both sides (`remaining`).
  * @param {AST.Comment[]} comments - Consecutive comments
  * @param {number} index - The comment's index in `comments`
  * @param {string} text - The source text
- * @returns {boolean}
+ * @returns {'ownLine' | 'endOfLine' | 'remaining'}
  */
-function commentStartsOrEndsLine(comments, index, text) {
+function getCommentPlacement(comments, index, text) {
 	const sameLineGap = /^[^\S\n]*$/;
 	let start = /** @type {AST.NodeWithLocation} */ (comments[index]).start;
 	for (let i = index - 1; i >= 0; i--) {
@@ -11261,13 +11263,20 @@ function commentStartsOrEndsLine(comments, index, text) {
 		if (!sameLineGap.test(text.slice(end, next.start))) break;
 		end = next.end;
 	}
-	return hasNewline(text, start, { backwards: true }) || hasNewline(text, end);
+	if (hasNewline(text, start, { backwards: true })) {
+		return 'ownLine';
+	}
+	return hasNewline(text, end) ? 'endOfLine' : 'remaining';
 }
 
 /**
  * Print a labeled statement. As in Prettier, a comment between the label and
  * the body moves above the label when it starts or ends its line; the other
- * comments stay on their side of the colon.
+ * comments stay on their side of the colon. A JSDoc type cast comment at the
+ * end of a line still leads the body (Prettier's
+ * `handleClosureTypeCastComments` comes first), and so does one on a line of
+ * its own right before the parentheses it casts, which Prettier moves above
+ * the label, where its next pass drops the parentheses and the cast.
  * @param {AST.LabeledStatement} node - The labeled statement node
  * @param {AstPath<AST.LabeledStatement>} path - The AST path
  * @param {TsrxFormatOptions} options - Prettier options
@@ -11279,6 +11288,8 @@ function printLabeledStatement(node, path, options, print) {
 	const comments = /** @type {AST.NodeWithMaybeComments} */ (node.body).leadingComments ?? [];
 	/** @type {AST.Comment[]} */
 	const moved = [];
+	/** @type {AST.Comment[]} */
+	const bodyComments = [];
 	/** @type {Doc[]} */
 	const beforeColon = [];
 	/** @type {Doc[]} */
@@ -11290,7 +11301,14 @@ function printLabeledStatement(node, path, options, print) {
 		const { start, end } = /** @type {AST.NodeWithLocation} */ (comment);
 		pastColon ||= text.slice(gapStart, start).includes(':');
 		gapStart = end;
-		if (commentStartsOrEndsLine(comments, i, text)) {
+		const placement = getCommentPlacement(comments, i, text);
+		if (
+			isTypeCastComment(comment) &&
+			node.body.type !== 'EmptyStatement' &&
+			(placement === 'endOfLine' || /^\s*\(/.test(text.slice(end)))
+		) {
+			bodyComments.push(comment);
+		} else if (placement !== 'remaining') {
 			moved.push(comment);
 		} else {
 			// A line comment always ends its line, so this is a block comment
@@ -11315,7 +11333,11 @@ function printLabeledStatement(node, path, options, print) {
 		parts.push(' ', join(' ', afterColon));
 	}
 	// Like Prettier, an empty body's `;` touches the colon: `label:;`
-	parts.push(node.body.type === 'EmptyStatement' && afterColon.length === 0 ? '' : ' ', body);
+	parts.push(
+		node.body.type === 'EmptyStatement' && afterColon.length === 0 ? '' : ' ',
+		...printLeadingComments(node.body, bodyComments, options),
+		body,
+	);
 	return parts;
 }
 
