@@ -464,12 +464,11 @@ declare module 'estree' {
 		/** Loose-mode recovery: the element was never closed. */
 		unclosed?: boolean;
 		/**
-		 * Raw-text `<script>` body captured verbatim by the parser's
-		 * `#parseScriptElement` (analogous to {@link JSXStyleElement.css}). Present only
-		 * on `<script>` elements that have a body. The parser also mirrors the body as
-		 * a single `JSXText` child so generic element consumers emit it; consumers that
-		 * handle `content` directly (target transforms, the Prettier plugin, the
-		 * type-only editor output) skip the children instead of emitting both.
+		 * Raw-text `<script>` body, everything up to the closing tag, as written
+		 * (analogous to {@link JSXStyleElement.css}): no comments, no character
+		 * references, no `{…}` expressions. Present on every `<script>` element
+		 * that has a closing tag (an empty string for `<script></script>`), and
+		 * such an element has no children: `content` is its only body.
 		 */
 		content?: string;
 		/**
@@ -635,6 +634,15 @@ declare module 'estree' {
 		 * one it's attached to (see `BaseNodeMetaData.prettierIgnore`).
 		 */
 		unignore?: boolean;
+		/**
+		 * A comment that the parser moved to where Prettier's next pass finds
+		 * it on a line of its own, with the comments next to it that have this
+		 * flag too, so that it prints as it would there: after the last body of
+		 * a chain of arrow functions called right away, which prints below its
+		 * `=>`, Prettier prints them on the line after that body, and its next
+		 * pass gives them to the first argument.
+		 */
+		ownLine?: boolean;
 	}
 
 	// For now only ObjectExpression needs printInline

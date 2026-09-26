@@ -476,6 +476,22 @@ export interface JsxPlatform {
 		 *   before the spread or evaluates the spread lazily, such as Solid's.
 		 */
 		hostSpreadRefBinding?: 'in-place';
+		/**
+		 * How a raw-text `<script>` element's body (its `content`, as written)
+		 * is output, in the form the target renders exactly on the client and
+		 * from server HTML. JSX text can't hold it: a JSX compiler joins its
+		 * lines and decodes its character references.
+		 *
+		 * - `'children'` (default): one string child, `<script>{"…"}</script>`.
+		 * - `'dangerouslySetInnerHTML'`:
+		 *   `<script dangerouslySetInnerHTML={{ __html: "…" }} />`, for server
+		 *   renderers that escape a string child like text.
+		 * - `'innerHTML'`: `<script innerHTML={"…"} />`, for compilers that
+		 *   escape a string child into their HTML templates.
+		 * - `'v-html'`: `<script v-html={"…"} />`, for vue-jsx-vapor, which
+		 *   writes a string `innerHTML` into its HTML template as an attribute.
+		 */
+		scriptBody?: 'children' | 'dangerouslySetInnerHTML' | 'innerHTML' | 'v-html';
 	};
 
 	validation: {

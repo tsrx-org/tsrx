@@ -19,6 +19,7 @@
 import { walk } from 'zimmerframe';
 import {
 	createJsxTransform,
+	createScriptBody as create_script_body,
 	error,
 	mergeDuplicateRefs,
 	validateAtMostOneRefAttribute,
@@ -105,6 +106,10 @@ const solid_platform = {
 		// `ref` attributes collapse to `ref={[a, b, ...]}` rather than
 		// going through a `mergeRefs` helper.
 		multiRefStrategy: 'array',
+		// Solid's compiler escapes a string child into its HTML template, and a
+		// `<script>` element's text there isn't decoded; `innerHTML` renders the
+		// body as written on the client and the server.
+		scriptBody: 'innerHTML',
 	},
 	validation: {
 		requireUseServerForAwait: true,
@@ -1975,13 +1980,7 @@ function inject_solid_imports(program, transform_context) {
 function to_jsx_element(node, transform_context) {
 	if (node.type === 'JSXElement' && !node.metadata?.native_tsrx) return node;
 
-	// A raw-text `<script>` body (mirrored by the parser as a JSXText child of
-	// `node.content`) must not appear in the type-only editor TSX: raw JS/TS
-	// (`{`, `<`) doesn't lex as JSX text there and would surface bogus syntactic
-	// diagnostics. The embedded TS document built from `scriptMappings` covers
-	// the body in the editor; runtime output keeps the text child.
-	const walked_children =
-		transform_context.typeOnly && typeof node.content === 'string' ? [] : node.children || [];
+	const walked_children = node.children || [];
 
 	if (!node.openingElement?.name) {
 		return tsrx_node_to_jsx_expression(node, transform_context, true);
@@ -1997,8 +1996,17 @@ function to_jsx_element(node, transform_context) {
 		node,
 	);
 
-	const selfClosing = !!node.openingElement.selfClosing;
-	const children = create_element_children(walked_children, transform_context);
+	// A raw-text `<script>` body is `node.content`, printed in the form Solid
+	// renders exactly. The type-only editor TSX leaves it out: the embedded TS
+	// document built from `scriptMappings` covers it there.
+	const script_body = transform_context.typeOnly
+		? null
+		: create_script_body(node, transform_context.platform.jsx.scriptBody);
+	if (script_body) attributes.push(...script_body.attributes);
+	const selfClosing = script_body ? script_body.selfClosing : !!node.openingElement.selfClosing;
+	const children = script_body
+		? script_body.children
+		: create_element_children(walked_children, transform_context);
 
 	const openingElement = set_loc(
 		b.jsx_opening_element(name, attributes, selfClosing, node.openingElement?.typeArguments),

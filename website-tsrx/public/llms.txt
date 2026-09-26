@@ -669,6 +669,47 @@ const Article = ({ markup }: { markup: string }) =>
 	<article innerHTML={markup} />;
 ```
 
+### Scripts
+
+A `<script>` body is raw text, like a `<style>` body, in a template and in plain
+TSX: everything up to `</script>`, kept as written. JSX text rules don't apply
+to it. Comments, `<`, `>`, `&amp;`, and line breaks stay as they are, and `{…}`
+is text, not an expression container: `<script>{code}</script>` is a script
+whose text is `{code}`, as in an `.html` file.
+
+```tsrx
+export function Page() @{
+	<>
+		<script type="importmap">
+			{ "imports": { "app": "/app.js" } }
+		</script>
+		<script>
+			// A line comment, a <, and an &amp; stay as written.
+			if (a < b) log('&amp;');
+		</script>
+	</>
+}
+```
+
+The body ends at `</script`, optional whitespace, and `>`, where HTML ends it.
+Any other `</script` in the body, in any letter case, is the
+`tsrx-script-end-tag-in-body` error, because a browser would end the script
+there. Write it as `<\/script`, the same string, regular expression, or JSON.
+
+For a body computed at runtime, use a self-closing `<script>` with the
+target's own property. Whether a script runs is each target's decision:
+
+| Target                    | Dynamic body                                 | Runs on a client render | Runs from server HTML |
+| ------------------------- | -------------------------------------------- | ----------------------- | --------------------- |
+| React                     | `dangerouslySetInnerHTML={{ __html: code }}` | No                      | Yes                   |
+| Preact                    | `dangerouslySetInnerHTML={{ __html: code }}` | Yes                     | Yes                   |
+| Hono server (`hono/jsx`)  | `dangerouslySetInnerHTML={{ __html: code }}` | Not applicable          | Yes                   |
+| Hono DOM (`hono/jsx/dom`) | `dangerouslySetInnerHTML={{ __html: code }}` | Yes                     | Not applicable        |
+| Solid                     | `innerHTML={code}`                           | No                      | Yes                   |
+| Vue                       | `innerHTML={code}`                           | No                      | Yes                   |
+
+Ripple and Octane decide for themselves; see their documentation.
+
 ### Prop shorthand
 
 When a prop name matches the variable, use `{name}` instead of `name={name}`.
@@ -720,12 +761,26 @@ const Body = expanded ? ExpandedBody : CompactBody;
 <{Body} item={item} />
 ```
 
-The tag expression must resolve to an element name: an identifier, member
-access, static string, or a runtime expression composed of those. Calls,
-spreads, string concatenation, and string interpolation are not valid tag
-names. Do not use removed dynamic tag syntax such as `<@tag />`,
-`<@Component />`, or the imported `Dynamic` component with an `is` prop. Use
-`<{tag}>` instead.
+The tag expression must be one of three forms:
+
+- an identifier: `tag`, `Comp`;
+- a member access, including chains: `props.as`, `this.tag`, `registry[name]`,
+  `items[0]`. The chain starts at an identifier or `this`, and each computed key
+  is an identifier, a string or number literal, or a member access;
+- a string literal: `'section'`.
+
+Any other expression is a compile error, and the editor underlines it. That
+includes a conditional, `||`, `??` and `&&`, even when every branch or operand
+is one of the three forms; parentheses and type-only wrappers (`as`,
+`satisfies`, `!`); optional member access (`a?.b`); calls, `new`, spreads,
+string concatenation, template literals, assignments and sequences; functions,
+elements and fragments; and every literal other than a string. A
+non-self-closing element repeats the expression in its closing tag, so compute
+anything more above the element, as `Body` is in the example above, and use the
+result: `const Tag = c ? Child : Fallback;` followed by `<{Tag} />`.
+
+Do not use removed dynamic tag syntax such as `<@tag />`, `<@Component />`, or
+the imported `Dynamic` component with an `is` prop. Use `<{tag}>` instead.
 
 ## Control Flow
 

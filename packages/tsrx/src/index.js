@@ -170,6 +170,7 @@ export {
 	create_hook_safe_helper as createHookSafeHelper,
 	create_element_ref_target_type as createElementRefTargetType,
 	create_element_ref_target_type_for_name as createElementRefTargetTypeForName,
+	create_script_body as createScriptBody,
 	build_return_expression as buildReturnExpression,
 	createJsxTransform,
 	extract_jsx_setup_declarations as extractJsxSetupDeclarations,
@@ -261,6 +262,7 @@ export { prune_css as pruneCss } from './analyze/prune.js';
 export { create_scope_root as createScopeRoot } from './transform/jsx/style-scopes.js';
 export {
 	TSRX_DO_WHILE_STATEMENT_ERROR,
+	TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
 	TSRX_FORGOTTEN_STATEMENT_CONTAINER_ERROR,
 	TSRX_FOR_IN_STATEMENT_ERROR,
 	TSRX_FOR_STATEMENT_ERROR,

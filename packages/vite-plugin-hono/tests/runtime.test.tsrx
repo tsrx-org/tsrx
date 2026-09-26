@@ -33,6 +33,11 @@ import {
 	jsx_text_nbsp_cases,
 	jsx_text_whitespace_cases,
 } from '@tsrx/core/test-harness/runtime/jsx-text-whitespace-components.tsrx';
+import {
+	ScriptBodyApp,
+	ScriptBracesApp,
+	script_body_cases,
+} from '@tsrx/core/test-harness/runtime/script-body-components.tsrx';
 
 let container: HTMLDivElement;
 let resolveValue: (value: string) => void;
@@ -278,6 +283,17 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			render(<JsxTextCharactersApp />, container);
 
 			expect(container.querySelector(selector)?.textContent).toBe(text);
+		});
+	}
+
+	// A raw-text `<script>` body renders as written (#708).
+	for (const [label, selector, text] of script_body_cases) {
+		it(`renders a script with ${label} as written`, () => {
+			render(selector === '.script-braces' ? <ScriptBracesApp /> : <ScriptBodyApp />, container);
+
+			const script = container.querySelector(`${selector} > script`);
+			expect(script?.textContent).toBe(text);
+			expect(script?.childNodes.length).toBe(1);
 		});
 	}
 

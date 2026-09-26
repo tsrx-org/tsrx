@@ -389,6 +389,24 @@ describe('elements', () => {
 		await expectFormat(`const d = <{Tag} a="1">x</{Tag}>;`, `const d = <{Tag} a="1">x</{Tag}>;\n`);
 	});
 
+	// A dynamic tag expression other than an identifier, a member access, or a
+	// string literal is reported (#737), but the tree is complete, so the file
+	// is formatted.
+	test('dynamic tags that are only reported', async () => {
+		await expectFormat(
+			`export function App({ c }) @{ <main><{c?A:B}   title="t"><p>{c}</p></{c?A:B}><{getTag()}/></main> }`,
+			`export function App({ c }) @{
+  <main>
+    <{c ? A : B} title="t">
+      <p>{c}</p>
+    </{c ? A : B}>
+    <{getTag()} />
+  </main>
+}
+`,
+		);
+	});
+
 	test('<style> bodies are formatted as CSS, with their comments', async () => {
 		await expectFormat(
 			`function App() @{ <div><style>/* theme */ .a { color: red } .b{margin:0}</style><p class="a" /></div> }`,
@@ -531,7 +549,7 @@ describe('text keeps its characters as written', () => {
 `,
 		],
 		[
-			'references in an element in a dynamic tag name',
+			'references in an element in a reported dynamic tag name',
 			`export function App() @{
   <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} />
 }
@@ -946,6 +964,14 @@ describe('parse errors', () => {
 			['const k = async(a)(b) => 1;', 'Unexpected token (1:23)', { line: 1, column: 23 }],
 			// Prettier's typescript parser: `Expression expected. (1:31)`.
 			['const g = <T,>(x: T) => { x = ; };', 'Unexpected token (1:31)', { line: 1, column: 31 }],
+			// Prettier's typescript parser: `'=>' expected. (1:22)`.
+			[
+				'const a = (x: number);',
+				'Did not expect a type annotation here. (1:13)',
+				{ line: 1, column: 13 },
+			],
+			// Prettier's typescript parser: `Expression expected. (1:15)`.
+			['const c = f(x?);', 'Unexpected token (1:14)', { line: 1, column: 14 }],
 		]) {
 			const error = await format(/** @type {string} */ (source)).catch((/** @type {any} */ e) => e);
 			expect(error).toBeInstanceOf(SyntaxError);
@@ -1013,6 +1039,12 @@ describe('parse errors', () => {
 		);
 		// Prettier's typescript parser formats `let` as a name the same way.
 		await expectFormat('var let = 1;\nclass let {}', 'var let = 1;\nclass let {}\n');
+		// And a parameter after an arrow function's rest parameter.
+		await expectFormat('const f = (...a, b) => [a, b];', 'const f = (...a, b) => [a, b];\n');
+		await expectFormat(
+			'const g = async (x, ...rest: string[], y) => x;',
+			'const g = async (x, ...rest: string[], y) => x;\n',
+		);
 	});
 
 	test("mistakes Prettier's typescript parser rejects are errors, not left out", async () => {
@@ -1042,6 +1074,15 @@ describe('parse errors', () => {
 				'const f = (a: number, public ...rest: number[]) => a;',
 				'A parameter property cannot be declared using a rest parameter. (1:23)',
 			],
+			// Prettier's typescript parser leaves a rest parameter's default out
+			// (`function f(...a) {}`), as the tree does.
+			['function f(...a = []) {}', 'A rest parameter cannot have an initializer. (1:15)'],
+			[
+				'const g = (...a: number[] = []) => a;',
+				'A rest parameter cannot have an initializer. (1:15)',
+			],
+			['const h = async (...a = []) => a;', 'A rest parameter cannot have an initializer. (1:21)'],
+			['type H = (...a = []) => void;', 'A rest parameter cannot have an initializer. (1:14)'],
 			['@dec function f() {}', 'Leading decorators must be attached to a class declaration. (1:1)'],
 			[
 				'export @dec const x = 1;',
@@ -1077,11 +1118,83 @@ describe('parse errors', () => {
 				'abstract function f() {}',
 				"'abstract' modifier can only appear on a class, method, or property declaration. (1:1)",
 			],
+			// #719: modifiers the tree has no place for, which TypeScript reports from
+			// its checker, and which the output would leave out.
+			[
+				'public class A {}',
+				"'public' modifier cannot appear on a module or namespace element. (1:1)",
+			],
+			[
+				'export static let x = 1;',
+				"'static' modifier cannot appear on a module or namespace element. (1:8)",
+			],
+			[
+				'readonly function f() {}',
+				"'readonly' modifier can only appear on a property declaration or index signature. (1:1)",
+			],
+			[
+				'accessor class A {}',
+				"'accessor' modifier can only appear on a property declaration. (1:1)",
+			],
+			['async class A {}', "'async' modifier cannot be used here. (1:1)"],
+			['declare declare class A {}', "'declare' modifier already seen. (1:9)"],
+			[
+				`function f() {
+  public class A {}
+}`,
+				'Modifiers cannot appear here. (2:3)',
+			],
+			[
+				'declare import x from "m";',
+				"A 'declare' modifier cannot be used with an import declaration. (1:1)",
+			],
+			['declare using x = y;', "'declare' modifier cannot appear on a 'using' declaration. (1:1)"],
+			[
+				'abstract export public class A {}',
+				"'public' modifier cannot appear on a module or namespace element. (1:17)",
+			],
 		]) {
 			const error = await format(source).catch((/** @type {any} */ e) => e);
 			expect(error, source).toBeInstanceOf(SyntaxError);
 			expect(error.message.split('\n')[0], source).toBe(message);
 		}
+	});
+});
+
+// Prettier's typescript parser formats these the same way.
+describe('rest parameters and `for` heads', () => {
+	// An async arrow function's rest parameter ended before its type annotation,
+	// so a comment between them moved after the annotation (#725).
+	test("a comment before a rest parameter's type annotation stays there", async () => {
+		await expectFormat(
+			'const f = async (...a /* c */: number[]) => a;',
+			'const f = async (...a /* c */ : number[]) => a;\n',
+		);
+		await expectFormat(
+			'const g = (...a /* c */: number[]) => a;',
+			'const g = (...a /* c */ : number[]) => a;\n',
+		);
+		await expectFormat(
+			`const h = async (
+  x,
+  // rest
+  ...rest: string[] // after
+) => x;`,
+			`const h = async (
+  x,
+  // rest
+  ...rest: string[] // after
+) => x;
+`,
+		);
+	});
+
+	// A type assertion in a `for…in` or `for…of` head failed to parse (#723).
+	test('a type assertion in a `for…in` or `for…of` head', async () => {
+		await expectFormat('for ((a as number) of x);', 'for (a as number of x);\n');
+		await expectFormat('for ([a as number, b!] of x);', 'for ([a as number, b!] of x);\n');
+		await expectFormat('for ({ a: b! } in {});', 'for ({ a: b! } in {});\n');
+		await expectFormat('for ((a!) in {});', 'for (a! in {});\n');
 	});
 });
 
@@ -1128,9 +1241,37 @@ I {}`,
 		['type satisfies<T> = T;', 'type satisfies<T> = T;\n'],
 		['export global {}', 'export global {}\n'],
 		['export declare global {}', 'export declare global {}\n'],
+		// #716, #717, #718 and #720.
+		[
+			'type Uppercase<S extends string> = intrinsic;',
+			'type Uppercase<S extends string> = intrinsic;\n',
+		],
+		[
+			'let x: import("m", { with: { "resolution-mode": "import" } }).X;',
+			'let x: import("m", { with: { "resolution-mode": "import" } }).X;\n',
+		],
+		['import \\u0074ype { a } from "m";', 'import type { a } from "m";\n'],
+		['import { \\u0074ype a } from "m";', 'import { type a } from "m";\n'],
+		[
+			'export default @dec declare abstract class A {}',
+			`export default
+@dec
+declare abstract class A {}
+`,
+		],
 	])('formats %j like Prettier', async (input, expected) => {
 		await expectFormat(input, expected);
 		expect(expected).toBe(await prettier.format(input, { parser: 'typescript' }));
+	});
+
+	// #719: modifiers out of order that the tree keeps print in order. Prettier's
+	// `typescript` parser leaves out the `export` of the first two.
+	test.each([
+		['abstract export class A {}', 'export abstract class A {}\n'],
+		['async export function f() {}', 'export async function f() {}\n'],
+		['declare export const x: number;', 'export declare const x: number;\n'],
+	])('keeps the modifiers of %j', async (input, expected) => {
+		await expectFormat(input, expected);
 	});
 });
 
