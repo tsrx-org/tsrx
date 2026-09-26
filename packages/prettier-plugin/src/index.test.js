@@ -10206,6 +10206,54 @@ function k() {
 		])('keeps the blank line after the comment before the child in %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});
+
+		// A `{" "}` is text, like Prettier's `isJsxWhitespaceExpression` reads it,
+		// even with the comments TSRX attaches to its braces, which are
+		// `{/* c */}` children next to it in TSX. With one, the element had no
+		// text, so a blank line after it stayed (#738).
+		it.each([
+			[
+				'const a = (\n  <div>\n    {" "}/* a */\n\n    <i />\n  </div>\n);',
+				'const a = (\n  <div>\n    {" "}/* a */\n    <i />\n  </div>\n);',
+			],
+			[
+				'export function App() @{\n  <div>\n    {" "}/* a */\n\n    <i />\n  </div>\n}',
+				'export function App() @{\n  <div>\n    {" "}/* a */\n    <i />\n  </div>\n}',
+			],
+			[
+				'const a = (\n  <div>\n    <b />\n    {" "}/* a */\n\n    <i />\n  </div>\n);',
+				'const a = (\n  <div>\n    <b />\n    {" "}/* a */\n    <i />\n  </div>\n);',
+			],
+			[
+				'const a = (\n  <div>\n    {" "} // a\n\n    {x}\n  </div>\n);',
+				'const a = (\n  <div>\n    {" "} // a\n    {x}\n  </div>\n);',
+			],
+			[
+				'const a = (\n  <div>\n    /* a */\n    {" "}\n\n    <i />\n  </div>\n);',
+				'const a = (\n  <div>\n    /* a */\n    {" "}\n    <i />\n  </div>\n);',
+			],
+			[
+				'const a = (\n  <>\n    <b />\n\n    {" "}/* a */\n  </>\n);',
+				'const a = (\n  <>\n    <b />\n    {" "}/* a */\n  </>\n);',
+			],
+		])(
+			'removes the blank line in the element with the {" "} with a comment of %j',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
+
+		// Like Prettier, a comment in the braces makes the `{" "}` an expression,
+		// and an element without text keeps its blank lines
+		it.each([
+			'const a = (\n  <div>\n    {" " /* a */}\n\n    <i />\n  </div>\n);',
+			'const a = (\n  <div>\n    {/* a */ " "}\n\n    <i />\n  </div>\n);',
+		])(
+			'keeps the blank line after the {" "} with a comment in its braces of %j',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
 	});
 
 	// A space at a template child boundary renders, like in JSX, while
@@ -10614,6 +10662,62 @@ export function Spaced() @{
 }`);
 			expect(await render(result)).toEqual(await render(input));
 			expect(await render(input)).toEqual(['<div>x y</div>', '<div>x y</div>', '<div>x y</div>']);
+		});
+
+		// A comment that starts a line takes the line break before it into its
+		// run of whitespace, which then renders nothing. So where the body
+		// breaks, the space after a comment that starts it prints as a `{" "}`
+		// before the comment, as it does for text after the comment: TSX's
+		// `{/* c */} <i />`, as `/* c */ <i />` on a line of its own, drops the
+		// space (#739).
+		it('keeps the space after a comment that starts the body', async () => {
+			const input = `export function Tag() @{
+  <div>/* c */ <i /></div>
+}
+export function Text() @{
+  <div>/* c */ <i /> text</div>
+}
+export function Expression() @{
+  <div>/* c */ {"x"}</div>
+}
+export function Two() @{
+  <div>/* a */ /* b */ <i /></div>
+}`;
+			const result = await format(input);
+			expect(result).toBeWithNewline(`export function Tag() @{
+  <div>
+    {" "}
+    /* c */ <i />
+  </div>
+}
+export function Text() @{
+  <div>
+    {" "}
+    /* c */ <i /> text
+  </div>
+}
+export function Expression() @{
+  <div>
+    {" "}
+    /* c */ {"x"}
+  </div>
+}
+export function Two() @{
+  <div>
+    {" "}
+    /* a */ /* b */ <i />
+  </div>
+}`);
+			expect(await render(result)).toEqual(await render(input));
+			expect(await render(input)).toEqual([
+				'<div> <i></i></div>',
+				'<div> <i></i> text</div>',
+				'<div> x</div>',
+				'<div> <i></i></div>',
+			]);
+			expect(
+				await render('export function Tag() @{\n  <div>\n    /* c */ <i />\n  </div>\n}'),
+			).toEqual(['<div><i></i></div>']);
 		});
 
 		it('renders website sections the same after formatting', async () => {
