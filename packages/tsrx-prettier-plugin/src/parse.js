@@ -343,6 +343,105 @@ class Adapter {
 		node.children = children;
 		if (children.some((child) => child.type === 'TSRXJSXComment')) {
 			node.tsrxCommentChildren = true;
+			this.describeCommentRuns(children, opening.end, closing.start);
+		}
+	}
+
+	/**
+	 * A comment between children adds nothing to the text around it (#615): the
+	 * whitespace on its two sides is one run, which renders as it would without
+	 * the comment. Without a line break it renders a space; with one it renders
+	 * a space only between two words of text, and nothing beside an element, an
+	 * expression, or the start or end of the children. For each group of
+	 * comments with only whitespace between them, record what the run renders
+	 * and what is beside it, so `printCommentChild` prints a run that renders the
+	 * same.
+	 * @param {Node[]} children
+	 * @param {number} start Where the children start.
+	 * @param {number} end Where the children end.
+	 */
+	describeCommentRuns(children, start, end) {
+		const isBlank = (/** @type {Node | undefined} */ child) =>
+			child?.type === 'JSXText' && /^[ \t\r\n]*$/u.test(child.value);
+		// `{" "}` renders a space whatever is around it.
+		const isSpace = (/** @type {Node | undefined} */ child) =>
+			child?.type === 'JSXExpressionContainer' &&
+			child.expression.type === 'Literal' &&
+			child.expression.value === ' ';
+		const isGap = (/** @type {Node | undefined} */ child) => isBlank(child) || isSpace(child);
+		const kind = (/** @type {Node | undefined} */ child) =>
+			!child ? 'boundary' : child.type === 'JSXText' ? 'text' : 'node';
+		for (let first = 0; first < children.length; first++) {
+			if (children[first].type !== 'TSRXJSXComment') continue;
+			/** @type {Node[]} */
+			const group = [children[first]];
+			let last = first;
+			for (let next = last + 1; next < children.length; next++) {
+				if (isGap(children[next])) continue;
+				if (children[next].type !== 'TSRXJSXComment') break;
+				group.push(children[next]);
+				last = next;
+			}
+			let previous = first - 1;
+			while (isGap(children[previous])) previous--;
+			let following = last + 1;
+			while (isGap(children[following])) following++;
+			const before = children[previous];
+			const after = children[following];
+			// The whitespace and `{" "}`s beside the comments are the run, which the
+			// comments print.
+			let explicitSpace = false;
+			for (let index = previous + 1; index < following; index++) {
+				children[index].tsrxInCommentRun = true;
+				if (isSpace(children[index])) {
+					children[index].tsrxCommentSpace = true;
+					explicitSpace = true;
+				}
+			}
+			const runStart = !before
+				? start
+				: before.type === 'JSXText'
+					? before.start + before.value.replace(/[ \t\r\n]+$/u, '').length
+					: before.end;
+			const runEnd = !after
+				? end
+				: after.type === 'JSXText'
+					? after.end - after.value.replace(/^[ \t\r\n]+/u, '').length
+					: after.start;
+			// The run's whitespace, without the comments and the `{" "}`s.
+			let run = '';
+			let position = runStart;
+			for (const skipped of children.slice(previous + 1, following)) {
+				if (skipped.type !== 'TSRXJSXComment' && !isSpace(skipped)) continue;
+				run += this.text.slice(position, skipped.start);
+				position = skipped.end;
+			}
+			run += this.text.slice(position, runEnd);
+			const lineBreak = /[\r\n]/u.test(run);
+			const betweenWords = kind(before) === 'text' && kind(after) === 'text';
+			const description = {
+				before: kind(before),
+				after: kind(after),
+				// Whether the run renders a space.
+				space: explicitSpace || (run !== '' && (!lineBreak || betweenWords)),
+				// Whether a line break in the run is what it renders (nothing, or a
+				// space between words) rather than a space that must be kept.
+				lineBreak: lineBreak && !explicitSpace,
+				// Whether a line comment in the group puts a line break in the run.
+				lineComment: group.some((comment) => comment.commentType === 'Line'),
+			};
+			for (const [index, comment] of group.entries()) {
+				// Between two comments, whatever the source had there (whitespace or
+				// a `{" "}`) keeps them apart.
+				const gap = index > 0 ? this.text.slice(group[index - 1].end, comment.start) : '';
+				comment.run = {
+					...description,
+					first: index === 0,
+					last: index === group.length - 1,
+					gapBefore: /[\r\n]/u.test(gap) ? 'line' : gap !== '' ? 'space' : '',
+				};
+			}
+			first = last;
 		}
 	}
 
@@ -589,7 +688,11 @@ class Adapter {
 			case 'MethodDefinition':
 			case 'TSAbstractMethodDefinition':
 				if (node.typeParameters) {
+					// The function starts at its type parameters, as in typescript-estree,
+					// so a comment inside them belongs to the function.
 					node.value.typeParameters = node.typeParameters;
+					node.value.start = node.typeParameters.start;
+					if (node.value.range) node.value.range = [node.value.start, node.value.range[1]];
 					delete node.typeParameters;
 				}
 				break;
