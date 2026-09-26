@@ -79,7 +79,7 @@ export const parsers = {
 		 */
 		parse(text, options) {
 			const ast = parseModule(text, options.filepath || 'PrettierPlugin.tsrx');
-			markHashbangComment(ast, text);
+			prepareComments(ast, text);
 			return ast;
 		},
 
@@ -102,24 +102,36 @@ export const parsers = {
 };
 
 /**
- * The hashbang comments of parsed files (see {@link markHashbangComment}).
+ * The hashbang comments of parsed files (see {@link prepareComments}).
  * @type {WeakSet<AST.Comment>}
  */
 const hashbangComments = new WeakSet();
 
 /**
- * Remember a file's hashbang (`#!…` on its first line) so {@link printComment}
- * prints it back as written. The parser reports it as a `Line` comment at offset
- * 0 whose value is the text after `#!`, and attaches it like any other comment,
- * so it can end up on any node: the first statement, a later one when empty
- * statements come first, or the program. Find it by its position instead.
+ * Prepare the comments the parser attached for printing, in one walk that
+ * only runs when there is something to do:
+ * - Remember a file's hashbang (`#!…` on its first line) so
+ *   {@link printComment} prints it back as written. The parser reports it as
+ *   a `Line` comment at offset 0 whose value is the text after `#!`, and
+ *   attaches it like any other comment, so it can end up on any node: the
+ *   first statement, a later one when empty statements come first, or the
+ *   program. Find it by its position instead.
+ * - Merge the JSDoc comments that touch (`*\/` right before `/*`), see
+ *   {@link mergeNestledJsdocComments}.
  * @param {AST.Program} ast
  * @param {string} text
  */
-function markHashbangComment(ast, text) {
-	if (!text.startsWith('#!')) {
+function prepareComments(ast, text) {
+	const hasHashbang = text.startsWith('#!');
+	const hasTouchingComments = text.includes('*//*');
+	if (!hasHashbang && !hasTouchingComments) {
 		return;
 	}
+	/**
+	 * The comment lists that hold each comment
+	 * @type {Map<AST.Comment, AST.Comment[][]>}
+	 */
+	const lists = new Map();
 	/** @type {unknown[]} */
 	const stack = [ast];
 	const seen = new Set();
@@ -131,20 +143,82 @@ function markHashbangComment(ast, text) {
 		seen.add(value);
 		if (Array.isArray(value)) {
 			for (const item of value) {
+				if (hasTouchingComments && isParsedComment(item)) {
+					const itemLists = lists.get(item);
+					if (itemLists) {
+						itemLists.push(value);
+					} else {
+						lists.set(item, [value]);
+					}
+				}
 				stack.push(item);
 			}
 			continue;
 		}
-		const node = /** @type {Record<string, unknown>} */ (value);
-		if (node.type === 'Line' && node.start === 0) {
-			hashbangComments.add(/** @type {AST.Comment} */ (/** @type {unknown} */ (node)));
+		if (isParsedComment(value)) {
+			if (hasHashbang && value.type === 'Line' && value.start === 0) {
+				hashbangComments.add(value);
+			}
 			continue;
 		}
+		const node = /** @type {Record<string, unknown>} */ (value);
 		for (const key in node) {
 			if (key !== 'metadata' && key !== 'loc' && key !== 'parent') {
 				stack.push(node[key]);
 			}
 		}
+	}
+	mergeNestledJsdocComments(lists);
+}
+
+/**
+ * Whether a value in the parsed tree is a comment. A stylesheet's rule block
+ * is a `Block` too, one without a `value`.
+ * @param {unknown} value
+ * @returns {value is AST.Comment & AST.NodeWithLocation}
+ */
+function isParsedComment(value) {
+	const node = /** @type {{ type?: unknown, value?: unknown }} */ (value);
+	return (
+		!!node && (node.type === 'Line' || node.type === 'Block') && typeof node.value === 'string'
+	);
+}
+
+/**
+ * Like Prettier's `mergeNestledJsdocComments`, a parse postprocess step:
+ * two multi-line block comments whose lines all start with `*` (see
+ * {@link isIndentableBlockComment}), where one ends right where the next
+ * starts (`*\/` then `/**`), become one comment, so they print together as
+ * written. The parser has already attached them, so the merged comment stays
+ * where the first one is. A JSDoc cast in either one keeps its parentheses,
+ * which the merged comment ends right before.
+ * @param {Map<AST.Comment, AST.Comment[][]>} lists - The comment lists that
+ *   hold each comment
+ */
+function mergeNestledJsdocComments(lists) {
+	const comments = /** @type {(AST.Comment & AST.NodeWithLocation)[]} */ ([...lists.keys()]).sort(
+		(a, b) => a.start - b.start,
+	);
+	/** @type {(AST.Comment & AST.NodeWithLocation) | undefined} */
+	let followingComment;
+	for (let index = comments.length - 1; index >= 0; index--) {
+		const comment = comments[index];
+		if (
+			followingComment &&
+			comment.end === followingComment.start &&
+			isIndentableBlockComment(comment) &&
+			isIndentableBlockComment(followingComment)
+		) {
+			for (const list of lists.get(followingComment) ?? []) {
+				list.splice(list.indexOf(followingComment), 1);
+			}
+			comment.value += '*//*' + followingComment.value;
+			comment.end = followingComment.end;
+			if (comment.loc && followingComment.loc) {
+				comment.loc = { start: comment.loc.start, end: followingComment.loc.end };
+			}
+		}
+		followingComment = comment;
 	}
 }
 
@@ -11764,14 +11838,19 @@ function printBinaryishExpressions(path, options, print, isNested, isInsideParen
 		!isNested && getTypeCastParens(path, options)
 			? PARENTHESIZED_EXPRESSION
 			: /** @type {AST.Node} */ (path.getParentNode());
-	const shouldBreak = Boolean(
-		node.left.trailingComments?.some((comment) => comment.type === 'Line'),
-	);
+	// A line comment after the left operand breaks the line after the
+	// operator, like Prettier's `hasComment(node.left, Trailing | Line)`. The
+	// ones that print inside the operand's JSDoc cast parentheses trail the
+	// expression in Prettier's `ParenthesizedExpression`, not the operand.
+	const leftTypeCastParens = path.call((leftPath) => getTypeCastParens(leftPath, options), 'left');
+	const shouldBreak = (
+		leftTypeCastParens ? leftTypeCastParens.behind : (node.left.trailingComments ?? [])
+	).some((comment) => comment.type === 'Line');
 	const shouldGroup =
 		shouldBreak ||
 		(!(isInsideParenthesis && node.type === 'LogicalExpression') &&
 			parent.type !== node.type &&
-			(node.left.type !== node.type || hasTypeCastParens(path, options, 'left')) &&
+			(node.left.type !== node.type || leftTypeCastParens !== null) &&
 			(node.right.type !== node.type || hasTypeCastParens(path, options, 'right')));
 	if (shouldGroup) {
 		right = group(right, { shouldBreak });
