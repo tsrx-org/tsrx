@@ -144,6 +144,44 @@ describe.each(['native', 'bypass', 'legacy'])('tsrx-tsc with the %s loader', (lo
 		expect(result.output).toBe(`Version ${cli_require('typescript').version}\n`);
 		expect(result.status).toBe(0);
 	});
+
+	it('exits nonzero on a fatal .tsrx failure with no other diagnostics', () => {
+		// `{1 +}` throws inside the compiler; under tsrx-tsc the file stubs to
+		// `export {}` and the failure reaches stderr via logTSRXErrors. The stub
+		// type-checks clean and nothing imports it, so TypeScript reports zero
+		// diagnostics — the nonzero exit can only come from the logged-failure
+		// signal in tsc.js, which is what this test pins.
+		fs.writeFileSync(
+			path.join(workspace, 'broken.tsrx'),
+			'export default function Broken() @{\n\t<div>{1 +}</div>\n}\n',
+		);
+		const tsconfig = JSON.parse(fs.readFileSync(path.join(workspace, 'tsconfig.json'), 'utf8'));
+		tsconfig.include = ['main.ts', 'broken.tsrx'];
+		fs.writeFileSync(path.join(workspace, 'tsconfig.json'), JSON.stringify(tsconfig));
+		const result = run_cli(loader);
+		expect(result.status).not.toBe(0);
+		expect(result.output).toContain('[tsrx-tsc]');
+		expect(result.output).toContain('broken.tsrx');
+	});
+
+	it('keeps sibling diagnostics when a .tsrx file fails to compile', () => {
+		// The stub exists so a broken neighbor does not suppress the rest of the
+		// program's semantic diagnostics — the import error on the stubbed module
+		// and the type error in main.ts must both still surface.
+		fs.writeFileSync(
+			path.join(workspace, 'broken.tsrx'),
+			'export default function Broken() @{\n\t<div>{1 +}</div>\n}\n',
+		);
+		fs.appendFileSync(
+			path.join(workspace, 'main.ts'),
+			"import Broken from './broken.tsrx';\nBroken();\nMainLayout({ title: 123 });\n",
+		);
+		const result = run_cli(loader);
+		expect(result.status).not.toBe(0);
+		expect(result.output).toContain('[tsrx-tsc]');
+		expect(result.output).toContain('broken.tsrx');
+		expect(result.output).toContain('main.ts(5,14): error TS2322');
+	});
 });
 
 it('reports unresolved class field and heritage types in .tsrx files', () => {

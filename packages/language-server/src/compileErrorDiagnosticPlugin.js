@@ -124,7 +124,10 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 	}
 
 	return {
-		severity: DiagnosticSeverity.Error,
+		// Collected diagnostics may declare `severity: 'warning'` (consumer
+		// compilers push warnings into `errors` alongside errors); surface those
+		// as real editor warnings instead of silently upgrading them.
+		severity: error.severity === 'warning' ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
 		range: { start, end },
 		message: error.message,
 		source: 'TSRX',

@@ -65,7 +65,7 @@ export function create_service_harness(source, plugins, fixture_name = 'App.tsrx
 	);
 	const document = TextDocument.create(uri.toString(), 'tsrx', 0, source);
 
-	return { document, service, uri };
+	return { document, service, uri, language };
 }
 
 /**

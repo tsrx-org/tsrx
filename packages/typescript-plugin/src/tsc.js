@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import node_module, { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { getTsrxLanguagePlugin } from './language.js';
+import { getTsrxLanguagePlugin, loggedErrorDiagnostic } from './language.js';
 
 const require = createRequire(import.meta.url);
 const { runTsc } = /** @type {typeof import('@volar/typescript/lib/quickstart/runTsc.js')} */ (
@@ -30,6 +30,15 @@ const hook = node_module.registerHooks?.({
 	},
 });
 
+// tsc exits through sys.exit → process.exit. A fatal .tsrx compile failure is
+// mirrored to stderr via logTSRXErrors but produces no TypeScript diagnostic —
+// the file compiles to a stub — so a clean tsc run must not exit 0 over it.
+// Error-severity only: warning diagnostics are allowed to print without
+// failing the gate.
+const realExit = process.exit;
+process.exit = (code) =>
+	realExit(loggedErrorDiagnostic() && (code === undefined || code === 0) ? 1 : code);
+
 try {
 	runTsc(
 		tscPath,
@@ -54,4 +63,9 @@ try {
 	);
 } finally {
 	hook?.deregister();
+}
+
+// Reached only when tsc returns without exiting (e.g. watch mode teardown).
+if (loggedErrorDiagnostic()) {
+	process.exitCode = 1;
 }

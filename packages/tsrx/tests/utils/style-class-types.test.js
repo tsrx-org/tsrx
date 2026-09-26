@@ -241,6 +241,38 @@ export function App() @{ <div class={theme.dark} /> }`;
 			expect(to_source_ranges(mappings, diagnostics[0])).toContainEqual(range_of(source, '$nope'));
 		});
 
+		// The literal-key class-map emit is the contract the typecheck gate
+		// stands on: a key the map does not provide is a TS2339, today and
+		// going forward.
+		it.each(OUTPUTS)('rejects an unknown class key in %s output', (_name, compiler) => {
+			const source = SOURCE.replace('theme.dark', 'theme.light');
+			const { errors, diagnostics } = check_source(compiler, source);
+
+			// Member reads are the typecheck gate's job — the analyzer stays silent.
+			expect(errors).toEqual([]);
+			expect(diagnostics.map(({ code, message }) => ({ code, message }))).toEqual([
+				{
+					code: 2339,
+					message: "Property 'light' does not exist on type '{ $class: string; dark: string; }'.",
+				},
+			]);
+		});
+
+		it('reports a misspelled class key with a suggestion on the authored access', () => {
+			const source = SOURCE.replace('theme.dark', 'theme.darkk');
+			const { diagnostics, mappings } = check_source(compile_to_volar_mappings, source);
+
+			// A near-miss key reports the did-you-mean variant (2551) of 2339.
+			expect(diagnostics.map(({ code, message }) => ({ code, message }))).toEqual([
+				{
+					code: 2551,
+					message:
+						"Property 'darkk' does not exist on type '{ $class: string; dark: string; }'. Did you mean 'dark'?",
+				},
+			]);
+			expect(to_source_ranges(mappings, diagnostics[0])).toContainEqual(range_of(source, 'darkk'));
+		});
+
 		it('types a body-less apply bundle as a $class-only object', () => {
 			const { errors, diagnostics, types } = check_source(
 				compile_to_volar_mappings,
@@ -346,6 +378,63 @@ export function App() @{ <><style apply={theme} /><div class={theme.x} /></> }`;
 				expect(types.x).toBe('string');
 			},
 		);
+
+		it('rejects an unknown class key on an imported class map', () => {
+			const base = compile_to_volar_mappings(BASE_SOURCE, 'base.tsrx', {
+				loose: true,
+				collect: true,
+			});
+			const app = compile_to_volar_mappings(
+				`import { base } from './base.js';
+const y: string = base.darkk;`,
+				'App.tsrx',
+				{ loose: true, collect: true },
+			);
+
+			expect(base.errors).toEqual([]);
+			expect(app.errors).toEqual([]);
+
+			const { diagnostics } = check_generated({ 'base.tsx': base.code, 'App.tsx': app.code });
+			expect(diagnostics.map(({ file, code, message }) => ({ file, code, message }))).toEqual([
+				{
+					file: 'App.tsx',
+					code: 2339,
+					message: "Property 'darkk' does not exist on type '{ $class: string; b: string; }'.",
+				},
+			]);
+		});
+
+		it('rejects an apply target that is not a class map across a module boundary', () => {
+			const app = compile_to_volar_mappings(
+				`import { tokens } from './tokens.js';
+export function App() @{ <><style apply={tokens} /><div /></> }`,
+				'App.tsrx',
+				{ loose: true, collect: true },
+			);
+
+			// Import bindings resolve at runtime, so the analyzer stays silent;
+			// the typecheck gate owns this rejection through the synthesized
+			// `$class` read on the apply target.
+			expect(app.errors).toEqual([]);
+			expect(app.code).toContain('<style data-tsrx-apply={tokens.$class} />');
+
+			const { diagnostics } = check_generated({
+				'tokens.tsx': "export const tokens = { dark: 'x' };",
+				'App.tsx': app.code,
+			});
+			// The emitted output reads `tokens.$class` twice — once on the
+			// `data-tsrx-apply` attribute and once on the sibling element the
+			// applied block styles — so TypeScript reports both sites.
+			const expected = {
+				file: 'App.tsx',
+				code: 2339,
+				message: "Property '$class' does not exist on type '{ dark: string; }'.",
+			};
+			expect(diagnostics.map(({ file, code, message }) => ({ file, code, message }))).toEqual([
+				expected,
+				expected,
+			]);
+		});
 	});
 
 	describe('apply before declaration', () => {

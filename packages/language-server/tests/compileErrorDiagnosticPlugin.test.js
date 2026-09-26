@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DiagnosticSeverity } from '@volar/language-server';
 import { createCompileErrorDiagnosticPlugin } from '../src/compileErrorDiagnosticPlugin.js';
 import { create_service_harness } from './setup.js';
 
@@ -101,6 +102,41 @@ export function App() @{
 		);
 
 		expect(diagnostics).toEqual([]);
+	});
+
+	it('surfaces a collected warning-severity diagnostic as a warning, not silence or an error', async () => {
+		const source = `const theme = <style>.a { color: red; }</style>;
+export function App() @{
+	<>
+		<style apply={theme} />
+		<div class={theme.a}>{'x'}</div>
+	</>
+}`;
+		const { document, service, uri, language } = create_service_harness(
+			source,
+			[createCompileErrorDiagnosticPlugin()],
+			'react/App.tsrx',
+		);
+
+		// A consumer compiler (octane) pushes warning-severity diagnostics into the
+		// collected `errors` channel; the plugin must surface them as warnings.
+		const root = language.scripts.get(uri)?.generated?.root;
+		expect(root?.usageErrors).toEqual([]);
+		const theme_start = source.indexOf('theme');
+		root.usageErrors.push({
+			message: "'.a' is never referenced",
+			code: 'octane-style-unused-selector',
+			severity: 'warning',
+			pos: theme_start,
+			end: theme_start + 'theme'.length,
+			type: 'usage',
+		});
+
+		const diagnostics = await service.getDiagnostics(uri);
+		expect(diagnostics).toHaveLength(1);
+		expect(diagnostics[0].severity).toBe(DiagnosticSeverity.Warning);
+		expect(diagnostics[0].code).toBe('octane-style-unused-selector');
+		expect(document.getText(diagnostics[0].range)).toBe('theme');
 	});
 });
 
