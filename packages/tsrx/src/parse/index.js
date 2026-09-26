@@ -933,13 +933,17 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 *   moves to the next line, and the comment stays on its own line there.
 	 * The comments between the constraint and the `=` of the default, and
 	 * after the `=`, follow the same rules for the constraint (see
-	 * {@link trailsTypeParameterPart}).
+	 * {@link trailsTypeParameterPart}). Prettier's parsers keep no node for
+	 * the parentheses around the type, so the comments after their `(` count
+	 * as ones before the type too.
 	 * @param {AST.TSTypeParameter & AST.NodeWithLocation} node
 	 * @param {AST.Node | AST.CSS.StyleSheet | undefined} parent
 	 */
 	function takeTypeParameterNameComments(node, parent) {
 		const keyword = getTypeParameterKeyword(node, parent);
-		const first = /** @type {AST.NodeWithLocation | undefined} */ (node.constraint ?? node.default);
+		const first = /** @type {AST.NodeWithLocation | null} */ (
+			skipParenthesizedTypes(node.constraint ?? node.default ?? null)
+		);
 		const end = first?.start ?? node.end;
 		let hasLineComment = false;
 		while (comments[0] && comments[0].end <= end) {

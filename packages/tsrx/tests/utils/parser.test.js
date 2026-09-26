@@ -7063,6 +7063,13 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(intersection.types[0].typeAnnotation).trailing).toBeUndefined();
 	});
 
+	it('gives a type parameter a comment that ends the line after the ( around its constraint', () => {
+		const [parameter] = firstStatement('type K<T extends (// c\n  A)> = T;').typeParameters.params;
+
+		expect(commentsOf(parameter).inner).toEqual([' c']);
+		expect(commentsOf(parameter.constraint.typeAnnotation).leading).toBeUndefined();
+	});
+
 	it('trails an intersection member with a comment that ends the line after its &', () => {
 		const intersection = firstStatement('type K = X & // c\n  Y;').typeAnnotation;
 
