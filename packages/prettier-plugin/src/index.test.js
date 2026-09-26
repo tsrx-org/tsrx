@@ -22699,6 +22699,83 @@ export { theme };`;
 	// or function expression (#578), and a `const` type parameter on an object
 	// method (#631) failed to parse; the output of the first two failed on the
 	// next pass. They print as Prettier's `typescript` parser prints them.
+	describe('text keeps its characters as written', () => {
+		// A `>` in an element in a container dropped the text before it, or
+		// failed after a child container (#694). In an element in a spread
+		// argument or an unbraced attribute value in a container, character
+		// references were printed decoded: `&#123;x&#125;` became `{x}` (#693).
+		// Since #656 those are template text; only an element in a dynamic tag
+		// name is read that way. A text prints from its `raw`, the text as
+		// written.
+		it.each([
+			[
+				'a `>` in an element in a container',
+				`export function App() @{
+  <main>{c && <b>a > b</b>}</main>
+}
+`,
+			],
+			[
+				'a `>` after a child container',
+				`export function App() @{
+  <main>{c && <b>{y} a > b</b>}</main>
+}
+`,
+			],
+			[
+				'an arrow in an element in a container',
+				`export function App() @{
+  <main>{c && <b>a => b</b>}</main>
+}
+`,
+			],
+			[
+				"references in a spread attribute's argument",
+				`export function App() @{
+  <div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />
+}
+`,
+			],
+			[
+				'references in an unbraced attribute value in a container',
+				`export function App() @{
+  <main>{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}</main>
+}
+`,
+			],
+			[
+				"a `>` in a spread attribute's argument",
+				`export function App() @{
+  <div {...{ title: <b>a > b</b> }} />
+}
+`,
+			],
+			[
+				'a `>` first in an unbraced attribute value in a container',
+				`export function App() @{
+  <main>{c && <div title=<b>> b &#123;x&#125;</b> />}</main>
+}
+`,
+			],
+			[
+				'references in an element in a dynamic tag name',
+				`export function App() @{
+  <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} />
+}
+`,
+			],
+			[
+				'references and a comment in template text',
+				`export function App() @{
+  <p>a &amp; b /* c */ &#123;x&#125;</p>
+}
+`,
+			],
+		])('keeps the text of %s', async (_label, source) => {
+			expect(await format(source)).toBe(source);
+		});
+	});
+
 	describe('type arguments and parameters the parser used to reject', () => {
 		it.each([
 			['class A extends B\n<T> {}', 'class A extends B<T> {}\n'],

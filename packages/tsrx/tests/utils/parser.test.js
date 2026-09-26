@@ -11081,6 +11081,255 @@ describe('a `/` in the opening tag of an element in a template (#655)', () => {
 	});
 });
 
+describe('the text of an element in a template', () => {
+	const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+
+	/**
+	 * The children of the first element named `name`: each text by its `raw` or
+	 * `value`, each element by its tag, anything else by its type.
+	 *
+	 * @param {unknown} ast
+	 * @param {string} name
+	 * @param {'raw' | 'value'} [form]
+	 * @returns {string[]}
+	 */
+	function children(ast, name, form = 'raw') {
+		const element = find_first(
+			ast,
+			(node) =>
+				node.type === 'JSXElement' &&
+				/** @type {{ name?: string }} */ (
+					/** @type {AST.TSRXJSXElement} */ (node).openingElement.name
+				).name === name,
+		);
+		if (!element) throw new Error(`No <${name}>`);
+		return node_children(element).map((child) =>
+			child.type === 'JSXText'
+				? child[form]
+				: child.type === 'JSXElement'
+					? `<${/** @type {{ name: string }} */ (child.openingElement.name).name}>`
+					: child.type,
+		);
+	}
+
+	/**
+	 * @param {string} body
+	 */
+	const component = (body) => `export function App() @{
+	<main>${body}</main>
+}`;
+
+	// In a template a `>` is text. In an element in a `{…}` container, the `>`
+	// right after a tag was read as code, dropping the text before it, and
+	// after a child container it failed (#694).
+	/** @type {Array<[string, string, string[], string?]>} */
+	const greater_than = [
+		['in a container', component('{c && <b>a > b</b>}'), ['a > b']],
+		['first in a container', component('{c && <b>> b</b>}'), ['> b']],
+		['in an arrow in a container', component('{c && <b>a => b</b>}'), ['a => b']],
+		['in operators in a container', component('{c && <b>a >= b >> c</b>}'), ['a >= b >> c']],
+		['after a tag in a container', component('{c && <b><i />a > b</b>}'), ['<i>', 'a > b']],
+		[
+			'after a child container in a container',
+			component('{c && <b>{y} a > b</b>}'),
+			['JSXExpressionContainer', ' a > b'],
+		],
+		[
+			'on its own line in a container',
+			component(`{c && <b>
+		a > b
+	</b>}`),
+			[
+				`
+		a > b
+	`,
+			],
+		],
+		[
+			'after type arguments in a container',
+			component('{c && <List<string>>a > b</List>}'),
+			['a > b'],
+			'List',
+		],
+		['in an attribute value', component('<div title={<b>a > b</b>} />'), ['a > b']],
+		[
+			'in an @if body in a container',
+			component('{c && <p>@if (d) { <b>a > b</b> }</p>}'),
+			['a > b'],
+		],
+		[
+			'in a container in a function',
+			`function App() {
+	return <main>{c && <b>a > b</b>}</main>;
+}`,
+			['a > b'],
+		],
+		// Template text since #656
+		[
+			"in a spread attribute's argument",
+			`export function App() @{
+	<div {...{ title: <b>a > b</b> }} />
+}`,
+			['a > b'],
+		],
+		['first in an unbraced attribute value', component('<div title=<b>> b</b> />'), ['> b']],
+		[
+			'in an unbraced attribute value in a container',
+			component('{c && <div title=<b>a > b</b> />}'),
+			['a > b'],
+		],
+		// It was text here before
+		['in a template', component('<b>a > b</b>'), ['a > b']],
+		['after a tag in a template', component('<b><i />a > b</b>'), ['<i>', 'a > b']],
+	];
+
+	it.each(greater_than)('reads a `>` %s as text', async (_label, source, expected, name = 'b') => {
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], label).toEqual([]);
+			expect(children(outcome.ast, name), label).toEqual(expected);
+		}
+	});
+
+	// Where the `>` is code, it stays code
+	/** @type {Array<[string, string, string]>} */
+	const code = [
+		['a comparison in a container', component('{a > b ? <b /> : null}'), 'BinaryExpression'],
+		[
+			'a comparison in an element in a container',
+			component('{c && <b>{a > b}</b>}'),
+			'BinaryExpression',
+		],
+		[
+			'a comparison in an attribute in a container',
+			component('{c && <b title={a > b} />}'),
+			'BinaryExpression',
+		],
+		[
+			'an arrow in a container',
+			component('{items.map((i) => <b>{i}</b>)}'),
+			'ArrowFunctionExpression',
+		],
+	];
+
+	it.each(code)('reads %s as code', async (_label, source, type) => {
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], label).toEqual([]);
+			expect(
+				find_first(outcome.ast, (node) => node.type === type),
+				label,
+			).toBeDefined();
+		}
+	});
+
+	// A text's `raw` is the text as written, which the printers print, with its
+	// character references. In an element that acorn-typescript's JSX parser
+	// reads, `value` has them decoded, and the output printed it, so
+	// `&#123;x&#125;` compiled to the expression `{x}` (#693). Since #656 that
+	// is only an element in a dynamic tag name. The `value` of template text
+	// keeps them for now (#710).
+	/** @type {Array<[string, string, string[], string[] | null]>} */
+	const references = [
+		[
+			'in an element in a dynamic tag name',
+			`export function App() @{
+	<{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : 'i'} />
+}`,
+			['&#123;x&#125; &amp;lt; &gt;'],
+			['{x} &lt; >'],
+		],
+		[
+			'across a line break in an element in a dynamic tag name',
+			`export function App() @{
+	<{c ? <b>&#123;x&#125;
+&amp;lt;</b> : 'i'} />
+}`.replaceAll('\n', '\r\n'),
+			['&#123;x&#125;\r\n&amp;lt;'],
+			['{x}\n&lt;'],
+		],
+		[
+			"in a spread attribute's argument",
+			`export function App() @{
+	<div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />
+}`,
+			['&#123;x&#125; &amp;lt; &gt;'],
+			null,
+		],
+		[
+			'in an unbraced attribute value in a container',
+			component('{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}'),
+			['&#123;x&#125; &amp;lt; &gt;'],
+			null,
+		],
+		[
+			'in a template',
+			component('<b>&#123;x&#125; &amp;lt; &gt;</b>'),
+			['&#123;x&#125; &amp;lt; &gt;'],
+			null,
+		],
+		[
+			'in an attribute value',
+			component('<div title={<b>&#123;x&#125; &amp;lt; &gt;</b>} />'),
+			['&#123;x&#125; &amp;lt; &gt;'],
+			null,
+		],
+	];
+
+	it.each(references)(
+		'keeps the character references %s in `raw`',
+		async (_label, source, raw, value) => {
+			const outcomes = await parse_in_worker_with_ast(
+				modes.map((options) => ({ source, options })),
+			);
+
+			for (const [index, outcome] of outcomes.entries()) {
+				const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+				if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+				expect(outcome.errors ?? [], label).toEqual([]);
+				expect(children(outcome.ast, 'b'), label).toEqual(raw);
+				if (value) expect(children(outcome.ast, 'b', 'value'), label).toEqual(value);
+			}
+		},
+	);
+
+	// A comment between children is a comment, not text as in TSX, so it is in
+	// neither form of the text, and doesn't print as text
+	/** @type {Array<[string, string, string]>} */
+	const comments = [
+		['a block comment', component('<b>a /* c */ b</b>'), 'a  b'],
+		['a block comment in a container', component('{c && <b>a /* c */ > b</b>}'), 'a  > b'],
+		[
+			'a line comment',
+			component(`<b>
+		// c
+		a
+	</b>`),
+			`
+		
+		a
+	`,
+		],
+	];
+
+	it.each(comments)('leaves %s out of the text', async (_label, source, text) => {
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(children(outcome.ast, 'b'), label).toEqual([text]);
+			expect(children(outcome.ast, 'b', 'value'), label).toEqual([text]);
+		}
+	});
+});
+
 describe('an at-sign construct after `export` (#607)', () => {
 	/** @type {Array<ParseOptions | undefined>} */
 	const modes = [undefined, { collect: true }, { loose: true }];

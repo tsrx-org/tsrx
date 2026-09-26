@@ -26,8 +26,10 @@ import {
 	generator_spread_ref_nodes,
 } from '@tsrx/core/test-harness/runtime/generator-spread-ref-components.tsrx';
 import {
+	JsxTextCharactersApp,
 	JsxTextWhitespaceApp,
 	jsx_text_braced_value_cases,
+	jsx_text_character_cases,
 	jsx_text_nbsp_cases,
 	jsx_text_whitespace_cases,
 } from '@tsrx/core/test-harness/runtime/jsx-text-whitespace-components.tsrx';
@@ -268,6 +270,14 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			const html = container.querySelector(selector)?.innerHTML;
 			expect(html).toBeTypeOf('string');
 			expect(html).toBe(container.querySelector(braced)?.innerHTML);
+		});
+	}
+
+	for (const [label, selector, text] of jsx_text_character_cases) {
+		it(`renders ${label} like TSX`, () => {
+			render(<JsxTextCharactersApp />, container);
+
+			expect(container.querySelector(selector)?.textContent).toBe(text);
 		});
 	}
 
