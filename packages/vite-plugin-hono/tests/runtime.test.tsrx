@@ -28,6 +28,7 @@ import {
 import {
 	JsxTextCharactersApp,
 	JsxTextWhitespaceApp,
+	jsx_text_braced_value_cases,
 	jsx_text_character_cases,
 	jsx_text_nbsp_cases,
 	jsx_text_whitespace_cases,
@@ -259,6 +260,16 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			render(<JsxTextWhitespaceApp />, container);
 
 			expect(container.querySelector(selector)?.innerHTML).toBe(html);
+		});
+	}
+
+	for (const [label, selector, braced] of jsx_text_braced_value_cases) {
+		it(`renders ${label} like the same markup in a braced value`, () => {
+			render(<JsxTextWhitespaceApp />, container);
+
+			const html = container.querySelector(selector)?.innerHTML;
+			expect(html).toBeTypeOf('string');
+			expect(html).toBe(container.querySelector(braced)?.innerHTML);
 		});
 	}
 

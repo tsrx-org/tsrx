@@ -463,6 +463,10 @@ describe('optional binding pattern parameter in a signature (sveltejs/acorn-type
 			'class A { m({ a }?: { a: number }) {} }',
 			'const o = { set x({ a }: { a: number }) {}, m({ a }?: { a: number }) {} };',
 			'export function App({ a }?: { a: number }) @{ <div /> }',
+			// An arrow function always has a body.
+			'const f = ({ a }?: { a: number }) => a;',
+			'const f = async (x, [a]?: number[]) => a;',
+			'export const App = ({ a }?: { a: number }) => @{ <div /> };',
 		];
 		const outcomes = await parse_in_worker([
 			...sources.map((source) => ({ source })),
@@ -485,6 +489,9 @@ describe('optional binding pattern parameter in a signature (sveltejs/acorn-type
 			'function f(...a?: number[]) {}',
 			'function f(...a?: number[]): void;',
 			'class A { m(...a?: number[]): void; }',
+			// An arrow function's parameters are read as expressions.
+			'const f = (...a?: number[]) => a;',
+			'const f = (x, ...[a] /* rest */ ?) => a;',
 		];
 		const unreported = [
 			'declare function f(...a?: number[]): void;',
@@ -603,13 +610,14 @@ describe("a repeated modifier's error (sveltejs/acorn-typescript#129)", () => {
 	});
 });
 
-describe('a parameter property modifier on a function parameter (sveltejs/acorn-typescript#136)', () => {
+describe('a parameter property modifier outside a constructor (sveltejs/acorn-typescript#136)', () => {
 	// TypeScript's parser reads the modifiers before any parameter, and its
 	// checker reports TS2369 outside a constructor. acorn-typescript reads a
-	// function's parameters without them, so `public` failed as a reserved word
-	// and the name after `readonly` was unexpected. Its own error for them is
-	// raised at the modifier's column. When collecting, it's recorded at the
-	// first modifier.
+	// function's or a signature's parameters without them, and acorn reads an
+	// arrow function's as expressions, so `public` failed as a reserved word and
+	// the name after `readonly` was unexpected. acorn-typescript's own error for
+	// them is raised at the modifier's column. When collecting, it's recorded at
+	// the first modifier.
 	const message = 'A parameter property is only allowed in a constructor implementation.';
 	/** @type {Array<[source: string, modifiers: string[]]>} */
 	const cases = [
@@ -621,6 +629,21 @@ describe('a parameter property modifier on a function parameter (sveltejs/acorn-
 		],
 		['declare function h(public x?: number): void;', ['public']],
 		['function f(@dec readonly x: number) {}', ['readonly']],
+		// A signature's parameters (#664), which `tsParseBindingListForSignature`
+		// reads.
+		['type F = (a: string, public x: number) => void;', ['public']],
+		['type C = new (readonly x: number) => object;', ['readonly']],
+		[
+			'interface I {\n\tm(private x: number): void;\n\tnew (\n\t\toverride y: number,\n\t): I;\n}',
+			['private', 'override'],
+		],
+		// An arrow function's parameters (#663), which acorn reads as expressions.
+		['const f = (a, protected override b: number) => a;', ['protected']],
+		[
+			'const g = async (\n\tprivate x: number,\n\treadonly y: number,\n) => x;',
+			['private', 'readonly'],
+		],
+		['const h = async <T,>(public x: T) => x;', ['public']],
 	];
 
 	it('records it at the first modifier when collecting', async () => {
@@ -651,6 +674,115 @@ describe('a parameter property modifier on a function parameter (sveltejs/acorn-
 		);
 
 		expect(outcomes).toEqual(sources.map(() => ({ ok: true, errors: [] })));
+	});
+});
+
+describe('a parameter property with a pattern and a default (sveltejs/acorn-typescript#138)', () => {
+	// acorn-typescript rejects a parameter property with a binding pattern
+	// (TS1187), but not one with a default, whose output then keeps the pattern
+	// after the modifier. TypeScript's checker reports both.
+	const message = 'A parameter property may not be declared using a binding pattern.';
+	const sources = [
+		'class A { constructor(public [a] = [1]) {} }',
+		'class A { constructor(readonly { a } = { a: 1 }) {} }',
+		'class A { constructor(private [a]: number[] = [1]) {} }',
+		'class A { constructor(@dec protected { a }: { a: number } = { a: 1 }) {} }',
+		// acorn-typescript reads the modifiers on a method's parameters too.
+		'class A { m(override [a] = [1]) {} }',
+	];
+	const modifier = /public|readonly|private|protected|override/;
+
+	it('throws it at the modifier', async () => {
+		const outcomes = await parse_in_worker(sources.map((source) => ({ source })));
+
+		expect(outcomes).toEqual(
+			sources.map((source) => {
+				const pos = source.search(modifier);
+				return { ok: false, message: `${message} (1:${pos})`, pos };
+			}),
+		);
+	});
+
+	it('records it at the modifier when collecting, and keeps the default', async () => {
+		const outcomes = await parse_in_worker_with_ast(
+			sources.map((source) => ({ source, options: { collect: true } })),
+		);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const source = sources[index];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			const pos = source.search(modifier);
+			expect(outcome.errors, source).toEqual([{ message, pos, end: pos + 1 }]);
+			const method = as_type(
+				as_type(outcome.ast.body[0], 'ClassDeclaration').body.body[0],
+				'MethodDefinition',
+			);
+			expect(method.value.params[0], source).toMatchObject({
+				type: 'TSParameterProperty',
+				parameter: { type: 'AssignmentPattern', left: { type: /^(?:Array|Object)Pattern$/ } },
+			});
+		}
+	});
+
+	it('still accepts a default after a name', async () => {
+		const valid = ['class A { constructor(public x = 1, readonly y: number[] = [1]) {} }'];
+		const outcomes = await parse_in_worker(valid.map((source) => ({ source })));
+
+		expect(outcomes).toEqual(valid.map(() => ({ ok: true, errors: undefined })));
+	});
+});
+
+describe("a parameter property modifier before a function type's first parameter (sveltejs/acorn-typescript#139)", () => {
+	// TypeScript's lookahead for a function type skips modifiers before the
+	// first parameter; acorn-typescript's took the token after the modifier for
+	// the one after the parameter's name, and read a parenthesized type. When
+	// collecting, the type is a function type, and TS2369 is recorded (#136).
+	const message = 'A parameter property is only allowed in a constructor implementation.';
+	const sources = [
+		'type F = (public x: number) => void;',
+		'type F = (readonly [a]: number[]) => void;',
+		'type F = (private readonly x?) => void;',
+		'let f: (override { a }: { a: number }, b: string) => void;',
+	];
+
+	it('reads a function type when collecting', async () => {
+		const outcomes = await parse_in_worker_with_ast(
+			sources.map((source) => ({ source, options: { collect: true } })),
+		);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const source = sources[index];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			const pos = source.indexOf('(') + 1;
+			expect(outcome.errors?.[0], source).toEqual({ message, pos, end: pos + 1 });
+			expect(JSON.stringify(outcome.ast), source).toContain('"type":"TSFunctionType"');
+		}
+	});
+
+	it('still fails after the modifier without collecting', async () => {
+		const outcomes = await parse_in_worker([{ source: sources[0] }]);
+
+		expect(outcomes).toEqual([{ ok: false, message: 'Unexpected token (1:17)', pos: 17 }]);
+	});
+
+	it('still reads a parenthesized type', async () => {
+		const valid = [
+			'type P = (readonly [string]);',
+			'type Q = (readonly string[]) | (readonly [a: number]);',
+			'type R = (readonly: number) => void;',
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			valid.map((source) => ({ source, options: { collect: true } })),
+		);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const source = valid[index];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			expect(outcome.errors, source).toEqual([]);
+			const text = JSON.stringify(outcome.ast);
+			if (index < 2) expect(text, source).not.toContain('TSFunctionType');
+			expect(text, source).not.toContain('TSParameterProperty');
+		}
 	});
 });
 

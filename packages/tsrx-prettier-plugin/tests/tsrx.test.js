@@ -477,7 +477,9 @@ const A = () => (
 describe('text keeps its characters as written', () => {
 	// A `>` in an element in a container failed after a child container (#694),
 	// and the text of an element in a spread argument or an unbraced attribute
-	// value in a container is read with its character references decoded (#693).
+	// value in a container was read with its character references decoded
+	// (#693). Since #656 those are template text; only an element in a dynamic
+	// tag name is read that way. A text prints from its `raw`.
 	test.each([
 		[
 			'a `>` in an element in a container',
@@ -515,9 +517,23 @@ describe('text keeps its characters as written', () => {
 `,
 		],
 		[
-			'references in an unbraced attribute value, from a directive on',
+			"a `>` in a spread attribute's argument",
 			`export function App() @{
-  <div title=<b>a &#123; @if (x) &#123;x&#125;</b> />
+  <div {...{ title: <b>a > b</b> }} />
+}
+`,
+		],
+		[
+			'a `>` first in an unbraced attribute value in a container',
+			`export function App() @{
+  <main>{c && <div title=<b>> b &#123;x&#125;</b> />}</main>
+}
+`,
+		],
+		[
+			'references in an element in a dynamic tag name',
+			`export function App() @{
+  <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} />
 }
 `,
 		],
@@ -888,6 +904,23 @@ describe('parse errors', () => {
 			'function f(private readonly x: number) {}',
 			'function f(private readonly x: number) {}\n',
 		);
+		// And a parameter property on a signature's or an arrow function's
+		// parameter, and one with a pattern and a default.
+		await expectFormat(
+			'type F = (public x: number) => void;',
+			'type F = (public x: number) => void;\n',
+		);
+		await expectFormat(
+			'const f = async (a, readonly [b]: number[]) => a;',
+			'const f = async (a, readonly [b]: number[]) => a;\n',
+		);
+		await expectFormat(
+			'class A { constructor(public [a] = [1]) {} }',
+			'class A {\n  constructor(public [a] = [1]) {}\n}\n',
+		);
+		// Prettier's typescript parser formats an arrow function's optional rest
+		// parameter the same way.
+		await expectFormat('const f = (...a?: number[]) => a;', 'const f = (...a: number[]) => a;\n');
 		// Prettier's typescript parser formats `let` as a name the same way.
 		await expectFormat('var let = 1;\nclass let {}', 'var let = 1;\nclass let {}\n');
 	});
@@ -914,6 +947,10 @@ describe('parse errors', () => {
 			[
 				'class A {\n  constructor(public ...rest: number[]) {}\n}',
 				'A parameter property cannot be declared using a rest parameter. (2:15)',
+			],
+			[
+				'const f = (a: number, public ...rest: number[]) => a;',
+				'A parameter property cannot be declared using a rest parameter. (1:23)',
 			],
 			['@dec function f() {}', 'Leading decorators must be attached to a class declaration. (1:1)'],
 			[

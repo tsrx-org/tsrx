@@ -2185,6 +2185,21 @@ export function App() @{
 			],
 			['an attribute value', component('<div title={<b>a > b</b>} />'), '<b>a &gt; b</b>'],
 			['an unbraced attribute value', component('<div title=<b>a > b</b> />'), '<b>a &gt; b</b>'],
+			[
+				'an unbraced attribute value, first',
+				component('<div title=<b>> b</b> />'),
+				'<b>&gt; b</b>',
+			],
+			[
+				'an unbraced attribute value in a container',
+				component('{c && <div title=<b>a > b</b> />}'),
+				'<b>a &gt; b</b>',
+			],
+			[
+				"a spread attribute's argument",
+				component('<div {...{ title: <b>a > b</b> }} />'),
+				'<b>a &gt; b</b>',
+			],
 			['an @if body', component('@if (c) { <b>a > b</b> }'), '<b>a &gt; b</b>'],
 			[
 				'an @if body in a container',
@@ -2227,11 +2242,13 @@ export function App() @{
 			expect(virtual_parse_diagnostics(code)).toEqual([]);
 		});
 
-		// Text is written as it is in the source, character references included.
-		// In an element that acorn-typescript's JSX parser reads, in a spread
-		// attribute's argument or an unbraced attribute value in a container,
-		// they were decoded, so `&#123;x&#125;` compiled to the expression `{x}`,
-		// and `&gt;` to a bare `>` (#693).
+		// Text is written as it is in the source, its `raw`, character references
+		// included. In an element that acorn-typescript's JSX parser read, in a
+		// spread attribute's argument or an unbraced attribute value in a
+		// container, the output printed the decoded `value`, so `&#123;x&#125;`
+		// compiled to the expression `{x}`, and `&gt;` to a bare `>` (#693).
+		// Since #656 those are template text, and that parser reads only an
+		// element in a dynamic tag name.
 		/** @type {Array<[string, string, string]>} */
 		const references = [
 			[
@@ -2245,9 +2262,9 @@ export function App() @{
 				'<b>&#123;x&#125; &amp;lt; &gt;</b>',
 			],
 			[
-				'an unbraced attribute value, from a directive on',
-				component('<div title=<b>a &#123; @if (x) &#123;x&#125;</b> />'),
-				'<b>a &#123; @if (x) &#123;x&#125;</b>',
+				'an element in a dynamic tag name',
+				component(`<{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : 'i'} />`),
+				'<b>&#123;x&#125; &amp;lt; &gt;</b>',
 			],
 			[
 				'a template',
@@ -2775,6 +2792,19 @@ export function App() @{
 			expect(code).toContain('Hello<b');
 			expect(code).toContain('/> 2<i');
 			expect(code).toContain('\u00a03');
+		});
+
+		it("keeps the text of an element in a spread attribute's argument and in an attribute value without braces", () => {
+			const { code } = compile(
+				'export function App() @{\n\t<main>\n\t\t<p {...{ k: <div><b>1</b> /* c */ 2</div> }} />\n\t\t<p k=<div><i>3</i> /* c */ 4</div> />\n\t\t<p {...(x ? <div>@if (y) { <s>5</s> } 6</div> : {})} />\n\t</main>\n}',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('</b>  2');
+			expect(code).toContain('</i>  4');
+			expect(code).toContain('5</s>');
+			expect(code).not.toContain('/* c */');
+			expect(code).not.toContain('@if');
 		});
 
 		it('keeps double-quoted strings inside expression containers as JavaScript strings', () => {

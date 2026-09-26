@@ -174,6 +174,22 @@ export function JsxTextWhitespaceApp() @{
 		<div>{pickBySwitch('a')}</div>
 		// An element in a setup statement reads its text as anywhere else too
 		<SetupText kind="a" />
+		// So does an element in a spread attribute's argument, and one that is an
+		// attribute value without braces: its comments are comments, and its `@if`
+		// a directive, as in a braced value
+		// prettier-ignore
+		<Slot {...{ content: <span class="ws-spread-comment"><b>t</b> /* c */2</span> }} />
+		// prettier-ignore
+		<Slot {...{ content: <span class="ws-spread-line-comment"><b>t</b> // c
+			two</span> }} />
+		// prettier-ignore
+		<Slot {...(show ? { content: <span class="ws-spread-directive">@if (show) { <b>1</b> } 2</span> } : { content: null })} />
+		// prettier-ignore
+		<Slot content=<span class="ws-unbraced-comment"><b>t</b> /* c */2</span> />
+		// prettier-ignore
+		<Slot content=<span class="ws-unbraced-directive">@if (show) { <b>1</b> } 2</span> />
+		// prettier-ignore
+		<Slot content={<span class="ws-braced-directive">@if (show) { <b>1</b> } 2</span>} />
 	</>
 }
 
@@ -248,6 +264,39 @@ export const jsx_text_whitespace_cases = [
 		'<b>1</b> 2',
 	],
 	['text before a tag in a setup statement of an @case', '.ws-case-setup', 'Hello<b></b> 2'],
+	[
+		"a block comment in an element in a spread attribute's argument",
+		'.ws-spread-comment',
+		'<b>t</b> 2',
+	],
+	[
+		"a line comment in an element in a spread attribute's argument",
+		'.ws-spread-line-comment',
+		'<b>t</b>two',
+	],
+	[
+		'a block comment in an element that is an attribute value without braces',
+		'.ws-unbraced-comment',
+		'<b>t</b> 2',
+	],
+] as const;
+
+/**
+ * Markup in a spread attribute's argument or in an attribute value without
+ * braces, and the same markup in a braced value, which it renders like. A
+ * directive renders differently on each target (Vue adds an anchor comment).
+ */
+export const jsx_text_braced_value_cases = [
+	[
+		"an @if in an element in a spread attribute's argument",
+		'.ws-spread-directive',
+		'.ws-braced-directive',
+	],
+	[
+		'an @if in an element that is an attribute value without braces',
+		'.ws-unbraced-directive',
+		'.ws-braced-directive',
+	],
 ] as const;
 
 /**
@@ -330,13 +379,13 @@ export function JsxTextCharactersApp() @{
 		</div>
 		<div>{show && <span class="ch-container-after-container">{'1'} a > b</span>}</div>
 		<Slot content={<span class="ch-attr">a > b &#123;x&#125;</span>} />
-		<Slot content=<span class="ch-attr-unbraced">a > b &#123;x&#125; &amp;lt;</span> />
+		<Slot content=<span class="ch-attr-unbraced">> b &#123;x&#125; &amp;lt;</span> />
 		<div>
 			{show && (
-				<Slot content=<span class="ch-attr-unbraced-container">&#123;x&#125; &amp;lt; &gt;</span> />
+				<Slot content=<span class="ch-attr-unbraced-container">&#123;x&#125; &amp;lt; &gt; a > b</span> />
 			)}
 		</div>
-		<Slot {...{ content: <span class="ch-spread">&#123;x&#125; &amp;lt; &gt;</span> }} />
+		<Slot {...{ content: <span class="ch-spread">&#123;x&#125; &amp;lt; &gt; a > b</span> }} />
 		<div>
 			@if (show) {
 				<span class="ch-if">a > b</span>
@@ -369,13 +418,13 @@ export const jsx_text_character_cases = [
 		'1 a > b',
 	],
 	['a `>` and a reference in an attribute value', '.ch-attr', 'a > b {x}'],
-	['a `>` and references in an unbraced attribute value', '.ch-attr-unbraced', 'a > b {x} &lt;'],
+	['a `>` and references in an unbraced attribute value', '.ch-attr-unbraced', '> b {x} &lt;'],
 	[
-		'references in an unbraced attribute value in a container',
+		'references and a `>` in an unbraced attribute value in a container',
 		'.ch-attr-unbraced-container',
-		'{x} &lt; >',
+		'{x} &lt; > a > b',
 	],
-	["references in a spread attribute's argument", '.ch-spread', '{x} &lt; >'],
+	["references and a `>` in a spread attribute's argument", '.ch-spread', '{x} &lt; > a > b'],
 	['a `>` in an @if body', '.ch-if', 'a > b'],
 	['a `>` in an @for body', '.ch-for', 'a > b'],
 	['a `>` in an @switch case', '.ch-switch', 'a > b'],

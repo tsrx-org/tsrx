@@ -94,6 +94,10 @@ const REST_PARAMETER_PROPERTY = 'A parameter property cannot be declared using a
 // parameter when `parseBindingList` passes `allowModifiers: false`.
 const UNEXPECTED_PARAMETER_MODIFIER =
 	'A parameter property is only allowed in a constructor implementation.';
+// TypeScript's TS1187, acorn-typescript's error for a parameter property with a
+// binding pattern.
+const PATTERN_PARAMETER_PROPERTY =
+	'A parameter property may not be declared using a binding pattern.';
 // acorn-typescript's error for decorators before something other than a class.
 const UNEXPECTED_LEADING_DECORATOR = 'Leading decorators must be attached to a class declaration.';
 // TypeScript's parser errors for what follows `export` when it starts no
@@ -172,7 +176,8 @@ const regex_let_binding_error =
  * (`parseVarStatement`, `parseForStatement`), `await` in a namespace
  * (`canAwait`), a private name outside a class (the constructor and
  * `parsePrivateIdent`), a modifier on a rest parameter
- * (`#parseRestParameterProperty`), and decorators before a declaration other
+ * (`#parseRestParameterProperty`), a modifier on an arrow function's parameter
+ * (`#parseArrowParameterProperty`), and decorators before a declaration other
  * than a class (`parseDecorators`, `#parseDecoratedStatement`).
  *
  * acorn's errors here are ECMAScript early errors, which acorn rightly raises;
@@ -227,10 +232,12 @@ const CHECKER_LEVEL_ERRORS = [
 	/^'\w+' modifier cannot appear on a type (?:member|parameter)\.$/,
 	/^'\w+' modifier can only appear on a type parameter of a class, interface or type alias\.$/,
 	// acorn-typescript: a parameter property with a binding pattern,
-	// `constructor(public [a]: T) {}` (TS1187).
-	'A parameter property may not be declared using a binding pattern.',
-	// acorn-typescript: a parameter property modifier on a function's parameter,
-	// `function f(public x) {}` (TS2369), when collecting. See `parseBindingList`.
+	// `constructor(public [a]: T) {}` (TS1187), also with a default (see
+	// `#parseAssignableListItem`).
+	PATTERN_PARAMETER_PROPERTY,
+	// acorn-typescript: a parameter property modifier on a function's or a
+	// signature's parameter, `function f(public x) {}` (TS2369), when collecting.
+	// See `parseBindingList` and `tsParseBindingListForSignature`.
 	UNEXPECTED_PARAMETER_MODIFIER,
 	// acorn-typescript: `private #x` (TS18010), `abstract #x` (TS18019).
 	/^Private elements cannot have an accessibility modifier \('\w+'\)\.$/,
@@ -257,6 +264,31 @@ function get_error_message(message) {
 		: typeof message?.message === 'string'
 			? message.message
 			: String(message);
+}
+
+/**
+ * Whether an arrow function's parameter, read as an expression before `=>`,
+ * becomes a binding pattern, with or without a type annotation and a default.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_pattern_parameter_expression(node) {
+	/** @typedef {{ type: string, left?: unknown, expression?: unknown }} ParameterExpression */
+	let target = /** @type {ParameterExpression} */ (node);
+	// A default: acorn makes the left side of `=` a pattern already.
+	if (target.type === 'AssignmentExpression') {
+		target = /** @type {ParameterExpression} */ (target.left);
+	}
+	// A type annotation.
+	if (target.type === 'TSTypeCastExpression') {
+		target = /** @type {ParameterExpression} */ (target.expression);
+	}
+	return (
+		target.type === 'ArrayExpression' ||
+		target.type === 'ObjectExpression' ||
+		target.type === 'ArrayPattern' ||
+		target.type === 'ObjectPattern'
+	);
 }
 
 /**
@@ -836,6 +868,15 @@ export function TSRXPlugin(config) {
 			// Where the binding list item being read starts, after its decorators (see
 			// `#parseAssignableListItem`).
 			#assignableListItemStart = -1;
+			// When collecting, the list being read that can be an arrow function's
+			// parameters: a parenthesized expression or the arguments of `async (…)`.
+			// Where its `(` is, whether type parameters come before it, and how many
+			// `parseMaybeAssign` calls deep the parser is in one of its items (see
+			// `#parseArrowParameterProperty`).
+			/** @type {{ parenStart: number, generic: boolean, depth: number } | null} */
+			#arrowParameterList = null;
+			// Where the last type parameter list ended (see `tsParseTypeParameters`).
+			#typeParametersEnd = -1;
 			// When collecting, where the leading decorators of the statement being read
 			// start, while `parseDecorators` reads them (-1 otherwise), and the error
 			// recorded for them when no class follows (see `parseDecorators`).
@@ -861,6 +902,14 @@ export function TSRXPlugin(config) {
 			// `parseElement`), for its closing tag to restore.
 			/** @type {WeakMap<AST.Node, number>} */
 			#elementContextDepths = new WeakMap();
+			// The context depth before the `<` of an element that is an attribute
+			// value without braces, for `parseElement` to keep: the host's opening
+			// tag contexts. -1 otherwise.
+			#tagValueContextDepth = -1;
+			// The elements that are attribute values without braces: each closes in
+			// its host's opening tag, not in a template.
+			/** @type {WeakSet<AST.Node>} */
+			#tagValueElements = new WeakSet();
 			// What enclosed each element when it started: `this.labels` and its length
 			// (see `#insideSwitchStartedAfter`), and the setup-statement depths (see
 			// `#elementStart`).
@@ -1103,8 +1152,7 @@ export function TSRXPlugin(config) {
 			 * started after `node`, and the position is in that statement's code. In
 			 * an element opened in the statement, it is that element's children.
 			 * `scriptDepth` is `#templateScriptParsingDepth`, raised by a setup
-			 * statement of a `@{ … }` or directive body and by a spread attribute's
-			 * argument; `switchCaseScriptDepth` is
+			 * statement of a `@{ … }` or directive body; `switchCaseScriptDepth` is
 			 * `#parsingJSXSwitchCaseScriptStatementDepth`, raised by one of an `@case`.
 			 * `scriptJSXDepth` is `#scriptJSXElementDepth` (see
 			 * `#insideScriptJSXElement`). A node that no element start recorded counts
@@ -1126,7 +1174,7 @@ export function TSRXPlugin(config) {
 			/**
 			 * Whether the position is in an element that acorn-typescript's JSX parser
 			 * reads (see `jsx_parseElement`) and that started after the innermost TSRX
-			 * element: an element in an unbraced attribute value (`<div a=<b>…</b> />`).
+			 * element: an element in a dynamic tag name (`<{c ? <b>…</b> : 'i'}>`).
 			 * Its children are read as template text, but that parser takes each text
 			 * token as a child as it is, so a template's comments are text there, as
 			 * in TSX.
@@ -1656,9 +1704,8 @@ export function TSRXPlugin(config) {
 				if (!current_template_node) {
 					return false;
 				}
-				// Code that started after the innermost element, a setup statement or a
-				// spread attribute's argument (`<div {...props}>`), isn't its text. An
-				// element opened in that code reads its own children as text
+				// Code that started after the innermost element, a setup statement, isn't
+				// its text. An element opened in that code reads its own children as text
 				// (`const a = <b> 1</b>;` in a `@{ … }` body).
 				const element_start = this.#elementStart(current_template_node);
 				if (
@@ -3892,6 +3939,63 @@ export function TSRXPlugin(config) {
 				return elements;
 			}
 
+			// UPSTREAM(sveltejs/acorn-typescript#136): remove once a release includes the fix
+			/**
+			 * The parameters of a function or constructor type, or of a method, call,
+			 * or construct signature. TypeScript's parser reads parameter property
+			 * modifiers before them too, and its checker reports them (TS2369).
+			 * acorn-typescript reads them with acorn's `parseBindingList`, past
+			 * `parseBindingList` above, with no `allowModifiers`, so `public` failed as
+			 * a reserved word and the name after `readonly` as unexpected. When
+			 * collecting, read them through `parseBindingList`, which reads the
+			 * modifiers there and records TS2369 at the first one, as for a function's
+			 * parameters. A strict parse still fails.
+			 *
+			 * This is acorn-typescript's method with that change. Its check of each
+			 * parameter looks through a parameter property to its parameter, which
+			 * can't have a default in a signature either.
+			 * @type {Parse.Parser['tsParseBindingListForSignature']}
+			 */
+			tsParseBindingListForSignature() {
+				if (!this.#collect) return super.tsParseBindingListForSignature();
+				return this.parseBindingList(tt.parenR, true, true).map((item) => {
+					const node = /** @type {AST.Node} */ (item);
+					const parameter = /** @type {AST.Node & AST.NodeWithLocation} */ (
+						node.type === 'TSParameterProperty' ? node.parameter : node
+					);
+					if (
+						parameter.type !== 'Identifier' &&
+						parameter.type !== 'RestElement' &&
+						parameter.type !== 'ObjectPattern' &&
+						parameter.type !== 'ArrayPattern'
+					) {
+						this.raise(
+							parameter.start,
+							`Name in a signature must be an Identifier, ObjectPattern or ArrayPattern, instead got ${parameter.type}.`,
+						);
+					}
+					return item;
+				});
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#139): remove once a release includes the fix
+			/**
+			 * Whether a parameter starts at the current token, for the lookahead that
+			 * tells a function type from a parenthesized type. TypeScript's
+			 * `skipParameterStart` skips modifiers first, so
+			 * `(public x: number) => void` is a function type, with TS2369 from its
+			 * checker. When collecting, skip parameter property modifiers too, so
+			 * that `tsParseBindingListForSignature` reads them. A strict parse still
+			 * reads `(public x` as a parenthesized type and fails at `x`.
+			 * @type {Parse.Parser['tsSkipParameterStart']}
+			 */
+			tsSkipParameterStart() {
+				if (this.#collect) {
+					this.tsParseModifiers({ modified: {}, allowedModifiers: PARAMETER_MODIFIERS });
+				}
+				return super.tsSkipParameterStart();
+			}
+
 			/**
 			 * acorn-typescript gives a namespace body acorn's class static block scope
 			 * flag, so acorn reads `await` there as an identifier and throws `Cannot use
@@ -4677,17 +4781,32 @@ export function TSRXPlugin(config) {
 			 * the rest element after parameter property modifiers
 			 * (`#parseRestParameterProperty`). Records where the item starts for
 			 * `raise`.
+			 *
+			 * acorn-typescript raises TS1187 for a parameter property whose parameter
+			 * is a binding pattern, but not for one with a default
+			 * (`constructor(public [a] = [1])`), whose output then keeps the pattern
+			 * after the modifier. TypeScript's checker reports both. Raise it for the
+			 * pattern before the default too, at the same place.
 			 * @param {boolean | undefined} allowModifiers
 			 * @returns {AST.Pattern}
 			 */
 			#parseAssignableListItem(allowModifiers) {
 				this.#assignableListItemStart = this.start;
-				return (
+				const item = /** @type {AST.Node} */ (
 					(this.#collect &&
 						allowModifiers !== undefined &&
 						this.#parseRestParameterProperty(allowModifiers)) ||
-					super.parseAssignableListItem(allowModifiers)
+						super.parseAssignableListItem(allowModifiers)
 				);
+				if (
+					item.type === 'TSParameterProperty' &&
+					item.parameter.type === 'AssignmentPattern' &&
+					item.parameter.left.type !== 'Identifier'
+				) {
+					// UPSTREAM(sveltejs/acorn-typescript#138): remove once a release includes the fix
+					this.raise(/** @type {number} */ (item.start), PATTERN_PARAMETER_PROPERTY);
+				}
+				return /** @type {AST.Pattern} */ (item);
 			}
 
 			/**
@@ -5280,10 +5399,11 @@ export function TSRXPlugin(config) {
 				// literal character (`<div>5/2</div>`, `<div>#tag</div>`). This must
 				// not fire in the JS positions that can sit under a template element
 				// on the path: inside a `{ … }` expression container (an attribute or
-				// child expression — `<rect x={a / 2}/>`, `{this.#x}`), inside a
+				// child expression — `<rect x={a / 2}/>`, `{this.#x}`) or a spread
+				// attribute's argument, read as one (`{...(a / 2)}`), inside a
 				// control-flow directive header (`@if (a / 2 > 1)`), or in an opening
-				// tag (`<div / >`, a spread attribute's `{...(a / 2)}`), where `/` is
-				// division or a self-closing tag's and `#` is a private-field access.
+				// tag (`<div / >`), where `/` is division or a self-closing tag's and
+				// `#` is a private-field access.
 				// The element being opened goes on `#path` only for the token after
 				// its `>`, which is its first child.
 				const template_parent = this.#path.at(-1);
@@ -5479,7 +5599,14 @@ export function TSRXPlugin(config) {
 			 */
 			parseParenAndDistinguishExpression(canBeArrow, forInit) {
 				const startPos = this.start;
-				const expr = super.parseParenAndDistinguishExpression(canBeArrow, forInit);
+				const expr =
+					canBeArrow && this.#collect
+						? this.#parseArrowParameterList(
+								// `<T,>(`: type parameters make it an arrow function.
+								this.#typeParametersEnd === this.lastTokEnd,
+								() => super.parseParenAndDistinguishExpression(canBeArrow, forInit),
+							)
+						: super.parseParenAndDistinguishExpression(canBeArrow, forInit);
 
 				// If the expression's start position is after the opening paren,
 				// it means it was wrapped in parentheses. Mark it in metadata.
@@ -5491,6 +5618,247 @@ export function TSRXPlugin(config) {
 				}
 
 				return expr;
+			}
+
+			/**
+			 * The arguments of `async (…)` can be an async arrow function's
+			 * parameters (see `#parseArrowParameterProperty`).
+			 * @type {Parse.Parser['parseSubscript']}
+			 */
+			parseSubscript(base, startPos, startLoc, noCalls, maybeAsyncArrow, optionalChained, forInit) {
+				if (
+					this.#collect &&
+					maybeAsyncArrow &&
+					!noCalls &&
+					base.type === 'Identifier' &&
+					this.type === tt.parenL
+				) {
+					return this.#parseArrowParameterList(false, () =>
+						super.parseSubscript(
+							base,
+							startPos,
+							startLoc,
+							noCalls,
+							maybeAsyncArrow,
+							optionalChained,
+							forInit,
+						),
+					);
+				}
+				return super.parseSubscript(
+					base,
+					startPos,
+					startLoc,
+					noCalls,
+					maybeAsyncArrow,
+					optionalChained,
+					forInit,
+				);
+			}
+
+			/**
+			 * Records where type parameters end: after them, a parenthesized list is
+			 * an arrow function's parameters (`<T,>(public x: T) => x`).
+			 * @type {Parse.Parser['tsParseTypeParameters']}
+			 */
+			tsParseTypeParameters(parseModifiers) {
+				const node = super.tsParseTypeParameters(parseModifiers);
+				this.#typeParametersEnd = this.lastTokEnd;
+				return node;
+			}
+
+			/**
+			 * Reads, with `parse`, a list that can be an arrow function's parameters,
+			 * for `#parseArrowParameterProperty`.
+			 * @template T
+			 * @param {boolean} generic Whether type parameters come before its `(`
+			 * @param {() => T} parse
+			 * @returns {T}
+			 */
+			#parseArrowParameterList(generic, parse) {
+				const outer = this.#arrowParameterList;
+				this.#arrowParameterList = { parenStart: this.start, generic, depth: 0 };
+				try {
+					return parse();
+				} finally {
+					this.#arrowParameterList = outer;
+				}
+			}
+
+			/**
+			 * Tracks how deep the parser is in an item of the list that
+			 * `#parseArrowParameterList` reads. acorn reads each item with
+			 * `parseParenItem` after it; before one, read parameter property
+			 * modifiers (`#parseArrowParameterProperty`).
+			 * @type {Parse.Parser['parseMaybeAssign']}
+			 */
+			parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse) {
+				const list = this.#arrowParameterList;
+				if (list === null) {
+					return super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse);
+				}
+				if (list.depth === 0 && afterLeftParse === this.parseParenItem) {
+					const item = this.#parseArrowParameterProperty(list, refDestructuringErrors);
+					if (item) return item;
+				}
+				list.depth++;
+				try {
+					return super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse);
+				} finally {
+					list.depth--;
+				}
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#136): remove once a release includes the fix
+			/**
+			 * TypeScript's parser reads parameter property modifiers before an arrow
+			 * function's parameters too, and its checker reports them: TS2369, and
+			 * TS1187 or TS1317 as for other parameters. acorn reads an arrow
+			 * function's parameters as the items of a parenthesized expression, or as
+			 * the arguments of `async (…)`, and makes them patterns once `=>` follows,
+			 * so `public` failed as a reserved word and the name after `readonly` as
+			 * unexpected.
+			 *
+			 * When collecting, where TypeScript reads the list as an arrow function's
+			 * parameters with modifiers here (`#startsArrowParameterProperty`), read
+			 * them before the item, record the errors, and build the
+			 * `TSParameterProperty` that a function's parameter gets (see
+			 * `parseBindingList`). Its parameter is an expression until `toAssignable`
+			 * makes it a pattern. Before a rest element, keep the rest element without
+			 * them, as `#parseRestParameterProperty` does. Anywhere else, return
+			 * `null`, having read nothing, so that the item reads as before, and a
+			 * strict parse fails as before.
+			 * @param {{ parenStart: number, generic: boolean, depth: number }} list
+			 * @param {Parse.DestructuringErrors | undefined} refDestructuringErrors
+			 * @returns {AST.Expression | null}
+			 */
+			#parseArrowParameterProperty(list, refDestructuringErrors) {
+				if (
+					this.containsEsc ||
+					!PARAMETER_MODIFIERS.includes(/** @type {string} */ (this.value)) ||
+					!Parser.acornTypeScript.tokenIsIdentifier(this.type) ||
+					!this.#startsArrowParameterProperty(
+						!list.generic && this.lastTokStart === list.parenStart,
+					)
+				) {
+					return null;
+				}
+				const start = this.start;
+				const startLoc = this.startLoc;
+				/** @type {{ accessibility?: AST.TSParameterProperty['accessibility'], readonly?: boolean, override?: boolean }} */
+				const modified = {};
+				this.tsParseModifiers({ modified, allowedModifiers: PARAMETER_MODIFIERS });
+				if (this.type === tt.ellipsis) {
+					this.#recordCheckerLevelError(start, this.lastTokEnd, REST_PARAMETER_PROPERTY);
+					this.#recordCheckerLevelError(start, start + 1, UNEXPECTED_PARAMETER_MODIFIER);
+					const rest = this.parseParenItem(this.parseRestBinding());
+					// As acorn does after a rest element in a parenthesized expression.
+					if (this.type === tt.comma) this.raise(this.start, REST_ELEMENT_TRAILING_COMMA);
+					return /** @type {AST.Expression} */ (/** @type {unknown} */ (rest));
+				}
+				this.#recordCheckerLevelError(start, start + 1, UNEXPECTED_PARAMETER_MODIFIER);
+				/** @type {AST.Expression} */
+				let parameter;
+				list.depth++;
+				try {
+					parameter = super.parseMaybeAssign(false, refDestructuringErrors, this.parseParenItem);
+				} finally {
+					list.depth--;
+				}
+				if (is_pattern_parameter_expression(parameter)) {
+					this.#recordCheckerLevelError(start, start + 1, PATTERN_PARAMETER_PROPERTY);
+				}
+				const node = /** @type {AST.TSParameterProperty} */ (this.startNodeAt(start, startLoc));
+				if (modified.accessibility) node.accessibility = modified.accessibility;
+				if (modified.readonly) node.readonly = true;
+				if (modified.override) node.override = true;
+				node.parameter = /** @type {AST.TSParameterProperty['parameter']} */ (
+					/** @type {unknown} */ (parameter)
+				);
+				return /** @type {AST.Expression} */ (
+					/** @type {unknown} */ (
+						this.finishNode(
+							node,
+							/** @type {AST.TSParameterProperty['type']} */ ('TSParameterProperty'),
+						)
+					)
+				);
+			}
+
+			/**
+			 * Whether TypeScript reads the list as an arrow function's parameters, with
+			 * parameter property modifiers from the current token: the rest of the
+			 * list reads as parameters, the first of them with modifiers, and `=>`
+			 * follows it (after a return type). At the list's first item, TypeScript
+			 * reads `(` and a modifier as an arrow function's parameters only when a
+			 * name other than `as` follows the modifier
+			 * (`isParenthesizedArrowFunctionExpressionWorker`), and as a
+			 * parenthesized expression otherwise, as in `(public [a]) => a`. After
+			 * another item, or after type parameters, it reads parameters.
+			 * @param {boolean} first Whether the item is the list's first, with no
+			 * type parameters before the list
+			 * @returns {boolean}
+			 */
+			#startsArrowParameterProperty(first) {
+				if (first) {
+					const next = this.lookahead();
+					if (
+						!Parser.acornTypeScript.tokenIsIdentifier(next.type) ||
+						this.isContextualWithState('as', next)
+					) {
+						return false;
+					}
+				}
+				const start = this.start;
+				const errors = this.#errors;
+				const errors_length = errors?.length ?? 0;
+				try {
+					return this.tsLookAhead(() => {
+						try {
+							const [item] = /** @type {AST.Node[]} */ (
+								this.parseBindingList(tt.parenR, false, true, false)
+							);
+							// Modifiers leave a parameter property, or a rest element after them.
+							if (!item || (item.type !== 'TSParameterProperty' && item.start === start)) {
+								return false;
+							}
+							if (this.type === tt.colon) this.tsParseTypeOrTypePredicateAnnotation(tt.colon);
+							return this.type === tt.arrow && !this.canInsertSemicolon();
+						} catch {
+							return false;
+						}
+					});
+				} finally {
+					// `error` records some errors outside the lookahead's undo log.
+					if (errors) errors.length = errors_length;
+				}
+			}
+
+			/**
+			 * A parameter property that `#parseArrowParameterProperty` reads holds
+			 * its parameter as an expression: make that a pattern, as for any other
+			 * parameter of the arrow function. One that `parseBindingList` reads for
+			 * a generic async arrow function holds a pattern already.
+			 * UPSTREAM(sveltejs/acorn-typescript#136)
+			 * @type {Parse.Parser['toAssignable']}
+			 */
+			toAssignable(node, isBinding, refDestructuringErrors, preserveTypeScriptWrapper) {
+				if (node?.type !== 'TSParameterProperty') {
+					return super.toAssignable(
+						node,
+						isBinding,
+						refDestructuringErrors,
+						preserveTypeScriptWrapper,
+					);
+				}
+				let parameter = /** @type {AST.Node} */ (/** @type {unknown} */ (node.parameter));
+				if (/** @type {string} */ (parameter.type) === 'TSTypeCastExpression') {
+					parameter = this.typeCastToParameter(parameter);
+				}
+				node.parameter = /** @type {AST.TSParameterProperty['parameter']} */ (
+					/** @type {unknown} */ (this.toAssignable(parameter, isBinding, refDestructuringErrors))
+				);
+				return /** @type {AST.Pattern} */ (/** @type {unknown} */ (node));
 			}
 
 			/**
@@ -5803,6 +6171,10 @@ export function TSRXPlugin(config) {
 			 */
 			parseFunctionBody(node, isArrowFunction, isMethod, forInit, ...args) {
 				this.#functionBodyDepth++;
+				// A body isn't part of a list that can be an arrow function's parameters,
+				// though an arrow function's is read before that list is done.
+				const arrow_parameter_list = this.#arrowParameterList;
+				this.#arrowParameterList = null;
 				try {
 					// Allow a `@{ … }` code block as the body of a function, method, or
 					// arrow function, so components can be written as `function Something()
@@ -5817,7 +6189,10 @@ export function TSRXPlugin(config) {
 						node.returnType = this.tsParseTypeOrTypePredicateAnnotation(tt.colon);
 					}
 					const is_code_block = this.#isCodeBlockStart(this.start);
-					if (!isArrowFunction && (is_code_block || !this.#isBodilessSignature(args[0]))) {
+					if (isArrowFunction) {
+						this.#reportOptionalRestParameter(/** @type {AST.ArrowFunctionExpression} */ (node));
+						this.#reportOptionalPatternParameters(node);
+					} else if (is_code_block || !this.#isBodilessSignature(args[0])) {
 						this.#reportOptionalPatternParameters(node);
 					}
 					if (is_code_block) {
@@ -5829,6 +6204,30 @@ export function TSRXPlugin(config) {
 					return super.parseFunctionBody(node, isArrowFunction, isMethod, forInit, ...args);
 				} finally {
 					this.#functionBodyDepth--;
+					this.#arrowParameterList = arrow_parameter_list;
+				}
+			}
+
+			/**
+			 * Raise TS1047 for an optional rest parameter of an arrow function, at its
+			 * `?`, outside an ambient context, as `parseBindingListItem` does for
+			 * other functions. An arrow function's parameters are read as
+			 * expressions, which acorn-typescript never checked.
+			 * @param {AST.ArrowFunctionExpression} node
+			 */
+			#reportOptionalRestParameter(node) {
+				if (this.isAmbientContext) return;
+				for (const param of node.params) {
+					if (
+						param.type === 'RestElement' &&
+						/** @type {{ optional?: boolean }} */ (param).optional
+					) {
+						const question = skip_space_and_comments_from(
+							this.input,
+							/** @type {number} */ (param.argument.end),
+						);
+						this.raise(question, OPTIONAL_REST_PARAMETER);
+					}
 				}
 			}
 
@@ -5853,8 +6252,9 @@ export function TSRXPlugin(config) {
 			 * that has a body, outside an ambient context, with the message and
 			 * position acorn-typescript gave it while reading the parameter (see
 			 * `parseBindingListItem`). A signature without a body, such as an
-			 * overload, may have one. An arrow function's parameters are read as
-			 * expressions, and acorn-typescript never checked them.
+			 * overload, may have one. An arrow function always has a body; its
+			 * parameters are read as expressions, which acorn-typescript never
+			 * checked.
 			 * @param {AST.FunctionDeclaration | AST.FunctionExpression | AST.ArrowFunctionExpression} node
 			 */
 			#reportOptionalPatternParameters(node) {
@@ -6067,25 +6467,19 @@ export function TSRXPlugin(config) {
 				}
 
 				if (this.eat(tt.braceL)) {
-					if (this.type === tt.ellipsis) {
+					if (this.type === tt.ellipsis || this.lookahead().type === tt.ellipsis) {
+						// The brace's context is on top
+						const brace_context_depth = this.context.length;
 						this.#suppressTemplateRawTextToken = true;
 						this.expect(tt.ellipsis);
-						this.#templateScriptParsingDepth++;
-						try {
-							/** @type {ESTreeJSX.JSXSpreadAttribute} */ (node).argument = this.parseMaybeAssign();
-						} finally {
-							this.#templateScriptParsingDepth--;
-						}
-						this.#expectContainerClosingBrace();
-						return this.finishNode(node, 'JSXSpreadAttribute');
-					} else if (this.lookahead().type === tt.ellipsis) {
-						this.#suppressTemplateRawTextToken = true;
-						this.expect(tt.ellipsis);
-						this.#templateScriptParsingDepth++;
-						try {
-							/** @type {ESTreeJSX.JSXSpreadAttribute} */ (node).argument = this.parseMaybeAssign();
-						} finally {
-							this.#templateScriptParsingDepth--;
+						/** @type {ESTreeJSX.JSXSpreadAttribute} */ (node).argument = this.#parseOpeningTagCode(
+							() => this.parseMaybeAssign(),
+						);
+						// A control-flow directive in an element in the argument can leave
+						// contexts above the brace's, as in a container (see
+						// `jsx_parseExpressionContainer`). The `}` read pops the brace's.
+						if (this.type === tt.braceR) {
+							this.#truncateContext(brace_context_depth - 1);
 						}
 						this.#expectContainerClosingBrace();
 						return this.finishNode(node, 'JSXSpreadAttribute');
@@ -6262,10 +6656,53 @@ export function TSRXPlugin(config) {
 						}
 					}
 					case tstt.jsxTagStart:
+						return this.#parseOpeningTagCode(() => {
+							// The element's `<` pushed its contexts on the opening tag's, which
+							// the tag goes on in after the element.
+							this.#tagValueContextDepth = this.context.length - 2;
+							try {
+								return this.parseExprAtom();
+							} finally {
+								this.#tagValueContextDepth = -1;
+							}
+						});
 					case tt.string:
 						return this.parseExprAtom();
 					default:
 						this.raise(this.start, 'value should be either an expression or a quoted text');
+				}
+			}
+
+			/**
+			 * Parses code in an opening tag outside a `{ … }` container: a spread
+			 * attribute's argument, whose first token is read, or an element that is an
+			 * attribute value without braces (`<div a=<b>…</b> />`). While the tag is
+			 * read, the element it opens is `#openingNativeTemplateNode`, still in
+			 * script mode, so `jsx_parseElement` would hand an element in that code to
+			 * acorn-typescript's JSX parser. Hide it and read the code as a container's
+			 * (see `jsx_parseExpressionContainer`), as a braced value is read: its
+			 * elements are template markup, and the code around them is not template
+			 * text. The token after the code is read in the tag again.
+			 * @template T
+			 * @param {() => T} parse
+			 * @returns {T}
+			 */
+			#parseOpeningTagCode(parse) {
+				const opening_node = this.#openingNativeTemplateNode;
+				this.#openingNativeTemplateNode = null;
+				this.#jsxExpressionContainerDepth++;
+				this.#expressionContainerContextBaselines.push(this.context.length);
+				this.#expressionContainerPathBaselines.push({
+					path: this.#path,
+					length: this.#path.length,
+				});
+				try {
+					return parse();
+				} finally {
+					this.#jsxExpressionContainerDepth--;
+					this.#expressionContainerContextBaselines.pop();
+					this.#expressionContainerPathBaselines.pop();
+					this.#openingNativeTemplateNode = opening_node;
 				}
 			}
 
@@ -6895,9 +7332,13 @@ export function TSRXPlugin(config) {
 				// stack here; the body (especially a control-flow block) can otherwise
 				// leave residue that breaks tokenizing the following JS token when the
 				// element is in expression position. The token after `<` is already read,
-				// so the `{` of a dynamic tag name (`<{tag}>`) doesn't count.
+				// so the `{` of a dynamic tag name (`<{tag}>`) doesn't count. An element
+				// that is an attribute value without braces keeps its host's opening tag
+				// contexts below it (see `jsx_parseAttributeValue`).
+				const tag_value_context_depth = this.#tagValueContextDepth;
+				this.#tagValueContextDepth = -1;
 				let pre_element_context_depth = this.context.length - this.#currentTokenContextCount();
-				while (pre_element_context_depth > 0) {
+				while (pre_element_context_depth > Math.max(0, tag_value_context_depth)) {
 					const ctx = this.context[pre_element_context_depth - 1];
 					if (ctx === tstc.tc_expr || ctx === tstc.tc_oTag || ctx === tstc.tc_cTag) {
 						pre_element_context_depth--;
@@ -6930,6 +7371,9 @@ export function TSRXPlugin(config) {
 					switchCaseScriptDepth: this.#parsingJSXSwitchCaseScriptStatementDepth,
 					scriptJSXDepth: this.#scriptJSXElementDepth,
 				});
+				if (tag_value_context_depth >= 0) {
+					this.#tagValueElements.add(node);
+				}
 
 				const previous_opening_native_template_node = this.#openingNativeTemplateNode;
 				this.#openingNativeTemplateNode = node;
@@ -7235,7 +7679,8 @@ export function TSRXPlugin(config) {
 							this.#closingNativeTemplateNode = true;
 						}
 						// `>` reads the token after the element. When the element closes and no
-						// template encloses it, that token is code: the element leaves `#path`
+						// template encloses it, or in its host's opening tag as an attribute
+						// value without braces, that token is code: the element leaves `#path`
 						// (`<b>x</b> / 2` divides; it is popped for good below), and the
 						// tokenizer context returns to where the element began, as after a
 						// balanced closing tag, dropping residue its body left (a control-flow
@@ -7243,7 +7688,8 @@ export function TSRXPlugin(config) {
 						const closes_outside_template =
 							this.#isNativeTemplateNode(current) &&
 							current_name === closing_name_str &&
-							!this.#isNativeTemplateNode(this.#path.at(-2));
+							(!this.#isNativeTemplateNode(this.#path.at(-2)) ||
+								this.#tagValueElements.has(current));
 						if (closes_outside_template) {
 							this.#path.pop();
 							const context_depth = this.#elementContextDepths.get(current);

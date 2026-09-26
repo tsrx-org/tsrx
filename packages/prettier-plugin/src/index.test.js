@@ -22704,6 +22704,9 @@ export { theme };`;
 		// failed after a child container (#694). In an element in a spread
 		// argument or an unbraced attribute value in a container, character
 		// references were printed decoded: `&#123;x&#125;` became `{x}` (#693).
+		// Since #656 those are template text; only an element in a dynamic tag
+		// name is read that way. A text prints from its `raw`, the text as
+		// written.
 		it.each([
 			[
 				'a `>` in an element in a container',
@@ -22741,9 +22744,23 @@ export { theme };`;
 `,
 			],
 			[
-				'references in an unbraced attribute value, from a directive on',
+				"a `>` in a spread attribute's argument",
 				`export function App() @{
-  <div title=<b>a &#123; @if (x) &#123;x&#125;</b> />
+  <div {...{ title: <b>a > b</b> }} />
+}
+`,
+			],
+			[
+				'a `>` first in an unbraced attribute value in a container',
+				`export function App() @{
+  <main>{c && <div title=<b>> b &#123;x&#125;</b> />}</main>
+}
+`,
+			],
+			[
+				'references in an element in a dynamic tag name',
+				`export function App() @{
+  <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} />
 }
 `,
 			],
