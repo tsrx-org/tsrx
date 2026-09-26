@@ -454,6 +454,33 @@ describe('optional binding pattern parameter in a signature (sveltejs/acorn-type
 		}
 	});
 
+	it('accepts it in a function type and a type member, in every mode', async () => {
+		// `tsParseBindingListForSignature` reads these, in every mode since #705.
+		const types = [
+			'type F = ({ a }?: { a: number }) => void;',
+			'type G = new ([a]?: number[]) => object;',
+			`interface I {
+	m({ a }?: { a: number }): void;
+	([a]?: number[]): void;
+	new ({ a }?: { a: number }): I;
+}`,
+		];
+		const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+		const outcomes = await parse_in_worker_with_ast(
+			types.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const source = types[Math.floor(index / modes.length)];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], source).toEqual([]);
+			const text = JSON.stringify(outcome.ast);
+			const patterns = text.match(/"type":"(?:Object|Array)Pattern"/g);
+			expect(patterns?.length, source).toBe(source.split('?').length - 1);
+			expect(text.match(/"optional":true/g)?.length, source).toBe(patterns?.length);
+		}
+	});
+
 	it('still reports it in a function with a body, and not in an ambient one', async () => {
 		const message =
 			'A binding pattern parameter cannot be optional in an implementation signature.';
