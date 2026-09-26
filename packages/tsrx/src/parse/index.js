@@ -1655,6 +1655,64 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Whether a node is a template `@case` or `@default`, whose `{ … }` is
+	 * part of the case rather than a block of its own
+	 * @param {AST.Node | AST.CSS.StyleSheet | null | undefined} node
+	 * @returns {node is AST.SwitchCase & AST.NodeWithLocation}
+	 */
+	function isTemplateSwitchCase(node) {
+		return node?.type === 'SwitchCase' && !!node.keyword;
+	}
+
+	/**
+	 * Place a comment that follows the test of a template `@case`, or the
+	 * `@default`, and comes before the case's first child, where Prettier puts
+	 * it in the same `case x: { … }`, whose `{ … }` is a block. One before the
+	 * `:` trails the test. A block comment between the `:` and the `{` dangles
+	 * on the case, which prints it before the `{` (`@case 1: /* c *\/ {`),
+	 * except that after a test, one at the end of its line trails the test
+	 * (`@case 1 /* c *\/: {`). A line comment there goes into the body, where
+	 * Prettier's second pass puts it (`addBlockStatementFirstComment`), and
+	 * the comments in an empty body dangle on the case, which prints them
+	 * inside its braces. The ones in a body with children are left to them.
+	 * @param {AST.CommentWithLocation} comment
+	 * @param {AST.SwitchCase & AST.NodeWithLocation} switchCase
+	 * @returns {boolean} Whether the comment was attached
+	 */
+	function takeTemplateSwitchCaseComment(comment, switchCase) {
+		const test = /** @type {(AST.Node & AST.NodeWithLocation) | null} */ (switchCase.test);
+		const headerStart = test?.end ?? switchCase.keyword?.end ?? switchCase.start;
+		if (comment.start < headerStart) {
+			return false;
+		}
+		const colon = test ? findOutsideComments(':', headerStart, switchCase.end) : headerStart;
+		if (test && comment.end <= colon) {
+			addTrailingComment(test, comment);
+			return true;
+		}
+		const first = switchCase.consequent.find((child) => child.type !== 'EmptyStatement');
+		if (comment.end <= findOutsideComments('{', colon, switchCase.end)) {
+			if (comment.type === 'Line') {
+				if (first) {
+					addLeadingComment(first, comment);
+				} else {
+					pushInnerComment(switchCase, comment);
+				}
+			} else if (test && !isOwnLineComment(comment) && isEndOfLineComment(comment)) {
+				addTrailingComment(test, comment);
+			} else {
+				pushInnerComment(switchCase, comment);
+			}
+			return true;
+		}
+		if (first) {
+			return false;
+		}
+		pushInnerComment(switchCase, comment);
+		return true;
+	}
+
+	/**
 	 * Like Prettier's `isTypeCastComment`: a JSDoc comment with `@type` or
 	 * `@satisfies`
 	 * @param {AST.CommentWithLocation} comment
@@ -1747,6 +1805,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			type === 'TSTypeAliasDeclaration' ||
 			type === 'ImportAttribute' ||
 			type === 'ForStatement' ||
+			isTemplateSwitchCase(node) ||
 			isObjectProperty(node) ||
 			getSignatureParameters(node) !== null ||
 			isClassLike(/** @type {AST.Node} */ (node)) ||
@@ -1847,6 +1906,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 		const endOfLine = !ownLine && isEndOfLineComment(comment);
 		const node = /** @type {any} */ (enclosing);
 		const type = node.statementType ?? node.type;
+
+		// The comments after a template case's test or `@default`, before its
+		// first child (see `takeTemplateSwitchCaseComment`)
+		if (isTemplateSwitchCase(enclosing) && (!preceding || preceding === node.test)) {
+			return takeTemplateSwitchCaseComment(comment, enclosing);
+		}
 
 		// `handleCommentInEmptyParens`: a comment in the empty parentheses of a
 		// parameter list dangles on the function or signature, which prints it
@@ -2701,6 +2766,20 @@ export function get_comment_handlers(source, comments, index = 0) {
 								return;
 							}
 						}
+						// A template case with an empty body keeps the comments after its
+						// test or `@default` (see `takeTemplateSwitchCaseComment`)
+						if (isTemplateSwitchCase(node) && hasOnlyEmptyStatements(node.consequent)) {
+							while (
+								comments[0] &&
+								comments[0].end <= node.end &&
+								takeTemplateSwitchCaseComment(comments[0], node)
+							) {
+								comments.shift();
+							}
+							if (comments.length === 0) {
+								return;
+							}
+						}
 						if (
 							((node.type === 'BlockStatement' ||
 								node.type === 'StaticBlock' ||
@@ -2708,7 +2787,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 								hasOnlyEmptyStatements(node.body)) ||
 							((node.type === 'TSInterfaceBody' || node.type === 'ClassBody') &&
 								node.body.length === 0) ||
-							(node.type === 'SwitchStatement' && node.cases.length === 0) ||
+							((node.type === 'SwitchStatement' || node.type === 'JSXSwitchExpression') &&
+								node.cases.length === 0) ||
 							((node.type === 'TSTypeLiteral' || node.type === 'TSEnumDeclaration') &&
 								node.members.length === 0)
 						) {
@@ -3054,7 +3134,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 									// keeps them as inner comments.
 									node_array = parent.render ? [...parent.body, parent.render] : parent.body;
 									isCodeBlockChild = true;
-								} else if (parent.type === 'SwitchStatement') {
+								} else if (
+									parent.type === 'SwitchStatement' ||
+									parent.type === 'JSXSwitchExpression'
+								) {
 									// The discriminant isn't a case. With no cases, it would count
 									// as the last one and take the body's comments.
 									if (node !== parent.discriminant) {
@@ -3320,11 +3403,15 @@ export function get_comment_handlers(source, comments, index = 0) {
 									(node.trailingComments ||= []).push(...trailing);
 								};
 
+								// A case takes the comments on its last line up to the next case.
+								// The ones after it, which in code on one line can come after the
+								// whole switch, aren't between the two.
 								if (isSwitchCaseSibling && !is_last_in_array) {
 									if (
 										nodeEndLine !== null &&
 										commentStartLine !== null &&
-										nodeEndLine === commentStartLine
+										nodeEndLine === commentStartLine &&
+										comments[0].end <= /** @type {AST.NodeWithLocation} */ (nextSibling).start
 									) {
 										takeSameLineComments();
 									}

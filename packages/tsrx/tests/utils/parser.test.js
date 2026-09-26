@@ -6286,6 +6286,86 @@ namespace N {
 	});
 });
 
+describe('comments in switch cases', () => {
+	// A case that isn't the last took the comments on its last line even after
+	// the next case, so in code on one line, the first comment after the whole
+	// switch moved into it (#775)
+	it.each([
+		['after the switch', 'switch(e){case 1:a;case 2:}x;/* e */ y'],
+		[
+			'in a later statement',
+			'var f=function(e){switch(typeof e){case"string":return e;default:return""}};var n=/* e */ 1;',
+		],
+	])('keeps a comment on the line of a switch %s out of it', (_, source) => {
+		const ast = parseModule(source, 'App.js');
+		const switchStatement = find_first(ast, (node) => node.type === 'SwitchStatement');
+
+		expect(comments_in(switchStatement)).toEqual([]);
+		expect(comments_in(ast)).toEqual([' e ']);
+	});
+
+	it('gives a case the comment at the end of its line before the next case', () => {
+		const ast = parseModule('switch(e){case 1:a; // e\ncase 2:b}', 'App.js');
+		const switchStatement = find_first(ast, (node) => node.type === 'SwitchStatement');
+		assert_type(switchStatement, 'SwitchStatement');
+
+		expect(comments_in(switchStatement.cases[0])).toEqual([' e']);
+	});
+
+	/**
+	 * @param {string} body
+	 */
+	const templateSwitch = (body) => {
+		const ast = parseModule(`function App() @{\n\t<div>\n${body}\n\t</div>\n}`, 'App.tsrx');
+		const found = find_first(ast, (node) => node.type === 'JSXSwitchExpression');
+		assert_type(found, 'JSXSwitchExpression');
+		return found;
+	};
+
+	// A template `@switch` is a `JSXSwitchExpression`, and its cases' braces
+	// aren't nodes, so none of the switch rules kept the comments in an empty
+	// body, which moved out of the switch, and the ones before a case's `{`
+	// trailed the test or led the first child (#774)
+	it('keeps the comments of a template @switch with no cases as its inner comments', () => {
+		const switchExpression = templateSwitch('\t\t@switch (a) {\n\t\t\t// a\n\t\t\t/* b */\n\t\t}');
+
+		expect(switchExpression.innerComments?.map((comment) => comment.value)).toEqual([' a', ' b ']);
+	});
+
+	it('keeps the comments before the { of a template case and in its empty body on the case', () => {
+		const switchExpression = templateSwitch(
+			'\t\t@switch (a) {\n\t\t\t@case 1: /* a */ {\n\t\t\t\t// b\n\t\t\t}\n\t\t\t@default: /* c */ {\n\t\t\t\t<span />\n\t\t\t}\n\t\t}',
+		);
+		const [first, fallback] = switchExpression.cases;
+
+		expect(first.innerComments?.map((comment) => comment.value)).toEqual([' a ', ' b']);
+		expect(first.test?.trailingComments).toBeUndefined();
+		expect(fallback.innerComments?.map((comment) => comment.value)).toEqual([' c ']);
+		expect(comments_in(fallback.consequent)).toEqual([]);
+	});
+
+	it('gives a line comment before the { of a template case to its first child', () => {
+		const switchExpression = templateSwitch(
+			'\t\t@switch (a) {\n\t\t\t@case 1: // a\n\t\t\t{\n\t\t\t\t<span />\n\t\t\t}\n\t\t}',
+		);
+		const [first] = switchExpression.cases;
+
+		expect(first.innerComments).toBeUndefined();
+		expect(first.consequent[0].leadingComments?.map((comment) => comment.value)).toEqual([' a']);
+	});
+
+	// They moved out of the switch too (#798)
+	it('gives the comments after the last case of a template @switch to that case', () => {
+		const switchExpression = templateSwitch(
+			'\t\t@switch (a) {\n\t\t\t@case 1: {\n\t\t\t\t<span />\n\t\t\t}\n\t\t\t// a\n\t\t}',
+		);
+
+		expect(switchExpression.cases[0].trailingComments?.map((comment) => comment.value)).toEqual([
+			' a',
+		]);
+	});
+});
+
 describe('comments in member lists', () => {
 	/**
 	 * @param {AST.Node | undefined} node

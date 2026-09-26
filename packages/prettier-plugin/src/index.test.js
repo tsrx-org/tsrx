@@ -4288,6 +4288,29 @@ foo(
 			expect(result).toBeWithNewline(expected);
 		});
 
+		// In code on one line, a case that isn't the last took the first comment
+		// after the switch on that line, even one in a later statement (#775)
+		it.each([
+			[
+				'switch(e){case 1:a;case 2:}x;/* e */ y',
+				'switch (e) {\n  case 1:\n    a;\n  case 2:\n}\nx;\n/* e */ y;',
+			],
+			[
+				'var f=function(e){switch(typeof e){case"string":return e;default:return""}};var n=/* e */ 1;',
+				'var f = function (e) {\n  switch (typeof e) {\n    case "string":\n      return e;\n    default:\n      return "";\n  }\n};\nvar n = /* e */ 1;',
+			],
+			[
+				'switch(e){case 1:a; // e\ncase 2:b}',
+				'switch (e) {\n  case 1:\n    a; // e\n  case 2:\n    b;\n}',
+			],
+			[
+				'switch(e){case 1:a;/* e */case 2:b}',
+				'switch (e) {\n  case 1:\n    a;\n  /* e */ case 2:\n    b;\n}',
+			],
+		])('keeps the comments in the one-line %j where Prettier does', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		it('keeps a comment after a case label with its first statement below it', async () => {
 			const input = `switch (x) {
   case 1: // c
@@ -4368,6 +4391,108 @@ foo(
 
 			const result = await format(expected);
 			expect(result).toBeWithNewline(expected);
+		});
+
+		// The comments in an empty @case or @default body moved out of the
+		// @switch or lost their indentation, and a comment between the `:` and
+		// the `{` moved before the `:` or into the body (#774). They stay where
+		// Prettier keeps them in `case 1: /* b */ { … }`.
+		it('keeps the comments in empty @case and @default bodies and before their {', async () => {
+			const expected = `function App() @{
+  <div>
+    @switch (x) {
+      @case 1: {
+        // a
+      }
+      @case 2: /* b */ {
+        /* c */
+      }
+      @case 3: /* d */ {
+        <span />
+      }
+      @default: /* e */ {
+        // f
+        // g
+      }
+    }
+  </div>
+}`;
+
+			expect(await format(expected)).toBeWithNewline(expected);
+		});
+
+		// A comment after the last @case body moved out of the @switch (#798)
+		it('keeps a comment after the last @case body inside the @switch', async () => {
+			const expected = `function App() @{
+  <div>
+    @switch (x) {
+      @case 1: {
+        <span />
+      }
+      // a
+      /* b */
+    }
+  </div>
+}`;
+
+			expect(await format(expected)).toBeWithNewline(expected);
+		});
+
+		const inSwitch = (/** @type {string} */ cases) =>
+			`function App() @{\n  <div>\n    @switch (x) {\n      ${cases}\n    }\n  </div>\n}`;
+
+		// Like the comments in `case 1: { … }`, which Prettier prints in the
+		// block, before the `{`, or before the `:`. Where Prettier needs more
+		// than one pass, one pass prints a stable form: an own-line block comment
+		// before the `{` stays before it.
+		it.each([
+			['@case 1: { /* a */ }', '@case 1: {\n        /* a */\n      }'],
+			['@case 1: { // a\n      }', '@case 1: {\n        // a\n      }'],
+			[
+				'@case 1: {\n        // a\n\n        // b\n      }',
+				'@case 1: {\n        // a\n        // b\n      }',
+			],
+			[
+				'@default /* a */: {\n        <span />\n      }',
+				'@default: /* a */ {\n        <span />\n      }',
+			],
+			[
+				'@case 1: /* a */\n      {\n        <span />\n      }',
+				'@case 1 /* a */: {\n        <span />\n      }',
+			],
+			[
+				'@case 1:\n        /* a */\n        {\n          <span />\n        }',
+				'@case 1: /* a */ {\n        <span />\n      }',
+			],
+			[
+				'@default:\n        /* a */\n        {\n          <span />\n        }',
+				'@default: /* a */ {\n        <span />\n      }',
+			],
+			['@case 1: // a\n      {\n      }', '@case 1: {\n        // a\n      }'],
+			['@default: /* a */ // b\n      {\n      }', '@default: /* a */ {\n        // b\n      }'],
+			[
+				'@case 1: { // a\n        <span />\n      }',
+				'@case 1: {\n        // a\n        <span />\n      }',
+			],
+		])('places the comment in %j where Prettier places it in a case', async (input, expected) => {
+			expect(await format(inSwitch(input))).toBeWithNewline(inSwitch(expected));
+		});
+
+		it.each([
+			'@case 1 /* a */: {\n        <span />\n      }',
+			'@case /* a */ 1: {\n        <span />\n      }',
+			'@case 1: {\n        // a\n        <span />\n      }',
+			'@case 1: {\n        <span /> // a\n      }',
+			'@case 1: {\n        <span />\n        // a\n      }',
+			'@case 1: {\n      } // a\n      @default: {\n        <span />\n      }',
+		])('keeps the comment in %j', async (input) => {
+			expect(await format(inSwitch(input))).toBeWithNewline(inSwitch(input));
+		});
+
+		it('moves a line comment between the : and the { of a @case into the body, like Prettier', async () => {
+			expect(
+				await format(inSwitch('@case 1: // a\n      {\n        <span />\n      }')),
+			).toBeWithNewline(inSwitch('@case 1: {\n        // a\n        <span />\n      }'));
 		});
 
 		it('should not add an extra new line above a comment inside objects and in between properties', async () => {
@@ -19309,6 +19434,38 @@ for (
 		it('keeps a comment between ) and { inside the parentheses, like Prettier', async () => {
 			expect(await format('switch (x) /* c */ {\n}')).toBeWithNewline('switch (x /* c */) {\n}');
 		});
+
+		const inTemplate = (/** @type {string} */ body) =>
+			`function App() @{\n  <div>\n    ${body}\n  </div>\n}`;
+
+		// They moved after a template @switch (#774)
+		it.each([
+			'@switch (x) {\n      // a\n    }',
+			'@switch (x) {\n      /* a */\n    }',
+			'@switch (x) {\n      // a\n      // b\n    }',
+			'@switch (x /* c */) {\n      // a\n    }',
+		])('keeps the comments of the template %j inside its braces', async (body) => {
+			expect(await format(inTemplate(body))).toBeWithNewline(inTemplate(body));
+		});
+
+		it('puts a comment in the braces of a one-line template @switch on its own line', async () => {
+			expect(await format(inTemplate('@switch (x) { /* a */ }'))).toBeWithNewline(
+				inTemplate('@switch (x) {\n      /* a */\n    }'),
+			);
+		});
+
+		it.each([
+			['@switch (x) /* c */ {\n      // a\n    }', '@switch (x /* c */) {\n      // a\n    }'],
+			[
+				'@switch (x) /* c */ {\n      @case 1: {\n        <span />\n      }\n    }',
+				'@switch (x /* c */) {\n      @case 1: {\n        <span />\n      }\n    }',
+			],
+		])(
+			'keeps a comment between ) and { of the template %j inside the parentheses, like Prettier',
+			async (input, expected) => {
+				expect(await format(inTemplate(input))).toBeWithNewline(inTemplate(expected));
+			},
+		);
 	});
 
 	// A block comment over several lines ends a `return`, `throw`, or `yield`
