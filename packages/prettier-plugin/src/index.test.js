@@ -21945,6 +21945,19 @@ type T = [A, /* y */ B];`);
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
+		// Pins: like Prettier, it leads an unbraced body, which stays on the
+		// header's line when it fits, where TypeScript doesn't read the comment
+		// as the body's JSDoc either. A body that doesn't fit starts its line
+		// with it (#822).
+		it.each([
+			['if (a) /** @type {X} */\nb();', 'if (a) /** @type {X} */ b();'],
+			['if (a) b();\nelse /** @type {X} */\nc();', 'if (a) b();\nelse /** @type {X} */ c();'],
+			['for (const a of b) /** @type {X} */\nc();', 'for (const a of b) /** @type {X} */ c();'],
+			['while (a) /** @type {X} */\nb();', 'while (a) /** @type {X} */ b();'],
+		])('keeps the comment on the header line in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		// Pins: unlike Prettier, it stays at the end of its line before a
 		// statement, a class or interface member, a `case`, or a template's
 		// output or child. Prettier moves it onto the line of the node after it,
