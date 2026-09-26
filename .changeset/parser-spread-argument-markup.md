@@ -1,5 +1,5 @@
 ---
-'@tsrx/core': patch
+'@tsrx/core': minor
 ---
 
 An element in a spread attribute's argument (`<div {...{ k: <b>…</b> }} />`,
