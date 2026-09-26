@@ -280,35 +280,21 @@ export const printers = {
 				};
 			}
 
-			// Raw-text `<script>` bodies: the parser mirrors the element's `content` as
-			// a single JSXText child. Format it with the parser for the script's type
-			// (see inferScriptParser) the same way <style> bodies are formatted as CSS
-			// above, and keep a body of any other type as written.
-			if (node.type === 'JSXText') {
-				const parent = /** @type {AST.TSRXJSXElement | null} */ (path.getParentNode());
-				if (isRawScriptElement(parent)) {
-					const parser = inferScriptParser(/** @type {AST.TSRXJSXElement} */ (parent), options);
-					return async (textToDoc) => {
-						try {
-							if (!parser) {
-								return printUnformattedRawText(getJSXTextRaw(node));
-							}
-							const body = await textToDoc(
-								parser === 'markdown'
-									? dedentString(getJSXTextRaw(node).replace(/^[^\S\n]*\n/u, ''))
-									: getJSXTextRaw(node),
-								{ parser },
-							);
-							// Drop the program's trailing hardline; printElement places the
-							// closing tag on its own line already.
-							return stripTrailingHardline(body);
-						} catch {
-							// A body that doesn't parse (e.g. mid-edit code) is an expected
-							// state, not an error: keep its lines and stay quiet.
-							return printUnformattedRawText(getJSXTextRaw(node));
-						}
-					};
+			// Raw-text `<script>` bodies (`content`): format the body with the parser
+			// for the script's type (see inferScriptParser) the same way <style>
+			// bodies are formatted as CSS above, and keep a body of any other type as
+			// written. The element itself prints as usual (printJSXElement), with the
+			// body doc recorded here; returning nothing leaves it to the printer.
+			const script = /** @type {AST.TSRXJSXElement} */ (node);
+			if (isRawScriptElement(script)) {
+				if (!script.content.trim()) {
+					return null;
 				}
+				const parser = inferScriptParser(script, options);
+				return async (textToDoc) => {
+					scriptBodyDocs.set(script, await formatScriptBody(script.content, parser, textToDoc));
+					return undefined;
+				};
 			}
 
 			return null;
@@ -577,12 +563,45 @@ function unwrapRedundantType(node) {
 }
 
 /**
- * Raw-text `<script>` element: the parser stores the verbatim JS/TS body on
- * `content` and mirrors it as a single JSXText child. Checking the tag name
- * alongside `content` matches the other raw-aware consumers (the target
- * transforms, the compiler's script regions).
+ * The formatted bodies of raw-text `<script>` elements, recorded by `embed()`
+ * for printJSXElement.
+ * @type {WeakMap<AST.TSRXJSXElement, Doc>}
+ */
+const scriptBodyDocs = new WeakMap();
+
+/**
+ * Format a raw-text `<script>` body with its parser, or keep its lines as
+ * written when it has none or doesn't parse (e.g. mid-edit code, an expected
+ * state rather than an error).
+ * @param {string} content
+ * @param {string | undefined} parser
+ * @param {TextToDoc} textToDoc
+ * @returns {Promise<Doc>}
+ */
+async function formatScriptBody(content, parser, textToDoc) {
+	if (!parser) {
+		return printUnformattedRawText(content);
+	}
+	try {
+		const body = await textToDoc(
+			parser === 'markdown' ? dedentString(content.replace(/^[^\S\n]*\n/u, '')) : content,
+			{ parser },
+		);
+		// Drop the program's trailing hardline; printElement places the closing
+		// tag on its own line already.
+		return stripTrailingHardline(body);
+	} catch {
+		return printUnformattedRawText(content);
+	}
+}
+
+/**
+ * Raw-text `<script>` element: the parser stores the body as written on
+ * `content`, and the element has no children. Checking the tag name alongside
+ * `content` matches the other raw-aware consumers (the target transforms, the
+ * compiler's script regions).
  * @param {AST.TSRXJSXElement | AST.JSXStyleElement | null | undefined} node
- * @returns {boolean}
+ * @returns {node is AST.TSRXJSXElement & { content: string }}
  */
 function isRawScriptElement(node) {
 	return (
@@ -14887,17 +14906,17 @@ function printJSXElement(node, path, options, print) {
 		options,
 	);
 
-	// Raw-text `<script>` element: the body lives on `node.content`, mirrored as a
-	// single JSXText child (see the parser's `#parseScriptElement`). Print that
-	// child — embed() formats it as TypeScript — in a block layout, bypassing the
-	// generic children path so the body is never whitespace-merged as markup text.
+	// Raw-text `<script>` element: the body lives on `node.content` (see the
+	// parser's `#parseScriptElement`). Print it — as embed() formatted it, or
+	// its lines as written — in a block layout, never whitespace-merged as
+	// markup text.
 	if (isRawScriptElement(node)) {
-		if (!hasChildren) {
+		if (!node.content.trim()) {
 			return [openingTag, closingTag];
 		}
 		return group([
 			openingTag,
-			indent([hardline, path.call(print, 'children', 0)]),
+			indent([hardline, scriptBodyDocs.get(node) ?? printUnformattedRawText(node.content)]),
 			hardline,
 			closingTag,
 		]);

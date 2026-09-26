@@ -2061,6 +2061,214 @@ export function runSharedClassFunctionComponentTests({ compile, compile_to_volar
 }
 
 /**
+ * How each target outputs a raw-text `<script>` body: the form that renders it
+ * exactly on the client and from server HTML.
+ * @type {Record<string, 'children' | 'dangerouslySetInnerHTML' | 'innerHTML' | 'v-html'>}
+ */
+const SCRIPT_BODY_FORMS = {
+	react: 'children',
+	preact: 'dangerouslySetInnerHTML',
+	hono: 'dangerouslySetInnerHTML',
+	solid: 'innerHTML',
+	vue: 'v-html',
+};
+
+/**
+ * The `<script>` elements of compiled TSX, each with the form its body takes
+ * and the string it holds.
+ * @param {string} code
+ * @returns {Array<{ form: string | null, body: string | null, children: number }>}
+ */
+function compiled_scripts(code) {
+	const source_file = ts.createSourceFile(
+		'compiled.tsx',
+		code,
+		ts.ScriptTarget.Latest,
+		true,
+		ts.ScriptKind.TSX,
+	);
+	/** @type {Array<{ form: string | null, body: string | null, children: number }>} */
+	const scripts = [];
+	/** @param {ts.Expression | undefined} expression */
+	const string_of = (expression) =>
+		expression && ts.isStringLiteralLike(expression) ? expression.text : null;
+	/** @param {ts.Node} node */
+	const visit = (node) => {
+		const opening = ts.isJsxElement(node)
+			? node.openingElement
+			: ts.isJsxSelfClosingElement(node)
+				? node
+				: null;
+		if (opening && opening.tagName.getText(source_file) === 'script') {
+			const children = ts.isJsxElement(node)
+				? node.children.filter((child) => !ts.isJsxText(child) || child.text.trim() !== '')
+				: [];
+			/** @type {{ form: string | null, body: string | null, children: number }} */
+			const script = { form: null, body: null, children: children.length };
+			const only = children[0];
+			if (children.length === 1 && ts.isJsxExpression(only)) {
+				script.form = 'children';
+				script.body = string_of(only.expression);
+			}
+			for (const attribute of opening.attributes.properties) {
+				if (!ts.isJsxAttribute(attribute) || !attribute.initializer) continue;
+				const attribute_name = attribute.name.getText(source_file);
+				const value = ts.isJsxExpression(attribute.initializer)
+					? attribute.initializer.expression
+					: undefined;
+				if (attribute_name === 'innerHTML' || attribute_name === 'v-html') {
+					script.form = attribute_name;
+					script.body = string_of(value);
+				} else if (
+					attribute_name === 'dangerouslySetInnerHTML' &&
+					value &&
+					ts.isObjectLiteralExpression(value)
+				) {
+					const html = value.properties.find(
+						(property) =>
+							ts.isPropertyAssignment(property) && property.name.getText(source_file) === '__html',
+					);
+					script.form = 'dangerouslySetInnerHTML';
+					script.body = html && ts.isPropertyAssignment(html) ? string_of(html.initializer) : null;
+				}
+			}
+			scripts.push(script);
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(source_file);
+	return scripts;
+}
+
+/**
+ * A `<script>` element is raw text: its body is `content`, as written, with no
+ * comments, no character references, and no `{…}` expressions, and its line
+ * breaks stay. Each target outputs it in the form that renders it exactly
+ * (#708).
+ * @param {{ compile: CompileHarness['compile'], name: string }} options
+ */
+function runSharedScriptBodyTests({ compile, name }) {
+	const form = SCRIPT_BODY_FORMS[name];
+
+	describe(`[${name}] raw-text script bodies`, () => {
+		const code_body = `
+			// c
+			run();
+			if (a < b && b > c) x = "&amp;";
+			items.forEach((i) => { log(i); });
+		`;
+
+		/** @type {Array<[string, string, string]>} */
+		const cases = [
+			[
+				'a template',
+				`export function App() @{
+	<div>
+		<script>${code_body}</script>
+	</div>
+}`,
+				code_body,
+			],
+			[
+				'plain JSX',
+				`export function App() {
+	return <div><script>${code_body}</script></div>;
+}`,
+				code_body,
+			],
+			[
+				'a JSON body',
+				`export function App() @{
+	<script type="application/json" id="data">{"a": 1, "b": "<b>&amp;</b>"}</script>
+}`,
+				'{"a": 1, "b": "<b>&amp;</b>"}',
+			],
+			[
+				'an import map',
+				`export function App() @{
+	<script type="importmap">
+		{ "imports": { "x": "./x.js" } }
+	</script>
+}`,
+				`
+		{ "imports": { "x": "./x.js" } }
+	`,
+			],
+			[
+				'braces, as text',
+				`export function App() {
+	const code = 'window.__ran = 1;';
+	return <div><script>{code}</script></div>;
+}`,
+				'{code}',
+			],
+			[
+				'a closing tag with whitespace',
+				`export function App() @{
+	<div><script>a = 1;</script
+	></div>
+}`,
+				'a = 1;',
+			],
+			[
+				'an escaped end tag',
+				`export function App() @{
+	<script>const tag = "<\\/script>";</script>
+}`,
+				'const tag = "<\\/script>";',
+			],
+		];
+
+		it.each(cases)(`outputs the body in %s as written, as \`${form}\``, (_label, source, body) => {
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(compiled_scripts(code)).toEqual([
+				{ form, body, children: form === 'children' ? 1 : 0 },
+			]);
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+		});
+
+		it('never reads braces in a body as an expression', () => {
+			const { code } = compile(
+				`export function App() {
+	return <div><script>{code}</script></div>;
+}`,
+				'App.tsrx',
+			);
+
+			expect(code).not.toMatch(/\{code\}(?!['"])/);
+		});
+
+		it('outputs a body of only whitespace as an empty script, as the formatter prints it', () => {
+			const { code } = compile(
+				`export function App() @{
+	<script src="/a.js">
+	</script>
+}`,
+				'App.tsrx',
+			);
+
+			expect(compiled_scripts(code)).toEqual([{ form: null, body: null, children: 0 }]);
+		});
+
+		it("keeps a self-closing script with the target's prop for a dynamic body", () => {
+			const dynamic =
+				form === 'innerHTML' || form === 'v-html' ? 'innerHTML' : 'dangerouslySetInnerHTML';
+			const { code } = compile(
+				`export function App() @{
+	const code = 'window.__ran = 1;';
+	<script type="module" ${dynamic}={${dynamic === 'dangerouslySetInnerHTML' ? '{ __html: code }' : 'code'}} />
+}`,
+				'App.tsrx',
+			);
+
+			expect(compiled_scripts(code)).toEqual([{ form: dynamic, body: null, children: 0 }]);
+			expect(code).toContain('type="module"');
+		});
+	});
+}
+
+/**
  * Shared compile-output regressions. These assert observable properties of
  * the generated code (not source-map structure) that every JSX target should
  * satisfy across whatever `transformElement` hook the platform wires in.
@@ -2180,16 +2388,9 @@ export function App() @{
 
 			expect(code).toContain('<span>&lt;3 and a &lt; b</span>');
 		});
-
-		it('escapes `<` in a raw-text script body', () => {
-			const { code } = compile(
-				`export function App() { return <div><script>if (a < b) x();</script></div>; }`,
-				'App.tsrx',
-			);
-
-			expect(code).toContain('<script>if (a &lt; b) x();</script>');
-		});
 	});
+
+	runSharedScriptBodyTests({ compile, name });
 
 	describe(`[${name}] characters that JSX text can't hold`, () => {
 		/**
@@ -2262,11 +2463,6 @@ export function App() @{
 	return <main>{c && <b>a > b</b>}</main>;
 }`,
 				'<b>a &gt; b</b>',
-			],
-			[
-				'a raw-text script body, with braces',
-				component('<script>if (a > b) { go(); }</script>'),
-				'<script>if (a &gt; b) &#123; go(); &#125;</script>',
 			],
 		];
 

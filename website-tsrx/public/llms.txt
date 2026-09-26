@@ -669,6 +669,47 @@ const Article = ({ markup }: { markup: string }) =>
 	<article innerHTML={markup} />;
 ```
 
+### Scripts
+
+A `<script>` body is raw text, like a `<style>` body, in a template and in plain
+TSX: everything up to `</script>`, kept as written. JSX text rules don't apply
+to it. Comments, `<`, `>`, `&amp;`, and line breaks stay as they are, and `{…}`
+is text, not an expression container: `<script>{code}</script>` is a script
+whose text is `{code}`, as in an `.html` file.
+
+```tsrx
+export function Page() @{
+	<>
+		<script type="importmap">
+			{ "imports": { "app": "/app.js" } }
+		</script>
+		<script>
+			// A line comment, a <, and an &amp; stay as written.
+			if (a < b) log('&amp;');
+		</script>
+	</>
+}
+```
+
+The body ends at `</script`, optional whitespace, and `>`, where HTML ends it.
+Any other `</script` in the body, in any letter case, is the
+`tsrx-script-end-tag-in-body` error, because a browser would end the script
+there. Write it as `<\/script`, the same string, regular expression, or JSON.
+
+For a body computed at runtime, use a self-closing `<script>` with the
+target's own property. Whether a script runs is each target's decision:
+
+| Target                    | Dynamic body                                 | Runs on a client render | Runs from server HTML |
+| ------------------------- | -------------------------------------------- | ----------------------- | --------------------- |
+| React                     | `dangerouslySetInnerHTML={{ __html: code }}` | No                      | Yes                   |
+| Preact                    | `dangerouslySetInnerHTML={{ __html: code }}` | Yes                     | Yes                   |
+| Hono server (`hono/jsx`)  | `dangerouslySetInnerHTML={{ __html: code }}` | Not applicable          | Yes                   |
+| Hono DOM (`hono/jsx/dom`) | `dangerouslySetInnerHTML={{ __html: code }}` | Yes                     | Not applicable        |
+| Solid                     | `innerHTML={code}`                           | No                      | Yes                   |
+| Vue                       | `innerHTML={code}`                           | No                      | Yes                   |
+
+Ripple and Octane decide for themselves; see their documentation.
+
 ### Prop shorthand
 
 When a prop name matches the variable, use `{name}` instead of `name={name}`.

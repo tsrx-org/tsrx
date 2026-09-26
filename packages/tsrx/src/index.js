@@ -170,6 +170,7 @@ export {
 	create_hook_safe_helper as createHookSafeHelper,
 	create_element_ref_target_type as createElementRefTargetType,
 	create_element_ref_target_type_for_name as createElementRefTargetTypeForName,
+	create_script_body as createScriptBody,
 	build_return_expression as buildReturnExpression,
 	createJsxTransform,
 	extract_jsx_setup_declarations as extractJsxSetupDeclarations,

@@ -6077,18 +6077,149 @@ describe('division and private fields in template JS positions', () => {
 });
 
 describe('raw-text <script> elements', () => {
-	it('captures the body verbatim as `content` and mirrors it as a single JSXText child', () => {
+	it('captures the body verbatim as `content`, with no children', () => {
 		const script = findElement(
 			`function App() @{ <head><script>const x = 1; foo();</script></head> }`,
 			'script',
 		);
 		assert_type(script, 'JSXElement');
 		expect(script.content).toBe('const x = 1; foo();');
-		// The body is mirrored as one JSXText child (like JSXStyleElement's css +
-		// parsed children) so generic element consumers emit it verbatim.
-		expect(script.children).toHaveLength(1);
-		expect(script.children[0].type).toBe('JSXText');
-		expect(child(script, 0, 'JSXText').value).toBe('const x = 1; foo();');
+		// `content` is the only body: a JSXText child would be read with JSX
+		// text's rules, which join its lines and decode its references (#708).
+		expect(script.children).toEqual([]);
+	});
+
+	// The body is raw text, in templates and in plain JSX: no comments, no
+	// character references, no `{…}` expressions, and its line breaks stay.
+	it('reads comments, character references, and braces in the body as text', async () => {
+		const body = `
+	// c
+	{code}
+	/* d */ x = "&amp;" < 1;
+`;
+		const sources = [
+			`export function App() @{
+	<div><script>${body}</script></div>
+}`,
+			`export function App() {
+	return <div><script>${body}</script></div>;
+}`,
+			`export const s = <script>${body}</script>;`,
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			sources.map((source) => ({ source, options: { collect: true } })),
+		);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			if (!outcome.ok) throw new Error(`${sources[index]} threw ${outcome.message}`);
+			const script = /** @type {AST.TSRXJSXElement | undefined} */ (
+				find_first(
+					outcome.ast,
+					(node) =>
+						node.type === 'JSXElement' &&
+						/** @type {AST.TSRXJSXElement} */ (node).openingElement.name.type === 'JSXIdentifier' &&
+						/** @type {ESTreeJSX.JSXIdentifier} */ (
+							/** @type {AST.TSRXJSXElement} */ (node).openingElement.name
+						).name === 'script',
+				)
+			);
+			expect(script?.content, sources[index]).toBe(body);
+			expect(script?.children, sources[index]).toEqual([]);
+			expect(outcome.errors, sources[index]).toEqual([]);
+			// The comments in the body are text, attached to no node.
+			const commented = find_first(outcome.ast, (node) =>
+				['leadingComments', 'trailingComments', 'innerComments'].some(
+					(key) =>
+						/** @type {Record<string, unknown[] | undefined>} */ (/** @type {unknown} */ (node))[
+							key
+						]?.length,
+				),
+			);
+			expect(commented, sources[index]).toBeUndefined();
+		}
+	});
+
+	// HTML ends a script at `</script`, optional whitespace, and `>`, and at any
+	// other `</script`, in any letter case, too. So a body ends at the first,
+	// and every other `</script` is an error.
+	it('ends the body where HTML does', async () => {
+		/** @type {Array<[string, string]>} */
+		const closings = [
+			['</script>', 'a = 1;'],
+			['</script >', 'a = 1;'],
+			['</script\n\t>', 'a = 1;'],
+			['</script\t\f\r >', 'a = 1;'],
+		];
+		const sources = closings.map(
+			([closing]) => `export function App() @{
+	<div><script>a = 1;${closing}</div>
+}`,
+		);
+		const outcomes = await parse_in_worker_with_ast(sources.map((source) => ({ source })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const [closing, content] = closings[index];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(closing)} threw ${outcome.message}`);
+			const script = /** @type {AST.TSRXJSXElement} */ (
+				find_first(
+					outcome.ast,
+					(node) => node.type === 'JSXElement' && node !== null && 'content' in node,
+				)
+			);
+			expect(script.content).toBe(content);
+			const source = sources[index];
+			const closing_element = /** @type {AST.NodeWithLocation} */ (
+				/** @type {unknown} */ (script.closingElement)
+			);
+			expect(source.slice(closing_element.start, closing_element.end)).toBe(closing);
+			expect(source.slice(/** @type {AST.NodeWithLocation} */ (script).end - 1)).toMatch(/^>/);
+		}
+	});
+
+	it('reports every other `</script` in the body, in any letter case', async () => {
+		/** @type {Array<[string, string]>} */
+		const cases = [
+			['a = 1;</SCRIPT>b = 2;', '</SCRIPT'],
+			['a = 1;</Script >b = 2;', '</Script'],
+			['a = 1;</script/>b = 2;', '</script'],
+			['a = 1;</script foo>b = 2;', '</script'],
+			['s = "</scripts>";', '</script'],
+		];
+		const sources = cases.map(
+			([body]) => `export function App() @{
+	<script>${body}</script>
+}`,
+		);
+		const collected = await parse_in_worker_with_ast(
+			sources.map((source) => ({ source, options: { collect: true } })),
+		);
+		const thrown = await parse_in_worker(sources.map((source) => ({ source })));
+
+		for (const [index, [body, written]] of cases.entries()) {
+			const message = `'${written}' can end a script in HTML, so a '<script>' body can't contain it. Write '<\\/${written.slice(2)}' instead.`;
+			const outcome = collected[index];
+			if (!outcome.ok) throw new Error(`${body} threw ${outcome.message}`);
+			expect(outcome.errors, body).toEqual([
+				{
+					message,
+					pos: sources[index].indexOf(written, sources[index].indexOf('a = 1;') - 10),
+					end: sources[index].indexOf(written, sources[index].indexOf('a = 1;') - 10) + 8,
+				},
+			]);
+			const script = /** @type {AST.TSRXJSXElement} */ (
+				find_first(outcome.ast, (node) => node.type === 'JSXElement' && 'content' in node)
+			);
+			expect(script.content, body).toBe(body);
+			expect(thrown[index], body).toMatchObject({ ok: false, message });
+		}
+	});
+
+	it('reads `<\\/script` in the body as text', () => {
+		const script = findElement(
+			`function App() @{ <script>const tag = "<\\/script>";</script> }`,
+			'script',
+		);
+		expect(script.content).toBe('const tag = "<\\/script>";');
 	});
 
 	it('reads JS with markup-significant characters (`<`, `{`, `}`) that would otherwise break parsing', () => {

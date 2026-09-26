@@ -81,6 +81,10 @@ function create_hono_platform(mode) {
 			rewriteClassAttr: false,
 			multiRefStrategy: 'merge-refs',
 			hostSpreadRefBinding: 'in-place',
+			// Hono's server renderer escapes a string child of `<script>` like
+			// text; `dangerouslySetInnerHTML` renders the body as written in both
+			// modes.
+			scriptBody: 'dangerouslySetInnerHTML',
 		},
 		validation: {
 			// Server JSX supports async function components. The DOM renderer is

@@ -787,14 +787,16 @@ function create_embedded_code_from_mapping(mapping, languageId) {
  * Every body is treated as TypeScript (a superset of JS), so the attributes are
  * never inspected. The opening-tag pattern refuses to match self-closing
  * `<script src=... />` tags (the `/` before `>` must not close the tag), so they
- * can't swallow a later real script's body.
+ * can't swallow a later real script's body. A body ends where the parser ends
+ * it: at `</script`, optional whitespace, then `>`.
  * @param {string} code - The source code to extract scripts from
  * @returns {VirtualCode[]} Array of embedded TypeScript virtual codes
  */
 function extractScriptFromSource(code) {
 	/** @type {VirtualCode[]} */
 	const embeddedCodes = [];
-	const scriptRegex = /<script\b((?:[^>"'/]|"[^"]*"|'[^']*'|\/(?!>))*)>([\s\S]*?)<\/script>/gi;
+	const scriptRegex =
+		/<script\b((?:[^>"'/]|"[^"]*"|'[^']*'|\/(?!>))*)>([\s\S]*?)<\/script[\t\n\f\r ]*>/gi;
 	let match;
 	let index = 0;
 

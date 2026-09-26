@@ -756,6 +756,23 @@ function can_start_tag_after_lt(input, index) {
 	);
 }
 
+/** The start of an end tag for a script, in any letter case. */
+const regex_script_end_tag_start = /<\/script/giu;
+
+/**
+ * HTML's whitespace: tab, line feed, form feed, carriage return, and space.
+ * @param {number} code
+ */
+function is_html_whitespace(code) {
+	return (
+		code === CharCode.tab ||
+		code === CharCode.lineFeed ||
+		code === 0x0c ||
+		code === CharCode.carriageReturn ||
+		code === CharCode.space
+	);
+}
+
 /**
  * @param {string} input
  * @param {number} i
@@ -3224,9 +3241,11 @@ export function TSRXPlugin(config) {
 
 			/**
 			 * Read a raw-text element body: capture everything between the opening `>`
-			 * and the literal `</tagName>` verbatim (never as template markup),
-			 * synthesize the closing element, and restore the tokenizer state past it.
-			 * Shared by `<style>` and `<script>`.
+			 * and the closing tag verbatim (never as template markup), synthesize the
+			 * closing element, and restore the tokenizer state past it. Shared by
+			 * `<style>` and `<script>`. A `<style>` body ends at the literal
+			 * `</style>`; a `<script>` body ends where HTML ends it (see
+			 * `#findScriptBodyEnd`).
 			 *
 			 * Without a closing tag the element is unclosed and the rest of the input
 			 * is its body, except that in loose mode inside a template the body stops
@@ -3250,7 +3269,17 @@ export function TSRXPlugin(config) {
 				const input = this.input.slice(contentStart);
 				const parent = this.#path.at(-2);
 				const insideTemplate = this.#isNativeTemplateNode(parent);
-				let relativeCloseStart = input.indexOf(closeTag);
+				let relativeCloseStart = -1;
+				let closeTagLength = closeTag.length;
+				if (tagName === 'script') {
+					const close = this.#findScriptBodyEnd(contentStart);
+					if (close) {
+						relativeCloseStart = close.start - contentStart;
+						closeTagLength = close.end - close.start;
+					}
+				} else {
+					relativeCloseStart = input.indexOf(closeTag);
+				}
 				const unclosed = relativeCloseStart === -1;
 
 				if (unclosed) {
@@ -3307,7 +3336,7 @@ export function TSRXPlugin(config) {
 						nameEnd,
 						new acorn.Position(nameEndInfo.line, nameEndInfo.column),
 					);
-					closingEnd = closingStart + closeTag.length;
+					closingEnd = closingStart + closeTagLength;
 					const closingEndInfo = get_line_info(this, closingEnd);
 					const closingElement =
 						/** @type {ESTreeJSX.TSRXJSXClosingElement & AST.NodeWithLocation} */ (
@@ -3380,6 +3409,45 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Where a `<script>` body ends: at `</script`, optional whitespace, then
+			 * `>`. HTML ends a script at any `</script` followed by whitespace, `/`, or
+			 * `>`, in any letter case, and reads the rest as markup, so every other
+			 * `</script` in the body is reported, whatever follows it. Writing it
+			 * `<\/script` keeps the same code (a string, a regular expression, or
+			 * JSON) and doesn't end the script.
+			 *
+			 * @param {number} contentStart the offset after the opening tag's `>`
+			 * @returns {{ start: number, end: number } | null} the closing tag's span,
+			 *   or `null` when the body is unclosed
+			 */
+			#findScriptBodyEnd(contentStart) {
+				const input = this.input;
+				regex_script_end_tag_start.lastIndex = contentStart;
+				/** @type {RegExpExecArray | null} */
+				let match;
+				while ((match = regex_script_end_tag_start.exec(input))) {
+					const start = match.index;
+					const written = match[0];
+					if (written === '</script') {
+						let index = start + written.length;
+						while (index < input.length && is_html_whitespace(input.charCodeAt(index))) {
+							index++;
+						}
+						if (input.charCodeAt(index) === CharCode.greaterThan) {
+							return { start, end: index + 1 };
+						}
+					}
+					this.#report_recoverable_error_range(
+						start,
+						start + written.length,
+						`'${written}' can end a script in HTML, so a '<script>' body can't contain it. Write '<\\/${written.slice(2)}' instead.`,
+						DIAGNOSTIC_CODES.SCRIPT_END_TAG_IN_BODY,
+					);
+				}
+				return null;
+			}
+
+			/**
 			 * Whether the first non-whitespace character after an opening tag is
 			 * `{`: the element's children start with an expression container.
 			 *
@@ -3427,44 +3495,23 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Parse a `<script>` element as a raw-text element, exactly like `<style>`:
-			 * the body is captured verbatim as `node.content`, letting authors write real
-			 * JS/TS (with `<`, `{`, `}`) and letting the editor treat the body as an
-			 * embedded TypeScript/JavaScript document.
+			 * Parse a `<script>` element as a raw-text element, like `<style>`: the
+			 * body is everything up to the closing tag, kept as written on
+			 * `node.content`. None of JSX text's rules apply to it: it has no comments,
+			 * no character references, and no `{…}` expressions, and its line breaks
+			 * stay. So authors write real JS/TS (with `<`, `{`, `}`), and the editor
+			 * treats the body as an embedded TypeScript/JavaScript document.
 			 *
-			 * Mirroring `JSXStyleElement` (raw `css` string + parsed children), the body
-			 * is exposed twice: verbatim on `content`, and as a single `JSXText` child so
-			 * generic element paths (factory targets, static hoisting, printers) emit the
-			 * body without knowing about raw-text elements. Consumers that handle
-			 * `content` directly (target transforms, the Prettier plugin) must skip
-			 * the children instead of emitting both.
+			 * The element has no children: `content` is its only body, and each target
+			 * prints it in the form that renders it exactly.
 			 *
 			 * @param {ESTreeJSX.TSRXJSXOpeningElement & AST.NodeWithLocation} open
 			 * @param {AST.TSRXJSXElement} node
 			 * @param {number} [contextDepth] see #parseRawTextElement
 			 */
 			#parseScriptElement(open, node, contextDepth) {
-				const content = this.#parseRawTextElement(open, node, 'script', contextDepth);
-				node.content = content;
+				node.content = this.#parseRawTextElement(open, node, 'script', contextDepth);
 				node.children = [];
-
-				if (content.length > 0) {
-					const bodyStartInfo = get_line_info(this, open.end);
-					const text = /** @type {ESTreeJSX.JSXText} */ (
-						this.startNodeAt(open.end, new acorn.Position(bodyStartInfo.line, bodyStartInfo.column))
-					);
-					text.value = content;
-					text.raw = content;
-					const bodyEnd = open.end + content.length;
-					const bodyEndInfo = get_line_info(this, bodyEnd);
-					this.finishNodeAt(
-						text,
-						'JSXText',
-						bodyEnd,
-						new acorn.Position(bodyEndInfo.line, bodyEndInfo.column),
-					);
-					node.children = [/** @type {AST.Node} */ (text)];
-				}
 			}
 
 			#parseNativeTemplateExpressionContainer() {

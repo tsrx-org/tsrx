@@ -8,8 +8,7 @@ compiler builds:
 
 - A `>` in template text compiles to `&gt;`, as a `<` compiles to `&lt;`. The
   bare `>` in the output failed to build with esbuild, oxc, and TypeScript, and
-  vue-jsx-vapor gave no output. Braces in a raw-text `<script>` body compile to
-  `&#123;` and `&#125;` instead of starting an expression container.
+  vue-jsx-vapor gave no output.
 - In an element in a `{…}` container, a `>` is text, as outside one. The text
   before it is no longer dropped when it follows a tag
   (`{c && <b>a > b</b>}` compiled to `<b>> b</b>`), and after a child

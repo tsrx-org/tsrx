@@ -54,6 +54,7 @@ export async function generate_docs_index() {
 		specification_source,
 	);
 	const style_grammar = extract_string_array_constant('STYLE_GRAMMAR', specification_source);
+	const script_grammar = extract_string_array_constant('SCRIPT_GRAMMAR', specification_source);
 	const style_scope_example = extract_string_array_constant(
 		'STYLE_SCOPE_EXAMPLE',
 		specification_source,
@@ -114,7 +115,8 @@ Source: website-tsrx/src/pages/specification.tsrx#components`,
 		{
 			slug: 'text-and-template-expressions',
 			title: 'Text and Template Expressions',
-			use_cases: 'text children, jsx text, comments, string literals, expression containers',
+			use_cases:
+				'text children, jsx text, comments, string literals, expression containers, script elements, raw text',
 			content: `# Text and Template Expressions
 
 Static text is JSXText and can be written directly between tags. Dynamic values use normal JSX expression containers.
@@ -130,13 +132,17 @@ function Greeting({ name }: { name: string }) @{
 
 JavaScript comments are also allowed between template children and are not rendered. Use braces for JavaScript expressions, including string literals that should be evaluated as JavaScript.
 
+A \`<script>\` body is raw text, like a \`<style>\` body, in a template and in plain TSX: everything up to \`</script>\`, kept as written, with its comments, \`<\`, \`>\`, character references, and line breaks. \`{…}\` in it is text, not an expression container: \`<script>{code}</script>\` is a script whose text is \`{code}\`. The body ends at \`</script\`, optional whitespace, and \`>\`; any other \`</script\` in it, in any letter case, is the \`tsrx-script-end-tag-in-body\` error, so write \`<\\/script\` instead. For a body computed at runtime, use the target's property on a self-closing \`<script>\`: \`dangerouslySetInnerHTML={{ __html: code }}\` in React, Preact, and Hono, \`innerHTML={code}\` in Solid and Vue. Whether a script runs is each target's decision.
+
 Specification grammar:
 
 \`\`\`text
 ${template_expression_grammar}
+
+${script_grammar}
 \`\`\`
 
-Source: website-tsrx/src/pages/specification.tsrx#templates`,
+Source: website-tsrx/src/pages/specification.tsrx#templates, website-tsrx/src/pages/specification.tsrx#script`,
 		},
 		{
 			slug: 'expression-values',

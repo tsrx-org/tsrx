@@ -28,21 +28,21 @@ export function in_jsx_child_context(path) {
 }
 
 /** @type {Record<string, string>} */
-const JSX_TEXT_ESCAPES = { '<': '&lt;', '>': '&gt;', '{': '&#123;', '}': '&#125;' };
+const JSX_TEXT_ESCAPES = { '<': '&lt;', '>': '&gt;' };
 
 /** The characters that `escape_jsx_text` writes as character references. */
-export const regex_jsx_text_escaped = /[<>{}]/g;
+export const regex_jsx_text_escaped = /[<>]/g;
 
 /**
  * JSX text as the output writes it. A `JSXText` node's `raw` is its text as
  * written, character references included (`&amp;`), and JSX reads it the same
  * way; `value` is what it renders, with the references decoded. TSRX text can
  * also hold characters that JSX text can't: a `<` or `>` in template text
- * (`<span><3</span>`, `a > b`), and braces in a raw-text `<script>` body. The
- * target's JSX toolchain rejects a bare `<` or `>` (esbuild, oxc, TypeScript)
- * or gives no output (vue-jsx-vapor), and reads a brace as a container, so
- * each is written as a character reference, which JSX decodes back to the same
- * character. The references already in the text stay as written.
+ * (`<span><3</span>`, `a > b`). The target's JSX toolchain rejects a bare `<`
+ * or `>` (esbuild, oxc, TypeScript) or gives no output (vue-jsx-vapor), so each
+ * is written as a character reference, which JSX decodes back to the same
+ * character. The references already in the text stay as written. A raw-text
+ * `<script>` body is never JSX text (see `create_script_body`).
  *
  * @param {string} raw
  * @returns {string}
