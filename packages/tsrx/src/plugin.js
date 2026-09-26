@@ -83,6 +83,8 @@ const REGEX_PRECEDING_KEYWORDS = new Set([
 const regex_identifier = /[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*/uy;
 
 const regex_line_break = /\r\n?|[\n\u2028\u2029]/;
+// A word written with an escape, from `lastIndex`.
+const regex_escaped_word = /[$_\p{ID_Continue}\u200c\u200d]*\\/uy;
 
 const REST_ELEMENT_TRAILING_COMMA = 'Comma is not permitted after the rest element';
 const OPTIONAL_BINDING_PATTERN_PARAMETER =
@@ -113,6 +115,23 @@ const KEYWORD_ESCAPE = 'Keywords cannot contain escape characters.';
 // class (TS1242).
 const ABSTRACT_MODIFIER_NOT_ALLOWED =
 	"'abstract' modifier can only appear on a class, method, or property declaration.";
+// TypeScript's checker error for `export` before a global augmentation
+// (TS2668).
+const EXPORT_MODIFIER_ON_AUGMENTATION =
+	"'export' modifier cannot be applied to ambient modules and module augmentations since they are always visible.";
+// The words TypeScript's parser reads as keyword types (`parseKeywordAndNoDot`).
+const KEYWORD_TYPES = new Set([
+	'any',
+	'bigint',
+	'boolean',
+	'never',
+	'number',
+	'object',
+	'string',
+	'symbol',
+	'undefined',
+	'unknown',
+]);
 // The modifiers acorn-typescript reads before a parameter.
 const PARAMETER_MODIFIERS = ['public', 'private', 'protected', 'override', 'readonly'];
 // The statements TypeScript's parser reads after decorators, as declarations
@@ -217,9 +236,11 @@ const CHECKER_LEVEL_ERRORS = [
 	regex_let_binding_error,
 	// acorn-typescript: `abstract` members in a class that isn't abstract (TS1244).
 	'Abstract methods can only appear within an abstract class.',
-	// `export abstract function f() {}` (TS1242), raised by
-	// `#checkExportDeclarationStart`.
+	// `abstract function f() {}`, `export abstract let x = 1;` (TS1242), raised
+	// by `tsParseDeclaration` and `tsTryParseDeclare`.
 	ABSTRACT_MODIFIER_NOT_ALLOWED,
+	// `export global {}` (TS2668), raised by `parseExportDeclaration`.
+	EXPORT_MODIFIER_ON_AUGMENTATION,
 	// acorn-typescript: `declare class A { x = 1 }`, `declare let x = 1` (TS1039).
 	'Initializers are not allowed in ambient contexts.',
 	// acorn-typescript: modifiers out of order, incompatible, or repeated
@@ -310,6 +331,7 @@ const SCOPE_ASYNC = 4;
 const SCOPE_SIMPLE_CATCH = 32;
 const SCOPE_CLASS_STATIC_BLOCK = 256;
 const SCOPE_CLASS_FIELD_INIT = 512;
+const TS_SCOPE_OTHER = 1 << 20;
 const TS_SCOPE_TS_MODULE = 1 << 21;
 
 /** @type {WeakMap<Parse.Parser, number[]>} */
@@ -924,6 +946,9 @@ export function TSRXPlugin(config) {
 			// Where the last decorator ended: a class member missing after one is not
 			// a missing `}`.
 			#decoratorEnd = -1;
+			// Where the `interface` after `export default` starts, which starts an
+			// interface declaration wherever its name is (see `hasFollowingLineBreak`).
+			#defaultExportInterfaceStart = -1;
 
 			/**
 			 * @type {Parse.Parser['finishNode']}
@@ -3577,6 +3602,12 @@ export function TSRXPlugin(config) {
 					// the fix. `parseAssignableListItem` raises it at the first modifier's
 					// column, where `#parseAssignableListItem` started reading.
 					position = this.#assignableListItemStart;
+				} else if (message === 'Escape sequence in keyword asserts') {
+					// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release
+					// includes the fix. acorn-typescript's wording of TypeScript's TS1260 for
+					// an escaped `asserts` in a type predicate, the only escaped TypeScript
+					// keyword it reports.
+					message = KEYWORD_ESCAPE;
 				} else if (
 					message === UNEXPECTED_LEADING_DECORATOR &&
 					this.#dropLeadingDecorators(position)
@@ -4168,6 +4199,7 @@ export function TSRXPlugin(config) {
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#119): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
 			/**
 			 * `static` is a modifier even when the next token is on a later line, as
 			 * in TypeScript (`nextTokenCanFollowModifier`) and acorn: `static` with
@@ -4177,10 +4209,31 @@ export function TSRXPlugin(config) {
 			 * member. Other modifiers keep that rule (`readonly` with `x` on the next
 			 * line is two fields). As in TypeScript, `static` after a `static`
 			 * modifier is a name, so `static` / `static` / `a() {}` on three lines
-			 * is a static field named `static` and an instance method.
+			 * is a static field named `static` and an instance method
+			 * (sveltejs/acorn-typescript#119).
+			 *
+			 * A modifier written with an escape is still one: TypeScript's parser
+			 * reads it where it reads the modifier and reports TS1260 `Keywords
+			 * cannot contain escape characters.` at it. acorn-typescript read it as
+			 * a name, so `static` in `class A { \u0073tatic x = 1; }` was a field
+			 * name followed by an unexpected `x` (sveltejs/acorn-typescript#147).
 			 * @type {Parse.Parser['tsParseModifier']}
 			 */
 			tsParseModifier(allowedModifiers, stopOnStartOfClassStaticBlock) {
+				if (
+					this.containsEsc &&
+					Parser.acornTypeScript.tokenIsIdentifier(this.type) &&
+					allowedModifiers.includes(/** @type {string} */ (this.value))
+				) {
+					// Read it as the word written out, and report it if that's a modifier.
+					const start = this.start;
+					const parser = /** @type {Parse.Parser} */ (this);
+					parser.containsEsc = false;
+					const modifier = this.tsParseModifier(allowedModifiers, stopOnStartOfClassStaticBlock);
+					if (modifier !== undefined) this.raise(start, KEYWORD_ESCAPE);
+					parser.containsEsc = true;
+					return undefined;
+				}
 				if (!this.isContextual('static') || !allowedModifiers.includes('static')) {
 					return super.tsParseModifier(allowedModifiers, stopOnStartOfClassStaticBlock);
 				}
@@ -4273,6 +4326,13 @@ export function TSRXPlugin(config) {
 			parseClassSuper(node) {
 				super.parseClassSuper(node);
 				const heading = /** @type {AST.ClassDeclaration | AST.ClassExpression} */ (node);
+				// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+				// `implements` written with an escape is TypeScript's TS1260: its parser
+				// reads the clause. acorn-typescript failed at it with `Unexpected
+				// token`.
+				if (this.containsEsc && this.type === tt.name && this.value === 'implements') {
+					this.raise(this.start, KEYWORD_ESCAPE);
+				}
 				const superClass = heading.superClass;
 				if (!superClass) return;
 				if (
@@ -4342,6 +4402,500 @@ export function TSRXPlugin(config) {
 				return regex_line_break.test(this.input.slice(end, this.nextTokenStartSince(end)));
 			}
 
+			// UPSTREAM(sveltejs/acorn-typescript#143): remove once a release includes the fix
+			/**
+			 * Decorators can come before `abstract declare class A {}`, as before
+			 * `declare abstract class A {}` (see `tsParseDeclaration`).
+			 * @type {Parse.Parser['canHaveLeadingDecorator']}
+			 */
+			canHaveLeadingDecorator() {
+				if (super.canHaveLeadingDecorator()) return true;
+				if (this.type !== tstt.abstract || this.containsEsc || this.#lineBreakAfter(this.end)) {
+					return false;
+				}
+				const declaration = this.#declarationAfterModifier(1);
+				return (
+					declaration?.length === 2 && declaration[0] === 'declare' && declaration[1] === 'class'
+				);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#143): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+			/**
+			 * TypeScript's parser reads `abstract` as a modifier before any
+			 * declaration that it reads after one on the same line (`isDeclaration`),
+			 * and reports it from its checker (TS1242 `'abstract' modifier can only
+			 * appear on a class, method, or property declaration.`) unless that's a
+			 * class. acorn-typescript's `tsParseAbstractDeclaration` took only a class
+			 * or an interface after it: it gave the interface `abstract` without an
+			 * error (`abstract interface I {}`), rejected `abstract declare class A {}`,
+			 * which is valid, and before anything else raised `Unexpected token`, or
+			 * declined, in every mode (`abstract function f() {}`,
+			 * `export abstract let x = 1;`) (sveltejs/acorn-typescript#143).
+			 *
+			 * Read `abstract` at the start of a statement, after `export` (see also
+			 * `#checkExportDeclarationStart`) and after `declare` (see also
+			 * `tsTryParseDeclare`) as TypeScript does:
+			 *
+			 * - before a class, or before `declare` and a class, it makes the class
+			 *   abstract;
+			 * - before any other declaration it's TS1242, a checker error (see
+			 *   `CHECKER_LEVEL_ERRORS`): a strict parse throws it, and a collecting
+			 *   one records it and parses the declaration without the modifier,
+			 *   which the formatter then refuses;
+			 * - written with an escape, before a declaration, it's TypeScript's
+			 *   parser error TS1260 `Keywords cannot contain escape characters.`, in
+			 *   every mode. acorn-typescript read `\u0061bstract class A {}` as an
+			 *   abstract class (sveltejs/acorn-typescript#147).
+			 *
+			 * Before anything else, a repeated modifier (`abstract abstract class A
+			 * {}`), or a modifier this parser doesn't keep on a declaration
+			 * (`abstract public class A {}`), acorn-typescript's reading stays.
+			 * @type {Parse.Parser['tsParseDeclaration']}
+			 */
+			tsParseDeclaration(node, value, next) {
+				if (value !== 'abstract' || (!next && this.#wordWasParenthesized())) {
+					return super.tsParseDeclaration(node, value, next);
+				}
+				// `next` says whether `abstract` is the current token or was just read,
+				// as the statement's expression.
+				const start = next ? this.start : this.lastTokStart;
+				const escaped = next ? this.containsEsc : this.#lastWordEscaped();
+				// After `declare` (`declare abstract class A {}`), where a second
+				// `declare` would be repeated.
+				const after_declare =
+					next && this.input.slice(this.lastTokStart, this.lastTokEnd) === 'declare';
+				if (!this.tsCheckLineTerminator(next)) return undefined;
+				let declaration = this.#declarationAfterModifier(0);
+				if (
+					declaration?.includes('abstract') ||
+					(after_declare && declaration?.[0] === 'declare')
+				) {
+					declaration = null;
+				}
+				if (declaration === null) {
+					return Parser.acornTypeScript.tokenIsIdentifier(this.type)
+						? this.tsParseAbstractDeclaration(node)
+						: undefined;
+				}
+				if (escaped) this.raise(start, KEYWORD_ESCAPE);
+				const abstract_class = /** @type {AST.ClassDeclaration} */ (node);
+				if (declaration.length === 1 && declaration[0] === 'class') {
+					abstract_class.abstract = true;
+					return this.parseClass(abstract_class, true);
+				}
+				if (declaration.length === 2 && declaration[1] === 'class') {
+					// `declare class`.
+					abstract_class.abstract = true;
+					this.next();
+					return this.tsTryParseDeclare(abstract_class);
+				}
+				// The declaration without `abstract`, the statement that acorn-typescript
+				// parses after `export` when this returns nothing. TypeScript's checker
+				// reports `abstract` only without syntax errors in it.
+				const statement = this.parseStatement(null, this.#atTopLevel());
+				this.raise(start, ABSTRACT_MODIFIER_NOT_ALLOWED);
+				return statement;
+			}
+
+			/**
+			 * Whether the statement being read is at the top level of the module or
+			 * of a namespace's body, where acorn reads an import declaration: acorn's
+			 * `parseTopLevel` and acorn-typescript's `tsParseModuleBlock` pass
+			 * `topLevel` to `parseStatement`.
+			 */
+			#atTopLevel() {
+				if (this.scopeStack.length === 1) return true;
+				const parent = /** @type {Parse.Scope} */ (this.scopeStack.at(-2));
+				return (
+					this.currentScope().flags === TS_SCOPE_OTHER && (parent.flags & TS_SCOPE_TS_MODULE) !== 0
+				);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#143): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+			/**
+			 * Reads the declaration after `declare` at the start of a statement, as
+			 * acorn-typescript does, and reports what TypeScript reports there:
+			 *
+			 * - `abstract` before a declaration other than a class
+			 *   (`declare abstract function f(): void;`), TS1242, as in
+			 *   `tsParseDeclaration`. acorn-typescript's `tsParseDeclaration` read
+			 *   `abstract`, declined, and failed with `Unexpected token`, or gave the
+			 *   interface `abstract` without an error
+			 *   (sveltejs/acorn-typescript#143).
+			 * - `declare` written with an escape before a declaration, TS1260:
+			 *   TypeScript's parser reads it as the modifier. acorn-typescript read
+			 *   `\u0064eclare class A {}` as an ambient class without an error
+			 *   (sveltejs/acorn-typescript#147). So is `enum` or `interface` after
+			 *   `declare` (see `#checkEscapedDeclarationKeyword`).
+			 * @type {Parse.Parser['tsTryParseDeclare']}
+			 */
+			tsTryParseDeclare(node) {
+				// `tsParseExpressionStatement` has read `declare` as the statement's
+				// expression.
+				if (this.#wordWasParenthesized()) return super.tsTryParseDeclare(node);
+				this.#checkEscapedDeclarationKeyword();
+				if (
+					this.#lastWordEscaped() &&
+					!this.hasPrecedingLineBreak() &&
+					this.#declarationAfterModifier(0) !== null
+				) {
+					this.raise(this.lastTokStart, KEYWORD_ESCAPE);
+				}
+				if (this.type === tstt.abstract && !this.#lineBreakAfter(this.end)) {
+					const declaration = this.#declarationAfterModifier(1);
+					if (
+						declaration !== null &&
+						declaration.at(-1) !== 'class' &&
+						!declaration.includes('abstract') &&
+						!declaration.includes('declare')
+					) {
+						const start = this.start;
+						if (this.containsEsc) this.raise(start, KEYWORD_ESCAPE);
+						// The declaration without `abstract`, then its error.
+						this.next();
+						const declared = super.tsTryParseDeclare(node);
+						this.raise(start, ABSTRACT_MODIFIER_NOT_ALLOWED);
+						return declared;
+					}
+				}
+				return super.tsTryParseDeclare(node);
+			}
+
+			/**
+			 * What TypeScript's parser reads from the token `ahead` tokens on (the
+			 * current one for 0), after a modifier on the same line: TypeScript's
+			 * `isDeclaration`, for the modifiers this parser keeps on a declaration
+			 * that isn't a class member (`abstract`, `declare`, and `async` before
+			 * `function`). Returns those modifiers and the word that starts the
+			 * declaration (`['declare', 'class']`), or `null` where TypeScript reads
+			 * no declaration, or another modifier (`public`) comes first.
+			 * @param {number} ahead
+			 * @returns {string[] | null}
+			 */
+			#declarationAfterModifier(ahead) {
+				const is_identifier = Parser.acornTypeScript.tokenIsIdentifier;
+				const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
+				switch (token.type) {
+					case tt._class:
+					case tt._function:
+					case tt._var:
+					case tt._const:
+						return [/** @type {string} */ (token.type.keyword)];
+					case tt._import: {
+						// An import declaration, not `import(…)` or `import.meta`.
+						const after = this.lookahead(ahead + 1).type;
+						return after === tt.string ||
+							after === tt.star ||
+							after === tt.braceL ||
+							after.keyword !== undefined ||
+							is_identifier(after)
+							? ['import']
+							: null;
+					}
+				}
+				if (!is_identifier(token.type)) return null;
+				const word = /** @type {string} */ (token.value);
+				const next = this.lookahead(ahead + 1);
+				const same_line = !regex_line_break.test(this.input.slice(token.end, next.start));
+				switch (word) {
+					case 'let':
+					case 'enum':
+						return [word];
+					case 'interface':
+					case 'type':
+					case 'namespace':
+					case 'using':
+						return same_line && is_identifier(next.type) ? [word] : null;
+					case 'module':
+						return same_line && (is_identifier(next.type) || next.type === tt.string)
+							? [word]
+							: null;
+					case 'global':
+						return next.type === tt.braceL ? [word] : null;
+					case 'await': {
+						// `await using x = y;`
+						if (!same_line || next.type !== tt.name || next.value !== 'using') return null;
+						const after = this.lookahead(ahead + 2);
+						return !regex_line_break.test(this.input.slice(next.end, after.start)) &&
+							is_identifier(after.type)
+							? ['await']
+							: null;
+					}
+					case 'async':
+						return same_line && next.type === tt._function ? [word, 'function'] : null;
+					case 'abstract':
+					case 'declare': {
+						if (!same_line) return null;
+						const declaration = this.#declarationAfterModifier(ahead + 1);
+						return declaration && [word, ...declaration];
+					}
+				}
+				return null;
+			}
+
+			/**
+			 * Whether the statement's expression that `tsParseExpressionStatement`
+			 * reads as a TypeScript word was the word in parentheses, `(abstract)`,
+			 * which acorn-typescript still reads as the word (#715).
+			 */
+			#wordWasParenthesized() {
+				return this.input.charCodeAt(this.lastTokStart) === CharCode.closeParen;
+			}
+
+			/**
+			 * Whether the last token, a word, was written with an escape.
+			 */
+			#lastWordEscaped() {
+				return this.input.slice(this.lastTokStart, this.lastTokEnd).includes('\\');
+			}
+
+			/**
+			 * Report TS1260 `Keywords cannot contain escape characters.` at the word
+			 * just read, if it was written with an escape: TypeScript's parser reads
+			 * an escaped keyword as the keyword and reports it.
+			 */
+			#checkKeywordJustRead() {
+				if (this.#lastWordEscaped()) this.raise(this.lastTokStart, KEYWORD_ESCAPE);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+			/**
+			 * `type` before a type alias's name, written with an escape, is
+			 * TypeScript's TS1260 (see `#checkKeywordJustRead`). acorn-typescript
+			 * read `\u0074ype T = 1;` as a type alias without an error.
+			 * @type {Parse.Parser['tsParseTypeAliasDeclaration']}
+			 */
+			tsParseTypeAliasDeclaration(node) {
+				// `type` has just been read.
+				this.#checkKeywordJustRead();
+				return super.tsParseTypeAliasDeclaration(node);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+			/**
+			 * `module` or `namespace` before a name, written with an escape, is
+			 * TypeScript's TS1260 (see `#checkKeywordJustRead`). acorn-typescript
+			 * read `n\u0061mespace N {}` as a namespace without an error.
+			 * @type {Parse.Parser['tsParseModuleOrNamespaceDeclaration']}
+			 */
+			tsParseModuleOrNamespaceDeclaration(node, nested) {
+				// `module` or `namespace` has just been read, or the `.` of a dotted
+				// name.
+				if (!nested) this.#checkKeywordJustRead();
+				return super.tsParseModuleOrNamespaceDeclaration(node, nested);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+			/**
+			 * `module` before a string, written with an escape, is TypeScript's
+			 * TS1260 (see `#checkKeywordJustRead`); acorn-typescript read
+			 * `\u006dodule "m" {}` without an error. `global` is the declaration's
+			 * name, which TypeScript reads as an identifier, so an escape there is
+			 * no error, where acorn-typescript rejected `declare \u0067lobal {}`.
+			 * @type {Parse.Parser['tsParseAmbientExternalModuleDeclaration']}
+			 */
+			tsParseAmbientExternalModuleDeclaration(node) {
+				if (this.type === tt.string) {
+					// `module` has just been read.
+					this.#checkKeywordJustRead();
+				} else if (this.type === tstt.global) {
+					// acorn-typescript takes `global` only without an escape.
+					/** @type {Parse.Parser} */ (this).containsEsc = false;
+				}
+				return super.tsParseAmbientExternalModuleDeclaration(node);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#144): remove once a release includes the fix
+			/**
+			 * After `export default`, TypeScript reads `interface` as the start of an
+			 * interface declaration wherever the name is (`nextTokenCanFollowDefaultKeyword`),
+			 * as `interface` is a reserved word there. acorn-typescript's
+			 * `tsParseInterfaceDeclaration` declines `interface` before a line break,
+			 * which is TypeScript's rule at the start of a statement, and
+			 * `export default interface` with `I {}` on the next line failed with
+			 * `The keyword 'interface' is reserved`. `parseExportDefaultDeclaration`
+			 * marks that `interface`, for which there's no line break to check.
+			 * @type {Parse.Parser['hasFollowingLineBreak']}
+			 */
+			hasFollowingLineBreak() {
+				return this.start !== this.#defaultExportInterfaceStart && super.hasFollowingLineBreak();
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+			/**
+			 * `as` or `satisfies` after an operand, written with an escape, is
+			 * TypeScript's TS1260: its parser reads the operator and reports the
+			 * escape. acorn-typescript read a name there, which failed as
+			 * `Unexpected token` at it.
+			 * @type {Parse.Parser['parseExprOp']}
+			 */
+			parseExprOp(left, leftStartPos, leftStartLoc, minPrec, forInit) {
+				if (
+					this.containsEsc &&
+					this.type === tt.name &&
+					(this.value === 'as' || this.value === 'satisfies') &&
+					/** @type {number} */ (tt._in.binop) > minPrec &&
+					!this.hasPrecedingLineBreak()
+				) {
+					this.raise(this.start, KEYWORD_ESCAPE);
+				}
+				return super.parseExprOp(left, leftStartPos, leftStartLoc, minPrec, forInit);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+			/**
+			 * `keyof`, `readonly`, `unique` or `infer` where a type starts, written
+			 * with an escape, is TypeScript's TS1260: its parser reads the operator
+			 * and reports the escape. acorn-typescript read a type name there, and
+			 * failed at the type after it.
+			 * @type {Parse.Parser['tsParseTypeOperatorOrHigher']}
+			 */
+			tsParseTypeOperatorOrHigher() {
+				if (
+					this.containsEsc &&
+					(Parser.acornTypeScript.tokenIsTSTypeOperator(this.type) ||
+						(this.type === tt.name && this.value === 'infer'))
+				) {
+					this.raise(this.start, KEYWORD_ESCAPE);
+				}
+				return super.tsParseTypeOperatorOrHigher();
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+			/**
+			 * A keyword type written with an escape (`\u0073tring`) is TypeScript's
+			 * TS1260, unless a `.` follows, where it's the start of a type name.
+			 * acorn-typescript read the keyword type without an error.
+			 * @type {Parse.Parser['tsParseNonArrayType']}
+			 */
+			tsParseNonArrayType() {
+				if (
+					this.containsEsc &&
+					this.type === tt.name &&
+					KEYWORD_TYPES.has(/** @type {string} */ (this.value)) &&
+					this.lookaheadCharCode() !== CharCode.dot
+				) {
+					this.raise(this.start, KEYWORD_ESCAPE);
+				}
+				return super.tsParseNonArrayType();
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+			/**
+			 * `is` after a type predicate's name, written with an escape, is
+			 * TypeScript's TS1260: its parser reads the predicate and reports the
+			 * escape. acorn-typescript read the name as the type, then failed at `is`
+			 * with `Unexpected token`.
+			 * @type {Parse.Parser['tsParseTypePredicatePrefix']}
+			 */
+			tsParseTypePredicatePrefix() {
+				const name = super.tsParseTypePredicatePrefix();
+				if (name === undefined) this.#checkEscapedPredicateIs();
+				return name;
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+			/**
+			 * `is` after `this` in a type, written with an escape, is TypeScript's
+			 * TS1260, as after a name (see `tsParseTypePredicatePrefix`).
+			 * @type {Parse.Parser['tsParseThisTypeOrThisTypePredicate']}
+			 */
+			tsParseThisTypeOrThisTypePredicate() {
+				const type = super.tsParseThisTypeOrThisTypePredicate();
+				if (type.type === 'TSThisType') this.#checkEscapedPredicateIs();
+				return type;
+			}
+
+			/**
+			 * Report TS1260 at the current token if it's `is` written with an escape,
+			 * on the line of a type predicate's name or `this`, which acorn-typescript
+			 * has read.
+			 */
+			#checkEscapedPredicateIs() {
+				if (
+					this.containsEsc &&
+					this.type === tt.name &&
+					this.value === 'is' &&
+					!this.hasPrecedingLineBreak()
+				) {
+					this.raise(this.start, KEYWORD_ESCAPE);
+				}
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+			/**
+			 * `as` after a mapped type's type parameter, written with an escape, is
+			 * TypeScript's TS1260: its parser reads the `as` clause. acorn-typescript
+			 * failed at `as` with `Unexpected token`.
+			 * @type {Parse.Parser['tsParseMappedTypeParameter']}
+			 */
+			tsParseMappedTypeParameter() {
+				const parameter = super.tsParseMappedTypeParameter();
+				if (this.containsEsc && this.type === tt.name && this.value === 'as') {
+					this.raise(this.start, KEYWORD_ESCAPE);
+				}
+				return parameter;
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+			/**
+			 * `abstract` before `new` in a type, written with an escape, is
+			 * TypeScript's TS1260: its parser reads an abstract constructor type.
+			 * acorn-typescript read a type named `abstract` and failed at `new`.
+			 * @type {Parse.Parser['isAbstractConstructorSignature']}
+			 */
+			isAbstractConstructorSignature() {
+				if (this.type === tstt.abstract && this.containsEsc && this.lookahead().type === tt._new) {
+					this.raise(this.start, KEYWORD_ESCAPE);
+				}
+				return super.isAbstractConstructorSignature();
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+			/**
+			 * `require` before `(` in an import-equals declaration, written with an
+			 * escape, is TypeScript's TS1260: its parser reads an external module
+			 * reference. acorn-typescript read a name and failed at `(`.
+			 * @type {Parse.Parser['tsIsExternalModuleReference']}
+			 */
+			tsIsExternalModuleReference() {
+				if (
+					this.containsEsc &&
+					this.type === tt.name &&
+					this.value === 'require' &&
+					this.lookaheadCharCode() === CharCode.openParen
+				) {
+					this.raise(this.start, KEYWORD_ESCAPE);
+				}
+				return super.tsIsExternalModuleReference();
+			}
+
+			/**
+			 * Report TS1260 at `enum`, or at `interface` before a name on its line,
+			 * written with an escape where a statement starts, or after `const`:
+			 * TypeScript's parser reads the keyword there, where acorn reported a
+			 * reserved word or acorn-typescript `Unexpected token` at it
+			 * (sveltejs/acorn-typescript#147).
+			 */
+			#checkEscapedDeclarationKeyword() {
+				if (this.type === tt._const) {
+					regex_escaped_word.lastIndex = this.nextTokenStart();
+					if (!regex_escaped_word.test(this.input)) return;
+					const next = this.lookahead();
+					if (next.type === tstt.enum) this.raise(next.start, KEYWORD_ESCAPE);
+					return;
+				}
+				if (
+					this.containsEsc &&
+					(this.type === tstt.enum ||
+						(this.type === tstt.interface && this.#declarationAfterModifier(0) !== null))
+				) {
+					this.raise(this.start, KEYWORD_ESCAPE);
+				}
+			}
+
 			// UPSTREAM(sveltejs/acorn-typescript#113): remove once a release includes the fix
 			// UPSTREAM(sveltejs/acorn-typescript#124): remove once a release includes the fix
 			/**
@@ -4362,6 +4916,13 @@ export function TSRXPlugin(config) {
 			 * A class after `export default (` stays an expression, and so do the
 			 * at-sign constructs (`export default @if (a) { … }`), which aren't
 			 * decorators (see `parseExprAtom`).
+			 *
+			 * `interface` starts an interface declaration there wherever its name is
+			 * (see `hasFollowingLineBreak`, sveltejs/acorn-typescript#144).
+			 * `interface`, and `abstract` before a class, written with an escape, are
+			 * TypeScript's TS1260 `Keywords cannot contain escape characters.`: its
+			 * parser reads them as the keywords, where acorn-typescript failed at the
+			 * name or the class (sveltejs/acorn-typescript#147).
 			 * @type {Parse.Parser['parseExportDefaultDeclaration']}
 			 */
 			parseExportDefaultDeclaration() {
@@ -4375,6 +4936,17 @@ export function TSRXPlugin(config) {
 						// statement, which they are (see `parseDecorators`).
 						this.#readingDefaultExportDecorators = true;
 						this.parseDecorators();
+					}
+					if (this.type === tstt.interface) {
+						if (this.containsEsc) this.raise(this.start, KEYWORD_ESCAPE);
+						this.#defaultExportInterfaceStart = this.start;
+					} else if (
+						this.type === tstt.abstract &&
+						this.containsEsc &&
+						this.lookahead().type === tt._class &&
+						!this.#lineBreakAfter(this.end)
+					) {
+						this.raise(this.start, KEYWORD_ESCAPE);
 					}
 					if (this.isAbstractClass()) {
 						const node = /** @type {AST.ClassDeclaration} */ (this.startNode());
@@ -4431,6 +5003,12 @@ export function TSRXPlugin(config) {
 			 * (`export foo`), and after `export declare` acorn-typescript's error for
 			 * a missing ambient declaration. It used to be parsed as a statement, and
 			 * the parser crashed with a TypeError when `parseExport` read its `id`.
+			 *
+			 * `global` before `{` starts a global augmentation, which TypeScript's
+			 * parser reads after `export` (or `export declare`), and reports from its
+			 * checker (see `parseExportDeclaration`). acorn-typescript didn't take
+			 * `global` for the start of a declaration, and failed at it
+			 * (sveltejs/acorn-typescript#146).
 			 * @type {Parse.Parser['shouldParseExportStatement']}
 			 */
 			shouldParseExportStatement() {
@@ -4440,6 +5018,8 @@ export function TSRXPlugin(config) {
 				) {
 					return false;
 				}
+				// UPSTREAM(sveltejs/acorn-typescript#146): remove once a release includes the fix
+				if (this.type === tstt.global && this.lookahead().type === tt.braceL) return true;
 				return super.shouldParseExportStatement();
 			}
 
@@ -4468,6 +5048,16 @@ export function TSRXPlugin(config) {
 			 * `#checkExportDeclarationStart` reports the second before
 			 * acorn-typescript reads `declare`, and the words that the declaration
 			 * after them used to lose.
+			 *
+			 * A global augmentation after `export` (see `shouldParseExportStatement`)
+			 * is TypeScript's checker error TS2668 `'export' modifier cannot be
+			 * applied to ambient modules and module augmentations since they are
+			 * always visible.`: a strict parse throws it, and a collecting one records
+			 * it and keeps the export, as Prettier's `typescript` parser does
+			 * (sveltejs/acorn-typescript#146). An export of an ambient declaration
+			 * whose `declare` follows `abstract` (`export abstract declare class A
+			 * {}`) is a type export, as after `export declare`
+			 * (sveltejs/acorn-typescript#143).
 			 * @type {Parse.Parser['parseExportDeclaration']}
 			 */
 			parseExportDeclaration(node) {
@@ -4480,6 +5070,13 @@ export function TSRXPlugin(config) {
 					!(/** @type {{ id?: unknown } | null} */ (declaration)?.id)
 				) {
 					this.raise(export_start, DECLARATION_OR_STATEMENT_EXPECTED);
+				}
+				if (/** @type {{ declare?: boolean }} */ (declaration).declare) {
+					/** @type {AST.ExportNamedDeclaration} */ (node).exportKind = 'type';
+				}
+				const module = /** @type {AST.Node} */ (declaration);
+				if (module.type === 'TSModuleDeclaration' && module.kind === 'global') {
+					this.raise(export_start, EXPORT_MODIFIER_ON_AUGMENTATION);
 				}
 				return declaration;
 			}
@@ -4500,19 +5097,23 @@ export function TSRXPlugin(config) {
 			 * class A {}` gave the plain exported declaration. Report the word
 			 * before it's lost, as TypeScript's parser does:
 			 *
-			 * - `abstract` before a function, a variable or an import declaration is
-			 *   a modifier of that declaration, which TypeScript's checker reports
-			 *   (TS1242). A strict parse throws it; a collecting parse records it and
-			 *   parses the declaration without the modifier.
+			 * - `abstract` before a declaration is a modifier of that declaration,
+			 *   which `tsParseDeclaration` reads, reporting TS1242 from TypeScript's
+			 *   checker unless it's a class.
 			 * - `type` after `declare`, or before `default` or `@`, starts a type
 			 *   alias, whose name is missing (TS1003, or TS1359 for a reserved word),
-			 *   or on the next line (TS1142). Before `=`, TypeScript expects the
-			 *   braces of `export type { … }` (TS1005).
+			 *   or on the next line (TS1142). Before `=` or `as`, TypeScript expects
+			 *   the braces of `export type { … }` (TS1005), where acorn-typescript
+			 *   read a type alias named `as` (sveltejs/acorn-typescript#145).
 			 * - `namespace` before a string starts a namespace without a name
 			 *   (TS1003).
 			 * - Otherwise the word starts no declaration (TS1128).
 			 *
-			 * A word before any other line break starts no declaration either, which
+			 * Where TypeScript reads the word as the keyword, the word written with
+			 * an escape is TS1260 first (sveltejs/acorn-typescript#147); before a
+			 * name, `tsParseTypeAliasDeclaration` and
+			 * `tsParseModuleOrNamespaceDeclaration` report it. A word before any
+			 * other line break starts no declaration either, which
 			 * `parseExportDeclaration` reports.
 			 * @param {number} export_start
 			 */
@@ -4537,32 +5138,47 @@ export function TSRXPlugin(config) {
 				const next = this.lookahead(++ahead);
 				const line_break = regex_line_break.test(this.input.slice(word.end, next.start));
 				if (value === 'type') {
-					// TypeScript's parser reads `export type` before `=` as the start of
-					// `export type { … }`, and a type alias after `declare type` or before
-					// `default` or `@`, on the same line or not.
-					if (!declared && next.type === tt.eq) this.raise(next.start, OPENING_BRACE_EXPECTED);
+					// TypeScript's parser reads `export type` before `=`, `as`, `{` or `*`
+					// as the start of `export type { … }` or `export type * …` (before `{`
+					// or `*` only an escaped `type` gets here), and a type alias after
+					// `declare type` or before `default` or `@`, on the same line or not.
+					const braces =
+						!declared &&
+						(next.type === tt.eq ||
+							next.type === tt.braceL ||
+							next.type === tt.star ||
+							(next.type === tt.name && next.value === 'as'));
 					const alias = declared || next.type === tt._default || next.type === tstt.at;
+					if ((braces || alias) && word.containsEsc) this.raise(word.start, KEYWORD_ESCAPE);
+					if (braces) this.raise(next.start, OPENING_BRACE_EXPECTED);
 					if (alias && line_break) this.raise(next.start, LINE_BREAK_NOT_PERMITTED);
 					if (alias && !is_identifier(next.type)) this.#raiseIdentifierExpected(next);
 				}
 				if (line_break) return;
+				if (value === 'abstract') {
+					const declaration = this.#declarationAfterModifier(ahead);
+					if (
+						declaration === null ||
+						declaration.includes('abstract') ||
+						(declared && declaration[0] === 'declare')
+					) {
+						// No declaration, or a repeated modifier, which acorn-typescript's
+						// `tsParseAbstractDeclaration` rejects at `abstract` after a name
+						// (`export abstract abstract class A {}`).
+						if (is_identifier(next.type)) return;
+						this.raise(export_start, DECLARATION_OR_STATEMENT_EXPECTED);
+					}
+					// `tsParseDeclaration` reads the declaration, and reports `abstract`
+					// before one that isn't a class.
+					if (word.containsEsc) this.raise(word.start, KEYWORD_ESCAPE);
+					return;
+				}
 				// What `tsParseDeclaration` reads after the word, which keeps the word.
-				// After `abstract`, it takes a name to `tsParseAbstractDeclaration`,
-				// which reads `interface` and rejects any other name at `abstract`
-				// (#697).
-				if (
-					is_identifier(next.type) ||
-					(value === 'abstract' && next.type === tt._class) ||
-					(value === 'module' && next.type === tt.string)
-				) {
-					return;
+				if (is_identifier(next.type) || (value === 'module' && next.type === tt.string)) return;
+				if (value === 'namespace' && next.type === tt.string) {
+					if (word.containsEsc) this.raise(word.start, KEYWORD_ESCAPE);
+					this.#raiseIdentifierExpected(next);
 				}
-				if (value === 'abstract' && this.#isDeclarationAfterModifier(next.type, ahead)) {
-					// TypeScript's parser rejects an escaped modifier (TS1260).
-					this.raise(word.start, word.containsEsc ? KEYWORD_ESCAPE : ABSTRACT_MODIFIER_NOT_ALLOWED);
-					return;
-				}
-				if (value === 'namespace' && next.type === tt.string) this.#raiseIdentifierExpected(next);
 				this.raise(export_start, DECLARATION_OR_STATEMENT_EXPECTED);
 			}
 
@@ -4577,29 +5193,6 @@ export function TSRXPlugin(config) {
 					token.type.keyword
 						? `Identifier expected. '${token.value}' is a reserved word that cannot be used here.`
 						: IDENTIFIER_EXPECTED,
-				);
-			}
-
-			/**
-			 * Whether the token `ahead` tokens on, of type `type`, starts a
-			 * declaration that TypeScript's parser reads after a modifier, and that
-			 * can follow `export` here: a function, a variable, or an import
-			 * declaration (not `import(…)` or `import.meta`). TypeScript's parser
-			 * reads no declaration at decorators after a modifier, and the tree has
-			 * no place for a second `export`.
-			 * @param {acorn.TokenType} type
-			 * @param {number} ahead
-			 */
-			#isDeclarationAfterModifier(type, ahead) {
-				if (type === tt._function || type === tt._const || type === tt._var) return true;
-				if (type !== tt._import) return false;
-				const after = this.lookahead(ahead + 1).type;
-				return (
-					after === tt.string ||
-					after === tt.star ||
-					after === tt.braceL ||
-					!!after.keyword ||
-					Parser.acornTypeScript.tokenIsIdentifier(after)
 				);
 			}
 
@@ -4636,11 +5229,14 @@ export function TSRXPlugin(config) {
 				// `class A {}` on the next line exports the value of `abstract`.
 				/** @param {typeof next} modifier */
 				const modifies = (modifier) => !modifier.containsEsc && !this.#lineBreakAfter(modifier.end);
-				if (!is_default && next.type === tstt.declare && modifies(next)) {
-					next = this.lookahead(++ahead);
-				}
+				const declared = !is_default && next.type === tstt.declare && modifies(next);
+				if (declared) next = this.lookahead(++ahead);
 				if (next.type === tstt.abstract && modifies(next)) {
 					next = this.lookahead(++ahead);
+					// `abstract declare class A {}` (see `tsParseDeclaration`).
+					if (!declared && !is_default && next.type === tstt.declare && modifies(next)) {
+						next = this.lookahead(++ahead);
+					}
 				}
 				if (next.type !== tt._class) {
 					this.raise(declaration_start, UNEXPECTED_LEADING_DECORATOR);
@@ -4902,16 +5498,25 @@ export function TSRXPlugin(config) {
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#121): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
 			/**
 			 * `assert` starts import assertions only on the line the import or
 			 * export ends on, as in TypeScript and the import assertions grammar.
 			 * After a line break it starts the next statement: `import "x"` with
 			 * `assert(ok)` on the next line is an import and a call. `with` has no
-			 * such rule.
+			 * such rule (sveltejs/acorn-typescript#121).
+			 *
+			 * `assert` written with an escape is TypeScript's TS1260 `Keywords cannot
+			 * contain escape characters.`: its parser reads it as the keyword, where
+			 * acorn-typescript read the assertions without an error
+			 * (sveltejs/acorn-typescript#147).
 			 * @type {Parse.Parser['parseMaybeImportAttributes']}
 			 */
 			parseMaybeImportAttributes(node) {
-				if (this.type === tstt.assert && this.hasPrecedingLineBreak()) return;
+				if (this.type === tstt.assert) {
+					if (this.hasPrecedingLineBreak()) return;
+					if (this.containsEsc) this.raise(this.start, KEYWORD_ESCAPE);
+				}
 				super.parseMaybeImportAttributes(node);
 			}
 
@@ -8135,7 +8740,37 @@ export function TSRXPlugin(config) {
 					);
 				}
 
+				this.#checkEscapedDeclarationKeyword();
+
+				if (this.type === tstt.type && this.#isTypeAliasNamedOperator()) {
+					const node = this.startNode();
+					this.next(); // `type`
+					return /** @type {AST.Statement} */ (
+						/** @type {unknown} */ (this.tsParseTypeAliasDeclaration(node))
+					);
+				}
+
 				return super.parseStatement(context, topLevel, exports);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#145): remove once a release includes the fix
+			/**
+			 * Whether the current token, `type`, starts a type alias named `as` or
+			 * `satisfies`. TypeScript reads `type` before a name on the same line as a
+			 * type alias (`isDeclaration`), and these are names. acorn-typescript
+			 * reads the start of a statement as an expression first and makes a type
+			 * alias of `type` and the name after it, but it read `as` or `satisfies`
+			 * after the expression `type` as an operator, so `type as = 1;` failed at
+			 * `=`, and `type as number;` parsed as an expression, where TypeScript
+			 * expects the alias's `=` (TS1005).
+			 */
+			#isTypeAliasNamedOperator() {
+				const next = this.lookahead();
+				return (
+					next.type === tt.name &&
+					(next.value === 'as' || next.value === 'satisfies') &&
+					!this.#lineBreakAfter(this.end)
+				);
 			}
 
 			/**
@@ -8297,9 +8932,25 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * `get` or `set` before a property name, written with an escape, is
+			 * TypeScript's TS1260 `Keywords cannot contain escape characters.`: its
+			 * parser reads an accessor signature there, as acorn-typescript did,
+			 * without an error (sveltejs/acorn-typescript#147).
 			 * @type {Parse.Parser['tsParseTypeMember']}
 			 */
 			tsParseTypeMember() {
+				// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+				if (
+					this.containsEsc &&
+					this.type === tt.name &&
+					(this.value === 'get' || this.value === 'set')
+				) {
+					// TypeScript's `canFollowGetOrSetKeyword`.
+					const next = this.lookahead().type;
+					if (next === tt.bracketL || Parser.acornTypeScript.tokenIsLiteralPropertyName(next)) {
+						this.raise(this.start, KEYWORD_ESCAPE);
+					}
+				}
 				return this.#parseBraceListElement(() => super.tsParseTypeMember());
 			}
 
@@ -8316,13 +8967,33 @@ export function TSRXPlugin(config) {
 			 * A class member at the end of the input: the class body's `}` is
 			 * missing, unless a decorator came right before it, where TypeScript
 			 * reports the member as missing instead.
+			 *
+			 * A constructor named with an escape (`\u0063onstructor() {}`) is
+			 * TypeScript's TS1260 `Keywords cannot contain escape characters.`: its
+			 * parser reads the `constructor` keyword there, and so a constructor
+			 * even after `static`. acorn reads the constructor, or a static method,
+			 * as ECMAScript does, without an error (sveltejs/acorn-typescript#147).
 			 * @type {Parse.Parser['parseClassElement']}
 			 */
 			parseClassElement(constructorAllowsSuper) {
 				if (this.type === tt.eof && this.lastTokEnd !== this.#decoratorEnd) {
 					this.#raiseClosingBraceExpected();
 				}
-				return super.parseClassElement(constructorAllowsSuper);
+				const element = super.parseClassElement(constructorAllowsSuper);
+				// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
+				if (
+					element?.type === 'MethodDefinition' &&
+					!element.computed &&
+					element.kind !== 'get' &&
+					element.kind !== 'set' &&
+					!element.value.generator &&
+					element.key.type === 'Identifier' &&
+					element.key.name === 'constructor' &&
+					this.input.slice(element.key.start, element.key.end) !== 'constructor'
+				) {
+					this.raise(/** @type {number} */ (element.key.start), KEYWORD_ESCAPE);
+				}
+				return element;
 			}
 		}
 

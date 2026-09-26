@@ -22695,6 +22695,47 @@ export { theme };`;
 		);
 	});
 
+	// Declarations that TypeScript reads and the parser failed on: `abstract
+	// declare class` (#697), `export default interface` with the name on the
+	// next line (#698), and a type alias named `as` or `satisfies` (#699).
+	describe('declarations after TypeScript keywords', () => {
+		it.each([
+			['abstract declare class A {}', 'declare abstract class A {}\n'],
+			['export abstract declare class A {}', 'export declare abstract class A {}\n'],
+			[
+				`export default interface
+I {}`,
+				'export default interface I {}\n',
+			],
+			['type as = 1;', 'type as = 1;\n'],
+			['type satisfies<T> = T;', 'type satisfies<T> = T;\n'],
+		])('formats %j like Prettier', async (input, expected) => {
+			const output = await format(input);
+			expect(output).toBe(expected);
+			expect(output).toBe(await prettier.format(input, { parser: 'typescript' }));
+		});
+
+		// #697: `abstract` before an interface was left out. A global augmentation
+		// after `export` (#700) is an error that TypeScript reports from its
+		// checker, which a strict parse throws.
+		it.each([
+			[
+				'export abstract interface I {}',
+				"'abstract' modifier can only appear on a class, method, or property declaration.",
+			],
+			[
+				'abstract function f() {}',
+				"'abstract' modifier can only appear on a class, method, or property declaration.",
+			],
+			[
+				'export global {}',
+				"'export' modifier cannot be applied to ambient modules and module augmentations since they are always visible.",
+			],
+		])('refuses %j', async (input, message) => {
+			await expect(format(input)).rejects.toThrow(message);
+		});
+	});
+
 	// Type arguments on the line after a superclass (#545), right after a class
 	// or function expression (#578), and a `const` type parameter on an object
 	// method (#631) failed to parse; the output of the first two failed on the
