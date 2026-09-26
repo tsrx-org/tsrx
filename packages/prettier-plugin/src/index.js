@@ -1358,11 +1358,16 @@ function skipArgumentCasts(node) {
  * looser no longer parses without its parens: `class A extends B || C {}` is
  * a syntax error. Like Prettier, `new`, object literal and tagged template
  * superclasses are wrapped for readability too. Sequence expressions always
- * print their own parens.
+ * print their own parens. Any other superclass follows
+ * {@link nodeNeedsParens}, as Prettier's `needsParentheses` goes on to the
+ * node's own rules, so an element keeps its parens: TypeScript doesn't read
+ * `class A extends <div /> {}`.
  * @param {AST.Node} expression - The superclass expression
+ * @param {AST.ClassDeclaration | AST.ClassExpression} classNode - The class
+ * @param {AST.Node | null} grandparent - The class's parent
  * @returns {boolean} - True if parentheses are printed
  */
-function superClassNeedsParens(expression) {
+function superClassNeedsParens(expression, classNode, grandparent) {
 	switch (expression.type) {
 		case 'ArrowFunctionExpression':
 		case 'AssignmentExpression':
@@ -1383,7 +1388,7 @@ function superClassNeedsParens(expression) {
 			// `extends @dec class {}` does not parse; the decorator needs the parens
 			return getDecorators(expression).length > 0;
 		default:
-			return false;
+			return nodeNeedsParens(expression, 'superClass', classNode, grandparent);
 	}
 }
 
@@ -7674,6 +7679,9 @@ function printClassDeclaration(node, path, options, print) {
 	let endsWithComment = false;
 	/** @type {AST.Comment[]} */
 	let bodyComments = [];
+	/** @type {AST.Comment[]} */
+	let afterClassComments = [];
+	const bodyNode = /** @type {AST.NodeWithMaybeComments} */ (node.body);
 	if (node.superClass) {
 		const superClassNode = /** @type {AST.Node & AST.NodeWithMaybeComments} */ (node.superClass);
 		// A JSDoc cast prints its comments, and parentheses the superclass needs
@@ -7686,7 +7694,13 @@ function printClassDeclaration(node, path, options, print) {
 		// Like Prettier's `printClass`, the class prints the superclass's
 		// comments, around the parentheses it adds and the type arguments
 		const printsComments = !isTypeCast;
-		const addsParens = !isTypeCast && superClassNeedsParens(superClassNode);
+		const addsParens =
+			!isTypeCast &&
+			superClassNeedsParens(
+				superClassNode,
+				node,
+				/** @type {AST.Node | null} */ (path.getParentNode()),
+			);
 		// A `prettier-ignore` after the superclass stays inside the parentheses,
 		// where it keeps ignoring the superclass on the next format. After them,
 		// it would lead the body. A cast prints the comments inside its own
@@ -7732,26 +7746,51 @@ function printClassDeclaration(node, path, options, print) {
 				}),
 			'superClass',
 		);
-		// A line comment after the superclass and its type arguments ends the
-		// heading, and the next format moves it into the body, as the parser
-		// does with one before the body (Prettier moves it on its next pass
-		// too), so it prints there
-		if (!node.implements?.length && printsTrailingComments) {
-			bodyComments = trailingComments.filter((comment) => comment.type === 'Line');
+		const typeArguments = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (
+			node.superTypeParameters
+		);
+		// A line comment after the superclass, or on a line of its own before
+		// its type arguments, ends the heading after them: Prettier prints it
+		// there, or moves it there on its next pass. Unless `implements`
+		// follows, Prettier breaks the heading around it, and its next pass
+		// moves the comment into a nonempty body, as the parser does with one
+		// before the body, or finds it after an empty body's `{}`. It prints
+		// there right away (#652).
+		const typeArgumentsComments = (typeArguments?.leadingComments ?? []).filter(
+			(comment) => comment.type === 'Line',
+		);
+		const lineComments = [
+			...(printsTrailingComments
+				? trailingComments.filter((comment) => comment.type === 'Line')
+				: []),
+			...typeArgumentsComments,
+		];
+		if (!node.implements?.length) {
+			if (typeArguments && node.body.body.length === 0 && !bodyNode.innerComments?.length) {
+				afterClassComments = lineComments;
+			} else {
+				bodyComments = lineComments;
+			}
 		}
-		const headingComments = printsTrailingComments
-			? trailingComments.filter((comment) => !bodyComments.includes(comment))
-			: [];
+		const headingComments = [
+			...(printsTrailingComments ? trailingComments : []),
+			...typeArgumentsComments,
+		].filter((comment) => !bodyComments.includes(comment) && !afterClassComments.includes(comment));
 		/** @type {Doc} */
 		let superClassDoc = superClass;
 		if (addsParens) {
 			// Each decorator prints on its own line, so the class is indented
-			// inside the parentheses to keep them off column zero. The cast of the
-			// operand of an ignored superclass goes inside them.
-			superClassDoc =
-				getDecorators(superClassNode).length > 0
-					? ['(', indent([hardline, superClass]), hardline, ')']
-					: ['(', ...ignoredOperandCast, superClass, ')'];
+			// inside the parentheses to keep them off column zero. Like Prettier's
+			// `maybeWrapJsxElementInParens`, an element that breaks starts on a
+			// line of its own inside them. The cast of the operand of an ignored
+			// superclass goes inside them.
+			if (getDecorators(superClassNode).length > 0) {
+				superClassDoc = ['(', indent([hardline, superClass]), hardline, ')'];
+			} else if (isTemplateExpression(superClassNode)) {
+				superClassDoc = ['(', group([indent([softline, superClass]), softline]), ')'];
+			} else {
+				superClassDoc = ['(', ...ignoredOperandCast, superClass, ')'];
+			}
 		}
 		if (isAssigned) {
 			// Like Prettier's `printSuperClass`, a superclass that doesn't fit
@@ -7770,13 +7809,26 @@ function printClassDeclaration(node, path, options, print) {
 			),
 			superClassDoc,
 		];
-		if (node.superTypeParameters) {
-			superClassParts.push(path.call(print, 'superTypeParameters'));
+		if (typeArguments) {
+			superClassParts.push(
+				typeArgumentsComments.length > 0
+					? [
+							...printLeadingComments(
+								typeArguments,
+								/** @type {AST.Comment[]} */ (typeArguments.leadingComments).filter(
+									(comment) => comment.type !== 'Line',
+								),
+								options,
+							),
+							path.call(
+								(typeArgumentsPath) => print(typeArgumentsPath, { suppressLeadingComments: true }),
+								'superTypeParameters',
+							),
+						]
+					: path.call(print, 'superTypeParameters'),
+			);
 		}
 		superClassParts.push(...printTrailingComments(superClassNode, options, headingComments));
-		const typeArguments = /** @type {AST.NodeWithMaybeComments | undefined} */ (
-			node.superTypeParameters
-		);
 		endsWithComment =
 			!node.implements?.length &&
 			Boolean(headingComments.length || typeArguments?.trailingComments?.length);
@@ -7792,8 +7844,16 @@ function printClassDeclaration(node, path, options, print) {
 			bodyComments.length > 0 ? print(bodyPath, { firstComments: bodyComments }) : print(bodyPath),
 		'body',
 	);
+	// Like comments that follow the class, the first one ends its line, and
+	// the next ones print on lines of their own
+	const text = /** @type {string} */ (options.originalText);
+	const afterClass = afterClassComments.map((comment, index) =>
+		index === 0
+			? [lineSuffix([' ', printComment(comment, text)]), breakParent]
+			: lineSuffix([hardline, printComment(comment, text)]),
+	);
 	if (!groupMode) {
-		return [...parts, ...heritage, ' ', body];
+		return [...parts, ...heritage, ' ', body, ...afterClass];
 	}
 
 	// Like Prettier, a class whose heading breaks starts its body on a new
@@ -7802,13 +7862,13 @@ function printClassDeclaration(node, path, options, print) {
 	// would move into the body on the next format, as it does in Prettier, so
 	// the body starts on its line.
 	const heritageGroupId = Symbol('heritageGroup');
-	const bodyNode = /** @type {AST.NodeWithMaybeComments} */ (node.body);
 	return [
 		group([...parts, indent(heritage)], { id: heritageGroupId }),
 		node.body.body.length > 0 && !endsWithComment && !bodyNode.leadingComments?.length
 			? ifBreak(hardline, ' ', { groupId: heritageGroupId })
 			: ' ',
 		body,
+		...afterClass,
 	];
 }
 

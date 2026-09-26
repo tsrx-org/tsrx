@@ -14088,6 +14088,49 @@ type C = /* c */ D | E;`;
 			await expectUnchanged(source);
 		});
 
+		// Like Prettier, an element keeps its parentheses in a class heading, as
+		// it does in any parent that doesn't print it bare. TypeScript doesn't
+		// read `class A extends <div /> {}` (#680).
+		it.each([
+			'class Derived extends (<div />) {}',
+			'class Derived extends (<></>) {}',
+			'class Derived extends (<style>{css}</style>) {}',
+			'class Derived extends (<div />)<T> {}',
+			'class Derived extends (<div />) implements Contract {}',
+			'const Derived = class extends (<div />) {};',
+			'export default class extends (<></>) {}',
+			'class Derived extends (<div />).Base {}',
+		])('keeps the parentheses around the element in %s', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it.each([
+			['class Derived extends <div /> {}', 'class Derived extends (<div />) {}'],
+			['class Derived extends <></> {}', 'class Derived extends (<></>) {}'],
+		])('adds the parentheses around the element in %s', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Like Prettier's `maybeWrapJsxElementInParens`, an element that breaks
+		// starts on a line of its own inside them
+		it.each([
+			'class Derived extends (\n  <div\n    className="aaaaaaaaaaaaaaaaaaaaaaaa"\n    id="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"\n  />\n) {}',
+			'class Derived extends (\n  <div>\n    <span>aaaaaaaaaaaaaaaaaaaaaaaaaaaa</span>\n    <span>bbbbbbbbbbbbbbbbbbbbbbbbbb</span>\n  </div>\n) {}',
+			'x = class extends (\n  (\n    <div\n      className="aaaaaaaaaaaaaaaaaaaaaaaa"\n      id="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"\n    />\n  )\n) {};',
+		])('breaks the element inside the parentheses in %j', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		// Prettier prints these comments twice, once more on each pass. Like
+		// the comments of any other superclass, they print outside the
+		// parentheses.
+		it.each([
+			['class A extends (/* c */ <div />) {}', 'class A extends /* c */ (<div />) {}'],
+			['class A extends (<div /> /* c */) {}', 'class A extends (<div />) /* c */ {}'],
+		])('prints the comment of the element in %j once', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		// Like Prettier's `babel` output, a JSDoc cast's parentheses are enough.
 		// The class used to add a second pair around them (#519).
 		it.each([
@@ -17464,21 +17507,27 @@ for (
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 
-		// A line comment after the superclass and its type arguments ends the
-		// heading, and the next format moves it into the body, as the parser
-		// does with one before the body, so it prints there. Prettier prints it
-		// after the type arguments, with the body on the next line, and moves it
-		// into the body on its next pass.
+		// A line comment between the superclass and its type arguments ends the
+		// heading after them. Prettier prints it there, with a nonempty body on
+		// the next line, and its next pass moves the comment into the body, as
+		// the parser does with one before the body, so it prints there. On a
+		// line of its own before the type arguments, Prettier's first pass keeps
+		// it there (#652).
 		it.each([
 			[
 				'class A extends (a || b // c\n)<T> {\n  x = 1;\n}',
 				'class A extends (a || b)<T> {\n  // c\n  x = 1;\n}',
 			],
-			['class A extends (a || b // c\n)<T> {}', 'class A extends (a || b)<T> {\n  // c\n}'],
+			['class A extends B // c\n<T> {\n  x = 1;\n}', 'class A extends B<T> {\n  // c\n  x = 1;\n}'],
+			[
+				'class A extends B\n// c\n<T> {\n  x = 1;\n}',
+				'class A extends B<T> {\n  // c\n  x = 1;\n}',
+			],
 			[
 				'class A extends (a || b // c\n)<T> {\n  // d\n}',
 				'class A extends (a || b)<T> {\n  // c\n  // d\n}',
 			],
+			['class A extends B<T> // c\n{}', 'class A extends B<T> {\n  // c\n}'],
 			[
 				'x = class extends (a || b // c\n)<T> {\n  x = 1;\n};',
 				'x = class extends (a || b)<T> {\n  // c\n  x = 1;\n};',
@@ -17494,6 +17543,26 @@ for (
 				expect(await format(input)).toBeWithNewline(expected);
 			},
 		);
+
+		// With an empty body, Prettier's next pass finds the comment after the
+		// class's `{}`, where the body doesn't take it, so it prints there. Two
+		// comments stay in their order on lines of their own, where Prettier
+		// joins them in the opposite order (`// d // c`) (#652).
+		it.each([
+			['class A extends B // c\n<T> {}', 'class A extends B<T> {} // c'],
+			['class A extends (a || b // c\n)<T> {}', 'class A extends (a || b)<T> {} // c'],
+			['class A extends B\n// c\n<T> {}', 'class A extends B<T> {} // c'],
+			['class A extends (a || b\n// c\n)<T> {}', 'class A extends (a || b)<T> {} // c'],
+			['class A extends B /* d */ // c\n<T> {}', 'class A extends B<T> /* d */ {} // c'],
+			['class A extends B // c\n<T> {} // d', 'class A extends B<T> {} // c // d'],
+			['class A extends B // c\n// d\n<T> {}', 'class A extends B<T> {} // c\n// d'],
+			['const X = class extends B // c\n<T> {};', 'const X = class extends B<T> {}; // c'],
+			['export default class extends B // c\n<T> {}', 'export default class extends B<T> {} // c'],
+			['(class extends B // c\n<T> {}).foo();', '(class extends B<T> {}).foo(); // c'],
+			['foo(class extends B // c\n<T> {}, d);', 'foo(\n  class extends B<T> {}, // c\n  d,\n);'],
+		])('prints the line comment of %j after the empty class', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
 
 		// A comment inside a JSDoc cast's parentheses stays there, like in
 		// Prettier's `babel-ts` output, which keeps them as a node. It isn't after
@@ -17536,6 +17605,11 @@ for (
 			['class A extends B // c\n  implements C {}', 'class A\n  extends B // c\n  implements C {}'],
 			[
 				'class A extends B<T>\n  // c\n  implements C {}',
+				'class A\n  extends B<T>\n  // c\n  implements C {}',
+			],
+			// Prettier's first pass prints it before the type arguments (#652)
+			[
+				'class A extends B\n// c\n<T> implements C {}',
 				'class A\n  extends B<T>\n  // c\n  implements C {}',
 			],
 			['interface I extends\n  // c\n  J, K {}', 'interface I\n  // c\n  extends J, K {}'],
