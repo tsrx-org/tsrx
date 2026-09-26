@@ -7132,12 +7132,64 @@ function printFunctionDeclaration(node, path, options, print) {
 }
 
 /**
+ * Leading comments written on a clause header's line when one of them is a
+ * JSDoc type cast (`/** @type {X} *\/`, `/** @satisfies {X} *\/`) that does
+ * not belong to parentheses. A non-block body prints on the next line once
+ * the header's group breaks, and a comment that then starts the body's line
+ * is a JSDoc type the statement did not have. These stay on the header's
+ * line. A comment that already starts its own line, and one right before the
+ * `(` it casts, still lead the body.
+ * @param {AST.Node} body - The clause body
+ * @param {AST.Comment[]} comments - The body's leading comments
+ * @param {string} text - The source text
+ * @returns {AST.Comment[] | null}
+ */
+function headerLineTypeCasts(body, comments, text) {
+	const printed = withoutHoistedComments(body, comments);
+	/** @type {AST.Comment[]} */
+	const header = [];
+	for (const comment of printed) {
+		const start = /** @type {AST.NodeWithLocation} */ (comment).start;
+		if (typeof start !== 'number' || hasNewline(text, start, { backwards: true })) {
+			break;
+		}
+		header.push(comment);
+	}
+	const castsBody = header.some((comment) => {
+		if (!isTypeCastComment(comment)) {
+			return false;
+		}
+		const end = /** @type {AST.NodeWithLocation} */ (comment).end;
+		const next = getNextNonSpaceNonCommentCharacterIndex(text, end);
+		return typeof next !== 'number' || text.charAt(next) !== '(';
+	});
+	return castsBody ? header : null;
+}
+
+/**
+ * The break between a clause header's type-cast comments and its body (see
+ * {@link headerLineTypeCasts}). A line comment has to break, or it would
+ * comment out the body, and a blank line after the comment stays.
+ * @param {AST.Comment} comment - The last comment on the header's line
+ * @param {string} text - The source text
+ * @returns {Doc}
+ */
+function clauseBreakAfterHeaderComment(comment, text) {
+	const blank = isLineAfterCommentEmpty(text, comment);
+	if (comment.type === 'Line') {
+		return blank ? [hardline, hardline] : hardline;
+	}
+	return blank ? [hardline, hardline] : line;
+}
+
+/**
  * Print a loop, `if` or `else` body after its header, like Prettier's
  * `printClause`. A block, or the `if` of an `else if`, stays on the header's
  * line. Another statement moves to its own indented line when the enclosing
  * group breaks. A body whose first comment starts its line or spans lines
  * starts on a new line. An empty statement body prints its `;` against the
- * header, with its comments around it.
+ * header, with its comments around it. An end-of-line JSDoc type cast stays
+ * on the header's line (see {@link headerLineTypeCasts}).
  * @param {AstPath} path - The path to the statement
  * @param {TsrxFormatOptions} options - Prettier options
  * @param {PrintFn} print - Print callback
@@ -7147,16 +7199,46 @@ function printFunctionDeclaration(node, path, options, print) {
 function printClause(path, options, print, property = 'body') {
 	return path.call((bodyPath) => {
 		const body = /** @type {AST.Statement & AST.NodeWithMaybeComments} */ (bodyPath.node);
-		const doc = print(bodyPath);
-		const comments = getTypeCastParens(bodyPath, options)?.ahead ?? body.leadingComments ?? [];
+		const text = options.originalText ?? '';
+		const typeCastParens = getTypeCastParens(bodyPath, options);
+		const comments = typeCastParens?.ahead ?? body.leadingComments ?? [];
 
 		if (body.type === 'EmptyStatement') {
+			const doc = print(bodyPath);
 			return comments.length > 0 ? [' ', doc] : doc;
 		}
 
 		const isBlock = body.type === 'BlockStatement';
+		const staysWithHeader =
+			isBlock ||
+			(body.type === 'IfStatement' &&
+				bodyPath.getParentNode()?.type === 'IfStatement' &&
+				bodyPath.key === 'alternate');
+		// A cast's own comments print between its parentheses. Suppressing the
+		// body's leading comments would drop the ones inside those parentheses.
+		const headerCasts =
+			!staysWithHeader && !typeCastParens ? headerLineTypeCasts(body, comments, text) : null;
+
+		if (headerCasts) {
+			const doc = print(bodyPath, { suppressLeadingComments: true });
+			const rest = withoutHoistedComments(body, comments).slice(headerCasts.length);
+			const last = /** @type {AST.Comment} */ (headerCasts.at(-1));
+			return [
+				' ',
+				join(
+					' ',
+					headerCasts.map((comment) => printComment(comment, text)),
+				),
+				indent([
+					clauseBreakAfterHeaderComment(last, text),
+					...printLeadingComments(body, rest, options),
+					doc,
+				]),
+			];
+		}
+
+		const doc = print(bodyPath);
 		const firstComment = /** @type {AST.NodeWithLocation | undefined} */ (comments[0]);
-		const text = options.originalText ?? '';
 		if (
 			firstComment &&
 			(hasNewline(text, firstComment.start, { backwards: true }) ||
@@ -7165,12 +7247,7 @@ function printClause(path, options, print, property = 'body') {
 			return isBlock ? [hardline, doc] : indent([hardline, doc]);
 		}
 
-		if (
-			isBlock ||
-			(body.type === 'IfStatement' &&
-				bodyPath.getParentNode()?.type === 'IfStatement' &&
-				bodyPath.key === 'alternate')
-		) {
+		if (staysWithHeader) {
 			return [' ', doc];
 		}
 

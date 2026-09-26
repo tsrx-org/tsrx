@@ -21961,6 +21961,64 @@ type T = [A, /* y */ B];`);
 		])('keeps %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});
+
+		// A non-block body moves to the next line when it no longer fits after
+		// the header. The cast stays on the header's line. At the start of the
+		// body's line, TypeScript reads it as that statement's JSDoc.
+		it.each([
+			[
+				'if (someConditionThatIsQuiteLongAlready) /** @type {SomeType} */\nfoo(alpha, beta, gamma, delta, epsilon);',
+				'if (someConditionThatIsQuiteLongAlready) /** @type {SomeType} */\n  foo(alpha, beta, gamma, delta, epsilon);',
+			],
+			[
+				'while (someConditionThatIsQuiteLongAlready) /** @type {SomeType} */\nfoo(alpha, beta, gamma, delta, epsilon);',
+				'while (someConditionThatIsQuiteLongAlready) /** @type {SomeType} */\n  foo(alpha, beta, gamma, delta, epsilon);',
+			],
+			[
+				'for (const item of items) /** @type {SomeType} */\nprocessItem(item, extraContext, moreData, stillMore);',
+				'for (const item of items) /** @type {SomeType} */\n  processItem(item, extraContext, moreData, stillMore);',
+			],
+			[
+				'for (const key in values) /** @type {SomeType} */\nprocessItem(key, extraContext, moreData, stillMore);',
+				'for (const key in values) /** @type {SomeType} */\n  processItem(key, extraContext, moreData, stillMore);',
+			],
+			[
+				'for (let index = 0; index < items.length; index++) /** @type {SomeType} */\nprocessItem(items[index], extra);',
+				'for (let index = 0; index < items.length; index++) /** @type {SomeType} */\n  processItem(items[index], extra);',
+			],
+			[
+				'for await (const item of items) /** @type {X} */\nprocessItem(item, extraContext, moreData, stillMore);',
+				'for await (const item of items) /** @type {X} */\n  processItem(item, extraContext, moreData, stillMore);',
+			],
+			[
+				'do /** @type {SomeType} */\nprocessItem(alpha, beta, gamma, delta, epsilon, zeta, eta);\nwhile (cond);',
+				'do /** @type {SomeType} */\n  processItem(alpha, beta, gamma, delta, epsilon, zeta, eta);\nwhile (cond);',
+			],
+			[
+				'if (a) b();\nelse /** @type {X} */\nfoo(alpha, beta, gamma, delta, epsilon, zeta, eta, theta, iota, kappa);',
+				'if (a) b();\nelse /** @type {X} */\n  foo(alpha, beta, gamma, delta, epsilon, zeta, eta, theta, iota, kappa);',
+			],
+			[
+				'if (a) /** @type {X} */ // note\nfoo(alpha, beta, gamma, delta, epsilon, zeta, eta, theta);',
+				'if (a) /** @type {X} */ // note\n  foo(alpha, beta, gamma, delta, epsilon, zeta, eta, theta);',
+			],
+			[
+				'if (a) /** @satisfies {X} */\nfoo(alpha, beta, gamma, delta, epsilon, zeta, eta, theta, iota);',
+				'if (a) /** @satisfies {X} */\n  foo(alpha, beta, gamma, delta, epsilon, zeta, eta, theta, iota);',
+			],
+			['if (a) /** @type {X} */\n// note\nb();', 'if (a) /** @type {X} */\n  // note\n  b();'],
+		])('keeps the JSDoc type cast on the header line in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['if (cond) /** @type {X} */\nfoo();', 'if (cond) /** @type {X} */ foo();'],
+			['do /** @type {X} */\nfoo();\nwhile (cond);', 'do /** @type {X} */ foo();\nwhile (cond);'],
+			['if (a)\n  /** @type {X} */\n  foo();', 'if (a)\n  /** @type {X} */\n  foo();'],
+			['if (cond) /** @type {X} */\n{\n  foo();\n}', 'if (cond) /** @type {X} */\n{\n  foo();\n}'],
+		])('keeps a JSDoc type cast with its clause header in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
 	});
 
 	// `export default (class Named {})` is an expression: `Named` is bound only
