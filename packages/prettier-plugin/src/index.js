@@ -4732,11 +4732,7 @@ function printCalledArrowInParens(path, options, nodeContent) {
 	) {
 		return null;
 	}
-	/** @type {AST.Node & AST.NodeWithMaybeComments} */
-	let body = node.body;
-	while (body.type === 'ArrowFunctionExpression') {
-		body = body.body;
-	}
+	const body = getArrowChainBody(path, options);
 	const bodyGroupId = templateParensGroupIds.get(body);
 	if (!bodyGroupId || !body.trailingComments?.length) {
 		return null;
@@ -4770,6 +4766,23 @@ function printCalledArrowInParens(path, options, nodeContent) {
 			inParens,
 		]),
 		inParens,
+	);
+}
+
+/**
+ * The last body of the arrow function at `path`, through the arrow functions
+ * that print in its chain (see `canPrintInArrowChain`)
+ * @param {AstPath} path - The path to the arrow function
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @returns {AST.Node & AST.NodeWithMaybeComments}
+ */
+function getArrowChainBody(path, options) {
+	return path.call(
+		(bodyPath) =>
+			bodyPath.node.type === 'ArrowFunctionExpression' && canPrintInArrowChain(bodyPath, options)
+				? getArrowChainBody(bodyPath, options)
+				: bodyPath.node,
+		'body',
 	);
 }
 

@@ -8257,11 +8257,44 @@ const short = (value as Entry).name;`;
 		});
 
 		// A line comment prints at the end of the line, past what follows the
-		// parentheses, where Prettier's next pass finds it
+		// parentheses, where Prettier's next pass finds it. A statement's last
+		// operand has a rule of its own (#622).
 		it.each([
 			['new ((a) => (b // c\n))(1);', 'new ((a) =>\n  b) // c\n(1);'],
 			['x || ((a) => (b /* c */));', 'x || ((a) => b); /* c */'],
 		])('prints %j like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// `prettier-ignore` keeps an arrow function in the chain as written,
+		// with the comments in it, and a JSDoc cast prints its arrow function
+		// on its own. They used to print the comment again after it (#780).
+		it.each([
+			[
+				'(\n  // prettier-ignore\n  (a) => (b /* c */)\n)(1);',
+				'(\n  // prettier-ignore\n  (a) => (b /* c */)\n)(1);',
+			],
+			[
+				'((a) =>\n  // prettier-ignore\n  (b) => (c /* c */))(1);',
+				'(\n  (a) =>\n    // prettier-ignore\n    (b) => (c /* c */)\n)(1);',
+			],
+			[
+				'new (\n  // prettier-ignore\n  (a) => (b /* c */)\n)(1);',
+				'new // prettier-ignore\n((a) => (b /* c */))(1);',
+			],
+			[
+				'x = (\n  // prettier-ignore\n  (a) => (b /* c */)\n).call(x);',
+				'x =\n  // prettier-ignore\n  ((a) => (b /* c */)).call(x);',
+			],
+			[
+				'((a) => /** @type {X} */ ((b) => (<div /> /* c */)))(1);',
+				'((a) => /** @type {X} */ ((b) => <div /> /* c */))(1);',
+			],
+			[
+				'((a) => /** @type {X} */ ((b) => (c /* c */)))(1);',
+				'((a) => /** @type {X} */ ((b) => c /* c */))(1);',
+			],
+		])('prints %j in one pass', async (input, expected) => {
 			expect(await format(input)).toBeWithNewline(expected);
 		});
 

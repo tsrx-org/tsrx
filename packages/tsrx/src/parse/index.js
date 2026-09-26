@@ -762,7 +762,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * The comments after the last body of a chain of arrow functions called
 	 * right away or used as a `new` callee, on the body's line before the `)`
 	 * around the chain, when the body prints below its `=>` (see
-	 * {@link printsArrowChainBodyBelow}), as Prettier's first pass prints
+	 * {@link getArrowChainBodyPlace}), as Prettier's first pass prints
 	 * them: `(\n  (a) => (b) =>\n    c /* c *\/\n)(1);`. Its next passes move
 	 * them (see {@link takeCommentsAfterArrowFunctionBody}).
 	 * @param {AST.NodeWithLocation} node - The chain's first arrow function
@@ -789,7 +789,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 		while (isArrowChainLink(last, /** @type {any} */ (last.body))) {
 			last = /** @type {any} */ (last.body);
 		}
-		if (!printsArrowChainBodyBelow(/** @type {AST.Node} */ (last.body))) {
+		if (getArrowChainBodyPlace(/** @type {AST.Node} */ (last.body)) !== 'below') {
 			return false;
 		}
 		return takeCommentsAfterArrowFunctionBody(
@@ -818,22 +818,37 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
-	 * Like Prettier's `shouldPutBodyOnSameLine` for the last body of a chain of
-	 * arrow functions: an array, an object, a sequence, a conditional, an
-	 * element or other template value, and a template literal with a line
-	 * break stay on the `=>` line, and any other body prints below it when the
-	 * chain is a callee
-	 * @param {AST.Node} body
+	 * Whether a `prettier-ignore` comment before the node, or one that marks
+	 * it, keeps it as written
+	 * @param {AST.Node & AST.NodeWithMaybeComments} node
 	 * @returns {boolean}
 	 */
-	function printsArrowChainBodyBelow(body) {
+	function isIgnoredNode(node) {
+		return Boolean(
+			node.metadata?.prettierIgnore || node.leadingComments?.some(isPrettierIgnoreComment),
+		);
+	}
+
+	/**
+	 * Where the last body of a chain of arrow functions that is a callee
+	 * prints, like Prettier's `shouldPutBodyOnSameLine`: an array, an object, a
+	 * sequence, a conditional, an element or other template value, and a
+	 * template literal with a line break stay on the `=>` line (`'line'`), and
+	 * any other body prints below it (`'below'`). A tagged template on one
+	 * line, or a template with a comment before it, stays on the line when the
+	 * printer formats its code as CSS, GraphQL, or Markdown, which depends on
+	 * the options and the tag, so the parser can't tell (`null`).
+	 * @param {AST.Node & AST.NodeWithMaybeComments} body
+	 * @returns {'line' | 'below' | null}
+	 */
+	function getArrowChainBodyPlace(body) {
 		const template =
 			body.type === 'TemplateLiteral'
 				? body
 				: body.type === 'TaggedTemplateExpression'
 					? body.quasi
 					: null;
-		return !(
+		if (
 			body.type === 'ArrayExpression' ||
 			body.type === 'ObjectExpression' ||
 			body.type === 'ArrowFunctionExpression' ||
@@ -841,7 +856,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 			body.type === 'ConditionalExpression' ||
 			body.type.startsWith('JSX') ||
 			template?.quasis.some((quasi) => quasi.value.raw.includes('\n'))
-		);
+		) {
+			return 'line';
+		}
+		return body.type === 'TaggedTemplateExpression' || (template && body.leadingComments?.length)
+			? null
+			: 'below';
 	}
 
 	/**
@@ -857,7 +877,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 *   `((a) => (b /* c *\/))(1);` prints `(\n  (a) => b /* c *\/\n)(1);`
 	 *   (#634).
 	 * - A chain called right away whose body prints below its `=>` (see
-	 *   {@link printsArrowChainBodyBelow}) prints them there on a line of its
+	 *   {@link getArrowChainBodyPlace}) prints them there on a line of its
 	 *   own, which the pass after that gives to the first argument:
 	 *   `((a) => (b) => (c /* c *\/))(1);` prints
 	 *   `(\n  (a) => (b) =>\n    c\n)(\n  /* c *\/\n  1,\n);` (see
@@ -902,6 +922,22 @@ export function get_comment_handlers(source, comments, index = 0) {
 		) {
 			return false;
 		}
+		// `prettier-ignore` keeps a node as written, with the comments in it
+		for (let arrow = first; ; arrow = /** @type {any} */ (arrow.body)) {
+			if (isIgnoredNode(arrow) || isIgnoredNode(/** @type {AST.Node} */ (arrow.body))) {
+				return false;
+			}
+			if (arrow === last) {
+				break;
+			}
+		}
+		const place =
+			node.type === 'CallExpression' && first !== last
+				? getArrowChainBodyPlace(/** @type {AST.Node} */ (last.body))
+				: 'line';
+		if (place === null) {
+			return false;
+		}
 		let count = 0;
 		for (
 			let previousEnd = from;
@@ -922,11 +958,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 		if (node.type === 'NewExpression' && argument) {
 			target = argument;
 			leads = true;
-		} else if (
-			node.type === 'CallExpression' &&
-			first !== last &&
-			printsArrowChainBodyBelow(/** @type {AST.Node} */ (last.body))
-		) {
+		} else if (place === 'below') {
 			target = argument ?? last;
 			leads = Boolean(argument);
 		}
