@@ -8092,6 +8092,43 @@ const short = (value as Entry).name;`;
 			);
 		});
 
+		// Prettier prints the parentheses around the arrow function's body as
+		// nothing, with the comment in them before the `)` around the arrow
+		// function, and its next pass gives the comment to the arrow function,
+		// which prints it inside those parentheses. The formatter prints the
+		// fixpoint (#634).
+		it.each([
+			['((a) => (b /* c */))(1);', '(\n  (a) => b /* c */\n)(1);'],
+			['((a) => ((b /* c */)))(1);', '(\n  (a) => b /* c */\n)(1);'],
+			['((a) => (b /* c */\n))(1);', '(\n  (a) => b /* c */\n)(1);'],
+			['((a) => (b.c /* c */))(1);', '(\n  (a) => b.c /* c */\n)(1);'],
+			['((a) => ({} /* c */))(1);', '(\n  (a) => ({}) /* c */\n)(1);'],
+			['((a) => (b /* c */))`x`;', '(\n  (a) => b /* c */\n)`x`;'],
+			['((a) => (b // c\n))(1);', '(\n  (a) => b // c\n)(1);'],
+			['const x = ((a) => (b // c\n))(1);', 'const x = (\n  (a) => b // c\n)(1);'],
+		])('prints %j in one pass', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const x = ((a) => b /* c */)(1);',
+			'((a) => (b, c /* c */))(1);',
+			'((a) => (a ? b : c /* c */))(1);',
+			'(\n  (a) => b /* c */ /* d */\n)(1);',
+			'f((a) => b /* c */);',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// A comment on a line of its own after the body isn't one of these,
+		// and keeps the place it had, which the next pass keeps too
+		it.each([
+			['((a) => (b\n  /* c */))(1);', '((a) => b)(/* c */ 1);'],
+			['((a) => (b\n  // c\n))(1);', '((a) => b)(\n  // c\n  1,\n);'],
+		])('formats %j as before', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
 		// Only a call's callee or a tag counts: the comments of a function
 		// that is a member object or a `new` callee print outside
 		it.each([
@@ -10027,6 +10064,62 @@ function k() {
 	</>
 }`);
 		});
+
+		// A comment before a child is a child of its own in TSX, `{/* c */}`, so
+		// whether the text after the child starts a line depends on the child
+		// alone. A comment on a line of its own before a child that breaks kept
+		// that text on the child's last line, and a comment that joined the
+		// opening tag's line moved it on the next format (#640).
+		it.each([
+			'<div>\n\t/* c */\n\t<span>\n\t\t<b>1</b>\n\t</span> 3\n</div>',
+			'<div>\n\t/* a */\n\t/* b */\n\t<span>\n\t\t<b>1</b>\n\t</span> 3\n</div>',
+			'<div>\n\t/* c */\n\t{cond && (\n\t\t<b>\n\t\t\t<i />\n\t\t</b>\n\t)} 3\n</div>',
+			'<main>\n\t{x && (\n\t\t<div>\n\t\t\t/* c */\n\t\t\t<span>\n\t\t\t\t<b>1</b>\n\t\t\t</span> 3\n\t\t</div>\n\t)}\n</main>',
+			// A child that fits keeps the text on its line
+			'<div>\n\t/* c */\n\t<i /> 3\n</div>',
+		])(
+			'lays out the text after the child with a comment before it in %j like TSX',
+			async (element) => {
+				const template = await format(
+					`export function Page() @{\n\t${element.replace(/\n/g, '\n\t')}\n}`,
+					repoOptions,
+				);
+				const tsx = await prettier.format(
+					`export function Page() {\n\t${element.replace(/\/\* \w \*\//g, '{$&}').replace(/\n/g, '\n\t')};\n}`,
+					{ parser: 'typescript', ...repoOptions },
+				);
+				expect(template).toBe(
+					tsx
+						.replace('Page() {', 'Page() @{')
+						.replace(/;\n}\n$/, '\n}\n')
+						.replace(/\{(\/\* \w \*\/)\}/g, '$1'),
+				);
+			},
+		);
+
+		it.each([
+			[
+				'export function App() @{\n  <div> /* c */\n    <span>\n      <b>1</b>\n    </span> 3</div>\n}',
+				'export function App() @{\n  <div>\n    /* c */\n    <span>\n      <b>1</b>\n    </span>{" "}\n    3\n  </div>\n}',
+			],
+			[
+				'export function App() @{\n  <div>\n    /* c */\n    <span>\n      <b>1</b>\n    </span> 3</div>\n}',
+				'export function App() @{\n  <div>\n    /* c */\n    <span>\n      <b>1</b>\n    </span>{" "}\n    3\n  </div>\n}',
+			],
+			[
+				'export function App() @{\n  <div>\n    // c\n    <span>\n      <b>1</b>\n    </span> 3</div>\n}',
+				'export function App() @{\n  <div>\n    // c\n    <span>\n      <b>1</b>\n    </span>{" "}\n    3\n  </div>\n}',
+			],
+			[
+				'const a = <div>\n  // c\n  {cond && (\n    <b>\n      <i />\n    </b>\n  )} 3</div>;',
+				'const a = (\n  <div>\n    // c\n    {cond && (\n      <b>\n        <i />\n      </b>\n    )}{" "}\n    3\n  </div>\n);',
+			],
+		])(
+			'starts the text after the multi-line child with a comment before it in %j on a line',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
 	});
 
 	// A space at a template child boundary renders, like in JSX, while
@@ -12976,6 +13069,60 @@ function Two() @{
 			await expectUnchanged('type Entry = import("./module").Entry<string>;');
 		});
 
+		// Like Prettier, the module specifier of an import type lays out like a
+		// call argument, so the parentheses break around a comment on its own
+		// line. The comment used to stay after the `(`, and join the specifier
+		// on the next format, and a line comment after it moved past the `;`
+		// (#621).
+		it('breaks the parentheses of an import type around a comment like call arguments', async () => {
+			const input = `type X = import(
+  /* c */
+  'a');
+type Y = import(
+  "a" // c
+).B;`;
+			const expected = `type X = import(
+  /* c */
+  "a"
+);
+type Y = import(
+  "a" // c
+).B;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'type X = import(/* c */ "a");',
+			'type Y = import("a" /* c */).B<T>;',
+			'type Z =\n  import("./long/long/long/long/long/long/long/long/long/long/long/path/to/module");',
+		])('keeps %j', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		// Like Prettier's `printTypePredicate`, a type predicate prints its
+		// parameter name as a node, with its comments. They were deleted (#620).
+		it.each([
+			'function f(x): asserts /* c */ x {}',
+			'function f(x): x /* c */ is T {}',
+			'function f(this: A): this /* c */ is T {}',
+			'function f(x): asserts x /* c */ is T {}',
+			'function f(x): asserts /* c */ this is T {}',
+			'function f(): asserts this /* c */ {}',
+			'type F = (x: unknown) => x /* c */ is string;',
+			'class A {\n  isB(): this /* c */ is B {\n    return true;\n  }\n}',
+			'interface I {\n  isB(x): x /* c */ is B;\n}',
+		])('keeps the comment next to the parameter name of a type predicate in %j', async (source) => {
+			await expectUnchanged(source);
+		});
+
+		it.each([
+			'function f(x): /* c */ x is T {}',
+			'function f(x): x is /* c */ T {}',
+			'function f(x): asserts x is /* c */ T {}',
+		])('keeps the comment around a type predicate in %j', async (source) => {
+			await expectUnchanged(source);
+		});
+
 		// Like Prettier, the module specifier and the import attributes of an
 		// import type lay out like call arguments, without a trailing comma (#422).
 		describe('import attributes in import types', () => {
@@ -13423,6 +13570,51 @@ const target = event.target as HTMLElement | null;`;
 			expect(result).toBeWithNewline(expected);
 		});
 
+		// Like Prettier's `printUnionType`, a union prints its trailing comments
+		// inside its indentation too, so a line comment after a type
+		// parameter's union constraint moves the union to the line after
+		// `extends`. They printed after it, and the union stayed on the line of
+		// `extends` (#623).
+		it.each([
+			[
+				'type A<R extends B | C // c\n  = D> = R;',
+				'type A<\n  R extends\n    B | C = // c\n    D,\n> = R;',
+			],
+			[
+				'type A<R extends B | C = // c\n  D> = R;',
+				'type A<\n  R extends\n    B | C = // c\n    D,\n> = R;',
+			],
+		])('formats %j like Prettier', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Prettier leads the default with a line comment on its own line before
+		// the `=`, and its next pass moves the comment after the union like above
+		it('formats a line comment on its own line after a union constraint in one pass', async () => {
+			expect(await format('type A<R extends B | C\n  // c\n  = D> = R;')).toBeWithNewline(
+				'type A<\n  R extends\n    B | C = // c\n    D,\n> = R;',
+			);
+		});
+
+		it.each([
+			'type A<R extends B | C /* c */ = D> = R;',
+			'type A<\n  R extends B | C, // c\n> = R;',
+			'type A<T> = T extends\n  B | C // c\n  ? D\n  : E;',
+			'type A = Foo<\n  B | C // c\n>;',
+			'type A = [\n  B | C, // c\n  D,\n];',
+			'type A = [B | C /* c */, D];',
+			'function f(\n  a: B | C, // c\n) {}',
+			'let x: B | C = // c\n  y;',
+			'interface I {\n  a: B | C; // c\n  b: D;\n}',
+			'type A = /* c */ B | C;',
+			'type A =\n  // c\n  B | C;',
+			'type A = X & (/* c */ B | C);',
+			'type A = (B | C /* c */)[];',
+			'type T = keyof (B | C /* c */);',
+		])('keeps the comments of %j where they are, like Prettier', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
 		it('prints the comments before a union inside its indentation', async () => {
 			const input = `interface Props {
   // What the field holds
@@ -13534,6 +13726,86 @@ type D = { a: string } &
   E;`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
+		});
+
+		// Like Prettier's parser postprocess, an intersection or union of one
+		// type is that type, so a comment after its leading `&` or `|` leads the
+		// value, which moves below the `=` with it. It used to print on the `=`
+		// line, with the type at the start of the next line, and move again on
+		// the next format, and after a `|` it stayed there (#603).
+		it('prints a one-member intersection or union as its type, with its comments', async () => {
+			const input = `type A = & // Comment
+"VALUE";
+type F = &
+/* Comment */
+"VALUE";
+type U = | // Comment
+"VALUE";
+type O = & // Comment
+  { a: 1 };`;
+			const expected = `type A =
+  // Comment
+  "VALUE";
+type F =
+  /* Comment */
+  "VALUE";
+type U =
+  // Comment
+  "VALUE";
+type O =
+  // Comment
+  { a: 1 };`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// The parentheses around it no longer count as the parentheses of a
+		// union or intersection, and a long member breaks on its own
+		it('drops the parentheses around a one-member intersection or union', async () => {
+			const input = `type G = (| A)[];
+type H = | (A | B);
+interface X { a: | (() => void); b: & ((x: string) => void) }
+type C = | { a: string; bbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number; ccccccccccccccccccccccccc: boolean }[];
+type D = /* c */ | B;
+let x: | A = 1;`;
+			const expected = `type G = A[];
+type H = A | B;
+interface X {
+  a: () => void;
+  b: (x: string) => void;
+}
+type C = {
+  a: string;
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number;
+  ccccccccccccccccccccccccc: boolean;
+}[];
+type D = /* c */ B;
+let x: A = 1;`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Like Prettier's `handleUnionTypeLeadingComments`, a one-line block
+		// comment right before a union leads its first member, through any
+		// wrappers. Prettier's first format of the nested unions from its
+		// `union/consistent-with-flow/single-type.ts` test prints the comment
+		// before the `|`, and its next format moves it after the `|`: the
+		// formatter prints that form at once.
+		it('moves a comment before one-member unions around a union after its first |', async () => {
+			const input = `type A6 = | (
+  /*1*/ | (
+    | (
+          | A
+          // A comment to force break
+          | B
+        )
+  )
+  );
+type C = /* c */ | (| D | E);`;
+			const expected = `type A6 =
+  | /*1*/ A
+    // A comment to force break
+  | B;
+type C = /* c */ D | E;`;
+			expect(await format(input)).toBeWithNewline(expected);
 		});
 	});
 
@@ -14014,6 +14286,108 @@ export interface SectionProps<T>
 		// a `(`, `[`, or template literal on the next line starts a statement of
 		// its own, as Prettier's `typescript` parser reads it, and an element
 		// called, indexed, or used as a tag keeps its parentheses.
+		// Unlike in TSX, an element alone at the start of a statement is a
+		// template element, and the `;` after it an empty statement, so an
+		// element that is an expression statement keeps its parentheses, and
+		// its `;`. In a template body, an operator after the element doesn't
+		// continue the statement either (#625). The statements compared leave
+		// out the empty ones, like the `;` that starts a line with semi: false.
+		/** @param {string} text */
+		const parseStatements = (text) =>
+			JSON.stringify(
+				/** @type {any[]} */ (/** @type {any} */ (parsers)?.tsrx.parse(text, {}).body).filter(
+					(node) => node.type !== 'EmptyStatement',
+				),
+				(key, value) =>
+					['start', 'end', 'loc', 'range', 'metadata', 'raw'].includes(key) ||
+					key.endsWith('Comments')
+						? undefined
+						: value,
+			);
+		it.each([
+			['(<div />);', '(<div />);'],
+			['(<></>);', '(<></>);'],
+			['(<style>{css}</style>);', '(<style>{css}</style>);'],
+			['(<div>\n<span />\n</div>);', '(\n  <div>\n    <span />\n  </div>\n);'],
+			['function f() {\n  (<div />);\n}', 'function f() {\n  (<div />);\n}'],
+			['if (a) (<div />);\nelse (<span />);', 'if (a) (<div />);\nelse (<span />);'],
+			['for (const a of b) (<div />);', 'for (const a of b) (<div />);'],
+			['label: (<div />);', 'label: (<div />);'],
+			[
+				'function C() @{\n  (<div />);\n  (<div />) + 1;\n  (<div />) || x;\n  (<div />) ? a : b;\n  <i />\n}',
+				'function C() @{\n  (<div />);\n  (<div />) + 1;\n  (<div />) || x;\n  (<div />) ? a : b;\n  <i />\n}',
+			],
+			[
+				'function C() @{\n  @if (a) {\n    (<div />) + 1;\n    <i />\n  } @else {\n    (<div />) + 1;\n    <i />\n  }\n}',
+				'function C() @{\n  @if (a) {\n    (<div />) + 1;\n    <i />\n  } @else {\n    (<div />) + 1;\n    <i />\n  }\n}',
+			],
+			[
+				'function C() @{\n  @for (const a of b) {\n    (<div />) * 2;\n    <i />\n  }\n}',
+				'function C() @{\n  @for (const a of b) {\n    (<div />) * 2;\n    <i />\n  }\n}',
+			],
+			[
+				'function C() @{\n  @switch (x) {\n    @case 1: {\n      (<div />) + 1;\n      <i />\n    }\n  }\n}',
+				'function C() @{\n  @switch (x) {\n    @case 1: {\n      (<div />) + 1;\n      <i />\n    }\n  }\n}',
+			],
+			[
+				'function C() @{\n  @try {\n    (<div />) + 1;\n    <i />\n  } @catch (e) {\n    (<div />) + 1;\n    <i />\n  }\n}',
+				'function C() @{\n  @try {\n    (<div />) + 1;\n    <i />\n  } @catch (e) {\n    (<div />) + 1;\n    <i />\n  }\n}',
+			],
+			// Like Prettier, which gives a comment after the expression in the
+			// parentheses to the statement, it moves after the `;`
+			['(<div /> /* c */);', '(<div />); /* c */'],
+			['(<div /> // c\n);', '(<div />); // c'],
+			['(<div>\n<span />\n</div> /* c */);', '(\n  <div>\n    <span />\n  </div>\n); /* c */'],
+			// An element prints its other comments inside the parentheses
+			['(\n// c\n<div />);', '(\n  // c\n  <div />\n);'],
+			['(<div />\n// c\n);', '(\n  <div />\n  // c\n);'],
+		])('keeps the parentheses around the element statement in %j', async (input, expected) => {
+			const output = await format(input);
+			expect(output).toBeWithNewline(expected);
+			expect(parseStatements(output)).toBe(parseStatements(input));
+		});
+
+		it.each([
+			['(<div />);', ';(<div />)'],
+			['a;\n(<div />);', 'a\n;(<div />)'],
+		])(
+			'puts the leading semicolon before the element statement %j with semi: false',
+			async (input, expected) => {
+				const output = await format(input, { semi: false });
+				expect(output).toBeWithNewline(expected);
+				expect(parseStatements(output)).toBe(parseStatements(input));
+			},
+		);
+
+		// A template value that is an expression statement reads the same
+		// without its parentheses, and a comment after it moves after the `;`
+		// as it does on the next pass
+		it.each([
+			['(@{ <div /> });', '@{\n  <div />\n};'],
+			['(@if (a) { <div /> });', '@if (a) {\n  <div />\n};'],
+			['(@{ <div /> } /* c */);', '@{\n  <div />\n}; /* c */'],
+			['(@if (a) { <div /> } /* c */);', '@if (a) {\n  <div />\n}; /* c */'],
+		])('prints the template statement %j without parentheses', async (input, expected) => {
+			const output = await format(input);
+			expect(output).toBeWithNewline(expected);
+			expect(parseStatements(output)).toBe(parseStatements(input));
+		});
+
+		// Outside a template body, an operator after an element that starts a
+		// statement continues it, as in TSX
+		it.each([
+			['(<div />) + 1;', '<div /> + 1;'],
+			['function f() {\n  (<div />) ? a : b;\n}', 'function f() {\n  <div /> ? a : b;\n}'],
+			[
+				'function C() @{\n  if (a) {\n    (<div />) + 1;\n  }\n  <i />\n}',
+				'function C() @{\n  if (a) {\n    <div /> + 1;\n  }\n  <i />\n}',
+			],
+		])('prints the element that starts %j bare like Prettier', async (input, expected) => {
+			const output = await format(input);
+			expect(output).toBeWithNewline(expected);
+			expect(parseStatements(output)).toBe(parseStatements(input));
+		});
+
 		it('starts a statement at a `(`, `[`, or template literal on the line after an element', async () => {
 			const input =
 				'const a = <b>x</b>\n(foo)\nconst c = <b />\n[1].map(f)\nconst d = <b />\n`t`\n';
@@ -14713,6 +15087,50 @@ const b = (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
 			],
 		])('lays out a JSDoc-cast operand as its own node in %j', async (input, expected) => {
 			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Prettier prints a line comment before the `)` of the parentheses
+		// around an operand after the operator that follows them, and breaks
+		// the operator before them with its line break. Its next pass gives the
+		// comment to the operand before the operator, which joins the operator
+		// before them again. The formatter prints the fixpoint (#626).
+		it.each([
+			['x = 30 * (month - 1 // c\n) + day;', 'x =\n  30 * (month - 1) + // c\n  day;'],
+			['x = 30 * ((month - 1 // c\n)) + day;', 'x =\n  30 * (month - 1) + // c\n  day;'],
+			['x = 30 * (2 * (month - 1 // c\n)) + day;', 'x =\n  30 * (2 * (month - 1)) + // c\n  day;'],
+			['x = 30 * (month - (1 // c\n)) + day;', 'x =\n  30 * (month - 1) + // c\n  day;'],
+			['f(30 * (month - 1 // c\n) + day);', 'f(\n  30 * (month - 1) + // c\n    day,\n);'],
+			[
+				'const jd = Math.floor(\n  30 * (month - 1 // c\n  ) + day\n);',
+				'const jd = Math.floor(\n  30 * (month - 1) + // c\n    day,\n);',
+			],
+			[
+				'x = 30 * (month - 1 /* c */ // d\n) + day;',
+				'x =\n  30 * (month - 1) /* c */ + // d\n  day;',
+			],
+			// Prettier's next pass takes a block comment out of the parentheses
+			// that print around the operand too (#673)
+			['x = (a && (b /* c */)) || d;', 'x = (a && b) /* c */ || d;'],
+			['x = (a && (b /* c */ /* d */)) || e;', 'x = (a && b) /* c */ /* d */ || e;'],
+			['if ((a && (b /* c */)) || d) {\n}', 'if ((a && b) /* c */ || d) {\n}'],
+			[
+				'function isHexCode(c) {\n  return ((0x30/* 0 */ <= c) && (c <= 0x39/* 9 */)) ||\n         ((0x41/* A */ <= c) && (c <= 0x46/* F */)) ||\n         ((0x61/* a */ <= c) && (c <= 0x66/* f */));\n}',
+				'function isHexCode(c) {\n  return (\n    (0x30 /* 0 */ <= c && c <= 0x39) /* 9 */ ||\n    (0x41 /* A */ <= c && c <= 0x46) /* F */ ||\n    (0x61 /* a */ <= c && c <= 0x66) /* f */\n  );\n}',
+			],
+		])('formats %j in one pass', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'x =\n  a &&\n  (b || c) && // c\n  d;',
+			'x =\n  (a || b) + // c\n  d;',
+			'x =\n  f(\n    a, // c\n  ) + d;',
+			'x = 30 * (month - 1) /* c */ + day;',
+			'x = a || b /* c */ || d;',
+			'x = f(a && b /* c */, x);',
+			'x =\n  a && (\n    <Note /> // note\n  ) &&\n  b;',
+		])('keeps %j like Prettier', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
 		});
 
 		it('keeps a JSDoc cast around a broken return argument as the only parentheses', async () => {
@@ -16237,6 +16655,36 @@ item
 				'switch (a /* note */) {\n  case 1:\n    break;\n}',
 			);
 		});
+
+		// Like Prettier's default for a comment at the end of a line, one after
+		// a `;` of a for header trails the clause before it. It used to move to
+		// its own line before the next clause (#660).
+		it('keeps a comment at the end of the line after a ; of a for header after it', async () => {
+			const input = `for (let i = 0; // start
+  i < 1; // bound
+  i++) {}
+for (let j = // c
+  0; j < 1; j++) {}`;
+			const expected = `for (
+  let i = 0; // start
+  i < 1; // bound
+  i++
+) {}
+for (
+  let j = 0; // c
+  j < 1;
+  j++
+) {}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'for (\n  // c\n  let i = 0;\n  i < 1;\n  i++\n) {}',
+			'for (\n  let i = 0;\n  // c\n  i < 1;\n  i++\n) {}',
+			'for (let i = 0; i < 1; i++)\n  // c\n  foo();',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
 	});
 
 	// A comment before `else` used to become a trailing comment of the block
@@ -16633,6 +17081,55 @@ item
 			expect(await format('interface I {\n  a:\n    /* c */\n    T;\n}')).toBeWithNewline(
 				'interface I {\n  a: /* c */\n  T;\n}',
 			);
+		});
+	});
+
+	// Like the types above, an expression after `new`, `await`, `yield*`, a
+	// spread's `...`, or a conditional's `?` or `:` prints right after them, so
+	// a block comment on its own line before it stays on their line. Prettier
+	// breaks the line after the comment, and its next pass joins it, which the
+	// formatter did too (#619).
+	describe('block comments on their own line before an expression after a keyword or operator', () => {
+		it.each([
+			['const x = new\n  /* c */\n  Foo();', 'const x = new /* c */ Foo();'],
+			['const x = new\n\n  /* c */\n  Foo();', 'const x = new /* c */ Foo();'],
+			[
+				'async function f() {\n  const x = await\n    /* c */\n    foo();\n}',
+				'async function f() {\n  const x = await /* c */ foo();\n}',
+			],
+			[
+				'function* g() {\n  const x = yield*\n    /* c */\n    a;\n}',
+				'function* g() {\n  const x = yield* /* c */ a;\n}',
+			],
+			['f(...\n  /* c */\n  a);', 'f(.../* c */ a);'],
+			['const x = [ ...\n  /* c */\n  a ];', 'const x = [.../* c */ a];'],
+			['const { ...\n  /* c */\n  a } = x;', 'const { .../* c */ a } = x;'],
+			['function f(...\n  /* c */\n  a) {}', 'function f(.../* c */ a) {}'],
+			['const x = a ?\n  /* c */\n  b : c;', 'const x = a ? /* c */ b : c;'],
+			['const x = a ? b :\n  /* c */\n  c;', 'const x = a ? b : /* c */ c;'],
+			['const x = a ? b : c ?\n  /* c */\n  d : e;', 'const x = a ? b : c ? /* c */ d : e;'],
+			['const x = a ?\n  /* c */\n  b ? d : e : c;', 'const x = a ? (/* c */ b ? d : e) : c;'],
+			['const x = (await\n  /* c */\n  foo()).bar;', 'const x = (await /* c */ foo()).bar;'],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// Prettier's line break after the comment breaks an object around a
+		// spread, and the object then stays expanded. An expression that doesn't
+		// fit after the comment still starts the next line, and so does one
+		// after a line comment. A branch of a conditional in JSX mode starts a
+		// line in its parentheses.
+		it.each([
+			'const x = {\n  .../* c */\n  a,\n};',
+			'const x = {\n  b,\n  .../* c */\n  a,\n};',
+			'const x = new /* c */\nFoo(\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,\n  ccccccccccccc,\n);',
+			'const x = new // c\nFoo();',
+			'const x = a ? (\n  /* c */\n  <div />\n) : null;',
+			'const x = a ? (\n  <div />\n) : (\n  /* c */\n  foo()\n);',
+			'const x = a ? (\n  /* c */\n  b\n) : (\n  <div />\n);',
+			'function* g() {\n  yield (\n    /* c */\n    a\n  );\n}',
+		])('keeps %j like Prettier', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
 		});
 	});
 
@@ -17257,6 +17754,47 @@ item
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// In an element in a `{…}` container, a comment before the first child,
+		// or after a `{…}` child, went to the element's body, which printed it
+		// before the closing tag. It stays before the child after it, as in a
+		// template (#637).
+		it.each([
+			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {" "}\n        /* c */ <i />\n      </div>\n    )}\n  </main>\n}',
+			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {y}\n        /* c */\n        <i />\n      </div>\n    )}\n  </main>\n}',
+			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {y}\n        // c\n        {z}\n      </div>\n    )}\n  </main>\n}',
+			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        /* c */\n        <i />\n      </div>\n    )}\n  </main>\n}',
+			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        // c\n        <i />\n      </div>\n    )}\n  </main>\n}',
+			'export function App() @{\n  <main\n    a={\n      <b>\n        {" "}\n        /* c */ <i />\n      </b>\n    }\n  />\n}',
+			'export function App() @{\n  @switch (x) {\n    @case 1: {\n      <p>\n        {y && (\n          <div>\n            {z}\n            // c\n            <i />\n          </div>\n        )}\n      </p>\n    }\n  }\n}',
+			// After the last child, as before
+			'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {y}\n        // c\n      </div>\n    )}\n  </main>\n}',
+		])(
+			'keeps the comment between the children of the element in a container of %j',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
+
+		it.each([
+			[
+				'export function App() @{\n  <main>{x && <div> /* c */ <i /></div>}</main>\n}',
+				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {" "}\n        /* c */ <i />\n      </div>\n    )}\n  </main>\n}',
+			],
+			[
+				'export function App() @{\n  <main a={<b> /* c */ <i /></b>} />\n}',
+				'export function App() @{\n  <main\n    a={\n      <b>\n        {" "}\n        /* c */ <i />\n      </b>\n    }\n  />\n}',
+			],
+			[
+				'export function App() @{\n  <main>{x && <div>/* c */<i /></div>}</main>\n}',
+				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        /* c */ <i />\n      </div>\n    )}\n  </main>\n}',
+			],
+		])(
+			'formats the comment in the element in a container of %j like in a template',
+			async (source, expected) => {
+				expect(await format(source)).toBeWithNewline(expected);
+			},
+		);
+
 		// A block comment after a child used to print after a space, which was
 		// new text on the child's line (#538)
 		it.each([
@@ -17329,6 +17867,33 @@ item
 			'const a = <div>x{" "} /* c */ /* d */ y</div>;',
 		])('keeps the spaces around the block comment after the {" "} of %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// In an element in a `{…}` container, the parser keeps no text for the
+		// space between a `{" "}` and a block comment that a tag or the closing
+		// tag follows (#667), which then starts a line of its own after the
+		// comment. A space printed before the comment was read as a line's
+		// trailing space on the next format, which dropped it.
+		it.each([
+			[
+				'export function App() @{\n  <main>{x && <div>{" "} /* c */</div>}</main>\n}',
+				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {" "}/* c */\n      </div>\n    )}\n  </main>\n}',
+			],
+			[
+				'export function App() @{\n  <main>{x && <div>a{" "} /* c */</div>}</main>\n}',
+				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        a{" "}/* c */\n      </div>\n    )}\n  </main>\n}',
+			],
+			[
+				'export function App() @{\n  <main>{x && <div>{" "} /* a */ /* b */<i /></div>}</main>\n}',
+				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {" "}/* a *//* b */\n        <i />\n      </div>\n    )}\n  </main>\n}',
+			],
+			// Outside a container the space is text, and stays
+			[
+				'export function App() @{\n  <div>{" "} /* c */<i /></div>\n}',
+				'export function App() @{\n  <div>\n    {" "} /* c */ <i />\n  </div>\n}',
+			],
+		])('prints the block comment after the {" "} of %j against it', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
 		});
 
 		// Like Prettier's `printJsxClosingElement` and
@@ -17984,6 +18549,125 @@ item
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// Prettier prints a comment in the parentheses around the last operand
+		// of a statement's binary or logical value after them, where they print
+		// as nothing or not, and moves it after the `;` on the next pass. The
+		// formatter prints the fixpoint (#622).
+		it.each([
+			['const x = a || (b /* c */);', 'const x = a || b; /* c */'],
+			['x = a + (b /* c */);', 'x = a + b; /* c */'],
+			['x = a * (b + c /* c */);', 'x = a * (b + c); /* c */'],
+			['x = a || (b && c /* c */);', 'x = a || (b && c); /* c */'],
+			['x = a || b && (c /* c */);', 'x = a || (b && c); /* c */'],
+			// Prettier takes the comment out of one pair of parentheses a pass
+			['x = a * (b + (c /* c */));', 'x = a * (b + c); /* c */'],
+			['x = a || (b + (c /* c */));', 'x = a || b + c; /* c */'],
+			// After the parentheses of a JSDoc cast, which keep the ones in them
+			['x = a || (/** @type {T} */ (b) /* c */);', 'x = a || /** @type {T} */ (b); /* c */'],
+			[
+				'const x = (/** @type {T} */ (a || b) /* c */);',
+				'const x = /** @type {T} */ (a || b); /* c */',
+			],
+			[
+				'x = a || /** @type {T} */ (b && (c /* c */));',
+				'x = a || /** @type {T} */ (b && c /* c */);',
+			],
+			[
+				'x = a || /** @type {T} */ (b && (c // c\n));',
+				'x =\n  a ||\n  /** @type {T} */ (\n    b && c // c\n  );',
+			],
+			['x = a || (await b /* c */);', 'x = a || (await b); /* c */'],
+			['x = a ?? (b ? c : d /* c */);', 'x = a ?? (b ? c : d); /* c */'],
+			['const x = (a || b /* c */);', 'const x = a || b; /* c */'],
+			['a || (b /* c */);', 'a || b; /* c */'],
+			['export default a || (b /* c */);', 'export default a || b; /* c */'],
+			['const f = () => a || (b /* c */);', 'const f = () => a || b; /* c */'],
+			['if (a) x = a || (b /* c */);', 'if (a) x = a || b; /* c */'],
+			// A line comment, which Prettier's line break after it breaks the
+			// operator before
+			['const x = a || (b // c\n);', 'const x = a || b; // c'],
+			['x = a + (b // c\n);', 'x = a + b; // c'],
+			['const x = (a || b // c\n);', 'const x = a || b; // c'],
+			['const x = a || (b /* c */ // d\n);', 'const x = a || b; /* c */ // d'],
+			// A `return` or `throw` argument that fits
+			[
+				'function f(c) {\n  return (c === 0x0A/* LF */) || (c === 0x0D/* CR */);\n}',
+				'function f(c) {\n  return c === 0x0a /* LF */ || c === 0x0d; /* CR */\n}',
+			],
+			[
+				'function f() {\n  return (a || b /* c */);\n}',
+				'function f() {\n  return a || b; /* c */\n}',
+			],
+			[
+				'function f() {\n  throw a || (b /* c */);\n}',
+				'function f() {\n  throw a || b; /* c */\n}',
+			],
+			[
+				'function f() {\n  return (a || b /* c */) /* d */;\n}',
+				'function f() {\n  return a || b; /* c */ /* d */\n}',
+			],
+			[
+				'function f() {\n  if (x) return a || (b /* c */);\n  else return 1;\n}',
+				'function f() {\n  if (x) return a || b; /* c */\n  else return 1;\n}',
+			],
+			// A line comment breaks the parentheses, outside the argument
+			[
+				'function f() {\n  return a || (b // c\n  );\n}',
+				'function f() {\n  return (\n    a || b // c\n  );\n}',
+			],
+			[
+				'function f() {\n  return a || (b /* c */ // d\n  );\n}',
+				'function f() {\n  return (\n    a || b /* c */ // d\n  );\n}',
+			],
+			// Without a `;`, at the end of the statement, where the `;` goes (#672)
+			['const x = a || (b /* c */)\nfoo()', 'const x = a || b; /* c */\nfoo();'],
+			['const x = (b /* c */)\nfoo()', 'const x = b; /* c */\nfoo();'],
+			['function f() {\n  return (b /* c */)\n}', 'function f() {\n  return b; /* c */\n}'],
+			['const x = a || (b // c\n)', 'const x = a || b; // c'],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			// In the parentheses the argument breaks in, like Prettier
+			'function is_WS_OR_EOL(c) {\n  return (\n    c === 0x09 /* Tab */ ||\n    c === 0x20 /* Space */ ||\n    c === 0x0a /* LF */ ||\n    c === 0x0d /* CR */\n  );\n}',
+			'function f() {\n  return (\n    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||\n    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb /* c */\n  ); /* d */\n}',
+			// In parentheses that print, around an operand before the last one
+			'x = a * (b + c) /* c */ + d;',
+			// In a JSDoc cast's parentheses
+			'x = a || /** @type {T} */ (b /* c */);',
+			'function f() {\n  return /** @type {T} */ (a || b /* c */);\n}',
+			'x = a || (b && /** @type {T} */ (c /* c */));',
+			'x = a || /** @type {T} */ (b && c /* c */);',
+			'x = (a && /** @type {T} */ (b /* c */)) || d;',
+			'((a) => /** @type {T} */ (b /* c */))(1);',
+			'x = !(a || b /* c */);',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Prettier prints the block comments in the parentheses of a
+		// declarator's or an assignment's sequence, and breaks them with the
+		// line comment after them, which its next pass moves after the `;`.
+		// The formatter prints the fixpoint (#624).
+		it.each([
+			['const x = (a, b /* c */ // d\n);', 'const x = (a, b /* c */); // d'],
+			['const x = (a, b /* c */ /* e */ // d\n);', 'const x = (a, b /* c */ /* e */); // d'],
+			['x = (a, b /* c */ // d\n);', 'x = (a, b /* c */); // d'],
+			['const x = (a, b.c /* c */ // d\n);', 'const x = (a, b.c /* c */); // d'],
+		])('formats %j in one pass', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const x = (a = b /* c */); // d',
+			'(a, b); /* c */ // d',
+			'const f = () => (\n  a,\n  b /* c */ // d\n);',
+			'function f() {\n  return (\n    a,\n    b /* c */ // d\n  );\n}',
+		])('keeps %j like Prettier', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
 		// Like Prettier, which measures from the end of the statement, the
 		// blank line after a statement stays when the comment that moves after
 		// its `;` was written on a line before it. It used to measure from the
@@ -17993,6 +18677,86 @@ item
 			['(foo() /* c */\n);\n\nb();', 'foo(); /* c */\n\nb();'],
 			['({ a } = c /* c */\n);\n\nb();', '({ a } = c); /* c */\n\nb();'],
 		])('keeps the blank line after %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// A `continue`, `break`, `debugger`, or `return` that is only its keyword
+		// holds the comment before its `;` itself. The comment used to lead the
+		// next statement (#628).
+		it.each([
+			['for (;;) continue // comment\n;\nfoo();', 'for (;;) continue; // comment\nfoo();'],
+			['while (a) break /* comment */\n;\nfoo();', 'while (a) break; /* comment */\nfoo();'],
+			['for (;;) continue // comment\n;\nfoo() // x', 'for (;;) continue; // comment\nfoo(); // x'],
+			[
+				'for (;;) {\n  continue // comment\n  ;\n  foo();\n}',
+				'for (;;) {\n  continue; // comment\n  foo();\n}',
+			],
+			[
+				'function f() {\n  return // c\n  ;\n  foo();\n}',
+				'function f() {\n  return; // c\n  foo();\n}',
+			],
+			['debugger /* c */ /* d */\n;\nfoo();', 'debugger; /* c */ /* d */\nfoo();'],
+			['for (;;) continue /* c */;\nfoo();', 'for (;;) continue; /* c */\nfoo();'],
+			[
+				'switch (a) {\n  case 1:\n    break // c\n    ;\n  case 2:\n}',
+				'switch (a) {\n  case 1:\n    break; // c\n  case 2:\n}',
+			],
+			[
+				'while (a) break /* comment */\n  /* d */ ;\nfoo();',
+				'while (a) break; /* comment */\n/* d */ foo();',
+			],
+			['do continue // c\n; while (a);', 'do\n  continue; // c\nwhile (a);'],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['for (;;) continue // comment\n;', 'for (;;) continue; // comment'],
+			['a: for (;;) break a // c\n;\nfoo();', 'a: for (;;) break a; // c\nfoo();'],
+			['while (a) break\n  /* comment */\n  ;\nfoo();', 'while (a) break;\n/* comment */\nfoo();'],
+		])('formats %j like Prettier, as before', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// Like Prettier's `printTrailingComment`, a comment after a line comment
+		// goes on a line of its own, even when it shared its line with the
+		// `;`, and a block comment after one keeps its place. The line comment
+		// used to take in the comment after it, and a block comment moved before
+		// it (#670).
+		it.each([
+			['foo() // a\n; // b\nbar();', 'foo(); // a\n// b\nbar();'],
+			[
+				'function f() {\n  return x // a\n  ; // b\n}',
+				'function f() {\n  return x; // a\n  // b\n}',
+			],
+			['let x = 1 // a\n; /* b */', 'let x = 1; // a\n/* b */'],
+			['for (;;) continue // a\n; // b\nfoo();', 'for (;;) continue; // a\n// b\nfoo();'],
+		])('formats %j like Prettier', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		// A block comment after one on a line of its own followed it on its
+		// line, ahead of it, and ended it early, so the output didn't parse.
+		// Prettier keeps touching JSDoc comments together (#689).
+		it.each([
+			[
+				'const o = {\n  a: 1\n  /** b *//**\n  * c\n  */\n};',
+				'const o = {\n  a: 1,\n  /** b */ /**\n   * c\n   */\n};',
+			],
+			['function f() {}\n/** a\n *//** b\n */', 'function f() {}\n/** a\n */ /** b\n */'],
+			[
+				'const o = {\n  a: 1,\n  /** b *//** c */\n};',
+				'const o = {\n  a: 1,\n  /** b */ /** c */\n};',
+			],
+		])('keeps the comments of %j in order', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			['let x = 1 /* a */ // b\n;', 'let x = 1; /* a */ // b'],
+			['foo() /* a */ /* b */;', 'foo(); /* a */ /* b */'],
+			['foo(); // a\n// b', 'foo(); // a\n// b'],
+		])('keeps the comments of %j on their lines like Prettier', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
 		});
 
@@ -19429,6 +20193,176 @@ const [
 				expect(await format(source)).toBeWithNewline(source);
 			},
 		);
+
+		// Like Prettier's `handleAssignmentLikeComments`, a comment that ends its
+		// line before the value of a type alias, or before an object, array,
+		// template, or type literal value of a declaration or assignment, leads
+		// the value, which moves below the `=` with it. A line comment there
+		// used to stay on the `=` line (#598).
+		it.each([
+			['type A = // Comment\n  B | C;', 'type A =\n  // Comment\n  B | C;'],
+			['const a = // Comment\n  { a: 1 };', 'const a =\n  // Comment\n  { a: 1 };'],
+			['b = // Comment\n  [1, 2];', 'b =\n  // Comment\n  [1, 2];'],
+			['a.b += // c\n  `x`;', 'a.b +=\n  // c\n  `x`;'],
+			['const t = // c\n  tag`x`;', 'const t =\n  // c\n  tag`x`;'],
+			['let c: T = // c\n  { a: 1 };', 'let c: T =\n  // c\n  { a: 1 };'],
+			['type D<T> = // c\n  { a: T };', 'type D<T> =\n  // c\n  { a: T };'],
+			['const e = /* a */ // b\n  { a: 1 };', 'const e =\n  /* a */ // b\n  { a: 1 };'],
+			['type F = /* a */ // b\n  B | C;', 'type F =\n  /* a */ // b\n  B | C;'],
+			// Before the `=` too. Prettier's first format of the type aliases
+			// leaves the comment after the `=`, and its next format moves it below.
+			['let obj // Comment\n= { a: 1 };', 'let obj =\n  // Comment\n  { a: 1 };'],
+			['x // c\n= [1];', 'x =\n  // c\n  [1];'],
+			['type G // Comment\n= B;', 'type G =\n  // Comment\n  B;'],
+			['type H // c\n  <T> = T;', 'type H<T> =\n  // c\n  T;'],
+		])('moves a comment at the end of the = line below it in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		// Like Prettier, a JSDoc cast value isn't an object for this: its
+		// parentheses are a node of their own in Prettier's `babel` parser
+		it.each([
+			'const a = // c\n  /** @type {X} */ ({});',
+			'x = // c\n  /** @type {X} */ ([]);',
+			'type A = /* c */ B;',
+			'let obj =\n  // c\n  { a: 1 };',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Prettier's default gives a line comment at the end of the `=` line
+		// before any other value to the left side, which prints it at the end of
+		// the statement when the value stays on the `=` line. A block comment
+		// there leads the value, so it prints after a line comment beside it.
+		// Both used to lead the value in their written order and stay on the
+		// `=` line (#593).
+		it.each([
+			['const a = // Comment\n  b || c;', 'const a = b || c; // Comment'],
+			['const a = // c\n  "str";', 'const a = "str"; // c'],
+			['a = // c\n  b || c;', 'a = b || c; // c'],
+			['const test = /* a */ // b\n  value;', 'const test = // b\n  /* a */ value;'],
+			['let a: number = // c\n  1, b = 2;', 'let a: number = 1, // c\n  b = 2;'],
+			['const h = // c\n  class {};', 'const h = class {}; // c'],
+		])('trails the left side with a line comment after the = in %j', async (input, expected) => {
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it.each([
+			'const f = // c\n  () => {};',
+			'const g = // c\n  function () {};',
+			'const n = // c\n  new Foo(a);',
+			'let obj = // c\n  foo();',
+		])('keeps %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier's `handlePropertyComments`, a comment at the end of a
+		// line inside an object property leads the property, and like its
+		// default, one after a class field's `=` trails the key. Both used to
+		// lead the value (#593).
+		it('moves a comment at the end of the line after a key before the key or the =', async () => {
+			const input = `const o = {
+  key: /* note */
+    compute(aaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, ccccccccccccc),
+  other: // note
+    value,
+  [computed]: // note
+    { a: 1 },
+  cast: // note
+    /** @type {X} */ (b),
+};
+const { a: // c
+  b = 1 } = x;
+class A {
+  field = /* note */
+    value;
+  f2 = /* note */ // n2
+    value;
+  f3 = // note
+    b || c;
+  static readonly f4 = // note
+    1;
+}`;
+			const expected = `const o = {
+  /* note */
+  key: compute(
+    aaaaaaaaaaaaaaaaaaaaaaaaa,
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+    ccccccccccccc,
+  ),
+  // note
+  other: value,
+  // note
+  [computed]: { a: 1 },
+  // note
+  cast: /** @type {X} */ (b),
+};
+const {
+  // c
+  a: b = 1,
+} = x;
+class A {
+  field /* note */ = value;
+  f2 /* note */ = // n2
+    value;
+  f3 = b || c; // note
+  static readonly f4 = 1; // note
+}`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps the comments in object properties and class fields that Prettier keeps', async () => {
+			const source = `const o = {
+  k: /* c */ v,
+  k2 /* c */: v,
+  k3:
+    // c
+    v,
+  m() {}, // c
+};
+class A {
+  field = // note
+    value;
+  f2 = // note
+    { a: 1 };
+  f3 =
+    // note
+    value;
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier's output for the same TSX, an element after a line
+		// comment at the end of the `=` line prints below it, in parentheses
+		// when it breaks. The comment used to move into the parentheses.
+		it('keeps a line comment on the = line before an element', async () => {
+			const source = `function App() {
+  const el = // c
+    (
+      <div>
+        <span />
+      </div>
+    );
+  const e2 = // c
+    <div />;
+  return el;
+}`;
+			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// Like Prettier's `printCallee`, the line ends after a callee or its type
+		// arguments with a line comment. The comment used to move after the
+		// arguments (#658).
+		it.each([
+			'foo // c\n(a);',
+			'const x = require // c\n("x");',
+			'new Foo<T> // c\n(a);',
+			'foo<T> // c\n(a);',
+			'export default foo // c\n(a);',
+			'const x =\n  foo<T> // c\n  (a);',
+		])('keeps the line comment after the callee in %j', async (source) => {
+			expect(await format(source)).toBeWithNewline(source);
+		});
 	});
 
 	// Static blocks, namespaces, and code blocks are statement lists like a
@@ -19821,6 +20755,30 @@ export const x = Alias.answer;`;
 			await expectUnchanged('import fs = require(/* why */ "fs");');
 		});
 
+		// Like Prettier, the module name of a `require(…)` lays out like a call
+		// argument. A comment on its own line used to stay after the `(`, with
+		// the name unindented, and a line comment after the name moved past the
+		// `;` (#659).
+		it('breaks the parentheses of a require around a comment like call arguments', async () => {
+			const input = `import A = require(
+  /* c */
+  "a");
+import B = require(
+  "b" // c
+);`;
+			const expected = `import A = require(
+  /* c */
+  "a"
+);
+import B = require(
+  "b" // c
+);`;
+			expect(await format(input)).toBeWithNewline(expected);
+			await expectUnchanged(
+				'import C = require("./long/long/long/long/long/long/long/long/long/long/long/path/to/module");',
+			);
+		});
+
 		it('follows quote and semicolon options', async () => {
 			const result = await format(`import fs = require("fs");\nexport = fs;`, {
 				singleQuote: true,
@@ -20016,6 +20974,54 @@ import c from "./c" with { type: "json" };`;
 			await expectUnchanged(`import a from "./a.json" assert { type: "json" };
 import b from "./b" with {};
 import f from "./f" /* c */ with { type: "json" };`);
+		});
+
+		// Like Prettier, an import attribute prints as an assignment, so a
+		// comment on its own line before the value moves below the `:` with the
+		// value, and one at the end of the line after the `:` trails the key.
+		// The first used to move to the key's line, with the value unindented,
+		// and the second to stay there (#604).
+		it('moves the comments between an import attribute key and its value like Prettier', async () => {
+			const input = `import a from "./a.json" with {
+  type:
+  // comment
+  "json"
+};
+import b from "./b.json" with {
+  type:
+  /* comment */
+  "json"
+};
+import c from "./c.json" with {
+  type: // comment
+  "json"
+};
+import d from "./d.json" with {
+  type: /* comment */
+  "json"
+};`;
+			const expected = `import a from "./a.json" with {
+  type:
+    // comment
+    "json",
+};
+import b from "./b.json" with {
+  type:
+    /* comment */
+    "json",
+};
+import c from "./c.json" with {
+  type: "json", // comment
+};
+import d from "./d.json" with {
+  type /* comment */: "json",
+};`;
+			expect(await format(input)).toBeWithNewline(expected);
+		});
+
+		it('keeps a comment between an import attribute key and its value on their line', async () => {
+			await expectUnchanged(`import a from "./a.json" with { type: /* c */ "json" };
+import b from "./b.json" with { type /* c */: "json" };`);
 		});
 
 		it('keeps an alias that repeats the name', async () => {
@@ -21659,6 +22665,181 @@ export { theme };`;
 </style>;`;
 			const result = await format(input);
 			expect(result).toBeWithNewline(expected);
+		});
+	});
+
+	// `abstract` before a line break after `export default` is the exported
+	// value, and the class on the next line a declaration of its own (#608).
+	describe('`abstract` before a line break after `export default`', () => {
+		it.each([
+			['export default abstract\nclass A {}', 'export default abstract;\nclass A {}\n'],
+			[
+				'declare module "m" {\n  export default abstract\n  class A {}\n}',
+				'declare module "m" {\n  export default abstract;\n  class A {}\n}\n',
+			],
+		])('formats %j like Prettier', async (input, expected) => {
+			const output = await format(input);
+			expect(output).toBe(expected);
+			expect(output).toBe(await prettier.format(input, { parser: 'typescript' }));
+			expect(await format(output)).toBe(output);
+		});
+
+		// #651: `abstract` before a function or variable used to be left out.
+		it.each(['export abstract function f() {}', 'export abstract const x = 1;'])(
+			'refuses %j',
+			async (input) => {
+				await expect(format(input)).rejects.toThrow(
+					"'abstract' modifier can only appear on a class, method, or property declaration.",
+				);
+			},
+		);
+	});
+
+	// Declarations that TypeScript reads and the parser failed on: `abstract
+	// declare class` (#697), `export default interface` with the name on the
+	// next line (#698), and a type alias named `as` or `satisfies` (#699).
+	describe('declarations after TypeScript keywords', () => {
+		it.each([
+			['abstract declare class A {}', 'declare abstract class A {}\n'],
+			['export abstract declare class A {}', 'export declare abstract class A {}\n'],
+			[
+				`export default interface
+I {}`,
+				'export default interface I {}\n',
+			],
+			['type as = 1;', 'type as = 1;\n'],
+			['type satisfies<T> = T;', 'type satisfies<T> = T;\n'],
+		])('formats %j like Prettier', async (input, expected) => {
+			const output = await format(input);
+			expect(output).toBe(expected);
+			expect(output).toBe(await prettier.format(input, { parser: 'typescript' }));
+		});
+
+		// #697: `abstract` before an interface was left out. A global augmentation
+		// after `export` (#700) is an error that TypeScript reports from its
+		// checker, which a strict parse throws.
+		it.each([
+			[
+				'export abstract interface I {}',
+				"'abstract' modifier can only appear on a class, method, or property declaration.",
+			],
+			[
+				'abstract function f() {}',
+				"'abstract' modifier can only appear on a class, method, or property declaration.",
+			],
+			[
+				'export global {}',
+				"'export' modifier cannot be applied to ambient modules and module augmentations since they are always visible.",
+			],
+		])('refuses %j', async (input, message) => {
+			await expect(format(input)).rejects.toThrow(message);
+		});
+	});
+
+	// Type arguments on the line after a superclass (#545), right after a class
+	// or function expression (#578), and a `const` type parameter on an object
+	// method (#631) failed to parse; the output of the first two failed on the
+	// next pass. They print as Prettier's `typescript` parser prints them.
+	describe('text keeps its characters as written', () => {
+		// A `>` in an element in a container dropped the text before it, or
+		// failed after a child container (#694). In an element in a spread
+		// argument or an unbraced attribute value in a container, character
+		// references were printed decoded: `&#123;x&#125;` became `{x}` (#693).
+		// Since #656 those are template text; only an element in a dynamic tag
+		// name is read that way. A text prints from its `raw`, the text as
+		// written.
+		it.each([
+			[
+				'a `>` in an element in a container',
+				`export function App() @{
+  <main>{c && <b>a > b</b>}</main>
+}
+`,
+			],
+			[
+				'a `>` after a child container',
+				`export function App() @{
+  <main>{c && <b>{y} a > b</b>}</main>
+}
+`,
+			],
+			[
+				'an arrow in an element in a container',
+				`export function App() @{
+  <main>{c && <b>a => b</b>}</main>
+}
+`,
+			],
+			[
+				"references in a spread attribute's argument",
+				`export function App() @{
+  <div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />
+}
+`,
+			],
+			[
+				'references in an unbraced attribute value in a container',
+				`export function App() @{
+  <main>{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}</main>
+}
+`,
+			],
+			[
+				"a `>` in a spread attribute's argument",
+				`export function App() @{
+  <div {...{ title: <b>a > b</b> }} />
+}
+`,
+			],
+			[
+				'a `>` first in an unbraced attribute value in a container',
+				`export function App() @{
+  <main>{c && <div title=<b>> b &#123;x&#125;</b> />}</main>
+}
+`,
+			],
+			[
+				'references in an element in a dynamic tag name',
+				`export function App() @{
+  <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} />
+}
+`,
+			],
+			[
+				'references and a comment in template text',
+				`export function App() @{
+  <p>a &amp; b /* c */ &#123;x&#125;</p>
+}
+`,
+			],
+		])('keeps the text of %s', async (_label, source) => {
+			expect(await format(source)).toBe(source);
+		});
+	});
+
+	describe('type arguments and parameters the parser used to reject', () => {
+		it.each([
+			['class A extends B\n<T> {}', 'class A extends B<T> {}\n'],
+			[
+				'class A extends B.C\n  <T, U>\n  implements I\n{}',
+				'class A extends B.C<T, U> implements I {}\n',
+			],
+			['((class<T> { x?: T })<string>).name', '(class<T> {\n  x?: T;\n}<string>).name;\n'],
+			['const A = class<T> { x?: T }<string>;', 'const A = class<T> {\n  x?: T;\n}<string>;\n'],
+			[
+				'const f = function <T>(x: T) { return x; }<string>(1);',
+				'const f = (function <T>(x: T) {\n  return x;\n})<string>(1);\n',
+			],
+			['const v = new class<T> {}<string>();', 'const v = new (class<T> {})<string>();\n'],
+			[
+				'const o = { m<const T>(x: T) { return x; } };',
+				'const o = {\n  m<const T>(x: T) {\n    return x;\n  },\n};\n',
+			],
+		])('formats %j like Prettier', async (input, expected) => {
+			const output = await format(input);
+			expect(output).toBe(expected);
+			expect(output).toBe(await prettier.format(input, { parser: 'typescript' }));
+			expect(await format(output)).toBe(output);
 		});
 	});
 });

@@ -52,6 +52,61 @@ function pickBySwitch(kind: string) {
 	return null;
 }
 
+function SetupText(props: { kind: string }) @{
+	// prettier-ignore
+	const afterOpen = <span class="ws-setup-after-open"> 1</span>;
+	// prettier-ignore
+	const afterClose = <span class="ws-setup-after-close"><b>2</b> 3</span>;
+	// prettier-ignore
+	const beforeTag = <span class="ws-setup-before-tag">4<b /></span>;
+	// prettier-ignore
+	const afterContainer = <span class="ws-setup-after-container">{'5'} 6</span>;
+	// prettier-ignore
+	const nbspOwnLine = <span class="ws-setup-nbsp-own-line">
+		<b>x</b>
+		 
+		<i />
+	</span>;
+	function inFunction() {
+		// prettier-ignore
+		return <span class="ws-setup-function">Hello<b /> 2</span>;
+	}
+	// prettier-ignore
+	const inArrow = () => <span class="ws-setup-arrow"><b>1</b> 2</span>;
+	const inIf = (
+		@if (props.kind === 'a') {
+			// prettier-ignore
+			<span class="ws-setup-if">Hello<b /> 2</span>
+		}
+	);
+	const inCodeBlock = (
+		@{
+			// prettier-ignore
+			const inner = <span class="ws-setup-code-block"><b>1</b> 2</span>;
+			<>{inner}</>
+		}
+	);
+
+	<div>
+		{afterOpen}
+		{afterClose}
+		{beforeTag}
+		{afterContainer}
+		{nbspOwnLine}
+		{inFunction()}
+		{inArrow()}
+		{inIf}
+		{inCodeBlock}
+		@switch (props.kind) {
+			@case 'a': {
+				// prettier-ignore
+				const inCase = <span class="ws-case-setup">Hello<b /> 2</span>;
+				<>{inCase}</>
+			}
+		}
+	</div>
+}
+
 export function JsxTextWhitespaceApp() @{
 	const show = true;
 
@@ -117,6 +172,24 @@ export function JsxTextWhitespaceApp() @{
 		<SwitchText kind="a" />
 		<SwitchText kind="z" />
 		<div>{pickBySwitch('a')}</div>
+		// An element in a setup statement reads its text as anywhere else too
+		<SetupText kind="a" />
+		// So does an element in a spread attribute's argument, and one that is an
+		// attribute value without braces: its comments are comments, and its `@if`
+		// a directive, as in a braced value
+		// prettier-ignore
+		<Slot {...{ content: <span class="ws-spread-comment"><b>t</b> /* c */2</span> }} />
+		// prettier-ignore
+		<Slot {...{ content: <span class="ws-spread-line-comment"><b>t</b> // c
+			two</span> }} />
+		// prettier-ignore
+		<Slot {...(show ? { content: <span class="ws-spread-directive">@if (show) { <b>1</b> } 2</span> } : { content: null })} />
+		// prettier-ignore
+		<Slot content=<span class="ws-unbraced-comment"><b>t</b> /* c */2</span> />
+		// prettier-ignore
+		<Slot content=<span class="ws-unbraced-directive">@if (show) { <b>1</b> } 2</span> />
+		// prettier-ignore
+		<Slot content={<span class="ws-braced-directive">@if (show) { <b>1</b> } 2</span>} />
 	</>
 }
 
@@ -174,6 +247,56 @@ export const jsx_text_whitespace_cases = [
 		'<span><b>1</b></span> 2',
 	],
 	['text before a tag in a switch case', '.ws-js-switch', ' 1<b></b>'],
+	['a space after an opening tag in a setup statement', '.ws-setup-after-open', ' 1'],
+	['a space after a closing tag in a setup statement', '.ws-setup-after-close', '<b>2</b> 3'],
+	['text before a tag in a setup statement', '.ws-setup-before-tag', '4<b></b>'],
+	['a space after a container in a setup statement', '.ws-setup-after-container', '5 6'],
+	[
+		'text before a tag in a function declared in a setup statement',
+		'.ws-setup-function',
+		'Hello<b></b> 2',
+	],
+	['a space after a closing tag in an arrow in a setup statement', '.ws-setup-arrow', '<b>1</b> 2'],
+	['text before a tag in an @if in a setup statement', '.ws-setup-if', 'Hello<b></b> 2'],
+	[
+		'a space after a closing tag in a setup statement of a @{ … } in a setup statement',
+		'.ws-setup-code-block',
+		'<b>1</b> 2',
+	],
+	['text before a tag in a setup statement of an @case', '.ws-case-setup', 'Hello<b></b> 2'],
+	[
+		"a block comment in an element in a spread attribute's argument",
+		'.ws-spread-comment',
+		'<b>t</b> 2',
+	],
+	[
+		"a line comment in an element in a spread attribute's argument",
+		'.ws-spread-line-comment',
+		'<b>t</b>two',
+	],
+	[
+		'a block comment in an element that is an attribute value without braces',
+		'.ws-unbraced-comment',
+		'<b>t</b> 2',
+	],
+] as const;
+
+/**
+ * Markup in a spread attribute's argument or in an attribute value without
+ * braces, and the same markup in a braced value, which it renders like. A
+ * directive renders differently on each target (Vue adds an anchor comment).
+ */
+export const jsx_text_braced_value_cases = [
+	[
+		"an @if in an element in a spread attribute's argument",
+		'.ws-spread-directive',
+		'.ws-braced-directive',
+	],
+	[
+		'an @if in an element that is an attribute value without braces',
+		'.ws-unbraced-directive',
+		'.ws-braced-directive',
+	],
 ] as const;
 
 /**
@@ -208,4 +331,105 @@ export const jsx_text_nbsp_cases = [
 		'<b>x</b>&nbsp;<i></i>',
 		'<b>x</b><i></i>',
 	],
+	[
+		'a non-breaking space on its own line in a setup statement',
+		'.ws-setup-nbsp-own-line',
+		'<b>x</b>&nbsp;<i></i>',
+		'<b>x</b><i></i>',
+	],
+] as const;
+
+function SwitchCharacters(props: { kind: string }) @{
+	@switch (props.kind) {
+		@case 'a': {
+			<span class="ch-switch">a > b</span>
+		}
+	}
+}
+
+// The cases select the element in a container: the targets render the
+// container's own slot differently.
+function charactersInFunction(show: boolean) {
+	return <span>{show && <b class="ch-function">a > b</b>}</span>;
+}
+
+/**
+ * Text with characters that JSX text can't hold, or with character
+ * references, in each place an element's text is read. What renders is what
+ * the same TSX renders, with a `>` read as `&gt;`.
+ */
+export function JsxTextCharactersApp() @{
+	const show = true;
+	const setup = <span class="ch-setup">{'1'} a > b</span>;
+
+	<>
+		<span class="ch-template">1 < 2 > 0 &amp;lt; &#123;x&#125; &gt;</span>
+		<span class="ch-template-after-tag">
+			<b />a > b
+		</span>
+		<div>{show && <span class="ch-container">a > b</span>}</div>
+		<div>{show && <span class="ch-container-first">> b</span>}</div>
+		<div>{show && <span class="ch-container-arrow">a => b</span>}</div>
+		<div>
+			{show && (
+				<span class="ch-container-after-tag">
+					<b />a > b
+				</span>
+			)}
+		</div>
+		<div>{show && <span class="ch-container-after-container">{'1'} a > b</span>}</div>
+		<Slot content={<span class="ch-attr">a > b &#123;x&#125;</span>} />
+		<Slot content=<span class="ch-attr-unbraced">> b &#123;x&#125; &amp;lt;</span> />
+		<div>
+			{show && (
+				<Slot
+					content=<span class="ch-attr-unbraced-container">&#123;x&#125; &amp;lt; &gt; a > b</span>
+				/>
+			)}
+		</div>
+		<Slot {...{ content: <span class="ch-spread">&#123;x&#125; &amp;lt; &gt; a > b</span> }} />
+		<div>
+			@if (show) {
+				<span class="ch-if">a > b</span>
+			}
+		</div>
+		<div>
+			@for (const item of ['a']) {
+				<span class="ch-for">{item} > b</span>
+			}
+		</div>
+		<SwitchCharacters kind="a" />
+		<div>{setup}</div>
+		<div>{charactersInFunction(show)}</div>
+	</>
+}
+
+/**
+ * The text each case renders.
+ */
+export const jsx_text_character_cases = [
+	['`<`, `>`, and character references in a template', '.ch-template', '1 < 2 > 0 &lt; {x} >'],
+	['a `>` after a tag in a template', '.ch-template-after-tag', 'a > b'],
+	['a `>` in an element in a container', '.ch-container', 'a > b'],
+	['a `>` first in an element in a container', '.ch-container-first', '> b'],
+	['an arrow in an element in a container', '.ch-container-arrow', 'a => b'],
+	['a `>` after a tag in an element in a container', '.ch-container-after-tag', 'a > b'],
+	[
+		'a `>` after a child container in an element in a container',
+		'.ch-container-after-container',
+		'1 a > b',
+	],
+	['a `>` and a reference in an attribute value', '.ch-attr', 'a > b {x}'],
+	['a `>` and references in an unbraced attribute value', '.ch-attr-unbraced', '> b {x} &lt;'],
+	[
+		'references and a `>` in an unbraced attribute value in a container',
+		'.ch-attr-unbraced-container',
+		'{x} &lt; > a > b',
+	],
+	["references and a `>` in a spread attribute's argument", '.ch-spread', '{x} &lt; > a > b'],
+	['a `>` in an @if body', '.ch-if', 'a > b'],
+	['a `>` in an @for body', '.ch-for', 'a > b'],
+	['a `>` in an @switch case', '.ch-switch', 'a > b'],
+	['a `>` in a setup statement', '.ch-setup', '1 a > b'],
+	['a `>` in a container in a function', '.ch-function', 'a > b'],
 ] as const;

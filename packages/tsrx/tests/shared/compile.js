@@ -322,6 +322,27 @@ export function App() @{
 			expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
 		});
 
+		it('gives a `@for` loop with an empty declaration list no parameter', () => {
+			// Loose mode parses `const` with no name (TS1123), as while it is typed.
+			const result = compile_to_volar_mappings(
+				`export function App({ items }: { items: string[] }) @{
+					<ul>
+						@for (const of items) {
+							<li />
+						}
+					</ul>
+				}`,
+				'App.tsrx',
+				{ loose: true },
+			);
+
+			expect(result.errors.map((error) => error.message)).toEqual([
+				'Variable declaration list cannot be empty.',
+			]);
+			expect(result.code).toContain('() =>');
+			expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+		});
+
 		it('preserves deferred imports in type-only output', () => {
 			const result = compile_to_volar_mappings(
 				`import defer * as feature from './feature.js';
@@ -404,6 +425,19 @@ export function App() @{
 				name: 'a partially typed `@if`',
 				source: 'export function App() {\n\t<>\n\t\t@if\n\t</>\n}',
 			},
+			// The output writes a `>` or `<` in text as a character reference
+			{
+				name: 'a `@`-leading child with a `>`',
+				source: `export function App() {
+	<div>@if > x</div>
+}`,
+			},
+			{
+				name: 'a `@`-leading child with a `<`',
+				source: `export function App() {
+	<div>@if < x</div>
+}`,
+			},
 		]) {
 			it(`emits a well-formed completion-only mapping for ${name}`, () => {
 				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
@@ -428,6 +462,39 @@ export function App() @{
 				}
 			});
 		}
+
+		it('maps a `@`-leading child with a `>` after an `@switch` to its own text', () => {
+			// The text's start also maps into the `@switch`'s output, so the mapping is
+			// found by its text, which stops before the `>` that the output escapes.
+			const source = `export function App() {
+	<div>
+		@switch (k) {
+			@case 1: {
+				<b />
+			}
+		}
+		@if > x
+	</div>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const cursor = source.indexOf('@if') + 1;
+
+			const covering = result.mappings.filter(
+				(m) =>
+					m.data?.completion &&
+					cursor >= m.sourceOffsets[0] &&
+					cursor <= m.sourceOffsets[0] + m.lengths[0],
+			);
+
+			expect(covering.length).toBeGreaterThan(0);
+			for (const m of covering) {
+				const mapped = source.slice(m.sourceOffsets[0], m.sourceOffsets[0] + m.lengths[0]);
+				expect(
+					result.code.slice(m.generatedOffsets[0], m.generatedOffsets[0] + m.generatedLengths[0]),
+				).toBe(mapped);
+				expect(mapped.trim()).toBe('@if');
+			}
+		});
 
 		it('does not map ordinary template text (no stray completions in plain text)', () => {
 			const source = 'export function App() {\n\t<div>hello world</div>\n}';
@@ -2089,6 +2156,139 @@ export function App() @{
 		});
 	});
 
+	describe(`[${name}] characters that JSX text can't hold`, () => {
+		/**
+		 * @param {string} body
+		 * @param {string} [before]
+		 */
+		const component = (body, before = '') => `export function App() @{
+	${before}<main>${body}</main>
+}`;
+
+		// A `>` is text in a template, as a `<` that can't start a tag is. JSX
+		// rejects both in text (TS1382), so each is written as a character
+		// reference. In a `{…}` container, the text before a `>` was dropped
+		// when it followed a tag, and after a child container the `>` failed
+		// (#694).
+		/** @type {Array<[string, string, string]>} */
+		const greater_than = [
+			['a template', component('<b>a > b</b>'), '<b>a &gt; b</b>'],
+			['a template after a tag', component('<b><i />a > b</b>'), '<i />a &gt; b</b>'],
+			['a container', component('{c && <b>a > b</b>}'), '<b>a &gt; b</b>'],
+			['a container, first', component('{c && <b>> b</b>}'), '<b>&gt; b</b>'],
+			['a container, an arrow', component('{c && <b>a => b</b>}'), '<b>a =&gt; b</b>'],
+			['a container after a tag', component('{c && <b><i />a > b</b>}'), '<i />a &gt; b</b>'],
+			[
+				'a container after a child container',
+				component('{c && <b>{y} a > b</b>}'),
+				'{y} a &gt; b</b>',
+			],
+			['an attribute value', component('<div title={<b>a > b</b>} />'), '<b>a &gt; b</b>'],
+			['an unbraced attribute value', component('<div title=<b>a > b</b> />'), '<b>a &gt; b</b>'],
+			[
+				'an unbraced attribute value, first',
+				component('<div title=<b>> b</b> />'),
+				'<b>&gt; b</b>',
+			],
+			[
+				'an unbraced attribute value in a container',
+				component('{c && <div title=<b>a > b</b> />}'),
+				'<b>a &gt; b</b>',
+			],
+			[
+				"a spread attribute's argument",
+				component('<div {...{ title: <b>a > b</b> }} />'),
+				'<b>a &gt; b</b>',
+			],
+			['an @if body', component('@if (c) { <b>a > b</b> }'), '<b>a &gt; b</b>'],
+			[
+				'an @if body in a container',
+				component('{c && <p>@if (d) { <b>a > b</b> }</p>}'),
+				'<b>a &gt; b</b>',
+			],
+			[
+				'an @switch body',
+				component('@switch (c) { @case 1: { <b>a > b</b> } }'),
+				'<b>a &gt; b</b>',
+			],
+			['an @for body', component('@for (const i of c) { <b>a > b</b> }'), '<b>a &gt; b</b>'],
+			[
+				'a setup statement',
+				component(
+					'{v}',
+					`const v = <b>{y} a > b</b>;
+	`,
+				),
+				'{y} a &gt; b</b>',
+			],
+			[
+				'a function',
+				`export function App() {
+	return <main>{c && <b>a > b</b>}</main>;
+}`,
+				'<b>a &gt; b</b>',
+			],
+			[
+				'a raw-text script body, with braces',
+				component('<script>if (a > b) { go(); }</script>'),
+				'<script>if (a &gt; b) &#123; go(); &#125;</script>',
+			],
+		];
+
+		it.each(greater_than)('writes a `>` in text in %s as `&gt;`', (_label, source, expected) => {
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code).toContain(expected);
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+		});
+
+		// Text is written as it is in the source, its `raw`, character references
+		// included. In an element that acorn-typescript's JSX parser read, in a
+		// spread attribute's argument or an unbraced attribute value in a
+		// container, the output printed the decoded `value`, so `&#123;x&#125;`
+		// compiled to the expression `{x}`, and `&gt;` to a bare `>` (#693).
+		// Since #656 those are template text, and that parser reads only an
+		// element in a dynamic tag name.
+		/** @type {Array<[string, string, string]>} */
+		const references = [
+			[
+				'a spread argument',
+				component('<div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />'),
+				'<b>&#123;x&#125; &amp;lt; &gt;</b>',
+			],
+			[
+				'an unbraced attribute value in a container',
+				component('{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}'),
+				'<b>&#123;x&#125; &amp;lt; &gt;</b>',
+			],
+			[
+				'an element in a dynamic tag name',
+				component(`<{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : 'i'} />`),
+				'<b>&#123;x&#125; &amp;lt; &gt;</b>',
+			],
+			[
+				'a template',
+				component('<b>&#123;x&#125; &amp;lt; &gt;</b>'),
+				'<b>&#123;x&#125; &amp;lt; &gt;</b>',
+			],
+			[
+				'an attribute value',
+				component('<div title={<b>&#123;x&#125; &amp;lt; &gt;</b>} />'),
+				'<b>&#123;x&#125; &amp;lt; &gt;</b>',
+			],
+		];
+
+		it.each(references)(
+			'keeps the character references in text in %s',
+			(_label, source, expected) => {
+				const { code } = compile(source, 'App.tsrx');
+
+				expect(code).toContain(expected);
+				expect(virtual_parse_diagnostics(code)).toEqual([]);
+			},
+		);
+	});
+
 	describe(`[${name}] fragment expression children`, () => {
 		// A bare expression placed directly as a JSX child reads as JSX text
 		// (`<>{a}b</>` renders the letter "b"), so every expression that ends up
@@ -2581,6 +2781,30 @@ export function App() @{
 
 			expect(code).toContain('</b> 4<i');
 			expect(code).toContain('\u00a05');
+		});
+
+		it('keeps the text of an element in a setup statement', () => {
+			const { code } = compile(
+				'export function App() @{\n\tconst a = <div>Hello<b /> 2<i />\u00a03</div>;\n\t<main>{a}</main>\n}',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('Hello<b');
+			expect(code).toContain('/> 2<i');
+			expect(code).toContain('\u00a03');
+		});
+
+		it("keeps the text of an element in a spread attribute's argument and in an attribute value without braces", () => {
+			const { code } = compile(
+				'export function App() @{\n\t<main>\n\t\t<p {...{ k: <div><b>1</b> /* c */ 2</div> }} />\n\t\t<p k=<div><i>3</i> /* c */ 4</div> />\n\t\t<p {...(x ? <div>@if (y) { <s>5</s> } 6</div> : {})} />\n\t</main>\n}',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('</b>  2');
+			expect(code).toContain('</i>  4');
+			expect(code).toContain('5</s>');
+			expect(code).not.toContain('/* c */');
+			expect(code).not.toContain('@if');
 		});
 
 		it('keeps double-quoted strings inside expression containers as JavaScript strings', () => {

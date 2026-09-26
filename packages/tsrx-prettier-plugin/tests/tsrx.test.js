@@ -474,6 +474,81 @@ const A = () => (
 	});
 });
 
+describe('text keeps its characters as written', () => {
+	// A `>` in an element in a container failed after a child container (#694),
+	// and the text of an element in a spread argument or an unbraced attribute
+	// value in a container was read with its character references decoded
+	// (#693). Since #656 those are template text; only an element in a dynamic
+	// tag name is read that way. A text prints from its `raw`.
+	test.each([
+		[
+			'a `>` in an element in a container',
+			`export function App() @{
+  <main>{c && <b>a > b</b>}</main>
+}
+`,
+		],
+		[
+			'a `>` after a child container',
+			`export function App() @{
+  <main>{c && <b>{y} a > b</b>}</main>
+}
+`,
+		],
+		[
+			'an arrow in an element in a container',
+			`export function App() @{
+  <main>{c && <b>a => b</b>}</main>
+}
+`,
+		],
+		[
+			"references in a spread attribute's argument",
+			`export function App() @{
+  <div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />
+}
+`,
+		],
+		[
+			'references in an unbraced attribute value in a container',
+			`export function App() @{
+  <main>{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}</main>
+}
+`,
+		],
+		[
+			"a `>` in a spread attribute's argument",
+			`export function App() @{
+  <div {...{ title: <b>a > b</b> }} />
+}
+`,
+		],
+		[
+			'a `>` first in an unbraced attribute value in a container',
+			`export function App() @{
+  <main>{c && <div title=<b>> b &#123;x&#125;</b> />}</main>
+}
+`,
+		],
+		[
+			'references in an element in a dynamic tag name',
+			`export function App() @{
+  <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} />
+}
+`,
+		],
+		[
+			'references and a comment in template text',
+			`export function App() @{
+  <p>a &amp; b /* c */ &#123;x&#125;</p>
+}
+`,
+		],
+	])('keeps the text of %s', async (_label, source) => {
+		await expectFormat(source, source);
+	});
+});
+
 // `//` and `/* */` between JSX children are comments in TSRX, where TSX reads
 // them as text. They keep their place among the children.
 describe('comments between JSX children', () => {
@@ -859,6 +934,18 @@ describe('parse errors', () => {
 				"Unclosed tag '<div>'. Expected '</div>' before end of template. (2:1)",
 				{ line: 2, column: 1 },
 			],
+			// Prettier's typescript parser: `Property assignment expected. (1:13)`.
+			['const o = { @dec m() {} };', 'Unexpected token (1:13)', { line: 1, column: 13 }],
+			// Prettier's typescript parser: `';' expected. (1:25)`.
+			[
+				'const f = (x as number) => x;',
+				'Unexpected type cast in parameter position. (1:12)',
+				{ line: 1, column: 12 },
+			],
+			// Prettier's typescript parser: `';' expected. (1:23)`.
+			['const k = async(a)(b) => 1;', 'Unexpected token (1:23)', { line: 1, column: 23 }],
+			// Prettier's typescript parser: `Expression expected. (1:31)`.
+			['const g = <T,>(x: T) => { x = ; };', 'Unexpected token (1:31)', { line: 1, column: 31 }],
 		]) {
 			const error = await format(/** @type {string} */ (source)).catch((/** @type {any} */ e) => e);
 			expect(error).toBeInstanceOf(SyntaxError);
@@ -883,11 +970,56 @@ describe('parse errors', () => {
 			'class A { @dec constructor() {} }',
 			'class A {\n  @dec constructor() {}\n}\n',
 		);
+		// The tree keeps these too, which Prettier's typescript parser rejects: a
+		// parameter property with a pattern, and one on a function's parameter.
+		await expectFormat(
+			'class A { constructor(public [a]: number[]) {} }',
+			'class A {\n  constructor(public [a]: number[]) {}\n}\n',
+		);
+		await expectFormat(
+			'function f(private readonly x: number) {}',
+			'function f(private readonly x: number) {}\n',
+		);
+		// And a parameter property on a signature's or an arrow function's
+		// parameter, and one with a pattern and a default.
+		await expectFormat(
+			'type F = (public x: number) => void;',
+			'type F = (public x: number) => void;\n',
+		);
+		await expectFormat(
+			'const f = async (a, readonly [b]: number[]) => a;',
+			'const f = async (a, readonly [b]: number[]) => a;\n',
+		);
+		await expectFormat(
+			'class A { constructor(public [a] = [1]) {} }',
+			'class A {\n  constructor(public [a] = [1]) {}\n}\n',
+		);
+		// Prettier's typescript parser formats an arrow function's optional rest
+		// parameter the same way, async too.
+		await expectFormat('const f = (...a?: number[]) => a;', 'const f = (...a: number[]) => a;\n');
+		await expectFormat(
+			'const f = async (x, ...a?: number[]) => a;',
+			'const f = async (x, ...a: number[]) => a;\n',
+		);
+		// And a parameter's default in a signature.
+		await expectFormat('type F = (a = 1) => void;', 'type F = (a = 1) => void;\n');
+		await expectFormat(
+			'interface I { m(a: number = 1): void; new ({ b } = { b: 2 }): I }',
+			`interface I {
+  m(a: number = 1): void;
+  new ({ b } = { b: 2 }): I;
+}
+`,
+		);
+		// Prettier's typescript parser formats `let` as a name the same way.
+		await expectFormat('var let = 1;\nclass let {}', 'var let = 1;\nclass let {}\n');
 	});
 
 	test("mistakes Prettier's typescript parser rejects are errors, not left out", async () => {
 		for (const [source, message] of [
 			['function f() {\n  const\n}', 'Variable declaration list cannot be empty. (2:8)'],
+			['for (var; ;) {}', 'Variable declaration list cannot be empty. (1:9)'],
+			['for (const of x) {}', 'Variable declaration list cannot be empty. (1:11)'],
 			[
 				'export function App() @{\n  var\n  <div />\n}',
 				'Variable declaration list cannot be empty. (2:6)',
@@ -906,6 +1038,10 @@ describe('parse errors', () => {
 				'class A {\n  constructor(public ...rest: number[]) {}\n}',
 				'A parameter property cannot be declared using a rest parameter. (2:15)',
 			],
+			[
+				'const f = (a: number, public ...rest: number[]) => a;',
+				'A parameter property cannot be declared using a rest parameter. (1:23)',
+			],
 			['@dec function f() {}', 'Leading decorators must be attached to a class declaration. (1:1)'],
 			[
 				'export @dec const x = 1;',
@@ -919,10 +1055,109 @@ describe('parse errors', () => {
 				'@dec export function f() {}',
 				'Leading decorators must be attached to a class declaration. (1:1)',
 			],
+			[
+				'export abstract function f() {}',
+				"'abstract' modifier can only appear on a class, method, or property declaration. (1:8)",
+			],
+			[
+				'export abstract const x = 1;',
+				"'abstract' modifier can only appear on a class, method, or property declaration. (1:8)",
+			],
+			// #697: `abstract` before an interface was kept without an error, and
+			// before a function outside an export failed to parse.
+			[
+				'abstract interface I {}',
+				"'abstract' modifier can only appear on a class, method, or property declaration. (1:1)",
+			],
+			[
+				'export abstract interface I {}',
+				"'abstract' modifier can only appear on a class, method, or property declaration. (1:8)",
+			],
+			[
+				'abstract function f() {}',
+				"'abstract' modifier can only appear on a class, method, or property declaration. (1:1)",
+			],
 		]) {
 			const error = await format(source).catch((/** @type {any} */ e) => e);
 			expect(error, source).toBeInstanceOf(SyntaxError);
 			expect(error.message.split('\n')[0], source).toBe(message);
 		}
+	});
+});
+
+// `abstract` before a line break after `export default` is the exported value,
+// and the class on the next line a declaration of its own (#608).
+describe('`abstract` before a line break after `export default`', () => {
+	test.each([
+		['export default abstract\nclass A {}', 'export default abstract;\nclass A {}\n'],
+		[
+			'declare module "m" {\n  export default abstract\n  class A {}\n}',
+			'declare module "m" {\n  export default abstract;\n  class A {}\n}\n',
+		],
+	])('formats %j like Prettier', async (input, expected) => {
+		await expectFormat(input, expected);
+		expect(expected).toBe(await prettier.format(input, { parser: 'typescript' }));
+	});
+});
+
+// Declarations that TypeScript reads and the parser failed on: `abstract
+// declare class` (#697), `export default interface` with the name on the next
+// line (#698), a type alias named `as` or `satisfies` (#699), and a global
+// augmentation after `export` (#700), which TypeScript reports from its
+// checker and Prettier's `typescript` parser prints.
+describe('declarations after TypeScript keywords', () => {
+	test.each([
+		['abstract declare class A {}', 'declare abstract class A {}\n'],
+		['export abstract declare class A {}', 'export declare abstract class A {}\n'],
+		[
+			`export default interface
+I {}`,
+			'export default interface I {}\n',
+		],
+		[
+			`declare module "m" {
+  export default interface
+  I {}
+}`,
+			`declare module "m" {
+  export default interface I {}
+}
+`,
+		],
+		['type as = 1;', 'type as = 1;\n'],
+		['type satisfies<T> = T;', 'type satisfies<T> = T;\n'],
+		['export global {}', 'export global {}\n'],
+		['export declare global {}', 'export declare global {}\n'],
+	])('formats %j like Prettier', async (input, expected) => {
+		await expectFormat(input, expected);
+		expect(expected).toBe(await prettier.format(input, { parser: 'typescript' }));
+	});
+});
+
+// A `<` after a line break or a `}` reads as a tag start in TSRX, except
+// where type arguments follow a superclass (#545) or a class or function
+// expression (#578). A `const` type parameter on an object method failed to
+// parse too (#631). They print as Prettier's `typescript` parser prints them.
+describe('type arguments and parameters the parser used to reject', () => {
+	test.each([
+		['class A extends B\n<T> {}', 'class A extends B<T> {}\n'],
+		[
+			'class A extends B.C\n  <T, U>\n  implements I\n{}',
+			'class A extends B.C<T, U> implements I {}\n',
+		],
+		['((class<T> { x?: T })<string>).name', '(class<T> {\n  x?: T;\n}<string>).name;\n'],
+		['const A = class<T> { x?: T }<string>;', 'const A = class<T> {\n  x?: T;\n}<string>;\n'],
+		[
+			'const f = function <T>(x: T) { return x; }<string>(1);',
+			'const f = (function <T>(x: T) {\n  return x;\n})<string>(1);\n',
+		],
+		['const v = new class<T> {}<string>();', 'const v = new (class<T> {})<string>();\n'],
+		[
+			'const o = { m<const T>(x: T) { return x; } };',
+			'const o = {\n  m<const T>(x: T) {\n    return x;\n  },\n};\n',
+		],
+	])('formats %j like Prettier', async (input, expected) => {
+		await expectFormat(input, expected);
+		expect(expected).toBe(await prettier.format(input, { parser: 'typescript' }));
 	});
 });

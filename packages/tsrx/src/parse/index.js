@@ -9,7 +9,7 @@
 import * as acorn from 'acorn';
 import { tsPlugin } from '@sveltejs/acorn-typescript';
 import { walk } from 'zimmerframe';
-import { has_location, node_children } from '../utils/ast.js';
+import { has_location } from '../utils/ast.js';
 
 /** @type {Parse.BindingType} */
 export const BINDING_TYPES = {
@@ -388,6 +388,23 @@ export function get_comment_handlers(source, comments, index = 0) {
 	]);
 
 	/**
+	 * The end of the keyword of a statement that is only its keyword and `;`:
+	 * `continue` or `break` without a label, `debugger`, and `return` without
+	 * an argument. Other nodes give -1.
+	 * @param {AST.NodeWithLocation} node
+	 * @returns {number}
+	 */
+	function getKeywordOnlyStatementEnd(node) {
+		const statement = /** @type {any} */ (node);
+		const keyword =
+			(statement.type === 'ContinueStatement' && !statement.label && 'continue') ||
+			(statement.type === 'BreakStatement' && !statement.label && 'break') ||
+			(statement.type === 'DebuggerStatement' && 'debugger') ||
+			(statement.type === 'ReturnStatement' && !statement.argument && 'return');
+		return keyword ? node.start + keyword.length : -1;
+	}
+
+	/**
 	 * When the next comment follows `node` on its line and only comments sit
 	 * between it and the `;` that ends the statement enclosing `node`, give it,
 	 * and the comments after it on the same line, to the outermost statement
@@ -397,12 +414,21 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * A comment before the closing parenthesis around the statement's value
 	 * moves too, since the printer drops those parentheses: Prettier prints
 	 * `return (b /* note *\/);` as `return b /* note *\/;`, and moves it after
-	 * the `;` on the next pass.
+	 * the `;` on the next pass. So does one before that parenthesis at the end
+	 * of a statement without a `;`, which the printer adds after it (#672).
 	 * @param {AST.NodeWithLocation} node - The node the comment follows
 	 * @param {(AST.Node | AST.CSS.StyleSheet)[]} path - The node's ancestors
 	 * @returns {boolean} Whether it took the comments
 	 */
 	function takeCommentsBeforeFinalSemicolon(node, path) {
+		// A statement that is only its keyword has no child for the comment to
+		// follow, so the comment follows the keyword, and the statement itself
+		// may end at the `;`: `for (;;) continue // note` with the `;` on the
+		// next line prints `for (;;) continue; // note`
+		const keywordEnd = getKeywordOnlyStatementEnd(node);
+		if (keywordEnd >= 0) {
+			path = [...path, /** @type {AST.Node} */ (node)];
+		}
 		// Look past the expressions around the node, whose parentheses may close
 		// between the comment and the `;`, for the statement they end. A call's
 		// parentheses are its own, so a comment inside them stays there.
@@ -420,13 +446,19 @@ export function get_comment_handlers(source, comments, index = 0) {
 			!statement ||
 			!statementsEndingBeforeSemicolon.has(statement.type) ||
 			statement.end <= comments[0].end ||
-			source[statement.end - 1] !== ';' ||
 			// The comment must follow the node on its line
-			!/^[ \t)]*$/.test(source.slice(node.end, comments[0].start))
+			!/^[ \t)]*$/.test(source.slice(keywordEnd < 0 ? node.end : keywordEnd, comments[0].start))
 		) {
 			return false;
 		}
-		if (!isBlankBetween(comments[0].end, statement.end - 1, false)) {
+		// Where the statement's value ends: at its `;`, or at its end without
+		// one, where only the value's parentheses can follow the comment
+		const semicolon = source[statement.end - 1] === ';' ? statement.end - 1 : statement.end;
+		/** @type {AST.Node & AST.NodeWithLocation} */
+		let target = statement;
+		// Where the comments to take start in `comments`
+		let first = 0;
+		if (!isBlankBetween(comments[0].end, semicolon, false)) {
 			// Only the parentheses around the statement's value may close after
 			// the comment. Any other pair, like the one in `x = !(a /* c */);`,
 			// stays, and so does the comment inside it. The value ends where the
@@ -434,34 +466,72 @@ export function get_comment_handlers(source, comments, index = 0) {
 			// the value's own parentheses (or the ones around the statement's
 			// other parts that end there, like an arrow function's), never a
 			// pair inside the value.
-			const values = getParenthesizedStatementValues(statement, comments[0]);
-			if (
-				!values.some(
-					(value) => value.end === node.end && (value === node || path.includes(value)),
-				) ||
-				!isBlankBetween(comments[0].end, statement.end - 1, true)
-			) {
+			if (!isBlankBetween(comments[0].end, semicolon, true)) {
 				return false;
 			}
+			/** @param {AST.CommentWithLocation} comment */
+			const followsValue = (comment) =>
+				getParenthesizedStatementValues(statement, comment).some(
+					(value) => value.end === node.end && (value === node || path.includes(value)),
+				);
+			if (!followsValue(comments[0])) {
+				// Block comments that a line comment follows on their line stay in
+				// the parentheses, and the line comment alone may move: after a
+				// declarator's sequence value, Prettier prints
+				// `const x = (a, b /* c */ // d⏎);` with the block comment in
+				// them and breaks them with the line comment, which its next pass
+				// moves after the `;` (#624)
+				while (
+					comments[first].type === 'Block' &&
+					comments[first + 1] &&
+					/^[ \t]*$/.test(source.slice(comments[first].end, comments[first + 1].start))
+				) {
+					first++;
+				}
+				if (first === 0 || comments[first].type !== 'Line' || !followsValue(comments[first])) {
+					return false;
+				}
+			}
+			// A `return` or `throw` prints a binary or logical argument in
+			// parentheses when it breaks, and Prettier keeps the comments at its
+			// end inside them. They trail the argument, which the printer prints
+			// inside those parentheses when they break, or after the `;` when they
+			// don't, where Prettier's next pass puts them.
+			const argument = /** @type {AST.Node & AST.NodeWithLocation} */ (
+				/** @type {any} */ (statement).argument
+			);
+			if (
+				(statement.type === 'ReturnStatement' || statement.type === 'ThrowStatement') &&
+				isBinaryish(argument) &&
+				getTypeCastEnd(argument) === -1
+			) {
+				target = argument;
+			}
 		}
-		let target = statement;
+		/** @type {AST.Node & AST.NodeWithLocation} */
+		let outermost = statement;
 		for (let i = index - 1; i >= 0; i--) {
 			const ancestor = /** @type {AST.Node & AST.NodeWithLocation} */ (path[i]);
 			if (ancestor.type === 'Program' || ancestor.end !== statement.end) break;
-			target = ancestor;
+			outermost = ancestor;
 		}
-		const targetNode = /** @type {AST.NodeWithMaybeComments} */ (target);
-		const trailing = (targetNode.trailingComments ||= []);
-		let previousEnd = node.end;
+		let previousEnd =
+			first !== 0 ? comments[first - 1].end : keywordEnd < 0 ? node.end : keywordEnd;
 		while (
-			comments[0] &&
-			comments[0].end < statement.end &&
-			!source.slice(previousEnd, comments[0].start).includes('\n')
+			comments[first] &&
+			comments[first].end < statement.end &&
+			!source.slice(previousEnd, comments[first].start).includes('\n')
 		) {
-			previousEnd = comments[0].end;
-			trailing.push(/** @type {AST.CommentWithLocation} */ (comments.shift()));
+			const comment = /** @type {AST.CommentWithLocation} */ (comments.splice(first, 1)[0]);
+			previousEnd = comment.end;
+			// The ones after the argument's parentheses trail the statement
+			const takes = /** @type {AST.NodeWithMaybeComments} */ (
+				target === statement || isBlankBetween(comment.end, semicolon, false) ? outermost : target
+			);
+			(takes.trailingComments ||= []).push(comment);
 		}
-		return true;
+		// It leaves the block comments before a line comment it takes
+		return first === 0;
 	}
 
 	/**
@@ -494,8 +564,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * {@link movesCommentAfterParens}), and the expression body of an arrow
 	 * function that is the value, as in `const f = () => (a);`, when the
 	 * comments after it in its parentheses print before the `;` (see
-	 * {@link keepsCommentsInArrowBodyParens}). The one the comment follows
-	 * takes it.
+	 * {@link keepsCommentsInArrowBodyParens}), and a binary or logical value
+	 * and the operands at its end (see {@link getBinaryishValueEnds}). The one
+	 * the comment follows takes it.
 	 * @param {AST.Node} statement
 	 * @param {AST.CommentWithLocation} comment
 	 * @returns {(AST.Node & AST.NodeWithLocation)[]}
@@ -532,17 +603,166 @@ export function get_comment_handlers(source, comments, index = 0) {
 			} else if (value?.metadata?.parenthesized && movesCommentAfterParens(node, value, comment)) {
 				values.push(value);
 			}
+			values.push(...getBinaryishValueEnds(candidate));
 		}
 		return values;
+	}
+
+	/**
+	 * @param {AST.Node | null | undefined} node
+	 * @returns {node is AST.BinaryExpression | AST.LogicalExpression}
+	 */
+	function isBinaryish(node) {
+		return node?.type === 'BinaryExpression' || node?.type === 'LogicalExpression';
+	}
+
+	/**
+	 * A binary or logical value of a statement, when it's in parentheses, and
+	 * the right operands down its chain, whose comments after them, in their
+	 * parentheses, print at the value's end. Prettier prints a comment that
+	 * trails an operand after the operand's parentheses, where they print, and
+	 * the ones around the value print as nothing, or, around a `return` or
+	 * `throw` argument, only when it breaks: `x = a || (b /* c *\/);` and
+	 * `x = a * (b + c /* c *\/);` print `x = a || b /* c *\/;` and
+	 * `x = a * (b + c) /* c *\/;`, and the next pass moves the comment after
+	 * the `;` (#622). Each pass takes it out of one more pair, so it ends there
+	 * from any depth of the chain. A pair that completes a JSDoc cast keeps the
+	 * comments in it (see {@link getTypeCastEnd}), which the walk takes before
+	 * this runs, so the operands inside it don't count, and so does the pair an
+	 * element or other template value prints its comments in (see
+	 * {@link keepsCommentsInArrowBodyParens}).
+	 * @param {AST.Node | null | undefined} value
+	 * @returns {(AST.Node & AST.NodeWithLocation)[]}
+	 */
+	function getBinaryishValueEnds(value) {
+		/** @type {(AST.Node & AST.NodeWithLocation)[]} */
+		const ends = [];
+		if (!isBinaryish(value)) {
+			return ends;
+		}
+		if (value.metadata?.parenthesized) {
+			ends.push(/** @type {AST.Node & AST.NodeWithLocation} */ (value));
+		}
+		/** @type {AST.Node} */
+		let operand = value;
+		while (isBinaryish(operand) && getTypeCastEnd(/** @type {any} */ (operand)) === -1) {
+			const right = /** @type {AST.Node & AST.NodeWithLocation} */ (operand.right);
+			if (right.type.startsWith('JSX')) break;
+			ends.push(right);
+			operand = right;
+		}
+		return ends;
+	}
+
+	/**
+	 * The comments before the `)` of the parentheses around the last operand
+	 * of a binary or logical expression print after them, and after the
+	 * parentheses around the operands that it ends, where Prettier's next
+	 * passes find them, one pair a pass. Before the `;` that ends the
+	 * statement, they go after it (see {@link takeCommentsBeforeFinalSemicolon}):
+	 * `x = a || (b /* c *\/);` prints `x = a || b; /* c *\/` (#622). Before
+	 * an operator, they trail the left operand the operator follows:
+	 * `((0x30 <= c) && (c <= 0x39 /* 9 *\/)) || d` prints
+	 * `(0x30 <= c && c <= 0x39) /* 9 *\/ || d` (#673). Prettier prints a line
+	 * comment as a line suffix, which moves it past the operator to the end of
+	 * the line: it prints `x = 30 * (month - 1 // c⏎) + day;` with the
+	 * comment after the `+` and the `*` broken by its line break, and its next
+	 * pass gives it to `30 * (month - 1)`, which joins the `*` again (#626).
+	 * @param {AST.NodeWithLocation} node - The operand the comment follows
+	 * @param {(AST.Node | AST.CSS.StyleSheet)[]} path - The node's ancestors
+	 * @returns {boolean} Whether it took the comment
+	 */
+	function takeCommentsBeforeOperandParens(node, path) {
+		const comment = comments[0];
+		/** @type {AST.Node} */
+		let child = /** @type {AST.Node} */ (node);
+		let index = path.length - 1;
+		const parent = /** @type {AST.Node} */ (path[index]);
+		if (
+			!comment ||
+			!isBinaryish(parent) ||
+			parent.right !== child ||
+			// An element prints its comments inside its own parentheses
+			child.type.startsWith('JSX') ||
+			getNextNonSpaceNonCommentCharacter(comment.end) !== ')'
+		) {
+			return false;
+		}
+		// The left operand that the comment ends, up the right operands that
+		// end it, which only `)`s separate from the operator after it. One in a
+		// JSDoc cast's parentheses keeps the comment in them, where the printer
+		// prints the ones that trail it (see `getTypeCastEnd`).
+		for (; index >= 1; index--) {
+			const operand = /** @type {AST.Node & AST.NodeWithLocation} */ (path[index]);
+			if (!isBinaryish(operand) || operand.right !== child) {
+				break;
+			}
+			const binary = /** @type {AST.Node} */ (path[index - 1]);
+			if ((isBinaryish(binary) && binary.left === operand) || getTypeCastEnd(operand) !== -1) {
+				addTrailingComment(operand, /** @type {AST.CommentWithLocation} */ (comments.shift()));
+				return true;
+			}
+			child = operand;
+		}
+		return takeCommentsBeforeFinalSemicolon(node, path);
+	}
+
+	/**
+	 * The comments after the expression body of an arrow function called
+	 * right away or used as a tag, in the parentheses around the body that
+	 * print as nothing (see {@link keepsCommentsInArrowBodyParens}), trail
+	 * the arrow function. Prettier prints `((a) => (b /* c *\/))(1);` as
+	 * `((a) => b /* c *\/)(1);`, where its next pass finds the comment before
+	 * the `)` around the arrow function, and prints it inside those
+	 * parentheses, which break around it (`printCommentsForFunction`, see
+	 * `breakTies`) (#634).
+	 * @param {AST.NodeWithLocation} node - The body the comment follows
+	 * @param {(AST.Node | AST.CSS.StyleSheet)[]} path - The node's ancestors
+	 * @returns {boolean} Whether it took the comments
+	 */
+	function takeCommentsInCalledArrowBody(node, path) {
+		const body = /** @type {AST.Node & AST.NodeWithLocation} */ (node);
+		const arrow = /** @type {AST.Node & AST.NodeWithLocation} */ (path.at(-1));
+		const call = /** @type {any} */ (path.at(-2));
+		// A chain of arrow functions breaks before its last body when a comment
+		// follows it, which keeps the comment there. The comments go with the
+		// first one, on the body's line.
+		if (
+			arrow?.type !== 'ArrowFunctionExpression' ||
+			arrow.body !== body ||
+			source.slice(body.end, comments[0].start).includes('\n') ||
+			!body.metadata?.parenthesized ||
+			keepsCommentsInArrowBodyParens(body) ||
+			body.type === 'ArrowFunctionExpression' ||
+			!(
+				(call?.type === 'CallExpression' && call.callee === arrow) ||
+				(call?.type === 'TaggedTemplateExpression' && call.tag === arrow)
+			) ||
+			!isBlankBetween(comments[0].end, arrow.end, true)
+		) {
+			return false;
+		}
+		let previousEnd = body.end;
+		while (
+			comments[0] &&
+			comments[0].end <= arrow.end &&
+			!source.slice(previousEnd, comments[0].start).includes('\n')
+		) {
+			previousEnd = comments[0].end;
+			addTrailingComment(arrow, /** @type {AST.CommentWithLocation} */ (comments.shift()));
+		}
+		return true;
 	}
 
 	/**
 	 * Whether a comment after a statement's value, in the parentheses around
 	 * it, ends up after the statement's `;` in Prettier, at once or on its
 	 * next pass, so that it goes there at once:
-	 * - After an expression statement's expression, other than an element or
-	 *   template, `handleParenthesizedExpressionTrailingComment` gives it to
-	 *   the statement: `(a, b /* c *\/);` prints `(a, b); /* c *\/`.
+	 * - After an expression statement's expression,
+	 *   `handleParenthesizedExpressionTrailingComment` gives it to the
+	 *   statement: `(a, b /* c *\/);` prints `(a, b); /* c *\/`, and
+	 *   `(<div /> /* c *\/);`, whose element keeps its parentheses (#625),
+	 *   prints `(<div />); /* c *\/`.
 	 * - After a sequence or assignment that is the argument of a `throw` or
 	 *   the declaration of an `export default`, which the handler leaves out,
 	 *   it trails the value, which prints it after its parentheses.
@@ -559,7 +779,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 */
 	function movesCommentAfterParens(statement, value, comment) {
 		if (statement.type === 'ExpressionStatement' && statement.expression === value) {
-			return !value.type.startsWith('JSX');
+			return true;
 		}
 		if (value.type !== 'SequenceExpression' && value.type !== 'AssignmentExpression') {
 			return false;
@@ -1207,6 +1427,64 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Like Prettier's `isObjectProperty`: a property of an object literal or
+	 * pattern that isn't a method, getter, or setter
+	 * @param {AST.Node | AST.CSS.StyleSheet | null | undefined} node
+	 * @returns {boolean}
+	 */
+	function isObjectProperty(node) {
+		const property = /** @type {any} */ (node);
+		return (
+			node?.type === 'Property' &&
+			!(
+				(property.method && property.kind === 'init') ||
+				property.kind === 'get' ||
+				property.kind === 'set'
+			)
+		);
+	}
+
+	/**
+	 * Like Prettier's `isAssignmentLikeNode` and `isComplexExprNode`: whether
+	 * a declarator, an assignment, or a type alias gives its value the
+	 * comments that end their line before it (see {@link handleComment}). A
+	 * value in a JSDoc cast's parentheses isn't complex, since Prettier's
+	 * `babel` parser keeps those as a node of their own.
+	 * @param {AST.Node & AST.NodeWithLocation} value
+	 * @returns {boolean}
+	 */
+	function isComplexAssignedValue(value) {
+		return (
+			(value.type === 'ObjectExpression' ||
+				value.type === 'ArrayExpression' ||
+				value.type === 'TemplateLiteral' ||
+				value.type === 'TaggedTemplateExpression' ||
+				value.type === 'TSTypeLiteral') &&
+			getTypeCastEnd(value) < 0
+		);
+	}
+
+	/**
+	 * Like Prettier's `addLeadingCommentToPossibleUnionType`: a one-line block
+	 * comment right before a union, on its line, leads the union's first
+	 * member, and any other comment leads the node
+	 * @param {AST.Node & AST.NodeWithLocation} node
+	 * @param {AST.CommentWithLocation} comment
+	 */
+	function addLeadingCommentToPossibleUnionType(node, comment) {
+		addLeadingComment(
+			node.type === 'TSUnionType' &&
+				comment.type === 'Block' &&
+				!source.slice(comment.start, comment.end).includes('\n') &&
+				!isPrettierIgnoreComment(comment) &&
+				/^[ \t]*$/.test(source.slice(comment.end, node.start))
+				? getUnionCommentTarget(/** @type {AST.TSUnionType} */ (node), comment)
+				: node,
+			comment,
+		);
+	}
+
+	/**
 	 * @param {AST.Node} node
 	 * @param {AST.CommentWithLocation} comment
 	 */
@@ -1277,6 +1555,36 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * The node a one-line block comment right before a union leads, like
+	 * Prettier's `shouldAttachToUnionTypeFirstElement`: the union's first
+	 * member. Prettier's parser postprocess, which the formatter follows, drops
+	 * parentheses and replaces a union or intersection of one type with that
+	 * type, so when only those wrap a union of more types (`| (| A | B)`), with
+	 * no other comments among them, the comment leads that union's first
+	 * member. Prettier's first format leaves it before the union's `|`, and its
+	 * next format moves it there.
+	 * @param {AST.TSUnionType} union
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {AST.Node}
+	 */
+	function getUnionCommentTarget(union, comment) {
+		/** @type {any} */
+		let node = union;
+		while (
+			node.type === 'TSParenthesizedType' ||
+			((node.type === 'TSUnionType' || node.type === 'TSIntersectionType') &&
+				node.types.length === 1)
+		) {
+			node = node.type === 'TSParenthesizedType' ? node.typeAnnotation : node.types[0];
+		}
+		return node !== union &&
+			node.type === 'TSUnionType' &&
+			/^[\s|&(]*$/.test(source.slice(comment.end, node.types[0].start))
+			? node.types[0]
+			: /** @type {AST.Node} */ (union.types[0]);
+	}
+
+	/**
 	 * Whether {@link handleComment} has a rule for comments in the node.
 	 * @param {AST.Node | AST.CSS.StyleSheet | undefined} node
 	 * @returns {boolean}
@@ -1301,6 +1609,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 			type === 'VariableDeclarator' ||
 			type === 'ReturnStatement' ||
 			type === 'AssignmentExpression' ||
+			type === 'TSTypeAliasDeclaration' ||
+			type === 'ImportAttribute' ||
+			type === 'ForStatement' ||
+			isObjectProperty(node) ||
 			getSignatureParameters(node) !== null ||
 			isClassLike(/** @type {AST.Node} */ (node)) ||
 			isPropertyLike(node) ||
@@ -1625,7 +1937,10 @@ export function get_comment_handlers(source, comments, index = 0) {
 			!isPrettierIgnoreComment(comment) &&
 			/^[ \t]*$/.test(source.slice(comment.end, following.start))
 		) {
-			addLeadingComment(/** @type {AST.TSUnionType} */ (following).types[0], comment);
+			addLeadingComment(
+				getUnionCommentTarget(/** @type {AST.TSUnionType} */ (following), comment),
+				comment,
+			);
 			return true;
 		}
 
@@ -1705,11 +2020,65 @@ export function get_comment_handlers(source, comments, index = 0) {
 			return true;
 		}
 
+		// `handlePropertyComments`: a comment that ends its line inside an
+		// object property leads the property, so that it prints before the key
+		// (`// note` / `key: value`) instead of after the `:`
+		if (endOfLine && isObjectProperty(enclosing)) {
+			addLeadingComment(enclosing, comment);
+			return true;
+		}
+
+		// `handleAssignmentLikeComments`: in a declarator, an assignment, or a
+		// type alias, a comment that ends its line before the value leads the
+		// value when it's a block comment or the value is an object, array,
+		// template, or type literal, and so does any comment after a type
+		// alias's `=` that doesn't start its line. Such a value prints below the
+		// operator. The default below makes any other line comment there trail
+		// the left side, which prints it at the end of the operator's line, or
+		// of the statement when the value stays on that line. Unlike Prettier, a
+		// line comment that ends its line before a type alias's `=`, after its
+		// name or its type parameters, leads the value too: Prettier's default
+		// prints it after the `=`, and its next pass gives it to the value.
+		if (
+			(type === 'VariableDeclarator' ||
+				type === 'AssignmentExpression' ||
+				type === 'TSTypeAliasDeclaration') &&
+			following
+		) {
+			const value = /** @type {AST.Node & AST.NodeWithLocation} */ (following);
+			const isAlias = type === 'TSTypeAliasDeclaration';
+			if (
+				isAlias &&
+				endOfLine &&
+				comment.type === 'Line' &&
+				preceding &&
+				(following === node.typeAnnotation || following === node.typeParameters)
+			) {
+				addLeadingComment(node.typeAnnotation, comment);
+				return true;
+			}
+			if (
+				(endOfLine && (comment.type === 'Block' || isComplexAssignedValue(value))) ||
+				(isAlias &&
+					following === node.typeAnnotation &&
+					!ownLine &&
+					comment.start >=
+						findOutsideComments('=', (node.typeParameters ?? node.id).end, value.start))
+			) {
+				addLeadingCommentToPossibleUnionType(value, comment);
+				return true;
+			}
+		}
+
 		// Prettier's default for a comment that ends its line: it trails the
 		// node before it, so that it stays after an operator (`a || // note`)
 		// instead of moving to its own line, and before the `)` of a parameter
 		// list (`function f(a) // note` with the return type on the next line)
-		// or the `]` of a mapped type's key instead of after the `:`
+		// or the `]` of a mapped type's key instead of after the `:`. After the
+		// `=` or `:` of a declarator, an assignment, a class field, or an import
+		// attribute, it trails the name, which prints it before the `=` or `:`
+		// or at the end of the line, and after a `;` in a `for` header, it
+		// trails the part before the `;`.
 		if (endOfLine && preceding && following && following === getReturnType(enclosing)) {
 			addTrailingComment(preceding, comment);
 			return true;
@@ -1723,7 +2092,17 @@ export function get_comment_handlers(source, comments, index = 0) {
 				node.type === 'TSConditionalType' ||
 				node.type === 'TSUnionType' ||
 				node.type === 'AssignmentPattern' ||
-				node.type === 'TSMappedType')
+				node.type === 'TSMappedType' ||
+				(following &&
+					(type === 'VariableDeclarator' ||
+						type === 'AssignmentExpression' ||
+						type === 'TSTypeAliasDeclaration' ||
+						type === 'ImportAttribute' ||
+						type === 'PropertyDefinition' ||
+						type === 'AccessorProperty' ||
+						type === 'TSAbstractPropertyDefinition' ||
+						type === 'TSAbstractAccessorProperty' ||
+						(type === 'ForStatement' && following !== node.body))))
 		) {
 			addTrailingComment(preceding, comment);
 			return true;
@@ -1921,8 +2300,6 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 			walk(ast, null, {
 				_(node, { next, path, visit }) {
-					const metadata = /** @type {AST.Node} */ (node)?.metadata;
-
 					/** @returns {boolean} */
 					function isCommentInsideAttributeExpression() {
 						for (let i = path.length - 1; i >= 0; i--) {
@@ -2035,41 +2412,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 						return;
 					}
 
-					if (metadata && metadata.commentContainerId !== undefined) {
-						// For empty template elements, keep comments as `innerComments`.
-						// The Prettier plugin uses `innerComments` to preserve them and
-						// to avoid collapsing the element into self-closing syntax.
-						const isEmptyElement = isEmptyTemplateNode(node);
-						if (!isEmptyElement) {
-							while (
-								comments[0] &&
-								comments[0].context &&
-								comments[0].context.containerId === metadata.commentContainerId &&
-								comments[0].context.beforeMeaningfulChild
-							) {
-								// Check that the comment is actually in this element's own content
-								// area, not positionally inside a child element. This handles the
-								// case where jsx_parseOpeningElementAt() triggers jsx_readToken()
-								// before the child element is pushed to the parser's #path, causing
-								// comments inside the child to get the parent's containerId.
-								const commentStart = comments[0].start;
-								const isInsideChildElement = node_children(node).some(
-									(child) =>
-										child &&
-										child.start !== undefined &&
-										child.end !== undefined &&
-										commentStart >= child.start &&
-										commentStart < child.end,
-								);
-								if (isInsideChildElement) break;
-
-								const elementComment = /** @type {AST.CommentWithLocation} */ (comments.shift());
-
-								(metadata.elementLeadingComments ||= []).push(elementComment);
-							}
-						}
-					}
-
+					// A comment in an element's body goes to the child or closing tag
+					// after it by position, whichever tokenizer path read it. The
+					// `context` the parser gives a comment in an element in a `{…}`
+					// container marks it as before the first child until a child is
+					// finished, which a `{…}` child isn't when the token after it is
+					// read, so it can't tell a comment after such a child from one
+					// before the first child (#637).
 					while (comments[0] && comments[0].start < getCommentStart(node)) {
 						// Skip comments that are inside an attribute of an ancestor JSX element.
 						// Since zimmerframe visits children before attributes, we need to leave
@@ -2468,6 +2817,14 @@ export function get_comment_handlers(source, comments, index = 0) {
 							if (neighbors?.preceding !== node) {
 								break;
 							}
+							const operand = /** @type {AST.NodeWithLocation} */ (node);
+							if (
+								!neighbors.following &&
+								(takeCommentsBeforeOperandParens(operand, path) ||
+									takeCommentsInCalledArrowBody(operand, path))
+							) {
+								continue;
+							}
 							if (
 								isHandledEnclosingNode(parent) &&
 								handleComment(comments[0], parent, node, neighbors.following, path.at(-2))
@@ -2490,9 +2847,11 @@ export function get_comment_handlers(source, comments, index = 0) {
 						// Like Prettier, which ends a statement before its `;`, the comments
 						// between the two, as in `if (a) return b // note` with the `;` on the
 						// next line, trail the outermost statement that ends at that `;`, so
-						// they print after it
+						// they print after it. In a statement that is only its keyword, like
+						// `continue // note`, they lie in the statement itself.
 						if (
-							/** @type {AST.NodeWithLocation} */ (node).end <= comments[0].start &&
+							(nodeEnd <= comments[0].start ||
+								getKeywordOnlyStatementEnd(/** @type {AST.NodeWithLocation} */ (node)) >= 0) &&
 							takeCommentsBeforeFinalSemicolon(/** @type {AST.NodeWithLocation} */ (node), path)
 						) {
 							return;

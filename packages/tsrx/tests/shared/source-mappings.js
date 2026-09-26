@@ -309,6 +309,38 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		});
 	});
 
+	describe(`[${name}] text with a comment and characters JSX text can't hold`, () => {
+		// Text prints from its `raw`, which leaves out a comment between children
+		// and writes a `>` as `&gt;`, so it is shorter or longer than the source
+		// it spans. The code around it still maps to itself.
+		it('maps the code after the text', () => {
+			const source = `export function App() @{
+	<div>
+		a /* c */ > b &amp; c
+		{value}
+		<span title={other}>x // y</span>
+	</div>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(result.code).toContain('a  &gt; b &amp; c');
+
+			for (const identifier of ['value', 'other']) {
+				const start = source.indexOf(identifier);
+				const mapping = result.mappings.find(
+					(mapping) =>
+						mapping.sourceOffsets[0] === start && mapping.lengths[0] === identifier.length,
+				);
+				assert(mapping, identifier);
+				const generated = mapping.generatedOffsets[0];
+				expect(
+					result.code.slice(generated, generated + mapping.generatedLengths[0]),
+					identifier,
+				).toBe(identifier);
+			}
+		});
+	});
+
 	describe(`[${name}] whitespace or a comment after an element's \`<\``, () => {
 		it('maps the element from its `<`, not from the gap', () => {
 			const source = [

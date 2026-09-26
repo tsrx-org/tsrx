@@ -349,11 +349,13 @@ export function is_bare_render_expression(node) {
 export function get_for_of_iteration_params(left, index) {
 	/** @type {AST.Pattern[]} */
 	const params = [];
-	if (left?.type === 'VariableDeclaration' && left.declarations?.[0]) {
-		params.push(left.declarations[0].id);
-	} else {
+	if (left?.type !== 'VariableDeclaration') {
 		params.push(/** @type {AST.Pattern} */ (left));
+	} else if (left.declarations[0]) {
+		params.push(left.declarations[0].id);
 	}
+	// A declaration list with no name, which `collect` and `loose` mode parse
+	// (`@for (const of items)`), gives the loop none.
 	if (index) {
 		params.push(index);
 	}

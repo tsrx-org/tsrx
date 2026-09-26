@@ -37,6 +37,7 @@ import {
 import { should_preserve_jsx_tooling_comment, format_comment } from '../comment-utils.js';
 import { has_location } from '../utils/ast.js';
 import { regex_whitespaces_strict } from '../utils/patterns.js';
+import { regex_jsx_text_escaped } from './jsx/helpers.js';
 
 const RETURN_KEYWORD = 'return';
 const EXPORT_KEYWORD = 'export';
@@ -973,12 +974,17 @@ export function convert_source_map_to_mappings(
 				// text itself — and get_mapping_from_node just takes the first, so its generated length
 				// spans the wrong region and the editor can't map a completion's edit back to source
 				// (it then drops the item). The token resolves to the position whose generated text
-				// matches the node's value, giving a well-formed same-length mapping. TSRX keeps text
-				// verbatim in to_ts, so `source` and `generated` are identical. Other text stays unmapped.
-				if (node.loc && typeof node.value === 'string' && node.value.trimStart().startsWith('@')) {
+				// matches the node's text as written, giving a well-formed same-length mapping. TSRX
+				// prints that text verbatim in to_ts, except for the characters JSX text can't hold,
+				// which it writes as character references (`escape_jsx_text`), so the token stops
+				// before the first of them. Other text stays unmapped.
+				const text = node.raw ?? node.value;
+				if (node.loc && typeof text === 'string' && text.trimStart().startsWith('@')) {
+					const escaped_at = text.search(regex_jsx_text_escaped);
+					const verbatim = escaped_at === -1 ? text : text.slice(0, escaped_at);
 					tokens.push({
-						source: node.value,
-						generated: node.value,
+						source: verbatim,
+						generated: verbatim,
 						loc: node.loc,
 						metadata: {},
 						mappingData: mapping_data_completion_only,

@@ -6469,6 +6469,29 @@ describe('comments in element bodies and closing tags', () => {
 		}
 	});
 
+	// Inside a `{…}` container, the parser records a comment in an element's
+	// body as before its first child until a child is finished, which a `{…}`
+	// child isn't until the token after its `}` is read. The comment went to the
+	// element's body, which the formatter prints before the closing tag (#637).
+	it('gives a comment in the body of an element in a container to the child after it', () => {
+		for (const source of [
+			'export function App() @{\n  <main>{x && <div>{" "}\n/* c */ <i /></div>}</main>\n}',
+			'export function App() @{\n  <main a={<div>{" "}\n/* c */ <i /></div>} />\n}',
+			'export function App() @{\n  <main>{x && <div>{y}\n/* c */\n<i /></div>}</main>\n}',
+			'export function App() @{\n  <main>{x && <div>\n/* c */\n<i /></div>}</main>\n}',
+			'export function App() @{\n  <main>{x && <p>{y && <div>{z}\n/* c */\n<i /></div>}</p>}</main>\n}',
+		]) {
+			const div = findElement(source, 'div');
+			const child = div.children.find((node) => node.type === 'JSXElement');
+			expect(commentsOf(child).leading, source).toEqual([' c ']);
+			expect(div.metadata.elementLeadingComments, source).toBeUndefined();
+		}
+
+		// After the last child, the comment leads the closing tag
+		const div = findElement('export function App() @{\n  {x && <div>{y}\n// c\n</div>}\n}', 'div');
+		expect(commentsOf(div.closingElement).leading).toEqual([' c']);
+	});
+
 	it("keeps a comment between a closing fragment's `</` and `>` on it, as Prettier does", () => {
 		const program = parseModule('<>x</ /* note */>;\nfoo();', 'App.tsrx');
 		const fragment = find_first(program, (node) => node.type === 'JSXFragment');
@@ -7441,6 +7464,90 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(lineComment).trailing).toEqual([' c']);
 	});
 
+	// Prettier prints these before the `;`, after the parentheses around the
+	// operand, and its next pass moves them after it (#622)
+	it('trails the statement with a comment in the parentheses at the end of a binary or logical value', () => {
+		const declared = firstStatement('const x = a || (b /* c */);');
+		const nested = firstStatement('x = a * (b + (c /* c */));');
+		const lineComment = firstStatement('x = a + (b // c\n);');
+		const withoutSemicolon = firstStatement('const x = a || (b /* c */)\nfoo()');
+
+		expect(commentsOf(declared).trailing).toEqual([' c ']);
+		expect(commentsOf(declared.declarations[0].init.right).trailing).toBeUndefined();
+		expect(commentsOf(nested).trailing).toEqual([' c ']);
+		expect(commentsOf(lineComment).trailing).toEqual([' c']);
+		expect(commentsOf(withoutSemicolon).trailing).toEqual([' c ']);
+	});
+
+	// The printer prints these in the parentheses around the argument when it
+	// breaks, and after the `;` when it doesn't
+	it('trails a binary or logical return argument with a comment in the parentheses at its end', () => {
+		const returned = firstStatement('function f() {\n  return a || (b /* c */);\n}').body.body[0];
+		const own = firstStatement('function f() {\n  return (a || b /* c */) /* d */;\n}').body
+			.body[0];
+
+		expect(commentsOf(returned.argument).trailing).toEqual([' c ']);
+		expect(commentsOf(returned).trailing).toBeUndefined();
+		expect(commentsOf(own.argument).trailing).toEqual([' c ']);
+		expect(commentsOf(own).trailing).toEqual([' d ']);
+	});
+
+	it('keeps a comment in the parentheses of a JSDoc cast or an element at the end of a value', () => {
+		const cast = firstStatement('x = a || /** @type {T} */ (b /* c */);');
+		const element = firstStatement('x = a && (\n  <Note /> // c\n);');
+
+		expect(commentsOf(cast).trailing).toBeUndefined();
+		expect(commentsOf(element).trailing).toBeUndefined();
+		expect(commentsOf(element.expression.right.right).trailing).toEqual([' c']);
+	});
+
+	// Prettier's next passes find it after the parentheses, and a line
+	// comment after the operator that follows them (#626)
+	it('trails the left operand of the next operator with a comment before the ) of its last operand', () => {
+		const statement = firstStatement('x = 30 * (month - 1 // c\n) + day;');
+		const block = firstStatement('x = (a && (b /* c */)) || d;');
+		const call = firstStatement('x = f(a // c\n) + d;');
+
+		expect(commentsOf(statement.expression.right.left).trailing).toEqual([' c']);
+		expect(commentsOf(statement.expression.right.left.right).trailing).toBeUndefined();
+		expect(commentsOf(block.expression.right.left).trailing).toEqual([' c ']);
+		expect(commentsOf(call.expression.right.left.arguments[0]).trailing).toEqual([' c']);
+	});
+
+	// Prettier's next pass moves the line comment alone after the `;` (#624)
+	it('trails the statement with a line comment after block comments at the end of a parenthesized sequence', () => {
+		const statement = firstStatement('const x = (a, b /* c */ // d\n);');
+
+		expect(commentsOf(statement.declarations[0].init.expressions[1]).trailing).toEqual([' c ']);
+		expect(commentsOf(statement).trailing).toEqual([' d']);
+	});
+
+	// Prettier's next pass finds it before the `)` around the arrow function,
+	// which takes it (#634)
+	it('trails an arrow function called right away with a comment after its parenthesized body', () => {
+		const called = firstStatement('((a) => (b /* c */))(1);');
+		const conditional = firstStatement('((a) => (a ? b : c /* c */))(1);');
+
+		expect(commentsOf(called.expression.callee).trailing).toEqual([' c ']);
+		expect(commentsOf(called.expression.callee.body).trailing).toBeUndefined();
+		expect(commentsOf(conditional.expression.callee.body).trailing).toEqual([' c ']);
+		expect(commentsOf(conditional.expression.callee).trailing).toBeUndefined();
+	});
+
+	// Like Prettier, which ends these statements before their `;`
+	it('trails the statement with a comment after a statement that is only its keyword, before its ;', () => {
+		const loop = firstStatement('for (;;) continue // c\n;\nfoo();');
+		const [, next] = parseModule('while (a) break /* c */\n;\nfoo();', 'App.ts').body;
+		const returned = firstStatement('function f() {\n  return // c\n  ;\n  foo();\n}').body.body[0];
+		const debug = firstStatement('debugger /* c */ /* d */\n;');
+
+		expect(commentsOf(loop).trailing).toEqual([' c']);
+		expect(commentsOf(loop.body).trailing).toBeUndefined();
+		expect(commentsOf(next).leading).toBeUndefined();
+		expect(commentsOf(returned).trailing).toEqual([' c']);
+		expect(commentsOf(debug).trailing).toEqual([' c ', ' d ']);
+	});
+
 	it('trails the constraint of a type parameter with a comment at the end of the line of its =', () => {
 		const [parameter] = firstStatement('type A<B extends C = // c\n  D> = R;').typeParameters
 			.params;
@@ -7462,6 +7569,82 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(after.default).leading).toBeUndefined();
 		expect(commentsOf(second.constraint).trailing).toEqual([' a']);
 		expect(commentsOf(second.default).leading).toEqual([' b']);
+	});
+
+	// Prettier's `handleAssignmentLikeComments`
+	it('leads an object, array, or template value, or a type alias value, with a comment that ends the line of its =', () => {
+		const object = firstStatement('const a = // c\n  { a: 1 };').declarations[0];
+		const before = firstStatement('let a // c\n= [1];').declarations[0];
+		const assigned = firstStatement('a = // c\n  `x`;').expression;
+		const block = firstStatement('const a = /* c */\n  b;').declarations[0];
+		const alias = firstStatement('type A = // c\n  B;');
+		const aliasBefore = firstStatement('type A<T> // c\n= B;');
+		const aliasName = firstStatement('type A // c\n<T> = B;');
+		const union = firstStatement('type A = /* c */ B | C;');
+
+		expect(commentsOf(object.init).leading).toEqual([' c']);
+		expect(commentsOf(object.id).trailing).toBeUndefined();
+		expect(commentsOf(before.init).leading).toEqual([' c']);
+		expect(commentsOf(before.id).trailing).toBeUndefined();
+		expect(commentsOf(assigned.right).leading).toEqual([' c']);
+		expect(commentsOf(block.init).leading).toEqual([' c ']);
+		expect(commentsOf(alias.typeAnnotation).leading).toEqual([' c']);
+		// Prettier's default gives these to the name first, and its next pass
+		// to the value
+		expect(commentsOf(aliasBefore.typeAnnotation).leading).toEqual([' c']);
+		expect(commentsOf(aliasName.typeAnnotation).leading).toEqual([' c']);
+		expect(commentsOf(aliasName.id).trailing).toBeUndefined();
+		expect(commentsOf(union.typeAnnotation.types[0]).leading).toEqual([' c ']);
+	});
+
+	it('trails the left side with a line comment at the end of the line of an = before any other value', () => {
+		const call = firstStatement('const a = // c\n  foo();').declarations[0];
+		const logical = firstStatement('a = // c\n  b || c;').expression;
+		const cast = firstStatement('const a = // c\n  /** @type {X} */ ({});').declarations[0];
+		const both = firstStatement('const a = /* a */ // b\n  value;').declarations[0];
+		const field = firstStatement('class A {\n  f = // c\n    1;\n  g = /* c */\n    2;\n}').body
+			.body;
+
+		expect(commentsOf(call.id).trailing).toEqual([' c']);
+		expect(commentsOf(call.init).leading).toBeUndefined();
+		expect(commentsOf(logical.left).trailing).toEqual([' c']);
+		expect(commentsOf(cast.id).trailing).toEqual([' c']);
+		expect(commentsOf(both.id).trailing).toEqual([' b']);
+		expect(commentsOf(both.init).leading).toEqual([' a ']);
+		expect(commentsOf(field[0].key).trailing).toEqual([' c']);
+		expect(commentsOf(field[1].key).trailing).toEqual([' c ']);
+		expect(commentsOf(field[1].value).leading).toBeUndefined();
+	});
+
+	// Prettier's `handlePropertyComments`
+	it('leads an object property with a comment that ends a line inside it', () => {
+		const [line, block, method] = firstStatement(
+			'const o = {\n  a: // c\n    1,\n  b: /* c */\n    2,\n  m // c\n  () {},\n};',
+		).declarations[0].init.properties;
+		const [pattern] = firstStatement('const { a: // c\n  b } = x;').declarations[0].id.properties;
+		const [kept] = firstStatement('const o = { a: /* c */ 1 };').declarations[0].init.properties;
+
+		expect(commentsOf(line).leading).toEqual([' c']);
+		expect(commentsOf(line.value).leading).toBeUndefined();
+		expect(commentsOf(block).leading).toEqual([' c ']);
+		expect(commentsOf(method).leading).toBeUndefined();
+		expect(commentsOf(pattern).leading).toEqual([' c']);
+		expect(commentsOf(kept).leading).toBeUndefined();
+		expect(commentsOf(kept.value).leading).toEqual([' c ']);
+	});
+
+	it('trails an import attribute key or a for header clause with a comment that ends the line after it', () => {
+		const [attribute] = firstStatement(
+			'import a from "a" with { type: // c\n  "json" };',
+		).attributes;
+		const loop = firstStatement('for (let i = 0; // a\n  i < 1; // b\n  i++) {}');
+
+		expect(commentsOf(attribute.key).trailing).toEqual([' c']);
+		expect(commentsOf(attribute.value).leading).toBeUndefined();
+		expect(commentsOf(loop.init).trailing).toEqual([' a']);
+		expect(commentsOf(loop.test).leading).toBeUndefined();
+		expect(commentsOf(loop.test).trailing).toEqual([' b']);
+		expect(commentsOf(loop.update).leading).toBeUndefined();
 	});
 });
 
@@ -8591,7 +8774,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	 *   valid?: string,
 	 *   pick?: (program: AST.Program) => unknown,
 	 *   pickValid?: (program: AST.Program) => unknown,
-	 *   match?: Record<string, unknown>,
+	 *   match?: Record<string, unknown> | unknown[],
 	 * }} CheckerLevelCase
 	 * `errors` pairs each collected message with the source text at its position.
 	 * The node that `pick` takes from the AST is the node that `pickValid` (or
@@ -8646,6 +8829,18 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		);
 		return declaration.typeParameters?.params[0];
 	};
+	/** @param {AST.Program} program */
+	const constructor_parameters = (program) =>
+		as_type(/** @type {AST.Node} */ (first_member(program)), 'MethodDefinition').value.params;
+	/** @param {AST.Program} program */
+	const declarator_init = (program) =>
+		as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations[0].init;
+	/** @param {AST.Program} program */
+	const arrow_parameters = (program) =>
+		as_type(declarator_init(program), 'ArrowFunctionExpression').params;
+	/** @param {AST.Program} program */
+	const type_alias_type = (program) =>
+		as_type(/** @type {AST.Node} */ (first(program)), 'TSTypeAliasDeclaration').typeAnnotation;
 
 	/** @type {CheckerLevelCase[]} */
 	const cases = [
@@ -9259,6 +9454,642 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: function_statement,
 			match: { type: 'ExpressionStatement', expression: { type: 'Identifier', name: 'let' } },
 		},
+		{
+			// acorn also reports the binding name and the lexical declaration's name,
+			// at the same place: one mistake, one error.
+			source: 'const { a: let } = b;',
+			errors: [["The keyword 'let' is reserved", 'let }']],
+			throws: "The keyword 'let' is reserved (1:11)",
+			pick: first,
+			match: {
+				type: 'VariableDeclaration',
+				declarations: [{ id: { properties: [{ value: { type: 'Identifier', name: 'let' } }] } }],
+			},
+		},
+		{
+			source: 'var let = 1;',
+			errors: [["The keyword 'let' is reserved", 'let =']],
+			throws: "The keyword 'let' is reserved (1:4)",
+			pick: first,
+			match: { type: 'VariableDeclaration', declarations: [{ id: { name: 'let' } }] },
+		},
+		{
+			source: 'class let {}',
+			errors: [["The keyword 'let' is reserved", 'let {']],
+			throws: "The keyword 'let' is reserved (1:6)",
+			pick: first,
+			match: { type: 'ClassDeclaration', id: { name: 'let' } },
+		},
+		{
+			source: "import let from 'a';",
+			errors: [["The keyword 'let' is reserved", 'let from']],
+			throws: "The keyword 'let' is reserved (1:7)",
+			pick: first,
+			match: { type: 'ImportDeclaration', specifiers: [{ local: { name: 'let' } }] },
+		},
+		{
+			source: 'function f(let) {\n\tlet = 1;\n}',
+			errors: [
+				["The keyword 'let' is reserved", 'let)'],
+				["The keyword 'let' is reserved", 'let ='],
+			],
+			throws: "The keyword 'let' is reserved (1:11)",
+			pick: first,
+			match: {
+				params: [{ type: 'Identifier', name: 'let' }],
+				body: {
+					body: [
+						{
+							expression: {
+								type: 'AssignmentExpression',
+								left: { type: 'Identifier', name: 'let' },
+							},
+						},
+					],
+				},
+			},
+		},
+		{
+			source: 'for (var; ;) {}',
+			// Right after `var`, as for a statement.
+			errors: [['Variable declaration list cannot be empty.', '; ;)']],
+			throws: 'Unexpected token (1:8)',
+			pick: first,
+			match: {
+				type: 'ForStatement',
+				init: { type: 'VariableDeclaration', kind: 'var', declarations: [] },
+				test: null,
+				update: null,
+			},
+		},
+		{
+			source: 'for (const of x) {}',
+			errors: [['Variable declaration list cannot be empty.', ' of x']],
+			throws: 'Unexpected token (1:14)',
+			pick: first,
+			match: {
+				type: 'ForOfStatement',
+				left: { type: 'VariableDeclaration', kind: 'const', declarations: [] },
+				right: { type: 'Identifier', name: 'x' },
+			},
+		},
+		{
+			source: 'for (let of x) {}',
+			errors: [['Variable declaration list cannot be empty.', ' of x']],
+			throws: 'Unexpected token (1:12)',
+			pick: first,
+			match: {
+				type: 'ForOfStatement',
+				left: { type: 'VariableDeclaration', kind: 'let', declarations: [] },
+			},
+		},
+		{
+			source: 'for (const in x) {}',
+			errors: [['Variable declaration list cannot be empty.', ' in x']],
+			throws: "Unexpected keyword 'in' (1:11)",
+			pick: first,
+			match: {
+				type: 'ForInStatement',
+				left: { type: 'VariableDeclaration', kind: 'const', declarations: [] },
+			},
+		},
+		{
+			source: 'async function f() {\n\tfor await (var\n\t\tof x) {}\n}',
+			errors: [['Variable declaration list cannot be empty.', '\n\t\tof']],
+			// At `await`: acorn reads a declarator named `of`.
+			throws: 'Unexpected token (2:5)',
+			pick: function_statement,
+			match: {
+				type: 'ForOfStatement',
+				await: true,
+				left: { type: 'VariableDeclaration', kind: 'var', declarations: [] },
+			},
+		},
+		{
+			source:
+				'export function App() @{\n\t<ul>\n\t\t@for (const of items) {\n\t\t\t<li />\n\t\t}\n\t</ul>\n}',
+			errors: [['Variable declaration list cannot be empty.', ' of items']],
+			throws: 'Unexpected token (3:17)',
+		},
+		{
+			source: 'class A { constructor(public [a]: number[]) {} }',
+			errors: [['A parameter property may not be declared using a binding pattern.', 'public [a]']],
+			throws: 'A parameter property may not be declared using a binding pattern. (1:22)',
+			pick: constructor_parameter,
+			match: {
+				type: 'TSParameterProperty',
+				accessibility: 'public',
+				parameter: { type: 'ArrayPattern', elements: [{ type: 'Identifier', name: 'a' }] },
+			},
+		},
+		{
+			source: 'class A {\n\tconstructor(readonly { a }?: { a: number }) {}\n}',
+			errors: [
+				['A parameter property may not be declared using a binding pattern.', 'readonly {'],
+				// As for any other optional pattern parameter of a constructor with a body.
+				[
+					'A binding pattern parameter cannot be optional in an implementation signature.',
+					'{ a }?',
+				],
+			],
+			throws: 'A parameter property may not be declared using a binding pattern. (2:13)',
+			pick: constructor_parameter,
+			match: {
+				type: 'TSParameterProperty',
+				readonly: true,
+				parameter: { type: 'ObjectPattern', optional: true },
+			},
+		},
+		{
+			source: 'function f(public x: number) {}',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public x'],
+			],
+			throws: "The keyword 'public' is reserved (1:11)",
+			valid: 'class A { constructor(public x: number) {} }',
+			pick: first_parameter,
+			pickValid: constructor_parameter,
+		},
+		{
+			// At the first modifier, not at its column.
+			source: 'const g = function (\n\tprivate readonly x: number,\n\tprotected y: number,\n) {};',
+			errors: [
+				[
+					'A parameter property is only allowed in a constructor implementation.',
+					'private readonly',
+				],
+				['A parameter property is only allowed in a constructor implementation.', 'protected y'],
+			],
+			throws: "The keyword 'private' is reserved (2:1)",
+			valid:
+				'class A {\n\tconstructor(\n\t\tprivate readonly x: number,\n\t\tprotected y: number,\n\t) {}\n}',
+			pick: (program) =>
+				as_type(
+					as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations[0]
+						.init,
+					'FunctionExpression',
+				).params,
+			pickValid: (program) =>
+				as_type(/** @type {AST.Node} */ (first_member(program)), 'MethodDefinition').value.params,
+		},
+		{
+			source: 'declare function f(readonly x: number): void;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'readonly x'],
+			],
+			throws: 'Unexpected token (1:28)',
+			valid: 'class A { constructor(readonly x: number) {} }',
+			pick: first_parameter,
+			pickValid: constructor_parameter,
+		},
+		{
+			source: 'export function App(override x: number) @{\n\t<div>{x}</div>\n}',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'override'],
+			],
+			throws: 'Unexpected token (1:29)',
+		},
+		{
+			// TypeScript reports both.
+			source: 'function f(public ...rest: number[]) {}',
+			errors: [
+				['A parameter property cannot be declared using a rest parameter.', 'public'],
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+			],
+			throws: "The keyword 'public' is reserved (1:11)",
+			valid: 'function f(...rest: number[]) {}',
+			pick: first_parameter,
+		},
+		{
+			source: 'function f(public [a]: number[]) {}',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				['A parameter property may not be declared using a binding pattern.', 'public'],
+			],
+			throws: "The keyword 'public' is reserved (1:11)",
+			pick: first_parameter,
+			match: { type: 'TSParameterProperty', parameter: { type: 'ArrayPattern' } },
+		},
+		// A parameter property with a pattern and a default (#665).
+		{
+			source: 'class A {\n\tconstructor(public [a] = [1]) {}\n}',
+			errors: [['A parameter property may not be declared using a binding pattern.', 'public [a]']],
+			throws: 'A parameter property may not be declared using a binding pattern. (2:13)',
+			pick: constructor_parameter,
+			match: {
+				type: 'TSParameterProperty',
+				accessibility: 'public',
+				parameter: { type: 'AssignmentPattern', left: { type: 'ArrayPattern' } },
+			},
+		},
+		{
+			source: 'class A { constructor(readonly { a }: { a: number } = { a: 1 }) {} }',
+			errors: [['A parameter property may not be declared using a binding pattern.', 'readonly {']],
+			throws: 'A parameter property may not be declared using a binding pattern. (1:22)',
+			pick: constructor_parameter,
+			match: {
+				type: 'TSParameterProperty',
+				readonly: true,
+				parameter: {
+					type: 'AssignmentPattern',
+					left: { type: 'ObjectPattern', typeAnnotation: { type: 'TSTypeAnnotation' } },
+				},
+			},
+		},
+		{
+			source: 'function f(public [a] = [1]) {}',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				['A parameter property may not be declared using a binding pattern.', 'public'],
+			],
+			throws: "The keyword 'public' is reserved (1:11)",
+			pick: first_parameter,
+			match: {
+				type: 'TSParameterProperty',
+				parameter: { type: 'AssignmentPattern', left: { type: 'ArrayPattern' } },
+			},
+		},
+		// A parameter property modifier on a signature's parameter (#664).
+		{
+			source: 'type F = (public x: number) => void;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public x'],
+			],
+			// acorn-typescript reads `(public x` as a parenthesized type.
+			throws: 'Unexpected token (1:17)',
+			valid: 'class A { constructor(public x: number) {} }',
+			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
+			pickValid: constructor_parameters,
+		},
+		{
+			source: 'type C = new (protected x: number) => object;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'protected x'],
+			],
+			throws: "The keyword 'protected' is reserved (1:14)",
+			valid: 'class A { constructor(protected x: number) {} }',
+			pick: (program) => as_type(type_alias_type(program), 'TSConstructorType').parameters,
+			pickValid: constructor_parameters,
+		},
+		{
+			source:
+				'interface I {\n\tm(private readonly x: number): void;\n\t(override y: number): void;\n\tnew (readonly z: number): I;\n}',
+			errors: [
+				[
+					'A parameter property is only allowed in a constructor implementation.',
+					'private readonly',
+				],
+				['A parameter property is only allowed in a constructor implementation.', 'override y'],
+				['A parameter property is only allowed in a constructor implementation.', 'readonly z'],
+			],
+			throws: "The keyword 'private' is reserved (2:3)",
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'TSInterfaceDeclaration').body.body,
+			match: [
+				{
+					type: 'TSMethodSignature',
+					parameters: [{ type: 'TSParameterProperty', accessibility: 'private', readonly: true }],
+				},
+				{
+					type: 'TSCallSignatureDeclaration',
+					parameters: [{ type: 'TSParameterProperty', override: true }],
+				},
+				{
+					type: 'TSConstructSignatureDeclaration',
+					parameters: [{ type: 'TSParameterProperty', readonly: true }],
+				},
+			],
+		},
+		{
+			source: 'type T = { m?(public [a]: number[]): void };',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				['A parameter property may not be declared using a binding pattern.', 'public'],
+			],
+			throws: "The keyword 'public' is reserved (1:14)",
+			pick: (program) =>
+				as_type(as_type(type_alias_type(program), 'TSTypeLiteral').members[0], 'TSMethodSignature')
+					.parameters,
+			match: [
+				{
+					type: 'TSParameterProperty',
+					accessibility: 'public',
+					parameter: { type: 'ArrayPattern', typeAnnotation: { type: 'TSTypeAnnotation' } },
+				},
+			],
+		},
+		{
+			source: 'type T = { (public ...rest: number[]): void };',
+			errors: [
+				['A parameter property cannot be declared using a rest parameter.', 'public'],
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+			],
+			throws: "The keyword 'public' is reserved (1:12)",
+			valid: 'type T = { (...rest: number[]): void };',
+			pick: type_alias_type,
+		},
+		{
+			// A signature's parameters now go through `parseBindingList`, which reads
+			// the parameters after a rest parameter, as for a function.
+			source: 'type F = (...a: number[], b: string) => void;',
+			errors: [['Comma is not permitted after the rest element', ', b']],
+			throws: 'Comma is not permitted after the rest element (1:24)',
+			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
+			match: [{ type: 'RestElement' }, { type: 'Identifier', name: 'b' }],
+		},
+		// A parameter property modifier on an arrow function's parameter (#663).
+		{
+			source: 'const k = (public x: number) => x;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public x'],
+			],
+			throws: "The keyword 'public' is reserved (1:11)",
+			valid: 'class A { constructor(public x: number) {} }',
+			pick: arrow_parameters,
+			pickValid: constructor_parameters,
+		},
+		{
+			source: 'const m = async (readonly x: number) => x;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'readonly x'],
+			],
+			throws: 'Unexpected token (1:26)',
+			valid: 'class A { constructor(readonly x: number) {} }',
+			pick: arrow_parameters,
+			pickValid: constructor_parameters,
+		},
+		{
+			// After type parameters, a modifier can come before a pattern too.
+			source: 'const n = <T,>(a: T, private readonly b?: T, protected [c]: T[] = []) => a;',
+			errors: [
+				[
+					'A parameter property is only allowed in a constructor implementation.',
+					'private readonly',
+				],
+				['A parameter property is only allowed in a constructor implementation.', 'protected'],
+				['A parameter property may not be declared using a binding pattern.', 'protected'],
+			],
+			// acorn-typescript throws the error of reading `<T,>` as an element.
+			throws: 'Unexpected token (1:10)',
+			pick: arrow_parameters,
+			match: [
+				{ type: 'Identifier', name: 'a' },
+				{
+					type: 'TSParameterProperty',
+					accessibility: 'private',
+					readonly: true,
+					parameter: { type: 'Identifier', name: 'b', optional: true },
+				},
+				{
+					type: 'TSParameterProperty',
+					accessibility: 'protected',
+					parameter: {
+						type: 'AssignmentPattern',
+						left: { type: 'ArrayPattern', typeAnnotation: { type: 'TSTypeAnnotation' } },
+						right: { type: 'ArrayExpression' },
+					},
+				},
+			],
+		},
+		{
+			source: 'const o = async <T,>(override x: T) => x;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'override'],
+			],
+			throws: 'Unexpected token (1:19)',
+			valid: 'class A { constructor(override x: T) {} }',
+			pick: arrow_parameters,
+			pickValid: constructor_parameters,
+		},
+		{
+			source:
+				'const g = (\n\ta: number,\n\treadonly b = 1,\n\tpublic { c }: { c: number },\n): number => a;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'readonly b'],
+				['A parameter property is only allowed in a constructor implementation.', 'public {'],
+				['A parameter property may not be declared using a binding pattern.', 'public {'],
+			],
+			throws: 'Unexpected token (3:10)',
+			pick: declarator_init,
+			match: {
+				type: 'ArrowFunctionExpression',
+				params: [
+					{ type: 'Identifier', name: 'a' },
+					{
+						type: 'TSParameterProperty',
+						readonly: true,
+						parameter: { type: 'AssignmentPattern', left: { name: 'b' } },
+					},
+					{
+						type: 'TSParameterProperty',
+						accessibility: 'public',
+						parameter: { type: 'ObjectPattern', typeAnnotation: { type: 'TSTypeAnnotation' } },
+					},
+				],
+				returnType: { type: 'TSTypeAnnotation' },
+			},
+		},
+		{
+			// TypeScript reports both, as for a function's parameter.
+			source: 'const f = (a: number, public ...rest: number[]) => a;',
+			errors: [
+				['A parameter property cannot be declared using a rest parameter.', 'public'],
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+			],
+			throws: "The keyword 'public' is reserved (1:22)",
+			valid: 'const f = (a: number, ...rest: number[]) => a;',
+			pick: arrow_parameters,
+		},
+		{
+			source: 'const f = (a, public ...r,) => a;',
+			errors: [
+				['A parameter property cannot be declared using a rest parameter.', 'public'],
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				['Comma is not permitted after the rest element', ',)'],
+			],
+			throws: "The keyword 'public' is reserved (1:14)",
+			valid: 'const f = (a, ...r) => a;',
+			pick: arrow_parameters,
+		},
+		{
+			source: 'export const App = (public x: number) => @{\n\t<div>{x}</div>\n};',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public x'],
+			],
+			throws: "The keyword 'public' is reserved (1:20)",
+		},
+		// An arrow function's optional rest or pattern parameter (#663), as other
+		// functions' (#616, #557).
+		{
+			source: 'const f = (...a?: number[]) => a;',
+			errors: [['A rest parameter cannot be optional.', '?:']],
+			throws: 'A rest parameter cannot be optional. (1:15)',
+			valid: 'declare function f(...a?: number[]): void;',
+			pick: arrow_parameters,
+			pickValid: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'TSDeclareFunction').params,
+		},
+		{
+			source: 'const f = ({ a }?: { a: number }) => a;',
+			errors: [
+				[
+					'A binding pattern parameter cannot be optional in an implementation signature.',
+					'{ a }?',
+				],
+			],
+			throws:
+				'A binding pattern parameter cannot be optional in an implementation signature. (1:11)',
+			valid: 'declare function f({ a }?: { a: number }): void;',
+			pick: arrow_parameters,
+			pickValid: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'TSDeclareFunction').params,
+		},
+		{
+			source: 'const f = async (x, [a]?: number[]) => a;',
+			errors: [
+				['A binding pattern parameter cannot be optional in an implementation signature.', '[a]?'],
+			],
+			throws:
+				'A binding pattern parameter cannot be optional in an implementation signature. (1:20)',
+			pick: arrow_parameters,
+			match: [{ type: 'Identifier' }, { type: 'ArrayPattern', optional: true }],
+		},
+		{
+			source: 'const f = <T,>({ a }?: T) => a;',
+			errors: [
+				[
+					'A binding pattern parameter cannot be optional in an implementation signature.',
+					'{ a }?',
+				],
+			],
+			// The arrow function's own error, past its `=>` (#703).
+			throws:
+				'A binding pattern parameter cannot be optional in an implementation signature. (1:15)',
+			pick: arrow_parameters,
+			match: [{ type: 'ObjectPattern', optional: true }],
+		},
+		// An async arrow function's optional rest parameter (#702), which acorn
+		// reads as a spread among the arguments of `async (…)`.
+		{
+			source: 'const f = async (...a?: number[]) => a;',
+			errors: [['A rest parameter cannot be optional.', '?:']],
+			throws: 'A rest parameter cannot be optional. (1:21)',
+			valid: 'declare function f(...a?: number[]): void;',
+			pick: arrow_parameters,
+			pickValid: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'TSDeclareFunction').params,
+		},
+		{
+			source: `const g = async (
+	x,
+	...[a] /* rest */ ?
+) => x;`,
+			errors: [['A rest parameter cannot be optional.', '?\n']],
+			throws: 'A rest parameter cannot be optional. (3:19)',
+			pick: arrow_parameters,
+			match: [
+				{ type: 'Identifier', name: 'x' },
+				{ type: 'RestElement', argument: { type: 'ArrayPattern' }, optional: true },
+			],
+		},
+		// A parameter's default in a function or constructor type, or in a
+		// method, call, or construct signature (#705, TS2371). The tree keeps it,
+		// as typescript-estree's does.
+		{
+			source: 'type F = (a = 1) => void;',
+			errors: [
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'a = 1',
+				],
+			],
+			throws:
+				'A parameter initializer is only allowed in a function or constructor implementation. (1:10)',
+			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
+			match: [
+				{
+					type: 'AssignmentPattern',
+					left: { type: 'Identifier', name: 'a' },
+					right: { type: 'Literal', value: 1 },
+				},
+			],
+		},
+		{
+			source: `interface I {
+	m(a: number = 1): void;
+	(b = 2): void;
+	new ({ c }: { c: number } = { c: 3 }): I;
+}`,
+			errors: [
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'a: number = 1',
+				],
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'b = 2',
+				],
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'{ c }',
+				],
+			],
+			throws:
+				'A parameter initializer is only allowed in a function or constructor implementation. (2:3)',
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'TSInterfaceDeclaration').body.body,
+			match: [
+				{
+					type: 'TSMethodSignature',
+					parameters: [
+						{
+							type: 'AssignmentPattern',
+							left: { type: 'Identifier', name: 'a', typeAnnotation: { type: 'TSTypeAnnotation' } },
+						},
+					],
+				},
+				{
+					type: 'TSCallSignatureDeclaration',
+					parameters: [{ type: 'AssignmentPattern', left: { name: 'b' } }],
+				},
+				{
+					type: 'TSConstructSignatureDeclaration',
+					parameters: [{ type: 'AssignmentPattern', left: { type: 'ObjectPattern' } }],
+				},
+			],
+		},
+		{
+			source: 'let f: new ([a]?: number[], b = 2) => object;',
+			errors: [
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'b = 2',
+				],
+			],
+			throws:
+				'A parameter initializer is only allowed in a function or constructor implementation. (1:28)',
+		},
+		{
+			// TypeScript reports both at the parameter.
+			source: 'type F = (public x = 1) => void;',
+			errors: [
+				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				[
+					'A parameter initializer is only allowed in a function or constructor implementation.',
+					'public x = 1',
+				],
+			],
+			// acorn-typescript reads `(public x` as a parenthesized type.
+			throws: 'Unexpected token (1:17)',
+			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
+			match: [
+				{
+					type: 'TSParameterProperty',
+					accessibility: 'public',
+					parameter: { type: 'AssignmentPattern', left: { name: 'x' } },
+				},
+			],
+		},
 	];
 
 	/** @type {Array<ParseOptions>} */
@@ -9354,6 +10185,29 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// Decorators before a statement that isn't a declaration, in a function
 			// that has decorators of its own.
 			'@dec function f() {\n\t@inner x;\n}',
+			// TypeScript's parser reads a declarator named `of` in these `for` heads.
+			'for (const of []) {}',
+			'for (const of x.y) {}',
+			// Modifiers on the line before a parameter's name are its name.
+			'function f(readonly\n\tx: number) {}',
+			'const f = (public\n\tx) => x;',
+			// TypeScript reads `(` and a modifier as an arrow function's parameters
+			// only before a name other than `as`, and as a parenthesized expression
+			// otherwise.
+			'const f = (public [a]) => a;',
+			'const f = async (readonly { a }) => a;',
+			'const f = (public ...r) => r;',
+			'const f = (readonly as) => 1;',
+			// Modifiers where no arrow function follows.
+			'(public x);',
+			'(a, readonly b);',
+			'f(public x);',
+			'async (a, public b);',
+			'const f = (a, public b)\n=> a;',
+			// TypeScript reads a parenthesized type here.
+			'type F = (public ...rest: number[]) => void;',
+			// TypeScript reads `x` as the name after the modifiers, then fails.
+			'const f = (a, public x y) => a;',
 		];
 		const modes = [undefined, ...collect_modes];
 		const inputs = sources.flatMap((source) => modes.map((options) => ({ source, options })));
@@ -9417,6 +10271,19 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'class A {\n\tconstructor(@dec private x: number) {}\n\tm(@dec y: number) {}\n}',
 			// Parameter properties and parameters named after modifiers.
 			'class A {\n\tconstructor(public x: number, readonly: number, ...rest: number[]) {}\n}',
+			'function f(readonly, override?: number) {}',
+			// A declarator named `of`.
+			'for (const of of x) {}',
+			'for (var of = 1; ; ) {}',
+			// Names and expressions that start with a modifier's name.
+			'const f = (readonly, override = 1, public$: number) => readonly;',
+			'const g = (a, readonly [b]);',
+			'const h = async (readonly) => readonly;',
+			'f(readonly, readonly[0], override * 2);',
+			'type P = (readonly [string]) | (readonly string[]);',
+			'type Q = (readonly: number) => void;',
+			// A parameter property with a default that isn't a pattern.
+			'class A {\n\tconstructor(public x = 1, readonly y: number[] = []) {}\n}',
 		];
 		const outcomes = await parse_in_worker(
 			sources.flatMap((source) => collect_modes.map((options) => ({ source, options }))),
@@ -9636,6 +10503,128 @@ describe('JSX whitespace in template text', () => {
 			'export function App() @{\n\t<main>\n\t\t{(() => {\n\t\t\tswitch (x) {\n\t\t\t\tcase 1:\n\t\t\t\t\treturn <div><b>1</b> 2</div>;\n\t\t\t}\n\t\t})()}\n\t</main>\n}',
 			['<b>', ' 2'],
 		],
+		// So does an element in a setup statement, wherever the statement holds it (#636)
+		[
+			'text before a tag in an element in a setup statement',
+			'export function App() @{\n\tconst a = <div>Hello<b /></div>;\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'a space after an opening tag in an element in a setup statement',
+			'export function App() @{\n\tlet a = <div> 1</div>;\n\t<main>{a}</main>\n}',
+			[' 1'],
+		],
+		[
+			'a space after a closing tag in an element in a setup statement',
+			'export function App() @{\n\tconst a = <div><b>1</b> 2</div>;\n\t<main>{a}</main>\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'a non-breaking space after a closing tag in an element in a setup statement',
+			'export function App() @{\n\tconst a = <div><b>1</b>\u00a02</div>;\n\t<main>{a}</main>\n}',
+			['<b>', '\u00a02'],
+		],
+		[
+			'a space after a child container in an element in a setup statement',
+			'export function App() @{\n\tconst a = <div>{x} 2</div>;\n\t<main>{a}</main>\n}',
+			['JSXExpressionContainer', ' 2'],
+		],
+		[
+			'text before a tag in a function declared in a setup statement',
+			'export function App() @{\n\tfunction f() {\n\t\treturn <div>Hello<b /></div>;\n\t}\n\t<main>{f()}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a return in a setup statement',
+			'export function App() @{\n\tif (x) {\n\t\treturn <div>Hello<b /></div>;\n\t}\n\t<main />\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a call argument in a setup statement',
+			'export function App() @{\n\tconst a = f(<div>Hello<b /></div>);\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in an array in a setup statement',
+			'export function App() @{\n\tconst a = [<div>Hello<b /></div>];\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in an object in a setup statement',
+			'export function App() @{\n\tconst a = { k: <div>Hello<b /></div> };\n\t<main>{a.k}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a conditional in a setup statement',
+			'export function App() @{\n\tconst a = x ? <div>Hello<b /></div> : null;\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in an arrow body in a setup statement',
+			'export function App() @{\n\tconst a = () => <div>Hello<b /></div>;\n\t<main>{a()}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in an @if in a setup statement',
+			'export function App() @{\n\tconst a = @if (x) {\n\t\t<div>Hello<b /></div>\n\t};\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in an @for in a setup statement',
+			'export function App() @{\n\tconst a = @for (const i of xs) {\n\t\t<div>Hello<b /></div>\n\t};\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in an @switch in a setup statement',
+			'export function App() @{\n\tconst a = @switch (x) {\n\t\t@case 1: {\n\t\t\t<div>Hello<b /></div>\n\t\t}\n\t};\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a setup statement of a @{ … } in a setup statement',
+			'export function App() @{\n\tconst a = @{\n\t\tconst b = <div>Hello<b /></div>;\n\t\t<p>{b}</p>\n\t};\n\t<main>{a}</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a component declared in a setup statement',
+			'export function App() @{\n\tfunction B() @{\n\t\t<div>Hello<b /></div>\n\t}\n\t<main><B /></main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a switch case in a setup statement',
+			'export function App() @{\n\tswitch (y) {\n\t\tcase 1: {\n\t\t\tconst a = <div>Hello<b /></div>;\n\t\t}\n\t}\n\t<main />\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'a space after a closing tag in an element in a container in a setup statement',
+			'export function App() @{\n\tconst a = <p>{x && <div><b>1</b> 2</div>}</p>;\n\t<main>{a}</main>\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'a space after a closing tag in an element in an attribute value in a setup statement',
+			'export function App() @{\n\tconst a = <p slot={<div><b>1</b> 2</div>} />;\n\t<main>{a}</main>\n}',
+			['<b>', ' 2'],
+		],
+		[
+			'text before a tag in a setup statement of an @if body',
+			'export function App() @{\n\t<main>\n\t\t@if (x) {\n\t\t\tconst a = <div>Hello<b /></div>;\n\t\t\t<p>{a}</p>\n\t\t}\n\t</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'text before a tag in a setup statement of a @{ … } child',
+			'export function App() @{\n\t<main>\n\t\t@{\n\t\t\tconst a = <div>Hello<b /></div>;\n\t\t\t<p>{a}</p>\n\t\t}\n\t</main>\n}',
+			['Hello', '<b>'],
+		],
+		[
+			'a space after a closing tag in a setup statement of an @case',
+			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tconst a = <div><b>1</b> 2<i /></div>;\n\t\t\t\t<p>{a}</p>\n\t\t\t}\n\t\t}\n\t</main>\n}',
+			['<b>', ' 2', '<i>'],
+		],
+		// A spread attribute's argument stays code
+		[
+			'text in an element with a spread attribute',
+			'export function App() @{\n\t<main>\n\t\t<div {...{ a: b ? c : d, e: <i>1</i> }}> 3</div>\n\t</main>\n}',
+			[' 3'],
+		],
 	];
 
 	it.each(cases)('reads %s like JSX', async (_label, source, expected) => {
@@ -9658,5 +10647,908 @@ describe('JSX whitespace in template text', () => {
 		for (const outcome of outcomes) {
 			expect(outcome).toMatchObject({ ok: false, message: 'Unexpected token (1:13)' });
 		}
+	});
+
+	it('reads the token after a self-closing tag with a space before its `>` as code', async () => {
+		const sources = [
+			'const a = <div / >;\nconst b = 1;',
+			'export function App() @{\n\tconst a = <b / >;\n\tconst c = 1;\n\t<main>{a}</main>\n}',
+		];
+		const inputs = sources.flatMap((source) => modes.map((options) => ({ source, options })));
+		const outcomes = await parse_in_worker(inputs);
+
+		expect(outcomes).toEqual(inputs.map(({ options }) => ({ ok: true, errors: options && [] })));
+	});
+});
+
+describe('syntax errors in an element that is a value', () => {
+	const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+
+	// acorn-typescript first parses a value that starts with `<` as an element,
+	// in an attempt that is undone when it fails. A syntax error in the element
+	// still reports as that error, where TypeScript reports it (#638).
+	/** @type {Array<[string, string, string]>} */
+	const cases = [
+		['a closing tag without its `>`', 'const el = <div>x</div;', "'>' expected. (1:22)"],
+		['the same in parentheses', 'const el = (<div>x</div);', "'>' expected. (1:23)"],
+		['the same at the end of the input', 'const a = cond ? <span>a</span', "'>' expected. (1:30)"],
+		['the same in a default export', 'export default <div>B</div', "'>' expected. (1:26)"],
+		['a self-closing tag without its `>`', 'const el = <div/;', "'>' expected. (1:16)"],
+		[
+			'a closing tag without its `>` in a setup statement',
+			'export function App() @{\n\tconst a = <div><b>1</b</div>;\n\t<p>{a}</p>\n}',
+			"'>' expected. (2:23)",
+		],
+		// A closing tag where an element starts is reported at its `<`, where
+		// TypeScript expects an expression (#653)
+		['a closing tag as an argument', 'x = import(</>);', 'Unexpected token (1:11)'],
+		['a closing tag as an index', 'x = a[(</>)];', 'Unexpected token (1:7)'],
+		['a closing tag as an operand', 'x = -(< />);', 'Unexpected token (1:6)'],
+		['a closing tag after yield', 'function* g() {\n\tyield </>;\n}', 'Unexpected token (2:7)'],
+		['a closing tag in parentheses', 'x = (</>);', 'Unexpected token (1:5)'],
+		['a closing tag where a statement starts', 'a;\n</div>', 'Unexpected token (2:0)'],
+		[
+			'text that reads nothing in a setup statement',
+			'export function App() @{\n\tconst f = <b><T,>() => 1;\n\t<main />\n}',
+			'Unexpected token (2:14)',
+		],
+	];
+
+	it.each(cases)('reports %s as a syntax error', async (_label, source, message) => {
+		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
+
+		for (const outcome of outcomes) {
+			expect(outcome).toMatchObject({ ok: false, message });
+		}
+	});
+});
+
+/**
+ * The comments attached in `node`, by their values.
+ *
+ * @param {unknown} node
+ * @returns {string[]}
+ */
+function comments_in(node) {
+	/** @type {string[]} */
+	const values = [];
+	JSON.stringify(node, (key, value) => {
+		if (
+			(key === 'leadingComments' || key === 'trailingComments' || key === 'innerComments') &&
+			Array.isArray(value)
+		) {
+			values.push(...value.map((/** @type {{ value: string }} */ comment) => comment.value));
+		}
+		return value;
+	});
+	return values;
+}
+
+/**
+ * The children of `node`: each text by its value, each element by its tag and
+ * children, and anything else by its type.
+ *
+ * @param {AST.Node} node
+ * @returns {unknown[]}
+ */
+function read_children(node) {
+	return node_children(node).map((child) =>
+		child.type === 'JSXText'
+			? child.value
+			: child.type === 'JSXElement'
+				? {
+						[/** @type {{ name: string }} */ (child.openingElement.name).name]:
+							read_children(child),
+					}
+				: child.type,
+	);
+}
+
+describe('an element as an attribute value without braces (#654)', () => {
+	const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+
+	/**
+	 * The value of the `attr` attribute.
+	 *
+	 * @param {unknown} ast
+	 * @returns {AST.Node}
+	 */
+	function attr_value(ast) {
+		const attribute = /** @type {ESTreeJSX.JSXAttribute} */ (
+			find_first(
+				ast,
+				(node) =>
+					node.type === 'JSXAttribute' &&
+					/** @type {ESTreeJSX.JSXAttribute} */ (node).name.name === 'attr',
+			)
+		);
+		return /** @type {AST.Node} */ (/** @type {unknown} */ (attribute.value));
+	}
+
+	// acorn-typescript's JSX parser read the element, taking each text token as
+	// a child. Its text was read as a template's, which ends at a comment, so
+	// the parser read the same empty text there until memory ran out. The
+	// element is template markup now, as in a braced value (#656), so a comment
+	// is a comment.
+	/** @type {Array<[string, string, unknown[], string[]]>} */
+	const cases = [
+		['a block comment', 'const el = <div attr=<b>/* c */</b> />;', [], [' c ']],
+		[
+			'a block comment after text',
+			'const el = <div attr=<b>a /* c */ b</b> />;',
+			['a  b'],
+			[' c '],
+		],
+		['a line comment', 'const el = <div attr=<b>// c\n</b> />;', [], [' c']],
+		['a line comment after a space', 'const el = <div attr=<b> // c\n</b> />;', [], [' c']],
+		['a line comment on its own line', 'const el = <div attr=<b>\n// c\n</b> />;', [], [' c']],
+		['a comment in a fragment', 'const el = <div attr=<>/* c */</> />;', [], [' c ']],
+		[
+			'a comment in a nested element',
+			'const el = <div attr=<b>a<i>/* c */</i></b> />;',
+			['a', { i: [] }],
+			[' c '],
+		],
+		[
+			'a comment in an element in a template',
+			'export function App() @{\n\t<main>\n\t\t<div attr=<b>/* c */</b> />\n\t</main>\n}',
+			[],
+			[' c '],
+		],
+		[
+			'a comment in an element in a setup statement',
+			'export function App() @{\n\tconst el = <div attr=<b>/* c */</b> />;\n\t<main>{el}</main>\n}',
+			[],
+			[' c '],
+		],
+		[
+			'a comment in an element in a function',
+			'function App() {\n\treturn <div attr=<b>// c\n</b> />;\n}',
+			[],
+			[' c'],
+		],
+		['an @if', 'const el = <div attr=<b>@if (x) { <i /> }</b> />;', ['JSXIfExpression'], []],
+		// The other children read as they did
+		['text', 'const el = <div attr=<b>text</b> />;', ['text'], []],
+		['an element', 'const el = <div attr=<b><i /></b> />;', [{ i: [] }], []],
+		['a container', 'const el = <div attr=<b>{x}</b> />;', ['JSXExpressionContainer'], []],
+	];
+
+	it.each(cases)('reads %s', async (_label, source, children, comments) => {
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], label).toEqual([]);
+			expect(read_children(attr_value(outcome.ast)), label).toEqual(children);
+			expect(comments_in(attr_value(outcome.ast)), label).toEqual(comments);
+		}
+	});
+
+	it('reports a closing tag that does not match it as in a braced value', async () => {
+		const sources = [
+			'const el = <div attr= <b>// c\n"foo">text</div>;',
+			'const el = <div attr={<b>// c\n"foo">text</div>};',
+		];
+		const outcomes = await parse_in_worker(
+			sources.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes.map((outcome) => !outcome.ok && outcome.message)).toEqual([
+			"Expected closing tag to match opening tag. Expected '</b>' but found '</div>' (2:10)",
+			'Unexpected closing tag (2:10)',
+			'Unexpected closing tag (2:10)',
+			"Expected closing tag to match opening tag. Expected '</b>' but found '</div>' (2:10)",
+			'Unexpected closing tag (2:10)',
+			'Unexpected closing tag (2:10)',
+		]);
+	});
+
+	// An element in a dynamic tag name is still read by acorn-typescript's JSX
+	// parser (see `jsx_parseElement`), where a comment is text
+	it('reads a comment in an element in a dynamic tag name as text', async () => {
+		const source = 'const el = <{c ? <b>/* c */</b> : "div"} />;';
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const outcome of outcomes) {
+			if (!outcome.ok) throw new Error(outcome.message);
+			const b = /** @type {AST.Node} */ (
+				find_first(
+					outcome.ast,
+					(node) =>
+						node.type === 'JSXElement' &&
+						/** @type {{ name: string }} */ (
+							/** @type {ESTreeJSX.JSXElement} */ (node).openingElement.name
+						).name === 'b',
+				)
+			);
+			expect(read_children(b)).toEqual(['/* c */']);
+		}
+	});
+});
+
+describe("an element in a spread attribute's argument (#656)", () => {
+	const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+
+	/**
+	 * The element `<i>`.
+	 *
+	 * @param {unknown} ast
+	 * @returns {AST.Node}
+	 */
+	function element_i(ast) {
+		return /** @type {AST.Node} */ (
+			find_first(
+				ast,
+				(node) =>
+					node.type === 'JSXElement' &&
+					/** @type {{ name?: string }} */ (
+						/** @type {ESTreeJSX.JSXElement} */ (node).openingElement.name
+					).name === 'i',
+			)
+		);
+	}
+
+	// acorn-typescript's JSX parser read the element as plain JSX: a comment was
+	// text, and `@if` was text and a container. It is template markup, as in a
+	// braced value.
+	/** @type {Array<[string, string, unknown[], string[]]>} */
+	const cases = [
+		[
+			'a comment in an object',
+			'export function App() @{\n\t<div {...{ k: <i><b /> /* c */ 2</i> }} />\n}',
+			[{ b: [] }, '  2'],
+			[' c '],
+		],
+		[
+			'an @if in an object',
+			'export function App() @{\n\t<div {...{ k: <i>@if (x) { <b /> }</i> }} />\n}',
+			['JSXIfExpression'],
+			[],
+		],
+		[
+			'a comment in a conditional',
+			'export function App() @{\n\t<main>\n\t\t<div {...(c ? <i><b /> /* c */ 2</i> : null)}>t</div>\n\t</main>\n}',
+			[{ b: [] }, '  2'],
+			[' c '],
+		],
+		[
+			'an @for in a setup statement',
+			'export function App() @{\n\tconst a = <div {...{ k: <i>@for (const y of ys) { <b>{y}</b> }</i>, j: 1 }} />;\n\t<main>{a}</main>\n}',
+			['JSXForExpression'],
+			[],
+		],
+		[
+			'a line comment in a function',
+			'function App() {\n\treturn <div {...{ k: <i><b />\n\t\t// c\n\t\ttwo</i> }} />;\n}',
+			[{ b: [] }, '\n\t\t\n\t\ttwo'],
+			[' c'],
+		],
+		[
+			'text in an array',
+			'function App() {\n\treturn <div {...[<i>  a  <b />  </i>]}>t</div>;\n}',
+			['  a  ', { b: [] }, '  '],
+			[],
+		],
+		[
+			'an @switch in an arrow',
+			'const a = <div {...{ r: () => <i>@switch (x) { @case 1: { <b /> } }</i> }} />;',
+			['JSXSwitchExpression'],
+			[],
+		],
+		[
+			'a code block',
+			'export function App() @{\n\t<main>\n\t\t<div {...{ k: <i>@{ const y = 1; <b>{y}</b> }</i> }}>t</div>\n\t</main>\n}',
+			['JSXCodeBlock'],
+			[],
+		],
+		[
+			'an @try in a container',
+			'export function App() @{\n\t<main>\n\t\t{x && <div {...{ k: <i>@try { <b /> } @catch (e) { <u /> }</i> }} />}\n\t</main>\n}',
+			['JSXTryExpression'],
+			[],
+		],
+	];
+
+	it.each(cases)('reads %s', async (_label, source, children, comments) => {
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], label).toEqual([]);
+			const i = element_i(outcome.ast);
+			expect(i.metadata?.native_tsrx, label).toBe(true);
+			expect(read_children(i), label).toEqual(children);
+			expect(comments_in(i), label).toEqual(comments);
+		}
+	});
+
+	/**
+	 * A node without its locations and metadata.
+	 * @param {unknown} node
+	 */
+	function without_locations(node) {
+		return JSON.parse(
+			JSON.stringify(node, (key, value) =>
+				key === 'start' || key === 'end' || key === 'loc' || key === 'range' || key === 'metadata'
+					? undefined
+					: value,
+			),
+		);
+	}
+
+	// Each spread, and an attribute value without braces, against the same
+	// expression in a braced value
+	/** @type {Array<[string, (element: string) => string, (element: string) => string]>} */
+	const forms = [
+		['an object', (x) => `{...{ k: ${x} }}`, (x) => `k={{ k: ${x} }}`],
+		['a conditional', (x) => `{...(c ? ${x} : null)}`, (x) => `k={(c ? ${x} : null)}`],
+		['an array', (x) => `{...[${x}]}`, (x) => `k={[${x}]}`],
+		['an object with more', (x) => `{...{ k: ${x}, j: 1 }}`, (x) => `k={{ k: ${x}, j: 1 }}`],
+		['an arrow', (x) => `{...{ r: () => ${x} }}`, (x) => `k={{ r: () => ${x} }}`],
+		['an attribute value without braces', (x) => `k=${x}`, (x) => `k={${x}}`],
+	];
+	const contents = [
+		'<b>t</b> /* c */ <u />',
+		'<b>t</b>\n\t\t// c\n\t\ttwo',
+		'@if (x) { <b /> } @else { <u /> } 2',
+		'@switch (x) { @case 1: { <b /> } }',
+		'{x} /* c */ {y}',
+		'<b k=<u>n /* c */</u> {...{ j: <u>@if (y) { <s /> }</u> }} />',
+	];
+	/** @type {Array<(host: string) => string>} */
+	const places = [
+		(host) => `const a = ${host};`,
+		(host) => `export function App() @{\n\t<main>\n\t\t${host}\n\t</main>\n}`,
+		(host) => `export function App() @{\n\tconst a = ${host};\n\t<main>{a}</main>\n}`,
+		(host) => `export function App() @{\n\t<main>\n\t\t{x && ${host}}\n\t</main>\n}`,
+	];
+	const ends = [' />', '>t</p>', ' j="1" {...y}>t</p>'];
+
+	it.each(forms)(
+		'reads an element in %s like one in a braced value',
+		async (_label, form, braced) => {
+			const pairs = contents.flatMap((content) =>
+				places.flatMap((place) =>
+					ends.map((end) => [
+						place(`<p ${form(`<i>${content}</i>`)}${end}`),
+						place(`<p ${braced(`<i>${content}</i>`)}${end}`),
+					]),
+				),
+			);
+			const outcomes = await parse_in_worker_with_ast(
+				pairs.flatMap((pair) =>
+					pair.flatMap((source) => modes.map((options) => ({ source, options }))),
+				),
+			);
+
+			for (const [index, [source]] of pairs.entries()) {
+				for (const [mode_index, options] of modes.entries()) {
+					const outcome = outcomes[index * 2 * modes.length + mode_index];
+					const reference = outcomes[(index * 2 + 1) * modes.length + mode_index];
+					const label = `${JSON.stringify(source)} with ${JSON.stringify(options)}`;
+					if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+					if (!reference.ok) throw new Error(`the braced value of ${label} threw`);
+					expect(outcome.errors ?? [], label).toEqual([]);
+					const [i, reference_i] = [outcome, reference].map(({ ast }) => element_i(ast));
+					expect(i.metadata?.native_tsrx, label).toBe(true);
+					expect(without_locations(i), label).toEqual(without_locations(reference_i));
+					const [p, reference_p] = [outcome, reference].map(({ ast }) =>
+						read_children(
+							/** @type {AST.Node} */ (
+								find_first(
+									ast,
+									(node) =>
+										node.type === 'JSXElement' &&
+										/** @type {{ name?: string }} */ (
+											/** @type {ESTreeJSX.JSXElement} */ (node).openingElement.name
+										).name === 'p',
+								)
+							),
+						),
+					);
+					expect(p, label).toEqual(reference_p);
+				}
+			}
+		},
+	);
+});
+
+describe('a `/` in the opening tag of an element in a template (#655)', () => {
+	const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+
+	/**
+	 * A node without its locations.
+	 * @param {unknown} node
+	 */
+	function without_locations(node) {
+		return JSON.parse(
+			JSON.stringify(node, (key, value) =>
+				key === 'start' || key === 'end' || key === 'loc' || key === 'range' || key === 'metadata'
+					? undefined
+					: value,
+			),
+		);
+	}
+
+	// While an opening tag is read, its element isn't on the path yet, so the
+	// rule that reads a `/` or `#` in a template's text as text took the tag's
+	// `/` and a spread argument's for text.
+	/** @type {Array<[string, string, string]>} */
+	const self_closing = [
+		[
+			'a space before the `>`',
+			'export function App() @{\n\t<main>\n\t\t<div / >\n\t</main>\n}',
+			'export function App() @{\n\t<main>\n\t\t<div />\n\t</main>\n}',
+		],
+		[
+			'a line break before the `>`',
+			'export function App() @{\n\t<main>\n\t\t<div a="1" /\n\t\t>\n\t</main>\n}',
+			'export function App() @{\n\t<main>\n\t\t<div a="1" />\n\t</main>\n}',
+		],
+		[
+			'a comment before the `/`',
+			'export function App() @{\n\t<main>\n\t\t<div /* c */ / >\n\t</main>\n}',
+			'export function App() @{\n\t<main>\n\t\t<div /* c */ />\n\t</main>\n}',
+		],
+		[
+			'text after the tag',
+			'export function App() @{\n\t<main><div / >/path #tag</main>\n}',
+			'export function App() @{\n\t<main><div />/path #tag</main>\n}',
+		],
+		[
+			'an element in a function',
+			'function App() {\n\treturn <main><div {...a} / ></main>;\n}',
+			'function App() {\n\treturn <main><div {...a} /></main>;\n}',
+		],
+		[
+			'an element in a setup statement',
+			'export function App() @{\n\tconst el = <main><div / ></main>;\n\t<p>{el}</p>\n}',
+			'export function App() @{\n\tconst el = <main><div /></main>;\n\t<p>{el}</p>\n}',
+		],
+		[
+			'an element in an attribute value',
+			'export function App() @{\n\t<main>\n\t\t<div a=<b / > />\n\t</main>\n}',
+			'export function App() @{\n\t<main>\n\t\t<div a=<b /> />\n\t</main>\n}',
+		],
+	];
+
+	it.each(self_closing)(
+		'reads a self-closing tag with %s like one without',
+		async (_label, source, valid) => {
+			const outcomes = await parse_in_worker_with_ast(
+				[source, valid].flatMap((input) => modes.map((options) => ({ source: input, options }))),
+			);
+
+			for (const [index, options] of modes.entries()) {
+				const outcome = outcomes[index];
+				const valid_outcome = outcomes[modes.length + index];
+				const label = `${JSON.stringify(source)} with ${JSON.stringify(options)}`;
+				if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+				if (!valid_outcome.ok) throw new Error(`${JSON.stringify(valid)} threw`);
+				expect(outcome.errors ?? [], label).toEqual([]);
+				expect(without_locations(outcome.ast), label).toEqual(without_locations(valid_outcome.ast));
+			}
+		},
+	);
+
+	/** @type {Array<[string, string, object]>} */
+	const spread_arguments = [
+		[
+			'a division',
+			'export function App() @{\n\t<main>\n\t\t<div {...{ a: b / 2 }} />\n\t</main>\n}',
+			{
+				type: 'ObjectExpression',
+				properties: [{ value: { type: 'BinaryExpression', operator: '/' } }],
+			},
+		],
+		[
+			'a division in an element in a function',
+			'function App() {\n\treturn <main><div {...[b / 2]} /></main>;\n}',
+			{ type: 'ArrayExpression', elements: [{ type: 'BinaryExpression', operator: '/' }] },
+		],
+		[
+			'a division in a setup statement',
+			'export function App() @{\n\tconst el = <main><div {...[b / 2]} /></main>;\n\t<p>{el}</p>\n}',
+			{ type: 'ArrayExpression', elements: [{ type: 'BinaryExpression', operator: '/' }] },
+		],
+		[
+			'a regular expression',
+			'export function App() @{\n\t<main>\n\t\t<div {...{ a: /re/.test(s) }} />\n\t</main>\n}',
+			{ type: 'ObjectExpression', properties: [{ value: { type: 'CallExpression' } }] },
+		],
+		[
+			'a private name',
+			'class C {\n\t#p = {};\n\trender() @{\n\t\t<main>\n\t\t\t<div {...this.#p} />\n\t\t</main>\n\t}\n}',
+			{ type: 'MemberExpression', property: { type: 'PrivateIdentifier', name: 'p' } },
+		],
+	];
+
+	it.each(spread_arguments)(
+		"reads %s in a spread attribute's argument as code",
+		async (_label, source, argument) => {
+			const outcomes = await parse_in_worker_with_ast(
+				modes.map((options) => ({ source, options })),
+			);
+
+			for (const [index, outcome] of outcomes.entries()) {
+				const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+				if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+				expect(outcome.errors ?? [], label).toEqual([]);
+				const spread = /** @type {ESTreeJSX.JSXSpreadAttribute} */ (
+					find_first(outcome.ast, (node) => node.type === 'JSXSpreadAttribute')
+				);
+				expect(spread.argument, label).toMatchObject(argument);
+			}
+		},
+	);
+
+	it('still reads a `/` and a `#` that start a child as text', async () => {
+		const source = 'export function App() @{\n\t<main><div>/path #tag</div> / 2</main>\n}';
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const outcome of outcomes) {
+			if (!outcome.ok) throw new Error(outcome.message);
+			const main = /** @type {ESTreeJSX.JSXElement} */ (
+				find_first(outcome.ast, (node) => node.type === 'JSXElement')
+			);
+			expect(
+				node_children(/** @type {AST.Node} */ (/** @type {unknown} */ (main))).map((child) =>
+					child.type === 'JSXText'
+						? child.value
+						: node_children(child).map((c) => c.type === 'JSXText' && c.value),
+				),
+			).toEqual([['/path #tag'], ' / 2']);
+		}
+	});
+});
+
+describe('the text of an element in a template', () => {
+	const modes = [undefined, { collect: true, preserveParens: true }, { loose: true }];
+
+	/**
+	 * The children of the first element named `name`: each text by its `raw` or
+	 * `value`, each element by its tag, anything else by its type.
+	 *
+	 * @param {unknown} ast
+	 * @param {string} name
+	 * @param {'raw' | 'value'} [form]
+	 * @returns {string[]}
+	 */
+	function children(ast, name, form = 'raw') {
+		const element = find_first(
+			ast,
+			(node) =>
+				node.type === 'JSXElement' &&
+				/** @type {{ name?: string }} */ (
+					/** @type {AST.TSRXJSXElement} */ (node).openingElement.name
+				).name === name,
+		);
+		if (!element) throw new Error(`No <${name}>`);
+		return node_children(element).map((child) =>
+			child.type === 'JSXText'
+				? child[form]
+				: child.type === 'JSXElement'
+					? `<${/** @type {{ name: string }} */ (child.openingElement.name).name}>`
+					: child.type,
+		);
+	}
+
+	/**
+	 * @param {string} body
+	 */
+	const component = (body) => `export function App() @{
+	<main>${body}</main>
+}`;
+
+	// In a template a `>` is text. In an element in a `{…}` container, the `>`
+	// right after a tag was read as code, dropping the text before it, and
+	// after a child container it failed (#694).
+	/** @type {Array<[string, string, string[], string?]>} */
+	const greater_than = [
+		['in a container', component('{c && <b>a > b</b>}'), ['a > b']],
+		['first in a container', component('{c && <b>> b</b>}'), ['> b']],
+		['in an arrow in a container', component('{c && <b>a => b</b>}'), ['a => b']],
+		['in operators in a container', component('{c && <b>a >= b >> c</b>}'), ['a >= b >> c']],
+		['after a tag in a container', component('{c && <b><i />a > b</b>}'), ['<i>', 'a > b']],
+		[
+			'after a child container in a container',
+			component('{c && <b>{y} a > b</b>}'),
+			['JSXExpressionContainer', ' a > b'],
+		],
+		[
+			'on its own line in a container',
+			component(`{c && <b>
+		a > b
+	</b>}`),
+			[
+				`
+		a > b
+	`,
+			],
+		],
+		[
+			'after type arguments in a container',
+			component('{c && <List<string>>a > b</List>}'),
+			['a > b'],
+			'List',
+		],
+		['in an attribute value', component('<div title={<b>a > b</b>} />'), ['a > b']],
+		[
+			'in an @if body in a container',
+			component('{c && <p>@if (d) { <b>a > b</b> }</p>}'),
+			['a > b'],
+		],
+		[
+			'in a container in a function',
+			`function App() {
+	return <main>{c && <b>a > b</b>}</main>;
+}`,
+			['a > b'],
+		],
+		// Template text since #656
+		[
+			"in a spread attribute's argument",
+			`export function App() @{
+	<div {...{ title: <b>a > b</b> }} />
+}`,
+			['a > b'],
+		],
+		['first in an unbraced attribute value', component('<div title=<b>> b</b> />'), ['> b']],
+		[
+			'in an unbraced attribute value in a container',
+			component('{c && <div title=<b>a > b</b> />}'),
+			['a > b'],
+		],
+		// It was text here before
+		['in a template', component('<b>a > b</b>'), ['a > b']],
+		['after a tag in a template', component('<b><i />a > b</b>'), ['<i>', 'a > b']],
+	];
+
+	it.each(greater_than)('reads a `>` %s as text', async (_label, source, expected, name = 'b') => {
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], label).toEqual([]);
+			expect(children(outcome.ast, name), label).toEqual(expected);
+		}
+	});
+
+	// Where the `>` is code, it stays code
+	/** @type {Array<[string, string, string]>} */
+	const code = [
+		['a comparison in a container', component('{a > b ? <b /> : null}'), 'BinaryExpression'],
+		[
+			'a comparison in an element in a container',
+			component('{c && <b>{a > b}</b>}'),
+			'BinaryExpression',
+		],
+		[
+			'a comparison in an attribute in a container',
+			component('{c && <b title={a > b} />}'),
+			'BinaryExpression',
+		],
+		[
+			'an arrow in a container',
+			component('{items.map((i) => <b>{i}</b>)}'),
+			'ArrowFunctionExpression',
+		],
+	];
+
+	it.each(code)('reads %s as code', async (_label, source, type) => {
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], label).toEqual([]);
+			expect(
+				find_first(outcome.ast, (node) => node.type === type),
+				label,
+			).toBeDefined();
+		}
+	});
+
+	// A text's `raw` is the text as written, which the printers print, with its
+	// character references. In an element that acorn-typescript's JSX parser
+	// reads, `value` has them decoded, and the output printed it, so
+	// `&#123;x&#125;` compiled to the expression `{x}` (#693). Since #656 that
+	// is only an element in a dynamic tag name. The `value` of template text
+	// keeps them for now (#710).
+	/** @type {Array<[string, string, string[], string[] | null]>} */
+	const references = [
+		[
+			'in an element in a dynamic tag name',
+			`export function App() @{
+	<{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : 'i'} />
+}`,
+			['&#123;x&#125; &amp;lt; &gt;'],
+			['{x} &lt; >'],
+		],
+		[
+			'across a line break in an element in a dynamic tag name',
+			`export function App() @{
+	<{c ? <b>&#123;x&#125;
+&amp;lt;</b> : 'i'} />
+}`.replaceAll('\n', '\r\n'),
+			['&#123;x&#125;\r\n&amp;lt;'],
+			['{x}\n&lt;'],
+		],
+		[
+			"in a spread attribute's argument",
+			`export function App() @{
+	<div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />
+}`,
+			['&#123;x&#125; &amp;lt; &gt;'],
+			null,
+		],
+		[
+			'in an unbraced attribute value in a container',
+			component('{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}'),
+			['&#123;x&#125; &amp;lt; &gt;'],
+			null,
+		],
+		[
+			'in a template',
+			component('<b>&#123;x&#125; &amp;lt; &gt;</b>'),
+			['&#123;x&#125; &amp;lt; &gt;'],
+			null,
+		],
+		[
+			'in an attribute value',
+			component('<div title={<b>&#123;x&#125; &amp;lt; &gt;</b>} />'),
+			['&#123;x&#125; &amp;lt; &gt;'],
+			null,
+		],
+	];
+
+	it.each(references)(
+		'keeps the character references %s in `raw`',
+		async (_label, source, raw, value) => {
+			const outcomes = await parse_in_worker_with_ast(
+				modes.map((options) => ({ source, options })),
+			);
+
+			for (const [index, outcome] of outcomes.entries()) {
+				const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+				if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+				expect(outcome.errors ?? [], label).toEqual([]);
+				expect(children(outcome.ast, 'b'), label).toEqual(raw);
+				if (value) expect(children(outcome.ast, 'b', 'value'), label).toEqual(value);
+			}
+		},
+	);
+
+	// A comment between children is a comment, not text as in TSX, so it is in
+	// neither form of the text, and doesn't print as text
+	/** @type {Array<[string, string, string]>} */
+	const comments = [
+		['a block comment', component('<b>a /* c */ b</b>'), 'a  b'],
+		['a block comment in a container', component('{c && <b>a /* c */ > b</b>}'), 'a  > b'],
+		[
+			'a line comment',
+			component(`<b>
+		// c
+		a
+	</b>`),
+			`
+		
+		a
+	`,
+		],
+	];
+
+	it.each(comments)('leaves %s out of the text', async (_label, source, text) => {
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(children(outcome.ast, 'b'), label).toEqual([text]);
+			expect(children(outcome.ast, 'b', 'value'), label).toEqual([text]);
+		}
+	});
+});
+
+describe('an at-sign construct after `export` (#607)', () => {
+	/** @type {Array<ParseOptions | undefined>} */
+	const modes = [undefined, { collect: true }, { loose: true }];
+
+	// acorn-typescript takes every `@` after `export` for decorators, and the
+	// construct was parsed as a statement whose `id` the parser then read.
+	it('reports it like another token that starts no declaration, instead of crashing', async () => {
+		/** @type {Array<[source: string, message: string, at: string]>} */
+		const cases = [
+			['export @if (a) { <div /> };', 'Unexpected token', '@'],
+			['export @{ <div /> };', 'Unexpected token', '@'],
+			['export @for (const a of b) { <div /> }', 'Unexpected token', '@'],
+			['export @switch (a) { @case 1: { <div /> } }', 'Unexpected token', '@'],
+			['export @try { <div /> } @catch (e) { <b /> }', 'Unexpected token', '@'],
+			['export foo;', 'Unexpected token', 'foo'],
+			[
+				'export declare @if (a) { <div /> }',
+				"'export declare' must be followed by an ambient declaration.",
+				'@',
+			],
+		];
+		const outcomes = await parse_in_worker(
+			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
+		);
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, message, at]) => {
+				const pos = source.indexOf(at);
+				const { line, column } = acorn.getLineInfo(source, pos);
+				return modes.map(() => ({ ok: false, message: `${message} (${line}:${column})`, pos }));
+			}),
+		);
+	});
+
+	it('still exports a decorated class, and a default at-sign construct', async () => {
+		const sources = ['export @dec class A {}', 'export default @if (a) { <div /> };'];
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+		expect(
+			outcomes.map((outcome) => {
+				if (!outcome.ok) return outcome.message;
+				const [statement] = outcome.ast.body;
+				return [
+					...(outcome.errors ?? []).map((error) => error.message),
+					/** @type {any} */ (statement).declaration.type,
+				];
+			}),
+		).toEqual(
+			[['ClassDeclaration'], ['JSXIfExpression']].flatMap((expected) => modes.map(() => expected)),
+		);
+	});
+});
+
+describe('`const` type parameters on an object method (#631)', () => {
+	/** @type {Array<ParseOptions | undefined>} */
+	const modes = [undefined, { collect: true }, { loose: true }];
+
+	it('reads them like those of an async method, a class method, or a function', async () => {
+		const sources = [
+			'const o = { m<const T>(x: T) { return x; } };',
+			'const o = { m<T, const U extends readonly unknown[]>(x: T, y: U) {} };',
+			'const o = { m\n  <const T>(x: T) {} };',
+			'const o = { async m<const T>(x: T) { return x; } };',
+			'class A { m<const T>(x: T) { return x; } }',
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+		expect(
+			outcomes.map((outcome) => {
+				if (!outcome.ok) return outcome.message;
+				const parameters = /** @type {any} */ (
+					find_first(outcome.ast, (node) => node.type === 'TSTypeParameterDeclaration')
+				).params;
+				return [
+					...(outcome.errors ?? []).map((error) => error.message),
+					parameters.map((/** @type {any} */ parameter) => Boolean(parameter.const)),
+				];
+			}),
+		).toEqual(
+			[[[true]], [[false, true]], [[true]], [[true]], [[true]]].flatMap((expected) =>
+				modes.map(() => expected),
+			),
+		);
+	});
+
+	it('still reports `in` and `out` there, as for a function', async () => {
+		const source = 'const o = { m<in T>(x: T) {} };';
+		const message =
+			"'in' modifier can only appear on a type parameter of a class, interface or type alias.";
+		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
+		expect(outcomes).toEqual([
+			{ ok: false, message: `${message} (1:14)`, pos: 14 },
+			{ ok: true, errors: [message] },
+			{ ok: true, errors: [message] },
+		]);
 	});
 });

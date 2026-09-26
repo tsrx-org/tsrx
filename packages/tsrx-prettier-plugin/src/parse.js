@@ -31,11 +31,12 @@ const BROKEN_MARKUP_CODES = new Set([
 
 /**
  * Mistakes the parser records when collecting that Prettier's `typescript`
- * parser rejects: a declaration list without a declarator (`const` on its
- * own), and code that the output would leave out: a modifier where TypeScript
- * doesn't allow one, which Prettier's printer doesn't print, and a second
- * accessibility modifier, a modifier on a rest parameter, or decorators before
- * a declaration other than a class, which the tree doesn't keep.
+ * parser rejects: a declaration list without a declarator (`const` on its own,
+ * `for (const of x)`), and code that the output would leave out: a modifier
+ * where TypeScript doesn't allow one, which Prettier's printer doesn't print,
+ * and a second accessibility modifier, a modifier on a rest parameter,
+ * decorators before a declaration other than a class, or `abstract` before
+ * one (`export abstract function f() {}`), which the tree doesn't keep.
  * @type {Array<string | RegExp>}
  */
 const REJECTED_MISTAKES = [
@@ -45,6 +46,7 @@ const REJECTED_MISTAKES = [
 	'Accessibility modifier already seen.',
 	'A parameter property cannot be declared using a rest parameter.',
 	'Leading decorators must be attached to a class declaration.',
+	"'abstract' modifier can only appear on a class, method, or property declaration.",
 ];
 
 /**
