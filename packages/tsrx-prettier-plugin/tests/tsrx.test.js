@@ -725,6 +725,33 @@ const b = (
 		);
 	});
 
+	// `{" "}` with a comment inside the braces is an expression, not the space a
+	// comment run renders. The comment has to stay with the expression.
+	test('a comment inside {" "} stays when the expression is beside a child comment', async () => {
+		await expectFormat(
+			`const a = <div>/* c */ {/* inner */ " "}</div>;
+const b = <div>/* c */ {" " /* inner */}</div>;
+const c = <div>{/* inner */ " "} /* c */</div>;
+const d = (
+  <div>
+    /* c */
+    {/* keep */ " "}
+  </div>
+);
+`,
+			`const a = <div> /* c */ {/* inner */ " "}</div>;
+const b = <div> /* c */ {" " /* inner */}</div>;
+const c = <div>{/* inner */ " "} /* c */ </div>;
+const d = (
+  <div>
+    /* c */
+    {/* keep */ " "}
+  </div>
+);
+`,
+		);
+	});
+
 	test('in a fragment, and a JSDoc-style block comment is re-indented', async () => {
 		await expectFormat(
 			`const a = <>

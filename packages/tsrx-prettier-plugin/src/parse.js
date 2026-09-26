@@ -363,11 +363,21 @@ class Adapter {
 	describeCommentRuns(children, start, end) {
 		const isBlank = (/** @type {Node | undefined} */ child) =>
 			child?.type === 'JSXText' && /^[ \t\r\n]*$/u.test(child.value);
-		// `{" "}` renders a space whatever is around it.
-		const isSpace = (/** @type {Node | undefined} */ child) =>
-			child?.type === 'JSXExpressionContainer' &&
-			child.expression.type === 'Literal' &&
-			child.expression.value === ' ';
+		// `{" "}` renders a space whatever is around it. A comment inside the
+		// braces belongs to that expression: `isJsxWhitespaceExpression` keeps
+		// the node once Prettier reattaches the comment, so it is a child, not
+		// whitespace in the run. (The parser has already cleared `comments`.)
+		const isSpace = (/** @type {Node | undefined} */ child) => {
+			if (
+				child?.type !== 'JSXExpressionContainer' ||
+				child.expression.type !== 'Literal' ||
+				child.expression.value !== ' '
+			) {
+				return false;
+			}
+			const { start, end } = child;
+			return !this.comments.some((comment) => comment.start > start && comment.end < end);
+		};
 		const isGap = (/** @type {Node | undefined} */ child) => isBlank(child) || isSpace(child);
 		const kind = (/** @type {Node | undefined} */ child) =>
 			!child ? 'boundary' : child.type === 'JSXText' ? 'text' : 'node';
