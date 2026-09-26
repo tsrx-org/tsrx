@@ -7600,7 +7600,7 @@ function printClassDeclaration(node, path, options, print) {
 				}),
 			'superClass',
 		);
-		const typeArguments = /** @type {AST.NodeWithMaybeComments | undefined} */ (
+		const typeArguments = /** @type {(AST.Node & AST.NodeWithMaybeComments) | undefined} */ (
 			node.superTypeParameters
 		);
 		// A line comment after the superclass, or on a line of its own before
