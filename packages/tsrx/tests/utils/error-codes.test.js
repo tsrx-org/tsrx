@@ -2,6 +2,7 @@
 
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { get_error_code } from '../../src/diagnostics.js';
 import { analyzeTsrx, DIAGNOSTIC_CODES, parseModule } from '../../src/index.js';
 
 /**
@@ -306,6 +307,7 @@ let a = 2;`,
 }`,
 			],
 			['TS2369', 'function f(private a) {}'],
+			['TS2858', "import a from 'a' with { type: 1 };"],
 			// acorn raises it with `raiseRecoverable`.
 			[
 				'TS1111',
@@ -318,6 +320,28 @@ let a = 2;`,
 		];
 		for (const [code, source] of cases) {
 			expect(reported_codes(source), source).toContain(code);
+		}
+	});
+
+	it("maps a message to the code of that exact mistake, not a broader one's", () => {
+		// Messages that no source reaches today, which a broader pattern would
+		// catch first.
+		/** @type {Array<[code: string, message: string]>} */
+		const cases = [
+			['TS1382', 'Unexpected token `>`. Did you mean `&gt;` or `{">"}`?'],
+			['TS1381', 'Unexpected token `}`. Did you mean `&rbrace;` or `{"}"}`?'],
+			[
+				'TS7059',
+				'This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression instead.',
+			],
+			[
+				'TS7060',
+				'This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma, as in `<T,>() => ...`.',
+			],
+			['TS1012', 'Unexpected token'],
+		];
+		for (const [code, message] of cases) {
+			expect(get_error_code(message), message).toBe(code);
 		}
 	});
 

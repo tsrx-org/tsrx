@@ -739,6 +739,7 @@ const TYPESCRIPT_ERROR_CODES = [
 	"TS1359  Identifier expected. '{0}' is a reserved word that cannot be used here.",
 	'TS1363  A type-only import can specify a default import or named bindings, but not both.',
 	'TS1368  Class constructor may not be a generator.',
+	"TS1381  Unexpected token. Did you mean `{'}'}` or `&rbrace;`?",
 	"TS1382  Unexpected token. Did you mean `{'>'}` or `&gt;`?",
 	"TS1392  An import alias cannot use 'import type'",
 	'TS1438  Interface must be given a name.',

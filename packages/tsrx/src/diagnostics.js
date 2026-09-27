@@ -276,7 +276,6 @@ const MESSAGE_CODES = [
 	['A rest parameter cannot have an initializer.', 'TS1048'],
 	['A rest parameter cannot be optional.', 'TS1047'],
 	['A binding pattern parameter cannot be optional in an implementation signature.', 'TS2463'],
-	[/^This syntax is reserved in files with the \.mts or \.cts extension\. /, 'TS7060'],
 	["'readonly' type modifier is only permitted on array and tuple literal types.", 'TS1354'],
 	["'abstract' modifier can only appear on a class, method, or property declaration.", 'TS1242'],
 	[
@@ -301,10 +300,8 @@ const MESSAGE_CODES = [
 	['for-of loop variable declaration may not have an initializer', 'TS1190'],
 	['Missing catch or finally clause', 'TS1472'],
 	['Multiple default clauses', 'TS1113'],
-	['Only string is supported as an attribute value', 'TS1145'],
 	['value should be either an expression or a quoted text', 'TS1145'],
 	['Unterminated JSX contents', 'TS17008'],
-	[/^Unexpected token\b/, 'TS1012'],
 ];
 
 /**
@@ -578,7 +575,8 @@ const PARSER_MESSAGE_CODES = [
 	// acorn-typescript: Unterminated JSX contents
 	[/^Unterminated JSX contents$/, 'TS17008'],
 	// acorn-typescript: Unexpected token `{0}`. Did you mean `{1}` or `{"{0}"}`?
-	[/^Unexpected token `.`\. Did you mean `&(?:gt|rbrace);` or `\{"."\}`\?$/, 'TS1382'],
+	[/^Unexpected token `>`\. Did you mean `&gt;` or `\{">"\}`\?$/, 'TS1382'],
+	[/^Unexpected token `\}`\. Did you mean `&rbrace;` or `\{"\}"\}`\?$/, 'TS1381'],
 	// acorn-typescript: JSX attributes must only be assigned a non-empty expression
 	[/^JSX attributes must only be assigned a non-empty expression$/, 'TS17000'],
 	// acorn-typescript: JSX value should be either an expression or a quoted JSX text
