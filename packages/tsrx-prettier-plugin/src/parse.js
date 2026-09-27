@@ -528,20 +528,6 @@ class Adapter {
 				rename(node, 'typeAnnotation', 'returnType');
 				break;
 
-			case 'TSEnumDeclaration':
-				if (node.members) {
-					// typescript-estree's body starts at the `{`, after any comments
-					// between the name and it (#840)
-					node.body = {
-						type: 'TSEnumBody',
-						start: this.textWithoutComments.indexOf('{', node.id.end),
-						end: node.end,
-						members: node.members,
-					};
-					delete node.members;
-				}
-				break;
-
 			case 'TSImportType':
 				if (node.argument) {
 					node.source =

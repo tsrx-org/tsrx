@@ -2006,7 +2006,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			node.type === 'SwitchStatement' ||
 			node.type === 'SwitchCase' ||
 			node.type === 'TSTypeLiteral' ||
-			node.type === 'TSEnumDeclaration' ||
+			node.type === 'TSEnumBody' ||
 			node.type === 'ObjectExpression' ||
 			node.type === 'ObjectPattern' ||
 			node.type === 'ArrayExpression' ||
@@ -2850,7 +2850,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 							((node.type === 'TSInterfaceBody' || node.type === 'ClassBody') &&
 								node.body.length === 0) ||
 							(node.type === 'SwitchStatement' && node.cases.length === 0) ||
-							((node.type === 'TSTypeLiteral' || node.type === 'TSEnumDeclaration') &&
+							((node.type === 'TSTypeLiteral' || node.type === 'TSEnumBody') &&
 								node.members.length === 0)
 						) {
 							// Collect all comments that fall within this empty block or member list
@@ -3209,12 +3209,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 									node_array = parent.params;
 								} else if (parent.type === 'TSTupleType') {
 									node_array = parent.elementTypes;
-								} else if (parent.type === 'TSEnumDeclaration') {
-									// The enum's name is not a member. With no members, it would
-									// count as the last one and take the body's comments.
-									if (node !== parent.id) {
-										node_array = parent.members;
-									}
+								} else if (parent.type === 'TSEnumBody') {
+									node_array = parent.members;
 								} else if (getSignatureParameters(parent)) {
 									// The function's name, type parameters, and return type
 									// aren't parameters. Like Prettier, a comment after the name
@@ -3442,7 +3438,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 									parent?.type === 'ArrayExpression' ||
 									parent?.type === 'ObjectExpression' ||
 									parent?.type === 'ObjectPattern' ||
-									parent?.type === 'TSEnumDeclaration' ||
+									parent?.type === 'TSEnumBody' ||
 									parent?.type === 'TSTypeParameterInstantiation' ||
 									parent?.type === 'TSTypeParameterDeclaration' ||
 									parent?.type === 'TSTupleType' ||

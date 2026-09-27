@@ -4187,6 +4187,10 @@ function printTsrxNode(node, path, options, print, args) {
 			nodeContent = printTSEnumDeclaration(node, path, options, print);
 			break;
 
+		case 'TSEnumBody':
+			nodeContent = printTSEnumBody(node, path, options, print);
+			break;
+
 		case 'TSTypeParameterDeclaration':
 			nodeContent = printTSTypeParameterDeclaration(node, path, options, print);
 			break;
@@ -10591,7 +10595,7 @@ function typeMemberNeedsSemicolon(node, next, members, options) {
  * comments the parser keeps inside them as inner comments. Like Prettier, an
  * enum or type literal keeps a lone block comment on the line of its braces
  * when it fits. Otherwise each comment prints on its own line.
- * @param {AST.TSInterfaceBody | AST.TSTypeLiteral | AST.TSEnumDeclaration} node
+ * @param {AST.TSInterfaceBody | AST.TSTypeLiteral | AST.TSEnumBody} node
  * @returns {Doc}
  */
 function printEmptyMemberList(node) {
@@ -10850,37 +10854,44 @@ function printTSEnumDeclaration(node, path, options, print) {
 	parts.push('enum ');
 	parts.push(path.call(print, 'id'));
 	parts.push(' ');
-
-	// Print enum body
-	if (!node.members || node.members.length === 0) {
-		parts.push(printEmptyMemberList(node));
-	} else {
-		const members = path.map(print, 'members');
-		const membersWithCommas = [];
-
-		for (let i = 0; i < members.length; i++) {
-			membersWithCommas.push(members[i]);
-			if (i < members.length - 1) {
-				membersWithCommas.push(',');
-				membersWithCommas.push(hardline);
-				if (shouldAddBlankLine(node.members[i], node.members[i + 1], options)) {
-					membersWithCommas.push(hardline);
-				}
-			}
-		}
-
-		parts.push(
-			group([
-				'{',
-				indent([hardline, membersWithCommas]),
-				options.trailingComma !== 'none' ? ',' : '',
-				hardline,
-				'}',
-			]),
-		);
-	}
+	parts.push(path.call(print, 'body'));
 
 	return parts;
+}
+
+/**
+ * Print an enum's body: its braces and members
+ * @param {AST.TSEnumBody} node - The enum body
+ * @param {AstPath<AST.TSEnumBody>} path - The AST path
+ * @param {TsrxFormatOptions} options - Prettier options
+ * @param {PrintFn} print - Print callback
+ * @returns {Doc}
+ */
+function printTSEnumBody(node, path, options, print) {
+	if (node.members.length === 0) {
+		return printEmptyMemberList(node);
+	}
+	const members = path.map(print, 'members');
+	const membersWithCommas = [];
+
+	for (let i = 0; i < members.length; i++) {
+		membersWithCommas.push(members[i]);
+		if (i < members.length - 1) {
+			membersWithCommas.push(',');
+			membersWithCommas.push(hardline);
+			if (shouldAddBlankLine(node.members[i], node.members[i + 1], options)) {
+				membersWithCommas.push(hardline);
+			}
+		}
+	}
+
+	return group([
+		'{',
+		indent([hardline, membersWithCommas]),
+		options.trailingComma !== 'none' ? ',' : '',
+		hardline,
+		'}',
+	]);
 }
 
 /**

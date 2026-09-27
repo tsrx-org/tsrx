@@ -2342,10 +2342,8 @@ export function convert_source_map_to_mappings(
 				if (node.id) {
 					visit(node.id);
 				}
-				if (node.members) {
-					for (const member of node.members) {
-						visit(member);
-					}
+				for (const member of node.body.members) {
+					visit(member);
 				}
 				return;
 			} else if (node.type === 'TSEnumMember') {

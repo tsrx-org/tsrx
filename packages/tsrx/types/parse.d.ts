@@ -1584,6 +1584,10 @@ export namespace Parse {
 		/** Parse a mapped type's `K in T` (@sveltejs/acorn-typescript). */
 		tsParseMappedTypeParameter(): AST.TSTypeParameter;
 		tsParseTypeParameterName(): AST.Identifier;
+		tsParseEnumDeclaration(
+			node: AST.TSEnumDeclaration,
+			properties?: { const?: boolean; declare?: boolean },
+		): AST.TSEnumDeclaration;
 
 		/** Whether the current token is `abstract` before `new` in a type (@sveltejs/acorn-typescript). */
 		isAbstractConstructorSignature(): boolean;

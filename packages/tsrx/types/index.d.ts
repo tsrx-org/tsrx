@@ -1110,6 +1110,7 @@ declare module 'estree' {
 		TSConstructorType: TSConstructorType;
 		TSConstructSignatureDeclaration: TSConstructSignatureDeclaration;
 		TSDeclareFunction: TSDeclareFunction;
+		TSEnumBody: TSEnumBody;
 		TSEnumDeclaration: TSEnumDeclaration;
 		TSEnumMember: TSEnumMember;
 		TSExportAssignment: TSExportAssignment;
@@ -1250,9 +1251,13 @@ declare module 'estree' {
 	}
 	interface TSEnumDeclaration extends Omit<
 		AcornTSNode<TSESTree.TSEnumDeclaration>,
-		'id' | 'members'
+		'id' | 'members' | 'body'
 	> {
 		id: AST.Identifier;
+		// acorn-typescript keeps the members on the declaration; core puts them in a body
+		body: TSEnumBody;
+	}
+	interface TSEnumBody extends Omit<AcornTSNode<TSESTree.TSEnumBody>, 'members'> {
 		members: TSEnumMember[];
 	}
 	interface TSEnumMember extends Omit<AcornTSNode<TSESTree.TSEnumMember>, 'id' | 'initializer'> {

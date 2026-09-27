@@ -5211,6 +5211,25 @@ foo();`;
 		expect(messages.some((m) => m.startsWith('10:') && /single node/.test(m))).toBe(true);
 	});
 
+	// An enum's members are in a TSEnumBody that spans its braces, as in
+	// typescript-estree, after any comments between the name and the `{`
+	it.each([
+		['enum E { A, B = 2 }', 2],
+		['enum E /* c */ { A }', 1],
+		['enum E // c\n{ A }', 1],
+		['declare const enum E {}', 0],
+	])('gives %j a TSEnumBody', (source, count) => {
+		const declaration = as_type(parseModule(source, 'App.ts').body[0], 'TSEnumDeclaration');
+		const body = declaration.body;
+		expect(body.type).toBe('TSEnumBody');
+		expect(source.slice(found(body.start), found(body.end))).toBe(
+			source.slice(source.indexOf('{')),
+		);
+		expect(body.loc?.start).toEqual(acorn.getLineInfo(source, source.indexOf('{')));
+		expect(body.members).toHaveLength(count);
+		expect('members' in declaration).toBe(false);
+	});
+
 	// A type parameter's name is the Identifier acorn-typescript reads, with its
 	// position, as in typescript-estree (#873)
 	it.each([
@@ -6729,7 +6748,7 @@ describe('comments in member lists', () => {
 	 */
 	function members(node) {
 		if (node?.type === 'TSInterfaceDeclaration') return node.body.body;
-		if (node?.type === 'TSEnumDeclaration') return node.members;
+		if (node?.type === 'TSEnumDeclaration') return node.body.members;
 		if (node?.type === 'TSTypeAliasDeclaration') {
 			return as_type(node.typeAnnotation, 'TSTypeLiteral').members;
 		}
@@ -6777,9 +6796,9 @@ type T = {
 		const alias = as_type(ast.body[2], 'TSTypeAliasDeclaration');
 
 		expect(iface.body.innerComments?.map((comment) => comment.value)).toEqual([' interface']);
-		// The enum's name is not a member, so it doesn't take the body's comments.
+		// The enum's name is not in its body, so it doesn't take the body's comments.
 		expect(enumeration.id.trailingComments).toBeUndefined();
-		expect(enumeration.innerComments?.map((comment) => comment.value)).toEqual([' enum']);
+		expect(enumeration.body.innerComments?.map((comment) => comment.value)).toEqual([' enum']);
 		expect(alias.typeAnnotation.innerComments?.map((comment) => comment.value)).toEqual([' type']);
 	});
 });
@@ -7105,7 +7124,7 @@ describe('comments around the commas of a list', () => {
 			'const { a /* c */, b } = o;',
 			(statement) => statement.declarations[0].id.properties,
 		],
-		['an enum', 'enum E { A /* c */, B }', (statement) => statement.members],
+		['an enum', 'enum E { A /* c */, B }', (statement) => statement.body.members],
 		[
 			'import specifiers',
 			"import { a /* c */, b } from 'mod';",

@@ -16,6 +16,9 @@ import {
 } from './analyze/validation.js';
 import { is_tsrx_render_output_node } from './utils/ast.js';
 
+/** Whitespace and comments from `lastIndex` on, like acorn's `skipSpace` */
+const regex_space_and_comments = /(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\/)*/y;
+
 /**
  * A comment between template children, as `#parseTemplateRawText` reads it.
  * @typedef {{ type: 'Line' | 'Block', value: string, start: number, end: number }} TemplateTextComment
@@ -5971,6 +5974,32 @@ export function TSRXPlugin(config) {
 				) {
 					this.raise(this.start, KEYWORD_ESCAPE);
 				}
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#158): remove once a release gives the body as a node
+			/**
+			 * An enum's members in a `TSEnumBody` that spans its braces, as in
+			 * typescript-estree and Babel 8. acorn-typescript keeps them on the
+			 * declaration, Babel 7's shape.
+			 * @type {Parse.Parser['tsParseEnumDeclaration']}
+			 */
+			tsParseEnumDeclaration(node, properties) {
+				const declaration = /** @type {any} */ (super.tsParseEnumDeclaration(node, properties));
+				// The body starts at the `{`, after the whitespace and comments after the name
+				regex_space_and_comments.lastIndex = declaration.id.end;
+				const start =
+					declaration.id.end +
+					/** @type {RegExpExecArray} */ (regex_space_and_comments.exec(this.input))[0].length;
+				const body = /** @type {any} */ (this.startNodeAt(start, this.#positionAt(start)));
+				body.members = declaration.members;
+				delete declaration.members;
+				declaration.body = this.finishNodeAt(
+					body,
+					'TSEnumBody',
+					declaration.end,
+					declaration.loc.end,
+				);
+				return declaration;
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#7): remove once a release gives the name as a node
