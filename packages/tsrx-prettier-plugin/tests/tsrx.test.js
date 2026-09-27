@@ -2065,3 +2065,34 @@ const c  =  3;
 		);
 	});
 });
+
+describe('decorator arguments', () => {
+	test('break with a trailing comma, which parses again (#773)', async () => {
+		await expectFormat(
+			`@Component(someLongDecoratorArgumentName, anotherLongDecoratorArgumentName, third)
+class A {}
+`,
+			`@Component(
+  someLongDecoratorArgumentName,
+  anotherLongDecoratorArgumentName,
+  third,
+)
+class A {}
+`,
+		);
+		await expectFormat(
+			`@dec(/* e */ {
+  // c
+})
+class A {}
+`,
+			`@dec(
+  /* e */ {
+    // c
+  },
+)
+class A {}
+`,
+		);
+	});
+});

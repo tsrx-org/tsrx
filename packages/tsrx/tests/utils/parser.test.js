@@ -5191,6 +5191,39 @@ foo();`;
 		]);
 	});
 
+	it("reads a trailing comma in a decorator's arguments, as in any call (#773)", () => {
+		/** @type {Array<[source: string, pick: (ast: AST.Program) => AST.Decorator]>} */
+		const cases = [
+			['@dec(a,)\nclass A {}', (ast) => as_type(ast.body[0], 'ClassDeclaration').decorators[0]],
+			[
+				'class A {\n\t@dec(a,)\n\tm() {}\n}',
+				(ast) =>
+					as_type(as_type(ast.body[0], 'ClassDeclaration').body.body[0], 'MethodDefinition')
+						.decorators[0],
+			],
+			[
+				'class A {\n\tm(@dec(a,) b) {}\n}',
+				(ast) =>
+					/** @type {AST.Identifier & { decorators: AST.Decorator[] }} */ (
+						as_type(as_type(ast.body[0], 'ClassDeclaration').body.body[0], 'MethodDefinition').value
+							.params[0]
+					).decorators[0],
+			],
+			['@dec<T>(a,)\nclass A {}', (ast) => as_type(ast.body[0], 'ClassDeclaration').decorators[0]],
+		];
+		for (const [source, pick] of cases) {
+			const call = as_type(pick(parseModule(source, 'App.tsrx')).expression, 'CallExpression');
+			expect(
+				call.arguments.map((argument) => as_type(argument, 'Identifier').name),
+				source,
+			).toEqual(['a']);
+			expect(source.slice(/** @type {number} */ (call.end) - 3, call.end), source).toBe('a,)');
+		}
+		for (const source of ['@dec(,)\nclass A {}', '@dec(a,,)\nclass A {}']) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(/Unexpected token/);
+		}
+	});
+
 	it('reports an error for two bare render nodes in a code block', () => {
 		expect(() =>
 			parseModule(

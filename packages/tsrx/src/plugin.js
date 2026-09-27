@@ -7681,6 +7681,49 @@ export function TSRXPlugin(config) {
 				}
 			}
 
+			// UPSTREAM(sveltejs/acorn-typescript#109): remove once a release includes the fix
+			/**
+			 * A decorator's arguments, read as acorn-typescript reads them, but with a
+			 * trailing comma, as in any call (`@dec(a,)`): acorn-typescript passes
+			 * `allowTrailingComma: false`. TypeScript and Babel accept it, and Prettier
+			 * prints one when the arguments break.
+			 * @param {AST.Expression} expr
+			 * @returns {AST.Expression}
+			 */
+			parseMaybeDecoratorArguments(expr) {
+				const typeArguments =
+					this.tsMatchLeftRelational() || this.match(tt.bitShift)
+						? this.tsParseTypeArgumentsInExpression()
+						: undefined;
+				if (this.eat(tt.parenL)) {
+					const node = /** @type {AST.CallExpression & { typeArguments?: unknown }} */ (
+						this.startNodeAtNode(expr)
+					);
+					node.callee = expr;
+					node.arguments = /** @type {AST.CallExpression['arguments']} */ (
+						this.parseExprList(tt.parenR, this.options.ecmaVersion >= 8)
+					);
+					if (typeArguments) node.typeArguments = typeArguments;
+					return this.finishNode(node, 'CallExpression');
+				}
+				if (typeArguments) {
+					const node = /** @type {AST.TSInstantiationExpression} */ (
+						/** @type {unknown} */ (this.startNodeAtNode(expr))
+					);
+					node.expression = expr;
+					node.typeArguments = typeArguments;
+					return /** @type {AST.Expression} */ (
+						/** @type {unknown} */ (
+							this.finishNode(
+								node,
+								/** @type {AST.TSInstantiationExpression['type']} */ ('TSInstantiationExpression'),
+							)
+						)
+					);
+				}
+				return expr;
+			}
+
 			// UPSTREAM(sveltejs/acorn-typescript#140): remove once a release includes the fix
 			// UPSTREAM(sveltejs/acorn-typescript#149): remove once a release includes the fix
 			// UPSTREAM(sveltejs/acorn-typescript#150): remove once a release includes the fix
