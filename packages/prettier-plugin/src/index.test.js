@@ -9232,6 +9232,61 @@ const b = [
 }`;
 			expect(await format(input)).toBeWithNewline(expected);
 		});
+
+		// A comment right before an empty container took the comments inside it,
+		// and nothing printed them (#741).
+		it('keeps the comments of an empty container after a comment before it', async () => {
+			for (const source of [
+				`class A /* e */ {
+  // c
+}`,
+				`function f() /* e */ {
+  // c
+}`,
+				`x = () => /* e */ {
+  // c
+};`,
+				`if (a) /* e */ {
+  // c
+}`,
+				`// e
+{
+  // c
+}`,
+				`interface I /* e */ {
+  // c
+}`,
+				`namespace N /* e */ {
+  // c
+}`,
+				`type T = /* e */ {
+  // c
+};`,
+				'const a = /* e */ [/* c */];',
+			]) {
+				expect(await format(source), source).toBeWithNewline(source);
+			}
+			expect(
+				await format(`f(a, /* e */ [
+  // c
+]);`),
+			).toBeWithNewline(`f(
+  a,
+  /* e */ [
+    // c
+  ],
+);`);
+			expect(
+				await format(`x = // e
+[
+  // c
+];`),
+			).toBeWithNewline(`x =
+  // e
+  [
+    // c
+  ];`);
+		});
 	});
 
 	// The comma after a trailing hole creates an array slot (or an iterator

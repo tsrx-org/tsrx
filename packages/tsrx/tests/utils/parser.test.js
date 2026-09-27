@@ -7103,6 +7103,36 @@ foo({
 		expect(objectArgument.innerComments?.map((comment) => comment.value)).toEqual([' argument']);
 	});
 
+	it("keeps an empty container's comments inside it after a comment before it (#741)", () => {
+		// The comment before the container leads it, and the walk reached that
+		// comment as a node and gave it the container's comments as trailing ones.
+		/** @type {Array<[source: string, container: (node: AST.Node) => boolean]>} */
+		const cases = [
+			['class A /* e */ {\n\t// c\n}', (node) => node.type === 'ClassBody'],
+			['function f() /* e */ {\n\t// c\n}', (node) => node.type === 'BlockStatement'],
+			['x = () => /* e */ {\n\t// c\n};', (node) => node.type === 'BlockStatement'],
+			['if (a) /* e */ {\n\t// c\n}', (node) => node.type === 'BlockStatement'],
+			['// e\n{\n\t// c\n}', (node) => node.type === 'BlockStatement'],
+			['interface I /* e */ {\n\t// c\n}', (node) => node.type === 'TSInterfaceBody'],
+			['namespace N /* e */ {\n\t// c\n}', (node) => node.type === 'TSModuleBlock'],
+			['type T = /* e */ {\n\t// c\n};', (node) => node.type === 'TSTypeLiteral'],
+			['const a = /* e */ [/* c */];', (node) => node.type === 'ArrayExpression'],
+			['f(a, /* e */ [\n\t// c\n]);', (node) => node.type === 'ArrayExpression'],
+			['x = // e\n[\n\t// c\n];', (node) => node.type === 'ArrayExpression'],
+		];
+		for (const [source, is_container] of cases) {
+			const container = find_first(parseModule(source, 'App.ts'), is_container);
+			expect(
+				container?.innerComments?.map((comment) => comment.value.trim()),
+				source,
+			).toEqual(['c']);
+			const [before] = /** @type {Array<AST.Comment & AST.NodeWithMaybeComments>} */ (
+				container?.leadingComments ?? []
+			);
+			expect(before?.trailingComments, source).toBeUndefined();
+		}
+	});
+
 	it('leaves a comment before an empty array in a template child to its attribute', () => {
 		const ast = parseModule(
 			`export function App() @{
