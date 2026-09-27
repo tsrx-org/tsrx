@@ -63,6 +63,7 @@ const TSRX_VISITOR_KEYS = /** @type {Record<string, string[]>} */ ({
 	JSXForExpression: ['init', 'test', 'update', 'left', 'right', 'index', 'key', 'body', 'empty'],
 	JSXSwitchExpression: ['discriminant', 'cases'],
 	JSXTryExpression: ['block', 'pending', 'handler'],
+	TSRXRangeText: [],
 });
 
 /** `@catch (error, reset)` has a second parameter. */
@@ -504,7 +505,7 @@ function printNode(path, options, print, args) {
 				),
 		);
 	}
-	if (!isTsrxValue(path)) return doc;
+	if (!isTsrxValue(path) || rangeRoots.has(path.node)) return doc;
 	const printed = printOwnComments(path, options, doc);
 	// Like an element, a `@{ … }` value or a directive isn't a left-hand-side
 	// expression, so it's the base of a call, member access, index, non-null
@@ -548,6 +549,59 @@ function subscriptBaseKind(path) {
 }
 
 /**
+ * A range's one node, printed without the parentheses of a TSRX value.
+ * @type {WeakSet<Node>}
+ */
+const rangeRoots = new WeakSet();
+
+/**
+ * The statements of a range (`range.js`), printed where they are in the file:
+ * one statement, or the first to the last of a list, which Prettier puts on
+ * lines of their own and keeps an empty line between.
+ * @param {AstPath<Node>} path
+ * @param {ParserOptions<Node>} options
+ * @param {Print} print
+ * @param {{ keys: Array<string | number>, first?: number, last?: number }} range
+ * @returns {Doc}
+ */
+function printRange(path, options, print, { keys, first, last }) {
+	// `AstPath#call` takes the keys as separate arguments.
+	const pathTo =
+		/** @type {(callback: (path: AstPath<Node>) => unknown, ...keys: Array<string | number>) => any} */ (
+			path.call.bind(path)
+		);
+	if (first === undefined || last === undefined) {
+		// A `@{ … }` value's parentheses are outside the range.
+		const node = /** @type {Node} */ (pathTo(({ node }) => node, ...keys));
+		rangeRoots.add(node);
+		try {
+			return /** @type {Doc} */ (pathTo(() => print(), ...keys));
+		} finally {
+			rangeRoots.delete(node);
+		}
+	}
+	return /** @type {Doc} */ (
+		pathTo(
+			(listParent) => {
+				/** @type {Doc[]} */
+				const parts = [];
+				listParent.each((statementPath, index) => {
+					const node = /** @type {Node} */ (statementPath.node);
+					if (index < first || index > last || node.type === 'EmptyStatement') return;
+					if (parts.length > 0) parts.push(hardline);
+					parts.push(print());
+					if (index < last && isNextLineEmpty(options.originalText, options.locEnd(node))) {
+						parts.push(hardline);
+					}
+				}, /** @type {string} */ (keys.at(-1)));
+				return parts;
+			},
+			...keys.slice(0, -1),
+		)
+	);
+}
+
+/**
  * Print a TSRX node, or return `null` to let Prettier's estree printer print it.
  * @param {AstPath<Node>} path
  * @param {ParserOptions<Node>} options
@@ -556,8 +610,15 @@ function subscriptBaseKind(path) {
  */
 function printTsrx(path, options, print) {
 	const { node, parent } = path;
+	if (node.type === 'Program' && node.tsrxRange) {
+		return printRange(path, options, print, node.tsrxRange);
+	}
 
 	switch (node.tsrxType ?? node.type) {
+		// A range that can't be formatted keeps its text (`range.js`).
+		case 'TSRXRangeText':
+			return replaceEndOfLine(options.originalText.slice(node.start, node.end));
+
 		case 'BlockStatement':
 			return node.tsrxCodeBlock
 				? ['@', /** @type {Doc} */ (estree.print(path, asTypeScript(options), print))]

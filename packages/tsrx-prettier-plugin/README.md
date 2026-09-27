@@ -64,8 +64,21 @@ props, `<style>`/`<script>` bodies, and comments between JSX children.
   it after text or a comment (touching them, `//` is text); text that starts with
   `//` right after a block comment stays on its line. Every other element is
   printed by Prettier itself. Keep the copy in step with Prettier when upgrading.
+- **Range formatting** (`src/range.js`): Prettier formats a selection
+  (`rangeStart`, `rangeEnd`) only for its own parsers, by the parser's name. For
+  one such format, the plugin names its parser `typescript` and resolves that name
+  to itself, so Prettier chooses the statements to format as it does for
+  TypeScript. A range of template content (an output, a directive, a branch, a
+  body) can't be formatted on its own, so the plugin prints it where it is in the
+  file. A range that Prettier grows to several children of an element keeps its
+  text.
 
 The plugin needs no other Prettier plugin, including in `prettier/standalone`.
+
+It supports Prettier 3.9 (`~3.9.9`): range formatting relies on how Prettier 3.9
+passes a range's options from the file's parse to the range's. When upgrading
+Prettier, check `src/main/range.js` and `formatRange` in `src/main/core.js`, as
+well as the JSX printing that `src/jsx.js` copies.
 
 ## Tests
 
@@ -73,7 +86,8 @@ The plugin needs no other Prettier plugin, including in `prettier/standalone`.
   TypeScript, imported by `scripts/import-prettier-tests.js`. A case is imported
   when Prettier's `typescript` parser prints the snapshot's output and the input
   is TSRX: valid TSX, in a strict-mode module. `tests/prettier.test.js` runs every
-  case through this plugin and expects exactly Prettier's output.
+  case through this plugin the way Prettier's harness does (with its cursor, range
+  and line endings) and expects exactly Prettier's output.
 - `tests/prettier/manifest.json` records the Prettier version, the cases that were
   left out and why, and the imported cases that the TSRX parser rejects.
 - `tests/prettier-known-failures.json` lists the cases that don't pass yet. They

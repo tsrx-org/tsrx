@@ -106,10 +106,6 @@ async function exclusionReason(dir, entry) {
 		return 'records an error, not an output';
 	}
 	const { output, filename } = formatCase;
-	// The plugin doesn't format a range yet (#831).
-	if ('rangeStart' in formatCase.options || 'rangeEnd' in formatCase.options) {
-		return 'range test';
-	}
 	const { text: input, options } = readHarnessInput(formatCase);
 
 	try {

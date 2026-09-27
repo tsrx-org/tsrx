@@ -1838,3 +1838,196 @@ describe('type arguments and parameters the parser used to reject', () => {
 		expect(expected).toBe(await prettier.format(input, { parser: 'typescript' }));
 	});
 });
+
+/**
+ * Format the part of `marked` between `«` and `»`, as an editor's "Format
+ * Selection" does.
+ * @param {string} marked
+ * @param {prettier.Options} [options]
+ */
+async function formatSelection(marked, options = {}) {
+	const rangeStart = marked.indexOf('«');
+	const rangeEnd = marked.indexOf('»') - 1;
+	return format(marked.replace('«', '').replace('»', ''), { ...options, rangeStart, rangeEnd });
+}
+
+describe('range formatting (#831)', () => {
+	test('formats the statements in the range', async () => {
+		expect(
+			await formatSelection(`export function App() @{
+  const a  =  1;
+  «const b  =  2;»
+  <div   class="x">{a  +  b}</div>
+}
+`),
+		).toBe(`export function App() @{
+  const a  =  1;
+  const b = 2;
+  <div   class="x">{a  +  b}</div>
+}
+`);
+	});
+
+	test("formats a template's output without a semicolon", async () => {
+		expect(
+			await formatSelection(`export function App() @{
+  const a  =  1;
+  @if (a) {
+    «<b>{a  +  1}</b>»
+  }
+}
+`),
+		).toBe(`export function App() @{
+  const a  =  1;
+  @if (a) {
+    <b>{a + 1}</b>
+  }
+}
+`);
+		// A range inside markup grows to the output, as it grows to the statement
+		// in JavaScript.
+		expect(
+			await formatSelection(`export function App() @{
+  const a  =  1;
+  <div   class="x">«{a  +  b}»</div>
+}
+`),
+		).toBe(`export function App() @{
+  const a  =  1;
+  <div class="x">{a + b}</div>
+}
+`);
+	});
+
+	test('formats a directive, its branches and its bodies where they are', async () => {
+		expect(
+			await formatSelection(`export function App() @{
+  const a  =  1;
+  «@if (a) {
+    const y  =  2;
+    <b>{y  +  1}</b>
+  } @else {
+    <i   />
+  }»
+}
+`),
+		).toBe(`export function App() @{
+  const a  =  1;
+  @if (a) {
+    const y = 2;
+    <b>{y + 1}</b>
+  } @else {
+    <i />
+  }
+}
+`);
+		expect(
+			await formatSelection(`export function App() @{
+  <>
+    @if (a) {
+      <b>1</b>
+    } @else «if (b) {
+      <i  >2</i>
+    }»
+  </>
+}
+`),
+		).toBe(`export function App() @{
+  <>
+    @if (a) {
+      <b>1</b>
+    } @else if (b) {
+      <i>2</i>
+    }
+  </>
+}
+`);
+		expect(
+			await formatSelection(`export function App() @{
+  @try {
+    <Child   />
+  } @pending «{}»
+}
+`),
+		).toBe(`export function App() @{
+  @try {
+    <Child   />
+  } @pending {}
+}
+`);
+	});
+
+	test('formats a `@{ … }` value without adding its parentheses again', async () => {
+		expect(
+			await formatSelection(`const inner = («@{
+    const x  =  1;
+    <p>{x}</p>
+  }»);
+`),
+		).toBe(`const inner = (@{
+  const x = 1;
+  <p>{x}</p>
+});
+`);
+	});
+
+	test('formats a statement that only parses where it is', async () => {
+		expect(
+			await formatSelection(`function* g(x) {
+  «return x ? <input title={yield   x} /> : null;»
+}
+`),
+		).toBe(`function* g(x) {
+  return x ? <input title={yield x} /> : null;
+}
+`);
+	});
+
+	test('keeps the text of a range that is several children of an element', async () => {
+		// Prettier 3.9 grows this range to the two `@if` children, which print only
+		// with the element's layout between them.
+		const source = `export function App() @{
+  <ul>
+    @if (a) {
+      «<li   />
+    }
+    @if (b) {
+      <li   />»
+    }
+  </ul>
+}
+`;
+		expect(await formatSelection(source)).toBe(source.replace('«', '').replace('»', ''));
+	});
+
+	test('keeps the cursor on the same text', async () => {
+		const source = `export function App() @{
+  @if (a) {
+    <b>{a  +  1}</b>
+  }
+}
+`;
+		const rangeStart = source.indexOf('<b>');
+		const result = await prettier.formatWithCursor(source, {
+			parser: 'tsrx',
+			plugins: [plugin],
+			rangeStart,
+			rangeEnd: source.indexOf('\n  }'),
+			cursorOffset: source.indexOf('1'),
+		});
+		expect(result.formatted.slice(result.cursorOffset)).toMatch(/^1\}<\/b>/u);
+	});
+
+	test("leaves Prettier's own typescript parser to other files", async () => {
+		const source = 'const a  =  1;\nconst b  =  2;\n';
+		const options = {
+			plugins: [plugin],
+			rangeStart: source.indexOf('const b'),
+			rangeEnd: source.length,
+		};
+		await format('export function App() @{ <p   /> }', { ...options, rangeStart: 0, rangeEnd: 10 });
+		expect(await prettier.format(source, { ...options, parser: 'typescript' })).toBe(
+			'const a  =  1;\nconst b = 2;\n',
+		);
+	});
+});

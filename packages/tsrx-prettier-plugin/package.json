@@ -23,7 +23,7 @@
     "import-prettier-tests": "node scripts/import-prettier-tests.js"
   },
   "peerDependencies": {
-    "prettier": "^3.9.9"
+    "prettier": "~3.9.9"
   },
   "devDependencies": {
     "@types/node": "catalog:default",

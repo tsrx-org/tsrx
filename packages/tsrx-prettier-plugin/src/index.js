@@ -7,6 +7,7 @@ import * as estreePlugin from 'prettier/plugins/estree';
 import * as postcssPlugin from 'prettier/plugins/postcss';
 import { hasIgnorePragma, hasPragma, locEnd, locStart, parse } from './parse.js';
 import { printer } from './printer.js';
+import { withRangeFormatting } from './range.js';
 
 /** @type {Plugin<Node>['languages']} */
 export const languages = [
@@ -29,14 +30,14 @@ export const options = /** @type {any} */ (estreePlugin).options;
 export const parsers = {
 	// `<style>` bodies are formatted as CSS, including in `prettier/standalone`.
 	...postcssPlugin.parsers,
-	tsrx: {
+	tsrx: withRangeFormatting({
 		astFormat: 'tsrx-estree',
 		parse,
 		locStart,
 		locEnd,
 		hasPragma,
 		hasIgnorePragma,
-	},
+	}),
 };
 
 /** @type {Plugin<Node>['printers']} */

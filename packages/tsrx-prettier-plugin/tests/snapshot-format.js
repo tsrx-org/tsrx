@@ -67,13 +67,39 @@ export function writeSnapshotEntries(entries) {
 	return `${SNAPSHOT_HEADER}\n\n${entries.map((entry) => entry.raw).join('\n\n')}\n`;
 }
 
+/** A line that a range case's snapshot indents to line up with its code frame. */
+const RANGE_LINE = /^ *:(?: |$)/u;
+/** A source line of a range case's code frame, after its gutter. */
+const CODE_FRAME_LINE = /^[> ] *\d+ \| ?/u;
+
+/**
+ * A range case's snapshot shows the input as a code frame that marks the
+ * range, and indents every other line with `: ` to line up with it (Prettier's
+ * `visualize-range.js`). Undo both: keep the frame's source lines without
+ * their gutter, and drop the lines that mark the range.
+ * @param {string} body
+ * @returns {string}
+ */
+function unframeRange(body) {
+	if (!RANGE_LINE.test(body)) return body;
+	return body
+		.split('\n')
+		.flatMap((line) => {
+			if (RANGE_LINE.test(line)) return [line.replace(RANGE_LINE, '')];
+			if (CODE_FRAME_LINE.test(line)) return [line.replace(CODE_FRAME_LINE, '')];
+			return [];
+		})
+		.join('\n');
+}
+
 /**
  * Split an entry into its options, input, and output. Returns `null` for
  * entries that don't record a formatted output, such as expected errors.
  * @param {SnapshotEntry} entry
  * @returns {FormatCase | null}
  */
-export function readFormatCase({ title, body }) {
+export function readFormatCase({ title, body: snapshotBody }) {
+	const body = unframeRange(snapshotBody);
 	if (!body.startsWith(`${OPTIONS_SEPARATOR}\n`) || !body.endsWith(`\n${END_SEPARATOR}`)) {
 		return null;
 	}
