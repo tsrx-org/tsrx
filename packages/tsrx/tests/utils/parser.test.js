@@ -5235,6 +5235,24 @@ foo();`;
 		expect(identifier.loc?.start).toEqual(acorn.getLineInfo(source, start));
 	});
 
+	// The comments around a type parameter's name stay on the type parameter,
+	// which prints them around the name, as when the name was a string (#873)
+	it.each([
+		'function f<const /* c */ T extends string>() {}',
+		'function h<T /* c */ extends string>() {}',
+		'type M = { [/* c */ K in keyof X]: X[K] };',
+		'type I = X extends Array<infer /* c */ U> ? U : never;',
+	])('gives no comment to the type parameter name in %j', (source) => {
+		const parameter = find_first(
+			parseModule(source, 'App.tsrx', { collect: true, errors: [], comments: [] }),
+			(node) => node.type === 'TSTypeParameter',
+		);
+		assert_type(parameter, 'TSTypeParameter');
+		const name = /** @type {AST.Identifier & AST.NodeWithMaybeComments} */ (parameter.name);
+		expect(name.leadingComments ?? []).toEqual([]);
+		expect(name.trailingComments ?? []).toEqual([]);
+	});
+
 	it('keeps shorthand attribute locations aligned across every JavaScript line terminator', () => {
 		const source =
 			'export function App() @{\r\n' +

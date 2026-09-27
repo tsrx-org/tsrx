@@ -1535,6 +1535,18 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * Whether `node` is a type parameter's name, which takes no comments: the
+	 * type parameter keeps the ones around it (see
+	 * {@link takeTypeParameterNameComments})
+	 * @param {AST.Node | AST.CSS.StyleSheet} node
+	 * @param {AST.Node | AST.CSS.StyleSheet | undefined} parent
+	 * @returns {boolean}
+	 */
+	function isTypeParameterName(node, parent) {
+		return parent?.type === 'TSTypeParameter' && parent.name === node;
+	}
+
+	/**
 	 * The child nodes a comment can attach to, like Prettier's
 	 * `getSortedChildNodes` with its `canAttachComment` (in key order, not
 	 * sorted)
@@ -1545,6 +1557,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 	function getAttachableChildren(node, children = []) {
 		for (const key in node) {
 			if (key === 'metadata' || key === 'loc' || /[cC]omments$/.test(key)) continue;
+			// A type parameter's name takes no comments (see `isTypeParameterName`)
+			if (key === 'name' && node.type === 'TSTypeParameter') continue;
 			const value = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (node))[key];
 			for (const child of Array.isArray(value) ? value : [value]) {
 				if (
@@ -2612,6 +2626,11 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 			walk(ast, null, {
 				_(node, { next, path, visit }) {
+					// A type parameter's name takes no comments: the type parameter keeps
+					// the ones around it (see `takeTypeParameterNameComments`), as when the
+					// name was a string (#873)
+					if (isTypeParameterName(node, path.at(-1))) return;
+
 					/** @returns {boolean} */
 					function isCommentInsideAttributeExpression() {
 						for (let i = path.length - 1; i >= 0; i--) {
