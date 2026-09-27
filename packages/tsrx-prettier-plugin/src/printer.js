@@ -62,7 +62,7 @@ const TSRX_VISITOR_KEYS = /** @type {Record<string, string[]>} */ ({
 	JSXIfExpression: ['test', 'consequent', 'alternate'],
 	JSXForExpression: ['init', 'test', 'update', 'left', 'right', 'index', 'key', 'body', 'empty'],
 	JSXSwitchExpression: ['discriminant', 'cases'],
-	JSXTryExpression: ['block', 'pending', 'handler', 'finalizer'],
+	JSXTryExpression: ['block', 'pending', 'handler'],
 });
 
 /** `@catch (error, reset)` has a second parameter. */
@@ -80,7 +80,11 @@ const SHORTHAND_ATTRIBUTE_KEYS = ['value'];
  * line comment before `@catch` moves into its body), and one before a body's
  * `{` moves into the body.
  */
-const COMMENT_STATEMENT_DIRECTIVES = new Set(['JSXIfExpression', 'JSXTryExpression']);
+const COMMENT_STATEMENT_DIRECTIVES = new Set([
+	'JSXIfExpression',
+	'JSXSwitchExpression',
+	'JSXTryExpression',
+]);
 
 /**
  * One of Prettier's comment handlers, run while a directive enclosing the
@@ -285,6 +289,28 @@ function printCommentNode(comment, options) {
 		/** @type {AstPath<Node>} */ (/** @type {unknown} */ ({ node: comment })),
 		options,
 	);
+}
+
+/**
+ * A node's dangling comments, one per line, indented on a line of their own,
+ * as Prettier's `printDanglingComments` prints them with `indent` (which
+ * plugins can't call).
+ * @param {Node} node
+ * @param {ParserOptions<Node>} options
+ * @returns {Doc}
+ */
+function printDanglingComments(node, options) {
+	const dangling = /** @type {Node[]} */ (node.comments ?? []).filter(
+		(comment) => !comment.leading && !comment.trailing,
+	);
+	if (dangling.length === 0) return '';
+	return indent([
+		hardline,
+		join(
+			hardline,
+			dangling.map((comment) => printCommentNode(comment, options)),
+		),
+	]);
 }
 
 /**
@@ -609,7 +635,8 @@ function printTsrx(path, options, print) {
 								),
 							),
 						])
-					: '',
+					: // A comment in an empty body, as in Prettier's `switch` (#835)
+						printDanglingComments(node, options),
 				hardline,
 				'}',
 			];
@@ -635,7 +662,6 @@ function printTsrx(path, options, print) {
 							path.call((handler) => printOwnComments(handler, options, ['@', print()]), 'handler'),
 						]
 					: '',
-				node.finalizer ? [' @finally ', print('finalizer')] : '',
 			];
 	}
 

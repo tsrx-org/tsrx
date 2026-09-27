@@ -100,6 +100,93 @@ function f() {
 });
 
 describe('directives', () => {
+	// A comment in an empty `@switch` body stays in it, as Prettier keeps it in
+	// a `switch`: the comment handlers see the `@switch` as a `switch` (#835)
+	test.each([
+		[
+			'function App() @{\n  @switch (a) {\n    // c\n  }\n}',
+			'function App() @{\n  @switch (a) {\n    // c\n  }\n}\n',
+		],
+		[
+			'function App() @{\n  @switch (a) { /* c */ }\n}',
+			'function App() @{\n  @switch (a) {\n    /* c */\n  }\n}\n',
+		],
+		[
+			'function App() @{\n  @switch (a) {\n    // c\n    // d\n  }\n}',
+			'function App() @{\n  @switch (a) {\n    // c\n    // d\n  }\n}\n',
+		],
+		[
+			'function App() @{\n  <div>\n    @switch (a) {\n      // c\n    }\n  </div>\n}',
+			'function App() @{\n  <div>\n    @switch (a) {\n      // c\n    }\n  </div>\n}\n',
+		],
+	])('keeps the comment in the empty @switch body of %j', async (input, expected) => {
+		await expectFormat(input, expected);
+	});
+
+	// A comment in each place of each directive prints as Prettier prints it
+	// in the same statement: the directive in TypeScript, with `<b />` as `b;`
+	// (#835). Where Prettier's own output changes on a second format (a line
+	// comment in `for`'s parentheses, or between `case 1:` and its `{`), both
+	// formats match it; those are on #852's list of Prettier bugs.
+	describe('comments in directives print like the same statement', () => {
+		/** @type {Array<[string, string]>} */
+		const places = [];
+		for (const [kind, c, nl] of [
+			['a line', '// c', '\n'],
+			['a block', '/* c */', ' '],
+		]) {
+			places.push(
+				[`${kind} comment in an empty @if`, `@if (a) {${nl}${c}${nl}}`],
+				[`${kind} comment in @if's parentheses`, `@if (a ${c}${nl}) { <b /> }`],
+				[`${kind} comment between @if's ) and {`, `@if (a) ${c}${nl}{ <b /> }`],
+				[`${kind} comment before @else`, `@if (a) { <b /> } ${c}${nl}@else { <i /> }`],
+				[`${kind} comment in an empty @else`, `@if (a) { <b /> } @else {${nl}${c}${nl}}`],
+				[`${kind} comment in an empty @else if`, `@if (a) { <b /> } @else if (c) {${nl}${c}${nl}}`],
+				[`${kind} comment after @if's last child`, `@if (a) { <b />${nl}${c}${nl}}`],
+				[`${kind} comment in an empty @for of`, `@for (const x of xs) {${nl}${c}${nl}}`],
+				[`${kind} comment in @for of's parentheses`, `@for (const x of xs ${c}${nl}) { <b /> }`],
+				[`${kind} comment in an empty @for in`, `@for (const k in o) {${nl}${c}${nl}}`],
+				[
+					`${kind} comment in an empty classic @for`,
+					`@for (let i = 0; i < n; i++) {${nl}${c}${nl}}`,
+				],
+				[`${kind} comment in an empty @switch`, `@switch (a) {${nl}${c}${nl}}`],
+				[`${kind} comment in @switch's parentheses`, `@switch (a ${c}${nl}) {}`],
+				[`${kind} comment in an empty @case`, `@switch (a) { @case 1: {${nl}${c}${nl}} }`],
+				[`${kind} comment after an @case test`, `@switch (a) { @case 1: ${c}${nl}{ <b /> } }`],
+				[`${kind} comment in an empty @default`, `@switch (a) { @default: {${nl}${c}${nl}} }`],
+				[`${kind} comment after the last @case`, `@switch (a) { @case 1: { <b /> }${nl}${c}${nl}}`],
+				[
+					`${kind} comment before the first @case`,
+					`@switch (a) {${nl}${c}${nl}@case 1: { <b /> } }`,
+				],
+				[`${kind} comment in an empty @try`, `@try {${nl}${c}${nl}} @catch (e) { <i /> }`],
+				[`${kind} comment before @catch`, `@try { <b /> } ${c}${nl}@catch (e) { <i /> }`],
+				[`${kind} comment in an empty @catch`, `@try { <b /> } @catch (e) {${nl}${c}${nl}}`],
+				[
+					`${kind} comment in @catch's parentheses`,
+					`@try { <b /> } @catch (e ${c}${nl}) { <i /> }`,
+				],
+			);
+		}
+		/** @param {string} code */
+		const asStatement = (code) =>
+			code
+				.replace(/^function App\(\) @\{/, 'function f() {')
+				.replace(/@(if|else|for|switch|case|default|try|catch)\b/g, '$1')
+				.replace(/<(\w) \/>/g, '$1;');
+
+		test.each(places)('prints %s', async (_label, body) => {
+			const first = await format(`function App() @{\n  ${body}\n}\n`);
+			const second = await format(first);
+			const expected = await prettier.format(asStatement(`function App() @{\n  ${body}\n}\n`), {
+				parser: 'typescript',
+			});
+			expect(asStatement(first)).toBe(expected);
+			expect(asStatement(second)).toBe(await prettier.format(expected, { parser: 'typescript' }));
+		});
+	});
+
 	test('@if, @else if, and @else', async () => {
 		await expectFormat(
 			`const A = () => <div>@if (a) { <b /> } @else if (c) { <d /> } @else { <e /> }</div>`,
