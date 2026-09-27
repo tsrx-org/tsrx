@@ -2629,7 +2629,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 					// A comment attached already, which the walk reaches through an empty
 					// container's `leadingComments`, takes no comments: the ones inside the
 					// container are its own (#741)
-					if (node.type === 'Line' || node.type === 'Block') return;
+					const type = /** @type {string} */ (node.type);
+					if (type === 'Line' || type === 'Block') return;
 
 					// A type parameter's name takes no comments: the type parameter keeps
 					// the ones around it (see `takeTypeParameterNameComments`), as when the
