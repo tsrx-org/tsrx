@@ -693,7 +693,7 @@ export function Page() @{
 
 The body ends at `</script`, optional whitespace, and `>`, where HTML ends it.
 Any other `</script` in the body, in any letter case, is the
-`tsrx-script-end-tag-in-body` error, because a browser would end the script
+`TSRX1004` error, because a browser would end the script
 there. Write it as `<\/script`, the same string, regular expression, or JSON.
 
 For a body computed at runtime, use a self-closing `<script>` with the
@@ -996,7 +996,7 @@ A `@{ ... }` body and every `@if`, `@for`, `@switch`, or `@try` branch (each
 `@else`, `@empty`, `@case`, `@default`, `@pending`, and `@catch` body too)
 render exactly one output node, and a `<style>` block counts as an output node.
 Beside another output it is the multiple-outputs error; as the only output it
-is `tsrx-style-standalone-needs-fragment` and styles nothing. Wrap the block
+is `TSRX3009` and styles nothing. Wrap the block
 and its output in a fragment.
 
 ```tsrx
@@ -1035,7 +1035,7 @@ function Note({ open }: { open: boolean }) @{
 
 Raw CSS in `<style>` is TSRX template syntax. A block with CSS in it must sit
 lexically inside a `@{ ... }` body or an `@if`/`@for`/`@switch`/`@try` body (at
-any depth); anywhere else it is the `tsrx-style-standalone-outside-template`
+any depth); anywhere else it is the `TSRX3008`
 error. In plain TSX, write `<style>{css}</style>`: an ordinary element with an
 expression child, which the compiler never scopes and never gives a hash class.
 
@@ -1115,7 +1115,7 @@ with CSS nesting:
 - Compound `.card:global(.is-open)` -> `.card.<hash>.is-open`: your own
   element, with a class another library toggles on it.
 - `:global` in the middle of a selector (`.card :global(.x) .title`) is the
-  `tsrx-css-global-placement` error: it may only start or end a selector.
+  `TSRX3011` error: it may only start or end a selector.
 - Block `:global { .toast { ... } body { ... } }` -> `.toast { ... } body { ... }`:
   the wrapper is dropped (left behind as a comment) and everything inside is
   unscoped. Several page-wide rules at once.
@@ -1146,7 +1146,7 @@ several of the child's classes, nest one `:global { ... }` block under your
 scoped selector. Never write a bare `:global` selector or a top-level
 `:global { ... }` block for anything but page-level elements.
 
-`@import` is not allowed in a `<style>` block (`tsrx-css-import`): the imported
+`@import` is not allowed in a `<style>` block (`TSRX3012`): the imported
 rules would not be scoped. Share scoped styles through an assigned block and
 `apply`. For global CSS, use `:global` in the block, or import the stylesheet in
 JavaScript (`import './global.css'`), which the bundler adds to the page as is.

@@ -2,6 +2,7 @@
 /** @import { NonEmptyString } from '../../types/helpers' */
 
 import { strong_hash } from '../utils/hashing.js';
+import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 
 const REGEX_MATCHER = /^[~^$*|]?=/;
 const REGEX_ATTRIBUTE_FLAGS = /^[a-zA-Z]+/;
@@ -144,7 +145,7 @@ export function parse_style(content, location, options) {
 		source: content,
 		hash: `tsrx-${strong_hash(hash_source)}`,
 		type: 'StyleSheet',
-		children: read_body(parser),
+		children: read_css_body(parser),
 		start: 0,
 		end: content.length,
 		filename: location.filename,
@@ -159,6 +160,23 @@ export function parse_style(content, location, options) {
 	}
 
 	return sheet;
+}
+
+/**
+ * The rules of a style body. A CSS syntax error gets its code
+ * (`DIAGNOSTIC_CODES.CSS_SYNTAX`).
+ * @param {Parser} parser
+ * @returns {Array<AST.CSS.Rule | AST.CSS.Atrule>}
+ */
+function read_css_body(parser) {
+	try {
+		return read_body(parser);
+	} catch (error) {
+		if (error instanceof Error && !(/** @type {{ code?: string }} */ (error).code)) {
+			/** @type {{ code?: string }} */ (error).code = DIAGNOSTIC_CODES.CSS_SYNTAX;
+		}
+		throw error;
+	}
 }
 
 /**

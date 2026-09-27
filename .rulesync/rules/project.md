@@ -87,8 +87,8 @@ dependencies, not workspace packages.
   instead of `:global`; use `.wrapper :global(.their)` or
   `.wrapper { :global { ... } }` (scoped prefix first) only for a child you cannot
   change, and a bare `:global` only for page-level elements.
-- `@import` in a `<style>` block is a compile error (`tsrx-css-import`) because
-  the imported rules would not be scoped. Share scoped styles through an assigned
+- `@import` in a `<style>` block is a compile error (`TSRX3012`) because the
+  imported rules would not be scoped. Share scoped styles through an assigned
   block and `apply`; for global CSS use `:global`, or import the stylesheet in
   JavaScript (`import './global.css'`).
 - Target-specific behavior must be selected through the consumer compiler. In

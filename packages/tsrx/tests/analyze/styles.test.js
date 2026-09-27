@@ -50,6 +50,13 @@ function analyze(source, options = { collect: true }) {
 	return analyzeTsrx(ast, filename, { ...options, comments });
 }
 
+/** The codes of the style diagnostics (`DIAGNOSTIC_CODES.STYLE_*`). */
+const STYLE_CODES = new Set(
+	Object.entries(DIAGNOSTIC_CODES)
+		.filter(([name]) => name.startsWith('STYLE_'))
+		.map(([, code]) => code),
+);
+
 /**
  * Style diagnostics only, so unrelated analysis output never leaks into the
  * assertions of this file.
@@ -57,7 +64,7 @@ function analyze(source, options = { collect: true }) {
  * @param {ReturnType<typeof analyze>} result
  */
 function style_errors(result) {
-	return result.errors.filter((error) => error.code?.startsWith('tsrx-style-'));
+	return result.errors.filter((error) => STYLE_CODES.has(/** @type {string} */ (error.code)));
 }
 
 /**

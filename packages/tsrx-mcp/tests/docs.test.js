@@ -117,16 +117,16 @@ describe('@tsrx/mcp documentation index', () => {
 
 		// Static constraints with their diagnostic codes.
 		for (const code of [
-			'tsrx-style-standalone-at-module-scope',
-			'tsrx-style-standalone-outside-template',
-			'tsrx-style-unknown-attribute',
-			'tsrx-style-apply-value',
-			'tsrx-style-apply-duplicate',
-			'tsrx-style-apply-unsupported-host',
-			'tsrx-style-apply-target',
-			'tsrx-style-apply-before-declaration',
-			'tsrx-style-reserved-class-key',
-			'tsrx-css-global-placement',
+			'TSRX3007',
+			'TSRX3008',
+			'TSRX3010',
+			'TSRX3001',
+			'TSRX3004',
+			'TSRX3005',
+			'TSRX3002',
+			'TSRX3003',
+			'TSRX3006',
+			'TSRX3011',
 		]) {
 			expect(content).toContain(code);
 		}

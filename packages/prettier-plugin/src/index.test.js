@@ -137,7 +137,7 @@ describe('prettier-plugin', () => {
 		'export function App() @{ <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} /> }',
 	])('rejects an invalid dynamic tag in %j', async (input) => {
 		await expect(format(input)).rejects.toMatchObject({
-			code: 'tsrx-dynamic-tag-expression',
+			code: 'TSRX2014',
 		});
 	});
 

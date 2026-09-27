@@ -9,7 +9,7 @@ import { isWhitespaceTextNode, BINDING_TYPES, DestructuringErrors } from './pars
 import { parse_style } from './parse/style.js';
 import { regex_newline_characters, regex_not_whitespace } from './utils/patterns.js';
 import { error } from './errors.js';
-import { DIAGNOSTIC_CODES } from './diagnostics.js';
+import { DIAGNOSTIC_CODES, get_error_code } from './diagnostics.js';
 import {
 	TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
 	TSRX_RETURN_STATEMENT_ERROR,
@@ -367,9 +367,6 @@ const CHECKER_LEVEL_ERRORS = [
 	'super() call outside constructor of a subclass',
 	// acorn: `function f(...a,) {}` (TS1013).
 	REST_ELEMENT_TRAILING_COMMA,
-	// acorn: an import or export inside a block (TS1184, TS1231, TS1232, TS1233,
-	// TS1258, TS1316).
-	"'import' and 'export' may only appear at the top level",
 	// acorn: `let` used as a name in strict code (TS1213, TS1214), such as a bare
 	// `let`, a binding name (`var let`, `class let {}`), or an assignment target
 	// (`let = 1`). acorn reports a binding name or a target more than once, and
@@ -489,6 +486,59 @@ function modifier_error(kind, modifier, other) {
 		case 'await using':
 			return `'${modifier}' modifier cannot appear on an 'await using' declaration.`;
 	}
+}
+
+// acorn's one error for an import or export inside a block.
+const NESTED_IMPORT_EXPORT = "'import' and 'export' may only appear at the top level";
+// A word, or any other character, after whitespace and comments.
+const regex_next_token =
+	/(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\/)*([\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*|\S)/uy;
+
+/**
+ * TypeScript's error for the import or export at `position` inside a block,
+ * where acorn raises `NESTED_IMPORT_EXPORT`: TS1232 for an import, and for an
+ * export TS1231 (`export =`), TS1316 (`export as namespace`), TS1233 (a list
+ * or `*`), TS1258 (a default expression), TS1235 (a namespace), and otherwise
+ * TS1184 at the `export` modifier.
+ * @param {string} input
+ * @param {number} position
+ * @returns {string}
+ */
+function nested_import_export_error(input, position) {
+	/** @type {string[]} */
+	const tokens = [];
+	regex_next_token.lastIndex = position;
+	for (let match; tokens.length < 4 && (match = regex_next_token.exec(input));) {
+		tokens.push(match[1]);
+	}
+	const [keyword, first, second, third] = tokens;
+	if (keyword === 'import' || first === 'import') {
+		return 'An import declaration can only be used at the top level of a namespace or module.';
+	}
+	if (first === '=') {
+		return 'An export assignment must be at the top level of a file or module declaration.';
+	}
+	if (first === 'as') return 'Global module exports may only appear at top level.';
+	if (first === '{' || first === '*' || (first === 'type' && (second === '{' || second === '*'))) {
+		return 'An export declaration can only be used at the top level of a namespace or module.';
+	}
+	if (
+		first === 'default' &&
+		!(
+			second === 'function' ||
+			second === 'class' ||
+			second === 'interface' ||
+			(second === 'async' && third === 'function') ||
+			(second === 'abstract' && third === 'class')
+		)
+	) {
+		return 'A default export must be at the top level of a file or module declaration.';
+	}
+	const declared = first === 'declare' ? second : first;
+	if (declared === 'namespace' || declared === 'module') {
+		return 'A namespace declaration is only allowed at the top level of a namespace or module.';
+	}
+	return MODIFIERS_CANNOT_APPEAR_HERE;
 }
 
 /**
@@ -2914,13 +2964,6 @@ export function TSRXPlugin(config) {
 						this.#readingJSXControlFlowHeader = previous_reading_header;
 						this.#templateControlFlowBlockDepth--;
 					}
-					if (
-						node.statementType !== 'ForOfStatement' &&
-						node.statementType !== 'ForInStatement' &&
-						node.statementType !== 'ForStatement'
-					) {
-						this.raise(start, 'Expected `for` after `@`.');
-					}
 					if (node.body?.type !== 'BlockStatement') {
 						this.raise(node.body?.start ?? start, 'Expected `{` after JSX control-flow directive.');
 					}
@@ -2975,7 +3018,8 @@ export function TSRXPlugin(config) {
 					}
 				}
 
-				this.raise(start, 'Expected `@if`, `@for`, `@switch`, or `@try`.');
+				// The caller reads a directive only after one of these words.
+				throw new Error(`Unexpected template directive '@${label}'.`);
 			}
 
 			/**
@@ -4142,12 +4186,33 @@ export function TSRXPlugin(config) {
 				) {
 					// See `parseDecorators`.
 					return /** @type {never} */ (undefined);
+				} else if (message === NESTED_IMPORT_EXPORT) {
+					// TypeScript reports each kind of import or export with its own error.
+					this.#raiseCheckerError(position, nested_import_export_error(this.input, position));
+					return /** @type {never} */ (undefined);
 				}
 				if (this.#collectCheckerLevelError(position, message)) {
 					// The raise site goes on parsing (see `CHECKER_LEVEL_ERRORS`).
 					return /** @type {never} */ (undefined);
 				}
-				return super.raise(position, message);
+				return this.#throwError(position, message);
+			}
+
+			/**
+			 * Throw acorn's error for `message` at `position`, with its code: TSRX's
+			 * own, or TypeScript's for a mistake TypeScript also reports (see
+			 * `get_error_code`).
+			 * @param {number} position
+			 * @param {string} message
+			 * @returns {never}
+			 */
+			#throwError(position, message) {
+				try {
+					return super.raise(position, message);
+				} catch (error) {
+					/** @type {{ code?: string }} */ (error).code ??= get_error_code(message);
+					throw error;
+				}
 			}
 
 			/**
@@ -5632,7 +5697,7 @@ export function TSRXPlugin(config) {
 			 * @param {string} message
 			 */
 			#raiseCheckerError(position, message) {
-				if (!this.#collect) super.raise(position, message);
+				if (!this.#collect) this.#throwError(position, message);
 				this.#recordCheckerLevelError(position, position + 1, message);
 			}
 
@@ -6545,7 +6610,7 @@ export function TSRXPlugin(config) {
 						this.#droppedDecoratorsError
 					);
 					if (error && !DECORATED_DECLARATION_TYPES.has(node.type)) {
-						super.raise(error.position, error.message);
+						this.#throwError(error.position, error.message);
 					}
 					return node;
 				} finally {
@@ -8371,7 +8436,10 @@ export function TSRXPlugin(config) {
 						(init.kind === 'using' || init.kind === 'await using') &&
 						!init.declarations[0].init
 					) {
-						this.raise(this.start, 'Using declaration is not allowed in for-in loops');
+						this.raise(
+							this.start,
+							`The left-hand side of a 'for...in' statement cannot be ${init.kind === 'using' ? "a 'using'" : "an 'await using'"} declaration.`,
+						);
 					}
 					if (this.options.ecmaVersion >= 9) {
 						if (this.type === tt._in) {

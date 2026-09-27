@@ -585,13 +585,21 @@ describe('TSRX parser', () => {
 			}
 		});
 
-		it('rejects a using declaration in a for...in head, like acorn', () => {
-			for (const source of [
-				'for (using item in items) {}',
-				'async function f() { for (await using item in items) {} }',
+		it('rejects a using declaration in a for...in head, as TypeScript does', () => {
+			for (const [source, message, code] of [
+				[
+					'for (using item in items) {}',
+					"The left-hand side of a 'for...in' statement cannot be a 'using' declaration.",
+					'TS1493',
+				],
+				[
+					'async function f() { for (await using item in items) {} }',
+					"The left-hand side of a 'for...in' statement cannot be an 'await using' declaration.",
+					'TS1494',
+				],
 			]) {
 				expect(() => parseModule(source, 'App.tsrx')).toThrow(
-					'Using declaration is not allowed in for-in loops',
+					expect.objectContaining({ message: expect.stringContaining(message), code }),
 				);
 			}
 		});
@@ -10012,24 +10020,35 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'function f() {\n\texport const a = 1;\n}',
-			errors: [["'import' and 'export' may only appear at the top level", 'export const']],
-			throws: "'import' and 'export' may only appear at the top level (2:1)",
+			errors: [['Modifiers cannot appear here.', 'export const']],
+			throws: 'Modifiers cannot appear here. (2:1)',
 			valid: 'export const a = 1;',
 			pick: function_statement,
 			pickValid: first,
 		},
 		{
 			source: 'function f() {\n\texport default 1;\n}',
-			errors: [["'import' and 'export' may only appear at the top level", 'export default']],
-			throws: "'import' and 'export' may only appear at the top level (2:1)",
+			errors: [
+				[
+					'A default export must be at the top level of a file or module declaration.',
+					'export default',
+				],
+			],
+			throws: 'A default export must be at the top level of a file or module declaration. (2:1)',
 			valid: 'export default 1;',
 			pick: function_statement,
 			pickValid: first,
 		},
 		{
 			source: "{\n\timport a from 'a';\n}",
-			errors: [["'import' and 'export' may only appear at the top level", 'import a']],
-			throws: "'import' and 'export' may only appear at the top level (2:1)",
+			errors: [
+				[
+					'An import declaration can only be used at the top level of a namespace or module.',
+					'import a',
+				],
+			],
+			throws:
+				'An import declaration can only be used at the top level of a namespace or module. (2:1)',
 			valid: "import a from 'a';",
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'BlockStatement').body[0],
@@ -10037,16 +10056,83 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: "function f() {\n\timport x = require('a');\n}",
-			errors: [["'import' and 'export' may only appear at the top level", 'import x']],
-			throws: "'import' and 'export' may only appear at the top level (2:1)",
+			errors: [
+				[
+					'An import declaration can only be used at the top level of a namespace or module.',
+					'import x',
+				],
+			],
+			throws:
+				'An import declaration can only be used at the top level of a namespace or module. (2:1)',
 			valid: "import x = require('a');",
 			pick: function_statement,
 			pickValid: first,
 		},
+		// TypeScript's error for each other kind of export in a block.
+		{
+			source: 'function f() {\n\texport { f };\n}',
+			errors: [
+				[
+					'An export declaration can only be used at the top level of a namespace or module.',
+					'export {',
+				],
+			],
+			throws:
+				'An export declaration can only be used at the top level of a namespace or module. (2:1)',
+		},
+		{
+			source: "function f() {\n\texport * from 'a';\n}",
+			errors: [
+				[
+					'An export declaration can only be used at the top level of a namespace or module.',
+					'export *',
+				],
+			],
+			throws:
+				'An export declaration can only be used at the top level of a namespace or module. (2:1)',
+		},
+		{
+			source: 'function f() {\n\texport = f;\n}',
+			errors: [
+				[
+					'An export assignment must be at the top level of a file or module declaration.',
+					'export =',
+				],
+			],
+			throws:
+				'An export assignment must be at the top level of a file or module declaration. (2:1)',
+		},
+		{
+			source: 'function f() {\n\texport as namespace A;\n}',
+			errors: [['Global module exports may only appear at top level.', 'export as']],
+			throws: 'Global module exports may only appear at top level. (2:1)',
+		},
+		{
+			source: 'function f() {\n\texport /* a */ default class {}\n}',
+			errors: [['Modifiers cannot appear here.', 'export /*']],
+			throws: 'Modifiers cannot appear here. (2:1)',
+		},
+		{
+			source: 'function f() {\n\texport declare namespace N {}\n}',
+			errors: [
+				[
+					'A namespace declaration is only allowed at the top level of a namespace or module.',
+					'export declare',
+				],
+			],
+			throws:
+				'A namespace declaration is only allowed at the top level of a namespace or module. (2:1)',
+		},
 		{
 			source: "export function App() @{\n\timport a from 'a';\n\t<div>{a}</div>\n}",
-			errors: [["'import' and 'export' may only appear at the top level", 'import a']],
-			throws: "'import' and 'export' may only appear at the top level (2:1)",
+			errors: [
+				[
+					'An import declaration can only be used at the top level of a namespace or module.',
+					'import a',
+				],
+			],
+			throws:
+				'An import declaration can only be used at the top level of a namespace or module. (2:1)',
 		},
 		{
 			source: 'function f() {\n\tconst\n}',

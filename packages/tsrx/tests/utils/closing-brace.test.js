@@ -331,10 +331,7 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 		// after it (#588). A strict parse throws the mistake itself.
 		/** @type {Array<[source: string, message: string]>} */
 		const cases = [
-			[
-				'function f() {\n  a();\nexport function g() {}\n',
-				"'import' and 'export' may only appear at the top level (3:0)",
-			],
+			['function f() {\n  a();\nexport function g() {}\n', 'Modifiers cannot appear here. (3:0)'],
 			['{ const', 'Unexpected token (1:7)'],
 			['{ let', "The keyword 'let' is reserved (1:2)"],
 		];

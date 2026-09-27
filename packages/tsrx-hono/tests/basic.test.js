@@ -143,7 +143,12 @@ describe('@tsrx/hono server compiler', () => {
 				}`,
 				'App.tsrx',
 			),
-		).toThrow(/does not provide a reset callback/);
+		).toThrow(
+			expect.objectContaining({
+				code: 'TSRX2026',
+				message: expect.stringMatching(/does not provide a reset callback/),
+			}),
+		);
 	});
 
 	it('keeps Hono-specific adapters available in direct runtime mode', () => {

@@ -128,7 +128,7 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 		range: { start, end },
 		message: error.message,
 		source: 'TSRX',
-		// Coded usage errors (`DIAGNOSTIC_CODES` in @tsrx/core, e.g. `tsrx-style-apply-target`)
+		// Coded usage errors (`DIAGNOSTIC_CODES` in @tsrx/core, e.g. `TSRX3002`)
 		// keep their code so editors and tooling can tell them apart; uncoded ones fall back
 		// to the generic marker.
 		code: error.code ?? 'tsrx-usage-error',

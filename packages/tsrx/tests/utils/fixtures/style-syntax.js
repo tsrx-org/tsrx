@@ -232,7 +232,7 @@ export const STYLE_SYNTAX_CASES = [
 	// `<style>` block is an output node like any other: beside another output
 	// it is the ordinary multiple-outputs error (reported on the later node),
 	// and as the lone output it parses but the analyzer reports
-	// `tsrx-style-standalone-needs-fragment`. The valid placement is inside a
+	// `TSRX3009`. The valid placement is inside a
 	// fragment or element (see the fragment forms below).
 	{
 		name: 'style before the output node in a @{} body is the multiple-outputs error',

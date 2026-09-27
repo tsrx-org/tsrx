@@ -1527,36 +1527,28 @@ describe('parse errors', () => {
 		// Prettier's typescript parser formats these the same way: a repeated
 		// modifier and an optional rest parameter's `?` aren't printed.
 		await expectFormat('class A { readonly readonly x = 1; }', 'class A {\n  readonly x = 1;\n}\n');
+		await expectFormat('declare declare class A {}', 'declare class A {}\n');
+		await expectFormat('type A<in in T> = T;', 'type A<in T> = T;\n');
 		await expectFormat('function f(...a?: number[]) {}', 'function f(...a: number[]) {}\n');
-		// The tree keeps the decorator, which Prettier's parsers reject.
+		// Nor a rest parameter's default, a modifier in a block, or `declare`
+		// before an import.
+		await expectFormat('function f(...a = []) {}', 'function f(...a) {}\n');
 		await expectFormat(
-			'class A { @dec constructor() {} }',
-			'class A {\n  @dec constructor() {}\n}\n',
+			'const g = (...a: number[] = []) => a;',
+			'const g = (...a: number[]) => a;\n',
 		);
-		// The tree keeps these too, which Prettier's typescript parser rejects: a
-		// parameter property with a pattern, and one on a function's parameter.
+		await expectFormat('const h = async (...a = []) => a;', 'const h = async (...a) => a;\n');
+		await expectFormat('type H = (...a = []) => void;', 'type H = (...a) => void;\n');
 		await expectFormat(
-			'class A { constructor(public [a]: number[]) {} }',
-			'class A {\n  constructor(public [a]: number[]) {}\n}\n',
+			`function f() {
+  public class A {}
+}`,
+			`function f() {
+  class A {}
+}
+`,
 		);
-		await expectFormat(
-			'function f(private readonly x: number) {}',
-			'function f(private readonly x: number) {}\n',
-		);
-		// And a parameter property on a signature's or an arrow function's
-		// parameter, and one with a pattern and a default.
-		await expectFormat(
-			'type F = (public x: number) => void;',
-			'type F = (public x: number) => void;\n',
-		);
-		await expectFormat(
-			'const f = async (a, readonly [b]: number[]) => a;',
-			'const f = async (a, readonly [b]: number[]) => a;\n',
-		);
-		await expectFormat(
-			'class A { constructor(public [a] = [1]) {} }',
-			'class A {\n  constructor(public [a] = [1]) {}\n}\n',
-		);
+		await expectFormat('declare import x from "m";', 'import x from "m";\n');
 		// Prettier's typescript parser formats an arrow function's optional rest
 		// parameter the same way, async too.
 		await expectFormat('const f = (...a?: number[]) => a;', 'const f = (...a: number[]) => a;\n');
@@ -1611,16 +1603,34 @@ describe('parse errors', () => {
 				'const f = (a: number, public ...rest: number[]) => a;',
 				'A parameter property cannot be declared using a rest parameter. (1:23)',
 			],
-			// Prettier's typescript parser leaves a rest parameter's default out
-			// (`function f(...a) {}`), as the tree does.
-			['function f(...a = []) {}', 'A rest parameter cannot have an initializer. (1:15)'],
 			[
-				'const g = (...a: number[] = []) => a;',
-				'A rest parameter cannot have an initializer. (1:15)',
+				'function f(private readonly x: number) {}',
+				'A parameter property is only allowed in a constructor implementation. (1:12)',
 			],
-			['const h = async (...a = []) => a;', 'A rest parameter cannot have an initializer. (1:21)'],
-			['type H = (...a = []) => void;', 'A rest parameter cannot have an initializer. (1:14)'],
+			[
+				'type F = (public x: number) => void;',
+				'A parameter property is only allowed in a constructor implementation. (1:11)',
+			],
+			[
+				'const f = async (a, readonly [b]: number[]) => a;',
+				'A parameter property is only allowed in a constructor implementation. (1:21)',
+			],
+			[
+				'class A { constructor(public [a]: number[]) {} }',
+				'A parameter property may not be declared using a binding pattern. (1:23)',
+			],
+			[
+				'class A { constructor(public [a] = [1]) {} }',
+				'A parameter property may not be declared using a binding pattern. (1:23)',
+			],
+			['import.source("x");', "The only valid meta property for import is 'import.meta' (1:8)"],
 			['@dec function f() {}', 'Leading decorators must be attached to a class declaration. (1:1)'],
+			[
+				`class A {
+  @dec constructor() {}
+}`,
+				"Decorators can't be used with a constructor. Did you mean '@dec class { ... }'? (2:3)",
+			],
 			[
 				'export @dec const x = 1;',
 				'Leading decorators must be attached to a class declaration. (1:8)',
@@ -1674,17 +1684,6 @@ describe('parse errors', () => {
 				"'accessor' modifier can only appear on a property declaration. (1:1)",
 			],
 			['async class A {}', "'async' modifier cannot be used here. (1:1)"],
-			['declare declare class A {}', "'declare' modifier already seen. (1:9)"],
-			[
-				`function f() {
-  public class A {}
-}`,
-				'Modifiers cannot appear here. (2:3)',
-			],
-			[
-				'declare import x from "m";',
-				"A 'declare' modifier cannot be used with an import declaration. (1:1)",
-			],
 			['declare using x = y;', "'declare' modifier cannot appear on a 'using' declaration. (1:1)"],
 			[
 				'abstract export public class A {}',

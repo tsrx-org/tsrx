@@ -76,17 +76,6 @@ function create_advice(input) {
 		});
 	}
 
-	if (error_codes.has(DIAGNOSTIC_CODES.JSX_EXPRESSION_VALUE)) {
-		advice.push({
-			kind: 'jsx-expression-value',
-			severity: 'info',
-			title: 'Use JSX-shaped expression values',
-			message:
-				'TSRX expression values use JSX-shaped nodes. Use a JSXElement directly for one child, a JSXFragment when the value needs multiple children, or a JSX statement container when setup must produce one final output.',
-			documentation: ['tsrx://docs/expression-values.md'],
-		});
-	}
-
 	if (error_codes.has(DIAGNOSTIC_CODES.FORGOTTEN_STATEMENT_CONTAINER)) {
 		advice.push({
 			kind: 'forgotten-statement-container',

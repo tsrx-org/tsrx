@@ -482,7 +482,7 @@ const GLOBAL_STYLES_HTML = highlight_tsrx(
       .card { .title { font-weight: bold; } }
       /* → .card.tsrx-1a2b3c4d { .title.tsrx-1a2b3c4d { … } } */
 
-      /* Error tsrx-css-global-placement: :global in the middle. */
+      /* Error TSRX3011: :global in the middle. */
       /* .card :global(.footnote) .title { } */
     </style>
     <div class="card" innerHTML={html} />
@@ -1093,7 +1093,7 @@ export const FeaturesPage = () => @{
 								styles your own element with a class another library toggles on it. A
 								<code class="inline-code">:global</code>
 								in the middle of a selector is the
-								<code class="inline-code">tsrx-css-global-placement</code>
+								<code class="inline-code">TSRX3011</code>
 								error: it may only start or end a selector. A
 								<code class="inline-code">{':global { ... }'}</code>
 								block drops its wrapper, leaving a comment behind, and everything inside it is

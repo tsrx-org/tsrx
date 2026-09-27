@@ -3,6 +3,8 @@
 @import { CompileError } from '../types/index';
 */
 
+import { get_error_code } from './diagnostics.js';
+
 /**
  *
  * @param {string} message
@@ -26,7 +28,8 @@ export function error(message, filename, node, errors, comments, code) {
 
 	// custom properties
 	error.fileName = filename;
-	error.code = code;
+	// TSRX's own code, or TypeScript's for a mistake TypeScript also reports
+	error.code = code ?? get_error_code(message);
 	error.end = node.end ?? undefined;
 	error.loc = !node.loc
 		? undefined

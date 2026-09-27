@@ -26,7 +26,7 @@ describe('compile error diagnostic plugin — scoped style diagnostics', () => {
 
 		expect(diagnostics).toHaveLength(1);
 		const [diagnostic] = diagnostics;
-		expect(diagnostic.code).toBe('tsrx-style-apply-target');
+		expect(diagnostic.code).toBe('TSRX3002');
 		expect(diagnostic.source).toBe('TSRX');
 		expect(diagnostic.message).toContain("'missing' is not a style block");
 		expect(document.getText(diagnostic.range)).toBe('missing');
@@ -45,7 +45,7 @@ const later = <style>.a { color: red; }</style>;`,
 
 		expect(diagnostics).toHaveLength(1);
 		const [diagnostic] = diagnostics;
-		expect(diagnostic.code).toBe('tsrx-style-apply-before-declaration');
+		expect(diagnostic.code).toBe('TSRX3003');
 		expect(diagnostic.message).toContain("'later' is applied before its declaration");
 		expect(document.getText(diagnostic.range)).toBe('later');
 	});
@@ -62,7 +62,7 @@ export function App() @{
 		);
 
 		expect(diagnostics).toHaveLength(1);
-		expect(diagnostics[0].code).toBe('tsrx-style-apply-target');
+		expect(diagnostics[0].code).toBe('TSRX3002');
 		expect(document.getText(diagnostics[0].range)).toBe('themes.light');
 	});
 
@@ -83,7 +83,7 @@ export function App() @{
 
 		expect(diagnostics).toHaveLength(1);
 		const [diagnostic] = diagnostics;
-		expect(diagnostic.code).toBe('tsrx-css-global-placement');
+		expect(diagnostic.code).toBe('TSRX3011');
 		expect(document.getText(diagnostic.range)).toBe(
 			'<style>\n\t\t\t.a :global(.b) .c { color: red; }\n\t\t</style>',
 		);

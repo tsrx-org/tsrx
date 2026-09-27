@@ -18,6 +18,7 @@
 
 import { walk } from 'zimmerframe';
 import {
+	DIAGNOSTIC_CODES,
 	createJsxTransform,
 	createScriptBody as create_script_body,
 	error,
@@ -1204,6 +1205,7 @@ function try_statement_to_jsx_child(node, transform_context) {
 			finalizer,
 			transform_context.errors,
 			transform_context.comments,
+			DIAGNOSTIC_CODES.TEMPLATE_TRY_FINALLY,
 		);
 	}
 
@@ -1214,6 +1216,7 @@ function try_statement_to_jsx_child(node, transform_context) {
 			node,
 			transform_context.errors,
 			transform_context.comments,
+			DIAGNOSTIC_CODES.TEMPLATE_TRY_HANDLER,
 		);
 		return to_jsx_expression_container(create_null_literal());
 	}
