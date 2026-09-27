@@ -30,7 +30,8 @@
  * those children (prettier/prettier#19880 changes this after 3.9). One child,
  * an element or a directive, prints where it is. Several children print only
  * with the element's layout between them, and the range can't grow further,
- * so their text stays as it is.
+ * so their text stays as it is, as does a range that doesn't start and end at
+ * the same list's items (which #19880 can choose).
  */
 
 /** A range format's state, from its first parse to its second. */
@@ -75,8 +76,7 @@ export function withRangeFormatting(parser) {
 			// Prettier locates the range with these (`calculateRange`).
 			const loc = options.printer.features?.experimental_locForRangeFormat ?? parser;
 			const found = findRange(range.ast, start, end, loc);
-			if (!found) return text;
-			if (!found.printable) {
+			if (!found?.printable) {
 				const rangeText = { type: 'TSRXRangeText', start, end };
 				range.piece = { type: 'Program', body: [rangeText], comments: [], start, end };
 				return range.text;
