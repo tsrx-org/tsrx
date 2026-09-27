@@ -903,6 +903,54 @@ const u = <div>/* c */</div>; /* trail */
 	});
 });
 
+// `//` after other text on its line is text (as in `https://…`), and at the
+// start of a line a comment, so formatting never starts a line with it (#849).
+describe('text with a word that starts with //', () => {
+	test('keeps the // word on the line of the word before it', async () => {
+		await expectFormat(
+			`export function Links() @{
+  <p>
+    Our docs live at the project site and the API reference is at the same host // see below
+  </p>
+}`,
+			`export function Links() @{
+  <p>
+    Our docs live at the project site and the API reference is at the same
+    host // see below
+  </p>
+}
+`,
+		);
+		await expectFormat(
+			`const a = <p>aaaa bbbb // c</p>;`,
+			`const a = (
+  <p>
+    aaaa
+    bbbb //
+    c
+  </p>
+);
+`,
+			{ printWidth: 12 },
+		);
+	});
+
+	test('keeps a // word after a comment on the comment line', async () => {
+		await expectFormat(
+			`const a = <p>one two /* x */ // three</p>;`,
+			`const a = (
+  <p>
+    one two
+    /* x */ //
+    three
+  </p>
+);
+`,
+			{ printWidth: 12 },
+		);
+	});
+});
+
 describe('comments before a tag name', () => {
 	// Prettier prints `<// note` with the name below it at the same indentation,
 	// which TSX can't parse.

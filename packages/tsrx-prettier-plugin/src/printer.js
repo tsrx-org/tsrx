@@ -543,7 +543,7 @@ function printTsrx(path, options, print) {
 			if (node.tsrxRawText !== undefined && isRawScriptElement(node)) {
 				return printRawTextAsWritten(path, options, print);
 			}
-			if (!node.tsrxCommentChildren) return null;
+			if (!node.tsrxPrintsChildren) return null;
 			return printElement(path, options, printJsxElementInternal(path, options, print));
 
 		case 'TSRXJSXComment': {

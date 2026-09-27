@@ -296,8 +296,15 @@ class Adapter {
 		addSource(closing.start);
 		node.children = children;
 		if (children.some((child) => child.type === 'TSRXJSXComment')) {
-			node.tsrxCommentChildren = true;
+			node.tsrxPrintsChildren = true;
 			this.describeCommentRuns(children, opening.end, closing.start);
+		}
+		// A `//` after other text on its line is text, and at the start of a
+		// line a comment, so `jsx.js` keeps it off the start of a line.
+		if (
+			children.some((child) => child.type === 'JSXText' && /(?:^|[ \t\r\n])\/\//u.test(child.value))
+		) {
+			node.tsrxPrintsChildren = true;
 		}
 	}
 
@@ -387,6 +394,9 @@ class Adapter {
 				// Whether a line break in the run is what it renders (nothing, or a
 				// space between words) rather than a space that must be kept.
 				lineBreak: lineBreak && !explicitSpace,
+				// Whether the text after the comments starts with a `//` word, which
+				// must stay on the comments' line to stay text.
+				slashTextAfter: after?.type === 'JSXText' && /^[ \t]*\/\//u.test(after.value),
 				// Whether the comments keep a line break in the run: a line comment, or
 				// one between two comments or between a comment and the child beside
 				// the run. (One beside the start or end of the children isn't kept

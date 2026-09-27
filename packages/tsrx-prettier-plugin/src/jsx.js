@@ -1,13 +1,15 @@
 /**
  * Prettier's layout of a JSX element's children, for the elements whose
  * children include TSRX comments (`// …` and `/* … *\/` between children,
- * which TSX reads as text). Every other element is printed by Prettier itself.
+ * which TSX reads as text), or text with a word that starts with `//`. Every
+ * other element is printed by Prettier itself.
  *
  * `printJsxElementInternal` and `printJsxChildren` are copied from Prettier
  * 3.9.6 (`src/language-js/print/jsx.js`, MIT license, Copyright © James Long and
- * contributors). The only change is in `printJsxChildren`: a comment child
- * chooses the line breaks around it (see `printCommentChild`). Keep the rest in
- * step with Prettier when upgrading.
+ * contributors). The only changes are in `printJsxChildren`: a comment child
+ * chooses the line breaks around it (see `printCommentChild`), and a word that
+ * starts with `//` never starts a line. Keep the rest in step with Prettier when
+ * upgrading.
  *
  * @import { AstPath, Doc, ParserOptions } from 'prettier'
  * @import { Node } from './parse.js'
@@ -390,7 +392,10 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 
 				for (const [i, word] of words.entries()) {
 					if (i % 2 === 1) {
-						pushLine(line);
+						// TSRX: `//` after a word is text, and at the start of a line a
+						// comment, so it stays on the line of the word before it.
+						if (words[i + 1].startsWith('//')) push(' ');
+						else pushLine(line);
 					} else {
 						push(word);
 					}
@@ -514,6 +519,9 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 		}
 		// A line comment ends its line.
 		if (comment.commentType === 'Line') after = hardline;
+		// Text that starts with a `//` word stays on the comment's line, where
+		// it's text; at the start of a line, or after a `{" "}`, it's a comment.
+		if (outerAfter && run.slashTextAfter && (after === line || after === whitespace)) after = ' ';
 		// The line break at the start or end of the children is only there when
 		// the element breaks. Without it, a space left in the run would render.
 		const breaksAtEdge =
