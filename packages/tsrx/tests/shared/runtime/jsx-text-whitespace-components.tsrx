@@ -194,9 +194,9 @@ export function JsxTextWhitespaceApp() @{
 }
 
 /**
- * What each case renders: what React renders for the same TSX, with the
- * comments left out. A comment adds nothing to the text around it, so the
- * whitespace on its two sides is one run.
+ * What each case renders: what React renders for the same TSX, with each
+ * comment written as `{/* … *\/}`. The text on each side of a comment follows
+ * JSX's whitespace rules on its own.
  */
 export const jsx_text_whitespace_cases = [
 	[
@@ -209,14 +209,14 @@ export const jsx_text_whitespace_cases = [
 	[
 		'a block comment on the line after a closing tag',
 		'.ws-block-comment-after-close',
-		'<b>t</b><i></i>',
+		'<b>t</b> <i></i>',
 	],
 	[
 		'a block comment on the line after a self-closing tag',
 		'.ws-block-comment-after-self-close',
-		'<b></b><i></i>',
+		'<b></b> <i></i>',
 	],
-	['a line comment after a closing tag', '.ws-line-comment-after-close', '<b>t</b>two'],
+	['a line comment after a closing tag', '.ws-line-comment-after-close', '<b>t</b> two'],
 	[
 		'a block comment between children on one line',
 		'.ws-inline-comment-between-children',
@@ -272,7 +272,7 @@ export const jsx_text_whitespace_cases = [
 	[
 		"a line comment in an element in a spread attribute's argument",
 		'.ws-spread-line-comment',
-		'<b>t</b>two',
+		'<b>t</b> two',
 	],
 	[
 		'a block comment in an element that is an attribute value without braces',

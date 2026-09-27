@@ -2,17 +2,18 @@
  * Prettier's layout of a JSX element's children, for the elements whose
  * children include TSRX comments (`// …` and `/* … *\/` between children,
  * which TSX reads as text, and which `parse.js` gives Prettier as the `{…}`
- * children `{/* … *\/}` would be), or text with a word that starts with `//`.
- * Every other element is printed by Prettier itself.
+ * children `{/* … *\/}` would be). Every other element is printed by Prettier
+ * itself.
  *
  * `printJsxElementInternal` and `printJsxChildren` are copied from Prettier
  * 3.9.9 (`src/language-js/print/jsx.js`, MIT license, Copyright © James Long and
  * contributors). The only changes, marked `TSRX:`, are in `printJsxChildren`,
- * for the two places a bare comment differs from `{/* … *\/}`: a line comment
- * ends its line, and starts one after text; and `//` after text on its line is
- * text, but a comment at the start of a line, so a word or text that starts
- * with `//` never starts a line. Keep the rest in step with Prettier when
- * upgrading.
+ * where a bare `//` differs from `{// … }`: a `//` is a comment only after
+ * whitespace (or at the start of a line, or right after a tag), and it runs to
+ * the end of its line. So a line comment ends its line, keeps whitespace
+ * between it and text or a comment before it, and text that starts with `//`
+ * (right after a block comment) stays on that line. Keep the rest in step with
+ * Prettier when upgrading.
  *
  * @import { AstPath, Doc, ParserOptions } from 'prettier'
  * @import { Node } from './parse.js'
@@ -358,10 +359,6 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 						if (!followsLineComment) {
 							pushLine(separatorWithWhitespace(isFacebookTranslationTag, words[1], node, next));
 						}
-					} else if (words[1].startsWith('//')) {
-						// TSRX: text that starts with `//` follows a comment on its line
-						// (anywhere else, it would be a comment), and stays there.
-						push(' ');
 					} else {
 						pushLine(whitespace);
 					}
@@ -382,10 +379,7 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 
 				for (const [i, word] of words.entries()) {
 					if (i % 2 === 1) {
-						// TSRX: `//` after a word is text, and at the start of a line a
-						// comment, so it stays on the line of the word before it.
-						if (words[i + 1].startsWith('//')) push(' ');
-						else pushLine(line);
+						pushLine(line);
 					} else {
 						push(word);
 					}
@@ -412,19 +406,16 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 		} else {
 			const printedChild = print();
 			const lineComment = node.tsrxComment?.type === 'Line';
-			// TSRX: a line comment after text starts its own line; after text on
-			// its line, it would be text. A space that renders there (`{" "}`,
-			// which Prettier treats as text) is written out before the line break.
+			// TSRX: a line comment after text or a comment needs whitespace before
+			// it: touching them, it would be text. Where Prettier would leave no
+			// space (a line break in the source), it starts its own line.
 			if (
 				lineComment &&
-				followsText(/** @type {Node[]} */ (siblings), /** @type {number} */ (index))
+				followsText(/** @type {Node[]} */ (siblings), /** @type {number} */ (index)) &&
+				!(parts.length > 1 && parts.at(-1) === '' && parts.at(-2) === whitespace)
 			) {
-				if (parts.length > 1 && parts.at(-1) === '') {
-					parts.pop();
-					const separator = parts.pop();
-					if (separator === whitespace) push(rawJsxWhitespace(options));
-				}
-				pushLine(lineCommentBreak);
+				if (parts.length > 1 && parts.at(-1) === '') parts[parts.length - 2] = lineCommentBreak;
+				else pushLine(lineCommentBreak);
 			}
 			push(printedChild);
 
@@ -435,9 +426,9 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 			} else if (directlyFollowedByMeaningfulText) {
 				const trimmed = jsxWhitespace.trim(getRaw(next));
 				const [firstWord] = jsxWhitespace.split(trimmed);
-				// TSRX: text right after a comment that starts with `//` is text
-				// only there.
-				if (!(node.tsrxComment && /^[ \t]*\/\//u.test(getRaw(next)))) {
+				// TSRX: text that starts with `//` right after a block comment is
+				// text only there; at the start of a line, it would be a comment.
+				if (!(node.tsrxComment && getRaw(next).startsWith('//'))) {
 					pushLine(separatorNoWhitespace(isFacebookTranslationTag, firstWord, node, next));
 				}
 			} else {
@@ -466,9 +457,6 @@ function followsText(siblings, index) {
 	}
 	return false;
 }
-
-/** @param {ParserOptions<Node>} options */
-const rawJsxWhitespace = (options) => (options.singleQuote ? "{' '}" : '{" "}');
 
 /**
  * @param {boolean} isFacebookTranslationTag

@@ -299,17 +299,8 @@ class Adapter {
 		}
 		addSource(closing.start);
 		node.children = children;
-		// `jsx.js` keeps a line comment on its own line, and a `//` after other
-		// text on its line (text) off the start of a line (a comment).
-		if (
-			children.some(
-				(child) =>
-					child.tsrxComment ||
-					(child.type === 'JSXText' && /(?:^|[ \t\r\n])\/\//u.test(child.value)),
-			)
-		) {
-			node.tsrxPrintsChildren = true;
-		}
+		// `jsx.js` prints a line comment where it stays a comment.
+		if (children.some((child) => child.tsrxComment)) node.tsrxPrintsChildren = true;
 	}
 
 	/**

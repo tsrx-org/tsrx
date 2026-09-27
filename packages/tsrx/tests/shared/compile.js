@@ -3093,8 +3093,8 @@ export function App() @{
 				'App.tsrx',
 			);
 
-			expect(code).toContain('</b>  2');
-			expect(code).toContain('</i>  4');
+			expect(code).toContain('</b> {} 2');
+			expect(code).toContain('</i> {} 4');
 			expect(code).toContain('5</s>');
 			expect(code).not.toContain('/* c */');
 			expect(code).not.toContain('@if');

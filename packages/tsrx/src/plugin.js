@@ -1679,9 +1679,15 @@ export function TSRXPlugin(config) {
 				const token_end = this.end;
 				let index = start;
 				let value = '';
+				// The text between the comments, which render like `{/* … */}` in TSX:
+				// each piece follows JSX's whitespace rules on its own.
+				/** @type {Array<[number, number]>} */
+				const pieces = [];
+				let piece_start = start;
 				while (index < this.input.length) {
 					if (this.#isTemplateLineCommentStart(index, start)) {
 						const comment_start = index;
+						pieces.push([piece_start, comment_start]);
 						index += 2;
 						while (
 							index < this.input.length &&
@@ -1694,10 +1700,12 @@ export function TSRXPlugin(config) {
 						if (comment_start >= token_end) {
 							this.#emitTemplateLineComment(comment_start, index, null);
 						}
+						piece_start = index;
 						continue;
 					}
 					if (this.#isTemplateBlockCommentStart(index)) {
 						const comment_start = index;
+						pieces.push([piece_start, comment_start]);
 						const comment_start_loc = get_line_info(this, comment_start);
 						const close = this.input.indexOf('*/', index + 2);
 						const value_end = close === -1 ? this.input.length : close;
@@ -1714,6 +1722,7 @@ export function TSRXPlugin(config) {
 								null,
 							);
 						}
+						piece_start = index;
 						continue;
 					}
 					const ch = this.input.charCodeAt(index);
@@ -1736,6 +1745,25 @@ export function TSRXPlugin(config) {
 				// The text as written, which the printers print. A comment between
 				// children isn't part of it: it is a comment, not text as in TSX.
 				node.raw = value;
+				if (pieces.length > 0) {
+					pieces.push([piece_start, index]);
+					node.metadata = {
+						...(node.metadata ?? { path: [] }),
+						text_pieces: pieces.map(([piece_start, piece_end]) => {
+							const start_loc = get_line_info(this, piece_start);
+							const end_loc = get_line_info(this, piece_end);
+							return {
+								start: piece_start,
+								end: piece_end,
+								value: this.input.slice(piece_start, piece_end),
+								loc: {
+									start: { line: start_loc.line, column: start_loc.column },
+									end: { line: end_loc.line, column: end_loc.column },
+								},
+							};
+						}),
+					};
+				}
 
 				if (this.input.slice(start, index).match(regex_newline_characters)) {
 					this.curLine = endLoc.line;
@@ -1760,8 +1788,11 @@ export function TSRXPlugin(config) {
 			 * @param {ESTreeJSX.JSXText} node
 			 */
 			#shouldKeepTemplateTextNode(node) {
-				const value = node.value;
-				return regex_not_whitespace.test(value) || (value !== '' && !/[\n\r]/.test(value));
+				const values = node.metadata?.text_pieces?.map((piece) => piece.value) ?? [node.value];
+				// With comments, the text between them renders piece by piece.
+				return values.some(
+					(value) => regex_not_whitespace.test(value) || (value !== '' && !/[\n\r]/.test(value)),
+				);
 			}
 
 			/**
@@ -2173,11 +2204,12 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * A `//` is a comment only when nothing but whitespace precedes it on its
+			 * A `//` is a comment when whitespace comes right before it, it starts a
 			 * line, or — given `run_start`, the position where the current text run
-			 * began (right after a sibling element, code block, or expression
-			 * container) — since that boundary. Once real text has begun, `//` is
-			 * literal so inline text like `https://…` stays text.
+			 * began (right after a tag, an expression container, a code block, or a
+			 * directive's block) — it starts the run. A `//` that touches other text
+			 * or a block comment is text: `https://…`, `a//b`, and `/* a *\/// b`.
+			 * The comment runs to the end of the line, a closing tag on it included.
 			 * @param {number} index
 			 * @param {number} [run_start]
 			 */
@@ -2189,13 +2221,14 @@ export function TSRXPlugin(config) {
 					return false;
 				}
 				if (this.#isLineStartPosition(index)) return true;
-				if (run_start < 0) return false;
-				for (let i = index - 1; i >= run_start; i--) {
-					const ch = this.input.charCodeAt(i);
-					if (ch === CharCode.lineFeed || ch === CharCode.carriageReturn) return false;
-					if (ch !== CharCode.space && ch !== CharCode.tab) return false;
-				}
-				return true;
+				if (index === run_start) return true;
+				const before = this.input.charCodeAt(index - 1);
+				return (
+					before === CharCode.space ||
+					before === CharCode.tab ||
+					before === CharCode.lineFeed ||
+					before === CharCode.carriageReturn
+				);
 			}
 
 			/**
@@ -9170,7 +9203,7 @@ export function TSRXPlugin(config) {
 
 						case CharCode.slash:
 							// Check if this is a comment (// or /*)
-							if (this.input.charCodeAt(this.pos + 1) === CharCode.slash) {
+							if (this.#isTemplateLineCommentStart(this.pos, this.start)) {
 								// '//'
 								// Line comment - handle it properly
 								const commentStart = this.pos;

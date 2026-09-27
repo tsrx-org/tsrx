@@ -121,6 +121,18 @@ export type NameSpace = 'html' | 'svg' | 'mathml';
 export interface BaseNodeMetaData {
 	scoped?: boolean;
 	path: AST.Node[];
+	/**
+	 * A template `JSXText` with comments in it: the text between them, as
+	 * written, with its source position. A comment renders like `{/* … *\/}` in
+	 * TSX, so each piece follows JSX's whitespace rules on its own;
+	 * `analyzeTsrx` splits the text into these pieces.
+	 */
+	text_pieces?: Array<{
+		start: number;
+		end: number;
+		value: string;
+		loc: AST.SourceLocation;
+	}>;
 	has_template?: boolean;
 	source_name?: string;
 	source_length?: number;

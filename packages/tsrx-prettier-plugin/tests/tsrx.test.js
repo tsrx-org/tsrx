@@ -776,8 +776,7 @@ const b = (
       <b />
     </p>
     <p>
-      one{" "}
-      // c
+      one // c
       two
     </p>
   </>
@@ -910,51 +909,63 @@ const u = <div>/* c */</div>; /* trail */
 	});
 });
 
-// `//` after other text on its line is text (as in `https://…`), and at the
-// start of a line a comment, so formatting never starts a line with it (#849).
-describe('text with a word that starts with //', () => {
-	test('keeps the // word on the line of the word before it', async () => {
+// A `//` is a comment when whitespace comes right before it, it starts a line,
+// or it comes right after a tag, `}`, or a block; it runs to the end of its
+// line. Touching other text or a block comment, it's text (as in `https://…`).
+describe('// in text', () => {
+	test('touching text, it is a word, as in Prettier', async () => {
 		await expectFormat(
-			`export function Links() @{
-  <p>
-    Our docs live at the project site and the API reference is at the same host // see below
-  </p>
-}`,
-			`export function Links() @{
-  <p>
-    Our docs live at the project site and the API reference is at the same
-    host // see below
-  </p>
-}
-`,
-		);
-		await expectFormat(
-			`const a = <p>aaaa bbbb // c</p>;`,
+			`const a = <p>see https://example.com/docs and a//b, which are text and wrap like words</p>;`,
 			`const a = (
   <p>
-    aaaa
-    bbbb //
-    c
+    see https://example.com/docs and a//b, which are text and wrap like words
   </p>
 );
 `,
-			{ printWidth: 12 },
 		);
 	});
 
-	test('keeps a // word after a comment on the comment line', async () => {
+	test('after whitespace, it is a comment, laid out as Prettier lays out {// …}', async () => {
 		await expectFormat(
-			`const a = <p>one two /* x */ // three</p>;`,
+			`const a = <p>a word // a comment
+</p>;
+const b = (
+  <p>
+    Our docs live at the project site and the API reference is at the same host // see below
+  </p>
+);`,
 			`const a = (
   <p>
-    one two{" "}
-    /* x */ //
-    three
+    a word // a comment
+  </p>
+);
+const b = (
+  <p>
+    Our docs live at the project site and the API reference is at the same host{" "}
+    // see below
   </p>
 );
 `,
-			{ printWidth: 12 },
 		);
+	});
+
+	test('text that starts with // right after a block comment stays on its line', async () => {
+		await expectFormat(
+			`const a = <p>one /* x */// two three</p>;`,
+			`const a = (
+  <p>
+    one{" "}
+    /* x *///
+    two three
+  </p>
+);
+`,
+			{ printWidth: 14 },
+		);
+	});
+
+	test('a comment takes a closing tag on its line with it', async () => {
+		await expect(format(`const a = <p>a //comment </p>;`)).rejects.toThrow(/Unclosed tag '<p>'/);
 	});
 });
 

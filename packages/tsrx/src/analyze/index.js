@@ -121,7 +121,80 @@ function visit_class(_node, { next, state }) {
 	});
 }
 
+/**
+ * A comment between children renders like `{/* … *\/}` in TSX: the text on
+ * each side of it follows JSX's whitespace rules on its own. The parser keeps
+ * the text around comments as one `JSXText` with its pieces in
+ * `metadata.text_pieces`; this splits it into those pieces, with an empty
+ * `{}` between two of them so that they stay apart in the output, as every
+ * target's JSX compiler reads it. A piece that is whitespace with a line break
+ * renders nothing and is left out.
+ * @param {any[]} list
+ * @returns {any[]}
+ */
+function split_text_pieces(list) {
+	/** @type {any[]} */
+	const result = [];
+	for (const child of list) {
+		const pieces = child?.type === 'JSXText' ? child.metadata?.text_pieces : undefined;
+		if (!pieces) {
+			result.push(child);
+			continue;
+		}
+		/** @type {any} */
+		let previous = null;
+		for (const piece of pieces) {
+			if (piece.value === '' || (/[\r\n]/.test(piece.value) && !/[^ \t\r\n]/.test(piece.value))) {
+				continue;
+			}
+			if (previous) {
+				const start = previous.end;
+				const end = piece.start;
+				const loc = { start: previous.loc.end, end: piece.loc.start };
+				result.push({
+					type: 'JSXExpressionContainer',
+					expression: { type: 'JSXEmptyExpression', start, end, loc, metadata: { path: [] } },
+					start,
+					end,
+					loc,
+					metadata: { path: [] },
+				});
+			}
+			previous = {
+				type: 'JSXText',
+				value: piece.value,
+				raw: piece.value,
+				start: piece.start,
+				end: piece.end,
+				loc: piece.loc,
+				metadata: { path: [] },
+			};
+			result.push(previous);
+		}
+	}
+	return result;
+}
+
+/**
+ * @param {any} node
+ * @param {{ next: () => void }} context
+ */
+function visit_node(node, { next }) {
+	for (const key of ['children', 'body']) {
+		const list = node[key];
+		if (
+			Array.isArray(list) &&
+			list.some((child) => child?.type === 'JSXText' && child.metadata?.text_pieces)
+		) {
+			node[key] = split_text_pieces(list);
+		}
+	}
+	next();
+}
+
 const visitors = {
+	_: visit_node,
+
 	FunctionDeclaration: visit_function,
 	FunctionExpression: visit_function,
 	ArrowFunctionExpression: visit_function,

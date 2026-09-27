@@ -2288,13 +2288,25 @@ abc
 		expect(comments).toEqual([]);
 	});
 
-	it('keeps // after text on the same line as literal text', () => {
+	// A `//` that touches text is text; after whitespace, it's a comment that
+	// runs to the end of the line.
+	it('keeps // that touches text as literal text', () => {
 		const { texts, comments } = parseTemplateTextsAndComments(`function App() @{
-	<div>hi // note</div>
+	<div>see https://x.dev and a//b</div>
 }`);
 
-		expect(texts).toEqual(['hi // note']);
+		expect(texts).toEqual(['see https://x.dev and a//b']);
 		expect(comments).toEqual([]);
+	});
+
+	it('reads // after whitespace in text as a comment', () => {
+		const { texts, comments } = parseTemplateTextsAndComments(`function App() @{
+	<div>hi // note
+	</div>
+}`);
+
+		expect(texts).toEqual(['hi \n\t']);
+		expect(comments.map((comment) => comment.type + ':' + comment.value)).toEqual(['Line: note']);
 	});
 
 	it('parses a trailing line comment after a `@{ }` code block on the same line', () => {
@@ -2304,7 +2316,8 @@ abc
 	</>
 }`);
 
-		expect(texts).toEqual(['hello ']);
+		// The spaces before the comment render, as before `{/* … */}` in TSX.
+		expect(texts).toEqual(['hello ', '  \n\t']);
 		expect(comments.map((comment) => comment.type + ':' + comment.value)).toEqual([
 			'Line: <-- depth 4',
 		]);
@@ -11017,22 +11030,23 @@ describe('JSX whitespace in template text', () => {
 			'<div>\n\t<b />\n\ttwo\n</div>;',
 			['<b>', '\n\ttwo\n'],
 		],
-		// A comment adds nothing to the text: the whitespace on its two sides is
-		// one run, layout when it has a line break (#540)
+		// A comment renders like `{/* c */}` in TSX: the text on each side of it
+		// follows JSX's whitespace rules on its own, so a space on the comment's
+		// line renders and the text is kept
 		[
 			'a block comment on the line after a closing tag',
 			'<div>\n\t<b>t</b>\n\t/* c */ <i />\n</div>;',
-			['<b>', '<i>'],
+			['<b>', '\n\t ', '<i>'],
 		],
 		[
 			'a block comment on the line after a self-closing tag',
 			'<div>\n\t<b />\n\t/* c */ <i />\n</div>;',
-			['<b>', '<i>'],
+			['<b>', '\n\t ', '<i>'],
 		],
 		[
 			'a line comment after a closing tag',
 			'<div>\n\t<b>t</b> // c\n\t<i />\n</div>;',
-			['<b>', '<i>'],
+			['<b>', ' \n\t', '<i>'],
 		],
 		[
 			'a block comment between children on one line',
@@ -11410,7 +11424,7 @@ describe('an element as an attribute value without braces (#654)', () => {
 			[' c '],
 		],
 		['a line comment', 'const el = <div attr=<b>// c\n</b> />;', [], [' c']],
-		['a line comment after a space', 'const el = <div attr=<b> // c\n</b> />;', [], [' c']],
+		['a line comment after a space', 'const el = <div attr=<b> // c\n</b> />;', [' \n'], [' c']],
 		['a line comment on its own line', 'const el = <div attr=<b>\n// c\n</b> />;', [], [' c']],
 		['a comment in a fragment', 'const el = <div attr=<>/* c */</> />;', [], [' c ']],
 		[
