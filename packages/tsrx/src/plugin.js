@@ -1684,9 +1684,9 @@ export function TSRXPlugin(config) {
 				/** @type {Array<[number, number]>} */
 				const pieces = [];
 				let piece_start = start;
-				// A comment that may be a tooling directive (`// @ts-expect-error`),
-				// which the editor's TypeScript keeps even where the text renders
-				// nothing.
+				// A comment that may be a tooling directive (`// @ts-expect-error`,
+				// `/** @ts-expect-error */`), which the editor's TypeScript keeps even
+				// where the text renders nothing.
 				let has_directive = false;
 				while (index < this.input.length) {
 					if (this.#isTemplateLineCommentStart(index, start)) {
@@ -1704,7 +1704,7 @@ export function TSRXPlugin(config) {
 						if (comment_start >= token_end) {
 							this.#emitTemplateLineComment(comment_start, index, null);
 						}
-						if (/^\s*@/.test(this.input.slice(comment_start + 2, index))) has_directive = true;
+						if (/^[\s*]*@/.test(this.input.slice(comment_start + 2, index))) has_directive = true;
 						piece_start = index;
 						continue;
 					}
@@ -1727,7 +1727,8 @@ export function TSRXPlugin(config) {
 								null,
 							);
 						}
-						if (/^\s*@/.test(this.input.slice(comment_start + 2, value_end))) has_directive = true;
+						if (/^[\s*]*@/.test(this.input.slice(comment_start + 2, value_end)))
+							has_directive = true;
 						piece_start = index;
 						continue;
 					}

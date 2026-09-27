@@ -255,7 +255,7 @@ export function tsx_with_ts_locations(
 			emitted_comments.add(key);
 			if (comment.loc) context.location(comment.loc.start.line, comment.loc.start.column);
 			context.write(
-				comment.type === 'Line' ? `/* ${comment.value.trim()} */` : format_comment(comment),
+				comment.type === 'Line' ? `/* ${comment.value.trim()} */` : `/*${comment.value}*/`,
 			);
 			if (comment.loc) context.location(comment.loc.end.line, comment.loc.end.column);
 		},

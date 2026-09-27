@@ -351,6 +351,8 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		// @ts-expect-error
 		<Missing a={1} />
 		text /* @ts-ignore */ <Other />
+		/** @ts-expect-error */
+		<Third b={2} />
 		plain /* not a directive */ more
 	</div>
 }`;
@@ -358,6 +360,7 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 			expect(result.errors).toEqual([]);
 			expect(result.code).toMatch(/\n\s*\{\/\* @ts-expect-error \*\/\}\n\s*<Missing a=\{1\} \/>/);
 			expect(result.code).toContain('text {/* @ts-ignore */} <Other />');
+			expect(result.code).toMatch(/\n\s*\{\/\*\* @ts-expect-error \*\/\}\n\s*<Third b=\{2\} \/>/);
 			expect(result.code).toContain('plain {} more');
 			expect(result.code).not.toContain('not a directive');
 		});

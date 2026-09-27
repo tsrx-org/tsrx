@@ -107,15 +107,15 @@ export function should_preserve_jsx_tooling_comment(comment) {
 /**
  * A comment between JSX children that the editor's TypeScript keeps, in its
  * `{}` (see `split_text_pieces` in `analyze/index.js`): a tooling comment, or a
- * `@ts-expect-error` or `@ts-ignore` block comment, which TypeScript also reads
- * there, as in TSX's `{/* @ts-expect-error *\/}`.
+ * `@ts-expect-error` or `@ts-ignore` block comment, JSDoc-style too, which
+ * TypeScript also reads there, as in TSX's `{/* @ts-expect-error *\/}`.
  * @param {AST.CommentWithLocation} comment
  * @returns {boolean}
  */
 export function is_jsx_child_tooling_comment(comment) {
 	return (
 		should_preserve_jsx_tooling_comment(comment) ||
-		(comment.type === 'Block' && /^\s*@ts-(?:expect-error|ignore)\b/.test(comment.value))
+		(comment.type === 'Block' && /^[\s*]*@ts-(?:expect-error|ignore)\b/.test(comment.value))
 	);
 }
 
