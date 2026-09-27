@@ -1772,16 +1772,15 @@ function startsElementStatement(path) {
 	switch (body?.type) {
 		case 'JSXCodeBlock':
 			return true;
-		case 'SwitchCase':
-			return owner?.type === 'JSXSwitchExpression';
 		case 'BlockStatement': {
 			const template =
-				owner?.type === 'CatchClause'
+				owner?.type === 'CatchClause' || owner?.type === 'SwitchCase'
 					? /** @type {AST.Node | null} */ (path.getParentNode(level + 3))
 					: owner;
 			return (
 				template?.type === 'JSXIfExpression' ||
 				template?.type === 'JSXForExpression' ||
+				template?.type === 'JSXSwitchExpression' ||
 				template?.type === 'JSXTryExpression'
 			);
 		}
@@ -11207,8 +11206,23 @@ function printJSXSwitchExpression(node, path, options, print) {
 		cases.push(caseDoc);
 	}
 
+	// An empty body keeps its comments, as Prettier's `switch` does (#774)
+	const innerComments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
 	const bodyDoc =
-		cases.length > 0 ? [indent([hardline, join(hardline, cases)]), hardline] : hardline;
+		cases.length > 0
+			? [indent([hardline, join(hardline, cases)]), hardline]
+			: innerComments.length > 0
+				? [
+						indent([
+							hardline,
+							join(
+								hardline,
+								innerComments.map((comment) => printComment(comment, options.originalText)),
+							),
+						]),
+						hardline,
+					]
+				: hardline;
 
 	const discriminantDoc = group(['@switch (', indent([softline, discriminant]), softline, ')']);
 
@@ -11227,29 +11241,14 @@ function printJSXSwitchCase(node, path, options, print, index) {
 	const header = node.test
 		? ['@case ', path.call(print, 'cases', index, 'test'), ':']
 		: '@default:';
-	const consequents = node.consequent || [];
-	const printedIndexes = getPrintedStatementIndexes(consequents);
 
-	const bodyDoc =
-		printedIndexes.length > 0
-			? [
-					indent([
-						hardline,
-						printSwitchCaseStatements(consequents, printedIndexes, options, (i) =>
-							path.call((casePath) => casePath.call(print, 'consequent', i), 'cases', index),
-						),
-					]),
-					hardline,
-				]
-			: hardline;
-
-	// The case doesn't go through `print`, so it prints its own comments
+	// The case doesn't go through `print`, so it prints its own comments. Its
+	// body is the `{ … }` block, which prints like an `@if` body (#842).
 	return [
 		...printLeadingComments(node, node.leadingComments ?? [], options),
 		header,
-		' {',
-		bodyDoc,
-		'}',
+		' ',
+		path.call(print, 'cases', index, 'consequent', 0),
 		...printSwitchCaseTrailingComments(node, options),
 	];
 }

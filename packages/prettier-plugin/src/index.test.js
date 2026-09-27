@@ -17935,6 +17935,25 @@ for (
 	// The parser visited an element's children before its opening tag, and a
 	// tag's attributes before its name, so a comment in an attribute held up
 	// the comments after it until the closing tag took them.
+	// An `@case` or `@default` body is a block, and an empty `@switch` keeps its
+	// comments, so the comments go where Prettier 3.9.9 puts them in a `switch`
+	// (#774, #842). It moves a comment after the `)` into the parentheses.
+	it.each([
+		['@switch (a) {\n    // c\n  }'],
+		['@switch (a) {\n    @default: {\n      // c\n    }\n  }'],
+		['@switch (a) {\n    @case 1: {\n      // c\n    }\n  }'],
+		[
+			'@switch (a) /* e */ {\n    @case 1: {\n      <span />\n    }\n  }',
+			'@switch (a /* e */) {\n    @case 1: {\n      <span />\n    }\n  }',
+		],
+		['@switch (a) {\n    @case 1: /* e */ {\n      <span />\n    }\n  }'],
+		['@switch (a) {\n    @default: /* e */ {\n      <span />\n    }\n  }'],
+	])('places the comment of the template %j as a switch does', async (body, expected = body) => {
+		const output = await format(`function App() @{\n  ${body}\n}`);
+		expect(output).toBeWithNewline(`function App() @{\n  ${expected}\n}`);
+		expect(await format(output)).toBe(output);
+	});
+
 	describe('comments in JSX opening tags and children stay there', () => {
 		it.each([
 			'const el = <div title={/* a */ title}>{/* b */ label}</div>;',

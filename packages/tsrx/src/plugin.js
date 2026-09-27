@@ -3201,6 +3201,17 @@ export function TSRXPlugin(config) {
 						// text. Render nodes re-establish their own path via `parseElement`.
 						const enclosing_path = this.#path;
 						this.#path = [];
+						// The arm's `{ … }` is its body, a block as in `case 1: { … }` and
+						// as the `@if`, `@for` and `@try` bodies are (#842)
+						const body = /** @type {AST.BlockStatement} */ (this.startNode());
+						body.body = [];
+						body.metadata = {
+							...body.metadata,
+							path: [],
+							native_tsrx_template_block: true,
+							templateMode: 'script',
+							allows_native_return: false,
+						};
 						try {
 							this.expect(tt.braceL);
 							// Each arm's braces are its own template block, so setup locals
@@ -3210,13 +3221,14 @@ export function TSRXPlugin(config) {
 							// unterminated arm reaches the `expect(tt.braceR)` below and reports
 							// the missing `}` instead of reading nothing forever.
 							while (this.type !== tt.braceR && this.type !== tt.eof) {
-								this.#parseJSXSwitchCaseConsequent(current.consequent);
+								this.#parseJSXSwitchCaseConsequent(body.body);
 							}
 							this.exitScope();
 						} finally {
 							this.#path = enclosing_path;
 						}
 						this.expect(tt.braceR);
+						current.consequent.push(this.finishNode(body, 'BlockStatement'));
 						node.cases.push(this.finishNode(current, 'SwitchCase'));
 						continue;
 					}

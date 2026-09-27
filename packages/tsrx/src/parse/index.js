@@ -2849,7 +2849,8 @@ export function get_comment_handlers(source, comments, index = 0) {
 								hasOnlyEmptyStatements(node.body)) ||
 							((node.type === 'TSInterfaceBody' || node.type === 'ClassBody') &&
 								node.body.length === 0) ||
-							(node.type === 'SwitchStatement' && node.cases.length === 0) ||
+							((node.type === 'SwitchStatement' || node.type === 'JSXSwitchExpression') &&
+								node.cases.length === 0) ||
 							((node.type === 'TSTypeLiteral' || node.type === 'TSEnumBody') &&
 								node.members.length === 0)
 						) {

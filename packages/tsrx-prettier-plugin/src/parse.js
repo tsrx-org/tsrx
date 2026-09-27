@@ -407,26 +407,6 @@ class Adapter {
 				node.consequent = node.consequent.map(templateStatement);
 				break;
 
-			// An `@case` body is a `{ … }` template block. The parser keeps only its
-			// statements, so rebuild the block to get Prettier's block printing
-			// (blank lines, comments, empty bodies).
-			case 'JSXSwitchExpression':
-				for (const switchCase of node.cases) {
-					const start = this.textWithoutComments.indexOf(
-						'{',
-						switchCase.test?.end ?? switchCase.start,
-					);
-					switchCase.consequent = [
-						{
-							type: 'BlockStatement',
-							start,
-							end: switchCase.end,
-							body: switchCase.consequent,
-						},
-					];
-				}
-				break;
-
 			// `<style>` is a JSX element whose body `embed()` prints as CSS.
 			case 'JSXStyleElement':
 				node.tsrxType = node.type;

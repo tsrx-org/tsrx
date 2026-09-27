@@ -211,6 +211,17 @@ function contentChild(node, index, type) {
 }
 
 /**
+ * The statements of an `@case` or `@default` body: its `{ … }` block's (#842).
+ *
+ * @param {AST.SwitchCase} switch_case
+ * @returns {AST.Node[]}
+ */
+function caseBody(switch_case) {
+	expect(switch_case.consequent).toHaveLength(1);
+	return as_type(switch_case.consequent[0], 'BlockStatement').body;
+}
+
+/**
  * The initializer of a variable declaration's first declarator.
  *
  * @param {AST.Node | null | undefined} statement
@@ -2901,7 +2912,7 @@ export function App() @{ <div /> }`;
 					directive.cases.forEach((switch_case, index) => {
 						const expected_case = shape.cases[index];
 						expect(switch_case.test?.type ?? null).toBe(expected_case.test);
-						assert_shapes(switch_case.consequent, expected_case.consequent);
+						assert_shapes(caseBody(switch_case), expected_case.consequent);
 					});
 					break;
 				}
@@ -3199,6 +3210,48 @@ foo();`;
 		expect(ast.body[1].start).toBe(source.indexOf('foo()'));
 	});
 
+	// An `@case` or `@default` body is a block from its `{` to its `}`, as in
+	// `case 1: { … }`, with a comment in an empty one as its inner comment (#842)
+	it('gives each @case and @default arm a BlockStatement body', () => {
+		const source = `function App() @{
+  @switch (x) {
+    @case 1: /* c */ {
+      const y = 1;
+      <b>{y}</b>
+    }
+    @default: {
+      // only a comment
+    }
+  }
+}`;
+		const ast = parseModule(source, 'App.tsrx', { collect: true, errors: [], comments: [] });
+		const directive = as_type(
+			find_first(ast, (node) => node.type === 'JSXSwitchExpression'),
+			'JSXSwitchExpression',
+		);
+		const [first, fallback] = directive.cases.map((switch_case) => {
+			expect(switch_case.consequent).toHaveLength(1);
+			return as_type(switch_case.consequent[0], 'BlockStatement');
+		});
+		const firstOpen = source.indexOf('{\n      const');
+		expect([first.start, first.end]).toEqual([
+			firstOpen,
+			source.indexOf('}', source.indexOf('</b>')) + 1,
+		]);
+		expect(first.body.map((node) => node.type)).toEqual(['VariableDeclaration', 'JSXElement']);
+		const fallbackOpen = source.indexOf('{', source.indexOf('@default'));
+		expect(source.slice(found(fallback.start), found(fallback.end))).toBe(
+			'{\n      // only a comment\n    }',
+		);
+		expect(fallback.start).toBe(fallbackOpen);
+		expect(fallback.body).toEqual([]);
+		expect(
+			/** @type {AST.NodeWithMaybeComments} */ (fallback).innerComments?.map(
+				(comment) => comment.value,
+			),
+		).toEqual([' only a comment']);
+	});
+
 	it('parses switch cases with JSX children', () => {
 		const switchExpression = findNode(
 			`function App() { return <>@{
@@ -3220,14 +3273,14 @@ foo();`;
 		);
 
 		expect(switchExpression.cases).toHaveLength(2);
-		const spread = as_type(switchExpression.cases[0].consequent[0], 'JSXElement').openingElement
+		const spread = as_type(caseBody(switchExpression.cases[0])[0], 'JSXElement').openingElement
 			.attributes[0];
 		expect(as_type(spread, 'JSXSpreadAttribute').argument.type).toBe('Identifier');
 		expect(as_type(as_type(spread, 'JSXSpreadAttribute').argument, 'Identifier').name).toBe(
 			'attrs',
 		);
-		expect(switchExpression.cases[0].consequent.map((node) => node.type)).toEqual(['JSXElement']);
-		expect(switchExpression.cases[1].consequent.map((node) => node.type)).toEqual(['JSXElement']);
+		expect(caseBody(switchExpression.cases[0]).map((node) => node.type)).toEqual(['JSXElement']);
+		expect(caseBody(switchExpression.cases[1]).map((node) => node.type)).toEqual(['JSXElement']);
 	});
 
 	it('rejects break statements inside JSX switch cases', () => {
@@ -3330,14 +3383,14 @@ foo();`;
 		);
 
 		const [first, fallback] = switchExpression.cases;
-		expect(first.consequent.map((node) => node.type)).toEqual([
+		expect(caseBody(first).map((node) => node.type)).toEqual([
 			'ExpressionStatement',
 			'VariableDeclaration',
 			'ExpressionStatement',
 			'ExpressionStatement',
 			'JSXElement',
 		]);
-		const [regexTest, half, template] = first.consequent;
+		const [regexTest, half, template] = caseBody(first);
 		const regexCall = as_type(
 			as_type(regexTest, 'ExpressionStatement').expression,
 			'CallExpression',
@@ -3349,13 +3402,13 @@ foo();`;
 				.value.raw,
 		).toBe('x');
 
-		expect(fallback.consequent.map((node) => node.type)).toEqual([
+		expect(caseBody(fallback).map((node) => node.type)).toEqual([
 			'ExpressionStatement',
 			'ExpressionStatement',
 			'JSXElement',
 		]);
 		const trimCall = as_type(
-			as_type(fallback.consequent[0], 'ExpressionStatement').expression,
+			as_type(caseBody(fallback)[0], 'ExpressionStatement').expression,
 			'CallExpression',
 		);
 		const trimmed = as_type(as_type(trimCall.callee, 'MemberExpression').object, 'TemplateLiteral');
@@ -4705,12 +4758,12 @@ foo();`;
 		expect(as_type(directive.discriminant, 'Identifier').name).toBe('value');
 		expect(directive.cases).toHaveLength(3);
 		expect(as_type(directive.cases[0].test, 'Literal').value).toBe('a');
-		expect(directive.cases[0].consequent[0].type).toBe('JSXFragment');
-		expect(as_type(node_children(directive.cases[0].consequent[0])[0], 'JSXText').value).toContain(
+		expect(caseBody(directive.cases[0])[0].type).toBe('JSXFragment');
+		expect(as_type(node_children(caseBody(directive.cases[0])[0])[0], 'JSXText').value).toContain(
 			'Case A',
 		);
 		expect(directive.cases[2].test).toBeNull();
-		expect(as_type(node_children(directive.cases[2].consequent[0])[0], 'JSXText').value).toContain(
+		expect(as_type(node_children(caseBody(directive.cases[2])[0])[0], 'JSXText').value).toContain(
 			'Fallback',
 		);
 	});
