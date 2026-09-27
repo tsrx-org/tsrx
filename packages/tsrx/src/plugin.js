@@ -4233,7 +4233,8 @@ export function TSRXPlugin(config) {
 					this.#report_recoverable_error(position, error_message);
 					return;
 				}
-				return super.raiseRecoverable(position, error_message);
+				// acorn's `raiseRecoverable` is its `raise`.
+				return this.#throwError(position, error_message);
 			}
 
 			/**

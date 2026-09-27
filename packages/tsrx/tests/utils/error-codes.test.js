@@ -306,6 +306,15 @@ let a = 2;`,
 }`,
 			],
 			['TS2369', 'function f(private a) {}'],
+			// acorn raises it with `raiseRecoverable`.
+			[
+				'TS1111',
+				`class A {
+	m() {
+		return this.#x;
+	}
+}`,
+			],
 		];
 		for (const [code, source] of cases) {
 			expect(reported_codes(source), source).toContain(code);
@@ -322,7 +331,7 @@ let a = 2;`,
 			[...diagnostics.matchAll(/'(TS\d+)'/g)].map(([, code]) => code),
 		);
 		for (const code of [...Object.values(DIAGNOSTIC_CODES), ...typescript_codes]) {
-			expect(specification, code).toMatch(new RegExp(`'${code}  `));
+			expect(specification, code).toMatch(new RegExp(`['"]${code}  `));
 		}
 	});
 });
