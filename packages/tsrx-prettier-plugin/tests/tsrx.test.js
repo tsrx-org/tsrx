@@ -402,6 +402,28 @@ describe('elements', () => {
 		);
 	});
 
+	// A comment in a shorthand's braces stays there, laid out as Prettier lays
+	// out the braces of `name={name /* c */}` (#834)
+	test.each([
+		['const a = <div {name /* c */} />;', 'const a = <div {name /* c */} />;\n'],
+		['const a = <div {name/* c */} />;', 'const a = <div {name /* c */} />;\n'],
+		['const a = <div {/* c */ name} />;', 'const a = <div {/* c */ name} />;\n'],
+		[
+			'const a = <div {name\n  // c\n} />;',
+			'const a = (\n  <div\n    {\n      name\n      // c\n    }\n  />\n);\n',
+		],
+		[
+			'x = <div {name\n/* c */\n} x="1" />;',
+			'x = (\n  <div\n    {\n      name\n      /* c */\n    }\n    x="1"\n  />\n);\n',
+		],
+		[
+			'export function App() @{\n  <div {name /* c */} />\n}',
+			'export function App() @{\n  <div {name /* c */} />\n}\n',
+		],
+	])('keeps the comment in the shorthand of %j', async (input, expected) => {
+		await expectFormat(input, expected);
+	});
+
 	test('dynamic tags', async () => {
 		await expectFormat(`const d = <{Tag} a="1">x</{Tag}>;`, `const d = <{Tag} a="1">x</{Tag}>;\n`);
 	});

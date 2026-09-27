@@ -17944,6 +17944,24 @@ for (
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// The braces of a shorthand attribute end at its `}`, so a comment before
+		// it stays in them, as in the long form's `name={…}` (#592)
+		it.each([
+			['const a = <div {name /* c */} />;', 'const a = <div {name /* c */} />;'],
+			[
+				'x = <div {name\n// c\n} x="1" />;',
+				'x = (\n  <div\n    {\n      name\n      // c\n    }\n    x="1"\n  />\n);',
+			],
+			[
+				'x = <div {name\n/* c */\n} x="1" />;',
+				'x = (\n  <div\n    {\n      name\n      /* c */\n    }\n    x="1"\n  />\n);',
+			],
+		])('keeps the comment in the shorthand of %j', async (input, expected) => {
+			const output = await format(input);
+			expect(output).toBeWithNewline(expected);
+			expect(await format(output)).toBe(output);
+		});
+
 		it('keeps every comment of nested elements with attributes', async () => {
 			const source = `export function App() @{
   <div a={/* a */ x} b={/* b */ y}>

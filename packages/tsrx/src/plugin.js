@@ -8766,15 +8766,16 @@ export function TSRXPlugin(config) {
 						);
 						expression.expression = name;
 						/** @type {ESTreeJSX.JSXAttribute} */ (node).name = id;
-						/** @type {ESTreeJSX.JSXAttribute} */ (node).value = this.finishNodeAt(
-							expression,
-							'JSXExpressionContainer',
-							this.end + 1,
-							this.endLoc,
-						);
 						/** @type {ESTreeJSX.JSXAttribute} */ (node).shorthand = true;
 						this.next();
 						this.#expectContainerClosingBrace();
+						// The braces end at the `}`, after any comments before it (#592)
+						/** @type {ESTreeJSX.JSXAttribute} */ (node).value = this.finishNodeAt(
+							expression,
+							'JSXExpressionContainer',
+							this.lastTokEnd,
+							this.lastTokEndLoc,
+						);
 						return this.finishNode(node, 'JSXAttribute');
 					}
 				}

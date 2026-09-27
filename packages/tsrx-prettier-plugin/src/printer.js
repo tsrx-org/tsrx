@@ -69,6 +69,12 @@ const TSRX_VISITOR_KEYS = /** @type {Record<string, string[]>} */ ({
 const CATCH_CLAUSE_KEYS = ['param', 'resetParam', 'body'];
 
 /**
+ * A shorthand attribute (`{name}`) prints only its value: its `name` is the
+ * same identifier as the value's expression, so no comment may attach to it.
+ */
+const SHORTHAND_ATTRIBUTE_KEYS = ['value'];
+
+/**
  * Directives whose comments Prettier places as in the statements they're
  * written like: a comment before `@else` or `@catch` stays after the `}` (a
  * line comment before `@catch` moves into its body), and one before a body's
@@ -146,6 +152,7 @@ export const printer = {
 		const keys = TSRX_VISITOR_KEYS[node.tsrxType ?? node.type];
 		if (keys) return keys;
 		if (node.type === 'CatchClause' && node.resetParam) return CATCH_CLAUSE_KEYS;
+		if (node.type === 'JSXAttribute' && node.shorthand) return SHORTHAND_ATTRIBUTE_KEYS;
 		return /** @type {NonNullable<Printer<Node>['getVisitorKeys']>} */ (estree.getVisitorKeys)(
 			node,
 			nonTraversableKeys,
@@ -564,7 +571,9 @@ function printTsrx(path, options, print) {
 			return isCommentedTagName(path) ? printTagNameComments(path, options, print) : null;
 
 		case 'JSXAttribute':
-			return node.shorthand ? ['{', print(['value', 'expression']), '}'] : null;
+			// A shorthand (`{name}`) is its value, printed as Prettier prints the
+			// braces of `name={name}`
+			return node.shorthand ? print('value') : null;
 
 		case 'IfStatement':
 			return node.tsrxElseIf ? printIf(path, options, print, 'if') : null;

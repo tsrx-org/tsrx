@@ -5239,6 +5239,31 @@ foo();`;
 		}
 	});
 
+	// A comment in a shorthand attribute's braces is inside them, as in the
+	// long form's `name={…}`: the braces end at the `}` (#592)
+	it.each([
+		['a block comment after the name', 'const a = <div {name /* c */} />;', 'trailing'],
+		['a line comment after the name', 'const a = <div {name\n// c\n} x="1" />;', 'trailing'],
+		['a block comment on its own line', 'const a = <div {name\n/* c */\n} x="1" />;', 'trailing'],
+		['a block comment before the name', 'const a = <div {/* c */ name} />;', 'leading'],
+	])('ends a shorthand attribute at its `}` with %s', (_label, source, side) => {
+		const attribute = find_first(
+			parseModule(source, 'App.tsrx', { collect: true, errors: [], comments: [] }),
+			(node) => node.type === 'JSXAttribute' && node.shorthand === true,
+		);
+		assert_type(attribute, 'JSXAttribute');
+		const container = as_type(attribute.value, 'JSXExpressionContainer');
+		const expression = as_type(container.expression, 'Identifier');
+		const open = source.indexOf('{');
+		const close = source.indexOf('}') + 1;
+		expect([attribute.start, attribute.end]).toEqual([open, close]);
+		expect([container.start, container.end]).toEqual([open, close]);
+		expect(source.slice(found(expression.start), found(expression.end))).toBe('name');
+		const comments = side === 'trailing' ? expression.trailingComments : expression.leadingComments;
+		expect(comments?.map((comment) => comment.value.trim())).toEqual(['c']);
+		expect(container.trailingComments ?? []).toEqual([]);
+	});
+
 	it.each([
 		['LF', '\n'],
 		['CRLF', '\r\n'],
