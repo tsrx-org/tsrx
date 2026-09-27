@@ -2000,6 +2000,24 @@ describe('range formatting (#831)', () => {
 		expect(await formatSelection(source)).toBe(source.replace('«', '').replace('»', ''));
 	});
 
+	test('formats a `<script>` body in the range as its own code', async () => {
+		expect(
+			await formatSelection(`const a  =  1;
+«function Page() @{
+  <script>const b  =  2;</script>
+}»
+const c  =  3;
+`),
+		).toBe(`const a  =  1;
+function Page() @{
+  <script>
+    const b = 2;
+  </script>
+}
+const c  =  3;
+`);
+	});
+
 	test('keeps the cursor on the same text', async () => {
 		const source = `export function App() @{
   @if (a) {

@@ -45,7 +45,7 @@ const RANGE = Symbol('tsrx range format');
  *   start: number,
  *   ast: Node,
  *   piece?: Node,
- *   standalone?: Node,
+ *   standalone?: { text: string, ast: Node },
  * }} RangeFormat
  * @typedef {{ locStart: (node: Node) => number, locEnd: (node: Node) => number }} Loc
  * @typedef {ParserOptions<Node> & {
@@ -89,7 +89,7 @@ export function withRangeFormatting(parser) {
 				!/(?:Statement|Declaration)$/u.test(node.type);
 			if (!found.nodes.some(inTemplate)) {
 				try {
-					range.standalone = /** @type {Node} */ (parser.parse(text, options));
+					range.standalone = { text, ast: /** @type {Node} */ (parser.parse(text, options)) };
 					return text;
 				} catch {
 					// Print it where it is instead.
@@ -109,7 +109,8 @@ export function withRangeFormatting(parser) {
 			const rangeOptions = /** @type {RangeOptions} */ (options);
 			const range = rangeOptions[RANGE];
 			if (range?.piece && text === range.text) return range.piece;
-			if (range?.standalone) return range.standalone;
+			// Only for the range's text: an embed (a `<script>` body) parses its own.
+			if (range?.standalone?.text === text) return range.standalone.ast;
 			const ast = /** @type {Node} */ (parser.parse(text, options));
 			if (
 				!range &&
