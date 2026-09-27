@@ -81,6 +81,22 @@ export function runSharedSourceMappingTests({
 			},
 		);
 
+		// A type parameter's name is an Identifier (#873), mapped to itself
+		it.each([
+			['export function C<const T extends string>(x: T) @{\n\t<div>{x}</div>\n}', 'T extends'],
+			['export type M<X> = { [K in keyof X]: X[K] };', 'K in'],
+			['export type I<X> = X extends Array<infer U> ? U : never;', 'U>'],
+		])('maps the type parameter name in %j', (source, marker) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const offset = source.indexOf(marker);
+			const mapping = result.mappings.find(
+				(/** @type {any} */ m) => m.sourceOffsets[0] === offset && m.lengths[0] === 1,
+			);
+			expect(mapping, marker).toBeDefined();
+			const generated = mapping.generatedOffsets[0];
+			expect(result.code.slice(generated, generated + 1)).toBe(source[offset]);
+		});
+
 		it('retains the trailing-comma diagnostic for an ambiguous generic arrow', () => {
 			const result = compile_to_volar_mappings(
 				'export const identity = <Value>(value: Value) => value;',

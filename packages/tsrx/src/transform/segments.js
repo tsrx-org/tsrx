@@ -2013,13 +2013,7 @@ export function convert_source_map_to_mappings(
 				return;
 			} else if (node.type === 'TSTypeParameter') {
 				// Type parameter like T in <T> or key in mapped types
-				// Note: node.name is a string, not an Identifier node
-				if (node.name && node.loc && typeof node.name === 'string') {
-					tokens.push({ source: node.name, generated: node.name, loc: node.loc, metadata: {} });
-				} else if (node.name && typeof node.name === 'object') {
-					// In some cases, name might be an Identifier node
-					visit(node.name);
-				}
+				visit(node.name);
 				if (node.constraint) {
 					visit(node.constraint);
 				}

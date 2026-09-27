@@ -10946,11 +10946,11 @@ function printTSTypeParameterDeclaration(node, path, options, print) {
 }
 
 /**
- * Print a type parameter's name, which the parser keeps as a string, with
- * the comments that dangle on the type parameter around it (Prettier's
- * parsers keep the name as a node, which takes them). The ones before the
- * name lead it, and the ones after it trail it on its line, even one written
- * on a line of its own (see the parser's `takeTypeParameterNameComments`).
+ * Print a type parameter's name with the comments that dangle on the type
+ * parameter around it (Prettier's parsers attach them to the name). The ones
+ * before the name lead it, and the ones after it trail it on its line, even
+ * one written on a line of its own (see the parser's
+ * `takeTypeParameterNameComments`).
  * @param {AST.TSTypeParameter} node - The type parameter
  * @param {TsrxFormatOptions} options - Prettier options
  * @returns {Doc[]}
@@ -10958,24 +10958,12 @@ function printTSTypeParameterDeclaration(node, path, options, print) {
 function printTypeParameterName(node, options) {
 	const text = /** @type {string} */ (options.originalText);
 	const comments = /** @type {AST.NodeWithMaybeComments} */ (node).innerComments ?? [];
-	// The name follows the modifiers, which are keywords
-	let nameStart = skipWhitespaceAndComments(
-		text,
-		options.locStart(/** @type {AST.NodeWithLocation} */ (node)),
-	);
-	for (const modifier of [node.const, node.in, node.out]) {
-		if (modifier) {
-			while (/[\w$]/.test(text[nameStart] ?? '')) {
-				nameStart++;
-			}
-			nameStart = skipWhitespaceAndComments(text, nameStart);
-		}
-	}
+	const nameStart = options.locStart(/** @type {AST.NodeWithLocation} */ (node.name));
 	/** @param {AST.Comment} comment */
 	const isBeforeName = (comment) => /** @type {AST.NodeWithLocation} */ (comment).end <= nameStart;
 	return [
 		...printLeadingComments(node, comments.filter(isBeforeName), options),
-		node.name,
+		node.name.name,
 		...printCommentsOnLine(
 			comments.filter((comment) => !isBeforeName(comment)),
 			text,

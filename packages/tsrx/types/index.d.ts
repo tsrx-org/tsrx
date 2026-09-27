@@ -1473,7 +1473,8 @@ declare module 'estree' {
 	> {
 		constraint: TypeNode | undefined;
 		default: TypeNode | undefined;
-		name: string; // for some reason acorn-typescript uses string instead of Identifier
+		// acorn-typescript keeps only the name's string; core keeps the node (#873)
+		name: Identifier;
 	}
 	interface TSTypeParameterDeclaration extends Omit<
 		AcornTSNode<TSESTree.TSTypeParameterDeclaration>,

@@ -555,22 +555,6 @@ class Adapter {
 					delete node.typeParameter;
 				}
 				break;
-
-			case 'TSTypeParameter':
-				if (typeof node.name === 'string') {
-					// The name follows the modifiers, and any comments between them
-					const modifiers = /^(?:(?:const|in|out)\s+)*/u.exec(
-						this.textWithoutComments.slice(node.start, node.end),
-					);
-					const start = node.start + (modifiers?.[0].length ?? 0);
-					node.name = {
-						type: 'Identifier',
-						name: node.name,
-						start,
-						end: start + node.name.length,
-					};
-				}
-				break;
 		}
 
 		// Directives are block-shaped expressions. Prettier's closest relative is

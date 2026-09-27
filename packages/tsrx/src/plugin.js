@@ -5973,6 +5973,18 @@ export function TSRXPlugin(config) {
 				}
 			}
 
+			// UPSTREAM(sveltejs/acorn-typescript#7): remove once a release gives the name as a node
+			/**
+			 * A type parameter's name (`T` in `<T>`, a mapped type's key, `infer U`)
+			 * as the `Identifier` acorn-typescript reads, with its position, as in
+			 * typescript-estree. acorn-typescript keeps only its string, Babel 7's
+			 * shape (#873).
+			 * @type {Parse.Parser['tsParseTypeParameterName']}
+			 */
+			tsParseTypeParameterName() {
+				return /** @type {any} */ (this.parseIdent());
+			}
+
 			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
 			/**
 			 * `as` after a mapped type's type parameter, written with an escape, is

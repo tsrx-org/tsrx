@@ -1280,9 +1280,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 	 * it. After it, before the type after the `extends`, `=`, or mapped type's
 	 * `in` (see {@link getTypeParameterKeyword}), the ones that end their line
 	 * trail it, and so do the other ones before the keyword that aren't on a
-	 * line of their own. This parser keeps the name as a string, so those
-	 * comments dangle on the type parameter, which prints them around its
-	 * name. The rest lead the type after the keyword, with two exceptions:
+	 * line of their own. Here those comments dangle on the type parameter,
+	 * which prints them around its name. The rest lead the type after the
+	 * keyword, with two exceptions:
 	 * - A `prettier-ignore` comment on its own line, or after the keyword,
 	 *   keeps ignoring that type.
 	 * - A line comment, or a block comment that ends its line, on a line of
