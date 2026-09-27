@@ -92,7 +92,7 @@ export function runSharedSourceMappingTests({
 			const mapping = result.mappings.find(
 				(/** @type {any} */ m) => m.sourceOffsets[0] === offset && m.lengths[0] === 1,
 			);
-			expect(mapping, marker).toBeDefined();
+			if (!mapping) throw new Error(`No mapping for ${marker}`);
 			const generated = mapping.generatedOffsets[0];
 			expect(result.code.slice(generated, generated + 1)).toBe(source[offset]);
 		});
