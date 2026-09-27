@@ -143,7 +143,6 @@ export const printer = {
 	},
 
 	getVisitorKeys(node, nonTraversableKeys) {
-		if (node.type === 'TSRXJSXComment') return [];
 		const keys = TSRX_VISITOR_KEYS[node.tsrxType ?? node.type];
 		if (keys) return keys;
 		if (node.type === 'CatchClause' && node.resetParam) return CATCH_CLAUSE_KEYS;
@@ -546,25 +545,22 @@ function printTsrx(path, options, print) {
 			if (!node.tsrxPrintsChildren) return null;
 			return printElement(path, options, printJsxElementInternal(path, options, print));
 
-		case 'TSRXJSXComment': {
-			// Printed like any comment: a line comment ends its line, and a
-			// JSDoc-style block comment is re-indented.
-			const comment = {
-				type: node.commentType,
-				value: node.value,
-				start: node.start,
-				end: node.end,
-			};
-			const printed = /** @type {NonNullable<Printer<Node>['printComment']>} */ (
-				estree.printComment
-			)(/** @type {AstPath<Node>} */ (/** @type {unknown} */ ({ node: comment })), options);
-			return node.commentType === 'Line' ? [printed, breakParent] : printed;
-		}
+		case 'JSXExpressionContainer':
+			if (node.tsrxComment) {
+				// A comment between children, laid out as `{/* … *\/}` and printed
+				// without the braces, like any comment: a line comment ends its line,
+				// and a JSDoc-style block comment is re-indented.
+				const comment = node.tsrxComment;
+				const printed = /** @type {NonNullable<Printer<Node>['printComment']>} */ (
+					estree.printComment
+				)(/** @type {AstPath<Node>} */ (/** @type {unknown} */ ({ node: comment })), options);
+				return comment.type === 'Line' ? [printed, breakParent] : printed;
+			}
+			return isCommentedTagName(path) ? printTagNameComments(path, options, print) : null;
 
 		case 'JSXIdentifier':
 		case 'JSXMemberExpression':
 		case 'JSXNamespacedName':
-		case 'JSXExpressionContainer':
 			return isCommentedTagName(path) ? printTagNameComments(path, options, print) : null;
 
 		case 'JSXAttribute':

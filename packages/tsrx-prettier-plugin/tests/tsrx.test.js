@@ -672,14 +672,18 @@ describe('comments between JSX children', () => {
 		);
 	});
 
-	test('inline block comments keep the spacing around them', async () => {
+	// Laid out as Prettier lays out `{/* c */}`: without text, each child on its
+	// own line.
+	test('inline block comments lay out like {/* c */}', async () => {
 		await expectFormat(
 			`const a = <p>one /* two */ three</p>;
 const b = <p><a />/* c */<b /></p>;`,
 			`const a = <p>one /* two */ three</p>;
 const b = (
   <p>
-    <a />/* c */<b />
+    <a />
+    /* c */
+    <b />
   </p>
 );
 `,
@@ -701,9 +705,9 @@ const b = (
 		);
 	});
 
-	// A comment adds nothing to the text around it: the whitespace on its two
-	// sides is one run, which renders a space without a line break, and nothing
-	// with one beside an element or the start or end of the children (#639).
+	// A comment renders like `{/* c */}`: the text on each side of it follows
+	// JSX's whitespace rules on its own, and Prettier's layout of `{/* c */}`
+	// keeps what it renders (#639).
 	test('the whitespace around a comment renders the same after formatting (#639)', async () => {
 		await expectFormat(
 			`export function App() @{
@@ -727,14 +731,12 @@ const b = (
       {" "}
       /* c */ <i />
     </div>
-    <div>
-      /* c */ 2
-    </div>
+    <div>/* c */ 2</div>
     <div>
       {x} /* c */
     </div>
     <p>
-      <i />{" "}// c
+      <i /> // c
     </p>
   </>
 }
@@ -742,9 +744,8 @@ const b = (
 		);
 	});
 
-	// A `{" "}` beside a comment is part of the comment's run. It becomes a
-	// plain space where one renders, and stays `{" "}` next to a line break the
-	// comment keeps, which would drop a plain space.
+	// A `{" "}` beside a comment is a space, as beside `{/* c */}`; before a line
+	// comment that starts its line, it's written out.
 	test('a {" "} beside a comment keeps its space', async () => {
 		await expectFormat(
 			`export function App() @{
@@ -763,17 +764,19 @@ const b = (
   <>
     <p>one /* c */two</p>
     <p>
-      <b /> /* c */<i />
+      <b /> /* c */
+      <i />
     </p>
     <p>
-      <b />/* c */ <i />
+      <b />
+      /* c */ <i />
     </p>
     <p>
-      one{" "}/* c */
+      one /* c */
       <b />
     </p>
     <p>
-      one
+      one{" "}
       // c
       two
     </p>
@@ -786,19 +789,23 @@ const b = (
 	test('a {" "} with a comment inside is printed with its comment', async () => {
 		await expectFormat(
 			`const a = <p>one /* c */{/* d */ " "}two</p>;`,
-			`const a = <p>one /* c */{/* d */ " "}two</p>;\n`,
+			`const a = (
+  <p>
+    one /* c */
+    {/* d */ " "}two
+  </p>
+);
+`,
 		);
 	});
 
-	// Prettier treats a run of spaces as one (`<p>a  b</p>` prints `a b`), so a
-	// space on each side of a comment renders like the one in the source.
-	test('the space around a group of comments breaks in one place', async () => {
+	test('a group of comments lays out like {/* c */} children', async () => {
 		await expectFormat(
 			`const a = <p>one /* c */ /* d */ <b /></p>;`,
 			`const a = (
   <p>
-    one /* c */ /* d */{" "}
-    <b />
+    one /* c */{" "}
+    /* d */ <b />
   </p>
 );
 `,
@@ -940,7 +947,7 @@ describe('text with a word that starts with //', () => {
 			`const a = <p>one two /* x */ // three</p>;`,
 			`const a = (
   <p>
-    one two
+    one two{" "}
     /* x */ //
     three
   </p>
