@@ -1026,6 +1026,21 @@ describe('prettier/standalone', () => {
 
 // Where core's tree differs from typescript-estree's, the adapter reshapes it.
 describe('the typescript-estree shape', () => {
+	// typescript-estree has no parenthesized expressions, so Prettier's
+	// `typescript` parser drops a JSDoc cast's parentheses; TypeScript applies
+	// the cast only in JavaScript files (decision 39 in #852).
+	test('a JSDoc type cast loses its parentheses, as with the typescript parser (#844)', async () => {
+		await expectFormat(
+			`const y = /** @type {Label} */ (value);
+const s = /** @satisfies {Config} */ ({ a: 1 });
+const a = <div x={/** @type {T} */ (y)}>{/** @type {T} */ (z)}</div>;`,
+			`const y = /** @type {Label} */ value;
+const s = /** @satisfies {Config} */ { a: 1 };
+const a = <div x={/** @type {T} */ y}>{/** @type {T} */ z}</div>;
+`,
+		);
+	});
+
 	test("a comment in a class method's type parameters stays in them (#630)", async () => {
 		await expectFormat(
 			`class A {

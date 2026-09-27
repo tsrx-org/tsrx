@@ -116,7 +116,6 @@ export function parse(text, options) {
 					collect: true,
 					errors: /** @type {any} */ (errors),
 					comments: /** @type {any} */ (comments),
-					preserveParens: true,
 				})
 			)
 		);
@@ -455,22 +454,6 @@ class Adapter {
 	}
 
 	/**
-	 * Prettier keeps parentheses only around JSDoc type casts
-	 * (`/** @type {T} *\/ (value)`), like its `babel` parser.
-	 * @param {Node} node
-	 * @returns {boolean}
-	 */
-	isTypeCastParentheses(node) {
-		const comment = this.comments.findLast((comment) => comment.end <= node.start);
-		return (
-			comment?.type === 'Block' &&
-			comment.value[0] === '*' &&
-			/@(?:type|satisfies)\b/u.test(comment.value) &&
-			this.text.slice(comment.end, node.start).trim() === ''
-		);
-	}
-
-	/**
 	 * @param {any} value
 	 * @returns {any}
 	 */
@@ -484,9 +467,6 @@ class Adapter {
 		/** @type {Node} */
 		const node = value;
 
-		if (node.type === 'ParenthesizedExpression' && !this.isTypeCastParentheses(node)) {
-			return this.visit(node.expression);
-		}
 		if (node.type === 'TSParenthesizedType') {
 			return this.visit(node.typeAnnotation);
 		}
