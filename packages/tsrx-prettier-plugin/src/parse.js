@@ -255,78 +255,32 @@ class Adapter {
 	}
 
 	/**
-	 * Rebuild a JSX element's text children from the source, each exactly the
-	 * source it covers. The parser leaves the whitespace between children out of
-	 * its text nodes and splits them at comments, and Prettier reads the text to
-	 * keep blank lines and to choose line breaks.
-	 *
-	 * A TSRX comment between children (`// …` or `/* … *\/`, which TSX would
-	 * read as text) renders like `{/* … *\/}` in TSX, so it becomes the `{…}`
-	 * child TSX would have: Prettier lays it out as that, and `printer.js`
-	 * prints the comment without the braces.
+	 * The parser gives an element's children as TSX's parsers do, text exactly
+	 * as written, and a TSRX comment between children (`// …` or `/* … *\/`,
+	 * which TSX would read as text) as the `{…}` child that `{/* … *\/}` is in
+	 * TSX, with no braces in the source. That child becomes the plugin's comment
+	 * child: Prettier lays it out as `{/* … *\/}`, and `printer.js` prints the
+	 * comment without the braces.
 	 * @param {Node} node
 	 */
-	rebuildJsxChildren(node) {
-		const opening = node.openingElement ?? node.openingFragment;
-		const closing = node.closingElement ?? node.closingFragment;
-		if (!closing) return;
-
-		/** @type {Node[]} */
-		const children = [];
-		let position = opening.end;
-		/**
-		 * The text and comments from `position` to `end`.
-		 * @param {number} end
-		 */
-		const addSource = (end) => {
-			const comments = this.comments.filter(
-				(comment) => comment.start >= position && comment.end <= end,
-			);
-			for (const comment of comments) {
-				this.addJsxText(children, position, comment.start);
-				children.push(this.jsxComment(comment));
-				this.jsxComments.add(comment);
-				position = comment.end;
+	markJsxComments(node) {
+		let marked = false;
+		node.children = node.children.map((/** @type {Node} */ child) => {
+			if (
+				child.type !== 'JSXExpressionContainer' ||
+				child.expression.type !== 'JSXEmptyExpression' ||
+				this.text[child.start] === '{'
+			) {
+				return child;
 			}
-			this.addJsxText(children, position, end);
-			position = end;
-		};
-		for (const child of node.children) {
-			// The parser's own `{}` where comments split the text has no braces in
-			// the source; the text and comments are read from the source instead.
-			if (child.type === 'JSXText' || this.isCommentContainer(child)) continue;
-			addSource(child.start);
-			children.push(child);
-			position = child.end;
-		}
-		addSource(closing.start);
-		node.children = children;
+			const comment = this.comments.find(({ start }) => start === child.start);
+			if (!comment) return child;
+			this.jsxComments.add(comment);
+			marked = true;
+			return this.jsxComment(comment);
+		});
 		// `jsx.js` prints a line comment where it stays a comment.
-		if (children.some((child) => child.tsrxComment)) node.tsrxPrintsChildren = true;
-	}
-
-	/**
-	 * Whether a child is the empty `{}` the parser puts where comments split
-	 * text, which has no braces in the source.
-	 * @param {Node} child
-	 */
-	isCommentContainer(child) {
-		return (
-			child.type === 'JSXExpressionContainer' &&
-			child.expression.type === 'JSXEmptyExpression' &&
-			this.text[child.start] !== '{'
-		);
-	}
-
-	/**
-	 * @param {Node[]} children
-	 * @param {number} start
-	 * @param {number} end
-	 */
-	addJsxText(children, start, end) {
-		if (end <= start) return;
-		const raw = this.text.slice(start, end);
-		children.push({ type: 'JSXText', start, end, value: raw, raw });
+		if (marked) node.tsrxPrintsChildren = true;
 	}
 
 	/**
@@ -422,7 +376,7 @@ class Adapter {
 
 			case 'JSXElement':
 			case 'JSXFragment':
-				if (!isRawScriptElement(node)) this.rebuildJsxChildren(node);
+				if (!isRawScriptElement(node)) this.markJsxComments(node);
 				break;
 
 			case 'Program':

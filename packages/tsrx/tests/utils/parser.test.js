@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	acorn,
 	analyzeTsrx,
+	isLayoutWhitespace,
 	parseModule,
 	TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
 } from '../../src/index.js';
@@ -182,6 +183,31 @@ function openingName(element) {
  */
 function child(node, index, type) {
 	return as_type(node_children(node)[index], type);
+}
+
+/**
+ * The node's children without layout whitespace (see `isLayoutWhitespace`),
+ * for tests about something other than the text between children.
+ *
+ * @param {AST.Node} node
+ * @returns {AST.Node[]}
+ */
+function contentChildren(node) {
+	return node_children(node).filter((child) => !isLayoutWhitespace(child));
+}
+
+/**
+ * The node's child at `index` among {@link contentChildren}, asserted to be
+ * `type`.
+ *
+ * @template {NodeTypeName} T
+ * @param {AST.Node} node
+ * @param {number} index
+ * @param {T} type
+ * @returns {NodeOfType<T>}
+ */
+function contentChild(node, index, type) {
+	return as_type(contentChildren(node)[index], type);
 }
 
 /**
@@ -1253,7 +1279,10 @@ describe('TSRX parser', () => {
 		// Inside a template, what follows an element is text.
 		for (const source of ['<div><span /> > 5</div>', '<div>\n  <span />\n  > 5\n</div>']) {
 			const container = firstStatement(parseModule(source, 'App.tsrx'), 'JSXElement');
-			expect(container.children.map((node) => node.type)).toEqual(['JSXElement', 'JSXText']);
+			expect(contentChildren(container).map((node) => node.type)).toEqual([
+				'JSXElement',
+				'JSXText',
+			]);
 		}
 	});
 
@@ -1664,10 +1693,19 @@ abc
 		expect(child(fragment, 2, 'JSXText').value).toBe('   ');
 	});
 
-	it('drops layout whitespace before a code block in a fragment', () => {
+	it('keeps layout whitespace before a code block in a fragment as text', () => {
 		const fragment = findNode('let a = <>\n   @{<b>123</b>}\n</>;', 'JSXFragment');
 
-		expect(fragment.children.map((child) => child.type)).toEqual(['JSXCodeBlock']);
+		// As in TSX, the line breaks and indentation are text that renders nothing
+		expect(fragment.children.map((child) => child.type)).toEqual([
+			'JSXText',
+			'JSXCodeBlock',
+			'JSXText',
+		]);
+		expect(child(fragment, 0, 'JSXText').value).toBe('\n   ');
+		expect(child(fragment, 2, 'JSXText').value).toBe('\n');
+		expect(isLayoutWhitespace(child(fragment, 0, 'JSXText'))).toBe(true);
+		expect(isLayoutWhitespace(child(fragment, 2, 'JSXText'))).toBe(true);
 	});
 
 	it('parses an @if directive inside an element nested in an expression container', () => {
@@ -1926,9 +1964,10 @@ abc
 		}
 	});
 
-	it('still drops layout indentation before a directive', () => {
-		// Whitespace containing a newline is layout, not content — the JSX
-		// significant-whitespace rule removes it in every position.
+	it('keeps layout indentation around a directive as text', () => {
+		// Whitespace containing a newline is layout, not content: the parser keeps
+		// it as text, as TSX parsers do, and the JSX significant-whitespace rule
+		// renders nothing for it in every position.
 		const element = findElement(
 			`function App({ ok, c }) @{
 				const v = @switch (c) { @case 1: { <h1><a />
@@ -1939,7 +1978,16 @@ abc
 			'h1',
 		);
 
-		expect(element.children.map((child) => child.type)).toEqual(['JSXElement', 'JSXIfExpression']);
+		expect(element.children.map((child) => child.type)).toEqual([
+			'JSXElement',
+			'JSXText',
+			'JSXIfExpression',
+			'JSXText',
+		]);
+		expect(child(element, 1, 'JSXText').value).toBe('\n\t\t\t\t\t');
+		expect(child(element, 3, 'JSXText').value).toBe('\n\t\t\t\t');
+		expect(isLayoutWhitespace(child(element, 1, 'JSXText'))).toBe(true);
+		expect(isLayoutWhitespace(child(element, 3, 'JSXText'))).toBe(true);
 	});
 
 	it('keeps text around `=` inside a container-nested element', () => {
@@ -2011,7 +2059,7 @@ abc
 		assert_type(returned, 'ConditionalExpression');
 		expect(returned.consequent.type).toBe('JSXElement');
 		expect(returned.alternate.type).toBe('JSXFragment');
-		expect(node_children(returned.alternate).map((child) => child.type)).toEqual(['JSXElement']);
+		expect(contentChildren(returned.alternate).map((child) => child.type)).toEqual(['JSXElement']);
 	});
 
 	it('parses a return ternary from a self-closing element to an array', () => {
@@ -2083,8 +2131,8 @@ abc
 			}`,
 		);
 
-		expect(node_children(returned).map((child) => child.type)).toEqual(['JSXElement', 'JSXText']);
-		expect(child(returned, 1, 'JSXText').value).toContain('tail');
+		expect(contentChildren(returned).map((child) => child.type)).toEqual(['JSXElement', 'JSXText']);
+		expect(contentChild(returned, 1, 'JSXText').value).toContain('tail');
 	});
 
 	it('parses a ternary with JSX element branches inside an expression container', () => {
@@ -2177,10 +2225,21 @@ abc
 		);
 
 		const value = as_type(declaratorInit(exportedDeclaration(ast)), 'ArrowFunctionExpression').body;
-		expect(node_children(value).map((child) => child.type)).toEqual(['JSXElement']);
-		expect(as_type(child(value, 0, 'JSXElement').openingElement.name, 'JSXIdentifier').name).toBe(
-			'div',
+		// The comment is in an empty `{}` of its own, not in the text
+		expect(contentChildren(value).map((child) => child.type)).toEqual([
+			'JSXExpressionContainer',
+			'JSXElement',
+		]);
+		const comment = as_type(
+			contentChild(value, 0, 'JSXExpressionContainer').expression,
+			'JSXEmptyExpression',
 		);
+		expect(comment.innerComments?.map((c) => c.value)).toEqual([
+			' This is a JS comment, not text.',
+		]);
+		expect(
+			as_type(contentChild(value, 1, 'JSXElement').openingElement.name, 'JSXIdentifier').name,
+		).toBe('div');
 	});
 
 	it('treats JS-looking fragment content as JSXText', () => {
@@ -2310,8 +2369,9 @@ abc
 	</div>
 }`);
 
-		// The line break after it renders nothing, as after `{/* … */}` in TSX
-		expect(texts).toEqual(['hi ']);
+		// The line break after it is text that renders nothing, as after
+		// `{/* … */}` in TSX
+		expect(texts).toEqual(['hi ', '\n\t']);
 		expect(comments.map((comment) => comment.type + ':' + comment.value)).toEqual(['Line: note']);
 	});
 
@@ -2322,8 +2382,9 @@ abc
 	</>
 }`);
 
-		// The spaces before the comment render, as before `{/* … */}` in TSX.
-		expect(texts).toEqual(['hello ', '  ']);
+		// The spaces before the comment render, as before `{/* … */}` in TSX, and
+		// the layout line breaks around the code block are text too.
+		expect(texts).toEqual(['\n\t\t', 'hello ', '  ', '\n\t']);
 		expect(comments.map((comment) => comment.type + ':' + comment.value)).toEqual([
 			'Line: <-- depth 4',
 		]);
@@ -2411,15 +2472,15 @@ abc
 		});
 		assert_type(fragment, 'JSXFragment');
 		expect(
-			fragment.children.map(function (child) {
+			contentChildren(fragment).map(function (child) {
 				return child.type;
 			}),
 		).toEqual(['JSXStyleElement', 'JSXElement']);
-		const style = child(fragment, 0, 'JSXStyleElement');
+		const style = contentChild(fragment, 0, 'JSXStyleElement');
 		expect(style.css?.trim()).toBe('');
 		expect(style.unclosed).toBe(true);
 		expect(style.closingElement).toBeNull();
-		expect(openingName(child(fragment, 1, 'JSXElement')).name).toBe('div');
+		expect(openingName(contentChild(fragment, 1, 'JSXElement')).name).toBe('div');
 	});
 
 	it('captures partial CSS after an unclosed style up to the next sibling', function () {
@@ -2443,12 +2504,12 @@ abc
 		});
 		assert_type(fragment, 'JSXFragment');
 		expect(
-			fragment.children.map(function (child) {
+			contentChildren(fragment).map(function (child) {
 				return child.type;
 			}),
 		).toEqual(['JSXStyleElement', 'JSXElement']);
 
-		const style = child(fragment, 0, 'JSXStyleElement');
+		const style = contentChild(fragment, 0, 'JSXStyleElement');
 		expect(style.unclosed).toBe(true);
 		expect(style.css).toBe('\n\t\t\t.foo { color: red; }\n\t\t\t.bar {\n\t\t');
 		expect(style.end).toBe(source.indexOf('<div />'));
@@ -2460,7 +2521,7 @@ abc
 		expect(sheet.type).toBe('StyleSheet');
 		expect(sheet.children.map((rule) => rule.type)).toEqual(['Rule']);
 
-		const div = child(fragment, 1, 'JSXElement');
+		const div = contentChild(fragment, 1, 'JSXElement');
 		expect(openingName(div).name).toBe('div');
 		expect(div.loc?.start.line).toBe(6);
 		expect(div.loc?.start.column).toBe(2);
@@ -2487,12 +2548,14 @@ export function App() @{
 		});
 		assert_type(fragment, 'JSXFragment');
 		expect(
-			fragment.children.map(function (child) {
+			contentChildren(fragment).map(function (child) {
 				return child.type;
 			}),
 		).toEqual(['JSXStyleElement', 'JSXElement']);
-		expect(child(fragment, 0, 'JSXStyleElement').css).toBe('\n\t\t\t.foo { color: red; }\n\t\t');
-		expect(child(fragment, 1, 'JSXElement').isDynamic).toBe(true);
+		expect(contentChild(fragment, 0, 'JSXStyleElement').css).toBe(
+			'\n\t\t\t.foo { color: red; }\n\t\t',
+		);
+		expect(contentChild(fragment, 1, 'JSXElement').isDynamic).toBe(true);
 	});
 
 	it('keeps a `<` inside CSS text in the unclosed style body', function () {
@@ -2516,15 +2579,15 @@ export function App() @{
 		});
 		assert_type(fragment, 'JSXFragment');
 		expect(
-			fragment.children.map(function (child) {
+			contentChildren(fragment).map(function (child) {
 				return child.type;
 			}),
 		).toEqual(['JSXStyleElement', 'JSXElement']);
-		const style = child(fragment, 0, 'JSXStyleElement');
+		const style = contentChild(fragment, 0, 'JSXStyleElement');
 		expect(style.css).toContain('content: "<";');
 		expect(style.css).toContain('/* < is not a tag */');
 		expect(style.end).toBe(source.indexOf('<div />'));
-		expect(openingName(child(fragment, 1, 'JSXElement')).name).toBe('div');
+		expect(openingName(contentChild(fragment, 1, 'JSXElement')).name).toBe('div');
 	});
 
 	it('captures the rest of the file after an unclosed module-scope style', function () {
@@ -2568,17 +2631,17 @@ export function App() @{ <div /> }`;
 		});
 		assert_type(fragment, 'JSXFragment');
 		expect(
-			fragment.children.map(function (child) {
+			contentChildren(fragment).map(function (child) {
 				return child.type;
 			}),
 		).toEqual(['JSXElement', 'JSXElement']);
 
-		const script = child(fragment, 0, 'JSXElement');
+		const script = contentChild(fragment, 0, 'JSXElement');
 		expect(openingName(script).name).toBe('script');
 		expect(script.unclosed).toBe(true);
 		expect(script.content).toBe('\n\t\t\tconsole.log(1);\n\t\t');
 		expect(script.end).toBe(source.indexOf('<div />'));
-		expect(openingName(child(fragment, 1, 'JSXElement')).name).toBe('div');
+		expect(openingName(contentChild(fragment, 1, 'JSXElement')).name).toBe('div');
 	});
 
 	it('keeps an unclosed style inside an element so later siblings stay JSX children', function () {
@@ -2613,12 +2676,12 @@ export function App() @{ <div /> }`;
 		});
 		assert_type(section, 'JSXElement');
 		expect(
-			section.children.map(function (child) {
+			contentChildren(section).map(function (child) {
 				return child.type;
 			}),
 		).toEqual(['JSXStyleElement', 'JSXElement']);
-		expect(child(section, 0, 'JSXStyleElement').unclosed).toBe(true);
-		expect(openingName(child(section, 1, 'JSXElement')).name).toBe('span');
+		expect(contentChild(section, 0, 'JSXStyleElement').unclosed).toBe(true);
+		expect(openingName(contentChild(section, 1, 'JSXElement')).name).toBe('span');
 		expect(section.unclosed).toBeFalsy();
 	});
 
@@ -2811,7 +2874,7 @@ export function App() @{ <div /> }`;
 					break;
 				}
 				case 'JSXFragment':
-					assert_shapes(as_type(actual, 'JSXFragment').children, shape.children);
+					assert_shapes(contentChildren(as_type(actual, 'JSXFragment')), shape.children);
 					break;
 				case 'JSXCodeBlock': {
 					const block = codeBlock(actual);
@@ -3011,11 +3074,13 @@ export function App() @{ <div /> }`;
 		const block = child(returned, 0, 'JSXCodeBlock');
 		expect(codeBlock(block).body.map((child) => child.type)).toEqual(['VariableDeclaration']);
 		expect(codeBlockRender(block).type).toBe('JSXFragment');
-		expect(node_children(codeBlockRender(block)).map((child) => child.type)).toEqual([
+		expect(contentChildren(codeBlockRender(block)).map((child) => child.type)).toEqual([
 			'JSXText',
 			'JSXElement',
 		]);
-		expect(child(codeBlockRender(block), 0, 'JSXText').value).toContain('for switching to if');
+		expect(contentChild(codeBlockRender(block), 0, 'JSXText').value).toContain(
+			'for switching to if',
+		);
 	});
 
 	it('parses a nested element that earns its own `@{ }` block', () => {
@@ -3059,12 +3124,12 @@ export function App() @{ <div /> }`;
 		);
 		const fragment = codeBlockRender(firstStatement(ast, 'FunctionDeclaration').body);
 
-		expect(node_children(found(fragment)).map((child) => child.type)).toEqual([
+		expect(contentChildren(found(fragment)).map((child) => child.type)).toEqual([
 			'JSXText',
 			'JSXCodeBlock',
 		]);
-		expect(child(found(fragment), 0, 'JSXText').value).toContain('Hello ');
-		const block = node_children(found(fragment))[1];
+		expect(contentChild(found(fragment), 0, 'JSXText').value).toContain('Hello ');
+		const block = contentChildren(found(fragment))[1];
 		expect(codeBlock(block).body.map((child) => child.type)).toEqual(['ExpressionStatement']);
 		expect(
 			as_type(
@@ -3449,7 +3514,7 @@ foo();`;
 		const block = child(returned, 0, 'JSXCodeBlock');
 		expect(codeBlock(block).body.map((child) => child.type)).toEqual(['VariableDeclaration']);
 		expect(declaratorInit(block.body[0]).type).toBe('JSXElement');
-		expect(node_children(codeBlockRender(block)).map((child) => child.type)).toEqual([
+		expect(contentChildren(codeBlockRender(block)).map((child) => child.type)).toEqual([
 			'JSXElement',
 			'JSXExpressionContainer',
 		]);
@@ -3949,13 +4014,13 @@ foo();`;
 
 	it('parses a text-then-element sibling after newline-separated elements', () => {
 		const pre = findElement('let a = <pre><b>2</b>\n<b>3</b>1<b>4</b></pre>;', 'pre');
-		expect(pre.children.map((child) => child.type)).toEqual([
+		expect(contentChildren(pre).map((child) => child.type)).toEqual([
 			'JSXElement',
 			'JSXElement',
 			'JSXText',
 			'JSXElement',
 		]);
-		expect(child(pre, 2, 'JSXText').value).toBe('1');
+		expect(contentChild(pre, 2, 'JSXText').value).toBe('1');
 	});
 
 	it('parses indented multi-line markup with a text-then-element sibling', () => {
@@ -4348,12 +4413,16 @@ foo();`;
 			'JSXFragment',
 		);
 
-		const directive = fragment.children.find((child) => child.type === 'JSXIfExpression');
-		const text = fragment.children.find((child) => child.type === 'JSXText');
+		expect(fragment.children.map((child) => child.type)).toEqual([
+			'JSXText',
+			'JSXIfExpression',
+			'JSXText',
+		]);
+		const directive = child(fragment, 1, 'JSXIfExpression');
 
-		assert_type(directive, 'JSXIfExpression');
 		expect(directive.alternate).toBe(null);
-		expect(as_type(text, 'JSXText').value).toBe(' else\n');
+		expect(child(fragment, 0, 'JSXText').value).toBe('\n');
+		expect(child(fragment, 2, 'JSXText').value).toBe(' else\n');
 	});
 
 	it('parses same-line trailing text after an @if block closed by a tag', () => {
@@ -4559,14 +4628,14 @@ foo();`;
 		).body;
 		assert_type(block, 'JSXCodeBlock');
 		expect(codeBlockRender(block).type).toBe('JSXFragment');
-		expect(node_children(codeBlockRender(block)).map((child) => child.type)).toEqual([
+		expect(contentChildren(codeBlockRender(block)).map((child) => child.type)).toEqual([
 			'JSXElement',
 			'JSXElement',
 			'JSXForExpression',
 		]);
-		expect(
-			as_type(node_children(codeBlockRender(block))[2], 'JSXForExpression').body.body[0].type,
-		).toBe('JSXElement');
+		expect(contentChild(codeBlockRender(block), 2, 'JSXForExpression').body.body[0].type).toBe(
+			'JSXElement',
+		);
 	});
 
 	it('parses @for empty fallbacks as template blocks', () => {
@@ -5328,11 +5397,11 @@ foo();`;
 			</main>;
 		}`);
 
-		expect(node_children(returned).map((child) => child.type)).toEqual([
+		expect(contentChildren(returned).map((child) => child.type)).toEqual([
 			'JSXCodeBlock',
 			'JSXCodeBlock',
 		]);
-		const [first, second] = node_children(returned);
+		const [first, second] = contentChildren(returned);
 		expect(codeBlock(first).body.map((child) => child.type)).toEqual(['VariableDeclaration']);
 		expect(openingName(as_type(codeBlockRender(first), 'JSXElement')).name).toBe('span');
 		expect(codeBlock(second).body.map((child) => child.type)).toEqual(['VariableDeclaration']);
@@ -5453,7 +5522,7 @@ foo();`;
 			(child) => /** @type {AST.Node} */ (child).type === 'JSXFragment',
 		);
 		assert_found(fragment);
-		expect(node_children(fragment).map((child) => child.type)).toEqual([
+		expect(contentChildren(fragment).map((child) => child.type)).toEqual([
 			'JSXElement',
 			'JSXIfExpression',
 		]);
@@ -5552,11 +5621,11 @@ foo();`;
 		assert_type(block, 'JSXCodeBlock');
 		expect(codeBlock(block).body.map((child) => child.type)).toEqual(['VariableDeclaration']);
 		expect(codeBlockRender(block).type).toBe('JSXFragment');
-		expect(node_children(found(block.render)).map((child) => child.type)).toEqual([
+		expect(contentChildren(found(block.render)).map((child) => child.type)).toEqual([
 			'JSXCodeBlock',
 			'JSXCodeBlock',
 		]);
-		const [first, second] = node_children(found(block.render));
+		const [first, second] = contentChildren(found(block.render));
 		expect(openingName(as_type(codeBlockRender(first), 'JSXElement')).name).toBe('span');
 		expect(openingName(as_type(codeBlockRender(second), 'JSXElement')).name).toBe('span');
 	});
@@ -6710,27 +6779,37 @@ describe('comments in element bodies and closing tags', () => {
 		);
 	}
 
-	it('gives a comment right after an opening tag to the body, not the tag', () => {
-		for (const source of ['<div>/* note */x</div>;', '<>/* note */ x</>;']) {
+	/**
+	 * The comments in `node` when it is an empty `{}`, the `{}` every comment
+	 * between children gets.
+	 *
+	 * @param {any} node
+	 * @returns {string[] | undefined}
+	 */
+	function emptyContainerComments(node) {
+		expect(node?.type).toBe('JSXExpressionContainer');
+		expect(node.expression.type).toBe('JSXEmptyExpression');
+		expect(commentsOf(node)).toEqual({});
+		return commentsOf(node.expression).inner;
+	}
+
+	it('gives a comment right after an opening tag its own `{}` in the body, not the tag', () => {
+		for (const source of [
+			'<div>/* note */x</div>;',
+			'<>/* note */ x</>;',
+			'const a = <p>/* note */{name}</p>;',
+		]) {
 			const element = firstTemplate(source);
 			expect(commentsOf(element.openingElement ?? element.openingFragment), source).toEqual({});
-			// Nothing renders before it, so it leads the text after it
-			expect(commentsOf(element.children[0]).leading, source).toEqual([' note ']);
+			expect(emptyContainerComments(element.children[0]), source).toEqual([' note ']);
+			expect(commentsOf(element.children[1]), source).toEqual({});
 		}
-
-		const element = firstTemplate('const a = <p>/* note */{name}</p>;');
-		expect(commentsOf(element.openingElement)).toEqual({});
-		expect(commentsOf(element.children[0]).leading).toEqual([' note ']);
 	});
 
-	it('gives a comment in JSX text to the text or its `{}`, not the closing tag', () => {
-		const first = firstTemplate('const a = <div>\n  /* note */\n  text\n</div>;');
-		expect(commentsOf(first.closingElement)).toEqual({});
-		expect(commentsOf(first.children[0]).leading).toEqual([' note ']);
-
-		// Between two pieces of text, it is in the `{}` between them, as
-		// `{/* note */}` is in TSX
+	it('gives a comment in JSX text its own `{}`, not the text or the closing tag', () => {
+		// As `{/* note */}` is in TSX, whether text renders around it or not
 		for (const source of [
+			'const a = <div>\n  /* note */\n  text\n</div>;',
 			'const a = <div>\n  text\n  // note\n  more\n</div>;',
 			'const a = <div>text /* note */ more</div>;',
 		]) {
@@ -6738,48 +6817,52 @@ describe('comments in element bodies and closing tags', () => {
 			expect(commentsOf(element.closingElement), source).toEqual({});
 			expect(commentsOf(element.children[0]), source).toEqual({});
 			expect(
-				commentsOf(element.children[1].expression).inner?.map((value) => value.trim()),
+				emptyContainerComments(element.children[1])?.map((value) => value.trim()),
 				source,
 			).toEqual(['note']);
+			expect(commentsOf(element.children[2]), source).toEqual({});
 		}
 	});
 
-	it("gives a comment between two pieces of text to their `{}`, even on a child's line", () => {
+	it("gives a comment between two children its own `{}`, even on a child's line", () => {
 		for (const source of [
 			'const a = <div>{a} /* note */ text</div>;',
 			'const a = <div><b /> /* note */ <i /></div>;',
 		]) {
 			const element = firstTemplate(source);
 			expect(commentsOf(element.children[0]), source).toEqual({});
-			expect(element.children[2].type, source).toBe('JSXExpressionContainer');
-			expect(commentsOf(element.children[2].expression).inner, source).toEqual([' note ']);
+			expect(emptyContainerComments(element.children[2]), source).toEqual([' note ']);
 		}
 
-		// With nothing that renders on one side, there is no `{}`: the comment
-		// goes to a child next to it
+		// With nothing that renders on one side, it still has its own `{}`
 		const touching = firstTemplate('const a = <div><b />/* note */text</div>;');
 		expect(touching.children.map((/** @type {AST.Node} */ node) => node.type)).toEqual([
 			'JSXElement',
+			'JSXExpressionContainer',
 			'JSXText',
 		]);
-		expect(commentsOf(touching.children[0]).trailing).toEqual([' note ']);
+		expect(commentsOf(touching.children[0])).toEqual({});
+		expect(emptyContainerComments(touching.children[1])).toEqual([' note ']);
 
 		const ignored = firstTemplate(
 			'const a = <div>\n  text\n  // prettier-ignore\n  <b />\n</div>;',
 		);
-		expect(commentsOf(ignored.children[0]).trailing).toEqual([' prettier-ignore']);
-		expect(commentsOf(ignored.children[1])).toEqual({});
+		expect(commentsOf(ignored.children[0])).toEqual({});
+		expect(emptyContainerComments(ignored.children[1])).toEqual([' prettier-ignore']);
+		expect(commentsOf(ignored.children[3])).toEqual({});
 
-		// A `{" "}` keeps it
+		// After a `{" "}`, too
 		const element = firstTemplate('const a = <div>x{" "}/* note */ y</div>;');
-		expect(commentsOf(element.children[1]).trailing).toEqual([' note ']);
+		expect(commentsOf(element.children[1])).toEqual({});
+		expect(emptyContainerComments(element.children[2])).toEqual([' note ']);
 	});
 
-	// Inside a `{…}` container, the parser records a comment in an element's
-	// body as before its first child until a child is finished, which a `{…}`
+	// Inside a `{…}` container, the parser recorded a comment in an element's
+	// body as before its first child until a child was finished, which a `{…}`
 	// child isn't until the token after its `}` is read. The comment went to the
-	// element's body, which the formatter prints before the closing tag (#637).
-	it('gives a comment in the body of an element in a container to the child after it', () => {
+	// element's body, which the formatter printed before the closing tag (#637).
+	// Now it is in its own `{}` where it is written.
+	it('gives a comment in the body of an element in a container its own `{}`', () => {
 		for (const source of [
 			'export function App() @{\n  <main>{x && <div>{" "}\n/* c */ <i /></div>}</main>\n}',
 			'export function App() @{\n  <main a={<div>{" "}\n/* c */ <i /></div>} />\n}',
@@ -6788,15 +6871,21 @@ describe('comments in element bodies and closing tags', () => {
 			'export function App() @{\n  <main>{x && <p>{y && <div>{z}\n/* c */\n<i /></div>}</p>}</main>\n}',
 		]) {
 			const div = findElement(source, 'div');
-			const comment_end = source.indexOf('/* c */') + '/* c */'.length;
-			const child = div.children.find((node) => (node.start ?? -1) >= comment_end);
-			expect(commentsOf(child).leading, source).toEqual([' c ']);
+			const comment_start = source.indexOf('/* c */');
+			const container = div.children.find((node) => node.start === comment_start);
+			expect(container?.end, source).toBe(comment_start + '/* c */'.length);
+			expect(emptyContainerComments(container), source).toEqual([' c ']);
+			for (const node of div.children) {
+				if (node !== container) expect(commentsOf(node), source).toEqual({});
+			}
 			expect(div.metadata.elementLeadingComments, source).toBeUndefined();
 		}
 
-		// After the last child, the comment leads the closing tag
-		const div = findElement('export function App() @{\n  {x && <div>{y}\n// c\n</div>}\n}', 'div');
-		expect(commentsOf(div.closingElement).leading).toEqual([' c']);
+		// After the last child, too, not on the closing tag
+		const source = 'export function App() @{\n  {x && <div>{y}\n// c\n</div>}\n}';
+		const div = findElement(source, 'div');
+		expect(commentsOf(div.closingElement)).toEqual({});
+		expect(emptyContainerComments(div.children[2])).toEqual([' c']);
 	});
 
 	it("keeps a comment between a closing fragment's `</` and `>` on it, as Prettier does", () => {
@@ -8613,7 +8702,7 @@ describe('function types in JSX attribute values', () => {
 		expect(as_type(arrow.params[0], 'Identifier').name).toBe('reset');
 		// The element's own children still parse — the stale context used to
 		// swallow the opening tag's `>` and everything after it.
-		expect(as_type(element.children[0], 'JSXElement')).toBeTruthy();
+		expect(contentChild(element, 0, 'JSXElement')).toBeTruthy();
 	});
 
 	it('parses the no-argument function type in every spelling that leaked a context', () => {
@@ -8649,7 +8738,7 @@ describe('function types in JSX attribute values', () => {
 		const [, id] = element.openingElement.attributes;
 		expect(as_type(as_type(id, 'JSXAttribute').name, 'JSXIdentifier').name).toBe('id');
 		expect(
-			as_type(as_type(element.children[0], 'JSXElement').openingElement.name, 'JSXIdentifier').name,
+			as_type(contentChild(element, 0, 'JSXElement').openingElement.name, 'JSXIdentifier').name,
 		).toBe('Sibling');
 	});
 });
@@ -11026,44 +11115,44 @@ describe('JSX whitespace in template text', () => {
 		[
 			'a space after a closing tag whose body ends in a line break',
 			'export function App() @{\n\t<div>\n\t\t<span>\n\t\t\t<b>1</b>\n\t\t</span> 2\n\t</div>\n}',
-			['<span>', ' 2\n\t'],
+			['\n\t\t', '<span>', ' 2\n\t'],
 		],
 		[
 			'the same in a fragment',
 			'export function App() @{\n\t<>\n\t\t<span>\n\t\t\t<b>1</b>\n\t\t</span> 2\n\t</>\n}',
-			['<span>', ' 2\n\t'],
+			['\n\t\t', '<span>', ' 2\n\t'],
 		],
 		// As after a self-closing tag, the text keeps the line break that JSX
 		// trims as layout
 		[
 			'text on the line after a closing tag',
 			'<div>\n\t<b>1</b>\n\ttwo\n</div>;',
-			['<b>', '\n\ttwo\n'],
+			['\n\t', '<b>', '\n\ttwo\n'],
 		],
 		[
 			'text on the line after a self-closing tag',
 			'<div>\n\t<b />\n\ttwo\n</div>;',
-			['<b>', '\n\ttwo\n'],
+			['\n\t', '<b>', '\n\ttwo\n'],
 		],
-		// A comment renders like `{/* c */}` in TSX: the text on each side of it
-		// follows JSX's whitespace rules on its own, so a space on the comment's
-		// line renders, and the line break on its other side doesn't
+		// A comment is an empty `{}` of its own, as `{/* c */}` is in TSX: the
+		// text on each side of it follows JSX's whitespace rules on its own, so a
+		// space on the comment's line renders, and the line break on its other
+		// side is layout
 		[
 			'a block comment on the line after a closing tag',
 			'<div>\n\t<b>t</b>\n\t/* c */ <i />\n</div>;',
-			['<b>', ' ', '<i>'],
+			['\n\t', '<b>', '\n\t', '{}', ' ', '<i>', '\n'],
 		],
 		[
 			'a block comment on the line after a self-closing tag',
 			'<div>\n\t<b />\n\t/* c */ <i />\n</div>;',
-			['<b>', ' ', '<i>'],
+			['\n\t', '<b>', '\n\t', '{}', ' ', '<i>', '\n'],
 		],
 		[
 			'a line comment after a closing tag',
 			'<div>\n\t<b>t</b> // c\n\t<i />\n</div>;',
-			['<b>', ' ', '<i>'],
+			['\n\t', '<b>', ' ', '{}', '\n\t', '<i>', '\n'],
 		],
-		// Between two pieces that render, an empty `{}` keeps them apart
 		[
 			'a block comment between children on one line',
 			'<div><b>t</b> /* c */ <i /></div>;',
@@ -11073,19 +11162,19 @@ describe('JSX whitespace in template text', () => {
 		[
 			'a non-breaking space at the start of a line',
 			'<div>\n\t\u00a0<b>x</b>\n</div>;',
-			['\n\t\u00a0', '<b>'],
+			['\n\t\u00a0', '<b>', '\n'],
 		],
 		[
 			'a non-breaking space on its own line',
 			'<div>\n\t<b>x</b>\n\t\u00a0\n</div>;',
-			['<b>', '\n\t\u00a0\n'],
+			['\n\t', '<b>', '\n\t\u00a0\n'],
 		],
 		[
 			'a non-breaking space between children',
 			'<div><b>x</b>\u00a0<i /></div>;',
 			['<b>', '\u00a0', '<i>'],
 		],
-		['a tab on its own line', '<div>\n\t<b>x</b>\n\t\t\n</div>;', ['<b>']],
+		['a tab on its own line', '<div>\n\t<b>x</b>\n\t\t\n</div>;', ['\n\t', '<b>', '\n\t\t\n']],
 		// An element in a `{…}` container reads its text as anywhere else (#612)
 		[
 			'a space after a closing tag in an element in a child container',
@@ -11141,7 +11230,7 @@ describe('JSX whitespace in template text', () => {
 		[
 			'a non-breaking space after a nested closing tag in an @switch case',
 			'export function App() @{\n\t@switch (x) {\n\t\t@case 1: {\n\t\t\t<div>\n\t\t\t\t<span>\n\t\t\t\t\t<b>1</b>\n\t\t\t\t</span> 2\n\t\t\t</div>\n\t\t}\n\t}\n}',
-			['<span>', ' 2\n\t\t\t'],
+			['\n\t\t\t\t', '<span>', ' 2\n\t\t\t'],
 		],
 		[
 			'text before a tag in an @switch case',
@@ -11385,8 +11474,8 @@ function comments_in(node) {
 }
 
 /**
- * Whether a child is an empty `{}`, such as the one the parser puts where
- * comments are between two pieces of text.
+ * Whether a child is an empty `{}`, such as the one the parser gives each
+ * comment between children.
  * @param {AST.Node} child
  */
 function is_empty_container(child) {
@@ -11440,42 +11529,52 @@ describe('an element as an attribute value without braces (#654)', () => {
 	// a child. Its text was read as a template's, which ends at a comment, so
 	// the parser read the same empty text there until memory ran out. The
 	// element is template markup now, as in a braced value (#656), so a comment
-	// is a comment.
+	// is a comment, in an empty `{}` of its own.
 	/** @type {Array<[string, string, unknown[], string[]]>} */
 	const cases = [
-		['a block comment', 'const el = <div attr=<b>/* c */</b> />;', [], [' c ']],
+		['a block comment', 'const el = <div attr=<b>/* c */</b> />;', ['{}'], [' c ']],
 		[
 			'a block comment after text',
 			'const el = <div attr=<b>a /* c */ b</b> />;',
 			['a ', '{}', ' b'],
 			[' c '],
 		],
-		['a line comment', 'const el = <div attr=<b>// c\n</b> />;', [], [' c']],
-		['a line comment after a space', 'const el = <div attr=<b> // c\n</b> />;', [' '], [' c']],
-		['a line comment on its own line', 'const el = <div attr=<b>\n// c\n</b> />;', [], [' c']],
-		['a comment in a fragment', 'const el = <div attr=<>/* c */</> />;', [], [' c ']],
+		['a line comment', 'const el = <div attr=<b>// c\n</b> />;', ['{}', '\n'], [' c']],
+		[
+			'a line comment after a space',
+			'const el = <div attr=<b> // c\n</b> />;',
+			[' ', '{}', '\n'],
+			[' c'],
+		],
+		[
+			'a line comment on its own line',
+			'const el = <div attr=<b>\n// c\n</b> />;',
+			['\n', '{}', '\n'],
+			[' c'],
+		],
+		['a comment in a fragment', 'const el = <div attr=<>/* c */</> />;', ['{}'], [' c ']],
 		[
 			'a comment in a nested element',
 			'const el = <div attr=<b>a<i>/* c */</i></b> />;',
-			['a', { i: [] }],
+			['a', { i: ['{}'] }],
 			[' c '],
 		],
 		[
 			'a comment in an element in a template',
 			'export function App() @{\n\t<main>\n\t\t<div attr=<b>/* c */</b> />\n\t</main>\n}',
-			[],
+			['{}'],
 			[' c '],
 		],
 		[
 			'a comment in an element in a setup statement',
 			'export function App() @{\n\tconst el = <div attr=<b>/* c */</b> />;\n\t<main>{el}</main>\n}',
-			[],
+			['{}'],
 			[' c '],
 		],
 		[
 			'a comment in an element in a function',
 			'function App() {\n\treturn <div attr=<b>// c\n</b> />;\n}',
-			[],
+			['{}', '\n'],
 			[' c'],
 		],
 		['an @if', 'const el = <div attr=<b>@if (x) { <i /> }</b> />;', ['JSXIfExpression'], []],
@@ -11600,7 +11699,7 @@ describe("an element in a spread attribute's argument (#656)", () => {
 		[
 			'a line comment in a function',
 			'function App() {\n\treturn <div {...{ k: <i><b />\n\t\t// c\n\t\ttwo</i> }} />;\n}',
-			[{ b: [] }, '\n\t\ttwo'],
+			[{ b: [] }, '\n\t\t', '{}', '\n\t\ttwo'],
 			[' c'],
 		],
 		[
@@ -12116,8 +12215,8 @@ describe('the text of an element in a template', () => {
 	);
 
 	// A comment between children is a comment, not text as in TSX, so it is in
-	// neither form of the text, and doesn't print as text. It renders like
-	// `{/* c */}`, so it splits the text, with an empty `{}` between two pieces
+	// neither form of the text, and doesn't print as text. It is an empty `{}`
+	// of its own, as `{/* c */}` is in TSX, so it splits the text
 	/** @type {Array<[string, string, string[]]>} */
 	const comments = [
 		['a block comment', component('<b>a /* c */ b</b>'), ['a ', '{}', ' b']],
@@ -12133,6 +12232,8 @@ describe('the text of an element in a template', () => {
 		a
 	</b>`),
 			[
+				'\n\t\t',
+				'{}',
 				`
 		a
 	`,
@@ -12253,9 +12354,9 @@ describe('`const` type parameters on an object method (#631)', () => {
 
 // A comment between children renders like `{/* … */}` in TSX, so the parser
 // gives text with comments the children TSX has for it: the text between the
-// comments, each piece exactly as written, and an empty `{}` between two
-// pieces, where the comments are. A piece that is whitespace with a line break
-// renders nothing and is left out, as the parser leaves out such text anywhere.
+// comments, each piece exactly as written, and an empty `{}` for each comment,
+// spanning it. A piece that is whitespace with a line break renders nothing,
+// but is kept as text, as TSX parsers keep such text anywhere.
 describe('comments between template children', () => {
 	/** @type {Array<ParseOptions | undefined>} */
 	const modes = [undefined, { collect: true, errors: [], comments: [] }, { loose: true }];
@@ -12312,17 +12413,37 @@ describe('comments between template children', () => {
 		[
 			'comments with only line breaks between them',
 			'<p>a /* c */\n\t// d\n\t/* e */ b</p>;',
-			['a ', '{}', ' b'],
+			['a ', '{}', '\n\t', '{}', '\n\t', '{}', ' b'],
 		],
-		['a comment before the first text', '<p>/* c */ a</p>;', [' a']],
-		['a line comment after the last text', '<p>a // c\n</p>;', ['a ']],
+		['a comment before the first text', '<p>/* c */ a</p>;', ['{}', ' a']],
+		['a line comment after the last text', '<p>a // c\n</p>;', ['a ', '{}', '\n']],
 		[
 			'a comment on its own line between elements',
 			'<p>\n\t<b />\n\t// c\n\t<i />\n</p>;',
-			['<b>', '<i>'],
+			['\n\t', '<b>', '\n\t', '{}', '\n\t', '<i>', '\n'],
 		],
-		['only a comment', '<p>\n\t// c\n</p>;', []],
+		['only a comment', '<p>\n\t// c\n</p>;', ['\n\t', '{}', '\n']],
 		['a `//` that touches text', '<p>a//b https://x.dev</p>;', ['a//b https://x.dev']],
+		[
+			'comments touching tags',
+			'<p><b />/* c */text<i />/* d */<u /></p>;',
+			['<b>', '{}', 'text', '<i>', '{}', '<u>'],
+		],
+		[
+			'the whitespace and comments after a directive block',
+			'function App() @{\n\t<p>\n\t\t@if (a) {\n\t\t\t<b />\n\t\t} // c\n\t\t// d\n\t\t<i />\n\t</p>\n}',
+			['\n\t\t', 'JSXIfExpression', ' ', '{}', '\n\t\t', '{}', '\n\t\t', '<i>', '\n\t'],
+		],
+		[
+			'text after a directive block, from the block on',
+			'function App() @{\n\t<p>\n\t\t@if (a) {\n\t\t\t<b />\n\t\t} /* c */ else\n\t</p>\n}',
+			['\n\t\t', 'JSXIfExpression', ' ', '{}', ' else\n\t'],
+		],
+		[
+			'layout whitespace between elements',
+			'<p>\n\t<b />\n\n\t<i />\n</p>;',
+			['\n\t', '<b>', '\n\n\t', '<i>', '\n'],
+		],
 		[
 			'a comment in a template body',
 			'function App() @{\n\t<p>a /* c */ {b}</p>\n}',
@@ -12373,22 +12494,28 @@ describe('comments between template children', () => {
 		});
 	});
 
-	it('spans every comment between two pieces with one `{}`', () => {
+	it('gives each of several comments between two pieces its own `{}`', () => {
 		const source = '<p>a /* c */\n\t// d\n\t/* e */ b</p>;';
-		const container = /** @type {any} */ (paragraph(source).children[1]);
+		const children = /** @type {any[]} */ (paragraph(source).children);
 
-		expect(container.start).toBe(source.indexOf('/* c */'));
-		expect(container.end).toBe(source.indexOf('/* e */') + '/* e */'.length);
-		expect(container.expression.innerComments.map((/** @type {any} */ c) => c.value)).toEqual([
-			' c ',
-			' d',
-			' e ',
-		]);
+		for (const [index, comment, value] of /** @type {const} */ ([
+			[1, '/* c */', ' c '],
+			[3, '// d', ' d'],
+			[5, '/* e */', ' e '],
+		])) {
+			const container = children[index];
+			expect(container.start, comment).toBe(source.indexOf(comment));
+			expect(container.end, comment).toBe(source.indexOf(comment) + comment.length);
+			expect(
+				container.expression.innerComments.map((/** @type {any} */ c) => c.value),
+				comment,
+			).toEqual([value]);
+		}
 	});
 
-	// A tooling comment gets a `{}` of its own, which holds it for the editor's
-	// TypeScript, and the text around it keeps its line breaks, so that the
-	// comment stays on the line before the child it's about
+	// A tooling comment, like every comment, gets a `{}` of its own, which holds
+	// it for the editor's TypeScript, and the text around it keeps its line
+	// breaks, so that the comment stays on the line before the child it's about
 	it.each([
 		['// @ts-expect-error', ' @ts-expect-error'],
 		['/* @ts-ignore */', ' @ts-ignore '],
@@ -12398,7 +12525,7 @@ describe('comments between template children', () => {
 		const source = `<p>\n\t${comment}\n\t<b x />\n</p>;`;
 		for (const options of modes) {
 			const element = paragraph(source, options);
-			expect(read(element), JSON.stringify(options)).toEqual(['\n\t', '{}', '\n\t', '<b>']);
+			expect(read(element), JSON.stringify(options)).toEqual(['\n\t', '{}', '\n\t', '<b>', '\n']);
 			const start = source.indexOf(comment);
 			expect(element.children[1], JSON.stringify(options)).toMatchObject({
 				start,
@@ -12413,8 +12540,14 @@ describe('comments between template children', () => {
 		}
 	});
 
-	it('gives a plain comment no `{}` of its own where nothing renders around it', () => {
-		expect(read(paragraph('<p>\n\t// c\n\t<b x />\n</p>;'))).toEqual(['<b>']);
+	it('gives a plain comment its own `{}` too, where nothing renders around it', () => {
+		const element = paragraph('<p>\n\t// c\n\t<b x />\n</p>;');
+		expect(read(element)).toEqual(['\n\t', '{}', '\n\t', '<b>', '\n']);
+		expect(
+			/** @type {any} */ (element.children[1]).expression.innerComments?.map(
+				(/** @type {AST.Comment} */ c) => c.value,
+			),
+		).toEqual([' c']);
 	});
 
 	it('leaves the children to the analyzer as the parser gives them', () => {
@@ -12426,6 +12559,26 @@ describe('comments between template children', () => {
 		const children = [...element.children];
 		analyzeTsrx(ast, 'App.tsrx');
 		expect(element.children).toEqual(children);
-		expect(read(element)).toEqual(['a ', '{}', ' b ']);
+		expect(read(element)).toEqual(['a ', '{}', ' b ', '{}', '\n\t']);
+	});
+});
+
+describe('isLayoutWhitespace', () => {
+	/** @type {Array<[string, unknown, boolean]>} */
+	const cases = [
+		['empty text', { type: 'JSXText', value: '' }, true],
+		['a line break with indentation', { type: 'JSXText', value: '\n\t\t' }, true],
+		['a blank line', { type: 'JSXText', value: '\n\n  ' }, true],
+		['a carriage return', { type: 'JSXText', value: '\r\n' }, true],
+		['a space between children', { type: 'JSXText', value: ' ' }, false],
+		['a tab between children', { type: 'JSXText', value: '\t' }, false],
+		['a non-breaking space on its own line', { type: 'JSXText', value: '\n\u00a0\n' }, false],
+		['text with words', { type: 'JSXText', value: '\n  a\n' }, false],
+		['a node that is not text', { type: 'JSXElement', value: '\n' }, false],
+		['nothing', undefined, false],
+	];
+
+	it.each(cases)('reads %s', (_label, node, expected) => {
+		expect(isLayoutWhitespace(node)).toBe(expected);
 	});
 });

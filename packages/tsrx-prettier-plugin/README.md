@@ -23,12 +23,12 @@ props, `<style>`/`<script>` bodies, and comments between JSX children.
   - the parts of Prettier's parser postprocess that its printer relies on:
     `__contentEnd`, `locEnd` for statements, rebalanced logical expressions,
     merged touching JSDoc comments, dropped single-type unions;
-  - JSX text children are rebuilt from the source, since the parser leaves out the
-    whitespace between children and Prettier reads it;
-  - a comment between JSX children, which renders like `{/* … */}` in TSX, becomes
-    the `{…}` child that `{/* … */}` is (a `JSXExpressionContainer` with a
-    `JSXEmptyExpression`), so Prettier lays it out; a `prettier-ignore` one keeps
-    the next child as written;
+  - a comment between JSX children, which renders like `{/* … */}` in TSX, is the
+    `{…}` child that `{/* … */}` is in the parser's tree (a
+    `JSXExpressionContainer` with a `JSXEmptyExpression`, and no braces in the
+    source), so Prettier lays it out; it becomes the plugin's comment child, which
+    prints without the braces, and a `prettier-ignore` one keeps the next child as
+    written;
   - comments go to Prettier as a flat list with their source text, and Prettier
     attaches them itself.
 - **Printer** (`src/printer.js`) is Prettier's `estree` printer from

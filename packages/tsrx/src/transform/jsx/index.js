@@ -65,6 +65,7 @@ import {
 	is_function_or_class_node as is_function_or_class_boundary,
 	is_template_directive as is_jsx_control_flow_expression,
 	node_children,
+	render_children,
 } from '../../utils/ast.js';
 
 const TEMPLATE_FRAGMENT_ERROR =
@@ -679,10 +680,7 @@ export function createJsxTransform(platform) {
 				const is_empty_container_child =
 					immediate_parent?.type === 'JSXExpressionContainer' &&
 					in_jsx_child_context(path.slice(0, -1)) &&
-					!node_children(target).some(
-						(child) =>
-							child.type !== 'EmptyStatement' && (child.type !== 'JSXText' || child.value !== ''),
-					);
+					!render_children(target).some((child) => child.type !== 'EmptyStatement');
 				const in_jsx_child = in_jsx_child_context(path) || is_empty_container_child;
 				let expression = tsrx_node_to_jsx_expression(target, state, in_jsx_child);
 				// Keep a fragment's `<> … </>` identity in expression position when it is
@@ -728,7 +726,7 @@ export function createJsxTransform(platform) {
 
 				// Capture raw children BEFORE the walker transforms them so platform
 				// hooks can inspect the original JSX child shape.
-				const raw_children = node_children(node).map((child) => ({ ...child }));
+				const raw_children = render_children(node).map((child) => ({ ...child }));
 				const inner = /** @type {AST.TSRXJSXElement} */ (next() ?? node);
 				const in_jsx_child = in_jsx_child_context(path);
 				const hook = platform.hooks?.transformElement;
@@ -2542,9 +2540,7 @@ function mark_native_pretransformed_jsx(node, seen = new Set()) {
  * @returns {AST.Node[]}
  */
 function get_tsrx_render_children(node) {
-	return node_children(node).filter(
-		(child) => child.type !== 'EmptyStatement' && (child.type !== 'JSXText' || child.value !== ''),
-	);
+	return render_children(node).filter((child) => child.type !== 'EmptyStatement');
 }
 
 /**
@@ -3845,7 +3841,7 @@ export function create_script_body(node, form = 'children') {
 function to_jsx_element(
 	node,
 	transform_context,
-	raw_children = node_children(node),
+	raw_children = render_children(node),
 	in_jsx_child = false,
 ) {
 	if (node.type === 'JSXElement' && !node.metadata?.native_tsrx) {
@@ -3865,7 +3861,7 @@ function to_jsx_element(
 		transform_context,
 		/** @type {AST.TSRXJSXElement} */ (node),
 	);
-	const walked_children = node_children(node);
+	const walked_children = render_children(node);
 	let selfClosing = !!source_opening.selfClosing;
 	let children;
 	// A raw-text `<script>` body is `node.content`, printed in the form the
@@ -4722,10 +4718,7 @@ function to_jsx_child(node, transform_context) {
  * @returns {AST.Expression | ESTreeJSX.JSXExpressionContainer}
  */
 function tsrx_node_to_jsx_expression(node, transform_context, in_jsx_child = false) {
-	const children = (node.children || []).filter(
-		(child) =>
-			child && child.type !== 'EmptyStatement' && (child.type !== 'JSXText' || child.value !== ''),
-	);
+	const children = render_children(node).filter((child) => child.type !== 'EmptyStatement');
 
 	/** @type {AST.Expression | null} */
 	let expression = null;

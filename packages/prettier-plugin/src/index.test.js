@@ -4,7 +4,20 @@ import standalonePrettier from 'prettier/standalone';
 import estreePlugin from 'prettier/plugins/estree';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { isLayoutWhitespace } from '@tsrx/core';
 import { languages, parsers, printers } from './index.js';
+
+/**
+ * For a syntax tree compared before and after a format: an element's children
+ * without the layout whitespace that formatting changes, which renders
+ * nothing, as Prettier's own check of the tree leaves it out.
+ * @param {string} key
+ * @param {unknown} value
+ */
+const withoutLayoutWhitespace = (key, value) =>
+	key === 'children' && Array.isArray(value)
+		? value.filter((child) => !isLayoutWhitespace(child))
+		: value;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -10163,7 +10176,7 @@ items.map((i) => (
 					['start', 'end', 'loc', 'range', 'metadata', 'raw'].includes(key) ||
 					key.endsWith('Comments')
 						? undefined
-						: value,
+						: withoutLayoutWhitespace(key, value),
 				);
 			/** @param {string} text */
 			const parse = (text) => /** @type {any} */ (parsers)?.tsrx.parse(text, {}).body;
@@ -10203,7 +10216,9 @@ function k() {
 			/** @param {string} text */
 			const parse = (text) =>
 				JSON.stringify(/** @type {any} */ (parsers)?.tsrx.parse(text, {}).body, (key, value) =>
-					['start', 'end', 'loc', 'range', 'metadata', 'raw'].includes(key) ? undefined : value,
+					['start', 'end', 'loc', 'range', 'metadata', 'raw'].includes(key)
+						? undefined
+						: withoutLayoutWhitespace(key, value),
 				);
 			expect(parse(result)).toBe(parse(input));
 		});
@@ -14560,7 +14575,7 @@ export interface SectionProps<T>
 					['start', 'end', 'loc', 'range', 'metadata', 'raw'].includes(key) ||
 					key.endsWith('Comments')
 						? undefined
-						: value,
+						: withoutLayoutWhitespace(key, value),
 			);
 		it.each([
 			['(<div />);', '(<div />);'],
@@ -19503,7 +19518,7 @@ for (
 		 */
 		const parseShape = (code) =>
 			JSON.stringify(parsers?.tsrx.parse(code, /** @type {any} */ ({})), (key, value) =>
-				positionKeys.has(key) ? undefined : value,
+				positionKeys.has(key) ? undefined : withoutLayoutWhitespace(key, value),
 			);
 
 		/**
@@ -19631,7 +19646,7 @@ for (
 		 */
 		const parseShape = (code) =>
 			JSON.stringify(parsers?.tsrx.parse(code, /** @type {any} */ ({})), (key, value) =>
-				positionKeys.has(key) ? undefined : value,
+				positionKeys.has(key) ? undefined : withoutLayoutWhitespace(key, value),
 			);
 
 		/**

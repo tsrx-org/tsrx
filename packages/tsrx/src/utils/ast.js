@@ -1,6 +1,7 @@
 /** @import * as AST from 'estree' */
 
 import * as b from './builders.js';
+import { is_jsx_child_tooling_comment } from '../comment-utils.js';
 
 /**
  * @param {unknown} value
@@ -50,6 +51,78 @@ export function child_nodes(node, skip_key) {
 export function node_children(node) {
 	const children = /** @type {AST.TraversableAstNode} */ (node).children;
 	return Array.isArray(children) ? children.filter(is_ast_node) : [];
+}
+
+/**
+ * Whether a node is JSX text that renders nothing under JSX's whitespace rule
+ * (Babel's `cleanJSXElementLiteralChild`): empty, or only spaces, tabs and line
+ * breaks with a line break among them, which is layout indentation. A space or
+ * tab without a line break renders, and a non-breaking space is text. The
+ * parser keeps such text, as every JSX parser does; compilers leave it out.
+ * @param {unknown} node
+ * @returns {boolean}
+ */
+export function is_layout_whitespace(node) {
+	const text = /** @type {{ type?: unknown, value?: unknown } | null | undefined} */ (node);
+	return (
+		text?.type === 'JSXText' &&
+		typeof text.value === 'string' &&
+		/^[ \t\r\n]*$/.test(text.value) &&
+		(text.value === '' || /[\r\n]/.test(text.value))
+	);
+}
+
+/**
+ * Whether a child is an empty `{}` holding a tooling comment
+ * (`// @ts-expect-error`, see `is_jsx_child_tooling_comment`), which the
+ * editor's TypeScript reads as `{/* @ts-expect-error *\/}`.
+ * @param {AST.Node | undefined} node
+ * @returns {boolean}
+ */
+function is_tooling_comment_container(node) {
+	const expression = /** @type {any} */ (node)?.expression;
+	return (
+		node?.type === 'JSXExpressionContainer' &&
+		expression?.type === 'JSXEmptyExpression' &&
+		(expression.innerComments ?? []).some(is_jsx_child_tooling_comment)
+	);
+}
+
+/**
+ * The children of a template node that a compiler renders: its children
+ * without the text that renders nothing (see `is_layout_whitespace`), and
+ * without an empty `{}` that separates nothing. An empty `{}` between two texts
+ * stays, since it keeps them apart as in TSX (a comment between children), and
+ * so does one holding a tooling comment, with the line breaks around it, which
+ * keep the comment on the line before the child it's about.
+ * @param {AST.Node} node
+ * @returns {AST.Node[]}
+ */
+export function render_children(node) {
+	const children = node_children(node);
+	const kept = children.filter(
+		(child, index) =>
+			!is_layout_whitespace(child) ||
+			is_tooling_comment_container(children[index - 1]) ||
+			is_tooling_comment_container(children[index + 1]),
+	);
+	/** @param {AST.Node | undefined} child */
+	const is_plain_empty_container = (child) =>
+		child?.type === 'JSXExpressionContainer' &&
+		/** @type {any} */ (child).expression.type === 'JSXEmptyExpression' &&
+		!is_tooling_comment_container(child);
+	/** @type {AST.Node[]} */
+	const result = [];
+	for (const [index, child] of kept.entries()) {
+		if (!is_plain_empty_container(child)) {
+			result.push(child);
+			continue;
+		}
+		// One `{}` for a run of them between two texts
+		const next = kept.slice(index + 1).find((sibling) => !is_plain_empty_container(sibling));
+		if (result.at(-1)?.type === 'JSXText' && next?.type === 'JSXText') result.push(child);
+	}
+	return result;
 }
 
 /**

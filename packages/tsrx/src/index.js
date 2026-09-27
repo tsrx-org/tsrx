@@ -95,6 +95,7 @@ export {
 	is_code_block_function_body as isCodeBlockFunctionBody,
 	is_statement_list_item as isStatementListItem,
 	is_statement_position as isStatementPosition,
+	is_layout_whitespace as isLayoutWhitespace,
 } from './utils/ast.js';
 
 // Shared TSRX semantic analysis
