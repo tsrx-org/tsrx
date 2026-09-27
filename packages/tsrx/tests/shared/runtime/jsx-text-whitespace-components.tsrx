@@ -142,6 +142,17 @@ export function JsxTextWhitespaceApp() @{
 		</div>
 		// prettier-ignore
 		<div class="ws-inline-comment-between-children"><b>t</b> /* c */<i /></div>
+		// A tooling comment keeps the text's line breaks around it, which still
+		// render nothing
+		// prettier-ignore
+		<div class="ws-tooling-comment-between-children">
+			<b>t</b>
+			// @see the next line
+			<i />
+			two
+		</div>
+		// prettier-ignore
+		<div class="ws-inline-tooling-comment"><b>t</b> /** @see */ <i /></div>
 		// The text before `<b>x</b>` here, and the line after it in the next
 		// case, is a non-breaking space (U+00A0)
 		// prettier-ignore
@@ -221,6 +232,16 @@ export const jsx_text_whitespace_cases = [
 		'a block comment between children on one line',
 		'.ws-inline-comment-between-children',
 		'<b>t</b> <i></i>',
+	],
+	[
+		'a tooling comment on its own line between children',
+		'.ws-tooling-comment-between-children',
+		'<b>t</b><i></i>two',
+	],
+	[
+		'a tooling comment between children on one line',
+		'.ws-inline-tooling-comment',
+		'<b>t</b>  <i></i>',
 	],
 	[
 		'a space after a closing tag in an element in a container',

@@ -233,31 +233,23 @@ export function tsx_with_ts_locations(
 			context.visit(value.body);
 		},
 
-		// A comment between children is an empty `{}` (see `split_text_pieces` in
-		// `analyze/index.js`). In the editor's TypeScript, a tooling comment there
+		// A comment between children is in an empty `{}` (see `#addTemplateText`
+		// in `plugin.js`). In the editor's TypeScript, a tooling comment there
 		// prints inside it in block form, `{/* @ts-expect-error */}`, which
 		// TypeScript applies to the next line, as in TSX.
 		JSXEmptyExpression: (node, context) => {
-			const comment = /** @type {AST.CommentWithLocation | undefined} */ (
-				node.metadata?.tooling_comment
-			);
-			if (
-				!comment ||
-				!emitted_comments ||
-				!preserve_owner_comments ||
-				!is_jsx_child_tooling_comment(comment) ||
-				comment.value.includes('*/')
-			) {
-				return;
+			if (!emitted_comments || !preserve_owner_comments) return;
+			for (const comment of /** @type {AST.CommentWithLocation[]} */ (node.innerComments ?? [])) {
+				if (!is_jsx_child_tooling_comment(comment) || comment.value.includes('*/')) continue;
+				const key = `${comment.start}:${comment.end}:${comment.type}:${comment.value}`;
+				if (emitted_comments.has(key)) continue;
+				emitted_comments.add(key);
+				if (comment.loc) context.location(comment.loc.start.line, comment.loc.start.column);
+				context.write(
+					comment.type === 'Line' ? `/* ${comment.value.trim()} */` : `/*${comment.value}*/`,
+				);
+				if (comment.loc) context.location(comment.loc.end.line, comment.loc.end.column);
 			}
-			const key = `${comment.start}:${comment.end}:${comment.type}:${comment.value}`;
-			if (emitted_comments.has(key)) return;
-			emitted_comments.add(key);
-			if (comment.loc) context.location(comment.loc.start.line, comment.loc.start.column);
-			context.write(
-				comment.type === 'Line' ? `/* ${comment.value.trim()} */` : `/*${comment.value}*/`,
-			);
-			if (comment.loc) context.location(comment.loc.end.line, comment.loc.end.column);
 		},
 
 		// Text prints from `raw`, as JSX printers do: `value` has its character

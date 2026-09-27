@@ -106,7 +106,7 @@ export function should_preserve_jsx_tooling_comment(comment) {
 
 /**
  * A comment between JSX children that the editor's TypeScript keeps, in its
- * `{}` (see `split_text_pieces` in `analyze/index.js`): a tooling comment, or a
+ * `{}` (see `#addTemplateText` in `plugin.js`): a tooling comment, or a
  * `@ts-expect-error` or `@ts-ignore` block comment, JSDoc-style too, which
  * TypeScript also reads there, as in TSX's `{/* @ts-expect-error *\/}`.
  * @param {AST.CommentWithLocation} comment

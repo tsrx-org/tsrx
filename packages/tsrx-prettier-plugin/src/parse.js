@@ -257,8 +257,8 @@ class Adapter {
 	/**
 	 * Rebuild a JSX element's text children from the source, each exactly the
 	 * source it covers. The parser leaves the whitespace between children out of
-	 * its text nodes and cuts comments out of them, and Prettier reads the text
-	 * to keep blank lines and to choose line breaks.
+	 * its text nodes and splits them at comments, and Prettier reads the text to
+	 * keep blank lines and to choose line breaks.
 	 *
 	 * A TSRX comment between children (`// …` or `/* … *\/`, which TSX would
 	 * read as text) renders like `{/* … *\/}` in TSX, so it becomes the `{…}`
@@ -292,7 +292,9 @@ class Adapter {
 			position = end;
 		};
 		for (const child of node.children) {
-			if (child.type === 'JSXText') continue;
+			// The parser's own `{}` where comments split the text has no braces in
+			// the source; the text and comments are read from the source instead.
+			if (child.type === 'JSXText' || this.isCommentContainer(child)) continue;
 			addSource(child.start);
 			children.push(child);
 			position = child.end;
@@ -301,6 +303,19 @@ class Adapter {
 		node.children = children;
 		// `jsx.js` prints a line comment where it stays a comment.
 		if (children.some((child) => child.tsrxComment)) node.tsrxPrintsChildren = true;
+	}
+
+	/**
+	 * Whether a child is the empty `{}` the parser puts where comments split
+	 * text, which has no braces in the source.
+	 * @param {Node} child
+	 */
+	isCommentContainer(child) {
+		return (
+			child.type === 'JSXExpressionContainer' &&
+			child.expression.type === 'JSXEmptyExpression' &&
+			this.text[child.start] !== '{'
+		);
 	}
 
 	/**

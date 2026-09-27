@@ -209,7 +209,8 @@ function prepareComments(ast, text) {
 /**
  * A comment between an element's children renders like `{/* … *\/}` in TSX,
  * and prints as a child of its own, so it leaves the node the parser attached
- * it to (a text, a child, or the closing tag) for {@link jsxChildComments}. A
+ * it to (a child, the parser's `{}` between two pieces of text, or the closing
+ * tag) for {@link jsxChildComments}. A
  * `prettier-ignore` comment marks the child after it.
  * @param {AST.Node[]} elements
  * @param {Map<AST.Comment, AST.Comment[][]>} lists - The comment lists that
@@ -232,6 +233,16 @@ function detachJSXChildComments(elements, lists, owners, text) {
 		if (!opening || !closing) {
 			continue;
 		}
+		// The parser's own `{}` where comments split the text has no braces in the
+		// source; the comments in it print from the source like the others.
+		node.children = node.children.filter(
+			(/** @type {AST.Node & AST.NodeWithLocation} */ child) =>
+				!(
+					child.type === 'JSXExpressionContainer' &&
+					child.expression.type === 'JSXEmptyExpression' &&
+					text[child.start] !== '{'
+				),
+		);
 		const children = /** @type {(AST.Node & AST.NodeWithLocation)[]} */ (node.children).filter(
 			(child) => child.type !== 'JSXText',
 		);
