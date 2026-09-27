@@ -13,31 +13,6 @@ import("./foo.json", { assert: { type: "json" } });
 ================================================================================
 `;
 
-exports[`import-phase.js format 1`] = `
-====================================options=====================================
-parsers: ["babel", "flow", "typescript"]
-                                                      printWidth: 80 (default) |
-=====================================input======================================
-import.source(\`data:text/javascript,
-    console.log("RUN");
-\`)
-
-import.source(String.raw\`data:text/javascript,
-    console.log("RUN");
-\`)
-
-=====================================output=====================================
-import.source(\`data:text/javascript,
-    console.log("RUN");
-\`);
-
-import.source(String.raw\`data:text/javascript,
-    console.log("RUN");
-\`);
-
-================================================================================
-`;
-
 exports[`template-literal.js format 1`] = `
 ====================================options=====================================
 parsers: ["babel", "flow", "typescript"]

@@ -1,5 +1,26 @@
 // Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
 
+exports[`import-defer.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import.defer("./a/long/long/long/long/long/long/long/long/long/long/long/long/path/to/module");
+import.defer(
+  // Comment
+  "./a/long/long/long/long/long/long/long/long/long/long/long/long/path/to/module"
+)
+
+=====================================output=====================================
+import.defer("./a/long/long/long/long/long/long/long/long/long/long/long/long/path/to/module");
+import.defer(
+  // Comment
+  "./a/long/long/long/long/long/long/long/long/long/long/long/long/path/to/module"
+);
+
+================================================================================
+`;
+
 exports[`import-expression.js format 1`] = `
 ====================================options=====================================
 parsers: ["babel", "flow", "typescript"]

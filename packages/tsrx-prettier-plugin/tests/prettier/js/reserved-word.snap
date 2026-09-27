@@ -1,14 +1,26 @@
 // Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
 
-exports[`default-binding.js format 1`] = `
+exports[`let.js format 1`] = `
 ====================================options=====================================
-parsers: ["babel"]
+parsers: ["acorn", "espree", "meriyah", "babel"]
                                                       printWidth: 80 (default) |
 =====================================input======================================
-import source from "x";
+foo.let;
+let.foo;
+new let();
+({ let: "foo" });
+(let, "foo");
+void let;
+var let = "foo";
 
 =====================================output=====================================
-import source from "x";
+foo.let;
+let.foo;
+new let();
+({ let: "foo" });
+(let, "foo");
+void let;
+var let = "foo";
 
 ================================================================================
 `;
