@@ -316,7 +316,9 @@ class Adapter {
 
 	/**
 	 * A comment between children, as the `{…}` child that `{/* … *\/}` is in
-	 * TSX. It spans only the comment, which `printer.js` prints.
+	 * TSX. It spans only the comment, which `printer.js` prints. A
+	 * `prettier-ignore` comment keeps the next child as written, as
+	 * `{/* prettier-ignore *\/}` does in Prettier.
 	 * @param {Comment} comment
 	 * @returns {Node}
 	 */
@@ -326,7 +328,12 @@ class Adapter {
 			type: 'JSXExpressionContainer',
 			start,
 			end,
-			expression: { type: 'JSXEmptyExpression', start, end },
+			expression: {
+				type: 'JSXEmptyExpression',
+				start,
+				end,
+				prettierIgnore: comment.value.trim() === 'prettier-ignore',
+			},
 			tsrxComment: { type: comment.type, value: comment.value, start, end },
 		};
 	}

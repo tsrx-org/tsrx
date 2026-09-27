@@ -341,6 +341,28 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		});
 	});
 
+	describe(`[${name}] a TypeScript directive between children`, () => {
+		// A comment between children is an empty `{}` in the output; a directive
+		// goes inside it, on the line before the child, as `{/* @ts-expect-error */}`
+		// works in TSX.
+		it('keeps it on the line before the child for the editor', () => {
+			const source = `export function App() @{
+	<div>
+		// @ts-expect-error
+		<Missing a={1} />
+		text /* @ts-ignore */ <Other />
+		plain /* not a directive */ more
+	</div>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(result.code).toMatch(/\n\s*\{\/\* @ts-expect-error \*\/\}\n\s*<Missing a=\{1\} \/>/);
+			expect(result.code).toContain('text {/* @ts-ignore */} <Other />');
+			expect(result.code).toContain('plain {} more');
+			expect(result.code).not.toContain('not a directive');
+		});
+	});
+
 	describe(`[${name}] whitespace or a comment after an element's \`<\``, () => {
 		it('maps the element from its `<`, not from the gap', () => {
 			const source = [

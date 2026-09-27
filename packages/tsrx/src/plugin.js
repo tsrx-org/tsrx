@@ -1684,6 +1684,10 @@ export function TSRXPlugin(config) {
 				/** @type {Array<[number, number]>} */
 				const pieces = [];
 				let piece_start = start;
+				// A comment that may be a tooling directive (`// @ts-expect-error`),
+				// which the editor's TypeScript keeps even where the text renders
+				// nothing.
+				let has_directive = false;
 				while (index < this.input.length) {
 					if (this.#isTemplateLineCommentStart(index, start)) {
 						const comment_start = index;
@@ -1700,6 +1704,7 @@ export function TSRXPlugin(config) {
 						if (comment_start >= token_end) {
 							this.#emitTemplateLineComment(comment_start, index, null);
 						}
+						if (/^\s*@/.test(this.input.slice(comment_start + 2, index))) has_directive = true;
 						piece_start = index;
 						continue;
 					}
@@ -1722,6 +1727,7 @@ export function TSRXPlugin(config) {
 								null,
 							);
 						}
+						if (/^\s*@/.test(this.input.slice(comment_start + 2, value_end))) has_directive = true;
 						piece_start = index;
 						continue;
 					}
@@ -1749,6 +1755,7 @@ export function TSRXPlugin(config) {
 					pieces.push([piece_start, index]);
 					node.metadata = {
 						...(node.metadata ?? { path: [] }),
+						...(has_directive ? { text_directive: true } : {}),
 						text_pieces: pieces.map(([piece_start, piece_end]) => {
 							const start_loc = get_line_info(this, piece_start);
 							const end_loc = get_line_info(this, piece_end);
@@ -1788,6 +1795,7 @@ export function TSRXPlugin(config) {
 			 * @param {ESTreeJSX.JSXText} node
 			 */
 			#shouldKeepTemplateTextNode(node) {
+				if (node.metadata?.text_directive) return true;
 				const values = node.metadata?.text_pieces?.map((piece) => piece.value) ?? [node.value];
 				// With comments, the text between them renders piece by piece.
 				return values.some(

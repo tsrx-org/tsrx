@@ -718,7 +718,12 @@ export const FeaturesPage = () => @{
 							<p class="section-body">
 								JavaScript line and block comments are valid inside template children. They are
 								comments, not rendered text, so you can annotate element bodies and control-flow
-								branches without wrapping the note in braces.
+								branches without wrapping the note in braces. A comment renders like
+								<code class="inline-code">{'{/* … */}'}</code>
+								in TSX. A<code class="inline-code">{'//'}</code>
+								after a space starts a comment that runs to the end of the line; one that touches
+								text, as in
+								<code class="inline-code">{'https://example.com'}</code>, stays text.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={COMMENTS_HTML} />

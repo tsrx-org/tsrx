@@ -127,6 +127,14 @@ export interface BaseNodeMetaData {
 	 * TSX, so each piece follows JSX's whitespace rules on its own;
 	 * `analyzeTsrx` splits the text into these pieces.
 	 */
+	/** A template `JSXText` with a comment in it that starts with `@`. */
+	text_directive?: boolean;
+	/**
+	 * The empty `JSXEmptyExpression` that `analyzeTsrx` puts where a comment was
+	 * between children: the tooling comment (`// @ts-expect-error`) it holds for
+	 * the editor's TypeScript.
+	 */
+	tooling_comment?: AST.CommentWithLocation;
 	text_pieces?: Array<{
 		start: number;
 		end: number;

@@ -912,6 +912,29 @@ const u = <div>/* c */</div>; /* trail */
 // A `//` is a comment when whitespace comes right before it, it starts a line,
 // or it comes right after a tag, `}`, or a block; it runs to the end of its
 // line. Touching other text or a block comment, it's text (as in `https://…`).
+// As `{/* prettier-ignore */}` keeps the next child as written in Prettier.
+describe('prettier-ignore between children', () => {
+	test('keeps the next child as written', async () => {
+		await expectFormat(
+			`export function A() @{
+  <div>
+    // prettier-ignore
+    <span   a="1"   b="2" />
+    <p   x="1" />
+  </div>
+}`,
+			`export function A() @{
+  <div>
+    // prettier-ignore
+    <span   a="1"   b="2" />
+    <p x="1" />
+  </div>
+}
+`,
+		);
+	});
+});
+
 describe('// in text', () => {
 	test('touching text, it is a word, as in Prettier', async () => {
 		await expectFormat(

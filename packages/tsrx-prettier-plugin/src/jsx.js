@@ -186,6 +186,14 @@ export function printJsxElementInternal(path, options, print) {
 			(children[i] === softline && children[i + 1] === '' && children[i + 2] === hardline) ||
 			(children[i] === hardline && children[i + 1] === '' && children[i + 2] === softline);
 
+		// TSRX: a line break after a line comment's, as after `{// …}`.
+		const isLineCommentBreakFollowedByHardline =
+			children[i] === lineCommentBreak && children[i + 1] === '' && children[i + 2] === hardline;
+		if (isLineCommentBreakFollowedByHardline && containsText) {
+			children.splice(i + 1, 2);
+			continue;
+		}
+
 		if (
 			(isPairOfHardlines && containsText) ||
 			isPairOfEmptyStrings ||

@@ -3,10 +3,11 @@
 
 import tsx from 'esrap/languages/tsx';
 import {
+	format_comment,
+	is_file_level_pragma,
+	is_jsx_child_tooling_comment,
 	should_preserve_comment,
 	should_preserve_jsx_tooling_comment,
-	is_file_level_pragma,
-	format_comment,
 } from '../../comment-utils.js';
 import { has_location } from '../../utils/ast.js';
 import { with_deferred_imports } from '../imports.js';
@@ -230,6 +231,33 @@ export function tsx_with_ts_locations(
 			if (value.returnType) context.visit(value.returnType);
 			context.write(' ');
 			context.visit(value.body);
+		},
+
+		// A comment between children is an empty `{}` (see `split_text_pieces` in
+		// `analyze/index.js`). In the editor's TypeScript, a tooling comment there
+		// prints inside it in block form, `{/* @ts-expect-error */}`, which
+		// TypeScript applies to the next line, as in TSX.
+		JSXEmptyExpression: (node, context) => {
+			const comment = /** @type {AST.CommentWithLocation | undefined} */ (
+				node.metadata?.tooling_comment
+			);
+			if (
+				!comment ||
+				!emitted_comments ||
+				!preserve_owner_comments ||
+				!is_jsx_child_tooling_comment(comment) ||
+				comment.value.includes('*/')
+			) {
+				return;
+			}
+			const key = `${comment.start}:${comment.end}:${comment.type}:${comment.value}`;
+			if (emitted_comments.has(key)) return;
+			emitted_comments.add(key);
+			if (comment.loc) context.location(comment.loc.start.line, comment.loc.start.column);
+			context.write(
+				comment.type === 'Line' ? `/* ${comment.value.trim()} */` : format_comment(comment),
+			);
+			if (comment.loc) context.location(comment.loc.end.line, comment.loc.end.column);
 		},
 
 		// Text prints from `raw`, as JSX printers do: `value` has its character

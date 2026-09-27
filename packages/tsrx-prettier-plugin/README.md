@@ -25,7 +25,10 @@ props, `<style>`/`<script>` bodies, and comments between JSX children.
     merged touching JSDoc comments, dropped single-type unions;
   - JSX text children are rebuilt from the source, since the parser leaves out the
     whitespace between children and Prettier reads it;
-  - a comment between JSX children becomes a `TSRXJSXComment` child;
+  - a comment between JSX children, which renders like `{/* … */}` in TSX, becomes
+    the `{…}` child that `{/* … */}` is (a `JSXExpressionContainer` with a
+    `JSXEmptyExpression`), so Prettier lays it out; a `prettier-ignore` one keeps
+    the next child as written;
   - comments go to Prettier as a flat list with their source text, and Prettier
     attaches them itself.
 - **Printer** (`src/printer.js`) is Prettier's `estree` printer from
@@ -54,9 +57,12 @@ props, `<style>`/`<script>` bodies, and comments between JSX children.
   - Comments between a directive's branches are placed by Prettier's own comment
     handling for `if` and `try`, while `@if` and `@try` present themselves as
     those statements. A comment before `@empty` is handled like one before `else`.
-- **JSX children** (`src/jsx.js`): an element whose children include TSRX comments
-  is laid out by a copy of Prettier's `printJsxElementInternal` and
-  `printJsxChildren`, in which a comment keeps its line. Every other element is
+- **JSX children** (`src/jsx.js`): a comment between children prints without the
+  braces, as written. An element with such comments is laid out by a copy of
+  Prettier's `printJsxElementInternal` and `printJsxChildren` with the two rules a
+  bare comment needs: a line comment ends its line, and it keeps whitespace before
+  it after text or a comment (touching them, `//` is text); text that starts with
+  `//` right after a block comment stays on its line. Every other element is
   printed by Prettier itself. Keep the copy in step with Prettier when upgrading.
 
 The plugin needs no other Prettier plugin, including in `prettier/standalone`.

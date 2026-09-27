@@ -745,8 +745,21 @@ export function SpecificationPage() @{
 							<p class="section-body">
 								Within a returned TSRX template, direct element, fragment, style, text, and
 								expression-container children use the standard JSX node family. JavaScript line and
-								block comments are permitted between template children and do not render. Template
-								control flow uses directive-prefixed
+								block comments are permitted between template children and do not render. A comment
+								between children renders like
+								<code class="inline-code">{'{/* … */}'}</code>
+								in TSX: the text on each side of it follows JSX's whitespace rules on its own. A
+								<code class="inline-code">{'/*'}</code>
+								starts a comment anywhere. A<code class="inline-code">{'//'}</code>
+								starts a line comment where whitespace comes right before it, at the start of a
+								line, or right after a tag, an expression container, or a block, and the comment
+								runs to the end of the line, a closing tag on it included. A
+								<code class="inline-code">{'//'}</code>
+								that touches other text, as in
+								<code class="inline-code">{'https://example.com'}</code>
+								or
+								<code class="inline-code">{'a//b'}</code>, is text. Template control flow uses
+								directive-prefixed
 								<code class="inline-code">@if</code>,<code class="inline-code">@for</code>,
 								<code class="inline-code">@switch</code>, and
 								<code class="inline-code">@try</code>

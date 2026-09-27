@@ -4066,9 +4066,7 @@ function test() {
 
 		it('should preserve a comment-only fragment body', async () => {
 			const expected = `function App() @{
-  <>
-    /* only */
-  </>
+  <>/* only */</>
 }`;
 
 			const result = await format(expected, { singleQuote: true });
@@ -10290,7 +10288,7 @@ function k() {
 		it.each([
 			[
 				'export function App() @{\n  <div> /* c */\n    <span>\n      <b>1</b>\n    </span> 3</div>\n}',
-				'export function App() @{\n  <div>\n    /* c */\n    <span>\n      <b>1</b>\n    </span>{" "}\n    3\n  </div>\n}',
+				'export function App() @{\n  <div>\n    {" "}\n    /* c */\n    <span>\n      <b>1</b>\n    </span>{" "}\n    3\n  </div>\n}',
 			],
 			[
 				'export function App() @{\n  <div>\n    /* c */\n    <span>\n      <b>1</b>\n    </span> 3</div>\n}',
@@ -10489,9 +10487,9 @@ export function CodeBlock() @{
 			]);
 		});
 
-		// A comment in text adds nothing to it, so the whitespace on its sides is
-		// one run, significant at the text's edge. It keeps its meaning where the
-		// body breaks around the comment.
+		// A comment between children renders like `{/* c */}` in TSX: the text on
+		// each side of it follows JSX's whitespace rules on its own. It keeps its
+		// meaning where the body breaks around the comment.
 		it('renders the same markup with comments in text after formatting', async () => {
 			const input = `export function EdgeStart() @{
   <div>/* c */ x<b /></div>
@@ -10539,18 +10537,18 @@ export function SpaceBeforeComment() @{
 			const result = await format(input);
 			expect(result).toBeWithNewline(`export function EdgeStart() @{
   <div>
-    {" "}
     /* c */ x<b />
   </div>
 }
 export function EdgeEnd() @{
   <div>
-    <b />x /* c */{" "}
+    <b />x /* c */
   </div>
 }
 export function BeforeChild() @{
   <div>
-    text /* c */<b />
+    text /* c */
+    <b />
   </div>
 }
 export function Between() @{
@@ -10573,29 +10571,32 @@ export function Glued() @{
 }
 export function Long() @{
   <p>
-    Some text that goes past the print width once it is indented /* a comment */<b>
-      bold
-    </b>
+    Some text that goes past the print width once it is indented /* a comment */
+    <b>bold</b>
   </p>
 }
 export function AfterChild() @{
-  <p>{"x"}/* c */cc</p>
+  <p>
+    {"x"}
+    /* c */cc
+  </p>
 }
 export function AfterLastChild() @{
   <p>
-    {"x"} /* c */
+    {"x"}
+    /* c */
   </p>
 }
 export function LineAfterChild() @{
   <p>
-    <b>t</b>// c
+    <b>t</b>
+    // c
     c
   </p>
 }
 export function SpaceBeforeComment() @{
   <p>
-    {"a"}{" "}
-    // c
+    {"a"} // c
     {"b"}
   </p>
 }`);
@@ -10605,7 +10606,7 @@ export function SpaceBeforeComment() @{
 				'<div><b></b>x </div>',
 				'<div>text <b></b></div>',
 				'<p>a b<i></i></p>',
-				'<p>a b<i></i></p>',
+				'<p>ab<i></i></p>',
 				'<p>ab<i></i></p>',
 				'<p>Some text that goes past the print width once it is indented <b>bold</b></p>',
 				'<p>xcc</p>',
@@ -10644,7 +10645,8 @@ export function CommentAfterClose() @{
 export function CommentAfterClose() @{
   <div>
     <b>t</b>
-    /* c */ <i />
+    /* c */
+    <i />
   </div>
 }`);
 			expect(await render(result)).toEqual(await render(input));
@@ -10662,119 +10664,56 @@ export function CommentAfterClose() @{
 			).toBeWithNewline('export function App() @{\n  <div>\n    \u00a0<b>x</b>\n  </div>\n}');
 		});
 
-		// `//` at the start of a line of text is a comment, so a word that starts
-		// with it stays on the line of the word before it, where it is text. It
-		// used to wrap to the start of a line, and the rest of the line was lost
-		// (#541).
-		it('renders a word that starts with // the same after formatting', async () => {
-			const input = `export function Wrapped() @{
-	<div>${'a'.repeat(40)} ${'b'.repeat(53)} // ${'c'.repeat(16)} dddd</div>
+		// A `//` is a comment when whitespace comes right before it, it starts a
+		// line, or it comes right after a tag, `}`, or a block, and it runs to the
+		// end of its line. Touching other text or a block comment, it's text (as
+		// in `https://…`), and a word like any other.
+		it('renders // that touches text the same after formatting', async () => {
+			const input = `export function Links() @{
+	<div>see https://example.com/a/long/path and a//b, which are text and wrap like the words around them</div>
 }
-export function AfterComment() @{
-	<div>${'a'.repeat(40)} ${'b'.repeat(45)} /* c */ //x dddd</div>
+export function Note() @{
+	<div>a word // a comment
+	</div>
 }
-export function Short() @{
-	<div>a // b</div>
+export function Glued() @{
+	<div>one /* x */// two three</div>
 }`;
-			const result = await format(input, { useTabs: true, printWidth: 100 });
-			expect(result).toBeWithNewline(`export function Wrapped() @{
+			const result = await format(input, { useTabs: true, printWidth: 18 });
+			expect(result).toBeWithNewline(`export function Links() @{
 	<div>
-		${'a'.repeat(40)}
-		${'b'.repeat(53)} // ${'c'.repeat(16)} dddd
+		see
+		https://example.com/a/long/path
+		and a//b,
+		which are text
+		and wrap like
+		the words
+		around them
 	</div>
 }
-export function AfterComment() @{
+export function Note() @{
 	<div>
-		${'a'.repeat(40)} ${'b'.repeat(45)} /* c */ //x
-		dddd
+		a word{" "}
+		// a comment
 	</div>
 }
-export function Short() @{
-	<div>a // b</div>
+export function Glued() @{
+	<div>
+		one /* x *///
+		two three
+	</div>
 }`);
 			expect(await render(result)).toEqual(await render(input));
 			expect(await render(input)).toEqual([
-				`<div>${'a'.repeat(40)} ${'b'.repeat(53)} // ${'c'.repeat(16)} dddd</div>`,
-				`<div>${'a'.repeat(40)} ${'b'.repeat(45)} //x dddd</div>`,
-				'<div>a // b</div>',
+				'<div>see https://example.com/a/long/path and a//b, which are text and wrap like the words around them</div>',
+				'<div>a word </div>',
+				'<div>one // two three</div>',
 			]);
 		});
 
-		// Right after a child, `//` is a comment too, so such a word is text only
-		// after a comment there. A `{" "}` keeps that comment, and the JSX space
-		// before the word broke the line before it.
-		it('renders a word that starts with // after a child the same after formatting', async () => {
-			const text = 'Some text that goes past the print width once it is indented, and then more';
-			const input = `export function AfterSpace() @{
-	<p>${text} {' '}/* c */ //xxxxxxxxxx ends here</p>
-}
-export function AfterSpaceGlued() @{
-	<p>${text} {' '}/* c *///xxxxxxxxxxx ends here</p>
-}
-export function AfterElement() @{
-	<p>${text} <b>t</b>/* c */ //xxxxxxxxxx ends here</p>
-}
-export function AfterSelfClosing() @{
-	<p>${text} <br />/* c */ //xxxxxxxxxx ends here</p>
-}
-export function AfterExpression() @{
-	<p>${text} {'t'}/* c */ //xxxxxxxxxx ends here</p>
-}
-export function AfterFragment() @{
-	<p>${text} <>t</>/* c */ //xxxxxxxxxx ends here</p>
-}`;
-			const result = await format(input, { useTabs: true, singleQuote: true, printWidth: 100 });
-			expect(result).toBeWithNewline(`export function AfterSpace() @{
-	<p>
-		${text}{' '}
-		{' '}/* c */ //xxxxxxxxxx ends here
-	</p>
-}
-export function AfterSpaceGlued() @{
-	<p>
-		${text}{' '}
-		{' '}/* c *///xxxxxxxxxxx ends here
-	</p>
-}
-export function AfterElement() @{
-	<p>
-		${text} <b>t</b>/* c */ //xxxxxxxxxx
-		ends here
-	</p>
-}
-export function AfterSelfClosing() @{
-	<p>
-		${text} <br />/* c */ //xxxxxxxxxx
-		ends here
-	</p>
-}
-export function AfterExpression() @{
-	<p>
-		${text} {'t'}/* c */ //xxxxxxxxxx
-		ends here
-	</p>
-}
-export function AfterFragment() @{
-	<p>
-		${text} <>t</>/* c */ //xxxxxxxxxx
-		ends here
-	</p>
-}`);
-			expect(await render(result)).toEqual(await render(input));
-			expect(await render(input)).toEqual([
-				`<p>${text} //xxxxxxxxxx ends here</p>`,
-				`<p>${text} //xxxxxxxxxxx ends here</p>`,
-				`<p>${text} <b>t</b> //xxxxxxxxxx ends here</p>`,
-				`<p>${text} <br></br> //xxxxxxxxxx ends here</p>`,
-				`<p>${text} t //xxxxxxxxxx ends here</p>`,
-				`<p>${text} t //xxxxxxxxxx ends here</p>`,
-			]);
-		});
-
-		it('keeps a word that starts with // off the start of a line in JSX text', async () => {
-			const input = `const a = <div>${'a'.repeat(40)} ${'b'.repeat(53)} // cc dd</div>;`;
-			expect(await format(input, { useTabs: true, printWidth: 100 })).toBeWithNewline(
-				`const a = (\n\t<div>\n\t\t${'a'.repeat(40)}\n\t\t${'b'.repeat(53)} // cc dd\n\t</div>\n);`,
+		it('reads a // comment to the end of its line, a closing tag included', async () => {
+			await expect(format('const a = <div>a //comment </div>;')).rejects.toThrow(
+				/Unclosed tag '<div>'/,
 			);
 		});
 
@@ -10794,13 +10733,13 @@ export function Spaced() @{
 }`;
 			const result = await format(input, { useTabs: true, singleQuote: true });
 			expect(result).toBeWithNewline(`export function Glued() @{
-	<div>x{' '}/* c */y</div>
+	<div>x /* c */y</div>
 }
 export function LineAfter() @{
-	<div>x{' '}/* c */y</div>
+	<div>x /* c */y</div>
 }
 export function Spaced() @{
-	<div>x{' '} /* c */ y</div>
+	<div>x /* c */ y</div>
 }`);
 			expect(await render(result)).toEqual(await render(input));
 			expect(await render(input)).toEqual(['<div>x y</div>', '<div>x y</div>', '<div>x y</div>']);
@@ -18082,7 +18021,7 @@ for (
 			],
 			[
 				'export function App() @{\n  <div> // c\n    <b />\n  </div>\n}',
-				'export function App() @{\n  <div>\n    // c\n    <b />\n  </div>\n}',
+				'export function App() @{\n  <div>\n    {" "}\n    // c\n    <b />\n  </div>\n}',
 			],
 		])('keeps the comment after the opening tag of %j in the body', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
@@ -18102,12 +18041,22 @@ for (
 			'const el = (\n  <div>\n    <b />\n    /* c */ text\n  </div>\n);',
 			'const el = (\n  <div>\n    {value}\n    // c\n    text\n  </div>\n);',
 			'export function App() @{\n  <div>\n    text here\n    // c\n    more\n  </div>\n}',
-			'export function App() @{\n  <p>\n    a\n    /* b */\n    c\n  </p>\n}',
 			// A comment that starts or ends a line keeps the line break, which
 			// makes the spaces next to it insignificant
 			'export function App() @{\n  <div>\n    /* a */ text /* b */ more /* c */\n  </div>\n}',
 		])('keeps the comment in the text of %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
+		});
+
+		// A comment between children is a child of its own, as `{/* c */}` is in
+		// TSX, and these lay out as Prettier lays out that, which renders the same
+		it.each([
+			[
+				'export function App() @{\n  <p>\n    a\n    /* b */\n    c\n  </p>\n}',
+				'export function App() @{\n  <p>a/* b */c</p>\n}',
+			],
+		])('lays out the comment of %j like a {/* c */} child', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
 		});
 
 		it.each([
@@ -18167,7 +18116,7 @@ for (
 			],
 			[
 				'export function App() @{\n  <main>{x && <div>/* c */<i /></div>}</main>\n}',
-				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        /* c */ <i />\n      </div>\n    )}\n  </main>\n}',
+				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        /* c */\n        <i />\n      </div>\n    )}\n  </main>\n}',
 			],
 		])(
 			'formats the comment in the element in a container of %j like in a template',
@@ -18179,20 +18128,36 @@ for (
 		// A block comment after a child used to print after a space, which was
 		// new text on the child's line (#538)
 		it.each([
-			'const a = <div>{x}/* c */cc</div>;',
-			'const a = <div>{x} /* c */ cc</div>;',
 			'const a = <div>{x /* c */}</div>;',
 			'export function App() @{\n  <p>\n    <b>t</b> // c\n    c\n  </p>\n}',
 		])('keeps the spaces around the comment after a child of %j', async (source) => {
 			expect(await format(source)).toBeWithNewline(source);
 		});
 
+		// A comment between children is a child of its own, as `{/* c */}` is in
+		// TSX, and these lay out as Prettier lays out that, which renders the same
+		it.each([
+			[
+				'const a = <div>{x}/* c */cc</div>;',
+				'const a = (\n  <div>\n    {x}\n    /* c */cc\n  </div>\n);',
+			],
+			[
+				'const a = <div>{x} /* c */ cc</div>;',
+				'const a = (\n  <div>\n    {x} /* c */ cc\n  </div>\n);',
+			],
+		])('lays out the comment of %j like a {/* c */} child', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
+		});
+
 		it.each([
 			[
 				'const a = <div><b /> /* c */\n  c</div>;',
-				'const a = (\n  <div>\n    <b /> /* c */\n    c\n  </div>\n);',
+				'const a = (\n  <div>\n    <b /> /* c */c\n  </div>\n);',
 			],
-			['const a = <div>{x}/* c */</div>;', 'const a = (\n  <div>\n    {x} /* c */\n  </div>\n);'],
+			[
+				'const a = <div>{x}/* c */</div>;',
+				'const a = (\n  <div>\n    {x}\n    /* c */\n  </div>\n);',
+			],
 			[
 				'const a = <div>{x} /* c */\n</div>;',
 				'const a = (\n  <div>\n    {x} /* c */\n  </div>\n);',
@@ -18208,19 +18173,19 @@ for (
 		it.each([
 			[
 				'const a = <div><b>t</b>// c\n  c</div>;',
-				'const a = (\n  <div>\n    <b>t</b>// c\n    c\n  </div>\n);',
+				'const a = (\n  <div>\n    <b>t</b>\n    // c\n    c\n  </div>\n);',
 			],
 			[
 				'const a = <div><b />// c\n  c</div>;',
-				'const a = (\n  <div>\n    <b />// c\n    c\n  </div>\n);',
+				'const a = (\n  <div>\n    <b />\n    // c\n    c\n  </div>\n);',
 			],
 			[
 				'const a = <div>{a}{" "}\n// c\n{b}</div>;',
-				'const a = (\n  <div>\n    {a}{" "}\n    // c\n    {b}\n  </div>\n);',
+				'const a = (\n  <div>\n    {a} // c\n    {b}\n  </div>\n);',
 			],
 			[
 				'const a = <div>{a}{" "}\n/* c */\n<b /></div>;',
-				'const a = (\n  <div>\n    {a}{" "}\n    /* c */\n    <b />\n  </div>\n);',
+				'const a = (\n  <div>\n    {a} /* c */\n    <b />\n  </div>\n);',
 			],
 		])('keeps the line break of the comment next to a child of %j', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
@@ -18231,23 +18196,35 @@ for (
 		// either way, which the next format read as the text's leading space
 		// (#542).
 		it.each([
-			['const a = <div>{" "}/* c */y</div>;', 'const a = <div>{" "}/* c */y</div>;'],
-			['const a = <div>x{" "}/* c */\n  y</div>;', 'const a = <div>x{" "}/* c */y</div>;'],
-			['const a = <div>x{" "} /* c */\n  y</div>;', 'const a = <div>x{" "}/* c */y</div>;'],
+			['const a = <div>{" "}/* c */y</div>;', 'const a = <div> /* c */y</div>;'],
+			['const a = <div>x{" "}/* c */\n  y</div>;', 'const a = <div>x /* c */y</div>;'],
+			['const a = <div>x{" "} /* c */\n  y</div>;', 'const a = <div>x /* c */y</div>;'],
 			[
 				'export function App() @{\n  <p>{a}{" "}/* c */y</p>\n}',
-				'export function App() @{\n  <p>\n    {a}\n    {" "}/* c */y\n  </p>\n}',
+				'export function App() @{\n  <p>\n    {a} /* c */y\n  </p>\n}',
 			],
 		])('keeps the block comment after the {" "} of %j in place', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);
 		});
 
+		it.each([])(
+			'keeps the spaces around the block comment after the {" "} of %j',
+			async (source) => {
+				expect(await format(source)).toBeWithNewline(source);
+			},
+		);
+
+		// A comment between children is a child of its own, as `{/* c */}` is in
+		// TSX, and these lay out as Prettier lays out that, which renders the same
 		it.each([
-			'const a = <div>x{" "} /* c */ y</div>;',
-			'const a = <div>x{" "}/* c */ y</div>;',
-			'const a = <div>x{" "} /* c */ /* d */ y</div>;',
-		])('keeps the spaces around the block comment after the {" "} of %j', async (source) => {
-			expect(await format(source)).toBeWithNewline(source);
+			['const a = <div>x{" "} /* c */ y</div>;', 'const a = <div>x /* c */ y</div>;'],
+			['const a = <div>x{" "}/* c */ y</div>;', 'const a = <div>x /* c */ y</div>;'],
+			[
+				'const a = <div>x{" "} /* c */ /* d */ y</div>;',
+				'const a = (\n  <div>\n    x /* c */ /* d */ y\n  </div>\n);',
+			],
+		])('lays out the comment of %j like a {/* c */} child', async (source, expected) => {
+			expect(await format(source)).toBeWithNewline(expected);
 		});
 
 		// In an element in a `{…}` container, the parser keeps no text for the
@@ -18258,20 +18235,20 @@ for (
 		it.each([
 			[
 				'export function App() @{\n  <main>{x && <div>{" "} /* c */</div>}</main>\n}',
-				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {" "}/* c */\n      </div>\n    )}\n  </main>\n}',
+				'export function App() @{\n  <main>{x && <div> /* c */</div>}</main>\n}',
 			],
 			[
 				'export function App() @{\n  <main>{x && <div>a{" "} /* c */</div>}</main>\n}',
-				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        a{" "}/* c */\n      </div>\n    )}\n  </main>\n}',
+				'export function App() @{\n  <main>{x && <div>a /* c */</div>}</main>\n}',
 			],
 			[
 				'export function App() @{\n  <main>{x && <div>{" "} /* a */ /* b */<i /></div>}</main>\n}',
-				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {" "}/* a *//* b */\n        <i />\n      </div>\n    )}\n  </main>\n}',
+				'export function App() @{\n  <main>\n    {x && (\n      <div>\n        {" "}\n        /* a */ /* b */\n        <i />\n      </div>\n    )}\n  </main>\n}',
 			],
 			// Outside a container the space is text, and stays
 			[
 				'export function App() @{\n  <div>{" "} /* c */<i /></div>\n}',
-				'export function App() @{\n  <div>\n    {" "} /* c */ <i />\n  </div>\n}',
+				'export function App() @{\n  <div>\n    {" "}\n    /* c */\n    <i />\n  </div>\n}',
 			],
 		])('prints the block comment after the {" "} of %j against it', async (source, expected) => {
 			expect(await format(source)).toBeWithNewline(expected);

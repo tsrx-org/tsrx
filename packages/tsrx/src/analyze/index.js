@@ -12,6 +12,7 @@ import {
 	is_tsrx_render_output_node,
 } from '../utils/ast.js';
 import { validate_forgotten_statement_container, validate_jsx_spread_child } from './validation.js';
+import { is_jsx_child_tooling_comment } from '../comment-utils.js';
 import { create_scopes, ScopeRoot } from '../scope.js';
 import { analyze_styles } from './style-analyze.js';
 
@@ -129,10 +130,17 @@ function visit_class(_node, { next, state }) {
  * `{}` between two of them so that they stay apart in the output, as every
  * target's JSX compiler reads it. A piece that is whitespace with a line break
  * renders nothing and is left out.
+ *
+ * A tooling comment (`// @ts-expect-error`, see
+ * `is_jsx_child_tooling_comment`) goes into its `{}` for the editor's
+ * TypeScript, as `{/* @ts-expect-error *\/}` works in TSX, and the text around
+ * it keeps its line breaks, so that it stays on the line before the child it's
+ * about. Only type-only compiles pass the comments.
  * @param {any[]} list
+ * @param {AST.CommentWithLocation[]} comments
  * @returns {any[]}
  */
-function split_text_pieces(list) {
+function split_text_pieces(list, comments) {
 	/** @type {any[]} */
 	const result = [];
 	for (const child of list) {
@@ -141,52 +149,85 @@ function split_text_pieces(list) {
 			result.push(child);
 			continue;
 		}
+		// The comment between each piece and the next starts where the piece ends.
+		const tooling = pieces.slice(0, -1).map((/** @type {any} */ piece) => {
+			const comment = comments.find((comment) => comment.start === piece.end);
+			return comment && is_jsx_child_tooling_comment(comment) ? comment : null;
+		});
+		const keep_layout = tooling.some(Boolean);
 		/** @type {any} */
 		let previous = null;
-		for (const piece of pieces) {
-			if (piece.value === '' || (/[\r\n]/.test(piece.value) && !/[^ \t\r\n]/.test(piece.value))) {
-				continue;
-			}
-			if (previous) {
-				const start = previous.end;
-				const end = piece.start;
-				const loc = { start: previous.loc.end, end: piece.loc.start };
-				result.push({
-					type: 'JSXExpressionContainer',
-					expression: { type: 'JSXEmptyExpression', start, end, loc, metadata: { path: [] } },
-					start,
-					end,
-					loc,
+		for (const [index, piece] of pieces.entries()) {
+			const renders =
+				piece.value !== '' && (!/[\r\n]/.test(piece.value) || /[^ \t\r\n]/.test(piece.value));
+			if (renders || (keep_layout && piece.value !== '')) {
+				if (previous && !keep_layout) {
+					result.push(
+						empty_container(previous.end, piece.start, previous.loc.end, piece.loc.start),
+					);
+				}
+				previous = {
+					type: 'JSXText',
+					value: piece.value,
+					raw: piece.value,
+					start: piece.start,
+					end: piece.end,
+					loc: piece.loc,
 					metadata: { path: [] },
-				});
+				};
+				result.push(previous);
 			}
-			previous = {
-				type: 'JSXText',
-				value: piece.value,
-				raw: piece.value,
-				start: piece.start,
-				end: piece.end,
-				loc: piece.loc,
-				metadata: { path: [] },
-			};
-			result.push(previous);
+			if (keep_layout && index < pieces.length - 1) {
+				const next = pieces[index + 1];
+				result.push(
+					empty_container(piece.end, next.start, piece.loc.end, next.loc.start, tooling[index]),
+				);
+				previous = null;
+			}
 		}
 	}
 	return result;
 }
 
 /**
- * @param {any} node
- * @param {{ next: () => void }} context
+ * An empty `{}` child, which renders nothing, for the span of a comment.
+ * @param {number} start
+ * @param {number} end
+ * @param {AST.Position} start_loc
+ * @param {AST.Position} end_loc
+ * @param {AST.CommentWithLocation | null} [tooling_comment] A tooling comment it holds
+ * @returns {any}
  */
-function visit_node(node, { next }) {
+function empty_container(start, end, start_loc, end_loc, tooling_comment = null) {
+	const loc = { start: start_loc, end: end_loc };
+	return {
+		type: 'JSXExpressionContainer',
+		expression: {
+			type: 'JSXEmptyExpression',
+			start,
+			end,
+			loc,
+			metadata: tooling_comment ? { path: [], tooling_comment } : { path: [] },
+		},
+		start,
+		end,
+		loc,
+		metadata: { path: [] },
+	};
+}
+
+/**
+ * @param {any} node
+ * @param {{ next: () => void, state: TSRXAnalysisState }} context
+ */
+function visit_node(node, { next, state }) {
 	for (const key of ['children', 'body']) {
 		const list = node[key];
 		if (
 			Array.isArray(list) &&
 			list.some((child) => child?.type === 'JSXText' && child.metadata?.text_pieces)
 		) {
-			node[key] = split_text_pieces(list);
+			node[key] = split_text_pieces(list, state.comments);
 		}
 	}
 	next();
