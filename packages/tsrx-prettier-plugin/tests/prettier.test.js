@@ -1,6 +1,7 @@
 // Runs Prettier's own format tests (imported into `tests/prettier/` by
-// `scripts/import-prettier-tests.js`) through the TSRX plugin. Each case
-// expects exactly what Prettier prints with its `typescript` parser.
+// `scripts/import-prettier-tests.js`) through the TSRX plugin, the way Prettier's
+// own harness runs them, cursor and line breaks included. Each case expects
+// exactly what Prettier prints with its `typescript` parser.
 //
 // Cases listed in `prettier-known-failures.json` are expected to fail until the
 // plugin handles them; a listed case that passes fails the run, so the list
@@ -13,11 +14,15 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import * as prettier from 'prettier';
 import { afterAll, describe, expect, test } from 'vitest';
 import plugin from '../src/index.js';
 import overrides from './prettier-overrides.js';
-import { readFormatCase, readSnapshotEntries } from './snapshot-format.js';
+import {
+	formatAsHarness,
+	readFormatCase,
+	readHarnessInput,
+	readSnapshotEntries,
+} from './snapshot-format.js';
 
 const FIXTURES_DIR = path.join(import.meta.dirname, 'prettier');
 const KNOWN_FAILURES_FILE = path.join(import.meta.dirname, 'prettier-known-failures.json');
@@ -53,20 +58,23 @@ for (const snapshotFile of snapshotFiles) {
 				test.skip(entry.title, () => {});
 				continue;
 			}
-			const input = override?.input ?? formatCase.input;
+			const { text, options } = readHarnessInput({
+				...formatCase,
+				input: override?.input ?? formatCase.input,
+			});
 			const run = !updateKnownFailures && knownFailures.has(key) ? test.fails : test;
 
 			run(entry.title, async () => {
 				try {
 					const output = override?.tsx
-						? await prettier.format(input, {
-								...formatCase.options,
+						? await formatAsHarness(text, {
+								...options,
 								parser: 'typescript',
 								filepath: 'Fixture.tsx',
 							})
 						: (override?.output ?? formatCase.output);
-					const formatted = await prettier.format(input, {
-						...formatCase.options,
+					const formatted = await formatAsHarness(text, {
+						...options,
 						parser: 'tsrx',
 						plugins: [plugin],
 						filepath: 'Fixture.tsrx',

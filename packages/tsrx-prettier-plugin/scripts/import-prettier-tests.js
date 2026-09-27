@@ -18,7 +18,9 @@ import { parseArgs } from 'node:util';
 import * as prettier from 'prettier';
 import { parse } from '../src/parse.js';
 import {
+	formatAsHarness,
 	readFormatCase,
+	readHarnessInput,
 	readSnapshotEntries,
 	writeSnapshotEntries,
 } from '../tests/snapshot-format.js';
@@ -103,19 +105,15 @@ async function exclusionReason(dir, entry) {
 	if (!formatCase) {
 		return 'records an error, not an output';
 	}
-	const { options, input, output, filename } = formatCase;
-	if (
-		'cursorOffset' in options ||
-		'rangeStart' in options ||
-		'rangeEnd' in options ||
-		'endOfLine' in options ||
-		input.includes('<|>')
-	) {
-		return 'cursor, range, or end-of-line test';
+	const { output, filename } = formatCase;
+	// The plugin doesn't format a range yet (#831).
+	if ('rangeStart' in formatCase.options || 'rangeEnd' in formatCase.options) {
+		return 'range test';
 	}
+	const { text: input, options } = readHarnessInput(formatCase);
 
 	try {
-		const formatted = await prettier.format(input, {
+		const formatted = await formatAsHarness(input, {
 			...options,
 			parser: 'typescript',
 			filepath: filename && `${dir}/${filename}`,

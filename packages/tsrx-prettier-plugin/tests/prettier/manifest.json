@@ -2,9 +2,8 @@
   "prettier": "3.9.9",
   "source": "https://github.com/prettier/prettier/tree/3.9.9/tests/format",
   "areas": ["js", "jsx", "typescript"],
-  "imported": 2047,
+  "imported": 2097,
   "excluded": {
-    "cursor, range, or end-of-line test": 50,
     "error test": 1831,
     "formatted differently by the typescript parser": 27,
     "namespaced JSX element": 3,

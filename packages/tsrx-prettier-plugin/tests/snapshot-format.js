@@ -2,8 +2,11 @@
  * Reads Prettier's format-test snapshots (`tests/format/**\/format.test.js.snap`
  * in the Prettier repository). Each entry records the options, the input, and
  * Prettier's output for one fixture; see Prettier's
- * `tests/config/format-test/create-snapshot.js`.
+ * `tests/config/format-test/create-snapshot.js`. A case is formatted the way
+ * Prettier's harness formats it, with its cursor and line breaks.
  */
+
+import * as prettier from 'prettier';
 
 /**
  * @typedef {{ title: string, raw: string, body: string }} SnapshotEntry
@@ -114,4 +117,64 @@ function filenameOf(title) {
 	const name = /^(.*?)(?: - \{.*\})? format \d+$/u.exec(title)?.[1] ?? title;
 	const file = name.startsWith('snippet: ') ? name.slice('snippet: '.length) : name;
 	return /\.[cm]?[jt]sx?$/u.test(file) ? file : undefined;
+}
+
+/** Where a cursor case's input and output have the cursor. */
+export const CURSOR_PLACEHOLDER = '<|>';
+
+/** @type {Record<string, string>} */
+const END_OF_LINE_MARKS = { '\n': '<LF>\n', '\r\n': '<CRLF>\n', '\r': '<CR>\n' };
+/** @type {Record<string, string>} */
+const END_OF_LINES = { LF: '\n', CRLF: '\r\n', CR: '\r' };
+
+/**
+ * Mark each line break as `<LF>`, `<CRLF>` or `<CR>` followed by `\n`, as the
+ * snapshot of a case that sets `endOfLine` records its input and output
+ * (Prettier's `visualize-end-of-line.js`).
+ * @param {string} text
+ * @returns {string}
+ */
+function visualizeEndOfLine(text) {
+	return text.replace(/\r\n?|\n/gu, (endOfLine) => END_OF_LINE_MARKS[endOfLine]);
+}
+
+/**
+ * The text and options that Prettier's harness formats for a case: the input
+ * with its line breaks restored when the case sets `endOfLine`, and without
+ * the cursor placeholder, whose index becomes `cursorOffset` (Prettier's
+ * `replace-placeholders.js`).
+ * @param {{ input: string, options: Record<string, unknown> }} formatCase
+ * @returns {{ text: string, options: Record<string, unknown> }}
+ */
+export function readHarnessInput({ input, options }) {
+	let text =
+		'endOfLine' in options
+			? input.replace(/<(LF|CRLF|CR)>\n/gu, (_, endOfLine) => END_OF_LINES[endOfLine])
+			: input;
+	const cursorOffset = text.indexOf(CURSOR_PLACEHOLDER);
+	if (cursorOffset === -1) return { text, options };
+	text = text.replace(CURSOR_PLACEHOLDER, '');
+	return { text, options: { ...options, cursorOffset } };
+}
+
+/**
+ * Format `text` as Prettier's harness does (`run-prettier.js`), so the result
+ * compares with a snapshot's output: the cursor placeholder goes back where
+ * Prettier moved the cursor, and the line breaks are marked when the case sets
+ * `endOfLine`.
+ * @param {string} text
+ * @param {import('prettier').Options} options
+ * @returns {Promise<string>}
+ */
+export async function formatAsHarness(text, options) {
+	// Without a cursor, Prettier's default `cursorOffset` of -1.
+	const { formatted, cursorOffset } = await prettier.formatWithCursor(text, {
+		cursorOffset: -1,
+		...options,
+	});
+	const output =
+		cursorOffset >= 0
+			? formatted.slice(0, cursorOffset) + CURSOR_PLACEHOLDER + formatted.slice(cursorOffset)
+			: formatted;
+	return 'endOfLine' in options ? visualizeEndOfLine(output) : output;
 }
