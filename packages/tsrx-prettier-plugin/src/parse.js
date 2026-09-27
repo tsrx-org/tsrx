@@ -558,8 +558,9 @@ class Adapter {
 
 			case 'TSTypeParameter':
 				if (typeof node.name === 'string') {
+					// The name follows the modifiers, and any comments between them
 					const modifiers = /^(?:(?:const|in|out)\s+)*/u.exec(
-						this.text.slice(node.start, node.end),
+						this.textWithoutComments.slice(node.start, node.end),
 					);
 					const start = node.start + (modifiers?.[0].length ?? 0);
 					node.name = {

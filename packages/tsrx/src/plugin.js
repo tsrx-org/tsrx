@@ -8660,69 +8660,14 @@ export function TSRXPlugin(config) {
 				);
 
 				if (this.type === tt.braceL) {
-					let name_start = skip_whitespace_from(this.input, this.start + 1);
-					const first = this.input.charCodeAt(name_start);
-					if (
-						this.#isIdentifierChar(first) &&
-						!(first >= CharCode.digit0 && first <= CharCode.digit9)
-					) {
-						let name_end = name_start + 1;
-						while (this.#isIdentifierChar(this.input.charCodeAt(name_end))) {
-							name_end++;
-						}
-						const brace_start = skip_whitespace_from(this.input, name_end);
-						if (this.input.charCodeAt(brace_start) === CharCode.closeBrace) {
-							const name_start_loc = get_line_info(this, name_start);
-							const name_end_loc = get_line_info(this, name_end);
-							const name_value = this.input.slice(name_start, name_end);
-							const id = /** @type {ESTreeJSX.JSXIdentifier} */ (
-								this.startNodeAt(name_start, name_start_loc)
-							);
-							id.name = name_value;
-							this.finishNodeAt(id, 'JSXIdentifier', name_end, name_end_loc);
-							const name = /** @type {AST.Identifier} */ (
-								this.startNodeAt(name_start, name_start_loc)
-							);
-							name.name = name_value;
-							this.finishNodeAt(name, 'Identifier', name_end, name_end_loc);
-							const expression = /** @type {ESTreeJSX.JSXExpressionContainer} */ (
-								this.startNodeAt(this.start, this.startLoc)
-							);
-							expression.expression = name;
-							this.finishNodeAt(
-								expression,
-								'JSXExpressionContainer',
-								brace_start + 1,
-								get_line_info(this, brace_start + 1),
-							);
-							/** @type {ESTreeJSX.JSXAttribute} */ (node).name = id;
-							/** @type {ESTreeJSX.JSXAttribute} */ (node).value = expression;
-							/** @type {ESTreeJSX.JSXAttribute} */ (node).shorthand = true;
-
-							const end = brace_start + 1;
-							const endLoc = get_line_info(this, end);
-							this.pos = end;
-							this.curLine = endLoc.line;
-							this.lineStart = end - endLoc.column;
-							if (this.curContext()?.token === '{') {
-								this.#popContext();
-							}
-							this.exprAllowed = false;
-							this.next();
-							return this.finishNodeAt(node, 'JSXAttribute', end, endLoc);
-						}
-					}
-
 					// Inside a native element `next()` would otherwise read whatever follows
 					// the brace as raw template text, scanning (and counting line breaks) up
 					// to the closing brace. An attribute brace is only ever followed by
 					// JavaScript (a spread or a shorthand name), so suppress that one token
 					// and let acorn's `skipSpace` handle any comments or Unicode whitespace
-					// before it instead of replicating them in the peek above.
+					// before it.
 					this.#suppressTemplateRawTextToken = true;
-				}
-
-				if (this.eat(tt.braceL)) {
+					this.next();
 					if (this.type === tt.ellipsis || this.lookahead().type === tt.ellipsis) {
 						// The brace's context is on top
 						const brace_context_depth = this.context.length;

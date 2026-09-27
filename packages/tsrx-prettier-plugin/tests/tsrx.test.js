@@ -1247,6 +1247,23 @@ const a = <div x={/** @type {T} */ y}>{/** @type {T} */ z}</div>;
 	});
 });
 
+describe('type parameter modifiers', () => {
+	// The name follows the modifiers and the comments between them (#839)
+	test.each([
+		['function f<const /* c */ T>() {}', 'function f<const /* c */ T>() {}\n'],
+		['class A<in /* c */ out T> {}', 'class A<in out /* c */ T> {}\n'],
+		['class B<in out /* c */ T> {}', 'class B<in out /* c */ T> {}\n'],
+		['function h<const/* c */T>() {}', 'function h<const /* c */ T>() {}\n'],
+		[
+			'function k<const /* c */ T extends string = "a">() {}',
+			'function k<const /* c */ T extends string = "a">() {}\n',
+		],
+		['const l = <const /* c */ T,>(x: T) => x;', 'const l = <const /* c */ T,>(x: T) => x;\n'],
+	])('formats %j as Prettier does', async (input, expected) => {
+		await expectFormat(input, expected);
+	});
+});
+
 describe('parse errors', () => {
 	test('unclosed or mismatched tags are errors, not guessed markup', async () => {
 		await expect(format('const x = 1;\nconst y = <div>\n')).rejects.toThrow(/Unclosed tag '<div>'/);
