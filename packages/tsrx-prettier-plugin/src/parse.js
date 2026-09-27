@@ -363,11 +363,14 @@ class Adapter {
 	describeCommentRuns(children, start, end) {
 		const isBlank = (/** @type {Node | undefined} */ child) =>
 			child?.type === 'JSXText' && /^[ \t\r\n]*$/u.test(child.value);
-		// `{" "}` renders a space whatever is around it.
+		// `{" "}` renders a space whatever is around it. One with a comment inside
+		// is a child like any other, which prints its comment.
 		const isSpace = (/** @type {Node | undefined} */ child) =>
 			child?.type === 'JSXExpressionContainer' &&
 			child.expression.type === 'Literal' &&
-			child.expression.value === ' ';
+			child.expression.value === ' ' &&
+			/^\{[ \t\r\n]*$/u.test(this.text.slice(child.start, child.expression.start)) &&
+			/^[ \t\r\n]*\}$/u.test(this.text.slice(child.expression.end, child.end));
 		const isGap = (/** @type {Node | undefined} */ child) => isBlank(child) || isSpace(child);
 		const kind = (/** @type {Node | undefined} */ child) =>
 			!child ? 'boundary' : child.type === 'JSXText' ? 'text' : 'node';
@@ -396,6 +399,9 @@ class Adapter {
 				if (isSpace(children[index])) {
 					children[index].tsrxCommentSpace = true;
 					explicitSpace = true;
+					// The comment beside it prints the space on that side.
+					if (index < first) group[0].spaceBefore = true;
+					if (index > last) group[group.length - 1].spaceAfter = true;
 				}
 			}
 			const runStart = !before
@@ -427,8 +433,20 @@ class Adapter {
 				// Whether a line break in the run is what it renders (nothing, or a
 				// space between words) rather than a space that must be kept.
 				lineBreak: lineBreak && !explicitSpace,
-				// Whether a line comment in the group puts a line break in the run.
-				lineComment: group.some((comment) => comment.commentType === 'Line'),
+				// Whether the comments keep a line break in the run: a line comment, or
+				// one between two comments or between a comment and the child beside
+				// the run. (One beside the start or end of the children isn't kept
+				// when the element fits on a line.)
+				hardBreak:
+					group.some(
+						(comment, index) =>
+							comment.commentType === 'Line' ||
+							(index > 0 && /[\r\n]/u.test(this.text.slice(group[index - 1].end, comment.start))),
+					) ||
+					(before !== undefined && group[0].newlineBefore) ||
+					(after !== undefined && group[group.length - 1].newlineAfter),
+				// The one side of the comments where a space the run renders goes.
+				spaceAfter: group[group.length - 1].spaceAfter,
 			};
 			for (const [index, comment] of group.entries()) {
 				// Between two comments, whatever the source had there (whitespace or

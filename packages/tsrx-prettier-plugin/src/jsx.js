@@ -485,12 +485,12 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 		if (
 			run.space &&
 			!run.lineBreak &&
-			run.lineComment &&
+			run.hardBreak &&
 			!(run.before === 'text' && run.after === 'text')
 		) {
-			// A line comment puts a line break in the run, so the space it renders
-			// is written out, before the comments.
-			if (outerBefore) before = rawWhitespace;
+			// A line break in the run would drop a space beside it, so the space
+			// the run renders is written out, before the comments.
+			if (outerBefore) before = comment.newlineBefore ? [rawWhitespace, hardline] : rawWhitespace;
 			if (outerAfter && !lineAfter) after = comment.spaceAfter ? ' ' : '';
 		} else if (run.space && !run.lineBreak) {
 			if (run.before === 'text' && run.after === 'text') {
@@ -507,16 +507,31 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 					before = whitespace;
 				}
 			} else {
-				// The space stays on its side; a line break there prints `{" "}`.
-				const side = outerAfter && comment.spaceAfter ? 'after' : 'before';
-				if (side === 'after') after = whitespace;
-				else if (outerBefore && comment.spaceBefore) before = whitespace;
+				// The space stays on its side, once for all the comments; a line
+				// break there prints `{" "}`.
+				if (run.spaceAfter) {
+					if (outerAfter) after = whitespace;
+				} else if (outerBefore && comment.spaceBefore) {
+					before = whitespace;
+				}
 			}
 		} else if (run.lineBreak) {
 			// A space beside the start or end of the children renders nothing here.
 			if (outerBefore && run.before === 'boundary' && !comment.newlineBefore) before = '';
 			if (outerAfter && run.after === 'boundary' && !lineAfter) after = '';
 		}
+		// A line comment after text on its line is read as text, so it starts
+		// its own line; between two words, the line break renders the space.
+		if (
+			outerBefore &&
+			comment.commentType === 'Line' &&
+			run.before === 'text' &&
+			(before === ' ' || before === line || before === '')
+		) {
+			before = hardline;
+		}
+		// A line comment ends its line.
+		if (comment.commentType === 'Line') after = hardline;
 		// The line break at the start or end of the children is only there when
 		// the element breaks. Without it, a space left in the run would render.
 		const breaksAtEdge =

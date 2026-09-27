@@ -725,6 +725,70 @@ const b = (
 		);
 	});
 
+	// A `{" "}` beside a comment is part of the comment's run. It becomes a
+	// plain space where one renders, and stays `{" "}` next to a line break the
+	// comment keeps, which would drop a plain space.
+	test('a {" "} beside a comment keeps its space', async () => {
+		await expectFormat(
+			`export function App() @{
+  <>
+    <p>one{" "}/* c */two</p>
+    <p><b />{" "}/* c */<i /></p>
+    <p><b />/* c */{" "}<i /></p>
+    <p>one{" "}/* c */
+      <b /></p>
+    <p>one{" "}
+      // c
+      two</p>
+  </>
+}`,
+			`export function App() @{
+  <>
+    <p>one /* c */two</p>
+    <p>
+      <b /> /* c */<i />
+    </p>
+    <p>
+      <b />/* c */ <i />
+    </p>
+    <p>
+      one{" "}/* c */
+      <b />
+    </p>
+    <p>
+      one
+      // c
+      two
+    </p>
+  </>
+}
+`,
+		);
+	});
+
+	test('a {" "} with a comment inside is printed with its comment', async () => {
+		await expectFormat(
+			`const a = <p>one /* c */{/* d */ " "}two</p>;`,
+			`const a = <p>one /* c */{/* d */ " "}two</p>;\n`,
+		);
+	});
+
+	// Prettier treats a run of spaces as one (`<p>a  b</p>` prints `a b`), so a
+	// space on each side of a comment renders like the one in the source.
+	test('the space around a group of comments breaks in one place', async () => {
+		await expectFormat(
+			`const a = <p>one /* c */ /* d */ <b /></p>;`,
+			`const a = (
+  <p>
+    one /* c */ /* d */{" "}
+    <b />
+  </p>
+);
+`,
+			{ printWidth: 20 },
+		);
+	});
+
 	test('in a fragment, and a JSDoc-style block comment is re-indented', async () => {
 		await expectFormat(
 			`const a = <>
