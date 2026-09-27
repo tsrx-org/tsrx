@@ -1732,6 +1732,22 @@ describe('rest parameters and `for` heads', () => {
 		await expectFormat('for ({ a: b! } in {});', 'for ({ a: b! } in {});\n');
 		await expectFormat('for ((a!) in {});', 'for (a! in {});\n');
 	});
+
+	// Without its parentheses, which Prettier drops, one in a `for await` head
+	// failed to parse again (#769).
+	test('a type assertion in a `for await` head', async () => {
+		await expectFormat(
+			`async function f(x) {
+  for await ((a as number) of x);
+  for await (a satisfies unknown of x);
+}`,
+			`async function f(x) {
+  for await (a as number of x);
+  for await (a satisfies unknown of x);
+}
+`,
+		);
+	});
 });
 
 // `abstract` before a line break after `export default` is the exported value,

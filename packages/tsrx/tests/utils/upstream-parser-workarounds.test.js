@@ -1227,6 +1227,65 @@ describe('a type assertion in a `for…in` or `for…of` head (sveltejs/acorn-ty
 	});
 });
 
+describe('a type assertion without parentheses in a `for await` head (sveltejs/acorn-typescript#157)', () => {
+	// acorn reads a `for await` head with `parseExprSubscripts`, as JavaScript's
+	// grammar says, but acorn-typescript reads `as` and `satisfies` only in
+	// `parseExprOp`, so the head ended before `as` and failed at `await`, in
+	// every mode. TypeScript reads the head as an expression, and Prettier prints
+	// `for await ((a as T) of x)` without the parentheses.
+	/** @type {Array<[source: string, head: Record<string, unknown>]>} */
+	const cases = [
+		['async function f(x) { for await (a as number of x); }', { type: 'TSAsExpression' }],
+		[
+			'async function f(x) { for await (a satisfies unknown of x); }',
+			{ type: 'TSSatisfiesExpression' },
+		],
+		[
+			'async function f(x) { for await (o.a as number of x); }',
+			{ type: 'TSAsExpression', expression: { type: 'MemberExpression' } },
+		],
+		[
+			'async function f(x) { for await (a as unknown as number of x); }',
+			{ type: 'TSAsExpression', expression: { type: 'TSAsExpression' } },
+		],
+		[
+			`export async function App() @{
+	let a;
+	for await (a as string of ['x']) {}
+	<div>{a}</div>
+}`,
+			{ type: 'TSAsExpression' },
+		],
+	];
+
+	it('reads them in every mode, and keeps the assertion', async () => {
+		const outcomes = await parse_in_worker_with_ast(in_every_mode(cases.map(([source]) => source)));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const [source, head] = cases[Math.floor(index / PARSE_MODES.length)];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			expect(outcome.errors ?? [], source).toEqual([]);
+			expect(loop_head(outcome.ast), source).toMatchObject(head);
+		}
+	});
+
+	it('still rejects one after a line break, and a `for await…in`', async () => {
+		const sources = [
+			`async function f(x) {
+	for await (a
+		as number of x);
+}`,
+			'async function f(x) { for await (a as number in x); }',
+		];
+		const outcomes = await parse_in_worker_with_ast(in_every_mode(sources));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const source = sources[Math.floor(index / PARSE_MODES.length)];
+			expect(outcome.ok, source).toBe(false);
+		}
+	});
+});
+
 describe("a `?` or a type annotation outside an arrow function's parameters (sveltejs/acorn-typescript#149)", () => {
 	// acorn-typescript reads a `?` and a type annotation after each item of a
 	// parenthesized expression and of a call's arguments, and a type annotation

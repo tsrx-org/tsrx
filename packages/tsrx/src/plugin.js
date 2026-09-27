@@ -8383,6 +8383,25 @@ export function TSRXPlugin(config) {
 					awaitAt > -1
 						? this.parseExprSubscripts(refDestructuringErrors, 'await')
 						: this.parseExpression(true, refDestructuringErrors);
+				// UPSTREAM(sveltejs/acorn-typescript#157): remove once a release includes the fix
+				// A `for await` head is a left-hand-side expression, which acorn reads
+				// with `parseExprSubscripts`, but acorn-typescript reads `as` and
+				// `satisfies` only in `parseExprOp`. TypeScript reads the head as an
+				// expression, so `for await (a as T of x)` is a loop over an assertion,
+				// as `for (a as T of x)` is.
+				if (
+					awaitAt > -1 &&
+					!this.hasPrecedingLineBreak() &&
+					(this.isContextual('as') || this.isContextual('satisfies'))
+				) {
+					init_expr = this.parseExprOp(
+						init_expr,
+						/** @type {number} */ (init_expr.start),
+						/** @type {AST.NodeWithLocation} */ (init_expr).loc.start,
+						-1,
+						'await',
+					);
+				}
 
 				if (
 					this.type === tt._in ||
