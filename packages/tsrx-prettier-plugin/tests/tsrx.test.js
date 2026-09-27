@@ -175,6 +175,34 @@ describe('directives', () => {
 				[`${kind} comment in an empty @case`, `@switch (a) { @case 1: {${nl}${c}${nl}} }`],
 				[`${kind} comment after an @case test`, `@switch (a) { @case 1: ${c}${nl}{ <b /> } }`],
 				[`${kind} comment in an empty @default`, `@switch (a) { @default: {${nl}${c}${nl}} }`],
+				[
+					`${kind} comment alone in an @case block with a test in parentheses`,
+					`@switch (role) { @case (admin + "_1"): {${nl}${c}${nl}} @case "editor": { <e /> } }`,
+				],
+				[
+					`${kind} comment before a child of an @case with a test in parentheses`,
+					`@switch (role) { @case (admin + "_1"): {${nl}${c}${nl}<b /> } }`,
+				],
+				[
+					`${kind} comment after an @case test in parentheses`,
+					`@switch (role) { @case (admin + "_1"): ${c}${nl}{ <b /> } }`,
+				],
+				[
+					`${kind} comment between an @case test's ) and :`,
+					`@switch (role) { @case (admin + "_1") ${c}${nl}: { <b /> } }`,
+				],
+				[
+					`${kind} comment first in an @case test's parentheses`,
+					`@switch (role) { @case (${c}${nl}admin + "_1"): { <b /> } }`,
+				],
+				[
+					`${kind} comment in the middle of an @case test in parentheses`,
+					`@switch (role) { @case (admin ${c}${nl}+ "_1"): { <b /> } }`,
+				],
+				[
+					`${kind} comment last in an @case test's parentheses`,
+					`@switch (role) { @case (admin + "_1" ${c}${nl}): { <b /> } }`,
+				],
 				[`${kind} comment after the last @case`, `@switch (a) { @case 1: { <b /> }${nl}${c}${nl}}`],
 				[
 					`${kind} comment before the first @case`,
