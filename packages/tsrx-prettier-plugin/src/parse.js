@@ -530,9 +530,11 @@ class Adapter {
 
 			case 'TSEnumDeclaration':
 				if (node.members) {
+					// typescript-estree's body starts at the `{`, after any comments
+					// between the name and it (#840)
 					node.body = {
 						type: 'TSEnumBody',
-						start: node.id.end,
+						start: this.textWithoutComments.indexOf('{', node.id.end),
 						end: node.end,
 						members: node.members,
 					};

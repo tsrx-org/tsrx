@@ -1264,6 +1264,37 @@ describe('type parameter modifiers', () => {
 	});
 });
 
+describe('a comment between an enum name and its `{` (#840)', () => {
+	// The enum's body starts at the `{`, as in typescript-estree, so the
+	// comment is Prettier's to place
+	test.each([
+		['enum E /* c */ { A }', 'enum E /* c */ {\n  A,\n}\n'],
+		['const enum G /* c */ { A, B }', 'const enum G /* c */ {\n  A,\n  B,\n}\n'],
+		['declare enum H /* c */ {}', 'declare enum H /* c */ {}\n'],
+		['export enum J /* a */ /* b */ { A = 1 }', 'export enum J /* a */ /* b */ {\n  A = 1,\n}\n'],
+	])(
+		'keeps the block comment of %j outside the body, as Prettier does',
+		async (input, expected) => {
+			await expectFormat(input, expected);
+		},
+	);
+
+	// Prettier moves a line comment there into the body, and its second format
+	// moves it again (decision 48 in #852: printed as Prettier prints it, and on
+	// the list of Prettier bugs to report)
+	test('moves a line comment into the body on each format, as Prettier does', async () => {
+		const first = await format('enum F // c\n{ A }');
+		expect(first).toBe('enum F { // c\n  A,\n}\n');
+		expect(await format(first)).toBe('enum F {\n  // c\n  A,\n}\n');
+		for (const output of [first, 'enum F {\n  // c\n  A,\n}\n']) {
+			const typescript = await prettier.format(output === first ? 'enum F // c\n{ A }' : first, {
+				parser: 'typescript',
+			});
+			expect(typescript).toBe(output);
+		}
+	});
+});
+
 describe('parse errors', () => {
 	test('unclosed or mismatched tags are errors, not guessed markup', async () => {
 		await expect(format('const x = 1;\nconst y = <div>\n')).rejects.toThrow(/Unclosed tag '<div>'/);
