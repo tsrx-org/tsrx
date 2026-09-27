@@ -126,17 +126,16 @@ export const printer = {
 		remaining: withDirectivesAsStatements(estreeCommentHandlers.remaining),
 	},
 
-	// Prettier's JSX printer prints an element's own comments. This plugin prints
+	// Prettier's JSX printer prints an element's own comments, and so does this
+	// plugin for the elements it prints itself (`printElement`). It also prints
 	// the comments of a `@{ … }` value or a directive (inside its parentheses),
-	// and of a tag name (`printTagNameComments`); for an element with comment
-	// children, which `jsx.js` prints, Prettier prints its comments around it.
+	// and of a tag name (`printTagNameComments`).
 	/**
 	 * @param {AstPath<Node>} path
 	 * @param {...unknown} rest
 	 */
 	willPrintOwnComments(path, ...rest) {
 		if (isTsrxValue(path) || isCommentedTagName(path) || isCatchDirective(path)) return true;
-		if (path.node?.tsrxCommentChildren) return false;
 		const willPrintOwnComments = /** @type {(...args: unknown[]) => boolean} */ (
 			estree.willPrintOwnComments
 		);
@@ -171,11 +170,14 @@ export const printer = {
 
 	embed(path, options) {
 		const { node } = path;
+		// Prettier passes the full options, which `Printer` types loosely.
+		const printOptions = /** @type {ParserOptions<Node>} */ (options);
 
 		if (node.tsrxType === 'JSXStyleElement' && !node.openingElement.selfClosing) {
 			return async (textToDoc, print) =>
 				printRawTextElement(
 					path,
+					printOptions,
 					print,
 					node.css?.trim() ? await textToDoc(node.css, { parser: 'css' }) : '',
 				);
@@ -186,9 +188,14 @@ export const printer = {
 			// parser, so `prettier/standalone` needs no other plugin; any other
 			// body (JSON, an import map, a template) is kept as written.
 			return async (textToDoc, print) => {
-				if (!node.content.trim()) return printRawTextElement(path, print, '');
-				if (!isCodeScript(node)) return printRawTextAsWritten(path, print);
-				return printRawTextElement(path, print, await textToDoc(node.content, { parser: 'tsrx' }));
+				if (!node.content.trim()) return printRawTextElement(path, printOptions, print, '');
+				if (!isCodeScript(node)) return printRawTextAsWritten(path, printOptions, print);
+				return printRawTextElement(
+					path,
+					printOptions,
+					print,
+					await textToDoc(node.content, { parser: 'tsrx' }),
+				);
 			};
 		}
 
@@ -529,15 +536,15 @@ function printTsrx(path, options, print) {
 		// With embedded formatting off, Prettier doesn't call `embed()`, and a
 		// `<style>` or `<script>` body is printed as written.
 		case 'JSXStyleElement':
-			return node.tsrxRawText === undefined ? null : printRawTextAsWritten(path, print);
+			return node.tsrxRawText === undefined ? null : printRawTextAsWritten(path, options, print);
 
 		case 'JSXElement':
 		case 'JSXFragment':
 			if (node.tsrxRawText !== undefined && isRawScriptElement(node)) {
-				return printRawTextAsWritten(path, print);
+				return printRawTextAsWritten(path, options, print);
 			}
 			if (!node.tsrxCommentChildren) return null;
-			return maybeWrapJsxElementInParens(path, printJsxElementInternal(path, options, print));
+			return printElement(path, options, printJsxElementInternal(path, options, print));
 
 		case 'TSRXJSXComment': {
 			// Printed like any comment: a line comment ends its line, and a
@@ -748,32 +755,99 @@ function asStatement(node, callback) {
 /**
  * A `<style>` or `<script>` element whose body is formatted as CSS or TypeScript.
  * @param {AstPath<Node>} path
+ * @param {ParserOptions<Node>} options
  * @param {Print} print
  * @param {Doc} body
  * @returns {Doc}
  */
-function printRawTextElement(path, print, body) {
-	const element = [
+function printRawTextElement(path, options, print, body) {
+	return printElement(path, options, [
 		print('openingElement'),
 		body ? [indent([hardline, body]), hardline] : '',
 		print('closingElement'),
-	];
-	return maybeWrapJsxElementInParens(path, element);
+	]);
 }
 
 /**
  * A `<style>` or `<script>` element with its body as written.
  * @param {AstPath<Node>} path
+ * @param {ParserOptions<Node>} options
  * @param {Print} print
  * @returns {Doc}
  */
-function printRawTextAsWritten(path, print) {
-	return maybeWrapJsxElementInParens(path, [
+function printRawTextAsWritten(path, options, print) {
+	return printElement(path, options, [
 		print('openingElement'),
 		replaceEndOfLine(path.node.tsrxRawText),
 		print('closingElement'),
 	]);
 }
+
+/**
+ * An element this plugin prints itself (one with comment children, a `<style>`
+ * or a `<script>`), around it what Prettier's `printJsxElement` and `print`
+ * add around every element: its own comments, then the layout parentheses, and
+ * the parentheses `needsParens` asks for.
+ * @param {AstPath<Node>} path
+ * @param {ParserOptions<Node>} options
+ * @param {Doc} element
+ * @returns {Doc}
+ */
+function printElement(path, options, element) {
+	const needsParens = jsxNeedsParens(path);
+	const printed = maybeWrapJsxElementInParens(
+		path,
+		printOwnComments(path, options, element),
+		needsParens,
+	);
+	return needsParens ? ['(', printed, ')'] : printed;
+}
+
+/**
+ * The `JSXElement` case of Prettier's `needsParens`, which Prettier doesn't
+ * export. (Its checks on the parent give nothing else for an element in a
+ * strict-mode module.)
+ * @param {AstPath<Node>} path
+ * @returns {boolean}
+ */
+function jsxNeedsParens(path) {
+	const { key, parent } = path;
+	if (!parent) return false;
+	return (
+		key === 'callee' ||
+		(key === 'left' && parent.type === 'BinaryExpression' && parent.operator === '<') ||
+		(!JSX_NO_PARENS_PARENTS.has(parent.type) &&
+			!(key === 'declaration' && parent.type === 'ExportDefaultDeclaration'))
+	);
+}
+
+/** Parents where an element needs no parentheses, from Prettier's `needsParens`. */
+const JSX_NO_PARENS_PARENTS = new Set([
+	'ArrayExpression',
+	'ArrowFunctionExpression',
+	'AssignmentExpression',
+	'AssignmentPattern',
+	'BinaryExpression',
+	'ConditionalExpression',
+	'ExpressionStatement',
+	'JsExpressionRoot',
+	'JSXAttribute',
+	'JSXElement',
+	'JSXExpressionContainer',
+	'JSXFragment',
+	'LogicalExpression',
+	'CallExpression',
+	'OptionalCallExpression',
+	'NewExpression',
+	'ObjectProperty',
+	'Property',
+	'ReturnStatement',
+	'ThrowStatement',
+	'TypeCastExpression',
+	'VariableDeclarator',
+	'YieldExpression',
+	'MatchExpressionCase',
+]);
 
 /** Parents that never need parentheses around a multi-line JSX element. */
 const NO_WRAP_PARENTS = new Set([
@@ -792,12 +866,14 @@ const NO_WRAP_PARENTS = new Set([
 ]);
 
 /**
- * Prettier's `maybeWrapJsxElementInParens`, for the elements `embed()` prints.
+ * Prettier's `maybeWrapJsxElementInParens`: the parentheses of a multi-line
+ * element, left out where `needsParens` already adds them.
  * @param {AstPath<Node>} path
  * @param {Doc} element
+ * @param {boolean} [needsParens]
  * @returns {Doc}
  */
-function maybeWrapJsxElementInParens(path, element) {
+function maybeWrapJsxElementInParens(path, element, needsParens = false) {
 	if (!path.parent || NO_WRAP_PARENTS.has(path.parent.type)) {
 		return element;
 	}
@@ -823,7 +899,13 @@ function maybeWrapJsxElementInParens(path, element) {
 				(node, key) => key === 'expression' && node.type === 'ChainExpression',
 				(node, key) => key === 'expression' && node.type === 'JSXExpressionContainer',
 			));
-	return group([ifBreak('('), indent([softline, element]), softline, ifBreak(')')], {
-		shouldBreak,
-	});
+	return group(
+		[
+			needsParens ? '' : ifBreak('('),
+			indent([softline, element]),
+			softline,
+			needsParens ? '' : ifBreak(')'),
+		],
+		{ shouldBreak },
+	);
 }

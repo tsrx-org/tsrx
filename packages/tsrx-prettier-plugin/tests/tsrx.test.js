@@ -831,6 +831,78 @@ const b = (
 	});
 });
 
+// Elements this plugin prints itself (with comment children, `<script>`, and
+// `<style>`) get what Prettier's `printJsxElement` and `print` add around every
+// element: the parentheses `needsParens` asks for, and their own comments inside
+// the layout parentheses.
+describe('elements the plugin prints itself (#836)', () => {
+	test('keep the parentheses Prettier needs around an element', async () => {
+		await expectFormat(
+			`const a = (<div>/* c */</div>).props;
+const b = (<script></script>).props;
+async function f() {
+  return await <div>/* c */</div>;
+}
+const d = <div>/* c */</div> as Node;
+const v = !<div>/* c */</div>;
+class A extends (<div>/* c */</div>) {}`,
+			`const a = (<div>/* c */</div>).props;
+const b = (<script></script>).props;
+async function f() {
+  return await (<div>/* c */</div>);
+}
+const d = (<div>/* c */</div>) as Node;
+const v = !(<div>/* c */</div>);
+class A extends (<div>/* c */</div>) {}
+`,
+		);
+	});
+
+	test('print their own comments inside the layout parentheses', async () => {
+		await expectFormat(
+			`const e = (
+  // lead
+  <div>
+    // c
+    <b />
+  </div>
+);
+const s = (
+  // lead
+  <script>let a = 1;</script>
+);
+const t = (
+  /* lead */
+  <style>.b { color: red }</style>
+);
+const u = <div>/* c */</div> /* trail */;`,
+			`const e = (
+  // lead
+  <div>
+    // c
+    <b />
+  </div>
+);
+const s = (
+  // lead
+  <script>
+    let a = 1;
+  </script>
+);
+const t = (
+  /* lead */
+  <style>
+    .b {
+      color: red;
+    }
+  </style>
+);
+const u = <div>/* c */</div>; /* trail */
+`,
+		);
+	});
+});
+
 describe('comments before a tag name', () => {
 	// Prettier prints `<// note` with the name below it at the same indentation,
 	// which TSX can't parse.
