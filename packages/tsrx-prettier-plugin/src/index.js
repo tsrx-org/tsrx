@@ -5,7 +5,7 @@
 
 import * as estreePlugin from 'prettier/plugins/estree';
 import * as postcssPlugin from 'prettier/plugins/postcss';
-import { locEnd, locStart, parse } from './parse.js';
+import { hasIgnorePragma, hasPragma, locEnd, locStart, parse } from './parse.js';
 import { printer } from './printer.js';
 
 /** @type {Plugin<Node>['languages']} */
@@ -34,6 +34,8 @@ export const parsers = {
 		parse,
 		locStart,
 		locEnd,
+		hasPragma,
+		hasIgnorePragma,
 	},
 };
 

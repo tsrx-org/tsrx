@@ -289,6 +289,23 @@ function D() @{
 		);
 	});
 
+	// As Prettier keeps a blank line after a comment that ends a `case`.
+	test('a blank line after an @case arm that ends with a comment stays (#837)', async () => {
+		const source = `function App() @{
+  @switch (x) {
+    @case 1: {
+      <a />
+    } // after one
+
+    @case 2: {
+      <b />
+    }
+  }
+}
+`;
+		await expectFormat(source, source);
+	});
+
 	test('a brace in a comment before an @case body (#509)', async () => {
 		await expectFormat(
 			`const S = () => @switch (1) { @case 1: /* { */ { <b /> } @default: /* } */ { <i /> } }`,
@@ -948,6 +965,40 @@ describe('<script> bodies', () => {
 );
 `,
 		);
+	});
+});
+
+// Prettier's own pragma functions, so the options work as with Prettier's
+// `typescript` parser.
+describe('pragmas (#830)', () => {
+	test('insertPragma adds @format', async () => {
+		expect(await format(`const a  =  1;`, { insertPragma: true })).toBe(`/** @format */
+
+const a = 1;
+`);
+	});
+
+	test('requirePragma formats only a file with @format or @prettier', async () => {
+		const plain = `const a  =  1;
+`;
+		expect(await format(plain, { requirePragma: true })).toBe(plain);
+		expect(
+			await format(
+				`/** @format */
+const a  =  1;
+`,
+				{ requirePragma: true },
+			),
+		).toBe(`/** @format */
+const a = 1;
+`);
+	});
+
+	test('checkIgnorePragma leaves a file with @noformat as written', async () => {
+		const source = `/** @noformat */
+const a  =  1;
+`;
+		expect(await format(source, { checkIgnorePragma: true })).toBe(source);
 	});
 });
 

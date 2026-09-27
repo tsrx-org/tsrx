@@ -5,12 +5,25 @@
 
 import { builders, utils } from 'prettier/doc';
 import * as estreePlugin from 'prettier/plugins/estree';
+import * as standalone from 'prettier/standalone';
 import { printJsxElementInternal } from './jsx.js';
 import { TSRX_DIRECTIVES, isRawScriptElement } from './parse.js';
 
 const { breakParent, group, hardline, ifBreak, indent, join, line, lineSuffix, softline } =
 	builders;
 const { replaceEndOfLine } = utils;
+// Prettier's text and comment helpers. `prettier/standalone` exports the same
+// `util` as `prettier` and loads in the browser too; only its types leave
+// `util` out.
+const {
+	addDanglingComment,
+	hasNewline,
+	isNextLineEmpty,
+	isPreviousLineEmpty,
+	skipNewline,
+	skipSpaces,
+} = /** @type {{ util: typeof import('prettier').util }} */ (/** @type {unknown} */ (standalone))
+	.util;
 
 /**
  * Prettier's own JS/TS printer. Everything that isn't TSRX syntax is printed by
@@ -96,9 +109,7 @@ function handleCommentBeforeEmpty({ comment, precedingNode, enclosingNode, follo
 	) {
 		return false;
 	}
-	comment.leading = false;
-	comment.trailing = false;
-	(enclosingNode.comments ??= []).push(comment);
+	addDanglingComment(enclosingNode, comment, undefined);
 	return true;
 }
 
@@ -113,16 +124,6 @@ export const printer = {
 		ownLine: withDirectivesAsStatements(estreeCommentHandlers.ownLine),
 		endOfLine: withDirectivesAsStatements(estreeCommentHandlers.endOfLine),
 		remaining: withDirectivesAsStatements(estreeCommentHandlers.remaining),
-	},
-
-	// A comment between JSX children is printed as a node, and no other comment
-	// attaches to it.
-	canAttachComment(node, ...rest) {
-		if (node.type === 'TSRXJSXComment') return false;
-		const canAttachComment = /** @type {(...args: unknown[]) => boolean} */ (
-			estree.canAttachComment
-		);
-		return canAttachComment(node, ...rest);
 	},
 
 	// Prettier's JSX printer prints an element's own comments. This plugin prints
@@ -304,7 +305,8 @@ function printOwnComments(path, options, doc, { afterText = false } = {}) {
 			if (isBlock) {
 				leading.push(
 					hasNewline(text, comment.end)
-						? hasNewline(text, comment.start, true) && !(afterText && comment === first)
+						? hasNewline(text, comment.start, { backwards: true }) &&
+							!(afterText && comment === first)
 							? hardline
 							: line
 						: ' ',
@@ -312,10 +314,15 @@ function printOwnComments(path, options, doc, { afterText = false } = {}) {
 			} else {
 				leading.push(hardline);
 			}
-			if (isNextLineEmpty(text, comment.end)) leading.push(hardline);
+			// As Prettier's `printLeadingComment` checks for a blank line after it.
+			const next = skipNewline(text, skipSpaces(text, comment.end));
+			if (next !== false && hasNewline(text, next)) leading.push(hardline);
 		} else if (comment.trailing) {
 			const printed = printComment(comment);
-			if ((previous?.hasLineSuffix && !previous.isBlock) || hasNewline(text, comment.start, true)) {
+			if (
+				(previous?.hasLineSuffix && !previous.isBlock) ||
+				hasNewline(text, comment.start, { backwards: true })
+			) {
 				trailing.push(
 					lineSuffix([hardline, isPreviousLineEmpty(text, comment.start) ? hardline : '', printed]),
 				);
@@ -330,32 +337,6 @@ function printOwnComments(path, options, doc, { afterText = false } = {}) {
 		}
 	}
 	return [...leading, doc, ...trailing];
-}
-
-/**
- * Whether a line break follows `index` (or precedes it, `backwards`) with only
- * spaces and tabs between.
- * @param {string} text
- * @param {number} index
- * @param {boolean} [backwards]
- * @returns {boolean}
- */
-function hasNewline(text, index, backwards = false) {
-	let i = backwards ? index - 1 : index;
-	while (i >= 0 && i < text.length && (text[i] === ' ' || text[i] === '\t'))
-		i += backwards ? -1 : 1;
-	return text[i] === '\n' || text[i] === '\r';
-}
-
-/**
- * Whether the line before the one at `index` is blank.
- * @param {string} text
- * @param {number} index
- * @returns {boolean}
- */
-function isPreviousLineEmpty(text, index) {
-	const before = text.slice(0, index);
-	return /\n[ \t]*\r?\n[ \t]*$/u.test(before);
 }
 
 /**
@@ -694,7 +675,7 @@ function printBeforeBranch(node, options) {
 	return [
 		isPreviousLineEmpty(text, first.start)
 			? [hardline, hardline]
-			: hasNewline(text, first.start, true)
+			: hasNewline(text, first.start, { backwards: true })
 				? hardline
 				: ' ',
 		join(
@@ -845,16 +826,4 @@ function maybeWrapJsxElementInParens(path, element) {
 	return group([ifBreak('('), indent([softline, element]), softline, ifBreak(')')], {
 		shouldBreak,
 	});
-}
-
-/**
- * Whether the line after `index` is blank, like Prettier's `isNextLineEmpty`
- * for a node that ends a line.
- * @param {string} text
- * @param {number} index
- * @returns {boolean}
- */
-function isNextLineEmpty(text, index) {
-	const rest = /^[ \t]*(?:\r\n?|\n)[ \t]*(\r\n?|\n)?/u.exec(text.slice(index));
-	return Boolean(rest?.[1]);
 }

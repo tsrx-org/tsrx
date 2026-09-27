@@ -3,6 +3,7 @@
  */
 
 import { DIAGNOSTIC_CODES, parseModule } from '@tsrx/core';
+import { parsers as acornParsers } from 'prettier/plugins/acorn';
 
 /**
  * A loosely typed AST node. The parser's acorn-typescript output is reshaped in
@@ -126,11 +127,9 @@ export function parse(text, options) {
 	if (rejected) throw createParseError(rejected);
 	const adapter = new Adapter(text, comments);
 	const program = adapter.visit(ast);
-	program.start = 0;
-	program.end = text.length;
 	program.comments = mergeNestledJsdocComments(
 		comments
-			.filter((comment) => !adapter.isInsideRawText(comment) && !adapter.jsxComments.has(comment))
+			.filter((comment) => !adapter.jsxComments.has(comment))
 			.map(({ type, value, start, end }) => ({ type, value, start, end })),
 	);
 	return program;
@@ -196,48 +195,10 @@ function isIndentableBlockComment(comment) {
 }
 
 /**
- * Prettier's `locStart`: a declaration starts at its first decorator.
- * @param {Node} node
- * @returns {number}
+ * Prettier's own location and pragma functions for JavaScript parsers.
+ * `locEnd` reads the `__contentEnd` the adapter sets on statements.
  */
-export function locStart(node) {
-	const start = node.range?.[0] ?? node.start;
-	const decorators = node.declaration?.decorators ?? node.decorators;
-	if (decorators?.length) {
-		return Math.min(locStart(decorators[0]), start);
-	}
-	return start;
-}
-
-/**
- * Prettier's `locEnd`, which comment attachment relies on: a statement ends
- * where its content ends, before a semicolon that comments separate from it,
- * and a compound statement ends where its body does.
- * @param {Node} node
- * @returns {number}
- */
-export function locEnd(node) {
-	switch (node.type) {
-		case 'IfStatement':
-			return locEnd(node.alternate ?? node.consequent);
-		case 'ForInStatement':
-		case 'ForOfStatement':
-		case 'ForStatement':
-		case 'LabeledStatement':
-		case 'WithStatement':
-		case 'WhileStatement':
-			return locEnd(node.body);
-		case 'BreakStatement':
-			return node.label ? locEnd(node.label) : locStart(node) + 'break'.length;
-		case 'ContinueStatement':
-			return node.label ? locEnd(node.label) : locStart(node) + 'continue'.length;
-		case 'DebuggerStatement':
-			return locStart(node) + 'debugger'.length;
-		case 'VariableDeclaration':
-			return locEnd(node.declarations.at(-1));
-	}
-	return node.__contentEnd ?? node.range?.[1] ?? node.end;
-}
+export const { locStart, locEnd, hasPragma, hasIgnorePragma } = acornParsers.acorn;
 
 class Adapter {
 	/**
@@ -255,12 +216,6 @@ class Adapter {
 					? text.slice(comment.start + 2, comment.end - 2)
 					: text.slice(comment.start + 2, comment.end);
 		}
-		/**
-		 * Source ranges of `<style>` and `<script>` bodies. Comments inside them
-		 * belong to the embedded CSS/TypeScript, not to the TSRX AST.
-		 * @type {Array<[number, number]>}
-		 */
-		this.rawTextRanges = [];
 		/**
 		 * Comments between JSX children, which are `TSRXJSXComment` nodes instead
 		 * of comments for Prettier to attach.
@@ -500,14 +455,6 @@ class Adapter {
 	}
 
 	/**
-	 * @param {Comment} comment
-	 * @returns {boolean}
-	 */
-	isInsideRawText(comment) {
-		return this.rawTextRanges.some(([start, end]) => comment.start >= start && comment.end <= end);
-	}
-
-	/**
 	 * Prettier keeps parentheses only around JSDoc type casts
 	 * (`/** @type {T} *\/ (value)`), like its `babel` parser.
 	 * @param {Node} node
@@ -557,7 +504,6 @@ class Adapter {
 			// `node.content`. (A stylesheet's own positions are CSS offsets.)
 			// Without embedded formatting, the body is printed as written.
 			if (node.closingElement) {
-				this.rawTextRanges.push([node.openingElement.end, node.closingElement.start]);
 				node.tsrxRawText = this.text.slice(node.openingElement.end, node.closingElement.start);
 			}
 			if (node.type === 'JSXStyleElement') node.children = [];
@@ -766,7 +712,6 @@ class Adapter {
 						node.argument.type === 'TSLiteralType' ? node.argument.literal : node.argument;
 					delete node.argument;
 				}
-				node.options ??= null;
 				break;
 
 			case 'TSMappedType':

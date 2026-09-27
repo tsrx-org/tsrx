@@ -65,14 +65,6 @@ function isMeaningfulJsxText(node) {
 	);
 }
 
-/** @param {Node} node */
-function isEmptyJsxElement(node) {
-	if (node.children.length === 0) return true;
-	if (node.children.length > 1) return false;
-	const child = node.children[0];
-	return child.type === 'JSXText' && !isMeaningfulJsxText(child);
-}
-
 /**
  * Detect an expression node representing `{" "}`.
  * @param {Node} node
@@ -118,23 +110,13 @@ const isEmptyStringOrAnyLine = (doc) =>
 export function printJsxElementInternal(path, options, print) {
 	const { node } = path;
 
-	if (node.type === 'JSXElement' && isEmptyJsxElement(node)) {
-		return [print('openingElement'), print('closingElement')];
-	}
-
+	// TSRX: this runs only for an element with a comment child, which is never
+	// empty and never has a lone `{…}` child, so Prettier's paths for those are
+	// left out.
 	const openingLines =
 		node.type === 'JSXElement' ? print('openingElement') : print('openingFragment');
 	const closingLines =
 		node.type === 'JSXElement' ? print('closingElement') : print('closingFragment');
-
-	if (
-		node.children.length === 1 &&
-		node.children[0].type === 'JSXExpressionContainer' &&
-		(node.children[0].expression.type === 'TemplateLiteral' ||
-			node.children[0].expression.type === 'TaggedTemplateExpression')
-	) {
-		return [openingLines, ...path.map(print, 'children'), closingLines];
-	}
 
 	// Convert `{" "}` to text nodes containing a space.
 	// This makes it easy to turn them into `jsxWhitespace` which
