@@ -81,6 +81,7 @@ const SHORTHAND_ATTRIBUTE_KEYS = ['value'];
  * `{` moves into the body.
  */
 const COMMENT_STATEMENT_DIRECTIVES = new Set([
+	'JSXForExpression',
 	'JSXIfExpression',
 	'JSXSwitchExpression',
 	'JSXTryExpression',
