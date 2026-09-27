@@ -207,7 +207,6 @@ export namespace Parse {
 			end: number,
 			start_loc: AST.Position,
 			end_loc: AST.Position,
-			metadata?: CommentMetaData | null,
 		): void;
 	}
 
@@ -218,12 +217,6 @@ export namespace Parse {
 	 */
 	export interface ParseInputOptions extends Omit<Options, 'ecmaVersion'> {
 		ecmaVersion: acorn.Options['ecmaVersion'];
-	}
-
-	export interface CommentMetaData {
-		containerId: number;
-		childIndex: number;
-		beforeMeaningfulChild: boolean;
 	}
 
 	/**

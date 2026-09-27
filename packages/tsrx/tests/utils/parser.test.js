@@ -6878,7 +6878,6 @@ describe('comments in element bodies and closing tags', () => {
 			for (const node of div.children) {
 				if (node !== container) expect(commentsOf(node), source).toEqual({});
 			}
-			expect(div.metadata.elementLeadingComments, source).toBeUndefined();
 		}
 
 		// After the last child, too, not on the closing tag
@@ -12438,6 +12437,21 @@ describe('comments between template children', () => {
 			'text after a directive block, from the block on',
 			'function App() @{\n\t<p>\n\t\t@if (a) {\n\t\t\t<b />\n\t\t} /* c */ else\n\t</p>\n}',
 			['\n\t\t', 'JSXIfExpression', ' ', '{}', ' else\n\t'],
+		],
+		[
+			'text and a comment before the closing tag, in a container',
+			'function App() @{\n\t<main>{x && <p>a /* c */</p>}</main>\n}',
+			['a ', '{}'],
+		],
+		[
+			'text and a comment before the closing tag, in an attribute value',
+			'<b k=<p>n /* c */</p> />;',
+			['n ', '{}'],
+		],
+		[
+			'only a comment, in a container',
+			'function App() @{\n\t<main>{x && <p>/* c */</p>}</main>\n}',
+			['{}'],
 		],
 		[
 			'layout whitespace between elements',

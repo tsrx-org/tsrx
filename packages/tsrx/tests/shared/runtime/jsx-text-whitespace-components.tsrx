@@ -189,6 +189,8 @@ export function JsxTextWhitespaceApp() @{
 		// prettier-ignore
 		<div>{show && <span class="ws-container-space-after-close"><b>1</b> 2</span>}</div>
 		// prettier-ignore
+		<div>{show && <span class="ws-container-comment-last">a /* c */</span>}</div>
+		// prettier-ignore
 		<Slot content={<span class="ws-attr-space-after-close"><b>1</b> 2</span>} />
 		// prettier-ignore
 		<div>{show && <section>@if (show) { <span class="ws-container-directive">{'1'} 2</span> }</section>}</div>
@@ -263,6 +265,11 @@ export const jsx_text_whitespace_cases = [
 	],
 	['two comment lines between lines of text', '.ws-two-comment-lines', 'ab'],
 	['comments touching tags', '.ws-comment-touching-tags', '<b>t</b>two<i></i><u></u>'],
+	[
+		'text and a comment before the closing tag of an element in a container',
+		'.ws-container-comment-last',
+		'a ',
+	],
 	['a line comment after a directive block', '.ws-comment-after-directive', '<b>t</b> two'],
 	[
 		'a space after a closing tag in an element in a container',

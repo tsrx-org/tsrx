@@ -2566,7 +2566,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 		/**
 		 * @type {Parse.Options['onComment']}
 		 */
-		onComment: (block, value, start, end, start_loc, end_loc, metadata) => {
+		onComment: (block, value, start, end, start_loc, end_loc) => {
 			if (block && /\n/.test(value)) {
 				let a = start;
 				while (a > 0 && source[a - 1] !== '\n') a -= 1;
@@ -2587,7 +2587,6 @@ export function get_comment_handlers(source, comments, index = 0) {
 					start: start_loc,
 					end: end_loc,
 				},
-				context: metadata ?? null,
 			});
 		},
 
@@ -2599,13 +2598,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 			comments = comments
 				.filter((comment) => comment.start >= index)
-				.map(({ type, value, start, end, loc, context }) => ({
+				.map(({ type, value, start, end, loc }) => ({
 					type,
 					value,
 					start,
 					end,
 					loc,
-					context,
 				}));
 			for (const comment of comments) {
 				commentsByStart.set(comment.start, comment);
@@ -2657,28 +2655,6 @@ export function get_comment_handlers(source, comments, index = 0) {
 						return false;
 					}
 
-					/**
-					 * @param {AST.CommentWithLocation} comment
-					 * @returns {(AST.NativeTSRXTemplateNode & AST.NodeWithLocation) | null}
-					 */
-					function getEmptyElementInnerCommentTarget(comment) {
-						const element = path.findLast((ancestor) => isNativeTemplateNode(ancestor));
-						const openingEnd =
-							element?.type === 'JSXFragment'
-								? element.openingFragment?.end
-								: element?.openingElement?.end;
-						if (
-							!element ||
-							!isEmptyTemplateNode(element) ||
-							openingEnd === undefined ||
-							!(comment.start >= openingEnd && comment.end <= element.end)
-						) {
-							return null;
-						}
-
-						return element;
-					}
-
 					// Skip CSS nodes entirely - they use CSS-local positions (relative to
 					// the <style> tag content) which would incorrectly match against
 					// absolute source positions of JS/HTML comments. Also consume any
@@ -2726,13 +2702,6 @@ export function get_comment_handlers(source, comments, index = 0) {
 						return;
 					}
 
-					// A comment in an element's body goes to the child or closing tag
-					// after it by position, whichever tokenizer path read it. The
-					// `context` the parser gives a comment in an element in a `{…}`
-					// container marks it as before the first child until a child is
-					// finished, which a `{…}` child isn't when the token after it is
-					// read, so it can't tell a comment after such a child from one
-					// before the first child (#637).
 					while (comments[0] && comments[0].start < getCommentStart(node)) {
 						// Skip comments that are inside an attribute of an ancestor JSX element.
 						// Since zimmerframe visits children before attributes, we need to leave
@@ -2743,17 +2712,6 @@ export function get_comment_handlers(source, comments, index = 0) {
 							)
 						) {
 							break;
-						}
-
-						const maybeInner = getEmptyElementInnerCommentTarget(
-							/** @type {AST.CommentWithLocation} */ (comments[0]),
-						);
-						if (maybeInner) {
-							pushInnerComment(
-								maybeInner,
-								/** @type {AST.CommentWithLocation} */ (comments.shift()),
-							);
-							continue;
 						}
 
 						const comment = /** @type {AST.CommentWithLocation} */ (comments.shift());
@@ -2802,21 +2760,6 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 						if (isCommentInsideAttributeExpression()) {
 							(node.leadingComments ||= []).push(comment);
-							continue;
-						}
-
-						const ancestorElements = path
-							.filter(has_location)
-							.filter(isNativeTemplateNode)
-							.sort((a, b) => a.loc.start.line - b.loc.start.line);
-
-						const targetAncestor = ancestorElements.find(
-							(ancestor) => comment.loc.start.line < ancestor.loc.start.line,
-						);
-
-						if (targetAncestor) {
-							const targetMetadata = getNodeMetadata(targetAncestor);
-							(targetMetadata.elementLeadingComments ||= []).push(comment);
 							continue;
 						}
 
@@ -3367,15 +3310,6 @@ export function get_comment_handlers(source, comments, index = 0) {
 											break;
 										}
 
-										const maybeInner = getEmptyElementInnerCommentTarget(potentialComment);
-										if (maybeInner) {
-											pushInnerComment(
-												maybeInner,
-												/** @type {AST.CommentWithLocation} */ (comments.shift()),
-											);
-											continue;
-										}
-
 										// Like Prettier, the comments before the `)` all trail the last
 										// one, even with other comments or a trailing comma between
 										// (`f(a, b /* c */ /* d */)`, `f(a, b /* c */,)`)
@@ -3407,31 +3341,11 @@ export function get_comment_handlers(source, comments, index = 0) {
 											break;
 										}
 
-										const maybeInner = getEmptyElementInnerCommentTarget(comment);
-										if (maybeInner) {
-											pushInnerComment(
-												maybeInner,
-												/** @type {AST.CommentWithLocation} */ (comments.shift()),
-											);
-											continue;
-										}
-
 										(node.trailingComments ||= []).push(comment);
 										comments.shift();
 									}
 								}
 							} else if (/** @type {AST.NodeWithLocation} */ (node).end <= comments[0].start) {
-								const maybeInner = getEmptyElementInnerCommentTarget(
-									/** @type {AST.CommentWithLocation} */ (comments[0]),
-								);
-								if (maybeInner) {
-									pushInnerComment(
-										maybeInner,
-										/** @type {AST.CommentWithLocation} */ (comments.shift()),
-									);
-									return;
-								}
-
 								// A `)` that closes a statement header, as in `if (a) /* c */ b();`,
 								// ends the header: like Prettier, a comment after it leads the body,
 								// unless another `)` follows it (`if ((a) /* c */) b();`)

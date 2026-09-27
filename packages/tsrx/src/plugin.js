@@ -1141,7 +1141,6 @@ export function TSRXPlugin(config) {
 		class TSRXParser extends Parser {
 			/** @type {AST.Node[]} */
 			#path = [];
-			#commentContextId = 0;
 			#collect = false;
 			#loose = false;
 			// Set while `parseVarStatement` or `parseVar` lets `const` declarators omit
@@ -1711,7 +1710,7 @@ export function TSRXPlugin(config) {
 						}
 
 						if (comment_start >= token_end) {
-							this.#emitTemplateLineComment(comment_start, index, null);
+							this.#emitTemplateLineComment(comment_start, index);
 						}
 						comments.push({
 							type: 'Line',
@@ -1738,7 +1737,6 @@ export function TSRXPlugin(config) {
 								index,
 								new acorn.Position(comment_start_loc.line, comment_start_loc.column),
 								new acorn.Position(comment_end_loc.line, comment_end_loc.column),
-								null,
 							);
 						}
 						comments.push({
@@ -1938,9 +1936,8 @@ export function TSRXPlugin(config) {
 			/**
 			 * @param {number} start
 			 * @param {number} end
-			 * @param {Parse.CommentMetaData | null} metadata
 			 */
-			#emitTemplateLineComment(start, end, metadata) {
+			#emitTemplateLineComment(start, end) {
 				if (!this.options.onComment) return;
 				this.options.onComment(
 					false,
@@ -1949,7 +1946,6 @@ export function TSRXPlugin(config) {
 					end,
 					get_line_info(this, start),
 					get_line_info(this, end),
-					metadata,
 				);
 			}
 
@@ -6898,45 +6894,6 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * @returns {Parse.CommentMetaData | null}
-			 */
-			#createCommentMetadata() {
-				if (this.#path.length === 0) {
-					return null;
-				}
-
-				const container = this.#path[this.#path.length - 1];
-				if (!this.#isNativeTemplateNode(container)) {
-					return null;
-				}
-
-				// A directive's `{ }` block is a native template node too, and it has no
-				// `children`, so read the slot defensively.
-				const container_children = /** @type {{ children?: unknown }} */ (container).children;
-				const children = Array.isArray(container_children)
-					? /** @type {AST.Node[]} */ (container_children)
-					: [];
-				const hasMeaningfulChildren = children.some(
-					(child) => child && !isWhitespaceTextNode(child),
-				);
-
-				if (hasMeaningfulChildren) {
-					return null;
-				}
-
-				container.metadata ??= { path: [] };
-				if (container.metadata.commentContainerId === undefined) {
-					container.metadata.commentContainerId = ++this.#commentContextId;
-				}
-
-				return /*** @type {Parse.CommentMetaData} */ ({
-					containerId: container.metadata.commentContainerId,
-					childIndex: children.length,
-					beforeMeaningfulChild: !hasMeaningfulChildren,
-				});
-			}
-
-			/**
 			 * Helper method to get the element name from a JSX identifier or member expression
 			 * @type {Parse.Parser['getElementName']}
 			 */
@@ -9355,7 +9312,6 @@ export function TSRXPlugin(config) {
 
 								// Call onComment if it exists
 								if (this.options.onComment) {
-									const metadata = this.#createCommentMetadata();
 									this.options.onComment(
 										false,
 										commentText,
@@ -9363,11 +9319,12 @@ export function TSRXPlugin(config) {
 										commentEnd,
 										startLoc,
 										endLoc,
-										metadata,
 									);
 								}
 
-								// Continue processing from current position
+								// The text before the comment is part of the run, which
+								// `#parseTemplateRawText` reads again from its start
+								out += this.input.slice(chunkStart, commentStart);
 								chunkStart = this.pos;
 								break;
 							} else if (this.input.charCodeAt(this.pos + 1) === CharCode.asterisk) {
@@ -9395,7 +9352,6 @@ export function TSRXPlugin(config) {
 
 								// Call onComment if it exists
 								if (this.options.onComment) {
-									const metadata = this.#createCommentMetadata();
 									this.options.onComment(
 										true,
 										commentText,
@@ -9403,11 +9359,12 @@ export function TSRXPlugin(config) {
 										commentEnd,
 										startLoc,
 										endLoc,
-										metadata,
 									);
 								}
 
-								// Continue processing from current position
+								// The text before the comment is part of the run, which
+								// `#parseTemplateRawText` reads again from its start
+								out += this.input.slice(chunkStart, commentStart);
 								chunkStart = this.pos;
 								break;
 							}
@@ -9758,13 +9715,6 @@ export function TSRXPlugin(config) {
 					}
 				}
 
-				// Opening-tag parsing can tokenize comments that appear before the first
-				// child. Preserve that early container id so the comment stays associated
-				// with this element during comment attachment/printing.
-				if (node.metadata.commentContainerId === undefined) {
-					node.metadata.commentContainerId = ++this.#commentContextId;
-				}
-
 				this.#path.push(node);
 
 				if (!is_fragment && open.selfClosing) {
@@ -9883,18 +9833,9 @@ export function TSRXPlugin(config) {
 				if (this.#atCodeBlockStart()) {
 					const at_index = skip_whitespace_from(this.input, this.start);
 					if (this.start !== at_index) {
-						const ws_start = this.start;
-						const ws_start_loc = this.startLoc;
-						const ws_value = this.input.slice(ws_start, at_index);
-						const text_node = /** @type {ESTreeJSX.JSXText} */ (
-							this.startNodeAt(ws_start, ws_start_loc)
-						);
-						text_node.value = ws_value;
-						text_node.raw = ws_value;
+						this.#addSkippedTemplateText(body, this.start, at_index);
 						const loc = get_line_info(this, at_index);
 						const at_position = new acorn.Position(loc.line, loc.column);
-						this.finishNodeAt(text_node, 'JSXText', at_index, at_position);
-						body.push(text_node);
 						this.pos = at_index;
 						this.start = at_index;
 						this.startLoc = at_position;

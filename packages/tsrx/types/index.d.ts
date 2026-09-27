@@ -134,7 +134,6 @@ export interface BaseNodeMetaData {
 	 */
 	string_literal_source_span?: boolean;
 	is_capitalized?: boolean;
-	commentContainerId?: number;
 	/**
 	 * A `prettier-ignore` comment attached elsewhere keeps this node as written,
 	 * like Prettier's `prettierIgnore` for the union member after one.
@@ -204,7 +203,6 @@ export interface BaseNodeMetaData {
 		scopedClasses: TopScopedClasses;
 		hash: string;
 	};
-	elementLeadingComments?: AST.Comment[];
 	returns?: AST.ReturnStatement[];
 	has_return?: boolean;
 	has_throw?: boolean;
@@ -628,7 +626,6 @@ declare module 'estree' {
 	}
 
 	interface Comment {
-		context?: Parse.CommentMetaData | null;
 		/**
 		 * A `prettier-ignore` comment that marks another node instead of the
 		 * one it's attached to (see `BaseNodeMetaData.prettierIgnore`).
