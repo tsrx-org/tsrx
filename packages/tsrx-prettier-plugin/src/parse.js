@@ -438,11 +438,13 @@ class Adapter {
 				break;
 
 			case 'PropertyDefinition':
-			case 'TSAbstractPropertyDefinition':
+				// typescript-estree names an abstract member's type, and Prettier
+				// checks it: it unquotes an abstract field's key (#903).
 				if (node.accessor) {
-					node.type =
-						node.type === 'PropertyDefinition' ? 'AccessorProperty' : 'TSAbstractAccessorProperty';
+					node.type = node.abstract ? 'TSAbstractAccessorProperty' : 'AccessorProperty';
 					delete node.accessor;
+				} else if (node.abstract) {
+					node.type = 'TSAbstractPropertyDefinition';
 				}
 				break;
 
@@ -481,7 +483,12 @@ class Adapter {
 				break;
 
 			case 'MethodDefinition':
-			case 'TSAbstractMethodDefinition':
+				if (node.abstract) node.type = 'TSAbstractMethodDefinition';
+				// A method without a body (an overload, an abstract method, a method
+				// of a `declare class`): Prettier reads `TSDeclareMethod` as babel's
+				// whole method and prints its `async`, `*` and key again (#916).
+				if (node.value.type === 'TSDeclareMethod')
+					node.value.type = 'TSEmptyBodyFunctionExpression';
 				if (node.typeParameters) {
 					// The function starts at its type parameters, as in typescript-estree,
 					// so a comment inside them belongs to the function.
