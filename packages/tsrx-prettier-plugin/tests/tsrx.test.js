@@ -748,6 +748,70 @@ const z = (
 	});
 });
 
+// A JSX statement outside a template body is a plain expression statement,
+// printed as Prettier prints it, on the first format (#923).
+describe('an element statement outside a template body', () => {
+	test('in a static block, a namespace, and single-statement bodies', async () => {
+		const source = `class Registry {
+  static {
+    <div />
+  }
+}
+namespace N {
+  <div />
+}
+function f(x) {
+  if (x) <div />
+  else <b />
+  for (const a of b) <i />
+  while (x) <i />
+  do <i />; while (x)
+  label: <div />
+}
+`;
+		const expected = `class Registry {
+  static {
+    <div />;
+  }
+}
+namespace N {
+  <div />;
+}
+function f(x) {
+  if (x) <div />;
+  else <b />;
+  for (const a of b) <i />;
+  while (x) <i />;
+  do <i />;
+  while (x);
+  label: <div />;
+}
+`;
+		await expectFormat(source, expected);
+		expect(await prettier.format(source, { parser: 'typescript' })).toBe(expected);
+	});
+
+	test("in the single-statement bodies of a template's setup", async () => {
+		await expectFormat(
+			`export function C({ x }) @{
+  if (x) <div />
+  else <b />
+  for (const a of b) <i />
+  label: <div />
+  <span />
+}`,
+			`export function C({ x }) @{
+  if (x) <div />;
+  else <b />;
+  for (const a of b) <i />;
+  label: <div />;
+  <span />
+}
+`,
+		);
+	});
+});
+
 describe('elements', () => {
 	test('shorthand props stay shorthand', async () => {
 		await expectFormat(

@@ -402,11 +402,26 @@ class Adapter {
 				if (!isRawScriptElement(node)) this.markJsxComments(node);
 				break;
 
+			// A JSX statement outside a template body is a plain expression
+			// statement, printed as Prettier prints it (`<div />;`): at module
+			// level, in a `static` block or a namespace, and as the single-statement
+			// body of an `if`, a loop or a label (#923).
 			case 'Program':
-				// A module-level JSX statement is a plain expression statement.
-				node.body = node.body.map((/** @type {Node} */ child) =>
-					isTsrxOutput(child) ? expressionStatement(child) : child,
-				);
+			case 'StaticBlock':
+			case 'TSModuleBlock':
+				node.body = node.body.map(plainStatement);
+				break;
+			case 'IfStatement':
+				node.consequent = plainStatement(node.consequent);
+				if (node.alternate) node.alternate = plainStatement(node.alternate);
+				break;
+			case 'ForStatement':
+			case 'ForInStatement':
+			case 'ForOfStatement':
+			case 'WhileStatement':
+			case 'DoWhileStatement':
+			case 'LabeledStatement':
+				node.body = plainStatement(node.body);
 				break;
 
 			// `@{ … }` is a block whose last statement is the output node. Prettier
@@ -650,6 +665,15 @@ function isTsrxOutput(node) {
  */
 function expressionStatement(node) {
 	return { type: 'ExpressionStatement', expression: node, start: node.start, end: node.end };
+}
+
+/**
+ * A JSX statement outside a template body, printed with a semicolon.
+ * @param {Node} node
+ * @returns {Node}
+ */
+function plainStatement(node) {
+	return isTsrxOutput(node) ? expressionStatement(node) : node;
 }
 
 /**
