@@ -2223,7 +2223,17 @@ describe('parse errors', () => {
 		await expectFormat('declare declare class A {}', 'declare class A {}\n');
 		await expectFormat('type A<in in T> = T;', 'type A<in T> = T;\n');
 		await expectFormat('function f(...a?: number[]) {}', 'function f(...a: number[]) {}\n');
-		// Nor a modifier in a block, or `declare` before an import.
+		// A rest parameter's default is kept (#945), where Prettier's typescript
+		// parser drops it.
+		await expectFormat('function f(...a = []) {}', 'function f(...a = []) {}\n');
+		await expectFormat(
+			'const g = (...a: number[] = []) => a;',
+			'const g = (...a: number[] = []) => a;\n',
+		);
+		await expectFormat('const h = async (...a = []) => a;', 'const h = async (...a = []) => a;\n');
+		await expectFormat('type H = (...a = []) => void;', 'type H = (...a = []) => void;\n');
+		// Prettier's typescript parser formats these the same way: a modifier in a
+		// block isn't printed, nor `declare` before an import.
 		await expectFormat(
 			`function f() {
   public class A {}
@@ -2414,9 +2424,10 @@ describe('parse errors', () => {
 	});
 
 	// A rest element's or rest parameter's default (#770, #726) prints as
-	// written. Prettier's typescript parser keeps it only in an assignment: it
-	// leaves a rest parameter's and an object binding pattern's out, and makes
-	// an array binding pattern's rest element a plain element (`[a = 1]`).
+	// written, with a rest parameter's `?` and type annotation before it.
+	// Prettier's typescript parser keeps it only in an assignment: it leaves a
+	// rest parameter's and an object binding pattern's out, and makes an array
+	// binding pattern's rest element a plain element (`[a = 1]`).
 	test("a rest element's or rest parameter's default is kept", async () => {
 		for (const source of [
 			'const [...a = 1] = b;',
@@ -2424,9 +2435,6 @@ describe('parse errors', () => {
 			'[...a = 1] = b;',
 			'({ ...a = 1 } = b);',
 			'function f(...a?: number[] = []) {}',
-			'const g = (...a: number[] = []) => a;',
-			'const h = async (...a = []) => a;',
-			'type H = (...a = []) => void;',
 		]) {
 			await expectFormat(source, `${source}\n`);
 		}
