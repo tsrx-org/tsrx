@@ -77,24 +77,31 @@ const REJECTED_CODES = new Set([
 ]);
 
 /**
- * A modifier before `export` (`abstract export class A {}`, TS1029). Prettier's
- * `typescript` parser drops the `export` there (`abstract class A {}`), which
- * only its own tree gives, so the plugin rejects it (decision 60 of #852). A
- * class member's modifiers out of order (`static public x`) are TS1029 too, and
- * Prettier prints them in order, as the plugin does.
- */
-const MODIFIER_BEFORE_EXPORT = /^'export' modifier must precede '\w+' modifier\.$/u;
-
-/**
- * @param {Error & { code?: string }} error
+ * Whether `error` is for a modifier before `export` (`abstract export class A
+ * {}`): TS1029 at the `export`. Prettier's `typescript` parser drops the
+ * `export` there (`abstract class A {}`), which only its own tree gives, so the
+ * plugin rejects it (decision 60 of #852). A class member's modifiers out of
+ * order (`static public x`) are TS1029 too, and Prettier prints them in order,
+ * as the plugin does.
+ * @param {ParseError} error
+ * @param {string} text
  * @returns {boolean}
  */
-function isRejected(error) {
+function isModifierBeforeExport(error, text) {
+	return error.code === 'TS1029' && error.pos !== undefined && text.startsWith('export', error.pos);
+}
+
+/**
+ * @param {ParseError} error
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isRejected(error, text) {
 	return (
 		!!error.code &&
 		(BROKEN_MARKUP_CODES.has(error.code) ||
 			REJECTED_CODES.has(error.code) ||
-			(error.code === 'TS1029' && MODIFIER_BEFORE_EXPORT.test(error.message)))
+			isModifierBeforeExport(error, text))
 	);
 }
 
@@ -145,7 +152,7 @@ export function parse(text, options) {
 	} catch (error) {
 		throw createParseError(/** @type {ParseError} */ (error));
 	}
-	const rejected = errors.find(isRejected);
+	const rejected = errors.find((error) => isRejected(error, text));
 	if (rejected) throw createParseError(rejected);
 	const adapter = new Adapter(text, comments);
 	const program = adapter.visit(ast);
@@ -160,6 +167,7 @@ export function parse(text, options) {
 /**
  * @typedef {Error & {
  *   code?: string,
+ *   pos?: number,
  *   loc?: { line: number, column: number } | { start: { line: number, column: number } },
  * }} ParseError
  */

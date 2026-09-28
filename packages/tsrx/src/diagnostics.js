@@ -2,7 +2,7 @@
  * TSRX's own error codes, one per mistake only TSRX reports. The TSRX
  * specification lists each with its message and an example (its appendix,
  * "Error codes"). A mistake TypeScript also reports has TypeScript's code
- * instead (`TS1005`), from {@link MESSAGE_CODES}.
+ * instead (`TS1005`), from {@link TS_ERRORS}.
  *
  * - `TSRX1xxx`: markup syntax only TSRX has
  * - `TSRX2xxx`: template rules
@@ -121,664 +121,1180 @@ export const DIAGNOSTIC_CODES = {
 	JAVASCRIPT_SYNTAX: 'TSRX4003',
 };
 
+/**
+ * An error TSRX reports: its code, TSRX's own or TypeScript's for a mistake
+ * TypeScript also reports, and its message.
+ * @typedef {{ code: string, message: string }} Diagnostic
+ */
+
+/**
+ * An error whose message takes values, such as a name from the source. Called
+ * with them, it gives the {@link Diagnostic}; its `code` is the code of every
+ * message it gives.
+ * @typedef {((...values: string[]) => Diagnostic) & { code: string }} DiagnosticWithValues
+ */
+
+/**
+ * @param {string} code
+ * @param {(...values: string[]) => string} message
+ * @returns {DiagnosticWithValues}
+ */
+function with_values(code, message) {
+	return Object.assign(
+		(/** @type {string[]} */ ...values) => ({ code, message: message(...values) }),
+		{
+			code,
+		},
+	);
+}
+
 const C = DIAGNOSTIC_CODES;
 
 /**
- * The code of each error message, for the errors raised without one: TSRX's
- * own messages, and the mistakes TypeScript also reports, with TypeScript's
- * code. A TypeScript code is TypeScript's for the same mistake: the
- * diagnostic with the same wording, or, for acorn's and acorn-typescript's own
- * wording, the diagnostic TypeScript reports for the same input. A test checks
- * that every error the test suites raise has a code.
- * @type {Array<[string | RegExp, string]>}
+ * The errors only TSRX reports, each with its code from
+ * {@link DIAGNOSTIC_CODES}. A code can have several messages, one for each form
+ * of the mistake.
  */
-const MESSAGE_CODES = [
+export const TSRX_ERRORS = {
 	// TSRX1xxx
-	[/^Unclosed tag '<[^']*>'\. Expected '<\/[^']*>' before end of template\.$/, C.UNCLOSED_TAG],
-	[/^Expected closing tag to match opening tag\. /, C.MISMATCHED_CLOSING_TAG],
-	['Unexpected closing tag', C.UNEXPECTED_CLOSING_TAG],
-	[/^'<\/script' can end a script in HTML, /i, C.SCRIPT_END_TAG_IN_BODY],
-	[/^Namespaced elements are not supported in TSRX templates: /, C.NAMESPACED_ELEMENT],
-	[/^Attribute values cannot be spread\. /, C.ATTRIBUTE_VALUE_SPREAD],
-	[
-		'TSRX expression containers do not use semicolons. Remove this semicolon.',
-		C.TEMPLATE_EXPRESSION_TRAILING_SEMICOLON,
-	],
-	['Expected `{` after JSX control-flow directive.', C.DIRECTIVE_BODY_EXPECTED],
-	[
-		/^Expected `@(?:else|empty|pending|catch)` after `@(?:if|for|try)` block\.$/,
+	UNCLOSED_TAG: with_values(
+		C.UNCLOSED_TAG,
+		(tag) => `Unclosed tag '<${tag}>'. Expected '</${tag}>' before end of template.`,
+	),
+	MISMATCHED_CLOSING_TAG: with_values(
+		C.MISMATCHED_CLOSING_TAG,
+		(opening, closing) =>
+			`Expected closing tag to match opening tag. Expected '</${opening}>' but found '</${closing}>'`,
+	),
+	UNEXPECTED_CLOSING_TAG: { code: C.UNEXPECTED_CLOSING_TAG, message: 'Unexpected closing tag' },
+	/** `written` is the `</script` as written, in any case. */
+	SCRIPT_END_TAG_IN_BODY: with_values(
+		C.SCRIPT_END_TAG_IN_BODY,
+		(written) =>
+			`'${written}' can end a script in HTML, so a '<script>' body can't contain it. Write '<\\/${written.slice(2)}' instead.`,
+	),
+	NAMESPACED_ELEMENT: with_values(
+		C.NAMESPACED_ELEMENT,
+		(tag) => `Namespaced elements are not supported in TSRX templates: <${tag}>.`,
+	),
+	ATTRIBUTE_VALUE_SPREAD: {
+		code: C.ATTRIBUTE_VALUE_SPREAD,
+		message: 'Attribute values cannot be spread. Use a spread attribute (`{...props}`) instead.',
+	},
+	TEMPLATE_EXPRESSION_TRAILING_SEMICOLON: {
+		code: C.TEMPLATE_EXPRESSION_TRAILING_SEMICOLON,
+		message: 'TSRX expression containers do not use semicolons. Remove this semicolon.',
+	},
+	DIRECTIVE_BODY_EXPECTED: {
+		code: C.DIRECTIVE_BODY_EXPECTED,
+		message: 'Expected `{` after JSX control-flow directive.',
+	},
+	/** `branch` is the branch written without its `@`, and `directive` the directive it belongs to. */
+	DIRECTIVE_BRANCH_EXPECTED: with_values(
 		C.DIRECTIVE_BRANCH_EXPECTED,
-	],
-	['Missing `@catch` or `@pending` after `@try` block.', C.TRY_HANDLER_MISSING],
-	['Expected identifier after "index" keyword', C.FOR_CLAUSE],
-	['"index" must come before "key" in for-of loop', C.FOR_CLAUSE],
+		(branch, directive) => `Expected \`@${branch}\` after \`@${directive}\` block.`,
+	),
+	TRY_HANDLER_MISSING: {
+		code: C.TRY_HANDLER_MISSING,
+		message: 'Missing `@catch` or `@pending` after `@try` block.',
+	},
+	FOR_INDEX_NAME_EXPECTED: {
+		code: C.FOR_CLAUSE,
+		message: 'Expected identifier after "index" keyword',
+	},
+	FOR_INDEX_AFTER_KEY: {
+		code: C.FOR_CLAUSE,
+		message: '"index" must come before "key" in for-of loop',
+	},
 
 	// TSRX2xxx
-	[/^Return statements are not allowed inside TSRX templates\. /, C.TEMPLATE_RETURN_STATEMENT],
-	[/^Return statements are not allowed inside TSRX template @if blocks\./, C.IF_RETURN_STATEMENT],
-	[/^Break statements are not allowed inside TSRX template @if blocks\./, C.IF_BREAK_STATEMENT],
-	[
-		/^Continue statements are not allowed inside TSRX template @if blocks\./,
-		C.IF_CONTINUE_STATEMENT,
-	],
-	[
-		/^Return statements are not allowed inside TSRX template for\.\.\.of loops\./,
-		C.FOR_RETURN_STATEMENT,
-	],
-	[
-		/^Break statements are not allowed inside TSRX template for\.\.\.of loops\./,
-		C.FOR_BREAK_STATEMENT,
-	],
-	[
-		/^Continue statements are not allowed inside TSRX template for\.\.\.of loops\./,
-		C.FOR_CONTINUE_STATEMENT,
-	],
-	['`break` is invalid inside `@switch` cases.', C.SWITCH_CASE_BREAK_STATEMENT],
-	['`return` is invalid inside `@switch` cases.', C.SWITCH_CASE_RETURN_STATEMENT],
-	[/^This TSRX template output is unused\. /, C.FORGOTTEN_STATEMENT_CONTAINER],
-	[/^A code block renders a single node; /, C.CODE_BLOCK_SINGLE_OUTPUT],
-	[/^Code must be at the top of '@\{ \}'; /, C.CODE_BLOCK_STATEMENT_AFTER_OUTPUT],
-	[/^JSX spread children \(`\{\.\.\.items\}`\) are not supported\. /, C.JSX_SPREAD_CHILD],
-	[/^A dynamic tag expression must be /, C.DYNAMIC_TAG_EXPRESSION],
-	['TSRX `@for` currently supports `for...of` loops in template output.', C.FOR_OF_ONLY],
-	[
-		/^(?:For|For\.\.\.in|While|Do\.\.\.while) loops are not supported in TSRX templates\. /,
-		C.FOR_OF_ONLY,
-	],
-	[/^Element has multiple `ref=\{\.\.\.\}` attributes; /, C.MULTIPLE_REFS],
-	[/^Invalid HTML nesting: /, C.INVALID_HTML_NESTING],
-	[/ TSRX does not support JavaScript `try\/finally` in TSRX templates\. /, C.TEMPLATE_TRY_FINALLY],
-	['TSRX try statements must have a `pending` or `catch` block.', C.TEMPLATE_TRY_HANDLER],
-	[/ does not support `@pending`/, C.TARGET_PENDING_UNSUPPORTED],
-	[/ TSRX does not support `await` here: /, C.TARGET_AWAIT_UNSUPPORTED],
-	[/^`await` is not (?:yet supported in|allowed inside) /, C.TARGET_AWAIT_UNSUPPORTED],
-	[
-		/ does not support (?:async components|top-level `await` in components)\. /,
+	TEMPLATE_RETURN_STATEMENT: {
+		code: C.TEMPLATE_RETURN_STATEMENT,
+		message:
+			'Return statements are not allowed inside TSRX templates. Move the return before the TSRX return value, or use conditional rendering instead.',
+	},
+	IF_RETURN_STATEMENT: {
+		code: C.IF_RETURN_STATEMENT,
+		message:
+			'Return statements are not allowed inside TSRX template @if blocks. Move the return before the template output or render conditionally instead.',
+	},
+	IF_BREAK_STATEMENT: {
+		code: C.IF_BREAK_STATEMENT,
+		message: 'Break statements are not allowed inside TSRX template @if blocks.',
+	},
+	IF_CONTINUE_STATEMENT: {
+		code: C.IF_CONTINUE_STATEMENT,
+		message:
+			'Continue statements are not allowed inside TSRX template @if blocks. Filter before rendering or use conditional output instead.',
+	},
+	FOR_RETURN_STATEMENT: {
+		code: C.FOR_RETURN_STATEMENT,
+		message:
+			'Return statements are not allowed inside TSRX template for...of loops. Filter the iterable before rendering or use an @empty fallback for empty lists.',
+	},
+	FOR_BREAK_STATEMENT: {
+		code: C.FOR_BREAK_STATEMENT,
+		message: 'Break statements are not allowed inside TSRX template for...of loops.',
+	},
+	FOR_CONTINUE_STATEMENT: {
+		code: C.FOR_CONTINUE_STATEMENT,
+		message:
+			'Continue statements are not allowed inside TSRX template for...of loops. Filter the iterable before rendering.',
+	},
+	SWITCH_CASE_BREAK_STATEMENT: {
+		code: C.SWITCH_CASE_BREAK_STATEMENT,
+		message: '`break` is invalid inside `@switch` cases.',
+	},
+	SWITCH_CASE_RETURN_STATEMENT: {
+		code: C.SWITCH_CASE_RETURN_STATEMENT,
+		message: '`return` is invalid inside `@switch` cases.',
+	},
+	FORGOTTEN_STATEMENT_CONTAINER: {
+		code: C.FORGOTTEN_STATEMENT_CONTAINER,
+		message:
+			"This TSRX template output is unused. Return it, assign it to a value that is rendered, or make it part of the rendered output of a function '@{...}' body.",
+	},
+	CODE_BLOCK_SINGLE_OUTPUT: {
+		code: C.CODE_BLOCK_SINGLE_OUTPUT,
+		message:
+			"A code block renders a single node; wrap multiple nodes or text in a fragment '<>…</>'.",
+	},
+	CODE_BLOCK_STATEMENT_AFTER_OUTPUT: {
+		code: C.CODE_BLOCK_STATEMENT_AFTER_OUTPUT,
+		message: "Code must be at the top of '@{ }'; statements cannot follow the rendered output.",
+	},
+	JSX_SPREAD_CHILD: {
+		code: C.JSX_SPREAD_CHILD,
+		message:
+			'JSX spread children (`{...items}`) are not supported. Render the array as an expression child instead: `{items}`.',
+	},
+	DYNAMIC_TAG_EXPRESSION: {
+		code: C.DYNAMIC_TAG_EXPRESSION,
+		message:
+			'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.',
+	},
+	FOR_OF_ONLY: {
+		code: C.FOR_OF_ONLY,
+		message: 'TSRX `@for` currently supports `for...of` loops in template output.',
+	},
+	FOR_STATEMENT: {
+		code: C.FOR_OF_ONLY,
+		message: 'For loops are not supported in TSRX templates. Use for...of instead.',
+	},
+	FOR_IN_STATEMENT: {
+		code: C.FOR_OF_ONLY,
+		message: 'For...in loops are not supported in TSRX templates. Use for...of instead.',
+	},
+	WHILE_STATEMENT: {
+		code: C.FOR_OF_ONLY,
+		message:
+			'While loops are not supported in TSRX templates. Move the while loop into a function.',
+	},
+	DO_WHILE_STATEMENT: {
+		code: C.FOR_OF_ONLY,
+		message:
+			'Do...while loops are not supported in TSRX templates. Move the do...while loop into a function.',
+	},
+	MULTIPLE_REFS: {
+		code: C.MULTIPLE_REFS,
+		message:
+			'Element has multiple `ref={...}` attributes; an element may have at most one. Use a single array-valued ref such as `ref={[a, b]}` where the target framework supports multiple refs.',
+	},
+	INVALID_HTML_NESTING: with_values(
+		C.INVALID_HTML_NESTING,
+		(tag, parent) => `Invalid HTML nesting: <${tag}> cannot be a descendant of <${parent}>.`,
+	),
+	/** `target` is the target's name. */
+	TEMPLATE_TRY_FINALLY: with_values(
+		C.TEMPLATE_TRY_FINALLY,
+		(target) =>
+			`${target} TSRX does not support JavaScript \`try/finally\` in TSRX templates. \`finally\` is not part of TSRX control flow; move the try/finally into a function if you need cleanup logic.`,
+	),
+	TEMPLATE_TRY_HANDLER: {
+		code: C.TEMPLATE_TRY_HANDLER,
+		message: 'TSRX try statements must have a `pending` or `catch` block.',
+	},
+	/** `target` is the target's name. */
+	TARGET_AWAIT_UNSUPPORTED: with_values(
 		C.TARGET_AWAIT_UNSUPPORTED,
-	],
-	[/ TSRX does not support `yield` here: /, C.TARGET_YIELD_UNSUPPORTED],
-	[/ TSRX does not support `super` here: /, C.TARGET_SUPER_UNSUPPORTED],
-	[
-		/ TSRX does not support `for await\.\.\.of` in TSRX templates\.$/,
+		(target) =>
+			`${target} TSRX does not support \`await\` here: this part of the template renders through a callback the target calls, so its result cannot be awaited. Await the value in the component body, or move it into an async child component.`,
+	),
+	/** `target` is the target's name. */
+	TARGET_YIELD_UNSUPPORTED: with_values(
+		C.TARGET_YIELD_UNSUPPORTED,
+		(target) =>
+			`${target} TSRX does not support \`yield\` here: this part of the template runs in a callback, which cannot yield from the enclosing generator. Yield the value in the function body first.`,
+	),
+	/** `target` is the target's name. */
+	TARGET_SUPER_UNSUPPORTED: with_values(
+		C.TARGET_SUPER_UNSUPPORTED,
+		(target) =>
+			`${target} TSRX does not support \`super\` here: this part of the template also yields, so it is lowered into a generator function, where \`super\` is unavailable. Read the value into a variable in the method body first.`,
+	),
+	/** `target` is the target's name. */
+	TARGET_FOR_AWAIT_UNSUPPORTED: with_values(
 		C.TARGET_FOR_AWAIT_UNSUPPORTED,
-	],
-	[
-		/^Top-level `await` in TSRX functions requires a module-level `"use server"` directive\.$/,
-		C.TOP_LEVEL_AWAIT_USE_SERVER,
-	],
-	[/ ErrorBoundary does not provide a reset callback\. /, C.TARGET_CATCH_RESET_UNSUPPORTED],
+		(target) => `${target} TSRX does not support \`for await...of\` in TSRX templates.`,
+	),
+	TOP_LEVEL_AWAIT_USE_SERVER: {
+		code: C.TOP_LEVEL_AWAIT_USE_SERVER,
+		message:
+			'Top-level `await` in TSRX functions requires a module-level `"use server"` directive.',
+	},
+
+	// TSRX3xxx
+	STYLE_APPLY_VALUE: {
+		code: C.STYLE_APPLY_VALUE,
+		message:
+			"The 'apply' attribute of a <style> block requires an expression value: apply={theme} or apply={[a, b]}.",
+	},
+	STYLE_APPLY_TARGET: with_values(
+		C.STYLE_APPLY_TARGET,
+		(name) =>
+			`'${name}' is not a style block. An 'apply' target must be a variable, import, or member holding an assigned <style> block.`,
+	),
+	STYLE_APPLY_BEFORE_DECLARATION: with_values(
+		C.STYLE_APPLY_BEFORE_DECLARATION,
+		(name) =>
+			`'${name}' is applied before its declaration. Declare the style block before the block that applies it.`,
+	),
+	STYLE_APPLY_DUPLICATE: {
+		code: C.STYLE_APPLY_DUPLICATE,
+		message:
+			"A <style> block accepts a single 'apply' attribute; pass several themes as an array: apply={[a, b]}.",
+	},
+	STYLE_APPLY_UNSUPPORTED_HOST: {
+		code: C.STYLE_APPLY_UNSUPPORTED_HOST,
+		message:
+			"The 'apply' attribute is only supported on scoped <style> blocks, not on <head> styles or resource styles.",
+	},
+	STYLE_RESERVED_CLASS_KEY: {
+		code: C.STYLE_RESERVED_CLASS_KEY,
+		message:
+			"'$class' is reserved on assigned <style> blocks for the block's scope hash; rename the '.$class' selector.",
+	},
+	STYLE_STANDALONE_AT_MODULE_SCOPE: {
+		code: C.STYLE_STANDALONE_AT_MODULE_SCOPE,
+		message:
+			'A standalone <style> block is only allowed inside a template scope. At module scope assign it: const theme = <style>…</style>.',
+	},
+	STYLE_STANDALONE_OUTSIDE_TEMPLATE: {
+		code: C.STYLE_STANDALONE_OUTSIDE_TEMPLATE,
+		message:
+			'A standalone <style> block with CSS text is TSRX template syntax and needs an enclosing @{ … } body or an @if/@for/@switch/@try body. In plain TSX give <style> an expression child instead: <style>{css}</style>. To declare a reusable block here, assign it: const theme = <style>…</style>.',
+	},
+	STYLE_STANDALONE_NEEDS_FRAGMENT: {
+		code: C.STYLE_STANDALONE_NEEDS_FRAGMENT,
+		message:
+			'A standalone <style> block must be a child of an element or a fragment. Wrap it with the output it styles in a fragment: <><style>…</style><div>…</div></>.',
+	},
+	STYLE_UNKNOWN_ATTRIBUTE: with_values(
+		C.STYLE_UNKNOWN_ATTRIBUTE,
+		(name) => `Unknown <style> attribute '${name}'. Scoped style blocks accept 'ref' and 'apply'.`,
+	),
+	CSS_GLOBAL_IN_PSEUDOCLASS: {
+		code: C.CSS_GLOBAL_PLACEMENT,
+		message: 'A :global selector cannot be inside a pseudoclass.',
+	},
+	CSS_GLOBAL_IN_MIDDLE: {
+		code: C.CSS_GLOBAL_PLACEMENT,
+		message:
+			':global(...) can be at the start or end of a selector sequence, but not in the middle.',
+	},
+	CSS_IMPORT: {
+		code: C.CSS_IMPORT,
+		message:
+			"@import is not supported in <style> blocks: the imported rules would not be scoped. Share scoped styles with an assigned block (const theme = <style>…</style>) and apply={theme}. For global CSS, use :global in the block, or import the stylesheet in JavaScript: import './global.css'.",
+	},
 
 	// TSRX4xxx
-	[/^Platform flag usage requires a configured TSRX platform\. /, C.PLATFORM_REQUIRED],
-	[
-		/^Cannot declare a variable named "[^"]*" as identifiers starting with "[^"]*" are reserved$/,
+	PLATFORM_REQUIRED: {
+		code: C.PLATFORM_REQUIRED,
+		message:
+			'Platform flag usage requires a configured TSRX platform. Set `tsrx.platform` in tsconfig.json and pass the same `platform` to the build integration ("web", "ios", or "android").',
+	},
+	RESERVED_IDENTIFIER_PREFIX: with_values(
 		C.RESERVED_IDENTIFIER_PREFIX,
-	],
-
-	// TypeScript's codes for the mistakes TypeScript also reports, in core's own
-	// wording (most of it TypeScript's)
-	[/^'[^']+' expected\.$/, 'TS1005'],
-	['Identifier expected.', 'TS1003'],
-	// The modifiers of a declaration, as TypeScript's checker words them
-	// (`checkGrammarModifiers`)
-	[/^'[^']+' modifier already seen\.$/, 'TS1030'],
-	[/^'[^']+' modifier must precede '[^']+' modifier\.$/, 'TS1029'],
-	[/^'[^']+' modifier cannot be used with '[^']+' modifier\.$/, 'TS1243'],
-	[/^'[^']+' modifier cannot be used in an ambient context\.$/, 'TS1040'],
-	[/^'[^']+' modifier cannot be used here\.$/, 'TS1042'],
-	[/^'[^']+' modifier cannot appear on a module or namespace element\.$/, 'TS1044'],
-	[/^'[^']+' modifier cannot appear on a 'using' declaration\.$/, 'TS1491'],
-	[/^'[^']+' modifier cannot appear on an 'await using' declaration\.$/, 'TS1495'],
-	['Modifiers cannot appear here.', 'TS1184'],
-	// acorn's `'import' and 'export' may only appear at the top level`, as
-	// TypeScript words it for each kind of import or export.
-	['An import declaration can only be used at the top level of a namespace or module.', 'TS1232'],
-	['An export declaration can only be used at the top level of a namespace or module.', 'TS1233'],
-	['An export assignment must be at the top level of a file or module declaration.', 'TS1231'],
-	['A default export must be at the top level of a file or module declaration.', 'TS1258'],
-	['A namespace declaration is only allowed at the top level of a namespace or module.', 'TS1235'],
-	['Global module exports may only appear at top level.', 'TS1316'],
-	['Accessibility modifier already seen.', 'TS1028'],
-	["'readonly' modifier can only appear on a property declaration or index signature.", 'TS1024'],
-	["'accessor' modifier can only appear on a property declaration.", 'TS1275'],
-	["A 'declare' modifier cannot be used in an already ambient context.", 'TS1038'],
-	["A 'declare' modifier cannot be used with an import declaration.", 'TS1079'],
-	[
-		"'await using' statements are only allowed within async functions and at the top levels of modules.",
-		'TS2852',
-	],
-	[
-		"'await' expressions are only allowed within async functions and at the top levels of modules.",
-		'TS1308',
-	],
-	[
-		"'for await' loops are only allowed within async functions and at the top levels of modules.",
-		'TS1103',
-	],
-	// TypeScript reports a deferred default import (TS18058) or named imports
-	// (TS18059); core words both as one message
-	['`import defer` only supports a namespace import from a string literal.', 'TS18059'],
-	['Declaration expected.', 'TS1146'],
-	['Declaration or statement expected.', 'TS1128'],
-	['Line break not permitted here.', 'TS1142'],
-	['Keywords cannot contain escape characters.', 'TS1260'],
-	[/^Escape sequence in keyword /, 'TS1260'],
-	['Variable declaration list cannot be empty.', 'TS1123'],
-	[/^'(?:const|using|await using)' declarations must be initialized\.$/, 'TS1155'],
-	['Comma is not permitted after the rest element', 'TS1013'],
-	[
-		'A parameter initializer is only allowed in a function or constructor implementation.',
-		'TS2371',
-	],
-	['A parameter property may not be declared using a binding pattern.', 'TS1187'],
-	['A parameter property cannot be declared using a rest parameter.', 'TS1317'],
-	['A parameter property is only allowed in a constructor implementation.', 'TS2369'],
-	['A rest parameter cannot have an initializer.', 'TS1048'],
-	['A rest element cannot have an initializer.', 'TS1186'],
-	['A rest parameter cannot be optional.', 'TS1047'],
-	['A binding pattern parameter cannot be optional in an implementation signature.', 'TS2463'],
-	["'readonly' type modifier is only permitted on array and tuple literal types.", 'TS1354'],
-	["'abstract' modifier can only appear on a class, method, or property declaration.", 'TS1242'],
-	[
-		"'export' modifier cannot be applied to ambient modules and module augmentations since they are always visible.",
-		'TS2668',
-	],
-	[/^Identifier expected\. '[^']*' is a reserved word that cannot be used here\.$/, 'TS1359'],
-	['Identifier or string literal expected.', 'TS1478'],
-	['Argument in a type import must be a string literal.', 'TS1141'],
-	['Leading decorators must be attached to a class declaration.', 'TS1206'],
-	[/^Private field '#[^']*' must be declared in an enclosing class$/, 'TS1111'],
-	['Argument name clash', 'TS2300'],
-	[/^(?:Identifier|type) '#?[^']+' has already been declared\.?$/, 'TS2300'],
-	[/^'[^']+' has already been declared in the current scope$/, 'TS2300'],
-	['Await using cannot appear outside of async function', 'TS2852'],
-	["The left-hand side of a 'for...in' statement cannot be a 'using' declaration.", 'TS1493'],
-	[
-		"The left-hand side of a 'for...in' statement cannot be an 'await using' declaration.",
-		'TS1494',
-	],
-	['for-in loop variable declaration may not have an initializer', 'TS1189'],
-	['for-of loop variable declaration may not have an initializer', 'TS1190'],
-	['Missing catch or finally clause', 'TS1472'],
-	['Multiple default clauses', 'TS1113'],
-	['value should be either an expression or a quoted text', 'TS1145'],
-	['Unterminated JSX contents', 'TS17008'],
-];
+		(name, prefix) =>
+			`Cannot declare a variable named "${name}" as identifiers starting with "${prefix}" are reserved`,
+	),
+	// acorn-typescript's wording, for `with { type: 'json', type: 'json' }`: an
+	// ECMAScript early error that TypeScript doesn't report.
+	DUPLICATED_ATTRIBUTE_KEY: { code: C.JAVASCRIPT_SYNTAX, message: 'Duplicated key in attributes' },
+};
 
 /**
- * acorn's and acorn-typescript's messages, with TypeScript's code for the same
- * mistake: the diagnostic with the same wording, or the one TypeScript reports
- * for an input that raises the message (checked for each), and `TSRX4003`
- * where TypeScript accepts the code. Core's own entries come first and win.
- * @type {Array<[RegExp, string]>}
+ * The errors TSRX reports for mistakes TypeScript also reports, each with
+ * TypeScript's code for the same mistake. Most have TypeScript's wording too;
+ * the ones in acorn's or acorn-typescript's wording are the upstream errors
+ * TSRX raises itself where it reads the code in their place. A test checks the
+ * wording of each against TypeScript's.
  */
-const PARSER_MESSAGE_CODES = [
-	// acorn: Unexpected token
-	[/^Unexpected token$/, 'TS1012'],
-	// acorn: Comma is not permitted after the rest element
-	[/^Comma is not permitted after the rest element$/, 'TS1013'],
-	// acorn: Assigning to rvalue
+export const TS_ERRORS = {
+	// Tokens and names
+	/** `token` is the token expected, such as `}`. */
+	TOKEN_EXPECTED: with_values('TS1005', (token) => `'${token}' expected.`),
+	IDENTIFIER_EXPECTED: { code: 'TS1003', message: 'Identifier expected.' },
+	RESERVED_WORD_AS_IDENTIFIER: with_values(
+		'TS1359',
+		(word) => `Identifier expected. '${word}' is a reserved word that cannot be used here.`,
+	),
+	IDENTIFIER_OR_STRING_EXPECTED: {
+		code: 'TS1478',
+		message: 'Identifier or string literal expected.',
+	},
+	DECLARATION_EXPECTED: { code: 'TS1146', message: 'Declaration expected.' },
+	DECLARATION_OR_STATEMENT_EXPECTED: {
+		code: 'TS1128',
+		message: 'Declaration or statement expected.',
+	},
+	LINE_BREAK_NOT_PERMITTED: { code: 'TS1142', message: 'Line break not permitted here.' },
+	KEYWORD_ESCAPE: { code: 'TS1260', message: 'Keywords cannot contain escape characters.' },
+
+	// The modifiers of a declaration, as TypeScript's checker words them
+	// (`checkGrammarModifiers`)
+	MODIFIER_ALREADY_SEEN: with_values(
+		'TS1030',
+		(modifier) => `'${modifier}' modifier already seen.`,
+	),
+	MODIFIER_MUST_PRECEDE: with_values(
+		'TS1029',
+		(modifier, other) => `'${modifier}' modifier must precede '${other}' modifier.`,
+	),
+	MODIFIER_CANNOT_BE_USED_WITH: with_values(
+		'TS1243',
+		(modifier, other) => `'${modifier}' modifier cannot be used with '${other}' modifier.`,
+	),
+	MODIFIER_IN_AMBIENT_CONTEXT: with_values(
+		'TS1040',
+		(modifier) => `'${modifier}' modifier cannot be used in an ambient context.`,
+	),
+	MODIFIER_CANNOT_BE_USED_HERE: with_values(
+		'TS1042',
+		(modifier) => `'${modifier}' modifier cannot be used here.`,
+	),
+	MODIFIER_ON_MODULE_ELEMENT: with_values(
+		'TS1044',
+		(modifier) => `'${modifier}' modifier cannot appear on a module or namespace element.`,
+	),
+	MODIFIER_ON_USING: with_values(
+		'TS1491',
+		(modifier) => `'${modifier}' modifier cannot appear on a 'using' declaration.`,
+	),
+	MODIFIER_ON_AWAIT_USING: with_values(
+		'TS1495',
+		(modifier) => `'${modifier}' modifier cannot appear on an 'await using' declaration.`,
+	),
+	MODIFIERS_CANNOT_APPEAR_HERE: { code: 'TS1184', message: 'Modifiers cannot appear here.' },
+	ACCESSIBILITY_MODIFIER_ALREADY_SEEN: {
+		code: 'TS1028',
+		message: 'Accessibility modifier already seen.',
+	},
+	READONLY_MODIFIER_NOT_ALLOWED: {
+		code: 'TS1024',
+		message: "'readonly' modifier can only appear on a property declaration or index signature.",
+	},
+	ACCESSOR_MODIFIER_NOT_ALLOWED: {
+		code: 'TS1275',
+		message: "'accessor' modifier can only appear on a property declaration.",
+	},
+	ABSTRACT_MODIFIER_NOT_ALLOWED: {
+		code: 'TS1242',
+		message: "'abstract' modifier can only appear on a class, method, or property declaration.",
+	},
+	DECLARE_MODIFIER_IN_AMBIENT_CONTEXT: {
+		code: 'TS1038',
+		message: "A 'declare' modifier cannot be used in an already ambient context.",
+	},
+	DECLARE_MODIFIER_ON_IMPORT: {
+		code: 'TS1079',
+		message: "A 'declare' modifier cannot be used with an import declaration.",
+	},
+	EXPORT_MODIFIER_ON_AUGMENTATION: {
+		code: 'TS2668',
+		message:
+			"'export' modifier cannot be applied to ambient modules and module augmentations since they are always visible.",
+	},
+	READONLY_TYPE_MODIFIER: {
+		code: 'TS1354',
+		message: "'readonly' type modifier is only permitted on array and tuple literal types.",
+	},
+
+	// An import or export inside a block, which acorn reports as `'import' and
+	// 'export' may only appear at the top level`, as TypeScript words it for each
+	// kind of import or export
+	NESTED_IMPORT: {
+		code: 'TS1232',
+		message: 'An import declaration can only be used at the top level of a namespace or module.',
+	},
+	NESTED_EXPORT: {
+		code: 'TS1233',
+		message: 'An export declaration can only be used at the top level of a namespace or module.',
+	},
+	NESTED_EXPORT_ASSIGNMENT: {
+		code: 'TS1231',
+		message: 'An export assignment must be at the top level of a file or module declaration.',
+	},
+	NESTED_DEFAULT_EXPORT: {
+		code: 'TS1258',
+		message: 'A default export must be at the top level of a file or module declaration.',
+	},
+	NESTED_NAMESPACE: {
+		code: 'TS1235',
+		message: 'A namespace declaration is only allowed at the top level of a namespace or module.',
+	},
+	NESTED_GLOBAL_EXPORT: {
+		code: 'TS1316',
+		message: 'Global module exports may only appear at top level.',
+	},
+
+	// `await` outside an async function, where only a namespace makes it parse
+	AWAIT_EXPRESSION_NOT_ALLOWED: {
+		code: 'TS1308',
+		message:
+			"'await' expressions are only allowed within async functions and at the top levels of modules.",
+	},
+	FOR_AWAIT_NOT_ALLOWED: {
+		code: 'TS1103',
+		message:
+			"'for await' loops are only allowed within async functions and at the top levels of modules.",
+	},
+	AWAIT_USING_NOT_ALLOWED: {
+		code: 'TS2852',
+		message:
+			"'await using' statements are only allowed within async functions and at the top levels of modules.",
+	},
+	// TypeScript reports a deferred default import (TS18058) or named imports
+	// (TS18059); TSRX words both as one message
+	IMPORT_DEFER_NAMESPACE: {
+		code: 'TS18059',
+		message: '`import defer` only supports a namespace import from a string literal.',
+	},
+
+	// Declarations
+	VARIABLE_DECLARATION_LIST_EMPTY: {
+		code: 'TS1123',
+		message: 'Variable declaration list cannot be empty.',
+	},
+	/** `kind` is `const`, `using`, or `await using`. */
+	DECLARATION_NOT_INITIALIZED: with_values(
+		'TS1155',
+		(kind) => `'${kind}' declarations must be initialized.`,
+	),
+	FOR_IN_USING: {
+		code: 'TS1493',
+		message: "The left-hand side of a 'for...in' statement cannot be a 'using' declaration.",
+	},
+	FOR_IN_AWAIT_USING: {
+		code: 'TS1494',
+		message: "The left-hand side of a 'for...in' statement cannot be an 'await using' declaration.",
+	},
+	// TSRX's wording of a name redeclared in a module's or function's scope
+	DECLARED_IN_SCOPE: with_values(
+		'TS2300',
+		(name) => `'${name}' has already been declared in the current scope`,
+	),
+
+	// Parameters
+	SIGNATURE_PARAMETER_INITIALIZER: {
+		code: 'TS2371',
+		message: 'A parameter initializer is only allowed in a function or constructor implementation.',
+	},
+	PATTERN_PARAMETER_PROPERTY: {
+		code: 'TS1187',
+		message: 'A parameter property may not be declared using a binding pattern.',
+	},
+	REST_PARAMETER_PROPERTY: {
+		code: 'TS1317',
+		message: 'A parameter property cannot be declared using a rest parameter.',
+	},
+	PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR: {
+		code: 'TS2369',
+		message: 'A parameter property is only allowed in a constructor implementation.',
+	},
+	REST_PARAMETER_INITIALIZER: {
+		code: 'TS1048',
+		message: 'A rest parameter cannot have an initializer.',
+	},
+	REST_ELEMENT_INITIALIZER: {
+		code: 'TS1186',
+		message: 'A rest element cannot have an initializer.',
+	},
+	OPTIONAL_REST_PARAMETER: { code: 'TS1047', message: 'A rest parameter cannot be optional.' },
+	OPTIONAL_BINDING_PATTERN_PARAMETER: {
+		code: 'TS2463',
+		message: 'A binding pattern parameter cannot be optional in an implementation signature.',
+	},
+
+	// acorn's wording, for the code TSRX reads in acorn's place
+	UNEXPECTED_TOKEN: { code: 'TS1012', message: 'Unexpected token' },
+	REST_ELEMENT_TRAILING_COMMA: {
+		code: 'TS1013',
+		message: 'Comma is not permitted after the rest element',
+	},
+	ARGUMENT_NAME_CLASH: { code: 'TS2300', message: 'Argument name clash' },
+	/** `name` is the private name without its `#`. */
+	PRIVATE_NAME_OUTSIDE_CLASS: with_values(
+		'TS1111',
+		(name) => `Private field '#${name}' must be declared in an enclosing class`,
+	),
+	KEYWORD_ESCAPE_SEQUENCE: with_values(
+		'TS1260',
+		(keyword) => `Escape sequence in keyword ${keyword}`,
+	),
+	AWAIT_USING_OUTSIDE_ASYNC: {
+		code: 'TS2852',
+		message: 'Await using cannot appear outside of async function',
+	},
+	FOR_OF_LET: {
+		code: 'TS1134',
+		message: "The left-hand side of a for-of loop may not start with 'let'.",
+	},
+	FOR_IN_INITIALIZER: {
+		code: 'TS1189',
+		message: 'for-in loop variable declaration may not have an initializer',
+	},
+	FOR_OF_INITIALIZER: {
+		code: 'TS1190',
+		message: 'for-of loop variable declaration may not have an initializer',
+	},
+	MISSING_CATCH_OR_FINALLY: { code: 'TS1472', message: 'Missing catch or finally clause' },
+	MULTIPLE_DEFAULT_CLAUSES: { code: 'TS1113', message: 'Multiple default clauses' },
+
+	// acorn-typescript's wording, for the code TSRX reads in acorn-typescript's
+	// place
+	UNTERMINATED_JSX_CONTENTS: { code: 'TS17008', message: 'Unterminated JSX contents' },
+	JSX_UNESCAPED_GREATER_THAN: {
+		code: 'TS1382',
+		message: 'Unexpected token `>`. Did you mean `&gt;` or `{">"}`?',
+	},
+	JSX_UNESCAPED_CLOSING_BRACE: {
+		code: 'TS1381',
+		message: 'Unexpected token `}`. Did you mean `&rbrace;` or `{"}"}`?',
+	},
+	// TSRX's shorter wording of acorn-typescript's `JSX value should be either
+	// an expression or a quoted JSX text`
+	JSX_ATTRIBUTE_VALUE: {
+		code: 'TS1145',
+		message: 'value should be either an expression or a quoted text',
+	},
+	ONLY_STRING_ATTRIBUTE_VALUE: {
+		code: 'TS2858',
+		message: 'Only string is supported as an attribute value',
+	},
+	TYPE_IMPORT_ARGUMENT: {
+		code: 'TS1141',
+		message: 'Argument in a type import must be a string literal.',
+	},
+	UNEXPECTED_LEADING_DECORATOR: {
+		code: 'TS1206',
+		message: 'Leading decorators must be attached to a class declaration.',
+	},
+	TYPE_CAST_IN_PARAMETER: {
+		code: 'TS1005',
+		message: 'Unexpected type cast in parameter position.',
+	},
+	UNEXPECTED_TYPE_ANNOTATION: { code: 'TS1005', message: 'Did not expect a type annotation here.' },
+	/** `type` is the type of the node read as the parameter. */
+	SIGNATURE_PARAMETER_NAME: with_values(
+		'TS2371',
+		(type) =>
+			`Name in a signature must be an Identifier, ObjectPattern or ArrayPattern, instead got ${type}.`,
+	),
+	RESERVED_ARROW_TYPE_PARAMETER: {
+		code: 'TS7060',
+		message:
+			'This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma, as in `<T,>() => ...`.',
+	},
+};
+
+/**
+ * An error that acorn or acorn-typescript raises in its own words, which TSRX
+ * doesn't write: the pattern of its message, and TypeScript's code for the
+ * same mistake. The code is TypeScript's diagnostic with the same wording, or
+ * the one TypeScript reports for an input that raises the message (checked for
+ * each), and `TSRX4003` where TypeScript accepts the code.
+ * @typedef {{ pattern: RegExp, code: string }} UpstreamError
+ */
+
+/**
+ * The upstream errors that TSRX's parser handles itself, by kind: see
+ * `CHECKER_LEVEL_ERRORS` and `raise` in `plugin.js`. A comment names the
+ * upstream functions that raise each.
+ */
+export const UPSTREAM_ERRORS = {
+	// A redeclared variable, import, type alias, or private name. TypeScript
+	// reports TS2451 for a block-scoped variable; TSRX reports TS2300 for each.
+	// acorn: declareName, parseClass; acorn-typescript: declareName
+	REDECLARED: {
+		pattern: /^(?:Identifier|type) '#?[^']+' has already been declared\.?$/,
+		code: 'TS2300',
+	},
+	// acorn: parseTopLevel
+	EXPORT_NOT_DEFINED: { pattern: /^Export '[^']+' is not defined$/, code: 'TS2304' },
+	// acorn: toAssignable, checkLValSimple
+	OPTIONAL_CHAIN_ASSIGNMENT: {
+		pattern: /^Optional chaining cannot appear in left-hand side$/,
+		code: 'TS2779',
+	},
+	// acorn: parseImportMeta
+	IMPORT_META_PROPERTY: {
+		pattern: /^The only valid meta property for import is 'import\.meta'$/,
+		code: 'TS17012',
+	},
+	// acorn: parseNew
+	NEW_TARGET_OUTSIDE_FUNCTION: {
+		pattern: /^'new\.target' can only be used in functions and class static block$/,
+		code: 'TS17013',
+	},
+	// acorn: parseExprAtom
+	SUPER_OUTSIDE_METHOD: { pattern: /^'super' keyword outside a method$/, code: 'TS2660' },
+	// acorn: parseExprAtom
+	SUPER_CALL_OUTSIDE_CONSTRUCTOR: {
+		pattern: /^super\(\) call outside constructor of a subclass$/,
+		code: 'TS2337',
+	},
+	// acorn: checkUnreserved
+	LET_RESERVED: { pattern: /^The keyword 'let' is reserved$/, code: 'TS1212' },
+	// `let` as a binding name or an assignment target, which acorn reports after
+	// `LET_RESERVED` at the same position, so only that one is recorded.
+	// acorn: checkLValSimple
+	LET_BINDING: {
+		pattern:
+			/^(?:(?:Binding|Assigning to) let in strict mode|let is disallowed as a lexically bound name)$/,
+		code: 'TS2480',
+	},
+	// acorn-typescript: callParseClassMemberWithIsStatic
+	ABSTRACT_METHOD_IN_CLASS: {
+		pattern: /^Abstract methods can only appear within an abstract class\.$/,
+		code: 'TS1244',
+	},
+	// acorn-typescript: parseVarStatement, parseClassField
+	AMBIENT_INITIALIZER: {
+		pattern: /^Initializers are not allowed in ambient contexts\.$/,
+		code: 'TS1039',
+	},
+	// acorn-typescript: tsParseModifiers
+	DUPLICATE_MODIFIER: { pattern: /^Duplicate modifier: '\w+'\.$/, code: 'TS1030' },
+	// acorn-typescript: tsParseModifiers
+	TYPE_MEMBER_MODIFIER: {
+		pattern: /^'\w+' modifier cannot appear on a type member\.$/,
+		code: 'TS1070',
+	},
+	// acorn-typescript: tsParseModifiers
+	TYPE_PARAMETER_MODIFIER: {
+		pattern: /^'\w+' modifier cannot appear on a type parameter\.$/,
+		code: 'TS1273',
+	},
+	// acorn-typescript: tsParseModifiers
+	VARIANCE_MODIFIER: {
+		pattern:
+			/^'\w+' modifier can only appear on a type parameter of a class, interface or type alias\.$/,
+		code: 'TS1274',
+	},
+	// acorn-typescript: parseClassField
+	PRIVATE_ELEMENT_ACCESSIBILITY: {
+		pattern: /^Private elements cannot have an accessibility modifier \('\w+'\)\.$/,
+		code: 'TS18010',
+	},
+	// acorn-typescript: parseClassField
+	PRIVATE_ELEMENT_ABSTRACT: {
+		pattern: /^Private elements cannot have the 'abstract' modifier\.$/,
+		code: 'TS18019',
+	},
+	// acorn-typescript: parseClass
+	DECORATED_CONSTRUCTOR: {
+		pattern:
+			/^Decorators can't be used with a constructor\. Did you mean '@dec class \{ \.\.\. \}'\?$/,
+		code: 'TS1206',
+	},
+};
+
+/**
+ * acorn's and acorn-typescript's errors, which they raise as bare messages:
+ * the lookup that gives each its code. A row is an {@link UpstreamError}, a
+ * `[pattern, code]` pair, or the entry of a message TSRX raises too in the same
+ * words, whose pattern is the entry's message with any value in it. A comment
+ * names the upstream functions that raise each. The first row that matches
+ * wins.
+ * @type {Array<UpstreamError | [RegExp, string] | Diagnostic | DiagnosticWithValues>}
+ */
+const UPSTREAM_LOOKUP_ROWS = [
+	// acorn: unexpected, toAssignable
+	TS_ERRORS.UNEXPECTED_TOKEN,
+	// acorn: parseBindingList, checkPatternErrors, parseParenAndDistinguishExpression, parseProperty
+	TS_ERRORS.REST_ELEMENT_TRAILING_COMMA,
+	// acorn: checkPatternErrors, toAssignable
 	[/^Assigning to rvalue$/, 'TS2364'],
-	// acorn: Parenthesized pattern
+	// acorn: checkPatternErrors
 	[/^Parenthesized pattern$/, 'TS1005'],
-	// acorn: Shorthand property assignments are valid only in destructuring patterns
+	// acorn: checkExpressionErrors
 	[/^Shorthand property assignments are valid only in destructuring patterns$/, 'TS1312'],
-	// acorn: Redefinition of __proto__ property
+	// acorn: checkExpressionErrors, checkPropClash
 	[/^Redefinition of __proto__ property$/, 'TS1117'],
-	// acorn: Yield expression cannot be a default value
+	// acorn: checkYieldAwaitInDefaultParams
 	[/^Yield expression cannot be a default value$/, 'TS2523'],
-	// acorn: Await expression cannot be a default value
+	// acorn: checkYieldAwaitInDefaultParams
 	[/^Await expression cannot be a default value$/, 'TS2524'],
-	// acorn: Export '{0}' is not defined
-	[/^Export '[^']+' is not defined$/, 'TS2304'],
-	// acorn: Using declaration cannot appear in the top level when source type is `script` or in the ba
+	// acorn: parseTopLevel
+	UPSTREAM_ERRORS.EXPORT_NOT_DEFINED,
+	// acorn: parseStatement
 	[
 		/^Using declaration cannot appear in the top level when source type is `script` or in the bare case statement$/,
 		'TSRX4003',
 	],
-	// acorn: Using declaration is not allowed in single-statement positions
+	// acorn: parseStatement
 	[/^Using declaration is not allowed in single-statement positions$/, 'TS1156'],
-	// acorn: Await using cannot appear outside of async function
-	[/^Await using cannot appear outside of async function$/, 'TS2852'],
-	// acorn: Unsyntactic break
+	// acorn: parseStatement, parseForStatement
+	TS_ERRORS.AWAIT_USING_OUTSIDE_ASYNC,
+	// acorn: parseBreakContinueStatement
 	[/^Unsyntactic break$/, 'TS1105'],
-	// acorn: Unsyntactic continue
+	// acorn: parseBreakContinueStatement
 	[/^Unsyntactic continue$/, 'TS1104'],
-	// acorn: The left-hand side of a for-of loop may not start with 'let'.
-	[/^The left-hand side of a for-of loop may not start with 'let'\.$/, 'TS1134'],
-	// acorn: Using declaration is not allowed in for-in loops
+	// acorn: parseForStatement
+	TS_ERRORS.FOR_OF_LET,
+	// acorn: parseForAfterInit
 	[/^Using declaration is not allowed in for-in loops$/, 'TS1493'],
-	// acorn: 'return' outside of function
+	// acorn: parseReturnStatement
 	[/^'return' outside of function$/, 'TS1108'],
-	// acorn: Multiple default clauses
-	[/^Multiple default clauses$/, 'TS1113'],
-	// acorn: Illegal newline after throw
+	// acorn: parseSwitchStatement
+	TS_ERRORS.MULTIPLE_DEFAULT_CLAUSES,
+	// acorn: parseThrowStatement
 	[/^Illegal newline after throw$/, 'TS1142'],
-	// acorn: Missing catch or finally clause
-	[/^Missing catch or finally clause$/, 'TS1472'],
-	// acorn: 'with' in strict mode
+	// acorn: parseTryStatement
+	TS_ERRORS.MISSING_CATCH_OR_FINALLY,
+	// acorn: parseWithStatement
 	[/^'with' in strict mode$/, 'TS1101'],
-	// acorn: Label '{0}' is already declared
+	// acorn: parseLabeledStatement
 	[/^Label '[^']+' is already declared$/, 'TS1114'],
-	// acorn: for-in loop variable declaration may not have an initializer
-	[/^for-in loop variable declaration may not have an initializer$/, 'TS1189'],
-	// acorn: for-of loop variable declaration may not have an initializer
-	[/^for-of loop variable declaration may not have an initializer$/, 'TS1190'],
-	// acorn: Missing initializer in {0} declaration
+	// acorn: parseForIn
+	TS_ERRORS.FOR_IN_INITIALIZER,
+	// acorn: parseForIn
+	TS_ERRORS.FOR_OF_INITIALIZER,
+	// acorn: parseVar
 	[/^Missing initializer in (?:const|using|await using) declaration$/, 'TS1155'],
-	// acorn: Complex binding patterns require an initialization value
+	// acorn: parseVar
 	[/^Complex binding patterns require an initialization value$/, 'TS1182'],
-	// acorn: Duplicate constructor in the same class
+	// acorn: parseClass
 	[/^Duplicate constructor in the same class$/, 'TS2392'],
-	// acorn: Identifier '#{0}' has already been declared
-	[/^Identifier '#[^']+' has already been declared$/, 'TS2300'],
-	// acorn: Constructor can't have get/set modifier
+	// acorn: declareName, parseClass; acorn-typescript: declareName
+	UPSTREAM_ERRORS.REDECLARED,
+	// acorn: parseClassElement
 	[/^Constructor can't have get\/set modifier$/, 'TS1341'],
-	// acorn: Classes can't have an element named '#constructor'
+	// acorn: parseClassElementName
 	[/^Classes can't have an element named '#constructor'$/, 'TS18012'],
-	// acorn: Constructor can't be a generator
+	// acorn: parseClassMethod
 	[/^Constructor can't be a generator$/, 'TS1368'],
-	// acorn: Constructor can't be an async method
+	// acorn: parseClassMethod
 	[/^Constructor can't be an async method$/, 'TS1089'],
-	// acorn: Classes may not have a static property named prototype
+	// acorn: parseClassMethod
 	[/^Classes may not have a static property named prototype$/, 'TS2699'],
-	// acorn: getter should have no params
+	// acorn: parseClassMethod, parseGetterSetter
 	[/^getter should have no params$/, 'TS1054'],
-	// acorn: setter should have exactly one param
+	// acorn: parseClassMethod, parseGetterSetter
 	[/^setter should have exactly one param$/, 'TS1049'],
-	// acorn: Setter cannot use rest params
+	// acorn: parseClassMethod, parseGetterSetter
 	[/^Setter cannot use rest params$/, 'TS1053'],
-	// acorn: Classes can't have a field named 'constructor'
+	// acorn: parseClassField
 	[/^Classes can't have a field named 'constructor'$/, 'TS18006'],
-	// acorn: Classes can't have a static field named 'prototype'
+	// acorn: parseClassField
 	[/^Classes can't have a static field named 'prototype'$/, 'TS2699'],
-	// acorn: Private field '#{0}' must be declared in an enclosing class
-	[/^Private field '#[^']+' must be declared in an enclosing class$/, 'TS18016'],
-	// acorn: A string literal cannot be used as an exported binding without `from`.
+	// acorn: exitClassBody, parsePrivateIdent
+	TS_ERRORS.PRIVATE_NAME_OUTSIDE_CLASS,
+	// acorn: parseExport
 	[/^A string literal cannot be used as an exported binding without `from`\.$/, 'TSRX4003'],
-	// acorn: Duplicate export '{0}'
+	// acorn: checkExport
 	[/^Duplicate export '[^']+'$/, 'TS2300'],
-	// acorn: An export name cannot include a lone surrogate.
+	// acorn: parseModuleExportName
 	[/^An export name cannot include a lone surrogate\.$/, 'TSRX4003'],
-	// acorn: Cannot use 'await' as identifier inside an async function
+	// acorn: toAssignable, parseSubscript, checkUnreserved
 	[/^Cannot use 'await' as identifier inside an async function$/, 'TS1359'],
-	// acorn: Object pattern can't contain getter or setter
+	// acorn: toAssignable
 	[/^Object pattern can't contain getter or setter$/, 'TS1136'],
-	// acorn: Rest elements cannot have a default value
+	// acorn: toAssignable
 	[/^Rest elements cannot have a default value$/, 'TS1186'],
-	// acorn: Only '=' operator can be used for specifying default value.
+	// acorn: toAssignable
 	[/^Only '=' operator can be used for specifying default value\.$/, 'TS2364'],
-	// acorn: Optional chaining cannot appear in left-hand side
-	[/^Optional chaining cannot appear in left-hand side$/, 'TS2779'],
-	// acorn: Binding {0} in strict mode
+	// acorn: toAssignable, checkLValSimple
+	UPSTREAM_ERRORS.OPTIONAL_CHAIN_ASSIGNMENT,
+	// acorn: checkLValSimple
 	[/^Binding (?:eval|arguments) in strict mode$/, 'TS1100'],
-	// acorn: Assigning to {0} in strict mode
+	// acorn: checkLValSimple
 	[/^Assigning to (?:eval|arguments) in strict mode$/, 'TS1100'],
-	// acorn: let is disallowed as a lexically bound name
-	[/^let is disallowed as a lexically bound name$/, 'TS2480'],
-	// acorn: Argument name clash
-	[/^Argument name clash$/, 'TS2300'],
-	// acorn: Binding member expression
+	// acorn: checkLValSimple
+	UPSTREAM_ERRORS.LET_BINDING,
+	// acorn: checkLValSimple
+	TS_ERRORS.ARGUMENT_NAME_CLASH,
+	// acorn: checkLValSimple
 	[/^Binding member expression$/, 'TS1005'],
-	// acorn: Binding rvalue
+	// acorn: checkLValSimple
 	[/^Binding rvalue$/, 'TS2364'],
-	// acorn: Redefinition of property
+	// acorn: checkPropClash
 	[/^Redefinition of property$/, 'TS1117'],
-	// acorn: Logical expressions and coalesce expressions cannot be mixed. Wrap either by parentheses
+	// acorn: parseExprOp
 	[
 		/^Logical expressions and coalesce expressions cannot be mixed\. Wrap either by parentheses$/,
 		'TS5076',
 	],
-	// acorn: Private identifier can only be left side of binary expression
+	// acorn: buildBinary
 	[/^Private identifier can only be left side of binary expression$/, 'TS1451'],
-	// acorn: Deleting local variable in strict mode
+	// acorn: parseMaybeUnary
 	[/^Deleting local variable in strict mode$/, 'TS1102'],
-	// acorn: Private fields can not be deleted
+	// acorn: parseMaybeUnary
 	[/^Private fields can not be deleted$/, 'TS18011'],
-	// acorn: Optional chaining cannot appear in the callee of new expressions
+	// acorn: parseSubscript
 	[/^Optional chaining cannot appear in the callee of new expressions$/, 'TS1209'],
-	// acorn: Optional chaining cannot appear in the tag of tagged template expressions
+	// acorn: parseSubscript
 	[/^Optional chaining cannot appear in the tag of tagged template expressions$/, 'TS1358'],
-	// acorn: 'super' keyword outside a method
-	[/^'super' keyword outside a method$/, 'TS2660'],
-	// acorn: super() call outside constructor of a subclass
-	[/^super\(\) call outside constructor of a subclass$/, 'TS2337'],
-	// acorn: Escape sequence in keyword {0}
-	[/^Escape sequence in keyword \w+$/, 'TS1260'],
-	// acorn: The only valid meta property for import is 'import.meta'
-	[/^The only valid meta property for import is 'import\.meta'$/, 'TS17012'],
-	// acorn: 'import.meta' must not contain escaped characters
+	// acorn: parseExprAtom
+	UPSTREAM_ERRORS.SUPER_OUTSIDE_METHOD,
+	// acorn: parseExprAtom
+	UPSTREAM_ERRORS.SUPER_CALL_OUTSIDE_CONSTRUCTOR,
+	// acorn: parseExprImport, parseNew, next
+	TS_ERRORS.KEYWORD_ESCAPE_SEQUENCE,
+	// acorn: parseImportMeta
+	UPSTREAM_ERRORS.IMPORT_META_PROPERTY,
+	// acorn: parseImportMeta
 	[/^'import\.meta' must not contain escaped characters$/, 'TSRX4003'],
-	// acorn: The only valid meta property for new is 'new.target'
+	// acorn: parseNew
 	[/^The only valid meta property for new is 'new\.target'$/, 'TS17012'],
-	// acorn: 'new.target' must not contain escaped characters
+	// acorn: parseNew
 	[/^'new\.target' must not contain escaped characters$/, 'TSRX4003'],
-	// acorn: 'new.target' can only be used in functions and class static block
-	[/^'new\.target' can only be used in functions and class static block$/, 'TS17013'],
-	// acorn: Bad escape sequence in untagged template literal
+	// acorn: parseNew
+	UPSTREAM_ERRORS.NEW_TARGET_OUTSIDE_FUNCTION,
+	// acorn: parseTemplateElement
 	[/^Bad escape sequence in untagged template literal$/, 'TS1125'],
-	// acorn: Unterminated template literal
+	// acorn: parseTemplate
 	[/^Unterminated template literal$/, 'TS1160'],
-	// acorn: Illegal 'use strict' directive in function with non-simple parameter list
+	// acorn: parseFunctionBody
 	[/^Illegal 'use strict' directive in function with non-simple parameter list$/, 'TS1347'],
-	// acorn: Cannot use 'yield' as identifier inside a generator
+	// acorn: checkUnreserved
 	[/^Cannot use 'yield' as identifier inside a generator$/, 'TS1212'],
-	// acorn: Cannot use 'arguments' in class field initializer
+	// acorn: checkUnreserved
 	[/^Cannot use 'arguments' in class field initializer$/, 'TS2815'],
-	// acorn: Cannot use arguments in class static initialization block
+	// acorn: checkUnreserved
 	[/^Cannot use arguments in class static initialization block$/, 'TS2815'],
-	// acorn: Cannot use await in class static initialization block
+	// acorn: checkUnreserved
 	[/^Cannot use await in class static initialization block$/, 'TS18037'],
-	// acorn: Unexpected keyword '{0}'
+	// acorn: checkUnreserved
 	[/^Unexpected keyword '[^']+'$/, 'TS1359'],
-	// acorn: Cannot use keyword 'await' outside an async function
+	// acorn: checkUnreserved
 	[/^Cannot use keyword 'await' outside an async function$/, 'TS1262'],
-	// acorn: The keyword '{0}' is reserved
+	// acorn: checkUnreserved
+	UPSTREAM_ERRORS.LET_RESERVED,
+	// acorn: checkUnreserved
 	[/^The keyword '[^']+' is reserved$/, 'TS1212'],
-	// acorn: Identifier '{0}' has already been declared
-	[/^Identifier '[^'#][^']*' has already been declared$/, 'TS2451'],
-	// acorn: Invalid regular expression flag
+	// acorn: validateRegExpFlags
 	[/^Invalid regular expression flag$/, 'TS1499'],
-	// acorn: Duplicate regular expression flag
+	// acorn: validateRegExpFlags
 	[/^Duplicate regular expression flag$/, 'TS1500'],
-	// acorn: Unterminated comment
+	// acorn: skipBlockComment
 	[/^Unterminated comment$/, 'TS1010'],
-	// acorn: Unexpected character '{0}'
+	// acorn: readToken_numberSign, getTokenFromCode
 	[/^Unexpected character '.+'$/, 'TS1127'],
-	// acorn: Unterminated regular expression
+	// acorn: readRegexp
 	[/^Unterminated regular expression$/, 'TS1161'],
-	// acorn: Numeric separator is not allowed in legacy octal numeric literals
+	// acorn: readInt
 	[/^Numeric separator is not allowed in legacy octal numeric literals$/, 'TS6188'],
-	// acorn: Numeric separator must be exactly one underscore
+	// acorn: readInt
 	[/^Numeric separator must be exactly one underscore$/, 'TS6189'],
-	// acorn: Numeric separator is not allowed at the first of digits
+	// acorn: readInt
 	[/^Numeric separator is not allowed at the first of digits$/, 'TS6188'],
-	// acorn: Numeric separator is not allowed at the last of digits
+	// acorn: readInt
 	[/^Numeric separator is not allowed at the last of digits$/, 'TS6188'],
-	// acorn: Expected number in radix 16
+	// acorn: readRadixNumber
 	[/^Expected number in radix 16$/, 'TS1125'],
-	// acorn: Expected number in radix 2
+	// acorn: readRadixNumber
 	[/^Expected number in radix 2$/, 'TS1177'],
-	// acorn: Expected number in radix 8
+	// acorn: readRadixNumber
 	[/^Expected number in radix 8$/, 'TS1178'],
-	// acorn: Identifier directly after number
+	// acorn: readRadixNumber, readNumber
 	[/^Identifier directly after number$/, 'TS1351'],
-	// acorn: Invalid number
+	// acorn: readNumber
 	[/^Invalid number$/, 'TS1124'],
-	// acorn: Unterminated string constant
+	// acorn: readString
 	[/^Unterminated string constant$/, 'TS1002'],
-	// acorn: Unterminated template
+	// acorn: parseTemplate, readTmplToken, readInvalidTemplateToken
 	[/^Unterminated template$/, 'TS1160'],
-	// acorn: Code point out of bounds
+	// acorn: readCodePoint
 	[/^Code point out of bounds$/, 'TS1198'],
-	// acorn: Invalid escape sequence
+	// acorn: readEscapedChar
 	[/^Invalid escape sequence$/, 'TS1488'],
-	// acorn: Invalid escape sequence in template string
+	// acorn: readEscapedChar
 	[/^Invalid escape sequence in template string$/, 'TS1488'],
-	// acorn: Octal literal in template string
+	// acorn: readEscapedChar
 	[/^Octal literal in template string$/, 'TS1487'],
-	// acorn: Octal literal in strict mode
+	// acorn: readEscapedChar
 	[/^Octal literal in strict mode$/, 'TS1487'],
-	// acorn: Bad character escape sequence
+	// acorn: readHexChar
 	[/^Bad character escape sequence$/, 'TS1125'],
-	// acorn: Expecting Unicode escape sequence \uXXXX
+	// acorn: readWord1
 	[/^Expecting Unicode escape sequence \\uXXXX$/, 'TS1127'],
-	// acorn: Invalid Unicode escape
+	// acorn: readWord1
 	[/^Invalid Unicode escape$/, 'TS1127'],
-	// acorn: Invalid regular expression: /{0}/: Unmatched ')'
+	// acorn's regular expression validator, as `Invalid regular expression:
+	// /{0}/: {1}`
+	// acorn: regexp_pattern
 	[/^Invalid regular expression: \/.*\/: Unmatched '\)'$/, 'TS1508'],
-	// acorn: Invalid regular expression: /{0}/: Lone quantifier brackets
+	// acorn: regexp_pattern, regexp_disjunction
 	[/^Invalid regular expression: \/.*\/: Lone quantifier brackets$/, 'TS1508'],
-	// acorn: Invalid regular expression: /{0}/: Invalid escape
+	// acorn: regexp_pattern, regexp_eatAtomEscape, regexp_eatClassAtom, regexp_eatClassStringDisjunction, regexp_eatHexEscapeSequence
 	[/^Invalid regular expression: \/.*\/: Invalid escape$/, 'TS1535'],
-	// acorn: Invalid regular expression: /{0}/: Invalid named capture referenced
+	// acorn: regexp_pattern
 	[/^Invalid regular expression: \/.*\/: Invalid named capture referenced$/, 'TS1532'],
-	// acorn: Invalid regular expression: /{0}/: Nothing to repeat
+	// acorn: regexp_disjunction, regexp_eatInvalidBracedQuantifier
 	[/^Invalid regular expression: \/.*\/: Nothing to repeat$/, 'TS1507'],
-	// acorn: Invalid regular expression: /{0}/: Invalid quantifier
+	// acorn: regexp_eatTerm
 	[/^Invalid regular expression: \/.*\/: Invalid quantifier$/, 'TS1507'],
-	// acorn: Invalid regular expression: /{0}/: Unterminated group
+	// acorn: regexp_eatAssertion, regexp_eatCapturingGroup, regexp_eatUncapturingGroup
 	[/^Invalid regular expression: \/.*\/: Unterminated group$/, 'TS1005'],
-	// acorn: Invalid regular expression: /{0}/: numbers out of order in {} quantifier
+	// acorn: regexp_eatBracedQuantifier
 	[/^Invalid regular expression: \/.*\/: numbers out of order in \{\} quantifier$/, 'TS1506'],
-	// acorn: Invalid regular expression: /{0}/: Incomplete quantifier
+	// acorn: regexp_eatBracedQuantifier
 	[/^Invalid regular expression: \/.*\/: Incomplete quantifier$/, 'TS1005'],
-	// acorn: Invalid regular expression: /{0}/: Duplicate regular expression modifiers
+	// acorn: regexp_eatUncapturingGroup
 	[/^Invalid regular expression: \/.*\/: Duplicate regular expression modifiers$/, 'TS1500'],
-	// acorn: Invalid regular expression: /{0}/: Invalid regular expression modifiers
+	// acorn: regexp_eatUncapturingGroup
 	[/^Invalid regular expression: \/.*\/: Invalid regular expression modifiers$/, 'TS1504'],
-	// acorn: Invalid regular expression: /{0}/: Invalid group
+	// acorn: regexp_eatCapturingGroup, regexp_groupSpecifier
 	[/^Invalid regular expression: \/.*\/: Invalid group$/, 'TS1005'],
-	// acorn: Invalid regular expression: /{0}/: Duplicate capture group name
+	// acorn: regexp_groupSpecifier
 	[/^Invalid regular expression: \/.*\/: Duplicate capture group name$/, 'TS1515'],
-	// acorn: Invalid regular expression: /{0}/: Invalid capture group name
+	// acorn: regexp_eatGroupName
 	[/^Invalid regular expression: \/.*\/: Invalid capture group name$/, 'TS1514'],
-	// acorn: Invalid regular expression: /{0}/: Invalid unicode escape
+	// acorn: regexp_eatAtomEscape, regexp_eatRegExpUnicodeEscapeSequence
 	[/^Invalid regular expression: \/.*\/: Invalid unicode escape$/, 'TS1198'],
-	// acorn: Invalid regular expression: /{0}/: Invalid named reference
+	// acorn: regexp_eatKGroupName
 	[/^Invalid regular expression: \/.*\/: Invalid named reference$/, 'TS1510'],
-	// acorn: Invalid regular expression: /{0}/: Invalid property name
+	// acorn: regexp_eatCharacterClassEscape, regexp_validateUnicodePropertyNameAndValue, regexp_validateUnicodePropertyNameOrValue
 	[/^Invalid regular expression: \/.*\/: Invalid property name$/, 'TS1529'],
-	// acorn: Invalid regular expression: /{0}/: Invalid property value
+	// acorn: regexp_validateUnicodePropertyNameAndValue
 	[/^Invalid regular expression: \/.*\/: Invalid property value$/, 'TS1526'],
-	// acorn: Invalid regular expression: /{0}/: Unterminated character class
+	// acorn: regexp_eatCharacterClass
 	[/^Invalid regular expression: \/.*\/: Unterminated character class$/, 'TS1005'],
-	// acorn: Invalid regular expression: /{0}/: Negated character class may contain strings
+	// acorn: regexp_eatCharacterClass, regexp_eatNestedClass
 	[/^Invalid regular expression: \/.*\/: Negated character class may contain strings$/, 'TS1518'],
-	// acorn: Invalid regular expression: /{0}/: Invalid character class
+	// acorn: regexp_nonEmptyClassRanges
 	[/^Invalid regular expression: \/.*\/: Invalid character class$/, 'TS1516'],
-	// acorn: Invalid regular expression: /{0}/: Range out of order in character class
+	// acorn: regexp_nonEmptyClassRanges, regexp_eatClassSetRange
 	[/^Invalid regular expression: \/.*\/: Range out of order in character class$/, 'TS1517'],
-	// acorn: Invalid regular expression: /{0}/: Invalid class escape
+	// acorn: regexp_eatClassAtom
 	[/^Invalid regular expression: \/.*\/: Invalid class escape$/, 'TS1512'],
-	// acorn: Invalid regular expression: /{0}/: Invalid character in character class
+	// acorn: regexp_classSetExpression
 	[/^Invalid regular expression: \/.*\/: Invalid character in character class$/, 'TS1508'],
-	// acorn-typescript: Unterminated JSX contents
-	[/^Unterminated JSX contents$/, 'TS17008'],
-	// acorn-typescript: Unexpected token `{0}`. Did you mean `{1}` or `{"{0}"}`?
-	[/^Unexpected token `>`\. Did you mean `&gt;` or `\{">"\}`\?$/, 'TS1382'],
-	[/^Unexpected token `\}`\. Did you mean `&rbrace;` or `\{"\}"\}`\?$/, 'TS1381'],
-	// acorn-typescript: JSX attributes must only be assigned a non-empty expression
+	// acorn-typescript: jsx_readToken
+	TS_ERRORS.UNTERMINATED_JSX_CONTENTS,
+	// acorn-typescript: jsx_readToken
+	TS_ERRORS.JSX_UNESCAPED_GREATER_THAN,
+	// acorn-typescript: jsx_readToken
+	TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE,
+	// acorn-typescript: jsx_parseAttributeValue
 	[/^JSX attributes must only be assigned a non-empty expression$/, 'TS17000'],
-	// acorn-typescript: JSX value should be either an expression or a quoted JSX text
+	// acorn-typescript: jsx_parseAttributeValue
 	[/^JSX value should be either an expression or a quoted JSX text$/, 'TS1145'],
-	// acorn-typescript: Expected corresponding JSX closing tag for <{0}>
+	// acorn-typescript: jsx_parseElementAt
 	[/^Expected corresponding JSX closing tag for <[^>]*>$/, 'TS17002'],
-	// acorn-typescript: Adjacent JSX elements must be wrapped in an enclosing tag
+	// acorn-typescript: jsx_parseElementAt
 	[/^Adjacent JSX elements must be wrapped in an enclosing tag$/, 'TS2657'],
-	// acorn-typescript: Duplicated key in attributes
-	[/^Duplicated key in attributes$/, 'TSRX4003'],
-	// acorn-typescript: Only string is supported as an attribute value
-	[/^Only string is supported as an attribute value$/, 'TS2858'],
-	// acorn-typescript: A 'get' accesor must not have any formal parameters.
+	// acorn-typescript: parseWithEntries
+	TSRX_ERRORS.DUPLICATED_ATTRIBUTE_KEY,
+	// acorn-typescript: parseWithEntries
+	TS_ERRORS.ONLY_STRING_ATTRIBUTE_VALUE,
+	// acorn-typescript: tsParsePropertyOrMethodSignature
 	[/^A 'get' accesor must not have any formal parameters\.$/, 'TS1054'],
-	// acorn-typescript: Cannot use new with import()
+	// acorn-typescript: parseNew
 	[/^Cannot use new with import\(\)$/, 'TS1109'],
-	// acorn-typescript: Tagged Template Literals are not allowed in optionalChain.
+	// acorn-typescript: parseTaggedTemplateExpression
 	[/^Tagged Template Literals are not allowed in optionalChain\.$/, 'TS1358'],
-	// acorn-typescript: Identifier '{0}' has already been declared.
-	[/^Identifier '[^']+' has already been declared\.$/, 'TS2300'],
-	// acorn-typescript: type '{0}' has already been declared.
-	[/^type '[^']+' has already been declared\.$/, 'TS2300'],
-	// acorn-typescript: Method '{0}' cannot have an implementation because it is marked abstract.
+	// acorn-typescript: parseMethod
 	[/^Method '.+' cannot have an implementation because it is marked abstract\.$/, 'TS1245'],
-	// acorn-typescript: Property '{0}' cannot have an initializer because it is marked abstract.
+	// acorn-typescript: parseClassField
 	[/^Property '.+' cannot have an initializer because it is marked abstract\.$/, 'TS1267'],
-	// acorn-typescript: 'get' and 'set' accessors cannot declare 'this' parameters.
+	// acorn-typescript: tsParsePropertyOrMethodSignature
 	[/^'get' and 'set' accessors cannot declare 'this' parameters\.$/, 'TS2784'],
-	// acorn-typescript: An accessor cannot have type parameters.
+	// acorn-typescript: tsParsePropertyOrMethodSignature
 	[/^An accessor cannot have type parameters\.$/, 'TS1094'],
-	// acorn-typescript: Cannot find name '{0}'.
+	// acorn-typescript: tsTryNextParseConstantContext
 	[/^Cannot find name '[^']+'\.$/, 'TS2304'],
-	// acorn-typescript: Class methods cannot have the 'declare' modifier.
+	// acorn-typescript: parsePostMemberNameModifiers
 	[/^Class methods cannot have the 'declare' modifier\.$/, 'TS1031'],
-	// acorn-typescript: Class methods cannot have the 'readonly' modifier.
+	// acorn-typescript: parsePostMemberNameModifiers
 	[/^Class methods cannot have the 'readonly' modifier\.$/, 'TS1024'],
-	// acorn-typescript: A 'const' initializer in an ambient context must be a string or numeric literal or literal
+	// acorn-typescript: parseVarStatement
 	[
 		/^A 'const' initializer in an ambient context must be a string or numeric literal or literal enum reference\.$/,
 		'TS1254',
 	],
-	// acorn-typescript: Type parameters cannot appear on a constructor declaration.
+	// acorn-typescript: parseClassMethod
 	[/^Type parameters cannot appear on a constructor declaration\.$/, 'TS1092'],
-	// acorn-typescript: 'declare' is not allowed in {0}ters.
+	// acorn-typescript: parseClassMethod
 	[/^'declare' is not allowed in (?:get|set)ters\.$/, 'TS1031'],
-	// acorn-typescript: Initializers are not allowed in ambient contexts.
-	[/^Initializers are not allowed in ambient contexts\.$/, 'TS1039'],
-	// acorn-typescript: An implementation cannot be declared in ambient contexts.
+	// acorn-typescript: parseVarStatement, parseClassField
+	UPSTREAM_ERRORS.AMBIENT_INITIALIZER,
+	// acorn-typescript: parseFunctionBody
 	[/^An implementation cannot be declared in ambient contexts\.$/, 'TS1183'],
-	// acorn-typescript: Accessibility modifier already seen.
-	[/^Accessibility modifier already seen\.$/, 'TS1028'],
-	// acorn-typescript: Duplicate modifier: '{0}'.
-	[/^Duplicate modifier: '\w+'\.$/, 'TS1030'],
-	// acorn-typescript: '{0}' list cannot be empty.
+	// acorn-typescript: tsParseModifiers
+	TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
+	// acorn-typescript: tsParseModifiers
+	UPSTREAM_ERRORS.DUPLICATE_MODIFIER,
+	// acorn-typescript: tsParseHeritageClause
 	[/^'(?:extends|implements)' list cannot be empty\.$/, 'TS1097'],
-	// acorn-typescript: Type argument list cannot be empty.
+	// acorn-typescript: tsParseTypeArguments
 	[/^Type argument list cannot be empty\.$/, 'TS1099'],
-	// acorn-typescript: Type parameter list cannot be empty.
+	// acorn-typescript: tsParseTypeParameters
 	[/^Type parameter list cannot be empty\.$/, 'TS1098'],
-	// acorn-typescript: 'export declare' must be followed by an ambient declaration.
+	// acorn-typescript: parseExportDeclaration
 	[/^'export declare' must be followed by an ambient declaration\.$/, 'TS1128'],
-	// acorn-typescript: An import alias can not use 'import type'.
+	// acorn-typescript: tsParseImportEqualsDeclaration
 	[/^An import alias can not use 'import type'\.$/, 'TS1392'],
-	// acorn-typescript: '{0}' modifier cannot be used with '{1}' modifier.
-	[/^'\w+' modifier cannot be used with '\w+' modifier\.$/, 'TS1243'],
-	// acorn-typescript: Index signatures cannot have the 'abstract' modifier.
+	// acorn-typescript: tsParseModifiers (incompatible)
+	TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH,
+	// acorn-typescript: callParseClassMemberWithIsStatic
 	[/^Index signatures cannot have the 'abstract' modifier\.$/, 'TS1071'],
-	// acorn-typescript: Index signatures cannot have an accessibility modifier ('{0}').
+	// acorn-typescript: callParseClassMemberWithIsStatic
 	[/^Index signatures cannot have an accessibility modifier \('\w+'\)\.$/, 'TS1071'],
-	// acorn-typescript: Index signatures cannot have the 'declare' modifier.
+	// acorn-typescript: callParseClassMemberWithIsStatic
 	[/^Index signatures cannot have the 'declare' modifier\.$/, 'TS1071'],
-	// acorn-typescript: 'override' modifier cannot appear on an index signature.
+	// acorn-typescript: callParseClassMemberWithIsStatic
 	[/^'override' modifier cannot appear on an index signature\.$/, 'TS1071'],
-	// acorn-typescript: '{0}' modifier cannot appear on a type member.
-	[/^'\w+' modifier cannot appear on a type member\.$/, 'TS1070'],
-	// acorn-typescript: '{0}' modifier cannot appear on a type parameter.
-	[/^'\w+' modifier cannot appear on a type parameter\.$/, 'TS1273'],
-	// acorn-typescript: '{0}' modifier can only appear on a type parameter of a class, interface or type alias.
-	[
-		/^'\w+' modifier can only appear on a type parameter of a class, interface or type alias\.$/,
-		'TS1274',
-	],
-	// acorn-typescript: '{0}' modifier must precede '{1}' modifier.
-	[/^'\w+' modifier must precede '\w+' modifier\.$/, 'TS1029'],
-	// acorn-typescript: Invalid property access after an instantiation expression. You can either wrap the instant
+	// acorn-typescript: tsParseModifiers
+	UPSTREAM_ERRORS.TYPE_MEMBER_MODIFIER,
+	// acorn-typescript: tsParseModifiers
+	UPSTREAM_ERRORS.TYPE_PARAMETER_MODIFIER,
+	// acorn-typescript: tsParseModifiers
+	UPSTREAM_ERRORS.VARIANCE_MODIFIER,
+	// acorn-typescript: tsParseModifiers (enforceOrder)
+	TS_ERRORS.MODIFIER_MUST_PRECEDE,
+	// acorn-typescript: parseSubscript
 	[
 		/^Invalid property access after an instantiation expression\. You can either wrap the instantiation expression in parentheses, or delete the type arguments\.$/,
 		'TS1477',
 	],
-	// acorn-typescript: Tuple members must be labeled with a simple identifier.
+	// acorn-typescript: tsParseTupleElementType
 	[/^Tuple members must be labeled with a simple identifier\.$/, 'TS1005'],
-	// acorn-typescript: 'interface' declarations must be followed by an identifier.
+	// acorn-typescript: tsParseInterfaceDeclaration
 	[/^'interface' declarations must be followed by an identifier\.$/, 'TS1438'],
-	// acorn-typescript: Abstract methods can only appear within an abstract class.
-	[/^Abstract methods can only appear within an abstract class\.$/, 'TS1244'],
-	// acorn-typescript: 'abstract' modifier can only appear on a class, method, or property declaration.
-	[/^'abstract' modifier can only appear on a class, method, or property declaration\.$/, 'TS1242'],
-	// acorn-typescript: A required element cannot follow an optional element.
+	// acorn-typescript: callParseClassMemberWithIsStatic
+	UPSTREAM_ERRORS.ABSTRACT_METHOD_IN_CLASS,
+	// acorn-typescript: tsParseTupleType
 	[/^A required element cannot follow an optional element\.$/, 'TS1257'],
-	// acorn-typescript: This member cannot have an 'override' modifier because its containing class does not exten
+	// acorn-typescript: callParseClassMemberWithIsStatic
 	[
 		/^This member cannot have an 'override' modifier because its containing class does not extend another class\.$/,
 		'TS4112',
 	],
-	// acorn-typescript: A binding pattern parameter cannot be optional in an implementation signature.
-	[/^A binding pattern parameter cannot be optional in an implementation signature\.$/, 'TS2463'],
-	// acorn-typescript: Private elements cannot have the 'abstract' modifier.
-	[/^Private elements cannot have the 'abstract' modifier\.$/, 'TS18019'],
-	// acorn-typescript: Private elements cannot have an accessibility modifier ('{0}').
-	[/^Private elements cannot have an accessibility modifier \('\w+'\)\.$/, 'TS18010'],
-	// acorn-typescript: Private methods cannot have an accessibility modifier ('{0}').
+	// acorn-typescript: parseBindingListItem
+	TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER,
+	// acorn-typescript: parseClassField
+	UPSTREAM_ERRORS.PRIVATE_ELEMENT_ABSTRACT,
+	// acorn-typescript: parseClassField
+	UPSTREAM_ERRORS.PRIVATE_ELEMENT_ACCESSIBILITY,
+	// acorn-typescript: parseClassMethod
 	[/^Private methods cannot have an accessibility modifier \('\w+'\)\.$/, 'TS18010'],
-	// acorn-typescript: 'readonly' modifier can only appear on a property declaration or index signature.
-	[
-		/^'readonly' modifier can only appear on a property declaration or index signature\.$/,
-		'TS1024',
-	],
-	// acorn-typescript: This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma, as
-	[
-		/^This syntax is reserved in files with the \.mts or \.cts extension\. Add a trailing comma, as in `<T,>\(\) => \.\.\.`\.$/,
-		'TS7060',
-	],
-	// acorn-typescript: This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression i
+	// acorn-typescript: tsParsePropertyOrMethodSignature
+	TS_ERRORS.READONLY_MODIFIER_NOT_ALLOWED,
+	// acorn-typescript: tsParseTypeAssertion
+	TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER,
+	// acorn-typescript: tsParseTypeAssertion
 	[
 		/^This syntax is reserved in files with the \.mts or \.cts extension\. Use an `as` expression instead\.$/,
 		'TS7059',
 	],
-	// acorn-typescript: A 'set' accessor cannot have an optional parameter.
+	// acorn-typescript: tsParsePropertyOrMethodSignature
 	[/^A 'set' accessor cannot have an optional parameter\.$/, 'TS1051'],
-	// acorn-typescript: A 'set' accessor cannot have rest parameter.
+	// acorn-typescript: tsParsePropertyOrMethodSignature
 	[/^A 'set' accessor cannot have rest parameter\.$/, 'TS1053'],
-	// acorn-typescript: A 'set' accessor cannot have a return type annotation.
+	// acorn-typescript: tsParsePropertyOrMethodSignature
 	[/^A 'set' accessor cannot have a return type annotation\.$/, 'TS1095'],
-	// acorn-typescript: Static class blocks cannot have any modifier.
+	// acorn-typescript: callParseClassMemberWithIsStatic
 	[/^Static class blocks cannot have any modifier\.$/, 'TS1184'],
-	// acorn-typescript: Type annotations must come before default assignments, e.g. instead of `age = 25: number`
+	// acorn-typescript: parseMaybeDefault
 	[
 		/^Type annotations must come before default assignments, e\.g\. instead of `age = 25: number` use `age: number = 25`\.$/,
 		'TS1005',
 	],
-	// acorn-typescript: A type-only import can specify a default import or named bindings, but not both.
+	// acorn-typescript: parseImport
 	[/^A type-only import can specify a default import or named bindings, but not both\.$/, 'TS1363'],
-	// acorn-typescript: The 'type' modifier cannot be used on a named export when 'export type' is used on its exp
+	// acorn-typescript: parseTypeOnlyImportExportSpecifier
 	[
 		/^The 'type' modifier cannot be used on a named export when 'export type' is used on its export statement\.$/,
 		'TS2207',
 	],
-	// acorn-typescript: The 'type' modifier cannot be used on a named import when 'import type' is used on its imp
+	// acorn-typescript: parseTypeOnlyImportExportSpecifier
 	[
 		/^The 'type' modifier cannot be used on a named import when 'import type' is used on its import statement\.$/,
 		'TS2206',
 	],
-	// acorn-typescript: A parameter property is only allowed in a constructor implementation.
-	[/^A parameter property is only allowed in a constructor implementation\.$/, 'TS2369'],
-	// acorn-typescript: 'readonly' type modifier is only permitted on array and tuple literal types.
-	[/^'readonly' type modifier is only permitted on array and tuple literal types\.$/, 'TS1354'],
-	// acorn-typescript: Trailing comma is not allowed at the end of generics.
-	[/^Trailing comma is not allowed at the end of generics\.$/, 'TS1009'],
-	// acorn-typescript: Did not expect a type annotation here.
-	[/^Did not expect a type annotation here\.$/, 'TS1005'],
-	// acorn-typescript: Unexpected type cast in parameter position.
-	[/^Unexpected type cast in parameter position\.$/, 'TS1005'],
-	// acorn-typescript: Argument in a type import must be a string literal.
-	[/^Argument in a type import must be a string literal\.$/, 'TS1141'],
-	// acorn-typescript: A parameter property may not be declared using a binding pattern.
-	[/^A parameter property may not be declared using a binding pattern\.$/, 'TS1187'],
-	// acorn-typescript: Name in a signature must be an Identifier, ObjectPattern or ArrayPattern, instead got {0}.
-	[
-		/^Name in a signature must be an Identifier, ObjectPattern or ArrayPattern, instead got \w+\.$/,
-		'TS2371',
-	],
-	// acorn-typescript: 'let' is not allowed to be used as a name in 'let' or 'const' declarations.
-	[/^'let' is not allowed to be used as a name in 'let' or 'const' declarations\.$/, 'TS2480'],
-	// acorn-typescript: Leading decorators must be attached to a class declaration.
-	[/^Leading decorators must be attached to a class declaration\.$/, 'TS1206'],
-	// acorn-typescript: Decorators can't be used with a constructor. Did you mean '@dec class { ... }'?
-	[
-		/^Decorators can't be used with a constructor\. Did you mean '@dec class \{ \.\.\. \}'\?$/,
-		'TS1206',
-	],
-	// acorn-typescript: Decorators must be attached to a class element.
+	// acorn-typescript: parseAssignableListItem
+	TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+	// acorn-typescript: tsCheckTypeAnnotationForReadOnly
+	TS_ERRORS.READONLY_TYPE_MODIFIER,
+	// acorn-typescript: tsCheckForInvalidTypeCasts
+	TS_ERRORS.UNEXPECTED_TYPE_ANNOTATION,
+	// acorn-typescript: toAssignable
+	TS_ERRORS.TYPE_CAST_IN_PARAMETER,
+	// acorn-typescript: tsParseImportType
+	TS_ERRORS.TYPE_IMPORT_ARGUMENT,
+	// acorn-typescript: parseAssignableListItem
+	TS_ERRORS.PATTERN_PARAMETER_PROPERTY,
+	// acorn-typescript: tsParseBindingListForSignature
+	TS_ERRORS.SIGNATURE_PARAMETER_NAME,
+	// acorn-typescript: parseDecorators
+	TS_ERRORS.UNEXPECTED_LEADING_DECORATOR,
+	// acorn-typescript: parseClass
+	UPSTREAM_ERRORS.DECORATED_CONSTRUCTOR,
+	// acorn-typescript: parseClass
 	[/^Decorators must be attached to a class element\.$/, 'TS1146'],
-	// acorn-typescript: Decorators can't be used with SpreadElement
+	// acorn-typescript: parseProperty
 	[/^Decorators can't be used with SpreadElement$/, 'TS1206'],
 ];
 
 /**
- * The code of an error message: TSRX's own code, or TypeScript's for a
- * mistake TypeScript also reports (see {@link MESSAGE_CODES} and
- * {@link PARSER_MESSAGE_CODES}).
- * @param {string} message
- * @returns {string | undefined}
+ * The pattern of an entry's message, with any value in it.
+ * @param {Diagnostic | DiagnosticWithValues} entry
+ * @returns {RegExp}
  */
-export function get_error_code(message) {
-	for (const [pattern, code] of MESSAGE_CODES) {
-		if (typeof pattern === 'string' ? pattern === message : pattern.test(message)) {
-			return code;
-		}
-	}
-	for (const [pattern, code] of PARSER_MESSAGE_CODES) {
-		if (pattern.test(message)) return code;
-	}
-	return undefined;
+function message_pattern(entry) {
+	const placeholder = '\0';
+	const message =
+		typeof entry === 'function'
+			? entry(placeholder, placeholder, placeholder).message
+			: entry.message;
+	const source = message
+		.split(placeholder)
+		.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+		.join('.+');
+	return new RegExp(`^${source}$`);
+}
+
+/**
+ * {@link UPSTREAM_LOOKUP_ROWS}, as the pattern of each row and the kind of
+ * error it is: the entry, or the {@link UpstreamError}.
+ * @type {Array<{ pattern: RegExp, error: UpstreamError | Diagnostic | DiagnosticWithValues }>}
+ */
+const UPSTREAM_LOOKUP = UPSTREAM_LOOKUP_ROWS.map((row) => {
+	if (Array.isArray(row)) return { pattern: row[0], error: { pattern: row[0], code: row[1] } };
+	if ('pattern' in row) return { pattern: row.pattern, error: row };
+	return { pattern: message_pattern(row), error: row };
+});
+
+/**
+ * The kind of error an acorn or acorn-typescript `message` is, with its code:
+ * the entry TSRX raises in the same words, or the {@link UpstreamError}.
+ * @param {string} message
+ * @returns {Diagnostic | DiagnosticWithValues | UpstreamError | undefined}
+ */
+export function get_upstream_error(message) {
+	return UPSTREAM_LOOKUP.find((row) => row.pattern.test(message))?.error;
+}
+
+/**
+ * The {@link Diagnostic} for an error acorn or acorn-typescript raises, with
+ * its code from the lookup, if the lookup has it.
+ * @param {string} message
+ * @returns {{ code: string | undefined, message: string }}
+ */
+export function upstream_diagnostic(message) {
+	return { code: get_upstream_error(message)?.code, message };
 }

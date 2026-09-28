@@ -19,6 +19,7 @@
 import { walk } from 'zimmerframe';
 import {
 	DIAGNOSTIC_CODES,
+	TSRX_ERRORS,
 	createJsxTransform,
 	createScriptBody as create_script_body,
 	error,
@@ -56,18 +57,6 @@ import {
 } from '@tsrx/core';
 
 import { builders as b } from '@tsrx/core';
-
-const TSRX_FOR_RETURN_ERROR =
-	'Return statements are not allowed inside TSRX template for...of loops. Filter the iterable before rendering or use an @empty fallback for empty lists.';
-const TSRX_FOR_BREAK_ERROR =
-	'Break statements are not allowed inside TSRX template for...of loops.';
-const TSRX_FOR_CONTINUE_ERROR =
-	'Continue statements are not allowed inside TSRX template for...of loops. Filter the iterable before rendering.';
-const TSRX_IF_RETURN_ERROR =
-	'Return statements are not allowed inside TSRX template @if blocks. Move the return before the template output or render conditionally instead.';
-const TSRX_IF_BREAK_ERROR = 'Break statements are not allowed inside TSRX template @if blocks.';
-const TSRX_IF_CONTINUE_ERROR =
-	'Continue statements are not allowed inside TSRX template @if blocks. Filter before rendering or use conditional output instead.';
 
 /**
  * Solid platform descriptor consumed by `createJsxTransform`. Everything
@@ -159,6 +148,7 @@ const solid_platform = {
 				adjusted_node,
 				ctx?.errors,
 				ctx?.comments,
+				DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED,
 			);
 		},
 		controlFlow: {
@@ -255,7 +245,7 @@ function to_jsx_child(node, transform_context) {
 		case 'JSXForExpression':
 			if (node.statementType !== 'ForOfStatement') {
 				error(
-					'TSRX `@for` currently supports `for...of` loops in template output.',
+					TSRX_ERRORS.FOR_OF_ONLY,
 					transform_context.filename,
 					node,
 					transform_context.errors,
@@ -551,15 +541,30 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 	}
 
 	if (current.type === 'ReturnStatement') {
-		error(TSRX_FOR_RETURN_ERROR, transform_context.filename, current, transform_context.errors);
+		error(
+			TSRX_ERRORS.FOR_RETURN_STATEMENT,
+			transform_context.filename,
+			current,
+			transform_context.errors,
+		);
 		return;
 	}
 	if (current.type === 'BreakStatement') {
-		error(TSRX_FOR_BREAK_ERROR, transform_context.filename, current, transform_context.errors);
+		error(
+			TSRX_ERRORS.FOR_BREAK_STATEMENT,
+			transform_context.filename,
+			current,
+			transform_context.errors,
+		);
 		return;
 	}
 	if (current.type === 'ContinueStatement') {
-		error(TSRX_FOR_CONTINUE_ERROR, transform_context.filename, current, transform_context.errors);
+		error(
+			TSRX_ERRORS.FOR_CONTINUE_STATEMENT,
+			transform_context.filename,
+			current,
+			transform_context.errors,
+		);
 		return;
 	}
 
@@ -597,15 +602,30 @@ function validate_if_body_control_flow(node, transform_context) {
 	const current = /** @type {AST.TraversableAstNode} */ (node);
 
 	if (current.type === 'ReturnStatement') {
-		error(TSRX_IF_RETURN_ERROR, transform_context.filename, current, transform_context.errors);
+		error(
+			TSRX_ERRORS.IF_RETURN_STATEMENT,
+			transform_context.filename,
+			current,
+			transform_context.errors,
+		);
 		return;
 	}
 	if (current.type === 'BreakStatement') {
-		error(TSRX_IF_BREAK_ERROR, transform_context.filename, current, transform_context.errors);
+		error(
+			TSRX_ERRORS.IF_BREAK_STATEMENT,
+			transform_context.filename,
+			current,
+			transform_context.errors,
+		);
 		return;
 	}
 	if (current.type === 'ContinueStatement') {
-		error(TSRX_IF_CONTINUE_ERROR, transform_context.filename, current, transform_context.errors);
+		error(
+			TSRX_ERRORS.IF_CONTINUE_STATEMENT,
+			transform_context.filename,
+			current,
+			transform_context.errors,
+		);
 		return;
 	}
 

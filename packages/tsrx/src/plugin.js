@@ -2,6 +2,7 @@
 @import * as AST from 'estree'
 @import * as ESTreeJSX from 'estree-jsx'
 @import { Parse } from '@tsrx/core/types'
+@import { Diagnostic } from './diagnostics.js'
  */
 
 import * as acorn from 'acorn';
@@ -9,11 +10,7 @@ import { isWhitespaceTextNode, BINDING_TYPES, DestructuringErrors } from './pars
 import { parse_style } from './parse/style.js';
 import { regex_newline_characters, regex_not_whitespace } from './utils/patterns.js';
 import { error } from './errors.js';
-import { DIAGNOSTIC_CODES, get_error_code } from './diagnostics.js';
-import {
-	TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
-	TSRX_RETURN_STATEMENT_ERROR,
-} from './analyze/validation.js';
+import { TS_ERRORS, TSRX_ERRORS, UPSTREAM_ERRORS, get_upstream_error } from './diagnostics.js';
 import { is_tsrx_render_output_node } from './utils/ast.js';
 
 /** Whitespace and comments from `lastIndex` on, like acorn's `skipSpace` */
@@ -22,6 +19,12 @@ const regex_space_and_comments = /(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\
 /**
  * A comment between template children, as `#parseTemplateRawText` reads it.
  * @typedef {{ type: 'Line' | 'Block', value: string, start: number, end: number }} TemplateTextComment
+ */
+
+/**
+ * An error the parser reports: TSRX's own ({@link Diagnostic}), or acorn's or
+ * acorn-typescript's message, with the code the lookup has for it.
+ * @typedef {{ code: string | undefined, message: string }} ReportedError
  */
 
 /**
@@ -66,8 +69,8 @@ const regex_space_and_comments = /(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\
  * or a list that `parseExprList` reads, such as a call's arguments. Whether it
  * can be an arrow function's parameters, and where the first `?` or type
  * annotation that only a parameter can have is in it, with its error (-1 and
- * `''` when there is none). See `#checkParameterSyntax`.
- * @typedef {{ parameters: boolean, position: number, message: string }} ExpressionList
+ * `null` when there is none). See `#checkParameterSyntax`.
+ * @typedef {{ parameters: boolean, position: number, error: Diagnostic | null }} ExpressionList
  */
 
 /**
@@ -160,27 +163,6 @@ const regex_line_break = /\r\n?|[\n\u2028\u2029]/;
 // A word written with an escape, from `lastIndex`.
 const regex_escaped_word = /[$_\p{ID_Continue}\u200c\u200d]*\\/uy;
 
-const REST_ELEMENT_TRAILING_COMMA = 'Comma is not permitted after the rest element';
-const OPTIONAL_BINDING_PATTERN_PARAMETER =
-	'A binding pattern parameter cannot be optional in an implementation signature.';
-// TypeScript's TS1047 and TS1317.
-const OPTIONAL_REST_PARAMETER = 'A rest parameter cannot be optional.';
-const REST_PARAMETER_PROPERTY = 'A parameter property cannot be declared using a rest parameter.';
-// TypeScript's TS2369, which acorn-typescript raises for a modifier on a
-// parameter when `parseBindingList` passes `allowModifiers: false`.
-const UNEXPECTED_PARAMETER_MODIFIER =
-	'A parameter property is only allowed in a constructor implementation.';
-// TypeScript's TS1187, acorn-typescript's error for a parameter property with a
-// binding pattern.
-const PATTERN_PARAMETER_PROPERTY =
-	'A parameter property may not be declared using a binding pattern.';
-// TypeScript's TS2371, for a parameter with a default in a function or
-// constructor type, or in a method, call, or construct signature.
-const SIGNATURE_PARAMETER_INITIALIZER =
-	'A parameter initializer is only allowed in a function or constructor implementation.';
-// acorn-typescript's and @babel/parser's error for a type assertion in an arrow
-// function's parameters.
-const TYPE_CAST_IN_PARAMETER = 'Unexpected type cast in parameter position.';
 // The expressions that assert a type, which an assignment target can be.
 const TYPE_ASSERTIONS = new Set([
 	'TSAsExpression',
@@ -188,41 +170,12 @@ const TYPE_ASSERTIONS = new Set([
 	'TSNonNullExpression',
 	'TSTypeAssertion',
 ]);
-// acorn-typescript's and @babel/parser's error for a type annotation that isn't
-// on a parameter, such as one on a call's argument.
-const UNEXPECTED_TYPE_ANNOTATION = 'Did not expect a type annotation here.';
-// acorn's error for a token it doesn't expect (`unexpected`).
-const UNEXPECTED_TOKEN = 'Unexpected token';
 /**
  * A list of expressions that can't be an arrow function's parameters (see
  * `#checkParameterSyntax`), which nothing notes anything in.
  * @type {Readonly<ExpressionList>}
  */
-const NON_PARAMETER_LIST = Object.freeze({ parameters: false, position: -1, message: '' });
-// TypeScript's TS1048, for a rest parameter with a default.
-const REST_PARAMETER_INITIALIZER = 'A rest parameter cannot have an initializer.';
-// TypeScript's TS1186, for a rest element with a default in a destructuring
-// pattern.
-const REST_ELEMENT_INITIALIZER = 'A rest element cannot have an initializer.';
-// acorn-typescript's error for decorators before something other than a class.
-const UNEXPECTED_LEADING_DECORATOR = 'Leading decorators must be attached to a class declaration.';
-// TypeScript's parser errors for what follows `export` when it starts no
-// declaration (TS1128), for a missing name (TS1003, or TS1359 for a reserved
-// word), for a type alias name on the line after `declare type` (TS1142), for
-// `export type` before `=` (TS1005), and for an escaped modifier (TS1260).
-const DECLARATION_OR_STATEMENT_EXPECTED = 'Declaration or statement expected.';
-const IDENTIFIER_EXPECTED = 'Identifier expected.';
-const LINE_BREAK_NOT_PERMITTED = 'Line break not permitted here.';
-const OPENING_BRACE_EXPECTED = "'{' expected.";
-const KEYWORD_ESCAPE = 'Keywords cannot contain escape characters.';
-// TypeScript's checker error for `abstract` before a declaration other than a
-// class (TS1242).
-const ABSTRACT_MODIFIER_NOT_ALLOWED =
-	"'abstract' modifier can only appear on a class, method, or property declaration.";
-// TypeScript's checker error for `export` before a global augmentation
-// (TS2668).
-const EXPORT_MODIFIER_ON_AUGMENTATION =
-	"'export' modifier cannot be applied to ambient modules and module augmentations since they are always visible.";
+const NON_PARAMETER_LIST = Object.freeze({ parameters: false, position: -1, error: null });
 // The words besides `export` that TypeScript's parser reads as modifiers before
 // a declaration (`isDeclaration`), on the line of the next token (`static` on
 // any line).
@@ -247,21 +200,6 @@ const CLASS_MEMBER_MODIFIERS = new Set([
 	'readonly',
 	'static',
 ]);
-// TypeScript's parser error where modifiers are followed by no declaration
-// (TS1146), and its checker errors for the modifiers of a declaration
-// (`checkGrammarModifiers`): TS1184, TS1028, TS1024, TS1275, TS1038 and TS1079,
-// and the ones `modifier_error` words.
-const DECLARATION_EXPECTED = 'Declaration expected.';
-const MODIFIERS_CANNOT_APPEAR_HERE = 'Modifiers cannot appear here.';
-const ACCESSIBILITY_MODIFIER_ALREADY_SEEN = 'Accessibility modifier already seen.';
-const READONLY_MODIFIER_NOT_ALLOWED =
-	"'readonly' modifier can only appear on a property declaration or index signature.";
-const ACCESSOR_MODIFIER_NOT_ALLOWED =
-	"'accessor' modifier can only appear on a property declaration.";
-const DECLARE_MODIFIER_IN_AMBIENT_CONTEXT =
-	"A 'declare' modifier cannot be used in an already ambient context.";
-const DECLARE_MODIFIER_ON_IMPORT =
-	"A 'declare' modifier cannot be used with an import declaration.";
 // The words TypeScript's parser reads as keyword types (`parseKeywordAndNoDot`).
 const KEYWORD_TYPES = new Set([
 	'any',
@@ -311,16 +249,6 @@ const DECLARATION_KEYWORDS = new Set([
 	'type',
 	'using',
 ]);
-// acorn-typescript raises these at the modifier's column instead of its offset.
-const regex_modifier_order_error =
-	/^'\w+' modifier (?:must precede|cannot be used with) '\w+' modifier\.$/;
-// acorn-typescript raises these at the token after the repeated modifier.
-const regex_repeated_modifier_error =
-	/^(?:Accessibility modifier already seen\.|Duplicate modifier: '\w+'\.)$/;
-// acorn's errors for `let` as a binding name or an assignment target, after
-// `The keyword 'let' is reserved`.
-const regex_let_binding_error =
-	/^(?:(?:Binding|Assigning to) let in strict mode|let is disallowed as a lexically bound name)$/;
 
 /**
  * Errors that acorn and `@sveltejs/acorn-typescript` raise while parsing, but that
@@ -329,7 +257,7 @@ const regex_let_binding_error =
  * keeps parsing, as TypeScript does; a strict parse still throws them. Every other
  * error still throws.
  *
- * `raise` and `raiseRecoverable` return for these messages, so each one is listed
+ * `raise` and `raiseRecoverable` return for these errors, so each one is listed
  * only after checking that the code raising it upstream goes on to build the same
  * node it builds for valid code. Mistakes whose raise site can't continue are
  * handled by narrow overrides instead: a comma after a rest element
@@ -350,80 +278,86 @@ const regex_let_binding_error =
  * UPSTREAM(sveltejs/acorn-typescript#89): whether acorn-typescript should report
  * TypeScript diagnostics as parse errors at all.
  *
- * @type {Array<string | RegExp>}
+ * Each is an entry of `TS_ERRORS` or `TSRX_ERRORS`, which TSRX raises and the
+ * lookup gives for upstream's message in the same words, or an entry of
+ * `UPSTREAM_ERRORS`, for an upstream message TSRX doesn't write.
+ * @type {Set<unknown>}
  */
-const CHECKER_LEVEL_ERRORS = [
+const CHECKER_LEVEL_ERRORS = new Set([
 	// acorn and acorn-typescript: a redeclared variable, import, type alias, or
-	// private name (TS2300, TS2451), and a repeated parameter name (TS2300).
-	/^(?:Identifier|type) '#?[^']+' has already been declared\.?$/,
-	'Argument name clash',
+	// private name (TS2300), and a repeated parameter name (TS2300).
+	UPSTREAM_ERRORS.REDECLARED,
+	TS_ERRORS.ARGUMENT_NAME_CLASH,
 	// acorn: `export { missing }` (TS2304).
-	/^Export '[^']+' is not defined$/,
+	UPSTREAM_ERRORS.EXPORT_NOT_DEFINED,
 	// acorn: `a?.b = c` (TS2779).
-	'Optional chaining cannot appear in left-hand side',
+	UPSTREAM_ERRORS.OPTIONAL_CHAIN_ASSIGNMENT,
 	// acorn: `import.source('x')` (TS18061).
-	"The only valid meta property for import is 'import.meta'",
+	UPSTREAM_ERRORS.IMPORT_META_PROPERTY,
 	// acorn: `new.target` outside a function (TS17013).
-	"'new.target' can only be used in functions and class static block",
+	UPSTREAM_ERRORS.NEW_TARGET_OUTSIDE_FUNCTION,
 	// acorn: `super` outside a method, or `super()` outside a derived class's
 	// constructor (TS2337, TS2335).
-	"'super' keyword outside a method",
-	'super() call outside constructor of a subclass',
+	UPSTREAM_ERRORS.SUPER_OUTSIDE_METHOD,
+	UPSTREAM_ERRORS.SUPER_CALL_OUTSIDE_CONSTRUCTOR,
 	// acorn: `function f(...a,) {}` (TS1013).
-	REST_ELEMENT_TRAILING_COMMA,
+	TS_ERRORS.REST_ELEMENT_TRAILING_COMMA,
 	// acorn: `let` used as a name in strict code (TS1213, TS1214), such as a bare
 	// `let`, a binding name (`var let`, `class let {}`), or an assignment target
 	// (`let = 1`). acorn reports a binding name or a target more than once, and
 	// only the first is recorded (see `#collectCheckerLevelError`).
-	"The keyword 'let' is reserved",
-	regex_let_binding_error,
+	UPSTREAM_ERRORS.LET_RESERVED,
+	UPSTREAM_ERRORS.LET_BINDING,
 	// acorn-typescript: `abstract` members in a class that isn't abstract (TS1244).
-	'Abstract methods can only appear within an abstract class.',
+	UPSTREAM_ERRORS.ABSTRACT_METHOD_IN_CLASS,
 	// `abstract function f() {}`, `export abstract let x = 1;` (TS1242), raised
 	// by `tsParseDeclaration` and `tsTryParseDeclare`.
-	ABSTRACT_MODIFIER_NOT_ALLOWED,
+	TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED,
 	// `export global {}` (TS2668), raised by `parseExportDeclaration`.
-	EXPORT_MODIFIER_ON_AUGMENTATION,
+	TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION,
 	// acorn-typescript: `declare class A { x = 1 }`, `declare let x = 1` (TS1039).
-	'Initializers are not allowed in ambient contexts.',
+	UPSTREAM_ERRORS.AMBIENT_INITIALIZER,
 	// acorn-typescript: modifiers out of order, incompatible, or repeated
 	// (TS1029, TS1243, TS1030, TS1028). See `raise` for the repeated ones.
-	regex_modifier_order_error,
-	regex_repeated_modifier_error,
+	TS_ERRORS.MODIFIER_MUST_PRECEDE,
+	TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH,
+	TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
+	UPSTREAM_ERRORS.DUPLICATE_MODIFIER,
 	// acorn-typescript: a modifier where TypeScript doesn't allow one, on a type
 	// member (TS1070) or a type parameter (TS1273), or `in` or `out` outside the
 	// type parameters of a class, interface, or type alias (TS1274). See `raise`.
-	/^'\w+' modifier cannot appear on a type (?:member|parameter)\.$/,
-	/^'\w+' modifier can only appear on a type parameter of a class, interface or type alias\.$/,
+	UPSTREAM_ERRORS.TYPE_MEMBER_MODIFIER,
+	UPSTREAM_ERRORS.TYPE_PARAMETER_MODIFIER,
+	UPSTREAM_ERRORS.VARIANCE_MODIFIER,
 	// acorn-typescript: a parameter property with a binding pattern,
 	// `constructor(public [a]: T) {}` (TS1187), also with a default (see
 	// `#parseAssignableListItem`).
-	PATTERN_PARAMETER_PROPERTY,
+	TS_ERRORS.PATTERN_PARAMETER_PROPERTY,
 	// acorn-typescript: a parameter property modifier on a function's or a
 	// signature's parameter, `function f(public x) {}` (TS2369), when collecting.
 	// See `parseBindingList` and `tsParseBindingListForSignature`.
-	UNEXPECTED_PARAMETER_MODIFIER,
+	TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
 	// A parameter's default in a signature, `type F = (a = 1) => void` (TS2371),
 	// raised by `tsParseBindingListForSignature`.
-	SIGNATURE_PARAMETER_INITIALIZER,
+	TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER,
 	// acorn-typescript: `private #x` (TS18010), `abstract #x` (TS18019).
-	/^Private elements cannot have an accessibility modifier \('\w+'\)\.$/,
-	"Private elements cannot have the 'abstract' modifier.",
+	UPSTREAM_ERRORS.PRIVATE_ELEMENT_ACCESSIBILITY,
+	UPSTREAM_ERRORS.PRIVATE_ELEMENT_ABSTRACT,
 	// `function f({ a }?: T) {}` (TS2463), raised by `parseFunctionBody` for a
 	// function with a body.
-	OPTIONAL_BINDING_PATTERN_PARAMETER,
+	TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER,
 	// `function f(...a?: T[]) {}` (TS1047), raised by `parseBindingListItem`.
-	OPTIONAL_REST_PARAMETER,
+	TS_ERRORS.OPTIONAL_REST_PARAMETER,
 	// `function f(...a = []) {}` (TS1048), raised by `parseBindingListItem`, or
 	// by `parseFunctionBody` for an arrow function. See
 	// `#readRestParameterDefault`.
-	REST_PARAMETER_INITIALIZER,
+	TS_ERRORS.REST_PARAMETER_INITIALIZER,
 	// acorn-typescript: `class A { @dec constructor() {} }` (TS1206).
-	"Decorators can't be used with a constructor. Did you mean '@dec class { ... }'?",
+	UPSTREAM_ERRORS.DECORATED_CONSTRUCTOR,
 	// acorn-typescript: `with { type: 'json', type: 'json' }`, an ECMAScript early
 	// error that TypeScript doesn't report at all.
-	'Duplicated key in attributes',
-];
+	TSRX_ERRORS.DUPLICATED_ATTRIBUTE_KEY,
+]);
 
 /**
  * @param {string | { message?: string }} message
@@ -462,36 +396,6 @@ function is_pattern_parameter_expression(node) {
 	);
 }
 
-/**
- * TypeScript's checker errors for a modifier of a declaration that take the
- * modifier's name: TS1030 (`seen`), TS1029 (`precede`), TS1243 (`with`),
- * TS1040 (`ambient`), TS1042 (`here`), TS1044 (`module`), and TS1491 and TS1495
- * (`using`, `await using`).
- * @param {'seen' | 'precede' | 'with' | 'ambient' | 'here' | 'module' | 'using' | 'await using'} kind
- * @param {string} modifier
- * @param {string} [other] The modifier `modifier` must precede or can't be used with
- */
-function modifier_error(kind, modifier, other) {
-	switch (kind) {
-		case 'seen':
-			return `'${modifier}' modifier already seen.`;
-		case 'precede':
-			return `'${modifier}' modifier must precede '${other}' modifier.`;
-		case 'with':
-			return `'${modifier}' modifier cannot be used with '${other}' modifier.`;
-		case 'ambient':
-			return `'${modifier}' modifier cannot be used in an ambient context.`;
-		case 'here':
-			return `'${modifier}' modifier cannot be used here.`;
-		case 'module':
-			return `'${modifier}' modifier cannot appear on a module or namespace element.`;
-		case 'using':
-			return `'${modifier}' modifier cannot appear on a 'using' declaration.`;
-		case 'await using':
-			return `'${modifier}' modifier cannot appear on an 'await using' declaration.`;
-	}
-}
-
 // acorn's one error for an import or export inside a block.
 const NESTED_IMPORT_EXPORT = "'import' and 'export' may only appear at the top level";
 // A word, or any other character, after whitespace and comments.
@@ -506,7 +410,7 @@ const regex_next_token =
  * TS1184 at the `export` modifier.
  * @param {string} input
  * @param {number} position
- * @returns {string}
+ * @returns {Diagnostic}
  */
 function nested_import_export_error(input, position) {
 	/** @type {string[]} */
@@ -516,15 +420,11 @@ function nested_import_export_error(input, position) {
 		tokens.push(match[1]);
 	}
 	const [keyword, first, second, third] = tokens;
-	if (keyword === 'import' || first === 'import') {
-		return 'An import declaration can only be used at the top level of a namespace or module.';
-	}
-	if (first === '=') {
-		return 'An export assignment must be at the top level of a file or module declaration.';
-	}
-	if (first === 'as') return 'Global module exports may only appear at top level.';
+	if (keyword === 'import' || first === 'import') return TS_ERRORS.NESTED_IMPORT;
+	if (first === '=') return TS_ERRORS.NESTED_EXPORT_ASSIGNMENT;
+	if (first === 'as') return TS_ERRORS.NESTED_GLOBAL_EXPORT;
 	if (first === '{' || first === '*' || (first === 'type' && (second === '{' || second === '*'))) {
-		return 'An export declaration can only be used at the top level of a namespace or module.';
+		return TS_ERRORS.NESTED_EXPORT;
 	}
 	if (
 		first === 'default' &&
@@ -536,13 +436,11 @@ function nested_import_export_error(input, position) {
 			(second === 'abstract' && third === 'class')
 		)
 	) {
-		return 'A default export must be at the top level of a file or module declaration.';
+		return TS_ERRORS.NESTED_DEFAULT_EXPORT;
 	}
 	const declared = first === 'declare' ? second : first;
-	if (declared === 'namespace' || declared === 'module') {
-		return 'A namespace declaration is only allowed at the top level of a namespace or module.';
-	}
-	return MODIFIERS_CANNOT_APPEAR_HERE;
+	if (declared === 'namespace' || declared === 'module') return TS_ERRORS.NESTED_NAMESPACE;
+	return TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE;
 }
 
 /**
@@ -587,46 +485,73 @@ function modified_declaration_kind(declaration) {
  * @param {ModifiedDeclarationKind} kind
  * @param {boolean} block
  * @param {boolean} duplicate Whether the same modifier comes before it
+ * @returns {Diagnostic}
  */
 function dropped_modifier_error(modifier, kind, block, duplicate) {
 	if (block) {
 		return (modifier === 'abstract' && kind === 'class') ||
 			(modifier === 'async' && kind === 'function')
-			? modifier_error('seen', modifier)
-			: MODIFIERS_CANNOT_APPEAR_HERE;
+			? TS_ERRORS.MODIFIER_ALREADY_SEEN(modifier)
+			: TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE;
 	}
 	switch (modifier) {
 		case 'public':
 		case 'protected':
 		case 'private':
 		case 'static':
-			return modifier_error('module', modifier);
+			return TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT(modifier);
 		case 'readonly':
-			return READONLY_MODIFIER_NOT_ALLOWED;
+			return TS_ERRORS.READONLY_MODIFIER_NOT_ALLOWED;
 		case 'accessor':
-			return ACCESSOR_MODIFIER_NOT_ALLOWED;
+			return TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED;
 	}
-	if (duplicate) return modifier_error('seen', modifier);
+	if (duplicate) return TS_ERRORS.MODIFIER_ALREADY_SEEN(modifier);
 	switch (modifier) {
 		case 'abstract':
-			return ABSTRACT_MODIFIER_NOT_ALLOWED;
+			return TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED;
 		case 'async':
-			return modifier_error('here', modifier);
+			return TS_ERRORS.MODIFIER_CANNOT_BE_USED_HERE(modifier);
 	}
 	// `declare`, on an import or a `using` declaration.
 	return kind === 'import'
-		? DECLARE_MODIFIER_ON_IMPORT
-		: modifier_error(/** @type {'using' | 'await using'} */ (kind), modifier);
+		? TS_ERRORS.DECLARE_MODIFIER_ON_IMPORT
+		: using_modifier_error(/** @type {'using' | 'await using'} */ (kind), modifier);
 }
 
 /**
- * @param {string} message
- * @returns {boolean}
+ * TypeScript's error for `modifier` on a `using` or `await using` declaration
+ * (TS1491, TS1495).
+ * @param {'using' | 'await using'} kind
+ * @param {string} modifier
+ * @returns {Diagnostic}
  */
-function is_checker_level_error(message) {
-	return CHECKER_LEVEL_ERRORS.some((entry) =>
-		typeof entry === 'string' ? entry === message : entry.test(message),
-	);
+function using_modifier_error(kind, modifier) {
+	return kind === 'using'
+		? TS_ERRORS.MODIFIER_ON_USING(modifier)
+		: TS_ERRORS.MODIFIER_ON_AWAIT_USING(modifier);
+}
+
+/**
+ * The kind of error an error being raised is, for `CHECKER_LEVEL_ERRORS` and
+ * `raise`: the entry TSRX raises, or the lookup's entry for acorn's or
+ * acorn-typescript's message.
+ * @param {string | Diagnostic} error
+ * @returns {unknown}
+ */
+function error_kind(error) {
+	return typeof error === 'string' ? get_upstream_error(error) : error;
+}
+
+/**
+ * The diagnostic of an error being raised: TSRX's own, or acorn's or
+ * acorn-typescript's message with its code from the lookup.
+ * @param {string | Diagnostic} error
+ * @param {unknown} [kind] Its kind, from `error_kind`
+ * @returns {ReportedError}
+ */
+function to_diagnostic(error, kind = error_kind(error)) {
+	if (typeof error !== 'string') return error;
+	return { code: /** @type {{ code?: string } | undefined} */ (kind)?.code, message: error };
 }
 
 // acorn's scope flags and acorn-typescript's namespace scope flag, which neither
@@ -758,12 +683,6 @@ function end_after_parentheses(input, node) {
 	}
 	return end;
 }
-
-// TypeScript's message for a missing `}` (TS1005). The parser reports it in
-// place of acorn's `Unexpected token` wherever TypeScript's parser reports it.
-const CLOSING_BRACE_EXPECTED = "'}' expected.";
-// TypeScript's message for a tag's missing `>` (TS1005).
-const TAG_END_EXPECTED = "'>' expected.";
 
 /** @type {WeakMap<Record<string, boolean>, Map<string, number>>} */
 const argument_clash_first_positions = new WeakMap();
@@ -1280,7 +1199,7 @@ export function TSRXPlugin(config) {
 			// start, while `parseDecorators` reads them (-1 otherwise), and the error
 			// recorded for them when no class follows (see `parseDecorators`).
 			#leadingDecoratorsStart = -1;
-			/** @type {{ position: number, message: string } | null} */
+			/** @type {{ position: number, error: Diagnostic } | null} */
 			#droppedDecoratorsError = null;
 			// Set when `parseExportDefaultDeclaration` reads the decorators after
 			// `export default`, which are the declaration's leading decorators.
@@ -2704,7 +2623,7 @@ export function TSRXPlugin(config) {
 							this.#report_recoverable_error_range(
 								/** @type {number} */ (render_node.start),
 								/** @type {number} */ (render_node.end),
-								"A code block renders a single node; wrap multiple nodes or text in a fragment '<>…</>'.",
+								TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT,
 							);
 						}
 						flat.push(render_node);
@@ -2718,7 +2637,7 @@ export function TSRXPlugin(config) {
 							this.#report_recoverable_error_range(
 								/** @type {number} */ (statement.start),
 								/** @type {number} */ (statement.end),
-								"Code must be at the top of '@{ }'; statements cannot follow the rendered output.",
+								TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT,
 							);
 						}
 						flat.push(statement);
@@ -2976,11 +2895,11 @@ export function TSRXPlugin(config) {
 						this.#templateControlFlowBlockDepth--;
 					}
 					if (node.body?.type !== 'BlockStatement') {
-						this.raise(node.body?.start ?? start, 'Expected `{` after JSX control-flow directive.');
+						this.raise(node.body?.start ?? start, TSRX_ERRORS.DIRECTIVE_BODY_EXPECTED);
 					}
 					if (this.#eatJSXForEmptyKeyword()) {
 						if (this.type !== tt.braceL) {
-							this.raise(this.start, 'Expected `{` after JSX control-flow directive.');
+							this.raise(this.start, TSRX_ERRORS.DIRECTIVE_BODY_EXPECTED);
 						}
 						const emptyKeyword = this.#lastClauseKeywordSpan;
 						let empty;
@@ -3004,7 +2923,7 @@ export function TSRXPlugin(config) {
 							/** @type {AST.NodeWithLocation} */ (empty).loc.end;
 						if (node.range) node.range[1] = /** @type {number} */ (empty.end);
 					} else if (this.#isUnprefixedDirectiveClauseContinuation('empty', ['{'])) {
-						this.raise(this.start, 'Expected `@empty` after `@for` block.');
+						this.raise(this.start, TSRX_ERRORS.DIRECTIVE_BRANCH_EXPECTED('empty', 'for'));
 					} else {
 						node.empty = null;
 					}
@@ -3167,7 +3086,7 @@ export function TSRXPlugin(config) {
 
 			#parseTemplateControlFlowStatement() {
 				if (this.type !== tt.braceL) {
-					this.raise(this.start, 'Expected `{` after JSX control-flow directive.');
+					this.raise(this.start, TSRX_ERRORS.DIRECTIVE_BODY_EXPECTED);
 				}
 				return this.#parseTemplateControlFlowBlock();
 			}
@@ -3191,7 +3110,7 @@ export function TSRXPlugin(config) {
 						? this.#parseTemplateIfStatement()
 						: /** @type {AST.Statement} */ (this.#parseTemplateControlFlowStatement());
 				} else if (this.#isUnprefixedDirectiveClauseContinuation('else', ['{', 'if'])) {
-					this.raise(this.start, 'Expected `@else` after `@if` block.');
+					this.raise(this.start, TSRX_ERRORS.DIRECTIVE_BRANCH_EXPECTED('else', 'if'));
 				}
 
 				return this.finishNode(node, 'IfStatement');
@@ -3241,7 +3160,7 @@ export function TSRXPlugin(config) {
 								current.test = this.parseExpression();
 							} else {
 								if (sawDefault) {
-									this.raiseRecoverable(this.lastTokStart, 'Multiple default clauses');
+									this.raise(this.lastTokStart, TS_ERRORS.MULTIPLE_DEFAULT_CLAUSES);
 								}
 								sawDefault = true;
 								current.test = null;
@@ -3328,10 +3247,10 @@ export function TSRXPlugin(config) {
 				) {
 					const raw = String(this.value ?? '').trimStart();
 					if (/^break\b/.test(raw)) {
-						this.raise(this.start, '`break` is invalid inside `@switch` cases.');
+						this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT);
 					}
 					if (/^return\b/.test(raw)) {
-						this.raise(this.start, '`return` is invalid inside `@switch` cases.');
+						this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT);
 					}
 					this.#filterTemplateScriptContexts();
 					this.pos = this.start;
@@ -3403,10 +3322,10 @@ export function TSRXPlugin(config) {
 
 				const label = this.type.keyword || this.type.label;
 				if (label === 'break') {
-					this.raise(this.start, '`break` is invalid inside `@switch` cases.');
+					this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT);
 				}
 				if (label === 'return') {
-					this.raise(this.start, '`return` is invalid inside `@switch` cases.');
+					this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT);
 				}
 				if (label === 'continue' || label === 'throw') {
 					consequent.push(this.parseStatement(null));
@@ -3514,10 +3433,7 @@ export function TSRXPlugin(config) {
 				const unclosed = relativeCloseStart === -1;
 
 				if (unclosed) {
-					this.#report_broken_markup_error(
-						open.end,
-						`Unclosed tag '<${tagName}>'. Expected '${closeTag}' before end of template.`,
-					);
+					this.#report_broken_markup_error(open.end, TSRX_ERRORS.UNCLOSED_TAG(tagName));
 					node.unclosed = true;
 					relativeCloseStart = input.length;
 					if (!this.#loose) {
@@ -3671,8 +3587,7 @@ export function TSRXPlugin(config) {
 					this.#report_recoverable_error_range(
 						start,
 						start + written.length,
-						`'${written}' can end a script in HTML, so a '<script>' body can't contain it. Write '<\\/${written.slice(2)}' instead.`,
-						DIAGNOSTIC_CODES.SCRIPT_END_TAG_IN_BODY,
+						TSRX_ERRORS.SCRIPT_END_TAG_IN_BODY(written),
 					);
 				}
 				return null;
@@ -4037,10 +3952,9 @@ export function TSRXPlugin(config) {
 			/**
 			 * @param {number} position
 			 * @param {number} end
-			 * @param {string} message
-			 * @param {string} [code]
+			 * @param {ReportedError} message
 			 */
-			#report_recoverable_error_range(position, end, message, code) {
+			#report_recoverable_error_range(position, end, message) {
 				const start = Math.max(0, Math.min(position, this.input.length));
 				const range_end = Math.max(start, Math.min(end, this.input.length));
 				const start_loc = get_line_info(this, start);
@@ -4058,29 +3972,25 @@ export function TSRXPlugin(config) {
 						},
 					}),
 					this.#collect ? this.#errors : undefined,
-					undefined,
-					code,
 				);
 			}
 
 			/**
 			 * @param {number} position
-			 * @param {string} message
-			 * @param {string} [code]
+			 * @param {ReportedError} message
 			 */
-			#report_recoverable_error(position, message, code) {
-				this.#report_recoverable_error_range(position, position + 1, message, code);
+			#report_recoverable_error(position, message) {
+				this.#report_recoverable_error_range(position, position + 1, message);
 			}
 
 			/**
 			 * @param {number} position
-			 * @param {string} message
-			 * @param {string} [code]
+			 * @param {Diagnostic} message
 			 */
-			#report_broken_markup_error(position, message, code = DIAGNOSTIC_CODES.UNCLOSED_TAG) {
+			#report_broken_markup_error(position, message) {
 				if (this.#loose) return;
 				if (this.#collect) {
-					this.#report_recoverable_error(position, message, code);
+					this.#report_recoverable_error(position, message);
 					return;
 				}
 				this.raise(position, message);
@@ -4127,8 +4037,7 @@ export function TSRXPlugin(config) {
 					this.#report_recoverable_error_range(
 						/** @type {AST.NodeWithLocation} */ (node).start ?? this.start,
 						/** @type {AST.NodeWithLocation} */ (node).end ?? this.start + 1,
-						TSRX_RETURN_STATEMENT_ERROR,
-						DIAGNOSTIC_CODES.TEMPLATE_RETURN_STATEMENT,
+						TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
 					);
 					return;
 				}
@@ -4160,10 +4069,12 @@ export function TSRXPlugin(config) {
 			 * When collecting, record a checker-level error (`CHECKER_LEVEL_ERRORS`) and
 			 * keep parsing, so editor tooling and the formatter still get an AST.
 			 * @param {number} position
-			 * @param {string | ((values: { modifier: string }) => string)} message
+			 * @param {string | Diagnostic | ((values: { modifier: string }) => string)} message
+			 *   TSRX's own error, or acorn's or acorn-typescript's message
 			 * @returns {never}
 			 */
 			raise(position, message) {
+				let kind = typeof message === 'function' ? undefined : error_kind(message);
 				if (typeof message === 'function') {
 					// UPSTREAM(sveltejs/acorn-typescript#123): remove once a release includes
 					// the fix. `tsParseModifiers` raises a disallowed modifier's error with
@@ -4174,25 +4085,32 @@ export function TSRXPlugin(config) {
 						modifier: this.input.slice(this.lastTokStart, this.lastTokEnd),
 					});
 					position = this.lastTokStart;
-				} else if (regex_repeated_modifier_error.test(message)) {
+					kind = error_kind(message);
+				} else if (
+					kind === UPSTREAM_ERRORS.DUPLICATE_MODIFIER ||
+					kind === TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN
+				) {
 					// UPSTREAM(sveltejs/acorn-typescript#129): remove once a release includes
 					// the fix. `tsParseModifiers` raises a repeated modifier's error at the
 					// token after it, collected or thrown; the modifier is the token just
 					// read.
 					position = this.lastTokStart;
-				} else if (message === UNEXPECTED_PARAMETER_MODIFIER) {
+				} else if (kind === TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR) {
 					// UPSTREAM(sveltejs/acorn-typescript#136): remove once a release includes
 					// the fix. `parseAssignableListItem` raises it at the first modifier's
 					// column, where `#parseAssignableListItem` started reading.
 					position = this.#assignableListItemStart;
-				} else if (message === 'Escape sequence in keyword asserts') {
+				} else if (
+					kind === TS_ERRORS.KEYWORD_ESCAPE_SEQUENCE &&
+					message === TS_ERRORS.KEYWORD_ESCAPE_SEQUENCE('asserts').message
+				) {
 					// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release
 					// includes the fix. acorn-typescript's wording of TypeScript's TS1260 for
 					// an escaped `asserts` in a type predicate, the only escaped TypeScript
 					// keyword it reports.
-					message = KEYWORD_ESCAPE;
+					message = kind = TS_ERRORS.KEYWORD_ESCAPE;
 				} else if (
-					message === UNEXPECTED_LEADING_DECORATOR &&
+					kind === TS_ERRORS.UNEXPECTED_LEADING_DECORATOR &&
 					this.#dropLeadingDecorators(position)
 				) {
 					// See `parseDecorators`.
@@ -4202,65 +4120,64 @@ export function TSRXPlugin(config) {
 					this.#raiseCheckerError(position, nested_import_export_error(this.input, position));
 					return /** @type {never} */ (undefined);
 				}
-				if (this.#collectCheckerLevelError(position, message)) {
+				const error = to_diagnostic(message, kind);
+				if (this.#collectCheckerLevelError(position, error, kind)) {
 					// The raise site goes on parsing (see `CHECKER_LEVEL_ERRORS`).
 					return /** @type {never} */ (undefined);
 				}
-				return this.#throwError(position, message);
+				return this.#throwError(position, error);
 			}
 
 			/**
-			 * Throw acorn's error for `message` at `position`, with its code: TSRX's
-			 * own, or TypeScript's for a mistake TypeScript also reports (see
-			 * `get_error_code`).
+			 * Throw acorn's error for `error` at `position`, with its code: TSRX's
+			 * own, or TypeScript's for a mistake TypeScript also reports.
 			 * @param {number} position
-			 * @param {string} message
+			 * @param {ReportedError} error
 			 * @returns {never}
 			 */
-			#throwError(position, message) {
+			#throwError(position, error) {
 				try {
-					return super.raise(position, message);
-				} catch (error) {
-					/** @type {{ code?: string }} */ (error).code ??= get_error_code(message);
-					throw error;
+					return super.raise(position, error.message);
+				} catch (thrown) {
+					/** @type {{ code?: string }} */ (thrown).code = error.code;
+					throw thrown;
 				}
 			}
 
 			/**
 			 * @param {number} position
-			 * @param {string | { message?: string }} message
+			 * @param {string | { message?: string }} message acorn's or
+			 *   acorn-typescript's message
 			 */
 			raiseRecoverable(position, message) {
-				if (this.#collectCheckerLevelError(position, message)) {
+				const text = get_error_message(message);
+				const kind = error_kind(text);
+				const error = to_diagnostic(text, kind);
+				if (this.#collectCheckerLevelError(position, error, kind)) {
 					return;
 				}
-				const error_message = get_error_message(message);
-				if (
-					error_message.includes('has already been declared') ||
-					error_message === 'Argument name clash'
-				) {
+				if (kind === UPSTREAM_ERRORS.REDECLARED || kind === TS_ERRORS.ARGUMENT_NAME_CLASH) {
 					// A strict parse throws these as a `CompileError`, without acorn's
 					// location suffix.
-					this.#report_recoverable_error(position, error_message);
+					this.#report_recoverable_error(position, error);
 					return;
 				}
 				// acorn's `raiseRecoverable` is its `raise`.
-				return this.#throwError(position, error_message);
+				return this.#throwError(position, error);
 			}
 
 			/**
-			 * Record `message` in `errors` when collecting and it is a checker-level
+			 * Record `error` in `errors` when collecting and it is a checker-level
 			 * error (`CHECKER_LEVEL_ERRORS`).
 			 * @param {number} position
-			 * @param {string | { message?: string }} message
+			 * @param {ReportedError} error
+			 * @param {unknown} kind Its kind, from `error_kind`
 			 * @returns {boolean} Whether the error was recorded, and parsing goes on
 			 */
-			#collectCheckerLevelError(position, message) {
-				if (!this.#collect) return false;
-				const error_message = get_error_message(message);
-				if (!is_checker_level_error(error_message)) return false;
+			#collectCheckerLevelError(position, error, kind) {
+				if (!this.#collect || !CHECKER_LEVEL_ERRORS.has(kind)) return false;
 
-				if (error_message === REST_ELEMENT_TRAILING_COMMA && this.type === tt.comma) {
+				if (kind === TS_ERRORS.REST_ELEMENT_TRAILING_COMMA && this.type === tt.comma) {
 					// acorn raises this at the comma, then expects the list to close. Skip a
 					// trailing comma, as acorn-typescript does in ambient contexts (where
 					// it's allowed after a rest parameter); a comma that another element
@@ -4274,13 +4191,13 @@ export function TSRXPlugin(config) {
 					) {
 						return this.#readArrowParametersPastRestElement(position);
 					}
-					this.#recordCheckerLevelError(position, position + 1, error_message);
+					this.#recordCheckerLevelError(position, position + 1, error);
 					this.next();
 					return true;
 				}
 
 				if (
-					regex_let_binding_error.test(error_message) &&
+					kind === UPSTREAM_ERRORS.LET_BINDING &&
 					this.#errors?.some((error) => error.pos === position)
 				) {
 					// acorn reports `let` as a binding name or an assignment target up to
@@ -4290,14 +4207,17 @@ export function TSRXPlugin(config) {
 					return true;
 				}
 
-				if (regex_modifier_order_error.test(error_message)) {
+				if (
+					kind === TS_ERRORS.MODIFIER_MUST_PRECEDE ||
+					kind === TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH
+				) {
 					// UPSTREAM(sveltejs/acorn-typescript#122): `tsParseModifiers` passes the
 					// modifier's column as the position; remove once a release includes the
 					// fix. The modifier is the token just read.
 					position = this.lastTokStart;
 				}
 
-				this.#recordCheckerLevelError(position, position + 1, error_message);
+				this.#recordCheckerLevelError(position, position + 1, error);
 				return true;
 			}
 
@@ -4320,16 +4240,18 @@ export function TSRXPlugin(config) {
 			 * rest of that parse's effects.
 			 * @param {number} start
 			 * @param {number} end
-			 * @param {string} message
+			 * @param {ReportedError} error
 			 */
-			#recordCheckerLevelError(start, end, message) {
+			#recordCheckerLevelError(start, end, error) {
 				if (this.#errors) {
-					if (this.#errors.some((error) => error.pos === start && error.message === message)) {
+					if (
+						this.#errors.some((other) => other.pos === start && other.message === error.message)
+					) {
 						return;
 					}
 					this.parseEffects?.willAppend(this.#errors);
 				}
-				this.#report_recoverable_error_range(start, end, message);
+				this.#report_recoverable_error_range(start, end, error);
 			}
 
 			/**
@@ -4343,7 +4265,7 @@ export function TSRXPlugin(config) {
 					this.#recordCheckerLevelError(
 						/** @type {number} */ (node.start),
 						/** @type {number} */ (node.end),
-						`Private field '#${node.name}' must be declared in an enclosing class`,
+						TS_ERRORS.PRIVATE_NAME_OUTSIDE_CLASS(node.name),
 					);
 				}
 				return node;
@@ -4464,7 +4386,7 @@ export function TSRXPlugin(config) {
 				this.#recordCheckerLevelError(
 					this.lastTokEnd,
 					this.lastTokEnd,
-					'Variable declaration list cannot be empty.',
+					TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY,
 				);
 			}
 
@@ -4500,7 +4422,7 @@ export function TSRXPlugin(config) {
 				this.#recordCheckerLevelError(
 					start,
 					start + decl.id.name.length,
-					"'const' declarations must be initialized.",
+					TS_ERRORS.DECLARATION_NOT_INITIALIZED('const'),
 				);
 			}
 
@@ -4571,7 +4493,7 @@ export function TSRXPlugin(config) {
 							this.#recordCheckerLevelError(
 								this.start,
 								this.start + 1,
-								REST_ELEMENT_TRAILING_COMMA,
+								TS_ERRORS.REST_ELEMENT_TRAILING_COMMA,
 							);
 						}
 					} else {
@@ -4617,17 +4539,14 @@ export function TSRXPlugin(config) {
 						parameter.type === 'AssignmentPattern' ||
 						this.#isRestParameterWithDefault(parameter)
 					) {
-						this.raise(parameter.start, SIGNATURE_PARAMETER_INITIALIZER);
+						this.raise(parameter.start, TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER);
 					} else if (
 						parameter.type !== 'Identifier' &&
 						parameter.type !== 'RestElement' &&
 						parameter.type !== 'ObjectPattern' &&
 						parameter.type !== 'ArrayPattern'
 					) {
-						this.raise(
-							parameter.start,
-							`Name in a signature must be an Identifier, ObjectPattern or ArrayPattern, instead got ${parameter.type}.`,
-						);
+						this.raise(parameter.start, TS_ERRORS.SIGNATURE_PARAMETER_NAME(parameter.type));
 					}
 					return item;
 				});
@@ -4696,25 +4615,22 @@ export function TSRXPlugin(config) {
 			 * @param {AST.Node} node
 			 */
 			#reportAwaitInNamespace(node) {
-				/** @type {string | null} */
-				let message = null;
+				/** @type {Diagnostic | null} */
+				let error = null;
 				if (node.type === 'AwaitExpression') {
-					message =
-						"'await' expressions are only allowed within async functions and at the top levels of modules.";
+					error = TS_ERRORS.AWAIT_EXPRESSION_NOT_ALLOWED;
 				} else if (node.type === 'ForOfStatement' && node.await) {
-					message =
-						"'for await' loops are only allowed within async functions and at the top levels of modules.";
+					error = TS_ERRORS.FOR_AWAIT_NOT_ALLOWED;
 				} else if (node.type === 'VariableDeclaration' && node.kind === 'await using') {
-					message =
-						"'await using' statements are only allowed within async functions and at the top levels of modules.";
+					error = TS_ERRORS.AWAIT_USING_NOT_ALLOWED;
 				}
-				if (message === null || this.#awaitContext() !== 'namespace') return;
+				if (error === null || this.#awaitContext() !== 'namespace') return;
 				// The `await` keyword, after `for` in a loop.
 				const start =
 					node.type === 'ForOfStatement'
 						? skip_space_and_comments_from(this.input, /** @type {number} */ (node.start) + 3)
 						: /** @type {number} */ (node.start);
-				this.#recordCheckerLevelError(start, start + 'await'.length, message);
+				this.#recordCheckerLevelError(start, start + 'await'.length, error);
 			}
 
 			/**
@@ -4734,12 +4650,7 @@ export function TSRXPlugin(config) {
 					!node.params[0].constraint &&
 					!node.params[0].default
 				) {
-					error(
-						'This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma, as in `<T,>() => ...`.',
-						this.#filename,
-						node,
-						this.#errors,
-					);
+					error(TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER, this.#filename, node, this.#errors);
 				}
 			}
 
@@ -4758,12 +4669,7 @@ export function TSRXPlugin(config) {
 				}
 
 				if (this.#collect) {
-					error(
-						"'readonly' type modifier is only permitted on array and tuple literal types.",
-						this.#filename,
-						typeAnnotation,
-						this.#errors,
-					);
+					error(TS_ERRORS.READONLY_TYPE_MODIFIER, this.#filename, typeAnnotation, this.#errors);
 				}
 			}
 
@@ -4854,7 +4760,7 @@ export function TSRXPlugin(config) {
 					const parser = /** @type {Parse.Parser} */ (this);
 					parser.containsEsc = false;
 					const modifier = this.tsParseModifier(allowedModifiers, stopOnStartOfClassStaticBlock);
-					if (modifier !== undefined) this.raise(start, KEYWORD_ESCAPE);
+					if (modifier !== undefined) this.raise(start, TS_ERRORS.KEYWORD_ESCAPE);
 					parser.containsEsc = true;
 					return undefined;
 				}
@@ -4955,7 +4861,7 @@ export function TSRXPlugin(config) {
 				// reads the clause. acorn-typescript failed at it with `Unexpected
 				// token`.
 				if (this.containsEsc && this.type === tt.name && this.value === 'implements') {
-					this.raise(this.start, KEYWORD_ESCAPE);
+					this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 				}
 				const superClass = heading.superClass;
 				if (!superClass) return;
@@ -5107,7 +5013,7 @@ export function TSRXPlugin(config) {
 						? this.tsParseAbstractDeclaration(node)
 						: undefined;
 				}
-				if (escaped) this.raise(start, KEYWORD_ESCAPE);
+				if (escaped) this.raise(start, TS_ERRORS.KEYWORD_ESCAPE);
 				const abstract_class = /** @type {AST.ClassDeclaration} */ (node);
 				if (declaration.length === 1 && declaration[0] === 'class') {
 					abstract_class.abstract = true;
@@ -5124,7 +5030,7 @@ export function TSRXPlugin(config) {
 				// reports `abstract` only without syntax errors in it.
 				this.#declarationAfterAbstractStart = this.start;
 				const statement = this.parseStatement(null, this.#atTopLevel());
-				this.raise(start, ABSTRACT_MODIFIER_NOT_ALLOWED);
+				this.raise(start, TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED);
 				return statement;
 			}
 
@@ -5168,7 +5074,7 @@ export function TSRXPlugin(config) {
 					!this.hasPrecedingLineBreak() &&
 					this.#declarationAfterModifier(0) !== null
 				) {
-					this.raise(this.lastTokStart, KEYWORD_ESCAPE);
+					this.raise(this.lastTokStart, TS_ERRORS.KEYWORD_ESCAPE);
 				}
 				if (this.type === tstt.abstract && !this.#lineBreakAfter(this.end)) {
 					const declaration = this.#declarationAfterModifier(1);
@@ -5179,11 +5085,11 @@ export function TSRXPlugin(config) {
 						!declaration.includes('declare')
 					) {
 						const start = this.start;
-						if (this.containsEsc) this.raise(start, KEYWORD_ESCAPE);
+						if (this.containsEsc) this.raise(start, TS_ERRORS.KEYWORD_ESCAPE);
 						// The declaration without `abstract`, then its error.
 						this.next();
 						const declared = super.tsTryParseDeclare(node);
-						this.raise(start, ABSTRACT_MODIFIER_NOT_ALLOWED);
+						this.raise(start, TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED);
 						return declared;
 					}
 				}
@@ -5546,9 +5452,10 @@ export function TSRXPlugin(config) {
 			#checkModifiersRead(modifiers, declaration_expected) {
 				const escaped = modifiers.find((modifier) => modifier.containsEsc);
 				if (escaped && (declaration_expected === -1 || escaped.start < declaration_expected)) {
-					this.raise(escaped.start, KEYWORD_ESCAPE);
+					this.raise(escaped.start, TS_ERRORS.KEYWORD_ESCAPE);
 				}
-				if (declaration_expected !== -1) this.raise(declaration_expected, DECLARATION_EXPECTED);
+				if (declaration_expected !== -1)
+					this.raise(declaration_expected, TS_ERRORS.DECLARATION_EXPECTED);
 			}
 
 			/**
@@ -5647,7 +5554,7 @@ export function TSRXPlugin(config) {
 			 */
 			#raiseModifierErrors(modifiers, declaration, context, exported) {
 				const kind = modified_declaration_kind(declaration);
-				let error = this.#modifierError(modifiers, kind, context);
+				let found = this.#modifierError(modifiers, kind, context);
 				if (
 					exported &&
 					declaration.type === 'TSModuleDeclaration' &&
@@ -5655,21 +5562,21 @@ export function TSRXPlugin(config) {
 				) {
 					// After a modifier error at the same position, as TypeScript orders
 					// its errors by position and then by code.
-					if (error && error.start <= modifiers[0].start) {
-						this.#raiseCheckerError(error.start, error.message);
-						error = null;
+					if (found && found.start <= modifiers[0].start) {
+						this.#raiseCheckerError(found.start, found.error);
+						found = null;
 					}
-					this.raise(modifiers[0].start, EXPORT_MODIFIER_ON_AUGMENTATION);
+					this.raise(modifiers[0].start, TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION);
 				}
 				if (
 					exported === 'outer' &&
 					context.block &&
-					error?.start === modifiers[0].start &&
-					error.message === MODIFIERS_CANNOT_APPEAR_HERE
+					found?.start === modifiers[0].start &&
+					found.error === TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE
 				) {
-					error = null;
+					found = null;
 				}
-				if (error) this.#raiseCheckerError(error.start, error.message);
+				if (found) this.#raiseCheckerError(found.start, found.error);
 				if (!this.#collect) return;
 				/** @type {Set<string>} */
 				const kept = new Set();
@@ -5706,11 +5613,11 @@ export function TSRXPlugin(config) {
 			 * this keeps the position of the modifier errors that `raise` moves for
 			 * acorn-typescript.
 			 * @param {number} position
-			 * @param {string} message
+			 * @param {Diagnostic} error
 			 */
-			#raiseCheckerError(position, message) {
-				if (!this.#collect) this.#throwError(position, message);
-				this.#recordCheckerLevelError(position, position + 1, message);
+			#raiseCheckerError(position, error) {
+				if (!this.#collect) this.#throwError(position, error);
+				this.#recordCheckerLevelError(position, position + 1, error);
 			}
 
 			/**
@@ -5720,14 +5627,14 @@ export function TSRXPlugin(config) {
 			 * @param {Parse.LookaheadState[]} modifiers
 			 * @param {ModifiedDeclarationKind} kind
 			 * @param {ModifierContext} context
-			 * @returns {{ start: number, message: string } | null}
+			 * @returns {{ start: number, error: Diagnostic } | null}
 			 */
 			#modifierError(modifiers, kind, { block, ambient }) {
 				if (block && kind !== 'module' && kind !== 'import') {
 					// `reportObviousModifierErrors`, which checks the first modifier.
 					const allowed = kind === 'class' ? 'abstract' : kind === 'function' ? 'async' : '';
 					if (modifiers[0].value !== allowed) {
-						return { start: modifiers[0].start, message: MODIFIERS_CANNOT_APPEAR_HERE };
+						return { start: modifiers[0].start, error: TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE };
 					}
 				}
 				/** @type {Set<string>} */
@@ -5738,8 +5645,8 @@ export function TSRXPlugin(config) {
 				let last_async;
 				for (const modifier of modifiers) {
 					const value = /** @type {string} */ (modifier.value);
-					/** @param {string} message */
-					const at = (message) => ({ start: modifier.start, message });
+					/** @param {Diagnostic} error */
+					const at = (error) => ({ start: modifier.start, error });
 					/** @param {string[]} others */
 					const precedes = (...others) => others.find((other) => flags.has(other));
 					switch (value) {
@@ -5747,74 +5654,83 @@ export function TSRXPlugin(config) {
 						case 'protected':
 						case 'private': {
 							if (precedes('public', 'protected', 'private')) {
-								return at(ACCESSIBILITY_MODIFIER_ALREADY_SEEN);
+								return at(TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN);
 							}
 							const other = precedes('static', 'accessor', 'readonly', 'async');
-							if (other) return at(modifier_error('precede', value, other));
-							if (!block) return at(modifier_error('module', value));
+							if (other) return at(TS_ERRORS.MODIFIER_MUST_PRECEDE(value, other));
+							if (!block) return at(TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT(value));
 							if (flags.has('abstract')) {
 								return at(
-									modifier_error(value === 'private' ? 'with' : 'precede', value, 'abstract'),
+									(value === 'private'
+										? TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH
+										: TS_ERRORS.MODIFIER_MUST_PRECEDE)(value, 'abstract'),
 								);
 							}
 							break;
 						}
 						case 'static': {
 							const other = precedes('readonly', 'async', 'accessor');
-							if (other) return at(modifier_error('precede', value, other));
-							if (!block) return at(modifier_error('module', value));
-							if (flags.has('abstract')) return at(modifier_error('with', value, 'abstract'));
+							if (other) return at(TS_ERRORS.MODIFIER_MUST_PRECEDE(value, other));
+							if (!block) return at(TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT(value));
+							if (flags.has('abstract'))
+								return at(TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH(value, 'abstract'));
 							break;
 						}
 						case 'accessor': {
-							if (flags.has('accessor')) return at(modifier_error('seen', value));
+							if (flags.has('accessor')) return at(TS_ERRORS.MODIFIER_ALREADY_SEEN(value));
 							const other = precedes('readonly', 'declare');
-							if (other) return at(modifier_error('with', value, other));
-							return at(ACCESSOR_MODIFIER_NOT_ALLOWED);
+							if (other) return at(TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH(value, other));
+							return at(TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED);
 						}
 						case 'readonly':
 							return at(
 								flags.has('readonly')
-									? modifier_error('seen', value)
-									: READONLY_MODIFIER_NOT_ALLOWED,
+									? TS_ERRORS.MODIFIER_ALREADY_SEEN(value)
+									: TS_ERRORS.READONLY_MODIFIER_NOT_ALLOWED,
 							);
 						case 'export': {
-							if (flags.has('export')) return at(modifier_error('seen', value));
+							if (flags.has('export')) return at(TS_ERRORS.MODIFIER_ALREADY_SEEN(value));
 							const other = precedes('declare', 'abstract', 'async');
-							if (other) return at(modifier_error('precede', value, other));
+							if (other) return at(TS_ERRORS.MODIFIER_MUST_PRECEDE(value, other));
 							if (kind === 'using' || kind === 'await using') {
-								return at(modifier_error(kind, value));
+								return at(using_modifier_error(kind, value));
 							}
 							break;
 						}
 						case 'declare':
-							if (flags.has('declare')) return at(modifier_error('seen', value));
-							if (flags.has('async')) return at(modifier_error('ambient', 'async'));
+							if (flags.has('declare')) return at(TS_ERRORS.MODIFIER_ALREADY_SEEN(value));
+							if (flags.has('async')) return at(TS_ERRORS.MODIFIER_IN_AMBIENT_CONTEXT('async'));
 							if (kind === 'using' || kind === 'await using') {
-								return at(modifier_error(kind, value));
+								return at(using_modifier_error(kind, value));
 							}
-							if (ambient && !block) return at(DECLARE_MODIFIER_IN_AMBIENT_CONTEXT);
-							if (flags.has('accessor')) return at(modifier_error('with', value, 'accessor'));
+							if (ambient && !block) return at(TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT);
+							if (flags.has('accessor'))
+								return at(TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH(value, 'accessor'));
 							last_declare = modifier;
 							break;
 						case 'abstract':
-							if (flags.has('abstract')) return at(modifier_error('seen', value));
-							if (kind !== 'class') return at(ABSTRACT_MODIFIER_NOT_ALLOWED);
+							if (flags.has('abstract')) return at(TS_ERRORS.MODIFIER_ALREADY_SEEN(value));
+							if (kind !== 'class') return at(TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED);
 							break;
 						case 'async':
-							if (flags.has('async')) return at(modifier_error('seen', value));
-							if (flags.has('declare') || ambient) return at(modifier_error('ambient', value));
-							if (flags.has('abstract')) return at(modifier_error('with', value, 'abstract'));
+							if (flags.has('async')) return at(TS_ERRORS.MODIFIER_ALREADY_SEEN(value));
+							if (flags.has('declare') || ambient)
+								return at(TS_ERRORS.MODIFIER_IN_AMBIENT_CONTEXT(value));
+							if (flags.has('abstract'))
+								return at(TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH(value, 'abstract'));
 							last_async = modifier;
 							break;
 					}
 					flags.add(value);
 				}
 				if (kind === 'import' && last_declare) {
-					return { start: last_declare.start, message: DECLARE_MODIFIER_ON_IMPORT };
+					return { start: last_declare.start, error: TS_ERRORS.DECLARE_MODIFIER_ON_IMPORT };
 				}
 				if (last_async && kind !== 'function') {
-					return { start: last_async.start, message: modifier_error('here', 'async') };
+					return {
+						start: last_async.start,
+						error: TS_ERRORS.MODIFIER_CANNOT_BE_USED_HERE('async'),
+					};
 				}
 				return null;
 			}
@@ -5852,7 +5768,7 @@ export function TSRXPlugin(config) {
 			 * an escaped keyword as the keyword and reports it.
 			 */
 			#checkKeywordJustRead() {
-				if (this.#lastWordEscaped()) this.raise(this.lastTokStart, KEYWORD_ESCAPE);
+				if (this.#lastWordEscaped()) this.raise(this.lastTokStart, TS_ERRORS.KEYWORD_ESCAPE);
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
@@ -5893,7 +5809,7 @@ export function TSRXPlugin(config) {
 						this.value === 'intrinsic' &&
 						this.lookahead().type !== tt.dot
 					) {
-						if (this.containsEsc) this.raise(this.start, KEYWORD_ESCAPE);
+						if (this.containsEsc) this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 						const keyword = this.startNode();
 						this.next();
 						return /** @type {AST.TypeNode} */ (
@@ -5980,7 +5896,7 @@ export function TSRXPlugin(config) {
 					/** @type {number} */ (tt._in.binop) > minPrec &&
 					!this.hasPrecedingLineBreak()
 				) {
-					this.raise(this.start, KEYWORD_ESCAPE);
+					this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 				}
 				return super.parseExprOp(left, leftStartPos, leftStartLoc, minPrec, forInit);
 			}
@@ -5999,7 +5915,7 @@ export function TSRXPlugin(config) {
 					(Parser.acornTypeScript.tokenIsTSTypeOperator(this.type) ||
 						(this.type === tt.name && this.value === 'infer'))
 				) {
-					this.raise(this.start, KEYWORD_ESCAPE);
+					this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 				}
 				return super.tsParseTypeOperatorOrHigher();
 			}
@@ -6018,7 +5934,7 @@ export function TSRXPlugin(config) {
 					KEYWORD_TYPES.has(/** @type {string} */ (this.value)) &&
 					this.lookaheadCharCode() !== CharCode.dot
 				) {
-					this.raise(this.start, KEYWORD_ESCAPE);
+					this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 				}
 				return super.tsParseNonArrayType();
 			}
@@ -6061,7 +5977,7 @@ export function TSRXPlugin(config) {
 					this.value === 'is' &&
 					!this.hasPrecedingLineBreak()
 				) {
-					this.raise(this.start, KEYWORD_ESCAPE);
+					this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 				}
 			}
 
@@ -6113,7 +6029,7 @@ export function TSRXPlugin(config) {
 			tsParseMappedTypeParameter() {
 				const parameter = super.tsParseMappedTypeParameter();
 				if (this.containsEsc && this.type === tt.name && this.value === 'as') {
-					this.raise(this.start, KEYWORD_ESCAPE);
+					this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 				}
 				return parameter;
 			}
@@ -6127,7 +6043,7 @@ export function TSRXPlugin(config) {
 			 */
 			isAbstractConstructorSignature() {
 				if (this.type === tstt.abstract && this.containsEsc && this.lookahead().type === tt._new) {
-					this.raise(this.start, KEYWORD_ESCAPE);
+					this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 				}
 				return super.isAbstractConstructorSignature();
 			}
@@ -6146,7 +6062,7 @@ export function TSRXPlugin(config) {
 					this.value === 'require' &&
 					this.lookaheadCharCode() === CharCode.openParen
 				) {
-					this.raise(this.start, KEYWORD_ESCAPE);
+					this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 				}
 				return super.tsIsExternalModuleReference();
 			}
@@ -6163,7 +6079,7 @@ export function TSRXPlugin(config) {
 					regex_escaped_word.lastIndex = this.nextTokenStart();
 					if (!regex_escaped_word.test(this.input)) return;
 					const next = this.lookahead();
-					if (next.type === tstt.enum) this.raise(next.start, KEYWORD_ESCAPE);
+					if (next.type === tstt.enum) this.raise(next.start, TS_ERRORS.KEYWORD_ESCAPE);
 					return;
 				}
 				if (
@@ -6171,7 +6087,7 @@ export function TSRXPlugin(config) {
 					(this.type === tstt.enum ||
 						(this.type === tstt.interface && this.#declarationAfterModifier(0) !== null))
 				) {
-					this.raise(this.start, KEYWORD_ESCAPE);
+					this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 				}
 			}
 
@@ -6230,7 +6146,7 @@ export function TSRXPlugin(config) {
 						this.parseDecorators();
 					}
 					if (this.type === tstt.interface) {
-						if (this.containsEsc) this.raise(this.start, KEYWORD_ESCAPE);
+						if (this.containsEsc) this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 						this.#defaultExportInterfaceStart = this.start;
 					} else if (
 						this.type === tstt.abstract &&
@@ -6238,7 +6154,7 @@ export function TSRXPlugin(config) {
 						this.lookahead().type === tt._class &&
 						!this.#lineBreakAfter(this.end)
 					) {
-						this.raise(this.start, KEYWORD_ESCAPE);
+						this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 					}
 					if (this.isAbstractClass()) {
 						const node = /** @type {AST.ClassDeclaration} */ (this.startNode());
@@ -6379,14 +6295,14 @@ export function TSRXPlugin(config) {
 					declaration?.type !== 'VariableDeclaration' &&
 					!(/** @type {{ id?: unknown } | null} */ (declaration)?.id)
 				) {
-					this.raise(export_start, DECLARATION_OR_STATEMENT_EXPECTED);
+					this.raise(export_start, TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED);
 				}
 				if (/** @type {{ declare?: boolean }} */ (declaration).declare) {
 					/** @type {AST.ExportNamedDeclaration} */ (node).exportKind = 'type';
 				}
 				const module = /** @type {AST.Node} */ (declaration);
 				if (module.type === 'TSModuleDeclaration' && module.kind === 'global') {
-					this.raise(export_start, EXPORT_MODIFIER_ON_AUGMENTATION);
+					this.raise(export_start, TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION);
 				}
 				return declaration;
 			}
@@ -6434,7 +6350,7 @@ export function TSRXPlugin(config) {
 				const declared = word.type === tstt.declare && !word.containsEsc;
 				if (declared) {
 					if (this.#lineBreakAfter(word.end)) {
-						this.raise(export_start, DECLARATION_OR_STATEMENT_EXPECTED);
+						this.raise(export_start, TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED);
 					}
 					word = this.lookahead(++ahead);
 				}
@@ -6459,9 +6375,10 @@ export function TSRXPlugin(config) {
 							next.type === tt.star ||
 							(next.type === tt.name && next.value === 'as'));
 					const alias = declared || next.type === tt._default || next.type === tstt.at;
-					if ((braces || alias) && word.containsEsc) this.raise(word.start, KEYWORD_ESCAPE);
-					if (braces) this.raise(next.start, OPENING_BRACE_EXPECTED);
-					if (alias && line_break) this.raise(next.start, LINE_BREAK_NOT_PERMITTED);
+					if ((braces || alias) && word.containsEsc)
+						this.raise(word.start, TS_ERRORS.KEYWORD_ESCAPE);
+					if (braces) this.raise(next.start, TS_ERRORS.TOKEN_EXPECTED('{'));
+					if (alias && line_break) this.raise(next.start, TS_ERRORS.LINE_BREAK_NOT_PERMITTED);
 					if (alias && !is_identifier(next.type)) this.#raiseIdentifierExpected(next);
 				}
 				if (line_break) return;
@@ -6476,20 +6393,20 @@ export function TSRXPlugin(config) {
 						// `tsParseAbstractDeclaration` rejects at `abstract` after a name
 						// (`export abstract abstract class A {}`).
 						if (is_identifier(next.type)) return;
-						this.raise(export_start, DECLARATION_OR_STATEMENT_EXPECTED);
+						this.raise(export_start, TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED);
 					}
 					// `tsParseDeclaration` reads the declaration, and reports `abstract`
 					// before one that isn't a class.
-					if (word.containsEsc) this.raise(word.start, KEYWORD_ESCAPE);
+					if (word.containsEsc) this.raise(word.start, TS_ERRORS.KEYWORD_ESCAPE);
 					return;
 				}
 				// What `tsParseDeclaration` reads after the word, which keeps the word.
 				if (is_identifier(next.type) || (value === 'module' && next.type === tt.string)) return;
 				if (value === 'namespace' && next.type === tt.string) {
-					if (word.containsEsc) this.raise(word.start, KEYWORD_ESCAPE);
+					if (word.containsEsc) this.raise(word.start, TS_ERRORS.KEYWORD_ESCAPE);
 					this.#raiseIdentifierExpected(next);
 				}
-				this.raise(export_start, DECLARATION_OR_STATEMENT_EXPECTED);
+				this.raise(export_start, TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED);
 			}
 
 			/**
@@ -6501,8 +6418,8 @@ export function TSRXPlugin(config) {
 				this.raise(
 					token.start,
 					token.type.keyword
-						? `Identifier expected. '${token.value}' is a reserved word that cannot be used here.`
-						: IDENTIFIER_EXPECTED,
+						? TS_ERRORS.RESERVED_WORD_AS_IDENTIFIER(String(token.value))
+						: TS_ERRORS.IDENTIFIER_EXPECTED,
 				);
 			}
 
@@ -6549,7 +6466,7 @@ export function TSRXPlugin(config) {
 					}
 				}
 				if (next.type !== tt._class) {
-					this.raise(declaration_start, UNEXPECTED_LEADING_DECORATOR);
+					this.raise(declaration_start, TS_ERRORS.UNEXPECTED_LEADING_DECORATOR);
 				}
 			}
 
@@ -6572,8 +6489,8 @@ export function TSRXPlugin(config) {
 				) {
 					return false;
 				}
-				this.#recordCheckerLevelError(start, start + 1, UNEXPECTED_LEADING_DECORATOR);
-				this.#droppedDecoratorsError = { position, message: UNEXPECTED_LEADING_DECORATOR };
+				this.#recordCheckerLevelError(start, start + 1, TS_ERRORS.UNEXPECTED_LEADING_DECORATOR);
+				this.#droppedDecoratorsError = { position, error: TS_ERRORS.UNEXPECTED_LEADING_DECORATOR };
 				const index = this.decoratorStack.length - 1;
 				this.parseEffects?.willSet(this.decoratorStack, String(index));
 				this.decoratorStack[index] = [];
@@ -6618,11 +6535,11 @@ export function TSRXPlugin(config) {
 				try {
 					const node = parse();
 					// Set by `#dropLeadingDecorators` while `parse` runs.
-					const error = /** @type {{ position: number, message: string } | null} */ (
+					const dropped = /** @type {{ position: number, error: Diagnostic } | null} */ (
 						this.#droppedDecoratorsError
 					);
-					if (error && !DECORATED_DECLARATION_TYPES.has(node.type)) {
-						this.#throwError(error.position, error.message);
+					if (dropped && !DECORATED_DECLARATION_TYPES.has(node.type)) {
+						this.#throwError(dropped.position, dropped.error);
 					}
 					return node;
 				} finally {
@@ -6710,7 +6627,7 @@ export function TSRXPlugin(config) {
 					item.parameter.left.type !== 'Identifier'
 				) {
 					// UPSTREAM(sveltejs/acorn-typescript#138): remove once a release includes the fix
-					this.raise(/** @type {number} */ (item.start), PATTERN_PARAMETER_PROPERTY);
+					this.raise(/** @type {number} */ (item.start), TS_ERRORS.PATTERN_PARAMETER_PROPERTY);
 				}
 				return /** @type {AST.Pattern} */ (item);
 			}
@@ -6738,9 +6655,13 @@ export function TSRXPlugin(config) {
 					return this.type === tt.ellipsis && this.lastTokEnd;
 				});
 				if (modifiers_end === undefined) return null;
-				this.#recordCheckerLevelError(start, modifiers_end, REST_PARAMETER_PROPERTY);
+				this.#recordCheckerLevelError(start, modifiers_end, TS_ERRORS.REST_PARAMETER_PROPERTY);
 				if (!allowModifiers) {
-					this.#recordCheckerLevelError(start, start + 1, UNEXPECTED_PARAMETER_MODIFIER);
+					this.#recordCheckerLevelError(
+						start,
+						start + 1,
+						TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+					);
 				}
 				const rest = this.parseRestBinding();
 				this.parseBindingListItem(rest);
@@ -6757,9 +6678,13 @@ export function TSRXPlugin(config) {
 			#reportCommaAfterRestParameter() {
 				if (this.type !== tt.comma || this.#isAmbientRestParameterTrailingComma()) return;
 				if (this.#collect) {
-					this.#recordCheckerLevelError(this.start, this.start + 1, REST_ELEMENT_TRAILING_COMMA);
+					this.#recordCheckerLevelError(
+						this.start,
+						this.start + 1,
+						TS_ERRORS.REST_ELEMENT_TRAILING_COMMA,
+					);
 				} else {
-					this.raiseRecoverable(this.start, REST_ELEMENT_TRAILING_COMMA);
+					this.raise(this.start, TS_ERRORS.REST_ELEMENT_TRAILING_COMMA);
 				}
 			}
 
@@ -6799,7 +6724,10 @@ export function TSRXPlugin(config) {
 				if (item.type === 'RestElement' && this.type === tt.eq) {
 					if (this.#bindingListClose === tt.parenR) {
 						if (!this.#readingGenericArrowParameters) {
-							this.raise(/** @type {number} */ (item.argument.start), REST_PARAMETER_INITIALIZER);
+							this.raise(
+								/** @type {number} */ (item.argument.start),
+								TS_ERRORS.REST_PARAMETER_INITIALIZER,
+							);
 						}
 						this.#readRestParameterDefault(item);
 					} else if (this.#bindingListClose === tt.bracketR) {
@@ -6836,7 +6764,7 @@ export function TSRXPlugin(config) {
 							// `#parseGenericArrowFunction`).
 							// UPSTREAM(sveltejs/acorn-typescript#141): remove once a release includes the fix
 							if (!this.#readingGenericArrowParameters) {
-								this.raise(question, OPTIONAL_REST_PARAMETER);
+								this.raise(question, TS_ERRORS.OPTIONAL_REST_PARAMETER);
 							}
 						}
 					}
@@ -6911,7 +6839,7 @@ export function TSRXPlugin(config) {
 			 * @param {AST.RestElement} rest
 			 */
 			#readRestElementDefault(rest) {
-				this.#raiseCheckerError(this.start, REST_ELEMENT_INITIALIZER);
+				this.#raiseCheckerError(this.start, TS_ERRORS.REST_ELEMENT_INITIALIZER);
 				const argument = /** @type {AST.Pattern & AST.NodeWithLocation} */ (rest.argument);
 				rest.argument = this.parseMaybeDefault(argument.start, argument.loc?.start, argument);
 				this.resetEndLocation(rest);
@@ -6950,7 +6878,7 @@ export function TSRXPlugin(config) {
 			parseMaybeImportAttributes(node) {
 				if (this.type === tstt.assert) {
 					if (this.hasPrecedingLineBreak()) return;
-					if (this.containsEsc) this.raise(this.start, KEYWORD_ESCAPE);
+					if (this.containsEsc) this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 				}
 				super.parseMaybeImportAttributes(node);
 			}
@@ -6980,11 +6908,11 @@ export function TSRXPlugin(config) {
 					this.next();
 					const key = attribute.key.type === 'Literal' ? attribute.key.value : attribute.key.name;
 					if (keys.has(key)) {
-						this.raise(this.pos, 'Duplicated key in attributes');
+						this.raise(this.pos, TSRX_ERRORS.DUPLICATED_ATTRIBUTE_KEY);
 					}
 					keys.add(key);
 					if (this.type !== tt.string) {
-						this.raise(this.pos, 'Only string is supported as an attribute value');
+						this.raise(this.pos, TS_ERRORS.ONLY_STRING_ATTRIBUTE_VALUE);
 					}
 					attribute.value = this.parseLiteral(this.value);
 					this.finishNode(
@@ -7186,13 +7114,13 @@ export function TSRXPlugin(config) {
 				this.expect(tt._import);
 				this.expect(tt.parenL);
 				if (!this.match(tt.string)) {
-					this.raise(this.start, 'Argument in a type import must be a string literal.');
+					this.raise(this.start, TS_ERRORS.TYPE_IMPORT_ARGUMENT);
 				}
 				// For estree compatibility the specifier is a `Literal`, as in acorn-typescript.
 				node.argument = /** @type {AST.TSImportType['argument']} */ (this.parseExprAtom());
 				node.options = null;
 				if (this.eat(tt.comma)) {
-					if (!this.match(tt.braceL)) this.raise(this.start, OPENING_BRACE_EXPECTED);
+					if (!this.match(tt.braceL)) this.raise(this.start, TS_ERRORS.TOKEN_EXPECTED('{'));
 					node.options = this.#parseImportTypeOptions();
 				}
 				this.expect(tt.parenR);
@@ -7226,33 +7154,33 @@ export function TSRXPlugin(config) {
 				options.properties = [];
 				this.next(); // `{`
 				if (this.type !== tt._with && this.type !== tstt.assert) {
-					this.raise(this.start, "'with' expected.");
+					this.raise(this.start, TS_ERRORS.TOKEN_EXPECTED('with'));
 				}
-				if (this.containsEsc) this.raise(this.start, KEYWORD_ESCAPE);
+				if (this.containsEsc) this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 				options.properties.push(
 					this.#parseImportTypeOption(() => {
 						const attributes = /** @type {AST.ObjectExpression} */ (this.startNode());
 						attributes.properties = [];
-						this.#expectImportTypeToken(tt.braceL, OPENING_BRACE_EXPECTED);
+						this.#expectImportTypeToken(tt.braceL, TS_ERRORS.TOKEN_EXPECTED('{'));
 						const is_name = Parser.acornTypeScript.tokenIsKeywordOrIdentifier;
 						while (this.type !== tt.braceR && this.type !== tt.eof) {
 							if (!is_name(this.type) && this.type !== tt.string) {
-								this.raise(this.start, 'Identifier or string literal expected.');
+								this.raise(this.start, TS_ERRORS.IDENTIFIER_OR_STRING_EXPECTED);
 							}
 							attributes.properties.push(
 								this.#parseImportTypeOption(() => this.parseMaybeAssign(false)),
 							);
 							if (this.eat(tt.comma)) continue;
 							if (this.type !== tt.braceR && this.type !== tt.eof) {
-								this.raise(this.start, "',' expected.");
+								this.raise(this.start, TS_ERRORS.TOKEN_EXPECTED(','));
 							}
 						}
-						this.#expectImportTypeToken(tt.braceR, CLOSING_BRACE_EXPECTED);
+						this.#expectImportTypeToken(tt.braceR, TS_ERRORS.TOKEN_EXPECTED('}'));
 						return this.finishNode(attributes, 'ObjectExpression');
 					}),
 				);
 				this.eat(tt.comma);
-				this.#expectImportTypeToken(tt.braceR, CLOSING_BRACE_EXPECTED);
+				this.#expectImportTypeToken(tt.braceR, TS_ERRORS.TOKEN_EXPECTED('}'));
 				return this.finishNode(options, 'ObjectExpression');
 			}
 
@@ -7268,7 +7196,7 @@ export function TSRXPlugin(config) {
 				property.method = false;
 				property.shorthand = false;
 				this.parsePropertyName(property);
-				this.#expectImportTypeToken(tt.colon, "':' expected.");
+				this.#expectImportTypeToken(tt.colon, TS_ERRORS.TOKEN_EXPECTED(':'));
 				property.value = parse_value();
 				property.kind = 'init';
 				return this.finishNode(property, 'Property');
@@ -7276,12 +7204,12 @@ export function TSRXPlugin(config) {
 
 			/**
 			 * Read a token of an import type's options, or report TypeScript's
-			 * message for it where it's missing.
+			 * error for it where it's missing.
 			 * @param {acorn.TokenType} type
-			 * @param {string} message
+			 * @param {Diagnostic} error
 			 */
-			#expectImportTypeToken(type, message) {
-				if (this.type !== type) this.raise(this.start, message);
+			#expectImportTypeToken(type, error) {
+				if (this.type !== type) this.raise(this.start, error);
 				this.next();
 			}
 
@@ -7603,7 +7531,7 @@ export function TSRXPlugin(config) {
 							this.#report_recoverable_error_range(
 								first_position,
 								first_position + expr.name.length,
-								'Argument name clash',
+								TS_ERRORS.ARGUMENT_NAME_CLASH,
 							);
 							reported_names.add(expr.name);
 						}
@@ -7611,7 +7539,7 @@ export function TSRXPlugin(config) {
 						this.#report_recoverable_error_range(
 							start,
 							/** @type {number} */ (expr.end ?? start + expr.name.length),
-							'Argument name clash',
+							TS_ERRORS.ARGUMENT_NAME_CLASH,
 						);
 						return;
 					}
@@ -7638,7 +7566,7 @@ export function TSRXPlugin(config) {
 				const outer_list = this.#expressionList;
 				/** @type {ExpressionList} */
 				const list = canBeArrow
-					? { parameters: true, position: -1, message: '' }
+					? { parameters: true, position: -1, error: null }
 					: NON_PARAMETER_LIST;
 				this.#expressionList = list;
 				/** @type {AST.Expression} */
@@ -7657,7 +7585,7 @@ export function TSRXPlugin(config) {
 				}
 				// UPSTREAM(sveltejs/acorn-typescript#149): remove once a release includes the fix
 				if (list.position !== -1 && expr.type !== 'ArrowFunctionExpression') {
-					this.raise(list.position, list.message);
+					this.raise(list.position, /** @type {Diagnostic} */ (list.error));
 				}
 
 				// If the expression's start position is after the opening paren,
@@ -7729,14 +7657,14 @@ export function TSRXPlugin(config) {
 			#parseAsyncArguments(parse) {
 				const outer = this.#asyncArguments;
 				/** @type {ExpressionList & { start: number }} */
-				const async_arguments = { start: this.start, parameters: true, position: -1, message: '' };
+				const async_arguments = { start: this.start, parameters: true, position: -1, error: null };
 				this.#asyncArguments = async_arguments;
 				try {
 					const node = this.#collect ? this.#parseArrowParameterList(false, parse) : parse();
 					// UPSTREAM(sveltejs/acorn-typescript#140): remove once a release includes the fix
 					// UPSTREAM(sveltejs/acorn-typescript#149): remove once a release includes the fix
 					if (async_arguments.position !== -1 && node.type !== 'ArrowFunctionExpression') {
-						this.raise(async_arguments.position, async_arguments.message);
+						this.raise(async_arguments.position, /** @type {Diagnostic} */ (async_arguments.error));
 					}
 					return node;
 				} finally {
@@ -7839,14 +7767,14 @@ export function TSRXPlugin(config) {
 				const list = this.#expressionList;
 				const rest_parameter = list !== null && list === this.#asyncArguments;
 				if (rest_parameter && this.type === tt.question) {
-					this.#checkParameterSyntax(this.start, UNEXPECTED_TOKEN);
+					this.#checkParameterSyntax(this.start, TS_ERRORS.UNEXPECTED_TOKEN);
 					this.next();
 					node.optional = true;
 					this.resetEndLocation(node);
 				}
 				// Where acorn-typescript's `parseExprList` reads it.
 				if (this.maybeInArrowParameters && this.type === tt.colon) {
-					this.#checkParameterSyntax(this.start, UNEXPECTED_TYPE_ANNOTATION);
+					this.#checkParameterSyntax(this.start, TS_ERRORS.UNEXPECTED_TYPE_ANNOTATION);
 					node.typeAnnotation = this.tsParseTypeAnnotation();
 					this.resetEndLocation(node);
 				}
@@ -7879,12 +7807,12 @@ export function TSRXPlugin(config) {
 				let item = super.parseParenItem(node);
 				const type_cast = /** @type {string} */ (item.type) === 'TSTypeCastExpression';
 				if (question !== -1) {
-					this.#checkParameterSyntax(question, UNEXPECTED_TOKEN);
+					this.#checkParameterSyntax(question, TS_ERRORS.UNEXPECTED_TOKEN);
 				} else if (type_cast) {
 					const annotation = /** @type {{ typeAnnotation: AST.NodeWithLocation }} */ (
 						/** @type {unknown} */ (item)
 					).typeAnnotation;
-					this.#checkParameterSyntax(annotation.start, UNEXPECTED_TYPE_ANNOTATION);
+					this.#checkParameterSyntax(annotation.start, TS_ERRORS.UNEXPECTED_TYPE_ANNOTATION);
 				}
 				if (
 					node.type === 'RestElement' &&
@@ -7901,23 +7829,23 @@ export function TSRXPlugin(config) {
 			 * A `?` or a type annotation after an item of the list being read, or a
 			 * type annotation after a spread, at `position`. Only an arrow function's
 			 * parameters can have them: TypeScript's parser rejects them anywhere
-			 * else, and @babel/parser reports `message`. Raise it now when the list
+			 * else, and @babel/parser reports `error`. Raise it now when the list
 			 * can't be an arrow function's parameters, and otherwise note the first
 			 * one, for the list to raise when it isn't one (see
 			 * `parseParenAndDistinguishExpression` and `#parseAsyncArguments`).
 			 * @param {number} position
-			 * @param {string} message
+			 * @param {Diagnostic} error
 			 */
-			#checkParameterSyntax(position, message) {
+			#checkParameterSyntax(position, error) {
 				const list = this.#expressionList;
 				if (list === null || !list.parameters) {
-					this.raise(position, message);
+					this.raise(position, error);
 				} else if (list.position === -1) {
 					// Undone with an abandoned speculative parse that noted it.
 					this.parseEffects?.willSet(list, 'position');
-					this.parseEffects?.willSet(list, 'message');
+					this.parseEffects?.willSet(list, 'error');
 					list.position = position;
-					list.message = message;
+					list.error = error;
 				}
 			}
 
@@ -8146,14 +8074,22 @@ export function TSRXPlugin(config) {
 				const modified = {};
 				this.tsParseModifiers({ modified, allowedModifiers: PARAMETER_MODIFIERS });
 				if (this.type === tt.ellipsis) {
-					this.#recordCheckerLevelError(start, this.lastTokEnd, REST_PARAMETER_PROPERTY);
-					this.#recordCheckerLevelError(start, start + 1, UNEXPECTED_PARAMETER_MODIFIER);
+					this.#recordCheckerLevelError(start, this.lastTokEnd, TS_ERRORS.REST_PARAMETER_PROPERTY);
+					this.#recordCheckerLevelError(
+						start,
+						start + 1,
+						TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+					);
 					const rest = this.parseParenItem(this.parseRestBinding());
 					// The list goes on after it: a parameter after it is TS1014 (#727).
 					this.#reportCommaAfterRestParameter();
 					return /** @type {AST.Expression} */ (/** @type {unknown} */ (rest));
 				}
-				this.#recordCheckerLevelError(start, start + 1, UNEXPECTED_PARAMETER_MODIFIER);
+				this.#recordCheckerLevelError(
+					start,
+					start + 1,
+					TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				);
 				/** @type {AST.Expression} */
 				let parameter;
 				list.depth++;
@@ -8163,7 +8099,7 @@ export function TSRXPlugin(config) {
 					list.depth--;
 				}
 				if (is_pattern_parameter_expression(parameter)) {
-					this.#recordCheckerLevelError(start, start + 1, PATTERN_PARAMETER_PROPERTY);
+					this.#recordCheckerLevelError(start, start + 1, TS_ERRORS.PATTERN_PARAMETER_PROPERTY);
 				}
 				const node = /** @type {AST.TSParameterProperty} */ (this.startNodeAt(start, startLoc));
 				if (modified.accessibility) node.accessibility = modified.accessibility;
@@ -8273,7 +8209,11 @@ export function TSRXPlugin(config) {
 				) {
 					return false;
 				}
-				this.#recordCheckerLevelError(position, position + 1, REST_ELEMENT_TRAILING_COMMA);
+				this.#recordCheckerLevelError(
+					position,
+					position + 1,
+					TS_ERRORS.REST_ELEMENT_TRAILING_COMMA,
+				);
 				const refDestructuringErrors = new /** @type {new () => Parse.DestructuringErrors} */ (
 					/** @type {unknown} */ (DestructuringErrors)
 				)();
@@ -8387,7 +8327,7 @@ export function TSRXPlugin(config) {
 					if (this.input.charCodeAt(position) !== CharCode.closeParen) break;
 					position++;
 				}
-				this.#raiseCheckerError(position, REST_ELEMENT_INITIALIZER);
+				this.#raiseCheckerError(position, TS_ERRORS.REST_ELEMENT_INITIALIZER);
 				/** @type {AST.Node} */ (spread).type = 'RestElement';
 				spread.argument = /** @type {AST.Expression} */ (
 					/** @type {unknown} */ (this.toAssignable(argument, isBinding))
@@ -8426,7 +8366,7 @@ export function TSRXPlugin(config) {
 				) {
 					if (bindingType !== undefined && bindingType !== BINDING_TYPES.BIND_NONE) {
 						// UPSTREAM(sveltejs/acorn-typescript#142): remove once a release includes the fix
-						this.raise(/** @type {number} */ (node.start), TYPE_CAST_IN_PARAMETER);
+						this.raise(/** @type {number} */ (node.start), TS_ERRORS.TYPE_CAST_IN_PARAMETER);
 					}
 					node = /** @type {AST.Node} */ (
 						/** @type {{ expression: AST.Node }} */ (/** @type {unknown} */ (node)).expression
@@ -8541,7 +8481,7 @@ export function TSRXPlugin(config) {
 					this.next();
 					if (usingKind === 'await using') {
 						if (!this.canAwait) {
-							this.raise(this.start, 'Await using cannot appear outside of async function');
+							this.raise(this.start, TS_ERRORS.AWAIT_USING_OUTSIDE_ASYNC);
 						}
 						this.next();
 					}
@@ -8603,10 +8543,7 @@ export function TSRXPlugin(config) {
 							/** @type {AST.ForOfStatement} */ (node).await = false;
 					}
 					if (startsWithLet && isForOf)
-						this.raise(
-							/** @type {AST.NodeWithLocation} */ (init_expr).start,
-							"The left-hand side of a for-of loop may not start with 'let'.",
-						);
+						this.raise(/** @type {AST.NodeWithLocation} */ (init_expr).start, TS_ERRORS.FOR_OF_LET);
 					// Keep a type assertion, and the parentheses around it, as for an
 					// assignment target (see `toAssignable`).
 					const init = this.toAssignable(init_expr, false, refDestructuringErrors, true);
@@ -8638,7 +8575,7 @@ export function TSRXPlugin(config) {
 					) {
 						this.raise(
 							this.start,
-							`The left-hand side of a 'for...in' statement cannot be ${init.kind === 'using' ? "a 'using'" : "an 'await using'"} declaration.`,
+							init.kind === 'using' ? TS_ERRORS.FOR_IN_USING : TS_ERRORS.FOR_IN_AWAIT_USING,
 						);
 					}
 					if (this.options.ecmaVersion >= 9) {
@@ -8677,7 +8614,7 @@ export function TSRXPlugin(config) {
 				) {
 					this.raise(
 						/** @type {AST.NodeWithLocation} */ (init).start,
-						`${isForIn ? 'for-in' : 'for-of'} loop variable declaration may not have an initializer`,
+						isForIn ? TS_ERRORS.FOR_IN_INITIALIZER : TS_ERRORS.FOR_OF_INITIALIZER,
 					);
 				}
 
@@ -8687,7 +8624,7 @@ export function TSRXPlugin(config) {
 				// `@for`'s `index` and `key` clauses. A regular `for…of` has none, and
 				// TypeScript reports the `;` as `')' expected.` (TS1005).
 				if (!isForIn && this.type === tt.semi && !this.#forDirectiveLoops.has(node)) {
-					this.raise(this.start, "')' expected.");
+					this.raise(this.start, TS_ERRORS.TOKEN_EXPECTED(')'));
 				}
 				if (!isForIn && this.type === tt.semi) {
 					this.next(); // consume ';'
@@ -8701,7 +8638,7 @@ export function TSRXPlugin(config) {
 							/** @type {AST.Identifier} */ (/** @type {AST.ForOfStatement} */ (node).index)
 								.type !== 'Identifier'
 						) {
-							this.raise(this.start, 'Expected identifier after "index" keyword');
+							this.raise(this.start, TSRX_ERRORS.FOR_INDEX_NAME_EXPECTED);
 						}
 						this.eat(tt.semi);
 					}
@@ -8712,7 +8649,7 @@ export function TSRXPlugin(config) {
 					}
 
 					if (this.isContextual('index')) {
-						this.raise(this.start, '"index" must come before "key" in for-of loop');
+						this.raise(this.start, TSRX_ERRORS.FOR_INDEX_AFTER_KEY);
 					}
 				} else if (!isForIn) {
 					// Set index to null for standard for-of loops
@@ -8801,18 +8738,21 @@ export function TSRXPlugin(config) {
 					if (param.type !== 'RestElement') continue;
 					const question = this.#restParameterQuestions.get(param);
 					if (!this.isAmbientContext && question !== undefined) {
-						this.raise(question, OPTIONAL_REST_PARAMETER);
+						this.raise(question, TS_ERRORS.OPTIONAL_REST_PARAMETER);
 					} else if (
 						!this.isAmbientContext &&
 						/** @type {{ optional?: boolean }} */ (param).optional
 					) {
 						this.raise(
 							skip_space_and_comments_from(this.input, /** @type {number} */ (param.argument.end)),
-							OPTIONAL_REST_PARAMETER,
+							TS_ERRORS.OPTIONAL_REST_PARAMETER,
 						);
 					}
 					if (this.#isRestParameterWithDefault(param)) {
-						this.raise(/** @type {number} */ (param.argument.start), REST_PARAMETER_INITIALIZER);
+						this.raise(
+							/** @type {number} */ (param.argument.start),
+							TS_ERRORS.REST_PARAMETER_INITIALIZER,
+						);
 					}
 				}
 			}
@@ -8859,7 +8799,10 @@ export function TSRXPlugin(config) {
 						pattern.optional &&
 						(pattern.type === 'ObjectPattern' || pattern.type === 'ArrayPattern')
 					) {
-						this.raise(/** @type {number} */ (pattern.start), OPTIONAL_BINDING_PATTERN_PARAMETER);
+						this.raise(
+							/** @type {number} */ (pattern.start),
+							TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER,
+						);
 					}
 				}
 			}
@@ -8916,8 +8859,7 @@ export function TSRXPlugin(config) {
 						if (this.#collect) {
 							this.#report_recoverable_error(
 								this.start,
-								'TSRX expression containers do not use semicolons. Remove this semicolon.',
-								DIAGNOSTIC_CODES.TEMPLATE_EXPRESSION_TRAILING_SEMICOLON,
+								TSRX_ERRORS.TEMPLATE_EXPRESSION_TRAILING_SEMICOLON,
 							);
 						}
 						this.next();
@@ -9113,7 +9055,7 @@ export function TSRXPlugin(config) {
 								? container.start
 								: (container.expression.start ?? container.start)
 						),
-						TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
+						TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION,
 					);
 				}
 				container.isDynamic = true;
@@ -9135,8 +9077,7 @@ export function TSRXPlugin(config) {
 				this.#report_recoverable_error_range(
 					node.metadata?.paren_start ?? node.start,
 					end_after_parentheses(this.input, node),
-					TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
-					DIAGNOSTIC_CODES.DYNAMIC_TAG_EXPRESSION,
+					TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION,
 				);
 			}
 
@@ -9202,10 +9143,7 @@ export function TSRXPlugin(config) {
 						try {
 							const value = this.jsx_parseExpressionContainer();
 							if (value.type === 'JSXSpreadChild') {
-								this.raise(
-									/** @type {number} */ (value.start),
-									'Attribute values cannot be spread. Use a spread attribute (`{...props}`) instead.',
-								);
+								this.raise(/** @type {number} */ (value.start), TSRX_ERRORS.ATTRIBUTE_VALUE_SPREAD);
 							}
 							return value;
 						} finally {
@@ -9227,7 +9165,7 @@ export function TSRXPlugin(config) {
 					case tt.string:
 						return this.parseExprAtom();
 					default:
-						this.raise(this.start, 'value should be either an expression or a quoted text');
+						this.raise(this.start, TS_ERRORS.JSX_ATTRIBUTE_VALUE);
 				}
 			}
 
@@ -9293,7 +9231,7 @@ export function TSRXPlugin(config) {
 							node.pendingKeyword = this.#lastClauseKeywordSpan;
 							node.pending = this.#parseTemplateControlFlowReturnBlock();
 						} else if (this.#isUnprefixedDirectiveClauseContinuation('pending', ['{'])) {
-							this.raise(this.start, 'Expected `@pending` after `@try` block.');
+							this.raise(this.start, TSRX_ERRORS.DIRECTIVE_BRANCH_EXPECTED('pending', 'try'));
 						} else {
 							node.pending = null;
 						}
@@ -9371,14 +9309,14 @@ export function TSRXPlugin(config) {
 							this.exitScope();
 							node.handler = this.finishNode(clause, 'CatchClause');
 						} else if (this.#isUnprefixedDirectiveClauseContinuation('catch', ['{', '('])) {
-							this.raise(this.start, 'Expected `@catch` after `@try` block.');
+							this.raise(this.start, TSRX_ERRORS.DIRECTIVE_BRANCH_EXPECTED('catch', 'try'));
 						}
 						node.finalizer = null;
 
 						if (!node.handler && !node.pending) {
 							this.raise(
 								/** @type {AST.NodeWithLocation} */ (node).start,
-								'Missing `@catch` or `@pending` after `@try` block.',
+								TSRX_ERRORS.TRY_HANDLER_MISSING,
 							);
 						}
 						return this.finishNode(node, 'TryStatement');
@@ -9447,7 +9385,7 @@ export function TSRXPlugin(config) {
 				if (!node.handler && !node.finalizer && !node.pending) {
 					this.raise(
 						/** @type {AST.NodeWithLocation} */ (node).start,
-						'Missing catch or finally clause',
+						TS_ERRORS.MISSING_CATCH_OR_FINALLY,
 					);
 				}
 				return this.finishNode(node, 'TryStatement');
@@ -9508,7 +9446,7 @@ export function TSRXPlugin(config) {
 							}
 							return this.finishToken(tt.eof);
 						}
-						this.raise(this.start, 'Unterminated JSX contents');
+						this.raise(this.start, TS_ERRORS.UNTERMINATED_JSX_CONTENTS);
 					}
 					let ch = this.input.charCodeAt(this.pos);
 
@@ -9698,15 +9636,9 @@ export function TSRXPlugin(config) {
 							}
 							this.raise(
 								this.pos,
-								'Unexpected token `' +
-									this.input[this.pos] +
-									'`. Did you mean `' +
-									(ch === CharCode.greaterThan ? '&gt;' : '&rbrace;') +
-									'` or ' +
-									'`{"' +
-									this.input[this.pos] +
-									'"}' +
-									'`?',
+								ch === CharCode.greaterThan
+									? TS_ERRORS.JSX_UNESCAPED_GREATER_THAN
+									: TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE,
 							);
 						}
 
@@ -9963,10 +9895,7 @@ export function TSRXPlugin(config) {
 				if (!is_fragment && open.name.type === 'JSXNamespacedName') {
 					const namespace_node = /** @type {ESTreeJSX.JSXNamespacedName} */ (open.name);
 					const tagName = namespace_node.namespace.name + ':' + namespace_node.name.name;
-					this.raise(
-						open.start,
-						`Namespaced elements are not supported in TSRX templates: <${tagName}>.`,
-					);
+					this.raise(open.start, TSRX_ERRORS.NAMESPACED_ELEMENT(tagName));
 				}
 
 				// The node was started before its opening tag was read, so its shape is
@@ -10030,7 +9959,7 @@ export function TSRXPlugin(config) {
 							: this.getElementName(/** @type {ESTreeJSX.JSXElement} */ (node).openingElement.name);
 						this.#report_broken_markup_error(
 							this.start,
-							`Unclosed tag '<${displayTag}>'. Expected '</${displayTag}>' before end of template.`,
+							TSRX_ERRORS.UNCLOSED_TAG(String(displayTag)),
 						);
 						slots.unclosed = true;
 						/** @type {AST.SourceLocation} */ (node.loc).end = {
@@ -10232,7 +10161,7 @@ export function TSRXPlugin(config) {
 							this.#path[this.#path.length - 1]
 						);
 						if (!this.#isNativeTemplateNode(currentElement)) {
-							this.raise(this.start, 'Unexpected closing tag');
+							this.raise(this.start, TSRX_ERRORS.UNEXPECTED_CLOSING_TAG);
 						}
 
 						/** @type {string | null} */
@@ -10275,13 +10204,12 @@ export function TSRXPlugin(config) {
 								return elemName === normalized_closing_name;
 							});
 							if (!matches_open_element && this.#collect) {
-								this.raise(closingElement.start, 'Unexpected closing tag');
+								this.raise(closingElement.start, TSRX_ERRORS.UNEXPECTED_CLOSING_TAG);
 							}
 							// this will throw if not collecting errors
 							this.#report_broken_markup_error(
 								closingElement.start,
-								`Expected closing tag to match opening tag. Expected '</${openingTagName}>' but found '</${closingTagName}>'`,
-								DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG,
+								TSRX_ERRORS.MISMATCHED_CLOSING_TAG(String(openingTagName), String(closingTagName)),
 							);
 							// Loop through all unclosed elements on the stack
 							while (this.#path.length > 0) {
@@ -10397,7 +10325,7 @@ export function TSRXPlugin(config) {
 				) {
 					const node = /** @type {AST.ImportExpression} */ (this.startNode());
 					if (this.containsEsc) {
-						this.raiseRecoverable(this.start, 'Escape sequence in keyword import');
+						this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE_SEQUENCE('import'));
 					}
 					this.next(); // `import`
 					this.next(); // `.`
@@ -10487,10 +10415,7 @@ export function TSRXPlugin(config) {
 						node.specifiers[0].type !== 'ImportNamespaceSpecifier' ||
 						node.source.type !== 'Literal')
 				) {
-					this.raise(
-						defer_start,
-						'`import defer` only supports a namespace import from a string literal.',
-					);
+					this.raise(defer_start, TS_ERRORS.IMPORT_DEFER_NAMESPACE);
 				}
 				this.parseMaybeImportAttributes(node);
 				this.semicolon();
@@ -10747,7 +10672,7 @@ export function TSRXPlugin(config) {
 			 * @returns {never}
 			 */
 			#raiseClosingBraceExpected() {
-				return this.raise(this.start, CLOSING_BRACE_EXPECTED);
+				return this.raise(this.start, TS_ERRORS.TOKEN_EXPECTED('}'));
 			}
 
 			/**
@@ -10795,7 +10720,7 @@ export function TSRXPlugin(config) {
 			expect(type) {
 				if (this.type !== type) {
 					if (type === tstt.jsxTagEnd) {
-						this.raise(this.start, TAG_END_EXPECTED);
+						this.raise(this.start, TS_ERRORS.TOKEN_EXPECTED('>'));
 					}
 					if (
 						type === tt.braceR &&
@@ -10860,7 +10785,7 @@ export function TSRXPlugin(config) {
 				this.finishNode(rest, 'RestElement');
 				if (this.type === tt.eq) this.#readRestElementDefault(rest);
 				if (this.type === tt.comma) {
-					this.#raiseCheckerError(this.start, REST_ELEMENT_TRAILING_COMMA);
+					this.#raiseCheckerError(this.start, TS_ERRORS.REST_ELEMENT_TRAILING_COMMA);
 				}
 				return rest;
 			}
@@ -10948,7 +10873,7 @@ export function TSRXPlugin(config) {
 					// TypeScript's `canFollowGetOrSetKeyword`.
 					const next = this.lookahead().type;
 					if (next === tt.bracketL || Parser.acornTypeScript.tokenIsLiteralPropertyName(next)) {
-						this.raise(this.start, KEYWORD_ESCAPE);
+						this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 					}
 				}
 				return this.#parseBraceListElement(() => super.tsParseTypeMember());
@@ -10991,7 +10916,7 @@ export function TSRXPlugin(config) {
 					element.key.name === 'constructor' &&
 					this.input.slice(element.key.start, element.key.end) !== 'constructor'
 				) {
-					this.raise(/** @type {number} */ (element.key.start), KEYWORD_ESCAPE);
+					this.raise(/** @type {number} */ (element.key.start), TS_ERRORS.KEYWORD_ESCAPE);
 				}
 				return element;
 			}

@@ -3,7 +3,7 @@
 
 import MagicString from 'magic-string';
 import { decode, encode } from '@jridgewell/sourcemap-codec';
-import { DIAGNOSTIC_CODES } from '../diagnostics.js';
+import { TSRX_ERRORS } from '../diagnostics.js';
 import { error } from '../errors.js';
 import { parse_module } from '../parse/parse-module.js';
 import { child_nodes, extract_identifiers, is_ast_node } from '../utils/ast.js';
@@ -311,12 +311,11 @@ export function specialize_platform(ast, platform_value, filename, options = {})
 		const flag = find_platform_flag(ast);
 		if (flag) {
 			error(
-				'Platform flag usage requires a configured TSRX platform. Set `tsrx.platform` in tsconfig.json and pass the same `platform` to the build integration ("web", "ios", or "android").',
+				TSRX_ERRORS.PLATFORM_REQUIRED,
 				filename ?? null,
 				flag,
 				options.errors,
 				options.comments,
-				DIAGNOSTIC_CODES.PLATFORM_REQUIRED,
 			);
 		}
 		return ast;

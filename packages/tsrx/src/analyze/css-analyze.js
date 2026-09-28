@@ -1,14 +1,11 @@
 /** @import * as AST from 'estree' */
 /** @import { CompileError } from '../../types/index' */
+/** @import { Diagnostic } from '../diagnostics.js' */
 
 import { walk } from 'zimmerframe';
 import { error } from '../errors.js';
-import { DIAGNOSTIC_CODES } from '../diagnostics.js';
+import { TSRX_ERRORS } from '../diagnostics.js';
 import { css_node_source_position } from '../parse/style.js';
-import {
-	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
-	TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
-} from './validation.js';
 
 /**
  * True if is `:global` without arguments
@@ -64,17 +61,16 @@ export function analyze_css(css, options = {}) {
 	const filename = options.filename ?? sheet?.filename ?? null;
 
 	/**
-	 * @param {string} message
+	 * @param {Diagnostic} diagnostic
 	 * @param {AST.CSS.Node} node
 	 */
-	function report(message, node) {
+	function report(diagnostic, node) {
 		error(
-			message,
+			diagnostic,
 			filename,
 			css_node_source_position(sheet, node),
 			options.errors,
 			options.comments,
-			DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT,
 		);
 	}
 
@@ -137,7 +133,7 @@ export function analyze_css(css, options = {}) {
 						is_nested &&
 						!(/** @type {AST.CSS.PseudoClassSelector} */ (global.selectors[0]).args)
 					) {
-						report(TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR, global.selectors[0]);
+						report(TSRX_ERRORS.CSS_GLOBAL_IN_PSEUDOCLASS, global.selectors[0]);
 					}
 
 					const idx = node.children.indexOf(global);
@@ -146,7 +142,7 @@ export function analyze_css(css, options = {}) {
 						// ensure `:global(...)` is not used in the middle of a selector (but multiple `global(...)` in sequence are ok)
 						for (let i = idx + 1; i < node.children.length; i++) {
 							if (!is_global(node.children[i])) {
-								report(TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR, first);
+								report(TSRX_ERRORS.CSS_GLOBAL_IN_MIDDLE, first);
 								break;
 							}
 						}

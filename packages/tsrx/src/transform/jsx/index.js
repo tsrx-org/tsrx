@@ -5,6 +5,7 @@
 import { walk } from 'zimmerframe';
 import { print } from 'esrap';
 import { error } from '../../errors.js';
+import { DIAGNOSTIC_CODES, TSRX_ERRORS } from '../../diagnostics.js';
 import { is_template_value_position } from '../../analyze/validation.js';
 import { analyze_css } from '../../analyze/css-analyze.js';
 import {
@@ -70,17 +71,6 @@ import {
 
 const TEMPLATE_FRAGMENT_ERROR =
 	'JSX fragment syntax is not needed in TSRX templates. TSRX renders in immediate mode, so everything is already a fragment. Use `<>...</>` only in expression position.';
-const TSRX_FOR_RETURN_ERROR =
-	'Return statements are not allowed inside TSRX template for...of loops. Filter the iterable before rendering or use an @empty fallback for empty lists.';
-const TSRX_FOR_BREAK_ERROR =
-	'Break statements are not allowed inside TSRX template for...of loops.';
-const TSRX_FOR_CONTINUE_ERROR =
-	'Continue statements are not allowed inside TSRX template for...of loops. Filter the iterable before rendering.';
-const TSRX_IF_RETURN_ERROR =
-	'Return statements are not allowed inside TSRX template @if blocks. Move the return before the template output or render conditionally instead.';
-const TSRX_IF_BREAK_ERROR = 'Break statements are not allowed inside TSRX template @if blocks.';
-const TSRX_IF_CONTINUE_ERROR =
-	'Continue statements are not allowed inside TSRX template @if blocks. Filter before rendering or use conditional output instead.';
 const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
 const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
 const LEADING_INLINE_WHITESPACE = /^[ \t]+/;
@@ -1881,7 +1871,7 @@ function validate_native_await(node, transform_context) {
 
 	if (transform_context.platform.validation.requireUseServerForAwait) {
 		error(
-			'Top-level `await` in TSRX functions requires a module-level `"use server"` directive.',
+			TSRX_ERRORS.TOP_LEVEL_AWAIT_USE_SERVER,
 			transform_context.filename,
 			await_node,
 			transform_context.errors,
@@ -3082,7 +3072,7 @@ function suspend_generated_closures(program, transform_context) {
 					fn = { ...fn, async: true };
 				} else {
 					error(
-						`${transform_context.platform.name} TSRX does not support \`await\` here: this part of the template renders through a callback the target calls, so its result cannot be awaited. Await the value in the component body, or move it into an async child component.`,
+						TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED(transform_context.platform.name),
 						transform_context.filename,
 						/** @type {AST.Node} */ (first_await),
 						transform_context.errors,
@@ -3095,7 +3085,7 @@ function suspend_generated_closures(program, transform_context) {
 					fn = to_generator_function(fn);
 				} else {
 					error(
-						`${transform_context.platform.name} TSRX does not support \`yield\` here: this part of the template runs in a callback, which cannot yield from the enclosing generator. Yield the value in the function body first.`,
+						TSRX_ERRORS.TARGET_YIELD_UNSUPPORTED(transform_context.platform.name),
 						transform_context.filename,
 						/** @type {AST.Node} */ (first_yield),
 						transform_context.errors,
@@ -3196,7 +3186,7 @@ function delegate_to_generated_generator(call, transform_context) {
 
 	if (found.super) {
 		error(
-			`${transform_context.platform.name} TSRX does not support \`super\` here: this part of the template also yields, so it is lowered into a generator function, where \`super\` is unavailable. Read the value into a variable in the method body first.`,
+			TSRX_ERRORS.TARGET_SUPER_UNSUPPORTED(transform_context.platform.name),
 			transform_context.filename,
 			found.super,
 			transform_context.errors,
@@ -4667,7 +4657,7 @@ function to_jsx_child(node, transform_context) {
 		case 'JSXForExpression':
 			if (node.statementType !== 'ForOfStatement') {
 				error(
-					'TSRX `@for` currently supports `for...of` loops in template output.',
+					TSRX_ERRORS.FOR_OF_ONLY,
 					transform_context.filename,
 					node,
 					transform_context.errors,
@@ -5143,7 +5133,7 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 
 	if (node.type === 'ReturnStatement') {
 		error(
-			TSRX_FOR_RETURN_ERROR,
+			TSRX_ERRORS.FOR_RETURN_STATEMENT,
 			transform_context.filename,
 			node,
 			transform_context.errors,
@@ -5153,7 +5143,7 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 	}
 	if (node.type === 'BreakStatement') {
 		error(
-			TSRX_FOR_BREAK_ERROR,
+			TSRX_ERRORS.FOR_BREAK_STATEMENT,
 			transform_context.filename,
 			node,
 			transform_context.errors,
@@ -5163,7 +5153,7 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 	}
 	if (node.type === 'ContinueStatement') {
 		error(
-			TSRX_FOR_CONTINUE_ERROR,
+			TSRX_ERRORS.FOR_CONTINUE_STATEMENT,
 			transform_context.filename,
 			node,
 			transform_context.errors,
@@ -5199,7 +5189,7 @@ function validate_if_body_control_flow(node, transform_context) {
 
 	if (node.type === 'ReturnStatement') {
 		error(
-			TSRX_IF_RETURN_ERROR,
+			TSRX_ERRORS.IF_RETURN_STATEMENT,
 			transform_context.filename,
 			node,
 			transform_context.errors,
@@ -5209,7 +5199,7 @@ function validate_if_body_control_flow(node, transform_context) {
 	}
 	if (node.type === 'BreakStatement') {
 		error(
-			TSRX_IF_BREAK_ERROR,
+			TSRX_ERRORS.IF_BREAK_STATEMENT,
 			transform_context.filename,
 			node,
 			transform_context.errors,
@@ -5219,7 +5209,7 @@ function validate_if_body_control_flow(node, transform_context) {
 	}
 	if (node.type === 'ContinueStatement') {
 		error(
-			TSRX_IF_CONTINUE_ERROR,
+			TSRX_ERRORS.IF_CONTINUE_STATEMENT,
 			transform_context.filename,
 			node,
 			transform_context.errors,
@@ -5262,7 +5252,7 @@ function is_loop_statement(node) {
 function for_of_statement_to_jsx_child(node, transform_context) {
 	if (node.await) {
 		error(
-			`${transform_context.platform.name} TSRX does not support \`for await...of\` in TSRX templates.`,
+			TSRX_ERRORS.TARGET_FOR_AWAIT_UNSUPPORTED(transform_context.platform.name),
 			transform_context.filename,
 			node,
 			transform_context.errors,
@@ -5800,7 +5790,7 @@ function try_statement_to_jsx_child(node, transform_context) {
 
 	if (finalizer) {
 		error(
-			`${transform_context.platform.name} TSRX does not support JavaScript \`try/finally\` in TSRX templates. \`finally\` is not part of TSRX control flow; move the try/finally into a function if you need cleanup logic.`,
+			TSRX_ERRORS.TEMPLATE_TRY_FINALLY(transform_context.platform.name),
 			transform_context.filename,
 			finalizer,
 			transform_context.errors,
@@ -5810,7 +5800,7 @@ function try_statement_to_jsx_child(node, transform_context) {
 
 	if (!pending && !handler) {
 		error(
-			'TSRX try statements must have a `pending` or `catch` block.',
+			TSRX_ERRORS.TEMPLATE_TRY_HANDLER,
 			transform_context.filename,
 			node,
 			transform_context.errors,
@@ -5826,6 +5816,7 @@ function try_statement_to_jsx_child(node, transform_context) {
 			pending,
 			transform_context.errors,
 			transform_context.comments,
+			DIAGNOSTIC_CODES.TARGET_PENDING_UNSUPPORTED,
 		);
 	}
 
@@ -6685,8 +6676,7 @@ export function validate_at_most_one_ref_attribute(raw_attrs, transform_context)
 			continue;
 		}
 		error(
-			'Element has multiple `ref={...}` attributes; an element may have at most one. ' +
-				'Use a single array-valued ref such as `ref={[a, b]}` where the target framework supports multiple refs.',
+			TSRX_ERRORS.MULTIPLE_REFS,
 			transform_context?.filename ?? null,
 			node,
 			transform_context?.errors,

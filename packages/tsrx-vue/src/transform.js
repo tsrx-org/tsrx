@@ -13,6 +13,7 @@ import {
 	createHookSafeHelper,
 	create_generated_identifier,
 	createJsxTransform,
+	DIAGNOSTIC_CODES,
 	error,
 	has_location,
 	is_component_like_element,
@@ -153,6 +154,7 @@ const vue_platform = {
 				await_expression,
 				ctx?.errors,
 				ctx?.comments,
+				DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED,
 			);
 		},
 		injectImports(program, ctx) {
