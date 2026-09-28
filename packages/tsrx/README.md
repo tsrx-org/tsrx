@@ -100,6 +100,13 @@ here and keeps package docs focused on the core parser API.
   these checks when choosing safe lowering behavior without a known namespace.
 - **Event helpers** — delegated-event utilities, event-name normalization.
 - **Source maps** — `convertSourceMapToMappings`.
+- **Errors** — `TSRX_ERRORS` and `TS_ERRORS` define each error `@tsrx/core`
+  reports once, with its code: TSRX's own (`DIAGNOSTIC_CODES`), or TypeScript's
+  for a mistake TypeScript also reports. An entry is `{ code, message }`, or a
+  function of the values its message takes that gives one
+  (`TS_ERRORS.MODIFIER_MUST_PRECEDE('export', 'abstract')`).
+  `error(entry, filename, node, errors?, comments?)` records an error in `errors`,
+  or throws it; it also takes a message and a code.
 
 See `src/index.js` for the full exported surface.
 
