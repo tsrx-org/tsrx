@@ -10494,6 +10494,11 @@ export function TSRXPlugin(config) {
 					if (this.#continuesElementExpression()) {
 						return this.#parseElementExpressionStatement(node);
 					}
+					// The body of an `if`, `else`, loop or label (a `context`) ends at its
+					// `;`, as an expression statement's does, so `if (x) <a />; else <b />;`
+					// and `do <a />; while (x);` read as in TSX (#924). In a statement list,
+					// a `;` after an element stays an empty statement.
+					if (context != null) this.eat(tt.semi);
 					return node;
 				}
 
