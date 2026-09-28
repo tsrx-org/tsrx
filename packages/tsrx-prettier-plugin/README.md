@@ -121,6 +121,11 @@ well as the JSX printing that `src/jsx.js` copies.
 
 ## Tests
 
+- `tests/tsrx.test.js` covers TSRX syntax, which Prettier's own tests don't.
+- `tests/tsrx-migrated.test.js` holds the tests of `@tsrx/prettier-plugin` that
+  exercise TSRX syntax and that this plugin passes (#852, Phase 2), under one
+  `describe` with their old names. Each expects the old test's output, and that
+  formatting it again changes nothing.
 - `tests/prettier/` holds Prettier's own format tests for JavaScript, JSX, and
   TypeScript, imported by `scripts/import-prettier-tests.js`. A case is imported
   when Prettier's `typescript` parser prints the snapshot's output and the input
