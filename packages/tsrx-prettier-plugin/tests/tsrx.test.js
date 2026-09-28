@@ -648,21 +648,6 @@ describe('elements', () => {
 	// A dynamic tag expression other than an identifier, a member access, or a
 	// string literal is reported (#737), but the tree is complete, so the file
 	// is formatted.
-	test('dynamic tags that are only reported', async () => {
-		await expectFormat(
-			`export function App({ c }) @{ <main><{c?A:B}   title="t"><p>{c}</p></{c?A:B}><{getTag()}/></main> }`,
-			`export function App({ c }) @{
-  <main>
-    <{c ? A : B} title="t">
-      <p>{c}</p>
-    </{c ? A : B}>
-    <{getTag()} />
-  </main>
-}
-`,
-		);
-	});
-
 	test('<style> bodies are formatted as CSS, with their comments', async () => {
 		await expectFormat(
 			`function App() @{ <div><style>/* theme */ .a { color: red } .b{margin:0}</style><p class="a" /></div> }`,
@@ -801,13 +786,6 @@ describe('text keeps its characters as written', () => {
 			'a `>` first in an unbraced attribute value in a container',
 			`export function App() @{
   <main>{c && <div title=<b>> b &#123;x&#125;</b> />}</main>
-}
-`,
-		],
-		[
-			'references in an element in a reported dynamic tag name',
-			`export function App() @{
-  <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} />
 }
 `,
 		],
@@ -1825,6 +1803,53 @@ describe('parse errors', () => {
 	test('unclosed or mismatched tags are errors, not guessed markup', async () => {
 		await expect(format('const x = 1;\nconst y = <div>\n')).rejects.toThrow(/Unclosed tag '<div>'/);
 		await expect(format('const a = <div></span>;\n')).rejects.toThrow();
+	});
+
+	// The dynamic tag grammar allows an identifier, a member access or a string
+	// literal (TSRX2014, decision 58 of #852, #906).
+	test('a dynamic tag with any other expression is an error', async () => {
+		const message =
+			'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.';
+		for (const [source, position] of [
+			[
+				`export function App() @{
+  <{getTag()} />
+}`,
+				'(2:5)',
+			],
+			[
+				`export function App({ c }) @{
+  <main>
+    <{c ? A : B} title="t">
+      <p>{c}</p>
+    </{c ? A : B}>
+  </main>
+}`,
+				'(3:7)',
+			],
+			['const a = <{c ? <a /> : <b />} />;', '(1:13)'],
+		]) {
+			const error = await format(source).catch((/** @type {any} */ e) => e);
+			expect(error, source).toBeInstanceOf(SyntaxError);
+			expect(error.message.split('\n')[0], source).toBe(`${message} ${position}`);
+		}
+		await expectFormat(
+			`export function App({ tag, props }) @{
+  <>
+    <{tag} />
+    <{props.as} />
+    <{registry[name]} />
+  </>
+}`,
+			`export function App({ tag, props }) @{
+  <>
+    <{tag} />
+    <{props.as} />
+    <{registry[name]} />
+  </>
+}
+`,
+		);
 	});
 
 	test("errors are reported like Prettier's parsers report them", async () => {

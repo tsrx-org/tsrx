@@ -15,8 +15,10 @@ props, `<style>`/`<script>` bodies, and comments between JSX children.
 - **Parser** (`src/parse.js`) parses with `@tsrx/core` in `collect` mode, so
   mistakes TypeScript only reports as diagnostics (a redeclared variable) still
   format. An unclosed or mismatched tag is still an error: the parser would guess
-  the markup's structure. Then it reshapes the acorn-typescript AST into the
-  typescript-estree shape that Prettier's printer expects:
+  the markup's structure. So is a dynamic tag whose expression isn't an
+  identifier, a member access or a string literal (`<{getTag()} />`). Then it
+  reshapes the acorn-typescript AST into the typescript-estree shape that
+  Prettier's printer expects:
   - renames, such as `superTypeParameters` → `superTypeArguments`, `accessor`
     fields → `AccessorProperty`, `namespace A.B` → `TSQualifiedName`, and
     `export import` → `ExportNamedDeclaration`;

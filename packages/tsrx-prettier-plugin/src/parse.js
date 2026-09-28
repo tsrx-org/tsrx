@@ -24,10 +24,16 @@ export const TSRX_DIRECTIVES = new Set([
 	'JSXTryExpression',
 ]);
 
-/** Errors after which the parser guessed at the markup's structure. */
+/**
+ * Markup that breaks TSRX's grammar: an unclosed or mismatched tag, after which
+ * the parser guessed at the markup's structure, and a dynamic tag whose
+ * expression isn't an identifier, a member access or a string literal
+ * (`<{getTag()} />`, TSRX2014, decision 58 of #852).
+ */
 const BROKEN_MARKUP_CODES = new Set([
 	DIAGNOSTIC_CODES.UNCLOSED_TAG,
 	DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG,
+	DIAGNOSTIC_CODES.DYNAMIC_TAG_EXPRESSION,
 ]);
 
 /**
