@@ -2,8 +2,9 @@
  * Prettier's layout of a JSX element's children, for the elements whose
  * children include TSRX comments (`// …` and `/* … *\/` between children,
  * which TSX reads as text, and which `parse.js` gives Prettier as the `{…}`
- * children `{/* … *\/}` would be). Every other element is printed by Prettier
- * itself.
+ * children `{/* … *\/}` would be), and for an element that keeps its
+ * parentheses at the start of a statement (`keepStatementParens`). Every other
+ * element is printed by Prettier itself.
  *
  * `printJsxElementInternal` and `printJsxChildren` are copied from Prettier
  * 3.9.9 (`src/language-js/print/jsx.js`, MIT license, Copyright © James Long and
@@ -72,6 +73,17 @@ function isMeaningfulJsxText(node) {
 }
 
 /**
+ * An element without children, or with only whitespace that has a line break.
+ * @param {Node} node
+ */
+function isEmptyJsxElement(node) {
+	if (node.children.length === 0) return true;
+	if (node.children.length > 1) return false;
+	const child = node.children[0];
+	return child.type === 'JSXText' && !isMeaningfulJsxText(child);
+}
+
+/**
  * Detect an expression node representing `{" "}`.
  * @param {Node} node
  */
@@ -123,13 +135,23 @@ const isEmptyStringOrAnyLine = (doc) =>
 export function printJsxElementInternal(path, options, print) {
 	const { node } = path;
 
-	// TSRX: this runs only for an element with a comment child, which is never
-	// empty and never has a lone `{…}` child, so Prettier's paths for those are
-	// left out.
+	if (node.type === 'JSXElement' && isEmptyJsxElement(node)) {
+		return [print('openingElement'), print('closingElement')];
+	}
+
 	const openingLines =
 		node.type === 'JSXElement' ? print('openingElement') : print('openingFragment');
 	const closingLines =
 		node.type === 'JSXElement' ? print('closingElement') : print('closingFragment');
+
+	if (
+		node.children.length === 1 &&
+		node.children[0].type === 'JSXExpressionContainer' &&
+		(node.children[0].expression.type === 'TemplateLiteral' ||
+			node.children[0].expression.type === 'TaggedTemplateExpression')
+	) {
+		return [openingLines, ...path.map(print, 'children'), closingLines];
+	}
 
 	// Convert `{" "}` to text nodes containing a space.
 	// This makes it easy to turn them into `jsxWhitespace` which

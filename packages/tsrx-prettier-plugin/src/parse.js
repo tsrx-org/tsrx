@@ -427,19 +427,21 @@ class Adapter {
 			// `@{ … }` is a block whose last statement is the output node. Prettier
 			// prints it like any block; `printer.js` adds the `@`.
 			case 'JSXCodeBlock': {
-				const body = node.render ? [...node.body, node.render] : node.body;
+				const body = (node.render ? [...node.body, node.render] : node.body).map(templateStatement);
+				keepStatementParens(body, true);
 				return {
 					type: 'BlockStatement',
 					tsrxCodeBlock: true,
 					start: node.start,
 					end: node.end,
-					body: body.map(templateStatement),
+					body,
 				};
 			}
 
 			// Directive and case bodies hold bare JSX output as statements.
 			case 'BlockStatement':
 				node.body = node.body.map(templateStatement);
+				keepStatementParens(node.body, false);
 				break;
 			case 'SwitchCase':
 				node.consequent = node.consequent.map(templateStatement);
@@ -451,10 +453,33 @@ class Adapter {
 				node.type = 'JSXElement';
 				break;
 
-			case 'JSXIfExpression':
-				for (let alternate = node.alternate; alternate?.type === 'IfStatement';) {
+			case 'JSXIfExpression': {
+				keepStatementParens(node.consequent.body, true);
+				let alternate = node.alternate;
+				for (; alternate?.type === 'IfStatement'; alternate = alternate.alternate) {
 					alternate.tsrxElseIf = true;
-					alternate = alternate.alternate;
+					keepStatementParens(alternate.consequent.body, true);
+				}
+				if (alternate) keepStatementParens(alternate.body, true);
+				break;
+			}
+
+			case 'JSXForExpression':
+				keepStatementParens(node.body.body, true);
+				break;
+
+			case 'JSXTryExpression':
+				for (const block of [node.block, node.pending, node.handler?.body, node.finalizer]) {
+					if (block) keepStatementParens(block.body, true);
+				}
+				break;
+
+			case 'JSXSwitchExpression':
+				for (const switchCase of node.cases) {
+					keepStatementParens(switchCase.consequent, true);
+					for (const statement of switchCase.consequent) {
+						if (statement.type === 'BlockStatement') keepStatementParens(statement.body, true);
+					}
 				}
 				break;
 
@@ -665,6 +690,71 @@ function isTsrxOutput(node) {
  */
 function expressionStatement(node) {
 	return { type: 'ExpressionStatement', expression: node, start: node.start, end: node.end };
+}
+
+/**
+ * Mark the element that starts a statement where it has parentheses TSRX needs:
+ * without them, an element that starts a statement is a template's output, as
+ * `{` starts a block and `function` a declaration in JavaScript, where
+ * Prettier keeps the parentheses too (decision 63 of #852). In a template body
+ * (`template`), an element that starts a statement ends it, so
+ * `(<hr />) + 1;` keeps its parentheses; in any other block, only a statement
+ * that is just the element does (`(<div />);`), since `<hr /> + 1` reads the
+ * same there.
+ * @param {Node[]} statements
+ * @param {boolean} template
+ */
+function keepStatementParens(statements, template) {
+	for (const statement of statements) {
+		if (statement.type !== 'ExpressionStatement' || statement.tsrxOutput) continue;
+		const start = template ? leftmostExpression(statement.expression) : statement.expression;
+		if (start.type === 'JSXElement' || start.type === 'JSXFragment') start.tsrxKeepParens = true;
+	}
+}
+
+/**
+ * The expression a printed expression starts with, as Prettier's
+ * `startsWithNoLookaheadToken` walks it.
+ * @param {Node} node
+ * @returns {Node}
+ */
+function leftmostExpression(node) {
+	for (;;) {
+		switch (node.type) {
+			case 'BinaryExpression':
+			case 'LogicalExpression':
+			case 'AssignmentExpression':
+				node = node.left;
+				break;
+			case 'ConditionalExpression':
+				node = node.test;
+				break;
+			case 'SequenceExpression':
+				node = node.expressions[0];
+				break;
+			case 'MemberExpression':
+				node = node.object;
+				break;
+			case 'CallExpression':
+				node = node.callee;
+				break;
+			case 'TaggedTemplateExpression':
+				node = node.tag;
+				break;
+			case 'TSAsExpression':
+			case 'TSSatisfiesExpression':
+			case 'TSNonNullExpression':
+			case 'ChainExpression':
+				node = node.expression;
+				break;
+			case 'UpdateExpression':
+				if (node.prefix) return node;
+				node = node.argument;
+				break;
+			default:
+				return node;
+		}
+	}
 }
 
 /**

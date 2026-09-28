@@ -812,6 +812,89 @@ function f(x) {
 	});
 });
 
+// Without its parentheses, an element that starts a statement is output in
+// TSRX, as `{` starts a block and `function` a declaration in JavaScript,
+// where Prettier keeps the parentheses too (decision 63 of #852).
+describe('parentheses around an element that starts a statement', () => {
+	test('stay in a template body, wherever the element starts the statement', async () => {
+		const source = `export function Card({ user, show }) @{
+  (<hr />) + 1;
+  (<Spinner />) || show;
+  (<a />) ? b : c;
+  (<></>) + 1;
+  (
+    <a
+      x="aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      y="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      z="cccccccccc"
+    />
+  ) + 1;
+  <h2>{user.name}</h2>
+}
+export function D() @{
+  <>
+    @if (a) {
+      (<div />) + 1;
+      <i />
+    } @else if (b) {
+      (<div />) + 1;
+      <i />
+    } @else {
+      (<div />) + 1;
+      <i />
+    }
+    @for (const a of b) {
+      (<div />) * 2;
+      <i />
+    }
+    @switch (x) {
+      @case 1: {
+        (<div />) + 1;
+        <i />
+      }
+    }
+    @try {
+      (<div />) + 1;
+      <i />
+    } @catch (e) {
+      (<div />) + 1;
+      <i />
+    }
+  </>
+}
+`;
+		await expectFormat(source, source);
+	});
+
+	test('stay around an element statement in any other block, and go elsewhere as in Prettier', async () => {
+		await expectFormat(
+			`export function helper() {
+  (<div />);
+  (<div />) + 1;
+  if (a) {
+    (<div />);
+  }
+  return 1;
+}
+(<div />);
+(<div />) + 1;
+const x = (<div />);`,
+			`export function helper() {
+  (<div />);
+  <div /> + 1;
+  if (a) {
+    (<div />);
+  }
+  return 1;
+}
+<div />;
+<div /> + 1;
+const x = <div />;
+`,
+		);
+	});
+});
+
 describe('elements', () => {
 	test('shorthand props stay shorthand', async () => {
 		await expectFormat(

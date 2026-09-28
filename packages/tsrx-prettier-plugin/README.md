@@ -48,6 +48,11 @@ props, `<style>`/`<script>` bodies, and comments between JSX children.
     presents itself as a `JSXElement` (`withTsrxValuesAsJsx`), so Prettier's
     JSX-specific layout applies to it. A `@{ … }` function or arrow body stays on
     its line.
+  - An element that starts a statement keeps its parentheses where TSRX would read
+    it as output without them, as Prettier keeps them before a statement that
+    would start with `{`, `function` or `class`: in a template body wherever it
+    starts the statement (`(<hr />) + 1;`), and in any other block when it is the
+    whole statement (`(<div />);`).
   - A `@{ … }` block that is an element's or fragment's only child hugs its tags
     (`<div>@{`, the statements, `}</div>`), as a function's `@{ … }` body hugs its
     `)`, and one in an expression container hugs the braces (`{@{`, `}}`), as

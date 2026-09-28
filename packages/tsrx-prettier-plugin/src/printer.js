@@ -783,7 +783,7 @@ function printTsrx(path, options, print) {
 				return printRawTextKept(path, options, print);
 			}
 			if (huggedCodeBlock(node) !== -1) return printHuggedCodeBlock(path, options, print);
-			if (!node.tsrxPrintsChildren) return null;
+			if (!node.tsrxPrintsChildren && !node.tsrxKeepParens) return null;
 			return printElement(path, options, printJsxElementInternal(path, options, print));
 
 		case 'JSXExpressionContainer':
@@ -1161,6 +1161,9 @@ function printElement(path, options, element) {
 function jsxNeedsParens(path) {
 	const { key, parent } = path;
 	if (!parent) return false;
+	// An element that starts a statement where TSRX would read it as output
+	// (`parse.js`, `keepStatementParens`).
+	if (path.node.tsrxKeepParens) return true;
 	return (
 		key === 'callee' ||
 		(key === 'left' && parent.type === 'BinaryExpression' && parent.operator === '<') ||
