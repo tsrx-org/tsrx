@@ -1,13 +1,15 @@
 // Ordering: applied theme, then the outer scope's blocks as one contiguous
 // group (even though one sits after the nested scope), then the inner scope.
-const theme = <style>
-	.theme {
-		--label: theme;
-	}
-	div {
-		color: green;
-	}
-</style>;
+const theme = (
+	<style>
+		.theme {
+			--label: theme;
+		}
+		div {
+			color: green;
+		}
+	</style>
+);
 
 export function Precedence() @{
 	<>

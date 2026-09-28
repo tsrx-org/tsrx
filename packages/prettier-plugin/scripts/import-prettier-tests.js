@@ -1,7 +1,7 @@
 // Imports Prettier's own JavaScript, JSX, and TypeScript format tests as TSRX
 // test cases.
 //
-//   pnpm --filter tsrx-prettier-plugin import-prettier-tests [--source <prettier checkout>]
+//   pnpm --filter @tsrx/prettier-plugin import-prettier-tests [--source <prettier checkout>]
 //
 // Without `--source`, it clones the Prettier release that is installed. A case
 // is imported when Prettier's `typescript` parser formats its input exactly as

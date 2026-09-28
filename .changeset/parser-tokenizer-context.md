@@ -1,6 +1,5 @@
 ---
 '@tsrx/core': patch
-'@tsrx/prettier-plugin': patch
 ---
 
 The parser reads five kinds of code by the token's context, as TypeScript's TSX
@@ -28,6 +27,3 @@ parser does:
   template right after one (`<b />.foo`) is a syntax error. In parentheses
   (`(<b />).foo`, `(@{ … })(x)`) they work as before. Operators after one,
   including on the next line, are unchanged.
-
-The formatter keeps the parentheses around a `@{ … }` value or a directive that
-is called, indexed, or used as a tag, as it does for an element.

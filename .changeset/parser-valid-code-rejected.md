@@ -1,6 +1,5 @@
 ---
 '@tsrx/core': patch
-'@tsrx/prettier-plugin': patch
 ---
 
 The parser accepts four kinds of valid code that it rejected:
@@ -22,6 +21,3 @@ The parser accepts four kinds of valid code that it rejected:
   typescript-estree, the options of an ordinary `import()` are now on the
   `ImportExpression`'s `options` instead of `arguments`, and a third argument is
   a syntax error instead of a sequence expression.
-
-The formatter formats these, and prints `import()` without the trailing comma,
-like Prettier.

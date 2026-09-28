@@ -1,6 +1,5 @@
 ---
 '@tsrx/core': patch
-'@tsrx/prettier-plugin': patch
 ---
 
 Template text follows JSX's whitespace rules after closing tags, around
@@ -20,7 +19,3 @@ comments, and for non-breaking spaces:
   space next to a line break is text, and is no longer dropped. The target's
   JSX compiler decides whether it renders at the edge of a line, as it does for
   TSX.
-
-The formatter prints a line comment glued to a closing tag glued to it
-(`<b>t</b>// c`), as it does after a self-closing tag, and formats a
-non-breaking space that starts a line the same way on the next pass.

@@ -127,17 +127,16 @@ run with 3.6.0.
 
 - `tests/import-types.test.js` checks import types, comments, standalone output,
   cursors, and selections with both the workspace Prettier and 3.6.0. Run the
-  older-version checks with `pnpm test --project tsrx-prettier-plugin-3.6`.
+  older-version checks with `pnpm test --project prettier-plugin-3.6`.
 - `tests/tsrx.test.js` covers TSRX syntax, which Prettier's own tests don't. Each
   formatting test also checks that a second format changes nothing.
-- `tests/tsrx-migrated.test.js` holds every test of the
-  [previous implementation](../old-prettier-plugin) that exercises TSRX syntax
-  (#852, Phase 2), under one `describe` with their old names. Each expects this
-  plugin's output and that formatting it again changes nothing, and, where
-  Prettier's `typescript` parser gives the same output, checks that too. The old
-  tests of plain JavaScript and TypeScript aren't migrated: Prettier prints those,
-  the imported Prettier tests run them through the TSRX parser, and core's parser
-  tests cover the parser.
+- `tests/tsrx-migrated.test.js` holds every test of the previous implementation
+  that exercises TSRX syntax (#852, Phase 2), under one `describe` with their old
+  names. Each expects this plugin's output and that formatting it again changes
+  nothing, and, where Prettier's `typescript` parser gives the same output, checks
+  that too. The old tests of plain JavaScript and TypeScript aren't migrated:
+  Prettier prints those, the imported Prettier tests run them through the TSRX
+  parser, and core's parser tests cover the parser.
 - `tests/prettier/` holds Prettier's own format tests for JavaScript, JSX, and
   TypeScript, imported by `scripts/import-prettier-tests.js`. A case is imported
   when Prettier's `typescript` parser prints the snapshot's output and the input
@@ -149,7 +148,7 @@ run with 3.6.0.
 - `tests/prettier-known-failures.json` lists the cases that don't pass yet. They
   run as expected failures, and a listed case that starts passing fails the run,
   so the list only shrinks. Refresh it after a change with
-  `UPDATE_KNOWN_FAILURES=1 pnpm test --project tsrx-prettier-plugin`.
+  `UPDATE_KNOWN_FAILURES=1 pnpm test --project prettier-plugin`.
 - `tests/prettier-overrides.js` holds the cases where TSRX deliberately differs
   from Prettier, each with its reason. An override skips the case (for example,
   syntax that is only a proposal), expects Prettier's output for the input as a
@@ -167,9 +166,9 @@ applies to every Prettier upgrade:
    known failures:
 
    ```sh
-   pnpm --filter tsrx-prettier-plugin import-prettier-tests
-   UPDATE_KNOWN_FAILURES=1 pnpm test --project tsrx-prettier-plugin
-   pnpm test --project tsrx-prettier-plugin --project tsrx-prettier-plugin-3.6
+   pnpm --filter @tsrx/prettier-plugin import-prettier-tests
+   UPDATE_KNOWN_FAILURES=1 pnpm test --project prettier-plugin
+   pnpm test --project prettier-plugin --project prettier-plugin-3.6
    ```
 
    The importer clones the installed release's tests, or accepts

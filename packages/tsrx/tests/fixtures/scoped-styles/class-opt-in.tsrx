@@ -19,17 +19,19 @@ function Card({ parentClass }: { parentClass: string }) @{
 }
 
 export function ClassOptIn() @{
-	const theme = <style>
-		.theme {
-			--label: theme;
-		}
-		div {
-			color: blue;
-		}
-		.card {
-			color: red;
-		}
-	</style>;
+	const theme = (
+		<style>
+			.theme {
+				--label: theme;
+			}
+			div {
+				color: blue;
+			}
+			.card {
+				color: red;
+			}
+		</style>
+	);
 	<>
 		<Card parentClass={theme.$class} />
 		<div class={theme.$class}>{'opted in'}</div>

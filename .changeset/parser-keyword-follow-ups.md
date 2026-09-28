@@ -1,6 +1,5 @@
 ---
 '@tsrx/core': patch
-'@tsrx/prettier-plugin': patch
 ---
 
 The parser reads more TypeScript keyword forms as TypeScript does:
@@ -29,6 +28,3 @@ The parser reads more TypeScript keyword forms as TypeScript does:
   throws it now.
 - `export default @dec declare class A {}` (also with `abstract`) is a
   default-exported ambient class; it failed to parse.
-
-`@tsrx/prettier-plugin` prints the `intrinsic` keyword, which it printed as an
-unknown node.

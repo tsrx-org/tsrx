@@ -1,6 +1,5 @@
 ---
 '@tsrx/core': patch
-'@tsrx/prettier-plugin': patch
 ---
 
 Text compiles to output that renders what it says and that each target's JSX
@@ -14,10 +13,10 @@ compiler builds:
   (`{c && <b>a > b</b>}` compiled to `<b>> b</b>`), and after a child
   container it no longer reports `Unexpected token`.
 - Text prints from its `raw`, the text as written, as JSX printers do, in the
-  compiled output and in the formatter. Text in an element in a spread
-  attribute's argument, or in an unbraced attribute value in a container, has
+  compiled output. Text in an element in a spread attribute's argument, or in
+  an unbraced attribute value in a container, has
   its character references decoded in `value`, and printing `value` compiled
   `&#123;x&#125;` to the expression `{x}` and `&amp;lt;` to `&lt;`, which render
-  something else. The formatter printed those texts decoded too.
+  something else.
 - The `raw` of template text leaves out the comments between children, as its
   `value` does.

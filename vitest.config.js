@@ -380,23 +380,15 @@ export default defineConfig({
 			{
 				test: {
 					name: 'prettier-plugin',
-					include: ['packages/old-prettier-plugin/src/*.test.js'],
-					environment: 'jsdom',
-				},
-				plugins: [],
-			},
-			{
-				test: {
-					name: 'tsrx-prettier-plugin',
-					include: ['packages/tsrx-prettier-plugin/tests/*.test.js'],
+					include: ['packages/prettier-plugin/tests/*.test.js'],
 					environment: 'node',
 				},
 				plugins: [],
 			},
 			{
 				test: {
-					name: 'tsrx-prettier-plugin-3.6',
-					include: ['packages/tsrx-prettier-plugin/tests/import-types.test.js'],
+					name: 'prettier-plugin-3.6',
+					include: ['packages/prettier-plugin/tests/import-types.test.js'],
 					environment: 'node',
 				},
 				// Use the older formatter and its printer, parsers, and document helpers

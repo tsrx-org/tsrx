@@ -2,23 +2,27 @@
 import { theme } from './theme.tsrx';
 import * as themes from './themes.tsrx';
 
-const localBase = <style>
-	.localBase {
-		--label: localBase;
-	}
-	div {
-		color: red;
-	}
-</style>;
+const localBase = (
+	<style>
+		.localBase {
+			--label: localBase;
+		}
+		div {
+			color: red;
+		}
+	</style>
+);
 
-export const mixed = <style apply={[localBase, theme]}>
-	.mixed {
-		--label: mixed;
-	}
-	div {
-		color: blue;
-	}
-</style>;
+export const mixed = (
+	<style apply={[localBase, theme]}>
+		.mixed {
+			--label: mixed;
+		}
+		div {
+			color: blue;
+		}
+	</style>
+);
 
 export const bundle = <style apply={[theme, themes.dark]} />;
 

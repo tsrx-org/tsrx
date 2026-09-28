@@ -7,7 +7,7 @@
 // plugin handles them; a listed case that passes fails the run, so the list
 // only shrinks. After a change, refresh the list with:
 //
-//   UPDATE_KNOWN_FAILURES=1 pnpm test --project tsrx-prettier-plugin
+//   UPDATE_KNOWN_FAILURES=1 pnpm test --project prettier-plugin
 //
 // `prettier-overrides.js` holds the cases whose TSRX output deliberately
 // differs from Prettier's, with the reason.

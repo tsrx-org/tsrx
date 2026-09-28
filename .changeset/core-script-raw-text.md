@@ -5,7 +5,6 @@
 '@tsrx/hono': minor
 '@tsrx/solid': minor
 '@tsrx/vue': minor
-'@tsrx/prettier-plugin': patch
 '@tsrx/typescript-plugin': patch
 '@tsrx/mcp': patch
 ---
@@ -35,8 +34,7 @@ React, Solid, and Vue, and server HTML runs it.
 A body ends where HTML ends it: at `</script`, optional whitespace, and `>`, so
 `</script >` closes it. Any other `</script` in the body, in any letter case
 (`</SCRIPT>`), is the `tsrx-script-end-tag-in-body` error, with a hint to write
-`<\/script`. A body of only whitespace outputs an empty script, as the formatter
-prints it.
+`<\/script`. A body of only whitespace outputs an empty script.
 
-The formatter formats a script body from `content`, and the TypeScript plugin's
-fallback for a file that doesn't compile ends a body where the parser does.
+The TypeScript plugin's fallback for a file that doesn't compile ends a body
+where the parser does.

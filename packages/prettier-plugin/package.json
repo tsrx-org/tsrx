@@ -12,19 +12,22 @@
     "formatter"
   ],
   "homepage": "https://tsrx.dev/",
-  "author": "Dominic Gannaway",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tsrx-org/tsrx.git",
-    "directory": "packages/old-prettier-plugin"
+    "directory": "packages/prettier-plugin"
+  },
+  "scripts": {
+    "import-prettier-tests": "node scripts/import-prettier-tests.js"
   },
   "peerDependencies": {
-    "prettier": "catalog:peer"
+    "prettier": ">=3.6.0"
   },
   "devDependencies": {
     "@types/node": "catalog:default",
-    "prettier": "catalog:default"
+    "prettier": "catalog:default",
+    "prettier-3-6": "npm:prettier@3.6.0"
   },
   "dependencies": {
     "@tsrx/core": "workspace:*"
@@ -32,6 +35,7 @@
   "files": [
     "src/"
   ],
+  "author": "Dominic Gannaway",
   "publishConfig": {
     "access": "public"
   }

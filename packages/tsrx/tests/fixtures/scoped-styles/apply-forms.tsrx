@@ -1,22 +1,26 @@
 // Every `apply` shape: self-closed, array, with a body, two blocks in one
 // scope, and a body-less assigned bundle.
-const one = <style>
-	.one {
-		--label: one;
-	}
-	div {
-		color: red;
-	}
-</style>;
+const one = (
+	<style>
+		.one {
+			--label: one;
+		}
+		div {
+			color: red;
+		}
+	</style>
+);
 
-const two = <style>
-	.two {
-		--label: two;
-	}
-	div {
-		color: blue;
-	}
-</style>;
+const two = (
+	<style>
+		.two {
+			--label: two;
+		}
+		div {
+			color: blue;
+		}
+	</style>
+);
 
 export const both = <style apply={[one, two]} />;
 
