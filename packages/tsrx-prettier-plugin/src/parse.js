@@ -466,6 +466,7 @@ class Adapter {
 
 			case 'JSXForExpression':
 				keepStatementParens(node.body.body, true);
+				if (node.empty) keepStatementParens(node.empty.body, true);
 				break;
 
 			case 'JSXTryExpression':

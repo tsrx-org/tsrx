@@ -846,6 +846,9 @@ export function D() @{
     @for (const a of b) {
       (<div />) * 2;
       <i />
+    } @empty {
+      (<div />) + 1;
+      <i />
     }
     @switch (x) {
       @case 1: {
