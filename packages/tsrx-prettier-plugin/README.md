@@ -75,17 +75,15 @@ props, `<style>`/`<script>` bodies, and comments between JSX children.
   it after text or a comment (touching them, `//` is text); text that starts with
   `//` right after a block comment stays on its line. Every other element is
   printed by Prettier itself. Keep the copy in step with Prettier when upgrading.
-- **Range formatting** (`src/range.js`): Prettier formats a selection
-  (`rangeStart`, `rangeEnd`) only for its own parsers, by the parser's name. For
-  one such format, the plugin names its parser `typescript` and resolves that name
-  to itself, so Prettier chooses the statements to format as it does for
-  TypeScript. A range of template content (an output, a directive, a branch, a
-  body) can't be formatted on its own, so the plugin prints it where it is in the
-  file. A range that Prettier grows to several children of an element keeps its
-  text.
 
 The plugin needs no other Prettier plugin, including in `prettier/standalone`,
 except to format JSON, HTML, or Markdown `<script>` bodies there.
+
+## Selection formatting
+
+The plugin supports selection formatting (also called range formatting). Use your
+editor's **Format Selection** command to format part of a `.tsrx` file, or pass
+Prettier's `rangeStart` and `rangeEnd` options when formatting through its API.
 
 ## In the browser
 
@@ -115,10 +113,15 @@ const formatted = await prettier.format(code, {
 In Node, `prettier` loads its own plugins, so these bodies are formatted without
 passing them.
 
-The Prettier peer dependency is `>=3.6.0`, with no upper limit. The full
-formatting suite uses 3.9.9; focused import-type compatibility tests also run with
-3.6.0. Older versions have formatting differences and known compatibility gaps,
-including `prettier-ignore` on template outputs.
+## Prettier versions
+
+The Prettier peer dependency is `>=3.6.0`, with no upper limit. **We recommend
+Prettier 3.9.9 or newer for more correct formatting.** Older versions have
+formatting differences and known compatibility gaps, including `prettier-ignore`
+on template outputs.
+
+The full formatting suite uses 3.9.9; focused import-type compatibility tests also
+run with 3.6.0.
 
 ## Tests
 
