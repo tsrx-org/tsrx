@@ -4669,6 +4669,65 @@ foo();`;
 		expect(directive.empty).toBeNull();
 	});
 
+	it('ends an element body of if, else, a loop or a label at its `;` (#924)', () => {
+		/** @type {Array<[source: string, types: string[]]>} */
+		const cases = [
+			[
+				`function f(x) {
+	if (x) <div />;
+	else <b />;
+}`,
+				['IfStatement'],
+			],
+			[
+				`function f(x) {
+	do <i />; while (x);
+	label: <i />;
+	g();
+}`,
+				['DoWhileStatement', 'LabeledStatement', 'ExpressionStatement'],
+			],
+			[
+				`const a = 1;
+if (x) <div />;
+else <b />;`,
+				['VariableDeclaration', 'IfStatement'],
+			],
+			// In a statement list, a `;` after an element is still an empty statement.
+			[
+				`function f(x) {
+	if (x) <div />;;
+}`,
+				['IfStatement', 'EmptyStatement'],
+			],
+		];
+		for (const [source, types] of cases) {
+			for (const options of [undefined, { collect: true, errors: [], comments: [] }]) {
+				const ast = parseModule(source, 'App.tsrx', options);
+				const last = /** @type {any} */ (ast.body.at(-1));
+				const body = last.type === 'FunctionDeclaration' ? last.body.body : ast.body;
+				expect(
+					body.map((/** @type {AST.Node} */ node) => node.type),
+					source,
+				).toEqual(types);
+			}
+		}
+
+		const template = parseModule(
+			`export function C({ x }) @{
+	if (x) <div />;
+	else <b />;
+	<span />
+}`,
+			'App.tsrx',
+		);
+		const statement = find_first(template, (node) => node.type === 'IfStatement');
+		expect(statement).toMatchObject({
+			consequent: { type: 'JSXElement' },
+			alternate: { type: 'JSXElement' },
+		});
+	});
+
 	it("reads `index` and `key` only in @for's own head (#896)", () => {
 		// A regular `for…of` has no such clauses: TypeScript reports the `;` as
 		// `')' expected.` (TS1005), in every mode. That includes a regular loop in
