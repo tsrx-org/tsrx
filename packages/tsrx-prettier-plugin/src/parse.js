@@ -525,6 +525,18 @@ class Adapter {
 				rename(node, 'typeAnnotation', 'returnType');
 				break;
 
+			// typescript-estree gives a template literal type its own node, with its
+			// `${…}` types in `types`. Prettier's comment handling keeps a comment in
+			// a `TemplateLiteral`'s `${…}`, but moves one in a type's (#904).
+			case 'TSLiteralType':
+				if (node.literal.type === 'TemplateLiteral') {
+					node.type = 'TSTemplateLiteralType';
+					node.quasis = node.literal.quasis;
+					node.types = node.literal.expressions;
+					delete node.literal;
+				}
+				break;
+
 			case 'TSImportType':
 				if (node.argument) {
 					node.source =
