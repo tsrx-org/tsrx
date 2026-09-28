@@ -15,28 +15,23 @@ through `prettier/standalone` are supported.
 
 Notable formatting changes when upgrading:
 
-- **More consistent parentheses around multiline markup values.** JSX branches of
-  multiline conditional expressions now use Prettier's parenthesized layout:
+- **More consistent parentheses around multiline markup values.** Multiline JSX
+  and TSRX values use Prettier's parenthesized layout:
 
   ```diff
-  -const content = ready
-  -  ? <div>
-  -      <b>Hello</b>
-  -    </div>
-  -  : <span>Loading</span>;
-  +const content = ready ? (
+  -const a = <div>
+  -  <div>Hello</div>
+  -</div>
+  +const a = (
   +  <div>
-  +    <b>Hello</b>
+  +    <div>Hello</div>
   +  </div>
-  +) : (
-  +  <span>Loading</span>
-  +);
+  +)
   ```
 
   Assigned `<style>` blocks also gain parentheses, like other multiline JSX
-  values: `const theme = (` followed by the style block and `);`. Ordinary
-  multiline JSX assignments and returned JSX retain their parenthesized layout. A
-  function or arrow's `@{ ... }` body stays attached to its signature.
+  values: `const theme = (` followed by the style block and `);`. A function or
+  arrow's `@{ ... }` body stays attached to its signature.
 
 - **String expressions in attributes keep their braces.** An authored
   `<div class={"card"} />` stays an expression instead of becoming
