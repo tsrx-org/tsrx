@@ -1696,6 +1696,40 @@ const a = <div x={/** @type {T} */ y}>{/** @type {T} */ z}</div>;
 	});
 });
 
+// typescript-estree names an abstract member `TSAbstractPropertyDefinition`,
+// `TSAbstractAccessorProperty` or `TSAbstractMethodDefinition`, and Prettier
+// unquotes an abstract field's key where it keeps a field's (#903).
+test("an abstract member's key is quoted like the typescript parser quotes it", async () => {
+	const source = `abstract class D extends B {
+  abstract "j": string;
+  private "k" = 1;
+  abstract accessor "a": number;
+  protected abstract readonly "r"?: number;
+  abstract override "o": number;
+  // c
+  abstract x: string; // t
+  @dec abstract "a-b": number;
+}`;
+	for (const quoteProps of /** @type {const} */ (['as-needed', 'consistent', 'preserve'])) {
+		const expected = await prettier.format(source, { parser: 'typescript', quoteProps });
+		await expectFormat(source, expected, { quoteProps });
+	}
+	await expectFormat(
+		source,
+		`abstract class D extends B {
+  abstract j: string;
+  private "k" = 1;
+  abstract accessor a: number;
+  protected abstract readonly r?: number;
+  abstract override o: number;
+  // c
+  abstract x: string; // t
+  @dec abstract "a-b": number;
+}
+`,
+	);
+});
+
 describe('type parameter modifiers', () => {
 	// The name follows the modifiers and the comments between them (#839)
 	test.each([

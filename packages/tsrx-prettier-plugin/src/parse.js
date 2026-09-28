@@ -438,11 +438,13 @@ class Adapter {
 				break;
 
 			case 'PropertyDefinition':
-			case 'TSAbstractPropertyDefinition':
+				// typescript-estree names an abstract member's type, and Prettier
+				// checks it: it unquotes an abstract field's key (#903).
 				if (node.accessor) {
-					node.type =
-						node.type === 'PropertyDefinition' ? 'AccessorProperty' : 'TSAbstractAccessorProperty';
+					node.type = node.abstract ? 'TSAbstractAccessorProperty' : 'AccessorProperty';
 					delete node.accessor;
+				} else if (node.abstract) {
+					node.type = 'TSAbstractPropertyDefinition';
 				}
 				break;
 
@@ -481,7 +483,7 @@ class Adapter {
 				break;
 
 			case 'MethodDefinition':
-			case 'TSAbstractMethodDefinition':
+				if (node.abstract) node.type = 'TSAbstractMethodDefinition';
 				if (node.typeParameters) {
 					// The function starts at its type parameters, as in typescript-estree,
 					// so a comment inside them belongs to the function.
