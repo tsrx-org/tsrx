@@ -40,7 +40,8 @@ const BROKEN_MARKUP_CODES = new Set([
  * member other than a constructor, `abstract` before anything but a class or a
  * class member, a class member's modifier before a module element
  * (`public class A {}`), `readonly`, `accessor` or `async` where they can't
- * appear, `declare` before a `using` declaration, and `import.source`.
+ * appear, `async` with `declare` or in a `declare` context (TS1040),
+ * `declare` before a `using` declaration, and `import.source`.
  *
  * It formats the others, and leaves out what its tree has no place for, as the
  * output does: a repeated modifier, a rest parameter's default, a modifier in a
@@ -61,6 +62,7 @@ const REJECTED_CODES = new Set([
 	'TS1242',
 	'TS1044',
 	'TS1024',
+	'TS1040',
 	'TS1275',
 	'TS1042',
 	'TS1491',
@@ -69,11 +71,25 @@ const REJECTED_CODES = new Set([
 ]);
 
 /**
+ * A modifier before `export` (`abstract export class A {}`, TS1029). Prettier's
+ * `typescript` parser drops the `export` there (`abstract class A {}`), which
+ * only its own tree gives, so the plugin rejects it (decision 60 of #852). A
+ * class member's modifiers out of order (`static public x`) are TS1029 too, and
+ * Prettier prints them in order, as the plugin does.
+ */
+const MODIFIER_BEFORE_EXPORT = /^'export' modifier must precede '\w+' modifier\.$/u;
+
+/**
  * @param {Error & { code?: string }} error
  * @returns {boolean}
  */
 function isRejected(error) {
-	return !!error.code && (BROKEN_MARKUP_CODES.has(error.code) || REJECTED_CODES.has(error.code));
+	return (
+		!!error.code &&
+		(BROKEN_MARKUP_CODES.has(error.code) ||
+			REJECTED_CODES.has(error.code) ||
+			(error.code === 'TS1029' && MODIFIER_BEFORE_EXPORT.test(error.message)))
+	);
 }
 
 /** The statements whose `__contentEnd` Prettier's comment handling reads. */

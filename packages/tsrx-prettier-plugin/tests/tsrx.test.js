@@ -1960,9 +1960,41 @@ describe('parse errors', () => {
 			],
 			['async class A {}', "'async' modifier cannot be used here. (1:1)"],
 			['declare using x = y;', "'declare' modifier cannot appear on a 'using' declaration. (1:1)"],
+			// Prettier reports the `public` (1:17); the plugin reports the first
+			// mistake, the modifier before `export` (#902).
 			[
 				'abstract export public class A {}',
-				"'public' modifier cannot appear on a module or namespace element. (1:17)",
+				"'export' modifier must precede 'abstract' modifier. (1:10)",
+			],
+			// #902: `async` in an ambient context (TS1040).
+			[
+				'export declare async function f(): void;',
+				"'async' modifier cannot be used in an ambient context. (1:16)",
+			],
+			[
+				'declare async function f(): void;',
+				"'async' modifier cannot be used in an ambient context. (1:9)",
+			],
+			[
+				'namespace N {\n  declare async function f(): void;\n}',
+				"'async' modifier cannot be used in an ambient context. (2:11)",
+			],
+			// #902: a modifier before `export` (TS1029), where Prettier's output drops
+			// the `export` (decision 60 of #852).
+			['abstract export class A {}', "'export' modifier must precede 'abstract' modifier. (1:10)"],
+			['declare export class A {}', "'export' modifier must precede 'declare' modifier. (1:9)"],
+			[
+				'declare export function f(): void;',
+				"'export' modifier must precede 'declare' modifier. (1:9)",
+			],
+			['async export function f() {}', "'export' modifier must precede 'async' modifier. (1:7)"],
+			[
+				'declare export const x: number;',
+				"'export' modifier must precede 'declare' modifier. (1:9)",
+			],
+			[
+				'abstract export default class A {}',
+				"'export' modifier must precede 'abstract' modifier. (1:10)",
 			],
 		]) {
 			const error = await format(source).catch((/** @type {any} */ e) => e);
@@ -1970,6 +2002,30 @@ describe('parse errors', () => {
 			expect(error.message.split('\n')[0], source).toBe(message);
 		}
 	});
+});
+
+// Prettier's typescript parser prints a class member's modifiers in order, and
+// so does the plugin; only a modifier before `export` is an error (#902).
+test("a class member's or parameter property's modifiers out of order print in order", async () => {
+	await expectFormat(
+		`class A extends B {
+  static public a = 1;
+  readonly static b = 1;
+  override static c = 1;
+  constructor(readonly public x: number) {
+    super();
+  }
+}`,
+		`class A extends B {
+  public static a = 1;
+  static readonly b = 1;
+  static override c = 1;
+  constructor(public readonly x: number) {
+    super();
+  }
+}
+`,
+	);
 });
 
 // Prettier's typescript parser formats these the same way.
@@ -2089,16 +2145,6 @@ declare abstract class A {}
 	])('formats %j like Prettier', async (input, expected) => {
 		await expectFormat(input, expected);
 		expect(expected).toBe(await prettier.format(input, { parser: 'typescript' }));
-	});
-
-	// #719: modifiers out of order that the tree keeps print in order. Prettier's
-	// `typescript` parser leaves out the `export` of the first two.
-	test.each([
-		['abstract export class A {}', 'export abstract class A {}\n'],
-		['async export function f() {}', 'export async function f() {}\n'],
-		['declare export const x: number;', 'export declare const x: number;\n'],
-	])('keeps the modifiers of %j', async (input, expected) => {
-		await expectFormat(input, expected);
 	});
 });
 
