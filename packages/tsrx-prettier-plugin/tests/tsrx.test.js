@@ -1694,6 +1694,45 @@ const a = <div x={/** @type {T} */ y}>{/** @type {T} */ z}</div>;
 `,
 		);
 	});
+
+	// A method without a body printed its `async`, `*` and name twice
+	// (`async masync ()`) (#916).
+	test('an async or generator method without a body prints like the typescript parser', async () => {
+		const source = `class A {
+  async m(): Promise<void>;
+  async m() {}
+}
+
+declare class B {
+  async load(): Promise<void>;
+  async *items(): AsyncGenerator<number>;
+  static async s<T>(/* c */ a: T): void;
+  get x(): number;
+  constructor(a: number);
+}
+
+abstract class C {
+  abstract async m(): void;
+  public async *g(): void; // t
+}
+`;
+		await expectFormat(source, source);
+		expect(await prettier.format(source, { parser: 'typescript' })).toBe(source);
+	});
+
+	// Prettier's key quoting read the body-less method's value as a whole method,
+	// and failed with `Cannot read properties of null` (#916).
+	test('a method without a body formats with quoteProps "consistent"', async () => {
+		const source = `class A {
+  m(): void;
+  m() {}
+}
+`;
+		await expectFormat(source, source, { quoteProps: 'consistent' });
+		expect(await prettier.format(source, { parser: 'typescript', quoteProps: 'consistent' })).toBe(
+			source,
+		);
+	});
 });
 
 // typescript-estree names an abstract member `TSAbstractPropertyDefinition`,
@@ -1706,6 +1745,8 @@ test("an abstract member's key is quoted like the typescript parser quotes it", 
   abstract accessor "a": number;
   protected abstract readonly "r"?: number;
   abstract override "o": number;
+  abstract "m"(): void;
+  abstract get "g"(): number;
   // c
   abstract x: string; // t
   @dec abstract "a-b": number;
@@ -1722,6 +1763,8 @@ test("an abstract member's key is quoted like the typescript parser quotes it", 
   abstract accessor a: number;
   protected abstract readonly r?: number;
   abstract override o: number;
+  abstract m(): void;
+  abstract get g(): number;
   // c
   abstract x: string; // t
   @dec abstract "a-b": number;
