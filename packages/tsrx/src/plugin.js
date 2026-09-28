@@ -514,7 +514,7 @@ function dropped_modifier_error(modifier, kind, block, duplicate) {
 	}
 	// `declare`, on an import or a `using` declaration.
 	return kind === 'import'
-		? TS_ERRORS.DECLARE_MODIFIER_ON_IMPORT
+		? TS_ERRORS.MODIFIER_ON_IMPORT('declare')
 		: using_modifier_error(/** @type {'using' | 'await using'} */ (kind), modifier);
 }
 
@@ -5724,7 +5724,7 @@ export function TSRXPlugin(config) {
 					flags.add(value);
 				}
 				if (kind === 'import' && last_declare) {
-					return { start: last_declare.start, error: TS_ERRORS.DECLARE_MODIFIER_ON_IMPORT };
+					return { start: last_declare.start, error: TS_ERRORS.MODIFIER_ON_IMPORT('declare') };
 				}
 				if (last_async && kind !== 'function') {
 					return {

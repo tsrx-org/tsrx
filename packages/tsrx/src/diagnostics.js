@@ -507,10 +507,10 @@ export const TS_ERRORS = {
 		code: 'TS1038',
 		message: "A 'declare' modifier cannot be used in an already ambient context.",
 	},
-	DECLARE_MODIFIER_ON_IMPORT: {
-		code: 'TS1079',
-		message: "A 'declare' modifier cannot be used with an import declaration.",
-	},
+	MODIFIER_ON_IMPORT: with_values(
+		'TS1079',
+		(modifier) => `A '${modifier}' modifier cannot be used with an import declaration.`,
+	),
 	EXPORT_MODIFIER_ON_AUGMENTATION: {
 		code: 'TS2668',
 		message:

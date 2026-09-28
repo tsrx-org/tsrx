@@ -8,65 +8,42 @@
 import { error } from '../errors.js';
 import { TSRX_ERRORS } from '../diagnostics.js';
 
-// The messages of `TSRX_ERRORS`, under the names `@tsrx/core` exports them by.
-// Report an error with its entry, which carries its code too.
-/** @deprecated Use `TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT`, which carries the code too. */
+// The messages of `TSRX_ERRORS` entries, under the names `@tsrx/core` exports
+// them by, for matching an error that has no code, such as one from an older
+// compiler. Report an error with its entry, which carries its code too.
 export const TSRX_RETURN_STATEMENT_ERROR = TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.message;
-/** @deprecated Use `TSRX_ERRORS.FOR_RETURN_STATEMENT`, which carries the code too. */
 export const TSRX_LOOP_RETURN_ERROR = TSRX_ERRORS.FOR_RETURN_STATEMENT.message;
-/** @deprecated Use `TSRX_ERRORS.FOR_BREAK_STATEMENT`, which carries the code too. */
 export const TSRX_LOOP_BREAK_ERROR = TSRX_ERRORS.FOR_BREAK_STATEMENT.message;
-/** @deprecated Use `TSRX_ERRORS.FOR_CONTINUE_STATEMENT`, which carries the code too. */
 export const TSRX_LOOP_CONTINUE_ERROR = TSRX_ERRORS.FOR_CONTINUE_STATEMENT.message;
-/** @deprecated Use `TSRX_ERRORS.IF_RETURN_STATEMENT`, which carries the code too. */
 export const TSRX_IF_RETURN_ERROR = TSRX_ERRORS.IF_RETURN_STATEMENT.message;
-/** @deprecated Use `TSRX_ERRORS.IF_BREAK_STATEMENT`, which carries the code too. */
 export const TSRX_IF_BREAK_ERROR = TSRX_ERRORS.IF_BREAK_STATEMENT.message;
-/** @deprecated Use `TSRX_ERRORS.IF_CONTINUE_STATEMENT`, which carries the code too. */
 export const TSRX_IF_CONTINUE_ERROR = TSRX_ERRORS.IF_CONTINUE_STATEMENT.message;
-/** @deprecated Use `TSRX_ERRORS.FOR_STATEMENT`, which carries the code too. */
 export const TSRX_FOR_STATEMENT_ERROR = TSRX_ERRORS.FOR_STATEMENT.message;
-/** @deprecated Use `TSRX_ERRORS.FOR_IN_STATEMENT`, which carries the code too. */
 export const TSRX_FOR_IN_STATEMENT_ERROR = TSRX_ERRORS.FOR_IN_STATEMENT.message;
-/** @deprecated Use `TSRX_ERRORS.WHILE_STATEMENT`, which carries the code too. */
 export const TSRX_WHILE_STATEMENT_ERROR = TSRX_ERRORS.WHILE_STATEMENT.message;
-/** @deprecated Use `TSRX_ERRORS.DO_WHILE_STATEMENT`, which carries the code too. */
 export const TSRX_DO_WHILE_STATEMENT_ERROR = TSRX_ERRORS.DO_WHILE_STATEMENT.message;
-/** @deprecated Use `TSRX_ERRORS.FORGOTTEN_STATEMENT_CONTAINER`, which carries the code too. */
 export const TSRX_FORGOTTEN_STATEMENT_CONTAINER_ERROR =
 	TSRX_ERRORS.FORGOTTEN_STATEMENT_CONTAINER.message;
-/** @deprecated Use `TSRX_ERRORS.JSX_SPREAD_CHILD`, which carries the code too. */
 export const TSRX_JSX_SPREAD_CHILD_ERROR = TSRX_ERRORS.JSX_SPREAD_CHILD.message;
-/** @deprecated Use `TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION`, which carries the code too. */
 export const TSRX_DYNAMIC_TAG_EXPRESSION_ERROR = TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION.message;
-/** @deprecated Use `TSRX_ERRORS.STYLE_APPLY_VALUE`, which carries the code too. */
 export const TSRX_STYLE_APPLY_VALUE_ERROR = TSRX_ERRORS.STYLE_APPLY_VALUE.message;
-/** @deprecated Use `TSRX_ERRORS.STYLE_APPLY_DUPLICATE`, which carries the code too. */
 export const TSRX_STYLE_APPLY_DUPLICATE_ERROR = TSRX_ERRORS.STYLE_APPLY_DUPLICATE.message;
-/** @deprecated Use `TSRX_ERRORS.STYLE_APPLY_UNSUPPORTED_HOST`, which carries the code too. */
 export const TSRX_STYLE_APPLY_UNSUPPORTED_HOST_ERROR =
 	TSRX_ERRORS.STYLE_APPLY_UNSUPPORTED_HOST.message;
-/** @deprecated Use `TSRX_ERRORS.STYLE_RESERVED_CLASS_KEY`, which carries the code too. */
 export const TSRX_STYLE_RESERVED_CLASS_KEY_ERROR = TSRX_ERRORS.STYLE_RESERVED_CLASS_KEY.message;
-/** @deprecated Use `TSRX_ERRORS.STYLE_STANDALONE_AT_MODULE_SCOPE`, which carries the code too. */
 export const TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR =
 	TSRX_ERRORS.STYLE_STANDALONE_AT_MODULE_SCOPE.message;
-/** @deprecated Use `TSRX_ERRORS.STYLE_STANDALONE_NEEDS_FRAGMENT`, which carries the code too. */
 export const TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR =
 	TSRX_ERRORS.STYLE_STANDALONE_NEEDS_FRAGMENT.message;
-/** @deprecated Use `TSRX_ERRORS.STYLE_STANDALONE_OUTSIDE_TEMPLATE`, which carries the code too. */
 export const TSRX_STYLE_STANDALONE_OUTSIDE_TEMPLATE_ERROR =
 	TSRX_ERRORS.STYLE_STANDALONE_OUTSIDE_TEMPLATE.message;
-/** @deprecated Use `TSRX_ERRORS.CSS_GLOBAL_IN_PSEUDOCLASS`, which carries the code too. */
 export const TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR =
 	TSRX_ERRORS.CSS_GLOBAL_IN_PSEUDOCLASS.message;
-/** @deprecated Use `TSRX_ERRORS.CSS_GLOBAL_IN_MIDDLE`, which carries the code too. */
 export const TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR = TSRX_ERRORS.CSS_GLOBAL_IN_MIDDLE.message;
-/** @deprecated Use `TSRX_ERRORS.CSS_IMPORT`, which carries the code too. */
 export const TSRX_CSS_IMPORT_ERROR = TSRX_ERRORS.CSS_IMPORT.message;
 
 /**
- * @deprecated Use `TSRX_ERRORS.STYLE_APPLY_TARGET`, which carries the code too.
+ * The message of `TSRX_ERRORS.STYLE_APPLY_TARGET(name)`.
  * @param {string} name
  * @returns {string}
  */
@@ -75,7 +52,7 @@ export function tsrx_style_apply_target_error(name) {
 }
 
 /**
- * @deprecated Use `TSRX_ERRORS.STYLE_APPLY_BEFORE_DECLARATION`, which carries the code too.
+ * The message of `TSRX_ERRORS.STYLE_APPLY_BEFORE_DECLARATION(name)`.
  * @param {string} name
  * @returns {string}
  */
@@ -84,7 +61,7 @@ export function tsrx_style_apply_before_declaration_error(name) {
 }
 
 /**
- * @deprecated Use `TSRX_ERRORS.STYLE_UNKNOWN_ATTRIBUTE`, which carries the code too.
+ * The message of `TSRX_ERRORS.STYLE_UNKNOWN_ATTRIBUTE(name)`.
  * @param {string} name
  * @returns {string}
  */
