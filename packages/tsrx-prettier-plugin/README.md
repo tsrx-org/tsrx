@@ -119,13 +119,21 @@ const formatted = await prettier.format(code, {
 In Node, `prettier` loads its own plugins, so these bodies are formatted without
 passing them.
 
-It supports Prettier 3.9 (`~3.9.9`): range formatting relies on how Prettier 3.9
-passes a range's options from the file's parse to the range's. When upgrading
-Prettier, check `src/main/range.js` and `formatRange` in `src/main/core.js`, as
-well as the JSX printing that `src/jsx.js` copies.
+The Prettier peer dependency is `>=3.6.0`, with no upper limit. The full
+formatting suite uses 3.9.9; focused import-type compatibility tests also run with
+3.6.0. Older versions have formatting differences and known compatibility gaps,
+including `prettier-ignore` on template outputs.
+
+Range formatting relies on Prettier passing a range's options from the file's
+parse to the range's. When upgrading Prettier, check `src/main/range.js` and
+`formatRange` in `src/main/core.js`, as well as the JSX printing that `src/jsx.js`
+copies.
 
 ## Tests
 
+- `tests/import-types.test.js` checks import types, comments, standalone output,
+  cursors, and selections with both the workspace Prettier and 3.6.0. Run the
+  older-version checks with `pnpm test --project tsrx-prettier-plugin-3.6`.
 - `tests/tsrx.test.js` covers TSRX syntax, which Prettier's own tests don't.
 - `tests/tsrx-migrated.test.js` holds every test of `@tsrx/prettier-plugin` that
   exercises TSRX syntax (#852, Phase 2), under one `describe` with their old

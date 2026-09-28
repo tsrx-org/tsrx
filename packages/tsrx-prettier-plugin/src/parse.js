@@ -593,9 +593,11 @@ class Adapter {
 
 			case 'TSImportType':
 				if (node.argument) {
+					// Older Prettier printers read `argument` with its TSLiteralType
+					// wrapper; newer ones read `source`. Keep both: each printer's
+					// visitor keys select the shape it uses for comments and printing.
 					node.source =
 						node.argument.type === 'TSLiteralType' ? node.argument.literal : node.argument;
-					delete node.argument;
 				}
 				break;
 

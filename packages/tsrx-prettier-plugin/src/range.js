@@ -15,8 +15,7 @@
  * plugin that resolves that name to this parser: Prettier then chooses the
  * statements as it does for TypeScript, and parses the range with this parser.
  * Other files keep Prettier's own `typescript` parser. This relies on Prettier
- * passing the options object that `parse` receives on to the range's format,
- * which is why the plugin supports Prettier 3.9 only.
+ * passing the options object that `parse` receives on to the range's format.
  *
  * A template's output, a directive, a template body or a directive's branch
  * can't be formatted on its own: outside the template, a JSX element is an

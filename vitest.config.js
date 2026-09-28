@@ -395,6 +395,19 @@ export default defineConfig({
 			},
 			{
 				test: {
+					name: 'tsrx-prettier-plugin-3.6',
+					include: ['packages/tsrx-prettier-plugin/tests/import-types.test.js'],
+					environment: 'node',
+				},
+				// Use the older formatter and its printer, parsers, and document helpers
+				// throughout the plugin. Only the import-type compatibility tests run here.
+				resolve: {
+					alias: [{ find: /^prettier(?=\/|$)/u, replacement: 'prettier-3-6' }],
+				},
+				plugins: [],
+			},
+			{
+				test: {
 					name: 'eslint-plugin',
 					include: ['packages/eslint-plugin/tests/**/*.test.ts'],
 					environment: 'jsdom',

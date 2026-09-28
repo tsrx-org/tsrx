@@ -23,11 +23,12 @@
     "import-prettier-tests": "node scripts/import-prettier-tests.js"
   },
   "peerDependencies": {
-    "prettier": "~3.9.9"
+    "prettier": ">=3.6.0"
   },
   "devDependencies": {
     "@types/node": "catalog:default",
-    "prettier": "catalog:default"
+    "prettier": "catalog:default",
+    "prettier-3-6": "npm:prettier@3.6.0"
   },
   "dependencies": {
     "@tsrx/core": "workspace:*"
