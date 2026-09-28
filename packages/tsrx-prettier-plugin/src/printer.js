@@ -669,9 +669,20 @@ function printTsrx(path, options, print) {
 		case 'JSXIfExpression':
 			return printIf(path, options, print, '@if');
 
-		case 'CatchClause':
+		// `@catch (error, reset)`, which Prettier can't print: a `catch` has one
+		// parameter. Its parentheses break as Prettier's `printCatchClause` breaks
+		// them around a parameter with a comment by it, a parameter on each line.
+		case 'CatchClause': {
 			if (!node.resetParam) return null;
-			return ['catch (', print('param'), ', ', print('resetParam'), ') ', print('body')];
+			const params = [print('param'), ',', line, print('resetParam')];
+			return [
+				'catch ',
+				[node.param, node.resetParam].some((param) => hasParameterComment(param, options))
+					? ['(', indent([softline, ...params]), softline, ') ']
+					: ['(', print('param'), ', ', print('resetParam'), ') '],
+				print('body'),
+			];
+		}
 
 		case 'JSXForExpression':
 			return printFor(path, options, print);
@@ -728,6 +739,24 @@ function printTsrx(path, options, print) {
 	}
 
 	return null;
+}
+
+/**
+ * Whether a `catch` parameter has a comment that breaks its parentheses, as in
+ * Prettier's `printCatchClause`: a line comment, or a block comment with a line
+ * break on its outer side.
+ * @param {Node} param
+ * @param {ParserOptions<Node>} options
+ * @returns {boolean}
+ */
+function hasParameterComment(param, options) {
+	return /** @type {Node[]} */ (param.comments ?? []).some(
+		(comment) =>
+			comment.type !== 'Block' ||
+			(comment.leading && hasNewline(options.originalText, options.locEnd(comment))) ||
+			(comment.trailing &&
+				hasNewline(options.originalText, options.locStart(comment), { backwards: true })),
+	);
 }
 
 /**

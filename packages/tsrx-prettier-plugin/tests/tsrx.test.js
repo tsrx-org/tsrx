@@ -2152,3 +2152,96 @@ function Bar() @{
 		);
 	});
 });
+
+// `@catch (error, reset)` breaks its parentheses around a parameter with a
+// comment by it, as Prettier's `printCatchClause` breaks `catch (e)`'s (#898).
+// A line comment after `)` became the body's on a second format.
+describe('@catch parameters with comments', () => {
+	test('a line comment after the parameters stays with them', async () => {
+		await expectFormat(
+			`function A() @{
+  @try {
+    <B />
+  } @catch (e, reset) // c
+  {
+    <p>{"error"}</p>
+  }
+}`,
+			`function A() @{
+  @try {
+    <B />
+  } @catch (
+    e,
+    reset // c
+  ) {
+    <p>{"error"}</p>
+  }
+}
+`,
+		);
+	});
+
+	test('as Prettier prints one parameter', async () => {
+		await expectFormat(
+			`function A() @{
+  @try {
+    <B />
+  } @catch (e) // c
+  {
+    <p />
+  }
+}`,
+			`function A() @{
+  @try {
+    <B />
+  } @catch (
+    e // c
+  ) {
+    <p />
+  }
+}
+`,
+		);
+		await expectFormat(
+			`function A() @{
+  @try {
+    <B />
+  } @catch (
+    // a
+    e, reset) {
+    <p />
+  }
+}`,
+			`function A() @{
+  @try {
+    <B />
+  } @catch (
+    // a
+    e,
+    reset
+  ) {
+    <p />
+  }
+}
+`,
+		);
+		// A block comment on the line stays on it, as in Prettier.
+		await expectFormat(
+			`function A() @{
+  @try {
+    <B />
+  } @catch (e, /* c */ reset) {
+    <p />
+  }
+}`,
+			`function A() @{
+  @try {
+    <B />
+  } @catch (e, /* c */ reset) {
+    <p />
+  }
+}
+`,
+		);
+	});
+});
