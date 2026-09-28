@@ -4669,6 +4669,77 @@ foo();`;
 		expect(directive.empty).toBeNull();
 	});
 
+	it("reads `index` and `key` only in @for's own head (#896)", () => {
+		// A regular `for…of` has no such clauses: TypeScript reports the `;` as
+		// `')' expected.` (TS1005), in every mode. That includes a regular loop in
+		// an @for's body or in a function in its head.
+		/** @type {Array<[source: string, at: string]>} */
+		const cases = [
+			[
+				`const test = () => {
+	for (const item of []; index i) {}
+};`,
+				'; index i',
+			],
+			['for (const item of items; key item.id) {}', '; key'],
+			[
+				`export function App() @{
+	<ul>
+		@for (const item of items; index i) {
+			@{
+				for (const x of item.list; index j) {}
+				<li>{i}</li>
+			}
+		}
+	</ul>
+}`,
+				'; index j',
+			],
+			[
+				`export function App() @{
+	<ul>
+		@for (const item of items.filter((x) => {
+			for (const y of x; index k) {}
+			return true;
+		}); index i) {
+			<li>{i}</li>
+		}
+	</ul>
+}`,
+				'; index k',
+			],
+		];
+		for (const [source, at] of cases) {
+			for (const options of [undefined, { collect: true, errors: [], comments: [] }]) {
+				/** @type {any} */
+				let error;
+				try {
+					parseModule(source, 'App.tsrx', options);
+				} catch (thrown) {
+					error = thrown;
+				}
+				expect(error?.message, source).toMatch(/^'\)' expected\./);
+				expect(error.code, source).toBe('TS1005');
+				expect(error.pos, source).toBe(source.indexOf(at));
+			}
+		}
+
+		const loop = find_first(
+			parseModule(
+				`export function App() @{
+	<ul>
+		@for (const item of items; index i; key item.id) {
+			<li>{i}</li>
+		}
+	</ul>
+}`,
+				'App.tsrx',
+			),
+			(node) => node.type === 'JSXForExpression',
+		);
+		expect(loop).toMatchObject({ index: { name: 'i' }, key: { type: 'MemberExpression' } });
+	});
+
 	it('parses @for inside a statement-container fragment output with JSX siblings', () => {
 		const ast = parseModule(
 			`export function App({ items }: { items: string[] }) @{

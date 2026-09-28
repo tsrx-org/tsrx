@@ -1311,6 +1311,11 @@ export function TSRXPlugin(config) {
 			#elementStarts = new WeakMap();
 			#readingJSXControlFlowDirectiveKeyword = false;
 			#readingJSXControlFlowHeader = false;
+			// Set while `@for` reads its statement, until `parseForStatement` takes it:
+			// the loop whose head may end with `index` and `key` clauses.
+			#readingForDirective = false;
+			/** @type {WeakSet<AST.Node>} */
+			#forDirectiveLoops = new WeakSet();
 			// Where the last element of a `{ … }` list ended, so that `expect` can
 			// tell a comma expected after it at the end of the input is the list's
 			// missing `}`.
@@ -2951,6 +2956,7 @@ export function TSRXPlugin(config) {
 					let node;
 					const previous_reading_header = this.#readingJSXControlFlowHeader;
 					this.#readingJSXControlFlowHeader = true;
+					this.#readingForDirective = true;
 					try {
 						node = /** @type {AST.JSXForExpression} */ (
 							this.#finishJSXControlFlowExpression(
@@ -8355,6 +8361,10 @@ export function TSRXPlugin(config) {
 
 			/** @type {Parse.Parser['parseForStatement']} */
 			parseForStatement(node) {
+				if (this.#readingForDirective) {
+					this.#readingForDirective = false;
+					this.#forDirectiveLoops.add(node);
+				}
 				this.next();
 				let awaitAt =
 					this.options.ecmaVersion >= 9 && this.canAwait && this.eatContextual('await')
@@ -8547,7 +8557,11 @@ export function TSRXPlugin(config) {
 				node.left = init;
 				node.right = isForIn ? this.parseExpression() : this.parseMaybeAssign();
 
-				// Check for our extended syntax: "; index varName"
+				// `@for`'s `index` and `key` clauses. A regular `for…of` has none, and
+				// TypeScript reports the `;` as `')' expected.` (TS1005).
+				if (!isForIn && this.type === tt.semi && !this.#forDirectiveLoops.has(node)) {
+					this.raise(this.start, "')' expected.");
+				}
 				if (!isForIn && this.type === tt.semi) {
 					this.next(); // consume ';'
 

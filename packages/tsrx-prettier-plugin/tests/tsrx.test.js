@@ -1491,6 +1491,8 @@ describe('parse errors', () => {
 			],
 			// Prettier's typescript parser: `Property assignment expected. (1:13)`.
 			['const o = { @dec m() {} };', 'Unexpected token (1:13)', { line: 1, column: 13 }],
+			// `index` belongs to `@for`: the output used to drop it (#896).
+			['for (const item of []; index i) {}', "')' expected. (1:22)", { line: 1, column: 22 }],
 			// Prettier's typescript parser: `';' expected. (1:25)`.
 			[
 				'const f = (x as number) => x;',

@@ -4663,17 +4663,21 @@ const items = [] as unknown[];`;
 			expect(result).toBeWithNewline(expected);
 		});
 
+		// `index` belongs to `@for`; a regular `for…of` with it is a parse error
+		// (#896).
 		it('should correctly handle for loop with index syntax, plus comments', async () => {
-			const input = `const test = () => {
+			const input = `export function Test() @{
   // some comments
-  for (const item of []; index i) {
-    // comment
-  }
-  debugger;
+  <ul>
+    @for (const item of items; index i) {
+      // comment
+      <li>{i}</li>
+    }
+  </ul>
+}
 
-  // some comments
-  const test = ""; // some comments 2
-};`;
+// some comments
+const test = ""; // some comments 2`;
 
 			const result = await format(input);
 			expect(result).toBeWithNewline(input);
