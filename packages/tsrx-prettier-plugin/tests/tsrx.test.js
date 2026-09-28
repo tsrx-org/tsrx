@@ -1719,6 +1719,20 @@ abstract class C {
 		await expectFormat(source, source);
 		expect(await prettier.format(source, { parser: 'typescript' })).toBe(source);
 	});
+
+	// Prettier's key quoting read the body-less method's value as a whole method,
+	// and failed with `Cannot read properties of null` (#916).
+	test('a method without a body formats with quoteProps "consistent"', async () => {
+		const source = `class A {
+  m(): void;
+  m() {}
+}
+`;
+		await expectFormat(source, source, { quoteProps: 'consistent' });
+		expect(await prettier.format(source, { parser: 'typescript', quoteProps: 'consistent' })).toBe(
+			source,
+		);
+	});
 });
 
 describe('type parameter modifiers', () => {
