@@ -3618,6 +3618,92 @@ function RowList({ rows, Row }) {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<section class="doc-section" id="components">
+		<h2 class="section-heading">Components</h2>
+		<p class="section-body">
+			A TSRX component is just a TypeScript function that produces JSX. Use a
+			statement-container body for component-shaped templates, especially when local
+			setup, comments, scoped styles, or multiple rendered children belong with the
+			markup.
+		</p>
+		<p class="section-body">
+			In practice, components are ordinary TypeScript functions or
+			{' '}
+			<code class="inline-code">const</code>
+			{' '}
+			values. A component can use
+			{' '}
+			<code class="inline-code">{'@{...}'}</code>
+			{' '}
+			as the function body, giving you one place for local state, derived values, template
+			control flow, rendered elements, and scoped styles.
+		</p>
+		<pre class="code-block">
+			<code innerHTML={COMPONENT_HTML} />
+		</pre>
+		<p class="section-body">
+			Export them like any other function:
+			{' '}
+			<code class="inline-code">{'export function Name() @{ <div /> }'}</code>
+			. The compiler turns that into the right component shape for the target you're
+			using.
+		</p>
+		<p class="section-body">
+			When a bit of logic should stay plain JavaScript rather than render into the
+			template, put it in a normal function beside the markup. Use
+			{' '}
+			<code class="inline-code">{'function fn() { ... }'}</code>
+			{' '}
+			for ordinary control flow, then call helpers from event handlers or expressions:
+			{' '}
+			<code class="inline-code">{'onClick={fn}'}</code>
+			.
+		</p>
+		<pre class="code-block">
+			<code innerHTML={BAILOUT_HTML} />
+		</pre>
+	</section>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<section class="doc-section" id="components">
+		<h2 class="section-heading">Components</h2>
+		<p class="section-body">
+			A TSRX component is just a TypeScript function that produces JSX. Use a statement-container
+			body for component-shaped templates, especially when local setup, comments, scoped styles, or
+			multiple rendered children belong with the markup.
+		</p>
+		<p class="section-body">
+			In practice, components are ordinary TypeScript functions or{' '}
+			<code class="inline-code">const</code> values. A component can use{' '}
+			<code class="inline-code">{'@{...}'}</code> as the function body, giving you one place for
+			local state, derived values, template control flow, rendered elements, and scoped styles.
+		</p>
+		<pre class="code-block">
+			<code innerHTML={COMPONENT_HTML} />
+		</pre>
+		<p class="section-body">
+			Export them like any other function:{' '}
+			<code class="inline-code">{'export function Name() @{ <div /> }'}</code>. The compiler turns
+			that into the right component shape for the target you're using.
+		</p>
+		<p class="section-body">
+			When a bit of logic should stay plain JavaScript rather than render into the template, put it
+			in a normal function beside the markup. Use{' '}
+			<code class="inline-code">{'function fn() { ... }'}</code> for ordinary control flow, then
+			call helpers from event handlers or expressions:{' '}
+			<code class="inline-code">{'onClick={fn}'}</code>.
+		</p>
+		<pre class="code-block">
+			<code innerHTML={BAILOUT_HTML} />
+		</pre>
+	</section>;
+}
+`);
 		});
 
 		test('formats the features: statement containers section like Prettier', async () => {
@@ -3726,6 +3812,112 @@ function RowList({ rows, Row }) {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<section class="doc-section" id="template-structure">
+		<h2 class="section-heading">Statement containers</h2>
+		<p class="section-body">
+			When a template scope mixes TypeScript setup with rendered output, wrap the setup in
+			<code class="inline-code">{'@{...}'}</code>
+			. TSRX treats everything before the final renderable child as script, then the
+			container must finish with exactly one output node.
+		</p>
+		<p class="section-body muted">
+			That final output can be a JSX element, a JSX fragment, or JSX control flow like
+			{' '}
+			<code class="inline-code">{'@if'}</code>
+			,
+			{' '}
+			<code class="inline-code">{'@for'}</code>
+			,
+			{' '}
+			<code class="inline-code">{'@switch'}</code>
+			, or
+			{' '}
+			<code class="inline-code">{'@try'}</code>
+			. It cannot be a bare expression container, and no script statements can appear
+			after it.
+		</p>
+		<p class="section-body muted">
+			If the rendered part needs multiple siblings or text next to elements, wrap those
+			children in a fragment so they become one output. The rule applies locally to
+			component bodies, element children, and control-flow branches, so setup can stay
+			close to the markup that uses it without turning ordinary template text into
+			JavaScript.
+		</p>
+		<p class="section-body muted">
+			Control-flow bodies are implicit statement containers too:
+			<code class="inline-code">@if</code>
+			,
+			<code class="inline-code">@for</code>
+			,
+			<code class="inline-code">@switch</code>
+			, and
+			<code class="inline-code">@try</code>
+			arms all use
+			<code class="inline-code">{'{}'}</code>
+			blocks.
+		</p>
+		<p class="section-body muted">
+			If you write setup statements and then a bare JSX element inside a normal
+			<code class="inline-code">{'{}'}</code>
+			function body, the compiler will ask you to add the missing
+			<code class="inline-code">@</code>
+			. Plain braces are JavaScript; statement-container braces are
+			<code class="inline-code">{'@{...}'}</code>
+			.
+		</p>
+		<pre class="code-block">
+			<code innerHTML={TEMPLATE_STRUCTURE_HTML} />
+		</pre>
+	</section>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<section class="doc-section" id="template-structure">
+		<h2 class="section-heading">Statement containers</h2>
+		<p class="section-body">
+			When a template scope mixes TypeScript setup with rendered output, wrap the setup in
+			<code class="inline-code">{'@{...}'}</code>. TSRX treats everything before the final
+			renderable child as script, then the container must finish with exactly one output node.
+		</p>
+		<p class="section-body muted">
+			That final output can be a JSX element, a JSX fragment, or JSX control flow like{' '}
+			<code class="inline-code">{'@if'}</code>, <code class="inline-code">{'@for'}</code>,{' '}
+			<code class="inline-code">{'@switch'}</code>, or <code class="inline-code">{'@try'}</code>. It
+			cannot be a bare expression container, and no script statements can appear after it.
+		</p>
+		<p class="section-body muted">
+			If the rendered part needs multiple siblings or text next to elements, wrap those children in
+			a fragment so they become one output. The rule applies locally to component bodies, element
+			children, and control-flow branches, so setup can stay close to the markup that uses it
+			without turning ordinary template text into JavaScript.
+		</p>
+		<p class="section-body muted">
+			Control-flow bodies are implicit statement containers too:
+			<code class="inline-code">@if</code>,<code class="inline-code">@for</code>,
+			<code class="inline-code">@switch</code>, and
+			<code class="inline-code">@try</code>
+			arms all use
+			<code class="inline-code">{'{}'}</code>
+			blocks.
+		</p>
+		<p class="section-body muted">
+			If you write setup statements and then a bare JSX element inside a normal
+			<code class="inline-code">{'{}'}</code>
+			function body, the compiler will ask you to add the missing
+			<code class="inline-code">@</code>. Plain braces are JavaScript; statement-container braces
+			are
+			<code class="inline-code">{'@{...}'}</code>.
+		</p>
+		<pre class="code-block">
+			<code innerHTML={TEMPLATE_STRUCTURE_HTML} />
+		</pre>
+	</section>;
+}
+`);
 		});
 
 		test('formats the getting started: Zed section like Prettier', async () => {
@@ -3785,6 +3977,63 @@ function RowList({ rows, Row }) {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<section class="doc-section" id="zed">
+		<h2 class="section-heading">Zed</h2>
+		<p class="section-body">
+			Install the
+			{' '}
+			<a
+				class="inline-link"
+				href="https://zed.dev/extensions/tsrx"
+				target="_blank"
+				rel="noopener noreferrer"
+			>TSRX extension for Zed</a>
+			{' '}
+			from the Zed Extension Marketplace for syntax highlighting and language-server
+			support. Open Zed's Extensions view and search for
+			{' '}
+			<code class="inline-code">TSRX</code>
+			{' '}
+			to install it.
+		</p>
+		<p class="section-body">
+			The extension uses a project-local
+			{' '}
+			<code class="inline-code">@tsrx/language-server</code>
+			{' '}
+			when available and otherwise downloads its pinned language-server version
+			automatically.
+		</p>
+	</section>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<section class="doc-section" id="zed">
+		<h2 class="section-heading">Zed</h2>
+		<p class="section-body">
+			Install the{' '}
+			<a
+				class="inline-link"
+				href="https://zed.dev/extensions/tsrx"
+				target="_blank"
+				rel="noopener noreferrer"
+			>
+				TSRX extension for Zed
+			</a>{' '}
+			from the Zed Extension Marketplace for syntax highlighting and language-server support. Open
+			Zed's Extensions view and search for <code class="inline-code">TSRX</code> to install it.
+		</p>
+		<p class="section-body">
+			The extension uses a project-local <code class="inline-code">@tsrx/language-server</code> when
+			available and otherwise downloads its pinned language-server version automatically.
+		</p>
+	</section>;
+}
+`);
 		});
 
 		test('formats the index: beta notice section like Prettier', async () => {
@@ -3826,6 +4075,45 @@ function RowList({ rows, Row }) {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<aside class="alpha-notice" role="note" aria-label="Beta release notice">
+		<span class="alpha-badge">Beta</span>
+		<p class="alpha-notice-body">
+			TSRX is in active beta development. Feedback on the
+			{' '}
+			<a
+				class="alpha-notice-link"
+				href="https://github.com/tsrx-org/tsrx/issues"
+				target="_blank"
+				rel="noopener noreferrer"
+			>issue tracker</a>
+			{' '}
+			is very welcome.
+		</p>
+	</aside>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<aside class="alpha-notice" role="note" aria-label="Beta release notice">
+		<span class="alpha-badge">Beta</span>
+		<p class="alpha-notice-body">
+			TSRX is in active beta development. Feedback on the{' '}
+			<a
+				class="alpha-notice-link"
+				href="https://github.com/tsrx-org/tsrx/issues"
+				target="_blank"
+				rel="noopener noreferrer"
+			>
+				issue tracker
+			</a>{' '}
+			is very welcome.
+		</p>
+	</aside>;
+}
+`);
 		});
 
 		test('keeps the parentheses of a returned template that starts with a comment', async () => {
@@ -4081,6 +4369,28 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+		{/* c */}
+		<span>
+			<b>1</b>
+		</span> 3
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* c */}
+		<span>
+			<b>1</b>
+		</span>{' '}
+		3
+	</div>;
+}
+`);
 		});
 
 		test('lays out the text after the child with a comment before it in "<div>\\n\\t/* a */\\n\\t/* b */\\n\\t<span>\\n\\t\\t<b>1</b>\\n\\t</span> 3\\n</div>" like TSX', async () => {
@@ -4107,6 +4417,30 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+		{/* a */}
+		{/* b */}
+		<span>
+			<b>1</b>
+		</span> 3
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* a */}
+		{/* b */}
+		<span>
+			<b>1</b>
+		</span>{' '}
+		3
+	</div>;
+}
+`);
 		});
 
 		test('lays out the text after the child with a comment before it in "<div>\\n\\t/* c */\\n\\t{cond && (\\n\\t\\t<b>\\n\\t\\t\\t<i />\\n\\t\\t</b>\\n\\t)} 3\\n</div>" like TSX', async () => {
@@ -4135,6 +4469,32 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+		{/* c */}
+		{cond && (
+			<b>
+				<i />
+			</b>
+		)} 3
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* c */}
+		{cond && (
+			<b>
+				<i />
+			</b>
+		)}{' '}
+		3
+	</div>;
+}
+`);
 		});
 
 		test('lays out the text after the child with a comment before it in "<main>\\n\\t{x && (\\n\\t\\t<div>\\n\\t\\t\\t/* c */\\n\\t\\t\\t<span>\\n\\t\\t\\t\\t<b>1</b>\\n\\t\\t\\t</span> 3\\n\\t\\t</div>\\n\\t)}\\n</main>" like TSX', async () => {
@@ -4167,6 +4527,36 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<main>
+		{x && (
+			<div>
+				{/* c */}
+				<span>
+					<b>1</b>
+				</span> 3
+			</div>
+		)}
+	</main>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<main>
+		{x && (
+			<div>
+				{/* c */}
+				<span>
+					<b>1</b>
+				</span>{' '}
+				3
+			</div>
+		)}
+	</main>;
+}
+`);
 		});
 
 		test('lays out the text after the child with a comment before it in "<div>\\n\\t/* c */\\n\\t<i /> 3\\n</div>" like TSX', async () => {
@@ -4186,6 +4576,23 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+		{/* c */}
+		<i /> 3
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* c */}
+		<i /> 3
+	</div>;
+}
+`);
 		});
 
 		test('starts the text after the multi-line child with a comment before it in "export function App() @{\\n  <div> /* c */\\n    <span>\\n      <b>1</b>\\n    </span> 3</div>\\n}" on a line', async () => {
@@ -4295,6 +4702,23 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>{/* a */}
+	{/* b */}
+	<i /> 3</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* a */}
+		{/* b */}
+		<i /> 3
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */ /* b */\\n\\n<i /> 3</div>" like TSX', async () => {
@@ -4314,6 +4738,23 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	{/* a */} {/* b */}
+	
+	<i /> 3</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* a */} {/* b */}
+		<i /> 3
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>/* a */\\n<i /> 3</div>" like TSX', async () => {
@@ -4331,6 +4772,21 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>{/* a */}
+	<i /> 3</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* a */}
+		<i /> 3
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */ /* b */\\n<i /> 3</div>" like TSX', async () => {
@@ -4349,6 +4805,22 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	{/* a */} {/* b */}
+	<i /> 3</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* a */} {/* b */}
+		<i /> 3
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* c */\\n\\n<b /> text\\n</div>" like TSX', async () => {
@@ -4369,6 +4841,24 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	{/* c */}
+	
+	<b /> text
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* c */}
+		<b /> text
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */\\n\\n/* b */\\n<b /> text\\n</div>" like TSX', async () => {
@@ -4391,6 +4881,26 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	{/* a */}
+	
+	{/* b */}
+	<b /> text
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* a */}
+		{/* b */}
+		<b /> text
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n<i />\\n/* c */\\n\\n<b /> text\\n</div>" like TSX', async () => {
@@ -4413,6 +4923,26 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	<i />
+	{/* c */}
+	
+	<b /> text
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		<i />
+		{/* c */}
+		<b /> text
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* c */\\n\\n{x}\\n</div>" like TSX', async () => {
@@ -4434,6 +4964,25 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	{/* c */}
+	
+	{x}
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* c */}
+
+		{x}
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */ /* b */\\n{x} text\\n</div>" like TSX', async () => {
@@ -4453,6 +5002,23 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	{/* a */} {/* b */}
+	{x} text
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* a */} {/* b */}
+		{x} text
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* c */ {x}\\n</div>" like TSX', async () => {
@@ -4470,6 +5036,21 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	{/* c */} {x}
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* c */} {x}
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */\\n/* b */ {x} 3\\n</div>" like TSX', async () => {
@@ -4489,6 +5070,23 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	{/* a */}
+	{/* b */} {x} 3
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* a */}
+		{/* b */} {x} 3
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */ /* b */{x}\\n</div>" like TSX', async () => {
@@ -4507,6 +5105,22 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	{/* a */} {/* b */}{x}
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* a */} {/* b */}
+		{x}
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>/* a */\\n/* b */\\n<i /></div>" like TSX', async () => {
@@ -4526,6 +5140,23 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>{/* a */}
+	{/* b */}
+	<i /></div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* a */}
+		{/* b */}
+		<i />
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* c */\\n\\n<b />\\n</div>" like TSX', async () => {
@@ -4547,6 +5178,25 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	{/* c */}
+	
+	<b />
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* c */}
+
+		<b />
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* c */\\n\\n{x} text\\n</div>" like TSX', async () => {
@@ -4567,6 +5217,24 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	{/* c */}
+	
+	{x} text
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* c */}
+		{x} text
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */\\n/* b */ <i /> 3</div>" like TSX', async () => {
@@ -4585,6 +5253,22 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	{/* a */}
+	{/* b */} <i /> 3</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		{/* a */}
+		{/* b */} <i /> 3
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n<i /> /* a */\\n/* b */\\n<b /> text\\n</div>" like TSX', async () => {
@@ -4606,6 +5290,25 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<div>
+	<i /> {/* a */}
+	{/* b */}
+	<b /> text
+	</div>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<div>
+		<i /> {/* a */}
+		{/* b */}
+		<b /> text
+	</div>;
+}
+`);
 		});
 
 		test('lays out the comments before the child in "<p>/* c */{name}</p>" like TSX', async () => {
@@ -4622,6 +5325,20 @@ items.map((i) => (
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
+			expect(
+				await prettier.format(
+					`export function Page() {
+	<p>{/* c */}{name}</p>;
+}`,
+					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+				),
+			).toBe(`export function Page() {
+	<p>
+		{/* c */}
+		{name}
+	</p>;
+}
+`);
 		});
 
 		test('keeps the line breaks after the comments before the child in "const a = <div>/* a */\\n/* b */\\n<i /> 3</div>;" like TSX', async () => {
