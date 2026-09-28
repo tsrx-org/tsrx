@@ -1,8 +1,6 @@
 # @tsrx/prettier-plugin
 
-A Prettier plugin for [TSRX](https://tsrx.dev) that formats everything except TSRX
-syntax with Prettier's own JavaScript and TypeScript printer, and prints TSRX
-syntax itself.
+A Prettier plugin for formatting [TSRX](https://tsrx.dev) files.
 
 The goal is Prettier's output wherever TSRX is TSX, so TSRX only differs where its
 syntax does: `@{ … }` blocks, `@if`/`@for`/`@switch`/`@try`, `{value}` shorthand
