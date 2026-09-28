@@ -231,7 +231,7 @@ importers:
         version: link:packages/tsrx-preact
       '@tsrx/prettier-plugin':
         specifier: workspace:*
-        version: link:packages/prettier-plugin
+        version: link:packages/old-prettier-plugin
       '@tsrx/react':
         specifier: workspace:*
         version: link:packages/tsrx-react
@@ -533,7 +533,7 @@ importers:
 
   packages/nvim-plugin: {}
 
-  packages/prettier-plugin:
+  packages/old-prettier-plugin:
     dependencies:
       '@tsrx/core':
         specifier: workspace:*
@@ -757,7 +757,7 @@ importers:
         version: link:../tsrx
       '@tsrx/prettier-plugin':
         specifier: workspace:*
-        version: link:../prettier-plugin
+        version: link:../old-prettier-plugin
       prettier:
         specifier: catalog:default
         version: 3.9.9
@@ -1371,7 +1371,7 @@ importers:
         version: link:../packages/tsrx-preact
       '@tsrx/prettier-plugin':
         specifier: workspace:*
-        version: link:../packages/prettier-plugin
+        version: link:../packages/old-prettier-plugin
       '@tsrx/react':
         specifier: workspace:*
         version: link:../packages/tsrx-react

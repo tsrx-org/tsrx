@@ -380,7 +380,7 @@ export default defineConfig({
 			{
 				test: {
 					name: 'prettier-plugin',
-					include: ['packages/prettier-plugin/src/*.test.js'],
+					include: ['packages/old-prettier-plugin/src/*.test.js'],
 					environment: 'jsdom',
 				},
 				plugins: [],

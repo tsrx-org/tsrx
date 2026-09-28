@@ -47,8 +47,9 @@ directly.
   intelligence and consumer-compiler resolution
 - `packages/vscode-plugin/`, `packages/zed-plugin/`, `packages/nvim-plugin/`,
   `packages/intellij-plugin/`, and `packages/sublime-text-plugin/`: editor tooling
-- `packages/prettier-plugin/`, `packages/eslint-parser/`, and
-  `packages/eslint-plugin/`: formatting and linting
+- `packages/tsrx-prettier-plugin/` and `packages/old-prettier-plugin/`: the new
+  and previous Prettier implementations
+- `packages/eslint-parser/` and `packages/eslint-plugin/`: linting
 - `grammars/`: TextMate and Tree-sitter grammars
 - `playground/`: retained React, Solid, Vue, and Hono examples plus shared editor
   settings in `playground/.vscode/`

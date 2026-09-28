@@ -34,7 +34,9 @@ the monorepo.
 - `packages/typescript-plugin` and `packages/language-server` own diagnostics,
   completions, navigation, and TypeScript integration.
 - Editor-specific behavior belongs in the corresponding editor plugin package.
-- `packages/eslint-*` and `packages/prettier-plugin` own linting and formatting.
+- `packages/eslint-*` owns linting. `packages/tsrx-prettier-plugin` contains the
+  Prettier implementation, and `packages/old-prettier-plugin` holds the previous
+  implementation during the transition.
 - `grammars/` owns the TextMate and Tree-sitter grammars.
 
 Ripple is a supported external target. Its runtime, compiler target, adapters, and

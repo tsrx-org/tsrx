@@ -17,7 +17,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tsrx-org/tsrx.git",
-    "directory": "packages/prettier-plugin"
+    "directory": "packages/old-prettier-plugin"
   },
   "peerDependencies": {
     "prettier": "catalog:peer"
