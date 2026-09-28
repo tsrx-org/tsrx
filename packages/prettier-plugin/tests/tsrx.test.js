@@ -2420,6 +2420,22 @@ describe('parse errors', () => {
 			expect(error.message.split('\n')[0], source).toBe(message);
 		}
 	});
+
+	// #770: the tree leaves a rest element's default out, where Prettier's
+	// typescript parser keeps it or makes the rest element a plain element.
+	test("a rest element's default is an error, not left out", async () => {
+		for (const [source, column] of /** @type {const} */ ([
+			['const [...a = 1] = b;', 13],
+			['const { ...a = 1 } = b;', 14],
+			['[...a = 1] = b;', 7],
+			['({ ...a = 1 } = b);', 9],
+		])) {
+			const error = await format(source).catch((/** @type {any} */ e) => e);
+			expect(error, source).toBeInstanceOf(SyntaxError);
+			expect(error.cause.code, source).toBe('TS1186');
+			expect(error.loc, source).toEqual({ start: { line: 1, column } });
+		}
+	});
 });
 
 // Prettier's typescript parser prints a class member's modifiers in order, and

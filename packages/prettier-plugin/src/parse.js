@@ -47,7 +47,11 @@ const BROKEN_MARKUP_CODES = new Set([
  * class member, a class member's modifier before a module element
  * (`public class A {}`), `readonly`, `accessor` or `async` where they can't
  * appear, `async` with `declare` or in a `declare` context (TS1040),
- * `declare` before a `using` declaration, and `import.source`.
+ * `declare` before a `using` declaration, and `import.source`. It also rejects
+ * a rest element's default in a destructuring pattern (TS1186), which the tree
+ * has no place for: Prettier keeps it in an assignment (`[...a = 1] = b`) and
+ * makes the array pattern's rest element a plain element
+ * (`const [a = 1] = b`), so leaving it out would drop code.
  *
  * It formats the others, and leaves out what its tree has no place for, as the
  * output does: a repeated modifier, a rest parameter's default, a modifier in a
@@ -74,6 +78,7 @@ const REJECTED_CODES = new Set([
 	'TS1491',
 	'TS1495',
 	'TS17012',
+	'TS1186',
 ]);
 
 /**

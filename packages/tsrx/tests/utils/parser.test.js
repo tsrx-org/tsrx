@@ -11118,6 +11118,73 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			valid: 'class A { constructor(...a) {} }',
 			pick: constructor_parameters,
 		},
+		// A rest element's default in a destructuring pattern (#770, TS1186, at
+		// the `=`). The tree leaves it out, as for a rest parameter's.
+		{
+			source: 'const [...a = 1] = b;',
+			errors: [['A rest element cannot have an initializer.', '= 1']],
+			throws: 'A rest element cannot have an initializer. (1:12)',
+			valid: 'const [...a] = b;',
+			pick: first,
+		},
+		{
+			source: 'const { x, ...a = f() } = b;',
+			errors: [['A rest element cannot have an initializer.', '= f()']],
+			throws: 'A rest element cannot have an initializer. (1:16)',
+			valid: 'const { x, ...a } = b;',
+			pick: first,
+		},
+		{
+			source: 'function f([...a = 1], { ...b = {} }) {}',
+			errors: [
+				['A rest element cannot have an initializer.', '= 1'],
+				['A rest element cannot have an initializer.', '= {}'],
+			],
+			throws: 'A rest element cannot have an initializer. (1:17)',
+			valid: 'function f([...a], { ...b }) {}',
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'FunctionDeclaration').params,
+		},
+		{
+			source: 'const f = ([...a = 1]) => a;',
+			errors: [['A rest element cannot have an initializer.', '= 1']],
+			throws: 'A rest element cannot have an initializer. (1:17)',
+			valid: 'const f = ([...a]) => a;',
+			pick: arrow_parameters,
+		},
+		{
+			source: '[...a = 1] = b;',
+			errors: [['A rest element cannot have an initializer.', '= 1']],
+			throws: 'A rest element cannot have an initializer. (1:6)',
+			valid: '[...a] = b;',
+			pick: first,
+		},
+		{
+			source: '({ ...a = 1 } = b);',
+			errors: [['A rest element cannot have an initializer.', '= 1']],
+			throws: 'A rest element cannot have an initializer. (1:8)',
+			valid: '({ ...a } = b);',
+			pick: first,
+		},
+		{
+			// The `=` past a comment.
+			source: 'for ([...a /* = */ = 1] of c) {}',
+			errors: [['A rest element cannot have an initializer.', '= 1']],
+			throws: 'A rest element cannot have an initializer. (1:19)',
+			pick: (program) => as_type(/** @type {AST.Node} */ (first(program)), 'ForOfStatement').left,
+			match: {
+				type: 'ArrayPattern',
+				elements: [{ type: 'RestElement', argument: { type: 'Identifier', name: 'a' } }],
+			},
+		},
+		{
+			// And past the parentheses around the target.
+			source: '[...(a) = 1] = b;',
+			errors: [['A rest element cannot have an initializer.', '= 1']],
+			throws: 'A rest element cannot have an initializer. (1:8)',
+			valid: '[...(a)] = b;',
+			pick: first,
+		},
 		// A parameter after an arrow function's rest parameter (#727, TS1014),
 		// recorded at the comma as for other functions' parameters.
 		{
@@ -11446,6 +11513,9 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'type Q = (readonly: number) => void;',
 			// A parameter property with a default that isn't a pattern.
 			'class A {\n\tconstructor(public x = 1, readonly y: number[] = []) {}\n}',
+			// A default before a rest element, and a spread of an assignment.
+			'const [a = 1, ...b] = c;',
+			'f(...a = 1, ...(b = 2));',
 		];
 		const outcomes = await parse_in_worker(
 			sources.flatMap((source) => collect_modes.map((options) => ({ source, options }))),

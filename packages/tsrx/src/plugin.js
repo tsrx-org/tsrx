@@ -201,6 +201,9 @@ const UNEXPECTED_TOKEN = 'Unexpected token';
 const NON_PARAMETER_LIST = Object.freeze({ parameters: false, position: -1, message: '' });
 // TypeScript's TS1048, for a rest parameter with a default.
 const REST_PARAMETER_INITIALIZER = 'A rest parameter cannot have an initializer.';
+// TypeScript's TS1186, for a rest element with a default in a destructuring
+// pattern.
+const REST_ELEMENT_INITIALIZER = 'A rest element cannot have an initializer.';
 // acorn-typescript's error for decorators before something other than a class.
 const UNEXPECTED_LEADING_DECORATOR = 'Leading decorators must be attached to a class declaration.';
 // TypeScript's parser errors for what follows `export` when it starts no
@@ -331,8 +334,9 @@ const regex_let_binding_error =
  * node it builds for valid code. Mistakes whose raise site can't continue are
  * handled by narrow overrides instead: a comma after a rest element
  * (`#collectCheckerLevelError`, `parseBindingList`,
- * `#readArrowParametersPastRestElement`), a rest parameter's default
- * (`#readRestParameterDefault`), `const` without an
+ * `#readArrowParametersPastRestElement`), a rest parameter's or rest element's
+ * default (`#readRestParameterDefault`, `#readRestElementDefault`), `const`
+ * without an
  * initializer (`parseVarId`), a declaration list without a declarator
  * (`parseVarStatement`, `parseForStatement`), `await` in a namespace
  * (`canAwait`), a private name outside a class (the constructor and
@@ -6784,20 +6788,22 @@ export function TSRXPlugin(config) {
 			 * and failed at the `=`. Raise TS1048 there, which `raise` records when
 			 * collecting, and read the default (see `#readRestParameterDefault`). A
 			 * strict parse throws it. `parseFunctionBody` raises it for an arrow
-			 * function, after its `=>`.
+			 * function, after its `=>`. An array pattern's rest element can have one
+			 * too, TS1186 (see `#readRestElementDefault`).
 			 * @type {Parse.Parser['parseBindingListItem']}
 			 */
 			parseBindingListItem(param) {
 				const item = this.#parseBindingListItem(param);
-				if (
-					item.type === 'RestElement' &&
-					this.type === tt.eq &&
-					this.#bindingListClose === tt.parenR
-				) {
-					if (!this.#readingGenericArrowParameters) {
-						this.raise(/** @type {number} */ (item.argument.start), REST_PARAMETER_INITIALIZER);
+				// UPSTREAM(sveltejs/acorn-typescript#159): remove once a release includes the fix
+				if (item.type === 'RestElement' && this.type === tt.eq) {
+					if (this.#bindingListClose === tt.parenR) {
+						if (!this.#readingGenericArrowParameters) {
+							this.raise(/** @type {number} */ (item.argument.start), REST_PARAMETER_INITIALIZER);
+						}
+						this.#readRestParameterDefault(item);
+					} else if (this.#bindingListClose === tt.bracketR) {
+						this.#readRestElementDefault(item);
 					}
-					this.#readRestParameterDefault(item);
 				}
 				return item;
 			}
@@ -6837,6 +6843,7 @@ export function TSRXPlugin(config) {
 				return super.parseBindingListItem(param);
 			}
 
+			// UPSTREAM(sveltejs/acorn-typescript#159): remove once a release includes the fix
 			/**
 			 * Reads the default after a rest parameter, from its `=`: TypeScript's
 			 * parser reads one, and its checker reports TS1048. ESTree's rest element
@@ -6853,6 +6860,25 @@ export function TSRXPlugin(config) {
 				this.parseMaybeAssign();
 				this.resetEndLocation(rest);
 				this.#restParameterDefaults.add(rest);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#159): remove once a release includes the fix
+			/**
+			 * Reads the default after the rest element of an array or object binding
+			 * pattern, from its `=` (`const [...a = 1] = b`, `const { ...a = 1 } =
+			 * b`). acorn expects the pattern to end after a rest element, and failed
+			 * at the `=`. TypeScript's parser reads the default, and its checker
+			 * reports TS1186 at the `=`: record it there when collecting, while a
+			 * strict parse throws it. As for a rest parameter's
+			 * default (`#readRestParameterDefault`), the tree leaves the default out
+			 * and the rest element's range covers it.
+			 * @param {AST.Node} rest
+			 */
+			#readRestElementDefault(rest) {
+				this.#raiseCheckerError(this.start, REST_ELEMENT_INITIALIZER);
+				this.next();
+				this.parseMaybeAssign();
+				this.resetEndLocation(rest);
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#121): remove once a release includes the fix
@@ -8236,6 +8262,7 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['toAssignable']}
 			 */
 			toAssignable(node, isBinding, refDestructuringErrors, preserveTypeScriptWrapper) {
+				if (node?.type === 'SpreadElement') this.#dropRestElementDefault(node);
 				if (!isBinding && node && TYPE_ASSERTIONS.has(node.type)) {
 					const assertion = /** @type {AST.Node & { expression: AST.Node }} */ (
 						/** @type {unknown} */ (node)
@@ -8266,6 +8293,39 @@ export function TSRXPlugin(config) {
 					/** @type {unknown} */ (this.toAssignable(parameter, isBinding, refDestructuringErrors))
 				);
 				return /** @type {AST.Pattern} */ (/** @type {unknown} */ (node));
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#159): remove once a release includes the fix
+			/**
+			 * An array or object literal that becomes a destructuring pattern
+			 * (`[...a = 1] = b`, `({ ...a = 1 } = b)`) holds a rest element's
+			 * default as the spread's argument, an assignment. acorn raised `Rest
+			 * elements cannot have a default value` at the assignment when making it
+			 * the rest element. TypeScript's parser reads it, and its checker reports
+			 * TS1186 at the `=`: record that there when collecting, and make the
+			 * assignment's target the argument, as
+			 * `#readRestElementDefault` does for a binding pattern. A strict parse
+			 * throws it. A parenthesized assignment, `...(a = 1)`, isn't a default.
+			 * @param {AST.SpreadElement} spread
+			 */
+			#dropRestElementDefault(spread) {
+				const argument = spread.argument;
+				if (
+					argument.type !== 'AssignmentExpression' ||
+					argument.operator !== '=' ||
+					argument.metadata?.parenthesized
+				) {
+					return;
+				}
+				// The `=`, past any comments and the `)` of a parenthesized target.
+				let position = /** @type {number} */ (argument.left.end);
+				for (;;) {
+					position = skip_space_and_comments_from(this.input, position);
+					if (this.input.charCodeAt(position) !== CharCode.closeParen) break;
+					position++;
+				}
+				this.#raiseCheckerError(position, REST_ELEMENT_INITIALIZER);
+				spread.argument = /** @type {AST.Expression} */ (argument.left);
 			}
 
 			/**
@@ -10689,6 +10749,9 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * An object binding pattern's rest element can have a default, TS1186
+			 * (see `#readRestElementDefault`), which acorn's check for a comma after
+			 * the rest element comes before.
 			 * @type {Parse.Parser['parseProperty']}
 			 */
 			parseProperty(isPattern, refDestructuringErrors) {
@@ -10699,9 +10762,20 @@ export function TSRXPlugin(config) {
 				// property, which the output leaves out. Throw acorn's `Unexpected
 				// token` at the `@` in every mode.
 				if (this.type === tstt.at) this.unexpected();
-				return this.#parseBraceListElement(() =>
-					super.parseProperty(isPattern, refDestructuringErrors),
-				);
+				return this.#parseBraceListElement(() => {
+					const property = super.parseProperty(isPattern, refDestructuringErrors);
+					// UPSTREAM(sveltejs/acorn-typescript#159): remove once a release includes the fix
+					// A pattern's rest element, which the type leaves out.
+					const type = /** @type {string} */ (property.type);
+					if (isPattern && type === 'RestElement' && this.type === tt.eq) {
+						this.#readRestElementDefault(property);
+						// acorn checks for a comma after the rest element before the default.
+						if (this.type === tt.comma) {
+							this.raiseRecoverable(this.start, REST_ELEMENT_TRAILING_COMMA);
+						}
+					}
+					return property;
+				});
 			}
 
 			/**

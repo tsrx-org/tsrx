@@ -274,6 +274,7 @@ const MESSAGE_CODES = [
 	['A parameter property cannot be declared using a rest parameter.', 'TS1317'],
 	['A parameter property is only allowed in a constructor implementation.', 'TS2369'],
 	['A rest parameter cannot have an initializer.', 'TS1048'],
+	['A rest element cannot have an initializer.', 'TS1186'],
 	['A rest parameter cannot be optional.', 'TS1047'],
 	['A binding pattern parameter cannot be optional in an implementation signature.', 'TS2463'],
 	["'readonly' type modifier is only permitted on array and tuple literal types.", 'TS1354'],
