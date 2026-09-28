@@ -3667,7 +3667,7 @@ function RowList({ rows, Row }) {
 		</pre>
 	</section>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<section class="doc-section" id="components">
@@ -3873,7 +3873,7 @@ function RowList({ rows, Row }) {
 		</pre>
 	</section>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<section class="doc-section" id="template-structure">
@@ -4009,7 +4009,7 @@ function RowList({ rows, Row }) {
 		</p>
 	</section>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<section class="doc-section" id="zed">
@@ -4094,7 +4094,7 @@ function RowList({ rows, Row }) {
 		</p>
 	</aside>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<aside class="alpha-notice" role="note" aria-label="Beta release notice">
@@ -4379,7 +4379,7 @@ items.map((i) => (
 		</span> 3
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -4428,7 +4428,7 @@ items.map((i) => (
 		</span> 3
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -4481,7 +4481,7 @@ items.map((i) => (
 		)} 3
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -4541,7 +4541,7 @@ items.map((i) => (
 		)}
 	</main>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<main>
@@ -4584,7 +4584,7 @@ items.map((i) => (
 		<i /> 3
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -4709,7 +4709,7 @@ items.map((i) => (
 	{/* b */}
 	<i /> 3</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -4746,7 +4746,7 @@ items.map((i) => (
 	
 	<i /> 3</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -4778,7 +4778,7 @@ items.map((i) => (
 	<div>{/* a */}
 	<i /> 3</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -4812,7 +4812,7 @@ items.map((i) => (
 	{/* a */} {/* b */}
 	<i /> 3</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -4850,7 +4850,7 @@ items.map((i) => (
 	<b /> text
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -4891,7 +4891,7 @@ items.map((i) => (
 	<b /> text
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -4933,7 +4933,7 @@ items.map((i) => (
 	<b /> text
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -4973,7 +4973,7 @@ items.map((i) => (
 	{x}
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -5010,7 +5010,7 @@ items.map((i) => (
 	{x} text
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -5043,7 +5043,7 @@ items.map((i) => (
 	{/* c */} {x}
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -5078,7 +5078,7 @@ items.map((i) => (
 	{/* b */} {x} 3
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -5112,7 +5112,7 @@ items.map((i) => (
 	{/* a */} {/* b */}{x}
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -5147,7 +5147,7 @@ items.map((i) => (
 	{/* b */}
 	<i /></div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -5187,7 +5187,7 @@ items.map((i) => (
 	<b />
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -5226,7 +5226,7 @@ items.map((i) => (
 	{x} text
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -5260,7 +5260,7 @@ items.map((i) => (
 	{/* a */}
 	{/* b */} <i /> 3</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -5299,7 +5299,7 @@ items.map((i) => (
 	<b /> text
 	</div>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<div>
@@ -5330,7 +5330,7 @@ items.map((i) => (
 					`export function Page() {
 	<p>{/* c */}{name}</p>;
 }`,
-					{ parser: 'typescript', useTabs: true, singleQuote: true, printWidth: 100 },
+					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
 				),
 			).toBe(`export function Page() {
 	<p>
