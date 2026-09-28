@@ -9,8 +9,18 @@ import * as standalone from 'prettier/standalone';
 import { printJsxElementInternal } from './jsx.js';
 import { TSRX_DIRECTIVES, isRawScriptElement } from './parse.js';
 
-const { breakParent, group, hardline, ifBreak, indent, join, line, lineSuffix, softline } =
-	builders;
+const {
+	breakParent,
+	group,
+	hardline,
+	ifBreak,
+	indent,
+	join,
+	line,
+	lineSuffix,
+	lineSuffixBoundary,
+	softline,
+} = builders;
 const { replaceEndOfLine } = utils;
 // Prettier's text and comment helpers. `prettier/standalone` exports the same
 // `util` as `prettier` and loads in the browser too; only its types leave
@@ -772,10 +782,16 @@ function printTsrx(path, options, print) {
 			if (node.tsrxRawText !== undefined && isRawScriptElement(node)) {
 				return printRawTextKept(path, options, print);
 			}
+			if (huggedCodeBlock(node) !== -1) return printHuggedCodeBlock(path, options, print);
 			if (!node.tsrxPrintsChildren) return null;
 			return printElement(path, options, printJsxElementInternal(path, options, print));
 
 		case 'JSXExpressionContainer':
+			// `{@{ … }}` hugs its braces, as Prettier hugs a function or a `do`
+			// expression there (decision 57 of #852).
+			if (node.expression.tsrxCodeBlock && !hasOwnComments(node.expression)) {
+				return group(['{', print('expression'), lineSuffixBoundary, '}']);
+			}
 			if (node.tsrxComment) {
 				// A comment between children, laid out as `{/* … *\/}` and printed
 				// without the braces, like any comment: a line comment ends its line,
@@ -1066,6 +1082,53 @@ function printRawTextAsWritten(path, options, print) {
 		replaceEndOfLine(path.node.tsrxRawText),
 		print('closingElement'),
 	]);
+}
+
+/**
+ * The index of the `@{ … }` block that is an element's or fragment's only
+ * child, apart from whitespace with a line break (which renders nothing), or
+ * -1.
+ * @param {Node} node
+ * @returns {number}
+ */
+function huggedCodeBlock(node) {
+	let index = -1;
+	for (const [i, child] of node.children.entries()) {
+		if (child.type === 'JSXText' && /^\s*$/u.test(child.value) && child.value.includes('\n')) {
+			continue;
+		}
+		if (index !== -1 || !child.tsrxCodeBlock || hasOwnComments(child)) return -1;
+		index = i;
+	}
+	return index;
+}
+
+/**
+ * An element whose only child is a `@{ … }` block hugs it, as a function's
+ * `@{ … }` body hugs its `)`: `<div>@{`, the block's statements, `}</div>`
+ * (decision 57 of #852).
+ * @param {AstPath<Node>} path
+ * @param {ParserOptions<Node>} options
+ * @param {Print} print
+ * @returns {Doc}
+ */
+function printHuggedCodeBlock(path, options, print) {
+	const { node } = path;
+	const fragment = node.type === 'JSXFragment';
+	return printElement(path, options, [
+		print(fragment ? 'openingFragment' : 'openingElement'),
+		print(['children', huggedCodeBlock(node)]),
+		print(fragment ? 'closingFragment' : 'closingElement'),
+	]);
+}
+
+/**
+ * Whether Prettier attached comments to a node.
+ * @param {Node} node
+ * @returns {boolean}
+ */
+function hasOwnComments(node) {
+	return !!node.comments?.length;
 }
 
 /**

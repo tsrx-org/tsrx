@@ -46,6 +46,10 @@ props, `<style>`/`<script>` bodies, and comments between JSX children.
     presents itself as a `JSXElement` (`withTsrxValuesAsJsx`), so Prettier's
     JSX-specific layout applies to it. A `@{ … }` function or arrow body stays on
     its line.
+  - A `@{ … }` block that is an element's or fragment's only child hugs its tags
+    (`<div>@{`, the statements, `}</div>`), as a function's `@{ … }` body hugs its
+    `)`, and one in an expression container hugs the braces (`{@{`, `}}`), as
+    Prettier hugs a function there.
   - A comment before a tag name: after a line comment, Prettier would print
     `<// note` with the name below it, which TSX can't parse, so the comment and
     the name go on their own indented lines after `<`, as in Prettier's closing

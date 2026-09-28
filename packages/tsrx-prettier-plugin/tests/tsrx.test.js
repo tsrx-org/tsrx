@@ -611,6 +611,143 @@ const chain = a && b && (
 	});
 });
 
+// A `@{ … }` block lays out like a function's `@{ … }` body, which hugs its `)`
+// (decision 57 of #852, #905).
+describe("a `@{ … }` block as an element's only child", () => {
+	test('hugs the tags of an element or fragment, however it was written', async () => {
+		await expectFormat(
+			`export function Card({ user }) @{
+  <section class="card">
+    @{
+      const name = user.first + " " + user.last;
+      <h2>{name}</h2>
+    }
+  </section>
+}
+const y = <>@{ const a = 1; <b>{a}</b> }</>;
+export function List({ items }) @{
+  <ul>@{ @for (const i of items) { <li>{i}</li> } }</ul>
+}`,
+			`export function Card({ user }) @{
+  <section class="card">@{
+    const name = user.first + " " + user.last;
+    <h2>{name}</h2>
+  }</section>
+}
+const y = (
+  <>@{
+    const a = 1;
+    <b>{a}</b>
+  }</>
+);
+export function List({ items }) @{
+  <ul>@{
+    @for (const i of items) {
+      <li>{i}</li>
+    }
+  }</ul>
+}
+`,
+		);
+	});
+
+	test('hugs after attributes that break, and keeps comments in the block', async () => {
+		await expectFormat(
+			`export function A() @{
+  <div x="1" y="2" zzzzzzzzzzzzzzzzzzzzzz="3" wwwwwwwwwwwwwwwwwwwwwwwwwwwww="4" vvvvvvvvvvv="5">@{
+    // first
+    const a = 1;
+    <b>{a}</b> // after
+  }</div>
+}`,
+			`export function A() @{
+  <div
+    x="1"
+    y="2"
+    zzzzzzzzzzzzzzzzzzzzzz="3"
+    wwwwwwwwwwwwwwwwwwwwwwwwwwwww="4"
+    vvvvvvvvvvv="5"
+  >@{
+    // first
+    const a = 1;
+    <b>{a}</b> // after
+  }</div>
+}
+`,
+		);
+	});
+
+	test('in an expression container, hugs its braces', async () => {
+		await expectFormat(
+			`const x = <div>{@{ const a = 1; <b>{a}</b> }}</div>;
+const z = <div x={@{ <b /> }} />;`,
+			`const x = (
+  <div>
+    {@{
+      const a = 1;
+      <b>{a}</b>
+    }}
+  </div>
+);
+const z = (
+  <div
+    x={@{
+      <b />
+    }}
+  />
+);
+`,
+		);
+	});
+
+	test('with other children, text, or a comment, keeps its own lines', async () => {
+		await expectFormat(
+			`export function A() @{
+  <>
+    <div>text {@{ <b /> }}</div>
+    <div> @{ <b /> } </div>
+    <div>@{ <b /> }@{ <i /> }</div>
+    <div>
+      // note
+      @{ <b /> }
+    </div>
+  </>
+}`,
+			`export function A() @{
+  <>
+    <div>
+      text{" "}
+      {@{
+        <b />
+      }}
+    </div>
+    <div>
+      {" "}
+      @{
+        <b />
+      }{" "}
+    </div>
+    <div>
+      @{
+        <b />
+      }
+      @{
+        <i />
+      }
+    </div>
+    <div>
+      // note
+      @{
+        <b />
+      }
+    </div>
+  </>
+}
+`,
+		);
+	});
+});
+
 describe('elements', () => {
 	test('shorthand props stay shorthand', async () => {
 		await expectFormat(
