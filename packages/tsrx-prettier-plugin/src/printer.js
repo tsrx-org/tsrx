@@ -196,17 +196,36 @@ export const printer = {
 		}
 
 		if (isRawScriptElement(node)) {
-			// A JavaScript or TypeScript body is formatted with this plugin's own
-			// parser, so `prettier/standalone` needs no other plugin; any other
-			// body (JSON, an import map, a template) is kept as written.
+			// A body is formatted as Prettier's HTML formatter formats it, with the
+			// parser for its language (`scriptBodyParser`). JavaScript and
+			// TypeScript use this plugin's own parser, so `prettier/standalone`
+			// needs no other plugin for them; JSON, HTML and Markdown use
+			// Prettier's, when they're loaded. Without a parser, or when the parser
+			// isn't loaded or can't read the body, Prettier prints the element
+			// instead, and `printRawTextKept` keeps the body as written.
+			const parser = scriptBodyParser(node, printOptions);
+			if (!parser) return null;
 			return async (textToDoc, print) => {
 				if (!node.content.trim()) return printRawTextElement(path, printOptions, print, '');
-				if (!isCodeScript(node)) return printRawTextAsWritten(path, printOptions, print);
+				if (JAVASCRIPT_PARSERS.has(parser)) {
+					return printRawTextElement(
+						path,
+						printOptions,
+						print,
+						await textToDoc(node.content, { parser: 'tsrx' }),
+					);
+				}
+				// Prettier's HTML formatter reads a Markdown body without its first
+				// line break and common indentation, so its lines aren't code.
+				const value =
+					parser === 'markdown'
+						? dedentString(node.content.replace(/^[^\S\n]*\n/u, ''))
+						: node.content;
 				return printRawTextElement(
 					path,
 					printOptions,
 					print,
-					await textToDoc(node.content, { parser: 'tsrx' }),
+					await textToDoc(value, { parser, __embeddedInHtml: true }),
 				);
 			};
 		}
@@ -459,25 +478,128 @@ function printTagNameComments(path, options, print) {
 		: printOwnComments(path, options, name, { afterText: true });
 }
 
-/**
- * `type` values of a `<script>` whose body is JavaScript or TypeScript, as in
- * Prettier's HTML printer. No `type` means JavaScript.
- */
-const CODE_SCRIPT_TYPE =
-	/^(?:module|text\/babel|(?:text|application)\/(?:javascript|ecmascript|typescript|x-typescript))$/iu;
+/** The parsers for JavaScript and TypeScript, which this plugin's own parser formats. */
+const JAVASCRIPT_PARSERS = new Set([
+	'tsrx',
+	'babel',
+	'babel-flow',
+	'babel-ts',
+	'flow',
+	'typescript',
+	'acorn',
+	'espree',
+	'meriyah',
+	'oxc',
+	'oxc-ts',
+]);
 
 /**
+ * The parser Prettier's HTML formatter formats a `<script>` body with
+ * (`inferScriptParser`): none with `src`, JavaScript without `type` or `lang`,
+ * then the parser of the language `lang` names, or the one for the `type`.
+ * `undefined` keeps the body as written. A `type` or `lang` that is an
+ * expression can't be known, so its body is kept too.
  * @param {Node} node A `<script>` element.
- * @returns {boolean}
+ * @param {ParserOptions<Node>} options
+ * @returns {string | undefined}
  */
-function isCodeScript(node) {
-	const type = node.openingElement.attributes.find(
-		(/** @type {Node} */ attribute) =>
-			attribute.type === 'JSXAttribute' && attribute.name.name === 'type',
-	);
-	if (!type) return true;
-	const value = type.value?.type === 'Literal' ? type.value.value : undefined;
-	return typeof value === 'string' && (value === '' || CODE_SCRIPT_TYPE.test(value));
+function scriptBodyParser(node, options) {
+	/** @type {Map<string, string | null>} */
+	const attributes = new Map();
+	for (const attribute of node.openingElement.attributes) {
+		if (attribute.type !== 'JSXAttribute' || attribute.name.type !== 'JSXIdentifier') continue;
+		const { value } = attribute;
+		attributes.set(
+			attribute.name.name,
+			value == null
+				? ''
+				: value.type === 'Literal' && typeof value.value === 'string'
+					? value.value
+					: null,
+		);
+	}
+	if (attributes.has('src')) return undefined;
+	const type = attributes.get('type');
+	const lang = attributes.get('lang');
+	if (type === null || lang === null) return undefined;
+	if (!type && !lang) return 'babel';
+	return (lang ? languageParser(options, lang) : undefined) ?? typeParser(type);
+}
+
+/**
+ * The first parser of the language a name, alias or extension names, among the
+ * languages of the loaded plugins, as Prettier's `inferParser` finds it.
+ * @param {ParserOptions<Node>} options
+ * @param {string} name
+ * @returns {string | undefined}
+ */
+function languageParser(options, name) {
+	const languages = [.../** @type {any[]} */ (options.plugins)]
+		.reverse()
+		.flatMap((plugin) => (typeof plugin === 'object' && plugin?.languages) || []);
+	const language =
+		languages.find((language) => language.name.toLowerCase() === name) ??
+		languages.find((language) => language.aliases?.includes(name)) ??
+		languages.find((language) => language.extensions?.includes(`.${name}`));
+	return language?.parsers[0];
+}
+
+/**
+ * Prettier's HTML formatter's parser for a `<script>` `type`
+ * (`inferParserByTypeAttribute`).
+ * @param {string | undefined} type
+ * @returns {string | undefined}
+ */
+function typeParser(type) {
+	switch (type) {
+		case undefined:
+		case '':
+			return undefined;
+		case 'module':
+		case 'text/javascript':
+		case 'text/babel':
+		case 'text/jsx':
+		case 'application/javascript':
+			return 'babel';
+		case 'application/x-typescript':
+			return 'typescript';
+		case 'text/markdown':
+			return 'markdown';
+		case 'text/html':
+			return 'html';
+		case 'text/x-handlebars-template':
+			return 'glimmer';
+		default:
+			return type.endsWith('json') || type.endsWith('importmap') || type === 'speculationrules'
+				? 'json'
+				: undefined;
+	}
+}
+
+/** HTML's whitespace characters. */
+const HTML_WHITESPACE = /[\t\n\f\r ]+$/u;
+
+/**
+ * A text without the indentation all of its lines share, as Prettier's
+ * `dedentString` removes it: lines that are empty or only whitespace don't count.
+ * @param {string} text
+ * @returns {string}
+ */
+function dedentString(text) {
+	let minIndentation = Number.POSITIVE_INFINITY;
+	for (const line of text.split('\n')) {
+		if (line.length === 0) continue;
+		const indentation = /** @type {RegExpMatchArray} */ (line.match(/^[\t\n\f\r ]*/u))[0].length;
+		if (indentation === 0) return text;
+		if (indentation === line.length) continue;
+		minIndentation = Math.min(minIndentation, indentation);
+	}
+	return minIndentation === Number.POSITIVE_INFINITY
+		? text
+		: text
+				.split('\n')
+				.map((line) => line.slice(minIndentation))
+				.join('\n');
 }
 
 /**
@@ -627,15 +749,16 @@ function printTsrx(path, options, print) {
 		case 'ExpressionStatement':
 			return node.tsrxOutput ? print('expression') : null;
 
-		// With embedded formatting off, Prettier doesn't call `embed()`, and a
-		// `<style>` or `<script>` body is printed as written.
+		// With embedded formatting off, Prettier doesn't call `embed()`: a
+		// `<style>` body is printed as written, and a `<script>` body is kept as
+		// Prettier's HTML formatter keeps it, as when it has no parser.
 		case 'JSXStyleElement':
 			return node.tsrxRawText === undefined ? null : printRawTextAsWritten(path, options, print);
 
 		case 'JSXElement':
 		case 'JSXFragment':
 			if (node.tsrxRawText !== undefined && isRawScriptElement(node)) {
-				return printRawTextAsWritten(path, options, print);
+				return printRawTextKept(path, options, print);
 			}
 			if (!node.tsrxPrintsChildren) return null;
 			return printElement(path, options, printJsxElementInternal(path, options, print));
@@ -897,6 +1020,25 @@ function printRawTextElement(path, options, print, body) {
 		body ? [indent([hardline, body]), hardline] : '',
 		print('closingElement'),
 	]);
+}
+
+/**
+ * A `<script>` element whose body isn't formatted, laid out as Prettier's HTML
+ * formatter lays out such a body (`getTextValueParts`): as written, on lines
+ * of its own one level in, without its trailing whitespace, its first blank
+ * line, or the indentation its lines share. That happens when no parser fits
+ * the body, when the parser isn't loaded or can't read it, and when embedded
+ * formatting is off.
+ * @param {AstPath<Node>} path
+ * @param {ParserOptions<Node>} options
+ * @param {Print} print
+ * @returns {Doc}
+ */
+function printRawTextKept(path, options, print) {
+	const text = dedentString(
+		path.node.tsrxRawText.replace(HTML_WHITESPACE, '').replace(/^[\t\f\r ]*\n/u, ''),
+	);
+	return printRawTextElement(path, options, print, text ? replaceEndOfLine(text, hardline) : '');
 }
 
 /**

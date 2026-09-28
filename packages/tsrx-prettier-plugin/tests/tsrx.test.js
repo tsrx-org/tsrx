@@ -666,11 +666,11 @@ const A = () => (
 
 	test('<script> bodies are formatted as TypeScript, with their comments', async () => {
 		await expectFormat(
-			`const s = <><script type="text/typescript">const x:number=1 // one
+			`const s = <><script lang="ts">const x:number=1 // one
 </script></>;`,
 			`const s = (
   <>
-    <script type="text/typescript">
+    <script lang="ts">
       const x: number = 1; // one
     </script>
   </>
@@ -1289,14 +1289,17 @@ const b = <div>text</ /* note */ div>;
 	});
 });
 
+// Like Prettier's HTML formatter (#900).
 describe('<script> bodies', () => {
-	test('with embedded formatting off, <style> and <script> bodies are kept as written (#503)', async () => {
+	test('with embedded formatting off, <style> bodies are kept as written and <script> bodies on their own lines (#503)', async () => {
 		await expectFormat(
 			`function App() @{ <><style>.x {  color: red }</style><script>const  x=1</script></> }`,
 			`function App() @{
   <>
     <style>.x {  color: red }</style>
-    <script>const  x=1</script>
+    <script>
+      const  x=1
+    </script>
   </>
 }
 `,
@@ -1304,26 +1307,214 @@ describe('<script> bodies', () => {
 		);
 	});
 
-	test('only JavaScript and TypeScript bodies are formatted', async () => {
+	test('a JavaScript or TypeScript body is formatted with the options', async () => {
 		await expectFormat(
-			`const s = <>
-<script>let  y = 2</script>
+			`export function App() @{ <>
+<script>const i = 2</script>
 <script type="module">import a from "a"</script>
-<script type="application/json">[1,2]</script>
-</>;`,
-			`const s = (
+<script type="">let   a = 1</script>
+<script type="application/x-typescript">let   a: number = 1</script>
+<script lang="ts">const n:number=1<2?3:4;
+if(n<2){go("now")}</script>
+<script lang="tsx">const a=<div/></script>
+</> }`,
+			`export function App() @{
   <>
     <script>
-      let y = 2;
+      const i = 2
     </script>
     <script type="module">
-      import a from "a";
+      import a from 'a'
     </script>
-    <script type="application/json">[1,2]</script>
+    <script type="">
+      let a = 1
+    </script>
+    <script type="application/x-typescript">
+      let a: number = 1
+    </script>
+    <script lang="ts">
+      const n: number = 1 < 2 ? 3 : 4
+      if (n < 2) {
+        go('now')
+      }
+    </script>
+    <script lang="tsx">
+      const a = <div />
+    </script>
   </>
-);
+}
+`,
+			{ semi: false, singleQuote: true },
+		);
+	});
+
+	test('a JSON, import map, or speculation rules body is formatted as JSON', async () => {
+		await expectFormat(
+			`export function App() @{
+  <div>
+    <script type="application/json">[1,2]</script>
+    <script type="application/json">"on"</script>
+    <script type="importmap">{"imports":{"a":"./a.js"}}</script>
+    <script type="application/ld+json">
+      { "@context": "https://schema.org",
+        "name": 'x' }
+    </script>
+    <script type="speculationrules">{"prerender":[{"source":"list"}]}</script>
+    <script type="application/json">true</script>
+    <script lang="json">{"a":1}</script>
+  </div>
+}`,
+			`export function App() @{
+  <div>
+    <script type="application/json">
+      [1, 2]
+    </script>
+    <script type="application/json">
+      "on"
+    </script>
+    <script type="importmap">
+      { "imports": { "a": "./a.js" } }
+    </script>
+    <script type="application/ld+json">
+      { "@context": "https://schema.org", "name": "x" }
+    </script>
+    <script type="speculationrules">
+      { "prerender": [{ "source": "list" }] }
+    </script>
+    <script type="application/json">
+      true
+    </script>
+    <script lang="json">
+      { "a": 1 }
+    </script>
+  </div>
+}
 `,
 		);
+	});
+
+	test('a Markdown or HTML body is formatted as Markdown or HTML', async () => {
+		await expectFormat(
+			`export function App() @{
+  <div>
+    <script type="text/markdown">
+      #   Title
+      * one
+    </script>
+    <script type="text/html"><div><p>hi</p></div></script>
+  </div>
+}`,
+			`export function App() @{
+  <div>
+    <script type="text/markdown">
+      # Title
+
+      - one
+    </script>
+    <script type="text/html">
+      <div><p>hi</p></div>
+    </script>
+  </div>
+}
+`,
+		);
+	});
+
+	test("a body without a parser, or that its parser can't read, is kept on its own lines", async () => {
+		await expectFormat(
+			`export function App() @{
+  <div>
+    <script type="text/template">
+          <div>
+            x   y
+          </div>
+    </script>
+    <script type="text/typescript">let   a: number = 1</script>
+    <script src="x.js">let   a = 1</script>
+    <script type={kind}>[1,2]</script>
+    <script type="application/json">[1,2</script>
+    <script>const broken = ;</script>
+    <script type="text/x-foo">   </script>
+  </div>
+}`,
+			`export function App() @{
+  <div>
+    <script type="text/template">
+      <div>
+        x   y
+      </div>
+    </script>
+    <script type="text/typescript">
+      let   a: number = 1
+    </script>
+    <script src="x.js">
+      let   a = 1
+    </script>
+    <script type={kind}>
+      [1,2]
+    </script>
+    <script type="application/json">
+      [1,2
+    </script>
+    <script>
+      const broken = ;
+    </script>
+    <script type="text/x-foo"></script>
+  </div>
+}
+`,
+		);
+	});
+
+	test('a kept body loses its first blank line and shared indentation, not its relative indentation', async () => {
+		await expectFormat(
+			`export function App() @{
+  <div>
+    <script>
+
+            const a = 1;
+            const broken = ;
+              if (a) {
+                go();
+              }
+
+    </script>
+  </div>
+}`,
+			`export function App() @{
+  <div>
+    <script>
+
+      const a = 1;
+      const broken = ;
+        if (a) {
+          go();
+        }
+    </script>
+  </div>
+}
+`,
+		);
+	});
+
+	test('a kept body is indented with tabs under useTabs', async () => {
+		await expectFormat(
+			`export function App() @{\n  <script>\n    const broken = ;\n      go();\n  </script>\n}`,
+			`export function App() @{\n\t<script>\n\t\tconst broken = ;\n\t\t  go();\n\t</script>\n}\n`,
+			{ useTabs: true },
+		);
+	});
+
+	test('a kept body with CRLF line endings keeps the line endings clean', async () => {
+		const source =
+			'export function App() @{\r\n  <script>\r\n    const a = 1;\r\n    const broken = ;\r\n      go();\r\n  </script>\r\n}\r\n';
+		const lf =
+			'export function App() @{\n  <script>\n    const a = 1;\n    const broken = ;\n      go();\n  </script>\n}\n';
+		for (const endOfLine of /** @type {const} */ (['auto', 'lf', 'crlf'])) {
+			await expectFormat(source, endOfLine === 'lf' ? lf : lf.replace(/\n/g, '\r\n'), {
+				endOfLine,
+			});
+		}
 	});
 });
 
@@ -1380,6 +1571,47 @@ describe('prettier/standalone', () => {
 }
 `);
 		expect(output).toBe(await prettier.format(source, options));
+	});
+
+	test('formats JSON, HTML, and Markdown <script> bodies only with the plugins that parse them', async () => {
+		const source = `export function App() @{ <div><script type="application/json">[1,2]</script><script type="text/html"><p>hi</p></script><script type="text/markdown">*  a</script></div> }`;
+		expect(await standalone.format(source, { parser: 'tsrx', plugins: [plugin] })).toBe(
+			`export function App() @{
+  <div>
+    <script type="application/json">
+      [1,2]
+    </script>
+    <script type="text/html">
+      <p>hi</p>
+    </script>
+    <script type="text/markdown">
+      *  a
+    </script>
+  </div>
+}
+`,
+		);
+		const plugins = await Promise.all([
+			import('prettier/plugins/babel'),
+			import('prettier/plugins/estree'),
+			import('prettier/plugins/html'),
+			import('prettier/plugins/markdown'),
+		]);
+		expect(await standalone.format(source, { parser: 'tsrx', plugins: [plugin, ...plugins] }))
+			.toBe(`export function App() @{
+  <div>
+    <script type="application/json">
+      [1, 2]
+    </script>
+    <script type="text/html">
+      <p>hi</p>
+    </script>
+    <script type="text/markdown">
+      - a
+    </script>
+  </div>
+}
+`);
 	});
 });
 

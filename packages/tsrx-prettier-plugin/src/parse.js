@@ -335,9 +335,9 @@ class Adapter {
 		delete node.metadata;
 
 		if (node.type === 'JSXStyleElement' || isRawScriptElement(node)) {
-			// `embed()` prints the CSS or TypeScript body from `node.css` or
+			// `embed()` prints the CSS or `<script>` body from `node.css` or
 			// `node.content`. (A stylesheet's own positions are CSS offsets.)
-			// Without embedded formatting, the body is printed as written.
+			// A body `embed()` doesn't format is printed from this text.
 			if (node.closingElement) {
 				node.tsrxRawText = this.text.slice(node.openingElement.end, node.closingElement.start);
 			}

@@ -50,10 +50,14 @@ props, `<style>`/`<script>` bodies, and comments between JSX children.
     `<// note` with the name below it, which TSX can't parse, so the comment and
     the name go on their own indented lines after `<`, as in Prettier's closing
     tags. A block comment prints straight after `<` (`</* note */ div />`).
-  - `<style>` bodies are formatted as CSS. A `<script>` body is formatted with
-    this plugin's own parser when it holds JavaScript or TypeScript, and kept as
-    written otherwise (JSON, import maps). With
-    `embeddedLanguageFormatting: "off"`, both are kept as written.
+  - `<style>` bodies are formatted as CSS. A `<script>` body is formatted as
+    Prettier's HTML formatter formats it: its `type` or `lang` picks the parser
+    (JavaScript without either; JSON for JSON, import maps, and speculation rules;
+    Markdown; HTML), JavaScript and TypeScript bodies are formatted with this
+    plugin's own parser, and a body without a parser (`src`, an unknown type), or
+    that its parser can't read, is kept as written on its own lines, as Prettier
+    keeps it. With `embeddedLanguageFormatting: "off"`, `<style>` bodies are kept
+    as written and `<script>` bodies are kept on their own lines.
   - Comments between a directive's branches are placed by Prettier's own comment
     handling for `if` and `try`, while `@if` and `@try` present themselves as
     those statements. A comment before `@empty` is handled like one before `else`.
@@ -73,7 +77,36 @@ props, `<style>`/`<script>` bodies, and comments between JSX children.
   file. A range that Prettier grows to several children of an element keeps its
   text.
 
-The plugin needs no other Prettier plugin, including in `prettier/standalone`.
+The plugin needs no other Prettier plugin, including in `prettier/standalone`,
+except to format JSON, HTML, or Markdown `<script>` bodies there.
+
+## In the browser
+
+`prettier/standalone` loads no parser by itself, and this plugin brings only its
+own and the CSS one for `<style>`. JavaScript and TypeScript `<script>` bodies are
+formatted with the plugin's parser, but a JSON, HTML, or Markdown body is kept as
+written unless you pass the Prettier plugins that parse and print it: Prettier
+finds a body's parser and printer among all the plugins in `plugins`.
+
+```js
+import * as prettier from 'prettier/standalone';
+import tsrx from 'tsrx-prettier-plugin';
+// JSON, import maps, and speculation rules: babel parses JSON, estree prints it
+import * as babel from 'prettier/plugins/babel';
+import * as estree from 'prettier/plugins/estree';
+// <script type="text/html">
+import * as html from 'prettier/plugins/html';
+// <script type="text/markdown">
+import * as markdown from 'prettier/plugins/markdown';
+
+const formatted = await prettier.format(code, {
+  parser: 'tsrx',
+  plugins: [tsrx, babel, estree, html, markdown],
+});
+```
+
+In Node, `prettier` loads its own plugins, so these bodies are formatted without
+passing them.
 
 It supports Prettier 3.9 (`~3.9.9`): range formatting relies on how Prettier 3.9
 passes a range's options from the file's parse to the range's. When upgrading
