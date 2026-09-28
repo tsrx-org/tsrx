@@ -1,3 +1,4 @@
+import { TS_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedCodeBlockChildrenTests,
@@ -1275,7 +1276,7 @@ describe('@tsrx/react basic', () => {
 				}`,
 				'App.tsrx',
 			),
-		).toThrow(/Unexpected token/);
+		).toThrow(expect.objectContaining({ code: TS_ERRORS.UNEXPECTED_TOKEN.code }));
 	});
 
 	it('transforms try with use() inside for Suspense triggering', () => {

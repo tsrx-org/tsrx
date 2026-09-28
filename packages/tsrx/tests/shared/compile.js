@@ -1,10 +1,7 @@
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { DIAGNOSTIC_CODES } from '../../src/diagnostics.js';
-import {
-	TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
-	TSRX_JSX_SPREAD_CHILD_ERROR,
-} from '../../src/analyze/validation.js';
+import { DIAGNOSTIC_CODES, TS_ERRORS, TSRX_ERRORS } from '../../src/diagnostics.js';
+import { error_with } from './errors.js';
 import { runSharedScopedStyleTests } from './scoped-styles.js';
 import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformance.js';
 
@@ -74,9 +71,6 @@ function virtual_semantic_diagnostics(code) {
 	const program = ts.createProgram([file_name], options, host);
 	return program.getSemanticDiagnostics(source_file);
 }
-
-const TSRX_TEMPLATE_RETURN_ERROR =
-	'Return statements are not allowed inside TSRX templates. Move the return before the TSRX return value, or use conditional rendering instead.';
 
 /**
  * Shared compile/editor diagnostics. These do not assert source-map structure;
@@ -275,12 +269,10 @@ export function App() @{
 				}),
 			).toEqual([]);
 			expect(
-				result.errors
-					.map(function (error) {
-						return error.message;
-					})
-					.join('\n'),
-			).not.toContain('Expected identifier');
+				result.errors.map(function (error) {
+					return error.code;
+				}),
+			).not.toContain(DIAGNOSTIC_CODES.CSS_SYNTAX);
 			expect(result.mappings.length).toBeGreaterThan(1);
 
 			const whole_file = result.mappings.find(function (mapping) {
@@ -371,8 +363,8 @@ export function App() @{
 				{ loose: true },
 			);
 
-			expect(result.errors.map((error) => error.message)).toEqual([
-				'Variable declaration list cannot be empty.',
+			expect(result.errors.map((error) => error.code)).toEqual([
+				TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY.code,
 			]);
 			expect(result.code).toContain('() =>');
 			expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
@@ -654,7 +646,9 @@ export function App() @{
 			]) {
 				const result = compile_to_volar_mappings(source, 'App.tsrx');
 
-				expect(result.errors.map((error) => error.message)).toContain(TSRX_TEMPLATE_RETURN_ERROR);
+				expect(result.errors.map((error) => error.code)).toContain(
+					TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code,
+				);
 			}
 		});
 
@@ -693,7 +687,9 @@ export function App() @{
 			]) {
 				const result = compile_to_volar_mappings(source, 'App.tsrx');
 
-				expect(result.errors.map((error) => error.message)).toContain(TSRX_TEMPLATE_RETURN_ERROR);
+				expect(result.errors.map((error) => error.code)).toContain(
+					TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code,
+				);
 			}
 		});
 
@@ -1581,7 +1577,11 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 		});
 
 		it('rejects direct loop exits inside for...of template loops', () => {
-			for (const statement of ['continue', 'break', 'return null']) {
+			for (const [statement, error] of [
+				['continue', TSRX_ERRORS.FOR_CONTINUE_STATEMENT],
+				['break', TSRX_ERRORS.FOR_BREAK_STATEMENT],
+				['return null', TSRX_ERRORS.FOR_RETURN_STATEMENT],
+			]) {
 				expect(() =>
 					compile(
 						`export function App({ items }: { items: string[] }) @{
@@ -1592,9 +1592,7 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 						}`,
 						'App.tsrx',
 					),
-				).toThrow(
-					/(Continue|Break|Return) statements are not allowed inside TSRX template for\.\.\.of loops/,
-				);
+				).toThrow(error_with(error));
 			}
 		});
 
@@ -1609,14 +1607,14 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 					}`,
 					'App.tsrx',
 				),
-			).toThrow(/Return statements are not allowed inside TSRX template @if blocks/);
+			).toThrow(error_with(TSRX_ERRORS.IF_RETURN_STATEMENT));
 		});
 
 		it('rejects nested exits inside @if template blocks', () => {
 			for (const [statement, expected] of [
-				['return null', /Return statements are not allowed inside TSRX template @if blocks/],
-				['break', /Break statements are not allowed inside TSRX template @if blocks/],
-				['continue', /Continue statements are not allowed inside TSRX template @if blocks/],
+				['return null', TSRX_ERRORS.IF_RETURN_STATEMENT],
+				['break', TSRX_ERRORS.IF_BREAK_STATEMENT],
+				['continue', TSRX_ERRORS.IF_CONTINUE_STATEMENT],
 			]) {
 				expect(() =>
 					compile(
@@ -1630,7 +1628,7 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 						}`,
 						'App.tsrx',
 					),
-				).toThrow(expected);
+				).toThrow(error_with(expected));
 			}
 		});
 
@@ -2651,8 +2649,7 @@ export function App() @{
 			it(`throws for ${label}`, () => {
 				expect(() => compile(source, 'App.tsrx')).toThrow(
 					expect.objectContaining({
-						message: TSRX_JSX_SPREAD_CHILD_ERROR,
-						code: DIAGNOSTIC_CODES.JSX_SPREAD_CHILD,
+						code: TSRX_ERRORS.JSX_SPREAD_CHILD.code,
 						pos: start,
 						end,
 					}),
@@ -2662,8 +2659,8 @@ export function App() @{
 			it(`records ${label} in collect mode`, () => {
 				const { code, errors } = compile(source, 'App.tsrx', { collect: true });
 
-				expect(errors.map((error) => [error.code, error.message, error.pos, error.end])).toEqual([
-					[DIAGNOSTIC_CODES.JSX_SPREAD_CHILD, TSRX_JSX_SPREAD_CHILD_ERROR, start, end],
+				expect(errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+					[TSRX_ERRORS.JSX_SPREAD_CHILD.code, start, end],
 				]);
 				expect(virtual_parse_diagnostics(code), code).toEqual([]);
 			});
@@ -2700,8 +2697,7 @@ export function App() @{
 			it(`throws for ${label}`, () => {
 				expect(() => compile(source, 'App.tsrx')).toThrow(
 					expect.objectContaining({
-						message: TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
-						code: DIAGNOSTIC_CODES.DYNAMIC_TAG_EXPRESSION,
+						code: TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION.code,
 						pos: start,
 						end,
 					}),
@@ -2711,8 +2707,8 @@ export function App() @{
 			it(`records ${label} in collect mode`, () => {
 				const { code, errors } = compile(source, 'App.tsrx', { collect: true });
 
-				expect(errors.map((error) => [error.code, error.message, error.pos, error.end])).toEqual([
-					[DIAGNOSTIC_CODES.DYNAMIC_TAG_EXPRESSION, TSRX_DYNAMIC_TAG_EXPRESSION_ERROR, start, end],
+				expect(errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+					[TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION.code, start, end],
 				]);
 				expect(virtual_parse_diagnostics(code), code).toEqual([]);
 			});
@@ -2899,10 +2895,7 @@ export function App() @{
 				{ collect: true },
 			);
 
-			expect(result.errors.map((error) => error.message)).toContain(
-				"Unclosed tag '<div>'. Expected '</div>' before end of template.",
-			);
-			expect(diagnostic_codes(result)).toContain(DIAGNOSTIC_CODES.UNCLOSED_TAG);
+			expect(diagnostic_codes(result)).toContain(TSRX_ERRORS.UNCLOSED_TAG.code);
 		});
 
 		it('keeps loose unclosed tag recovery silent', () => {
@@ -3121,7 +3114,7 @@ break"}</p>
 					}`,
 					'App.tsrx',
 				),
-			).toThrow(/Unterminated string constant/);
+			).toThrow(error_with('TS1002'));
 		});
 
 		it('keeps compact string comparisons in expression containers parseable', () => {
@@ -3321,7 +3314,7 @@ export function App() @{
 					'App.tsrx',
 					{ collect: true },
 				),
-			).toThrow(/Unexpected closing tag/);
+			).toThrow(error_with(TSRX_ERRORS.UNEXPECTED_CLOSING_TAG));
 		});
 	});
 
@@ -3366,7 +3359,7 @@ export function App() @{
 					}`,
 					'App.tsrx',
 				),
-			).toThrow(/Return statements are not allowed inside TSRX template @if blocks/);
+			).toThrow(error_with(TSRX_ERRORS.IF_RETURN_STATEMENT));
 		});
 	});
 
@@ -4937,7 +4930,7 @@ function runSharedPlatformTests({ compile, name }) {
 
 		it('requires configuration when a recognized flag is used', () => {
 			expect(() => compile('if (import.meta.env.platform.web) { consume(); }', 'App.tsrx')).toThrow(
-				/requires a configured TSRX platform/,
+				error_with(TSRX_ERRORS.PLATFORM_REQUIRED),
 			);
 
 			const result = compile('if (import.meta.env.platform.web) { consume(); }', 'App.tsrx', {

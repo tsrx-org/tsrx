@@ -22,26 +22,31 @@ import(workerData.parser).then(({ parseModule }) => {
 			const ast = parseModule(source, 'App.tsrx', parse_options);
 			const errors = parse_options?.collect || parse_options?.loose ? parse_options.errors : undefined;
 			const outcome = workerData.details
-				? { ok: true, errors: errors?.map((e) => ({ message: e.message, pos: e.pos, end: e.end })), ast }
-				: { ok: true, errors: errors?.map((e) => e.message) };
+				? { ok: true, errors: errors?.map((e) => ({ code: e.code, pos: e.pos, end: e.end })), ast }
+				: { ok: true, errors: errors?.map((e) => e.code) };
 			parentPort.postMessage({ outcome });
 		} catch (error) {
-			parentPort.postMessage({ outcome: { ok: false, message: String(error?.message), pos: error?.pos } });
+			parentPort.postMessage({
+				outcome: { ok: false, code: error?.code, pos: error?.pos, message: String(error?.message) },
+			});
 		}
 	}
 });
 `;
 
 /**
- * @typedef {{ ok: true, errors: string[] | undefined } | { ok: false, message: string, pos: number | undefined }} ParseOutcome
- * @typedef {{ message: string, pos: number | undefined, end: number | undefined }} CollectedError
- * @typedef {{ ok: true, errors: CollectedError[] | undefined, ast: import('estree').Program } | { ok: false, message: string, pos: number | undefined }} DetailedParseOutcome
+ * A parse that threw: the error's code and position, and its message, to show
+ * where a test fails.
+ * @typedef {{ ok: false, code: string | undefined, pos: number | undefined, message: string }} ThrownOutcome
+ * @typedef {{ ok: true, errors: Array<string | undefined> | undefined } | ThrownOutcome} ParseOutcome
+ * @typedef {{ code: string | undefined, pos: number | undefined, end: number | undefined }} CollectedError
+ * @typedef {{ ok: true, errors: CollectedError[] | undefined, ast: import('estree').Program } | ThrownOutcome} DetailedParseOutcome
  */
 
 /**
  * Parse each input with `parseModule` in a worker thread, failing as soon as
  * one parse runs longer than `timeout` instead of stalling the test run.
- * Collected `errors` are returned by message; a thrown error by its message and
+ * Collected `errors` are returned by code; a thrown error by its code and
  * position.
  *
  * @param {Array<{ source: string, options?: ParseOptions }>} inputs
@@ -54,7 +59,7 @@ export function parse_in_worker(inputs, settings) {
 
 /**
  * Like `parse_in_worker`, but a parse that returns also gives its AST, and each
- * collected error its position.
+ * collected error its range.
  *
  * @param {Array<{ source: string, options?: ParseOptions }>} inputs
  * @param {{ timeout?: number }} [settings]

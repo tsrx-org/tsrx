@@ -1,7 +1,9 @@
 /** @import { ParseOptions } from '../../types/index' */
+/** @import { ErrorKind } from '../shared/errors.js' */
 
 import { describe, expect, it } from 'vitest';
-import { acorn } from '../../src/index.js';
+import { TS_ERRORS, TSRX_ERRORS, UPSTREAM_ERRORS } from '../../src/diagnostics.js';
+import { code_of, line_column, thrown } from '../shared/errors.js';
 import { parse_in_worker } from '../shared/parse-in-worker.js';
 
 /**
@@ -22,16 +24,6 @@ const modes = [undefined, { collect: true }, { loose: true }];
  */
 
 /**
- * @param {string} source
- * @param {string} message
- * @param {number} pos
- */
-function thrown(source, message, pos) {
-	const { line, column } = acorn.getLineInfo(source, pos);
-	return { ok: false, message: `${message} (${line}:${column})`, pos };
-}
-
-/**
  * Parse each case in every mode and expect `'}' expected.` where the `}` is
  * missing.
  * @param {MissingBrace[]} cases
@@ -43,21 +35,24 @@ async function expect_brace_expected(cases) {
 		cases.flatMap(({ source, at }) => {
 			const pos = at === undefined ? source.length : source.indexOf(at);
 			expect(pos, `${JSON.stringify(at)} in ${JSON.stringify(source)}`).toBeGreaterThan(-1);
-			return modes.map(() => thrown(source, "'}' expected.", pos));
+			return modes.map(() => thrown(TS_ERRORS.TOKEN_EXPECTED, pos));
 		}),
 	);
 }
 
 /**
- * Parse each source in every mode and expect it to throw `message`.
- * @param {Array<[source: string, message: string]>} cases
+ * Parse each source in every mode and expect it to throw `error` at `at`,
+ * `line:column`.
+ * @param {Array<[source: string, error: ErrorKind, at: string]>} cases
  */
-async function expect_messages(cases) {
+async function expect_errors(cases) {
 	const inputs = cases.flatMap(([source]) => modes.map((options) => ({ source, options })));
 	const outcomes = await parse_in_worker(inputs);
-	expect(outcomes.map((outcome) => (outcome.ok ? 'parses' : outcome.message))).toEqual(
-		cases.flatMap(([, message]) => modes.map(() => message)),
-	);
+	expect(
+		outcomes.map((outcome, index) =>
+			outcome.ok ? 'parses' : [outcome.code, line_column(inputs[index].source, outcome.pos)],
+		),
+	).toEqual(cases.flatMap(([, error, at]) => modes.map(() => [code_of(error), at])));
 }
 
 /** @param {string[]} sources */
@@ -243,8 +238,6 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 		const style = 'export function App() @{\n  <>\n    <style>\n      .a { color: red; }\n';
 		const section = 'export function App() @{\n  @if (ok) {\n    <section>\n';
 		const div = '{ <div>';
-		const unclosed = (/** @type {string} */ tag) =>
-			`Unclosed tag '<${tag}>'. Expected '</${tag}>' before end of template.`;
 		const inputs = [style, section, div].flatMap((source) =>
 			modes.map((options) => ({ source, options })),
 		);
@@ -252,97 +245,110 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 		const outcomes = await parse_in_worker(inputs);
 
 		expect(outcomes).toEqual([
-			thrown(style, unclosed('style'), style.indexOf('\n      .a')),
-			thrown(style, "'}' expected.", style.indexOf(': red')),
-			thrown(style, "'}' expected.", style.length),
-			thrown(section, unclosed('section'), section.length),
-			thrown(section, "'}' expected.", section.length),
-			thrown(section, "'}' expected.", section.length),
-			thrown(div, unclosed('div'), div.length),
-			thrown(div, "'}' expected.", div.length),
-			thrown(div, "'}' expected.", div.length),
+			thrown(TSRX_ERRORS.UNCLOSED_TAG, style.indexOf('\n      .a')),
+			thrown(TS_ERRORS.TOKEN_EXPECTED, style.indexOf(': red')),
+			thrown(TS_ERRORS.TOKEN_EXPECTED, style.length),
+			thrown(TSRX_ERRORS.UNCLOSED_TAG, section.length),
+			thrown(TS_ERRORS.TOKEN_EXPECTED, section.length),
+			thrown(TS_ERRORS.TOKEN_EXPECTED, section.length),
+			thrown(TSRX_ERRORS.UNCLOSED_TAG, div.length),
+			thrown(TS_ERRORS.TOKEN_EXPECTED, div.length),
+			thrown(TS_ERRORS.TOKEN_EXPECTED, div.length),
 		]);
 	});
 
 	it('keeps the other syntax errors', async () => {
 		// Where TypeScript reports something else first, such as a missing `)` or
-		// expression, or a `;` or `,` at the next token, the message stays.
-		/** @type {Array<[source: string, message: string]>} */
+		// expression, or a `;` or `,` at the next token, that error stays.
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
 		const cases = [
-			['{ a(', 'Unexpected token (1:4)'],
-			['{ a[', 'Unexpected token (1:4)'],
-			['{ a +', 'Unexpected token (1:5)'],
-			['{ a.', 'Unexpected token (1:4)'],
-			['{ if (x)', 'Unexpected token (1:8)'],
-			['{ while (x)', 'Unexpected token (1:11)'],
-			['{ a:', 'Unexpected token (1:4)'],
-			['{ do', 'Unexpected token (1:4)'],
-			['{ const a =', 'Unexpected token (1:11)'],
-			['x = { a:', 'Unexpected token (1:8)'],
-			['x = { m(', 'Unexpected token (1:8)'],
-			['x = { [a', 'Unexpected token (1:8)'],
-			['x = { a: f(1', 'Unexpected token (1:12)'],
-			['x = { a: [1', 'Unexpected token (1:11)'],
-			['x = <div>{', 'Unexpected token (1:10)'],
-			['x = <div id={', 'Unexpected token (1:13)'],
-			['x = `${', 'Unexpected token (1:7)'],
-			['x = [1, 2', 'Unexpected token (1:9)'],
-			['switch (x) { case 1', 'Unexpected token (1:19)'],
-			['switch (x) { a }', 'Unexpected token (1:13)'],
-			['class A { @dec', 'Unexpected token (1:14)'],
-			['class A { ) }', 'Unexpected token (1:10)'],
-			['interface I { ) }', 'Unexpected token (1:14)'],
-			['try {} catch (e)', 'Unexpected token (1:16)'],
-			['export', 'Unexpected token (1:6)'],
-			['}', 'Unexpected token (1:0)'],
-			['x = { a 1 }', 'Unexpected token (1:8)'],
-			['x = [{ a: 1 ];', 'Unexpected token (1:12)'],
-			['foo(() => {\n  a();\n);\n', 'Unexpected token (3:0)'],
-			['const o = {\n  a: 1\nconst b = 2;\n', 'Unexpected token (3:0)'],
-			['class A {\n  m() {\n    a();\n\n  n() {}\n}\n', 'Unexpected token (5:6)'],
-			['enum E { A B }', 'Unexpected token (1:11)'],
-			['import { a b } from "x";', 'Unexpected token (1:11)'],
-			["import a from './a.json' with { type: 'json' x };", 'Unexpected token (1:45)'],
-			['type M = { [K in T]: X; Y };', 'Unexpected token (1:24)'],
-			['type M = { [K in T]: X Y };', 'Unexpected token (1:23)'],
-			["x = 'abc", 'Unterminated string constant (1:4)'],
+			['{ a(', TS_ERRORS.UNEXPECTED_TOKEN, '1:4'],
+			['{ a[', TS_ERRORS.UNEXPECTED_TOKEN, '1:4'],
+			['{ a +', TS_ERRORS.UNEXPECTED_TOKEN, '1:5'],
+			['{ a.', TS_ERRORS.UNEXPECTED_TOKEN, '1:4'],
+			['{ if (x)', TS_ERRORS.UNEXPECTED_TOKEN, '1:8'],
+			['{ while (x)', TS_ERRORS.UNEXPECTED_TOKEN, '1:11'],
+			['{ a:', TS_ERRORS.UNEXPECTED_TOKEN, '1:4'],
+			['{ do', TS_ERRORS.UNEXPECTED_TOKEN, '1:4'],
+			['{ const a =', TS_ERRORS.UNEXPECTED_TOKEN, '1:11'],
+			['x = { a:', TS_ERRORS.UNEXPECTED_TOKEN, '1:8'],
+			['x = { m(', TS_ERRORS.UNEXPECTED_TOKEN, '1:8'],
+			['x = { [a', TS_ERRORS.UNEXPECTED_TOKEN, '1:8'],
+			['x = { a: f(1', TS_ERRORS.UNEXPECTED_TOKEN, '1:12'],
+			['x = { a: [1', TS_ERRORS.UNEXPECTED_TOKEN, '1:11'],
+			['x = <div>{', TS_ERRORS.UNEXPECTED_TOKEN, '1:10'],
+			['x = <div id={', TS_ERRORS.UNEXPECTED_TOKEN, '1:13'],
+			['x = `${', TS_ERRORS.UNEXPECTED_TOKEN, '1:7'],
+			['x = [1, 2', TS_ERRORS.UNEXPECTED_TOKEN, '1:9'],
+			['switch (x) { case 1', TS_ERRORS.UNEXPECTED_TOKEN, '1:19'],
+			['switch (x) { a }', TS_ERRORS.UNEXPECTED_TOKEN, '1:13'],
+			['class A { @dec', TS_ERRORS.UNEXPECTED_TOKEN, '1:14'],
+			['class A { ) }', TS_ERRORS.UNEXPECTED_TOKEN, '1:10'],
+			['interface I { ) }', TS_ERRORS.UNEXPECTED_TOKEN, '1:14'],
+			['try {} catch (e)', TS_ERRORS.UNEXPECTED_TOKEN, '1:16'],
+			['export', TS_ERRORS.UNEXPECTED_TOKEN, '1:6'],
+			['}', TS_ERRORS.UNEXPECTED_TOKEN, '1:0'],
+			['x = { a 1 }', TS_ERRORS.UNEXPECTED_TOKEN, '1:8'],
+			['x = [{ a: 1 ];', TS_ERRORS.UNEXPECTED_TOKEN, '1:12'],
+			['foo(() => {\n  a();\n);\n', TS_ERRORS.UNEXPECTED_TOKEN, '3:0'],
+			['const o = {\n  a: 1\nconst b = 2;\n', TS_ERRORS.UNEXPECTED_TOKEN, '3:0'],
+			['class A {\n  m() {\n    a();\n\n  n() {}\n}\n', TS_ERRORS.UNEXPECTED_TOKEN, '5:6'],
+			['enum E { A B }', TS_ERRORS.UNEXPECTED_TOKEN, '1:11'],
+			['import { a b } from "x";', TS_ERRORS.UNEXPECTED_TOKEN, '1:11'],
+			["import a from './a.json' with { type: 'json' x };", TS_ERRORS.UNEXPECTED_TOKEN, '1:45'],
+			['type M = { [K in T]: X; Y };', TS_ERRORS.UNEXPECTED_TOKEN, '1:24'],
+			['type M = { [K in T]: X Y };', TS_ERRORS.UNEXPECTED_TOKEN, '1:23'],
+			["x = 'abc", 'TS1002', '1:4'],
 			[
 				'export function App() @{\n  @try {\n    <b />\n  } @catch (e) {\n    <p />\n  } finally {\n  }\n}',
-				'Unexpected token (6:4)',
+				TS_ERRORS.UNEXPECTED_TOKEN,
+				'6:4',
 			],
 		];
-		await expect_messages(cases);
+		await expect_errors(cases);
 	});
 
 	it('keeps the error where the parse fails before it reaches the missing `}`', async () => {
 		// TypeScript reports `'}' expected` for these, but TSRX fails first for a
 		// cause of its own: `get` read as a getter's keyword, and an import
 		// attribute read after a trailing comma.
-		/** @type {Array<[source: string, message: string]>} */
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
 		const cases = [
-			['x = { get', 'Unexpected token (1:9)'],
-			["import a from './a.json' with { type: 'json',", 'Unexpected token (1:45)'],
+			['x = { get', TS_ERRORS.UNEXPECTED_TOKEN, '1:9'],
+			["import a from './a.json' with { type: 'json',", TS_ERRORS.UNEXPECTED_TOKEN, '1:45'],
 		];
-		await expect_messages(cases);
+		await expect_errors(cases);
 	});
 
 	it('reports it after a mistake that TypeScript reports only from its checker, when collecting', async () => {
 		// An `export` inside a block (#587), and a `const` or `let` with nothing
 		// after it (#588). A strict parse throws the mistake itself.
-		/** @type {Array<[source: string, message: string]>} */
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
 		const cases = [
-			['function f() {\n  a();\nexport function g() {}\n', 'Modifiers cannot appear here. (3:0)'],
-			['{ const', 'Unexpected token (1:7)'],
-			['{ let', "The keyword 'let' is reserved (1:2)"],
+			[
+				'function f() {\n  a();\nexport function g() {}\n',
+				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
+				'3:0',
+			],
+			['{ const', TS_ERRORS.UNEXPECTED_TOKEN, '1:7'],
+			['{ let', UPSTREAM_ERRORS.LET_RESERVED, '1:2'],
 		];
 		const outcomes = await parse_in_worker(
 			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
 		);
 
-		expect(outcomes.map((outcome) => (outcome.ok ? 'parses' : outcome.message))).toEqual(
-			cases.flatMap(([source, message]) =>
+		expect(
+			outcomes.map((outcome, index) =>
+				outcome.ok
+					? 'parses'
+					: [outcome.code, line_column(cases[Math.floor(index / modes.length)][0], outcome.pos)],
+			),
+		).toEqual(
+			cases.flatMap(([source, error, at]) =>
 				modes.map((options) =>
-					options ? thrown(source, "'}' expected.", source.length).message : message,
+					options
+						? [TS_ERRORS.TOKEN_EXPECTED.code, line_column(source, source.length)]
+						: [code_of(error), at],
 				),
 			),
 		);

@@ -1,3 +1,4 @@
+import { TS_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import { createCompileErrorDiagnosticPlugin } from '../src/compileErrorDiagnosticPlugin.js';
 import { create_service_harness } from './setup.js';
@@ -115,7 +116,7 @@ describe('compile error diagnostic plugin — a missing closing brace', () => {
 		expect(diagnostics).toHaveLength(1);
 		const [diagnostic] = diagnostics;
 		expect(diagnostic.code).toBe('tsrx-compile-error');
-		expect(diagnostic.message).toBe("'}' expected. (4:0)");
+		expect(diagnostic.message).toBe(`${TS_ERRORS.TOKEN_EXPECTED('}').message} (4:0)`);
 		const end = document.positionAt(source.length);
 		expect(diagnostic.range).toEqual({ start: end, end });
 	});
@@ -129,7 +130,7 @@ describe('compile error diagnostic plugin — a missing closing brace', () => {
 		);
 
 		expect(diagnostics).toHaveLength(1);
-		expect(diagnostics[0].message).toBe("'}' expected. (2:10)");
+		expect(diagnostics[0].message).toBe(`${TS_ERRORS.TOKEN_EXPECTED('}').message} (2:10)`);
 		expect(document.getText(diagnostics[0].range)).toBe('name');
 	});
 });

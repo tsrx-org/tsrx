@@ -1,3 +1,4 @@
+import { TS_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedClassFunctionComponentTests,
@@ -888,7 +889,7 @@ describe('@tsrx/vue basic', () => {
 				}`,
 				'App.tsrx',
 			),
-		).toThrow(/Unexpected token/);
+		).toThrow(expect.objectContaining({ code: TS_ERRORS.UNEXPECTED_TOKEN.code }));
 	});
 
 	it('rejects await in component bodies', () => {

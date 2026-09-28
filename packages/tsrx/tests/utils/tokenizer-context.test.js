@@ -1,8 +1,10 @@
 /** @import * as AST from 'estree' */
 /** @import { ParseOptions } from '../../types/index' */
+/** @import { ErrorKind } from '../shared/errors.js' */
 
 import { describe, expect, it } from 'vitest';
-import { acorn } from '../../src/index.js';
+import { TS_ERRORS, TSRX_ERRORS } from '../../src/diagnostics.js';
+import { thrown } from '../shared/errors.js';
 import { parse_in_worker, parse_in_worker_with_ast } from '../shared/parse-in-worker.js';
 
 /**
@@ -28,7 +30,7 @@ async function parse_all(sources) {
 	const outcomes = await parse_in_worker_with_ast(inputs);
 	expect(
 		outcomes.map((outcome) =>
-			outcome.ok ? (outcome.errors?.map((error) => error.message) ?? []) : outcome.message,
+			outcome.ok ? (outcome.errors?.map((error) => error.code) ?? []) : outcome.message,
 		),
 	).toEqual(inputs.map(() => []));
 	return sources.map((_, index) => {
@@ -39,19 +41,18 @@ async function parse_all(sources) {
 }
 
 /**
- * Parse each source in every mode and expect it to throw `message` at `at`:
- * an offset, or the first occurrence of that text in the source.
- * @param {Array<[source: string, message: string, at: string | number]>} cases
+ * Parse each source in every mode and expect it to throw `error` at `at`: an
+ * offset, or the first occurrence of that text in the source.
+ * @param {Array<[source: string, error: ErrorKind, at: string | number]>} cases
  */
 async function expect_errors(cases) {
 	const inputs = cases.flatMap(([source]) => modes.map((options) => ({ source, options })));
 	const outcomes = await parse_in_worker(inputs);
 	expect(outcomes).toEqual(
-		cases.flatMap(([source, message, at]) => {
+		cases.flatMap(([source, error, at]) => {
 			const pos = typeof at === 'number' ? at : source.indexOf(at);
 			expect(pos, `${JSON.stringify(at)} in ${JSON.stringify(source)}`).toBeGreaterThan(-1);
-			const { line, column } = acorn.getLineInfo(source, pos);
-			return modes.map(() => ({ ok: false, message: `${message} (${line}:${column})`, pos }));
+			return modes.map(() => thrown(error, pos));
 		}),
 	);
 }
@@ -193,27 +194,27 @@ describe('a comment after a directive keyword (#477)', () => {
 		await expect_errors([
 			[
 				'function A() @{\n  @if (x) {\n    <b />\n  } else /* c */ {\n    <i />\n  }\n}',
-				'Expected `@else` after `@if` block.',
+				TSRX_ERRORS.DIRECTIVE_BRANCH_EXPECTED,
 				'else',
 			],
 			[
 				'function A() @{\n  @if (x) {\n    <b />\n  } else // c\n  if (y) {\n    <i />\n  }\n}',
-				'Expected `@else` after `@if` block.',
+				TSRX_ERRORS.DIRECTIVE_BRANCH_EXPECTED,
 				'else',
 			],
 			[
 				'function A() @{\n  @for (const x of xs) {\n    <b />\n  } empty /* c */ {\n    <i />\n  }\n}',
-				'Expected `@empty` after `@for` block.',
+				TSRX_ERRORS.DIRECTIVE_BRANCH_EXPECTED,
 				'empty',
 			],
 			[
 				'function A() @{\n  @try {\n    <b />\n  } pending /* c */ {\n    <i />\n  }\n}',
-				'Expected `@pending` after `@try` block.',
+				TSRX_ERRORS.DIRECTIVE_BRANCH_EXPECTED,
 				'pending',
 			],
 			[
 				'function A() @{\n  @try {\n    <b />\n  } catch /* c */ (e) {\n    <i />\n  }\n}',
-				'Expected `@catch` after `@try` block.',
+				TSRX_ERRORS.DIRECTIVE_BRANCH_EXPECTED,
 				'catch',
 			],
 		]);
@@ -221,7 +222,7 @@ describe('a comment after a directive keyword (#477)', () => {
 
 	it('still needs the `@` and the keyword to touch', async () => {
 		await expect_errors([
-			['function A() @{\n  @ /* c */ if (x) {\n    <b />\n  }\n}', "Unexpected keyword 'if'", 'if'],
+			['function A() @{\n  @ /* c */ if (x) {\n    <b />\n  }\n}', 'TS1359', 'if'],
 		]);
 	});
 });
@@ -316,10 +317,10 @@ describe('`</` after an operand (#586)', () => {
 	it('starts a closing tag, as in TSX, so the expression ends there', async () => {
 		// TypeScript reports `',' expected` at the `</`.
 		await expect_errors([
-			['const b = a </re/.test(c);', 'Unexpected token', '</'],
+			['const b = a </re/.test(c);', TS_ERRORS.UNEXPECTED_TOKEN, '</'],
 			[
 				'function App() { return <div>@{\n  const x = 3</div>/\n  <>{x}</>\n}</div>; }',
-				'Unexpected token',
+				TS_ERRORS.UNEXPECTED_TOKEN,
 				'</div>/',
 			],
 		]);
@@ -381,12 +382,12 @@ describe('what follows an element (#426)', () => {
 
 	it('rejects a call, member access, index, non-null assertion, or tagged template after it', async () => {
 		// TypeScript reports `',' expected` at the same token.
-		/** @type {Array<[source: string, message: string, at: number]>} */
+		/** @type {Array<[source: string, error: ErrorKind, at: number]>} */
 		const cases = [];
 		for (const value of ['<b />', '<b>x</b>', '<>x</>', '@{ <b /> }', '@if (x) { <b /> }']) {
 			for (const next of ['.foo', '?.foo', '!', '(x)', '[0]', '`t`']) {
 				const before = `const e = ${value}`;
-				cases.push([`${before}${next};`, 'Unexpected token', before.length]);
+				cases.push([`${before}${next};`, TS_ERRORS.UNEXPECTED_TOKEN, before.length]);
 			}
 		}
 		await expect_errors(cases);
@@ -476,10 +477,10 @@ describe('type arguments where a tag could start (#545, #578)', () => {
 
 	it('still reports a tag, or type arguments on a second line, after the superclass', async () => {
 		await expect_errors([
-			['class A extends B\n</div>', 'Unexpected token', '</'],
-			['class A extends B<T>\n<U> {}', 'Unexpected token', '<U>'],
+			['class A extends B\n</div>', TS_ERRORS.UNEXPECTED_TOKEN, '</'],
+			['class A extends B<T>\n<U> {}', TS_ERRORS.UNEXPECTED_TOKEN, '<U>'],
 			// `<div>` reads as type arguments, as it would on the superclass's line.
-			['class A extends B\n<div>x</div> {}', 'Unexpected token', 'x</'],
+			['class A extends B\n<div>x</div> {}', TS_ERRORS.UNEXPECTED_TOKEN, 'x</'],
 		]);
 	});
 
@@ -509,7 +510,7 @@ describe('type arguments where a tag could start (#545, #578)', () => {
 				return text(cases[index][0], node?.superTypeParameters ?? node?.typeArguments);
 			}),
 		).toEqual(cases.map(([, typeArguments]) => typeArguments));
-		await expect_errors([['x = class {}</div>;', 'Unexpected token', '</']]);
+		await expect_errors([['x = class {}</div>;', TS_ERRORS.UNEXPECTED_TOKEN, '</']]);
 	});
 
 	it('reads type arguments right after a class or function expression', async () => {
@@ -591,12 +592,12 @@ describe('type arguments where a tag could start (#545, #578)', () => {
 	it('still takes no type arguments after an element, and reports a tag after a class or function expression where TypeScript does', async () => {
 		await expect_errors([
 			// An element isn't a left-hand-side expression (#426).
-			['const e = <b /><T>;', 'Unexpected token', '<T>'],
-			['const e = @{ <b /> }<T>;', 'Unexpected token', '<T>'],
+			['const e = <b /><T>;', TS_ERRORS.UNEXPECTED_TOKEN, '<T>'],
+			['const e = @{ <b /> }<T>;', TS_ERRORS.UNEXPECTED_TOKEN, '<T>'],
 			// TypeScript reports these at the same token.
-			['const f = function () {} <div />;', 'Unexpected token', '>;'],
-			['x = class {}<div>a</div>;', 'Unexpected token', '</'],
-			['x = <div>{function () {}</div>', "'}' expected.", '</'],
+			['const f = function () {} <div />;', TS_ERRORS.UNEXPECTED_TOKEN, '>;'],
+			['x = class {}<div>a</div>;', TS_ERRORS.UNEXPECTED_TOKEN, '</'],
+			['x = <div>{function () {}</div>', TS_ERRORS.TOKEN_EXPECTED, '</'],
 		]);
 	});
 });

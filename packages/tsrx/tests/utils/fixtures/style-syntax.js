@@ -34,9 +34,10 @@
  * - Any other `{ type }` matches on `type` alone (e.g. a setup statement or a
  *   `JSXExpressionContainer` child).
  *
- * Negative cases carry `error: { message, start, end }` instead of `expected`
- * (or alongside it, when the recovered tree is also specified): `start`/`end`
- * are the offsets of the reported range in `source`.
+ * Negative cases carry `error: { code, start, end }` instead of `expected`
+ * (or alongside it, when the recovered tree is also specified): `code` is the
+ * error's code (`TSRX2011` is a `@{ … }` body with more than one output node),
+ * and `start`/`end` are the offsets of the reported range in `source`.
  *
  * @typedef {{
  *   type: 'JSXStyleElement',
@@ -75,7 +76,7 @@
  * The parsed `Program` is walked untyped on purpose: the table must not depend
  * on the JS parser's AST typings so it can be lifted verbatim into an issue.
  * @typedef {(ast: any) => unknown} Locate
- * @typedef {{ message: string, start?: number, end?: number }} ExpectedError
+ * @typedef {{ code: string, start?: number, end?: number }} ExpectedError
  * @typedef {{ name: string, source: string, locate: Locate, expected: Shape, error?: undefined }} PositiveCase
  * @typedef {{ name: string, source: string, locate: Locate, error: ExpectedError, expected?: Shape }} NegativeCase
  * @typedef {PositiveCase | NegativeCase} StyleSyntaxCase
@@ -241,8 +242,7 @@ export const STYLE_SYNTAX_CASES = [
 		source: `function App() @{ const x = 1; <style apply={a} /> <div /> }`,
 		locate: component_block,
 		error: {
-			message:
-				"A code block renders a single node; wrap multiple nodes or text in a fragment '<>…</>'.",
+			code: 'TSRX2011',
 			start: 51,
 			end: 58,
 		},
@@ -260,8 +260,7 @@ export const STYLE_SYNTAX_CASES = [
 		source: `function App() @{ <div /> <style>${CSS}</style> }`,
 		locate: component_block,
 		error: {
-			message:
-				"A code block renders a single node; wrap multiple nodes or text in a fragment '<>…</>'.",
+			code: 'TSRX2011',
 			start: 26,
 			end: 59,
 		},
@@ -320,8 +319,7 @@ export const STYLE_SYNTAX_CASES = [
 		source: `function App() @{ @if (ok) { <style apply={a} /> <b /> } }`,
 		locate: (ast) => component_block(ast).render,
 		error: {
-			message:
-				"A code block renders a single node; wrap multiple nodes or text in a fragment '<>…</>'.",
+			code: 'TSRX2011',
 			start: 49,
 			end: 54,
 		},
@@ -362,8 +360,7 @@ export const STYLE_SYNTAX_CASES = [
 		source: `function App() @{ @for (const x of xs) { <style apply={a} /> <b>{x}</b> } }`,
 		locate: (ast) => component_block(ast).render,
 		error: {
-			message:
-				"A code block renders a single node; wrap multiple nodes or text in a fragment '<>…</>'.",
+			code: 'TSRX2011',
 			start: 61,
 			end: 71,
 		},
@@ -422,8 +419,7 @@ export const STYLE_SYNTAX_CASES = [
 		source: `function App() @{ @try { <style apply={a} /> <b /> } @catch (e) { <i /> } }`,
 		locate: (ast) => component_block(ast).render,
 		error: {
-			message:
-				"A code block renders a single node; wrap multiple nodes or text in a fragment '<>…</>'.",
+			code: 'TSRX2011',
 			start: 45,
 			end: 50,
 		},

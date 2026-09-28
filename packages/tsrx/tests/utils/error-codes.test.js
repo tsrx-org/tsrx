@@ -1,8 +1,9 @@
 /** @import { CompileError } from '../../types/index' */
 
 import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { get_upstream_error } from '../../src/diagnostics.js';
+import { get_upstream_error, TS_ERRORS, TSRX_ERRORS } from '../../src/diagnostics.js';
 import { analyzeTsrx, DIAGNOSTIC_CODES, parseModule } from '../../src/index.js';
 
 /**
@@ -320,6 +321,64 @@ let a = 2;`,
 		];
 		for (const [code, source] of cases) {
 			expect(reported_codes(source), source).toContain(code);
+		}
+	});
+
+	it("words each TypeScript error as TypeScript does, unless it's in acorn's, acorn-typescript's, or TSRX's own words", () => {
+		/** @type {Map<string, string>} */
+		const typescript = new Map(
+			Object.values(
+				/** @type {{ Diagnostics: Record<string, { code: number, message: string }> }} */ (
+					/** @type {unknown} */ (ts)
+				).Diagnostics,
+			).map((diagnostic) => [`TS${diagnostic.code}`, diagnostic.message]),
+		);
+		/** @type {Set<unknown>} */
+		const other_wording = new Set([
+			// acorn's, for the code TSRX reads in acorn's place
+			TS_ERRORS.UNEXPECTED_TOKEN,
+			TS_ERRORS.REST_ELEMENT_TRAILING_COMMA,
+			TS_ERRORS.ARGUMENT_NAME_CLASH,
+			TS_ERRORS.PRIVATE_NAME_OUTSIDE_CLASS,
+			TS_ERRORS.KEYWORD_ESCAPE_SEQUENCE,
+			TS_ERRORS.AWAIT_USING_OUTSIDE_ASYNC,
+			TS_ERRORS.FOR_OF_LET,
+			TS_ERRORS.FOR_IN_INITIALIZER,
+			TS_ERRORS.FOR_OF_INITIALIZER,
+			TS_ERRORS.MISSING_CATCH_OR_FINALLY,
+			TS_ERRORS.MULTIPLE_DEFAULT_CLAUSES,
+			// acorn-typescript's, for the code TSRX reads in its place
+			TS_ERRORS.UNTERMINATED_JSX_CONTENTS,
+			TS_ERRORS.JSX_UNESCAPED_GREATER_THAN,
+			TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE,
+			TS_ERRORS.ONLY_STRING_ATTRIBUTE_VALUE,
+			TS_ERRORS.TYPE_IMPORT_ARGUMENT,
+			TS_ERRORS.UNEXPECTED_LEADING_DECORATOR,
+			TS_ERRORS.TYPE_CAST_IN_PARAMETER,
+			TS_ERRORS.UNEXPECTED_TYPE_ANNOTATION,
+			TS_ERRORS.SIGNATURE_PARAMETER_NAME,
+			TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER,
+			// TSRX's own
+			TS_ERRORS.IMPORT_DEFER_NAMESPACE,
+			TS_ERRORS.DECLARED_IN_SCOPE,
+			TS_ERRORS.JSX_ATTRIBUTE_VALUE,
+		]);
+		for (const [name, entry] of Object.entries(TS_ERRORS)) {
+			// With TypeScript's placeholders for the values a message takes
+			const { message } = typeof entry === 'function' ? entry('{0}', '{1}') : entry;
+			expect(typescript.has(entry.code), `${name}: ${entry.code}`).toBe(true);
+			if (other_wording.has(entry)) {
+				expect(message, name).not.toBe(typescript.get(entry.code));
+			} else {
+				expect(message, name).toBe(typescript.get(entry.code));
+			}
+		}
+	});
+
+	it('gives each TSRX error a TSRX code', () => {
+		const codes = new Set(Object.values(DIAGNOSTIC_CODES));
+		for (const [name, entry] of Object.entries(TSRX_ERRORS)) {
+			expect(codes.has(entry.code), `${name}: ${entry.code}`).toBe(true);
 		}
 	});
 

@@ -2,16 +2,13 @@
 /** @import { TSESTree } from '@typescript-eslint/types' */
 /** @import { CompileError, NodeOfType, NodeTypeName, ParseOptions } from '../../types/index' */
 /** @import * as ESTreeJSX from 'estree-jsx' */
+/** @import { ErrorKind } from '../shared/errors.js' */
 
 import { describe, expect, it } from 'vitest';
-import {
-	acorn,
-	analyzeTsrx,
-	isLayoutWhitespace,
-	parseModule,
-	TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
-} from '../../src/index.js';
+import { acorn, analyzeTsrx, isLayoutWhitespace, parseModule } from '../../src/index.js';
+import { TS_ERRORS, TSRX_ERRORS, UPSTREAM_ERRORS } from '../../src/diagnostics.js';
 import { node_children } from '../../src/utils/ast.js';
+import { code_of, error_with, line_column, thrown } from '../shared/errors.js';
 import { as_type, assert_type } from '../shared/node-types.js';
 import { parse_in_worker, parse_in_worker_with_ast } from '../shared/parse-in-worker.js';
 import { STYLE_SYNTAX_CASES } from './fixtures/style-syntax.js';
@@ -461,7 +458,7 @@ describe('TSRX parser', () => {
 				"import defer './feature.js';",
 			]) {
 				expect(() => parseModule(source, 'App.tsrx')).toThrow(
-					'`import defer` only supports a namespace import from a string literal.',
+					error_with(TS_ERRORS.IMPORT_DEFER_NAMESPACE),
 				);
 			}
 		});
@@ -586,21 +583,13 @@ describe('TSRX parser', () => {
 		});
 
 		it('rejects a using declaration in a for...in head, as TypeScript does', () => {
-			for (const [source, message, code] of [
-				[
-					'for (using item in items) {}',
-					"The left-hand side of a 'for...in' statement cannot be a 'using' declaration.",
-					'TS1493',
-				],
-				[
-					'async function f() { for (await using item in items) {} }',
-					"The left-hand side of a 'for...in' statement cannot be an 'await using' declaration.",
-					'TS1494',
-				],
-			]) {
-				expect(() => parseModule(source, 'App.tsrx')).toThrow(
-					expect.objectContaining({ message: expect.stringContaining(message), code }),
-				);
+			/** @type {Array<[source: string, error: ErrorKind]>} */
+			const cases = [
+				['for (using item in items) {}', TS_ERRORS.FOR_IN_USING],
+				['async function f() { for (await using item in items) {} }', TS_ERRORS.FOR_IN_AWAIT_USING],
+			];
+			for (const [source, error] of cases) {
+				expect(() => parseModule(source, 'App.tsrx')).toThrow(error_with(error));
 			}
 		});
 	});
@@ -1223,8 +1212,12 @@ describe('TSRX parser', () => {
 				node.type === 'ExpressionStatement' ? node.expression.type : node.type,
 			);
 		// TypeScript reads `as` and `satisfies` as operators only on the element's line.
-		expect(() => parseModule('<div />\nas any;', 'App.tsrx')).toThrow('Unexpected token');
-		expect(() => parseModule('<div />\nsatisfies any;', 'App.tsrx')).toThrow('Unexpected token');
+		expect(() => parseModule('<div />\nas any;', 'App.tsrx')).toThrow(
+			error_with(TS_ERRORS.UNEXPECTED_TOKEN),
+		);
+		expect(() => parseModule('<div />\nsatisfies any;', 'App.tsrx')).toThrow(
+			error_with(TS_ERRORS.UNEXPECTED_TOKEN),
+		);
 		// A tag start is the next element, not a comparison, and so is any `<`
 		// that starts the next line.
 		expect(statementTypes('<div /> <span />\n')).toEqual(['JSXElement', 'JSXElement']);
@@ -1245,14 +1238,16 @@ describe('TSRX parser', () => {
 			'export function App() @{\n  @if (x) {\n    <div />\n    > 5\n  }\n}',
 			'export function App() @{\n  @switch (x) {\n    @case 1: {\n      <div />\n      > 5\n    }\n  }\n}',
 		]) {
-			expect(() => parseModule(source, 'App.tsrx'), source).toThrow('Unexpected token');
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				error_with(TS_ERRORS.UNEXPECTED_TOKEN),
+			);
 		}
 		for (const source of [
 			'export function App() @{\n  const a = 1\n  <div /> + 1\n}',
 			'export function App() @{\n  const a = 1\n  <div />\n  + 1\n}',
 		]) {
 			expect(() => parseModule(source, 'App.tsrx')).toThrow(
-				'statements cannot follow the rendered output',
+				error_with(TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT),
 			);
 			/** @type {CompileError[]} */
 			const errors = [];
@@ -1271,8 +1266,8 @@ describe('TSRX parser', () => {
 				'JSXElement',
 				'ExpressionStatement',
 			]);
-			expect(errors.map((error) => error.message)).toEqual([
-				"Code must be at the top of '@{ }'; statements cannot follow the rendered output.",
+			expect(errors.map((error) => error.code)).toEqual([
+				TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT.code,
 			]);
 		}
 
@@ -2478,13 +2473,7 @@ abc
 		);
 
 		assert_type(ast, 'Program');
-		expect(
-			errors
-				.map(function (error) {
-					return error.message;
-				})
-				.join('\n'),
-		).not.toContain('Expected identifier');
+		expect(errors).toEqual([]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2678,13 +2667,7 @@ export function App() @{ <div /> }`;
 		);
 
 		assert_type(ast, 'Program');
-		expect(
-			errors
-				.map(function (error) {
-					return error.message;
-				})
-				.join('\n'),
-		).not.toContain('Expected identifier');
+		expect(errors).toEqual([]);
 
 		const section = find_first(ast, function (node) {
 			return (
@@ -2712,13 +2695,7 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(
-			errors
-				.map(function (error) {
-					return error.message;
-				})
-				.join('\n'),
-		).not.toContain('Expected identifier');
+		expect(errors).toEqual([]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2743,20 +2720,7 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(
-			errors
-				.map(function (error) {
-					return error.message;
-				})
-				.join('\n'),
-		).not.toContain('Expected identifier');
-		expect(
-			errors
-				.map(function (error) {
-					return error.message;
-				})
-				.join('\n'),
-		).not.toContain('Unterminated regular expression');
+		expect(errors).toEqual([]);
 
 		const div = find_first(ast, function (node) {
 			return (
@@ -3002,7 +2966,7 @@ export function App() @{ <div /> }`;
 				const ast = parseModule(spec.source, 'App.tsrx', { collect: true, errors, comments: [] });
 
 				if ('error' in spec && spec.error) {
-					expect(errors.map((error) => error.message)).toEqual([spec.error.message]);
+					expect(errors.map((error) => error.code)).toEqual([spec.error.code]);
 					if (spec.error.start !== undefined) expect(errors[0].pos).toBe(spec.error.start);
 					if (spec.error.end !== undefined) expect(errors[0].end).toBe(spec.error.end);
 				} else {
@@ -3302,7 +3266,7 @@ foo();`;
 				}; }`,
 				'App.tsrx',
 			),
-		).toThrow('`break` is invalid inside `@switch` cases.');
+		).toThrow(error_with(TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT));
 	});
 
 	it('rejects return statements inside JSX switch cases', () => {
@@ -3315,7 +3279,7 @@ foo();`;
 				}; }`,
 				'App.tsrx',
 			),
-		).toThrow('`return` is invalid inside `@switch` cases.');
+		).toThrow(error_with(TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT));
 		expect(() =>
 			parseModule(
 				`function App() { return @switch (tag) {
@@ -3325,7 +3289,7 @@ foo();`;
 				}; }`,
 				'App.tsrx',
 			),
-		).toThrow('`return` is invalid inside `@switch` cases.');
+		).toThrow(error_with(TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT));
 	});
 
 	it('scopes switch case setup locals to their own case block', () => {
@@ -3364,7 +3328,7 @@ foo();`;
 				}`,
 				'App.tsrx',
 			),
-		).toThrow("Identifier 'label' has already been declared");
+		).toThrow(error_with(UPSTREAM_ERRORS.REDECLARED));
 	});
 
 	it('parses regex, division, template literal, and parenthesized statements in case bodies', () => {
@@ -3465,14 +3429,7 @@ foo();`;
 			const outcomes = await parse_in_worker(inputs);
 
 			expect(outcomes).toEqual(
-				inputs.map(({ source }) => {
-					const { line, column } = acorn.getLineInfo(source, source.length);
-					return {
-						ok: false,
-						message: `'}' expected. (${line}:${column})`,
-						pos: source.length,
-					};
-				}),
+				inputs.map(({ source }) => thrown(TS_ERRORS.TOKEN_EXPECTED, source.length)),
 			);
 		});
 
@@ -3489,13 +3446,9 @@ foo();`;
 			// collect and loose mode, which keep parsing past it, then stop at the
 			// missing `}` at the end of the input.
 			expect(outcomes).toEqual(
-				inputs.map(({ source, options }) => ({
-					ok: false,
-					message: options
-						? "'}' expected. (4:15)"
-						: "Unclosed tag '<section>'. Expected '</section>' before end of template. (4:15)",
-					pos: source.length,
-				})),
+				inputs.map(({ source, options }) =>
+					thrown(options ? TS_ERRORS.TOKEN_EXPECTED : TSRX_ERRORS.UNCLOSED_TAG, source.length),
+				),
 			);
 		});
 
@@ -4534,7 +4487,7 @@ foo();`;
 			getReturned(`function App() { return <div>
 					@if (visible) <div class="status">Visible: {String(visible)}</div>
 			</div>; }`),
-		).toThrow(/Expected `\{` after JSX control-flow directive/);
+		).toThrow(error_with(TSRX_ERRORS.DIRECTIVE_BODY_EXPECTED));
 	});
 
 	it('rejects unprefixed template continuation clauses', () => {
@@ -4546,7 +4499,7 @@ foo();`;
 					<>Waiting</>
 				}
 			</div>; }`),
-		).toThrow(/Expected `@else` after `@if` block/);
+		).toThrow(error_with(TSRX_ERRORS.DIRECTIVE_BRANCH_EXPECTED));
 
 		expect(() =>
 			getReturned(`function App() { return <ul>
@@ -4556,7 +4509,7 @@ foo();`;
 					<li>Empty</li>
 				}
 			</ul>; }`),
-		).toThrow(/Expected `@empty` after `@for` block/);
+		).toThrow(error_with(TSRX_ERRORS.DIRECTIVE_BRANCH_EXPECTED));
 
 		expect(() =>
 			getReturned(`function App() { return <div>
@@ -4569,7 +4522,7 @@ foo();`;
 					}
 				}
 			</div>; }`),
-		).toThrow(/Unexpected token/);
+		).toThrow(error_with(TS_ERRORS.UNEXPECTED_TOKEN));
 
 		expect(() =>
 			getReturned(`function App() { return <div>
@@ -4579,7 +4532,7 @@ foo();`;
 					<>Loading</>
 				}
 			</div>; }`),
-		).toThrow(/Expected `@pending` after `@try` block/);
+		).toThrow(error_with(TSRX_ERRORS.DIRECTIVE_BRANCH_EXPECTED));
 
 		expect(() =>
 			getReturned(`function App() { return <div>
@@ -4591,7 +4544,7 @@ foo();`;
 					<>Failed</>
 				}
 			</div>; }`),
-		).toThrow(/Expected `@catch` after `@try` block/);
+		).toThrow(error_with(TSRX_ERRORS.DIRECTIVE_BRANCH_EXPECTED));
 	});
 
 	it('parses code-only @if bodies', () => {
@@ -4774,11 +4727,11 @@ else <b />;`,
 				let error;
 				try {
 					parseModule(source, 'App.tsrx', options);
-				} catch (thrown) {
-					error = thrown;
+				} catch (caught) {
+					error = caught;
 				}
-				expect(error?.message, source).toMatch(/^'\)' expected\./);
-				expect(error.code, source).toBe('TS1005');
+				// `')' expected.`
+				expect(error?.code, source).toBe(TS_ERRORS.TOKEN_EXPECTED.code);
 				expect(error.pos, source).toBe(source.indexOf(at));
 			}
 		}
@@ -4861,7 +4814,7 @@ else <b />;`,
 					<li>{item.label}</li>
 				} @empty <li>No items</li>
 			</ul>; }`),
-		).toThrow(/Expected `\{` after JSX control-flow directive/);
+		).toThrow(error_with(TSRX_ERRORS.DIRECTIVE_BODY_EXPECTED));
 	});
 
 	it('parses code-only @for bodies', () => {
@@ -5212,7 +5165,7 @@ else <b />;`,
 
 	it('rejects an arrow token between a function return type and a `@{ }` body', () => {
 		expect(() => parseModule(`function App(): JSX.Element => @{}`, 'App.tsrx')).toThrow(
-			/Unexpected token/,
+			error_with(TS_ERRORS.UNEXPECTED_TOKEN),
 		);
 	});
 
@@ -5231,14 +5184,14 @@ else <b />;`,
 
 	it('rejects duplicate params in a `@{ }` function body after a return type', () => {
 		expect(() => parseModule(`function App(a, a): JSX.Element @{}`, 'App.tsrx')).toThrow(
-			/Argument name clash/,
+			error_with(TS_ERRORS.ARGUMENT_NAME_CLASH),
 		);
 	});
 
 	it('rejects non-code-block directives as function bodies after a return type', () => {
 		expect(() =>
 			parseModule(`function App(): JSX.Element @if (show) { <div/> }`, 'App.tsrx'),
-		).toThrow(/Unexpected token/);
+		).toThrow(error_with(TS_ERRORS.UNEXPECTED_TOKEN));
 	});
 
 	it('assigns each @-control directive directly to a variable', () => {
@@ -5350,7 +5303,9 @@ else <b />;`,
 			expect(source.slice(/** @type {number} */ (call.end) - 3, call.end), source).toBe('a,)');
 		}
 		for (const source of ['@dec(,)\nclass A {}', '@dec(a,,)\nclass A {}']) {
-			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(/Unexpected token/);
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				error_with(TS_ERRORS.UNEXPECTED_TOKEN),
+			);
 		}
 	});
 
@@ -5360,7 +5315,7 @@ else <b />;`,
 				`function App() { return <div>@{ const a = 5; <span/> <b/> }</div>; }`,
 				'App.tsrx',
 			),
-		).toThrow(/single node/);
+		).toThrow(error_with(TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT));
 	});
 
 	it('reports an error for a statement after the render node', () => {
@@ -5369,7 +5324,7 @@ else <b />;`,
 				`function App() { return <div>@{ const a = 5; <span/> doThing(); }</div>; }`,
 				'App.tsrx',
 			),
-		).toThrow(/statements cannot follow/);
+		).toThrow(error_with(TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT));
 	});
 
 	it('reports an error for bare text inside a code block', () => {
@@ -5428,11 +5383,9 @@ else <b />;`,
 		}
 
 		// Both authoring-rule diagnostics still land on the correct source lines.
-		const messages = errors.map((e) => `${e.loc?.start?.line}:${e.message}`);
-		expect(messages.some((m) => m.startsWith('8:') && /statements cannot follow/.test(m))).toBe(
-			true,
-		);
-		expect(messages.some((m) => m.startsWith('10:') && /single node/.test(m))).toBe(true);
+		const lines = errors.map((e) => `${e.loc?.start?.line}:${e.code}`);
+		expect(lines).toContain(`8:${TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT.code}`);
+		expect(lines).toContain(`10:${TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT.code}`);
 	});
 
 	// An enum's members are in a TSEnumBody that spans its braces, as in
@@ -5782,7 +5735,7 @@ else <b />;`,
 				}`,
 				'App.tsrx',
 			),
-		).toThrow(/single node/);
+		).toThrow(error_with(TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT));
 	});
 
 	it('reports an error for a nested `@{ }` block following a render node', () => {
@@ -5803,7 +5756,7 @@ else <b />;`,
 				}`,
 				'App.tsrx',
 			),
-		).toThrow(/single node/);
+		).toThrow(error_with(TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT));
 	});
 
 	it('parses a nested `@if` with its own setup when siblings are wrapped in a fragment', () => {
@@ -5867,7 +5820,7 @@ else <b />;`,
 				}`,
 				'App.tsrx',
 			),
-		).toThrow(/single node/);
+		).toThrow(error_with(TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT));
 	});
 
 	it('parses a single nested `@{ }` block as a code block render output', () => {
@@ -5907,7 +5860,7 @@ else <b />;`,
 
 		// Non-fatal: parsing still produces an AST.
 		assert_type(ast, 'Program');
-		expect(errors.map((error) => error.message)).toEqual([expect.stringMatching(/single node/)]);
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT.code]);
 	});
 
 	it('parses nested `@{ }` blocks when wrapped in a fragment render output', () => {
@@ -6129,14 +6082,14 @@ else <b />;`,
 	it('rejects a braceless `@if` render after the setup `;`', () => {
 		expect(() =>
 			getReturned(`function App() { return @{ const foo = 123; @if (foo) <div>{foo}</div> }; }`),
-		).toThrow(/Expected `\{` after JSX control-flow directive/);
+		).toThrow(error_with(TSRX_ERRORS.DIRECTIVE_BODY_EXPECTED));
 	});
 
 	it('rejects a braceless `@if` render whose consequent begins on the next line', () => {
 		expect(() =>
 			getReturned(`function App() { return @{ const foo = 123; @if (foo)
 				<div>{foo}</div> }; }`),
-		).toThrow(/Expected `\{` after JSX control-flow directive/);
+		).toThrow(error_with(TSRX_ERRORS.DIRECTIVE_BODY_EXPECTED));
 	});
 
 	it('parses a braced `@if` render after the setup `;` on the same line', () => {
@@ -6195,7 +6148,7 @@ else <b />;`,
 			getReturned(
 				`function App() { return @{ const xs = [1, 2]; @for (const x of xs) <li>{x}</li> }; }`,
 			),
-		).toThrow(/Expected `\{` after JSX control-flow directive/);
+		).toThrow(error_with(TSRX_ERRORS.DIRECTIVE_BODY_EXPECTED));
 	});
 
 	it('rejects a braceless `@try` render after the setup `;`', () => {
@@ -6203,7 +6156,7 @@ else <b />;`,
 			getReturned(
 				`function App() { return @{ const foo = 123; @try <div>{foo}</div> catch (e) { <span /> } }; }`,
 			),
-		).toThrow(/Unexpected keyword 'try'|Expected token `\{/);
+		).toThrow(error_with('TS1359', '1:45'));
 	});
 
 	it('allows and ignores a trailing `;` after a render node', () => {
@@ -6296,12 +6249,12 @@ describe('dynamic tag expression rule (#737)', () => {
 		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
 
 		const [strict, ...collected] = outcomes;
-		expect(strict).toEqual({ ok: false, message: TSRX_DYNAMIC_TAG_EXPRESSION_ERROR, pos: start });
+		expect(strict).toEqual(thrown(TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION, start));
 		for (const [index, outcome] of collected.entries()) {
 			const label = JSON.stringify(modes[index + 1]);
 			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
 			expect(outcome.errors, label).toEqual([
-				{ message: TSRX_DYNAMIC_TAG_EXPRESSION_ERROR, pos: start, end: start + part.length },
+				{ code: TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION.code, pos: start, end: start + part.length },
 			]);
 			const element = /** @type {AST.Node} */ (
 				find_first(
@@ -6338,12 +6291,10 @@ export function Later() @{
 		for (const outcome of outcomes) {
 			if (!outcome.ok) throw new Error(outcome.message);
 			// Once per element: the closing tag repeats the expression.
-			expect(
-				outcome.errors?.map(({ message, pos, end }) => [message, source.slice(pos, end)]),
-			).toEqual([
-				[TSRX_DYNAMIC_TAG_EXPRESSION_ERROR, 'c ? A : B'],
-				[TSRX_DYNAMIC_TAG_EXPRESSION_ERROR, 'getTag()'],
-				[TSRX_DYNAMIC_TAG_EXPRESSION_ERROR, 'props?.as'],
+			expect(outcome.errors?.map(({ code, pos, end }) => [code, source.slice(pos, end)])).toEqual([
+				[TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION.code, 'c ? A : B'],
+				[TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION.code, 'getTag()'],
+				[TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION.code, 'props?.as'],
 			]);
 			expect(outcome.ast.body.map((node) => node.type)).toEqual([
 				'ExportNamedDeclaration',
@@ -6387,11 +6338,7 @@ export function Later() @{
 		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
 
 		for (const outcome of outcomes) {
-			expect(outcome).toEqual({
-				ok: false,
-				message: `${TSRX_DYNAMIC_TAG_EXPRESSION_ERROR} (1:${pos})`,
-				pos,
-			});
+			expect(outcome).toEqual(thrown(TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION, pos));
 		}
 	});
 });
@@ -6591,24 +6538,20 @@ describe('raw-text <script> elements', () => {
 		const collected = await parse_in_worker_with_ast(
 			sources.map((source) => ({ source, options: { collect: true } })),
 		);
-		const thrown = await parse_in_worker(sources.map((source) => ({ source })));
+		const strict = await parse_in_worker(sources.map((source) => ({ source })));
 
 		for (const [index, [body, written]] of cases.entries()) {
-			const message = `'${written}' can end a script in HTML, so a '<script>' body can't contain it. Write '<\\/${written.slice(2)}' instead.`;
+			const pos = sources[index].indexOf(written, sources[index].indexOf('a = 1;') - 10);
 			const outcome = collected[index];
 			if (!outcome.ok) throw new Error(`${body} threw ${outcome.message}`);
 			expect(outcome.errors, body).toEqual([
-				{
-					message,
-					pos: sources[index].indexOf(written, sources[index].indexOf('a = 1;') - 10),
-					end: sources[index].indexOf(written, sources[index].indexOf('a = 1;') - 10) + 8,
-				},
+				{ code: TSRX_ERRORS.SCRIPT_END_TAG_IN_BODY.code, pos, end: pos + 8 },
 			]);
 			const script = /** @type {AST.TSRXJSXElement} */ (
 				find_first(outcome.ast, (node) => node.type === 'JSXElement' && 'content' in node)
 			);
 			expect(script.content, body).toBe(body);
-			expect(thrown[index], body).toMatchObject({ ok: false, message });
+			expect(strict[index], body).toEqual(thrown(TSRX_ERRORS.SCRIPT_END_TAG_IN_BODY, pos));
 		}
 	});
 
@@ -6865,11 +6808,11 @@ type B = import("foo").Bar<string>;`,
 		// Like TypeScript (microsoft/TypeScript#61489), unlike `import()`. Where
 		// the options' `{` is missing, TypeScript reports it (TS1005, #717).
 		it.each([
-			['type A = import("foo",);', "'{' expected."],
-			['type A = import("foo", { with: { type: "json" } },);', 'Unexpected token'],
-			['type A = import("foo", attributes);', "'{' expected."],
-		])('rejects what TypeScript rejects: %s', (source, message) => {
-			expect(() => parseModule(source, 'App.tsrx', options())).toThrow(message);
+			['type A = import("foo",);', TS_ERRORS.TOKEN_EXPECTED],
+			['type A = import("foo", { with: { type: "json" } },);', TS_ERRORS.UNEXPECTED_TOKEN],
+			['type A = import("foo", attributes);', TS_ERRORS.TOKEN_EXPECTED],
+		])('rejects what TypeScript rejects: %s', (source, error) => {
+			expect(() => parseModule(source, 'App.tsrx', options())).toThrow(error_with(error));
 		});
 	});
 });
@@ -8939,7 +8882,7 @@ describe('JSX spread children', () => {
 
 	it.each(parse_options)('rejects a spread without an argument (%o)', (options) => {
 		expect(() => parseModule('const x = <div>{...}</div>;', 'App.tsrx', options)).toThrow(
-			'Unexpected token (1:19)',
+			error_with(TS_ERRORS.UNEXPECTED_TOKEN, '1:19'),
 		);
 	});
 
@@ -8949,14 +8892,14 @@ describe('JSX spread children', () => {
 			['function App() @{\n\t<a b={...c} />\n}', '2:6'],
 		]) {
 			expect(() => parseModule(source, 'App.tsrx', options), source).toThrow(
-				`Attribute values cannot be spread. Use a spread attribute (\`{...props}\`) instead. (${position})`,
+				error_with(TSRX_ERRORS.ATTRIBUTE_VALUE_SPREAD, position),
 			);
 		}
 	});
 
 	it.each(parse_options)('rejects a spread as a dynamic tag name (%o)', (options) => {
 		expect(() => parseModule('const x = <{...a} />;', 'App.tsrx', options)).toThrow(
-			`${TSRX_DYNAMIC_TAG_EXPRESSION_ERROR} (1:11)`,
+			error_with(TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION, '1:11'),
 		);
 	});
 });
@@ -9460,14 +9403,11 @@ describe('`var` redeclaring a catch parameter', () => {
 		const outcomes = await parse_in_worker(in_every_mode(sources.map(([source]) => source)));
 
 		expect(outcomes).toEqual(
-			sources.flatMap(([, name]) => {
-				const message = `Identifier '${name}' has already been declared`;
-				return [
-					{ ok: false, message, pos: expect.any(Number) },
-					{ ok: true, errors: [message] },
-					{ ok: true, errors: [message] },
-				];
-			}),
+			sources.flatMap(([source, name]) => [
+				thrown(UPSTREAM_ERRORS.REDECLARED, source.lastIndexOf(name)),
+				{ ok: true, errors: [UPSTREAM_ERRORS.REDECLARED.code] },
+				{ ok: true, errors: [UPSTREAM_ERRORS.REDECLARED.code] },
+			]),
 		);
 	});
 });
@@ -9603,14 +9543,15 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	/**
 	 * @typedef {{
 	 *   source: string,
-	 *   errors: Array<[message: string, at: string]>,
-	 *   throws: string,
+	 *   errors: Array<[error: ErrorKind, at: string]>,
+	 *   throws: [error: ErrorKind, at: string],
 	 *   valid?: string,
 	 *   pick?: (program: AST.Program) => unknown,
 	 *   pickValid?: (program: AST.Program) => unknown,
 	 *   match?: Record<string, unknown> | unknown[],
 	 * }} CheckerLevelCase
-	 * `errors` pairs each collected message with the source text at its position.
+	 * `errors` pairs each collected error with the source text at its position,
+	 * and `throws` the error a strict parse throws with its `line:column`.
 	 * The node that `pick` takes from the AST is the node that `pickValid` (or
 	 * `pick`) takes from the AST of the `valid` source, apart from locations, or
 	 * matches `match`.
@@ -9708,128 +9649,128 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	const cases = [
 		{
 			source: 'type T = 1;\ntype T = 2;',
-			errors: [["type 'T' has already been declared.", 'T = 2']],
-			throws: "type 'T' has already been declared. (2:5)",
+			errors: [[UPSTREAM_ERRORS.REDECLARED, 'T = 2']],
+			throws: [UPSTREAM_ERRORS.REDECLARED, '2:5'],
 			valid: 'type U = 1;\ntype T = 2;',
 			pick: last,
 		},
 		{
 			source: "import a from 'a';\nimport a from 'b';",
-			errors: [["Identifier 'a' has already been declared", "a from 'b'"]],
-			throws: "Identifier 'a' has already been declared",
+			errors: [[UPSTREAM_ERRORS.REDECLARED, "a from 'b'"]],
+			throws: [UPSTREAM_ERRORS.REDECLARED, '2:7'],
 			valid: "import b from 'a';\nimport a from 'b';",
 			pick: last,
 		},
 		{
 			source: 'class A { abstract m(): void; }',
-			errors: [['Abstract methods can only appear within an abstract class.', 'abstract m']],
-			throws: 'Abstract methods can only appear within an abstract class. (1:10)',
+			errors: [[UPSTREAM_ERRORS.ABSTRACT_METHOD_IN_CLASS, 'abstract m']],
+			throws: [UPSTREAM_ERRORS.ABSTRACT_METHOD_IN_CLASS, '1:10'],
 			valid: 'abstract class A { abstract m(): void; }',
 			pick: first_member,
 		},
 		{
 			source: 'declare class A { x = 1; }',
-			errors: [['Initializers are not allowed in ambient contexts.', '= 1']],
-			throws: 'Initializers are not allowed in ambient contexts. (1:20)',
+			errors: [[UPSTREAM_ERRORS.AMBIENT_INITIALIZER, '= 1']],
+			throws: [UPSTREAM_ERRORS.AMBIENT_INITIALIZER, '1:20'],
 			valid: 'class A { x = 1; }',
 			pick: first_member,
 		},
 		{
 			source: 'declare let x = 1;',
-			errors: [['Initializers are not allowed in ambient contexts.', '1;']],
-			throws: 'Initializers are not allowed in ambient contexts. (1:16)',
+			errors: [[UPSTREAM_ERRORS.AMBIENT_INITIALIZER, '1;']],
+			throws: [UPSTREAM_ERRORS.AMBIENT_INITIALIZER, '1:16'],
 			valid: 'let x = 1;',
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations,
 		},
 		{
 			source: 'abstract class A { static abstract x: number; }',
-			errors: [["'static' modifier cannot be used with 'abstract' modifier.", 'abstract x']],
-			throws: "'static' modifier cannot be used with 'abstract' modifier. (1:26)",
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'abstract x']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:26'],
 			pick: first_member,
 			match: { static: true, abstract: true, key: { name: 'x' } },
 		},
 		{
 			source: 'class A {\n\tconstructor(readonly public x: number) {}\n}',
-			errors: [["'public' modifier must precede 'readonly' modifier.", 'public x']],
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'public x']],
 			// acorn-typescript throws it at the modifier's column (sveltejs/acorn-typescript#122).
-			throws: "'public' modifier must precede 'readonly' modifier. (2:12)",
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '2:12'],
 			valid: 'class A {\n\tconstructor(public readonly x: number) {}\n}',
 			pick: constructor_parameter,
 		},
 		{
 			source: 'class A { constructor(readonly readonly x: number) {} }',
 			// At the repeated modifier (sveltejs/acorn-typescript#129).
-			errors: [["Duplicate modifier: 'readonly'.", 'readonly x']],
-			throws: "Duplicate modifier: 'readonly'. (1:31)",
+			errors: [[UPSTREAM_ERRORS.DUPLICATE_MODIFIER, 'readonly x']],
+			throws: [UPSTREAM_ERRORS.DUPLICATE_MODIFIER, '1:31'],
 			valid: 'class A { constructor(readonly x: number) {} }',
 			pick: constructor_parameter,
 		},
 		{
 			source: 'class A { private private x = 1; }',
-			errors: [['Accessibility modifier already seen.', 'private x']],
-			throws: 'Accessibility modifier already seen. (1:18)',
+			errors: [[TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN, 'private x']],
+			throws: [TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN, '1:18'],
 			valid: 'class A { private x = 1; }',
 			pick: first_member,
 		},
 		{
 			source: 'class A { public protected x = 1; }',
 			// The first one stays.
-			errors: [['Accessibility modifier already seen.', 'protected']],
-			throws: 'Accessibility modifier already seen. (1:17)',
+			errors: [[TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN, 'protected']],
+			throws: [TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN, '1:17'],
 			valid: 'class A { public x = 1; }',
 			pick: first_member,
 		},
 		{
 			source: 'class A {\n\tconstructor(private public readonly x: number) {}\n}',
-			errors: [['Accessibility modifier already seen.', 'public']],
-			throws: 'Accessibility modifier already seen. (2:21)',
+			errors: [[TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN, 'public']],
+			throws: [TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN, '2:21'],
 			valid: 'class A {\n\tconstructor(private readonly x: number) {}\n}',
 			pick: constructor_parameter,
 		},
 		{
 			source: 'function f(...a?: number[]) {}',
-			errors: [['A rest parameter cannot be optional.', '?']],
-			throws: 'A rest parameter cannot be optional. (1:15)',
+			errors: [[TS_ERRORS.OPTIONAL_REST_PARAMETER, '?']],
+			throws: [TS_ERRORS.OPTIONAL_REST_PARAMETER, '1:15'],
 			valid: 'declare function f(...a?: number[]): void;',
 			pick: first_parameter,
 		},
 		{
 			source: 'function f(a: string, ...b?: number[]): void;\nfunction f() {}',
-			errors: [['A rest parameter cannot be optional.', '?:']],
-			throws: 'A rest parameter cannot be optional. (1:26)',
+			errors: [[TS_ERRORS.OPTIONAL_REST_PARAMETER, '?:']],
+			throws: [TS_ERRORS.OPTIONAL_REST_PARAMETER, '1:26'],
 			valid: 'declare function f(a: string, ...b?: number[]): void;',
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'TSDeclareFunction').params,
 		},
 		{
 			source: 'class A { constructor(public ...rest: number[]) {} }',
-			errors: [['A parameter property cannot be declared using a rest parameter.', 'public']],
-			throws: 'Unexpected token (1:29)',
+			errors: [[TS_ERRORS.REST_PARAMETER_PROPERTY, 'public']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:29'],
 			valid: 'class A { constructor(...rest: number[]) {} }',
 			pick: constructor_parameter,
 		},
 		{
 			source: 'class A { m(a: string, readonly ...rest: number[]) {} }',
-			errors: [['A parameter property cannot be declared using a rest parameter.', 'readonly']],
-			throws: 'Unexpected token (1:32)',
+			errors: [[TS_ERRORS.REST_PARAMETER_PROPERTY, 'readonly']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:32'],
 			valid: 'class A { m(a: string, ...rest: number[]) {} }',
 			pick: first_member,
 		},
 		{
 			source: 'class A { constructor(@dec public ...rest: number[]) {} }',
-			errors: [['A parameter property cannot be declared using a rest parameter.', 'public']],
-			throws: 'Unexpected token (1:34)',
+			errors: [[TS_ERRORS.REST_PARAMETER_PROPERTY, 'public']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:34'],
 			valid: 'class A { constructor(@dec ...rest: number[]) {} }',
 			pick: constructor_parameter,
 		},
 		{
 			source: 'class A { constructor(private readonly ...rest: number[], b) {} }',
 			errors: [
-				['A parameter property cannot be declared using a rest parameter.', 'private readonly ...'],
-				['Comma is not permitted after the rest element', ', b'],
+				[TS_ERRORS.REST_PARAMETER_PROPERTY, 'private readonly ...'],
+				[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', b'],
 			],
-			throws: 'Unexpected token (1:39)',
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:39'],
 			pick: first_member,
 			match: {
 				value: {
@@ -9842,81 +9783,78 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: '@dec function f() {}',
-			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
-			throws: 'Leading decorators must be attached to a class declaration. (1:5)',
+			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:5'],
 			valid: 'function f() {}',
 			pick: first,
 		},
 		{
 			source: '@a @b(1) const x = 1;',
-			errors: [['Leading decorators must be attached to a class declaration.', '@a']],
-			throws: 'Leading decorators must be attached to a class declaration. (1:9)',
+			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@a']],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:9'],
 			valid: 'const x = 1;',
 			pick: first,
 		},
 		{
 			source: '@dec interface I {}',
-			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
-			throws: 'Leading decorators must be attached to a class declaration. (1:5)',
+			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:5'],
 			valid: 'interface I {}',
 			pick: first,
 		},
 		{
 			source: "@dec import a from 'a';",
-			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
-			throws: 'Leading decorators must be attached to a class declaration. (1:5)',
+			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:5'],
 			valid: "import a from 'a';",
 			pick: first,
 		},
 		{
 			source: 'export @dec function f() {}',
-			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
-			throws: 'Leading decorators must be attached to a class declaration. (1:12)',
+			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:12'],
 			valid: 'export function f() {}',
 			pick: first,
 		},
 		{
 			source: 'export default @dec async function f() {}',
-			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
-			throws: 'Leading decorators must be attached to a class declaration. (1:20)',
+			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:20'],
 			valid: 'export default async function f() {}',
 			pick: first,
 		},
 		{
 			// No other class takes the decorators written before `export`.
 			source: '@dec export const A = class {};',
-			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
-			throws: 'Leading decorators must be attached to a class declaration. (1:12)',
+			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:12'],
 			valid: 'export const A = class {};',
 			pick: first,
 		},
 		{
 			source: 'function f() {\n\t@dec const x = 1;\n}',
-			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
-			throws: 'Leading decorators must be attached to a class declaration. (2:6)',
+			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '2:6'],
 			valid: 'function f() {\n\tconst x = 1;\n}',
 			pick: first,
 		},
 		{
 			// No other class takes the decorators.
 			source: '@dec function f() {}\nclass A {}',
-			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
-			throws: 'Leading decorators must be attached to a class declaration. (1:5)',
+			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:5'],
 			valid: 'function f() {}\nclass A {}',
 			pick: (program) => program.body,
 		},
 		{
 			source: 'export function App() @{\n\t@dec const x = 1;\n\t<div>{x}</div>\n}',
-			errors: [['Leading decorators must be attached to a class declaration.', '@dec']],
-			throws: 'Leading decorators must be attached to a class declaration. (2:6)',
+			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '2:6'],
 		},
 		{
 			source: 'class A { @dec constructor() {} }',
-			errors: [
-				["Decorators can't be used with a constructor. Did you mean '@dec class { ... }'?", '@dec'],
-			],
-			throws:
-				"Decorators can't be used with a constructor. Did you mean '@dec class { ... }'? (1:10)",
+			errors: [[UPSTREAM_ERRORS.DECORATED_CONSTRUCTOR, '@dec']],
+			throws: [UPSTREAM_ERRORS.DECORATED_CONSTRUCTOR, '1:10'],
 			pick: first_member,
 			match: {
 				type: 'MethodDefinition',
@@ -9926,29 +9864,29 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'class A { private #x = 1; }',
-			errors: [["Private elements cannot have an accessibility modifier ('private').", 'private']],
-			throws: "Private elements cannot have an accessibility modifier ('private'). (1:10)",
+			errors: [[UPSTREAM_ERRORS.PRIVATE_ELEMENT_ACCESSIBILITY, 'private']],
+			throws: [UPSTREAM_ERRORS.PRIVATE_ELEMENT_ACCESSIBILITY, '1:10'],
 			pick: first_member,
 			match: { type: 'PropertyDefinition', accessibility: 'private', key: { name: 'x' } },
 		},
 		{
 			source: 'abstract class A { abstract #x: number; }',
-			errors: [["Private elements cannot have the 'abstract' modifier.", 'abstract #x']],
-			throws: "Private elements cannot have the 'abstract' modifier. (1:19)",
+			errors: [[UPSTREAM_ERRORS.PRIVATE_ELEMENT_ABSTRACT, 'abstract #x']],
+			throws: [UPSTREAM_ERRORS.PRIVATE_ELEMENT_ABSTRACT, '1:19'],
 			pick: first_member,
 			match: { abstract: true, key: { type: 'PrivateIdentifier', name: 'x' } },
 		},
 		{
 			source: 'interface I { private x: number }',
-			errors: [["'private' modifier cannot appear on a type member.", 'private x']],
-			throws: "'private' modifier cannot appear on a type member. (1:14)",
+			errors: [[UPSTREAM_ERRORS.TYPE_MEMBER_MODIFIER, 'private x']],
+			throws: [UPSTREAM_ERRORS.TYPE_MEMBER_MODIFIER, '1:14'],
 			pick: interface_member,
 			match: { type: 'TSPropertySignature', accessibility: 'private', key: { name: 'x' } },
 		},
 		{
 			source: 'type T = { static m(): void };',
-			errors: [["'static' modifier cannot appear on a type member.", 'static m']],
-			throws: "'static' modifier cannot appear on a type member. (1:11)",
+			errors: [[UPSTREAM_ERRORS.TYPE_MEMBER_MODIFIER, 'static m']],
+			throws: [UPSTREAM_ERRORS.TYPE_MEMBER_MODIFIER, '1:11'],
 			pick: (program) =>
 				as_type(
 					as_type(/** @type {AST.Node} */ (first(program)), 'TSTypeAliasDeclaration')
@@ -9959,64 +9897,43 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'interface I {\n\tstatic\n\tx: number;\n}',
-			errors: [["'static' modifier cannot appear on a type member.", 'static\n']],
-			throws: "'static' modifier cannot appear on a type member. (2:1)",
+			errors: [[UPSTREAM_ERRORS.TYPE_MEMBER_MODIFIER, 'static\n']],
+			throws: [UPSTREAM_ERRORS.TYPE_MEMBER_MODIFIER, '2:1'],
 			pick: interface_member,
 			match: { type: 'TSPropertySignature', static: true, key: { name: 'x' } },
 		},
 		{
 			source: 'interface I<public T> {}',
-			errors: [["'public' modifier cannot appear on a type parameter.", 'public T']],
-			throws: "'public' modifier cannot appear on a type parameter. (1:12)",
+			errors: [[UPSTREAM_ERRORS.TYPE_PARAMETER_MODIFIER, 'public T']],
+			throws: [UPSTREAM_ERRORS.TYPE_PARAMETER_MODIFIER, '1:12'],
 			pick: first_type_parameter,
 			match: { type: 'TSTypeParameter', accessibility: 'public', name: { name: 'T' } },
 		},
 		{
 			source: 'function f<in T>() {}',
-			errors: [
-				[
-					"'in' modifier can only appear on a type parameter of a class, interface or type alias.",
-					'in T',
-				],
-			],
-			throws:
-				"'in' modifier can only appear on a type parameter of a class, interface or type alias. (1:11)",
+			errors: [[UPSTREAM_ERRORS.VARIANCE_MODIFIER, 'in T']],
+			throws: [UPSTREAM_ERRORS.VARIANCE_MODIFIER, '1:11'],
 			valid: 'interface I<in T> {}',
 			pick: first_type_parameter,
 		},
 		{
 			source: 'class A { out x = 1; }',
-			errors: [
-				[
-					"'out' modifier can only appear on a type parameter of a class, interface or type alias.",
-					'out x',
-				],
-			],
-			throws:
-				"'out' modifier can only appear on a type parameter of a class, interface or type alias. (1:10)",
+			errors: [[UPSTREAM_ERRORS.VARIANCE_MODIFIER, 'out x']],
+			throws: [UPSTREAM_ERRORS.VARIANCE_MODIFIER, '1:10'],
 			pick: first_member,
 			match: { type: 'PropertyDefinition', out: true, key: { name: 'x' } },
 		},
 		{
 			source: 'function f({ a }?: { a: number }) {}',
-			errors: [
-				[
-					'A binding pattern parameter cannot be optional in an implementation signature.',
-					'{ a }?',
-				],
-			],
-			throws:
-				'A binding pattern parameter cannot be optional in an implementation signature. (1:11)',
+			errors: [[TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER, '{ a }?']],
+			throws: [TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER, '1:11'],
 			valid: 'declare function f({ a }?: { a: number }): void;',
 			pick: first_parameter,
 		},
 		{
 			source: 'const o = { m([a]?: number[]) {} };',
-			errors: [
-				['A binding pattern parameter cannot be optional in an implementation signature.', '[a]?'],
-			],
-			throws:
-				'A binding pattern parameter cannot be optional in an implementation signature. (1:14)',
+			errors: [[TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER, '[a]?']],
+			throws: [TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER, '1:14'],
 			valid: 'declare function m([a]?: number[]): void;',
 			pick: (program) =>
 				as_type(
@@ -10033,14 +9950,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'export function App({ a }?: { a: number }) @{\n\t<div />\n}',
-			errors: [
-				[
-					'A binding pattern parameter cannot be optional in an implementation signature.',
-					'{ a }?',
-				],
-			],
-			throws:
-				'A binding pattern parameter cannot be optional in an implementation signature. (1:20)',
+			errors: [[TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER, '{ a }?']],
+			throws: [TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER, '1:20'],
 			pick: (program) =>
 				as_type(
 					as_type(/** @type {AST.Node} */ (first(program)), 'ExportNamedDeclaration').declaration,
@@ -10050,22 +9961,22 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'function f(...a: number[],) {}',
-			errors: [['Comma is not permitted after the rest element', ',)']],
-			throws: 'Comma is not permitted after the rest element (1:25)',
+			errors: [[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ',)']],
+			throws: [TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, '1:25'],
 			valid: 'function f(...a: number[]) {}',
 			pick: first,
 		},
 		{
 			source: 'function f(...a: number[], b: string) {}',
-			errors: [['Comma is not permitted after the rest element', ', b']],
-			throws: 'Comma is not permitted after the rest element (1:25)',
+			errors: [[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', b']],
+			throws: [TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, '1:25'],
 			pick: first,
 			match: { params: [{ type: 'RestElement' }, { type: 'Identifier', name: 'b' }] },
 		},
 		{
 			source: 'const [...a, b] = c;',
-			errors: [['Comma is not permitted after the rest element', ', b']],
-			throws: 'Comma is not permitted after the rest element (1:11)',
+			errors: [[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', b']],
+			throws: [TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, '1:11'],
 			pick: first,
 			match: {
 				declarations: [
@@ -10075,37 +9986,37 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'function f(...a: number[], /* last */\n) {}',
-			errors: [['Comma is not permitted after the rest element', ', /*']],
-			throws: 'Comma is not permitted after the rest element (1:25)',
+			errors: [[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', /*']],
+			throws: [TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, '1:25'],
 			valid: 'function f(...a: number[] /* last */\n) {}',
 			pick: first,
 		},
 		{
 			source: 'const f = (...a: number[],) => a;',
-			errors: [['Comma is not permitted after the rest element', ',)']],
-			throws: 'Comma is not permitted after the rest element (1:25)',
+			errors: [[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ',)']],
+			throws: [TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, '1:25'],
 			valid: 'const f = (...a: number[]) => a;',
 			pick: first,
 		},
 		{
 			source: "import j from './a.json' with { type: 'json', type: 'x' };",
 			// acorn-typescript reports it after the repeated attribute's value.
-			errors: [['Duplicated key in attributes', ' };']],
-			throws: 'Duplicated key in attributes (1:55)',
+			errors: [[TSRX_ERRORS.DUPLICATED_ATTRIBUTE_KEY, ' };']],
+			throws: [TSRX_ERRORS.DUPLICATED_ATTRIBUTE_KEY, '1:55'],
 			pick: first,
 			match: { attributes: [{ value: { value: 'json' } }, { value: { value: 'x' } }] },
 		},
 		{
 			source: 'export { missing };',
-			errors: [["Export 'missing' is not defined", 'missing }']],
-			throws: "Export 'missing' is not defined (1:9)",
+			errors: [[UPSTREAM_ERRORS.EXPORT_NOT_DEFINED, 'missing }']],
+			throws: [UPSTREAM_ERRORS.EXPORT_NOT_DEFINED, '1:9'],
 			valid: 'const missing = 1;\nexport { missing };',
 			pick: last,
 		},
 		{
 			source: 'a?.b = c;',
-			errors: [['Optional chaining cannot appear in left-hand side', 'a?.b']],
-			throws: 'Optional chaining cannot appear in left-hand side (1:0)',
+			errors: [[UPSTREAM_ERRORS.OPTIONAL_CHAIN_ASSIGNMENT, 'a?.b']],
+			throws: [UPSTREAM_ERRORS.OPTIONAL_CHAIN_ASSIGNMENT, '1:0'],
 			pick: first,
 			match: {
 				expression: { type: 'AssignmentExpression', left: { type: 'ChainExpression' } },
@@ -10113,8 +10024,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'a?.b += c;',
-			errors: [['Optional chaining cannot appear in left-hand side', 'a?.b']],
-			throws: 'Optional chaining cannot appear in left-hand side (1:0)',
+			errors: [[UPSTREAM_ERRORS.OPTIONAL_CHAIN_ASSIGNMENT, 'a?.b']],
+			throws: [UPSTREAM_ERRORS.OPTIONAL_CHAIN_ASSIGNMENT, '1:0'],
 			pick: first,
 			match: {
 				expression: {
@@ -10126,8 +10037,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: "import.source('x');",
-			errors: [["The only valid meta property for import is 'import.meta'", "source('x')"]],
-			throws: "The only valid meta property for import is 'import.meta' (1:7)",
+			errors: [[UPSTREAM_ERRORS.IMPORT_META_PROPERTY, "source('x')"]],
+			throws: [UPSTREAM_ERRORS.IMPORT_META_PROPERTY, '1:7'],
 			pick: first,
 			match: {
 				expression: {
@@ -10138,8 +10049,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'const x = new.target;',
-			errors: [["'new.target' can only be used in functions and class static block", 'new.target']],
-			throws: "'new.target' can only be used in functions and class static block (1:10)",
+			errors: [[UPSTREAM_ERRORS.NEW_TARGET_OUTSIDE_FUNCTION, 'new.target']],
+			throws: [UPSTREAM_ERRORS.NEW_TARGET_OUTSIDE_FUNCTION, '1:10'],
 			valid: 'function f() {\n\tconst x = new.target;\n}',
 			pick: first,
 			pickValid: (program) =>
@@ -10148,10 +10059,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'super();',
 			errors: [
-				["'super' keyword outside a method", 'super'],
-				['super() call outside constructor of a subclass', 'super'],
+				[UPSTREAM_ERRORS.SUPER_OUTSIDE_METHOD, 'super'],
+				[UPSTREAM_ERRORS.SUPER_CALL_OUTSIDE_CONSTRUCTOR, 'super'],
 			],
-			throws: "'super' keyword outside a method (1:0)",
+			throws: [UPSTREAM_ERRORS.SUPER_OUTSIDE_METHOD, '1:0'],
 			valid: 'class A extends B {\n\tconstructor() {\n\t\tsuper();\n\t}\n}',
 			pick: first,
 			pickValid: (program) =>
@@ -10160,70 +10071,55 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'class A {\n\tconstructor() {\n\t\tsuper();\n\t}\n}',
-			errors: [['super() call outside constructor of a subclass', 'super']],
-			throws: 'super() call outside constructor of a subclass (3:2)',
+			errors: [[UPSTREAM_ERRORS.SUPER_CALL_OUTSIDE_CONSTRUCTOR, 'super']],
+			throws: [UPSTREAM_ERRORS.SUPER_CALL_OUTSIDE_CONSTRUCTOR, '3:2'],
 			valid: 'class A extends B {\n\tconstructor() {\n\t\tsuper();\n\t}\n}',
 			pick: class_method_statement,
 		},
 		{
 			source: 'namespace N {\n\tconst x = await 42;\n}',
-			errors: [
-				[
-					"'await' expressions are only allowed within async functions and at the top levels of modules.",
-					'await 42',
-				],
-			],
-			throws: 'Cannot use await in class static initialization block (2:11)',
+			errors: [[TS_ERRORS.AWAIT_EXPRESSION_NOT_ALLOWED, 'await 42']],
+			throws: ['TS18037', '2:11'],
 			valid: 'const x = await 42;',
 			pick: namespace_statement,
 			pickValid: first,
 		},
 		{
 			source: 'namespace N {\n\tfor await (const x of y) {}\n}',
-			errors: [
-				[
-					"'for await' loops are only allowed within async functions and at the top levels of modules.",
-					'await (',
-				],
-			],
-			throws: 'Unexpected token (2:5)',
+			errors: [[TS_ERRORS.FOR_AWAIT_NOT_ALLOWED, 'await (']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '2:5'],
 			valid: 'for await (const x of y) {}',
 			pick: namespace_statement,
 			pickValid: first,
 		},
 		{
 			source: 'namespace N {\n\tawait using x = y;\n}',
-			errors: [
-				[
-					"'await using' statements are only allowed within async functions and at the top levels of modules.",
-					'await using',
-				],
-			],
-			throws: 'Await using cannot appear outside of async function (2:1)',
+			errors: [[TS_ERRORS.AWAIT_USING_NOT_ALLOWED, 'await using']],
+			throws: [TS_ERRORS.AWAIT_USING_OUTSIDE_ASYNC, '2:1'],
 			valid: 'await using x = y;',
 			pick: namespace_statement,
 			pickValid: first,
 		},
 		{
 			source: '#x in obj;',
-			errors: [["Private field '#x' must be declared in an enclosing class", '#x in']],
-			throws: 'Unexpected token (1:0)',
+			errors: [[TS_ERRORS.PRIVATE_NAME_OUTSIDE_CLASS, '#x in']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:0'],
 			valid: 'class A {\n\t#x;\n\tm() {\n\t\t#x in obj;\n\t}\n}',
 			pick: first,
 			pickValid: class_method_statement,
 		},
 		{
 			source: 'obj.#x;',
-			errors: [["Private field '#x' must be declared in an enclosing class", '#x;']],
-			throws: "Private field '#x' must be declared in an enclosing class (1:4)",
+			errors: [[TS_ERRORS.PRIVATE_NAME_OUTSIDE_CLASS, '#x;']],
+			throws: [TS_ERRORS.PRIVATE_NAME_OUTSIDE_CLASS, '1:4'],
 			valid: 'class A {\n\t#x;\n\tm() {\n\t\tobj.#x;\n\t}\n}',
 			pick: first,
 			pickValid: class_method_statement,
 		},
 		{
 			source: 'export const v: string;',
-			errors: [["'const' declarations must be initialized.", 'v: string']],
-			throws: 'Unexpected token (1:22)',
+			errors: [[TS_ERRORS.DECLARATION_NOT_INITIALIZED, 'v: string']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:22'],
 			valid: 'export declare const v: string;',
 			pick: (program) =>
 				as_type(
@@ -10233,43 +10129,32 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'const a = 1,\n\tb: number;',
-			errors: [["'const' declarations must be initialized.", 'b: number']],
-			throws: 'Unexpected token (2:10)',
+			errors: [[TS_ERRORS.DECLARATION_NOT_INITIALIZED, 'b: number']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '2:10'],
 			valid: 'declare const a = 1,\n\tb: number;',
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations,
 		},
 		{
 			source: 'function f() {\n\texport const a = 1;\n}',
-			errors: [['Modifiers cannot appear here.', 'export const']],
-			throws: 'Modifiers cannot appear here. (2:1)',
+			errors: [[TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'export const']],
+			throws: [TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:1'],
 			valid: 'export const a = 1;',
 			pick: function_statement,
 			pickValid: first,
 		},
 		{
 			source: 'function f() {\n\texport default 1;\n}',
-			errors: [
-				[
-					'A default export must be at the top level of a file or module declaration.',
-					'export default',
-				],
-			],
-			throws: 'A default export must be at the top level of a file or module declaration. (2:1)',
+			errors: [[TS_ERRORS.NESTED_DEFAULT_EXPORT, 'export default']],
+			throws: [TS_ERRORS.NESTED_DEFAULT_EXPORT, '2:1'],
 			valid: 'export default 1;',
 			pick: function_statement,
 			pickValid: first,
 		},
 		{
 			source: "{\n\timport a from 'a';\n}",
-			errors: [
-				[
-					'An import declaration can only be used at the top level of a namespace or module.',
-					'import a',
-				],
-			],
-			throws:
-				'An import declaration can only be used at the top level of a namespace or module. (2:1)',
+			errors: [[TS_ERRORS.NESTED_IMPORT, 'import a']],
+			throws: [TS_ERRORS.NESTED_IMPORT, '2:1'],
 			valid: "import a from 'a';",
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'BlockStatement').body[0],
@@ -10277,14 +10162,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: "function f() {\n\timport x = require('a');\n}",
-			errors: [
-				[
-					'An import declaration can only be used at the top level of a namespace or module.',
-					'import x',
-				],
-			],
-			throws:
-				'An import declaration can only be used at the top level of a namespace or module. (2:1)',
+			errors: [[TS_ERRORS.NESTED_IMPORT, 'import x']],
+			throws: [TS_ERRORS.NESTED_IMPORT, '2:1'],
 			valid: "import x = require('a');",
 			pick: function_statement,
 			pickValid: first,
@@ -10292,88 +10171,58 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		// TypeScript's error for each other kind of export in a block.
 		{
 			source: 'function f() {\n\texport { f };\n}',
-			errors: [
-				[
-					'An export declaration can only be used at the top level of a namespace or module.',
-					'export {',
-				],
-			],
-			throws:
-				'An export declaration can only be used at the top level of a namespace or module. (2:1)',
+			errors: [[TS_ERRORS.NESTED_EXPORT, 'export {']],
+			throws: [TS_ERRORS.NESTED_EXPORT, '2:1'],
 		},
 		{
 			source: "function f() {\n\texport * from 'a';\n}",
-			errors: [
-				[
-					'An export declaration can only be used at the top level of a namespace or module.',
-					'export *',
-				],
-			],
-			throws:
-				'An export declaration can only be used at the top level of a namespace or module. (2:1)',
+			errors: [[TS_ERRORS.NESTED_EXPORT, 'export *']],
+			throws: [TS_ERRORS.NESTED_EXPORT, '2:1'],
 		},
 		{
 			source: 'function f() {\n\texport = f;\n}',
-			errors: [
-				[
-					'An export assignment must be at the top level of a file or module declaration.',
-					'export =',
-				],
-			],
-			throws:
-				'An export assignment must be at the top level of a file or module declaration. (2:1)',
+			errors: [[TS_ERRORS.NESTED_EXPORT_ASSIGNMENT, 'export =']],
+			throws: [TS_ERRORS.NESTED_EXPORT_ASSIGNMENT, '2:1'],
 		},
 		{
 			source: 'function f() {\n\texport as namespace A;\n}',
-			errors: [['Global module exports may only appear at top level.', 'export as']],
-			throws: 'Global module exports may only appear at top level. (2:1)',
+			errors: [[TS_ERRORS.NESTED_GLOBAL_EXPORT, 'export as']],
+			throws: [TS_ERRORS.NESTED_GLOBAL_EXPORT, '2:1'],
 		},
 		{
 			source: 'function f() {\n\texport /* a */ default class {}\n}',
-			errors: [['Modifiers cannot appear here.', 'export /*']],
-			throws: 'Modifiers cannot appear here. (2:1)',
+			errors: [[TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'export /*']],
+			throws: [TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:1'],
 		},
 		{
 			source: 'function f() {\n\texport declare namespace N {}\n}',
-			errors: [
-				[
-					'A namespace declaration is only allowed at the top level of a namespace or module.',
-					'export declare',
-				],
-			],
-			throws:
-				'A namespace declaration is only allowed at the top level of a namespace or module. (2:1)',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'export declare']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
 		},
 		{
 			source: "export function App() @{\n\timport a from 'a';\n\t<div>{a}</div>\n}",
-			errors: [
-				[
-					'An import declaration can only be used at the top level of a namespace or module.',
-					'import a',
-				],
-			],
-			throws:
-				'An import declaration can only be used at the top level of a namespace or module. (2:1)',
+			errors: [[TS_ERRORS.NESTED_IMPORT, 'import a']],
+			throws: [TS_ERRORS.NESTED_IMPORT, '2:1'],
 		},
 		{
 			source: 'function f() {\n\tconst\n}',
 			// Right after `const`, as TypeScript reports it.
-			errors: [['Variable declaration list cannot be empty.', '\n}']],
-			throws: 'Unexpected token (3:0)',
+			errors: [[TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, '\n}']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '3:0'],
 			pick: function_statement,
 			match: { type: 'VariableDeclaration', kind: 'const', declarations: [] },
 		},
 		{
 			source: 'var;',
-			errors: [['Variable declaration list cannot be empty.', ';']],
-			throws: 'Unexpected token (1:3)',
+			errors: [[TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, ';']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:3'],
 			pick: first,
 			match: { type: 'VariableDeclaration', kind: 'var', declarations: [] },
 		},
 		{
 			source: 'function f() {\n\tconst\n\treturn 1;\n}',
-			errors: [['Variable declaration list cannot be empty.', '\n\treturn']],
-			throws: "Unexpected keyword 'return' (3:1)",
+			errors: [[TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, '\n\treturn']],
+			throws: ['TS1359', '3:1'],
 			pick: (program) => ({ statements: function_statements(program) }),
 			match: {
 				statements: [
@@ -10384,13 +10233,13 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'export function App() @{\n\tconst\n\t<div />\n}',
-			errors: [['Variable declaration list cannot be empty.', '\n\t<div']],
-			throws: 'Unexpected token (3:1)',
+			errors: [[TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, '\n\t<div']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '3:1'],
 		},
 		{
 			source: 'function f() {\n\tlet\n}',
-			errors: [["The keyword 'let' is reserved", 'let']],
-			throws: "The keyword 'let' is reserved (2:1)",
+			errors: [[UPSTREAM_ERRORS.LET_RESERVED, 'let']],
+			throws: [UPSTREAM_ERRORS.LET_RESERVED, '2:1'],
 			pick: function_statement,
 			match: { type: 'ExpressionStatement', expression: { type: 'Identifier', name: 'let' } },
 		},
@@ -10398,8 +10247,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// acorn also reports the binding name and the lexical declaration's name,
 			// at the same place: one mistake, one error.
 			source: 'const { a: let } = b;',
-			errors: [["The keyword 'let' is reserved", 'let }']],
-			throws: "The keyword 'let' is reserved (1:11)",
+			errors: [[UPSTREAM_ERRORS.LET_RESERVED, 'let }']],
+			throws: [UPSTREAM_ERRORS.LET_RESERVED, '1:11'],
 			pick: first,
 			match: {
 				type: 'VariableDeclaration',
@@ -10408,32 +10257,32 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'var let = 1;',
-			errors: [["The keyword 'let' is reserved", 'let =']],
-			throws: "The keyword 'let' is reserved (1:4)",
+			errors: [[UPSTREAM_ERRORS.LET_RESERVED, 'let =']],
+			throws: [UPSTREAM_ERRORS.LET_RESERVED, '1:4'],
 			pick: first,
 			match: { type: 'VariableDeclaration', declarations: [{ id: { name: 'let' } }] },
 		},
 		{
 			source: 'class let {}',
-			errors: [["The keyword 'let' is reserved", 'let {']],
-			throws: "The keyword 'let' is reserved (1:6)",
+			errors: [[UPSTREAM_ERRORS.LET_RESERVED, 'let {']],
+			throws: [UPSTREAM_ERRORS.LET_RESERVED, '1:6'],
 			pick: first,
 			match: { type: 'ClassDeclaration', id: { name: 'let' } },
 		},
 		{
 			source: "import let from 'a';",
-			errors: [["The keyword 'let' is reserved", 'let from']],
-			throws: "The keyword 'let' is reserved (1:7)",
+			errors: [[UPSTREAM_ERRORS.LET_RESERVED, 'let from']],
+			throws: [UPSTREAM_ERRORS.LET_RESERVED, '1:7'],
 			pick: first,
 			match: { type: 'ImportDeclaration', specifiers: [{ local: { name: 'let' } }] },
 		},
 		{
 			source: 'function f(let) {\n\tlet = 1;\n}',
 			errors: [
-				["The keyword 'let' is reserved", 'let)'],
-				["The keyword 'let' is reserved", 'let ='],
+				[UPSTREAM_ERRORS.LET_RESERVED, 'let)'],
+				[UPSTREAM_ERRORS.LET_RESERVED, 'let ='],
 			],
-			throws: "The keyword 'let' is reserved (1:11)",
+			throws: [UPSTREAM_ERRORS.LET_RESERVED, '1:11'],
 			pick: first,
 			match: {
 				params: [{ type: 'Identifier', name: 'let' }],
@@ -10452,8 +10301,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'for (var; ;) {}',
 			// Right after `var`, as for a statement.
-			errors: [['Variable declaration list cannot be empty.', '; ;)']],
-			throws: 'Unexpected token (1:8)',
+			errors: [[TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, '; ;)']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:8'],
 			pick: first,
 			match: {
 				type: 'ForStatement',
@@ -10464,8 +10313,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'for (const of x) {}',
-			errors: [['Variable declaration list cannot be empty.', ' of x']],
-			throws: 'Unexpected token (1:14)',
+			errors: [[TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, ' of x']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:14'],
 			pick: first,
 			match: {
 				type: 'ForOfStatement',
@@ -10475,8 +10324,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'for (let of x) {}',
-			errors: [['Variable declaration list cannot be empty.', ' of x']],
-			throws: 'Unexpected token (1:12)',
+			errors: [[TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, ' of x']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:12'],
 			pick: first,
 			match: {
 				type: 'ForOfStatement',
@@ -10485,8 +10334,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'for (const in x) {}',
-			errors: [['Variable declaration list cannot be empty.', ' in x']],
-			throws: "Unexpected keyword 'in' (1:11)",
+			errors: [[TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, ' in x']],
+			throws: ['TS1359', '1:11'],
 			pick: first,
 			match: {
 				type: 'ForInStatement',
@@ -10495,9 +10344,9 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'async function f() {\n\tfor await (var\n\t\tof x) {}\n}',
-			errors: [['Variable declaration list cannot be empty.', '\n\t\tof']],
+			errors: [[TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, '\n\t\tof']],
 			// At `await`: acorn reads a declarator named `of`.
-			throws: 'Unexpected token (2:5)',
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '2:5'],
 			pick: function_statement,
 			match: {
 				type: 'ForOfStatement',
@@ -10508,13 +10357,13 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source:
 				'export function App() @{\n\t<ul>\n\t\t@for (const of items) {\n\t\t\t<li />\n\t\t}\n\t</ul>\n}',
-			errors: [['Variable declaration list cannot be empty.', ' of items']],
-			throws: 'Unexpected token (3:17)',
+			errors: [[TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, ' of items']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '3:17'],
 		},
 		{
 			source: 'class A { constructor(public [a]: number[]) {} }',
-			errors: [['A parameter property may not be declared using a binding pattern.', 'public [a]']],
-			throws: 'A parameter property may not be declared using a binding pattern. (1:22)',
+			errors: [[TS_ERRORS.PATTERN_PARAMETER_PROPERTY, 'public [a]']],
+			throws: [TS_ERRORS.PATTERN_PARAMETER_PROPERTY, '1:22'],
 			pick: constructor_parameter,
 			match: {
 				type: 'TSParameterProperty',
@@ -10525,14 +10374,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'class A {\n\tconstructor(readonly { a }?: { a: number }) {}\n}',
 			errors: [
-				['A parameter property may not be declared using a binding pattern.', 'readonly {'],
+				[TS_ERRORS.PATTERN_PARAMETER_PROPERTY, 'readonly {'],
 				// As for any other optional pattern parameter of a constructor with a body.
-				[
-					'A binding pattern parameter cannot be optional in an implementation signature.',
-					'{ a }?',
-				],
+				[TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER, '{ a }?'],
 			],
-			throws: 'A parameter property may not be declared using a binding pattern. (2:13)',
+			throws: [TS_ERRORS.PATTERN_PARAMETER_PROPERTY, '2:13'],
 			pick: constructor_parameter,
 			match: {
 				type: 'TSParameterProperty',
@@ -10542,10 +10388,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'function f(public x: number) {}',
-			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'public x'],
-			],
-			throws: "The keyword 'public' is reserved (1:11)",
+			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public x']],
+			throws: ['TS1212', '1:11'],
 			valid: 'class A { constructor(public x: number) {} }',
 			pick: first_parameter,
 			pickValid: constructor_parameter,
@@ -10554,13 +10398,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// At the first modifier, not at its column.
 			source: 'const g = function (\n\tprivate readonly x: number,\n\tprotected y: number,\n) {};',
 			errors: [
-				[
-					'A parameter property is only allowed in a constructor implementation.',
-					'private readonly',
-				],
-				['A parameter property is only allowed in a constructor implementation.', 'protected y'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'private readonly'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'protected y'],
 			],
-			throws: "The keyword 'private' is reserved (2:1)",
+			throws: ['TS1212', '2:1'],
 			valid:
 				'class A {\n\tconstructor(\n\t\tprivate readonly x: number,\n\t\tprotected y: number,\n\t) {}\n}',
 			pick: (program) =>
@@ -10574,47 +10415,43 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'declare function f(readonly x: number): void;',
-			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'readonly x'],
-			],
-			throws: 'Unexpected token (1:28)',
+			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'readonly x']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:28'],
 			valid: 'class A { constructor(readonly x: number) {} }',
 			pick: first_parameter,
 			pickValid: constructor_parameter,
 		},
 		{
 			source: 'export function App(override x: number) @{\n\t<div>{x}</div>\n}',
-			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'override'],
-			],
-			throws: 'Unexpected token (1:29)',
+			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'override']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:29'],
 		},
 		{
 			// TypeScript reports both.
 			source: 'function f(public ...rest: number[]) {}',
 			errors: [
-				['A parameter property cannot be declared using a rest parameter.', 'public'],
-				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				[TS_ERRORS.REST_PARAMETER_PROPERTY, 'public'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
 			],
-			throws: "The keyword 'public' is reserved (1:11)",
+			throws: ['TS1212', '1:11'],
 			valid: 'function f(...rest: number[]) {}',
 			pick: first_parameter,
 		},
 		{
 			source: 'function f(public [a]: number[]) {}',
 			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'public'],
-				['A parameter property may not be declared using a binding pattern.', 'public'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
+				[TS_ERRORS.PATTERN_PARAMETER_PROPERTY, 'public'],
 			],
-			throws: "The keyword 'public' is reserved (1:11)",
+			throws: ['TS1212', '1:11'],
 			pick: first_parameter,
 			match: { type: 'TSParameterProperty', parameter: { type: 'ArrayPattern' } },
 		},
 		// A parameter property with a pattern and a default (#665).
 		{
 			source: 'class A {\n\tconstructor(public [a] = [1]) {}\n}',
-			errors: [['A parameter property may not be declared using a binding pattern.', 'public [a]']],
-			throws: 'A parameter property may not be declared using a binding pattern. (2:13)',
+			errors: [[TS_ERRORS.PATTERN_PARAMETER_PROPERTY, 'public [a]']],
+			throws: [TS_ERRORS.PATTERN_PARAMETER_PROPERTY, '2:13'],
 			pick: constructor_parameter,
 			match: {
 				type: 'TSParameterProperty',
@@ -10624,8 +10461,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'class A { constructor(readonly { a }: { a: number } = { a: 1 }) {} }',
-			errors: [['A parameter property may not be declared using a binding pattern.', 'readonly {']],
-			throws: 'A parameter property may not be declared using a binding pattern. (1:22)',
+			errors: [[TS_ERRORS.PATTERN_PARAMETER_PROPERTY, 'readonly {']],
+			throws: [TS_ERRORS.PATTERN_PARAMETER_PROPERTY, '1:22'],
 			pick: constructor_parameter,
 			match: {
 				type: 'TSParameterProperty',
@@ -10639,10 +10476,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'function f(public [a] = [1]) {}',
 			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'public'],
-				['A parameter property may not be declared using a binding pattern.', 'public'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
+				[TS_ERRORS.PATTERN_PARAMETER_PROPERTY, 'public'],
 			],
-			throws: "The keyword 'public' is reserved (1:11)",
+			throws: ['TS1212', '1:11'],
 			pick: first_parameter,
 			match: {
 				type: 'TSParameterProperty',
@@ -10652,21 +10489,17 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		// A parameter property modifier on a signature's parameter (#664).
 		{
 			source: 'type F = (public x: number) => void;',
-			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'public x'],
-			],
+			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public x']],
 			// acorn-typescript reads `(public x` as a parenthesized type.
-			throws: 'Unexpected token (1:17)',
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:17'],
 			valid: 'class A { constructor(public x: number) {} }',
 			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
 			pickValid: constructor_parameters,
 		},
 		{
 			source: 'type C = new (protected x: number) => object;',
-			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'protected x'],
-			],
-			throws: "The keyword 'protected' is reserved (1:14)",
+			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'protected x']],
+			throws: ['TS1212', '1:14'],
 			valid: 'class A { constructor(protected x: number) {} }',
 			pick: (program) => as_type(type_alias_type(program), 'TSConstructorType').parameters,
 			pickValid: constructor_parameters,
@@ -10675,14 +10508,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			source:
 				'interface I {\n\tm(private readonly x: number): void;\n\t(override y: number): void;\n\tnew (readonly z: number): I;\n}',
 			errors: [
-				[
-					'A parameter property is only allowed in a constructor implementation.',
-					'private readonly',
-				],
-				['A parameter property is only allowed in a constructor implementation.', 'override y'],
-				['A parameter property is only allowed in a constructor implementation.', 'readonly z'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'private readonly'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'override y'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'readonly z'],
 			],
-			throws: "The keyword 'private' is reserved (2:3)",
+			throws: ['TS1212', '2:3'],
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'TSInterfaceDeclaration').body.body,
 			match: [
@@ -10703,10 +10533,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'type T = { m?(public [a]: number[]): void };',
 			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'public'],
-				['A parameter property may not be declared using a binding pattern.', 'public'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
+				[TS_ERRORS.PATTERN_PARAMETER_PROPERTY, 'public'],
 			],
-			throws: "The keyword 'public' is reserved (1:14)",
+			throws: ['TS1212', '1:14'],
 			pick: (program) =>
 				as_type(as_type(type_alias_type(program), 'TSTypeLiteral').members[0], 'TSMethodSignature')
 					.parameters,
@@ -10721,10 +10551,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'type T = { (public ...rest: number[]): void };',
 			errors: [
-				['A parameter property cannot be declared using a rest parameter.', 'public'],
-				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				[TS_ERRORS.REST_PARAMETER_PROPERTY, 'public'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
 			],
-			throws: "The keyword 'public' is reserved (1:12)",
+			throws: ['TS1212', '1:12'],
 			valid: 'type T = { (...rest: number[]): void };',
 			pick: type_alias_type,
 		},
@@ -10732,28 +10562,24 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// A signature's parameters now go through `parseBindingList`, which reads
 			// the parameters after a rest parameter, as for a function.
 			source: 'type F = (...a: number[], b: string) => void;',
-			errors: [['Comma is not permitted after the rest element', ', b']],
-			throws: 'Comma is not permitted after the rest element (1:24)',
+			errors: [[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', b']],
+			throws: [TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, '1:24'],
 			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
 			match: [{ type: 'RestElement' }, { type: 'Identifier', name: 'b' }],
 		},
 		// A parameter property modifier on an arrow function's parameter (#663).
 		{
 			source: 'const k = (public x: number) => x;',
-			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'public x'],
-			],
-			throws: "The keyword 'public' is reserved (1:11)",
+			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public x']],
+			throws: ['TS1212', '1:11'],
 			valid: 'class A { constructor(public x: number) {} }',
 			pick: arrow_parameters,
 			pickValid: constructor_parameters,
 		},
 		{
 			source: 'const m = async (readonly x: number) => x;',
-			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'readonly x'],
-			],
-			throws: 'Unexpected token (1:26)',
+			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'readonly x']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:26'],
 			valid: 'class A { constructor(readonly x: number) {} }',
 			pick: arrow_parameters,
 			pickValid: constructor_parameters,
@@ -10762,15 +10588,12 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// After type parameters, a modifier can come before a pattern too.
 			source: 'const n = <T,>(a: T, private readonly b?: T, protected [c]: T[] = []) => a;',
 			errors: [
-				[
-					'A parameter property is only allowed in a constructor implementation.',
-					'private readonly',
-				],
-				['A parameter property is only allowed in a constructor implementation.', 'protected'],
-				['A parameter property may not be declared using a binding pattern.', 'protected'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'private readonly'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'protected'],
+				[TS_ERRORS.PATTERN_PARAMETER_PROPERTY, 'protected'],
 			],
 			// acorn-typescript throws the error of reading `<T,>` as an element.
-			throws: 'Unexpected token (1:10)',
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:10'],
 			pick: arrow_parameters,
 			match: [
 				{ type: 'Identifier', name: 'a' },
@@ -10793,10 +10616,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'const o = async <T,>(override x: T) => x;',
-			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'override'],
-			],
-			throws: 'Unexpected token (1:19)',
+			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'override']],
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:19'],
 			valid: 'class A { constructor(override x: T) {} }',
 			pick: arrow_parameters,
 			pickValid: constructor_parameters,
@@ -10805,11 +10626,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			source:
 				'const g = (\n\ta: number,\n\treadonly b = 1,\n\tpublic { c }: { c: number },\n): number => a;',
 			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'readonly b'],
-				['A parameter property is only allowed in a constructor implementation.', 'public {'],
-				['A parameter property may not be declared using a binding pattern.', 'public {'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'readonly b'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public {'],
+				[TS_ERRORS.PATTERN_PARAMETER_PROPERTY, 'public {'],
 			],
-			throws: 'Unexpected token (3:10)',
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '3:10'],
 			pick: declarator_init,
 			match: {
 				type: 'ArrowFunctionExpression',
@@ -10833,37 +10654,35 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// TypeScript reports both, as for a function's parameter.
 			source: 'const f = (a: number, public ...rest: number[]) => a;',
 			errors: [
-				['A parameter property cannot be declared using a rest parameter.', 'public'],
-				['A parameter property is only allowed in a constructor implementation.', 'public'],
+				[TS_ERRORS.REST_PARAMETER_PROPERTY, 'public'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
 			],
-			throws: "The keyword 'public' is reserved (1:22)",
+			throws: ['TS1212', '1:22'],
 			valid: 'const f = (a: number, ...rest: number[]) => a;',
 			pick: arrow_parameters,
 		},
 		{
 			source: 'const f = (a, public ...r,) => a;',
 			errors: [
-				['A parameter property cannot be declared using a rest parameter.', 'public'],
-				['A parameter property is only allowed in a constructor implementation.', 'public'],
-				['Comma is not permitted after the rest element', ',)'],
+				[TS_ERRORS.REST_PARAMETER_PROPERTY, 'public'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
+				[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ',)'],
 			],
-			throws: "The keyword 'public' is reserved (1:14)",
+			throws: ['TS1212', '1:14'],
 			valid: 'const f = (a, ...r) => a;',
 			pick: arrow_parameters,
 		},
 		{
 			source: 'export const App = (public x: number) => @{\n\t<div>{x}</div>\n};',
-			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'public x'],
-			],
-			throws: "The keyword 'public' is reserved (1:20)",
+			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public x']],
+			throws: ['TS1212', '1:20'],
 		},
 		// An arrow function's optional rest or pattern parameter (#663), as other
 		// functions' (#616, #557).
 		{
 			source: 'const f = (...a?: number[]) => a;',
-			errors: [['A rest parameter cannot be optional.', '?:']],
-			throws: 'A rest parameter cannot be optional. (1:15)',
+			errors: [[TS_ERRORS.OPTIONAL_REST_PARAMETER, '?:']],
+			throws: [TS_ERRORS.OPTIONAL_REST_PARAMETER, '1:15'],
 			valid: 'declare function f(...a?: number[]): void;',
 			pick: arrow_parameters,
 			pickValid: (program) =>
@@ -10871,14 +10690,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'const f = ({ a }?: { a: number }) => a;',
-			errors: [
-				[
-					'A binding pattern parameter cannot be optional in an implementation signature.',
-					'{ a }?',
-				],
-			],
-			throws:
-				'A binding pattern parameter cannot be optional in an implementation signature. (1:11)',
+			errors: [[TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER, '{ a }?']],
+			throws: [TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER, '1:11'],
 			valid: 'declare function f({ a }?: { a: number }): void;',
 			pick: arrow_parameters,
 			pickValid: (program) =>
@@ -10886,25 +10699,16 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'const f = async (x, [a]?: number[]) => a;',
-			errors: [
-				['A binding pattern parameter cannot be optional in an implementation signature.', '[a]?'],
-			],
-			throws:
-				'A binding pattern parameter cannot be optional in an implementation signature. (1:20)',
+			errors: [[TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER, '[a]?']],
+			throws: [TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER, '1:20'],
 			pick: arrow_parameters,
 			match: [{ type: 'Identifier' }, { type: 'ArrayPattern', optional: true }],
 		},
 		{
 			source: 'const f = <T,>({ a }?: T) => a;',
-			errors: [
-				[
-					'A binding pattern parameter cannot be optional in an implementation signature.',
-					'{ a }?',
-				],
-			],
+			errors: [[TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER, '{ a }?']],
 			// The arrow function's own error, past its `=>` (#703).
-			throws:
-				'A binding pattern parameter cannot be optional in an implementation signature. (1:15)',
+			throws: [TS_ERRORS.OPTIONAL_BINDING_PATTERN_PARAMETER, '1:15'],
 			pick: arrow_parameters,
 			match: [{ type: 'ObjectPattern', optional: true }],
 		},
@@ -10912,8 +10716,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		// reads as a spread among the arguments of `async (…)`.
 		{
 			source: 'const f = async (...a?: number[]) => a;',
-			errors: [['A rest parameter cannot be optional.', '?:']],
-			throws: 'A rest parameter cannot be optional. (1:21)',
+			errors: [[TS_ERRORS.OPTIONAL_REST_PARAMETER, '?:']],
+			throws: [TS_ERRORS.OPTIONAL_REST_PARAMETER, '1:21'],
 			valid: 'declare function f(...a?: number[]): void;',
 			pick: arrow_parameters,
 			pickValid: (program) =>
@@ -10924,8 +10728,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	x,
 	...[a] /* rest */ ?
 ) => x;`,
-			errors: [['A rest parameter cannot be optional.', '?\n']],
-			throws: 'A rest parameter cannot be optional. (3:19)',
+			errors: [[TS_ERRORS.OPTIONAL_REST_PARAMETER, '?\n']],
+			throws: [TS_ERRORS.OPTIONAL_REST_PARAMETER, '3:19'],
 			pick: arrow_parameters,
 			match: [
 				{ type: 'Identifier', name: 'x' },
@@ -10937,14 +10741,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		// as typescript-estree's does.
 		{
 			source: 'type F = (a = 1) => void;',
-			errors: [
-				[
-					'A parameter initializer is only allowed in a function or constructor implementation.',
-					'a = 1',
-				],
-			],
-			throws:
-				'A parameter initializer is only allowed in a function or constructor implementation. (1:10)',
+			errors: [[TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER, 'a = 1']],
+			throws: [TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER, '1:10'],
 			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
 			match: [
 				{
@@ -10961,21 +10759,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	new ({ c }: { c: number } = { c: 3 }): I;
 }`,
 			errors: [
-				[
-					'A parameter initializer is only allowed in a function or constructor implementation.',
-					'a: number = 1',
-				],
-				[
-					'A parameter initializer is only allowed in a function or constructor implementation.',
-					'b = 2',
-				],
-				[
-					'A parameter initializer is only allowed in a function or constructor implementation.',
-					'{ c }',
-				],
+				[TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER, 'a: number = 1'],
+				[TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER, 'b = 2'],
+				[TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER, '{ c }'],
 			],
-			throws:
-				'A parameter initializer is only allowed in a function or constructor implementation. (2:3)',
+			throws: [TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER, '2:3'],
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'TSInterfaceDeclaration').body.body,
 			match: [
@@ -11000,27 +10788,18 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'let f: new ([a]?: number[], b = 2) => object;',
-			errors: [
-				[
-					'A parameter initializer is only allowed in a function or constructor implementation.',
-					'b = 2',
-				],
-			],
-			throws:
-				'A parameter initializer is only allowed in a function or constructor implementation. (1:28)',
+			errors: [[TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER, 'b = 2']],
+			throws: [TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER, '1:28'],
 		},
 		{
 			// TypeScript reports both at the parameter.
 			source: 'type F = (public x = 1) => void;',
 			errors: [
-				['A parameter property is only allowed in a constructor implementation.', 'public'],
-				[
-					'A parameter initializer is only allowed in a function or constructor implementation.',
-					'public x = 1',
-				],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
+				[TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER, 'public x = 1'],
 			],
 			// acorn-typescript reads `(public x` as a parenthesized type.
-			throws: 'Unexpected token (1:17)',
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:17'],
 			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
 			match: [
 				{
@@ -11035,24 +10814,24 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		// type annotation on its target, as for a parameter with a default.
 		{
 			source: 'function f(...a = []) {}',
-			errors: [['A rest parameter cannot have an initializer.', 'a =']],
-			throws: 'A rest parameter cannot have an initializer. (1:14)',
+			errors: [[TS_ERRORS.REST_PARAMETER_INITIALIZER, 'a =']],
+			throws: [TS_ERRORS.REST_PARAMETER_INITIALIZER, '1:14'],
 			valid: 'function f(a = []) {}',
 			pick: rest_defaults_as_elements(first_parameter),
 			pickValid: first_parameter,
 		},
 		{
 			source: 'function f(...[a, b] = []) {}',
-			errors: [['A rest parameter cannot have an initializer.', '[a, b]']],
-			throws: 'A rest parameter cannot have an initializer. (1:14)',
+			errors: [[TS_ERRORS.REST_PARAMETER_INITIALIZER, '[a, b]']],
+			throws: [TS_ERRORS.REST_PARAMETER_INITIALIZER, '1:14'],
 			valid: 'function f([a, b] = []) {}',
 			pick: rest_defaults_as_elements(first_parameter),
 			pickValid: first_parameter,
 		},
 		{
 			source: 'const g = (...a: number[] = []) => a;',
-			errors: [['A rest parameter cannot have an initializer.', 'a:']],
-			throws: 'A rest parameter cannot have an initializer. (1:14)',
+			errors: [[TS_ERRORS.REST_PARAMETER_INITIALIZER, 'a:']],
+			throws: [TS_ERRORS.REST_PARAMETER_INITIALIZER, '1:14'],
 			valid: 'const g = (a: number[] = []) => a;',
 			pick: rest_defaults_as_elements(arrow_parameters),
 			pickValid: arrow_parameters,
@@ -11062,8 +10841,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	x,
 	...a = [1]
 ) => a;`,
-			errors: [['A rest parameter cannot have an initializer.', 'a = [1]']],
-			throws: 'A rest parameter cannot have an initializer. (3:4)',
+			errors: [[TS_ERRORS.REST_PARAMETER_INITIALIZER, 'a = [1]']],
+			throws: [TS_ERRORS.REST_PARAMETER_INITIALIZER, '3:4'],
 			valid: `const h = async (
 	x,
 	a = [1]
@@ -11073,24 +10852,24 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'const i = async (...a: number[] = []) => a;',
-			errors: [['A rest parameter cannot have an initializer.', 'a:']],
-			throws: 'A rest parameter cannot have an initializer. (1:20)',
+			errors: [[TS_ERRORS.REST_PARAMETER_INITIALIZER, 'a:']],
+			throws: [TS_ERRORS.REST_PARAMETER_INITIALIZER, '1:20'],
 			valid: 'const i = async (a: number[] = []) => a;',
 			pick: rest_defaults_as_elements(arrow_parameters),
 			pickValid: arrow_parameters,
 		},
 		{
 			source: 'const k = <T,>(...a: T[] = []) => a;',
-			errors: [['A rest parameter cannot have an initializer.', 'a:']],
-			throws: 'A rest parameter cannot have an initializer. (1:18)',
+			errors: [[TS_ERRORS.REST_PARAMETER_INITIALIZER, 'a:']],
+			throws: [TS_ERRORS.REST_PARAMETER_INITIALIZER, '1:18'],
 			valid: 'const k = <T,>(a: T[] = []) => a;',
 			pick: rest_defaults_as_elements(arrow_parameters),
 			pickValid: arrow_parameters,
 		},
 		{
 			source: 'const l = async <T,>(...a = []) => a;',
-			errors: [['A rest parameter cannot have an initializer.', 'a =']],
-			throws: 'A rest parameter cannot have an initializer. (1:24)',
+			errors: [[TS_ERRORS.REST_PARAMETER_INITIALIZER, 'a =']],
+			throws: [TS_ERRORS.REST_PARAMETER_INITIALIZER, '1:24'],
 			valid: 'const l = async <T,>(a = []) => a;',
 			pick: rest_defaults_as_elements(arrow_parameters),
 			pickValid: arrow_parameters,
@@ -11100,20 +10879,17 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	const m = (...a = []) => a;
 	<div>{m.length}</div>
 }`,
-			errors: [['A rest parameter cannot have an initializer.', 'a =']],
-			throws: 'A rest parameter cannot have an initializer. (2:15)',
+			errors: [[TS_ERRORS.REST_PARAMETER_INITIALIZER, 'a =']],
+			throws: [TS_ERRORS.REST_PARAMETER_INITIALIZER, '2:15'],
 		},
 		{
 			// TypeScript reports TS2371 too, at the parameter.
 			source: 'type H = (...a = []) => void;',
 			errors: [
-				['A rest parameter cannot have an initializer.', 'a ='],
-				[
-					'A parameter initializer is only allowed in a function or constructor implementation.',
-					'...a = []',
-				],
+				[TS_ERRORS.REST_PARAMETER_INITIALIZER, 'a ='],
+				[TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER, '...a = []'],
 			],
-			throws: 'A rest parameter cannot have an initializer. (1:13)',
+			throws: [TS_ERRORS.REST_PARAMETER_INITIALIZER, '1:13'],
 			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
 			match: [
 				{
@@ -11128,18 +10904,12 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	new (...b: string[] = []): I;
 }`,
 			errors: [
-				['A rest parameter cannot have an initializer.', 'a ='],
-				[
-					'A parameter initializer is only allowed in a function or constructor implementation.',
-					'...a = []',
-				],
-				['A rest parameter cannot have an initializer.', 'b:'],
-				[
-					'A parameter initializer is only allowed in a function or constructor implementation.',
-					'...b: string[] = []',
-				],
+				[TS_ERRORS.REST_PARAMETER_INITIALIZER, 'a ='],
+				[TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER, '...a = []'],
+				[TS_ERRORS.REST_PARAMETER_INITIALIZER, 'b:'],
+				[TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER, '...b: string[] = []'],
 			],
-			throws: 'A rest parameter cannot have an initializer. (2:6)',
+			throws: [TS_ERRORS.REST_PARAMETER_INITIALIZER, '2:6'],
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'TSInterfaceDeclaration').body.body,
 			match: [
@@ -11164,11 +10934,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'class A { constructor(public ...a = []) {} }',
 			errors: [
-				['A parameter property cannot be declared using a rest parameter.', 'public'],
-				['A rest parameter cannot have an initializer.', 'a ='],
+				[TS_ERRORS.REST_PARAMETER_PROPERTY, 'public'],
+				[TS_ERRORS.REST_PARAMETER_INITIALIZER, 'a ='],
 			],
 			// acorn-typescript expects a name after the modifier.
-			throws: 'Unexpected token (1:29)',
+			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:29'],
 			valid: 'class A { constructor(a = []) {} }',
 			pick: rest_defaults_as_elements(constructor_parameters),
 			pickValid: constructor_parameters,
@@ -11178,16 +10948,16 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		// typescript-estree gives `[...a = 1] = b`.
 		{
 			source: 'const [...a = 1] = b;',
-			errors: [['A rest element cannot have an initializer.', '= 1']],
-			throws: 'A rest element cannot have an initializer. (1:12)',
+			errors: [[TS_ERRORS.REST_ELEMENT_INITIALIZER, '= 1']],
+			throws: [TS_ERRORS.REST_ELEMENT_INITIALIZER, '1:12'],
 			valid: 'const [a = 1] = b;',
 			pick: rest_defaults_as_elements(first),
 			pickValid: first,
 		},
 		{
 			source: 'const { x, ...a = f() } = b;',
-			errors: [['A rest element cannot have an initializer.', '= f()']],
-			throws: 'A rest element cannot have an initializer. (1:16)',
+			errors: [[TS_ERRORS.REST_ELEMENT_INITIALIZER, '= f()']],
+			throws: [TS_ERRORS.REST_ELEMENT_INITIALIZER, '1:16'],
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations[0].id,
 			match: {
@@ -11208,10 +10978,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'function f([...a = 1], { ...b = {} }) {}',
 			errors: [
-				['A rest element cannot have an initializer.', '= 1'],
-				['A rest element cannot have an initializer.', '= {}'],
+				[TS_ERRORS.REST_ELEMENT_INITIALIZER, '= 1'],
+				[TS_ERRORS.REST_ELEMENT_INITIALIZER, '= {}'],
 			],
-			throws: 'A rest element cannot have an initializer. (1:17)',
+			throws: [TS_ERRORS.REST_ELEMENT_INITIALIZER, '1:17'],
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'FunctionDeclaration').params,
 			match: [
@@ -11221,24 +10991,24 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'const f = ([...a = 1]) => a;',
-			errors: [['A rest element cannot have an initializer.', '= 1']],
-			throws: 'A rest element cannot have an initializer. (1:17)',
+			errors: [[TS_ERRORS.REST_ELEMENT_INITIALIZER, '= 1']],
+			throws: [TS_ERRORS.REST_ELEMENT_INITIALIZER, '1:17'],
 			valid: 'const f = ([a = 1]) => a;',
 			pick: rest_defaults_as_elements(arrow_parameters),
 			pickValid: arrow_parameters,
 		},
 		{
 			source: '[...a = 1] = b;',
-			errors: [['A rest element cannot have an initializer.', '= 1']],
-			throws: 'A rest element cannot have an initializer. (1:6)',
+			errors: [[TS_ERRORS.REST_ELEMENT_INITIALIZER, '= 1']],
+			throws: [TS_ERRORS.REST_ELEMENT_INITIALIZER, '1:6'],
 			valid: '[a = 1] = b;',
 			pick: rest_defaults_as_elements(first),
 			pickValid: first,
 		},
 		{
 			source: '({ ...a = 1 } = b);',
-			errors: [['A rest element cannot have an initializer.', '= 1']],
-			throws: 'A rest element cannot have an initializer. (1:8)',
+			errors: [[TS_ERRORS.REST_ELEMENT_INITIALIZER, '= 1']],
+			throws: [TS_ERRORS.REST_ELEMENT_INITIALIZER, '1:8'],
 			pick: (program) => {
 				let expression = as_type(
 					/** @type {AST.Node} */ (first(program)),
@@ -11255,8 +11025,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			// The `=` past a comment.
 			source: 'for ([...a /* = */ = 1] of c) {}',
-			errors: [['A rest element cannot have an initializer.', '= 1']],
-			throws: 'A rest element cannot have an initializer. (1:19)',
+			errors: [[TS_ERRORS.REST_ELEMENT_INITIALIZER, '= 1']],
+			throws: [TS_ERRORS.REST_ELEMENT_INITIALIZER, '1:19'],
 			pick: (program) => as_type(/** @type {AST.Node} */ (first(program)), 'ForOfStatement').left,
 			match: {
 				type: 'ArrayPattern',
@@ -11271,8 +11041,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			// And past the parentheses around the target.
 			source: '[...(a) = 1] = b;',
-			errors: [['A rest element cannot have an initializer.', '= 1']],
-			throws: 'A rest element cannot have an initializer. (1:8)',
+			errors: [[TS_ERRORS.REST_ELEMENT_INITIALIZER, '= 1']],
+			throws: [TS_ERRORS.REST_ELEMENT_INITIALIZER, '1:8'],
 			valid: '[(a) = 1] = b;',
 			pick: rest_defaults_as_elements(first),
 			pickValid: first,
@@ -11282,8 +11052,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		// array binding pattern.
 		{
 			source: 'const { ...a, b } = c;',
-			errors: [['Comma is not permitted after the rest element', ', b']],
-			throws: 'Comma is not permitted after the rest element (1:12)',
+			errors: [[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', b']],
+			throws: [TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, '1:12'],
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations[0].id,
 			match: {
@@ -11297,10 +11067,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'function f({ ...a, ...b, c = 1 }) {}',
 			errors: [
-				['Comma is not permitted after the rest element', ', ...b'],
-				['Comma is not permitted after the rest element', ', c'],
+				[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', ...b'],
+				[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', c'],
 			],
-			throws: 'Comma is not permitted after the rest element (1:17)',
+			throws: [TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, '1:17'],
 			pick: first_parameter,
 			match: {
 				type: 'ObjectPattern',
@@ -11315,10 +11085,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// And after a rest element's default (#770).
 			source: 'const { ...a = 1, b } = c;',
 			errors: [
-				['A rest element cannot have an initializer.', '= 1'],
-				['Comma is not permitted after the rest element', ', b'],
+				[TS_ERRORS.REST_ELEMENT_INITIALIZER, '= 1'],
+				[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', b'],
 			],
-			throws: 'A rest element cannot have an initializer. (1:13)',
+			throws: [TS_ERRORS.REST_ELEMENT_INITIALIZER, '1:13'],
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations[0].id,
 			match: {
@@ -11333,8 +11103,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		// recorded at the comma as for other functions' parameters.
 		{
 			source: 'const f = (...a, b) => [a, b];',
-			errors: [['Comma is not permitted after the rest element', ', b']],
-			throws: 'Comma is not permitted after the rest element (1:15)',
+			errors: [[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', b']],
+			throws: [TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, '1:15'],
 			pick: arrow_parameters,
 			match: [
 				{ type: 'RestElement', argument: { name: 'a' } },
@@ -11344,10 +11114,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'const g = (...a, ...b, c,) => c;',
 			errors: [
-				['Comma is not permitted after the rest element', ', ...b'],
-				['Comma is not permitted after the rest element', ', c'],
+				[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', ...b'],
+				[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', c'],
 			],
-			throws: 'Comma is not permitted after the rest element (1:15)',
+			throws: [TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, '1:15'],
 			pick: arrow_parameters,
 			match: [
 				{ type: 'RestElement', argument: { name: 'a' } },
@@ -11357,8 +11127,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'const h = (...a, b = 1, { c }): void => c;',
-			errors: [['Comma is not permitted after the rest element', ', b']],
-			throws: 'Comma is not permitted after the rest element (1:15)',
+			errors: [[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', b']],
+			throws: [TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, '1:15'],
 			pick: arrow_parameters,
 			match: [
 				{ type: 'RestElement' },
@@ -11374,29 +11144,29 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	) => b;
 	<div>{m()}</div>
 }`,
-			errors: [['Comma is not permitted after the rest element', ',']],
-			throws: 'Comma is not permitted after the rest element (3:16)',
+			errors: [[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ',']],
+			throws: [TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, '3:16'],
 		},
 		{
 			// After a rest parameter with modifiers, async too.
 			source: 'const i = (x, public ...a, b) => b;',
 			errors: [
-				['A parameter property cannot be declared using a rest parameter.', 'public'],
-				['A parameter property is only allowed in a constructor implementation.', 'public'],
-				['Comma is not permitted after the rest element', ', b'],
+				[TS_ERRORS.REST_PARAMETER_PROPERTY, 'public'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
+				[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', b'],
 			],
-			throws: "The keyword 'public' is reserved (1:14)",
+			throws: ['TS1212', '1:14'],
 			pick: arrow_parameters,
 			match: [{ name: 'x' }, { type: 'RestElement' }, { name: 'b' }],
 		},
 		{
 			source: 'const j = async (x, public ...a, b) => b;',
 			errors: [
-				['A parameter property cannot be declared using a rest parameter.', 'public'],
-				['A parameter property is only allowed in a constructor implementation.', 'public'],
-				['Comma is not permitted after the rest element', ', b'],
+				[TS_ERRORS.REST_PARAMETER_PROPERTY, 'public'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
+				[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', b'],
 			],
-			throws: "The keyword 'public' is reserved (1:20)",
+			throws: ['TS1212', '1:20'],
 			pick: arrow_parameters,
 			match: [{ name: 'x' }, { type: 'RestElement' }, { name: 'b' }],
 		},
@@ -11442,12 +11212,12 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			const label = `${JSON.stringify(source)} with ${JSON.stringify(options)}`;
 			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
 			expect(
-				outcome.errors?.map(({ message, pos }, i) => [
-					message,
+				outcome.errors?.map(({ code, pos }, i) => [
+					code,
 					source.slice(pos, (pos ?? 0) + (test_case.errors[i]?.[1].length ?? 0)),
 				]),
 				label,
-			).toEqual(test_case.errors);
+			).toEqual(test_case.errors.map(([error, at]) => [code_of(error), at]));
 
 			const node = test_case.pick?.(outcome.ast);
 			if (test_case.match) {
@@ -11466,9 +11236,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	it('still throws them without collecting', async () => {
 		const outcomes = await parse_in_worker(cases.map(({ source }) => ({ source })));
 
-		expect(outcomes.map((outcome) => (outcome.ok ? 'parsed' : outcome.message))).toEqual(
-			cases.map(({ throws }) => throws),
-		);
+		expect(
+			outcomes.map((outcome, index) =>
+				outcome.ok ? 'parsed' : [outcome.code, line_column(cases[index].source, outcome.pos)],
+			),
+		).toEqual(cases.map(({ throws: [error, at] }) => [code_of(error), at]));
 	});
 
 	it('compares them with valid code', async () => {
@@ -11549,11 +11321,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 
 		expect(outcomes).toEqual(
 			sources.flatMap(([source, at]) =>
-				modes.map(() => ({
-					ok: false,
-					message: `Leading decorators must be attached to a class declaration. (1:${source.indexOf(at)})`,
-					pos: source.indexOf(at),
-				})),
+				modes.map(() => thrown(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, source.indexOf(at))),
 			),
 		);
 	});
@@ -11561,20 +11329,20 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	it("still throws a rest parameter's default, or a parameter after it, where no arrow function follows", async () => {
 		// Only a parameter can have these (#726, #727). A rest element without an
 		// arrow function fails at its `...`, as before.
-		/** @type {Array<[source: string, message: string, at: string]>} */
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
 		const sources = [
-			['const a = (...b, c);', 'Comma is not permitted after the rest element', ', c'],
+			['const a = (...b, c);', TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', c'],
 			[
 				`const a = (...b, c)
 => 1;`,
-				'Comma is not permitted after the rest element',
+				TS_ERRORS.REST_ELEMENT_TRAILING_COMMA,
 				', c',
 			],
-			['const a = (...b, c()) => 1;', 'Comma is not permitted after the rest element', ', c'],
-			['const a = x || (...b, c) => b;', 'Comma is not permitted after the rest element', ', c'],
-			['const a = (...b = []);', 'Unexpected token', '...'],
-			['const a = x || (...b = []) => b;', 'Unexpected token', '= []'],
-			['const a = async(...b: T = []);', 'Did not expect a type annotation here.', ': T'],
+			['const a = (...b, c()) => 1;', TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', c'],
+			['const a = x || (...b, c) => b;', TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ', c'],
+			['const a = (...b = []);', TS_ERRORS.UNEXPECTED_TOKEN, '...'],
+			['const a = x || (...b = []) => b;', TS_ERRORS.UNEXPECTED_TOKEN, '= []'],
+			['const a = async(...b: T = []);', TS_ERRORS.UNEXPECTED_TYPE_ANNOTATION, ': T'],
 		];
 		const modes = [undefined, ...collect_modes];
 		const inputs = sources.flatMap(([source]) => modes.map((options) => ({ source, options })));
@@ -11582,13 +11350,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		const outcomes = await parse_in_worker(inputs);
 
 		expect(outcomes).toEqual(
-			sources.flatMap(([source, message, at]) =>
-				modes.map(() => ({
-					ok: false,
-					message: `${message} (1:${source.indexOf(at)})`,
-					pos: source.indexOf(at),
-				})),
-			),
+			sources.flatMap(([source, error, at]) => modes.map(() => thrown(error, source.indexOf(at)))),
 		);
 	});
 
@@ -11614,10 +11376,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			});
 		}
 		// A parenthesized pattern isn't a parameter.
-		expect(outcomes.slice(3).map((outcome) => !outcome.ok && outcome.message)).toEqual([
-			'Parenthesized pattern (1:19)',
-			'Parenthesized pattern (1:19)',
-			'Parenthesized pattern (1:19)',
+		// acorn's `Parenthesized pattern` (TS1005).
+		expect(outcomes.slice(3)).toEqual([
+			thrown('TS1005', 19),
+			thrown('TS1005', 19),
+			thrown('TS1005', 19),
 		]);
 	});
 
@@ -11684,7 +11447,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		expect(outcomes.map((outcome) => (outcome.ok ? outcome.errors : outcome.message))).toEqual(
 			cases.map(([, keyword_end]) => [
 				{
-					message: 'Variable declaration list cannot be empty.',
+					code: TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY.code,
 					pos: keyword_end,
 					end: keyword_end,
 				},
@@ -11698,11 +11461,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		);
 
 		expect(outcomes).toEqual(
-			[undefined, ...collect_modes].map(() => ({
-				ok: false,
-				message: 'Unexpected token (1:11)',
-				pos: 11,
-			})),
+			[undefined, ...collect_modes].map(() => thrown(TS_ERRORS.UNEXPECTED_TOKEN, 11)),
 		);
 	});
 });
@@ -12025,7 +11784,7 @@ describe('JSX whitespace in template text', () => {
 		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
 
 		for (const outcome of outcomes) {
-			expect(outcome).toMatchObject({ ok: false, message: 'Unexpected token (1:13)' });
+			expect(outcome).toEqual(thrown(TS_ERRORS.UNEXPECTED_TOKEN, 13));
 		}
 	});
 
@@ -12047,38 +11806,57 @@ describe('syntax errors in an element that is a value', () => {
 	// acorn-typescript first parses a value that starts with `<` as an element,
 	// in an attempt that is undone when it fails. A syntax error in the element
 	// still reports as that error, where TypeScript reports it (#638).
-	/** @type {Array<[string, string, string]>} */
+	/** @type {Array<[label: string, source: string, error: [ErrorKind, at: string]]>} */
 	const cases = [
-		['a closing tag without its `>`', 'const el = <div>x</div;', "'>' expected. (1:22)"],
-		['the same in parentheses', 'const el = (<div>x</div);', "'>' expected. (1:23)"],
-		['the same at the end of the input', 'const a = cond ? <span>a</span', "'>' expected. (1:30)"],
-		['the same in a default export', 'export default <div>B</div', "'>' expected. (1:26)"],
-		['a self-closing tag without its `>`', 'const el = <div/;', "'>' expected. (1:16)"],
+		[
+			'a closing tag without its `>`',
+			'const el = <div>x</div;',
+			[TS_ERRORS.TOKEN_EXPECTED, '1:22'],
+		],
+		['the same in parentheses', 'const el = (<div>x</div);', [TS_ERRORS.TOKEN_EXPECTED, '1:23']],
+		[
+			'the same at the end of the input',
+			'const a = cond ? <span>a</span',
+			[TS_ERRORS.TOKEN_EXPECTED, '1:30'],
+		],
+		[
+			'the same in a default export',
+			'export default <div>B</div',
+			[TS_ERRORS.TOKEN_EXPECTED, '1:26'],
+		],
+		['a self-closing tag without its `>`', 'const el = <div/;', [TS_ERRORS.TOKEN_EXPECTED, '1:16']],
 		[
 			'a closing tag without its `>` in a setup statement',
 			'export function App() @{\n\tconst a = <div><b>1</b</div>;\n\t<p>{a}</p>\n}',
-			"'>' expected. (2:23)",
+			[TS_ERRORS.TOKEN_EXPECTED, '2:23'],
 		],
 		// A closing tag where an element starts is reported at its `<`, where
 		// TypeScript expects an expression (#653)
-		['a closing tag as an argument', 'x = import(</>);', 'Unexpected token (1:11)'],
-		['a closing tag as an index', 'x = a[(</>)];', 'Unexpected token (1:7)'],
-		['a closing tag as an operand', 'x = -(< />);', 'Unexpected token (1:6)'],
-		['a closing tag after yield', 'function* g() {\n\tyield </>;\n}', 'Unexpected token (2:7)'],
-		['a closing tag in parentheses', 'x = (</>);', 'Unexpected token (1:5)'],
-		['a closing tag where a statement starts', 'a;\n</div>', 'Unexpected token (2:0)'],
+		['a closing tag as an argument', 'x = import(</>);', [TS_ERRORS.UNEXPECTED_TOKEN, '1:11']],
+		['a closing tag as an index', 'x = a[(</>)];', [TS_ERRORS.UNEXPECTED_TOKEN, '1:7']],
+		['a closing tag as an operand', 'x = -(< />);', [TS_ERRORS.UNEXPECTED_TOKEN, '1:6']],
+		[
+			'a closing tag after yield',
+			'function* g() {\n\tyield </>;\n}',
+			[TS_ERRORS.UNEXPECTED_TOKEN, '2:7'],
+		],
+		['a closing tag in parentheses', 'x = (</>);', [TS_ERRORS.UNEXPECTED_TOKEN, '1:5']],
+		['a closing tag where a statement starts', 'a;\n</div>', [TS_ERRORS.UNEXPECTED_TOKEN, '2:0']],
 		[
 			'text that reads nothing in a setup statement',
 			'export function App() @{\n\tconst f = <b><T,>() => 1;\n\t<main />\n}',
-			'Unexpected token (2:14)',
+			[TS_ERRORS.UNEXPECTED_TOKEN, '2:14'],
 		],
 	];
 
-	it.each(cases)('reports %s as a syntax error', async (_label, source, message) => {
+	it.each(cases)('reports %s as a syntax error', async (_label, source, [error, at]) => {
 		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
 
 		for (const outcome of outcomes) {
-			expect(outcome).toMatchObject({ ok: false, message });
+			expect(outcome.ok ? 'parsed' : [outcome.code, line_column(source, outcome.pos)]).toEqual([
+				code_of(error),
+				at,
+			]);
 		}
 	});
 });
@@ -12236,14 +12014,15 @@ describe('an element as an attribute value without braces (#654)', () => {
 			sources.flatMap((source) => modes.map((options) => ({ source, options }))),
 		);
 
-		expect(outcomes.map((outcome) => !outcome.ok && outcome.message)).toEqual([
-			"Expected closing tag to match opening tag. Expected '</b>' but found '</div>' (2:10)",
-			'Unexpected closing tag (2:10)',
-			'Unexpected closing tag (2:10)',
-			"Expected closing tag to match opening tag. Expected '</b>' but found '</div>' (2:10)",
-			'Unexpected closing tag (2:10)',
-			'Unexpected closing tag (2:10)',
-		]);
+		// Both at the `</div>` (2:10)
+		const pos = sources[0].indexOf('</div>');
+		expect(outcomes).toEqual(
+			sources.flatMap(() => [
+				thrown(TSRX_ERRORS.MISMATCHED_CLOSING_TAG, pos),
+				thrown(TSRX_ERRORS.UNEXPECTED_CLOSING_TAG, pos),
+				thrown(TSRX_ERRORS.UNEXPECTED_CLOSING_TAG, pos),
+			]),
+		);
 	});
 
 	// An element in a dynamic tag name is reported (#737), but collecting still
@@ -12255,11 +12034,11 @@ describe('an element as an attribute value without braces (#654)', () => {
 			modes.map((options) => ({ source, options })),
 		);
 
-		expect(strict).toEqual({ ok: false, message: TSRX_DYNAMIC_TAG_EXPRESSION_ERROR, pos: 13 });
+		expect(strict).toEqual(thrown(TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION, 13));
 		for (const outcome of collected) {
 			if (!outcome.ok) throw new Error(outcome.message);
-			expect(outcome.errors?.map(({ message }) => message)).toEqual([
-				TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
+			expect(outcome.errors?.map(({ code }) => code)).toEqual([
+				TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION.code,
 			]);
 			const b = /** @type {AST.Node} */ (
 				find_first(
@@ -12830,15 +12609,15 @@ describe('the text of an element in a template', () => {
 				if (reported && !modes[index]) {
 					expect(outcome, label).toMatchObject({
 						ok: false,
-						message: TSRX_DYNAMIC_TAG_EXPRESSION_ERROR,
+						code: TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION.code,
 					});
 					continue;
 				}
 				if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
 				expect(
-					(outcome.errors ?? []).map(({ message }) => message),
+					(outcome.errors ?? []).map(({ code }) => code),
 					label,
-				).toEqual(reported ? [TSRX_DYNAMIC_TAG_EXPRESSION_ERROR] : []);
+				).toEqual(reported ? [TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION.code] : []);
 				expect(children(outcome.ast, 'b'), label).toEqual(raw);
 				if (value) expect(children(outcome.ast, 'b', 'value'), label).toEqual(value);
 			}
@@ -12891,29 +12670,23 @@ describe('an at-sign construct after `export` (#607)', () => {
 	// acorn-typescript takes every `@` after `export` for decorators, and the
 	// construct was parsed as a statement whose `id` the parser then read.
 	it('reports it like another token that starts no declaration, instead of crashing', async () => {
-		/** @type {Array<[source: string, message: string, at: string]>} */
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
 		const cases = [
-			['export @if (a) { <div /> };', 'Unexpected token', '@'],
-			['export @{ <div /> };', 'Unexpected token', '@'],
-			['export @for (const a of b) { <div /> }', 'Unexpected token', '@'],
-			['export @switch (a) { @case 1: { <div /> } }', 'Unexpected token', '@'],
-			['export @try { <div /> } @catch (e) { <b /> }', 'Unexpected token', '@'],
-			['export foo;', 'Unexpected token', 'foo'],
-			[
-				'export declare @if (a) { <div /> }',
-				"'export declare' must be followed by an ambient declaration.",
-				'@',
-			],
+			['export @if (a) { <div /> };', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
+			['export @{ <div /> };', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
+			['export @for (const a of b) { <div /> }', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
+			['export @switch (a) { @case 1: { <div /> } }', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
+			['export @try { <div /> } @catch (e) { <b /> }', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
+			['export foo;', TS_ERRORS.UNEXPECTED_TOKEN, 'foo'],
+			// acorn-typescript's `'export declare' must be followed by an ambient
+			// declaration.`
+			['export declare @if (a) { <div /> }', 'TS1128', '@'],
 		];
 		const outcomes = await parse_in_worker(
 			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
 		);
 		expect(outcomes).toEqual(
-			cases.flatMap(([source, message, at]) => {
-				const pos = source.indexOf(at);
-				const { line, column } = acorn.getLineInfo(source, pos);
-				return modes.map(() => ({ ok: false, message: `${message} (${line}:${column})`, pos }));
-			}),
+			cases.flatMap(([source, error, at]) => modes.map(() => thrown(error, source.indexOf(at)))),
 		);
 	});
 
@@ -12927,7 +12700,7 @@ describe('an at-sign construct after `export` (#607)', () => {
 				if (!outcome.ok) return outcome.message;
 				const [statement] = outcome.ast.body;
 				return [
-					...(outcome.errors ?? []).map((error) => error.message),
+					...(outcome.errors ?? []).map((error) => error.code),
 					/** @type {any} */ (statement).declaration.type,
 				];
 			}),
@@ -12959,7 +12732,7 @@ describe('`const` type parameters on an object method (#631)', () => {
 					find_first(outcome.ast, (node) => node.type === 'TSTypeParameterDeclaration')
 				).params;
 				return [
-					...(outcome.errors ?? []).map((error) => error.message),
+					...(outcome.errors ?? []).map((error) => error.code),
 					parameters.map((/** @type {any} */ parameter) => Boolean(parameter.const)),
 				];
 			}),
@@ -12972,13 +12745,11 @@ describe('`const` type parameters on an object method (#631)', () => {
 
 	it('still reports `in` and `out` there, as for a function', async () => {
 		const source = 'const o = { m<in T>(x: T) {} };';
-		const message =
-			"'in' modifier can only appear on a type parameter of a class, interface or type alias.";
 		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
 		expect(outcomes).toEqual([
-			{ ok: false, message: `${message} (1:14)`, pos: 14 },
-			{ ok: true, errors: [message] },
-			{ ok: true, errors: [message] },
+			thrown(UPSTREAM_ERRORS.VARIANCE_MODIFIER, 14),
+			{ ok: true, errors: [UPSTREAM_ERRORS.VARIANCE_MODIFIER.code] },
+			{ ok: true, errors: [UPSTREAM_ERRORS.VARIANCE_MODIFIER.code] },
 		]);
 	});
 });

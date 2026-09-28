@@ -1,5 +1,6 @@
 // TSRX syntax, which Prettier's own tests don't cover.
 
+import { TS_ERRORS, TSRX_ERRORS } from '@tsrx/core';
 import * as prettier from 'prettier';
 import * as standalone from 'prettier/standalone';
 import { describe, expect, test } from 'vitest';
@@ -11,6 +12,25 @@ import plugin from '../src/index.js';
  */
 async function format(code, options = {}) {
 	return prettier.format(code, { parser: 'tsrx', plugins: [plugin], ...options });
+}
+
+/**
+ * Formatting `source` fails as Prettier's parsers report an error: a
+ * `SyntaxError` at `at`, `line:column` with a 1-based column, in `loc` and at
+ * the end of the message's first line. Its `cause` is the TSRX error, of the
+ * kind `error`: the entry of `@tsrx/core`'s `TS_ERRORS` or `TSRX_ERRORS`, or
+ * the code of an acorn or acorn-typescript message.
+ * @param {string} source
+ * @param {{ code: string } | string} error
+ * @param {string} at
+ */
+async function expect_reported(source, error, at) {
+	const thrown = await format(source).catch((/** @type {any} */ e) => e);
+	const [line, column] = at.split(':').map(Number);
+	expect(thrown, source).toBeInstanceOf(SyntaxError);
+	expect(thrown.cause?.code, source).toBe(typeof error === 'string' ? error : error.code);
+	expect(thrown.loc, source).toEqual({ start: { line, column } });
+	expect(thrown.message.split('\n')[0].endsWith(` (${at})`), thrown.message).toBe(true);
 }
 
 /**
@@ -1492,7 +1512,7 @@ const b = (
 	});
 
 	test('a comment takes a closing tag on its line with it', async () => {
-		await expect(format(`const a = <p>a //comment </p>;`)).rejects.toThrow(/Unclosed tag '<p>'/);
+		await expect_reported(`const a = <p>a //comment </p>;`, TSRX_ERRORS.UNCLOSED_TAG, '1:31');
 	});
 });
 
@@ -2117,21 +2137,19 @@ describe('a comment between an enum name and its `{` (#840)', () => {
 
 describe('parse errors', () => {
 	test('unclosed or mismatched tags are errors, not guessed markup', async () => {
-		await expect(format('const x = 1;\nconst y = <div>\n')).rejects.toThrow(/Unclosed tag '<div>'/);
+		await expect_reported('const x = 1;\nconst y = <div>\n', TSRX_ERRORS.UNCLOSED_TAG, '3:1');
 		await expect(format('const a = <div></span>;\n')).rejects.toThrow();
 	});
 
 	// The dynamic tag grammar allows an identifier, a member access or a string
 	// literal (TSRX2014, decision 58 of #852, #906).
 	test('a dynamic tag with any other expression is an error', async () => {
-		const message =
-			'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.';
-		for (const [source, position] of [
+		for (const [source, at] of [
 			[
 				`export function App() @{
   <{getTag()} />
 }`,
-				'(2:5)',
+				'2:5',
 			],
 			[
 				`export function App({ c }) @{
@@ -2141,13 +2159,11 @@ describe('parse errors', () => {
     </{c ? A : B}>
   </main>
 }`,
-				'(3:7)',
+				'3:7',
 			],
-			['const a = <{c ? <a /> : <b />} />;', '(1:13)'],
+			['const a = <{c ? <a /> : <b />} />;', '1:13'],
 		]) {
-			const error = await format(source).catch((/** @type {any} */ e) => e);
-			expect(error, source).toBeInstanceOf(SyntaxError);
-			expect(error.message.split('\n')[0], source).toBe(`${message} ${position}`);
+			await expect_reported(source, TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION, at);
 		}
 		await expectFormat(
 			`export function App({ tag, props }) @{
@@ -2169,44 +2185,34 @@ describe('parse errors', () => {
 	});
 
 	test("errors are reported like Prettier's parsers report them", async () => {
-		for (const [source, message, start] of [
+		for (const [source, error, start] of [
 			[
 				'function App() @{\n  @if (x) {\n    <b />\n',
-				"'}' expected. (4:1)",
+				TS_ERRORS.TOKEN_EXPECTED,
 				{ line: 4, column: 1 },
 			],
-			[
-				'const y = <div>\n',
-				"Unclosed tag '<div>'. Expected '</div>' before end of template. (2:1)",
-				{ line: 2, column: 1 },
-			],
+			['const y = <div>\n', TSRX_ERRORS.UNCLOSED_TAG, { line: 2, column: 1 }],
 			// Prettier's typescript parser: `Property assignment expected. (1:13)`.
-			['const o = { @dec m() {} };', 'Unexpected token (1:13)', { line: 1, column: 13 }],
+			['const o = { @dec m() {} };', TS_ERRORS.UNEXPECTED_TOKEN, { line: 1, column: 13 }],
 			// `index` belongs to `@for`: the output used to drop it (#896).
-			['for (const item of []; index i) {}', "')' expected. (1:22)", { line: 1, column: 22 }],
+			['for (const item of []; index i) {}', TS_ERRORS.TOKEN_EXPECTED, { line: 1, column: 22 }],
 			// Prettier's typescript parser: `';' expected. (1:25)`.
-			[
-				'const f = (x as number) => x;',
-				'Unexpected type cast in parameter position. (1:12)',
-				{ line: 1, column: 12 },
-			],
+			['const f = (x as number) => x;', TS_ERRORS.TYPE_CAST_IN_PARAMETER, { line: 1, column: 12 }],
 			// Prettier's typescript parser: `';' expected. (1:23)`.
-			['const k = async(a)(b) => 1;', 'Unexpected token (1:23)', { line: 1, column: 23 }],
+			['const k = async(a)(b) => 1;', TS_ERRORS.UNEXPECTED_TOKEN, { line: 1, column: 23 }],
 			// Prettier's typescript parser: `Expression expected. (1:31)`.
-			['const g = <T,>(x: T) => { x = ; };', 'Unexpected token (1:31)', { line: 1, column: 31 }],
+			['const g = <T,>(x: T) => { x = ; };', TS_ERRORS.UNEXPECTED_TOKEN, { line: 1, column: 31 }],
 			// Prettier's typescript parser: `'=>' expected. (1:22)`.
-			[
-				'const a = (x: number);',
-				'Did not expect a type annotation here. (1:13)',
-				{ line: 1, column: 13 },
-			],
+			['const a = (x: number);', TS_ERRORS.UNEXPECTED_TYPE_ANNOTATION, { line: 1, column: 13 }],
 			// Prettier's typescript parser: `Expression expected. (1:15)`.
-			['const c = f(x?);', 'Unexpected token (1:14)', { line: 1, column: 14 }],
+			['const c = f(x?);', TS_ERRORS.UNEXPECTED_TOKEN, { line: 1, column: 14 }],
 		]) {
-			const error = await format(/** @type {string} */ (source)).catch((/** @type {any} */ e) => e);
-			expect(error).toBeInstanceOf(SyntaxError);
-			expect(error.message.split('\n')[0]).toBe(message);
-			expect(error.loc).toEqual({ start });
+			const { line, column } = /** @type {{ line: number, column: number }} */ (start);
+			await expect_reported(
+				/** @type {string} */ (source),
+				/** @type {{ code: string } | string} */ (error),
+				`${line}:${column}`,
+			);
 		}
 	});
 
@@ -2272,154 +2278,108 @@ describe('parse errors', () => {
 	});
 
 	test("mistakes Prettier's typescript parser rejects are errors, not left out", async () => {
-		for (const [source, message] of [
-			['function f() {\n  const\n}', 'Variable declaration list cannot be empty. (2:8)'],
-			['for (var; ;) {}', 'Variable declaration list cannot be empty. (1:9)'],
-			['for (const of x) {}', 'Variable declaration list cannot be empty. (1:11)'],
+		/** @type {Array<[source: string, error: { code: string } | string, at: string]>} */
+		const cases = [
+			['function f() {\n  const\n}', TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, '2:8'],
+			['for (var; ;) {}', TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, '1:9'],
+			['for (const of x) {}', TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, '1:11'],
 			[
 				'export function App() @{\n  var\n  <div />\n}',
-				'Variable declaration list cannot be empty. (2:6)',
+				TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY,
+				'2:6',
 			],
+			['interface I { private x: number }', 'TS1070', '1:15'],
+			['interface I<public T> {}', 'TS1273', '1:13'],
+			['class C { in x = 1 }', 'TS1274', '1:11'],
 			[
-				'interface I { private x: number }',
-				"'private' modifier cannot appear on a type member. (1:15)",
+				'class A { public protected x = 1; }',
+				TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
+				'1:18',
 			],
-			['interface I<public T> {}', "'public' modifier cannot appear on a type parameter. (1:13)"],
-			[
-				'class C { in x = 1 }',
-				"'in' modifier can only appear on a type parameter of a class, interface or type alias. (1:11)",
-			],
-			['class A { public protected x = 1; }', 'Accessibility modifier already seen. (1:18)'],
 			[
 				'class A {\n  constructor(public ...rest: number[]) {}\n}',
-				'A parameter property cannot be declared using a rest parameter. (2:15)',
+				TS_ERRORS.REST_PARAMETER_PROPERTY,
+				'2:15',
 			],
 			[
 				'const f = (a: number, public ...rest: number[]) => a;',
-				'A parameter property cannot be declared using a rest parameter. (1:23)',
+				TS_ERRORS.REST_PARAMETER_PROPERTY,
+				'1:23',
 			],
 			[
 				'function f(private readonly x: number) {}',
-				'A parameter property is only allowed in a constructor implementation. (1:12)',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'1:12',
 			],
 			[
 				'type F = (public x: number) => void;',
-				'A parameter property is only allowed in a constructor implementation. (1:11)',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'1:11',
 			],
 			[
 				'const f = async (a, readonly [b]: number[]) => a;',
-				'A parameter property is only allowed in a constructor implementation. (1:21)',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'1:21',
 			],
 			[
 				'class A { constructor(public [a]: number[]) {} }',
-				'A parameter property may not be declared using a binding pattern. (1:23)',
+				TS_ERRORS.PATTERN_PARAMETER_PROPERTY,
+				'1:23',
 			],
 			[
 				'class A { constructor(public [a] = [1]) {} }',
-				'A parameter property may not be declared using a binding pattern. (1:23)',
+				TS_ERRORS.PATTERN_PARAMETER_PROPERTY,
+				'1:23',
 			],
-			['import.source("x");', "The only valid meta property for import is 'import.meta' (1:8)"],
-			['@dec function f() {}', 'Leading decorators must be attached to a class declaration. (1:1)'],
+			['import.source("x");', 'TS17012', '1:8'],
+			['@dec function f() {}', TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:1'],
 			[
 				`class A {
   @dec constructor() {}
 }`,
-				"Decorators can't be used with a constructor. Did you mean '@dec class { ... }'? (2:3)",
+				'TS1206',
+				'2:3',
 			],
-			[
-				'export @dec const x = 1;',
-				'Leading decorators must be attached to a class declaration. (1:8)',
-			],
-			[
-				'export default @dec function f() {}',
-				'Leading decorators must be attached to a class declaration. (1:16)',
-			],
-			[
-				'@dec export function f() {}',
-				'Leading decorators must be attached to a class declaration. (1:1)',
-			],
-			[
-				'export abstract function f() {}',
-				"'abstract' modifier can only appear on a class, method, or property declaration. (1:8)",
-			],
-			[
-				'export abstract const x = 1;',
-				"'abstract' modifier can only appear on a class, method, or property declaration. (1:8)",
-			],
+			['export @dec const x = 1;', TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:8'],
+			['export default @dec function f() {}', TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:16'],
+			['@dec export function f() {}', TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:1'],
+			['export abstract function f() {}', TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:8'],
+			['export abstract const x = 1;', TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:8'],
 			// #697: `abstract` before an interface was kept without an error, and
 			// before a function outside an export failed to parse.
-			[
-				'abstract interface I {}',
-				"'abstract' modifier can only appear on a class, method, or property declaration. (1:1)",
-			],
-			[
-				'export abstract interface I {}',
-				"'abstract' modifier can only appear on a class, method, or property declaration. (1:8)",
-			],
-			[
-				'abstract function f() {}',
-				"'abstract' modifier can only appear on a class, method, or property declaration. (1:1)",
-			],
+			['abstract interface I {}', TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:1'],
+			['export abstract interface I {}', TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:8'],
+			['abstract function f() {}', TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:1'],
 			// #719: modifiers the tree has no place for, which TypeScript reports from
 			// its checker, and which the output would leave out.
-			[
-				'public class A {}',
-				"'public' modifier cannot appear on a module or namespace element. (1:1)",
-			],
-			[
-				'export static let x = 1;',
-				"'static' modifier cannot appear on a module or namespace element. (1:8)",
-			],
-			[
-				'readonly function f() {}',
-				"'readonly' modifier can only appear on a property declaration or index signature. (1:1)",
-			],
-			[
-				'accessor class A {}',
-				"'accessor' modifier can only appear on a property declaration. (1:1)",
-			],
-			['async class A {}', "'async' modifier cannot be used here. (1:1)"],
-			['declare using x = y;', "'declare' modifier cannot appear on a 'using' declaration. (1:1)"],
+			['public class A {}', TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT, '1:1'],
+			['export static let x = 1;', TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT, '1:8'],
+			['readonly function f() {}', TS_ERRORS.READONLY_MODIFIER_NOT_ALLOWED, '1:1'],
+			['accessor class A {}', TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, '1:1'],
+			['async class A {}', TS_ERRORS.MODIFIER_CANNOT_BE_USED_HERE, '1:1'],
+			['declare using x = y;', TS_ERRORS.MODIFIER_ON_USING, '1:1'],
 			// Prettier reports the `public` (1:17); the plugin reports the first
 			// mistake, the modifier before `export` (#902).
-			[
-				'abstract export public class A {}',
-				"'export' modifier must precede 'abstract' modifier. (1:10)",
-			],
+			['abstract export public class A {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:10'],
 			// #902: `async` in an ambient context (TS1040).
-			[
-				'export declare async function f(): void;',
-				"'async' modifier cannot be used in an ambient context. (1:16)",
-			],
-			[
-				'declare async function f(): void;',
-				"'async' modifier cannot be used in an ambient context. (1:9)",
-			],
+			['export declare async function f(): void;', TS_ERRORS.MODIFIER_IN_AMBIENT_CONTEXT, '1:16'],
+			['declare async function f(): void;', TS_ERRORS.MODIFIER_IN_AMBIENT_CONTEXT, '1:9'],
 			[
 				'namespace N {\n  declare async function f(): void;\n}',
-				"'async' modifier cannot be used in an ambient context. (2:11)",
+				TS_ERRORS.MODIFIER_IN_AMBIENT_CONTEXT,
+				'2:11',
 			],
 			// #902: a modifier before `export` (TS1029), where Prettier's output drops
 			// the `export` (decision 60 of #852).
-			['abstract export class A {}', "'export' modifier must precede 'abstract' modifier. (1:10)"],
-			['declare export class A {}', "'export' modifier must precede 'declare' modifier. (1:9)"],
-			[
-				'declare export function f(): void;',
-				"'export' modifier must precede 'declare' modifier. (1:9)",
-			],
-			['async export function f() {}', "'export' modifier must precede 'async' modifier. (1:7)"],
-			[
-				'declare export const x: number;',
-				"'export' modifier must precede 'declare' modifier. (1:9)",
-			],
-			[
-				'abstract export default class A {}',
-				"'export' modifier must precede 'abstract' modifier. (1:10)",
-			],
-		]) {
-			const error = await format(source).catch((/** @type {any} */ e) => e);
-			expect(error, source).toBeInstanceOf(SyntaxError);
-			expect(error.message.split('\n')[0], source).toBe(message);
+			['abstract export class A {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:10'],
+			['declare export class A {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:9'],
+			['declare export function f(): void;', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:9'],
+			['async export function f() {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:7'],
+			['declare export const x: number;', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:9'],
+			['abstract export default class A {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:10'],
+		];
+		for (const [source, error, at] of cases) {
+			await expect_reported(source, error, at);
 		}
 	});
 

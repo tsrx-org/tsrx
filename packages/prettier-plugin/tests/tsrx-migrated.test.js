@@ -6,9 +6,19 @@
 // marked; its output follows #852's decisions. Kept apart from `tsrx.test.js`
 // and the imported Prettier tests.
 
+import { TSRX_ERRORS } from '@tsrx/core';
 import * as prettier from 'prettier';
 import { describe, expect, test } from 'vitest';
 import plugin from '../src/index.js';
+
+/**
+ * A matcher for the error the plugin throws for a TSRX error of the kind
+ * `error`, its entry in `@tsrx/core`, which is the error's `cause`.
+ * @param {{ code: string }} error
+ */
+function caused_by(error) {
+	return expect.objectContaining({ cause: expect.objectContaining({ code: error.code }) });
+}
 
 /**
  * @param {string} code
@@ -101,15 +111,13 @@ describe('migrated from @tsrx/prettier-plugin', () => {
 			format(
 				`export function App({ c }) @{ <main><{c?A:B} title="t"><p>{c}</p></{c?A:B}></main> }`,
 			),
-		).rejects.toThrow(
-			'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.',
-		);
+		).rejects.toThrow(caused_by(TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION));
 	});
 
 	// The old test expected other output; this is the current output, which follows #852's decisions.
 	test('rejects an invalid dynamic tag in "export function App() @{ <{getTag()}/> }"', async () => {
 		await expect(format(`export function App() @{ <{getTag()}/> }`)).rejects.toThrow(
-			'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.',
+			caused_by(TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION),
 		);
 	});
 
@@ -117,9 +125,7 @@ describe('migrated from @tsrx/prettier-plugin', () => {
 	test('rejects an invalid dynamic tag in "export function App() @{ <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : \\"i\\"} /> }"', async () => {
 		await expect(
 			format(`export function App() @{ <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} /> }`),
-		).rejects.toThrow(
-			'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.',
-		);
+		).rejects.toThrow(caused_by(TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION));
 	});
 
 	test('formats a fragment code block with setup and template control flow', async () => {
@@ -5770,7 +5776,7 @@ export function Glued() @{
 
 		test('reads a // comment to the end of its line, a closing tag included', async () => {
 			await expect(format(`const a = <div>a //comment </div>;`)).rejects.toThrow(
-				"Unclosed tag '<div>'. Expected '</div>' before end of template.",
+				caused_by(TSRX_ERRORS.UNCLOSED_TAG),
 			);
 		});
 
