@@ -1,8 +1,10 @@
 // Tests of TSRX syntax migrated from `@tsrx/prettier-plugin`'s suite (#852,
-// Phase 2): the ones that exercise TSRX syntax and that this plugin passes.
-// Each expects the output the old test expected, and that formatting it again
-// changes nothing. A test that compared with Prettier's `typescript` parser
-// still does. Kept apart from `tsrx.test.js` and the imported Prettier tests.
+// Phase 2): every old test that exercises TSRX syntax. Each expects this
+// plugin's output for the old test's inputs, and that formatting it again
+// changes nothing. Where Prettier's `typescript` parser gives the same output,
+// the test checks that too. A test the old plugin formatted differently is
+// marked; its output follows #852's decisions. Kept apart from `tsrx.test.js`
+// and the imported Prettier tests.
 
 import * as prettier from 'prettier';
 import { describe, expect, test } from 'vitest';
@@ -25,6 +27,39 @@ async function format(code, options = {}) {
 async function expectFormat(input, expected, options) {
 	expect(await format(input, options)).toBe(expected);
 	expect(await format(expected, options)).toBe(expected);
+}
+
+/**
+ * `expectFormat`, and Prettier's `typescript` parser prints the same.
+ * @param {string} input
+ * @param {string} expected
+ * @param {prettier.Options} [options]
+ */
+async function expectPrettierFormat(input, expected, options) {
+	await expectFormat(input, expected, options);
+	expect(await prettier.format(input, { ...options, parser: 'typescript' })).toBe(expected);
+}
+
+/**
+ * Formatting `input` gives `expected`, which Prettier itself doesn't keep on a
+ * second format (a Prettier bug, #852).
+ * @param {string} input
+ * @param {string} expected
+ * @param {prettier.Options} [options]
+ */
+async function expectFirstFormat(input, expected, options) {
+	expect(await format(input, options)).toBe(expected);
+}
+
+/**
+ * `expectFirstFormat`, and Prettier's `typescript` parser prints the same.
+ * @param {string} input
+ * @param {string} expected
+ * @param {prettier.Options} [options]
+ */
+async function expectFirstPrettierFormat(input, expected, options) {
+	await expectFirstFormat(input, expected, options);
+	expect(await prettier.format(input, { ...options, parser: 'typescript' })).toBe(expected);
 }
 
 describe('migrated from @tsrx/prettier-plugin', () => {
@@ -57,6 +92,33 @@ describe('migrated from @tsrx/prettier-plugin', () => {
   );
 }
 `,
+		);
+	});
+
+	// The old test expected other output; this is the current output, which follows #852's decisions.
+	test('rejects an invalid dynamic tag in "export function App({ c }) @{ <main><{c?A:B} title=\\"t\\"><p>{c}</p></{c?A:B}></main> }"', async () => {
+		await expect(
+			format(
+				`export function App({ c }) @{ <main><{c?A:B} title="t"><p>{c}</p></{c?A:B}></main> }`,
+			),
+		).rejects.toThrow(
+			'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.',
+		);
+	});
+
+	// The old test expected other output; this is the current output, which follows #852's decisions.
+	test('rejects an invalid dynamic tag in "export function App() @{ <{getTag()}/> }"', async () => {
+		await expect(format(`export function App() @{ <{getTag()}/> }`)).rejects.toThrow(
+			'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.',
+		);
+	});
+
+	// The old test expected other output; this is the current output, which follows #852's decisions.
+	test('rejects an invalid dynamic tag in "export function App() @{ <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : \\"i\\"} /> }"', async () => {
+		await expect(
+			format(`export function App() @{ <{c ? <b>&#123;x&#125; &amp;lt; &gt;</b> : "i"} /> }`),
+		).rejects.toThrow(
+			'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.',
 		);
 	});
 
@@ -166,7 +228,7 @@ const items=[1,2,3];
 	});
 
 	test('formats line comments before template children', async () => {
-		await expectFormat(
+		await expectPrettierFormat(
 			`const App=()=> <>
 // keep the status visible
 <span>Ready</span>
@@ -878,6 +940,25 @@ const items=[1,2,3];
 			);
 		});
 
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('keeps an element that a prettier-ignore comment trails on its line', async () => {
+			await expectFormat(
+				`export function App() @{
+  <div>
+    <span   a="1" /> // prettier-ignore
+    <b />
+  </div>
+}`,
+				`export function App() @{
+  <div>
+    <span a="1" /> // prettier-ignore
+    <b />
+  </div>
+}
+`,
+			);
+		});
+
 		test('still formats an element whose only comment is its child', async () => {
 			await expectFormat(
 				`function App() @{
@@ -1204,6 +1285,68 @@ async function App({ items }) @{
 }
 `,
 				{ singleQuote: true, printWidth: 100 },
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('should keep style tag intact when wrapped in parent outside a component', async () => {
+			await expectFormat(
+				`<head>
+  <style>
+    div {
+      background: purple;
+    }
+    p {
+      background: blue;
+    }
+    .div {
+      color: red;
+    }
+    .p {
+      color: green;
+    }
+  </style>
+</head>`,
+				`<head>
+  <style>
+    div {
+      background: purple;
+    }
+    p {
+      background: blue;
+    }
+    .div {
+      color: red;
+    }
+    .p {
+      color: green;
+    }
+  </style>
+</head>;
+`,
+				{ singleQuote: true, printWidth: 100 },
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('formats top-level markup with a style or script block to a fixpoint', async () => {
+			await expectFormat(
+				`<head>
+  <style>
+    div {
+      color: red;
+    }
+  </style>
+</head>
+`,
+				`<head>
+  <style>
+    div {
+      color: red;
+    }
+  </style>
+</head>;
+`,
 			);
 		});
 
@@ -1778,6 +1921,36 @@ async function App({ items }) @{
     }
   </>
 );
+`,
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('expands empty braces for try family blocks', async () => {
+			await expectFormat(
+				`function Foo() @{ @try {} @pending {} @catch {} }
+function Bar() @{ @try {} @catch {} }
+function Baz() { try {} catch {} finally {} }
+function Qux() { try {} catch {} }`,
+				`function Foo() @{
+  @try {
+  } @pending {
+  } @catch {}
+}
+function Bar() @{
+  @try {
+  } @catch {}
+}
+function Baz() {
+  try {
+  } catch {
+  } finally {
+  }
+}
+function Qux() {
+  try {
+  } catch {}
+}
 `,
 			);
 		});
@@ -2637,6 +2810,50 @@ render(App);
 			);
 		});
 
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('should correctly handle comments in TSRX syntax', async () => {
+			await expectFormat(
+				`// input
+<>
+  <section>
+    // TODO
+    {'Hello'}
+  </section>
+
+  // input
+  <section>
+    // TODO
+  </section>
+
+  // input
+  <section>
+        // TODO
+    <span>{'Hello'}</span>
+  </section>
+</>`,
+				`// input
+<>
+  <section>
+    // TODO
+    {'Hello'}
+  </section>
+
+  // input
+  <section>
+    // TODO
+  </section>
+
+  // input
+  <section>
+    // TODO
+    <span>{'Hello'}</span>
+  </section>
+</>;
+`,
+				{ singleQuote: true },
+			);
+		});
+
 		test('should not move commented composite elements to the outside of parent element', async () => {
 			await expectFormat(
 				`function Child({ children, NonExistent, ...props }) {
@@ -2676,6 +2893,36 @@ render(App);
 }
 `,
 				{ singleQuote: true },
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('should keep semi with tables in a for of loop', async () => {
+			await expectFormat(
+				`<table>
+  <tbody>
+    @for (const row of items) {
+      const id = row.id;
+
+      <tr>
+        <td class="col-md-6" />
+      </tr>
+    }
+  </tbody>
+</table>`,
+				`<table>
+  <tbody>
+    @for (const row of items) {
+      const id = row.id;
+
+      <tr>
+        <td class="col-md-6" />
+      </tr>
+    }
+  </tbody>
+</table>;
+`,
+				{ singleQuote: true, semi: true },
 			);
 		});
 
@@ -2856,6 +3103,53 @@ render(App);
       // </div>
       // </div>
       // <div />
+      // </div>
+      // <div id="sibling-block">{'Sibling'}</div>
+    }</div>
+  );
+}
+`,
+				{ singleQuote: true },
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('should handle comments before try block in a function', async () => {
+			await expectFormat(
+				`function App() {
+  return <div id="second-top-block">@{
+    // <div>
+    @try {
+      <div>b is true</div>
+    } @catch (e) {
+    }
+    // 	<div>
+    // 		<div>
+    // 			@if (b) {
+    // 				return;
+    // 			}
+    // 		</div>
+    // 	</div>
+    // 	<div />
+    // </div>
+    // <div id="sibling-block">{'Sibling'}</div>
+  }</div>
+}`,
+				`function App() {
+  return (
+    <div id="second-top-block">@{
+      // <div>
+      @try {
+        <div>b is true</div>
+      } @catch (e) {}
+      // 	<div>
+      // 		<div>
+      // 			@if (b) {
+      // 				return;
+      // 			}
+      // 		</div>
+      // 	</div>
+      // 	<div />
       // </div>
       // <div id="sibling-block">{'Sibling'}</div>
     }</div>
@@ -3192,6 +3486,49 @@ function RowList({ rows, Row }) {
 `,
 			);
 		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('breaks TSRX attribute values the same way', async () => {
+			await expectFormat(
+				`export function App(props) @{
+  const theme = <style>.card { color: red; }</style>;
+  <>
+    <style apply={[theme, props.someOtherThemeWithAVeryLongName, props.yetAnotherThemeName]} />
+    <div class={theme.$class} ref={props.someVeryLongReferenceName ?? props.fallbackReferenceNameHere} />
+    <div {...props.spread} class={props.isActiveAndHighlighted ? theme.$class : props.inactiveClassName} />
+  </>
+}`,
+				`export function App(props) @{
+  const theme = (
+    <style>
+      .card {
+        color: red;
+      }
+    </style>
+  );
+  <>
+    <style
+      apply={[
+        theme,
+        props.someOtherThemeWithAVeryLongName,
+        props.yetAnotherThemeName,
+      ]}
+    />
+    <div
+      class={theme.$class}
+      ref={props.someVeryLongReferenceName ?? props.fallbackReferenceNameHere}
+    />
+    <div
+      {...props.spread}
+      class={
+        props.isActiveAndHighlighted ? theme.$class : props.inactiveClassName
+      }
+    />
+  </>
+}
+`,
+			);
+		});
 	});
 
 	describe('template children lay out like the same JSX in TSX', () => {
@@ -3281,92 +3618,6 @@ function RowList({ rows, Row }) {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<section class="doc-section" id="components">
-		<h2 class="section-heading">Components</h2>
-		<p class="section-body">
-			A TSRX component is just a TypeScript function that produces JSX. Use a
-			statement-container body for component-shaped templates, especially when local
-			setup, comments, scoped styles, or multiple rendered children belong with the
-			markup.
-		</p>
-		<p class="section-body">
-			In practice, components are ordinary TypeScript functions or
-			{' '}
-			<code class="inline-code">const</code>
-			{' '}
-			values. A component can use
-			{' '}
-			<code class="inline-code">{'@{...}'}</code>
-			{' '}
-			as the function body, giving you one place for local state, derived values, template
-			control flow, rendered elements, and scoped styles.
-		</p>
-		<pre class="code-block">
-			<code innerHTML={COMPONENT_HTML} />
-		</pre>
-		<p class="section-body">
-			Export them like any other function:
-			{' '}
-			<code class="inline-code">{'export function Name() @{ <div /> }'}</code>
-			. The compiler turns that into the right component shape for the target you're
-			using.
-		</p>
-		<p class="section-body">
-			When a bit of logic should stay plain JavaScript rather than render into the
-			template, put it in a normal function beside the markup. Use
-			{' '}
-			<code class="inline-code">{'function fn() { ... }'}</code>
-			{' '}
-			for ordinary control flow, then call helpers from event handlers or expressions:
-			{' '}
-			<code class="inline-code">{'onClick={fn}'}</code>
-			.
-		</p>
-		<pre class="code-block">
-			<code innerHTML={BAILOUT_HTML} />
-		</pre>
-	</section>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<section class="doc-section" id="components">
-		<h2 class="section-heading">Components</h2>
-		<p class="section-body">
-			A TSRX component is just a TypeScript function that produces JSX. Use a statement-container
-			body for component-shaped templates, especially when local setup, comments, scoped styles, or
-			multiple rendered children belong with the markup.
-		</p>
-		<p class="section-body">
-			In practice, components are ordinary TypeScript functions or{' '}
-			<code class="inline-code">const</code> values. A component can use{' '}
-			<code class="inline-code">{'@{...}'}</code> as the function body, giving you one place for
-			local state, derived values, template control flow, rendered elements, and scoped styles.
-		</p>
-		<pre class="code-block">
-			<code innerHTML={COMPONENT_HTML} />
-		</pre>
-		<p class="section-body">
-			Export them like any other function:{' '}
-			<code class="inline-code">{'export function Name() @{ <div /> }'}</code>. The compiler turns
-			that into the right component shape for the target you're using.
-		</p>
-		<p class="section-body">
-			When a bit of logic should stay plain JavaScript rather than render into the template, put it
-			in a normal function beside the markup. Use{' '}
-			<code class="inline-code">{'function fn() { ... }'}</code> for ordinary control flow, then
-			call helpers from event handlers or expressions:{' '}
-			<code class="inline-code">{'onClick={fn}'}</code>.
-		</p>
-		<pre class="code-block">
-			<code innerHTML={BAILOUT_HTML} />
-		</pre>
-	</section>;
-}
-`);
 		});
 
 		test('formats the features: statement containers section like Prettier', async () => {
@@ -3475,112 +3726,6 @@ function RowList({ rows, Row }) {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<section class="doc-section" id="template-structure">
-		<h2 class="section-heading">Statement containers</h2>
-		<p class="section-body">
-			When a template scope mixes TypeScript setup with rendered output, wrap the setup in
-			<code class="inline-code">{'@{...}'}</code>
-			. TSRX treats everything before the final renderable child as script, then the
-			container must finish with exactly one output node.
-		</p>
-		<p class="section-body muted">
-			That final output can be a JSX element, a JSX fragment, or JSX control flow like
-			{' '}
-			<code class="inline-code">{'@if'}</code>
-			,
-			{' '}
-			<code class="inline-code">{'@for'}</code>
-			,
-			{' '}
-			<code class="inline-code">{'@switch'}</code>
-			, or
-			{' '}
-			<code class="inline-code">{'@try'}</code>
-			. It cannot be a bare expression container, and no script statements can appear
-			after it.
-		</p>
-		<p class="section-body muted">
-			If the rendered part needs multiple siblings or text next to elements, wrap those
-			children in a fragment so they become one output. The rule applies locally to
-			component bodies, element children, and control-flow branches, so setup can stay
-			close to the markup that uses it without turning ordinary template text into
-			JavaScript.
-		</p>
-		<p class="section-body muted">
-			Control-flow bodies are implicit statement containers too:
-			<code class="inline-code">@if</code>
-			,
-			<code class="inline-code">@for</code>
-			,
-			<code class="inline-code">@switch</code>
-			, and
-			<code class="inline-code">@try</code>
-			arms all use
-			<code class="inline-code">{'{}'}</code>
-			blocks.
-		</p>
-		<p class="section-body muted">
-			If you write setup statements and then a bare JSX element inside a normal
-			<code class="inline-code">{'{}'}</code>
-			function body, the compiler will ask you to add the missing
-			<code class="inline-code">@</code>
-			. Plain braces are JavaScript; statement-container braces are
-			<code class="inline-code">{'@{...}'}</code>
-			.
-		</p>
-		<pre class="code-block">
-			<code innerHTML={TEMPLATE_STRUCTURE_HTML} />
-		</pre>
-	</section>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<section class="doc-section" id="template-structure">
-		<h2 class="section-heading">Statement containers</h2>
-		<p class="section-body">
-			When a template scope mixes TypeScript setup with rendered output, wrap the setup in
-			<code class="inline-code">{'@{...}'}</code>. TSRX treats everything before the final
-			renderable child as script, then the container must finish with exactly one output node.
-		</p>
-		<p class="section-body muted">
-			That final output can be a JSX element, a JSX fragment, or JSX control flow like{' '}
-			<code class="inline-code">{'@if'}</code>, <code class="inline-code">{'@for'}</code>,{' '}
-			<code class="inline-code">{'@switch'}</code>, or <code class="inline-code">{'@try'}</code>. It
-			cannot be a bare expression container, and no script statements can appear after it.
-		</p>
-		<p class="section-body muted">
-			If the rendered part needs multiple siblings or text next to elements, wrap those children in
-			a fragment so they become one output. The rule applies locally to component bodies, element
-			children, and control-flow branches, so setup can stay close to the markup that uses it
-			without turning ordinary template text into JavaScript.
-		</p>
-		<p class="section-body muted">
-			Control-flow bodies are implicit statement containers too:
-			<code class="inline-code">@if</code>,<code class="inline-code">@for</code>,
-			<code class="inline-code">@switch</code>, and
-			<code class="inline-code">@try</code>
-			arms all use
-			<code class="inline-code">{'{}'}</code>
-			blocks.
-		</p>
-		<p class="section-body muted">
-			If you write setup statements and then a bare JSX element inside a normal
-			<code class="inline-code">{'{}'}</code>
-			function body, the compiler will ask you to add the missing
-			<code class="inline-code">@</code>. Plain braces are JavaScript; statement-container braces
-			are
-			<code class="inline-code">{'@{...}'}</code>.
-		</p>
-		<pre class="code-block">
-			<code innerHTML={TEMPLATE_STRUCTURE_HTML} />
-		</pre>
-	</section>;
-}
-`);
 		});
 
 		test('formats the getting started: Zed section like Prettier', async () => {
@@ -3640,63 +3785,6 @@ function RowList({ rows, Row }) {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<section class="doc-section" id="zed">
-		<h2 class="section-heading">Zed</h2>
-		<p class="section-body">
-			Install the
-			{' '}
-			<a
-				class="inline-link"
-				href="https://zed.dev/extensions/tsrx"
-				target="_blank"
-				rel="noopener noreferrer"
-			>TSRX extension for Zed</a>
-			{' '}
-			from the Zed Extension Marketplace for syntax highlighting and language-server
-			support. Open Zed's Extensions view and search for
-			{' '}
-			<code class="inline-code">TSRX</code>
-			{' '}
-			to install it.
-		</p>
-		<p class="section-body">
-			The extension uses a project-local
-			{' '}
-			<code class="inline-code">@tsrx/language-server</code>
-			{' '}
-			when available and otherwise downloads its pinned language-server version
-			automatically.
-		</p>
-	</section>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<section class="doc-section" id="zed">
-		<h2 class="section-heading">Zed</h2>
-		<p class="section-body">
-			Install the{' '}
-			<a
-				class="inline-link"
-				href="https://zed.dev/extensions/tsrx"
-				target="_blank"
-				rel="noopener noreferrer"
-			>
-				TSRX extension for Zed
-			</a>{' '}
-			from the Zed Extension Marketplace for syntax highlighting and language-server support. Open
-			Zed's Extensions view and search for <code class="inline-code">TSRX</code> to install it.
-		</p>
-		<p class="section-body">
-			The extension uses a project-local <code class="inline-code">@tsrx/language-server</code> when
-			available and otherwise downloads its pinned language-server version automatically.
-		</p>
-	</section>;
-}
-`);
 		});
 
 		test('formats the index: beta notice section like Prettier', async () => {
@@ -3738,45 +3826,6 @@ function RowList({ rows, Row }) {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<aside class="alpha-notice" role="note" aria-label="Beta release notice">
-		<span class="alpha-badge">Beta</span>
-		<p class="alpha-notice-body">
-			TSRX is in active beta development. Feedback on the
-			{' '}
-			<a
-				class="alpha-notice-link"
-				href="https://github.com/tsrx-org/tsrx/issues"
-				target="_blank"
-				rel="noopener noreferrer"
-			>issue tracker</a>
-			{' '}
-			is very welcome.
-		</p>
-	</aside>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<aside class="alpha-notice" role="note" aria-label="Beta release notice">
-		<span class="alpha-badge">Beta</span>
-		<p class="alpha-notice-body">
-			TSRX is in active beta development. Feedback on the{' '}
-			<a
-				class="alpha-notice-link"
-				href="https://github.com/tsrx-org/tsrx/issues"
-				target="_blank"
-				rel="noopener noreferrer"
-			>
-				issue tracker
-			</a>{' '}
-			is very welcome.
-		</p>
-	</aside>;
-}
-`);
 		});
 
 		test('keeps the parentheses of a returned template that starts with a comment', async () => {
@@ -3829,6 +3878,139 @@ function* h() {
     </style>
   );
 }
+`,
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('puts a multi-line template value in parentheses like an element', async () => {
+			await expectFormat(
+				`const x = @if (something === true) { <div>Hello</div> };
+function f(p) { return @{ const a = p.a; <div>{a}</div> }; }
+function g(items) { throw @for (const i of items) { <li>{i}</li> }; }
+const h = (p) => @{ const a = 1; <div>{a}</div> };
+const k = (p) => (@{ const a = 1; <div>{a}</div> });
+const m = (p) => @if (p.a) { <b /> };
+function A() @{ <div /> }
+const s = @switch (v) { @case 1: { <b /> } };
+const t = @try { <b /> } @catch (e) { <i /> };
+class C { field = @if (a) { <div /> }; render() @{ <div /> } }
+const o = { a: @if (a) { <div /> }, b: @{ <i /> } };
+let z; z = @if (a) { <div /> };
+export default @if (a) { <div /> };
+foo(@if (a) { <div /> });
+const arr = [@if (a) { <div /> }];
+const cond = a ? @if (b) { <c /> } : null;
+const logical = a && @if (b) { <c /> };
+items.map((i) => @if (i) { <c /> });`,
+				`const x = (
+  @if (something === true) {
+    <div>Hello</div>
+  }
+);
+function f(p) {
+  return (
+    @{
+      const a = p.a;
+      <div>{a}</div>
+    }
+  );
+}
+function g(items) {
+  throw (
+    @for (const i of items) {
+      <li>{i}</li>
+    }
+  );
+}
+const h = (p) => @{
+  const a = 1;
+  <div>{a}</div>
+};
+const k = (p) => @{
+  const a = 1;
+  <div>{a}</div>
+};
+const m = (p) => (
+  @if (p.a) {
+    <b />
+  }
+);
+function A() @{
+  <div />
+}
+const s = (
+  @switch (v) {
+    @case 1: {
+      <b />
+    }
+  }
+);
+const t = (
+  @try {
+    <b />
+  } @catch (e) {
+    <i />
+  }
+);
+class C {
+  field = (
+    @if (a) {
+      <div />
+    }
+  );
+  render() @{
+    <div />
+  }
+}
+const o = {
+  a: (
+    @if (a) {
+      <div />
+    }
+  ),
+  b: (
+    @{
+      <i />
+    }
+  ),
+};
+let z;
+z = (
+  @if (a) {
+    <div />
+  }
+);
+export default (
+  @if (a) {
+    <div />
+  }
+);
+foo(
+  @if (a) {
+    <div />
+  },
+);
+const arr = [
+  @if (a) {
+    <div />
+  },
+];
+const cond = a ? (
+  @if (b) {
+    <c />
+  }
+) : null;
+const logical = a && (
+  @if (b) {
+    <c />
+  }
+);
+items.map((i) => (
+  @if (i) {
+    <c />
+  }
+));
 `,
 			);
 		});
@@ -3899,28 +4081,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-		{/* c */}
-		<span>
-			<b>1</b>
-		</span> 3
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* c */}
-		<span>
-			<b>1</b>
-		</span>{' '}
-		3
-	</div>;
-}
-`);
 		});
 
 		test('lays out the text after the child with a comment before it in "<div>\\n\\t/* a */\\n\\t/* b */\\n\\t<span>\\n\\t\\t<b>1</b>\\n\\t</span> 3\\n</div>" like TSX', async () => {
@@ -3947,30 +4107,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-		{/* a */}
-		{/* b */}
-		<span>
-			<b>1</b>
-		</span> 3
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* a */}
-		{/* b */}
-		<span>
-			<b>1</b>
-		</span>{' '}
-		3
-	</div>;
-}
-`);
 		});
 
 		test('lays out the text after the child with a comment before it in "<div>\\n\\t/* c */\\n\\t{cond && (\\n\\t\\t<b>\\n\\t\\t\\t<i />\\n\\t\\t</b>\\n\\t)} 3\\n</div>" like TSX', async () => {
@@ -3999,32 +4135,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-		{/* c */}
-		{cond && (
-			<b>
-				<i />
-			</b>
-		)} 3
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* c */}
-		{cond && (
-			<b>
-				<i />
-			</b>
-		)}{' '}
-		3
-	</div>;
-}
-`);
 		});
 
 		test('lays out the text after the child with a comment before it in "<main>\\n\\t{x && (\\n\\t\\t<div>\\n\\t\\t\\t/* c */\\n\\t\\t\\t<span>\\n\\t\\t\\t\\t<b>1</b>\\n\\t\\t\\t</span> 3\\n\\t\\t</div>\\n\\t)}\\n</main>" like TSX', async () => {
@@ -4057,36 +4167,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<main>
-		{x && (
-			<div>
-				{/* c */}
-				<span>
-					<b>1</b>
-				</span> 3
-			</div>
-		)}
-	</main>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<main>
-		{x && (
-			<div>
-				{/* c */}
-				<span>
-					<b>1</b>
-				</span>{' '}
-				3
-			</div>
-		)}
-	</main>;
-}
-`);
 		});
 
 		test('lays out the text after the child with a comment before it in "<div>\\n\\t/* c */\\n\\t<i /> 3\\n</div>" like TSX', async () => {
@@ -4106,23 +4186,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-		{/* c */}
-		<i /> 3
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* c */}
-		<i /> 3
-	</div>;
-}
-`);
 		});
 
 		test('starts the text after the multi-line child with a comment before it in "export function App() @{\\n  <div> /* c */\\n    <span>\\n      <b>1</b>\\n    </span> 3</div>\\n}" on a line', async () => {
@@ -4192,7 +4255,7 @@ function* h() {
 		});
 
 		test('starts the text after the multi-line child with a comment before it in "const a = <div>\\n  // c\\n  {cond && (\\n    <b>\\n      <i />\\n    </b>\\n  )} 3</div>;" on a line', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const a = <div>
   // c
   {cond && (
@@ -4232,23 +4295,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>{/* a */}
-	{/* b */}
-	<i /> 3</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* a */}
-		{/* b */}
-		<i /> 3
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */ /* b */\\n\\n<i /> 3</div>" like TSX', async () => {
@@ -4268,23 +4314,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	{/* a */} {/* b */}
-	
-	<i /> 3</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* a */} {/* b */}
-		<i /> 3
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>/* a */\\n<i /> 3</div>" like TSX', async () => {
@@ -4302,21 +4331,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>{/* a */}
-	<i /> 3</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* a */}
-		<i /> 3
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */ /* b */\\n<i /> 3</div>" like TSX', async () => {
@@ -4335,22 +4349,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	{/* a */} {/* b */}
-	<i /> 3</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* a */} {/* b */}
-		<i /> 3
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* c */\\n\\n<b /> text\\n</div>" like TSX', async () => {
@@ -4371,24 +4369,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	{/* c */}
-	
-	<b /> text
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* c */}
-		<b /> text
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */\\n\\n/* b */\\n<b /> text\\n</div>" like TSX', async () => {
@@ -4411,26 +4391,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	{/* a */}
-	
-	{/* b */}
-	<b /> text
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* a */}
-		{/* b */}
-		<b /> text
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n<i />\\n/* c */\\n\\n<b /> text\\n</div>" like TSX', async () => {
@@ -4453,26 +4413,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	<i />
-	{/* c */}
-	
-	<b /> text
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		<i />
-		{/* c */}
-		<b /> text
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* c */\\n\\n{x}\\n</div>" like TSX', async () => {
@@ -4494,25 +4434,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	{/* c */}
-	
-	{x}
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* c */}
-
-		{x}
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */ /* b */\\n{x} text\\n</div>" like TSX', async () => {
@@ -4532,23 +4453,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	{/* a */} {/* b */}
-	{x} text
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* a */} {/* b */}
-		{x} text
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* c */ {x}\\n</div>" like TSX', async () => {
@@ -4566,21 +4470,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	{/* c */} {x}
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* c */} {x}
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */\\n/* b */ {x} 3\\n</div>" like TSX', async () => {
@@ -4600,23 +4489,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	{/* a */}
-	{/* b */} {x} 3
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* a */}
-		{/* b */} {x} 3
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */ /* b */{x}\\n</div>" like TSX', async () => {
@@ -4635,22 +4507,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	{/* a */} {/* b */}{x}
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* a */} {/* b */}
-		{x}
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>/* a */\\n/* b */\\n<i /></div>" like TSX', async () => {
@@ -4670,23 +4526,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>{/* a */}
-	{/* b */}
-	<i /></div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* a */}
-		{/* b */}
-		<i />
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* c */\\n\\n<b />\\n</div>" like TSX', async () => {
@@ -4708,25 +4547,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	{/* c */}
-	
-	<b />
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* c */}
-
-		<b />
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* c */\\n\\n{x} text\\n</div>" like TSX', async () => {
@@ -4747,24 +4567,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	{/* c */}
-	
-	{x} text
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* c */}
-		{x} text
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n/* a */\\n/* b */ <i /> 3</div>" like TSX', async () => {
@@ -4783,22 +4585,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	{/* a */}
-	{/* b */} <i /> 3</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		{/* a */}
-		{/* b */} <i /> 3
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<div>\\n<i /> /* a */\\n/* b */\\n<b /> text\\n</div>" like TSX', async () => {
@@ -4820,25 +4606,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<div>
-	<i /> {/* a */}
-	{/* b */}
-	<b /> text
-	</div>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<div>
-		<i /> {/* a */}
-		{/* b */}
-		<b /> text
-	</div>;
-}
-`);
 		});
 
 		test('lays out the comments before the child in "<p>/* c */{name}</p>" like TSX', async () => {
@@ -4855,20 +4622,6 @@ function* h() {
 `,
 				{ useTabs: true, singleQuote: true, printWidth: 100 },
 			);
-			expect(
-				await prettier.format(
-					`export function Page() {
-	<p>{/* c */}{name}</p>;
-}`,
-					{ parser: 'typescript', ...{ useTabs: true, singleQuote: true, printWidth: 100 } },
-				),
-			).toBe(`export function Page() {
-	<p>
-		{/* c */}
-		{name}
-	</p>;
-}
-`);
 		});
 
 		test('keeps the line breaks after the comments before the child in "const a = <div>/* a */\\n/* b */\\n<i /> 3</div>;" like TSX', async () => {
@@ -4888,7 +4641,7 @@ function* h() {
 		});
 
 		test('keeps the line breaks after the comments before the child in "const b = <div>\\n/* a */ /* b */\\n\\n<i /> 3</div>;" like TSX', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const b = <div>
 /* a */ /* b */
 
@@ -4920,7 +4673,7 @@ function* h() {
 		});
 
 		test('keeps the line breaks after the comments before the child in "const a = (\\n  <div>\\n    // c\\n\\n    <b /> text\\n  </div>\\n);" like TSX', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const a = (
   <div>
     // c
@@ -5996,6 +5749,40 @@ function render() {
 			);
 		});
 
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('keeps an element after a statement that ends with a type', async () => {
+			await expectFormat(
+				`export function App() @{
+  const x = y as Foo
+  const z = y satisfies Foo
+  let w: Foo
+  type T = Foo
+  <Bar />
+}
+function render() {
+  const x = y as Map<A, B>
+  <Bar a={1} />
+}
+let v: Foo
+<Bar />`,
+				`export function App() @{
+  const x = y as Foo
+  const z = y satisfies Foo
+  let w: Foo
+  type T = Foo
+  <Bar />
+}
+function render() {
+  const x = y as Map<A, B>
+  <Bar a={1} />
+}
+let v: Foo
+;<Bar />
+`,
+				{ semi: false },
+			);
+		});
+
 		test('divides after an element and in code block setup statements', async () => {
 			await expectFormat(
 				`const half = <span /> / 2
@@ -6224,6 +6011,128 @@ function Two() @{
 	});
 
 	describe('expression parentheses follow Prettier', () => {
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('parenthesizes the element operand in const a = (<style>.a {}</style>).a;', async () => {
+			await expectFormat(
+				`const a = (<style>.a {}</style>).a;`,
+				`const a = (
+  <style>
+    .a {
+    }
+  </style>
+).a;
+`,
+			);
+		});
+
+		test('keeps the parentheses around the element statement in "function C() @{\\n  (<div />);\\n  (<div />) + 1;\\n  (<div />) || x;\\n  (<div />) ? a : b;\\n  <i />\\n}"', async () => {
+			await expectFormat(
+				`function C() @{
+  (<div />);
+  (<div />) + 1;
+  (<div />) || x;
+  (<div />) ? a : b;
+  <i />
+}`,
+				`function C() @{
+  (<div />);
+  (<div />) + 1;
+  (<div />) || x;
+  (<div />) ? a : b;
+  <i />
+}
+`,
+			);
+		});
+
+		test('keeps the parentheses around the element statement in "function C() @{\\n  @if (a) {\\n    (<div />) + 1;\\n    <i />\\n  } @else {\\n    (<div />) + 1;\\n    <i />\\n  }\\n}"', async () => {
+			await expectFormat(
+				`function C() @{
+  @if (a) {
+    (<div />) + 1;
+    <i />
+  } @else {
+    (<div />) + 1;
+    <i />
+  }
+}`,
+				`function C() @{
+  @if (a) {
+    (<div />) + 1;
+    <i />
+  } @else {
+    (<div />) + 1;
+    <i />
+  }
+}
+`,
+			);
+		});
+
+		test('keeps the parentheses around the element statement in "function C() @{\\n  @for (const a of b) {\\n    (<div />) * 2;\\n    <i />\\n  }\\n}"', async () => {
+			await expectFormat(
+				`function C() @{
+  @for (const a of b) {
+    (<div />) * 2;
+    <i />
+  }
+}`,
+				`function C() @{
+  @for (const a of b) {
+    (<div />) * 2;
+    <i />
+  }
+}
+`,
+			);
+		});
+
+		test('keeps the parentheses around the element statement in "function C() @{\\n  @switch (x) {\\n    @case 1: {\\n      (<div />) + 1;\\n      <i />\\n    }\\n  }\\n}"', async () => {
+			await expectFormat(
+				`function C() @{
+  @switch (x) {
+    @case 1: {
+      (<div />) + 1;
+      <i />
+    }
+  }
+}`,
+				`function C() @{
+  @switch (x) {
+    @case 1: {
+      (<div />) + 1;
+      <i />
+    }
+  }
+}
+`,
+			);
+		});
+
+		test('keeps the parentheses around the element statement in "function C() @{\\n  @try {\\n    (<div />) + 1;\\n    <i />\\n  } @catch (e) {\\n    (<div />) + 1;\\n    <i />\\n  }\\n}"', async () => {
+			await expectFormat(
+				`function C() @{
+  @try {
+    (<div />) + 1;
+    <i />
+  } @catch (e) {
+    (<div />) + 1;
+    <i />
+  }
+}`,
+				`function C() @{
+  @try {
+    (<div />) + 1;
+    <i />
+  } @catch (e) {
+    (<div />) + 1;
+    <i />
+  }
+}
+`,
+			);
+		});
+
 		test('prints the template statement "(@{ <div /> });" without parentheses', async () => {
 			await expectFormat(
 				`(@{ <div /> });`,
@@ -6240,6 +6149,47 @@ function Two() @{
 				`@if (a) {
   <div />
 };
+`,
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('prints the template statement "(@{ <div /> } /* c */);" without parentheses', async () => {
+			await expectFormat(
+				`(@{ <div /> } /* c */);`,
+				`@{
+  <div />
+}; /* c */
+`,
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('prints the template statement "(@if (a) { <div /> } /* c */);" without parentheses', async () => {
+			await expectFormat(
+				`(@if (a) { <div /> } /* c */);`,
+				`@if (a) {
+  <div />
+}; /* c */
+`,
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('prints the element that starts "function C() @{\\n  if (a) {\\n    (<div />) + 1;\\n  }\\n  <i />\\n}" bare like Prettier', async () => {
+			await expectFormat(
+				`function C() @{
+  if (a) {
+    (<div />) + 1;
+  }
+  <i />
+}`,
+				`function C() @{
+  if (a) {
+    <div /> + 1;
+  }
+  <i />
+}
 `,
 			);
 		});
@@ -6407,6 +6357,23 @@ function Two() @{
 			);
 		});
 
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('keeps an element bare as a statement of an if and else body', async () => {
+			await expectFormat(
+				`function C() @{
+  if (x) <div />
+  else <b />
+  <span />
+}`,
+				`function C() @{
+  if (x) <div />;
+  else <b />;
+  <span />
+}
+`,
+			);
+		});
+
 		test('keeps an element bare as a statement of a case', async () => {
 			await expectFormat(
 				`function C() @{
@@ -6421,6 +6388,38 @@ function Two() @{
     case 1:
       <div />
   }
+  <span />
+}
+`,
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('keeps an element bare as a statement of a loop body', async () => {
+			await expectFormat(
+				`function C() @{
+  for (const a of b) <div />
+  while (x) <i />
+  <span />
+}`,
+				`function C() @{
+  for (const a of b) <div />;
+  while (x) <i />;
+  <span />
+}
+`,
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('keeps an element bare as a statement of a labeled statement', async () => {
+			await expectFormat(
+				`function C() @{
+  label: <div />
+  <span />
+}`,
+				`function C() @{
+  label: <div />;
   <span />
 }
 `,
@@ -6460,6 +6459,83 @@ function Two() @{
       <s />
     }
   </div>
+}
+`,
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('keeps template elements, code blocks, and style blocks bare', async () => {
+			await expectFormat(
+				`export function Button({ label }) @{
+  const theme = <style>
+    .btn {
+      padding: 0;
+    }
+  </style>;
+  if (label) {
+    <span />
+  }
+  <>
+    <button class="btn">{label}</button>
+    <div>
+      {@{
+        const a = 1;
+        <b>{a}</b>
+      }}
+    </div>
+    @if (label) {
+      <i />
+    } @else {
+      <u />
+    }
+    @switch (label) {
+      @case "a": {
+        <p />
+      }
+    }
+    <style>
+      .btn {
+        color: red;
+      }
+    </style>
+  </>
+}`,
+				`export function Button({ label }) @{
+  const theme = (
+    <style>
+      .btn {
+        padding: 0;
+      }
+    </style>
+  );
+  if (label) {
+    <span />
+  }
+  <>
+    <button class="btn">{label}</button>
+    <div>
+      {@{
+        const a = 1;
+        <b>{a}</b>
+      }}
+    </div>
+    @if (label) {
+      <i />
+    } @else {
+      <u />
+    }
+    @switch (label) {
+      @case "a": {
+        <p />
+      }
+    }
+    <style>
+      .btn {
+        color: red;
+      }
+    </style>
+  </>
 }
 `,
 			);
@@ -6612,6 +6688,44 @@ function Toggle(props) @{
   </ul>
 }
 `,
+			);
+		});
+	});
+
+	describe('comments in if, loop, and switch headers stay inside the parentheses', () => {
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('keeps comments inside @if and @switch tests', async () => {
+			await expectFormat(
+				`export function App(props) @{
+  <div>
+    @if (/* note */ props.open) {
+      <span />
+    } @else if (/** @type {boolean} */ (props.closed)) {
+      <b />
+    }
+    @switch (/* kind */ props.kind) {
+      @case 'a': {
+        <i />
+      }
+    }
+  </div>
+}`,
+				`export function App(props) @{
+  <div>
+    @if (/* note */ props.open) {
+      <span />
+    } @else if (/** @type {boolean} */ props.closed) {
+      <b />
+    }
+    @switch (/* kind */ props.kind) {
+      @case 'a': {
+        <i />
+      }
+    }
+  </div>
+}
+`,
+				{ singleQuote: true },
 			);
 		});
 	});
@@ -6883,7 +6997,7 @@ function Toggle(props) @{
 		});
 
 		test('keeps the comment after the opening tag of "const el = <div>/* c */x</div>;"', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const el = <div>/* c */x</div>;`,
 				`const el = <div>/* c */x</div>;
 `,
@@ -6891,7 +7005,7 @@ function Toggle(props) @{
 		});
 
 		test('keeps the comment after the opening tag of "const el = <>/* c */ x</>;"', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const el = <>/* c */ x</>;`,
 				`const el = <>/* c */ x</>;
 `,
@@ -6899,7 +7013,7 @@ function Toggle(props) @{
 		});
 
 		test('keeps the comment after the opening tag of "const el = <div>/* c */ text</div>;"', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const el = <div>/* c */ text</div>;`,
 				`const el = <div>/* c */ text</div>;
 `,
@@ -6914,6 +7028,24 @@ function Toggle(props) @{
 				`export function App() @{
   <div>/* c */x</div>
 }
+`,
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('keeps the comment after the opening tag of "<div>/* c */x</div>;" in the body', async () => {
+			await expectPrettierFormat(
+				`<div>/* c */x</div>;`,
+				`<div>/* c */x</div>;
+`,
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('keeps the comment after the opening tag of "<>/* c */ x</>;" in the body', async () => {
+			await expectPrettierFormat(
+				`<>/* c */ x</>;`,
+				`<>/* c */ x</>;
 `,
 			);
 		});
@@ -7079,7 +7211,7 @@ function Toggle(props) @{
 		});
 
 		test('keeps the comment in the text of "const el = <div>text here /* c */ more</div>;"', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const el = <div>text here /* c */ more</div>;`,
 				`const el = <div>text here /* c */ more</div>;
 `,
@@ -7087,7 +7219,7 @@ function Toggle(props) @{
 		});
 
 		test('keeps the comment in the text of "const el = <div>a/* c */b</div>;"', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const el = <div>a/* c */b</div>;`,
 				`const el = <div>a/* c */b</div>;
 `,
@@ -7095,7 +7227,7 @@ function Toggle(props) @{
 		});
 
 		test('keeps the comment in the text of "const el = (\\n  <div>\\n    <b />\\n    /* c */ text\\n  </div>\\n);"', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const el = (
   <div>
     <b />
@@ -7203,7 +7335,7 @@ function Toggle(props) @{
 		});
 
 		test('keeps the comment next to a child of "const el = (\\n  <div>\\n    // c\\n    <b />\\n  </div>\\n);"', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const el = (
   <div>
     // c
@@ -7221,7 +7353,7 @@ function Toggle(props) @{
 		});
 
 		test('keeps the comment next to a child of "const el = (\\n  <div>\\n    /* c */ <b />\\n  </div>\\n);"', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const el = (
   <div>
     /* c */ <b />
@@ -7237,7 +7369,7 @@ function Toggle(props) @{
 		});
 
 		test('keeps the comment next to a child of "const el = (\\n  <div>\\n    <b /> /* c */ text\\n  </div>\\n);"', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const el = (
   <div>
     <b /> /* c */ text
@@ -7271,7 +7403,7 @@ function Toggle(props) @{
 		});
 
 		test('keeps the comment next to a child of "const el = (\\n  <div>\\n    text\\n    <b /> // c\\n  </div>\\n);"', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const el = (
   <div>
     text
@@ -7753,7 +7885,7 @@ function Toggle(props) @{
 		});
 
 		test('keeps the line break of the comment next to a child of "const a = <div>{a}{\\" \\"}\\n/* c */\\n<b /></div>;"', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const a = <div>{a}{" "}
 /* c */
 <b /></div>;`,
@@ -7768,7 +7900,7 @@ function Toggle(props) @{
 		});
 
 		test('keeps the block comment after the {" "} of "const a = <div>{\\" \\"}/* c */y</div>;" in place', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const a = <div>{" "}/* c */y</div>;`,
 				`const a = <div> /* c */y</div>;
 `,
@@ -7808,7 +7940,7 @@ function Toggle(props) @{
 		});
 
 		test('lays out the comment of "const a = <div>x{\\" \\"} /* c */ y</div>;" like a {/* c */} child', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const a = <div>x{" "} /* c */ y</div>;`,
 				`const a = <div>x /* c */ y</div>;
 `,
@@ -7816,7 +7948,7 @@ function Toggle(props) @{
 		});
 
 		test('lays out the comment of "const a = <div>x{\\" \\"}/* c */ y</div>;" like a {/* c */} child', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`const a = <div>x{" "}/* c */ y</div>;`,
 				`const a = <div>x /* c */ y</div>;
 `,
@@ -8165,6 +8297,20 @@ Comp}>text</{Comp}>;`,
 			);
 		});
 
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('breaks the shorthand attribute of "<div {key // c\\n} />;" around its line comment', async () => {
+			await expectFormat(
+				`<div {key // c
+} />;`,
+				`<div
+  {
+    key // c
+  }
+/>;
+`,
+			);
+		});
+
 		test('keeps the comment before the value of "export function App() @{\\n  <div attr=/* c */\\"foo\\">text</div>\\n}"', async () => {
 			await expectFormat(
 				`export function App() @{
@@ -8172,6 +8318,22 @@ Comp}>text</{Comp}>;`,
 }`,
 				`export function App() @{
   <div attr=/* c */ "foo">text</div>
+}
+`,
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('formats the line comment before the value of "export function App() @{\\n  <div attr= // c\\n  \\"foo\\">text</div>\\n}"', async () => {
+			await expectFirstFormat(
+				`export function App() @{
+  <div attr= // c
+  "foo">text</div>
+}`,
+				`export function App() @{
+  <div attr="foo"> // c
+    text
+  </div>
 }
 `,
 			);
@@ -8277,7 +8439,7 @@ Comp}>text</{Comp}>;`,
 		});
 
 		test('formats the comment after the expression of "e = <div>{a}\\n// g\\n</div>;" like Prettier', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`e = <div>{a}
 // g
 </div>;`,
@@ -8524,6 +8686,40 @@ Comp}>text</{Comp}>;`,
 			);
 		});
 
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('keeps the elements of a component body', async () => {
+			await expectFormat(
+				`function C() @{
+  const render = () =>
+    // note
+    <a />;
+  function other() {
+    return (
+      // note
+      <b />
+    );
+  }
+  // note
+  <div>{render()}</div>
+}`,
+				`function C() @{
+  const render = () => (
+    // note
+    <a />
+  );
+  function other() {
+    return (
+      // note
+      <b />
+    );
+  }
+  // note
+  <div>{render()}</div>
+}
+`,
+			);
+		});
+
 		test('prints "function C() @{\\n  const a = 1;\\n  <>\\n    @if (a) {\\n      // note\\n      <a />\\n    }\\n    // note\\n    <b />\\n  </>\\n}" without parentheses of its own', async () => {
 			await expectFormat(
 				`function C() @{
@@ -8606,6 +8802,68 @@ Comp}>text</{Comp}>;`,
 	});
 
 	describe('comments in static blocks, namespaces, and code blocks', () => {
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('keeps a JSDoc cast with the statement it starts', async () => {
+			await expectFormat(
+				`function f() { a; /** @type {Foo} */ (x).y(); }
+class C { static { a; /** @type {Foo} */ (x).y(); } }
+namespace N { a; /** @type {Foo} */ (x).y(); }
+export function App() @{
+  const a = 1; /** @type {Foo} */ (x).y();
+  <div />
+}`,
+				`function f() {
+  a;
+  /** @type {Foo} */ x.y();
+}
+class C {
+  static {
+    a;
+    /** @type {Foo} */ x.y();
+  }
+}
+namespace N {
+  a;
+  /** @type {Foo} */ x.y();
+}
+export function App() @{
+  const a = 1;
+  /** @type {Foo} */ x.y();
+  <div />
+}
+`,
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('keeps a JSDoc cast with the statement it starts without semicolons', async () => {
+			await expectFormat(
+				`class C { static { a; /** @type {Foo} */ (x).y(); } }
+namespace N { a; /** @type {Foo} */ (x).y(); }
+export function App() @{
+  const a = 1; /** @type {Foo} */ (x).y();
+  <div />
+}`,
+				`class C {
+  static {
+    a
+    /** @type {Foo} */ x.y()
+  }
+}
+namespace N {
+  a
+  /** @type {Foo} */ x.y()
+}
+export function App() @{
+  const a = 1
+  /** @type {Foo} */ x.y()
+  <div />
+}
+`,
+				{ semi: false },
+			);
+		});
+
 		test('keeps a block comment with the render output on its line', async () => {
 			await expectFormat(
 				`export function App() @{
@@ -8622,7 +8880,7 @@ Comp}>text</{Comp}>;`,
 
 	describe('scoped <style> blocks with apply', () => {
 		test('formats a body-less <style apply={theme} /> inside a fragment', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`export function App(){return <><style apply={theme} /><div>{"hi"}</div></>}`,
 				`export function App() {
   return (
@@ -8817,6 +9075,27 @@ Comp}>text</{Comp}>;`,
 			);
 		});
 
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('keeps the lines after an assigned block as authored', async () => {
+			await expectFormat(
+				`const theme = <style>
+  .card {
+    color: red;
+  }
+</style>;
+export { theme };`,
+				`const theme = (
+  <style>
+    .card {
+      color: red;
+    }
+  </style>
+);
+export { theme };
+`,
+			);
+		});
+
 		test('keeps a leading comment on a style block', async () => {
 			await expectFormat(
 				`export function App() @{
@@ -8939,9 +9218,24 @@ Comp}>text</{Comp}>;`,
 		});
 
 		test('formats a module-scope body-less bundle export', async () => {
-			await expectFormat(
+			await expectPrettierFormat(
 				`export const bundle = <style apply={[a,b]} />;`,
 				`export const bundle = <style apply={[a, b]} />;
+`,
+			);
+		});
+
+		// The old test expected other output; this is the current output, which follows #852's decisions.
+		test('formats a module-scope assigned block with a CSS body', async () => {
+			await expectFormat(
+				`const theme = <style apply={base}>div{color:red}</style>;`,
+				`const theme = (
+  <style apply={base}>
+    div {
+      color: red;
+    }
+  </style>
+);
 `,
 			);
 		});
