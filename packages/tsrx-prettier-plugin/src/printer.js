@@ -221,7 +221,9 @@ export const printer = {
  * comments), and checks for JSX by node type. A `@{ … }` value or a directive
  * lays out the same way, so while Prettier prints its parent, it presents
  * itself as a JSX element. So does a directive that is the body of a call's
- * last-argument arrow, which the call checks (`list.map((item) => (` … `))`).
+ * last-argument arrow, which the call checks (`list.map((item) => (` … `))`),
+ * and a value on the right of a logical expression, which an assignment checks
+ * to keep `a && (` on its line (Prettier's `shouldInlineLogicalExpression`).
  * @template T
  * @param {AstPath<Node>} path
  * @param {() => T} callback
@@ -237,6 +239,12 @@ function withTsrxValuesAsJsx(path, callback) {
 		if (key === 'comments' || key === 'loc') continue;
 		for (const child of [node[key]].flat()) {
 			if (isTsrxValueNode(child, node, key)) values.push(child);
+			else if (
+				child?.type === 'LogicalExpression' &&
+				isTsrxValueNode(child.right, child, 'right')
+			) {
+				values.push(child.right);
+			}
 		}
 	}
 	const lastArgument = node.arguments?.at(-1);
@@ -245,6 +253,10 @@ function withTsrxValuesAsJsx(path, callback) {
 		TSRX_DIRECTIVES.has(lastArgument.body.tsrxType)
 	) {
 		values.push(lastArgument.body);
+	}
+	// A value an enclosing node presents already stays presented while it prints.
+	for (let i = values.length - 1; i >= 0; i--) {
+		if (presentedAsJsx.has(values[i])) values.splice(i, 1);
 	}
 	if (values.length === 0) return callback();
 

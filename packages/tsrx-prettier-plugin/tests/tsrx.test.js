@@ -518,6 +518,47 @@ function D() @{
 	// Like an element, a `@{ … }` value or a directive isn't a left-hand-side
 	// expression (#426): it hugs its parentheses as a callee, and breaks inside
 	// them before a member access, index, non-null assertion, or tag.
+	// An assigned `a && <jsx>` stays on the `=` line (Prettier's
+	// `shouldInlineLogicalExpression`), and so does a value there (#899).
+	test('a value on the right of an assigned logical expression stays on the `=` line', async () => {
+		await expectFormat(
+			`const logical = a && @if (b) { <c /> };
+const x = a || @{ const y = 1; <b>{y}</b> };
+x = a ?? @for (const i of items) { <li /> };
+const o = { k: a && @if (b) { <c /> } };
+const chain = a && b && @if (c) { <d /> };`,
+			`const logical = a && (
+  @if (b) {
+    <c />
+  }
+);
+const x = a || (
+  @{
+    const y = 1;
+    <b>{y}</b>
+  }
+);
+x = a ?? (
+  @for (const i of items) {
+    <li />
+  }
+);
+const o = {
+  k: a && (
+    @if (b) {
+      <c />
+    }
+  ),
+};
+const chain = a && b && (
+  @if (c) {
+    <d />
+  }
+);
+`,
+		);
+	});
+
 	test('a value before a subscript keeps its parentheses', async () => {
 		for (const [input, expected] of [
 			['const a = (@{ <b /> })(x);', 'const a = (@{\n  <b />\n})(x);\n'],
