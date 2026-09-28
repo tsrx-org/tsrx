@@ -1694,6 +1694,31 @@ const a = <div x={/** @type {T} */ y}>{/** @type {T} */ z}</div>;
 `,
 		);
 	});
+
+	// A method without a body printed its `async`, `*` and name twice
+	// (`async masync ()`) (#916).
+	test('an async or generator method without a body prints like the typescript parser', async () => {
+		const source = `class A {
+  async m(): Promise<void>;
+  async m() {}
+}
+
+declare class B {
+  async load(): Promise<void>;
+  async *items(): AsyncGenerator<number>;
+  static async s<T>(/* c */ a: T): void;
+  get x(): number;
+  constructor(a: number);
+}
+
+abstract class C {
+  abstract async m(): void;
+  public async *g(): void; // t
+}
+`;
+		await expectFormat(source, source);
+		expect(await prettier.format(source, { parser: 'typescript' })).toBe(source);
+	});
 });
 
 describe('type parameter modifiers', () => {

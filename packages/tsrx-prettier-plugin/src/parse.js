@@ -482,6 +482,11 @@ class Adapter {
 
 			case 'MethodDefinition':
 			case 'TSAbstractMethodDefinition':
+				// A method without a body (an overload, an abstract method, a method
+				// of a `declare class`): Prettier reads `TSDeclareMethod` as babel's
+				// whole method and prints its `async`, `*` and key again (#916).
+				if (node.value.type === 'TSDeclareMethod')
+					node.value.type = 'TSEmptyBodyFunctionExpression';
 				if (node.typeParameters) {
 					// The function starts at its type parameters, as in typescript-estree,
 					// so a comment inside them belongs to the function.
