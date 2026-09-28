@@ -1033,8 +1033,9 @@ export function SpecificationPage() @{
 							<p class="section-body">
 								Within a returned TSRX template, direct element, fragment, style, text, and
 								expression-container children use the standard JSX node family. JavaScript line and
-								block comments are permitted between template children and do not render. A comment
-								between children renders like
+								block comments are permitted between the children of every element and fragment in a
+								TSRX source text, in a template or not (A.4), and do not render. A comment between
+								children renders like
 								<code class="inline-code">{'{/* … */}'}</code>
 								in TSX: the text on each side of it follows JSX's whitespace rules on its own. A
 								<code class="inline-code">{'/*'}</code>
@@ -1046,8 +1047,21 @@ export function SpecificationPage() @{
 								that touches other text, as in
 								<code class="inline-code">{'https://example.com'}</code>
 								or
-								<code class="inline-code">{'a//b'}</code>, is text. Template control flow uses
-								directive-prefixed
+								<code class="inline-code">{'a//b'}</code>, is text. So is a character reference or a
+								string expression: only
+								<code class="inline-code">{'/*'}</code>
+								and
+								<code class="inline-code">{'//'}</code>
+								start a comment, so
+								<code class="inline-code">{'&#47;*'}</code>,
+								<code class="inline-code">{'&#47;/'}</code>
+								and
+								<code class="inline-code">{"{'/* … */'}"}</code>
+								render as text. This differs from TSX, where
+								<code class="inline-code">{'/* … */'}</code>
+								and a line starting with
+								<code class="inline-code">{'//'}</code>
+								between children are text. Template control flow uses directive-prefixed
 								<code class="inline-code">@if</code>,<code class="inline-code">@for</code>,
 								<code class="inline-code">@switch</code>, and
 								<code class="inline-code">@try</code>
@@ -1160,7 +1174,16 @@ export function SpecificationPage() @{
 									<code class="inline-code">JSXText</code>
 									and contributes escaped static text. Character references such as
 									<code class="inline-code">{'&quot;'}</code>
-									are decoded before the text value is stored.
+									are decoded before the text value is stored. A comment between children is not
+									part of any JSXText: text ends before it and starts again after it, and the
+									comment is the inner comment of an empty
+									<code class="inline-code">{'{}'}</code>
+									of its own (a
+									<code class="inline-code">JSXExpressionContainer</code>
+									holding a<code class="inline-code">JSXEmptyExpression</code>, with no braces in
+									the source), as
+									<code class="inline-code">{'{/* … */}'}</code>
+									is in TSX.
 								</li>
 								<li>
 									<code class="inline-code">{'{ AssignmentExpression }'}</code>
@@ -1900,7 +1923,9 @@ export function SpecificationPage() @{
 								</li>
 								<li>
 									JSXText records a raw text child. Static text children decode JSX character
-									references before the text value is stored.
+									references before the text value is stored. A comment between children is in
+									neither a JSXText's value nor its raw: it is the inner comment of a
+									JSXExpressionContainer whose expression is a JSXEmptyExpression (4.3).
 								</li>
 								<li>
 									JSXAttribute.value is null for boolean-style attributes with no initializer.

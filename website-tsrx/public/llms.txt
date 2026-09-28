@@ -599,7 +599,8 @@ const icon = <svg aria-hidden="true" />;
 
 TSRX opens from JSX expression positions: arrow expression bodies, assignments,
 props, helper returns, and children can all create TSRX values. Plain JSX
-children stay JSX text, elements, comments, and `{...}` expression containers.
+children stay JSX text, elements, JavaScript comments (see "Comments between
+children"), and `{...}` expression containers.
 When a scope needs TypeScript setup before rendering, use a JSX statement
 container: `@{ ... }`. Setup must come first and the container must finish with
 exactly one output node: a JSX element, JSX fragment, or JSX control-flow
@@ -667,6 +668,32 @@ raw HTML prop for trusted markup.
 ```tsrx
 const Article = ({ markup }: { markup: string }) =>
 	<article innerHTML={markup} />;
+```
+
+### Comments between children
+
+JavaScript comments are comments between the children of every element in a
+`.tsrx` file: in a template, a control-flow body, JSX returned from a regular
+function, and module-level JSX. A comment renders like `{/* … */}` in TSX, so
+text on each side of it follows JSX's whitespace rules on its own.
+
+- `/*` starts a comment anywhere in text.
+- `//` starts a comment after whitespace, at the start of a line, or right after
+  a tag, `{…}` or block, and runs to the end of the line, a closing tag
+  included: `<p>a // note</p>` on one line leaves `<p>` unclosed.
+- `//` touching other text (`https://example.com`, `a//b`) is text.
+
+This differs from TSX, where `/* … */` and `//` lines between children are text.
+To show comment-like text, write the first `/` as `&#47;` or use a string:
+
+```tsrx
+export function Samples() @{
+	<main>
+		<div>&#47;* something */</div> // renders /* something */
+		<div>{'// something'}</div> // renders // something
+		<div>/* something */</div> // empty: its content is a comment
+	</main>
+}
 ```
 
 ### Scripts

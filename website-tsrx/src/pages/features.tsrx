@@ -80,6 +80,19 @@ const COMMENTS_HTML = highlight_tsrx(
 }`,
 );
 
+const COMMENT_TEXT_HTML = highlight_tsrx(
+	`function Samples() @{
+  <main>
+    <div>&#47;* something */</div> // renders /* something */
+    <div>
+      &#47;/ something
+    </div> // renders // something
+    <div>{'/* something */'}</div> // renders /* something */
+    <div>/* something */</div> // empty: its content is a comment
+  </main>
+}`,
+);
+
 const IF_HTML = highlight_tsrx(
 	`function StatusBadge({ status }: { status: 'active' | 'idle' | 'offline' }) @{
   @if (status === 'active') {
@@ -716,17 +729,44 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="comments">
 							<h2 class="section-heading">JS comments</h2>
 							<p class="section-body">
-								JavaScript line and block comments are valid inside template children. They are
+								JavaScript line and block comments are valid between the children of any element in
+								a <code class="inline-code">.tsrx</code> file: in a template, in a control-flow
+								body, in JSX returned from a regular function, and in module-level JSX. They are
 								comments, not rendered text, so you can annotate element bodies and control-flow
 								branches without wrapping the note in braces. A comment renders like
 								<code class="inline-code">{'{/* … */}'}</code>
-								in TSX. A<code class="inline-code">{'//'}</code>
-								after a space starts a comment that runs to the end of the line; one that touches
-								text, as in
+								in TSX. A<code class="inline-code">{'/*'}</code>
+								starts a comment anywhere in text. A<code class="inline-code">{'//'}</code>
+								after whitespace, at the start of a line, or right after a tag starts a comment that
+								runs to the end of the line, a closing tag included, so
+								<code class="inline-code">{'<p>a // note</p>'}</code>
+								on one line leaves the
+								<code class="inline-code">{'<p>'}</code>
+								unclosed. One that touches text, as in
 								<code class="inline-code">{'https://example.com'}</code>, stays text.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={COMMENTS_HTML} />
+							</pre>
+							<p class="section-body">
+								This differs from TSX, where
+								<code class="inline-code">{'/* … */'}</code>
+								and a line starting with
+								<code class="inline-code">{'//'}</code>
+								between children are text, and
+								<code class="inline-code">{'{/* … */}'}</code>
+								is the only comment. TSX pasted into a<code class="inline-code">.tsrx</code>
+								file can render differently, most often a code sample in
+								<code class="inline-code">{'<pre>'}</code>
+								or
+								<code class="inline-code">{'<code>'}</code>. To show text that looks like a comment,
+								write its first
+								<code class="inline-code">/</code>
+								as the character reference
+								<code class="inline-code">{'&#47;'}</code>, or write the text as a string in braces:
+							</p>
+							<pre class="code-block">
+								<code innerHTML={COMMENT_TEXT_HTML} />
 							</pre>
 						</section>
 						<section class="doc-section" id="prop-shorthands">
