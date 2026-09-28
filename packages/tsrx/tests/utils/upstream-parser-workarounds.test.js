@@ -3689,3 +3689,52 @@ describe('`declare` after decorators after `export default` (sveltejs/acorn-type
 		);
 	});
 });
+
+/**
+ * The type of each rest element's argument in `node`.
+ * @param {unknown} node
+ * @returns {string[]}
+ */
+function restArgumentTypes(node) {
+	if (Array.isArray(node)) return node.flatMap(restArgumentTypes);
+	if (!node || typeof node !== 'object') return [];
+	const { type, argument } = /** @type {{ type?: string, argument?: { type: string } }} */ (node);
+	return [
+		...(type === 'RestElement' && argument ? [argument.type] : []),
+		...Object.entries(node).flatMap(([key, child]) =>
+			key === 'metadata' || key === 'loc' ? [] : restArgumentTypes(child),
+		),
+	];
+}
+
+// #726, #770
+describe('a rest element or rest parameter with a default (sveltejs/acorn-typescript#159)', () => {
+	it('keeps the default and reports TS1186 or TS1048, as TypeScript does', async () => {
+		// TypeScript's parser reads each, and its checker reports TS1186 at the
+		// `=` of a rest element, and TS1048 at a rest parameter's name.
+		/** @type {Array<[source: string, message: string, at: string]>} */
+		const cases = [
+			['const [...a = 1] = b;', 'A rest element cannot have an initializer.', '= 1'],
+			['const { ...a = 1 } = b;', 'A rest element cannot have an initializer.', '= 1'],
+			['[...a = 1] = b;', 'A rest element cannot have an initializer.', '= 1'],
+			['({ ...a = 1 } = b);', 'A rest element cannot have an initializer.', '= 1'],
+			['function f(...a = []) {}', 'A rest parameter cannot have an initializer.', 'a ='],
+			['const g = (...a = []) => a;', 'A rest parameter cannot have an initializer.', 'a ='],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			const [, message, at] = cases[index];
+			const pos = source.indexOf(at);
+			const { line, column } = acorn.getLineInfo(source, pos);
+			expect(strict, source).toMatchObject({
+				ok: false,
+				message: `${message} (${line}:${column})`,
+			});
+			const { ast, errors } = parsed(collect, source);
+			expect(errors, source).toEqual([message]);
+			expect(collect.ok && collect.errors?.[0].pos, source).toBe(pos);
+			// The rest element keeps its default, as its argument's pattern.
+			expect(restArgumentTypes(ast), source).toEqual(['AssignmentPattern']);
+		}
+	});
+});

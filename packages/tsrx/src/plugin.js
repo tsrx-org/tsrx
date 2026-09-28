@@ -334,9 +334,9 @@ const regex_let_binding_error =
  * node it builds for valid code. Mistakes whose raise site can't continue are
  * handled by narrow overrides instead: a comma after a rest element
  * (`#collectCheckerLevelError`, `parseBindingList`,
- * `#readArrowParametersPastRestElement`), a rest parameter's or rest element's
- * default (`#readRestParameterDefault`, `#readRestElementDefault`), `const`
- * without an
+ * `#readArrowParametersPastRestElement`, `#parseObjectPatternRest`), a rest parameter's or rest element's
+ * default (`#readRestParameterDefault`, `#readRestElementDefault`,
+ * `#toRestElementWithDefault`), `const` without an
  * initializer (`parseVarId`), a declaration list without a declarator
  * (`parseVarStatement`, `parseForStatement`), `await` in a namespace
  * (`canAwait`), a private name outside a class (the constructor and
@@ -1258,10 +1258,11 @@ export function TSRXPlugin(config) {
 			// `#checkParameterSyntax`).
 			/** @type {ExpressionList | null} */
 			#expressionList = null;
-			// The rest parameters whose default `#readRestParameterDefault` read and
-			// left out of the tree.
-			/** @type {WeakSet<AST.Node>} */
-			#restParameterDefaults = new WeakSet();
+			// The `?` of each optional rest parameter whose default
+			// `#readRestParameterDefault` read, where `#reportRestParameterMistakes`
+			// reports TS1047 for an arrow function's.
+			/** @type {WeakMap<AST.Node, number>} */
+			#restParameterQuestions = new WeakMap();
 			// Where the last type parameter list ended (see `tsParseTypeParameters`).
 			#typeParametersEnd = -1;
 			// The innermost expression being read that can be a generic arrow
@@ -4597,8 +4598,8 @@ export function TSRXPlugin(config) {
 			 * (TS2371). acorn-typescript rejected the `AssignmentPattern` with its own
 			 * message, in every mode. Raise TS2371 at the parameter instead, which
 			 * `raise` records when collecting, keeping the default as typescript-estree
-			 * does. A strict parse throws it. So is a rest parameter's default, which
-			 * the tree leaves out (see `#readRestParameterDefault`), after TS1048.
+			 * does. A strict parse throws it. So is a rest parameter's default (see
+			 * `#readRestParameterDefault`), after TS1048.
 			 *
 			 * This is acorn-typescript's method with those changes. Its check of each
 			 * parameter looks through a parameter property to its parameter. A strict
@@ -4614,7 +4615,7 @@ export function TSRXPlugin(config) {
 					);
 					if (
 						parameter.type === 'AssignmentPattern' ||
-						this.#restParameterDefaults.has(parameter)
+						this.#isRestParameterWithDefault(parameter)
 					) {
 						this.raise(parameter.start, SIGNATURE_PARAMETER_INITIALIZER);
 					} else if (
@@ -6846,20 +6847,54 @@ export function TSRXPlugin(config) {
 			// UPSTREAM(sveltejs/acorn-typescript#159): remove once a release includes the fix
 			/**
 			 * Reads the default after a rest parameter, from its `=`: TypeScript's
-			 * parser reads one, and its checker reports TS1048. ESTree's rest element
-			 * has no place for it, and typescript-estree leaves it out of the tree
-			 * while the parameter's range covers it; so does this. The rest element
-			 * is kept in `#restParameterDefaults`, for the errors to be reported
-			 * where they're known to be a parameter's (see `parseFunctionBody` and
+			 * parser reads one, and its checker reports TS1048. The rest element's
+			 * argument becomes an `AssignmentPattern`, as for a rest element's
+			 * default (`#readRestElementDefault`), so the tree keeps the default. Its
+			 * `?` and type annotation move to the pattern's target, where a
+			 * parameter with a default has them (`a?: T = 1`), for them to print
+			 * before the default. The errors are reported where the rest element is
+			 * known to be a parameter's (see `parseFunctionBody` and
 			 * `tsParseBindingListForSignature`).
 			 * @param {AST.Node} rest The rest parameter, a `RestElement`, or the
 			 * `SpreadElement` that becomes one
 			 */
 			#readRestParameterDefault(rest) {
-				this.next();
-				this.parseMaybeAssign();
+				const node =
+					/** @type {AST.Node & { argument: AST.Node & AST.NodeWithLocation, optional?: boolean, typeAnnotation?: AST.TSTypeAnnotation }} */ (
+						rest
+					);
+				const argument =
+					/** @type {AST.Node & AST.NodeWithLocation & { optional?: boolean, typeAnnotation?: AST.TSTypeAnnotation }} */ (
+						node.argument
+					);
+				if (node.optional) {
+					this.#restParameterQuestions.set(
+						rest,
+						skip_space_and_comments_from(this.input, argument.end),
+					);
+					argument.optional = true;
+					delete node.optional;
+				}
+				if (node.typeAnnotation) {
+					argument.typeAnnotation = node.typeAnnotation;
+					delete node.typeAnnotation;
+				}
+				if (argument.optional || argument.typeAnnotation) {
+					this.resetEndLocation(argument);
+				}
+				node.argument = /** @type {AST.Node & AST.NodeWithLocation} */ (
+					this.parseMaybeDefault(argument.start, argument.loc?.start, /** @type {any} */ (argument))
+				);
 				this.resetEndLocation(rest);
-				this.#restParameterDefaults.add(rest);
+			}
+
+			/**
+			 * Whether `node` is a rest parameter with a default
+			 * (`#readRestParameterDefault`).
+			 * @param {AST.Node} node
+			 */
+			#isRestParameterWithDefault(node) {
+				return node.type === 'RestElement' && node.argument.type === 'AssignmentPattern';
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#159): remove once a release includes the fix
@@ -6869,16 +6904,32 @@ export function TSRXPlugin(config) {
 			 * b`). acorn expects the pattern to end after a rest element, and failed
 			 * at the `=`. TypeScript's parser reads the default, and its checker
 			 * reports TS1186 at the `=`: record it there when collecting, while a
-			 * strict parse throws it. As for a rest parameter's
-			 * default (`#readRestParameterDefault`), the tree leaves the default out
-			 * and the rest element's range covers it.
-			 * @param {AST.Node} rest
+			 * strict parse throws it. The rest element's argument becomes an
+			 * `AssignmentPattern`, as acorn and typescript-estree make it for
+			 * `[...a = 1] = b`, so the tree keeps the default (see
+			 * `checkLValInnerPattern`).
+			 * @param {AST.RestElement} rest
 			 */
 			#readRestElementDefault(rest) {
 				this.#raiseCheckerError(this.start, REST_ELEMENT_INITIALIZER);
-				this.next();
-				this.parseMaybeAssign();
+				const argument = /** @type {AST.Pattern & AST.NodeWithLocation} */ (rest.argument);
+				rest.argument = this.parseMaybeDefault(argument.start, argument.loc?.start, argument);
 				this.resetEndLocation(rest);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#159): remove once a release includes the fix
+			/**
+			 * A rest element with a default (`#readRestElementDefault`,
+			 * `#toRestElementWithDefault`): acorn checks a rest element's argument as
+			 * a target, which an `AssignmentPattern` isn't (`Binding rvalue`). Check
+			 * it as a pattern's element instead, which checks its target.
+			 * @type {Parse.Parser['checkLValInnerPattern']}
+			 */
+			checkLValInnerPattern(expr, bindingType, checkClashes) {
+				if (expr.type === 'RestElement' && expr.argument.type === 'AssignmentPattern') {
+					expr = expr.argument;
+				}
+				super.checkLValInnerPattern(expr, bindingType, checkClashes);
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#121): remove once a release includes the fix
@@ -7875,9 +7926,10 @@ export function TSRXPlugin(config) {
 			 * part of the spread's argument among the arguments of `async (…)`, and
 			 * failed as it made them the parameters (`Rest elements cannot have a
 			 * default value`). TypeScript's parser reads the default, and its checker
-			 * reports TS1048. Leave it out, as `#readRestParameterDefault` does, for
-			 * `parseFunctionBody` to report TS1048 (#726). A parenthesized
-			 * assignment, `...(a = [])`, isn't a parameter.
+			 * reports TS1048. Make the assignment an `AssignmentPattern`, as
+			 * `#readRestParameterDefault` does, for `parseFunctionBody` to report
+			 * TS1048 (#726). A parenthesized assignment, `...(a = [])`, isn't a
+			 * parameter.
 			 * @type {Parse.Parser['parseSubscriptAsyncArrow']}
 			 */
 			parseSubscriptAsyncArrow(startPos, startLoc, exprList, forInit) {
@@ -7890,8 +7942,9 @@ export function TSRXPlugin(config) {
 						argument.operator === '=' &&
 						!argument.metadata?.parenthesized
 					) {
-						spread.argument = /** @type {AST.Expression} */ (argument.left);
-						this.#restParameterDefaults.add(spread);
+						spread.argument = /** @type {AST.Expression} */ (
+							/** @type {unknown} */ (this.toAssignable(argument, true))
+						);
 					}
 				}
 				return super.parseSubscriptAsyncArrow(startPos, startLoc, exprList, forInit);
@@ -8262,7 +8315,9 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['toAssignable']}
 			 */
 			toAssignable(node, isBinding, refDestructuringErrors, preserveTypeScriptWrapper) {
-				if (node?.type === 'SpreadElement') this.#dropRestElementDefault(node);
+				if (node?.type === 'SpreadElement' && this.#toRestElementWithDefault(node, isBinding)) {
+					return /** @type {AST.Pattern} */ (/** @type {unknown} */ (node));
+				}
 				if (!isBinding && node && TYPE_ASSERTIONS.has(node.type)) {
 					const assertion = /** @type {AST.Node & { expression: AST.Node }} */ (
 						/** @type {unknown} */ (node)
@@ -8302,20 +8357,28 @@ export function TSRXPlugin(config) {
 			 * default as the spread's argument, an assignment. acorn raised `Rest
 			 * elements cannot have a default value` at the assignment when making it
 			 * the rest element. TypeScript's parser reads it, and its checker reports
-			 * TS1186 at the `=`: record that there when collecting, and make the
-			 * assignment's target the argument, as
-			 * `#readRestElementDefault` does for a binding pattern. A strict parse
-			 * throws it. A parenthesized assignment, `...(a = 1)`, isn't a default.
+			 * TS1186 at the `=`: record that there when collecting, while a strict
+			 * parse throws it. Make the spread the rest element, with the assignment
+			 * as an `AssignmentPattern`, as acorn does without the error. A
+			 * parenthesized assignment, `...(a = 1)`, isn't a default.
 			 * @param {AST.SpreadElement} spread
+			 * @param {boolean | undefined} isBinding
+			 * @returns {boolean} Whether the spread had a default and is converted
 			 */
-			#dropRestElementDefault(spread) {
+			#toRestElementWithDefault(spread, isBinding) {
 				const argument = spread.argument;
+				if (/** @type {string} */ (argument.type) === 'AssignmentPattern') {
+					// A rest parameter's default, which `#readRestParameterDefault` or
+					// `parseSubscriptAsyncArrow` read, and `parseFunctionBody` reports.
+					/** @type {AST.Node} */ (spread).type = 'RestElement';
+					return true;
+				}
 				if (
 					argument.type !== 'AssignmentExpression' ||
 					argument.operator !== '=' ||
 					argument.metadata?.parenthesized
 				) {
-					return;
+					return false;
 				}
 				// The `=`, past any comments and the `)` of a parenthesized target.
 				let position = /** @type {number} */ (argument.left.end);
@@ -8325,7 +8388,11 @@ export function TSRXPlugin(config) {
 					position++;
 				}
 				this.#raiseCheckerError(position, REST_ELEMENT_INITIALIZER);
-				spread.argument = /** @type {AST.Expression} */ (argument.left);
+				/** @type {AST.Node} */ (spread).type = 'RestElement';
+				spread.argument = /** @type {AST.Expression} */ (
+					/** @type {unknown} */ (this.toAssignable(argument, isBinding))
+				);
+				return true;
 			}
 
 			/**
@@ -8732,14 +8799,19 @@ export function TSRXPlugin(config) {
 			#reportRestParameterMistakes(node) {
 				for (const param of node.params) {
 					if (param.type !== 'RestElement') continue;
-					if (!this.isAmbientContext && /** @type {{ optional?: boolean }} */ (param).optional) {
-						const question = skip_space_and_comments_from(
-							this.input,
-							/** @type {number} */ (param.argument.end),
-						);
+					const question = this.#restParameterQuestions.get(param);
+					if (!this.isAmbientContext && question !== undefined) {
 						this.raise(question, OPTIONAL_REST_PARAMETER);
+					} else if (
+						!this.isAmbientContext &&
+						/** @type {{ optional?: boolean }} */ (param).optional
+					) {
+						this.raise(
+							skip_space_and_comments_from(this.input, /** @type {number} */ (param.argument.end)),
+							OPTIONAL_REST_PARAMETER,
+						);
 					}
-					if (this.#restParameterDefaults.has(param)) {
+					if (this.#isRestParameterWithDefault(param)) {
 						this.raise(/** @type {number} */ (param.argument.start), REST_PARAMETER_INITIALIZER);
 					}
 				}
@@ -10749,9 +10821,6 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * An object binding pattern's rest element can have a default, TS1186
-			 * (see `#readRestElementDefault`), which acorn's check for a comma after
-			 * the rest element comes before.
 			 * @type {Parse.Parser['parseProperty']}
 			 */
 			parseProperty(isPattern, refDestructuringErrors) {
@@ -10762,20 +10831,38 @@ export function TSRXPlugin(config) {
 				// property, which the output leaves out. Throw acorn's `Unexpected
 				// token` at the `@` in every mode.
 				if (this.type === tstt.at) this.unexpected();
-				return this.#parseBraceListElement(() => {
-					const property = super.parseProperty(isPattern, refDestructuringErrors);
-					// UPSTREAM(sveltejs/acorn-typescript#159): remove once a release includes the fix
-					// A pattern's rest element, which the type leaves out.
-					const type = /** @type {string} */ (property.type);
-					if (isPattern && type === 'RestElement' && this.type === tt.eq) {
-						this.#readRestElementDefault(property);
-						// acorn checks for a comma after the rest element before the default.
-						if (this.type === tt.comma) {
-							this.raiseRecoverable(this.start, REST_ELEMENT_TRAILING_COMMA);
-						}
-					}
-					return property;
-				});
+				return this.#parseBraceListElement(() =>
+					isPattern && this.type === tt.ellipsis
+						? /** @type {AST.Property} */ (/** @type {unknown} */ (this.#parseObjectPatternRest()))
+						: super.parseProperty(isPattern, refDestructuringErrors),
+				);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#159): remove once a release includes the fix
+			/**
+			 * An object binding pattern's rest element, as acorn's `parseProperty`
+			 * reads it, and then what TypeScript's parser reads after it, which its
+			 * checker reports:
+			 * - A default (`const { ...a = 1 } = b`), TS1186 (see
+			 *   `#readRestElementDefault`).
+			 * - A comma, before another property (`const { ...a, b } = c`, TS2462)
+			 *   or the `}`. acorn raises `Comma is not permitted after the rest
+			 *   element` at it and goes on reading the properties. `raise` records
+			 *   that only for a comma before the `}`, since elsewhere a rest element
+			 *   ends its list. Record it at any comma here when collecting, as
+			 *   `#parseBindingListPastRestElement` does for an array binding pattern
+			 *   (#771), and leave the comma for `parseObj`. A strict parse throws it.
+			 */
+			#parseObjectPatternRest() {
+				const rest = /** @type {AST.RestElement} */ (this.startNode());
+				this.next();
+				rest.argument = this.parseIdent(false);
+				this.finishNode(rest, 'RestElement');
+				if (this.type === tt.eq) this.#readRestElementDefault(rest);
+				if (this.type === tt.comma) {
+					this.#raiseCheckerError(this.start, REST_ELEMENT_TRAILING_COMMA);
+				}
+				return rest;
 			}
 
 			/**

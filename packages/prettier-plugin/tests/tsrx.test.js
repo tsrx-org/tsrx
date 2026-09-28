@@ -2223,15 +2223,7 @@ describe('parse errors', () => {
 		await expectFormat('declare declare class A {}', 'declare class A {}\n');
 		await expectFormat('type A<in in T> = T;', 'type A<in T> = T;\n');
 		await expectFormat('function f(...a?: number[]) {}', 'function f(...a: number[]) {}\n');
-		// Nor a rest parameter's default, a modifier in a block, or `declare`
-		// before an import.
-		await expectFormat('function f(...a = []) {}', 'function f(...a) {}\n');
-		await expectFormat(
-			'const g = (...a: number[] = []) => a;',
-			'const g = (...a: number[]) => a;\n',
-		);
-		await expectFormat('const h = async (...a = []) => a;', 'const h = async (...a) => a;\n');
-		await expectFormat('type H = (...a = []) => void;', 'type H = (...a) => void;\n');
+		// Nor a modifier in a block, or `declare` before an import.
 		await expectFormat(
 			`function f() {
   public class A {}
@@ -2421,20 +2413,29 @@ describe('parse errors', () => {
 		}
 	});
 
-	// #770: the tree leaves a rest element's default out, where Prettier's
-	// typescript parser keeps it or makes the rest element a plain element.
-	test("a rest element's default is an error, not left out", async () => {
-		for (const [source, column] of /** @type {const} */ ([
-			['const [...a = 1] = b;', 13],
-			['const { ...a = 1 } = b;', 14],
-			['[...a = 1] = b;', 7],
-			['({ ...a = 1 } = b);', 9],
-		])) {
-			const error = await format(source).catch((/** @type {any} */ e) => e);
-			expect(error, source).toBeInstanceOf(SyntaxError);
-			expect(error.cause.code, source).toBe('TS1186');
-			expect(error.loc, source).toEqual({ start: { line: 1, column } });
+	// A rest element's or rest parameter's default (#770, #726) prints as
+	// written. Prettier's typescript parser keeps it only in an assignment: it
+	// leaves a rest parameter's and an object binding pattern's out, and makes
+	// an array binding pattern's rest element a plain element (`[a = 1]`).
+	test("a rest element's or rest parameter's default is kept", async () => {
+		for (const source of [
+			'const [...a = 1] = b;',
+			'const { ...a = f() } = b;',
+			'[...a = 1] = b;',
+			'({ ...a = 1 } = b);',
+			'function f(...a?: number[] = []) {}',
+			'const g = (...a: number[] = []) => a;',
+			'const h = async (...a = []) => a;',
+			'type H = (...a = []) => void;',
+		]) {
+			await expectFormat(source, `${source}\n`);
 		}
+	});
+
+	// Prettier's typescript parser formats them the same way (#771).
+	test("properties after an object binding pattern's rest element", async () => {
+		await expectFormat('const { ...a, b } = c;', 'const { ...a, b } = c;\n');
+		await expectFormat('function f({ ...a, b }) {}', 'function f({ ...a, b }) {}\n');
 	});
 });
 

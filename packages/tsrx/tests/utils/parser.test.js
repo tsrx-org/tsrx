@@ -9675,6 +9675,34 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	/** @param {AST.Program} program */
 	const type_alias_type = (program) =>
 		as_type(/** @type {AST.Node} */ (first(program)), 'TSTypeAliasDeclaration').typeAnnotation;
+	/**
+	 * `pick`, with each rest element that has a default (#726, #770) replaced by
+	 * its argument, the `AssignmentPattern`: the tree that the source without the
+	 * `...` gives. There must be one.
+	 * @param {(program: AST.Program) => unknown} pick
+	 */
+	const rest_defaults_as_elements = (pick) => (/** @type {AST.Program} */ program) => {
+		let found = false;
+		/** @param {unknown} value @returns {unknown} */
+		const unwrap = (value) => {
+			if (Array.isArray(value)) return value.map(unwrap);
+			if (!value || typeof value !== 'object') return value;
+			const node = /** @type {{ type?: string, argument?: { type?: string } }} */ (value);
+			if (node.type === 'RestElement' && node.argument?.type === 'AssignmentPattern') {
+				found = true;
+				return unwrap(node.argument);
+			}
+			return Object.fromEntries(
+				Object.entries(value).map(([key, child]) => [
+					key,
+					key === 'metadata' ? child : unwrap(child),
+				]),
+			);
+		};
+		const node = unwrap(pick(program));
+		if (!found) throw new Error('Expected a rest element with a default');
+		return node;
+	};
 
 	/** @type {CheckerLevelCase[]} */
 	const cases = [
@@ -11002,29 +11030,32 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				},
 			],
 		},
-		// A rest parameter's default (#726, TS1048, at the parameter's name).
-		// ESTree's rest element has no place for it, and typescript-estree leaves
-		// it out of the tree, as this does.
+		// A rest parameter's default (#726, TS1048, at the parameter's name). The
+		// rest element's argument is an `AssignmentPattern`, with the `?` and the
+		// type annotation on its target, as for a parameter with a default.
 		{
 			source: 'function f(...a = []) {}',
 			errors: [['A rest parameter cannot have an initializer.', 'a =']],
 			throws: 'A rest parameter cannot have an initializer. (1:14)',
-			valid: 'function f(...a) {}',
-			pick: first_parameter,
+			valid: 'function f(a = []) {}',
+			pick: rest_defaults_as_elements(first_parameter),
+			pickValid: first_parameter,
 		},
 		{
 			source: 'function f(...[a, b] = []) {}',
 			errors: [['A rest parameter cannot have an initializer.', '[a, b]']],
 			throws: 'A rest parameter cannot have an initializer. (1:14)',
-			valid: 'function f(...[a, b]) {}',
-			pick: first_parameter,
+			valid: 'function f([a, b] = []) {}',
+			pick: rest_defaults_as_elements(first_parameter),
+			pickValid: first_parameter,
 		},
 		{
 			source: 'const g = (...a: number[] = []) => a;',
 			errors: [['A rest parameter cannot have an initializer.', 'a:']],
 			throws: 'A rest parameter cannot have an initializer. (1:14)',
-			valid: 'const g = (...a: number[]) => a;',
-			pick: arrow_parameters,
+			valid: 'const g = (a: number[] = []) => a;',
+			pick: rest_defaults_as_elements(arrow_parameters),
+			pickValid: arrow_parameters,
 		},
 		{
 			source: `const h = async (
@@ -11035,30 +11066,34 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			throws: 'A rest parameter cannot have an initializer. (3:4)',
 			valid: `const h = async (
 	x,
-	...a
+	a = [1]
 ) => a;`,
-			pick: arrow_parameters,
+			pick: rest_defaults_as_elements(arrow_parameters),
+			pickValid: arrow_parameters,
 		},
 		{
 			source: 'const i = async (...a: number[] = []) => a;',
 			errors: [['A rest parameter cannot have an initializer.', 'a:']],
 			throws: 'A rest parameter cannot have an initializer. (1:20)',
-			valid: 'const i = async (...a: number[]) => a;',
-			pick: arrow_parameters,
+			valid: 'const i = async (a: number[] = []) => a;',
+			pick: rest_defaults_as_elements(arrow_parameters),
+			pickValid: arrow_parameters,
 		},
 		{
 			source: 'const k = <T,>(...a: T[] = []) => a;',
 			errors: [['A rest parameter cannot have an initializer.', 'a:']],
 			throws: 'A rest parameter cannot have an initializer. (1:18)',
-			valid: 'const k = <T,>(...a: T[]) => a;',
-			pick: arrow_parameters,
+			valid: 'const k = <T,>(a: T[] = []) => a;',
+			pick: rest_defaults_as_elements(arrow_parameters),
+			pickValid: arrow_parameters,
 		},
 		{
 			source: 'const l = async <T,>(...a = []) => a;',
 			errors: [['A rest parameter cannot have an initializer.', 'a =']],
 			throws: 'A rest parameter cannot have an initializer. (1:24)',
-			valid: 'const l = async <T,>(...a) => a;',
-			pick: arrow_parameters,
+			valid: 'const l = async <T,>(a = []) => a;',
+			pick: rest_defaults_as_elements(arrow_parameters),
+			pickValid: arrow_parameters,
 		},
 		{
 			source: `export function App() @{
@@ -11079,8 +11114,13 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				],
 			],
 			throws: 'A rest parameter cannot have an initializer. (1:13)',
-			valid: 'type H = (...a) => void;',
 			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
+			match: [
+				{
+					type: 'RestElement',
+					argument: { type: 'AssignmentPattern', left: { name: 'a' }, right: { elements: [] } },
+				},
+			],
 		},
 		{
 			source: `interface I {
@@ -11100,12 +11140,26 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				],
 			],
 			throws: 'A rest parameter cannot have an initializer. (2:6)',
-			valid: `interface I {
-	m(...a): void;
-	new (...b: string[]): I;
-}`,
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'TSInterfaceDeclaration').body.body,
+			match: [
+				{
+					parameters: [
+						{ type: 'RestElement', argument: { type: 'AssignmentPattern', left: { name: 'a' } } },
+					],
+				},
+				{
+					parameters: [
+						{
+							type: 'RestElement',
+							argument: {
+								type: 'AssignmentPattern',
+								left: { name: 'b', typeAnnotation: { type: 'TSTypeAnnotation' } },
+							},
+						},
+					],
+				},
+			],
 		},
 		{
 			source: 'class A { constructor(public ...a = []) {} }',
@@ -11115,24 +11169,41 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			],
 			// acorn-typescript expects a name after the modifier.
 			throws: 'Unexpected token (1:29)',
-			valid: 'class A { constructor(...a) {} }',
-			pick: constructor_parameters,
+			valid: 'class A { constructor(a = []) {} }',
+			pick: rest_defaults_as_elements(constructor_parameters),
+			pickValid: constructor_parameters,
 		},
 		// A rest element's default in a destructuring pattern (#770, TS1186, at
-		// the `=`). The tree leaves it out, as for a rest parameter's.
+		// the `=`). The rest element's argument is an `AssignmentPattern`, as
+		// typescript-estree gives `[...a = 1] = b`.
 		{
 			source: 'const [...a = 1] = b;',
 			errors: [['A rest element cannot have an initializer.', '= 1']],
 			throws: 'A rest element cannot have an initializer. (1:12)',
-			valid: 'const [...a] = b;',
-			pick: first,
+			valid: 'const [a = 1] = b;',
+			pick: rest_defaults_as_elements(first),
+			pickValid: first,
 		},
 		{
 			source: 'const { x, ...a = f() } = b;',
 			errors: [['A rest element cannot have an initializer.', '= f()']],
 			throws: 'A rest element cannot have an initializer. (1:16)',
-			valid: 'const { x, ...a } = b;',
-			pick: first,
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations[0].id,
+			match: {
+				type: 'ObjectPattern',
+				properties: [
+					{ type: 'Property' },
+					{
+						type: 'RestElement',
+						argument: {
+							type: 'AssignmentPattern',
+							left: { name: 'a' },
+							right: { type: 'CallExpression' },
+						},
+					},
+				],
+			},
 		},
 		{
 			source: 'function f([...a = 1], { ...b = {} }) {}',
@@ -11141,30 +11212,45 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				['A rest element cannot have an initializer.', '= {}'],
 			],
 			throws: 'A rest element cannot have an initializer. (1:17)',
-			valid: 'function f([...a], { ...b }) {}',
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (first(program)), 'FunctionDeclaration').params,
+			match: [
+				{ elements: [{ type: 'RestElement', argument: { type: 'AssignmentPattern' } }] },
+				{ properties: [{ type: 'RestElement', argument: { type: 'AssignmentPattern' } }] },
+			],
 		},
 		{
 			source: 'const f = ([...a = 1]) => a;',
 			errors: [['A rest element cannot have an initializer.', '= 1']],
 			throws: 'A rest element cannot have an initializer. (1:17)',
-			valid: 'const f = ([...a]) => a;',
-			pick: arrow_parameters,
+			valid: 'const f = ([a = 1]) => a;',
+			pick: rest_defaults_as_elements(arrow_parameters),
+			pickValid: arrow_parameters,
 		},
 		{
 			source: '[...a = 1] = b;',
 			errors: [['A rest element cannot have an initializer.', '= 1']],
 			throws: 'A rest element cannot have an initializer. (1:6)',
-			valid: '[...a] = b;',
-			pick: first,
+			valid: '[a = 1] = b;',
+			pick: rest_defaults_as_elements(first),
+			pickValid: first,
 		},
 		{
 			source: '({ ...a = 1 } = b);',
 			errors: [['A rest element cannot have an initializer.', '= 1']],
 			throws: 'A rest element cannot have an initializer. (1:8)',
-			valid: '({ ...a } = b);',
-			pick: first,
+			pick: (program) => {
+				let expression = as_type(
+					/** @type {AST.Node} */ (first(program)),
+					'ExpressionStatement',
+				).expression;
+				if (expression.type === 'ParenthesizedExpression') expression = expression.expression;
+				return as_type(expression, 'AssignmentExpression').left;
+			},
+			match: {
+				type: 'ObjectPattern',
+				properties: [{ type: 'RestElement', argument: { type: 'AssignmentPattern' } }],
+			},
 		},
 		{
 			// The `=` past a comment.
@@ -11174,7 +11260,12 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: (program) => as_type(/** @type {AST.Node} */ (first(program)), 'ForOfStatement').left,
 			match: {
 				type: 'ArrayPattern',
-				elements: [{ type: 'RestElement', argument: { type: 'Identifier', name: 'a' } }],
+				elements: [
+					{
+						type: 'RestElement',
+						argument: { type: 'AssignmentPattern', left: { name: 'a' }, right: { value: 1 } },
+					},
+				],
 			},
 		},
 		{
@@ -11182,8 +11273,61 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			source: '[...(a) = 1] = b;',
 			errors: [['A rest element cannot have an initializer.', '= 1']],
 			throws: 'A rest element cannot have an initializer. (1:8)',
-			valid: '[...(a)] = b;',
-			pick: first,
+			valid: '[(a) = 1] = b;',
+			pick: rest_defaults_as_elements(first),
+			pickValid: first,
+		},
+		// A property after an object binding pattern's rest element (#771,
+		// TypeScript's TS2462 from its checker), recorded at the comma as for an
+		// array binding pattern.
+		{
+			source: 'const { ...a, b } = c;',
+			errors: [['Comma is not permitted after the rest element', ', b']],
+			throws: 'Comma is not permitted after the rest element (1:12)',
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations[0].id,
+			match: {
+				type: 'ObjectPattern',
+				properties: [
+					{ type: 'RestElement', argument: { name: 'a' } },
+					{ type: 'Property', key: { name: 'b' } },
+				],
+			},
+		},
+		{
+			source: 'function f({ ...a, ...b, c = 1 }) {}',
+			errors: [
+				['Comma is not permitted after the rest element', ', ...b'],
+				['Comma is not permitted after the rest element', ', c'],
+			],
+			throws: 'Comma is not permitted after the rest element (1:17)',
+			pick: first_parameter,
+			match: {
+				type: 'ObjectPattern',
+				properties: [
+					{ type: 'RestElement', argument: { name: 'a' } },
+					{ type: 'RestElement', argument: { name: 'b' } },
+					{ type: 'Property', value: { type: 'AssignmentPattern' } },
+				],
+			},
+		},
+		{
+			// And after a rest element's default (#770).
+			source: 'const { ...a = 1, b } = c;',
+			errors: [
+				['A rest element cannot have an initializer.', '= 1'],
+				['Comma is not permitted after the rest element', ', b'],
+			],
+			throws: 'A rest element cannot have an initializer. (1:13)',
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (first(program)), 'VariableDeclaration').declarations[0].id,
+			match: {
+				type: 'ObjectPattern',
+				properties: [
+					{ type: 'RestElement', argument: { type: 'AssignmentPattern' } },
+					{ type: 'Property', key: { name: 'b' } },
+				],
+			},
 		},
 		// A parameter after an arrow function's rest parameter (#727, TS1014),
 		// recorded at the comma as for other functions' parameters.
