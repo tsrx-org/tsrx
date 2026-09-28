@@ -2098,3 +2098,57 @@ class A {}
 		);
 	});
 });
+
+// An empty directive body prints as the statement the directive is written like
+// prints it: on two lines, except a `@catch` body, which stays `{}` as a
+// `catch` without `finally` does (#897). From `@tsrx/prettier-plugin`'s
+// "expands empty braces" tests.
+describe('empty directive bodies', () => {
+	test('@if, @else, @for and @empty', async () => {
+		await expectFormat(
+			`export function App() @{
+  <>
+    @if (ready) {} @else {}
+    @if (a) {} @else if (b) {} @else {}
+    @for (const item of items) {} @empty {}
+  </>
+}`,
+			`export function App() @{
+  <>
+    @if (ready) {
+    } @else {
+    }
+    @if (a) {
+    } @else if (b) {
+    } @else {
+    }
+    @for (const item of items) {
+    } @empty {
+    }
+  </>
+}
+`,
+		);
+	});
+
+	test('@try, @pending and @catch', async () => {
+		await expectFormat(
+			`function Foo() @{
+  @try {} @pending {} @catch {}
+}
+function Bar() @{
+  @try {} @catch (e, reset) {}
+}`,
+			`function Foo() @{
+  @try {
+  } @pending {
+  } @catch {}
+}
+function Bar() @{
+  @try {
+  } @catch (e, reset) {}
+}
+`,
+		);
+	});
+});

@@ -712,7 +712,7 @@ function printTsrx(path, options, print) {
 			];
 
 		case 'JSXTryExpression':
-			return [
+			return asStatement(node, () => [
 				'@try ',
 				print('block'),
 				node.pending ? [' @pending ', print('pending')] : '',
@@ -724,7 +724,7 @@ function printTsrx(path, options, print) {
 							path.call((handler) => printOwnComments(handler, options, ['@', print()]), 'handler'),
 						]
 					: '',
-			];
+			]);
 	}
 
 	return null;
@@ -749,10 +749,14 @@ function printIf(path, options, print, keyword) {
 			')',
 		]),
 		' ',
-		print('consequent'),
+		asStatement(node, () => print('consequent')),
 	];
 	if (!node.alternate) return parts;
-	parts.push(printBeforeBranch(node, options), '@else ', print('alternate'));
+	parts.push(
+		printBeforeBranch(node, options),
+		'@else ',
+		asStatement(node, () => print('alternate')),
+	);
 	return parts;
 }
 
@@ -820,8 +824,10 @@ function printFor(path, options, print) {
 	return [
 		group(['@for', node.await ? ' await' : '', ' (', head, ')']),
 		' ',
-		print('body'),
-		node.empty ? [printBeforeBranch(node, options), '@empty ', print('empty')] : '',
+		asStatement(node, () => print('body')),
+		node.empty
+			? [printBeforeBranch(node, options), '@empty ', asStatement(node, () => print('empty'))]
+			: '',
 	];
 }
 
@@ -829,13 +835,16 @@ function printFor(path, options, print) {
  * Print a directive's children while the directive presents itself as its
  * statement (`IfStatement`, `ForOfStatement`, …), so Prettier lays them out as
  * it would inside that statement: a broken `if` test, a `for` declaration
- * without a semicolon.
+ * without a semicolon, an empty body on two lines (`{`, `}`), except a
+ * `@catch` body, which stays `{}` as a `catch` without `finally` does. An
+ * `@else if` is an `IfStatement` already.
  * @template T
  * @param {Node} node
  * @param {() => T} callback
  * @returns {T}
  */
 function asStatement(node, callback) {
+	if (!node.statementType) return callback();
 	const { type } = node;
 	node.type = node.statementType;
 	try {
