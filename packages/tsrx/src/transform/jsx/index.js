@@ -69,8 +69,6 @@ import {
 	render_children,
 } from '../../utils/ast.js';
 
-const TEMPLATE_FRAGMENT_ERROR =
-	'JSX fragment syntax is not needed in TSRX templates. TSRX renders in immediate mode, so everything is already a fragment. Use `<>...</>` only in expression position.';
 const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
 const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
 const LEADING_INLINE_WHITESPACE = /^[ \t]+/;
@@ -82,20 +80,6 @@ const TRAILING_INLINE_WHITESPACE = /[ \t]+$/;
  */
 function is_newline_char(ch) {
 	return ch === '\n' || ch === '\r';
-}
-
-/**
- * @param {AST.Node} node
- * @param {TransformContext} transform_context
- */
-function report_jsx_fragment_in_tsrx_error(node, transform_context) {
-	error(
-		TEMPLATE_FRAGMENT_ERROR,
-		transform_context.filename,
-		node,
-		transform_context.errors,
-		transform_context.comments,
-	);
 }
 
 /**
@@ -3822,11 +3806,11 @@ export function create_script_body(node, form = 'children') {
 }
 
 /**
- * @param {AST.TSRXJSXElement | AST.TSRXJSXFragment | AST.JSXStyleElement} node
+ * @param {AST.TSRXJSXElement | AST.JSXStyleElement} node
  * @param {TransformContext} transform_context
  * @param {AST.Node[]} [raw_children]
  * @param {boolean} [in_jsx_child]
- * @returns {AST.TSRXJSXElement | AST.TSRXJSXFragment}
+ * @returns {AST.TSRXJSXElement}
  */
 function to_jsx_element(
 	node,
@@ -3836,13 +3820,6 @@ function to_jsx_element(
 ) {
 	if (node.type === 'JSXElement' && !node.metadata?.native_tsrx) {
 		return node;
-	}
-
-	// A fragment has no opening element to take a name from; in a TSRX template
-	// that is the "fragments are not needed here" error case.
-	if (node.type === 'JSXFragment' || !node.openingElement?.name) {
-		report_jsx_fragment_in_tsrx_error(node, transform_context);
-		return set_loc(b.jsx_fragment(), node);
 	}
 	const source_opening = node.openingElement;
 	const name = clone_jsx_name(source_opening.name);
