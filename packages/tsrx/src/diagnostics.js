@@ -1,3 +1,8 @@
+// This file must not import anything. `@tsrx/core/diagnostics` exports it on
+// its own so that tools can bundle or load the error tables without the rest
+// of the compiler, and an import here would pull that module, and everything
+// it imports, into each of them. `tests/utils/error-codes.test.js` checks it.
+
 /**
  * TSRX's own error codes, one per mistake only TSRX reports. The TSRX
  * specification lists each with its message and an example (its appendix,
