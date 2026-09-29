@@ -144,6 +144,46 @@ describe.each(['native', 'bypass', 'legacy'])('tsrx-tsc with the %s loader', (lo
 		expect(result.output).toBe(`Version ${cli_require('typescript').version}\n`);
 		expect(result.status).toBe(0);
 	});
+
+	it('resolves extensionless .tsrx imports, honoring moduleSuffixes', () => {
+		fs.writeFileSync(
+			path.join(workspace, 'tsconfig.json'),
+			JSON.stringify({
+				tsrx: { compiler: '@tsrx/preact' },
+				compilerOptions: {
+					module: 'ESNext',
+					moduleResolution: 'Bundler',
+					jsx: 'react-jsx',
+					jsxImportSource: 'preact',
+					allowImportingTsExtensions: true,
+					moduleSuffixes: ['.web', ''],
+					target: 'ES2022',
+					strict: true,
+					skipLibCheck: true,
+					types: [],
+				},
+				include: ['main.ts'],
+			}),
+		);
+		fs.writeFileSync(
+			path.join(workspace, 'Card.web.tsrx'),
+			"export default function Card({ platform }: { platform: 'web' }) @{\n\t<div>{platform}</div>\n}\n",
+		);
+		fs.writeFileSync(
+			path.join(workspace, 'Card.tsrx'),
+			"export default function Card({ platform }: { platform: 'native' }) @{\n\t<div>{platform}</div>\n}\n",
+		);
+		// './Card' must reach Card.web.tsrx (the moduleSuffixes pick), not the
+		// unsuffixed Card.tsrx — the literal prop type only matches the web
+		// variant, so a wrong or failed resolution errors here.
+		fs.appendFileSync(
+			path.join(workspace, 'main.ts'),
+			"import Card from './Card';\nCard({ platform: 'web' });\n",
+		);
+		const result = run_cli(loader);
+		expect(result.output).toBe('');
+		expect(result.status).toBe(0);
+	});
 });
 
 it('reports unresolved class field and heritage types in .tsrx files', () => {

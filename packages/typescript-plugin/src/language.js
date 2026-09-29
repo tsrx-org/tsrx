@@ -212,6 +212,12 @@ export function getTsrxLanguagePlugin(options = {}) {
 				isMixedContent: false,
 				scriptKind: 7,
 			})),
+			// Extensionless specifiers (`./Card`, also `Card.web` through
+			// `moduleSuffixes`) only get `.ts`/`.tsx`/`.d.ts`/`.js` probed by
+			// TypeScript. Map each `.d.ts` probe back to a `.tsrx` source so a
+			// bare import can resolve `Card.tsrx`/`Card.web.tsrx`; a real
+			// `.d.ts` file still wins when it exists.
+			resolveHiddenExtensions: true,
 			/**
 			 * @param {VirtualCode} tsrx_code
 			 */
