@@ -45,6 +45,10 @@
       "types": "./types/config.d.ts",
       "default": "./src/config.js"
     },
+    "./diagnostics": {
+      "types": "./src/diagnostics.js",
+      "default": "./src/diagnostics.js"
+    },
     "./runtime/ref": {
       "types": "./types/runtime/ref.d.ts",
       "default": "./src/runtime/ref.js"

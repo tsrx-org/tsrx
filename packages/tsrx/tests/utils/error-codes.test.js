@@ -445,4 +445,15 @@ let E;`,
 			expect(specification, code).toMatch(new RegExp(`['"]${code}  `));
 		}
 	});
+
+	it('are exported without the compiler as @tsrx/core/diagnostics', async () => {
+		const tables = await import('@tsrx/core/diagnostics');
+		const core = await import('../../src/index.js');
+		expect(tables.DIAGNOSTIC_CODES).toBe(core.DIAGNOSTIC_CODES);
+		expect(tables.TS_ERRORS).toBe(core.TS_ERRORS);
+		expect(tables.TSRX_ERRORS).toBe(core.TSRX_ERRORS);
+		// Importing the tables loads nothing else.
+		const diagnostics = readFileSync(new URL('../../src/diagnostics.js', import.meta.url), 'utf8');
+		expect(diagnostics).not.toMatch(/^\s*(import|export .* from)\b/m);
+	});
 });
