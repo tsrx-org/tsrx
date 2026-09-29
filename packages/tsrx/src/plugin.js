@@ -4229,11 +4229,7 @@ export function TSRXPlugin(config) {
 				const redeclaration = kind === UPSTREAM_ERRORS.REDECLARED ? this.#redeclaration : null;
 				const error =
 					redeclaration &&
-					!(
-						redeclaration.table &&
-						!this.#collect &&
-						this.#declaresFunctionLater(redeclaration.name, position)
-					)
+					!(redeclaration.table && !this.#collect && this.#declaresFunctionLater(position))
 						? redeclaration.error
 						: fallback;
 				if (this.#collectCheckerLevelError(position, error, kind)) {
@@ -4511,23 +4507,17 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Whether a strict parse throwing TS2451 for `name` at `position` has a
-			 * function declaration of the name later in the list, which TypeScript
-			 * binds first, so that it's TS2300. Only a parse of the rest can tell: it
+			 * Whether a strict parse throwing TS2451 at `position` has a function
+			 * declaration of the name later in the list, which TypeScript binds
+			 * first, so that it's TS2300. Only a parse of the rest can tell: it
 			 * collects the errors of the input, which `#reportRedeclarationsBeforeFunction`
-			 * corrects, and gives the code it records at `position`.
-			 * @param {string} name
+			 * corrects, and gives the code it records at `position`. It's needed only
+			 * where a `function` keyword follows, which can't be written with an
+			 * escape; a comment or an escaped name can come between it and the name.
 			 * @param {number} position
 			 */
-			#declaresFunctionLater(name, position) {
-				const escaped = name.replace(/[$]/g, '\\$&');
-				if (
-					!new RegExp(`\\bfunction\\b[\\s*]*${escaped}(?![\\w$])`, 'u').test(
-						this.input.slice(position),
-					)
-				) {
-					return false;
-				}
+			#declaresFunctionLater(position) {
+				if (!/\bfunction\b/.test(this.input.slice(position))) return false;
 				/** @type {import('../types/index').CompileError[]} */
 				const errors = [];
 				try {

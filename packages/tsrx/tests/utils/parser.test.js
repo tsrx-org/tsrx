@@ -9517,6 +9517,21 @@ describe('a redeclared name (#948, #952)', () => {
 					[UPSTREAM_ERRORS.REDECLARED, 28],
 				],
 			],
+			// A comment or an escaped name between `function` and the name
+			[
+				'let a;\nlet a;\nfunction /* c */ a() {}',
+				[
+					[UPSTREAM_ERRORS.REDECLARED, 11],
+					[UPSTREAM_ERRORS.REDECLARED, 31],
+				],
+			],
+			[
+				'let a;\nlet a;\nfunction \\u0061() {}',
+				[
+					[UPSTREAM_ERRORS.REDECLARED, 11],
+					[UPSTREAM_ERRORS.REDECLARED, 23],
+				],
+			],
 			[
 				'let a;\nlet a;\nexport function a() {}',
 				[
@@ -9536,7 +9551,7 @@ describe('a redeclared name (#948, #952)', () => {
 			]),
 		);
 		for (const [source, errors] of cases) {
-			for (const [, at] of errors) expect(source.slice(at, at + 1), source).toBe('a');
+			for (const [, at] of errors) expect(source.slice(at), source).toMatch(/^(?:a|\\u0061)/);
 		}
 	});
 });
