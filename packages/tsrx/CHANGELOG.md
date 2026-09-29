@@ -1,5 +1,28 @@
 # @tsrx/core
 
+## 0.5.1
+
+### Patch Changes
+
+- [#967](https://github.com/tsrx-org/tsrx/pull/967)
+  [`b213995`](https://github.com/tsrx-org/tsrx/commit/b213995b75c1c294d76efc20445e450b3b876eb7)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Read the strings that start a
+  `@{ … }` function body as its directive prologue, as in a `{ … }` body. The
+  parser now marks them as directives, so Prettier no longer wraps them in
+  parentheses:
+
+  ```diff
+   function App() @{
+  -  ('use client');
+  +  'use client';
+     <div>Hello</div>
+   }
+  ```
+
+  `'use strict'` there with a parameter list that isn't simple is now TS1347, as
+  it is in a `{ … }` body. A `@{ … }` value and a directive body aren't function
+  bodies, so a string at their start still gets parentheses, as in a block.
+
 ## 0.5.0
 
 ### Minor Changes

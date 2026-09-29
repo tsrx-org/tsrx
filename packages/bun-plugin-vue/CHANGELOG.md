@@ -1,5 +1,14 @@
 # @tsrx/bun-plugin-vue
 
+## 0.0.87
+
+### Patch Changes
+
+- Updated dependencies
+  [[`b213995`](https://github.com/tsrx-org/tsrx/commit/b213995b75c1c294d76efc20445e450b3b876eb7)]:
+  - @tsrx/core@0.5.1
+  - @tsrx/vue@0.3.1
+
 ## 0.0.86
 
 ### Patch Changes

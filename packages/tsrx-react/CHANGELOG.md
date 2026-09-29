@@ -1,5 +1,13 @@
 # @tsrx/react
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies
+  [[`b213995`](https://github.com/tsrx-org/tsrx/commit/b213995b75c1c294d76efc20445e450b3b876eb7)]:
+  - @tsrx/core@0.5.1
+
 ## 0.4.0
 
 ### Minor Changes
