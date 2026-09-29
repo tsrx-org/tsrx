@@ -570,8 +570,10 @@ const TS_SCOPE_TS_MODULE = 1 << 21;
 // `var` in a block below them is declared: a module or script, a function, and
 // a class static block. A namespace's body is one too (see `#isSymbolTable`).
 const TABLE_SCOPE_FLAGS = SCOPE_TOP | SCOPE_FUNCTION | SCOPE_CLASS_STATIC_BLOCK;
-// acorn-typescript's binding type for a type alias's name.
+// acorn-typescript's binding type for a type alias's name, and its flag for an
+// enum's.
 const BIND_TS_TYPE = 6;
+const BIND_FLAGS_TS_ENUM = 256;
 // acorn's flags for `parseFunction`: a function declaration, whose name is
 // optional (after `export default`).
 const FUNC_STATEMENT = 1;
@@ -594,6 +596,40 @@ function block_scoped_names_of(scope) {
 	if (!names) block_scoped_names.set(scope, (names = []));
 	return names;
 }
+
+/**
+ * The names each scope declares with a function declaration that isn't
+ * exported, which TypeScript's binder binds before the other statements of
+ * the list (see `declareName`).
+ * @type {WeakMap<Parse.Scope, string[]>}
+ */
+const function_names = new WeakMap();
+
+/**
+ * @param {Parse.Scope} scope
+ * @returns {string[]}
+ */
+function function_names_of(scope) {
+	let names = function_names.get(scope);
+	if (!names) function_names.set(scope, (names = []));
+	return names;
+}
+
+/**
+ * The names of a `catch` clause's parameter, by the scope of the clause, which
+ * acorn shares with its block (see `parseTryStatement`).
+ * @type {WeakMap<Parse.Scope, string[]>}
+ */
+const catch_parameter_names = new WeakMap();
+
+/**
+ * When collecting, the redeclarations each scope has recorded as TS2451: the
+ * name, where it's recorded, and acorn's error, TS2300, which a function
+ * declaration of the name later in the scope's list makes it (see
+ * `declareName`).
+ * @type {WeakMap<Parse.Scope, Array<{ name: string, pos: number, fallback: ReportedError }>>}
+ */
+const block_scoped_redeclarations = new WeakMap();
 
 /** @type {WeakMap<Parse.Parser, number[]>} */
 const parser_line_starts = new WeakMap();
@@ -1224,10 +1260,14 @@ export function TSRXPlugin(config) {
 			/** @type {{ kind: string, scope: Parse.Scope } | null} */
 			#declaration = null;
 			// While `declareName` declares a name that TypeScript reports as a
-			// redeclared block-scoped variable (TS2451), the error, which
-			// `raiseRecoverable` reports in place of acorn's.
-			/** @type {Diagnostic | null} */
-			#blockScopedRedeclaration = null;
+			// redeclaration with another code than acorn's TS2300, the name and the
+			// error, which `raiseRecoverable` reports in place of acorn's, and for
+			// TS2451 the scope it's in (see `#redeclarationError`).
+			/** @type {{ name: string, error: Diagnostic, table: Parse.Scope | null } | null} */
+			#redeclaration = null;
+			// While `parseExportDeclaration` reads the declaration after `export`,
+			// where it starts (-1 otherwise).
+			#exportedDeclarationStart = -1;
 			// When collecting, where the leading decorators of the statement being read
 			// start, while `parseDecorators` reads them (-1 otherwise), and the error
 			// recorded for them when no class follows (see `parseDecorators`).
@@ -4185,11 +4225,24 @@ export function TSRXPlugin(config) {
 			raiseRecoverable(position, message) {
 				const text = get_error_message(message);
 				const kind = error_kind(text);
+				const fallback = to_diagnostic(text, kind);
+				const redeclaration = kind === UPSTREAM_ERRORS.REDECLARED ? this.#redeclaration : null;
 				const error =
-					kind === UPSTREAM_ERRORS.REDECLARED && this.#blockScopedRedeclaration
-						? this.#blockScopedRedeclaration
-						: to_diagnostic(text, kind);
+					redeclaration &&
+					!(
+						redeclaration.table &&
+						!this.#collect &&
+						this.#declaresFunctionLater(redeclaration.name, position)
+					)
+						? redeclaration.error
+						: fallback;
 				if (this.#collectCheckerLevelError(position, error, kind)) {
+					if (redeclaration?.table) {
+						const records = block_scoped_redeclarations.get(redeclaration.table) ?? [];
+						block_scoped_redeclarations.set(redeclaration.table, records);
+						this.parseEffects?.willAppend(records);
+						records.push({ name: redeclaration.name, pos: position, fallback });
+					}
 					return;
 				}
 				if (kind === UPSTREAM_ERRORS.REDECLARED || kind === TS_ERRORS.ARGUMENT_NAME_CLASH) {
@@ -4336,13 +4389,13 @@ export function TSRXPlugin(config) {
 			 * TypeScript reports a name its binder declares twice in one symbol table
 			 * as TS2451 where the first declaration bound is a `let`, `const`, or
 			 * `using` one, and otherwise as TS2300, which acorn's `Identifier '…' has
-			 * already been declared` stands for. acorn keeps the names of those
-			 * declarations with those of classes (`lexical`), so the parser keeps
-			 * them apart, and has `raiseRecoverable` report TS2451 when a variable or
-			 * a class redeclares one. TypeScript binds a function declaration before
-			 * the other statements of its list, so a redeclaration involving one is
-			 * TS2300. A `var` in a block below the one that has the name is
-			 * TypeScript's TS2481, which isn't reported here.
+			 * already been declared` stands for. Its binder binds the function
+			 * declarations of a list that aren't exported before the other
+			 * statements. acorn keeps the names of `let`, `const`, and `using`
+			 * declarations with those of classes (`lexical`), and a module's or
+			 * function's function declarations with its `var`s, so the parser keeps
+			 * the kinds apart, and has `raiseRecoverable` report TypeScript's code
+			 * (see `#redeclarationError`).
 			 * @type {Parse.Parser['declareName']}
 			 */
 			declareName(name, bindingType, pos) {
@@ -4352,17 +4405,19 @@ export function TSRXPlugin(config) {
 					(bindingType === BINDING_TYPES.BIND_LEXICAL || bindingType === BINDING_TYPES.BIND_VAR)
 						? this.#declaration.kind
 						: null;
-				const outer = this.#blockScopedRedeclaration;
-				this.#blockScopedRedeclaration =
-					kind !== null && this.#isBlockScopedRedeclaration(name, kind)
-						? TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED(name)
-						: null;
+				const outer = this.#redeclaration;
+				this.#redeclaration = this.#redeclarationError(name, bindingType, kind);
 				try {
 					super.declareName(name, bindingType, pos);
 				} finally {
-					this.#blockScopedRedeclaration = outer;
+					this.#redeclaration = outer;
 				}
-				if (kind !== null && kind !== 'var' && kind !== 'class') {
+				if (kind === 'function') {
+					const names = function_names_of(scope);
+					this.parseEffects?.willAppend(names);
+					names.push(name);
+					this.#reportRedeclarationsBeforeFunction(scope, name);
+				} else if (kind !== null && kind !== 'var' && kind !== 'class') {
 					const names = block_scoped_names_of(scope);
 					this.parseEffects?.willAppend(names);
 					names.push(name);
@@ -4370,26 +4425,129 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Whether TypeScript reports a `kind` declaration of `name` here as a
-			 * redeclared block-scoped variable (TS2451; see `declareName`): the
-			 * symbol table it's declared in has the name from a `let`, `const`, or
-			 * `using` declaration.
+			 * The error TypeScript reports for declaring `name` with `bindingType`
+			 * here, where acorn finds it declared already, when its code isn't
+			 * acorn's TS2300: TS2567 when an enum is either declaration, TS2492 for a
+			 * `let`, `const`, or `using` declaration of the parameter of the `catch`
+			 * clause whose block it's in, TS2481 for a `var` in a block below one that
+			 * declares the name with those, and TS2451 for a variable or class that
+			 * redeclares such a name in the same symbol table, unless a function
+			 * declaration of the name comes first there.
 			 * @param {string} name
-			 * @param {string} kind `var`, `let`, `const`, `using`, `await using`, or
-			 *   `class`
+			 * @param {number} bindingType
+			 * @param {string | null} kind The kind of declaration (see `#declaration`)
+			 * @returns {{ name: string, error: Diagnostic, table: Parse.Scope | null } | null}
 			 */
-			#isBlockScopedRedeclaration(name, kind) {
-				if (kind !== 'var') {
-					return block_scoped_names_of(this.currentScope()).includes(name);
+			#redeclarationError(name, bindingType, kind) {
+				if (bindingType & BIND_FLAGS_TS_ENUM) {
+					return { name, error: TS_ERRORS.ENUM_REDECLARED, table: null };
 				}
-				// acorn looks for the name from the current scope up to the one the
-				// `var` is declared in.
+				if (kind === null) return null;
+				const found = this.#findDeclaringScope(name, bindingType);
+				if (!found) return null;
+				const { scope, table } = found;
+				if (scope.enums?.includes(name)) {
+					return { name, error: TS_ERRORS.ENUM_REDECLARED, table: null };
+				}
+				const block_scoped = kind !== 'var' && kind !== 'class' && kind !== 'function';
+				if (block_scoped && catch_parameter_names.get(scope)?.includes(name)) {
+					return { name, error: TS_ERRORS.CATCH_PARAMETER_REDECLARED(name), table: null };
+				}
+				if (kind === 'function' || !block_scoped_names_of(scope).includes(name)) return null;
+				if (!table) {
+					return kind === 'var'
+						? { name, error: TS_ERRORS.OUTER_SCOPED_VARIABLE_INITIALIZED(name, name), table: null }
+						: null;
+				}
+				if (function_names_of(scope).includes(name)) return null;
+				return { name, error: TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED(name), table: scope };
+			}
+
+			/**
+			 * The scope where acorn finds `name` declared when it declares it with
+			 * `bindingType` here, and whether that scope is the symbol table the
+			 * declaration goes in: the current scope, or for a `var`-style one the
+			 * first from there up to its symbol table whose lexical names have it.
+			 * @param {string} name
+			 * @param {number} bindingType
+			 * @returns {{ scope: Parse.Scope, table: boolean } | null}
+			 */
+			#findDeclaringScope(name, bindingType) {
+				if (bindingType !== BINDING_TYPES.BIND_VAR) {
+					return { scope: this.currentScope(), table: true };
+				}
 				for (let i = this.scopeStack.length - 1; i >= 0; i--) {
 					const scope = this.scopeStack[i];
-					if (this.#isSymbolTable(i)) return block_scoped_names_of(scope).includes(name);
-					if (scope.lexical.includes(name)) return false;
+					const table = this.#isSymbolTable(i);
+					if (scope.lexical.includes(name)) return { scope, table };
+					if (table) return null;
 				}
-				return false;
+				return null;
+			}
+
+			/**
+			 * When collecting, a function declaration of `name` in `scope` comes first
+			 * in TypeScript's binder, so the redeclarations of the name recorded
+			 * there as TS2451 are TS2300, acorn's error.
+			 * @param {Parse.Scope} scope
+			 * @param {string} name
+			 */
+			#reportRedeclarationsBeforeFunction(scope, name) {
+				const records = block_scoped_redeclarations.get(scope);
+				if (!records || !this.#errors) return;
+				for (const record of records) {
+					if (record.name !== name) continue;
+					const error = this.#errors.find(
+						(error) =>
+							error.pos === record.pos &&
+							error.code === TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED.code,
+					);
+					if (!error) continue;
+					this.parseEffects?.willSet(error, 'code');
+					this.parseEffects?.willSet(error, 'message');
+					error.code = record.fallback.code;
+					error.message = record.fallback.message;
+				}
+			}
+
+			/**
+			 * Whether a strict parse throwing TS2451 for `name` at `position` has a
+			 * function declaration of the name later in the list, which TypeScript
+			 * binds first, so that it's TS2300. Only a parse of the rest can tell: it
+			 * collects the errors of the input, which `#reportRedeclarationsBeforeFunction`
+			 * corrects, and gives the code it records at `position`.
+			 * @param {string} name
+			 * @param {number} position
+			 */
+			#declaresFunctionLater(name, position) {
+				const escaped = name.replace(/[$]/g, '\\$&');
+				if (
+					!new RegExp(`\\bfunction\\b[\\s*]*${escaped}(?![\\w$])`, 'u').test(
+						this.input.slice(position),
+					)
+				) {
+					return false;
+				}
+				/** @type {import('../types/index').CompileError[]} */
+				const errors = [];
+				try {
+					/** @type {typeof acorn.Parser} */ (/** @type {unknown} */ (this.constructor)).parse(
+						this.input,
+						/** @type {acorn.Options} */ ({
+							sourceType: this.options.sourceType,
+							ecmaVersion: this.options.ecmaVersion,
+							allowReturnOutsideFunction: this.options.allowReturnOutsideFunction,
+							locations: true,
+							preserveParens: this.options.preserveParens,
+							tsrxOptions: { filename: this.#filename, collect: true, errors },
+						}),
+					);
+				} catch {
+					// The errors recorded before a syntax error still tell.
+				}
+				return (
+					errors.find((error) => error.pos === position)?.code === UPSTREAM_ERRORS.REDECLARED.code
+				);
 			}
 
 			/**
@@ -4983,6 +5141,28 @@ export function TSRXPlugin(config) {
 				}
 				try {
 					super.parseClassId(node, isStatement);
+				} finally {
+					this.#declaration = outer;
+				}
+			}
+
+			/**
+			 * A function declaration that isn't exported: TypeScript binds it before
+			 * the other statements of its list (see `declareName`). One after
+			 * `export default` (`FUNC_NULLABLE_ID`) or `export` is exported.
+			 * @type {Parse.Parser['parseFunction']}
+			 */
+			parseFunction(node, statement, allowExpressionBody, isAsync, forInit) {
+				const outer = this.#declaration;
+				if (
+					statement & FUNC_STATEMENT &&
+					!(statement & FUNC_NULLABLE_ID) &&
+					node.start !== this.#exportedDeclarationStart
+				) {
+					this.#declaration = { kind: 'function', scope: this.currentScope() };
+				}
+				try {
+					return super.parseFunction(node, statement, allowExpressionBody, isAsync, forInit);
 				} finally {
 					this.#declaration = outer;
 				}
@@ -6443,7 +6623,14 @@ export function TSRXPlugin(config) {
 				// `parseExport` has just read `export`.
 				const export_start = this.lastTokStart;
 				this.#checkExportDeclarationStart(export_start);
-				const declaration = super.parseExportDeclaration(node);
+				const outer_exported_start = this.#exportedDeclarationStart;
+				this.#exportedDeclarationStart = this.start;
+				let declaration;
+				try {
+					declaration = super.parseExportDeclaration(node);
+				} finally {
+					this.#exportedDeclarationStart = outer_exported_start;
+				}
 				if (
 					declaration?.type !== 'VariableDeclaration' &&
 					!(/** @type {{ id?: unknown } | null} */ (declaration)?.id)
@@ -9502,6 +9689,10 @@ export function TSRXPlugin(config) {
 							param,
 							simple ? BINDING_TYPES.BIND_SIMPLE_CATCH : BINDING_TYPES.BIND_LEXICAL,
 						);
+						// acorn shares the clause's scope with its block: the names of the
+						// parameter, which TypeScript reports a `let`, `const`, or `using`
+						// declaration of in the block as TS2492 (see `#redeclarationError`).
+						catch_parameter_names.set(this.currentScope(), [...this.currentScope().lexical]);
 						const type = this.tsTryParseTypeAnnotation();
 						if (type) {
 							param.typeAnnotation = type;

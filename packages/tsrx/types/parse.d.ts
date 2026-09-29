@@ -500,6 +500,8 @@ export namespace Parse {
 		functions: string[];
 		/** acorn-typescript: the type aliases and interfaces declared in the scope. */
 		types: string[];
+		/** acorn-typescript: the enums declared in the scope. */
+		enums: string[];
 		/**
 		 * acorn-typescript: names that can merge with a value of the same name,
 		 * such as namespaces and top-level ambient functions.

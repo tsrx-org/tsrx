@@ -601,6 +601,25 @@ export const TS_ERRORS = {
 		'TS2451',
 		(name) => `Cannot redeclare block-scoped variable '${name}'.`,
 	),
+	// A `var` in a block below one that declares its name with `let`, `const`, or
+	// `using` (see `declareName` in `plugin.js`). TypeScript gives the name for
+	// both values.
+	OUTER_SCOPED_VARIABLE_INITIALIZED: with_values(
+		'TS2481',
+		(name, declaration) =>
+			`Cannot initialize outer scoped variable '${name}' in the same scope as block scoped declaration '${declaration}'.`,
+	),
+	// A `let`, `const`, or `using` declaration of a `catch` clause's parameter in
+	// its block
+	CATCH_PARAMETER_REDECLARED: with_values(
+		'TS2492',
+		(name) => `Cannot redeclare identifier '${name}' in catch clause.`,
+	),
+	// An enum and another declaration of its name but an enum or a namespace
+	ENUM_REDECLARED: {
+		code: 'TS2567',
+		message: 'Enum declarations can only merge with namespace or other enum declarations.',
+	},
 	// TSRX's wording of a name redeclared in a module's or function's scope
 	DECLARED_IN_SCOPE: with_values(
 		'TS2300',
@@ -730,9 +749,9 @@ export const TS_ERRORS = {
  * upstream functions that raise each.
  */
 export const UPSTREAM_ERRORS = {
-	// A redeclared variable, import, type alias, or private name. For a
-	// block-scoped variable the parser reports TypeScript's TS2451 instead
-	// (`BLOCK_SCOPED_VARIABLE_REDECLARED`).
+	// A redeclared variable, import, type alias, or private name. Where
+	// TypeScript reports another code, the parser reports it instead: TS2451,
+	// TS2481, TS2492, or TS2567 (see `declareName` in `plugin.js`).
 	// acorn: declareName, parseClass; acorn-typescript: declareName
 	REDECLARED: {
 		pattern: /^(?:Identifier|type) '#?[^']+' has already been declared\.?$/,

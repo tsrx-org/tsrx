@@ -9391,36 +9391,56 @@ describe('`var` redeclaring a catch parameter', () => {
 
 	it('still rejects the redeclarations Annex B does not allow', async () => {
 		// A destructured parameter and a function declaration are ECMAScript early
-		// errors that TypeScript doesn't report; `let` conflicts in TypeScript too.
+		// errors that TypeScript doesn't report; `let` conflicts in TypeScript too
+		// (TS2492).
+		/** @type {Array<[source: string, name: string, error: ErrorKind]>} */
 		const sources = [
-			['try {} catch ({ e }) { var e; }', 'e'],
-			['try {} catch ([e]) { var e; }', 'e'],
-			['try {} catch (e) { let e; }', 'e'],
-			['try {} catch (e) { function e() {} }', 'e'],
-			['function App() @{ @try { <div /> } @catch (e, reset) { var reset; <span /> } }', 'reset'],
+			['try {} catch ({ e }) { var e; }', 'e', UPSTREAM_ERRORS.REDECLARED],
+			['try {} catch ([e]) { var e; }', 'e', UPSTREAM_ERRORS.REDECLARED],
+			['try {} catch (e) { let e; }', 'e', TS_ERRORS.CATCH_PARAMETER_REDECLARED],
+			['try {} catch (e) { function e() {} }', 'e', UPSTREAM_ERRORS.REDECLARED],
+			[
+				'function App() @{ @try { <div /> } @catch (e, reset) { var reset; <span /> } }',
+				'reset',
+				UPSTREAM_ERRORS.REDECLARED,
+			],
 		];
 
 		const outcomes = await parse_in_worker(in_every_mode(sources.map(([source]) => source)));
 
 		expect(outcomes).toEqual(
-			sources.flatMap(([source, name]) => [
-				thrown(UPSTREAM_ERRORS.REDECLARED, source.lastIndexOf(name)),
-				{ ok: true, errors: [UPSTREAM_ERRORS.REDECLARED.code] },
-				{ ok: true, errors: [UPSTREAM_ERRORS.REDECLARED.code] },
+			sources.flatMap(([source, name, error]) => [
+				thrown(error, source.lastIndexOf(name)),
+				{ ok: true, errors: [code_of(error)] },
+				{ ok: true, errors: [code_of(error)] },
 			]),
 		);
 	});
 });
 
-describe('a redeclared name (#948)', () => {
+describe('a redeclared name (#948, #952)', () => {
 	// TypeScript reports a name declared twice in one symbol table as TS2451
 	// where the first declaration bound is a `let`, `const`, or `using` one, and
-	// as TS2300 otherwise. It binds function declarations before the other
-	// statements of their list. Each is reported at the later declaration, and
-	// a strict parse throws it.
+	// as TS2300 otherwise. It binds the function declarations of a list that
+	// aren't exported before the other statements. An enum with another
+	// declaration of its name is TS2567, a `let`, `const`, or `using` declaration
+	// of a `catch` clause's parameter in its block TS2492, and a `var` in a block
+	// below one that declares its name that way TS2481. Each is reported at the
+	// later declaration, and a strict parse throws it.
 	const modes = [undefined, { collect: true, comments: [] }];
 
-	/** @type {Array<[source: string, error: ErrorKind]>} */
+	/**
+	 * Where `name` is last declared in `source`.
+	 * @param {string} source
+	 * @param {string} name
+	 */
+	const last = (source, name) =>
+		source.search(new RegExp(`\\b${name}\\b(?![\\s\\S]*\\b${name}\\b)`));
+
+	/**
+	 * Each source's error, at the last `a` unless `at` says where.
+	 * @type {Array<[source: string, error: ErrorKind, at?: number]>}
+	 */
 	const cases = [
 		['let a;\nlet a;', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
 		['const a = 1;\nconst a = 2;', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
@@ -9433,43 +9453,91 @@ describe('a redeclared name (#948)', () => {
 		['namespace N {\n\tlet a;\n\tvar a;\n}', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
 		['let a;\nclass a {}', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
 		['{\n\tlet a;\n\tclass a {}\n}', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
+		// A function declaration in a block below is in that block's table.
+		['let a;\nlet a;\n{\n\tfunction a() {}\n}', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 11],
 		['var a;\nlet a;', UPSTREAM_ERRORS.REDECLARED],
 		['class a {}\nlet a;', UPSTREAM_ERRORS.REDECLARED],
 		['let a;\nfunction a() {}', UPSTREAM_ERRORS.REDECLARED],
 		['function a() {}\nlet a;', UPSTREAM_ERRORS.REDECLARED],
 		['{\n\tlet a;\n\tfunction a() {}\n}', UPSTREAM_ERRORS.REDECLARED],
 		['function f(a) {\n\tlet a;\n}', UPSTREAM_ERRORS.REDECLARED],
+		['{\n\tlet a;\n\tvar a;\n}', TS_ERRORS.OUTER_SCOPED_VARIABLE_INITIALIZED],
+		['{\n\tconst a = 1;\n\tvar [a] = b;\n}', TS_ERRORS.OUTER_SCOPED_VARIABLE_INITIALIZED],
+		['{\n\tlet a;\n\t{\n\t\tvar a;\n\t}\n}', TS_ERRORS.OUTER_SCOPED_VARIABLE_INITIALIZED],
+		['for (let a; ; ) {\n\tvar a;\n}', TS_ERRORS.OUTER_SCOPED_VARIABLE_INITIALIZED],
+		['try {\n} catch (a) {\n\tlet a;\n}', TS_ERRORS.CATCH_PARAMETER_REDECLARED],
+		['try {\n} catch ({ a }) {\n\tconst a = 1;\n}', TS_ERRORS.CATCH_PARAMETER_REDECLARED],
+		['try {\n} catch (a: unknown) {\n\tusing a = null;\n}', TS_ERRORS.CATCH_PARAMETER_REDECLARED],
+		['enum a {}\nlet a;', TS_ERRORS.ENUM_REDECLARED],
+		['let a;\nenum a {}', TS_ERRORS.ENUM_REDECLARED],
+		['enum a {}\nvar a;', TS_ERRORS.ENUM_REDECLARED],
+		['enum a {}\nfunction a() {}', TS_ERRORS.ENUM_REDECLARED],
+		['const enum a {}\nclass a {}', TS_ERRORS.ENUM_REDECLARED],
+		// TypeScript reports nothing for these, whose tables differ, but acorn
+		// raises an ECMAScript early error.
+		['{\n\tclass a {}\n\tvar a;\n}', UPSTREAM_ERRORS.REDECLARED],
+		['try {\n} catch (a) {\n\tclass a {}\n}', UPSTREAM_ERRORS.REDECLARED],
 	];
 
-	it('reports TS2451 for a let, const, or using declaration redeclared, and TS2300 otherwise', async () => {
+	it('reports the code TypeScript reports for each kind of redeclaration', async () => {
 		const outcomes = await parse_in_worker(
 			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
 		);
 
 		expect(outcomes).toEqual(
-			cases.flatMap(([source, error]) => {
-				// The later declaration's name
-				const pos = source.search(/\ba\b(?![\s\S]*\ba\b)/);
-				return [thrown(error, pos), { ok: true, errors: [code_of(error)] }];
-			}),
+			cases.flatMap(([source, error, at = last(source, 'a')]) => [
+				thrown(error, at),
+				{ ok: true, errors: [code_of(error)] },
+			]),
 		);
 	});
 
-	it("keeps TS2300 for a redeclaration that isn't in the same symbol table", async () => {
-		// A `var` in a block, below the `let` of the same block: TypeScript's
-		// checker reports TS2481, and a `let` in a catch clause's block: TS2492.
-		// The parser doesn't give those yet (#952).
-		const sources = ['{\n\tlet a;\n\tvar a;\n}', 'try {} catch (a) {\n\tlet a;\n}'];
+	it('reports TS2300 where a function declaration later in the list comes first', async () => {
+		// A strict parse throws the first. An exported function isn't bound first.
+		/** @type {Array<[source: string, errors: Array<[ErrorKind, at: number]>]>} */
+		const cases = [
+			[
+				'let a;\nlet a;\nfunction a() {}',
+				[
+					[UPSTREAM_ERRORS.REDECLARED, 11],
+					[UPSTREAM_ERRORS.REDECLARED, 23],
+				],
+			],
+			[
+				'let a;\nfunction a() {}\nlet a;',
+				[
+					[UPSTREAM_ERRORS.REDECLARED, 16],
+					[UPSTREAM_ERRORS.REDECLARED, 27],
+				],
+			],
+			[
+				'{\n\tlet a;\n\tlet a;\n\tfunction a() {}\n}',
+				[
+					[UPSTREAM_ERRORS.REDECLARED, 15],
+					[UPSTREAM_ERRORS.REDECLARED, 28],
+				],
+			],
+			[
+				'let a;\nlet a;\nexport function a() {}',
+				[
+					[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 11],
+					[UPSTREAM_ERRORS.REDECLARED, 30],
+				],
+			],
+		];
 		const outcomes = await parse_in_worker(
-			sources.flatMap((source) => modes.map((options) => ({ source, options }))),
+			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
 		);
 
 		expect(outcomes).toEqual(
-			sources.flatMap((source) => [
-				thrown(UPSTREAM_ERRORS.REDECLARED, source.lastIndexOf('a;')),
-				{ ok: true, errors: [UPSTREAM_ERRORS.REDECLARED.code] },
+			cases.flatMap(([, errors]) => [
+				thrown(errors[0][0], errors[0][1]),
+				{ ok: true, errors: errors.map(([error]) => code_of(error)) },
 			]),
 		);
+		for (const [source, errors] of cases) {
+			for (const [, at] of errors) expect(source.slice(at, at + 1), source).toBe('a');
+		}
 	});
 });
 

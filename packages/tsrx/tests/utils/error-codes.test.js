@@ -241,6 +241,26 @@ let a = 2;`,
 				`var a = 1;
 let a = 2;`,
 			],
+			// Other redeclarations TypeScript reports with their own code (#952)
+			[
+				'TS2481',
+				`{
+	let a;
+	var a;
+}`,
+			],
+			[
+				'TS2492',
+				`try {
+} catch (e) {
+	let e;
+}`,
+			],
+			[
+				'TS2567',
+				`enum E {}
+let E;`,
+			],
 			[
 				'TS1184',
 				`function f() {
