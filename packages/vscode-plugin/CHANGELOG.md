@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.14
+
+### Patch Changes
+
+- Updated dependencies
+  [[`c70964d`](https://github.com/tsrx-org/tsrx/commit/c70964d76055f1bea742bc15b66044042ef5bfcd),
+  [`4d47d02`](https://github.com/tsrx-org/tsrx/commit/4d47d02cbba41980a6a17ffb43436cae622377cf)]:
+  - @tsrx/typescript-plugin@0.5.0
+  - @tsrx/language-server@0.5.0
+
 ## 2.1.13
 
 ### Patch Changes
