@@ -764,6 +764,21 @@ export function List({ items }) @{
 		await expectFormat(source, source);
 	});
 
+	// A non-breaking space is text, not layout whitespace, so it stays
+	test('keeps its tags apart from text that is only non-breaking spaces', async () => {
+		const source = `export function App() @{
+  <section>
+    \u00a0\u00a0
+    @{
+      const a = 1;
+      <b>{a}</b>
+    }
+  </section>
+}
+`;
+		await expectFormat(source, source);
+	});
+
 	test('in an expression container, hugs its braces', async () => {
 		await expectFormat(
 			`const x = <div>{@{ const a = 1; <b>{a}</b> }}</div>;

@@ -3,6 +3,7 @@
  * @import { Node } from './parse.js'
  */
 
+import { isLayoutWhitespace } from '@tsrx/core';
 import { builders, utils } from 'prettier/doc';
 import * as estreePlugin from 'prettier/plugins/estree';
 import * as standalone from 'prettier/standalone';
@@ -1086,17 +1087,15 @@ function printRawTextAsWritten(path, options, print) {
 
 /**
  * The index of the `@{ … }` block that is an element's or fragment's only
- * child, apart from whitespace with a line break (which renders nothing), or
- * -1.
+ * child, apart from text that renders nothing (core's `isLayoutWhitespace`:
+ * spaces, tabs and line breaks with a line break among them), or -1.
  * @param {Node} node
  * @returns {number}
  */
 function huggedCodeBlock(node) {
 	let index = -1;
 	for (const [i, child] of node.children.entries()) {
-		if (child.type === 'JSXText' && /^\s*$/u.test(child.raw) && child.raw.includes('\n')) {
-			continue;
-		}
+		if (isLayoutWhitespace(child)) continue;
 		if (index !== -1 || !child.tsrxCodeBlock || hasOwnComments(child)) return -1;
 		index = i;
 	}
