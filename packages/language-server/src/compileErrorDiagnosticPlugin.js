@@ -1,5 +1,5 @@
 /**
- * @import {Diagnostic, Range, LanguageServicePlugin, LanguageServiceContext, Position, Mapper} from '@volar/language-server';
+ * @import {Diagnostic, Range, LanguageServicePlugin, LanguageServiceContext, Position, Mapper, CancellationToken, CodeInformation} from '@volar/language-server';
  * @import {TextDocument} from 'vscode-languageserver-textdocument';
  * @import {TSRXVirtualCodeInstance} from '@tsrx/typescript-plugin/src/language.js';
  */
@@ -26,7 +26,7 @@ export function createCompileErrorDiagnosticPlugin() {
 		},
 		create(/** @type {LanguageServiceContext} */ context) {
 			return {
-				provideDiagnostics(document, _token) {
+				async provideDiagnostics(document, token) {
 					log('Providing TSRX diagnostics for:', document.uri);
 
 					/** @type {Diagnostic[]} */
@@ -42,6 +42,9 @@ export function createCompileErrorDiagnosticPlugin() {
 						return diagnostics;
 					}
 
+					/** @type {Set<string> | undefined} */
+					let typescript_diagnostics;
+
 					for (const error of [...virtualCode.fatalErrors, ...virtualCode.usageErrors]) {
 						const diagnostic = parseCompilationErrorWithDocument(
 							error,
@@ -49,6 +52,26 @@ export function createCompileErrorDiagnosticPlugin() {
 							sourceMap,
 							document,
 						);
+
+						// A usage error with a TypeScript code is a mistake the parser
+						// collects where TypeScript's parser goes on (#415). When the
+						// virtual code keeps the code the mistake is in, TypeScript reports
+						// it too, so leave it to TypeScript, whose diagnostic has its quick
+						// fixes, when it shows the same code at the same place.
+						if (error.type !== 'fatal' && error.code?.startsWith('TS') && sourceMap) {
+							typescript_diagnostics ??= await get_typescript_diagnostics(
+								context,
+								document,
+								sourceMap,
+								token,
+							);
+							const place = shown_at(diagnostic, error.code, document, sourceMap);
+							if (place && typescript_diagnostics.has(place)) {
+								log('Leaving', error.code, 'to TypeScript:', error.message);
+								continue;
+							}
+						}
+
 						diagnostics.push(diagnostic);
 					}
 
@@ -58,6 +81,75 @@ export function createCompileErrorDiagnosticPlugin() {
 			};
 		},
 	};
+}
+
+/**
+ * Where the editor shows each diagnostic TypeScript reports for the virtual
+ * code, as `shown_at` gives it. They come from the `typescript-semantic` plugin,
+ * so they are the ones the editor gets: `createTypeScriptDiagnosticFilterPlugin`
+ * has already left out the suppressed ones, and none come back when TypeScript
+ * validation is off or the plugin is disabled. TypeScript caches a program's
+ * syntactic and semantic diagnostics, so the plugin reuses them when Volar asks
+ * it next.
+ * @param {LanguageServiceContext} context
+ * @param {TextDocument} document
+ * @param {Mapper} sourceMap
+ * @param {CancellationToken} token
+ * @returns {Promise<Set<string>>}
+ */
+async function get_typescript_diagnostics(context, document, sourceMap, token) {
+	/** @type {Set<string>} */
+	const places = new Set();
+	const typescript = context.plugins.find(
+		([plugin, instance]) =>
+			plugin.name === 'typescript-semantic' && !context.disabledServicePlugins.has(instance),
+	)?.[1];
+	const diagnostics = (await typescript?.provideDiagnostics?.(document, token)) ?? [];
+
+	for (const diagnostic of diagnostics) {
+		if (typeof diagnostic.code !== 'number') continue;
+		const place = shown_at(diagnostic, `TS${diagnostic.code}`, document, sourceMap);
+		if (place) places.add(place);
+	}
+
+	return places;
+}
+
+/**
+ * The code of `diagnostic` and the source offset the editor shows it at, or
+ * `null` when the editor leaves it out. Volar maps a diagnostic's range back to
+ * the source through the mappings that report diagnostics, and leaves out a
+ * diagnostic whose range doesn't map, such as one that ends in text the
+ * mappings don't cover (`transformDiagnostic` in `@volar/language-service`).
+ * @param {Diagnostic} diagnostic
+ * @param {string} code
+ * @param {TextDocument} document
+ * @param {Mapper} sourceMap
+ * @returns {string | null}
+ */
+function shown_at(diagnostic, code, document, sourceMap) {
+	const range = sourceMap
+		.toSourceRange(
+			document.offsetAt(diagnostic.range.start),
+			document.offsetAt(diagnostic.range.end),
+			true,
+			(data) => reports_diagnostic(data, diagnostic),
+		)
+		.next().value;
+	return range ? `${code}@${range[0]}` : null;
+}
+
+/**
+ * Whether a mapping reports `diagnostic`, as Volar's `shouldReportDiagnostics`
+ * decides it.
+ * @param {CodeInformation} data
+ * @param {Diagnostic} diagnostic
+ * @returns {boolean}
+ */
+function reports_diagnostic(data, diagnostic) {
+	return typeof data.verification === 'object'
+		? (data.verification.shouldReport?.(diagnostic.source, diagnostic.code) ?? true)
+		: !!data.verification;
 }
 
 /**

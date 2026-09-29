@@ -91,11 +91,22 @@ export function create_completion_harness(source, fixture_name = 'App.tsrx') {
  * TypeScript-dependent features (hover, definition) end-to-end through the generated TSX and
  * its mappings. Volar's `typescript-semantic`/`typescript-syntactic` plugins are wired first
  * (our hover/definition plugins look them up by name), followed by `plugins`.
+ *
+ * Volar's TypeScript service shares one document registry per directory, so a later harness for
+ * the same fixture name can get the TypeScript source file of an earlier one. Give each source
+ * its own fixture name.
  * @param {string} source
  * @param {import('@volar/language-service').LanguageServicePlugin[]} plugins
  * @param {string} [fixture_name]
+ * @param {Partial<import('@volar/language-service').LanguageServiceEnvironment>} [env] Extra
+ *   environment, such as a `getConfiguration` for editor settings
  */
-export function create_typescript_harness(source, plugins, fixture_name = 'react/App.tsrx') {
+export function create_typescript_harness(
+	source,
+	plugins,
+	fixture_name = 'react/App.tsrx',
+	env = {},
+) {
 	const uri = URI.file(path.join(fixture_dir, fixture_name));
 	const scripts = createUriMap();
 	/** @type {import('@volar/language-core').Language<URI>} */
@@ -155,6 +166,7 @@ export function create_typescript_harness(source, plugins, fixture_name = 'react
 		{
 			workspaceFolders: [URI.file(root_dir)],
 			console,
+			...env,
 		},
 		{
 			typescript: {
