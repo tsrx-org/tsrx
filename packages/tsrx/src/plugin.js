@@ -556,6 +556,7 @@ function to_diagnostic(error, kind = error_kind(error)) {
 
 // acorn's scope flags and acorn-typescript's namespace scope flag, which neither
 // package exports.
+const SCOPE_TOP = 1;
 const SCOPE_FUNCTION = 2;
 const SCOPE_ASYNC = 4;
 // The scope of a catch clause whose parameter is a plain name, where Annex B lets
@@ -565,12 +566,34 @@ const SCOPE_CLASS_STATIC_BLOCK = 256;
 const SCOPE_CLASS_FIELD_INIT = 512;
 const TS_SCOPE_OTHER = 1 << 20;
 const TS_SCOPE_TS_MODULE = 1 << 21;
+// The scopes whose names are one symbol table in TypeScript's binder, where a
+// `var` in a block below them is declared: a module or script, a function, and
+// a class static block. A namespace's body is one too (see `#isSymbolTable`).
+const TABLE_SCOPE_FLAGS = SCOPE_TOP | SCOPE_FUNCTION | SCOPE_CLASS_STATIC_BLOCK;
 // acorn-typescript's binding type for a type alias's name.
 const BIND_TS_TYPE = 6;
 // acorn's flags for `parseFunction`: a function declaration, whose name is
 // optional (after `export default`).
 const FUNC_STATEMENT = 1;
 const FUNC_NULLABLE_ID = 4;
+
+/**
+ * The names each scope declares with `let`, `const`, `using`, or `await using`,
+ * which acorn keeps in `lexical` with the names of classes (see
+ * `declareName`).
+ * @type {WeakMap<Parse.Scope, string[]>}
+ */
+const block_scoped_names = new WeakMap();
+
+/**
+ * @param {Parse.Scope} scope
+ * @returns {string[]}
+ */
+function block_scoped_names_of(scope) {
+	let names = block_scoped_names.get(scope);
+	if (!names) block_scoped_names.set(scope, (names = []));
+	return names;
+}
 
 /** @type {WeakMap<Parse.Parser, number[]>} */
 const parser_line_starts = new WeakMap();
@@ -1195,6 +1218,16 @@ export function TSRXPlugin(config) {
 			// list of them (see `#parseAsyncArguments`).
 			/** @type {ExpressionList & { start: number } | null} */
 			#asyncArguments = null;
+			// While `parseVarId` reads a declaration's names, or `parseClassId` a class
+			// declaration's, the kind of declaration and the scope it declares them
+			// in (see `declareName`).
+			/** @type {{ kind: string, scope: Parse.Scope } | null} */
+			#declaration = null;
+			// While `declareName` declares a name that TypeScript reports as a
+			// redeclared block-scoped variable (TS2451), the error, which
+			// `raiseRecoverable` reports in place of acorn's.
+			/** @type {Diagnostic | null} */
+			#blockScopedRedeclaration = null;
 			// When collecting, where the leading decorators of the statement being read
 			// start, while `parseDecorators` reads them (-1 otherwise), and the error
 			// recorded for them when no class follows (see `parseDecorators`).
@@ -4152,7 +4185,10 @@ export function TSRXPlugin(config) {
 			raiseRecoverable(position, message) {
 				const text = get_error_message(message);
 				const kind = error_kind(text);
-				const error = to_diagnostic(text, kind);
+				const error =
+					kind === UPSTREAM_ERRORS.REDECLARED && this.#blockScopedRedeclaration
+						? this.#blockScopedRedeclaration
+						: to_diagnostic(text, kind);
 				if (this.#collectCheckerLevelError(position, error, kind)) {
 					return;
 				}
@@ -4255,20 +4291,121 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * When collecting, private-field checks are off (see the constructor):
-			 * record a private name outside any class, which acorn would raise.
+			 * A private name outside any class, which TypeScript reports as TS18016.
+			 * A strict parse throws it where acorn raises its own error. When
+			 * collecting, private-field checks are off (see the constructor), and it
+			 * is recorded.
 			 * @type {Parse.Parser['parsePrivateIdent']}
 			 */
 			parsePrivateIdent() {
+				const outside_class = this.privateNameStack.length === 0;
+				if (outside_class && this.options.checkPrivateFields) {
+					this.raise(this.start, TS_ERRORS.PRIVATE_IDENTIFIER_OUTSIDE_CLASS);
+				}
 				const node = super.parsePrivateIdent();
-				if (this.#collect && this.privateNameStack.length === 0) {
+				if (outside_class && this.#collect) {
 					this.#recordCheckerLevelError(
 						/** @type {number} */ (node.start),
 						/** @type {number} */ (node.end),
-						TS_ERRORS.PRIVATE_NAME_OUTSIDE_CLASS(node.name),
+						TS_ERRORS.PRIVATE_IDENTIFIER_OUTSIDE_CLASS,
 					);
 				}
 				return node;
+			}
+
+			/**
+			 * `#x in obj` outside any class, which acorn fails at `#x` as an unexpected
+			 * token before `parsePrivateIdent` reads it. A strict parse throws
+			 * TypeScript's TS18016 instead, as for any other private name there.
+			 * @type {Parse.Parser['parseMaybeUnary']}
+			 */
+			parseMaybeUnary(refDestructuringErrors, sawUnary, incDec, forInit) {
+				if (
+					!sawUnary &&
+					!forInit &&
+					this.type === tt.privateId &&
+					this.privateNameStack.length === 0 &&
+					this.options.checkPrivateFields
+				) {
+					this.raise(this.start, TS_ERRORS.PRIVATE_IDENTIFIER_OUTSIDE_CLASS);
+				}
+				return super.parseMaybeUnary(refDestructuringErrors, sawUnary, incDec, forInit);
+			}
+
+			/**
+			 * TypeScript reports a name its binder declares twice in one symbol table
+			 * as TS2451 where the first declaration bound is a `let`, `const`, or
+			 * `using` one, and otherwise as TS2300, which acorn's `Identifier '…' has
+			 * already been declared` stands for. acorn keeps the names of those
+			 * declarations with those of classes (`lexical`), so the parser keeps
+			 * them apart, and has `raiseRecoverable` report TS2451 when a variable or
+			 * a class redeclares one. TypeScript binds a function declaration before
+			 * the other statements of its list, so a redeclaration involving one is
+			 * TS2300. A `var` in a block below the one that has the name is
+			 * TypeScript's TS2481, which isn't reported here.
+			 * @type {Parse.Parser['declareName']}
+			 */
+			declareName(name, bindingType, pos) {
+				const scope = this.currentScope();
+				const kind =
+					this.#declaration?.scope === scope &&
+					(bindingType === BINDING_TYPES.BIND_LEXICAL || bindingType === BINDING_TYPES.BIND_VAR)
+						? this.#declaration.kind
+						: null;
+				const outer = this.#blockScopedRedeclaration;
+				this.#blockScopedRedeclaration =
+					kind !== null && this.#isBlockScopedRedeclaration(name, kind)
+						? TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED(name)
+						: null;
+				try {
+					super.declareName(name, bindingType, pos);
+				} finally {
+					this.#blockScopedRedeclaration = outer;
+				}
+				if (kind !== null && kind !== 'var' && kind !== 'class') {
+					const names = block_scoped_names_of(scope);
+					this.parseEffects?.willAppend(names);
+					names.push(name);
+				}
+			}
+
+			/**
+			 * Whether TypeScript reports a `kind` declaration of `name` here as a
+			 * redeclared block-scoped variable (TS2451; see `declareName`): the
+			 * symbol table it's declared in has the name from a `let`, `const`, or
+			 * `using` declaration.
+			 * @param {string} name
+			 * @param {string} kind `var`, `let`, `const`, `using`, `await using`, or
+			 *   `class`
+			 */
+			#isBlockScopedRedeclaration(name, kind) {
+				if (kind !== 'var') {
+					return block_scoped_names_of(this.currentScope()).includes(name);
+				}
+				// acorn looks for the name from the current scope up to the one the
+				// `var` is declared in.
+				for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+					const scope = this.scopeStack[i];
+					if (this.#isSymbolTable(i)) return block_scoped_names_of(scope).includes(name);
+					if (scope.lexical.includes(name)) return false;
+				}
+				return false;
+			}
+
+			/**
+			 * Whether the scope at `index` in `scopeStack` is a symbol table of its own
+			 * in TypeScript's binder, where a `var` in a block below it is declared: a
+			 * module, a function, a class static block, or a namespace's body.
+			 * @param {number} index
+			 */
+			#isSymbolTable(index) {
+				const flags = this.scopeStack[index].flags;
+				if (flags & TABLE_SCOPE_FLAGS) return true;
+				return (
+					flags === TS_SCOPE_OTHER &&
+					index > 0 &&
+					(this.scopeStack[index - 1].flags & TS_SCOPE_TS_MODULE) !== 0
+				);
 			}
 
 			/**
@@ -4407,7 +4544,13 @@ export function TSRXPlugin(config) {
 			 * @param {AST.VariableDeclaration['kind']} kind
 			 */
 			parseVarId(decl, kind) {
-				super.parseVarId(decl, kind);
+				const outer = this.#declaration;
+				this.#declaration = { kind, scope: this.currentScope() };
+				try {
+					super.parseVarId(decl, kind);
+				} finally {
+					this.#declaration = outer;
+				}
 				// acorn's check in `parseVar`, which reads the initializer next.
 				if (
 					!this.#collectingConstWithoutInitializer ||
@@ -4832,7 +4975,17 @@ export function TSRXPlugin(config) {
 				if (this.type !== tt.name && Parser.acornTypeScript.tokenIsIdentifier(this.type)) {
 					this.type = tt.name;
 				}
-				super.parseClassId(node, isStatement);
+				const outer = this.#declaration;
+				// A class declaration, not one after `export default` (`'nullableID'`),
+				// which TypeScript reports as another default export (TS2528).
+				if (isStatement === true) {
+					this.#declaration = { kind: 'class', scope: this.currentScope() };
+				}
+				try {
+					super.parseClassId(node, isStatement);
+				} finally {
+					this.#declaration = outer;
+				}
 			}
 
 			/**

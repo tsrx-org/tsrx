@@ -230,9 +230,15 @@ function App() @{
 		const cases = [
 			['TS1005', 'if (a) {'],
 			['TS1012', 'let x = );'],
+			// A `let` or `const` declared again (#948), and anything else
+			[
+				'TS2451',
+				`let a = 1;
+let a = 2;`,
+			],
 			[
 				'TS2300',
-				`let a = 1;
+				`var a = 1;
 let a = 2;`,
 			],
 			[
@@ -309,6 +315,9 @@ let a = 2;`,
 			],
 			['TS2369', 'function f(private a) {}'],
 			['TS2858', "import a from 'a' with { type: 1 };"],
+			// A private name outside any class (#948)
+			['TS18016', 'const x = this.#y;'],
+			['TS18016', '#y in o;'],
 			// acorn raises it with `raiseRecoverable`.
 			[
 				'TS1111',
@@ -339,7 +348,6 @@ let a = 2;`,
 			TS_ERRORS.UNEXPECTED_TOKEN,
 			TS_ERRORS.REST_ELEMENT_TRAILING_COMMA,
 			TS_ERRORS.ARGUMENT_NAME_CLASH,
-			TS_ERRORS.PRIVATE_NAME_OUTSIDE_CLASS,
 			TS_ERRORS.KEYWORD_ESCAPE_SEQUENCE,
 			TS_ERRORS.AWAIT_USING_OUTSIDE_ASYNC,
 			TS_ERRORS.FOR_OF_LET,

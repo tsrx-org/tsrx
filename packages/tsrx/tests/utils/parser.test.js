@@ -3328,7 +3328,7 @@ foo();`;
 				}`,
 				'App.tsrx',
 			),
-		).toThrow(error_with(UPSTREAM_ERRORS.REDECLARED));
+		).toThrow(error_with(TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED));
 	});
 
 	it('parses regex, division, template literal, and parenthesized statements in case bodies', () => {
@@ -9412,6 +9412,67 @@ describe('`var` redeclaring a catch parameter', () => {
 	});
 });
 
+describe('a redeclared name (#948)', () => {
+	// TypeScript reports a name declared twice in one symbol table as TS2451
+	// where the first declaration bound is a `let`, `const`, or `using` one, and
+	// as TS2300 otherwise. It binds function declarations before the other
+	// statements of their list. Each is reported at the later declaration, and
+	// a strict parse throws it.
+	const modes = [undefined, { collect: true, comments: [] }];
+
+	/** @type {Array<[source: string, error: ErrorKind]>} */
+	const cases = [
+		['let a;\nlet a;', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
+		['const a = 1;\nconst a = 2;', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
+		['let a, a;', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
+		['let [b, { a }] = c;\nlet a;', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
+		['using a = null;\nlet a;', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
+		['let a;\nvar a;', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
+		['let a;\n{\n\tvar a;\n}', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
+		['function f() {\n\tconst a = 1;\n\tvar a;\n}', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
+		['namespace N {\n\tlet a;\n\tvar a;\n}', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
+		['let a;\nclass a {}', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
+		['{\n\tlet a;\n\tclass a {}\n}', TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED],
+		['var a;\nlet a;', UPSTREAM_ERRORS.REDECLARED],
+		['class a {}\nlet a;', UPSTREAM_ERRORS.REDECLARED],
+		['let a;\nfunction a() {}', UPSTREAM_ERRORS.REDECLARED],
+		['function a() {}\nlet a;', UPSTREAM_ERRORS.REDECLARED],
+		['{\n\tlet a;\n\tfunction a() {}\n}', UPSTREAM_ERRORS.REDECLARED],
+		['function f(a) {\n\tlet a;\n}', UPSTREAM_ERRORS.REDECLARED],
+	];
+
+	it('reports TS2451 for a let, const, or using declaration redeclared, and TS2300 otherwise', async () => {
+		const outcomes = await parse_in_worker(
+			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, error]) => {
+				// The later declaration's name
+				const pos = source.search(/\ba\b(?![\s\S]*\ba\b)/);
+				return [thrown(error, pos), { ok: true, errors: [code_of(error)] }];
+			}),
+		);
+	});
+
+	it("keeps TS2300 for a redeclaration that isn't in the same symbol table", async () => {
+		// A `var` in a block, below the `let` of the same block: TypeScript's
+		// checker reports TS2481, and a `let` in a catch clause's block: TS2492.
+		// The parser doesn't give those yet (#952).
+		const sources = ['{\n\tlet a;\n\tvar a;\n}', 'try {} catch (a) {\n\tlet a;\n}'];
+		const outcomes = await parse_in_worker(
+			sources.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+
+		expect(outcomes).toEqual(
+			sources.flatMap((source) => [
+				thrown(UPSTREAM_ERRORS.REDECLARED, source.lastIndexOf('a;')),
+				{ ok: true, errors: [UPSTREAM_ERRORS.REDECLARED.code] },
+			]),
+		);
+	});
+});
+
 describe('comments around empty statements', () => {
 	/**
 	 * @param {AST.Comment[] | undefined} comments
@@ -10102,16 +10163,16 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: '#x in obj;',
-			errors: [[TS_ERRORS.PRIVATE_NAME_OUTSIDE_CLASS, '#x in']],
-			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:0'],
+			errors: [[TS_ERRORS.PRIVATE_IDENTIFIER_OUTSIDE_CLASS, '#x in']],
+			throws: [TS_ERRORS.PRIVATE_IDENTIFIER_OUTSIDE_CLASS, '1:0'],
 			valid: 'class A {\n\t#x;\n\tm() {\n\t\t#x in obj;\n\t}\n}',
 			pick: first,
 			pickValid: class_method_statement,
 		},
 		{
 			source: 'obj.#x;',
-			errors: [[TS_ERRORS.PRIVATE_NAME_OUTSIDE_CLASS, '#x;']],
-			throws: [TS_ERRORS.PRIVATE_NAME_OUTSIDE_CLASS, '1:4'],
+			errors: [[TS_ERRORS.PRIVATE_IDENTIFIER_OUTSIDE_CLASS, '#x;']],
+			throws: [TS_ERRORS.PRIVATE_IDENTIFIER_OUTSIDE_CLASS, '1:4'],
 			valid: 'class A {\n\t#x;\n\tm() {\n\t\tobj.#x;\n\t}\n}',
 			pick: first,
 			pickValid: class_method_statement,

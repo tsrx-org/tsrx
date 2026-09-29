@@ -451,6 +451,11 @@ export const TS_ERRORS = {
 	},
 	LINE_BREAK_NOT_PERMITTED: { code: 'TS1142', message: 'Line break not permitted here.' },
 	KEYWORD_ESCAPE: { code: 'TS1260', message: 'Keywords cannot contain escape characters.' },
+	// A private name outside any class (see `parsePrivateIdent` in `plugin.js`)
+	PRIVATE_IDENTIFIER_OUTSIDE_CLASS: {
+		code: 'TS18016',
+		message: 'Private identifiers are not allowed outside class bodies.',
+	},
 
 	// The modifiers of a declaration, as TypeScript's checker words them
 	// (`checkGrammarModifiers`)
@@ -590,6 +595,12 @@ export const TS_ERRORS = {
 		code: 'TS1494',
 		message: "The left-hand side of a 'for...in' statement cannot be an 'await using' declaration.",
 	},
+	// A `let`, `const` or `using` declaration's name declared again in the same
+	// scope (see `declareName` in `plugin.js`)
+	BLOCK_SCOPED_VARIABLE_REDECLARED: with_values(
+		'TS2451',
+		(name) => `Cannot redeclare block-scoped variable '${name}'.`,
+	),
 	// TSRX's wording of a name redeclared in a module's or function's scope
 	DECLARED_IN_SCOPE: with_values(
 		'TS2300',
@@ -634,11 +645,6 @@ export const TS_ERRORS = {
 		message: 'Comma is not permitted after the rest element',
 	},
 	ARGUMENT_NAME_CLASH: { code: 'TS2300', message: 'Argument name clash' },
-	/** `name` is the private name without its `#`. */
-	PRIVATE_NAME_OUTSIDE_CLASS: with_values(
-		'TS1111',
-		(name) => `Private field '#${name}' must be declared in an enclosing class`,
-	),
 	KEYWORD_ESCAPE_SEQUENCE: with_values(
 		'TS1260',
 		(keyword) => `Escape sequence in keyword ${keyword}`,
@@ -724,8 +730,9 @@ export const TS_ERRORS = {
  * upstream functions that raise each.
  */
 export const UPSTREAM_ERRORS = {
-	// A redeclared variable, import, type alias, or private name. TypeScript
-	// reports TS2451 for a block-scoped variable; TSRX reports TS2300 for each.
+	// A redeclared variable, import, type alias, or private name. For a
+	// block-scoped variable the parser reports TypeScript's TS2451 instead
+	// (`BLOCK_SCOPED_VARIABLE_REDECLARED`).
 	// acorn: declareName, parseClass; acorn-typescript: declareName
 	REDECLARED: {
 		pattern: /^(?:Identifier|type) '#?[^']+' has already been declared\.?$/,
@@ -900,8 +907,10 @@ const UPSTREAM_LOOKUP_ROWS = [
 	[/^Classes can't have a field named 'constructor'$/, 'TS18006'],
 	// acorn: parseClassField
 	[/^Classes can't have a static field named 'prototype'$/, 'TS2699'],
-	// acorn: exitClassBody, parsePrivateIdent
-	TS_ERRORS.PRIVATE_NAME_OUTSIDE_CLASS,
+	// acorn: exitClassBody (a class uses a private name it doesn't declare). The
+	// parser reports acorn's error for one outside any class, from
+	// `parsePrivateIdent`, as TypeScript's TS18016 instead.
+	[/^Private field '#.+' must be declared in an enclosing class$/, 'TS1111'],
 	// acorn: parseExport
 	[/^A string literal cannot be used as an exported binding without `from`\.$/, 'TSRX4003'],
 	// acorn: checkExport
