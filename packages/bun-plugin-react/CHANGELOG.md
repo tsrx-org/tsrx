@@ -1,5 +1,14 @@
 # @tsrx/bun-plugin-react
 
+## 0.1.107
+
+### Patch Changes
+
+- Updated dependencies
+  [[`a836f17`](https://github.com/tsrx-org/tsrx/commit/a836f1730d868f4a06b6de019d5c6ff1112db34e)]:
+  - @tsrx/core@0.5.2
+  - @tsrx/react@0.4.2
+
 ## 0.1.106
 
 ### Patch Changes
