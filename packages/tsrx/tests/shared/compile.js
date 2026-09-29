@@ -3018,6 +3018,40 @@ export function App() @{
 			expect(code).toContain('a&amp;b&quot;c');
 		});
 
+		// A text's `value` has its character references decoded (#710), so the
+		// `value` of a text that is only `&nbsp;` or `&#10;` is whitespace. The
+		// text as written isn't, and the output keeps it.
+		it('keeps text that is only a character reference', () => {
+			const { code } = compile(
+				`export function Only() @{
+					<>&nbsp;</>
+				}
+
+				export function Branch(props: { show: boolean }) @{
+					<div>
+						@if (props.show) {
+							<>&#32;</>
+						}
+					</div>
+				}
+
+				export function Line() @{
+					<p>
+						<b />&#10;<i />
+					</p>
+				}
+
+				export function Plain() {
+					return <>&nbsp;</>;
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code.match(/<>&nbsp;<\/>/g)).toHaveLength(2);
+			expect(code).toContain('<>&#32;</>');
+			expect(code).toContain('<b />&#10;<i />');
+		});
+
 		it('treats backslashes in JSX text children as literal text', () => {
 			const { code } = compile(
 				`export function App() @{

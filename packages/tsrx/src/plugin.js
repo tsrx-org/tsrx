@@ -1830,11 +1830,11 @@ export function TSRXPlugin(config) {
 					this.#addTemplateText(body, pieces, comments);
 				} else {
 					const node = /** @type {ESTreeJSX.JSXText} */ (this.startNodeAt(start, start_loc));
-					node.value = this.input.slice(start, index);
 					// The text as written, which the printers print.
-					node.raw = node.value;
+					node.raw = this.input.slice(start, index);
+					node.value = this.#readJSXTextValue(start, index);
 					this.finishNodeAt(node, 'JSXText', index, endLoc);
-					if (node.value !== '') body.push(node);
+					if (node.raw !== '') body.push(node);
 				}
 				return index;
 			}
@@ -1857,14 +1857,58 @@ export function TSRXPlugin(config) {
 						const node = /** @type {ESTreeJSX.JSXText} */ (
 							this.startNodeAt(start, this.#positionAt(start))
 						);
-						node.value = this.input.slice(start, end);
-						node.raw = node.value;
+						node.raw = this.input.slice(start, end);
+						node.value = this.#readJSXTextValue(start, end);
 						body.push(this.finishNodeAt(node, 'JSXText', end, this.#positionAt(end)));
 					}
 					if (index < comments.length) {
 						body.push(this.#emptyTemplateContainer(comments[index].start, comments[index].end));
 					}
 				}
+			}
+
+			/**
+			 * A `JSXText` node's `value`: the text from `start` to `end` as acorn's
+			 * JSX parser reads an element's text, with its character references
+			 * decoded (`&amp;` is `&`) by the reader it uses for them, and each CRLF
+			 * line break read as LF. `raw` is the text as written. A `&` that starts
+			 * no character reference is text.
+			 * @param {number} start
+			 * @param {number} end
+			 * @returns {string}
+			 */
+			#readJSXTextValue(start, end) {
+				const pos = this.pos;
+				let value = '';
+				let chunk_start = start;
+				let index = start;
+				while (index < end) {
+					const ch = this.input.charCodeAt(index);
+					if (ch === CharCode.ampersand) {
+						value += this.input.slice(chunk_start, index);
+						this.pos = index;
+						const entity = this.jsx_readEntity();
+						// A reference ends with its `;` inside the text
+						if (this.pos > end) {
+							value += '&';
+							this.pos = index + 1;
+						} else {
+							value += entity;
+						}
+						index = chunk_start = this.pos;
+					} else if (
+						ch === CharCode.carriageReturn &&
+						index + 1 < end &&
+						this.input.charCodeAt(index + 1) === CharCode.lineFeed
+					) {
+						value += this.input.slice(chunk_start, index) + '\n';
+						index = chunk_start = index + 2;
+					} else {
+						index++;
+					}
+				}
+				this.pos = pos;
+				return value + this.input.slice(chunk_start, end);
 			}
 
 			/**
@@ -2209,10 +2253,10 @@ export function TSRXPlugin(config) {
 
 				const endLoc = get_line_info(this, index);
 				const node = /** @type {ESTreeJSX.JSXText} */ (this.startNodeAt(start, this.startLoc));
-				node.value = this.input.slice(start, index);
-				node.raw = node.value;
+				node.raw = this.input.slice(start, index);
+				node.value = this.#readJSXTextValue(start, index);
 
-				if (node.value.match(regex_newline_characters)) {
+				if (node.raw.match(regex_newline_characters)) {
 					this.curLine = endLoc.line;
 					this.lineStart = index - endLoc.column;
 				}

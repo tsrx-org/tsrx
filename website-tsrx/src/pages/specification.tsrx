@@ -1177,9 +1177,10 @@ export function SpecificationPage() @{
 									<code class="inline-code">JSXText</code>
 									and contributes escaped static text. Character references such as
 									<code class="inline-code">{'&quot;'}</code>
-									are decoded before the text value is stored. A comment between children is not
-									part of any JSXText: text ends before it and starts again after it, and the
-									comment is the inner comment of an empty
+									are decoded before the text value is stored, and the raw text keeps them as
+									written, which is how the text is printed. A comment between children is not part
+									of any JSXText: text ends before it and starts again after it, and the comment is
+									the inner comment of an empty
 									<code class="inline-code">{'{}'}</code>
 									of its own (a
 									<code class="inline-code">JSXExpressionContainer</code>
@@ -1926,9 +1927,12 @@ export function SpecificationPage() @{
 								</li>
 								<li>
 									JSXText records a raw text child. Static text children decode JSX character
-									references before the text value is stored. A comment between children is in
-									neither a JSXText's value nor its raw: it is the inner comment of a
-									JSXExpressionContainer whose expression is a JSXEmptyExpression (4.3).
+									references before the text value is stored, as other JSX parsers do, and read each
+									CRLF line break as LF; JSXText.raw is the text as written, references included.
+									Compilers and formatters print raw, and JSX's whitespace rules read it, so a
+									reference such as &amp;nbsp; is text. A comment between children is in neither a
+									JSXText's value nor its raw: it is the inner comment of a JSXExpressionContainer
+									whose expression is a JSXEmptyExpression (4.3).
 								</li>
 								<li>
 									JSXAttribute.value is null for boolean-style attributes with no initializer.

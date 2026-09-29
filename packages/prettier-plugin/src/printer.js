@@ -1094,7 +1094,7 @@ function printRawTextAsWritten(path, options, print) {
 function huggedCodeBlock(node) {
 	let index = -1;
 	for (const [i, child] of node.children.entries()) {
-		if (child.type === 'JSXText' && /^\s*$/u.test(child.value) && child.value.includes('\n')) {
+		if (child.type === 'JSXText' && /^\s*$/u.test(child.raw) && child.raw.includes('\n')) {
 			continue;
 		}
 		if (index !== -1 || !child.tsrxCodeBlock || hasOwnComments(child)) return -1;

@@ -457,7 +457,7 @@ function get_possible_element_siblings(node, direction, adjacent_only) {
 			}
 		}
 		// Stop at non-whitespace text nodes for adjacent selectors
-		else if (adjacent_only && sibling.type === 'JSXText' && sibling.value.trim()) {
+		else if (adjacent_only && sibling.type === 'JSXText' && sibling.raw.trim()) {
 			break;
 		}
 	}

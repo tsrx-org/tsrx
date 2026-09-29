@@ -68,6 +68,8 @@ export function skipWhitespace(parser) {
 }
 
 /**
+ * Whether a node is JSX text written as whitespace only. It reads the text as
+ * written, so a character reference such as `&nbsp;` is text.
  * @param {AST.Node | ESTreeJSX.JSXText | null | undefined} node
  * @returns {boolean}
  */
@@ -77,7 +79,7 @@ export function isWhitespaceTextNode(node) {
 	}
 
 	if (node.type === 'JSXText') {
-		return /^\s*$/.test(node.value);
+		return /^\s*$/.test(node.raw);
 	}
 
 	return false;

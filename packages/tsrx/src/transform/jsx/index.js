@@ -4559,7 +4559,7 @@ export function wrap_edge_whitespace(nodes) {
 		// prints, and taken off both forms of the text: spaces and tabs are the
 		// same in each.
 		let value = /** @type {string} */ (node.value);
-		let raw = node.raw ?? value;
+		let raw = node.raw;
 		if (at_start) {
 			const lead = LEADING_INLINE_WHITESPACE.exec(raw);
 			if (lead && !is_newline_char(raw[lead[0].length])) {
@@ -6966,7 +6966,7 @@ export function build_return_expression(render_nodes, in_jsx_child = false, type
 			// type-only editor view or runtime codegen. At runtime we additionally drop a
 			// nullish/whitespace-only child so it renders nothing instead of emitting
 			// empty output.
-			if (!type_only && !in_jsx_child && (only.value ?? '').trim() === '') {
+			if (!type_only && !in_jsx_child && only.raw.trim() === '') {
 				return null;
 			}
 			return set_loc(b.jsx_fragment([only]), has_location(only) ? only : undefined);

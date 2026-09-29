@@ -978,7 +978,7 @@ export function convert_source_map_to_mappings(
 				// prints that text verbatim in to_ts, except for the characters JSX text can't hold,
 				// which it writes as character references (`escape_jsx_text`), so the token stops
 				// before the first of them. Other text stays unmapped.
-				const text = node.raw ?? node.value;
+				const text = node.raw;
 				if (node.loc && typeof text === 'string' && text.trimStart().startsWith('@')) {
 					const escaped_at = text.search(regex_jsx_text_escaped);
 					const verbatim = escaped_at === -1 ? text : text.slice(0, escaped_at);
