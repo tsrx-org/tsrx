@@ -5646,6 +5646,80 @@ else <b />;`,
 		expect(codeBlock(block).render).toBeNull();
 	});
 
+	it('reads the strings that start a `@{ }` function body as its directive prologue', () => {
+		const ast = parseModule(
+			`function App() @{
+				'use strict';
+				"use dom bindings";
+				('parenthesized');
+				'after the prologue';
+				<div />
+			}
+			const Arrow = () => @{
+				'use client';
+				const a = 1;
+				'after a statement';
+				<div>{a}</div>
+			};
+			class A {
+				render() @{
+					'use x';
+					<div />
+				}
+			}`,
+			'App.tsrx',
+		);
+		/** @param {AST.Node | null | undefined} node */
+		const directives = (node) =>
+			codeBlock(node).body.map(
+				(statement) => /** @type {{ directive?: string }} */ (statement).directive,
+			);
+
+		expect(directives(as_type(ast.body[0], 'FunctionDeclaration').body)).toEqual([
+			'use strict',
+			'use dom bindings',
+			undefined,
+			undefined,
+		]);
+		expect(
+			directives(as_type(declaratorInit(ast.body[1]), 'ArrowFunctionExpression').body),
+		).toEqual(['use client', undefined, undefined]);
+		const method = as_type(ast.body[2], 'ClassDeclaration').body.body[0];
+		expect(directives(as_type(method, 'MethodDefinition').value.body)).toEqual(['use x']);
+	});
+
+	it("reads no directive prologue in a `@{ }` block that isn't a function's body", () => {
+		const ast = parseModule(
+			`function App() {
+				const value = @{
+					'use a';
+					<div />
+				};
+				return value;
+			}`,
+			'App.tsrx',
+		);
+		const body = blockBody(as_type(ast.body[0], 'FunctionDeclaration').body);
+		const statement = codeBlock(declaratorInit(body[0])).body[0];
+
+		expect(statement.type).toBe('ExpressionStatement');
+		expect(/** @type {{ directive?: string }} */ (statement).directive).toBeUndefined();
+	});
+
+	it("rejects `'use strict'` in a `@{ }` function body with a parameter list that isn't simple", () => {
+		for (const source of [
+			`function App(a = 1) @{ 'use strict'; <div /> }`,
+			`const App = ({ a }) => @{ 'use strict'; <div /> };`,
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				error_with(TS_ERRORS.USE_STRICT_NON_SIMPLE_PARAMETERS),
+			);
+		}
+		expect(() =>
+			parseModule(`function App(a: string) @{ 'use strict'; <div /> }`, 'App.tsrx'),
+		).not.toThrow();
+	});
+
 	it('parses two sibling `@{ }` blocks as separate element children', () => {
 		const returned = getReturned(`function App() {
 			return <main>

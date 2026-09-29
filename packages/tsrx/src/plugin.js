@@ -9043,7 +9043,24 @@ export function TSRXPlugin(config) {
 						this.#reportOptionalPatternParameters(node);
 					}
 					if (is_code_block) {
-						node.body = this.#parseCodeBlock({ allowReturnStatements: true });
+						const body = this.#parseCodeBlock({ allowReturnStatements: true });
+						node.body = body;
+						// A `@{ … }` body compiles to the function's body, so its leading
+						// strings are its directive prologue, as acorn reads a `{ … }` body's.
+						// A module is strict already, so `'use strict'` only matters with a
+						// parameter list that isn't simple (TS1347).
+						this.adaptDirectivePrologue(body.body);
+						if (
+							!this.isSimpleParamList(node.params) &&
+							body.body.some(
+								(statement) => /** @type {AST.Directive} */ (statement).directive === 'use strict',
+							)
+						) {
+							this.raiseRecoverable(
+								/** @type {number} */ (node.start),
+								TS_ERRORS.USE_STRICT_NON_SIMPLE_PARAMETERS,
+							);
+						}
 						this.checkParams(node, false);
 						this.exitScope();
 						return node;

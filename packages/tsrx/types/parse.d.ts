@@ -1856,6 +1856,12 @@ export namespace Parse {
 		/** Check function parameters for duplicate names and invalid bindings */
 		checkParams(node: AST.Node, allowDuplicates: boolean): void;
 
+		/** Whether every parameter is a plain identifier (no default, pattern, or rest) */
+		isSimpleParamList(params: AST.Node[]): boolean;
+
+		/** Mark the leading string statements of a body as its directive prologue */
+		adaptDirectivePrologue(statements: AST.Node[]): void;
+
 		/** Initialize function node properties */
 		initFunction(node: AST.Node): void;
 

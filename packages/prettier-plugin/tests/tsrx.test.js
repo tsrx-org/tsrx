@@ -117,6 +117,58 @@ function f() {
 `,
 		);
 	});
+
+	test("a function body's leading strings are its directives, printed as in a `{ … }` body", async () => {
+		await expectFormat(
+			`function App() @{
+  'use dom bindings';
+
+  'it\\'s';
+  ('parenthesized');
+  const a = 1;
+  'after a statement';
+  <p>{a}</p>
+}
+const B = () => @{ 'use client'
+<b /> }`,
+			`function App() @{
+  "use dom bindings";
+
+  'it\\'s';
+  ("parenthesized");
+  const a = 1;
+  ("after a statement");
+  <p>{a}</p>
+}
+const B = () => @{
+  "use client";
+  <b />
+};
+`,
+		);
+	});
+
+	test('a string that starts a `@{ … }` value or a directive body keeps its parentheses, as in a block', async () => {
+		await expectFormat(
+			`function App() @{
+  const c = @{ 'use a'; <i /> }
+  @if (x) { 'use b'; <b /> }
+}`,
+			`function App() @{
+  const c = (
+    @{
+      ("use a");
+      <i />
+    }
+  );
+  @if (x) {
+    ("use b");
+    <b />
+  }
+}
+`,
+		);
+	});
 });
 
 describe('directives', () => {
