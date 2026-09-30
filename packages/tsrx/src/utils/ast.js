@@ -58,17 +58,20 @@ export function node_children(node) {
  * (Babel's `cleanJSXElementLiteralChild`): empty, or only spaces, tabs and line
  * breaks with a line break among them, which is layout indentation. A space or
  * tab without a line break renders, and a non-breaking space is text. The
- * parser keeps such text, as every JSX parser does; compilers leave it out.
+ * rule reads the text as written, as the output prints it, so a character
+ * reference such as `&#10;` or `&nbsp;` is text. The parser keeps such text,
+ * as every JSX parser does; compilers leave it out.
  * @param {unknown} node
  * @returns {boolean}
  */
 export function is_layout_whitespace(node) {
-	const text = /** @type {{ type?: unknown, value?: unknown } | null | undefined} */ (node);
+	const text = /** @type {{ type?: unknown, raw?: unknown } | null | undefined} */ (node);
+	const raw = text?.raw;
 	return (
 		text?.type === 'JSXText' &&
-		typeof text.value === 'string' &&
-		/^[ \t\r\n]*$/.test(text.value) &&
-		(text.value === '' || /[\r\n]/.test(text.value))
+		typeof raw === 'string' &&
+		/^[ \t\r\n]*$/.test(raw) &&
+		(raw === '' || /[\r\n]/.test(raw))
 	);
 }
 

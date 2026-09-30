@@ -60,7 +60,7 @@ export function is_empty_jsx_fragment(node) {
 	return (
 		node?.type === 'JSXFragment' &&
 		!(node.children || []).some(
-			(child) => child && (child.type !== 'JSXText' || child.value.trim() !== ''),
+			(child) => child && (child.type !== 'JSXText' || child.raw.trim() !== ''),
 		)
 	);
 }
@@ -256,7 +256,7 @@ export function tsx_with_ts_locations(
 		// references decoded, so `&#123;x&#125;` would print as the expression
 		// `{x}`.
 		JSXText: (node, context) => {
-			context.write(escape_jsx_text(node.raw ?? node.value), node);
+			context.write(escape_jsx_text(node.raw), node);
 		},
 
 		// esrap's JSXOpeningElement printer doesn't emit `typeArguments`, so generic

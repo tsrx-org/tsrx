@@ -117,6 +117,58 @@ function f() {
 `,
 		);
 	});
+
+	test("a function body's leading strings are its directives, printed as in a `{ … }` body", async () => {
+		await expectFormat(
+			`function App() @{
+  'use dom bindings';
+
+  'it\\'s';
+  ('parenthesized');
+  const a = 1;
+  'after a statement';
+  <p>{a}</p>
+}
+const B = () => @{ 'use client'
+<b /> }`,
+			`function App() @{
+  "use dom bindings";
+
+  'it\\'s';
+  ("parenthesized");
+  const a = 1;
+  ("after a statement");
+  <p>{a}</p>
+}
+const B = () => @{
+  "use client";
+  <b />
+};
+`,
+		);
+	});
+
+	test('a string that starts a `@{ … }` value or a directive body keeps its parentheses, as in a block', async () => {
+		await expectFormat(
+			`function App() @{
+  const c = @{ 'use a'; <i /> }
+  @if (x) { 'use b'; <b /> }
+}`,
+			`function App() @{
+  const c = (
+    @{
+      ("use a");
+      <i />
+    }
+  );
+  @if (x) {
+    ("use b");
+    <b />
+  }
+}
+`,
+		);
+	});
 });
 
 describe('directives', () => {
@@ -697,6 +749,36 @@ export function List({ items }) @{
 		);
 	});
 
+	// Text that is only a reference renders, though its `value` is whitespace
+	test('keeps its tags apart from text that is only a reference', async () => {
+		const source = `export function App() @{
+  <section>
+    &#10;
+    @{
+      const a = 1;
+      <b>{a}</b>
+    }
+  </section>
+}
+`;
+		await expectFormat(source, source);
+	});
+
+	// A non-breaking space is text, not layout whitespace, so it stays
+	test('keeps its tags apart from text that is only non-breaking spaces', async () => {
+		const source = `export function App() @{
+  <section>
+    \u00a0\u00a0
+    @{
+      const a = 1;
+      <b>{a}</b>
+    }
+  </section>
+}
+`;
+		await expectFormat(source, source);
+	});
+
 	test('in an expression container, hugs its braces', async () => {
 		await expectFormat(
 			`const x = <div>{@{ const a = 1; <b>{a}</b> }}</div>;
@@ -1045,7 +1127,8 @@ describe('text keeps its characters as written', () => {
 	// and the text of an element in a spread argument or an unbraced attribute
 	// value in a container was read with its character references decoded
 	// (#693). Since #656 those are template text; only an element in a dynamic
-	// tag name is read that way. A text prints from its `raw`.
+	// tag name is read that way. A text prints from its `raw`: its `value` has
+	// the references decoded (#710).
 	test.each([
 		[
 			'a `>` in an element in a container',
@@ -1100,6 +1183,38 @@ describe('text keeps its characters as written', () => {
 			'references and a comment in template text',
 			`export function App() @{
   <p>a &amp; b /* c */ &#123;x&#125;</p>
+}
+`,
+		],
+		[
+			'references by name, in decimal and in hexadecimal in template text',
+			`export function App() @{
+  <p>&quot;a&quot; &amp;lt; &nbsp;&copy; &#123;x&#125; &#x1F600;</p>
+}
+`,
+		],
+		[
+			'references in a function',
+			`export function App() {
+  return <p>&quot;a&quot; &amp;lt; &nbsp;&copy; &#123;x&#125; &#x1F600;</p>;
+}
+`,
+		],
+		[
+			'a fragment whose text is only a reference',
+			`export function App() @{
+  <>&nbsp;</>
+}
+`,
+		],
+		[
+			'a reference on its own line',
+			`export function App() @{
+  <p>
+    <b />
+    &#10;
+    <i />
+  </p>
 }
 `,
 		],

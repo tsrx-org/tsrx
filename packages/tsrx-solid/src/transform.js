@@ -316,7 +316,7 @@ function tsrx_node_to_jsx_expression(node, transform_context, in_jsx_child = fal
 		(child) =>
 			child &&
 			child.type !== 'EmptyStatement' &&
-			(child.type !== 'JSXText' || child.value.trim() !== ''),
+			(child.type !== 'JSXText' || child.raw.trim() !== ''),
 	);
 
 	const returned_expression = return_value_body_to_expression(children, node, transform_context);

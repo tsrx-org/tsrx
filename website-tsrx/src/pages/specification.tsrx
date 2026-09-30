@@ -1177,9 +1177,10 @@ export function SpecificationPage() @{
 									<code class="inline-code">JSXText</code>
 									and contributes escaped static text. Character references such as
 									<code class="inline-code">{'&quot;'}</code>
-									are decoded before the text value is stored. A comment between children is not
-									part of any JSXText: text ends before it and starts again after it, and the
-									comment is the inner comment of an empty
+									are decoded before the text value is stored, and the raw text keeps them as
+									written, which is how the text is printed. A comment between children is not part
+									of any JSXText: text ends before it and starts again after it, and the comment is
+									the inner comment of an empty
 									<code class="inline-code">{'{}'}</code>
 									of its own (a
 									<code class="inline-code">JSXExpressionContainer</code>
@@ -1206,42 +1207,83 @@ export function SpecificationPage() @{
 							</ul>
 							<h3 class="appendix-heading">4.3.1 Whitespace</h3>
 							<p class="section-body">
-								Whitespace in template syntax follows ordinary ECMAScript token-separation rules
-								except at a small number of JSX-like boundaries where the delimiter itself is
-								whitespace-sensitive.
+								Whitespace, line terminators, and JavaScript comments can separate tokens in tags
+								and embedded expressions. The boundaries below distinguish token separation from
+								recognizing a tag in JSX text.
 							</p>
 							<ul class="spec-list">
 								<li>
 									Within
-									<code class="inline-code">{'{ AssignmentExpression }'}</code>, whitespace and line
-									terminators are admitted wherever the embedded ECMAScript grammar permits them.
-									Thus forms such as
+									<code class="inline-code">{'{ AssignmentExpression }'}</code>, whitespace, line
+									terminators, and comments are admitted wherever the embedded ECMAScript grammar
+									permits them. Thus forms such as
 									<code class="inline-code">{'{ expr }'}</code>
 									are well-formed.
 								</li>
 								<li>
 									The statement-container introducer must be written as the contiguous sequence
-									<code class="inline-code">{'@{'}</code>. Whitespace between
+									<code class="inline-code">{'@{'}</code>. Whitespace or comments between
 									<code class="inline-code">@</code>
 									and
 									<code class="inline-code">{'{'}</code>
-									does not form a JSXCodeBlock.
+									do not form a JSXCodeBlock.
 								</li>
 								<li>
-									A tag or fragment introducer must be written as a contiguous delimiter sequence.
-									Implementations must not treat
-									<code class="inline-code">{'< div>'}</code>,
-									<code class="inline-code">{'< /div>'}</code>,
-									<code class="inline-code">{'</ div>'}</code>,
-									<code class="inline-code">{'< >'}</code>, or
+									In expression position, whitespace and comments may follow the opening
+									<code class="inline-code">{'<'}</code>
+									of an element or fragment. For example,
+									<code class="inline-code">{'const node = < div />;'}</code>,
+									<code class="inline-code">{'const node = </* note */div />;'}</code>, and
+									<code class="inline-code">{'const fragment = < >text</>;'}</code>
+									are well-formed.
+								</li>
+								<li>
+									Inside a tag, whitespace, line terminators, and JavaScript line or block comments
+									may separate the name, attributes, attribute assignment tokens, and closing
+									<code class="inline-code">{'>'}</code>. They may also separate the self-closing
+									<code class="inline-code">/</code>
+									from
+									<code class="inline-code">{'>'}</code>, as in
+									<code class="inline-code">{'<div /* note */ id = "x" / >'}</code>. A
+									<code class="inline-code">{'//'}</code>
+									comment consumes the rest of its line, so subsequent tag tokens must be on a later
+									line.
+								</li>
+								<li>
+									Whitespace and comments may surround the dots in a member tag name:
+									<code class="inline-code">{'<Foo . Bar />'}</code>
+									and
+									<code class="inline-code">{'<Foo /* note */ . Bar />'}</code>
+									both name
+									<code class="inline-code">Foo.Bar</code>. Each identifier remains a single token;
+									<code class="inline-code">{'<di v />'}</code>
+									is an element named
+									<code class="inline-code">di</code>
+									with an attribute named
+									<code class="inline-code">v</code>.
+								</li>
+								<li>
+									A closing tag begins with contiguous
+									<code class="inline-code">{'</'}</code>. Whitespace and comments may follow that
+									sequence or the closing name, so
+									<code class="inline-code">{'</ div >'}</code>,
+									<code class="inline-code">{'</ /* note */ div>'}</code>, and
+									<code class="inline-code">{'</ >'}</code>
+									are valid closing tags for an element or fragment. Neither
+									<code class="inline-code">{'< /div>'}</code>
+									nor
 									<code class="inline-code">{'< / >'}</code>
-									as TSRX template delimiters.
+									closes a tag.
 								</li>
 								<li>
-									Whitespace and comments are not admitted within a single tag name. Source texts
-									such as
-									<code class="inline-code">{'<Foo . Bar>'}</code>
-									do not form a single TSRX tag name.
+									While reading JSX child text, tag recognition depends on the character immediately
+									after
+									<code class="inline-code">{'<'}</code>. Whitespace after it leaves it as text:
+									<code class="inline-code">{'<p>a < b</p>'}</code>
+									contains the text
+									<code class="inline-code">{'a < b'}</code>. This differs from the expression
+									position in
+									<code class="inline-code">{'const node = < div />;'}</code>.
 								</li>
 								<li>
 									Indentation and line breaks between adjacent template children are permitted as
@@ -1250,9 +1292,11 @@ export function SpecificationPage() @{
 								</li>
 							</ul>
 							<p class="section-body">
-								The raw style and script elements are also part of this syntax. A style body is
-								captured as raw text for host-defined stylesheet processing, and a script body as
-								raw text (4.6), rather than being parsed as nested template children.
+								Raw style and script bodies have their own closing-tag rules. A raw style body ends
+								at the literal
+								<code class="inline-code">{'</style>'}</code>; a script body follows the HTML
+								closing-tag rules in 4.6. Their bodies are captured as raw text rather than parsed
+								as nested template children.
 							</p>
 						</section>
 
@@ -1620,8 +1664,9 @@ export function SpecificationPage() @{
 							<h2 class="section-heading">5 Static Semantics: Early Errors</h2>
 							<ul class="spec-list">
 								<li>
-									A tag or fragment delimiter must not be split by intervening whitespace at the
-									points described in 4.3.1.
+									An element or fragment closing tag must begin with contiguous
+									<code class="inline-code">{'</'}</code>
+									(4.3.1).
 								</li>
 								<li>Opening and closing tags for TSRX elements and fragments must match.</li>
 								<li>
@@ -1926,9 +1971,12 @@ export function SpecificationPage() @{
 								</li>
 								<li>
 									JSXText records a raw text child. Static text children decode JSX character
-									references before the text value is stored. A comment between children is in
-									neither a JSXText's value nor its raw: it is the inner comment of a
-									JSXExpressionContainer whose expression is a JSXEmptyExpression (4.3).
+									references before the text value is stored, as other JSX parsers do, and read each
+									CRLF line break as LF; JSXText.raw is the text as written, references included.
+									Compilers and formatters print raw, and JSX's whitespace rules read it, so a
+									reference such as &amp;nbsp; is text. A comment between children is in neither a
+									JSXText's value nor its raw: it is the inner comment of a JSXExpressionContainer
+									whose expression is a JSXEmptyExpression (4.3).
 								</li>
 								<li>
 									JSXAttribute.value is null for boolean-style attributes with no initializer.

@@ -5646,6 +5646,80 @@ else <b />;`,
 		expect(codeBlock(block).render).toBeNull();
 	});
 
+	it('reads the strings that start a `@{ }` function body as its directive prologue', () => {
+		const ast = parseModule(
+			`function App() @{
+				'use strict';
+				"use dom bindings";
+				('parenthesized');
+				'after the prologue';
+				<div />
+			}
+			const Arrow = () => @{
+				'use client';
+				const a = 1;
+				'after a statement';
+				<div>{a}</div>
+			};
+			class A {
+				render() @{
+					'use x';
+					<div />
+				}
+			}`,
+			'App.tsrx',
+		);
+		/** @param {AST.Node | null | undefined} node */
+		const directives = (node) =>
+			codeBlock(node).body.map(
+				(statement) => /** @type {{ directive?: string }} */ (statement).directive,
+			);
+
+		expect(directives(as_type(ast.body[0], 'FunctionDeclaration').body)).toEqual([
+			'use strict',
+			'use dom bindings',
+			undefined,
+			undefined,
+		]);
+		expect(
+			directives(as_type(declaratorInit(ast.body[1]), 'ArrowFunctionExpression').body),
+		).toEqual(['use client', undefined, undefined]);
+		const method = as_type(ast.body[2], 'ClassDeclaration').body.body[0];
+		expect(directives(as_type(method, 'MethodDefinition').value.body)).toEqual(['use x']);
+	});
+
+	it("reads no directive prologue in a `@{ }` block that isn't a function's body", () => {
+		const ast = parseModule(
+			`function App() {
+				const value = @{
+					'use a';
+					<div />
+				};
+				return value;
+			}`,
+			'App.tsrx',
+		);
+		const body = blockBody(as_type(ast.body[0], 'FunctionDeclaration').body);
+		const statement = codeBlock(declaratorInit(body[0])).body[0];
+
+		expect(statement.type).toBe('ExpressionStatement');
+		expect(/** @type {{ directive?: string }} */ (statement).directive).toBeUndefined();
+	});
+
+	it("rejects `'use strict'` in a `@{ }` function body with a parameter list that isn't simple", () => {
+		for (const source of [
+			`function App(a = 1) @{ 'use strict'; <div /> }`,
+			`const App = ({ a }) => @{ 'use strict'; <div /> };`,
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				error_with(TS_ERRORS.USE_STRICT_NON_SIMPLE_PARAMETERS),
+			);
+		}
+		expect(() =>
+			parseModule(`function App(a: string) @{ 'use strict'; <div /> }`, 'App.tsrx'),
+		).not.toThrow();
+	});
+
 	it('parses two sibling `@{ }` blocks as separate element children', () => {
 		const returned = getReturned(`function App() {
 			return <main>
@@ -12687,13 +12761,12 @@ describe('the text of an element in a template', () => {
 	});
 
 	// A text's `raw` is the text as written, which the printers print, with its
-	// character references. In an element that acorn-typescript's JSX parser
-	// reads, `value` has them decoded, and the output printed it, so
-	// `&#123;x&#125;` compiled to the expression `{x}` (#693). Since #656 that
-	// is only an element in a dynamic tag name, which is reported (#737) but
-	// parsed when collecting. The `value` of template text keeps them for now
-	// (#710).
-	/** @type {Array<[string, string, string[], string[] | null]>} */
+	// character references, and its `value` is the text JSX reads, with them
+	// decoded and each CRLF line break read as LF, as in every JSX parser (#710).
+	// Printing `value` compiled `&#123;x&#125;` to the expression `{x}` (#693).
+	// acorn-typescript's JSX parser reads an element in a dynamic tag name, which
+	// is reported (#737) but parsed when collecting, and TSRX reads the others.
+	/** @type {Array<[string, string, string[], string[]]>} */
 	const references = [
 		[
 			'in an element in a reported dynamic tag name',
@@ -12718,30 +12791,79 @@ describe('the text of an element in a template', () => {
 	<div {...{ title: <b>&#123;x&#125; &amp;lt; &gt;</b> }} />
 }`,
 			['&#123;x&#125; &amp;lt; &gt;'],
-			null,
+			['{x} &lt; >'],
 		],
 		[
 			'in an unbraced attribute value in a container',
 			component('{c && <div title=<b>&#123;x&#125; &amp;lt; &gt;</b> />}'),
 			['&#123;x&#125; &amp;lt; &gt;'],
-			null,
+			['{x} &lt; >'],
 		],
 		[
 			'in a template',
 			component('<b>&#123;x&#125; &amp;lt; &gt;</b>'),
 			['&#123;x&#125; &amp;lt; &gt;'],
-			null,
+			['{x} &lt; >'],
+		],
+		[
+			'across a line break in a template',
+			component(`<b>&#123;x&#125;
+&amp;lt;</b>`).replaceAll('\n', '\r\n'),
+			['&#123;x&#125;\r\n&amp;lt;'],
+			['{x}\n&lt;'],
+		],
+		[
+			'around a comment in a template',
+			component('<b>&amp;lt; /* c */ &gt;</b>'),
+			['&amp;lt; ', '{}', ' &gt;'],
+			['&lt; ', '{}', ' >'],
 		],
 		[
 			'in an attribute value',
 			component('<div title={<b>&#123;x&#125; &amp;lt; &gt;</b>} />'),
 			['&#123;x&#125; &amp;lt; &gt;'],
-			null,
+			['{x} &lt; >'],
+		],
+		[
+			'in the setup code of a template',
+			`export function App() @{
+	const b = <b>&#123;x&#125; &amp;lt; &gt;</b>;
+	<main>{b}</main>
+}`,
+			['&#123;x&#125; &amp;lt; &gt;'],
+			['{x} &lt; >'],
+		],
+		[
+			'in a function',
+			`export function App() {
+	return <b>&#123;x&#125; &amp;lt; &gt;</b>;
+}`,
+			['&#123;x&#125; &amp;lt; &gt;'],
+			['{x} &lt; >'],
+		],
+		[
+			'at the top level',
+			'export const b = <b>&#123;x&#125; &amp;lt; &gt;</b>;',
+			['&#123;x&#125; &amp;lt; &gt;'],
+			['{x} &lt; >'],
+		],
+		[
+			'by name, in decimal and in hexadecimal',
+			component('<b>&nbsp;&copy; &#128512; &#x1F600; &#X41;</b>'),
+			['&nbsp;&copy; &#128512; &#x1F600; &#X41;'],
+			[' © 😀 😀 A'],
+		],
+		// Like acorn-typescript's, which reads the same text in a dynamic tag name
+		[
+			'that are not character references',
+			component('<b>&bogus; &amp &#xZZ; &#1114112; &#; & b &</b>'),
+			['&bogus; &amp &#xZZ; &#1114112; &#; & b &'],
+			['&bogus; &amp &#xZZ; &#1114112; &#; & b &'],
 		],
 	];
 
 	it.each(references)(
-		'keeps the character references %s in `raw`',
+		'keeps the character references %s in `raw` and decodes them in `value`',
 		async (_label, source, raw, value) => {
 			const outcomes = await parse_in_worker_with_ast(
 				modes.map((options) => ({ source, options })),
@@ -12763,10 +12885,26 @@ describe('the text of an element in a template', () => {
 					label,
 				).toEqual(reported ? [TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION.code] : []);
 				expect(children(outcome.ast, 'b'), label).toEqual(raw);
-				if (value) expect(children(outcome.ast, 'b', 'value'), label).toEqual(value);
+				expect(children(outcome.ast, 'b', 'value'), label).toEqual(value);
 			}
 		},
 	);
+
+	// A reference that ends past its text is text: the `;` after a comment or
+	// an element is not the reference's
+	it.each([
+		['a comment', component('<b>&amp/* c */;</b>'), ['&amp', '{}', ';']],
+		['an element', component('<b>&amp<i />;</b>'), ['&amp', '<i>', ';']],
+	])('reads a reference cut off by %s as text', async (_label, source, texts) => {
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const label = `${JSON.stringify(source)} with ${JSON.stringify(modes[index])}`;
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(children(outcome.ast, 'b'), label).toEqual(texts);
+			expect(children(outcome.ast, 'b', 'value'), label).toEqual(texts);
+		}
+	});
 
 	// A comment between children is a comment, not text as in TSX, so it is in
 	// neither form of the text, and doesn't print as text. It is an empty `{}`
@@ -13125,17 +13263,32 @@ describe('comments between template children', () => {
 });
 
 describe('isLayoutWhitespace', () => {
+	/**
+	 * A text node: `raw` as written, and `value` as JSX reads it.
+	 * @param {string} raw
+	 * @param {string} [value]
+	 */
+	const text = (raw, value = raw) => ({ type: 'JSXText', value, raw });
+
+	// It reads the text as written: a character reference is text, though its
+	// `value` may be whitespace (#710)
 	/** @type {Array<[string, unknown, boolean]>} */
 	const cases = [
-		['empty text', { type: 'JSXText', value: '' }, true],
-		['a line break with indentation', { type: 'JSXText', value: '\n\t\t' }, true],
-		['a blank line', { type: 'JSXText', value: '\n\n  ' }, true],
-		['a carriage return', { type: 'JSXText', value: '\r\n' }, true],
-		['a space between children', { type: 'JSXText', value: ' ' }, false],
-		['a tab between children', { type: 'JSXText', value: '\t' }, false],
-		['a non-breaking space on its own line', { type: 'JSXText', value: '\n\u00a0\n' }, false],
-		['text with words', { type: 'JSXText', value: '\n  a\n' }, false],
-		['a node that is not text', { type: 'JSXElement', value: '\n' }, false],
+		['empty text', text(''), true],
+		['a line break with indentation', text('\n\t\t'), true],
+		['a blank line', text('\n\n  '), true],
+		['a carriage return', text('\r\n', '\n'), true],
+		['a space between children', text(' '), false],
+		['a tab between children', text('\t'), false],
+		['a non-breaking space on its own line', text('\n\u00a0\n'), false],
+		['a reference to a line break', text('&#10;', '\n'), false],
+		[
+			'a reference to a non-breaking space on its own line',
+			text('\n&nbsp;\n', '\n\u00a0\n'),
+			false,
+		],
+		['text with words', text('\n  a\n'), false],
+		['a node that is not text', { type: 'JSXElement', value: '\n', raw: '\n' }, false],
 		['nothing', undefined, false],
 	];
 

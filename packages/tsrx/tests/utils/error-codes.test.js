@@ -384,6 +384,9 @@ let E;`,
 	}
 }`,
 			],
+			// acorn raises it for a `{ … }` body, and TSRX for a `@{ … }` one.
+			['TS1347', "function f(a = 1) { 'use strict'; }"],
+			['TS1347', "function f(a = 1) @{ 'use strict'; <div /> }"],
 		];
 		for (const [code, source] of cases) {
 			expect(reported_codes(source), source).toContain(code);
@@ -412,6 +415,7 @@ let E;`,
 			TS_ERRORS.FOR_OF_INITIALIZER,
 			TS_ERRORS.MISSING_CATCH_OR_FINALLY,
 			TS_ERRORS.MULTIPLE_DEFAULT_CLAUSES,
+			TS_ERRORS.USE_STRICT_NON_SIMPLE_PARAMETERS,
 			// acorn-typescript's, for the code TSRX reads in its place
 			TS_ERRORS.UNTERMINATED_JSX_CONTENTS,
 			TS_ERRORS.JSX_UNESCAPED_GREATER_THAN,

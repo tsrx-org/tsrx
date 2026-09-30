@@ -388,6 +388,11 @@ export const jsx_text_nbsp_cases = [
 	],
 ] as const;
 
+// A text that is only a character reference, whose `value` is whitespace
+function OnlyReference() @{
+	<>&nbsp;</>
+}
+
 function SwitchCharacters(props: { kind: string }) @{
 	@switch (props.kind) {
 		@case 'a': {
@@ -450,6 +455,14 @@ export function JsxTextCharactersApp() @{
 		<SwitchCharacters kind="a" />
 		<div>{setup}</div>
 		<div>{charactersInFunction(show)}</div>
+		<span class="ch-only-reference">
+			<OnlyReference />
+		</span>
+		<span class="ch-only-reference-if">
+			@if (show) {
+				<>&#32;</>
+			}
+		</span>
 	</>
 }
 
@@ -481,4 +494,6 @@ export const jsx_text_character_cases = [
 	['a `>` in an @switch case', '.ch-switch', 'a > b'],
 	['a `>` in a setup statement', '.ch-setup', '1 a > b'],
 	['a `>` in a container in a function', '.ch-function', 'a > b'],
+	['a component whose text is only a character reference', '.ch-only-reference', '\u00a0'],
+	['an @if body whose text is only a character reference', '.ch-only-reference-if', ' '],
 ] as const;
