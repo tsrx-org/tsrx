@@ -45,10 +45,10 @@ import {
 	get_for_of_iteration_params,
 	has_location,
 	is_component_like_element,
-	planSwitchLift as plan_switch_lift,
 	is_bare_render_expression,
 	is_jsx_child,
 	set_loc,
+	summarize_switch_case,
 	isTemplateIfNode as is_template_if_node,
 	isTemplateForOfNode as is_template_for_of_node,
 	isTemplateSwitchNode as is_template_switch_node,
@@ -109,12 +109,6 @@ const solid_platform = {
 		scanUseServerDirectiveForAwaitWithCustomValidator: false,
 	},
 	hooks: {
-		// Hoist to module scope in the client transform —
-		// same trade-off as Vue, where one definition per helper
-		// keeps bundles small and source mappings 1:1. The
-		// `compile_to_volar_mappings` entry point opts back out so Volar's
-		// type-only output keeps helpers inline against the component body.
-		moduleScopedHookComponents: true,
 		initialState: () => ({
 			needs_show: false,
 			needs_for: false,
@@ -128,8 +122,8 @@ const solid_platform = {
 			// Solid's reactive runtime doesn't reuse JSX-element identity the
 			// way React does, so hoisting `<Component />` references to module
 			// level pays no runtime cost — it just creates an extra `const`
-			// that aliases a helper invocation (e.g. `App__static1 =
-			// <App__StatementBodyHook2 />`). Truly-static DOM trees like
+			// that aliases a component invocation (e.g. `App__static1 =
+			// <Child />`). Truly-static DOM trees like
 			// `<span>Hello</span>` still benefit from being hoisted out of
 			// the per-render closure, so we only veto hoisting when the
 			// subtree contains a *component* JSX element. Same logic Vue uses.
@@ -1109,17 +1103,6 @@ function for_of_statement_to_jsx_child(node, transform_context) {
  *   <Switch fallback={...default}><Match when={d === c1}>...</Match>...</Switch>
  *
  * Cases are isolated: `@switch` does not fall through and does not use `break`.
- * Hook-bearing case bodies reuse the shared `plan_switch_lift` pipeline from
- * `@tsrx/core`. The client transform hoists those helpers to module scope
- * (Solid's platform sets `moduleScopedHookComponents: true`);
- * `compile_to_volar_mappings` opts back out and emits the helpers locally
- * inside the component body so Volar still sees closure-captured bindings
- * against the component scope.
- *
- * When any case is lifted in `typeOnly` mode the helper declarations have to
- * live somewhere local-scoped — we wrap the whole `<Switch>` in an IIFE that
- * declares them in order and returns the element. The client transform's
- * module-scoped helpers leave that IIFE empty, so we skip the wrapper.
  *
  * @param {AST.SwitchStatement} node
  * @param {TransformContext} transform_context
@@ -1129,30 +1112,17 @@ function switch_statement_to_jsx_child(node, transform_context) {
 	transform_context.needs_switch = true;
 	transform_context.needs_match = true;
 
-	const { case_info, case_helpers, setup_statements } = plan_switch_lift(node, transform_context);
-
 	/** @type {AST.Expression | null} */
 	let fallback = null;
 	/** @type {SolidMatchEntry[]} */
 	const match_entries = [];
 
-	for (let i = 0; i < node.cases.length; i++) {
-		const original_case = node.cases[i];
-		const info = case_info[i];
-		const helper = case_helpers[i];
-
-		/** @type {AST.Expression} */
-		let body_jsx;
-		if (helper) {
-			// Lifted case: render the helper element directly. Use the
-			// original `component_element` (not a clone) for this — its
-			// definition's `loc` is what the case position should map to.
-			body_jsx = helper.component_element;
-		} else if (info.own_body.length === 0) {
-			body_jsx = create_null_literal();
-		} else {
-			body_jsx = body_to_jsx_child(info.own_body, transform_context);
-		}
+	for (const original_case of node.cases) {
+		const { own_body } = summarize_switch_case(original_case);
+		const body_jsx =
+			own_body.length === 0
+				? create_null_literal()
+				: body_to_jsx_child(own_body, transform_context);
 
 		if (original_case.test === null) {
 			fallback = body_jsx;
@@ -1192,17 +1162,7 @@ function switch_statement_to_jsx_child(node, transform_context) {
 				]
 			: [];
 
-	const switch_element = create_jsx_element('Switch', attributes, match_children);
-
-	if (setup_statements.length === 0) {
-		return switch_element;
-	}
-
-	// Local-scoped helpers (typeOnly mode): wrap the <Switch> in an IIFE that
-	// declares the helpers in source order and returns the element.
-	return to_jsx_expression_container(
-		b.call(b.arrow([], b.block([...setup_statements, b.return(switch_element)]))),
-	);
+	return create_jsx_element('Switch', attributes, match_children);
 }
 
 /**

@@ -1462,35 +1462,38 @@ to exactly the elements of one scope.
 
 ### React and Preact
 
-Hooks that appear inside TSRX template branches, loops, switches, try blocks,
-or expression values are isolated behind generated child components
-when safe. Hook results must stay local to the generated component; move shared
-state into an explicit child component when values need to cross the generated
-boundary. React and Preact can also emit async component functions when template
-body `await` is supported by the target pipeline. An `await` in an `@for`,
-`@empty`, `@switch`, or `@if` body is awaited by that component, and a loop body
-finishes one item before it starts the next.
+Hooks run where they are written. TSRX does not move a hook inside a template
+branch, loop, switch, or try block into a generated component, so the Rules of
+Hooks apply as they do in TSX: give hook state that belongs to a branch or a
+list item its own component. React and Preact can also emit async component
+functions when template body `await` is supported by the target pipeline. An
+`await` in an `@for`, `@empty`, `@switch`, or `@if` body is awaited by that
+component, and a loop body finishes one item before it starts the next.
 
 ```tsrx
 import { useEffect, useState } from 'react';
 
+const PostItem = ({ post }: { post: Post }) => @{
+	useEffect(() => {
+		console.log('viewed ' + post.title);
+	}, [post.title]);
+
+	<li>{post.title}</li>
+};
+
 const UserProfile = ({ user, posts }: { user: User | null; posts: Post[] }) => @{
+	const [tab, setTab] = useState('overview');
+
 	if (!user) {
 		return null;
 	}
-
-	const [tab, setTab] = useState('overview');
 
 	<>
 		<h1>{user.name}</h1>
 		<TabBar value={tab} onChange={setTab} />
 		<ul>
-			@for (const post of posts) {
-				useEffect(() => {
-					console.log('viewed ' + post.title);
-				}, [post.title]);
-
-				<li>{post.title}</li>
+			@for (const post of posts; key post.id) {
+				<PostItem post={post} />
 			}
 		</ul>
 	</>

@@ -6,7 +6,7 @@ import {
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
 	runSharedComponentParamsTests,
-	runSharedSwitchHelperHoistingTests,
+	runSharedHookBodyTests,
 	runSharedTsxExpressionTsrxTests,
 } from '@tsrx/core/test-harness/compile';
 import { runSharedSourceMappingTests } from '@tsrx/core/test-harness/source-mappings';
@@ -48,12 +48,7 @@ runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'vue' });
 runSharedCodeBlockChildrenTests({ compile, name: 'vue' });
 runSharedClassFunctionComponentTests({ compile, compile_to_volar_mappings, name: 'vue' });
 runSharedComponentParamsTests({ compile, compile_to_volar_mappings, name: 'vue' });
-runSharedSwitchHelperHoistingTests({
-	compile,
-	compile_to_volar_mappings,
-	name: 'vue',
-	clientHelperShape: 'module-vapor-component',
-});
+runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'vue' });
 
 describe('@tsrx/vue basic', () => {
 	it('merges defineVaporComponent into existing vue imports', () => {

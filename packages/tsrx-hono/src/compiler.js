@@ -104,7 +104,6 @@ export function createCompiler(transform, settings = {}) {
 			collect: true,
 			loose: !!options?.loose,
 			typeOnly: true,
-			moduleScopedHookComponents: false,
 			errors,
 			comments,
 		});

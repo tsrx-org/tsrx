@@ -5,7 +5,7 @@ import {
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
 	runSharedComponentParamsTests,
-	runSharedSwitchHelperHoistingTests,
+	runSharedHookBodyTests,
 	runSharedTsxExpressionTsrxTests,
 } from '@tsrx/core/test-harness/compile';
 import { runSharedSourceMappingTests } from '@tsrx/core/test-harness/source-mappings';
@@ -29,6 +29,11 @@ runSharedCompileDiagnosticsTests({
 	name: 'hono',
 });
 runSharedCodeBlockChildrenTests({ compile: compileServer, name: 'hono' });
+runSharedHookBodyTests({
+	compile: compileServer,
+	compile_to_volar_mappings: compileServerToVolarMappings,
+	name: 'hono',
+});
 
 runSharedSourceMappingTests({
 	compile: compileDom,
@@ -52,11 +57,10 @@ runSharedComponentParamsTests({
 	compile_to_volar_mappings: compileDomToVolarMappings,
 	name: 'hono-dom',
 });
-runSharedSwitchHelperHoistingTests({
+runSharedHookBodyTests({
 	compile: compileDom,
 	compile_to_volar_mappings: compileDomToVolarMappings,
 	name: 'hono-dom',
-	clientHelperShape: 'module-function',
 });
 
 describe('removed lazy destructuring', () => {
@@ -343,7 +347,7 @@ describe('@tsrx/hono DOM compiler', () => {
 		expect(code).toContain("return <div>{'static'}</div>;");
 	});
 
-	it('uses the DOM JSX runtime and stable helper components for hook branches', () => {
+	it('uses the DOM JSX runtime and keeps hook branches inline', () => {
 		const { code } = compileDom(
 			`import { useState } from 'hono/jsx/dom';
 
@@ -358,7 +362,8 @@ describe('@tsrx/hono DOM compiler', () => {
 
 		expect(code).toContain("from 'hono/jsx/dom'");
 		expect(code).toContain('class="button"');
-		expect(code).toMatch(/function App__StatementBodyHook\d+\(/);
+		expect(code).toContain('const [count] = useState(0);');
+		expect(code).not.toContain('StatementBodyHook');
 	});
 
 	it('uses the Hono DOM ref runtime for multiple refs', () => {

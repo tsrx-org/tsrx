@@ -44,14 +44,19 @@ function virtual_parse_diagnostics(code) {
 		.parseDiagnostics;
 }
 
-/** @param {string} code @returns {readonly ts.Diagnostic[]} */
-function virtual_semantic_diagnostics(code) {
+/**
+ * @param {string} code
+ * @param {ts.CompilerOptions} [extra_options]
+ * @returns {readonly ts.Diagnostic[]}
+ */
+function virtual_semantic_diagnostics(code, extra_options = {}) {
 	const file_name = '/virtual-platform.tsx';
 	const options = {
 		target: ts.ScriptTarget.ESNext,
 		module: ts.ModuleKind.ESNext,
 		noEmit: true,
 		noLib: true,
+		...extra_options,
 	};
 	const source_file = ts.createSourceFile(
 		file_name,
@@ -1371,160 +1376,70 @@ export function runSharedSwitchFallthroughTests({ compile, name }) {
 }
 
 /**
- * Shared assertions covering where each target places the lifted
- * `StatementBodyHook` helper component for hook-bearing switch cases
- * — module scope for the client transform on every target whose platform
- * sets `moduleScopedHookComponents: true` (Solid, Vue), and a local
- * `let App__StatementBodyHook<N>` cache slot + per-render `?? (= …)` lazy
- * initializer otherwise. `compile_to_volar_mappings` keeps the local-scoped
- * shape regardless of platform default so Volar's virtual TSX can still
- * resolve closure-captured bindings against the component body.
- *
- * The `StatementBodyHook` name is React-flavored historically, but on
- * Vue/Solid the lift solves different problems (avoid re-`defineVaporComponent`
- * per render, keep hooks in stable branch components, etc.) — same machinery
- * either way.
- *
- * @typedef {'module-function' | 'module-vapor-component' | 'local-cache'} SwitchHelperClientShape
+ * Hooks in template control-flow bodies stay where they are written: no target
+ * lifts a hook-bearing `@if`, `@for`, `@switch`, or `@try` body into a
+ * generated helper component, in the client or the type-only transform.
+ * Following the Rules of Hooks is up to the author.
  *
  * @param {{
  *   compile: CompileHarness['compile'],
  *   compile_to_volar_mappings: CompileDiagnosticsHarness['compile_to_volar_mappings'],
  *   name: string,
- *   clientHelperShape: SwitchHelperClientShape,
  * }} harness
  */
-export function runSharedSwitchHelperHoistingTests({
-	compile,
-	compile_to_volar_mappings,
-	name,
-	clientHelperShape,
-}) {
-	describe(`[${name}] StatementBodyHook hoisting (client vs typeOnly)`, () => {
-		// Two case bodies contain hooks, so two helpers should exist. The
-		// non-hook case stays inline and cases remain isolated.
-		const switch_source = `export function App({ status }: { status: string }) @{
-				@switch (status) {
-					@case "idle": {
-						const idle_label = useMemo(() => 'Online', [status]);
-						<span>{idle_label}</span>
-					}
-					@case "active": {
-						const active_label = useMemo(() => 'Away', [status]);
-						<span>{active_label}</span>
-					}
-					@case "offline": {
-						<span>{'Offline'}</span>
-					}
-				}
-			}`;
-		const helper_capture_source = `export function App({ status }: { status: string }) @{
-				const early = 'early';
-				const property_label = 'unused';
-				const member_label = 'unused';
-				const attribute_label = 'unused';
-				const jsx_member_label = 'unused';
-				const local_shadow = 'outer';
-				const unused0 = 0;
-				const unused1 = 1;
-				const unused2 = 2;
-				const unused3 = 3;
-				const unused4 = 4;
-				const unused5 = 5;
-				const unused6 = 6;
-				const unused7 = 7;
-				const late = 'late';
-				@switch (status) {
-					@case "active": {
-						const local_shadow = 'inner';
-						const record = { property_label: 1 };
-						const Local = { jsx_member_label: () => <span /> };
-						const label = useMemo(
-							() => late + early + local_shadow + record.member_label,
-							[],
-						);
-						<Local.jsx_member_label attribute_label={label} />
-					}
-					@default: {
-						<span>{'idle'}</span>
-					}
-				}
-			}`;
+export function runSharedHookBodyTests({ compile, compile_to_volar_mappings, name }) {
+	describe(`[${name}] hooks in control-flow bodies`, () => {
+		const source = `import { useMemo } from 'x';
 
-		/**
-		 * @param {string} code
-		 * @param {boolean} local_helper
-		 */
-		function expect_ordered_helper_capture(code, local_helper) {
-			const helper_name = local_helper ? 'StatementBodyHook1' : 'App__StatementBodyHook1';
-			const helper_signature = local_helper
-				? new RegExp(`function ${helper_name}\\(\\s*\\{ early, late \\}:`)
-				: new RegExp(`function ${helper_name}\\(\\{ early, late \\}\\)`);
-
-			expect(code).toMatch(helper_signature);
-			expect(code).toContain(`<${helper_name} early={early} late={late} />`);
+export function App({ status, items }: { status: string; items: string[] }) @{
+	<>
+		@if (status === 'idle') {
+			const idle_label = useMemo(() => 'Online', [status]);
+			<span>{idle_label}</span>
 		}
-
-		it('lifts hook-bearing case bodies in the client transform', () => {
-			const { code } = compile(switch_source, 'App.tsrx');
-
-			if (clientHelperShape === 'module-function') {
-				// Solid: top-level `function App__StatementBodyHook<N>()`
-				// declarations, no per-render cache slots.
-				const top_level_helper_count = (
-					code.match(/^function App__StatementBodyHook\d+\([^)]*\)/gm) || []
-				).length;
-				expect(top_level_helper_count).toBe(2);
-				expect(code).not.toContain('let App__StatementBodyHook');
-			} else if (clientHelperShape === 'module-vapor-component') {
-				// Vue: top-level `const App__StatementBodyHook<N> =
-				// defineVaporComponent(function App__StatementBodyHook<N>() {...})`.
-				const top_level_helper_count = (
-					code.match(
-						/^const App__StatementBodyHook\d+ = defineVaporComponent\(function App__StatementBodyHook\d+\([^)]*\)/gm,
-					) || []
-				).length;
-				expect(top_level_helper_count).toBe(2);
-				expect(code).not.toContain('let App__StatementBodyHook');
-			} else {
-				// Local cache slot + `?? (= function …)` lazy
-				// initializer per hook-bearing body; no top-level declarations.
-				const cache_slot_count = (code.match(/^let App__StatementBodyHook\d+;$/gm) || []).length;
-				expect(cache_slot_count).toBe(2);
-				expect(code).toMatch(
-					/const StatementBodyHook\d+\s*=\s*App__StatementBodyHook\d+\s*\?\?\s*\(App__StatementBodyHook\d+\s*=\s*function StatementBodyHook\d+\(\)/,
-				);
+		@for (const item of items; key item) {
+			const item_label = useMemo(() => item, [item]);
+			<li>{item_label}</li>
+		}
+		@switch (status) {
+			@case 'active': {
+				const active_label = useMemo(() => 'Away', [status]);
+				<span>{active_label}</span>
 			}
+			@default: {
+				<span>{'Offline'}</span>
+			}
+		}
+		@try {
+			const try_label = useMemo(() => 'Loaded', []);
+			<span>{try_label}</span>
+		} @pending {
+			<span>{'Loading'}</span>
+		}
+	</>
+}`;
+
+		it('keeps hook-bearing bodies inline in the client transform', () => {
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code).not.toContain('StatementBodyHook');
+			expect(count_substring(code, 'useMemo(')).toBe(4);
 		});
 
-		it('keeps hook-bearing case helpers local in the typeOnly transform', () => {
-			const { code } = compile_to_volar_mappings(switch_source, 'App.tsrx');
+		it('keeps hook-bearing bodies inline in the typeOnly transform', () => {
+			const { code } = compile_to_volar_mappings(source, 'App.tsrx');
 
-			// Volar's virtual TSX always uses the local cache-slot pattern so
-			// closure-captured bindings stay in the component scope for type
-			// checking. The wrapper inside the lazy initializer varies per
-			// target — `defineVaporComponent(function …)` on Vue, plain
-			// `function …` elsewhere — but the slot + `?? (=` shape is uniform.
-			const cache_slot_count = (code.match(/^let App__StatementBodyHook\d+;$/gm) || []).length;
-			expect(cache_slot_count).toBe(2);
-			expect(code).toMatch(
-				/const StatementBodyHook\d+\s*=\s*App__StatementBodyHook\d+\s*\?\?\s*\(App__StatementBodyHook\d+\s*=\s*/,
-			);
-			// No top-level helper declarations in either lifted shape.
-			expect(code).not.toMatch(/^function App__StatementBodyHook\d+\(\)/m);
-			expect(code).not.toMatch(/^const App__StatementBodyHook\d+ = defineVaporComponent\(/m);
+			expect(code).not.toContain('StatementBodyHook');
+			expect(count_substring(code, 'useMemo(')).toBe(4);
 		});
 
-		it('captures only outer references in available-binding order for client helpers', () => {
-			const { code } = compile(helper_capture_source, 'App.tsrx');
+		it('declares no untyped module variable in the typeOnly transform', () => {
+			const { code } = compile_to_volar_mappings(source, 'App.tsrx');
+			const implicit_any = virtual_semantic_diagnostics(code, { noImplicitAny: true })
+				.filter((diagnostic) => diagnostic.code === 7005 || diagnostic.code === 7034)
+				.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
 
-			expect_ordered_helper_capture(code, false);
-		});
-
-		it('captures only outer references in available-binding order for typeOnly helpers', () => {
-			const { code } = compile_to_volar_mappings(helper_capture_source, 'App.tsrx');
-
-			expect_ordered_helper_capture(code, true);
+			expect(implicit_any).toEqual([]);
 		});
 	});
 }

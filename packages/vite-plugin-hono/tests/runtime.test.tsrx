@@ -64,10 +64,15 @@ function Counter() @{
 	</button>
 }
 
+function ConditionalLabel() @{
+	const [label] = useState('visible');
+
+	<span class="conditional">{label}</span>
+}
+
 function ConditionalHook({ visible }: { visible: boolean }) @{
 	@if (visible) {
-		const [label] = useState('visible');
-		<span class="conditional">{label}</span>
+		<ConditionalLabel />
 	}
 }
 
@@ -227,7 +232,7 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 		expect(container.querySelector('style')?.sheet?.cssRules[0].cssText).toContain('color: red');
 	});
 
-	it('keeps hook-bearing TSRX branches stable across renders', async () => {
+	it('keeps a hook component in a TSRX branch stable across renders', async () => {
 		render(<ConditionalHook visible={true} />, container);
 
 		expect(container.innerHTML).toBe('<span class="conditional">visible</span>');

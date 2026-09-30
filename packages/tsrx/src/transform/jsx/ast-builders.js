@@ -384,6 +384,33 @@ export function flatten_switch_consequent(consequent) {
 }
 
 /**
+ * A `@switch` case's own body: its flattened consequent up to the first
+ * `return`. A `return <expr>;` stays in the body as the case's terminal
+ * return; a bare `return;` only ends it. Cases are isolated and do not fall
+ * through, so `break` is not part of the template switch model.
+ *
+ * @param {AST.SwitchCase} switch_case
+ * @returns {{ own_body: AST.Statement[], has_terminator: boolean }}
+ */
+export function summarize_switch_case(switch_case) {
+	/** @type {AST.Statement[]} */
+	const own_body = [];
+	let has_terminator = false;
+	for (const child of flatten_switch_consequent(switch_case.consequent || [])) {
+		if (child.type === 'ReturnStatement' && child.argument == null) {
+			has_terminator = true;
+			break;
+		}
+		own_body.push(child);
+		if (child.type === 'ReturnStatement') {
+			has_terminator = true;
+			break;
+		}
+	}
+	return { own_body, has_terminator };
+}
+
+/**
  * Deep-clone an AST subtree.
  *
  * @template T

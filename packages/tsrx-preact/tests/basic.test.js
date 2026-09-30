@@ -3,6 +3,7 @@ import {
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
+	runSharedHookBodyTests,
 	runSharedTsxExpressionTsrxTests,
 } from '@tsrx/core/test-harness/compile';
 import { runSharedSourceMappingTests } from '@tsrx/core/test-harness/source-mappings';
@@ -46,6 +47,7 @@ runSharedTsxExpressionTsrxTests({ compile, name: 'preact', classAttrName: 'class
 runSharedCompileTests({ compile, name: 'preact', classAttrName: 'class' });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'preact' });
 runSharedCodeBlockChildrenTests({ compile, name: 'preact' });
+runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'preact' });
 
 describe('@tsrx/preact basic', () => {
 	it('rejects the removed `&{ ... }` lazy destructuring syntax', () => {

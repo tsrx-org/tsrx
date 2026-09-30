@@ -37,9 +37,6 @@ function create_hono_platform(mode) {
 		},
 		...(is_dom
 			? {
-					// Hono DOM keys hook state by the runtime component function. A
-					// helper recreated inside its parent would lose state on updates.
-					moduleScopedHookComponents: true,
 					// Hono DOM JSX nodes carry mutable reconciliation and hook state.
 					// Reusing any module-scoped node across mounts is unsafe, not only
 					// reusing composite nodes.

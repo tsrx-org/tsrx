@@ -4,6 +4,7 @@ import {
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
+	runSharedHookBodyTests,
 	runSharedTsxExpressionTsrxTests,
 } from '@tsrx/core/test-harness/compile';
 import { runSharedSourceMappingTests } from '@tsrx/core/test-harness/source-mappings';
@@ -54,6 +55,7 @@ runSharedCompileTests({
 });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'react' });
 runSharedCodeBlockChildrenTests({ compile, name: 'react' });
+runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'react' });
 
 /**
  * @import { CodeMapping } from '@tsrx/core/types';

@@ -165,7 +165,6 @@ export {
 export { with_deferred_imports as withDeferredImports } from './transform/imports.js';
 export {
 	add_jsx_setup_declaration as addJsxSetupDeclaration,
-	clone_switch_helper_invocation as cloneSwitchHelperInvocation,
 	collect_param_bindings as collectParamBindings,
 	collect_statement_bindings as collectStatementBindings,
 	create_hook_safe_helper as createHookSafeHelper,
@@ -182,9 +181,7 @@ export {
 	merge_duplicate_refs as mergeDuplicateRefs,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
-	plan_switch_lift as planSwitchLift,
 	return_value_body_to_expression as returnValueBodyToExpression,
-	rewrite_loop_continues_to_bare_returns as rewriteLoopContinuesToBareReturns,
 	validate_at_most_one_ref_attribute as validateAtMostOneRefAttribute,
 	wrap_edge_whitespace as wrapEdgeWhitespace,
 } from './transform/jsx/index.js';
@@ -221,6 +218,7 @@ export {
 	is_component_jsx_name,
 	is_jsx_child,
 	set_loc,
+	summarize_switch_case,
 } from './transform/jsx/ast-builders.js';
 export {
 	render_stylesheets as renderStylesheets,

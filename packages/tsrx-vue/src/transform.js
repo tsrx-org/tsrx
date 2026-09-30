@@ -66,20 +66,10 @@ const vue_platform = {
 		scanUseServerDirectiveForAwaitWithCustomValidator: false,
 	},
 	hooks: {
-		// Hoist to module scope
-		// in the regular client transform — one
-		// definition per helper keeps bundles small and source mappings 1:1
-		// for editor IntelliSense. The `compile_to_volar_mappings` entry point
-		// opts back out so Volar's type-only output keeps helpers inline,
-		// matching how it generates virtual TSX today.
-		moduleScopedHookComponents: true,
 		initialState: () => ({
 			needs_define_vapor_component: false,
 			needs_vapor_for: false,
 		}),
-		isTopLevelSetupCall(call_expression) {
-			return is_vue_setup_call(call_expression);
-		},
 		wrapHelperComponent(helper_fn, helper_id, ctx, source_node) {
 			ctx.needs_define_vapor_component = true;
 			return wrap_helper_component(helper_fn, helper_id, source_node);
@@ -214,21 +204,10 @@ function create_vapor_pending_boundary_from_default_slot(default_slot, fallback_
  * @returns {JsxHelperComponent}
  */
 function create_module_scoped_error_fallback_component(catch_body_nodes, catch_params, ctx, node) {
-	const saved_module_scoped = ctx.module_scoped_hook_components;
-	ctx.module_scoped_hook_components = true;
-	try {
-		const source = node.handler ?? node;
-		return createHookSafeHelper(
-			catch_body_nodes,
-			undefined,
-			has_location(source) ? source : undefined,
-			ctx,
-			undefined,
-			{ transientBindings: get_pattern_names(catch_params) },
-		);
-	} finally {
-		ctx.module_scoped_hook_components = saved_module_scoped;
-	}
+	const source = node.handler ?? node;
+	return createHookSafeHelper(catch_body_nodes, has_location(source) ? source : undefined, ctx, {
+		transientBindings: get_pattern_names(catch_params),
+	});
 }
 
 /**
@@ -1105,41 +1084,6 @@ function function_declaration_to_expression(fn) {
 	expression.generator = fn.generator;
 	expression.metadata = { ...(fn.metadata || {}), path: fn.metadata?.path || [] };
 	return expression;
-}
-
-const VUE_SETUP_CALLS = new Set([
-	'ref',
-	'shallowRef',
-	'computed',
-	'reactive',
-	'shallowReactive',
-	'customRef',
-	'toRef',
-	'toRefs',
-	'useTemplateRef',
-]);
-
-/**
- * @param {AST.CallExpression} call_expression
- * @returns {boolean}
- */
-function is_vue_setup_call(call_expression) {
-	const callee = call_expression?.callee;
-	if (!callee) return false;
-
-	if (callee.type === 'Identifier') {
-		return VUE_SETUP_CALLS.has(callee.name);
-	}
-
-	if (
-		callee.type === 'MemberExpression' &&
-		callee.computed === false &&
-		callee.property?.type === 'Identifier'
-	) {
-		return VUE_SETUP_CALLS.has(callee.property.name);
-	}
-
-	return false;
 }
 
 /**
