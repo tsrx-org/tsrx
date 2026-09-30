@@ -769,6 +769,23 @@ describe('@tsrx/vue basic', () => {
 		expect(code).not.toContain('Suspense');
 	});
 
+	it('does not generate a catch fallback component without @pending', () => {
+		const { code } = compile(
+			`export function App() @{
+				@try {
+					<span>{'Loaded'}</span>
+				} @catch (error) {
+					<span>{'Failed'}</span>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('StatementBodyHook');
+		expect(code.match(/<span>\{'Failed'\}<\/span>/g)).toHaveLength(1);
+		expect(code).toContain('<TsrxErrorBoundary fallback={(error, _reset) =>');
+	});
+
 	it('compiles try/pending into a Vue Suspense slot boundary', () => {
 		const { code } = compile(
 			`function App() @{

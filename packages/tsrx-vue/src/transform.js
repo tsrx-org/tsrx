@@ -92,7 +92,9 @@ const vue_platform = {
 			return create_vapor_pending_boundary(try_content, fallback_content);
 		},
 		createErrorFallbackComponent(catch_body_nodes, catch_params, ctx, node) {
-			if (ctx.typeOnly) return null;
+			// Only the runtime `@pending` boundary renders the component (see
+			// `createErrorBoundary`); anything else would be dead module code.
+			if (ctx.typeOnly || !node.pending) return null;
 			return create_module_scoped_error_fallback_component(
 				catch_body_nodes,
 				catch_params,
