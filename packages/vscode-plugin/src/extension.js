@@ -26,6 +26,8 @@ import { createLabsInfo } from '@volar/vscode';
 import { activate_closing_tags } from './closing-tags.js';
 import { register_restart_command } from './restart.js';
 import { register_source_definition_command } from './source-definition.js';
+import { register_project_config_command } from './project-config.js';
+import { register_import_commands } from './import-commands.js';
 import { CompileErrorDedupe } from './diagnostics.js';
 import { activate_typescript } from './typescript.js';
 import { activate_typescript_guidance } from './typescript-guidance.js';
@@ -98,12 +100,16 @@ export async function activate(context) {
 	}
 
 	// Which TypeScript serves .tsrx files, and what to do when none can.
+	// Shows TSRX's commands in the Command Palette of a TSRX workspace (package.json).
+	void vscode.commands.executeCommand('setContext', 'tsrx.active', true);
 	const typescript_guidance = activate_typescript_guidance(context);
 	// Registered before the server starts: the restart command can retry a server that
-	// failed to start, and Go to Source Definition needs only TypeScript.
+	// failed to start, and the other commands need only TypeScript or the file system.
 	context.subscriptions.push(
 		register_restart_command(() => client),
 		register_source_definition_command(),
+		register_project_config_command(),
+		register_import_commands(),
 	);
 
 	const serverModule = path.join(__dirname, 'server.js');

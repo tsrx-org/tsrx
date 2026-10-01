@@ -21,7 +21,29 @@ TypeScript ever serves a file.
 
 If `.tsrx` features stop responding, run **TSRX: Restart Language Server** from
 the Command Palette. It restarts the TSRX language server and the TypeScript
-server that serves `.tsrx` files.
+server that serves `.tsrx` files, which also reloads its projects. VS Code's own
+**TypeScript: Reload Projects** only runs in TypeScript and JavaScript files.
+
+### Go to Project Configuration
+
+To open the `tsconfig.json` of the current `.tsrx` file, run **TSRX: Go to Project
+Configuration** from the Command Palette. It opens the nearest `tsconfig.json`
+above the file, where TSRX reads its settings (`tsrx.compiler`, `tsrx.platform`).
+VS Code's own **TypeScript: Go to Project Configuration** only runs in TypeScript
+and JavaScript files.
+
+### Sort and remove imports
+
+To sort the imports of the current `.tsrx` file, or to remove the unused ones, run
+**TSRX: Sort Imports** or **TSRX: Remove Unused Imports** from the Command
+Palette. They apply TypeScript's own source actions, which also appear under
+**Source Action…** in the editor's context menu, with **Organize Imports**
+(Shift+Alt+O). VS Code's own TypeScript commands only run in TypeScript and
+JavaScript files.
+
+On TypeScript 7 these actions work in `.tsrx` files. On TypeScript 5.9 or 6 they
+do not change `.tsrx` files yet
+([tsrx-org/tsrx#994](https://github.com/tsrx-org/tsrx/issues/994)).
 
 ### Native backend setup
 

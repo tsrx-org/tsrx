@@ -9,7 +9,8 @@ export const GO_TO_SOURCE_DEFINITION_COMMAND = 'tsrx.goToSourceDefinition';
  * Whether the TypeScript 7 extension's Go to Source Definition runs in `.tsrx` files.
  * `tsc --lsp` answers its request (`custom/textDocument/sourceDefinition`) for them
  * through the content mapper, but the command only runs in TypeScript and JavaScript
- * files, and no other extension can send the request (microsoft/TypeScript#64576).
+ * files (microsoft/TypeScript#64576), and no other extension can send the request
+ * (microsoft/TypeScript#64580).
  * Set this to true once a fixed extension ships (tsrx-org/tsrx#992).
  */
 const TYPESCRIPT_7_SOURCE_DEFINITION = false;

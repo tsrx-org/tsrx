@@ -110,6 +110,21 @@
         "command": "tsrx.goToSourceDefinition",
         "title": "Go to Source Definition",
         "category": "TSRX"
+      },
+      {
+        "command": "tsrx.goToProjectConfig",
+        "title": "Go to Project Configuration",
+        "category": "TSRX"
+      },
+      {
+        "command": "tsrx.sortImports",
+        "title": "Sort Imports",
+        "category": "TSRX"
+      },
+      {
+        "command": "tsrx.removeUnusedImports",
+        "title": "Remove Unused Imports",
+        "category": "TSRX"
       }
     ],
     "languages": [
@@ -159,35 +174,26 @@
           "group": "navigation@1.41"
         }
       ],
-      "explorer/context": [
-        {
-          "command": "typescript.findAllFileReferences",
-          "when": "tsSupportsFileReferences && resourceLangId == tsrx",
-          "group": "4_search"
-        }
-      ],
-      "editor/title/context": [
-        {
-          "command": "typescript.findAllFileReferences",
-          "when": "tsSupportsFileReferences && resourceLangId == tsrx"
-        }
-      ],
       "commandPalette": [
         {
-          "command": "typescript.reloadProjects",
-          "when": "editorLangId == tsrx && typescript.isManagedFile"
+          "command": "tsrx.restartServer",
+          "when": "tsrx.active"
         },
         {
-          "command": "typescript.goToProjectConfig",
-          "when": "editorLangId == tsrx && typescript.isManagedFile"
+          "command": "tsrx.goToSourceDefinition",
+          "when": "editorLangId == tsrx"
         },
         {
-          "command": "typescript.sortImports",
-          "when": "supportedCodeAction =~ /(\\s|^)source\\.sortImports\\b/ && editorLangId =~ /^tsrx$/"
+          "command": "tsrx.goToProjectConfig",
+          "when": "editorLangId == tsrx"
         },
         {
-          "command": "typescript.removeUnusedImports",
-          "when": "supportedCodeAction =~ /(\\s|^)source\\.removeUnusedImports\\b/ && editorLangId =~ /^tsrx$/"
+          "command": "tsrx.sortImports",
+          "when": "editorLangId == tsrx && supportedCodeAction =~ /(\\s|^)source\\.sortImports\\b/"
+        },
+        {
+          "command": "tsrx.removeUnusedImports",
+          "when": "editorLangId == tsrx && supportedCodeAction =~ /(\\s|^)source\\.removeUnusedImports\\b/"
         }
       ]
     }

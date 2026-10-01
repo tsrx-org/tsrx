@@ -310,6 +310,61 @@ export function Format() @{
 		const opened = vscode.window.activeTextEditor?.document;
 		result.sourceDefinition =
 			opened && opened !== document ? opened.uri.path.split('/node_modules/').pop() : undefined;
+
+		// TSRX: Go to Project Configuration in App.tsrx: the file it opens.
+		await vscode.window.showTextDocument(document);
+		await within(vscode.commands.executeCommand('tsrx.goToProjectConfig'), 10000, undefined);
+		const project_config = vscode.window.activeTextEditor?.document;
+		// Real paths on both sides: the opened file's path can differ in letter case.
+		result.projectConfig =
+			project_config && project_config !== document
+				? path.relative(
+						fs.realpathSync.native(path.dirname(path.dirname(config.file))),
+						fs.realpathSync.native(project_config.uri.fsPath),
+					)
+				: undefined;
+
+		// TSRX: Remove Unused Imports on a file written into the project copy here. The
+		// command changes the document, so it is reverted and closed right after.
+		const imports_file = path.join(path.dirname(config.file), 'Imports.tsrx');
+		fs.writeFileSync(
+			imports_file,
+			`import { useState } from 'react';
+import { label } from './label';
+import { App } from './App.tsrx';
+
+export function Imports() @{
+	const [count] = useState(0);
+	<p>{count}</p>
+}
+`,
+		);
+		const imports_document = await vscode.workspace.openTextDocument(imports_file);
+		await vscode.window.showTextDocument(imports_document);
+		const imports_before = imports_document.getText();
+		// The source actions need the file's project: wait for TypeScript to answer.
+		await poll_hover(
+			imports_document,
+			(text) => text.indexOf('useState(0)') + 2,
+			/useState/,
+			answering ? 20000 : 0,
+		);
+		await within(vscode.commands.executeCommand('tsrx.removeUnusedImports'), 20000, undefined);
+		const imports_deadline = Date.now() + 5000;
+		while (imports_document.getText() === imports_before && Date.now() < imports_deadline) {
+			await sleep(250);
+		}
+		result.removeUnusedImports = imports_document
+			.getText()
+			.split('\n')
+			.filter((line) => line.startsWith('import '));
+		await vscode.window.showTextDocument(imports_document);
+		await within(
+			vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor'),
+			5000,
+			undefined,
+		);
+
 		// Back to the file, so it is what gets reverted and closed below.
 		await vscode.window.showTextDocument(document);
 
