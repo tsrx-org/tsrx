@@ -4939,17 +4939,6 @@ function try_statement_to_jsx_child(node, transform_context) {
 			collect_pattern_bindings(param, transform_context.available_bindings);
 		}
 
-		const fallback_fn = b.arrow(
-			catch_params,
-			b.block(
-				build_render_statements(catch_body_nodes, true, transform_context),
-				has_location(handler.body) ? handler.body : undefined,
-			),
-			false,
-			undefined,
-			has_location(handler) ? handler : undefined,
-		);
-
 		const fallback_component =
 			transform_context.platform.hooks?.createErrorFallbackComponent?.(
 				catch_body_nodes,
@@ -4957,6 +4946,21 @@ function try_statement_to_jsx_child(node, transform_context) {
 				transform_context,
 				node,
 			) ?? null;
+
+		// A platform fallback component already holds the lowered catch body, so
+		// the fallback function renders it instead of lowering the body again.
+		const fallback_fn = b.arrow(
+			catch_params,
+			b.block(
+				fallback_component
+					? [b.return(clone_ast_node(fallback_component.component_element, false))]
+					: build_render_statements(catch_body_nodes, true, transform_context),
+				has_location(handler.body) ? handler.body : undefined,
+			),
+			false,
+			undefined,
+			has_location(handler) ? handler : undefined,
+		);
 
 		transform_context.available_bindings = saved_catch_bindings;
 

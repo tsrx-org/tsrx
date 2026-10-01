@@ -842,6 +842,28 @@ describe('@tsrx/vue basic', () => {
 		expect(error_boundary_index).toBeLessThan(suspense_index);
 	});
 
+	it('lowers a try/pending/catch catch body only into its fallback component', () => {
+		const { code } = compile(
+			`export function App() @{
+				@try {
+					<span>{'Loaded'}</span>
+				} @pending {
+					<span>{'Loading'}</span>
+				} @catch (error) {
+					<span>{'Failed'}</span>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.match(/<span>\{'Failed'\}<\/span>/g)).toHaveLength(1);
+		expect(code).toMatch(
+			/const App__StatementBodyHook1 = defineVaporComponent\(function App__StatementBodyHook1\(\) \{\n\treturn App__static\d+;/,
+		);
+		expect(code).toContain('fallback={(error, _reset) => {');
+		expect(code.match(/return <App__StatementBodyHook1 \/>;/g)).toHaveLength(2);
+	});
+
 	it('keeps try/pending/catch Suspense lowering valid in type-only output', () => {
 		const source = `import { defineVaporAsyncComponent } from 'vue';
 

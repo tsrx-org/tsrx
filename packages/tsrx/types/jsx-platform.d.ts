@@ -227,7 +227,9 @@ export interface JsxPlatformHooks {
 	/**
 	 * Optionally create a generated component for a catch fallback body while
 	 * the catch parameters are still in scope. Platforms can use this to reuse
-	 * one mapped catch-body component from multiple runtime catch sites.
+	 * one mapped catch-body component from multiple runtime catch sites. When a
+	 * component is returned, the catch body is lowered only into it, and the
+	 * fallback function passed to `createErrorBoundary` renders the component.
 	 */
 	createErrorFallbackComponent?: (
 		catchBodyNodes: AST.Statement[],

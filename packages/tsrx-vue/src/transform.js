@@ -111,9 +111,6 @@ const vue_platform = {
 				return create_vapor_error_boundary(try_content, fallback_fn);
 			}
 			const fallback_component = info?.fallbackComponent ?? null;
-			const fallback_renderer = fallback_component
-				? create_fallback_component_renderer(fallback_component, fallback_fn)
-				: fallback_fn;
 			const default_slot = ctx.typeOnly
 				? b.arrow([], jsx_child_to_expression(raw_try_content))
 				: create_sync_error_boundary_slot(
@@ -127,7 +124,7 @@ const vue_platform = {
 				default_slot,
 				fallback_content,
 			);
-			const boundary = create_vapor_error_boundary(suspense, fallback_renderer);
+			const boundary = create_vapor_error_boundary(suspense, fallback_fn);
 			for (const statement of fallback_component?.setup_statements ?? []) {
 				addJsxSetupDeclaration(boundary, statement);
 			}
@@ -255,18 +252,6 @@ function create_sync_error_boundary_slot(
 		true,
 	);
 	return b.arrow([], b.block([try_statement]));
-}
-
-/**
- * @param {JsxHelperComponent} fallback_component
- * @param {AST.ArrowFunctionExpression} fallback_fn
- * @returns {AST.ArrowFunctionExpression}
- */
-function create_fallback_component_renderer(fallback_component, fallback_fn) {
-	return b.arrow(
-		fallback_fn.params.map((param) => clone_ast_node(param, false)),
-		b.block([b.return(create_fallback_component_element(fallback_component, fallback_fn))]),
-	);
 }
 
 /**

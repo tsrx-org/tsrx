@@ -1,4 +1,4 @@
-import type { VaporRenderedBlock } from './vapor-runtime.js';
+import type { Block } from 'vue';
 
 export interface TsrxErrorBoundaryProps {
 	/**
@@ -12,7 +12,12 @@ export interface TsrxErrorBoundaryProps {
 }
 
 export interface TsrxErrorBoundaryComponent {
-	(props: TsrxErrorBoundaryProps): Array<VaporRenderedBlock | undefined>;
+	/**
+	 * Returns a one-item block that the boundary patches in place: the rendered
+	 * `content`, or the `fallback` once an error is caught. Typed as Vue's
+	 * `Block` so the component is a valid element under `vue-jsx-vapor`'s JSX.
+	 */
+	(props: TsrxErrorBoundaryProps): Block;
 	__setup(): void;
 }
 
