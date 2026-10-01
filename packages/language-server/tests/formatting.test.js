@@ -1,7 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { format_tsrx } from '../src/formatting.js';
 import { add_dev_command, setup_message } from '../src/formattingHandler.js';
@@ -74,6 +75,41 @@ export function App() @{
 				text: expected,
 			});
 		}
+	});
+
+	it('finds a plugin the Prettier config names from the file, in a monorepo package', () => {
+		// Prettier at the root, the plugin only in the package, and the config naming it.
+		// Prettier would resolve the name from the process's working directory, which for
+		// a language server is not the project, so this runs from the temp folder.
+		const { dir } = project({ install: ['prettier'] });
+		const pkg = path.join(dir, 'packages', 'app');
+		fs.mkdirSync(path.join(pkg, 'node_modules', '@tsrx'), { recursive: true });
+		fs.symlinkSync(
+			plugin_package,
+			path.join(pkg, 'node_modules', '@tsrx', 'prettier-plugin'),
+			'junction',
+		);
+		fs.writeFileSync(
+			path.join(pkg, '.prettierrc'),
+			JSON.stringify({ plugins: ['@tsrx/prettier-plugin'] }),
+		);
+		const file_path = path.join(pkg, 'App.tsrx');
+		fs.writeFileSync(file_path, MESSY);
+		const module_url = pathToFileURL(
+			fileURLToPath(new URL('../src/formatting.js', import.meta.url)),
+		).href;
+		const output = execFileSync(
+			process.execPath,
+			[
+				'--input-type=module',
+				'-e',
+				`import { format_tsrx } from ${JSON.stringify(module_url)};
+const result = await format_tsrx({ file_path: ${JSON.stringify(file_path)}, text: ${JSON.stringify(MESSY)} });
+console.log(JSON.stringify({ status: result.status, error: result.error ? String(result.error.message) : undefined }));`,
+			],
+			{ cwd: os.tmpdir(), env: { ...process.env, NODE_PATH: '' }, encoding: 'utf8' },
+		);
+		expect(JSON.parse(output)).toEqual({ status: 'formatted' });
 	});
 
 	it('reads .editorconfig', async () => {

@@ -87,9 +87,20 @@ export async function format_tsrx({ file_path, text, tab_size = 2, insert_spaces
 			tabWidth: tab_size,
 			useTabs: !insert_spaces,
 		};
+		// Prettier resolves a plugin listed by package name from the process's working
+		// directory, which for an editor's language server is not the project, so each
+		// one is resolved from the file's node_modules here, as the Prettier extension
+		// does. A name it cannot find stays for Prettier to report.
 		/** @type {unknown[]} */
-		const plugins = Array.isArray(config.plugins) ? [...config.plugins] : [];
-		if (!plugins.includes(PRETTIER_PLUGIN)) plugins.push(plugin_entry);
+		const plugins = (Array.isArray(config.plugins) ? config.plugins : []).map(
+			(/** @type {unknown} */ plugin) =>
+				typeof plugin === 'string' && is_package_name(plugin)
+					? plugin === PRETTIER_PLUGIN
+						? plugin_entry
+						: (resolve(file_path, plugin) ?? plugin)
+					: plugin,
+		);
+		if (!plugins.includes(plugin_entry)) plugins.push(plugin_entry);
 		const formatted = await prettier.format(text, {
 			...config,
 			filepath: file_path,
@@ -101,6 +112,14 @@ export async function format_tsrx({ file_path, text, tab_size = 2, insert_spaces
 	} catch (error) {
 		return { status: 'failed', error };
 	}
+}
+
+/**
+ * Whether a plugin entry is a package name (`@tsrx/prettier-plugin`), not a path or URL.
+ * @param {string} specifier
+ */
+function is_package_name(specifier) {
+	return !specifier.startsWith('.') && !path.isAbsolute(specifier) && !/^[a-z]+:/i.test(specifier);
 }
 
 /**
