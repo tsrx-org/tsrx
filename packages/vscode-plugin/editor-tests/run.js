@@ -418,14 +418,18 @@ function source_definition_problem(scenario, result) {
 }
 
 /**
- * TSRX's commands that come from TypeScript or the file system, where TypeScript
- * serves the file: Go to Project Configuration opens the project's tsconfig.json, and
+ * Linked editing (both tag names of <button>, from TypeScript) and TSRX's commands
+ * that come from TypeScript or the file system, where TypeScript serves the file:
+ * Go to Project Configuration opens the project's tsconfig.json, and
  * Remove Unused Imports removes the two unused imports on TypeScript 7. VS Code's own
  * TypeScript (5.9 or 6) returns no edits for them yet (tsrx-org/tsrx#994).
  * @param {import('./scenarios.js').Scenario} scenario
  * @param {Record<string, any>} result
  */
 function command_problem(scenario, result) {
+	if (JSON.stringify(result.linkedEditing) !== JSON.stringify(['button', 'button'])) {
+		return `expected linked editing on <button> to cover both tag names, got ${JSON.stringify(result.linkedEditing)}`;
+	}
 	if (result.projectConfig !== 'tsconfig.json') {
 		return `expected Go to Project Configuration to open tsconfig.json, got ${JSON.stringify(result.projectConfig)}`;
 	}

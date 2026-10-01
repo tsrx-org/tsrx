@@ -45,6 +45,24 @@ On TypeScript 7 these actions work in `.tsrx` files. On TypeScript 5.9 or 6 they
 do not change `.tsrx` files yet
 ([tsrx-org/tsrx#994](https://github.com/tsrx-org/tsrx/issues/994)).
 
+### Rename both tags of a pair
+
+To rename an element's closing tag together with its opening tag as you type, turn
+on linked editing, as for HTML and TSX files. VS Code leaves it off by default. In
+your settings, turn it on everywhere:
+
+```json
+{ "editor.linkedEditing": true }
+```
+
+Or only for `.tsrx` files:
+
+```json
+{ "[tsrx]": { "editor.linkedEditing": true } }
+```
+
+TypeScript finds the tag pairs, on TypeScript 5.9, 6 and 7.
+
 ### Native backend setup
 
 TypeScript 7 support for `.tsrx` files is not complete yet. The gaps and the

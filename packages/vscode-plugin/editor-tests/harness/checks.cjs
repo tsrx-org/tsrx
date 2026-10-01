@@ -131,6 +131,30 @@ exports.run = async () => {
 			answering ? 10000 : 0,
 		);
 
+		// Linked editing on the <button> tag (auto-rename of the tag pair with
+		// editor.linkedEditing on): the text of the ranges VS Code's provider returns.
+		// An internal command: its ranges are the editor's one-based IRange, not vscode.Range.
+		/** @type {{ ranges: Array<{ startLineNumber: number, startColumn: number, endLineNumber: number, endColumn: number }> } | undefined} */
+		const linked = await within(
+			vscode.commands.executeCommand(
+				'_executeLinkedEditingProvider',
+				uri,
+				document.positionAt(text.indexOf('<button') + 2),
+			),
+			10000,
+			undefined,
+		);
+		result.linkedEditing = linked?.ranges?.map((range) =>
+			document.getText(
+				new vscode.Range(
+					range.startLineNumber - 1,
+					range.startColumn - 1,
+					range.endLineNumber - 1,
+					range.endColumn - 1,
+				),
+			),
+		);
+
 		/** @type {Array<vscode.Location | vscode.LocationLink>} */
 		const definitions = await within(
 			vscode.commands.executeCommand(
@@ -302,6 +326,18 @@ export function Format() @{
 		const source_editor = await vscode.window.showTextDocument(document);
 		const use_state = document.positionAt(document.getText().indexOf('useState(0)') + 2);
 		source_editor.selection = new vscode.Selection(use_state, use_state);
+		// TypeScript can still be loading the definition's file: wait until it has one.
+		const definition_deadline = Date.now() + (answering ? 20000 : 0);
+		while (Date.now() < definition_deadline) {
+			/** @type {unknown[] | undefined} */
+			const found = await within(
+				vscode.commands.executeCommand('vscode.executeDefinitionProvider', document.uri, use_state),
+				5000,
+				undefined,
+			);
+			if (found?.length) break;
+			await sleep(500);
+		}
 		await within(vscode.commands.executeCommand('tsrx.goToSourceDefinition'), 30000, undefined);
 		const source_deadline = Date.now() + 10000;
 		while (vscode.window.activeTextEditor?.document === document && Date.now() < source_deadline) {
