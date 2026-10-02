@@ -12,3 +12,9 @@ export interface TsrxLanguageServerOptions {
 }
 
 export function createTsrxLanguageServer(options?: TsrxLanguageServerOptions): TsrxLanguageServer;
+
+/**
+ * The notification the server sends to ask for a restart, to a client that set
+ * the `restartNotification` initialization option.
+ */
+export const RESTART_NOTIFICATION: 'tsrx/restartServer';

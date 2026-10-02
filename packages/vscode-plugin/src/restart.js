@@ -4,6 +4,29 @@ import { typescript_7_on } from './typescript-7.js';
 export const RESTART_COMMAND = 'tsrx.restartServer';
 
 /**
+ * What the TSRX language server sends to ask for a restart (`RESTART_NOTIFICATION` in
+ * `@tsrx/language-server`), because the client set the `restartNotification`
+ * initialization option.
+ */
+export const RESTART_NOTIFICATION = 'tsrx/restartServer';
+
+/**
+ * The server asks for a restart when a package.json or a lockfile changes, to load the
+ * TSRX compiler again. The client restarts it, so it stops sending before the server
+ * exits. A server that exited by itself made VS Code show "Cannot call write after a
+ * stream was destroyed" for the next message.
+ * @param {import('vscode-languageclient/node').LanguageClient} client
+ * @returns {import('vscode').Disposable}
+ */
+export function restart_on_request(client) {
+	return client.onNotification(RESTART_NOTIFICATION, () => {
+		client.restart().catch((error) => {
+			client.error('Restarting the TSRX language server failed.', error, false);
+		});
+	});
+}
+
+/**
  * **TSRX: Restart Language Server** restarts everything that serves `.tsrx` files: the
  * TSRX language server, and the TypeScript server, which is VS Code's own tsserver
  * (hosting `@tsrx/typescript-plugin`) or TypeScript 7 (running `@tsrx/content-mapper`).

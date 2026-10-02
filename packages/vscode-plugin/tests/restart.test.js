@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { RESTART_COMMAND, register_restart_command } from '../src/restart.js';
+import {
+	RESTART_COMMAND,
+	RESTART_NOTIFICATION,
+	register_restart_command,
+	restart_on_request,
+} from '../src/restart.js';
 
 const host = vi.hoisted(() => ({
 	use_tsgo: false,
@@ -100,5 +105,47 @@ describe('TSRX: Restart Language Server', () => {
 		expect(host.showErrorMessage).toHaveBeenCalledWith(
 			'TSRX could not restart the language server: server crashed',
 		);
+	});
+});
+
+/** A client whose server can ask for a restart (`request`). */
+function requesting_client() {
+	/** @type {Map<string, () => void>} */
+	const handlers = new Map();
+	const client = {
+		onNotification: vi.fn((/** @type {string} */ method, /** @type {() => void} */ handler) => {
+			handlers.set(method, handler);
+			return { dispose() {} };
+		}),
+		restart: vi.fn(async () => {}),
+		error: vi.fn(),
+	};
+	restart_on_request(
+		/** @type {import('vscode-languageclient/node').LanguageClient} */ (
+			/** @type {unknown} */ (client)
+		),
+	);
+	return { client, request: () => handlers.get(RESTART_NOTIFICATION)?.() };
+}
+
+describe('Restart when the TSRX language server asks', () => {
+	it('restarts the TSRX server only', () => {
+		const { client, request } = requesting_client();
+		request();
+		expect(client.restart).toHaveBeenCalledOnce();
+		expect(host.executeCommand).not.toHaveBeenCalled();
+	});
+
+	it('writes a failed restart to the output only', async () => {
+		const { client, request } = requesting_client();
+		client.restart.mockRejectedValue(new Error('server crashed'));
+		request();
+		await vi.waitFor(() => expect(client.error).toHaveBeenCalledOnce());
+		expect(client.error).toHaveBeenCalledWith(
+			'Restarting the TSRX language server failed.',
+			expect.objectContaining({ message: 'server crashed' }),
+			false,
+		);
+		expect(host.showErrorMessage).not.toHaveBeenCalled();
 	});
 });

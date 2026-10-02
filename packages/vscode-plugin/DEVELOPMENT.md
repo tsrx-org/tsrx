@@ -28,7 +28,9 @@ installs the extensions the scenario lists, opens a copy of
 file: a hover, a definition, and a type error typed into the unsaved buffer.
 Scenarios cover the TypeScript 7 extension with the project's 7.1 nightly, with
 the TypeScript 7 Nightly extension, with its bundled compiler, switched off, and
-VS Code's own TypeScript without it.
+VS Code's own TypeScript without it. `vscode-typescript-package-change` changes
+the project's `package.json` and checks, in the TSRX Language Server output, that
+the extension restarts the TSRX server without a connection error.
 
 ```sh
 pnpm --filter @tsrx/vscode-plugin build-and-package

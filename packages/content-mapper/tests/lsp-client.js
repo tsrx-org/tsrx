@@ -36,6 +36,11 @@ export class NativeLspClient {
 	 * @type {Record<string, unknown>}
 	 */
 	configuration = {};
+	/**
+	 * Resolves with the server's exit code once its process has exited.
+	 * @type {Promise<number | null>}
+	 */
+	exited;
 
 	/**
 	 * @param {string} cwd
@@ -59,6 +64,7 @@ export class NativeLspClient {
 			for (const pending of this.#pending.values()) pending.reject(error);
 			this.#pending.clear();
 		});
+		this.exited = new Promise((resolve) => this.#process.on('exit', resolve));
 		this.#process.stdout.on('data', (chunk) => {
 			this.#buffered = Buffer.concat([this.#buffered, chunk]);
 			this.#read_messages();

@@ -295,6 +295,7 @@ async function run_scenario(scenario, index) {
 			autoInsertWaitMs: AUTO_INSERT_WAIT_MS,
 			action: scenario.action,
 			command: scenario.command,
+			packageChange: scenario.packageChange,
 			actionWaitMs: ACTION_WAIT_MS,
 		}),
 	);
@@ -357,8 +358,28 @@ async function run_scenario(scenario, index) {
 	await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5000))]);
 	fs.closeSync(log_fd);
 	const result = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, 'utf8')) : undefined;
-	if (result) result.tsserver = tsserver_logs(user_data);
+	if (result) {
+		result.tsserver = tsserver_logs(user_data);
+		result.serverOutput = server_output(user_data);
+	}
 	return { result, installed: extensions.installed, log };
+}
+
+/**
+ * What the TSRX Language Server output says in an instance, from the file VS Code
+ * keeps for each output channel: the server's own lines, and the language client's
+ * (`[Error - 1:12:18 PM] ...`), without the plugins' debug lines.
+ * @param {string} user_data
+ * @returns {string[]}
+ */
+function server_output(user_data) {
+	const logs = path.join(user_data, 'logs');
+	if (!fs.existsSync(logs)) return [];
+	return fs
+		.readdirSync(logs, { recursive: true, encoding: 'utf8' })
+		.filter((file) => /^\d+-TSRX Language Server\.log$/.test(path.basename(file)))
+		.flatMap((file) => fs.readFileSync(path.join(logs, file), 'utf8').split('\n'))
+		.filter((line) => /^\[(TSRX Language Server\]|Info |Warn |Error )/.test(line));
 }
 
 /**

@@ -258,6 +258,28 @@ exports.run = async () => {
 			result.afterCommand.symbols = symbols?.length ?? 0;
 		}
 
+		if (config.packageChange) {
+			// The project's package.json changes, as `pnpm install` changes it: the TSRX
+			// server restarts to load the TSRX compiler again, and then lists the symbols.
+			// The runner reads what the server's output says about the restart.
+			const package_json = path.join(path.dirname(path.dirname(config.file)), 'package.json');
+			fs.appendFileSync(package_json, '\n');
+			await sleep(config.actionWaitMs);
+			let symbols = 0;
+			const symbols_deadline = Date.now() + 20000;
+			while (symbols === 0 && Date.now() < symbols_deadline) {
+				/** @type {unknown[] | undefined} */
+				const found = await within(
+					vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', document.uri),
+					5000,
+					undefined,
+				);
+				symbols = found?.length ?? 0;
+				if (symbols === 0) await sleep(500);
+			}
+			result.afterPackageChange = { symbols };
+		}
+
 		// `main.ts` imports `App.tsrx`: whatever serves `.ts` files must resolve it,
 		// with no `plugins` entry in the fixture's tsconfig.json.
 		const main = await vscode.workspace.openTextDocument(

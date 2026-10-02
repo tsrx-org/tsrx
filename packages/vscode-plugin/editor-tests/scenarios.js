@@ -29,7 +29,9 @@
  * comma-separated (none when left out). `action` runs one of the notice's actions,
  * as clicking it would; `check` then reads `result.afterAction`. `command` runs a
  * command at the end, as the Command Palette would; `check` then reads
- * `result.afterCommand`.
+ * `result.afterCommand`. `packageChange` changes the project's package.json at the
+ * end, as `pnpm install` would; `check` then reads `result.afterPackageChange`.
+ * `result.serverOutput` has the lines of the TSRX Language Server output.
  *
  * @typedef {'typescript-7' | 'vscode-typescript' | 'nothing'} Server
  * @typedef {'vscode' | 'typescript-7' | 'typescript-7-unsupported' | 'typescript-7-missing'} Status
@@ -44,6 +46,7 @@
  * 	notice?: string,
  * 	action?: string,
  * 	command?: string,
+ * 	packageChange?: boolean,
  * 	gap?: string,
  * 	closingTag?: string,
  * 	check?: (result: Record<string, any>) => string | undefined,
@@ -106,6 +109,35 @@ function restarted(result) {
 			: after.symbols > 0
 				? undefined
 				: 'expected document symbols after the restart';
+}
+
+/**
+ * After a package.json change, the TSRX server asks for a restart, the extension
+ * restarts it, and the new server lists the document symbols. The server must not exit
+ * by itself: the language client then takes it for a crash ("Connection to server got
+ * closed"), and what it sends meanwhile fails, which VS Code showed as "Client TSRX
+ * Language Server: connection to server is erroring. Cannot call write after a stream
+ * was destroyed".
+ * @param {Record<string, any>} result
+ */
+function restarted_after_package_change(result) {
+	/** @type {string[]} */
+	const output = result.serverOutput ?? [];
+	const unexpected = output.filter((line) =>
+		/connection to server is erroring|Connection to server got closed/.test(line),
+	);
+	const asked = output.findIndex((line) =>
+		line.includes('Asking the client to restart the server'),
+	);
+	return unexpected.length > 0
+		? `expected the extension to restart the server, but the output says ${JSON.stringify(unexpected)}`
+		: asked < 0
+			? 'expected the server to ask for a restart after the package.json change'
+			: !output.slice(asked).some((line) => line.includes('Server process exited with code 0'))
+				? 'expected the server to stop after it asked for the restart'
+				: result.afterPackageChange?.symbols > 0
+					? undefined
+					: 'expected document symbols from the new server';
 }
 
 /** @type {Scenario[]} */
@@ -288,6 +320,17 @@ export const SCENARIOS = [
 		command: 'tsrx.restartServer',
 		closingTag: '<b></b>',
 		check: restarted,
+	},
+	{
+		name: 'vscode-typescript-package-change',
+		description:
+			'TSRX extension only, then package.json changes: the TSRX server restarts without an error',
+		extensions: ['tsrx'],
+		expect: 'vscode-typescript',
+		typescript: 'vscode',
+		packageChange: true,
+		closingTag: '<b></b>',
+		check: restarted_after_package_change,
 	},
 	{
 		name: 'vscode-typescript-tsrx-closing-off',

@@ -30,6 +30,12 @@ import {
 const { log, logError } = createLogging('[TSRX Language Server]');
 
 /**
+ * Sent to a client that set the `restartNotification` initialization option
+ * when the server must restart; the client then restarts the server itself.
+ */
+export const RESTART_NOTIFICATION = 'tsrx/restartServer';
+
+/**
  * @param {{ argv?: readonly string[] }} [options] `argv` defaults to the process
  *   arguments; it carries the `--typescript-backend=<classic|native>` flag.
  */
@@ -49,13 +55,24 @@ export function createTsrxLanguageServer(options = {}) {
 	/** @type {Set<Set<string>>} */
 	const compilerResolutionDependencySets = new Set();
 	let restartScheduled = false;
+	let clientRestarts = false;
 
-	/** Restart the process so Node drops the complete ESM compiler graph. */
+	/**
+	 * Restart the process so Node drops the complete ESM compiler graph. A
+	 * client that restarts the server itself stops sending first. When the
+	 * server exits by itself, the client's next message fails (VS Code showed
+	 * "Cannot call write after a stream was destroyed").
+	 */
 	function restartLanguageServer() {
 		if (restartScheduled) {
 			return;
 		}
 		restartScheduled = true;
+		if (clientRestarts) {
+			log('Asking the client to restart the server after package state changed.');
+			void connection.sendNotification(RESTART_NOTIFICATION);
+			return;
+		}
 		log('Restarting after package state changed.');
 		setTimeout(() => process.exit(0), 50);
 	}
@@ -132,6 +149,7 @@ export function createTsrxLanguageServer(options = {}) {
 		try {
 			log('Initializing TSRX language server...');
 			log('Initialization options:', JSON.stringify(params.initializationOptions, null, 2));
+			clientRestarts = params.initializationOptions?.restartNotification === true;
 
 			const selection = resolve_typescript_backend({
 				argv,

@@ -24,7 +24,7 @@ import protocol from '@volar/language-server/protocol';
 import * as lsp from 'vscode-languageclient/node';
 import { createLabsInfo } from '@volar/vscode';
 import { activate_closing_tags } from './closing-tags.js';
-import { register_restart_command } from './restart.js';
+import { register_restart_command, restart_on_request } from './restart.js';
 import { register_source_definition_command } from './source-definition.js';
 import { register_project_config_command } from './project-config.js';
 import { register_import_commands } from './import-commands.js';
@@ -160,7 +160,9 @@ export async function activate(context) {
 		// copy once TypeScript 7's content mapper has been seen reporting in this session, so
 		// the extension never has to know which TypeScript VS Code runs, and drops each one
 		// tsserver shows itself (same TypeScript code, same place).
-		initializationOptions: { typescriptBackend: 'plugin' },
+		// `restartNotification`: the server asks for a restart (`restart_on_request`)
+		// instead of exiting by itself.
+		initializationOptions: { typescriptBackend: 'plugin', restartNotification: true },
 		middleware: {
 			handleDiagnostics(uri, diagnostics, next) {
 				const all = vscode.languages.getDiagnostics(uri);
@@ -196,6 +198,8 @@ export async function activate(context) {
 
 	try {
 		client = new lsp.LanguageClient('tsrx', 'TSRX Language Server', serverOptions, clientOptions);
+		// Before the start: the handler stays registered across restarts.
+		context.subscriptions.push(restart_on_request(client));
 
 		console.log('Starting language client...');
 		await client.start();

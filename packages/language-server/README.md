@@ -163,6 +163,22 @@ Other formatters for `.tsrx` files return no edits:
 In VS Code, TSRX is the default formatter for `.tsrx` files, so neither gets in
 the way.
 
+## Restarts after package changes
+
+When a `package.json` or a lockfile changes (`pnpm install`, for example), the
+server must restart to load the TSRX compiler again. By default it exits with code
+0, and the editor must start it again.
+
+An editor that can restart the server itself sets the `restartNotification`
+initialization option. The server then sends a `tsrx/restartServer` notification
+and keeps running until the editor stops it (`shutdown`, then `exit`) and starts
+it again. The VS Code extension does this:
+
+```jsonc
+// LSP initialize params
+{ "initializationOptions": { "restartNotification": true } }
+```
+
 ## More
 
 See the [TSRX documentation](https://tsrx.dev/) and
