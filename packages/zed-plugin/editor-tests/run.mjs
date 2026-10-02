@@ -114,6 +114,12 @@ async function run_scenario(scenario) {
 		recursive: true,
 		filter: (source) => !source.includes(`${path.sep}target${path.sep}`),
 	});
+	// Trust every folder in this instance only, so Zed asks nothing about the project.
+	fs.mkdirSync(path.join(user_data, 'config'), { recursive: true });
+	fs.writeFileSync(
+		path.join(user_data, 'config', 'settings.json'),
+		JSON.stringify({ session: { trust_all_worktrees: true } }, null, 2),
+	);
 	const log = fs.openSync(path.join(root, `zed-${scenario.name}.log`), 'w');
 	const zed = spawn(zed_cli, ['--user-data-dir', user_data, '--foreground', project, file], {
 		stdio: ['ignore', log, log],
