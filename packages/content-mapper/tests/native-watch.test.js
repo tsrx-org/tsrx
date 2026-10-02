@@ -101,15 +101,21 @@ describe('native tsc --watch', () => {
 		expect(log.output).not.toContain('TS2322');
 		expect(log.output).toMatch(/Found 1 error\. Watching for file changes/);
 
-		// Fixing the .tsrx file brings back main.ts's cross-file error.
+		// Fixing the .tsrx file brings back main.ts's cross-file error. A write
+		// empties the file before it fills it, and watch mode can compile in
+		// between ("Panel.tsrx is not a module"), so check the pass that saw the
+		// new text.
 		let offset = log.output.length;
 		fs.writeFileSync(path.join(created.dir, 'Panel.tsrx'), panel);
-		await wait_for(child, log, (output) => watch_passes_since(output, offset).length > 0);
-		for (const pass of watch_passes_since(log.output, offset)) {
-			expect(pass).toMatch(/main\.ts\(7,47\): error TS2322:/);
-			expect(pass).not.toMatch(/error TSRX/);
-			expect(pass).toContain('Found 1 error.');
-		}
+		const cross_file_error = /main\.ts\(7,47\): error TS2322:/;
+		await wait_for(child, log, (output) =>
+			watch_passes_since(output, offset).some((pass) => cross_file_error.test(pass)),
+		);
+		const fixed = watch_passes_since(log.output, offset).find((pass) =>
+			cross_file_error.test(pass),
+		);
+		expect(fixed).not.toMatch(/error TSRX/);
+		expect(fixed).toContain('Found 1 error.');
 
 		// Fixing the .ts importer leaves no errors.
 		offset = log.output.length;
