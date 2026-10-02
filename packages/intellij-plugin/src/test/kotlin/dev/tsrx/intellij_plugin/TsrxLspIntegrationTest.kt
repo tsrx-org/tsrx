@@ -81,12 +81,16 @@ class TsrxLspIntegrationTest : BasePlatformTestCase() {
 			configurable.apply()
 			assertEmpty(restarts)
 
-			field.text = lib
+			field.text = "  $lib  "
 			assertTrue(configurable.isModified)
 			configurable.apply()
 			assertEquals(lib, settings.typescriptLib)
+			assertEquals(lib, field.text)
+			assertFalse(configurable.isModified)
 			assertEquals(listOf(project), restarts)
 
+			configurable.apply()
+			field.text = "$lib "
 			configurable.apply()
 			assertEquals(1, restarts.size)
 

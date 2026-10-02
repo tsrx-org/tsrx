@@ -36,6 +36,8 @@ class TsrxSettingsConfigurable internal constructor(
 	override fun apply() {
 		val before = settings.typescriptLib
 		super.apply()
+		// Show the trimmed value that was saved, so the page is no longer modified.
+		reset()
 		if (settings.typescriptLib != before) {
 			restartServer(project)
 		}
