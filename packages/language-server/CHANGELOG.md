@@ -1,5 +1,41 @@
 # @tsrx/language-server
 
+## 0.6.1
+
+### Patch Changes
+
+- [#999](https://github.com/tsrx-org/tsrx/pull/999)
+  [`72eb4ab`](https://github.com/tsrx-org/tsrx/commit/72eb4ab3206870b0e3592431c998f60aa434a79e)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - When a `package.json` or a
+  lockfile changes, VS Code no longer shows "Client TSRX Language Server:
+  connection to server is erroring. Cannot call write after a stream was
+  destroyed". The language server restarts to load the TSRX compiler again.
+  Before, it exited by itself, and VS Code's next message to it failed. Now an
+  editor that sets the new `restartNotification` initialization option gets a
+  `tsrx/restartServer` notification and restarts the server itself. The VS Code
+  extension sets it. Other editors see the same exit as before.
+
+- [#1011](https://github.com/tsrx-org/tsrx/pull/1011)
+  [`4c627a3`](https://github.com/tsrx-org/tsrx/commit/4c627a3368e0b2b84ff778c88b9eb34cedb2d6b4)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - When an editor starts the
+  server without choosing a backend (Zed, Neovim, Sublime Text, IntelliJ), the
+  server now uses the project's `typescript`: it looks for
+  `node_modules/typescript` in each open workspace folder and its parent folders,
+  then next to the server. The `typescript.tsdk` initialization option still comes
+  first. Any version below 7 works. When it finds no `typescript`, or finds
+  TypeScript 7, the server still starts without TypeScript features and shows one
+  warning that says what it found and what to do, instead of refusing to start.
+
+  `typescript` is now an optional peer dependency of `@tsrx/language-server` and
+  `@tsrx/typescript-plugin`, so npm and pnpm no longer install one with them: a
+  global install, or the copy an editor installs into its own folder, used to get
+  a TypeScript 7 nightly, which the server cannot run. Without a `typescript`,
+  `tsrx-tsc` now says to install one.
+
+- Updated dependencies
+  [[`4c627a3`](https://github.com/tsrx-org/tsrx/commit/4c627a3368e0b2b84ff778c88b9eb34cedb2d6b4)]:
+  - @tsrx/typescript-plugin@0.6.1
+
 ## 0.6.0
 
 ### Minor Changes

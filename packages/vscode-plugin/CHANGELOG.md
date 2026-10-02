@@ -1,5 +1,60 @@
 # Changelog
 
+## 2.2.1
+
+### Patch Changes
+
+- [#999](https://github.com/tsrx-org/tsrx/pull/999)
+  [`72eb4ab`](https://github.com/tsrx-org/tsrx/commit/72eb4ab3206870b0e3592431c998f60aa434a79e)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - When a `package.json` or a
+  lockfile changes, VS Code no longer shows "Client TSRX Language Server:
+  connection to server is erroring. Cannot call write after a stream was
+  destroyed". The language server restarts to load the TSRX compiler again.
+  Before, it exited by itself, and VS Code's next message to it failed. Now an
+  editor that sets the new `restartNotification` initialization option gets a
+  `tsrx/restartServer` notification and restarts the server itself. The VS Code
+  extension sets it. Other editors see the same exit as before.
+
+- [#1006](https://github.com/tsrx-org/tsrx/pull/1006)
+  [`4403f93`](https://github.com/tsrx-org/tsrx/commit/4403f93f71f29d60d3cea46b55ee145e915d28d1)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The extension ships each
+  package it keeps unbundled at the version the TSRX language server resolves: it
+  shipped `acorn` 8.16.0 (from an older `@tsrx/core` elsewhere in the workspace),
+  while the bundled `@tsrx/core` needs `^8.18.0`. The build now resolves each of
+  these packages from the package that depends on it, and fails, naming who needs
+  which version, when one would need two versions.
+
+- [#1005](https://github.com/tsrx-org/tsrx/pull/1005)
+  [`337ae36`](https://github.com/tsrx-org/tsrx/commit/337ae36e4f11145bff88036144b99683b2f61bac)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Update the VS Code language
+  client to vscode-languageclient 10.1.2. After the TSRX language server stops
+  unexpectedly and starts again, the TSRX Language Server output no longer shows a
+  line that says only `true`. The output and trace channels are now log channels:
+  each line shows its time and level, and **Set Log Level** in the Output view
+  filters them. Server traces (`tsrx.trace.server`) show at the Trace level.
+
+- [#1007](https://github.com/tsrx-org/tsrx/pull/1007)
+  [`628a342`](https://github.com/tsrx-org/tsrx/commit/628a342555e9e3f0528d378ddd7072da968ef4d5)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The extension no longer ships
+  a copy of TypeScript 5.9.3 inside its language server bundle, which it never
+  loaded: the VSIX is 3.5 MB instead of 7.4 MB. The extension's language server
+  runs beside VS Code's own TypeScript and loads none.
+
+- [#1001](https://github.com/tsrx-org/tsrx/pull/1001)
+  [`c80453c`](https://github.com/tsrx-org/tsrx/commit/c80453c6bf89276838e2b7ac3333f5452180b80b)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - After the TSRX language
+  server restarts (**TSRX: Restart Language Server**, a `package.json` or lockfile
+  change, or a crash), the TSRX Language Server output shows the new server's
+  lines again. The restarted server used to start without `TSRX_DEBUG`, so it
+  wrote nothing to the output. vscode-languageclient 9 and the `fork` of VS Code's
+  Electron both change the server options object they get, and the next start lost
+  the variable. Each start now gets new options.
+- Updated dependencies
+  [[`72eb4ab`](https://github.com/tsrx-org/tsrx/commit/72eb4ab3206870b0e3592431c998f60aa434a79e),
+  [`4c627a3`](https://github.com/tsrx-org/tsrx/commit/4c627a3368e0b2b84ff778c88b9eb34cedb2d6b4)]:
+  - @tsrx/language-server@0.6.1
+  - @tsrx/typescript-plugin@0.6.1
+
 ## 2.2.0
 
 ### Minor Changes
