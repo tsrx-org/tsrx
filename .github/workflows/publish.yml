@@ -12,7 +12,7 @@ jobs:
     if: >-
       github.repository == 'tsrx-org/tsrx' &&
       github.ref == 'refs/heads/main' &&
-      contains(github.event.head_commit.message, 'Version Packages')
+      startsWith(github.event.head_commit.message, 'Version Packages')
     permissions:
       contents: write
       id-token: write
