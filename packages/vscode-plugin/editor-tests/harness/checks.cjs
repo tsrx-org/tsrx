@@ -7,6 +7,7 @@
  * this file by the runner). It never saves the documents.
  */
 
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const vscode = require('vscode');
@@ -71,6 +72,27 @@ async function poll_hover(document, offset, expected, timeout_ms) {
  */
 function hover_on_count(document, timeout_ms) {
 	return poll_hover(document, (text) => text.indexOf('{count}') + 1, /number/, timeout_ms);
+}
+
+/**
+ * The number of document symbols in `document`, polled until there are some or 20
+ * seconds have passed: right after a restart, the TSRX server may not answer yet.
+ * @param {vscode.TextDocument} document
+ */
+async function poll_symbols(document) {
+	let symbols = 0;
+	const deadline = Date.now() + 20000;
+	while (symbols === 0 && Date.now() < deadline) {
+		/** @type {unknown[] | undefined} */
+		const found = await within(
+			vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', document.uri),
+			5000,
+			undefined,
+		);
+		symbols = found?.length ?? 0;
+		if (symbols === 0) await sleep(500);
+	}
+	return symbols;
 }
 
 /**
@@ -265,19 +287,27 @@ exports.run = async () => {
 			const package_json = path.join(path.dirname(path.dirname(config.file)), 'package.json');
 			fs.appendFileSync(package_json, '\n');
 			await sleep(config.actionWaitMs);
-			let symbols = 0;
-			const symbols_deadline = Date.now() + 20000;
-			while (symbols === 0 && Date.now() < symbols_deadline) {
-				/** @type {unknown[] | undefined} */
-				const found = await within(
-					vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', document.uri),
-					5000,
-					undefined,
-				);
-				symbols = found?.length ?? 0;
-				if (symbols === 0) await sleep(500);
+			result.afterPackageChange = { symbols: await poll_symbols(document) };
+		}
+
+		if (config.serverCrash) {
+			// The TSRX server process dies, as in a crash: the language client starts it
+			// again, and the new server lists the symbols. The runner reads what the
+			// server's output says about it. The server is the one this extension host
+			// started (`--clientProcessId`).
+			const servers = execFileSync('ps', ['-A', '-o', 'pid=,command='], { encoding: 'utf8' })
+				.split('\n')
+				.filter(
+					(line) =>
+						line.includes(`--clientProcessId=${process.pid}`) &&
+						/tsrx\.tsrx-vscode-plugin-[^/]*\/dist\/server\.js/.test(line),
+				)
+				.map((line) => Number.parseInt(line.trim(), 10));
+			for (const pid of servers) {
+				process.kill(pid, 'SIGKILL');
 			}
-			result.afterPackageChange = { symbols };
+			await sleep(config.actionWaitMs);
+			result.afterServerCrash = { killed: servers.length, symbols: await poll_symbols(document) };
 		}
 
 		// `main.ts` imports `App.tsrx`: whatever serves `.ts` files must resolve it,

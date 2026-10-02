@@ -77,6 +77,14 @@ overrides:
   # preset's own dependency range.
   babel-preset-solid: '2.0.0-rc.2'
   babel-plugin-jsx-dom-expressions: '0.50.0-next.14'
+  # @volar/vscode 2.4 still declares vscode-languageclient ^9.0.1. One client copy
+  # for the extension and Volar's helpers (createLabsInfo, activateAutoInsertion), which
+  # use only sendRequest, sendNotification, onRequest and the protocol converters.
+  vscode-languageclient: ^10.1.2
+  # vscode-languageclient 10 needs the 3.18 types (CodeActionTag), and the VSIX ships
+  # one copy for every package. 3.18 only adds exports to 3.17, so the CSS language
+  # service and Volar's server keep working with it.
+  vscode-languageserver-types: 3.18.4
 
 packageExtensions:
   # These declaration files import types from `typescript` without declaring it,
@@ -187,7 +195,7 @@ catalogs:
     vitest: ^4.1.6
     volar-service-css: 0.0.70
     volar-service-typescript: 0.0.70
-    vscode-languageclient: ^9.0.1
+    vscode-languageclient: ^10.1.2
     vscode-languageserver-textdocument: ^1.0.12
     vscode-languageserver-types: ^3.17.5
     vscode-uri: ^3.1.0

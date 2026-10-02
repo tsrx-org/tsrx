@@ -17,7 +17,11 @@ const { log, logError } = createLogging('[TSRX TypeScript Diagnostic Plugin]');
  * @param {Diagnostic[]} items
  */
 function process(diagnostic, items) {
-	diagnostic.message = deobfuscateIdentifiers(diagnostic.message);
+	// LSP 3.18 also allows formatted text (`MarkupContent`); TypeScript's are strings.
+	diagnostic.message =
+		typeof diagnostic.message === 'string'
+			? deobfuscateIdentifiers(diagnostic.message)
+			: { ...diagnostic.message, value: deobfuscateIdentifiers(diagnostic.message.value) };
 	items.push(diagnostic);
 }
 

@@ -30,8 +30,10 @@ Scenarios cover the TypeScript 7 extension with the project's 7.1 nightly, with
 the TypeScript 7 Nightly extension, with its bundled compiler, switched off, and
 VS Code's own TypeScript without it. `vscode-typescript-package-change` changes
 the project's `package.json` and checks, in the TSRX Language Server output, that
-the extension restarts the TSRX server without a connection error. It and the
-`*-restart` scenarios also check that the restarted server writes to the output.
+the extension restarts the TSRX server without a connection error.
+`vscode-typescript-server-crash` stops the TSRX server process and checks that the
+language client starts it again. These and the `*-restart` scenarios also check
+that the restarted server writes to the output.
 
 ```sh
 pnpm --filter @tsrx/vscode-plugin build-and-package

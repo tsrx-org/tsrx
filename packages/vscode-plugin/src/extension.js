@@ -166,8 +166,12 @@ export async function activate(context) {
 				return { action: lsp.CloseAction.Restart };
 			},
 		},
-		outputChannel: vscode.window.createOutputChannel('TSRX Language Server'),
-		traceOutputChannel: vscode.window.createOutputChannel('TSRX Language Server Trace'),
+		// vscode-languageclient 10 writes to log channels: each line gets a time and a level,
+		// and the channel's log level (Set Log Level in the Output view) filters them.
+		outputChannel: vscode.window.createOutputChannel('TSRX Language Server', { log: true }),
+		traceOutputChannel: vscode.window.createOutputChannel('TSRX Language Server Trace', {
+			log: true,
+		}),
 	};
 
 	try {

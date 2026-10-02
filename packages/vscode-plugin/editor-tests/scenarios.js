@@ -31,6 +31,8 @@
  * command at the end, as the Command Palette would; `check` then reads
  * `result.afterCommand`. `packageChange` changes the project's package.json at the
  * end, as `pnpm install` would; `check` then reads `result.afterPackageChange`.
+ * `serverCrash` stops the TSRX server process at the end, as a crash would; `check`
+ * then reads `result.afterServerCrash`.
  * `result.serverOutput` has the lines of the TSRX Language Server output.
  *
  * @typedef {'typescript-7' | 'vscode-typescript' | 'nothing'} Server
@@ -47,6 +49,7 @@
  * 	action?: string,
  * 	command?: string,
  * 	packageChange?: boolean,
+ * 	serverCrash?: boolean,
  * 	gap?: string,
  * 	closingTag?: string,
  * 	check?: (result: Record<string, any>) => string | undefined,
@@ -143,13 +146,38 @@ function restarted_after_package_change(result) {
 	const asked = output.findIndex((line) =>
 		line.includes('Asking the client to restart the server'),
 	);
+	// vscode-languageclient 10 says "exited successfully", 9 "exited with code 0".
+	const stopped = output
+		.slice(Math.max(asked, 0))
+		.some((line) => /Server process exited (successfully|with code 0)/.test(line));
 	return unexpected.length > 0
 		? `expected the extension to restart the server, but the output says ${JSON.stringify(unexpected)}`
 		: asked < 0
 			? 'expected the server to ask for a restart after the package.json change'
-			: !output.slice(asked).some((line) => line.includes('Server process exited with code 0'))
+			: !stopped
 				? 'expected the server to stop after it asked for the restart'
 				: result.afterPackageChange?.symbols > 0
+					? both_servers_logged(result)
+					: 'expected document symbols from the new server';
+}
+
+/**
+ * After the TSRX server process dies, the language client starts it again: the output
+ * says so, the new server lists the document symbols, and the output shows both servers
+ * starting. vscode-languageclient 9 also wrote a line that said only `true` (#998).
+ * @param {Record<string, any>} result
+ */
+function restarted_after_crash(result) {
+	/** @type {string[]} */
+	const output = result.serverOutput ?? [];
+	const after = result.afterServerCrash ?? {};
+	return after.killed !== 1
+		? `expected to stop 1 TSRX server process, stopped ${after.killed}`
+		: !output.some((line) => line.includes('Connection to server got closed. Server will restart.'))
+			? 'expected the client to start the server again after the crash'
+			: output.some((line) => line.trim() === 'true')
+				? 'expected no line that says only "true" after the crash (#998)'
+				: after.symbols > 0
 					? both_servers_logged(result)
 					: 'expected document symbols from the new server';
 }
@@ -345,6 +373,17 @@ export const SCENARIOS = [
 		packageChange: true,
 		closingTag: '<b></b>',
 		check: restarted_after_package_change,
+	},
+	{
+		name: 'vscode-typescript-server-crash',
+		description:
+			'TSRX extension only, then the TSRX server process dies: the client starts it again',
+		extensions: ['tsrx'],
+		expect: 'vscode-typescript',
+		typescript: 'vscode',
+		serverCrash: true,
+		closingTag: '<b></b>',
+		check: restarted_after_crash,
 	},
 	{
 		name: 'vscode-typescript-tsrx-closing-off',
