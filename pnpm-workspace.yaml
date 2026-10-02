@@ -85,6 +85,9 @@ overrides:
   # one copy for every package. 3.18 only adds exports to 3.17, so the CSS language
   # service and Volar's server keep working with it.
   vscode-languageserver-types: 3.18.4
+  # vscode-languageclient 10 needs 1.0.15 (getLineRange), Volar's server declares
+  # ^1.0.12, and the VSIX ships one copy. 1.0.15 only adds methods to 1.0.12.
+  vscode-languageserver-textdocument: 1.0.15
 
 packageExtensions:
   # These declaration files import types from `typescript` without declaring it,

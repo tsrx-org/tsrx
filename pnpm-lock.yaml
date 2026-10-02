@@ -180,9 +180,6 @@ catalogs:
     volar-service-typescript:
       specifier: 0.0.70
       version: 0.0.70
-    vscode-languageserver-textdocument:
-      specifier: ^1.0.12
-      version: 1.0.12
     vscode-uri:
       specifier: ^3.1.0
       version: 3.1.0
@@ -211,6 +208,7 @@ overrides:
   babel-plugin-jsx-dom-expressions: 0.50.0-next.14
   vscode-languageclient: ^10.1.2
   vscode-languageserver-types: 3.18.4
+  vscode-languageserver-textdocument: 1.0.15
 
 packageExtensionsChecksum: sha256-qCB7e8vZElXq981YATPkxRTk4R5pjIQM090RjT1N7K4=
 
@@ -577,8 +575,8 @@ importers:
         specifier: catalog:default
         version: 0.0.70(@volar/language-service@2.4.28(typescript@5.9.3))(typescript@5.9.3)
       vscode-languageserver-textdocument:
-        specifier: catalog:default
-        version: 1.0.12
+        specifier: 1.0.15
+        version: 1.0.15
       vscode-uri:
         specifier: catalog:default
         version: 3.1.0
@@ -6348,9 +6346,6 @@ packages:
   vscode-languageserver-protocol@3.18.4:
     resolution: {integrity: sha512-CCXbyr99dafRJzJH/0Ryk7ly5T8XPmSR0//OuF2w4m+9JiOin7zcAT5iET8GRE7Z9taFBejb3GbM0a0mbjdbrg==}
 
-  vscode-languageserver-textdocument@1.0.12:
-    resolution: {integrity: sha512-cxWNPesCnQCcMPeenjKKsOCKQZ/L6Tv19DTRIGuLWe32lyzWhihGVJ/rcckZXJxfdKCFvRLS3fpBIsV/ZGX4zA==}
-
   vscode-languageserver-textdocument@1.0.15:
     resolution: {integrity: sha512-Gsfr9S8LU3S6885cS+NaleasJ0n3V5y/SOTqHCifQiXWFw3G9w9/YItDfwHrlCz+dSZWWZ8ilYVMcJe7Sz7Sxw==}
 
@@ -8415,7 +8410,7 @@ snapshots:
       request-light: 0.7.0
       vscode-languageserver: 9.0.1
       vscode-languageserver-protocol: 3.17.5
-      vscode-languageserver-textdocument: 1.0.12
+      vscode-languageserver-textdocument: 1.0.15
       vscode-uri: 3.1.0
     optionalDependencies:
       typescript: 5.9.3
@@ -8424,7 +8419,7 @@ snapshots:
     dependencies:
       '@volar/language-core': 2.4.28
       vscode-languageserver-protocol: 3.17.5
-      vscode-languageserver-textdocument: 1.0.12
+      vscode-languageserver-textdocument: 1.0.15
       vscode-uri: 3.1.0
     optionalDependencies:
       typescript: 5.9.3
@@ -11556,7 +11551,7 @@ snapshots:
   volar-service-css@0.0.70(@volar/language-service@2.4.28(typescript@5.9.3)):
     dependencies:
       vscode-css-languageservice: 6.3.10
-      vscode-languageserver-textdocument: 1.0.12
+      vscode-languageserver-textdocument: 1.0.15
       vscode-uri: 3.1.0
     optionalDependencies:
       '@volar/language-service': 2.4.28(typescript@5.9.3)
@@ -11566,7 +11561,7 @@ snapshots:
       path-browserify: 1.0.1
       semver: 7.7.4
       typescript-auto-import-cache: 0.3.6
-      vscode-languageserver-textdocument: 1.0.12
+      vscode-languageserver-textdocument: 1.0.15
       vscode-nls: 5.2.0
       vscode-uri: 3.1.0
     optionalDependencies:
@@ -11576,7 +11571,7 @@ snapshots:
   vscode-css-languageservice@6.3.10:
     dependencies:
       '@vscode/l10n': 0.0.18
-      vscode-languageserver-textdocument: 1.0.12
+      vscode-languageserver-textdocument: 1.0.15
       vscode-languageserver-types: 3.18.4
       vscode-uri: 3.1.0
 
@@ -11600,8 +11595,6 @@ snapshots:
     dependencies:
       vscode-jsonrpc: 9.0.3
       vscode-languageserver-types: 3.18.4
-
-  vscode-languageserver-textdocument@1.0.12: {}
 
   vscode-languageserver-textdocument@1.0.15: {}
 
