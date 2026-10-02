@@ -1,9 +1,13 @@
 import { defineConfig } from 'tsdown';
-import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getAllExternalPackages } from '../../scripts/collect-external-deps.js';
+import {
+	findPackageDir,
+	resolveExternalPackages,
+	workspacePackageDirs,
+} from '../../scripts/collect-external-deps.js';
+import { copyExternalPackages } from '../../scripts/copy-external-deps.js';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -33,9 +37,19 @@ const REGEX_EXTERNAL_PACKAGES = [
 export const ALWAYS_EXTERNAL = ['vscode', 'typescript'];
 const OUT_DIR = 'dist';
 
-// Compute all external packages by collecting dependency trees
-const computed = getAllExternalPackages(ROOT_EXTERNAL_PACKAGES);
+// The external packages: the roots and everything they depend on, resolved from the
+// packages that import them. Before bundling, those are this package and its workspace
+// dependencies; after it, the packages the bundles contain (`bundledPackageDirs`).
+const computed = [
+	...resolveExternalPackages({
+		roots: ROOT_EXTERNAL_PACKAGES,
+		importers: workspacePackageDirs(dirname),
+	}).keys(),
+];
 const allExternalPackages = [...ALWAYS_EXTERNAL, ...computed, ...REGEX_EXTERNAL_PACKAGES];
+
+/** The directories of the packages whose code the bundles contain. @type {Set<string>} */
+const bundledPackageDirs = new Set();
 
 console.log(`ℹ️  Found ${computed.length} packages to mark as external`);
 
@@ -56,6 +70,17 @@ export default defineConfig({
 	outExtensions: () => ({ js: '.js' }),
 	platform: 'node',
 	target: 'node22',
+	plugins: [
+		{
+			name: 'tsrx:bundled-packages',
+			buildEnd() {
+				for (const id of this.getModuleIds()) {
+					const dir = path.isAbsolute(id) ? findPackageDir(id) : null;
+					if (dir) bundledPackageDirs.add(dir);
+				}
+			},
+		},
+	],
 	deps: {
 		neverBundle: [...allExternalPackages],
 		alwaysBundle: /.+/,
@@ -66,12 +91,16 @@ export default defineConfig({
 			// Write a CJS package.json so Node.js treats dist/*.js as CommonJS
 			fs.writeFileSync(path.join(dirname, OUT_DIR, 'package.json'), '{"type":"commonjs"}\n');
 
-			const scriptPath = path.join(dirname, '../../scripts/copy-external-deps.js');
 			const distPath = path.join(dirname, OUT_DIR);
-
-			execSync(`node "${scriptPath}" "${distPath}" ${ROOT_EXTERNAL_PACKAGES.join(' ')}`, {
-				stdio: 'inherit',
-			});
+			// Each external package at the version the bundled code and the other external
+			// packages resolve (one version each, or the build fails).
+			copyExternalPackages(
+				distPath,
+				resolveExternalPackages({
+					roots: ROOT_EXTERNAL_PACKAGES,
+					importers: [...bundledPackageDirs],
+				}),
+			);
 
 			// `@tsrx/typescript-plugin` is contributed to VS Code as a tsserver plugin
 			// (`typescriptServerPlugins` in package.json): VS Code passes this extension's

@@ -296,6 +296,7 @@ async function run_scenario(scenario, index) {
 			action: scenario.action,
 			command: scenario.command,
 			packageChange: scenario.packageChange,
+			serverCrash: scenario.serverCrash,
 			actionWaitMs: ACTION_WAIT_MS,
 		}),
 	);
@@ -367,19 +368,34 @@ async function run_scenario(scenario, index) {
 
 /**
  * What the TSRX Language Server output says in an instance, from the file VS Code
- * keeps for each output channel: the server's own lines, and the language client's
- * (`[Error - 1:12:18 PM] ...`), without the plugins' debug lines.
+ * keeps for the output channel: the server's own lines and the language client's,
+ * without the plugins' lines (`[TSRX Hover Plugin] ...`) and what follows them. In a
+ * log channel (vscode-languageclient 10), each line starts with the time and the level,
+ * which become `[info] `. A plain channel (vscode-languageclient 9) has the client's
+ * own prefix (`[Error - 1:12:18 PM] ...`).
  * @param {string} user_data
  * @returns {string[]}
  */
 function server_output(user_data) {
 	const logs = path.join(user_data, 'logs');
 	if (!fs.existsSync(logs)) return [];
-	return fs
-		.readdirSync(logs, { recursive: true, encoding: 'utf8' })
-		.filter((file) => /^\d+-TSRX Language Server\.log$/.test(path.basename(file)))
-		.flatMap((file) => fs.readFileSync(path.join(logs, file), 'utf8').split('\n'))
-		.filter((line) => /^\[(TSRX Language Server\]|Info |Warn |Error )/.test(line));
+	/** @type {string[]} */
+	const output = [];
+	let keep = true;
+	for (const file of fs.readdirSync(logs, { recursive: true, encoding: 'utf8' })) {
+		if (!/^(\d+-)?TSRX Language Server\.log$/.test(path.basename(file))) continue;
+		for (const text of fs.readFileSync(path.join(logs, file), 'utf8').split('\n')) {
+			const line = text.replace(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} \[(\w+)\] /, '[$1] ');
+			if (line.trim() === '') continue;
+			// A message starts with `[`. The other lines continue the message before them
+			// (a multi-line message, a stack trace) and are kept or left out with it.
+			if (line.startsWith('[')) {
+				keep = !/^(\[\w+\] |\[\w+ +- [^\]]+\] )?\[TSRX (?!Language Server\])/.test(line);
+			}
+			if (keep) output.push(line);
+		}
+	}
+	return output;
 }
 
 /**

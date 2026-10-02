@@ -1,17 +1,5 @@
-#!/usr/bin/env node
 import fs from 'fs';
 import path from 'path';
-import { getPackagePaths } from './collect-external-deps.js';
-
-// Parse command line arguments
-const args = process.argv.slice(2);
-if (args.length < 2) {
-	console.error('Usage: copy-external-deps.js <distDir> <package1> [package2] [package3] ...');
-	process.exit(1);
-}
-
-const distDir = path.resolve(args[0]);
-const rootPackages = args.slice(1);
 
 /**
  * Recursively copy directory contents, avoiding symlink loops
@@ -81,52 +69,28 @@ function removeDir(dir) {
 	}
 }
 
-console.log('🔍 Collecting dependency tree...');
-console.log('');
+/**
+ * Copy the external packages into `<distDir>/node_modules`, each from the real path
+ * `resolveExternalPackages` resolved for it.
+ * @param {string} distDir
+ * @param {Map<string, string>} packages each package's name and real path
+ */
+export function copyExternalPackages(distDir, packages) {
+	console.log(`📂 Copying ${packages.size} external packages...`);
 
-// Collect all packages
-const packagesToCopy = getPackagePaths(rootPackages);
-
-// Log the tree
-for (const [packageName] of packagesToCopy) {
-	console.log(`📦 ${packageName}`);
-}
-
-console.log('');
-console.log(`📋 Found ${packagesToCopy.size} packages to copy`);
-console.log('');
-console.log('📂 Copying packages...');
-
-// Create dist/node_modules if it doesn't exist
-const distNodeModules = path.join(distDir, 'node_modules');
-if (!fs.existsSync(distNodeModules)) {
+	const distNodeModules = path.join(distDir, 'node_modules');
 	fs.mkdirSync(distNodeModules, { recursive: true });
-}
 
-// Copy all collected packages
-for (const [packageName, srcPath] of packagesToCopy) {
-	const destPath = path.join(distNodeModules, packageName);
-
-	// Handle scoped packages - create parent directory if needed
-	if (packageName.startsWith('@')) {
-		const scopeDir = path.join(distNodeModules, packageName.split('/')[0]);
-		if (!fs.existsSync(scopeDir)) {
-			fs.mkdirSync(scopeDir, { recursive: true });
-		}
-	}
-
-	try {
-		// Remove existing directory to ensure clean copy
+	for (const [packageName, srcPath] of packages) {
+		const destPath = path.join(distNodeModules, packageName);
+		// Scoped packages need their scope directory.
+		fs.mkdirSync(path.dirname(destPath), { recursive: true });
+		// Remove the previous copy for a clean one.
 		removeDir(destPath);
-
-		// Copy the package
 		copyDir(srcPath, destPath);
-		console.log(`  ✓ ${packageName}`);
-	} catch (error) {
-		console.error(`  ✗ Error copying ${packageName}:`, /** @type {Error} */ (error).message);
-		process.exit(1);
+		const version = JSON.parse(fs.readFileSync(path.join(srcPath, 'package.json'), 'utf8')).version;
+		console.log(`  ✓ ${packageName}@${version}`);
 	}
-}
 
-console.log('');
-console.log('✅ External dependencies copied successfully');
+	console.log('✅ External dependencies copied successfully');
+}
