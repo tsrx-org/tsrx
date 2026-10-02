@@ -25,6 +25,7 @@ import * as lsp from 'vscode-languageclient/node';
 import { createLabsInfo } from '@volar/vscode';
 import { activate_closing_tags } from './closing-tags.js';
 import { register_restart_command, restart_on_request } from './restart.js';
+import { create_server_options } from './server-options.js';
 import { register_source_definition_command } from './source-definition.js';
 import { register_project_config_command } from './project-config.js';
 import { register_import_commands } from './import-commands.js';
@@ -121,34 +122,7 @@ export async function activate(context) {
 		return;
 	}
 
-	const runOptions = {
-		execArgv: [],
-		env: {
-			...process.env,
-			TSRX_DEBUG: process.env.TSRX_DEBUG === 'false' ? 'false' : 'true',
-		},
-	};
-
-	const debugOptions = {
-		execArgv: ['--nolazy', '--inspect'],
-		env: {
-			...process.env,
-			TSRX_DEBUG: process.env.TSRX_DEBUG === 'false' ? 'false' : 'true',
-		},
-	};
-
-	const serverOptions = {
-		run: {
-			module: serverModule,
-			transport: lsp.TransportKind.stdio,
-			options: runOptions,
-		},
-		debug: {
-			module: serverModule,
-			transport: lsp.TransportKind.stdio,
-			options: debugOptions,
-		},
-	};
+	const serverOptions = create_server_options(serverModule, lsp.TransportKind.stdio);
 
 	/** @type {import('vscode-languageclient/node').LanguageClientOptions} */
 	const clientOptions = {

@@ -96,8 +96,21 @@ const RECOMMENDED = {
 };
 
 /**
- * After `TSRX: Restart Language Server`, TypeScript answers again and the TSRX server
- * lists the document symbols.
+ * The TSRX Language Server output shows both servers starting, the first one and the
+ * restarted one. A restarted server used to start without `TSRX_DEBUG` and write
+ * nothing (#997).
+ * @param {Record<string, any>} result
+ */
+function both_servers_logged(result) {
+	const starts = (result.serverOutput ?? []).filter((/** @type {string} */ line) =>
+		line.includes('Initializing TSRX language server'),
+	).length;
+	return starts === 2 ? undefined : `expected the output to show 2 servers starting, got ${starts}`;
+}
+
+/**
+ * After `TSRX: Restart Language Server`, TypeScript answers again, the TSRX server
+ * lists the document symbols, and the output shows both servers starting.
  * @param {Record<string, any>} result
  */
 function restarted(result) {
@@ -107,13 +120,14 @@ function restarted(result) {
 		: !/number/.test(after.hover ?? '')
 			? `expected TypeScript to answer after the restart, got the hover ${JSON.stringify(after.hover)}`
 			: after.symbols > 0
-				? undefined
+				? both_servers_logged(result)
 				: 'expected document symbols after the restart';
 }
 
 /**
  * After a package.json change, the TSRX server asks for a restart, the extension
- * restarts it, and the new server lists the document symbols. The server must not exit
+ * restarts it, the new server lists the document symbols, and the output shows both
+ * servers starting. The server must not exit
  * by itself: the language client then takes it for a crash ("Connection to server got
  * closed"), and what it sends meanwhile fails, which VS Code showed as "Client TSRX
  * Language Server: connection to server is erroring. Cannot call write after a stream
@@ -136,7 +150,7 @@ function restarted_after_package_change(result) {
 			: !output.slice(asked).some((line) => line.includes('Server process exited with code 0'))
 				? 'expected the server to stop after it asked for the restart'
 				: result.afterPackageChange?.symbols > 0
-					? undefined
+					? both_servers_logged(result)
 					: 'expected document symbols from the new server';
 }
 
