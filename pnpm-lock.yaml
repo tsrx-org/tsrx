@@ -559,9 +559,6 @@ importers:
       '@tsrx/core':
         specifier: workspace:*
         version: link:../tsrx
-      '@tsrx/typescript-plugin':
-        specifier: workspace:*
-        version: link:../typescript-plugin
       '@volar/language-server':
         specifier: catalog:default
         version: 2.4.28(typescript@5.9.3)
@@ -581,6 +578,9 @@ importers:
         specifier: catalog:default
         version: 3.1.0
     devDependencies:
+      '@tsrx/typescript-plugin':
+        specifier: workspace:*
+        version: link:../typescript-plugin
       '@types/estree':
         specifier: catalog:default
         version: 1.0.8

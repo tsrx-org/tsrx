@@ -4,7 +4,9 @@
   "description": "Zed editor support for TSRX",
   "private": true,
   "main": "index.js",
-  "scripts": {},
+  "scripts": {
+    "test:editor": "node editor-tests/run.mjs"
+  },
   "keywords": [
     "zed",
     "zed-extension",

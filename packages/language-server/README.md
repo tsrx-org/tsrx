@@ -37,27 +37,83 @@ pnpm dlx @tsrx/language-server --stdio
 
 Configure your editor's LSP client for `*.tsrx` files with the language ID `tsrx`.
 
-The `classic` backend hosts TypeScript's JavaScript API,
-`typescript@^5.9.3 || ^6.0.0` (the peer dependency range also admits TypeScript 7
-from `7.1.0-dev.20260923.1`, for the `native` backend); it refuses to initialize
-with an explanation when the project's only `typescript` is the native TypeScript
-7 package (a launcher without a JavaScript API). The `native` backend loads no
-TypeScript at all: it reads `tsconfig.json` and resolves compilers through
-`@tsrx/typescript-plugin`'s own reader and runs on Volar's plain project host, so
-TypeScript 7 can be the only TypeScript in the project.
+## Which TypeScript it uses
+
+When the editor does not choose a backend, the server runs the `classic` backend,
+which needs a `typescript` package. On the `native` backend (TypeScript 7) and the
+`plugin` backend (which VS Code uses), it loads no TypeScript and searches for
+none.
+
+On the `classic` backend, it uses the first `typescript` it finds:
+
+1. The `typescript.tsdk` initialization option, when the editor passes one: the
+   `lib` folder of a TypeScript installation.
+2. The project's: `node_modules/typescript` in each open workspace folder and its
+   parent folders, the way Node finds a package. The first folder that has one
+   wins. When the editor names no folder, the server searches from the folder it
+   was started in.
+3. The one next to the server: `node_modules/typescript` from the server's own
+   folder up.
+
+Any version below 7 works. `typescript` is an optional peer dependency, so npm and
+pnpm do not install one with the server. Install it in the project:
+
+```bash
+npm install -D typescript
+# or
+pnpm add -D typescript
+```
+
+When the server finds no `typescript`, or finds TypeScript 7, it still starts and
+shows one warning that says what it found and what to do. `.tsrx` files then get
+no type checking, hover or completions. TSRX compile errors, CSS in `<style>`, the
+outline, formatting and closing tags still work.
+
+To use another TypeScript than the one it finds, pass that TypeScript's `lib`
+folder:
+
+```jsonc
+// LSP initialize params
+{
+  "initializationOptions": {
+    "typescript": { "tsdk": "/path/to/node_modules/typescript/lib" },
+  },
+}
+```
+
+### TypeScript 7
+
+TypeScript 7's npm package is the native compiler and has no JavaScript API, so
+the `classic` backend cannot run it. For `.tsrx` files on TypeScript 7:
+
+1. Install TypeScript `7.1.0-dev.20260923.1` or newer and
+   [`@tsrx/content-mapper`](https://github.com/tsrx-org/tsrx/tree/main/packages/content-mapper)
+   in the project, and declare the mapper in `tsconfig.json`:
+
+   ```jsonc
+   {
+     "tsrx": { "compiler": "@tsrx/react" },
+     "contentMappers": [
+       { "package": "@tsrx/content-mapper", "extensions": [".tsrx"] },
+     ],
+   }
+   ```
+
+2. Have the editor run TypeScript 7's language server, `tsc --lsp --stdio`, for
+   `.tsrx` files, with the initialization option `runExternalCode: true`. It
+   serves types, hover, completions and errors, TSRX compile errors included.
+3. Run this server next to it with `--typescript-backend=native`, for what
+   TypeScript 7 does not do: CSS in `<style>`, the outline, formatting and closing
+   tags. It loads no TypeScript in that mode.
 
 ## TypeScript backends
 
 The server runs beside one of two TypeScript backends. Never run both on the same
 file.
 
-- `classic` (default): the server hosts TypeScript (5.9 or 6) itself through Volar
-  and serves every feature for `.tsrx` files, including type-aware ones. Which
-  installation it hosts comes from the Volar-style `typescript.tsdk`
-  initialization option, the absolute path of a TypeScript `lib` directory (the
-  one containing `typescript.js`); the VS Code extension passes the TypeScript VS
-  Code runs for the workspace. Without the option the server loads the
-  `typescript` package resolvable from its own location (the peer dependency).
+- `classic` (default): the server hosts TypeScript itself through Volar and serves
+  every feature for `.tsrx` files, including type-aware ones. Which TypeScript it
+  hosts: [Which TypeScript it uses](#which-typescript-it-uses).
 - `native`: TypeScript 7 owns every TypeScript feature for `.tsrx` files through
   [`@tsrx/content-mapper`](https://github.com/tsrx-org/tsrx/tree/main/packages/content-mapper)
   (diagnostics including TSRX compile errors, hover, completions, signature help,

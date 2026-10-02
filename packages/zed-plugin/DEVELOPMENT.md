@@ -50,6 +50,27 @@ the extension loads. Set `TSRX_ZED_DEV_DIR` to use a custom staging directory.
    - Code completion works
    - Outline view shows components/functions
 
+### Editor tests (local)
+
+`editor-tests/run.mjs` starts a separate Zed instance per scenario (its own user
+data directory, with a copy of the installed TSRX extension) on a temporary
+project whose `package.json` declares `@tsrx/language-server`. The project's
+server is this repository's, packed and installed outside the repository as an
+editor installs it, so no `typescript` sits next to it. A recorder between Zed and
+the server writes every message to a file, and the test checks which TypeScript
+the server runs and the warning it sends when it finds none it can run. A Zed
+window shows while a scenario runs.
+
+```sh
+pnpm --filter @tsrx/zed-plugin test:editor
+pnpm --filter @tsrx/zed-plugin test:editor -- --keep
+```
+
+`--keep` keeps the temporary directory with the recorded messages. Set
+`TSRX_ZED_CLI` for another Zed and `TSRX_ZED_EXTENSION` for another extension
+folder. Packing the server needs network access. The tests are not part of
+`pnpm test` or CI.
+
 ## File Structure
 
 ```

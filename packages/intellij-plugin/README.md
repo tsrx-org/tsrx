@@ -66,8 +66,36 @@ shows an actionable notification instead of repeatedly starting a broken server.
 ## TypeScript backends
 
 `@tsrx/language-server` runs with its default `classic` backend: it hosts
-TypeScript 5 itself and serves every feature for `.tsrx` files. The IDE's own
+TypeScript itself and serves every feature for `.tsrx` files. The IDE's own
 TypeScript service is not involved with `.tsrx` files.
+
+### Which TypeScript the language server uses
+
+In the default setup, `@tsrx/language-server` runs TypeScript itself and looks for
+it as described here. With TypeScript 7 it does not: the server runs with
+`--typescript-backend=native`, loads no TypeScript and searches for none, and
+TypeScript 7's own language server (`tsc --lsp`) provides the TypeScript features.
+JetBrains IDEs cannot run TypeScript 7's language server for `.tsrx` files yet;
+see below.
+
+`@tsrx/language-server` uses the project's `typescript`: `node_modules/typescript`
+in the folder you open in the IDE, or in a parent folder. Without one, it uses a
+`typescript` installed next to the server. It does not install one itself, so
+install `typescript` in the project:
+
+```bash
+npm install -D typescript
+# or
+pnpm add -D typescript
+```
+
+Any version below 7 works. When the server finds no `typescript`, or finds
+TypeScript 7, it still starts and sends a warning that says what it found. `.tsrx`
+files then get no type checking, hover or completions. TSRX compile errors, CSS in
+`<style>`, the outline, formatting and closing tags still work.
+
+The plugin has no setting yet to make the server use another TypeScript
+([tsrx-org/tsrx#1009](https://github.com/tsrx-org/tsrx/issues/1009)).
 
 ### What goes in tsconfig.json
 

@@ -11,6 +11,9 @@
     "url": "git+https://github.com/tsrx-org/tsrx.git",
     "directory": "packages/nvim-plugin"
   },
+  "scripts": {
+    "test:editor": "node editor-tests/run.js"
+  },
   "config": {
     "@tsrx/language-server": "0.3.125"
   },

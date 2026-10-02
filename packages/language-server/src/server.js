@@ -9,7 +9,9 @@ import {
 } from '@volar/language-server/node';
 import Module from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolve_typescript_backend, resolve_typescript_tsdk } from './backend.js';
+import { find_typescript, is_usable_typescript, typescript_notice } from './find-typescript.js';
 import { createServicePlugins } from './servicePlugins.js';
 import { register_formatting } from './formattingHandler.js';
 import { URI } from 'vscode-uri';
@@ -19,7 +21,6 @@ import {
 	invalidateTypeDefinitionCaches,
 	resolveConfig,
 } from '@tsrx/typescript-plugin/src/language.js';
-import { unsupported_typescript_message } from '@tsrx/typescript-plugin/src/typescript-version.js';
 import { NODE_CONFIG_HOST } from '@tsrx/typescript-plugin/src/config-host.js';
 import {
 	handleWorkspaceChanges,
@@ -28,6 +29,16 @@ import {
 } from './workspaceState.js';
 
 const { log, logError } = createLogging('[TSRX Language Server]');
+
+/** The server's own folder, where the search for a `typescript` package ends. */
+const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+/** Where a `typescript` package came from, for the log. */
+const TYPESCRIPT_SOURCES = {
+	tsdk: 'typescript.tsdk initialization option',
+	workspace: 'the project',
+	server: 'next to the server',
+};
 
 /**
  * Sent to a client that set the `restartNotification` initialization option
@@ -56,6 +67,12 @@ export function createTsrxLanguageServer(options = {}) {
 	const compilerResolutionDependencySets = new Set();
 	let restartScheduled = false;
 	let clientRestarts = false;
+	/**
+	 * Shown once the client is initialized, when the classic backend found no
+	 * `typescript` it can run and the server started without TypeScript features.
+	 * @type {string | undefined}
+	 */
+	let typescriptNotice;
 
 	/**
 	 * Restart the process so Node drops the complete ESM compiler graph. A
@@ -114,23 +131,15 @@ export function createTsrxLanguageServer(options = {}) {
 	}
 
 	/**
-	 * Load the TypeScript the classic backend hosts. With a `typescript.tsdk`
-	 * initialization option (the `lib` directory of a TypeScript installation),
-	 * that installation is loaded and every later `require('typescript')` in this
-	 * process (the shared transform's option defaults, Volar's TypeScript
-	 * service) resolves to the same module, so one TypeScript runs. Without the
-	 * option, the `typescript` package resolvable from the server (its peer
-	 * dependency) is used, as before.
-	 * @param {string | undefined} tsdk
+	 * Load the TypeScript the classic backend hosts (`find_typescript`). Every
+	 * later `require('typescript')` in this process (the shared transform's option
+	 * defaults, Volar's TypeScript service) resolves to the same module, so one
+	 * TypeScript runs.
+	 * @param {import('./find-typescript.js').FoundTypeScript} found
 	 * @returns {typeof import('typescript')}
 	 */
-	function load_typescript(tsdk) {
-		if (tsdk === undefined) {
-			const bundled = require('typescript');
-			log(`TypeScript ${bundled.version} from the typescript package next to the server`);
-			return bundled;
-		}
-		const typescript_js = path.join(tsdk, 'typescript.js');
+	function load_typescript(found) {
+		const typescript_js = path.join(found.lib, 'typescript.js');
 		const module_loader = /** @type {{ _resolveFilename: (...args: unknown[]) => string }} */ (
 			/** @type {unknown} */ (Module)
 		);
@@ -141,7 +150,7 @@ export function createTsrxLanguageServer(options = {}) {
 				: original_resolve.call(this, request, ...rest);
 		};
 		const loaded = require(typescript_js);
-		log(`TypeScript ${loaded.version} from ${tsdk} (typescript.tsdk initialization option)`);
+		log(`TypeScript ${loaded.version} from ${found.dir} (${TYPESCRIPT_SOURCES[found.source]})`);
 		return loaded;
 	}
 
@@ -162,13 +171,34 @@ export function createTsrxLanguageServer(options = {}) {
 			}
 			log(`TypeScript backend: ${selection.backend} (from ${selection.source})`);
 
-			if (selection.backend !== 'classic') {
+			let backend = selection.backend;
+			/** @type {typeof import('typescript') | undefined} */
+			let ts;
+			if (backend === 'classic') {
+				const workspace_dirs = workspace_folder_paths(params);
+				const found = find_typescript({
+					tsdk: resolve_typescript_tsdk(params.initializationOptions),
+					workspace_dirs,
+					server_dir: SERVER_DIR,
+				});
+				if (found && is_usable_typescript(found.version)) {
+					ts = load_typescript(found);
+				} else {
+					// No TypeScript it can run: start anyway with what needs none, as on
+					// the plugin backend (TSRX compile errors included), and tell the user.
+					typescriptNotice = typescript_notice(found, workspace_dirs);
+					logError(typescriptNotice);
+					backend = 'plugin';
+				}
+			}
+
+			if (ts === undefined) {
 				// The editor's TypeScript (TypeScript 7 through the content mapper, or
 				// its tsserver through the tsserver plugin) owns every TypeScript
-				// feature for `.tsrx` files. The TSRX plugin only needs the compiler
-				// per file, which it resolves from the nearest tsconfig.json itself,
-				// so no TypeScript module is loaded (the native compiler's package has
-				// none) and no TypeScript project host is created.
+				// feature for `.tsrx` files, or none does. The TSRX plugin only needs
+				// the compiler per file, which it resolves from the nearest
+				// tsconfig.json itself, so no TypeScript module is loaded (the native
+				// compiler's package has none) and no TypeScript project host is created.
 				const compilerResolutionDependencies = new Set();
 				compilerResolutionDependencySets.add(compilerResolutionDependencies);
 				const languagePlugin = getTsrxLanguagePlugin({
@@ -178,16 +208,10 @@ export function createTsrxLanguageServer(options = {}) {
 				const initResult = server.initialize(
 					params,
 					createSimpleProject([languagePlugin]),
-					createServicePlugins(selection.backend),
+					createServicePlugins(backend),
 				);
 				log('Server initialization complete');
 				return with_formatting(initResult);
-			}
-
-			const ts = load_typescript(resolve_typescript_tsdk(params.initializationOptions));
-			const unsupported_typescript = unsupported_typescript_message(ts, 'language-server');
-			if (unsupported_typescript) {
-				throw new Error(unsupported_typescript);
 			}
 
 			const initResult = server.initialize(
@@ -220,7 +244,7 @@ export function createTsrxLanguageServer(options = {}) {
 						},
 					};
 				}),
-				createServicePlugins(selection.backend, ts),
+				createServicePlugins(backend, ts),
 			);
 
 			log('Server initialization complete');
@@ -234,6 +258,15 @@ export function createTsrxLanguageServer(options = {}) {
 	connection.onInitialized(async () => {
 		log('Server initialized.');
 		server.initialized();
+		if (typescriptNotice) {
+			// The `window/showMessage` notification (type 2: warning), which editors show
+			// to the user; `connection.window.showWarningMessage` sends the request form,
+			// which waits for the user to pick an action.
+			void connection.sendNotification('window/showMessage', {
+				type: 2,
+				message: typescriptNotice,
+			});
+		}
 
 		server.fileWatcher.onDidChangeWatchedFiles(({ changes }) => {
 			for (const configDependencies of compilerResolutionDependencySets) {
@@ -294,4 +327,29 @@ function with_formatting(initResult) {
 	initResult.capabilities.documentFormattingProvider = true;
 	initResult.capabilities.documentRangeFormattingProvider = true;
 	return initResult;
+}
+
+/**
+ * The paths of the open workspace folders (`file:` URIs only), or of the root
+ * the client sent instead. A client that names no folder (Neovim when it finds no
+ * root marker, for a single file) starts the server in the file's project, so the
+ * server's working directory stands in.
+ * @param {import('@volar/language-server/node').InitializeParams} params
+ * @returns {string[]}
+ */
+function workspace_folder_paths(params) {
+	const uris =
+		params.workspaceFolders?.map((folder) => folder.uri) ??
+		(params.rootUri ? [params.rootUri] : []);
+	const paths = uris
+		.map((uri) => URI.parse(uri))
+		.filter((uri) => uri.scheme === 'file')
+		.map((uri) => uri.fsPath);
+	if (paths.length === 0 && params.rootPath) {
+		paths.push(params.rootPath);
+	}
+	if (paths.length === 0) {
+		paths.push(process.cwd());
+	}
+	return paths;
 }

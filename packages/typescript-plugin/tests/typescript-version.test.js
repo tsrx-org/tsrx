@@ -21,7 +21,6 @@ describe('TypeScript version support', () => {
 		for (const version of ['5.9.3', '5.9.4', '6.0.0', '6.0.3', '6.1.0-beta']) {
 			expect(is_native_typescript_package(version)).toBe(false);
 			expect(has_content_mapper_protocol(version)).toBe(false);
-			expect(unsupported_typescript_message(version, 'language-server')).toBeUndefined();
 		}
 		expect(typescript_major('6.0.3')).toBe(6);
 	});
@@ -110,18 +109,10 @@ describe('TypeScript version support', () => {
 		expect(unsupported_typescript_message('7.1.0-dev.20260821.1', 'tsrx-tsc')).toContain(
 			'tsrx-tsc resolved typescript@7.1.0-dev.20260821.1',
 		);
-
-		// The classic language server backend cannot host any native build.
-		const server = unsupported_typescript_message('7.1.0-dev.20260918.1', 'language-server');
-		expect(server).toContain(
-			"The TSRX language server's classic backend resolved typescript@7.1.0-dev.20260918.1",
-		);
-		expect(server).toContain('--typescript-backend=native');
-		expect(server).toContain(TYPESCRIPT_7_TRACKING_URL);
 	});
 
 	it('stays silent without a version to judge', () => {
 		expect(unsupported_typescript_message(undefined, 'tsrx-tsc')).toBeUndefined();
-		expect(unsupported_typescript_message({}, 'language-server')).toBeUndefined();
+		expect(unsupported_typescript_message({}, 'tsrx-tsc')).toBeUndefined();
 	});
 });

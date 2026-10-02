@@ -134,7 +134,7 @@ export function has_content_mapper_protocol(version) {
 	);
 }
 
-/** @typedef {'tsrx-tsc' | 'language-server'} TypeScriptConsumer */
+/** @typedef {'tsrx-tsc'} TypeScriptConsumer The language server finds its own (`find-typescript.js`). */
 
 /**
  * The message to show when `typescript` resolved to a package the given tool
@@ -159,7 +159,5 @@ export function unsupported_typescript_message(typescript, tool) {
 				return undefined;
 			}
 			return `tsrx-tsc ${resolved} tsrx-tsc runs TypeScript 7 through "tsc --runExternalCode" and @tsrx/content-mapper, which needs a 7.1 nightly with the content-mapper protocol (${MINIMUM_NATIVE_TYPESCRIPT_VERSION} or newer; install typescript@next), or TypeScript ${SUPPORTED_TYPESCRIPT_RANGE} through Volar. ${TYPESCRIPT_7_SUPPORT_NOTE}`;
-		case 'language-server':
-			return `The TSRX language server's classic backend ${resolved} The classic backend hosts TypeScript ${SUPPORTED_TYPESCRIPT_RANGE} through Volar: install one of those versions, or run the server with --typescript-backend=native beside TypeScript 7's own language server, which needs no other TypeScript. ${TYPESCRIPT_7_SUPPORT_NOTE}`;
 	}
 }

@@ -96,10 +96,49 @@ files.
 
 ## TypeScript backends
 
-The TSRX language server hosts TypeScript 5 itself (the `classic` backend), so
+The TSRX language server hosts TypeScript itself (the `classic` backend), so
 `.tsrx` files get their TypeScript features from it. Zed's own TypeScript support
 runs `vtsls` or `typescript-language-server`, both TypeScript 5 based, and cannot
 serve `.tsrx` files.
+
+### Which TypeScript the language server uses
+
+In the default setup, `@tsrx/language-server` runs TypeScript itself and looks for
+it as described here. With TypeScript 7 it does not: the server runs with
+`--typescript-backend=native`, loads no TypeScript and searches for none, and
+TypeScript 7's own language server (`tsc --lsp`) provides the TypeScript features.
+Zed has no TypeScript 7 language server for `.tsrx` files yet; see the `native`
+backend below.
+
+`@tsrx/language-server` uses the project's `typescript`: `node_modules/typescript`
+in the folder you open in Zed, or in a parent folder. Without one, it uses a
+`typescript` installed next to the server. It does not install one itself, so
+install `typescript` in the project:
+
+```bash
+npm install -D typescript
+# or
+pnpm add -D typescript
+```
+
+Any version below 7 works. When the server finds no `typescript`, or finds
+TypeScript 7, it still starts and Zed shows a warning that says what it found.
+`.tsrx` files then get no type checking, hover or completions. TSRX compile
+errors, CSS in `<style>`, the outline, formatting and closing tags still work.
+
+To use another TypeScript, set its `lib` folder in Zed's settings:
+
+```jsonc
+{
+  "lsp": {
+    "tsrx-language-server": {
+      "initialization_options": {
+        "typescript": { "tsdk": "/path/to/typescript/lib" },
+      },
+    },
+  },
+}
+```
 
 ### What goes in tsconfig.json
 

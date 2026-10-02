@@ -51,8 +51,40 @@ vim.lsp.buf.format({ name = "tsrx" })
 
 ## TypeScript backends
 
-By default the TSRX language server hosts TypeScript 5 itself (the `classic`
+By default the TSRX language server hosts TypeScript itself (the `classic`
 backend) and serves every feature for `.tsrx` files.
+
+### Which TypeScript the language server uses
+
+In the default setup, `@tsrx/language-server` runs TypeScript itself and looks for
+it as described here. With TypeScript 7 it does not: the server runs with
+`--typescript-backend=native`, loads no TypeScript and searches for none, and
+TypeScript 7's own language server (`tsc --lsp`) provides the TypeScript features.
+The plugin sets that up with `typescript_backend = "native"`; see below.
+
+`@tsrx/language-server` uses the project's `typescript`: `node_modules/typescript`
+in the folder you open in Neovim, or in a parent folder. Without one, it uses a
+`typescript` installed next to the server. It does not install one itself, so
+install `typescript` in the project:
+
+```bash
+npm install -D typescript
+# or
+pnpm add -D typescript
+```
+
+Any version below 7 works. When the server finds no `typescript`, or finds
+TypeScript 7, it still starts and Neovim shows a warning that says what it found.
+`.tsrx` files then get no type checking, hover or completions. TSRX compile
+errors, CSS in `<style>`, the outline, formatting and closing tags still work.
+
+To use another TypeScript, pass its `lib` folder after `require("tsrx").setup()`:
+
+```lua
+vim.lsp.config("tsrx", {
+  init_options = { typescript = { tsdk = "/path/to/typescript/lib" } },
+})
+```
 
 ### What goes in tsconfig.json
 
