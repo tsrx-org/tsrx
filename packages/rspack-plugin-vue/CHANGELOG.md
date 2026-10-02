@@ -1,5 +1,21 @@
 # @tsrx/rspack-plugin-vue
 
+## 0.0.97
+
+### Patch Changes
+
+- Updated dependencies
+  [[`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`5abd474`](https://github.com/tsrx-org/tsrx/commit/5abd474b108bdd780cece1e88e02ccfec265aad4),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`f518cb9`](https://github.com/tsrx-org/tsrx/commit/f518cb91a120e8a368cece21efbc954135f99dfe),
+  [`12803d3`](https://github.com/tsrx-org/tsrx/commit/12803d3da7a8fddfbd9ec783213310e3e6520fff)]:
+  - @tsrx/core@0.5.3
+  - @tsrx/vue@0.3.3
+
 ## 0.0.96
 
 ### Patch Changes

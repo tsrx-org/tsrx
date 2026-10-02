@@ -1,5 +1,109 @@
 # @tsrx/language-server
 
+## 0.6.0
+
+### Minor Changes
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Add a `native` TypeScript
+  backend mode (`--typescript-backend=native` or the `typescriptBackend`
+  initialization option) that leaves every TypeScript feature for `.tsrx` files to
+  TypeScript 7 and `@tsrx/content-mapper`, serving only TSRX snippets, CSS,
+  document symbols, auto-insert, CSS-class hover and definition, and keyword
+  highlights; `volar-service-typescript` is loaded lazily and only on the classic
+  backend. Migration and rollback steps, the compatibility matrix against the
+  classic path, and benchmarks are in `packages/content-mapper/ROLLOUT.md`,
+  `COMPATIBILITY.md` and `BENCHMARKS.md`. On the classic backend the new
+  Volar-style `typescript.tsdk` initialization option names the TypeScript
+  installation to host (the `lib` directory containing `typescript.js`); without
+  it the server keeps loading the `typescript` package next to it. A third mode,
+  `plugin` (`--typescript-backend=plugin`), is the slim native set plus TSRX
+  compile-error diagnostics, for editors whose own tsserver serves `.tsrx` files
+  through `@tsrx/typescript-plugin`. The component-function snippet is no longer
+  listed twice in completions.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The native TypeScript 7 path
+  needs no other TypeScript. `@tsrx/typescript-plugin` now reads `tsconfig.json`
+  (with `jsonc-parser`) and resolves `extends` entries and compiler packages
+  itself (the rules of get-tsconfig's resolver, with `resolve-pkg-maps` for
+  `exports`) instead of through TypeScript's JavaScript API, and detects
+  `import.meta.env.platform` flags without TypeScript's scanner; TypeScript is
+  only loaded by the classic path (`tsrx-tsc`, the tsserver plugin, the language
+  server's `classic` backend). `@tsrx/content-mapper` drops its `typescript`
+  dependency and starts about three times faster;
+  `@tsrx/language-server --typescript-backend=native` runs on Volar's plain
+  project host and loads no TypeScript, so a project whose only `typescript` is
+  the native compiler's launcher package works in every editor. Both are tested
+  with the `typescript` package forbidden.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Support TypeScript 6: the
+  `typescript` peer dependency range of `@tsrx/typescript-plugin` and
+  `@tsrx/language-server` is now `^5.9.3 || ^6.0.0 || ^7.1.0-dev.20260923.1` (the
+  classic path passes its whole test suite on 6.0.3; TypeScript 7 is for
+  `tsrx-tsc` and the language server's native backend). `@tsrx/content-mapper`
+  declares that range as its own dependency, so a project whose `typescript` is
+  the native TypeScript 7 package (a launcher without a JavaScript API) can still
+  run the mapper. `tsrx-tsc`, the language server and the mapper now stop with an
+  explanation when they resolve a TypeScript 7 package instead of failing on its
+  export map. The mapper documents its minimum TypeScript build
+  (`7.1.0-dev.20260923.1`, the first nightly whose `tsc --watch` recompiles; the
+  stable 7.0 line has no content-mapper protocol), and the test suite runs against
+  another build through `TSRX_NATIVE_TSC`. The TypeScript 7 messages of `tsrx-tsc`
+  and the language server say that TypeScript 7 support is not complete and link
+  tsrx-org/tsrx#136, which tracks the gaps. `<script>` bodies are type-checked as
+  blocks appended to the generated TSX on every path, including tsserver through
+  the plugin, instead of as extra service scripts that only the language server
+  could register.
+
+### Patch Changes
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The TSRX language server now
+  formats `.tsrx` files (`textDocument/formatting`, and
+  `textDocument/rangeFormatting` for Format Selection and format on paste) with
+  the project's own `prettier` and `@tsrx/prettier-plugin`, on every backend and
+  in every editor that formats through it. It adds the plugin and the `tsrx`
+  parser itself, so a `.tsrx` file formats even when the Prettier config does not
+  list the plugin, and it applies the project's Prettier config, `.editorconfig`
+  and `.prettierignore`, so the editor gives the same result as the `prettier`
+  command. When a package is missing, or Prettier is older than 3.6, the server
+  returns no edits and shows a message once per project with the install command
+  for the project's package manager (from the nearest lockfile: pnpm, Yarn, Bun or
+  npm). `tsrx.format.enable: false` turns formatting off.
+
+  The VS Code extension makes TSRX the default formatter for `.tsrx` files through
+  `configurationDefaults`, so the Prettier extension is no longer needed. It no
+  longer writes `prettier.documentSelectors` and
+  `"[tsrx]": { "editor.defaultFormatter": "esbenp.prettier-vscode" }` into the
+  user settings on every start. That write replaced the whole `[tsrx]` block and
+  the whole selector list each time. Settings that older versions wrote stay until
+  you remove them, and while they stay, the Prettier extension formats `.tsrx`
+  files. The unused `tsrx.preferences.preferTypeOnlyAutoImports` setting is
+  removed.
+
+- Updated dependencies
+  [[`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`5abd474`](https://github.com/tsrx-org/tsrx/commit/5abd474b108bdd780cece1e88e02ccfec265aad4),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`f518cb9`](https://github.com/tsrx-org/tsrx/commit/f518cb91a120e8a368cece21efbc954135f99dfe)]:
+  - @tsrx/core@0.5.3
+  - @tsrx/typescript-plugin@0.6.0
+
 ## 0.5.2
 
 ### Patch Changes

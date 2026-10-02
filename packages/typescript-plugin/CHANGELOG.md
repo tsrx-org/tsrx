@@ -1,5 +1,144 @@
 # @tsrx/typescript-plugin
 
+## 0.6.0
+
+### Minor Changes
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The native TypeScript 7 path
+  needs no other TypeScript. `@tsrx/typescript-plugin` now reads `tsconfig.json`
+  (with `jsonc-parser`) and resolves `extends` entries and compiler packages
+  itself (the rules of get-tsconfig's resolver, with `resolve-pkg-maps` for
+  `exports`) instead of through TypeScript's JavaScript API, and detects
+  `import.meta.env.platform` flags without TypeScript's scanner; TypeScript is
+  only loaded by the classic path (`tsrx-tsc`, the tsserver plugin, the language
+  server's `classic` backend). `@tsrx/content-mapper` drops its `typescript`
+  dependency and starts about three times faster;
+  `@tsrx/language-server --typescript-backend=native` runs on Volar's plain
+  project host and loads no TypeScript, so a project whose only `typescript` is
+  the native compiler's launcher package works in every editor. Both are tested
+  with the `typescript` package forbidden.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Add `@tsrx/content-mapper`, a
+  TypeScript 7 content mapper that type-checks `.tsrx` files under native
+  `tsc --runExternalCode`; factor the type-only transform out of the Volar plugin
+  into `@tsrx/typescript-plugin/src/transform.js`, and drop the unused
+  `suppressedDiagnostics` mapping metadata, and blank `<script>` bodies in the
+  generated TSX (they are checked as embedded scripts) so a `<` inside one no
+  longer parses as a JSX tag. Migration and rollback steps, the compatibility
+  matrix against the classic path, and benchmarks are in
+  `packages/content-mapper/ROLLOUT.md`, `COMPATIBILITY.md` and `BENCHMARKS.md`.
+  `<script>` bodies are no longer separate supplemental `.mts` outputs: the shared
+  transform appends each body to the generated TSX as a block statement, mapped
+  back to the source, and hoists a `<script type="module">` body's `import`
+  declarations to module level in front of it (its `export` syntax is blanked in
+  place, since nothing can import an inline script, and top-level `await` stays
+  valid). Composite (`--build`) projects therefore accept `.tsrx` files with
+  `<script>` bodies (the TS6307 limitation is gone), and `--declaration` emits no
+  `*.tsrx.<n>.d.mts` files. Verbatim spans now also cover the identical whitespace
+  that follows them, so edits that end at the start of the next line (Organize
+  Imports, Sort Imports, Remove Unused Imports) map and apply instead of being
+  dropped by TypeScript 7.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - `tsrx-tsc` runs on
+  TypeScript 7. When the installed `typescript` is a 7.1 nightly with the
+  content-mapper protocol (`7.1.0-dev.20260923.1` or newer), the command finds the
+  native compiler through the launcher's platform package and runs it with
+  `--runExternalCode`, so `.tsrx` files are type-checked through
+  `@tsrx/content-mapper` (now an optional peer dependency) and one `package.json`
+  script serves TypeScript 5.9, 6 and 7. It refuses to run a project whose
+  `tsconfig.json` (through `extends`) declares no content mapper for `.tsrx`
+  rather than let TypeScript skip those files, and explains a TypeScript 7 build
+  without the protocol (the stable 7.0 releases, earlier nightlies) instead of
+  failing on the package's export map.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The tsserver plugin drops
+  TypeScript's diagnostics for a `.tsrx` file while that file has a fatal TSRX
+  compile error, as the classic language server's diagnostic filter always did: in
+  that state the generated code is the raw source, so those diagnostics were noise
+  beside the compile error the TSRX language server (or `@tsrx/content-mapper` on
+  TypeScript 7) reports. The VS Code extension now hands this plugin to VS Code's
+  own tsserver, so VS Code needs no tsconfig `plugins` entry; the entry remains
+  for other editors' TypeScript servers.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Support TypeScript 6: the
+  `typescript` peer dependency range of `@tsrx/typescript-plugin` and
+  `@tsrx/language-server` is now `^5.9.3 || ^6.0.0 || ^7.1.0-dev.20260923.1` (the
+  classic path passes its whole test suite on 6.0.3; TypeScript 7 is for
+  `tsrx-tsc` and the language server's native backend). `@tsrx/content-mapper`
+  declares that range as its own dependency, so a project whose `typescript` is
+  the native TypeScript 7 package (a launcher without a JavaScript API) can still
+  run the mapper. `tsrx-tsc`, the language server and the mapper now stop with an
+  explanation when they resolve a TypeScript 7 package instead of failing on its
+  export map. The mapper documents its minimum TypeScript build
+  (`7.1.0-dev.20260923.1`, the first nightly whose `tsc --watch` recompiles; the
+  stable 7.0 line has no content-mapper protocol), and the test suite runs against
+  another build through `TSRX_NATIVE_TSC`. The TypeScript 7 messages of `tsrx-tsc`
+  and the language server say that TypeScript 7 support is not complete and link
+  tsrx-org/tsrx#136, which tracks the gaps. `<script>` bodies are type-checked as
+  blocks appended to the generated TSX on every path, including tsserver through
+  the plugin, instead of as extra service scripts that only the language server
+  could register.
+
+### Patch Changes
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - **Go to Source Definition**
+  now works in `.tsrx` files with VS Code's own TypeScript (5.9 or 6). Like Go to
+  Definition, it opens a symbol's definition, but it goes past a `.d.ts` file to
+  the JavaScript behind it: `useState` opens React's JavaScript, not
+  `@types/react`. Before, the command only ran Go to Definition. VS Code's own Go
+  to Source Definition runs only in TypeScript and JavaScript files.
+
+  `@tsrx/typescript-plugin` adds the request the extension sends,
+  `_tsrx:findSourceDefinition`, and fixes tsserver's `findSourceDefinition` for
+  `.tsrx` files. It used to fail with "Debug Failure. Script kind should match
+  provided ScriptKind" for a symbol from a library: tsserver checks the library in
+  a helper project without plugins, which read the `.tsrx` file as plain
+  TypeScript. The plugin now sets up that helper project too.
+
+  With TypeScript 7, the command opens the definition and says that Go to Source
+  Definition does not work in `.tsrx` files yet: `tsc --lsp` can answer the
+  request, but the TypeScript 7 extension runs its command only in TypeScript and
+  JavaScript files (microsoft/TypeScript#64576).
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The tsserver plugin now
+  answers TypeScript's closing-tag request (`getJsxClosingTagAtPosition`) for
+  `.tsrx` files by mapping the typed position into the generated code. Volar's
+  language-service proxy leaves this request out, so tsserver used to read the
+  `.tsrx` position against the generated TSX and find nothing. Editors that close
+  JSX tags through tsserver, such as VS Code's built-in TypeScript
+  (`js/ts.autoClosingTags.enabled`), now close tags in `.tsrx` files too.
+- Updated dependencies
+  [[`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`5abd474`](https://github.com/tsrx-org/tsrx/commit/5abd474b108bdd780cece1e88e02ccfec265aad4),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`f518cb9`](https://github.com/tsrx-org/tsrx/commit/f518cb91a120e8a368cece21efbc954135f99dfe),
+  [`12803d3`](https://github.com/tsrx-org/tsrx/commit/12803d3da7a8fddfbd9ec783213310e3e6520fff)]:
+  - @tsrx/content-mapper@0.1.2
+  - @tsrx/vue@0.3.3
+  - @tsrx/solid@0.3.3
+  - @tsrx/preact@0.3.3
+  - @tsrx/react@0.4.3
+
 ## 0.5.2
 
 ### Patch Changes

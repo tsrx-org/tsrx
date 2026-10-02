@@ -1,5 +1,109 @@
 # @tsrx/core
 
+## 0.5.3
+
+### Patch Changes
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - `@tsrx/content-mapper`
+  reports every compile error under the source `TSRX`, in capitals like
+  TypeScript's own `TS2322`: a TSRX error with its code's number, so it shows with
+  its own code (`TSRX2002`) instead of a hash of the code, and an error with a
+  TypeScript code with `11` before its number (`TS1005` shows as `TSRX111005`).
+  The generated code can lose a mistake, such as a repeated modifier or a rest
+  parameter's `?`, so TypeScript can't always report it itself. Where it does, an
+  `ignore` diagnostic directive over the generated code of the statement, member
+  or element that holds the error hides TypeScript's copy until the error is
+  fixed, so each mistake shows once. The mapper's own errors are `771000` to
+  `771003`. `@tsrx/core/diagnostics` exports the source, codes and prefixes as
+  `DIAGNOSTIC_SOURCE`, `MAPPER_CODES`, `TYPESCRIPT_CODE_PREFIX` and
+  `MAPPER_CODE_PREFIX`.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - `@tsrx/core/diagnostics` runs
+  nothing when it loads, so a bundler keeps only the tables a consumer reads: a
+  bundle that imports the diagnostic source and codes now takes under 2 KB of it
+  instead of about 45 KB, with Rolldown, esbuild or Rollup and no bundler
+  settings. The upstream message lookup is built the first time it is used.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A `<script>` whose `type`
+  makes its body data rather than code, such as `application/json`, `importmap` or
+  `text/template`, no longer gets an embedded TypeScript region, so the language
+  service and TypeScript 7 stop reporting TypeScript errors in valid JSON
+  ([#846](https://github.com/tsrx-org/tsrx/issues/846)). A body with no `type`,
+  `module`, a JavaScript MIME type, a TypeScript or JSX type (`text/typescript`,
+  `text/babel`), or a `type` only known at run time is still checked.
+
+- [#985](https://github.com/tsrx-org/tsrx/pull/985)
+  [`5abd474`](https://github.com/tsrx-org/tsrx/commit/5abd474b108bdd780cece1e88e02ccfec265aad4)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Stop moving hooks out of
+  template control flow for Vue, Solid and Hono DOM. A hook (or, on Vue, a
+  `ref()`, `computed()` or similar call) inside an `@if`, `@for`, `@switch` or
+  `@try` body now stays in that body, as it already does for React and Preact, so
+  the Rules of Hooks apply as they do in TSX. Give hook state that belongs to a
+  branch its own component.
+
+  The type-only output for editors no longer declares an untyped
+  `let <Component>__StatementBodyHook<N>;` cache, which TypeScript 7 reported as
+  TS7034 and TS7005 under `noImplicitAny`.
+
+  Platform authors: the `moduleScopedHookComponents` and `isTopLevelSetupCall`
+  platform hooks, the `moduleScopedHookComponents` transform option, and the
+  `planSwitchLift`, `cloneSwitchHelperInvocation` and
+  `rewriteLoopContinuesToBareReturns` exports are removed. `createHookSafeHelper`
+  now takes `(bodyNodes, sourceNode, ctx, options)`, and the new
+  `summarize_switch_case` export returns a `@switch` case's own body.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Add `@tsrx/content-mapper`, a
+  TypeScript 7 content mapper that type-checks `.tsrx` files under native
+  `tsc --runExternalCode`; factor the type-only transform out of the Volar plugin
+  into `@tsrx/typescript-plugin/src/transform.js`, and drop the unused
+  `suppressedDiagnostics` mapping metadata, and blank `<script>` bodies in the
+  generated TSX (they are checked as embedded scripts) so a `<` inside one no
+  longer parses as a JSX tag. Migration and rollback steps, the compatibility
+  matrix against the classic path, and benchmarks are in
+  `packages/content-mapper/ROLLOUT.md`, `COMPATIBILITY.md` and `BENCHMARKS.md`.
+  `<script>` bodies are no longer separate supplemental `.mts` outputs: the shared
+  transform appends each body to the generated TSX as a block statement, mapped
+  back to the source, and hoists a `<script type="module">` body's `import`
+  declarations to module level in front of it (its `export` syntax is blanked in
+  place, since nothing can import an inline script, and top-level `await` stays
+  valid). Composite (`--build`) projects therefore accept `.tsrx` files with
+  `<script>` bodies (the TS6307 limitation is gone), and `--declaration` emits no
+  `*.tsrx.<n>.d.mts` files. Verbatim spans now also cover the identical whitespace
+  that follows them, so edits that end at the start of the next line (Organize
+  Imports, Sort Imports, Remove Unused Imports) map and apply instead of being
+  dropped by TypeScript 7.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A tag that the loose parser
+  recovers as unclosed (for example `<b>` typed before its `</b>`) now stays
+  unclosed in the type-only output used by editors, as authored, instead of
+  getting a synthesized closing tag. TypeScript then reports it ("JSX element 'b'
+  has no corresponding closing tag", TS17008) as it does in a `.tsx` file, and
+  TypeScript's own closing-tag completion can find the open tag. Compiled output
+  is unchanged.
+
+- [#988](https://github.com/tsrx-org/tsrx/pull/988)
+  [`f518cb9`](https://github.com/tsrx-org/tsrx/commit/f518cb91a120e8a368cece21efbc954135f99dfe)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Lower a `@catch` body once
+  when the target renders it through a fallback component. For Vue, a `@try` with
+  `@pending` and `@catch` no longer hoists a static catch body a second time for
+  an inline fallback that is never used; the fallback renders the component
+  instead.
+
+  Type `TsrxErrorBoundary` as returning Vue's `Block`, so `<TsrxErrorBoundary>` in
+  the type-only output for `@try` / `@catch` is a valid `vue-jsx-vapor` JSX
+  element. Under `strict` it reported TS2786 because its declared return type
+  included `undefined`.
+
 ## 0.5.2
 
 ### Patch Changes

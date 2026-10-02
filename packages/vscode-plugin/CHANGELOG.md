@@ -1,5 +1,180 @@
 # Changelog
 
+## 2.2.0
+
+### Minor Changes
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The TSRX language server now
+  formats `.tsrx` files (`textDocument/formatting`, and
+  `textDocument/rangeFormatting` for Format Selection and format on paste) with
+  the project's own `prettier` and `@tsrx/prettier-plugin`, on every backend and
+  in every editor that formats through it. It adds the plugin and the `tsrx`
+  parser itself, so a `.tsrx` file formats even when the Prettier config does not
+  list the plugin, and it applies the project's Prettier config, `.editorconfig`
+  and `.prettierignore`, so the editor gives the same result as the `prettier`
+  command. When a package is missing, or Prettier is older than 3.6, the server
+  returns no edits and shows a message once per project with the install command
+  for the project's package manager (from the nearest lockfile: pnpm, Yarn, Bun or
+  npm). `tsrx.format.enable: false` turns formatting off.
+
+  The VS Code extension makes TSRX the default formatter for `.tsrx` files through
+  `configurationDefaults`, so the Prettier extension is no longer needed. It no
+  longer writes `prettier.documentSelectors` and
+  `"[tsrx]": { "editor.defaultFormatter": "esbenp.prettier-vscode" }` into the
+  user settings on every start. That write replaced the whole `[tsrx]` block and
+  the whole selector list each time. Settings that older versions wrote stay until
+  you remove them, and while they stay, the Prettier extension formats `.tsrx`
+  files. The unused `tsrx.preferences.preferTypeOnlyAutoImports` setting is
+  removed.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Support TypeScript 6: the
+  `typescript` peer dependency range of `@tsrx/typescript-plugin` and
+  `@tsrx/language-server` is now `^5.9.3 || ^6.0.0 || ^7.1.0-dev.20260923.1` (the
+  classic path passes its whole test suite on 6.0.3; TypeScript 7 is for
+  `tsrx-tsc` and the language server's native backend). `@tsrx/content-mapper`
+  declares that range as its own dependency, so a project whose `typescript` is
+  the native TypeScript 7 package (a launcher without a JavaScript API) can still
+  run the mapper. `tsrx-tsc`, the language server and the mapper now stop with an
+  explanation when they resolve a TypeScript 7 package instead of failing on its
+  export map. The mapper documents its minimum TypeScript build
+  (`7.1.0-dev.20260923.1`, the first nightly whose `tsc --watch` recompiles; the
+  stable 7.0 line has no content-mapper protocol), and the test suite runs against
+  another build through `TSRX_NATIVE_TSC`. The TypeScript 7 messages of `tsrx-tsc`
+  and the language server say that TypeScript 7 support is not complete and link
+  tsrx-org/tsrx#136, which tracks the gaps. `<script>` bodies are type-checked as
+  blocks appended to the generated TSX on every path, including tsserver through
+  the plugin, instead of as extra service scripts that only the language server
+  could register.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Add native TypeScript 7
+  support while leaving every TypeScript feature for `.tsrx` files to VS Code's
+  selected TypeScript. On TypeScript 5.9/6, the extension contributes and ships
+  `@tsrx/typescript-plugin`, so VS Code's tsserver handles `.tsrx` files without a
+  tsconfig `plugins` entry. The extension activates Microsoft's TypeScript
+  extensions and leaves server selection to them. On TypeScript 7 it registers
+  `.tsrx` for configured-project discovery; each project's `contentMappers` entry
+  supplies the mapper. The extension neither bundles nor hosts TypeScript, patches
+  no other extension, and has no backend setting of its own.
+
+  The TSRX language server always runs slim for TSRX-specific features and compile
+  errors; the extension drops its compile-error copy for files the native mapper
+  reports on, and, on TypeScript 5.9/6, each compile error that tsserver also
+  reports, with the same TypeScript code at the same place (a mistake the parser
+  collects, such as a rest element's default or a redeclared `let`), as the
+  language server does when it hosts TypeScript. The extension activates when a
+  single `.tsrx` file is opened and does not run in untrusted workspaces.
+  Migration steps, the compatibility matrix and benchmarks are in
+  `packages/content-mapper/ROLLOUT.md`, `COMPATIBILITY.md` and `BENCHMARKS.md`.
+
+### Patch Changes
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - **Go to Source Definition**
+  now works in `.tsrx` files with VS Code's own TypeScript (5.9 or 6). Like Go to
+  Definition, it opens a symbol's definition, but it goes past a `.d.ts` file to
+  the JavaScript behind it: `useState` opens React's JavaScript, not
+  `@types/react`. Before, the command only ran Go to Definition. VS Code's own Go
+  to Source Definition runs only in TypeScript and JavaScript files.
+
+  `@tsrx/typescript-plugin` adds the request the extension sends,
+  `_tsrx:findSourceDefinition`, and fixes tsserver's `findSourceDefinition` for
+  `.tsrx` files. It used to fail with "Debug Failure. Script kind should match
+  provided ScriptKind" for a symbol from a library: tsserver checks the library in
+  a helper project without plugins, which read the `.tsrx` file as plain
+  TypeScript. The plugin now sets up that helper project too.
+
+  With TypeScript 7, the command opens the definition and says that Go to Source
+  Definition does not work in `.tsrx` files yet: `tsc --lsp` can answer the
+  request, but the TypeScript 7 extension runs its command only in TypeScript and
+  JavaScript files (microsoft/TypeScript#64576).
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The extension now closes JSX
+  tags in `.tsrx` files itself only while TypeScript 7 serves them
+  (`js/ts.experimental.useTsgo` on and a TypeScript 7 extension installed). With
+  VS Code's built-in TypeScript, TypeScript closes them through
+  `@tsrx/typescript-plugin` (`js/ts.autoClosingTags.enabled`), so the two no
+  longer race to insert the same closing tag. The TypeScript 7 extension does not
+  close tags in `.tsrx` files yet (microsoft/TypeScript#64564);
+  `tsrx.autoClosingTags.enabled` now only applies on TypeScript 7.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Adds **TSRX: Restart Language
+  Server** to the Command Palette. It restarts the TSRX language server and the
+  TypeScript server that serves `.tsrx` files: VS Code's own TypeScript with the
+  TSRX plugin, or TypeScript 7.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - New Command Palette commands
+  for `.tsrx` files, because VS Code's own TypeScript commands only run in
+  TypeScript and JavaScript files:
+
+  - **TSRX: Go to Project Configuration** opens the nearest `tsconfig.json` above
+    the file, where TSRX reads its settings.
+  - **TSRX: Sort Imports** and **TSRX: Remove Unused Imports** apply TypeScript's
+    source actions. They work on TypeScript 7; on TypeScript 5.9 or 6 they do not
+    change `.tsrx` files yet (tsrx-org/tsrx#994).
+
+  The extension no longer adds VS Code's own commands to menus for `.tsrx` files,
+  where they never appeared or refused the file: Reload Projects (**TSRX: Restart
+  Language Server** covers it), Go to Project Configuration, Sort Imports, Remove
+  Unused Imports, and Find File References (tsrx-org/tsrx#993). TSRX's commands
+  appear in the Command Palette only in a TSRX workspace, and Go to Source
+  Definition only in `.tsrx` files.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Activate Microsoft's
+  TypeScript extensions directly and register `.tsrx` through TypeScript 7's
+  `registerContentMappers` API for configured-project discovery. Remove the
+  workaround that opened JavaScript/TypeScript files or created a temporary
+  `tsrx-wake-up.ts`. Projects containing only `.tsrx` source files get TypeScript
+  features without opening another file. The mapper still comes from
+  `tsconfig.json`. Microsoft's extensions decide which server runs; TSRX neither
+  reads their selection settings nor introduces its own.
+
+- [#135](https://github.com/tsrx-org/tsrx/pull/135)
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - A status item on `.tsrx`
+  files now names the TypeScript that serves them and opens the version picker.
+  When a setup leaves `.tsrx` files unchecked, or checked by another TypeScript
+  than the project's, the extension says what to do, once per window. When
+  TypeScript 7 runs its built-in 7.0.2 but the project installs a 7.1 nightly, a
+  **Use Project TypeScript** button sets `js/ts.tsdk.path` to it. Nothing changes
+  or installs unless you click a button. Whenever a `tsdk` setting changes which
+  compiler TypeScript 7 should run, the extension restarts TypeScript 7, which
+  otherwise reads these settings only when it starts.
+
+  To type-check `.tsrx` files with TypeScript 7.1, the README now gives three
+  steps: install `typescript@next` in the project; set
+  `"js/ts.experimental.useTsgo": true` and
+  `"js/ts.tsdk.path": "node_modules/typescript"` in your VS Code user settings;
+  and install the TypeScript 7 extension. The TypeScript 7 Nightly extension is
+  not needed.
+
+- Updated dependencies
+  [[`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee)]:
+  - @tsrx/language-server@0.6.0
+  - @tsrx/typescript-plugin@0.6.0
+
 ## 2.1.16
 
 ### Patch Changes

@@ -1,5 +1,59 @@
 # @tsrx/vue
 
+## 0.3.3
+
+### Patch Changes
+
+- [#985](https://github.com/tsrx-org/tsrx/pull/985)
+  [`5abd474`](https://github.com/tsrx-org/tsrx/commit/5abd474b108bdd780cece1e88e02ccfec265aad4)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Stop moving hooks out of
+  template control flow for Vue, Solid and Hono DOM. A hook (or, on Vue, a
+  `ref()`, `computed()` or similar call) inside an `@if`, `@for`, `@switch` or
+  `@try` body now stays in that body, as it already does for React and Preact, so
+  the Rules of Hooks apply as they do in TSX. Give hook state that belongs to a
+  branch its own component.
+
+  The type-only output for editors no longer declares an untyped
+  `let <Component>__StatementBodyHook<N>;` cache, which TypeScript 7 reported as
+  TS7034 and TS7005 under `noImplicitAny`.
+
+  Platform authors: the `moduleScopedHookComponents` and `isTopLevelSetupCall`
+  platform hooks, the `moduleScopedHookComponents` transform option, and the
+  `planSwitchLift`, `cloneSwitchHelperInvocation` and
+  `rewriteLoopContinuesToBareReturns` exports are removed. `createHookSafeHelper`
+  now takes `(bodyNodes, sourceNode, ctx, options)`, and the new
+  `summarize_switch_case` export returns a `@switch` case's own body.
+
+- [#988](https://github.com/tsrx-org/tsrx/pull/988)
+  [`f518cb9`](https://github.com/tsrx-org/tsrx/commit/f518cb91a120e8a368cece21efbc954135f99dfe)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Lower a `@catch` body once
+  when the target renders it through a fallback component. For Vue, a `@try` with
+  `@pending` and `@catch` no longer hoists a static catch body a second time for
+  an inline fallback that is never used; the fallback renders the component
+  instead.
+
+  Type `TsrxErrorBoundary` as returning Vue's `Block`, so `<TsrxErrorBoundary>` in
+  the type-only output for `@try` / `@catch` is a valid `vue-jsx-vapor` JSX
+  element. Under `strict` it reported TS2786 because its declared return type
+  included `undefined`.
+
+- [#987](https://github.com/tsrx-org/tsrx/pull/987)
+  [`12803d3`](https://github.com/tsrx-org/tsrx/commit/12803d3da7a8fddfbd9ec783213310e3e6520fff)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Stop generating an unused
+  catch fallback component for `@try` / `@catch` without `@pending`. The component
+  is only rendered by the `@pending` boundary, so without one the output had an
+  extra `defineVaporComponent` and a second hoisted copy of a static catch body.
+- Updated dependencies
+  [[`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`5abd474`](https://github.com/tsrx-org/tsrx/commit/5abd474b108bdd780cece1e88e02ccfec265aad4),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`836eb49`](https://github.com/tsrx-org/tsrx/commit/836eb492898dc8d7300dd31012951c1dd3d1adee),
+  [`f518cb9`](https://github.com/tsrx-org/tsrx/commit/f518cb91a120e8a368cece21efbc954135f99dfe)]:
+  - @tsrx/core@0.5.3
+  - @tsrx/vue-runtime@0.1.13
+
 ## 0.3.2
 
 ### Patch Changes
