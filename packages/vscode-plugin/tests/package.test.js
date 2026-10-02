@@ -60,11 +60,14 @@ describe('@tsrx/vscode-plugin package contract', () => {
 		expect(Object.keys(properties).filter((key) => /backend/i.test(key))).toEqual([]);
 	});
 
-	it("bundles no TypeScript: VS Code's own TypeScript owns .tsrx files", () => {
+	it("bundles no TypeScript: VS Code's own TypeScript owns .tsrx files", async () => {
 		expect(package_json.dependencies.typescript).toBeUndefined();
 		expect(package_json.peerDependencies.typescript).toBeUndefined();
-		const tsdown_config = readFileSync(resolve(__dirname, '../tsdown.config.js'), 'utf8');
-		expect(tsdown_config).not.toMatch(/^\s*'typescript',/m);
+		// Kept external, so the build does not inline it (#1003), and not copied into
+		// dist/node_modules.
+		const { ALWAYS_EXTERNAL, ROOT_EXTERNAL_PACKAGES } = await import('../tsdown.config.js');
+		expect(ALWAYS_EXTERNAL).toContain('typescript');
+		expect(ROOT_EXTERNAL_PACKAGES).not.toContain('typescript');
 	});
 
 	it('hands @tsrx/typescript-plugin to whichever tsserver VS Code runs, for .tsrx files', () => {

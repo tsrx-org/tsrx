@@ -8,9 +8,7 @@ import { getAllExternalPackages } from '../../scripts/collect-external-deps.js';
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Root packages to treat as external (their full dependency trees will be copied)
-// `typescript` is deliberately absent: the classic backend hosts the TypeScript VS Code
-// runs for the workspace (`typescript.tsdk` initialization option), never a bundled copy.
-const ROOT_EXTERNAL_PACKAGES = [
+export const ROOT_EXTERNAL_PACKAGES = [
 	'@tsrx/core',
 	'volar-service-css',
 	'vscode-uri',
@@ -27,8 +25,12 @@ const REGEX_EXTERNAL_PACKAGES = [
 	// content mapper does.
 	/^@tsrx\/core(?!\/diagnostics$)(?:\/.*)?$/,
 ];
-// Always external (provided by VS Code)
-const ALWAYS_EXTERNAL = ['vscode'];
+// Always external, and not copied: `vscode` is provided by VS Code. `typescript` is
+// loaded only by the classic backend, which hosts the TypeScript VS Code runs for the
+// workspace (`typescript.tsdk` initialization option). The extension starts the server
+// on the plugin backend, which loads none. A package left out of these lists is
+// bundled, which put TypeScript 5.9.3 in dist/server.js (#1003).
+export const ALWAYS_EXTERNAL = ['vscode', 'typescript'];
 const OUT_DIR = 'dist';
 
 // Compute all external packages by collecting dependency trees
