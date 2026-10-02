@@ -73,6 +73,21 @@ class TsrxPluginPackagingTest {
 			"dev.tsrx.intellij_plugin.TsrxLspServerSupportProvider",
 			(providers.item(0) as Element).getAttribute("implementation"),
 		)
+		val services = lspDescriptor.getElementsByTagName("projectService")
+		assertEquals(1, services.length)
+		assertEquals(
+			"dev.tsrx.intellij_plugin.TsrxSettings",
+			(services.item(0) as Element).getAttribute("serviceImplementation"),
+		)
+		val configurables = lspDescriptor.getElementsByTagName("projectConfigurable")
+		assertEquals(1, configurables.length)
+		assertEquals(
+			"dev.tsrx.intellij_plugin.TsrxSettingsConfigurable",
+			(configurables.item(0) as Element).getAttribute("instance"),
+		)
+		assertEquals("language", (configurables.item(0) as Element).getAttribute("parentId"))
+		assertEquals(0, mainDescriptor.getElementsByTagName("projectService").length)
+		assertEquals(0, mainDescriptor.getElementsByTagName("projectConfigurable").length)
 
 		val rainbowDescriptor = parseXml(
 			packageDir.resolve("src/main/resources/META-INF/tsrx.intellij-plugin-rainbow-brackets.xml"),

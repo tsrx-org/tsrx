@@ -3,6 +3,7 @@ package dev.tsrx.intellij_plugin
 import com.intellij.ide.trustedProjects.TrustedProjects
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.platform.lsp.api.LspServerManager
 import com.intellij.platform.lsp.api.LspServerSupportProvider
 
 class TsrxLspServerSupportProvider internal constructor(
@@ -22,4 +23,10 @@ class TsrxLspServerSupportProvider internal constructor(
 		val serverInfo = TsrxLanguageServer.resolveServer(project, file) ?: return
 		serverStarter.ensureServerStarted(TsrxLspServerDescriptor(project, serverInfo))
 	}
+}
+
+/** Stops the project's TSRX servers and starts them again for the open `.tsrx` files. */
+internal fun restartTsrxLanguageServer(project: Project) {
+	LspServerManager.getInstance(project)
+		.stopAndRestartIfNeeded(TsrxLspServerSupportProvider::class.java)
 }
