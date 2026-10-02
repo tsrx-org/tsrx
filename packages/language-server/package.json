@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "@volar/language-server": "catalog:default",
+    "@tsrx/typescript-plugin": "workspace:*",
     "@tsrx/core": "workspace:*",
     "jsonc-parser": "catalog:default",
     "volar-service-css": "catalog:default",
@@ -51,7 +52,6 @@
     "vscode-uri": "catalog:default"
   },
   "devDependencies": {
-    "@tsrx/typescript-plugin": "workspace:*",
     "tsdown": "catalog:default",
     "@types/estree": "catalog:default",
     "@volar/language-core": "catalog:default",

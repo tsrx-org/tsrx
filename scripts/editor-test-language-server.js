@@ -12,27 +12,32 @@ import { fileURLToPath } from 'node:url';
 export const repo_root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
- * Build, pack and install `@tsrx/language-server` into `<dir>/server`. Needs network
- * access for its npm dependencies.
+ * Build, pack and install `@tsrx/language-server` into `<dir>/server`, with this
+ * repository's `@tsrx/typescript-plugin` (a dependency of the server, released together
+ * with it) packed and installed beside it, so npm uses both as the next release ships
+ * them. Needs network access for the other npm dependencies.
  * @param {string} dir
  * @returns {{ bin: string, typescript_next_to_server: boolean }}
  */
 export function install_packed_language_server(dir) {
-	execFileSync('pnpm', ['--filter', '@tsrx/language-server', 'build'], {
-		cwd: repo_root,
-		stdio: 'ignore',
-	});
 	const pack = path.join(dir, 'pack');
-	execFileSync('pnpm', ['--filter', '@tsrx/language-server', 'pack', '--pack-destination', pack], {
-		cwd: repo_root,
-		stdio: 'ignore',
-	});
-	const tarball = path.join(pack, fs.readdirSync(pack)[0]);
+	/** @type {string[]} */
+	const tarballs = [];
+	for (const name of ['@tsrx/typescript-plugin', '@tsrx/language-server']) {
+		execFileSync('pnpm', ['--filter', name, 'build'], { cwd: repo_root, stdio: 'ignore' });
+		const before = new Set(fs.existsSync(pack) ? fs.readdirSync(pack) : []);
+		execFileSync('pnpm', ['--filter', name, 'pack', '--pack-destination', pack], {
+			cwd: repo_root,
+			stdio: 'ignore',
+		});
+		const packed = fs.readdirSync(pack).filter((file) => !before.has(file));
+		tarballs.push(path.join(pack, packed[0]));
+	}
 	const install = path.join(dir, 'server');
 	fs.mkdirSync(install);
 	execFileSync(
 		'npm',
-		['install', '--prefix', install, tarball, '--no-audit', '--no-fund', '--loglevel=error'],
+		['install', '--prefix', install, ...tarballs, '--no-audit', '--no-fund', '--loglevel=error'],
 		{ stdio: 'ignore' },
 	);
 	return {

@@ -21,10 +21,11 @@ plugin next to the workspace `typescript` package it runs. On TypeScript 7 the
 The plugin and the TSRX language server run on TypeScript's JavaScript API of
 `typescript@^5.9.3 || ^6.0.0`. `tsrx-tsc` runs on those versions through Volar and
 on TypeScript 7 through the native compiler, so the peer dependency range is
-`^5.9.3 || ^6.0.0 || ^7.1.0-dev.20260923.1`. The `typescript@7` package is a
-launcher for the platform binary with no JavaScript API, so when `tsrx-tsc`
-resolves one it runs that binary itself with `--runExternalCode`, which lets
-TypeScript type-check `.tsrx` files through
+`^5.9.3 || ^6.0.0 || ^7.1.0-dev.20260923.1`. The peer dependency is optional: npm
+and pnpm do not install a `typescript` with this package, so the project's own is
+used. The `typescript@7` package is a launcher for the platform binary with no
+JavaScript API, so when `tsrx-tsc` resolves one it runs that binary itself with
+`--runExternalCode`, which lets TypeScript type-check `.tsrx` files through
 [`@tsrx/content-mapper`](https://github.com/tsrx-org/tsrx/tree/main/packages/content-mapper)
 (an optional peer dependency of this package). That needs a TypeScript 7.1 nightly
 (`7.1.0-dev.20260923.1` or newer; the stable 7.0 releases have no content-mapper

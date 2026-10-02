@@ -11,7 +11,17 @@ import {
 } from './typescript-version.js';
 
 const require = createRequire(import.meta.url);
-const typescript_package_json_path = require.resolve('typescript/package.json');
+// `typescript` is an optional peer dependency: npm and pnpm do not install one.
+/** @type {string} */
+let typescript_package_json_path;
+try {
+	typescript_package_json_path = require.resolve('typescript/package.json');
+} catch {
+	console.error(
+		'tsrx-tsc needs the typescript package installed next to @tsrx/typescript-plugin. In the project: npm install -D typescript, or pnpm add -D typescript.',
+	);
+	process.exit(1);
+}
 const typescript_version = /** @type {{ version: string }} */ (
 	require(typescript_package_json_path)
 ).version;

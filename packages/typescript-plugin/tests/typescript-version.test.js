@@ -25,6 +25,14 @@ describe('TypeScript version support', () => {
 		expect(typescript_major('6.0.3')).toBe(6);
 	});
 
+	it('declares typescript as an optional peer dependency, which npm and pnpm do not install', () => {
+		const manifest = JSON.parse(
+			fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+		);
+		expect(manifest.peerDependencies.typescript).toBeDefined();
+		expect(manifest.peerDependenciesMeta?.typescript?.optional).toBe(true);
+	});
+
 	it('declares the ranges the workspace uses', () => {
 		expect(SUPPORTED_TYPESCRIPT_RANGE).toBe('^5.9.3 || ^6.0.0');
 		const workspace = fs.readFileSync(

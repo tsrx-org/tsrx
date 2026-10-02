@@ -49,6 +49,9 @@
     "octane": "*"
   },
   "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    },
     "@tsrx/content-mapper": {
       "optional": true
     },
