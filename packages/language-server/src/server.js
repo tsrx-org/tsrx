@@ -180,7 +180,7 @@ export function createTsrxLanguageServer(options = {}) {
 					createSimpleProject([languagePlugin]),
 					createServicePlugins(selection.backend),
 				);
-				log('Server initialization complete (native backend, no TypeScript loaded)');
+				log('Server initialization complete');
 				return with_formatting(initResult);
 			}
 

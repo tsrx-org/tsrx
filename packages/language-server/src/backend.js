@@ -79,10 +79,10 @@ export function resolve_typescript_backend({ argv = [], initializationOptions } 
 /**
  * The TypeScript installation the classic backend hosts, from the Volar-style
  * `typescript.tsdk` initialization option: the absolute path of a TypeScript
- * `lib` directory (the one containing `typescript.js`). The VS Code extension
- * passes the TypeScript VS Code itself runs for the workspace; other editors
- * may pass their own. Without it the server loads the `typescript` package
- * resolvable from its own location (the peer dependency).
+ * `lib` directory (the one containing `typescript.js`). An editor may pass
+ * the TypeScript it runs for the workspace. Without it the server loads the
+ * `typescript` package resolvable from its own location (the peer
+ * dependency). The VS Code extension uses the plugin backend, which loads none.
  * @param {unknown} initializationOptions
  * @returns {string | undefined}
  */
