@@ -166,7 +166,7 @@ describe('@tsrx/intellij-plugin release contract', () => {
 		const zed_job = workflow.slice(zed_job_start, intellij_job_start);
 		const intellij_job = workflow.slice(intellij_job_start);
 
-		expect(workflow).toContain("contains(github.event.head_commit.message, 'Version Packages')");
+		expect(workflow).toContain("startsWith(github.event.head_commit.message, 'Version Packages')");
 		expect(workflow).toContain('packages/intellij-plugin/package.json');
 		expect(workflow).toContain('intellij-version-changed: ${{ steps.intellij.outputs.changed }}');
 		expect(workflow_header).not.toContain('concurrency:');
