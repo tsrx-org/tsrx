@@ -67,6 +67,26 @@ export function helperD() {}
 	'src/Semicolons.tsrx': imports_file(';'),
 	'src/NoSemicolons.tsrx': imports_file(''),
 	'src/Comment.tsrx': imports_file(';', ' // keep this'),
+	'src/ReExports.tsrx': `import { label } from './label';
+import { useState } from 'react';
+export * from './lib';
+export { label as other } from './label';
+
+export function ReExports() @{
+	const [count] = useState(label);
+	<p>{count}</p>
+}
+`,
+	'src/ReExports.tsx': `import { label } from './label';
+import { useState } from 'react';
+export * from './lib';
+export { label as other } from './label';
+
+export function ReExports() {
+	const [count] = useState(label);
+	return <p>{count}</p>;
+}
+`,
 	// Unused imports
 	'src/Unused.tsrx': `import { helperA } from './lib';
 import { helperB } from './lib'
@@ -129,7 +149,7 @@ describe('tsserver plugin: imports in .tsrx files', () => {
 		await server.request('configure', {
 			preferences: { includeCompletionsForModuleExports: true },
 		});
-		for (const file of Object.keys(FILES).filter((name) => name.endsWith('.tsrx'))) {
+		for (const file of Object.keys(FILES).filter((name) => /\.tsx$|\.tsrx$/.test(name))) {
 			const full = path.join(workspace, file);
 			await server.request('open', {
 				file: full,
@@ -439,6 +459,29 @@ import def from './def';
 	});
 
 	describe('Organize Imports', () => {
+		it('sorts the imports of a file with re-exports, but not the re-exports (#1029)', async () => {
+			// TypeScript also sorts and joins re-exports. An edit for them that did not map
+			// would make the plugin drop the edits for the imports too.
+			expect(await organized_imports('src/ReExports.tsx', 'SortAndCombine')).toBe(
+				`import { useState } from 'react';
+import { label } from './label';
+export { label as other } from './label';
+export * from './lib';
+
+`,
+			);
+			// The generated code has a blank line between the re-exports, so TypeScript
+			// sorts each one on its own and they keep their order.
+			expect(await organized_imports('src/ReExports.tsrx', 'SortAndCombine')).toBe(
+				`import { useState } from 'react';
+import { label } from './label';
+export * from './lib';
+export { label as other } from './label';
+
+`,
+			);
+		}, 60_000);
+
 		it.each(/** @type {const} */ (['src/Semicolons.tsrx', 'src/NoSemicolons.tsrx']))(
 			'sorts the imports of %s',
 			async (file) => {

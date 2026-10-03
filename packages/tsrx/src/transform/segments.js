@@ -563,9 +563,7 @@ export function convert_source_map_to_mappings(
 	 *
 	 * An import gets the mapping only when it is printed as written: a name the
 	 * compiler adds has no location, and Organize Imports would copy it into the
-	 * source. The line point needs only spaces and a line break after the import,
-	 * in both files. Other text there, such as a comment, is not in the generated
-	 * code, and an edit up to the next line would delete it.
+	 * source.
 	 * @param {(AST.ImportDeclaration | AST.TSRXImportDeclaration) & AST.NodeWithLocation} node
 	 */
 	function add_import_mapping(node) {
@@ -575,22 +573,34 @@ export function convert_source_map_to_mappings(
 		const generated_end = generated_import_end(node, generated_start);
 		if (generated_end === undefined) return;
 
-		const source_offsets = [node.start, node.end];
-		const generated_offsets = [generated_start, generated_end];
-		const source_line_start = line_start_after(source, node.end);
-		const generated_line_start = line_start_after(generated_code, generated_end);
-		if (source_line_start !== -1 && generated_line_start !== -1) {
-			source_offsets.push(source_line_start);
-			generated_offsets.push(generated_line_start);
-		}
-		const lengths = source_offsets.map(() => 0);
-		mappings.push({
-			sourceOffsets: source_offsets,
-			generatedOffsets: generated_offsets,
-			lengths,
-			generatedLengths: [...lengths],
+		/** @type {CodeMapping} */
+		const mapping = {
+			sourceOffsets: [node.start, node.end],
+			generatedOffsets: [generated_start, generated_end],
+			lengths: [0, 0],
+			generatedLengths: [0, 0],
 			data: { ...mapping_data_verify_only, customData: {} },
-		});
+		};
+		add_line_point(mapping);
+		mappings.push(mapping);
+	}
+
+	/**
+	 * Add the start of the next line to the points of a whole-statement mapping,
+	 * when only spaces and a line break follow the statement in both files.
+	 * Organize Imports replaces or deletes imports and re-exports up to the start
+	 * of the next line. Other text there, such as a comment, is not in the
+	 * generated code, and an edit up to the next line would delete it.
+	 * @param {CodeMapping} mapping Points: the statement's start, then its end.
+	 */
+	function add_line_point(mapping) {
+		const source_line_start = line_start_after(source, mapping.sourceOffsets[1]);
+		const generated_line_start = line_start_after(generated_code, mapping.generatedOffsets[1]);
+		if (source_line_start === -1 || generated_line_start === -1) return;
+		mapping.sourceOffsets.push(source_line_start);
+		mapping.generatedOffsets.push(generated_line_start);
+		mapping.lengths.push(0);
+		mapping.generatedLengths?.push(0);
 	}
 
 	/**
@@ -647,6 +657,13 @@ export function convert_source_map_to_mappings(
 			mapping.generatedOffsets = [generated_start, generated_end];
 			mapping.lengths = [0, 0];
 			mapping.generatedLengths = [0, 0];
+			// Organize Imports also sorts and joins re-exports.
+			if (
+				node.type === 'ExportAllDeclaration' ||
+				(node.type === 'ExportNamedDeclaration' && node.source)
+			) {
+				add_line_point(mapping);
+			}
 			mappings.push(mapping);
 		}
 		tokens.push({

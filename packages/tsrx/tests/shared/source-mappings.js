@@ -1880,6 +1880,42 @@ export function App() @{
 			expect(lines).toEqual(statements.map((statement) => statement + line_break));
 		});
 
+		it.each([
+			"export { label } from './label';",
+			"export { label } from './label'",
+			"export * from './label';",
+			"export * as all from './label'",
+		])('maps the line of the re-export %j', (statement) => {
+			const source = `import { first } from './first';
+${statement}
+
+export function App() @{
+	<p>{first}</p>
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const file = ts.createSourceFile(
+				'App.tsx',
+				result.code,
+				ts.ScriptTarget.Latest,
+				true,
+				ts.ScriptKind.TSX,
+			);
+			const node = file.statements.find(
+				(statement) =>
+					ts.isExportDeclaration(statement) &&
+					statement.moduleSpecifier !== undefined &&
+					ts.isStringLiteral(statement.moduleSpecifier) &&
+					statement.moduleSpecifier.text === './label',
+			);
+			assert(node, 'The generated code must keep the re-export');
+			const start = node.getStart(file);
+			const line_end = result.code.indexOf('\n', node.getEnd()) + 1;
+			// Organize Imports also sorts and joins re-exports, up to the next line.
+			expect(mapped_text(source, result.mappings, start, line_end, 'edit')).toBe(`${statement}\n`);
+		});
+
 		it('does not map the line of an import with a comment after it', () => {
 			const source = `import { label } from './label'; // keep this
 
