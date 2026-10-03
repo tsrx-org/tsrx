@@ -101,9 +101,9 @@ export function is_usable_typescript(version) {
 	return Number.parseInt(version, 10) < 7;
 }
 
-/** What the server does not give without TypeScript, for the notices. */
+/** What the server does not provide without TypeScript, for the notices. */
 const NO_FEATURES =
-	'The TSRX language server does not give type checking, hover or completions in .tsrx files.';
+	'The TSRX language server does not provide type checking, hover or completions in .tsrx files.';
 
 /** What still works without TypeScript, for the notices. */
 const STILL_WORKS =
