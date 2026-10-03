@@ -110,7 +110,8 @@ export function set_node_path_metadata(node, path) {
  * `get_hashbang`), printed as the output's first line. The parser also reports
  * it as the `Line` comment at offset 0, which is then never printed as `//…`.
  * @param {string} [source] The source text. In type-only output, the comments
- * after an import or a re-export on its line print after it as written.
+ * and spaces after an import or a re-export on its line print after it as
+ * written.
  */
 export function tsx_with_ts_locations(
 	boundary_tokens = false,
@@ -149,15 +150,15 @@ export function tsx_with_ts_locations(
 	};
 
 	/**
-	 * Write the comments after an import or a re-export on its line, with the
-	 * spaces before them, as written. TypeScript then keeps a comment with its
-	 * import when Organize Imports moves the import, and the rest of the line
-	 * is the same as in the source, so an edit up to the next line maps back
-	 * (see `add_line_point` in `segments.js`).
+	 * Write the rest of the line after an import or a re-export as written, when
+	 * it has only comments and spaces. TypeScript then keeps a comment with its
+	 * import when Organize Imports moves the import. The line is then the same
+	 * text up to the next line in both files, which TypeScript 7 needs to apply
+	 * an edit (see also `add_line_point` in `segments.js`).
 	 * @param {AST.Node} node
 	 * @param {ESRap.Context} context
 	 */
-	const write_line_comments = (node, context) => {
+	const write_rest_of_line = (node, context) => {
 		if (!emitted_comments || source === undefined || !is_organized_import(node)) return;
 		let end = /** @type {number} */ (node.end);
 		for (const comment of get_line_comments_after(node, source)) {
@@ -167,6 +168,15 @@ export function tsx_with_ts_locations(
 			context.write(source.slice(comment.start, comment.end));
 			context.location(comment.loc.end.line, comment.loc.end.column);
 			end = comment.end;
+		}
+		let spaces_end = end;
+		while (source[spaces_end] === ' ' || source[spaces_end] === '\t') spaces_end++;
+		if (
+			spaces_end === source.length ||
+			source[spaces_end] === '\n' ||
+			source[spaces_end] === '\r'
+		) {
+			context.write(source.slice(end, spaces_end));
 		}
 	};
 
@@ -417,7 +427,7 @@ export function tsx_with_ts_locations(
 			} else {
 				visit_with_locations();
 			}
-			if (preserve_owner_comments) write_line_comments(node, context);
+			if (preserve_owner_comments) write_rest_of_line(node, context);
 		},
 	};
 

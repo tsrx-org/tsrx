@@ -1922,26 +1922,32 @@ export function App() @{
 			["import { label } from './label'", ' // keep this'],
 			["import { label } from './label';", '\t/* first */  // second'],
 			["import { label } from './label';", ' /* keep this */'],
-		])('keeps the comment after the import %j and maps its line (%j)', (statement, comment) => {
-			const source = `${statement}${comment}
+			["import { label } from './label';", ' /* keep this */  \t'],
+			["import { label } from './label';", '  '],
+		])(
+			'keeps the rest of the line after the import %j and maps the line (%j)',
+			(statement, comment) => {
+				const source = `${statement}${comment}
 
 export function App() @{
 	<p>{label}</p>
 }
 `;
-			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
-			expect(result.errors).toEqual([]);
-			const generated = generated_imports(result.code).find((g) => g.module === './label');
-			assert(generated, 'The generated code must keep the import');
-			// TypeScript moves the comment with its import, as in a `.ts` file.
-			expect(result.code.slice(generated.end, generated.line_end)).toBe(`${comment}\n`);
-			expect(
-				mapped_text(source, result.mappings, generated.start, generated.end, 'diagnostic'),
-			).toBe(statement);
-			expect(
-				mapped_text(source, result.mappings, generated.start, generated.line_end, 'edit'),
-			).toBe(`${statement}${comment}\n`);
-		});
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				expect(result.errors).toEqual([]);
+				const generated = generated_imports(result.code).find((g) => g.module === './label');
+				assert(generated, 'The generated code must keep the import');
+				// TypeScript moves the comment with its import, as in a `.ts` file, and
+				// TypeScript 7 maps an edit up to the next line only over the same text.
+				expect(result.code.slice(generated.end, generated.line_end)).toBe(`${comment}\n`);
+				expect(
+					mapped_text(source, result.mappings, generated.start, generated.end, 'diagnostic'),
+				).toBe(statement);
+				expect(
+					mapped_text(source, result.mappings, generated.start, generated.line_end, 'edit'),
+				).toBe(`${statement}${comment}\n`);
+			},
+		);
 
 		it.each([
 			["import { label } from './label'; /* first\nsecond */", 'a comment on several lines'],

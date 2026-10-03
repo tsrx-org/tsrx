@@ -401,15 +401,25 @@ describe('native language server on a configured project', () => {
 	);
 
 	it.each([
-		[
-			'source.sortImports',
-			["import Button from './Button.tsrx';", "import Panel from './Panel.tsrx'; // keep this"],
-		],
-		['source.removeUnusedImports', ["import Button from './Button.tsrx';"]],
-		['source.organizeImports', ["import Button from './Button.tsrx';"]],
-	])('applies %s when a comment follows an import (#1024)', async (kind, imports) => {
-		// The generated code keeps the comment after its import, so TypeScript moves or
-		// removes it with the import, and the whole line is the same text in both files.
+		['source.sortImports', ' // keep this'],
+		['source.removeUnusedImports', ' // keep this'],
+		['source.organizeImports', ' // keep this'],
+		['source.sortImports', ' /* keep this */  '],
+		['source.removeUnusedImports', ' /* keep this */  '],
+		['source.sortImports', '  '],
+		['source.removeUnusedImports', '  '],
+	])('applies %s when %j follows an import (#1024)', async (kind, rest) => {
+		// The generated code keeps the rest of the line after an import, so TypeScript
+		// moves or removes a comment with its import, and the whole line is the same
+		// text in both files. As in a `.ts` file, a moved import loses the spaces at
+		// the end of its line.
+		const imports =
+			kind === 'source.sortImports'
+				? [
+						"import Button from './Button.tsrx';",
+						`import Panel from './Panel.tsrx';${rest.trimEnd()}`,
+					]
+				: ["import Button from './Button.tsrx';"];
 		const component = [
 			'',
 			'export default function Commented() @{',
@@ -418,7 +428,7 @@ describe('native language server on a configured project', () => {
 			'',
 		];
 		const source = [
-			"import Panel from './Panel.tsrx'; // keep this",
+			`import Panel from './Panel.tsrx';${rest}`,
 			"import Button from './Button.tsrx';",
 			...component,
 		].join('\n');
