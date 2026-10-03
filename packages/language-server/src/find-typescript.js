@@ -103,7 +103,7 @@ export function is_usable_typescript(version) {
 
 /** What the server does not give without TypeScript, for the notices. */
 const NO_FEATURES =
-	'The TSRX language server gives no type checking, hover or completions in .tsrx files.';
+	'The TSRX language server does not give type checking, hover or completions in .tsrx files.';
 
 /** What still works without TypeScript, for the notices. */
 const STILL_WORKS =
@@ -119,7 +119,7 @@ const STILL_WORKS =
 export function tsdk_notice(tsdk, found) {
 	const sentences = [
 		'The TSRX language server does not use the typescript.tsdk startup option.',
-		`The folder in this option contains no TypeScript: ${path.resolve(tsdk)}.`,
+		`The folder in this option does not contain TypeScript: ${path.resolve(tsdk)}.`,
 	];
 	if (found && is_usable_typescript(found.version)) {
 		const from = found.source === 'server' ? 'the server installation' : 'the project';
@@ -134,7 +134,7 @@ export function tsdk_notice(tsdk, found) {
 }
 
 /**
- * The notice the server shows when it found no `typescript` it can run.
+ * The notice the server shows when it did not find a `typescript` it can run.
  * @param {FoundTypeScript | undefined} found
  * @param {readonly string[]} workspace_dirs
  * @returns {string}
@@ -154,7 +154,7 @@ export function typescript_notice(found, workspace_dirs) {
 	const where = workspace_dirs.join(', ');
 	return [
 		NO_FEATURES,
-		'The server found no TypeScript.',
+		'The server did not find TypeScript.',
 		`The server looked in ${where}, in the server installation, and in their parent folders.`,
 		STILL_WORKS,
 		'Install TypeScript in the project: npm install -D typescript, or pnpm add -D typescript.',

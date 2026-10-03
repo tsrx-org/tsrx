@@ -74,8 +74,8 @@ export function createTsrxLanguageServer(options = {}) {
 	let clientRestarts = false;
 	/**
 	 * Shown once the client is initialized, each as its own warning: the classic
-	 * backend skipped the `typescript.tsdk` option, or found no `typescript` it can
-	 * run and the server started without TypeScript features.
+	 * backend skipped the `typescript.tsdk` option, or did not find a `typescript`
+	 * it can run and the server started without TypeScript features.
 	 * @type {string[]}
 	 */
 	const typescriptNotices = [];

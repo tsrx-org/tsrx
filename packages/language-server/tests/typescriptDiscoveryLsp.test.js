@@ -7,8 +7,8 @@
  *   warning that names the version and where it was found;
  * - with the `typescript.tsdk` initialization option (the `lib` folder or the
  *   package folder), it runs that TypeScript;
- * - when that option's folder has no TypeScript, it warns and runs the TypeScript
- *   it finds without it;
+ * - when the folder in that option does not contain TypeScript, it warns and
+ *   runs the TypeScript it finds without it;
  * - with TypeScript 5.9 there, it runs it.
  */
 
@@ -151,7 +151,7 @@ describe('TSRX language server: which typescript other editors get', () => {
 		await expect(warning).rejects.toThrow(/Timed out/);
 	});
 
-	it("warns when the typescript.tsdk folder has no TypeScript, and runs the project's TypeScript", async () => {
+	it("warns when the typescript.tsdk folder does not contain TypeScript, and runs the project's TypeScript", async () => {
 		const tsdk = path.join(repo_root, 'no-such-folder/lib');
 		const { capabilities, warning, second_warning } = await session({
 			dependencies: [['typescript', path.join(repo_root, 'packages/language-server')]],
@@ -162,14 +162,14 @@ describe('TSRX language server: which typescript other editors get', () => {
 		expect(message.type).toBe(2);
 		expect(message.message).toBe(
 			`The TSRX language server does not use the typescript.tsdk startup option. ` +
-				`The folder in this option contains no TypeScript: ${tsdk}. ` +
+				`The folder in this option does not contain TypeScript: ${tsdk}. ` +
 				`The server uses TypeScript ${typescript_version} from the project instead: ${typescript_dir}. ` +
 				`Set this option to the lib folder of a TypeScript installation, for example /path/to/node_modules/typescript/lib.`,
 		);
 		await expect(second_warning).rejects.toThrow(/Timed out/);
 	});
 
-	it('warns about a typescript.tsdk folder with no TypeScript, then about TypeScript 7', async () => {
+	it('warns about a typescript.tsdk folder that does not contain TypeScript, then about TypeScript 7', async () => {
 		const tsdk = path.join(repo_root, 'no-such-folder/lib');
 		const { capabilities, warning, second_warning } = await session({
 			extra_files: { 'node_modules/typescript/package.json': TYPESCRIPT_7 },
@@ -177,7 +177,9 @@ describe('TSRX language server: which typescript other editors get', () => {
 		});
 		expect(serves_typescript(capabilities)).toBe(false);
 		const first = await warning;
-		expect(first.message).toContain(`The folder in this option contains no TypeScript: ${tsdk}.`);
+		expect(first.message).toContain(
+			`The folder in this option does not contain TypeScript: ${tsdk}.`,
+		);
 		expect(first.message).not.toContain('The server uses');
 		const second = await second_warning;
 		expect(second.message).toContain('The server found TypeScript 7.1.0-dev.20261002.1 in ');

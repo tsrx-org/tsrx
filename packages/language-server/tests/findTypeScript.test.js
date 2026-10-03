@@ -2,8 +2,8 @@
  * Which `typescript` package the classic backend runs: the `typescript.tsdk`
  * initialization option, then the project's (each workspace folder and its parent
  * folders), then the one next to the server; the notice when it skipped the
- * `typescript.tsdk` option; and the notice when it found none it can run (nothing,
- * or TypeScript 7).
+ * `typescript.tsdk` option; and the notice when it did not find one it can run
+ * (nothing, or TypeScript 7).
  */
 
 import fs from 'node:fs';
@@ -158,7 +158,7 @@ describe('the notice when the typescript.tsdk option is skipped', () => {
 		);
 		expect(notice).toBe(
 			`The TSRX language server does not use the typescript.tsdk startup option. ` +
-				`The folder in this option contains no TypeScript: ${typo()}. ` +
+				`The folder in this option does not contain TypeScript: ${typo()}. ` +
 				`The server uses TypeScript 6.0.3 from the project instead: ${at('monorepo/node_modules/typescript')}. ` +
 				`Set this option to the lib folder of a TypeScript installation, for example /path/to/node_modules/typescript/lib.`,
 		);
@@ -174,7 +174,7 @@ describe('the notice when the typescript.tsdk option is skipped', () => {
 		);
 	});
 
-	it('names no other typescript when the server found none it can run', () => {
+	it('names no other typescript when the server did not find one it can run', () => {
 		for (const workspace_dir of ['plain', 'ts7']) {
 			const notice = tsdk_notice(
 				typo(),
@@ -185,7 +185,7 @@ describe('the notice when the typescript.tsdk option is skipped', () => {
 			);
 			expect(notice).toBe(
 				`The TSRX language server does not use the typescript.tsdk startup option. ` +
-					`The folder in this option contains no TypeScript: ${typo()}. ` +
+					`The folder in this option does not contain TypeScript: ${typo()}. ` +
 					`Set this option to the lib folder of a TypeScript installation, for example /path/to/node_modules/typescript/lib.`,
 			);
 		}
@@ -204,7 +204,7 @@ describe('the notice when no usable typescript is found', () => {
 			['/project'],
 		);
 		expect(notice).toBe(
-			`The TSRX language server gives no type checking, hover or completions in .tsrx files. ` +
+			`The TSRX language server does not give type checking, hover or completions in .tsrx files. ` +
 				`The server found TypeScript 7.1.0-dev.20261002.1 in /project/node_modules/typescript. ` +
 				`The server cannot run TypeScript 7 or newer. ` +
 				`These features still work: TSRX compile errors, CSS in <style>, the outline, formatting and closing tags. ` +
@@ -217,8 +217,8 @@ describe('the notice when no usable typescript is found', () => {
 	it('says where it looked and how to install typescript', () => {
 		const notice = typescript_notice(undefined, ['/project/a', '/project/b']);
 		expect(notice).toBe(
-			`The TSRX language server gives no type checking, hover or completions in .tsrx files. ` +
-				`The server found no TypeScript. ` +
+			`The TSRX language server does not give type checking, hover or completions in .tsrx files. ` +
+				`The server did not find TypeScript. ` +
 				`The server looked in /project/a, /project/b, in the server installation, and in their parent folders. ` +
 				`These features still work: TSRX compile errors, CSS in <style>, the outline, formatting and closing tags. ` +
 				`Install TypeScript in the project: npm install -D typescript, or pnpm add -D typescript. ` +

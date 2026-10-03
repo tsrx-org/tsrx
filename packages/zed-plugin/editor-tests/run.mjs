@@ -64,7 +64,7 @@ const SCENARIOS = [
 		expect: {
 			typescript_features: false,
 			warning:
-				/The server found no TypeScript\. The server looked in .*, in the server installation, and in their parent folders\./,
+				/The server did not find TypeScript\. The server looked in .*, in the server installation, and in their parent folders\./,
 		},
 	},
 	{

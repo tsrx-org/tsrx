@@ -48,8 +48,8 @@ On the `classic` backend, it uses the first `typescript` it finds:
 
 1. The `typescript.tsdk` initialization option, when the editor passes one: the
    `lib` folder of a TypeScript installation. The `typescript` package folder
-   above it works too. When the folder has no TypeScript, the server shows a
-   warning that names the folder, and goes on to the next step.
+   above it works too. When the folder does not contain TypeScript, the server
+   shows a warning that names the folder, and goes on to the next step.
 2. The project's: `node_modules/typescript` in each open workspace folder and its
    parent folders, the way Node finds a package. The first folder that has one
    wins. When the editor names no folder, the server searches from the folder it
@@ -66,10 +66,10 @@ npm install -D typescript
 pnpm add -D typescript
 ```
 
-When the server finds no `typescript`, or finds TypeScript 7, it still starts and
-shows one warning that says what it found and what to do. `.tsrx` files then get
-no type checking, hover or completions. TSRX compile errors, CSS in `<style>`, the
-outline, formatting and closing tags still work.
+When the server does not find `typescript`, or finds TypeScript 7, it still starts
+and shows one warning that says what it found and what to do. `.tsrx` files then
+do not get type checking, hover or completions. TSRX compile errors, CSS in
+`<style>`, the outline, formatting and closing tags still work.
 
 To use another TypeScript than the one it finds, pass that TypeScript's `lib`
 folder:
