@@ -11,7 +11,6 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.platform.lsp.api.LspServerManager
 import com.intellij.util.EnvironmentUtil
 import java.io.File
 import java.io.InputStream
@@ -89,8 +88,7 @@ internal object TsrxLanguageServer {
 			NotificationType.INFORMATION,
 			"TSRX language server installed. Restarting language services...",
 		)
-		LspServerManager.getInstance(project)
-			.stopAndRestartIfNeeded(TsrxLspServerSupportProvider::class.java)
+		restartTsrxLanguageServer(project)
 	}
 
 	private fun installationFailed(project: Project, failure: TsrxInstallResult.Failure) {

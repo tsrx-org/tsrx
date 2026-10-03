@@ -94,8 +94,15 @@ TypeScript 7, it still starts and sends a warning that says what it found. `.tsr
 files then get no type checking, hover or completions. TSRX compile errors, CSS in
 `<style>`, the outline, formatting and closing tags still work.
 
-The plugin has no setting yet to make the server use another TypeScript
-([tsrx-org/tsrx#1009](https://github.com/tsrx-org/tsrx/issues/1009)).
+To use another TypeScript, open **Settings → Languages & Frameworks → TSRX** and
+set **TypeScript lib folder** to the `lib` folder of that TypeScript, for example
+`/path/to/typescript/lib`. A relative path, such as `node_modules/typescript/lib`,
+starts at the project folder. When you apply the change, the plugin restarts the
+language server and passes the folder as the `typescript.tsdk` startup option.
+Leave the field empty to use the project's `typescript` again.
+
+The setting is saved for each project, in `.idea/tsrx.xml`. The page is only in
+IDEs that run the language server.
 
 ### What goes in tsconfig.json
 

@@ -1,8 +1,11 @@
 package dev.tsrx.intellij_plugin
 
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.platform.lsp.api.LspServerDescriptor
 import com.intellij.platform.lsp.api.LspServerSupportProvider
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.intellij.util.ui.UIUtil
 import java.nio.file.Files
 
 class TsrxLspIntegrationTest : BasePlatformTestCase() {
@@ -30,6 +33,75 @@ class TsrxLspIntegrationTest : BasePlatformTestCase() {
 		assertEquals(binary.toString(), commandLine.exePath)
 		assertEquals(root.toFile(), commandLine.workDirectory)
 		assertTrue(commandLine.getCommandLineList(null).contains("--stdio"))
+	}
+
+	fun testDescriptorSendsTheTypeScriptLibSettingOnlyWhenSet() {
+		val settings = TsrxSettings.getInstance(project)
+		val lib = Files.createTempDirectory("tsrx-typescript-lib")
+		val descriptor = TsrxLspServerDescriptor(
+			project,
+			TsrxLanguageServerInfo(
+				Files.createTempFile("tsrx-language-server", ""),
+				null,
+				TsrxLanguageServerSource.PROJECT,
+			),
+		)
+
+		try {
+			assertNull(descriptor.createInitializationOptions())
+
+			settings.typescriptLib = "  $lib  "
+			assertEquals(lib.toString(), settings.typescriptLib)
+			assertEquals(
+				createTsrxInitializationOptions(lib.toString(), null),
+				descriptor.createInitializationOptions(),
+			)
+
+			settings.typescriptLib = " "
+			assertEquals("", settings.typescriptLib)
+			assertNull(descriptor.createInitializationOptions())
+		} finally {
+			settings.typescriptLib = ""
+		}
+	}
+
+	fun testSettingsPageRestartsTheServerOnlyWhenTheSettingChanges() {
+		val settings = TsrxSettings.getInstance(project)
+		val lib = Files.createTempDirectory("tsrx-typescript-lib").toString()
+		val restarts = mutableListOf<Project>()
+		val configurable = TsrxSettingsConfigurable(project) { restarts += it }
+
+		try {
+			val field = requireNotNull(
+				UIUtil.findComponentOfType(configurable.createComponent(), TextFieldWithBrowseButton::class.java),
+			)
+			configurable.reset()
+			assertEquals("", field.text)
+
+			configurable.apply()
+			assertEmpty(restarts)
+
+			field.text = "  $lib  "
+			assertTrue(configurable.isModified)
+			configurable.apply()
+			assertEquals(lib, settings.typescriptLib)
+			assertEquals(lib, field.text)
+			assertFalse(configurable.isModified)
+			assertEquals(listOf(project), restarts)
+
+			configurable.apply()
+			field.text = "$lib "
+			configurable.apply()
+			assertEquals(1, restarts.size)
+
+			field.text = ""
+			configurable.apply()
+			assertEquals("", settings.typescriptLib)
+			assertEquals(2, restarts.size)
+		} finally {
+			configurable.disposeUIResources()
+			settings.typescriptLib = ""
+		}
 	}
 
 	fun testUntrustedProjectCannotStartLanguageServerResolution() {
