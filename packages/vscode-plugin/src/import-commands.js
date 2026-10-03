@@ -8,8 +8,7 @@ export const REMOVE_UNUSED_IMPORTS_COMMAND = 'tsrx.removeUnusedImports';
  * action of that kind to the current `.tsrx` file. VS Code's own commands
  * (`typescript.sortImports`) and the TypeScript 7 extension's only run in TypeScript
  * and JavaScript files. The actions come from whichever TypeScript serves the file:
- * TypeScript 7 sorts and removes imports in `.tsrx` files; TypeScript 5.9 and 6 offer
- * the actions but return no edits for them yet (tsrx-org/tsrx#994).
+ * TypeScript 7, or TypeScript 5.9 and 6 through `@tsrx/typescript-plugin`.
  *
  * The action is fetched and applied through the API rather than
  * `editor.action.sourceAction`, which acts on the focused editor only.

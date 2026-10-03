@@ -8,6 +8,7 @@ import {
 import { getTsrxLanguagePlugin } from './language.js';
 import { without_typescript_diagnostics_on_compile_error } from './plugin-diagnostics.js';
 import { with_jsx_closing_tags } from './plugin-jsx-closing-tag.js';
+import { with_whole_file_import_edits } from './plugin-organize-imports.js';
 import {
 	register_source_definition_command,
 	with_source_definition_project,
@@ -15,10 +16,17 @@ import {
 
 /**
  * The Volar language each decorated language service maps through, for the
- * methods Volar's own proxy leaves out (`with_jsx_closing_tags`).
+ * methods Volar's own proxy leaves out (`with_jsx_closing_tags`) or maps
+ * differently (`with_whole_file_import_edits`).
  * @type {WeakMap<object, import('@volar/language-core').Language<string>>}
  */
 const languages = new WeakMap();
+
+/**
+ * The language service each Volar proxy wraps, for `with_whole_file_import_edits`.
+ * @type {WeakMap<object, import('typescript').LanguageService>}
+ */
+const originals = new WeakMap();
 
 /**
  * TypeScript's tsserver loads this plugin to serve `.tsrx` files: through the
@@ -29,7 +37,8 @@ const languages = new WeakMap();
  * plugin cannot: TSRX compile errors, snippets, CSS in `<style>`, symbols.
  *
  * `create` is Volar's `createLanguageServicePlugin` (quickstart), reproduced so
- * the Volar language it creates can be kept for `with_jsx_closing_tags`.
+ * the Volar language it creates can be kept for `with_jsx_closing_tags` and
+ * `with_whole_file_import_edits`.
  * @param {{ typescript: typeof import('typescript') }} modules
  */
 const plugin = (modules) => {
@@ -63,8 +72,14 @@ const plugin = (modules) => {
 				register_source_definition_command(info.session);
 			}
 			const decorated = info.languageService;
-			return with_jsx_closing_tags(without_typescript_diagnostics_on_compile_error(decorated), () =>
-				languages.get(decorated),
+			const get_language = () => languages.get(decorated);
+			return with_jsx_closing_tags(
+				with_whole_file_import_edits(
+					without_typescript_diagnostics_on_compile_error(decorated),
+					() => originals.get(decorated),
+					get_language,
+				),
+				get_language,
 			);
 		},
 		getExternalFiles: makeGetExternalFiles(ts),
@@ -85,6 +100,7 @@ function decorate(ts, info, config_file_name) {
 		],
 	};
 	const { proxy, initialize } = createProxyLanguageService(info.languageService);
+	originals.set(proxy, info.languageService);
 	info.languageService = proxy;
 	createLanguageCommon(created, ts, info, (language) => {
 		languages.set(proxy, language);

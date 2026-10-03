@@ -458,26 +458,18 @@ function source_definition_problem(scenario, result) {
  * Linked editing (both tag names of <button>, from TypeScript) and TSRX's commands
  * that come from TypeScript or the file system, where TypeScript serves the file:
  * Go to Project Configuration opens the project's tsconfig.json, and
- * Remove Unused Imports removes the two unused imports on TypeScript 7. VS Code's own
- * TypeScript (5.9 or 6) returns no edits for them yet (tsrx-org/tsrx#994).
- * @param {import('./scenarios.js').Scenario} scenario
+ * Remove Unused Imports removes the two unused imports, on TypeScript 7 and on
+ * VS Code's own TypeScript (5.9 or 6).
  * @param {Record<string, any>} result
  */
-function command_problem(scenario, result) {
+function command_problem(result) {
 	if (JSON.stringify(result.linkedEditing) !== JSON.stringify(['button', 'button'])) {
 		return `expected linked editing on <button> to cover both tag names, got ${JSON.stringify(result.linkedEditing)}`;
 	}
 	if (result.projectConfig !== 'tsconfig.json') {
 		return `expected Go to Project Configuration to open tsconfig.json, got ${JSON.stringify(result.projectConfig)}`;
 	}
-	const expected =
-		scenario.expect === 'typescript-7'
-			? ["import { useState } from 'react';"]
-			: [
-					"import { useState } from 'react';",
-					"import { label } from './label';",
-					"import { App } from './App.tsrx';",
-				];
+	const expected = ["import { useState } from 'react';"];
 	return JSON.stringify(result.removeUnusedImports) === JSON.stringify(expected)
 		? undefined
 		: `expected Remove Unused Imports to leave ${JSON.stringify(expected)}, got ${JSON.stringify(result.removeUnusedImports)}`;
@@ -601,8 +593,7 @@ for (const scenario of selected) {
 	const unsaved = result?.unsavedDocuments?.length
 		? `expected no unsaved documents at the end (VS Code would ask to save them and come to the front), got ${JSON.stringify(result.unsavedDocuments)}`
 		: undefined;
-	const commands =
-		scenario.expect === 'nothing' ? undefined : command_problem(scenario, result ?? {});
+	const commands = scenario.expect === 'nothing' ? undefined : command_problem(result ?? {});
 	const feature =
 		imports ?? source_definition ?? formatting_problem(result ?? {}) ?? commands ?? unsaved;
 	const problem =

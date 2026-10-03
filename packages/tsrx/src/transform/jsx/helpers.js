@@ -429,6 +429,9 @@ const COMMENT_OWNER_NODE_TYPES = new Set([
 ]);
 
 const TOOLING_LOCATION_WRAPPED_NODE_TYPES = new Set([
+	// esrap does not map the end of an import, after the `;` it always writes,
+	// so the whole import (with or without a `;` in the source) maps through this.
+	'ImportDeclaration',
 	'ExportNamedDeclaration',
 	'ExportDefaultDeclaration',
 	'ExportAllDeclaration',

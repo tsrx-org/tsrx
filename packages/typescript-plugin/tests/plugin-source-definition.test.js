@@ -1,17 +1,8 @@
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
-import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SOURCE_DEFINITION_COMMAND } from '../src/plugin-source-definition.js';
-
-const package_dir = fs.realpathSync(fileURLToPath(new URL('..', import.meta.url)));
-const react_package = fs.realpathSync(path.join(package_dir, 'node_modules', '@tsrx', 'react'));
-const tsserver_path = createRequire(path.join(package_dir, 'package.json')).resolve(
-	'typescript/lib/tsserver.js',
-);
+import { create_tsserver_workspace, start_tsserver } from './tsserver.js';
 
 const FILES = {
 	'tsconfig.json': JSON.stringify({
@@ -53,58 +44,6 @@ export const text = greet('x');
 `,
 };
 
-/**
- * A tsserver with `@tsrx/typescript-plugin` (this package's `dist`) as a global
- * plugin, the way VS Code hands it over (`typescriptServerPlugins`).
- * @param {string} workspace
- * @param {string} probe_location
- */
-function start_tsserver(workspace, probe_location) {
-	const child = spawn(
-		process.execPath,
-		[
-			tsserver_path,
-			'--globalPlugins',
-			'@tsrx/typescript-plugin',
-			'--pluginProbeLocations',
-			probe_location,
-			'--disableAutomaticTypingAcquisition',
-		],
-		{ cwd: workspace, stdio: ['pipe', 'pipe', 'ignore'] },
-	);
-	let seq = 0;
-	/** @type {Map<number, (response: any) => void>} */
-	const pending = new Map();
-	let buffer = '';
-	child.stdout.setEncoding('utf8');
-	child.stdout.on('data', (chunk) => {
-		buffer += chunk;
-		let end;
-		while ((end = buffer.indexOf('\n')) >= 0) {
-			const line = buffer.slice(0, end).trim();
-			buffer = buffer.slice(end + 1);
-			if (!line.startsWith('{')) continue;
-			const message = JSON.parse(line);
-			if (message.type === 'response') pending.get(message.request_seq)?.(message);
-		}
-	});
-	return {
-		/**
-		 * @param {string} command
-		 * @param {unknown} args
-		 * @returns {Promise<any>}
-		 */
-		request(command, args) {
-			const id = ++seq;
-			child.stdin.write(
-				JSON.stringify({ seq: id, type: 'request', command, arguments: args }) + '\n',
-			);
-			return new Promise((resolve) => pending.set(id, resolve));
-		},
-		stop: () => child.kill('SIGKILL'),
-	};
-}
-
 describe('tsserver plugin: Go to Source Definition in .tsrx files', () => {
 	/** @type {string} */
 	let workspace;
@@ -112,26 +51,9 @@ describe('tsserver plugin: Go to Source Definition in .tsrx files', () => {
 	let server;
 
 	beforeAll(async () => {
-		workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tsrx-source-definition-')));
-		for (const [name, content] of Object.entries(FILES)) {
-			fs.mkdirSync(path.dirname(path.join(workspace, name)), { recursive: true });
-			fs.writeFileSync(path.join(workspace, name), content);
-		}
-		fs.mkdirSync(path.join(workspace, 'node_modules', '@tsrx'), { recursive: true });
-		fs.symlinkSync(
-			react_package,
-			path.join(workspace, 'node_modules', '@tsrx', 'react'),
-			'junction',
-		);
-		// tsserver looks for global plugins in `<probe location>/node_modules`.
-		const probe_location = path.join(workspace, '.probe');
-		fs.mkdirSync(path.join(probe_location, 'node_modules', '@tsrx'), { recursive: true });
-		fs.symlinkSync(
-			package_dir,
-			path.join(probe_location, 'node_modules', '@tsrx', 'typescript-plugin'),
-			'junction',
-		);
-		server = start_tsserver(workspace, probe_location);
+		const created = create_tsserver_workspace('tsrx-source-definition-', FILES);
+		workspace = created.workspace;
+		server = start_tsserver(workspace, created.probe_location);
 		for (const file of ['src/main.ts', 'src/Lib.tsrx']) {
 			const full = path.join(workspace, file);
 			await server.request('open', {
