@@ -1,3 +1,6 @@
+import { isCodeActionsEnabled, isDiagnosticsEnabled } from '@volar/language-core';
+import { SourceMap } from '@volar/source-map';
+import ts from 'typescript';
 import { assert, describe, expect, it } from 'vitest';
 import { builders as b, identifier_to_jsx_name, parseModule } from '@tsrx/core';
 import { assert_type } from './node-types.js';
@@ -1774,6 +1777,160 @@ function C() @{
 			expect_mapping(source_load_offset, generated_load_offset, 'load'.length);
 			expect_mapping(source_get_load_offset, generated_get_load_offset, 'getLoad'.length);
 			expect_mapping(source_server_offset, generated_server_offset, 'server'.length);
+		});
+	});
+
+	describe(`[${name}] whole import mappings`, () => {
+		/**
+		 * Each import in the generated code: the range TypeScript reports an import
+		 * on, and its end up to the next line, where an Organize Imports edit ends.
+		 * @param {string} code
+		 */
+		function generated_imports(code) {
+			const file = ts.createSourceFile(
+				'App.tsx',
+				code,
+				ts.ScriptTarget.Latest,
+				true,
+				ts.ScriptKind.TSX,
+			);
+			return file.statements.filter(ts.isImportDeclaration).map((node) => ({
+				module: /** @type {import('typescript').StringLiteral} */ (node.moduleSpecifier).text,
+				start: node.getStart(file),
+				end: node.getEnd(),
+				line_end: code.indexOf('\n', node.getEnd()) + 1,
+			}));
+		}
+
+		/**
+		 * The source text Volar maps a generated range to. A diagnostic may start and
+		 * end in two mappings; a code-action edit must start and end in one.
+		 * @param {string} source
+		 * @param {CodeMapping[]} mappings
+		 * @param {number} start
+		 * @param {number} end
+		 * @param {'diagnostic' | 'edit'} kind
+		 * @returns {string | undefined}
+		 */
+		function mapped_text(source, mappings, start, end, kind) {
+			const map = new SourceMap(mappings);
+			for (const [source_start, source_end] of map.toSourceRange(
+				start,
+				end,
+				kind === 'diagnostic',
+				kind === 'diagnostic' ? isDiagnosticsEnabled : isCodeActionsEnabled,
+			)) {
+				return source.slice(source_start, source_end);
+			}
+		}
+
+		it.each([
+			["import { label } from './label';", 'a semicolon'],
+			["import { label } from './label'", 'no semicolon'],
+			["import {\n\tfirst,\n\tsecond,\n} from './label'", 'names on several lines'],
+			["import type { Label } from './label';", 'import type'],
+			["import data from './label' with { type: 'json' }", 'import attributes'],
+			["import * as all from './label';", 'a namespace import'],
+			["import './label'", 'no names'],
+		])('maps the whole import %j (%s)', (statement) => {
+			const source = `${statement}
+
+export function App() @{
+	<p />
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const generated = generated_imports(result.code).find((g) => g.module === './label');
+			assert(generated, 'The generated code must keep the import');
+			// TypeScript reports an import whose names are all unused on the whole import.
+			expect(
+				mapped_text(source, result.mappings, generated.start, generated.end, 'diagnostic'),
+			).toBe(statement);
+			// Organize Imports replaces or deletes an import up to the next line.
+			expect(
+				mapped_text(source, result.mappings, generated.start, generated.line_end, 'edit'),
+			).toBe(`${statement}\n`);
+		});
+
+		it.each([
+			['\n', ';'],
+			['\n', ''],
+			['\r\n', ';'],
+			['\r\n', ''],
+		])('maps each line of an import block (line break %j, end %j)', (line_break, end) => {
+			const statements = [
+				`import { useState } from './state'${end}`,
+				`import { label } from './label'${end}`,
+				`import { App } from './App.tsrx'${end}`,
+			];
+			const source = [
+				...statements,
+				'',
+				'export function Imports() @{',
+				'\t<p>{label}</p>',
+				'}',
+				'',
+			].join(line_break);
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const lines = generated_imports(result.code)
+				.filter((g) => ['./state', './label', './App.tsrx'].includes(g.module))
+				.map((g) => mapped_text(source, result.mappings, g.start, g.line_end, 'edit'));
+			expect(lines).toEqual(statements.map((statement) => statement + line_break));
+		});
+
+		it('does not map the line of an import with a comment after it', () => {
+			const source = `import { label } from './label'; // keep this
+
+export function App() @{
+	<p>{label}</p>
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const generated = generated_imports(result.code).find((g) => g.module === './label');
+			assert(generated, 'The generated code must keep the import');
+			expect(
+				mapped_text(source, result.mappings, generated.start, generated.end, 'diagnostic'),
+			).toBe("import { label } from './label';");
+			// The comment is not in the generated code: an edit up to the next line
+			// would delete it.
+			expect(
+				mapped_text(source, result.mappings, generated.start, generated.line_end, 'edit'),
+			).toBeUndefined();
+		});
+
+		it('keeps each name of an import mapped to the name', () => {
+			const source = `import { first, second } from './label';
+
+export function App() @{
+	<p>{first}</p>
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const start = result.code.indexOf('second');
+			expect(
+				mapped_text(source, result.mappings, start, start + 'second'.length, 'diagnostic'),
+			).toBe('second');
+		});
+
+		it.runIf(name === 'vue')('does not map an import the compiler adds a name to', () => {
+			const source = `import { VaporFor } from 'vue-jsx-vapor';
+
+export function App() @{
+	<div />
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.code).toContain(
+				"import { VaporFor, defineVaporComponent } from 'vue-jsx-vapor';",
+			);
+			const generated = generated_imports(result.code).find((g) => g.module === 'vue-jsx-vapor');
+			assert(generated, 'The generated code must keep the import');
+			// An edit there would copy `defineVaporComponent` into the source.
+			expect(
+				mapped_text(source, result.mappings, generated.start, generated.line_end, 'edit'),
+			).toBeUndefined();
 		});
 	});
 
