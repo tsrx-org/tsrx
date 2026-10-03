@@ -11,7 +11,8 @@
   ],
   "scripts": {
     "update-lock": "cd src/language-server && npm install --package-lock-only",
-    "build": "npm run update-lock && node ./scripts/build.js"
+    "build": "npm run update-lock && node ./scripts/build.js",
+    "test:editor": "node editor-tests/run.mjs"
   },
   "author": "Dominic Gannaway",
   "license": "MIT",
