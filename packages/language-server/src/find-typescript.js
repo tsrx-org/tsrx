@@ -2,7 +2,8 @@
  * Finding the `typescript` package the classic backend runs, in this order:
  *
  * 1. the `typescript.tsdk` initialization option: an editor's choice, the `lib`
- *    directory of a TypeScript installation;
+ *    directory of a TypeScript installation (any other folder is skipped, and the
+ *    server warns with `tsdk_notice`);
  * 2. the project's own `typescript`: `node_modules/typescript` in each open
  *    workspace folder (or, when the client names none, the server's working
  *    directory) and its parent folders, as Node resolves a package, the first
@@ -97,6 +98,27 @@ export function is_usable_typescript(version) {
 /** What still works without TypeScript, for the notices. */
 const STILL_WORKS =
 	'TSRX compile errors, CSS in <style>, the outline, formatting and closing tags still work.';
+
+/**
+ * The notice the server shows when the `typescript.tsdk` option is set but
+ * `find_typescript` skipped it: the folder is not the `lib` folder of a
+ * `typescript` package.
+ * @param {string} tsdk the option's value
+ * @param {FoundTypeScript | undefined} found the `typescript` found instead
+ * @returns {string}
+ */
+export function tsdk_notice(tsdk, found) {
+	const folder = path.resolve(tsdk);
+	return [
+		`The TSRX language server cannot use the typescript.tsdk startup option, ${folder}.`,
+		package_version(folder) !== undefined
+			? `The option must name the lib folder of a TypeScript install. For this TypeScript, set the option to ${path.join(folder, 'lib')}.`
+			: 'The option must name the lib folder of a TypeScript install, such as /path/to/node_modules/typescript/lib.',
+		...(found && is_usable_typescript(found.version)
+			? [`The server uses typescript ${found.version} from ${found.dir} instead.`]
+			: []),
+	].join(' ');
+}
 
 /**
  * The notice the server shows when it found no `typescript` it can run.

@@ -6,6 +6,8 @@
  * - with TypeScript 7 there, it starts without TypeScript features and shows one
  *   warning that names the version and where it was found;
  * - with the `typescript.tsdk` initialization option, it runs that TypeScript;
+ * - when that option is not the `lib` folder of a TypeScript install, it warns
+ *   and runs the TypeScript it finds without it;
  * - with TypeScript 5.9 there, it runs it.
  */
 
@@ -29,6 +31,11 @@ const server_path = fileURLToPath(new URL('../dist/language-server.js', import.m
 const typescript_dir = fs.realpathSync(
 	path.join(repo_root, 'packages/language-server/node_modules/typescript'),
 );
+
+/** The version of that TypeScript. */
+const typescript_version = JSON.parse(
+	fs.readFileSync(path.join(typescript_dir, 'package.json'), 'utf8'),
+).version;
 
 /** The TypeScript 7 nightly npm installs today for `^7.1.0-dev...` (only its manifest). */
 const TYPESCRIPT_7 = JSON.stringify({ name: 'typescript', version: '7.1.0-dev.20261002.1' });
@@ -68,12 +75,32 @@ async function session({ extra_files = {}, dependencies = [], initializationOpti
 		await Promise.race([client.exited, client.shutdown()]);
 		workspace.cleanup();
 	});
-	// Listen before initializing: the warning comes right after `initialized`.
-	const warning = client.wait_for_notification('window/showMessage', undefined, 5000);
-	warning.catch(() => {});
+	// Listen before initializing: the warnings come right after `initialized`.
+	// Every waiter sees every notification, so each one takes the warning at its
+	// own place in the order they arrive.
+	/** @type {unknown[]} */
+	const shown = [];
+	const [warning, second_warning] = [0, 1].map((place) => {
+		const wait = client.wait_for_notification(
+			'window/showMessage',
+			(params) => {
+				if (!shown.includes(params)) shown.push(params);
+				return shown.indexOf(params) === place;
+			},
+			5000,
+		);
+		wait.catch(() => {});
+		return wait;
+	});
 	const { capabilities } = await client.initialize({ initializationOptions });
 	client.open('Panel.tsrx', files['app/Panel.tsrx']);
-	return { client, capabilities, warning, workspace_dir: fs.realpathSync(workspace.dir) };
+	return {
+		client,
+		capabilities,
+		warning,
+		second_warning,
+		workspace_dir: fs.realpathSync(workspace.dir),
+	};
 }
 
 /**
@@ -112,6 +139,37 @@ describe('TSRX language server: which typescript other editors get', () => {
 		});
 		expect(serves_typescript(capabilities)).toBe(true);
 		await expect(warning).rejects.toThrow(/Timed out/);
+	});
+
+	it("warns when typescript.tsdk is the typescript package folder, and runs the project's TypeScript", async () => {
+		const { capabilities, warning, second_warning } = await session({
+			dependencies: [['typescript', path.join(repo_root, 'packages/language-server')]],
+			initializationOptions: { typescript: { tsdk: typescript_dir } },
+		});
+		expect(serves_typescript(capabilities)).toBe(true);
+		const message = await warning;
+		expect(message.type).toBe(2);
+		expect(message.message).toBe(
+			`The TSRX language server cannot use the typescript.tsdk startup option, ${typescript_dir}. ` +
+				`The option must name the lib folder of a TypeScript install. ` +
+				`For this TypeScript, set the option to ${path.join(typescript_dir, 'lib')}. ` +
+				`The server uses typescript ${typescript_version} from ${typescript_dir} instead.`,
+		);
+		await expect(second_warning).rejects.toThrow(/Timed out/);
+	});
+
+	it('warns about a typescript.tsdk folder with no TypeScript, then about TypeScript 7', async () => {
+		const tsdk = path.join(repo_root, 'no-such-folder/lib');
+		const { capabilities, warning, second_warning } = await session({
+			extra_files: { 'node_modules/typescript/package.json': TYPESCRIPT_7 },
+			initializationOptions: { typescript: { tsdk } },
+		});
+		expect(serves_typescript(capabilities)).toBe(false);
+		const first = await warning;
+		expect(first.message).toContain(`cannot use the typescript.tsdk startup option, ${tsdk}.`);
+		expect(first.message).not.toContain('instead');
+		const second = await second_warning;
+		expect(second.message).toContain('found typescript 7.1.0-dev.20261002.1');
 	});
 
 	it("runs the project's TypeScript 5.9 from the parent folder", async () => {

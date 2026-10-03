@@ -11,7 +11,12 @@ import Module from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolve_typescript_backend, resolve_typescript_tsdk } from './backend.js';
-import { find_typescript, is_usable_typescript, typescript_notice } from './find-typescript.js';
+import {
+	find_typescript,
+	is_usable_typescript,
+	tsdk_notice,
+	typescript_notice,
+} from './find-typescript.js';
 import { createServicePlugins } from './servicePlugins.js';
 import { register_formatting } from './formattingHandler.js';
 import { URI } from 'vscode-uri';
@@ -68,11 +73,12 @@ export function createTsrxLanguageServer(options = {}) {
 	let restartScheduled = false;
 	let clientRestarts = false;
 	/**
-	 * Shown once the client is initialized, when the classic backend found no
-	 * `typescript` it can run and the server started without TypeScript features.
-	 * @type {string | undefined}
+	 * Shown once the client is initialized, each as its own warning: the classic
+	 * backend skipped the `typescript.tsdk` option, or found no `typescript` it can
+	 * run and the server started without TypeScript features.
+	 * @type {string[]}
 	 */
-	let typescriptNotice;
+	const typescriptNotices = [];
 
 	/**
 	 * Restart the process so Node drops the complete ESM compiler graph. A
@@ -176,19 +182,23 @@ export function createTsrxLanguageServer(options = {}) {
 			let ts;
 			if (backend === 'classic') {
 				const workspace_dirs = workspace_folder_paths(params);
-				const found = find_typescript({
-					tsdk: resolve_typescript_tsdk(params.initializationOptions),
-					workspace_dirs,
-					server_dir: SERVER_DIR,
-				});
+				const tsdk = resolve_typescript_tsdk(params.initializationOptions);
+				const found = find_typescript({ tsdk, workspace_dirs, server_dir: SERVER_DIR });
+				if (tsdk !== undefined && found?.source !== 'tsdk') {
+					// The editor's choice names no TypeScript install: say so, or the
+					// user sees no effect and does not know why.
+					typescriptNotices.push(tsdk_notice(tsdk, found));
+				}
 				if (found && is_usable_typescript(found.version)) {
 					ts = load_typescript(found);
 				} else {
 					// No TypeScript it can run: start anyway with what needs none, as on
 					// the plugin backend (TSRX compile errors included), and tell the user.
-					typescriptNotice = typescript_notice(found, workspace_dirs);
-					logError(typescriptNotice);
+					typescriptNotices.push(typescript_notice(found, workspace_dirs));
 					backend = 'plugin';
+				}
+				for (const notice of typescriptNotices) {
+					logError(notice);
 				}
 			}
 
@@ -258,14 +268,11 @@ export function createTsrxLanguageServer(options = {}) {
 	connection.onInitialized(async () => {
 		log('Server initialized.');
 		server.initialized();
-		if (typescriptNotice) {
+		for (const message of typescriptNotices) {
 			// The `window/showMessage` notification (type 2: warning), which editors show
 			// to the user; `connection.window.showWarningMessage` sends the request form,
 			// which waits for the user to pick an action.
-			void connection.sendNotification('window/showMessage', {
-				type: 2,
-				message: typescriptNotice,
-			});
+			void connection.sendNotification('window/showMessage', { type: 2, message });
 		}
 
 		server.fileWatcher.onDidChangeWatchedFiles(({ changes }) => {
