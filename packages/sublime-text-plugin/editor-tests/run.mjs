@@ -10,14 +10,18 @@
  * The scenario builds this repository's package (`TSRX.sublime-package`, as `pnpm build`
  * does) and installs it, then opens a `.tsrx` file in a temporary project whose
  * `node_modules/.bin/tsrx-language-server` starts a packed build of this repository's
- * `@tsrx/language-server`. It checks that the TSRX syntax loads (#1021) and that the TSRX
- * language server starts, and that the expression in a dynamic closing tag such as
- * `</{props.as}>` is scoped as JavaScript. Sublime Text shows its window while the
- * scenario runs; quit Sublime Text before the run.
+ * `@tsrx/language-server`. It checks that the TSRX syntax loads (#1021), that the TSRX
+ * language server starts, that the expression in a dynamic closing tag such as
+ * `</{props.as}>` is scoped as JavaScript, and that typing `<div>` closes the tag with the
+ * caret between the tags (#1004; the run turns `format_on_type` on). Sublime Text shows
+ * its window while the scenario runs; quit Sublime Text before the run. The run stops
+ * only the Sublime Text it started.
  *
  *   pnpm --filter @tsrx/sublime-text-plugin test:editor [-- --keep]
  *
  * Sublime Text: TSRX_SUBLIME, else /Applications/Sublime Text.app/Contents/MacOS/sublime_text.
+ * It must be the `sublime_text` executable, not `subl`: the run reads the console from
+ * that process and stops it by its process ID.
  * Installing Package Control, LSP and the server's dependencies needs network access.
  */
 
@@ -41,9 +45,12 @@ if (!fs.existsSync(sublime)) {
 	console.log(`Sublime Text not found (${sublime}). Skipping.`);
 	process.exit(0);
 }
-/** Every Sublime Text process, plugin hosts included. */
-const SUBLIME_PROCESSES = path.dirname(sublime);
-if (spawnSync('pgrep', ['-f', SUBLIME_PROCESSES]).status === 0) {
+/** Whether a Sublime Text runs, from any folder: its executable's exact process name. */
+function sublime_runs() {
+	const name = path.basename(sublime).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	return spawnSync('pgrep', ['-x', name]).status === 0;
+}
+if (sublime_runs()) {
 	console.log('Sublime Text is running. Quit it, then run the test again.');
 	process.exit(1);
 }
@@ -59,11 +66,32 @@ console.log(`Temporary directory: ${root}\n`);
 /** @param {number} ms */
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Stop every Sublime Text process; the run started all of them. */
-async function quit_sublime() {
-	spawnSync('pkill', ['-f', SUBLIME_PROCESSES]);
-	await sleep(1000);
-	spawnSync('pkill', ['-9', '-f', SUBLIME_PROCESSES]);
+/**
+ * Stop a Sublime Text that this run started, and its plugin hosts, which are its child
+ * processes. Its crash handler exits with it.
+ * @param {import('node:child_process').ChildProcess} child
+ */
+async function stop_sublime(child) {
+	const pid = /** @type {number} */ (child.pid);
+	const children = spawnSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' })
+		.stdout.split('\n')
+		.filter(Boolean)
+		.map(Number);
+	const exited =
+		child.exitCode !== null || child.signalCode !== null
+			? Promise.resolve()
+			: new Promise((resolve) => child.once('exit', resolve));
+	for (const signal of /** @type {const} */ (['SIGTERM', 'SIGKILL'])) {
+		for (const target of [pid, ...children]) {
+			try {
+				process.kill(target, signal);
+			} catch {
+				// Already gone.
+			}
+		}
+		await Promise.race([exited, sleep(3000)]);
+	}
+	if (sublime_runs()) console.log(`A Sublime Text process is still running after the test.`);
 }
 
 /**
@@ -102,8 +130,7 @@ async function ensure_lsp_package() {
 	}
 	// Then the libraries LSP needs.
 	await sleep(15_000);
-	child.kill();
-	await quit_sublime();
+	await stop_sublime(child);
 	if (!fs.existsSync(path.join(installed_packages, 'LSP.sublime-package'))) {
 		throw new Error('Package Control did not install the LSP package.');
 	}
@@ -150,6 +177,9 @@ fs.writeFileSync(
 // `props` in the closing tag.
 const scope_at = '</{props';
 const scope_offset = 3;
+// An empty line in a template, where the test types `<div>` (#1004).
+const closing_file = path.join(app, 'Closing.tsrx');
+fs.writeFileSync(closing_file, ['export function Closing() @{', '\t', '}', ''].join('\n'));
 
 // This repository's package, built as `pnpm build` builds it.
 execFileSync(process.execPath, ['scripts/build.js'], { cwd: package_dir, stdio: 'ignore' });
@@ -166,26 +196,32 @@ try {
 	set_aside(path.join(profile, 'Packages', 'TSRX'), restores);
 	set_aside(path.join(user, 'tsrx_editor_test.py'), restores);
 	set_aside(path.join(user, 'tsrx_editor_test.json'), restores);
+	// The LSP package asks for on-type formatting, which closes tags, only with it on.
+	set_aside(path.join(user, 'LSP.sublime-settings'), restores);
+	fs.writeFileSync(
+		path.join(user, 'LSP.sublime-settings'),
+		JSON.stringify({ format_on_type: true }, null, '\t'),
+	);
 	fs.copyFileSync(
 		path.join(package_dir, 'TSRX.sublime-package'),
 		path.join(installed_packages, 'TSRX.sublime-package'),
 	);
 	fs.writeFileSync(
 		path.join(user, 'tsrx_editor_test.json'),
-		JSON.stringify({ file, out, scope_file, scope_at, scope_offset }),
+		JSON.stringify({ file, out, scope_file, scope_at, scope_offset, closing_file }),
 	);
 	fs.copyFileSync(path.join(here, 'check.py'), path.join(user, 'tsrx_editor_test.py'));
 
 	process.stdout.write(
-		'▶ syntax-and-server: the TSRX syntax loads, the server starts, `</{expr}>` is JS … ',
+		'▶ sublime-text: the TSRX syntax loads, the server starts, `</{expr}>` is JS, tags close … ',
 	);
 	// `--debug` writes the console to stdout, where syntax errors show.
 	const log = fs.openSync(console_log, 'w');
-	spawn(sublime, ['--debug', app], { stdio: ['ignore', log, log] });
+	const child = spawn(sublime, ['--debug', app], { stdio: ['ignore', log, log] });
 	const deadline = Date.now() + 120_000;
 	while (Date.now() < deadline && !fs.existsSync(out)) await sleep(1000);
 	await sleep(1000);
-	await quit_sublime();
+	await stop_sublime(child);
 	fs.closeSync(log);
 	result = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, 'utf8')) : undefined;
 } finally {
@@ -207,6 +243,14 @@ function problem() {
 	if (!/meta\.embedded\.expression\.js.*variable\.other\.object\.js/.test(scope)) {
 		return `\`props\` in \`</{props.as}>\` has the scope ${JSON.stringify(result.scope)}`;
 	}
+	// The closing tag, with the caret between the tags: typing goes inside the element.
+	const { after_gt, after_hi } = result.closing ?? {};
+	if (after_gt?.line !== '\t<div></div>' || after_gt?.col !== '\t<div>'.length) {
+		return `typing <div> gave ${JSON.stringify(after_gt)}, not "\\t<div></div>" with the caret after <div>`;
+	}
+	if (after_hi?.line !== '\t<div>hi</div>') {
+		return `typing hi after <div> gave ${JSON.stringify(after_hi?.line)}`;
+	}
 	return undefined;
 }
 
@@ -215,6 +259,7 @@ console.log(failed ? `FAIL (${failed})` : 'ok');
 if (result) {
 	console.log(`  Sublime Text ${result.sublime}, LSP ${result.lsp}, waited ${result.waited_ms} ms`);
 	console.log(`  \`props\` in \`</{props.as}>\`: ${result.scope}`);
+	console.log(`  after typing <div>: ${JSON.stringify(result.closing?.after_gt)}`);
 }
 
 if (!keep) fs.rmSync(root, { recursive: true, force: true });

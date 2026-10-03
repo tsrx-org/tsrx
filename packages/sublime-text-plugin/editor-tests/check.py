@@ -1,8 +1,8 @@
 # Runs inside Sublime Text as `Packages/User/tsrx_editor_test.py`, copied there by
 # `run.mjs`. It does nothing unless `tsrx_editor_test.json` is next to it: then it
 # opens the file that names, waits for the TSRX syntax and the TSRX language
-# server, reads the scope of a piece of text in a second file, writes what it saw
-# to the result file, and quits Sublime Text.
+# server, reads the scope of a piece of text in a second file, types `<div>` in a
+# third, writes what it saw to the result file, and quits Sublime Text.
 import json
 import os
 
@@ -57,9 +57,50 @@ def _check_scope(config, view, result):
         point = region.a + config['scope_offset']
         result['scope'] = other.scope_name(point) if region.a >= 0 else None
         other.set_scratch(True)
-        _finish(config, view, result)
+        _check_closing_tag(config, view, result)
 
     check()
+
+
+def _check_closing_tag(config, view, result):
+    # Type `<div>` on the empty second line of `config['closing_file']`, one key at a
+    # time as a user does, then `hi`, and record the line and the caret each time.
+    closing = view.window().open_file(config['closing_file'])
+    result['closing'] = {}
+
+    def record(name):
+        caret = closing.sel()[0].b
+        row, col = closing.rowcol(caret)
+        result['closing'][name] = {'line': closing.substr(closing.line(caret)), 'col': col}
+
+    def type_keys(keys, then):
+        if not keys:
+            sublime.set_timeout(then, 3000)
+            return
+        closing.window().focus_view(closing)
+        closing.run_command('insert', {'characters': keys[0]})
+        sublime.set_timeout(lambda: type_keys(keys[1:], then), 120)
+
+    def after_hi():
+        record('after_hi')
+        closing.set_scratch(True)
+        _finish(config, view, result)
+
+    def after_gt():
+        record('after_gt')
+        type_keys(list('hi'), after_hi)
+
+    def start(waited=0):
+        ready = not closing.is_loading() and closing.settings().get('lsp_active')
+        if not ready and waited < TIMEOUT_MS:
+            sublime.set_timeout(lambda: start(waited + STEP_MS), STEP_MS)
+            return
+        line_end = closing.line(closing.text_point(1, 0)).end()
+        closing.sel().clear()
+        closing.sel().add(line_end)
+        type_keys(list('<div>'), after_gt)
+
+    start()
 
 
 def _finish(config, view, result):
