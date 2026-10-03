@@ -2,4 +2,6 @@
 '@tsrx/language-server': patch
 ---
 
-The `typescript.tsdk` startup option must name the `lib` folder of a TypeScript install. When it names another folder, for example the `typescript` package folder or a wrong path, the server now shows a warning. The warning names the folder, says which folder to use, and names the TypeScript the server uses instead. Before, the server ignored the option and showed nothing.
+The `typescript.tsdk` startup option now also accepts the `typescript` package folder, such as `/path/to/node_modules/typescript`, not only its `lib` folder. Before, the server ignored the package folder without a message.
+
+When the option names a folder with no TypeScript in it, for example a wrong path, the server now shows a warning. The warning names the folder, says which TypeScript the server uses instead, and says how to set the option. Before, the server showed nothing.

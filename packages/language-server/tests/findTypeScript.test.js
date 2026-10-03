@@ -93,23 +93,25 @@ describe("finding the classic backend's typescript", () => {
 		).toMatchObject({ version: '7.1.0-dev.20261002.1', source: 'workspace' });
 	});
 
-	it('prefers the typescript.tsdk initialization option', () => {
-		expect(
-			find_typescript({
-				tsdk: path.join(root, 'tools/typescript/lib'),
-				workspace_dirs: [path.join(root, 'monorepo')],
-				server_dir: server_dir(),
-			}),
-		).toEqual({
-			dir: at('tools/typescript'),
-			lib: path.join(root, 'tools/typescript/lib'),
-			version: '6.0.2',
-			source: 'tsdk',
-		});
+	it('prefers the typescript.tsdk initialization option, the lib folder or the package folder', () => {
+		for (const tsdk of ['tools/typescript/lib', 'tools/typescript']) {
+			expect(
+				find_typescript({
+					tsdk: path.join(root, tsdk),
+					workspace_dirs: [path.join(root, 'monorepo')],
+					server_dir: server_dir(),
+				}),
+			).toEqual({
+				dir: at('tools/typescript'),
+				lib: path.join(root, 'tools/typescript/lib'),
+				version: '6.0.2',
+				source: 'tsdk',
+			});
+		}
 	});
 
-	it('skips a typescript.tsdk folder that is not the lib folder of a typescript package', () => {
-		for (const tsdk of ['tools/typescript', 'tools/typo/lib']) {
+	it('skips a typescript.tsdk folder with no typescript package', () => {
+		for (const tsdk of ['tools/typo/lib', 'tools']) {
 			expect(
 				find_typescript({
 					tsdk: path.join(root, tsdk),
@@ -147,42 +149,43 @@ describe("finding the classic backend's typescript", () => {
 });
 
 describe('the notice when the typescript.tsdk option is skipped', () => {
-	it('names the lib folder when the option names the typescript package folder', () => {
+	const typo = () => path.join(root, 'tools/typo/lib');
+
+	it("names the folder, then the project's typescript the server uses", () => {
 		const notice = tsdk_notice(
-			path.join(root, 'tools/typescript'),
+			typo(),
 			find_typescript({ workspace_dirs: [path.join(root, 'monorepo')], server_dir: server_dir() }),
 		);
 		expect(notice).toBe(
-			`The TSRX language server cannot use the typescript.tsdk startup option, ${path.join(root, 'tools/typescript')}. ` +
-				`The option must name the lib folder of a TypeScript install. ` +
-				`For this TypeScript, set the option to ${path.join(root, 'tools/typescript/lib')}. ` +
-				`The server uses typescript 6.0.3 from ${at('monorepo/node_modules/typescript')} instead.`,
+			`The TSRX language server found no TypeScript in ${typo()}, the folder in the typescript.tsdk startup option. ` +
+				`So the server uses the project's TypeScript 6.0.3, from ${at('monorepo/node_modules/typescript')}. ` +
+				`Set typescript.tsdk to the lib folder of a TypeScript install, such as /path/to/node_modules/typescript/lib.`,
 		);
 	});
 
-	it('shows an example lib folder when the option names a folder with no TypeScript', () => {
+	it('says when the typescript the server uses is the one next to the server', () => {
 		const notice = tsdk_notice(
-			path.join(root, 'tools/typo/lib'),
+			typo(),
 			find_typescript({ workspace_dirs: [path.join(root, 'plain')], server_dir: server_dir() }),
 		);
-		expect(notice).toBe(
-			`The TSRX language server cannot use the typescript.tsdk startup option, ${path.join(root, 'tools/typo/lib')}. ` +
-				`The option must name the lib folder of a TypeScript install, such as /path/to/node_modules/typescript/lib. ` +
-				`The server uses typescript 5.9.3 from ${at('server/node_modules/typescript')} instead.`,
+		expect(notice).toContain(
+			`So the server uses the TypeScript 5.9.3 installed next to the server, from ${at('server/node_modules/typescript')}.`,
 		);
 	});
 
 	it('names no other typescript when the server found none it can run', () => {
 		for (const workspace_dir of ['plain', 'ts7']) {
 			const notice = tsdk_notice(
-				path.join(root, 'tools/typo/lib'),
+				typo(),
 				find_typescript({
 					workspace_dirs: [path.join(root, workspace_dir)],
 					server_dir: path.join(root, 'plain'),
 				}),
 			);
-			expect(notice).toContain('cannot use the typescript.tsdk startup option');
-			expect(notice).not.toContain('instead');
+			expect(notice).toBe(
+				`The TSRX language server found no TypeScript in ${typo()}, the folder in the typescript.tsdk startup option. ` +
+					`Set typescript.tsdk to the lib folder of a TypeScript install, such as /path/to/node_modules/typescript/lib.`,
+			);
 		}
 	});
 });

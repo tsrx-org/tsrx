@@ -47,9 +47,9 @@ none.
 On the `classic` backend, it uses the first `typescript` it finds:
 
 1. The `typescript.tsdk` initialization option, when the editor passes one: the
-   `lib` folder of a TypeScript installation. When the option names another
-   folder, such as the `typescript` package folder, the server shows a warning
-   that names the folder, and goes on to the next step.
+   `lib` folder of a TypeScript installation. The `typescript` package folder
+   above it works too. When the folder has no TypeScript, the server shows a
+   warning that names the folder, and goes on to the next step.
 2. The project's: `node_modules/typescript` in each open workspace folder and its
    parent folders, the way Node finds a package. The first folder that has one
    wins. When the editor names no folder, the server searches from the folder it

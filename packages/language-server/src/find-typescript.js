@@ -2,8 +2,9 @@
  * Finding the `typescript` package the classic backend runs, in this order:
  *
  * 1. the `typescript.tsdk` initialization option: an editor's choice, the `lib`
- *    directory of a TypeScript installation (any other folder is skipped, and the
- *    server warns with `tsdk_notice`);
+ *    directory of a TypeScript installation or the `typescript` package directory
+ *    itself (a folder with neither is skipped, and the server warns with
+ *    `tsdk_notice`);
  * 2. the project's own `typescript`: `node_modules/typescript` in each open
  *    workspace folder (or, when the client names none, the server's working
  *    directory) and its parent folders, as Node resolves a package, the first
@@ -70,11 +71,16 @@ export function find_typescript_package(from_dir) {
  */
 export function find_typescript({ tsdk, workspace_dirs, server_dir }) {
 	if (tsdk !== undefined) {
-		const lib = path.resolve(tsdk);
-		const dir = path.dirname(lib);
-		const version = package_version(dir);
-		if (version !== undefined) {
-			return { dir: fs.realpathSync(dir), lib, version, source: 'tsdk' };
+		// The `lib` folder the option asks for, or the package folder above it.
+		const folder = path.resolve(tsdk);
+		for (const [dir, lib] of [
+			[path.dirname(folder), folder],
+			[folder, path.join(folder, 'lib')],
+		]) {
+			const version = package_version(dir);
+			if (version !== undefined) {
+				return { dir: fs.realpathSync(dir), lib, version, source: 'tsdk' };
+			}
 		}
 	}
 	for (const workspace_dir of workspace_dirs) {
@@ -101,23 +107,26 @@ const STILL_WORKS =
 
 /**
  * The notice the server shows when the `typescript.tsdk` option is set but
- * `find_typescript` skipped it: the folder is not the `lib` folder of a
- * `typescript` package.
+ * `find_typescript` skipped it: the folder has no `typescript` package.
  * @param {string} tsdk the option's value
  * @param {FoundTypeScript | undefined} found the `typescript` found instead
  * @returns {string}
  */
 export function tsdk_notice(tsdk, found) {
-	const folder = path.resolve(tsdk);
-	return [
-		`The TSRX language server cannot use the typescript.tsdk startup option, ${folder}.`,
-		package_version(folder) !== undefined
-			? `The option must name the lib folder of a TypeScript install. For this TypeScript, set the option to ${path.join(folder, 'lib')}.`
-			: 'The option must name the lib folder of a TypeScript install, such as /path/to/node_modules/typescript/lib.',
-		...(found && is_usable_typescript(found.version)
-			? [`The server uses typescript ${found.version} from ${found.dir} instead.`]
-			: []),
-	].join(' ');
+	const sentences = [
+		`The TSRX language server found no TypeScript in ${path.resolve(tsdk)}, the folder in the typescript.tsdk startup option.`,
+	];
+	if (found && is_usable_typescript(found.version)) {
+		const which =
+			found.source === 'server'
+				? `the TypeScript ${found.version} installed next to the server`
+				: `the project's TypeScript ${found.version}`;
+		sentences.push(`So the server uses ${which}, from ${found.dir}.`);
+	}
+	sentences.push(
+		'Set typescript.tsdk to the lib folder of a TypeScript install, such as /path/to/node_modules/typescript/lib.',
+	);
+	return sentences.join(' ');
 }
 
 /**

@@ -5,9 +5,10 @@
  *
  * - with TypeScript 7 there, it starts without TypeScript features and shows one
  *   warning that names the version and where it was found;
- * - with the `typescript.tsdk` initialization option, it runs that TypeScript;
- * - when that option is not the `lib` folder of a TypeScript install, it warns
- *   and runs the TypeScript it finds without it;
+ * - with the `typescript.tsdk` initialization option (the `lib` folder or the
+ *   package folder), it runs that TypeScript;
+ * - when that option's folder has no TypeScript, it warns and runs the TypeScript
+ *   it finds without it;
  * - with TypeScript 5.9 there, it runs it.
  */
 
@@ -141,19 +142,28 @@ describe('TSRX language server: which typescript other editors get', () => {
 		await expect(warning).rejects.toThrow(/Timed out/);
 	});
 
-	it("warns when typescript.tsdk is the typescript package folder, and runs the project's TypeScript", async () => {
+	it('runs the typescript.tsdk TypeScript when the option names the package folder', async () => {
+		const { capabilities, warning } = await session({
+			extra_files: { 'node_modules/typescript/package.json': TYPESCRIPT_7 },
+			initializationOptions: { typescript: { tsdk: typescript_dir } },
+		});
+		expect(serves_typescript(capabilities)).toBe(true);
+		await expect(warning).rejects.toThrow(/Timed out/);
+	});
+
+	it("warns when the typescript.tsdk folder has no TypeScript, and runs the project's TypeScript", async () => {
+		const tsdk = path.join(repo_root, 'no-such-folder/lib');
 		const { capabilities, warning, second_warning } = await session({
 			dependencies: [['typescript', path.join(repo_root, 'packages/language-server')]],
-			initializationOptions: { typescript: { tsdk: typescript_dir } },
+			initializationOptions: { typescript: { tsdk } },
 		});
 		expect(serves_typescript(capabilities)).toBe(true);
 		const message = await warning;
 		expect(message.type).toBe(2);
 		expect(message.message).toBe(
-			`The TSRX language server cannot use the typescript.tsdk startup option, ${typescript_dir}. ` +
-				`The option must name the lib folder of a TypeScript install. ` +
-				`For this TypeScript, set the option to ${path.join(typescript_dir, 'lib')}. ` +
-				`The server uses typescript ${typescript_version} from ${typescript_dir} instead.`,
+			`The TSRX language server found no TypeScript in ${tsdk}, the folder in the typescript.tsdk startup option. ` +
+				`So the server uses the project's TypeScript ${typescript_version}, from ${typescript_dir}. ` +
+				`Set typescript.tsdk to the lib folder of a TypeScript install, such as /path/to/node_modules/typescript/lib.`,
 		);
 		await expect(second_warning).rejects.toThrow(/Timed out/);
 	});
@@ -166,8 +176,10 @@ describe('TSRX language server: which typescript other editors get', () => {
 		});
 		expect(serves_typescript(capabilities)).toBe(false);
 		const first = await warning;
-		expect(first.message).toContain(`cannot use the typescript.tsdk startup option, ${tsdk}.`);
-		expect(first.message).not.toContain('instead');
+		expect(first.message).toContain(
+			`found no TypeScript in ${tsdk}, the folder in the typescript.tsdk`,
+		);
+		expect(first.message).not.toContain('So the server uses');
 		const second = await second_warning;
 		expect(second.message).toContain('found typescript 7.1.0-dev.20261002.1');
 	});
