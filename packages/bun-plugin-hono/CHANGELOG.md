@@ -1,5 +1,15 @@
 # @tsrx/bun-plugin-hono
 
+## 0.1.13
+
+### Patch Changes
+
+- Updated dependencies
+  [[`d2f42e8`](https://github.com/tsrx-org/tsrx/commit/d2f42e8e8403c1653c2928ac7b92c71ee04b9e42),
+  [`7accf3c`](https://github.com/tsrx-org/tsrx/commit/7accf3c7fb0d56288827c1804a2d2c1fd1120bff)]:
+  - @tsrx/core@0.5.4
+  - @tsrx/hono@0.2.4
+
 ## 0.1.12
 
 ### Patch Changes

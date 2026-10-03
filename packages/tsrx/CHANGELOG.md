@@ -1,5 +1,33 @@
 # @tsrx/core
 
+## 0.5.4
+
+### Patch Changes
+
+- [#1032](https://github.com/tsrx-org/tsrx/pull/1032)
+  [`d2f42e8`](https://github.com/tsrx-org/tsrx/commit/d2f42e8e8403c1653c2928ac7b92c71ee04b9e42)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - **Organize Imports**, **Sort
+  Imports** and **Remove Unused Imports** now change `.tsrx` files in which a
+  comment follows an import on the same line. As in a `.ts` file, the comment
+  moves with its import, and Remove Unused Imports removes it with its import.
+  Before, these actions did not change such a file. On TypeScript 7, they now also
+  work when spaces end the line of an import, but the imports must still end with
+  `;` ([#1023](https://github.com/tsrx-org/tsrx/issues/1023)).
+
+  `@tsrx/core` now exports `getLineCommentsAfter` and `isOrganizedImport`, so that
+  a compiler with its own type-only printer can print these comments too.
+
+- [#1022](https://github.com/tsrx-org/tsrx/pull/1022)
+  [`7accf3c`](https://github.com/tsrx-org/tsrx/commit/7accf3c7fb0d56288827c1804a2d2c1fd1120bff)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - On TypeScript 5.9 and 6,
+  **Organize Imports**, **Sort Imports** and **Remove Unused Imports** now change
+  `.tsrx` files. Before, they did nothing. The quick fix that removes an unused
+  import, **Fix All** for unused imports, and the auto-import quick fix that adds
+  a new import line now work in `.tsrx` files too.
+
+  When an import does not end with `;`, the warning for an unused import now shows
+  in `.tsrx` files on TypeScript 5.9 and 6. Before, it did not show.
+
 ## 0.5.3
 
 ### Patch Changes

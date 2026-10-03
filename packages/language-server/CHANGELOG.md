@@ -1,5 +1,60 @@
 # @tsrx/language-server
 
+## 0.6.2
+
+### Patch Changes
+
+- [#1031](https://github.com/tsrx-org/tsrx/pull/1031)
+  [`e806335`](https://github.com/tsrx-org/tsrx/commit/e806335fc4ab663c7746e5e946cec72761db7659)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Closing tags now keep a `$`
+  in the tag name. In VS Code with TypeScript 7, typing `<$Foo>` inserted `</>`,
+  and `<ui.$Item>` inserted `</ui.>`. Now they insert `</$Foo>` and `</ui.$Item>`.
+  The closing tag goes to VS Code as a snippet, and in a snippet `$Foo` is a
+  variable that VS Code replaces with nothing. The server now escapes the closing
+  tag.
+
+  Closing tags in all editors also keep a `$` or a non-ASCII letter after the
+  first character of the tag name. Before, `<Foo$Bar>` got `</Foo>`, `<ui.$Item>`
+  got `</ui.>` and `<Café>` got `</Caf>`.
+
+- [#1020](https://github.com/tsrx-org/tsrx/pull/1020)
+  [`87c8835`](https://github.com/tsrx-org/tsrx/commit/87c88350c4e3d0f5b6ecc1ce60a31a957fa565ac)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Tags now close in editors
+  other than VS Code. When you type the `>` that ends an opening tag, the server
+  answers on-type formatting (`textDocument/onTypeFormatting`) with the closing
+  tag: `<div>` becomes `<div></div>`. Zed 1.17 or newer, Neovim and JetBrains IDEs
+  keep the cursor between the tags. Before, only VS Code closed tags, and on-type
+  formatting for `>` returned nothing.
+
+  To turn closing tags off, set `tsrx.autoClosingTags.enabled` to `false`. An
+  editor that closes tags another way sets the new `closeTagsOnType`
+  initialization option to `false`. The server then offers no on-type formatting.
+  The VS Code extension does this.
+
+  On the classic backend, the server no longer offers on-type formatting for `;`,
+  `}` and new lines. For `.tsrx` files, it returned nothing.
+
+- [#1015](https://github.com/tsrx-org/tsrx/pull/1015)
+  [`495323e`](https://github.com/tsrx-org/tsrx/commit/495323ee83e9a454e59e5b2a2b3d53e76e5d9588)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The `typescript.tsdk` startup
+  option now also accepts the `typescript` package folder, such as
+  `/path/to/node_modules/typescript`, not only its `lib` folder. Before, the
+  server ignored the package folder without a message.
+
+  When the option names a folder that does not contain TypeScript, for example a
+  wrong path, the server now shows a warning. The warning names the folder, says
+  which TypeScript the server uses instead, and says how to set the option.
+  Before, the server showed nothing.
+
+  The warnings for no TypeScript and for TypeScript 7 now use shorter, plainer
+  sentences. They first say which features do not work, then why, then what to do.
+
+- Updated dependencies
+  [[`d2f42e8`](https://github.com/tsrx-org/tsrx/commit/d2f42e8e8403c1653c2928ac7b92c71ee04b9e42),
+  [`7accf3c`](https://github.com/tsrx-org/tsrx/commit/7accf3c7fb0d56288827c1804a2d2c1fd1120bff)]:
+  - @tsrx/core@0.5.4
+  - @tsrx/typescript-plugin@0.6.2
+
 ## 0.6.1
 
 ### Patch Changes

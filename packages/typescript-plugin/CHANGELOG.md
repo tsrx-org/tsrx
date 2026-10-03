@@ -1,5 +1,27 @@
 # @tsrx/typescript-plugin
 
+## 0.6.2
+
+### Patch Changes
+
+- [#1022](https://github.com/tsrx-org/tsrx/pull/1022)
+  [`7accf3c`](https://github.com/tsrx-org/tsrx/commit/7accf3c7fb0d56288827c1804a2d2c1fd1120bff)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - On TypeScript 5.9 and 6,
+  **Organize Imports**, **Sort Imports** and **Remove Unused Imports** now change
+  `.tsrx` files. Before, they did nothing. The quick fix that removes an unused
+  import, **Fix All** for unused imports, and the auto-import quick fix that adds
+  a new import line now work in `.tsrx` files too.
+
+  When an import does not end with `;`, the warning for an unused import now shows
+  in `.tsrx` files on TypeScript 5.9 and 6. Before, it did not show.
+
+- Updated dependencies []:
+  - @tsrx/content-mapper@0.1.2
+  - @tsrx/preact@0.3.4
+  - @tsrx/react@0.4.4
+  - @tsrx/solid@0.3.4
+  - @tsrx/vue@0.3.4
+
 ## 0.6.1
 
 ### Patch Changes
