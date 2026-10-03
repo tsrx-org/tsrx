@@ -92,7 +92,8 @@ pnpm add -D typescript
 Any version below 7 works. When the server finds no `typescript`, or finds
 TypeScript 7, it still starts and sends a warning that says what it found. `.tsrx`
 files then get no type checking, hover or completions. TSRX compile errors, CSS in
-`<style>`, the outline, formatting and closing tags still work.
+`<style>`, the outline and formatting still work. (JetBrains IDEs do not close
+tags yet: [#1019](https://github.com/tsrx-org/tsrx/issues/1019).)
 
 To use another TypeScript, open **Settings → Languages & Frameworks → TSRX** and
 set **TypeScript lib folder** to the `lib` folder of that TypeScript, for example

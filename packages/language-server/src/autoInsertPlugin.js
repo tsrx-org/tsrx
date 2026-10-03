@@ -29,7 +29,9 @@ const VOID_ELEMENTS = new Set([
 
 /**
  * Auto-insert plugin for TSRX.
- * Handles auto-closing tags when typing '>' after a tag name
+ * Handles auto-closing tags when typing '>' after a tag name. The VS Code extension
+ * asks for them with Volar's `volar/client/autoInsert` request; other editors get
+ * them through `textDocument/onTypeFormatting` (`closingTagsHandler.js`).
  * @returns {LanguageServicePlugin}
  */
 export function createAutoInsertPlugin() {
@@ -39,9 +41,6 @@ export function createAutoInsertPlugin() {
 			autoInsertionProvider: {
 				triggerCharacters: ['>'],
 				configurationSections: ['tsrx.autoClosingTags.enabled'],
-			},
-			documentOnTypeFormattingProvider: {
-				triggerCharacters: ['>'],
 			},
 		},
 		// leaving context for future use

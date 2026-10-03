@@ -3,11 +3,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
+from typing import TYPE_CHECKING, Any
 
 import sublime
 from LSP.plugin import LspPlugin, OnPreStartContext, WorkspaceFolder
 from lsp_utils import NodeManager
 from sublime_lib import ResourcePath
+
+if TYPE_CHECKING:
+    from LSP.plugin import ServerResponse
 
 
 def plugin_loaded() -> None:
@@ -32,6 +36,14 @@ class LspTsrxPlugin(LspPlugin):
                 Path('node_modules', '@tsrx', 'language-server', 'dist', 'language-server.js'),
                 node_version_requirement='>=22',
             )
+
+    def on_server_response_async(self, response: ServerResponse) -> None:
+        # The server closes tags through on-type formatting, its only on-type formatting: when
+        # `>` ends an opening tag, it answers with an edit that inserts the closing tag at the
+        # caret. Sublime Text moves the caret past text inserted at it, so apply the edit as a
+        # snippet whose `$0` keeps the caret between the tags.
+        if response['method'] == 'textDocument/onTypeFormatting' and isinstance(response['result'], list):
+            response['result'] = [_closing_tag_snippet(edit) for edit in response['result']]
 
     @classmethod
     def _determine_external_binary(
@@ -119,3 +131,13 @@ class LspTsrxPlugin(LspPlugin):
         if script_path and sublime.platform() == 'windows':
             return script_path + '.cmd' if not script_path.endswith('.cmd') else script_path
         return None
+
+
+def _closing_tag_snippet(edit: Any) -> Any:
+    """A text edit that inserts text, as a snippet edit that leaves the caret before the text."""
+    range_ = edit.get('range')
+    new_text = edit.get('newText')
+    if not isinstance(new_text, str) or not range_ or range_['start'] != range_['end']:
+        return edit
+    escaped = new_text.replace('\\', '\\\\').replace('$', '\\$')
+    return {'range': range_, 'snippet': {'kind': 'snippet', 'value': '$0' + escaped}}

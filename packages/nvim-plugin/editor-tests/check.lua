@@ -45,6 +45,23 @@ if result.attached then
 		0
 	)
 	result.symbols = response and response.result and #response.result or 0
+
+	-- Closing tags (#1004), on Neovim 0.12 or newer: type `<p>` on a new line above the
+	-- `<h2>` as a user does, and stay in Insert mode while the server answers on-type
+	-- formatting for `>`. With `x!`, the keys run and Insert mode stays on until the
+	-- timer records the line and leaves it.
+	result.on_type_formatting = vim.lsp.on_type_formatting ~= nil
+	if result.on_type_formatting then
+		vim.defer_fn(function()
+			result.closing_tag = {
+				line = vim.api.nvim_get_current_line(),
+				column = vim.fn.col("."),
+				mode = vim.api.nvim_get_mode().mode,
+			}
+			vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "n", false)
+		end, 3000)
+		vim.api.nvim_feedkeys(vim.keycode("/<lt>h2<CR>O<lt>p>"), "tx!", false)
+	end
 end
 
 local file = assert(io.open(os.getenv("TSRX_NVIM_OUT"), "w"))

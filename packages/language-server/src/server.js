@@ -19,6 +19,11 @@ import {
 } from './find-typescript.js';
 import { createServicePlugins } from './servicePlugins.js';
 import { register_formatting } from './formattingHandler.js';
+import {
+	CLOSING_TAGS_ON_TYPE,
+	closes_tags_on_type,
+	register_closing_tags,
+} from './closingTagsHandler.js';
 import { URI } from 'vscode-uri';
 import {
 	getTsrxLanguagePlugin,
@@ -61,6 +66,8 @@ export function createTsrxLanguageServer(options = {}) {
 	const server = createServer(connection);
 	// Prettier formats `.tsrx` sources on every backend (`formattingHandler.js`).
 	register_formatting(connection, (uri) => server.documents.get(URI.parse(uri)));
+	// Closing tags on `>` for every editor (`closingTagsHandler.js`).
+	register_closing_tags(connection, server);
 
 	connection.listen();
 
@@ -221,7 +228,7 @@ export function createTsrxLanguageServer(options = {}) {
 					createServicePlugins(backend),
 				);
 				log('Server initialization complete');
-				return with_formatting(initResult);
+				return with_own_handlers(initResult, params);
 			}
 
 			const initResult = server.initialize(
@@ -258,7 +265,7 @@ export function createTsrxLanguageServer(options = {}) {
 			);
 
 			log('Server initialization complete');
-			return with_formatting(initResult);
+			return with_own_handlers(initResult, params);
 		} catch (initError) {
 			logError('Server initialization failed:', initError);
 			throw initError;
@@ -324,15 +331,21 @@ export function createTsrxLanguageServer(options = {}) {
 }
 
 /**
- * Advertise the formatters `register_formatting` serves (whole document and range); no Volar service plugin
- * advertises one (`stripDocumentFormatting`).
+ * Advertise what the server's own handlers serve: the formatters `register_formatting`
+ * serves (whole document and range), and the closing tags `register_closing_tags`
+ * serves on `>`, unless the client closes tags another way (`closes_tags_on_type`).
+ * No Volar service plugin advertises either (`stripFormatting`).
  * @template {import('@volar/language-server/node').InitializeResult} T
  * @param {T} initResult
+ * @param {import('@volar/language-server/node').InitializeParams} params
  * @returns {T}
  */
-function with_formatting(initResult) {
+function with_own_handlers(initResult, params) {
 	initResult.capabilities.documentFormattingProvider = true;
 	initResult.capabilities.documentRangeFormattingProvider = true;
+	if (closes_tags_on_type(params)) {
+		initResult.capabilities.documentOnTypeFormattingProvider = CLOSING_TAGS_ON_TYPE;
+	}
 	return initResult;
 }
 

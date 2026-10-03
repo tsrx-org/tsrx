@@ -136,7 +136,14 @@ export async function activate(context) {
 		// tsserver shows itself (same TypeScript code, same place).
 		// `restartNotification`: the server asks for a restart (`restart_on_request`)
 		// instead of exiting by itself.
-		initializationOptions: { typescriptBackend: 'plugin', restartNotification: true },
+		// `closeTagsOnType: false`: VS Code's TypeScript closes tags, or on TypeScript 7 this
+		// extension asks the server for them (`closing-tags.js`), so the server's on-type
+		// formatting would insert a second closing tag with `editor.formatOnType` on.
+		initializationOptions: {
+			typescriptBackend: 'plugin',
+			restartNotification: true,
+			closeTagsOnType: false,
+		},
 		middleware: {
 			handleDiagnostics(uri, diagnostics, next) {
 				const all = vscode.languages.getDiagnostics(uri);

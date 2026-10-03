@@ -18,4 +18,16 @@ describe('Volar service plugins', () => {
 			expect(formatters, backend).toEqual([]);
 		}
 	});
+
+	it('offer no on-type formatting on any backend, so the server closes tags on `>`', () => {
+		// The server answers `textDocument/onTypeFormatting` itself (`closingTagsHandler.js`).
+		// A plugin that offers on-type formatting would make Volar register its own
+		// handler, which replaces that one.
+		for (const backend of /** @type {const} */ (['native', 'plugin', 'classic'])) {
+			const on_type_formatters = createServicePlugins(backend, ts)
+				.filter((plugin) => plugin.capabilities.documentOnTypeFormattingProvider)
+				.map((plugin) => plugin.name);
+			expect(on_type_formatters, backend).toEqual([]);
+		}
+	});
 });

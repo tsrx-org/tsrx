@@ -94,6 +94,24 @@ pnpm add -D prettier @tsrx/prettier-plugin
 Zed's default `formatter` setting (`auto`) uses the language server for `.tsrx`
 files.
 
+## Closing tags
+
+When you type the `>` that ends an opening tag, the TSRX language server inserts
+the closing tag: `<div>` becomes `<div></div>`, with the cursor between the tags.
+Zed asks the server for it through on-type formatting, which is on by default. Use
+Zed 1.17 or newer: older versions move the cursor past the closing tag.
+
+To turn closing tags off, turn on-type formatting off for `.tsrx` files in Zed's
+settings:
+
+```jsonc
+{
+  "languages": {
+    "TSRX": { "use_on_type_format": false },
+  },
+}
+```
+
 ## TypeScript backends
 
 The TSRX language server hosts TypeScript itself (the `classic` backend), so

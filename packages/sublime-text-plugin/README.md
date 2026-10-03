@@ -140,6 +140,29 @@ configuration:
 },
 ```
 
+## Closing tags
+
+When you type the `>` that ends an opening tag, the TSRX language server inserts
+the closing tag: `<div>` becomes `<div></div>`, with the caret between the tags.
+The LSP package (2.11 or newer) asks the server for it through on-type formatting,
+which is off by default. To turn it on, in `LSP.sublime-settings`:
+
+```jsonc
+"format_on_type": true,
+```
+
+This setting is for every language server, so other servers can then also format
+as you type. To keep it on but turn closing tags off, in
+`Packages/User/TSRX.sublime-settings`:
+
+```jsonc
+{
+  "settings": {
+    "tsrx.autoClosingTags.enabled": false,
+  },
+}
+```
+
 ## Build
 
 ```sh
