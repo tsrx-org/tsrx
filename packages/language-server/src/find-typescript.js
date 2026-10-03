@@ -101,9 +101,13 @@ export function is_usable_typescript(version) {
 	return Number.parseInt(version, 10) < 7;
 }
 
+/** What the server does not give without TypeScript, for the notices. */
+const NO_FEATURES =
+	'The TSRX language server gives no type checking, hover or completions in .tsrx files.';
+
 /** What still works without TypeScript, for the notices. */
 const STILL_WORKS =
-	'TSRX compile errors, CSS in <style>, the outline, formatting and closing tags still work.';
+	'These features still work: TSRX compile errors, CSS in <style>, the outline, formatting and closing tags.';
 
 /**
  * The notice the server shows when the `typescript.tsdk` option is set but
@@ -114,17 +118,17 @@ const STILL_WORKS =
  */
 export function tsdk_notice(tsdk, found) {
 	const sentences = [
-		`The TSRX language server found no TypeScript in ${path.resolve(tsdk)}, the folder in the typescript.tsdk startup option.`,
+		'The TSRX language server does not use the typescript.tsdk startup option.',
+		`The folder in this option contains no TypeScript: ${path.resolve(tsdk)}.`,
 	];
 	if (found && is_usable_typescript(found.version)) {
-		const which =
-			found.source === 'server'
-				? `the TypeScript ${found.version} installed next to the server`
-				: `the project's TypeScript ${found.version}`;
-		sentences.push(`So the server uses ${which}, from ${found.dir}.`);
+		const from = found.source === 'server' ? 'the server installation' : 'the project';
+		sentences.push(
+			`The server uses TypeScript ${found.version} from ${from} instead: ${found.dir}.`,
+		);
 	}
 	sentences.push(
-		'Set typescript.tsdk to the lib folder of a TypeScript install, such as /path/to/node_modules/typescript/lib.',
+		'Set this option to the lib folder of a TypeScript installation, for example /path/to/node_modules/typescript/lib.',
 	);
 	return sentences.join(' ');
 }
@@ -138,18 +142,22 @@ export function tsdk_notice(tsdk, found) {
 export function typescript_notice(found, workspace_dirs) {
 	if (found) {
 		return [
-			`The TSRX language server found typescript ${found.version} at ${found.dir}.`,
-			'It cannot run TypeScript 7 or newer, so type checking, hover and completions in .tsrx files are off.',
+			NO_FEATURES,
+			`The server found TypeScript ${found.version} in ${found.dir}.`,
+			'The server cannot run TypeScript 7 or newer.',
 			STILL_WORKS,
-			'For TypeScript 7, run its own language server (tsc --lsp) with @tsrx/content-mapper. To use another TypeScript, set the typescript.tsdk startup option to its lib folder.',
-			'See https://github.com/tsrx-org/tsrx/tree/main/packages/language-server#which-typescript-it-uses',
+			'To use TypeScript 7, run the TypeScript 7 language server (tsc --lsp) with @tsrx/content-mapper.',
+			'To use a different TypeScript, set the typescript.tsdk startup option to the lib folder of that TypeScript.',
+			'For more information, see https://github.com/tsrx-org/tsrx/tree/main/packages/language-server#which-typescript-it-uses',
 		].join(' ');
 	}
 	const where = workspace_dirs.join(', ');
 	return [
-		`The TSRX language server found no typescript package in ${where}, its parent folders, or next to the server,`,
-		'so type checking, hover and completions in .tsrx files are off.',
+		NO_FEATURES,
+		'The server found no TypeScript.',
+		`The server looked in ${where}, in the server installation, and in their parent folders.`,
 		STILL_WORKS,
-		'Install typescript in the project (npm install -D typescript, or pnpm add -D typescript), then restart the language server.',
+		'Install TypeScript in the project: npm install -D typescript, or pnpm add -D typescript.',
+		'Then restart the TSRX language server.',
 	].join(' ');
 }

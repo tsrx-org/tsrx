@@ -72,7 +72,8 @@ const SCENARIOS = [
 		description: 'no typescript in the project or next to the server',
 		expect: {
 			typescript_features: false,
-			warning: /found no typescript package in .*, its parent folders, or next to the server/,
+			warning:
+				/The server found no TypeScript\. The server looked in .*, in the server installation, and in their parent folders\./,
 		},
 	},
 	{
@@ -81,7 +82,8 @@ const SCENARIOS = [
 		typescript: { version: '7.1.0-dev.20261002.1' },
 		expect: {
 			typescript_features: false,
-			warning: /found typescript 7\.1\.0-dev\.20261002\.1 at .*node_modules\/typescript/,
+			warning:
+				/The server found TypeScript 7\.1\.0-dev\.20261002\.1 in .*node_modules\/typescript\./,
 		},
 	},
 	{

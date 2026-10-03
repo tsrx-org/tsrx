@@ -120,7 +120,7 @@ describe('TSRX language server: which typescript other editors get', () => {
 		const message = await warning;
 		expect(message.type).toBe(2);
 		expect(message.message).toContain(
-			`found typescript 7.1.0-dev.20261002.1 at ${path.join(workspace_dir, 'node_modules', 'typescript')}`,
+			`The server found TypeScript 7.1.0-dev.20261002.1 in ${path.join(workspace_dir, 'node_modules', 'typescript')}.`,
 		);
 
 		// No second warning, and what needs no TypeScript still works.
@@ -161,9 +161,10 @@ describe('TSRX language server: which typescript other editors get', () => {
 		const message = await warning;
 		expect(message.type).toBe(2);
 		expect(message.message).toBe(
-			`The TSRX language server found no TypeScript in ${tsdk}, the folder in the typescript.tsdk startup option. ` +
-				`So the server uses the project's TypeScript ${typescript_version}, from ${typescript_dir}. ` +
-				`Set typescript.tsdk to the lib folder of a TypeScript install, such as /path/to/node_modules/typescript/lib.`,
+			`The TSRX language server does not use the typescript.tsdk startup option. ` +
+				`The folder in this option contains no TypeScript: ${tsdk}. ` +
+				`The server uses TypeScript ${typescript_version} from the project instead: ${typescript_dir}. ` +
+				`Set this option to the lib folder of a TypeScript installation, for example /path/to/node_modules/typescript/lib.`,
 		);
 		await expect(second_warning).rejects.toThrow(/Timed out/);
 	});
@@ -176,12 +177,10 @@ describe('TSRX language server: which typescript other editors get', () => {
 		});
 		expect(serves_typescript(capabilities)).toBe(false);
 		const first = await warning;
-		expect(first.message).toContain(
-			`found no TypeScript in ${tsdk}, the folder in the typescript.tsdk`,
-		);
-		expect(first.message).not.toContain('So the server uses');
+		expect(first.message).toContain(`The folder in this option contains no TypeScript: ${tsdk}.`);
+		expect(first.message).not.toContain('The server uses');
 		const second = await second_warning;
-		expect(second.message).toContain('found typescript 7.1.0-dev.20261002.1');
+		expect(second.message).toContain('The server found TypeScript 7.1.0-dev.20261002.1 in ');
 	});
 
 	it("runs the project's TypeScript 5.9 from the parent folder", async () => {
