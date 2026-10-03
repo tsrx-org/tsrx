@@ -50,6 +50,22 @@ To ask only the TSRX server:
 vim.lsp.buf.format({ name = "tsrx" })
 ```
 
+## Closing tags
+
+On Neovim 0.12 or newer, when you type the `>` that ends an opening tag, the TSRX
+language server inserts the closing tag: `<div>` becomes `<div></div>`, with the
+cursor between the tags. The plugin turns on Neovim's on-type formatting
+(`vim.lsp.on_type_formatting`) for the TSRX server only. Neovim 0.11 does not have
+on-type formatting, so it does not close tags.
+
+To turn closing tags off:
+
+```lua
+vim.lsp.config("tsrx", {
+  settings = { tsrx = { autoClosingTags = { enabled = false } } },
+})
+```
+
 ## TypeScript backends
 
 By default the TSRX language server hosts TypeScript itself (the `classic`

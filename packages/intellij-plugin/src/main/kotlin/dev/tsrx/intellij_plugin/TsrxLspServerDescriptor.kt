@@ -4,7 +4,10 @@ import com.google.gson.JsonObject
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.platform.lsp.api.ProjectWideLspServerDescriptor
+import com.intellij.platform.lsp.api.ProjectWideLspClientDescriptor
+import com.intellij.platform.lsp.api.customization.LspCustomization
+import com.intellij.platform.lsp.api.customization.LspOnTypeFormattingCustomizer
+import com.intellij.platform.lsp.api.customization.LspOnTypeFormattingSupport
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -12,7 +15,7 @@ import java.nio.file.Paths
 internal class TsrxLspServerDescriptor(
 	project: Project,
 	private val serverInfo: TsrxLanguageServerInfo,
-) : ProjectWideLspServerDescriptor(project, "TSRX") {
+) : ProjectWideLspClientDescriptor(project, "TSRX") {
 	override fun isSupportedFile(file: VirtualFile): Boolean = TsrxFileType.isTsrxFile(file)
 
 	override fun createCommandLine(): GeneralCommandLine {
@@ -29,6 +32,17 @@ internal class TsrxLspServerDescriptor(
 		TsrxSettings.getInstance(project).typescriptLib,
 		project.basePath?.let(Paths::get),
 	)
+
+	override val lspCustomization: LspCustomization = TsrxLspCustomization
+}
+
+/**
+ * The server closes tags through on-type formatting: when `>` ends an opening tag, it
+ * answers with an edit that inserts the closing tag. That is its only on-type formatting,
+ * and JetBrains IDEs leave on-type formatting off unless the plugin turns it on.
+ */
+internal object TsrxLspCustomization : LspCustomization() {
+	override val onTypeFormattingCustomizer: LspOnTypeFormattingCustomizer = LspOnTypeFormattingSupport()
 }
 
 /**

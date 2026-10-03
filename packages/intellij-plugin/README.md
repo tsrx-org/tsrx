@@ -9,21 +9,21 @@ TSRX language support for compatible IntelliJ-based IDEs.
 - Optional structural bracket coloring from the standard Rainbow Brackets plugin,
   including TSRX template blocks, JavaScript delimiters, JSX tags, fragments, and
   embedded expressions
-- Diagnostics, completion, navigation, and formatting through
+- Diagnostics, completion, navigation, formatting, and closing tags through
   `@tsrx/language-server` when the IDE exposes JetBrains' LSP module. Formatting
   needs `prettier` and `@tsrx/prettier-plugin` in the project (see
   [Formatting](https://github.com/tsrx-org/tsrx/tree/main/packages/language-server#formatting))
 
 ## Requirements
 
-- IntelliJ-based IDE 2025.2 or newer
+- IntelliJ-based IDE 2026.1.4 or newer
 - Rainbow coloring requires the optional standard Rainbow Brackets plugin. The
   integration is verified with Rainbow Brackets 2025.3.12; Rainbow Brackets Lite
   is not supported.
 - LSP features require both the Ultimate and LSP modules
 - Node.js 22+ with npm available on PATH (for LSP features)
 
-WebStorm 2025.2.4 is the reference build used by CI. Syntax-only IDEs receive the
+WebStorm 2026.1.4 is the reference build used by CI. Syntax-only IDEs receive the
 baseline feature tier; products with the optional modules receive the LSP feature
 tier. Rainbow Brackets is not required for the TSRX file type or baseline syntax
 highlighting. When installed, its existing colors and settings control TSRX
@@ -48,6 +48,14 @@ packages/intellij-plugin/gradlew -p packages/intellij-plugin buildPlugin
 
 Then use **Settings → Plugins → ⚙ → Install Plugin from Disk** and select the ZIP
 from `packages/intellij-plugin/build/distributions`.
+
+## Closing tags
+
+When you type the `>` that ends an opening tag, the TSRX language server inserts
+the closing tag: `<div>` becomes `<div></div>`, with the caret between the tags.
+The IDE asks the server for it through on-type formatting. JetBrains IDEs leave
+on-type formatting off for language servers, so the plugin turns it on for the
+TSRX server only.
 
 ## Language Server Resolution
 

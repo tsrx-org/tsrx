@@ -221,6 +221,44 @@ Other formatters for `.tsrx` files return no edits:
 In VS Code, TSRX is the default formatter for `.tsrx` files, so neither gets in
 the way.
 
+## Closing tags
+
+When you type the `>` that ends an opening tag, the server inserts the closing tag
+after the cursor: `<div>` becomes `<div></div>`. It does not close a void element
+such as `<br>`, a self-closing tag such as `<div />`, or a tag that is already
+closed.
+
+Editors ask for the closing tag in one of two ways:
+
+- **On-type formatting** (`textDocument/onTypeFormatting`), with `>` as the only
+  trigger character. A text edit cannot move the cursor, so the cursor stays
+  between the tags only in an editor that keeps it before text inserted at the
+  cursor. Zed 1.17 or newer, Neovim and JetBrains IDEs do. The READMEs of the TSRX
+  plugins for
+  [Zed](https://github.com/tsrx-org/tsrx/tree/main/packages/zed-plugin#closing-tags),
+  [Neovim](https://github.com/tsrx-org/tsrx/tree/main/packages/nvim-plugin#closing-tags),
+  [Sublime Text](https://github.com/tsrx-org/tsrx/tree/main/packages/sublime-text-plugin#closing-tags)
+  and
+  [JetBrains IDEs](https://github.com/tsrx-org/tsrx/tree/main/packages/intellij-plugin#closing-tags)
+  say what each editor needs.
+- **Volar's `volar/client/autoInsert` request**, which the VS Code extension
+  sends. The server answers with a snippet (`$0</div>`) that puts the cursor
+  between the tags.
+
+To turn closing tags off, set `tsrx.autoClosingTags.enabled` to `false`. The
+server reads it through `workspace/configuration`.
+
+An editor that closes tags another way sets the `closeTagsOnType` initialization
+option to `false`. The server then offers no on-type formatting, so the editor
+does not get a second closing tag. The VS Code extension does this, because VS
+Code's TypeScript closes the tags, or on TypeScript 7 the extension sends
+`volar/client/autoInsert`:
+
+```jsonc
+// LSP initialize params
+{ "initializationOptions": { "closeTagsOnType": false } }
+```
+
 ## Restarts after package changes
 
 When a `package.json` or a lockfile changes (`pnpm install`, for example), the

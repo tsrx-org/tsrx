@@ -11,7 +11,7 @@ import { MINIMUM_PRETTIER_VERSION, PRETTIER_PLUGIN, find_up, format_tsrx } from 
  * Answer `textDocument/formatting` and `textDocument/rangeFormatting` (Format
  * Selection, format on paste) for `.tsrx` files with `format_tsrx`, on the
  * plain LSP connection: Volar only formats generated code, never the `.tsrx`
- * source, and its TypeScript and CSS formatters stay off (`stripDocumentFormatting`
+ * source, and its TypeScript and CSS formatters stay off (`stripFormatting`
  * in `servicePlugins.js`), so this is the server's only formatter.
  *
  * When the project lacks `prettier` or `@tsrx/prettier-plugin`, or has a Prettier

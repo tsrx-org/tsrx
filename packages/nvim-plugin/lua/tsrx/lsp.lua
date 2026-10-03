@@ -217,6 +217,26 @@ local function extend_native_typescript_server()
 	vim.lsp.config("tsc", { filetypes = filetypes, init_options = init_options })
 end
 
+--- Close tags when `>` is typed: the server answers `textDocument/onTypeFormatting` for `>`
+--- with the closing tag, and Neovim sends that request only for clients that turn on-type
+--- formatting on (`vim.lsp.on_type_formatting`, Neovim 0.12 and newer). Only the TSRX client
+--- gets it, and the server offers no other on-type formatting.
+local function enable_closing_tags()
+	local on_type_formatting = vim.lsp.on_type_formatting
+	if not on_type_formatting then
+		return
+	end
+	vim.api.nvim_create_autocmd("LspAttach", {
+		group = vim.api.nvim_create_augroup("tsrx.closing_tags", { clear = true }),
+		callback = function(event)
+			local client = vim.lsp.get_client_by_id(event.data.client_id)
+			if client and client.name == SERVER_NAME then
+				on_type_formatting.enable(true, { client_id = client.id })
+			end
+		end,
+	})
+end
+
 --- @param opts? { typescript_backend?: "classic"|"native" }
 function M.setup(opts)
 	opts = opts or {}
@@ -244,6 +264,7 @@ function M.setup(opts)
 	}
 
 	vim.lsp.config(SERVER_NAME, base_config)
+	enable_closing_tags()
 	vim.lsp.enable(SERVER_NAME)
 end
 

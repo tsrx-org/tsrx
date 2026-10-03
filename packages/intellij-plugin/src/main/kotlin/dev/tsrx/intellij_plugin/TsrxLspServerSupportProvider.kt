@@ -3,30 +3,30 @@ package dev.tsrx.intellij_plugin
 import com.intellij.ide.trustedProjects.TrustedProjects
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.platform.lsp.api.LspServerManager
-import com.intellij.platform.lsp.api.LspServerSupportProvider
+import com.intellij.platform.lsp.api.LspClientManager
+import com.intellij.platform.lsp.api.LspIntegrationProvider
 
 class TsrxLspServerSupportProvider internal constructor(
 	private val isProjectTrusted: (Project) -> Boolean,
-) : LspServerSupportProvider {
+) : LspIntegrationProvider {
 	constructor() : this(TrustedProjects::isProjectTrusted)
 
 	override fun fileOpened(
 		project: Project,
 		file: VirtualFile,
-		serverStarter: LspServerSupportProvider.LspServerStarter,
+		clientStarter: LspIntegrationProvider.LspClientStarter,
 	) {
 		if (!TsrxFileType.isTsrxFile(file) || !isProjectTrusted(project)) {
 			return
 		}
 
 		val serverInfo = TsrxLanguageServer.resolveServer(project, file) ?: return
-		serverStarter.ensureServerStarted(TsrxLspServerDescriptor(project, serverInfo))
+		clientStarter.ensureClientStarted(TsrxLspServerDescriptor(project, serverInfo))
 	}
 }
 
 /** Stops the project's TSRX servers and starts them again for the open `.tsrx` files. */
 internal fun restartTsrxLanguageServer(project: Project) {
-	LspServerManager.getInstance(project)
-		.stopAndRestartIfNeeded(TsrxLspServerSupportProvider::class.java)
+	LspClientManager.getInstance(project)
+		.stopAndRestartClientsIfNeeded(TsrxLspServerSupportProvider::class.java)
 }

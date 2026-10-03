@@ -11,7 +11,7 @@ import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
 
 plugins {
 	id("java")
-	id("org.jetbrains.kotlin.jvm") version "2.1.20"
+	id("org.jetbrains.kotlin.jvm") version "2.3.21"
 	id("org.jetbrains.intellij.platform") version "2.18.1"
 }
 
@@ -44,7 +44,7 @@ dependencies {
 intellijPlatform {
 	pluginConfiguration {
 		ideaVersion {
-			sinceBuild = "252"
+			sinceBuild = "261.26222"
 		}
 
 		changeNotes = """
@@ -116,6 +116,12 @@ tasks {
 	}
 	test {
 		dependsOn(buildPlugin)
+	}
+	prepareTestSandbox {
+		// WebStorm's bundled Vue plugin cannot create its language server in the test sandbox
+		// (ExceptionInInitializerError in VueLspServerPackageDescriptor, 2026.1.2 to 2026.1.5).
+		// The error fails every test that lists the LSP providers or highlights a file.
+		disabledPlugins.add("org.jetbrains.plugins.vue")
 	}
 
 	// Set the JVM compatibility versions

@@ -13,7 +13,8 @@ import { createTypeScriptDiagnosticFilterPlugin } from './typescriptDiagnosticPl
 import { createTypeScriptServices } from './typescriptService.js';
 
 /**
- * Strip whole-document formatting capabilities from a Volar service plugin.
+ * Strip the formatting capabilities from a Volar service plugin, on-type
+ * formatting included.
  *
  * The bundled TypeScript (`typescript-syntactic`) and CSS services advertise a
  * `documentFormattingProvider`. Because they run against the virtual TS/CSS code
@@ -22,19 +23,23 @@ import { createTypeScriptServices } from './typescriptService.js';
  * (`formattingHandler.js`): a plugin that offered formatting would make Volar
  * register its own `textDocument/formatting` handler, which would replace that one,
  * and the language client would list a second formatter that does nothing
- * (removed first by Ripple-TS/ripple#1318). On-type formatting is left intact.
- * TypeScript 7 registers a formatter for `.tsrx` files that returns no edits
- * (`native-lsp.test.js` pins it), so the VS Code extension makes TSRX the `[tsrx]`
- * default formatter.
+ * (removed first by Ripple-TS/ripple#1318). TypeScript 7 registers a formatter for
+ * `.tsrx` files that returns no edits (`native-lsp.test.js` pins it), so the VS Code
+ * extension makes TSRX the `[tsrx]` default formatter.
+ *
+ * On-type formatting is the same: TypeScript's `;`, `}` and newline triggers
+ * return nothing for `.tsrx` files (their mappings turn formatting off), and the
+ * server answers `>` itself with the closing tag (`closingTagsHandler.js`).
  *
  * @template {{ capabilities?: Record<string, unknown> }} T
  * @param {T} plugin
  * @returns {T}
  */
-export function stripDocumentFormatting(plugin) {
+export function stripFormatting(plugin) {
 	const {
 		documentFormattingProvider: _fmt,
 		documentRangeFormattingProvider: _rangeFmt,
+		documentOnTypeFormattingProvider: _onTypeFmt,
 		...capabilities
 	} = plugin.capabilities ?? {};
 	return { ...plugin, capabilities };
@@ -66,7 +71,7 @@ export function createServicePlugins(backend, ts) {
 	const shared_last = [
 		createDefinitionPlugin(),
 		createDocumentSymbolPlugin(),
-		stripDocumentFormatting(createCssService()),
+		stripFormatting(createCssService()),
 	];
 	if (backend === 'native' || backend === 'plugin') {
 		return [
@@ -84,7 +89,7 @@ export function createServicePlugins(backend, ts) {
 		...shared_first,
 		createCompileErrorDiagnosticPlugin(),
 		...shared_last,
-		...createTypeScriptServices(ts).map(stripDocumentFormatting),
+		...createTypeScriptServices(ts).map(stripFormatting),
 		// !IMPORTANT 'createTypeScriptDiagnosticFilterPlugin', 'createHoverPlugin',
 		// and 'createDocumentHighlightPlugin' must come after TypeScript services
 		// to intercept volar's and vscode default providers

@@ -6,7 +6,9 @@
  * packed build of this repository's `@tsrx/language-server`, installed outside the
  * repository with npm as an editor installs it (so no `typescript` next to it). It opens
  * a `.tsrx` file in the project's `app/` folder and checks which TypeScript the server
- * runs, and the warning Neovim shows when it finds none it can run (#1008).
+ * runs, the warning Neovim shows when it finds none it can run (#1008), and, on Neovim
+ * 0.12 or newer, that typing `<p>` in Insert mode closes the tag with the cursor between
+ * the tags (#1004).
  *
  *   pnpm --filter @tsrx/nvim-plugin test:editor [-- --keep]
  *
@@ -151,6 +153,19 @@ function problem(scenario, result) {
 		return `expected TypeScript features ${scenario.expect.typescript_features}, got ${result.typescript_features}`;
 	}
 	if (!(result.symbols > 0)) return 'expected document symbols';
+	/** @type {{ line: string, column: number, mode: string } | undefined} */
+	const closing_tag = result.closing_tag;
+	if (
+		result.on_type_formatting &&
+		!(
+			closing_tag &&
+			closing_tag.line.endsWith('<p></p>') &&
+			closing_tag.column === closing_tag.line.length - '</p>'.length + 1 &&
+			closing_tag.mode === 'i'
+		)
+	) {
+		return `expected <p></p> with the cursor between the tags, got ${JSON.stringify(closing_tag)}`;
+	}
 	/** @type {Array<{ message: string }>} */
 	const sent = result.warnings_sent ?? [];
 	/** @type {Array<{ message: string }>} */
