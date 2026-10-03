@@ -67,6 +67,16 @@ export function helperD() {}
 	'src/Semicolons.tsrx': imports_file(';'),
 	'src/NoSemicolons.tsrx': imports_file(''),
 	'src/Comment.tsrx': imports_file(';', ' // keep this'),
+	'src/NoSemicolonsComment.tsrx': imports_file('', ' // keep this'),
+	'src/Comment.tsx': `import { useState } from 'react';
+import { label } from './label'; // keep this
+import { App } from './App.tsrx';
+
+export function Imports() {
+	const [count] = useState(0);
+	return <p>{count}</p>;
+}
+`,
 	'src/ReExports.tsrx': `import { label } from './label';
 import { useState } from 'react';
 export * from './lib';
@@ -514,12 +524,41 @@ import { label } from './label';
 			60_000,
 		);
 
-		it.each(/** @type {const} */ (['SortAndCombine', 'RemoveUnused', 'All']))(
-			'leaves the imports alone when an import has a comment after it (%s, #1024)',
-			async (mode) => {
-				// The comment is not in the generated code, so the edit that deletes its line
-				// does not map. Applying only the other edits would leave a duplicate import.
-				expect(await organized_imports('src/Comment.tsrx', mode)).toBeNull();
+		it.each(
+			/** @type {const} */ ([
+				'src/Comment.tsx',
+				'src/Comment.tsrx',
+				'src/NoSemicolonsComment.tsrx',
+			]),
+		)(
+			'sorts the imports of %s with the comment after its import (#1024)',
+			async (file) => {
+				expect(await organized_imports(file, 'SortAndCombine')).toBe(
+					`import { useState } from 'react';
+import { App } from './App.tsrx';
+import { label } from './label'; // keep this
+
+`,
+				);
+			},
+			60_000,
+		);
+
+		it.each(
+			/** @type {const} */ ([
+				['src/Comment.tsx', 'RemoveUnused', ';'],
+				['src/Comment.tsx', 'All', ';'],
+				['src/Comment.tsrx', 'RemoveUnused', ';'],
+				['src/Comment.tsrx', 'All', ';'],
+				['src/NoSemicolonsComment.tsrx', 'RemoveUnused', ''],
+				['src/NoSemicolonsComment.tsrx', 'All', ''],
+			]),
+		)(
+			'removes an unused import with the comment after it in %s (%s, #1024)',
+			async (file, mode, end) => {
+				expect(await organized_imports(file, mode)).toBe(`import { useState } from 'react'${end}
+
+`);
 			},
 			60_000,
 		);

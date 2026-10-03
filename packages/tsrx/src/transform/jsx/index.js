@@ -858,6 +858,7 @@ export function createJsxTransform(platform) {
 				transform_context.typeOnly,
 				transform_context.typeOnly ? transform_context.comments : undefined,
 				get_hashbang(source),
+				source,
 			),
 			{
 				sourceMapSource: filename,

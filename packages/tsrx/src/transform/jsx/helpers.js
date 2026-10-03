@@ -4,12 +4,13 @@
 import tsx from 'esrap/languages/tsx';
 import {
 	format_comment,
+	get_line_comments_after,
 	is_file_level_pragma,
 	is_jsx_child_tooling_comment,
 	should_preserve_comment,
 	should_preserve_jsx_tooling_comment,
 } from '../../comment-utils.js';
-import { has_location } from '../../utils/ast.js';
+import { has_location, is_organized_import } from '../../utils/ast.js';
 import { with_deferred_imports } from '../imports.js';
 
 /**
@@ -108,11 +109,14 @@ export function set_node_path_metadata(node, path) {
  * @param {string | null} [hashbang] The source's hashbang line (`#!…`, see
  * `get_hashbang`), printed as the output's first line. The parser also reports
  * it as the `Line` comment at offset 0, which is then never printed as `//…`.
+ * @param {string} [source] The source text. In type-only output, the comments
+ * after an import or a re-export on its line print after it as written.
  */
 export function tsx_with_ts_locations(
 	boundary_tokens = false,
 	comments = undefined,
 	hashbang = null,
+	source = undefined,
 ) {
 	const base = with_deferred_imports(tsx({ boundaryTokens: boundary_tokens }));
 	const { _: base_visitor, ...base_visitors } = base;
@@ -142,6 +146,28 @@ export function tsx_with_ts_locations(
 		context.write(format_comment(comment));
 		if (comment.loc) context.location(comment.loc.end.line, comment.loc.end.column);
 		context.newline();
+	};
+
+	/**
+	 * Write the comments after an import or a re-export on its line, with the
+	 * spaces before them, as written. TypeScript then keeps a comment with its
+	 * import when Organize Imports moves the import, and the rest of the line
+	 * is the same as in the source, so an edit up to the next line maps back
+	 * (see `add_line_point` in `segments.js`).
+	 * @param {AST.Node} node
+	 * @param {ESRap.Context} context
+	 */
+	const write_line_comments = (node, context) => {
+		if (!emitted_comments || source === undefined || !is_organized_import(node)) return;
+		let end = /** @type {number} */ (node.end);
+		for (const comment of get_line_comments_after(node, source)) {
+			emitted_comments.add(`${comment.start}:${comment.end}:${comment.type}:${comment.value}`);
+			context.write(source.slice(end, comment.start));
+			context.location(comment.loc.start.line, comment.loc.start.column);
+			context.write(source.slice(comment.start, comment.end));
+			context.location(comment.loc.end.line, comment.loc.end.column);
+			end = comment.end;
+		}
 	};
 
 	/**
@@ -391,6 +417,7 @@ export function tsx_with_ts_locations(
 			} else {
 				visit_with_locations();
 			}
+			if (preserve_owner_comments) write_line_comments(node, context);
 		},
 	};
 

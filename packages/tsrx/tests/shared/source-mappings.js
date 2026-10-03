@@ -1885,6 +1885,7 @@ export function App() @{
 			"export { label } from './label'",
 			"export * from './label';",
 			"export * as all from './label'",
+			"export { label } from './label'; // keep this",
 		])('maps the line of the re-export %j', (statement) => {
 			const source = `import { first } from './first';
 ${statement}
@@ -1916,21 +1917,53 @@ export function App() @{
 			expect(mapped_text(source, result.mappings, start, line_end, 'edit')).toBe(`${statement}\n`);
 		});
 
-		it('does not map the line of an import with a comment after it', () => {
-			const source = `import { label } from './label'; // keep this
+		it.each([
+			["import { label } from './label';", ' // keep this'],
+			["import { label } from './label'", ' // keep this'],
+			["import { label } from './label';", '\t/* first */  // second'],
+			["import { label } from './label';", ' /* keep this */'],
+		])('keeps the comment after the import %j and maps its line (%j)', (statement, comment) => {
+			const source = `${statement}${comment}
 
 export function App() @{
 	<p>{label}</p>
 }
 `;
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const generated = generated_imports(result.code).find((g) => g.module === './label');
+			assert(generated, 'The generated code must keep the import');
+			// TypeScript moves the comment with its import, as in a `.ts` file.
+			expect(result.code.slice(generated.end, generated.line_end)).toBe(`${comment}\n`);
+			expect(
+				mapped_text(source, result.mappings, generated.start, generated.end, 'diagnostic'),
+			).toBe(statement);
+			expect(
+				mapped_text(source, result.mappings, generated.start, generated.line_end, 'edit'),
+			).toBe(`${statement}${comment}\n`);
+		});
+
+		it.each([
+			["import { label } from './label'; /* first\nsecond */", 'a comment on several lines'],
+			["import { label } from './label'; label; // keep this", 'code'],
+		])('does not map the line of the import %j, followed by %s', (line) => {
+			const source = `${line}
+
+export function App() @{
+	<p>{label}</p>
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(result.code).not.toContain('first');
+			expect(result.code).not.toContain('keep this');
 			const generated = generated_imports(result.code).find((g) => g.module === './label');
 			assert(generated, 'The generated code must keep the import');
 			expect(
 				mapped_text(source, result.mappings, generated.start, generated.end, 'diagnostic'),
 			).toBe("import { label } from './label';");
-			// The comment is not in the generated code: an edit up to the next line
-			// would delete it.
+			// The rest of the line is not in the generated code: an edit up to the next
+			// line would delete it.
 			expect(
 				mapped_text(source, result.mappings, generated.start, generated.line_end, 'edit'),
 			).toBeUndefined();

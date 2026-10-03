@@ -34,8 +34,12 @@ import {
 	build_line_offsets,
 	get_mapping_from_node,
 } from '../source-map-utils.js';
-import { should_preserve_jsx_tooling_comment, format_comment } from '../comment-utils.js';
-import { has_location } from '../utils/ast.js';
+import {
+	should_preserve_jsx_tooling_comment,
+	format_comment,
+	get_line_comments_after,
+} from '../comment-utils.js';
+import { has_location, is_organized_import } from '../utils/ast.js';
 import { regex_whitespaces_strict } from '../utils/patterns.js';
 import { regex_jsx_text_escaped } from './jsx/helpers.js';
 
@@ -235,18 +239,19 @@ function span_key(node) {
 }
 
 /**
- * The offset of the next line when only spaces and tabs come between `offset`
- * and a line break, or -1 when other text comes first.
+ * The text from `offset` to the end of its line, without the spaces and tabs
+ * at the end, and the offset of the next line. Undefined on the last line.
  * @param {string} text
  * @param {number} offset
- * @returns {number}
+ * @returns {{ text: string, next: number } | undefined}
  */
-function line_start_after(text, offset) {
-	let index = offset;
-	while (text[index] === ' ' || text[index] === '\t') index++;
-	if (text[index] === '\n') return index + 1;
-	if (text[index] === '\r' && text[index + 1] === '\n') return index + 2;
-	return -1;
+function rest_of_line(text, offset) {
+	const line_break = text.indexOf('\n', offset);
+	if (line_break === -1) return;
+	let end = line_break;
+	if (end > offset && text[end - 1] === '\r') end--;
+	while (end > offset && (text[end - 1] === ' ' || text[end - 1] === '\t')) end--;
+	return { text: text.slice(offset, end), next: line_break + 1 };
 }
 
 /**
@@ -587,18 +592,20 @@ export function convert_source_map_to_mappings(
 
 	/**
 	 * Add the start of the next line to the points of a whole-statement mapping,
-	 * when only spaces and a line break follow the statement in both files.
-	 * Organize Imports replaces or deletes imports and re-exports up to the start
-	 * of the next line. Other text there, such as a comment, is not in the
-	 * generated code, and an edit up to the next line would delete it.
+	 * when the rest of the line after the statement is the same in both files:
+	 * only spaces, or the comments the type-only print writes after an import
+	 * or a re-export as written. Organize Imports replaces or deletes imports and
+	 * re-exports up to the start of the next line. Other text there, such as
+	 * code, or a comment a printer leaves out, is not the same in the generated
+	 * code, and an edit up to the next line would delete it.
 	 * @param {CodeMapping} mapping Points: the statement's start, then its end.
 	 */
 	function add_line_point(mapping) {
-		const source_line_start = line_start_after(source, mapping.sourceOffsets[1]);
-		const generated_line_start = line_start_after(generated_code, mapping.generatedOffsets[1]);
-		if (source_line_start === -1 || generated_line_start === -1) return;
-		mapping.sourceOffsets.push(source_line_start);
-		mapping.generatedOffsets.push(generated_line_start);
+		const source_rest = rest_of_line(source, mapping.sourceOffsets[1]);
+		const generated_rest = rest_of_line(generated_code, mapping.generatedOffsets[1]);
+		if (!source_rest || !generated_rest || source_rest.text !== generated_rest.text) return;
+		mapping.sourceOffsets.push(source_rest.next);
+		mapping.generatedOffsets.push(generated_rest.next);
 		mapping.lengths.push(0);
 		mapping.generatedLengths?.push(0);
 	}
@@ -754,6 +761,35 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * Map the comments after an import or a re-export on its line, which the
+	 * type-only print writes as written, with the mapping data of the import's
+	 * tokens. TypeScript 7 (`@tsrx/content-mapper`) applies an edit only inside
+	 * one span of identical text, and joins neighbouring spans only when their
+	 * features match, so the whole line of such an import is then one span.
+	 * The comments then do not also get a verification-only mapping.
+	 * @param {AST.Node} node
+	 */
+	function add_line_comments_mapping(node) {
+		if (!is_organized_import(node)) return;
+		const comments = get_line_comments_after(node, source);
+		if (comments.length === 0) return;
+		const start = comments[0].start;
+		const text = source.slice(start, comments[comments.length - 1].end);
+		const generated_start = generated_offset_for_text(comments[0].loc.start, text);
+		if (generated_start === undefined) return;
+		for (const comment of comments) {
+			mapped_comments.add(`${comment.start}:${comment.end}`);
+		}
+		mappings.push({
+			sourceOffsets: [start],
+			lengths: [text.length],
+			generatedOffsets: [generated_start],
+			generatedLengths: [text.length],
+			data: { ...mapping_data, customData: {} },
+		});
+	}
+
+	/**
 	 * @param {AST.Literal} node
 	 */
 	function handle_literal(node) {
@@ -833,6 +869,7 @@ export function convert_source_map_to_mappings(
 
 	walk(ast, null, {
 		_(node, { visit }) {
+			add_line_comments_mapping(node);
 			add_preserved_comment_mappings(node);
 
 			// Collect key node types: Identifiers, Literals, and JSX Elements

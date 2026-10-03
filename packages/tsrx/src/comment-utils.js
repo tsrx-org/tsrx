@@ -134,6 +134,51 @@ export function is_file_level_pragma(comment) {
 	);
 }
 
+const regex_line_terminator = /[\n\r\u2028\u2029]/;
+
+/**
+ * The comments after a statement on the line where it ends, when only spaces
+ * and these comments follow it up to the line break or the end of the file,
+ * as in `import { a } from './a'; // why`. TypeScript keeps such a comment
+ * with its statement, for instance when Organize Imports moves an import.
+ * @param {AST.Node & { trailingComments?: AST.Comment[] }} node
+ * @param {string} source
+ * @returns {AST.CommentWithLocation[]}
+ */
+export function get_line_comments_after(node, source) {
+	if (!node.loc || node.end === undefined) return [];
+	/** @type {AST.CommentWithLocation[]} */
+	const comments = [];
+	let end = node.end;
+	for (const comment of /** @type {AST.CommentWithLocation[]} */ (node.trailingComments ?? [])) {
+		if (
+			!comment.loc ||
+			!is_spaces(source, end, comment.start) ||
+			regex_line_terminator.test(comment.value)
+		) {
+			break;
+		}
+		comments.push(comment);
+		end = comment.end;
+		if (comment.type === 'Line') break;
+	}
+	while (source[end] === ' ' || source[end] === '\t') end++;
+	return end === source.length || regex_line_terminator.test(source[end]) ? comments : [];
+}
+
+/**
+ * @param {string} text
+ * @param {number} start
+ * @param {number} end
+ */
+function is_spaces(text, start, end) {
+	if (start > end) return false;
+	for (let index = start; index < end; index++) {
+		if (text[index] !== ' ' && text[index] !== '\t') return false;
+	}
+	return true;
+}
+
 /**
  * The hashbang line (`#!…`) that starts `source`, without its line break.
  * The parser reports a hashbang to `onComment` as a `Line` comment at offset 0

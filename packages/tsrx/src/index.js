@@ -64,6 +64,7 @@ export {
 	is_jsdoc_ts_annotation as isJsdocTsAnnotation,
 	should_preserve_comment as shouldPreserveComment,
 	format_comment as formatComment,
+	get_line_comments_after as getLineCommentsAfter,
 } from './comment-utils.js';
 
 // Generic utils
@@ -89,6 +90,7 @@ export {
 	is_function_or_component_node as isFunctionOrComponentNode,
 	has_location,
 	is_inside_component as isInsideComponent,
+	is_organized_import as isOrganizedImport,
 	is_submodule_declaration as isSubmoduleDeclaration,
 	is_template_directive as isTemplateDirective,
 	is_tsrx_render_output_node as isTsrxRenderOutputNode,

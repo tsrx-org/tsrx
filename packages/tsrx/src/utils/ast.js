@@ -140,6 +140,20 @@ export function has_location(node) {
 }
 
 /**
+ * Whether Organize Imports sorts, joins or removes the statement: an import
+ * or a re-export.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+export function is_organized_import(node) {
+	return (
+		node.type === 'ImportDeclaration' ||
+		node.type === 'ExportAllDeclaration' ||
+		(node.type === 'ExportNamedDeclaration' && node.source != null)
+	);
+}
+
+/**
  * @param {AST.Node | null | undefined} node
  * @returns {node is AST.JSXStyleElement}
  */
