@@ -8,15 +8,16 @@ const default_root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const package_name = '@tsrx/language-server';
 // The Neovim plugin accepts only an exact x.y.z pin (packages/nvim-plugin/lua/tsrx/lsp.lua).
 const version_pattern = /^\d+\.\d+\.\d+$/;
-const lockfile_attempts = 10;
-const lockfile_retry_ms = 30_000;
+const npm_attempts = 10;
+const npm_retry_ms = 30_000;
 
 /**
  * Moves the `@tsrx/language-server` version that the Neovim and Sublime Text
  * integrations install to the workspace's server version, and rebuilds the Sublime
- * Text lockfile against it. The version must already be on npm, so the Publish
- * workflow runs this after npm publish and opens a pull request with the result.
- * With `check`, it only verifies that the pins and the lockfile name one version.
+ * Text lockfile against it. It first waits until npm serves that version, for about
+ * five minutes. The Publish workflow runs this after npm publish and opens a pull
+ * request with the result. With `check`, it only verifies that the pins and the
+ * lockfile name one version.
  */
 export async function synchronizeEditorLanguageServerPins({
 	rootDir = default_root,
@@ -103,23 +104,41 @@ function read_server_version(path) {
 }
 
 async function update_lockfile({ directory, version, logger }) {
-	const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-	const args = ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'];
+	const spec = `${package_name}@${version}`;
 	// npm can take a little while to serve a version it has just published.
 	for (let attempt = 1; ; attempt++) {
-		const result = spawnSync(npm, args, { cwd: directory, encoding: 'utf8' });
-		if (result.error) throw result.error;
-		if (result.status === 0) return;
-		if (attempt === lockfile_attempts) {
-			throw new Error(
-				`npm ${args.join(' ')} failed with exit code ${result.status}:\n${result.stderr}${result.stdout}`,
-			);
+		const result = run_npm(['view', spec, 'version', '--prefer-online'], directory);
+		if (result.status === 0 && result.stdout.trim() === version) break;
+		if (attempt === npm_attempts) {
+			throw new Error(`npm does not serve ${spec}:\n${result.stderr}${result.stdout}`);
 		}
 		logger.log(
-			`npm cannot resolve ${package_name}@${version} yet (attempt ${attempt} of ${lockfile_attempts}); retrying in ${lockfile_retry_ms / 1000} seconds.`,
+			`npm does not serve ${spec} yet (attempt ${attempt} of ${npm_attempts}); checking again in ${npm_retry_ms / 1000} seconds.`,
 		);
-		await sleep(lockfile_retry_ms);
+		await sleep(npm_retry_ms);
 	}
+
+	const args = [
+		'install',
+		'--package-lock-only',
+		'--prefer-online',
+		'--ignore-scripts',
+		'--no-audit',
+		'--no-fund',
+	];
+	const result = run_npm(args, directory);
+	if (result.status !== 0) {
+		throw new Error(
+			`npm ${args.join(' ')} failed with exit code ${result.status}:\n${result.stderr}${result.stdout}`,
+		);
+	}
+}
+
+function run_npm(args, cwd) {
+	const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+	const result = spawnSync(npm, args, { cwd, encoding: 'utf8' });
+	if (result.error) throw result.error;
+	return result;
 }
 
 function read_json(path) {

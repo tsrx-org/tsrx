@@ -243,7 +243,7 @@ jobs:
             exit 0
           fi
 
-          title="chore: move Neovim and Sublime Text to @tsrx/language-server $version"
+          title="Version Editors: Neovim, Sublime Text"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch --create "$branch"
