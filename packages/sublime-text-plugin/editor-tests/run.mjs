@@ -11,8 +11,9 @@
  * does) and installs it, then opens a `.tsrx` file in a temporary project whose
  * `node_modules/.bin/tsrx-language-server` starts a packed build of this repository's
  * `@tsrx/language-server`. It checks that the TSRX syntax loads (#1021) and that the TSRX
- * language server starts. Sublime Text shows its window while the scenario runs; quit
- * Sublime Text before the run.
+ * language server starts, and that the expression in a dynamic closing tag such as
+ * `</{props.as}>` is scoped as JavaScript. Sublime Text shows its window while the
+ * scenario runs; quit Sublime Text before the run.
  *
  *   pnpm --filter @tsrx/sublime-text-plugin test:editor [-- --keep]
  *
@@ -140,6 +141,15 @@ const { app, file } = create_test_project({
 	typescript: 'repository',
 	package_json: { name: 'tsrx-sublime-test', private: true },
 });
+// A dynamic closing tag, whose expression Sublime Text must scope as JavaScript.
+const scope_file = path.join(app, 'Dynamic.tsrx');
+fs.writeFileSync(
+	scope_file,
+	['export function Dynamic(props) @{', '\t<{props.as}>text</{props.as}>', '}', ''].join('\n'),
+);
+// `props` in the closing tag.
+const scope_at = '</{props';
+const scope_offset = 3;
 
 // This repository's package, built as `pnpm build` builds it.
 execFileSync(process.execPath, ['scripts/build.js'], { cwd: package_dir, stdio: 'ignore' });
@@ -160,10 +170,15 @@ try {
 		path.join(package_dir, 'TSRX.sublime-package'),
 		path.join(installed_packages, 'TSRX.sublime-package'),
 	);
-	fs.writeFileSync(path.join(user, 'tsrx_editor_test.json'), JSON.stringify({ file, out }));
+	fs.writeFileSync(
+		path.join(user, 'tsrx_editor_test.json'),
+		JSON.stringify({ file, out, scope_file, scope_at, scope_offset }),
+	);
 	fs.copyFileSync(path.join(here, 'check.py'), path.join(user, 'tsrx_editor_test.py'));
 
-	process.stdout.write('▶ syntax-and-server: the TSRX syntax loads and the server starts … ');
+	process.stdout.write(
+		'▶ syntax-and-server: the TSRX syntax loads, the server starts, `</{expr}>` is JS … ',
+	);
 	// `--debug` writes the console to stdout, where syntax errors show.
 	const log = fs.openSync(console_log, 'w');
 	spawn(sublime, ['--debug', app], { stdio: ['ignore', log, log] });
@@ -188,6 +203,10 @@ function problem() {
 		return `the file opened as ${result.syntax?.name ?? 'no syntax'}, not TSRX`;
 	}
 	if (!result.attached) return 'the TSRX language server did not start';
+	const scope = String(result.scope ?? '');
+	if (!/meta\.embedded\.expression\.js.*variable\.other\.object\.js/.test(scope)) {
+		return `\`props\` in \`</{props.as}>\` has the scope ${JSON.stringify(result.scope)}`;
+	}
 	return undefined;
 }
 
@@ -195,6 +214,7 @@ const failed = problem();
 console.log(failed ? `FAIL (${failed})` : 'ok');
 if (result) {
 	console.log(`  Sublime Text ${result.sublime}, LSP ${result.lsp}, waited ${result.waited_ms} ms`);
+	console.log(`  \`props\` in \`</{props.as}>\`: ${result.scope}`);
 }
 
 if (!keep) fs.rmSync(root, { recursive: true, force: true });

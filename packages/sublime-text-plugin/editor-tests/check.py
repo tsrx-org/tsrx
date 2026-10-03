@@ -1,7 +1,8 @@
 # Runs inside Sublime Text as `Packages/User/tsrx_editor_test.py`, copied there by
 # `run.mjs`. It does nothing unless `tsrx_editor_test.json` is next to it: then it
 # opens the file that names, waits for the TSRX syntax and the TSRX language
-# server, writes what it saw to the result file, and quits Sublime Text.
+# server, reads the scope of a piece of text in a second file, writes what it saw
+# to the result file, and quits Sublime Text.
 import json
 import os
 
@@ -38,9 +39,27 @@ def _wait(config, view, result, waited):
     result['attached'] = bool(view.settings().get('lsp_active'))
     result['waited_ms'] = waited
     if (not view.is_loading() and result['attached']) or waited >= TIMEOUT_MS:
-        _finish(config, view, result)
+        _check_scope(config, view, result)
     else:
         sublime.set_timeout(lambda: _wait(config, view, result, waited + STEP_MS), STEP_MS)
+
+
+def _check_scope(config, view, result):
+    # The scope Sublime Text gives the character `config['scope_offset']` characters into
+    # the first `config['scope_at']` in `config['scope_file']`.
+    other = view.window().open_file(config['scope_file'])
+
+    def check(waited=0):
+        if other.is_loading() and waited < TIMEOUT_MS:
+            sublime.set_timeout(lambda: check(waited + STEP_MS), STEP_MS)
+            return
+        region = other.find(config['scope_at'], 0, sublime.LITERAL)
+        point = region.a + config['scope_offset']
+        result['scope'] = other.scope_name(point) if region.a >= 0 else None
+        other.set_scratch(True)
+        _finish(config, view, result)
+
+    check()
 
 
 def _finish(config, view, result):

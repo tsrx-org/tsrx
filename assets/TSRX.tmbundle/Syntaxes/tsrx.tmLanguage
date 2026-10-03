@@ -5421,20 +5421,10 @@
 			<key>begin</key>
 			<string>(?=&lt;\{)</string>
 			<key>end</key>
-			<string>(/&gt;)|(?:(&lt;/)\s*(\{)\s*([[:upper:]][_$[:alnum:]]*(?:\.[_$[:alpha:]][_$[:alnum:]]*)*)\s*(\})\s*(&gt;))|(?:(&lt;/)\s*(\{)([^}]*)(\})\s*(&gt;))</string>
+			<string>(/&gt;)|(?:(&lt;/)\s*(\{)\s*([[:upper:]][_$[:alnum:]]*(?:\.[_$[:alpha:]][_$[:alnum:]]*)*)\s*(\})\s*(&gt;))|(?:(\})\s*(&gt;))</string>
 			<key>endCaptures</key>
 			<dict>
 				<key>1</key>
-				<dict>
-					<key>name</key>
-					<string>punctuation.definition.tag.end.js</string>
-				</dict>
-				<key>10</key>
-				<dict>
-					<key>name</key>
-					<string>punctuation.definition.tag.end.js</string>
-				</dict>
-				<key>11</key>
 				<dict>
 					<key>name</key>
 					<string>punctuation.definition.tag.end.js</string>
@@ -5467,17 +5457,12 @@
 				<key>7</key>
 				<dict>
 					<key>name</key>
-					<string>punctuation.definition.tag.begin.js</string>
+					<string>punctuation.definition.tag.end.js</string>
 				</dict>
 				<key>8</key>
 				<dict>
 					<key>name</key>
-					<string>punctuation.definition.tag.begin.js</string>
-				</dict>
-				<key>9</key>
-				<dict>
-					<key>name</key>
-					<string>meta.embedded.expression.js source.js.embedded.tsrx</string>
+					<string>punctuation.definition.tag.end.js</string>
 				</dict>
 			</dict>
 			<key>name</key>
@@ -5573,6 +5558,34 @@
 						<dict>
 							<key>include</key>
 							<string>#jsx-children</string>
+						</dict>
+					</array>
+				</dict>
+				<dict>
+					<key>begin</key>
+					<string>(&lt;/)\s*(\{)</string>
+					<key>beginCaptures</key>
+					<dict>
+						<key>1</key>
+						<dict>
+							<key>name</key>
+							<string>punctuation.definition.tag.begin.js</string>
+						</dict>
+						<key>2</key>
+						<dict>
+							<key>name</key>
+							<string>punctuation.definition.tag.begin.js</string>
+						</dict>
+					</dict>
+					<key>contentName</key>
+					<string>meta.embedded.expression.js source.js.embedded.tsrx</string>
+					<key>end</key>
+					<string>(?=\})</string>
+					<key>patterns</key>
+					<array>
+						<dict>
+							<key>include</key>
+							<string>#expression</string>
 						</dict>
 					</array>
 				</dict>

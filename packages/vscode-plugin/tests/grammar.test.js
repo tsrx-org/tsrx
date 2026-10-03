@@ -329,3 +329,69 @@ describe('TSRX TextMate grammar: JSX expression boundaries', () => {
 		expect(find(tokens, 'item', 1).scopes).toContain('meta.embedded.expression.js');
 	});
 });
+
+describe('TSRX TextMate grammar: dynamic tags', () => {
+	it('scopes the expression of a dynamic closing tag as JS', () => {
+		const tokens = tokenize(
+			['function App(props) @{', '  <{props.as} className="x">text</{props.as}>', '}'].join('\n'),
+		);
+
+		const closing = tokens.slice(tokens.findIndex((token) => token.content === '</')).slice(0, 7);
+		expect(closing.map((token) => [token.content, token.scopes.at(-1)])).toEqual([
+			['</', 'punctuation.definition.tag.begin.js'],
+			['{', 'punctuation.definition.tag.begin.js'],
+			['props', 'variable.other.object.js'],
+			['.', 'punctuation.accessor.js'],
+			['as', 'variable.other.property.js'],
+			['}', 'punctuation.definition.tag.end.js'],
+			['>', 'punctuation.definition.tag.end.js'],
+		]);
+		for (const token of closing) expect(token.scopes).toContain('meta.tag.js');
+		for (const token of closing.slice(2, 5)) {
+			expect(token.scopes).toEqual(
+				expect.arrayContaining(['meta.embedded.expression.js', 'source.js.embedded.tsrx']),
+			);
+		}
+	});
+
+	it('closes a dynamic tag before the next sibling starts', () => {
+		const tokens = tokenize(
+			['function App(p) @{', '  <>', '    <{p.a}>a</{p.a}><{p.b}>b</{p.b}>', '  </>', '}'].join(
+				'\n',
+			),
+		);
+
+		// The children `a` and `b` (the second `a` and `b` tokens) are siblings.
+		expect(find(tokens, 'b', 1).scopes).toEqual(find(tokens, 'a', 1).scopes);
+		expect(find(tokens, 'b', 1).scopes).toContain('meta.jsx.children.js');
+	});
+
+	it('scopes a component name in a dynamic closing tag', () => {
+		const tokens = tokenize(['function App() @{', '  <{UI.Item}>x</{UI.Item}>', '}'].join('\n'));
+
+		expect(find(tokens, 'UI.Item', 1).scopes).toEqual(
+			expect.arrayContaining(['meta.tag.js', 'support.class.component.js']),
+		);
+	});
+
+	it('has no capture with patterns, which makes Sublime Text reject the whole grammar (#1021)', () => {
+		/**
+		 * @param {unknown} node
+		 * @param {string} at
+		 * @returns {string[]}
+		 */
+		const captures_with_patterns = (node, at) => {
+			if (!node || typeof node !== 'object') return [];
+			return Object.entries(node).flatMap(([key, value]) => [
+				...(/^(?:begin|end|while)?[cC]aptures$/.test(key)
+					? Object.entries(value)
+							.filter(([, capture]) => 'patterns' in capture)
+							.map(([group]) => `${at}/${key}/${group}`)
+					: []),
+				...captures_with_patterns(value, `${at}/${key}`),
+			]);
+		};
+
+		expect(captures_with_patterns(grammar, '')).toEqual([]);
+	});
+});

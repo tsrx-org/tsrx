@@ -2,7 +2,6 @@
 import { cp, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { toPlist, withoutCapturePatterns } from './textmate-plist.js';
 
 /**
  * @param {string[]} targets
@@ -37,9 +36,6 @@ const main = async () => {
 };
 
 /**
- * Write the `.tmLanguage` plist, which TextMate and Sublime Text read (VS Code and
- * JetBrains IDEs read the JSON grammar). Sublime Text rejects the whole file when
- * a capture has `patterns`, so the plist leaves them out (`withoutCapturePatterns`).
  * @param {string} sourcePath
  * @param {string} targetPath
  * @returns {Promise<void>}
@@ -47,7 +43,89 @@ const main = async () => {
 async function writeAssetBundleGrammar(sourcePath, targetPath) {
 	const grammar = JSON.parse(await readFile(sourcePath, 'utf8'));
 	console.log(`[write] ${path.relative(rootDir, targetPath)}`);
-	await writeFile(targetPath, toPlist(withoutCapturePatterns(grammar)), 'utf8');
+	await writeFile(targetPath, toPlist(grammar), 'utf8');
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function toPlist(value) {
+	return [
+		'<?xml version="1.0" encoding="UTF-8"?>',
+		'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+		'<plist version="1.0">',
+		formatPlistValue(value, 0),
+		'</plist>',
+		'',
+	].join('\n');
+}
+
+/**
+ * @param {unknown} value
+ * @param {number} depth
+ * @returns {string}
+ */
+function formatPlistValue(value, depth) {
+	const indent = '\t'.repeat(depth);
+	const childIndent = '\t'.repeat(depth + 1);
+
+	if (Array.isArray(value)) {
+		if (value.length === 0) return `${indent}<array/>`;
+
+		return [
+			`${indent}<array>`,
+			...value.map((item) => formatPlistValue(item, depth + 1)),
+			`${indent}</array>`,
+		].join('\n');
+	}
+
+	if (value && typeof value === 'object') {
+		const entries = Object.entries(value).sort(comparePlistKeys);
+		if (entries.length === 0) return `${indent}<dict/>`;
+
+		return [
+			`${indent}<dict>`,
+			...entries.flatMap(([key, item]) => [
+				`${childIndent}<key>${escapeXml(key)}</key>`,
+				formatPlistValue(item, depth + 1),
+			]),
+			`${indent}</dict>`,
+		].join('\n');
+	}
+
+	if (typeof value === 'boolean') {
+		return `${indent}<${value ? 'true' : 'false'}/>`;
+	}
+
+	if (typeof value === 'number') {
+		return Number.isInteger(value)
+			? `${indent}<integer>${value}</integer>`
+			: `${indent}<real>${value}</real>`;
+	}
+
+	if (value == null) {
+		return `${indent}<string></string>`;
+	}
+
+	return `${indent}<string>${escapeXml(String(value))}</string>`;
+}
+
+/**
+ * @param {[string, unknown]} left
+ * @param {[string, unknown]} right
+ * @returns {number}
+ */
+function comparePlistKeys(left, right) {
+	return left[0].localeCompare(right[0]);
+}
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function escapeXml(value) {
+	return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 main().catch((error) => {

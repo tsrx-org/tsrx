@@ -7,8 +7,10 @@ as `pnpm build` builds it), installs it, and starts Sublime Text on a temporary
 project. The project's server is this repository's `@tsrx/language-server`, packed
 and installed outside the repository as an editor installs it. Sublime Text opens
 a `.tsrx` file, and `editor-tests/check.py`, copied into `Packages/User` for the
-run, records the file's syntax and whether the TSRX language server serves it. The
-test also reads Sublime Text's console for errors about the TSRX syntax (#1021).
+run, records the file's syntax and whether the TSRX language server serves it. It
+also records the scope of the expression in a dynamic closing tag,
+`</{props.as}>`, which must be JavaScript. The test also reads Sublime Text's
+console for errors about the TSRX syntax (#1021).
 
 ```sh
 pnpm --filter @tsrx/sublime-text-plugin test:editor

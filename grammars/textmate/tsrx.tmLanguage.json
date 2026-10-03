@@ -6755,7 +6755,7 @@
     "jsx-tag-dynamic": {
       "name": "meta.tag.js",
       "begin": "(?=<\\{)",
-      "end": "(/>)|(?:(</)\\s*(\\{)\\s*([[:upper:]][_$[:alnum:]]*(?:\\.[_$[:alpha:]][_$[:alnum:]]*)*)\\s*(\\})\\s*(>))|(?:(</)\\s*(\\{)([^}]*)(\\})\\s*(>))",
+      "end": "(/>)|(?:(</)\\s*(\\{)\\s*([[:upper:]][_$[:alnum:]]*(?:\\.[_$[:alpha:]][_$[:alnum:]]*)*)\\s*(\\})\\s*(>))|(?:(\\})\\s*(>))",
       "endCaptures": {
         "1": {
           "name": "punctuation.definition.tag.end.js"
@@ -6776,23 +6776,9 @@
           "name": "punctuation.definition.tag.end.js"
         },
         "7": {
-          "name": "punctuation.definition.tag.begin.js"
-        },
-        "8": {
-          "name": "punctuation.definition.tag.begin.js"
-        },
-        "9": {
-          "name": "meta.embedded.expression.js source.js.embedded.tsrx",
-          "patterns": [
-            {
-              "include": "#expression"
-            }
-          ]
-        },
-        "10": {
           "name": "punctuation.definition.tag.end.js"
         },
-        "11": {
+        "8": {
           "name": "punctuation.definition.tag.end.js"
         }
       },
@@ -6855,6 +6841,24 @@
           "patterns": [
             {
               "include": "#jsx-children"
+            }
+          ]
+        },
+        {
+          "begin": "(</)\\s*(\\{)",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.tag.begin.js"
+            },
+            "2": {
+              "name": "punctuation.definition.tag.begin.js"
+            }
+          },
+          "end": "(?=\\})",
+          "contentName": "meta.embedded.expression.js source.js.embedded.tsrx",
+          "patterns": [
+            {
+              "include": "#expression"
             }
           ]
         }
