@@ -1,16 +1,22 @@
 package dev.tsrx.intellij_plugin
 
+import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
-import com.intellij.platform.lsp.api.LspServerDescriptor
-import com.intellij.platform.lsp.api.LspServerSupportProvider
+import com.intellij.platform.lsp.api.LspClientDescriptor
+import com.intellij.platform.lsp.api.LspIntegrationProvider
+import com.intellij.platform.lsp.api.customization.LspOnTypeFormattingSupport
+import com.intellij.platform.lsp.util.applyTextEdits
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.util.ui.UIUtil
 import java.nio.file.Files
+import org.eclipse.lsp4j.Position
+import org.eclipse.lsp4j.Range
+import org.eclipse.lsp4j.TextEdit
 
 class TsrxLspIntegrationTest : BasePlatformTestCase() {
 	fun testOptionalProviderIsRegisteredExactlyOnce() {
-		val providers = LspServerSupportProvider.EP_NAME.extensionList
+		val providers = LspIntegrationProvider.EP_NAME.extensionList
 			.filterIsInstance<TsrxLspServerSupportProvider>()
 
 		assertEquals(1, providers.size)
@@ -109,8 +115,8 @@ class TsrxLspIntegrationTest : BasePlatformTestCase() {
 		val file = myFixture.configureByText("App.tsrx", source).virtualFile
 		var starts = 0
 		val provider = TsrxLspServerSupportProvider { false }
-		val starter = object : LspServerSupportProvider.LspServerStarter {
-			override fun ensureServerStarted(serverDescriptor: LspServerDescriptor) {
+		val starter = object : LspIntegrationProvider.LspClientStarter {
+			override fun ensureClientStarted(descriptor: LspClientDescriptor) {
 				starts++
 			}
 		}
@@ -118,6 +124,46 @@ class TsrxLspIntegrationTest : BasePlatformTestCase() {
 		provider.fileOpened(project, file, starter)
 
 		assertEquals(0, starts)
+	}
+
+	fun testDescriptorTurnsOnTypeFormattingOnForClosingTags() {
+		val descriptor = TsrxLspServerDescriptor(
+			project,
+			TsrxLanguageServerInfo(
+				Files.createTempFile("tsrx-language-server", ""),
+				null,
+				TsrxLanguageServerSource.PROJECT,
+			),
+		)
+
+		assertTrue(descriptor.lspCustomization.onTypeFormattingCustomizer is LspOnTypeFormattingSupport)
+	}
+
+	fun testClosingTagEditLeavesTheCaretBetweenTheTags() {
+		// After `>`, the server answers on-type formatting with an edit that inserts the closing
+		// tag at the caret. The IDE applies on-type formatting edits with `applyTextEdits` and does
+		// not move the caret itself.
+		myFixture.configureByText(
+			"App.tsrx",
+			"""
+			export function App() @{
+				<div><caret>
+			}
+			""".trimIndent(),
+		)
+		val document = myFixture.editor.document
+
+		WriteCommandAction.runWriteCommandAction(project) {
+			applyTextEdits(document, listOf(TextEdit(Range(Position(1, 6), Position(1, 6)), "</div>")))
+		}
+
+		myFixture.checkResult(
+			"""
+			export function App() @{
+				<div><caret></div>
+			}
+			""".trimIndent(),
+		)
 	}
 
 	private fun fixtureText(path: String): String =

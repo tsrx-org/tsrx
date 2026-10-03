@@ -1,6 +1,6 @@
 <idea-plugin>
 	<extensions defaultExtensionNs="com.intellij.platform.lsp">
-		<serverSupportProvider implementation="dev.tsrx.intellij_plugin.TsrxLspServerSupportProvider"/>
+		<integrationProvider implementation="dev.tsrx.intellij_plugin.TsrxLspServerSupportProvider"/>
 	</extensions>
 	<!-- The settings only change how the language server starts, so they load with the LSP module. -->
 	<extensions defaultExtensionNs="com.intellij">

@@ -67,7 +67,7 @@ class TsrxPluginPackagingTest {
 		)
 
 		val lspDescriptor = parseXml(packageDir.resolve("src/main/resources/META-INF/tsrx-lsp.xml"))
-		val providers = lspDescriptor.getElementsByTagName("serverSupportProvider")
+		val providers = lspDescriptor.getElementsByTagName("integrationProvider")
 		assertEquals(1, providers.length)
 		assertEquals(
 			"dev.tsrx.intellij_plugin.TsrxLspServerSupportProvider",

@@ -21,7 +21,9 @@ records cannot become the official release channel accidentally.
 Version `0.0.82` was submitted on 2026-09-01 and is under Marketplace review.
 JetBrains' compatibility verification considers the plugin compatible. IntelliJ
 2026.x builds report non-blocking deprecation warnings for LSP APIs that remain
-necessary for the supported IntelliJ 2025.2 baseline.
+necessary for the supported IntelliJ 2025.2 baseline. The plugin now needs
+2026.1.4 or newer and uses the renamed LSP API, so Plugin Verifier no longer
+reports these warnings.
 
 Remaining release steps:
 

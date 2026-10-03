@@ -15,10 +15,15 @@ contains the plugin descriptors, MIT license, icon, pinned language-server
 version, and generated TextMate bundle. It declares the standard Rainbow Brackets
 plugin as optional and does not package its JAR or implementation classes.
 
-The plugin targets compatible IntelliJ-based IDEs from 2025.2 onward. WebStorm
-2025.2.4 is the reference build used for compilation, platform tests, and Plugin
-Verifier. Syntax support does not load the optional LSP classes; IDEs exposing the
-Ultimate and LSP modules additionally receive language-server features.
+The plugin targets compatible IntelliJ-based IDEs from 2026.1.4 onward. WebStorm
+2026.1.4 is the reference build used for compilation, platform tests, and Plugin
+Verifier. 2026.1.4 is the first build with both on-type formatting for language
+servers (`LspOnTypeFormattingSupport`, which closes tags) and the renamed LSP API
+(`LspIntegrationProvider`, `ProjectWideLspClientDescriptor`, `LspClientManager`).
+The test sandbox turns off the bundled Vue plugin, which cannot create its
+language server there. Syntax support does not load the optional LSP classes; IDEs
+exposing the Ultimate and LSP modules additionally receive language-server
+features.
 
 The optional bracket-coloring integration is verified against the standard Rainbow
 Brackets plugin 2025.3.12. Do not substitute Rainbow Brackets Lite. The
@@ -36,14 +41,14 @@ formatting. In a syntax-only IDE, confirm the file type and highlighting work
 without starting a language-server download.
 
 For JSX highlighting parity, open `src/test/resources/highlighting/issue-100.tsx`
-and `issue-100.tsrx` side by side in WebStorm 2025.2.4 under Darcula. Compare tag
+and `issue-100.tsrx` side by side in WebStorm 2026.1.4 under Darcula. Compare tag
 names and delimiters, `key` and `className`, and the `length`, `map`, and `text`
 member names. The comparison is theme-relative; it checks equivalent syntax roles,
 not full TypeScript PSI-backed semantics for `.tsrx` files.
 
 ### Rainbow Brackets compatibility smoke
 
-Run these checks in WebStorm 2025.2.4 with a clean profile:
+Run these checks in WebStorm 2026.1.4 with a clean profile:
 
 1. Leave Rainbow Brackets uninstalled. Install the TSRX ZIP, open
    `src/test/resources/highlighting/rainbow-brackets.tsrx`, and confirm the file

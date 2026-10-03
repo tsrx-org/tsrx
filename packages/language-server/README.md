@@ -233,11 +233,13 @@ Editors ask for the closing tag in one of two ways:
 - **On-type formatting** (`textDocument/onTypeFormatting`), with `>` as the only
   trigger character. A text edit cannot move the cursor, so the cursor stays
   between the tags only in an editor that keeps it before text inserted at the
-  cursor. Zed 1.17 or newer and Neovim do. The READMEs of the TSRX plugins for
+  cursor. Zed 1.17 or newer, Neovim and JetBrains IDEs do. The READMEs of the TSRX
+  plugins for
   [Zed](https://github.com/tsrx-org/tsrx/tree/main/packages/zed-plugin#closing-tags),
-  [Neovim](https://github.com/tsrx-org/tsrx/tree/main/packages/nvim-plugin#closing-tags)
-  and
+  [Neovim](https://github.com/tsrx-org/tsrx/tree/main/packages/nvim-plugin#closing-tags),
   [Sublime Text](https://github.com/tsrx-org/tsrx/tree/main/packages/sublime-text-plugin#closing-tags)
+  and
+  [JetBrains IDEs](https://github.com/tsrx-org/tsrx/tree/main/packages/intellij-plugin#closing-tags)
   say what each editor needs.
 - **Volar's `volar/client/autoInsert` request**, which the VS Code extension
   sends. The server answers with a snippet (`$0</div>`) that puts the cursor
