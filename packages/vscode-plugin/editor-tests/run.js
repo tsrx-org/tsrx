@@ -293,6 +293,7 @@ async function run_scenario(scenario, index) {
 			hoverTimeoutMs: HOVER_TIMEOUT_MS,
 			diagnosticTimeoutMs: DIAGNOSTIC_TIMEOUT_MS,
 			autoInsertWaitMs: AUTO_INSERT_WAIT_MS,
+			typedTag: scenario.typedTag ?? 'b',
 			action: scenario.action,
 			command: scenario.command,
 			packageChange: scenario.packageChange,
@@ -602,7 +603,7 @@ for (const scenario of selected) {
 			: feature
 				? feature
 				: scenario.closingTag !== undefined && closing_tag !== scenario.closingTag
-					? `expected ${JSON.stringify(scenario.closingTag)} after typing <b>, got ${JSON.stringify(closing_tag)}`
+					? `expected ${JSON.stringify(scenario.closingTag)} after typing <${scenario.typedTag ?? 'b'}>, got ${JSON.stringify(closing_tag)}`
 					: status !== scenario.typescript
 						? `expected the TypeScript status ${scenario.typescript}, got ${status}`
 						: notices !== (scenario.notice ?? 'none')
@@ -617,7 +618,7 @@ for (const scenario of selected) {
 		imports: scenario.expect === 'nothing' ? '-' : imports ? 'FAIL' : 'ok',
 		'source definition': result?.sourceDefinition?.split('/').pop() ?? '-',
 		formatting: formatting_problem(result ?? {}) ? 'FAIL' : 'ok',
-		'after typing <b>': closing_tag,
+		'after typing a tag': closing_tag,
 		'TypeScript status': [status, result?.typescriptStatus?.version].filter(Boolean).join(' '),
 		notices,
 		result: problem ? 'FAIL' : 'ok',

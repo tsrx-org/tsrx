@@ -213,11 +213,12 @@ exports.run = async () => {
 		}
 		result.diagnostics = diagnostics_of(uri);
 
-		// Closing tags: type `<b` and then `>` inside the button, and record what
-		// follows: `<b></b>` once, nothing, or a closing tag inserted by more than
-		// one provider. Each keystroke is an edit at the cursor, which moves the
-		// cursor past it, as typing does. The `type` command would need the window
-		// to have the focus, and the runner keeps the instance hidden. Both
+		// Closing tags: type `<b` and then `>` inside the button (or the scenario's
+		// `typedTag` instead of `b`), and record what follows: `<b></b>` once,
+		// nothing, or a closing tag inserted by more than one provider. Each
+		// keystroke is an edit at the cursor, which moves the cursor past it, as
+		// typing does. The `type` command would need the window to have the
+		// focus, and the runner keeps the instance hidden. Both
 		// closing-tag providers react to the document change and the cursor.
 		// Another extension may have opened an editor of its own meanwhile.
 		const editor = await vscode.window.showTextDocument(document);
@@ -227,7 +228,7 @@ exports.run = async () => {
 		if (editor) {
 			const before_close = document.positionAt(document.getText().indexOf('</button>'));
 			editor.selection = new vscode.Selection(before_close, before_close);
-			for (const text of ['<b', '>']) {
+			for (const text of [`<${config.typedTag}`, '>']) {
 				const at = editor.selection.active;
 				await editor.edit((builder) => builder.insert(at, text));
 				const after = at.translate(0, text.length);

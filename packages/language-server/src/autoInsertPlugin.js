@@ -177,11 +177,31 @@ export function createAutoInsertPlugin() {
 					log('Inserting closing tag:', closingTag);
 
 					// Return a snippet with $0 to place cursor between the tags
-					return `$0${closingTag}`;
+					return `$0${escapeSnippetText(closingTag)}`;
 				},
 			};
 		},
 	};
+}
+
+/**
+ * Escape `text` so that a snippet inserts it as written. `\`, `$` and `}` are snippet
+ * syntax: unescaped, the `$Foo` in `</$Foo>` is a variable, which VS Code replaces
+ * with nothing.
+ * @param {string} text
+ * @returns {string}
+ */
+export function escapeSnippetText(text) {
+	return text.replace(/[\\$}]/g, '\\$&');
+}
+
+/**
+ * The text that a snippet made by `escapeSnippetText` inserts: `</\$Foo>` inserts `</$Foo>`.
+ * @param {string} snippet
+ * @returns {string}
+ */
+export function unescapeSnippetText(snippet) {
+	return snippet.replace(/\\([\\$}])/g, '$1');
 }
 
 /**
@@ -194,11 +214,14 @@ export function createAutoInsertPlugin() {
  * expression, not closing the tag), an earlier `>` already closed the tag, or the tag is
  * self-closing (`<style apply={theme} />`).
  *
+ * A name is made of JavaScript identifier characters, `.` and `-`, so `$` and non-ASCII
+ * letters can appear anywhere in it (`<ui.$Item>`, `<Café>`).
+ *
  * @param {string} text - Source text from the tag's `<` up to and including the typed `>`
  * @returns {string | null}
  */
 export function matchOpeningTag(text) {
-	const nameMatch = text.match(/^<([@$\w][\w.-]*)/);
+	const nameMatch = text.match(/^<([@$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D.-]*)/u);
 	if (!nameMatch) {
 		return null;
 	}

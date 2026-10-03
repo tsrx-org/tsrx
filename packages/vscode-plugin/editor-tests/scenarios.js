@@ -35,6 +35,9 @@
  * then reads `result.afterServerCrash`.
  * `result.serverOutput` has the lines of the TSRX Language Server output.
  *
+ * `closingTag` is the text the runner expects after it types `<b>` inside the
+ * fixture's button, or the tag that `typedTag` names (`<$Foo>` for `$Foo`).
+ *
  * @typedef {'typescript-7' | 'vscode-typescript' | 'nothing'} Server
  * @typedef {'vscode' | 'typescript-7' | 'typescript-7-unsupported' | 'typescript-7-missing'} Status
  * @typedef {{
@@ -52,6 +55,7 @@
  * 	serverCrash?: boolean,
  * 	gap?: string,
  * 	closingTag?: string,
+ * 	typedTag?: string,
  * 	check?: (result: Record<string, any>) => string | undefined,
  * }} Scenario
  */
@@ -195,6 +199,18 @@ export const SCENARIOS = [
 		typescript: 'typescript-7',
 		closingTag: '<b></b>',
 		check: (result) => status_version(result, PROJECT_NIGHTLY),
+	},
+	{
+		name: 'ts7-recommended-dollar-tag',
+		description:
+			"The README's setup, typing `<$Foo>`: the TSRX extension closes the tag through a snippet, where `$Foo` is a variable unless escaped (#1018)",
+		extensions: ['tsrx', 'ts7'],
+		settings: RECOMMENDED,
+		projectTypeScript: true,
+		expect: 'typescript-7',
+		typescript: 'typescript-7',
+		typedTag: '$Foo',
+		closingTag: '<$Foo></$Foo>',
 	},
 	{
 		name: 'ts7-recommended-tsrx-closing-off',

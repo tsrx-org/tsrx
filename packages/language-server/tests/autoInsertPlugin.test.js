@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createAutoInsertPlugin, matchOpeningTag } from '../src/autoInsertPlugin.js';
+import {
+	createAutoInsertPlugin,
+	escapeSnippetText,
+	matchOpeningTag,
+	unescapeSnippetText,
+} from '../src/autoInsertPlugin.js';
 import { create_service_harness } from './setup.js';
 
 /**
@@ -76,6 +81,31 @@ describe('auto-insert plugin — element tags', () => {
 			'\n\t</>\n}',
 		);
 		expect(snippet).toBe('$0</UI.Item>');
+	});
+
+	it('escapes `$` in a component tag name', async () => {
+		// Unescaped, VS Code reads `$Foo` as a snippet variable and inserts `</>`.
+		const snippet = await auto_insert_after_gt(
+			'function $Foo(props) @{ <div>{props.children}</div> }\nexport function App() @{\n\t<$Foo',
+			'\n}',
+		);
+		expect(snippet).toBe('$0</\\$Foo>');
+	});
+
+	it('closes a member-expression tag with `$` after the first character', async () => {
+		const snippet = await auto_insert_after_gt(
+			'const ui = { $Item() @{ <div /> } };\nexport function App() @{\n\t<>\n\t\t<ui.$Item',
+			'\n\t</>\n}',
+		);
+		expect(snippet).toBe('$0</ui.\\$Item>');
+	});
+
+	it('closes a component tag with non-ASCII letters', async () => {
+		const snippet = await auto_insert_after_gt(
+			'function Café() @{ <div /> }\nexport function App() @{\n\t<>\n\t\t<Café',
+			'\n\t</>\n}',
+		);
+		expect(snippet).toBe('$0</Café>');
 	});
 
 	it('closes a tag inside a control-flow body', async () => {
@@ -203,6 +233,14 @@ describe('matchOpeningTag', () => {
 		expect(matchOpeningTag('<style apply={theme}>')).toBe('style');
 	});
 
+	it('matches `$` and non-ASCII letters anywhere in the name', () => {
+		expect(matchOpeningTag('<$Foo>')).toBe('$Foo');
+		expect(matchOpeningTag('<ui.$Item>')).toBe('ui.$Item');
+		expect(matchOpeningTag('<Foo$Bar title="x">')).toBe('Foo$Bar');
+		expect(matchOpeningTag('<Café>')).toBe('Café');
+		expect(matchOpeningTag('<my-element>')).toBe('my-element');
+	});
+
 	it('tolerates `>` and braces inside attribute expressions', () => {
 		expect(matchOpeningTag('<style apply={x > y ? a : b}>')).toBe('style');
 		expect(matchOpeningTag('<style apply={[a, b]}>')).toBe('style');
@@ -216,5 +254,15 @@ describe('matchOpeningTag', () => {
 		expect(matchOpeningTag('<style apply={x >')).toBeNull();
 		expect(matchOpeningTag('<div>text>')).toBeNull();
 		expect(matchOpeningTag('</div>')).toBeNull();
+	});
+});
+
+describe('snippet escapes', () => {
+	it('escapes `\\`, `$` and `}`, and removes the escapes again', () => {
+		expect(escapeSnippetText('</$Foo>')).toBe('</\\$Foo>');
+		expect(escapeSnippetText('a\\b}$')).toBe('a\\\\b\\}\\$');
+		for (const text of ['</div>', '</$Foo>', '</ui.$Item>', 'a\\b}$', '\\$', '\\\\']) {
+			expect(unescapeSnippetText(escapeSnippetText(text))).toBe(text);
+		}
 	});
 });

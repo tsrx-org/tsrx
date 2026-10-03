@@ -2,6 +2,7 @@
 /** @import { Connection, DocumentOnTypeFormattingParams, InitializeParams, LanguageServer, ServerCapabilities, TextEdit } from '@volar/language-server' */
 
 import { URI } from 'vscode-uri';
+import { unescapeSnippetText } from './autoInsertPlugin.js';
 import { is_tsrx_document } from './utils.js';
 
 /**
@@ -25,10 +26,10 @@ export function closes_tags_on_type(params) {
  * Close tags in every editor: answer `textDocument/onTypeFormatting` for `>` with
  * an edit that inserts the closing tag at the cursor. Only the VS Code extension
  * sends Volar's `volar/client/autoInsert` request. This handler asks the same
- * plugin (`provideAutoInsertSnippet` in `autoInsertPlugin.js`) and drops the
- * snippet's `$0`. No Volar service plugin offers on-type formatting
- * (`stripFormatting` in `servicePlugins.js`), so Volar registers no handler that
- * would replace this one.
+ * plugin (`provideAutoInsertSnippet` in `autoInsertPlugin.js`), drops the
+ * snippet's `$0` and removes its escapes (`$0</\$Foo>` inserts `</$Foo>`). No
+ * Volar service plugin offers on-type formatting (`stripFormatting` in
+ * `servicePlugins.js`), so Volar registers no handler that would replace this one.
  *
  * A text edit cannot place the cursor. Editors that leave the cursor before text
  * inserted at the cursor (Zed 1.17 and newer, Neovim in Insert mode) keep it
@@ -60,7 +61,10 @@ export function register_closing_tags(connection, server) {
 			);
 			if (token.isCancellationRequested || !snippet?.startsWith('$0')) return null;
 			return [
-				{ range: { start: params.position, end: params.position }, newText: snippet.slice(2) },
+				{
+					range: { start: params.position, end: params.position },
+					newText: unescapeSnippetText(snippet.slice(2)),
+				},
 			];
 		},
 	);

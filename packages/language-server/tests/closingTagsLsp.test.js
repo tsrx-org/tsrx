@@ -19,6 +19,15 @@ const TYPED_DIV = `export function App() @{
 }
 `;
 
+const TYPED_DOLLAR = `function $Foo(props) @{
+	<div>{props.children}</div>
+}
+
+export function App() @{
+	<$Foo>
+}
+`;
+
 const VOID_AND_CLOSED = `export function App() @{
 	<>
 		<br>
@@ -117,6 +126,19 @@ describe('TSRX language server: closing tags on `>`', () => {
 			]);
 		},
 	);
+
+	it('inserts a tag name with `$` as written, without snippet escapes', async () => {
+		const { type_gt } = await session({
+			backend: 'plugin',
+			text: TYPED_DOLLAR,
+		});
+		expect(await type_gt('<$Foo>')).toEqual([
+			{
+				range: { start: { line: 5, character: 7 }, end: { line: 5, character: 7 } },
+				newText: '</$Foo>',
+			},
+		]);
+	});
 
 	it('inserts nothing after a void element or an already closed tag', async () => {
 		const { type_gt } = await session({
