@@ -235,6 +235,21 @@ function span_key(node) {
 }
 
 /**
+ * The offset of the next line when only spaces and tabs come between `offset`
+ * and a line break, or -1 when other text comes first.
+ * @param {string} text
+ * @param {number} offset
+ * @returns {number}
+ */
+function line_start_after(text, offset) {
+	let index = offset;
+	while (text[index] === ' ' || text[index] === '\t') index++;
+	if (text[index] === '\n') return index + 1;
+	if (text[index] === '\r' && text[index + 1] === '\n') return index + 2;
+	return -1;
+}
+
+/**
  * Extract individual class names and their offsets from class attribute values
  * Handles: "foo bar", { foo: true }, ['foo', { bar: true }], etc.
  *
@@ -536,6 +551,82 @@ export function convert_source_map_to_mappings(
 		}
 	}
 
+	/**
+	 * Map an import declaration as a whole: its start, its end, and the start of
+	 * the line after it, as points of one mapping. Volar maps a range only when
+	 * both ends fall in one mapping. TypeScript reports an import whose names are
+	 * all unused on the whole declaration, and Organize Imports replaces or
+	 * deletes imports up to the start of the next line. The points have no
+	 * length, so the names inside keep their own mappings, and an unused name is
+	 * still reported on the name. The generated import always ends with `;`, and
+	 * the end point includes it, with or without a `;` in the source.
+	 *
+	 * An import gets the mapping only when it is printed as written: a name the
+	 * compiler adds has no location, and Organize Imports would copy it into the
+	 * source.
+	 * @param {(AST.ImportDeclaration | AST.TSRXImportDeclaration) & AST.NodeWithLocation} node
+	 */
+	function add_import_mapping(node) {
+		if (!node.specifiers.every((specifier) => has_location(specifier))) return;
+		const generated_start = generated_offset_for_text(node.loc.start, 'import');
+		if (generated_start === undefined) return;
+		const generated_end = generated_import_end(node, generated_start);
+		if (generated_end === undefined) return;
+
+		/** @type {CodeMapping} */
+		const mapping = {
+			sourceOffsets: [node.start, node.end],
+			generatedOffsets: [generated_start, generated_end],
+			lengths: [0, 0],
+			generatedLengths: [0, 0],
+			data: { ...mapping_data_verify_only, customData: {} },
+		};
+		add_line_point(mapping);
+		mappings.push(mapping);
+	}
+
+	/**
+	 * Add the start of the next line to the points of a whole-statement mapping,
+	 * when only spaces and a line break follow the statement in both files.
+	 * Organize Imports replaces or deletes imports and re-exports up to the start
+	 * of the next line. Other text there, such as a comment, is not in the
+	 * generated code, and an edit up to the next line would delete it.
+	 * @param {CodeMapping} mapping Points: the statement's start, then its end.
+	 */
+	function add_line_point(mapping) {
+		const source_line_start = line_start_after(source, mapping.sourceOffsets[1]);
+		const generated_line_start = line_start_after(generated_code, mapping.generatedOffsets[1]);
+		if (source_line_start === -1 || generated_line_start === -1) return;
+		mapping.sourceOffsets.push(source_line_start);
+		mapping.generatedOffsets.push(generated_line_start);
+		mapping.lengths.push(0);
+		mapping.generatedLengths?.push(0);
+	}
+
+	/**
+	 * The generated offset after the `;` that ends an import. The printer records
+	 * the import's end after the `;`. A printer that records the position of the
+	 * last source character before it writes the `;` is supported too. Without a
+	 * `;` in the source, the end of the module string also maps to the generated
+	 * position before the `;`.
+	 * @param {(AST.ImportDeclaration | AST.TSRXImportDeclaration) & AST.NodeWithLocation} node
+	 * @param {number} generated_start
+	 * @returns {number | undefined}
+	 */
+	function generated_import_end(node, generated_start) {
+		const { line, column } = node.loc.end;
+		for (const [key, text] of [
+			[`${line}:${column}`, ''],
+			[`${line}:${column - 1}`, ';'],
+		]) {
+			for (const generated of src_to_gen_map.get(key) ?? []) {
+				const end = loc_to_offset(generated.line, generated.column, gen_line_offsets);
+				if (end <= generated_start || !generated_code.startsWith(text, end)) continue;
+				return generated_code[end] === ';' ? end + 1 : end;
+			}
+		}
+	}
+
 	/** @param {AST.ExportNamedDeclaration | AST.ExportDefaultDeclaration | AST.ExportAllDeclaration | AST.TSImportEqualsDeclaration} node */
 	function add_export_mapping(node) {
 		if (!has_location(node)) return;
@@ -566,6 +657,13 @@ export function convert_source_map_to_mappings(
 			mapping.generatedOffsets = [generated_start, generated_end];
 			mapping.lengths = [0, 0];
 			mapping.generatedLengths = [0, 0];
+			// Organize Imports also sorts and joins re-exports.
+			if (
+				node.type === 'ExportAllDeclaration' ||
+				(node.type === 'ExportNamedDeclaration' && node.source)
+			) {
+				add_line_point(mapping);
+			}
 			mappings.push(mapping);
 		}
 		tokens.push({
@@ -813,12 +911,9 @@ export function convert_source_map_to_mappings(
 			} else if (node.type === 'ImportDeclaration') {
 				isImportDeclarationPresent = true;
 
-				// Add 'import' keyword token to anchor statement-level diagnostics
-				// And the last character of the statement (semicolon or closing brace)
-				// (e.g., when ALL imports are unused, TS reports on the whole statement)
-				// We only map the 'import' and the last character
-				// to avoid overlapping with individual specifier mappings
-				// which would interfere when only SOME imports are unused.
+				// Map the 'import' keyword and an authored `;` as tokens. The whole
+				// statement (TypeScript reports an import whose names are all
+				// unused on it) maps through `add_import_mapping`.
 				if (has_location(node)) {
 					tokens.push({
 						source: 'import',
@@ -833,20 +928,22 @@ export function convert_source_map_to_mappings(
 						metadata: {},
 					});
 
-					tokens.push({
-						source:
-							source[loc_to_offset(node.loc.end.line, node.loc.end.column - 1, src_line_offsets)],
-						// we always add `;' in the generated import
-						generated: ';',
-						loc: {
-							start: {
-								line: node.loc.end.line,
-								column: node.loc.end.column - 1,
+					if (source[node.end - 1] === ';') {
+						tokens.push({
+							source: ';',
+							generated: ';',
+							loc: {
+								start: {
+									line: node.loc.end.line,
+									column: node.loc.end.column - 1,
+								},
+								end: node.loc.end,
 							},
-							end: node.loc.end,
-						},
-						metadata: {},
-					});
+							metadata: {},
+						});
+					}
+
+					add_import_mapping(node);
 				}
 
 				// Visit specifiers in source order

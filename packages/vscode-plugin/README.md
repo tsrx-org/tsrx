@@ -41,9 +41,10 @@ Palette. They apply TypeScript's own source actions, which also appear under
 (Shift+Alt+O). VS Code's own TypeScript commands only run in TypeScript and
 JavaScript files.
 
-On TypeScript 7 these actions work in `.tsrx` files. On TypeScript 5.9 or 6 they
-do not change `.tsrx` files yet
-([tsrx-org/tsrx#994](https://github.com/tsrx-org/tsrx/issues/994)).
+These actions work in `.tsrx` files on TypeScript 5.9, 6 and 7. They do not change
+a file in which a comment follows an import on the same line, because TypeScript
+does not see the comment and would delete it. On TypeScript 7, they also do not
+change a file in which an import does not end with `;`.
 
 ### Rename both tags of a pair
 

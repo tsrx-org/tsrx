@@ -45,6 +45,42 @@ const OTHER_TSRX = `export function Other(props: { n: number }) @{
 const USE_TS = `import { Other } from './Other.tsrx';
 export const x = Other({ n: 'no' });
 `;
+const MIXED_TS = `export interface Model {
+	id: string;
+}
+export interface Other {
+	name: string;
+}
+export function helperA() {}
+export function helperB() {}
+export function helperC() {}
+export function helperD() {}
+export default function def() {}
+`;
+const NEW_LINE_TSRX = `import { helperC } from './mixed';
+
+export function NewLine() @{
+	<p>{helperC()}{helperB()}</p>
+}
+`;
+const WITH_COMPONENT_TSRX = `import Button from './Button.tsrx';
+
+export function WithComponent() @{
+	<p>{helperB()}<Button label="x" /></p>
+}
+`;
+const NO_IMPORTS_TSRX = `export function NoImports() @{
+	<p>{helperB()}</p>
+}
+`;
+/** Imports with several names and type names, some of them unused. */
+const MIXED_IMPORTS = `import { type Model, helperA } from './mixed';
+import { helperA as first, type Model as M, helperB } from './mixed';
+import { helperA as a1, helperB as b1, helperC } from './mixed';
+import { type Model as M2, type Other } from './mixed';
+import type { Model as M3, Other as O3 } from './mixed';
+import def, { helperD } from './mixed';
+`;
 
 /**
  * The consumer fixture as an LSP workspace: the language server discovers
@@ -61,6 +97,10 @@ function workspace_files() {
 	files['tsconfig.json'] = JSON.stringify(tsconfig, null, '\t');
 	delete files['tsconfig.native.json'];
 	files['lib.ts'] = LIB_TS;
+	files['mixed.ts'] = MIXED_TS;
+	files['NewLine.tsrx'] = NEW_LINE_TSRX;
+	files['NoImports.tsrx'] = NO_IMPORTS_TSRX;
+	files['WithComponent.tsrx'] = WITH_COMPONENT_TSRX;
 	files['Extend.tsrx'] = EXTEND_TSRX;
 	files['Fresh.tsrx'] = FRESH_TSRX;
 	files['sub/tsconfig.json'] = JSON.stringify(
@@ -300,6 +340,213 @@ describe('native language server on a configured project', () => {
 			},
 		]);
 		client.close('Unsorted.tsrx');
+	});
+
+	/**
+	 * `text` after applying LSP text `edits`.
+	 * @param {string} text
+	 * @param {{ range: { start: { line: number, character: number }, end: { line: number, character: number } }, newText: string }[]} edits
+	 */
+	function apply_edits(text, edits) {
+		const lines = text.split('\n');
+		/** @param {{ line: number, character: number }} position */
+		const offset = ({ line, character }) =>
+			lines.slice(0, line).reduce((sum, previous) => sum + previous.length + 1, 0) + character;
+		let result = text;
+		for (const edit of edits.toSorted((a, b) => offset(b.range.start) - offset(a.range.start))) {
+			result =
+				result.slice(0, offset(edit.range.start)) +
+				edit.newText +
+				result.slice(offset(edit.range.end));
+		}
+		return result;
+	}
+
+	/**
+	 * The edits of the first source action of `kind` for `file`, opened with `source`.
+	 * @param {string} file
+	 * @param {string} source
+	 * @param {string} kind
+	 */
+	async function source_action_edits(file, source, kind) {
+		client.open(file, source);
+		await client.diagnostics(file).catch(() => undefined);
+		const uri = client.uri(file);
+		const [action] = await client.request('textDocument/codeAction', {
+			textDocument: { uri },
+			range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+			context: { diagnostics: [], only: [kind] },
+		});
+		const resolved = action.edit ? action : await client.request('codeAction/resolve', action);
+		client.close(file);
+		return resolved.edit?.changes?.[uri] ?? [];
+	}
+
+	it.each(['source.organizeImports', 'source.sortImports', 'source.removeUnusedImports'])(
+		'returns no %s edits when an import does not end with a semicolon (#1023)',
+		async (kind) => {
+			// The generated import always ends with `;`, so the end of each line is not the
+			// same text in both files, and TypeScript 7 drops every edit.
+			const source = [
+				"import Panel from './Panel.tsrx'",
+				"import Button from './Button.tsrx'",
+				'',
+				'export default function NoSemicolons() @{',
+				'\t<Button label="x" />',
+				'}',
+				'',
+			].join('\n');
+			expect(await source_action_edits('NoSemicolons.tsrx', source, kind)).toEqual([]);
+		},
+	);
+
+	it.each(['source.organizeImports', 'source.sortImports', 'source.removeUnusedImports'])(
+		'returns no %s edits when a comment follows an import (#1024)',
+		async (kind) => {
+			// The comment is not in the generated code, so the end of its line is not the
+			// same text in both files, and TypeScript 7 drops every edit.
+			const source = [
+				"import Panel from './Panel.tsrx'; // keep this",
+				"import Button from './Button.tsrx';",
+				'',
+				'export default function Commented() @{',
+				'\t<Button label="x" />',
+				'}',
+				'',
+			].join('\n');
+			expect(await source_action_edits('Commented.tsrx', source, kind)).toEqual([]);
+		},
+	);
+
+	it('reports unused imports on the unused names', async () => {
+		const source = [
+			"import { helperA } from './lib';",
+			"import { helperB } from './lib'",
+			'import {',
+			'\thelperA as first,',
+			'\thelperB as second,',
+			"} from './lib';",
+			"import Panel from './Panel.tsrx';",
+			"import * as all from './lib';",
+			'',
+			'export function Unused() @{',
+			'\t<p />',
+			'}',
+			'',
+		].join('\n');
+		client.open('Unused.tsrx', source);
+		const diagnostics = await client.diagnostics('Unused.tsrx');
+		expect(diagnostics.map((d) => [d.code, range_text(source, d.range)])).toEqual([
+			[6133, 'helperA'],
+			[6133, 'helperB'],
+			[6192, "import {\n\thelperA as first,\n\thelperB as second,\n} from './lib';"],
+			[6133, 'Panel'],
+			[6133, 'all'],
+		]);
+		client.close('Unused.tsrx');
+	});
+
+	it('reports unused imports with several names and type names as in a .ts file', async () => {
+		const tsrx = `${MIXED_IMPORTS}
+export function Mixed(props: { value: M | O3 }) @{
+	<p>{String([first, b1, def])}{String(props.value)}</p>
+}
+`;
+		const ts = `${MIXED_IMPORTS}
+export const used = [first, b1, def];
+export type Value = M | O3;
+`;
+		/**
+		 * @param {string} file
+		 * @param {string} text
+		 */
+		const unused = async (file, text) => {
+			client.open(file, text);
+			const diagnostics = await client.diagnostics(file);
+			client.close(file);
+			return diagnostics.map((d) => [d.code, range_text(text, d.range)]);
+		};
+		const in_ts = await unused('MixedImports.ts', ts);
+		expect(await unused('Mixed.tsrx', tsrx)).toEqual(in_ts);
+		expect(in_ts).toEqual([
+			[6192, "import { type Model, helperA } from './mixed';"],
+			[6133, 'helperB'],
+			[6133, 'a1'],
+			[6133, 'helperC'],
+			[6192, "import { type Model as M2, type Other } from './mixed';"],
+			[6196, 'M3'],
+			[6133, 'helperD'],
+		]);
+	});
+
+	it('removes the unused names of imports with several names and type names', async () => {
+		const source = `${MIXED_IMPORTS}
+export function Mixed(props: { value: M | O3 }) @{
+	<p>{String([first, b1, def])}{String(props.value)}</p>
+}
+`;
+		const edits = await source_action_edits('Mixed.tsrx', source, 'source.removeUnusedImports');
+		const result = apply_edits(source, edits);
+		expect(result.slice(0, result.indexOf('export function'))).toBe(
+			`import { helperA as first, type Model as M } from './mixed';
+import { helperB as b1 } from './mixed';
+import type { Other as O3 } from './mixed';
+import def from './mixed';
+
+`,
+		);
+	});
+
+	it.each([
+		[
+			'on a new line, sorted before the other import',
+			'NewLine.tsrx',
+			{
+				range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+				newText: "import { helperB } from './lib';\n",
+			},
+		],
+		[
+			'into a file without imports whose generated code starts like the source',
+			'NoImports.tsrx',
+			{
+				range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+				newText: 'import { helperB } from "./lib";\n\n',
+			},
+		],
+	])('auto-imports %s', async (_name, file, edit) => {
+		// The file is on disk, so it belongs to the project that holds `lib.ts`.
+		client.open(file, files[file]);
+		await client.diagnostics(file).catch(() => undefined);
+		const completion = await client.request('textDocument/completion', {
+			...at(client, files, file, 'helperB', 'helperB'.length),
+			context: { triggerKind: 1 },
+		});
+		const item = completion.items.find(
+			(/** @type {{ label: string, labelDetails?: { description?: string } }} */ entry) =>
+				entry.label === 'helperB' && entry.labelDetails?.description === './lib',
+		);
+		expect(item, 'auto-import candidate').toBeDefined();
+		const resolved = await client.request('completionItem/resolve', item);
+		expect(resolved.additionalTextEdits ?? item.additionalTextEdits).toEqual([edit]);
+		client.close(file);
+	});
+
+	it('offers no auto-import that needs a new line when the template uses a component tag (#1028)', async () => {
+		// A `.tsx` file with the same code gets the candidate, and so does this file
+		// without the `<Button />` tag.
+		client.open('WithComponent.tsrx', files['WithComponent.tsrx']);
+		await client.diagnostics('WithComponent.tsrx').catch(() => undefined);
+		const completion = await client.request('textDocument/completion', {
+			...at(client, files, 'WithComponent.tsrx', 'helperB', 'helperB'.length),
+			context: { triggerKind: 1 },
+		});
+		expect(
+			completion.items.filter(
+				(/** @type {{ label: string }} */ entry) => entry.label === 'helperB',
+			),
+		).toEqual([]);
+		client.close('WithComponent.tsrx');
 	});
 
 	it('reports a compile error at the authored construct and keeps importers resolving', async () => {
