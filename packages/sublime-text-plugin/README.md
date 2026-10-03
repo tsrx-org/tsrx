@@ -147,3 +147,5 @@ pnpm --filter @tsrx/sublime-text-plugin build
 ```
 
 produces `TSRX.sublime-package` with the pinned language server.
+`src/language-server/` pins it with a lockfile. The pin moves to each new server
+release soon after it is on npm, so build again to get that server.

@@ -25,6 +25,7 @@ jobs:
       intellij-version-changed: ${{ steps.intellij.outputs.changed }}
       zed-version-changed: ${{ steps.zed.outputs.changed }}
       zed-tag: ${{ steps.zed.outputs.tag }}
+      language-server-version-changed: ${{ steps.language-server.outputs.changed }}
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
@@ -90,6 +91,26 @@ jobs:
 
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "tag=@tsrx/zed-plugin@$version" >> "$GITHUB_OUTPUT"
+
+      - name: Detect language server release
+        id: language-server
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          previous_version="$(git show "${BEFORE_SHA}:packages/language-server/package.json" | jq -r .version)"
+          version="$(jq -r .version packages/language-server/package.json)"
+
+          if [ -z "$previous_version" ] || [ -z "$version" ]; then
+            echo "Could not determine the previous and current language server versions." >&2
+            exit 1
+          fi
+
+          if [ "$previous_version" = "$version" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish to npm
         id: changesets
@@ -173,3 +194,76 @@ jobs:
       JETBRAINS_MARKETPLACE_PRIVATE_KEY: ${{ secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY }}
       JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD: ${{ secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD }}
       JETBRAINS_MARKETPLACE_PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_PUBLISH_TOKEN }}
+
+  # Neovim and Sublime Text install the server version pinned on main. The pins
+  # move only once npm serves the new version, because the Sublime Text lockfile
+  # is built from the registry, so they move in a pull request after publishing.
+  move-editor-language-server-pins:
+    name: Move Neovim and Sublime Text language server pins
+    needs: publish
+    if: >-
+      needs.publish.result == 'success' &&
+      needs.publish.outputs.language-server-version-changed == 'true'
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    concurrency:
+      group: editor-language-server-pins
+      cancel-in-progress: false
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+        with:
+          # main, not the release commit: a rerun after the pins pull request
+          # merged then finds nothing to move.
+          ref: main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+
+      - name: Move the pins to the published version
+        run: node scripts/sync-editor-language-server-pins.js
+
+      - name: Open the pins pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(jq -r .version packages/language-server/package.json)"
+          if git diff --quiet; then
+            echo "Neovim and Sublime Text already pin @tsrx/language-server $version." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          branch="chore/editor-language-server-$version"
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
+            echo "$branch already exists, so no new pull request was opened." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          title="chore: move Neovim and Sublime Text to @tsrx/language-server $version"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --create "$branch"
+          git commit --all --message "$title"
+          git push origin "$branch"
+
+          url="$(gh pr create --base main --head "$branch" --title "$title" --body-file - <<EOF
+          \`@tsrx/language-server\` $version is on npm. This moves the server version that the Neovim and Sublime Text integrations install when a project has no server of its own:
+
+          - \`packages/nvim-plugin/package.json\` (\`config\`)
+          - \`packages/sublime-text-plugin/src/language-server/package.json\` and its \`package-lock.json\`
+
+          The Publish workflow opened this pull request with \`scripts/sync-editor-language-server-pins.js\`. Checks do not start for pull requests that a workflow opens.
+          EOF
+          )"
+          echo "Opened $url" >> "$GITHUB_STEP_SUMMARY"
+
+          # An older pins pull request that was never merged is out of date now.
+          gh pr list --state open --json number,headRefName \
+            --jq ".[] | select(.headRefName | startswith(\"chore/editor-language-server-\")) | select(.headRefName != \"$branch\") | .number" |
+            while read -r number; do
+              gh pr close "$number" --delete-branch --comment "Replaced by $url."
+            done

@@ -25,6 +25,7 @@
     "changeset:publish": "pnpm changeset:check && changeset publish",
     "regenerate-textmate": "node scripts/regenerate-textmate.js",
     "sync-intellij-plugin-version": "node scripts/sync-intellij-plugin-version.js",
+    "sync-editor-language-server-pins": "node scripts/sync-editor-language-server-pins.js",
     "copy-tree-sitter-queries": "node ./scripts/copy-tree-sitter-queries.js",
     "sync-zed-grammar-rev": "node scripts/sync-zed-grammar-rev.js",
     "zed:stage-dev": "node scripts/stage-zed-plugin.js",

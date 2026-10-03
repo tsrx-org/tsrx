@@ -5,6 +5,6 @@
     "update-lockfile": "npm install --lockfile-only"
   },
   "dependencies": {
-    "@tsrx/language-server": "0.3.125"
+    "@tsrx/language-server": "0.6.1"
   }
 }

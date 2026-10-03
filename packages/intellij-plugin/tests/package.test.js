@@ -164,7 +164,11 @@ describe('@tsrx/intellij-plugin release contract', () => {
 		const workflow_header = workflow.slice(0, publish_job_start);
 		const publish_job = workflow.slice(publish_job_start, zed_job_start);
 		const zed_job = workflow.slice(zed_job_start, intellij_job_start);
-		const intellij_job = workflow.slice(intellij_job_start);
+		const after_intellij_job = workflow.slice(intellij_job_start + 1).search(/^ {2}\S/m);
+		const intellij_job = workflow.slice(
+			intellij_job_start,
+			after_intellij_job < 0 ? undefined : intellij_job_start + 1 + after_intellij_job,
+		);
 
 		expect(workflow).toContain("startsWith(github.event.head_commit.message, 'Version Packages')");
 		expect(workflow).toContain('packages/intellij-plugin/package.json');

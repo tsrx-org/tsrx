@@ -25,7 +25,8 @@ With `lazy.nvim`:
 
 The plugin uses a project-local or global `tsrx-language-server` when available.
 Otherwise, it installs the exact `@tsrx/language-server` version pinned in this
-package's `config` field.
+package's `config` field. The pin moves to each new server release soon after it
+is on npm, so updating the plugin also updates that server.
 
 ## Formatting
 
