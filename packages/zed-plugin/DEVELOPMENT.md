@@ -94,8 +94,11 @@ zed-plugin/
 
 ## Publishing to Zed Extensions Registry
 
-Add a patch changeset for `@tsrx/zed-plugin` when a change should reach the Zed
-extension registry:
+Each `@tsrx/language-server` release also releases the extension: `package.json`
+lists the server under `dependencies`, so Changesets bumps the extension with it
+and the server pin moves to the new version. For other changes, add a patch
+changeset for `@tsrx/zed-plugin` when the change should reach the Zed extension
+registry:
 
 ```bash
 pnpm changeset

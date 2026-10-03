@@ -94,7 +94,9 @@ for (const entry of readdirSync(stageDirectory, { withFileTypes: true })) {
 }
 
 for (const entry of readdirSync(source, { withFileTypes: true })) {
-	if (generatedEntries.has(entry.name)) {
+	// node_modules only holds pnpm's link to the workspace language server, which
+	// package.json declares so that each server release also releases the extension.
+	if (generatedEntries.has(entry.name) || entry.name === 'node_modules') {
 		continue;
 	}
 

@@ -102,7 +102,9 @@ WebStorm Plugin Verifier pass.
 The plugin XML ID is `tsrx.intellij-plugin`. The deleted third-party listing used
 a different ID and is intentionally not reused.
 
-Changesets owns the plugin version. When the **Version Packages** commit changes
+Changesets owns the plugin version. `package.json` lists `@tsrx/language-server`
+under `dependencies`, so each server release also releases the plugin with the new
+server version. When the **Version Packages** commit changes
 `packages/intellij-plugin/package.json`, `.github/workflows/publish.yml` waits for
 the repository's npm publication job, then calls the reusable
 `.github/workflows/publish-intellij-plugin.yml` workflow. The dedicated workflow

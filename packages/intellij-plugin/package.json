@@ -11,5 +11,8 @@
     "type": "git",
     "url": "git+https://github.com/tsrx-org/tsrx.git",
     "directory": "packages/intellij-plugin"
+  },
+  "dependencies": {
+    "@tsrx/language-server": "workspace:*"
   }
 }

@@ -17,5 +17,8 @@
   "config": {
     "@tsrx/language-server": "0.6.1"
   },
-  "packageManager": "pnpm@11.15.1"
+  "packageManager": "pnpm@11.15.1",
+  "dependencies": {
+    "@tsrx/language-server": "workspace:*"
+  }
 }
