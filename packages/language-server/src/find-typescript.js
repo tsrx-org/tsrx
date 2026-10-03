@@ -101,9 +101,12 @@ export function is_usable_typescript(version) {
 	return Number.parseInt(version, 10) < 7;
 }
 
-/** What the server does not provide without TypeScript, for the notices. */
+/**
+ * What the server does not provide without TypeScript, for the notices. It
+ * follows the sentence that gives the cause.
+ */
 const NO_FEATURES =
-	'The TSRX language server does not provide type checking, hover or completions in .tsrx files.';
+	'Because of this, the server does not provide type checking, hover or completions in .tsrx files.';
 
 /** What still works without TypeScript, for the notices. */
 const STILL_WORKS =
@@ -142,9 +145,9 @@ export function tsdk_notice(tsdk, found) {
 export function typescript_notice(found, workspace_dirs) {
 	if (found) {
 		return [
-			NO_FEATURES,
-			`The server found TypeScript ${found.version} in ${found.dir}.`,
+			`The TSRX language server found TypeScript ${found.version} in ${found.dir}.`,
 			'The server cannot run TypeScript 7 or newer.',
+			NO_FEATURES,
 			STILL_WORKS,
 			'To use TypeScript 7, run the TypeScript 7 language server (tsc --lsp) with @tsrx/content-mapper.',
 			'To use a different TypeScript, set the typescript.tsdk startup option to the lib folder of that TypeScript.',
@@ -153,9 +156,8 @@ export function typescript_notice(found, workspace_dirs) {
 	}
 	const where = workspace_dirs.join(', ');
 	return [
+		`The TSRX language server did not find TypeScript in ${where}, in the server installation, or in their parent folders.`,
 		NO_FEATURES,
-		'The server did not find TypeScript.',
-		`The server looked in ${where}, in the server installation, and in their parent folders.`,
 		STILL_WORKS,
 		'Install TypeScript in the project: npm install -D typescript, or pnpm add -D typescript.',
 		'Then restart the TSRX language server.',

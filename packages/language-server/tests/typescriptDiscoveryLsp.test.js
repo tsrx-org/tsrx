@@ -120,7 +120,7 @@ describe('TSRX language server: which typescript other editors get', () => {
 		const message = await warning;
 		expect(message.type).toBe(2);
 		expect(message.message).toContain(
-			`The server found TypeScript 7.1.0-dev.20261002.1 in ${path.join(workspace_dir, 'node_modules', 'typescript')}.`,
+			`The TSRX language server found TypeScript 7.1.0-dev.20261002.1 in ${path.join(workspace_dir, 'node_modules', 'typescript')}.`,
 		);
 
 		// No second warning, and what needs no TypeScript still works.
@@ -182,7 +182,9 @@ describe('TSRX language server: which typescript other editors get', () => {
 		);
 		expect(first.message).not.toContain('The server uses');
 		const second = await second_warning;
-		expect(second.message).toContain('The server found TypeScript 7.1.0-dev.20261002.1 in ');
+		expect(second.message).toContain(
+			'The TSRX language server found TypeScript 7.1.0-dev.20261002.1 in ',
+		);
 	});
 
 	it("runs the project's TypeScript 5.9 from the parent folder", async () => {

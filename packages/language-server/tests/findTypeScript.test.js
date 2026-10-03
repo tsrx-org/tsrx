@@ -204,9 +204,9 @@ describe('the notice when no usable typescript is found', () => {
 			['/project'],
 		);
 		expect(notice).toBe(
-			`The TSRX language server does not provide type checking, hover or completions in .tsrx files. ` +
-				`The server found TypeScript 7.1.0-dev.20261002.1 in /project/node_modules/typescript. ` +
+			`The TSRX language server found TypeScript 7.1.0-dev.20261002.1 in /project/node_modules/typescript. ` +
 				`The server cannot run TypeScript 7 or newer. ` +
+				`Because of this, the server does not provide type checking, hover or completions in .tsrx files. ` +
 				`These features still work: TSRX compile errors, CSS in <style>, the outline, formatting and closing tags. ` +
 				`To use TypeScript 7, run the TypeScript 7 language server (tsc --lsp) with @tsrx/content-mapper. ` +
 				`To use a different TypeScript, set the typescript.tsdk startup option to the lib folder of that TypeScript. ` +
@@ -217,9 +217,8 @@ describe('the notice when no usable typescript is found', () => {
 	it('says where it looked and how to install typescript', () => {
 		const notice = typescript_notice(undefined, ['/project/a', '/project/b']);
 		expect(notice).toBe(
-			`The TSRX language server does not provide type checking, hover or completions in .tsrx files. ` +
-				`The server did not find TypeScript. ` +
-				`The server looked in /project/a, /project/b, in the server installation, and in their parent folders. ` +
+			`The TSRX language server did not find TypeScript in /project/a, /project/b, in the server installation, or in their parent folders. ` +
+				`Because of this, the server does not provide type checking, hover or completions in .tsrx files. ` +
 				`These features still work: TSRX compile errors, CSS in <style>, the outline, formatting and closing tags. ` +
 				`Install TypeScript in the project: npm install -D typescript, or pnpm add -D typescript. ` +
 				`Then restart the TSRX language server.`,

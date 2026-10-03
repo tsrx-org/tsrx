@@ -73,7 +73,7 @@ const SCENARIOS = [
 		expect: {
 			typescript_features: false,
 			warning:
-				/The server did not find TypeScript\. The server looked in .*, in the server installation, and in their parent folders\./,
+				/The TSRX language server did not find TypeScript in .*, in the server installation, or in their parent folders\./,
 		},
 	},
 	{
@@ -83,7 +83,7 @@ const SCENARIOS = [
 		expect: {
 			typescript_features: false,
 			warning:
-				/The server found TypeScript 7\.1\.0-dev\.20261002\.1 in .*node_modules\/typescript\./,
+				/The TSRX language server found TypeScript 7\.1\.0-dev\.20261002\.1 in .*node_modules\/typescript\./,
 		},
 	},
 	{
