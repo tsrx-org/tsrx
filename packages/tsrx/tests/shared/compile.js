@@ -409,6 +409,21 @@ export function App() @{
 			expect(result.code).toContain("import.source('./later.wasm', { with: { type: 'wasm' } })");
 		});
 
+		it('reports wrong source phase bindings in type-only output, and keeps the import', () => {
+			for (const [source, code] of [
+				["import source { module } from './module.wasm';", 'TS18112'],
+				["import source './module.wasm';", 'TS18111'],
+			]) {
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(
+					result.errors.map((error) => error.code),
+					source,
+				).toEqual([code]);
+				expect(result.code, source).toContain(source);
+			}
+		});
+
 		it('keeps fragment expression children inside containers in type-only output', () => {
 			const result = compile_to_volar_mappings(
 				`function StatusBadge() @{

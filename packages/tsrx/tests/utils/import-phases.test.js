@@ -97,17 +97,24 @@ const later = import('./later.js');`,
 		);
 	});
 
-	it('throws for a source phase import that is not a single default import', () => {
-		for (const source of [
-			"import { module } from './module.wasm';",
-			"import * as module from './module.wasm';",
-			"import module, { other } from './module.wasm';",
-			"import './module.wasm';",
+	it('prints the bindings a phase does not allow as written, as a collecting parse keeps them', () => {
+		for (const [source, printed] of [
+			["import { module } from './module.wasm';", "import source { module } from './module.wasm';"],
+			[
+				"import * as module from './module.wasm';",
+				"import source * as module from './module.wasm';",
+			],
+			[
+				"import module, { other as renamed } from './module.wasm';",
+				"import source module, { other as renamed } from './module.wasm';",
+			],
+			["import './module.wasm';", "import source './module.wasm';"],
 		]) {
-			expect(() => print_module(with_phase(source, 'source')), source).toThrow(
-				'`import source` only supports a default import.',
-			);
+			expect(print_module(with_phase(source, 'source')), source).toBe(printed);
 		}
+		expect(print_module(with_phase("import feature from './feature.js';", 'defer'))).toBe(
+			"import defer feature from './feature.js';",
+		);
 	});
 
 	it('throws for a phase it does not know, instead of printing an ordinary import', () => {
