@@ -23,7 +23,7 @@ import { walk } from 'zimmerframe';
 import { TSRX_ERRORS } from '../diagnostics.js';
 import { css_node_source_position } from '../parse/style.js';
 import { get_style_class_map_names, get_style_element_stylesheet } from '../transform/style-ref.js';
-import { is_function_node, is_template_directive } from '../utils/ast.js';
+import { is_function_node, is_template_directive, skip_parentheses } from '../utils/ast.js';
 import { validate_style } from './validation.js';
 
 /**
@@ -54,13 +54,14 @@ function nearest_scope(path, scopes) {
  * A style block is standalone when it is template content rather than a value:
  * a child of a native element/fragment, the render output of a `@{ … }` body
  * or a control-flow body, or a bare statement. Only the first placement is
- * valid; the others are reported (5.1).
+ * valid; the others are reported (5.1). Parentheses around the block do not
+ * change its position.
  *
  * @param {AST.Node[]} path
  * @returns {boolean}
  */
 export function is_standalone_style_position(path) {
-	const parent = path.at(-1);
+	const parent = style_parent(path);
 	if (!parent) return true;
 	switch (parent.type) {
 		case 'JSXElement':
@@ -75,6 +76,18 @@ export function is_standalone_style_position(path) {
 		default:
 			return false;
 	}
+}
+
+/**
+ * The nearest ancestor of a style block that is not a parenthesis.
+ *
+ * @param {AST.Node[]} path
+ * @returns {AST.Node | undefined}
+ */
+function style_parent(path) {
+	let index = path.length - 1;
+	while (path[index]?.type === 'ParenthesizedExpression') index -= 1;
+	return path[index];
 }
 
 /**
@@ -109,7 +122,7 @@ function describe_target(expression) {
 		!expression.computed &&
 		expression.property.type === 'Identifier'
 	) {
-		return `${describe_target(/** @type {AST.Expression} */ (expression.object))}.${expression.property.name}`;
+		return `${describe_target(skip_parentheses(/** @type {AST.Expression} */ (expression.object)))}.${expression.property.name}`;
 	}
 	return 'apply target';
 }
@@ -121,7 +134,7 @@ function describe_target(expression) {
 function member_root(expression) {
 	let current = expression;
 	while (current.type === 'MemberExpression' && !current.computed) {
-		current = /** @type {AST.Expression} */ (current.object);
+		current = skip_parentheses(/** @type {AST.Expression} */ (current.object));
 	}
 	return current.type === 'Identifier' ? current : null;
 }
@@ -134,21 +147,25 @@ function member_root(expression) {
  */
 function resolve_local_member(binding, expression) {
 	if (expression.type !== 'MemberExpression' || expression.computed) return undefined;
-	if (expression.object.type !== 'Identifier' || expression.property.type !== 'Identifier') {
+	if (
+		skip_parentheses(expression.object).type !== 'Identifier' ||
+		expression.property.type !== 'Identifier'
+	) {
 		return undefined;
 	}
-	const object = binding.initial;
+	const object = skip_parentheses(binding.initial);
 	if (object?.type !== 'ObjectExpression') return undefined;
 	const name = expression.property.name;
 	for (const property of object.properties) {
+		const value = property.type === 'Property' ? skip_parentheses(property.value) : null;
 		if (
 			property.type === 'Property' &&
 			!property.computed &&
 			((property.key.type === 'Identifier' && property.key.name === name) ||
 				(property.key.type === 'Literal' && property.key.value === name)) &&
-			property.value.type === 'JSXStyleElement'
+			value?.type === 'JSXStyleElement'
 		) {
-			return property.value;
+			return value;
 		}
 	}
 	return undefined;
@@ -179,11 +196,12 @@ export function analyze_styles(ast, scopes, state) {
 	};
 
 	/**
-	 * @param {AST.Expression} expression
+	 * @param {AST.Expression} entry
 	 * @param {ScopeInterface | null} scope
 	 * @param {StyleApplyResolution[]} resolutions
 	 */
-	const resolve_apply_entry = (expression, scope, resolutions) => {
+	const resolve_apply_entry = (entry, scope, resolutions) => {
+		const expression = skip_parentheses(entry);
 		if (expression.type === 'ArrayExpression') {
 			for (const element of expression.elements) {
 				if (!element || element.type === 'SpreadElement') {
@@ -211,7 +229,8 @@ export function analyze_styles(ast, scopes, state) {
 		/** @type {AST.JSXStyleElement | null | undefined} */
 		let target;
 		if (expression.type === 'Identifier') {
-			target = binding.initial?.type === 'JSXStyleElement' ? binding.initial : undefined;
+			const initial = skip_parentheses(binding.initial);
+			target = initial?.type === 'JSXStyleElement' ? initial : undefined;
 		} else {
 			target = resolve_local_member(binding, expression);
 		}
@@ -321,7 +340,7 @@ export function analyze_styles(ast, scopes, state) {
 
 				if (is_standalone) {
 					if (!inside_head && !is_resource) {
-						const parent = path.at(-1);
+						const parent = style_parent(path);
 						const in_children_list =
 							parent?.type === 'JSXElement' || parent?.type === 'JSXFragment';
 						if (walk_state.function_depth === 0 && walk_state.template_depth === 0) {
