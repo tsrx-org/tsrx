@@ -12,6 +12,8 @@ Import and export mistakes now report the errors TypeScript reports, instead of 
 
 A deferred import with a default binding now reports TS18058 `Default imports are not allowed in a deferred import.`, and one with named bindings TS18059 `Named imports are not allowed in a deferred import.`. Before, both reported TS18059 with one message. TypeScript reports both from its checker, so a collecting parse records them and goes on, as it does for a source phase import. A phase import from an inline module (`import defer * as ns from server`) reports TS1141 the same way.
 
+A deferred import without bindings (`import defer "./a.js"`) is still an error, now with TSRX's code TSRX4003 instead of TS18059. TypeScript accepts it without an error and leaves out `defer` (microsoft/TypeScript#64627), but the proposal allows only a namespace import.
+
 `import.defer()` and `import.source()` with an escape in the phase name now report TS1260 at the name, as TypeScript 7.1 does, instead of an error about `import.meta`.
 
 The formatter still refuses a deferred import with a default or named binding, as Prettier does.

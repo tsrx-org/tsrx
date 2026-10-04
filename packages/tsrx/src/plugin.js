@@ -10856,7 +10856,7 @@ export function TSRXPlugin(config) {
 				} else if (phase === 'defer') {
 					const [first] = node.specifiers;
 					if (!has_clause) {
-						this.raise(phase_start, TS_ERRORS.IMPORT_DEFER_NAMESPACE);
+						this.raise(phase_start, TSRX_ERRORS.IMPORT_DEFER_NAMESPACE);
 					} else if (first?.type === 'ImportDefaultSpecifier') {
 						this.#raiseCheckerError(phase_start, TS_ERRORS.IMPORT_DEFER_DEFAULT);
 					} else if (first?.type !== 'ImportNamespaceSpecifier') {

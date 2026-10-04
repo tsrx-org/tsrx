@@ -501,12 +501,13 @@ describe('TSRX parser', () => {
 		});
 
 		it('rejects a deferred import without bindings', () => {
-			// TypeScript reads it as an ordinary import without an error, and leaves
-			// `defer` out of its output.
+			// The proposal allows only a namespace import. TypeScript reads it as an
+			// ordinary import without an error, and leaves `defer` out of its output
+			// (microsoft/TypeScript#64627), so the error has TSRX's code.
 			for (const collect of [false, true]) {
 				expect(() =>
 					parseModule("import defer './feature.js';", 'App.tsrx', { collect, errors: [] }),
-				).toThrow(error_with(TS_ERRORS.IMPORT_DEFER_NAMESPACE, '1:7'));
+				).toThrow(error_with(TSRX_ERRORS.IMPORT_DEFER_NAMESPACE, '1:7'));
 			}
 		});
 

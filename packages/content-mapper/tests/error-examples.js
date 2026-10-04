@@ -630,7 +630,7 @@ Foo = 1;`,
 	await using a = b;
 }`,
 	},
-	{ error: TS_ERRORS.IMPORT_DEFER_NAMESPACE, source: `import defer "a";` },
+	{ error: TSRX_ERRORS.IMPORT_DEFER_NAMESPACE, source: `import defer "a";` },
 	{ error: TS_ERRORS.IMPORT_DEFER_DEFAULT, source: `import defer a from "a";` },
 	{ error: TS_ERRORS.IMPORT_DEFER_NAMED, source: `import defer { a } from "a";` },
 	{ error: TS_ERRORS.EXPRESSION_EXPECTED, source: `import { a } from;` },

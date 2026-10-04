@@ -478,6 +478,13 @@ export const TSRX_ERRORS = {
 	// acorn-typescript's wording, for `with { type: 'json', type: 'json' }`: an
 	// ECMAScript early error that TypeScript doesn't report.
 	DUPLICATED_ATTRIBUTE_KEY: tsrx('JAVASCRIPT_SYNTAX', 'Duplicated key in attributes'),
+	// A deferred import without bindings (`import defer "./a.js"`). The proposal
+	// allows only a namespace import, but TypeScript reads it as an ordinary
+	// import without an error and leaves out `defer` (microsoft/TypeScript#64627).
+	IMPORT_DEFER_NAMESPACE: tsrx(
+		'JAVASCRIPT_SYNTAX',
+		'`import defer` only supports a namespace import from a string literal.',
+	),
 };
 
 /**
@@ -626,12 +633,6 @@ export const TS_ERRORS = {
 		code: 'TS2852',
 		message:
 			"'await using' statements are only allowed within async functions and at the top levels of modules.",
-	},
-	// A deferred import without bindings (`import defer "./a.js"`), which
-	// TypeScript reads as an ordinary import without an error, leaving out `defer`
-	IMPORT_DEFER_NAMESPACE: {
-		code: 'TS18059',
-		message: '`import defer` only supports a namespace import from a string literal.',
 	},
 	// TypeScript reports these from the checker (`checkGrammarImportClause`)
 	IMPORT_DEFER_DEFAULT: {
