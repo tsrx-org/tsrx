@@ -1,5 +1,35 @@
 # @tsrx/language-server
 
+## 0.6.3
+
+### Patch Changes
+
+- [#1041](https://github.com/tsrx-org/tsrx/pull/1041)
+  [`defb663`](https://github.com/tsrx-org/tsrx/commit/defb6639445c76f617a2a080d8d0d00928962fe1)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Closing tags no longer add a
+  second closing tag to an element that already has one. Before, typing the `>` of
+  `<div class="card">` again inserted `</div>` when the element's `</div>` was
+  further on, for example on a later line below its children. The server now
+  checks the parsed element, like TypeScript does, and inserts a closing tag only
+  when the element has none. For `<style>` and `<script>`, only a closing tag
+  right after the cursor counts, as before.
+
+- [#1043](https://github.com/tsrx-org/tsrx/pull/1043)
+  [`3322cec`](https://github.com/tsrx-org/tsrx/commit/3322ceca85280c493625e58e92b987bbb3925249)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Closing tags no longer add a
+  second `</style>` or `</script>` to an element that already has one. Before,
+  typing the `>` of `<style>` again inserted `</style>` when the element's
+  `</style>` was further on, for example on a later line below its CSS. A new
+  `<style>` or `<script>` still gets its closing tag, also when a style block or
+  script further on in the file has its own.
+- Updated dependencies
+  [[`0a967fc`](https://github.com/tsrx-org/tsrx/commit/0a967fcc3df20b9e9e22921ca90d604dd93cf7ec),
+  [`5d7314a`](https://github.com/tsrx-org/tsrx/commit/5d7314a0615d1dfcf5ba36cf832d7b4b656885e8),
+  [`a420dd1`](https://github.com/tsrx-org/tsrx/commit/a420dd1bd2e3fe7d03d4e93eb666d7d070e7bdb5),
+  [`5ce0b5f`](https://github.com/tsrx-org/tsrx/commit/5ce0b5fdff3f86abf578a685869d63b8dfb61f60)]:
+  - @tsrx/core@0.5.5
+  - @tsrx/typescript-plugin@0.6.3
+
 ## 0.6.2
 
 ### Patch Changes

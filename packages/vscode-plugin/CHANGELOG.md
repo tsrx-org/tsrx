@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.2.3
+
+### Patch Changes
+
+- Updated dependencies
+  [[`defb663`](https://github.com/tsrx-org/tsrx/commit/defb6639445c76f617a2a080d8d0d00928962fe1),
+  [`3322cec`](https://github.com/tsrx-org/tsrx/commit/3322ceca85280c493625e58e92b987bbb3925249)]:
+  - @tsrx/language-server@0.6.3
+  - @tsrx/typescript-plugin@0.6.3
+
 ## 2.2.2
 
 ### Patch Changes
