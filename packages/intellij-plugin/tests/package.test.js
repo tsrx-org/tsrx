@@ -7,6 +7,7 @@ import { synchronizeIntellijPluginVersions } from '../../../scripts/sync-intelli
 import {
 	readLanguageServerVersion,
 	validateInstalledLanguageServer,
+	waitForPublishedLanguageServer,
 } from '../scripts/verify-language-server-release.mjs';
 
 const test_dir = dirname(fileURLToPath(import.meta.url));
@@ -243,6 +244,50 @@ describe('@tsrx/intellij-plugin release contract', () => {
 		expect(() => validateInstalledLanguageServer({ ...valid, launcherExists: false })).toThrow(
 			/installed tsrx-language-server launcher/,
 		);
+	});
+
+	it('waits until npm serves the language-server version', async () => {
+		const not_found = { status: 1, stdout: '', stderr: 'npm error code E404\n' };
+		const found = { status: 0, stdout: '1.2.3\n', stderr: '' };
+		const calls = [];
+		const waits = [];
+		const responses = [not_found, not_found, found];
+
+		await waitForPublishedLanguageServer({
+			version: '1.2.3',
+			runNpm: (args) => {
+				calls.push(args);
+				return responses.shift();
+			},
+			wait: async (ms) => {
+				waits.push(ms);
+			},
+			logger: { log() {} },
+		});
+
+		expect(calls).toEqual([
+			['view', '@tsrx/language-server@1.2.3', 'version', '--prefer-online'],
+			['view', '@tsrx/language-server@1.2.3', 'version', '--prefer-online'],
+			['view', '@tsrx/language-server@1.2.3', 'version', '--prefer-online'],
+		]);
+		expect(waits).toEqual([30_000, 30_000]);
+	});
+
+	it('stops waiting for npm after ten attempts', async () => {
+		let attempts = 0;
+
+		await expect(
+			waitForPublishedLanguageServer({
+				version: '1.2.3',
+				runNpm: () => {
+					attempts++;
+					return { status: 1, stdout: '', stderr: 'npm error code E404\n' };
+				},
+				wait: async () => {},
+				logger: { log() {} },
+			}),
+		).rejects.toThrow(/npm does not serve @tsrx\/language-server@1\.2\.3:\nnpm error code E404/);
+		expect(attempts).toBe(10);
 	});
 
 	it('documents the Marketplace submission', () => {
