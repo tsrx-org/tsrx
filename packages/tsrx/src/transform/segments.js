@@ -2150,7 +2150,9 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'ParenthesizedExpression') {
-				if (node.metadata.forceMapping && has_location(node)) {
+				// The parser does not give parentheses metadata, so a cloned one
+				// that the transform never visited has none.
+				if (node.metadata?.forceMapping && has_location(node)) {
 					const mapping = get_mapping_from_node(node, src_to_gen_map, gen_line_offsets);
 					if (node.metadata.skipParenthesisMapping) {
 						mapping.generatedOffsets[0] = mapping.generatedOffsets[0] + 1; // Skip the opening parenthesis

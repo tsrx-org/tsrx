@@ -162,6 +162,23 @@ export function is_style_element(node) {
 }
 
 /**
+ * The node inside any parentheses. Editors parse with `preserveParens`, which
+ * keeps the `ParenthesizedExpression` nodes that the build drops, so code that
+ * looks through them gives both trees the same answer.
+ *
+ * @template {AST.Node | null | undefined} T
+ * @param {T} node
+ * @returns {T}
+ */
+export function skip_parentheses(node) {
+	let current = /** @type {AST.Node | null | undefined} */ (node);
+	while (current?.type === 'ParenthesizedExpression') {
+		current = current.expression;
+	}
+	return /** @type {T} */ (current);
+}
+
+/**
  * @param {AST.Node} node
  * @returns {node is AST.Function}
  */

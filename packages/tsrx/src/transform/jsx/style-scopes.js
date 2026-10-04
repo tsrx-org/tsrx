@@ -42,6 +42,7 @@ import {
 	is_style_element,
 	is_template_directive,
 	node_children,
+	skip_parentheses,
 } from '../../utils/ast.js';
 import {
 	add_scope_classes,
@@ -823,15 +824,16 @@ export function type_only_style(block) {
 		) {
 			return attr;
 		}
-		const expression = attr.value.expression;
+		// Analysis resolves the same entries without their parentheses.
+		const expression = skip_parentheses(attr.value.expression);
 		const value =
 			expression.type === 'ArrayExpression'
 				? b.array(
-						expression.elements.map((element) =>
-							element && element.type !== 'SpreadElement'
-								? b.member(clone_ast_node(element), type_only_class_read(element))
-								: element,
-						),
+						expression.elements.map((element) => {
+							if (!element || element.type === 'SpreadElement') return element;
+							const entry = skip_parentheses(element);
+							return b.member(clone_ast_node(entry), type_only_class_read(entry));
+						}),
 					)
 				: b.member(clone_ast_node(expression), type_only_class_read(expression));
 		// The renamed attribute is synthesized text: leave it unmapped so the
