@@ -381,6 +381,32 @@ function allNodes(value) {
 	return nodes;
 }
 
+/** JavaScript's line terminators, by name. */
+const LINE_TERMINATORS = [
+	['LF', '\n'],
+	['CR', '\r'],
+	['CRLF', '\r\n'],
+	['U+2028', '\u2028'],
+	['U+2029', '\u2029'],
+];
+
+/**
+ * Expect the `loc` of each node and comment in `value` to be the line and
+ * column of its offsets. A StyleSheet's offsets are relative to the style
+ * body, so it is skipped (its CSS nodes have no `loc`).
+ *
+ * @param {string} source
+ * @param {unknown} value
+ */
+function expectLocations(source, value) {
+	for (const node of allNodes(value)) {
+		if (!node.loc || typeof node.start !== 'number') continue;
+		if (/** @type {string} */ (node.type) === 'StyleSheet') continue;
+		expect(node.loc.start, `${node.type} start`).toEqual(acorn.getLineInfo(source, node.start));
+		expect(node.loc.end, `${node.type} end`).toEqual(acorn.getLineInfo(source, found(node.end)));
+	}
+}
+
 describe('TSRX parser', () => {
 	describe('deferred imports', () => {
 		it('parses a deferred namespace import with its phase and source', () => {
@@ -5477,6 +5503,91 @@ else <b />;`,
 		}
 	});
 
+	it.each(LINE_TERMINATORS)(
+		'keeps JSXText and the locations after it aligned across %s',
+		(_name, newline) => {
+			const first = 'a🚀' + newline + 'b';
+			const second = 'c' + newline + 'd🚀';
+			const element = '<div>' + first + '<span/>' + second + '</div>';
+			for (const source of ['const view = ' + element + ';', 'function F() @{ ' + element + ' }']) {
+				const program = parseModule(source, 'App.tsrx');
+				expectLocations(source, program);
+				const texts = allNodes(program)
+					.filter((node) => node.type === 'JSXText')
+					.map((node) => as_type(node, 'JSXText'));
+				expect(texts.map((text) => text.raw)).toEqual([first, second]);
+				expect(texts.map((text) => text.value)).toEqual(
+					[first, second].map((value) => value.replace(/\r\n/g, '\n')),
+				);
+				for (const text of texts) {
+					expect(source.slice(found(text.start), found(text.end))).toBe(text.raw);
+				}
+			}
+		},
+	);
+
+	it.each([
+		['U+2028', '\u2028'],
+		['U+2029', '\u2029'],
+	])('keeps %s in JSXText as text', (_name, newline) => {
+		for (const value of [newline, 'a' + newline + 'b']) {
+			const source = 'const view = <div>' + value + '</div>;';
+			const text = findNode(source, 'JSXText');
+			expect(text.value).toBe(value);
+			expect(text.raw).toBe(value);
+			expect(source.slice(text.start, text.end)).toBe(value);
+			expect([text.start, text.end]).toEqual([18, 18 + value.length]);
+			expectLocations(source, parseModule(source, 'App.tsrx'));
+		}
+	});
+
+	it.each(LINE_TERMINATORS)(
+		'keeps raw <style> content and the locations after it aligned across %s',
+		(_name, newline) => {
+			const content = '/*🚀' + newline + 'x*/' + newline + '.a { color: red }';
+			for (const closed of [false, true]) {
+				const source =
+					'const view = <style>' + content + (closed ? '</style>; const after = 1;' : '');
+				const program = parseModule(
+					source,
+					'App.tsrx',
+					closed ? undefined : { loose: true, errors: [] },
+				);
+				expectLocations(source, program);
+				const style = as_type(
+					find_first(program, (node) => node.type === 'JSXStyleElement'),
+					'JSXStyleElement',
+				);
+				expect(style.css).toBe(content);
+				expect(style.children.map((child) => child.type)).toEqual(['StyleSheet']);
+			}
+		},
+	);
+
+	it.each(LINE_TERMINATORS)(
+		'keeps raw <script> content and the locations after it aligned across %s',
+		(_name, newline) => {
+			const content = '🚀' + newline + 'x' + newline + 'y';
+			for (const closed of [false, true]) {
+				const source =
+					'const view = <script>' + content + (closed ? '</script>; const after = 1;' : '');
+				const program = parseModule(
+					source,
+					'App.tsrx',
+					closed ? undefined : { loose: true, errors: [] },
+				);
+				expectLocations(source, program);
+				const script = as_type(
+					find_first(program, (node) => node.type === 'JSXElement'),
+					'JSXElement',
+				);
+				expect(script.content).toBe(content);
+				// A `<script>` element has no children: `content` is its only body.
+				expect(script.children).toEqual([]);
+			}
+		},
+	);
+
 	// A comment in a shorthand attribute's braces is inside them, as in the
 	// long form's `name={…}`: the braces end at the `}` (#592)
 	it.each([
@@ -6148,6 +6259,49 @@ else <b />;`,
 			as_type(as_type(directive?.body.body[1], 'JSXElement').openingElement.name, 'JSXIdentifier')
 				.name,
 		).toBe('li');
+	});
+
+	// U+2028 and U+2029 end a line, as LF and CR do, so markup on the line
+	// after the setup is the render node.
+	it.each(LINE_TERMINATORS)(
+		'splits setup and render on lines that end with %s',
+		(_name, newline) => {
+			for (const setup of [
+				"const a = '🚀'",
+				"const a = '🚀';",
+				"const a = '🚀' // comment",
+				"const a = '🚀' /* comment */",
+				'a()',
+			]) {
+				for (const tag of ['<div/>', '<{Tag}/>']) {
+					const source = 'function F() @{' + newline + setup + newline + '  ' + tag + newline + '}';
+					const block = findNode(source, 'JSXCodeBlock');
+					expect(block.body).toHaveLength(1);
+					const render = codeBlockRender(block);
+					expect(render.type).toBe('JSXElement');
+					expect([render.start, render.end]).toEqual([
+						source.indexOf(tag),
+						source.indexOf(tag) + tag.length,
+					]);
+					expect(render.loc?.start).toMatchObject({ line: 3, column: 2 });
+				}
+			}
+		},
+	);
+
+	it.each([
+		['U+2028', '\u2028'],
+		['U+2029', '\u2029'],
+	])('reads literals and a `<` across a %s line break as TypeScript does', (_name, newline) => {
+		const value = 'x' + newline + 'y';
+		const literal = findNode("const a = '" + value + "';", 'Literal');
+		expect(literal.value).toBe(value);
+		const template = findNode('const a = `' + value + '`;', 'TemplateLiteral');
+		expect(template.quasis[0].value.raw).toBe(value);
+		const comparison = findNode('const a = 1' + newline + '< 2;', 'BinaryExpression');
+		expect(comparison.operator).toBe('<');
+		expect(() => parseModule('const a = (' + newline + '<div/>);', 'App.tsrx')).not.toThrow();
+		expect(() => parseModule('const a = f<' + newline + 'T>();', 'App.tsrx')).not.toThrow();
 	});
 
 	// The render node of a one-line block can be an `@if`/`@for`/`@switch`/`@try`
@@ -13153,6 +13307,40 @@ describe('comments between template children', () => {
 	it.each(cases)('reads %s', (_label, source, expected) => {
 		for (const options of modes) {
 			expect(read(paragraph(source, options)), JSON.stringify(options)).toEqual(expected);
+		}
+	});
+
+	// A line comment ends at the first line terminator, whichever it is, and
+	// the children after it are read as usual.
+	it.each(LINE_TERMINATORS)('ends a line comment at %s', (_name, newline) => {
+		/** @type {Array<[string, string[]]>} */
+		const before_comment = [
+			['', [newline, '{}', newline, '<span>']],
+			['hello🚀', ['hello🚀' + newline, '{}', newline, '<span>']],
+			['<b />', ['<b>', newline, '{}', newline, '<span>']],
+		];
+		for (const [before, expected] of before_comment) {
+			const source =
+				'function F() @{ <p>' + before + newline + '// note🚀' + newline + '<span /></p> }';
+			/** @type {AST.CommentWithLocation[]} */
+			const comments = [];
+			const program = parseModule(source, 'App.tsrx', { collect: true, comments });
+			expectLocations(source, program);
+			expectLocations(source, comments);
+			expect(
+				comments.map((comment) => [comment.value, source.slice(comment.start, comment.end)]),
+			).toEqual([[' note🚀', '// note🚀']]);
+			const element = /** @type {AST.TSRXJSXElement} */ (
+				find_first(program, (node) => node.type === 'JSXElement')
+			);
+			expect(read(element)).toEqual(expected);
+			const container = /** @type {any} */ (element.children.find(is_empty_container));
+			expect(
+				container.expression.innerComments.map((/** @type {any} */ c) => [
+					c.value,
+					source.slice(c.start, c.end),
+				]),
+			).toEqual([[' note🚀', '// note🚀']]);
 		}
 	});
 

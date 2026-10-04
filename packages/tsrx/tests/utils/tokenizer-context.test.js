@@ -165,6 +165,20 @@ describe('a comment after a directive keyword (#477)', () => {
 		);
 	});
 
+	// A line comment after the keyword ends at any line terminator.
+	it.each([
+		['LF', '\n'],
+		['CR', '\r'],
+		['CRLF', '\r\n'],
+		['U+2028', '\u2028'],
+		['U+2029', '\u2029'],
+	])('ends a line comment after the keyword at %s', async (_name, newline) => {
+		const programs = await parse_all(['function A() @{ @if // c' + newline + '(x) { <b /> } }']);
+		expect(programs.map((program) => find(program, is_directive)?.type)).toEqual([
+			'JSXIfExpression',
+		]);
+	});
+
 	it('reads a directive in element children that used to be text and a container', async () => {
 		// The comment made `@if` text, so the text was `@if  (x) ` and `{ <b /> }`
 		// an expression container.

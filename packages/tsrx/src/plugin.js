@@ -820,13 +820,7 @@ function is_html_whitespace(code) {
 function skip_whitespace_from(input, i) {
 	while (i < input.length) {
 		const ch = input.charCodeAt(i);
-		if (
-			ch !== CharCode.space &&
-			ch !== CharCode.tab &&
-			ch !== CharCode.lineFeed &&
-			ch !== CharCode.carriageReturn
-		)
-			break;
+		if (ch !== CharCode.space && ch !== CharCode.tab && !acorn.isNewLine(ch)) break;
 		i++;
 	}
 	return i;
@@ -983,12 +977,7 @@ function scan_balanced_from(input, i, open, close) {
 function skip_space_and_comments_from(input, i) {
 	while (i < input.length) {
 		const ch = input.charCodeAt(i);
-		if (
-			ch === CharCode.space ||
-			ch === CharCode.tab ||
-			ch === CharCode.lineFeed ||
-			ch === CharCode.carriageReturn
-		) {
+		if (ch === CharCode.space || ch === CharCode.tab || acorn.isNewLine(ch)) {
 			i++;
 			continue;
 		}
@@ -998,7 +987,7 @@ function skip_space_and_comments_from(input, i) {
 			i += 2;
 			while (i < input.length) {
 				const c = input.charCodeAt(i);
-				if (c === CharCode.lineFeed || c === CharCode.carriageReturn) break;
+				if (acorn.isNewLine(c)) break;
 				i++;
 			}
 		} else if (next === CharCode.asterisk) {
@@ -1645,7 +1634,7 @@ export function TSRXPlugin(config) {
 			#isLineStartPosition(index) {
 				for (let i = index - 1; i >= 0; i--) {
 					const ch = this.input.charCodeAt(i);
-					if (ch === CharCode.lineFeed || ch === CharCode.carriageReturn) return true;
+					if (acorn.isNewLine(ch)) return true;
 					if (ch !== CharCode.space && ch !== CharCode.tab) return false;
 				}
 				return true;
@@ -1756,11 +1745,7 @@ export function TSRXPlugin(config) {
 						const comment_start = index;
 						pieces.push([piece_start, comment_start]);
 						index += 2;
-						while (
-							index < this.input.length &&
-							this.input.charCodeAt(index) !== CharCode.lineFeed &&
-							this.input.charCodeAt(index) !== CharCode.carriageReturn
-						) {
+						while (index < this.input.length && !acorn.isNewLine(this.input.charCodeAt(index))) {
 							index++;
 						}
 
@@ -1817,10 +1802,8 @@ export function TSRXPlugin(config) {
 				}
 
 				const endLoc = get_line_info(this, index);
-				if (this.input.slice(start, index).match(regex_newline_characters)) {
-					this.curLine = endLoc.line;
-					this.lineStart = index - endLoc.column;
-				}
+				this.curLine = endLoc.line;
+				this.lineStart = index - endLoc.column;
 				this.pos = index;
 				this.#popTemplateLiteralTokenContext();
 				this.next();
@@ -2029,7 +2012,7 @@ export function TSRXPlugin(config) {
 			 */
 			#isNewlineCharCode(index) {
 				const ch = this.input.charCodeAt(index);
-				return ch === CharCode.lineFeed || ch === CharCode.carriageReturn;
+				return acorn.isNewLine(ch);
 			}
 
 			/**
@@ -2422,10 +2405,8 @@ export function TSRXPlugin(config) {
 
 				const endLoc = get_line_info(this, index);
 				const value = this.input.slice(start, index);
-				if (value.match(regex_newline_characters)) {
-					this.curLine = endLoc.line;
-					this.lineStart = index - endLoc.column;
-				}
+				this.curLine = endLoc.line;
+				this.lineStart = index - endLoc.column;
 				this.pos = index;
 				return this.finishToken(tstt.jsxText, value);
 			}
@@ -7816,8 +7797,7 @@ export function TSRXPlugin(config) {
 					const isTagLikeAfterLt = can_start_tag_after_lt(this.input, this.pos);
 					const prevAllowsTagStart =
 						prevNonWhitespaceChar === null ||
-						prevNonWhitespaceChar === CharCode.lineFeed || // '\n'
-						prevNonWhitespaceChar === CharCode.carriageReturn || // '\r'
+						acorn.isNewLine(prevNonWhitespaceChar) ||
 						prevNonWhitespaceChar === CharCode.openBrace ||
 						prevNonWhitespaceChar === CharCode.closeBrace ||
 						prevNonWhitespaceChar === CharCode.greaterThan;
@@ -7851,11 +7831,7 @@ export function TSRXPlugin(config) {
 
 						// Check if everything before this position on the current line is whitespace
 						let lineStart = this.pos - 1;
-						while (
-							lineStart >= 0 &&
-							this.input.charCodeAt(lineStart) !== CharCode.lineFeed &&
-							this.input.charCodeAt(lineStart) !== CharCode.carriageReturn
-						) {
+						while (lineStart >= 0 && !acorn.isNewLine(this.input.charCodeAt(lineStart))) {
 							lineStart--;
 						}
 						lineStart++; // Move past the newline character
