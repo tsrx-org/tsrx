@@ -1,5 +1,16 @@
 # @tsrx/hono
 
+## 0.2.4
+
+### Patch Changes
+
+- Updated dependencies
+  [[`885adfb`](https://github.com/tsrx-org/tsrx/commit/885adfb87ddf6907d46e8a98267bdfdad5103d76),
+  [`87dda2d`](https://github.com/tsrx-org/tsrx/commit/87dda2d5c8d6154ffe32e7494aaadfc8ac7a27aa),
+  [`d2f42e8`](https://github.com/tsrx-org/tsrx/commit/d2f42e8e8403c1653c2928ac7b92c71ee04b9e42),
+  [`7accf3c`](https://github.com/tsrx-org/tsrx/commit/7accf3c7fb0d56288827c1804a2d2c1fd1120bff)]:
+  - @tsrx/core@0.5.4
+
 ## 0.2.3
 
 ### Patch Changes
