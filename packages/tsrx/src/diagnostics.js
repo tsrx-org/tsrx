@@ -478,6 +478,13 @@ export const TSRX_ERRORS = {
 	// acorn-typescript's wording, for `with { type: 'json', type: 'json' }`: an
 	// ECMAScript early error that TypeScript doesn't report.
 	DUPLICATED_ATTRIBUTE_KEY: tsrx('JAVASCRIPT_SYNTAX', 'Duplicated key in attributes'),
+	// A deferred import without bindings (`import defer "./a.js"`). The proposal
+	// allows only a namespace import, but TypeScript reads it as an ordinary
+	// import without an error and leaves out `defer` (microsoft/TypeScript#64627).
+	IMPORT_DEFER_NAMESPACE: tsrx(
+		'JAVASCRIPT_SYNTAX',
+		'`import defer` only supports a namespace import from a string literal.',
+	),
 };
 
 /**
@@ -501,6 +508,7 @@ export const TS_ERRORS = {
 		message: 'Identifier or string literal expected.',
 	},
 	DECLARATION_EXPECTED: { code: 'TS1146', message: 'Declaration expected.' },
+	EXPRESSION_EXPECTED: { code: 'TS1109', message: 'Expression expected.' },
 	DECLARATION_OR_STATEMENT_EXPECTED: {
 		code: 'TS1128',
 		message: 'Declaration or statement expected.',
@@ -626,11 +634,14 @@ export const TS_ERRORS = {
 		message:
 			"'await using' statements are only allowed within async functions and at the top levels of modules.",
 	},
-	// TypeScript reports a deferred default import (TS18058) or named imports
-	// (TS18059); TSRX words both as one message
-	IMPORT_DEFER_NAMESPACE: {
+	// TypeScript reports these from the checker (`checkGrammarImportClause`)
+	IMPORT_DEFER_DEFAULT: {
+		code: 'TS18058',
+		message: 'Default imports are not allowed in a deferred import.',
+	},
+	IMPORT_DEFER_NAMED: {
 		code: 'TS18059',
-		message: '`import defer` only supports a namespace import from a string literal.',
+		message: 'Named imports are not allowed in a deferred import.',
 	},
 	// TypeScript 7.1 reports these two from the checker (`checkGrammarImportClause`)
 	IMPORT_SOURCE_BINDING: {
@@ -641,7 +652,8 @@ export const TS_ERRORS = {
 		code: 'TS18112',
 		message: 'Named and namespace imports are not allowed in a source phase import.',
 	},
-	// A source phase import from an inline module (`import source m from server`)
+	// A module specifier that isn't a string, or a phase import from an inline
+	// module (`import source m from server`)
 	STRING_LITERAL_EXPECTED: {
 		code: 'TS1141',
 		message: 'String literal expected.',
