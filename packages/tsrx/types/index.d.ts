@@ -700,7 +700,7 @@ declare module 'estree' {
 
 	interface ImportDeclaration {
 		importKind: TSESTree.ImportDeclaration['importKind'];
-		phase?: 'defer' | null;
+		phase?: 'defer' | 'source' | null;
 		/** Pre-`import attributes` spelling of {@link ImportDeclaration.attributes}. */
 		assertions?: AST.ImportAttribute[];
 	}
@@ -708,7 +708,7 @@ declare module 'estree' {
 		source: AST.Literal | AST.Identifier;
 	}
 	interface ImportExpression {
-		phase?: 'defer' | null;
+		phase?: 'defer' | 'source' | null;
 	}
 	interface ImportSpecifier {
 		importKind: TSESTree.ImportSpecifier['importKind'];
