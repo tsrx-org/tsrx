@@ -392,6 +392,38 @@ export function App() @{
 			expect(result.code).toContain("import.defer('./lazy.js', { with: { type: 'json' } })");
 		});
 
+		it('preserves source phase imports in type-only output', () => {
+			const result = compile_to_volar_mappings(
+				`import source module from './module.wasm';
+				const later = import.source('./later.wasm', { with: { type: 'wasm' } });
+
+				export function App() {
+					return <div>{String(module)}</div>;
+				}`,
+				'App.tsrx',
+				{ loose: true },
+			);
+
+			expect(result.errors).toEqual([]);
+			expect(result.code).toContain("import source module from './module.wasm';");
+			expect(result.code).toContain("import.source('./later.wasm', { with: { type: 'wasm' } })");
+		});
+
+		it('reports wrong source phase bindings in type-only output, and keeps the import', () => {
+			for (const [source, code] of [
+				["import source { module } from './module.wasm';", 'TS18112'],
+				["import source './module.wasm';", 'TS18111'],
+			]) {
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(
+					result.errors.map((error) => error.code),
+					source,
+				).toEqual([code]);
+				expect(result.code, source).toContain(source);
+			}
+		});
+
 		it('keeps fragment expression children inside containers in type-only output', () => {
 			const result = compile_to_volar_mappings(
 				`function StatusBadge() @{
@@ -2208,7 +2240,7 @@ export function runSharedCompileTests({
 	runSharedScopedStyleTests({ compile, name, classAttrName, generatedClassAttrName });
 	runSharedScopedStyleConformanceTests({ compile, name, classAttrName, generatedClassAttrName });
 
-	describe(`[${name}] deferred imports`, () => {
+	describe(`[${name}] import phases`, () => {
 		it('preserves deferred imports in compiled output', () => {
 			const { code } = compile(
 				`import defer * as feature from './feature.js';
@@ -2222,6 +2254,23 @@ export function runSharedCompileTests({
 
 			expect(code).toContain("import defer * as feature from './feature.js';");
 			expect(code).toContain("import.defer('./lazy.js', { with: { type: 'json' } })");
+		});
+
+		it('preserves source phase imports in compiled output', () => {
+			const { code } = compile(
+				`import source module from './module.wasm';
+				export const later = import.source('./later.wasm');
+
+				export function App() @{
+					const render = import.source('./render.wasm');
+					<p>{String([module, render])}</p>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain("import source module from './module.wasm';");
+			expect(code).toContain("import.source('./later.wasm')");
+			expect(code).toContain("import.source('./render.wasm')");
 		});
 	});
 

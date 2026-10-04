@@ -47,7 +47,8 @@ const BROKEN_MARKUP_CODES = new Set([
  * class member, a class member's modifier before a module element
  * (`public class A {}`), `readonly`, `accessor` or `async` where they can't
  * appear, `async` with `declare` or in a `declare` context (TS1040),
- * `declare` before a `using` declaration, and `import.source`.
+ * `declare` before a `using` declaration, and a call of `import.<name>` other
+ * than `import.defer()` or `import.source()`.
  *
  * It formats the others, and leaves out what its tree has no place for, as the
  * output does: a repeated modifier, a modifier in a block, `declare` before an

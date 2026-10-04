@@ -482,9 +482,129 @@ describe('TSRX parser', () => {
 				"import defer feature from './feature.js';",
 				"import defer { feature } from './feature.js';",
 				"import defer './feature.js';",
+				// `defer` before a second `from` is the phase, as in TypeScript.
+				"import defer from from './feature.js';",
 			]) {
 				expect(() => parseModule(source, 'App.tsrx')).toThrow(
 					error_with(TS_ERRORS.IMPORT_DEFER_NAMESPACE),
+				);
+			}
+		});
+	});
+
+	describe('source phase imports', () => {
+		it('parses a source phase import with its phase, binding, and source', () => {
+			const [declaration] = parseModule(
+				"import source module from './module.wasm';",
+				'App.tsrx',
+			).body;
+
+			assert_type(declaration, 'ImportDeclaration');
+			expect(declaration.phase).toBe('source');
+			expect(declaration.specifiers).toHaveLength(1);
+			expect(declaration.specifiers[0].type).toBe('ImportDefaultSpecifier');
+			expect(declaration.specifiers[0].local.name).toBe('module');
+			expect(declaration.source.value).toBe('./module.wasm');
+		});
+
+		it('parses import attributes on a source phase import', () => {
+			const [declaration] = parseModule(
+				"import source module from './module.wasm' with { type: 'wasm' };",
+				'App.tsrx',
+			).body;
+
+			assert_type(declaration, 'ImportDeclaration');
+			expect(declaration.phase).toBe('source');
+			expect(declaration.attributes).toHaveLength(1);
+			expect(declaration.attributes[0].value.value).toBe('wasm');
+		});
+
+		it('reads `source` before a second `from` as the phase, binding `from`', () => {
+			const [declaration] = parseModule(
+				"import source from from './module.wasm';",
+				'App.tsrx',
+			).body;
+
+			assert_type(declaration, 'ImportDeclaration');
+			expect(declaration.phase).toBe('source');
+			expect(declaration.specifiers[0].local.name).toBe('from');
+			expect(declaration.source.value).toBe('./module.wasm');
+		});
+
+		it('parses a dynamic source phase import with options and trailing commas', () => {
+			const expression = findNode(
+				"const module = import.source('./module.wasm', { with: { type: 'wasm' } },);",
+				'ImportExpression',
+			);
+
+			expect(expression.phase).toBe('source');
+			expect(as_type(expression.source, 'Literal').value).toBe('./module.wasm');
+			expect(expression.options?.type).toBe('ObjectExpression');
+
+			const trailing = findNode(
+				"const module = import.source('./module.wasm',);",
+				'ImportExpression',
+			);
+			expect(trailing.phase).toBe('source');
+			expect(trailing.options).toBeNull();
+		});
+
+		it('keeps source as an ordinary import binding where it cannot be the phase', () => {
+			for (const [source, names, from] of /** @type {const} */ ([
+				["import source from './source.js';", ['source'], "'./source.js'"],
+				["import source, { other } from './source.js';", ['source', 'other'], "'./source.js'"],
+				// A default import from an inline module
+				['import source from server;', ['source'], 'server'],
+			])) {
+				const [declaration] = parseModule(source, 'App.tsrx').body;
+
+				assert_type(declaration, 'ImportDeclaration');
+				expect(declaration.phase, source).toBeUndefined();
+				expect(
+					declaration.specifiers.map((specifier) => specifier.local.name),
+					source,
+				).toEqual(names);
+				expect(source.slice(declaration.source.start, declaration.source.end), source).toBe(from);
+			}
+
+			const [equals] = parseModule("import source = require('./source.js');", 'App.tsrx').body;
+			expect(equals).toMatchObject({ type: 'TSImportEqualsDeclaration', id: { name: 'source' } });
+		});
+
+		it('reports named, namespace, and missing bindings as TypeScript does, from a parse that goes on', () => {
+			for (const [source, error] of /** @type {const} */ ([
+				["import source { module } from './module.wasm';", TS_ERRORS.IMPORT_SOURCE_NAMED],
+				["import source * as module from './module.wasm';", TS_ERRORS.IMPORT_SOURCE_NAMED],
+				["import source module, { other } from './module.wasm';", TS_ERRORS.IMPORT_SOURCE_NAMED],
+				["import source './module.wasm';", TS_ERRORS.IMPORT_SOURCE_BINDING],
+			])) {
+				expect(() => parseModule(source, 'App.tsrx'), source).toThrow(error_with(error, '1:7'));
+
+				/** @type {CompileError[]} */
+				const errors = [];
+				const [declaration] = parseModule(source, 'App.tsrx', { collect: true, errors }).body;
+				expect(
+					errors.map((found) => found.code),
+					source,
+				).toEqual([error.code]);
+				expect(as_type(declaration, 'ImportDeclaration').phase, source).toBe('source');
+			}
+		});
+
+		it('rejects a source phase import from an inline module', () => {
+			expect(() => parseModule('import source module from server;', 'App.tsrx')).toThrow(
+				error_with(TS_ERRORS.STRING_LITERAL_EXPECTED, '1:26'),
+			);
+		});
+
+		it('never reads an import with a phase as an import-equals declaration', () => {
+			// TypeScript expects `from` after the binding.
+			for (const source of [
+				"import source module = require('./module.wasm');",
+				"import defer feature = require('./feature.js');",
+			]) {
+				expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+					error_with(TS_ERRORS.UNEXPECTED_TOKEN),
 				);
 			}
 		});
@@ -10459,14 +10579,14 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			},
 		},
 		{
-			source: "import.source('x');",
-			errors: [[UPSTREAM_ERRORS.IMPORT_META_PROPERTY, "source('x')"]],
+			source: "import.foo('x');",
+			errors: [[UPSTREAM_ERRORS.IMPORT_META_PROPERTY, "foo('x')"]],
 			throws: [UPSTREAM_ERRORS.IMPORT_META_PROPERTY, '1:7'],
 			pick: first,
 			match: {
 				expression: {
 					type: 'CallExpression',
-					callee: { type: 'MetaProperty', meta: { name: 'import' }, property: { name: 'source' } },
+					callee: { type: 'MetaProperty', meta: { name: 'import' }, property: { name: 'foo' } },
 				},
 			},
 		},

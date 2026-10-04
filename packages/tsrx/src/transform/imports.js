@@ -35,23 +35,33 @@ export function with_deferred_imports(visitors) {
 				return;
 			}
 
-			const [specifier] = node.specifiers;
-			if (phase === 'defer') {
-				if (node.specifiers.length !== 1 || specifier.type !== 'ImportNamespaceSpecifier') {
-					throw new Error('`import defer` only supports a namespace import.');
-				}
-			} else if (node.specifiers.length !== 1 || specifier.type !== 'ImportDefaultSpecifier') {
-				throw new Error('`import source` only supports a default import.');
-			}
-
 			if (node.loc) context.location(node.loc.start.line, node.loc.start.column);
 			context.write(`import ${phase} `);
-			if (specifier.loc) {
-				context.location(specifier.loc.start.line, specifier.loc.start.column);
+			// Print the bindings as written, also the ones a phase doesn't allow: a
+			// collecting parse reports those (TS18111, TS18112) and keeps the import.
+			const named = node.specifiers.filter((specifier) => specifier.type === 'ImportSpecifier');
+			let first = true;
+			for (const specifier of node.specifiers) {
+				if (specifier.type === 'ImportSpecifier') continue;
+				if (!first) context.write(', ');
+				first = false;
+				if (specifier.loc) {
+					context.location(specifier.loc.start.line, specifier.loc.start.column);
+				}
+				if (specifier.type === 'ImportNamespaceSpecifier') context.write('* as ');
+				context.visit(specifier.local);
 			}
-			if (phase === 'defer') context.write('* as ');
-			context.visit(specifier.local);
-			context.write(' from ');
+			if (named.length > 0) {
+				if (!first) context.write(', ');
+				first = false;
+				context.write('{ ');
+				for (let index = 0; index < named.length; index++) {
+					if (index > 0) context.write(', ');
+					context.visit(named[index]);
+				}
+				context.write(' }');
+			}
+			if (!first) context.write(' from ');
 			context.visit(node.source);
 
 			const attributes = node.attributes ?? node.assertions ?? [];

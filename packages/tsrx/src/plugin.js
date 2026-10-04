@@ -292,7 +292,7 @@ const CHECKER_LEVEL_ERRORS = new Set([
 	UPSTREAM_ERRORS.EXPORT_NOT_DEFINED,
 	// acorn: `a?.b = c` (TS2779).
 	UPSTREAM_ERRORS.OPTIONAL_CHAIN_ASSIGNMENT,
-	// acorn: `import.source('x')` (TS18061).
+	// acorn: `import.foo('x')` (TS18061).
 	UPSTREAM_ERRORS.IMPORT_META_PROPERTY,
 	// acorn: `new.target` outside a function (TS17013).
 	UPSTREAM_ERRORS.NEW_TARGET_OUTSIDE_FUNCTION,
@@ -10681,32 +10681,42 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Recognize the deferred dynamic-import form
-			 * `import.defer(specifier, options?)` before Acorn parses `import.<name>`
-			 * as an `import.meta` member access. Ordinary `import()` and `import.meta`
-			 * fall through to Acorn unchanged, so the proposal never alters their
-			 * existing AST shape.
+			 * Recognize the dynamic-import forms with a phase,
+			 * `import.defer(specifier, options?)` and
+			 * `import.source(specifier, options?)`, before Acorn parses
+			 * `import.<name>` as an `import.meta` member access. Ordinary `import()`
+			 * and `import.meta` fall through to Acorn unchanged, so the proposals
+			 * never alter their existing AST shape.
 			 * @type {Parse.Parser['parseExprImport']}
 			 */
 			parseExprImport(forNew) {
-				if (
-					!forNew &&
-					this.lookahead().type === tt.dot &&
-					this.isContextualWithState('defer', this.lookahead(2))
-				) {
+				const phase =
+					!forNew && this.lookahead().type === tt.dot ? this.#importPhase(this.lookahead(2)) : null;
+				if (phase !== null) {
 					const node = /** @type {AST.ImportExpression} */ (this.startNode());
 					if (this.containsEsc) {
 						this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE_SEQUENCE('import'));
 					}
 					this.next(); // `import`
 					this.next(); // `.`
-					this.next(); // `defer`
-					node.phase = 'defer';
+					this.next(); // `defer` or `source`
+					node.phase = phase;
 					if (this.type !== tt.parenL) this.unexpected();
 					return this.parseDynamicImport(node);
 				}
 
 				return super.parseExprImport(forNew);
+			}
+
+			/**
+			 * The import phase that `token` names, `defer` or `source`, or `null`.
+			 * @param {Parse.LookaheadState} token
+			 * @returns {'defer' | 'source' | null}
+			 */
+			#importPhase(token) {
+				if (this.isContextualWithState('defer', token)) return 'defer';
+				if (this.isContextualWithState('source', token)) return 'source';
+				return null;
 			}
 
 			/**
@@ -10721,27 +10731,38 @@ export function TSRXPlugin(config) {
 			parseImport(node) {
 				const tokenIsIdentifier = Parser.acornTypeScript.tokenIsIdentifier;
 				let enterHead = this.lookahead();
-				let deferred = false;
-				let defer_start = -1;
+				/** @type {'defer' | 'source' | null} */
+				let phase = null;
+				let phase_start = -1;
 				node.importKind = 'value';
 				this.importOrExportOuterKind = 'value';
 				if (tokenIsIdentifier(enterHead.type) || this.match(tt.star) || this.match(tt.braceL)) {
 					let ahead = this.lookahead(2);
-					// `defer` and `type` are only phase/kind modifiers when the following
-					// token cannot continue a default import (`, `/`from`) or an
+					// `defer`, `source`, and `type` are only phase/kind modifiers when the
+					// following token cannot continue a default import (`, `/`from`) or an
 					// import-equals declaration (`=`); otherwise they are ordinary bindings.
 					const head_modifies =
 						ahead.type !== tt.comma &&
 						!this.isContextualWithState('from', ahead) &&
 						ahead.type !== tt.eq;
-					// The namespace-only restriction is checked after parsing the clause,
-					// which also gives invalid named/default deferred imports a focused
-					// diagnostic.
-					if (head_modifies && this.isContextualWithState('defer', enterHead)) {
-						deferred = true;
-						defer_start = enterHead.start;
-						node.phase = 'defer';
-						this.ts_eatContextualWithState('defer', 1, enterHead);
+					const head_phase = this.#importPhase(enterHead);
+					// The bindings each phase allows are checked after parsing the clause,
+					// which also gives invalid ones a focused diagnostic. A phase can bind
+					// the name `from` (`import source from from './a.wasm'`). TypeScript
+					// reads the phase before a `from` that no string follows
+					// (`shouldParseImportPhaseModifier`), but an inline module's name can
+					// follow it here (`import source from server`), so only a second
+					// `from` makes it a phase.
+					if (
+						head_phase !== null &&
+						(head_modifies ||
+							(this.isContextualWithState('from', ahead) &&
+								this.isContextualWithState('from', this.lookahead(3))))
+					) {
+						phase = head_phase;
+						phase_start = enterHead.start;
+						node.phase = phase;
+						this.ts_eatContextualWithState(phase, 1, enterHead);
 						enterHead = this.lookahead();
 						ahead = this.lookahead(2);
 					} else if (head_modifies && enterHead.type === tstt.type) {
@@ -10756,7 +10777,9 @@ export function TSRXPlugin(config) {
 						enterHead = this.lookahead();
 						ahead = this.lookahead(2);
 					}
-					if (tokenIsIdentifier(enterHead.type) && ahead.type === tt.eq) {
+					// A phase never starts an import-equals declaration: like TypeScript,
+					// `import defer x = require('y')` expects `from` after `x`.
+					if (phase === null && tokenIsIdentifier(enterHead.type) && ahead.type === tt.eq) {
 						this.next();
 						const importNode = this.tsParseImportEqualsDeclaration(node);
 						this.importOrExportOuterKind = 'value';
@@ -10781,12 +10804,29 @@ export function TSRXPlugin(config) {
 					}
 				}
 				if (
-					deferred &&
+					phase === 'defer' &&
 					(node.specifiers.length !== 1 ||
 						node.specifiers[0].type !== 'ImportNamespaceSpecifier' ||
 						node.source.type !== 'Literal')
 				) {
-					this.raise(defer_start, TS_ERRORS.IMPORT_DEFER_NAMESPACE);
+					this.raise(phase_start, TS_ERRORS.IMPORT_DEFER_NAMESPACE);
+				} else if (phase === 'source') {
+					if (node.source.type !== 'Literal') {
+						this.raise(
+							/** @type {number} */ (node.source.start),
+							TS_ERRORS.STRING_LITERAL_EXPECTED,
+						);
+					}
+					// TypeScript reports these from the checker, so a collecting parse
+					// goes on.
+					if (node.specifiers.length === 0) {
+						this.#raiseCheckerError(phase_start, TS_ERRORS.IMPORT_SOURCE_BINDING);
+					} else if (
+						node.specifiers.length !== 1 ||
+						node.specifiers[0].type !== 'ImportDefaultSpecifier'
+					) {
+						this.#raiseCheckerError(phase_start, TS_ERRORS.IMPORT_SOURCE_NAMED);
+					}
 				}
 				this.parseMaybeImportAttributes(node);
 				this.semicolon();

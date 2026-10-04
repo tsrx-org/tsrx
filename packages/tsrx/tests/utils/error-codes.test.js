@@ -512,9 +512,26 @@ let E;`,
 			TS_ERRORS.DECLARED_IN_SCOPE,
 			TS_ERRORS.JSX_ATTRIBUTE_VALUE,
 		]);
+		// Codes that TypeScript added after the version installed here, as
+		// TypeScript 7.1 words them (microsoft/TypeScript#63915). TypeScript 7 has
+		// no JavaScript API to read them from.
+		/** @type {Map<unknown, string>} */
+		const newer_typescript = new Map([
+			[TS_ERRORS.IMPORT_SOURCE_BINDING, 'A source phase import must specify a local binding.'],
+			[
+				TS_ERRORS.IMPORT_SOURCE_NAMED,
+				'Named and namespace imports are not allowed in a source phase import.',
+			],
+		]);
 		for (const [name, entry] of Object.entries(TS_ERRORS)) {
 			// With TypeScript's placeholders for the values a message takes
 			const { message } = typeof entry === 'function' ? entry('{0}', '{1}') : entry;
+			if (newer_typescript.has(entry)) {
+				// Once the installed TypeScript has the code, check it like the others.
+				expect(typescript.has(entry.code), `${name}: ${entry.code}`).toBe(false);
+				expect(message, name).toBe(newer_typescript.get(entry));
+				continue;
+			}
 			expect(typescript.has(entry.code), `${name}: ${entry.code}`).toBe(true);
 			if (other_wording.has(entry)) {
 				expect(message, name).not.toBe(typescript.get(entry.code));
