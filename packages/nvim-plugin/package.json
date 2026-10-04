@@ -15,7 +15,7 @@
     "test:editor": "node editor-tests/run.js"
   },
   "config": {
-    "@tsrx/language-server": "0.6.2"
+    "@tsrx/language-server": "0.6.3"
   },
   "files": [
     "lua",
