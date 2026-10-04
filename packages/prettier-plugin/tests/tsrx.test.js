@@ -2446,7 +2446,7 @@ describe('parse errors', () => {
 				TS_ERRORS.PATTERN_PARAMETER_PROPERTY,
 				'1:23',
 			],
-			['import.source("x");', 'TS17012', '1:8'],
+			['import.foo("x");', 'TS17012', '1:8'],
 			['@dec function f() {}', TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:1'],
 			[
 				`class A {
@@ -3079,6 +3079,32 @@ describe('@catch parameters with comments', () => {
   }
 }
 `,
+		);
+	});
+});
+
+describe('import phases', () => {
+	test('a source phase import and `import.source()` keep their phase, like `defer`', async () => {
+		await expectFormat(
+			`import source module from './module.wasm'
+import source from from './from.wasm' with { type: 'wasm' }
+import defer * as feature from './feature.js'
+const later = import.source('./later.wasm')
+const lazy = import.defer('./lazy.js')`,
+			`import source module from "./module.wasm";
+import source from from "./from.wasm" with { type: "wasm" };
+import defer * as feature from "./feature.js";
+const later = import.source("./later.wasm");
+const lazy = import.defer("./lazy.js");
+`,
+		);
+	});
+
+	test('`source` as an ordinary default import name stays one', async () => {
+		await expectFormat(`import source from './source.js'`, 'import source from "./source.js";\n');
+		await expectFormat(
+			`import source, { a } from './source.js'`,
+			'import source, { a } from "./source.js";\n',
 		);
 	});
 });

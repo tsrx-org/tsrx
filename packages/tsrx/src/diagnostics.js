@@ -632,6 +632,20 @@ export const TS_ERRORS = {
 		code: 'TS18059',
 		message: '`import defer` only supports a namespace import from a string literal.',
 	},
+	// TypeScript 7.1 reports these two from the checker (`checkGrammarImportClause`)
+	IMPORT_SOURCE_BINDING: {
+		code: 'TS18111',
+		message: 'A source phase import must specify a local binding.',
+	},
+	IMPORT_SOURCE_NAMED: {
+		code: 'TS18112',
+		message: 'Named and namespace imports are not allowed in a source phase import.',
+	},
+	// A source phase import from an inline module (`import source m from server`)
+	STRING_LITERAL_EXPECTED: {
+		code: 'TS1141',
+		message: 'String literal expected.',
+	},
 
 	// Declarations
 	VARIABLE_DECLARATION_LIST_EMPTY: {
