@@ -29,12 +29,14 @@ const VOID_ELEMENTS = new Set([
 ]);
 
 /**
- * Elements whose body is raw text that ends at the next `</style>` or `</script>`,
- * wherever it is later in the file. The parsed source counts a new `<style>` as
- * closed by the `</style>` of a later style block, so for these only a closing tag
- * right after the cursor counts.
+ * Elements whose body is raw text, each with a pattern for its opening tag. The
+ * body ends at the next `</style>` or `</script>`, wherever it is later in the
+ * file, so that closing tag can belong to a later element (see `isUnclosed`).
  */
-const RAW_TEXT_ELEMENTS = new Set(['style', 'script']);
+const RAW_TEXT_OPENING_TAGS = new Map([
+	['style', /<style[\s/>]/],
+	['script', /<script[\s/>]/],
+]);
 
 /**
  * Auto-insert plugin for TSRX.
@@ -180,10 +182,9 @@ export function createAutoInsertPlugin() {
 					// above its children); without it, only a closing tag right after the cursor
 					// counts.
 					const closingTag = `</${tagName}>`;
-					const element =
-						virtualCode.isDotCompletionMode || RAW_TEXT_ELEMENTS.has(tagName)
-							? null
-							: findElement(virtualCode.sourceAst, sourceOffset + 1);
+					const element = virtualCode.isDotCompletionMode
+						? null
+						: findElement(virtualCode.sourceAst, sourceOffset + 1);
 					if (
 						element
 							? !isUnclosed(element, sourceCode)
@@ -250,6 +251,11 @@ function findElement(node, end, parent = null) {
  * with the same name (`<div>` typed as the first child of a `<div>`), which is then
  * the unclosed one. Loose-mode recovery marks an element without its closing tag
  * `unclosed`.
+ *
+ * A `<style>` or `<script>` body ends at the next closing tag with its name, which
+ * can belong to a later element: a new `<style>` typed in one component takes the
+ * `</style>` of the style block in the next component. That element's opening tag
+ * is then in the body, so the new element still needs its own closing tag.
  * @param {ElementPath} path
  * @param {string} sourceCode
  * @returns {boolean}
@@ -260,6 +266,14 @@ function isUnclosed(path, sourceCode) {
 		const { start, end } = /** @type {AST.NodeWithLocation} */ (element.openingElement.name);
 		return sourceCode.slice(start, end);
 	};
+
+	const { element } = path;
+	const rawTextOpeningTag = RAW_TEXT_OPENING_TAGS.get(name(element));
+	if (rawTextOpeningTag) {
+		if (element.unclosed || !element.closingElement) return true;
+		const bodyEnd = /** @type {AST.NodeWithLocation} */ (element.closingElement).start;
+		return rawTextOpeningTag.test(sourceCode.slice(element.openingElement.end, bodyEnd));
+	}
 
 	for (let current = path; ; current = current.parent) {
 		if (current.element.unclosed) return true;

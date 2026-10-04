@@ -240,6 +240,30 @@ describe('auto-insert plugin — <style> tags', () => {
 		expect(snippet).toBe('$0</style>');
 	});
 
+	it('does not close a <style> tag whose closing tag is on a later line', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<>\n\t\t<style',
+			'\n\t\t\t.card { color: red; }\n\t\t</style>\n\t\t<div class="card" />\n\t</>\n}',
+		);
+		expect(snippet).toBeFalsy();
+	});
+
+	it('does not close a <style> tag whose CSS contains `<`', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<>\n\t\t<style',
+			'\n\t\t\t.card::before { content: "<b>"; }\n\t\t</style>\n\t\t<div class="card" />\n\t</>\n}',
+		);
+		expect(snippet).toBeFalsy();
+	});
+
+	it('does not close <style apply={…}> whose closing tag is on a later line', async () => {
+		const snippet = await auto_insert_after_gt(
+			'const theme = <style>.a { color: red; }</style>;\nexport function App() @{\n\t<>\n\t\t<style apply={theme}',
+			'\n\t\t\t.b { margin: 0; }\n\t\t</style>\n\t\t<div class="a b" />\n\t</>\n}',
+		);
+		expect(snippet).toBeFalsy();
+	});
+
 	it('closes <style apply={…}> when the expression contains `>`', async () => {
 		const snippet = await auto_insert_after_gt(
 			'const a = <style>.a { color: red; }</style>;\nconst b = <style>.b { color: red; }</style>;\nexport function App(props) @{\n\t<>\n\t\t<div />\n\t\t<style apply={props.x > 1 ? a : b}',
@@ -270,6 +294,32 @@ describe('auto-insert plugin — <style> tags', () => {
 			' 1 ? a : b}>.c { margin: 0; }</style>\n\t</>\n}',
 		);
 		expect(snippet).toBeFalsy();
+	});
+});
+
+describe('auto-insert plugin — <script> tags', () => {
+	it('closes a <script> tag', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<>\n\t\t<div />\n\t\t<script',
+			'\n\t</>\n}',
+		);
+		expect(snippet).toBe('$0</script>');
+	});
+
+	it('does not close a <script> tag whose closing tag is on a later line', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<>\n\t\t<script',
+			'\n\t\t\tfor (let i = 0; i<n; i++) {}\n\t\t</script>\n\t\t<div />\n\t</>\n}',
+		);
+		expect(snippet).toBeFalsy();
+	});
+
+	it('closes a <script> tag when a later script has its closing tag', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function A() @{\n\t<>\n\t\t<div />\n\t\t<script',
+			'\n\t</>\n}\n\nexport function B() @{\n\t<>\n\t\t<div />\n\t\t<script>console.log(1);</script>\n\t</>\n}',
+		);
+		expect(snippet).toBe('$0</script>');
 	});
 });
 
