@@ -1,5 +1,52 @@
 # @tsrx/core
 
+## 0.5.4
+
+### Patch Changes
+
+- [#1036](https://github.com/tsrx-org/tsrx/pull/1036)
+  [`885adfb`](https://github.com/tsrx-org/tsrx/commit/885adfb87ddf6907d46e8a98267bdfdad5103d76)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Comments now attach to the
+  same code whatever line breaks a file uses. Before, in a file with U+2028 or
+  U+2029 line breaks, a comment at the end of a line became a leading comment of
+  the code on the next line: `const a = 1 // note` led `const b = 2` instead of
+  trailing `const a = 1`. In a file with only CR line breaks, a comment between
+  two blank lines led the next statement, and a block comment over several lines
+  kept its indentation. Now CR, U+2028 and U+2029 end a line like LF and CRLF, as
+  in Prettier.
+
+- [#1034](https://github.com/tsrx-org/tsrx/pull/1034)
+  [`87dda2d`](https://github.com/tsrx-org/tsrx/commit/87dda2d5c8d6154ffe32e7494aaadfc8ac7a27aa)
+  Thanks [@everton-dgn](https://github.com/everton-dgn)! - Recognize Unicode line
+  and paragraph separators between setup statements and markup, and in directive
+  trivia, without changing authored text or offsets. End template line comments at
+  these separators and keep UTF-16 locations aligned after JSX text, including
+  lone carriage returns.
+
+- [#1032](https://github.com/tsrx-org/tsrx/pull/1032)
+  [`d2f42e8`](https://github.com/tsrx-org/tsrx/commit/d2f42e8e8403c1653c2928ac7b92c71ee04b9e42)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - **Organize Imports**, **Sort
+  Imports** and **Remove Unused Imports** now change `.tsrx` files in which a
+  comment follows an import on the same line. As in a `.ts` file, the comment
+  moves with its import, and Remove Unused Imports removes it with its import.
+  Before, these actions did not change such a file. On TypeScript 7, they now also
+  work when spaces end the line of an import, but the imports must still end with
+  `;` ([#1023](https://github.com/tsrx-org/tsrx/issues/1023)).
+
+  `@tsrx/core` now exports `getLineCommentsAfter` and `isOrganizedImport`, so that
+  a compiler with its own type-only printer can print these comments too.
+
+- [#1022](https://github.com/tsrx-org/tsrx/pull/1022)
+  [`7accf3c`](https://github.com/tsrx-org/tsrx/commit/7accf3c7fb0d56288827c1804a2d2c1fd1120bff)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - On TypeScript 5.9 and 6,
+  **Organize Imports**, **Sort Imports** and **Remove Unused Imports** now change
+  `.tsrx` files. Before, they did nothing. The quick fix that removes an unused
+  import, **Fix All** for unused imports, and the auto-import quick fix that adds
+  a new import line now work in `.tsrx` files too.
+
+  When an import does not end with `;`, the warning for an unused import now shows
+  in `.tsrx` files on TypeScript 5.9 and 6. Before, it did not show.
+
 ## 0.5.3
 
 ### Patch Changes

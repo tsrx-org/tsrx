@@ -1,5 +1,38 @@
 # @tsrx/intellij-plugin
 
+## 0.0.87
+
+### Patch Changes
+
+- [#1020](https://github.com/tsrx-org/tsrx/pull/1020)
+  [`87c8835`](https://github.com/tsrx-org/tsrx/commit/87c88350c4e3d0f5b6ecc1ce60a31a957fa565ac)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Tags now close as you type.
+  When you type the `>` that ends an opening tag, the TSRX language server inserts
+  the closing tag: `<div>` becomes `<div></div>`, with the caret between the tags.
+  JetBrains IDEs leave on-type formatting off for language servers, so the plugin
+  turns it on for the TSRX server only.
+
+  The plugin now needs an IntelliJ-based IDE 2026.1.4 or newer. Before, it needed
+  2025.2 or newer. 2026.1.4 is the first version with on-type formatting for
+  language servers and with the renamed LSP API, which the plugin now uses
+  (`LspIntegrationProvider`, `ProjectWideLspClientDescriptor`,
+  `LspClientManager`).
+
+- [#1012](https://github.com/tsrx-org/tsrx/pull/1012)
+  [`9f04e81`](https://github.com/tsrx-org/tsrx/commit/9f04e81d9579624dd2bb2de8fab48141f430855f)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - New setting: **Settings →
+  Languages & Frameworks → TSRX → TypeScript lib folder**. Set it to the `lib`
+  folder of a TypeScript installation, and the TSRX language server runs that
+  TypeScript. For example, use TypeScript 6 when the project is on TypeScript 7. A
+  relative path starts at the project folder. When you change the setting, the
+  language server restarts. Leave it empty to use the project's `typescript`, as
+  before.
+- Updated dependencies
+  [[`e806335`](https://github.com/tsrx-org/tsrx/commit/e806335fc4ab663c7746e5e946cec72761db7659),
+  [`87c8835`](https://github.com/tsrx-org/tsrx/commit/87c88350c4e3d0f5b6ecc1ce60a31a957fa565ac),
+  [`495323e`](https://github.com/tsrx-org/tsrx/commit/495323ee83e9a454e59e5b2a2b3d53e76e5d9588)]:
+  - @tsrx/language-server@0.6.2
+
 ## 0.0.86
 
 ### Patch Changes
