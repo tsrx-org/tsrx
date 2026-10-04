@@ -604,7 +604,7 @@ describe('TSRX parser', () => {
 				"import defer feature = require('./feature.js');",
 			]) {
 				expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
-					error_with(TS_ERRORS.UNEXPECTED_TOKEN),
+					error_with(TS_ERRORS.TOKEN_EXPECTED('from'), `1:${source.indexOf('=')}`),
 				);
 			}
 		});

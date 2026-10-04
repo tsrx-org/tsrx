@@ -10779,11 +10779,20 @@ export function TSRXPlugin(config) {
 					}
 					// A phase never starts an import-equals declaration: like TypeScript,
 					// `import defer x = require('y')` expects `from` after `x`.
-					if (phase === null && tokenIsIdentifier(enterHead.type) && ahead.type === tt.eq) {
-						this.next();
-						const importNode = this.tsParseImportEqualsDeclaration(node);
-						this.importOrExportOuterKind = 'value';
-						return importNode;
+					if (phase === null && tokenIsIdentifier(enterHead.type)) {
+						if (ahead.type === tt.eq) {
+							this.next();
+							const importNode = this.tsParseImportEqualsDeclaration(node);
+							this.importOrExportOuterKind = 'value';
+							return importNode;
+						}
+						// TypeScript also reads an import-equals declaration when neither
+						// `,` nor `from` follows the name
+						// (`tokenAfterImportedIdentifierDefinitelyProducesImportDeclaration`),
+						// so `import a "x"` expects `=` after `a`, not `from`.
+						if (ahead.type !== tt.comma && !this.#isWord(ahead, 'from')) {
+							this.raise(ahead.start, TS_ERRORS.TOKEN_EXPECTED('='));
+						}
 					}
 				}
 				this.next();
@@ -10833,6 +10842,56 @@ export function TSRXPlugin(config) {
 				this.finishNode(node, 'ImportDeclaration');
 				this.importOrExportOuterKind = 'value';
 				return node;
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#165): remove once a release includes the fix
+			/**
+			 * Report a missing contextual keyword as TypeScript does: `from` after
+			 * import bindings or `export *`, and `namespace` after `export as`.
+			 * TypeScript reads each with `parseExpected`, which reports TS1005
+			 * `'from' expected.` at the token in its place, where acorn raised
+			 * `Unexpected token`. The word written with an escape is TS1260, since
+			 * TypeScript's parser reads it as the keyword and acorn's
+			 * `eatContextual` declines it.
+			 * @type {Parse.Parser['expectContextual']}
+			 */
+			expectContextual(name) {
+				if (this.containsEsc && this.#isWord(this, name)) {
+					this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
+				}
+				if (!this.eatContextual(name)) {
+					this.raise(this.start, TS_ERRORS.TOKEN_EXPECTED(name));
+				}
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#165): remove once a release includes the fix
+			/**
+			 * `export { … }` followed by a string on the same line is missing its
+			 * `from`, as TypeScript reports (`parseExportDeclaration`): after a line
+			 * break, the string is the next statement. acorn's `semicolon` raised
+			 * `Unexpected token` at the string. A `from` written with an escape is
+			 * TS1260 (see `expectContextual`).
+			 * @type {Parse.Parser['parseExportSpecifiers']}
+			 */
+			parseExportSpecifiers(exports) {
+				const specifiers = super.parseExportSpecifiers(exports);
+				if (
+					(this.type === tt.string && !this.hasPrecedingLineBreak()) ||
+					(this.containsEsc && this.#isWord(this, 'from'))
+				) {
+					this.expectContextual('from');
+				}
+				return specifiers;
+			}
+
+			/**
+			 * True when `token`, the current token or a `lookahead()` snapshot, is
+			 * the word `name`, also when written with an escape.
+			 * @param {{ type: Parse.TokenType, value: unknown }} token
+			 * @param {string} name
+			 */
+			#isWord(token, name) {
+				return Parser.acornTypeScript.tokenIsIdentifier(token.type) && token.value === name;
 			}
 
 			/**

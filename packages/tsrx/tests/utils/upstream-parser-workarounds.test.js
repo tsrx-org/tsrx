@@ -3595,3 +3595,79 @@ describe('a rest element or rest parameter with a default (sveltejs/acorn-typesc
 		}
 	});
 });
+
+// #1051
+describe('a missing `from`, `=` or `namespace` in an import or export (sveltejs/acorn-typescript#165)', () => {
+	it("reports TS1005 `'…' expected.` at the token in its place, as TypeScript does", async () => {
+		// TypeScript reads each word with `parseExpected`. A name after `import`
+		// that neither `,` nor `from` follows starts an import-equals declaration,
+		// so it expects `=` there, and a phase never starts one.
+		/** @type {Array<[source: string, word: string, at: string]>} */
+		const cases = [
+			['import { a } "m";', 'from', '"m"'],
+			['import * as ns "m";', 'from', '"m"'],
+			['import a, { b } "m";', 'from', '"m"'],
+			['import type { a } "m";', 'from', '"m"'],
+			['import { a }\n"m";', 'from', '"m"'],
+			['import { a } server;', 'from', 'server'],
+			['import defer * as ns "m";', 'from', '"m"'],
+			['import source a = require("m");', 'from', '='],
+			['export { a } "m";', 'from', '"m"'],
+			['export type { a } "m";', 'from', '"m"'],
+			['export * "m";', 'from', '"m"'],
+			['export * as ns "m";', 'from', '"m"'],
+			['export type * "m";', 'from', '"m"'],
+			['export as N;', 'namespace', 'N'],
+			['import a "m";', '=', '"m"'],
+			['import type a "m";', '=', '"m"'],
+			['import a b from "m";', '=', 'b'],
+			['import a;', '=', ';'],
+			['import a\n"m";', '=', '"m"'],
+			['import a server;', '=', 'server'],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			const [, word, at] = cases[index];
+			const error = thrown(TS_ERRORS.TOKEN_EXPECTED(word), source.indexOf(at));
+			expect(strict, source).toMatchObject(error);
+			expect(collect, source).toMatchObject(error);
+		}
+	});
+
+	it('reports TS1260 for the word written with an escape, as TypeScript does', async () => {
+		/** @type {Array<[source: string, word: string]>} */
+		const cases = [
+			['import { a } fr\\u006fm "m";', 'fr\\u006fm'],
+			['import a fr\\u006fm "m";', 'fr\\u006fm'],
+			['export { a } fr\\u006fm "m";', 'fr\\u006fm'],
+			['export { a }\nfr\\u006fm "m";', 'fr\\u006fm'],
+			['export * fr\\u006fm "m";', 'fr\\u006fm'],
+			['export as n\\u0061mespace N;', 'n\\u0061mespace'],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			const error = thrown(TS_ERRORS.KEYWORD_ESCAPE, source.indexOf(cases[index][1]));
+			expect(strict, source).toMatchObject(error);
+			expect(collect, source).toMatchObject(error);
+		}
+	});
+
+	it('still reads `type`, `from` and `source` as names, and a string after a line break as a statement', async () => {
+		const cases = [
+			'import type from "m";',
+			'import type, { a } from "m";',
+			'import type a = require("m");',
+			'import from from "m";',
+			'import source from server;',
+			'import a from server;',
+			'const a = 1;\nexport { a }\n"m";',
+			'export as namespace N;',
+		];
+		const outcomes = await parseBothModes(cases);
+		for (const { source, strict, collect } of outcomes) {
+			for (const outcome of [strict, collect]) {
+				expect(parsed(outcome, source).errors, source).toEqual([]);
+			}
+		}
+	});
+});
