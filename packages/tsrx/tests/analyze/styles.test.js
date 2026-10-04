@@ -33,13 +33,15 @@ const filename = 'App.tsrx';
  *
  * @param {string} source
  * @param {TSRXAnalysisOptions} [options]
+ * @param {{ preserveParens?: boolean }} [parse_options]
  */
-function analyze(source, options = { collect: true }) {
+function analyze(source, options = { collect: true }, parse_options = {}) {
 	/** @type {CompileError[]} */
 	const parse_errors = [];
 	/** @type {AST.CommentWithLocation[]} */
 	const comments = [];
 	const ast = parseModule(source, filename, {
+		...parse_options,
 		collect: true,
 		errors: parse_errors,
 		comments,
@@ -1507,6 +1509,110 @@ describe('scoped style analysis', () => {
 				DIAGNOSTIC_CODES.STYLE_APPLY_TARGET,
 			]);
 		});
+	});
+
+	describe('parentheses', () => {
+		// Editors parse with `preserveParens`, which keeps the parentheses that
+		// the build drops. Both trees must give the same analysis.
+		/** @type {Array<[string, boolean]>} */
+		const modes = [
+			['without preserveParens', false],
+			['with preserveParens', true],
+		];
+
+		it.each(modes)('resolves parenthesized blocks and apply values %s', (_name, preserveParens) => {
+			for (const source of [
+				`const t = (
+	<style>.a {}</style>
+);
+function App() @{ <><style apply={t} /><div /></> }`,
+				`const t = ((<style>.a {}</style>));
+function App() @{ <><style apply={t} /><div /></> }`,
+				`const themes = { dark: (<style>.a {}</style>) };
+function App() @{ <><style apply={themes.dark} /><div /></> }`,
+				`const themes = ({ dark: <style>.a {}</style> });
+function App() @{ <><style apply={themes.dark} /><div /></> }`,
+				`${theme}
+function App() @{ <><style apply={(t)} /><div /></> }`,
+				`${theme}
+function App() @{ <><style apply={[(t)]} /><div /></> }`,
+				`${theme}
+function App() @{ <><style apply={([t])} /><div /></> }`,
+				`const themes = { dark: <style>.a {}</style> };
+function App() @{ <><style apply={(themes).dark} /><div /></> }`,
+				`${theme}
+const b = <style apply={(t)}>.b {}</style>;`,
+			]) {
+				const result = analyze(source, undefined, { preserveParens });
+				const [block] = result.styles.assigned;
+				const applies = [...result.styles.assigned, ...result.styles.standalone].flatMap(
+					(style) => style.metadata.styleApplies ?? [],
+				);
+
+				expect(style_errors(result), source).toEqual([]);
+				expect(
+					applies.map((resolution) => resolution.target),
+					source,
+				).toEqual([block]);
+				expect(block.metadata.styleApplied, source).toBe(true);
+			}
+		});
+
+		it.each(modes)(
+			'reports a parenthesized apply target at the name inside %s',
+			(_name, preserveParens) => {
+				const missing = 'function App() @{ <><style apply={(missing)} /><div /></> }';
+				expect_single_error(
+					analyze(missing, undefined, { preserveParens }),
+					DIAGNOSTIC_CODES.STYLE_APPLY_TARGET,
+					tsrx_style_apply_target_error('missing'),
+					loc_of(missing, 'missing'),
+				);
+
+				const member = `const themes = { dark: <style>.a {}</style> };
+function App() @{ <><style apply={(themes).light} /><div /></> }`;
+				expect_single_error(
+					analyze(member, undefined, { preserveParens }),
+					DIAGNOSTIC_CODES.STYLE_APPLY_TARGET,
+					tsrx_style_apply_target_error('themes.light'),
+					loc_of(member, '(themes).light'),
+				);
+
+				const early = `function App() @{ <><style apply={(t)} /><div /></> }
+${theme}`;
+				expect_single_error(
+					analyze(early, undefined, { preserveParens }),
+					DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
+					tsrx_style_apply_before_declaration_error('t'),
+					loc_of(early, 't)'),
+				);
+			},
+		);
+
+		it.each(modes)(
+			'keeps a parenthesized block statement standalone %s',
+			(_name, preserveParens) => {
+				const module_level = analyze('(<style>.a { color: red; }</style>);', undefined, {
+					preserveParens,
+				});
+				expect_single_error(
+					module_level,
+					DIAGNOSTIC_CODES.STYLE_STANDALONE_AT_MODULE_SCOPE,
+					TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR,
+					{ line: 1, column: 1 },
+				);
+				expect(module_level.styles.standalone).toHaveLength(1);
+				expect(module_level.styles.assigned).toEqual([]);
+
+				const source = 'function C() { (<style>.a { color: red; }</style>); return null; }';
+				expect_single_error(
+					analyze(source, undefined, { preserveParens }),
+					DIAGNOSTIC_CODES.STYLE_STANDALONE_NEEDS_FRAGMENT,
+					TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR,
+					loc_of(source, '<style'),
+				);
+			},
+		);
 	});
 
 	describe('@tsrx-ignore', () => {
