@@ -150,6 +150,46 @@ describe('auto-insert plugin — element tags', () => {
 		expect(snippet).toBeFalsy();
 	});
 
+	it('does not close a tag whose closing tag is on a later line', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<div class="card"',
+			'\n\t\t<span />\n\t</div>\n}',
+		);
+		expect(snippet).toBeFalsy();
+	});
+
+	it('does not close a tag in a plain TSX return whose closing tag is on a later line', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() {\n\treturn (\n\t\t<div',
+			'\n\t\t\t<span />\n\t\t</div>\n\t);\n}',
+		);
+		expect(snippet).toBeFalsy();
+	});
+
+	it('closes a tag typed as the first child of an element with the same name', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<div>\n\t\t<div',
+			'\n\t\t<span />\n\t</div>\n}',
+		);
+		expect(snippet).toBe('$0</div>');
+	});
+
+	it('closes a tag typed inside two elements with the same name', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<div>\n\t\t<div>\n\t\t\t<div',
+			'\n\t\t\t<span />\n\t\t</div>\n\t</div>\n}',
+		);
+		expect(snippet).toBe('$0</div>');
+	});
+
+	it('does not close a tag inside an element with the same name when both are closed', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function App() @{\n\t<div>\n\t\t<div',
+			'\n\t\t\t<span />\n\t\t</div>\n\t</div>\n}',
+		);
+		expect(snippet).toBeFalsy();
+	});
+
 	it('does not close a tag when the `>` is typed inside an attribute expression', async () => {
 		const snippet = await auto_insert_after_gt(
 			'export function App(props) @{\n\t<>\n\t\t<div hidden={props.count ',
@@ -188,6 +228,14 @@ describe('auto-insert plugin — <style> tags', () => {
 		const snippet = await auto_insert_after_gt(
 			'export function App() @{\n\t<>\n\t\t<div />\n\t\t<style',
 			'\n\t\t\t.a { color: red; }\n\t</>\n}',
+		);
+		expect(snippet).toBe('$0</style>');
+	});
+
+	it('closes a <style> tag when a later style block has its closing tag', async () => {
+		const snippet = await auto_insert_after_gt(
+			'export function A() @{\n\t<>\n\t\t<div />\n\t\t<style',
+			'\n\t</>\n}\n\nexport function B() @{\n\t<>\n\t\t<div />\n\t\t<style>.b { color: red; }</style>\n\t</>\n}',
 		);
 		expect(snippet).toBe('$0</style>');
 	});

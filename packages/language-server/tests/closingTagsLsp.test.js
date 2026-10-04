@@ -36,6 +36,13 @@ const VOID_AND_CLOSED = `export function App() @{
 }
 `;
 
+const CLOSED_ON_LATER_LINE = `export function App() @{
+	<div class="card">
+		<span />
+	</div>
+}
+`;
+
 /** @type {Array<() => Promise<void>>} */
 const cleanups = [];
 afterEach(async () => {
@@ -147,6 +154,14 @@ describe('TSRX language server: closing tags on `>`', () => {
 		});
 		expect(await type_gt('<br>')).toBeNull();
 		expect(await type_gt('<p>')).toBeNull();
+	});
+
+	it('inserts nothing when the closing tag is on a later line', async () => {
+		const { type_gt } = await session({
+			backend: 'plugin',
+			text: CLOSED_ON_LATER_LINE,
+		});
+		expect(await type_gt('<div class="card">')).toBeNull();
 	});
 
 	it('does nothing with tsrx.autoClosingTags.enabled off', async () => {

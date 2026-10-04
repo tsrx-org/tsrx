@@ -1,3 +1,4 @@
+/** @import * as AST from 'estree' */
 /** @import { LanguageServicePlugin } from '@volar/language-server' */
 
 import { getVirtualCode, createLogging, is_tsrx_document } from './utils.js';
@@ -26,6 +27,14 @@ const VOID_ELEMENTS = new Set([
 	'track',
 	'wbr',
 ]);
+
+/**
+ * Elements whose body is raw text that ends at the next `</style>` or `</script>`,
+ * wherever it is later in the file. The parsed source counts a new `<style>` as
+ * closed by the `</style>` of a later style block, so for these only a closing tag
+ * right after the cursor counts.
+ */
+const RAW_TEXT_ELEMENTS = new Set(['style', 'script']);
 
 /**
  * Auto-insert plugin for TSRX.
@@ -164,11 +173,22 @@ export function createAutoInsertPlugin() {
 						return null;
 					}
 
-					// Check if there's already a closing tag ahead. Look at the source, not the
+					// Check if the element already has its closing tag. Look at the source, not the
 					// generated document: loose-mode recovery synthesizes the missing `</tag>` for an
-					// unclosed element, which would make the closing tag look already present.
+					// unclosed element, which would make the closing tag look already present. The
+					// parsed source also knows about a closing tag further down (`<div>` retyped
+					// above its children); without it, only a closing tag right after the cursor
+					// counts.
 					const closingTag = `</${tagName}>`;
-					if (sourceCode.startsWith(closingTag, sourceOffset + 1)) {
+					const element =
+						virtualCode.isDotCompletionMode || RAW_TEXT_ELEMENTS.has(tagName)
+							? null
+							: findElement(virtualCode.sourceAst, sourceOffset + 1);
+					if (
+						element
+							? !isUnclosed(element, sourceCode)
+							: sourceCode.startsWith(closingTag, sourceOffset + 1)
+					) {
 						log('Closing tag already exists, skipping');
 						return null;
 					}
@@ -182,6 +202,69 @@ export function createAutoInsertPlugin() {
 			};
 		},
 	};
+}
+
+/**
+ * An element of the parsed source and, when the element is one of its children,
+ * the element that holds it.
+ * @typedef {{ element: AST.TSRXJSXElement; parent: ElementPath | null }} ElementPath
+ */
+
+/**
+ * Find the element whose opening tag ends at `end` in the parsed source.
+ * @param {unknown} node
+ * @param {number} end - The offset right after the opening tag's `>`
+ * @param {ElementPath | null} [parent] - The element whose `children` hold `node`
+ * @returns {ElementPath | null}
+ */
+function findElement(node, end, parent = null) {
+	if (Array.isArray(node)) {
+		for (const child of node) {
+			const found = findElement(child, end, parent);
+			if (found) return found;
+		}
+		return null;
+	}
+	if (!node || typeof node !== 'object') {
+		return null;
+	}
+
+	const element = /** @type {AST.TSRXJSXElement} */ (node);
+	const path = element.openingElement ? { element, parent } : null;
+	if (path?.element.openingElement.end === end) {
+		return path;
+	}
+
+	for (const [key, value] of Object.entries(node)) {
+		// `metadata` holds analysis results, such as scopes, not source nodes.
+		if (key === 'loc' || key === 'metadata') continue;
+		const found = findElement(value, end, key === 'children' ? path : null);
+		if (found) return found;
+	}
+	return null;
+}
+
+/**
+ * Whether the element still needs its closing tag, decided like TypeScript's
+ * `isUnclosedTag`: the element is unclosed, or it took the closing tag of a parent
+ * with the same name (`<div>` typed as the first child of a `<div>`), which is then
+ * the unclosed one. Loose-mode recovery marks an element without its closing tag
+ * `unclosed`.
+ * @param {ElementPath} path
+ * @param {string} sourceCode
+ * @returns {boolean}
+ */
+function isUnclosed(path, sourceCode) {
+	/** @param {AST.TSRXJSXElement} element */
+	const name = (element) => {
+		const { start, end } = /** @type {AST.NodeWithLocation} */ (element.openingElement.name);
+		return sourceCode.slice(start, end);
+	};
+
+	for (let current = path; ; current = current.parent) {
+		if (current.element.unclosed) return true;
+		if (!current.parent || name(current.parent.element) !== name(current.element)) return false;
+	}
 }
 
 /**
