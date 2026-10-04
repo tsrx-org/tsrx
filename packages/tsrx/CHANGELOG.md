@@ -1,5 +1,89 @@
 # @tsrx/core
 
+## 0.5.5
+
+### Patch Changes
+
+- [#1054](https://github.com/tsrx-org/tsrx/pull/1054)
+  [`0a967fc`](https://github.com/tsrx-org/tsrx/commit/0a967fcc3df20b9e9e22921ca90d604dd93cf7ec)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Import and export mistakes
+  now report the errors TypeScript reports, instead of TS1012 `Unexpected token`:
+
+  - A missing `from` reports TS1005 `'from' expected.`: `import { a } "./a.js"`,
+    `export { a } "./a.js"` and `export * "./a.js"`. `import a "./a.js"` reports
+    `'=' expected.`, because TypeScript reads a single name after `import` as the
+    start of `import a = require(…)`. `export as N` reports
+    `'namespace' expected.`.
+  - A `from` written with an escape (`fr\u006fm`) reports TS1260
+    `Keywords cannot contain escape characters.`.
+  - A module specifier that isn't a string reports TS1141
+    `String literal expected.`, and a missing one reports TS1109
+    `Expression expected.`.
+  - `import type "./a.js"` now reports `'=' expected.`. Before, it parsed as a
+    type-only import. `import type from from "./a.js"` and
+    `import type from = require("./a.js")` now parse as type-only imports of a
+    binding named `from`, as in TypeScript.
+
+  A deferred import with a default binding now reports TS18058
+  `Default imports are not allowed in a deferred import.`, and one with named
+  bindings TS18059 `Named imports are not allowed in a deferred import.`. Before,
+  both reported TS18059 with one message. TypeScript reports both from its
+  checker, so a collecting parse records them and goes on, as it does for a source
+  phase import. A phase import from an inline module
+  (`import defer * as ns from server`) reports TS1141 the same way.
+
+  A deferred import without bindings (`import defer "./a.js"`) is still an error,
+  now with TSRX's code TSRX4003 instead of TS18059. TypeScript accepts it without
+  an error and leaves out `defer` (microsoft/TypeScript#64627), but the proposal
+  allows only a namespace import.
+
+  `import.defer()` and `import.source()` with an escape in the phase name now
+  report TS1260 at the name, as TypeScript 7.1 does, instead of an error about
+  `import.meta`.
+
+  The formatter still refuses a deferred import with a default or named binding,
+  as Prettier does.
+
+- [#1052](https://github.com/tsrx-org/tsrx/pull/1052)
+  [`5d7314a`](https://github.com/tsrx-org/tsrx/commit/5d7314a0615d1dfcf5ba36cf832d7b4b656885e8)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The parser now reads source
+  phase imports, `import source module from './module.wasm'` and
+  `import.source('./later.wasm')`, as TypeScript 7.1 does, and sets
+  `phase: 'source'` on the `ImportDeclaration` or `ImportExpression`. Before, both
+  failed to parse. `import source from './a.js'`,
+  `import source, { a } from './a.js'`, and `import source from server` are still
+  ordinary default imports named `source`. A source phase import with named or
+  namespace bindings reports TS18112, and one without a binding reports TS18111.
+  Like TypeScript, a collecting parse records both and goes on.
+
+  An import with a phase is also no longer read as an import-equals declaration:
+  `import defer x = require('./a.js')` is now a syntax error, as in TypeScript.
+  Before, it parsed as `import x = require('./a.js')` and lost the phase.
+  `import defer from from './a.js'` now reports the deferred import error instead
+  of an unexpected token.
+
+- [#1048](https://github.com/tsrx-org/tsrx/pull/1048)
+  [`a420dd1`](https://github.com/tsrx-org/tsrx/commit/a420dd1bd2e3fe7d03d4e93eb666d7d070e7bdb5)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Compiled output now keeps the
+  source phase of `import source module from './module.wasm'` and
+  `import.source('./later.wasm')`. Before, the printer kept only `defer` and
+  printed these as an ordinary default import and an ordinary `import()`, so the
+  program loaded the evaluated module instead of its source. This happened when
+  another parser, such as `@tsrx/oxc`, built the tree. Core's own parser does not
+  read source phase imports yet. An import phase the printer does not know now
+  throws instead of printing an ordinary import. The AST types now allow
+  `phase: 'source'`.
+
+- [#1045](https://github.com/tsrx-org/tsrx/pull/1045)
+  [`5ce0b5f`](https://github.com/tsrx-org/tsrx/commit/5ce0b5fdff3f86abf578a685869d63b8dfb61f60)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - Parentheses around a
+  `<style>` block or an `apply` value now give the same result in the editor as in
+  the build. Before, `const dark = (<style>…</style>)`, the form Prettier prints
+  for a multi-line block, built fine, but the editor and type checkers reported
+  `'dark' is not a style block` for `apply={dark}`. `apply={(dark)}` crashed the
+  editor compile, and a parenthesized `(<style>…</style>);` statement was not
+  reported as a standalone block.
+
 ## 0.5.4
 
 ### Patch Changes
