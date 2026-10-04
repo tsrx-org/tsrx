@@ -1977,6 +1977,9 @@ export namespace Parse {
 			exports?: Exports,
 		): AST.ExportNamedDeclaration | AST.ExportDefaultDeclaration | AST.ExportAllDeclaration;
 
+		/** Parse `export * from …` or `export * as name from …` after the `*` */
+		parseExportAllDeclaration(node: AST.Node, exports?: Exports): AST.ExportAllDeclaration;
+
 		/** Parse export specifiers */
 		parseExportSpecifiers(exports?: Exports): AST.ExportSpecifier[];
 

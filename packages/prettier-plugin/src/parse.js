@@ -47,8 +47,9 @@ const BROKEN_MARKUP_CODES = new Set([
  * class member, a class member's modifier before a module element
  * (`public class A {}`), `readonly`, `accessor` or `async` where they can't
  * appear, `async` with `declare` or in a `declare` context (TS1040),
- * `declare` before a `using` declaration, and a call of `import.<name>` other
- * than `import.defer()` or `import.source()`.
+ * `declare` before a `using` declaration, a call of `import.<name>` other
+ * than `import.defer()` or `import.source()`, and a default or named binding in
+ * a deferred import (`import defer a from "m"`, TS18058 and TS18059).
  *
  * It formats the others, and leaves out what its tree has no place for, as the
  * output does: a repeated modifier, a modifier in a block, `declare` before an
@@ -75,6 +76,8 @@ const REJECTED_CODES = new Set([
 	'TS1491',
 	'TS1495',
 	'TS17012',
+	'TS18058',
+	'TS18059',
 ]);
 
 /**

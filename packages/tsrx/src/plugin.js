@@ -10690,8 +10690,12 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['parseExprImport']}
 			 */
 			parseExprImport(forNew) {
+				// The name written with an escape is the phase too, as TypeScript's
+				// `parseImportMetaPropertyName` reads it, and TS1260 at it.
 				const phase =
-					!forNew && this.lookahead().type === tt.dot ? this.#importPhase(this.lookahead(2)) : null;
+					!forNew && this.lookahead().type === tt.dot
+						? this.#importPhase(this.lookahead(2), true)
+						: null;
 				if (phase !== null) {
 					const node = /** @type {AST.ImportExpression} */ (this.startNode());
 					if (this.containsEsc) {
@@ -10699,6 +10703,7 @@ export function TSRXPlugin(config) {
 					}
 					this.next(); // `import`
 					this.next(); // `.`
+					if (this.containsEsc) this.raise(this.start, TS_ERRORS.KEYWORD_ESCAPE);
 					this.next(); // `defer` or `source`
 					node.phase = phase;
 					if (this.type !== tt.parenL) this.unexpected();
@@ -10709,14 +10714,40 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * True when `type` after `import` makes the import type-only, with
+			 * `ahead` the token after `type`. As in TypeScript
+			 * (`parseImportDeclarationOrImportEqualsDeclaration`), a name, `*` or `{`
+			 * must follow it, and a `from` only when `from` or `=` comes next
+			 * (`import type from from "m"`). Otherwise `type` is the imported name:
+			 * `import type "m"` and `import type;` start an import-equals declaration
+			 * and expect `=`. acorn-typescript read `type` before anything but `,`,
+			 * `from` and `=` as the modifier, so `import type "m"` parsed
+			 * (sveltejs/acorn-typescript#166).
+			 * @param {Parse.LookaheadState} ahead
+			 */
+			#typeModifiesImport(ahead) {
+				if (
+					ahead.type !== tt.star &&
+					ahead.type !== tt.braceL &&
+					!Parser.acornTypeScript.tokenIsIdentifier(ahead.type)
+				) {
+					return false;
+				}
+				if (!this.#isWord(ahead, 'from')) return true;
+				const next = this.lookahead(3);
+				return next.type === tt.eq || this.#isWord(next, 'from');
+			}
+
+			/**
 			 * The import phase that `token` names, `defer` or `source`, or `null`.
 			 * @param {Parse.LookaheadState} token
+			 * @param {boolean} [escaped] whether the name written with an escape
+			 *   names it too
 			 * @returns {'defer' | 'source' | null}
 			 */
-			#importPhase(token) {
-				if (this.isContextualWithState('defer', token)) return 'defer';
-				if (this.isContextualWithState('source', token)) return 'source';
-				return null;
+			#importPhase(token, escaped = false) {
+				if (token.type !== tt.name || (token.containsEsc && !escaped)) return null;
+				return token.value === 'defer' || token.value === 'source' ? token.value : null;
 			}
 
 			/**
@@ -10738,9 +10769,10 @@ export function TSRXPlugin(config) {
 				this.importOrExportOuterKind = 'value';
 				if (tokenIsIdentifier(enterHead.type) || this.match(tt.star) || this.match(tt.braceL)) {
 					let ahead = this.lookahead(2);
-					// `defer`, `source`, and `type` are only phase/kind modifiers when the
-					// following token cannot continue a default import (`, `/`from`) or an
-					// import-equals declaration (`=`); otherwise they are ordinary bindings.
+					// `defer` and `source` are only phases when the following token cannot
+					// continue a default import (`, `/`from`) or an import-equals
+					// declaration (`=`); otherwise they are ordinary bindings. `type`
+					// follows TypeScript's own rule (`#typeModifiesImport`).
 					const head_modifies =
 						ahead.type !== tt.comma &&
 						!this.isContextualWithState('from', ahead) &&
@@ -10765,7 +10797,7 @@ export function TSRXPlugin(config) {
 						this.ts_eatContextualWithState(phase, 1, enterHead);
 						enterHead = this.lookahead();
 						ahead = this.lookahead(2);
-					} else if (head_modifies && enterHead.type === tstt.type) {
+					} else if (enterHead.type === tstt.type && this.#typeModifiesImport(ahead)) {
 						// UPSTREAM(sveltejs/acorn-typescript#154): remove once a release includes the fix
 						// `type`, also written with an escape: TypeScript reads the word as a
 						// name and compares its text (`parseImportDeclarationOrImportEqualsDeclaration`),
@@ -10796,7 +10828,8 @@ export function TSRXPlugin(config) {
 					}
 				}
 				this.next();
-				if (this.type === tt.string) {
+				const has_clause = this.type !== tt.string;
+				if (!has_clause) {
 					node.specifiers = [];
 					node.source = /** @type {AST.Literal} */ (this.parseExprAtom());
 				} else {
@@ -10809,25 +10842,28 @@ export function TSRXPlugin(config) {
 						source.metadata ??= { path: [] };
 						node.source = source;
 					} else {
-						this.unexpected();
+						this.#raiseModuleSpecifierError(this);
 					}
 				}
-				if (
-					phase === 'defer' &&
-					(node.specifiers.length !== 1 ||
-						node.specifiers[0].type !== 'ImportNamespaceSpecifier' ||
-						node.source.type !== 'Literal')
-				) {
-					this.raise(phase_start, TS_ERRORS.IMPORT_DEFER_NAMESPACE);
-				} else if (phase === 'source') {
-					if (node.source.type !== 'Literal') {
-						this.raise(
-							/** @type {number} */ (node.source.start),
-							TS_ERRORS.STRING_LITERAL_EXPECTED,
-						);
+				// TypeScript reports a phase import from an inline module, or else the
+				// bindings its phase doesn't allow, from the checker, so a collecting
+				// parse goes on.
+				if (phase !== null && node.source.type !== 'Literal') {
+					this.#raiseCheckerError(
+						/** @type {number} */ (node.source.start),
+						TS_ERRORS.STRING_LITERAL_EXPECTED,
+					);
+				} else if (phase === 'defer') {
+					const [first] = node.specifiers;
+					if (!has_clause) {
+						this.raise(phase_start, TS_ERRORS.IMPORT_DEFER_NAMESPACE);
+					} else if (first?.type === 'ImportDefaultSpecifier') {
+						this.#raiseCheckerError(phase_start, TS_ERRORS.IMPORT_DEFER_DEFAULT);
+					} else if (first?.type !== 'ImportNamespaceSpecifier') {
+						// Also `import defer {} from "m"`.
+						this.#raiseCheckerError(phase_start, TS_ERRORS.IMPORT_DEFER_NAMED);
 					}
-					// TypeScript reports these from the checker, so a collecting parse
-					// goes on.
+				} else if (phase === 'source') {
 					if (node.specifiers.length === 0) {
 						this.#raiseCheckerError(phase_start, TS_ERRORS.IMPORT_SOURCE_BINDING);
 					} else if (
@@ -10881,7 +10917,54 @@ export function TSRXPlugin(config) {
 				) {
 					this.expectContextual('from');
 				}
+				// UPSTREAM(sveltejs/acorn-typescript#167): remove once a release includes the fix
+				if (this.isContextual('from')) {
+					const specifier = this.lookahead();
+					if (specifier.type !== tt.string) this.#raiseModuleSpecifierError(specifier);
+				}
 				return specifiers;
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#167): remove once a release includes the fix
+			/**
+			 * Report the module specifier of `export * from` or `export * as ns from`
+			 * when it isn't a string (see `#raiseModuleSpecifierError`), where
+			 * acorn-typescript raised `Unexpected token`. A missing `from` is
+			 * `expectContextual`'s.
+			 * @type {Parse.Parser['parseExportAllDeclaration']}
+			 */
+			parseExportAllDeclaration(node, exports) {
+				// `as` and the exported name come before the `from`.
+				const from_index = this.isContextual('as') ? 2 : 0;
+				if (
+					from_index === 0
+						? this.isContextual('from')
+						: this.isContextualWithState('from', this.lookahead(from_index))
+				) {
+					const specifier = this.lookahead(from_index + 1);
+					if (specifier.type !== tt.string) this.#raiseModuleSpecifierError(specifier);
+				}
+				return super.parseExportAllDeclaration(node, exports);
+			}
+
+			/**
+			 * Report a module specifier that isn't a string as TypeScript does. It
+			 * reads any expression after `from` (`parseModuleSpecifier`), and its
+			 * checker reports TS1141 `String literal expected.` at it, or its parser
+			 * TS1109 `Expression expected.` where no expression starts. The tree has
+			 * no place for another expression, so a collecting parse stops here too.
+			 * An import's name after `from` is an inline module instead.
+			 * @param {{ type: Parse.TokenType, start: number }} token the current
+			 *   token or a `lookahead()` snapshot
+			 * @returns {never}
+			 */
+			#raiseModuleSpecifierError(token) {
+				const starts_expression =
+					token.type.startsExpr || Parser.acornTypeScript.tokenIsIdentifier(token.type);
+				return this.raise(
+					token.start,
+					starts_expression ? TS_ERRORS.STRING_LITERAL_EXPECTED : TS_ERRORS.EXPRESSION_EXPECTED,
+				);
 			}
 
 			/**

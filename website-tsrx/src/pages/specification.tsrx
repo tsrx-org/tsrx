@@ -814,6 +814,7 @@ const TYPESCRIPT_ERROR_CODES = [
 	'TS18016  Private identifiers are not allowed outside class bodies.',
 	"TS18019  '{0}' modifier cannot be used with a private identifier.",
 	"TS18037  'await' expression cannot be used inside a class static block.",
+	'TS18058  Default imports are not allowed in a deferred import.',
 	'TS18059  Named imports are not allowed in a deferred import.',
 	'TS18111  A source phase import must specify a local binding.',
 	'TS18112  Named and namespace imports are not allowed in a source phase import.',

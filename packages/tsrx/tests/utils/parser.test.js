@@ -477,17 +477,52 @@ describe('TSRX parser', () => {
 			expect(expression).not.toHaveProperty('arguments');
 		});
 
-		it('rejects deferred default, named, and bare imports', () => {
-			for (const source of [
-				"import defer feature from './feature.js';",
-				"import defer { feature } from './feature.js';",
-				"import defer './feature.js';",
+		it('reports default and named bindings as TypeScript does, from a parse that goes on', () => {
+			for (const [source, error] of /** @type {const} */ ([
+				["import defer feature from './feature.js';", TS_ERRORS.IMPORT_DEFER_DEFAULT],
+				["import defer feature, * as ns from './feature.js';", TS_ERRORS.IMPORT_DEFER_DEFAULT],
+				["import defer feature, { other } from './feature.js';", TS_ERRORS.IMPORT_DEFER_DEFAULT],
 				// `defer` before a second `from` is the phase, as in TypeScript.
-				"import defer from from './feature.js';",
+				["import defer from from './feature.js';", TS_ERRORS.IMPORT_DEFER_DEFAULT],
+				["import defer { feature } from './feature.js';", TS_ERRORS.IMPORT_DEFER_NAMED],
+				["import defer {} from './feature.js';", TS_ERRORS.IMPORT_DEFER_NAMED],
+			])) {
+				expect(() => parseModule(source, 'App.tsrx'), source).toThrow(error_with(error, '1:7'));
+
+				/** @type {CompileError[]} */
+				const errors = [];
+				const [declaration] = parseModule(source, 'App.tsrx', { collect: true, errors }).body;
+				expect(
+					errors.map((found) => found.code),
+					source,
+				).toEqual([error.code]);
+				expect(as_type(declaration, 'ImportDeclaration').phase, source).toBe('defer');
+			}
+		});
+
+		it('rejects a deferred import without bindings', () => {
+			// TypeScript reads it as an ordinary import without an error, and leaves
+			// `defer` out of its output.
+			for (const collect of [false, true]) {
+				expect(() =>
+					parseModule("import defer './feature.js';", 'App.tsrx', { collect, errors: [] }),
+				).toThrow(error_with(TS_ERRORS.IMPORT_DEFER_NAMESPACE, '1:7'));
+			}
+		});
+
+		it('reads `defer` or `source` written with an escape after `import.` as the phase, with TS1260', () => {
+			// TypeScript reads the name as the phase (`parseImportMetaPropertyName`).
+			for (const source of [
+				"const feature = import.d\\u0065fer('./feature.js');",
+				"const module = import.sour\\u0063e('./module.wasm');",
+				'const feature = import.d\\u0065fer;',
 			]) {
-				expect(() => parseModule(source, 'App.tsrx')).toThrow(
-					error_with(TS_ERRORS.IMPORT_DEFER_NAMESPACE),
-				);
+				const at = `1:${source.indexOf('import.') + 'import.'.length}`;
+				for (const collect of [false, true]) {
+					expect(() => parseModule(source, 'App.tsrx', { collect, errors: [] }), source).toThrow(
+						error_with(TS_ERRORS.KEYWORD_ESCAPE, at),
+					);
+				}
 			}
 		});
 	});
@@ -591,10 +626,31 @@ describe('TSRX parser', () => {
 			}
 		});
 
-		it('rejects a source phase import from an inline module', () => {
-			expect(() => parseModule('import source module from server;', 'App.tsrx')).toThrow(
-				error_with(TS_ERRORS.STRING_LITERAL_EXPECTED, '1:26'),
-			);
+		it('reports a phase import from an inline module as TypeScript does, from a parse that goes on', () => {
+			for (const source of [
+				'import source module from server;',
+				'import source { module } from server;',
+				'import defer * as feature from server;',
+				'import defer feature from server;',
+			]) {
+				const pos = source.indexOf('server');
+				expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+					error_with(TS_ERRORS.STRING_LITERAL_EXPECTED, `1:${pos}`),
+				);
+
+				// TypeScript's checker reports only this, and not the bindings.
+				/** @type {CompileError[]} */
+				const errors = [];
+				const [declaration] = parseModule(source, 'App.tsrx', { collect: true, errors }).body;
+				expect(
+					errors.map((found) => [found.code, found.pos]),
+					source,
+				).toEqual([[TS_ERRORS.STRING_LITERAL_EXPECTED.code, pos]]);
+				expect(as_type(declaration, 'ImportDeclaration').source, source).toMatchObject({
+					type: 'Identifier',
+					name: 'server',
+				});
+			}
 		});
 
 		it('never reads an import with a phase as an import-equals declaration', () => {

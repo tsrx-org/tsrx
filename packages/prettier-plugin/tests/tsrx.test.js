@@ -2447,6 +2447,8 @@ describe('parse errors', () => {
 				'1:23',
 			],
 			['import.foo("x");', 'TS17012', '1:8'],
+			['import defer a from "m";', TS_ERRORS.IMPORT_DEFER_DEFAULT, '1:8'],
+			['import defer { a } from "m";', TS_ERRORS.IMPORT_DEFER_NAMED, '1:8'],
 			['@dec function f() {}', TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:1'],
 			[
 				`class A {

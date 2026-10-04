@@ -3608,7 +3608,12 @@ describe('a missing `from`, `=` or `namespace` in an import or export (sveltejs/
 			['import * as ns "m";', 'from', '"m"'],
 			['import a, { b } "m";', 'from', '"m"'],
 			['import type { a } "m";', 'from', '"m"'],
-			['import { a }\n"m";', 'from', '"m"'],
+			[
+				`import { a }
+"m";`,
+				'from',
+				'"m"',
+			],
 			['import { a } server;', 'from', 'server'],
 			['import defer * as ns "m";', 'from', '"m"'],
 			['import source a = require("m");', 'from', '='],
@@ -3622,7 +3627,12 @@ describe('a missing `from`, `=` or `namespace` in an import or export (sveltejs/
 			['import type a "m";', '=', '"m"'],
 			['import a b from "m";', '=', 'b'],
 			['import a;', '=', ';'],
-			['import a\n"m";', '=', '"m"'],
+			[
+				`import a
+"m";`,
+				'=',
+				'"m"',
+			],
 			['import a server;', '=', 'server'],
 		];
 		const outcomes = await parseBothModes(cases.map(([source]) => source));
@@ -3640,7 +3650,11 @@ describe('a missing `from`, `=` or `namespace` in an import or export (sveltejs/
 			['import { a } fr\\u006fm "m";', 'fr\\u006fm'],
 			['import a fr\\u006fm "m";', 'fr\\u006fm'],
 			['export { a } fr\\u006fm "m";', 'fr\\u006fm'],
-			['export { a }\nfr\\u006fm "m";', 'fr\\u006fm'],
+			[
+				`export { a }
+fr\\u006fm "m";`,
+				'fr\\u006fm',
+			],
 			['export * fr\\u006fm "m";', 'fr\\u006fm'],
 			['export as n\\u0061mespace N;', 'n\\u0061mespace'],
 		];
@@ -3660,7 +3674,9 @@ describe('a missing `from`, `=` or `namespace` in an import or export (sveltejs/
 			'import from from "m";',
 			'import source from server;',
 			'import a from server;',
-			'const a = 1;\nexport { a }\n"m";',
+			`const a = 1;
+export { a }
+"m";`,
 			'export as namespace N;',
 		];
 		const outcomes = await parseBothModes(cases);
@@ -3668,6 +3684,77 @@ describe('a missing `from`, `=` or `namespace` in an import or export (sveltejs/
 			for (const outcome of [strict, collect]) {
 				expect(parsed(outcome, source).errors, source).toEqual([]);
 			}
+		}
+	});
+});
+
+// #1051
+describe('`type` after `import` (sveltejs/acorn-typescript#166)', () => {
+	it('reads `type` before anything but a name, `*` or `{` as the imported name, and expects `=`', async () => {
+		// As in TypeScript, the name then starts an import-equals declaration.
+		/** @type {Array<[source: string, at: string]>} */
+		const cases = [
+			['import type "m";', '"m"'],
+			[
+				`import type
+"m";`,
+				'"m"',
+			],
+			['import type;', ';'],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			const error = thrown(TS_ERRORS.TOKEN_EXPECTED('='), source.indexOf(cases[index][1]));
+			expect(strict, source).toMatchObject(error);
+			expect(collect, source).toMatchObject(error);
+		}
+	});
+
+	it('reads `type` before `from from` or `from =` as the modifier, binding `from`', async () => {
+		/** @type {Array<[source: string, type: string]>} */
+		const cases = [
+			['import type from from "m";', 'ImportDeclaration'],
+			['import type from = require("m");', 'TSImportEqualsDeclaration'],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			for (const outcome of [strict, collect]) {
+				const { ast, errors } = parsed(outcome, source);
+				expect(errors, source).toEqual([]);
+				const statement = /** @type {any} */ (ast.body[0]);
+				expect(statement.type, source).toBe(cases[index][1]);
+				expect(statement.importKind, source).toBe('type');
+				expect((statement.id ?? statement.specifiers[0].local).name, source).toBe('from');
+			}
+		}
+	});
+});
+
+// #1051
+describe('a module specifier that is not a string (sveltejs/acorn-typescript#167)', () => {
+	it('reports TS1141, or TS1109 where no expression starts, as TypeScript does', async () => {
+		// TypeScript reads any expression there, and its checker reports TS1141.
+		// The tree has no place for one, so a collecting parse stops too. A name
+		// after an import's `from` is an inline module instead.
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
+		const cases = [
+			['import { a } from 1;', TS_ERRORS.STRING_LITERAL_EXPECTED, '1'],
+			['import { a } from (m);', TS_ERRORS.STRING_LITERAL_EXPECTED, '('],
+			['export { a } from 1;', TS_ERRORS.STRING_LITERAL_EXPECTED, '1'],
+			['export { a } from m;', TS_ERRORS.STRING_LITERAL_EXPECTED, 'm;'],
+			['export * from m;', TS_ERRORS.STRING_LITERAL_EXPECTED, 'm;'],
+			['export * as ns from 1;', TS_ERRORS.STRING_LITERAL_EXPECTED, '1'],
+			['import { a } from;', TS_ERRORS.EXPRESSION_EXPECTED, ';'],
+			['import { a } from };', TS_ERRORS.EXPRESSION_EXPECTED, '};'],
+			['export { a } from;', TS_ERRORS.EXPRESSION_EXPECTED, ';'],
+			['export * from;', TS_ERRORS.EXPRESSION_EXPECTED, ';'],
+		];
+		const outcomes = await parseBothModes(cases.map(([source]) => source));
+		for (const [index, { source, strict, collect }] of outcomes.entries()) {
+			const [, error, at] = cases[index];
+			const expected = thrown(error, source.indexOf(at));
+			expect(strict, source).toMatchObject(expected);
+			expect(collect, source).toMatchObject(expected);
 		}
 	});
 });
