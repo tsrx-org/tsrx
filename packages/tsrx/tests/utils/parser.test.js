@@ -7695,6 +7695,57 @@ describe('comments placed like Prettier', () => {
 		expect(commentsOf(statement.consequent).leading).toBeUndefined();
 	});
 
+	// Prettier reads CR, U+2028 and U+2029 as line breaks, as it reads LF (#1035)
+	it.each(LINE_TERMINATORS)(
+		'places a comment at the end of a line that ends with %s',
+		(_name, newline) => {
+			/**
+			 * @param {string} source
+			 * @returns {any[]}
+			 */
+			const statements = (source) => parseModule(source.replaceAll('\n', newline), 'App.ts').body;
+
+			const [first, second] = statements('const a = 1 // c\nconst b = 2');
+			expect(commentsOf(first).trailing).toEqual([' c']);
+			expect(commentsOf(second).leading).toBeUndefined();
+
+			const [block] = statements('const a = 1 /* c */\nconst b = 2');
+			expect(commentsOf(block).trailing).toEqual([' c ']);
+
+			const [call] = statements('f(a, // c\nb);');
+			expect(commentsOf(call.expression.arguments[0]).trailing).toEqual([' c']);
+
+			const [object] = statements('const o = {\n  a: 1, // c\n  b: 2,\n};');
+			expect(commentsOf(object.declarations[0].init.properties[0]).trailing).toEqual([' c']);
+
+			const [named] = statements('import { a, // c\n  b } from "x";');
+			expect(commentsOf(named.specifiers[0]).trailing).toEqual([' c']);
+
+			const [template] = statements('const t = `a\nb` // c\nconst u = 1');
+			expect(commentsOf(template).trailing).toEqual([' c']);
+
+			const [declare] = statements('declare // c\nnamespace A {}');
+			expect(commentsOf(declare).trailing).toEqual([' c']);
+
+			// A comment with blank lines on both sides stays with the code before it.
+			const [before, after] = statements('const a = 1\n\n// c\n\nconst b = 2');
+			expect(commentsOf(before).trailing).toEqual([' c']);
+			expect(commentsOf(after).leading).toBeUndefined();
+		},
+	);
+
+	it.each(LINE_TERMINATORS)(
+		'removes the indentation of a block comment over lines that end with %s',
+		(_name, newline) => {
+			const source = 'class A {\n  /**\n   * doc\n   */\n  m() {}\n}'.replaceAll('\n', newline);
+			const [declaration] = /** @type {any[]} */ (parseModule(source, 'App.ts').body);
+
+			expect(commentsOf(declaration.body.body[0]).leading).toEqual([
+				['*', ' * doc', ' '].join(newline),
+			]);
+		},
+	);
+
 	/**
 	 * Parse each source in a worker, and fail on any that throws
 	 * @param {string[]} sources

@@ -31,6 +31,10 @@ declare module 'acorn' {
 		offset(offset: number): Position;
 	}
 	function isNewLine(code: number): boolean;
+	/** A line break: CRLF, CR, LF, U+2028 or U+2029. */
+	const lineBreak: RegExp;
+	/** {@link lineBreak} with the `g` flag. */
+	const lineBreakG: RegExp;
 
 	interface Parser {
 		readToken(...args: Parameters<ReadToken>): ReturnType<ReadToken>;

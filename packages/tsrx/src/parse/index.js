@@ -40,6 +40,16 @@ export function DestructuringErrors() {
 const regex_whitespace_only = /\s/;
 
 /**
+ * Whether `text` has a blank line: two line breaks (a CRLF pair is one) with
+ * only whitespace between them.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function includesBlankLine(text) {
+	return /\n\s*\n/.test(text.replace(acorn.lineBreakG, '\n'));
+}
+
+/**
  * Skip whitespace characters without skipping comments.
  * This is needed because Acorn's skipSpace() also skips comments, which breaks
  * parsing in certain contexts. Updates parser position and line tracking.
@@ -289,6 +299,29 @@ export function createParser(...plugins) {
  */
 export function get_comment_handlers(source, comments, index = 0) {
 	/**
+	 * The position of the first line terminator from `start` on, where a line
+	 * comment before it ends, or -1.
+	 * @param {number} start
+	 * @returns {number}
+	 */
+	function nextLineTerminator(start) {
+		for (let i = start; i < source.length; i++) {
+			if (acorn.isNewLine(source.charCodeAt(i))) return i;
+		}
+		return -1;
+	}
+
+	/**
+	 * Whether a line terminator is in the source between two positions.
+	 * @param {number} start
+	 * @param {number} end
+	 * @returns {boolean}
+	 */
+	function hasLineBreakBetween(start, end) {
+		return acorn.lineBreak.test(source.slice(start, end));
+	}
+
+	/**
 	 * Find the first `token` between two positions that isn't inside a comment,
 	 * such as the comma after a list element or the `from` of an import. Only
 	 * punctuation, whitespace, and comments can come before it there.
@@ -302,7 +335,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			if (source.startsWith('/*', i)) {
 				i = source.indexOf('*/', i + 2) + 1;
 			} else if (source.startsWith('//', i)) {
-				const newline = source.indexOf('\n', i);
+				const newline = nextLineTerminator(i);
 				i = newline === -1 ? end : newline;
 			} else if (source.startsWith(token, i)) {
 				return i;
@@ -325,7 +358,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 				if (end === -1) return -1;
 				i = end + 1;
 			} else if (source.startsWith('//', i)) {
-				const newline = source.indexOf('\n', i);
+				const newline = nextLineTerminator(i);
 				if (newline === -1) return -1;
 				i = newline;
 			} else if (!/\s/.test(source[i])) {
@@ -360,7 +393,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 				i = source.indexOf('*/', i + 2) + 1;
 				if (i === 0) return false;
 			} else if (source.startsWith('//', i)) {
-				const newline = source.indexOf('\n', i);
+				const newline = nextLineTerminator(i);
 				if (newline === -1 || newline >= end) return false;
 				i = newline;
 			} else if (!/\s/.test(source[i]) && !(parens && source[i] === ')')) {
@@ -486,7 +519,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 		// One on a line of its own moves only out of the value's parentheses
 		// before the `;`. Before a `,`, Prettier's next pass gives it to the next
 		// declarator (#750).
-		if (source.slice(nodeEnd, comments[0].start).includes('\n') && (!inParens || declarator)) {
+		if (hasLineBreakBetween(nodeEnd, comments[0].start) && (!inParens || declarator)) {
 			return false;
 		}
 		/** @type {AST.Node & AST.NodeWithLocation} */
@@ -556,7 +589,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 		while (
 			comments[first] &&
 			comments[first].end <= semicolon &&
-			(!source.slice(previousEnd, comments[first].start).includes('\n') ||
+			(!hasLineBreakBetween(previousEnd, comments[first].start) ||
 				(!declarator && !isBlankBetween(comments[first].end, semicolon, false)))
 		) {
 			const comment = /** @type {AST.CommentWithLocation} */ (comments.splice(first, 1)[0]);
@@ -859,7 +892,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 		if (
 			last?.type !== 'ArrowFunctionExpression' ||
 			last.body !== body ||
-			source.slice(body.end, comments[0].start).includes('\n') ||
+			hasLineBreakBetween(body.end, comments[0].start) ||
 			!body.metadata?.parenthesized ||
 			keepsCommentsInArrowBodyParens(body) ||
 			body.type === 'ArrowFunctionExpression'
@@ -912,7 +945,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 				call.callee === first
 			) ||
 			comments[0].start < first.end ||
-			source.slice(first.end, comments[0].start).includes('\n') ||
+			hasLineBreakBetween(first.end, comments[0].start) ||
 			getNextNonSpaceNonCommentCharacter(comments[0].end) !== ')'
 		) {
 			return false;
@@ -990,7 +1023,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			body.type === 'SequenceExpression' ||
 			body.type === 'ConditionalExpression' ||
 			body.type.startsWith('JSX') ||
-			template?.quasis.some((quasi) => quasi.value.raw.includes('\n'))
+			template?.quasis.some((quasi) => acorn.lineBreak.test(quasi.value.raw))
 		) {
 			return 'line';
 		}
@@ -1078,7 +1111,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			let previousEnd = from;
 			comments[count] &&
 			comments[count].end <= end &&
-			!source.slice(previousEnd, comments[count].start).includes('\n');
+			!hasLineBreakBetween(previousEnd, comments[count].start);
 			count++
 		) {
 			previousEnd = comments[count].end;
@@ -1507,7 +1540,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			} else if (source[i] === ' ' || source[i] === '\t') {
 				i--;
 			} else {
-				return source[i] === '\n' || source[i] === '\r';
+				return acorn.isNewLine(source.charCodeAt(i));
 			}
 		}
 		return false;
@@ -1530,7 +1563,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			} else if (source[i] === ' ' || source[i] === '\t') {
 				i++;
 			} else {
-				return source[i] === '\n' || source[i] === '\r';
+				return acorn.isNewLine(source.charCodeAt(i));
 			}
 		}
 		return false;
@@ -1805,7 +1838,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 		addLeadingComment(
 			node.type === 'TSUnionType' &&
 				comment.type === 'Block' &&
-				!source.slice(comment.start, comment.end).includes('\n') &&
+				!hasLineBreakBetween(comment.start, comment.end) &&
 				!isPrettierIgnoreComment(comment) &&
 				/^[ \t]*$/.test(source.slice(comment.end, node.start))
 				? getUnionCommentTarget(/** @type {AST.TSUnionType} */ (node), comment)
@@ -2099,9 +2132,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			(type === 'ConditionalExpression' || type === 'TSConditionalType') &&
 			following &&
 			(!preceding ||
-				source
-					.slice(/** @type {AST.NodeWithLocation} */ (preceding).end, comment.start)
-					.includes('\n'))
+				hasLineBreakBetween(/** @type {AST.NodeWithLocation} */ (preceding).end, comment.start))
 		) {
 			addLeadingComment(following, comment);
 			return true;
@@ -2263,7 +2294,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 			!endOfLine &&
 			following?.type === 'TSUnionType' &&
 			comment.type === 'Block' &&
-			!source.slice(comment.start, comment.end).includes('\n') &&
+			!hasLineBreakBetween(comment.start, comment.end) &&
 			!isPrettierIgnoreComment(comment) &&
 			/^[ \t]*$/.test(source.slice(comment.end, following.start))
 		) {
@@ -2583,9 +2614,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 		 * @type {Parse.Options['onComment']}
 		 */
 		onComment: (block, value, start, end, start_loc, end_loc) => {
-			if (block && /\n/.test(value)) {
+			if (block && acorn.lineBreak.test(value)) {
 				let a = start;
-				while (a > 0 && source[a - 1] !== '\n') a -= 1;
+				while (a > 0 && !acorn.isNewLine(source.charCodeAt(a - 1))) a -= 1;
 
 				let b = a;
 				while (/[ \t]/.test(source[b])) b += 1;
@@ -3151,10 +3182,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 							);
 							while (comments[0] && comments[0].end <= elseStart) {
 								const comment = /** @type {AST.CommentWithLocation} */ (comments.shift());
-								if (
-									node.type !== 'BlockStatement' &&
-									!source.slice(nodeEnd, comment.end).includes('\n')
-								) {
+								if (node.type !== 'BlockStatement' && !hasLineBreakBetween(nodeEnd, comment.end)) {
 									(node.trailingComments ||= []).push(comment);
 								} else {
 									pushInnerComment(ifStatement, comment);
@@ -3394,7 +3422,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 									!isAfterParent &&
 									(opensNamedSpecifiers ? /^[,{ \t]*$/ : /^[,) \t]*$/).test(slice);
 								const onlyWhitespace = /^\s*$/.test(slice);
-								const hasBlankLine = /\n\s*\n/.test(slice);
+								const hasBlankLine = includesBlankLine(slice);
 								const nodeEndLine = end_node.loc?.end?.line ?? null;
 								const commentStartLine = comments[0].loc?.start?.line ?? null;
 								const commentOnSameLine =
@@ -3547,7 +3575,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 											const sliceBetween = source.slice(currentComment.end, nextComment.start);
 
 											// If there's a blank line, stop
-											if (/\n\s*\n/.test(sliceBetween)) {
+											if (includesBlankLine(sliceBetween)) {
 												break;
 											}
 
@@ -3557,7 +3585,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 
 										// Check if there's a blank line after the last comment and before next sibling
 										const sliceAfterComments = source.slice(lastCommentEnd, nextSibling.start);
-										const hasBlankLineAfter = /\n\s*\n/.test(sliceAfterComments);
+										const hasBlankLineAfter = includesBlankLine(sliceAfterComments);
 
 										if (hasBlankLineAfter) {
 											// Don't attach comments as trailing if they are inside the next template node.
