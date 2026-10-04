@@ -279,6 +279,29 @@ export function App() @{ <><style apply={[a, b]} /><div /></> }`,
 			expect(array.diagnostics).toEqual([]);
 		});
 
+		it('accepts parenthesized blocks and apply values in type-only output', () => {
+			const single = check_source(
+				compile_to_volar_mappings,
+				`const theme = (
+	<style>.dark { color: red; }</style>
+);
+export function App() @{ <><style apply={(theme)} /><div /></> }`,
+			);
+			const array = check_source(
+				compile_to_volar_mappings,
+				`const a = (<style>.a { color: red; }</style>);
+const themes = ({ b: (<style>.b { color: blue; }</style>) });
+export function App() @{ <><style apply={([(a), (themes).b])} /><div /></> }`,
+			);
+
+			expect(single.errors).toEqual([]);
+			expect(single.code).toContain('<style data-tsrx-apply={theme.$class} />');
+			expect(single.diagnostics).toEqual([]);
+			expect(array.errors).toEqual([]);
+			expect(array.code).toContain('<style data-tsrx-apply={[a.$class, (themes).b.$class]} />');
+			expect(array.diagnostics).toEqual([]);
+		});
+
 		it.each([
 			['a number', 'const theme = 1;', "'1'"],
 			['an object without $class', "const theme = { dark: 'x' };", "'{ dark: string; }'"],
