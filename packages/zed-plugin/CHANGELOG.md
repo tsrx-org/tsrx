@@ -1,5 +1,39 @@
 # @tsrx/zed-plugin
 
+## 0.1.4
+
+### Patch Changes
+
+- [#1057](https://github.com/tsrx-org/tsrx/pull/1057)
+  [`aa13392`](https://github.com/tsrx-org/tsrx/commit/aa133921a960761f79ee69adf18ab225eaf7a440)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The tree-sitter grammar now
+  parses these without errors:
+
+  - indexed access types (`Props['title']`), `typeof` and `keyof` in types, and
+    `readonly` array and tuple types; `keyof` is highlighted as a keyword
+  - `A | B[]` and `A & B[]` as a union or intersection with an array type, and
+    `A | B & C` with `&` first, as TypeScript reads them
+  - holes in arrays and array patterns (`[a, , b]`)
+  - a type on a `catch` or `@catch` parameter
+    (`@catch (err: Error, reset: () => void)`)
+  - escapes in template strings (`` \` ``, `\${`, `\n`)
+  - JSX text with `<` or `>` that does not start a tag (`1 < 2 > 0`), with an `@`
+    that does not start a directive (`@tsrx/react`, `<code>@if</code>`), or that
+    starts with `-` (`<code>--flag</code>`)
+
+  Every `.tsrx` file in the TSRX repository now parses without errors.
+
+- [#1057](https://github.com/tsrx-org/tsrx/pull/1057)
+  [`aa13392`](https://github.com/tsrx-org/tsrx/commit/aa133921a960761f79ee69adf18ab225eaf7a440)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The tree-sitter grammar now
+  parses a `<style>` or `<script>` block wherever an expression can go. This
+  includes the parenthesized form the formatter writes for an assigned theme
+  (`const theme = (<style>…</style>);`), `export default`, a return, an arrow body
+  and an argument. Before, it parsed a block only right after `=`, and anywhere
+  else it read the CSS as JSX. A `<style>` body now also ends only at `</style>`,
+  so CSS that contains `<`, such as `@media (width < 600px)` or `content: '<'`,
+  parses.
+
 ## 0.1.3
 
 ### Patch Changes
