@@ -31,6 +31,7 @@ module.exports = grammar({
 		$._ternary_qmark,
 		$.jsx_text,
 		$._script_content,
+		$._style_content,
 	],
 
 	extras: ($) => [/\s/, $.comment],
@@ -724,8 +725,10 @@ module.exports = grammar({
 
 		jsx_finally_clause: ($) => seq('finally', field('body', $.jsx_template_block)),
 
-		// Raw-text `<style>` element: the body is verbatim CSS, never template
-		// markup. The self-closing form (`<style apply={theme} />`) has no body.
+		// Raw-text `<style>` element: the body is verbatim CSS (scanned by the
+		// external scanner up to the literal `</style>`, so `<` and comments in the
+		// CSS stay in it), never template markup. The self-closing form
+		// (`<style apply={theme} />`) has no body.
 		style_element: ($) =>
 			prec(
 				1,
@@ -735,8 +738,6 @@ module.exports = grammar({
 					choice('/>', seq('>', optional(alias($._style_content, $.raw_text)), '</style>')),
 				),
 			),
-
-		_style_content: ($) => /[^<]+/,
 
 		// Raw-text `<script>` element: the body is verbatim JS/TS (scanned by the
 		// external scanner up to the literal `</script>`), never template markup.
@@ -991,6 +992,11 @@ module.exports = grammar({
 				$.jsx_for_expression,
 				$.jsx_switch_expression,
 				$.jsx_try_expression,
+				// Raw-text elements are values wherever an expression is:
+				// `(<style>…</style>)`, `export default <style>…</style>`, a
+				// return, an arrow body or an argument, as well as `= <style>`.
+				prec(2, $.style_element),
+				prec(2, $.script_element),
 			),
 
 		module_declaration: ($) =>
@@ -1019,7 +1025,7 @@ module.exports = grammar({
 						),
 					),
 					'=',
-					field('right', choice($.expression, $.style_element, $.script_element)),
+					field('right', $.expression),
 				),
 			),
 
@@ -1516,7 +1522,7 @@ module.exports = grammar({
 
 		parenthesized_type: ($) => seq('(', $.type, ')'),
 
-		initializer: ($) => seq('=', choice($.expression, $.style_element, $.script_element)),
+		initializer: ($) => seq('=', $.expression),
 
 		_semicolon: ($) => choice($._automatic_semicolon, ';'),
 	},

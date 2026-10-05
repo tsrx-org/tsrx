@@ -3335,10 +3335,6 @@
         ]
       }
     },
-    "_style_content": {
-      "type": "PATTERN",
-      "value": "[^<]+"
-    },
     "script_element": {
       "type": "PREC",
       "value": 1,
@@ -4977,6 +4973,22 @@
         {
           "type": "SYMBOL",
           "name": "jsx_try_expression"
+        },
+        {
+          "type": "PREC",
+          "value": 2,
+          "content": {
+            "type": "SYMBOL",
+            "name": "style_element"
+          }
+        },
+        {
+          "type": "PREC",
+          "value": 2,
+          "content": {
+            "type": "SYMBOL",
+            "name": "script_element"
+          }
         }
       ]
     },
@@ -5139,21 +5151,8 @@
             "type": "FIELD",
             "name": "right",
             "content": {
-              "type": "CHOICE",
-              "members": [
-                {
-                  "type": "SYMBOL",
-                  "name": "expression"
-                },
-                {
-                  "type": "SYMBOL",
-                  "name": "style_element"
-                },
-                {
-                  "type": "SYMBOL",
-                  "name": "script_element"
-                }
-              ]
+              "type": "SYMBOL",
+              "name": "expression"
             }
           }
         ]
@@ -9195,21 +9194,8 @@
           "value": "="
         },
         {
-          "type": "CHOICE",
-          "members": [
-            {
-              "type": "SYMBOL",
-              "name": "expression"
-            },
-            {
-              "type": "SYMBOL",
-              "name": "style_element"
-            },
-            {
-              "type": "SYMBOL",
-              "name": "script_element"
-            }
-          ]
+          "type": "SYMBOL",
+          "name": "expression"
         }
       ]
     },
@@ -9571,6 +9557,10 @@
     {
       "type": "SYMBOL",
       "name": "_script_content"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_style_content"
     }
   ],
   "inline": [

@@ -8,6 +8,7 @@ enum TokenType {
   TERNARY_QMARK,
   JSX_TEXT,
   SCRIPT_CONTENT,
+  STYLE_CONTENT,
 };
 
 void *tree_sitter_tsrx_external_scanner_create() { return NULL; }
@@ -271,14 +272,13 @@ static bool scan_jsx_text(TSLexer *lexer) {
   }
 }
 
-// Raw `<script>` body: consume everything verbatim (including `<`, `{`, quotes
-// and comments) up to, but not including, the literal closing `</script>` tag.
-// Mirrors how tree-sitter-html scans raw text, so JS/TS bodies never parse as
-// template markup. Returns false for an empty body (the grammar's `optional`
-// handles that) or an unterminated element.
-static bool scan_script_content(TSLexer *lexer) {
-  lexer->result_symbol = SCRIPT_CONTENT;
-  const char *end_tag = "</script>";
+// Raw `<script>` or `<style>` body: consume everything verbatim (including `<`,
+// `{`, quotes and comments) up to, but not including, the literal closing tag
+// (`</script>` or `</style>`). Mirrors how tree-sitter-html scans raw text, so
+// JS/TS and CSS bodies never parse as template markup. Returns false for an
+// empty body (the grammar's `optional` handles that) or an unterminated element.
+static bool scan_raw_text(TSLexer *lexer, enum TokenType symbol, const char *end_tag) {
+  lexer->result_symbol = symbol;
   bool has_content = false;
 
   for (;;) {
@@ -293,7 +293,7 @@ static bool scan_script_content(TSLexer *lexer) {
         matched++;
       }
       if (end_tag[matched] == '\0') {
-        // Full `</script>` seen; mark_end above already excluded it.
+        // Full closing tag seen; mark_end above already excluded it.
         return has_content;
       }
       has_content = true;
@@ -315,7 +315,11 @@ bool tree_sitter_tsrx_external_scanner_scan(void *payload, TSLexer *lexer,
   }
 
   if (valid_symbols[SCRIPT_CONTENT]) {
-    return scan_script_content(lexer);
+    return scan_raw_text(lexer, SCRIPT_CONTENT, "</script>");
+  }
+
+  if (valid_symbols[STYLE_CONTENT]) {
+    return scan_raw_text(lexer, STYLE_CONTENT, "</style>");
   }
 
   if (valid_symbols[TEMPLATE_CHARS]) {
