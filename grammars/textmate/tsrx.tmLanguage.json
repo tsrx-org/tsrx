@@ -6545,6 +6545,10 @@
         }
       ]
     },
+    "embedded-grammar-fallback": {
+      "comment": "Never matches. A <style> or <script> body includes it after source.css or source.ts so the body rule always has a pattern: without one, a host that has not loaded the CSS or TypeScript grammar drops the body rule, and the tag then never closes.",
+      "match": "(?!)"
+    },
     "jsx-tag-style": {
       "name": "style.tag.js",
       "begin": "(<)\\s*(style)\\b(?=[\\s/>])",
@@ -6584,6 +6588,9 @@
           "patterns": [
             {
               "include": "source.css"
+            },
+            {
+              "include": "#embedded-grammar-fallback"
             }
           ]
         },
@@ -6634,6 +6641,9 @@
           "patterns": [
             {
               "include": "source.ts"
+            },
+            {
+              "include": "#embedded-grammar-fallback"
             }
           ]
         },
@@ -7050,7 +7060,36 @@
           "include": "#jsx-evaluated-code"
         },
         {
+          "include": "#jsx-tag-attribute-element"
+        },
+        {
           "include": "#jsx-tag-attributes-illegal"
+        }
+      ]
+    },
+    "jsx-tag-attribute-element": {
+      "comment": "An element or fragment as an attribute value without braces: content=<span>…</span>.",
+      "patterns": [
+        {
+          "include": "#jsx-tag-code"
+        },
+        {
+          "include": "#jsx-tag-style"
+        },
+        {
+          "include": "#jsx-tag-script"
+        },
+        {
+          "include": "#jsx-tag-fragment"
+        },
+        {
+          "include": "#jsx-tag-dynamic"
+        },
+        {
+          "include": "#jsx-tag-without-attributes"
+        },
+        {
+          "include": "#jsx-tag"
         }
       ]
     },
@@ -7070,7 +7109,7 @@
     },
     "jsx-tag-attribute-assignment": {
       "name": "keyword.operator.assignment.js",
-      "match": "=(?=\\s*(?:'|\"|{|/\\*|//|\\n))"
+      "match": "=(?=\\s*(?:'|\"|{|<|/\\*|//|\\n))"
     },
     "jsx-string-double-quoted": {
       "name": "string.quoted.double.js",

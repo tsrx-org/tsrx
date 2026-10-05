@@ -21,10 +21,24 @@ const grammar = JSON.parse(
 /** @type {import('shiki').Highlighter} */
 let highlighter;
 
+/**
+ * Loads only the TSRX grammar, without the CSS and TypeScript grammars that
+ * `<style>` and `<script>` bodies embed, as Shiki's grammar registry does when it
+ * tests each language on its own.
+ *
+ * @type {import('shiki').Highlighter}
+ */
+let tsrxOnlyHighlighter;
+
 beforeAll(async () => {
 	highlighter = await createHighlighter({
 		themes: ['nord'],
 		langs: ['css', 'typescript', { ...grammar, name: 'tsrx' }],
+		engine: createOnigurumaEngine(import('shiki/wasm')),
+	});
+	tsrxOnlyHighlighter = await createHighlighter({
+		themes: ['nord'],
+		langs: [{ ...grammar, name: 'tsrx' }],
 		engine: createOnigurumaEngine(import('shiki/wasm')),
 	});
 });
@@ -34,10 +48,11 @@ beforeAll(async () => {
  * (the root `source.tsrx` scope is omitted).
  *
  * @param {string} code
+ * @param {import('shiki').Highlighter} [using]
  * @returns {ScopedToken[]}
  */
-function tokenize(code) {
-	const lines = highlighter.codeToTokensBase(code, {
+function tokenize(code, using = highlighter) {
+	const lines = using.codeToTokensBase(code, {
 		// The TSRX grammar is registered at runtime, not one of shiki's bundled ids.
 		lang: /** @type {import('shiki').BundledLanguage} */ (/** @type {unknown} */ ('tsrx')),
 		theme: 'nord',
@@ -187,6 +202,120 @@ describe('TSRX TextMate grammar: <style> blocks', () => {
 	});
 });
 
+describe('TSRX TextMate grammar: without the CSS and TypeScript grammars', () => {
+	/**
+	 * @param {ScopedToken[]} tokens
+	 * @returns {ScopedToken[]}
+	 */
+	const invalid = (tokens) =>
+		tokens.filter((token) => token.scopes.some((scope) => scope.startsWith('invalid.')));
+
+	it('closes an assigned <style> block and highlights the code after it', () => {
+		const tokens = tokenize(
+			[
+				'const theme = <style>',
+				'  .done { color: red; }',
+				'</style>;',
+				'',
+				'export function App() @{',
+				'  <p class={theme.done} />',
+				'}',
+			].join('\n'),
+			tsrxOnlyHighlighter,
+		);
+
+		expect(find(tokens, '>').scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'punctuation.definition.tag.end.js']),
+		);
+		expect(find(tokens, '</').scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'punctuation.definition.tag.begin.js']),
+		);
+		expect(find(tokens, 'export').scopes).toContain('keyword.control.export.js');
+		expect(find(tokens, 'export').scopes).not.toContain('style.tag.js');
+		expect(find(tokens, 'p').scopes).toEqual(
+			expect.arrayContaining(['meta.tag.js', 'entity.name.tag.js']),
+		);
+		expect(invalid(tokens)).toEqual([]);
+	});
+
+	it('closes an assigned <style> block in parentheses', () => {
+		const tokens = tokenize(
+			[
+				'const theme = (',
+				'  <style>',
+				'    .done {',
+				'      color: red;',
+				'    }',
+				'  </style>',
+				');',
+				'',
+				'export function App() @{',
+				'  <p class={theme.done} />',
+				'}',
+			].join('\n'),
+			tsrxOnlyHighlighter,
+		);
+
+		expect(find(tokens, '>').scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'punctuation.definition.tag.end.js']),
+		);
+		expect(find(tokens, '</').scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'punctuation.definition.tag.begin.js']),
+		);
+		expect(find(tokens, ')').scopes).toContain('meta.brace.round.js');
+		expect(find(tokens, ')').scopes).not.toContain('style.tag.js');
+		expect(find(tokens, 'export').scopes).toContain('keyword.control.export.js');
+		expect(invalid(tokens)).toEqual([]);
+	});
+
+	it('closes a <style> block in a template before its siblings', () => {
+		const tokens = tokenize(
+			[
+				'function App() @{',
+				'  <section>',
+				'    <style>',
+				'      li { color: red; }',
+				'    </style>',
+				'    <ul />',
+				'  </section>',
+				'}',
+			].join('\n'),
+			tsrxOnlyHighlighter,
+		);
+
+		expect(find(tokens, 'style', 1).scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, 'ul').scopes).toContain('meta.tag.js');
+		expect(find(tokens, 'ul').scopes).not.toContain('style.tag.js');
+		expect(invalid(tokens)).toEqual([]);
+	});
+
+	it('closes a <script> block before its siblings', () => {
+		const tokens = tokenize(
+			[
+				'function App() @{',
+				'  <>',
+				'    <script>',
+				'      if (a < b) go();',
+				'    </script>',
+				'    <p>{text}</p>',
+				'  </>',
+				'}',
+			].join('\n'),
+			tsrxOnlyHighlighter,
+		);
+
+		expect(find(tokens, 'script', 1).scopes).toEqual(
+			expect.arrayContaining(['script.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'p').scopes).not.toContain('script.tag.js');
+		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+		expect(invalid(tokens)).toEqual([]);
+	});
+});
+
 describe('TSRX TextMate grammar: JSX expression boundaries', () => {
 	it('highlights the issue #100 JSX structure and embedded expressions independently', () => {
 		const tokens = tokenize(
@@ -327,6 +456,30 @@ describe('TSRX TextMate grammar: JSX expression boundaries', () => {
 		expect(find(tokens, '@', 1).scopes).toContain('keyword.control.directive.tsrx');
 		expect(find(tokens, 'for').scopes).toContain('keyword.control.directive.tsrx');
 		expect(find(tokens, 'item', 1).scopes).toContain('meta.embedded.expression.js');
+	});
+});
+
+describe('TSRX TextMate grammar: element attribute values', () => {
+	it('highlights an element or fragment as an attribute value without braces', () => {
+		const tokens = tokenize(
+			[
+				'function App() @{',
+				'  <Slot content=<span class="note"><b>t</b> 2</span> fallback=<>none</> />',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, '=').scopes).toContain('keyword.operator.assignment.js');
+		expect(find(tokens, 'span').scopes).toEqual(
+			expect.arrayContaining(['meta.tag.attributes.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, 'b').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'fallback').scopes).toContain('entity.other.attribute-name.js');
+		expect(find(tokens, 'none').scopes).toContain('meta.tag.fragment.js');
+		expect(find(tokens, '/>').scopes).toContain('punctuation.definition.tag.end.js');
+		expect(
+			tokens.filter((token) => token.scopes.some((scope) => scope.startsWith('invalid.'))),
+		).toEqual([]);
 	});
 });
 

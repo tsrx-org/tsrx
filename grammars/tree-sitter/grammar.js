@@ -22,6 +22,13 @@ const PREC = {
 	MEMBER: 15,
 };
 
+const TYPE_PREC = {
+	UNION: 1,
+	INTERSECTION: 2,
+	OPERATOR: 3,
+	POSTFIX: 4,
+};
+
 module.exports = grammar({
 	name: 'tsrx',
 
@@ -31,6 +38,7 @@ module.exports = grammar({
 		$._ternary_qmark,
 		$.jsx_text,
 		$._script_content,
+		$._style_content,
 	],
 
 	extras: ($) => [/\s/, $.comment],
@@ -94,6 +102,7 @@ module.exports = grammar({
 		[$.primary_expression, $.type, $.type_identifier],
 		[$.primary_expression, $.generic_type],
 		[$.primary_expression, $.nested_type_identifier],
+		[$.primary_expression, $.type_query],
 		[$.arrow_function, $.type, $.type_identifier],
 		[$.primary_expression, $.arrow_function],
 		[$.fragment_declaration],
@@ -120,10 +129,6 @@ module.exports = grammar({
 		[$.object_pattern, $.object_type],
 		[$.object_pattern, $.object, $.object_type],
 		[$.pattern, $.type, $.type_identifier],
-		[$.array_type, $.function_type],
-		[$._type_annotation, $.array_type],
-		[$.intersection_type, $.function_type],
-		[$.union_type, $.function_type],
 		[$.for_in_statement, $.primary_expression],
 		[$.jsx_template_block, $.primary_expression],
 		[$.jsx_template_block],
@@ -386,7 +391,14 @@ module.exports = grammar({
 		catch_clause: ($) =>
 			seq(
 				'catch',
-				optional(seq('(', field('parameter', choice($.identifier, $._destructuring_pattern)), ')')),
+				optional(
+					seq(
+						'(',
+						field('parameter', choice($.identifier, $._destructuring_pattern)),
+						optional($._type_annotation),
+						')',
+					),
+				),
 				field('body', $.statement_block),
 			),
 
@@ -714,7 +726,12 @@ module.exports = grammar({
 					optional(
 						seq(
 							'(',
-							commaSep1(field('parameter', choice($.identifier, $._destructuring_pattern))),
+							commaSep1(
+								seq(
+									field('parameter', choice($.identifier, $._destructuring_pattern)),
+									optional($._type_annotation),
+								),
+							),
 							')',
 						),
 					),
@@ -724,8 +741,10 @@ module.exports = grammar({
 
 		jsx_finally_clause: ($) => seq('finally', field('body', $.jsx_template_block)),
 
-		// Raw-text `<style>` element: the body is verbatim CSS, never template
-		// markup. The self-closing form (`<style apply={theme} />`) has no body.
+		// Raw-text `<style>` element: the body is verbatim CSS (scanned by the
+		// external scanner up to the literal `</style>`, so `<` and comments in the
+		// CSS stay in it), never template markup. The self-closing form
+		// (`<style apply={theme} />`) has no body.
 		style_element: ($) =>
 			prec(
 				1,
@@ -735,8 +754,6 @@ module.exports = grammar({
 					choice('/>', seq('>', optional(alias($._style_content, $.raw_text)), '</style>')),
 				),
 			),
-
-		_style_content: ($) => /[^<]+/,
 
 		// Raw-text `<script>` element: the body is verbatim JS/TS (scanned by the
 		// external scanner up to the literal `</script>`), never template markup.
@@ -921,13 +938,10 @@ module.exports = grammar({
 				field('right', $.expression),
 			),
 
+		// An element may be empty, which is a hole (`[a, , b]`) or a trailing
+		// comma (`[a,]`), as in tree-sitter-javascript.
 		array_pattern: ($) =>
-			seq(
-				'[',
-				commaSep(choice($.pattern, $.assignment_pattern, $.rest_pattern)),
-				optional(','),
-				']',
-			),
+			seq('[', commaSep(optional(choice($.pattern, $.assignment_pattern, $.rest_pattern))), ']'),
 
 		assignment_pattern: ($) => seq(field('left', $.pattern), '=', field('right', $.expression)),
 
@@ -991,6 +1005,11 @@ module.exports = grammar({
 				$.jsx_for_expression,
 				$.jsx_switch_expression,
 				$.jsx_try_expression,
+				// Raw-text elements are values wherever an expression is:
+				// `(<style>…</style>)`, `export default <style>…</style>`, a
+				// return, an arrow body or an argument, as well as `= <style>`.
+				prec(2, $.style_element),
+				prec(2, $.script_element),
 			),
 
 		module_declaration: ($) =>
@@ -1019,7 +1038,7 @@ module.exports = grammar({
 						),
 					),
 					'=',
-					field('right', choice($.expression, $.style_element, $.script_element)),
+					field('right', $.expression),
 				),
 			),
 
@@ -1256,10 +1275,13 @@ module.exports = grammar({
 		shorthand_property_identifier_pattern: ($) =>
 			alias($.identifier, $.shorthand_property_identifier),
 
-		array: ($) => seq('[', commaSep(choice($.expression, $.spread_element)), optional(','), ']'),
+		// An element may be empty: a hole (`[1, , 3]`) or a trailing comma.
+		array: ($) => seq('[', commaSep(optional(choice($.expression, $.spread_element))), ']'),
 
+		// `_template_chars` stops at a backslash; the escape (`\``, `\${`, `\n`) is
+		// an `escape_sequence`, as in a string.
 		template_string: ($) =>
-			seq('`', repeat(choice($._template_chars, $.template_substitution)), '`'),
+			seq('`', repeat(choice($._template_chars, $.escape_sequence, $.template_substitution)), '`'),
 
 		template_substitution: ($) => seq('${', $.expression, '}'),
 
@@ -1473,12 +1495,16 @@ module.exports = grammar({
 				$.generic_type,
 				$.object_type,
 				$.array_type,
+				$.lookup_type,
 				$.tuple_type,
 				$.union_type,
 				$.intersection_type,
 				$.function_type,
 				$.literal_type,
 				$.parenthesized_type,
+				$.type_query,
+				$.index_type_query,
+				$.readonly_type,
 			),
 
 		predefined_type: ($) =>
@@ -1502,13 +1528,25 @@ module.exports = grammar({
 		property_signature: ($) =>
 			seq(optional('readonly'), field('name', $.property_name), optional('?'), $._type_annotation),
 
-		array_type: ($) => seq($.type, '[', ']'),
+		// Type precedence, tightest first, as in TypeScript: the postfix `T[]` and
+		// `T[K]`, then `keyof` and `readonly`, then `&`, then `|`. So
+		// `A | B[]` is `A | (B[])` and `readonly T[]` is `readonly (T[])`.
+		array_type: ($) => prec(TYPE_PREC.POSTFIX, seq($.type, '[', ']')),
+
+		lookup_type: ($) => prec(TYPE_PREC.POSTFIX, seq($.type, '[', $.type, ']')),
+
+		// `typeof a.b` queries the whole dotted name.
+		type_query: ($) => prec.right(seq('typeof', choice($.identifier, $.nested_type_identifier))),
+
+		index_type_query: ($) => prec.right(TYPE_PREC.OPERATOR, seq('keyof', $.type)),
+
+		readonly_type: ($) => prec.right(TYPE_PREC.OPERATOR, seq('readonly', $.type)),
 
 		tuple_type: ($) => seq('[', commaSep1($.type), optional(','), ']'),
 
-		union_type: ($) => prec.left(seq($.type, '|', $.type)),
+		union_type: ($) => prec.left(TYPE_PREC.UNION, seq($.type, '|', $.type)),
 
-		intersection_type: ($) => prec.left(seq($.type, '&', $.type)),
+		intersection_type: ($) => prec.left(TYPE_PREC.INTERSECTION, seq($.type, '&', $.type)),
 
 		function_type: ($) => seq(optional($.type_parameters), $.formal_parameters, '=>', $.type),
 
@@ -1516,7 +1554,7 @@ module.exports = grammar({
 
 		parenthesized_type: ($) => seq('(', $.type, ')'),
 
-		initializer: ($) => seq('=', choice($.expression, $.style_element, $.script_element)),
+		initializer: ($) => seq('=', $.expression),
 
 		_semicolon: ($) => choice($._automatic_semicolon, ';'),
 	},

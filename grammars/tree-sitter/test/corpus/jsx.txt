@@ -330,6 +330,169 @@ const styles = <style>
         (style_element
           (raw_text))))))
 
+=====================================
+Style Element Expression In Parentheses
+=====================================
+
+const theme = (
+  <style>
+    .done {
+      color: red;
+    }
+  </style>
+);
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (parenthesized_expression
+          (style_element
+            (raw_text)))))))
+
+================================
+Style Element Export Default
+================================
+
+export default (
+  <style>
+    .a {
+      color: red;
+    }
+  </style>
+);
+
+---
+
+(program
+  (export_statement
+    (parenthesized_expression
+      (style_element
+        (raw_text)))))
+
+==================================
+Style Element Expression Positions
+==================================
+
+function themed() {
+  return <style>.a { color: red; }</style>;
+}
+const arrow = () => <style>.a { color: red; }</style>;
+use(<style>.a { color: red; }</style>);
+const list = [<style>.a { color: red; }</style>];
+const picked = dark ? <style>.a { color: red; }</style> : null;
+const map = { theme: <style>.a { color: red; }</style> };
+
+---
+
+(program
+  (function_declaration
+    (identifier)
+    (formal_parameters)
+    (statement_block
+      (return_statement
+        (style_element
+          (raw_text)))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (arrow_function
+          (formal_parameters)
+          (style_element
+            (raw_text))))))
+  (expression_statement
+    (call_expression
+      (identifier)
+      (arguments
+        (style_element
+          (raw_text)))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (array
+          (style_element
+            (raw_text))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (ternary_expression
+          (identifier)
+          (style_element
+            (raw_text))
+          (null)))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (object
+          (pair
+            (property_name
+              (identifier))
+            (style_element
+              (raw_text))))))))
+
+=====================================
+Style Element Body With Less-Than
+=====================================
+
+function App() @{
+  <>
+    <style>
+      /* a < b */
+      @media (width < 600px) {
+        div::before { content: '<'; }
+      }
+    </style>
+    <div />
+  </>
+}
+
+---
+
+(program
+  (function_declaration
+    (identifier)
+    (formal_parameters)
+    (jsx_statement_container
+      (jsx_fragment
+        (jsx_opening_fragment)
+        (jsx_text)
+        (style_element
+          (raw_text))
+        (jsx_text)
+        (jsx_self_closing_element
+          (jsx_non_namespaced_element_name
+            (identifier)))
+        (jsx_text)
+        (jsx_closing_fragment)))))
+
+=====================================
+Script Element Expression In Parentheses
+=====================================
+
+const script = (
+  <script>
+    if (a < b) go();
+  </script>
+);
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (parenthesized_expression
+          (script_element
+            (raw_text)))))))
+
 ====================================
 Style Element Self Closing With Apply
 ====================================
@@ -1227,3 +1390,163 @@ assigned = <script type="text/typescript">const n: number = 1;</script>;
           (identifier)
           (string))
         (raw_text)))))
+
+=====================================
+JSX Text With Less-Than And Greater-Than
+=====================================
+
+export function App() @{
+  <span>1 < 2 > 0 &amp;lt; &gt;</span>
+}
+
+---
+
+(program
+  (export_statement
+    (function_declaration
+      (identifier)
+      (formal_parameters)
+      (jsx_statement_container
+        (jsx_element
+          (jsx_opening_element
+            (jsx_element_name
+              (identifier)))
+          (jsx_text)
+          (jsx_closing_element
+            (jsx_element_name
+              (identifier))))))))
+
+=====================================
+JSX Text With At Signs
+=====================================
+
+export function App() @{
+  <div>
+    <>@</>
+    <code>@if</code>
+    <code>@tsrx/react</code>
+    <p>@if then text</p>
+    <p>text @else {x}</p>
+    <p>a @{b}</p>
+  </div>
+}
+
+---
+
+(program
+  (export_statement
+    (function_declaration
+      (identifier)
+      (formal_parameters)
+      (jsx_statement_container
+        (jsx_element
+          (jsx_opening_element
+            (jsx_element_name
+              (identifier)))
+          (jsx_text)
+          (jsx_fragment
+            (jsx_opening_fragment)
+            (jsx_text)
+            (jsx_closing_fragment))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_expression
+              (component_statement
+                (expression_statement
+                  (identifier))))
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_statement_container
+              (identifier))
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_closing_element
+            (jsx_element_name
+              (identifier))))))))
+
+=====================================
+JSX Text Starting With A Dash
+=====================================
+
+export function App() @{
+  <p>
+    <code>-global-</code>
+    <code>--runExternalCode</code>
+    - item
+  </p>
+}
+
+---
+
+(program
+  (export_statement
+    (function_declaration
+      (identifier)
+      (formal_parameters)
+      (jsx_statement_container
+        (jsx_element
+          (jsx_opening_element
+            (jsx_element_name
+              (identifier)))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_closing_element
+            (jsx_element_name
+              (identifier))))))))

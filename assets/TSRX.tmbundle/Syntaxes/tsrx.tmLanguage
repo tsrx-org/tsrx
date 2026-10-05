@@ -2247,6 +2247,13 @@
 				</dict>
 			</array>
 		</dict>
+		<key>embedded-grammar-fallback</key>
+		<dict>
+			<key>comment</key>
+			<string>Never matches. A &lt;style&gt; or &lt;script&gt; body includes it after source.css or source.ts so the body rule always has a pattern: without one, a host that has not loaded the CSS or TypeScript grammar drops the body rule, and the tag then never closes.</string>
+			<key>match</key>
+			<string>(?!)</string>
+		</dict>
 		<key>enum-declaration</key>
 		<dict>
 			<key>begin</key>
@@ -5228,9 +5235,45 @@
 		<key>jsx-tag-attribute-assignment</key>
 		<dict>
 			<key>match</key>
-			<string>=(?=\s*(?:'|"|{|/\*|//|\n))</string>
+			<string>=(?=\s*(?:'|"|{|&lt;|/\*|//|\n))</string>
 			<key>name</key>
 			<string>keyword.operator.assignment.js</string>
+		</dict>
+		<key>jsx-tag-attribute-element</key>
+		<dict>
+			<key>comment</key>
+			<string>An element or fragment as an attribute value without braces: content=&lt;span&gt;…&lt;/span&gt;.</string>
+			<key>patterns</key>
+			<array>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-code</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-style</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-script</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-fragment</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-dynamic</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-without-attributes</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag</string>
+				</dict>
+			</array>
 		</dict>
 		<key>jsx-tag-attribute-name</key>
 		<dict>
@@ -5292,6 +5335,10 @@
 				<dict>
 					<key>include</key>
 					<string>#jsx-evaluated-code</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-attribute-element</string>
 				</dict>
 				<dict>
 					<key>include</key>
@@ -5728,6 +5775,10 @@
 							<key>include</key>
 							<string>source.ts</string>
 						</dict>
+						<dict>
+							<key>include</key>
+							<string>#embedded-grammar-fallback</string>
+						</dict>
 					</array>
 				</dict>
 				<dict>
@@ -5825,6 +5876,10 @@
 						<dict>
 							<key>include</key>
 							<string>source.css</string>
+						</dict>
+						<dict>
+							<key>include</key>
+							<string>#embedded-grammar-fallback</string>
 						</dict>
 					</array>
 				</dict>

@@ -274,6 +274,7 @@
   "implements"
   "new"
   "typeof"
+  "keyof"
   "instanceof"
   "in"
   "of"

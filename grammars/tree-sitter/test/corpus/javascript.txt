@@ -306,3 +306,85 @@ const multiline = `
       name: (identifier)
       (initializer
         (template_string)))))
+
+=====================================
+Array Holes
+=====================================
+
+const pick = ([label, , trimmed]) => [label, trimmed];
+const [, second] = list;
+const sparse = [1, , 3];
+const trailing = [a, b,];
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (arrow_function
+          (formal_parameters
+            (required_parameter
+              (array_pattern
+                (identifier)
+                (identifier))))
+          (array
+            (identifier)
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (array_pattern
+        (identifier))
+      (initializer
+        (identifier))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (array
+          (number)
+          (number)))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (array
+          (identifier)
+          (identifier))))))
+
+=====================================
+Template String Escapes
+=====================================
+
+const a = `before \` after`;
+const b = `price: \${amount}`;
+const c = `${code}\n\n/* CSS */\n${css}`;
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (template_string
+          (escape_sequence)))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (template_string
+          (escape_sequence)))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (template_string
+          (template_substitution
+            (identifier))
+          (escape_sequence)
+          (escape_sequence)
+          (escape_sequence)
+          (template_substitution
+            (identifier)))))))
