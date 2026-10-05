@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.2.4
+
+### Patch Changes
+
+- [#1057](https://github.com/tsrx-org/tsrx/pull/1057)
+  [`aa13392`](https://github.com/tsrx-org/tsrx/commit/aa133921a960761f79ee69adf18ab225eaf7a440)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The TextMate grammar now
+  highlights an element or fragment used as an attribute value without braces,
+  such as `<Slot content=<span>…</span> />`. Before, `=<span` was marked as an
+  invalid attribute.
+
+- [#1057](https://github.com/tsrx-org/tsrx/pull/1057)
+  [`aa13392`](https://github.com/tsrx-org/tsrx/commit/aa133921a960761f79ee69adf18ab225eaf7a440)
+  Thanks [@leonidaz](https://github.com/leonidaz)! - The TextMate grammar now
+  closes a `<style>` or `<script>` block when the host has not loaded the CSS or
+  TypeScript grammar. Before, the block's body was read as tag attributes, and the
+  rest of the file stayed inside the tag. Highlighting is unchanged when those
+  grammars are loaded.
+
 ## 2.2.3
 
 ### Patch Changes
