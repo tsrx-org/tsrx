@@ -18,4 +18,22 @@ describe('editor releases', () => {
 			expect(package_json.dependencies?.['@tsrx/language-server']).toBe('workspace:*');
 		},
 	);
+
+	// Changesets versions these and writes their changelogs; the Publish workflow
+	// tags them and creates their GitHub releases. Private packages are never
+	// published to npm.
+	it.each(['nvim-plugin', 'sublime-text-plugin'])(
+		'versions %s with Changesets without publishing it to npm',
+		(name) => {
+			const package_json = JSON.parse(
+				readFileSync(resolve(repository_dir, 'packages', name, 'package.json'), 'utf8'),
+			);
+			const config = JSON.parse(
+				readFileSync(resolve(repository_dir, '.changeset/config.json'), 'utf8'),
+			);
+			expect(package_json.private).toBe(true);
+			expect(config.ignore).not.toContain(package_json.name);
+			expect(config.privatePackages).toEqual({ version: true, tag: false });
+		},
+	);
 });

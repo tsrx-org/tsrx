@@ -25,6 +25,8 @@ jobs:
       intellij-version-changed: ${{ steps.intellij.outputs.changed }}
       zed-version-changed: ${{ steps.zed.outputs.changed }}
       zed-tag: ${{ steps.zed.outputs.tag }}
+      nvim-version-changed: ${{ steps.nvim.outputs.changed }}
+      sublime-version-changed: ${{ steps.sublime.outputs.changed }}
       language-server-version-changed: ${{ steps.language-server.outputs.changed }}
     steps:
       - name: Checkout Repo
@@ -91,6 +93,46 @@ jobs:
 
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "tag=@tsrx/zed-plugin@$version" >> "$GITHUB_OUTPUT"
+
+      - name: Detect Neovim plugin release
+        id: nvim
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          previous_version="$(git show "${BEFORE_SHA}:packages/nvim-plugin/package.json" | jq -r .version)"
+          version="$(jq -r .version packages/nvim-plugin/package.json)"
+
+          if [ -z "$previous_version" ] || [ -z "$version" ]; then
+            echo "Could not determine the previous and current Neovim plugin versions." >&2
+            exit 1
+          fi
+
+          if [ "$previous_version" = "$version" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Detect Sublime Text package release
+        id: sublime
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          previous_version="$(git show "${BEFORE_SHA}:packages/sublime-text-plugin/package.json" | jq -r .version)"
+          version="$(jq -r .version packages/sublime-text-plugin/package.json)"
+
+          if [ -z "$previous_version" ] || [ -z "$version" ]; then
+            echo "Could not determine the previous and current Sublime Text package versions." >&2
+            exit 1
+          fi
+
+          if [ "$previous_version" = "$version" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Detect language server release
         id: language-server
@@ -195,9 +237,84 @@ jobs:
       JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD: ${{ secrets.JETBRAINS_MARKETPLACE_PRIVATE_KEY_PASSWORD }}
       JETBRAINS_MARKETPLACE_PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_PUBLISH_TOKEN }}
 
+  # Neovim and Sublime Text are not published to npm. Users install the Neovim
+  # plugin from this repository, and the Sublime Text package from the release's
+  # asset, so a release is a tag and a GitHub release with the changelog.
+  release-nvim-plugin:
+    name: Release Neovim plugin
+    needs: publish
+    if: >-
+      needs.publish.result == 'success' &&
+      needs.publish.outputs.nvim-version-changed == 'true'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    concurrency:
+      group: nvim-plugin-release
+      cancel-in-progress: false
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+
+      - name: Tag and create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/create-editor-release.js packages/nvim-plugin
+
+  release-sublime-text-plugin:
+    name: Release Sublime Text package
+    needs: publish
+    if: >-
+      needs.publish.result == 'success' &&
+      needs.publish.outputs.sublime-version-changed == 'true'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    concurrency:
+      group: sublime-text-plugin-release
+      cancel-in-progress: false
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter @tsrx/sublime-text-plugin
+
+      # `scripts/build.js`, not the `build` script: the package ships the
+      # committed server lockfile, which `build` would first regenerate.
+      - name: Build TSRX.sublime-package
+        working-directory: packages/sublime-text-plugin
+        run: node scripts/build.js
+
+      - name: Tag and create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/create-editor-release.js packages/sublime-text-plugin
+          packages/sublime-text-plugin/TSRX.sublime-package
+
   # Neovim and Sublime Text install the server version pinned on main. The pins
   # move only once npm serves the new version, because the Sublime Text lockfile
   # is built from the registry, so they move in a pull request after publishing.
+  # The pull request also adds a changeset, so the next Version Packages pull
+  # request releases both with the new pin.
   move-editor-language-server-pins:
     name: Move Neovim and Sublime Text language server pins
     needs: publish
@@ -247,7 +364,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch --create "$branch"
-          git commit --all --message "$title"
+          # --all also stages the changeset, a new file the script adds.
+          git add --all
+          git commit --message "$title"
           git push origin "$branch"
 
           url="$(gh pr create --base main --head "$branch" --title "$title" --body-file - <<EOF
@@ -255,6 +374,8 @@ jobs:
 
           - \`packages/nvim-plugin/package.json\` (\`config\`)
           - \`packages/sublime-text-plugin/src/language-server/package.json\` and its \`package-lock.json\`
+
+          It also adds a changeset for both, so the next Version Packages pull request releases them with this server.
 
           The Publish workflow opened this pull request with \`scripts/sync-editor-language-server-pins.js\`. Checks do not start for pull requests that a workflow opens.
           EOF

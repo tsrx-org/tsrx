@@ -28,6 +28,22 @@ Otherwise, it installs the exact `@tsrx/language-server` version pinned in this
 package's `config` field. The pin moves to each new server release soon after it
 is on npm, so updating the plugin also updates that server.
 
+## Updating
+
+Update the plugin with your plugin manager (with `lazy.nvim`, `:Lazy update`).
+Then rebuild the Tree-sitter parser, which nvim-treesitter compiles from
+`grammars/tree-sitter` in this repository:
+
+```vim
+:TSInstall! tsrx
+```
+
+`:TSUpdate` rebuilds it only on nvim-treesitter's `master` branch. On `main` it
+keeps the parser it built before.
+
+Each release is tagged `@tsrx/nvim-plugin@<version>` and lists its changes on the
+[releases page](https://github.com/tsrx-org/tsrx/releases?q=%40tsrx%2Fnvim-plugin&expanded=true).
+
 ## Formatting
 
 The TSRX language server formats `.tsrx` files with your project's Prettier and
