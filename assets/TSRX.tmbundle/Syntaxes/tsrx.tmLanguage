@@ -5235,9 +5235,45 @@
 		<key>jsx-tag-attribute-assignment</key>
 		<dict>
 			<key>match</key>
-			<string>=(?=\s*(?:'|"|{|/\*|//|\n))</string>
+			<string>=(?=\s*(?:'|"|{|&lt;|/\*|//|\n))</string>
 			<key>name</key>
 			<string>keyword.operator.assignment.js</string>
+		</dict>
+		<key>jsx-tag-attribute-element</key>
+		<dict>
+			<key>comment</key>
+			<string>An element or fragment as an attribute value without braces: content=&lt;span&gt;…&lt;/span&gt;.</string>
+			<key>patterns</key>
+			<array>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-code</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-style</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-script</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-fragment</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-dynamic</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-without-attributes</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag</string>
+				</dict>
+			</array>
 		</dict>
 		<key>jsx-tag-attribute-name</key>
 		<dict>
@@ -5299,6 +5335,10 @@
 				<dict>
 					<key>include</key>
 					<string>#jsx-evaluated-code</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#jsx-tag-attribute-element</string>
 				</dict>
 				<dict>
 					<key>include</key>

@@ -459,6 +459,30 @@ describe('TSRX TextMate grammar: JSX expression boundaries', () => {
 	});
 });
 
+describe('TSRX TextMate grammar: element attribute values', () => {
+	it('highlights an element or fragment as an attribute value without braces', () => {
+		const tokens = tokenize(
+			[
+				'function App() @{',
+				'  <Slot content=<span class="note"><b>t</b> 2</span> fallback=<>none</> />',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, '=').scopes).toContain('keyword.operator.assignment.js');
+		expect(find(tokens, 'span').scopes).toEqual(
+			expect.arrayContaining(['meta.tag.attributes.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, 'b').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'fallback').scopes).toContain('entity.other.attribute-name.js');
+		expect(find(tokens, 'none').scopes).toContain('meta.tag.fragment.js');
+		expect(find(tokens, '/>').scopes).toContain('punctuation.definition.tag.end.js');
+		expect(
+			tokens.filter((token) => token.scopes.some((scope) => scope.startsWith('invalid.'))),
+		).toEqual([]);
+	});
+});
+
 describe('TSRX TextMate grammar: dynamic tags', () => {
 	it('scopes the expression of a dynamic closing tag as JS', () => {
 		const tokens = tokenize(
