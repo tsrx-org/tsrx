@@ -1,6 +1,6 @@
 {
   "name": "@tsrx/nvim-plugin",
-  "version": "0.0.82",
+  "version": "0.0.83",
   "description": "Neovim plugin that wires TSRX tree-sitter highlights and language server integration.",
   "author": "Dominic Gannaway",
   "license": "MIT",
