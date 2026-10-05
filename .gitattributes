@@ -1,2 +1,4 @@
-grammars/tree-sitter/src/parser.c -linguist-detectable
+grammars/tree-sitter/src/parser.c -linguist-detectable linguist-generated
+grammars/tree-sitter/src/grammar.json linguist-generated
+grammars/tree-sitter/src/node-types.json linguist-generated
 *.tsrx linguist-language=TSX

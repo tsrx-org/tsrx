@@ -20,32 +20,35 @@ void tree_sitter_tsrx_external_scanner_deserialize(void *p, const char *b, unsig
 static void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
 static void skip(TSLexer *lexer) { lexer->advance(lexer, true); }
 
-static bool scan_whitespace_and_comments(TSLexer *lexer) {
+// Reads whitespace and comments. `skip_chars` skips them, for the start of a
+// token; a lookahead in the middle of a token passes false, because a skip
+// there moves the token's start past what it has read.
+static bool read_whitespace_and_comments(TSLexer *lexer, bool skip_chars) {
   for (;;) {
     while (iswspace(lexer->lookahead)) {
-      skip(lexer);
+      lexer->advance(lexer, skip_chars);
     }
 
     if (lexer->lookahead == '/') {
-      skip(lexer);
+      lexer->advance(lexer, skip_chars);
 
       if (lexer->lookahead == '/') {
-        skip(lexer);
+        lexer->advance(lexer, skip_chars);
         while (lexer->lookahead != 0 && lexer->lookahead != '\n') {
-          skip(lexer);
+          lexer->advance(lexer, skip_chars);
         }
       } else if (lexer->lookahead == '*') {
-        skip(lexer);
+        lexer->advance(lexer, skip_chars);
         while (true) {
           if (lexer->lookahead == 0) return false;
           if (lexer->lookahead == '*') {
-            skip(lexer);
+            lexer->advance(lexer, skip_chars);
             if (lexer->lookahead == '/') {
-              skip(lexer);
+              lexer->advance(lexer, skip_chars);
               break;
             }
           } else {
-            skip(lexer);
+            lexer->advance(lexer, skip_chars);
           }
         }
       } else {
@@ -55,6 +58,14 @@ static bool scan_whitespace_and_comments(TSLexer *lexer) {
       return true;
     }
   }
+}
+
+static bool scan_whitespace_and_comments(TSLexer *lexer) {
+  return read_whitespace_and_comments(lexer, true);
+}
+
+static bool advance_whitespace_and_comments(TSLexer *lexer) {
+  return read_whitespace_and_comments(lexer, false);
 }
 
 static bool scan_automatic_semicolon(TSLexer *lexer) {
@@ -163,7 +174,7 @@ static void scan_identifier_word(TSLexer *lexer, char *word, size_t word_size) {
 }
 
 static bool check_boundary_lookahead(TSLexer *lexer, const char *word) {
-  scan_whitespace_and_comments(lexer);
+  advance_whitespace_and_comments(lexer);
   if (strcmp(word, "case") == 0) {
     return lexer->lookahead == '\'' || lexer->lookahead == '"' ||
            lexer->lookahead == '`' || lexer->lookahead == '(' ||
@@ -180,6 +191,63 @@ static bool check_boundary_lookahead(TSLexer *lexer, const char *word) {
     return lexer->lookahead == '(' || lexer->lookahead == '{';
   }
   return lexer->lookahead == '{';
+}
+
+// Whether a `<` in text starts a tag, as the compiler's `can_start_tag_after_lt`
+// decides: the character after it is `/`, `>`, `{`, `@`, `$`, `_` or an ASCII
+// letter. Otherwise the `<` is text (`1 < 2`). Reads past the `<`; the caller
+// has marked the end of the text before it.
+static bool lt_starts_tag(TSLexer *lexer) {
+  advance(lexer);
+  int32_t c = lexer->lookahead;
+  return c == '/' || c == '>' || c == '{' || c == '@' || c == '$' || c == '_' ||
+         (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+// Whether an `@` in text starts a code block or directive, which ends the text,
+// as the compiler's `#isCodeBlockStart` and `#isJSXControlFlowDirectiveAt`
+// decide: `@{`, `@if (`, `@switch (`, `@for (`, `@for await (` or `@try {`, with
+// whitespace or comments allowed before the `(` or `{`. When `continuation` is
+// set (the text so far is only whitespace, as between a directive's body and
+// its next clause), `@else`, `@empty`, `@pending` and `@catch` followed by what
+// they take end it too. Any other `@` is text: `@tsrx/react`, `@if</code>`, a
+// lone `@`. Reads past the `@`; the caller has marked the end of the text.
+static bool at_ends_text(TSLexer *lexer, bool continuation) {
+  advance(lexer);
+  if (lexer->lookahead == '{') return true;
+  if (!is_identifier_start(lexer->lookahead)) return false;
+
+  char word[16];
+  scan_identifier_word(lexer, word, sizeof(word));
+  advance_whitespace_and_comments(lexer);
+  int32_t next = lexer->lookahead;
+
+  if (strcmp(word, "if") == 0 || strcmp(word, "switch") == 0) return next == '(';
+  if (strcmp(word, "try") == 0) return next == '{';
+  if (strcmp(word, "for") == 0) {
+    if (next == '(') return true;
+    if (next != 'a') return false;
+    scan_identifier_word(lexer, word, sizeof(word));
+    if (strcmp(word, "await") != 0) return false;
+    advance_whitespace_and_comments(lexer);
+    return lexer->lookahead == '(';
+  }
+
+  if (!continuation) return false;
+  if (strcmp(word, "else") == 0) {
+    // A braced or braceless body, or `else if`.
+    if (next == '{' || next == '@') return true;
+    if (next == '<') {
+      advance(lexer);
+      return lexer->lookahead != '/';
+    }
+    if (next != 'i') return false;
+    scan_identifier_word(lexer, word, sizeof(word));
+    return strcmp(word, "if") == 0;
+  }
+  if (strcmp(word, "empty") == 0 || strcmp(word, "pending") == 0) return next == '{';
+  if (strcmp(word, "catch") == 0) return next == '(' || next == '{';
+  return false;
 }
 
 static bool scan_jsx_text(TSLexer *lexer) {
@@ -199,22 +267,38 @@ static bool scan_jsx_text(TSLexer *lexer) {
   }
 
   if (has_content && lexer->lookahead == '@') {
-    return false;
+    // Whitespace before a code block or directive is not a text token. Any
+    // other `@` starts the text, after the skipped whitespace.
+    if (at_ends_text(lexer, true)) {
+      return false;
+    }
+    has_non_whitespace_content = true;
+    ws_only_since_boundary = false;
   }
 
   for (;;) {
     lexer->mark_end(lexer);
     switch (lexer->lookahead) {
-      case '<':
       case '{':
       case '}':
       case 0:
         return has_content;
-      case '@': {
-        if (has_content) {
-          return true;
+      case '<':
+        if (lt_starts_tag(lexer)) {
+          return has_content;
         }
-        return false;
+        has_content = true;
+        has_non_whitespace_content = true;
+        ws_only_since_boundary = false;
+        break;
+      case '@': {
+        if (at_ends_text(lexer, !has_non_whitespace_content)) {
+          return has_content;
+        }
+        has_content = true;
+        has_non_whitespace_content = true;
+        ws_only_since_boundary = false;
+        break;
       }
       case '/': {
         advance(lexer);
@@ -229,15 +313,6 @@ static bool scan_jsx_text(TSLexer *lexer) {
         ws_only_since_boundary = false;
         break;
       }
-      case '-':
-        if (!has_non_whitespace_content) {
-          return has_content;
-        }
-        advance(lexer);
-        has_content = true;
-        has_non_whitespace_content = true;
-        ws_only_since_boundary = false;
-        break;
       default:
         if (is_identifier_start(lexer->lookahead)) {
           if (!has_non_whitespace_content) {

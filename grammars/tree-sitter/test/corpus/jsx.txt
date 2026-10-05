@@ -1390,3 +1390,163 @@ assigned = <script type="text/typescript">const n: number = 1;</script>;
           (identifier)
           (string))
         (raw_text)))))
+
+=====================================
+JSX Text With Less-Than And Greater-Than
+=====================================
+
+export function App() @{
+  <span>1 < 2 > 0 &amp;lt; &gt;</span>
+}
+
+---
+
+(program
+  (export_statement
+    (function_declaration
+      (identifier)
+      (formal_parameters)
+      (jsx_statement_container
+        (jsx_element
+          (jsx_opening_element
+            (jsx_element_name
+              (identifier)))
+          (jsx_text)
+          (jsx_closing_element
+            (jsx_element_name
+              (identifier))))))))
+
+=====================================
+JSX Text With At Signs
+=====================================
+
+export function App() @{
+  <div>
+    <>@</>
+    <code>@if</code>
+    <code>@tsrx/react</code>
+    <p>@if then text</p>
+    <p>text @else {x}</p>
+    <p>a @{b}</p>
+  </div>
+}
+
+---
+
+(program
+  (export_statement
+    (function_declaration
+      (identifier)
+      (formal_parameters)
+      (jsx_statement_container
+        (jsx_element
+          (jsx_opening_element
+            (jsx_element_name
+              (identifier)))
+          (jsx_text)
+          (jsx_fragment
+            (jsx_opening_fragment)
+            (jsx_text)
+            (jsx_closing_fragment))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_expression
+              (component_statement
+                (expression_statement
+                  (identifier))))
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_statement_container
+              (identifier))
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_closing_element
+            (jsx_element_name
+              (identifier))))))))
+
+=====================================
+JSX Text Starting With A Dash
+=====================================
+
+export function App() @{
+  <p>
+    <code>-global-</code>
+    <code>--runExternalCode</code>
+    - item
+  </p>
+}
+
+---
+
+(program
+  (export_statement
+    (function_declaration
+      (identifier)
+      (formal_parameters)
+      (jsx_statement_container
+        (jsx_element
+          (jsx_opening_element
+            (jsx_element_name
+              (identifier)))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_text)
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_text)
+          (jsx_closing_element
+            (jsx_element_name
+              (identifier))))))))

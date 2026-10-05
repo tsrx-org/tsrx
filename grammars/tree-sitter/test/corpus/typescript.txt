@@ -818,3 +818,262 @@ const repeated = new Constructor!!;
           (non_null_expression
             (non_null_expression
               (identifier))))))))
+
+=====================================
+Indexed Access Types
+=====================================
+
+type Label = PanelProps['title'];
+type Deep = A['b']['c'];
+type Value = T[keyof T];
+
+---
+
+(program
+  (type_alias_declaration
+    (type_identifier
+      (type_identifier))
+    (type
+      (lookup_type
+        (type
+          (identifier))
+        (type
+          (literal_type
+            (string))))))
+  (type_alias_declaration
+    (type_identifier
+      (type_identifier))
+    (type
+      (lookup_type
+        (type
+          (lookup_type
+            (type
+              (identifier))
+            (type
+              (literal_type
+                (string)))))
+        (type
+          (literal_type
+            (string))))))
+  (type_alias_declaration
+    (type_identifier
+      (type_identifier))
+    (type
+      (lookup_type
+        (type
+          (identifier))
+        (type
+          (index_type_query
+            (type
+              (identifier))))))))
+
+=====================================
+Type Queries
+=====================================
+
+let load: () => Promise<{ default: typeof Child }>;
+let ret: ReturnType<typeof ref>;
+let member: typeof config.theme;
+const p = new Promise<typeof Child>((resolve) => resolve(Child));
+const o = { kind: typeof value };
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (type
+        (function_type
+          (formal_parameters)
+          (type
+            (generic_type
+              (identifier)
+              (type_arguments
+                (type
+                  (object_type
+                    (property_signature
+                      (property_name
+                        (identifier))
+                      (type
+                        (type_query
+                          (identifier)))))))))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (type
+        (generic_type
+          (identifier)
+          (type_arguments
+            (type
+              (type_query
+                (identifier))))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (type
+        (type_query
+          (nested_type_identifier
+            (identifier)
+            (type_identifier
+              (type_identifier)))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (new_expression
+          (identifier)
+          (type_arguments
+            (type
+              (type_query
+                (identifier))))
+          (arguments
+            (arrow_function
+              (formal_parameters
+                (required_parameter
+                  (identifier)))
+              (call_expression
+                (identifier)
+                (arguments
+                  (identifier)))))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (initializer
+        (object
+          (pair
+            (property_name
+              (identifier))
+            (unary_expression
+              (identifier))))))))
+
+=====================================
+Keyof And Readonly Type Operators
+=====================================
+
+let keys: keyof Props;
+const routes: readonly Route[] = [];
+let pair: readonly [string, number];
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (type
+        (index_type_query
+          (type
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (type
+        (readonly_type
+          (type
+            (array_type
+              (type
+                (identifier))))))
+      (initializer
+        (array))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (type
+        (readonly_type
+          (type
+            (tuple_type
+              (type
+                (predefined_type))
+              (type
+                (predefined_type)))))))))
+
+=====================================
+Union And Intersection With Array Types
+=====================================
+
+let x: A | B[];
+let y: A & B[];
+let z: A | B & C;
+let f: () => A | B;
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (type
+        (union_type
+          (type
+            (identifier))
+          (type
+            (array_type
+              (type
+                (identifier))))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (type
+        (intersection_type
+          (type
+            (identifier))
+          (type
+            (array_type
+              (type
+                (identifier))))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (type
+        (union_type
+          (type
+            (identifier))
+          (type
+            (intersection_type
+              (type
+                (identifier))
+              (type
+                (identifier))))))))
+  (variable_declaration
+    (variable_declarator
+      (identifier)
+      (type
+        (function_type
+          (formal_parameters)
+          (type
+            (union_type
+              (type
+                (identifier))
+              (type
+                (identifier)))))))))
+
+=====================================
+Typed Catch Parameter
+=====================================
+
+try {
+  run();
+} catch (error: unknown) {
+  report(error);
+}
+
+---
+
+(program
+  (try_statement
+    (statement_block
+      (expression_statement
+        (call_expression
+          (identifier)
+          (arguments))))
+    (catch_clause
+      (identifier)
+      (type
+        (predefined_type))
+      (statement_block
+        (expression_statement
+          (call_expression
+            (identifier)
+            (arguments
+              (identifier))))))))
