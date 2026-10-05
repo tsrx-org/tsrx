@@ -21,10 +21,24 @@ const grammar = JSON.parse(
 /** @type {import('shiki').Highlighter} */
 let highlighter;
 
+/**
+ * Loads only the TSRX grammar, without the CSS and TypeScript grammars that
+ * `<style>` and `<script>` bodies embed, as Shiki's grammar registry does when it
+ * tests each language on its own.
+ *
+ * @type {import('shiki').Highlighter}
+ */
+let tsrxOnlyHighlighter;
+
 beforeAll(async () => {
 	highlighter = await createHighlighter({
 		themes: ['nord'],
 		langs: ['css', 'typescript', { ...grammar, name: 'tsrx' }],
+		engine: createOnigurumaEngine(import('shiki/wasm')),
+	});
+	tsrxOnlyHighlighter = await createHighlighter({
+		themes: ['nord'],
+		langs: [{ ...grammar, name: 'tsrx' }],
 		engine: createOnigurumaEngine(import('shiki/wasm')),
 	});
 });
@@ -34,10 +48,11 @@ beforeAll(async () => {
  * (the root `source.tsrx` scope is omitted).
  *
  * @param {string} code
+ * @param {import('shiki').Highlighter} [using]
  * @returns {ScopedToken[]}
  */
-function tokenize(code) {
-	const lines = highlighter.codeToTokensBase(code, {
+function tokenize(code, using = highlighter) {
+	const lines = using.codeToTokensBase(code, {
 		// The TSRX grammar is registered at runtime, not one of shiki's bundled ids.
 		lang: /** @type {import('shiki').BundledLanguage} */ (/** @type {unknown} */ ('tsrx')),
 		theme: 'nord',
@@ -184,6 +199,90 @@ describe('TSRX TextMate grammar: <style> blocks', () => {
 			expect.arrayContaining(['source.css', 'entity.name.tag.css']),
 		);
 		expect(find(tokens, '</').scopes).toContain('style.tag.js');
+	});
+});
+
+describe('TSRX TextMate grammar: without the CSS and TypeScript grammars', () => {
+	/**
+	 * @param {ScopedToken[]} tokens
+	 * @returns {ScopedToken[]}
+	 */
+	const invalid = (tokens) =>
+		tokens.filter((token) => token.scopes.some((scope) => scope.startsWith('invalid.')));
+
+	it('closes an assigned <style> block and highlights the code after it', () => {
+		const tokens = tokenize(
+			[
+				'const theme = <style>',
+				'  .done { color: red; }',
+				'</style>;',
+				'',
+				'export function App() @{',
+				'  <p class={theme.done} />',
+				'}',
+			].join('\n'),
+			tsrxOnlyHighlighter,
+		);
+
+		expect(find(tokens, '>').scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'punctuation.definition.tag.end.js']),
+		);
+		expect(find(tokens, '</').scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'punctuation.definition.tag.begin.js']),
+		);
+		expect(find(tokens, 'export').scopes).toContain('keyword.control.export.js');
+		expect(find(tokens, 'export').scopes).not.toContain('style.tag.js');
+		expect(find(tokens, 'p').scopes).toEqual(
+			expect.arrayContaining(['meta.tag.js', 'entity.name.tag.js']),
+		);
+		expect(invalid(tokens)).toEqual([]);
+	});
+
+	it('closes a <style> block in a template before its siblings', () => {
+		const tokens = tokenize(
+			[
+				'function App() @{',
+				'  <section>',
+				'    <style>',
+				'      li { color: red; }',
+				'    </style>',
+				'    <ul />',
+				'  </section>',
+				'}',
+			].join('\n'),
+			tsrxOnlyHighlighter,
+		);
+
+		expect(find(tokens, 'style', 1).scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, 'ul').scopes).toContain('meta.tag.js');
+		expect(find(tokens, 'ul').scopes).not.toContain('style.tag.js');
+		expect(invalid(tokens)).toEqual([]);
+	});
+
+	it('closes a <script> block before its siblings', () => {
+		const tokens = tokenize(
+			[
+				'function App() @{',
+				'  <>',
+				'    <script>',
+				'      if (a < b) go();',
+				'    </script>',
+				'    <p>{text}</p>',
+				'  </>',
+				'}',
+			].join('\n'),
+			tsrxOnlyHighlighter,
+		);
+
+		expect(find(tokens, 'script', 1).scopes).toEqual(
+			expect.arrayContaining(['script.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'p').scopes).not.toContain('script.tag.js');
+		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+		expect(invalid(tokens)).toEqual([]);
 	});
 });
 

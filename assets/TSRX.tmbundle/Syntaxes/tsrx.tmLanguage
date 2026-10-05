@@ -2247,6 +2247,13 @@
 				</dict>
 			</array>
 		</dict>
+		<key>embedded-grammar-fallback</key>
+		<dict>
+			<key>comment</key>
+			<string>Never matches. A &lt;style&gt; or &lt;script&gt; body includes it after source.css or source.ts so the body rule always has a pattern: without one, a host that has not loaded the CSS or TypeScript grammar drops the body rule, and the tag then never closes.</string>
+			<key>match</key>
+			<string>(?!)</string>
+		</dict>
 		<key>enum-declaration</key>
 		<dict>
 			<key>begin</key>
@@ -5728,6 +5735,10 @@
 							<key>include</key>
 							<string>source.ts</string>
 						</dict>
+						<dict>
+							<key>include</key>
+							<string>#embedded-grammar-fallback</string>
+						</dict>
 					</array>
 				</dict>
 				<dict>
@@ -5825,6 +5836,10 @@
 						<dict>
 							<key>include</key>
 							<string>source.css</string>
+						</dict>
+						<dict>
+							<key>include</key>
+							<string>#embedded-grammar-fallback</string>
 						</dict>
 					</array>
 				</dict>

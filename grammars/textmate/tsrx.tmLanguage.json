@@ -6545,6 +6545,10 @@
         }
       ]
     },
+    "embedded-grammar-fallback": {
+      "comment": "Never matches. A <style> or <script> body includes it after source.css or source.ts so the body rule always has a pattern: without one, a host that has not loaded the CSS or TypeScript grammar drops the body rule, and the tag then never closes.",
+      "match": "(?!)"
+    },
     "jsx-tag-style": {
       "name": "style.tag.js",
       "begin": "(<)\\s*(style)\\b(?=[\\s/>])",
@@ -6584,6 +6588,9 @@
           "patterns": [
             {
               "include": "source.css"
+            },
+            {
+              "include": "#embedded-grammar-fallback"
             }
           ]
         },
@@ -6634,6 +6641,9 @@
           "patterns": [
             {
               "include": "source.ts"
+            },
+            {
+              "include": "#embedded-grammar-fallback"
             }
           ]
         },
