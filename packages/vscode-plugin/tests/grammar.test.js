@@ -238,6 +238,36 @@ describe('TSRX TextMate grammar: without the CSS and TypeScript grammars', () =>
 		expect(invalid(tokens)).toEqual([]);
 	});
 
+	it('closes an assigned <style> block in parentheses', () => {
+		const tokens = tokenize(
+			[
+				'const theme = (',
+				'  <style>',
+				'    .done {',
+				'      color: red;',
+				'    }',
+				'  </style>',
+				');',
+				'',
+				'export function App() @{',
+				'  <p class={theme.done} />',
+				'}',
+			].join('\n'),
+			tsrxOnlyHighlighter,
+		);
+
+		expect(find(tokens, '>').scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'punctuation.definition.tag.end.js']),
+		);
+		expect(find(tokens, '</').scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'punctuation.definition.tag.begin.js']),
+		);
+		expect(find(tokens, ')').scopes).toContain('meta.brace.round.js');
+		expect(find(tokens, ')').scopes).not.toContain('style.tag.js');
+		expect(find(tokens, 'export').scopes).toContain('keyword.control.export.js');
+		expect(invalid(tokens)).toEqual([]);
+	});
+
 	it('closes a <style> block in a template before its siblings', () => {
 		const tokens = tokenize(
 			[
