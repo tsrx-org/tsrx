@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -15,9 +15,10 @@ const npm_retry_ms = 30_000;
  * Moves the `@tsrx/language-server` version that the Neovim and Sublime Text
  * integrations install to the workspace's server version, and rebuilds the Sublime
  * Text lockfile against it. It first waits until npm serves that version, for about
- * five minutes. The Publish workflow runs this after npm publish and opens a pull
- * request with the result. With `check`, it only verifies that the pins and the
- * lockfile name one version.
+ * five minutes. When the pins move, it adds a changeset that releases both editors.
+ * The Publish workflow runs this after npm publish and opens a pull request with
+ * the result. With `check`, it only verifies that the pins and the lockfile name
+ * one version.
  */
 export async function synchronizeEditorLanguageServerPins({
 	rootDir = default_root,
@@ -65,8 +66,30 @@ export async function synchronizeEditorLanguageServerPins({
 			`The Sublime Text lockfile did not move to ${version}:\n${format_pins(updated)}`,
 		);
 	}
+	write_changeset(rootDir, version);
 	logger.log(`Neovim and Sublime Text: ${format_previous(pins)} → ${version}`);
 	return { changed: true, version };
+}
+
+/**
+ * Adds a changeset for both editors, so the next Version Packages pull request
+ * releases them with the new pin.
+ */
+function write_changeset(rootDir, version) {
+	const directory = join(rootDir, '.changeset');
+	mkdirSync(directory, { recursive: true });
+	writeFileSync(
+		join(directory, `editor-language-server-${version.replaceAll('.', '-')}.md`),
+		[
+			'---',
+			"'@tsrx/nvim-plugin': patch",
+			"'@tsrx/sublime-text-plugin': patch",
+			'---',
+			'',
+			`Install \`${package_name}\` ${version} when a project has no server of its own.`,
+			'',
+		].join('\n'),
+	);
 }
 
 function read_pins(nvim, sublime, lockfile) {

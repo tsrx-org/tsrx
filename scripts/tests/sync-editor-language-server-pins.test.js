@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +44,8 @@ describe('editor @tsrx/language-server pins', () => {
 		expect(job).toContain("needs.publish.result == 'success'");
 		expect(job).toContain("needs.publish.outputs.language-server-version-changed == 'true'");
 		expect(job).toContain('run: node scripts/sync-editor-language-server-pins.js');
+		// The changeset the script adds is a new file, which `git commit --all` leaves out.
+		expect(job).toContain('git add --all');
 		expect(job).toContain('gh pr create --base main');
 		expect(job).not.toContain('id-token');
 	});
@@ -63,6 +73,29 @@ describe('editor @tsrx/language-server pins', () => {
 		).resolves.toEqual({ changed: false, version: '0.6.2' });
 	});
 
+	it('adds a changeset that releases both editors with the new pin', async () => {
+		const fixture = create_fixture({ server: '0.6.2', pinned: '0.6.1' });
+
+		await synchronizeEditorLanguageServerPins({
+			rootDir: fixture,
+			logger: quiet,
+			updateLockfile: fake_npm(fixture, []),
+		});
+
+		expect(readdirSync(join(fixture, '.changeset'))).toEqual(['editor-language-server-0-6-2.md']);
+		expect(readFileSync(join(fixture, '.changeset/editor-language-server-0-6-2.md'), 'utf8')).toBe(
+			[
+				'---',
+				"'@tsrx/nvim-plugin': patch",
+				"'@tsrx/sublime-text-plugin': patch",
+				'---',
+				'',
+				'Install `@tsrx/language-server` 0.6.2 when a project has no server of its own.',
+				'',
+			].join('\n'),
+		);
+	});
+
 	it('does not run npm when the pins already match', async () => {
 		const fixture = create_fixture({ server: '0.6.2', pinned: '0.6.2' });
 		const calls = [];
@@ -75,6 +108,7 @@ describe('editor @tsrx/language-server pins', () => {
 			}),
 		).resolves.toEqual({ changed: false, version: '0.6.2' });
 		expect(calls).toEqual([]);
+		expect(existsSync(join(fixture, '.changeset'))).toBe(false);
 	});
 
 	it('fails when npm leaves the lockfile on another version', async () => {

@@ -7,6 +7,20 @@ package. The plugin starts a project-local
 `PATH`, and otherwise the exact `@tsrx/language-server` version bundled in
 `src/language-server/` (Node.js 22+).
 
+## Installation
+
+1. Install the [LSP](https://packagecontrol.io/packages/LSP) package with Package
+   Control.
+2. Download `TSRX.sublime-package` from the newest
+   [`@tsrx/sublime-text-plugin` release](https://github.com/tsrx-org/tsrx/releases?q=%40tsrx%2Fsublime-text-plugin&expanded=true).
+3. Choose **Preferences > Browse Packages…**, go up one folder, and put the file
+   in `Installed Packages`.
+4. Restart Sublime Text.
+
+Each release bundles the `@tsrx/language-server` version pinned when it was built,
+and a new release follows each server release. To update, download the newest
+release and replace the file. To build the package yourself, see [Build](#build).
+
 ## TypeScript backends
 
 By default the TSRX language server hosts TypeScript itself (the `classic`
@@ -171,4 +185,5 @@ pnpm --filter @tsrx/sublime-text-plugin build
 
 produces `TSRX.sublime-package` with the pinned language server.
 `src/language-server/` pins it with a lockfile. The pin moves to each new server
-release soon after it is on npm, so build again to get that server.
+release soon after it is on npm. Build again to get that server, or download the
+release that follows it.
