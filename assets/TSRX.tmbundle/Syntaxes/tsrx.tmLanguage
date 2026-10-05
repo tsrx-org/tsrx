@@ -6,12 +6,6 @@
 	<array>
 		<string>tsrx</string>
 	</array>
-	<key>information_for_contributors</key>
-	<array>
-		<string>This file has been converted from https://github.com/microsoft/TypeScript-TmLanguage/blob/master/TypeScriptReact.tmLanguage</string>
-		<string>If you want to provide a fix or improvement, please create a pull request against the original repository.</string>
-		<string>Once accepted there, we are happy to receive an update request.</string>
-	</array>
 	<key>name</key>
 	<string>TSRX</string>
 	<key>patterns</key>
@@ -11703,7 +11697,5 @@
 	</dict>
 	<key>scopeName</key>
 	<string>source.tsrx</string>
-	<key>version</key>
-	<string>https://github.com/microsoft/TypeScript-TmLanguage/commit/48f608692aa6d6ad7bd65b478187906c798234a8</string>
 </dict>
 </plist>

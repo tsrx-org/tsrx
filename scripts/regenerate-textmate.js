@@ -36,12 +36,20 @@ const main = async () => {
 };
 
 /**
+ * Writes the plist without `version` and `information_for_contributors`, the
+ * metadata the JSON grammar keeps from VS Code's TypeScript React grammar.
+ * TextMate and Sublime Text ignore them, but GitHub Linguist, which reads this
+ * plist, warns about keys a grammar does not define.
  * @param {string} sourcePath
  * @param {string} targetPath
  * @returns {Promise<void>}
  */
 async function writeAssetBundleGrammar(sourcePath, targetPath) {
-	const grammar = JSON.parse(await readFile(sourcePath, 'utf8'));
+	const {
+		version: _version,
+		information_for_contributors: _information_for_contributors,
+		...grammar
+	} = JSON.parse(await readFile(sourcePath, 'utf8'));
 	console.log(`[write] ${path.relative(rootDir, targetPath)}`);
 	await writeFile(targetPath, toPlist(grammar), 'utf8');
 }
