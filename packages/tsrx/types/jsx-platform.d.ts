@@ -392,8 +392,10 @@ export interface JsxPlatform {
 		 * imports `map_iterable_async` from the same module. React and Preact
 		 * use target-owned paths like `'@tsrx/react/runtime/iterable'` and
 		 * `'@tsrx/preact/runtime/iterable'`, which re-export from
-		 * `'@tsrx/core/runtime/iterable'`. Solid and Vue lower for-of via their
-		 * own iteration components and leave this unset.
+		 * `'@tsrx/core/runtime/iterable'`. Vue sets it too
+		 * (`'@tsrx/vue/runtime/iterable'`) for the loops it doesn't render through
+		 * `<VaporFor>`. Solid lowers for-of via its own `<For>` component and
+		 * leaves this unset.
 		 */
 		forOfIterableHelper?: string;
 	};

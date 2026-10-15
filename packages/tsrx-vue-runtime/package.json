@@ -21,6 +21,10 @@
     "./ref": {
       "types": "./types/ref.d.ts",
       "default": "./src/ref.js"
+    },
+    "./iterable": {
+      "types": "./types/iterable.d.ts",
+      "default": "./src/iterable.js"
     }
   },
   "dependencies": {
