@@ -477,3 +477,23 @@ export function build_assignment_value(operator, left, right) {
 		: // turn something like x += 1 into x = x + 1
 			b.binary(/** @type {AST.BinaryOperator} */ (operator.slice(0, -1)), left, right);
 }
+
+/**
+ * Insert generated statements (usually imports) at the top of a program, after
+ * its directive prologue. A directive such as `'use client'` or `'use server'`
+ * only counts while it is the first statement in the file, so anything the
+ * compiler adds has to go after it rather than in front of it.
+ * @param {AST.Program} program
+ * @param {...AST.Program['body'][number]} statements
+ * @returns {void}
+ */
+export function prepend_to_program_body(program, ...statements) {
+	if (statements.length === 0) return;
+	let index = 0;
+	while (index < program.body.length) {
+		const statement = /** @type {AST.Node & { directive?: string }} */ (program.body[index]);
+		if (statement.type !== 'ExpressionStatement' || typeof statement.directive !== 'string') break;
+		index++;
+	}
+	program.body.splice(index, 0, ...statements);
+}

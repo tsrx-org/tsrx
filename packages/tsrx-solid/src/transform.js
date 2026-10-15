@@ -54,6 +54,7 @@ import {
 	isTemplateSwitchNode as is_template_switch_node,
 	isTemplateTryNode as is_template_try_node,
 	isFunctionOrClassNode as is_function_or_class_boundary,
+	prependToProgramBody,
 } from '@tsrx/core';
 
 import { builders as b } from '@tsrx/core';
@@ -1910,7 +1911,8 @@ function inject_solid_imports(program, transform_context) {
 	const ref_prop_source = transform_context.platform.imports.refProp;
 
 	if (transform_context.needs_normalize_spread_props && ref_prop_source) {
-		program.body.unshift(
+		prependToProgramBody(
+			program,
 			b.import_declaration(
 				[b.import_specifier('normalize_spread_props', NORMALIZE_SPREAD_PROPS_INTERNAL_NAME)],
 				ref_prop_source,
@@ -1919,7 +1921,8 @@ function inject_solid_imports(program, transform_context) {
 	}
 
 	if (transform_context.needs_normalize_spread_props_for_ref_attr && ref_prop_source) {
-		program.body.unshift(
+		prependToProgramBody(
+			program,
 			b.import_declaration(
 				[
 					b.import_specifier(
@@ -1942,7 +1945,8 @@ function inject_solid_imports(program, transform_context) {
 
 	if (needed.length === 0) return;
 
-	program.body.unshift(
+	prependToProgramBody(
+		program,
 		b.imports(
 			needed.map((name) => [name, name]),
 			'solid-js',

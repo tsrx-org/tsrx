@@ -21,6 +21,7 @@ import {
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	setLocation,
+	prependToProgramBody,
 } from '@tsrx/core';
 
 /**
@@ -1269,7 +1270,7 @@ function ensure_named_import(program, source, name, local = name) {
 		return;
 	}
 
-	program.body.unshift(b.imports([[name, local, 'value']], source));
+	prependToProgramBody(program, b.imports([[name, local, 'value']], source));
 }
 
 /**

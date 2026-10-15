@@ -66,6 +66,7 @@ import {
 	is_function_or_class_node as is_function_or_class_boundary,
 	is_template_directive as is_jsx_control_flow_expression,
 	node_children,
+	prepend_to_program_body,
 	render_children,
 } from '../../utils/ast.js';
 
@@ -828,7 +829,7 @@ export function createJsxTransform(platform) {
 			transformed_program = { ...transformed_program, body: [...transformed_program.body] };
 		}
 		if (type_only_style_anchors.length > 0) {
-			transformed_program.body.unshift(...type_only_style_anchors);
+			prepend_to_program_body(transformed_program, ...type_only_style_anchors);
 		}
 		const expanded = expand_component_helpers(transformed_program);
 
@@ -1039,7 +1040,8 @@ function lower_dynamic_jsx_element(node, transform_context) {
 function inject_dynamic_import(program, transform_context) {
 	const factory = transform_context.platform.imports.dynamicFactory;
 	if (transform_context.needs_dynamic_factory && factory?.name && factory.source) {
-		program.body.unshift(
+		prepend_to_program_body(
+			program,
 			b.import_declaration(
 				[b.import_specifier(factory.name, DYNAMIC_FACTORY_LOCAL)],
 				factory.source,
@@ -1048,7 +1050,8 @@ function inject_dynamic_import(program, transform_context) {
 	}
 	const source = transform_context.platform.imports.dynamic;
 	if (!transform_context.needs_dynamic_element || !source) return;
-	program.body.unshift(
+	prepend_to_program_body(
+		program,
 		b.import_declaration([b.import_specifier('Dynamic', DYNAMIC_IMPORT_LOCAL)], source),
 	);
 }
@@ -5143,7 +5146,7 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	}
 
 	if (imports.length > 0) {
-		program.body.unshift(...imports);
+		prepend_to_program_body(program, ...imports);
 	}
 }
 

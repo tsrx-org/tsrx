@@ -2240,6 +2240,49 @@ export function runSharedCompileTests({
 	runSharedScopedStyleTests({ compile, name, classAttrName, generatedClassAttrName });
 	runSharedScopedStyleConformanceTests({ compile, name, classAttrName, generatedClassAttrName });
 
+	describe(`[${name}] directive prologue`, () => {
+		it('keeps added imports after a use client directive', () => {
+			const { code } = compile(
+				`'use client';
+
+				export function App(props: { items: string[] }) @{
+					<ul>
+						@for (const item of props.items) {
+							<li>{item}</li>
+						}
+					</ul>
+				}`,
+				'App.tsrx',
+			);
+
+			const statements = code.trimStart().split('\n');
+			expect(statements[0]).toBe("'use client';");
+			expect(code).toMatch(/^import /m);
+			expect(code.indexOf("'use client';")).toBeLessThan(code.indexOf('import '));
+		});
+
+		it('keeps every directive in the prologue ahead of added imports', () => {
+			const { code } = compile(
+				`'use server';
+				'use strict';
+
+				export function Tag(props: { tag: string; items: string[] }) @{
+					<{props.tag}>
+						@for (const item of props.items) {
+							<span>{item}</span>
+						}
+					</{props.tag}>
+				}`,
+				'Tag.tsrx',
+			);
+
+			const first_import = code.indexOf('import ');
+			expect(first_import).toBeGreaterThan(-1);
+			expect(code.indexOf("'use server';")).toBeLessThan(first_import);
+			expect(code.indexOf("'use strict';")).toBeLessThan(first_import);
+		});
+	});
+
 	describe(`[${name}] import phases`, () => {
 		it('preserves deferred imports in compiled output', () => {
 			const { code } = compile(
