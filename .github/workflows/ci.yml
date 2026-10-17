@@ -160,6 +160,42 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
+  storybook:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm --filter @tsrx/storybook-examples exec playwright install --with-deps chromium
+
+      - name: Check native component and story props
+        run: pnpm --filter @tsrx/storybook-examples typecheck
+
+      - name: Test development and static Storybook examples
+        run: pnpm --filter @tsrx/storybook-examples test
+
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: storybook-browser-failures
+          path: packages/storybook-examples/test-results/
+          if-no-files-found: ignore
+
   grammar:
     runs-on: ubuntu-latest
 

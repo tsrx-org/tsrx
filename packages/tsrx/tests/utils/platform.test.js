@@ -2,6 +2,7 @@ import { decode, encode } from '@jridgewell/sourcemap-codec';
 import { describe, expect, it } from 'vitest';
 import {
 	createPlatformDefinitions,
+	mergePlatformDefinitions,
 	parseModule,
 	replacePlatformFlags,
 	specializePlatform,
@@ -108,6 +109,112 @@ describe('platform specialization', () => {
 			'import.meta.env.platform.ios': false,
 			'import.meta.env.platform.android': true,
 		});
+	});
+
+	it.each(['{}', JSON.stringify({ STORYBOOK: '"true"' })])(
+		'preserves JSON environment defaults while merging exact platform flags: %s',
+		(environment) => {
+			const definitions = {
+				'import.meta.env': environment,
+				'import.meta.env.STORYBOOK': '"true"',
+			};
+
+			expect(mergePlatformDefinitions(definitions, 'web')).toEqual({
+				...definitions,
+				'import.meta.env': JSON.stringify({
+					...JSON.parse(environment),
+					platform: { web: true, ios: false, android: false },
+				}),
+				'import.meta.env.platform': JSON.stringify({ web: true, ios: false, android: false }),
+				...createPlatformDefinitions('web'),
+			});
+			expect(Object.keys(definitions)).toHaveLength(2);
+		},
+	);
+
+	it.each(['web', 'ios', 'android'])(
+		'keeps compatible environment composition idempotent for %s',
+		(platform) => {
+			const merged = mergePlatformDefinitions(
+				{
+					'import.meta.env': JSON.stringify({
+						STORYBOOK: '"true"',
+						unrelated: { nested: ['value'] },
+					}),
+				},
+				platform,
+				{ serialize: true },
+			);
+
+			const environment = merged['import.meta.env'];
+			if (typeof environment !== 'string') throw new Error('expected serialized environment');
+			expect(JSON.parse(environment)).toEqual({
+				STORYBOOK: '"true"',
+				unrelated: { nested: ['value'] },
+				platform: {
+					web: platform === 'web',
+					ios: platform === 'ios',
+					android: platform === 'android',
+				},
+			});
+			expect(mergePlatformDefinitions(merged, platform, { serialize: true })).toEqual(merged);
+		},
+	);
+
+	it.each([false, true])('preserves unrelated fields within platform defaults (%s)', (separate) => {
+		const platform = { web: true, ios: false, android: false, unrelated: { nested: ['value'] } };
+		const definitions = {
+			'import.meta.env': JSON.stringify({ STORYBOOK: '"true"', platform }),
+			...(separate ? { 'import.meta.env.platform': JSON.stringify(platform) } : {}),
+		};
+		const merged = mergePlatformDefinitions(definitions, 'web');
+		expect(merged['import.meta.env']).toBe(definitions['import.meta.env']);
+		expect(merged['import.meta.env.platform']).toBe(JSON.stringify(platform));
+	});
+
+	it('does not add platform flags without a selected platform', () => {
+		const definitions = { CUSTOM: 'true' };
+		expect(mergePlatformDefinitions(definitions, undefined)).toEqual(definitions);
+	});
+
+	it.each([
+		['import.meta', '{}'],
+		['import.meta.env.platform', '{}'],
+		['import.meta.env.platform', JSON.stringify({ web: true, ios: false, android: false })],
+		['import.meta.env', 'environmentDefaults'],
+		['import.meta.env', '({})'],
+		['import.meta.env', 'null'],
+		['import.meta.env', 'false'],
+		['import.meta.env', '[]'],
+		['import.meta.env', JSON.stringify({ platform: {} })],
+		['import.meta.env', JSON.stringify({ platform: { web: false } })],
+		['import.meta.env', JSON.stringify({ platform: { web: 'true', ios: false, android: false } })],
+		['import.meta.env', JSON.stringify({ platform: null })],
+	])('still rejects a reserved or unverifiable parent definition: %s = %s', (key, value) => {
+		expect(() => mergePlatformDefinitions({ [key]: value }, 'web')).toThrow(
+			/Conflicting build integration definition/,
+		);
+	});
+
+	it.each(['{}', 'dynamicPlatform', JSON.stringify({ web: false, ios: false, android: false })])(
+		'rejects an incomplete or conflicting namespace alongside environment defaults: %s',
+		(namespace) => {
+			expect(() =>
+				mergePlatformDefinitions(
+					{ 'import.meta.env': '{}', 'import.meta.env.platform': namespace },
+					'web',
+				),
+			).toThrow(/Conflicting build integration definition/);
+		},
+	);
+
+	it('still rejects conflicting exact flags alongside compatible environment defaults', () => {
+		expect(() =>
+			mergePlatformDefinitions(
+				{ 'import.meta.env': '{}', 'import.meta.env.platform.web': false },
+				'web',
+			),
+		).toThrow(/expected true/);
 	});
 
 	it('replaces exact flags without touching strings or comments', () => {

@@ -377,6 +377,26 @@ function wrap_helper_component(helper_fn, helper_id, source_node) {
  * @returns {void}
  */
 function wrap_native_function_components(program, ctx) {
+	// Keep the module binding when a named default function becomes a component const.
+	program.body = program.body.flatMap((statement) => {
+		const declaration =
+			statement.type === 'ExportDefaultDeclaration' ? statement.declaration : null;
+		const fn =
+			declaration?.type === 'FunctionDeclaration'
+				? /** @type {AST.FunctionDeclaration} */ (declaration)
+				: null;
+		if (!fn?.metadata?.native_tsrx_function || !fn.id || !/^[A-Z]/.test(fn.id.name)) {
+			return [statement];
+		}
+		return [
+			fn,
+			setLocation(
+				b.export_builder(null, [b.export_specifier(clone_identifier(fn.id), 'default')]),
+				has_location(statement) ? statement : undefined,
+			),
+		];
+	});
+
 	const wrapped = walk(program, ctx, {
 		FunctionDeclaration(node, { next, path, state }) {
 			const inner = next() ?? node;
@@ -430,10 +450,6 @@ function wrap_native_function_component(fn, ctx, path) {
 	);
 
 	if (fn.type !== 'FunctionDeclaration') {
-		return call;
-	}
-
-	if (parent?.type === 'ExportDefaultDeclaration' && parent.declaration === fn) {
 		return call;
 	}
 

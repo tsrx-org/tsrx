@@ -141,33 +141,36 @@ function create_tsrx_vue_plugin(options) {
 		name: '@tsrx/vite-plugin-vue',
 		enforce: 'pre',
 
-		config(config = /** @type {import('vite').UserConfig} */ ({})) {
-			resolve_platform(config);
-			return {
-				...(platform === undefined
-					? {}
-					: {
-							define: mergePlatformDefinitions(config.define, platform, {
-								integration: 'Vite',
+		config: {
+			order: 'post',
+			handler(config = /** @type {import('vite').UserConfig} */ ({})) {
+				resolve_platform(config);
+				return {
+					...(platform === undefined
+						? {}
+						: {
+								define: mergePlatformDefinitions(config.define, platform, {
+									integration: 'Vite',
+								}),
 							}),
-						}),
-				resolve: {
-					dedupe: ['vue', 'vue-jsx-vapor'],
-				},
-				optimizeDeps: {
-					rolldownOptions: {
-						// The scan runs its own jsx transform over the tsx the
-						// dep-scan plugin hands back, and it defaults to react's
-						// automatic runtime — which no Vue project has installed, so
-						// the scan would fail on an unresolvable
-						// `react/jsx-dev-runtime`. Vue's own jsx handling belongs to
-						// `vue-jsx-vapor` downstream; the scan only needs the
-						// imports, so leave the jsx alone.
-						transform: { jsx: 'preserve' },
-						plugins: [create_tsrx_vue_scan_plugin(isVirtual, toRealPath, compile_options)],
+					resolve: {
+						dedupe: ['vue', 'vue-jsx-vapor'],
 					},
-				},
-			};
+					optimizeDeps: {
+						rolldownOptions: {
+							// The scan runs its own jsx transform over the tsx the
+							// dep-scan plugin hands back, and it defaults to react's
+							// automatic runtime — which no Vue project has installed, so
+							// the scan would fail on an unresolvable
+							// `react/jsx-dev-runtime`. Vue's own jsx handling belongs to
+							// `vue-jsx-vapor` downstream; the scan only needs the
+							// imports, so leave the jsx alone.
+							transform: { jsx: 'preserve' },
+							plugins: [create_tsrx_vue_scan_plugin(isVirtual, toRealPath, compile_options)],
+						},
+					},
+				};
+			},
 		},
 
 		configEnvironment(name, config = /** @type {import('vite').EnvironmentOptions} */ ({})) {
@@ -248,8 +251,15 @@ function create_tsrx_vue_plugin(options) {
 			return { code, map };
 		},
 
-		handleHotUpdate(ctx) {
+		async handleHotUpdate(ctx) {
 			if (!isTsrxSource(ctx.file)) return;
+			// CSS can reload before the virtual JS, so refresh its selector hash first.
+			const { css } = compile(await ctx.read(), ctx.file, compile_options);
+			if (css) {
+				cssCache.set(ctx.file, css);
+			} else {
+				cssCache.delete(ctx.file);
+			}
 
 			// Look the virtual modules up by file to include a worker entry's
 			// query-suffixed id.

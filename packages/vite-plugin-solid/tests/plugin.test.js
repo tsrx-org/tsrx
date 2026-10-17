@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tsrxSolid } from '../src/index.js';
@@ -115,4 +115,56 @@ describe('@tsrx/vite-plugin-solid routing', () => {
 			expect(/** @type {any} */ (result).map.sourcesContent).toEqual([source]);
 		});
 	});
+});
+
+it('refreshes scoped CSS before updated virtual JS loads and clears removed styles', async () => {
+	const plugin = tsrxSolid();
+	const directory = mkdtempSync(join(tmpdir(), 'tsrx-solid-hmr-'));
+	const file = join(directory, 'App.tsrx');
+	const virtual_id = file + '.tsx';
+	const css_module = { id: file + '?tsrx-solid-css&lang.css' };
+	const js_module = { id: virtual_id };
+	const source = `export function App() @{
+		<>
+			<style>.content { color: red; }</style>
+			<div class="content">Before</div>
+		</>
+	}`;
+	let updated = source.replace('red', 'blue').replace('Before', 'After');
+	const handle_hot_update = /** @type {(ctx: any) => Promise<any[]>} */ (plugin.handleHotUpdate);
+	const context = {
+		file,
+		modules: [],
+		read: async () => updated,
+		server: {
+			moduleGraph: {
+				getModulesByFile: () => new Set([js_module]),
+				getModuleById: () => css_module,
+			},
+		},
+	};
+	try {
+		writeFileSync(file, source);
+		await call_load(plugin, virtual_id);
+		expect(await call_load(plugin, css_module.id)).toContain('color: red');
+
+		writeFileSync(file, updated);
+		const modules = await handle_hot_update(context);
+		const css = await call_load(plugin, css_module.id);
+		expect(css).toContain('color: blue');
+		expect(css).not.toContain('color: red');
+		if (typeof css !== 'string') throw new Error('expected CSS text');
+		const hash = css.match(/tsrx-[a-f0-9]+/)?.[0];
+		expect(hash).toBeDefined();
+		const javascript = await call_load(plugin, virtual_id);
+		expect(/** @type {any} */ (javascript).code).toContain(hash);
+		expect(modules).toEqual([js_module, css_module]);
+
+		updated = 'export function App() @{ <div>Without styles</div> }';
+		writeFileSync(file, updated);
+		await handle_hot_update(context);
+		expect(await call_load(plugin, css_module.id)).toBe('');
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
 });

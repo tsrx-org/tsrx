@@ -1,4 +1,9 @@
+import { resolveConfig } from 'vite';
 import { tsrxReact } from '../src/index.js';
+import { tsrxPreact } from '../../vite-plugin-preact/src/index.js';
+import { tsrxSolid } from '../../vite-plugin-solid/src/index.js';
+import { tsrxVue } from '../../vite-plugin-vue/src/index.js';
+import { tsrxHono } from '../../vite-plugin-hono/src/index.js';
 
 describe('@tsrx/vite-plugin-react basic', () => {
 	it('forwards direct runtime imports to the compiler', async () => {
@@ -141,4 +146,46 @@ describe('@tsrx/vite-plugin-react basic', () => {
 		expect(invalidated).toEqual([css_module]);
 		expect(modules).toContain(css_module);
 	});
+});
+
+describe('Vite platform environment composition', () => {
+	it.each([
+		['React', () => tsrxReact({ platform: 'web' })],
+		['Preact', () => tsrxPreact({ platform: 'web' })],
+		['Solid', () => tsrxSolid({ platform: 'web' })],
+		['Vue', () => tsrxVue({ platform: 'web' })],
+		['Hono', () => tsrxHono({ platform: 'web' })],
+	])(
+		'composes late environment defaults before root resolution for %s',
+		async (_, create_plugin) => {
+			const resolved = await resolveConfig(
+				{
+					configFile: false,
+					envFile: false,
+					plugins: [
+						create_plugin(),
+						{
+							name: 'late-environment-defaults',
+							config: () => ({
+								define: {
+									'import.meta.env': JSON.stringify({ STORYBOOK: '"true"' }),
+									'import.meta.env.STORYBOOK': '"true"',
+								},
+							}),
+						},
+					],
+				},
+				'serve',
+			);
+			const flags = { web: true, ios: false, android: false };
+			expect(resolved.define['import.meta.env']).toBe(
+				JSON.stringify({ STORYBOOK: '"true"', platform: flags }),
+			);
+			expect(resolved.define['import.meta.env.platform']).toBe(JSON.stringify(flags));
+			expect(resolved.define['import.meta.env.platform.web']).toBe(true);
+			expect(resolved.environments.client.define['import.meta.env.platform']).toBe(
+				JSON.stringify(flags),
+			);
+		},
+	);
 });

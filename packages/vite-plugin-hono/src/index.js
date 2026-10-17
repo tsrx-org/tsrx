@@ -106,14 +106,17 @@ export function tsrxHono(options = {}) {
 		perEnvironmentStartEndDuringDev: true,
 		perEnvironmentWatchChangeDuringDev: true,
 
-		config(config = /** @type {import('vite').UserConfig} */ ({})) {
-			resolve_platform(config);
-			if (platform === undefined) return;
-			return {
-				define: mergePlatformDefinitions(config.define, platform, {
-					integration: 'Vite',
-				}),
-			};
+		config: {
+			order: 'post',
+			handler(config = /** @type {import('vite').UserConfig} */ ({})) {
+				resolve_platform(config);
+				if (platform === undefined) return;
+				return {
+					define: mergePlatformDefinitions(config.define, platform, {
+						integration: 'Vite',
+					}),
+				};
+			},
 		},
 
 		configEnvironment(name, config = /** @type {import('vite').EnvironmentOptions} */ ({})) {

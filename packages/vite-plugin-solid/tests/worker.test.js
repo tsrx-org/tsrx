@@ -90,6 +90,7 @@ describe('@tsrx/vite-plugin-solid web workers', () => {
 		const worker_module = { id: '/abs/path/Worker.tsrx.tsx?worker_file&type=module' };
 		const modules = await call_handle_hot_update(tsrxSolid(), {
 			file: '/abs/path/Worker.tsrx',
+			read: async () => worker('updated'),
 			modules: [],
 			server: {
 				moduleGraph: {

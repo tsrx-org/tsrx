@@ -1,5 +1,7 @@
 import { TS_ERRORS } from '@tsrx/core';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { defineVaporComponent } from 'vue-jsx-vapor';
 import {
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
@@ -51,6 +53,48 @@ runSharedComponentParamsTests({ compile, compile_to_volar_mappings, name: 'vue' 
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'vue' });
 
 describe('@tsrx/vue basic', () => {
+	it('keeps default-exported component bindings consumable alongside named exports', () => {
+		const { code } = compile(
+			`export default function App() @{
+				<div onClick={() => {}}>{'Default'}</div>
+			}
+			export { App };
+			export function Named(props: { label: string }) @{
+				<span>{props.label}</span>
+			}`,
+			'App.tsrx',
+		);
+
+		const source_file = ts.createSourceFile(
+			'App.tsx',
+			code,
+			ts.ScriptTarget.Latest,
+			true,
+			ts.ScriptKind.TSX,
+		);
+		expect(
+			/** @type {ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }} */ (
+				source_file
+			).parseDiagnostics.map((diagnostic) => diagnostic.code),
+		).toEqual([]);
+
+		const { outputText } = ts.transpileModule(code, {
+			compilerOptions: {
+				module: ts.ModuleKind.CommonJS,
+				target: ts.ScriptTarget.ES2022,
+				jsx: ts.JsxEmit.React,
+			},
+		});
+
+		const module = { exports: /** @type {Record<string, any>} */ ({}) };
+		new Function('module', 'exports', 'require', outputText)(module, module.exports, () => ({
+			defineVaporComponent,
+		}));
+		expect(module.exports.default).toBe(module.exports.App);
+		expect(module.exports.default.__vapor).toBe(true);
+		expect(module.exports.Named.__vapor).toBe(true);
+	});
+
 	it('merges defineVaporComponent into existing vue imports', () => {
 		const { code } = compile(
 			`import { ref } from 'vue';

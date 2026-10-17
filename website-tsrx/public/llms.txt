@@ -74,6 +74,36 @@ npm install octane @octanejs/vite-plugin
 Vue's Vite setup should use `tsrxVue()` from `@tsrx/vite-plugin-vue`,
 and editor/typecheck configs should set `jsxImportSource: 'vue-jsx-vapor'`.
 
+### Storybook
+
+Runnable consumer examples: https://github.com/tsrx-org/tsrx/tree/main/packages/storybook-examples.
+Use ordinary `.stories.ts` or `.stories.tsx` files that import `.tsrx` components.
+Keep the target plugin in the consumer's `vite.config.ts`; Storybook loads it,
+so do not install a second compiler instance in `viteFinal`.
+
+- React: `@storybook/react-vite` plus `@tsrx/vite-plugin-react`.
+- Preact: `@storybook/preact-vite` plus `@tsrx/vite-plugin-preact`; the example's
+  small preview renderer uses native Preact `render` to preserve Controls state.
+- Solid: `storybook-solidjs-vite` plus `@tsrx/vite-plugin-solid` and
+  `vite-plugin-solid`.
+- Vue: `@storybook/vue3-vite` plus `@tsrx/vite-plugin-vue`; install Vue's
+  `vaporInteropPlugin` through Storybook's standard `setup` preview hook.
+- Hono DOM: `@storybook/html-vite` plus `tsrxHono({ mode: 'dom' })`; use a native
+  Hono DOM root with Storybook's `useMemo` and `useEffect` lifecycle hooks.
+- Ripple: `@storybook/html-vite` plus `ripple()` from `@ripple-ts/vite-plugin`;
+  the native `StoryRoot.tsrx` holds reactive props and the story cleans up the
+  disposer returned by `mount`.
+
+React, Preact, Solid, and Vue use the imported component directly in their
+stories. Explicit `args` and `argTypes` supply Controls; these examples do not
+establish automatic native `.tsrx` docgen or `.stories.tsrx` indexing. They cover
+browser canvases and static Storybook sites, not server rendering, hydration,
+or mobile hosts. See the examples' README for pinned versions, upstream Solid
+and Vue prerelease peer caveats, and the typecheck/browser-test commands.
+
+Octane's existing external example:
+https://github.com/octanejs/octane/blob/main/examples/storybook/README.md.
+
 ### Compile-time platform flags
 
 Shared source can select one of three exact platforms through the active

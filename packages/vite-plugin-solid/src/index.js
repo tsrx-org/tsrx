@@ -97,37 +97,40 @@ export function tsrxSolid(options = {}) {
 		name: '@tsrx/vite-plugin-solid',
 		enforce: 'pre',
 
-		config(config = /** @type {import('vite').UserConfig} */ ({})) {
-			resolve_platform(config);
-			return {
-				...(platform === undefined
-					? {}
-					: {
-							define: mergePlatformDefinitions(config.define, platform, {
-								integration: 'Vite',
+		config: {
+			order: 'post',
+			handler(config = /** @type {import('vite').UserConfig} */ ({})) {
+				resolve_platform(config);
+				return {
+					...(platform === undefined
+						? {}
+						: {
+								define: mergePlatformDefinitions(config.define, platform, {
+									integration: 'Vite',
+								}),
 							}),
-						}),
-				optimizeDeps: {
-					rolldownOptions: {
-						// The scan runs its own jsx transform over the tsx the
-						// dep-scan plugin hands back, and it defaults to react's
-						// automatic runtime — which no Solid project has installed,
-						// so the scan would fail on an unresolvable
-						// `react/jsx-dev-runtime`. Solid's own jsx handling belongs
-						// to `vite-plugin-solid` downstream; the scan only needs the
-						// imports, so leave the jsx alone.
-						transform: { jsx: 'preserve' },
-						plugins: [
-							createDepScanLoadPlugin({
-								name: '@tsrx/vite-plugin-solid:dep-scan',
-								isVirtual: is_virtual,
-								toRealPath: to_real_path,
-								compile: (code, id) => compile(code, id, compile_options),
-							}),
-						],
+					optimizeDeps: {
+						rolldownOptions: {
+							// The scan runs its own jsx transform over the tsx the
+							// dep-scan plugin hands back, and it defaults to react's
+							// automatic runtime — which no Solid project has installed,
+							// so the scan would fail on an unresolvable
+							// `react/jsx-dev-runtime`. Solid's own jsx handling belongs
+							// to `vite-plugin-solid` downstream; the scan only needs the
+							// imports, so leave the jsx alone.
+							transform: { jsx: 'preserve' },
+							plugins: [
+								createDepScanLoadPlugin({
+									name: '@tsrx/vite-plugin-solid:dep-scan',
+									isVirtual: is_virtual,
+									toRealPath: to_real_path,
+									compile: (code, id) => compile(code, id, compile_options),
+								}),
+							],
+						},
 					},
-				},
-			};
+				};
+			},
 		},
 
 		configEnvironment(name, config = /** @type {import('vite').EnvironmentOptions} */ ({})) {
@@ -205,8 +208,15 @@ export function tsrxSolid(options = {}) {
 			return { code, map };
 		},
 
-		handleHotUpdate(ctx) {
+		async handleHotUpdate(ctx) {
 			if (!is_tsrx_source(ctx.file)) return;
+			// CSS can reload before the virtual JS, so refresh its selector hash first.
+			const { css } = compile(await ctx.read(), ctx.file, compile_options);
+			if (css) {
+				css_cache.set(ctx.file, css);
+			} else {
+				css_cache.delete(ctx.file);
+			}
 			// Invalidate the virtual `<path>.tsx` modules so Vite re-runs `load`,
 			// looked up by file to include a worker entry's query-suffixed id.
 			// Also invalidate the virtual CSS module — Vite doesn't cascade

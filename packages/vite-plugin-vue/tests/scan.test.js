@@ -32,7 +32,7 @@ function get_config(options) {
 		(p) => /** @type {any} */ (p).name === '@tsrx/vite-plugin-vue',
 	);
 
-	return /** @type {any} */ (plugin).config();
+	return /** @type {any} */ (plugin).config.handler();
 }
 
 describe('@tsrx/vite-plugin-vue dep scan', () => {

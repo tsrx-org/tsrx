@@ -344,8 +344,8 @@ export function create_platform_definitions(platform_value) {
 }
 
 /**
- * Merge platform constants into a builder's native definition map and reject
- * an existing exact definition that selects a different value.
+ * Merge platform constants and compatible JSON environment defaults, rejecting
+ * conflicting exact flags or incomplete reserved platform namespaces.
  *
  * @param {Record<string, unknown> | undefined} definitions
  * @param {unknown} platform_value
@@ -355,13 +355,61 @@ export function create_platform_definitions(platform_value) {
 export function merge_platform_definitions(definitions, platform_value, options = {}) {
 	const platform_definitions = create_platform_definitions(platform_value);
 	const merged = { ...(definitions ?? {}) };
+	const flags = Object.fromEntries(
+		PLATFORMS.map((name) => [name, platform_definitions[`import.meta.env.platform.${name}`]]),
+	);
 	const integration = options.integration ?? 'build integration';
 	for (const parent of ['import.meta', 'import.meta.env', 'import.meta.env.platform']) {
 		if (Object.prototype.hasOwnProperty.call(merged, parent)) {
+			const definition = merged[parent];
+			const is_environment = parent === 'import.meta.env';
+			if (
+				platform_value !== undefined &&
+				typeof definition === 'string' &&
+				(is_environment ||
+					(parent === 'import.meta.env.platform' &&
+						Object.prototype.hasOwnProperty.call(merged, 'import.meta.env')))
+			) {
+				try {
+					const value = JSON.parse(definition);
+					const namespace = is_environment ? value?.platform : value;
+					if (
+						value !== null &&
+						typeof value === 'object' &&
+						!Array.isArray(value) &&
+						((is_environment && !Object.prototype.hasOwnProperty.call(value, 'platform')) ||
+							(namespace !== null &&
+								typeof namespace === 'object' &&
+								PLATFORMS.every(
+									(name) =>
+										Object.prototype.hasOwnProperty.call(namespace, name) &&
+										namespace[name] === flags[name],
+								)))
+					) {
+						if (is_environment) {
+							merged[parent] = JSON.stringify({
+								...value,
+								platform: { ...namespace, ...flags },
+							});
+						}
+						continue;
+					}
+				} catch {
+					// Non-JSON definitions cannot be checked without evaluating code.
+				}
+			}
 			throw new Error(
 				`Conflicting ${integration} definition for ${parent}: TSRX defines the three exact import.meta.env.platform.* paths for platform ${render_value(platform_value)}.`,
 			);
 		}
+	}
+	const environment = merged['import.meta.env'];
+	if (
+		typeof environment === 'string' &&
+		!Object.prototype.hasOwnProperty.call(merged, 'import.meta.env.platform')
+	) {
+		// Vite dev turns dotted env definitions into flat keys, so it also needs the namespace.
+		merged['import.meta.env.platform'] = JSON.stringify(JSON.parse(environment).platform);
 	}
 
 	for (const [key, expected] of Object.entries(platform_definitions)) {

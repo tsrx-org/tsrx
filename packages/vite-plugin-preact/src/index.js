@@ -27,7 +27,7 @@
  *   },
  * }} TsrxPreactConfigHook
  * @typedef {Omit<Plugin, 'config' | 'transform' | 'resolveId' | 'load'> & {
- *   config: TsrxPreactConfigHook,
+ *   config: { order: 'post', handler: TsrxPreactConfigHook },
  *   transform: TsrxPreactTransform,
  *   resolveId: TsrxPreactResolveId,
  *   load: TsrxPreactLoad,
@@ -106,32 +106,35 @@ export function tsrxPreact(options = {}) {
 		name: '@tsrx/vite-plugin-preact',
 		enforce: 'pre',
 
-		config(config = /** @type {import('vite').UserConfig} */ ({})) {
-			resolve_platform(config);
-			return {
-				...(platform === undefined
-					? {}
-					: {
-							define: mergePlatformDefinitions(config.define, platform, {
-								integration: 'Vite',
+		config: {
+			order: 'post',
+			handler(config = /** @type {import('vite').UserConfig} */ ({})) {
+				resolve_platform(config);
+				return {
+					...(platform === undefined
+						? {}
+						: {
+								define: mergePlatformDefinitions(config.define, platform, {
+									integration: 'Vite',
+								}),
 							}),
-						}),
-				optimizeDeps: {
-					// The scanner externalizes anything that is not a known JS
-					// type unless its extension is listed here, so without this
-					// entry the dep-scan plugin below never runs.
-					extensions: ['.tsrx'],
-					rolldownOptions: {
-						// The scan runs its own jsx transform over the tsx the
-						// dep-scan plugin hands back, and that transform defaults to
-						// react's runtime. Point it at the configured source, or the
-						// scan fails outright on an unresolvable
-						// `react/jsx-dev-runtime` in a project that has no react.
-						transform: { jsx: { importSource: jsxImportSource } },
-						plugins: [create_dep_scan_plugin(jsxImportSource, compile_options)],
+					optimizeDeps: {
+						// The scanner externalizes anything that is not a known JS
+						// type unless its extension is listed here, so without this
+						// entry the dep-scan plugin below never runs.
+						extensions: ['.tsrx'],
+						rolldownOptions: {
+							// The scan runs its own jsx transform over the tsx the
+							// dep-scan plugin hands back, and that transform defaults to
+							// react's runtime. Point it at the configured source, or the
+							// scan fails outright on an unresolvable
+							// `react/jsx-dev-runtime` in a project that has no react.
+							transform: { jsx: { importSource: jsxImportSource } },
+							plugins: [create_dep_scan_plugin(jsxImportSource, compile_options)],
+						},
 					},
-				},
-			};
+				};
+			},
 		},
 
 		configEnvironment(name, config = /** @type {import('vite').EnvironmentOptions} */ ({})) {

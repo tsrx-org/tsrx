@@ -328,7 +328,7 @@ describe('@tsrx/vite-plugin-hono', () => {
 
 	it('specializes platform flags and defines them for Vite', async () => {
 		const plugin = tsrxHono({ platform: 'web' });
-		const config = plugin.config({});
+		const config = plugin.config.handler({});
 		const environment_config = plugin.configEnvironment('client', {});
 		const source = `if (import.meta.env.platform.web) {
 			const selected_web = 'selected_web';
@@ -359,7 +359,7 @@ describe('@tsrx/vite-plugin-hono', () => {
 				JSON.stringify({ tsrx: { platform: 'ios' } }),
 			);
 			const plugin = tsrxHono();
-			const config = plugin.config({ root: directory });
+			const config = plugin.config.handler({ root: directory });
 			const transformed = await plugin.transform.call(
 				create_context(),
 				`if (import.meta.env.platform.ios) {

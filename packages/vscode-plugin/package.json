@@ -62,6 +62,7 @@
     "@types/vscode": "catalog:default"
   },
   "devDependencies": {
+    "typescript": "catalog:default",
     "@tsrx/core": "workspace:*",
     "tsdown": "catalog:default",
     "@vscode/vsce": "catalog:default",

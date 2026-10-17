@@ -107,6 +107,9 @@ This repository includes the core compiler, target compilers and runtime helpers
 build integrations for Vite, Rspack, Turbopack, and Bun, plus Prettier, ESLint,
 TypeScript, language-server, and editor tooling.
 
+See the [runnable Storybook examples](packages/storybook-examples/README.md) for
+native `.tsrx` components with React, Preact, Solid, Vue, Hono DOM, and Ripple.
+
 Install the
 [TSRX Syntax for VS Code](https://marketplace.visualstudio.com/items?itemName=TSRX.tsrx-vscode-plugin)
 for syntax highlighting, diagnostics, navigation, completions, formatting, and

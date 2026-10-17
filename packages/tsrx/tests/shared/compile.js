@@ -2766,7 +2766,27 @@ export function App() @{
 				'App.tsrx',
 			);
 
-			expect(code).toContain('export default defineVaporComponent(function App()');
+			const source_file = ts.createSourceFile(
+				'App.tsx',
+				code,
+				ts.ScriptTarget.Latest,
+				true,
+				ts.ScriptKind.TSX,
+			);
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+			expect(
+				source_file.statements.some(
+					(statement) =>
+						ts.isExportDeclaration(statement) &&
+						statement.exportClause &&
+						ts.isNamedExports(statement.exportClause) &&
+						statement.exportClause.elements.some(
+							(specifier) =>
+								specifier.name.text === 'default' && specifier.propertyName?.text === 'App',
+						),
+				),
+			).toBe(true);
+			expect(code).toContain('defineVaporComponent(function App()');
 			expect(code).toContain("{'Hello world'}");
 		});
 
