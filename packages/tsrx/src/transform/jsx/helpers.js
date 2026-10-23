@@ -212,6 +212,35 @@ export function tsx_with_ts_locations(
 
 	/** @type {ESRap.Visitors<AST.Node>} */
 	const wrappers = {
+		TemplateLiteral: (node, context) => {
+			if (!boundary_tokens) {
+				/** @type {NonNullable<typeof base.TemplateLiteral>} */ (base.TemplateLiteral)(
+					node,
+					context,
+				);
+				return;
+			}
+			// esrap writes quasis directly, without visiting or locating them. Anchor
+			// each literal token independently of expressions whose printed size changes.
+			// Located quasis retain their authored text; transforms must create unlocated
+			// quasis when replacing it. Read the source to preserve CR/CRLF spelling,
+			// which the parser normalizes to LF in value.raw.
+			for (let index = 0; index < node.quasis.length; index++) {
+				const quasi = node.quasis[index];
+				let raw = quasi.value.raw;
+				let loc;
+				if (source !== undefined && has_location(quasi)) {
+					raw = source.slice(quasi.start, quasi.end);
+					loc = quasi.loc;
+				}
+				const suffix = quasi.tail ? '`' : '${';
+				if (loc) context.location(loc.start.line, loc.start.column - 1);
+				context.write((index === 0 ? '`' : '}') + raw + suffix);
+				if (loc) context.location(loc.end.line, loc.end.column + suffix.length);
+				if (/[\r\n\u2028\u2029]/.test(raw)) context.multiline = true;
+				if (index < node.expressions.length) context.visit(node.expressions[index]);
+			}
+		},
 		Program: (node, context) => {
 			// A hashbang is only valid as the very first line of a module.
 			if (hashbang !== null) {
@@ -479,8 +508,8 @@ const TOOLING_LOCATION_WRAPPED_NODE_TYPES = new Set([
 ]);
 
 // Be careful when adding visitors that are already defined in `wrappers`.
-// JSXOpeningElement is intentionally in both places: its custom printer still
-// needs a location marker around the whole node.
+// JSXOpeningElement and TemplateLiteral are intentionally in both places: their
+// custom printers still need a location marker around the whole node.
 const LOCATION_WRAPPED_NODE_TYPES = new Set([
 	// JS nodes with boundary positions esrap still cannot map. Keyword
 	// writes (if/new/return/for/switch/await) and `boundaryTokens`

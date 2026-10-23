@@ -1,11 +1,13 @@
 import { isCodeActionsEnabled, isDiagnosticsEnabled } from '@volar/language-core';
 import { SourceMap } from '@volar/source-map';
 import ts from 'typescript';
+import { walk } from 'zimmerframe';
 import { assert, describe, expect, it } from 'vitest';
 import { builders as b, identifier_to_jsx_name, parseModule } from '@tsrx/core';
 import { assert_type } from './node-types.js';
 import {
 	build_line_offsets,
+	build_source_line_offsets,
 	build_src_to_gen_map,
 	find_exact_mapping,
 	get_generated_position,
@@ -24,6 +26,69 @@ export function runSharedSourceMappingTests({
 	name,
 	rejectsComponentAwait,
 }) {
+	describe(`[${name}] template text mappings`, () => {
+		it.each([
+			'const style = css`color: ${theme+size}; padding: ${size}px;`;',
+			'const style = css`color: ${theme    +    size}; padding: ${size}px;`;',
+			'const style = css`before ${@{ const x = theme; <span>{x}</span> }} after`;',
+			'const style = css`same${css`same${x+y}same`}same${x}same`;',
+			'const style = css`${value}${other}`; const empty = css``;',
+			'const é = "😀";\r\nconst style = css`😀\r\n${x+y}\r\nnext${z}\\n\\`\\${literal}\\u{invalid}`;',
+			'const style = css`😀\r${x+y}\u2028next${z}\u2029last`;\rconsume(style);',
+		])('maps every literal token independently in %s', (source) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const generated = ts.createSourceFile(
+				'App.tsx',
+				result.code,
+				ts.ScriptTarget.Latest,
+				true,
+				ts.ScriptKind.TSX,
+			);
+			/** @type {Array<[number, number]>} */
+			const generated_tokens = [];
+			/** @param {ts.Node} node */
+			function collect(node) {
+				if (
+					ts.isNoSubstitutionTemplateLiteral(node) ||
+					ts.isTemplateHead(node) ||
+					ts.isTemplateMiddle(node) ||
+					ts.isTemplateTail(node)
+				) {
+					generated_tokens.push([node.getStart(generated), node.end]);
+				}
+				ts.forEachChild(node, collect);
+			}
+			collect(generated);
+			let count = 0;
+			walk(result.sourceAst, null, {
+				TemplateElement(node) {
+					assert(node.start !== undefined && node.end !== undefined);
+					const start = node.start - 1;
+					const end = node.end + (node.tail ? 1 : 2);
+					const text = source.slice(start, end);
+					const mapping = result.mappings.find(
+						(mapping) =>
+							mapping.sourceOffsets[0] === start &&
+							mapping.lengths[0] === end - start &&
+							mapping.generatedLengths[0] === end - start &&
+							result.code.slice(
+								mapping.generatedOffsets[0],
+								mapping.generatedOffsets[0] + end - start,
+							) === text,
+					);
+					assert(mapping, `Exact mapping for ${JSON.stringify(text)} at ${start}`);
+					expect(generated_tokens).toContainEqual([
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + end - start,
+					]);
+					count++;
+				},
+			});
+			expect(count).toBeGreaterThan(0);
+		});
+	});
+
 	describe(`[${name}] platform-specialized source mappings`, () => {
 		it('maps only the selected branch and keeps its authored block location', () => {
 			const source = `if (import.meta.env.platform.web) {
@@ -1178,7 +1243,7 @@ function C() @{
 				build_line_offsets(result.code),
 				result.code,
 			);
-			const source_line_offsets = build_line_offsets(source);
+			const source_line_offsets = build_source_line_offsets(source);
 			const arrow_start = source.indexOf('(x: number)');
 			const arrow_end = source.indexOf(';', arrow_start);
 			const start = offset_to_line_col(arrow_start, source_line_offsets);

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import ts from 'typescript';
 import { afterEach, describe, expect, it } from 'vitest';
 import { create_tsrx_content_mapper, to_diagnostic, validate_options } from '../src/mapper.js';
 import { DiagnosticDirectivePolicy, SpanMapKind } from '../src/protocol.js';
@@ -108,6 +109,94 @@ describe('to_diagnostic', () => {
 });
 
 describe('create_tsrx_content_mapper', () => {
+	it.each([
+		'const style = css`same${css`same${x+y}same`}same${x}same`; const empty = css`${x}${y}`;',
+		'const é = "😀";\r\nconst style = css`😀\r\n${x+y}\rnext${z}\u2028\\n\\`\\${literal}\u2029end`;',
+	])('maps complete generated template tokens to their authored positions in %s', (content) => {
+		const result = create_tsrx_content_mapper().transform({
+			fileName: path.join(consumer_fixture_dir, 'Template.tsrx'),
+			content,
+		});
+		expect(result.diagnostics).toBeUndefined();
+		/** @param {string} text */
+		function template_tokens(text) {
+			const file = ts.createSourceFile(
+				'Template.tsx',
+				text,
+				ts.ScriptTarget.Latest,
+				true,
+				ts.ScriptKind.TSX,
+			);
+			/** @type {Array<[number, number]>} */
+			const tokens = [];
+			/** @param {ts.Node} node */
+			function visit(node) {
+				if (
+					ts.isNoSubstitutionTemplateLiteral(node) ||
+					ts.isTemplateHead(node) ||
+					ts.isTemplateMiddle(node) ||
+					ts.isTemplateTail(node)
+				) {
+					tokens.push([node.getStart(file), node.end]);
+				}
+				ts.forEachChild(node, visit);
+			}
+			visit(file);
+			return tokens;
+		}
+		const original = template_tokens(content);
+		const generated = template_tokens(result.text);
+		expect(generated).toHaveLength(original.length);
+		for (let index = 0; index < generated.length; index++) {
+			const [start, end] = generated[index];
+			const [original_start, original_end] = original[index];
+			expect(result.text.slice(start, end)).toBe(content.slice(original_start, original_end));
+			const span = result.mappings.find(
+				([offset, length, , , kind]) =>
+					kind === SpanMapKind.Verbatim && offset <= start && end <= offset + length,
+			);
+			expect(span, `mapping for literal token ${index}`).toBeDefined();
+			if (span) expect(span[2] + start - span[0]).toBe(original_start);
+		}
+	});
+
+	it.each(['theme', 'theme+size', 'theme    +    size', '@{ const x = theme; <span>{x}</span> }'])(
+		'maps template text before, between and after the interpolation %s',
+		(expression) => {
+			const mapper = create_tsrx_content_mapper();
+			const content = 'const style = css`color: ${' + expression + '}; padding: ${size}px;`;';
+			const result = mapper.transform({
+				fileName: path.join(consumer_fixture_dir, 'Template.tsrx'),
+				content,
+			});
+			expect(result.diagnostics).toBeUndefined();
+			for (const text of ['color: ', '; padding: ', 'px;']) {
+				const start = result.text.indexOf(text);
+				expect(start).toBeGreaterThanOrEqual(0);
+				const span = result.mappings.find(
+					([offset, length, , , kind]) =>
+						kind === SpanMapKind.Verbatim &&
+						offset <= start &&
+						start + text.length <= offset + length,
+				);
+				expect(span, `mapping for ${JSON.stringify(text)}`).toBeDefined();
+				if (span) expect(span[2] + start - span[0]).toBe(content.indexOf(text));
+			}
+			for (let index = 1; index < result.mappings.length; index++) {
+				const previous = result.mappings[index - 1];
+				expect(result.mappings[index][0]).toBeGreaterThanOrEqual(previous[0] + previous[1]);
+			}
+			for (const [start, length, original, original_length, kind] of result.mappings) {
+				if (kind === SpanMapKind.Verbatim) {
+					expect(length).toBe(original_length);
+					expect(result.text.slice(start, start + length)).toBe(
+						content.slice(original, original + original_length),
+					);
+				}
+			}
+		},
+	);
+
 	it('negotiates UTF-16 and refuses hosts that cannot speak it', () => {
 		const mapper = create_tsrx_content_mapper();
 		expect(mapper.initialize({ positionEncodings: ['utf-8', 'utf-16'] })).toEqual({

@@ -250,7 +250,8 @@ export function loc_to_offset(line, column, line_offsets) {
 }
 
 /**
- * Converts line/column positions to byte offsets
+ * Line starts for esrap's generated source-map coordinates, which count LF only.
+ * Offsets are UTF-16 code units.
  * @param {string} text
  * @returns {number[]}
  */
@@ -260,6 +261,20 @@ export function build_line_offsets(text) {
 		if (text[i] === '\n') {
 			offsets.push(i + 1);
 		}
+	}
+	return offsets;
+}
+
+/**
+ * Line starts for parser locations in authored JavaScript/TypeScript. Unlike
+ * esrap's generated coordinates, these count every ECMAScript line terminator.
+ * @param {string} source
+ * @returns {number[]}
+ */
+export function build_source_line_offsets(source) {
+	const offsets = [0];
+	for (const match of source.matchAll(/\r\n|[\r\n\u2028\u2029]/g)) {
+		offsets.push(match.index + match[0].length);
 	}
 	return offsets;
 }
