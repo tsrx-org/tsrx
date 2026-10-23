@@ -33,6 +33,7 @@ import {
 	mapping_data_completion_only,
 	mapping_data_string_span,
 	build_line_offsets,
+	build_source_line_offsets,
 	get_mapping_from_node,
 } from '../source-map-utils.js';
 import {
@@ -434,7 +435,7 @@ export function convert_source_map_to_mappings(
 	const mappings = [];
 	let isImportDeclarationPresent = false;
 
-	const src_line_offsets = build_line_offsets(source);
+	const src_line_offsets = build_source_line_offsets(source);
 	const gen_line_offsets = build_line_offsets(generated_code);
 
 	const [src_to_gen_map, , source_line_generated_map] = build_src_to_gen_map(
@@ -2264,20 +2265,42 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TemplateLiteral') {
-				if (has_location(node)) {
-					mappings.push(
-						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
-					);
-				}
+				let has_quasi_mapping = false;
 
 				// Visit quasis and expressions in order
 				for (let i = 0; i < node.quasis.length; i++) {
-					if (node.quasis[i]) {
-						visit(node.quasis[i]);
+					const quasi = node.quasis[i];
+					if (has_location(quasi)) {
+						// The tooling printer preserves the source text of located quasis.
+						// Include the backtick/brace and the following `${`/backtick, just
+						// as TypeScript's template tokens do. The printer anchors each token;
+						// its position never depends on the size of an earlier interpolation.
+						const start = quasi.start - 1;
+						const end = quasi.end + (quasi.tail ? 1 : 2);
+						const text = source.slice(start, end);
+						const loc = {
+							start: offset_to_line_col(start, src_line_offsets),
+							end: offset_to_line_col(end, src_line_offsets),
+						};
+						// Other callers of createVolarMappingsResult may use a printer that
+						// normalizes line endings. Only map tokens actually emitted verbatim;
+						// the general token lookup can fall back to a non-matching position.
+						if (generated_offset_for_text(loc.start, text) !== undefined) {
+							tokens.push({ source: text, generated: text, loc, metadata: {} });
+							has_quasi_mapping = true;
+						}
 					}
 					if (i < node.expressions.length && node.expressions[i]) {
 						visit(node.expressions[i]);
 					}
+				}
+				// Omit the whole-literal fallback only when a no-substitution token
+				// supplies its diagnostics and editor features. Keep it when another
+				// printer changes the text and the exact token mapping was skipped.
+				if (has_location(node) && (node.expressions.length > 0 || !has_quasi_mapping)) {
+					mappings.push(
+						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
+					);
 				}
 				return;
 			} else if (node.type === 'TaggedTemplateExpression') {
