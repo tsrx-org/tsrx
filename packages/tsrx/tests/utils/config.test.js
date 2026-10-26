@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { resolveBuildPlatform } from '../../src/config.js';
+import { getBuildPlatformConfigFiles, resolveBuildPlatform } from '../../src/config.js';
 
 /** @type {string} */
 let directory;
@@ -119,5 +119,46 @@ describe('build platform resolution', () => {
 	it.each(['windows', null, true, 1, [], {}])('rejects invalid config value %j', (platform) => {
 		write_config('tsconfig.json', { tsrx: { platform } });
 		expect(() => resolveBuildPlatform({ root: directory })).toThrow(/Invalid TSRX platform/);
+	});
+});
+
+describe('build platform config files', () => {
+	/** @param {string[]} files */
+	const real = (files) => files.map((file) => fs.realpathSync(file)).sort();
+
+	it('lists the tsconfig, its extends chain, and its references with theirs', () => {
+		// The base sits outside the project directory, as in a monorepo.
+		const shared = `../${path.basename(directory)}-shared`;
+		const files = [
+			write_config('tsconfig.json', {
+				extends: `${shared}/tsconfig.base.json`,
+				references: [{ path: './tsconfig.app.json' }, { path: './missing' }],
+			}),
+			write_config(`${shared}/tsconfig.base.json`, { tsrx: { platform: 'web' } }),
+			write_config('tsconfig.app.json', { extends: './configs/app.json' }),
+			write_config('configs/app.json', {}),
+		];
+		write_config('tsconfig.unrelated.json', {});
+
+		try {
+			expect(real(getBuildPlatformConfigFiles({ root: path.join(directory, 'src') }))).toEqual(
+				real(files),
+			);
+		} finally {
+			fs.rmSync(path.join(directory, shared), { recursive: true, force: true });
+		}
+	});
+
+	it('lists an explicit tsconfig and nothing when none is found', () => {
+		const file = write_config('configs/tsconfig.native.json', { tsrx: { platform: 'ios' } });
+
+		expect(
+			real(
+				getBuildPlatformConfigFiles({ root: directory, tsconfig: 'configs/tsconfig.native.json' }),
+			),
+		).toEqual(real([file]));
+		expect(
+			getBuildPlatformConfigFiles({ root: path.parse(directory).root + 'nonexistent-root' }),
+		).toEqual([]);
 	});
 });

@@ -181,3 +181,55 @@ export function resolveBuildPlatform(options = {}) {
 
 	return configured_platform ?? explicit_platform;
 }
+
+/**
+ * The tsconfig files {@link resolveBuildPlatform} reads for these options: the
+ * selected tsconfig, its `extends` chain, and its project references with
+ * theirs. A build integration watches them to follow platform changes. Files
+ * that do not resolve are left out; resolving the platform reports them.
+ *
+ * @param {BuildPlatformResolutionOptions} [options]
+ * @returns {string[]}
+ */
+export function getBuildPlatformConfigFiles(options = {}) {
+	const root = path.resolve(options.root ?? process.cwd());
+	const config_path = options.tsconfig
+		? path.resolve(root, options.tsconfig)
+		: findTsconfig(root, { cache: new Map() });
+	/** @type {Set<string>} */
+	const files = new Set();
+	if (config_path) collect_config_files(config_path, files);
+	return [...files];
+}
+
+/**
+ * @param {string} config_path
+ * @param {Set<string>} files
+ */
+function collect_config_files(config_path, files) {
+	const normalized_path = path.resolve(config_path);
+	if (files.has(normalized_path)) return;
+	files.add(normalized_path);
+
+	let layers;
+	try {
+		layers = getExtendsChain(normalized_path, { cache: new Map() });
+	} catch {
+		return;
+	}
+	for (const layer of layers) files.add(path.resolve(layer.path));
+
+	const root_config = layers[0]?.config;
+	const references =
+		root_config && typeof root_config === 'object'
+			? /** @type {Record<string, unknown>} */ (root_config).references
+			: undefined;
+	if (!Array.isArray(references)) return;
+	for (const reference of references) {
+		try {
+			collect_config_files(resolve_reference_path(normalized_path, reference), files);
+		} catch {
+			// An unresolvable reference has no file to watch.
+		}
+	}
+}
