@@ -600,6 +600,8 @@ export function createJsxTransform(platform) {
 		// owns the dialect's real codegen (isolation validation, RPC stubs).
 		// Copy-on-write: a program without a server block passes through as the
 		// same object.
+		// The copy-on-write passes below hand back a new program object.
+		const source_tokens = ast.tsrx_tokens;
 		if (transform_context.typeOnly && platform.serverModule) {
 			ast = lower_server_module_for_types(ast, platform.serverModule);
 		}
@@ -863,6 +865,9 @@ export function createJsxTransform(platform) {
 			{
 				sourceMapSource: filename,
 				sourceMapContent: source,
+				// The editor output maps the keywords and punctuation esrap writes
+				// to their source tokens; build prints stay sparse.
+				tokens: transform_context.typeOnly ? source_tokens : undefined,
 			},
 		);
 
