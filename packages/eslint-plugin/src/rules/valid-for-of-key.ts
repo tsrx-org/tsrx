@@ -1,6 +1,5 @@
 import type { Rule } from 'eslint';
 import type * as AST from '@tsrx/core/types/estree';
-import type { Scope } from 'eslint';
 
 const rule: Rule.RuleModule = {
 	meta: {
@@ -16,88 +15,36 @@ const rule: Rule.RuleModule = {
 	},
 	create(context) {
 		const checkForOfKey = (node: AST.ForOfStatement | AST.JSXForExpression) => {
-			if (!node.key) {
+			const key = node.key;
+			if (!key) {
 				return;
 			}
 
-			const checkIdentifier = (identifier: AST.Identifier) => {
-				const scope = context.sourceCode.getScope(node);
-				const variable = findVariable(scope, identifier.name);
-
-				if (!variable) {
-					context.report({
-						node: identifier,
-						messageId: 'undefinedVariable',
-						data: {
-							name: identifier.name,
-						},
-					});
+			const [start, end] = key.range!;
+			for (const reference of context.sourceCode.getScope(node).through) {
+				const identifier = reference.identifier as Rule.Node & AST.Identifier;
+				const [identifier_start, identifier_end] = identifier.range!;
+				if (reference.resolved || identifier_start < start || identifier_end > end) {
+					continue;
 				}
-			};
 
-			const traverse = (node: AST.Node) => {
-				if (!node) return;
-
-				switch (node.type) {
-					case 'Identifier':
-						checkIdentifier(node);
-
-						break;
-					case 'MemberExpression':
-						traverse(node.object);
-
-						if (node.computed) {
-							traverse(node.property);
-						}
-
-						break;
-					case 'BinaryExpression':
-					case 'LogicalExpression':
-						traverse(node.left);
-						traverse(node.right);
-
-						break;
-					case 'UnaryExpression':
-						traverse(node.argument);
-
-						break;
-					case 'CallExpression':
-						traverse(node.callee);
-						node.arguments.forEach(traverse);
-
-						break;
-					case 'ArrayExpression':
-						(node.elements as (AST.Expression | AST.SpreadElement)[]).forEach(traverse);
-
-						break;
-					case 'ObjectExpression':
-						node.properties.forEach((prop: AST.Property | AST.SpreadElement) => {
-							if (prop.type === 'Property') {
-								if (prop.computed) {
-									traverse(prop.key);
-								}
-
-								traverse(prop.value);
-							} else if (prop.type === 'SpreadElement') {
-								traverse(prop.argument);
-							}
-						});
-
-						break;
-					case 'ConditionalExpression':
-						traverse(node.test);
-						traverse(node.consequent);
-						traverse(node.alternate);
-
-						break;
-					case 'TemplateLiteral':
-						node.expressions.forEach(traverse);
-
-						break;
+				// ESLint's scope analysis does not know the loop's `index` binding.
+				if (identifier.name === node.index?.name) {
+					continue;
 				}
-			};
 
-			traverse(node.key);
+				if (is_type_name(identifier, node)) {
+					continue;
+				}
+
+				context.report({
+					node: identifier,
+					messageId: 'undefinedVariable',
+					data: {
+						name: identifier.name,
+					},
+				});
+			}
 		};
 
 		// `@for (... ; key X)` loops parse to `JSXForExpression`, while the bare
@@ -110,33 +57,25 @@ const rule: Rule.RuleModule = {
 	},
 };
 
-function findVariable(scope: Scope.Scope, name: string) {
-	let currentScope: Scope.Scope | null = scope;
+// TypeScript nodes that hold a value; every other TypeScript node is a type.
+const TS_EXPRESSIONS = new Set([
+	'TSAsExpression',
+	'TSSatisfiesExpression',
+	'TSNonNullExpression',
+	'TSInstantiationExpression',
+]);
 
-	while (currentScope) {
-		const variable = currentScope.variables.find((v: { name: string }) => v.name === name);
-
-		if (variable) {
-			return variable;
+/**
+ * Whether the identifier names a type, as `Foo` does in `key item as Foo`.
+ * ESLint's scope analysis reports a type declared in the file as unresolved.
+ */
+function is_type_name(identifier: Rule.Node, loop: AST.Node): boolean {
+	for (let node = identifier.parent; node && node !== loop; node = node.parent) {
+		if (node.type.startsWith('TS') && !TS_EXPRESSIONS.has(node.type)) {
+			return true;
 		}
-
-		// Also check references for global variables or variables defined in the loop itself (like the loop variable)
-		// The loop variable might not be in the 'variables' list of the surrounding scope yet if we are inside the loop statement
-		// But for 'for-of', the loop variable is in a special scope or the upper scope.
-		// Let's rely on standard scope analysis.
-
-		// Special case: check if the variable is the loop variable itself (left side of for-of)
-		// The scope analysis might handle this, but let's be sure.
-
-		currentScope = currentScope.upper;
 	}
-
-	// If not found in scopes, it might be a global variable.
-	// ESLint scope analysis usually includes globals in the global scope.
-	// However, if we are in a module, we might need to check if it's an implicit global or defined elsewhere.
-	// For now, let's assume standard scope resolution works.
-
-	return null;
+	return false;
 }
 
 export default rule;
