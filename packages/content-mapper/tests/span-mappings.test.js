@@ -81,8 +81,10 @@ describe('to_span_mappings', () => {
 		);
 		expect(spans).toEqual([
 			// `const` and `a` coalesce across the identical ` ` gap and extend over the
-			// identical ` ` that follows; the Atom stays apart.
+			// identical ` ` that follows; the identical `= ` before the Atom maps without
+			// features, and the Atom stays apart.
 			[0, 8, 0, 8, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+			[8, 2, 8, 2, SpanMapKind.Verbatim, SpanMapFeature.None],
 			[10, 10, 10, 1, SpanMapKind.Atom, SpanMapFeature.All & ~SpanMapFeature.Formatting],
 		]);
 	});
@@ -177,6 +179,26 @@ import b from './b';`;
 		]);
 	});
 
+	it('maps the identical text between spans with different features without features (#1028)', () => {
+		// TypeScript 7 offers no auto-import completion at the end of a span that unmapped
+		// text separates from the next span. The `<` of a tag maps with other features than
+		// `helperB`, so `()}` coalesces with neither.
+		const original = '<p>{helperB()}<Button /></p>';
+		const generated = `return ${original};`;
+		const offset = 'return '.length;
+		const spans = to_span_mappings(
+			[m(4, 4 + offset, 7), m(14, 14 + offset, 1, { data: verify_only }), m(15, 15 + offset, 6)],
+			generated,
+			original,
+		);
+		expect(spans.map((span) => [...span.slice(0, 4), span[5]])).toEqual([
+			[4 + offset, 7, 4, 7, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+			[11 + offset, 3, 11, 3, SpanMapFeature.None],
+			[14 + offset, 1, 14, 1, SpanMapFeature.None],
+			[15 + offset, 7, 15, 7, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+		]);
+	});
+
 	it('coalesces token spans of a statement across identical unmapped gaps', () => {
 		// The transform maps `import`, `helperA`, `'./lib'` and `;` but not the punctuation
 		// between them. Auto-import edits inside the statement are only applied by TypeScript
@@ -196,7 +218,18 @@ import b from './b';`;
 		const original = 'a + b';
 		const generated = 'a - b';
 		expect(to_span_mappings([m(0, 0, 1), m(4, 4, 1)], generated, original)).toHaveLength(2);
-		expect(to_span_mappings([m(0, 0, 1), m(4, 3, 1)], 'a +b', original)).toHaveLength(2);
+		// The identical `+` maps on its own, without features.
+		expect(
+			to_span_mappings([m(0, 0, 1), m(4, 3, 1)], 'a +b', original).map((span) => [
+				span[0],
+				span[1],
+				span[5],
+			]),
+		).toEqual([
+			[0, 2, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+			[2, 1, SpanMapFeature.None],
+			[3, 1, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+		]);
 		// Original ranges may be projected twice; a second projection never merges backwards.
 		expect(to_span_mappings([m(0, 0, 1), m(0, 2, 1)], 'a a', 'a')).toHaveLength(2);
 	});
@@ -233,7 +266,7 @@ import b from './b';`;
 		]);
 	});
 
-	it('keeps container-only regions unmapped when tokens have different features', () => {
+	it('maps container-only regions without features when tokens have different features', () => {
 		const text = 'if (x) { y }';
 		const spans = to_span_mappings(
 			[
@@ -246,6 +279,7 @@ import b from './b';`;
 		);
 		expect(spans.map((span) => [span[0], span[1], span[5]])).toEqual([
 			[4, 1, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+			[5, 4, SpanMapFeature.None],
 			[9, 2, SpanMapFeature.None],
 		]);
 		for (let index = 1; index < spans.length; index++) {
@@ -283,10 +317,12 @@ import b from './b';`;
 			generated,
 			original,
 		);
-		// Each token still extends over the identical space that follows it.
-		expect(apart.map((span) => [span[0], span[1]])).toEqual([
-			[6, 2],
-			[name_offset, 2],
+		// Each token still extends over the identical space that follows it, and the
+		// identical text between them maps without features.
+		expect(apart.map((span) => [span[0], span[1], span[5]])).toEqual([
+			[6, 2, SpanMapFeature.None],
+			[8, name_offset - 8, SpanMapFeature.None],
+			[name_offset, 2, SpanMapFeature.All & ~SpanMapFeature.Formatting],
 		]);
 	});
 
