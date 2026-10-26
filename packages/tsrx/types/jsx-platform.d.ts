@@ -37,6 +37,7 @@ export interface JsxTransformContext {
 	needs_merge_refs: boolean;
 	needs_normalize_spread_props: boolean;
 	needs_normalize_spread_props_for_ref_attr: boolean;
+	needs_spread_ref_bags: boolean;
 	needs_fragment: boolean;
 	needs_dynamic_element: boolean;
 	needs_dynamic_factory: boolean;
@@ -435,11 +436,26 @@ export interface JsxPlatform {
 		 */
 		multiRefStrategy?: 'merge-refs' | 'array';
 		/**
-		 * Some JSX runtimes do not apply a `ref` that arrives through a props
-		 * spread. In that case, host spread normalization also emits an
-		 * explicit `ref={normalized.ref}` attribute.
+		 * How a host spread's `ref` reaches the element.
+		 *
+		 * - `undefined`: the JSX runtime applies a `ref` that arrives through a
+		 *   spread, but the element's own `ref` replaces it. An element with its
+		 *   own `ref` also reads each spread's normalized `ref` and merges them
+		 *   into that attribute.
+		 * - `'explicit-ref-attr'`: the JSX runtime does not apply a `ref` that
+		 *   arrives through a spread, so every host spread also emits an explicit
+		 *   `ref={normalized.ref}` attribute.
+		 * - `'spread'`: the JSX runtime applies a spread's `ref` alongside the
+		 *   element's own `ref` (Solid's `spread()`), so an element with one
+		 *   spread keeps its own `ref` as written and spreads the normalized bag
+		 *   in place. The runtime keeps only the last of several spreads' refs,
+		 *   so an element with more than one spread and its own `ref` lowers its
+		 *   bags through `spread_ref_bags`, which `imports.refProp` must export:
+		 *   each spread gets its bag without a `ref`, and one more spread carries
+		 *   every bag's ref. The type-only print merges those refs into the
+		 *   element's `ref` as for `undefined`.
 		 */
-		hostSpreadRefStrategy?: 'explicit-ref-attr';
+		hostSpreadRefStrategy?: 'explicit-ref-attr' | 'spread';
 		/**
 		 * Where a host spread binds its normalized props bag when the element
 		 * also reads the bag's `ref` through a `ref` attribute.
@@ -447,8 +463,11 @@ export interface JsxPlatform {
 		 * - `'in-place'`: assign the bag inside the spread
 		 *   (`{...(bag = normalize(expr))}`) and declare `let bag;` ahead of the
 		 *   element, so attribute expressions keep their authored evaluation
-		 *   order. Requires a JSX runtime that evaluates attributes left to
-		 *   right, as `jsx()` and `createElement` calls do.
+		 *   order and a reactive spread is evaluated again with the element's
+		 *   other attributes. Requires compiled JSX that evaluates the spread
+		 *   before it reads the `ref`: `jsx()` and `createElement` calls evaluate
+		 *   attributes left to right, and vue-jsx-vapor sets a template ref after
+		 *   the element's props.
 		 * - `undefined`: evaluate the spread in a `let bag = normalize(expr);`
 		 *   declaration ahead of the element, for compiled JSX that reads `ref`
 		 *   before the spread or evaluates the spread lazily, such as Solid's.

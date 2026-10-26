@@ -404,10 +404,10 @@ describe('@tsrx/vue basic', () => {
 
 		expect(code).toContain("from '@tsrx/vue/ref'");
 		expect(code).toContain('{...{ input_ref: input }}');
+		expect(code).toContain('let Child__spread_props1;');
 		expect(code).toContain(
-			'let Child__spread_props1 = __normalize_spread_props_for_ref_attr(props);',
+			'{...(Child__spread_props1 = __normalize_spread_props_for_ref_attr(props))}',
 		);
-		expect(code).toContain('{...Child__spread_props1}');
 		expect(code).toContain('ref={Child__spread_props1?.ref}');
 		expect(code.match(/__normalize_spread_props_for_ref_attr\(/g)).toHaveLength(1);
 	});
@@ -441,14 +441,14 @@ describe('@tsrx/vue basic', () => {
 			'App.tsrx',
 		);
 
+		expect(code).toContain('let App__spread_props1;');
+		expect(code).toContain('let App__spread_props2;');
 		expect(code).toContain(
-			'let App__spread_props1 = __normalize_spread_props_for_ref_attr(first);',
+			'{...(App__spread_props1 = __normalize_spread_props_for_ref_attr(first))}',
 		);
 		expect(code).toContain(
-			'let App__spread_props2 = __normalize_spread_props_for_ref_attr(second);',
+			'{...(App__spread_props2 = __normalize_spread_props_for_ref_attr(second))}',
 		);
-		expect(code).toContain('{...App__spread_props1}');
-		expect(code).toContain('{...App__spread_props2}');
 		expect(code).toContain(
 			'ref={__mergeRefs(App__spread_props1?.ref, App__spread_props2?.ref, cb)}',
 		);

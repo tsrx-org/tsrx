@@ -560,6 +560,7 @@ export function createJsxTransform(platform) {
 			needs_merge_refs: false,
 			needs_normalize_spread_props: false,
 			needs_normalize_spread_props_for_ref_attr: false,
+			needs_spread_ref_bags: false,
 			needs_fragment: false,
 			needs_dynamic_element: false,
 			needs_dynamic_factory: false,
@@ -5138,6 +5139,14 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 		);
 	}
 
+	if (transform_context.needs_spread_ref_bags && platform.imports.refProp) {
+		add_ref_import_specifier(
+			ref_imports,
+			platform.imports.refProp,
+			b.import_specifier('spread_ref_bags', SPREAD_REF_BAGS_INTERNAL_NAME),
+		);
+	}
+
 	for (const [source, ref_specifiers] of ref_imports) {
 		imports.push(b.import_declaration(ref_specifiers, source));
 	}
@@ -5367,12 +5376,20 @@ function is_component_like_jsx_name(name) {
 function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 	if (!is_host) return attrs;
 
-	const needs_explicit_spread_ref =
-		transform_context.platform.jsx?.hostSpreadRefStrategy === 'explicit-ref-attr';
-	const ref_exprs = attrs
-		.filter((attr) => is_jsx_ref_attribute(attr))
-		.map((attr) => attr.value.expression);
-	const needs_synthetic_spread_ref = needs_explicit_spread_ref || ref_exprs.length > 0;
+	const strategy = transform_context.platform.jsx?.hostSpreadRefStrategy;
+	const has_ref = attrs.some((attr) => is_jsx_ref_attribute(attr));
+	const spread_count = attrs.filter((attr) => attr.type === 'JSXSpreadAttribute').length;
+	// Types do not depend on which spread applies a ref, so the type-only print
+	// merges the bags' refs into the element's own as for other targets.
+	if (strategy === 'spread' && has_ref && spread_count > 1 && !transform_context.typeOnly) {
+		return lower_spread_ref_bags(
+			attrs,
+			create_generated_identifier(create_spread_props_name(transform_context)),
+			transform_context,
+		);
+	}
+	const needs_synthetic_spread_ref =
+		strategy === 'explicit-ref-attr' || (has_ref && (strategy !== 'spread' || spread_count > 1));
 	// Types do not depend on evaluation order, so the type-only print keeps
 	// the initialized setup declaration.
 	const bind_in_place =
@@ -5441,6 +5458,60 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 			];
 		},
 	);
+}
+
+/**
+ * Lower the host spreads of an element with more than one beside its own
+ * `ref`, for `hostSpreadRefStrategy: 'spread'`. Such a JSX runtime applies
+ * only the last spread's `ref`, so the bags go through one `spread_ref_bags`
+ * group from `imports.refProp`: each spread gets its bag without a `ref`, and
+ * a spread of the group's `refs` after the last one carries every bag's ref.
+ * The element keeps its own `ref` as written. Each bag stays inside an arrow,
+ * so the runtime evaluates it when it reads the spread.
+ *
+ * @param {ESTreeJSX.JSXAttributeNode[]} attrs
+ * @param {AST.Identifier} group_id
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXAttributeNode[]}
+ */
+export function lower_spread_ref_bags(attrs, group_id, transform_context) {
+	transform_context.needs_spread_ref_bags = true;
+
+	/** @type {AST.Expression[]} */
+	const sources = [];
+	/** @type {ESTreeJSX.JSXAttributeNode[]} */
+	const lowered = [];
+	/** @type {ESTreeJSX.JSXSpreadAttribute | null} */
+	let first_spread = null;
+	let refs_index = 0;
+	for (const attr of attrs) {
+		if (attr.type !== 'JSXSpreadAttribute') {
+			lowered.push(attr);
+			continue;
+		}
+		/** @type {ESTreeJSX.JSXSpreadAttribute} */
+		const spread = {
+			...attr,
+			argument: b.call(b.member(clone_identifier(group_id), 'bag'), b.literal(sources.length)),
+		};
+		sources.push(b.arrow([], attr.argument));
+		first_spread ??= spread;
+		lowered.push(spread);
+		refs_index = lowered.length;
+	}
+
+	if (first_spread) {
+		add_jsx_setup_declaration(
+			first_spread,
+			b.let(clone_identifier(group_id), b.call(SPREAD_REF_BAGS_INTERNAL_NAME, ...sources)),
+		);
+	}
+	lowered.splice(
+		refs_index,
+		0,
+		b.jsx_spread_attribute(b.member(clone_identifier(group_id), 'refs')),
+	);
+	return lowered;
 }
 
 /**
@@ -5683,6 +5754,7 @@ export const MERGE_REFS_INTERNAL_NAME = '__mergeRefs';
 export const NORMALIZE_SPREAD_PROPS_INTERNAL_NAME = '__normalize_spread_props';
 export const NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME =
 	'__normalize_spread_props_for_ref_attr';
+export const SPREAD_REF_BAGS_INTERNAL_NAME = '__spread_ref_bags';
 /**
  * Point a generated node at the DIRECTIVE KEYWORD that produced it.
  *

@@ -33,9 +33,11 @@ import {
 	isInterleavedBody as is_interleaved_body_core,
 	isCapturableJsxChild as is_capturable_jsx_child,
 	captureJsxChild,
+	lowerSpreadRefBags as lower_spread_ref_bags,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	returnValueBodyToExpression as return_value_body_to_expression,
+	SPREAD_REF_BAGS_INTERNAL_NAME,
 	clone_ast_node,
 	clone_identifier,
 	clone_jsx_name,
@@ -96,6 +98,8 @@ const solid_platform = {
 		// `ref` attributes collapse to `ref={[a, b, ...]}` rather than
 		// going through a `mergeRefs` helper.
 		multiRefStrategy: 'array',
+		// Solid's `spread()` applies the bag's `ref` beside the element's own.
+		hostSpreadRefStrategy: 'spread',
 		// Solid's compiler escapes a string child into its HTML template, and a
 		// `<script>` element's text there isn't decoded; `innerHTML` renders the
 		// body as written on the client and the server.
@@ -1918,6 +1922,15 @@ function inject_solid_imports(program, transform_context) {
 		);
 	}
 
+	if (transform_context.needs_spread_ref_bags && ref_prop_source) {
+		program.body.unshift(
+			b.import_declaration(
+				[b.import_specifier('spread_ref_bags', SPREAD_REF_BAGS_INTERNAL_NAME)],
+				ref_prop_source,
+			),
+		);
+	}
+
 	if (transform_context.needs_normalize_spread_props_for_ref_attr && ref_prop_source) {
 		program.body.unshift(
 			b.import_declaration(
@@ -2082,7 +2095,21 @@ function transform_element_attributes(raw_attrs, is_composite, transform_context
 function normalize_solid_host_ref_spreads(attrs, is_host, transform_context) {
 	if (!is_host) return attrs;
 
-	const needs_synthetic_spread_ref = attrs.some(is_solid_jsx_ref_attribute);
+	// Solid's `spread()` applies a lone spread's `ref` beside the element's own
+	// `ref`, which keeps its native meaning (`ref={el}` assigns `el`). Of several
+	// spreads' refs its prop merge keeps only the last, so those go through one
+	// `spread_ref_bags` group; the type-only print merges them into the
+	// element's `ref` array instead.
+	const needs_synthetic_spread_ref =
+		attrs.some(is_solid_jsx_ref_attribute) &&
+		attrs.filter((attr) => attr?.type === 'JSXSpreadAttribute').length > 1;
+	if (needs_synthetic_spread_ref && !transform_context.typeOnly) {
+		return lower_spread_ref_bags(
+			attrs,
+			create_generated_identifier(create_solid_spread_props_name(transform_context)),
+			transform_context,
+		);
+	}
 
 	return attrs.flatMap(
 		/**

@@ -348,6 +348,34 @@ function ConditionalSpreadApp(props: { enabled: boolean }) @{
 	</>
 }
 
+let spread_reactive_ref_node: HTMLButtonElement | null = null;
+
+function SpreadReactiveApp() @{
+	const bag = ref({ title: 'before', disabled: false });
+	<>
+		<button
+			class="spread-reactive-update"
+			onClick={() => {
+				bag.value = { title: 'after', disabled: true };
+			}}
+		>
+			update
+		</button>
+		<button class="spread-reactive-target" {...bag.value}>
+			spread
+		</button>
+		<button
+			class="spread-reactive-target"
+			{...bag.value}
+			ref={(node: HTMLButtonElement | null) => {
+				spread_reactive_ref_node = node;
+			}}
+		>
+			spread with ref
+		</button>
+	</>
+}
+
 const named_vue_ref_object = ref<HTMLInputElement | null>(null);
 
 function NamedRefObjectApp() {
@@ -1069,6 +1097,26 @@ describe('tsrx-vue runtime', () => {
 		await click('.spread-html-update-markup');
 		expect(text('.spread-html-child')).toBe('updated');
 		expect(container.querySelector('.spread-html-child .html-node')?.tagName).toBe('STRONG');
+	});
+
+	it('updates host spreads when their expression changes', async () => {
+		spread_reactive_ref_node = null;
+		await render(SpreadReactiveApp);
+		const targets = Array.from(
+			container.querySelectorAll('.spread-reactive-target'),
+		) as HTMLButtonElement[];
+		expect(targets.map((target) => [target.title, target.disabled])).toEqual([
+			['before', false],
+			['before', false],
+		]);
+		expect(spread_reactive_ref_node).toBe(targets[1]);
+
+		await click('.spread-reactive-update');
+		expect(targets.map((target) => [target.title, target.disabled])).toEqual([
+			['after', true],
+			['after', true],
+		]);
+		expect(spread_reactive_ref_node).toBe(targets[1]);
 	});
 
 	it('supports ref callback on elements', async () => {
