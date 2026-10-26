@@ -262,8 +262,23 @@ Code's TypeScript closes the tags, or on TypeScript 7 the extension sends
 ## Restarts after package changes
 
 When a `package.json` or a lockfile changes (`pnpm install`, for example), the
-server must restart to load the TSRX compiler again. By default it exits with code
-0, and the editor must start it again.
+server must restart to load the TSRX compiler again. It waits until these files
+have stopped changing for a second, and at most ten seconds.
+
+Dev servers and builds write files under `node_modules` and framework build
+directories (`.next`, `.nuxt`, `.output`, `.svelte-kit`, `.turbo`, `.vercel`) all
+the time, so a file there restarts the server only when it shows that an install
+finished: the file a package manager writes at the end of an install
+(`node_modules/.modules.yaml`, `.package-lock.json`, `.yarn-state.yml` or
+`.yarn-integrity`), or the `package.json` of a package installed directly in a
+`node_modules` folder. A lockfile alone is not enough: `git pull` can change it
+before the install that changes the compiler. Paths are read relative to the
+workspace folder. By default the server exits with code 0, and the editor must
+start it again.
+
+On the `plugin` and `native` backends, the server watches only `.tsrx` files, JSON
+files, lockfiles and these install files: the editor's TypeScript reads the
+TypeScript and JavaScript sources.
 
 An editor that can restart the server itself sets the `restartNotification`
 initialization option. The server then sends a `tsrx/restartServer` notification

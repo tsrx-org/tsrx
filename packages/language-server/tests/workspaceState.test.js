@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { URI } from 'vscode-uri';
 import {
 	classifyWorkspaceChanges,
+	createRestartScheduler,
+	getWorkspaceFilePatterns,
 	handleWorkspaceChanges,
 	isPackageStateFile,
 	isTypeDefinitionFile,
@@ -41,6 +43,127 @@ describe('language-server workspace state', () => {
 		// against the config dependency graph before reloading.
 		expect(WORKSPACE_FILE_PATTERNS).toContain('**/*.json');
 		expect(WORKSPACE_FILE_PATTERNS).toContain('**/pnpm-lock.yaml');
+	});
+
+	it('watches only TSRX sources, configs and package state beside the editor TypeScript', () => {
+		expect(getWorkspaceFilePatterns('classic')).toEqual(WORKSPACE_FILE_PATTERNS);
+		for (const backend of /** @type {const} */ (['plugin', 'native'])) {
+			const patterns = getWorkspaceFilePatterns(backend);
+			expect(patterns).toContain('**/*.tsrx');
+			expect(patterns).toContain('**/*.json');
+			expect(patterns).toContain('**/pnpm-lock.yaml');
+			expect(patterns).toContain('**/node_modules/.modules.yaml');
+			expect(patterns).not.toContain('**/*.js');
+			expect(patterns).not.toContain('**/*.ts');
+		}
+	});
+
+	it('restarts nothing for package files that installs, dev servers and builds write', () => {
+		for (const file_name of [
+			'/workspace/node_modules/.vite/deps/package.json',
+			'/workspace/apps/web/node_modules/.vite/deps_temp_1a2b/package.json',
+			'/workspace/node_modules/.pnpm/react@19.0.0/node_modules/react/package.json',
+			'/workspace/node_modules/react/node_modules/scheduler/package.json',
+			'/workspace/node_modules/.cache/tool/package.json',
+			'/workspace/apps/site/.next/package.json',
+			'/workspace/apps/shop/.output/server/package.json',
+			'C:\\workspace\\node_modules\\.vite\\deps\\package.json',
+		]) {
+			expect(classifyWorkspaceChanges([change(file_name)])).toEqual({
+				restartLanguageServer: false,
+				reloadProjects: false,
+				changedTypeDefinitions: [],
+			});
+		}
+		expect(
+			classifyWorkspaceChanges([change('/workspace/apps/web/package.json')]).restartLanguageServer,
+		).toBe(true);
+	});
+
+	it('restarts when an install finishes, also when the lockfile changed before it', () => {
+		// `git pull` changes the lockfile first, and the server restarts with the old
+		// compiler still in node_modules; the install after it changes only node_modules.
+		// A fresh clone opened before the install has no compiler to load yet.
+		for (const file_name of [
+			'/repo/node_modules/.modules.yaml',
+			'/repo/node_modules/.package-lock.json',
+			'/repo/node_modules/.yarn-state.yml',
+			'/repo/node_modules/.yarn-integrity',
+			'/repo/app/node_modules/@tsrx/react/package.json',
+			'/repo/node_modules/typescript/package.json',
+		]) {
+			expect(classifyWorkspaceChanges([change(file_name)]).restartLanguageServer, file_name).toBe(
+				true,
+			);
+		}
+	});
+
+	it('reads paths relative to the workspace folder', () => {
+		const lockfile = '/home/me/node_modules/my-app/pnpm-lock.yaml';
+		expect(classifyWorkspaceChanges([change(lockfile)]).restartLanguageServer).toBe(false);
+		expect(
+			classifyWorkspaceChanges([change(lockfile)], new Set(), ['/home/me/node_modules/my-app'])
+				.restartLanguageServer,
+		).toBe(true);
+		expect(
+			classifyWorkspaceChanges(
+				[change('/home/me/node_modules/my-app/node_modules/.vite/deps/package.json')],
+				new Set(),
+				['/home/me/node_modules/my-app'],
+			).restartLanguageServer,
+		).toBe(false);
+	});
+
+	it('restarts once a burst of changes ends, or ten seconds after the first change', () => {
+		vi.useFakeTimers();
+		try {
+			const restart = vi.fn();
+			const schedule = createRestartScheduler(restart);
+			schedule();
+			vi.advanceTimersByTime(900);
+			schedule();
+			vi.advanceTimersByTime(900);
+			expect(restart).not.toHaveBeenCalled();
+			vi.advanceTimersByTime(100);
+			expect(restart).toHaveBeenCalledOnce();
+
+			const steady = vi.fn();
+			const schedule_steady = createRestartScheduler(steady);
+			for (let elapsed = 0; elapsed < 9_600; elapsed += 400) {
+				schedule_steady();
+				vi.advanceTimersByTime(400);
+			}
+			expect(steady).not.toHaveBeenCalled();
+			schedule_steady();
+			vi.advanceTimersByTime(400);
+			expect(steady).toHaveBeenCalledOnce();
+			schedule_steady();
+			vi.advanceTimersByTime(2_000);
+			expect(steady).toHaveBeenCalledOnce();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('reloads projects for a generated config only when a project loaded it', () => {
+		expect(
+			classifyWorkspaceChanges([change('/workspace/node_modules/some-lib/tsconfig.json')])
+				.reloadProjects,
+		).toBe(false);
+
+		const tracked_config_files = new Set();
+		trackTypeScriptConfigDependencies(tracked_config_files, {
+			configFileName: '/workspace/tsconfig.json',
+			compilerOptions: {
+				configFile: {
+					extendedSourceFiles: ['/workspace/.nuxt/tsconfig.json'],
+				},
+			},
+		});
+		expect(
+			classifyWorkspaceChanges([change('/workspace/.nuxt/tsconfig.json')], tracked_config_files)
+				.reloadProjects,
+		).toBe(true);
 	});
 
 	it('classifies definition and package files independently', () => {
