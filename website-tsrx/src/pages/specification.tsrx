@@ -294,6 +294,10 @@ const STYLE_STATIC_CONSTRAINTS = [
 	'TSRX3012',
 	'  A style body must not contain an @import rule; the imported rules would not',
 	'  be scoped.',
+	'TSRX3014',
+	'  A style element must not be rendered as an expression child: the expression of',
+	'  a child expression container, directly or as a branch of a conditional or',
+	'  logical expression. There it evaluates to its class map and styles nothing.',
 	'',
 	'Emission order (normative): outer scope before inner scope; applied block',
 	'before the block that applies it; source order within one scope, later wins.',
@@ -628,6 +632,8 @@ const TSRX_ERROR_CODES = [
 	"          <style>@import 'a.css';</style>",
 	"TSRX3013  The CSS parser's message, such as: Expected }",
 	'          <style>p { color: red; </style>',
+	'TSRX3014  A <style> block inside an expression container, such as {<style>…</style>}, evaluates to its class map, so as a child it styles nothing.',
+	'          <div>{<style>p {}</style>}</div>',
 	'TSRX4001  Platform flag usage requires a configured TSRX platform.',
 	'          import.meta.env.platform.web  (without tsrx.platform)',
 	'TSRX4002  Cannot declare a variable named "_$_x" as identifiers starting with "_$_" are reserved',
@@ -1798,6 +1804,13 @@ export function SpecificationPage() @{
 									<code class="inline-code">@import</code>
 									rule is
 									<code class="inline-code">TSRX3012</code>: the imported rules would not be scoped.
+								</li>
+								<li>
+									A style element that is the expression of a child expression container, directly
+									or as a branch of a conditional or logical expression, is
+									<code class="inline-code">TSRX3014</code>: it evaluates to its class map, which
+									styles nothing as a child. A style element whose value is used, such as an
+									attribute value or a member read, is an assigned block.
 								</li>
 							</ul>
 							<p class="section-body">

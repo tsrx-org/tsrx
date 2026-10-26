@@ -16,6 +16,7 @@ import {
 	TSRX_STYLE_APPLY_DUPLICATE_ERROR,
 	TSRX_STYLE_APPLY_UNSUPPORTED_HOST_ERROR,
 	TSRX_STYLE_APPLY_VALUE_ERROR,
+	TSRX_STYLE_IN_EXPRESSION_CONTAINER_ERROR,
 	TSRX_STYLE_RESERVED_CLASS_KEY_ERROR,
 	TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR,
 	TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR,
@@ -724,6 +725,45 @@ describe('scoped style analysis', () => {
 		});
 	});
 
+	describe('block in a child expression container', () => {
+		// `{<style>…</style>}` is an expression, so the block is a value: its
+		// class map, rendered as a child, styling nothing.
+		const CSS = '.a { color: red; }';
+
+		/** @type {Array<[string, string]>} */
+		const rejected = [
+			['block as the expression', `function C() @{ <div>{<style>${CSS}</style>}<p /></div> }`],
+			['parenthesized block', `function C() @{ <>{(<style>${CSS}</style>)}<p /></> }`],
+			['conditional branch', `function C(x) @{ <div>{x ? <style>${CSS}</style> : null}</div> }`],
+			['logical operand', `function C(x) @{ <div>{x && <style>${CSS}</style>}</div> }`],
+		];
+
+		it.each(rejected)('reports a %s at the block', (_name, source) => {
+			const errors = errors_with_code(
+				analyze(source),
+				DIAGNOSTIC_CODES.STYLE_IN_EXPRESSION_CONTAINER,
+			);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].message).toBe(TSRX_STYLE_IN_EXPRESSION_CONTAINER_ERROR);
+			expect(errors[0].loc?.start).toEqual(loc_of(source, '<style'));
+		});
+
+		it('accepts a block whose value is used, not rendered', () => {
+			const result = analyze(
+				`function C(x) @{
+					<>
+						<Button theme={<style>${CSS}</style>} />
+						<p class={(<style>${CSS}</style>).a} />
+						{x ? (<style>.b {}</style>).$class : null}
+					</>
+				}`,
+			);
+
+			expect(errors_with_code(result, DIAGNOSTIC_CODES.STYLE_IN_EXPRESSION_CONTAINER)).toEqual([]);
+		});
+	});
+
 	describe('unknown attributes', () => {
 		it('reports attributes other than ref and apply', () => {
 			const source = 'function App() @{ <><style data-x="1" ref={r}>.a {}</style><div /></> }';
@@ -1424,6 +1464,10 @@ describe('scoped style analysis', () => {
 				[
 					'function App() @{ <><style media="print">.a {}</style><div /></> }',
 					DIAGNOSTIC_CODES.STYLE_UNKNOWN_ATTRIBUTE,
+				],
+				[
+					'function App() @{ <div>{<style>.a {}</style>}</div> }',
+					DIAGNOSTIC_CODES.STYLE_IN_EXPRESSION_CONTAINER,
 				],
 			]) {
 				const ast = parseModule(source, filename);

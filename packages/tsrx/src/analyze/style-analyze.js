@@ -79,6 +79,34 @@ export function is_standalone_style_position(path) {
 }
 
 /**
+ * Whether a style block's value is rendered as a child: it is the expression of
+ * a child expression container (`<div>{<style>…</style>}</div>`), directly or
+ * as a branch of a conditional or logical expression.
+ *
+ * @param {AST.Node} node
+ * @param {AST.Node[]} path
+ * @returns {boolean}
+ */
+function is_rendered_expression_child(node, path) {
+	let child = node;
+	let index = path.length - 1;
+	while (
+		path[index]?.type === 'ParenthesizedExpression' ||
+		path[index]?.type === 'LogicalExpression' ||
+		(path[index]?.type === 'ConditionalExpression' &&
+			/** @type {AST.ConditionalExpression} */ (path[index]).test !== child)
+	) {
+		child = path[index];
+		index -= 1;
+	}
+	const parent = path[index - 1];
+	return (
+		path[index]?.type === 'JSXExpressionContainer' &&
+		(parent?.type === 'JSXElement' || parent?.type === 'JSXFragment')
+	);
+}
+
+/**
  * The nearest ancestor of a style block that is not a parenthesis.
  *
  * @param {AST.Node[]} path
@@ -360,6 +388,9 @@ export function analyze_styles(ast, scopes, state) {
 						standalone.push(node);
 					}
 				} else {
+					if (is_rendered_expression_child(node, path)) {
+						report(TSRX_ERRORS.STYLE_IN_EXPRESSION_CONTAINER, node);
+					}
 					assigned.push(node);
 					// No use of the block's value is tracked: `$class` is an ordinary
 					// string that destructuring, aliases, props, and return values carry
