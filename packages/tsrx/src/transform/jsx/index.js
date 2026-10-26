@@ -5067,11 +5067,18 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	/** @type {AST.ImportDeclaration[]} */
 	const imports = [];
 
-	if (transform_context.needs_fragment && platform.imports.fragment) {
+	if (
+		transform_context.needs_fragment &&
+		platform.imports.fragment &&
+		!has_named_value_import(program, platform.imports.fragment, 'Fragment')
+	) {
 		imports.push(b.imports([['Fragment', 'Fragment']], platform.imports.fragment));
 	}
 
-	if (transform_context.needs_suspense) {
+	if (
+		transform_context.needs_suspense &&
+		!has_named_value_import(program, suspense_source, 'Suspense')
+	) {
 		imports.push(b.imports([['Suspense', 'Suspense']], suspense_source));
 	}
 
@@ -5145,6 +5152,33 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	if (imports.length > 0) {
 		program.body.unshift(...imports);
 	}
+}
+
+/**
+ * Whether the module already imports the value `name` from `source` under the
+ * same local name, which the generated JSX can use as is. Injecting it again
+ * would declare the binding twice.
+ *
+ * @param {AST.Program} program
+ * @param {string} source
+ * @param {string} name
+ * @returns {boolean}
+ */
+function has_named_value_import(program, source, name) {
+	return program.body.some(
+		(statement) =>
+			statement.type === 'ImportDeclaration' &&
+			statement.source.value === source &&
+			statement.importKind !== 'type' &&
+			statement.specifiers.some(
+				(specifier) =>
+					specifier.type === 'ImportSpecifier' &&
+					specifier.importKind !== 'type' &&
+					specifier.imported.type === 'Identifier' &&
+					specifier.imported.name === name &&
+					specifier.local.name === name,
+			),
+	);
 }
 
 /**
