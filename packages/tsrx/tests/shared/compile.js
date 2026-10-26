@@ -255,6 +255,21 @@ export function App() @{
 			expect(code).toContain('void <style></style>');
 		});
 
+		it('reports a theme that applies itself instead of overflowing the stack', () => {
+			for (const options of [undefined, { loose: true }]) {
+				const { code, errors } = compile_to_volar_mappings(
+					'export const theme = <style apply={theme} />;',
+					'App.tsrx',
+					options,
+				);
+
+				expect(errors.map((error) => error.code)).toEqual([
+					DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
+				]);
+				expect(virtual_parse_diagnostics(code)).toEqual([]);
+			}
+		});
+
 		it('recovers an unclosed <style> in loose type-only compile without losing mappings', function () {
 			// While typing `<style>` there is no `</style>` yet. The raw-text path
 			// used to feed the rest of the file to the CSS parser, which threw

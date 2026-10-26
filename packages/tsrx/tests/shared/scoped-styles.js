@@ -1264,6 +1264,22 @@ export function runSharedScopedStyleTests({
 			expect(result.errors[0].loc?.start).toEqual({ line: 1, column: 41 });
 		});
 
+		it('reports a theme that applies itself instead of overflowing the stack', () => {
+			for (const source of [
+				'export const theme = <style apply={theme} />;',
+				`export function App() @{
+					const theme = <style apply={theme}>.a { color: red; }</style>;
+					<div ${attr}={theme.$class}>{'a'}</div>
+				}`,
+				'export const t = { a: <style apply={t.b}>.a {}</style>, b: <style apply={t.a}>.b {}</style> };',
+			]) {
+				expect(codes(source), source).toEqual([DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION]);
+				expect(() => compile(source, 'App.tsrx'), source).toThrow(
+					expect.objectContaining({ code: DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION }),
+				);
+			}
+		});
+
 		it('reports a standalone block at module scope', () => {
 			expect(codes(`<style>div { color: red; }</style>;`)).toEqual([
 				DIAGNOSTIC_CODES.STYLE_STANDALONE_AT_MODULE_SCOPE,

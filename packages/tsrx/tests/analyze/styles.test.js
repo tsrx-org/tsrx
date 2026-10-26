@@ -316,6 +316,39 @@ describe('scoped style analysis', () => {
 			expect(style_errors(result)).toEqual([]);
 		});
 
+		it('reports a block that applies itself', () => {
+			for (const [source, name] of [
+				['export const theme = <style apply={theme} />;', 'theme'],
+				['export const theme = <style apply={[theme]}>.a {}</style>;', 'theme'],
+				['export const t = { a: <style apply={t.a}>.a {}</style> };', 't.a'],
+			]) {
+				const result = analyze(source);
+
+				expect_single_error(
+					result,
+					DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
+					tsrx_style_apply_before_declaration_error(name),
+					loc_of(source, name, name === 'theme' ? 1 : 0),
+				);
+				expect(result.styles.assigned[0].metadata.styleApplies).toEqual([]);
+			}
+		});
+
+		it('reports a member applied before its place in the same object', () => {
+			const source =
+				'export const t = { a: <style apply={t.b}>.a {}</style>, b: <style apply={t.a}>.b {}</style> };';
+			const result = analyze(source);
+
+			expect_single_error(
+				result,
+				DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
+				tsrx_style_apply_before_declaration_error('t.b'),
+				apply_target_loc(source, 't.b'),
+			);
+			const [a, b] = result.styles.assigned;
+			expect(b.metadata.styleApplies?.[0].target).toBe(a);
+		});
+
 		it('resolves a name reused across @switch cases to its own case', () => {
 			const result = analyze(`function App({ kind }) @{
 	@switch (kind) {
