@@ -10580,7 +10580,7 @@ export function TSRXPlugin(config) {
 							// this will throw if not collecting errors
 							this.#report_broken_markup_error(
 								closingElement.start,
-								TSRX_ERRORS.MISMATCHED_CLOSING_TAG(String(openingTagName), String(closingTagName)),
+								TSRX_ERRORS.MISMATCHED_CLOSING_TAG(String(openingTagName), normalized_closing_name),
 							);
 							// Loop through all unclosed elements on the stack
 							while (this.#path.length > 0) {
