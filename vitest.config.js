@@ -508,6 +508,11 @@ export default defineConfig({
 					include: ['packages/tsrx-mcp/tests/**/*.test.js'],
 					environment: 'node',
 					globals: true,
+					// The first compile in a file pays for a cold `import()` of the
+					// target compiler, which can run past the 5s default once the rest
+					// of the suite is competing for workers (#310). The tests assert
+					// results, not speed, so the timeout is only here to catch a hang.
+					testTimeout: 30_000,
 				},
 				plugins: [],
 			},
