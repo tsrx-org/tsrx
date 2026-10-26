@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { resolveBuildPlatform } from '../../src/config.js';
+import { resolveBuildPlatform, resolveTsconfigJsx } from '../../src/config.js';
 
 /** @type {string} */
 let directory;
@@ -119,5 +119,16 @@ describe('build platform resolution', () => {
 	it.each(['windows', null, true, 1, [], {}])('rejects invalid config value %j', (platform) => {
 		write_config('tsconfig.json', { tsrx: { platform } });
 		expect(() => resolveBuildPlatform({ root: directory })).toThrow(/Invalid TSRX platform/);
+	});
+});
+
+describe('tsconfig jsx resolution', () => {
+	it('reads the jsx option of the tsconfig nearest a file, including extends', () => {
+		write_config('base.json', { compilerOptions: { jsx: 'react' } });
+		write_config('tsconfig.json', { extends: './base.json' });
+		write_config('src/tsconfig.json', { compilerOptions: { jsx: 'react-jsx' } });
+
+		expect(resolveTsconfigJsx(path.join(directory, 'App.tsrx'))).toBe('react');
+		expect(resolveTsconfigJsx(path.join(directory, 'src/App.tsrx'))).toBe('react-jsx');
 	});
 });
