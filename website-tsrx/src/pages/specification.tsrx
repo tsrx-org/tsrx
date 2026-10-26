@@ -1041,60 +1041,41 @@ export function SpecificationPage() @{
 								expression-container children use the standard JSX node family. JavaScript line and
 								block comments are permitted between the children of every element and fragment in a
 								TSRX source text, in a template or not (A.4), and do not render. A comment between
-								children renders like
-								<code class="inline-code">{'{/* … */}'}</code>
-								in TSX: the text on each side of it follows JSX's whitespace rules on its own. A
-								<code class="inline-code">{'/*'}</code>
-								starts a comment anywhere. A<code class="inline-code">{'//'}</code>
-								starts a line comment where whitespace comes right before it, at the start of a
-								line, or right after a tag, an expression container, or a block, and the comment
-								runs to the end of the line, a closing tag on it included. A
-								<code class="inline-code">{'//'}</code>
-								that touches other text, as in
-								<code class="inline-code">{'https://example.com'}</code>
-								or
+								children renders like <code class="inline-code">{'{/* … */}'}</code> in TSX: the
+								text on each side of it follows JSX's whitespace rules on its own. A{' '}
+								<code class="inline-code">{'/*'}</code> starts a comment anywhere. A{' '}
+								<code class="inline-code">{'//'}</code> starts a line comment where whitespace comes
+								right before it, at the start of a line, or right after a tag, an expression
+								container, or a block, and the comment runs to the end of the line, a closing tag on
+								it included. A <code class="inline-code">{'//'}</code> that touches other text, as
+								in <code class="inline-code">{'https://example.com'}</code> or{' '}
 								<code class="inline-code">{'a//b'}</code>, is text. So is a character reference or a
-								string expression: only
-								<code class="inline-code">{'/*'}</code>
-								and
-								<code class="inline-code">{'//'}</code>
-								start a comment, so
-								<code class="inline-code">{'&#47;*'}</code>,
-								<code class="inline-code">{'&#47;/'}</code>
-								and
-								<code class="inline-code">{"{'/* … */'}"}</code>
-								render as text. This differs from TSX, where
-								<code class="inline-code">{'/* … */'}</code>
-								and a line starting with
-								<code class="inline-code">{'//'}</code>
-								between children are text. Template control flow uses directive-prefixed
-								<code class="inline-code">@if</code>,<code class="inline-code">@for</code>,
-								<code class="inline-code">@switch</code>, and
-								<code class="inline-code">@try</code>
-								blocks whose bodies render template children.
+								string expression: only <code class="inline-code">{'/*'}</code> and{' '}
+								<code class="inline-code">{'//'}</code> start a comment, so{' '}
+								<code class="inline-code">{'&#47;*'}</code>,{' '}
+								<code class="inline-code">{'&#47;/'}</code> and{' '}
+								<code class="inline-code">{"{'/* … */'}"}</code> render as text. This differs from
+								TSX, where <code class="inline-code">{'/* … */'}</code> and a line starting with{' '}
+								<code class="inline-code">{'//'}</code> between children are text. Template control
+								flow uses directive-prefixed <code class="inline-code">@if</code>,{' '}
+								<code class="inline-code">@for</code>, <code class="inline-code">@switch</code>, and{' '}
+								<code class="inline-code">@try</code> blocks whose bodies render template children.
 							</p>
 							<p class="section-body">
-								Every JSX control-flow body is an implicit statement container and must use a
-								<code class="inline-code">{'{}'}</code>
-								template block after the directive header.
+								Every JSX control-flow body is an implicit statement container and must use a{' '}
+								<code class="inline-code">{'{}'}</code> template block after the directive header.
 							</p>
 							<p class="section-body">
-								Each
-								<code class="inline-code">@switch</code>
-								<code class="inline-code">@case</code>
-								and
-								<code class="inline-code">@default</code>
-								must use a<code class="inline-code">{'{}'}</code>
-								template block. Cases are isolated: they do not fall through to later cases, and
-								<code class="inline-code">break</code>
-								and
-								<code class="inline-code">return</code>
-								are syntax errors inside a JSX switch case.
+								Each <code class="inline-code">@switch</code> <code class="inline-code">@case</code>{' '}
+								and <code class="inline-code">@default</code> must use a{' '}
+								<code class="inline-code">{'{}'}</code> template block. Cases are isolated: they do
+								not fall through to later cases, and <code class="inline-code">break</code> and{' '}
+								<code class="inline-code">return</code> are syntax errors inside a JSX switch case.
 							</p>
 							<p class="section-body">
 								Plain JSX children are the default. When an expression position, function body,
 								element child, or fragment child needs local TypeScript statements before rendering,
-								those statements must be contained in a JSX statement container written as
+								those statements must be contained in a JSX statement container written as{' '}
 								<code class="inline-code">{'@{...}'}</code>. A statement container places setup
 								statements first and then exactly one output node: a JSX element, JSX fragment, or
 								JSX control-flow expression. If the output needs text, expression containers, or
@@ -1105,22 +1086,19 @@ export function SpecificationPage() @{
 							<p class="section-body">
 								Control-flow block bodies follow the same structural rule as statement containers:
 								TypeScript first (although optional), then an optional rendered template output. The
-								ordinary JSX form
-								<code class="inline-code">{'{ AssignmentExpression }'}</code>
+								ordinary JSX form <code class="inline-code">{'{ AssignmentExpression }'}</code>{' '}
 								contributes a JSXExpressionContainer node and is not itself a statement container. A
-								function exit remains an ordinary
-								<code class="inline-code">return</code>
-								statement.
+								function exit remains an ordinary <code class="inline-code">return</code> statement.
 							</p>
 							<pre class="code-block plain">
 								<code>{TEMPLATE_EXPRESSION_GRAMMAR}</code>
 							</pre>
 							<p class="section-body">
 								Runtime dynamic element and component selection uses the dynamic tag syntax: a JSX
-								expression container in element-name position, written
+								expression container in element-name position, written{' '}
 								<code class="inline-code">{'<{expression}>'}</code>. The expression can evaluate to
 								a string tag name or a component constructor, and a non-self-closing element repeats
-								the same expression in its closing tag:
+								the same expression in its closing tag:{' '}
 								<code class="inline-code">{'</{expression}>'}</code>. No runtime import is required;
 								each target compiler lowers the form to its own runtime helper.
 							</p>
@@ -1133,79 +1111,64 @@ export function SpecificationPage() @{
 							<p class="section-body">The tag expression must be one of three forms:</p>
 							<ul class="spec-list">
 								<li>
-									an identifier, such as
-									<code class="inline-code">tag</code>;
+									an identifier, such as <code class="inline-code">tag</code>;
 								</li>
 								<li>
-									a member access, including chains, such as
-									<code class="inline-code">props.as</code>,
-									<code class="inline-code">this.tag</code>,
-									<code class="inline-code">registry[name]</code>
-									or
-									<code class="inline-code">items[0]</code>. The chain starts at an identifier or
+									a member access, including chains, such as{' '}
+									<code class="inline-code">props.as</code>,{' '}
+									<code class="inline-code">this.tag</code>,{' '}
+									<code class="inline-code">registry[name]</code> or{' '}
+									<code class="inline-code">items[0]</code>. The chain starts at an identifier or{' '}
 									<code class="inline-code">this</code>, and each computed key is an identifier, a
 									string or number literal, or a member access;
 								</li>
 								<li>
-									a string literal, such as
-									<code class="inline-code">'section'</code>.
+									a string literal, such as <code class="inline-code">'section'</code>.
 								</li>
 							</ul>
 							<p class="section-body">
 								Any other expression parses, and is reported as an early error (5). That includes a
-								conditional,
-								<code class="inline-code">||</code>,<code class="inline-code">??</code>
-								and
-								<code class="inline-code">&&</code>, even when every branch or operand is one of the
-								three forms; parentheses and the type-only wrappers
-								<code class="inline-code">as</code>,<code class="inline-code">satisfies</code>
-								and
-								<code class="inline-code">!</code>; optional member access; calls,
-								<code class="inline-code">new</code>, string concatenation, template literals,
-								assignments and sequences; functions, elements and fragments; and every literal
-								other than a string. A non-self-closing element repeats the expression in its
-								closing tag, so anything more is computed above the element and the result used as
-								the tag:
-								<code class="inline-code">{'const Tag = c ? Child : Fallback;'}</code>
-								followed by
-								<code class="inline-code">{'<{Tag} />'}</code>. Forms such as
-								<code class="inline-code">{'<@tag />'}</code>
-								and
-								<code class="inline-code">{'<@Component />'}</code>
-								are not dynamic tag syntax in current TSRX.
+								conditional, <code class="inline-code">||</code>,{' '}
+								<code class="inline-code">??</code> and <code class="inline-code">&&</code>, even
+								when every branch or operand is one of the three forms; parentheses and the
+								type-only wrappers <code class="inline-code">as</code>,{' '}
+								<code class="inline-code">satisfies</code> and <code class="inline-code">!</code>;
+								optional member access; calls, <code class="inline-code">new</code>, string
+								concatenation, template literals, assignments and sequences; functions, elements and
+								fragments; and every literal other than a string. A non-self-closing element repeats
+								the expression in its closing tag, so anything more is computed above the element
+								and the result used as the tag:{' '}
+								<code class="inline-code">{'const Tag = c ? Child : Fallback;'}</code> followed by{' '}
+								<code class="inline-code">{'<{Tag} />'}</code>. Forms such as{' '}
+								<code class="inline-code">{'<@tag />'}</code> and{' '}
+								<code class="inline-code">{'<@Component />'}</code> are not dynamic tag syntax in
+								current TSRX.
 							</p>
 							<ul class="spec-list">
 								<li>
-									A JSX text child is represented by
-									<code class="inline-code">JSXText</code>
-									and contributes escaped static text. Character references such as
-									<code class="inline-code">{'&quot;'}</code>
-									are decoded before the text value is stored, and the raw text keeps them as
-									written, which is how the text is printed. A comment between children is not part
-									of any JSXText: text ends before it and starts again after it, and the comment is
-									the inner comment of an empty
-									<code class="inline-code">{'{}'}</code>
-									of its own (a
-									<code class="inline-code">JSXExpressionContainer</code>
-									holding a<code class="inline-code">JSXEmptyExpression</code>, with no braces in
-									the source), as
-									<code class="inline-code">{'{/* … */}'}</code>
-									is in TSX.
+									A JSX text child is represented by <code class="inline-code">JSXText</code> and
+									contributes escaped static text. Character references such as{' '}
+									<code class="inline-code">{'&quot;'}</code> are decoded before the text value is
+									stored, and the raw text keeps them as written, which is how the text is printed.
+									A comment between children is not part of any JSXText: text ends before it and
+									starts again after it, and the comment is the inner comment of an empty{' '}
+									<code class="inline-code">{'{}'}</code> of its own (a{' '}
+									<code class="inline-code">JSXExpressionContainer</code> holding a{' '}
+									<code class="inline-code">JSXEmptyExpression</code>, with no braces in the
+									source), as <code class="inline-code">{'{/* … */}'}</code> is in TSX.
 								</li>
 								<li>
-									<code class="inline-code">{'{ AssignmentExpression }'}</code>
-									is the generic template-expression form and is represented by
+									<code class="inline-code">{'{ AssignmentExpression }'}</code> is the generic
+									template-expression form and is represented by{' '}
 									<code class="inline-code">JSXExpressionContainer</code>.
 								</li>
 								<li>
-									<code class="inline-code">{'@{...}'}</code>
-									is the template statement form and is represented by
-									<code class="inline-code">JSXCodeBlock</code>.
+									<code class="inline-code">{'@{...}'}</code> is the template statement form and is
+									represented by <code class="inline-code">JSXCodeBlock</code>.
 								</li>
 								<li>
-									Identifiers named
-									<code class="inline-code">text</code>
-									are ordinary identifiers in braced template expressions.
+									Identifiers named <code class="inline-code">text</code> are ordinary identifiers
+									in braced template expressions.
 								</li>
 							</ul>
 							<h3 class="appendix-heading">4.3.1 Whitespace</h3>
@@ -1216,77 +1179,57 @@ export function SpecificationPage() @{
 							</p>
 							<ul class="spec-list">
 								<li>
-									Within
-									<code class="inline-code">{'{ AssignmentExpression }'}</code>, whitespace, line
-									terminators, and comments are admitted wherever the embedded ECMAScript grammar
-									permits them. Thus forms such as
-									<code class="inline-code">{'{ expr }'}</code>
-									are well-formed.
+									Within <code class="inline-code">{'{ AssignmentExpression }'}</code>, whitespace,
+									line terminators, and comments are admitted wherever the embedded ECMAScript
+									grammar permits them. Thus forms such as{' '}
+									<code class="inline-code">{'{ expr }'}</code> are well-formed.
 								</li>
 								<li>
-									The statement-container introducer must be written as the contiguous sequence
-									<code class="inline-code">{'@{'}</code>. Whitespace or comments between
-									<code class="inline-code">@</code>
-									and
-									<code class="inline-code">{'{'}</code>
-									do not form a JSXCodeBlock.
+									The statement-container introducer must be written as the contiguous sequence{' '}
+									<code class="inline-code">{'@{'}</code>. Whitespace or comments between{' '}
+									<code class="inline-code">@</code> and <code class="inline-code">{'{'}</code> do
+									not form a JSXCodeBlock.
 								</li>
 								<li>
-									In expression position, whitespace and comments may follow the opening
-									<code class="inline-code">{'<'}</code>
-									of an element or fragment. For example,
-									<code class="inline-code">{'const node = < div />;'}</code>,
-									<code class="inline-code">{'const node = </* note */div />;'}</code>, and
-									<code class="inline-code">{'const fragment = < >text</>;'}</code>
-									are well-formed.
+									In expression position, whitespace and comments may follow the opening{' '}
+									<code class="inline-code">{'<'}</code> of an element or fragment. For example,{' '}
+									<code class="inline-code">{'const node = < div />;'}</code>,{' '}
+									<code class="inline-code">{'const node = </* note */div />;'}</code>, and{' '}
+									<code class="inline-code">{'const fragment = < >text</>;'}</code> are well-formed.
 								</li>
 								<li>
 									Inside a tag, whitespace, line terminators, and JavaScript line or block comments
-									may separate the name, attributes, attribute assignment tokens, and closing
-									<code class="inline-code">{'>'}</code>. They may also separate the self-closing
-									<code class="inline-code">/</code>
-									from
-									<code class="inline-code">{'>'}</code>, as in
-									<code class="inline-code">{'<div /* note */ id = "x" / >'}</code>. A
-									<code class="inline-code">{'//'}</code>
-									comment consumes the rest of its line, so subsequent tag tokens must be on a later
-									line.
+									may separate the name, attributes, attribute assignment tokens, and closing{' '}
+									<code class="inline-code">{'>'}</code>. They may also separate the self-closing{' '}
+									<code class="inline-code">/</code> from <code class="inline-code">{'>'}</code>, as
+									in <code class="inline-code">{'<div /* note */ id = "x" / >'}</code>. A{' '}
+									<code class="inline-code">{'//'}</code> comment consumes the rest of its line, so
+									subsequent tag tokens must be on a later line.
 								</li>
 								<li>
-									Whitespace and comments may surround the dots in a member tag name:
-									<code class="inline-code">{'<Foo . Bar />'}</code>
-									and
-									<code class="inline-code">{'<Foo /* note */ . Bar />'}</code>
-									both name
-									<code class="inline-code">Foo.Bar</code>. Each identifier remains a single token;
-									<code class="inline-code">{'<di v />'}</code>
-									is an element named
-									<code class="inline-code">di</code>
-									with an attribute named
+									Whitespace and comments may surround the dots in a member tag name:{' '}
+									<code class="inline-code">{'<Foo . Bar />'}</code> and{' '}
+									<code class="inline-code">{'<Foo /* note */ . Bar />'}</code> both name{' '}
+									<code class="inline-code">Foo.Bar</code>. Each identifier remains a single token;{' '}
+									<code class="inline-code">{'<di v />'}</code> is an element named{' '}
+									<code class="inline-code">di</code> with an attribute named{' '}
 									<code class="inline-code">v</code>.
 								</li>
 								<li>
-									A closing tag begins with contiguous
-									<code class="inline-code">{'</'}</code>. Whitespace and comments may follow that
-									sequence or the closing name, so
-									<code class="inline-code">{'</ div >'}</code>,
-									<code class="inline-code">{'</ /* note */ div>'}</code>, and
-									<code class="inline-code">{'</ >'}</code>
-									are valid closing tags for an element or fragment. Neither
-									<code class="inline-code">{'< /div>'}</code>
-									nor
-									<code class="inline-code">{'< / >'}</code>
-									closes a tag.
+									A closing tag begins with contiguous <code class="inline-code">{'</'}</code>.
+									Whitespace and comments may follow that sequence or the closing name, so{' '}
+									<code class="inline-code">{'</ div >'}</code>,{' '}
+									<code class="inline-code">{'</ /* note */ div>'}</code>, and{' '}
+									<code class="inline-code">{'</ >'}</code> are valid closing tags for an element or
+									fragment. Neither <code class="inline-code">{'< /div>'}</code> nor{' '}
+									<code class="inline-code">{'< / >'}</code> closes a tag.
 								</li>
 								<li>
 									While reading JSX child text, tag recognition depends on the character immediately
-									after
-									<code class="inline-code">{'<'}</code>. Whitespace after it leaves it as text:
-									<code class="inline-code">{'<p>a < b</p>'}</code>
-									contains the text
+									after <code class="inline-code">{'<'}</code>. Whitespace after it leaves it as
+									text: <code class="inline-code">{'<p>a < b</p>'}</code> contains the text{' '}
 									<code class="inline-code">{'a < b'}</code>. This differs from the expression
-									position in
-									<code class="inline-code">{'const node = < div />;'}</code>.
+									position in <code class="inline-code">{'const node = < div />;'}</code>.
 								</li>
 								<li>
 									Indentation and line breaks between adjacent template children are permitted as
@@ -1296,10 +1239,9 @@ export function SpecificationPage() @{
 							</ul>
 							<p class="section-body">
 								Raw style and script bodies have their own closing-tag rules. A raw style body ends
-								at the literal
-								<code class="inline-code">{'</style>'}</code>; a script body follows the HTML
-								closing-tag rules in 4.6. Their bodies are captured as raw text rather than parsed
-								as nested template children.
+								at the literal <code class="inline-code">{'</style>'}</code>; a script body follows
+								the HTML closing-tag rules in 4.6. Their bodies are captured as raw text rather than
+								parsed as nested template children.
 							</p>
 						</section>
 
@@ -1328,60 +1270,50 @@ export function SpecificationPage() @{
 							<p class="section-body">
 								The syntax of style elements, where a style block may be placed, the sibling scope a
 								standalone block styles, the value an assigned block evaluates to, the meaning of
-								the
-								<code class="inline-code">apply</code>
-								attribute, and the order in which a module's stylesheets are output are part of core
-								TSRX. A conforming implementation rewrites every selector of a scoped block to
-								require a hash class: a class it adds to each element the block reaches, so that the
-								block's selectors match only there. The host is responsible for the text of
-								generated hash classes, the name of the class attribute it adds them to, selector
-								rewriting, stylesheet registration, and for injecting a module's CSS before the CSS
-								of every module that imports it. The selector form
-								<code class="inline-code">:global(...)</code>
-								marks the wrapped part of a selector as unscoped and may appear only at the start or
-								end of a selector sequence (<code class="inline-code">TSRX3011</code>); the block
-								form
-								<code class="inline-code">{':global { ... }'}</code>
-								marks every rule inside it as unscoped.
+								the <code class="inline-code">apply</code> attribute, and the order in which a
+								module's stylesheets are output are part of core TSRX. A conforming implementation
+								rewrites every selector of a scoped block to require a hash class: a class it adds
+								to each element the block reaches, so that the block's selectors match only there.
+								The host is responsible for the text of generated hash classes, the name of the
+								class attribute it adds them to, selector rewriting, stylesheet registration, and
+								for injecting a module's CSS before the CSS of every module that imports it. The
+								selector form <code class="inline-code">:global(...)</code> marks the wrapped part
+								of a selector as unscoped and may appear only at the start or end of a selector
+								sequence (<code class="inline-code">TSRX3011</code>); the block form{' '}
+								<code class="inline-code">{':global { ... }'}</code> marks every rule inside it as
+								unscoped.
 							</p>
 							<pre class="code-block plain">
 								<code>{STYLE_GRAMMAR}</code>
 							</pre>
 							<p class="section-body">
 								Keyframe names in a scoped style block are scoped by default. The implementation
-								renames each local
-								<code class="inline-code">@keyframes</code>
-								declaration using the block's hash and rewrites matching names in
-								<code class="inline-code">animation</code>
-								and
-								<code class="inline-code">animation-name</code>
-								declarations within that block. A keyframe name beginning with
-								<code class="inline-code">-global-</code>
-								is emitted with that prefix removed and no hash added: for example,
-								<code class="inline-code">@keyframes -global-fadeIn</code>
-								becomes
+								renames each local <code class="inline-code">@keyframes</code> declaration using the
+								block's hash and rewrites matching names in{' '}
+								<code class="inline-code">animation</code> and{' '}
+								<code class="inline-code">animation-name</code> declarations within that block. A
+								keyframe name beginning with <code class="inline-code">-global-</code> is emitted
+								with that prefix removed and no hash added: for example,{' '}
+								<code class="inline-code">@keyframes -global-fadeIn</code> becomes{' '}
 								<code class="inline-code">@keyframes fadeIn</code>. References use the unprefixed
 								name, including in other components or style blocks once the defining stylesheet is
-								loaded. Keyframes declared inside a
-								<code class="inline-code">{':global { ... }'}</code>
-								block also retain unscoped names. These rules apply to vendor-prefixed keyframe
-								at-rules and animation properties as well. Making a keyframe name global does not
-								change the scope of selectors that reference it.
+								loaded. Keyframes declared inside a{' '}
+								<code class="inline-code">{':global { ... }'}</code> block also retain unscoped
+								names. These rules apply to vendor-prefixed keyframe at-rules and animation
+								properties as well. Making a keyframe name global does not change the scope of
+								selectors that reference it.
 							</p>
 							<p class="section-body">
 								A style body is captured as raw CSS text. A self-closing style element has no body,
-								no stylesheet, and no hash class of its own; it exists to carry an
-								<code class="inline-code">apply</code>
-								attribute. A scoped style block admits exactly two attributes:
-								<code class="inline-code">ref</code>, whose value receives the class-map object of
-								the block's scope (4.5.3), and
+								no stylesheet, and no hash class of its own; it exists to carry an{' '}
+								<code class="inline-code">apply</code> attribute. A scoped style block admits
+								exactly two attributes: <code class="inline-code">ref</code>, whose value receives
+								the class-map object of the block's scope (4.5.3), and{' '}
 								<code class="inline-code">apply</code>, whose value must be a StyleApplyValue. Style
-								elements inside a<code class="inline-code">{'<head>'}</code>
-								element and style elements carrying an
-								<code class="inline-code">href</code>
-								attribute (resource styles) are outside the scope model of this section: they admit
-								any attribute, are not scoped, and do not admit
-								<code class="inline-code">apply</code>.
+								elements inside a <code class="inline-code">{'<head>'}</code> element and style
+								elements carrying an <code class="inline-code">href</code> attribute (resource
+								styles) are outside the scope model of this section: they admit any attribute, are
+								not scoped, and do not admit <code class="inline-code">apply</code>.
 							</p>
 							<h3 class="appendix-heading">4.5.1 A block is standalone or assigned</h3>
 							<p class="section-body">
@@ -1403,8 +1335,8 @@ export function SpecificationPage() @{
 								it must sit lexically inside a JSXCodeBlock body or a control-flow body, at any
 								depth of native elements, fragments, expression containers, callbacks, or templates
 								assigned inside such a body; anywhere else it is an early error (5.1). Plain TSX
-								keeps the TSX rule: a<code class="inline-code">{'<style>'}</code>
-								element whose first child is an expression container, written
+								keeps the TSX rule: a <code class="inline-code">{'<style>'}</code> element whose
+								first child is an expression container, written{' '}
 								<code class="inline-code">{'<style>{css}</style>'}</code>, is an ordinary JSXElement
 								with no stylesheet, no scope, and no hash class, and the implementation adds nothing
 								to it. Head styles and resource styles remain exempt.
@@ -1420,20 +1352,14 @@ export function SpecificationPage() @{
 								contains it, nor any ancestor. To style an element, make the block and the element
 								siblings in a fragment. Children lists nested in a scope that hold blocks are nested
 								scopes, whether they sit directly below or inside a nested JSXCodeBlock or a
-								control-flow body. Every
-								<code class="inline-code">@if</code>
-								branch, the
-								<code class="inline-code">@for</code>
-								body and its
-								<code class="inline-code">@empty</code>
-								block, every
-								<code class="inline-code">@case</code>
-								and
-								<code class="inline-code">@default</code>
-								body, and the
-								<code class="inline-code">@try</code>,<code class="inline-code">@pending</code>, and
-								<code class="inline-code">@catch</code>
-								blocks render one output node, and a fragment there is a scope of its own.
+								control-flow body. Every <code class="inline-code">@if</code> branch, the{' '}
+								<code class="inline-code">@for</code> body and its{' '}
+								<code class="inline-code">@empty</code> block, every{' '}
+								<code class="inline-code">@case</code> and <code class="inline-code">@default</code>{' '}
+								body, and the <code class="inline-code">@try</code>,{' '}
+								<code class="inline-code">@pending</code>, and{' '}
+								<code class="inline-code">@catch</code> blocks render one output node, and a
+								fragment there is a scope of its own.
 							</p>
 							<p class="section-body">
 								Sibling blocks share one hash class. All standalone blocks of one list share one
@@ -1454,77 +1380,58 @@ export function SpecificationPage() @{
 								Unused selectors are removed per scope, against the list's other children and their
 								subtrees: a selector of a standalone block that matches no element the block reaches
 								is unused, including a selector that matches only the element containing the block.
-								A block inside an
-								<code class="inline-code">@if</code>
-								or
-								<code class="inline-code">@for</code>
-								branch styles only the elements that branch renders: its hash class is added only to
-								the elements of its own branch. Its CSS is still always part of the module's
-								stylesheet, whether or not the branch ever renders, because CSS is static.
+								A block inside an <code class="inline-code">@if</code> or{' '}
+								<code class="inline-code">@for</code> branch styles only the elements that branch
+								renders: its hash class is added only to the elements of its own branch. Its CSS is
+								still always part of the module's stylesheet, whether or not the branch ever
+								renders, because CSS is static.
 							</p>
 							<h3 class="appendix-heading">
 								4.5.3 An assigned block evaluates to an object with $class
 							</h3>
 							<p class="section-body">
-								An assigned block evaluates to an object. Its first property is
+								An assigned block evaluates to an object. Its first property is{' '}
 								<code class="inline-code">$class</code>, a string, followed by one property for
 								every class selector that stands alone as a complete selector in the block; the
 								value of such a property is the block's hash class, a space, and the class name. A
-								class selector named
-								<code class="inline-code">$class</code>
-								in an assigned block is an early error.
+								class selector named <code class="inline-code">$class</code> in an assigned block is
+								an early error.
 							</p>
 							<p class="section-body">
 								Every assigned block is a theme. A theme keeps every selector, each scoped under the
 								block's hash class, and an implementation must not remove any selector of an
-								assigned block as unused. The block's
-								<code class="inline-code">$class</code>
-								and class properties are ordinary strings that any JavaScript use may carry to any
-								element, and
-								<code class="inline-code">apply</code>
-								may stamp its
-								<code class="inline-code">$class</code>
-								on scopes in other modules, so no set of elements bounds what the block can match.
-								An element that carries a class property such as
-								<code class="inline-code">styles.card</code>
-								carries the hash class too, so the block's element selectors match it as well.
+								assigned block as unused. The block's <code class="inline-code">$class</code> and
+								class properties are ordinary strings that any JavaScript use may carry to any
+								element, and <code class="inline-code">apply</code> may stamp its{' '}
+								<code class="inline-code">$class</code> on scopes in other modules, so no set of
+								elements bounds what the block can match. An element that carries a class property
+								such as <code class="inline-code">styles.card</code> carries the hash class too, so
+								the block's element selectors match it as well.
 							</p>
 							<p class="section-body">
-								<code class="inline-code">$class</code>
-								is the space-separated concatenation of the
-								<code class="inline-code">$class</code>
-								of every applied block, in
-								<code class="inline-code">apply</code>
-								order, followed by the block's own hash class. A block without a body exposes
-								<code class="inline-code">$class</code>
-								only and contributes no hash class. A repeated hash class in a class list has no CSS
+								<code class="inline-code">$class</code> is the space-separated concatenation of the{' '}
+								<code class="inline-code">$class</code> of every applied block, in{' '}
+								<code class="inline-code">apply</code> order, followed by the block's own hash
+								class. A block without a body exposes <code class="inline-code">$class</code> only
+								and contributes no hash class. A repeated hash class in a class list has no CSS
 								effect, and an implementation may drop repeats it can resolve statically. A
-								same-module target whose
-								<code class="inline-code">$class</code>
-								is fully static may be written into the output as a string literal; an imported
-								target is a runtime read of its
-								<code class="inline-code">$class</code>
-								property.
+								same-module target whose <code class="inline-code">$class</code> is fully static may
+								be written into the output as a string literal; an imported target is a runtime read
+								of its <code class="inline-code">$class</code> property.
 							</p>
 							<p class="section-body">
-								Reading
-								<code class="inline-code">$class</code>
-								opts elements into a theme one at a time. An element whose class attribute includes
-								a theme's
-								<code class="inline-code">$class</code>
-								matches the theme's element and descendant selectors exactly as an element of an
-								applying scope does (4.5.4), and no other element is affected. The value is an
-								ordinary string, so it may be passed to a component as a prop and placed on that
-								component's elements; it is then an authored class of those elements and precedes
-								the hash classes of their own enclosing scopes.
-								<code class="inline-code">$class</code>
-								is the selective counterpart of
+								Reading <code class="inline-code">$class</code> opts elements into a theme one at a
+								time. An element whose class attribute includes a theme's{' '}
+								<code class="inline-code">$class</code> matches the theme's element and descendant
+								selectors exactly as an element of an applying scope does (4.5.4), and no other
+								element is affected. The value is an ordinary string, so it may be passed to a
+								component as a prop and placed on that component's elements; it is then an authored
+								class of those elements and precedes the hash classes of their own enclosing scopes.{' '}
+								<code class="inline-code">$class</code> is the selective counterpart of{' '}
 								<code class="inline-code">apply</code>, which reaches every element of a scope, and
-								the two may be combined. Listing the
-								<code class="inline-code">$class</code>
-								of several themes on one element composes them there as
-								<code class="inline-code">{'apply={[a, b]}'}</code>
-								composes them on a scope.
+								the two may be combined. Listing the <code class="inline-code">$class</code> of
+								several themes on one element composes them there as{' '}
+								<code class="inline-code">{'apply={[a, b]}'}</code> composes them on a scope.
 							</p>
 							<pre class="code-block plain">
 								<code>{STYLE_THEME_EXAMPLE}</code>
@@ -1533,14 +1440,11 @@ export function SpecificationPage() @{
 								4.5.4 apply adds a theme's $class to every element of a scope
 							</h3>
 							<p class="section-body">
-								<code class="inline-code">apply</code>
-								on a standalone block adds the
-								<code class="inline-code">$class</code>
-								of each listed block to every element the block's scope reaches, after every
-								enclosing scope's hash class, outer scopes' entries first and each scope's entries
-								in source order.
-								<code class="inline-code">apply</code>
-								on an assigned block merges into that block's
+								<code class="inline-code">apply</code> on a standalone block adds the{' '}
+								<code class="inline-code">$class</code> of each listed block to every element the
+								block's scope reaches, after every enclosing scope's hash class, outer scopes'
+								entries first and each scope's entries in source order.{' '}
+								<code class="inline-code">apply</code> on an assigned block merges into that block's{' '}
 								<code class="inline-code">$class</code>. Each entry resolves with ordinary lexical
 								scoping from the position of the style element and must name an assigned block: a
 								binding whose initializer is a style element, an import, or a non-computed member
@@ -1576,9 +1480,8 @@ export function SpecificationPage() @{
 									Applied theme before the block that applies it. A same-module target precedes the
 									block that applies it because it must be declared first, and a host must inject an
 									imported module's CSS before the CSS of the module that imports it. The array
-									position of an
-									<code class="inline-code">apply</code>
-									entry decides which classes are added, not their precedence.
+									position of an <code class="inline-code">apply</code> entry decides which classes
+									are added, not their precedence.
 								</li>
 								<li>Source order within a scope. Of two blocks in one scope, the later wins.</li>
 							</ul>
@@ -1587,38 +1490,32 @@ export function SpecificationPage() @{
 						<section class="doc-section" id="script">
 							<h2 class="section-heading">4.6 Script Elements</h2>
 							<p class="section-body">
-								A<code class="inline-code">{'<script>'}</code>
-								element with a closing tag is a raw-text element, like a style element, in a
-								template and in plain TSX alike. Its body is every character up to its end tag, kept
-								as written. None of the rules of JSX text apply to it: it has no comments, no
-								character references, and no expression containers, and its line breaks and
-								whitespace stay. So
-								<code class="inline-code">{'<script>{code}</script>'}</code>
-								is a script whose text is
-								<code class="inline-code">{'{code}'}</code>, as it would be in an HTML file, and
-								<code class="inline-code">&amp;amp;</code>
-								in a body is those five characters.
+								A <code class="inline-code">{'<script>'}</code> element with a closing tag is a
+								raw-text element, like a style element, in a template and in plain TSX alike. Its
+								body is every character up to its end tag, kept as written. None of the rules of JSX
+								text apply to it: it has no comments, no character references, and no expression
+								containers, and its line breaks and whitespace stay. So{' '}
+								<code class="inline-code">{'<script>{code}</script>'}</code> is a script whose text
+								is <code class="inline-code">{'{code}'}</code>, as it would be in an HTML file, and{' '}
+								<code class="inline-code">&amp;amp;</code> in a body is those five characters.
 							</p>
 							<pre class="code-block plain">
 								<code>{SCRIPT_GRAMMAR}</code>
 							</pre>
 							<p class="section-body">
-								A body ends where HTML ends it: at
-								<code class="inline-code">{'</script'}</code>, optional HTML whitespace, and
-								<code class="inline-code">{'>'}</code>. Any other
-								<code class="inline-code">{'</script'}</code>
-								in the body, in any letter case, would end the script in a browser, and is an early
-								error (5.2). Write it as
+								A body ends where HTML ends it: at <code class="inline-code">{'</script'}</code>,
+								optional HTML whitespace, and <code class="inline-code">{'>'}</code>. Any other{' '}
+								<code class="inline-code">{'</script'}</code> in the body, in any letter case, would
+								end the script in a browser, and is an early error (5.2). Write it as{' '}
 								<code class="inline-code">{'<\\/script'}</code>, which is the same string, regular
 								expression, or JSON text.
 							</p>
 							<p class="section-body">
 								A self-closing script element has no body and is an ordinary element. Its code comes
-								from its attributes, such as
-								<code class="inline-code">src</code>, or from the host's property for a dynamic
-								body, such as
-								<code class="inline-code">{'dangerouslySetInnerHTML={{ __html: code }}'}</code>
-								or<code class="inline-code">{'innerHTML={code}'}</code>.
+								from its attributes, such as <code class="inline-code">src</code>, or from the
+								host's property for a dynamic body, such as{' '}
+								<code class="inline-code">{'dangerouslySetInnerHTML={{ __html: code }}'}</code> or{' '}
+								<code class="inline-code">{'innerHTML={code}'}</code>.
 							</p>
 							<pre class="code-block plain">
 								<code>{SCRIPT_EXAMPLE}</code>
@@ -1638,28 +1535,24 @@ export function SpecificationPage() @{
 								surface aligned with the TC39 module declarations proposal. Ripple and Octane both
 								define host profiles around a module server declaration. Ripple exposes
 								proposal-aligned imports from server, while Octane uses the file-local module
-								specifier
-								<code class="inline-code">'server'</code>
-								for RPC imports. The transport, serialization, and runtime behavior remain
-								host-defined.
+								specifier <code class="inline-code">'server'</code> for RPC imports. The transport,
+								serialization, and runtime behavior remain host-defined.
 							</p>
 							<p class="section-body">
 								A server submodule is a structural boundary, not a directive annotation. Its nested
 								module scope gives host compilers and tooling an explicit region for isolation and
 								static analysis, including rejecting implicit cross-boundary captures and keeping
-								server-only dependencies out of client output. A host-specific
-								<code class="inline-code">"use server"</code>
-								directive, when supported, has separate semantics and is not interchangeable with
-								module server.
+								server-only dependencies out of client output. A host-specific{' '}
+								<code class="inline-code">"use server"</code> directive, when supported, has
+								separate semantics and is not interchangeable with module server.
 							</p>
 							<pre class="code-block plain">
 								<code>{SERVER_EXTENSION_GRAMMAR}</code>
 							</pre>
 							<p class="section-body">
 								The identifier-source import production above describes the proposal-aligned form.
-								Octane's quoted
-								<code class="inline-code">'server'</code>
-								specifier uses the ordinary TypeScript import grammar.
+								Octane's quoted <code class="inline-code">'server'</code> specifier uses the
+								ordinary TypeScript import grammar.
 							</p>
 						</section>
 
@@ -1667,16 +1560,15 @@ export function SpecificationPage() @{
 							<h2 class="section-heading">5 Static Semantics: Early Errors</h2>
 							<ul class="spec-list">
 								<li>
-									An element or fragment closing tag must begin with contiguous
-									<code class="inline-code">{'</'}</code>
-									(4.3.1).
+									An element or fragment closing tag must begin with contiguous{' '}
+									<code class="inline-code">{'</'}</code> (4.3.1).
 								</li>
 								<li>Opening and closing tags for TSRX elements and fragments must match.</li>
 								<li>
 									A dynamic tag expression must be one of the three forms listed in 4.3; any other
-									expression is
-									<code class="inline-code">TSRX2014</code>, reported once for each element at the
-									part of the expression that isn't one of them. The check doesn't change the parse.
+									expression is <code class="inline-code">TSRX2014</code>, reported once for each
+									element at the part of the expression that isn't one of them. The check doesn't
+									change the parse.
 								</li>
 								<li>
 									A JSXCodeBlock or template control-flow block that contains TypeScript setup
@@ -1688,19 +1580,17 @@ export function SpecificationPage() @{
 									JSXCodeBlock.
 								</li>
 								<li>
-									A standalone
-									<code class="inline-code">JSXExpressionContainer</code>
-									is not a template output node. Use a JSX fragment when a statement container or
+									A standalone <code class="inline-code">JSXExpressionContainer</code> is not a
+									template output node. Use a JSX fragment when a statement container or
 									control-flow block needs to render text, expression containers, or multiple
 									siblings.
 								</li>
 								<li>
 									In hosts that enable server-oriented submodules, server exports must be imported
-									before use using the host profile's import form, for example
-									<code class="inline-code">import &#123; load &#125; from server</code>
-									in Ripple or
-									<code class="inline-code">import &#123; load &#125; from 'server'</code>
-									in Octane.
+									before use using the host profile's import form, for example{' '}
+									<code class="inline-code">import &#123; load &#125; from server</code> in Ripple
+									or <code class="inline-code">import &#123; load &#125; from 'server'</code> in
+									Octane.
 								</li>
 								<li>
 									Host profiles may restrict which submodule names are supported and may impose
@@ -1720,83 +1610,66 @@ export function SpecificationPage() @{
 							<ul class="spec-list">
 								<li>
 									A standalone style block must sit inside a template scope. A standalone block at
-									module scope is
-									<code class="inline-code">TSRX3007</code>.
+									module scope is <code class="inline-code">TSRX3007</code>.
 								</li>
 								<li>
 									A standalone style block must be a child of a native element or fragment. A block
 									that is the lone output node of a JSXCodeBlock or a control-flow body, or a
-									statement, is
-									<code class="inline-code">TSRX3009</code>.
+									statement, is <code class="inline-code">TSRX3009</code>.
 								</li>
 								<li>
 									A standalone style block with CSS text must sit lexically inside a JSXCodeBlock
 									body or a control-flow body (4.5.1). Anywhere else, such as a plain TSX return or
-									an assigned template outside those bodies, it is
+									an assigned template outside those bodies, it is{' '}
 									<code class="inline-code">TSRX3008</code>. Head styles, resource styles, and
 									self-closing blocks are exempt.
 								</li>
 								<li>
-									A scoped style block admits only the attributes
-									<code class="inline-code">ref</code>
-									and
-									<code class="inline-code">apply</code>; any other attribute is
-									<code class="inline-code">TSRX3010</code>. Head styles and resource styles admit
-									any attribute.
+									A scoped style block admits only the attributes{' '}
+									<code class="inline-code">ref</code> and <code class="inline-code">apply</code>;
+									any other attribute is <code class="inline-code">TSRX3010</code>. Head styles and
+									resource styles admit any attribute.
 								</li>
 								<li>
-									<code class="inline-code">apply</code>
-									requires an expression container, written
-									<code class="inline-code">{'apply={theme}'}</code>
-									or
+									<code class="inline-code">apply</code> requires an expression container, written{' '}
+									<code class="inline-code">{'apply={theme}'}</code> or{' '}
 									<code class="inline-code">{'apply={[a, b]}'}</code>. A bare attribute, a string
-									value, or an empty container is
-									<code class="inline-code">TSRX3001</code>.
+									value, or an empty container is <code class="inline-code">TSRX3001</code>.
 								</li>
 								<li>
-									A style element carries at most one
-									<code class="inline-code">apply</code>
-									attribute; each further one is
-									<code class="inline-code">TSRX3004</code>
-									and is ignored.
+									A style element carries at most one <code class="inline-code">apply</code>{' '}
+									attribute; each further one is <code class="inline-code">TSRX3004</code> and is
+									ignored.
 								</li>
 								<li>
-									<code class="inline-code">apply</code>
-									on a head style or a resource style is
+									<code class="inline-code">apply</code> on a head style or a resource style is{' '}
 									<code class="inline-code">TSRX3005</code>.
 								</li>
 								<li>
-									Every
-									<code class="inline-code">apply</code>
-									entry must be an identifier or non-computed member chain that resolves, by lexical
-									scoping, to an assigned style block, to an import, or to a member of an import or
-									of a module-local object literal whose property holds a style block. Any other
-									entry is
+									Every <code class="inline-code">apply</code> entry must be an identifier or
+									non-computed member chain that resolves, by lexical scoping, to an assigned style
+									block, to an import, or to a member of an import or of a module-local object
+									literal whose property holds a style block. Any other entry is{' '}
 									<code class="inline-code">TSRX3002</code>. Shadowing counts: a binding that hides
 									a style block with another value is not a target.
 								</li>
 								<li>
-									A same-module target declared after the block that applies it is
+									A same-module target declared after the block that applies it is{' '}
 									<code class="inline-code">TSRX3003</code>, reported at the entry.
 								</li>
 								<li>
-									An assigned block whose stylesheet declares a class selector named
-									<code class="inline-code">$class</code>
-									is
+									An assigned block whose stylesheet declares a class selector named{' '}
+									<code class="inline-code">$class</code> is{' '}
 									<code class="inline-code">TSRX3006</code>.
 								</li>
 								<li>
-									Within a style body,
-									<code class="inline-code">:global(...)</code>
-									may begin or end a selector sequence but not sit in its middle, and a bare
-									<code class="inline-code">:global</code>
-									must not be nested inside another pseudo-class; both are
-									<code class="inline-code">TSRX3011</code>.
+									Within a style body, <code class="inline-code">:global(...)</code> may begin or
+									end a selector sequence but not sit in its middle, and a bare{' '}
+									<code class="inline-code">:global</code> must not be nested inside another
+									pseudo-class; both are <code class="inline-code">TSRX3011</code>.
 								</li>
 								<li>
-									A style body containing an
-									<code class="inline-code">@import</code>
-									rule is
+									A style body containing an <code class="inline-code">@import</code> rule is{' '}
 									<code class="inline-code">TSRX3012</code>: the imported rules would not be scoped.
 								</li>
 							</ul>
@@ -1812,9 +1685,8 @@ export function SpecificationPage() @{
 							<h3 class="appendix-heading">5.2 Script elements</h3>
 							<ul class="spec-list">
 								<li>
-									A script body containing
-									<code class="inline-code">{'</script'}</code>, in any letter case, anywhere but
-									its end tag (4.6) is
+									A script body containing <code class="inline-code">{'</script'}</code>, in any
+									letter case, anywhere but its end tag (4.6) is{' '}
 									<code class="inline-code">TSRX1004</code>: a browser would end the script there.
 								</li>
 							</ul>
@@ -1840,14 +1712,12 @@ export function SpecificationPage() @{
 									4.5.5.
 								</li>
 								<li>
-									How the object of an assigned block and the value handed to a style
-									<code class="inline-code">ref</code>
-									are delivered at runtime.
+									How the object of an assigned block and the value handed to a style{' '}
+									<code class="inline-code">ref</code> are delivered at runtime.
 								</li>
 								<li>
-									How the dynamic tag syntax
-									<code class="inline-code">{'<{expression}>'}</code>
-									is lowered, and how the resolved value selects between string tags and component
+									How the dynamic tag syntax <code class="inline-code">{'<{expression}>'}</code> is
+									lowered, and how the resolved value selects between string tags and component
 									constructors at runtime.
 								</li>
 								<li>
@@ -1917,7 +1787,7 @@ export function SpecificationPage() @{
 									ordinary statement nodes directly in JSXElement or JSXFragment children.
 								</li>
 								<li>
-									A style element with a body carries a parsed StyleSheet child and
+									A style element with a body carries a parsed StyleSheet child and{' '}
 									<code class="inline-code">metadata.styleScopeHash</code>, the position-derived
 									hash of that block. Head styles and self-closing blocks carry no hash. A
 									standalone block is emitted under the hash of its scope (4.5.2), which the
@@ -1929,16 +1799,12 @@ export function SpecificationPage() @{
 								</li>
 								<li>
 									Implementation metadata may additionally record topScopedClasses for downstream
-									style-ref analysis. The style analyzer sets
-									<code class="inline-code">metadata.styleKind</code>
-									to theme on every assigned block, sets
-									<code class="inline-code">metadata.styleApplied</code>
-									on each block that an
-									<code class="inline-code">apply</code>
-									in its module resolves to, records
-									<code class="inline-code">metadata.styleApplies</code>
-									on every style element, and summarizes the module's assigned and standalone
-									blocks, in source order, on
+									style-ref analysis. The style analyzer sets{' '}
+									<code class="inline-code">metadata.styleKind</code> to theme on every assigned
+									block, sets <code class="inline-code">metadata.styleApplied</code> on each block
+									that an <code class="inline-code">apply</code> in its module resolves to, records{' '}
+									<code class="inline-code">metadata.styleApplies</code> on every style element, and
+									summarizes the module's assigned and standalone blocks, in source order, on{' '}
 									<code class="inline-code">program.metadata.styles</code>.
 								</li>
 							</ul>
@@ -1954,11 +1820,10 @@ export function SpecificationPage() @{
 								<li>
 									JSXOpeningElement.name is a JSXIdentifier for ordinary tag names, a
 									JSXMemberExpression for dotted names, a JSXNamespacedName for namespaced names,
-									and a JSXExpressionContainer for dynamic tags written as
+									and a JSXExpressionContainer for dynamic tags written as{' '}
 									<code class="inline-code">{'<{expression}>'}</code>. Dynamic tags additionally
-									mark the element, its opening element, and the name container with an
-									<code class="inline-code">isDynamic</code>
-									flag for downstream tooling.
+									mark the element, its opening element, and the name container with an{' '}
+									<code class="inline-code">isDynamic</code> flag for downstream tooling.
 								</li>
 								<li>
 									openingElement and closingElement preserve the original tag delimiters so
@@ -1990,20 +1855,19 @@ export function SpecificationPage() @{
 									carried by the attribute form.
 								</li>
 								<li>
-									A<code class="inline-code">{'<style>'}</code>
-									tag whose content is CSS text is a JSXStyleElement rather than a JSXElement. Its
-									captured stylesheet source text and its styleScopeHash, styleKind, and
-									styleApplies metadata are described in A.5 and are not part of the general
-									JSXElement shape described here. A<code class="inline-code">{'<style>'}</code>
-									tag whose first non-whitespace child character is
-									<code class="inline-code">{'{'}</code>
-									is an ordinary JSXElement named style with expression-container children.
+									A <code class="inline-code">{'<style>'}</code> tag whose content is CSS text is a
+									JSXStyleElement rather than a JSXElement. Its captured stylesheet source text and
+									its styleScopeHash, styleKind, and styleApplies metadata are described in A.5 and
+									are not part of the general JSXElement shape described here. A{' '}
+									<code class="inline-code">{'<style>'}</code> tag whose first non-whitespace child
+									character is <code class="inline-code">{'{'}</code> is an ordinary JSXElement
+									named style with expression-container children.
 								</li>
 								<li>
-									A<code class="inline-code">{'<script>'}</code>
-									tag with a closing tag is a JSXElement whose content field holds its body as
-									written (4.6), an empty string for an empty body, and whose children array is
-									empty. A self-closing script tag has no content field.
+									A <code class="inline-code">{'<script>'}</code> tag with a closing tag is a
+									JSXElement whose content field holds its body as written (4.6), an empty string
+									for an empty body, and whose children array is empty. A self-closing script tag
+									has no content field.
 								</li>
 							</ul>
 							<h3 class="appendix-heading">A.4 Expression value nodes</h3>
@@ -2038,28 +1902,24 @@ export function SpecificationPage() @{
 							</pre>
 							<ul class="spec-list">
 								<li>
-									The AST contract emits
-									<code class="inline-code">JSXIfExpression</code>,
-									<code class="inline-code">JSXForExpression</code>,
-									<code class="inline-code">JSXSwitchExpression</code>, and
-									<code class="inline-code">JSXTryExpression</code>
-									for template control flow.
+									The AST contract emits <code class="inline-code">JSXIfExpression</code>,{' '}
+									<code class="inline-code">JSXForExpression</code>,{' '}
+									<code class="inline-code">JSXSwitchExpression</code>, and{' '}
+									<code class="inline-code">JSXTryExpression</code> for template control flow.
 								</li>
 								<li>
-									<code class="inline-code">JSXCodeBlock</code>
-									is a template child and expression value, not a general ECMAScript statement node.
-									Its render field is the one node produced by the container after setup; standalone
-									style elements stay in body, in source order, whether they precede or follow the
-									output.
+									<code class="inline-code">JSXCodeBlock</code> is a template child and expression
+									value, not a general ECMAScript statement node. Its render field is the one node
+									produced by the container after setup; standalone style elements stay in body, in
+									source order, whether they precede or follow the output.
 								</li>
 								<li>
-									A bodied
-									<code class="inline-code">JSXStyleElement</code>
-									holds exactly one StyleSheet child and carries styleScopeHash unless it sits in a
-									head element. A self-closing style element has an empty children array and an
-									empty css string. styleKind is set on assigned blocks only; styleApplies is set on
-									every style element and is empty when the element has no apply attribute. The
-									analyzed Program carries a ProgramStyleMetadata object as metadata.styles.
+									A bodied <code class="inline-code">JSXStyleElement</code> holds exactly one
+									StyleSheet child and carries styleScopeHash unless it sits in a head element. A
+									self-closing style element has an empty children array and an empty css string.
+									styleKind is set on assigned blocks only; styleApplies is set on every style
+									element and is empty when the element has no apply attribute. The analyzed Program
+									carries a ProgramStyleMetadata object as metadata.styles.
 								</li>
 							</ul>
 							<h3 class="appendix-heading">A.6 Submodules, special identifiers, and stylesheets</h3>
@@ -2085,10 +1945,9 @@ export function SpecificationPage() @{
 									analysis.
 								</li>
 								<li>
-									Octane associates string-literal imports from
-									<code class="inline-code">'server'</code>
-									with the file-local module server declaration for server exports or client RPC
-									stubs.
+									Octane associates string-literal imports from{' '}
+									<code class="inline-code">'server'</code> with the file-local module server
+									declaration for server exports or client RPC stubs.
 								</li>
 								<li>
 									A StyleSheet child is attached to every style element with a body, wherever it
@@ -2109,7 +1968,7 @@ export function SpecificationPage() @{
 							<h2 class="section-heading">B Error codes</h2>
 							<p class="section-body">
 								Every error a conforming implementation reports carries a code. A mistake TypeScript
-								also reports carries TypeScript's own code for it (such as
+								also reports carries TypeScript's own code for it (such as{' '}
 								<code class="inline-code">TS1005</code>), so an editor shows the same code
 								TypeScript would. A mistake only TSRX reports carries a{' '}
 								<code class="inline-code">TSRX</code> code:{' '}
