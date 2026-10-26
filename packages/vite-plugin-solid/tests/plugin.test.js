@@ -28,12 +28,13 @@ function call_load(plugin, id) {
 /**
  * @param {import('vite').Plugin} plugin
  * @param {string} source
+ * @param {typeof fake_plugin_resolve} [resolve]
  */
-function call_resolve_id(plugin, source) {
+function call_resolve_id(plugin, source, resolve = fake_plugin_resolve) {
 	const hook =
 		typeof plugin.resolveId === 'function' ? plugin.resolveId : plugin.resolveId?.handler;
 	if (!hook) throw new Error('plugin has no resolveId hook');
-	const context = /** @type {ThisParameterType<typeof hook>} */ ({ resolve: fake_plugin_resolve });
+	const context = /** @type {ThisParameterType<typeof hook>} */ ({ resolve });
 	return hook.call(context, source, undefined, { isEntry: false });
 }
 
@@ -71,10 +72,28 @@ describe('@tsrx/vite-plugin-solid routing', () => {
 			expect(resolved_id(result)).toBe('/abs/path/App.tsrx.tsx');
 		});
 
-		it('leaves unrelated extensions alone', async () => {
-			expect(await call_resolve_id(plugin, '/abs/path/App.ts')).toBeNull();
-			expect(await call_resolve_id(plugin, '/abs/path/App.tsx')).toBeNull();
-			expect(await call_resolve_id(plugin, 'solid-js')).toBeNull();
+		it('passes the resolution of unrelated extensions through unchanged', async () => {
+			for (const source of ['/abs/path/App.ts', '/abs/path/App.tsx', 'solid-js']) {
+				expect(resolved_id(await call_resolve_id(plugin, source))).toBe(source);
+			}
+		});
+
+		it('leaves a virtual or query-suffixed resolution of a `.tsrx` path alone', async () => {
+			for (const id of ['\0virtual:App.tsrx', '/abs/path/App.tsrx?inline']) {
+				/** @param {string} source */
+				const resolve = async (source) => ({ ...(await fake_plugin_resolve(source)), id });
+				expect(resolved_id(await call_resolve_id(plugin, 'virtual-app', resolve))).toBe(id);
+			}
+		});
+
+		it('rewrites a specifier without an extension that resolves to a `.tsrx` file', async () => {
+			/** @param {string} source */
+			const resolve = async (source) => ({
+				...(await fake_plugin_resolve(source)),
+				id: '/abs/node_modules/fixture-lib/App.tsrx',
+			});
+			const result = await call_resolve_id(plugin, 'fixture-lib', resolve);
+			expect(resolved_id(result)).toBe('/abs/node_modules/fixture-lib/App.tsrx.tsx');
 		});
 	});
 
@@ -93,7 +112,7 @@ describe('@tsrx/vite-plugin-solid routing', () => {
 			const matched = await call_resolve_id(plugin, '/proj/src/App.tsrx');
 			const skipped = await call_resolve_id(plugin, '/proj/tests/App.tsrx');
 			expect(resolved_id(matched)).toBe('/proj/src/App.tsrx.tsx');
-			expect(skipped).toBeNull();
+			expect(resolved_id(skipped)).toBe('/proj/tests/App.tsrx');
 		});
 	});
 

@@ -178,7 +178,21 @@ export function tsrxSolid(options = {}) {
 					: path_resolve(root_dir, path.replace(/^\/+/, ''));
 				return absolute_source + VIRTUAL_TSX_SUFFIX + worker_query;
 			}
-			return null;
+
+			// A package export or an extensionless import can still resolve to
+			// a `.tsrx` file.
+			if (source.startsWith('\0') || source.includes('?')) return null;
+			const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
+			if (
+				resolved &&
+				!resolved.id.startsWith('\0') &&
+				!resolved.id.includes('?') &&
+				is_tsrx_source(resolved.id)
+			) {
+				return { ...resolved, id: resolved.id + VIRTUAL_TSX_SUFFIX };
+			}
+			// Hand the resolution over, so Vite does not resolve the import again.
+			return resolved;
 		},
 
 		async load(id) {
