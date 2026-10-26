@@ -1073,7 +1073,7 @@ function build_component_statements(body_nodes, transform_context) {
  * @returns {{ statements: AST.Statement[], has_render: boolean }}
  */
 function code_block_scope_statements(block, transform_context) {
-	const statements = [...(block.body || [])];
+	const statements = code_block_setup_statements(block);
 	const render = block.render ?? null;
 
 	if (render == null) {
@@ -1134,6 +1134,23 @@ function lower_code_block_stream_node(block, transform_context) {
 
 	const iife = b.call(b.arrow([], b.block(statements, block_loc)));
 	return [to_jsx_expression_container(iife, block)];
+}
+
+/**
+ * The setup statements of a `@{ … }` code block. A code block renders one node;
+ * in loose mode the parser reports a second output node and keeps the earlier
+ * one among the setup statements. A control-flow directive there would reach the
+ * printer unlowered, so it becomes an unused expression statement, which lowers
+ * like any directive in that slot and keeps the editor checking its body (#197).
+ * @param {AST.JSXCodeBlock} block
+ * @returns {AST.Statement[]}
+ */
+function code_block_setup_statements(block) {
+	return (block.body || []).map((statement) =>
+		is_jsx_control_flow_expression(statement)
+			? b.stmt(/** @type {AST.Expression} */ (wrap_in_native_tsrx_fragment(statement)))
+			: statement,
+	);
 }
 
 /**
@@ -1530,7 +1547,7 @@ function lower_jsx_code_block_function_body(node) {
 	if (node.body?.type !== 'JSXCodeBlock') return node;
 
 	const code_block = node.body;
-	const statements = [...code_block.body];
+	const statements = code_block_setup_statements(code_block);
 	if (code_block.render != null) {
 		let render = code_block.render;
 		if (!is_native_tsrx_node(render)) {

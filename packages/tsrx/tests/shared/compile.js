@@ -84,6 +84,40 @@ function virtual_semantic_diagnostics(code, extra_options = {}) {
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] control flow followed by another output node`, () => {
+		// A code block renders one node. The parser reports the second output node and
+		// keeps the control flow before it among the setup statements, which the loose
+		// compile used to print unlowered: it threw instead of reporting the error (#197).
+		it.each([
+			['@for', '@for (const item of items) {\n\t\t<li>{item}</li>\n\t}'],
+			['@if', '@if (items.length) {\n\t\t<li>{items[0]}</li>\n\t}'],
+			[
+				'@switch',
+				'@switch (items.length) {\n\t\t@case 1: {\n\t\t\t<li>{items[0]}</li>\n\t\t}\n\t}',
+			],
+			['@try', '@try {\n\t\t<li>{items[0]}</li>\n\t} @catch (error) {\n\t\t<b />\n\t}'],
+		])('reports the fragment error after %s and keeps its body', (_directive, control_flow) => {
+			for (const source of [
+				`export function List({ items }: { items: string[] }) @{\n\t${control_flow}\n\t<p>done</p>\n}\n`,
+				`export const List = ({ items }: { items: string[] }) => @{\n\t${control_flow}\n\t<p>done</p>\n};\n`,
+				`export function List({ items }: { items: string[] }) @{\n\t<ul>@{\n\t${control_flow}\n\t<p>done</p>\n\t}</ul>\n}\n`,
+			]) {
+				const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx', {
+					loose: true,
+				});
+
+				expect(
+					errors.map((error) => [error.code, error.pos]),
+					source,
+				).toContainEqual([TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT.code, source.indexOf('<p>done')]);
+				expect(errors.filter((error) => error.type === 'fatal')).toEqual([]);
+				expect(virtual_parse_diagnostics(code), code).toEqual([]);
+				const li = source.indexOf('li>');
+				expect(mappings.some((mapping) => mapping.sourceOffsets[0] === li)).toBe(true);
+			}
+		});
+	});
+
 	describe(`[${name}] virtual code for syntax newer than ES2022`, () => {
 		it('keeps a hashbang as the first line and maps the code after it', () => {
 			const source = `#!/usr/bin/env node
