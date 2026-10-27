@@ -2766,7 +2766,9 @@ export function App() @{
 				'App.tsrx',
 			);
 
-			expect(code).toContain('export default defineVaporComponent(function App()');
+			// `export default function App` also binds `App` in the module.
+			expect(code).toContain('const App = defineVaporComponent(function App()');
+			expect(code).toContain('export default App;');
 			expect(code).toContain("{'Hello world'}");
 		});
 

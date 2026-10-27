@@ -50,6 +50,8 @@ export interface JsxTransformContext {
 	needs_loading: boolean;
 	needs_define_vapor_component: boolean;
 	needs_vapor_for: boolean;
+	/** Vue: a component reads its children from the default slot. */
+	needs_use_slots?: boolean;
 	stylesheets: AST.CSS.StyleSheet[];
 	type_only_style_anchors: AST.Statement[];
 	helper_state: JsxHelperState | null;
