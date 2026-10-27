@@ -3,6 +3,7 @@ import { SourceMap } from '@volar/source-map';
 import ts from 'typescript';
 import { assert, describe, expect, it } from 'vitest';
 import { builders as b, identifier_to_jsx_name, parseModule } from '@tsrx/core';
+import { TSRX_ERRORS } from '../../src/diagnostics.js';
 import { assert_type } from './node-types.js';
 import {
 	build_line_offsets,
@@ -100,14 +101,17 @@ export function runSharedSourceMappingTests({
 			expect(result.code.slice(generated, generated + 1)).toBe(source[offset]);
 		});
 
-		it('retains the trailing-comma diagnostic for an ambiguous generic arrow', () => {
+		it('reports the trailing-comma diagnostic for a lone type parameter, which reads as a tag', () => {
 			const result = compile_to_volar_mappings(
 				'export const identity = <Value>(value: Value) => value;',
 				'App.tsrx',
 				{ loose: true },
 			);
-			expect(result.errors.map((error) => error.message)).toEqual([
-				expect.stringContaining('trailing comma'),
+			expect(result.errors).toEqual([
+				expect.objectContaining({
+					code: TSRX_ERRORS.UNCLOSED_TAG_GENERIC_ARROW.code,
+					message: expect.stringContaining('`<Value,>'),
+				}),
 			]);
 		});
 

@@ -1596,6 +1596,11 @@ const List = <T,>({ items, render }: Props<T>) =>
 	</ul>;
 ```
 
+As in a `.tsx` file, a generic arrow function needs a trailing comma (`<T,>`), a
+constraint (`<T extends object>`), or a default (`<T = unknown>`) after its type
+parameter. A bare `<T>(x) => x` is an unclosed `<T>` tag, and the compiler's
+error asks for the comma.
+
 ### Type checking
 
 Two paths type-check `.tsrx` files; both use the same target-specific transform.

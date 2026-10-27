@@ -36,6 +36,7 @@ export const ERROR_EXAMPLES = [
 }
 `,
 	},
+	{ error: TSRX_ERRORS.UNCLOSED_TAG_GENERIC_ARROW, source: `export const f = <T>(x: T) => x;` },
 	{
 		error: TSRX_ERRORS.MISMATCHED_CLOSING_TAG,
 		source: `export function C() @{
@@ -718,7 +719,7 @@ let E;`,
 	{ error: TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, source: `@dec function f() {}` },
 	{ error: TS_ERRORS.TYPE_CAST_IN_PARAMETER, source: `const f = (x as number) => x;` },
 	{ error: TS_ERRORS.UNEXPECTED_TYPE_ANNOTATION, source: `f(a: number);` },
-	{ error: TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER, source: `const f = <T>() => 1;` },
+	{ error: TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER, source: `const f = async <T>() => 1;` },
 	{
 		error: UPSTREAM_ERRORS.REDECLARED,
 		source: `var a = 1;
@@ -839,6 +840,10 @@ export const WITHOUT_EXAMPLE = new Map(
 		[TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE, 'No source found (#964).'],
 		[TS_ERRORS.SIGNATURE_PARAMETER_NAME, 'No source found (#964).'],
 		[
+			TS_ERRORS.RESERVED_TYPE_ASSERTION,
+			'Only in a `.mts` or `.cts` file, which no TSRX compiler reads: a `.tsrx` file has JSX, where `<T>x` is a tag.',
+		],
+		[
 			UPSTREAM_ERRORS.LET_BINDING,
 			"`let` as a name gives `The keyword 'let' is reserved` (TS1212) at the same place first (#962).",
 		],
@@ -868,13 +873,13 @@ export const KNOWN_PROBLEMS = new Map(
 	/** @type {Array<[ErrorEntry, KnownProblem]>} */ ([
 		[TSRX_ERRORS.UNCLOSED_TAG, { problem: 'lost', issue: 978 }],
 		[TSRX_ERRORS.MISMATCHED_CLOSING_TAG, { problem: 'lost', issue: 978 }],
+		// The generated code keeps the tag unclosed, so TypeScript reports it too
+		// (TS17008), a syntax error that no directive hides.
+		[TSRX_ERRORS.UNCLOSED_TAG_GENERIC_ARROW, { problem: 'typescript', issue: 978 }],
 		[TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT, { problem: 'twice', issue: 981 }],
 		[TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT, { problem: 'twice', issue: 981 }],
 		[TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED, { problem: 'twice', issue: 980 }],
 		// The statement's keywords have no mapping, so the directive covers only `A`.
 		[TS_ERRORS.NESTED_GLOBAL_EXPORT, { problem: 'typescript', issue: 979 }],
-		// Printed as `<T>() => 1`, which TypeScript reads as JSX in the generated TSX:
-		// its syntax errors there are beyond a directive's reach.
-		[TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER, { problem: 'typescript', issue: 707 }],
 	]),
 );

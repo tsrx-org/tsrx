@@ -3141,6 +3141,39 @@ break"}</p>
 			expect(code).toContain('export function getItems<Item>(props: Props<Item>)');
 		});
 
+		it('keeps the comma of a generic arrow with one type parameter, so the output reparses', () => {
+			const { code } = compile(
+				`export const f = <T,>(x: T) => x;
+				export const first = <const T,>(items: T[]) => items[0];
+				export const pair = <A, B>(a: A, b: B) => [a, b];`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('export const f = <T,>(x: T) => x;');
+			expect(code).toContain('export const first = <const T,>(items: T[]) => items[0];');
+			expect(code).toContain('export const pair = <A, B>(a: A, b: B) => [a, b];');
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+		});
+
+		it('keeps parameter decorators before parameter property modifiers', () => {
+			const { code } = compile(
+				`class Service {
+					constructor(@Inject() private readonly dep: Dep) {}
+					find(@Param() id: string) {}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('constructor(@Inject() private readonly dep: Dep) {}');
+			expect(code).toContain('find(@Param() id: string) {}');
+		});
+
+		it('keeps the type arguments of a tagged template', () => {
+			const { code } = compile('export const query = sql<Row>`select 1`;', 'App.tsrx');
+
+			expect(code).toContain('export const query = sql<Row>`select 1`;');
+		});
+
 		it('preserves optional markers in tuple members and function parameters', () => {
 			const { code } = compile(
 				`export type OptionalTuple = [bar: string, baz?: string];

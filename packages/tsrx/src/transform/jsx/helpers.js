@@ -97,10 +97,10 @@ export function set_node_path_metadata(node, path) {
  * @returns {ESRap.Visitors<AST.Node>}
  */
 /**
- * @param {boolean} [boundary_tokens] Enable esrap's `boundaryTokens` anchors
- * (structural tokens carry one-character source locations). typeOnly/volar
- * prints opt in — their maps are consumed positionally by the language
- * tooling and never shipped; build prints stay sparse.
+ * @param {boolean} [boundary_tokens] A typeOnly/volar print: denser location
+ * markers, whose maps are consumed positionally by the language tooling and
+ * never shipped; build prints stay sparse. Such a print also passes the
+ * parser's tokens to esrap's `tokens` option (see the jsx transform).
  * @param {AST.CommentWithLocation[]} [comments] Source comments. In type-only
  * output, file-wide pragmas lead the program while documentation and scoped
  * annotations stay with their declarations, members, or statements. A sparse
@@ -119,7 +119,7 @@ export function tsx_with_ts_locations(
 	hashbang = null,
 	source = undefined,
 ) {
-	const base = with_deferred_imports(tsx({ boundaryTokens: boundary_tokens }));
+	const base = with_deferred_imports(/** @type {ESRap.Visitors<AST.Node>} */ (tsx({})));
 	const { _: base_visitor, ...base_visitors } = base;
 	const preserve_comments = comments !== undefined;
 	const preserve_owner_comments = boundary_tokens && preserve_comments;
@@ -230,6 +230,40 @@ export function tsx_with_ts_locations(
 				context.visit(node.typeAnnotation);
 			}
 		},
+		// esrap's tsx printer writes `<T,>` for every one-parameter list, but
+		// only an arrow needs it: TSX reads `<T>(…) => …` as a JSX tag. Other
+		// lists print as written.
+		ArrowFunctionExpression: (node, context) => {
+			if (node.typeParameters?.params.length === 1) {
+				arrow_type_parameters.add(node.typeParameters);
+			}
+			/** @type {NonNullable<typeof base.ArrowFunctionExpression>} */ (
+				base.ArrowFunctionExpression
+			)(node, context);
+		},
+		TSTypeParameterDeclaration: (node, context) => {
+			if (arrow_type_parameters.has(node)) {
+				/** @type {NonNullable<typeof base.TSTypeParameterDeclaration>} */ (
+					base.TSTypeParameterDeclaration
+				)(node, context);
+				return;
+			}
+			context.write('<');
+			for (let i = 0; i < node.params.length; i++) {
+				if (i > 0) context.write(', ');
+				context.visit(node.params[i]);
+			}
+			context.write('>');
+		},
+		// esrap writes an interface's `{` and `}` around the body it visits, so the
+		// body's end, after the `}` in the source, would map before the generated
+		// `}`. Without the body's location the braces map through their tokens.
+		TSInterfaceDeclaration: (node, context) => {
+			/** @type {NonNullable<typeof base.TSInterfaceDeclaration>} */ (base.TSInterfaceDeclaration)(
+				{ ...node, body: { ...node.body, loc: undefined } },
+				context,
+			);
+		},
 		TSNamedTupleMember: (node, context) => {
 			context.visit(node.label);
 			if (node.optional) {
@@ -298,8 +332,14 @@ export function tsx_with_ts_locations(
 		// esrap's JSXOpeningElement printer doesn't emit `typeArguments`, so generic
 		// component tags like `<RenderProp<User>>` lose the `<User>` in the output.
 		JSXOpeningElement: (node, context) => {
-			context.write('<');
-			context.visit(node.name);
+			// A generated name (a lowered `<{tag}>`) follows no source token, so a
+			// lone `<` would map the end of the source `<` to the generated name.
+			if (node.name.type === 'JSXIdentifier' && !has_location(node.name)) {
+				context.write(`<${node.name.name}`);
+			} else {
+				context.write('<');
+				context.visit(node.name);
+			}
 			if (node.typeArguments) {
 				context.visit(node.typeArguments);
 			}
@@ -343,22 +383,6 @@ export function tsx_with_ts_locations(
 			if (node.typeArguments) {
 				context.visit(node.typeArguments);
 			}
-		},
-		// esrap's TSParameterProperty printer drops `override`, so
-		// `constructor(override readonly n: number)` typechecks as TS4115
-		// ("must have an 'override' modifier") under `noImplicitOverride`.
-		// TypeScript's modifier order is accessibility, override, readonly.
-		TSParameterProperty: (node, context) => {
-			if (node.accessibility) {
-				context.write(node.accessibility + ' ');
-			}
-			if (node.override) {
-				context.write('override ');
-			}
-			if (node.readonly) {
-				context.write('readonly ');
-			}
-			context.visit(node.parameter);
 		},
 		// acorn-typescript marks `export import A = B` with `isExport` instead of
 		// wrapping it in an ExportNamedDeclaration, and esrap's printer ignores
@@ -422,7 +446,10 @@ export function tsx_with_ts_locations(
 				visit(node);
 				context.location(node.loc.end.line, node.loc.end.column);
 			};
-			if (base_visitor) {
+			// esrap's `_` maps the start and end of every located node. A program's
+			// start would map the source's first character to an import a target
+			// adds before the first statement.
+			if (base_visitor && node.type !== 'Program') {
 				base_visitor(node, context, visit_with_locations);
 			} else {
 				visit_with_locations();
@@ -464,6 +491,9 @@ const COMMENT_OWNER_NODE_TYPES = new Set([
 	'TSEnumMember',
 	'TSExportAssignment',
 ]);
+
+/** @type {WeakSet<AST.Node>} */
+const arrow_type_parameters = new WeakSet();
 
 const TOOLING_LOCATION_WRAPPED_NODE_TYPES = new Set([
 	// esrap does not map the end of an import, after the `;` it always writes,

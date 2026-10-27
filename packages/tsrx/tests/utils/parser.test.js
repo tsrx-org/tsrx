@@ -4,6 +4,8 @@
 /** @import * as ESTreeJSX from 'estree-jsx' */
 /** @import { ErrorKind } from '../shared/errors.js' */
 
+import { readdirSync, readFileSync } from 'node:fs';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { acorn, analyzeTsrx, isLayoutWhitespace, parseModule } from '../../src/index.js';
 import { TS_ERRORS, TSRX_ERRORS, UPSTREAM_ERRORS } from '../../src/diagnostics.js';
@@ -3988,7 +3990,7 @@ foo();`;
 
 	it('treats a generic arrow function in the setup section as script', () => {
 		const returned = getReturned(`function App() { return <div>@{
-			const id = <T>(x: T) => x
+			const id = <T,>(x: T) => x
 			<>{id}</>
 		}</div>; }`);
 
@@ -7844,11 +7846,13 @@ describe('comments placed like Prettier', () => {
 	}
 
 	/**
+	 * The first statement of `source`, read as a `.tsx` file, since some hold
+	 * elements, which a `.ts` file has none of.
 	 * @param {string} source
 	 * @returns {any}
 	 */
 	function firstStatement(source) {
-		return parseModule(source, 'App.ts').body[0];
+		return parseModule(source, 'App.tsx').body[0];
 	}
 
 	it('trails the operand before a comment at the end of an operator line', () => {
@@ -9748,6 +9752,527 @@ describe('`<` operators beside type-argument lookahead', () => {
 			const method = findNode(source, 'MethodDefinition');
 			expect(method.optional, source).toBe(true);
 			expect(method.typeParameters?.params, source).toHaveLength(1);
+		}
+	});
+});
+
+// A `<` starts a generic arrow function by TypeScript's rule for `.tsx` files
+// (`isParenthesizedArrowFunctionExpression`): `<[const] T` followed by `,` or
+// `=`, or by `extends` and anything but `=`, `>`, or `/`. Nothing after the type
+// parameters is read, and everything else is a tag (#183).
+describe('generic arrows by the TSX rule', () => {
+	/**
+	 * The type parameter count of the first arrow function in `source`.
+	 * @param {string} source
+	 */
+	function arrowTypeParameterCount(source) {
+		return findNode(source, 'ArrowFunctionExpression').typeParameters?.params.length;
+	}
+
+	it('reads `<T extends …>` as a generic arrow whatever the constraint is', () => {
+		for (const source of [
+			'const f = <T extends U>(x: T) => x;',
+			'const f = <T extends keyof U>(x: T) => x;',
+			'const f = <T extends { a: 1 }>(x: T) => x;',
+			'const f = <T extends [U]>(x: T) => x;',
+			"const f = <T extends 'a' | 'b'>(x: T) => x;",
+			'const f = <T extends (a: U) => U>(x: T) => x;',
+			'const f = <T extends /* c */ U>(x: T) => x;',
+			'const f = <T extends U>(x: T): T => x;',
+			'const f = async <T extends U>(x: T) => x;',
+			'const a = <Box fn={<T extends U>(x: T) => x} />;',
+			'function App() @{ const f = <T extends U>(x: T) => x; <b>{f}</b> }',
+		]) {
+			expect(arrowTypeParameterCount(source), source).toBe(1);
+		}
+		expect(arrowTypeParameterCount('const f = <const T extends U, V>(x: T, y: V) => x;')).toBe(2);
+	});
+
+	it('reads `<T,>` and `<T = …>` as a generic arrow', () => {
+		for (const source of [
+			'const f = <T,>(x: T) => x;',
+			'const f = <const T,>(x: T) => x;',
+			'const f = <T = unknown>(x: T) => x;',
+			'const f = <const T = unknown>(x: T) => x;',
+			'const f = <T /* c */,>(x: T) => x;',
+		]) {
+			expect(arrowTypeParameterCount(source), source).toBe(1);
+		}
+		expect(arrowTypeParameterCount('const f = <T, U>(x: T, y: U) => x;')).toBe(2);
+	});
+
+	it('never reads the parameters, so nothing in them can hide the arrow', () => {
+		for (const source of [
+			// #164: the `=>` of a constraint's function type
+			`declare function Box(props: { fn: <T extends () => void>(x: T) => T }): any;
+export const node = <Box fn={<T extends () => void,>(x: T) => x} />;`,
+			// #175: a `)` in a comment or a regular expression
+			'export const fn = <T extends object>(x: T /* ) */) => x;',
+			'export const fn = <T extends object>(x: T, re = /[)]/) => x;',
+			'export const fn = <T extends object,>(x: T /* ) */) => x;',
+			// A `)` in a nested template literal, and a regular expression after `if (…)`
+			'export const fn = <T extends object>(x: T, y = `${`)`}`) => x;',
+			'export const fn = <T extends object>(x: T, y = (s: string) => { if (s) /[)]/.exec(s); }) => x;',
+		]) {
+			expect(arrowTypeParameterCount(source), source).toBe(1);
+		}
+	});
+
+	it('keeps `<T extends>`, `<T extends/>`, and `<T extends=…>` as tags', () => {
+		for (const source of [
+			'const a = <T extends>text</T>;',
+			'const a = <T extends/>;',
+			'const a = <T extends />;',
+			'const a = <T extends="a">text</T>;',
+			'const a = <T extends={1} />;',
+			// `enum` is reserved, so it names no type parameter
+			'const a = <enum extends foo>ok</enum>;',
+		]) {
+			const [attribute] = findNode(source, 'JSXElement').openingElement.attributes;
+			expect(as_type(attribute, 'JSXAttribute').name.name, source).toBe('extends');
+		}
+	});
+
+	it('reads a `<` between children as a tag, as TypeScript does', () => {
+		for (const source of [
+			'const a = <main><a extends b>x</a></main>;',
+			'const a = <main>{1}<a extends b>x</a></main>;',
+			'function App() @{ <main><a extends b>x</a></main> }',
+		]) {
+			const attributes = findElement(source, 'a').openingElement.attributes;
+			expect(
+				attributes.map((attribute) => as_type(attribute, 'JSXAttribute').name.name),
+				source,
+			).toEqual(['extends', 'b']);
+		}
+	});
+
+	// The rule decides only where an expression starts. A template's render
+	// node and its children are tags wherever they start, as before the rule.
+	it('reads a template render node or child as a tag, an `extends` attribute included', () => {
+		/** @type {Array<[shape: string, tag: string]>} */
+		const shapes = [
+			['<Foo extends bar>x</Foo>', 'Foo'],
+			['<Foo extends bar />', 'Foo'],
+			['<Foo extends {...p} />', 'Foo'],
+			['<div extends className="a">x</div>', 'div'],
+			['<const T extends x />', 'const'],
+		];
+		/** @type {Array<(shape: string) => string>} */
+		const positions = [
+			(shape) => `export function App() @{\n\t${shape}\n}`,
+			(shape) => `export function App() @{\n\tconst a = 1;\n\t${shape}\n}`,
+			(shape) => `export function App() @{\n\tconst a = 1\n\t${shape}\n}`,
+			(shape) => `export function App() @{ ${shape} }`,
+			(shape) => `export function App() @{ const a = 1; /* c */ ${shape} }`,
+			(shape) => `export function App(p) @{\n\tif (p) { p = 1 }\n\t${shape}\n}`,
+			(shape) => `export function App() { return <div>@{\n\tconst a = 1;\n\t${shape}\n}</div>; }`,
+			(shape) =>
+				`export function App(p) @{\n\t<div>@if (p.a) {\n\t\tconst b = 1\n\t\t${shape}\n\t}</div>\n}`,
+			(shape) =>
+				`export function App(p) @{\n\t<ul>@for (const i of p.xs) {\n\t\t${shape}\n\t}</ul>\n}`,
+			(shape) =>
+				`export function App(p) @{\n\t<div>@switch (p.a) {\n\t\t@case 1: {\n\t\t\tconst b = 1\n\t\t\t${shape}\n\t\t}\n\t}</div>\n}`,
+			(shape) =>
+				`export function App(p) @{\n\t<div>@try {\n\t\t${shape}\n\t} @catch (e) {\n\t\t<b />\n\t}</div>\n}`,
+			(shape) => `export const App = (p) => @if (p.a) {\n\t${shape}\n}`,
+			(shape) => `export function App(p) @{\n\t<div>@if (p.a) {\n\t\t<b />\n\t}${shape}</div>\n}`,
+		];
+		for (const position of positions) {
+			for (const [shape, tag] of shapes) {
+				const source = position(shape);
+				for (const options of [undefined, { collect: true, errors: [], comments: [] }]) {
+					const ast = parseModule(source, 'App.tsrx', options);
+					const label = `${source} ${options ? 'collecting' : 'strict'}`;
+					// The element named `tag` with an `extends` attribute
+					const element = find_first(ast, (node) => {
+						if (node.type !== 'JSXElement') return false;
+						const opening = /** @type {AST.TSRXJSXElement} */ (node).openingElement;
+						return (
+							'name' in opening.name &&
+							opening.name.name === tag &&
+							opening.attributes.some(
+								(attribute) =>
+									attribute.type === 'JSXAttribute' &&
+									attribute.name.type === 'JSXIdentifier' &&
+									attribute.name.name === 'extends',
+							)
+						);
+					});
+					expect(element, label).toBeDefined();
+					expect(options?.errors ?? [], label).toEqual([]);
+				}
+			}
+		}
+	});
+
+	it('keeps an element whose text starts like an arrow function as an element (#734)', () => {
+		for (const source of [
+			'export const f = <b>(i) => i</b>;',
+			'export const f = <b>(i): x => i</b>;',
+			'export function App() {\n\treturn <main><b>(i) => i</b></main>;\n}',
+			'export function App() @{\n\t<main><b>(i) => i</b></main>\n}',
+			'export function App() @{\n\t<main><b>(i): x => i</b></main>\n}',
+			'export function App() @{\n\t<main>\n\t\t<b>(i) => i</b>\n\t</main>\n}',
+		]) {
+			const [text] = findElement(source, 'b').children;
+			expect(as_type(text, 'JSXText').value, source).toMatch(/^\(i\)(: x)? => i$/);
+		}
+		for (const source of [
+			'export const f = <script>(i) => i</script>;',
+			'export function App() {\n\treturn <div><script>(i) => i</script></div>;\n}',
+			'export function App() @{\n\t<main><script>(i) => i</script></main>\n}',
+		]) {
+			expect(findElement(source, 'script').content, source).toBe('(i) => i');
+		}
+	});
+
+	describe('a lone type parameter without a comma', () => {
+		/** @type {Array<[source: string, tag: string, parameter: string]>} */
+		const cases = [
+			['const f = <T>(x: T) => x;', 'T', 'T'],
+			['const f = <T>(x: T): T => x;\nconst g = 1;', 'T', 'T'],
+			['const f = <Value> (value: Value) => value;', 'Value', 'Value'],
+			['const f = <const T>(x: T) => x;', 'const', 'const T'],
+			['function App() @{\n\tconst f = <T>(x: T) => x;\n\t<b>{f}</b>\n}', 'T', 'T'],
+			// Nested, where acorn-typescript would otherwise try a generic arrow
+			// function once the element failed
+			['const a = <Box fn={<T>(x: T) => x} />;', 'T', 'T'],
+			['const a = <div>{<T>(x: T) => x}</div>;', 'T', 'T'],
+			['export function App() @{\n\t<Box fn={<T>(x: T) => x} />\n}', 'T', 'T'],
+			['export function App() @{\n\t<Box onClick={<T>(x: T) => x} />\n}', 'T', 'T'],
+			['export function App() @{\n\t<Box fn={<const T>(x: T) => x} />\n}', 'const', 'const T'],
+			[
+				'export function App(p) @{\n\t<div>@if (p.a) {\n\t\t<Box fn={<T>(x: T) => x} />\n\t}</div>\n}',
+				'T',
+				'T',
+			],
+		];
+
+		/**
+		 * A matcher for the trailing-comma diagnostic at the lone type parameter's
+		 * `<` in `source`.
+		 * @param {string} source
+		 * @param {string} tag
+		 * @param {string} parameter
+		 */
+		function trailingCommaError(source, tag, parameter) {
+			return expect.objectContaining({
+				code: TSRX_ERRORS.UNCLOSED_TAG_GENERIC_ARROW.code,
+				message: expect.stringContaining(
+					TSRX_ERRORS.UNCLOSED_TAG_GENERIC_ARROW(tag, parameter).message,
+				),
+				pos: source.search(/<(const )?[A-Z]\w*> ?\(/),
+			});
+		}
+
+		it('throws the trailing-comma diagnostic at the tag', () => {
+			for (const [source, tag, parameter] of cases) {
+				expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+					trailingCommaError(source, tag, parameter),
+				);
+			}
+		});
+
+		it.each([
+			['when collecting', { collect: true }],
+			['in loose mode', { loose: true }],
+		])('reports the trailing-comma diagnostic %s', (_, options) => {
+			for (const [source, tag, parameter] of cases) {
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, 'App.tsrx', { ...options, errors, comments: [] });
+				expect(errors, source).toEqual([trailingCommaError(source, tag, parameter)]);
+			}
+		});
+
+		it('never reads it as a generic arrow function, whether strict or collecting', () => {
+			for (const source of [
+				...cases.map(([source]) => source),
+				'export const f = <T>(x: T) => "</T>";',
+				'export function App() @{ <Box fn={<T>(x: T) => { return x; }} /> }',
+			]) {
+				for (const options of [undefined, { collect: true, errors: [], comments: [] }]) {
+					const label = `${source} ${options ? 'collecting' : 'strict'}`;
+					let ast;
+					try {
+						ast = parseModule(source, 'App.tsrx', options);
+					} catch {
+						continue;
+					}
+					expect(options?.errors, label).not.toEqual([]);
+					expect(
+						find_first(
+							ast,
+							(node) => node.type === 'ArrowFunctionExpression' && 'typeParameters' in node,
+						),
+						label,
+					).toBeUndefined();
+				}
+			}
+		});
+
+		it('keeps the plain unclosed-tag error for a tag that is not a lone type parameter', () => {
+			for (const source of [
+				'const a = <T>text;',
+				'const a = <T x>(text);',
+				'const a = <T.U>(x);',
+				// An HTML element's lowercase name, and `const` without a name
+				'const a = <div>(hello);',
+				'const a = <const>(x);',
+			]) {
+				/** @type {unknown} */
+				let thrown_error;
+				try {
+					parseModule(source, 'App.tsrx');
+				} catch (error) {
+					thrown_error = error;
+				}
+				expect(thrown_error, source).toEqual(error_with(TSRX_ERRORS.UNCLOSED_TAG));
+				expect(thrown_error, source).not.toEqual(
+					expect.objectContaining({ message: expect.stringContaining('trailing comma') }),
+				);
+			}
+		});
+	});
+
+	it('reports `async <T>(x) => x`, which TypeScript reads as a call, with the trailing comma', () => {
+		const source = 'const f = async <T>(x: T) => x;';
+		// At the type parameter, as TS7060 is reported
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			error_with(TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER, '1:17'),
+		);
+		/** @type {CompileError[]} */
+		const errors = [];
+		parseModule(source, 'App.tsrx', { collect: true, errors, comments: [] });
+		expect(errors).toEqual([
+			expect.objectContaining({ code: TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER.code, pos: 17 }),
+		]);
+		for (const allowed of [
+			'const f = async <T,>(x: T) => x;',
+			'const f = async <T extends U>(x: T) => x;',
+		]) {
+			expect(arrowTypeParameterCount(allowed), allowed).toBe(1);
+		}
+	});
+
+	// A `@{ … }` body hands a `<` that starts a line to `parseElement`; the rule
+	// only decides whether a `<` reads as a tag or a generic arrow there.
+	it('reads `@{ … }` bodies as before', () => {
+		const element = findElement(
+			'function App() @{\n\t<div onClick={() => a}>(b) => c</div>\n}',
+			'div',
+		);
+		expect(element.openingElement.attributes).toHaveLength(1);
+		expect(as_type(element.children[0], 'JSXText').value).toBe('(b) => c');
+
+		const block = child(
+			getReturned(
+				'function App() { return <div>@{\n\tconst id = <T,>(x: T) => x;\n\t<>{id}</>\n}</div>; }',
+			),
+			0,
+			'JSXCodeBlock',
+		);
+		expect(declaratorInit(block.body[0]).type).toBe('ArrowFunctionExpression');
+		expect(block.render?.type).toBe('JSXFragment');
+
+		expect(
+			findElement('function App() @{\n\t<Box fn={<T extends U>(x: T) => x}>{1}</Box>\n}', 'Box')
+				.openingElement.attributes,
+		).toHaveLength(1);
+		expect(
+			arrowTypeParameterCount('function App() @{\n\t<b>{1}</b>\n}\nconst f = <T,>(x: T) => x;'),
+		).toBe(1);
+	});
+});
+
+// TypeScript reads a `.ts`, `.mts`, or `.cts` file without JSX: a `<` where an
+// expression starts is a generic arrow function's type parameters, or else a
+// type assertion's type, never a tag. In a `.mts` or `.cts` file it reports
+// the forms a JSX file would read as a tag (TS7059, TS7060).
+describe('a `<` in a file without JSX', () => {
+	/**
+	 * What TypeScript reads the initializer of the first declaration in `source`
+	 * as in a file named `filename`, and the codes of the TS7059 and TS7060
+	 * errors it reports there.
+	 * @param {string} source
+	 * @param {string} filename
+	 */
+	function typescript(source, filename) {
+		const path = `/${filename}`;
+		const host = ts.createCompilerHost({});
+		const get_source_file = host.getSourceFile;
+		host.getSourceFile = (name, version) =>
+			name === path ? ts.createSourceFile(name, source, version) : get_source_file(name, version);
+		const options = {
+			noLib: true,
+			types: [],
+			module: ts.ModuleKind.NodeNext,
+			moduleResolution: ts.ModuleResolutionKind.NodeNext,
+		};
+		const program = ts.createProgram([path], options, host);
+		const file = /** @type {ts.SourceFile} */ (program.getSourceFile(path));
+		const statement = /** @type {ts.VariableStatement} */ (file.statements[0]);
+		const init = statement.declarationList.declarations[0].initializer;
+		const codes = [
+			...program.getSyntacticDiagnostics(file),
+			...program.getSemanticDiagnostics(file),
+		]
+			.filter((diagnostic) => diagnostic.code === 7059 || diagnostic.code === 7060)
+			.map((diagnostic) => `TS${diagnostic.code}`);
+		return {
+			type: init && ts.isArrowFunction(init) ? 'ArrowFunctionExpression' : 'TSTypeAssertion',
+			codes,
+		};
+	}
+
+	/**
+	 * The operator of the binary expression that `program` starts with: the
+	 * first declaration's initializer, or a `for` loop's test.
+	 * @param {AST.Program} program
+	 */
+	function binaryOperator(program) {
+		const [statement] = program.body;
+		const expression =
+			statement.type === 'ForStatement'
+				? statement.test
+				: as_type(statement, 'VariableDeclaration').declarations[0].init;
+		return as_type(expression, 'BinaryExpression').operator;
+	}
+
+	const sources = [
+		'let f = <T>() => 1;',
+		'let f = <T>(x: T): T => x;',
+		'let f = <T extends object>(x: T) => x;',
+		'let f = <T = unknown>(x: T) => x;',
+		'let f = <const T>(x: T) => x;',
+		'let f = <T,>(x: T) => x;',
+		'let f = async <T>(x: T) => x;',
+		'let a = <T>x;',
+		'let a = <string>(x as any);',
+	];
+
+	// TS7060 for a generic arrow function is `reportReservedArrowTypeParam`'s
+	// (#880), which the comparison leaves out.
+	it.each(['a.ts', 'a.mts', 'a.cts'])('reads %s as TypeScript does', (filename) => {
+		for (const source of sources) {
+			const label = `${filename}: ${source}`;
+			const expected = typescript(source, filename);
+			const codes = expected.codes.filter((code) => code !== 'TS7060');
+			/** @type {CompileError[]} */
+			const errors = [];
+			const ast = parseModule(source, filename, { collect: true, errors, comments: [] });
+			const declaration = as_type(ast.body[0], 'VariableDeclaration');
+			expect(declaration.declarations[0].init?.type, label).toBe(expected.type);
+			expect(
+				errors.map((error) => error.code).filter((code) => code !== 'TS7060'),
+				label,
+			).toEqual(codes);
+			// A strict parse throws the first, and nothing TypeScript doesn't report.
+			/** @type {unknown} */
+			let thrown_error = null;
+			try {
+				parseModule(source, filename);
+			} catch (error) {
+				thrown_error = error;
+			}
+			if (codes.length > 0) {
+				expect(thrown_error, label).toEqual(expect.objectContaining({ code: codes[0] }));
+			} else if (thrown_error) {
+				expect(expected.codes, label).toContain(/** @type {CompileError} */ (thrown_error).code);
+			}
+		}
+	});
+
+	it('keeps `<=`, `<<`, and `<<=` whole, and reads a type assertion on a parenthesized function', () => {
+		for (const filename of ['a.ts', 'a.mts', 'a.cts', 'a.d.ts']) {
+			for (const [source, operator] of [
+				['let x = a <= b;', '<='],
+				['let x = a << 2;', '<<'],
+				['let x = 1 << 2 <= 3;', '<='],
+				['for (let i = 0; i <= n; i++) {}', '<='],
+			]) {
+				expect(binaryOperator(parseModule(source, filename)), `${filename}: ${source}`).toBe(
+					operator,
+				);
+			}
+			const assignment = as_type(
+				as_type(parseModule('a <<= 1;', filename).body[0], 'ExpressionStatement').expression,
+				'AssignmentExpression',
+			);
+			expect(assignment.operator, filename).toBe('<<=');
+		}
+		for (const source of [
+			'const h = <Handler>((e) => e.x);',
+			'const h = <Handler>(async (e) => e.x);',
+			'const h = <Handler>(a => a);',
+			'const h = <Handler>((e) => e)(1);',
+		]) {
+			expect(typescript(source, 'a.ts').type, source).toBe('TSTypeAssertion');
+			for (const options of [
+				undefined,
+				{ collect: true, errors: [], comments: [], preserveParens: true },
+			]) {
+				const declaration = as_type(
+					parseModule(source, 'a.ts', options).body[0],
+					'VariableDeclaration',
+				);
+				expect(declaration.declarations[0].init?.type, source).toBe('TSTypeAssertion');
+			}
+		}
+	});
+
+	it('records TS7059 once for each type assertion when collecting in a .mts or .cts file', () => {
+		for (const filename of ['a.mts', 'a.cts']) {
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule('let x = <T>(<U>y);', filename, { collect: true, errors, comments: [] });
+			expect(
+				errors.map((error) => [error.code, error.pos]).sort((a, b) => Number(a[1]) - Number(b[1])),
+				filename,
+			).toEqual([
+				[TS_ERRORS.RESERVED_TYPE_ASSERTION.code, 8],
+				[TS_ERRORS.RESERVED_TYPE_ASSERTION.code, 12],
+			]);
+		}
+	});
+
+	// A declaration file's `export const x: T;`, which only a `declare` context
+	// reads yet, keeps `.d.ts` files out.
+	it("parses this repository's own .ts, .mts, and .cts sources", () => {
+		const root = new URL('../../../../', import.meta.url);
+		/** @param {URL} directory @returns {string[]} */
+		const sources = (directory) =>
+			readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+				if (entry.isDirectory()) {
+					return entry.name.startsWith('.') ||
+						['node_modules', 'dist', 'build'].includes(entry.name)
+						? []
+						: sources(new URL(`${entry.name}/`, directory));
+				}
+				return /(?<!\.d)\.[cm]?ts$/.test(entry.name)
+					? [new URL(entry.name, directory).pathname]
+					: [];
+			});
+		const files = sources(root);
+		expect(files.length).toBeGreaterThan(20);
+		for (const file of files) {
+			expect(() => parseModule(readFileSync(file, 'utf8'), file), file).not.toThrow();
+		}
+	});
+
+	it('reads a tag where a file has JSX', () => {
+		for (const filename of ['App.tsrx', 'a.tsx', 'a.jsx', 'a.js']) {
+			expect(() => parseModule('let a = <T>x;', filename), filename).toThrow(
+				error_with(TSRX_ERRORS.UNCLOSED_TAG),
+			);
+			expect(
+				find_first(
+					parseModule('let a = <b>x</b>;', filename),
+					(node) => node.type === 'JSXElement',
+				),
+				filename,
+			).toBeDefined();
 		}
 	});
 });
@@ -12377,14 +12902,14 @@ describe('JSX whitespace in template text', () => {
 		}
 	});
 
-	it('reports a token that text cannot start at instead of reading it forever', async () => {
-		// The `<` of `<T,>` reads as a type parameter list's, where the text of
-		// `<b>` would start, so the text reads nothing
+	it('reads `<T,>` between children as a tag, as TypeScript does, and reports its `,`', async () => {
+		// Only where an expression can start does `<T,>` start a generic arrow
+		// function (#183), so its `<` never leaves the text of `<b>` reading nothing
 		const source = 'const f = <b><T,>() => 1;';
 		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
 
 		for (const outcome of outcomes) {
-			expect(outcome).toEqual(thrown(TS_ERRORS.UNEXPECTED_TOKEN, 13));
+			expect(outcome).toEqual(thrown(TS_ERRORS.UNEXPECTED_TOKEN, 15));
 		}
 	});
 
@@ -12442,10 +12967,11 @@ describe('syntax errors in an element that is a value', () => {
 		],
 		['a closing tag in parentheses', 'x = (</>);', [TS_ERRORS.UNEXPECTED_TOKEN, '1:5']],
 		['a closing tag where a statement starts', 'a;\n</div>', [TS_ERRORS.UNEXPECTED_TOKEN, '2:0']],
+		// `<T,>` between children is a tag, as in TypeScript (#183)
 		[
-			'text that reads nothing in a setup statement',
+			'a type parameter list as a child in a setup statement',
 			'export function App() @{\n\tconst f = <b><T,>() => 1;\n\t<main />\n}',
-			[TS_ERRORS.UNEXPECTED_TOKEN, '2:14'],
+			[TS_ERRORS.UNEXPECTED_TOKEN, '2:16'],
 		],
 	];
 

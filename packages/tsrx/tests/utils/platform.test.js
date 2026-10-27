@@ -133,6 +133,47 @@ const active = import.meta.env.platform.web;`;
 		expect(result.code).toBe(source.replace('import.meta.env.platform.web', 'true'));
 	});
 
+	// Turbopack's platform loader runs on every .ts, .mts, and .cts module, which
+	// TypeScript reads without JSX (#183).
+	it('replaces flags in a TypeScript module with operators, generics, and type assertions', () => {
+		const shared = `type Flags = { readonly [key: string]: boolean };
+export const isWeb = import.meta.env.platform.web;
+export function clamp(value: number, min: number, max: number): number {
+	let result = value <= min ? min : value;
+	if (result >= max && import.meta.env.platform.ios) result = max;
+	return result < 0 ? 0 : result;
+}
+export function bits(n: number): number {
+	let mask = 1 << n;
+	mask <<= 1;
+	mask >>= 1;
+	mask |= n << 2 <= 8 ? 1 : 0;
+	for (let i = 0; i < 10 && i <= n; i++) mask ^= i;
+	return mask >>> 0;
+}
+export const pick = <T extends object, K extends keyof T>(value: T, key: K): T[K] => value[key];
+export const first = <T,>(items: readonly T[]): T | undefined => items[0];
+export const flags = new Map<string, boolean>([['web', import.meta.env.platform.web]]);
+`;
+		const sources = {
+			// A `.ts` file also has the forms a `.mts` or `.cts` file reserves.
+			'utils.ts': `${shared}export const identity = <T>(x: T): T => x;
+export const label = <string>(<unknown>import.meta.env.platform.android);
+`,
+			'utils.mts': `${shared}export const label = import.meta.env.platform.android as unknown as string;\n`,
+			'utils.cts': `${shared}export const label = import.meta.env.platform.android as unknown as string;\n`,
+		};
+		for (const [filename, source] of Object.entries(sources)) {
+			const result = replacePlatformFlags(source, filename, 'web');
+			expect(result.code, filename).toBe(
+				source
+					.replaceAll('import.meta.env.platform.web', 'true')
+					.replaceAll('import.meta.env.platform.ios', 'false')
+					.replaceAll('import.meta.env.platform.android', 'false'),
+			);
+		}
+	});
+
 	it('preserves an incoming map when there is nothing to rewrite', () => {
 		const source = 'export const ready = true;';
 		const incoming = {

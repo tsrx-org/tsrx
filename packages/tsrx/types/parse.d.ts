@@ -1403,6 +1403,28 @@ export namespace Parse {
 		tsMatchLeftRelational(): boolean;
 
 		/**
+		 * Read the `const` of a const assertion written `<const>x`, after its `<`,
+		 * or `null` when another type follows (@sveltejs/acorn-typescript)
+		 */
+		tsTryNextParseConstantContext(): AST.TypeNode | null;
+
+		/**
+		 * Read the next token, then a type (@sveltejs/acorn-typescript)
+		 */
+		tsNextThenParseType(): AST.TypeNode;
+
+		/**
+		 * acorn's own `parseMaybeAssign`, without the attempts that
+		 * acorn-typescript's makes at an expression that starts with `<`: an
+		 * element, then a generic arrow function (@sveltejs/acorn-typescript)
+		 */
+		parseMaybeAssignOrigin(
+			forInit?: ForInit,
+			refDestructuringErrors?: DestructuringErrors,
+			afterLeftParse?: (node: AST.Node, startPos: number, startLoc: AST.Position) => AST.Node,
+		): AST.Expression;
+
+		/**
 		 * Parse type arguments in an expression position, rescanning the `<` that was
 		 * tokenized outside a type context (@sveltejs/acorn-typescript). `undefined`
 		 * when the rescan does not yield a `<`.
@@ -2250,7 +2272,8 @@ export namespace Parse {
 		/**
 		 * Record the source spans of `async`/`function` keywords on the program as
 		 * `tsrx_keyword_tokens` — the mapping collector needs them and no AST node
-		 * carries them.
+		 * carries them — and every token as `tsrx_tokens`, for esrap's `tokens`
+		 * print option.
 		 */
 		keywordTokens?: boolean;
 	}
@@ -2262,6 +2285,9 @@ export namespace Parse {
 		end: number;
 		loc: AST.SourceLocation;
 	}
+
+	/** A token recorded by the `keywordTokens` parse option. */
+	export type Token = acorn.Token;
 
 	/**
 	 * The constructor/class type for the extended TSRX parser.
