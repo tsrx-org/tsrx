@@ -464,6 +464,59 @@ describe('native language server on a configured project', () => {
 		client.close('Unused.tsrx');
 	});
 
+	it('reports an unused destructuring in a @{ body on the pattern (#1062)', async () => {
+		const source = [
+			'export function UnusedPattern() @{',
+			'\tconst [a, b] = [1, 2];',
+			'\tconst { c, d } = { c: 1, d: 2 };',
+			'\t<p />',
+			'}',
+			'',
+		].join('\n');
+		client.open('UnusedPattern.tsrx', source);
+		const diagnostics = await client.diagnostics('UnusedPattern.tsrx');
+		expect(diagnostics.map((d) => [d.code, range_text(source, d.range)])).toEqual([
+			[6198, '[a, b]'],
+			[6198, '{ c, d }'],
+		]);
+		client.close('UnusedPattern.tsrx');
+	});
+
+	it('offers the /** */ template after /** above a function (#1066)', async () => {
+		const source = [
+			'/** */',
+			'export function Documented({ a }: { a: number }) @{',
+			'\t/** */',
+			'\tfunction inner(x: number) {',
+			'\t\treturn x;',
+			'\t}',
+			'\t<p>{inner(a)}</p>',
+			'}',
+			'',
+		].join('\n');
+		client.open('Documented.tsrx', source);
+		await client.diagnostics('Documented.tsrx').catch(() => undefined);
+		/** @type {Array<[number, string]>} */
+		const templates = [];
+		for (const occurrence of [1, 2]) {
+			const completion = await client.request('textDocument/completion', {
+				textDocument: { uri: client.uri('Documented.tsrx') },
+				position: position_of(source, '/**', 3, occurrence),
+			});
+			const item = (completion?.items ?? completion ?? []).find(
+				(/** @type {{ label: string }} */ entry) => entry.label === '/** */',
+			);
+			expect(item, `template ${occurrence}`).toBeDefined();
+			templates.push([occurrence, range_text(source, item.textEdit.range)]);
+			expect(item.textEdit.newText).toContain(occurrence === 1 ? '@param param0' : '@param x');
+		}
+		expect(templates).toEqual([
+			[1, '/** */'],
+			[2, '/** */'],
+		]);
+		client.close('Documented.tsrx');
+	});
+
 	it('reports unused imports with several names and type names as in a .ts file', async () => {
 		const tsrx = `${MIXED_IMPORTS}
 export function Mixed(props: { value: M | O3 }) @{
