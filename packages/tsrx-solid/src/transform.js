@@ -19,6 +19,10 @@
 import { walk } from 'zimmerframe';
 import {
 	DIAGNOSTIC_CODES,
+	DYNAMIC_FACTORY_LOCAL,
+	DYNAMIC_IMPORT_LOCAL,
+	IDENTIFIER_OBFUSCATION_PREFIX,
+	isReference as is_reference,
 	TSRX_ERRORS,
 	createJsxTransform,
 	createScriptBody as create_script_body,
@@ -86,9 +90,12 @@ const solid_platform = {
 		dynamicFactory: { name: 'dynamic', source: '@solidjs/web' },
 		errorBoundary: 'solid-js',
 		refProp: '@tsrx/solid/ref',
+		// `<For each>` takes an array; `@for` takes any iterable.
+		forOfIterableHelper: '@tsrx/solid/iterable',
 	},
 	directRuntimeImports: {
 		refProp: '@tsrx/solid-runtime/ref',
+		forOfIterableHelper: '@tsrx/solid-runtime/iterable',
 	},
 	jsx: {
 		rewriteClassAttr: false,
@@ -1034,18 +1041,46 @@ function build_show_element(test, children, fallback) {
 	return create_jsx_element('Show', attributes, [jsx_child_wrap(to_function_child(children))]);
 }
 
+const FOR_ITEMS_INTERNAL_NAME = '__for_items';
+const FOR_KEYED_ROWS_INTERNAL_NAME = '__for_keyed_rows';
+const FOR_ROW_PARAM_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'row';
+const FOR_ITEM_PARAM_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'item';
+const FOR_BINDINGS_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'bindings';
+/**
+ * How many loops each compile has given a bindings memo, so each loop's memo
+ * has its own name and a nested loop's can't capture the outer loop's names.
+ * @type {WeakMap<TransformContext, number>}
+ */
+const for_bindings_counts = new WeakMap();
+const CREATE_MEMO_INTERNAL_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'createMemo';
+
 /**
  * `for (const item of items; index i) { ... }` →
- * `<For each={items} keyed={false}>{(item, i) => ...}</For>`
+ * `<For each={__for_items(items)} keyed={false}>{(item, i) => ...}</For>`
  *
  * `for (const item of items; key item.id) { ... }` →
- * `<For each={items} keyed={(item) => item.id}>{(item) => ...}</For>`
+ * `<For each={__for_items(items)} keyed={(item) => item.id}>{(item) => ...}</For>`
  *
  * Solid 2.0's `<For>` defaults to raw row values for the child callback. When
  * no explicit `key` is present, TSRX follows Solid's native callback shapes:
  * index loops use `keyed={false}` (accessor item, raw index), while loops
  * without an index use the default raw item. Explicit `key` clauses replace
  * the implicit mode with the user-provided key expression.
+ *
+ * `<For each>` takes an array, so `__for_items` walks any other iterable into
+ * one. Solid's `keyed` callback receives the item alone, so a key that reads
+ * the declared index is computed with the item by `__for_keyed_rows`, and the
+ * child callback reads the item back from its row:
+ *
+ * `for (const item of items; index i; key i) { ... }` →
+ * `<For each={__for_keyed_rows(items, (item, i) => i)} keyed={(row) => row.key}>
+ *   {(row, i) => { const item = () => row().item; ... }}
+ * </For>`
+ *
+ * Wherever the child callback receives the item as an accessor (any loop with
+ * a key or an index), a destructuring pattern can't be its parameter: the
+ * callback destructures the current item in a memo instead, and the body reads
+ * each name from it, so the names follow the row as Solid reuses it.
  *
  * @param {AST.ForOfStatement} node
  * @param {TransformContext} transform_context
@@ -1057,6 +1092,7 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 	const loop_params = get_for_of_iteration_params(node.left, node.index);
 	const loop_body = node.body.type === 'BlockStatement' ? node.body.body : [node.body];
 	const uses_index_only_mode = !node.key && node.index;
+	const key_reads_index = !!node.key && !!node.index && reads_identifier(node.key, node.index);
 	validate_for_body_control_flow(loop_body, transform_context);
 
 	let arrow;
@@ -1072,7 +1108,42 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		arrow = merge_branch_body_into_arrow(arrow, body_to_jsx_child(loop_body, transform_context));
 	}
 
-	const attributes = [b.jsx_attribute(b.jsx_id('each'), to_jsx_expression_container(node.right))];
+	/** @type {AST.Expression} */
+	let each;
+	if (key_reads_index) {
+		transform_context.needs_for_keyed_rows = true;
+		each = b.call(
+			create_generated_identifier(FOR_KEYED_ROWS_INTERNAL_NAME),
+			node.right,
+			b.arrow(
+				[clone_ast_node(loop_params[0]), clone_ast_node(loop_params[1])],
+				/** @type {AST.Expression} */ (node.key),
+			),
+		);
+		const row = create_generated_identifier(FOR_ROW_PARAM_NAME);
+		arrow = bind_loop_item(
+			arrow,
+			loop_params[0],
+			row,
+			b.member(b.call(clone_ast_node(row)), create_generated_identifier('item')),
+			transform_context,
+		);
+	} else {
+		transform_context.needs_for_items = true;
+		each = b.call(create_generated_identifier(FOR_ITEMS_INTERNAL_NAME), node.right);
+		if ((node.key || node.index) && loop_params[0] && loop_params[0].type !== 'Identifier') {
+			const item = create_generated_identifier(FOR_ITEM_PARAM_NAME);
+			arrow = bind_loop_item(
+				arrow,
+				loop_params[0],
+				item,
+				b.call(clone_ast_node(item)),
+				transform_context,
+			);
+		}
+	}
+
+	const attributes = [b.jsx_attribute(b.jsx_id('each'), to_jsx_expression_container(each))];
 	if (node.empty) {
 		const empty_body = node.empty.type === 'BlockStatement' ? node.empty.body : [node.empty];
 		attributes.push(
@@ -1083,7 +1154,18 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		);
 	}
 
-	if (node.key) {
+	if (key_reads_index) {
+		const row = create_generated_identifier(FOR_ROW_PARAM_NAME);
+		attributes.push(
+			b.jsx_attribute(
+				b.jsx_id('keyed'),
+				to_jsx_expression_container(
+					b.arrow([row], b.member(clone_ast_node(row), create_generated_identifier('key'))),
+					node.key,
+				),
+			),
+		);
+	} else if (node.key) {
 		const item_param = clone_ast_node(loop_params[0]);
 		const keyed_arrow = b.arrow([item_param], node.key);
 		attributes.push(
@@ -1094,6 +1176,318 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 	}
 
 	return create_jsx_element('For', attributes, [to_jsx_expression_container(arrow)]);
+}
+
+/**
+ * Whether `expression` reads the binding `name` names. Property names don't
+ * count; a nested function's parameter of the same name does, which only
+ * costs the loop the row form it would not have needed.
+ *
+ * @param {AST.Node} expression
+ * @param {AST.Identifier} name
+ * @returns {boolean}
+ */
+function reads_identifier(expression, name) {
+	let found = false;
+	walk(/** @type {AST.Node} */ (expression), null, {
+		Identifier(node, { path, next }) {
+			const parent = path.at(-1);
+			if (
+				node.name === name.name &&
+				!(parent?.type === 'MemberExpression' && parent.property === node && !parent.computed) &&
+				!(
+					parent?.type === 'Property' &&
+					parent.key === node &&
+					!parent.computed &&
+					!parent.shorthand
+				)
+			) {
+				found = true;
+			}
+			next();
+		},
+	});
+	return found;
+}
+
+/**
+ * Gives a `<For>` child callback the accessor `param` in place of the loop's
+ * item binding, and binds the item from `value` (an expression of `param`) as
+ * the body expects it: a name becomes an accessor, as in Solid's other keyed
+ * loops, and a pattern is destructured in a memo whose names the body reads,
+ * so they follow the row when Solid reuses it.
+ *
+ * @param {AST.ArrowFunctionExpression} arrow
+ * @param {AST.Pattern} item
+ * @param {AST.Identifier} param
+ * @param {AST.Expression} value
+ * @param {TransformContext} transform_context
+ * @returns {AST.ArrowFunctionExpression}
+ */
+function bind_loop_item(arrow, item, param, value, transform_context) {
+	/** @type {AST.Statement[]} */
+	let body =
+		arrow.body.type === 'BlockStatement'
+			? arrow.body.body
+			: [b.return(/** @type {AST.Expression} */ (arrow.body))];
+	/** @type {AST.Statement[]} */
+	let declarations;
+	if (item.type === 'Identifier') {
+		declarations = [b.const(item, b.arrow([], value))];
+	} else if (transform_context.typeOnly) {
+		// The type view only needs the names and their types: it keeps the
+		// authored names, so `typeof id` and `<Icon />` stay as written.
+		declarations = [b.const(item, value)];
+	} else {
+		transform_context.needs_for_memo = true;
+		const count = (for_bindings_counts.get(transform_context) ?? 0) + 1;
+		for_bindings_counts.set(transform_context, count);
+		const bindings = create_generated_identifier(`${FOR_BINDINGS_NAME}_${count}`);
+		const names = [...collect_param_bindings([item]).keys()];
+		/** @type {Map<string, AST.Expression>} */
+		const replacements = new Map(
+			names.map((name) => [
+				name,
+				b.member(b.call(clone_ast_node(bindings)), create_generated_identifier(name)),
+			]),
+		);
+		/** @type {AST.Statement[]} */
+		const tag_declarations = [];
+		body = body.map((statement) =>
+			rewrite_binding_refs(statement, replacements, tag_declarations, transform_context),
+		);
+		declarations = [
+			b.const(
+				bindings,
+				b.call(
+					CREATE_MEMO_INTERNAL_NAME,
+					b.arrow(
+						[],
+						b.block([
+							b.const(item, value),
+							b.return(
+								b.object(names.map((name) => b.prop('init', b.id(name), b.id(name), false, true))),
+							),
+						]),
+					),
+				),
+			),
+			...tag_declarations,
+		];
+	}
+	return {
+		...arrow,
+		params: [param, ...arrow.params.slice(1)],
+		body: b.block([...declarations, ...body]),
+		expression: false,
+	};
+}
+
+/**
+ * Whether `node` is TypeScript type syntax, which names no runtime value.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_type_only_node(node) {
+	return (
+		node.type === 'TSTypeAnnotation' ||
+		node.type === 'TSTypeParameterDeclaration' ||
+		node.type === 'TSTypeParameterInstantiation' ||
+		node.type === 'TSTypeAliasDeclaration' ||
+		node.type === 'TSInterfaceDeclaration' ||
+		node.type === 'TSTypeReference' ||
+		node.type === 'TSTypeLiteral' ||
+		node.type === 'TSTypeOperator' ||
+		node.type === 'TSTypeQuery' ||
+		/^TS[A-Za-z]*(Type|Keyword)$/.test(node.type)
+	);
+}
+
+/**
+ * Replaces each reference to a name in `replacements` with its expression,
+ * leaving names that a nested function, block, or loop declares again. A
+ * component tag that names one (`<Icon />`, `<icons.Star />`) becomes a
+ * `dynamic` component, declared in `tag_declarations`, so it follows the
+ * row too.
+ *
+ * @template {AST.Node} T
+ * @param {T} node
+ * @param {Map<string, AST.Expression>} replacements
+ * @param {AST.Statement[]} tag_declarations
+ * @param {TransformContext} transform_context
+ * @returns {T}
+ */
+function rewrite_binding_refs(node, replacements, tag_declarations, transform_context) {
+	/**
+	 * @param {Set<string>} shadowed
+	 * @param {Map<string, AST.Identifier>} declared
+	 */
+	const with_declared = (shadowed, declared) => {
+		const next = new Set(shadowed);
+		for (const name of declared.keys()) next.add(name);
+		return next;
+	};
+	/**
+	 * The names a block's statements declare for the whole block.
+	 * @param {AST.Node[]} statements
+	 * @returns {Map<string, AST.Identifier>}
+	 */
+	const lexical_names = (statements) => {
+		/** @type {Map<string, AST.Identifier>} */
+		const names = new Map();
+		for (const statement of statements) {
+			if (
+				(statement.type === 'TSEnumDeclaration' || statement.type === 'TSModuleDeclaration') &&
+				statement.id.type === 'Identifier'
+			) {
+				names.set(statement.id.name, statement.id);
+			} else if (statement.type !== 'VariableDeclaration' || statement.kind !== 'var') {
+				collect_statement_bindings(statement, names);
+			}
+		}
+		return names;
+	};
+	/**
+	 * @param {Set<string>} shadowed
+	 * @param {string} name
+	 */
+	const replacement_for = (shadowed, name) =>
+		shadowed.has(name) ? undefined : replacements.get(name);
+	/**
+	 * The expression a component tag name stands for, with its root replaced.
+	 * A lowercase name is an intrinsic element, not a reference.
+	 * @param {ESTreeJSX.JSXOpeningElement["name"]} name
+	 * @param {Set<string>} shadowed
+	 * @returns {AST.Expression | undefined}
+	 */
+	const tag_expression = (name, shadowed) => {
+		if (name.type === 'JSXIdentifier') {
+			return /^[A-Z]/.test(name.name) ? replacement_for(shadowed, name.name) : undefined;
+		}
+		if (name.type !== 'JSXMemberExpression') return;
+		const object =
+			name.object.type === 'JSXIdentifier'
+				? replacement_for(shadowed, name.object.name)
+				: tag_expression(name.object, shadowed);
+		return object && b.member(clone_ast_node(object), b.id(name.property.name));
+	};
+
+	return /** @type {T} */ (
+		walk(/** @type {AST.Node} */ (node), /** @type {Set<string>} */ (new Set()), {
+			_(child, { state, next }) {
+				if (!is_type_only_node(child)) next(state);
+			},
+			Identifier(identifier, { path, state }) {
+				const parent = path.at(-1);
+				const replacement = replacement_for(state, identifier.name);
+				if (
+					replacement &&
+					parent &&
+					!is_declaration_name(identifier, parent) &&
+					is_reference(identifier, parent)
+				) {
+					return clone_ast_node(replacement);
+				}
+			},
+			Property(property, { state, next }) {
+				const replacement =
+					property.value.type === 'Identifier'
+						? replacement_for(state, property.value.name)
+						: undefined;
+				if (property.shorthand && replacement) {
+					return { ...property, shorthand: false, value: clone_ast_node(replacement) };
+				}
+				next(state);
+			},
+			JSXElement(element, { state, next }) {
+				const expression = tag_expression(
+					/** @type {ESTreeJSX.JSXOpeningElement['name']} */ (element.openingElement.name),
+					state,
+				);
+				const walked = /** @type {ESTreeJSX.JSXElement} */ (next(state) ?? element);
+				if (!expression) return walked;
+				transform_context.local_statement_component_index += 1;
+				const local = `${DYNAMIC_IMPORT_LOCAL}_${transform_context.local_statement_component_index}`;
+				transform_context.needs_dynamic_factory = true;
+				tag_declarations.push(
+					b.const(b.id(local), b.call(b.id(DYNAMIC_FACTORY_LOCAL), b.arrow([], expression))),
+				);
+				return {
+					...walked,
+					openingElement: { ...walked.openingElement, name: b.jsx_id(local) },
+					closingElement: walked.closingElement && {
+						...walked.closingElement,
+						name: b.jsx_id(local),
+					},
+				};
+			},
+			BlockStatement(block, { state, next }) {
+				next(with_declared(state, lexical_names(block.body)));
+			},
+			CatchClause(clause, { state, next }) {
+				next(with_declared(state, collect_param_bindings(clause.param ? [clause.param] : [])));
+			},
+			ForStatement(loop, { state, next }) {
+				next(with_declared(state, lexical_names(loop.init ? [loop.init] : [])));
+			},
+			ForInStatement(loop, { state, next }) {
+				next(with_declared(state, lexical_names([loop.left])));
+			},
+			ForOfStatement(loop, { state, next }) {
+				next(with_declared(state, lexical_names([loop.left])));
+			},
+			FunctionDeclaration: shadow_function,
+			FunctionExpression: shadow_function,
+			ArrowFunctionExpression: shadow_function,
+		})
+	);
+
+	/**
+	 * A function's parameters, its own name, and the `var`s anywhere in its
+	 * body (outside nested functions) are its own.
+	 * @param {AST.Function} fn
+	 * @param {{ state: Set<string>, next: (state: Set<string>) => unknown }} context
+	 */
+	function shadow_function(fn, { state, next }) {
+		const declared = collect_param_bindings(fn.params);
+		if (fn.type !== 'ArrowFunctionExpression' && fn.id) declared.set(fn.id.name, fn.id);
+		walk(/** @type {AST.Node} */ (fn.body), null, {
+			VariableDeclaration(declaration, { next }) {
+				if (declaration.kind === 'var') collect_statement_bindings(declaration, declared);
+				next();
+			},
+			FunctionDeclaration() {},
+			FunctionExpression() {},
+			ArrowFunctionExpression() {},
+		});
+		next(with_declared(state, declared));
+	}
+}
+
+/**
+ * Whether `identifier` is the name a declaration introduces rather than a
+ * reference (`is_reference` counts these as references).
+ *
+ * @param {AST.Identifier} identifier
+ * @param {AST.Node} parent
+ * @returns {boolean}
+ */
+function is_declaration_name(identifier, parent) {
+	switch (parent.type) {
+		case 'VariableDeclarator':
+			return parent.id === identifier;
+		case 'FunctionDeclaration':
+		case 'FunctionExpression':
+		case 'ClassDeclaration':
+		case 'ClassExpression':
+		case 'TSEnumDeclaration':
+		case 'TSModuleDeclaration':
+		case 'TSEnumMember':
+			return parent.id === identifier;
+		default:
+			return false;
+	}
 }
 
 /**
@@ -1930,6 +2324,25 @@ function inject_solid_imports(program, transform_context) {
 				ref_prop_source,
 			),
 		);
+	}
+
+	if (transform_context.needs_for_memo) {
+		program.body.unshift(b.imports([['createMemo', CREATE_MEMO_INTERNAL_NAME]], 'solid-js'));
+	}
+
+	const iterable_source = transform_context.platform.imports.forOfIterableHelper;
+	if (
+		(transform_context.needs_for_items || transform_context.needs_for_keyed_rows) &&
+		iterable_source
+	) {
+		const specifiers = [];
+		if (transform_context.needs_for_items) {
+			specifiers.push(b.import_specifier('for_items', FOR_ITEMS_INTERNAL_NAME));
+		}
+		if (transform_context.needs_for_keyed_rows) {
+			specifiers.push(b.import_specifier('for_keyed_rows', FOR_KEYED_ROWS_INTERNAL_NAME));
+		}
+		program.body.unshift(b.import_declaration(specifiers, iterable_source));
 	}
 
 	const needed = [];

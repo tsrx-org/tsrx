@@ -69,8 +69,8 @@ import {
 	render_children,
 } from '../../utils/ast.js';
 
-const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
-const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
+export const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
+export const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
 const LEADING_INLINE_WHITESPACE = /^[ \t]+/;
 const TRAILING_INLINE_WHITESPACE = /[ \t]+$/;
 
@@ -571,6 +571,9 @@ export function createJsxTransform(platform) {
 			needs_match: false,
 			needs_errored: false,
 			needs_loading: false,
+			needs_for_items: false,
+			needs_for_keyed_rows: false,
+			needs_for_memo: false,
 			needs_define_vapor_component: false,
 			needs_vapor_for: false,
 			stylesheets,
