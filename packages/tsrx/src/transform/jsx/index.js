@@ -4989,15 +4989,6 @@ function try_statement_to_jsx_child(node, transform_context) {
 
 		if (custom_boundary) {
 			result = custom_boundary;
-		} else if (boundary_content && transform_context.inside_element_child) {
-			result = to_jsx_expression_container(
-				b.call(
-					'TsrxErrorBoundary',
-					b.object([b.init('fallback', fallback_fn), b.init('content', boundary_content)]),
-				),
-			);
-
-			return result;
 		} else {
 			const fallback_name = stamp_directive_origin(
 				b.jsx_id('fallback'),

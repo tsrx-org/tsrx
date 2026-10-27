@@ -113,13 +113,7 @@ const vue_platform = {
 			const fallback_component = info?.fallbackComponent ?? null;
 			const default_slot = ctx.typeOnly
 				? b.arrow([], jsx_child_to_expression(raw_try_content))
-				: create_sync_error_boundary_slot(
-						raw_try_content,
-						fallback_fn,
-						fallback_component,
-						node.block,
-						node,
-					);
+				: create_error_boundary_slot(raw_try_content, fallback_fn, node);
 			const suspense = create_vapor_pending_boundary_from_default_slot(
 				default_slot,
 				fallback_content,
@@ -210,78 +204,23 @@ function create_module_scoped_error_fallback_component(catch_body_nodes, catch_p
 }
 
 /**
- * Catch synchronous setup errors directly in the Suspense default slot so
- * Suspense can still observe async children while `catch` handles immediate
- * render failures.
+ * Render the try body in the Suspense default slot through its own error
+ * boundary. Suspense mounts its default content after the outer boundary has
+ * rendered, so an error thrown there, while setting up or from a rejected
+ * async child, has to be caught inside the slot. A boundary there, unlike a
+ * plain `try`, also gives `@catch` a `reset` that renders the body again.
  *
  * @param {ESTreeJSX.JSXRenderNode} content
  * @param {AST.ArrowFunctionExpression} fallback_fn
- * @param {JsxHelperComponent | null} fallback_component
- * @param {AST.BlockStatement} source_block
  * @param {AST.TryStatement} source_try
  * @returns {AST.ArrowFunctionExpression}
  */
-function create_sync_error_boundary_slot(
-	content,
-	fallback_fn,
-	fallback_component,
-	source_block,
-	source_try,
-) {
-	const error_id = create_generated_identifier('_error');
-	const content_expression = jsx_child_to_expression(content);
-	const fallback_expression = fallback_component
-		? create_fallback_component_element(fallback_component, fallback_fn, [
-				error_id,
-				b.arrow([], b.block([])),
-			])
-		: b.call(b.parenthesized(fallback_fn), clone_identifier(error_id), b.arrow([], b.block([])));
-	const try_block = setLocation(
-		b.block([b.return(content_expression)]),
-		has_location(source_block) ? source_block : undefined,
-		true,
+function create_error_boundary_slot(content, fallback_fn, source_try) {
+	const boundary = create_vapor_error_boundary(content, clone_ast_node(fallback_fn, false));
+	return b.arrow(
+		[],
+		setLocation(boundary, has_location(source_try) ? source_try : undefined, true),
 	);
-	const try_statement = setLocation(
-		b.try(
-			try_block,
-			b.catch_clause(error_id, null, b.block([b.return(fallback_expression)])),
-			null,
-			null,
-		),
-		has_location(source_try) ? source_try : undefined,
-		true,
-	);
-	return b.arrow([], b.block([try_statement]));
-}
-
-/**
- * @param {JsxHelperComponent} fallback_component
- * @param {AST.ArrowFunctionExpression} fallback_fn
- * @param {AST.Expression[]} [replacement_args]
- * @returns {AST.TSRXJSXElement}
- */
-function create_fallback_component_element(fallback_component, fallback_fn, replacement_args = []) {
-	const element = clone_ast_node(fallback_component.component_element, false);
-	/** @type {Map<string, AST.Expression>} */
-	const replacements = new Map();
-	for (let i = 0; i < fallback_fn.params.length && i < replacement_args.length; i += 1) {
-		const param = fallback_fn.params[i];
-		if (param?.type === 'Identifier') {
-			replacements.set(param.name, replacement_args[i]);
-		}
-	}
-
-	for (const attr of element.openingElement?.attributes ?? []) {
-		if (attr.type !== 'JSXAttribute' || attr.name.type !== 'JSXIdentifier') continue;
-		const attr_name = attr.name.name;
-		if (!attr_name || !replacements.has(attr_name)) continue;
-		attr.value = to_jsx_expression_container(
-			/** @type {AST.Expression} */ (replacements.get(attr_name)),
-			attr.value ?? attr,
-		);
-	}
-
-	return element;
 }
 
 /**
