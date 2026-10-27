@@ -119,6 +119,27 @@ describe('@tsrx/vue type-only output type-checks', () => {
 				}
 			}`,
 		],
+		[
+			'a mergeRefs result as a host ref',
+			`import { mergeRefs } from '@tsrx/vue/ref';
+
+			function first(node: Element | null) {}
+			function second(node: HTMLInputElement | null) {}
+
+			export function App() @{
+				<>
+					<input ref={mergeRefs(first, second)} />
+					<input ref={mergeRefs<HTMLInputElement>(second)} />
+				</>
+			}`,
+		],
+		[
+			'a host spread with a ref in an expression position',
+			`export function App(props: { ref?: (node: Element | null) => void }) @{
+				const own = (node: Element | null) => () => {};
+				<div>{props.ref ? <input {...props} ref={own} /> : null}</div>
+			}`,
+		],
 	])('%s', (_name, source) => {
 		expect(type_only_diagnostics(source)).toEqual([]);
 	});
