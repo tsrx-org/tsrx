@@ -54,7 +54,15 @@ export interface JsxTransformContext {
 	type_only_style_anchors: AST.Statement[];
 	helper_state: JsxHelperState | null;
 	available_bindings: Map<string, AST.Identifier>;
+	/**
+	 * Whether each tag in the module can be read where a static hoisted out of
+	 * it runs, keyed by the start of the identifier the tag starts with.
+	 * Computed on first use.
+	 */
+	hoistable_tags: () => Map<number, boolean>;
 	inside_element_child?: boolean;
+	/** True inside a function that is not a component. */
+	inside_plain_function?: boolean;
 	/** Full source text for source-aware diagnostics. */
 	source: string;
 	/** Source filename for diagnostics; null when the caller did not supply one. */
