@@ -6826,6 +6826,52 @@ describe('division and private fields in template JS positions', () => {
 	});
 });
 
+describe('raw-text <style> elements', () => {
+	// A closing tag can have whitespace before its `>` in JSX, as `</script >`
+	// ends a script (#793).
+	it('ends the body at `</style`, optional whitespace, and `>`', async () => {
+		const closings = ['</style>', '</style >', '</style\n\t\t>', '</style\t\f\r >'];
+		const sources = closings.map(
+			(closing) => `export function App() @{
+	<>
+		<style>.a { color: red; }${closing}
+		<div class="a" />
+	</>
+}`,
+		);
+		const outcomes = await parse_in_worker_with_ast(sources.map((source) => ({ source })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const closing = closings[index];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(closing)} threw ${outcome.message}`);
+			const style = /** @type {AST.JSXStyleElement & AST.NodeWithLocation} */ (
+				find_first(outcome.ast, (node) => node.type === 'JSXStyleElement')
+			);
+			const closing_element = /** @type {AST.NodeWithLocation} */ (
+				/** @type {unknown} */ (style.closingElement)
+			);
+			expect(sources[index].slice(closing_element.start, closing_element.end)).toBe(closing);
+			expect(
+				find_first(outcome.ast, (node) => node.type === 'JSXElement'),
+				closing,
+			).toMatchObject({ openingElement: { name: { name: 'div' } } });
+		}
+	});
+});
+
+describe("a closing tag that doesn't match the open element", () => {
+	it("names a fragment's closing tag `</>` in the mismatch it reports (#712)", () => {
+		for (const source of [
+			'const a = <b>x</>;',
+			'export function App() @{\n\t<div><b>x</></div>\n}',
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				"Expected closing tag to match opening tag. Expected '</b>' but found '</>'",
+			);
+		}
+	});
+});
+
 describe('raw-text <script> elements', () => {
 	it('captures the body verbatim as `content`, with no children', () => {
 		const script = findElement(
