@@ -59,6 +59,13 @@ const regex_space_and_comments = /(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\
  */
 
 /**
+ * An open namespace or module body, at `depth` in the scope stack, and the
+ * export specifiers in it that name what it hasn't declared yet (see
+ * `tsParseModuleBlock`). `scope` is the body's scope, kept once it has one.
+ * @typedef {{ depth: number, scope: Parse.Scope | null, ids: AST.Identifier[] }} ModuleBodyExports
+ */
+
+/**
  * The kinds of declaration TypeScript's checker tells apart when it checks
  * their modifiers.
  * @typedef {'class' | 'function' | 'variable' | 'using' | 'await using' | 'enum' | 'interface' | 'type' | 'module' | 'import'} ModifiedDeclarationKind
@@ -570,10 +577,11 @@ const TS_SCOPE_TS_MODULE = 1 << 21;
 // `var` in a block below them is declared: a module or script, a function, and
 // a class static block. A namespace's body is one too (see `#isSymbolTable`).
 const TABLE_SCOPE_FLAGS = SCOPE_TOP | SCOPE_FUNCTION | SCOPE_CLASS_STATIC_BLOCK;
-// acorn-typescript's binding type for a type alias's name, and its flag for an
-// enum's.
+// acorn-typescript's binding type for a type alias's name, its flag for an
+// enum's, and its flag for a name that only an export specifier can see.
 const BIND_TS_TYPE = 6;
 const BIND_FLAGS_TS_ENUM = 256;
+const BIND_FLAGS_TS_EXPORT_ONLY = 1024;
 // acorn's flags for `parseFunction`: a function declaration, whose name is
 // optional (after `export default`).
 const FUNC_STATEMENT = 1;
@@ -1176,6 +1184,8 @@ export function TSRXPlugin(config) {
 			#filename = null;
 			/** @type {WeakMap<object, { names: Set<string>, lengths: number[] }>} */
 			#localExportNamesByScope = new WeakMap();
+			/** @type {ModuleBodyExports[]} */
+			#moduleBodyExports = [];
 			#functionBodyDepth = 0;
 			#allowExpressionContainerTrailingSemicolon = false;
 			#jsxAttributeValueExpressionDepth = 0;
@@ -5165,6 +5175,14 @@ export function TSRXPlugin(config) {
 			 * A function declaration that isn't exported: TypeScript binds it before
 			 * the other statements of its list (see `declareName`). One after
 			 * `export default` (`FUNC_NULLABLE_ID`) or `export` is exported.
+			 *
+			 * acorn-typescript declares the name of an ambient function declaration,
+			 * which has no body, only at the top level, so in a `declare namespace` or
+			 * `declare module` body no scope had it and `export { f }` there failed as
+			 * undefined. Declare it in the scope it's in, as acorn-typescript does at
+			 * the top level, where only an export specifier sees it. Upstream's fix,
+			 * sveltejs/acorn-typescript#110, skips its own `checkLocalExport` in a
+			 * nested scope instead, which TSRX's override replaces.
 			 * @type {Parse.Parser['parseFunction']}
 			 */
 			parseFunction(node, statement, allowExpressionBody, isAsync, forInit) {
@@ -5176,11 +5194,26 @@ export function TSRXPlugin(config) {
 				) {
 					this.#declaration = { kind: 'function', scope: this.currentScope() };
 				}
+				/** @type {AST.FunctionDeclaration | AST.FunctionExpression} */
+				let parsed;
 				try {
-					return super.parseFunction(node, statement, allowExpressionBody, isAsync, forInit);
+					parsed = super.parseFunction(node, statement, allowExpressionBody, isAsync, forInit);
 				} finally {
 					this.#declaration = outer;
 				}
+				if (
+					statement & FUNC_STATEMENT &&
+					this.isAmbientContext &&
+					parsed.id &&
+					!(this.currentScope().flags & SCOPE_TOP)
+				) {
+					this.declareName(
+						parsed.id.name,
+						/** @type {Parse.BindingType[keyof Parse.BindingType]} */ (BIND_FLAGS_TS_EXPORT_ONLY),
+						/** @type {number} */ (parsed.id.start),
+					);
+				}
+				return parsed;
 			}
 
 			/**
@@ -8730,21 +8763,71 @@ export function TSRXPlugin(config) {
 			 * This is needed because submodules create nested scopes, but exports
 			 * from within submodules should still be valid if the identifier is
 			 * declared in the submodule scope (not just the top-level module scope).
+			 * In a namespace or module body, a name that isn't declared yet is
+			 * checked again when the body ends (see `tsParseModuleBlock`).
 			 * @type {Parse.Parser['checkLocalExport']}
 			 */
 			checkLocalExport(id) {
-				const { name } = id;
-				if (this.hasImport(name)) return;
-				// Check all scopes in the scope stack, not just the top-level scope
-				for (let i = this.scopeStack.length - 1; i >= 0; i--) {
-					if (this.#scopeDeclaredNames(this.scopeStack[i]).has(name)) {
-						// Found in a scope, remove from undefinedExports if it was added
-						delete this.undefinedExports[name];
-						return;
-					}
+				if (this.#isExportDeclared(id.name)) return;
+				const body = this.#moduleBodyExports.at(-1);
+				if (body && body.depth === this.scopeStack.length - 1) {
+					body.scope = this.currentScope();
+					body.ids.push(id);
+					return;
 				}
 				// Not found in any scope, add to undefinedExports for later error
-				this.undefinedExports[name] = id;
+				this.undefinedExports[id.name] = id;
+			}
+
+			/**
+			 * Whether an export specifier can name `name` here: an import, or a name
+			 * declared in a scope on the stack or in `body`, a namespace or module
+			 * body that has ended.
+			 * @param {string} name
+			 * @param {Parse.Scope | null} [body]
+			 */
+			#isExportDeclared(name, body = null) {
+				if (this.hasImport(name)) return true;
+				if (body && this.#scopeDeclaredNames(body).has(name)) return true;
+				for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+					if (this.#scopeDeclaredNames(this.scopeStack[i]).has(name)) return true;
+				}
+				return false;
+			}
+
+			/**
+			 * The `{ … }` body of a namespace or module. An export list in it can
+			 * name a declaration that comes later in the body, as in TypeScript, so
+			 * a name that `checkLocalExport` can't see yet is checked again when the
+			 * body ends. acorn-typescript leaves the body's scope with acorn's own
+			 * `exitScope`, past any override, so the check is made here. A name still
+			 * not declared is checked again at the end of the enclosing body, if
+			 * there is one, whose later declarations it can name too. Otherwise it's
+			 * recorded as undefined, and acorn reports it at the end of the program,
+			 * at the specifier.
+			 * @type {Parse.Parser['tsParseModuleBlock']}
+			 */
+			tsParseModuleBlock() {
+				/** @type {ModuleBodyExports} */
+				const body = { depth: this.scopeStack.length, scope: null, ids: [] };
+				this.#moduleBodyExports.push(body);
+				let block;
+				try {
+					block = super.tsParseModuleBlock();
+				} finally {
+					this.#moduleBodyExports.pop();
+				}
+				const outer = this.#moduleBodyExports.at(-1);
+				for (const id of body.ids) {
+					if (this.#isExportDeclared(id.name, body.scope)) continue;
+					if (outer) {
+						outer.scope ??= this.scopeStack[outer.depth];
+						outer.ids.push(id);
+					} else {
+						this.undefinedExports[id.name] = id;
+					}
+				}
+				return block;
 			}
 
 			/**
