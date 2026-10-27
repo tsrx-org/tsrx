@@ -28,6 +28,10 @@
         "named": true
       },
       {
+        "type": "using_declaration",
+        "named": true
+      },
+      {
         "type": "variable_declaration",
         "named": true
       }
@@ -482,6 +486,16 @@
             "named": true
           }
         ]
+      },
+      "type_parameters": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "type_parameters",
+            "named": true
+          }
+        ]
       }
     },
     "children": {
@@ -883,6 +897,16 @@
             "named": true
           }
         ]
+      },
+      "type_arguments": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "type_arguments",
+            "named": true
+          }
+        ]
       }
     }
   },
@@ -1208,6 +1232,10 @@
         },
         {
           "type": "try_statement",
+          "named": true
+        },
+        {
+          "type": "using_declaration",
           "named": true
         },
         {
@@ -5233,6 +5261,21 @@
     }
   },
   {
+    "type": "using_declaration",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "variable_declarator",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "variable_declaration",
     "named": true,
     "fields": {},
@@ -5897,6 +5940,10 @@
   },
   {
     "type": "untrack",
+    "named": false
+  },
+  {
+    "type": "using",
     "named": false
   },
   {

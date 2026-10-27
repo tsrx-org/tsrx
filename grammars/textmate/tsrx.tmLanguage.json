@@ -591,6 +591,15 @@
           "match": "(?<![_$[:alnum:]])(const|let|var)(?![_$[:alnum:]])"
         },
         {
+          "comment": "A using declaration heads only a for...of loop: `@for (using item of items)`.",
+          "match": "(?<=\\()(\\s*)((?:await\\s+)?using)(?=\\s+[_$[:alpha:]][_$[:alnum:]]*\\s+of(?![_$[:alnum:]]))",
+          "captures": {
+            "2": {
+              "name": "storage.type.js"
+            }
+          }
+        },
+        {
           "name": "keyword.operator.expression.js",
           "match": "(?<![_$[:alnum:]])(of|in|key|index)(?![_$[:alnum:]])"
         },
@@ -3140,7 +3149,7 @@
         },
         {
           "name": "meta.for-of-tsrx",
-          "match": "\\(\\s*(?:(let|const|var)\\s+)?([_$[:alpha:]][_$[:alnum:]]*)\\s+(of)\\s+([^;]+?)\\s*;\\s*(?:(index)\\s+([_$[:alpha:]][_$[:alnum:]]*)(?:\\s*;\\s*(key)\\s+([^)]+?))?|(key)\\s+([^)]+?))\\s*\\)",
+          "match": "\\(\\s*(?:(let|const|var|using|await\\s+using)\\s+)?([_$[:alpha:]][_$[:alnum:]]*)\\s+(of)\\s+([^;]+?)\\s*;\\s*(?:(index)\\s+([_$[:alpha:]][_$[:alnum:]]*)(?:\\s*;\\s*(key)\\s+([^)]+?))?|(key)\\s+([^)]+?))\\s*\\)",
           "captures": {
             "1": {
               "name": "storage.type.js"
@@ -6560,7 +6569,7 @@
           "name": "entity.name.tag.js"
         }
       },
-      "end": "(/>)|(</)(style)(>)",
+      "end": "(/>)|(</)(style)\\s*(>)|(</)(style)\\s*$",
       "endCaptures": {
         "1": {
           "name": "punctuation.definition.tag.end.js"
@@ -6573,6 +6582,12 @@
         },
         "4": {
           "name": "punctuation.definition.tag.end.js"
+        },
+        "5": {
+          "name": "punctuation.definition.tag.begin.js"
+        },
+        "6": {
+          "name": "entity.name.tag.js"
         }
       },
       "patterns": [
@@ -6583,7 +6598,7 @@
               "name": "punctuation.definition.tag.end.js"
             }
           },
-          "end": "(?=</style>)",
+          "end": "(?=</style\\s*(?:>|$))",
           "contentName": "source.css",
           "patterns": [
             {
@@ -6616,7 +6631,7 @@
           "name": "entity.name.tag.js"
         }
       },
-      "end": "(</)(script)(>)",
+      "end": "(</)(script)\\s*(>)|(</)(script)\\s*$",
       "endCaptures": {
         "1": {
           "name": "punctuation.definition.tag.begin.js"
@@ -6626,6 +6641,12 @@
         },
         "3": {
           "name": "punctuation.definition.tag.end.js"
+        },
+        "4": {
+          "name": "punctuation.definition.tag.begin.js"
+        },
+        "5": {
+          "name": "entity.name.tag.js"
         }
       },
       "patterns": [
@@ -6636,7 +6657,7 @@
               "name": "punctuation.definition.tag.end.js"
             }
           },
-          "end": "(?=</script>)",
+          "end": "(?=</script\\s*(?:>|$))",
           "contentName": "source.ts",
           "patterns": [
             {
