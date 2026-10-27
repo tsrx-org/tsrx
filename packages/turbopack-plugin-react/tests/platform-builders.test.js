@@ -317,6 +317,25 @@ describe('platform options across build integrations', () => {
 		expect(transformed.map.sourcesContent).toEqual(['export const flags = ORIGINAL;']);
 	});
 
+	it('keeps comment-like JSX text in Turbopack ordinary modules', async () => {
+		const source = `export default function Page() {
+			return <main><pre>/*</pre><pre>// docs</pre></main>;
+		}`;
+		const transformed = await new Promise((resolve) => {
+			turbopackPlatformLoader.call(
+				{
+					resourcePath: '/virtual/app/page.jsx',
+					getOptions: () => ({ platform: 'web' }),
+					async: () => (error, output, map) => resolve({ error, output, map }),
+				},
+				source,
+			);
+		});
+
+		expect(transformed.error).toBeNull();
+		expect(transformed.output).toBe(source);
+	});
+
 	it('preserves the TSRX compile map when no runtime flags remain', async () => {
 		const source = `export function App() @{
 			<div>{'Hello world'}</div>

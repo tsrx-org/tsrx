@@ -429,7 +429,8 @@ via `@tsrx/react` and returns the result to Turbopack as `*.tsx` so Next's
 React pipeline can handle the final JSX transform. When a component contains a
 local `<style>` block, the loader injects a sibling `?tsrx-css&lang.css`
 import, and the second Turbopack rule re-runs the compiler to extract the
-scoped CSS and hands it back to Turbopack as a CSS module type.
+scoped CSS and hands it back to Turbopack as a `*.css` module, so Next links
+the stylesheet into App Router pages.
 
 ```ts
 // next.config.ts
