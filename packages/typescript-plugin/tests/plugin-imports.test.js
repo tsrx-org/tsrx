@@ -87,6 +87,14 @@ export function ReExports() @{
 	<p>{count}</p>
 }
 `,
+	'src/Flagged.tsrx': `import { label } from './label';
+import { useState } from 'react';
+
+export function Flagged() @{
+	const [count] = useState(import.meta.env.platform.web);
+	<p>{label}{String(count)}</p>
+}
+`,
 	'src/ReExports.tsx': `import { label } from './label';
 import { useState } from 'react';
 export * from './lib';
@@ -491,6 +499,22 @@ export { label as other } from './label';
 `,
 			);
 		}, 60_000);
+
+		it.each(/** @type {const} */ (['SortAndCombine', 'All']))(
+			'organizes the imports of a module that keeps a platform flag in %s mode (#1207)',
+			async (mode) => {
+				// The compiler appends `export {};` to a module that reads a platform flag
+				// only when it has no import or export. TypeScript rewrites every export
+				// declaration, and an edit in generated code made the plugin drop them all.
+				expect(await organized_imports('src/Flagged.tsrx', mode)).toBe(
+					`import { useState } from 'react';
+import { label } from './label';
+
+`,
+				);
+			},
+			60_000,
+		);
 
 		it.each(/** @type {const} */ (['src/Semicolons.tsrx', 'src/NoSemicolons.tsrx']))(
 			'sorts the imports of %s',

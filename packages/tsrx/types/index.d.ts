@@ -2347,6 +2347,7 @@ export function mergePlatformDefinitions(
 export function withPlatformTypes(
 	result: VolarMappingsResult,
 	platform: unknown,
+	generatedProgram?: AST.Program | null,
 ): VolarMappingsResult;
 export function replacePlatformFlags(
 	source: string,
