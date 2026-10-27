@@ -45,6 +45,8 @@ export interface JsxTransformContext {
 	needs_show: boolean;
 	needs_for: boolean;
 	needs_switch: boolean;
+	/** Solid: a `@switch` reads its discriminant through `createMemo`. */
+	needs_switch_memo?: boolean;
 	needs_match: boolean;
 	needs_errored: boolean;
 	needs_loading: boolean;

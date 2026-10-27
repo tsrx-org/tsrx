@@ -356,6 +356,42 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toMatch(/import \{[^}]*Errored[^}]*Loading[^}]*\} from 'solid-js'/);
 		});
 
+		it('static @if condition → plain conditional instead of <Show>', () => {
+			const { code } = compile(
+				`function App() @{
+					<div>
+						@if (true) { <Child /> } @else { <Fallback /> }
+						@if (import.meta.env.DEV) { <p>{'dev'}</p> }
+						@if (!import.meta.env.PROD) { <p>{'a'}</p> } @else { <p>{'b'}</p> }
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain('{true ? <Child /> : <Fallback />}');
+			expect(code).toContain("{import.meta.env.DEV ? <p>{'dev'}</p> : null}");
+			expect(code).toContain("{!import.meta.env.PROD ? <p>{'a'}</p> : <p>{'b'}</p>}");
+			expect(code).not.toContain('Show');
+		});
+
+		it('static @if condition with setup statements or else-if keeps <Show>/<Switch>', () => {
+			const { code } = compile(
+				`function App(props) @{
+					<div>
+						@if (import.meta.env.DEV) {
+							const label = 'dev';
+							<p>{label}</p>
+						}
+						@if (true) { <a /> } @else if (props.b) { <b /> } @else { <i /> }
+						@if (import.meta.url) { <u /> }
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain('<Show when={import.meta.env.DEV}>');
+			expect(code).toContain('<Match when={true}>');
+			expect(code).toContain('<Show when={import.meta.url}>');
+		});
+
 		it('switch statement → <Switch>/<Match> using ===', () => {
 			const { code } = compile(
 				`function App({ kind }: { kind: string }) @{
@@ -370,6 +406,116 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toContain('<Switch fallback=');
 			expect(code).toMatch(/<Match when=\{kind === 'a'\}>/);
 			expect(code).toMatch(/<Match when=\{kind === 'b'\}>/);
+		});
+
+		it('switch reads a discriminant with a side effect once through a memo', () => {
+			const source = `function App() @{
+				@switch (queue.shift()) {
+					@case 'loading': { <p>{'Loading'}</p> }
+					@case 'ready': { <p>{'Ready'}</p> }
+				}
+			}`;
+			const { code } = compile(source, 'App.tsrx');
+			expect(code).toContain(
+				"import { Switch, Match, createMemo as _$_createMemo } from 'solid-js';",
+			);
+			// Boxed, so a thenable discriminant is compared rather than awaited.
+			expect(code).toContain('const _$_switch_value = _$_createMemo(() => [queue.shift()]);');
+			expect(code).toContain("<Match when={_$_switch_value()[0] === 'loading'}>");
+			expect(code).toContain("<Match when={_$_switch_value()[0] === 'ready'}>");
+			expect(code.match(/queue\.shift\(\)/g)).toHaveLength(1);
+
+			const type_only = compile_to_volar_mappings(source, 'App.tsrx').code;
+			expect(type_only).toContain("<Match when={queue.shift() === 'loading'}>");
+			expect(type_only).not.toContain('createMemo');
+		});
+
+		it('switch memo names cannot collide with authored names', () => {
+			const { code } = compile(
+				`import { createMemo } from 'solid-js';
+				function App(__switch_value, __createMemo) @{
+					@switch (__switch_value.read()) {
+						@case 1: { <p>{createMemo(() => __createMemo)()}</p> }
+					}
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain(
+				'const _$_switch_value = _$_createMemo(() => [__switch_value.read()]);',
+			);
+		});
+
+		it("lowers an element's @{ } child inside a control-flow body to its output", () => {
+			const { code } = compile(
+				`function App(props: { on: boolean }) @{
+					<div>
+						@if (props.on) {
+							<p>@{
+								const v = 1;
+								<b>{v}</b>
+							}</p>
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toMatch(
+				/<p>\{\(\(\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\)\(\)\}<\/p>/,
+			);
+			expect(code).not.toContain('return null');
+		});
+
+		it('lowers a @{ } block that is a whole control-flow body to its output', () => {
+			const { code } = compile(
+				`function App(props: { on: boolean }) @{
+					<div>
+						@if (props.on) {
+							@{
+								const v = 1;
+								<b>{v}</b>
+							}
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			// The block's setup becomes the branch's function child, which `<Show>`
+			// runs untracked, like a body without the `@{ }`.
+			expect(code).toMatch(
+				/<Show when=\{props\.on\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Show>/,
+			);
+			expect(code).not.toContain('return null');
+		});
+
+		it('lowers a @{ } block that is a whole @case or @default body to its output', () => {
+			const { code } = compile(
+				`function App(kind: string) @{
+					<div>
+						@switch (kind) {
+							@case 'a': {
+								@{
+									const v = 1;
+									<b>{v}</b>
+								}
+							}
+							@default: {
+								@{
+									const w = 2;
+									<i>{w}</i>
+								}
+							}
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toMatch(
+				/<Match when=\{kind === 'a'\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Match>/,
+			);
+			expect(code).toMatch(
+				/fallback=\{\(\(\) => \{\s*const w = 2;\s*return <i>\{w\}<\/i>;\s*\}\)\(\)\}/,
+			);
+			expect(code).not.toContain('return null');
 		});
 
 		it('element children mixing JSX and statements wrap in an IIFE', () => {

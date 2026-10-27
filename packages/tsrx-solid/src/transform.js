@@ -54,9 +54,18 @@ import {
 	isTemplateSwitchNode as is_template_switch_node,
 	isTemplateTryNode as is_template_try_node,
 	isFunctionOrClassNode as is_function_or_class_boundary,
+	IDENTIFIER_OBFUSCATION_PREFIX,
 } from '@tsrx/core';
 
 import { builders as b } from '@tsrx/core';
+
+/**
+ * Local name of the `createMemo` import that holds a `@switch` discriminant.
+ * The reserved prefix keeps it and {@link SWITCH_VALUE_NAME} clear of authored
+ * names.
+ */
+const SWITCH_MEMO_INTERNAL_NAME = `${IDENTIFIER_OBFUSCATION_PREFIX}createMemo`;
+const SWITCH_VALUE_NAME = `${IDENTIFIER_OBFUSCATION_PREFIX}switch_value`;
 
 /**
  * Solid platform descriptor consumed by `createJsxTransform`. Everything
@@ -116,6 +125,7 @@ const solid_platform = {
 			needs_match: false,
 			needs_errored: false,
 			needs_loading: false,
+			needs_switch_memo: false,
 			needs_normalize_spread_props: false,
 		}),
 		canHoistStaticNode(node) {
@@ -216,6 +226,11 @@ function get_await_keyword_start(await_node, source) {
 function to_jsx_child(node, transform_context) {
 	if (!node) return node;
 	switch (node.type) {
+		case 'JSXCodeBlock':
+			// Rendered as an expression child: the walker later lowers the block
+			// to an IIFE that returns its output. As a statement, that value
+			// would be dropped.
+			return to_jsx_expression_container(node, node);
 		case 'JSXFragment':
 			if (node.metadata?.native_tsrx) {
 				return tsrx_node_to_jsx_expression(node, transform_context, true);
@@ -365,6 +380,7 @@ function tsrx_node_to_jsx_expression(node, transform_context, in_jsx_child = fal
  * @returns {AST.Expression}
  */
 function body_to_jsx_child(body_nodes, transform_context) {
+	body_nodes = expand_code_block_body(body_nodes);
 	// When non-JSX statements are interleaved with JSX children, preserve
 	// source order by capturing each JSX child into a const at its textual
 	// position. Otherwise all statements would run before any JSX is
@@ -423,6 +439,33 @@ function body_to_jsx_child(body_nodes, transform_context) {
 }
 
 /**
+ * A body whose only node is a `@{ }` block is that block's scope: its setup
+ * statements and output are spliced into the body, so they lower like any
+ * other branch body, as a function child that Solid runs untracked. As an
+ * expression child, the block's IIFE would run inside the `<Show>` or
+ * `<Switch>` memo and re-run whenever a signal its setup reads changes. A
+ * block beside other nodes keeps its own scope as an expression child.
+ *
+ * @param {AST.Node[]} body_nodes
+ * @returns {AST.Node[]}
+ */
+function expand_code_block_body(body_nodes) {
+	// A `@case` body holds its block as an expression statement.
+	const nodes = body_nodes.map((node) =>
+		node?.type === 'ExpressionStatement' &&
+		/** @type {AST.Node} */ (node.expression).type === 'JSXCodeBlock'
+			? /** @type {AST.JSXCodeBlock} */ (/** @type {unknown} */ (node.expression))
+			: node,
+	);
+	const meaningful = nodes.filter((node) => node && node.type !== 'EmptyStatement');
+	if (meaningful.length !== 1 || meaningful[0].type !== 'JSXCodeBlock') {
+		return nodes;
+	}
+	const block = /** @type {AST.JSXCodeBlock} */ (meaningful[0]);
+	return expand_code_block_body([...(block.body || []), ...(block.render ? [block.render] : [])]);
+}
+
+/**
  * @param {AST.Node | null | undefined} node
  * @returns {boolean}
  */
@@ -478,6 +521,9 @@ function is_solid_render_control(node) {
  * @returns {node is SolidRenderSource}
  */
 function is_solid_render_child(node) {
+	if (node?.type === 'JSXCodeBlock') {
+		return true;
+	}
 	if (!node || !is_jsx_child(node)) {
 		return false;
 	}
@@ -641,6 +687,7 @@ function validate_if_body_control_flow(node, transform_context) {
  * @returns {AST.Node[]}
  */
 function loop_body_to_callback_statements(body_nodes, transform_context) {
+	body_nodes = expand_code_block_body(body_nodes);
 	/** @type {AST.Node[]} */
 	const statements = [];
 	/** @type {ESTreeJSX.JSXRenderChild[]} */
@@ -932,6 +979,13 @@ function if_statement_to_jsx_child(node, transform_context) {
 		}
 	}
 
+	const static_conditional = !transform_context.typeOnly
+		? build_static_conditional(branches, transform_context)
+		: null;
+	if (static_conditional) {
+		return static_conditional;
+	}
+
 	if (branches.length === 1) {
 		// Single `if` with no else → <Show when>
 		transform_context.needs_show = true;
@@ -985,6 +1039,77 @@ function if_statement_to_jsx_child(node, transform_context) {
 	);
 
 	return create_jsx_element('Switch', attributes, children);
+}
+
+/**
+ * A condition that cannot change at runtime needs no `<Show>`: render
+ * `test ? a : b` instead. Only branches whose bodies are plain output qualify;
+ * a body with setup statements keeps `<Show>`, which runs it untracked.
+ *
+ * @param {[SolidIfTestBranch, ...SolidIfBranch[]]} branches
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXExpressionContainer | null}
+ */
+function build_static_conditional(branches, transform_context) {
+	const [if_branch, else_branch] = branches;
+	if (
+		branches.length > 2 ||
+		(else_branch && else_branch.test !== null) ||
+		!is_static_condition(if_branch.test)
+	) {
+		return null;
+	}
+
+	const consequent = body_to_jsx_child(if_branch.body, transform_context);
+	const alternate = else_branch
+		? body_to_jsx_child(else_branch.body, transform_context)
+		: create_null_literal();
+	if (!is_plain_output(consequent) || !is_plain_output(alternate)) {
+		return null;
+	}
+
+	return to_jsx_expression_container(b.conditional(if_branch.test, consequent, alternate));
+}
+
+/**
+ * An element, fragment or literal. Anything else, such as the IIFE of a branch
+ * with setup statements or of a nested `@switch`, would run inside the
+ * enclosing insert effect, where `<Show>` runs its children untracked.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_plain_output(node) {
+	return node.type === 'JSXElement' || node.type === 'JSXFragment' || node.type === 'Literal';
+}
+
+/**
+ * A literal, `import.meta.env.*`, or the negation of either.
+ *
+ * @param {AST.Expression} node
+ * @returns {boolean}
+ */
+function is_static_condition(node) {
+	if (node.type === 'Literal') return true;
+	if (node.type === 'UnaryExpression' && node.operator === '!') {
+		return is_static_condition(node.argument);
+	}
+	/** @type {AST.Node} */
+	let object = node;
+	while (object.type === 'MemberExpression' && !object.computed) {
+		/** @type {AST.Node} */
+		const inner = object.object;
+		if (
+			inner.type === 'MetaProperty' &&
+			inner.meta.name === 'import' &&
+			object.property.type === 'Identifier' &&
+			object.property.name === 'env'
+		) {
+			return true;
+		}
+		object = inner;
+	}
+	return false;
 }
 
 /**
@@ -1112,6 +1237,15 @@ function switch_statement_to_jsx_child(node, transform_context) {
 	transform_context.needs_switch = true;
 	transform_context.needs_match = true;
 
+	// Each `<Match>` reads the discriminant, so one with a side effect (a call
+	// such as `queue.shift()`) would run once per case and each case would
+	// compare a different value. Read it once through a memo instead. The
+	// type-only output keeps the inline comparisons the editor maps.
+	const switch_value =
+		transform_context.typeOnly || is_reference_expression(node.discriminant)
+			? null
+			: create_generated_identifier(SWITCH_VALUE_NAME);
+
 	/** @type {AST.Expression | null} */
 	let fallback = null;
 	/** @type {SolidMatchEntry[]} */
@@ -1137,7 +1271,9 @@ function switch_statement_to_jsx_child(node, transform_context) {
 		// for editor IntelliSense and don't clone it.
 		const test = b.binary(
 			'===',
-			clone_ast_node(node.discriminant),
+			switch_value
+				? b.member(b.call(clone_identifier(switch_value)), b.literal(0), true)
+				: clone_ast_node(node.discriminant),
 			/** @type {AST.Expression} */ (original_case.test),
 		);
 
@@ -1162,7 +1298,49 @@ function switch_statement_to_jsx_child(node, transform_context) {
 				]
 			: [];
 
-	return create_jsx_element('Switch', attributes, match_children);
+	const switch_element = create_jsx_element('Switch', attributes, match_children);
+	if (!switch_value) {
+		return switch_element;
+	}
+
+	transform_context.needs_switch_memo = true;
+	return to_jsx_expression_container(
+		b.call(
+			b.arrow(
+				[],
+				b.block([
+					// Boxed, so a thenable discriminant is compared as a value, as a
+					// JavaScript switch compares it, instead of suspending the memo.
+					b.const(
+						switch_value,
+						b.call(SWITCH_MEMO_INTERNAL_NAME, b.arrow([], b.array([node.discriminant]))),
+					),
+					b.return(switch_element),
+				]),
+			),
+		),
+		node,
+	);
+}
+
+/**
+ * Whether reading `node` again gives the same value without side effects: an
+ * identifier, a literal, `this`, or a non-computed property chain of those.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_reference_expression(node) {
+	switch (node.type) {
+		case 'Identifier':
+		case 'Literal':
+		case 'ThisExpression':
+			return true;
+		case 'MemberExpression':
+			return !node.computed && is_reference_expression(node.object);
+		default:
+			return false;
+	}
 }
 
 /**
@@ -1940,14 +2118,15 @@ function inject_solid_imports(program, transform_context) {
 	if (transform_context.needs_errored) needed.push('Errored');
 	if (transform_context.needs_loading) needed.push('Loading');
 
-	if (needed.length === 0) return;
+	/** @type {Array<[string, string]>} */
+	const specifiers = needed.map((name) => [name, name]);
+	if (transform_context.needs_switch_memo) {
+		specifiers.push(['createMemo', SWITCH_MEMO_INTERNAL_NAME]);
+	}
 
-	program.body.unshift(
-		b.imports(
-			needed.map((name) => [name, name]),
-			'solid-js',
-		),
-	);
+	if (specifiers.length === 0) return;
+
+	program.body.unshift(b.imports(specifiers, 'solid-js'));
 }
 
 // =====================================================================
