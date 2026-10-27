@@ -799,6 +799,15 @@ export const FeaturesPage = () => @{
 								,<code class="inline-code">@switch</code>,<code class="inline-code">@try</code>
 								). Each one has its own scope.
 							</p>
+							<p class="section-body">
+								Declare the variables of a nested statement container or a control-flow body with
+								<code class="inline-code">const</code> or <code class="inline-code">let</code>. A
+								<code class="inline-code">var</code> in one, or in a plain block or loop inside it,
+								is an error, since it can't be read outside it. A component's own
+								<code class="inline-code">{'@{...}'}</code>
+								body shares the component function's scope, and a function inside a block keeps
+								ordinary <code class="inline-code">var</code> scoping.
+							</p>
 						</section>
 						<section class="doc-section" id="if">
 							<h2 class="section-heading">Conditional rendering</h2>
@@ -847,6 +856,17 @@ export const FeaturesPage = () => @{
 								statements are not allowed in
 								<code class="inline-code">@for</code>
 								template loop bodies; nested functions keep ordinary JavaScript control flow.
+							</p>
+							<p class="section-body">
+								The loop head declares its loop variable with
+								<code class="inline-code">const</code> or <code class="inline-code">let</code>, as
+								in
+								<code class="inline-code">{'@for (const item of items)'}</code>. A head that assigns
+								to an existing variable or property, such as
+								<code class="inline-code">{'@for (state.item of items)'}</code>, is an error, and so
+								is a <code class="inline-code">var</code> loop variable, which can't be read after
+								the loop. A <code class="inline-code">using</code>
+								loop variable is an error too; declare a resource in the loop body instead.
 							</p>
 							<p class="section-body">
 								Other JavaScript loops are not template rendering constructs: regular

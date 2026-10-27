@@ -6,7 +6,10 @@ import { walk } from 'zimmerframe';
 import { print } from 'esrap';
 import { error } from '../../errors.js';
 import { DIAGNOSTIC_CODES, TSRX_ERRORS } from '../../diagnostics.js';
-import { is_template_value_position } from '../../analyze/validation.js';
+import {
+	get_statement_keyword_node,
+	is_template_value_position,
+} from '../../analyze/validation.js';
 import { analyze_css } from '../../analyze/css-analyze.js';
 import {
 	in_jsx_child_context,
@@ -25,6 +28,7 @@ import {
 	clone_jsx_name,
 	create_generated_identifier,
 	create_null_literal,
+	FOR_OF_ITEM_PARAM_NAME,
 	get_for_of_iteration_params,
 	identifier_to_jsx_identifier,
 	is_bare_render_expression,
@@ -62,6 +66,7 @@ import {
 	child_nodes,
 	has_location,
 	is_ast_node,
+	is_code_block_function_body,
 	is_function_node,
 	is_function_or_class_node as is_function_or_class_boundary,
 	is_template_directive as is_jsx_control_flow_expression,
@@ -592,6 +597,8 @@ export function createJsxTransform(platform) {
 			// needs_show / needs_for flags) via `hooks.initialState`.
 			...(platform.hooks?.initialState?.() ?? {}),
 		};
+
+		validate_directive_declarations(ast, transform_context);
 
 		// Opt-in server-module dialect (`module <name> { … }` plus its boundary
 		// `import … from '<specifier>'`): lower to plain checkable TS before any
@@ -4309,6 +4316,108 @@ function validate_if_body_control_flow(node, transform_context) {
 }
 
 /**
+ * Every target hands an `@for` item to a callback, so the head has to declare
+ * its loop variable the way a parameter can: assigning to an existing variable
+ * or property would only shadow it, a `var` would not reach the enclosing
+ * function, and a `using` item would never be disposed. Called from
+ * `validate_directive_declarations`, before any target lowers an `@for`.
+ *
+ * @param {AST.ForOfStatement['left']} left
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function validate_for_of_head(left, transform_context) {
+	if (left.type !== 'VariableDeclaration') {
+		error(
+			TSRX_ERRORS.FOR_HEAD_ASSIGNMENT,
+			transform_context.filename,
+			left,
+			transform_context.errors,
+			transform_context.comments,
+		);
+	} else if (left.kind === 'var') {
+		error(
+			TSRX_ERRORS.FOR_HEAD_VAR,
+			transform_context.filename,
+			left,
+			transform_context.errors,
+			transform_context.comments,
+		);
+	} else if (left.kind === 'using' || left.kind === 'await using') {
+		error(
+			TSRX_ERRORS.FOR_HEAD_USING(left.kind),
+			transform_context.filename,
+			left,
+			transform_context.errors,
+			transform_context.comments,
+		);
+	}
+}
+
+/**
+ * Every target runs an `@if`, `@for`, `@switch` or `@try` body that declares
+ * something, and every `@{ … }` block that isn't a function's own body, in a
+ * function of its own, so a `var` there, or in a plain block or loop inside
+ * one, would not reach the enclosing function. A function or class inside
+ * scopes its own `var`s. This walks the authored module before any target
+ * lowers a directive or block, and reports those `var`s and invalid `@for`
+ * heads once each, in source order.
+ *
+ * @param {AST.Program} program
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function validate_directive_declarations(program, transform_context) {
+	/** @type {Array<{ node: AST.Node, head: boolean }>} */
+	const found = [];
+	collect_directive_declarations(program, null, false, found);
+	found.sort(
+		(a, b) =>
+			/** @type {AST.NodeWithLocation} */ (a.node).start -
+			/** @type {AST.NodeWithLocation} */ (b.node).start,
+	);
+	for (const { node, head } of found) {
+		if (head) {
+			validate_for_of_head(/** @type {AST.ForOfStatement['left']} */ (node), transform_context);
+		} else {
+			error(
+				TSRX_ERRORS.DIRECTIVE_BODY_VAR,
+				transform_context.filename,
+				get_statement_keyword_node(node, 'var'),
+				transform_context.errors,
+				transform_context.comments,
+			);
+		}
+	}
+}
+
+/**
+ * @param {AST.Node} node
+ * @param {AST.Node | null} parent
+ * @param {boolean} in_body Whether `node` is inside a directive body or a nested `@{ … }` block.
+ * @param {Array<{ node: AST.Node, head: boolean }>} found An `@for` head, or a `var` declaration in a body.
+ * @returns {void}
+ */
+function collect_directive_declarations(node, parent, in_body, found) {
+	if (in_body && node.type === 'VariableDeclaration' && node.kind === 'var' && !node.declare) {
+		found.push({ node, head: false });
+	} else if (is_template_for_of_node(node)) {
+		found.push({ node: node.left, head: true });
+	}
+
+	const children_in_body =
+		is_jsx_control_flow_expression(node) ||
+		(node.type === 'JSXCodeBlock' && !is_code_block_function_body(node, parent)) ||
+		(in_body && !is_function_or_class_boundary(node));
+	for (const child of child_nodes(node)) {
+		// The `@for` head is validated as a head.
+		const in_for_head =
+			node.type === 'JSXForExpression' && child !== node.body && child !== node.empty;
+		collect_directive_declarations(child, node, children_in_body && !in_for_head, found);
+	}
+}
+
+/**
  * @param {AST.Node | null | undefined} node
  * @returns {boolean}
  */
@@ -4341,7 +4450,7 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		);
 	}
 
-	const loop_params = get_for_of_iteration_params(node.left, node.index);
+	const loop_params = get_for_of_iteration_params(node.left, node.index, node.key);
 	/** @type {AST.Node[]} */
 	let loop_body = node.body.type === 'BlockStatement' ? node.body.body : [node.body];
 	validate_for_body_control_flow(loop_body, transform_context);
@@ -4394,7 +4503,28 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 	// Restore bindings
 	transform_context.available_bindings = saved_bindings;
 
-	const iter_callback = b.arrow(loop_params, b.block(body_statements));
+	// An `await` in a default of the head's pattern can't stay in the
+	// parameters of the async callback the loop becomes, so that callback takes
+	// the item whole and destructures it as its first statement.
+	let callback_params = loop_params;
+	if (
+		node.left.type === 'VariableDeclaration' &&
+		loop_params[0] === node.left.declarations[0]?.id &&
+		find_first_top_level_await(loop_params[0], false)
+	) {
+		const item = b.id(FOR_OF_ITEM_PARAM_NAME);
+		// `using` binds only a name, so a pattern that awaits is never one.
+		const kind = /** @type {'const' | 'let' | 'var'} */ (node.left.kind);
+		callback_params = [item, ...loop_params.slice(1)];
+		// The head runs before the body's scope is entered, so the body's own
+		// declarations stay in a block of their own and can't shadow the head.
+		body_statements = [
+			b.declaration(kind, [b.declarator(loop_params[0], item)]),
+			b.block(body_statements),
+		];
+	}
+
+	const iter_callback = b.arrow(callback_params, b.block(body_statements));
 	const empty_fallback = node.empty
 		? b.call(
 				b.arrow(

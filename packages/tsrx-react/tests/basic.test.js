@@ -980,7 +980,7 @@ describe('@tsrx/react basic', () => {
 			`function TodoList({ items }: { items: { text: string }[] }) @{
 				<ul>
 					@{
-						var a = 3 < 4;
+						const a = 3 < 4;
 					}
 				</ul>
 			}`,
@@ -989,7 +989,7 @@ describe('@tsrx/react basic', () => {
 
 		expect(code).toContain('function TodoList');
 		expect(code).toContain('return <ul>{(() => {');
-		expect(code).toContain('var a = 3 < 4;');
+		expect(code).toContain('const a = 3 < 4;');
 		expect(code).toContain('return null;');
 	});
 

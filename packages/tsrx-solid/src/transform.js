@@ -1054,7 +1054,7 @@ function build_show_element(test, children, fallback) {
 function for_of_statement_to_jsx_child(node, transform_context) {
 	transform_context.needs_for = true;
 
-	const loop_params = get_for_of_iteration_params(node.left, node.index);
+	const loop_params = get_for_of_iteration_params(node.left, node.index, node.key);
 	const loop_body = node.body.type === 'BlockStatement' ? node.body.body : [node.body];
 	const uses_index_only_mode = !node.key && node.index;
 	validate_for_body_control_flow(loop_body, transform_context);
