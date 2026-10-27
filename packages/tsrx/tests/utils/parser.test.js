@@ -5,7 +5,13 @@
 /** @import { ErrorKind } from '../shared/errors.js' */
 
 import { describe, expect, it } from 'vitest';
-import { acorn, analyzeTsrx, isLayoutWhitespace, parseModule } from '../../src/index.js';
+import {
+	acorn,
+	analyzeTsrx,
+	getCommentHandlers,
+	isLayoutWhitespace,
+	parseModule,
+} from '../../src/index.js';
 import { TS_ERRORS, TSRX_ERRORS, UPSTREAM_ERRORS } from '../../src/diagnostics.js';
 import { node_children } from '../../src/utils/ast.js';
 import { code_of, error_with, line_column, thrown } from '../shared/errors.js';
@@ -7310,6 +7316,140 @@ namespace N {
 
 		expect(staticBlock?.innerComments?.map((comment) => comment.value)).toEqual([' static']);
 		expect(moduleBlock?.innerComments?.map((comment) => comment.value)).toEqual([' namespace']);
+	});
+
+	/**
+	 * Count the characters that string scans examine while `run` runs. It
+	 * covers `RegExp#exec`, which `test` and the string methods that take a
+	 * regex (`match`, `matchAll`, `replace`, `replaceAll`, `search`, `split`)
+	 * call once it is replaced, and `String#includes`, `indexOf`,
+	 * `lastIndexOf`, and `split` by a string. A scan is charged from where it
+	 * starts to the end of its match, or to the end of the input when it fails;
+	 * `split` by a string is charged the whole input. A failing regex that can
+	 * match only where it starts (`^` without `m`, or sticky) is charged the
+	 * rest of the input as well, unless it is one repeated character class, as
+	 * in `/^\s*$/`, which stops at the first character outside the class.
+	 * Loops written by hand are not counted.
+	 * @param {() => void} run
+	 * @returns {number}
+	 */
+	function count_scanned_characters(run) {
+		const { exec } = RegExp.prototype;
+		const { includes, indexOf, lastIndexOf, split } = String.prototype;
+		const one_class_run = /^\^(\\[sSdDwW]|\[(?:\\.|[^\]\\])*\])[*+]\$?$/;
+		let scanned = 0;
+		RegExp.prototype.exec = function (/** @type {string} */ input) {
+			const text = String(input);
+			const start = this.global || this.sticky ? this.lastIndex : 0;
+			const match = exec.call(this, text);
+			if (match) {
+				scanned += match.index + match[0].length - start;
+			} else if ((this.source.startsWith('^') && !this.multiline) || this.sticky) {
+				const one_class = exec.call(one_class_run, this.source);
+				const run = one_class
+					? exec.call(
+							new RegExp(
+								`^${one_class[1]}*`,
+								[...this.flags].filter((flag) => flag !== 'g' && flag !== 'y').join(''),
+							),
+							text.slice(start),
+						)
+					: null;
+				scanned += run ? Math.min(run[0].length + 1, text.length - start) : text.length - start;
+			} else {
+				scanned += text.length - start;
+			}
+			return match;
+		};
+		/**
+		 * @param {string} text
+		 * @param {string} search
+		 * @param {number} from
+		 * @param {number} found
+		 */
+		const charge = (text, search, from, found) => {
+			scanned += found < 0 ? text.length - from : found + search.length - from;
+		};
+		String.prototype.includes = function (/** @type {string} */ search, position = 0) {
+			const found = indexOf.call(this, search, position);
+			charge(String(this), search, position, found);
+			return found >= 0;
+		};
+		String.prototype.indexOf = function (/** @type {string} */ search, position = 0) {
+			const found = indexOf.call(this, search, position);
+			charge(String(this), search, position, found);
+			return found;
+		};
+		String.prototype.lastIndexOf = function (/** @type {string} */ search, position = Infinity) {
+			const found = lastIndexOf.call(this, search, position);
+			const from = Math.min(position, this.length);
+			scanned += found < 0 ? from : from - found;
+			return found;
+		};
+		String.prototype.split = function (/** @type {any} */ separator, /** @type {any} */ limit) {
+			// A regex separator splits through `exec`, which counts it
+			if (!(separator instanceof RegExp)) scanned += this.length;
+			return split.call(this, separator, limit);
+		};
+		try {
+			run();
+		} finally {
+			RegExp.prototype.exec = exec;
+			String.prototype.includes = includes;
+			String.prototype.indexOf = indexOf;
+			String.prototype.lastIndexOf = lastIndexOf;
+			String.prototype.split = split;
+		}
+		return scanned;
+	}
+
+	it.each([
+		[
+			'functions',
+			(/** @type {number} */ i) => `export function f${i}(value) { return value + ${i}; }`,
+		],
+		['assignments without parentheses', (/** @type {number} */ i) => `x${i} = ${i};`],
+	])(
+		'scans the code before a distant comment once, not once per statement, after %s (#990)',
+		(_, statement) => {
+			/** @param {number} count */
+			const scan = (count) => {
+				const source =
+					Array.from({ length: count }, (_, i) => statement(i)).join('\n') +
+					'\n// A final comment\n';
+				/** @type {AST.Program | undefined} */
+				let ast;
+				const scanned = count_scanned_characters(() => {
+					ast = parseModule(source, 'App.ts');
+				});
+				expect(ast?.body.at(-1)?.trailingComments?.map((comment) => comment.value)).toEqual([
+					' A final comment',
+				]);
+				return scanned;
+			};
+
+			// Twice the statements is about twice the work; rescanning the rest of
+			// the file from every statement is four times the work
+			expect(scan(800)).toBeLessThan(3 * scan(400));
+		},
+	);
+
+	it('leaves a comment after a root node with no parent where it is', () => {
+		const source = 'a + b; // c';
+		/** @type {AST.CommentWithLocation[]} */
+		const comments = [];
+		const { onComment, add_comments } = getCommentHandlers(source, comments);
+		const program = acorn.parse(source, {
+			ecmaVersion: 'latest',
+			locations: true,
+			// It reads the locations, which `locations: true` always passes
+			onComment: /** @type {import('acorn').Options['onComment']} */ (onComment),
+		});
+		const expression = /** @type {AST.ExpressionStatement} */ (program.body[0]).expression;
+
+		add_comments(expression);
+		expect(expression.trailingComments).toBeUndefined();
+		expect(comments.map((comment) => comment.value)).toEqual([' c']);
 	});
 });
 
