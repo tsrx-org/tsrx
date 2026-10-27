@@ -7,7 +7,7 @@ export default defineConfig({
 	dts: true,
 	deps: {
 		// Mark peer dependencies and workspace packages as external so they're not bundled
-		neverBundle: ['eslint', '@tsrx/core'],
+		neverBundle: ['eslint', 'eslint-scope', '@tsrx/core'],
 		alwaysBundle: /.+/,
 		onlyBundle: false,
 	},
