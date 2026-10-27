@@ -10400,265 +10400,273 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['parseTemplateBody']}
 			 */
 			parseTemplateBody(body) {
-				const current_template_node = this.#currentNativeTemplateNode();
-				if (!current_template_node) return;
-				current_template_node.metadata ??= { path: [] };
-				current_template_node.metadata.templateMode = 'template';
-				this.#readSkippedTemplateText(body);
+				// One child per turn: a loop rather than recursion, so that the stack
+				// grows with the nesting of elements, not the number of children
+				while (true) {
+					const current_template_node = this.#currentNativeTemplateNode();
+					if (!current_template_node) return;
+					current_template_node.metadata ??= { path: [] };
+					current_template_node.metadata.templateMode = 'template';
+					this.#readSkippedTemplateText(body);
 
-				if (this.#atCodeBlockStart()) {
-					const at_index = skip_whitespace_from(this.input, this.start);
-					if (this.start !== at_index) {
-						this.#addSkippedTemplateText(body, this.start, at_index);
-						const loc = get_line_info(this, at_index);
-						const at_position = new acorn.Position(loc.line, loc.column);
-						this.pos = at_index;
-						this.start = at_index;
-						this.startLoc = at_position;
-						this.curLine = loc.line;
-						this.lineStart = at_index - loc.column;
+					if (this.#atCodeBlockStart()) {
+						const at_index = skip_whitespace_from(this.input, this.start);
+						if (this.start !== at_index) {
+							this.#addSkippedTemplateText(body, this.start, at_index);
+							const loc = get_line_info(this, at_index);
+							const at_position = new acorn.Position(loc.line, loc.column);
+							this.pos = at_index;
+							this.start = at_index;
+							this.startLoc = at_position;
+							this.curLine = loc.line;
+							this.lineStart = at_index - loc.column;
+						}
+						body.push(this.#parseCodeBlock());
+						continue;
 					}
-					body.push(this.#parseCodeBlock());
-					this.parseTemplateBody(body);
-					return;
-				}
 
-				if (this.type === tt.braceL) {
-					body.push(this.#parseNativeTemplateExpressionContainer());
-				} else if (this.type === tstt.jsxText) {
-					this.#parseTemplateRawText(body);
-				} else if (this.#isJSXControlFlowDirectiveStart()) {
-					body.push(this.#parseJSXControlFlowExpression());
-				} else if (this.type === tt.braceR) {
-					// Leaving a native template body. We may still be in TSX/JSX tokenization
-					// context (e.g. after parsing markup), but the closing `}` is a JS token.
-					// If we don't reset this here, the following `next()` can read EOF using
-					// `jsx_readToken()` and throw "Unterminated JSX contents".
-					while (this.curContext() === tstc.tc_expr) {
-						this.#popContext();
-					}
-					return;
-				} else if (this.type === tstt.jsxTagStart) {
-					const startPos = this.start;
-					const startLoc = this.startLoc;
-					this.next();
-					if (this.value === '/' || this.type === tt.slash) {
-						// Consume '/'
-						this.next();
-
-						const closingNode = this.startNodeAt(startPos, startLoc);
-						// Whether the element's parent is a template node, so that the token
-						// after the `>` is the parent's text. In a `{ … }` container only a
-						// parent opened in the container counts: above it, the container's
-						// expression goes on. Nor does a parent opened before the code the
-						// element is in (see `#elementStart`), whose text that code isn't.
-						const parent_template_node = this.#path
-							.slice(this.#containerPathBaseline(), -1)
-							.findLast((node) => this.#isNativeTemplateNode(node));
-						const inside_parent_template =
-							!!parent_template_node &&
-							this.#templateScriptParsingDepth <=
-								this.#elementStart(parent_template_node).scriptDepth;
-						this.#closingNativeTemplateNode = true;
-						/** @type {ReturnType<Parse.Parser['jsx_parseElementName']>} */
-						let closingName;
-						try {
-							closingName = this.jsx_parseElementName();
-						} finally {
-							this.#closingNativeTemplateNode = false;
+					if (this.type === tt.braceL) {
+						body.push(this.#parseNativeTemplateExpressionContainer());
+					} else if (this.type === tstt.jsxText) {
+						this.#parseTemplateRawText(body);
+					} else if (this.#isJSXControlFlowDirectiveStart()) {
+						body.push(this.#parseJSXControlFlowExpression());
+					} else if (this.type === tt.braceR) {
+						// Leaving a native template body. We may still be in TSX/JSX tokenization
+						// context (e.g. after parsing markup), but the closing `}` is a JS token.
+						// If we don't reset this here, the following `next()` can read EOF using
+						// `jsx_readToken()` and throw "Unterminated JSX contents".
+						while (this.curContext() === tstc.tc_expr) {
+							this.#popContext();
 						}
-						if (closingName) {
-							/** @type {ESTreeJSX.TSRXJSXClosingElement} */ (closingNode).name = closingName;
-						}
-						const current = /** @type {ESTreeJSX.JSXFragment | ESTreeJSX.JSXElement} */ (
-							this.#path[this.#path.length - 1]
-						);
-						const current_name = this.#isNativeTemplateNode(current)
-							? current.type === 'JSXFragment'
-								? ''
-								: current.openingElement?.name
-									? this.getElementName(current.openingElement.name)
-									: null
-							: null;
-						const closing_name_str = !closingName
-							? ''
-							: closingName.type === 'JSXNamespacedName'
-								? closingName.namespace.name + ':' + closingName.name.name
-								: this.getElementName(closingName);
-						if (!(inside_parent_template && current_name === closing_name_str)) {
-							this.#closingNativeTemplateNode = true;
-						}
-						// `>` reads the token after the element. When the element closes and no
-						// template encloses it, or in its host's opening tag as an attribute
-						// value without braces, that token is code: the element leaves `#path`
-						// (`<b>x</b> / 2` divides; it is popped for good below), and the
-						// tokenizer context returns to where the element began, as after a
-						// balanced closing tag, dropping residue its body left (a control-flow
-						// block's contexts). parseElement keeps the contexts the token pushes.
-						const closes_outside_template =
-							this.#isNativeTemplateNode(current) &&
-							current_name === closing_name_str &&
-							(!this.#isNativeTemplateNode(this.#path.at(-2)) ||
-								this.#tagValueElements.has(current));
-						if (closes_outside_template) {
-							this.#path.pop();
-							const context_depth = this.#elementContextDepths.get(current);
-							if (context_depth !== undefined && this.context.length > context_depth) {
-								this.#truncateContext(context_depth);
-								this.exprAllowed = false;
-							}
-						}
-						try {
-							this.expect(tstt.jsxTagEnd);
-						} finally {
-							if (closes_outside_template) {
-								this.#path.push(current);
-							}
-						}
-						this.#closingNativeTemplateNode = false;
-						const closingElement =
-							/** @type {ESTreeJSX.TSRXJSXClosingElement & AST.NodeWithLocation} */ (
-								this.finishNode(
-									closingNode,
-									closingName ? 'JSXClosingElement' : 'JSXClosingFragment',
-								)
-							);
-						if (this.#isDynamicJSXElementName(closingElement.name)) {
-							closingElement.isDynamic = true;
-						}
-
-						// Validate that the closing tag matches the opening tag
-						const currentElement = /** @type {AST.NativeTSRXTemplateNode} */ (
-							this.#path[this.#path.length - 1]
-						);
-						if (!this.#isNativeTemplateNode(currentElement)) {
-							this.raise(this.start, TSRX_ERRORS.UNEXPECTED_CLOSING_TAG);
-						}
-
-						/** @type {string | null} */
-						let openingTagName;
-						/** @type {string | null} */
-						let closingTagName;
-
-						if (currentElement.type === 'JSXFragment') {
-							openingTagName = '';
-							closingTagName = !closingElement.name
-								? ''
-								: closingElement.name.type === 'JSXNamespacedName'
-									? closingElement.name.namespace.name + ':' + closingElement.name.name.name
-									: this.getElementName(closingElement.name);
-						} else {
-							openingTagName = currentElement.openingElement?.name
-								? this.getElementName(currentElement.openingElement.name)
-								: null;
-							closingTagName = closingElement.name
-								? closingElement.name?.type === 'JSXNamespacedName'
-									? closingElement.name.namespace.name + ':' + closingElement.name.name.name
-									: this.getElementName(closingElement.name)
-								: null;
-						}
-
-						if (openingTagName !== closingTagName) {
-							// A closing tag that matches no open element on the path is not a
-							// mismatch we can recover from by marking ancestors unclosed — it is
-							// simply an unexpected closing tag (e.g. `<div></span>`).
-							const normalized_closing_name = closingTagName ?? '';
-							const matches_open_element = this.#path.some((node) => {
-								const elem = /** @type {AST.NativeTSRXTemplateNode} */ (node);
-								if (!this.#isNativeTemplateNode(elem)) return false;
-								const elemName =
-									elem.type === 'JSXFragment'
-										? ''
-										: elem.openingElement?.name
-											? this.getElementName(elem.openingElement.name)
-											: null;
-								return elemName === normalized_closing_name;
-							});
-							if (!matches_open_element && this.#collect) {
-								this.raise(closingElement.start, TSRX_ERRORS.UNEXPECTED_CLOSING_TAG);
-							}
-							// this will throw if not collecting errors
-							this.#report_broken_markup_error(
-								closingElement.start,
-								TSRX_ERRORS.MISMATCHED_CLOSING_TAG(String(openingTagName), String(closingTagName)),
-							);
-							// Loop through all unclosed elements on the stack
-							while (this.#path.length > 0) {
-								const elem = /** @type {AST.NativeTSRXTemplateNode} */ (
-									this.#path[this.#path.length - 1]
-								);
-
-								// Stop at non-template boundaries.
-								if (!this.#isNativeTemplateNode(elem)) {
-									break;
-								}
-
-								const elemName =
-									elem.type === 'JSXFragment'
-										? ''
-										: elem.openingElement?.name
-											? this.getElementName(elem.openingElement.name)
-											: null;
-
-								// Found matching opening tag
-								if (elemName === closingTagName) {
-									break;
-								}
-
-								// Mark as unclosed and adjust location
-								elem.unclosed = true;
-								/** @type {AST.NodeWithLocation} */ (elem).loc.end = {
-									.../** @type {AST.SourceLocation} */ (
-										elem.type === 'JSXFragment' ? elem.openingFragment.loc : elem.openingElement.loc
-									).end,
-								};
-								elem.end =
-									elem.type === 'JSXFragment' ? elem.openingFragment.end : elem.openingElement.end;
-
-								this.#path.pop(); // Remove from stack
-							}
-						}
-
-						const elementToClose = /** @type {AST.NativeTSRXTemplateNode} */ (
-							this.#path[this.#path.length - 1]
-						);
-						if (this.#isNativeTemplateNode(elementToClose)) {
-							const elementToCloseName =
-								elementToClose.type === 'JSXFragment'
-									? ''
-									: elementToClose.openingElement?.name
-										? this.getElementName(elementToClose.openingElement.name)
-										: null;
-							if (elementToCloseName === closingTagName) {
-								if (elementToClose.type === 'JSXFragment') {
-									elementToClose.closingFragment = this.#toClosingFragment(closingElement);
-								} else {
-									elementToClose.closingElement = closingElement;
-								}
-							}
-						}
-
-						this.#path.pop();
 						return;
-					}
-					const node = this.parseElement();
-					if (node !== null) {
-						body.push(node);
-					}
-				} else if (this.type === tt.eof) {
-					return;
-				} else {
-					const start = this.start;
-					const type = this.type;
-					const end = this.#parseTemplateRawText(body);
-					// Text that reads nothing and leaves the same token would be read
-					// again until the stack runs out.
-					if (end === start && this.start === start && this.type === type) {
-						this.unexpected(start);
+					} else if (this.type === tstt.jsxTagStart) {
+						const startPos = this.start;
+						const startLoc = this.startLoc;
+						this.next();
+						if (this.value === '/' || this.type === tt.slash) {
+							// Consume '/'
+							this.next();
+
+							const closingNode = this.startNodeAt(startPos, startLoc);
+							// Whether the element's parent is a template node, so that the token
+							// after the `>` is the parent's text. In a `{ … }` container only a
+							// parent opened in the container counts: above it, the container's
+							// expression goes on. Nor does a parent opened before the code the
+							// element is in (see `#elementStart`), whose text that code isn't.
+							const parent_template_node = this.#path
+								.slice(this.#containerPathBaseline(), -1)
+								.findLast((node) => this.#isNativeTemplateNode(node));
+							const inside_parent_template =
+								!!parent_template_node &&
+								this.#templateScriptParsingDepth <=
+									this.#elementStart(parent_template_node).scriptDepth;
+							this.#closingNativeTemplateNode = true;
+							/** @type {ReturnType<Parse.Parser['jsx_parseElementName']>} */
+							let closingName;
+							try {
+								closingName = this.jsx_parseElementName();
+							} finally {
+								this.#closingNativeTemplateNode = false;
+							}
+							if (closingName) {
+								/** @type {ESTreeJSX.TSRXJSXClosingElement} */ (closingNode).name = closingName;
+							}
+							const current = /** @type {ESTreeJSX.JSXFragment | ESTreeJSX.JSXElement} */ (
+								this.#path[this.#path.length - 1]
+							);
+							const current_name = this.#isNativeTemplateNode(current)
+								? current.type === 'JSXFragment'
+									? ''
+									: current.openingElement?.name
+										? this.getElementName(current.openingElement.name)
+										: null
+								: null;
+							const closing_name_str = !closingName
+								? ''
+								: closingName.type === 'JSXNamespacedName'
+									? closingName.namespace.name + ':' + closingName.name.name
+									: this.getElementName(closingName);
+							if (!(inside_parent_template && current_name === closing_name_str)) {
+								this.#closingNativeTemplateNode = true;
+							}
+							// `>` reads the token after the element. When the element closes and no
+							// template encloses it, or in its host's opening tag as an attribute
+							// value without braces, that token is code: the element leaves `#path`
+							// (`<b>x</b> / 2` divides; it is popped for good below), and the
+							// tokenizer context returns to where the element began, as after a
+							// balanced closing tag, dropping residue its body left (a control-flow
+							// block's contexts). parseElement keeps the contexts the token pushes.
+							const closes_outside_template =
+								this.#isNativeTemplateNode(current) &&
+								current_name === closing_name_str &&
+								(!this.#isNativeTemplateNode(this.#path.at(-2)) ||
+									this.#tagValueElements.has(current));
+							if (closes_outside_template) {
+								this.#path.pop();
+								const context_depth = this.#elementContextDepths.get(current);
+								if (context_depth !== undefined && this.context.length > context_depth) {
+									this.#truncateContext(context_depth);
+									this.exprAllowed = false;
+								}
+							}
+							try {
+								this.expect(tstt.jsxTagEnd);
+							} finally {
+								if (closes_outside_template) {
+									this.#path.push(current);
+								}
+							}
+							this.#closingNativeTemplateNode = false;
+							const closingElement =
+								/** @type {ESTreeJSX.TSRXJSXClosingElement & AST.NodeWithLocation} */ (
+									this.finishNode(
+										closingNode,
+										closingName ? 'JSXClosingElement' : 'JSXClosingFragment',
+									)
+								);
+							if (this.#isDynamicJSXElementName(closingElement.name)) {
+								closingElement.isDynamic = true;
+							}
+
+							// Validate that the closing tag matches the opening tag
+							const currentElement = /** @type {AST.NativeTSRXTemplateNode} */ (
+								this.#path[this.#path.length - 1]
+							);
+							if (!this.#isNativeTemplateNode(currentElement)) {
+								this.raise(this.start, TSRX_ERRORS.UNEXPECTED_CLOSING_TAG);
+							}
+
+							/** @type {string | null} */
+							let openingTagName;
+							/** @type {string | null} */
+							let closingTagName;
+
+							if (currentElement.type === 'JSXFragment') {
+								openingTagName = '';
+								closingTagName = !closingElement.name
+									? ''
+									: closingElement.name.type === 'JSXNamespacedName'
+										? closingElement.name.namespace.name + ':' + closingElement.name.name.name
+										: this.getElementName(closingElement.name);
+							} else {
+								openingTagName = currentElement.openingElement?.name
+									? this.getElementName(currentElement.openingElement.name)
+									: null;
+								closingTagName = closingElement.name
+									? closingElement.name?.type === 'JSXNamespacedName'
+										? closingElement.name.namespace.name + ':' + closingElement.name.name.name
+										: this.getElementName(closingElement.name)
+									: null;
+							}
+
+							if (openingTagName !== closingTagName) {
+								// A closing tag that matches no open element on the path is not a
+								// mismatch we can recover from by marking ancestors unclosed — it is
+								// simply an unexpected closing tag (e.g. `<div></span>`).
+								const normalized_closing_name = closingTagName ?? '';
+								const matches_open_element = this.#path.some((node) => {
+									const elem = /** @type {AST.NativeTSRXTemplateNode} */ (node);
+									if (!this.#isNativeTemplateNode(elem)) return false;
+									const elemName =
+										elem.type === 'JSXFragment'
+											? ''
+											: elem.openingElement?.name
+												? this.getElementName(elem.openingElement.name)
+												: null;
+									return elemName === normalized_closing_name;
+								});
+								if (!matches_open_element && this.#collect) {
+									this.raise(closingElement.start, TSRX_ERRORS.UNEXPECTED_CLOSING_TAG);
+								}
+								// this will throw if not collecting errors
+								this.#report_broken_markup_error(
+									closingElement.start,
+									TSRX_ERRORS.MISMATCHED_CLOSING_TAG(
+										String(openingTagName),
+										String(closingTagName),
+									),
+								);
+								// Loop through all unclosed elements on the stack
+								while (this.#path.length > 0) {
+									const elem = /** @type {AST.NativeTSRXTemplateNode} */ (
+										this.#path[this.#path.length - 1]
+									);
+
+									// Stop at non-template boundaries.
+									if (!this.#isNativeTemplateNode(elem)) {
+										break;
+									}
+
+									const elemName =
+										elem.type === 'JSXFragment'
+											? ''
+											: elem.openingElement?.name
+												? this.getElementName(elem.openingElement.name)
+												: null;
+
+									// Found matching opening tag
+									if (elemName === closingTagName) {
+										break;
+									}
+
+									// Mark as unclosed and adjust location
+									elem.unclosed = true;
+									/** @type {AST.NodeWithLocation} */ (elem).loc.end = {
+										.../** @type {AST.SourceLocation} */ (
+											elem.type === 'JSXFragment'
+												? elem.openingFragment.loc
+												: elem.openingElement.loc
+										).end,
+									};
+									elem.end =
+										elem.type === 'JSXFragment'
+											? elem.openingFragment.end
+											: elem.openingElement.end;
+
+									this.#path.pop(); // Remove from stack
+								}
+							}
+
+							const elementToClose = /** @type {AST.NativeTSRXTemplateNode} */ (
+								this.#path[this.#path.length - 1]
+							);
+							if (this.#isNativeTemplateNode(elementToClose)) {
+								const elementToCloseName =
+									elementToClose.type === 'JSXFragment'
+										? ''
+										: elementToClose.openingElement?.name
+											? this.getElementName(elementToClose.openingElement.name)
+											: null;
+								if (elementToCloseName === closingTagName) {
+									if (elementToClose.type === 'JSXFragment') {
+										elementToClose.closingFragment = this.#toClosingFragment(closingElement);
+									} else {
+										elementToClose.closingElement = closingElement;
+									}
+								}
+							}
+
+							this.#path.pop();
+							return;
+						}
+						const node = this.parseElement();
+						if (node !== null) {
+							body.push(node);
+						}
+					} else if (this.type === tt.eof) {
+						return;
+					} else {
+						const start = this.start;
+						const type = this.type;
+						const end = this.#parseTemplateRawText(body);
+						// Text that reads nothing and leaves the same token would be read
+						// again until the stack runs out.
+						if (end === start && this.start === start && this.type === type) {
+							this.unexpected(start);
+						}
 					}
 				}
-
-				this.parseTemplateBody(body);
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#110): remove once a release includes the fix

@@ -4825,6 +4825,51 @@ foo();`;
 		expect(directive.empty).toBeNull();
 	});
 
+	it('parses an element with 20,000 children without running out of stack (#1188)', () => {
+		const count = 20_000;
+		// Elements, text, expressions, and code blocks: all but the text are a
+		// child each
+		const children = Array.from(
+			{ length: count },
+			(_, i) => [`<i>${i}</i>`, `t${i}`, `{${i}}`, `@{ const v = ${i}; <b>{v}</b> }`][i % 4],
+		).join('\n');
+		/** @type {Array<[label: string, source: string]>} */
+		const cases = [
+			['a returned element', `export function App() {\n\treturn <div>\n${children}\n</div>;\n}`],
+			['an element in a code block', `export function App() @{\n\t<div>\n${children}\n</div>\n}`],
+			[
+				'a fragment in a directive body',
+				`export function App() @{\n\t<main>@if (a) {\n<>\n${children}\n</>\n}</main>\n}`,
+			],
+			[
+				'an element in a child container',
+				`export function App() @{\n\t<main>{<div>\n${children}\n</div>}</main>\n}`,
+			],
+		];
+		for (const [label, source] of cases) {
+			for (const options of [
+				undefined,
+				{ collect: true, errors: [], comments: [] },
+				{ loose: true, errors: [], comments: [] },
+			]) {
+				const parent = /** @type {any} */ (
+					find_first(
+						parseModule(source, 'App.tsrx', options),
+						(node) =>
+							(node.type === 'JSXElement' || node.type === 'JSXFragment') &&
+							/** @type {any} */ (node).children.length > count,
+					)
+				);
+				expect(
+					parent?.children.filter((/** @type {AST.Node} */ child) => child.type !== 'JSXText')
+						.length,
+					label,
+				).toBe((count / 4) * 3);
+				expect(options?.errors ?? [], label).toEqual([]);
+			}
+		}
+	});
+
 	it('ends an element body of if, else, a loop or a label at its `;` (#924)', () => {
 		/** @type {Array<[source: string, types: string[]]>} */
 		const cases = [
