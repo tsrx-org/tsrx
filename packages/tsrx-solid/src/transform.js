@@ -137,12 +137,11 @@ const solid_platform = {
 				end: await_start + 'await'.length,
 			});
 			error(
-				'`await` is not allowed inside Solid components.',
+				TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED(ctx.platform.name),
 				ctx?.filename ?? null,
 				adjusted_node,
 				ctx?.errors,
 				ctx?.comments,
-				DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED,
 			);
 		},
 		controlFlow: {

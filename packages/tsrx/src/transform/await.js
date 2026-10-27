@@ -46,13 +46,7 @@ export function find_first_top_level_await(node, inside_nested_function) {
 		return null;
 	}
 
-	if (
-		node.type === 'AwaitExpression' ||
-		(node.type === 'ForOfStatement' && node.await === true) ||
-		(node.type === 'JSXForExpression' &&
-			node.statementType === 'ForOfStatement' &&
-			node.await === true)
-	) {
+	if (is_await_node(node)) {
 		return node;
 	}
 
@@ -62,4 +56,56 @@ export function find_first_top_level_await(node, inside_nested_function) {
 	}
 
 	return null;
+}
+
+/**
+ * Every `await` in `node` outside nested functions, including one inside
+ * another, in the order the walk meets them.
+ *
+ * @param {AST.Node | AST.Node[] | null | undefined} node
+ * @param {AST.TSRXAwaitNode[]} [awaits]
+ * @returns {AST.TSRXAwaitNode[]}
+ */
+export function find_top_level_awaits(node, awaits = []) {
+	if (!node) {
+		return awaits;
+	}
+
+	if (Array.isArray(node)) {
+		for (const child of node) find_top_level_awaits(child, awaits);
+		return awaits;
+	}
+
+	if (
+		node.type === 'FunctionDeclaration' ||
+		node.type === 'FunctionExpression' ||
+		node.type === 'ArrowFunctionExpression'
+	) {
+		return awaits;
+	}
+
+	if (is_await_node(node)) {
+		awaits.push(node);
+	}
+
+	for (const child of child_nodes(node)) find_top_level_awaits(child, awaits);
+	return awaits;
+}
+
+/**
+ * An `await using` declaration awaits its resources' disposal, so it counts as
+ * an `await` even though it holds no `AwaitExpression`.
+ *
+ * @param {AST.Node} node
+ * @returns {node is AST.TSRXAwaitNode}
+ */
+function is_await_node(node) {
+	return (
+		node.type === 'AwaitExpression' ||
+		(node.type === 'VariableDeclaration' && node.kind === 'await using') ||
+		(node.type === 'ForOfStatement' && node.await === true) ||
+		(node.type === 'JSXForExpression' &&
+			node.statementType === 'ForOfStatement' &&
+			node.await === true)
+	);
 }

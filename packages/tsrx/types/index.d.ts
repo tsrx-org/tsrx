@@ -597,7 +597,12 @@ declare module 'estree' {
 		| JSXTemplateStatement;
 
 	/** An AST node that represents component-level `await` during validation. */
-	type TSRXAwaitNode = AST.AwaitExpression | AST.ForOfStatement | JSXForOfExpression;
+	type TSRXAwaitNode =
+		| AST.AwaitExpression
+		| AST.ForOfStatement
+		| JSXForOfExpression
+		/** An `await using` declaration. */
+		| AST.VariableDeclaration;
 
 	/** Any node that can be the rendered output of a TSRX template or statement container. */
 	type TSRXRenderOutput =

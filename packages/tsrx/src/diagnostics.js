@@ -387,6 +387,15 @@ export const TSRX_ERRORS = {
 		(target) =>
 			`${target} TSRX does not support \`await\` here: this part of the template renders through a callback the target calls, so its result cannot be awaited. Await the value in the component body, or move it into an async child component.`,
 	),
+	/** `target` is the target's name. For a target whose components can't be async. */
+	TARGET_COMPONENT_AWAIT_UNSUPPORTED: tsrx_with_values(
+		'TARGET_AWAIT_UNSUPPORTED',
+		(target) => `${target} TSRX components do not support \`await\`.`,
+	),
+	HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED: tsrx(
+		'TARGET_AWAIT_UNSUPPORTED',
+		'Hono JSX DOM does not support top-level `await` in components. Use `use(promise)` with `<Suspense>` instead.',
+	),
 	/** `target` is the target's name. */
 	TARGET_YIELD_UNSUPPORTED: tsrx_with_values(
 		'TARGET_YIELD_UNSUPPORTED',

@@ -1,4 +1,4 @@
-import { TS_ERRORS } from '@tsrx/core';
+import { TS_ERRORS, TSRX_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedClassFunctionComponentTests,
@@ -935,7 +935,7 @@ describe('@tsrx/vue basic', () => {
 					}`,
 				'App.tsrx',
 			),
-		).toThrow(/`await` is not yet supported in Vue TSRX components\./);
+		).toThrow(expect.objectContaining(TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED('Vue')));
 	});
 
 	it('allows await in nested async functions inside component bodies', () => {
