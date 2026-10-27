@@ -362,6 +362,52 @@ function merge_ref_list(refs) {
 }
 
 /**
+ * @typedef {{
+ *   next: WeakMap<object, MergedRefEntry> | undefined,
+ *   ref: RefValue<any> | undefined,
+ * }} MergedRefEntry
+ */
+
+/**
+ * `merge_shared_ref_list` callbacks by their refs, one level per ref.
+ * @type {MergedRefEntry}
+ */
+const shared_merged_refs = { next: undefined, ref: undefined };
+
+/**
+ * Merge a ref list into one ref, as `merge_ref_list` does, except that a single
+ * ref comes back as itself and the same refs give back the same callback.
+ * Every caller given the same refs shares the callback, so only a runtime that
+ * keeps no per-element state on a ref function can apply it (Solid ignores what
+ * a ref returns).
+ *
+ * @template [T=Element]
+ * @param {RefValue<T>[]} refs
+ * @returns {RefValue<T>}
+ */
+function merge_shared_ref_list(refs) {
+	// Only a function or an object is a ref; `ref: cond && cb` may be `false`.
+	const live = refs.filter(
+		(ref) => typeof ref === 'function' || (typeof ref === 'object' && ref !== null),
+	);
+	if (live.length < 2) {
+		return live[0];
+	}
+
+	let entry = shared_merged_refs;
+	for (const ref of live) {
+		const next = (entry.next ??= new WeakMap());
+		let child = next.get(/** @type {object} */ (ref));
+		if (child === undefined) {
+			child = { next: undefined, ref: undefined };
+			next.set(/** @type {object} */ (ref), child);
+		}
+		entry = child;
+	}
+	return (entry.ref ??= merge_ref_list(live));
+}
+
+/**
  * Collect ref cleanups as flat `[kind, payload]` pairs, matching
  * `apply_ref_value`'s observable behavior for every ref shape: kind 0 is a
  * cleanup a callback ref returned, kind 1 a callback ref to re-invoke with
@@ -413,6 +459,31 @@ function collect_ref_cleanups(ref_value, node, cleanups) {
  * @returns {SpreadProps | SpreadFalsy}
  */
 export function normalize_spread_props(props, ...outer_refs) {
+	return normalize_spread(props, outer_refs, merge_ref_list);
+}
+
+/**
+ * `normalize_spread_props` that merges a bag's refs with
+ * `merge_shared_ref_list`, so a new bag carrying the same refs gets the same
+ * `ref`. Solid's `spread_ref_bags` compares each bag's `ref` with the one it
+ * applied last.
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {...RefValue<Element>} outer_refs
+ * @returns {SpreadProps | SpreadFalsy}
+ */
+export function normalize_spread_props_sharing_refs(props, ...outer_refs) {
+	return normalize_spread(props, outer_refs, merge_shared_ref_list);
+}
+
+/**
+ * @param {object | SpreadFalsy} props
+ * @param {Array<RefValue<Element>>} outer_refs a rest array owned by the caller
+ * @param {(refs: RefValue<Element>[]) => RefValue<Element>} merge merges an
+ *   owned list of the bag's refs into one
+ * @returns {SpreadProps | SpreadFalsy}
+ */
+function normalize_spread(props, outer_refs, merge) {
 	// A non-object carries no refs to collect. Returning it unchanged leaves the
 	// spread to treat it exactly as a native JSX spread would.
 	if (props === null || (typeof props !== 'object' && typeof props !== 'function')) {
@@ -430,6 +501,18 @@ export function normalize_spread_props(props, ...outer_refs) {
 	for (let i = 0; i < keys.length; i++) {
 		const key = keys[i];
 		if (!property_is_enumerable.call(source, key)) {
+			continue;
+		}
+
+		// Solid's `children` getter creates the children each time it is read,
+		// and children are never a ref, so the copy reads them through `source`
+		// only when the JSX runtime does.
+		if (key === 'children') {
+			Object.defineProperty(next, key, {
+				get: () => source.children,
+				enumerable: true,
+				configurable: true,
+			});
 			continue;
 		}
 
@@ -466,18 +549,18 @@ export function normalize_spread_props(props, ...outer_refs) {
 
 	let merged_ref;
 	if (refs === undefined) {
-		// `outer_refs` is a fresh rest array owned by this call; unshifting
+		// `outer_refs` is a fresh rest array owned by the caller; unshifting
 		// `existing_ref` into place avoids a second concatenated array.
 		if (existing_ref != null) {
 			outer_refs.unshift(existing_ref);
 		}
-		merged_ref = merge_ref_list(outer_refs);
+		merged_ref = merge(outer_refs);
 	} else if (existing_ref == null && outer_refs.length === 0) {
 		// A single collected ref survives unchanged without merge machinery.
 		// `refs` holds only `is_ref_prop`-verified non-null entries, so a lone
 		// entry can be returned directly instead of routing through
-		// `merge_ref_list`'s nullish filtering.
-		merged_ref = refs.length === 1 ? refs[0] : merge_ref_list(refs);
+		// `merge`'s filtering.
+		merged_ref = refs.length === 1 ? refs[0] : merge(refs);
 	} else {
 		if (existing_ref != null) {
 			refs.unshift(existing_ref);
@@ -485,7 +568,7 @@ export function normalize_spread_props(props, ...outer_refs) {
 		if (outer_refs.length !== 0) {
 			refs.push(...outer_refs);
 		}
-		merged_ref = merge_ref_list(refs);
+		merged_ref = merge(refs);
 	}
 	if (merged_ref !== undefined) {
 		next.ref = merged_ref;

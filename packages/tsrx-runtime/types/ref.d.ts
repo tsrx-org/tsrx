@@ -90,6 +90,11 @@ export function normalize_spread_props<T extends object | SpreadFalsy>(
 	props: T,
 	...outer_refs: Array<RefValue<Element>>
 ): T | SpreadProps;
+// Returns the same merged `ref` for a bag carrying the same refs.
+export function normalize_spread_props_sharing_refs<T extends object | SpreadFalsy>(
+	props: T,
+	...outer_refs: Array<RefValue<Element>>
+): T | SpreadProps;
 /**
  * A props bag from `normalize_spread_props_for_ref_attr`: its refs merged into
  * a readable `ref` that the compiler hands to the element's `ref` attribute.
