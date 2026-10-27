@@ -18,6 +18,7 @@
 	TokenClass,
 } from '../../types/index';
 @import { CodeMapping as VolarCodeMapping } from '@volar/language-core';
+@import { Parse } from '../../types/parse';
  */
 
 import { walk } from 'zimmerframe';
@@ -41,6 +42,7 @@ import {
 } from '../comment-utils.js';
 import { has_location, is_organized_import } from '../utils/ast.js';
 import { regex_whitespaces_strict } from '../utils/patterns.js';
+import { get_source_tokens } from '../parse/source-tokens.js';
 import { regex_jsx_text_escaped } from './jsx/helpers.js';
 
 const RETURN_KEYWORD = 'return';
@@ -442,6 +444,7 @@ export function convert_source_map_to_mappings(
 
 	/** @type {MappingToken[]} */
 	const tokens = [];
+	const source_tokens = get_source_tokens(ast_from_source, source);
 	/** @type {CssSourceRegion[]} */
 	const css_regions = [];
 	/** @type {CssElementInfo} */
@@ -612,25 +615,18 @@ export function convert_source_map_to_mappings(
 
 	/**
 	 * The generated offset after the `;` that ends an import. The printer records
-	 * the import's end after the `;`. A printer that records the position of the
-	 * last source character before it writes the `;` is supported too. Without a
-	 * `;` in the source, the end of the module string also maps to the generated
-	 * position before the `;`.
+	 * the import's end after the `;`. Without a `;` in the source, the end of the
+	 * module string maps to the generated position before the `;`.
 	 * @param {(AST.ImportDeclaration | AST.TSRXImportDeclaration) & AST.NodeWithLocation} node
 	 * @param {number} generated_start
 	 * @returns {number | undefined}
 	 */
 	function generated_import_end(node, generated_start) {
 		const { line, column } = node.loc.end;
-		for (const [key, text] of [
-			[`${line}:${column}`, ''],
-			[`${line}:${column - 1}`, ';'],
-		]) {
-			for (const generated of src_to_gen_map.get(key) ?? []) {
-				const end = loc_to_offset(generated.line, generated.column, gen_line_offsets);
-				if (end <= generated_start || !generated_code.startsWith(text, end)) continue;
-				return generated_code[end] === ';' ? end + 1 : end;
-			}
+		for (const generated of src_to_gen_map.get(`${line}:${column}`) ?? []) {
+			const end = loc_to_offset(generated.line, generated.column, gen_line_offsets);
+			if (end <= generated_start) continue;
+			return generated_code[end] === ';' ? end + 1 : end;
 		}
 	}
 
@@ -688,34 +684,46 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
-	 * Needed for a mapping that includes the computed brackets for diagnostics
+	 * Needed for a mapping that includes the computed brackets for diagnostics.
 	 * @param {AST.MethodDefinition | AST.PropertyDefinition | AST.Property} node
-	 * @param {CodeMapping[]} mappings
 	 * @returns {void}
 	 */
-	function set_bracket_computed_mapping(node, mappings) {
-		if (has_location(node.key)) {
-			const key = node.key;
-			const start_key = `${key.loc.start.line}:${key.loc.start.column - 1}`;
-			const end_key = `${key.loc.end.line}:${key.loc.end.column + 1}`;
-			if (!src_to_gen_map.get(start_key)?.length || !src_to_gen_map.get(end_key)?.length) {
-				return;
-			}
-			mappings.push(
-				get_mapping_from_node(
-					/** @type {AST.NodeWithLocation} */ ({
-						start: key.start - 1,
-						end: key.end + 1,
-						loc: {
-							start: { line: key.loc.start.line, column: key.loc.start.column - 1 },
-							end: { line: key.loc.end.line, column: key.loc.end.column + 1 },
-						},
-					}),
-					src_to_gen_map,
-					gen_line_offsets,
-					mapping_data_verify_only,
-				),
-			);
+	function set_bracket_computed_mapping(node) {
+		if (!has_location(node.key)) return;
+		const open = find_source_token(source_tokens, '[', node.key.start, 'before');
+		const close = find_source_token(source_tokens, ']', node.key.end, 'after');
+		if (!open?.loc || !close?.loc) return;
+		push_verify_only_span_mapping({
+			start: open.start,
+			end: close.end,
+			loc: { start: open.loc.start, end: close.loc.end },
+		});
+	}
+
+	/**
+	 * A verify-only mapping over a node's whole span, for a diagnostic
+	 * TypeScript reports on all of it.
+	 * @param {AST.Node | AST.NodeWithLocation | null | undefined} node
+	 * @returns {void}
+	 */
+	function push_verify_only_span_mapping(node) {
+		if (!has_location(node) || !has_source_map_boundaries(node, src_to_gen_map)) return;
+		mappings.push(
+			get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
+		);
+	}
+
+	/**
+	 * Map the first `text` token at or after `from` that lies inside `node`.
+	 * @param {string} text
+	 * @param {number} from
+	 * @param {AST.NodeWithLocation} node
+	 * @returns {void}
+	 */
+	function push_source_keyword_token(text, from, node) {
+		const keyword = find_source_token(source_tokens, text, from, 'after');
+		if (keyword?.loc && keyword.start < node.end) {
+			tokens.push({ source: text, generated: text, loc: keyword.loc, metadata: {} });
 		}
 	}
 
@@ -790,13 +798,51 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * A literal that starts a sequence expression shares its source start with
+	 * the generated `(` before it, as `0` does in `(0, plain)`, so map from where
+	 * the literal's own text is printed when the printer kept it as written.
 	 * @param {AST.Literal} node
 	 */
 	function handle_literal(node) {
 		if (has_location(node)) {
 			const mapping = get_mapping_from_node(node, src_to_gen_map, gen_line_offsets);
+			const raw = source.slice(node.start, node.end);
+			const start = generated_offset_for_text(node.loc.start, raw);
+			if (start !== undefined && start !== mapping.generatedOffsets[0]) {
+				mapping.generatedOffsets = [start];
+				mapping.generatedLengths = [raw.length];
+			}
 			mappings.push(mapping);
 		}
+	}
+
+	/**
+	 * A lowered dynamic tag, `<{expr} … />`, prints as `<TsrxDynamic is={expr} … />`.
+	 * TypeScript reports a component's missing or unknown props (TS2769) on
+	 * the generated name, which has no source of its own, so it maps to the
+	 * authored `{expr}` (the `is` attribute's location) for diagnostics.
+	 * @param {ESTreeJSX.JSXOpeningElement | ESTreeJSX.TSRXJSXOpeningElement} opening
+	 * @returns {void}
+	 */
+	function add_dynamic_tag_name_mapping(opening) {
+		const name = opening.name;
+		if (!has_location(opening) || name.type !== 'JSXIdentifier' || has_location(name)) return;
+		const is = opening.attributes.find(
+			(attribute) =>
+				attribute.type === 'JSXAttribute' &&
+				attribute.name.type === 'JSXIdentifier' &&
+				attribute.name.name === 'is',
+		);
+		if (!has_location(is)) return;
+		const generated = generated_offset_for_text(opening.loc.start, `<${name.name}`);
+		if (generated === undefined) return;
+		mappings.push({
+			sourceOffsets: [is.start],
+			lengths: [is.end - is.start],
+			generatedOffsets: [generated + 1],
+			generatedLengths: [name.name.length],
+			data: { ...mapping_data_verify_only, customData: {} },
+		});
 	}
 
 	/**
@@ -829,38 +875,23 @@ export function convert_source_map_to_mappings(
 	 * TypeScript reports private-name diagnostics (e.g. TS2322 on an
 	 * incompatible initializer, TS2564 on a missing one) on the whole `#name`.
 	 * Extra sources (a dynamic tag's closing `</{this.#Tag}>`) share that range.
-	 *
-	 * Workaround: esrap (2.3.10 and main) writes the `#` without a location and
-	 * anchors the node's source start on the name after it, so the source `#`
-	 * maps one character late. Once esrap maps the `#` itself
-	 * (sveltejs/esrap#198), replace this with an ordinary `#name` token in the
-	 * Identifier branch: https://github.com/tsrx-org/tsrx/issues/208
 	 * @param {AST.PrivateIdentifier} node
 	 * @returns {void}
 	 */
-	function add_private_identifier_mappings(node) {
+	function add_private_identifier_tokens(node) {
 		if (!has_location(node)) return;
 
 		const text = `#${node.name}`;
-		let generated_start = generated_offset_for_text(node.loc.start, text);
-		// esrap's anchor sits after the `#`; step back over it (#208).
-		if (generated_start === undefined) {
-			const name_start = generated_offset_for_text(node.loc.start, node.name);
-			if (name_start !== undefined && generated_code[name_start - 1] === '#') {
-				generated_start = name_start - 1;
-			}
-		}
-		if (generated_start === undefined) return;
-
-		const source_nodes = [node, ...(node.metadata?.extra_source_mappings ?? [])];
-		for (const source_node of source_nodes) {
+		tokens.push({ source: text, generated: text, loc: node.loc, metadata: {} });
+		for (const source_node of node.metadata?.extra_source_mappings ?? []) {
 			if (!has_location(source_node)) continue;
-			mappings.push({
-				sourceOffsets: [source_node.start],
-				lengths: [source_node.end - source_node.start],
-				generatedOffsets: [generated_start],
-				generatedLengths: [text.length],
-				data: { ...mapping_data, customData: {} },
+			tokens.push({
+				source: text,
+				generated: text,
+				loc: source_node.loc,
+				generatedLoc: node.loc,
+				metadata: {},
+				sourceLength: source_node.end - source_node.start,
 			});
 		}
 	}
@@ -1232,6 +1263,10 @@ export function convert_source_map_to_mappings(
 					}
 				}
 
+				if (node.metadata?.dynamicElement) {
+					add_dynamic_tag_name_mapping(opening);
+				}
+
 				visit(opening);
 
 				// 2. Visit children in order
@@ -1393,6 +1428,12 @@ export function convert_source_map_to_mappings(
 
 				if (node.returnType) {
 					visit(node.returnType);
+					// TypeScript reports a missing return (TS2355) on the whole return
+					// type. A keyword type is already mapped as a token.
+					const type = node.returnType.typeAnnotation;
+					if (!type.type.endsWith('Keyword') && type.type !== 'TSThisType') {
+						push_verify_only_span_mapping(type);
+					}
 				}
 
 				if (node.body) {
@@ -1736,7 +1777,7 @@ export function convert_source_map_to_mappings(
 					}
 				} else {
 					if (node.computed) {
-						set_bracket_computed_mapping(node, mappings);
+						set_bracket_computed_mapping(node);
 					}
 
 					if (node.key.type === 'Literal') {
@@ -1880,16 +1921,8 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'ClassDeclaration' || node.type === 'ClassExpression') {
-				if (node.loc) {
-					tokens.push({
-						source: 'class',
-						generated: 'class',
-						loc: {
-							start: { line: node.loc.start.line, column: node.loc.start.column },
-							end: { line: node.loc.start.line, column: node.loc.start.column + 'class'.length },
-						},
-						metadata: {},
-					});
+				if (has_location(node)) {
+					push_source_keyword_token('class', node.decorators?.at(-1)?.end ?? node.start, node);
 				}
 
 				// Visit in source order: decorators, id, typeParameters, superClass,
@@ -1912,20 +1945,13 @@ export function convert_source_map_to_mappings(
 					// not a constructor, TS2509, TS2510) on the whole superclass
 					// expression, and Volar drops a diagnostic whose end it cannot map.
 					// Identifiers, member expressions, calls and parenthesized
-					// expressions map their whole span, but an array literal doesn't.
+					// expressions map their whole span, but an array literal and a
+					// non-null assertion (`maybe!`) don't.
 					if (
-						node.superClass.type === 'ArrayExpression' &&
-						has_location(node.superClass) &&
-						has_source_map_boundaries(node.superClass, src_to_gen_map)
+						node.superClass.type === 'ArrayExpression' ||
+						node.superClass.type === 'TSNonNullExpression'
 					) {
-						mappings.push(
-							get_mapping_from_node(
-								node.superClass,
-								src_to_gen_map,
-								gen_line_offsets,
-								mapping_data_verify_only,
-							),
-						);
+						push_verify_only_span_mapping(node.superClass);
 					}
 				}
 				if (node.superTypeParameters) {
@@ -1956,7 +1982,7 @@ export function convert_source_map_to_mappings(
 				}
 
 				if (node.computed) {
-					set_bracket_computed_mapping(node, mappings);
+					set_bracket_computed_mapping(node);
 				}
 
 				if (node.key.type === 'Literal') {
@@ -2109,7 +2135,7 @@ export function convert_source_map_to_mappings(
 				// Leaf node, no children to visit
 				return;
 			} else if (node.type === 'PrivateIdentifier') {
-				add_private_identifier_mappings(node);
+				add_private_identifier_tokens(node);
 				return; // Leaf node, don't traverse further
 			} else if (node.type === 'PropertyDefinition') {
 				// Visit in source order: decorators, key, typeAnnotation, value
@@ -2119,7 +2145,7 @@ export function convert_source_map_to_mappings(
 					}
 				}
 				if (node.computed) {
-					set_bracket_computed_mapping(node, mappings);
+					set_bracket_computed_mapping(node);
 				}
 				if (node.key) {
 					visit(node.key);
@@ -2171,6 +2197,14 @@ export function convert_source_map_to_mappings(
 				// Type assertion: value as Type
 				if (node.expression) {
 					visit(node.expression);
+				}
+				// TypeScript reports a failed check (TS1360) on the `satisfies` keyword.
+				if (
+					node.type === 'TSSatisfiesExpression' &&
+					has_location(node) &&
+					has_location(node.expression)
+				) {
+					push_source_keyword_token('satisfies', node.expression.end, node);
 				}
 				if (node.typeAnnotation) {
 					visit(node.typeAnnotation);
@@ -2610,13 +2644,6 @@ export function convert_source_map_to_mappings(
 				// Primitive type keywords - leaf nodes, no children. TypeScript
 				// reports on the whole keyword (e.g. TS2355 on a `number` return
 				// type), so map it like an identifier.
-				//
-				// Workaround: esrap (2.3.10 and main) records no location at the
-				// boundaries of composite types (`number[]`, `{ a: number }`,
-				// `keyof T`), so only keyword return types map. Once esrap maps
-				// every node's start and end (sveltejs/esrap#198), replace this
-				// with a verify-only mapping over the whole return type:
-				// https://github.com/tsrx-org/tsrx/issues/216
 				if (has_location(node)) {
 					const keyword = source.slice(node.start, node.end);
 					tokens.push({ source: keyword, generated: keyword, loc: node.loc, metadata: {} });
@@ -3003,6 +3030,35 @@ function has_source_map_boundaries(node, src_to_gen_map) {
 		src_to_gen_map.has(`${start.line}:${start.column}`) &&
 		src_to_gen_map.has(`${end.line}:${end.column}`)
 	);
+}
+
+/**
+ * The parser token for `text` nearest to `offset`: the last one ending at or
+ * before it (`before`), or the first one starting at or after it (`after`).
+ * Acorn keeps a keyword or punctuator in its type and leaves `value` unset for
+ * punctuators; a name, contextual keywords like `satisfies` included, carries
+ * its text in `value`. A backtracking parser can record tokens out of order,
+ * so the search compares offsets rather than trusting array order.
+ * @param {Parse.Token[] | undefined} tokens
+ * @param {string} text
+ * @param {number} offset
+ * @param {'before' | 'after'} direction
+ * @returns {Parse.Token | undefined}
+ */
+function find_source_token(tokens, text, offset, direction) {
+	/** @type {Parse.Token | undefined} */
+	let found;
+	for (const token of tokens ?? []) {
+		const token_text =
+			token.type.keyword ?? (token.type.label === 'name' ? token.value : token.type.label);
+		if (token_text !== text) continue;
+		if (direction === 'before') {
+			if (token.end <= offset && (!found || token.end > found.end)) found = token;
+		} else if (token.start >= offset && (!found || token.start < found.start)) {
+			found = token;
+		}
+	}
+	return found;
 }
 
 /**

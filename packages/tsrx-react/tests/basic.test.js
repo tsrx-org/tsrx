@@ -394,7 +394,7 @@ describe('@tsrx/react basic', () => {
 		const source_class_offset = source.indexOf('className=');
 		const source_closing_tag_offset = source.indexOf('tag}', source.indexOf('</{'));
 
-		const generated_tag_mapping = result.mappings.find((mapping) => {
+		const generated_tag_mappings = result.mappings.filter((mapping) => {
 			const generated_offset = mapping.generatedOffsets[0];
 			const generated_length = mapping.generatedLengths?.[0] ?? mapping.lengths[0];
 			return (
@@ -415,7 +415,15 @@ describe('@tsrx/react basic', () => {
 			'tag'.length,
 		);
 
-		expect(generated_tag_mapping).toBeUndefined();
+		// The generated name maps only to the authored `{tag}`, and only for
+		// diagnostics (TS2769 on a component's props), so editor features on the
+		// props never reach it.
+		expect(
+			generated_tag_mappings.map((mapping) => [
+				source.slice(mapping.sourceOffsets[0], mapping.sourceOffsets[0] + mapping.lengths[0]),
+				Boolean(mapping.data.completion || mapping.data.semantic || mapping.data.navigation),
+			]),
+		).toEqual([['{tag}', false]]);
 		expect(class_mapping).toBeDefined();
 		expect(closing_tag_mapping).toBeDefined();
 	});

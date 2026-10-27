@@ -203,6 +203,32 @@ export function App() @{
 			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
 			expect(code.slice(generated, generated + 'getTag'.length)).toBe('getTag');
 		});
+
+		it('maps the generated name of a dynamic tag to its expression', () => {
+			// TypeScript reports a component's missing or unknown props (TS2769) on
+			// the generated name of the lowered tag.
+			const source = `export function App({ C }: any) @{
+	<{C} title="x">child</{C}>
+}`;
+			const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			const tag = source.indexOf('{C}');
+			const names = mappings
+				.filter(
+					(mapping) =>
+						mapping.sourceOffsets[0] === tag &&
+						mapping.lengths[0] === '{C}'.length &&
+						mapping.data.verification,
+				)
+				.map((mapping) =>
+					code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+					),
+				);
+			expect(names).toContain('TsrxDynamic');
+		});
 	});
 
 	describe(`[${name}] platform flag virtual types`, () => {
@@ -3139,6 +3165,36 @@ break"}</p>
 			);
 
 			expect(code).toContain('export function getItems<Item>(props: Props<Item>)');
+		});
+
+		it('keeps a generic arrow with one type parameter from reading as a JSX tag', () => {
+			const { code } = compile(
+				`export const first = <T>(items: T[]) => items[0];
+				export const pair = <A, B>(a: A, b: B) => [a, b];`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('export const first = <T,>(items: T[]) => items[0];');
+			expect(code).toContain('export const pair = <A, B>(a: A, b: B) => [a, b];');
+		});
+
+		it('keeps parameter decorators before parameter property modifiers', () => {
+			const { code } = compile(
+				`class Service {
+					constructor(@Inject() private readonly dep: Dep) {}
+					find(@Param() id: string) {}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('constructor(@Inject() private readonly dep: Dep) {}');
+			expect(code).toContain('find(@Param() id: string) {}');
+		});
+
+		it('keeps the type arguments of a tagged template', () => {
+			const { code } = compile('export const query = sql<Row>`select 1`;', 'App.tsrx');
+
+			expect(code).toContain('export const query = sql<Row>`select 1`;');
 		});
 
 		it('preserves optional markers in tuple members and function parameters', () => {
