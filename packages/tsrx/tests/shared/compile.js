@@ -45,6 +45,74 @@ function virtual_parse_diagnostics(code) {
 }
 
 /**
+ * The syntax tree TypeScript reads from TSX code, as nested node kinds with
+ * their names and text, leaving out parentheses and imports. Code with the
+ * same shape as its source has the same meaning.
+ *
+ * @param {string} code
+ * @returns {string}
+ */
+function tsx_shape(code) {
+	const source_file = ts.createSourceFile(
+		'shape.tsx',
+		code,
+		ts.ScriptTarget.Latest,
+		true,
+		ts.ScriptKind.TSX,
+	);
+	/**
+	 * @param {ts.Node} node
+	 * @returns {string}
+	 */
+	const shape = (node) => {
+		if (ts.isParenthesizedExpression(node)) return shape(node.expression);
+		/** @type {string[]} */
+		const children = [];
+		ts.forEachChild(node, (child) => {
+			children.push(shape(child));
+		});
+		const text = 'text' in node && typeof node.text === 'string' ? ` ${node.text}` : '';
+		return `${ts.SyntaxKind[node.kind]}${text}(${children.join(' ')})`;
+	};
+	return source_file.statements
+		.filter((statement) => !ts.isImportDeclaration(statement))
+		.map(shape)
+		.join('\n');
+}
+
+/**
+ * An element or fragment in each position where TSX needs it in parentheses.
+ * TSX reads an element only as a unary operand, not as the object of a
+ * member, call, tagged-template, `!` or type-argument suffix, a `new` callee
+ * or a superclass. And it reads a `<` right after an element as the start of
+ * another element, so an element that ends the left operand of `<` needs
+ * them too.
+ * @type {Array<[string, string]>}
+ */
+const ELEMENT_OPERAND_CASES = [
+	[
+		'a member access',
+		'export function f(x: unknown) {\n\treturn (<b>ok</b>).type === x ? 1 : 2;\n}',
+	],
+	['a fragment member access', 'export const value = (<></>).props;'],
+	['an optional member access', 'export const value = (<b />)?.props;'],
+	['an index', 'export const value = (<b />)[0];'],
+	['a call', 'export const value = (<b />)();'],
+	['an optional call', 'export const value = (<b />)?.();'],
+	['a `new` callee', 'export const value = new (<b />)();'],
+	['a tagged template', 'export const value = (<b />)`t`;'],
+	['a non-null assertion', 'export const value = (<b />)!;'],
+	['an instantiation expression', 'export const value = (<b />)<string>;'],
+	['a superclass', 'export class A extends (<div />) {}'],
+	['a class expression superclass', 'export const B = class extends (<></>) {};'],
+	['the left operand of `<`', 'export const value = (<b />) < x;'],
+	['a fragment as the left operand of `<`', 'export const value = (<></>) < x;'],
+	['the end of the left operand of `<`', 'export const value = x + (<b />) < y;'],
+	['the end of a nested left operand of `<`', 'export const value = x < y * (<b />) < z;'],
+	['the end of an exponent before `<`', 'export const value = x ** y ** (<b />) < z;'],
+];
+
+/**
  * @param {string} code
  * @param {ts.CompilerOptions} [extra_options]
  * @returns {readonly ts.Diagnostic[]}
@@ -140,6 +208,20 @@ export function App() @{
 				expect(code.slice(generatedOffsets[0], generatedOffsets[0] + length)).toBe(text);
 			}
 		});
+	});
+
+	describe(`[${name}] parentheses around an element operand in virtual code`, () => {
+		// The editor parse keeps parentheses as nodes, so the virtual code
+		// prints them as the build output does.
+		it.each(ELEMENT_OPERAND_CASES)(
+			'keeps the parentheses around an element in %s',
+			(_label, source) => {
+				const { code } = compile_to_volar_mappings(source, 'App.tsrx');
+
+				expect(virtual_parse_diagnostics(code)).toEqual([]);
+				expect(tsx_shape(code)).toBe(tsx_shape(source));
+			},
+		);
 	});
 
 	describe(`[${name}] JSX spread children in virtual code`, () => {
@@ -2478,6 +2560,90 @@ export function App() @{
 		);
 	});
 
+	describe(`[${name}] parentheses around an element operand`, () => {
+		// The output dropped the parentheses: TypeScript read
+		// `return <b>ok</b>.type …` as `return <b>ok</b>;` and a separate
+		// statement (#1166), and rejected `class A extends <div /> {}` (#745).
+		it.each(ELEMENT_OPERAND_CASES)(
+			'keeps the parentheses around an element in %s',
+			(_label, source) => {
+				const { code } = compile(source, 'App.tsrx');
+
+				expect(virtual_parse_diagnostics(code)).toEqual([]);
+				expect(tsx_shape(code)).toBe(tsx_shape(source));
+			},
+		);
+
+		it('applies the member access to the element when the output runs', () => {
+			const { code } = compile(ELEMENT_OPERAND_CASES[0][1], 'App.tsrx');
+			const module = { exports: /** @type {Record<string, any>} */ ({}) };
+			const commonjs = ts.transpileModule(code, {
+				compilerOptions: {
+					jsx: ts.JsxEmit.React,
+					jsxFactory: 'h',
+					module: ts.ModuleKind.CommonJS,
+					target: ts.ScriptTarget.ES2022,
+				},
+			}).outputText;
+			new Function('module', 'exports', 'h', commonjs)(
+				module,
+				module.exports,
+				(/** @type {string} */ type) => ({ type }),
+			);
+
+			expect(module.exports.f('b')).toBe(1);
+			expect(module.exports.f('i')).toBe(2);
+		});
+
+		// A template in a callee position compiles to a fragment around it.
+		it('parenthesizes an element that the transform creates', () => {
+			const { code } = compile('export const value = (@{ <b /> })(x);', 'App.tsrx');
+			const source_file = ts.createSourceFile(
+				'virtual.tsx',
+				code,
+				ts.ScriptTarget.Latest,
+				true,
+				ts.ScriptKind.TSX,
+			);
+			const statement = source_file.statements.find(ts.isVariableStatement);
+			const call = statement?.declarationList.declarations[0].initializer;
+
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+			expect(call && ts.isCallExpression(call)).toBe(true);
+			const callee = /** @type {ts.CallExpression} */ (call).expression;
+			expect(ts.isParenthesizedExpression(callee)).toBe(true);
+			expect(ts.isJsxFragment(/** @type {ts.ParenthesizedExpression} */ (callee).expression)).toBe(
+				true,
+			);
+		});
+
+		it('adds no parentheses around an element that is an operand of an operator', () => {
+			const source = `export function f(x: any, y: any) {
+	return [
+		!<b />,
+		typeof <b />,
+		<b /> as unknown,
+		<b /> satisfies unknown,
+		x ?? <b />,
+		() => <b />,
+		<b /> <= x,
+		<b /> > x,
+		<b /> << x,
+		x < <b />,
+		!<b /> < x,
+		x + -<b /> < y,
+		(x == <b />) < y,
+		x ** (y * <b />) < x,
+	];
+}`;
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code).not.toContain('(<');
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+			expect(tsx_shape(code)).toBe(tsx_shape(source));
+		});
+	});
+
 	describe(`[${name}] fragment expression children`, () => {
 		// A bare expression placed directly as a JSX child reads as JSX text
 		// (`<>{a}b</>` renders the letter "b"), so every expression that ends up
@@ -3139,6 +3305,36 @@ break"}</p>
 			);
 
 			expect(code).toContain('export function getItems<Item>(props: Props<Item>)');
+		});
+
+		it('keeps a generic arrow with one type parameter from reading as a JSX tag', () => {
+			const { code } = compile(
+				`export const first = <T>(items: T[]) => items[0];
+				export const pair = <A, B>(a: A, b: B) => [a, b];`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('export const first = <T,>(items: T[]) => items[0];');
+			expect(code).toContain('export const pair = <A, B>(a: A, b: B) => [a, b];');
+		});
+
+		it('keeps parameter decorators before parameter property modifiers', () => {
+			const { code } = compile(
+				`class Service {
+					constructor(@Inject() private readonly dep: Dep) {}
+					find(@Param() id: string) {}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('constructor(@Inject() private readonly dep: Dep) {}');
+			expect(code).toContain('find(@Param() id: string) {}');
+		});
+
+		it('keeps the type arguments of a tagged template', () => {
+			const { code } = compile('export const query = sql<Row>`select 1`;', 'App.tsrx');
+
+			expect(code).toContain('export const query = sql<Row>`select 1`;');
 		});
 
 		it('preserves optional markers in tuple members and function parameters', () => {
