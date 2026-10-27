@@ -1778,6 +1778,43 @@ describe('destructuring', () => {
 			expect(type_only).toContain('{...App__spread_props1}');
 		});
 
+		it('keeps a ref written before a host spread in its authored position', () => {
+			const source = `export function App() @{
+					function init() {
+						return () => {};
+					}
+					<div ref={init()} data-first="1" {...bag} />
+				}`;
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code).toContain(
+				'<div ref={__mergeRefs(init(), (node) => __mergeRefs(App__spread_props1?.ref)(node))} data-first="1" {...(App__spread_props1 = __normalize_spread_props_for_ref_attr(bag))} />',
+			);
+
+			const { code: type_only } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(type_only).toContain(
+				'<div data-first="1" {...App__spread_props1} ref={__mergeRefs(init(), App__spread_props1?.ref)} />',
+			);
+		});
+
+		it('imports the spread normalizers that return their copy', () => {
+			const { code } = compile(
+				`export function App() @{
+					<>
+						<input {...props.first} />
+						<input {...props.second} ref={props.cb} />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('copy_spread_props as __normalize_spread_props');
+			expect(code).toContain(
+				'copy_spread_props_for_ref_attr as __normalize_spread_props_for_ref_attr',
+			);
+			expect(code).toContain('{...__normalize_spread_props(props.first)}');
+		});
+
 		it('rejects multiple ref={expr} attributes on the same element', () => {
 			expect(() =>
 				compile(

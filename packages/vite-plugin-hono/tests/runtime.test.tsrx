@@ -9,6 +9,12 @@ import {
 } from '@tsrx/core/test-harness/runtime/nullish-spread-ref-components.tsrx';
 import {
 	NestedSpreadRefOrderApp,
+	RefBeforeAttributeApp,
+	RefBeforeSpreadApp,
+	SpreadClearsRefApp,
+	SpreadGetterApp,
+	SpreadGetterOwnRefApp,
+	SpreadGetterRefApp,
 	SpreadRefOrderApp,
 	SpreadsRefOrderApp,
 	spread_ref_order_nodes,
@@ -333,6 +339,44 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 				(name) => element?.closest(`[${name}]`)?.getAttribute(name) ?? null,
 			);
 			expect(values).toEqual(['1', '2', '3']);
+			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
+		});
+	}
+
+	for (const [label, App, selector, refCalls] of [
+		['without a ref', SpreadGetterApp, '.spread-getter', 0],
+		['beside a ref', SpreadGetterRefApp, '.spread-getter-ref', 1],
+		['whose bag carries a ref', SpreadGetterOwnRefApp, '.spread-getter-own-ref', 1],
+	] as const) {
+		it(`reads a spread getter once ${label}`, () => {
+			spread_ref_order_nodes.length = 0;
+			render(<App />, container);
+
+			const element = container.querySelector(selector);
+			expect(element?.getAttribute('title')).toBe('1');
+			expect(element?.getAttribute('data-reads')).toBe('1');
+			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
+		});
+	}
+
+	it("lets a later spread's `ref: undefined` clear an earlier spread's ref", () => {
+		spread_ref_order_nodes.length = 0;
+		render(<SpreadClearsRefApp />, container);
+
+		expect(container.querySelector('.spread-clears-ref')).not.toBeNull();
+		expect(spread_ref_order_nodes).toEqual([]);
+	});
+
+	for (const [label, App, selector, refCalls] of [
+		['a spread', RefBeforeSpreadApp, '.ref-before-spread', 2],
+		['a later attribute', RefBeforeAttributeApp, '.ref-before-attribute', 1],
+	] as const) {
+		it(`evaluates a ref before ${label} in authored order`, () => {
+			spread_ref_order_nodes.length = 0;
+			render(<App />, container);
+
+			const element = container.querySelector(selector);
+			expect(element?.getAttribute('data-ready')).toBe('true');
 			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
 		});
 	}

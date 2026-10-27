@@ -452,6 +452,17 @@ export interface JsxPlatform {
 		 * - `undefined`: evaluate the spread in a `let bag = normalize(expr);`
 		 *   declaration ahead of the element, for compiled JSX that reads `ref`
 		 *   before the spread or evaluates the spread lazily, such as Solid's.
+		 *
+		 * With `'in-place'`, core's import injection also gives the platform
+		 * `copy_spread_props` and `copy_spread_props_for_ref_attr` in place of
+		 * `normalize_spread_props` and `normalize_spread_props_for_ref_attr`.
+		 * They return their copy of each bag rather than the bag itself, so a
+		 * runtime that copies the spread reads each getter once. A custom
+		 * platform's `imports.refProp` module must export them, as
+		 * `@tsrx/runtime/ref` does. With `multiRefStrategy:
+		 * 'merge-refs'` as well, the merged `ref` stays where the element's own
+		 * `ref` is written and reads the ref of a bag spread after it when it is
+		 * applied.
 		 */
 		hostSpreadRefBinding?: 'in-place';
 		/**
