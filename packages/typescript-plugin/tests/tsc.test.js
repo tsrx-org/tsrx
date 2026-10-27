@@ -449,6 +449,50 @@ it('reports unresolved class field and heritage types in .tsrx files', () => {
 	}
 });
 
+it('reports a failed satisfies check on its keyword in .tsrx files', () => {
+	const lines = [
+		'declare const count: number; declare function load(): number;',
+		'export const a = 1 satisfies string; export const b = count satisfies string; export const c = load() satisfies string;',
+		'export function read() { return count as unknown as number satisfies string; }',
+		'export function View() @{ const shown = count satisfies string; <div>{shown}</div> }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const ts1360 = "error TS1360: Type 'number' does not satisfy the expected type 'string'.";
+	for (const [index, line] of lines.entries()) {
+		for (const match of line.matchAll(/satisfies/g)) {
+			expect(result.output).toContain(
+				`layout.tsrx(${index + 4},${/** @type {number} */ (match.index) + 1}): ${ts1360}`,
+			);
+		}
+	}
+});
+
+it('reports an error on a literal that starts a sequence expression in .tsrx files', () => {
+	const lines = [
+		'declare const plain: {};',
+		'export function run() { return (0, plain); }',
+		"export const text = ('s', plain);",
+		'export const sum = (1 + 2, plain);',
+		'export const name = (plain, plain);',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const ts2695 = 'error TS2695: Left side of comma operator is unused and has no side effects.';
+	for (const [index, operand] of /** @type {const} */ ([
+		[1, '0,'],
+		[2, "'s'"],
+		[3, '1 + 2'],
+		[4, 'plain,'],
+	])) {
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${lines[index].indexOf(operand) + 1}): ${ts2695}`,
+		);
+	}
+});
+
 it('reports errors on private class fields in .tsrx files', () => {
 	const line = 'export class Model { #value: number = "bad"; #missing: number; }';
 	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${line}\n`);
@@ -460,6 +504,79 @@ it('reports errors on private class fields in .tsrx files', () => {
 	expect(result.output).toContain(
 		`layout.tsrx(4,${line.indexOf('#missing') + 1}): error TS2564: Property '#missing' has no initializer and is not definitely assigned in the constructor.`,
 	);
+});
+
+it('reports a missing return on a composite return type in .tsrx files', () => {
+	const lines = [
+		'export class Returns<T> { list(): number[] {} shape(): { a: number } {} keys(): keyof T {} later(): Promise<number> {} either(): number | string {} pair(): [number, string] {} plain(): number {} }',
+		'export function listed(): string[] {}',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const ts2355 =
+		"error TS2355: A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.";
+	for (const [index, type] of /** @type {const} */ ([
+		[0, 'number[]'],
+		[0, '{ a: number }'],
+		[0, 'keyof T'],
+		[0, 'Promise<number>'],
+		[0, 'number | string'],
+		[0, '[number, string]'],
+		[0, 'number {}'],
+		[1, 'string[]'],
+	])) {
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${lines[index].indexOf(type) + 1}): ${ts2355}`,
+		);
+	}
+});
+
+it('reports a non-null superclass that is not a constructor in .tsrx files', () => {
+	const lines = [
+		'declare const maybe: {} | undefined; declare const registry: { get(name: string): {} | undefined };',
+		"export class A extends maybe! {} export class B extends registry.get('Base')! {}",
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	for (const base of ['maybe!', "registry.get('Base')!"]) {
+		expect(result.output).toContain(
+			`layout.tsrx(5,${lines[1].indexOf(base) + 1}): error TS2507: Type '{}' is not a constructor function type.`,
+		);
+	}
+});
+
+it('reports computed property name errors whatever is inside the brackets in .tsrx files', () => {
+	const lines = [
+		'declare const o: {}; declare function f(): string; declare const key: "m";',
+		'export const tight = { [o]: 1 }; export const spaced = { [ o ]: 1 }; export const commented = { [/* c */ o]: 1 };',
+		'export const multiline = { [',
+		'\to',
+		']: 1 };',
+		'export class Field { [ f() ]: number = 1; }',
+		'export type Literal = { [ f() ]: number };',
+		'class Base { [key](): number { return 1; } } export class Sub extends Base { [ key ](): string { return ""; } }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	const ts2464 =
+		"error TS2464: A computed property name must be of type 'string', 'number', 'symbol', or 'any'.";
+	for (const key of ['[o]', '[ o ]', '[/* c */ o]']) {
+		expect(result.output).toContain(`${at(1, key)}: ${ts2464}`);
+	}
+	expect(result.output).toContain(`${at(2, '[')}: ${ts2464}`);
+	expect(result.output).toContain(
+		`${at(5, '[')}: error TS1166: A computed property name in a class property declaration must have a simple literal type or a 'unique symbol' type.`,
+	);
+	expect(result.output).toContain(
+		`${at(6, '[')}: error TS1170: A computed property name in a type literal must refer to an expression whose type is a literal type or a 'unique symbol' type.`,
+	);
+	// TypeScript quotes the property name from the generated code, which prints `[key]`.
+	expect(result.output).toContain(`${at(7, '[ key ]')}: error TS2416: Property '[key]' in type`);
 });
 
 it('reports a missing return on a primitive return type in .tsrx files', () => {
@@ -525,4 +642,68 @@ it('reports errors on a bare this in .tsrx files', () => {
 	expect(result.output).toContain(
 		`layout.tsrx(4,${line.lastIndexOf('this') + 1}): error TS17009: 'super' must be called before accessing 'this' in the constructor of a derived class.`,
 	);
+});
+
+it('reports errors that start at a yield, a rest parameter or a nested export as namespace in .tsrx files', () => {
+	const lines = [
+		'export function* plain() { const value = yield 1; return value; }',
+		'export function bad(...args: number) {} export class K { m(...args: number) {} }',
+		'export function List<T>(...items: T) @{ <ul /> }',
+		'function nested() { export as namespace A; }',
+		'export function* View() @{ @if (yield 1) { <div /> } }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {number} */ offset) =>
+		`layout.tsrx(${index + 4},${offset + 1})`;
+	for (const index of [0, 4]) {
+		expect(result.output).toContain(
+			`${at(index, lines[index].indexOf('yield'))}: error TS7057: 'yield' expression implicitly results in an 'any' type because its containing generator lacks a return-type annotation.`,
+		);
+	}
+	for (const [index, offset] of [
+		[1, lines[1].indexOf('...')],
+		[1, lines[1].lastIndexOf('...')],
+		[2, lines[2].indexOf('...')],
+	]) {
+		expect(result.output).toContain(
+			`${at(index, offset)}: error TS2370: A rest parameter must be of an array type.`,
+		);
+	}
+	expect(result.output).toContain(
+		`${at(3, lines[3].indexOf('export'))}: error TS1316: Global module exports may only appear at top level.`,
+	);
+});
+
+it('reports unreachable code on a statement that ends with an element in .tsrx files', () => {
+	const config_path = path.join(workspace, 'tsconfig.json');
+	const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+	config.compilerOptions.allowUnreachableCode = false;
+	fs.writeFileSync(config_path, JSON.stringify(config));
+	const lines = [
+		'let x: unknown; declare function foo(): void;',
+		'export function a() { return; x = <div></div>; }',
+		'export function b() { return; x = <br />; }',
+		'export function c() { return; true ? <div /> : <span />; }',
+		'export function d() { return; foo(); }',
+		'export function e() {',
+		'\treturn;',
+		'\tx = <span>x</span>',
+		'}',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	for (const [index, text] of /** @type {const} */ ([
+		[1, 'x ='],
+		[2, 'x ='],
+		[3, 'true'],
+		[4, 'foo'],
+		[7, 'x ='],
+	])) {
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1}): error TS7027: Unreachable code detected.`,
+		);
+	}
 });
