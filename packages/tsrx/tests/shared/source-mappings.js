@@ -428,6 +428,35 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		});
 	});
 
+	describe(`[${name}] computed key brackets`, () => {
+		it.each([
+			['class A { [k]() {} }', '[k]'],
+			['class A { [ k ]() {} }', '[ k ]'],
+			['class A { [/* c */ k]() {} }', '[/* c */ k]'],
+			['const o = { [\n\tk\n]: 1 };', '[\n\tk\n]'],
+			// The decorator's argument holds the first `[` inside the member.
+			[
+				'function dec(...args: unknown[]) { return () => {}; }\nclass A { @dec([1]) [k]() {} }',
+				'[k]',
+			],
+		])('maps the brackets of %j', (code, key) => {
+			const source = `declare const k: string;\n${code}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const source_offset = source.lastIndexOf(key);
+			const mapping = result.mappings.find(
+				(candidate) =>
+					candidate.sourceOffsets[0] === source_offset && candidate.lengths[0] === key.length,
+			);
+			assert(mapping, `no mapping covers ${JSON.stringify(key)}`);
+			const generated_start = mapping.generatedOffsets[0];
+			const generated = result.code.slice(
+				generated_start,
+				generated_start + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+			);
+			expect(generated.startsWith('[') && generated.endsWith(']')).toBe(true);
+		});
+	});
+
 	describe(`[${name}] source mappings do not crash for`, () => {
 		/**
 		 * @param {string} source
@@ -1330,6 +1359,28 @@ function C() @{
 			expect_class_keyword_mapping(`class Store {
 	value = 1;
 }`);
+		});
+
+		it.each([
+			['decorated', 'declare function dec(...args: unknown[]): any;\n@dec class Store {}'],
+			[
+				'exported decorated',
+				'declare function dec(...args: unknown[]): any;\nexport @dec class Store {}',
+			],
+			['abstract', 'abstract class Store {}'],
+			['declared', 'declare class Store {}'],
+			['expression', 'const Store = class {};'],
+		])('maps the class keyword of a %s class', (_kind, source) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const source_class_offset = source.search(/\bclass\b/);
+			const generated_class_offset = result.code.search(/\bclass\b/);
+			const mapping = find_exact_mapping(
+				result.mappings,
+				source_class_offset,
+				generated_class_offset,
+				'class'.length,
+			);
+			expect(mapping).toBeDefined();
 		});
 
 		it('maps anonymous default class keywords', () => {
@@ -2494,6 +2545,309 @@ function App() @{
 			}
 		});
 	});
+
+	describe(`[${name}] keywords and tags where diagnostics start or end`, () => {
+		/**
+		 * The generated text of each verification mapping that starts at `offset`
+		 * and covers `length` source characters.
+		 * @param {{ code: string, mappings: CodeMapping[] }} result
+		 * @param {number} offset
+		 * @param {number} length
+		 */
+		const generated_at = (result, offset, length) =>
+			result.mappings
+				.filter(
+					(mapping) =>
+						mapping.sourceOffsets[0] === offset &&
+						mapping.lengths[0] === length &&
+						mapping.data.verification,
+				)
+				.map((mapping) =>
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+					),
+				);
+
+		it('maps an authored yield keyword', () => {
+			// TypeScript reports TS7057 on a yield in a generator without a return type.
+			// A lowered `@if (yield 1)` prints its test in parentheses that start
+			// where the yield does.
+			const source = `export function* plain() {
+	const value = yield 1;
+	yield;
+	yield* plain();
+	return value;
+}
+export function* View() @{
+	@if (yield 1) {
+		<div />
+	}
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			for (const match of source.matchAll(/\byield\b/g)) {
+				expect(generated_at(result, /** @type {number} */ (match.index), 5)).toEqual(['yield']);
+			}
+		});
+
+		it.each([
+			['an authored ;', 'x = <div></div>;'],
+			['an authored ; after a self-closing tag', 'x = <br />;'],
+			['a ; the printer adds', 'x = <span>x</span>'],
+			['a call', 'foo();'],
+		])('maps the ; that ends a statement with %s', (_kind, statement) => {
+			// TypeScript reports unreachable code (TS7027) on the whole statement, up
+			// to its `;`.
+			const source = `let x: unknown;\ndeclare function foo(): void;\nexport function f() {\n\treturn;\n\t${statement}\n}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const start = source.indexOf(statement);
+			const authored = statement.endsWith(';');
+			const end = start + statement.length - (authored ? 1 : 0);
+			expect(generated_at(result, end, authored ? 1 : 0)).toEqual([';']);
+		});
+
+		it.each([
+			'export function bad(...args: number) {}',
+			'export class K { m(...args: number) {} }',
+			'export declare function f(...args: number): void;',
+			'export function List<T>(...items: T) @{ <ul /> }',
+		])('maps the ... of the rest parameter in %j', (source) => {
+			// TypeScript reports TS2370 (a rest parameter that is not an array) on the
+			// whole parameter, from the `...`.
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(generated_at(result, source.indexOf('...'), 3)).toContain('...');
+		});
+
+		it.each(['export as namespace A;', 'export as namespace A'])(
+			'maps the keywords and the whole statement of %j',
+			(statement) => {
+				// TypeScript reports a nested one (TS1316) on the whole statement.
+				const source = `function f() {\n\t${statement}\n}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf('export');
+				for (const keyword of ['export', 'as', 'namespace']) {
+					expect(generated_at(result, source.indexOf(keyword, start), keyword.length)).toContain(
+						keyword,
+					);
+				}
+				expect(generated_at(result, start, statement.length)).toContain('export as namespace A;');
+			},
+		);
+
+		it('maps each closing tag to exactly its generated tag', () => {
+			const source = `export function C() @{
+	<div>
+		<h2>a</h2>
+		<br />
+		<p>b</p>
+	</div>
+}
+export function D() @{
+	<input />
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			for (const tag of ['</h2>', '</p>', '</div>']) {
+				expect(generated_at(result, source.indexOf(tag), tag.length), tag).toEqual([tag]);
+			}
+			for (const element of ['<br />', '<input />']) {
+				const offset = source.indexOf(element) + element.length - 2;
+				expect(generated_at(result, offset, 2), element).toEqual(['/>']);
+			}
+		});
+
+		/**
+		 * The verification mappings that start at `offset` and cover `length`
+		 * source characters.
+		 * @param {{ mappings: CodeMapping[] }} result
+		 * @param {number} offset
+		 * @param {number} length
+		 */
+		const mappings_at = (result, offset, length) =>
+			result.mappings.filter(
+				(mapping) =>
+					mapping.sourceOffsets[0] === offset &&
+					mapping.lengths[0] === length &&
+					mapping.data.verification,
+			);
+
+		it('maps the keyword of a declaration and the brackets of a binding pattern (#1062)', () => {
+			// TypeScript reports TS6199 on a declaration whose variables are all unused,
+			// from its keyword, and TS6198 on a binding pattern whose elements are all
+			// unused, from its bracket. In a `@{` body no other mapping covers them.
+			const source = `export async function A({ x }: { x: number }, [y]: number[]) @{
+	const [a, b] = [x, y];
+	let { c, d: [e] } = { c: 1, d: [2] };
+	var [, f, ...g] = [1, 2, 3];
+	await using h = null;
+	try {} catch ({ message }) {}
+	for (const [k, v] of [[1, 2]]) {}
+	<p>{a}{b}{c}{e}{f}{g}{h}</p>
+}
+declare const i: number;`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			/** @type {Array<[string, number]>} */
+			const tokens = [
+				['const', source.indexOf('const [a')],
+				['let', source.indexOf('let {')],
+				['var', source.indexOf('var [')],
+				['await using', source.indexOf('await using')],
+				['const', source.indexOf('const [k')],
+				['declare', source.indexOf('declare')],
+				['const', source.indexOf('const i')],
+			];
+			for (const pattern of [
+				'{ x }',
+				'[y]',
+				'[a, b]',
+				'{ c, d: [e] }',
+				'[e]',
+				'[, f, ...g]',
+				'{ message }',
+				'[k, v]',
+			]) {
+				const start = source.indexOf(pattern);
+				tokens.push([pattern[0], start], [pattern[pattern.length - 1], start + pattern.length - 1]);
+			}
+			for (const [text, offset] of tokens) {
+				expect(generated_at(result, offset, text.length), `${text} at ${offset}`).toEqual([text]);
+				// Like the `function` keyword, with every feature, so that TypeScript 7
+				// joins it with the names around it into one span.
+				expect(mappings_at(result, offset, text.length)[0].data.completion).toBe(true);
+			}
+		});
+
+		it('maps the keywords that start a statement and the ends of its blocks, for diagnostics only', () => {
+			// TypeScript reports unreachable code (TS7027) from the start of the first
+			// unreachable statement to the end of the last, and TS2367 on a whole
+			// `typeof x` comparison.
+			const source = `let x: unknown;
+declare function foo(): void;
+export function f(n: number) {
+	if (x) {}
+	while (x) {}
+	do foo(); while (x);
+	for (;;) {}
+	for (const y of [n]) {}
+	switch (n) {}
+	throw new Error();
+	try {} catch {}
+	try {} finally {}
+	debugger;
+	typeof x;
+	void x;
+	delete (x as any).y;
+	label: for (;;) { break label; continue label; }
+	enum E { A }
+	return;
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			/** @type {Array<[string, number]>} */
+			const tokens = [];
+			for (const statement of [
+				'if (x)',
+				'while (x) {}',
+				'do foo()',
+				'for (;;) {}',
+				'for (const y',
+				'for (;;) { break',
+				'switch (n)',
+				'throw new',
+				'new Error',
+				'try {} catch',
+				'try {} finally',
+				'debugger;',
+				'typeof x',
+				'void x',
+				'delete (x',
+				'break label',
+				'continue label',
+				'enum E',
+			]) {
+				const keyword = statement.split(/[ (;]/)[0];
+				tokens.push([keyword, source.indexOf(statement)]);
+			}
+			const last_character = (/** @type {string} */ statement) =>
+				source.indexOf(statement) + statement.length - 1;
+			tokens.push(
+				['}', last_character('while (x) {}')],
+				['}', last_character('try {} catch {}')],
+				['}', last_character('try {} finally {}')],
+				['}', last_character('enum E { A }')],
+				[';', last_character('while (x);')],
+				[';', last_character('throw new Error();')],
+				[';', last_character('debugger;')],
+				[';', last_character('break label;')],
+				[';', last_character('continue label;')],
+				[';', last_character('return;')],
+			);
+			for (const [text, offset] of tokens) {
+				expect(generated_at(result, offset, text.length), `${text} at ${offset}`).toEqual([text]);
+				expect(
+					mappings_at(result, offset, text.length)[0].data.completion,
+					`${text} at ${offset}`,
+				).toBeFalsy();
+			}
+		});
+
+		it('completes inside a comment that the output writes as written (#1066)', () => {
+			// TypeScript offers the `/** */` template right after `/**`, and JSDoc tags.
+			const source = `/** */
+export function A() @{
+	/** @param x */
+	function inner(x: number) { return x; }
+	//@ts-expect-error
+	const y: string = 1;
+	<p>{inner(1)}{y}</p>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			for (const comment of ['/** */', '/** @param x */']) {
+				const offset = source.indexOf(comment);
+				expect(generated_at(result, offset, comment.length)).toEqual([comment]);
+				expect(mappings_at(result, offset, comment.length)[0].data.completion).toBe(true);
+			}
+			// The output writes this one as `// @ts-expect-error`, so offsets in it differ.
+			const directive = '//@ts-expect-error';
+			const [mapping] = mappings_at(result, source.indexOf(directive), directive.length);
+			expect(mapping.data.completion).toBeFalsy();
+		});
+
+		it.each([
+			['a tab', '\t', 1],
+			['spaces', '  ', 0],
+		])(
+			'maps the start of the line of a template output indented with %s to the line of its return (#1027)',
+			(_name, indent, length) => {
+				// Add missing function declaration inserts the declaration at the start of
+				// the line of the generated `return`. The indentation maps when it is the
+				// same text in both files.
+				const source = `export function A() @{\n${indent}<p>{missing()}</p>\n}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const generated_line = result.code.lastIndexOf('\n', result.code.indexOf('return <p>')) + 1;
+				expect(
+					result.mappings
+						.filter((mapping) => mapping.generatedOffsets[0] === generated_line)
+						.map((mapping) => [mapping.sourceOffsets[0], mapping.lengths[0]]),
+				).toEqual([[source.indexOf(indent), length]]);
+			},
+		);
+
+		it('maps no line start for a template output that does not start its line', () => {
+			const source = 'export function A() @{ <p>{missing()}</p> }';
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const generated_line = result.code.lastIndexOf('\n', result.code.indexOf('return <p>')) + 1;
+			expect(
+				result.mappings.filter((mapping) => mapping.generatedOffsets[0] === generated_line),
+			).toEqual([]);
+		});
+	});
+
 	describe(`[${name}] input AST immutability`, () => {
 		/**
 		 * Structural snapshot of an AST node graph. `metadata` is the sanctioned
