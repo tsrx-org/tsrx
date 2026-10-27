@@ -292,12 +292,12 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 			['x = [{ a: 1 ];', TS_ERRORS.UNEXPECTED_TOKEN, '1:12'],
 			['foo(() => {\n  a();\n);\n', TS_ERRORS.UNEXPECTED_TOKEN, '3:0'],
 			['const o = {\n  a: 1\nconst b = 2;\n', TS_ERRORS.UNEXPECTED_TOKEN, '3:0'],
-			['class A {\n  m() {\n    a();\n\n  n() {}\n}\n', TS_ERRORS.UNEXPECTED_TOKEN, '5:6'],
+			['class A {\n  m() {\n    a();\n\n  n() {}\n}\n', TS_ERRORS.TOKEN_EXPECTED, '5:6'],
 			['enum E { A B }', TS_ERRORS.UNEXPECTED_TOKEN, '1:11'],
 			['import { a b } from "x";', TS_ERRORS.UNEXPECTED_TOKEN, '1:11'],
 			["import a from './a.json' with { type: 'json' x };", TS_ERRORS.UNEXPECTED_TOKEN, '1:45'],
 			['type M = { [K in T]: X; Y };', TS_ERRORS.UNEXPECTED_TOKEN, '1:24'],
-			['type M = { [K in T]: X Y };', TS_ERRORS.UNEXPECTED_TOKEN, '1:23'],
+			['type M = { [K in T]: X Y };', TS_ERRORS.TOKEN_EXPECTED, '1:23'],
 			["x = 'abc", 'TS1002', '1:4'],
 			[
 				'export function App() @{\n  @try {\n    <b />\n  } @catch (e) {\n    <p />\n  } finally {\n  }\n}',
@@ -331,7 +331,7 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 				'3:0',
 			],
 			['{ const', TS_ERRORS.UNEXPECTED_TOKEN, '1:7'],
-			['{ let', UPSTREAM_ERRORS.LET_RESERVED, '1:2'],
+			['{ let', TS_ERRORS.STRICT_MODE_RESERVED_WORD, '1:2'],
 		];
 		const outcomes = await parse_in_worker(
 			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
