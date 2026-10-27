@@ -432,6 +432,48 @@ describe('@tsrx/vite-plugin-hono', () => {
 		expect(result).toBe(modules);
 	});
 
+	it('keeps the virtual CSS when a styled file imported only as `?raw` stops compiling', async () => {
+		const plugin = tsrxHono();
+		const id = '/virtual/Example.tsrx';
+		const css_module = { id: `${id}?tsrx-css&lang.css` };
+		const invalidated = [];
+		// Vite keeps the stylesheet module of the earlier component import after
+		// the file's importers switch to `?raw`.
+		const context = create_context({
+			getModuleById(module_id) {
+				return module_id === css_module.id ? css_module : undefined;
+			},
+			invalidateModule(module) {
+				invalidated.push(module);
+			},
+		});
+		await plugin.transform.call(
+			context,
+			`export function Example() @{
+				<><p class="a">{'hi'}</p>
+				<style>.a { color: red; }</style></>
+			}`,
+			id,
+		);
+		const resolved_id = plugin.resolveId.call(context, css_module.id);
+
+		const broken_source = 'export function Example() @{ <section>';
+		const modules = [{ id }, { id: `${id}?raw` }, css_module];
+		const result = await plugin.hotUpdate.call(context, {
+			file: id,
+			modules,
+			read: async () => broken_source,
+		});
+
+		expect(result).toBe(modules);
+		expect(invalidated).toEqual([]);
+		expect(plugin.load.call(context, resolved_id)).toContain('color: red;');
+		// A component import still reports the error when Vite transforms it again.
+		await expect(plugin.transform.call(context, broken_source, id)).rejects.toThrow(
+			"Unclosed tag '<section>'",
+		);
+	});
+
 	it('registers Hono JSX runtime dependencies for optimizeDeps', () => {
 		const plugin = tsrxHono({ mode: 'dom' });
 		const config = plugin.configEnvironment('client', {});

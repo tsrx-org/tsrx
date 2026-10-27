@@ -1223,6 +1223,35 @@ describe('@tsrx/react basic', () => {
 		expect(code).not.toContain('TsrxErrorBoundary');
 	});
 
+	it.each([
+		{
+			name: 'Suspense',
+			body: `<Suspense fallback={<i>loading</i>}><b>native</b></Suspense>
+					@try { <p>ready</p> } @pending { <i>loading</i> }`,
+		},
+		{
+			name: 'Fragment',
+			body: `<Fragment><b>native</b></Fragment>
+					<ul>@for (const item of [1, 2]; key item) { <><li>{item}</li><li>end</li></> }</ul>`,
+		},
+	])('reuses an authored $name import from react', ({ name, body }) => {
+		const { code } = compile(
+			`import { ${name} } from 'react';
+
+			export function App() @{
+				<>
+					${body}
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.match(new RegExp(`import \\{[^}]*\\b${name}\\b[^}]*\\} from`, 'g'))).toEqual([
+			`import { ${name} } from`,
+		]);
+		expect(code).toContain(`<${name}`);
+	});
+
 	it('transforms try/pending/catch into ErrorBoundary wrapping Suspense', () => {
 		const { code } = compile(
 			`export function App() @{
