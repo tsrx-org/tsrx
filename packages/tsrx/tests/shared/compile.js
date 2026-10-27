@@ -5,7 +5,7 @@ import { error_with } from './errors.js';
 import { runSharedScopedStyleTests } from './scoped-styles.js';
 import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformance.js';
 
-/** @import { CompileDiagnosticsHarness, CompileHarness } from '../../types/index' */
+/** @import { CodeMapping, CompileDiagnosticsHarness, CompileHarness } from '../../types/index' */
 
 /**
  * @param {string} haystack
@@ -139,6 +139,217 @@ export function App() @{
 				const length = generatedLengths?.[0] ?? lengths[0];
 				expect(code.slice(generatedOffsets[0], generatedOffsets[0] + length)).toBe(text);
 			}
+		});
+	});
+
+	describe(`[${name}] comments in virtual code`, () => {
+		/**
+		 * Whether a verification mapping covers exactly `text`, which starts at
+		 * `offset` in the source, and maps it to the same generated text.
+		 * @param {{ code: string, mappings: CodeMapping[] }} result
+		 * @param {number} offset
+		 * @param {string} text
+		 */
+		const is_mapped = (result, offset, text) =>
+			result.mappings.some(
+				(mapping) =>
+					mapping.sourceOffsets[0] === offset &&
+					mapping.lengths[0] === text.length &&
+					mapping.data.verification &&
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+					) === text,
+			);
+
+		it.each(['/** */', '/** Docs. */', '/**\n * Docs.\n * @param a The value.\n */'])(
+			'prints the JSDoc comment %j as written',
+			(comment) => {
+				const source = `${comment}\nexport function A({ a }: { a: number }) @{\n\t<p>{a}</p>\n}\n`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx');
+
+				expect(result.errors).toEqual([]);
+				expect(result.code).toContain(`${comment}\nexport `);
+				expect(is_mapped(result, 0, comment)).toBe(true);
+			},
+		);
+
+		it('keeps a block TypeScript directive on the line before its statement', () => {
+			const source = `/* @ts-expect-error */
+export const a: number = 'bad';
+/*@ts-ignore*/
+export const b: number = 'bad';
+export class K {
+	/* @ts-ignore */
+	v: number = 'bad';
+}
+/* plain */
+export const c = 1;
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(result.errors).toEqual([]);
+			expect(result.code).toContain("/* @ts-expect-error */\nexport const a: number = 'bad';");
+			expect(result.code).toContain("/*@ts-ignore*/\nexport const b: number = 'bad';");
+			expect(result.code).toMatch(/\/\* @ts-ignore \*\/\n\s*v: number = 'bad';/);
+			expect(result.code).not.toContain('plain');
+			for (const comment of ['/* @ts-expect-error */', '/*@ts-ignore*/', '/* @ts-ignore */']) {
+				expect(is_mapped(result, source.indexOf(comment), comment), comment).toBe(true);
+			}
+		});
+
+		it('keeps the comments around a directive on the lines where they are written', () => {
+			// TypeScript applies a directive to the first line after it that is not
+			// blank or a line comment, so a block comment after one ends its reach.
+			const source = `declare const bad: string;
+/* @ts-expect-error */
+/* plain */
+export const a: number = bad;
+// @ts-expect-error
+/* plain */
+export const b: number = bad;
+/* @ts-expect-error */ /** docs */
+export const c: number = bad;
+/* explanation
+@ts-expect-error */
+export const d: number = bad;
+/** Docs. */ export const e = 1;
+`;
+			const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(code).toContain('/* @ts-expect-error */\n/* plain */\nexport const a');
+			expect(code).toContain('// @ts-expect-error\n/* plain */\nexport const b');
+			expect(code).toContain('/* @ts-expect-error */ /** docs */\nexport const c');
+			expect(code).toContain('/* explanation\n@ts-expect-error */\nexport const d');
+			expect(code).toContain('/** Docs. */ export const e = 1;');
+		});
+
+		it('leaves out a directive on the line where its statement starts', () => {
+			// It covers the source line after it, which the printed statement does
+			// not keep: here the printer splits the statement over several lines.
+			const source = `export function f(x: number) {
+	/* @ts-ignore */ if (x) { const y: number = 'bad'; return y; }
+	return 0;
+}
+/* @ts-expect-error */ export const o = { a: missing, b: 'a long string to make the printer wrap', c: 'and another long string' };
+`;
+			const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(code).not.toContain('@ts-ignore');
+			expect(code).not.toContain('@ts-expect-error');
+		});
+
+		/**
+		 * The diagnostics TypeScript reports on the virtual code for names,
+		 * assignments and unused directives, with the text each one covers.
+		 * @param {string} code
+		 * @returns {Array<[number, string]>}
+		 */
+		const suppression_diagnostics = (code) =>
+			virtual_semantic_diagnostics(code)
+				.filter((diagnostic) => [2304, 2322, 2578].includes(diagnostic.code))
+				.map((diagnostic) => [
+					diagnostic.code,
+					code.slice(diagnostic.start, (diagnostic.start ?? 0) + (diagnostic.length ?? 0)),
+				]);
+
+		it('keeps the later lines of a statement off the line a directive covers', () => {
+			// TypeScript applies a directive to the line after it, so that line must
+			// hold the code of the source line after it and no more (#1144).
+			const source = `declare function foo(a: number, b?: number): void;
+// @ts-expect-error
+foo(
+	1,
+	missingA
+);
+/* @ts-expect-error */
+foo(1,
+	missingB);
+// @ts-expect-error
+foo(missingC,
+	1);
+// @ts-expect-error
+export const o = { a: missingD, b: 'a long string to make the printer wrap', c: 'and another long string' };
+export function App() @{
+	// @ts-expect-error
+	const x: number = foo(
+		1,
+		missingE,
+	);
+	<div>{x}</div>
+}
+`;
+			const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+			expect(suppression_diagnostics(code)).toEqual([
+				[2578, '// @ts-expect-error'],
+				[2304, 'missingA'],
+				[2578, '/* @ts-expect-error */'],
+				[2304, 'missingB'],
+				[2304, 'missingE'],
+			]);
+		});
+
+		it('breaks the line a directive covers only where the code reads the same', () => {
+			// The break goes where the source breaks the line between the same two
+			// tokens, or after code that must go on. The TSRX parser reads
+			// `asserts` and import attributes across a line break, which TypeScript
+			// does not, so those lines stay joined. A parenthesis the printer adds
+			// maps to the next `(` of the source, which is on a later line.
+			const source = `declare const bad: string;
+export function f(a: number) {
+	// @ts-expect-error
+	return (
+		a + missingA
+	);
+}
+// @ts-expect-error
+export const b = (bad
+) as unknown as number;
+// @ts-expect-error
+export function g(x: unknown): asserts
+	x {}
+// @ts-expect-error
+import 'x'
+with { type: 'json' };
+// @ts-expect-error
+export const c = \`\${bad}
+\${missingC}\`;
+// @ts-expect-error
+export const p = 1
+(bad)();
+`;
+			const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+			expect(code).toContain('return (\n\t\ta + missingA);');
+			expect(code).toContain('(bad\n\t) as unknown as number;');
+			expect(code).toContain('asserts x {');
+			expect(code).toContain("import 'x' with {");
+			expect(code).toContain('export const p = (1)(\n');
+			expect(suppression_diagnostics(code)).toEqual([
+				[2578, '// @ts-expect-error'],
+				[2304, 'missingA'],
+				[2578, '// @ts-expect-error'],
+				[2578, '// @ts-expect-error'],
+				[2578, '// @ts-expect-error'],
+				[2578, '// @ts-expect-error'],
+				[2304, 'missingC'],
+				[2578, '// @ts-expect-error'],
+			]);
+		});
+
+		it('maps an object literal getter or setter with type parameters', () => {
+			const source = 'export const o = { get g<T>() { return 1; }, set s<T>(v: T) {} };';
+			const result = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(result.code).toContain('get g<T>() {');
+			expect(result.code).toContain('set s<T>(v: T) {}');
 		});
 	});
 
@@ -3139,6 +3350,92 @@ break"}</p>
 			);
 
 			expect(code).toContain('export function getItems<Item>(props: Props<Item>)');
+		});
+
+		it('keeps a generic arrow with one type parameter from reading as a JSX tag', () => {
+			const { code } = compile(
+				`export const first = <T>(items: T[]) => items[0];
+				export const pair = <A, B>(a: A, b: B) => [a, b];`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('export const first = <T,>(items: T[]) => items[0];');
+			expect(code).toContain('export const pair = <A, B>(a: A, b: B) => [a, b];');
+		});
+
+		it('keeps parameter decorators before parameter property modifiers', () => {
+			const { code } = compile(
+				`class Service {
+					constructor(@Inject() private readonly dep: Dep) {}
+					find(@Param() id: string) {}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('constructor(@Inject() private readonly dep: Dep) {}');
+			expect(code).toContain('find(@Param() id: string) {}');
+		});
+
+		it('keeps the type arguments of a tagged template', () => {
+			const { code } = compile('export const query = sql<Row>`select 1`;', 'App.tsrx');
+
+			expect(code).toContain('export const query = sql<Row>`select 1`;');
+		});
+
+		it('keeps the ? of an optional binding pattern parameter', () => {
+			const { code } = compile(
+				`declare function f({ a }?: { a: number }): void;
+				type F = ([a]?: number[]) => void;
+				interface I { m({ a }?: { a: number }): void }
+				declare function g([a]?): void;`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('declare function f({ a }?: { a: number }): void;');
+			expect(code).toContain('type F = ([a]?: number[]) => void;');
+			expect(code).toContain('interface I { m({ a }?: { a: number }): void }');
+			expect(code).toContain('declare function g([a]?): void;');
+		});
+
+		it('prints the type annotation of a binding pattern parameter once', () => {
+			const { code } = compile(
+				'function f([a]: A, { b }: B, [c]: C = [], ...[d]: D) {}',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('function f([a]: A, { b }: B, [c]: C = [], ...[d]: D) {}');
+		});
+
+		it('keeps the parentheses that keep a string statement from being a directive', () => {
+			const { code } = compile(
+				`'';
+				'use client';
+				export function run(value = 1) {
+					('use strict');
+					return value;
+				}
+				export function strict() {
+					'use strict';
+					'also';
+					run();
+					'later';
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain("'';\n'use client';");
+			expect(code).toMatch(/run\(value = 1\) \{\n\t\('use strict'\);/);
+			expect(code).toMatch(/strict\(\) \{\n\t'use strict';\n\t'also';\n\trun\(\);\n\t\('later'\);/);
+		});
+
+		it('keeps the type parameters of an object literal getter or setter', () => {
+			const { code } = compile(
+				'export const o = { get g<T>() { return 1; }, set s<T>(v: T) {} };',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('get g<T>() {');
+			expect(code).toContain('set s<T>(v: T) {}');
 		});
 
 		it('preserves optional markers in tuple members and function parameters', () => {
