@@ -284,6 +284,29 @@ export const ERROR_EXAMPLES = [
 `,
 	},
 	{
+		error: TSRX_ERRORS.FOR_HEAD_ASSIGNMENT,
+		source: `export function C(props: { items: number[] }) @{
+	const state = { item: 0 };
+	<ul>
+		@for (state.item of props.items) {
+			<li>{state.item}</li>
+		}
+	</ul>
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.FOR_HEAD_USING,
+		source: `export function C(props: { items: Disposable[] }) @{
+	<ul>
+		@for (using item of props.items) {
+			<li>{String(item)}</li>
+		}
+	</ul>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.MULTIPLE_REFS,
 		source: `export function C(props: any) @{
 	<div ref={props.a} ref={props.b} />

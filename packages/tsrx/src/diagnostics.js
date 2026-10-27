@@ -94,6 +94,8 @@ export const DIAGNOSTIC_CODES = {
 	TOP_LEVEL_AWAIT_USE_SERVER: 'TSRX2025',
 	/** An `@catch` reset parameter on a target whose error boundary has none. */
 	TARGET_CATCH_RESET_UNSUPPORTED: 'TSRX2026',
+	/** An `@for` head that assigns to existing variables, or declares its loop variable with `using`. */
+	FOR_HEAD: 'TSRX2027',
 
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'TSRX3001',
@@ -362,6 +364,16 @@ export const TSRX_ERRORS = {
 	DO_WHILE_STATEMENT: tsrx(
 		'FOR_OF_ONLY',
 		'Do...while loops are not supported in TSRX templates. Move the do...while loop into a function.',
+	),
+	FOR_HEAD_ASSIGNMENT: tsrx(
+		'FOR_HEAD',
+		'TSRX `@for` must declare its loop variable, as in `@for (const item of items)`, not assign to an existing variable or property.',
+	),
+	/** `kind` is `using` or `await using`. */
+	FOR_HEAD_USING: tsrx_with_values(
+		'FOR_HEAD',
+		(kind) =>
+			`TSRX \`@for\` does not support \`${kind}\` loop variables. Declare the resource in the loop body instead: \`@for (const item of items) { ${kind} resource = item; ... }\`.`,
 	),
 	MULTIPLE_REFS: tsrx(
 		'MULTIPLE_REFS',

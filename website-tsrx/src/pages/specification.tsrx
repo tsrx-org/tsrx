@@ -602,6 +602,8 @@ const TSRX_ERROR_CODES = [
 	'          async function App() @{ const x = await f(); <p>{x}</p> }',
 	'TSRX2026  <target> ErrorBoundary does not provide a reset callback.',
 	'          @catch (e, reset) { <p /> }  (Hono)',
+	'TSRX2027  TSRX `@for` must declare its loop variable, as in `@for (const item of items)`.',
+	'          @for (state.item of xs) { <p /> }  or  @for (using x of xs) { <p /> }',
 	"TSRX3001  The 'apply' attribute of a <style> block requires an expression value.",
 	'          <style apply="a" />',
 	"TSRX3002  'a' is not a style block.",
