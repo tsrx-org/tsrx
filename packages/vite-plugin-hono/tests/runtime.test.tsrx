@@ -38,6 +38,11 @@ import {
 	ScriptBracesApp,
 	script_body_cases,
 } from '@tsrx/core/test-harness/runtime/script-body-components.tsrx';
+import {
+	ForOfSourceApp,
+	ForOfSourceEmptyApp,
+	for_of_source_cases,
+} from '@tsrx/core/test-harness/runtime/for-of-sources-components.tsrx';
 
 let container: HTMLDivElement;
 let resolveValue: (value: string) => void;
@@ -288,6 +293,23 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			render(<JsxTextCharactersApp />, container);
 
 			expect(container.querySelector(selector)?.textContent).toBe(text);
+		});
+	}
+
+	// `@for` walks its source the way `for...of` does.
+	for (const [label, make, rows] of for_of_source_cases) {
+		it(`renders the items of ${label} in @for`, () => {
+			render(<ForOfSourceApp items={make()} />, container);
+			expect(
+				Array.from(container.querySelectorAll('.for-of-source li'), (li) => li.textContent),
+			).toEqual(rows);
+		});
+
+		it(`renders ${label} in @for with @empty`, () => {
+			render(<ForOfSourceEmptyApp items={make()} />, container);
+			expect(
+				Array.from(container.querySelectorAll('.for-of-source-empty li'), (li) => li.textContent),
+			).toEqual(rows.length > 0 ? rows : ['empty']);
 		});
 	}
 
