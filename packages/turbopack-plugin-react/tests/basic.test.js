@@ -95,6 +95,31 @@ describe('@tsrx/turbopack-plugin-react loader', () => {
 		expect(output.startsWith("'use client';")).toBe(true);
 	});
 
+	it('keeps top-level directives ahead of compiler-generated imports', async () => {
+		const { context, promise } = create_loader_context('/virtual/App.tsrx');
+
+		tsrx_react_turbopack_loader.call(
+			context,
+			`'use client';
+
+			export function App({ rows }: { rows: string[] }) @{
+				@try {
+					<ul>@for (const row of rows; key row) { <><li>{row}</li><li>{'end'}</li></> }</ul>
+				} @pending {
+					<p>{'loading'}</p>
+				} @catch (error) {
+					<p>{'failed'}</p>
+				}
+			}`,
+		);
+
+		const { err, output } = await promise;
+
+		expect(err).toBeNull();
+		expect(output.startsWith("'use client';")).toBe(true);
+		expect(output).toContain("import { Suspense as __Suspense } from 'react';");
+	});
+
 	it('injects a sibling CSS import for component-local style blocks', async () => {
 		const { context, promise } = create_loader_context('/virtual/App.tsrx');
 

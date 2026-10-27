@@ -783,7 +783,59 @@ describe('@tsrx/vue basic', () => {
 
 		expect(code).not.toContain('StatementBodyHook');
 		expect(code.match(/<span>\{'Failed'\}<\/span>/g)).toHaveLength(1);
-		expect(code).toContain('<TsrxErrorBoundary fallback={(error, _reset) =>');
+		expect(code).toContain('<__TsrxErrorBoundary fallback={(error, _reset) =>');
+	});
+
+	it.each([
+		[`import type { TsrxErrorBoundary } from '@tsrx/vue/error-boundary';`, ''],
+		[`import { TsrxErrorBoundary } from './authored';`, ''],
+		['', `const TsrxErrorBoundary = 'authored';`],
+	])('imports the generated error boundary privately beside `%s%s`', (module_scope, setup) => {
+		const { code } = compile(
+			`${module_scope}
+
+			export function App() @{
+				${setup}
+				@try {
+					<span>{'Loaded'}</span>
+				} @catch (error) {
+					<span>{'Failed'}</span>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(
+			"import { TsrxErrorBoundary as __TsrxErrorBoundary } from '@tsrx/vue/error-boundary';",
+		);
+		expect(code).toContain('<__TsrxErrorBoundary fallback=');
+		expect(code).not.toContain('<TsrxErrorBoundary');
+	});
+
+	it.each([
+		[
+			`import { type Suspense } from 'vue';`,
+			`import { type Suspense, Suspense as __Suspense } from 'vue';`,
+		],
+		[`import type { Suspense } from 'vue';`, `import { Suspense as __Suspense } from 'vue';`],
+		[`import { Suspense } from './authored';`, `import { Suspense as __Suspense } from 'vue';`],
+	])('imports the generated Suspense as a value beside `%s`', (authored, generated) => {
+		const { code } = compile(
+			`${authored}
+
+			export function App() @{
+				@try {
+					<span>{'Loaded'}</span>
+				} @pending {
+					<span>{'Loading'}</span>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(generated);
+		expect(code).toContain('<__Suspense v-slots=');
+		expect(code).not.toContain('<Suspense');
 	});
 
 	it('compiles try/pending into a Vue Suspense slot boundary', () => {
@@ -829,7 +881,7 @@ describe('@tsrx/vue basic', () => {
 		expect(code).toContain('Suspense');
 		expect(code).toContain("from 'vue'");
 		expect(code).toContain('v-slots=');
-		expect(code).toContain('content={() => <Suspense');
+		expect(code).toContain('content={() => <__Suspense');
 		expect(code).toContain('default: () =>');
 		expect(code).toContain('content={() =>');
 		expect(code).toContain('error.message');
@@ -837,8 +889,8 @@ describe('@tsrx/vue basic', () => {
 		expect(code).toContain('StatementBodyHook');
 		expect(code).toContain('suffix={suffix}');
 
-		const error_boundary_index = code.indexOf('<TsrxErrorBoundary');
-		const suspense_index = code.indexOf('<Suspense');
+		const error_boundary_index = code.indexOf('<__TsrxErrorBoundary');
+		const suspense_index = code.indexOf('<__Suspense');
 		expect(error_boundary_index).toBeLessThan(suspense_index);
 	});
 
