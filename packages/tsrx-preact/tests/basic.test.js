@@ -37,6 +37,7 @@ describe('@tsrx/preact direct runtime imports', () => {
 		);
 
 		expect(code).toContain("from '@tsrx/preact-runtime/error-boundary'");
+		expect(code).toContain("from '@tsrx/preact-runtime/try-body'");
 		expect(code).toContain("from '@tsrx/preact-runtime/ref'");
 		expect(code).toContain("from '@tsrx/preact-runtime/iterable'");
 		expect(code).not.toMatch(/from '@tsrx\/preact\//);
