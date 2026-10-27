@@ -78,6 +78,8 @@ export function apply_ref_value<T = Element>(
 	set_ref_value?: (value: T | null) => void,
 ): void | (() => void);
 export function merge_ref_props<T = Element>(...refs: Array<RefValue<T>>): RefValue<T>;
+// Returns the same callback for the same refs; see the runtime JSDoc.
+export function merge_element_refs<T = Element>(...refs: Array<RefValue<T>>): RefValue<T>;
 /**
  * The non-object values a JSX spread accepts: TypeScript drops the
  * definitely-falsy members of a spread's type, so the `false` of
@@ -87,6 +89,11 @@ export function merge_ref_props<T = Element>(...refs: Array<RefValue<T>>): RefVa
 export type SpreadFalsy = false | 0 | '' | 0n | null | undefined | void;
 
 export function normalize_spread_props<T extends object | SpreadFalsy>(
+	props: T,
+	...outer_refs: Array<RefValue<Element>>
+): T | SpreadProps;
+// Always returns the normalized copy, for JSX runtimes that copy a spread once.
+export function copy_spread_props<T extends object | SpreadFalsy>(
 	props: T,
 	...outer_refs: Array<RefValue<Element>>
 ): T | SpreadProps;
@@ -101,6 +108,10 @@ export type SpreadRefProps<T> = (T | SpreadProps) & { readonly ref?: any };
 
 // A nullish bag comes back as an empty one so the compiler can read `.ref`.
 export function normalize_spread_props_for_ref_attr<T extends object | SpreadFalsy>(
+	props: T,
+	...outer_refs: Array<RefValue<Element>>
+): SpreadRefProps<Exclude<T, null | undefined | void>>;
+export function copy_spread_props_for_ref_attr<T extends object | SpreadFalsy>(
 	props: T,
 	...outer_refs: Array<RefValue<Element>>
 ): SpreadRefProps<Exclude<T, null | undefined | void>>;

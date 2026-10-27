@@ -5108,6 +5108,11 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			? platform.imports.refProp
 			: null;
 
+	// A JSX runtime that evaluates attributes left to right copies a spread once,
+	// so it gets the normalizers that return their copy: handing back the
+	// original bag would make the copy read its getters a second time.
+	const copies_spread = transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place';
+
 	/** @type {Map<string, AST.ImportSpecifier[]>} */
 	const ref_imports = new Map();
 
@@ -5115,7 +5120,12 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 		add_ref_import_specifier(
 			ref_imports,
 			merge_refs_source,
-			b.import_specifier('mergeRefs', MERGE_REFS_INTERNAL_NAME),
+			b.import_specifier(
+				!transform_context.typeOnly && transform_context.platform.jsx?.shareMergedRefs
+					? 'merge_element_refs'
+					: 'mergeRefs',
+				MERGE_REFS_INTERNAL_NAME,
+			),
 		);
 	}
 
@@ -5123,7 +5133,10 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 		add_ref_import_specifier(
 			ref_imports,
 			normalize_spread_props_source,
-			b.import_specifier('normalize_spread_props', NORMALIZE_SPREAD_PROPS_INTERNAL_NAME),
+			b.import_specifier(
+				copies_spread ? 'copy_spread_props' : 'normalize_spread_props',
+				NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
+			),
 		);
 	}
 
@@ -5132,7 +5145,7 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			normalize_spread_props_for_ref_attr_source,
 			b.import_specifier(
-				'normalize_spread_props_for_ref_attr',
+				copies_spread ? 'copy_spread_props_for_ref_attr' : 'normalize_spread_props_for_ref_attr',
 				NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 			),
 		);
@@ -5375,11 +5388,21 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 	const needs_synthetic_spread_ref = needs_explicit_spread_ref || ref_exprs.length > 0;
 	// Types do not depend on evaluation order, so the type-only print keeps
 	// the initialized setup declaration.
-	const bind_in_place =
-		!transform_context.typeOnly &&
-		transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place';
+	const bind_in_place = binds_host_spread_in_place(transform_context);
+	const own_ref_index = attrs.findIndex((attr) => is_jsx_ref_attribute(attr));
+	// The merged `ref` reads each bag's ref, so it has to follow the last spread.
+	// An own `ref` written before a spread is still evaluated where it is
+	// written: it is assigned to a binding ahead of the next attribute, and the
+	// merged ref reads the binding.
+	const own_ref_id =
+		bind_in_place &&
+		transform_context.platform.jsx.multiRefStrategy === 'merge-refs' &&
+		own_ref_index !== -1 &&
+		attrs.some((attr, index) => index > own_ref_index && attr.type === 'JSXSpreadAttribute')
+			? create_generated_identifier(create_own_ref_name(transform_context))
+			: null;
 
-	return attrs.flatMap(
+	const lowered = attrs.flatMap(
 		/**
 		 * @param {ESTreeJSX.JSXAttributeNode} attr
 		 * @returns {ESTreeJSX.JSXAttributeNode[]}
@@ -5405,8 +5428,6 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				);
 				// Bound in place, the bag is evaluated between the attributes around
 				// it, as in native JSX; the setup declaration only declares the name.
-				// The `ref` read below comes after the spread either way: the synthetic
-				// ref follows it, and `merge_duplicate_refs` appends the merged ref.
 				const spread = {
 					...attr,
 					argument: bind_in_place
@@ -5441,6 +5462,48 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 			];
 		},
 	);
+
+	if (own_ref_id !== null) {
+		const own_ref = /** @type {ESTreeJSX.JSXRefAttribute} */ (attrs[own_ref_index]);
+		const binding = b.assignment('=', clone_identifier(own_ref_id), own_ref.value.expression);
+		const position = lowered.indexOf(own_ref);
+		lowered[position] = {
+			...own_ref,
+			value: to_jsx_expression_container(clone_identifier(own_ref_id)),
+			metadata: { ...own_ref.metadata, own_ref_bound: true },
+		};
+		// An attribute value may not be a sequence (oxc rejects one there), but a
+		// spread argument may: the binding is evaluated in the spread right after
+		// the `ref`, or else in a spread of its own.
+		const next = lowered[position + 1];
+		/** @type {ESTreeJSX.JSXSpreadAttribute} */
+		let spread;
+		if (next.type === 'JSXSpreadAttribute') {
+			const argument =
+				next.argument.type === 'ParenthesizedExpression' ? next.argument.expression : next.argument;
+			spread = { ...next, argument: b.sequence([binding, argument]) };
+			lowered[position + 1] = spread;
+		} else {
+			spread = b.jsx_spread_attribute(b.sequence([binding, b.literal(null)]));
+			lowered.splice(position, 0, spread);
+		}
+		add_jsx_setup_declaration(spread, b.let(clone_identifier(own_ref_id)));
+	}
+
+	return lowered;
+}
+
+/**
+ * @param {TransformContext} transform_context
+ * @returns {string}
+ */
+function create_own_ref_name(transform_context) {
+	if (transform_context.helper_state) {
+		return create_helper_name(transform_context.helper_state, 'ref');
+	}
+
+	transform_context.local_statement_component_index += 1;
+	return `_tsrx_ref_${transform_context.local_statement_component_index}`;
 }
 
 /**
@@ -5613,6 +5676,7 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 	const result = [];
 	/** @type {ESTreeJSX.JSXRefAttribute | null} */
 	let source_attr = null;
+	let source_index = -1;
 	for (const attr of jsx_attrs) {
 		if (is_jsx_ref_attribute(attr)) {
 			ref_exprs.push(attr.value.expression);
@@ -5621,6 +5685,7 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 			// retains a source mapping back to its original `ref=` keyword.
 			if (!source_attr && !attr.metadata?.synthetic_ref) {
 				source_attr = attr;
+				source_index = result.length;
 			}
 		} else {
 			result.push(attr);
@@ -5651,9 +5716,34 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 		false,
 		source_attr_location,
 	);
-	result.push(merged_attr);
+	// Bound in place, the merged ref stays where the element's own `ref` is
+	// written, so a JSX runtime that evaluates attributes left to right
+	// evaluates that expression in authored order. An own `ref` written before
+	// a spread is already bound to a name there, and the merged ref follows the
+	// spread whose ref it reads.
+	if (
+		strategy === 'merge-refs' &&
+		source_index !== -1 &&
+		!source_attr?.metadata?.own_ref_bound &&
+		binds_host_spread_in_place(transform_context)
+	) {
+		result.splice(source_index, 0, merged_attr);
+	} else {
+		result.push(merged_attr);
+	}
 
 	return result;
+}
+
+/**
+ * @param {TransformContext} transform_context
+ * @returns {boolean}
+ */
+function binds_host_spread_in_place(transform_context) {
+	return (
+		!transform_context.typeOnly &&
+		transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place'
+	);
 }
 
 /**

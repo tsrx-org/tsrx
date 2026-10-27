@@ -362,6 +362,56 @@ function merge_ref_list(refs) {
 }
 
 /**
+ * @typedef {{
+ *   next: WeakMap<object, MergedRefEntry> | undefined,
+ *   ref: RefValue<any> | undefined,
+ * }} MergedRefEntry
+ */
+
+/**
+ * `merge_element_refs` callbacks by their refs, one level per ref.
+ * @type {MergedRefEntry}
+ */
+const merged_element_refs = { next: undefined, ref: undefined };
+
+/**
+ * Merge the refs of one compiled element into its `ref`. A single ref comes back
+ * as itself, and the same refs give back the same callback, so a JSX runtime
+ * that applies a `ref` again whenever its identity changes applies them once
+ * rather than on every render.
+ *
+ * Every element given the same refs shares the callback, so only a runtime
+ * that keeps a ref's cleanup per element can use it (React, Hono): Preact
+ * stores the cleanup on the function, where another element's would replace
+ * it.
+ *
+ * @template [T=Element]
+ * @param {...RefValue<T>} refs
+ * @returns {RefValue<T>}
+ */
+export function merge_element_refs(...refs) {
+	// Only a function or an object is a ref; `ref={cond && cb}` may be `false`.
+	const live = refs.filter(
+		(ref) => typeof ref === 'function' || (typeof ref === 'object' && ref !== null),
+	);
+	if (live.length < 2) {
+		return live[0];
+	}
+
+	let entry = merged_element_refs;
+	for (const ref of live) {
+		const next = (entry.next ??= new WeakMap());
+		let child = next.get(/** @type {object} */ (ref));
+		if (child === undefined) {
+			child = { next: undefined, ref: undefined };
+			next.set(/** @type {object} */ (ref), child);
+		}
+		entry = child;
+	}
+	return (entry.ref ??= merge_ref_list(live));
+}
+
+/**
  * Collect ref cleanups as flat `[kind, payload]` pairs, matching
  * `apply_ref_value`'s observable behavior for every ref shape: kind 0 is a
  * cleanup a callback ref returned, kind 1 a callback ref to re-invoke with
@@ -406,6 +456,10 @@ function collect_ref_cleanups(ref_value, node, cleanups) {
 }
 
 /**
+ * Collect a spread's refs into one `ref`. A bag with no refs to merge comes back
+ * as itself, so a JSX runtime that reads a spread lazily, property by property
+ * (Solid's), keeps reading the original bag.
+ *
  * @param {object | SpreadFalsy} props a props bag, or the falsy value of a
  *   conditional spread such as `{...(enabled && { disabled: true })}`; `object`
  *   rather than an index signature so an interface-typed bag is accepted
@@ -413,6 +467,29 @@ function collect_ref_cleanups(ref_value, node, cleanups) {
  * @returns {SpreadProps | SpreadFalsy}
  */
 export function normalize_spread_props(props, ...outer_refs) {
+	return normalize_spread(props, outer_refs, false);
+}
+
+/**
+ * `normalize_spread_props` for a JSX runtime that copies the result where it is
+ * spread, as `jsx()` and `createElement` do. It returns the normalized copy even
+ * when the bag has no refs to merge, so the bag's getters are read once.
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {...RefValue<Element>} outer_refs
+ * @returns {SpreadProps | SpreadFalsy}
+ */
+export function copy_spread_props(props, ...outer_refs) {
+	return normalize_spread(props, outer_refs, true);
+}
+
+/**
+ * @param {object | SpreadFalsy} props
+ * @param {Array<RefValue<Element>>} outer_refs a rest array owned by the caller
+ * @param {boolean} copy return the normalized copy even with nothing to merge
+ * @returns {SpreadProps | SpreadFalsy}
+ */
+function normalize_spread(props, outer_refs, copy) {
 	// A non-object carries no refs to collect. Returning it unchanged leaves the
 	// spread to treat it exactly as a native JSX spread would.
 	if (props === null || (typeof props !== 'object' && typeof props !== 'function')) {
@@ -425,6 +502,7 @@ export function normalize_spread_props(props, ...outer_refs) {
 	/** @type {SpreadProps} */
 	const next = {};
 	let existing_ref;
+	let has_existing_ref = false;
 
 	const keys = Reflect.ownKeys(source);
 	for (let i = 0; i < keys.length; i++) {
@@ -444,6 +522,7 @@ export function normalize_spread_props(props, ...outer_refs) {
 				}
 			} else {
 				existing_ref = /** @type {RefValue<Element>} */ (value);
+				has_existing_ref = true;
 			}
 			continue;
 		}
@@ -461,12 +540,20 @@ export function normalize_spread_props(props, ...outer_refs) {
 	}
 
 	if (refs === undefined && outer_refs.length === 0) {
-		return source;
+		if (!copy) {
+			return source;
+		}
+		// Even `ref: undefined` is kept: a later spread's own `ref` key replaces
+		// an earlier spread's ref, as in native JSX.
+		if (has_existing_ref) {
+			next.ref = existing_ref;
+		}
+		return next;
 	}
 
 	let merged_ref;
 	if (refs === undefined) {
-		// `outer_refs` is a fresh rest array owned by this call; unshifting
+		// `outer_refs` is a fresh rest array owned by the caller; unshifting
 		// `existing_ref` into place avoids a second concatenated array.
 		if (existing_ref != null) {
 			outer_refs.unshift(existing_ref);
@@ -505,7 +592,26 @@ export function normalize_spread_props(props, ...outer_refs) {
  * @returns {SpreadProps | Exclude<SpreadFalsy, null | undefined | void>}
  */
 export function normalize_spread_props_for_ref_attr(props, ...outer_refs) {
-	const next = normalize_spread_props(props, ...outer_refs);
+	return hide_spread_ref(normalize_spread(props, outer_refs, false));
+}
+
+/**
+ * `normalize_spread_props_for_ref_attr` for a JSX runtime that copies the
+ * result where it is spread; see `copy_spread_props`.
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {...RefValue<Element>} outer_refs
+ * @returns {SpreadProps | Exclude<SpreadFalsy, null | undefined | void>}
+ */
+export function copy_spread_props_for_ref_attr(props, ...outer_refs) {
+	return hide_spread_ref(normalize_spread(props, outer_refs, true));
+}
+
+/**
+ * @param {SpreadProps | SpreadFalsy} next
+ * @returns {SpreadProps | Exclude<SpreadFalsy, null | undefined | void>}
+ */
+function hide_spread_ref(next) {
 	// The compiler reads `normalized.ref` for the ref attribute, which throws on
 	// a nullish spread; an empty bag spreads to nothing just the same. Other
 	// primitives read `ref` as `undefined` and pass through.

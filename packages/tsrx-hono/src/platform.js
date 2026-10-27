@@ -79,6 +79,9 @@ function create_hono_platform(mode) {
 		jsx: {
 			rewriteClassAttr: false,
 			multiRefStrategy: 'merge-refs',
+			// Hono keeps a ref's cleanup per DOM node, so elements can share one
+			// merged ref.
+			shareMergedRefs: true,
 			hostSpreadRefBinding: 'in-place',
 			// Hono's server renderer escapes a string child of `<script>` like
 			// text; `dangerouslySetInnerHTML` renders the body as written in both

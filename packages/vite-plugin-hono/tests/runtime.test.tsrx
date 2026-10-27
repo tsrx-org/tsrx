@@ -9,6 +9,12 @@ import {
 } from '@tsrx/core/test-harness/runtime/nullish-spread-ref-components.tsrx';
 import {
 	NestedSpreadRefOrderApp,
+	RefBeforeAttributeApp,
+	RefBeforeSpreadApp,
+	SpreadClearsRefApp,
+	SpreadGetterApp,
+	SpreadGetterOwnRefApp,
+	SpreadGetterRefApp,
 	SpreadRefOrderApp,
 	SpreadsRefOrderApp,
 	spread_ref_order_nodes,
@@ -179,6 +185,45 @@ function StyledApp() @{
 	</div>
 }
 
+const spread_ref_render_log: string[] = [];
+
+function log_spread_ref(name: string) {
+	return (node: HTMLInputElement | null) => {
+		spread_ref_render_log.push(`${name}:${node ? 'attach' : 'detach'}`);
+	};
+}
+
+const own_before_ref = log_spread_ref('own-before');
+const own_after_ref = log_spread_ref('own-after');
+const own_beside_ref = log_spread_ref('own-beside');
+const bag_beside_ref = log_spread_ref('bag-beside');
+const swap_first_ref = log_spread_ref('swap-first');
+const swap_second_ref = log_spread_ref('swap-second');
+const plain_bag = { title: 'bag' };
+const ref_bag = { title: 'bag', ref: bag_beside_ref };
+
+function SpreadRefRenderApp() @{
+	const [count, setCount] = useState(0);
+	const [swapped, setSwapped] = useState(false);
+
+	<>
+		<input class="own-before" ref={own_before_ref} {...plain_bag} />
+		<input class="own-after" {...plain_bag} ref={own_after_ref} />
+		<input class="own-beside" ref={own_beside_ref} data-count={count} {...ref_bag} />
+		<input
+			class="swap"
+			ref={swapped ? swap_second_ref : swap_first_ref}
+			{...{ 'data-count': count }}
+		/>
+		<button class="spread-ref-rerender" onClick={() => setCount(count + 1)}>
+			{count}
+		</button>
+		<button class="spread-ref-swap" onClick={() => setSwapped(true)}>
+			{'swap'}
+		</button>
+	</>
+}
+
 let conditional_spread_and_node: HTMLInputElement | null = null;
 let conditional_spread_null_node: HTMLInputElement | null = null;
 
@@ -336,6 +381,71 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
 		});
 	}
+
+	for (const [label, App, selector, refCalls] of [
+		['without a ref', SpreadGetterApp, '.spread-getter', 0],
+		['beside a ref', SpreadGetterRefApp, '.spread-getter-ref', 1],
+		['whose bag carries a ref', SpreadGetterOwnRefApp, '.spread-getter-own-ref', 1],
+	] as const) {
+		it(`reads a spread getter once ${label}`, () => {
+			spread_ref_order_nodes.length = 0;
+			render(<App />, container);
+
+			const element = container.querySelector(selector);
+			expect(element?.getAttribute('title')).toBe('1');
+			expect(element?.getAttribute('data-reads')).toBe('1');
+			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
+		});
+	}
+
+	it("lets a later spread's `ref: undefined` clear an earlier spread's ref", () => {
+		spread_ref_order_nodes.length = 0;
+		render(<SpreadClearsRefApp />, container);
+
+		expect(container.querySelector('.spread-clears-ref')).not.toBeNull();
+		expect(spread_ref_order_nodes).toEqual([]);
+	});
+
+	for (const [label, App, selector, refCalls] of [
+		['a spread', RefBeforeSpreadApp, '.ref-before-spread', 2],
+		['a later attribute', RefBeforeAttributeApp, '.ref-before-attribute', 1],
+	] as const) {
+		it(`evaluates a ref before ${label} in authored order`, () => {
+			spread_ref_order_nodes.length = 0;
+			render(<App />, container);
+
+			const element = container.querySelector(selector);
+			expect(element?.getAttribute('data-ready')).toBe('true');
+			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
+		});
+	}
+
+	it('applies refs beside a host spread again only when a ref changes', async () => {
+		async function click(selector: string) {
+			(container.querySelector(selector) as HTMLButtonElement).click();
+			await Promise.resolve();
+		}
+
+		spread_ref_render_log.length = 0;
+		render(<SpreadRefRenderApp />, container);
+		expect(spread_ref_render_log).toEqual([
+			'own-before:attach',
+			'own-after:attach',
+			'own-beside:attach',
+			'bag-beside:attach',
+			'swap-first:attach',
+		]);
+
+		spread_ref_render_log.length = 0;
+		await click('.spread-ref-rerender');
+		await click('.spread-ref-rerender');
+		expect(container.querySelector('.spread-ref-rerender')?.textContent).toBe('2');
+		expect(container.querySelector('.own-beside')?.getAttribute('data-count')).toBe('2');
+		expect(spread_ref_render_log).toEqual([]);
+
+		await click('.spread-ref-swap');
+		expect(spread_ref_render_log).toEqual(['swap-first:detach', 'swap-second:attach']);
+	});
 
 	const spread_bag = { id: 'first', title: 'First' };
 	const spread_bags = [spread_bag, { id: 'second', title: 'Second' }];
