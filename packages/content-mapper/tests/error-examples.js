@@ -291,7 +291,35 @@ export const ERROR_EXAMPLES = [
 `,
 	},
 	{
+		// Solid lowers a statement that throws into its reactive render forms, and
+		// those have no `finally`. The parser rejects a `finally` after `@try`.
+		error: TSRX_ERRORS.TEMPLATE_TRY_FINALLY,
+		source: `export function C(props: { bad: boolean }) @{
+	try {
+		if (props.bad) throw new Error('bad');
+	} catch {
+		console.log('caught');
+	} finally {
+		console.log('done');
+	}
+	<p>ok</p>
+}
+`,
+		compiler: '@tsrx/solid',
+	},
+	{
 		error: TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED,
+		source: `export async function C(props: { load: (error: unknown) => Promise<string> }) @{
+	@try {
+		<p>ok</p>
+	} @catch (error) {
+		<p>{await props.load(error)}</p>
+	}
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED,
 		source: `export async function C(props: { items: Promise<string>[] }) @{
 	<ul>
 		@for (const item of props.items) {
@@ -814,16 +842,24 @@ export const WITHOUT_EXAMPLE = new Map(
 			"Raised only through core helpers that targets outside this repository call (Ripple, Octane); none of this repository's targets reaches it.",
 		],
 		[
-			TSRX_ERRORS.TEMPLATE_TRY_FINALLY,
-			'The parser rejects `finally` after an `@try` block (TS1012) first.',
-		],
-		[
 			TSRX_ERRORS.TEMPLATE_TRY_HANDLER,
-			'The parser reports an `@try` without `@catch` or `@pending` (TSRX1010) first.',
+			'The parser reports an `@try` without `@catch` or `@pending` (TSRX1010) first. A JavaScript `try` that Solid lowers has a `catch` or a `finally`, and without `catch` Solid reports only TEMPLATE_TRY_FINALLY for it.',
 		],
 		[
 			TSRX_ERRORS.TOP_LEVEL_AWAIT_USE_SERVER,
 			'Only for a target that sets `requireUseServerForAwait` without an `await` validator of its own; Solid, Vue and Hono DOM report their own error first (#887).',
+		],
+		[
+			TSRX_ERRORS.HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED,
+			"Only the Hono DOM compiler reports it, and this package doesn't depend on `@tsrx/hono`; its tests check it.",
+		],
+		[
+			TSRX_ERRORS.HONO_DOM_ASYNC_COMPONENT_UNSUPPORTED,
+			"Only the Hono DOM compiler reports it, and this package doesn't depend on `@tsrx/hono`; its tests check it.",
+		],
+		[
+			TSRX_ERRORS.TARGET_CATCH_RESET_UNSUPPORTED,
+			"Only the Hono compilers report it, and this package doesn't depend on `@tsrx/hono`; its tests check it.",
 		],
 		[
 			TSRX_ERRORS.RESERVED_IDENTIFIER_PREFIX,
@@ -870,7 +906,6 @@ export const KNOWN_PROBLEMS = new Map(
 		[TSRX_ERRORS.MISMATCHED_CLOSING_TAG, { problem: 'lost', issue: 978 }],
 		[TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT, { problem: 'twice', issue: 981 }],
 		[TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT, { problem: 'twice', issue: 981 }],
-		[TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED, { problem: 'twice', issue: 980 }],
 		// The statement's keywords have no mapping, so the directive covers only `A`.
 		[TS_ERRORS.NESTED_GLOBAL_EXPORT, { problem: 'typescript', issue: 979 }],
 		// Printed as `<T>() => 1`, which TypeScript reads as JSX in the generated TSX:

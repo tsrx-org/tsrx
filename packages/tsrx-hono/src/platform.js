@@ -5,12 +5,12 @@
 import {
 	builders as b,
 	createJsxTransform,
-	DIAGNOSTIC_CODES,
 	error,
 	findFirstTopLevelAwait,
 	findFirstTopLevelAwaitInTsrxFunctionBody,
 	is_component_like_element as isComponentLikeElement,
 	isFunctionNode,
+	TSRX_ERRORS,
 } from '@tsrx/core';
 
 const HONO_SERVER_SOURCE = 'hono/jsx';
@@ -45,12 +45,11 @@ function create_hono_platform(mode) {
 					},
 					validateComponentAwait(await_node, _component, ctx) {
 						error(
-							'Hono JSX DOM does not support top-level `await` in components. Use `use(promise)` with `<Suspense>` instead.',
+							TSRX_ERRORS.HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED,
 							ctx.filename,
 							await_node,
 							ctx.errors,
 							ctx.comments,
-							DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED,
 						);
 					},
 				}
@@ -110,12 +109,11 @@ function create_hono_error_boundary(try_content, fallback_fn, ctx, node) {
 	const reset_param = node.handler?.resetParam;
 	if (reset_param) {
 		error(
-			'Hono JSX ErrorBoundary does not provide a reset callback. Use `@catch (error)` without a reset parameter.',
+			TSRX_ERRORS.TARGET_CATCH_RESET_UNSUPPORTED,
 			ctx.filename,
 			reset_param,
 			ctx.errors,
 			ctx.comments,
-			DIAGNOSTIC_CODES.TARGET_CATCH_RESET_UNSUPPORTED,
 		);
 	}
 
@@ -162,12 +160,11 @@ export function validate_hono_dom_components(ast, filename, context) {
 	if (!component) return;
 
 	error(
-		'Hono JSX DOM does not support async components. Use use(promise) with <Suspense> instead.',
+		TSRX_ERRORS.HONO_DOM_ASYNC_COMPONENT_UNSUPPORTED,
 		filename,
 		component,
 		context.errors,
 		context.comments,
-		DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED,
 	);
 }
 

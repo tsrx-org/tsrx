@@ -585,7 +585,7 @@ const TSRX_ERROR_CODES = [
 	'TSRX2017  Invalid HTML nesting: <p> cannot be a descendant of <p>.',
 	'          <p><p /></p>  (on targets that check nesting)',
 	'TSRX2018  <target> TSRX does not support JavaScript `try/finally` in TSRX templates.',
-	'          a template try with a finally block, in a tree from another parser',
+	'          try { if (x) throw e; } finally {}  (a component-body try that Solid lowers, or a template try with a finally block from another parser)',
 	'TSRX2019  TSRX try statements must have a `pending` or `catch` block.',
 	'          a template try with neither, in a tree from another parser',
 	'TSRX2020  <target> TSRX does not support `@pending`.',

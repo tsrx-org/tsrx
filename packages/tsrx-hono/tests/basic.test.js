@@ -1,3 +1,4 @@
+import { TSRX_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedClassFunctionComponentTests,
@@ -135,9 +136,12 @@ describe('@tsrx/hono server compiler', () => {
 		).not.toThrow();
 	});
 
-	it('rejects the unsupported Hono reset callback shape', () => {
+	it.each([
+		['server', compileServer],
+		['DOM', compileDom],
+	])('rejects the unsupported Hono reset callback shape (%s)', (_mode, compile) => {
 		expect(() =>
-			compileServer(
+			compile(
 				`export function App() @{
 					@try {
 						<div />
@@ -147,12 +151,7 @@ describe('@tsrx/hono server compiler', () => {
 				}`,
 				'App.tsrx',
 			),
-		).toThrow(
-			expect.objectContaining({
-				code: 'TSRX2026',
-				message: expect.stringMatching(/does not provide a reset callback/),
-			}),
-		);
+		).toThrow(expect.objectContaining(TSRX_ERRORS.TARGET_CATCH_RESET_UNSUPPORTED));
 	});
 
 	it('keeps Hono-specific adapters available in direct runtime mode', () => {
@@ -402,7 +401,7 @@ describe('@tsrx/hono DOM compiler', () => {
 				<App />`,
 				'App.tsrx',
 			),
-		).toThrow(/Hono JSX DOM does not support async components/);
+		).toThrow(expect.objectContaining(TSRX_ERRORS.HONO_DOM_ASYNC_COMPONENT_UNSUPPORTED));
 	});
 
 	it('does not duplicate the async diagnostic when await has a precise diagnostic', () => {

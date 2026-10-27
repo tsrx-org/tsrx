@@ -54,6 +54,12 @@ export interface JsxTransformContext {
 	type_only_style_anchors: AST.Statement[];
 	helper_state: JsxHelperState | null;
 	available_bindings: Map<string, AST.Identifier>;
+	/**
+	 * Start offsets of the `await`s that `hooks.validateComponentAwait`
+	 * reported. The shared checks for an `await` the output can't hold skip
+	 * these, so each `await` is reported once.
+	 */
+	rejected_awaits: Set<number>;
 	inside_element_child?: boolean;
 	/** Full source text for source-aware diagnostics. */
 	source: string;
@@ -300,9 +306,11 @@ export interface JsxPlatformHooks {
 	 */
 	canHoistStaticNode?: (node: AST.TSRXJSXElement, ctx: JsxTransformContext) => boolean;
 	/**
-	 * Custom validation for a component body that uses top-level `await`.
-	 * Default: enforce `validation.requireUseServerForAwait`. Solid rejects
-	 * component-level await outright with a keyword-precise location.
+	 * Custom validation for a component body that uses top-level `await`,
+	 * called once for each such `await`, in source order.
+	 * Default: enforce `validation.requireUseServerForAwait` at the first one.
+	 * Solid rejects component-level await outright with a keyword-precise
+	 * location.
 	 */
 	validateComponentAwait?: (
 		awaitNode: AST.TSRXAwaitNode,
