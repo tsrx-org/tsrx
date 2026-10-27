@@ -1674,6 +1674,175 @@ describe('tsrx-solid runtime', () => {
 	});
 });
 
+// ── Element `@{ }` children inside control-flow bodies ──
+
+function BlockChildControlFlowApp() @{
+	const [on, setOn] = createSignal(false);
+	const kind = 'a';
+	<div>
+		@if (on()) {
+			<p class="if-block">@{
+				const v = 'if';
+				<b>{v}</b>
+			}</p>
+		}
+		@for (const item of ['x', 'y']) {
+			<p class="for-block">@{
+				const v = `for-${item}`;
+				<b>{v}</b>
+			}</p>
+		}
+		@switch (kind) {
+			@case 'a': {
+				<p class="switch-block">@{
+					const v = 'switch';
+					<b>{v}</b>
+				}</p>
+			}
+		}
+		@try {
+			<p class="try-block">@{
+				const v = 'try';
+				<b>{v}</b>
+			}</p>
+		} @catch (error) {
+			<p>{'failed'}</p>
+		}
+		<button class="show-if-block" onClick={() => setOn(true)}>
+			{'show'}
+		</button>
+	</div>
+}
+
+// ── Switch discriminant with a side effect ──
+
+const switch_queue: string[] = [];
+
+function SwitchQueueApp() @{
+	@switch (switch_queue.shift()) {
+		@case 'loading': {
+			<p class="queue-branch">{'Loading'}</p>
+		}
+		@case 'ready': {
+			<p class="queue-branch">{'Ready'}</p>
+		}
+		@default: {
+			<p class="queue-branch">{'Unknown'}</p>
+		}
+	}
+}
+
+// ── Whole-body `@{ }` blocks ──
+
+const block_runs = { if: 0, elseIf: 0, case: 0 };
+
+function WholeBodyBlockApp() @{
+	const [k, setK] = createSignal(0);
+	const [on] = createSignal(true);
+	const [off] = createSignal(false);
+	const kind = 'a';
+	const other = 'z';
+	<div>
+		@if (on()) {
+			@{
+				const value = (block_runs.if++, k());
+				<i class="whole-if">{`if ${value}`}</i>
+			}
+		}
+		@if (off()) {
+			<b />
+		} @else if (on()) {
+			@{
+				const value = (block_runs.elseIf++, k());
+				<i class="whole-else-if">{`else-if ${value}`}</i>
+			}
+		}
+		@switch (kind) {
+			@case 'a': {
+				@{
+					const value = (block_runs.case++, k());
+					<i class="whole-case">{`case ${value}`}</i>
+				};
+			}
+		}
+		@switch (other) {
+			@case 'a': {
+				<b />
+			}
+			@default: {
+				@{
+					const value = 'default';
+					<i class="whole-default">{value}</i>
+				};
+			}
+		}
+		<button class="bump-k" onClick={() => setK(k() + 1)}>
+			{'bump'}
+		</button>
+	</div>
+}
+
+// ── Switch discriminant that is a promise ──
+
+const switch_promise: Promise<string> = Promise.resolve('a');
+
+function SwitchPromiseApp() @{
+	const read = (): unknown => switch_promise;
+	@switch (read()) {
+		@case 'a': {
+			<p class="promise-branch">{'a'}</p>
+		}
+		@default: {
+			<p class="promise-branch">{'default'}</p>
+		}
+	}
+}
+
+describe('tsrx-solid control-flow bodies', () => {
+	it('renders a whole-body @{ } block and runs its setup once', async () => {
+		block_runs.if = block_runs.elseIf = block_runs.case = 0;
+		await render(WholeBodyBlockApp);
+		expect(text('.whole-if')).toBe('if 0');
+		expect(text('.whole-else-if')).toBe('else-if 0');
+		expect(text('.whole-case')).toBe('case 0');
+		expect(text('.whole-default')).toBe('default');
+		const nodes = Array.from(container.querySelectorAll('i'));
+
+		await click('.bump-k');
+		await click('.bump-k');
+		// The setup reads `k()` but runs untracked, as a body without `@{ }` does.
+		expect(block_runs).toEqual({ if: 1, elseIf: 1, case: 1 });
+		expect(Array.from(container.querySelectorAll('i'))).toEqual(nodes);
+	});
+
+	it('compares a promise discriminant as a value, as a JavaScript switch does', async () => {
+		await render(SwitchPromiseApp);
+		await flush();
+		expect(text('.promise-branch')).toBe('default');
+	});
+
+	it("renders an element's @{ } child inside @if, @for, @switch and @try bodies", async () => {
+		await render(BlockChildControlFlowApp);
+		expect(Array.from(container.querySelectorAll('.for-block'), (node) => node.innerHTML)).toEqual([
+			'<b>for-x</b>',
+			'<b>for-y</b>',
+		]);
+		expect(text('.switch-block')).toBe('switch');
+		expect(text('.try-block')).toBe('try');
+		expect(container.querySelector('.if-block')).toBeNull();
+
+		await click('.show-if-block');
+		expect(container.querySelector('.if-block')?.innerHTML).toBe('<b>if</b>');
+	});
+
+	it('reads a @switch discriminant once for all cases', async () => {
+		switch_queue.splice(0, switch_queue.length, 'ready', 'loading');
+		await render(SwitchQueueApp);
+		expect(text('.queue-branch')).toBe('Ready');
+		expect(switch_queue).toEqual(['loading']);
+	});
+});
+
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
