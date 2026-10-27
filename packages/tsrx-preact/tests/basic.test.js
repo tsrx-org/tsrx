@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -48,6 +49,7 @@ runSharedCompileTests({ compile, name: 'preact', classAttrName: 'class' });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'preact' });
 runSharedCodeBlockChildrenTests({ compile, name: 'preact' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'preact' });
+runSharedAnonymousComponentTests({ compile, name: 'preact' });
 
 describe('@tsrx/preact basic', () => {
 	it('rejects the removed `&{ ... }` lazy destructuring syntax', () => {
