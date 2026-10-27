@@ -686,6 +686,92 @@ describe('@tsrx/vue basic', () => {
 		expect(code).not.toContain('<Fragment');
 	});
 
+	it('destructures a keyed array pattern from the item, not by index (#938)', () => {
+		const { code, errors } = compile(
+			`function App({ rows }: { rows: Iterable<string>[] }) @{
+				@for (const [first, second = 'none'] of rows; key first) {
+					<p>{first}|{second}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain("<VaporFor in={rows} getKey={([first, second = 'none']) => first}>");
+		expect(code).toMatch(
+			/const _\$_vapor_bindings_1 = _\$_vapor_computed\(\(\) => \{\s*const \[first, second = 'none'\] = __vapor_item\.value;\s*return \{ first, second \};/,
+		);
+		expect(code).toContain('{_$_vapor_bindings_1.value.first}|{_$_vapor_bindings_1.value.second}');
+		expect(code).not.toContain('__vapor_item.value[0]');
+		expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");
+	});
+
+	it('imports computed for a keyed array pattern beside type and namespace imports of vue', () => {
+		for (const authored of [
+			"import type { Ref } from 'vue';",
+			"import * as Vue from 'vue';",
+			"import { type Ref, ref } from 'vue';",
+		]) {
+			const { code, errors } = compile(
+				`${authored}
+				function App({ rows }: { rows: string[][] }) @{
+					@for (const [first] of rows; key first) {
+						<p>{first}</p>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(errors, authored).toEqual([]);
+			expect(code, authored).toContain(authored);
+			expect(code, authored).toContain("import { computed as _$_vapor_computed } from 'vue';");
+		}
+	});
+
+	it('leaves type parameters and type references in a keyed slot alone (#922)', () => {
+		const { code, errors } = compile(
+			`function List({ items }: { items: { id: string; label: string }[] }) @{
+				<ul>
+					@for (const item of items; key item.id) {
+						<button onClick={function <item>(x: item, y: typeof item): item[] { return [x as item]; }}>{item.label}</button>
+					}
+				</ul>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain('function <item>(x: item, y: typeof item.value): item[] {');
+		expect(code).toContain('return [x as item];');
+		expect(code).toContain('{item.value.label}');
+		expect(code).not.toContain('<item.value>');
+	});
+
+	it('leaves type declarations and qualified type queries in a keyed slot alone (#922)', () => {
+		const { code, errors } = compile(
+			`function List({ items, Types }: { items: { id: string; label: string }[]; Types: { item: string } }) @{
+				<ul>
+					@for (const item of items; key item.id) {
+						<button onClick={() => {
+							type item = string;
+							interface Row { label: item }
+							const typed: typeof Types.item = item.label;
+							return typed satisfies item;
+						}}>{item.label}</button>
+					}
+				</ul>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain('type item = string;');
+		expect(code).toContain('interface Row {');
+		expect(code).toContain('label: item');
+		expect(code).toContain('const typed: typeof Types.item = item.value.label;');
+		expect(code).toContain('return typed satisfies item;');
+	});
+
 	it('falls back without injecting VaporFor for keyed destructuring patterns it cannot rewrite', () => {
 		const { code } = compile(
 			`function App({ items, keyName }: { items: Array<Record<string, string>>, keyName: string }) @{
