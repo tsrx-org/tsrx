@@ -43,7 +43,11 @@ import {
 	find_first_top_level_await,
 	find_first_top_level_await_in_tsrx_function_body,
 } from '../await.js';
-import { prepare_stylesheet_for_render, is_style_element } from '../scoping.js';
+import {
+	MERGE_SPREAD_CLASS_INTERNAL_NAME,
+	prepare_stylesheet_for_render,
+	is_style_element,
+} from '../scoping.js';
 import { prepare_style_scopes, type_only_style } from './style-scopes.js';
 import {
 	build_style_class_map,
@@ -558,6 +562,7 @@ export function createJsxTransform(platform) {
 			needs_error_boundary: false,
 			needs_suspense: false,
 			needs_merge_refs: false,
+			needs_merge_spread_class: false,
 			needs_normalize_spread_props: false,
 			needs_normalize_spread_props_for_ref_attr: false,
 			needs_fragment: false,
@@ -5116,6 +5121,14 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			merge_refs_source,
 			b.import_specifier('mergeRefs', MERGE_REFS_INTERNAL_NAME),
+		);
+	}
+
+	if (transform_context.needs_merge_spread_class && platform.imports.refProp) {
+		add_ref_import_specifier(
+			ref_imports,
+			platform.imports.refProp,
+			b.import_specifier('merge_spread_class', MERGE_SPREAD_CLASS_INTERNAL_NAME),
 		);
 	}
 

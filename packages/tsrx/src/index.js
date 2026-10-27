@@ -233,6 +233,7 @@ export {
 	annotate_with_hash as annotateWithHash,
 	annotate_component_with_hash as annotateComponentWithHash,
 	add_hash_class as addHashClass,
+	MERGE_SPREAD_CLASS_INTERNAL_NAME,
 } from './transform/scoping.js';
 export {
 	convert_source_map_to_mappings as convertSourceMapToMappings,

@@ -176,6 +176,31 @@ describe('@tsrx/vue basic', () => {
 		expect(css).toContain('color: red;');
 	});
 
+	// Vue's `mergeProps` joins `class` across attributes and spreads itself.
+	it('leaves host spreads as written beside the scope classes', () => {
+		const { code, cssHash } = compile(
+			`export function App(props) @{
+				<>
+					<span {...props} />
+					<span class="base" {...props} />
+					<span {...props} class="last" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('merge_spread_class');
+		expect(code).toMatch(
+			new RegExp(`<span \\{\\.\\.\\.(\\w+)\\} ref=\\{\\1\\?\\.ref\\} class="${cssHash}" />`),
+		);
+	});
+
 	it('applies scoped css hashes and keeps type selectors for dynamic tags', () => {
 		const { code, css, cssHash } = compile(
 			`export function App() @{

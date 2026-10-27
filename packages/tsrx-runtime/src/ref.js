@@ -1,6 +1,7 @@
 /** @import { MergeableRef, RefProp, RefValue, SpreadFalsy, SpreadProps } from '../types/ref' */
 
 import {
+	define_property,
 	has_own_property,
 	has_prototype_accessor,
 	is_array,
@@ -566,4 +567,112 @@ function is_dom_node(value) {
 			'nodeName' in value &&
 			typeof (/** @type {{ nodeName?: unknown }} */ (value).nodeName) === 'string')
 	);
+}
+
+/**
+ * Join the class a host spread passes an element with the scope classes TSRX
+ * adds to it. The compiler wraps each spread written after the element's
+ * class attribute, so the spread's class replaces the authored one, as in
+ * plain JSX, and the scope classes stay. A bag without a class comes back as
+ * itself, leaving the class attribute to apply. Otherwise the copy reads the
+ * bag through getters, so a JSX runtime that reads a spread lazily (Solid's)
+ * still tracks each prop, and the bag is never written to. The copy's class
+ * prop comes after the bag's other props.
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {unknown} scope_class the element's scope hashes and applied classes,
+ *   or `null` for a spread written before the class attribute: the copy then
+ *   leaves out the bag's class so that the attribute applies
+ * @param {string} key the class prop the copy carries
+ * @param {string} [alias] another prop the target reads a class from, such as
+ *   `className` beside Preact's `class`; its class moves to `key` so the
+ *   element keeps one class prop
+ * @param {boolean} [list] the target's class also takes an object or a list,
+ *   as Solid's does, so a class of another type joins the scope classes as
+ *   `[class, scope_class]`
+ * @returns {object | SpreadFalsy}
+ */
+export function merge_spread_class(props, scope_class, key, alias, list) {
+	if (props === null || (typeof props !== 'object' && typeof props !== 'function')) {
+		return props;
+	}
+
+	const source = /** @type {SpreadProps} */ (props);
+	const keys = Reflect.ownKeys(source);
+	/** @type {PropertyKey[]} */
+	const class_keys = [];
+	for (let i = 0; i < keys.length; i++) {
+		const name = keys[i];
+		if ((name === key || name === alias) && property_is_enumerable.call(source, name)) {
+			class_keys.push(name);
+		}
+	}
+	if (class_keys.length === 0) {
+		return props;
+	}
+
+	/** @type {SpreadProps} */
+	const next = {};
+	for (let i = 0; i < keys.length; i++) {
+		const name = keys[i];
+		if (name === key || name === alias || !property_is_enumerable.call(source, name)) {
+			continue;
+		}
+		define_property(next, name, {
+			enumerable: true,
+			configurable: true,
+			get: () => source[name],
+		});
+	}
+	if (scope_class !== null) {
+		define_property(next, key, {
+			enumerable: true,
+			configurable: true,
+			get: () => join_class(read_class(source, class_keys), scope_class, list),
+		});
+	}
+	return next;
+}
+
+/**
+ * Of a bag's class props, the last one with a value, as a runtime that reads
+ * either renders it.
+ *
+ * @param {SpreadProps} source
+ * @param {PropertyKey[]} class_keys
+ * @returns {unknown}
+ */
+function read_class(source, class_keys) {
+	for (let i = class_keys.length - 1; i >= 0; i--) {
+		const value = source[class_keys[i]];
+		if (value != null) {
+			return value;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * @param {unknown} value
+ * @param {unknown} scope_class
+ * @param {boolean | undefined} list
+ * @returns {unknown}
+ */
+function join_class(value, scope_class, list) {
+	if (value == null || value === false || value === '') {
+		return scope_class;
+	}
+	if (list && typeof value !== 'string') {
+		return [value, scope_class];
+	}
+	// A thenable class, such as the promise Hono's server `css` returns, applies
+	// as the runtime resolves it. Any other value joins as text, as it would in
+	// the class attribute.
+	if (
+		(typeof value === 'object' || typeof value === 'function') &&
+		typeof (/** @type {{ then?: unknown }} */ (value).then) === 'function'
+	) {
+		return value;
+	}
+	return `${value} ${scope_class}`;
 }

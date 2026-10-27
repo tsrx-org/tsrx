@@ -35,6 +35,7 @@ export interface JsxTransformContext {
 	needs_error_boundary: boolean;
 	needs_suspense: boolean;
 	needs_merge_refs: boolean;
+	needs_merge_spread_class: boolean;
 	needs_normalize_spread_props: boolean;
 	needs_normalize_spread_props_for_ref_attr: boolean;
 	needs_fragment: boolean;
@@ -420,6 +421,34 @@ export interface JsxPlatform {
 		 * not rewrite authored attributes.
 		 */
 		classAttrName?: 'class' | 'className';
+		/**
+		 * The props the JSX runtime reads a host element's class from, so an
+		 * element that receives scoped CSS classes keeps the class a spread
+		 * passes it. Each spread written after the element's class attribute is
+		 * wrapped in `merge_spread_class` from `imports.refProp`, which joins
+		 * the spread's class with the scope classes.
+		 *
+		 * - One prop, such as React's `['className']` or Solid's `['class']`.
+		 * - Both, `['class', 'className']`, for runtimes that read either, such
+		 *   as Preact's and Hono's: a spread's class moves to the name of the
+		 *   element's class attribute, so the element keeps one class prop. A
+		 *   spread written before the class attribute loses its class, which
+		 *   the attribute would replace anyway.
+		 * - `undefined`: spreads stay as written, for a runtime that joins
+		 *   `class` across attributes and spreads itself, such as Vue's
+		 *   `mergeProps`.
+		 *
+		 * A spread's class joins the scope classes as text, as in the class
+		 * attribute, except a thenable class (Hono's server `css`), which applies
+		 * unchanged. `hostSpreadClassList` joins a non-string class as a list.
+		 */
+		hostSpreadClassProps?: ReadonlyArray<'class' | 'className'>;
+		/**
+		 * The runtime's class prop also takes an object or a list, as Solid's
+		 * `class` does, so a spread's non-string class joins the scope classes
+		 * as `[class, scope]`.
+		 */
+		hostSpreadClassList?: boolean;
 		/**
 		 * How to collapse multiple `ref` attributes on the same element into
 		 * one. React's and Preact's runtimes treat duplicate `ref` props as

@@ -78,6 +78,8 @@ function create_hono_platform(mode) {
 		},
 		jsx: {
 			rewriteClassAttr: false,
+			// Hono renders `className` as `class`.
+			hostSpreadClassProps: ['class', 'className'],
 			multiRefStrategy: 'merge-refs',
 			hostSpreadRefBinding: 'in-place',
 			// Hono's server renderer escapes a string child of `<script>` like
