@@ -38,6 +38,21 @@ const FRESH_TSRX = `export function Fresh() @{
 	<div>{n}</div>
 }
 `;
+/** The output is static, so the generated file starts with it, hoisted. */
+const FRESH_STATIC_TSRX = `export function FreshStatic() @{
+	const n = 1;
+	helperB;
+	<div />
+}
+`;
+const MEMO_TSRX = `import { useState } from 'react';
+
+export function Memo() @{
+	const [n] = useState(0);
+	const m = useMem
+	<p>{n}{m}</p>
+}
+`;
 const OTHER_TSRX = `export function Other(props: { n: number }) @{
 	<span>{props.n}</span>
 }
@@ -103,6 +118,8 @@ function workspace_files() {
 	files['WithComponent.tsrx'] = WITH_COMPONENT_TSRX;
 	files['Extend.tsrx'] = EXTEND_TSRX;
 	files['Fresh.tsrx'] = FRESH_TSRX;
+	files['FreshStatic.tsrx'] = FRESH_STATIC_TSRX;
+	files['Memo.tsrx'] = MEMO_TSRX;
 	files['sub/tsconfig.json'] = JSON.stringify(
 		{ ...tsconfig, include: ['*.ts', '*.tsrx'] },
 		null,
@@ -296,8 +313,10 @@ describe('native language server on a configured project', () => {
 		// The generated file starts with hoisted static JSX, so the insertion point of a new
 		// import lies in synthesized code and the server drops the candidate rather than
 		// inserting at a bogus location. Tracked upstream; a plain `.ts` file gets the edit.
+		client.open('FreshStatic.tsrx', files['FreshStatic.tsrx']);
+		await client.diagnostics('FreshStatic.tsrx').catch(() => undefined);
 		const completion = await client.request('textDocument/completion', {
-			...at(client, files, 'Fresh.tsrx', 'helperB', 'helperB'.length),
+			...at(client, files, 'FreshStatic.tsrx', 'helperB', 'helperB'.length),
 			context: { triggerKind: 1 },
 		});
 		expect(
@@ -305,7 +324,51 @@ describe('native language server on a configured project', () => {
 				(/** @type {{ label: string }} */ entry) => entry.label === 'helperB',
 			),
 		).toEqual([]);
+		client.close('FreshStatic.tsrx');
 	});
+
+	it.each([
+		[
+			'on a new line',
+			'Fresh.tsrx',
+			'helperB',
+			'./lib',
+			{
+				range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+				newText: 'import { helperB } from "./lib";\n\n',
+			},
+		],
+		[
+			'into an import of a package',
+			'Memo.tsrx',
+			'useMemo',
+			'react',
+			{
+				range: { start: { line: 0, character: 9 }, end: { line: 0, character: 9 } },
+				newText: 'useMemo, ',
+			},
+		],
+	])(
+		'auto-imports %s at the end of a name that ends a statement without ; (#1064)',
+		async (_name, file, label, module, edit) => {
+			// The generated statement ends without `;` too, so the end of the name is
+			// inside text that is the same in both files.
+			client.open(file, files[file]);
+			await client.diagnostics(file).catch(() => undefined);
+			const needle = label === 'useMemo' ? 'useMem' : label;
+			const completion = await client.request('textDocument/completion', {
+				...at(client, files, file, needle, needle.length),
+				context: { triggerKind: 1 },
+			});
+			const item = completion.items.find(
+				(/** @type {{ label: string, labelDetails?: { description?: string } }} */ entry) =>
+					entry.label === label && entry.labelDetails?.description === module,
+			);
+			expect(item, 'auto-import candidate').toBeDefined();
+			const resolved = await client.request('completionItem/resolve', item);
+			expect(resolved.additionalTextEdits ?? item.additionalTextEdits).toEqual([edit]);
+		},
+	);
 
 	it('organizes imports (TypeScript 7 drops the edit unless the newline after the last import maps)', async () => {
 		const source = [
@@ -382,23 +445,41 @@ describe('native language server on a configured project', () => {
 		return resolved.edit?.changes?.[uri] ?? [];
 	}
 
-	it.each(['source.organizeImports', 'source.sortImports', 'source.removeUnusedImports'])(
-		'returns no %s edits when an import does not end with a semicolon (#1023)',
-		async (kind) => {
-			// The generated import always ends with `;`, so the end of each line is not the
-			// same text in both files, and TypeScript 7 drops every edit.
-			const source = [
-				"import Panel from './Panel.tsrx'",
-				"import Button from './Button.tsrx'",
-				'',
-				'export default function NoSemicolons() @{',
-				'\t<Button label="x" />',
-				'}',
-				'',
-			].join('\n');
-			expect(await source_action_edits('NoSemicolons.tsrx', source, kind)).toEqual([]);
-		},
-	);
+	const NO_SEMICOLONS = "import Panel from './Panel.tsrx'\nimport Button from './Button.tsrx'";
+	const SEVERAL_LINES = `import {
+	helperA,
+	helperB,
+} from './lib';
+import Panel from './Panel.tsrx';
+import Button from './Button.tsrx';`;
+	it.each([
+		['source.organizeImports', 'without semicolons (#1023)', NO_SEMICOLONS],
+		['source.sortImports', 'without semicolons (#1023)', NO_SEMICOLONS],
+		['source.removeUnusedImports', 'without semicolons (#1023)', NO_SEMICOLONS],
+		['source.organizeImports', 'over several lines (#1033)', SEVERAL_LINES],
+		['source.sortImports', 'over several lines (#1033)', SEVERAL_LINES],
+		[
+			'source.removeUnusedImports',
+			'without spaces (#1033)',
+			"import {helperA, helperB} from './lib';\nimport Button from './Button.tsrx';",
+		],
+		[
+			'source.removeUnusedImports',
+			'with a trailing comma (#1033)',
+			"import { helperA, helperB, } from './lib';\nimport Button from './Button.tsrx';",
+		],
+	])('applies %s to imports %s as in a .ts file', async (kind, _layout, imports) => {
+		// The editor output writes the imports as written, so TypeScript 7 finds the
+		// text of its edits in both files.
+		const tsrx = `${imports}\n\nexport default function Imports() @{\n\thelperA()\n\t<Button label="x" />\n}\n`;
+		const ts = `${imports}\n\nexport default function Imports() {\n\thelperA()\n\treturn Button\n}\n`;
+		const in_ts = apply_edits(ts, await source_action_edits('Imports.ts', ts, kind));
+		const in_tsrx = apply_edits(tsrx, await source_action_edits('Imports.tsrx', tsrx, kind));
+		expect(in_ts).not.toBe(ts);
+		/** @param {string} text */
+		const imports_of = (text) => text.slice(0, text.indexOf('export default'));
+		expect(imports_of(in_tsrx)).toBe(imports_of(in_ts));
+	});
 
 	it.each([
 		['source.sortImports', ' // keep this'],

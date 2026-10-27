@@ -428,6 +428,35 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		});
 	});
 
+	describe(`[${name}] computed key brackets`, () => {
+		it.each([
+			['class A { [k]() {} }', '[k]'],
+			['class A { [ k ]() {} }', '[ k ]'],
+			['class A { [/* c */ k]() {} }', '[/* c */ k]'],
+			['const o = { [\n\tk\n]: 1 };', '[\n\tk\n]'],
+			// The decorator's argument holds the first `[` inside the member.
+			[
+				'function dec(...args: unknown[]) { return () => {}; }\nclass A { @dec([1]) [k]() {} }',
+				'[k]',
+			],
+		])('maps the brackets of %j', (code, key) => {
+			const source = `declare const k: string;\n${code}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const source_offset = source.lastIndexOf(key);
+			const mapping = result.mappings.find(
+				(candidate) =>
+					candidate.sourceOffsets[0] === source_offset && candidate.lengths[0] === key.length,
+			);
+			assert(mapping, `no mapping covers ${JSON.stringify(key)}`);
+			const generated_start = mapping.generatedOffsets[0];
+			const generated = result.code.slice(
+				generated_start,
+				generated_start + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+			);
+			expect(generated.startsWith('[') && generated.endsWith(']')).toBe(true);
+		});
+	});
+
 	describe(`[${name}] source mappings do not crash for`, () => {
 		/**
 		 * @param {string} source
@@ -1332,6 +1361,28 @@ function C() @{
 }`);
 		});
 
+		it.each([
+			['decorated', 'declare function dec(...args: unknown[]): any;\n@dec class Store {}'],
+			[
+				'exported decorated',
+				'declare function dec(...args: unknown[]): any;\nexport @dec class Store {}',
+			],
+			['abstract', 'abstract class Store {}'],
+			['declared', 'declare class Store {}'],
+			['expression', 'const Store = class {};'],
+		])('maps the class keyword of a %s class', (_kind, source) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const source_class_offset = source.search(/\bclass\b/);
+			const generated_class_offset = result.code.search(/\bclass\b/);
+			const mapping = find_exact_mapping(
+				result.mappings,
+				source_class_offset,
+				generated_class_offset,
+				'class'.length,
+			);
+			expect(mapping).toBeDefined();
+		});
+
 		it('maps anonymous default class keywords', () => {
 			expect_class_keyword_mapping(`export default class {
 	value = 1;
@@ -1989,6 +2040,75 @@ export function App() @{
 			).toBe('second');
 		});
 
+		it.each([
+			["import { label } from './label'", 'no semicolon'],
+			["import {\n\tfirst, // the first\n\tsecond,\n} from './label';", 'names on several lines'],
+			["import {first} from './label';", 'no spaces'],
+			["import { first, } from './label';", 'a trailing comma'],
+			["import def, * as all from './label';", 'a default and a namespace import'],
+			["import { type Label, 'a-b' as ab } from './label';", 'a type name and a string name'],
+			["import data from './label' with { type: 'json' }", 'import attributes'],
+		])('writes the import %j as written in the editor output (%s, #1023, #1033)', (statement) => {
+			// TypeScript 7 applies an Organize Imports edit only to text that is the same
+			// in both files.
+			const source = `${statement}
+
+export function App() @{
+	<p />
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(result.code).toContain(`${statement}\n`);
+		});
+
+		it("keeps the printer's layout of an import in the build", () => {
+			const source = `import {
+	first,
+	second,
+} from './label'
+
+export function App() @{
+	<p>{first}{second}</p>
+}
+`;
+			expect(compile(source, 'App.tsrx').code).toContain(
+				"import { first, second } from './label';",
+			);
+		});
+
+		it('writes an import attribute after a line break in the printer layout', () => {
+			// TypeScript reads `with` after a line break as a new statement.
+			const source = `import data from './label'
+with { type: 'json' };
+
+export function App() @{
+	<p>{data}</p>
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.code).toContain("import data from './label' with { type: 'json' };");
+		});
+
+		it.each([
+			['the comma before the last name', ', ', 'helperB'],
+			['the first name with the comma after it', 'helperA, ', 'helperA'],
+		])('maps an edit of %s (#1025)', (_name, text, start_at) => {
+			// Removing one unused name deletes it with the text between it and the
+			// next name or the previous one, in an edit of its own.
+			const statement = "import { helperA, helperB } from './lib';";
+			const source = `${statement}
+
+export function App() @{
+	<p />
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const from = start_at === 'helperB' ? 'helperA'.length : 0;
+			const start = result.code.indexOf('helperA') + from;
+			expect(mapped_text(source, result.mappings, start, start + text.length, 'edit')).toBe(text);
+		});
+
 		it.runIf(name === 'vue')('does not map an import the compiler adds a name to', () => {
 			const source = `import { VaporFor } from 'vue-jsx-vapor';
 
@@ -2006,6 +2126,100 @@ export function App() @{
 			expect(
 				mapped_text(source, result.mappings, generated.start, generated.line_end, 'edit'),
 			).toBeUndefined();
+		});
+	});
+
+	describe(`[${name}] statement ends as written`, () => {
+		it('ends a statement without ; in the editor output when the source does (#1064)', () => {
+			// TypeScript 7 offers a completion at the end of a name only inside text
+			// that is the same in both files, and TypeScript writes the code of an edit
+			// with or without `;` as most statements of the file do.
+			const source = `import { useState } from 'react'
+export const top = 1
+let plain = top
+plain++
+export function App() @{
+	const [n] = useState(0)
+	const m = useMem
+	useMem
+	n.toFixed()
+	<p>{n}{m}</p>
+}
+export function Plain() {
+	const a = 1
+	foo<string>
+	true
+	return a
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			for (const line of [
+				'export const top = 1\n',
+				'let plain = top\n',
+				'plain++\n',
+				'const [n] = useState(0)\n',
+				'const m = useMem\n',
+				'useMem\n',
+				'n.toFixed()\n',
+				'const a = 1\n',
+				'foo<string>\n',
+				'true\n',
+				'return a\n',
+			]) {
+				expect(result.code).toContain(line);
+			}
+			// The output of a template has no `;` in the source either.
+			expect(result.code).toContain('return <p>{n}{m}</p>\n');
+			// The build keeps the printer's `;`.
+			expect(compile(source, 'App.tsrx').code).toContain('const m = useMem;');
+		});
+
+		it.each([
+			[
+				'the next statement is written in parentheses',
+				"const a = 1\n\t'not a directive'",
+				'const a = 1;',
+			],
+			['the statement is written in parentheses', '(plain)\n\tplain', '(plain);'],
+		])('keeps the ; of a statement when %s', (_name, statements, expected) => {
+			// A `(` on the next line would continue the statement.
+			const source = `let plain = 1;\nexport function Plain() {\n\t${statements}\n}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(result.code).toContain(expected);
+		});
+
+		it.each([
+			['const h = (c)', 'const h = (c);'],
+			['x = (y)', 'x = (y);'],
+			['x = (b, c)', 'x = (b, c);'],
+			['x = async (b)', 'x = async(b);'],
+			['x = c ? d : (e)', 'x = c ? d : (e);'],
+		])('keeps the ; of %j before a block', (statement, printed) => {
+			// TypeScript reads `(c)` and a `{` on the next line as an arrow function
+			// without `=>`.
+			const source = `declare let x: unknown, y: unknown, b: unknown, c: unknown, d: unknown, e: unknown;
+declare function async(value: unknown): unknown;
+export function Plain() {
+	${statement}
+	{ x }
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(result.code).toContain(printed);
+			const file = ts.createSourceFile(
+				'App.tsx',
+				result.code,
+				ts.ScriptTarget.Latest,
+				true,
+				ts.ScriptKind.TSX,
+			);
+			expect(
+				/** @type {{ parseDiagnostics: unknown[] }} */ (/** @type {unknown} */ (file))
+					.parseDiagnostics,
+			).toEqual([]);
 		});
 	});
 
@@ -2494,6 +2708,122 @@ function App() @{
 			}
 		});
 	});
+
+	describe(`[${name}] keywords and tags where diagnostics start or end`, () => {
+		/**
+		 * The generated text of each verification mapping that starts at `offset`
+		 * and covers `length` source characters.
+		 * @param {{ code: string, mappings: CodeMapping[] }} result
+		 * @param {number} offset
+		 * @param {number} length
+		 */
+		const generated_at = (result, offset, length) =>
+			result.mappings
+				.filter(
+					(mapping) =>
+						mapping.sourceOffsets[0] === offset &&
+						mapping.lengths[0] === length &&
+						mapping.data.verification,
+				)
+				.map((mapping) =>
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+					),
+				);
+
+		it('maps an authored yield keyword', () => {
+			// TypeScript reports TS7057 on a yield in a generator without a return type.
+			// A lowered `@if (yield 1)` prints its test in parentheses that start
+			// where the yield does.
+			const source = `export function* plain() {
+	const value = yield 1;
+	yield;
+	yield* plain();
+	return value;
+}
+export function* View() @{
+	@if (yield 1) {
+		<div />
+	}
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			for (const match of source.matchAll(/\byield\b/g)) {
+				expect(generated_at(result, /** @type {number} */ (match.index), 5)).toEqual(['yield']);
+			}
+		});
+
+		it.each([
+			['an authored ;', 'x = <div></div>;', ''],
+			['an authored ; after a self-closing tag', 'x = <br />;', ''],
+			// The next statement is written in parentheses, which could continue it.
+			['a ; the printer adds', 'x = <span>x</span>', "\n\t'next';"],
+			['a call', 'foo();', ''],
+		])('maps the ; that ends a statement with %s', (_kind, statement, after) => {
+			// TypeScript reports unreachable code (TS7027) on the whole statement, up
+			// to its `;`.
+			const source = `let x: unknown;\ndeclare function foo(): void;\nexport function f() {\n\treturn;\n\t${statement}${after}\n}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const start = source.indexOf(statement);
+			const authored = statement.endsWith(';');
+			const end = start + statement.length - (authored ? 1 : 0);
+			expect(generated_at(result, end, authored ? 1 : 0)).toEqual([';']);
+		});
+
+		it.each([
+			'export function bad(...args: number) {}',
+			'export class K { m(...args: number) {} }',
+			'export declare function f(...args: number): void;',
+			'export function List<T>(...items: T) @{ <ul /> }',
+		])('maps the ... of the rest parameter in %j', (source) => {
+			// TypeScript reports TS2370 (a rest parameter that is not an array) on the
+			// whole parameter, from the `...`.
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(generated_at(result, source.indexOf('...'), 3)).toContain('...');
+		});
+
+		it.each(['export as namespace A;', 'export as namespace A'])(
+			'maps the keywords and the whole statement of %j',
+			(statement) => {
+				// TypeScript reports a nested one (TS1316) on the whole statement.
+				const source = `function f() {\n\t${statement}\n}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf('export');
+				for (const keyword of ['export', 'as', 'namespace']) {
+					expect(generated_at(result, source.indexOf(keyword, start), keyword.length)).toContain(
+						keyword,
+					);
+				}
+				expect(generated_at(result, start, statement.length)).toContain('export as namespace A;');
+			},
+		);
+
+		it('maps each closing tag to exactly its generated tag', () => {
+			const source = `export function C() @{
+	<div>
+		<h2>a</h2>
+		<br />
+		<p>b</p>
+	</div>
+}
+export function D() @{
+	<input />
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			for (const tag of ['</h2>', '</p>', '</div>']) {
+				expect(generated_at(result, source.indexOf(tag), tag.length), tag).toEqual([tag]);
+			}
+			for (const element of ['<br />', '<input />']) {
+				const offset = source.indexOf(element) + element.length - 2;
+				expect(generated_at(result, offset, 2), element).toEqual(['/>']);
+			}
+		});
+	});
+
 	describe(`[${name}] input AST immutability`, () => {
 		/**
 		 * Structural snapshot of an AST node graph. `metadata` is the sanctioned

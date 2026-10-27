@@ -288,6 +288,8 @@ declare module 'estree' {
 		 * mapping collector needs the source positions.
 		 */
 		tsrx_keyword_tokens?: Parse.KeywordToken[];
+		/** Every token, recorded with `tsrx_keyword_tokens`, for esrap's `tokens` option. */
+		tsrx_tokens?: Parse.Token[];
 	}
 
 	interface FunctionDeclaration extends FunctionLikeTS {
@@ -389,6 +391,14 @@ declare module 'estree' {
 		typeAnnotation?: TSTypeAnnotation | undefined;
 		decorators: TSESTree.Decorator[];
 		optional: boolean;
+	}
+
+	// An optional binding pattern parameter in a signature: `{ a }?: T`, `[a]?: T`.
+	interface ObjectPattern {
+		optional?: boolean;
+	}
+	interface ArrayPattern {
+		optional?: boolean;
 	}
 
 	// Target analysis may mark a whole member expression as tracked metadata.
