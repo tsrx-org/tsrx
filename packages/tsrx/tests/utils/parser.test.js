@@ -4955,6 +4955,39 @@ else <b />;`,
 		expect(loop).toMatchObject({ index: { name: 'i' }, key: { type: 'MemberExpression' } });
 	});
 
+	it('reads an element right after `key` in an @for head (#1146)', () => {
+		/** @type {Array<[head: string, key: string]>} */
+		const cases = [
+			['key <b />', 'JSXElement'],
+			['index i; key <b />', 'JSXElement'],
+			['key<b />', 'JSXElement'],
+			['key <b>{x}</b>', 'JSXElement'],
+			['key <></>', 'JSXFragment'],
+			['key <T,>(x: T) => x', 'ArrowFunctionExpression'],
+			['key /a/.source + x', 'BinaryExpression'],
+		];
+		for (const [head, key] of cases) {
+			for (const options of [undefined, { collect: true, errors: [], comments: [] }]) {
+				const loop = find_first(
+					parseModule(
+						`export function A(props: { xs: string[] }) @{
+	<ul>
+		@for (const x of props.xs; ${head}) {
+			<li>{x}</li>
+		}
+	</ul>
+}`,
+						'A.tsrx',
+						options,
+					),
+					(node) => node.type === 'JSXForExpression',
+				);
+				expect(loop, head).toMatchObject({ key: { type: key } });
+				expect(options?.errors ?? [], head).toEqual([]);
+			}
+		}
+	});
+
 	it('parses @for inside a statement-container fragment output with JSX siblings', () => {
 		const ast = parseModule(
 			`export function App({ items }: { items: string[] }) @{

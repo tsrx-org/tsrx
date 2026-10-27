@@ -5021,6 +5021,24 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * The reverse where an expression starts after a name: `key` in an `@for`
+			 * head is a name, so the `<` after it reads as less-than, or as the start
+			 * of type arguments. Read it again as a tag start (as acorn reads a
+			 * `/` there again as a regular expression), so `key <b />` is an element,
+			 * unless it opens a generic arrow function (`key <T,>(x: T) => x`).
+			 */
+			#readLessThanAsTagStart() {
+				if (this.type !== tt.relational || this.value !== '<') return;
+				if (
+					!can_start_tag_after_lt(this.input, this.start) ||
+					looks_like_generic_arrow(this.input, this.start)
+				) {
+					return;
+				}
+				this.finishToken(tstt.jsxTagStart);
+			}
+
+			/**
 			 * @type {Parse.Parser['tsTryParseTypeParameters']}
 			 */
 			tsTryParseTypeParameters(parseModifiers) {
@@ -8995,6 +9013,7 @@ export function TSRXPlugin(config) {
 
 					if (this.isContextual('key')) {
 						this.next(); // consume 'key'
+						this.#readLessThanAsTagStart();
 						/** @type {AST.ForOfStatement} */ (node).key = this.parseExpression();
 					}
 
