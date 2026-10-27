@@ -10195,6 +10195,9 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	/** @param {AST.Program} program */
 	const function_statement = (program) => function_statements(program)[0];
 	/** @param {AST.Program} program */
+	const block_statement = (program) =>
+		as_type(/** @type {AST.Node} */ (first(program)), 'BlockStatement').body[0];
+	/** @param {AST.Program} program */
 	const interface_member = (program) =>
 		as_type(/** @type {AST.Node} */ (first(program)), 'TSInterfaceDeclaration').body.body[0];
 	/** @param {AST.Program} program */
@@ -10293,8 +10296,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'class A {\n\tconstructor(readonly public x: number) {}\n}',
 			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'public x']],
-			// acorn-typescript throws it at the modifier's column (sveltejs/acorn-typescript#122).
-			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '2:12'],
+			// At the modifier, not at its column on the first line (#735).
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '2:22'],
 			valid: 'class A {\n\tconstructor(public readonly x: number) {}\n}',
 			pick: constructor_parameter,
 		},
@@ -10351,8 +10354,12 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: constructor_parameter,
 		},
 		{
+			// On a method, TS2369 too.
 			source: 'class A { m(a: string, readonly ...rest: number[]) {} }',
-			errors: [[TS_ERRORS.REST_PARAMETER_PROPERTY, 'readonly']],
+			errors: [
+				[TS_ERRORS.REST_PARAMETER_PROPERTY, 'readonly'],
+				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'readonly'],
+			],
 			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:32'],
 			valid: 'class A { m(a: string, ...rest: number[]) {} }',
 			pick: first_member,
@@ -10742,6 +10749,127 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			valid: 'export const a = 1;',
 			pick: function_statement,
 			pickValid: first,
+		},
+		// `abstract` before a declaration other than a class in a block (#783).
+		{
+			source: 'function f() {\n\tabstract interface I {}\n}',
+			errors: [[TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'abstract interface']],
+			throws: [TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:1'],
+			valid: 'function f() {\n\tinterface I {}\n}',
+			pick: function_statement,
+		},
+		{
+			source: '{\n\tabstract let x = 1;\n}',
+			errors: [[TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'abstract let']],
+			throws: [TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:1'],
+			valid: '{\n\tlet x = 1;\n}',
+			pick: block_statement,
+		},
+		{
+			// At the first modifier, then `abstract`'s own error, which the tree
+			// leaves out, for the formatter to refuse.
+			source: '{\n\tdeclare abstract function f(): void;\n}',
+			errors: [
+				[TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'declare abstract'],
+				[TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'abstract function'],
+			],
+			throws: [TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:1'],
+			valid: '{\n\tdeclare function f(): void;\n}',
+			pick: block_statement,
+		},
+		{
+			// Not in a list: the body of an `if` or a label.
+			source: 'if (a) abstract interface I {}',
+			errors: [[TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'abstract interface']],
+			throws: [TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '1:7'],
+		},
+		{
+			source: 'label: abstract type T = 1;',
+			errors: [[TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'abstract type']],
+			throws: [TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '1:7'],
+		},
+		// TypeScript reports the first of `abstract` and `declare` in an ambient
+		// namespace, TS1242 or TS1038.
+		{
+			source: 'declare namespace N {\n\tdeclare abstract function f(): void;\n}',
+			errors: [
+				[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'declare abstract'],
+				[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract function'],
+			],
+			throws: [TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, '2:1'],
+		},
+		{
+			source: 'declare namespace N {\n\tabstract declare interface I {}\n}',
+			errors: [[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract declare']],
+			throws: [TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '2:1'],
+		},
+		{
+			source: 'declare namespace N {\n\texport declare abstract function f(): void;\n}',
+			errors: [
+				[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'declare abstract'],
+				[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract function'],
+			],
+			throws: [TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, '2:8'],
+		},
+		{
+			// TypeScript reads a constructor, which takes parameter properties.
+			source: 'class A {\n\tstatic constructor(public a: number) {}\n}',
+			errors: [[TS_ERRORS.MODIFIER_ON_CONSTRUCTOR, 'static']],
+			throws: [TS_ERRORS.MODIFIER_ON_CONSTRUCTOR, '2:1'],
+		},
+		// `declare` directly in an ambient namespace or module (#961).
+		{
+			source: 'declare namespace N {\n\tdeclare class A {}\n}',
+			errors: [[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'declare class']],
+			throws: [TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, '2:1'],
+			pick: namespace_statement,
+			match: { type: 'ClassDeclaration', declare: true, id: { name: 'A' } },
+		},
+		{
+			source: "declare module 'm' {\n\texport declare function f(): void;\n}",
+			errors: [[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'declare function']],
+			throws: [TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, '2:8'],
+			pick: namespace_statement,
+			match: {
+				type: 'ExportNamedDeclaration',
+				declaration: { type: 'TSDeclareFunction', declare: true },
+			},
+		},
+		{
+			source: 'declare namespace N {\n\tnamespace M {\n\t\tabstract declare class A {}\n\t}\n}',
+			errors: [[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'declare class']],
+			throws: [TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, '3:11'],
+		},
+		{
+			// Before the error for `abstract`, as TypeScript reports the first.
+			source: 'declare global {\n\tdeclare abstract interface I {}\n}',
+			errors: [
+				[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'declare abstract'],
+				[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract interface'],
+			],
+			throws: [TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, '2:1'],
+		},
+		// Modifiers or decorators before a class `static` block (#885).
+		{
+			source: 'class A {\n\tpublic static {}\n}',
+			errors: [[TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'public static']],
+			throws: [TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:1'],
+			valid: 'class A {\n\tstatic {}\n}',
+			pick: first_member,
+		},
+		{
+			source: 'class A {\n\tprivate readonly static {\n\t\tA.x = 1;\n\t}\n}',
+			errors: [[TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'private readonly']],
+			throws: [TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:1'],
+			valid: 'class A {\n\tstatic {\n\t\tA.x = 1;\n\t}\n}',
+			pick: first_member,
+		},
+		{
+			source: 'class A {\n\t@a @b() public static {}\n}',
+			errors: [[TS_ERRORS.DECORATORS_NOT_VALID_HERE, '@a @b']],
+			throws: [TS_ERRORS.DECORATORS_NOT_VALID_HERE, '2:1'],
+			pick: first_member,
+			match: { type: 'StaticBlock', decorators: [{ type: 'Decorator' }, { type: 'Decorator' }] },
 		},
 		{
 			source: 'function f() {\n\texport default 1;\n}',

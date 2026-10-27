@@ -556,6 +556,10 @@ export const TS_ERRORS = {
 		(modifier) => `'${modifier}' modifier cannot appear on an 'await using' declaration.`,
 	),
 	MODIFIERS_CANNOT_APPEAR_HERE: { code: 'TS1184', message: 'Modifiers cannot appear here.' },
+	MODIFIER_ON_CONSTRUCTOR: with_values(
+		'TS1089',
+		(modifier) => `'${modifier}' modifier cannot appear on a constructor declaration.`,
+	),
 	ACCESSIBILITY_MODIFIER_ALREADY_SEEN: {
 		code: 'TS1028',
 		message: 'Accessibility modifier already seen.',
@@ -576,6 +580,8 @@ export const TS_ERRORS = {
 		code: 'TS1038',
 		message: "A 'declare' modifier cannot be used in an already ambient context.",
 	},
+	/** Decorators on a class `static` block. */
+	DECORATORS_NOT_VALID_HERE: { code: 'TS1206', message: 'Decorators are not valid here.' },
 	MODIFIER_ON_IMPORT: with_values(
 		'TS1079',
 		(modifier) => `A '${modifier}' modifier cannot be used with an import declaration.`,
