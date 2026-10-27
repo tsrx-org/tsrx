@@ -33,6 +33,9 @@ export interface JsxTransformContext {
 	platform: JsxPlatform;
 	local_statement_component_index: number;
 	needs_error_boundary: boolean;
+	needs_try_body: boolean;
+	/** Counts `@try` sites, which runtime output keys `try1`, `try2`, …. */
+	try_site_index: number;
 	needs_suspense: boolean;
 	needs_merge_refs: boolean;
 	needs_normalize_spread_props: boolean;
@@ -375,6 +378,19 @@ export interface JsxPlatform {
 		 */
 		errorBoundary: string;
 		/**
+		 * Module to import `TsrxTryBody` from. When set, runtime output renders
+		 * a `@try` body as `<TsrxTryBody render={() => …} />` instead of an
+		 * expression the parent evaluates while rendering, and keys the
+		 * outermost element of each `@try` with its site. For runtimes whose
+		 * boundaries (React-style error boundaries and `Suspense`) catch only
+		 * what descendant components throw: the body's setup statements then
+		 * run inside the boundary. A body that awaits or yields stays inline,
+		 * since the enclosing function has to settle it. The type-only output
+		 * keeps the inline body. Keep this module free of class components so
+		 * a `@try` with only `@pending` works in React Server Components.
+		 */
+		tryBody?: string;
+		/**
 		 * Module to import `mergeRefs` from when an element has more than one
 		 * `ref` attribute and the platform uses the `'merge-refs'` strategy.
 		 * Required when `jsx.multiRefStrategy === 'merge-refs'`; ignored
@@ -404,6 +420,7 @@ export interface JsxPlatform {
 	 */
 	directRuntimeImports?: {
 		errorBoundary?: string;
+		tryBody?: string;
 		mergeRefs?: string;
 		refProp?: string;
 		forOfIterableHelper?: string;

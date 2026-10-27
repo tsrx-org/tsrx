@@ -1,5 +1,7 @@
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedCatchErrorTypeTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -37,6 +39,7 @@ describe('@tsrx/preact direct runtime imports', () => {
 		);
 
 		expect(code).toContain("from '@tsrx/preact-runtime/error-boundary'");
+		expect(code).toContain("from '@tsrx/preact-runtime/try-body'");
 		expect(code).toContain("from '@tsrx/preact-runtime/ref'");
 		expect(code).toContain("from '@tsrx/preact-runtime/iterable'");
 		expect(code).not.toMatch(/from '@tsrx\/preact\//);
@@ -46,6 +49,12 @@ describe('@tsrx/preact direct runtime imports', () => {
 runSharedTsxExpressionTsrxTests({ compile, name: 'preact', classAttrName: 'class' });
 runSharedCompileTests({ compile, name: 'preact', classAttrName: 'class' });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'preact' });
+runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings,
+	name: 'preact',
+	package_dir: fileURLToPath(new URL('..', import.meta.url)),
+	jsx_import_source: 'preact',
+});
 runSharedCodeBlockChildrenTests({ compile, name: 'preact' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'preact' });
 

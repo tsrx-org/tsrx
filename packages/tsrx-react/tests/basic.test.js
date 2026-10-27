@@ -1,6 +1,10 @@
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { TS_ERRORS } from '@tsrx/core';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedCatchErrorTypeTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -40,6 +44,7 @@ describe('@tsrx/react direct runtime imports', () => {
 		);
 
 		expect(code).toContain("from '@tsrx/react-runtime/error-boundary'");
+		expect(code).toContain("from '@tsrx/react-runtime/try-body'");
 		expect(code).toContain("from '@tsrx/react-runtime/ref'");
 		expect(code).toContain("from '@tsrx/react-runtime/iterable'");
 		expect(code).not.toMatch(/from '@tsrx\/react\//);
@@ -54,6 +59,12 @@ runSharedCompileTests({
 	generatedClassAttrName: 'className',
 });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'react' });
+runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings,
+	name: 'react',
+	package_dir: fileURLToPath(new URL('..', import.meta.url)),
+	jsx_import_source: 'react',
+});
 runSharedCodeBlockChildrenTests({ compile, name: 'react' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'react' });
 
@@ -1296,8 +1307,138 @@ describe('@tsrx/react basic', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toContain('Suspense');
-		expect(code).toContain('use(fetchData())');
+		expect(code).toContain("import { TsrxTryBody } from '@tsrx/react/try-body';");
+		// The body renders as a child of <Suspense>, so `use()` suspends to it.
+		expect(code).toMatch(
+			/<Suspense fallback=[\s\S]*><TsrxTryBody render=\{\(\) => \{\s*const data = use\(fetchData\(\)\);/,
+		);
+	});
+
+	it('keeps the try body inline in type-only output', () => {
+		const { code } = compile_to_volar_mappings(
+			`export function App() @{
+				@try {
+					const data = load();
+					<div>{data}</div>
+				} @catch (err) {
+					<p>{'error'}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('TsrxTryBody');
+	});
+
+	it('keeps a try body that awaits inline', () => {
+		const { code } = compile(
+			`export async function App() @{
+				@try {
+					const data = await fetchData();
+					<div>{data}</div>
+				} @catch (err) {
+					<p>{'error'}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('TsrxTryBody');
+		expect(code).toContain('await (async () => {');
+	});
+
+	it('imports only modules that load under react-server for a @pending-only try', () => {
+		const { code } = compile(
+			`export async function Page() @{
+				@try {
+					<Posts />
+				} @pending {
+					<p>{'Loading'}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		/** @type {Array<[string, string[]]>} */
+		const imports = [...code.matchAll(/^import \{([^}]*)\} from '([^']+)';$/gm)].map((match) => [
+			match[2],
+			match[1].split(',').map((name) => name.trim()),
+		]);
+		expect(imports).toEqual([
+			['react', ['Suspense']],
+			['@tsrx/react/try-body', ['TsrxTryBody']],
+		]);
+
+		// A Server Component module graph resolves `react` under the
+		// `react-server` condition, which has no `Component` export, so the
+		// class error boundary must stay out of this graph.
+		const script = `for (const [source, names] of ${JSON.stringify(imports)}) {
+			const module = await import(source);
+			for (const name of names) {
+				if (!(name in module)) throw new Error(source + ' has no export ' + name);
+			}
+		}`;
+		expect(() =>
+			execFileSync(
+				process.execPath,
+				['--conditions=react-server', '--input-type=module', '--eval', script],
+				{ cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'pipe' },
+			),
+		).not.toThrow();
+	}, 60_000);
+
+	it('keys each @try site so different sites in one slot do not share state', () => {
+		const { code } = compile(
+			`export function App({ a, items }) @{
+				<>
+					@if (a) {
+						@try {
+							<A />
+						} @catch (e) {
+							<p>{'a'}</p>
+						}
+					} @else {
+						@try {
+							<B />
+						} @catch (e) {
+							<p>{'b'}</p>
+						}
+					}
+					@for (const item of items; key item.id) {
+						@try {
+							<Row item={item} />
+						} @pending {
+							<p>{'loading'}</p>
+						}
+					}
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toMatch(/<TsrxErrorBoundary fallback=[\s\S]*? key='try1'>/);
+		expect(code).toMatch(/<TsrxErrorBoundary fallback=[\s\S]*? key='try2'>/);
+		// A loop key is combined with the site name rather than dropped.
+		expect(code).toContain("key={'try3:' + item.id}");
+	});
+
+	it('leaves @try site keys off the rows of a loop without a key', () => {
+		const { code } = compile(
+			`export function App({ items }) @{
+				@for (const item of items) {
+					@try {
+						<Row item={item} />
+					} @catch (e) {
+						<p>{'x'}</p>
+					}
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		// Every row would repeat the same site key.
+		expect(code).toContain('<TsrxErrorBoundary');
+		expect(code).not.toContain('key=');
 	});
 
 	it('applies scoped CSS hashes inside try blocks', () => {

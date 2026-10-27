@@ -150,7 +150,20 @@ function BoundaryApp() @{
 	@try {
 		<Broken />
 	} @catch (error) {
-		<p class="error">{error.message}</p>
+		<p class="error">{error instanceof Error ? error.message : String(error)}</p>
+	}
+}
+
+function loadOrThrow(): string {
+	throw new Error('body boom');
+}
+
+function BodyThrowBoundaryApp() @{
+	@try {
+		const value = loadOrThrow();
+		<p class="ok">{value}</p>
+	} @catch (error) {
+		<p class="error">{error instanceof Error ? error.message : String(error)}</p>
 	}
 }
 
@@ -256,6 +269,12 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 		render(<BoundaryApp />, container);
 
 		expect(container.innerHTML).toBe('<p class="error">boom</p>');
+	});
+
+	it('catches a throw from a @try body setup statement', () => {
+		render(<BodyThrowBoundaryApp />, container);
+
+		expect(container.innerHTML).toBe('<p class="error">body boom</p>');
 	});
 
 	// oxc, which compiles the target's JSX, trims a non-breaking space at the

@@ -885,6 +885,10 @@ export const App = () => @try {
 };
 ```
 
+The `catch` binding is the thrown value as it is, which need not be an `Error`,
+so it has the type `unknown`, as in a TypeScript `catch` clause. Check it before
+reading properties such as `message`.
+
 The `catch` block also receives a `reset` function as its second argument.
 Calling `reset()` clears the error state and re-renders the children, which is
 useful for building retry UIs:
@@ -894,7 +898,7 @@ export const RetryBoundary = () => @try {
 	<ComponentThatMightFail />
 } @catch (e, reset) {
 	<div>
-		<p>Error: {e.message}</p>
+		<p>Error: {e instanceof Error ? e.message : String(e)}</p>
 		<button onClick={() => reset()}>Try again</button>
 	</div>
 };

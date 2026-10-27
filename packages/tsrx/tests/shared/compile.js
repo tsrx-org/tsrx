@@ -1,3 +1,4 @@
+import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { DIAGNOSTIC_CODES, TS_ERRORS, TSRX_ERRORS } from '../../src/diagnostics.js';
@@ -5067,5 +5068,91 @@ export function runSharedCodeBlockChildrenTests({ compile, name }) {
 			expect(code).toContain('<span class="sum">{x + y}</span>');
 			expect(count_substring(code, '(() => {')).toBe(1);
 		});
+	});
+}
+
+/**
+ * The `@catch` binding is the thrown value, which need not be an `Error`, so the
+ * type-only output must type it `unknown`, as a `catch (error)` clause is under
+ * `strict`. Checks the output against the real declarations the target package
+ * resolves.
+ *
+ * @param {CompileDiagnosticsHarness & {
+ *   package_dir: string,
+ *   jsx_import_source: string,
+ * }} harness
+ */
+export function runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings,
+	name,
+	package_dir,
+	jsx_import_source,
+}) {
+	/** @type {ts.CompilerOptions} */
+	const options = {
+		strict: true,
+		target: ts.ScriptTarget.ESNext,
+		module: ts.ModuleKind.ESNext,
+		moduleResolution: ts.ModuleResolutionKind.Bundler,
+		jsx: ts.JsxEmit.Preserve,
+		jsxImportSource: jsx_import_source,
+		lib: ['lib.esnext.d.ts', 'lib.dom.d.ts'],
+		types: [],
+		skipLibCheck: true,
+		noEmit: true,
+	};
+	// Not on disk, but inside the package, so its dependencies and its own
+	// `exports` resolve as they do for an app.
+	const file_name = path.join(package_dir, '__catch-type-probe__', 'App.tsx');
+
+	/**
+	 * @param {string} source
+	 * @returns {string[]}
+	 */
+	function diagnostics(source) {
+		const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+		expect(errors).toEqual([]);
+
+		const host = ts.createCompilerHost(options);
+		const read_file = host.readFile.bind(host);
+		const file_exists = host.fileExists.bind(host);
+		const get_source_file = host.getSourceFile.bind(host);
+		host.readFile = (name) => (name === file_name ? code : read_file(name));
+		host.fileExists = (name) => name === file_name || file_exists(name);
+		host.getSourceFile = (name, language_version, on_error, should_create_new) =>
+			name === file_name
+				? ts.createSourceFile(name, code, language_version, true)
+				: get_source_file(name, language_version, on_error, should_create_new);
+
+		return ts
+			.getPreEmitDiagnostics(ts.createProgram([file_name], options, host))
+			.filter((diagnostic) => diagnostic.file?.fileName === file_name)
+			.map(
+				(diagnostic) =>
+					`TS${diagnostic.code}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')}`,
+			);
+	}
+
+	describe(`${name} @catch error type`, () => {
+		// Building a program with the DOM lib takes seconds, so one program
+		// checks both forms.
+		it('types the error as unknown until it is narrowed', () => {
+			const source = `export function Unchecked() @{
+				@try {
+					<p>{'ok'}</p>
+				} @catch (error) {
+					<p>{error.message}</p>
+				}
+			}
+
+			export function Narrowed() @{
+				@try {
+					<p>{'ok'}</p>
+				} @catch (error) {
+					<p>{error instanceof Error ? error.message : String(error)}</p>
+				}
+			}`;
+			expect(diagnostics(source)).toEqual(["TS18046: 'error' is of type 'unknown'."]);
+		}, 60_000);
 	});
 }

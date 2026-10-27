@@ -1,5 +1,7 @@
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedCatchErrorTypeTests,
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -28,6 +30,12 @@ runSharedCompileDiagnosticsTests({
 	compile_to_volar_mappings: compileServerToVolarMappings,
 	name: 'hono',
 });
+runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings: compileServerToVolarMappings,
+	name: 'hono',
+	package_dir: fileURLToPath(new URL('..', import.meta.url)),
+	jsx_import_source: 'hono/jsx',
+});
 runSharedCodeBlockChildrenTests({ compile: compileServer, name: 'hono' });
 runSharedHookBodyTests({
 	compile: compileServer,
@@ -45,6 +53,12 @@ runSharedTsxExpressionTsrxTests({ compile: compileDom, name: 'hono-dom', classAt
 runSharedCompileDiagnosticsTests({
 	compile_to_volar_mappings: compileDomToVolarMappings,
 	name: 'hono-dom',
+});
+runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings: compileDomToVolarMappings,
+	name: 'hono-dom',
+	package_dir: fileURLToPath(new URL('..', import.meta.url)),
+	jsx_import_source: 'hono/jsx/dom',
 });
 runSharedCodeBlockChildrenTests({ compile: compileDom, name: 'hono-dom' });
 runSharedClassFunctionComponentTests({
