@@ -1,3 +1,4 @@
+import { TSRX_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedClassFunctionComponentTests,
@@ -10,6 +11,10 @@ import {
 } from '@tsrx/core/test-harness/compile';
 import { runSharedSourceMappingTests } from '@tsrx/core/test-harness/source-mappings';
 import { compile, compile_to_volar_mappings } from '../src/index.js';
+
+const SOLID_COMPONENT_AWAIT = expect.objectContaining(
+	TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED('Solid'),
+);
 
 runSharedSourceMappingTests({
 	compile,
@@ -71,7 +76,7 @@ describe('@tsrx/solid basic', () => {
 						}`,
 					'App.tsrx',
 				),
-			).toThrow(/`await` is not allowed inside Solid components/);
+			).toThrow(SOLID_COMPONENT_AWAIT);
 		});
 
 		// `is_template_for_of_node` gates the hook-bearing for-of hoist; a
@@ -102,7 +107,7 @@ describe('@tsrx/solid basic', () => {
 						}`,
 					'App.tsrx',
 				),
-			).toThrow(/`await` is not allowed inside Solid components/);
+			).toThrow(SOLID_COMPONENT_AWAIT);
 		});
 
 		it('rejects for await...of in component body', () => {
@@ -115,7 +120,7 @@ describe('@tsrx/solid basic', () => {
 					}`,
 					'App.tsrx',
 				),
-			).toThrow(/`await` is not allowed inside Solid components/);
+			).toThrow(SOLID_COMPONENT_AWAIT);
 		});
 
 		it('reports for await...of errors at the await keyword', () => {

@@ -39,10 +39,7 @@ import {
 	jsx_id as build_jsx_id,
 } from '../../utils/builders.js';
 import * as b from '../../utils/builders.js';
-import {
-	find_first_top_level_await,
-	find_first_top_level_await_in_tsrx_function_body,
-} from '../await.js';
+import { find_top_level_awaits } from '../await.js';
 import { prepare_stylesheet_for_render, is_style_element } from '../scoping.js';
 import { prepare_style_scopes, type_only_style } from './style-scopes.js';
 import {
@@ -577,6 +574,7 @@ export function createJsxTransform(platform) {
 			type_only_style_anchors,
 			helper_state: null,
 			available_bindings: new Map(),
+			rejected_awaits: new Set(),
 			filename: filename ?? null,
 			source,
 			collect,
@@ -1612,14 +1610,22 @@ function transform_native_tsrx_function(node, { next, state }, { nativeBody = fa
  * @returns {void}
  */
 function validate_native_await(node, transform_context) {
-	const await_node = find_native_await(node);
-	if (!await_node) {
+	const awaits = find_native_awaits(node);
+	if (!awaits.length) {
 		return;
 	}
 
 	const validator = transform_context.platform.hooks?.validateComponentAwait;
 	if (validator) {
-		validator(await_node, node, transform_context, false, transform_context.source || '');
+		for (const await_node of awaits) {
+			const reported = transform_context.errors?.length ?? 0;
+			validator(await_node, node, transform_context, false, transform_context.source || '');
+			// The shared checks for an `await` the output can't hold skip one the
+			// target has reported, so each `await` is reported once.
+			if ((transform_context.errors?.length ?? 0) > reported) {
+				transform_context.rejected_awaits.add(/** @type {number} */ (await_node.start));
+			}
+		}
 		return;
 	}
 
@@ -1627,7 +1633,7 @@ function validate_native_await(node, transform_context) {
 		error(
 			TSRX_ERRORS.TOP_LEVEL_AWAIT_USE_SERVER,
 			transform_context.filename,
-			await_node,
+			awaits[0],
 			transform_context.errors,
 			transform_context.comments,
 		);
@@ -1635,88 +1641,72 @@ function validate_native_await(node, transform_context) {
 }
 
 /**
+ * The `await`s of a component outside nested functions, in source order.
+ *
  * @param {AST.Function} node
- * @returns {AST.TSRXAwaitNode | null}
+ * @returns {AST.TSRXAwaitNode[]}
  */
-function find_native_await(node) {
+function find_native_awaits(node) {
+	/** @type {AST.TSRXAwaitNode[]} */
+	const awaits = [];
 	if (
 		node.type === 'ArrowFunctionExpression' &&
 		node.body?.type !== 'BlockStatement' &&
 		node_contains_native_tsrx_template(node.body)
 	) {
-		return find_first_top_level_await(node.body, false);
+		find_top_level_awaits(node.body, awaits);
+	} else if (node.body?.type === 'JSXCodeBlock') {
+		find_native_awaits_in_list(get_raw_jsx_code_block_body_nodes(node.body), awaits);
+	} else if (node.body?.type === 'BlockStatement') {
+		find_native_awaits_in_list(node.body.body || [], awaits);
 	}
-
-	if (node.body?.type === 'JSXCodeBlock') {
-		return find_native_await_in_list(get_raw_jsx_code_block_body_nodes(node.body));
-	}
-
-	const body = node.body?.type === 'BlockStatement' ? node.body.body || [] : [];
-	return find_native_await_in_list(body);
+	return awaits;
 }
 
 /**
  * @param {AST.Node[]} statements
- * @returns {AST.TSRXAwaitNode | null}
+ * @param {AST.TSRXAwaitNode[]} awaits
+ * @returns {void}
  */
-function find_native_await_in_list(statements) {
+function find_native_awaits_in_list(statements, awaits) {
 	for (const statement of statements) {
-		const found = find_native_await_in_statement(statement);
-		if (found) return found;
+		find_native_awaits_in_statement(statement, awaits);
 	}
-	return null;
 }
 
 /**
  * @param {AST.Node | null | undefined} statement
- * @returns {AST.TSRXAwaitNode | null}
+ * @param {AST.TSRXAwaitNode[]} awaits
+ * @returns {void}
  */
-function find_native_await_in_statement(statement) {
-	if (!statement) return null;
+function find_native_awaits_in_statement(statement, awaits) {
+	if (!statement) return;
 
 	if (statement.type === 'ReturnStatement' && is_native_tsrx_node(statement.argument)) {
-		return find_first_top_level_await_in_tsrx_function_body(node_children(statement.argument));
-	}
-
-	if (
+		find_top_level_awaits(node_children(statement.argument), awaits);
+	} else if (
 		statement.type === 'ReturnStatement' &&
 		node_contains_native_tsrx_template(statement.argument)
 	) {
-		return find_first_top_level_await(statement.argument, false);
-	}
-
-	if (is_function_or_class_boundary(statement)) {
-		return null;
-	}
-
-	if (statement.type === 'BlockStatement') {
-		return find_native_await_in_list(statement.body || []);
-	}
-
-	if (is_if_control_node(statement)) {
-		return (
-			find_native_await_in_statement(statement.consequent) ||
-			find_native_await_in_statement(statement.alternate)
-		);
-	}
-
-	if (is_switch_control_node(statement)) {
+		find_top_level_awaits(statement.argument, awaits);
+	} else if (is_function_or_class_boundary(statement)) {
+		// An `await` there belongs to that function.
+	} else if (statement.type === 'BlockStatement') {
+		find_native_awaits_in_list(statement.body || [], awaits);
+	} else if (is_if_control_node(statement)) {
+		find_native_awaits_in_statement(statement.consequent, awaits);
+		find_native_awaits_in_statement(statement.alternate, awaits);
+	} else if (is_switch_control_node(statement)) {
 		for (const switch_case of statement.cases || []) {
-			const found = find_native_await_in_list(switch_case.consequent || []);
-			if (found) return found;
+			find_native_awaits_in_list(switch_case.consequent || [], awaits);
 		}
-		return null;
+	} else if (is_try_control_node(statement)) {
+		find_native_awaits_in_statement(statement.block, awaits);
+		find_native_awaits_in_statement(statement.handler?.body, awaits);
+		find_native_awaits_in_statement(statement.finalizer, awaits);
+	} else {
+		find_top_level_awaits(statement, awaits);
 	}
-
-	if (is_try_control_node(statement)) {
-		return (
-			find_native_await_in_statement(statement.block) ||
-			find_native_await_in_statement(statement.handler?.body) ||
-			find_native_await_in_statement(statement.finalizer)
-		);
-	}
-
-	return find_first_top_level_await(statement, false);
 }
 
 /**
@@ -2717,7 +2707,9 @@ function suspend_generated_closures(program, transform_context) {
 			if (make_async) {
 				if (awaitable) {
 					fn = { ...fn, async: true };
-				} else {
+				} else if (
+					!transform_context.rejected_awaits.has(/** @type {number} */ (first_await?.start))
+				) {
 					error(
 						TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED(transform_context.platform.name),
 						transform_context.filename,
@@ -4331,7 +4323,7 @@ function is_loop_statement(node) {
  * @returns {ESTreeJSX.JSXExpressionContainer}
  */
 function for_of_statement_to_jsx_child(node, transform_context) {
-	if (node.await) {
+	if (node.await && !transform_context.rejected_awaits.has(/** @type {number} */ (node.start))) {
 		error(
 			TSRX_ERRORS.TARGET_FOR_AWAIT_UNSUPPORTED(transform_context.platform.name),
 			transform_context.filename,

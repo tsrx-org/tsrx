@@ -2,7 +2,7 @@ import { isCodeActionsEnabled, isDiagnosticsEnabled } from '@volar/language-core
 import { SourceMap } from '@volar/source-map';
 import ts from 'typescript';
 import { assert, describe, expect, it } from 'vitest';
-import { builders as b, identifier_to_jsx_name, parseModule } from '@tsrx/core';
+import { builders as b, DIAGNOSTIC_CODES, identifier_to_jsx_name, parseModule } from '@tsrx/core';
 import { assert_type } from './node-types.js';
 import {
 	build_line_offsets,
@@ -183,6 +183,70 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		if (rejectsComponentAwait) {
 			it.each(Object.keys(SOURCES))('rejects an await in the %s', (label) => {
 				expect(() => compile(SOURCES[label], 'App.tsrx')).toThrow(/await/);
+			});
+
+			/** @type {Record<string, string>} */
+			const REJECTED_SOURCES = {
+				...SOURCES,
+				'@catch body': `export async function App() @{
+	@try {
+		<p>ok</p>
+	} @catch (error) {
+		<p>{await load(error)}</p>
+	}
+}`,
+				'@for await directive': `export async function App({ items }: { items: AsyncIterable<number> }) @{
+	<ul>
+		@for await (const item of items) {
+			<li>{item}</li>
+		}
+	</ul>
+}`,
+				'component body and @for body': `export async function App({ items }: { items: number[] }) @{
+	const first = await load(0);
+	<ul>
+		@for (const item of items) {
+			<li title={await load(item)}>{first}</li>
+		}
+	</ul>
+}`,
+			};
+
+			// #980: the target's own component check and the shared check for an
+			// `await` in a callback reported the same `await` twice.
+			it.each(Object.keys(REJECTED_SOURCES))(
+				'reports each await in the %s once, with one message',
+				(label) => {
+					const source = REJECTED_SOURCES[label];
+					const awaits = [...source.matchAll(/\bawait\b/g)].map((match) => match.index);
+					for (const { errors } of [
+						compile(source, 'App.tsrx', { collect: true }),
+						compile_to_volar_mappings(source, 'App.tsrx'),
+					]) {
+						// The first `await` keyword in each error's range; a `@for await`
+						// error may start at the directive.
+						expect(
+							errors.map((error) => [
+								error.code,
+								(error.pos ?? 0) + source.slice(error.pos, error.end).indexOf('await'),
+							]),
+						).toEqual(awaits.map((start) => [DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED, start]));
+						expect(new Set(errors.map((error) => error.message)).size).toBe(1);
+					}
+				},
+			);
+
+			it.each([
+				['an event handler', '<button onClick={async () => { await load(0); }} />'],
+				['a body function', '<>{(async () => { await load(0); })()}</>'],
+				[
+					'an @for body handler',
+					'<ul>@for (const item of [1]) { <li onClick={async () => { await load(item); }} /> }</ul>',
+				],
+			])('allows an await in a nested function in %s', (_label, output) => {
+				const source = `export function App() @{ ${output} }`;
+				expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
+				expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
 			});
 			return;
 		}
