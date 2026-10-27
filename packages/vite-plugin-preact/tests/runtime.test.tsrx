@@ -263,6 +263,44 @@ function MultiSpreadExplicitRefApp() @{
 	/>
 }
 
+// ── Elements that merge the same refs ──
+
+const shared_ref_log: string[] = [];
+
+function shared_cleanup_ref(node: HTMLParagraphElement | null) {
+	const name = node?.className;
+	shared_ref_log.push(`own:${name}`);
+	return () => {
+		shared_ref_log.push(`own-cleanup:${name}`);
+	};
+}
+
+const shared_ref_bag = {
+	ref: (node: HTMLParagraphElement | null) => {
+		shared_ref_log.push(`bag:${node ? node.className : 'null'}`);
+	},
+};
+
+function SharedRefToggle() @{
+	const [shown, setShown] = useState(true);
+
+	<>
+		@if (shown) {
+			<p class="shared-ref-b" ref={shared_cleanup_ref} {...shared_ref_bag} />
+		}
+		<button class="shared-ref-hide" onClick={() => setShown(false)}>
+			{'hide'}
+		</button>
+	</>
+}
+
+function SharedRefApp() @{
+	<>
+		<p class="shared-ref-a" ref={shared_cleanup_ref} {...shared_ref_bag} />
+		<SharedRefToggle />
+	</>
+}
+
 // ── Conditional host spreads ──
 
 let conditional_spread_and_node: HTMLInputElement | null = null;
@@ -522,6 +560,26 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 		expect(multi_spread_first_node).toBe(multi_spread_native_node);
 		expect(multi_spread_native_calls).toBe(1);
 		expect(container.querySelector('.multi-spread-explicit-ref')!.hasAttribute('ref')).toBe(false);
+	});
+
+	it("keeps each element's ref cleanup when two elements merge the same refs", async () => {
+		shared_ref_log.length = 0;
+		await render(SharedRefApp);
+		// Mounting the second element runs no cleanup of the first.
+		expect(shared_ref_log).toEqual([
+			'own:shared-ref-a',
+			'bag:shared-ref-a',
+			'own:shared-ref-b',
+			'bag:shared-ref-b',
+		]);
+
+		shared_ref_log.length = 0;
+		await act(() => {
+			(container.querySelector('.shared-ref-hide') as HTMLButtonElement).click();
+		});
+		expect(container.querySelector('.shared-ref-b')).toBeNull();
+		expect(container.querySelector('.shared-ref-a')).not.toBeNull();
+		expect(shared_ref_log).toEqual(['own-cleanup:shared-ref-b', 'bag:null']);
 	});
 
 	for (const enabled of [false, true]) {

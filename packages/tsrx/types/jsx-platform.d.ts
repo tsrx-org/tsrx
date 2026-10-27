@@ -435,6 +435,28 @@ export interface JsxPlatform {
 		 */
 		multiRefStrategy?: 'merge-refs' | 'array';
 		/**
+		 * With `multiRefStrategy: 'merge-refs'`, merge an element's refs with
+		 * `merge_element_refs` instead of `mergeRefs`. It returns a single ref as
+		 * itself and the same callback for the same refs, so a JSX runtime that
+		 * applies a `ref` again whenever its identity changes applies them once.
+		 * Every element given the same refs shares that callback, so set this
+		 * only for a runtime that keeps a ref's cleanup per element: React keeps
+		 * it per fiber and Hono per DOM node, while Preact stores it on the
+		 * function, where another element's cleanup would replace it. The
+		 * platform's `imports.mergeRefs` module must export `merge_element_refs`,
+		 * as `@tsrx/runtime/ref` does. The type-only print keeps `mergeRefs`.
+		 *
+		 * With `hostSpreadRefBinding: 'in-place'` as well, the spread
+		 * normalizers merge a bag's refs the same way, so a new bag carrying the
+		 * same refs gets the same `ref`. Core then imports
+		 * `copy_spread_props_sharing_refs` and
+		 * `copy_spread_props_for_ref_attr_sharing_refs` in place of
+		 * `copy_spread_props` and `copy_spread_props_for_ref_attr`, and the
+		 * platform's `imports.refProp` module must export them, as
+		 * `@tsrx/runtime/ref` does.
+		 */
+		shareMergedRefs?: boolean;
+		/**
 		 * Some JSX runtimes do not apply a `ref` that arrives through a props
 		 * spread. In that case, host spread normalization also emits an
 		 * explicit `ref={normalized.ref}` attribute.
@@ -452,6 +474,18 @@ export interface JsxPlatform {
 		 * - `undefined`: evaluate the spread in a `let bag = normalize(expr);`
 		 *   declaration ahead of the element, for compiled JSX that reads `ref`
 		 *   before the spread or evaluates the spread lazily, such as Solid's.
+		 *
+		 * With `'in-place'`, core's import injection also gives the platform
+		 * `copy_spread_props` and `copy_spread_props_for_ref_attr` in place of
+		 * `normalize_spread_props` and `normalize_spread_props_for_ref_attr`.
+		 * They return their copy of each bag rather than the bag itself, so a
+		 * runtime that copies the spread reads each getter once. A custom
+		 * platform's `imports.refProp` module must export them, as
+		 * `@tsrx/runtime/ref` does. With `multiRefStrategy:
+		 * 'merge-refs'` as well, the merged `ref` stays where the element's own
+		 * `ref` is written. When a spread follows that `ref`, its expression is
+		 * assigned to a binding where it is written instead, and the merged `ref`
+		 * follows the spreads.
 		 */
 		hostSpreadRefBinding?: 'in-place';
 		/**
