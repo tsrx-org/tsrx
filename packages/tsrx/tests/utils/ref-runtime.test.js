@@ -1100,6 +1100,33 @@ describe('spread ref normalization', () => {
 		expect(events).toEqual(['get:Symbol(spread)', 'getter:Symbol(spread)']);
 	});
 
+	it('leaves a children getter unread, in the bag and in its copy', () => {
+		let reads = 0;
+		/** @param {object} [extra] */
+		function bag(extra) {
+			return Object.defineProperty({ title: 'bag', ...extra }, 'children', {
+				enumerable: true,
+				get() {
+					reads += 1;
+					return 'child';
+				},
+			});
+		}
+
+		const plain = bag();
+		expect(normalize_spread_props(plain)).toBe(plain);
+		expect(reads).toBe(0);
+
+		const ref = create_ref_prop(() => null);
+		const copy = /** @type {Record<string, unknown>} */ (
+			normalize_spread_props(bag({ input_ref: ref }))
+		);
+		expect(reads).toBe(0);
+		expect([copy.title, copy.ref]).toEqual(['bag', ref]);
+		expect(copy.children).toBe('child');
+		expect(reads).toBe(1);
+	});
+
 	it('preserves inherited assignment side effects before returning an ordinary spread unchanged', () => {
 		/** @type {Array<unknown>} */
 		const events = [];

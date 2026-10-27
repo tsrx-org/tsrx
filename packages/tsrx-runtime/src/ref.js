@@ -433,6 +433,18 @@ export function normalize_spread_props(props, ...outer_refs) {
 			continue;
 		}
 
+		// Solid's `children` getter creates the children each time it is read,
+		// and children are never a ref, so the copy reads them through `source`
+		// only when the JSX runtime does.
+		if (key === 'children') {
+			Object.defineProperty(next, key, {
+				get: () => source.children,
+				enumerable: true,
+				configurable: true,
+			});
+			continue;
+		}
+
 		const value = source[key];
 
 		if (key === 'ref') {
