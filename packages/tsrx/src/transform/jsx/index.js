@@ -4651,7 +4651,7 @@ function apply_key_to_rendered_value(expression, loop_key, transform_context) {
 			return apply_key_to_jsx_element(expression, loop_key);
 		case 'JSXFragment':
 			transform_context.needs_fragment = true;
-			return keyed_fragment_to_jsx_element(expression, loop_key);
+			return keyed_fragment(expression.children, loop_key);
 		case 'ConditionalExpression': {
 			if (!loop_key.branches) return expression;
 			const consequent = apply_key_to_rendered_value(
@@ -4670,7 +4670,13 @@ function apply_key_to_rendered_value(expression, loop_key, transform_context) {
 			return { ...expression, consequent, alternate };
 		}
 		case 'CallExpression': {
-			if (!loop_key.branches || !is_render_iife(expression)) return expression;
+			if (!loop_key.branches) return expression;
+			if (is_map_iterable_call(expression)) {
+				// A nested `@for` renders an array, which takes no key of its own.
+				transform_context.needs_fragment = true;
+				return keyed_fragment([to_jsx_expression_container(expression)], loop_key);
+			}
+			if (!is_render_iife(expression)) return expression;
 			const callee = expression.callee;
 			const body = apply_key_to_returned_values(callee.body.body, loop_key, transform_context);
 			if (body === callee.body.body) return expression;
@@ -4679,6 +4685,16 @@ function apply_key_to_rendered_value(expression, loop_key, transform_context) {
 		default:
 			return expression;
 	}
+}
+
+/**
+ * @param {AST.CallExpression} expression
+ * @returns {boolean}
+ */
+function is_map_iterable_call(expression) {
+	return (
+		expression.callee.type === 'Identifier' && expression.callee.name === MAP_ITERABLE_INTERNAL_NAME
+	);
 }
 
 /**
@@ -4793,17 +4809,19 @@ function is_key_attribute(attr) {
 }
 
 /**
- * @param {AST.TSRXJSXFragment} fragment
+ * A `<Fragment>` with the loop key, around what one iteration renders.
+ *
+ * @param {AST.TSRXJSXFragment['children']} children
  * @param {LoopKey} loop_key
  * @returns {AST.TSRXJSXElement}
  */
-function keyed_fragment_to_jsx_element(fragment, loop_key) {
+function keyed_fragment(children, loop_key) {
 	const name = b.jsx_id('Fragment');
 
 	return b.jsx_element_fresh(
 		b.jsx_opening_element(name, [create_loop_key_attribute(loop_key)]),
 		b.jsx_closing_element(clone_jsx_name(name)),
-		fragment.children,
+		children,
 	);
 }
 

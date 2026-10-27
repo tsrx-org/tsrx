@@ -12358,6 +12358,37 @@ describe('JSX whitespace in template text', () => {
 			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tconst a = <div><b>1</b> 2<i /></div>;\n\t\t\t\t<p>{a}</p>\n\t\t\t}\n\t\t}\n\t</main>\n}',
 			['<b>', ' 2', '<i>'],
 		],
+		// An element in a directive header reads its text as anywhere else (#649)
+		[
+			'text before an element in an element in an @for header',
+			'export const App = () => @for (const item of [<div>Hello<b /></div>]) { <>{item}</> };',
+			['Hello', '<b>'],
+		],
+		[
+			'text before an element in an element in an @for header inside an element',
+			'export const App = () => <main>@for (const item of [<div>Hello<b /></div>]) { <>{item}</> }</main>;',
+			['Hello', '<b>'],
+		],
+		[
+			'a space after a closing tag in an element in an @for header inside an element',
+			'export const App = () => <main>@for (const item of [<div><b>1</b> 2</div>]) { <>{item}</> }</main>;',
+			['<b>', ' 2'],
+		],
+		[
+			'text before an element in an element in an @if header inside an element',
+			'export const App = () => <main>@if ([<div>Hello<b /></div>].length) { <p /> }</main>;',
+			['Hello', '<b>'],
+		],
+		[
+			'text before an element in an element in an @case test',
+			'export const App = () => <main>@switch (x) { @case <div>Hello<b /></div>: { <p /> } }</main>;',
+			['Hello', '<b>'],
+		],
+		[
+			'a `/` and a `#` in an element in an @for header inside an element',
+			'export const App = () => <main>@for (const item of [<div>5/2 #x<b /></div>]) { <>{item}</> }</main>;',
+			['5/2 #x', '<b>'],
+		],
 		// A spread attribute's argument stays code
 		[
 			'text in an element with a spread attribute',

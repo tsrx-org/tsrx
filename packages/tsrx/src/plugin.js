@@ -1293,10 +1293,16 @@ export function TSRXPlugin(config) {
 			// What enclosed each element when it started: `this.labels` and its length
 			// (see `#insideSwitchStartedAfter`), and the setup-statement depths (see
 			// `#elementStart`).
-			/** @type {WeakMap<AST.Node, { labels: Parse.Parser['labels'], labelsLength: number, scriptDepth: number, switchCaseScriptDepth: number, scriptJSXDepth: number }>} */
+			/** @type {WeakMap<AST.Node, { labels: Parse.Parser['labels'], labelsLength: number, scriptDepth: number, switchCaseScriptDepth: number, scriptJSXDepth: number, header: number | false }>} */
 			#elementStarts = new WeakMap();
 			#readingJSXControlFlowDirectiveKeyword = false;
+			// While a directive header (`@if (…)`, `@for (…)`, a `@case` test, …) is
+			// read, a number that tells that header apart from any other: an element
+			// opened in a header records it (see `#elementStart`), so the element's
+			// own children are still read as template text. `false` otherwise.
+			/** @type {number | false} */
 			#readingJSXControlFlowHeader = false;
+			#controlFlowHeaders = 0;
 			// Set while `@for` reads its statement, until `parseForStatement` takes it:
 			// the loop whose head may end with `index` and `key` clauses.
 			#readingForDirective = false;
@@ -1496,7 +1502,7 @@ export function TSRXPlugin(config) {
 				this.exprAllowed = true;
 				this.context = enclosing_context;
 				const previous_reading_header = this.#readingJSXControlFlowHeader;
-				this.#readingJSXControlFlowHeader = true;
+				this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 				try {
 					this.next();
 				} finally {
@@ -1550,8 +1556,9 @@ export function TSRXPlugin(config) {
 			 * statement of a `@{ … }` or directive body; `switchCaseScriptDepth` is
 			 * `#parsingJSXSwitchCaseScriptStatementDepth`, raised by one of an `@case`.
 			 * `scriptJSXDepth` is `#scriptJSXElementDepth` (see
-			 * `#insideScriptJSXElement`). A node that no element start recorded counts
-			 * from 0.
+			 * `#insideScriptJSXElement`). `header` is the directive header being read
+			 * (see `#readingJSXControlFlowHeader`). A node that no element start
+			 * recorded counts from 0.
 			 * @param {AST.Node} node
 			 */
 			#elementStart(node) {
@@ -1562,8 +1569,21 @@ export function TSRXPlugin(config) {
 						scriptDepth: 0,
 						switchCaseScriptDepth: 0,
 						scriptJSXDepth: 0,
+						header: false,
 					}
 				);
+			}
+
+			/**
+			 * Whether a directive header is being read that started after `node`, so
+			 * the position is in that header's code. In an element opened in the
+			 * header (`@for (const x of [<b>a<i /></b>])`), it is that element's
+			 * children.
+			 * @param {AST.Node | undefined} node
+			 */
+			#readingHeaderStartedAfter(node) {
+				const header = this.#readingJSXControlFlowHeader;
+				return header !== false && (!node || header !== this.#elementStart(node).header);
 			}
 
 			/**
@@ -2279,7 +2299,6 @@ export function TSRXPlugin(config) {
 				if (
 					this.#closingNativeTemplateNode ||
 					this.#readingJSXControlFlowDirectiveKeyword ||
-					this.#readingJSXControlFlowHeader ||
 					(!allow_inside_expression_container && this.#jsxExpressionContainerDepth > 0)
 				) {
 					return false;
@@ -2289,7 +2308,7 @@ export function TSRXPlugin(config) {
 					return false;
 				}
 				const current_template_node = this.#currentNativeTemplateNode();
-				if (!current_template_node) {
+				if (!current_template_node || this.#readingHeaderStartedAfter(current_template_node)) {
 					return false;
 				}
 				// Code that started after the innermost element, a setup statement, isn't
@@ -2977,7 +2996,7 @@ export function TSRXPlugin(config) {
 					this.#templateControlFlowBlockDepth++;
 					let node;
 					const previous_reading_header = this.#readingJSXControlFlowHeader;
-					this.#readingJSXControlFlowHeader = true;
+					this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 					this.#readingForDirective = true;
 					try {
 						node = /** @type {AST.JSXForExpression} */ (
@@ -3192,7 +3211,7 @@ export function TSRXPlugin(config) {
 			#parseTemplateIfStatement() {
 				const node = /** @type {AST.IfStatement} */ (this.startNode());
 				const previous_reading_header = this.#readingJSXControlFlowHeader;
-				this.#readingJSXControlFlowHeader = true;
+				this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 				try {
 					this.next();
 					node.test = this.parseParenExpression();
@@ -3221,7 +3240,7 @@ export function TSRXPlugin(config) {
 			#parseJSXSwitchExpression(start, startLoc) {
 				const node = /** @type {AST.SwitchStatement} */ (this.startNodeAt(start, startLoc));
 				const previous_reading_header = this.#readingJSXControlFlowHeader;
-				this.#readingJSXControlFlowHeader = true;
+				this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 				try {
 					this.next();
 					node.discriminant = this.parseParenExpression();
@@ -3252,7 +3271,7 @@ export function TSRXPlugin(config) {
 						// itself starts before the leading whitespace.
 						current.keyword = this.#lastClauseKeywordSpan;
 						const previous_reading_header = this.#readingJSXControlFlowHeader;
-						this.#readingJSXControlFlowHeader = true;
+						this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 						try {
 							if (isCase) {
 								current.test = this.parseExpression();
@@ -7726,8 +7745,8 @@ export function TSRXPlugin(config) {
 					(code === CharCode.numberSign || code === CharCode.slash) &&
 					this.#functionBodyDepth === 0 &&
 					this.#jsxExpressionContainerDepth === 0 &&
-					!this.#readingJSXControlFlowHeader &&
 					this.#isNativeTemplateNode(template_parent) &&
+					!this.#readingHeaderStartedAfter(template_parent) &&
 					(!this.#openingNativeTemplateNode ||
 						this.#openingNativeTemplateNode === template_parent) &&
 					!(
@@ -9633,7 +9652,7 @@ export function TSRXPlugin(config) {
 								this.startNodeAt(clauseStart, clauseStartLoc)
 							);
 							const previous_reading_header = this.#readingJSXControlFlowHeader;
-							this.#readingJSXControlFlowHeader = true;
+							this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 							try {
 								if (this.eat(tt.parenL)) {
 									const param = this.parseBindingAtom();
@@ -10232,6 +10251,7 @@ export function TSRXPlugin(config) {
 					scriptDepth: this.#templateScriptParsingDepth,
 					switchCaseScriptDepth: this.#parsingJSXSwitchCaseScriptStatementDepth,
 					scriptJSXDepth: this.#scriptJSXElementDepth,
+					header: this.#readingJSXControlFlowHeader,
 				});
 				if (tag_value_context_depth >= 0) {
 					this.#tagValueElements.add(node);
@@ -10451,14 +10471,16 @@ export function TSRXPlugin(config) {
 						// after the `>` is the parent's text. In a `{ … }` container only a
 						// parent opened in the container counts: above it, the container's
 						// expression goes on. Nor does a parent opened before the code the
-						// element is in (see `#elementStart`), whose text that code isn't.
+						// element is in (see `#elementStart`), whose text that code isn't, or
+						// before the directive header it is in.
 						const parent_template_node = this.#path
 							.slice(this.#containerPathBaseline(), -1)
 							.findLast((node) => this.#isNativeTemplateNode(node));
 						const inside_parent_template =
 							!!parent_template_node &&
 							this.#templateScriptParsingDepth <=
-								this.#elementStart(parent_template_node).scriptDepth;
+								this.#elementStart(parent_template_node).scriptDepth &&
+							!this.#readingHeaderStartedAfter(parent_template_node);
 						this.#closingNativeTemplateNode = true;
 						/** @type {ReturnType<Parse.Parser['jsx_parseElementName']>} */
 						let closingName;
@@ -10495,10 +10517,12 @@ export function TSRXPlugin(config) {
 						// tokenizer context returns to where the element began, as after a
 						// balanced closing tag, dropping residue its body left (a control-flow
 						// block's contexts). parseElement keeps the contexts the token pushes.
+						const parent_node = this.#path.at(-2);
 						const closes_outside_template =
 							this.#isNativeTemplateNode(current) &&
 							current_name === closing_name_str &&
-							(!this.#isNativeTemplateNode(this.#path.at(-2)) ||
+							(!this.#isNativeTemplateNode(parent_node) ||
+								this.#readingHeaderStartedAfter(parent_node) ||
 								this.#tagValueElements.has(current));
 						if (closes_outside_template) {
 							this.#path.pop();

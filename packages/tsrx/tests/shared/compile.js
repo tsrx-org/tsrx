@@ -1686,6 +1686,36 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			expect(code).toContain("<span key={item.id}>{'nested'}</span>");
 		});
 
+		it.runIf(keys_rows_by_prop)('keys a nested @for a keyed loop renders (#181)', () => {
+			const { code } = compile(
+				`export function App({ groups }: { groups: { id: string; open: boolean; children: string[] }[] }) @{
+					<ul>
+						@for (const group of groups; key group.id) {
+							@for (const child of group.children; index i) {
+								<li>{child}</li>
+							}
+						}
+						@for (const group of groups; key group.id) {
+							@if (group.open) {
+								@for (const child of group.children) {
+									<li>{child}</li>
+								}
+							}
+						}
+					</ul>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toMatch(
+				/return <Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child, i\) =>/,
+			);
+			expect(code).toMatch(
+				/group\.open\s*\? <Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child\) =>/,
+			);
+			expect(code).toContain('<li key={i}>{child}</li>');
+		});
+
 		it.runIf(keys_rows_by_prop)(
 			'keeps a key written inside a loop branch and keys the other branches',
 			() => {

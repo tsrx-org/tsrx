@@ -511,6 +511,34 @@ function ForKeyedSwitchApp() @{
 	</>
 }
 
+let nested_row_mounts = 0;
+
+function NestedRow({ id }: { id: string }) @{
+	const [mount] = useState(() => ++nested_row_mounts);
+
+	<li className="nested-row">{`${id}:${mount}`}</li>
+}
+
+function ForKeyedNestedForApp() @{
+	const [groups, setGroups] = useState([
+		{ id: 'a', children: ['a1', 'a2'] },
+		{ id: 'b', children: ['b1'] },
+	]);
+
+	<>
+		<ul>
+			@for (const group of groups; key group.id) {
+				@for (const child of group.children; index i) {
+					<NestedRow id={child} />
+				}
+			}
+		</ul>
+		<button className="reverse-keyed-nested-for" onClick={() => setGroups([...groups].reverse())}>
+			{'reverse'}
+		</button>
+	</>
+}
+
 // ── For-of over a Set ──
 
 function ForOverSetApp() @{
@@ -1458,6 +1486,23 @@ describe('tsrx-react runtime', () => {
 		expect(
 			Array.from(container.querySelectorAll('.continue-item'), (item) => item.textContent),
 		).toEqual(['a', 'c']);
+	});
+
+	it('keeps row state with its group when a keyed loop renders a nested @for (#181)', async () => {
+		const rows = () =>
+			Array.from(container.querySelectorAll('.nested-row'), (row) => row.textContent);
+
+		nested_row_mounts = 0;
+		await render(ForKeyedNestedForApp);
+		expect(rows()).toEqual(['a1:1', 'a2:2', 'b1:3']);
+
+		// Each group's rows move with it: their keys only tell rows within a
+		// group apart.
+		await click('.reverse-keyed-nested-for');
+		expect(rows()).toEqual(['b1:3', 'a1:1', 'a2:2']);
+		expect(
+			console_error_spy?.mock.calls.some((args) => String(args[0]).includes('unique "key"')),
+		).toBe(false);
 	});
 
 	for (const [directive, App, reverse] of [
