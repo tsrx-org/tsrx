@@ -185,6 +185,7 @@ export {
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	return_value_body_to_expression as returnValueBodyToExpression,
 	validate_at_most_one_ref_attribute as validateAtMostOneRefAttribute,
+	validate_for_of_head as validateForOfHead,
 	wrap_edge_whitespace as wrapEdgeWhitespace,
 } from './transform/jsx/index.js';
 export {

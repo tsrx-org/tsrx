@@ -849,6 +849,17 @@ export const FeaturesPage = () => @{
 								template loop bodies; nested functions keep ordinary JavaScript control flow.
 							</p>
 							<p class="section-body">
+								The loop head declares its loop variable with
+								<code class="inline-code">const</code> or <code class="inline-code">let</code>, as
+								in
+								<code class="inline-code">{'@for (const item of items)'}</code>. A head that assigns
+								to an existing variable or property, such as
+								<code class="inline-code">{'@for (state.item of items)'}</code>, is an error, and so
+								is a <code class="inline-code">var</code> loop variable, which can't be read after
+								the loop. A <code class="inline-code">using</code>
+								loop variable is an error too; declare a resource in the loop body instead.
+							</p>
+							<p class="section-body">
 								Other JavaScript loops are not template rendering constructs: regular
 								<code class="inline-code">for</code>,<code class="inline-code">for...in</code>,
 								<code class="inline-code">while</code>, and
