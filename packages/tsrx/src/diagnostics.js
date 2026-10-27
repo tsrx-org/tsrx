@@ -507,8 +507,51 @@ export const TS_ERRORS = {
 		code: 'TS1478',
 		message: 'Identifier or string literal expected.',
 	},
+	// A word reserved only in strict mode (`let`, `static`, `yield`, …) used as a
+	// name, which TypeScript's parser reads and its binder reports: TSRX's input
+	// is a module, and inside a class TypeScript says so instead
+	/** `word` is the word. */
+	STRICT_MODE_RESERVED_WORD: with_values(
+		'TS1214',
+		(word) =>
+			`Identifier expected. '${word}' is a reserved word in strict mode. Modules are automatically in strict mode.`,
+	),
+	/** `word` is the word. */
+	STRICT_MODE_RESERVED_WORD_IN_CLASS: with_values(
+		'TS1213',
+		(word) =>
+			`Identifier expected. '${word}' is a reserved word in strict mode. Class definitions are automatically in strict mode.`,
+	),
+	LET_DECLARATION_NAME: {
+		code: 'TS2480',
+		message: "'let' is not allowed to be used as a name in 'let' or 'const' declarations.",
+	},
 	DECLARATION_EXPECTED: { code: 'TS1146', message: 'Declaration expected.' },
+	// A name followed by another token where a statement ends (`a b;`), which
+	// TypeScript's parser takes for a misspelled keyword when it can
+	UNEXPECTED_KEYWORD_OR_IDENTIFIER: {
+		code: 'TS1434',
+		message: 'Unexpected keyword or identifier.',
+	},
+	/** `suggestion` is the keyword, or the keyword and the rest of the name. */
+	UNKNOWN_KEYWORD_OR_IDENTIFIER: with_values(
+		'TS1435',
+		(suggestion) => `Unknown keyword or identifier. Did you mean '${suggestion}'?`,
+	),
+	/** `kind` is `let`, `const`, `using` or `await using`. */
+	BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK: with_values(
+		'TS1156',
+		(kind) => `'${kind}' declarations can only be declared inside a block.`,
+	),
+	VARIABLE_DECLARATION_NOT_ALLOWED: {
+		code: 'TS1440',
+		message: 'Variable declaration not allowed at this location.',
+	},
 	EXPRESSION_EXPECTED: { code: 'TS1109', message: 'Expression expected.' },
+	OPTIONAL_CHAIN_TAGGED_TEMPLATE: {
+		code: 'TS1358',
+		message: 'Tagged template expressions are not permitted in an optional chain.',
+	},
 	DECLARATION_OR_STATEMENT_EXPECTED: {
 		code: 'TS1128',
 		message: 'Declaration or statement expected.',
@@ -556,6 +599,10 @@ export const TS_ERRORS = {
 		(modifier) => `'${modifier}' modifier cannot appear on an 'await using' declaration.`,
 	),
 	MODIFIERS_CANNOT_APPEAR_HERE: { code: 'TS1184', message: 'Modifiers cannot appear here.' },
+	MODIFIER_ON_CONSTRUCTOR: with_values(
+		'TS1089',
+		(modifier) => `'${modifier}' modifier cannot appear on a constructor declaration.`,
+	),
 	ACCESSIBILITY_MODIFIER_ALREADY_SEEN: {
 		code: 'TS1028',
 		message: 'Accessibility modifier already seen.',
@@ -576,6 +623,8 @@ export const TS_ERRORS = {
 		code: 'TS1038',
 		message: "A 'declare' modifier cannot be used in an already ambient context.",
 	},
+	/** Decorators on a class `static` block. */
+	DECORATORS_NOT_VALID_HERE: { code: 'TS1206', message: 'Decorators are not valid here.' },
 	MODIFIER_ON_IMPORT: with_values(
 		'TS1079',
 		(modifier) => `A '${modifier}' modifier cannot be used with an import declaration.`,
@@ -652,6 +701,15 @@ export const TS_ERRORS = {
 		code: 'TS18112',
 		message: 'Named and namespace imports are not allowed in a source phase import.',
 	},
+	// A call of `import.<name>`, which TypeScript reports from the checker
+	// (`checkGrammarMetaProperty`). Without a call, it's TS17012
+	// (`UPSTREAM_ERRORS.IMPORT_META_PROPERTY`).
+	/** `name` is the name after `import.`. */
+	IMPORT_META_PROPERTY_CALL: with_values(
+		'TS18061',
+		(name) =>
+			`'${name}' is not a valid meta-property for keyword 'import'. Did you mean 'meta' or 'defer'?`,
+	),
 	// A module specifier that isn't a string, or a phase import from an inline
 	// module (`import source m from server`)
 	STRING_LITERAL_EXPECTED: {
@@ -660,6 +718,7 @@ export const TS_ERRORS = {
 	},
 
 	// Declarations
+	VARIABLE_DECLARATION_EXPECTED: { code: 'TS1134', message: 'Variable declaration expected.' },
 	VARIABLE_DECLARATION_LIST_EMPTY: {
 		code: 'TS1123',
 		message: 'Variable declaration list cannot be empty.',
@@ -741,6 +800,14 @@ export const TS_ERRORS = {
 
 	// acorn's wording, for the code TSRX reads in acorn's place
 	UNEXPECTED_TOKEN: { code: 'TS1012', message: 'Unexpected token' },
+	REST_PARAMETER_NOT_LAST: {
+		code: 'TS1014',
+		message: 'A rest parameter must be last in a parameter list.',
+	},
+	REST_ELEMENT_NOT_LAST: {
+		code: 'TS2462',
+		message: 'A rest element must be last in a destructuring pattern.',
+	},
 	REST_ELEMENT_TRAILING_COMMA: {
 		code: 'TS1013',
 		message: 'Comma is not permitted after the rest element',
@@ -753,10 +820,6 @@ export const TS_ERRORS = {
 	AWAIT_USING_OUTSIDE_ASYNC: {
 		code: 'TS2852',
 		message: 'Await using cannot appear outside of async function',
-	},
-	FOR_OF_LET: {
-		code: 'TS1134',
-		message: "The left-hand side of a for-of loop may not start with 'let'.",
 	},
 	FOR_IN_INITIALIZER: {
 		code: 'TS1189',
@@ -867,16 +930,6 @@ export const UPSTREAM_ERRORS = {
 		pattern: /^super\(\) call outside constructor of a subclass$/,
 		code: 'TS2337',
 	},
-	// acorn: checkUnreserved
-	LET_RESERVED: { pattern: /^The keyword 'let' is reserved$/, code: 'TS1212' },
-	// `let` as a binding name or an assignment target, which acorn reports after
-	// `LET_RESERVED` at the same position, so only that one is recorded.
-	// acorn: checkLValSimple
-	LET_BINDING: {
-		pattern:
-			/^(?:(?:Binding|Assigning to) let in strict mode|let is disallowed as a lexically bound name)$/,
-		code: 'TS2480',
-	},
 	// acorn-typescript: callParseClassMemberWithIsStatic
 	ABSTRACT_METHOD_IN_CLASS: {
 		pattern: /^Abstract methods can only appear within an abstract class\.$/,
@@ -965,8 +1018,6 @@ function upstream_lookup_rows() {
 		[/^Unsyntactic break$/, 'TS1105'],
 		// acorn: parseBreakContinueStatement
 		[/^Unsyntactic continue$/, 'TS1104'],
-		// acorn: parseForStatement
-		TS_ERRORS.FOR_OF_LET,
 		// acorn: parseForAfterInit
 		[/^Using declaration is not allowed in for-in loops$/, 'TS1493'],
 		// acorn: parseReturnStatement
@@ -1037,8 +1088,14 @@ function upstream_lookup_rows() {
 		[/^Binding (?:eval|arguments) in strict mode$/, 'TS1100'],
 		// acorn: checkLValSimple
 		[/^Assigning to (?:eval|arguments) in strict mode$/, 'TS1100'],
-		// acorn: checkLValSimple
-		UPSTREAM_ERRORS.LET_BINDING,
+		// acorn: checkLValSimple, for a word that TSRX reports as
+		// `TS_ERRORS.STRICT_MODE_RESERVED_WORD` (see `raiseRecoverable` in `plugin.js`)
+		[
+			/^(?:Binding|Assigning to) (?:implements|interface|let|package|private|protected|public|static|yield) in strict mode$/,
+			'TS1214',
+		],
+		// acorn: checkLValSimple, which TSRX reports as `TS_ERRORS.LET_DECLARATION_NAME`
+		[/^let is disallowed as a lexically bound name$/, 'TS2480'],
 		// acorn: checkLValSimple
 		TS_ERRORS.ARGUMENT_NAME_CLASH,
 		// acorn: checkLValSimple
@@ -1096,8 +1153,12 @@ function upstream_lookup_rows() {
 		[/^Unexpected keyword '[^']+'$/, 'TS1359'],
 		// acorn: checkUnreserved
 		[/^Cannot use keyword 'await' outside an async function$/, 'TS1262'],
-		// acorn: checkUnreserved
-		UPSTREAM_ERRORS.LET_RESERVED,
+		// acorn: checkUnreserved, for a word that TSRX reports as
+		// `TS_ERRORS.STRICT_MODE_RESERVED_WORD` (see `raiseRecoverable` in `plugin.js`)
+		[
+			/^The keyword '(?:implements|interface|let|package|private|protected|public|static|yield)' is reserved$/,
+			'TS1214',
+		],
 		// acorn: checkUnreserved
 		[/^The keyword '[^']+' is reserved$/, 'TS1212'],
 		// acorn: validateRegExpFlags

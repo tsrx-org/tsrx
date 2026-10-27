@@ -2314,7 +2314,7 @@ describe('parse errors', () => {
 			// Prettier's typescript parser: `';' expected. (1:25)`.
 			['const f = (x as number) => x;', TS_ERRORS.TYPE_CAST_IN_PARAMETER, { line: 1, column: 12 }],
 			// Prettier's typescript parser: `';' expected. (1:23)`.
-			['const k = async(a)(b) => 1;', TS_ERRORS.UNEXPECTED_TOKEN, { line: 1, column: 23 }],
+			['const k = async(a)(b) => 1;', TS_ERRORS.TOKEN_EXPECTED, { line: 1, column: 23 }],
 			// Prettier's typescript parser: `Expression expected. (1:31)`.
 			['const g = <T,>(x: T) => { x = ; };', TS_ERRORS.UNEXPECTED_TOKEN, { line: 1, column: 31 }],
 			// Prettier's typescript parser: `'=>' expected. (1:22)`.
@@ -2365,6 +2365,18 @@ describe('parse errors', () => {
 `,
 		);
 		await expectFormat('declare import x from "m";', 'import x from "m";\n');
+		// Nor modifiers or decorators before a class `static` block (#885).
+		await expectFormat('class A { public static {} }', 'class A {\n  static {}\n}\n');
+		await expectFormat('class A { abstract static {} }', 'class A {\n  static {}\n}\n');
+		await expectFormat(
+			'class A { @dec static { f(); } }',
+			'class A {\n  static {\n    f();\n  }\n}\n',
+		);
+		// And `declare` in an ambient namespace is kept (#961).
+		await expectFormat(
+			'declare namespace N { declare class A {} }',
+			'declare namespace N {\n  declare class A {}\n}\n',
+		);
 		// Prettier's typescript parser formats an arrow function's optional rest
 		// parameter the same way, async too.
 		await expectFormat('const f = (...a?: number[]) => a;', 'const f = (...a: number[]) => a;\n');
@@ -2446,7 +2458,8 @@ describe('parse errors', () => {
 				TS_ERRORS.PATTERN_PARAMETER_PROPERTY,
 				'1:23',
 			],
-			['import.foo("x");', 'TS17012', '1:8'],
+			['import.foo;', 'TS17012', '1:8'],
+			['import.foo("x");', TS_ERRORS.IMPORT_META_PROPERTY_CALL, '1:8'],
 			['import defer a from "m";', TS_ERRORS.IMPORT_DEFER_DEFAULT, '1:8'],
 			['import defer { a } from "m";', TS_ERRORS.IMPORT_DEFER_NAMED, '1:8'],
 			['@dec function f() {}', TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:1'],
@@ -2467,6 +2480,44 @@ describe('parse errors', () => {
 			['abstract interface I {}', TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:1'],
 			['export abstract interface I {}', TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:8'],
 			['abstract function f() {}', TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:1'],
+			// In a block, TypeScript reports `abstract` there as TS1184 first (#783).
+			[
+				'function f() {\n  abstract interface I {}\n}',
+				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
+				'2:3',
+			],
+			// After `declare`, whose error TypeScript reports first, `abstract` is
+			// still refused, as Prettier refuses it, rather than left out.
+			[
+				'{\n  declare abstract function g(): void;\n}',
+				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
+				'2:11',
+			],
+			['{\n  declare abstract interface I {}\n}', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:11'],
+			['{\n  declare abstract enum E {}\n}', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:11'],
+			['{\n  declare abstract const x: number;\n}', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:11'],
+			[
+				'declare namespace N {\n  declare abstract function f(): void;\n}',
+				TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED,
+				'2:11',
+			],
+			[
+				'declare namespace N {\n  abstract declare interface I {}\n}',
+				TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED,
+				'2:3',
+			],
+			// A parameter property on a method or a constructor overload (#886).
+			['class A { m(public a) {} }', TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, '1:13'],
+			[
+				'class A {\n  constructor(public a);\n  constructor(a) {}\n}',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'2:15',
+			],
+			[
+				'const o = { set x(readonly a) {} };',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'1:19',
+			],
 			// #719: modifiers the tree has no place for, which TypeScript reports from
 			// its checker, and which the output would leave out.
 			['public class A {}', TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT, '1:1'],
