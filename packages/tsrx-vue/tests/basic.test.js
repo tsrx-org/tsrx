@@ -2,6 +2,7 @@ import { TS_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedClassFunctionComponentTests,
+	runSharedArrayRefTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -46,6 +47,7 @@ runSharedTsxExpressionTsrxTests({ compile, name: 'vue', classAttrName: 'class' }
 runSharedCompileTests({ compile, name: 'vue', classAttrName: 'class' });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'vue' });
 runSharedCodeBlockChildrenTests({ compile, name: 'vue' });
+runSharedArrayRefTests({ compile, compile_to_volar_mappings, name: 'vue', merge: 'mergeRefs' });
 runSharedClassFunctionComponentTests({ compile, compile_to_volar_mappings, name: 'vue' });
 runSharedComponentParamsTests({ compile, compile_to_volar_mappings, name: 'vue' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'vue' });

@@ -35,6 +35,8 @@ const react_platform = {
 		rewriteClassAttr: false,
 		classAttrName: 'className',
 		multiRefStrategy: 'merge-refs',
+		// React keeps a ref's cleanup per fiber, so elements can share one merged ref.
+		shareMergedRefs: true,
 		hostSpreadRefBinding: 'in-place',
 	},
 	validation: {

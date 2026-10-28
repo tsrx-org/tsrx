@@ -1,6 +1,7 @@
 import { TS_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedArrayRefTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -55,6 +56,12 @@ runSharedCompileTests({
 });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'react' });
 runSharedCodeBlockChildrenTests({ compile, name: 'react' });
+runSharedArrayRefTests({
+	compile,
+	compile_to_volar_mappings,
+	name: 'react',
+	merge: 'merge_element_refs',
+});
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'react' });
 
 /**
@@ -1776,6 +1783,54 @@ describe('destructuring', () => {
 				"let App__spread_props1 = __normalize_spread_props_for_ref_attr({ 'data-second': next() });",
 			);
 			expect(type_only).toContain('{...App__spread_props1}');
+		});
+
+		it('evaluates a ref written before a host spread in its authored position', () => {
+			const source = `export function App() @{
+					function init() {
+						return () => {};
+					}
+					<>
+						<div ref={init()} data-first="1" {...bag} />
+						<div ref={init()} {...bag} data-first="1" />
+					</>
+				}`;
+			const { code } = compile(source, 'App.tsrx');
+
+			// The merged ref follows the spread whose ref it reads, so it gets plain
+			// values, which `merge_element_refs` maps to the same ref on every render.
+			expect(code).toContain('merge_element_refs as __mergeRefs');
+			expect(code).toContain(
+				'<div {...(App__ref1 = init(), null)} data-first="1" {...(App__spread_props2 = __normalize_spread_props_for_ref_attr(bag))} ref={__mergeRefs(App__ref1, App__spread_props2?.ref)} />',
+			);
+			expect(code.replace(/\s+/g, ' ')).toContain(
+				'<div {...( App__ref3 = init(), App__spread_props4 = __normalize_spread_props_for_ref_attr(bag) )} data-first="1" ref={__mergeRefs(App__ref3, App__spread_props4?.ref)} />',
+			);
+
+			const { code: type_only } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(type_only).toContain('mergeRefs as __mergeRefs');
+			expect(type_only).not.toContain('merge_element_refs');
+			expect(type_only).toContain(
+				'<div data-first="1" {...App__spread_props1} ref={__mergeRefs(init(), App__spread_props1?.ref)} />',
+			);
+		});
+
+		it('imports the spread normalizers that return their copy and share merged refs', () => {
+			const { code } = compile(
+				`export function App() @{
+					<>
+						<input {...props.first} />
+						<input {...props.second} ref={props.cb} />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('copy_spread_props_sharing_refs as __normalize_spread_props');
+			expect(code).toContain(
+				'copy_spread_props_for_ref_attr_sharing_refs as __normalize_spread_props_for_ref_attr',
+			);
+			expect(code).toContain('{...__normalize_spread_props(props.first)}');
 		});
 
 		it('rejects multiple ref={expr} attributes on the same element', () => {

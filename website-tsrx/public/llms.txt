@@ -760,6 +760,18 @@ props, pass `children={...}` explicitly.
 <List children={items.map(renderItem)} />
 ```
 
+### Several refs on one element
+
+An element takes one `ref`. To attach several, write a ref list: every target
+calls each ref in it, in order. A list can nest, and a falsy entry such as the
+`false` of `cond && cb` is skipped. React, Preact, Hono and Vue also accept ref
+objects in the list (`useRef()`, a Vue `ref()`); Solid takes callback refs
+only, as Solid itself does.
+
+```tsrx
+<input ref={[localRef, props.inputRef]} />
+```
+
 ### Dynamic elements and components
 
 Use the dynamic tag syntax `<{expression}>` when the element tag or component
@@ -1650,6 +1662,7 @@ behind them: https://github.com/tsrx-org/tsrx/issues/136.
 | Text content           | `<p>literal</p>`, `<p>{expr}</p>`                     |
 | Expression children    | `<List children={items.map(render)} />`                |
 | Prop shorthand         | `<Input {value} {onChange} />`                         |
+| Several refs           | `<input ref={[a, b]} />`                               |
 | Conditional rendering  | `@if (cond) { <Panel /> }`                             |
 | List rendering         | `@for (const x of xs; index i; key x.id) { <li /> }`   |
 | Multi-branch           | `@switch (x) { @case 'a': { <A /> } }`                 |

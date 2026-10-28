@@ -225,6 +225,8 @@ export interface BaseNodeMetaData {
 	generated_statics?: AST.Statement[];
 	has_unmappable_value?: boolean;
 	synthetic_ref?: boolean;
+	/** An element's own `ref`, assigned to a binding where it is written; the merged ref goes last. */
+	own_ref_bound?: boolean;
 	tsrx_reactive_block?: boolean;
 	/** Generated dynamic-tag render-block closure, not a user component boundary. */
 	tsrx_dynamic_wrapper?: boolean;

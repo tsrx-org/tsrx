@@ -1,6 +1,7 @@
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { DIAGNOSTIC_CODES, TS_ERRORS, TSRX_ERRORS } from '../../src/diagnostics.js';
+import { find_exact_mapping } from '../../src/source-map-utils.js';
 import { error_with } from './errors.js';
 import { runSharedScopedStyleTests } from './scoped-styles.js';
 import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformance.js';
@@ -1921,6 +1922,61 @@ export function runSharedComponentParamsTests({ compile, compile_to_volar_mappin
 					/** @type {{ message?: string }} */ (error).message?.includes(removed_message),
 				),
 			).toBe(false);
+		});
+	});
+}
+
+/**
+ * Shared validation that a ref list written on an element, `ref={[a, b]}`,
+ * reaches a runtime that takes a single ref as one merged ref. `merge` names
+ * the helper the build output merges it with; `null` for a target whose
+ * runtime applies a ref list itself (Solid), which keeps the list as written.
+ *
+ * @param {Pick<CompileHarness, 'compile' | 'name'> & Pick<CompileDiagnosticsHarness, 'compile_to_volar_mappings'> & { merge: string | null }} harness
+ */
+export function runSharedArrayRefTests({ compile, compile_to_volar_mappings, name, merge }) {
+	const source = `export function App({ a, b, show }) @{
+	<>
+		<input ref={[a, [b, show && a]]} />
+		<input ref={a} />
+	</>
+}`;
+
+	describe(`[${name}] ref lists written on an element`, () => {
+		it(merge ? 'merges the list into one ref' : 'keeps the list as written', () => {
+			const { code } = compile(source, 'App.tsrx');
+			const { code: type_only, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(code).toContain('<input ref={a} />');
+			expect(type_only).toContain('<input ref={a} />');
+			if (merge === null) {
+				expect(code).toContain('<input ref={[a, [b, show && a]]} />');
+				expect(code).not.toContain('__mergeRefs');
+				expect(type_only).toContain('<input ref={[a, [b, show && a]]} />');
+				return;
+			}
+
+			expect(code).toContain(`${merge} as __mergeRefs`);
+			expect(code).toContain('<input ref={__mergeRefs([a, [b, show && a]])} />');
+			// The editor checks the list against the public \`mergeRefs\`, whose
+			// type takes ref lists.
+			expect(type_only).toContain('mergeRefs as __mergeRefs');
+			expect(type_only).toContain('<input ref={__mergeRefs([a, [b, show && a]])} />');
+
+			// The \`ref\` name and the refs in the list keep their source positions.
+			for (const [source_text, generated_text, length] of /** @type {const} */ ([
+				['ref={[a', 'ref={__mergeRefs([a', 'ref'.length],
+				['b, show', 'b, show', 'b'.length],
+			])) {
+				expect(
+					find_exact_mapping(
+						mappings,
+						source.indexOf(source_text),
+						type_only.indexOf(generated_text),
+						length,
+					),
+				).toBeDefined();
+			}
 		});
 	});
 }

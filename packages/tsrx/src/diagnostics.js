@@ -365,7 +365,7 @@ export const TSRX_ERRORS = {
 	),
 	MULTIPLE_REFS: tsrx(
 		'MULTIPLE_REFS',
-		'Element has multiple `ref={...}` attributes; an element may have at most one. Use a single array-valued ref such as `ref={[a, b]}` where the target framework supports multiple refs.',
+		'Element has multiple `ref={...}` attributes; an element may have at most one. Use a single ref list such as `ref={[a, b]}`, which applies every ref in it.',
 	),
 	INVALID_HTML_NESTING: tsrx_with_values(
 		'INVALID_HTML_NESTING',

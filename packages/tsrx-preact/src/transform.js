@@ -44,6 +44,8 @@ const preact_platform = {
 	jsx: {
 		rewriteClassAttr: false,
 		multiRefStrategy: 'merge-refs',
+		// No `shareMergedRefs`: Preact stores a ref's cleanup on the function, so
+		// elements sharing one merged ref would run each other's cleanups.
 		hostSpreadRefBinding: 'in-place',
 		// preact-render-to-string escapes a string child of `<script>` like
 		// text; `dangerouslySetInnerHTML` renders the body as written on the
