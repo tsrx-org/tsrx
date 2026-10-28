@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 import {
 	apply_ref_value,
 	create_ref_prop,
+	join_scope_class,
 	merge_ref_props,
+	merge_spread_class,
 	mergeRefs,
 	normalize_spread_props,
 	normalize_spread_props_for_ref_attr,
@@ -1911,5 +1913,178 @@ describe('spread ref normalization', () => {
 			['second', node],
 			['outer', node],
 		]);
+	});
+});
+
+describe('join_scope_class', () => {
+	it('leaves out a class the runtime would not render and joins any other as text', () => {
+		for (const value of [undefined, null, false, true, '']) {
+			expect(join_scope_class(value, 'tsrx-a')).toBe('tsrx-a');
+		}
+		expect(join_scope_class('x y', 'tsrx-a tsrx-b')).toBe('x y tsrx-a tsrx-b');
+		expect(join_scope_class(0, 'tsrx-a')).toBe('0 tsrx-a');
+		expect(join_scope_class(['a', 'b'], 'tsrx-a')).toBe('a,b tsrx-a');
+		expect(join_scope_class({ toString: () => 'css-1' }, 'tsrx-a')).toBe('css-1 tsrx-a');
+		const thenable = Promise.resolve('css-2');
+		expect(join_scope_class(thenable, 'tsrx-a')).toBe(thenable);
+	});
+
+	it('joins a boolean class as text where the runtime renders it', () => {
+		expect(join_scope_class(true, 'tsrx-a', 'text-true')).toBe('true tsrx-a');
+		expect(join_scope_class(false, 'tsrx-a', 'text-true')).toBe('tsrx-a');
+		expect(join_scope_class(true, 'tsrx-a', 'text-both')).toBe('true tsrx-a');
+		expect(join_scope_class(false, 'tsrx-a', 'text-both')).toBe('false tsrx-a');
+		expect(join_scope_class(null, 'tsrx-a', 'text-both')).toBe('tsrx-a');
+	});
+
+	it('joins an object or a list class as a list and leaves out other values', () => {
+		const object = { active: true };
+		const list = ['a', false];
+		expect(join_scope_class(object, 'tsrx-a', 'list')).toEqual([object, 'tsrx-a']);
+		expect(join_scope_class(list, 'tsrx-a', 'list')).toEqual([list, 'tsrx-a']);
+		expect(join_scope_class('x', 'tsrx-a', 'list')).toBe('x tsrx-a');
+		for (const value of [undefined, null, false, true, '', 0, 1, () => 'x']) {
+			expect(join_scope_class(value, 'tsrx-a', 'list')).toBe('tsrx-a');
+		}
+	});
+});
+
+describe('merge_spread_class', () => {
+	it('returns a bag without a class, or no bag, as it is', () => {
+		const bag = { id: 'a', class: 'ignored by React' };
+
+		expect(merge_spread_class(bag, 'tsrx-a', 'className')).toBe(bag);
+		for (const falsy of /** @type {const} */ ([null, undefined, false, 0, ''])) {
+			expect(merge_spread_class(falsy, 'tsrx-a', 'className')).toBe(falsy);
+		}
+	});
+
+	it("joins the bag's class with the scope classes without writing to the bag", () => {
+		const bag = Object.freeze({ className: 'x', id: 'a' });
+		const merged = merge_spread_class(bag, 'tsrx-a tsrx-b', 'className');
+
+		expect({ ...merged }).toEqual({ id: 'a', className: 'x tsrx-a tsrx-b' });
+		expect(bag).toEqual({ className: 'x', id: 'a' });
+	});
+
+	for (const empty of [undefined, null, false, '']) {
+		it(`keeps only the scope classes for a ${JSON.stringify(empty) ?? 'undefined'} class`, () => {
+			expect({ ...merge_spread_class({ class: empty }, 'tsrx-a', 'class') }).toEqual({
+				class: 'tsrx-a',
+			});
+		});
+	}
+
+	it('moves the class of the other prop a target reads to the key', () => {
+		expect({
+			...merge_spread_class({ className: 'x', id: 'a' }, 'tsrx-a', 'class', 'className'),
+		}).toEqual({
+			id: 'a',
+			class: 'x tsrx-a',
+		});
+		// Of both, the later prop wins, as it would in plain JSX.
+		expect({
+			...merge_spread_class({ class: 'x', className: 'y' }, 'tsrx-a', 'class', 'className'),
+		}).toEqual({
+			class: 'y tsrx-a',
+		});
+	});
+
+	for (const bag of [
+		{ class: 'x', className: undefined },
+		{ className: 'x', class: undefined },
+		{ className: null, class: 'x' },
+	]) {
+		it(`reads the class prop with a value from ${Object.keys(bag).join(' then ')}`, () => {
+			expect({ ...merge_spread_class(bag, 'tsrx-a', 'class', 'className') }).toEqual({
+				class: 'x tsrx-a',
+			});
+		});
+	}
+
+	it('leaves out both class props for a spread written before the class attribute', () => {
+		const bag = { className: 'x', class: 'y', id: 'a' };
+
+		const plain = { id: 'a' };
+
+		expect({ ...merge_spread_class(bag, null, 'class', 'className') }).toEqual({ id: 'a' });
+		expect(merge_spread_class(plain, null, 'class', 'className')).toBe(plain);
+	});
+
+	it('joins a class of another type as text, as the class attribute does', () => {
+		const css = { toString: () => 'css-class' };
+
+		expect(merge_spread_class({ className: ['a', 'b'] }, 'tsrx-a', 'className').className).toBe(
+			'a,b tsrx-a',
+		);
+		expect(merge_spread_class({ class: css }, 'tsrx-a', 'class', 'className').class).toBe(
+			'css-class tsrx-a',
+		);
+	});
+
+	it('applies a thenable class unchanged', () => {
+		const promise = Promise.resolve('css-class');
+
+		expect(merge_spread_class({ class: promise }, 'tsrx-a', 'class', 'className').class).toBe(
+			promise,
+		);
+	});
+
+	it('joins a boolean class as the target renders it', () => {
+		/** @param {unknown} value @param {any} [kind] */
+		const joined = (value, kind) =>
+			merge_spread_class({ class: value }, 'tsrx-a', 'class', undefined, kind).class;
+
+		expect(joined(true)).toBe('tsrx-a');
+		expect(joined(false)).toBe('tsrx-a');
+		expect(joined(true, 'text-true')).toBe('true tsrx-a');
+		expect(joined(false, 'text-true')).toBe('tsrx-a');
+		expect(joined(false, 'text-both')).toBe('false tsrx-a');
+	});
+
+	it('keeps a class object or list as a list for a target whose class takes one', () => {
+		const object = { active: true };
+		const list = ['a', { b: true }];
+
+		expect(
+			merge_spread_class({ class: object }, 'tsrx-a', 'class', undefined, 'list').class,
+		).toEqual([object, 'tsrx-a']);
+		expect(merge_spread_class({ class: list }, 'tsrx-a', 'class', undefined, 'list').class).toEqual(
+			[list, 'tsrx-a'],
+		);
+		expect(merge_spread_class({ class: 'x' }, 'tsrx-a', 'class', undefined, 'list').class).toBe(
+			'x tsrx-a',
+		);
+		// Solid renders no class for these, so only the scope classes apply.
+		for (const value of [0, 1, true, () => 'x']) {
+			expect(merge_spread_class({ class: value }, 'tsrx-a', 'class', undefined, 'list').class).toBe(
+				'tsrx-a',
+			);
+		}
+	});
+
+	it('reads each prop from the bag only when the copy is read', () => {
+		/** @type {string[]} */
+		const reads = [];
+		let current = 'one';
+		const bag = {
+			get class() {
+				reads.push('class');
+				return current;
+			},
+			get children() {
+				reads.push('children');
+				return 'child';
+			},
+		};
+
+		const merged = merge_spread_class(bag, 'tsrx-a', 'class');
+		expect(reads).toEqual([]);
+
+		expect(merged.class).toBe('one tsrx-a');
+		current = 'two';
+		expect(merged.class).toBe('two tsrx-a');
+		expect(merged.children).toBe('child');
+		expect(reads).toEqual(['class', 'class', 'children']);
 	});
 });

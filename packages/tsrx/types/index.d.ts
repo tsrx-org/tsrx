@@ -1670,6 +1670,24 @@ export interface ScopeClassParts {
 }
 
 /**
+ * How a runtime renders a host element's class value, which picks how the
+ * `join_scope_class` runtime helper joins an authored class that may not be a
+ * string with the scope classes (the platform's `jsx.classValue`). `null`
+ * joins it as text in a template literal.
+ */
+export type ScopeClassJoin = 'text' | 'text-true' | 'text-both' | 'list' | null;
+
+/**
+ * How a scope pre-pass keeps the class a host spread passes an element: the
+ * platform's `jsx.hostSpreadClassProps`, and its `jsx.classValue` for how the
+ * runtime renders the spread's class.
+ */
+export interface SpreadClassOptions {
+	props: ReadonlyArray<'class' | 'className'>;
+	kind: ScopeClassJoin;
+}
+
+/**
  * Result of parsing operation
  */
 export interface ParseResult {
@@ -2415,6 +2433,18 @@ export interface CompileHarness {
 	 * hashes. Defaults to `classAttrName`.
 	 */
 	generatedClassAttrName?: 'class' | 'className';
+	/**
+	 * The platform's `jsx.classValue`, which picks how an authored class that
+	 * may not be a string joins the scope classes (see `ScopeClassJoin`).
+	 * `runSharedCompileTests` defaults it from the target's name.
+	 */
+	classJoin?: ScopeClassJoin;
+	/**
+	 * The attribute an authored `className` compiles to: `class` where the
+	 * platform sets `jsx.rewriteClassNameAttr`. `runSharedCompileTests`
+	 * defaults it from the target's name.
+	 */
+	classNameAttr?: 'class' | 'className';
 }
 
 /** The per-target entry points the shared source-mapping tests run against. */

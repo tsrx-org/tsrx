@@ -79,6 +79,138 @@ describe('@tsrx/vite-plugin-hono', () => {
 		}
 	});
 
+	// Hono prints `class` and `className` as two `class` attributes, and a
+	// browser reads the first.
+	it('renders one class attribute for a host spread beside scoped styles with Hono SSR', async () => {
+		const plugin = tsrxHono();
+		const context = create_context();
+		const directory = await mkdtemp(
+			path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-hono-'),
+		);
+
+		try {
+			const source_id = path.join(directory, 'App.tsrx');
+			const output_id = path.join(directory, 'App.js');
+			const transformed = await plugin.transform.call(
+				context,
+				`export function App({ bag }) @{
+					<>
+						<style>
+							span {
+								color: red;
+							}
+						</style>
+						<span {...bag} />
+						<span className="base" {...bag} />
+						<span {...bag} class="last" />
+					</>
+				}`,
+				source_id,
+			);
+			// The CSS import is for Vite; the class attributes don't need it.
+			await writeFile(output_id, transformed.code.replace(/^import ".*\?tsrx-css.*";$/m, ''));
+
+			const [{ App }, { jsx }] = await Promise.all([
+				import(`${pathToFileURL(output_id).href}?test=${Date.now()}`),
+				import('hono/jsx'),
+			]);
+
+			for (const bag of [
+				{ className: 'x' },
+				{ class: 'x', className: undefined },
+				{ className: 'x', class: undefined },
+			]) {
+				const html = String(await jsx(App, { bag }).toString()).replace(
+					/tsrx-[0-9a-f]+/g,
+					'tsrx-H',
+				);
+				expect(html).toBe(
+					'<span class="x tsrx-H"></span><span class="x tsrx-H"></span><span class="last tsrx-H"></span>',
+				);
+			}
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it('renders a class beside scoped styles as Hono SSR renders it without them', async () => {
+		const plugin = tsrxHono();
+		const context = create_context();
+		const directory = await mkdtemp(
+			path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-hono-'),
+		);
+
+		try {
+			const source_id = path.join(directory, 'App.tsrx');
+			const output_id = path.join(directory, 'App.js');
+			const transformed = await plugin.transform.call(
+				context,
+				`export function Native({ value }) @{
+					<span class={value} />
+				}
+
+				export function Scoped({ value }) @{
+					<>
+						<style>
+							span {
+								color: red;
+							}
+						</style>
+						<span class={value} />
+					</>
+				}
+
+				export function NativeSpread({ value }) @{
+					<span {...{ class: value }} />
+				}
+
+				export function ScopedSpread({ value }) @{
+					<>
+						<style>
+							span {
+								color: red;
+							}
+						</style>
+						<span {...{ class: value }} />
+					</>
+				}`,
+				source_id,
+			);
+			await writeFile(output_id, transformed.code.replace(/^import ".*\?tsrx-css.*";$/m, ''));
+
+			const [{ Native, Scoped, NativeSpread, ScopedSpread }, { jsx }] = await Promise.all([
+				import(`${pathToFileURL(output_id).href}?test=${Date.now()}`),
+				import('hono/jsx'),
+			]);
+			/**
+			 * @param {unknown} component
+			 * @param {unknown} value
+			 */
+			const classes = async (component, value) => {
+				const html = String(
+					await jsx(/** @type {any} */ (component), {
+						value: /** @type {any} */ (value),
+					}).toString(),
+				);
+				return (/class="([^"]*)"/.exec(html)?.[1] ?? '').split(' ').filter(Boolean);
+			};
+
+			for (const value of [undefined, null, false, true, '', 0, 'a b']) {
+				expect(await classes(Scoped, value)).toEqual([
+					...(await classes(Native, value)),
+					expect.stringMatching(/^tsrx-[0-9a-f]+$/),
+				]);
+				// A spread's class joins the same way.
+				expect(await classes(ScopedSpread, value)).toEqual([
+					...(await classes(NativeSpread, value)),
+					expect.stringMatching(/^tsrx-[0-9a-f]+$/),
+				]);
+			}
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it('renders awaits inside @for, @empty, @switch, and @if bodies with Hono SSR (#145)', async () => {
 		const plugin = tsrxHono();
 		const context = create_context();
