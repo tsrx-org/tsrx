@@ -58,6 +58,7 @@ import {
 import { is_hoist_safe_jsx_node } from '../jsx-hoist.js';
 import { lower_server_module_for_types } from './server-module.js';
 import { get_hashbang } from '../../comment-utils.js';
+import { get_source_tokens } from '../../parse/source-tokens.js';
 import {
 	child_nodes,
 	has_location,
@@ -600,6 +601,8 @@ export function createJsxTransform(platform) {
 		// owns the dialect's real codegen (isolation validation, RPC stubs).
 		// Copy-on-write: a program without a server block passes through as the
 		// same object.
+		// The copy-on-write passes below hand back a new program object.
+		const source_ast = ast;
 		if (transform_context.typeOnly && platform.serverModule) {
 			ast = lower_server_module_for_types(ast, platform.serverModule);
 		}
@@ -863,6 +866,9 @@ export function createJsxTransform(platform) {
 			{
 				sourceMapSource: filename,
 				sourceMapContent: source,
+				// The editor output maps the keywords and punctuation esrap writes
+				// to their source tokens; build prints stay sparse.
+				tokens: transform_context.typeOnly ? get_source_tokens(source_ast, source) : undefined,
 			},
 		);
 
