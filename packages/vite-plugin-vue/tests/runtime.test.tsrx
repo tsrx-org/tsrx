@@ -1569,6 +1569,53 @@ describe('tsrx-vue runtime', () => {
 	});
 });
 
+const HandlerArrow = ({ label, onPick }: { label: string; onPick: (label: string) => void }) => (
+	<button class="handler" onClick={() => onPick(label)}>
+		{label}
+	</button>
+);
+
+function VariableCard({ title }: { title: string }) {
+	const element = <div class="card" title={title} />;
+	return element;
+}
+
+function VariableCardParent() @{
+	<section>
+		<VariableCard title="child" />
+	</section>
+}
+
+// Reads `RegisteredInner` above its declaration, so this module only loads
+// when the wrapped component is still initialized first.
+const component_registry = { inner: RegisteredInner };
+
+function RegisteredInner(props: { label: string }) @{
+	<span>{props.label}</span>
+}
+
+describe('tsrx-vue component wrapping', () => {
+	it('mounts an arrow component with an inline handler as the app root', async () => {
+		await render(HandlerArrow, { label: 'root', onPick: () => {} });
+		expect(container.innerHTML).toBe('<button class="handler">root</button>');
+	});
+
+	it('passes props to a component that returns JSX through a variable', async () => {
+		await render(VariableCardParent);
+		expect(container.innerHTML).toBe('<section><div class="card" title="child"></div></section>');
+	});
+
+	it('mounts a component that returns JSX through a variable as the app root', async () => {
+		await render(VariableCard, { title: 'root' });
+		expect(container.innerHTML).toBe('<div class="card" title="root"></div>');
+	});
+
+	it('renders a component read above its declaration', async () => {
+		await render(component_registry.inner, { label: 'registered' });
+		expect(container.innerHTML).toBe('<span>registered</span>');
+	});
+});
+
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runJsxTextWhitespaceRuntimeTests({ nbsp: 'kept' });

@@ -233,6 +233,8 @@ export interface BaseNodeMetaData {
 	/** Top-level scoped classes collected while pruning the component's CSS. */
 	topScopedClasses?: TopScopedClasses;
 	vapor_pending_fallback?: ESTreeJSX.JSXRenderNode;
+	/** Vue: the name a wrapped component declaration binds, so it can be hoisted. */
+	vue_component_binding?: string;
 	/**
 	 * Solid: control flow that must lower into a reactive `<Show>`/`<For>`/
 	 * `<Switch>` rather than run once at setup time.

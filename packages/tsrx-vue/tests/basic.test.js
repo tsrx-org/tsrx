@@ -67,6 +67,557 @@ describe('@tsrx/vue basic', () => {
 		expect(code.match(/defineVaporComponent/g)).toHaveLength(2);
 	});
 
+	it('wraps arrow components that contain nested functions', () => {
+		const { code } = compile(
+			`const Handler = ({ label, onPick }) => <button onClick={() => onPick(label)}>{label}</button>;
+			const List = ({ items }) => {
+				return <ul>{items.map((item) => <li>{item}</li>)}</ul>;
+			};
+			const parts = { Item: ({ label }) => <b onClick={() => label}>{label}</b> };`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('const Handler = defineVaporComponent(({ label, onPick }) =>');
+		expect(code).toContain('const List = defineVaporComponent(({ items }) =>');
+		expect(code).toContain('Item: defineVaporComponent(({ label }) =>');
+	});
+
+	it('wraps a default-exported component that contains a nested function', () => {
+		const { code } = compile(
+			`export default function App() @{
+				const pick = () => 1;
+				<button onClick={pick}>x</button>
+			}`,
+			'App.tsrx',
+		);
+
+		// The declaration also binds `App` in the module, so keep that binding.
+		expect(code).toContain('const App = defineVaporComponent(function App()');
+		expect(code).toContain('export default App;');
+		expect(code).not.toContain('export default const');
+	});
+
+	it('wraps components that return JSX through a local variable', () => {
+		const { code } = compile(
+			`function Card({ title }: { title: string }) {
+				const element = <div class="card" title={title} />;
+				return element;
+			}
+
+			function Badge({ on }: { on: boolean }) {
+				let element;
+				if (on) element = <b />;
+				else element = <i />;
+				return element;
+			}
+
+			function Factory() {
+				const value = { a: 1 };
+				return value;
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('const Card = defineVaporComponent(function Card(');
+		expect(code).toContain('const Badge = defineVaporComponent(function Badge(');
+		expect(code).toContain('function Factory() {');
+		expect(code).not.toContain('defineVaporComponent(function Factory');
+	});
+
+	it('wraps a returned local binding that holds JSX anywhere, like a returned expression', () => {
+		const { code } = compile(
+			`function Columns() {
+				return [{ header: <b>Name</b> }];
+			}
+
+			function Config() {
+				const config = { icon: <i />, label: 'x' };
+				return config;
+			}`,
+			'App.tsrx',
+		);
+
+		// The direct return was already wrapped; the local binding follows the same rule.
+		expect(code).toContain('const Columns = defineVaporComponent(function Columns(');
+		expect(code).toContain('const Config = defineVaporComponent(function Config(');
+	});
+
+	it('moves a wrapped component above the first statement that reads it', () => {
+		const { code } = compile(
+			`export { Inner };
+			type InnerType = typeof Inner;
+
+			export function App() @{
+				<Inner label="app" />
+			}
+
+			export const registry = { inner: Inner };
+			const LABEL = 'label';
+
+			export function Inner({ label = 'fixed' }: { label?: string }) @{
+				<span>{label}{LABEL}</span>
+			}
+
+			function make() {
+				return <Nested />;
+				function Nested() {
+					return <i />;
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		const inner = code.indexOf('export const Inner = defineVaporComponent');
+		expect(inner).toBeGreaterThan(-1);
+		expect(inner).toBeLessThan(code.indexOf('export const registry'));
+		// Reads that run later (exports, types, function bodies) keep the source order.
+		expect(code.indexOf('export { Inner }')).toBeLessThan(inner);
+		expect(code.indexOf('type InnerType')).toBeLessThan(inner);
+		expect(code.indexOf('export const App')).toBeLessThan(inner);
+		expect(code.indexOf('const Nested = defineVaporComponent')).toBeLessThan(
+			code.indexOf('return <Nested />'),
+		);
+	});
+
+	it('does not move a component for reads that do not run while the module loads', () => {
+		const { code } = compile(
+			`class Holder {
+				comp = Inner;
+				method() {
+					return Inner;
+				}
+			}
+			const DEBUG = false;
+			if (DEBUG) console.log(Inner);
+			const ready = DEBUG && Inner;
+			{
+				const Inner = 'shadow';
+				console.log(Inner);
+			}
+			try {
+				run();
+			} catch (Inner) {
+				console.log(Inner);
+			}
+			const PREFIX = 'p';
+			export function Inner({ label = PREFIX }: { label?: string }) @{
+				<span>{label}</span>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeGreaterThan(
+			code.indexOf("const PREFIX = 'p'"),
+		);
+	});
+
+	it('counts a read in a branch whose condition a nested scope redeclares', () => {
+		const { code } = compile(
+			`const DEBUG = false;
+			{
+				const DEBUG = true;
+				if (DEBUG) console.log(Inner);
+			}
+			export function Inner() @{
+				<i />
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeLessThan(
+			code.indexOf('const DEBUG = true'),
+		);
+	});
+
+	it('moves a component past a read in a static class field or a reachable branch', () => {
+		const { code } = compile(
+			`class Holder {
+				static comp = Inner;
+			}
+			if (window.debug) console.log(Inner);
+			export function Inner({ label = 'x' }: { label?: string }) @{
+				<span>{label}</span>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeLessThan(
+			code.indexOf('class Holder'),
+		);
+	});
+
+	it('reports a read above a component whose prop default reads a binding it would move past', () => {
+		for (const [source, read_line] of [
+			[
+				`export const registry = { inner: Inner };
+const PREFIX = 'p';
+export function Inner({ label = PREFIX }: { label?: string }) @{
+	<span>{label}</span>
+}`,
+				1,
+			],
+			[
+				`class Holder {
+	static comp = Inner;
+}
+var PREFIX = 'p';
+export function Inner({ label = PREFIX }: { label?: string }) @{
+	<span>{label}</span>
+}`,
+				2,
+			],
+			[
+				`const registry = { card: Card };
+const DEFAULT = 'x';
+function Card({ title = DEFAULT }: { title?: string }) {
+	const el = <div>{title}</div>;
+	return el;
+}`,
+				1,
+			],
+			// Assigned, updated or mutated in the statements it would move past.
+			[
+				`let size = 1;
+const registry = { card: Card };
+size = 2;
+function Card({ s = size }: { s?: number }) {
+	const el = <div>{s}</div>;
+	return el;
+}`,
+				2,
+			],
+			[
+				`let size = 1;
+const registry = { card: Card };
+size++;
+export function Card({ s = size }: { s?: number }) @{
+	<div>{s}</div>
+}`,
+				2,
+			],
+			[
+				`const cfg = { size: 1 };
+const registry = { card: Card };
+cfg.size = 2;
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+		]) {
+			/** @type {any} */
+			let thrown = null;
+			try {
+				compile(source, 'App.tsrx');
+			} catch (error) {
+				thrown = error;
+			}
+			const name = source.includes('Card') ? 'Card' : 'Inner';
+			expect(thrown, source).toBeInstanceOf(Error);
+			expect(thrown.code).toBe('TSRX2028');
+			expect(thrown.message).toContain(`'${name}' is read here before its declaration.`);
+			expect(thrown.message).toContain(`Move the declaration of '${name}' above this read.`);
+			expect(thrown.loc.start.line).toBe(read_line);
+		}
+
+		const { errors } = compile_to_volar_mappings(
+			`export const registry = { inner: Inner };
+const PREFIX = 'p';
+export function Inner({ label = PREFIX }: { label?: string }) @{
+	<span>{label}</span>
+}`,
+			'App.tsrx',
+		);
+		expect(errors.map((error) => error.code)).toEqual(['TSRX2028']);
+	});
+
+	it('accepts the destructured prop defaults vue-jsx-vapor keeps', () => {
+		for (const fallback of [
+			"'x'",
+			'1',
+			'true',
+			'null',
+			'undefined',
+			'SIZE',
+			'[]',
+			'{ a: 1 }',
+			'() => 1',
+			'function () { return 1; }',
+			'(2 as number)',
+			'SIZE!',
+		]) {
+			const source = `const SIZE = 2;
+export function Card({ s = ${fallback} }: { s?: unknown }) @{
+	<div>{String(s)}</div>
+}`;
+			expect(() => compile(source, 'App.tsrx'), fallback).not.toThrow();
+		}
+	});
+
+	it('reports a destructured prop default vue-jsx-vapor drops', () => {
+		for (const fallback of [
+			'cfg.size',
+			'Math.max(3, 4)',
+			'`t`',
+			'-1',
+			'SIZE + 1',
+			'/x/',
+			'10n',
+			'SIZE ? 1 : 2',
+			'(SIZE satisfies number)',
+		]) {
+			for (const source of [
+				`const cfg = { size: 1 };
+const SIZE = 2;
+export function Card({ s = ${fallback} }: { s?: unknown }) @{
+	<div>{String(s)}</div>
+}`,
+				// A component main left unwrapped, newly wrapped here.
+				`const cfg = { size: 1 };
+const SIZE = 2;
+function Card({ s = ${fallback} }: { s?: unknown }) {
+	const el = <div>{String(s)}</div>;
+	return el;
+}`,
+			]) {
+				/** @type {any} */
+				let thrown = null;
+				try {
+					compile(source, 'App.tsrx');
+				} catch (error) {
+					thrown = error;
+				}
+				expect(thrown, `${fallback}\n${source}`).toBeInstanceOf(Error);
+				expect(thrown.code).toBe('TSRX2029');
+				expect(thrown.message).toContain("Vue TSRX cannot keep this default for 's'");
+				expect(thrown.message).toContain('read the prop where you use it instead');
+				expect(thrown.loc.start.line).toBe(3);
+			}
+		}
+
+		const { errors } = compile_to_volar_mappings(
+			`const cfg = { size: 1 };
+export function Card({ s = cfg.size }: { s?: number }) @{
+	<div>{s}</div>
+}`,
+			'App.tsrx',
+		);
+		expect(errors.map((error) => error.code)).toEqual(['TSRX2029']);
+		expect(errors[0].message).toContain(
+			'for example `{props.s === undefined ? cfg.size : props.s}`, or derive it in a `computed`.',
+		);
+
+		const renamed = compile_to_volar_mappings(
+			`const cfg = { size: 1 };
+export function Card({ s: size = cfg.size }: { s?: number }) @{
+	<div>{size}</div>
+}`,
+			'App.tsrx',
+		);
+		expect(renamed.errors[0].message).toContain(
+			'for example `{props.s === undefined ? cfg.size : props.s}`',
+		);
+	});
+
+	it('reports a destructured prop key vue-jsx-vapor reads as another prop or leaves out', () => {
+		for (const [params, key, message, example] of [
+			// vue-jsx-vapor reads a computed name as the prop with that name.
+			[
+				'{ [k]: v = cfg.size }',
+				'k',
+				"reads `[k]` as the prop 'k'",
+				'{props[k] === undefined ? cfg.size : props[k]}',
+			],
+			[
+				'{ [k]: v = 3 }',
+				'k',
+				"reads `[k]` as the prop 'k'",
+				'{props[k] === undefined ? 3 : props[k]}',
+			],
+			['{ [k]: v }', 'k', "reads `[k]` as the prop 'k'", '{props[k]}'],
+			['{ t, [k]: v }', 'k', "reads `[k]` as the prop 'k'", '{props[k]}'],
+			['{ [k]: { a: v } }', 'k', "reads `[k]` as the prop 'k'", null],
+			['{ t: { [k]: v } }', 'k', "reads `[k]` as the prop 'k'", '{props.t?.[k]}'],
+			['{ t: [{ [k]: v }] }', 'k', "reads `[k]` as the prop 'k'", '{props.t?.[0]?.[k]}'],
+			// It leaves out any other key. With no key it reads, the component gets no
+			// prop options, so Vue passes it no props.
+			["{ ['s']: v = 3 }", "'s'", "the prop at `['s']`", '{props.s === undefined ? 3 : props.s}'],
+			["{ ['s']: v, t }", "'s'", "the prop at `['s']`", '{props.s}'],
+			["{ 's': v }", "'s'", "the prop at `'s'`", '{props.s}'],
+			[
+				"{ 'a-b': v = 1, t }",
+				"'a-b'",
+				"the prop at `'a-b'`",
+				'{props.aB === undefined ? 1 : props.aB}',
+			],
+			['{ [1]: v }', '1', 'the prop at `[1]`', '{props[1]}'],
+			['{ [`s`]: v, ...rest }', '`s`', 'the prop at `[`s`]`', '{props.s}'],
+			['{ [obj.k]: v }', 'obj.k', 'the prop at `[obj.k]`', '{props[obj.k]}'],
+			["{ [k + '']: v }", "k + ''", "the prop at `[k + '']`", "{props[k + '']}"],
+			["{ t: { 's': v } }", "'s'", "the prop at `'s'`", '{props.t?.s}'],
+			["{ t: { 'a-b': v } }", "'a-b'", "the prop at `'a-b'`", '{props.t?.["a-b"]}'],
+		]) {
+			const source = `const cfg = { size: 1 };
+const k = 's';
+const obj = { k: 's' };
+export function Card(${params}: any) @{
+	<div>{String(v)}</div>
+}`;
+			/** @type {any} */
+			let thrown = null;
+			try {
+				compile(source, 'App.tsrx');
+			} catch (error) {
+				thrown = error;
+			}
+			expect(thrown, params).toBeInstanceOf(Error);
+			expect(thrown.code, params).toBe('TSRX2031');
+			expect(thrown.message, params).toContain(message);
+			expect(thrown.message, params).toContain('read the prop where you use it instead');
+			if (example) expect(thrown.message, params).toContain(`for example \`${example}\``);
+			else expect(thrown.message, params).not.toContain('for example');
+			expect(thrown.loc.start, params).toEqual({
+				line: 4,
+				column: 'export function Card('.length + params.indexOf(key),
+			});
+
+			const { errors } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(
+				errors.map((error) => error.code),
+				params,
+			).toEqual(['TSRX2031']);
+		}
+
+		// A key that spans lines is shown on one line.
+		const { errors } = compile_to_volar_mappings(
+			`const k = 's';
+export function Card({ t, [k +
+	'']: v }: any) @{
+	<div>{String(v)}</div>
+}`,
+			'App.tsrx',
+		);
+		expect(errors.map((error) => error.message)).toEqual([
+			expect.stringContaining("the prop at `[k + '']`"),
+		]);
+	});
+
+	it('reports a default inside a destructured prop, which vue-jsx-vapor applies only to a missing prop', () => {
+		for (const [params, fallback, path, example] of [
+			[
+				'{ s: { a: v = cfg.size } }',
+				'cfg.size',
+				's.a',
+				'{props.s?.a === undefined ? cfg.size : props.s?.a}',
+			],
+			['{ s: { a: v = 3 } }', '3', 's.a', '{props.s?.a === undefined ? 3 : props.s?.a}'],
+			['{ s: [v = 1] }', '1', 's[0]', '{props.s?.[0] === undefined ? 1 : props.s?.[0]}'],
+			['{ s: { t: { a } = {} } }', '{}', 's.t', null],
+		]) {
+			const source = `const cfg = { size: 1 };
+export function Card(${params}: any) @{
+	<div>{String(v)}</div>
+}`;
+			const { errors } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(
+				errors.map((error) => error.code),
+				params,
+			).toEqual(['TSRX2029']);
+			expect(errors[0].message, params).toContain(
+				`cannot keep this default for '${path}': vue-jsx-vapor applies a default inside a destructured prop only when the whole prop is missing`,
+			);
+			if (example) expect(errors[0].message, params).toContain(`for example \`${example}\``);
+			else expect(errors[0].message, params).not.toContain('for example');
+			expect(errors[0].loc.start, params).toEqual({
+				line: 2,
+				column: 'export function Card('.length + params.indexOf(fallback),
+			});
+		}
+	});
+
+	it('reports a props parameter with a default, which vue-jsx-vapor skips', () => {
+		for (const [param, fallback] of [
+			['{ s: v }: { s?: number } = {}', '{}'],
+			['props: { s?: number } = { s: 1 }', '{ s: 1 }'],
+		]) {
+			const { errors } = compile_to_volar_mappings(
+				`export function Card(${param}) @{
+	<div>{String(v)}</div>
+}`,
+				'App.tsrx',
+			);
+			expect(
+				errors.map((error) => error.code),
+				param,
+			).toEqual(['TSRX2031']);
+			expect(errors[0].message, param).toContain(
+				`cannot read a props parameter with a default: vue-jsx-vapor skips it, so this component gets no props. Remove \`= ${fallback}\`; Vue always passes a props object.`,
+			);
+			expect(errors[0].loc.start, param).toEqual({
+				line: 1,
+				column: 'export function Card('.length + param.lastIndexOf(fallback),
+			});
+		}
+	});
+
+	it("reports a rest element inside a prop that vue-jsx-vapor doesn't give the rest of it", () => {
+		for (const [params, rests, path] of [
+			// The last rest element of the pattern gets the component's attrs.
+			['{ t: { a, ...r } }', ['...r'], 't'],
+			['{ t: [a, ...r] }', ['...r'], 't'],
+			// An array's rest element gets the whole array.
+			['{ t: [a, ...r], ...rest }', ['...r'], 't'],
+			// Any other gets the rest as it was at setup.
+			['{ t: { a, ...r }, ...rest }', ['...r'], 't'],
+			['{ t: [{ a, ...r }], ...rest }', ['...r'], 't[0]'],
+			['{ t: { a, ...r }, u: { b, ...q } }', ['...r', '...q'], null],
+		]) {
+			const { errors } = compile_to_volar_mappings(
+				`export function Card(${params}: any) @{
+	<div>{String(a)}</div>
+}`,
+				'App.tsrx',
+			);
+			expect(
+				errors.map((error) => error.code),
+				params,
+			).toEqual(rests.map(() => 'TSRX2031'));
+			if (path) {
+				expect(errors[0].message, params).toContain(
+					`cannot read this rest element inside '${path}': vue-jsx-vapor doesn't keep it as the rest of '${path}'.`,
+				);
+			}
+			expect(
+				errors.map((error) => error.loc.start),
+				params,
+			).toEqual(
+				rests.map((rest) => ({
+					line: 1,
+					column: 'export function Card('.length + params.indexOf(rest),
+				})),
+			);
+		}
+	});
+
+	it('accepts destructured props vue-jsx-vapor reads as written', () => {
+		for (const params of [
+			'{ s: v, t = 1 }',
+			'{ s: [v, w] }',
+			'{ s: { a: v } }',
+			// A prop's own default, which vue-jsx-vapor keeps for an object literal.
+			'{ s: { a: v } = {} }',
+			// The pattern's own rest element gets the attrs, which are the props it
+			// doesn't declare.
+			'{ s: v, ...rest }',
+			'{ ...rest }',
+		]) {
+			const source = `export function Card(${params}: any) @{
+	<div>{String(v)}</div>
+}`;
+			expect(() => compile(source, 'App.tsrx'), params).not.toThrow();
+		}
+	});
+
 	it('rejects the removed `&{ ... }` lazy destructuring syntax', () => {
 		expect(() =>
 			compile(
