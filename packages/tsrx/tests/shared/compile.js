@@ -205,6 +205,26 @@ export function App() @{
 		});
 	});
 
+	describe(`[${name}] type arguments on a tag in virtual code (#1260)`, () => {
+		it('keeps and maps type arguments other than a single name', () => {
+			const source = `export function App({ List, xs }: any) @{
+	<div>
+		<List<string | number, [1]> items={xs} />
+	</div>
+}`;
+			const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			expect(code).toContain('<List<string | number, [1]> items={xs} />');
+			const number = source.indexOf('number');
+			const mapping = mappings.find((candidate) => candidate.sourceOffsets[0] === number);
+			expect(mapping).toBeDefined();
+			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
+			expect(code.slice(generated, generated + 'number'.length)).toBe('number');
+		});
+	});
+
 	describe(`[${name}] platform flag virtual types`, () => {
 		it('types every retained flag with the selected boolean literal', () => {
 			const result = compile_to_volar_mappings(

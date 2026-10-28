@@ -615,3 +615,76 @@ describe('type arguments where a tag could start (#545, #578)', () => {
 		]);
 	});
 });
+
+describe('type arguments on a tag (#1260)', () => {
+	const type_arguments = [
+		'T',
+		'T,',
+		'T, U',
+		'T | U',
+		'T & U',
+		'[T, U]',
+		'T[]',
+		'readonly T[]',
+		'{ a: T; b?: U }',
+		'() => void',
+		'(a: T) => U',
+		'new () => T',
+		'typeof x',
+		'keyof T',
+		"T['k']",
+		'T extends U ? A : B',
+		'A.B',
+		'Array<T>',
+		'Map<K, V>',
+		"'a' | 'b'",
+		'`${T}-x`',
+		'1',
+	];
+	/** @type {Array<(name: string, args: string) => string>} */
+	const shapes = [
+		(name, args) => `const e = <${name}<${args}> />;`,
+		(name, args) => `const e = <${name}<${args}> x={1}>y</${name}>;`,
+		(name, args) => `export function App() @{\n\t<${name}<${args}> />\n}`,
+		(name, args) =>
+			`export function App() @{\n\t<div>\n\t\t<${name}<${args}> x="1">text</${name}>\n\t</div>\n}`,
+		(name, args) => `export function App() @{\n\t<div>{<${name}<${args}> />}</div>\n}`,
+		(name, args) =>
+			`export function App() @{\n\t@if (c) {\n\t\t<${name}<${args}>>\n\t\t\ttext\n\t\t</${name}>\n\t}\n}`,
+	];
+
+	/**
+	 * The opening tags in `value` that have type arguments, depth first.
+	 * @param {unknown} value
+	 * @returns {Array<AST.Node & Record<string, any>>}
+	 */
+	function typed_opening_tags(value) {
+		if (!value || typeof value !== 'object') return [];
+		if (Array.isArray(value)) return value.flatMap(typed_opening_tags);
+		const node = /** @type {AST.Node & Record<string, any>} */ (value);
+		return [
+			...(node.type === 'JSXOpeningElement' && node.typeArguments ? [node] : []),
+			...Object.keys(node)
+				.filter((key) => key !== 'loc' && key !== 'metadata')
+				.flatMap((key) => typed_opening_tags(node[key])),
+		];
+	}
+
+	it('reads any type arguments after a static or member tag name', async () => {
+		const cases = shapes.flatMap((shape) =>
+			['Tag', 'a.b', 'a.b.C'].flatMap((name) =>
+				type_arguments.map((args) => ({ source: shape(name, args), name, args })),
+			),
+		);
+		const programs = await parse_all(cases.map(({ source }) => source));
+		expect(
+			programs.map((program, index) => {
+				const { source } = cases[index];
+				return typed_opening_tags(program).map((tag) => [
+					source.slice(tag.name.start, tag.name.end),
+					source.slice(tag.typeArguments.start, tag.typeArguments.end),
+				]);
+			}),
+		).toEqual(cases.map(({ name, args }) => [[name, `<${args}>`]]));
+	});
+});
