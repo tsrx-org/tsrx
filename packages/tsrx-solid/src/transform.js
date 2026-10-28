@@ -2150,13 +2150,19 @@ function normalize_solid_host_ref_spreads(attrs, is_host, transform_context) {
  * @returns {string}
  */
 function create_solid_spread_props_name(transform_context) {
-	if (transform_context.helper_state) {
-		transform_context.helper_state.next_id += 1;
-		return `${transform_context.helper_state.base_name}__spread_props${transform_context.helper_state.next_id}`;
-	}
-
-	transform_context.local_statement_component_index += 1;
-	return `_tsrx_spread_props_${transform_context.local_statement_component_index}`;
+	/** @type {string} */
+	let name;
+	do {
+		if (transform_context.helper_state) {
+			transform_context.helper_state.next_id += 1;
+			name = `${transform_context.helper_state.base_name}__spread_props${transform_context.helper_state.next_id}`;
+		} else {
+			transform_context.local_statement_component_index += 1;
+			name = `_tsrx_spread_props_${transform_context.local_statement_component_index}`;
+		}
+		// A name the author wrote anywhere could be shadowed or redeclared
+	} while (new RegExp(`(?<![\\w$])${name}(?![\\w$])`).test(transform_context.source));
+	return name;
 }
 
 /**

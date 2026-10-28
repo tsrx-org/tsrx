@@ -534,6 +534,8 @@ export function createJsxTransform(platform) {
 	 * @returns {JsxTransformResult}
 	 */
 	function transform(ast, source, filename, options) {
+		/** @type {Map<number, boolean> | undefined} */
+		let hoistable_tags;
 		const effective_platform =
 			options?.runtimeImports === 'direct' && platform.directRuntimeImports
 				? {
@@ -577,6 +579,7 @@ export function createJsxTransform(platform) {
 			type_only_style_anchors,
 			helper_state: null,
 			available_bindings: new Map(),
+			hoistable_tags: () => (hoistable_tags ??= collect_hoistable_tags(ast)),
 			filename: filename ?? null,
 			source,
 			collect,
@@ -787,6 +790,7 @@ export function createJsxTransform(platform) {
 			FunctionDeclaration: transform_function,
 			FunctionExpression: transform_function,
 			ArrowFunctionExpression: transform_function,
+			TSModuleBlock: visit_local_helper_scope,
 
 			JSXOpeningElement(node, { next }) {
 				const visited = /** @type {ESTreeJSX.TSRXJSXOpeningElement} */ (next() || node);
@@ -1336,14 +1340,16 @@ function create_helper_name(helper_state, suffix) {
 
 /**
  * @param {string} base_name
+ * @param {boolean} [local] whether the component is inside another function
  * @returns {JsxHelperState}
  */
-function create_helper_state(base_name) {
+function create_helper_state(base_name, local = false) {
 	return {
 		base_name,
 		next_id: 0,
 		helpers: [],
 		statics: [],
+		local,
 	};
 }
 
@@ -1515,7 +1521,25 @@ function transform_function(node, context) {
 		});
 	}
 
-	return context.next() ?? node;
+	return visit_local_helper_scope(node, context);
+}
+
+/**
+ * Visits a plain function or a namespace body, where a component keeps its
+ * statics and helper components in place (see
+ * `transform_native_tsrx_function`). In a namespace body a name can read an
+ * export of any declaration of the namespace, which module level can't see.
+ *
+ * @param {AST.Node} node
+ * @param {JsxVisitorContext} context
+ * @returns {AST.Node}
+ */
+function visit_local_helper_scope(node, context) {
+	const saved = context.state.in_local_helper_scope;
+	context.state.in_local_helper_scope = true;
+	const result = context.next();
+	context.state.in_local_helper_scope = saved;
+	return result ?? node;
 }
 
 /**
@@ -1564,8 +1588,14 @@ function lower_jsx_code_block_function_body(node) {
  * @returns {AST.Node}
  */
 function transform_native_tsrx_function(node, { next, state }, { nativeBody = false } = {}) {
+	// Statics and helper components reach module level through the top-level
+	// statement that holds the component, and `expand_component_helpers` finds
+	// them only through nodes that are not functions. A component inside
+	// another function or a namespace gets a local helper state, which keeps
+	// them in place.
 	const helper_state =
-		state.helper_state || create_helper_state(get_function_helper_base_name(node));
+		state.helper_state ||
+		create_helper_state(get_function_helper_base_name(node), !!state.in_local_helper_scope);
 	const saved_helper_state = state.helper_state;
 	const saved_bindings = state.available_bindings;
 
@@ -2277,14 +2307,23 @@ function collect_descendant_declaration_bindings(node, bindings) {
 }
 
 /**
- * @param {AST.Identifier} helper_id
+ * The name of a generated helper component: `StatementBodyHook<n>`, with the
+ * component's name as a prefix inside a component (`App__StatementBodyHook1`),
+ * wherever the helper is declared. It skips any name the module source already
+ * uses, so the helper can't shadow or redeclare a binding the author wrote.
+ *
  * @param {TransformContext} transform_context
  * @returns {AST.Identifier}
  */
-function create_module_scoped_hook_component_id(helper_id, transform_context) {
-	return create_generated_identifier(
-		`${transform_context.helper_state?.base_name || 'TSRXTemplate'}__${helper_id.name}`,
-	);
+function create_helper_component_id(transform_context) {
+	const helper_state = transform_context.helper_state;
+	const prefix = helper_state ? `${helper_state.base_name || 'TSRXTemplate'}__` : '';
+	/** @type {string} */
+	let name;
+	do {
+		name = prefix + create_local_statement_component_name(transform_context);
+	} while (source_mentions_identifier(transform_context.source, name));
+	return create_generated_identifier(name);
 }
 
 /**
@@ -2444,7 +2483,7 @@ function references_scope_bindings(node, scope_bindings, referenced_bindings) {
  * @param {TransformContext} transform_context
  */
 function hoist_static_render_nodes(render_nodes, transform_context) {
-	if (!transform_context.helper_state) return;
+	if (!transform_context.helper_state || transform_context.helper_state.local) return;
 
 	for (let i = 0; i < render_nodes.length; i++) {
 		const node = render_nodes[i];
@@ -2466,14 +2505,308 @@ function hoist_static_render_nodes(render_nodes, transform_context) {
 			continue;
 		}
 		if (references_scope_bindings(node, transform_context.available_bindings)) continue;
+		if (reads_unhoistable_tag(node, transform_context.hoistable_tags())) continue;
 
 		const name = create_helper_name(transform_context.helper_state, 'static');
 		const id = create_generated_identifier(name);
 
-		transform_context.helper_state.statics.push(b.const(id, node));
+		transform_context.helper_state.statics.push(
+			b.const(id, lower_static_script_bodies(node, transform_context)),
+		);
 
 		render_nodes[i] = to_jsx_expression_container(clone_identifier(id), node);
 	}
+}
+
+/**
+ * Whether each tag in `program` can be read where a static hoisted out of it
+ * runs, keyed by the start of the identifier the tag starts with. A static
+ * runs at module level, before the top-level statement it came from. A tag
+ * can be read there when that identifier resolves to an import, a function
+ * declaration, or a `const` or class declared in an earlier statement. A
+ * member tag (`<Menu.Item>`) also reads a property, which the module can still
+ * assign after it loads (`Menu.Item = …`), so only one that starts with an
+ * import is hoisted. A tag that starts with `this`, `super`, a local binding,
+ * a binding that can be reassigned (`let`, `var`, an enum, a namespace, an
+ * import alias), or a name the module does not bind stays at render time.
+ *
+ * @param {AST.Program} program
+ * @returns {Map<number, boolean>}
+ */
+function collect_hoistable_tags(program) {
+	/** @type {Map<string, { kind: string, end: number }>} */
+	const module_bindings = new Map();
+	/**
+	 * @param {string} name
+	 * @param {string} kind
+	 * @param {number} end
+	 */
+	const declare = (name, kind, end) => {
+		const existing = module_bindings.get(name);
+		module_bindings.set(
+			name,
+			!existing ? { kind, end } : existing.kind === kind ? existing : { kind: 'mutable', end },
+		);
+	};
+	for (const statement of program.body) {
+		for (const [name, kind] of statement_bindings(statement)) {
+			declare(name, kind, statement.end ?? Infinity);
+		}
+	}
+	// A `var` in a block outside any function is module-level too
+	for (const name of var_names(program)) declare(name, 'mutable', Infinity);
+
+	/** @type {Map<number, boolean>} */
+	const hoistable = new Map();
+	/** @type {Set<string>[]} */
+	const scopes = [];
+	/**
+	 * @param {string} name
+	 * @param {boolean} member
+	 * @param {number} position
+	 * @returns {boolean}
+	 */
+	const is_hoistable = (name, member, position) => {
+		if (name === 'this' || name === 'super') return false;
+		if (scopes.some((names) => names.has(name))) return false;
+		const binding = module_bindings.get(name);
+		switch (binding?.kind) {
+			case 'import':
+				return true;
+			case 'function':
+				return !member;
+			case 'class':
+			case 'const':
+				return !member && binding.end <= position;
+			default:
+				return false;
+		}
+	};
+	/** @param {AST.Node} node */
+	const visit = (node) => {
+		const names = node === program ? null : scope_names(node);
+		if (names) scopes.push(names);
+		if (node.type === 'JSXOpeningElement' && !is_intrinsic_tag(node.name)) {
+			const root = jsx_tag_root(node.name);
+			if (root && typeof root.start === 'number') {
+				hoistable.set(
+					root.start,
+					is_hoistable(root.name, node.name.type === 'JSXMemberExpression', root.start),
+				);
+			}
+		}
+		for (const child of child_nodes(node)) visit(child);
+		if (names) scopes.pop();
+	};
+	visit(program);
+	return hoistable;
+}
+
+/**
+ * Whether a tag is intrinsic (`<div>`, `<my-element>`, `<svg:rect>`): a string
+ * that reads no binding.
+ *
+ * @param {ESTreeJSX.TSRXJSXOpeningElement['name']} name
+ * @returns {boolean}
+ */
+function is_intrinsic_tag(name) {
+	if (name.type === 'JSXNamespacedName') return true;
+	return (
+		name.type === 'JSXIdentifier' &&
+		name.name !== 'this' &&
+		name.name !== 'super' &&
+		(/^[a-z]/.test(name.name) || name.name.includes('-'))
+	);
+}
+
+/**
+ * The identifier a tag that reads a binding starts with: the tag itself, or
+ * the object a member tag starts with. `null` for any other tag.
+ *
+ * @param {ESTreeJSX.TSRXJSXOpeningElement['name']} name
+ * @returns {ESTreeJSX.JSXIdentifier | null}
+ */
+function jsx_tag_root(name) {
+	/** @type {any} */
+	let root = name;
+	while (root.type === 'JSXMemberExpression') root = root.object;
+	return root.type === 'JSXIdentifier' ? root : null;
+}
+
+/**
+ * The value bindings a statement in a statement list declares, with their
+ * kind: `import`, `function`, `class`, `const`, or `mutable`. Type-only and
+ * ambient declarations bind no value.
+ *
+ * @param {AST.Node} statement
+ * @returns {Array<[string, string]>}
+ */
+function statement_bindings(statement) {
+	// Typed loosely: the TypeScript declarations are not in the estree types
+	/** @type {any} */
+	const node =
+		statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportDefaultDeclaration'
+			? statement.declaration
+			: statement;
+	if (!node || node.declare) return [];
+	switch (node.type) {
+		case 'ImportDeclaration':
+			if (node.importKind === 'type') return [];
+			return node.specifiers.flatMap((/** @type {any} */ specifier) =>
+				specifier.importKind === 'type' ? [] : [[specifier.local.name, 'import']],
+			);
+		case 'VariableDeclaration': {
+			/** @type {Map<string, AST.Identifier>} */
+			const bindings = new Map();
+			collect_statement_bindings(node, bindings);
+			const kind = node.kind === 'let' || node.kind === 'var' ? 'mutable' : 'const';
+			return [...bindings.keys()].map((name) => [name, kind]);
+		}
+		case 'FunctionDeclaration':
+			return node.id ? [[node.id.name, 'function']] : [];
+		case 'ClassDeclaration':
+			return node.id ? [[node.id.name, 'class']] : [];
+		case 'TSEnumDeclaration':
+		case 'TSModuleDeclaration':
+		case 'TSImportEqualsDeclaration':
+			return node.id?.type === 'Identifier' ? [[node.id.name, 'mutable']] : [];
+		default:
+			return [];
+	}
+}
+
+/**
+ * The names `node` binds for the code inside it, or `null` when it binds none:
+ * a function's parameters, name, and `var`s, a class's name, a catch clause's
+ * parameters, a `@for` index, the declarations of a loop head, the
+ * declarations in any statement list it holds, and those of every case of a
+ * `switch`, which share one scope.
+ *
+ * @param {AST.Node} node
+ * @returns {Set<string> | null}
+ */
+function scope_names(node) {
+	/** @type {Map<string, AST.Identifier>} */
+	const bindings = new Map();
+	/** @type {string[]} */
+	const names = [];
+	/** @type {any} */
+	const loose = node;
+	if (is_function_node(node)) {
+		for (const param of node.params) collect_pattern_bindings(param, bindings);
+		if (node.type === 'FunctionExpression' && node.id) names.push(node.id.name);
+		if (node.body) names.push(...var_names(node.body));
+	}
+	if ((node.type === 'ClassDeclaration' || node.type === 'ClassExpression') && node.id) {
+		names.push(node.id.name);
+	}
+	if (loose.type === 'StaticBlock' || loose.type === 'TSModuleBlock')
+		names.push(...var_names(node));
+	if (node.type === 'CatchClause') {
+		collect_pattern_bindings(node.param, bindings);
+		collect_pattern_bindings(loose.resetParam, bindings);
+	}
+	if (loose.type === 'JSXForExpression') collect_pattern_bindings(loose.index, bindings);
+	if (node.type === 'SwitchStatement') {
+		for (const switch_case of node.cases) {
+			for (const statement of switch_case.consequent) {
+				names.push(...statement_bindings(statement).map(([name]) => name));
+			}
+		}
+	}
+	for (const key of Object.keys(node)) {
+		if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
+		const value = loose[key];
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				if (is_ast_node(item)) names.push(...statement_bindings(item).map(([name]) => name));
+			}
+		} else if (is_ast_node(value) && value.type === 'VariableDeclaration') {
+			collect_statement_bindings(value, bindings);
+		}
+	}
+	return bindings.size > 0 || names.length > 0 ? new Set([...bindings.keys(), ...names]) : null;
+}
+
+/**
+ * The names `var` declarations bind in `node`, outside any function in it.
+ *
+ * @param {AST.Node} node
+ * @returns {string[]}
+ */
+function var_names(node) {
+	/** @type {Map<string, AST.Identifier>} */
+	const bindings = new Map();
+	/** @param {AST.Node} current */
+	const visit = (current) => {
+		if (current.type === 'VariableDeclaration' && current.kind === 'var') {
+			collect_statement_bindings(current, bindings);
+		}
+		for (const child of child_nodes(current)) {
+			if (!is_function_node(child)) visit(child);
+		}
+	};
+	visit(node);
+	return [...bindings.keys()];
+}
+
+/**
+ * Whether a static would read a tag that `collect_hoistable_tags` found can't
+ * be read where the static runs, or one it has no record of.
+ *
+ * @param {AST.Node} node
+ * @param {Map<number, boolean>} hoistable_tags
+ * @returns {boolean}
+ */
+function reads_unhoistable_tag(node, hoistable_tags) {
+	if (node.type === 'JSXOpeningElement' && !is_intrinsic_tag(node.name)) {
+		const root = jsx_tag_root(node.name);
+		if (!root || typeof root.start !== 'number' || hoistable_tags.get(root.start) !== true) {
+			return true;
+		}
+	}
+	return child_nodes(node).some((child) => reads_unhoistable_tag(child, hoistable_tags));
+}
+
+/**
+ * A static with its raw `<script>` bodies lowered. The walk lowers the
+ * elements an expression container or attribute value holds in the render
+ * output it returns, which a static has already left.
+ *
+ * @template {AST.Node} T
+ * @param {T} node
+ * @param {TransformContext} transform_context
+ * @returns {T}
+ */
+function lower_static_script_bodies(node, transform_context) {
+	if (is_raw_script_element(node)) {
+		const hook = transform_context.platform.hooks?.transformElement;
+		return /** @type {T} */ (
+			hook ? hook(node, transform_context, []) : to_jsx_element(node, transform_context)
+		);
+	}
+
+	/** @type {AST.TraversableAstNode} */
+	let out = /** @type {AST.TraversableAstNode} */ (node);
+	for (const key of Object.keys(node)) {
+		if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
+		const value = /** @type {AST.TraversableAstNode} */ (node)[key];
+		/** @type {unknown} */
+		let next = value;
+		if (Array.isArray(value)) {
+			const lowered = value.map((child) =>
+				is_ast_node(child) ? lower_static_script_bodies(child, transform_context) : child,
+			);
+			if (lowered.some((child, index) => child !== value[index])) next = lowered;
+		} else if (is_ast_node(value)) {
+			next = lower_static_script_bodies(value, transform_context);
+		}
+		if (next !== value) {
+			if (out === node) out = { ...out };
+			out[key] = next;
+		}
+	}
+	return /** @type {T} */ (out);
 }
 
 /**
@@ -3389,13 +3722,13 @@ function get_referenced_helper_bindings(body_nodes, available_bindings) {
  * @returns {{ setup_statements: AST.Statement[], component_element: AST.TSRXJSXElement }}
  */
 export function create_hook_safe_helper(body_nodes, source_node, transform_context, options = {}) {
-	const helper_id = create_generated_identifier(
-		create_local_statement_component_name(transform_context),
-	);
-	const helper_state = transform_context.helper_state;
-	const component_id = helper_state
-		? create_module_scoped_hook_component_id(helper_id, transform_context)
-		: helper_id;
+	// A local helper state can't reach module level, so the helper is declared
+	// in place, as outside a component. Inside a component it still takes the
+	// component's prefix (see `create_helper_component_id`).
+	const helper_state = transform_context.helper_state?.local
+		? null
+		: transform_context.helper_state;
+	const component_id = create_helper_component_id(transform_context);
 	const helper_bindings = get_referenced_helper_bindings(
 		body_nodes,
 		transform_context.available_bindings,
@@ -3406,7 +3739,7 @@ export function create_hook_safe_helper(body_nodes, source_node, transform_conte
 		: helper_bindings.map((binding) =>
 				transient_bindings.has(binding.name)
 					? null
-					: create_helper_type_alias_declaration(helper_id, binding),
+					: create_helper_type_alias_declaration(component_id, binding),
 			);
 	const props_type =
 		helper_bindings.length > 0 && !helper_state
@@ -3448,7 +3781,7 @@ export function create_hook_safe_helper(body_nodes, source_node, transform_conte
 		return {
 			setup_statements: [
 				...aliases.flatMap((alias) => (alias ? [alias.declaration] : [])),
-				create_helper_declaration(helper_id, helper_fn, source_node, transform_context),
+				create_helper_declaration(component_id, helper_fn, source_node, transform_context),
 			],
 			component_element,
 		};
@@ -5448,12 +5781,31 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
  * @returns {string}
  */
 function create_spread_props_name(transform_context) {
-	if (transform_context.helper_state) {
-		return create_helper_name(transform_context.helper_state, 'spread_props');
-	}
+	/** @type {string} */
+	let name;
+	do {
+		if (transform_context.helper_state) {
+			name = create_helper_name(transform_context.helper_state, 'spread_props');
+		} else {
+			transform_context.local_statement_component_index += 1;
+			name = `_tsrx_spread_props_${transform_context.local_statement_component_index}`;
+		}
+	} while (source_mentions_identifier(transform_context.source, name));
+	return name;
+}
 
-	transform_context.local_statement_component_index += 1;
-	return `_tsrx_spread_props_${transform_context.local_statement_component_index}`;
+/**
+ * Whether `source` has `name` as a whole identifier anywhere, so a generated
+ * binding of that name could shadow or redeclare one the author wrote.
+ *
+ * @param {string} source
+ * @param {string} name a name of identifier characters only
+ * @returns {boolean}
+ */
+function source_mentions_identifier(source, name) {
+	// `$` is an identifier character and a regex anchor.
+	const escaped = name.replace(/\$/g, '\\$');
+	return new RegExp(`(?<![\\w$])${escaped}(?![\\w$])`).test(source);
 }
 
 /**

@@ -864,6 +864,118 @@ describe('@tsrx/vue basic', () => {
 		expect(code.match(/return <App__StatementBodyHook1 \/>;/g)).toHaveLength(2);
 	});
 
+	describe('names the catch helper of a component inside another scope with its component prefix', () => {
+		const try_block = `@try {
+						<span>{'Loaded'}</span>
+					} @pending {
+						<span>{'Loading'}</span>
+					} @catch (error) {
+						<span>{StatementBodyHook1}</span>
+					}`;
+
+		it.each([
+			[
+				'a function',
+				`export function makeApp() {
+					function App() @{
+						const StatementBodyHook1 = 'mine';
+						${try_block}
+					}
+					return App;
+				}`,
+			],
+			[
+				'a namespace',
+				`export namespace Views {
+					export function App() @{
+						const StatementBodyHook1 = 'mine';
+						${try_block}
+					}
+				}`,
+			],
+		])('beside a setup local of the bare name, inside %s', (_label, source) => {
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code.match(/(?:const|let|var|function) StatementBodyHook1\b/g)).toEqual([
+				'const StatementBodyHook1',
+			]);
+			expect(code).toContain(
+				'const App__StatementBodyHook1 = defineVaporComponent(function App__StatementBodyHook1(',
+			);
+			expect(code).toContain('<App__StatementBodyHook1 StatementBodyHook1={StatementBodyHook1} />');
+		});
+
+		it('without shadowing a binding of the bare name in the enclosing function', () => {
+			const { code } = compile(
+				`export function makeApp() {
+					const StatementBodyHook1 = 'mine';
+					function App() @{
+						${try_block}
+					}
+					return App;
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code.match(/(?:const|let|var|function) StatementBodyHook1\b/g)).toEqual([
+				'const StatementBodyHook1',
+			]);
+			expect(code).toContain(
+				'const App__StatementBodyHook1 = defineVaporComponent(function App__StatementBodyHook1() {',
+			);
+			expect(code).toContain('return <App__StatementBodyHook1 />;');
+		});
+
+		it.each([
+			[
+				'inside a function',
+				`export function makeApp() {
+					const App__StatementBodyHook1 = 'mine';
+					function App() @{
+						${try_block.replace('{StatementBodyHook1}', '{App__StatementBodyHook1}')}
+					}
+					return App;
+				}`,
+			],
+			[
+				'at module level',
+				`const App__StatementBodyHook1 = 'mine';
+				export function App() @{
+					${try_block.replace('{StatementBodyHook1}', '{App__StatementBodyHook1}')}
+				}`,
+			],
+		])('skipping a prefixed name the source already uses, %s', (_label, source) => {
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code.match(/(?:const|let|var|function) App__StatementBodyHook1\b/g)).toEqual([
+				'const App__StatementBodyHook1',
+			]);
+			expect(code).toContain(
+				'const App__StatementBodyHook2 = defineVaporComponent(function App__StatementBodyHook2() {',
+			);
+			expect(code).toContain('return <span>{App__StatementBodyHook1}</span>;');
+			expect(code).toContain('return <App__StatementBodyHook2 />;');
+		});
+
+		it('skipping a prefixed name the source already uses when the component name has a $', () => {
+			const { code } = compile(
+				`const App$__StatementBodyHook1 = 'mine';
+				export function App$() @{
+					${try_block.replace('{StatementBodyHook1}', '{App$__StatementBodyHook1}')}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code.match(/(?:const|let|var|function) App\$__StatementBodyHook1\b/g)).toEqual([
+				'const App$__StatementBodyHook1',
+			]);
+			expect(code).toContain(
+				'const App$__StatementBodyHook2 = defineVaporComponent(function App$__StatementBodyHook2() {',
+			);
+			expect(code).toContain('return <span>{App$__StatementBodyHook1}</span>;');
+		});
+	});
+
 	it('keeps try/pending/catch Suspense lowering valid in type-only output', () => {
 		const source = `import { defineVaporAsyncComponent } from 'vue';
 
