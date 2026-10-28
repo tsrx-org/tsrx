@@ -94,6 +94,8 @@ export const DIAGNOSTIC_CODES = {
 	TOP_LEVEL_AWAIT_USE_SERVER: 'TSRX2025',
 	/** An `@catch` reset parameter on a target whose error boundary has none. */
 	TARGET_CATCH_RESET_UNSUPPORTED: 'TSRX2026',
+	/** A binding of a name the target's toolchain finds by name: Vue's `defineVaporComponent`. */
+	TARGET_RESERVED_NAME: 'TSRX2032',
 
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'TSRX3001',
@@ -407,6 +409,10 @@ export const TSRX_ERRORS = {
 	TOP_LEVEL_AWAIT_USE_SERVER: tsrx(
 		'TOP_LEVEL_AWAIT_USE_SERVER',
 		'Top-level `await` in TSRX functions requires a module-level `"use server"` directive.',
+	),
+	DEFINE_VAPOR_COMPONENT_BINDING: tsrx(
+		'TARGET_RESERVED_NAME',
+		"Vue TSRX does not allow a binding named `defineVaporComponent`. vue-jsx-vapor finds components by calls to that exact name, and the compiler wraps each component in the one from 'vue-jsx-vapor', so the name can't be declared again or shadowed. Rename this binding.",
 	),
 
 	// TSRX3xxx

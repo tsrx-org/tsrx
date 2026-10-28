@@ -1375,10 +1375,10 @@ export function runSharedSwitchFallthroughTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Switch');
-			expect(code).toMatch(/<Match when=\{status === "idle"\}>/);
-			expect(code).toMatch(/<Match when=\{status === "active"\}>/);
-			expect(code).toMatch(/<Match when=\{status === "offline"\}>/);
+			expect(code).toContain('<__Switch');
+			expect(code).toMatch(/<__Match when=\{status === "idle"\}>/);
+			expect(code).toMatch(/<__Match when=\{status === "active"\}>/);
+			expect(code).toMatch(/<__Match when=\{status === "offline"\}>/);
 			expect(count_substring(code, "'Offline'")).toBe(1);
 			expect(count_substring(code, "'Away'")).toBe(1);
 			expect(count_substring(code, "'Online'")).toBe(1);
@@ -1400,8 +1400,8 @@ export function runSharedSwitchFallthroughTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Switch fallback=');
-			expect(code).toMatch(/<Match when=\{kind === "a"\}>/);
+			expect(code).toContain('<__Switch fallback=');
+			expect(code).toMatch(/<__Match when=\{kind === "a"\}>/);
 			expect(count_substring(code, "'D'")).toBe(1);
 		});
 	});
@@ -1627,9 +1627,9 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 				);
 
 				const fragment_source = name === 'react' ? 'react' : 'preact';
-				expect(code).toContain(`import { Fragment } from '${fragment_source}';`);
-				expect(code).toContain('<Fragment key={i}>');
-				expect(code).toContain('</Fragment>');
+				expect(code).toContain(`import { Fragment as __Fragment } from '${fragment_source}';`);
+				expect(code).toContain('<__Fragment key={i}>');
+				expect(code).toContain('</__Fragment>');
 			},
 		);
 
@@ -1656,7 +1656,7 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			);
 
 			expect(code).toContain("<p key={item.id}>{'static'}</p>");
-			expect(code).toContain('<Fragment key={item.id}>');
+			expect(code).toContain('<__Fragment key={item.id}>');
 			expect(code).toContain('<Row key={item.id} />');
 			// A keyed branch element is per-row, so it is never hoisted as a static.
 			expect(code).not.toContain('__static');
@@ -1823,9 +1823,9 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 			expect(code).toContain('children={({ items }: { items: JSX.Element[] }) => <ul>');
 			expect(code).toContain(
 				name === 'solid'
-					? '<For each={items}>'
+					? '<__For each={items}>'
 					: name === 'vue'
-						? '<VaporFor in={items}'
+						? '<__VaporFor in={items}'
 						: '__map_iterable(items, (item, i)',
 			);
 			expect(code).toContain(name === 'vue' ? '<li>{item.value}</li>' : '<li key={i}>{item}</li>');
@@ -2239,6 +2239,56 @@ export function runSharedCompileTests({
 	runSharedComponentLoopControlFlowTests({ compile, name });
 	runSharedScopedStyleTests({ compile, name, classAttrName, generatedClassAttrName });
 	runSharedScopedStyleConformanceTests({ compile, name, classAttrName, generatedClassAttrName });
+
+	describe(`[${name}] directive prologue`, () => {
+		// Each construct below makes the target inject at least one import.
+		const body = `import { label } from './label';
+
+			export function App({ rows, tag }: { rows: string[]; tag: string }) @{
+				<div>
+					@try {
+						<ul>@for (const row of rows; key row) { <><li>{row}</li><li>{label}</li></> }</ul>
+					} @pending {
+						<p>{'loading'}</p>
+					} @catch (error) {
+						<p>{'failed'}</p>
+					}
+					<{tag} />
+				</div>
+			}`;
+
+		/**
+		 * @param {string} code
+		 * @returns {string[]}
+		 */
+		function leading_statements(code) {
+			const source_file = ts.createSourceFile(
+				'out.tsx',
+				code,
+				ts.ScriptTarget.Latest,
+				true,
+				ts.ScriptKind.TSX,
+			);
+			return source_file.statements.map((statement) => statement.getText(source_file));
+		}
+
+		it.each([
+			{ label: "'use client'", directives: [`'use client';`] },
+			{ label: "'use server'", directives: [`'use server';`] },
+			{ label: "'use client' and 'use strict'", directives: [`'use client';`, `'use strict';`] },
+		])('keeps $label first ahead of generated imports', ({ directives }) => {
+			for (const options of [undefined, { collect: true }]) {
+				const { code } = compile(`${directives.join('\n')}\n\n${body}`, 'App.tsrx', options);
+				const statements = leading_statements(code);
+
+				expect(statements.slice(0, directives.length)).toEqual(directives);
+				expect(statements[directives.length]).toMatch(/^import /);
+				expect(
+					statements.slice(directives.length).filter((s) => s.startsWith('import ')).length,
+				).toBeGreaterThan(1);
+			}
+		});
+	});
 
 	describe(`[${name}] import phases`, () => {
 		it('preserves deferred imports in compiled output', () => {
@@ -2848,6 +2898,160 @@ export function App() @{
 			}
 		});
 	});
+
+	// The components each target imports itself, and the sources it imports
+	// them from. React, Preact and Hono share the core import injector; Solid
+	// and Vue have their own. Vue's `defineVaporComponent` keeps its public
+	// name: vue-jsx-vapor finds components by that callee name.
+	const generated_import_sources = /** @type {Record<string, Record<string, string>>} */ ({
+		react: {
+			Suspense: 'react',
+			Fragment: 'react',
+			TsrxErrorBoundary: '@tsrx/react/error-boundary',
+		},
+		preact: {
+			Suspense: 'preact/compat',
+			Fragment: 'preact',
+			TsrxErrorBoundary: '@tsrx/preact/error-boundary',
+		},
+		hono: {
+			Suspense: 'hono/jsx',
+			Fragment: 'hono/jsx',
+			TsrxErrorBoundary: '@tsrx/hono/error-boundary',
+		},
+		solid: {
+			Show: 'solid-js',
+			For: 'solid-js',
+			Switch: 'solid-js',
+			Match: 'solid-js',
+			Errored: 'solid-js',
+			Loading: 'solid-js',
+		},
+		vue: {
+			VaporFor: 'vue-jsx-vapor',
+		},
+	})[name];
+
+	if (generated_import_sources) {
+		const sources = generated_import_sources;
+
+		describe(`[${name}] generated imports beside authored bindings`, () => {
+			/** @type {Record<string, string>} */
+			const templates = {
+				Suspense: `<div>@try { <p>{'ready'}</p> } @pending { <p>{'loading'}</p> }</div>`,
+				TsrxErrorBoundary: `<div>@try { <p>{'ready'}</p> } @catch (error) { <p>{'failed'}</p> }</div>`,
+				Fragment: `<ul>@for (const row of rows; key row) { <><li>{row}</li><li>{'end'}</li></> }</ul>`,
+				Show: `<div>@if (rows.length > 0) { <p>{'some'}</p> }</div>`,
+				For: `<ul>@for (const row of rows) { <li>{row}</li> }</ul>`,
+				Switch: `<div>@switch (rows[0]) { @case 'a': { <p>{'a'}</p> } @default: { <p>{'other'}</p> } }</div>`,
+				Match: `<div>@switch (rows[0]) { @case 'a': { <p>{'a'}</p> } @default: { <p>{'other'}</p> } }</div>`,
+				Errored: `<div>@try { <p>{'ready'}</p> } @catch (error) { <p>{'failed'}</p> }</div>`,
+				Loading: `<div>@try { <p>{'ready'}</p> } @pending { <p>{'loading'}</p> }</div>`,
+				VaporFor: `<ul>@for (const row of rows; key row) { <li>{row}</li> }</ul>`,
+			};
+
+			/**
+			 * @param {string} generated
+			 * @param {string} module_scope
+			 * @param {string} [setup]
+			 * @param {string} [template]
+			 */
+			function compile_beside(generated, module_scope, setup = '', template) {
+				return compile(
+					`${module_scope}
+
+					export function App({ rows }: { rows: string[] }) @{
+						${setup}
+						${template ?? templates[generated]}
+					}`,
+					'App.tsrx',
+				).code;
+			}
+
+			/**
+			 * @param {string} code
+			 * @param {string} generated
+			 */
+			function expect_private_generated_binding(code, generated) {
+				const redeclarations = virtual_semantic_diagnostics(code)
+					.filter((diagnostic) => [2300, 2440, 2451].includes(diagnostic.code))
+					.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+				expect(redeclarations).toEqual([]);
+				// A target can import several generated names from one source in a
+				// single declaration.
+				const import_line = code
+					.split('\n')
+					.find(
+						(line) =>
+							line.startsWith('import {') &&
+							line.includes(` ${generated} as __${generated}`) &&
+							line.endsWith(` from '${sources[generated]}';`),
+					);
+				expect(import_line, `a value import of ${generated} as __${generated}`).toBeDefined();
+				expect(code).toContain(`<__${generated} `);
+				expect(code).not.toMatch(new RegExp(`<${generated}[\\s>]`));
+			}
+
+			for (const generated of Object.keys(sources)) {
+				const source = sources[generated];
+
+				it.each([
+					`import { ${generated} } from '${source}';`,
+					`import type { ${generated} } from '${source}';`,
+					`import { type ${generated} } from '${source}';`,
+					`import ${generated} from './authored';`,
+					`import * as ${generated} from './authored';`,
+					`import { ${generated} } from './authored';`,
+					`const ${generated} = 'authored';`,
+				])(`imports a generated ${generated} beside \`%s\``, (module_scope) => {
+					expect_private_generated_binding(compile_beside(generated, module_scope), generated);
+				});
+
+				it(`keeps a generated ${generated} when setup declares a local of that name`, () => {
+					const code = compile_beside(
+						generated,
+						'',
+						`const ${generated} = (props: { children?: unknown }) => <section>{props.children}</section>;`,
+					);
+
+					expect_private_generated_binding(code, generated);
+					expect(code).toContain(`const ${generated} = `);
+				});
+			}
+
+			it.runIf('Fragment' in sources)(
+				'keys a fragment row with the generated Fragment when the loop variable is named Fragment',
+				() => {
+					const code = compile_beside(
+						'Fragment',
+						'',
+						'',
+						`<ul>@for (const Fragment of rows; key Fragment) { <><li>{Fragment}</li><li>{'end'}</li></> }</ul>`,
+					);
+
+					expect_private_generated_binding(code, 'Fragment');
+					expect(code).toContain('<__Fragment key={Fragment}>');
+				},
+			);
+
+			it.runIf(name === 'solid')(
+				'switches through the generated Match when the loop variable is named Match',
+				() => {
+					const code = compile_beside(
+						'Match',
+						'',
+						'',
+						`<ul>@for (const Match of rows) { @switch (Match) { @case 'a': { <li>{'a'}</li> } @default: { <li>{'b'}</li> } } }</ul>`,
+					);
+
+					expect_private_generated_binding(code, 'Match');
+					expect_private_generated_binding(code, 'For');
+					expect(code).toContain('{(Match) => <__Switch');
+					expect(code).toContain(`<__Match when={Match === 'a'}>`);
+				},
+			);
+		});
+	}
 
 	describe(`[${name}] TypeScript output`, () => {
 		it('collects unclosed tag diagnostics without loose recovery silence', () => {

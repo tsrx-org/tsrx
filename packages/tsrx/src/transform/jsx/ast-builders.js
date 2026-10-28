@@ -198,9 +198,9 @@ export function identifier_to_jsx_identifier(id) {
 
 /**
  * A JSX tag name refers to a *component* (rather than a host/DOM tag) iff:
- * - it's a `JSXIdentifier` whose first character is uppercase (the convention
- *   every framework's JSX runtime keys off — `<div>` is a host element,
- *   `<Foo>` is a component), or
+ * - it's a `JSXIdentifier` whose first character isn't a lowercase ASCII
+ *   letter, as JSX itself decides (`<div>` is a host element; `<Foo>`, and the
+ *   compiler's own `<__Show>`, are components), or
  * - it's a `JSXMemberExpression` (e.g. `<Icons.Button />`).
  *
  * Used by platforms that veto static-hoisting of component JSX (Vue, Solid)
@@ -216,7 +216,7 @@ export function is_component_jsx_name(name) {
 
 	if (name.type === 'JSXIdentifier') {
 		const first = name.name?.[0];
-		return first != null && first >= 'A' && first <= 'Z';
+		return first != null && !(first >= 'a' && first <= 'z');
 	}
 
 	if (name.type === 'JSXMemberExpression') {

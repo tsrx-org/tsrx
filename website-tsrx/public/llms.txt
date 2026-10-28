@@ -1513,7 +1513,9 @@ reactivity is preserved.
 Vue output targets `vue-jsx-vapor` and `defineVaporComponent(...)`. It supports
 directive-prefixed template control flow, scoped styles, host `innerHTML`, and
 `@try/pending` lowering through Vue suspense APIs. Component-level `await` is
-not supported for Vue TSRX.
+not supported for Vue TSRX. vue-jsx-vapor finds components by calls to
+`defineVaporComponent`, so a Vue module can't declare its own binding of that
+name (TSRX2032); importing it from `vue-jsx-vapor` is fine.
 
 ### Octane
 

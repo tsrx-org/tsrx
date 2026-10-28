@@ -615,6 +615,22 @@ function ForKeyedStateApp() @{
 	</>
 }
 
+function LocalVaporForNameApp() @{
+	const VaporFor = () => <p class="authored-vapor-for">{'authored'}</p>;
+	const rows = ref(['a', 'b']);
+	<div>
+		<VaporFor />
+		<ul class="vapor-for-rows">
+			@for (const row of rows.value; key row) {
+				<li>{row}</li>
+			}
+		</ul>
+		<button class="reverse-vapor-for-rows" onClick={() => (rows.value = [...rows.value].reverse())}>
+			{'reverse'}
+		</button>
+	</div>
+}
+
 function ForJsxKeyedStateApp() @{
 	const items = ref([
 		{ id: 'a', label: 'Alpha' },
@@ -1363,6 +1379,15 @@ describe('tsrx-vue runtime', () => {
 
 		await click('.rename-beta');
 		expect(text('.row-b')).toBe('Bravo:1');
+	});
+
+	it('renders a keyed loop through the generated VaporFor beside a setup local VaporFor', async () => {
+		await render(LocalVaporForNameApp);
+		expect(texts('.authored-vapor-for')).toEqual(['authored']);
+		expect(texts('.vapor-for-rows > li')).toEqual(['a', 'b']);
+
+		await click('.reverse-vapor-for-rows');
+		expect(texts('.vapor-for-rows > li')).toEqual(['b', 'a']);
 	});
 
 	it('preserves component state when keys come from JSX key attributes', async () => {

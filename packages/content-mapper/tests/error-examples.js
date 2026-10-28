@@ -345,6 +345,18 @@ export class A extends B {
 `,
 	},
 	{
+		error: TSRX_ERRORS.DEFINE_VAPOR_COMPONENT_BINDING,
+		source: `function defineVaporComponent<T>(component: T): T {
+	return component;
+}
+
+export function C() @{
+	<p>{'text'}</p>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
 		error: TSRX_ERRORS.STYLE_APPLY_VALUE,
 		source: `export function C() @{
 	<>
