@@ -273,6 +273,18 @@ export const ERROR_EXAMPLES = [
 `,
 	},
 	{
+		error: TSRX_ERRORS.DYNAMIC_TAG_TYPE_ARGUMENTS,
+		source: `function List<T>(props: { items: T[] }) {
+	return null;
+}
+
+export function C(props: { items: string[] }) @{
+	const Tag = List;
+	<{Tag}<string> items={props.items} />
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.FOR_OF_ONLY,
 		source: `export function C(props: { a: boolean; items: string[]; n: number }) @{
 	<ul>

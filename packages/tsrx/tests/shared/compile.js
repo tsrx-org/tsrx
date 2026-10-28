@@ -205,6 +205,33 @@ export function App() @{
 		});
 	});
 
+	describe(`[${name}] type arguments after a dynamic tag in virtual code (#1243)`, () => {
+		// The editor reports them and still gets virtual code, which leaves them
+		// out: on the helper the tag lowers to, they would type the tag, not its
+		// props.
+		it('reports them, leaves them out, and keeps mapping the element', () => {
+			const source = `export function App({ Tag, title }: any) @{
+	<{Tag}<string> title={title}>
+		<p>{title}</p>
+	</{Tag}>
+}`;
+			const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			const start = source.indexOf('<string>');
+			expect(errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				[DIAGNOSTIC_CODES.DYNAMIC_TAG_TYPE_ARGUMENTS, start, start + '<string>'.length],
+			]);
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			expect(code).not.toContain('<string>');
+
+			const value = source.indexOf('{title}') + 1;
+			const mapping = mappings.find((candidate) => candidate.sourceOffsets[0] === value);
+			expect(mapping).toBeDefined();
+			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
+			expect(code.slice(generated, generated + 'title'.length)).toBe('title');
+		});
+	});
+
 	describe(`[${name}] platform flag virtual types`, () => {
 		it('types every retained flag with the selected boolean literal', () => {
 			const result = compile_to_volar_mappings(
@@ -2693,6 +2720,40 @@ export function App() @{
 			);
 
 			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+		});
+	});
+
+	describe(`[${name}] type arguments after a dynamic tag (#1243)`, () => {
+		// They would type the helper the tag lowers to, not the tag, so the parser
+		// reports them on every target.
+		const source = `export function App({ Tag, title }: any) @{
+	<main>
+		<{Tag}<string> title={title}>
+			<p>{title}</p>
+		</{Tag}>
+	</main>
+}`;
+		const start = source.indexOf('<string>');
+		const end = start + '<string>'.length;
+
+		it('throws', () => {
+			expect(() => compile(source, 'App.tsrx')).toThrow(
+				expect.objectContaining({
+					code: TSRX_ERRORS.DYNAMIC_TAG_TYPE_ARGUMENTS.code,
+					pos: start,
+					end,
+				}),
+			);
+		});
+
+		it('records them in collect mode, and leaves them out of the code', () => {
+			const { code, errors } = compile(source, 'App.tsrx', { collect: true });
+
+			expect(errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				[TSRX_ERRORS.DYNAMIC_TAG_TYPE_ARGUMENTS.code, start, end],
+			]);
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			expect(code).not.toContain('<string>');
 		});
 	});
 

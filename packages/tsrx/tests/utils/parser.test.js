@@ -6746,6 +6746,42 @@ export function Later() @{
 			expect(outcome).toEqual(thrown(TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION, pos));
 		}
 	});
+
+	// TSX takes type arguments after a tag name (`<List<Item> />`). After a
+	// dynamic tag they would type the helper the tag lowers to, not the tag, so
+	// they parse and are reported (#1243).
+	it.each([
+		['export function App() @{\n\t<{Tag}<T> />\n}', '<T>'],
+		['export function App() @{\n\t<{props.as}<Item> a={1}>x</{props.as}>\n}', '<Item>'],
+		['export function App() @{\n\t<{Tag} <Array<T>> />\n}', '<Array<T>>'],
+		['const a = <{Tag}<T> />;', '<T>'],
+		["const a = <{'div'}<T>>x</{'div'}>;", '<T>'],
+	])('reports the type arguments of %j', async (source, part) => {
+		const start = source.indexOf(part);
+		const outcomes = await parse_in_worker_with_ast(modes.map((options) => ({ source, options })));
+
+		const [strict, ...collected] = outcomes;
+		expect(strict).toEqual(thrown(TSRX_ERRORS.DYNAMIC_TAG_TYPE_ARGUMENTS, start));
+		for (const [index, outcome] of collected.entries()) {
+			const label = JSON.stringify(modes[index + 1]);
+			if (!outcome.ok) throw new Error(`${label} threw ${outcome.message}`);
+			expect(outcome.errors, label).toEqual([
+				{ code: TSRX_ERRORS.DYNAMIC_TAG_TYPE_ARGUMENTS.code, pos: start, end: start + part.length },
+			]);
+			const element = /** @type {AST.TSRXJSXElement} */ (
+				find_first(
+					outcome.ast,
+					(node) =>
+						node.type === 'JSXElement' &&
+						/** @type {AST.TSRXJSXElement} */ (node).isDynamic === true,
+				)
+			);
+			const type_arguments = /** @type {AST.Node} */ (
+				/** @type {any} */ (element.openingElement).typeArguments
+			);
+			expect(source.slice(type_arguments.start, type_arguments.end), label).toBe(part);
+		}
+	});
 });
 
 describe('division and private fields in template JS positions', () => {

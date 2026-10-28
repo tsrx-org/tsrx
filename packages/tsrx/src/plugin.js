@@ -10123,12 +10123,26 @@ export function TSRXPlugin(config) {
 				if (this.#isDynamicJSXElementName(nodeName)) {
 					node.isDynamic = true;
 					this.#reportInvalidDynamicTag(nodeName);
+					// A `<` after the name's `}` reads as a tag start, and no tag starts
+					// here.
+					this.#readTagStartAsTypeArgumentStart();
 				}
 				if (this.match(tt.relational) || this.match(tt.bitShift)) {
 					const typeArguments = this.tsTryParseAndCatch(() =>
 						this.tsParseTypeArgumentsInExpression(),
 					);
-					if (typeArguments) node.typeArguments = typeArguments;
+					if (typeArguments) {
+						node.typeArguments = typeArguments;
+						// On the helper a dynamic tag lowers to, they would type the tag,
+						// not its props. The check doesn't change the parse.
+						if (node.isDynamic) {
+							this.#report_recoverable_error_range(
+								/** @type {number} */ (typeArguments.start),
+								/** @type {number} */ (typeArguments.end),
+								TSRX_ERRORS.DYNAMIC_TAG_TYPE_ARGUMENTS,
+							);
+						}
+					}
 				}
 				while (this.type !== tt.slash && this.type !== tstt.jsxTagEnd) {
 					node.attributes.push(this.jsx_parseAttribute());

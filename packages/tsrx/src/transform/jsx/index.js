@@ -930,7 +930,9 @@ function lower_dynamic_jsx_element(node, transform_context) {
 				name_id,
 				[...extra_attributes, ...(node.openingElement.attributes || [])],
 				node.openingElement.selfClosing,
-				node.openingElement.typeArguments,
+				// Type arguments here are an error (TSRX2033): on `TsrxDynamic` they
+				// would type the tag, not its props.
+				undefined,
 				has_location(node.openingElement) ? node.openingElement : undefined,
 			),
 			closing

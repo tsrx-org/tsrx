@@ -806,6 +806,11 @@ non-self-closing element repeats the expression in its closing tag, so compute
 anything more above the element, as `Body` is in the example above, and use the
 result: `const Tag = c ? Child : Fallback;` followed by `<{Tag} />`.
 
+Type arguments after the tag expression, which TSX allows after a tag name, are
+an error too (TSRX2033): on the runtime helper a dynamic tag compiles to, they
+would type the helper, not the tag. Declare a typed alias above the element
+instead: `const Typed = Tag<T>;` followed by `<{Typed} />`.
+
 Do not use removed dynamic tag syntax such as `<@tag />`, `<@Component />`, or
 the imported `Dynamic` component with an `is` prop. Use `<{tag}>` instead.
 
