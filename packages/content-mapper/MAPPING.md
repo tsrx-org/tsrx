@@ -61,6 +61,17 @@ diagnostic text shows the authored name.
   shorter before longer, disjoint in generated space).
 - Neighbouring Verbatim spans with equal feature bits whose gap is identical text
   in both files are coalesced, so whole statements such as import declarations
-  become one edit-safe span.
+  become one edit-safe span. A span from a mapping with no Volar feature at all,
+  not even `verification` (the brackets of a respaced literal), joins either
+  neighbour and takes its features, as unmapped text between them would.
 - Atom candidates that are fragments of an identifier (the one-character
   file-start anchor) are dropped.
+- A container that lost keeps its uncovered edges, from its start to its first
+  span and from its last span to its end, without feature bits, so an error
+  TypeScript reports over the whole container (TS1340 on an import type printed
+  without its inner spaces) starts and ends where the container does in the
+  source. An edge is split into Verbatim runs of the text it shares with the
+  source, matched from the container's boundary across whitespace that only one
+  side has, and one Atom for the rest, so a node inside it without a span of its
+  own (the `{}` of `Record< {}, 1 >`) keeps its position. Gaps between a
+  container's spans stay unmapped.
