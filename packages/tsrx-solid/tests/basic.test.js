@@ -57,9 +57,8 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain("const App__static1 = <h1>{'a'}</h1>;");
-			expect(code).toContain("const App__static2 = <h2>{'b'}</h2>;");
-			expect(code).toContain('return <>{App__static1}{App__static2}</>;');
+			expect(code).toContain("return <><h1>{'a'}</h1><h2>{'b'}</h2></>;");
+			expect(code).not.toContain('__static');
 		});
 
 		it('rejects await in component body', () => {
@@ -487,8 +486,8 @@ describe('@tsrx/solid basic', () => {
 			);
 
 			expect(code).toContain('if (props.disabled)');
-			expect(code).toContain('return StatusBadge__static1;');
-			expect(code).toContain('return StatusBadge__static2;');
+			expect(code).toContain('return <span>disabled</span>;');
+			expect(code).toContain('return <span>enabled</span>;');
 			expect(code).not.toContain('<Show');
 			expect(code).not.toContain("import { Show } from 'solid-js'");
 		});
@@ -509,8 +508,8 @@ describe('@tsrx/solid basic', () => {
 			);
 
 			expect(code).toContain('if (!user)');
-			expect(code).toContain('return Dashboard__static1;');
-			expect(code).toContain('return <><h1>Welcome,{user}</h1>{Dashboard__static2}</>;');
+			expect(code).toContain('return <p>No user found</p>;');
+			expect(code).toContain('return <><h1>Welcome,{user}</h1><p>Here is your dashboard.</p></>;');
 			expect(code).not.toContain('<Show');
 			expect(code).not.toContain("import { Show } from 'solid-js'");
 		});
@@ -722,16 +721,12 @@ describe('@tsrx/solid basic', () => {
 		});
 	});
 
-	describe('component static-alias suppression', () => {
-		// Covers Solid's `canHoistStaticNode` veto on trees that contain a
-		// component — a Solid-specific optimization decision that doesn't apply
-		// to React's `App__static` hoisting policy.
-		it('does not hoist component invocations into App__static aliases', () => {
-			// On Solid the static-element-identity optimization React relies on
-			// doesn't apply, so hoisting a component invocation into a
-			// module-level `App__static` const only adds an alias indirection.
-			// Truly-static DOM trees (e.g. `<h1>{'a'}</h1>` with no scope refs)
-			// are still hoisted — those are real DOM nodes worth caching.
+	describe('static JSX', () => {
+		// Solid JSX evaluates to a DOM node, so a module-level `App__static`
+		// const would be one node that every use of the component moves (#1236).
+		// Solid's compiler already hoists the parsed template and clones it on
+		// each evaluation.
+		it('leaves static DOM and component invocations in place', () => {
 			const { code } = compile(
 				`function App() @{
 					<>
@@ -742,9 +737,8 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain("const App__static1 = <h1>{'a'}</h1>;");
-			expect(code).not.toMatch(/const App__static\d+\s*=\s*<section>/);
-			expect(code).toContain('return <>{App__static1}<section><Child /></section></>;');
+			expect(code).not.toContain('__static');
+			expect(code).toContain("return <><h1>{'a'}</h1><section><Child /></section></>;");
 		});
 	});
 
@@ -759,9 +753,8 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain("const App__static1 = <h1>{'a'}</h1>;");
-			expect(code).toContain("const App__static2 = <h2>{'b'}</h2>;");
-			expect(code).toContain('return <>{App__static1}{App__static2}</>;');
+			expect(code).toContain("return <><h1>{'a'}</h1><h2>{'b'}</h2></>;");
+			expect(code).not.toContain('__static');
 		});
 
 		it('rejects namespaced template tags', () => {

@@ -1961,6 +1961,11 @@ export interface JsxHelperState {
 	next_id: number;
 	helpers: AST.Statement[];
 	statics: AST.Statement[];
+	/**
+	 * True for a component inside another function, whose statics and helper
+	 * components can't reach module level, so they stay in place.
+	 */
+	local?: boolean;
 }
 
 /** Override zimmerframe types and provide our own */
