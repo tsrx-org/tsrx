@@ -331,10 +331,10 @@ describe('`</` after an operand (#586)', () => {
 	it('starts a closing tag, as in TSX, so the expression ends there', async () => {
 		// TypeScript reports `',' expected` at the `</`.
 		await expect_errors([
-			['const b = a </re/.test(c);', TS_ERRORS.UNEXPECTED_TOKEN, '</'],
+			['const b = a </re/.test(c);', TS_ERRORS.TOKEN_EXPECTED, '</'],
 			[
 				'function App() { return <div>@{\n  const x = 3</div>/\n  <>{x}</>\n}</div>; }',
-				TS_ERRORS.UNEXPECTED_TOKEN,
+				TS_ERRORS.TOKEN_EXPECTED,
 				'</div>/',
 			],
 		]);
@@ -401,7 +401,7 @@ describe('what follows an element (#426)', () => {
 		for (const value of ['<b />', '<b>x</b>', '<>x</>', '@{ <b /> }', '@if (x) { <b /> }']) {
 			for (const next of ['.foo', '?.foo', '!', '(x)', '[0]', '`t`']) {
 				const before = `const e = ${value}`;
-				cases.push([`${before}${next};`, TS_ERRORS.UNEXPECTED_TOKEN, before.length]);
+				cases.push([`${before}${next};`, TS_ERRORS.TOKEN_EXPECTED, before.length]);
 			}
 		}
 		await expect_errors(cases);
@@ -524,7 +524,7 @@ describe('type arguments where a tag could start (#545, #578)', () => {
 				return text(cases[index][0], node?.superTypeParameters ?? node?.typeArguments);
 			}),
 		).toEqual(cases.map(([, typeArguments]) => typeArguments));
-		await expect_errors([['x = class {}</div>;', TS_ERRORS.UNEXPECTED_TOKEN, '</']]);
+		await expect_errors([['x = class {}</div>;', TS_ERRORS.TOKEN_EXPECTED, '</']]);
 	});
 
 	it('reads type arguments right after a class or function expression', async () => {
@@ -606,11 +606,11 @@ describe('type arguments where a tag could start (#545, #578)', () => {
 	it('still takes no type arguments after an element, and reports a tag after a class or function expression where TypeScript does', async () => {
 		await expect_errors([
 			// An element isn't a left-hand-side expression (#426).
-			['const e = <b /><T>;', TS_ERRORS.UNEXPECTED_TOKEN, '<T>'],
-			['const e = @{ <b /> }<T>;', TS_ERRORS.UNEXPECTED_TOKEN, '<T>'],
+			['const e = <b /><T>;', TS_ERRORS.TOKEN_EXPECTED, '<T>'],
+			['const e = @{ <b /> }<T>;', TS_ERRORS.TOKEN_EXPECTED, '<T>'],
 			// TypeScript reports these at the same token.
 			['const f = function () {} <div />;', TS_ERRORS.UNEXPECTED_TOKEN, '>;'],
-			['x = class {}<div>a</div>;', TS_ERRORS.UNEXPECTED_TOKEN, '</'],
+			['x = class {}<div>a</div>;', TS_ERRORS.TOKEN_EXPECTED, '</'],
 			['x = <div>{function () {}</div>', TS_ERRORS.TOKEN_EXPECTED, '</'],
 		]);
 	});

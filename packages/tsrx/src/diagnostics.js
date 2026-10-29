@@ -139,6 +139,57 @@ export const DIAGNOSTIC_CODES = {
 export const DIAGNOSTIC_SOURCE = 'TSRX';
 
 /**
+ * The TypeScript codes in this module that TypeScript reports as syntax errors,
+ * from its scanner or parser (`getSyntacticDiagnostics`). It reports every
+ * other TypeScript code here from its binder or checker, as a grammar or
+ * semantic error, with its other checker errors, and none of them for a file
+ * with a syntax error (see `#isSyntaxError` in `plugin.js`). A test derives
+ * this from where TypeScript raises each code.
+ * @type {string[]}
+ */
+export const TS_SYNTAX_ERROR_CODES = [
+	'TS1002',
+	'TS1003',
+	'TS1005',
+	'TS1010',
+	'TS1012',
+	'TS1109',
+	'TS1124',
+	'TS1125',
+	'TS1127',
+	'TS1128',
+	'TS1134',
+	'TS1136',
+	'TS1145',
+	'TS1146',
+	'TS1160',
+	'TS1161',
+	'TS1177',
+	'TS1178',
+	'TS1198',
+	'TS1209',
+	'TS1260',
+	'TS1351',
+	'TS1359',
+	'TS1381',
+	'TS1382',
+	'TS1434',
+	'TS1435',
+	'TS1438',
+	'TS1440',
+	'TS1472',
+	'TS1477',
+	'TS1478',
+	'TS1487',
+	'TS1488',
+	'TS17002',
+	'TS17008',
+	'TS2657',
+	'TS6188',
+	'TS6189',
+];
+
+/**
  * TypeScript 7's content-mapper protocol takes a number as an error's code, and
  * shows every error `@tsrx/content-mapper` reports as {@link DIAGNOSTIC_SOURCE}
  * then that number. Each kind of code gets its own numbers:
@@ -507,8 +558,51 @@ export const TS_ERRORS = {
 		code: 'TS1478',
 		message: 'Identifier or string literal expected.',
 	},
+	// A word reserved only in strict mode (`let`, `static`, `yield`, …) used as a
+	// name, which TypeScript's parser reads and its binder reports: TSRX's input
+	// is a module, and inside a class TypeScript says so instead
+	/** `word` is the word. */
+	STRICT_MODE_RESERVED_WORD: with_values(
+		'TS1214',
+		(word) =>
+			`Identifier expected. '${word}' is a reserved word in strict mode. Modules are automatically in strict mode.`,
+	),
+	/** `word` is the word. */
+	STRICT_MODE_RESERVED_WORD_IN_CLASS: with_values(
+		'TS1213',
+		(word) =>
+			`Identifier expected. '${word}' is a reserved word in strict mode. Class definitions are automatically in strict mode.`,
+	),
+	LET_DECLARATION_NAME: {
+		code: 'TS2480',
+		message: "'let' is not allowed to be used as a name in 'let' or 'const' declarations.",
+	},
 	DECLARATION_EXPECTED: { code: 'TS1146', message: 'Declaration expected.' },
+	// A name followed by another token where a statement ends (`a b;`), which
+	// TypeScript's parser takes for a misspelled keyword when it can
+	UNEXPECTED_KEYWORD_OR_IDENTIFIER: {
+		code: 'TS1434',
+		message: 'Unexpected keyword or identifier.',
+	},
+	/** `suggestion` is the keyword, or the keyword and the rest of the name. */
+	UNKNOWN_KEYWORD_OR_IDENTIFIER: with_values(
+		'TS1435',
+		(suggestion) => `Unknown keyword or identifier. Did you mean '${suggestion}'?`,
+	),
+	/** `kind` is `let`, `const`, `using` or `await using`. */
+	BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK: with_values(
+		'TS1156',
+		(kind) => `'${kind}' declarations can only be declared inside a block.`,
+	),
+	VARIABLE_DECLARATION_NOT_ALLOWED: {
+		code: 'TS1440',
+		message: 'Variable declaration not allowed at this location.',
+	},
 	EXPRESSION_EXPECTED: { code: 'TS1109', message: 'Expression expected.' },
+	OPTIONAL_CHAIN_TAGGED_TEMPLATE: {
+		code: 'TS1358',
+		message: 'Tagged template expressions are not permitted in an optional chain.',
+	},
 	DECLARATION_OR_STATEMENT_EXPECTED: {
 		code: 'TS1128',
 		message: 'Declaration or statement expected.',
@@ -556,6 +650,10 @@ export const TS_ERRORS = {
 		(modifier) => `'${modifier}' modifier cannot appear on an 'await using' declaration.`,
 	),
 	MODIFIERS_CANNOT_APPEAR_HERE: { code: 'TS1184', message: 'Modifiers cannot appear here.' },
+	MODIFIER_ON_CONSTRUCTOR: with_values(
+		'TS1089',
+		(modifier) => `'${modifier}' modifier cannot appear on a constructor declaration.`,
+	),
 	ACCESSIBILITY_MODIFIER_ALREADY_SEEN: {
 		code: 'TS1028',
 		message: 'Accessibility modifier already seen.',
@@ -576,6 +674,8 @@ export const TS_ERRORS = {
 		code: 'TS1038',
 		message: "A 'declare' modifier cannot be used in an already ambient context.",
 	},
+	/** Decorators on a class `static` block. */
+	DECORATORS_NOT_VALID_HERE: { code: 'TS1206', message: 'Decorators are not valid here.' },
 	MODIFIER_ON_IMPORT: with_values(
 		'TS1079',
 		(modifier) => `A '${modifier}' modifier cannot be used with an import declaration.`,
@@ -652,6 +752,15 @@ export const TS_ERRORS = {
 		code: 'TS18112',
 		message: 'Named and namespace imports are not allowed in a source phase import.',
 	},
+	// A call of `import.<name>`, which TypeScript reports from the checker
+	// (`checkGrammarMetaProperty`). Without a call, it's TS17012
+	// (`UPSTREAM_ERRORS.IMPORT_META_PROPERTY`).
+	/** `name` is the name after `import.`. */
+	IMPORT_META_PROPERTY_CALL: with_values(
+		'TS18061',
+		(name) =>
+			`'${name}' is not a valid meta-property for keyword 'import'. Did you mean 'meta' or 'defer'?`,
+	),
 	// A module specifier that isn't a string, or a phase import from an inline
 	// module (`import source m from server`)
 	STRING_LITERAL_EXPECTED: {
@@ -660,6 +769,7 @@ export const TS_ERRORS = {
 	},
 
 	// Declarations
+	VARIABLE_DECLARATION_EXPECTED: { code: 'TS1134', message: 'Variable declaration expected.' },
 	VARIABLE_DECLARATION_LIST_EMPTY: {
 		code: 'TS1123',
 		message: 'Variable declaration list cannot be empty.',
@@ -702,6 +812,22 @@ export const TS_ERRORS = {
 		code: 'TS2567',
 		message: 'Enum declarations can only merge with namespace or other enum declarations.',
 	},
+	/** `name` is the name, or a string name in its quotes. */
+	DUPLICATE_IDENTIFIER: with_values('TS2300', (name) => `Duplicate identifier '${name}'.`),
+	// A second default export that TypeScript's binder can't merge with the first
+	MULTIPLE_DEFAULT_EXPORTS: {
+		code: 'TS2528',
+		message: 'A module cannot have multiple default exports.',
+	},
+	AMBIENT_IMPLEMENTATION: {
+		code: 'TS1183',
+		message: 'An implementation cannot be declared in ambient contexts.',
+	},
+	IMPORT_ALIAS_IMPORT_TYPE: { code: 'TS1392', message: "An import alias cannot use 'import type'" },
+	TYPE_IMPORT_DEFAULT_AND_NAMED: {
+		code: 'TS1363',
+		message: 'A type-only import can specify a default import or named bindings, but not both.',
+	},
 	// TSRX's wording of a name redeclared in a module's or function's scope
 	DECLARED_IN_SCOPE: with_values(
 		'TS2300',
@@ -741,6 +867,14 @@ export const TS_ERRORS = {
 
 	// acorn's wording, for the code TSRX reads in acorn's place
 	UNEXPECTED_TOKEN: { code: 'TS1012', message: 'Unexpected token' },
+	REST_PARAMETER_NOT_LAST: {
+		code: 'TS1014',
+		message: 'A rest parameter must be last in a parameter list.',
+	},
+	REST_ELEMENT_NOT_LAST: {
+		code: 'TS2462',
+		message: 'A rest element must be last in a destructuring pattern.',
+	},
 	REST_ELEMENT_TRAILING_COMMA: {
 		code: 'TS1013',
 		message: 'Comma is not permitted after the rest element',
@@ -753,10 +887,6 @@ export const TS_ERRORS = {
 	AWAIT_USING_OUTSIDE_ASYNC: {
 		code: 'TS2852',
 		message: 'Await using cannot appear outside of async function',
-	},
-	FOR_OF_LET: {
-		code: 'TS1134',
-		message: "The left-hand side of a for-of loop may not start with 'let'.",
 	},
 	FOR_IN_INITIALIZER: {
 		code: 'TS1189',
@@ -825,8 +955,11 @@ export const TS_ERRORS = {
  * doesn't write: the pattern of its message, and TypeScript's code for the
  * same mistake. The code is TypeScript's diagnostic with the same wording, or
  * the one TypeScript reports for an input that raises the message (checked for
- * each), and `TSRX4003` where TypeScript accepts the code.
- * @typedef {{ pattern: RegExp, code: string }} UpstreamError
+ * each), and `TSRX4003` where TypeScript accepts the code. `checker` marks one
+ * that TypeScript reports from its checker though its parser reports the code
+ * too, which `TS_SYNTAX_ERROR_CODES` lists: a regular expression's mistake,
+ * `await` as a name in an async function (#1264).
+ * @typedef {{ pattern: RegExp, code: string, checker?: boolean }} UpstreamError
  */
 
 /**
@@ -866,16 +999,6 @@ export const UPSTREAM_ERRORS = {
 	SUPER_CALL_OUTSIDE_CONSTRUCTOR: {
 		pattern: /^super\(\) call outside constructor of a subclass$/,
 		code: 'TS2337',
-	},
-	// acorn: checkUnreserved
-	LET_RESERVED: { pattern: /^The keyword 'let' is reserved$/, code: 'TS1212' },
-	// `let` as a binding name or an assignment target, which acorn reports after
-	// `LET_RESERVED` at the same position, so only that one is recorded.
-	// acorn: checkLValSimple
-	LET_BINDING: {
-		pattern:
-			/^(?:(?:Binding|Assigning to) let in strict mode|let is disallowed as a lexically bound name)$/,
-		code: 'TS2480',
 	},
 	// acorn-typescript: callParseClassMemberWithIsStatic
 	ABSTRACT_METHOD_IN_CLASS: {
@@ -926,11 +1049,12 @@ export const UPSTREAM_ERRORS = {
 /**
  * acorn's and acorn-typescript's errors, which they raise as bare messages:
  * the lookup that gives each its code. A row is an {@link UpstreamError}, a
- * `[pattern, code]` pair, or the entry of a message TSRX raises too in the same
- * words, whose pattern is the entry's message with any value in it. A comment
- * names the upstream functions that raise each. The first row that matches
- * wins.
- * @returns {Array<UpstreamError | [RegExp, string] | Diagnostic | DiagnosticWithValues>}
+ * `[pattern, code]` pair, a `[pattern, code, 'checker']` triple for a checker
+ * error with a code in `TS_SYNTAX_ERROR_CODES`, or the entry of a message TSRX
+ * raises too in the same words, whose pattern is the entry's message with any
+ * value in it. A comment names the upstream functions that raise each. The
+ * first row that matches wins.
+ * @returns {Array<UpstreamError | [RegExp, string] | [RegExp, string, 'checker'] | Diagnostic | DiagnosticWithValues>}
  */
 function upstream_lookup_rows() {
 	return [
@@ -941,7 +1065,7 @@ function upstream_lookup_rows() {
 		// acorn: checkPatternErrors, toAssignable
 		[/^Assigning to rvalue$/, 'TS2364'],
 		// acorn: checkPatternErrors
-		[/^Parenthesized pattern$/, 'TS1005'],
+		[/^Parenthesized pattern$/, 'TS1005', 'checker'],
 		// acorn: checkExpressionErrors
 		[/^Shorthand property assignments are valid only in destructuring patterns$/, 'TS1312'],
 		// acorn: checkExpressionErrors, checkPropClash
@@ -965,8 +1089,6 @@ function upstream_lookup_rows() {
 		[/^Unsyntactic break$/, 'TS1105'],
 		// acorn: parseBreakContinueStatement
 		[/^Unsyntactic continue$/, 'TS1104'],
-		// acorn: parseForStatement
-		TS_ERRORS.FOR_OF_LET,
 		// acorn: parseForAfterInit
 		[/^Using declaration is not allowed in for-in loops$/, 'TS1493'],
 		// acorn: parseReturnStatement
@@ -1024,9 +1146,9 @@ function upstream_lookup_rows() {
 		// acorn: parseModuleExportName
 		[/^An export name cannot include a lone surrogate\.$/, 'TSRX4003'],
 		// acorn: toAssignable, parseSubscript, checkUnreserved
-		[/^Cannot use 'await' as identifier inside an async function$/, 'TS1359'],
+		[/^Cannot use 'await' as identifier inside an async function$/, 'TS1359', 'checker'],
 		// acorn: toAssignable
-		[/^Object pattern can't contain getter or setter$/, 'TS1136'],
+		[/^Object pattern can't contain getter or setter$/, 'TS1136', 'checker'],
 		// acorn: toAssignable
 		[/^Rest elements cannot have a default value$/, 'TS1186'],
 		// acorn: toAssignable
@@ -1037,8 +1159,14 @@ function upstream_lookup_rows() {
 		[/^Binding (?:eval|arguments) in strict mode$/, 'TS1100'],
 		// acorn: checkLValSimple
 		[/^Assigning to (?:eval|arguments) in strict mode$/, 'TS1100'],
-		// acorn: checkLValSimple
-		UPSTREAM_ERRORS.LET_BINDING,
+		// acorn: checkLValSimple, for a word that TSRX reports as
+		// `TS_ERRORS.STRICT_MODE_RESERVED_WORD` (see `raiseRecoverable` in `plugin.js`)
+		[
+			/^(?:Binding|Assigning to) (?:implements|interface|let|package|private|protected|public|static|yield) in strict mode$/,
+			'TS1214',
+		],
+		// acorn: checkLValSimple, which TSRX reports as `TS_ERRORS.LET_DECLARATION_NAME`
+		[/^let is disallowed as a lexically bound name$/, 'TS2480'],
 		// acorn: checkLValSimple
 		TS_ERRORS.ARGUMENT_NAME_CLASH,
 		// acorn: checkLValSimple
@@ -1096,8 +1224,12 @@ function upstream_lookup_rows() {
 		[/^Unexpected keyword '[^']+'$/, 'TS1359'],
 		// acorn: checkUnreserved
 		[/^Cannot use keyword 'await' outside an async function$/, 'TS1262'],
-		// acorn: checkUnreserved
-		UPSTREAM_ERRORS.LET_RESERVED,
+		// acorn: checkUnreserved, for a word that TSRX reports as
+		// `TS_ERRORS.STRICT_MODE_RESERVED_WORD` (see `raiseRecoverable` in `plugin.js`)
+		[
+			/^The keyword '(?:implements|interface|let|package|private|protected|public|static|yield)' is reserved$/,
+			'TS1214',
+		],
 		// acorn: checkUnreserved
 		[/^The keyword '[^']+' is reserved$/, 'TS1212'],
 		// acorn: validateRegExpFlags
@@ -1163,23 +1295,23 @@ function upstream_lookup_rows() {
 		// acorn: regexp_eatTerm
 		[/^Invalid regular expression: \/.*\/: Invalid quantifier$/, 'TS1507'],
 		// acorn: regexp_eatAssertion, regexp_eatCapturingGroup, regexp_eatUncapturingGroup
-		[/^Invalid regular expression: \/.*\/: Unterminated group$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Unterminated group$/, 'TS1005', 'checker'],
 		// acorn: regexp_eatBracedQuantifier
 		[/^Invalid regular expression: \/.*\/: numbers out of order in \{\} quantifier$/, 'TS1506'],
 		// acorn: regexp_eatBracedQuantifier
-		[/^Invalid regular expression: \/.*\/: Incomplete quantifier$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Incomplete quantifier$/, 'TS1005', 'checker'],
 		// acorn: regexp_eatUncapturingGroup
 		[/^Invalid regular expression: \/.*\/: Duplicate regular expression modifiers$/, 'TS1500'],
 		// acorn: regexp_eatUncapturingGroup
 		[/^Invalid regular expression: \/.*\/: Invalid regular expression modifiers$/, 'TS1504'],
 		// acorn: regexp_eatCapturingGroup, regexp_groupSpecifier
-		[/^Invalid regular expression: \/.*\/: Invalid group$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Invalid group$/, 'TS1005', 'checker'],
 		// acorn: regexp_groupSpecifier
 		[/^Invalid regular expression: \/.*\/: Duplicate capture group name$/, 'TS1515'],
 		// acorn: regexp_eatGroupName
 		[/^Invalid regular expression: \/.*\/: Invalid capture group name$/, 'TS1514'],
 		// acorn: regexp_eatAtomEscape, regexp_eatRegExpUnicodeEscapeSequence
-		[/^Invalid regular expression: \/.*\/: Invalid unicode escape$/, 'TS1198'],
+		[/^Invalid regular expression: \/.*\/: Invalid unicode escape$/, 'TS1198', 'checker'],
 		// acorn: regexp_eatKGroupName
 		[/^Invalid regular expression: \/.*\/: Invalid named reference$/, 'TS1510'],
 		// acorn: regexp_eatCharacterClassEscape, regexp_validateUnicodePropertyNameAndValue, regexp_validateUnicodePropertyNameOrValue
@@ -1187,7 +1319,7 @@ function upstream_lookup_rows() {
 		// acorn: regexp_validateUnicodePropertyNameAndValue
 		[/^Invalid regular expression: \/.*\/: Invalid property value$/, 'TS1526'],
 		// acorn: regexp_eatCharacterClass
-		[/^Invalid regular expression: \/.*\/: Unterminated character class$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Unterminated character class$/, 'TS1005', 'checker'],
 		// acorn: regexp_eatCharacterClass, regexp_eatNestedClass
 		[/^Invalid regular expression: \/.*\/: Negated character class may contain strings$/, 'TS1518'],
 		// acorn: regexp_nonEmptyClassRanges
@@ -1248,7 +1380,7 @@ function upstream_lookup_rows() {
 		// acorn-typescript: parseVarStatement, parseClassField
 		UPSTREAM_ERRORS.AMBIENT_INITIALIZER,
 		// acorn-typescript: parseFunctionBody
-		[/^An implementation cannot be declared in ambient contexts\.$/, 'TS1183'],
+		TS_ERRORS.AMBIENT_IMPLEMENTATION,
 		// acorn-typescript: tsParseModifiers
 		TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
 		// acorn-typescript: tsParseModifiers
@@ -1330,10 +1462,7 @@ function upstream_lookup_rows() {
 			'TS1005',
 		],
 		// acorn-typescript: parseImport
-		[
-			/^A type-only import can specify a default import or named bindings, but not both\.$/,
-			'TS1363',
-		],
+		TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED,
 		// acorn-typescript: parseTypeOnlyImportExportSpecifier
 		[
 			/^The 'type' modifier cannot be used on a named export when 'export type' is used on its export statement\.$/,
@@ -1402,7 +1531,12 @@ let upstream_lookup;
  */
 export function get_upstream_error(message) {
 	upstream_lookup ??= upstream_lookup_rows().map((row) => {
-		if (Array.isArray(row)) return { pattern: row[0], error: { pattern: row[0], code: row[1] } };
+		if (Array.isArray(row)) {
+			/** @type {UpstreamError} */
+			const error = { pattern: row[0], code: row[1] };
+			if (row[2] === 'checker') error.checker = true;
+			return { pattern: row[0], error };
+		}
 		if ('pattern' in row) return { pattern: row.pattern, error: row };
 		return { pattern: message_pattern(row), error: row };
 	});

@@ -139,6 +139,14 @@ export interface BaseNodeMetaData {
 	 * like Prettier's `prettierIgnore` for the union member after one.
 	 */
 	prettierIgnore?: boolean;
+	/**
+	 * On a declaration after modifiers that a collecting parse reads, for each
+	 * modifier the tree leaves out, the error TypeScript reports for it once the
+	 * declaration's first modifier error is fixed. TypeScript reports only the
+	 * first; the formatter refuses the code with these, instead of printing it
+	 * without the modifier.
+	 */
+	dropped_modifiers?: CompileError[];
 	parenthesized?: boolean;
 	/**
 	 * Offset of the outermost `(` of a parenthesized expression. Only grouping
