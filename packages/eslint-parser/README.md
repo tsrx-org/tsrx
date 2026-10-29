@@ -102,6 +102,36 @@ The parser will successfully parse this and allow ESLint rules (like those from
 - Invalid rendering control flow
 - And more
 
+## Known Limitations
+
+Some core ESLint rules miss part of what TSRX syntax does, and the parser can't
+change that without misdescribing the source to other rules.
+[`@tsrx/eslint-plugin`](https://www.npmjs.com/package/@tsrx/eslint-plugin) has
+TSRX versions of these rules. Its `js` configuration, for `js.configs.recommended`
+users, uses `tsrx/no-unused-vars` and `tsrx/no-unreachable` for `.tsrx` files:
+
+- `no-unused-vars` reports an unused `@for` index, but its "Remove unused
+  variable" suggestion deletes only the name, and `index )` doesn't parse.
+  `tsrx/no-unused-vars` removes the whole `; index i` clause.
+- `no-await-in-loop` doesn't report an `await` in a `@for` key, though the key
+  runs once per item. `tsrx/no-await-in-loop` does: use it for `.tsrx` files if
+  you turn on `no-await-in-loop`.
+- Code path analysis runs the arms of a `@switch` one after another, not as
+  alternatives. After an arm that ends in `throw`, `no-unreachable` reports the
+  arms and code that follow it. `tsrx/no-unreachable` treats the arms as
+  alternatives.
+
+Other rules built on code paths still treat every `@switch` arm as always running.
+For example, `react-hooks/rules-of-hooks` doesn't report a hook called in a
+`@case` body. The arms of `@if` and `@try` get their own code paths.
+
+These have no TSRX version:
+
+- `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
+  `@else`, `@else if` or `@for` body that holds a single statement, such as
+  `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
+  doesn't parse. Use `all` or `multi-line`, which leave these bodies alone.
+
 ## Related Packages
 
 - [@tsrx/eslint-plugin](https://www.npmjs.com/package/@tsrx/eslint-plugin) -
