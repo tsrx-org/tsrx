@@ -5,8 +5,8 @@
 
 Language Server Protocol implementation for `.tsrx` files. It uses Volar and
 TypeScript to provide diagnostics, completions, hover information, navigation,
-document symbols, highlighting, and automatic closing tags. It formats `.tsrx`
-files with the project's Prettier (see [Formatting](#formatting)).
+document symbols, code folding, highlighting, and automatic closing tags. It
+formats `.tsrx` files with the project's Prettier (see [Formatting](#formatting)).
 
 The language server resolves the compiler selected by the active TypeScript
 project, so the same tooling works with React, Preact, Solid, Vue, Ripple, Octane,
@@ -69,7 +69,7 @@ pnpm add -D typescript
 When the server does not find `typescript`, or finds TypeScript 7, it still starts
 and shows one warning that says what it found and what to do. `.tsrx` files then
 do not get type checking, hover or completions. TSRX compile errors, CSS in
-`<style>`, the outline, formatting and closing tags still work.
+`<style>`, the outline, code folding, formatting and closing tags still work.
 
 To use another TypeScript than the one it finds, pass that TypeScript's `lib`
 folder:
@@ -105,8 +105,8 @@ the `classic` backend cannot run it. For `.tsrx` files on TypeScript 7:
    `.tsrx` files, with the initialization option `runExternalCode: true`. It
    serves types, hover, completions and errors, TSRX compile errors included.
 3. Run this server next to it with `--typescript-backend=native`, for what
-   TypeScript 7 does not do: CSS in `<style>`, the outline, formatting and closing
-   tags. It loads no TypeScript in that mode.
+   TypeScript 7 does not do: CSS in `<style>`, the outline, code folding,
+   formatting and closing tags. It loads no TypeScript in that mode.
 
 ## TypeScript backends
 

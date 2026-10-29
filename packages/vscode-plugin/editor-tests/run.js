@@ -513,6 +513,18 @@ function formatting_problem(result) {
 }
 
 /**
+ * In every setup, the TSRX language server folds `.tsrx` files: the imports, the component's
+ * `@{ ... }` body and the multi-line `<button>` of the fixture's `App.tsrx`.
+ * @param {Record<string, any>} result
+ */
+function folding_problem(result) {
+	const expected = ['1-2 imports', '4-9', '7-8'];
+	return JSON.stringify(result.folding) === JSON.stringify(expected)
+		? undefined
+		: `expected the folds ${JSON.stringify(expected)}, got ${JSON.stringify(result.folding)}`;
+}
+
+/**
  * The fallback for `hide-test-windows.swift`: VS Code brings its first window to the
  * front even when `open` starts it hidden in the background. When the instance is in
  * front, hide it: macOS then gives the front back to the app that had it. Hiding
@@ -596,7 +608,12 @@ for (const scenario of selected) {
 		: undefined;
 	const commands = scenario.expect === 'nothing' ? undefined : command_problem(result ?? {});
 	const feature =
-		imports ?? source_definition ?? formatting_problem(result ?? {}) ?? commands ?? unsaved;
+		imports ??
+		source_definition ??
+		formatting_problem(result ?? {}) ??
+		folding_problem(result ?? {}) ??
+		commands ??
+		unsaved;
 	const problem =
 		observed !== scenario.expect
 			? `expected ${scenario.expect}, got ${observed}`
@@ -618,6 +635,7 @@ for (const scenario of selected) {
 		imports: scenario.expect === 'nothing' ? '-' : imports ? 'FAIL' : 'ok',
 		'source definition': result?.sourceDefinition?.split('/').pop() ?? '-',
 		formatting: formatting_problem(result ?? {}) ? 'FAIL' : 'ok',
+		folding: folding_problem(result ?? {}) ? 'FAIL' : 'ok',
 		'after typing a tag': closing_tag,
 		'TypeScript status': [status, result?.typescriptStatus?.version].filter(Boolean).join(' '),
 		notices,

@@ -24,6 +24,7 @@ import {
 	closes_tags_on_type,
 	register_closing_tags,
 } from './closingTagsHandler.js';
+import { register_folding_ranges } from './foldingRangeHandler.js';
 import { URI } from 'vscode-uri';
 import {
 	getTsrxLanguagePlugin,
@@ -68,6 +69,8 @@ export function createTsrxLanguageServer(options = {}) {
 	register_formatting(connection, (uri) => server.documents.get(URI.parse(uri)));
 	// Closing tags on `>` for every editor (`closingTagsHandler.js`).
 	register_closing_tags(connection, server);
+	// Folds computed from the `.tsrx` source (`foldingRangeHandler.js`).
+	register_folding_ranges(connection, server);
 
 	connection.listen();
 
@@ -332,9 +335,10 @@ export function createTsrxLanguageServer(options = {}) {
 
 /**
  * Advertise what the server's own handlers serve: the formatters `register_formatting`
- * serves (whole document and range), and the closing tags `register_closing_tags`
- * serves on `>`, unless the client closes tags another way (`closes_tags_on_type`).
- * No Volar service plugin advertises either (`stripFormatting`).
+ * serves (whole document and range), the folds `register_folding_ranges` serves, and the
+ * closing tags `register_closing_tags` serves on `>`, unless the client closes tags another
+ * way (`closes_tags_on_type`). No Volar service plugin advertises any of them
+ * (`stripFormatting`, `stripFoldingRanges`).
  * @template {import('@volar/language-server/node').InitializeResult} T
  * @param {T} initResult
  * @param {import('@volar/language-server/node').InitializeParams} params
@@ -343,6 +347,7 @@ export function createTsrxLanguageServer(options = {}) {
 function with_own_handlers(initResult, params) {
 	initResult.capabilities.documentFormattingProvider = true;
 	initResult.capabilities.documentRangeFormattingProvider = true;
+	initResult.capabilities.foldingRangeProvider = true;
 	if (closes_tags_on_type(params)) {
 		initResult.capabilities.documentOnTypeFormattingProvider = CLOSING_TAGS_ON_TYPE;
 	}
