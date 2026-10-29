@@ -6,6 +6,7 @@ import {
 	projectExternalFileExtensions,
 } from '@volar/typescript/lib/quickstart/languageServicePluginCommon.js';
 import { getTsrxLanguagePlugin } from './language.js';
+import { with_tsrx_module_format_in_registry } from './module-format.js';
 import { without_typescript_diagnostics_on_compile_error } from './plugin-diagnostics.js';
 import { with_jsx_closing_tags } from './plugin-jsx-closing-tag.js';
 import { with_whole_file_import_edits } from './plugin-organize-imports.js';
@@ -46,6 +47,12 @@ const plugin = (modules) => {
 	return {
 		/** @param {import('typescript').server.PluginCreateInfo} info */
 		create(info) {
+			// The registry is the project service's, shared by its projects and by the
+			// Go to Source Definition helper.
+			const registry = /** @type {{ documentRegistry?: import('typescript').DocumentRegistry }} */ (
+				info.project.projectService
+			).documentRegistry;
+			if (registry) with_tsrx_module_format_in_registry(ts, registry);
 			if (!isHasAlreadyDecoratedLanguageService(info)) {
 				const config_file_name =
 					info.project.projectKind === ts.server.ProjectKind.Configured

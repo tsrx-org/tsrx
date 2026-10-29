@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import node_module, { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { getTsrxLanguagePlugin } from './language.js';
+import { with_tsrx_module_format_on_host } from './module-format.js';
 import { run_native_tsc } from './native-tsc.js';
 import {
 	is_native_typescript_package,
@@ -77,6 +78,9 @@ try {
 				 *  configFile?: import('typescript').TsConfigSourceFile,
 				 *  configFilePath?: string,
 				 * }} */ (create_program_options.options);
+			if (create_program_options.host) {
+				with_tsrx_module_format_on_host(ts, create_program_options.host, compiler_options);
+			}
 			return [
 				getTsrxLanguagePlugin({
 					ts,
