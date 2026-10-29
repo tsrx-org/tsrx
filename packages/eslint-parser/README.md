@@ -68,6 +68,34 @@ The parser:
 3. Returns the ESTree AST to ESLint
 4. Allows ESLint rules to analyze TSRX-specific patterns
 
+### Dynamic Tags
+
+Rules read an element's name as a JSX name. For a dynamic tag, they get one that
+mirrors the tag's expression: `<{as}>` is the `JSXIdentifier` `as`, and
+`<{ui.Box}>` is the `JSXMemberExpression` `ui.Box`. An expression that no JSX name
+can show, such as `<{'div'}>`, `<{icons[name]}>` or `<{getTag()}>`, gets the
+synthetic name `tsrx-dynamic-tag`. The name spans the braces, and the element
+keeps `isDynamic: true`. The expression container moves to `tagExpression`, where
+rules still lint the code and scope analysis reads it, so `no-unused-vars` and
+`no-undef` see the variables it uses.
+
+### Rule Fixes TSRX Can't Take
+
+Some `eslint-plugin-react` fixes write JSX that TSRX reads differently than TSX
+does. The parser can't prevent them:
+
+- `react/jsx-curly-brace-presence` unwraps a string child into text. TSRX text can
+  start a directive (`@if (`, `@for (`, `@switch (`) or a `//` comment, so
+  `{'@for (item of items)'}` stops parsing, and `{'// note'}` on its own line
+  becomes a comment. Use `tsrx/jsx-curly-brace-presence` from
+  [`@tsrx/eslint-plugin`](https://github.com/tsrx-org/tsrx/tree/main/packages/eslint-plugin)
+  instead: it has the same options, and keeps those braces. Its `react`
+  configuration swaps it in for `.tsrx` files.
+- `react/jsx-tag-spacing` with `closingSlash: 'always'` writes `< /p>`, which
+  neither TSRX nor TypeScript reads as a closing tag. With
+  `afterOpening: 'always'` it writes `< br />`, which TSRX reads as text inside an
+  element. Keep both options at `'never'`, their default.
+
 ## Supported Syntax
 
 The parser supports TSRX syntax including:
