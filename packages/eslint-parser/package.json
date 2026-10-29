@@ -39,7 +39,8 @@
     "eslint": "catalog:peer"
   },
   "dependencies": {
-    "@tsrx/core": "workspace:*"
+    "@tsrx/core": "workspace:*",
+    "eslint-scope": "^9.1.2"
   },
   "devDependencies": {
     "@types/eslint": "catalog:default",
