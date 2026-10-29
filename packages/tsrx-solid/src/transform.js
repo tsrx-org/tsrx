@@ -24,6 +24,8 @@ import {
 	createScriptBody as create_script_body,
 	error,
 	mergeDuplicateRefs,
+	MERGE_SPREAD_CLASS_INTERNAL_NAME,
+	JOIN_SCOPE_CLASS_INTERNAL_NAME,
 	validateAtMostOneRefAttribute,
 	addJsxSetupDeclaration as add_jsx_setup_declaration,
 	buildReturnExpression as build_return_expression,
@@ -92,6 +94,12 @@ const solid_platform = {
 	},
 	jsx: {
 		rewriteClassAttr: false,
+		// Solid reads a class only from `class`, which also takes an object or
+		// a list.
+		hostSpreadClassProps: ['class'],
+		classValue: 'list',
+		// Solid doesn't read `className`.
+		rewriteClassNameAttr: true,
 		// Solid's runtime accepts an array of refs natively, so multiple
 		// `ref` attributes collapse to `ref={[a, b, ...]}` rather than
 		// going through a `mergeRefs` helper.
@@ -1927,6 +1935,24 @@ function inject_solid_imports(program, transform_context) {
 						NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 					),
 				],
+				ref_prop_source,
+			),
+		);
+	}
+
+	if (transform_context.needs_merge_spread_class && ref_prop_source) {
+		program.body.unshift(
+			b.import_declaration(
+				[b.import_specifier('merge_spread_class', MERGE_SPREAD_CLASS_INTERNAL_NAME)],
+				ref_prop_source,
+			),
+		);
+	}
+
+	if (transform_context.needs_join_scope_class && ref_prop_source) {
+		program.body.unshift(
+			b.import_declaration(
+				[b.import_specifier('join_scope_class', JOIN_SCOPE_CLASS_INTERNAL_NAME)],
 				ref_prop_source,
 			),
 		);

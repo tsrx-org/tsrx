@@ -17,6 +17,7 @@ import {
 	error,
 	has_location,
 	is_component_like_element,
+	JOIN_SCOPE_CLASS_INTERNAL_NAME,
 	MERGE_REFS_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
@@ -53,6 +54,10 @@ const vue_platform = {
 	},
 	jsx: {
 		rewriteClassAttr: false,
+		// `class` also takes an object or a list.
+		classValue: 'list',
+		// A static `className` renders as a `classname` attribute.
+		rewriteClassNameAttr: true,
 		multiRefStrategy: 'merge-refs',
 		hostSpreadRefStrategy: 'explicit-ref-attr',
 		// vue-jsx-vapor escapes a string child into its HTML template, where a
@@ -1222,6 +1227,15 @@ function inject_vue_imports(program, transform_context) {
 		ensure_named_import(program, merge_refs_source, 'mergeRefs', MERGE_REFS_INTERNAL_NAME);
 	}
 
+	if (transform_context.needs_join_scope_class && ref_prop_source) {
+		ensure_named_import(
+			program,
+			ref_prop_source,
+			'join_scope_class',
+			JOIN_SCOPE_CLASS_INTERNAL_NAME,
+		);
+	}
+
 	if (transform_context.needs_normalize_spread_props && ref_prop_source) {
 		ensure_named_import(
 			program,
@@ -1253,10 +1267,19 @@ function ensure_named_import(program, source, name, local = name) {
 		if (statement.type !== 'ImportDeclaration' || statement.source?.value !== source) {
 			continue;
 		}
+		// A type-only import is erased from the build, and a namespace import
+		// takes no named specifiers: the helper gets an import of its own.
+		if (
+			statement.importKind === 'type' ||
+			statement.specifiers.some((specifier) => specifier.type === 'ImportNamespaceSpecifier')
+		) {
+			continue;
+		}
 
 		const has_specifier = statement.specifiers.some(
 			(specifier) =>
 				specifier.type === 'ImportSpecifier' &&
+				specifier.importKind !== 'type' &&
 				specifier.imported?.type === 'Identifier' &&
 				specifier.imported.name === name &&
 				specifier.local?.name === local,

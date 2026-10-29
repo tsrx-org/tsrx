@@ -326,6 +326,121 @@ describe('@tsrx/react basic', () => {
 		expect(code).not.toContain(`className="content ${cssHash}"`);
 	});
 
+	it('keeps the class a host spread passes beside the scope classes', () => {
+		const source = `export function App(props) @{
+				<>
+					<span {...props} />
+					<span className="base" {...props.a} {...props.b} />
+					<span {...props} className="last" />
+					<span className="plain" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`;
+		const { code, cssHash } = compile(source, 'App.tsrx');
+		/** @param {string} argument */
+		const merged = (argument) =>
+			`{...__normalize_spread_props(__merge_spread_class(${argument}, "${cssHash}", "className"))}`;
+
+		expect(code).toMatch(
+			/import \{\s*merge_spread_class as __merge_spread_class,[^}]*\} from '@tsrx\/react\/ref'/,
+		);
+		expect(code).toContain(`<span className="${cssHash}" ${merged('props')} />`);
+		expect(code).toContain(
+			`<span className="base ${cssHash}" ${merged('props.a')} ${merged('props.b')} />`,
+		);
+		expect(code).toContain(
+			`<span {...__normalize_spread_props(props)} className="last ${cssHash}" />`,
+		);
+		expect(code).toContain(`<span className="plain ${cssHash}" />`);
+		expect(compile_to_volar_mappings(source, 'App.tsrx').code).not.toContain('merge_spread_class');
+	});
+
+	it('joins every scope class a nested scope stamps with a host spread class once', () => {
+		const { code } = compile(
+			`import { theme } from './theme.tsrx';
+
+			export function App(props) @{
+				<>
+					<style apply={theme}>
+						div {
+							color: red;
+						}
+					</style>
+					<div>
+						<style>
+							span {
+								color: blue;
+							}
+						</style>
+						<span {...props} />
+					</div>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		const [, scope_class] =
+			code.match(/<span className=\{(`[^`]+`)\} \{\.\.\.__normalize_spread_props\(/) ?? [];
+		expect(scope_class).toMatch(/^`tsrx-[0-9a-f]+ tsrx-[0-9a-f]+ \$\{theme\.\$class\}`$/);
+		expect(code).toContain(`__merge_spread_class(props, ${scope_class}, "className")`);
+		expect(code.match(/__merge_spread_class\(/g)).toHaveLength(1);
+	});
+
+	it('joins a dynamic class with the scope classes through join_scope_class', () => {
+		const source = `import { theme } from './theme.tsrx';
+
+			export function App(props) @{
+				<>
+					<style apply={theme}>
+						span {
+							color: red;
+						}
+					</style>
+					<span className={props.c} />
+					<span className={theme.$class} />
+				</>
+			}`;
+		const { code, cssHash } = compile(source, 'App.tsrx');
+
+		expect(code).toMatch(
+			/import \{[^}]*join_scope_class as __join_scope_class[^}]*\} from '@tsrx\/react\/ref'/,
+		);
+		expect(code).toContain(
+			`<span className={__join_scope_class(props.c, \`${cssHash} \${theme.$class}\`)} />`,
+		);
+		// A `$class` read is a string.
+		expect(code).toContain(`<span className={\`\${theme.$class} ${cssHash} \${theme.$class}\`} />`);
+		// Types don't depend on how the class joins, so the type-only print keeps
+		// the template literal.
+		const type_only = compile_to_volar_mappings(source, 'App.tsrx').code;
+		expect(type_only).not.toContain('join_scope_class');
+		expect(type_only).toContain(`className={\`\${props.c} ${cssHash} \${theme.$class}\`}`);
+	});
+
+	it('imports no spread class helper when the class attribute follows every spread', () => {
+		const { code } = compile(
+			`export function App(props) @{
+				<>
+					<span {...props} className="last" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('merge_spread_class');
+	});
+
 	it('applies scoped css hashes and keeps type selectors for dynamic tags', () => {
 		const { code, css, cssHash } = compile(
 			`export function App() @{

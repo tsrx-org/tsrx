@@ -57,6 +57,23 @@ function class_of(code, name) {
 }
 
 /**
+ * The class attribute value a target gives an authored class that may not be a
+ * string, joined with the printed scope classes `scope` (a string or template
+ * literal): through `join_scope_class` with the target's class value kind, or
+ * as text in one template literal when the kind is `null`.
+ *
+ * @param {'text' | 'text-true' | 'text-both' | 'list' | null} class_join
+ * @param {string} expression
+ * @param {string} scope
+ * @returns {string}
+ */
+export function joined_class_value(class_join, expression, scope) {
+	if (class_join === null) return `{\`\${${expression}} ${scope.slice(1, -1)}\`}`;
+	const kind = class_join === 'text' ? '' : `, "${class_join}"`;
+	return `{__join_scope_class(${expression}, ${scope}${kind})}`;
+}
+
+/**
  * Deterministic generator for the ordering property test: a small LCG so a
  * failing tree can be reproduced from its seed.
  *
@@ -185,10 +202,34 @@ export function runSharedScopedStyleTests({
 	name,
 	classAttrName,
 	generatedClassAttrName = classAttrName,
+	classJoin = null,
+	classNameAttr = 'className',
 }) {
 	const attr = generatedClassAttrName;
 
 	describe(`[${name}] style scopes`, () => {
+		it('joins an authored class that may not be a string with the scope classes as the target does', () => {
+			const { code, cssHash } = compile(
+				`export function App(props) @{
+					<>
+						<span ${attr}={props.value} />
+						<span ${attr}={\`a \${props.value}\`} />
+						<span ${attr}={props.on ? 'on' : 'off'} />
+						<style>span { color: red; }</style>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain(
+				`<span ${attr}=${joined_class_value(classJoin, 'props.value', `"${cssHash}"`)} />`,
+			);
+			// A class that is always a string joins as text.
+			expect(code).toContain(`<span ${attr}={\`\${\`a \${props.value}\`} ${cssHash}\`} />`);
+			expect(code).toContain(`<span ${attr}={\`\${props.on ? 'on' : 'off'} ${cssHash}\`} />`);
+			expect(code).toContain('join_scope_class as __join_scope_class');
+		});
+
 		it('rfc1-multiple-blocks: two blocks in one scope share the hash and emit in source order', () => {
 			const { code, css, cssHash } = compile(
 				`export function App() @{
@@ -655,7 +696,7 @@ export function runSharedScopedStyleTests({
 			const hash = hashes_of(cssHash)[0];
 			expect(code).toContain(`<span ${attr}="${hash}">`);
 			expect(code).toContain(`class="bold ${hash}"`);
-			expect(code).toContain(`className="italic ${hash}"`);
+			expect(code).toContain(`${classNameAttr}="italic ${hash}"`);
 		});
 
 		it('drops a scope whose only block matches nothing without emitting a style element', () => {
@@ -855,7 +896,9 @@ export function runSharedScopedStyleTests({
 			expect(css.indexOf(`.dark.${theme_hash}`)).toBeLessThan(css.indexOf('color: purple'));
 			expect(css.indexOf('color: purple')).toBeLessThan(css.indexOf('font-weight: bold'));
 			// Class table: own classes, scope hashes outer→inner, then the theme.
-			expect(code).toContain(`${classAttrName}={\`\${theme.dark} ${scope_a} ${theme_hash}\`}`);
+			expect(code).toContain(
+				`${classAttrName}=${joined_class_value(classJoin, 'theme.dark', `"${scope_a} ${theme_hash}"`)}`,
+			);
 			expect(class_of(code, 'outer')).toBe(`outer ${scope_a} ${theme_hash}`);
 			expect(class_of(code, 'inner')).toBe(`inner ${scope_a} ${scope_b} ${theme_hash}`);
 		});
@@ -1101,7 +1144,9 @@ export function runSharedScopedStyleTests({
 			expect(code).toContain(
 				`<article ${classAttrName}={\`\${\`local \${parentClass}\`} ${local}\`}>`,
 			);
-			expect(code).toContain(`<h2 ${classAttrName}={\`\${parentClass} ${local}\`}>`);
+			expect(code).toContain(
+				`<h2 ${classAttrName}=${joined_class_value(classJoin, 'parentClass', `"${local}"`)}>`,
+			);
 		});
 
 		it('keeps every selector however $class leaves the block', () => {

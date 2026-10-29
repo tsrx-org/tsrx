@@ -8,6 +8,20 @@ import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformanc
 /** @import { CompileDiagnosticsHarness, CompileHarness } from '../../types/index' */
 
 /**
+ * Each first-party target's `jsx.classValue`.
+ *
+ * @type {Record<string, 'text' | 'text-true' | 'text-both' | 'list'>}
+ */
+const CLASS_VALUE_KINDS = {
+	react: 'text',
+	preact: 'text-true',
+	// The shared tests compile Hono for its server renderer.
+	hono: 'text-both',
+	solid: 'list',
+	vue: 'list',
+};
+
+/**
  * @param {string} haystack
  * @param {string} needle
  * @returns {number}
@@ -2227,6 +2241,9 @@ export function runSharedCompileTests({
 	name,
 	classAttrName,
 	generatedClassAttrName = classAttrName,
+	classJoin = CLASS_VALUE_KINDS[name] ?? null,
+	// Solid and Vue compile an authored `className` to `class`.
+	classNameAttr = name === 'solid' || name === 'vue' ? 'class' : 'className',
 }) {
 	const componentClassAttrName = name === 'react' ? 'className' : 'class';
 	const componentClassParam =
@@ -2237,8 +2254,21 @@ export function runSharedCompileTests({
 	runSharedPlatformTests({ compile, name });
 
 	runSharedComponentLoopControlFlowTests({ compile, name });
-	runSharedScopedStyleTests({ compile, name, classAttrName, generatedClassAttrName });
-	runSharedScopedStyleConformanceTests({ compile, name, classAttrName, generatedClassAttrName });
+	runSharedScopedStyleTests({
+		compile,
+		name,
+		classAttrName,
+		generatedClassAttrName,
+		classJoin,
+		classNameAttr,
+	});
+	runSharedScopedStyleConformanceTests({
+		compile,
+		name,
+		classAttrName,
+		generatedClassAttrName,
+		classJoin,
+	});
 
 	describe(`[${name}] import phases`, () => {
 		it('preserves deferred imports in compiled output', () => {

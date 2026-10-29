@@ -78,6 +78,11 @@ function create_hono_platform(mode) {
 		},
 		jsx: {
 			rewriteClassAttr: false,
+			// Hono renders `className` as `class`.
+			hostSpreadClassProps: ['class', 'className'],
+			// Hono's server renderer prints a boolean class as text; the DOM
+			// renderer leaves it out.
+			classValue: is_dom ? 'text' : 'text-both',
 			multiRefStrategy: 'merge-refs',
 			hostSpreadRefBinding: 'in-place',
 			// Hono's server renderer escapes a string child of `<script>` like

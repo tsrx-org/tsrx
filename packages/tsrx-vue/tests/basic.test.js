@@ -176,6 +176,107 @@ describe('@tsrx/vue basic', () => {
 		expect(css).toContain('color: red;');
 	});
 
+	// Vue's `mergeProps` joins `class` across attributes and spreads itself.
+	it('compiles an authored className on a host element to class', () => {
+		const source = `export function App(props) @{
+				const Tag = Child;
+				<>
+					<div className="x" />
+					<div className={props.c} />
+					<div class="a" className="b" />
+					<div class="a" className={props.c} />
+					<div class="a" {...props.bag} className={props.d} />
+					<div className="a" className="b" />
+					<Child className="kept" />
+					<ui.Child className="member" />
+					<{Tag} className="dynamic" />
+				</>
+			}`;
+		const { code } = compile(source, 'App.tsrx');
+
+		expect(code).toContain('<div class="x" />');
+		expect(code).toContain('<div class={props.c} />');
+		expect(code).toContain('<div class="a b" />');
+		expect(code).toContain('<div class={["a", props.c]} />');
+		// With a spread between, `className` stays where it is written, so the
+		// last class written still wins over the spread's.
+		expect(code).toMatch(
+			/<div class="a" \{\.\.\.[^}]+\}(?: ref=\{[^}]+\})? class=\{props\.d\} \/>/,
+		);
+		// Two `className` attributes stay two attributes.
+		expect(code).toContain('<div class="a" class="b" />');
+		// A component, member tag or dynamic tag may read `className`.
+		expect(code).toContain('<Child className="kept" />');
+		expect(code).toContain('<ui.Child className="member" />');
+		expect(code).toContain('className="dynamic"');
+
+		// The type-only print renames it too, so it type-checks against `class`,
+		// and maps the generated `class` back to the authored `className`.
+		const { code: type_only, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+		expect(type_only).toContain('<div class={props.c} />');
+		expect(type_only).toContain('<div class={["a", props.c]} />');
+		// TypeScript reports two `class` attributes even across a spread.
+		expect(type_only).toMatch(/<div class=\{\["a", props\.d\]\} \{\.\.\./);
+		expect(type_only).toContain('<Child className="kept" />');
+		expect(type_only).toContain('className="dynamic"');
+		for (const authored of ['className={props.c}', 'className={props.d}', 'className="x"']) {
+			const at = source.indexOf(authored);
+			const mapping = mappings.find((entry) => entry.sourceOffsets[0] === at);
+			expect(mapping).toMatchObject({ lengths: [9], generatedLengths: [5] });
+			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
+			expect(type_only.slice(generated, generated + 5)).toBe('class');
+			expect(mapping?.data).toMatchObject({ verification: true, semantic: true, navigation: true });
+		}
+	});
+
+	for (const [label, existing] of [
+		['a namespace import', "import * as ref from '@tsrx/vue/ref';"],
+		['a type-only import', "import type { RefValue } from '@tsrx/vue/ref';"],
+	]) {
+		it(`imports a scope class helper on its own beside ${label} of the same module`, () => {
+			const { code } = compile(
+				`${existing}
+
+				export function App(props: { c?: string }) @{
+					<>
+						<style>span { color: red; }</style>
+						<span class={props.c} />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain(existing);
+			expect(code).toContain(
+				"import { join_scope_class as __join_scope_class } from '@tsrx/vue/ref';",
+			);
+		});
+	}
+
+	it('leaves host spreads as written beside the scope classes', () => {
+		const { code, cssHash } = compile(
+			`export function App(props) @{
+				<>
+					<span {...props} />
+					<span class="base" {...props} />
+					<span {...props} class="last" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('merge_spread_class');
+		expect(code).toMatch(
+			new RegExp(`<span \\{\\.\\.\\.(\\w+)\\} ref=\\{\\1\\?\\.ref\\} class="${cssHash}" />`),
+		);
+	});
+
 	it('applies scoped css hashes and keeps type selectors for dynamic tags', () => {
 		const { code, css, cssHash } = compile(
 			`export function App() @{
