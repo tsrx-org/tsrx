@@ -31,9 +31,19 @@ function fixture(name) {
 describe('validate_options', () => {
 	it('accepts the documented options', () => {
 		expect(
-			validate_options({ compiler: '@tsrx/react', platform: 'ios', languageFeatures: false }),
+			validate_options({
+				compiler: '@tsrx/react',
+				platform: 'ios',
+				languageFeatures: false,
+				verificationMappings: true,
+			}),
 		).toEqual({
-			options: { compiler: '@tsrx/react', platform: 'ios', languageFeatures: false },
+			options: {
+				compiler: '@tsrx/react',
+				platform: 'ios',
+				languageFeatures: false,
+				verificationMappings: true,
+			},
 			optionDiagnostics: [],
 		});
 		expect(validate_options(undefined).optionDiagnostics).toEqual([]);
@@ -44,6 +54,7 @@ describe('validate_options', () => {
 			compiler: './local.js',
 			platform: 'tv',
 			languageFeatures: 'yes',
+			verificationMappings: 1,
 			bogus: 1,
 		});
 		expect(options).toEqual({});
@@ -51,8 +62,10 @@ describe('validate_options', () => {
 			['compiler'],
 			['platform'],
 			['languageFeatures'],
+			['verificationMappings'],
 			['bogus'],
 		]);
+		expect(optionDiagnostics[3].messageText).toBe('"verificationMappings" must be a boolean.');
 		expect(optionDiagnostics.every((d) => d.code === MAPPER_CODES.INVALID_CONFIG)).toBe(true);
 		expect(validate_options([]).optionDiagnostics[0].path).toEqual([]);
 	});

@@ -288,6 +288,8 @@ declare module 'estree' {
 		 * mapping collector needs the source positions.
 		 */
 		tsrx_keyword_tokens?: Parse.KeywordToken[];
+		/** Every token, recorded with `tsrx_keyword_tokens`, for esrap's `tokens` option. */
+		tsrx_tokens?: Parse.Token[];
 	}
 
 	interface FunctionDeclaration extends FunctionLikeTS {
@@ -1305,8 +1307,6 @@ declare module 'estree' {
 		options: AST.ObjectExpression | null;
 		qualifier: EntityName | null;
 		typeArguments: TSTypeParameterInstantiation | undefined;
-		// looks like acorn-typescript has typeParameters
-		typeParameters: TSTypeParameterDeclaration | undefined | undefined;
 	}
 	interface TSIndexedAccessType extends Omit<
 		AcornTSNode<TSESTree.TSIndexedAccessType>,
