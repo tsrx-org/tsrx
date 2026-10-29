@@ -184,6 +184,7 @@ export {
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	return_value_body_to_expression as returnValueBodyToExpression,
+	source_mentions_identifier as sourceMentionsIdentifier,
 	validate_at_most_one_ref_attribute as validateAtMostOneRefAttribute,
 	wrap_edge_whitespace as wrapEdgeWhitespace,
 } from './transform/jsx/index.js';

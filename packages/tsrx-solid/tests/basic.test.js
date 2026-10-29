@@ -1059,6 +1059,29 @@ describe('@tsrx/solid basic', () => {
 			expect(code).not.toContain('__normalize_spread_props(second, cb)');
 		});
 
+		it.each(['App', 'App$'])(
+			'names the spread temporary in a branch of %s apart from an authored binding of that name',
+			(component) => {
+				const { code } = compile(
+					`export function ${component}(props: any) @{
+						const ${component}__spread_props1 = 'mine';
+						<section>
+							@if (props.on) {
+								<div {...props.rest} ref={props.r} title={${component}__spread_props1} />
+							}
+						</section>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(code).toContain(
+					`let ${component}__spread_props2 = __normalize_spread_props_for_ref_attr(props.rest);`,
+				);
+				expect(code).toContain(`title={${component}__spread_props1}`);
+				expect(code).not.toContain(`let ${component}__spread_props1 `);
+			},
+		);
+
 		it('lowers a host spread beside a ref in expression position once', () => {
 			const source = `export function App({ enabled, bag, cb }) {
 					return enabled ? <input {...bag} ref={cb} /> : null;
