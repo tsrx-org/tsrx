@@ -13,7 +13,6 @@ import {
 	createHookSafeHelper,
 	create_generated_identifier,
 	createJsxTransform,
-	DIAGNOSTIC_CODES,
 	error,
 	has_location,
 	is_component_like_element,
@@ -21,6 +20,7 @@ import {
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	setLocation,
+	TSRX_ERRORS,
 } from '@tsrx/core';
 
 /**
@@ -138,12 +138,11 @@ const vue_platform = {
 		},
 		validateComponentAwait(await_expression, _component, ctx) {
 			error(
-				'`await` is not yet supported in Vue TSRX components.',
+				TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED(ctx.platform.name),
 				ctx?.filename ?? null,
 				await_expression,
 				ctx?.errors,
 				ctx?.comments,
-				DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED,
 			);
 		},
 		injectImports(program, ctx) {

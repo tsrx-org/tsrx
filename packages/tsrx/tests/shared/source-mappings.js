@@ -2,7 +2,7 @@ import { isCodeActionsEnabled, isDiagnosticsEnabled } from '@volar/language-core
 import { SourceMap } from '@volar/source-map';
 import ts from 'typescript';
 import { assert, describe, expect, it } from 'vitest';
-import { builders as b, identifier_to_jsx_name, parseModule } from '@tsrx/core';
+import { builders as b, DIAGNOSTIC_CODES, identifier_to_jsx_name, parseModule } from '@tsrx/core';
 import { assert_type } from './node-types.js';
 import {
 	build_line_offsets,
@@ -13,6 +13,50 @@ import {
 } from '../../src/source-map-utils.js';
 
 /** @import { CodeMapping, SourceMappingHarness } from '../../types/index' */
+
+/** @type {Map<string, ts.SourceFile | undefined>} */
+const lib_source_files = new Map();
+
+/**
+ * TypeScript's errors on a compiled module, with the ES library and without
+ * resolving its imports (TS2307), which the targets' packages provide.
+ *
+ * @param {string} code
+ * @returns {string[]}
+ */
+function output_type_errors(code) {
+	const file_name = '/output.tsx';
+	/** @type {ts.CompilerOptions} */
+	const options = {
+		target: ts.ScriptTarget.ESNext,
+		module: ts.ModuleKind.ESNext,
+		moduleResolution: ts.ModuleResolutionKind.Bundler,
+		lib: ['lib.esnext.d.ts'],
+		jsx: ts.JsxEmit.Preserve,
+		types: [],
+		noEmit: true,
+	};
+	const host = ts.createCompilerHost(options);
+	const get_source_file = host.getSourceFile.bind(host);
+	const file_exists = host.fileExists.bind(host);
+	host.fileExists = (name) => name === file_name || file_exists(name);
+	host.getSourceFile = (name, version, on_error, create) => {
+		if (name === file_name) {
+			return ts.createSourceFile(name, code, version, true, ts.ScriptKind.TSX);
+		}
+		if (!lib_source_files.has(name)) {
+			lib_source_files.set(name, get_source_file(name, version, on_error, create));
+		}
+		return lib_source_files.get(name);
+	};
+	return ts
+		.getPreEmitDiagnostics(ts.createProgram([file_name], options, host))
+		.filter((diagnostic) => diagnostic.file?.fileName === file_name && diagnostic.code !== 2307)
+		.map(
+			(diagnostic) =>
+				`TS${diagnostic.code} ${ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')}`,
+		);
+}
 
 /**
  * Tests for `compile_to_volar_mappings`
@@ -184,6 +228,70 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 			it.each(Object.keys(SOURCES))('rejects an await in the %s', (label) => {
 				expect(() => compile(SOURCES[label], 'App.tsrx')).toThrow(/await/);
 			});
+
+			/** @type {Record<string, string>} */
+			const REJECTED_SOURCES = {
+				...SOURCES,
+				'@catch body': `export async function App() @{
+	@try {
+		<p>ok</p>
+	} @catch (error) {
+		<p>{await load(error)}</p>
+	}
+}`,
+				'@for await directive': `export async function App({ items }: { items: AsyncIterable<number> }) @{
+	<ul>
+		@for await (const item of items) {
+			<li>{item}</li>
+		}
+	</ul>
+}`,
+				'component body and @for body': `export async function App({ items }: { items: number[] }) @{
+	const first = await load(0);
+	<ul>
+		@for (const item of items) {
+			<li title={await load(item)}>{first}</li>
+		}
+	</ul>
+}`,
+			};
+
+			// #980: the target's own component check and the shared check for an
+			// `await` in a callback reported the same `await` twice.
+			it.each(Object.keys(REJECTED_SOURCES))(
+				'reports each await in the %s once, with one message',
+				(label) => {
+					const source = REJECTED_SOURCES[label];
+					const awaits = [...source.matchAll(/\bawait\b/g)].map((match) => match.index);
+					for (const { errors } of [
+						compile(source, 'App.tsrx', { collect: true }),
+						compile_to_volar_mappings(source, 'App.tsrx'),
+					]) {
+						// The first `await` keyword in each error's range; a `@for await`
+						// error may start at the directive.
+						expect(
+							errors.map((error) => [
+								error.code,
+								(error.pos ?? 0) + source.slice(error.pos, error.end).indexOf('await'),
+							]),
+						).toEqual(awaits.map((start) => [DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED, start]));
+						expect(new Set(errors.map((error) => error.message)).size).toBe(1);
+					}
+				},
+			);
+
+			it.each([
+				['an event handler', '<button onClick={async () => { await load(0); }} />'],
+				['a body function', '<>{(async () => { await load(0); })()}</>'],
+				[
+					'an @for body handler',
+					'<ul>@for (const item of [1]) { <li onClick={async () => { await load(item); }} /> }</ul>',
+				],
+			])('allows an await in a nested function in %s', (_label, output) => {
+				const source = `export function App() @{ ${output} }`;
+				expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
+				expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
+			});
 			return;
 		}
 
@@ -234,6 +342,201 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 			expect(result.errors.map((error) => [error.message, error.pos])).toEqual([
 				[expect.stringContaining('does not support `await` here'), source.indexOf('await')],
 			]);
+		});
+	});
+
+	describe(`[${name}] await outside the output's children and statement bodies (#1201)`, () => {
+		/** @type {Record<string, string>} */
+		const SOURCES = {
+			'root element attribute': `export async function App(props: { p: Promise<string> }) @{
+	<div title={await props.p} />
+}`,
+			'root element attribute before a child': `export async function App(props: { p: Promise<string> }) @{
+	<div title={await props.p}>{await props.p}</div>
+}`,
+			'if test': `export async function App(props: { p: Promise<boolean> }) @{
+	let label = 'no';
+	if (await props.p) {
+		label = 'yes';
+	}
+	<div>{label}</div>
+}`,
+			'switch discriminant and case test': `export async function App(props: { p: Promise<number> }) @{
+	let label = 'other';
+	switch (await props.p) {
+		case await props.p:
+			label = 'same';
+	}
+	<div>{label}</div>
+}`,
+			'catch parameter default': `export async function App(props: { p: Promise<string> }) @{
+	let label = 'ok';
+	try {
+		label = String(props.p);
+	} catch ({ message = await props.p }) {
+		label = message;
+	}
+	<div>{label}</div>
+}`,
+			'await using declaration': `declare const res0: AsyncDisposable & { name: string };
+export async function App() @{
+	await using res = res0;
+	<div>{res.name}</div>
+}`,
+			'for (await using …) head': `export async function App(props: { items: (AsyncDisposable & { name: string })[] }) @{
+	let name = '';
+	for (await using res of props.items) {
+		name = res.name;
+	}
+	<div>{name}</div>
+}`,
+		};
+
+		/**
+		 * An `await using` in a part of the template that renders through a
+		 * generated callback, which a target with async components awaits.
+		 * @type {Record<string, string>}
+		 */
+		const CALLBACK_SOURCES = {
+			'@for body': `export async function App(props: { items: (AsyncDisposable & { name: string })[] }) @{
+	<ul>
+		@for (const item of props.items) {
+			await using res = item;
+			<li>{res.name}</li>
+		}
+	</ul>
+}`,
+			'@if body with setup statements': `export async function App(props: { ok: boolean; res: AsyncDisposable & { name: string } }) @{
+	<div>
+		@if (props.ok) {
+			await using res = props.res;
+			<p>{res.name}</p>
+		}
+	</div>
+}`,
+			'@switch case': `export async function App(props: { kind: number; res: AsyncDisposable & { name: string } }) @{
+	<div>
+		@switch (props.kind) {
+			@case 1: {
+				await using res = props.res;
+				<p>{res.name}</p>
+			}
+		}
+	</div>
+}`,
+			'@for body, as a for (await using …) head': `export async function App(props: { rows: (AsyncDisposable & { name: string })[][] }) @{
+	<ul>
+		@for (const row of props.rows) {
+			let name = '';
+			for (await using res of row) {
+				name = res.name;
+			}
+			<li>{name}</li>
+		}
+	</ul>
+}`,
+		};
+
+		// A callback the target calls itself can't be awaited.
+		const CATCH_SOURCE = `export async function App(props: { res: AsyncDisposable & { name: string } }) @{
+	@try {
+		<p>ok</p>
+	} @catch (error) {
+		await using res = props.res;
+		<p>{res.name}</p>
+	}
+}`;
+
+		if (rejectsComponentAwait) {
+			/** @type {Record<string, string>} */
+			const REJECTED_SOURCES = {
+				...SOURCES,
+				...Object.fromEntries(
+					Object.entries(CALLBACK_SOURCES).map(([label, source]) => [
+						`await using in the ${label}`,
+						source,
+					]),
+				),
+				'await using in the @catch body': CATCH_SOURCE,
+			};
+			it.each(Object.keys(REJECTED_SOURCES))('reports each await in the %s once', (label) => {
+				const source = REJECTED_SOURCES[label];
+				const awaits = [...source.matchAll(/\bawait\b/g)].map((match) => match.index);
+				expect(() => compile(source, 'App.tsrx')).toThrow(
+					expect.objectContaining({
+						code: DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED,
+						pos: awaits[0],
+					}),
+				);
+				for (const { errors } of [
+					compile(source, 'App.tsrx', { collect: true }),
+					compile_to_volar_mappings(source, 'App.tsrx'),
+				]) {
+					expect(errors.map((error) => [error.code, error.pos])).toEqual(
+						awaits.map((start) => [DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED, start]),
+					);
+				}
+			});
+
+			it.each([
+				['a root element attribute', '<div onClick={async () => { await load(0); }} />'],
+				[
+					'an if test',
+					`@{
+	let label = 'no';
+	if ((async () => await load(0))()) label = 'yes';
+	<div>{label}</div>
+}`,
+				],
+				[
+					'an await using declaration',
+					`@{
+	const read = async (res: AsyncDisposable) => {
+		await using held = res;
+	};
+	<div>{String(read)}</div>
+}`,
+				],
+			])('allows an await in a nested function in %s', (_label, output) => {
+				const source = `export function App() @{ ${output} }`;
+				expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
+				expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
+			});
+			return;
+		}
+
+		it.each(Object.keys(SOURCES))('accepts the await in the %s', (label) => {
+			const source = SOURCES[label];
+			const result = compile(source, 'App.tsrx', { collect: true });
+			expect(result.errors).toEqual([]);
+			expect(result.code).toContain('async function App');
+			expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
+		});
+
+		// The callback holding it wasn't made async, so its output failed with
+		// TS2852: 'await using' statements are only allowed within async functions.
+		it.each(Object.keys(CALLBACK_SOURCES))(
+			'makes the callback holding an await using in the %s async',
+			(label) => {
+				const source = CALLBACK_SOURCES[label];
+				for (const result of [
+					compile(source, 'App.tsrx', { collect: true }),
+					compile_to_volar_mappings(source, 'App.tsrx'),
+				]) {
+					expect(result.errors).toEqual([]);
+					expect(output_type_errors(result.code), result.code).toEqual([]);
+				}
+			},
+		);
+
+		it('reports an await using in a @catch body like an await', () => {
+			const error = expect.objectContaining({
+				code: DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED,
+				pos: CATCH_SOURCE.indexOf('await'),
+			});
+			expect(() => compile(CATCH_SOURCE, 'App.tsrx')).toThrow(error);
+			expect(compile(CATCH_SOURCE, 'App.tsrx', { collect: true }).errors).toEqual([error]);
+			expect(compile_to_volar_mappings(CATCH_SOURCE, 'App.tsrx').errors).toEqual([error]);
 		});
 	});
 

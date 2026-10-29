@@ -39,10 +39,7 @@ import {
 	jsx_id as build_jsx_id,
 } from '../../utils/builders.js';
 import * as b from '../../utils/builders.js';
-import {
-	find_first_top_level_await,
-	find_first_top_level_await_in_tsrx_function_body,
-} from '../await.js';
+import { find_top_level_awaits } from '../await.js';
 import { prepare_stylesheet_for_render, is_style_element } from '../scoping.js';
 import { prepare_style_scopes, type_only_style } from './style-scopes.js';
 import {
@@ -65,7 +62,6 @@ import {
 	is_function_node,
 	is_function_or_class_node as is_function_or_class_boundary,
 	is_template_directive as is_jsx_control_flow_expression,
-	node_children,
 	render_children,
 } from '../../utils/ast.js';
 
@@ -577,12 +573,14 @@ export function createJsxTransform(platform) {
 			type_only_style_anchors,
 			helper_state: null,
 			available_bindings: new Map(),
+			rejected_awaits: new Set(),
 			filename: filename ?? null,
 			source,
 			collect,
 			errors: collect ? options?.errors : undefined,
 			comments: options?.comments,
 			typeOnly: !!options?.typeOnly,
+			uses_server_directive: has_use_server_directive(ast),
 			// Opt-in navigation origins (see stamp_directive_origin). OFF by
 			// default, and the editor pipeline never asks for it: with the flag
 			// clear the emitted code, the source map and therefore every Volar
@@ -1612,22 +1610,40 @@ function transform_native_tsrx_function(node, { next, state }, { nativeBody = fa
  * @returns {void}
  */
 function validate_native_await(node, transform_context) {
-	const await_node = find_native_await(node);
-	if (!await_node) {
+	const awaits = find_native_awaits(node);
+	if (!awaits.length) {
 		return;
 	}
 
+	const { validation } = transform_context.platform;
 	const validator = transform_context.platform.hooks?.validateComponentAwait;
 	if (validator) {
-		validator(await_node, node, transform_context, false, transform_context.source || '');
+		const uses_server_directive =
+			validation.scanUseServerDirectiveForAwaitWithCustomValidator !== false &&
+			transform_context.uses_server_directive;
+		for (const await_node of awaits) {
+			const reported = transform_context.errors?.length ?? 0;
+			validator(
+				await_node,
+				node,
+				transform_context,
+				uses_server_directive,
+				transform_context.source || '',
+			);
+			// The shared checks for an `await` the output can't hold skip one the
+			// target has reported, so each `await` is reported once.
+			if ((transform_context.errors?.length ?? 0) > reported) {
+				transform_context.rejected_awaits.add(/** @type {number} */ (await_node.start));
+			}
+		}
 		return;
 	}
 
-	if (transform_context.platform.validation.requireUseServerForAwait) {
+	if (validation.requireUseServerForAwait && !transform_context.uses_server_directive) {
 		error(
 			TSRX_ERRORS.TOP_LEVEL_AWAIT_USE_SERVER,
 			transform_context.filename,
-			await_node,
+			awaits[0],
 			transform_context.errors,
 			transform_context.comments,
 		);
@@ -1635,88 +1651,39 @@ function validate_native_await(node, transform_context) {
 }
 
 /**
+ * Whether the module's directive prologue holds `"use server"`. The parser
+ * marks only the leading string statements as directives, so a string after
+ * another statement, or a parenthesized one, doesn't count.
+ *
+ * @param {AST.Program} program
+ * @returns {boolean}
+ */
+function has_use_server_directive(program) {
+	return program.body.some(
+		(statement) =>
+			statement.type === 'ExpressionStatement' &&
+			'directive' in statement &&
+			statement.directive === 'use server',
+	);
+}
+
+/**
+ * The `await`s of a component outside nested functions, in source order. Any of
+ * them makes the component async, so this walks the whole body, statement
+ * headers and the output's attributes included.
+ *
  * @param {AST.Function} node
- * @returns {AST.TSRXAwaitNode | null}
+ * @returns {AST.TSRXAwaitNode[]}
  */
-function find_native_await(node) {
-	if (
-		node.type === 'ArrowFunctionExpression' &&
-		node.body?.type !== 'BlockStatement' &&
-		node_contains_native_tsrx_template(node.body)
-	) {
-		return find_first_top_level_await(node.body, false);
+function find_native_awaits(node) {
+	if (node.body?.type !== 'BlockStatement' && !node_contains_native_tsrx_template(node.body)) {
+		return [];
 	}
-
-	if (node.body?.type === 'JSXCodeBlock') {
-		return find_native_await_in_list(get_raw_jsx_code_block_body_nodes(node.body));
-	}
-
-	const body = node.body?.type === 'BlockStatement' ? node.body.body || [] : [];
-	return find_native_await_in_list(body);
-}
-
-/**
- * @param {AST.Node[]} statements
- * @returns {AST.TSRXAwaitNode | null}
- */
-function find_native_await_in_list(statements) {
-	for (const statement of statements) {
-		const found = find_native_await_in_statement(statement);
-		if (found) return found;
-	}
-	return null;
-}
-
-/**
- * @param {AST.Node | null | undefined} statement
- * @returns {AST.TSRXAwaitNode | null}
- */
-function find_native_await_in_statement(statement) {
-	if (!statement) return null;
-
-	if (statement.type === 'ReturnStatement' && is_native_tsrx_node(statement.argument)) {
-		return find_first_top_level_await_in_tsrx_function_body(node_children(statement.argument));
-	}
-
-	if (
-		statement.type === 'ReturnStatement' &&
-		node_contains_native_tsrx_template(statement.argument)
-	) {
-		return find_first_top_level_await(statement.argument, false);
-	}
-
-	if (is_function_or_class_boundary(statement)) {
-		return null;
-	}
-
-	if (statement.type === 'BlockStatement') {
-		return find_native_await_in_list(statement.body || []);
-	}
-
-	if (is_if_control_node(statement)) {
-		return (
-			find_native_await_in_statement(statement.consequent) ||
-			find_native_await_in_statement(statement.alternate)
-		);
-	}
-
-	if (is_switch_control_node(statement)) {
-		for (const switch_case of statement.cases || []) {
-			const found = find_native_await_in_list(switch_case.consequent || []);
-			if (found) return found;
-		}
-		return null;
-	}
-
-	if (is_try_control_node(statement)) {
-		return (
-			find_native_await_in_statement(statement.block) ||
-			find_native_await_in_statement(statement.handler?.body) ||
-			find_native_await_in_statement(statement.finalizer)
-		);
-	}
-
-	return find_first_top_level_await(statement, false);
+	// The walk visits an element's children before its attributes. Strict mode
+	// throws at the first `await` reported, so report them in source order.
+	return find_top_level_awaits(node.body).sort(
+		(a, b) => /** @type {number} */ (a.start) - /** @type {number} */ (b.start),
+	);
 }
 
 /**
@@ -2661,7 +2628,9 @@ function suspend_generated_closures(program, transform_context) {
 
 		/** @type {AST.Node | null} */
 		let first_await =
-			node.type === 'AwaitExpression' || (node.type === 'ForOfStatement' && node.await)
+			node.type === 'AwaitExpression' ||
+			(node.type === 'ForOfStatement' && node.await) ||
+			(node.type === 'VariableDeclaration' && node.kind === 'await using')
 				? node
 				: null;
 		/** @type {AST.Node | null} */
@@ -2717,7 +2686,9 @@ function suspend_generated_closures(program, transform_context) {
 			if (make_async) {
 				if (awaitable) {
 					fn = { ...fn, async: true };
-				} else {
+				} else if (
+					!transform_context.rejected_awaits.has(/** @type {number} */ (first_await?.start))
+				) {
 					error(
 						TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED(transform_context.platform.name),
 						transform_context.filename,
@@ -3619,14 +3590,6 @@ function get_jsx_code_block_body_nodes(node, transform_context) {
 }
 
 /**
- * @param {AST.JSXCodeBlock} node
- * @returns {AST.Node[]}
- */
-function get_raw_jsx_code_block_body_nodes(node) {
-	return [...(node.body || []), ...(node.render ? [node.render] : [])];
-}
-
-/**
  * @param {AST.Node | null | undefined} node
  * @returns {node is AST.NativeTSRXNode}
  */
@@ -4331,7 +4294,7 @@ function is_loop_statement(node) {
  * @returns {ESTreeJSX.JSXExpressionContainer}
  */
 function for_of_statement_to_jsx_child(node, transform_context) {
-	if (node.await) {
+	if (node.await && !transform_context.rejected_awaits.has(/** @type {number} */ (node.start))) {
 		error(
 			TSRX_ERRORS.TARGET_FOR_AWAIT_UNSUPPORTED(transform_context.platform.name),
 			transform_context.filename,

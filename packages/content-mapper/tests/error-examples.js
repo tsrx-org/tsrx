@@ -292,6 +292,17 @@ export const ERROR_EXAMPLES = [
 	},
 	{
 		error: TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED,
+		source: `export async function C(props: { load: (error: unknown) => Promise<string> }) @{
+	@try {
+		<p>ok</p>
+	} @catch (error) {
+		<p>{await props.load(error)}</p>
+	}
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED,
 		source: `export async function C(props: { items: Promise<string>[] }) @{
 	<ul>
 		@for (const item of props.items) {
@@ -826,6 +837,10 @@ export const WITHOUT_EXAMPLE = new Map(
 			'Only for a target that sets `requireUseServerForAwait` without an `await` validator of its own; Solid, Vue and Hono DOM report their own error first (#887).',
 		],
 		[
+			TSRX_ERRORS.HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED,
+			"Only the Hono DOM compiler reports it, and this package doesn't depend on `@tsrx/hono`; its tests check it.",
+		],
+		[
 			TSRX_ERRORS.RESERVED_IDENTIFIER_PREFIX,
 			"Raised only through core helpers that targets outside this repository call (Ripple, Octane); none of this repository's targets reaches it.",
 		],
@@ -870,7 +885,6 @@ export const KNOWN_PROBLEMS = new Map(
 		[TSRX_ERRORS.MISMATCHED_CLOSING_TAG, { problem: 'lost', issue: 978 }],
 		[TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT, { problem: 'twice', issue: 981 }],
 		[TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT, { problem: 'twice', issue: 981 }],
-		[TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED, { problem: 'twice', issue: 980 }],
 		// The statement's keywords have no mapping, so the directive covers only `A`.
 		[TS_ERRORS.NESTED_GLOBAL_EXPORT, { problem: 'typescript', issue: 979 }],
 		// Printed as `<T>() => 1`, which TypeScript reads as JSX in the generated TSX:
