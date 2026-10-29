@@ -615,3 +615,83 @@ describe('type arguments where a tag could start (#545, #578)', () => {
 		]);
 	});
 });
+
+describe('text right before a tag, after a directive (#1270)', () => {
+	const directives = [
+		'@if (ok) {<b />}',
+		'@if (ok) {<b />} @else {<u />}',
+		'@for (const y of xs) {<b />}',
+		'@for (const y of xs) {<b />} @empty {<u />}',
+		'@switch (x) { @case 1: {<b />} }',
+		'@try {<b />} @catch (e) {<u />}',
+		'@try {<b />} @pending {<u />}',
+	];
+	/** @type {Array<(children: string) => string>} */
+	const positions = [
+		(children) => `export function A({ ok, xs, x }) @{\n\t<p>${children}</p>\n}`,
+		(children) =>
+			`export function A({ ok, xs, x }) @{\n\t@if (ok) {\n\t\t<p>${children}</p>\n\t}\n}`,
+		(children) =>
+			`export function A({ ok, xs, x }) {\n\treturn <div>{ok && <p>${children}</p>}</div>;\n}`,
+		(children) => `export const e = <p>${children}</p>;`,
+		(children) =>
+			`export function A({ ok, xs, x }) @{\n\t<div>{ok ? <p>${children}</p> : null}</div>\n}`,
+	];
+
+	/**
+	 * The children of the first `<p>` in `value`: text values, element names,
+	 * and `Value` for a directive or a `<z />`.
+	 * @param {unknown} value
+	 * @returns {string[] | undefined}
+	 */
+	function children_of(value) {
+		if (!value || typeof value !== 'object') return undefined;
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				const found = children_of(item);
+				if (found) return found;
+			}
+			return undefined;
+		}
+		const node = /** @type {Record<string, any>} */ (value);
+		if (node.type === 'JSXElement' && node.openingElement.name.name === 'p') {
+			return node.children.map((/** @type {Record<string, any>} */ child) => {
+				if (child.type === 'JSXText') return JSON.stringify(child.value);
+				if (is_directive(child.type)) return 'Value';
+				if (child.type === 'JSXElement') {
+					const name = child.openingElement.name.name;
+					return name === 'z' ? 'Value' : `<${name}>`;
+				}
+				return child.type;
+			});
+		}
+		for (const key of Object.keys(node)) {
+			if (key === 'loc' || key === 'metadata') continue;
+			const found = children_of(node[key]);
+			if (found) return found;
+		}
+		return undefined;
+	}
+
+	it('reads the text as text, as after an element', async () => {
+		const children = [
+			'%sa<br />',
+			'%s, write to me@x.dev<br />',
+			'%s a<br />',
+			'%s1<br />',
+			'%s\n\t\ta<i>z</i>',
+			'%s<i />x<em />',
+			'%s<i />, write to me@x.dev<em />',
+		];
+		const sources = positions.flatMap((position) =>
+			children.flatMap((child) =>
+				['<z />', ...directives].map((value) => position(child.replace('%s', value))),
+			),
+		);
+		const programs = await parse_all(sources);
+		const step = directives.length + 1;
+		expect(programs.map(children_of)).toEqual(
+			sources.map((_, index) => children_of(programs[index - (index % step)])),
+		);
+	});
+});

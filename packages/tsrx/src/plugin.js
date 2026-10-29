@@ -1806,6 +1806,10 @@ export function TSRXPlugin(config) {
 				this.lineStart = index - endLoc.column;
 				this.pos = index;
 				this.#popTemplateLiteralTokenContext();
+				// The token after text is read as after text, even when the text's first
+				// token was read as code (after a directive's `}`), so the `<` of
+				// `}a<br />` starts a tag, not type arguments after `a`.
+				this.type = tstt.jsxText;
 				this.next();
 
 				if (comments.length > 0) {

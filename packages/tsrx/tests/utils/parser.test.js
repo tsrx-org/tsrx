@@ -12379,12 +12379,14 @@ describe('JSX whitespace in template text', () => {
 
 	it('reports a token that text cannot start at instead of reading it forever', async () => {
 		// The `<` of `<T,>` reads as a type parameter list's, where the text of
-		// `<b>` would start, so the text reads nothing
+		// `<b>` would start, so the text reads nothing. Read again after it, the
+		// `<` starts a tag, as in TSX, and the error is at the `,`, where
+		// TypeScript reports it (#1270).
 		const source = 'const f = <b><T,>() => 1;';
 		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
 
 		for (const outcome of outcomes) {
-			expect(outcome).toEqual(thrown(TS_ERRORS.UNEXPECTED_TOKEN, 13));
+			expect(outcome).toEqual(thrown(TS_ERRORS.UNEXPECTED_TOKEN, 15));
 		}
 	});
 
@@ -12445,7 +12447,7 @@ describe('syntax errors in an element that is a value', () => {
 		[
 			'text that reads nothing in a setup statement',
 			'export function App() @{\n\tconst f = <b><T,>() => 1;\n\t<main />\n}',
-			[TS_ERRORS.UNEXPECTED_TOKEN, '2:14'],
+			[TS_ERRORS.UNEXPECTED_TOKEN, '2:16'],
 		],
 	];
 
