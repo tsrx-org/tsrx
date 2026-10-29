@@ -1,10 +1,16 @@
 /** @import { CompileError } from '../../types/index' */
 
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { parse } from 'acorn';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { get_upstream_error, TS_ERRORS, TSRX_ERRORS } from '../../src/diagnostics.js';
+import {
+	get_upstream_error,
+	TS_ERRORS,
+	TS_SYNTAX_ERROR_CODES,
+	TSRX_ERRORS,
+} from '../../src/diagnostics.js';
 import { analyzeTsrx, DIAGNOSTIC_CODES, parseModule } from '../../src/index.js';
 
 /**
@@ -490,25 +496,20 @@ let E;`,
 			TS_ERRORS.ARGUMENT_NAME_CLASH,
 			TS_ERRORS.KEYWORD_ESCAPE_SEQUENCE,
 			TS_ERRORS.AWAIT_USING_OUTSIDE_ASYNC,
-			TS_ERRORS.FOR_OF_LET,
 			TS_ERRORS.FOR_IN_INITIALIZER,
 			TS_ERRORS.FOR_OF_INITIALIZER,
 			TS_ERRORS.MISSING_CATCH_OR_FINALLY,
 			TS_ERRORS.MULTIPLE_DEFAULT_CLAUSES,
 			TS_ERRORS.USE_STRICT_NON_SIMPLE_PARAMETERS,
 			// acorn-typescript's, for the code TSRX reads in its place
-			TS_ERRORS.UNTERMINATED_JSX_CONTENTS,
-			TS_ERRORS.JSX_UNESCAPED_GREATER_THAN,
 			TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE,
 			TS_ERRORS.ONLY_STRING_ATTRIBUTE_VALUE,
 			TS_ERRORS.TYPE_IMPORT_ARGUMENT,
 			TS_ERRORS.UNEXPECTED_LEADING_DECORATOR,
 			TS_ERRORS.TYPE_CAST_IN_PARAMETER,
 			TS_ERRORS.UNEXPECTED_TYPE_ANNOTATION,
-			TS_ERRORS.SIGNATURE_PARAMETER_NAME,
 			TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER,
 			// TSRX's own
-			TS_ERRORS.DECLARED_IN_SCOPE,
 			TS_ERRORS.JSX_ATTRIBUTE_VALUE,
 		]);
 		// Codes that TypeScript added after the version installed here, as
@@ -540,6 +541,73 @@ let E;`,
 		}
 	});
 
+	it('tells the TypeScript codes TypeScript reports as syntax errors from the others', () => {
+		// Where TypeScript 5.9 raises each code, from the source file each use of
+		// its diagnostic is in, which its bundle marks with a
+		// `// src/compiler/<file>` comment: a code its scanner or parser raises is
+		// a syntax error, and one only its binder or checker raises is a grammar
+		// or semantic error (#1264).
+		const bundle = readFileSync(createRequire(import.meta.url).resolve('typescript'), 'utf8');
+		/** @type {Array<[number, string]>} */
+		const files = [...bundle.matchAll(/^\/\/ src\/compiler\/([\w/.-]+)$/gm)].map((match) => [
+			/** @type {number} */ (match.index),
+			match[1],
+		]);
+		/** @param {number} position */
+		const file_at = (position) => files.findLast(([start]) => start < position)?.[1];
+		const diagnostics = /** @type {{ Diagnostics: Record<string, { code: number }> }} */ (
+			/** @type {unknown} */ (ts)
+		).Diagnostics;
+		/** @type {Map<string, Set<string | undefined>>} */
+		const raised_in = new Map();
+		for (const match of bundle.matchAll(/\bDiagnostics\.(\w+)\b/g)) {
+			const diagnostic = diagnostics[match[1]];
+			if (!diagnostic) continue;
+			const code = `TS${diagnostic.code}`;
+			const in_files = raised_in.get(code) ?? new Set();
+			raised_in.set(code, in_files);
+			in_files.add(file_at(/** @type {number} */ (match.index)));
+		}
+		// TypeScript's checker reports these, though its scanner or parser raises
+		// them too: a regular expression's mistakes, which the checker scans the
+		// literal again to report (`checkGrammarRegularExpressionLiteral`), a line
+		// break after `throw` (TS1142) and a private name outside a class
+		// (TS18016), where TSRX raises them.
+		const checker = new Set([
+			'TS1142',
+			'TS18016',
+			'TS1499',
+			'TS1500',
+			'TS1504',
+			'TS1506',
+			'TS1507',
+			'TS1508',
+			'TS1510',
+			'TS1512',
+			'TS1514',
+			'TS1515',
+			'TS1516',
+			'TS1517',
+			'TS1518',
+			'TS1526',
+			'TS1529',
+			'TS1532',
+			'TS1535',
+		]);
+		const source = readFileSync(new URL('../../src/diagnostics.js', import.meta.url), 'utf8');
+		const codes = new Set([...source.matchAll(/'(TS\d+)'/g)].map((match) => match[1]));
+		const syntax = new Set(TS_SYNTAX_ERROR_CODES);
+		for (const code of codes) {
+			const in_files = raised_in.get(code) ?? new Set();
+			const raised_by_parser = in_files.has('scanner.ts') || in_files.has('parser.ts');
+			expect(syntax.has(code), `${code}: ${[...in_files].join(', ')}`).toBe(
+				raised_by_parser && !checker.has(code),
+			);
+		}
+		// The check finds the scanner's, the parser's and the checker's codes.
+		expect(syntax.has('TS1005') && !syntax.has('TS1114') && codes.has('TS1114')).toBe(true);
+	});
+
 	it('gives each TSRX error a TSRX code', () => {
 		const codes = new Set(Object.values(DIAGNOSTIC_CODES));
 		for (const [name, entry] of Object.entries(TSRX_ERRORS)) {
@@ -552,8 +620,6 @@ let E;`,
 		// catch first.
 		/** @type {Array<[code: string, message: string]>} */
 		const cases = [
-			['TS1382', 'Unexpected token `>`. Did you mean `&gt;` or `{">"}`?'],
-			['TS1381', 'Unexpected token `}`. Did you mean `&rbrace;` or `{"}"}`?'],
 			[
 				'TS7059',
 				'This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression instead.',
@@ -578,9 +644,13 @@ let E;`,
 		const typescript_codes = new Set(
 			[...diagnostics.matchAll(/'(TS\d+)'/g)].map(([, code]) => code),
 		);
-		for (const code of [...Object.values(DIAGNOSTIC_CODES), ...typescript_codes]) {
+		const codes = [...Object.values(DIAGNOSTIC_CODES), ...typescript_codes];
+		for (const code of codes) {
 			expect(specification, code).toMatch(new RegExp(`['"]${code}  `));
 		}
+		// And it lists no other code (#964).
+		const listed = [...specification.matchAll(/['"]((?:TSRX|TS)\d+) {2}/g)].map(([, code]) => code);
+		expect(listed.filter((code) => !codes.includes(code))).toEqual([]);
 	});
 
 	it('are exported without the compiler as @tsrx/core/diagnostics', async () => {
