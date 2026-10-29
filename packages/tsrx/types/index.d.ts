@@ -112,7 +112,8 @@ export interface CompileOptions {
 	collect?: boolean;
 	/**
 	 * Enables editor-oriented parser recovery such as incomplete markup.
-	 * Also collects non-fatal errors as `collect`.
+	 * Also collects non-fatal errors as `collect` does, including the unclosed
+	 * or mismatched tags it recovers (TSRX1001, TSRX1002).
 	 */
 	loose?: boolean;
 }
@@ -151,6 +152,12 @@ export interface BaseNodeMetaData {
 	tsrx_generated_wrapper?: boolean;
 	native_tsrx_template_block?: boolean;
 	dynamicElement?: boolean;
+	/**
+	 * A closing tag the type-only output adds to a tag that loose recovery found
+	 * unclosed. It has no source position, and the closing-tag mappings around it
+	 * leave it out.
+	 */
+	recovered?: boolean;
 	templateMode?: 'script' | 'template';
 	script_only?: boolean;
 	/** A synthetic wrapper for a nested `@{ @{ ... } }` code-block render chain. */

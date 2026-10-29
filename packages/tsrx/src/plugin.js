@@ -4082,11 +4082,13 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * An unclosed or mismatched tag (TSRX1001, TSRX1002). A strict parse
+			 * throws it. Collecting records it, and so does a loose parse (the
+			 * editor's), which also goes on to recover the markup.
 			 * @param {number} position
 			 * @param {Diagnostic} message
 			 */
 			#report_broken_markup_error(position, message) {
-				if (this.#loose) return;
 				if (this.#collect) {
 					this.#report_recoverable_error(position, message);
 					return;

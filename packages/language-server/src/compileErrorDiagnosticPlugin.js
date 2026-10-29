@@ -209,6 +209,18 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 				}
 			}
 		}
+
+		if (!start || !end) {
+			// No mapping covers the error, such as the `}` that ends a template
+			// with an unclosed tag in it (TSRX1001). The editor shows a diagnostic
+			// only where the generated code maps back, so show it on the nearest
+			// code before it that does, not at the start of the file.
+			const nearest = nearest_reported_range(virtualCode, start_offset);
+			if (nearest) {
+				start = document.positionAt(nearest[0]);
+				end = document.positionAt(nearest[1]);
+			}
+		}
 	}
 
 	if (!start || !end) {
@@ -226,6 +238,56 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 		// to the generic marker.
 		code: error.code ?? 'tsrx-usage-error',
 	};
+}
+
+/**
+ * The generated range of the source token that reports diagnostics and ends
+ * nearest before `offset`, or starts nearest after it when none ends before
+ * it. Of tokens the same distance away, the shortest.
+ * @param {TSRXVirtualCodeInstance} virtualCode
+ * @param {number} offset
+ * @returns {[number, number] | null}
+ */
+function nearest_reported_range(virtualCode, offset) {
+	/** @type {{ range: [number, number], distance: number, length: number } | null} */
+	let before = null;
+	/** @type {{ range: [number, number], distance: number, length: number } | null} */
+	let after = null;
+	for (const mapping of virtualCode.mappings ?? []) {
+		if (!mapping.data?.verification) continue;
+		for (let i = 0; i < mapping.sourceOffsets.length; i++) {
+			const source_start = mapping.sourceOffsets[i];
+			const length = mapping.lengths[i];
+			if (length === 0) continue;
+			const generated_start = mapping.generatedOffsets[i];
+			const ends_before = source_start + length <= offset;
+			if (!ends_before && source_start < offset) continue;
+			const candidate = {
+				/** @type {[number, number]} */
+				range: [generated_start, generated_start + (mapping.generatedLengths?.[i] ?? length)],
+				distance: ends_before ? offset - (source_start + length) : source_start - offset,
+				length,
+			};
+			if (ends_before) {
+				if (is_nearer(candidate, before)) before = candidate;
+			} else if (is_nearer(candidate, after)) {
+				after = candidate;
+			}
+		}
+	}
+	return (before ?? after)?.range ?? null;
+}
+
+/**
+ * @param {{ distance: number, length: number }} candidate
+ * @param {{ distance: number, length: number } | null} best
+ */
+function is_nearer(candidate, best) {
+	return (
+		!best ||
+		candidate.distance < best.distance ||
+		(candidate.distance === best.distance && candidate.length < best.length)
+	);
 }
 
 /**
