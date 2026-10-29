@@ -9,6 +9,8 @@ import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
 import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
+import { runStaticContainersRuntimeTests } from '@tsrx/core/test-harness/runtime/static-containers';
+import { StaticContainers } from '@tsrx/core/test-harness/runtime/static-containers-components.tsrx';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
@@ -1099,6 +1101,24 @@ function StaticHoistInBranchApp() @{
 	</>
 }
 
+// ── Static hoisting: static JSX in expression containers (#81) ──
+
+function StaticContainersHost() @{
+	const [on, setOn] = useState(false);
+	const [count, setCount] = useState(0);
+
+	<>
+		<StaticContainers {on} {count} />
+		<StaticContainers {on} {count} />
+		<button className="static-containers-toggle" onClick={() => setOn(!on)}>
+			{'toggle'}
+		</button>
+		<button className="static-containers-inc" onClick={() => setCount(count + 1)}>
+			{'inc'}
+		</button>
+	</>
+}
+
 // ── Static hoisting: fully static component ──
 
 function FullyStaticApp() @{
@@ -1783,3 +1803,4 @@ runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
 runGeneratorSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();
+runStaticContainersRuntimeTests({ Host: StaticContainersHost, click });
