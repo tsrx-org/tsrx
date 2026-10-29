@@ -1050,11 +1050,12 @@ export function SpecificationPage() @{
 								line, or right after a tag, an expression container, or a block, and the comment
 								runs to the end of the line, a closing tag on it included. A
 								<code class="inline-code">{'//'}</code>
-								that touches other text, as in
-								<code class="inline-code">{'https://example.com'}</code>
+								that touches other text or a block comment, as in
+								<code class="inline-code">{'https://example.com'}</code>,
+								<code class="inline-code">{'a//b'}</code>
 								or
-								<code class="inline-code">{'a//b'}</code>, is text. So is a character reference or a
-								string expression: only
+								<code class="inline-code">{'/* c */// c'}</code>, is text. So is a character
+								reference or a string expression: only
 								<code class="inline-code">{'/*'}</code>
 								and
 								<code class="inline-code">{'//'}</code>

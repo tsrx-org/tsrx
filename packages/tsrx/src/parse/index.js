@@ -224,6 +224,8 @@ export function createParser(...plugins) {
 		const output_comments = collect ? options?.comments : undefined;
 
 		const { onComment, add_comments } = get_comment_handlers(source, comments);
+		/** @type {Array<[number, number]>} */
+		const text_comments = [];
 		/** @type {AST.Program} */
 		let ast;
 
@@ -267,10 +269,15 @@ export function createParser(...plugins) {
 					collect,
 					errors: collect ? (options?.errors ?? []) : undefined,
 					loose: options?.loose || false,
+					textComments: text_comments,
 				},
 			});
 		} catch (e) {
 			throw e;
+		}
+
+		if (text_comments.length > 0) {
+			drop_text_comments(comments, text_comments);
 		}
 
 		if (output_comments) {
@@ -287,6 +294,28 @@ export function createParser(...plugins) {
 
 		return ast;
 	};
+}
+
+/**
+ * Drop the line comments the tokenizer recorded where template text reads
+ * text (`/* c *\/// c` after a directive, see `#readSkippedTemplateText` in
+ * the plugin), and the second copy of each comment the template read again,
+ * keeping the comments in source order.
+ * @param {AST.CommentWithLocation[]} comments
+ * @param {Array<[number, number]>} text_comments
+ */
+function drop_text_comments(comments, text_comments) {
+	const text = new Set(text_comments.map(([start, end]) => `${start}:${end}`));
+	/** @type {Set<number>} */
+	const seen = new Set();
+	const kept = comments.filter((comment) => {
+		if (text.has(`${comment.start}:${comment.end}`) || seen.has(comment.start)) return false;
+		seen.add(comment.start);
+		return true;
+	});
+	kept.sort((a, b) => a.start - b.start);
+	comments.length = 0;
+	comments.push(...kept);
 }
 
 /**

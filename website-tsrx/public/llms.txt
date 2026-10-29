@@ -681,7 +681,8 @@ text on each side of it follows JSX's whitespace rules on its own.
 - `//` starts a comment after whitespace, at the start of a line, or right after
   a tag, `{…}` or block, and runs to the end of the line, a closing tag
   included: `<p>a // note</p>` on one line leaves `<p>` unclosed.
-- `//` touching other text (`https://example.com`, `a//b`) is text.
+- `//` touching other text or a block comment (`https://example.com`, `a//b`,
+  `/* c */// c`) is text.
 
 This differs from TSX, where `/* … */` and `//` lines between children are text.
 To show comment-like text, write the first `/` as `&#47;` or use a string:

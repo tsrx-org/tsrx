@@ -13538,6 +13538,77 @@ describe('comments between template children', () => {
 		}
 	});
 
+	// A `//` that touches a block comment is text (`/* c */// c`), as it is
+	// without a directive, also where the tokenizer skipped it as code: right
+	// after a directive's block, or after a child that follows one (#1278).
+	it('reads a `//` right after a block comment as text after a directive too', () => {
+		const directives = [
+			'@if (ok) {<i />}',
+			'@for (const y of xs) {<i />} @empty {<u />}',
+			'@switch (k) { @case 1: {<i />} }',
+			'@try {<i />} @catch (e) {<u />}',
+		];
+		const children = [
+			'%s<b />/* c */// c\n\t',
+			'%s/* c */// c\n\t',
+			'%s /* c */// c\n\t',
+			'%s\n\t\t/* c */// c\n\t',
+			'%s<b />/* a */// b /* c */\n\t',
+			'%s<b />/* c */// c\n\t\ttext\n\t',
+			'%s<b />/* c */// c\n\t\t{x}\n\t',
+			'%s<b />\n\t\t/* c */\n\t\t// d\n\t',
+			// The next line isn't code: it must not be read as a token.
+			'%s/* c */// c\n\t\t1st prize\n\t',
+			"%s/* c */// c\n\t\t's fine\n\t",
+			'%s/* c */// c\n\t\t"open\n\t',
+			// JavaScript whitespace and line terminators before the comment.
+			'%s\u2028/* c */// c\n\t\t1st prize\n\t',
+			'%s\u00a0/* c */// c\n\t\t1st prize\n\t',
+		];
+		/** @type {Array<(children: string) => string>} */
+		const positions = [
+			(content) => `function App() @{\n\t<p>${content}</p>\n}`,
+			(content) => `function App() @{\n\t<main>{ok && <p>${content}</p>}</main>\n}`,
+			(content) => `const e = <p>${content}</p>;`,
+		];
+		/** @type {Array<[string, (children: string) => string]>} */
+		const cases = positions.flatMap((position) =>
+			children.map(
+				(child) => /** @type {[string, (children: string) => string]} */ ([child, position]),
+			),
+		);
+		// An unclosed `<p>` in a container, whose next line is the container's `}`.
+		for (const child of [
+			'%s/* c */// c\n',
+			'%s<b />/* c */// c\n',
+			'%s<b />/* a */// b /* c */\n',
+		]) {
+			cases.push([child, (content) => `const e = <main>{ok && <p>${content}}</main>;`]);
+		}
+		for (const [child, position] of cases) {
+			for (const options of modes) {
+				/**
+				 * The children of the `<p>`, and the source of each comment.
+				 * @param {string} value
+				 */
+				const outline = (value) => {
+					const source = position(child.replace('%s', value));
+					/** @type {AST.CommentWithLocation[]} */
+					const comments = [];
+					const element = paragraph(source, { ...options, collect: true, comments });
+					return {
+						children: read(element).map((part) => (/^JSX\w+Expression$/.test(part) ? '<z>' : part)),
+						comments: comments.map((comment) => source.slice(comment.start, comment.end)),
+					};
+				};
+				const expected = outline('<z />');
+				for (const directive of directives) {
+					expect(outline(directive), `${directive} in ${position(child)}`).toEqual(expected);
+				}
+			}
+		}
+	});
+
 	// A line comment ends at the first line terminator, whichever it is, and
 	// the children after it are read as usual.
 	it.each(LINE_TERMINATORS)('ends a line comment at %s', (_name, newline) => {
