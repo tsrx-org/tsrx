@@ -17,6 +17,7 @@ runSharedSourceMappingTests({
 	compile_to_volar_mappings,
 	name: 'vue',
 	rejectsComponentAwait: true,
+	rejectsTemplateYield: true,
 });
 
 describe('@tsrx/vue direct runtime imports', () => {

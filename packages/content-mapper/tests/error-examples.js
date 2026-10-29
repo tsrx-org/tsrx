@@ -314,6 +314,14 @@ export const ERROR_EXAMPLES = [
 `,
 	},
 	{
+		error: TSRX_ERRORS.TARGET_TEMPLATE_YIELD_UNSUPPORTED,
+		source: `export function* field(bag: { title: string }): Generator<string, unknown, string> {
+	return <input title={yield bag.title} />;
+}
+`,
+		compiler: '@tsrx/solid',
+	},
+	{
 		error: TSRX_ERRORS.TARGET_SUPER_UNSUPPORTED,
 		source: `class B {
 	m() {

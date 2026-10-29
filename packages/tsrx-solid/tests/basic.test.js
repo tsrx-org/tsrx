@@ -16,6 +16,7 @@ runSharedSourceMappingTests({
 	compile_to_volar_mappings,
 	name: 'solid',
 	rejectsComponentAwait: true,
+	rejectsTemplateYield: true,
 });
 
 describe('@tsrx/solid direct runtime imports', () => {

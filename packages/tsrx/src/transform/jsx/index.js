@@ -842,6 +842,7 @@ export function createJsxTransform(platform) {
 			lower_remaining_jsx_code_blocks(expanded, transform_context),
 			transform_context,
 		);
+		report_deferred_template_yields(final_program, transform_context);
 		inject_dynamic_import(final_program, transform_context);
 		if (platform.hooks?.injectImports) {
 			platform.hooks.injectImports(final_program, transform_context, suspense_source);
@@ -2580,6 +2581,77 @@ function lower_remaining_jsx_code_blocks(node, transform_context, seen = new Set
 }
 
 /**
+ * Reports the `yield`s a target's own JSX compiler would move out of their
+ * generator (TSRX2034): Solid's and Vue's compilers evaluate some template
+ * expressions in effects, getters or callbacks, where a `yield` no longer
+ * runs in its generator and the compiled output fails to parse. The target's
+ * `findDeferredTemplateYields` hook finds them in the final output, which is
+ * what that compiler reads. A `yield*` that delegates to a generator made from
+ * a generated closure stands for the authored `yield`s inside it.
+ *
+ * @param {AST.Program} program
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function report_deferred_template_yields(program, transform_context) {
+	const find = transform_context.platform.hooks?.findDeferredTemplateYields;
+	if (!find || (transform_context.source && !transform_context.source.includes('yield'))) {
+		return;
+	}
+
+	/** @type {Map<number, AST.YieldExpression>} */
+	const authored = new Map();
+	/** @param {AST.YieldExpression} node */
+	const add = (node) => {
+		const generator = /** @type {AST.FunctionExpression | undefined} */ (
+			node.metadata?.generated_delegation
+		);
+		if (generator) {
+			for (const inner of find_own_yields(generator.body)) add(inner);
+		} else if (typeof node.start === 'number') {
+			authored.set(node.start, node);
+		}
+	};
+	for (const node of find(program, transform_context)) add(node);
+
+	// A `yield` with an error of its own already, or one inside it, needs no
+	// second: TSRX2022 for a callback the target calls itself, TSRX2023 for a
+	// `super` that the lowering for the `yield` can't read.
+	const reported = (transform_context.errors ?? []).map((error) => error.pos ?? -1);
+	for (const node of [...authored.values()]
+		.filter(
+			(node) =>
+				!reported.some(
+					(pos) =>
+						pos >= /** @type {number} */ (node.start) && pos < /** @type {number} */ (node.end),
+				),
+		)
+		.sort((a, b) => /** @type {number} */ (a.start) - /** @type {number} */ (b.start))) {
+		error(
+			TSRX_ERRORS.TARGET_TEMPLATE_YIELD_UNSUPPORTED(transform_context.platform.name),
+			transform_context.filename,
+			node,
+			transform_context.errors,
+			transform_context.comments,
+		);
+	}
+}
+
+/**
+ * The `yield`s in `node` that belong to the function around it.
+ *
+ * @param {AST.Node} node
+ * @param {AST.YieldExpression[]} [found]
+ * @returns {AST.YieldExpression[]}
+ */
+function find_own_yields(node, found = []) {
+	if (is_function_node(node)) return found;
+	if (node.type === 'YieldExpression') found.push(node);
+	for (const child of child_nodes(node)) find_own_yields(child, found);
+	return found;
+}
+
+/**
  * An authored `await` or `yield` is valid where it was written, but lowering
  * can move it into a closure the compiler generated: the IIFE of a `@switch`,
  * of a branch with setup statements, or of an element whose spread and `ref`
@@ -2755,8 +2827,15 @@ function suspend_generated_closures(program, transform_context) {
 			if (made_generator.has(call.callee)) {
 				// `yield*` also settles a delegated async generator, so a closure
 				// made both async and a generator is not awaited as well.
+				const delegation = b.yield(delegate_to_generated_generator(call, transform_context), true);
+				// It stands for the authored `yield`s in the generated generator,
+				// which is where a later check reports them.
+				delegation.metadata = {
+					...delegation.metadata,
+					generated_delegation: /** @type {AST.FunctionExpression} */ (call.callee),
+				};
 				result = {
-					node: b.yield(delegate_to_generated_generator(call, transform_context), true),
+					node: delegation,
 					first_await: made_async.get(call.callee) ?? first_await,
 					first_yield: made_generator.get(call.callee) ?? first_yield,
 				};
