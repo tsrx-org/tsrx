@@ -2725,9 +2725,9 @@ function reads_tag_binding(node) {
  * import is hoisted. A tag that starts with `this`, `super`, a local binding,
  * a binding that can be reassigned (`let`, `var`, an enum, a namespace, an
  * import alias), a binding the module assigns anywhere (`Tag = Replacement`
- * after `function Tag() {}`), or a name the module does not bind stays at
- * render time, since a static would keep the value it read when the module
- * loaded.
+ * after `function Tag() {}`, or any binding once it calls `eval` directly),
+ * or a name the module does not bind stays at render time, since a static
+ * would keep the value it read when the module loaded.
  *
  * @param {AST.Program} program
  * @param {AST.Program} [parsed] the program before the passes that can move
@@ -2771,7 +2771,7 @@ function collect_hoistable_tags(program, parsed = program) {
 	const is_hoistable = (name, member, position) => {
 		if (name === 'this' || name === 'super') return false;
 		if (scopes.some((names) => names.has(name))) return false;
-		if (assigned.has(name)) return false;
+		if (!assigned || assigned.has(name)) return false;
 		const binding = module_bindings.get(name);
 		switch (binding?.kind) {
 			case 'import':
@@ -2810,16 +2810,18 @@ function collect_hoistable_tags(program, parsed = program) {
 /**
  * The names `program` assigns anywhere: the targets of an assignment, an
  * update, or a `for … in`/`for … of` head without a declaration, through
- * destructuring and type assertions. Read from the program as parsed: the
- * style pass moves the `ref` of a `<style>` in a nested root to the root's
- * metadata, which `child_nodes` skips.
+ * destructuring and type assertions. `null` when the program calls `eval`
+ * directly, which can assign any name it can see. Read from the program as
+ * parsed: the style pass moves the `ref` of a `<style>` in a nested root to
+ * the root's metadata, which `child_nodes` skips.
  *
  * @param {AST.Program} program
- * @returns {Set<string>}
+ * @returns {Set<string> | null}
  */
 function collect_assigned_names(program) {
 	/** @type {Set<string>} */
 	const names = new Set();
+	let calls_eval = false;
 	/** @param {AST.Node} node */
 	const visit = (node) => {
 		if (node.type === 'AssignmentExpression') add_target_names(node.left, names);
@@ -2829,11 +2831,35 @@ function collect_assigned_names(program) {
 			node.left.type !== 'VariableDeclaration'
 		) {
 			add_target_names(node.left, names);
+		} else if (node.type === 'CallExpression') {
+			const callee = unwrap_expression(node.callee);
+			if (callee.type === 'Identifier' && callee.name === 'eval') calls_eval = true;
 		}
 		for (const child of child_nodes(node)) visit(child);
 	};
 	visit(program);
-	return names;
+	return calls_eval ? null : names;
+}
+
+/**
+ * `node` without the parentheses and type assertions around it.
+ *
+ * @param {AST.Node} node
+ * @returns {AST.Node}
+ */
+function unwrap_expression(node) {
+	/** @type {any} */
+	let current = node;
+	while (
+		current.type === 'ParenthesizedExpression' ||
+		current.type === 'TSAsExpression' ||
+		current.type === 'TSSatisfiesExpression' ||
+		current.type === 'TSNonNullExpression' ||
+		current.type === 'TSTypeAssertion'
+	) {
+		current = current.expression;
+	}
+	return current;
 }
 
 /**
@@ -2842,7 +2868,7 @@ function collect_assigned_names(program) {
  */
 function add_target_names(target, names) {
 	/** @type {any} */
-	const node = target;
+	const node = target && unwrap_expression(target);
 	switch (node?.type) {
 		case 'Identifier':
 			names.add(node.name);
@@ -2863,13 +2889,6 @@ function add_target_names(target, names) {
 			break;
 		case 'AssignmentPattern':
 			add_target_names(node.left, names);
-			break;
-		case 'ParenthesizedExpression':
-		case 'TSAsExpression':
-		case 'TSSatisfiesExpression':
-		case 'TSNonNullExpression':
-		case 'TSTypeAssertion':
-			add_target_names(node.expression, names);
 			break;
 	}
 }
