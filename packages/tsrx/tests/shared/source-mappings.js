@@ -2549,6 +2549,28 @@ function App() @{
 		};
 
 		const SOURCES = {
+			'static JSX in expression containers': `function Card(props: { header: unknown; children?: unknown }) {
+	return null;
+}
+export function Plain(props: { on: boolean; n: number }) {
+	return <>
+		{<b>child</b>}
+		<div title={String(props.n)}>
+			{<i>in a dynamic element</i>}
+			<Card header={<h1>header</h1>}>{<span>card child</span>}</Card>
+			{props.on ? <em>on</em> : <s>off</s>}
+			{props.on && <u>and</u>}
+			{<p title={String(props.n)}>{<small>nested</small>}</p>}
+			{<><a>one</a><a>two</a></>}
+		</div>
+	</>;
+}
+export function Template(props: { on: boolean }) @{
+	<div title={String(props.on)}>
+		{<b>child</b>}
+		{props.on ? <em>on</em> : <s>off</s>}
+	</div>
+}`,
 			'component with template control flow': `function App(props: { items: string[] }) @{
 	<div>
 		@if (props.items.length) {

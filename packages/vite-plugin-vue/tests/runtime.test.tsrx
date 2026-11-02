@@ -976,6 +976,118 @@ function SuspenseErrorApp() @{
 	}
 }
 
+// ── Static output rendered more than once ──
+// Vapor JSX evaluates to DOM nodes, so each use of a static subtree needs a
+// node of its own.
+
+function StaticBadge() @{
+	<p class="static-badge">
+		<b>{'plain'}</b>
+	</p>
+}
+
+function StaticTwiceApp() @{
+	<div class="static-twice">
+		<StaticBadge />
+		<StaticBadge />
+	</div>
+}
+
+function StaticThriceApp() @{
+	<div class="static-thrice">
+		<StaticBadge />
+		<StaticBadge />
+		<StaticBadge />
+	</div>
+}
+
+function StaticHeaderPanel() @{
+	const open = ref(false);
+	<>
+		<h3 class="static-panel-title">{'Panel'}</h3>
+		<button class="static-panel-toggle" onClick={() => (open.value = !open.value)}>
+			{open.value ? 'open' : 'closed'}
+		</button>
+	</>
+}
+
+function StaticPanelsApp() @{
+	<>
+		<div class="static-panel">
+			<StaticHeaderPanel />
+		</div>
+		<div class="static-panel">
+			<StaticHeaderPanel />
+		</div>
+	</>
+}
+
+function StaticInIfApp() @{
+	const show = ref(false);
+	<div class="static-if">
+		<StaticBadge />
+		@if (show.value) {
+			<>
+				<StaticBadge />
+				<span class="static-if-text">
+					<i>{'shown'}</i>
+				</span>
+			</>
+		}
+		<button class="static-if-toggle" onClick={() => (show.value = !show.value)}>
+			{'toggle'}
+		</button>
+	</div>
+}
+
+function StaticInForApp() @{
+	const items = ref(['a', 'b', 'c']);
+	<div class="static-for">
+		<ul>
+			@for (const item of items.value) {
+				<li class="static-for-row">
+					<StaticBadge />
+					<em>{'row'}</em>
+				</li>
+			}
+		</ul>
+		<button class="static-for-add" onClick={() => (items.value = [...items.value, 'd'])}>
+			{'add'}
+		</button>
+	</div>
+}
+
+function StaticForBodyApp() @{
+	<ul class="static-for-body">
+		@for (const item of ['a', 'b', 'c']) {
+			<li class="static-for-body-row">
+				<b>{'row'}</b>
+			</li>
+		}
+	</ul>
+}
+
+function StaticIfBranch(props: { show: boolean }) @{
+	<div class="static-if-branch">
+		@if (props.show) {
+			<p class="static-if-branch-yes">
+				<b>{'yes'}</b>
+			</p>
+		} @else {
+			<p class="static-if-branch-no">{'no'}</p>
+		}
+	</div>
+}
+
+function StaticIfBranchesApp() @{
+	<>
+		<StaticIfBranch show={true} />
+		<StaticIfBranch show={true} />
+		<StaticIfBranch show={false} />
+		<StaticIfBranch show={false} />
+	</>
+}
+
 describe('tsrx-vue runtime', () => {
 	beforeEach(() => {
 		const original_console_error = console.error;
@@ -1566,6 +1678,75 @@ describe('tsrx-vue runtime', () => {
 		expect(text('.async-caught')).toBe('caught: pending catch boom');
 		expect(container.querySelector('.async-pending')).toBeNull();
 		expect(container.querySelector('.async-resolved')).toBeNull();
+	});
+
+	// ── Static output rendered more than once ──
+
+	it('renders a static component used twice as two nodes', async () => {
+		await render(StaticTwiceApp);
+		expect(texts('.static-twice > .static-badge')).toEqual(['plain', 'plain']);
+	});
+
+	it('renders a static component used three times as three nodes', async () => {
+		await render(StaticThriceApp);
+		expect(texts('.static-thrice > .static-badge')).toEqual(['plain', 'plain', 'plain']);
+	});
+
+	it('gives each instance of a component its own static output', async () => {
+		await render(StaticPanelsApp);
+		const panels = container.querySelectorAll('.static-panel');
+		expect(panels.length).toBe(2);
+		for (const panel of panels) {
+			expect(panel.querySelector('.static-panel-title')?.textContent).toBe('Panel');
+			expect(panel.querySelector('.static-panel-toggle')?.textContent).toBe('closed');
+		}
+	});
+
+	it('renders a static component inside @if beside one outside it', async () => {
+		const badge_count = () => container.querySelectorAll('.static-if .static-badge').length;
+		await render(StaticInIfApp);
+		expect(badge_count()).toBe(1);
+		expect(container.querySelector('.static-if-text')).toBeNull();
+
+		await click('.static-if-toggle');
+		expect(badge_count()).toBe(2);
+		expect(text('.static-if-text i')).toBe('shown');
+
+		await click('.static-if-toggle');
+		expect(badge_count()).toBe(1);
+		expect(container.querySelector('.static-if-text')).toBeNull();
+
+		await click('.static-if-toggle');
+		expect(badge_count()).toBe(2);
+		expect(text('.static-if-text i')).toBe('shown');
+	});
+
+	it('renders a static component in every @for row', async () => {
+		const expect_rows = (count: number) => {
+			const rows = container.querySelectorAll('.static-for-row');
+			expect(rows.length).toBe(count);
+			for (const row of rows) {
+				expect(row.querySelector('.static-badge')?.textContent).toBe('plain');
+				expect(row.querySelector('em')?.textContent).toBe('row');
+			}
+		};
+		await render(StaticInForApp);
+		expect_rows(3);
+
+		await click('.static-for-add');
+		expect_rows(4);
+	});
+
+	it('renders a static @for body in every row', async () => {
+		await render(StaticForBodyApp);
+		expect(texts('.static-for-body > .static-for-body-row')).toEqual(['row', 'row', 'row']);
+	});
+
+	it('renders the static @if branch of each instance', async () => {
+		await render(StaticIfBranchesApp);
+		const branches = container.querySelectorAll('.static-if-branch');
+		expect(branches.length).toBe(4);
+		expect([...branches].map((branch) => branch.textContent)).toEqual(['yes', 'yes', 'no', 'no']);
 	});
 });
 

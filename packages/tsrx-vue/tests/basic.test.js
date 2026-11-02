@@ -522,8 +522,8 @@ describe('@tsrx/vue basic', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toContain("const App__static1 = <div>{'Visible'}</div>;");
-		expect(code).toContain('return visible ? App__static1 : null;');
+		expect(code).toContain("return visible ? <div>{'Visible'}</div> : null;");
+		expect(code).not.toContain('__static');
 		expect(code).not.toContain('not yet supported in Vue TSRX');
 	});
 
@@ -539,9 +539,26 @@ describe('@tsrx/vue basic', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toContain("<div>{'Visible'}</div>");
-		expect(code).toContain("<div>{'Hidden'}</div>");
-		expect(code).toMatch(/return visible \? App__static\d+ : App__static\d+;/);
+		expect(code).toContain("return visible ? <div>{'Visible'}</div> : <div>{'Hidden'}</div>;");
+		expect(code).not.toContain('__static');
+	});
+
+	it('leaves a static @for row in place', () => {
+		// Vapor JSX evaluates to a DOM node, so a module-level static would be one
+		// node that every row moves (#1240).
+		const { code } = compile(
+			`function App(props: { items: string[] }) @{
+				<ul>
+					@for (const item of props.items) {
+						<li>{'row'}</li>
+					}
+				</ul>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain("{(item) => <li>{'row'}</li>}");
+		expect(code).not.toContain('__static');
 	});
 
 	it('rejects return statements inside template @if branches', () => {
@@ -858,7 +875,7 @@ describe('@tsrx/vue basic', () => {
 
 		expect(code.match(/<span>\{'Failed'\}<\/span>/g)).toHaveLength(1);
 		expect(code).toMatch(
-			/const App__StatementBodyHook1 = defineVaporComponent\(function App__StatementBodyHook1\(\) \{\n\treturn App__static\d+;/,
+			/const App__StatementBodyHook1 = defineVaporComponent\(function App__StatementBodyHook1\(\) \{\n\treturn <span>\{'Failed'\}<\/span>;/,
 		);
 		expect(code).toContain('fallback={(error, _reset) => {');
 		expect(code.match(/return <App__StatementBodyHook1 \/>;/g)).toHaveLength(2);
