@@ -4530,6 +4530,21 @@ export function App() @{
 				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nfor (Tag of [Replacement]);\nexport const result = () => App().props.children[0].type === Replacement;',
 				true,
 			],
+			[
+				'a function declaration a for…in head assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nfor (Tag in { replacement: 1 });\nexport const result = () => App().props.children[0].type;',
+				'replacement',
+			],
+			[
+				'a function declaration another function updates',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport function bump() {\n\tTag++;\n}\nexport const result = () => {\n\tbump();\n\treturn Number.isNaN(App().props.children[0].type);\n};',
+				true,
+			],
+			[
+				'a function declaration assigned by object destructuring with a default',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n({ Tag = Replacement } = {});\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
 		])(
 			'leaves JSX whose tag reads %s in place, reading it at render time',
 			(_case, source, expected) => {
