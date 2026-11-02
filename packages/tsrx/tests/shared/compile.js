@@ -4657,9 +4657,19 @@ export function App() @{
 				'conditional',
 			],
 			[
+				"an import property the module assigns through a conditional's alternate",
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(false ? ({} as any) : ui).Button = 'alternate';\nexport const result = () => App().props.children[0].type;",
+				'alternate',
+			],
+			[
 				'an import property the module assigns through a logical expression',
 				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(ui || ({} as any)).Button = 'either';\nexport const result = () => App().props.children[0].type;",
 				'either',
+			],
+			[
+				"an import property the module assigns through a logical expression's right operand",
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(({} as any) && ui).Button = 'right';\nexport const result = () => App().props.children[0].type;",
+				'right',
 			],
 			[
 				'an import property the module assigns through an assignment',
