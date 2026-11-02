@@ -9,7 +9,6 @@ import {
 	addJsxSetupDeclaration,
 	clone_ast_node,
 	clone_identifier,
-	contains_component_jsx,
 	createHookSafeHelper,
 	create_generated_identifier,
 	createJsxTransform,
@@ -74,8 +73,11 @@ const vue_platform = {
 			ctx.needs_define_vapor_component = true;
 			return wrap_helper_component(helper_fn, helper_id, source_node);
 		},
-		canHoistStaticNode(node) {
-			return !contains_component_jsx(node);
+		canHoistStaticNode() {
+			// Vapor JSX evaluates to a DOM node, so a module-level static would be
+			// one node that every use moves into place. vue-jsx-vapor already
+			// hoists the parsed template and clones it per evaluation.
+			return false;
 		},
 		preprocessElementAttributes(attrs, ctx) {
 			return preprocess_ref_attributes(attrs, ctx);

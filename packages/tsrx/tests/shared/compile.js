@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { DIAGNOSTIC_CODES, TS_ERRORS, TSRX_ERRORS } from '../../src/diagnostics.js';
@@ -2233,6 +2234,10 @@ export function runSharedCompileTests({
 		componentClassAttrName === 'className'
 			? '{ className }: { className?: string }'
 			: '{ class: className }: { class?: string }';
+	// Solid and Vue Vapor JSX evaluates to a DOM node, so these targets leave
+	// static JSX in place rather than hoist one node that every use would
+	// share (#1236, #1240).
+	const hoistsStaticJsx = !['solid', 'vue'].includes(name);
 
 	runSharedPlatformTests({ compile, name });
 
@@ -3634,10 +3639,17 @@ export function App() @{
 			);
 
 			expect(code).not.toContain('return;');
-			expect(code).toMatch(/function FragmentReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
-			expect(code).toMatch(/function TsxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
-			expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
-			expect(code).toMatch(/function TsrxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
+			if (hoistsStaticJsx) {
+				expect(code).toMatch(/function FragmentReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
+				expect(code).toMatch(/function TsxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
+				expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
+				expect(code).toMatch(/function TsrxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
+			} else {
+				expect(code).not.toContain('__static');
+				expect(code).toMatch(/function FragmentReturn\(\) {\s+return <><div>fragment<\/div><\/>;/);
+				expect(code).toMatch(/function TsxReturn\(\) {\s+return <><div>tsx<\/div><\/>;/);
+				expect(code).toMatch(/function TsrxReturn\(\) {\s+return <><div>tsrx<\/div><\/>;/);
+			}
 		});
 
 		it('keeps special fragment returns inside component prop arrow functions', () => {
@@ -3661,12 +3673,19 @@ export function App() @{
 			);
 
 			expect(code).not.toContain('return;');
-			expect(code).toMatch(/const App__static\d+ = <div[^>]*>fragment<\/div>;/);
-			expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsx<\/div>;/);
-			expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
-			expect(code).toMatch(/fragment={\(\) => {\s+return <>{App__static\d+}<\/>;/);
-			expect(code).toMatch(/tsx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
-			expect(code).toMatch(/tsrx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
+			if (hoistsStaticJsx) {
+				expect(code).toMatch(/const App__static\d+ = <div[^>]*>fragment<\/div>;/);
+				expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsx<\/div>;/);
+				expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
+				expect(code).toMatch(/fragment={\(\) => {\s+return <>{App__static\d+}<\/>;/);
+				expect(code).toMatch(/tsx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
+				expect(code).toMatch(/tsrx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
+			} else {
+				expect(code).not.toContain('__static');
+				expect(code).toMatch(/fragment={\(\) => {\s+return <><div>fragment<\/div><\/>;/);
+				expect(code).toMatch(/tsx={\(\) => {\s+return <><div>tsx<\/div><\/>;/);
+				expect(code).toMatch(/tsrx={\(\) => {\s+return <><div>tsrx<\/div><\/>;/);
+			}
 		});
 
 		it('parses semicolon-less JSX returns in component prop arrow functions', () => {
@@ -4302,10 +4321,10 @@ export function App() @{
 			).toThrow();
 		});
 
-		it.runIf(['react', 'preact', 'solid'].includes(name))(
+		it.runIf(['react', 'preact'].includes(name))(
 			`[${name}] hoists direct JSX text and static expression sibling combo to a static`,
 			() => {
-				// React/Preact/Solid hoist child-free static JSX to a module-level
+				// React/Preact hoist child-free static JSX to a module-level
 				// constant so the element identity is stable across renders.
 				const { code } = compile(
 					`export function App() @{
@@ -4320,6 +4339,794 @@ export function App() @{
 				expect(code).not.toContain('== null');
 			},
 		);
+
+		it.runIf(name === 'solid')(
+			`[${name}] leaves direct JSX text and static expression sibling combo in place`,
+			() => {
+				const { code } = compile(
+					`export function App() @{
+						<b>hello {'hello'}</b>
+					}`,
+					'App.tsrx',
+				);
+				expect(code).toContain("return <b>hello {'hello'}</b>;");
+				expect(code).not.toContain('__static');
+				expect(code).not.toContain('== null');
+			},
+		);
+	});
+
+	describe(`[${name}] static JSX hoisting`, () => {
+		/**
+		 * Runs compiled output with JSX elements as `{ type, props }` objects
+		 * and returns what its `result` export returns. An import is a string
+		 * that names it when it is capitalized, and otherwise a function that
+		 * returns its argument; a default import is a module of the same kind.
+		 * `modules` replaces the modules it names.
+		 * @param {string} code
+		 * @param {Record<string, object>} [modules]
+		 * @returns {unknown}
+		 */
+		function run_result(code, modules = {}) {
+			const { outputText } = ts.transpileModule(code, {
+				fileName: 'App.tsx',
+				compilerOptions: {
+					jsx: ts.JsxEmit.React,
+					jsxFactory: 'h',
+					jsxFragmentFactory: 'Fragment',
+					module: ts.ModuleKind.CommonJS,
+					target: ts.ScriptTarget.ES2022,
+				},
+			});
+			/** @param {unknown} type @param {object | null} props @param {unknown[]} children */
+			const h = (type, props, ...children) => ({
+				type,
+				props: { ...props, ...(children.length ? { children } : {}) },
+			});
+			/**
+			 * @param {string} specifier
+			 * @returns {object}
+			 */
+			const require = (specifier) =>
+				modules[specifier] ??
+				new Proxy(
+					{},
+					{
+						get: (_, key) =>
+							key === '__esModule'
+								? true
+								: key === 'default'
+									? require(`${specifier}.default`)
+									: typeof key === 'string' && /^[A-Z]/.test(key)
+										? `${specifier}.${key}`
+										: (/** @type {unknown} */ value) => value,
+					},
+				);
+			const module = { exports: /** @type {Record<string, any>} */ ({}) };
+			new Function('h', 'Fragment', 'require', 'module', 'exports', outputText)(
+				h,
+				'Fragment',
+				require,
+				module,
+				module.exports,
+			);
+			return module.exports.result();
+		}
+
+		it.each([
+			[
+				'the class it is in (#204)',
+				"class Screen {\n\tstatic Tag = 'div';\n\trender() {\n\t\treturn <Screen.Tag>hello</Screen.Tag>;\n\t}\n}\nexport const result = () => new Screen().render().type;",
+				'div',
+			],
+			[
+				'the class expression it is in',
+				"const C = class Screen {\n\tstatic Tag = 'nce';\n\trender() {\n\t\treturn <Screen.Tag>hello</Screen.Tag>;\n\t}\n};\nexport const result = () => new C().render().type;",
+				'nce',
+			],
+			[
+				'this',
+				"class Screen {\n\tTag = 'span';\n\trender() {\n\t\treturn <this.Tag>hello</this.Tag>;\n\t}\n}\nexport const result = () => new Screen().render().type;",
+				'span',
+			],
+			[
+				'super',
+				"const base = { Tag: 'sup' };\nconst screen = {\n\t__proto__: base,\n\trender() {\n\t\treturn <super.Tag>hello</super.Tag>;\n\t},\n};\nexport const result = () => screen.render().type;",
+				'sup',
+			],
+			[
+				'a const declared after it',
+				"function App() {\n\treturn <div><Late>hello</Late></div>;\n}\nconst Late = 'late';\nexport const result = () => App().props.children[0].type;",
+				'late',
+			],
+			[
+				'a binding of the static block it is in',
+				"let made: any;\nclass Holder {\n\tstatic {\n\t\tconst Tag = 'sb';\n\t\tfunction App() {\n\t\t\treturn <Tag>hello</Tag>;\n\t\t}\n\t\tmade = App;\n\t}\n}\nexport const result = () => made().type;",
+				'sb',
+			],
+			[
+				'a var assigned after it',
+				"var Tag: any;\nfunction App() {\n\treturn <Tag>hello</Tag>;\n}\nTag = 'va';\nexport const result = () => App().type;",
+				'va',
+			],
+			[
+				'a let reassigned after it',
+				"let Tag: any = 'first';\nfunction App() {\n\treturn <Tag>hello</Tag>;\n}\nTag = 'second';\nexport const result = () => App().type;",
+				'second',
+			],
+			[
+				'a property assigned to a function declaration after it',
+				"function App() {\n\treturn <Menu.Item>hello</Menu.Item>;\n}\nfunction Menu() {}\nMenu.Item = 'mi';\nexport const result = () => App().type;",
+				'mi',
+			],
+			[
+				'a property assigned to a const declared before it',
+				"const Menu = (props: any) => props;\nfunction App() {\n\treturn <div><Menu.Item>hello</Menu.Item></div>;\n}\n(Menu as any).Item = 'ci';\nexport const result = () => App().props.children[0].type;",
+				'ci',
+			],
+			[
+				'a property that Object.assign gives a const declared before it',
+				"function MenuRoot(props: any) {\n\treturn props;\n}\nconst Menu = Object.assign(MenuRoot, {});\nfunction App() {\n\treturn <div><Menu.Item>hello</Menu.Item></div>;\n}\nObject.assign(Menu, { Item: 'oa' });\nexport const result = () => App().props.children[0].type;",
+				'oa',
+			],
+			[
+				'a property assigned to a class declared before it',
+				"class Menu {}\nfunction App() {\n\treturn <Menu.Item>hello</Menu.Item>;\n}\n(Menu as any).Item = 'cp';\nexport const result = () => App().type;",
+				'cp',
+			],
+			[
+				'an import alias declared after it',
+				"namespace N {\n\texport const Tag = 'ie';\n}\nfunction App() {\n\treturn <Tag>hello</Tag>;\n}\nimport Tag = N.Tag;\nexport const result = () => App().type;",
+				'ie',
+			],
+			[
+				'a const of an earlier case in its switch (#1160)',
+				"const Tag: any = 'outer';\nfunction make(k: number): any {\n\tswitch (k) {\n\t\tcase 1:\n\t\t\tconst Tag: any = 'case';\n\t\tcase 2:\n\t\t\treturn <Tag>ok</Tag>;\n\t}\n}\nexport const result = () => make(1).type;",
+				'case',
+			],
+			[
+				'the inner name of its dotted namespace (#1160)',
+				"const Foo = 'outer';\nnamespace Outer {\n\texport function Foo() {\n\t\treturn null;\n\t}\n}\nnamespace Outer.Foo {\n\texport function App() {\n\t\treturn <Foo>ok</Foo>;\n\t}\n}\nexport const result = () => Outer.Foo.App().type === Outer.Foo;",
+				true,
+			],
+			[
+				'an export of another declaration of its namespace',
+				"const Foo = 'outer';\nnamespace Outer {\n\texport function Foo() {\n\t\treturn null;\n\t}\n}\nnamespace Outer {\n\texport function App() {\n\t\treturn <Foo>ok</Foo>;\n\t}\n}\nexport const result = () => Outer.App().type === Outer.Foo;",
+				true,
+			],
+			[
+				'a middle name of its dotted namespace',
+				"const Foo = 'outer';\nnamespace Outer {\n\texport function Foo() {\n\t\treturn null;\n\t}\n}\nnamespace Outer.Foo.Bar {\n\texport function App() {\n\t\treturn <Foo>ok</Foo>;\n\t}\n}\nexport const result = () => Outer.Foo.Bar.App().type === Outer.Foo;",
+				true,
+			],
+			[
+				'a function declaration the module assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nTag = Replacement;\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				'a function declaration that another function assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nexport function swap() {\n\tTag = Replacement;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport const result = () => {\n\tswap();\n\treturn App().props.children[0].type === Replacement;\n};',
+				true,
+			],
+			[
+				'a class declaration the module assigns by destructuring',
+				'class Box {}\nclass Other {}\nfunction App() {\n\treturn <div><Box>hello</Box></div>;\n}\n[Box] = [Other];\nexport const result = () => App().props.children[0].type === Other;',
+				true,
+			],
+			[
+				'a function declaration assigned through a typed destructuring target',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n[Tag as any] = [Replacement];\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				// Any assignment of the name counts, even to a local that shadows it
+				'a function declaration whose name another function assigns as a local',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport function other() {\n\tlet Tag = 1;\n\tTag = 2;\n\treturn Tag;\n}\nexport const result = () => App().props.children[0].type === Tag;',
+				true,
+			],
+			[
+				'a function declaration a for…of head assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nfor (Tag of [Replacement]);\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				'a function declaration a for…in head assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nfor (Tag in { replacement: 1 });\nexport const result = () => App().props.children[0].type;',
+				'replacement',
+			],
+			[
+				'a function declaration another function updates',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport function bump() {\n\tTag++;\n}\nexport const result = () => {\n\tbump();\n\treturn Number.isNaN(App().props.children[0].type);\n};',
+				true,
+			],
+			[
+				'a function declaration assigned by object destructuring with a default',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n({ Tag = Replacement } = {});\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				// The style pass moves a `ref` of a `<style>` in a nested root out of the tree
+				'a function declaration a style ref assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nexport function App() @{\n\tconst content = <><style ref={() => { Tag = Replacement; }} /><span>content</span></>;\n\t<>{content}<div><Tag>hello</Tag></div></>\n}\nexport const result = () => App().props.children[1].props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				'a function declaration a direct eval can assign',
+				"function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n(eval)('Tag = Replacement');\nexport const result = () => App().props.children[0].type === Replacement;",
+				true,
+			],
+		])(
+			'leaves JSX whose tag reads %s in place, reading it at render time',
+			(_case, source, expected) => {
+				const { code } = compile(source, 'App.tsrx');
+				expect(code).not.toContain('__static');
+				expect(run_result(code)).toBe(expected);
+			},
+		);
+
+		it.each([
+			[
+				'a default import the module assigns a property of (#1292)',
+				"import ui from './ui';\nfunction Replacement() {\n\treturn null;\n}\nexport function App() @{\n\t<div><ui.Button>hello</ui.Button></div>\n}\nui.Button = Replacement;\nexport const result = () => App().props.children[0].type === Replacement;",
+				true,
+			],
+			[
+				'a named import another function assigns a property of (#1292)',
+				"import { Menu } from './menu';\nfunction Replacement() {\n\treturn null;\n}\nexport function patch() {\n\tMenu.Item = Replacement;\n}\nexport function App() @{\n\t<div><Menu.Item /></div>\n}\nexport const result = () => {\n\tpatch();\n\treturn App().props.children[0].type === Replacement;\n};",
+				true,
+			],
+			[
+				'a property path under an import the module assigns',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Menu.Item>hello</ui.Menu.Item></div>;\n}\nui.Menu.Item = 'deep';\nexport const result = () => App().props.children[0].type;",
+				'deep',
+			],
+			[
+				'an import property the module assigns by a computed key',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nui['Button'] = 'computed';\nexport const result = () => App().props.children[0].type;",
+				'computed',
+			],
+			[
+				'an import property the module assigns with a compound operator',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nui.Button += '!';\nexport const result = () => App().props.children[0].type;",
+				'original!',
+			],
+			[
+				'an import property the module assigns with a logical operator',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nui.Button &&= 'logical';\nexport const result = () => App().props.children[0].type;",
+				'logical',
+			],
+			[
+				'an import property another function updates',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport function bump() {\n\tui.Button++;\n}\nexport const result = () => {\n\tbump();\n\treturn Number.isNaN(App().props.children[0].type);\n};",
+				true,
+			],
+			[
+				'an import property the module deletes',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\ndelete ui.Button;\nexport const result = () => App().props.children[0].type === undefined;",
+				true,
+			],
+			[
+				'an import property the module deletes through optional chaining',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\ndelete ui?.Button;\nexport const result = () => App().props.children[0].type === undefined;",
+				true,
+			],
+			[
+				'an import property the module assigns by array destructuring',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n[ui.Button] = ['array'];\nexport const result = () => App().props.children[0].type;",
+				'array',
+			],
+			[
+				'an import property the module assigns by object destructuring',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n({ x: ui.Button } = { x: 'object' });\nexport const result = () => App().props.children[0].type;",
+				'object',
+			],
+			[
+				'an import property a for…of head assigns',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nfor (ui.Button of ['of']);\nexport const result = () => App().props.children[0].type;",
+				'of',
+			],
+			[
+				'an import property a for…in head assigns',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nfor (ui.Button in { key: 1 });\nexport const result = () => App().props.children[0].type;",
+				'key',
+			],
+			[
+				'an import property a class static block assigns',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nclass Patch {\n\tstatic {\n\t\tui.Button = 'class';\n\t}\n}\nexport const result = () => App().props.children[0].type;",
+				'class',
+			],
+			[
+				'an import property its component body assigns',
+				"import ui from './ui';\nexport function App() @{\n\tui.Button = 'render';\n\t<div><ui.Button>hello</ui.Button></div>\n}\nexport const result = () => App().props.children[0].type;",
+				'render',
+			],
+			[
+				'an import property the module assigns through a type assertion',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(ui as any).Button = 'typed';\nexport const result = () => App().props.children[0].type;",
+				'typed',
+			],
+			[
+				'an import property the module assigns through a sequence',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(0, ui).Button = 'sequence';\nexport const result = () => App().props.children[0].type;",
+				'sequence',
+			],
+			[
+				'an import property the module assigns through a conditional',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(true ? ui : ({} as any)).Button = 'conditional';\nexport const result = () => App().props.children[0].type;",
+				'conditional',
+			],
+			[
+				"an import property the module assigns through a conditional's alternate",
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(false ? ({} as any) : ui).Button = 'alternate';\nexport const result = () => App().props.children[0].type;",
+				'alternate',
+			],
+			[
+				'an import property the module assigns through a logical expression',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(ui || ({} as any)).Button = 'either';\nexport const result = () => App().props.children[0].type;",
+				'either',
+			],
+			[
+				"an import property the module assigns through a logical expression's right operand",
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(({} as any) && ui).Button = 'right';\nexport const result = () => App().props.children[0].type;",
+				'right',
+			],
+			[
+				'an import property the module assigns through an assignment',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nlet alias: any;\n(alias = ui).Button = 'alias';\nexport const result = () => App().props.children[0].type;",
+				'alias',
+			],
+			[
+				'an import property the module assigns through await',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport async function patch() {\n\t(await ui).Button = 'awaited';\n}\nexport const result = async () => {\n\tawait patch();\n\treturn App().props.children[0].type;\n};",
+				'awaited',
+			],
+			[
+				'an import property the module assigns through type arguments',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(ui<any>).Button = 'instantiated';\nexport const result = () => App().props.children[0].type;",
+				'instantiated',
+			],
+			[
+				'an import property Object.assign gives',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nObject.assign(ui, { Button: 'assigned' });\nexport const result = () => App().props.children[0].type;",
+				'assigned',
+			],
+			[
+				'an import property Object.defineProperty defines',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nObject.defineProperty(ui, 'Button', { value: 'defined' });\nexport const result = () => App().props.children[0].type;",
+				'defined',
+			],
+			[
+				'a property path under an import that Object.assign gives',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Menu.Item>hello</ui.Menu.Item></div>;\n}\nObject.assign(ui.Menu, { Item: 'merged' });\nexport const result = () => App().props.children[0].type;",
+				'merged',
+			],
+			[
+				'an import property a constructor given the import writes',
+				"import ui from './ui';\nclass Patch {\n\tconstructor(target: any) {\n\t\ttarget.Button = 'constructed';\n\t}\n}\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nnew Patch(ui);\nexport const result = () => App().props.children[0].type;",
+				'constructed',
+			],
+			[
+				// A namespace object's own properties are read-only, but not the
+				// properties of the objects it exports
+				'a property path under a namespace import the module assigns',
+				"import * as lib from './lib';\nfunction App() {\n\treturn <div><lib.Menu.Item>hello</lib.Menu.Item></div>;\n}\nlib.Menu.Item = 'deep';\nexport const result = () => App().props.children[0].type;",
+				'deep',
+			],
+			[
+				// Any property write under the name counts, even under a local that
+				// shadows it
+				'an import whose name another function writes a property of as a local',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport function other(ui: any) {\n\tui.Button = 'local';\n}\nexport const result = () => App().props.children[0].type;",
+				'original',
+			],
+		])(
+			'leaves JSX whose member tag reads %s in place, reading it at render time',
+			async (_case, source, expected) => {
+				const { code } = compile(source, 'App.tsrx');
+				expect(code).not.toContain('__static');
+				expect(
+					await run_result(code, {
+						'./ui': { default: { Button: 'original', Menu: { Item: 'original' } } },
+						'./menu': { Menu: { Item: 'original' } },
+						'./lib': { Menu: { Item: 'original' } },
+					}),
+				).toBe(expected);
+			},
+		);
+
+		it('leaves JSX whose member tag reads an import a directive body assigns a property of in place', () => {
+			const { code } = compile(
+				"import ui from './ui';\nexport function App() @{\n\t<>\n\t\t@if (true) {\n\t\t\tui.Button = 'branch';\n\t\t\t<b>branch</b>\n\t\t}\n\t\t<div><ui.Button>hello</ui.Button></div>\n\t</>\n}",
+				'App.tsrx',
+			);
+			expect(code).toContain('<div><ui.Button>hello</ui.Button></div></>');
+			expect(code).not.toMatch(/__static\d+ = <div>/);
+		});
+
+		it('leaves the static JSX of a component inside another function in place', () => {
+			// Its statics would go to module level, which only the components a
+			// top-level statement holds outside any other function reach
+			const { code } = compile(
+				'function outer() {\n\tfunction App() {\n\t\treturn <div>hi</div>;\n\t}\n\treturn App();\n}\nexport const result = () => outer().type;',
+				'App.tsrx',
+			);
+			expect(code).not.toContain('__static');
+			expect(run_result(code)).toBe('div');
+		});
+
+		it('leaves the static JSX of a component in a namespace in place', () => {
+			// Inside a namespace body, a name can read an export of any declaration
+			// of the namespace, which module level can't see
+			const { code } = compile(
+				'namespace N {\n\texport function App() {\n\t\treturn <div>hi</div>;\n\t}\n}\nexport const result = () => N.App().type;',
+				'App.tsrx',
+			);
+			expect(code).not.toContain('__static');
+			expect(run_result(code)).toBe('div');
+		});
+
+		it.each(['_tsrx_spread_props_1', 'App__spread_props1'])(
+			'names the spread temporary of a component inside a method apart from a %s the author wrote',
+			(user_name) => {
+				const { code } = compile(
+					'export class Holder {\n' +
+						'\tmake() {\n' +
+						'\t\tfunction App(props: any) {\n' +
+						`\t\t\tconst ${user_name} = 'mine';\n` +
+						`\t\t\treturn <div {...props.rest} ref={props.r} title={${user_name}} />;\n` +
+						'\t\t}\n' +
+						'\t\treturn App;\n' +
+						'\t}\n' +
+						'}\n' +
+						'export const result = () => {\n' +
+						"\tconst element = new Holder().make()({ rest: { id: 'spread' }, r: null });\n" +
+						'\treturn [element.props.id, element.props.title];\n' +
+						'};',
+					'App.tsrx',
+				);
+				expect(run_result(code)).toEqual(['spread', 'mine']);
+			},
+		);
+
+		it.each([
+			[
+				'a const declared before it',
+				"const Tag = 'section';\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport const result = () => App().props.children[0].type;",
+				'section',
+			],
+			[
+				'a member of an import',
+				"import * as ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport const result = () => App().props.children[0].type;",
+				'./ui.Button',
+			],
+			[
+				'a member of a default import',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport const result = () => App().props.children[0].type;",
+				'./ui.default.Button',
+			],
+			[
+				// A namespace object's own properties are read-only
+				'a member of a namespace import whose property the module assigns',
+				"import * as ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport function patch() {\n\t(ui as any).Button = 'patched';\n\tObject.assign(ui, { Button: 'patched' });\n}\nexport const result = () => App().props.children[0].type;",
+				'./ui.Button',
+			],
+			[
+				'an import whose property the module assigns',
+				"import { Tag } from './tag';\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport function patch() {\n\t(Tag as any).displayName = 'T';\n}\nexport const result = () => App().props.children[0].type;",
+				'./tag.Tag',
+			],
+			[
+				'a member of an import beside one whose property the module assigns',
+				"import ui from './ui';\nimport other from './other';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nother.Button = 'other';\nexport const result = () => App().props.children[0].type;",
+				'./ui.default.Button',
+			],
+			[
+				'a function declared after it',
+				'function App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nfunction Tag() {\n\treturn null;\n}\nexport const result = () => App().props.children[0].type === Tag;',
+				true,
+			],
+			[
+				'a class declared before it',
+				'class Box {}\nfunction App() {\n\treturn <div><Box>hello</Box></div>;\n}\nexport const result = () => App().props.children[0].type === Box;',
+				true,
+			],
+			[
+				'a re-exported import',
+				"import { Tag } from './tag';\nexport { Tag };\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport const result = () => App().props.children[0].type;",
+				'./tag.Tag',
+			],
+		])('hoists JSX whose tag reads %s', (_case, source, expected) => {
+			const { code } = compile(source, 'App.tsrx');
+			// Solid and Vue never hoist
+			if (hoistsStaticJsx) {
+				expect(code).toContain('const App__static1 = <div>');
+			}
+			expect(run_result(code)).toBe(expected);
+		});
+
+		it.each([
+			[
+				'in the component and at module level',
+				"const App__static1 = 'module';\nexport function App() {\n\tconst App__static2 = 'local';\n\treturn <>{<div>static</div>}<b>bare</b>{App__static1}{App__static2}</>;\n}\nexport const result = () => App().props.children.map((child: any) => (typeof child === 'object' ? child.type : child));",
+				['App__static3', 'App__static4'],
+				['div', 'b', 'module', 'local'],
+			],
+			[
+				'with a $ in its name',
+				"export function $App() {\n\tconst $App__static1 = 'local';\n\treturn <>{<div>static</div>}{$App__static1}</>;\n}\nexport const result = () => $App().props.children.map((child: any) => (typeof child === 'object' ? child.type : child));",
+				['$App__static2'],
+				['div', 'local'],
+			],
+		])(
+			'names a static apart from an authored static name %s',
+			(_case, source, statics, expected) => {
+				const { code } = compile(source, 'App.tsrx');
+				expect(
+					[...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1]),
+				).toEqual(hoistsStaticJsx ? statics : []);
+				expect(run_result(code)).toEqual(expected);
+			},
+		);
+
+		it('hoists an intrinsic tag that shares its name with a later binding', () => {
+			const { code } = compile(
+				'function App() {\n\treturn <div>hello</div>;\n}\nconst div = 1;\nexport const result = () => App().type;',
+				'App.tsrx',
+			);
+			if (hoistsStaticJsx) {
+				expect(code).toContain('const App__static1 = <div>hello</div>;');
+			}
+			expect(run_result(code)).toBe('div');
+		});
+
+		it.each([
+			[
+				'an expression container',
+				'export function App() @{\n\t<div>{<script type="application/json">{"a":1}</script>}</div>\n}',
+			],
+			[
+				'a component prop',
+				'function Slot({ content }: { content: unknown }) {\n\treturn content;\n}\nexport function App() @{\n\t<Slot content={<script type="application/json">{"a":1}</script>} />\n}',
+			],
+		])('keeps the body of a raw script in %s of static JSX (#845)', (_case, source) => {
+			const { code } = compile(source, 'App.tsrx');
+			expect(code).toContain(`'{"a":1}'`);
+		});
+
+		describe('in expression containers (#81)', () => {
+			/** @param {string} code */
+			const static_count = (code) => code.match(/^const App__static\d+ = /gm)?.length ?? 0;
+
+			it('hoists a static element in a container like the bare one beside it', () => {
+				const { code } = compile(
+					'export function App() {\n\treturn <>{<b>a</b>}<b>b</b></>;\n}\n' +
+						'export const result = () => {\n' +
+						'\tconst [first, second] = [App(), App()];\n' +
+						'\treturn [first.props.children.length, ...first.props.children.map((child: unknown, i: number) => child === second.props.children[i])];\n' +
+						'};',
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(code).toContain('const App__static1 = <b>a</b>;');
+					expect(code).toContain('const App__static2 = <b>b</b>;');
+					expect(code).toContain('return <>{App__static1}{App__static2}</>;');
+					expect(run_result(code)).toEqual([2, true, true]);
+				} else {
+					expect(code).not.toContain('__static');
+					expect(run_result(code)).toEqual([2, false, false]);
+				}
+			});
+
+			it('hoists through children, attribute values, branches, nested containers and fragments', () => {
+				const { code } = compile(
+					`function Card(props: { header: unknown; n: number; children?: unknown }) {
+	return null;
+}
+export function App(props: { on: boolean; n: number; label?: string }) {
+	return (
+		<div title={String(props.n)}>
+			{<b>child</b>}
+			<Card header={<h1>header</h1>} n={props.n}>
+				{<i>card child</i>}
+			</Card>
+			{props.on ? <span>on</span> : <span>off</span>}
+			{props.on && <em>and</em>}
+			{props.label ?? <s>fallback</s>}
+			{<p title={String(props.n)}>{<u>nested</u>}</p>}
+			{<><a>one</a><a>two</a></>}
+		</div>
+	);
+}
+const strip = (node: any): any =>
+	node && typeof node === 'object'
+		? { type: typeof node.type === 'function' ? node.type.name : node.type, props: Object.fromEntries(Object.entries(node.props).map(([k, v]) => [k, Array.isArray(v) ? v.map(strip) : strip(v)])) }
+		: node;
+export const result = () => [App({ on: true, n: 1 }), App({ on: false, n: 2, label: 'x' })].map(strip);`,
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(static_count(code)).toBe(10);
+					expect(code).toContain(
+						'return <div title={String(props.n)}>{App__static1}<Card header={App__static2} n={props.n}>{App__static3}</Card>{props.on ? App__static4 : App__static5}{props.on && App__static6}{props.label ?? App__static7}{<p title={String(props.n)}>{App__static8}</p>}{<>{App__static9}{App__static10}</>}</div>;',
+					);
+				} else {
+					expect(code).not.toContain('__static');
+				}
+				/** @param {string} type @param {Record<string, unknown>} [props] */
+				const el = (type, props = {}) => ({ type, props });
+				/** @param {boolean} on @param {number} n @param {unknown} fallback */
+				const tree = (on, n, fallback) =>
+					el('div', {
+						title: String(n),
+						children: [
+							el('b', { children: ['child'] }),
+							el('Card', {
+								header: el('h1', { children: ['header'] }),
+								n,
+								children: [el('i', { children: ['card child'] })],
+							}),
+							el('span', { children: [on ? 'on' : 'off'] }),
+							on && el('em', { children: ['and'] }),
+							fallback,
+							el('p', { title: String(n), children: [el('u', { children: ['nested'] })] }),
+							el('Fragment', {
+								children: [el('a', { children: ['one'] }), el('a', { children: ['two'] })],
+							}),
+						],
+					});
+				expect(run_result(code)).toEqual([
+					tree(true, 1, el('s', { children: ['fallback'] })),
+					tree(false, 2, 'x'),
+				]);
+			});
+
+			it('hoists a static element in a nested container of a component body', () => {
+				const { code } = compile(
+					`export function App(props: { n: number }) @{
+	const label = String(props.n);
+	<section title={label}>
+		{<div title={label}>{<span>nested</span>}</div>}
+	</section>
+}`,
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(code).toContain('const App__static1 = <span>nested</span>;');
+					expect(code).toContain(
+						'return <section title={label}>{<div title={label}>{App__static1}</div>}</section>;',
+					);
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('hoists only host elements in a conditional container', () => {
+				// A static reads its tags when the module loads; a component the
+				// render may never reach can be uninitialized then (a cyclic import)
+				const { code } = compile(
+					`import * as ui from './ui';
+function Icon(props: { size: number }) {
+	return null;
+}
+export function App(props: { on: boolean; n: number; label?: string }) {
+	return <div title={String(props.n)}>
+		{props.on && <ui.Button x="x" />}
+		{props.on ? <Icon size={1} /> : <span>off</span>}
+		{props.label ?? <b><Icon size={2} /></b>}
+		{props.on || <i>host</i>}
+		{props.on && <p title={String(props.n)}>{<Icon size={3} />}{<em>nested host</em>}</p>}
+	</div>;
+}`,
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(code.match(/^const App__static\d+ = .*$/gm)).toEqual([
+						'const App__static1 = <span>off</span>;',
+						'const App__static2 = <i>host</i>;',
+						'const App__static3 = <em>nested host</em>;',
+					]);
+					expect(code).toContain('{props.on && <ui.Button x="x" />}');
+					expect(code).toContain('{props.on ? <Icon size={1} /> : App__static1}');
+					expect(code).toContain('{props.label ?? <b><Icon size={2} /></b>}');
+					expect(code).toContain('{<Icon size={3} />}{App__static3}');
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('does not read a component in a conditional container when the module loads', () => {
+				const { code } = compile(
+					"import * as ui from './ui';\n" +
+						'export function App(props: { on: boolean }) {\n' +
+						'\treturn <>{props.on && <ui.Button x="x" />}</>;\n' +
+						'}\n' +
+						'export const result = () => App({ on: false }).props.children;',
+					'App.tsrx',
+				);
+				const ui = {
+					get Button() {
+						throw new Error('ui.Button read');
+					},
+				};
+				expect(run_result(code, { './ui': ui })).toEqual([false]);
+			});
+
+			it('hoists a component in an unconditional container, as it does a bare one', () => {
+				const { code } = compile(
+					`import * as ui from './ui';
+function Icon(props: { size: number }) {
+	return null;
+}
+export function App(props: { n: number }) {
+	return <div title={String(props.n)}>
+		{<ui.Button x="x" />}
+		<ui.Button x={<Icon size={1} />} y={String(props.n)} />
+	</div>;
+}`,
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(code.match(/^const App__static\d+ = .*$/gm)).toEqual([
+						'const App__static1 = <ui.Button x="x" />;',
+						'const App__static2 = <Icon size={1} />;',
+					]);
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('hoists each of two static containers on its own instead of merging them', () => {
+				const { code } = compile(
+					'export function App() {\n\treturn <>{<b>a</b>}{<b>b</b>}</>;\n}',
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(static_count(code)).toBe(2);
+					expect(code).toContain('return <>{App__static1}{App__static2}</>;');
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('leaves keyed elements, binding reads, bare children and other expressions in place', () => {
+				const { code } = compile(
+					`function Card(props: { n?: number }) {
+	return null;
+}
+function Helper() {
+	return null;
+}
+export function App(props: { on: boolean; n: number; items: string[] }) {
+	return (
+		<div title={String(props.n)}>
+			<p>bare child</p>
+			{<b key="k">keyed</b>}
+			{props.on ? <i key="on">on</i> : <i key="off">off</i>}
+			{<b>{props.n}</b>}
+			{<Card n={props.n} />}
+			{<Helper />}
+			{props.items.map((item) => <li>row</li>)}
+			{[<u key="a">a</u>]}
+		</div>
+	);
+}`,
+					'App.tsrx',
+				);
+				expect(code).not.toContain('__static');
+			});
+
+			it('hoists the statics of the shared runtime fixture', () => {
+				const source = readFileSync(
+					new URL('./runtime/static-containers-components.tsrx', import.meta.url),
+					'utf8',
+				);
+				const { code } = compile(source, 'StaticContainers.tsrx');
+				expect(code.match(/^const StaticContainers__static\d+ = /gm)?.length ?? 0).toBe(
+					hoistsStaticJsx ? 10 : 0,
+				);
+			});
+		});
 	});
 
 	describe(`[${name}] native raw HTML props`, () => {
