@@ -4545,6 +4545,12 @@ export function App() @{
 				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n({ Tag = Replacement } = {});\nexport const result = () => App().props.children[0].type === Replacement;',
 				true,
 			],
+			[
+				// The style pass moves a `ref` of a `<style>` in a nested root out of the tree
+				'a function declaration a style ref assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nexport function App() @{\n\tconst content = <><style ref={() => { Tag = Replacement; }} /><span>content</span></>;\n\t<>{content}<div><Tag>hello</Tag></div></>\n}\nexport const result = () => App().props.children[1].props.children[0].type === Replacement;',
+				true,
+			],
 		])(
 			'leaves JSX whose tag reads %s in place, reading it at render time',
 			(_case, source, expected) => {

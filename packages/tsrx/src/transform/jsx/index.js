@@ -534,6 +534,7 @@ export function createJsxTransform(platform) {
 	 * @returns {JsxTransformResult}
 	 */
 	function transform(ast, source, filename, options) {
+		const parsed = ast;
 		/** @type {Map<number, boolean> | undefined} */
 		let hoistable_tags;
 		const effective_platform =
@@ -579,7 +580,7 @@ export function createJsxTransform(platform) {
 			type_only_style_anchors,
 			helper_state: null,
 			available_bindings: new Map(),
-			hoistable_tags: () => (hoistable_tags ??= collect_hoistable_tags(ast)),
+			hoistable_tags: () => (hoistable_tags ??= collect_hoistable_tags(ast, parsed)),
 			filename: filename ?? null,
 			source,
 			collect,
@@ -2729,9 +2730,11 @@ function reads_tag_binding(node) {
  * loaded.
  *
  * @param {AST.Program} program
+ * @param {AST.Program} [parsed] the program before the passes that can move
+ * authored code out of the tree, which the assignments are read from
  * @returns {Map<number, boolean>}
  */
-function collect_hoistable_tags(program) {
+function collect_hoistable_tags(program, parsed = program) {
 	/** @type {Map<string, { kind: string, end: number }>} */
 	const module_bindings = new Map();
 	/**
@@ -2756,20 +2759,9 @@ function collect_hoistable_tags(program) {
 
 	/** @type {Set<string>[]} */
 	const scopes = [];
-	/** @param {string} name */
-	const is_local = (name) => scopes.some((names) => names.has(name));
-	/**
-	 * The names the module assigns anywhere. A name a local binding shadows
-	 * counts too: that only keeps a static at render time.
-	 * @type {Set<string>}
-	 */
-	const assigned = new Set();
-	/**
-	 * Each tag's root: its start, its name (`null` when it is local), and
-	 * whether the tag is a member tag.
-	 * @type {Array<[number, string | null, boolean]>}
-	 */
-	const tags = [];
+	// A name a local binding shadows counts too: that only keeps a static at
+	// render time
+	const assigned = collect_assigned_names(parsed);
 	/**
 	 * @param {string} name
 	 * @param {boolean} member
@@ -2778,6 +2770,7 @@ function collect_hoistable_tags(program) {
 	 */
 	const is_hoistable = (name, member, position) => {
 		if (name === 'this' || name === 'super') return false;
+		if (scopes.some((names) => names.has(name))) return false;
 		if (assigned.has(name)) return false;
 		const binding = module_bindings.get(name);
 		switch (binding?.kind) {
@@ -2792,6 +2785,8 @@ function collect_hoistable_tags(program) {
 				return false;
 		}
 	};
+	/** @type {Map<number, boolean>} */
+	const hoistable = new Map();
 	/** @param {AST.Node} node */
 	const visit = (node) => {
 		const names = node === program ? null : scope_names(node);
@@ -2799,44 +2794,46 @@ function collect_hoistable_tags(program) {
 		if (node.type === 'JSXOpeningElement' && !is_intrinsic_tag(node.name)) {
 			const root = jsx_tag_root(node.name);
 			if (root && typeof root.start === 'number') {
-				tags.push([
+				hoistable.set(
 					root.start,
-					is_local(root.name) ? null : root.name,
-					node.name.type === 'JSXMemberExpression',
-				]);
+					is_hoistable(root.name, node.name.type === 'JSXMemberExpression', root.start),
+				);
 			}
 		}
-		collect_assigned_names(node, assigned);
 		for (const child of child_nodes(node)) visit(child);
 		if (names) scopes.pop();
 	};
 	visit(program);
-
-	/** @type {Map<number, boolean>} */
-	const hoistable = new Map();
-	for (const [start, name, member] of tags) {
-		hoistable.set(start, name !== null && is_hoistable(name, member, start));
-	}
 	return hoistable;
 }
 
 /**
- * Adds the names `node` assigns to `names`: the targets of an assignment, an
+ * The names `program` assigns anywhere: the targets of an assignment, an
  * update, or a `for … in`/`for … of` head without a declaration, through
- * destructuring and type assertions.
+ * destructuring and type assertions. Read from the program as parsed: the
+ * style pass moves the `ref` of a `<style>` in a nested root to the root's
+ * metadata, which `child_nodes` skips.
  *
- * @param {AST.Node} node
- * @param {Set<string>} names
+ * @param {AST.Program} program
+ * @returns {Set<string>}
  */
-function collect_assigned_names(node, names) {
-	if (node.type === 'AssignmentExpression') add_target_names(node.left, names);
-	else if (node.type === 'UpdateExpression') add_target_names(node.argument, names);
-	else if (
-		(node.type === 'ForInStatement' || node.type === 'ForOfStatement') &&
-		node.left.type !== 'VariableDeclaration'
-	) {
-		add_target_names(node.left, names);
-	}
+function collect_assigned_names(program) {
+	/** @type {Set<string>} */
+	const names = new Set();
+	/** @param {AST.Node} node */
+	const visit = (node) => {
+		if (node.type === 'AssignmentExpression') add_target_names(node.left, names);
+		else if (node.type === 'UpdateExpression') add_target_names(node.argument, names);
+		else if (
+			(node.type === 'ForInStatement' || node.type === 'ForOfStatement') &&
+			node.left.type !== 'VariableDeclaration'
+		) {
+			add_target_names(node.left, names);
+		}
+		for (const child of child_nodes(node)) visit(child);
+	};
+	visit(program);
+	return names;
 }
 
 /**
