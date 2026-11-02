@@ -155,6 +155,18 @@ describe('tsrx-tsc diagnostic logging', () => {
 		);
 	});
 
+	it('prints a thrown diagnostic as an error even when it is marked a warning', () => {
+		const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		// A thrown error stops the compile, so the language server shows it as an
+		// error whatever its severity.
+		const thrown = Object.assign(new Error('unsupported'), {
+			code: 'octane-unsupported',
+			severity: 'warning',
+		});
+		compile('App.tsrx', compiler_throwing(thrown));
+		expect(spy).toHaveBeenCalledWith('[tsrx-tsc] App.tsrx: error octane-unsupported: unsupported');
+	});
+
 	it('keeps the bare severity label when a diagnostic has no code', () => {
 		const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		compile('App.tsrx', compiler_throwing(new Error('parse blew up')));

@@ -716,6 +716,7 @@ function clamp_offset(offset, length) {
  * 	message?: unknown,
  * 	code?: unknown,
  * 	severity?: unknown,
+ * 	type?: unknown,
  * 	pos?: unknown,
  * 	loc?: { line?: unknown, column?: unknown, start?: { line?: unknown, column?: unknown } },
  * }} LoggedDiagnostic
@@ -725,7 +726,9 @@ function clamp_offset(offset, length) {
  * Mirrors compiler diagnostics to stderr under `tsrx-tsc`. The line follows
  * tsc's `file(line,col): error TS2339: message` convention — position when the
  * diagnostic has one, then severity and the diagnostic `code` — so output is
- * greppable by code and actionable by position.
+ * greppable by code and actionable by position. A thrown (fatal) error stops
+ * the compile, so it prints as an error whatever its `severity`, as the
+ * language server shows it.
  * @param {string} file_name
  * @param {ReadonlyArray<unknown>} errors
  * @param {string} source the compiled text, which a diagnostic's `pos` indexes
@@ -735,7 +738,8 @@ function logTSRXErrors(file_name, errors, source) {
 		const details =
 			error && typeof error === 'object' ? /** @type {LoggedDiagnostic} */ (error) : undefined;
 		const message = details && 'message' in details ? String(details.message) : String(error);
-		const severity = details?.severity === 'warning' ? 'warning' : 'error';
+		const severity =
+			details?.severity === 'warning' && details.type !== 'fatal' ? 'warning' : 'error';
 		const code =
 			typeof details?.code === 'string' && details.code.length > 0 ? details.code : undefined;
 		const label = code === undefined ? severity : `${severity} ${code}`;
