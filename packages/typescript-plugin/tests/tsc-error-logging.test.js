@@ -136,6 +136,22 @@ describe('tsrx-tsc diagnostic logging', () => {
 		expect(spy).toHaveBeenCalledWith('[tsrx-tsc] App.tsrx: error: parse blew up');
 	});
 
+	it('prints each mistake the parser collects at its own position, with its code', () => {
+		const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		// The same mistake twice in one file: tsrx-tsc printed it once, without
+		// a position or code (#957).
+		compile(
+			'App.tsrx',
+			react,
+			'const b = [1];\nconst [...a = [1]] = b;\nconst [...c = [2]] = b;\nexport { a, c };\n',
+		);
+		const { code, message } = TS_ERRORS.REST_ELEMENT_INITIALIZER;
+		expect(spy.mock.calls).toEqual([
+			[`[tsrx-tsc] App.tsrx(2,13): error ${code}: ${message}`],
+			[`[tsrx-tsc] App.tsrx(3,13): error ${code}: ${message}`],
+		]);
+	});
+
 	it('dedupes identical diagnostics but not identical messages with different codes', () => {
 		const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const compiler = compiler_collecting([

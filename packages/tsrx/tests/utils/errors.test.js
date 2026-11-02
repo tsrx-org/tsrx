@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { TSRX_ERRORS } from '../../src/diagnostics.js';
 import { error } from '../../src/errors.js';
 
 /**
@@ -40,6 +41,19 @@ describe('error()', () => {
 		error('bad', 'App.tsrx', node, errors, undefined, 'tsrx-style-apply-target');
 
 		expect(errors[0].severity).toBeUndefined();
+	});
+
+	it("keeps an error entry's code alongside a warning severity", () => {
+		/** @type {import('../../types/index').CompileError[]} */
+		const errors = [];
+		const entry = TSRX_ERRORS.UNCLOSED_TAG('div');
+		error(entry, 'App.tsrx', node, errors, undefined, undefined, 'warning');
+
+		expect(errors[0]).toMatchObject({
+			message: entry.message,
+			code: entry.code,
+			severity: 'warning',
+		});
 	});
 
 	it('still throws a fatal error when no collection array is given', () => {
