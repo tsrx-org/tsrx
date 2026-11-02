@@ -130,6 +130,31 @@ describe('tsrx-tsc diagnostic logging', () => {
 		expect(spy).toHaveBeenCalledWith(`[tsrx-tsc] App.tsrx(3,6): error ${code}: ${message} (3:5)`);
 	});
 
+	it('prints the position of a diagnostic that has only `pos`', () => {
+		const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		// A consumer compiler may give only `pos` and `end`, as the language
+		// server, which places a diagnostic by `pos`, allows.
+		const source = 'const a = 1;\r\nexport default <div>{a}</div>;\n';
+		const pos = source.indexOf('<div>');
+		compile(
+			'App.tsrx',
+			compiler_collecting([
+				{
+					message: "'.a' is never referenced",
+					code: 'octane-style-unused-selector',
+					severity: 'warning',
+					pos,
+					end: pos + '<div>'.length,
+					type: 'usage',
+				},
+			]),
+			source,
+		);
+		expect(spy).toHaveBeenCalledWith(
+			"[tsrx-tsc] App.tsrx(2,16): warning octane-style-unused-selector: '.a' is never referenced",
+		);
+	});
+
 	it('keeps the bare severity label when a diagnostic has no code', () => {
 		const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		compile('App.tsrx', compiler_throwing(new Error('parse blew up')));
