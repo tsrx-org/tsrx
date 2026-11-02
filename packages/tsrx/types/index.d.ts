@@ -73,6 +73,8 @@ export interface CompileError extends Error {
 	 * Diagnostic severity of a collected error; absent means `'error'`.
 	 * Consumer compilers may mark collected diagnostics `'warning'` so the
 	 * language server and `tsrx-tsc` surface them as warnings, not errors.
+	 * `error()` never throws a warning: with no `errors` to record it in, it
+	 * drops it.
 	 */
 	severity?: 'error' | 'warning';
 }

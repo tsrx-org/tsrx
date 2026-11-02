@@ -6,7 +6,8 @@
 /**
  * Report an error at `node`: record it in `errors`, or throw it. `message` is
  * the error's entry, such as `TSRX_ERRORS.UNCLOSED_TAG('div')`, with its code,
- * or its text, with `code`.
+ * or its text, with `code`. A warning is only ever recorded: without `errors`
+ * it is dropped, so it never fails a compile that doesn't collect.
  * @param {string | { code: string | undefined, message: string }} message
  * @param {string | null} filename
  * @param {AST.Node | AST.NodeWithLocation} node
@@ -18,6 +19,9 @@
  */
 export function error(message, filename, node, errors, comments, code, severity) {
 	if (errors && comments && is_error_suppressed(node, comments)) {
+		return;
+	}
+	if (!errors && severity === 'warning') {
 		return;
 	}
 	if (typeof message !== 'string') {

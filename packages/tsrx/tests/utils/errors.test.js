@@ -59,4 +59,20 @@ describe('error()', () => {
 	it('still throws a fatal error when no collection array is given', () => {
 		expect(() => error('bad', 'App.tsrx', node)).toThrowError('bad');
 	});
+
+	it('does not throw a warning when no collection array is given', () => {
+		// A compile that doesn't collect, such as a Vite build, passes no
+		// `errors`. Throwing there would fail the build on a warning.
+		expect(() =>
+			error(
+				"'.a' is never referenced",
+				'App.tsrx',
+				node,
+				undefined,
+				undefined,
+				'octane-style-unused-selector',
+				'warning',
+			),
+		).not.toThrow();
+	});
 });
