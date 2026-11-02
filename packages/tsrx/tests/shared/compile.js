@@ -4565,6 +4565,160 @@ export function App() @{
 			},
 		);
 
+		it.each([
+			[
+				'a default import the module assigns a property of (#1292)',
+				"import ui from './ui';\nfunction Replacement() {\n\treturn null;\n}\nexport function App() @{\n\t<div><ui.Button>hello</ui.Button></div>\n}\nui.Button = Replacement;\nexport const result = () => App().props.children[0].type === Replacement;",
+				true,
+			],
+			[
+				'a named import another function assigns a property of (#1292)',
+				"import { Menu } from './menu';\nfunction Replacement() {\n\treturn null;\n}\nexport function patch() {\n\tMenu.Item = Replacement;\n}\nexport function App() @{\n\t<div><Menu.Item /></div>\n}\nexport const result = () => {\n\tpatch();\n\treturn App().props.children[0].type === Replacement;\n};",
+				true,
+			],
+			[
+				'a property path under an import the module assigns',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Menu.Item>hello</ui.Menu.Item></div>;\n}\nui.Menu.Item = 'deep';\nexport const result = () => App().props.children[0].type;",
+				'deep',
+			],
+			[
+				'an import property the module assigns by a computed key',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nui['Button'] = 'computed';\nexport const result = () => App().props.children[0].type;",
+				'computed',
+			],
+			[
+				'an import property the module assigns with a compound operator',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nui.Button += '!';\nexport const result = () => App().props.children[0].type;",
+				'original!',
+			],
+			[
+				'an import property the module assigns with a logical operator',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nui.Button &&= 'logical';\nexport const result = () => App().props.children[0].type;",
+				'logical',
+			],
+			[
+				'an import property another function updates',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport function bump() {\n\tui.Button++;\n}\nexport const result = () => {\n\tbump();\n\treturn Number.isNaN(App().props.children[0].type);\n};",
+				true,
+			],
+			[
+				'an import property the module deletes',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\ndelete ui.Button;\nexport const result = () => App().props.children[0].type === undefined;",
+				true,
+			],
+			[
+				'an import property the module deletes through optional chaining',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\ndelete ui?.Button;\nexport const result = () => App().props.children[0].type === undefined;",
+				true,
+			],
+			[
+				'an import property the module assigns by array destructuring',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n[ui.Button] = ['array'];\nexport const result = () => App().props.children[0].type;",
+				'array',
+			],
+			[
+				'an import property the module assigns by object destructuring',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n({ x: ui.Button } = { x: 'object' });\nexport const result = () => App().props.children[0].type;",
+				'object',
+			],
+			[
+				'an import property a for…of head assigns',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nfor (ui.Button of ['of']);\nexport const result = () => App().props.children[0].type;",
+				'of',
+			],
+			[
+				'an import property a for…in head assigns',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nfor (ui.Button in { key: 1 });\nexport const result = () => App().props.children[0].type;",
+				'key',
+			],
+			[
+				'an import property a class static block assigns',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nclass Patch {\n\tstatic {\n\t\tui.Button = 'class';\n\t}\n}\nexport const result = () => App().props.children[0].type;",
+				'class',
+			],
+			[
+				'an import property its component body assigns',
+				"import ui from './ui';\nexport function App() @{\n\tui.Button = 'render';\n\t<div><ui.Button>hello</ui.Button></div>\n}\nexport const result = () => App().props.children[0].type;",
+				'render',
+			],
+			[
+				'an import property the module assigns through a type assertion',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(ui as any).Button = 'typed';\nexport const result = () => App().props.children[0].type;",
+				'typed',
+			],
+			[
+				'an import property the module assigns through a sequence',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(0, ui).Button = 'sequence';\nexport const result = () => App().props.children[0].type;",
+				'sequence',
+			],
+			[
+				'an import property the module assigns through a conditional',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(true ? ui : ({} as any)).Button = 'conditional';\nexport const result = () => App().props.children[0].type;",
+				'conditional',
+			],
+			[
+				'an import property the module assigns through a logical expression',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(ui || ({} as any)).Button = 'either';\nexport const result = () => App().props.children[0].type;",
+				'either',
+			],
+			[
+				'an import property the module assigns through an assignment',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nlet alias: any;\n(alias = ui).Button = 'alias';\nexport const result = () => App().props.children[0].type;",
+				'alias',
+			],
+			[
+				'an import property Object.assign gives',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nObject.assign(ui, { Button: 'assigned' });\nexport const result = () => App().props.children[0].type;",
+				'assigned',
+			],
+			[
+				'an import property Object.defineProperty defines',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nObject.defineProperty(ui, 'Button', { value: 'defined' });\nexport const result = () => App().props.children[0].type;",
+				'defined',
+			],
+			[
+				'a property path under an import that Object.assign gives',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Menu.Item>hello</ui.Menu.Item></div>;\n}\nObject.assign(ui.Menu, { Item: 'merged' });\nexport const result = () => App().props.children[0].type;",
+				'merged',
+			],
+			[
+				// A namespace object's own properties are read-only, but not the
+				// properties of the objects it exports
+				'a property path under a namespace import the module assigns',
+				"import * as lib from './lib';\nfunction App() {\n\treturn <div><lib.Menu.Item>hello</lib.Menu.Item></div>;\n}\nlib.Menu.Item = 'deep';\nexport const result = () => App().props.children[0].type;",
+				'deep',
+			],
+			[
+				// Any property write under the name counts, even under a local that
+				// shadows it
+				'an import whose name another function writes a property of as a local',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport function other(ui: any) {\n\tui.Button = 'local';\n}\nexport const result = () => App().props.children[0].type;",
+				'original',
+			],
+		])(
+			'leaves JSX whose member tag reads %s in place, reading it at render time',
+			(_case, source, expected) => {
+				const { code } = compile(source, 'App.tsrx');
+				expect(code).not.toContain('__static');
+				expect(
+					run_result(code, {
+						'./ui': { default: { Button: 'original', Menu: { Item: 'original' } } },
+						'./menu': { Menu: { Item: 'original' } },
+						'./lib': { Menu: { Item: 'original' } },
+					}),
+				).toBe(expected);
+			},
+		);
+
+		it('leaves JSX whose member tag reads an import a directive body assigns a property of in place', () => {
+			const { code } = compile(
+				"import ui from './ui';\nexport function App() @{\n\t<>\n\t\t@if (true) {\n\t\t\tui.Button = 'branch';\n\t\t\t<b>branch</b>\n\t\t}\n\t\t<div><ui.Button>hello</ui.Button></div>\n\t</>\n}",
+				'App.tsrx',
+			);
+			expect(code).toContain('<div><ui.Button>hello</ui.Button></div></>');
+			expect(code).not.toMatch(/__static\d+ = <div>/);
+		});
+
 		it('leaves the static JSX of a component inside another function in place', () => {
 			// Its statics would go to module level, which only the components a
 			// top-level statement holds outside any other function reach
@@ -4624,6 +4778,22 @@ export function App() @{
 			[
 				'a member of a default import',
 				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport const result = () => App().props.children[0].type;",
+				'./ui.default.Button',
+			],
+			[
+				// A namespace object's own properties are read-only
+				'a member of a namespace import whose property the module assigns',
+				"import * as ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport function patch() {\n\t(ui as any).Button = 'patched';\n\tObject.assign(ui, { Button: 'patched' });\n}\nexport const result = () => App().props.children[0].type;",
+				'./ui.Button',
+			],
+			[
+				'an import whose property the module assigns',
+				"import { Tag } from './tag';\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport function patch() {\n\t(Tag as any).displayName = 'T';\n}\nexport const result = () => App().props.children[0].type;",
+				'./tag.Tag',
+			],
+			[
+				'a member of an import beside one whose property the module assigns',
+				"import ui from './ui';\nimport other from './other';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nother.Button = 'other';\nexport const result = () => App().props.children[0].type;",
 				'./ui.default.Button',
 			],
 			[
