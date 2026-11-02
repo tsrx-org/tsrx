@@ -2820,8 +2820,9 @@ function collect_hoistable_tags(program, parsed = program) {
  * without a declaration, through destructuring and type assertions. `objects`
  * are the names it can write a property under: the name a member target of
  * any of those starts with (`ui` for `ui.Menu.Item = …`), the one a `delete`
- * starts with, and the one the first argument of any call starts with, since
- * `Object.assign(ui, …)` and `Object.defineProperty(ui.Menu, …)` write one.
+ * starts with, and the one the first argument of any call or `new` starts
+ * with, since `Object.assign(ui, …)` and `Object.defineProperty(ui.Menu, …)`
+ * write one.
  * `null` when the program calls `eval` directly, which can assign any name it
  * can see. Read from the program as parsed: the style pass moves the `ref` of
  * a `<style>` in a nested root to the root's metadata, which `child_nodes`
@@ -2844,7 +2845,7 @@ function collect_assigned_names(program) {
 			node.left.type !== 'VariableDeclaration'
 		) {
 			add_target_names(node.left, assigned);
-		} else if (node.type === 'CallExpression') {
+		} else if (node.type === 'CallExpression' || node.type === 'NewExpression') {
 			const callee = unwrap_expression(node.callee);
 			if (callee.type === 'Identifier' && callee.name === 'eval') calls_eval = true;
 			const [first] = node.arguments;
@@ -2857,7 +2858,8 @@ function collect_assigned_names(program) {
 }
 
 /**
- * `node` without the parentheses and type assertions around it.
+ * `node` without the parentheses, type assertions and type arguments around
+ * it.
  *
  * @param {AST.Node} node
  * @returns {AST.Node}
@@ -2870,7 +2872,8 @@ function unwrap_expression(node) {
 		current.type === 'TSAsExpression' ||
 		current.type === 'TSSatisfiesExpression' ||
 		current.type === 'TSNonNullExpression' ||
-		current.type === 'TSTypeAssertion'
+		current.type === 'TSTypeAssertion' ||
+		current.type === 'TSInstantiationExpression'
 	) {
 		current = current.expression;
 	}
@@ -2913,7 +2916,8 @@ function add_target_names(target, assigned) {
 
 /**
  * Adds the names whose value `node` can be, or that a property path in it
- * starts from: `ui` for `ui`, `ui.Menu`, `(0, ui)` and `ui?.Menu`.
+ * starts from: `ui` for `ui`, `ui.Menu`, `(0, ui)`, `ui?.Menu` and
+ * `(await ui)`.
  *
  * @param {AST.Node} node
  * @param {Set<string>} names
@@ -2930,6 +2934,9 @@ function add_object_names(node, names) {
 			break;
 		case 'ChainExpression':
 			add_object_names(current.expression, names);
+			break;
+		case 'AwaitExpression':
+			add_object_names(current.argument, names);
 			break;
 		case 'SequenceExpression':
 			add_object_names(current.expressions[current.expressions.length - 1], names);

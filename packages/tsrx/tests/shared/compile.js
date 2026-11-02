@@ -4667,6 +4667,16 @@ export function App() @{
 				'alias',
 			],
 			[
+				'an import property the module assigns through await',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport async function patch() {\n\t(await ui).Button = 'awaited';\n}\nexport const result = async () => {\n\tawait patch();\n\treturn App().props.children[0].type;\n};",
+				'awaited',
+			],
+			[
+				'an import property the module assigns through type arguments',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(ui<any>).Button = 'instantiated';\nexport const result = () => App().props.children[0].type;",
+				'instantiated',
+			],
+			[
 				'an import property Object.assign gives',
 				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nObject.assign(ui, { Button: 'assigned' });\nexport const result = () => App().props.children[0].type;",
 				'assigned',
@@ -4680,6 +4690,11 @@ export function App() @{
 				'a property path under an import that Object.assign gives',
 				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Menu.Item>hello</ui.Menu.Item></div>;\n}\nObject.assign(ui.Menu, { Item: 'merged' });\nexport const result = () => App().props.children[0].type;",
 				'merged',
+			],
+			[
+				'an import property a constructor given the import writes',
+				"import ui from './ui';\nclass Patch {\n\tconstructor(target: any) {\n\t\ttarget.Button = 'constructed';\n\t}\n}\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nnew Patch(ui);\nexport const result = () => App().props.children[0].type;",
+				'constructed',
 			],
 			[
 				// A namespace object's own properties are read-only, but not the
@@ -4697,11 +4712,11 @@ export function App() @{
 			],
 		])(
 			'leaves JSX whose member tag reads %s in place, reading it at render time',
-			(_case, source, expected) => {
+			async (_case, source, expected) => {
 				const { code } = compile(source, 'App.tsrx');
 				expect(code).not.toContain('__static');
 				expect(
-					run_result(code, {
+					await run_result(code, {
 						'./ui': { default: { Button: 'original', Menu: { Item: 'original' } } },
 						'./menu': { Menu: { Item: 'original' } },
 						'./lib': { Menu: { Item: 'original' } },
