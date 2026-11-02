@@ -723,7 +723,7 @@ function logTSRXErrors(file_name, errors) {
 	for (const error of errors) {
 		const details =
 			error && typeof error === 'object'
-				? /** @type {{ message?: unknown, code?: unknown, severity?: unknown, loc?: { start?: { line?: unknown, column?: unknown } } }} */ (
+				? /** @type {{ message?: unknown, code?: unknown, severity?: unknown, loc?: { line?: unknown, column?: unknown, start?: { line?: unknown, column?: unknown } } }} */ (
 						error
 					)
 				: undefined;
@@ -732,7 +732,9 @@ function logTSRXErrors(file_name, errors) {
 		const code =
 			typeof details?.code === 'string' && details.code.length > 0 ? details.code : undefined;
 		const label = code === undefined ? severity : `${severity} ${code}`;
-		const start = details?.loc?.start;
+		// A collected error's `loc` is a range; a parse error acorn throws gives
+		// its position as `loc` itself (`{ line, column }`).
+		const start = details?.loc?.start ?? details?.loc;
 		const position =
 			typeof start?.line === 'number' && typeof start?.column === 'number'
 				? `(${start.line},${start.column + 1})`

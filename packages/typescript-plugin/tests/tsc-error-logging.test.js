@@ -1,3 +1,5 @@
+import { TS_ERRORS } from '@tsrx/core/diagnostics';
+import * as react from '@tsrx/react';
 import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TSRXVirtualCode, _reset_for_test } from '../src/language.js';
@@ -54,13 +56,10 @@ function compiler_throwing(thrown) {
 /**
  * @param {string} file_name
  * @param {import('../src/language.js').TSRXCompilerModule} compiler
+ * @param {string} [source]
  */
-function compile(file_name, compiler) {
-	return new TSRXVirtualCode(
-		file_name,
-		ts.ScriptSnapshot.fromString('export default <div>Hello</div>;'),
-		compiler,
-	);
+function compile(file_name, compiler, source = 'export default <div>Hello</div>;') {
+	return new TSRXVirtualCode(file_name, ts.ScriptSnapshot.fromString(source), compiler);
 }
 
 describe('tsrx-tsc diagnostic logging', () => {
@@ -120,6 +119,15 @@ describe('tsrx-tsc diagnostic logging', () => {
 		expect(spy).toHaveBeenCalledWith(
 			'[tsrx-tsc] App.tsrx(3,2): error tsrx-unclosed-tag: expected a closing tag',
 		);
+	});
+
+	it("prints a parse error's position, which acorn gives as `loc` itself", () => {
+		const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		// The parser throws `'}' expected.` at `b` with acorn's `loc`, a position
+		// (`{ line: 3, column: 5 }`) instead of a range.
+		compile('App.tsrx', react, 'export function Panel() @{\n\t<div>\n\t\t{a b}\n\t</div>\n}\n');
+		const { code, message } = TS_ERRORS.TOKEN_EXPECTED('}');
+		expect(spy).toHaveBeenCalledWith(`[tsrx-tsc] App.tsrx(3,6): error ${code}: ${message} (3:5)`);
 	});
 
 	it('keeps the bare severity label when a diagnostic has no code', () => {
