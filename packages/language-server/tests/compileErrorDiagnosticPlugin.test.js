@@ -1,8 +1,9 @@
 /** @import {Diagnostic, LanguageServiceEnvironment} from '@volar/language-service' */
 /** @import {TextDocument} from 'vscode-languageserver-textdocument' */
 
-import { TS_ERRORS } from '@tsrx/core';
+import { TS_ERRORS, TSRX_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
+import { DiagnosticSeverity } from '@volar/language-server';
 import { createCompileErrorDiagnosticPlugin } from '../src/compileErrorDiagnosticPlugin.js';
 import { createTypeScriptDiagnosticFilterPlugin } from '../src/typescriptDiagnosticPlugin.js';
 import { create_service_harness, create_typescript_harness } from './setup.js';
@@ -106,6 +107,81 @@ export function App() @{
 		);
 
 		expect(diagnostics).toEqual([]);
+	});
+
+	it('surfaces a collected warning-severity diagnostic as a warning, not silence or an error', async () => {
+		const source = `const theme = <style>.a { color: red; }</style>;
+export function App() @{
+	<>
+		<style apply={theme} />
+		<div class={theme.a}>{'x'}</div>
+	</>
+}`;
+		const { document, service, uri, language } = create_service_harness(
+			source,
+			[createCompileErrorDiagnosticPlugin()],
+			'react/App.tsrx',
+		);
+
+		// A consumer compiler (octane) pushes warning-severity diagnostics into the
+		// collected `errors` channel; the plugin must surface them as warnings.
+		const root = language.scripts.get(uri)?.generated?.root;
+		expect(root?.usageErrors).toEqual([]);
+		const theme_start = source.indexOf('theme');
+		root.usageErrors.push({
+			message: "'.a' is never referenced",
+			code: 'octane-style-unused-selector',
+			severity: 'warning',
+			pos: theme_start,
+			end: theme_start + 'theme'.length,
+			type: 'usage',
+		});
+
+		const diagnostics = await service.getDiagnostics(uri);
+		expect(diagnostics).toHaveLength(1);
+		expect(diagnostics[0].severity).toBe(DiagnosticSeverity.Warning);
+		expect(diagnostics[0].code).toBe('octane-style-unused-selector');
+		expect(document.getText(diagnostics[0].range)).toBe('theme');
+	});
+});
+
+describe('compile error diagnostic plugin — a statement-only code block', () => {
+	it("shows TSRX2035 as a warning on the '@{…}', next to TypeScript's errors in it", async () => {
+		const { document, diagnostics } = await editor_diagnostics_for(
+			'CodeBlockExpression',
+			`export function App({ user }: { user: { name: string } }) @{
+	<p>@{user.nmae}</p>
+}`,
+		);
+
+		const shown = diagnostics
+			// The harness has no JSX types (TS7026).
+			.filter((diagnostic) => diagnostic.code !== 7026)
+			.map((diagnostic) => ({
+				source: diagnostic.source,
+				code: diagnostic.code,
+				severity: diagnostic.severity,
+				message: diagnostic.source === 'TSRX' ? diagnostic.message : undefined,
+				// The editor spans the tokens the virtual code maps, so not `@{`
+				// and `}`.
+				text: document.getText(diagnostic.range),
+			}));
+		expect(shown).toEqual([
+			{
+				source: 'ts',
+				code: 2339,
+				severity: DiagnosticSeverity.Error,
+				message: undefined,
+				text: 'nmae',
+			},
+			{
+				source: 'TSRX',
+				code: TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD.code,
+				severity: DiagnosticSeverity.Warning,
+				message: TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD.message,
+				text: 'user.nmae',
+			},
+		]);
 	});
 });
 

@@ -69,6 +69,14 @@ export interface CompileError extends Error {
 	loc: AST.SourceLocation | undefined;
 	fileName: string | null;
 	type: 'fatal' | 'usage';
+	/**
+	 * Diagnostic severity of a collected error; absent means `'error'`.
+	 * Consumer compilers may mark collected diagnostics `'warning'` so the
+	 * language server and `tsrx-tsc` surface them as warnings, not errors.
+	 * `error()` never throws a warning: with no `errors` to record it in, it
+	 * drops it.
+	 */
+	severity?: 'error' | 'warning';
 }
 
 /** Platform selected for compile-time `import.meta.env.platform` flags. */
@@ -2258,6 +2266,10 @@ export interface VolarMappingsResult {
 	 * Mirrors {@link cssMappings} for `<style>` bodies.
 	 */
 	scriptMappings: CodeMapping[];
+	/**
+	 * Non-fatal diagnostics collected during compilation. Entries may carry
+	 * `severity: 'warning'`; editors must surface those as warnings, not errors.
+	 */
 	errors: CompileError[];
 	sourceAst: AST.Program;
 }
@@ -2280,6 +2292,8 @@ export interface CompileResult {
 	/**
 	 * Non-fatal errors collected during compilation. Populated only when the
 	 * caller passes `collect: true` or `loose: true`; empty otherwise.
+	 * Entries may carry `severity: 'warning'` for diagnostics that should not
+	 * fail a build.
 	 */
 	errors: CompileError[];
 }

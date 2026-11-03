@@ -86,6 +86,44 @@ describe('native tsc --runExternalCode', () => {
 		expect(result.status).not.toBe(0);
 	});
 
+	it("leaves out a compiler's warning, and its statement's TypeScript errors still show", () => {
+		const files = consumer_fixture_files();
+		files['main.ts'] = files['main.ts'].replace(/\/\/ Intentional[^\n]*\n[^\n]*\n/, '');
+		const original = files['Button.tsrx'];
+		// TSRX2035, a warning: TypeScript 7 would show it as an error.
+		files['Button.tsrx'] = original.replace('{label}', '@{label}');
+		let result = run_native_tsc(workspace(files), [
+			'--noEmit',
+			'-p',
+			'tsconfig.native.json',
+			'--pretty',
+			'false',
+		]);
+		expect(result.output).toBe('');
+		expect(result.status).toBe(0);
+
+		// A warning's directive would hide TypeScript's error in the statement.
+		const edited = original.replace('{label}', '@{label.size}');
+		files['Button.tsrx'] = edited;
+		result = run_native_tsc(workspace(files), [
+			'--noEmit',
+			'-p',
+			'tsconfig.native.json',
+			'--pretty',
+			'false',
+		]);
+		const offset = edited.indexOf('size');
+		expect(parse_tsc_output(result.output)).toEqual([
+			{
+				file: 'Button.tsrx',
+				line: edited.slice(0, offset).split('\n').length,
+				column: offset - edited.lastIndexOf('\n', offset - 1),
+				code: 'TS2339',
+				message: "Property 'size' does not exist on type 'string'.",
+			},
+		]);
+	});
+
 	it('honors the mapper entry compiler option over the tsconfig declaration', () => {
 		const files = consumer_fixture_files({ compiler: '@tsrx/does-not-exist' });
 		const dir = workspace(files);

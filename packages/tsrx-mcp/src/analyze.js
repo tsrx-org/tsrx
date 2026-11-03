@@ -28,7 +28,7 @@ import { compile_tsrx } from './compile.js';
  * @typedef {{
  *   ok: boolean,
  *   target: string | null,
- *   errors: Array<{ message: string, code?: string | null }>,
+ *   errors: Array<{ message: string, code?: string | null, severity?: 'error' | 'warning' }>,
  * }} TSRXCompileSummary
  */
 
@@ -144,7 +144,21 @@ function create_advice(input) {
 		});
 	}
 
-	if (advice.length === 0 && compileResult.ok) {
+	if (error_codes.has(DIAGNOSTIC_CODES.CODE_BLOCK_EXPRESSION_ONLY)) {
+		advice.push({
+			kind: 'code-block-expression-only',
+			severity: 'warning',
+			title: 'Give a @{...} block output, or use the value directly',
+			message:
+				"`@{...}` is always a code block, so a block that holds only an expression runs it and renders nothing. As a child, as in `<p>@{user.name}</p>`, render an `@` and then the value with `<p>&#64;{user.name}</p>`, ``<p>{`@${user.name}`}</p>``, or `<p>{'@' + user.name}</p>`, or only the value with `<p>{user.name}</p>`. Elsewhere, as in `const title = @{user.name};` or `title={@{user.name}}`, use the expression itself (`title={user.name}`), or end the block with output: `@{ <>{user.name}</> }`.",
+			documentation: [
+				'tsrx://docs/text-and-template-expressions.md',
+				'tsrx://docs/expression-values.md',
+			],
+		});
+	}
+
+	if (advice.length === 0 && compileResult.errors.length === 0) {
 		advice.push({
 			kind: 'compile-clean',
 			severity: 'info',
@@ -155,10 +169,14 @@ function create_advice(input) {
 		});
 	}
 
-	if (advice.length === 0) {
+	// An error no hint covers needs advice too, even next to a warning's.
+	if (
+		advice.length === 0 ||
+		(!compileResult.ok && advice.every((item) => item.severity !== 'error'))
+	) {
 		advice.push({
 			kind: 'compiler-diagnostic',
-			severity: 'error',
+			severity: compileResult.ok ? 'warning' : 'error',
 			title: 'Compiler diagnostics need review',
 			message:
 				'The TSRX compiler returned diagnostics that do not match a known MCP hint yet. Use the normalized compiler errors and relevant docs sections to revise the source.',
@@ -181,6 +199,7 @@ function create_advice(input) {
  *     errors: Array<{
  *       message: string,
  *       code: string | null,
+ *       severity?: 'error' | 'warning',
  *       type: string | null,
  *       fileName: string | null,
  *       pos: number | null,

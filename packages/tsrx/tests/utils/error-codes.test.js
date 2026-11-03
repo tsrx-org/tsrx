@@ -245,6 +245,7 @@ describe('error codes', () => {
 }`,
 			],
 			['TSRX2013', 'const a = <div>{...items}</div>;'],
+			['TSRX2035', 'const a = <p>@{user.name}</p>;'],
 			['TSRX2014', 'const a = <{x ? A : B} />;'],
 			[
 				'TSRX3001',

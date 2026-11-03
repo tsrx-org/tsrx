@@ -1,3 +1,4 @@
+import { Linter } from 'eslint';
 import { describe, expect, it } from 'vitest';
 import plugin from '../src/index.ts';
 
@@ -14,5 +15,19 @@ describe('eslint-plugin configs', () => {
 			expect(config.name).not.toMatch(/ripple/i);
 			expect(Object.keys(config.rules ?? {})).not.toContainEqual(expect.stringMatching(/ripple/i));
 		}
+	});
+
+	it('lints a file that compiles with a TSRX warning', () => {
+		// `@{user.name}` is TSRX2035, a warning, which mustn't fail the parse.
+		const messages = new Linter().verify(
+			`export function UserName({ user }: { user: { name: string } }) @{
+	<p>@{user.name}</p>
+}
+`,
+			plugin.configs.recommended,
+			'UserName.tsrx',
+		);
+
+		expect(messages).toEqual([]);
 	});
 });

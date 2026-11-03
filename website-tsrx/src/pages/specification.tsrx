@@ -602,6 +602,10 @@ const TSRX_ERROR_CODES = [
 	'          async function App() @{ const x = await f(); <p>{x}</p> }',
 	'TSRX2026  <target> ErrorBoundary does not provide a reset callback.',
 	'          @catch (e, reset) { <p /> }  (Hono)',
+	"TSRX2035  This @{…} is a code block, not '@' text and an expression: it runs the expression as a statement and renders nothing.  (a warning)",
+	'          <p>@{user.name}</p>',
+	'TSRX2035  This @{…} code block holds only an expression statement, so it renders nothing.  (a warning)',
+	'          const v = @{ x };  (outside a child list)',
 	"TSRX3001  The 'apply' attribute of a <style> block requires an expression value.",
 	'          <style apply="a" />',
 	"TSRX3002  'a' is not a style block.",
@@ -2119,6 +2123,12 @@ export function SpecificationPage() @{
 								<code class="inline-code">TSRX4xxx</code> for everything else. The messages below
 								are the reference implementation's; <code class="inline-code">&lt;target&gt;</code>{' '}
 								is the name of the target, such as React.
+							</p>
+							<p class="section-body">
+								A code marked <code class="inline-code">(a warning)</code> is for code that compiles
+								but likely doesn't do what was meant. A warning never stops a compile. The reference
+								implementation reports one only where it collects diagnostics, as editors and{' '}
+								<code class="inline-code">tsrx-tsc</code> do.
 							</p>
 							<h3 class="appendix-heading">B.1 TSRX codes</h3>
 							<pre class="code-block plain">

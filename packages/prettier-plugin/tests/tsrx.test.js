@@ -723,6 +723,22 @@ export function List({ items }) @{
 		);
 	});
 
+	// `<p>@{user.name}</p>` is TSRX2035, a warning, which the parse the plugin
+	// runs doesn't report; the plugin prints the block as it does any other.
+	test('prints a block whose only statement is an expression', async () => {
+		await expectFormat(
+			`export function A({ user }) @{
+  <p>@{user.name}</p>
+}`,
+			`export function A({ user }) @{
+  <p>@{
+    user.name;
+  }</p>
+}
+`,
+		);
+	});
+
 	test('hugs after attributes that break, and keeps comments in the block', async () => {
 		await expectFormat(
 			`export function A() @{
