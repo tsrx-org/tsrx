@@ -144,6 +144,17 @@ function create_advice(input) {
 		});
 	}
 
+	if (error_codes.has(DIAGNOSTIC_CODES.CODE_BLOCK_EXPRESSION_ONLY)) {
+		advice.push({
+			kind: 'code-block-expression-only',
+			severity: 'warning',
+			title: 'Render text and values outside @{...}',
+			message:
+				"`@{...}` is always a code block, in children too, so a block that holds only an expression, such as `<p>@{user.name}</p>`, runs it and renders nothing. To render an `@` and then the value, write `<p>&#64;{user.name}</p>`, ``<p>{`@${user.name}`}</p>``, or `<p>{'@' + user.name}</p>`. To render only the value, write `<p>{user.name}</p>`.",
+			documentation: ['tsrx://docs/text-and-template-expressions.md'],
+		});
+	}
+
 	if (advice.length === 0 && compileResult.errors.length === 0) {
 		advice.push({
 			kind: 'compile-clean',

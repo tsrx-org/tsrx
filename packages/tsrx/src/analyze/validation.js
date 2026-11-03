@@ -7,6 +7,7 @@
 
 import { error } from '../errors.js';
 import { TSRX_ERRORS } from '../diagnostics.js';
+import { is_tsrx_render_output_node } from '../utils/ast.js';
 
 // The messages of `TSRX_ERRORS` entries, under the names `@tsrx/core` exports
 // them by, for matching an error that has no code, such as one from an older
@@ -261,6 +262,102 @@ export function validate_forgotten_statement_container(node, filename, errors, c
  */
 export function validate_jsx_spread_child(node, filename, errors, comments) {
 	error(TSRX_ERRORS.JSX_SPREAD_CHILD, filename ?? null, node, errors, comments);
+}
+
+/**
+ * The wrappers an expression's value passes through unchanged.
+ * @param {AST.Node} node
+ * @returns {node is AST.Node & { expression: AST.Expression }}
+ */
+function is_value_wrapper(node) {
+	return (
+		node.type === 'ParenthesizedExpression' ||
+		node.type === 'ChainExpression' ||
+		node.type === 'TSAsExpression' ||
+		node.type === 'TSSatisfiesExpression' ||
+		node.type === 'TSNonNullExpression' ||
+		node.type === 'TSInstantiationExpression' ||
+		node.type === 'TSTypeAssertion'
+	);
+}
+
+/**
+ * Whether `node`, run as a statement, does nothing but make a value that is
+ * thrown away. These are the expressions ESLint's `no-unused-expressions`
+ * reports with its `allowShortCircuit`, `allowTernary` and
+ * `allowTaggedTemplates` options on. A call, `new`, an assignment, `++`, `--`,
+ * `delete`, `void`, `await`, `yield` or `import()` may be there for its effect,
+ * and so may an `&&`, `||`, `??` or `?:` that can end in one.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function has_no_effect(node) {
+	switch (node.type) {
+		case 'Identifier':
+		case 'Literal':
+		case 'TemplateLiteral':
+		case 'ThisExpression':
+		case 'MetaProperty':
+		case 'MemberExpression':
+		case 'BinaryExpression':
+		case 'ArrayExpression':
+		case 'ObjectExpression':
+		case 'FunctionExpression':
+		case 'ArrowFunctionExpression':
+		case 'ClassExpression':
+		case 'JSXElement':
+		case 'JSXFragment':
+			return true;
+		case 'UnaryExpression':
+			return node.operator !== 'void' && node.operator !== 'delete';
+		case 'LogicalExpression':
+			return has_no_effect(node.right);
+		case 'ConditionalExpression':
+			return has_no_effect(node.consequent) && has_no_effect(node.alternate);
+		case 'SequenceExpression':
+			return node.expressions.every(has_no_effect);
+		default:
+			return is_value_wrapper(node) && has_no_effect(node.expression);
+	}
+}
+
+/**
+ * Warn about a `@{ … }` whose only statement is an expression with no effect
+ * and that has no output, such as `<p>@{user.name}</p>`: the block runs the
+ * expression, throws its value away and renders nothing. In a child list the
+ * `@` was likely meant as text, so the warning says how to write that. An
+ * expression that may have an effect, such as `@{log(user)}`, is left alone,
+ * and so is JSX, which `validate_forgotten_statement_container` reports.
+ *
+ * It is only a warning, so a compile that doesn't collect drops it.
+ * @param {AST.JSXCodeBlock} node
+ * @param {AST.Node | undefined} parent
+ * @param {string | null | undefined} filename
+ * @param {CompileError[]} [errors]
+ * @param {AST.CommentWithLocation[]} [comments]
+ */
+export function validate_code_block_expression_only(node, parent, filename, errors, comments) {
+	if (node.render || node.body.length !== 1) return;
+	const [statement] = node.body;
+	if (statement.type !== 'ExpressionStatement') return;
+	/** @type {AST.Node} */
+	let expression = statement.expression;
+	while (is_value_wrapper(expression)) {
+		expression = expression.expression;
+	}
+	if (is_tsrx_render_output_node(expression) || !has_no_effect(expression)) return;
+	const is_child =
+		(parent?.type === 'JSXElement' || parent?.type === 'JSXFragment') &&
+		/** @type {AST.Node[]} */ (parent.children).includes(node);
+	error(
+		is_child ? TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD : TSRX_ERRORS.CODE_BLOCK_EXPRESSION_ONLY,
+		filename ?? null,
+		node,
+		errors,
+		comments,
+		undefined,
+		'warning',
+	);
 }
 
 /**

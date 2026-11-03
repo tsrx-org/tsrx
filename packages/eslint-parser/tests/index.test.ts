@@ -30,4 +30,21 @@ describe('eslint-parser', () => {
 			]),
 		);
 	});
+
+	it('parses a file with a warning and keeps the warning for ESLint rules', () => {
+		const result = parseForESLint(
+			`export function UserName({ user }: { user: { name: string } }) @{
+				<p>@{user.name}</p>
+			}`,
+			{ filePath: 'App.tsrx' },
+		);
+
+		expect(result.ast.body).toHaveLength(1);
+		expect(result.services?.tsrxDiagnostics).toEqual([
+			expect.objectContaining({
+				code: DIAGNOSTIC_CODES.CODE_BLOCK_EXPRESSION_ONLY,
+				severity: 'warning',
+			}),
+		]);
+	});
 });

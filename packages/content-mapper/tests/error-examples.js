@@ -16,6 +16,7 @@ import { TS_ERRORS, TSRX_ERRORS, UPSTREAM_ERRORS } from '@tsrx/core/diagnostics'
  * @property {string} source
  * @property {string} [compiler] The compiler package, for an error only some targets report (default `@tsrx/react`).
  * @property {ErrorEntry[]} [also] Other entries the source reports too, for the reason its record in {@link KNOWN_PROBLEMS} gives.
+ * @property {boolean} [warning] The compiler reports it as a warning, which the content mapper leaves out, so on TypeScript 7 it shows nowhere.
  */
 
 /**
@@ -343,6 +344,22 @@ export class A extends B {
 	</ul>
 }
 `,
+	},
+	{
+		error: TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD,
+		source: `export function C(props: { name: string }) @{
+	<p>@{props.name}</p>
+}
+`,
+		warning: true,
+	},
+	{
+		error: TSRX_ERRORS.CODE_BLOCK_EXPRESSION_ONLY,
+		source: `export function C(props: { name: string }) @{
+	props.name
+}
+`,
+		warning: true,
 	},
 	{
 		error: TSRX_ERRORS.STYLE_APPLY_VALUE,
