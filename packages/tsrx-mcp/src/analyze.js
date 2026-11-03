@@ -28,7 +28,7 @@ import { compile_tsrx } from './compile.js';
  * @typedef {{
  *   ok: boolean,
  *   target: string | null,
- *   errors: Array<{ message: string, code?: string | null }>,
+ *   errors: Array<{ message: string, code?: string | null, severity?: 'error' | 'warning' }>,
  * }} TSRXCompileSummary
  */
 
@@ -144,7 +144,7 @@ function create_advice(input) {
 		});
 	}
 
-	if (advice.length === 0 && compileResult.ok) {
+	if (advice.length === 0 && compileResult.errors.length === 0) {
 		advice.push({
 			kind: 'compile-clean',
 			severity: 'info',
@@ -158,7 +158,7 @@ function create_advice(input) {
 	if (advice.length === 0) {
 		advice.push({
 			kind: 'compiler-diagnostic',
-			severity: 'error',
+			severity: compileResult.ok ? 'warning' : 'error',
 			title: 'Compiler diagnostics need review',
 			message:
 				'The TSRX compiler returned diagnostics that do not match a known MCP hint yet. Use the normalized compiler errors and relevant docs sections to revise the source.',
@@ -181,6 +181,7 @@ function create_advice(input) {
  *     errors: Array<{
  *       message: string,
  *       code: string | null,
+ *       severity?: 'error' | 'warning',
  *       type: string | null,
  *       fileName: string | null,
  *       pos: number | null,

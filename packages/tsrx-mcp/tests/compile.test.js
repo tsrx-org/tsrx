@@ -372,6 +372,55 @@ describe('@tsrx/mcp compile helpers', () => {
 		expect(result.errors.length).toBeGreaterThan(0);
 		expect(result.errors[0].message).toMatch(/Expected closing tag/);
 		expect(result.errors[0].code).toBe(DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG);
+		expect(result.errors[0].severity).toBe('error');
+	});
+
+	it('marks an error the compiler throws as an error', async () => {
+		const result = await compile_tsrx({
+			code: 'function A() { return <><div>hi</>; }',
+			filename: 'Unclosed.tsrx',
+			target: 'react',
+			cwd: react_fixture,
+			collect: false,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.errors).toEqual([
+			expect.objectContaining({
+				code: DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG,
+				severity: 'error',
+			}),
+		]);
+	});
+
+	it('gives general warning advice for a warning it has no hint for', () => {
+		const result = analyze_tsrx_result({
+			code: '',
+			compileResult: {
+				ok: true,
+				target: 'react',
+				compilerPackage: '@tsrx/react',
+				filename: 'App.tsrx',
+				cwd: react_fixture,
+				errors: [
+					{
+						message: "'.a' is never referenced",
+						code: 'octane-style-unused-selector',
+						severity: 'warning',
+						type: 'usage',
+						fileName: 'App.tsrx',
+						pos: null,
+						end: null,
+						raisedAt: null,
+						loc: null,
+					},
+				],
+			},
+		});
+
+		expect(result.advice).toEqual([
+			expect.objectContaining({ kind: 'compiler-diagnostic', severity: 'warning' }),
+		]);
 	});
 
 	it('normalizes compiler failures into structured diagnostics', async () => {
