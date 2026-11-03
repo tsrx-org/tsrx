@@ -148,6 +148,11 @@ mapper then sends that error alone, and a stub of the file's exports.
   `@tsrx/core/diagnostics`, and `tests/error-examples.test.js` checks that each
   shows exactly once on TypeScript 7, or that its known problem (with the issue
   that tracks it) still stands.
+- No warning (`severity: 'warning'`, such as TSRX2035). TypeScript 7 shows every
+  mapper diagnostic as an error, so a warning would fail `tsc` on code that
+  compiles, and its directive would hide TypeScript's own errors in the same
+  statement. The TSRX language server and the classic `tsrx-tsc` still show
+  warnings.
 - While a file cannot be compiled, a stub that re-declares its exports as `any`
   (values and types), so importers keep resolving and the author sees exactly one
   error at the failing construct. `<style>` bodies are never TypeScript's concern
