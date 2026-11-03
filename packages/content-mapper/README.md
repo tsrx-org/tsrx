@@ -151,8 +151,10 @@ mapper then sends that error alone, and a stub of the file's exports.
 - No warning (`severity: 'warning'`, such as TSRX2035). TypeScript 7 shows every
   mapper diagnostic as an error, so a warning would fail `tsc` on code that
   compiles, and its directive would hide TypeScript's own errors in the same
-  statement. The TSRX language server and the classic `tsrx-tsc` still show
-  warnings.
+  statement. The classic `tsrx-tsc` and the TSRX language server on its classic
+  and plugin backends still show warnings, so VS Code shows them on TypeScript 7
+  too. With `--typescript-backend=native` the server reports no compile
+  diagnostics, so nothing shows a warning there yet.
 - While a file cannot be compiled, a stub that re-declares its exports as `any`
   (values and types), so importers keep resolving and the author sees exactly one
   error at the failing construct. `<style>` bodies are never TypeScript's concern

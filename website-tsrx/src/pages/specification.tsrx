@@ -604,6 +604,8 @@ const TSRX_ERROR_CODES = [
 	'          @catch (e, reset) { <p /> }  (Hono)',
 	"TSRX2035  This @{…} is a code block, not '@' text and an expression: it runs the expression as a statement and renders nothing.  (a warning)",
 	'          <p>@{user.name}</p>',
+	'TSRX2035  This @{…} code block holds only an expression statement, so it renders nothing.  (a warning)',
+	'          const v = @{ x };  (outside a child list)',
 	"TSRX3001  The 'apply' attribute of a <style> block requires an expression value.",
 	'          <style apply="a" />',
 	"TSRX3002  'a' is not a style block.",

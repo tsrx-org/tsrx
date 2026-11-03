@@ -633,9 +633,9 @@ Use JSX text for literal content and an expression container for computed values
 
 An `@` right before `{` opens a `@{ ... }` code block, in children too, even
 after other text. So `<p>@{user.name}</p>` runs `user.name` as a statement and
-renders nothing; editors and `tsrx-tsc` show it as the `TSRX2035` warning. To
-render an `@` and then a value, write the `@` as `&#64;` or put both in one
-expression container:
+renders nothing; editors and `tsrx-tsc` show it as the `TSRX2035` warning (on
+TypeScript 7, only VS Code does yet). To render an `@` and then a value, write
+the `@` as `&#64;` or put both in one expression container:
 
 ```tsrx
 <p>&#64;{user.name}</p>
