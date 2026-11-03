@@ -452,7 +452,10 @@ export function Spread({ items }: { items: string[] }) @{
 			expect.objectContaining({
 				kind: 'code-block-expression-only',
 				severity: 'warning',
-				documentation: ['tsrx://docs/text-and-template-expressions.md'],
+				documentation: [
+					'tsrx://docs/text-and-template-expressions.md',
+					'tsrx://docs/expression-values.md',
+				],
 			}),
 		]);
 	});

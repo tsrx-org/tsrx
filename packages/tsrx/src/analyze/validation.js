@@ -282,16 +282,18 @@ function is_value_wrapper(node) {
 }
 
 /**
- * Whether `node`, run as a statement, does nothing but make a value that is
- * thrown away. These are the expressions ESLint's `no-unused-expressions`
- * reports with its `allowShortCircuit`, `allowTernary` and
- * `allowTaggedTemplates` options on. A call, `new`, an assignment, `++`, `--`,
- * `delete`, `void`, `await`, `yield` or `import()` may be there for its effect,
- * and so may an `&&`, `||`, `??` or `?:` that can end in one.
+ * Whether `node`, run as a statement, is there only for its value, which the
+ * statement throws away. This judges the outermost operation, as ESLint's
+ * `no-unused-expressions` does with its `allowShortCircuit`, `allowTernary` and
+ * `allowTaggedTemplates` options on: `a.b` or `f() + 1` may still run a getter
+ * or a call, but the statement adds nothing to what it computes. A call, `new`,
+ * an assignment, `++`, `--`, `delete`, `void`, `await`, `yield` or `import()`
+ * may be there for its effect, and so may an `&&`, `||`, `??` or `?:` that can
+ * end in one.
  * @param {AST.Node} node
  * @returns {boolean}
  */
-function has_no_effect(node) {
+function is_value_only(node) {
 	switch (node.type) {
 		case 'Identifier':
 		case 'Literal':
@@ -311,23 +313,24 @@ function has_no_effect(node) {
 		case 'UnaryExpression':
 			return node.operator !== 'void' && node.operator !== 'delete';
 		case 'LogicalExpression':
-			return has_no_effect(node.right);
+			return is_value_only(node.right);
 		case 'ConditionalExpression':
-			return has_no_effect(node.consequent) && has_no_effect(node.alternate);
+			return is_value_only(node.consequent) && is_value_only(node.alternate);
 		case 'SequenceExpression':
-			return node.expressions.every(has_no_effect);
+			return node.expressions.every(is_value_only);
 		default:
-			return is_value_wrapper(node) && has_no_effect(node.expression);
+			return is_value_wrapper(node) && is_value_only(node.expression);
 	}
 }
 
 /**
- * Warn about a `@{ … }` whose only statement is an expression with no effect
- * and that has no output, such as `<p>@{user.name}</p>`: the block runs the
+ * Warn about a `@{ … }` with no output whose only statement is an expression
+ * there only for its value, such as `<p>@{user.name}</p>`: the block runs the
  * expression, throws its value away and renders nothing. In a child list the
  * `@` was likely meant as text, so the warning says how to write that. An
- * expression that may have an effect, such as `@{log(user)}`, is left alone,
- * and so is JSX, which `validate_forgotten_statement_container` reports.
+ * expression that may be there for its effect, such as `@{log(user)}`, is left
+ * alone, and so is a directive (`@{ 'use server' }` as a function body) and
+ * JSX, which `validate_forgotten_statement_container` reports.
  *
  * It is only a warning, so a compile that doesn't collect drops it.
  * @param {AST.JSXCodeBlock} node
@@ -339,13 +342,18 @@ function has_no_effect(node) {
 export function validate_code_block_expression_only(node, parent, filename, errors, comments) {
 	if (node.render || node.body.length !== 1) return;
 	const [statement] = node.body;
-	if (statement.type !== 'ExpressionStatement') return;
+	if (
+		statement.type !== 'ExpressionStatement' ||
+		typeof (/** @type {{ directive?: unknown }} */ (statement).directive) === 'string'
+	) {
+		return;
+	}
 	/** @type {AST.Node} */
 	let expression = statement.expression;
 	while (is_value_wrapper(expression)) {
 		expression = expression.expression;
 	}
-	if (is_tsrx_render_output_node(expression) || !has_no_effect(expression)) return;
+	if (is_tsrx_render_output_node(expression) || !is_value_only(expression)) return;
 	const is_child =
 		(parent?.type === 'JSXElement' || parent?.type === 'JSXFragment') &&
 		/** @type {AST.Node[]} */ (parent.children).includes(node);

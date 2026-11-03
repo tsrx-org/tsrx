@@ -95,8 +95,9 @@ export const DIAGNOSTIC_CODES = {
 	/** An `@catch` reset parameter on a target whose error boundary has none. */
 	TARGET_CATCH_RESET_UNSUPPORTED: 'TSRX2026',
 	/**
-	 * A warning: a `@{ … }` whose only statement is an expression with no
-	 * effect, such as `<p>@{user.name}</p>`, so it renders nothing.
+	 * A warning: a `@{ … }` with no output whose only statement is an
+	 * expression there only for its value, such as `<p>@{user.name}</p>`, so
+	 * it renders nothing.
 	 */
 	CODE_BLOCK_EXPRESSION_ONLY: 'TSRX2035',
 

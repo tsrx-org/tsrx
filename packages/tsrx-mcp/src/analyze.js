@@ -148,10 +148,13 @@ function create_advice(input) {
 		advice.push({
 			kind: 'code-block-expression-only',
 			severity: 'warning',
-			title: 'Render text and values outside @{...}',
+			title: 'Give a @{...} block output, or use the value directly',
 			message:
-				"`@{...}` is always a code block, in children too, so a block that holds only an expression, such as `<p>@{user.name}</p>`, runs it and renders nothing. To render an `@` and then the value, write `<p>&#64;{user.name}</p>`, ``<p>{`@${user.name}`}</p>``, or `<p>{'@' + user.name}</p>`. To render only the value, write `<p>{user.name}</p>`.",
-			documentation: ['tsrx://docs/text-and-template-expressions.md'],
+				"`@{...}` is always a code block, so a block that holds only an expression runs it and renders nothing. As a child, as in `<p>@{user.name}</p>`, render an `@` and then the value with `<p>&#64;{user.name}</p>`, ``<p>{`@${user.name}`}</p>``, or `<p>{'@' + user.name}</p>`, or only the value with `<p>{user.name}</p>`. Elsewhere, as in `const title = @{user.name};` or `title={@{user.name}}`, use the expression itself (`title={user.name}`), or end the block with output: `@{ <>{user.name}</> }`.",
+			documentation: [
+				'tsrx://docs/text-and-template-expressions.md',
+				'tsrx://docs/expression-values.md',
+			],
 		});
 	}
 

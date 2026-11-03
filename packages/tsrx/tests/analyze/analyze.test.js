@@ -526,6 +526,14 @@ function Directives({ c, items, k }) @{
 			).toEqual([]);
 		});
 
+		it("leaves alone a function body's directive, but not the same string as a child", () => {
+			expect(
+				warnings(`export async function action() @{ 'use server' }
+const Client = () => @{ 'use client' };
+const text = <p>@{'use server'}</p>;`),
+			).toEqual([warning('child', "@{'use server'}")]);
+		});
+
 		it("leaves JSX to the unused-output error, and a directive's own body alone", () => {
 			const result = analyze(`function A({ ok }) @{
 	<>
