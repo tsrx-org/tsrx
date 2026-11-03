@@ -169,7 +169,11 @@ function create_advice(input) {
 		});
 	}
 
-	if (advice.length === 0) {
+	// An error no hint covers needs advice too, even next to a warning's.
+	if (
+		advice.length === 0 ||
+		(!compileResult.ok && advice.every((item) => item.severity !== 'error'))
+	) {
 		advice.push({
 			kind: 'compiler-diagnostic',
 			severity: compileResult.ok ? 'warning' : 'error',

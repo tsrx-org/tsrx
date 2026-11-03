@@ -437,6 +437,26 @@ export function Spread({ items }: { items: string[] }) @{
 		]);
 	});
 
+	it('still gives error advice for an error it has no hint for, next to a warning it has one for', async () => {
+		const result = await analyze_tsrx({
+			code: `export function UserName({ user }: { user: { name: string } }) @{
+	<p>@{user.name}</p>
+}
+export function Spread({ items }: { items: string[] }) @{
+	<div>{...items}</div>
+}`,
+			filename: 'UserName.tsrx',
+			target: 'react',
+			cwd: react_fixture,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.advice.map(({ kind, severity }) => ({ kind, severity }))).toEqual([
+			{ kind: 'code-block-expression-only', severity: 'warning' },
+			{ kind: 'compiler-diagnostic', severity: 'error' },
+		]);
+	});
+
 	it('gives warning advice, not a clean bill, for a statement-only @{...}', async () => {
 		const result = await analyze_tsrx({
 			code: `export function UserName({ user }: { user: { name: string } }) @{
