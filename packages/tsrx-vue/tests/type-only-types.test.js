@@ -94,6 +94,16 @@ describe('@tsrx/vue type-only output type-checks', () => {
 			}`,
 		],
 		[
+			'@try / @pending',
+			`export function App() @{
+				@try {
+					<span>{'Loaded'}</span>
+				} @pending {
+					<span>{'Loading'}</span>
+				}
+			}`,
+		],
+		[
 			'@try / @pending / @catch',
 			`export function App() @{
 				@try {
