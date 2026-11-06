@@ -7,7 +7,9 @@ import {
 import {
 	TSDK_SETTING_NAMES,
 	USE_TSGO_SETTINGS,
+	on_running_compiler_reported,
 	project_typescript,
+	running_compiler_version,
 	typescript_7_compiler,
 	typescript_7_on,
 	typescript_7_server_extension,
@@ -30,11 +32,14 @@ const FIX_COMMAND = 'tsrx.typescript.fix';
  * - `typescript-7-missing`: TypeScript 7 is on, which turns VS Code's own TypeScript
  *   off, but only the TypeScript 7 Nightly extension is installed, which has no server.
  *
- * `project` is the TypeScript package the file's project installs.
+ * `project` is the TypeScript package the file's project installs. `workspace_tsdk_ignored`
+ * says that the server runs another compiler than the one a `tsdk` setting in the
+ * workspace names, because the user has not allowed that setting.
  * @typedef {{
  * 	kind: 'vscode' | 'typescript-7' | 'typescript-7-unsupported' | 'typescript-7-missing',
  * 	version?: string,
  * 	project?: { name?: string, version: string, directory: string },
+ * 	workspace_tsdk_ignored?: boolean,
  * }} TypeScriptStatus
  */
 
@@ -47,11 +52,18 @@ export function typescript_status(uri) {
 	if (!typescript_7_on()) return { kind: 'vscode', project };
 	const compiler = typescript_7_compiler();
 	if (!compiler) return { kind: 'typescript-7-missing', project };
-	const supported = compiler.version === 'unknown' || has_content_mapper_protocol(compiler.version);
+	// What the settings predict is all there is until the server reports, and on extension
+	// 1.0.1, which never does.
+	const running = running_compiler_version();
+	const version = running ?? compiler.version;
+	const supported =
+		version === 'unknown' || version === 'local' || has_content_mapper_protocol(version);
 	return {
 		kind: supported ? 'typescript-7' : 'typescript-7-unsupported',
-		version: compiler.version,
+		version,
 		project,
+		workspace_tsdk_ignored:
+			compiler.scope === 'workspace' && running !== undefined && running !== compiler.version,
 	};
 }
 
@@ -88,6 +100,13 @@ const TURN_OFF_TYPESCRIPT_7 = {
 				: 'typescript.experimental.disableTsgo',
 		);
 	},
+};
+
+/** @type {Action} */
+const SELECT_TYPESCRIPT_VERSION = {
+	id: 'select-typescript-version',
+	label: 'Select TypeScript Version',
+	run: () => vscode.commands.executeCommand('typescript.native-preview.selectVersion'),
 };
 
 /** @type {Action} */
@@ -178,6 +197,17 @@ export function notice_for(status) {
 				actions: [INSTALL_TYPESCRIPT_7, LEARN_MORE],
 			};
 		case 'typescript-7-unsupported': {
+			// Writing the setting again would change nothing: the TypeScript 7 extension's
+			// version picker is what allows it.
+			if (status.workspace_tsdk_ignored) {
+				return {
+					id: 'typescript-7-unsupported',
+					severity: 'warning',
+					title: 'Fix type checking in .tsrx files',
+					message: `TypeScript 7 uses version ${status.version}. This version cannot type-check .tsrx files. The workspace settings name another version, which TypeScript 7 has not been allowed to use. To allow it, click Select TypeScript Version and choose Use Workspace Version.`,
+					actions: [SELECT_TYPESCRIPT_VERSION, TURN_OFF_TYPESCRIPT_7],
+				};
+			}
 			const target = project_typescript_target(status);
 			if (target) {
 				return {
@@ -338,6 +368,7 @@ export function activate_typescript_guidance(context) {
 	update();
 	context.subscriptions.push(
 		item,
+		on_running_compiler_reported(update),
 		vscode.window.onDidChangeActiveTextEditor(update),
 		vscode.extensions.onDidChange(() => {
 			last_compiler = compiler_key();

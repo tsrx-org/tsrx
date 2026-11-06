@@ -1,4 +1,5 @@
 import vscode from 'vscode';
+import { TYPESCRIPT_7_SERVER_EXTENSIONS, follow_running_compiler } from './typescript-7.js';
 
 // The TypeScript extensions VS Code recognizes. The nightly companion only supplies a compiler.
 const TYPESCRIPT_EXTENSIONS = [
@@ -13,7 +14,8 @@ const TYPESCRIPT_EXTENSIONS = [
  * status read their selection settings (`typescript-7.js`). Register our file
  * extensions with any API that supports content mappers, so it can discover configured
  * projects for already-open and future TSRX documents. Each project still declares its
- * own mapper in tsconfig.json.
+ * own mapper in tsconfig.json. A TypeScript 7 extension's API also says which compiler
+ * its server runs.
  * @param {import('vscode').ExtensionContext} context
  */
 export function activate_typescript(context) {
@@ -25,7 +27,7 @@ export function activate_typescript(context) {
 		'.tsrx',
 	];
 	// A successful activation is remembered even when that extension exposes no mapper API.
-	/** @type {Map<string, import('vscode').Disposable | undefined>} */
+	/** @type {Map<string, import('vscode').Disposable[]>} */
 	const registrations = new Map();
 	let disposed = false;
 	let pending = Promise.resolve();
@@ -34,7 +36,7 @@ export function activate_typescript(context) {
 		if (disposed) return;
 		for (const [id, registration] of registrations) {
 			if (!vscode.extensions.getExtension(id)) {
-				registration?.dispose();
+				for (const disposable of registration) disposable.dispose();
 				registrations.delete(id);
 			}
 		}
@@ -49,7 +51,13 @@ export function activate_typescript(context) {
 					typeof api?.registerContentMappers === 'function'
 						? api.registerContentMappers(context.extension.id, [{ extensions: tsrx_extensions }])
 						: undefined;
-				registrations.set(id, registration);
+				const following = TYPESCRIPT_7_SERVER_EXTENSIONS.includes(id)
+					? follow_running_compiler(api)
+					: undefined;
+				registrations.set(
+					id,
+					[registration, following].filter((disposable) => disposable !== undefined),
+				);
 			} catch (error) {
 				console.warn(`[TSRX] Could not activate ${id}:`, error);
 			}
@@ -67,7 +75,9 @@ export function activate_typescript(context) {
 		{
 			dispose: () => {
 				disposed = true;
-				for (const registration of registrations.values()) registration?.dispose();
+				for (const registration of registrations.values()) {
+					for (const disposable of registration) disposable.dispose();
+				}
 				registrations.clear();
 			},
 		},

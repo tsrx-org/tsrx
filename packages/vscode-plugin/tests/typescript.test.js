@@ -70,6 +70,27 @@ describe('TypeScript activation for .tsrx documents', () => {
 		expect(state.registration.dispose).toHaveBeenCalledOnce();
 	});
 
+	it("follows the compiler a TypeScript 7 extension's server runs, and stops on dispose", async () => {
+		const state = setup();
+		const subscription = { dispose: vi.fn() };
+		const follow = vi.fn(() => subscription);
+		Object.assign(state.api, { onLanguageServerInitialized: follow });
+		await activate_typescript(state.context);
+		expect(follow).toHaveBeenCalledOnce();
+		state.dispose();
+		expect(subscription.dispose).toHaveBeenCalledOnce();
+	});
+
+	it("does not follow VS Code's own TypeScript", async () => {
+		const state = setup();
+		const follow = vi.fn(() => ({ dispose() {} }));
+		state.extensions.delete(state.native.id);
+		state.builtin.activate = vi.fn(async () => ({ onLanguageServerInitialized: follow }));
+		await activate_typescript(state.context);
+		expect(follow).not.toHaveBeenCalled();
+		state.dispose();
+	});
+
 	it('activates classic TypeScript when the native extension is absent', async () => {
 		const state = setup();
 		state.extensions.delete(state.native.id);
