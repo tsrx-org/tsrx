@@ -128,13 +128,22 @@ these without misdescribing the source to other rules:
   `@else`, `@else if`, `@for` or `@pending` body that holds a single statement,
   such as `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file
   that doesn't parse. Use `all` or `multi-line`, which leave these bodies alone.
+- `unicorn/no-lonely-if` and `sonarjs/no-collapsible-if` read a `@pending` block
+  as an `if`, and report one that holds only an `if` statement. The `--fix` for
+  `unicorn/no-lonely-if` turns `@pending { if (n) { … } }` into
+  `@if ( && n) { … }`, which doesn't parse. Disable these rules for that line.
 - Code path analysis runs a `@pending` block just before the `@catch`, and doesn't
-  follow a `throw` in that block into the `@catch`. If `@pending` always throws,
-  `no-useless-assignment` flags a value it assigns that only the `@catch` reads.
+  follow a `throw` in that block into the `@catch`. When a path through `@pending`
+  ends in `throw`, `no-useless-assignment` flags a value assigned on that path
+  that only the `@catch` reads.
 - `preserve-caught-error` reads a `@pending` block as part of the `@catch` after
   it. It reports a `throw new Error()` in that block, and its suggestion adds the
   `@catch` parameter as the `cause`, though `@pending` can't see that parameter.
   Ignore the suggestion and disable the rule for that line.
+- `react-hooks/rules-of-hooks` reports a hook in a `@pending` body as called
+  conditionally. With React that report is false today: the fallback runs once
+  per render, even when nothing suspends. Its report on a hook in a `@catch` body
+  is real, since that hook crashes with React error #321.
 
 ## Related Packages
 
