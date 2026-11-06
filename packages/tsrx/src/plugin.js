@@ -4102,8 +4102,10 @@ export function TSRXPlugin(config) {
 					this.raise(position, message);
 				} else if (range) {
 					this.#report_recoverable_error_range(range[0], range[1], message);
-					const recorded = this.#errors?.at(-1);
-					if (recorded) recorded.raisedAt = Math.min(position + 1, this.input.length);
+					const recorded = /** @type {import('../types/index').CompileError} */ (
+						this.#errors?.at(-1)
+					);
+					recorded.raisedAt = Math.min(position + 1, this.input.length);
 				} else {
 					this.#report_recoverable_error(position, message);
 				}
