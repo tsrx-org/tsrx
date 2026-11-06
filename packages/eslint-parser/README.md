@@ -135,11 +135,7 @@ these without misdescribing the source to other rules:
 - Code path analysis runs a `@pending` block just before the `@catch`, and doesn't
   follow a `throw` in that block into the `@catch`. When a path through `@pending`
   ends in `throw`, `no-useless-assignment` flags a value assigned on that path
-  that only the `@catch` reads.
-- `preserve-caught-error` reads a `@pending` block as part of the `@catch` after
-  it. It reports a `throw new Error()` in that block, and its suggestion adds the
-  `@catch` parameter as the `cause`, though `@pending` can't see that parameter.
-  Ignore the suggestion and disable the rule for that line.
+  that only the `@catch`, or code after it, reads.
 - `react-hooks/rules-of-hooks` reports a hook in a `@pending` body as called
   conditionally. With React that report is false today: the fallback runs once per
   render, even when nothing suspends. Its report on a hook in a `@catch` body is
