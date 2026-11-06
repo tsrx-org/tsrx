@@ -26,7 +26,11 @@ describe('@tsrx/vue Suspense slot flag', () => {
 			}`,
 		],
 	])('is in compiled output and not in type-only output: %s', (_name, source) => {
-		expect(compile(source, 'App.tsrx').code).toMatch(/<Suspense v-slots=\{\{\s*_: 1,/);
-		expect(compile_to_volar_mappings(source, 'App.tsrx').code).not.toMatch(/\b_:/);
+		const type_only = compile_to_volar_mappings(source, 'App.tsrx');
+
+		expect(compile(source, 'App.tsrx').code).toMatch(/<Suspense v-slots=\{\{\s*_: 1,\s*default:/);
+		expect(type_only.errors).toEqual([]);
+		expect(type_only.code).toMatch(/<Suspense v-slots=\{\{\s*default:/);
+		expect(type_only.code).not.toMatch(/\b_:/);
 	});
 });
