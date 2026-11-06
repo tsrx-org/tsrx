@@ -485,6 +485,65 @@ export const B = ({ ok }) => @if (ok) { throw new Error('d'); } @else { <i /> };
 			expect(visited(`@try { <a /> } @pending { <b /> }`)).toEqual(['div', 'b', 'a']);
 		});
 
+		it('leaves a @catch after @pending as it is without one', () => {
+			const code = `export function App({ call }) @{
+	<div>
+		@try { <a /> } @pending { call(); <p /> } /* note */ @catch (e) { throw e; }
+	</div>
+}`;
+			const seen: unknown[] = [];
+			const messages = lint(code, {
+				plugins: {
+					probe: {
+						rules: {
+							clause: {
+								create: ({ sourceCode }) => ({
+									CatchClause(node: any) {
+										seen.push(
+											node.parent.type,
+											node.parent.handler.clause === node,
+											sourceCode.getFirstToken(node)?.value,
+											sourceCode.getFirstToken(node, (token) => token.value === '(')?.range,
+											sourceCode.getCommentsBefore(node).map((comment) => comment.value),
+											sourceCode.getCommentsInside(node),
+											sourceCode.getText(node),
+										);
+									},
+								}),
+							},
+						},
+					},
+				},
+				rules: { 'no-useless-catch': 'error', 'probe/clause': 'error' },
+			});
+			const start = code.indexOf('@catch');
+			expect(seen).toEqual([
+				'TryStatement',
+				true,
+				'@',
+				[code.indexOf('(e)'), code.indexOf('(e)') + 1],
+				[' note '],
+				[],
+				code.slice(start, code.indexOf(' }\n\t</div>') + 2),
+			]);
+			// On the `try`, as it is with no `@pending`.
+			expect(messages).toEqual(['3: no-useless-catch: Unnecessary try/catch wrapper.']);
+			expect(lint(code, { rules: { 'no-useless-catch': 'error' } })).toEqual(messages);
+		});
+
+		it('applies a comment above a @catch to the @catch', () => {
+			const code = `export function App() @{
+	<div>
+		@try { <a /> } @pending { <p /> }
+		// eslint-disable-next-line no-restricted-syntax
+		@catch (e) { <b>{e}</b> }
+	</div>
+}`;
+			expect(lint(code, { rules: { 'no-restricted-syntax': ['error', 'CatchClause'] } })).toEqual(
+				[],
+			);
+		});
+
 		it('keeps every child inside the range of its parent', () => {
 			const code = app(
 				`@try { <a /> } /* a */ @pending /* b */ { <p title="t">{n}</p> } /* c */ @catch (e) { <b>{e}</b> }
@@ -604,6 +663,38 @@ export const B = ({ ok }) => @if (ok) { throw new Error('d'); } @else { <i /> };
 			}
 		});
 
+		it('does not read a throw in @pending as a throw in the @catch', () => {
+			const code = app(
+				`@try { <a /> } @pending { throw new Error('p'); } @catch (e) { <b>{e}</b> }`,
+				'const label = n;',
+			);
+			expect(lint(code, { rules: { 'preserve-caught-error': 'error' } })).toEqual([]);
+		});
+
+		it('finds the scope of a @pending branch outside the @catch', () => {
+			const scopes: string[] = [];
+			const code = app(`@try { <a /> } @pending { <p /> } @catch (e) { <b>{e}</b> }`);
+			lint(code, {
+				plugins: {
+					probe: {
+						rules: {
+							scope: {
+								create: ({ sourceCode }) => ({
+									'JSXTryHandler > IfStatement'(node: any) {
+										for (const part of [node, node.test, node.consequent]) {
+											scopes.push(sourceCode.getScope(part).type);
+										}
+									},
+								}),
+							},
+						},
+					},
+				},
+				rules: { 'probe/scope': 'error' },
+			});
+			expect(scopes).toEqual(['function', 'function', 'block']);
+		});
+
 		it('keeps @pending out of the scope of the @catch', () => {
 			const code = app(
 				`@try { <a /> } @pending { <p>{e}</p> } @catch (e) { <p>{e}</p> }
@@ -642,8 +733,7 @@ export const B = ({ ok }) => @if (ok) { throw new Error('d'); } @else { <i /> };
 			loc: { start: { line: 4, column: 3 }, end: { line: 4, column: 56 } },
 			block: { type: 'BlockStatement' },
 			handler: {
-				type: 'CatchClause',
-				// It holds the branch, so it starts at the keyword, not at `@catch`.
+				type: 'JSXTryHandler',
 				loc: { start: { line: 4, column: 18 }, end: { line: 4, column: 56 } },
 				pending: {
 					type: 'IfStatement',
@@ -655,8 +745,17 @@ export const B = ({ ok }) => @if (ok) { throw new Error('d'); } @else { <i /> };
 					consequent: { type: 'BlockStatement' },
 					alternate: null,
 				},
+				clause: {
+					type: 'CatchClause',
+					loc: { start: { line: 4, column: 36 }, end: { line: 4, column: 56 } },
+				},
 			},
 		});
+		const { param, body, clause } = tsrx_try.statement.handler;
+		expect(param).toBe(clause.param);
+		expect(body).toBe(clause.body);
+		expect(param.name).toBe('e');
+		expect(Object.keys(tsrx_try.statement.handler)).not.toContain('body');
 		expect(tsrx_try.pending).toBeNull();
 		// A `try` needs a `catch` or `finally`.
 		expect(pending_only.statement).toBeUndefined();

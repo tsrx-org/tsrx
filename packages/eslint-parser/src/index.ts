@@ -36,7 +36,7 @@ const visitorKeys: Record<string, string[]> = {
 	JSXSwitchCase: ['test', 'consequent'],
 	JSXTryExpression: ['pending', 'block', 'statement'],
 	JSXPendingKeyword: [],
-	CatchClause: ['pending', 'param', 'resetParam', 'body'],
+	JSXTryHandler: ['pending', 'clause'],
 	JSXCodeBlock: ['body', 'render'],
 	StyleSheet: [],
 	ForOfStatement: ['left', 'right', 'body'],
@@ -81,7 +81,6 @@ class TSRXReferencer extends Referencer {
 	}
 
 	CatchClause(node: any): void {
-		if (node.pending) this.visit(node.pending);
 		if (!node.resetParam) {
 			super.CatchClause(node);
 			return;
@@ -180,6 +179,33 @@ function to_pending_branch(pending: any, keyword: { start: number; end: number }
 }
 
 /**
+ * A `@pending` branch and its `@catch`, as the handler of a `try` statement.
+ * Code path analysis starts the catch path at `TryStatement.handler`, so the
+ * branch has to be inside the handler. It can't be inside the `CatchClause`:
+ * `getNodeByRangeIndex` skips a node that doesn't contain the position, and a
+ * clause widened to contain the branch gives the `@catch` the first tokens and
+ * comments of `@pending`. So rules keep what they read from a handler and a
+ * clause, the handler has the `param` and `body` of the clause, and the parent of
+ * the clause is still the `try` statement. ESLint assigns `parent` as it
+ * traverses, so the accessor ignores that.
+ */
+function to_try_handler(pending: any, clause: any): any {
+	const handler: any = {
+		type: 'JSXTryHandler',
+		start: pending.start,
+		end: clause.end,
+		pending,
+		clause,
+	};
+	Object.defineProperties(handler, {
+		param: { value: clause.param },
+		body: { value: clause.body },
+	});
+	Object.defineProperty(clause, 'parent', { get: () => handler.parent, set() {} });
+	return handler;
+}
+
+/**
  * Keep this hook for small ESLint-only AST normalizations. Returns the `JSXText`
  * nodes, which each get a token of their own.
  */
@@ -234,20 +260,16 @@ function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
 		}
 
 		// A `@pending` block shows while the body suspends, however far the body
-		// has got, so it reads as a branch. With a `@catch` it opens the catch
-		// clause, which code path analysis reaches from the first thing in the
-		// `try` block that can throw, from each `throw`, and from the end of the
-		// block. A branch inside the `try` block would give the `@catch` a path that
-		// skips the body, and `rules-of-hooks` would report the hooks in the body.
-		// With no `@catch` there is no `try` statement: the branch runs first.
+		// has got, so it reads as a branch. With a `@catch` it opens the catch path,
+		// which code path analysis reaches from the first thing in the `try` block
+		// that can throw, from each `throw`, and from the end of the block. A branch
+		// inside the `try` block would give the `@catch` a path that skips the body,
+		// and `rules-of-hooks` would report the hooks in the body. With no `@catch`
+		// there is no `try` statement: the branch runs first.
 		if (node.type === 'JSXTryExpression' && node.pending) {
 			node.pending = to_pending_branch(node.pending, node.pendingKeyword);
 			if (node.handler) {
-				// `getNodeByRangeIndex` skips a node that doesn't contain the position,
-				// so the catch clause has to start where its branch does.
-				node.handler.pending = node.pending;
-				node.handler.start = node.pending.start;
-				delete node.handler.loc;
+				node.handler = to_try_handler(node.pending, node.handler);
 				node.pending = null;
 			}
 		}
