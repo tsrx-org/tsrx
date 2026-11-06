@@ -318,6 +318,13 @@ export function A({ items }) @{
 		}
 	});
 
+	it('reports a plain try with only a pending block as a parse error', () => {
+		const code = `export function App() @{
+	try { <p>a</p> } pending { <p>loading</p> }
+}`;
+		expect(lint(code)).toEqual(['2: null: Parsing error: Missing catch or finally clause']);
+	});
+
 	it('gives each arm of an @if or @try its own code path', () => {
 		const code = `export function A({ n }) @{
 	let x = 0;

@@ -268,6 +268,17 @@ function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
 			node.statement = statement;
 		}
 
+		// The parser accepts a plain `try` with only a `pending` block. It compiles
+		// to a `try` with neither a `catch` nor a `finally`, which isn't JavaScript,
+		// and code path analysis throws on it.
+		if (node.type === 'TryStatement' && !node.handler && !node.finalizer) {
+			throw to_eslint_parse_error({
+				message: 'Missing catch or finally clause',
+				loc: node.loc,
+				start: node.start,
+			});
+		}
+
 		// typescript-eslint names the parameters of a function type or signature
 		// `params`, and rules such as `max-params` read that name. It is not
 		// enumerable, so traversal still visits each parameter once.
