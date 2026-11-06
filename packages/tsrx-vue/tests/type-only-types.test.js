@@ -2,7 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { compile_to_volar_mappings } from '../src/index.js';
+import { compile, compile_to_volar_mappings } from '../src/index.js';
 
 /**
  * Runs the TypeScript checker over the type-only (editor) output against the
@@ -131,5 +131,35 @@ describe('@tsrx/vue type-only output type-checks', () => {
 		],
 	])('%s', (_name, source) => {
 		expect(type_only_diagnostics(source)).toEqual([]);
+	});
+});
+
+describe('@tsrx/vue Suspense slot flag', () => {
+	it.each([
+		[
+			'@try / @pending',
+			`export function App() @{
+				@try {
+					<span>{'Loaded'}</span>
+				} @pending {
+					<span>{'Loading'}</span>
+				}
+			}`,
+		],
+		[
+			'@try / @pending / @catch',
+			`export function App() @{
+				@try {
+					<span>{'Loaded'}</span>
+				} @pending {
+					<span>{'Loading'}</span>
+				} @catch (error) {
+					<span>{'Failed'}</span>
+				}
+			}`,
+		],
+	])('is in compiled output and not in type-only output: %s', (_name, source) => {
+		expect(compile(source, 'App.tsrx').code).toMatch(/<Suspense v-slots=\{\{\s*_: 1,/);
+		expect(compile_to_volar_mappings(source, 'App.tsrx').code).not.toMatch(/\b_:/);
 	});
 });
