@@ -611,6 +611,42 @@ import def from './mixed';
 		expect(await client.diagnostics('Button.tsrx')).toEqual([]);
 	});
 
+	// Each tag left open shows on itself. The closing tags that recovery adds
+	// have no mapping, so an error of TypeScript's on one could only show at the
+	// top of the file, as TS18080. The directive has to cover them (#1288).
+	it('reports each unclosed tag on itself and nothing on the closing tags added', async () => {
+		const unclosed = TSRX_ERRORS.UNCLOSED_TAG.code;
+		const number = Number(unclosed.slice('TSRX'.length));
+		/** @param {string} body */
+		const component = (body) => `export function C() @{\n\t${body}\n}\n`;
+		for (const [source, tags] of /** @type {Array<[string, string[]]>} */ ([
+			[component('<main><section>'), ['main', 'section']],
+			[component('<ul><li>a'), ['ul', 'li']],
+			[component('<><div>'), ['<>', 'div']],
+			[component('<div><span><b><i>'), ['div', 'span', 'b', 'i']],
+			[component('<Missing>'), ['Missing']],
+			[component('<nope.Missing>'), ['nope.Missing']],
+			['export const y = <div>\n', ['div']],
+			['export const y = <div><Missing>\n', ['div', 'Missing']],
+			['export const y = <style>.a {}\n', ['<style>']],
+			['export const y = <script>const a = 1;\n', ['<script>']],
+			['<><div>;\n', ['<>', 'div']],
+		])) {
+			client.change('Button.tsrx', source);
+			const diagnostics = await client.diagnostics('Button.tsrx');
+			expect(
+				diagnostics
+					.filter((d) => d.severity === 1)
+					.toSorted((a, b) => a.range.start.character - b.range.start.character)
+					.map((d) => [d.source, d.code, range_text(source, d.range)]),
+				source,
+			).toEqual(tags.map((tag) => ['TSRX', number, tag]));
+		}
+
+		client.change('Button.tsrx', files['Button.tsrx']);
+		expect(await client.diagnostics('Button.tsrx')).toEqual([]);
+	});
+
 	it('serves a second configured project in the same session', async () => {
 		client.open('sub/use.ts', files['sub/use.ts']);
 		client.open('sub/Other.tsrx', files['sub/Other.tsrx']);

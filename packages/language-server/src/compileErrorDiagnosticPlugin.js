@@ -176,7 +176,7 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 	/** @type {Position | null} */
 	let end = null;
 
-	if (error.pos) {
+	if (error.pos !== undefined) {
 		const start_offset = get_start_offset_from_error(error);
 		const end_offset = get_end_offset_from_error(error, start_offset);
 		// try to find exact mapping
@@ -211,11 +211,13 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 		}
 
 		if (!start || !end) {
-			// No mapping covers the error, such as the `}` that ends a template
-			// with an unclosed tag in it (TSRX1001). The editor shows a diagnostic
-			// only where the generated code maps back, so show it on the nearest
-			// code before it that does, not at the start of the file.
-			const nearest = nearest_reported_range(virtualCode, start_offset);
+			// No mapping covers the error, such as a repeated modifier the
+			// editor's code leaves out (`public public`), or a `<>` left open,
+			// which has none in a template. The editor shows a diagnostic only
+			// where the generated code maps back, so show it on the code the error
+			// reaches, a `<>`'s first child, or else the nearest code before it
+			// that does, not at the start of the file.
+			const nearest = nearest_reported_range(virtualCode, start_offset, error.raisedAt);
 			if (nearest) {
 				start = document.positionAt(nearest[0]);
 				end = document.positionAt(nearest[1]);
@@ -241,32 +243,38 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 }
 
 /**
- * The generated range of the source token that reports diagnostics and ends
- * nearest before `offset`, or starts nearest after it when none ends before
- * it. Of tokens the same distance away, the shortest.
+ * The generated range of the source token that reports diagnostics and starts
+ * nearest after `offset`, when it starts before `reach`. Otherwise the one that
+ * ends nearest before `offset`, or starts nearest after it when none ends
+ * before it. Of tokens the same distance away, the shortest.
  * @param {TSRXVirtualCodeInstance} virtualCode
  * @param {number} offset
+ * @param {number} [reach] Where the error's parser stopped, such as the token that ended a template
  * @returns {[number, number] | null}
  */
-function nearest_reported_range(virtualCode, offset) {
+function nearest_reported_range(virtualCode, offset, reach = offset) {
 	/** @type {{ range: [number, number], distance: number, length: number } | null} */
 	let before = null;
-	/** @type {{ range: [number, number], distance: number, length: number } | null} */
+	/** @type {{ range: [number, number], distance: number, length: number, start: number } | null} */
 	let after = null;
 	for (const mapping of virtualCode.mappings ?? []) {
 		if (!mapping.data?.verification) continue;
 		for (let i = 0; i < mapping.sourceOffsets.length; i++) {
 			const source_start = mapping.sourceOffsets[i];
 			const length = mapping.lengths[i];
-			if (length === 0) continue;
+			const generated_length = mapping.generatedLengths?.[i] ?? length;
+			// A hoisted sibling can leave a token a mapping that runs backwards in
+			// the generated code, and Volar drops a diagnostic on such a range.
+			if (length === 0 || generated_length <= 0) continue;
 			const generated_start = mapping.generatedOffsets[i];
 			const ends_before = source_start + length <= offset;
 			if (!ends_before && source_start < offset) continue;
 			const candidate = {
 				/** @type {[number, number]} */
-				range: [generated_start, generated_start + (mapping.generatedLengths?.[i] ?? length)],
+				range: [generated_start, generated_start + generated_length],
 				distance: ends_before ? offset - (source_start + length) : source_start - offset,
 				length,
+				start: source_start,
 			};
 			if (ends_before) {
 				if (is_nearer(candidate, before)) before = candidate;
@@ -275,6 +283,7 @@ function nearest_reported_range(virtualCode, offset) {
 			}
 		}
 	}
+	if (after && after.start < reach) return after.range;
 	return (before ?? after)?.range ?? null;
 }
 

@@ -98,7 +98,10 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 
 /**
  * The innermost holder node (see {@link HOLDER_TYPE}) that contains `position`,
- * found by descending from the root through the child that contains it.
+ * found by descending from the root through the child that contains it. An
+ * unclosed element is no holder: its generated code runs to the closing tag
+ * that recovery adds, which no mapping of its node reaches, so TypeScript's
+ * error there could only show at the top of the file.
  * @param {AST.Node} root
  * @param {number} position
  * @returns {AST.Node | null}
@@ -109,7 +112,7 @@ function holder_at(root, position) {
 	/** @type {AST.Node | null} */
 	let node = root;
 	while (node) {
-		if (HOLDER_TYPE.test(node.type)) {
+		if (HOLDER_TYPE.test(node.type) && !(/** @type {any} */ (node).unclosed)) {
 			holder = node;
 		}
 		node = child_at(node, position);

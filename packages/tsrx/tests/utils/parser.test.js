@@ -2977,6 +2977,61 @@ export function App() @{ <div /> }`;
 		expect(reported(loose)).toEqual(reported(collected));
 	});
 
+	// A collecting or loose parse records each tag left open at the end of its
+	// template at the tag's name (a fragment's `<>`), so the editor shows each
+	// error on its own tag, and keeps `raisedAt` at the token that ends the
+	// template. A strict parse still throws the first one at that token (#1288).
+	it.each([
+		['export function C() @{\n\t<main><section>\n}\n', ['section', 'main'], '\n}'],
+		['export function C() @{\n\t<ul><li>a\n}\n', ['li', 'ul'], '\n}'],
+		['export function C() @{\n\t<a><b><c><d>\n}\n', ['d', 'c', 'b', 'a'], '\n}'],
+		['export function C() @{\n\t<><div>\n}\n', ['div', '<>'], '\n}'],
+		['export function C() @{\n\t<>\n}\n', ['<>'], '\n}'],
+		['export function C() {\n\treturn <div>;\n}\n', ['div'], '\n}'],
+		['export const a = <><div>;\n', ['div', '<>'], null],
+		['export function C({ Tag }) @{\n\t<{Tag}>\n}\n', ['{Tag}'], '\n}'],
+		['export function C() @{\n\t<a.b class="x">\n}\n', ['a.b'], '\n}'],
+		['export function C() @{\n\t@if (x) {\n\t\t<div>\n\t}\n}\n', ['div'], '\n\t}'],
+	])('records each unclosed tag of %j at its name', (source, tags, before_end) => {
+		const end =
+			before_end === null ? source.length : source.indexOf(before_end) + before_end.length - 1;
+		for (const options of [{ collect: true }, { loose: true, collect: true }]) {
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'App.tsrx', { ...options, errors });
+			expect(errors.map((error) => [error.code, source.slice(error.pos, error.end)])).toEqual(
+				tags.map((tag) => [TSRX_ERRORS.UNCLOSED_TAG.code, tag]),
+			);
+			expect(errors.map((error) => error.raisedAt)).toEqual(
+				tags.map(() => Math.min(end + 1, source.length)),
+			);
+		}
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			error_with(TSRX_ERRORS.UNCLOSED_TAG, line_column(source, end)),
+		);
+	});
+
+	// `<style>` and `<script>` read their body as raw text, so they report an
+	// unclosed tag from their own path: on the opening tag in a loose parse,
+	// and where the body starts when thrown. Only a loose parse goes on past
+	// it; a collecting one records it, then throws its next error (#1288).
+	it.each([
+		['export const y = <style>.a {}\n', '<style>', '.a'],
+		['export const y = <script>const a = 1;\n', '<script>', 'const a'],
+	])('records the unclosed raw text tag of %j on its opening tag', (source, tag, body) => {
+		const start = source.indexOf(body);
+		/** @type {CompileError[]} */
+		const errors = [];
+		parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
+		expect(errors.map((error) => [error.code, source.slice(error.pos, error.end)])).toEqual([
+			[TSRX_ERRORS.UNCLOSED_TAG.code, tag],
+		]);
+		expect(errors[0].raisedAt).toBe(start + 1);
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			error_with(TSRX_ERRORS.UNCLOSED_TAG, line_column(source, start)),
+		);
+	});
+
 	it('parses module-scope style expressions followed by JavaScript statements', () => {
 		const source = `const styles = <style>
 			.card {
