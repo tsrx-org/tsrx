@@ -7,8 +7,9 @@
  *
  * The TSRX language server runs alongside it in `plugin` mode for snippets, CSS,
  * document symbols, CSS-class navigation, keyword highlights and formatting (with the
- * project's Prettier and `@tsrx/prettier-plugin`). A status item on `.tsrx` files names
- * the TypeScript that serves them, and a notice says what to do when none can
+ * project's Prettier and `@tsrx/prettier-plugin`), and closes tags on
+ * TypeScript 7 (`closing-tags.js`). A status item on `.tsrx` files names the
+ * TypeScript that serves them, and a notice says what to do when none can
  * (`typescript-guidance.js`).
  * It also reports compile errors; `diagnostics.js` removes that copy once the native
  * mapper reports for the file, and removes each one tsserver reports itself. This
@@ -22,6 +23,7 @@ import fs from 'node:fs';
 import protocol from '@volar/language-server/protocol';
 import * as lsp from 'vscode-languageclient/node';
 import { createLabsInfo } from '@volar/vscode';
+import { activate_closing_tags } from './closing-tags.js';
 import { register_restart_command, restart_on_request } from './restart.js';
 import { create_server_options } from './server-options.js';
 import { register_source_definition_command } from './source-definition.js';
@@ -134,9 +136,9 @@ export async function activate(context) {
 		// tsserver shows itself (same TypeScript code, same place).
 		// `restartNotification`: the server asks for a restart (`restart_on_request`)
 		// instead of exiting by itself.
-		// `closeTagsOnType: false`: the TypeScript that serves the file closes tags, so the
-		// server's on-type formatting would insert a second closing tag with
-		// `editor.formatOnType` on.
+		// `closeTagsOnType: false`: VS Code's TypeScript closes tags, or on TypeScript 7 this
+		// extension asks the server for them (`closing-tags.js`), so the server's on-type
+		// formatting would insert a second closing tag with `editor.formatOnType` on.
 		initializationOptions: {
 			typescriptBackend: 'plugin',
 			restartNotification: true,
@@ -190,6 +192,8 @@ export async function activate(context) {
 
 		const volar_labs = createLabsInfo(protocol);
 		volar_labs.addLanguageClient(client);
+
+		activate_closing_tags(context, client);
 
 		// Formatting: the TSRX language server formats .tsrx files with the project's Prettier
 		// and @tsrx/prettier-plugin, and this extension's configurationDefaults make it the

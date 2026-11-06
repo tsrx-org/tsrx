@@ -14,8 +14,8 @@ export const CLOSING_TAGS_ON_TYPE = { firstTriggerCharacter: '>' };
 /**
  * Whether the client gets its closing tags through `textDocument/onTypeFormatting`.
  * A client that closes tags another way sets the `closeTagsOnType` initialization
- * option to `false`: the VS Code extension, where the TypeScript that serves the file
- * closes them.
+ * option to `false`: the VS Code extension, where VS Code's TypeScript closes them,
+ * or the extension asks for them with Volar's `volar/client/autoInsert` request.
  * @param {InitializeParams} params
  */
 export function closes_tags_on_type(params) {
@@ -24,8 +24,9 @@ export function closes_tags_on_type(params) {
 
 /**
  * Close tags in every editor: answer `textDocument/onTypeFormatting` for `>` with
- * an edit that inserts the closing tag at the cursor. This handler asks the
- * auto-insert plugin (`provideAutoInsertSnippet` in `autoInsertPlugin.js`), drops the
+ * an edit that inserts the closing tag at the cursor. Only the VS Code extension
+ * sends Volar's `volar/client/autoInsert` request. This handler asks the same
+ * plugin (`provideAutoInsertSnippet` in `autoInsertPlugin.js`), drops the
  * snippet's `$0` and removes its escapes (`$0</\$Foo>` inserts `</$Foo>`). No
  * Volar service plugin offers on-type formatting (`stripFormatting` in
  * `servicePlugins.js`), so Volar registers no handler that would replace this one.

@@ -21,8 +21,10 @@
  * companion (`TypeScriptTeam.vscode-typescript-nightly`, a 7.1 nightly
  * compiler). `settings` are that instance's user settings; `${project}` is the
  * fixture copy's path. `projectTypeScript` links the repository's TypeScript
- * 7.1 nightly into the fixture's `node_modules`, or with `'classic'` the
- * TypeScript 5.9 or 6 that `@tsrx/typescript-plugin` develops against.
+ * 7.1 nightly into the fixture's `node_modules`, with `'classic'` the TypeScript 5.9
+ * or 6 that `@tsrx/typescript-plugin` develops against, or with `'no-binary'` the 7.1
+ * nightly's manifest without its platform package. `workspaceSettings` go in the
+ * fixture's `.vscode/settings.json`.
  *
  * `typescript` is what the TSRX extension's status item says serves the file
  * (`src/typescript-guidance.js`), and `notice` the ids of the notices it showed,
@@ -38,10 +40,10 @@
  * `result.serverOutput` has the lines of the TSRX Language Server output.
  *
  * `closingTag` is the text the runner expects after it types `<b>` inside the
- * fixture's button, or the tag that `typedTag` names (`<$Foo>` for `$Foo`). Only the
- * TypeScript that serves the file closes tags: TypeScript 7 needs the content mapper to
- * do that in a `.tsrx` file, so a compiler without it, such as the built-in 7.0.2,
- * leaves `<b>` as it is typed.
+ * fixture's button, or the tag that `typedTag` names (`<$Foo>` for `$Foo`). On
+ * TypeScript 7 the TSRX extension closes it (`tsrx.autoClosingTags.enabled`), even when
+ * no compiler serves the file. A compiler with the content mapper, from extension 1.0.2,
+ * closes it as well (`js/ts.autoClosingTags.enabled`).
  *
  * @typedef {'typescript-7' | 'vscode-typescript' | 'nothing'} Server
  * @typedef {'vscode' | 'typescript-7' | 'typescript-7-unsupported' | 'typescript-7-missing'} Status
@@ -50,7 +52,7 @@
  * 	description: string,
  * 	extensions: Array<'tsrx' | 'ts7' | 'ts7-nightly'>,
  * 	settings?: Record<string, unknown>,
- * 	projectTypeScript?: boolean | 'classic',
+ * 	projectTypeScript?: boolean | 'classic' | 'no-binary',
  * 	expect: Server,
  * 	typescript: Status,
  * 	notice?: string,
@@ -59,6 +61,7 @@
  * 	packageChange?: boolean,
  * 	serverCrash?: boolean,
  * 	workspacePrompt?: boolean,
+ * 	workspaceSettings?: Record<string, unknown>,
  * 	gap?: string,
  * 	closingTag?: string,
  * 	typedTag?: string,
@@ -222,10 +225,34 @@ export const SCENARIOS = [
 		closingTag: '<$Foo></$Foo>',
 	},
 	{
-		name: 'ts7-user-tsdk-closing-off',
-		description: "ts7-user-tsdk, TypeScript's closing tags off: nothing else closes it",
+		name: 'ts7-user-tsdk-tsrx-closing-off',
+		description: "ts7-user-tsdk, TSRX's closing tags off: TypeScript 7 closes the tag by itself",
+		extensions: ['tsrx', 'ts7'],
+		settings: { ...USER_TSDK, 'tsrx.autoClosingTags.enabled': false },
+		projectTypeScript: true,
+		expect: 'typescript-7',
+		typescript: 'typescript-7',
+		closingTag: '<b></b>',
+	},
+	{
+		name: 'ts7-user-tsdk-typescript-closing-off',
+		description: "ts7-user-tsdk, TypeScript's closing tags off: TSRX closes the tag by itself",
 		extensions: ['tsrx', 'ts7'],
 		settings: { ...USER_TSDK, 'js/ts.autoClosingTags.enabled': false },
+		projectTypeScript: true,
+		expect: 'typescript-7',
+		typescript: 'typescript-7',
+		closingTag: '<b></b>',
+	},
+	{
+		name: 'ts7-user-tsdk-closing-off',
+		description: 'ts7-user-tsdk, both closing tags off: nothing closes the tag',
+		extensions: ['tsrx', 'ts7'],
+		settings: {
+			...USER_TSDK,
+			'tsrx.autoClosingTags.enabled': false,
+			'js/ts.autoClosingTags.enabled': false,
+		},
 		projectTypeScript: true,
 		expect: 'typescript-7',
 		typescript: 'typescript-7',
@@ -251,7 +278,7 @@ export const SCENARIOS = [
 		expect: 'nothing',
 		typescript: 'typescript-7-unsupported',
 		notice: 'typescript-7-unsupported',
-		closingTag: '<b>',
+		closingTag: '<b></b>',
 		check: (result) => notice_actions(result, ['Learn More', 'Turn Off TypeScript 7']),
 	},
 	{
@@ -264,7 +291,7 @@ export const SCENARIOS = [
 		expect: 'nothing',
 		typescript: 'typescript-7-unsupported',
 		notice: 'typescript-7-unsupported',
-		closingTag: '<b>',
+		closingTag: '<b></b>',
 	},
 	{
 		name: 'ts7-bundled',
@@ -275,7 +302,7 @@ export const SCENARIOS = [
 		expect: 'nothing',
 		typescript: 'typescript-7-unsupported',
 		notice: 'typescript-7-unsupported',
-		closingTag: '<b>',
+		closingTag: '<b></b>',
 		gap: "The TypeScript 7 extension finds the project's `node_modules/typescript` (microsoft/TypeScript#64565) but only offers it: until the user accepts (`ts7-workspace-prompt`) it runs its built-in 7.0.2, which has no content-mapper protocol, and VS Code's own TypeScript stands down while TypeScript 7 is on. The TSRX extension's notice offers the same switch.",
 		check: (result) =>
 			status_version(result, '7.0.2') ??
@@ -302,6 +329,70 @@ export const SCENARIOS = [
 				: status_version(result, PROJECT_NIGHTLY),
 	},
 	{
+		name: 'ts7-user-tsdk-prompt',
+		description:
+			"ts7-user-tsdk: a user setting does not answer the extension's prompt, which still comes and adds the workspace setting",
+		extensions: ['tsrx', 'ts7'],
+		settings: USER_TSDK,
+		projectTypeScript: true,
+		workspacePrompt: true,
+		expect: 'typescript-7',
+		typescript: 'typescript-7',
+		closingTag: '<b></b>',
+		check: (result) =>
+			result.workspacePrompt?.workspace === 'node_modules/typescript' &&
+			result.workspacePrompt?.user === 'node_modules/typescript'
+				? undefined
+				: `expected the prompt to add js/ts.tsdk.path to the workspace settings beside the user setting, got ${JSON.stringify(result.workspacePrompt)}`,
+	},
+	{
+		name: 'ts7-user-tsdk-no-platform-binary',
+		description:
+			"ts7-user-tsdk, the project's TypeScript lacks its platform package: the extension skips it, and the built-in 7.0.2 serves",
+		extensions: ['tsrx', 'ts7'],
+		settings: USER_TSDK,
+		projectTypeScript: 'no-binary',
+		expect: 'nothing',
+		typescript: 'typescript-7-unsupported',
+		notice: 'typescript-7-unsupported',
+		closingTag: '<b></b>',
+		check: (result) =>
+			status_version(result, '7.0.2') ??
+			notice_actions(result, ['Learn More', 'Turn Off TypeScript 7']),
+	},
+	{
+		name: 'ts7-workspace-tsdk-not-allowed',
+		description:
+			'js/ts.tsdk.path in the workspace settings, not allowed yet: the built-in 7.0.2 serves, and the server says so',
+		extensions: ['tsrx', 'ts7'],
+		settings: { 'js/ts.experimental.useTsgo': true },
+		workspaceSettings: { 'js/ts.tsdk.path': 'node_modules/typescript' },
+		projectTypeScript: true,
+		expect: 'nothing',
+		typescript: 'typescript-7-unsupported',
+		notice: 'typescript-7-unsupported',
+		closingTag: '<b></b>',
+		check: (result) =>
+			status_version(result, '7.0.2') ??
+			notice_actions(result, ['Select TypeScript Version', 'Turn Off TypeScript 7']),
+	},
+	{
+		name: 'ts7-workspace-tsdk-allowed',
+		description:
+			"js/ts.tsdk.path in the workspace settings, and the user accepts the extension's Allow prompt",
+		extensions: ['tsrx', 'ts7'],
+		settings: { 'js/ts.experimental.useTsgo': true },
+		workspaceSettings: { 'js/ts.tsdk.path': 'node_modules/typescript' },
+		projectTypeScript: true,
+		workspacePrompt: true,
+		expect: 'typescript-7',
+		typescript: 'typescript-7',
+		// TSRX shows this notice once the server reports 7.0.2, before the user answers.
+		notice: 'typescript-7-unsupported',
+		closingTag: '<b></b>',
+		check: (result) => status_version(result, PROJECT_NIGHTLY),
+	},
+	{
 		name: 'ts7-bundled-use-project-typescript',
 		description:
 			"ts7-bundled, then the notice's Use Project TypeScript: TSRX writes js/ts.tsdk.path and restarts TypeScript 7",
@@ -312,7 +403,7 @@ export const SCENARIOS = [
 		typescript: 'typescript-7-unsupported',
 		notice: 'typescript-7-unsupported',
 		action: 'use-project-typescript',
-		closingTag: '<b>',
+		closingTag: '<b></b>',
 		check: (result) =>
 			result.afterAction?.tsdkPath !== 'node_modules/typescript'
 				? `expected js/ts.tsdk.path node_modules/typescript in the user settings, got ${JSON.stringify(result.afterAction?.tsdkPath)}`
@@ -332,7 +423,7 @@ export const SCENARIOS = [
 		typescript: 'typescript-7-unsupported',
 		notice: 'typescript-7-unsupported',
 		action: 'turn-off-typescript-7',
-		closingTag: '<b>',
+		closingTag: '<b></b>',
 		check: (result) =>
 			result.afterAction?.useTsgo?.user !== false
 				? `expected js/ts.experimental.useTsgo to be false, got ${JSON.stringify(result.afterAction?.useTsgo)}`
@@ -349,7 +440,7 @@ export const SCENARIOS = [
 		expect: 'nothing',
 		typescript: 'typescript-7-unsupported',
 		notice: 'typescript-7-unsupported',
-		closingTag: '<b>',
+		closingTag: '<b></b>',
 		gap: 'Same as ts7-bundled: on its first start the TypeScript 7 extension sets `js/ts.experimental.useTsgo` to true in the user settings.',
 		check: (result) =>
 			result.useTsgoAtEnd?.user !== true
@@ -429,9 +520,19 @@ export const SCENARIOS = [
 		check: restarted_after_crash,
 	},
 	{
+		name: 'vscode-typescript-tsrx-closing-off',
+		description:
+			"TSRX extension only, TSRX's own closing tags off: VS Code's TypeScript closes the tag through the tsserver plugin",
+		extensions: ['tsrx'],
+		settings: { 'tsrx.autoClosingTags.enabled': false },
+		expect: 'vscode-typescript',
+		typescript: 'vscode',
+		closingTag: '<b></b>',
+	},
+	{
 		name: 'vscode-typescript-closing-off',
 		description:
-			"TSRX extension only, VS Code's TypeScript closing tags off: nothing else closes it",
+			"TSRX extension only, VS Code's TypeScript closing tags off: TSRX closes tags only for TypeScript 7, so nothing closes it",
 		extensions: ['tsrx'],
 		settings: { 'js/ts.autoClosingTags.enabled': false },
 		expect: 'vscode-typescript',

@@ -193,7 +193,7 @@ describe('TSRX language server: closing tags on `>`', () => {
 	});
 
 	it('offers no on-type formatting to a client that closes tags itself', async () => {
-		// The VS Code extension: the TypeScript that serves the file closes its tags.
+		// The VS Code extension: TypeScript, or Volar's `volar/client/autoInsert` request.
 		const { capabilities } = await session({
 			backend: 'plugin',
 			text: TYPED_DIV,
