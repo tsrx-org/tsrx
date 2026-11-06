@@ -50,7 +50,7 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 		if (typeof error.pos !== 'number') {
 			continue;
 		}
-		const holder = source_ast ? holder_at(source_ast, error.pos) : null;
+		const holder = source_ast ? holder_at(source_ast, held_position(error)) : null;
 		const start = holder ? /** @type {number} */ (holder.start) : error.pos;
 		const end = holder
 			? /** @type {number} */ (holder.end)
@@ -97,11 +97,25 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 }
 
 /**
+ * The position whose holder an error's directive covers. It's the error's own,
+ * unless the parser read past it: an unclosed tag is reported on the tag and
+ * found where its template ends. The closing tag that recovery adds there has
+ * no mapping, so TypeScript's error on it could only show at the top of the
+ * file. The holder of the place the parser stopped spans it, and the tag's
+ * own may not.
+ * @param {CompileError} error
+ * @returns {number}
+ */
+function held_position(error) {
+	const { pos, end, raisedAt } = error;
+	return typeof raisedAt === 'number' && typeof end === 'number' && raisedAt > end
+		? raisedAt - 1
+		: /** @type {number} */ (pos);
+}
+
+/**
  * The innermost holder node (see {@link HOLDER_TYPE}) that contains `position`,
- * found by descending from the root through the child that contains it. An
- * unclosed element is no holder: its generated code runs to the closing tag
- * that recovery adds, which no mapping of its node reaches, so TypeScript's
- * error there could only show at the top of the file.
+ * found by descending from the root through the child that contains it.
  * @param {AST.Node} root
  * @param {number} position
  * @returns {AST.Node | null}
@@ -112,7 +126,7 @@ function holder_at(root, position) {
 	/** @type {AST.Node | null} */
 	let node = root;
 	while (node) {
-		if (HOLDER_TYPE.test(node.type) && !(/** @type {any} */ (node).unclosed)) {
+		if (HOLDER_TYPE.test(node.type)) {
 			holder = node;
 		}
 		node = child_at(node, position);
