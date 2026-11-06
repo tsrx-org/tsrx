@@ -32,11 +32,16 @@
  * `result.afterCommand`. `packageChange` changes the project's package.json at the
  * end, as `pnpm install` would; `check` then reads `result.afterPackageChange`.
  * `serverCrash` stops the TSRX server process at the end, as a crash would; `check`
- * then reads `result.afterServerCrash`.
+ * then reads `result.afterServerCrash`. `workspacePrompt` accepts the TypeScript 7
+ * extension's prompt to use the project's TypeScript before the checks, as clicking
+ * Use Workspace Version would; `check` then reads `result.workspacePrompt`.
  * `result.serverOutput` has the lines of the TSRX Language Server output.
  *
  * `closingTag` is the text the runner expects after it types `<b>` inside the
- * fixture's button, or the tag that `typedTag` names (`<$Foo>` for `$Foo`).
+ * fixture's button, or the tag that `typedTag` names (`<$Foo>` for `$Foo`). Only the
+ * TypeScript that serves the file closes tags: TypeScript 7 needs the content mapper to
+ * do that in a `.tsrx` file, so a compiler without it, such as the built-in 7.0.2,
+ * leaves `<b>` as it is typed.
  *
  * @typedef {'typescript-7' | 'vscode-typescript' | 'nothing'} Server
  * @typedef {'vscode' | 'typescript-7' | 'typescript-7-unsupported' | 'typescript-7-missing'} Status
@@ -53,6 +58,7 @@
  * 	command?: string,
  * 	packageChange?: boolean,
  * 	serverCrash?: boolean,
+ * 	workspacePrompt?: boolean,
  * 	gap?: string,
  * 	closingTag?: string,
  * 	typedTag?: string,
@@ -96,8 +102,11 @@ function notice_actions(result, actions) {
 		: `expected the notice to offer ${JSON.stringify(actions)}, got ${JSON.stringify(shown)}`;
 }
 
-/** The settings the extension README tells TypeScript 7 users to add. */
-const RECOMMENDED = {
+/**
+ * TypeScript 7 on, and the project's compiler named in the user settings, which the
+ * TypeScript 7 extension uses without asking. TSRX's Use Project TypeScript writes this.
+ */
+const USER_TSDK = {
 	'js/ts.experimental.useTsgo': true,
 	'js/ts.tsdk.path': 'node_modules/typescript',
 };
@@ -189,11 +198,11 @@ function restarted_after_crash(result) {
 /** @type {Scenario[]} */
 export const SCENARIOS = [
 	{
-		name: 'ts7-recommended',
+		name: 'ts7-user-tsdk',
 		description:
-			"The README's setup: TypeScript 7 extension, useTsgo and js/ts.tsdk.path = node_modules/typescript, project has the 7.1 nightly",
+			'TypeScript 7 extension, useTsgo and js/ts.tsdk.path = node_modules/typescript in the user settings, project has the 7.1 nightly',
 		extensions: ['tsrx', 'ts7'],
-		settings: RECOMMENDED,
+		settings: USER_TSDK,
 		projectTypeScript: true,
 		expect: 'typescript-7',
 		typescript: 'typescript-7',
@@ -201,11 +210,11 @@ export const SCENARIOS = [
 		check: (result) => status_version(result, PROJECT_NIGHTLY),
 	},
 	{
-		name: 'ts7-recommended-dollar-tag',
+		name: 'ts7-user-tsdk-dollar-tag',
 		description:
-			"The README's setup, typing `<$Foo>`: the TSRX extension closes the tag through a snippet, where `$Foo` is a variable unless escaped (#1018)",
+			'ts7-user-tsdk, typing `<$Foo>`: a closing tag sent as a snippet needs its `$` escaped, or `$Foo` is a variable (#1018)',
 		extensions: ['tsrx', 'ts7'],
-		settings: RECOMMENDED,
+		settings: USER_TSDK,
 		projectTypeScript: true,
 		expect: 'typescript-7',
 		typescript: 'typescript-7',
@@ -213,22 +222,20 @@ export const SCENARIOS = [
 		closingTag: '<$Foo></$Foo>',
 	},
 	{
-		name: 'ts7-recommended-tsrx-closing-off',
-		description:
-			"The README's setup, TSRX's own closing tags off: what TypeScript 7 closes by itself",
+		name: 'ts7-user-tsdk-closing-off',
+		description: "ts7-user-tsdk, TypeScript's closing tags off: nothing else closes it",
 		extensions: ['tsrx', 'ts7'],
-		settings: { ...RECOMMENDED, 'tsrx.autoClosingTags.enabled': false },
+		settings: { ...USER_TSDK, 'js/ts.autoClosingTags.enabled': false },
 		projectTypeScript: true,
 		expect: 'typescript-7',
 		typescript: 'typescript-7',
 		closingTag: '<b>',
-		gap: 'The TypeScript 7 extension does not close tags in `.tsrx` files (microsoft/TypeScript#64564): the closing tag comes from the TSRX extension (`tsrx.autoClosingTags.enabled`).',
 	},
 	{
-		name: 'ts7-recommended-restart',
-		description: "The README's setup, then TSRX: Restart Language Server",
+		name: 'ts7-user-tsdk-restart',
+		description: 'ts7-user-tsdk, then TSRX: Restart Language Server',
 		extensions: ['tsrx', 'ts7'],
-		settings: RECOMMENDED,
+		settings: USER_TSDK,
 		projectTypeScript: true,
 		expect: 'typescript-7',
 		typescript: 'typescript-7',
@@ -237,27 +244,27 @@ export const SCENARIOS = [
 		check: restarted,
 	},
 	{
-		name: 'ts7-recommended-no-project-typescript',
-		description: "The README's settings in a project without typescript: the built-in 7.0.2 serves",
+		name: 'ts7-user-tsdk-no-project-typescript',
+		description: 'ts7-user-tsdk in a project without typescript: the built-in 7.0.2 serves',
 		extensions: ['tsrx', 'ts7'],
-		settings: RECOMMENDED,
+		settings: USER_TSDK,
 		expect: 'nothing',
 		typescript: 'typescript-7-unsupported',
 		notice: 'typescript-7-unsupported',
-		closingTag: '<b></b>',
+		closingTag: '<b>',
 		check: (result) => notice_actions(result, ['Learn More', 'Turn Off TypeScript 7']),
 	},
 	{
-		name: 'ts7-recommended-classic-project',
+		name: 'ts7-user-tsdk-classic-project',
 		description:
-			"The README's settings in a project on TypeScript 5.9: the setting is skipped, the built-in 7.0.2 serves",
+			'ts7-user-tsdk in a project on TypeScript 5.9: the setting is skipped, the built-in 7.0.2 serves',
 		extensions: ['tsrx', 'ts7'],
-		settings: RECOMMENDED,
+		settings: USER_TSDK,
 		projectTypeScript: 'classic',
 		expect: 'nothing',
 		typescript: 'typescript-7-unsupported',
 		notice: 'typescript-7-unsupported',
-		closingTag: '<b></b>',
+		closingTag: '<b>',
 	},
 	{
 		name: 'ts7-bundled',
@@ -268,11 +275,31 @@ export const SCENARIOS = [
 		expect: 'nothing',
 		typescript: 'typescript-7-unsupported',
 		notice: 'typescript-7-unsupported',
-		closingTag: '<b></b>',
-		gap: "The TypeScript 7 extension's built-in compiler is 7.0.2, which has no content-mapper protocol, and VS Code's own TypeScript stands down while TypeScript 7 is on. The extension does not find the project's `node_modules/typescript` by itself (microsoft/TypeScript#64565). The TSRX extension's notice says to set `js/ts.tsdk.path`.",
+		closingTag: '<b>',
+		gap: "The TypeScript 7 extension finds the project's `node_modules/typescript` (microsoft/TypeScript#64565) but only offers it: until the user accepts (`ts7-workspace-prompt`) it runs its built-in 7.0.2, which has no content-mapper protocol, and VS Code's own TypeScript stands down while TypeScript 7 is on. The TSRX extension's notice offers the same switch.",
 		check: (result) =>
 			status_version(result, '7.0.2') ??
 			notice_actions(result, ['Use Project TypeScript', 'Turn Off TypeScript 7']),
+	},
+	{
+		name: 'ts7-workspace-prompt',
+		description:
+			"The README's setup: TypeScript 7 extension on, project has the 7.1 nightly, and the user accepts the extension's prompt to use it",
+		extensions: ['tsrx', 'ts7'],
+		settings: { 'js/ts.experimental.useTsgo': true },
+		projectTypeScript: true,
+		workspacePrompt: true,
+		expect: 'typescript-7',
+		typescript: 'typescript-7',
+		// TSRX shows this notice before the user answers the prompt. The extension host
+		// restart that follows the answer in a real window clears it; a test run holds it.
+		notice: 'typescript-7-unsupported',
+		closingTag: '<b></b>',
+		check: (result) =>
+			result.workspacePrompt?.workspace !== 'node_modules/typescript' ||
+			result.workspacePrompt?.user !== undefined
+				? `expected the prompt to write js/ts.tsdk.path node_modules/typescript to the workspace settings only, got ${JSON.stringify(result.workspacePrompt)}`
+				: status_version(result, PROJECT_NIGHTLY),
 	},
 	{
 		name: 'ts7-bundled-use-project-typescript',
@@ -285,7 +312,7 @@ export const SCENARIOS = [
 		typescript: 'typescript-7-unsupported',
 		notice: 'typescript-7-unsupported',
 		action: 'use-project-typescript',
-		closingTag: '<b></b>',
+		closingTag: '<b>',
 		check: (result) =>
 			result.afterAction?.tsdkPath !== 'node_modules/typescript'
 				? `expected js/ts.tsdk.path node_modules/typescript in the user settings, got ${JSON.stringify(result.afterAction?.tsdkPath)}`
@@ -305,7 +332,7 @@ export const SCENARIOS = [
 		typescript: 'typescript-7-unsupported',
 		notice: 'typescript-7-unsupported',
 		action: 'turn-off-typescript-7',
-		closingTag: '<b></b>',
+		closingTag: '<b>',
 		check: (result) =>
 			result.afterAction?.useTsgo?.user !== false
 				? `expected js/ts.experimental.useTsgo to be false, got ${JSON.stringify(result.afterAction?.useTsgo)}`
@@ -322,7 +349,7 @@ export const SCENARIOS = [
 		expect: 'nothing',
 		typescript: 'typescript-7-unsupported',
 		notice: 'typescript-7-unsupported',
-		closingTag: '<b></b>',
+		closingTag: '<b>',
 		gap: 'Same as ts7-bundled: on its first start the TypeScript 7 extension sets `js/ts.experimental.useTsgo` to true in the user settings.',
 		check: (result) =>
 			result.useTsgoAtEnd?.user !== true
@@ -402,19 +429,9 @@ export const SCENARIOS = [
 		check: restarted_after_crash,
 	},
 	{
-		name: 'vscode-typescript-tsrx-closing-off',
-		description:
-			"TSRX extension only, TSRX's own closing tags off: VS Code's TypeScript closes the tag through the tsserver plugin",
-		extensions: ['tsrx'],
-		settings: { 'tsrx.autoClosingTags.enabled': false },
-		expect: 'vscode-typescript',
-		typescript: 'vscode',
-		closingTag: '<b></b>',
-	},
-	{
 		name: 'vscode-typescript-closing-off',
 		description:
-			"TSRX extension only, VS Code's TypeScript closing tags off: TSRX closes tags only for TypeScript 7, so nothing closes it",
+			"TSRX extension only, VS Code's TypeScript closing tags off: nothing else closes it",
 		extensions: ['tsrx'],
 		settings: { 'js/ts.autoClosingTags.enabled': false },
 		expect: 'vscode-typescript',
@@ -435,7 +452,7 @@ export const SCENARIOS = [
 	{
 		name: 'vscode-typescript-tsdk-ts7-project',
 		description:
-			"TSRX extension only, the README's js/ts.tsdk.path set, project has the 7.1 nightly: VS Code's own TypeScript still serves",
+			"TSRX extension only, js/ts.tsdk.path = node_modules/typescript, project has the 7.1 nightly: VS Code's own TypeScript still serves",
 		extensions: ['tsrx'],
 		settings: { 'js/ts.tsdk.path': 'node_modules/typescript' },
 		projectTypeScript: true,
@@ -447,7 +464,7 @@ export const SCENARIOS = [
 	{
 		name: 'vscode-typescript-tsdk-classic-project',
 		description:
-			"TSRX extension only, the README's js/ts.tsdk.path set, project has TypeScript 5.9: VS Code's own TypeScript still serves",
+			"TSRX extension only, js/ts.tsdk.path = node_modules/typescript, project has TypeScript 5.9: VS Code's own TypeScript still serves",
 		extensions: ['tsrx'],
 		settings: { 'js/ts.tsdk.path': 'node_modules/typescript' },
 		projectTypeScript: 'classic',

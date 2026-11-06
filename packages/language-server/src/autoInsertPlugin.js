@@ -40,9 +40,9 @@ const RAW_TEXT_OPENING_TAGS = new Map([
 
 /**
  * Auto-insert plugin for TSRX.
- * Handles auto-closing tags when typing '>' after a tag name. The VS Code extension
- * asks for them with Volar's `volar/client/autoInsert` request; other editors get
- * them through `textDocument/onTypeFormatting` (`closingTagsHandler.js`).
+ * Handles auto-closing tags when typing '>' after a tag name. Editors get them
+ * through `textDocument/onTypeFormatting` (`closingTagsHandler.js`); no client that
+ * TSRX ships sends Volar's `volar/client/autoInsert` request.
  * @returns {LanguageServicePlugin}
  */
 export function createAutoInsertPlugin() {

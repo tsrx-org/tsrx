@@ -298,6 +298,7 @@ async function run_scenario(scenario, index) {
 			command: scenario.command,
 			packageChange: scenario.packageChange,
 			serverCrash: scenario.serverCrash,
+			workspacePrompt: scenario.workspacePrompt,
 			actionWaitMs: ACTION_WAIT_MS,
 		}),
 	);
