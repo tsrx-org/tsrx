@@ -68,7 +68,7 @@ TypeScript 7 plain `tsc --runExternalCode` can be used directly instead.
   nothing else. The mapper starts in about a third of the time it did with the
   TypeScript API loaded (`BENCHMARKS.md`).
 
-## Requirements and status on 2026-09-19 (VS Code updated 2026-10-01)
+## Requirements and status on 2026-09-19 (VS Code updated 2026-11-06)
 
 - The content-mapper protocol needs a TypeScript 7.1 nightly:
   `7.1.0-dev.20260923.1` or newer, the first whose `tsc --watch` recompiles (the
@@ -83,7 +83,9 @@ TypeScript 7 plain `tsc --runExternalCode` can be used directly instead.
   Since 1.0.2 (2026-11-06) the extension finds `node_modules/typescript`
   (microsoft/TypeScript#64565) and asks whether to use it. It runs its built-in
   compiler until the user accepts, which writes `js/ts.tsdk.path` to the workspace
-  settings. 1.0.2 also closes tags in `.tsrx` files (microsoft/TypeScript#64564).
+  settings. 1.0.2 also asks `tsc --lsp` to close tags in `.tsrx` files
+  (microsoft/TypeScript#64564), which works only in a file the mapper covers and
+  can parse, so the TSRX extension keeps its own closing tags (tsrx-org/tsrx#989).
   The TSRX extension uses its `registerContentMappers` API to discover projects
   when only `.tsrx` files are open.
 - Packaging verified on macOS x64: the `pnpm pack` tarball of
