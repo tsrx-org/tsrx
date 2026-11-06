@@ -215,8 +215,8 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 			// editor's code leaves out (`public public`), or a `<>` left open,
 			// which has none in a template. The editor shows a diagnostic only
 			// where the generated code maps back, so show it on the code the error
-			// reaches, a `<>`'s first child, or else the nearest code before it
-			// that does, not at the start of the file.
+			// reaches, such as a `<>`'s first child, or else the nearest code before
+			// it that does, not at the start of the file.
 			const nearest = nearest_reported_range(virtualCode, start_offset, error.raisedAt);
 			if (nearest) {
 				start = document.positionAt(nearest[0]);
