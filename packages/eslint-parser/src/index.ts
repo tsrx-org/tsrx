@@ -243,7 +243,11 @@ function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
 		if (node.type === 'JSXTryExpression' && node.pending) {
 			node.pending = to_pending_branch(node.pending, node.pendingKeyword);
 			if (node.handler) {
+				// `getNodeByRangeIndex` skips a node that doesn't contain the position,
+				// so the catch clause has to start where its branch does.
 				node.handler.pending = node.pending;
+				node.handler.start = node.pending.start;
+				delete node.handler.loc;
 				node.pending = null;
 			}
 		}

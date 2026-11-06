@@ -454,6 +454,156 @@ export const B = ({ ok }) => @if (ok) { throw new Error('d'); } @else { <i /> };
 			).toEqual([]);
 		});
 
+		it('visits a @try with a @catch in source order, and @pending first without one', () => {
+			const visited = (template: string) => {
+				const names: string[] = [];
+				lint(app(template), {
+					plugins: {
+						probe: {
+							rules: {
+								order: {
+									create: () => ({
+										'JSXOpeningElement > JSXIdentifier, CatchClause > Identifier'(node: any) {
+											names.push(node.name);
+										},
+									}),
+								},
+							},
+						},
+					},
+					rules: { 'probe/order': 'error' },
+				});
+				return names;
+			};
+			expect(visited(`@try { <a /> } @pending { <b /> } @catch (c) { <d /> }`)).toEqual([
+				'div',
+				'a',
+				'b',
+				'c',
+				'd',
+			]);
+			expect(visited(`@try { <a /> } @pending { <b /> }`)).toEqual(['div', 'b', 'a']);
+		});
+
+		it('keeps every child inside the range of its parent', () => {
+			const code = app(
+				`@try { <a /> } /* a */ @pending /* b */ { <p title="t">{n}</p> } /* c */ @catch (e) { <b>{e}</b> }
+		@try { <a /> } @pending { @try { <i /> } @pending { <p /> } @catch { <b /> } }
+		@try { @try { <a /> } @pending { <p /> } @catch (e, reset) { <b /> } } @pending { <p /> }
+		@if (n) { <i /> } @else { <u /> }
+		@for (const item of n; index i; key item) { <li>{i}</li> } @empty { <p /> }
+		@switch (n) { @case 1: { <i /> } @default: { <u /> } }`,
+			);
+			const { ast, visitorKeys } = parseForESLint(code, { filePath: 'App.tsrx' }) as any;
+			let visited = 0;
+			const visit = (node: any, parent: any) => {
+				visited++;
+				if (parent) {
+					expect([node.type, node.range[0] >= parent.range[0]]).toEqual([node.type, true]);
+					expect([node.type, node.range[1] <= parent.range[1]]).toEqual([node.type, true]);
+				}
+				const keys =
+					visitorKeys[node.type] ??
+					Object.keys(node).filter((key) => !['parent', 'loc', 'range', 'metadata'].includes(key));
+				for (const key of keys) {
+					for (const child of [node[key]].flat()) {
+						if (child?.range && child.type !== 'Line' && child.type !== 'Block') {
+							visit(child, node);
+						}
+					}
+				}
+			};
+			visit(ast, null);
+			expect(visited).toBeGreaterThan(100);
+		});
+
+		it('finds a node in @pending by its position', () => {
+			const code = app(
+				'@try { <a /> } @pending { const sql = `select 1`; <pre title="t">{sql}</pre> } @catch (e) { <b>{e}</b> }',
+			);
+			const linter = new Linter();
+			expect(
+				linter.verify(code, { files: ['**/*.tsrx'], languageOptions: { parser } }, 'App.tsrx'),
+			).toEqual([]);
+			const source = linter.getSourceCode();
+			const node_at = (text: string) => source.getNodeByRangeIndex(code.indexOf(text))?.type;
+			expect(node_at('pending')).toBe('JSXPendingKeyword');
+			expect(node_at('select')).toBe('TemplateElement');
+			expect(node_at('pre')).toBe('JSXIdentifier');
+			expect(node_at('"t"')).toBe('Literal');
+			expect(node_at('(e)')).toBe('CatchClause');
+			expect(node_at('e)')).toBe('Identifier');
+			expect(source.getNodeByRangeIndex(code.indexOf('<a />'))?.type).toBe('JSXOpeningElement');
+		});
+
+		it('leaves a template literal in @pending to the rules that skip it', () => {
+			for (const handler of with_and_without_catch) {
+				const code = app(
+					`@try { <a /> } @pending {
+			const sql = \`select 1${'   '}
+				from t\`;
+			<pre>{sql}</pre>
+		}${handler}`,
+					'const label = 1;',
+				);
+				const { fixed, output } = new Linter().verifyAndFix(
+					code,
+					{
+						files: ['**/*.tsrx'],
+						languageOptions: { parser },
+						rules: { 'no-trailing-spaces': 'error' },
+					},
+					{ filename: 'App.tsrx' },
+				);
+				expect(fixed).toBe(false);
+				expect(output).toBe(code);
+			}
+		});
+
+		it('gives rules that look a node up by position the node in @pending', () => {
+			const long = 'a'.repeat(90);
+			const cases: Array<[string, Linter.RuleEntry, string, number]> = [
+				['no-mixed-spaces-and-tabs', 'error', 'const s = `line\n \tone`; <p>{s}</p>', 0],
+				['max-len', ['error', { code: 80, ignoreStrings: true }], `<p title="${long}" />`, 0],
+				[
+					'object-curly-spacing',
+					['error', 'always', { objectsInObjects: false }],
+					'const o = { a: { b: 1 }}; <p>{o.a.b}</p>',
+					0,
+				],
+				[
+					'object-curly-spacing',
+					['error', 'always', { arraysInObjects: false }],
+					'const o = { a: [1]}; <p>{o.a[0]}</p>',
+					0,
+				],
+				[
+					'lines-around-comment',
+					['error', { beforeBlockComment: true, allowBlockStart: true }],
+					'\n\t\t\t/* note */\n\t\t\t<p />',
+					0,
+				],
+				[
+					'no-multi-spaces',
+					['error', { exceptions: { Property: true } }],
+					'const y = { a:  1 }; <p>{y.a}</p>',
+					0,
+				],
+				[
+					'padding-line-between-statements',
+					['error', { blankLine: 'always', prev: 'block-like', next: '*' }],
+					'{ n; }\n\t\t\tconst y = 2; <p>{y}</p>',
+					1,
+				],
+			];
+			for (const handler of with_and_without_catch) {
+				for (const [rule, entry, body, count] of cases) {
+					const code = app(`@try { <a /> } @pending { ${body} }${handler}`);
+					expect([rule, lint(code, { rules: { [rule]: entry } }).length]).toEqual([rule, count]);
+				}
+			}
+		});
+
 		it('keeps @pending out of the scope of the @catch', () => {
 			const code = app(
 				`@try { <a /> } @pending { <p>{e}</p> } @catch (e) { <p>{e}</p> }
