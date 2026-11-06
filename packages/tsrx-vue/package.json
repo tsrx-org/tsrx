@@ -49,7 +49,8 @@
     "@types/estree": "catalog:default",
     "@types/estree-jsx": "catalog:default",
     "typescript": "catalog:default",
-    "vue": "3.6.0-beta.12"
+    "vue": "3.6.0-rc.14",
+    "vue-jsx-vapor": "^3.2.29"
   },
   "files": [
     "src",
