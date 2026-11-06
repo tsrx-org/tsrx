@@ -323,6 +323,12 @@ export function A({ items }) @{
 	try { <p>a</p> } pending { <p>loading</p> }
 }`;
 		expect(lint(code)).toEqual(['2: null: Parsing error: Missing catch or finally clause']);
+		const [message] = new Linter().verify(
+			code,
+			{ files: ['**/*.tsrx'], languageOptions: { parser } },
+			'App.tsrx',
+		);
+		expect([message.line, message.column]).toEqual([2, 2]);
 	});
 
 	it('gives each arm of an @if or @try its own code path', () => {

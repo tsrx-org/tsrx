@@ -136,6 +136,15 @@ these without misdescribing the source to other rules:
   follow a `throw` in that block into the `@catch`. When a path through `@pending`
   ends in `throw`, `no-useless-assignment` flags a value assigned on that path
   that only the `@catch`, or code after it, reads.
+- With both `@pending` and `@catch`, `TryStatement.handler` is a `JSXTryHandler`
+  that holds the `@pending` branch and the `CatchClause`, because ESLint starts
+  the catch path at that field and `@pending` sits outside the clause. It has the
+  clause's `param` and `body`, and the clause's `parent` is the `try` statement.
+  But a `TryStatement > CatchClause` selector doesn't match, and rules that look
+  for a `CatchClause` where a code path segment starts don't find one.
+  `sonarjs/no-parameter-reassignment` misses a reassigned `@catch` parameter,
+  `unicorn/no-multiple-promise-resolver-calls` can report a false second call, and
+  `@stylistic/indent` skips the line of a `@catch` that starts one.
 - `react-hooks/rules-of-hooks` reports a hook in a `@pending` body as called
   conditionally. With React that report is false today: the fallback runs once per
   render, even when nothing suspends. Its report on a hook in a `@catch` body is
