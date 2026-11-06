@@ -125,9 +125,16 @@ these without misdescribing the source to other rules:
   and `@try` don't have this problem, so when an arm throws, an `@if`/`@else if`
   chain gets the right code paths.
 - `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
-  `@else`, `@else if` or `@for` body that holds a single statement, such as
-  `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
-  doesn't parse. Use `all` or `multi-line`, which leave these bodies alone.
+  `@else`, `@else if`, `@for` or `@pending` body that holds a single statement,
+  such as `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file
+  that doesn't parse. Use `all` or `multi-line`, which leave these bodies alone.
+- Code path analysis runs a `@pending` block just before the `@catch`, and doesn't
+  follow a `throw` in that block into the `@catch`. If `@pending` always throws,
+  `no-useless-assignment` flags a value it assigns that only the `@catch` reads.
+- `preserve-caught-error` reads a `@pending` block as part of the `@catch` after
+  it. It reports a `throw new Error()` in that block, and its suggestion adds the
+  `@catch` parameter as the `cause`, though `@pending` can't see that parameter.
+  Ignore the suggestion and disable the rule for that line.
 
 ## Related Packages
 

@@ -34,7 +34,9 @@ const visitorKeys: Record<string, string[]> = {
 	JSXForExpression: ['index', 'key', 'loop', 'empty'],
 	JSXSwitchExpression: ['discriminant', 'cases'],
 	JSXSwitchCase: ['test', 'consequent'],
-	JSXTryExpression: ['block', 'pending', 'statement'],
+	JSXTryExpression: ['pending', 'block', 'statement'],
+	JSXPendingKeyword: [],
+	CatchClause: ['pending', 'param', 'resetParam', 'body'],
 	JSXCodeBlock: ['body', 'render'],
 	StyleSheet: [],
 	ForOfStatement: ['left', 'right', 'body'],
@@ -79,6 +81,7 @@ class TSRXReferencer extends Referencer {
 	}
 
 	CatchClause(node: any): void {
+		if (node.pending) this.visit(node.pending);
 		if (!node.resetParam) {
 			super.CatchClause(node);
 			return;
@@ -148,7 +151,7 @@ const LOOP_FIELDS: Record<string, string[]> = {
 
 const STATEMENT_FIELDS: Record<string, { keyword: string; fields: string[] }> = {
 	JSXIfExpression: { keyword: 'if', fields: ['test', 'consequent', 'alternate'] },
-	JSXTryExpression: { keyword: 'try', fields: ['block', 'pending', 'handler'] },
+	JSXTryExpression: { keyword: 'try', fields: ['block', 'handler'] },
 };
 
 const SIGNATURE_TYPES = new Set([
@@ -158,6 +161,23 @@ const SIGNATURE_TYPES = new Set([
 	'TSConstructSignatureDeclaration',
 	'TSMethodSignature',
 ]);
+
+/**
+ * `@pending { … }` as `if (pending) { … }`. The keyword stands in for the test,
+ * so the statement has real tokens and no rule sees a reference or a constant.
+ */
+function to_pending_branch(pending: any, keyword: { start: number; end: number }): any {
+	// Like the statement of an `@if`, it starts after the `@`.
+	const start = keyword.start + 1;
+	return {
+		type: 'IfStatement',
+		start,
+		end: pending.end,
+		test: { type: 'JSXPendingKeyword', start, end: keyword.end },
+		consequent: pending,
+		alternate: null,
+	};
+}
 
 /**
  * Keep this hook for small ESLint-only AST normalizations. Returns the `JSXText`
@@ -213,12 +233,26 @@ function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
 			node.loop = loop;
 		}
 
+		// A `@pending` block shows while the body suspends, however far the body
+		// has got, so it reads as a branch. With a `@catch` it opens the catch
+		// clause, which code path analysis reaches from the first thing in the
+		// `try` block that can throw, from each `throw`, and from the end of the
+		// block. A branch inside the `try` block would give the `@catch` a path that
+		// skips the body, and `rules-of-hooks` would report the hooks in the body.
+		// With no `@catch` there is no `try` statement: the branch runs first.
+		if (node.type === 'JSXTryExpression' && node.pending) {
+			node.pending = to_pending_branch(node.pending, node.pendingKeyword);
+			if (node.handler) {
+				node.handler.pending = node.pending;
+				node.pending = null;
+			}
+		}
+
 		// An `@if` or `@try` likewise keeps its if or try statement in `statement`,
 		// so code path analysis gives each arm a path of its own, as it does the
-		// branches of an `if` and the blocks of a `try`. A `@pending` block stays
-		// in source order, after the `try` block. Code path analysis throws on a
-		// `try` without a `catch` or `finally`, so a `@try` with no `@catch` keeps
-		// its blocks. `@switch` keeps its cases: a `switch` would fall through
+		// branches of an `if` and the blocks of a `try`. Code path analysis throws
+		// on a `try` without a `catch` or `finally`, so a `@try` with no `@catch`
+		// keeps its blocks. `@switch` keeps its cases: a `switch` would fall through
 		// from each case into the next.
 		if (node.type in STATEMENT_FIELDS && (node.type !== 'JSXTryExpression' || node.handler)) {
 			const { keyword, fields } = STATEMENT_FIELDS[node.type];

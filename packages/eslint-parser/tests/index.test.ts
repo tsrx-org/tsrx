@@ -341,6 +341,125 @@ export const B = ({ ok }) => @if (ok) { throw new Error('d'); } @else { <i /> };
 		).toEqual(['2: no-useless-assignment', '9: no-unreachable']);
 	});
 
+	describe('@pending code paths', () => {
+		const rules = { 'no-unreachable': 'error', 'no-useless-assignment': 'error' } as const;
+		const app = (template: string, setup = '') => `export function App({ n }) @{
+	${setup}
+	<div>
+		${template}
+	</div>
+}`;
+		// Each shape, with and without a `@catch`.
+		const with_and_without_catch = ['', ' @catch (e) { <p>err</p> }'];
+
+		it('runs @pending after a @try body that throws', () => {
+			for (const handler of with_and_without_catch) {
+				const code = app(
+					`@try { @{ throw new Error('x'); } } @pending { <p>loading</p> }${handler}`,
+				);
+				expect(lint(code, { rules })).toEqual([]);
+			}
+		});
+
+		it('keeps a value that only @pending reads', () => {
+			for (const handler of with_and_without_catch) {
+				for (const body of [`@{ x = 1; } <p>{x}</p>`, `x = 1; <p>{x}</p>`]) {
+					const code = app(`@try { ${body} } @pending { <p>{x}</p> }${handler}`, 'let x = 0;');
+					expect(lint(code, { rules })).toEqual([]);
+				}
+			}
+		});
+
+		it('runs the body, the @catch and later code after a @pending that throws', () => {
+			const later = `@try { <a /> } @pending { throw new Error('x'); }
+		@if (n) { <i /> }`;
+			expect(lint(app(later), { rules })).toEqual([]);
+			for (const body of [`<a />`, `throw new Error('x');`]) {
+				const handled = `@try { ${body} } @pending { throw new Error('y'); } @catch (e) { <p /> }
+		@if (n) { <i /> }`;
+				expect(lint(app(handled), { rules })).toEqual([]);
+			}
+		});
+
+		it('reaches @pending and later code when the @catch throws', () => {
+			const code = app(`@try { <a /> } @pending { <p /> } @catch (e) { throw e; }
+		@if (n) { <i /> }`);
+			expect(lint(code, { rules })).toEqual([]);
+		});
+
+		it('reads a value assigned and read in @pending, or read in @catch', () => {
+			for (const handler of with_and_without_catch) {
+				const code = app(
+					`@try { <a /> } @pending { const y = n; let v = y; v += 1; <p>{v}</p> }${handler}`,
+				);
+				expect(lint(code, { rules })).toEqual([]);
+			}
+			const code = app(
+				`@try { <a /> } @pending { x = 1; <p /> } @catch (e) { <p>{x}</p> }`,
+				'let x = 0;',
+			);
+			expect(lint(code, { rules })).toEqual([]);
+		});
+
+		it('still reports dead code and overwritten values', () => {
+			const messages = (template: string, setup?: string) =>
+				lint(app(template, setup), { rules }).map((message) => message.split(': ', 2).join(': '));
+			const later = `
+		@if (n) { <i /> }`;
+			expect(
+				messages(`@try { <a /> } @pending { throw new Error('x'); const late = 1; <p>{late}</p> }`),
+			).toEqual(['4: no-unreachable']);
+			expect(messages(`@try { throw new Error('x'); } @pending { <p /> }${later}`)).toEqual([
+				'5: no-unreachable',
+			]);
+			expect(
+				messages(
+					`@try { throw new Error('x'); } @pending { <p /> } @catch (e) { throw e; }${later}`,
+				),
+			).toEqual(['5: no-unreachable']);
+			expect(
+				messages(
+					`@try { <a /> } @pending { x = 1; x = 2; <p>{x}</p> } @catch (e) { <p /> }`,
+					'let x = 0;',
+				),
+			).toEqual(['2: no-useless-assignment', '4: no-useless-assignment']);
+		});
+
+		it('hides the test of a @pending branch from rules', () => {
+			const code = app(
+				`@try { <a /> } @pending { <p>{n}</p> } @catch (e) { <p /> }
+		@try { <a /> } @pending { <p /> }`,
+			);
+			expect(
+				lint(code, {
+					rules: {
+						curly: 'error',
+						'no-cond-assign': 'error',
+						'no-constant-condition': 'error',
+						'no-dupe-else-if': 'error',
+						'no-else-return': 'error',
+						'no-extra-boolean-cast': 'error',
+						'no-lonely-if': 'error',
+						'no-undef': 'error',
+						'no-unused-vars': ['error', { caughtErrors: 'none' }],
+					},
+				}),
+			).toEqual([]);
+		});
+
+		it('keeps @pending out of the scope of the @catch', () => {
+			const code = app(
+				`@try { <a /> } @pending { <p>{e}</p> } @catch (e) { <p>{e}</p> }
+		@try { <a /> } @pending { const e = 1; <p>{e}</p> } @catch (e) { <p>{e}</p> }`,
+			);
+			expect(
+				lint(code, {
+					rules: { 'no-undef': 'error', 'no-shadow': 'error', 'no-redeclare': 'error' },
+				}),
+			).toEqual(["4: no-undef: 'e' is not defined."]);
+		});
+	});
+
 	it('shows ESLint the if or try statement of an @if or @try', () => {
 		const code = `export function A({ n }) @{
 	<div>
@@ -365,13 +484,29 @@ export const B = ({ ok }) => @if (ok) { throw new Error('d'); } @else { <i /> };
 			type: 'TryStatement',
 			loc: { start: { line: 4, column: 3 }, end: { line: 4, column: 56 } },
 			block: { type: 'BlockStatement' },
-			pending: { type: 'BlockStatement' },
-			handler: { type: 'CatchClause' },
+			handler: {
+				type: 'CatchClause',
+				pending: {
+					type: 'IfStatement',
+					loc: { start: { line: 4, column: 18 }, end: { line: 4, column: 35 } },
+					test: {
+						type: 'JSXPendingKeyword',
+						loc: { start: { line: 4, column: 18 }, end: { line: 4, column: 25 } },
+					},
+					consequent: { type: 'BlockStatement' },
+					alternate: null,
+				},
+			},
 		});
+		expect(tsrx_try.pending).toBeNull();
 		// A `try` needs a `catch` or `finally`.
 		expect(pending_only.statement).toBeUndefined();
 		expect(pending_only.block.type).toBe('BlockStatement');
-		expect(pending_only.pending.type).toBe('BlockStatement');
+		expect(pending_only.pending).toMatchObject({
+			type: 'IfStatement',
+			test: { type: 'JSXPendingKeyword' },
+			consequent: { type: 'BlockStatement' },
+		});
 	});
 
 	it('gives TypeScript function types the params ESLint reads', () => {
