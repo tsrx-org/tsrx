@@ -141,9 +141,9 @@ these without misdescribing the source to other rules:
   `@catch` parameter as the `cause`, though `@pending` can't see that parameter.
   Ignore the suggestion and disable the rule for that line.
 - `react-hooks/rules-of-hooks` reports a hook in a `@pending` body as called
-  conditionally. With React that report is false today: the fallback runs once
-  per render, even when nothing suspends. Its report on a hook in a `@catch` body
-  is real, since that hook crashes with React error #321.
+  conditionally. With React that report is false today: the fallback runs once per
+  render, even when nothing suspends. Its report on a hook in a `@catch` body is
+  real, since that hook crashes with React error #321.
 
 ## Related Packages
 
