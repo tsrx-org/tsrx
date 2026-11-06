@@ -643,6 +643,8 @@ export const B = ({ ok }) => @if (ok) { throw new Error('d'); } @else { <i /> };
 			block: { type: 'BlockStatement' },
 			handler: {
 				type: 'CatchClause',
+				// It holds the branch, so it starts at the keyword, not at `@catch`.
+				loc: { start: { line: 4, column: 18 }, end: { line: 4, column: 56 } },
 				pending: {
 					type: 'IfStatement',
 					loc: { start: { line: 4, column: 18 }, end: { line: 4, column: 35 } },
