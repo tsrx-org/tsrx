@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import vscode from 'vscode';
+import { is_native_typescript_package } from '@tsrx/typescript-plugin/src/typescript-version.js';
 
 /** The extensions whose presence makes VS Code's own TypeScript stand down for TypeScript 7. */
 const TYPESCRIPT_7_EXTENSIONS = [
@@ -32,6 +33,12 @@ const TSDK_SETTINGS = [
 	{ section: 'typescript', key: 'tsdk', native_only: true },
 	{ section: 'typescript.native-preview', key: 'tsdk', native_only: false },
 ];
+
+/**
+ * The packages the TypeScript 7 extension (1.0.2 and newer) looks for in a workspace
+ * folder's `node_modules`, in its order. It skips TypeScript 5 and 6.
+ */
+const WORKSPACE_PACKAGES = ['typescript', '@typescript/native', '@typescript/native-preview'];
 
 /** For `affectsConfiguration`. */
 export const TSDK_SETTING_NAMES = TSDK_SETTINGS.map(({ section, key }) => `${section}.${key}`);
@@ -81,21 +88,20 @@ export function typescript_7_server_extension() {
 
 /**
  * The directory the TypeScript 7 extension resolves a relative `tsdk` setting against:
- * the `.code-workspace` file's directory, or the only workspace folder.
+ * the `.code-workspace` file's directory, or the first workspace folder.
  * @returns {string | undefined}
  */
 export function workspace_config_base() {
 	const file = vscode.workspace.workspaceFile;
 	if (file?.scheme === 'file') return path.dirname(file.fsPath);
-	const folders = vscode.workspace.workspaceFolders ?? [];
-	return folders.length === 1 ? folders[0].uri.fsPath : undefined;
+	return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
 /**
  * The version of the TypeScript 7 package a `tsdk` setting names, as the TypeScript 7
  * extension finds it: the package at that path or its parent (the path may name its
- * `lib` directory), which must be `typescript` with a `tsc` bin or
- * `@typescript/native-preview` with a `tsgo` bin.
+ * `lib` directory), which must be `typescript` with a `tsc` bin or another package, such
+ * as `@typescript/native-preview`, with a `tsgo` bin.
  * @param {string} tsdk
  * @returns {string | undefined}
  */
@@ -192,6 +198,10 @@ function bundled_version(extension) {
  * extension's compiler, then its own bundled one. A setting in the workspace counts
  * as chosen although the TypeScript 7 extension first asks the user to allow it (it
  * remembers the answer where other extensions cannot read it).
+ *
+ * A package in `node_modules` does not count. The TypeScript 7 extension only offers
+ * one, and runs it once the user accepts, which writes it to `js/ts.tsdk.path` in the
+ * workspace settings. Counting it here would name a compiler that is not running.
  * @returns {TypeScript7Compiler | undefined} `undefined` when no TypeScript 7 server
  *   extension is installed.
  */
@@ -215,28 +225,26 @@ export function typescript_7_compiler() {
 }
 
 /**
- * The `typescript` package installed in a directory's `node_modules`.
+ * The package a directory's `node_modules` offers the TypeScript 7 extension: the first
+ * TypeScript 7 one in `WORKSPACE_PACKAGES`, or else the TypeScript 5 or 6 it has.
  * @param {string} directory
- * @returns {{ version: string, directory: string } | undefined}
+ * @returns {{ name: string, version: string, directory: string } | undefined}
  */
 function installed_typescript(directory) {
-	const package_directory = path.join(directory, 'node_modules', 'typescript');
-	try {
-		const manifest = JSON.parse(
-			fs.readFileSync(path.join(package_directory, 'package.json'), 'utf8'),
-		);
-		if (typeof manifest.version === 'string') {
-			return { version: manifest.version, directory: package_directory };
-		}
-	} catch {}
-	return undefined;
+	const installed = [];
+	for (const name of WORKSPACE_PACKAGES) {
+		const package_directory = path.join(directory, 'node_modules', name);
+		const version = tsdk_version(package_directory);
+		if (version) installed.push({ name, version, directory: package_directory });
+	}
+	return installed.find(({ version }) => is_native_typescript_package(version)) ?? installed[0];
 }
 
 /**
- * The `typescript` package a file's project installs: the nearest
- * `node_modules/typescript` from the file's directory up to its workspace folder.
+ * The TypeScript package a file's project installs: the nearest one from the file's
+ * directory up to its workspace folder.
  * @param {import('vscode').Uri} uri
- * @returns {{ version: string, directory: string } | undefined}
+ * @returns {{ name: string, version: string, directory: string } | undefined}
  */
 export function project_typescript(uri) {
 	if (uri.scheme !== 'file') return undefined;
@@ -252,9 +260,9 @@ export function project_typescript(uri) {
 }
 
 /**
- * The `typescript` package the open folder installs at its root: what a relative
+ * The TypeScript package the open folder installs at its root: what a relative
  * `"js/ts.tsdk.path": "node_modules/typescript"` names.
- * @returns {{ version: string, directory: string } | undefined}
+ * @returns {{ name: string, version: string, directory: string } | undefined}
  */
 export function workspace_typescript() {
 	const base = workspace_config_base();

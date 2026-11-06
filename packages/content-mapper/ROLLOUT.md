@@ -79,13 +79,13 @@ TypeScript 7 plain `tsc --runExternalCode` can be used directly instead.
 - The marketplace VS Code **TypeScript 7** extension
   (`TypeScriptTeam.native-preview`) supports content mappers since 1.0.1
   (2026-09-30), but its built-in compiler is `tsc` 7.0.2, which cannot run them.
-  VS Code therefore needs the project's `typescript@next` through
-  `js/ts.tsdk.path` (see "VS Code" below): the extension finds a workspace
-  compiler only in `node_modules/@typescript/native-preview`, a package last
-  published on 2026-07-07, not in `node_modules/typescript`
-  (microsoft/TypeScript#64565). The TSRX extension uses its
-  `registerContentMappers` API to discover projects when only `.tsrx` files are
-  open.
+  VS Code therefore needs the project's `typescript@next` (see "VS Code" below).
+  Since 1.0.2 (2026-11-06) the extension finds `node_modules/typescript`
+  (microsoft/TypeScript#64565) and asks whether to use it. It runs its built-in
+  compiler until the user accepts, which writes `js/ts.tsdk.path` to the workspace
+  settings. 1.0.2 also closes tags in `.tsrx` files (microsoft/TypeScript#64564).
+  The TSRX extension uses its `registerContentMappers` API to discover projects
+  when only `.tsrx` files are open.
 - Packaging verified on macOS x64: the `pnpm pack` tarball of
   `@tsrx/content-mapper` installed with npm into a fresh project outside the
   checkout beside `typescript@7.1.0-dev.20260918.1` and the published
@@ -185,12 +185,12 @@ long as TypeScript 5.9 and 6 are supported.
 ### VS Code
 
 1. Install `typescript@next` in the project (step 1 above), add
-   `"js/ts.experimental.useTsgo": true` and
-   `"js/ts.tsdk.path": "node_modules/typescript"` to the VS Code user settings,
-   and install the
-   [TypeScript 7 extension](https://marketplace.visualstudio.com/items?itemName=TypeScriptTeam.native-preview).
-   Keep its `js/ts.contentMappers.enabled` setting on (default). The TSRX
-   extension's README explains each step.
+   `"js/ts.experimental.useTsgo": true` to the VS Code user settings, and install
+   the
+   [TypeScript 7 extension](https://marketplace.visualstudio.com/items?itemName=TypeScriptTeam.native-preview),
+   version 1.0.2 or newer. When it asks whether to use the project's TypeScript,
+   choose **Use Workspace Version**. Keep its `js/ts.contentMappers.enabled`
+   setting on (default). The TSRX extension's README explains each step.
 2. Declare `contentMappers` in every `tsconfig.json` that contains `.tsrx` files
    and install `@tsrx/content-mapper` next to it (steps 1 and 2 above). A `.tsrx`
    file no such tsconfig covers gets no TypeScript features.

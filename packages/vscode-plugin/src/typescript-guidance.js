@@ -30,11 +30,11 @@ const FIX_COMMAND = 'tsrx.typescript.fix';
  * - `typescript-7-missing`: TypeScript 7 is on, which turns VS Code's own TypeScript
  *   off, but only the TypeScript 7 Nightly extension is installed, which has no server.
  *
- * `project` is the `typescript` package the file's project installs.
+ * `project` is the TypeScript package the file's project installs.
  * @typedef {{
  * 	kind: 'vscode' | 'typescript-7' | 'typescript-7-unsupported' | 'typescript-7-missing',
  * 	version?: string,
- * 	project?: { version: string, directory: string },
+ * 	project?: { name?: string, version: string, directory: string },
  * }} TypeScriptStatus
  */
 
@@ -100,9 +100,9 @@ const LEARN_MORE = {
 /**
  * The TypeScript 7.1 a "Use Project TypeScript" click points the TypeScript 7
  * extension at, and where it writes `js/ts.tsdk.path`:
- * - The open folder's own `node_modules/typescript`: the user settings get
- *   `node_modules/typescript`, the README's setting. The extension uses a user setting
- *   without asking, and the relative path serves every project opened later.
+ * - The open folder's own package: the user settings get its path, such as
+ *   `node_modules/typescript`. The extension uses a user setting without asking, and
+ *   the relative path serves every project opened later.
  * - Otherwise the nearest one to the file, as in a monorepo package: the workspace
  *   settings get its path from the folder. The extension asks once to allow a
  *   workspace setting.
@@ -114,9 +114,11 @@ const LEARN_MORE = {
 export function project_typescript_target(status) {
 	const root = workspace_typescript();
 	if (root && has_content_mapper_protocol(root.version)) {
-		return workspace_tsdk_set()
-			? { version: root.version, value: 'node_modules/typescript', target: 'workspace' }
-			: { version: root.version, value: 'node_modules/typescript', target: 'user' };
+		return {
+			version: root.version,
+			value: `node_modules/${root.name}`,
+			target: workspace_tsdk_set() ? 'workspace' : 'user',
+		};
 	}
 	const project = status.project;
 	if (!project || !has_content_mapper_protocol(project.version)) return undefined;
