@@ -2,6 +2,7 @@
 /** @import {CodeMapping, CompileError} from '@tsrx/core/types' */
 /** @import {DiagnosticDirectives} from './protocol.js' */
 
+import { DIAGNOSTIC_CODES } from '@tsrx/core/diagnostics';
 import { DiagnosticDirectivePolicy } from './protocol.js';
 
 /**
@@ -98,17 +99,21 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 
 /**
  * The position whose holder an error's directive covers. It's the error's own,
- * unless the parser read past it: an unclosed tag is reported on the tag and
- * found where its template ends. The closing tag that recovery adds there has
- * no mapping, so TypeScript's error on it could only show at the top of the
- * file. The holder of the place the parser stopped spans it, and the tag's
- * own may not.
+ * except for an unclosed tag, which is reported on the tag and found where its
+ * template ends. The closing tag that recovery adds has no mapping, so
+ * TypeScript's error on it could only show at the top of the file, and the
+ * tag's own statement can end before it. So its directive holds where the parser
+ * stopped, one before `raisedAt`, which usually spans the added tag. In a file
+ * that ends at the tag, with no final newline, that place is the tag itself.
  * @param {CompileError} error
  * @returns {number}
  */
 function held_position(error) {
-	const { pos, end, raisedAt } = error;
-	return typeof raisedAt === 'number' && typeof end === 'number' && raisedAt > end
+	const { code, pos, end, raisedAt } = error;
+	return code === DIAGNOSTIC_CODES.UNCLOSED_TAG &&
+		typeof raisedAt === 'number' &&
+		typeof end === 'number' &&
+		raisedAt > end
 		? raisedAt - 1
 		: /** @type {number} */ (pos);
 }

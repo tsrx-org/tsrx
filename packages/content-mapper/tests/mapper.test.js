@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { ignore_directives } from '../src/diagnostic-directives.js';
 import { create_tsrx_content_mapper, to_diagnostic, validate_options } from '../src/mapper.js';
 import { DiagnosticDirectivePolicy, SpanMapKind } from '../src/protocol.js';
 import { blank_script_bodies } from '@tsrx/typescript-plugin/src/transform.js';
@@ -260,6 +261,34 @@ export { rest };
 		expect(policy).toBe(DiagnosticDirectivePolicy.Ignore);
 		const default_at = result.text.indexOf('= [1]]');
 		expect(generated_start <= default_at && default_at < generated_end).toBe(true);
+	});
+
+	it("holds an unclosed tag's directive where the parser stopped, and only that error's", () => {
+		const first = { type: 'ExpressionStatement', start: 0, end: 6 };
+		const second = { type: 'ExpressionStatement', start: 7, end: 20 };
+		const source_ast = /** @type {any} */ ({
+			type: 'Program',
+			start: 0,
+			end: 20,
+			body: [first, second],
+		});
+		const mappings = /** @type {any} */ ([
+			{ sourceOffsets: [0], generatedOffsets: [0], lengths: [6], generatedLengths: [6] },
+			{ sourceOffsets: [7], generatedOffsets: [7], lengths: [13], generatedLengths: [13] },
+		]);
+		/** @param {string} code */
+		const directive_for = (code) =>
+			ignore_directives(
+				/** @type {any} */ ([{ code, pos: 1, end: 3, raisedAt: 12 }]),
+				source_ast,
+				mappings,
+				20,
+				20,
+			)?.directives.map(([start, length]) => [start, length]);
+
+		expect(directive_for(TSRX_ERRORS.UNCLOSED_TAG.code)).toEqual([[7, 13]]);
+		// Another compiler can set `raisedAt` as it likes.
+		expect(directive_for('OTHER1')).toEqual([[0, 6]]);
 	});
 
 	it("never hides another component's errors when an error's element holds a <script> body", () => {

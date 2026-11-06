@@ -613,8 +613,9 @@ import def from './mixed';
 
 	// Each tag left open shows on itself. The closing tags that recovery adds
 	// have no mapping, so an error of TypeScript's on one could only show at the
-	// top of the file, as TS18080. The directive has to cover them, wherever the
-	// tag is: its own statement can end before them (#1288).
+	// top of the file, as TS18080. The directive has to cover them, and a tag's
+	// own statement can end before them. An unclosed tag also hides TypeScript's
+	// errors around it in its function until it's closed (#1288).
 	it('reports each unclosed tag on itself and nothing on the closing tags added', async () => {
 		const unclosed = TSRX_ERRORS.UNCLOSED_TAG.code;
 		const number = Number(unclosed.slice('TSRX'.length));
@@ -635,6 +636,7 @@ import def from './mixed';
 			[plain('const n = 1;\n\treturn <Missing>{n};'), ['Missing']],
 			[plain('const n = 1;\n\treturn <div><Missing>{n};'), ['div', 'Missing']],
 			[plain('const f = () => <Missing>;\n\treturn f;'), ['Missing']],
+			[plain("const n: number = 'x';\n\treturn <div>{n};"), ['div']],
 			['export class A {\n\ty = <Missing>;\n}\n', ['Missing']],
 			['export const y = <div>\n', ['div']],
 			['export const y = <Missing>\n', ['Missing']],
