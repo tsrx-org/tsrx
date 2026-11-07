@@ -124,31 +124,15 @@ these without misdescribing the source to other rules:
   next, and `no-fallthrough` would then report every `@case`. The arms of `@if`
   and `@try` don't have this problem, so when an arm throws, an `@if`/`@else if`
   chain gets the right code paths.
+- Code path analysis runs a `@pending` block after the `@try` body, though it
+  shows while the body suspends. After a body that can't complete, such as one
+  that throws, `no-unreachable` reports `@pending`. `no-useless-assignment` can
+  flag a value only `@pending` reads, when the body overwrites it or can't
+  complete.
 - `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
-  `@else`, `@else if`, `@for` or `@pending` body that holds a single statement,
-  such as `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file
-  that doesn't parse. Use `all` or `multi-line`, which leave these bodies alone.
-- `unicorn/no-lonely-if` and `sonarjs/no-collapsible-if` read a `@pending` block
-  as an `if`, and report one that holds only an `if` statement. The `--fix` for
-  `unicorn/no-lonely-if` turns `@pending { if (n) { … } }` into
-  `@if ( && n) { … }`, which doesn't parse. Disable these rules for that line.
-- Code path analysis runs a `@pending` block just before the `@catch`, and doesn't
-  follow a `throw` in that block into the `@catch`. When a path through `@pending`
-  ends in `throw`, `no-useless-assignment` flags a value assigned on that path
-  that only the `@catch`, or code after it, reads.
-- With both `@pending` and `@catch`, `TryStatement.handler` is a `JSXTryHandler`
-  that holds the `@pending` branch and the `CatchClause`, because ESLint starts
-  the catch path at that field and `@pending` sits outside the clause. It has the
-  clause's `param` and `body`, and the clause's `parent` is the `try` statement.
-  But a `TryStatement > CatchClause` selector doesn't match, and rules that look
-  for a `CatchClause` where a code path segment starts don't find one.
-  `sonarjs/no-parameter-reassignment` misses a reassigned `@catch` parameter,
-  `unicorn/no-multiple-promise-resolver-calls` can report a false second call, and
-  `@stylistic/indent` skips the line of a `@catch` that starts one.
-- `react-hooks/rules-of-hooks` reports a hook in a `@pending` body as called
-  conditionally. With React that report is false today: the fallback runs once per
-  render, even when nothing suspends. Its report on a hook in a `@catch` body is
-  real, since that hook crashes with React error #321.
+  `@else`, `@else if` or `@for` body that holds a single statement, such as
+  `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
+  doesn't parse. Use `all` or `multi-line`, which leave these bodies alone.
 
 ## Related Packages
 
