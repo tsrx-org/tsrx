@@ -66,8 +66,9 @@ export interface CompileError extends Error {
 	pos: number | undefined;
 	/**
 	 * Usually `end`. An unclosed tag's TSRX1001 is reported on the tag and found
-	 * where its template ends, so its `raisedAt` is past `end`: one past the token
-	 * that ended the template, which at the end of the file is one past the input.
+	 * later, so its `raisedAt` is past `end`, one past where the parser stopped:
+	 * the token that ended the template, or the start of a `<style>` or `<script>`
+	 * body. A tag that runs to the end of the file has it one past the input.
 	 */
 	raisedAt: number | undefined;
 	end: number | undefined;

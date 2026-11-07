@@ -96,6 +96,19 @@ describe.each(Object.entries({ react, preact, solid, vue }))('%s', (_, compiler)
 		expect(covers(compiler, source, 'wrong: string', at_the_end), source).toBe(false);
 	});
 
+	// Such a compiler's error still holds what it held, which is the function.
+	it('holds an older shape of error at the token that ended the template', () => {
+		const source = `export function A() {\n\tconst n: number = 'x';\n\treturn <div>{n};\n}\n`;
+		const pos = source.lastIndexOf('}');
+		const where_it_stopped = (/** @type {any} */ error) => ({
+			code: error.code,
+			pos,
+			end: pos + 1,
+			raisedAt: pos + 1,
+		});
+		expect(covers(compiler, source, 'n: number', where_it_stopped)).toBe(true);
+	});
+
 	// A `<>` the output drops has only an anchor, on the line of its siblings. Its
 	// place depends on the columns before it, and at one length the source and the
 	// generated code are the same length too, so try each.

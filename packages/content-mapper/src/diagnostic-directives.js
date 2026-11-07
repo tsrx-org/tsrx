@@ -103,14 +103,15 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 }
 
 /**
- * Whether `error` is an unclosed tag reported on the tag and found where its
- * template ends, one before `raisedAt`. Its directive holds there, not at the
- * error: the closing tag that recovery adds has no mapping, so TypeScript's error
- * on it could only show at the top of the file, and the tag's own statement can
- * end before it. At the end of the file nothing holds that place, as the tag's
+ * Whether `error` is an unclosed tag reported on the tag and found where the
+ * parser stopped, one before `raisedAt`: the end of its template, or the start
+ * of a `<style>` or `<script>` body. Its directive holds there, not at the error:
+ * the closing tag that recovery adds has no mapping, so TypeScript's error on it
+ * could only show at the top of the file, and the tag's own statement can end
+ * before it. At the end of the file nothing holds that place, as the tag's
  * declaration has stretched around the code that follows, which the directive
  * must not hide. A compiler from before tags were reported on themselves has its
- * error at the end of the template already, with `raisedAt` no further than `end`,
+ * error where the parser stopped already, with `raisedAt` no further than `end`,
  * and the mapper runs whichever compiler the project has.
  * @param {CompileError} error
  * @returns {boolean}

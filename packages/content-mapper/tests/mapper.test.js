@@ -291,6 +291,33 @@ export { rest };
 		expect(directive_for('OTHER1')).toEqual([[0, 6]]);
 	});
 
+	it("keeps an older compiler's range when nothing holds its unclosed tag", () => {
+		const source_ast = /** @type {any} */ ({ type: 'Program', start: 0, end: 20, body: [] });
+		// A mapping of the whole file, the same length on both sides by chance.
+		const mappings = /** @type {any} */ ([
+			{
+				sourceOffsets: [0],
+				generatedOffsets: [0],
+				lengths: [20],
+				generatedLengths: [20],
+				data: { customData: {} },
+			},
+		]);
+		/** @param {number} raisedAt */
+		const directive_for = (raisedAt) =>
+			ignore_directives(
+				/** @type {any} */ ([{ code: TSRX_ERRORS.UNCLOSED_TAG.code, pos: 10, end: 12, raisedAt }]),
+				source_ast,
+				mappings,
+				20,
+				20,
+			)?.directives.map(([start, length]) => [start, length]);
+
+		expect(directive_for(12)).toEqual([[10, 2]]);
+		// Reported on its tag, it covers the tag's own code, which that mapping isn't.
+		expect(directive_for(21)).toBeUndefined();
+	});
+
 	it("never hides another component's errors when an error's element holds a <script> body", () => {
 		// The body is checked as a block at the end of the generated file, and the
 		// React target hoists the static <script> element above the component, so
