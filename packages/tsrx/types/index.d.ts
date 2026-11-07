@@ -64,6 +64,12 @@ export function getStyleElementStylesheet(
 export interface CompileError extends Error {
 	code: string | undefined;
 	pos: number | undefined;
+	/**
+	 * Usually `end`. An unclosed tag's TSRX1001 is reported on the tag and found
+	 * later, so its `raisedAt` is past `end`, one past where the parser stopped:
+	 * the token that ended the template, or the start of a `<style>` or `<script>`
+	 * body. A tag that runs to the end of the file has it one past the input.
+	 */
 	raisedAt: number | undefined;
 	end: number | undefined;
 	loc: AST.SourceLocation | undefined;
@@ -112,7 +118,8 @@ export interface CompileOptions {
 	collect?: boolean;
 	/**
 	 * Enables editor-oriented parser recovery such as incomplete markup.
-	 * Also collects non-fatal errors as `collect`.
+	 * Also collects non-fatal errors as `collect` does, including the unclosed
+	 * or mismatched tags it recovers (TSRX1001, TSRX1002).
 	 */
 	loose?: boolean;
 }
@@ -151,6 +158,12 @@ export interface BaseNodeMetaData {
 	tsrx_generated_wrapper?: boolean;
 	native_tsrx_template_block?: boolean;
 	dynamicElement?: boolean;
+	/**
+	 * A closing tag the type-only output adds to a tag that loose recovery found
+	 * unclosed. It has no source position, and the closing-tag mappings around it
+	 * leave it out.
+	 */
+	recovered?: boolean;
 	templateMode?: 'script' | 'template';
 	script_only?: boolean;
 	/** A synthetic wrapper for a nested `@{ @{ ... } }` code-block render chain. */
@@ -2235,6 +2248,11 @@ export interface PluginActionOverrides {
 export interface CustomMappingData extends PluginActionOverrides {
 	embeddedId?: string;
 	content?: string;
+	/**
+	 * An error's anchor: a mapping for a token that isn't in the generated code.
+	 * It marks a place, and whatever it sits on isn't that token's code.
+	 */
+	diagnosticAnchor?: boolean;
 }
 
 export interface MappingData extends VolarCodeInformation {

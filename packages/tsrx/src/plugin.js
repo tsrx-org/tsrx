@@ -3531,7 +3531,12 @@ export function TSRXPlugin(config) {
 				const unclosed = relativeCloseStart === -1;
 
 				if (unclosed) {
-					this.#report_broken_markup_error(open.end, TSRX_ERRORS.UNCLOSED_TAG(tagName));
+					// The whole opening tag: the editor's code has no reporting mapping
+					// for a `<style>`'s name alone, so a diagnostic there wouldn't show.
+					this.#report_broken_markup_error(open.end, TSRX_ERRORS.UNCLOSED_TAG(tagName), [
+						/** @type {number} */ (open.start),
+						/** @type {number} */ (open.end),
+					]);
 					node.unclosed = true;
 					relativeCloseStart = input.length;
 					if (!this.#loose) {
@@ -4082,16 +4087,28 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * An unclosed or mismatched tag (TSRX1001, TSRX1002). A strict parse
+			 * throws it at `position`. Collecting records it, and so does a loose
+			 * parse (the editor's), which also goes on to recover the markup. It is
+			 * recorded at `range` when given, such as an unclosed tag's name, and its
+			 * `raisedAt` stays one past `position`, even at the end of the input, so
+			 * the error still says where the parser stopped.
 			 * @param {number} position
 			 * @param {Diagnostic} message
+			 * @param {[number, number]} [range]
 			 */
-			#report_broken_markup_error(position, message) {
-				if (this.#loose) return;
-				if (this.#collect) {
+			#report_broken_markup_error(position, message, range) {
+				if (!this.#collect) {
+					this.raise(position, message);
+				} else if (range) {
+					this.#report_recoverable_error_range(range[0], range[1], message);
+					const recorded = /** @type {import('../types/index').CompileError} */ (
+						this.#errors?.at(-1)
+					);
+					recorded.raisedAt = position + 1;
+				} else {
 					this.#report_recoverable_error(position, message);
-					return;
 				}
-				this.raise(position, message);
 			}
 
 			/**
@@ -10328,9 +10345,16 @@ export function TSRXPlugin(config) {
 						const displayTag = is_fragment
 							? ''
 							: this.getElementName(/** @type {ESTreeJSX.JSXElement} */ (node).openingElement.name);
+						// Recorded at the tag's name (a fragment's `<>`), so that each tag
+						// left open shows on itself, not all of them at the token that ends
+						// the template (#1288).
+						const tag = is_fragment
+							? /** @type {ESTreeJSX.JSXFragment} */ (node).openingFragment
+							: /** @type {ESTreeJSX.JSXElement} */ (node).openingElement.name;
 						this.#report_broken_markup_error(
 							this.start,
 							TSRX_ERRORS.UNCLOSED_TAG(String(displayTag)),
+							[/** @type {number} */ (tag.start), /** @type {number} */ (tag.end)],
 						);
 						slots.unclosed = true;
 						/** @type {AST.SourceLocation} */ (node.loc).end = {

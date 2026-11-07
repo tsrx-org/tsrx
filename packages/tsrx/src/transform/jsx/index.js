@@ -3215,10 +3215,13 @@ function to_jsx_element(
 				authored_closing,
 			);
 		} else if (transform_context.typeOnly && node.unclosed) {
-			// A tag recovered as unclosed stays unclosed in the type-only output,
-			// as authored: TypeScript then reports it (TS17008) like a half-typed
-			// `.tsx` file, and its closing-tag completion finds the open tag.
-			closingElement = null;
+			// A tag recovered as unclosed gets a closing tag with no mapping in the
+			// type-only output, so that the code stays valid TSX: the editor shows
+			// the parser's TSRX1001 or TSRX1002 alone, not TypeScript's TS17008 and
+			// TS1005 on top of it (#978).
+			closingElement = b.jsx_closing_element(unlocated_jsx_name(name));
+			// The closing-tag mappings around it leave it out (`segments.js`).
+			closingElement.metadata.recovered = true;
 		} else {
 			// Recovered unclosed tags have no authored close. Map the synthesized
 			// name to the opening name token so rename/hover land on `span`, not
@@ -3238,6 +3241,28 @@ function to_jsx_element(
 		disable_style_anchor_verification(element);
 	}
 	return element;
+}
+
+/**
+ * A copy of a JSX element name with no source location, so it gets no
+ * mapping: the closing tag of a recovered unclosed element, which the source
+ * doesn't have.
+ * @param {ESTreeJSX.TSRXJSXOpeningElement['name']} name
+ * @returns {ESTreeJSX.TSRXJSXOpeningElement['name']}
+ */
+function unlocated_jsx_name(name) {
+	if (name.type === 'JSXMemberExpression') {
+		return b.jsx_member(
+			/** @type {ESTreeJSX.JSXIdentifier | ESTreeJSX.JSXMemberExpression} */ (
+				unlocated_jsx_name(name.object)
+			),
+			b.jsx_id(name.property.name),
+		);
+	}
+	if (name.type === 'JSXIdentifier' || name.type === 'Identifier') {
+		return b.jsx_id(name.name);
+	}
+	return name;
 }
 
 /**

@@ -1627,7 +1627,7 @@ const b = (
 	});
 
 	test('a comment takes a closing tag on its line with it', async () => {
-		await expect_reported(`const a = <p>a //comment </p>;`, TSRX_ERRORS.UNCLOSED_TAG, '1:31');
+		await expect_reported(`const a = <p>a //comment </p>;`, TSRX_ERRORS.UNCLOSED_TAG, '1:12');
 	});
 });
 
@@ -2252,7 +2252,7 @@ describe('a comment between an enum name and its `{` (#840)', () => {
 
 describe('parse errors', () => {
 	test('unclosed or mismatched tags are errors, not guessed markup', async () => {
-		await expect_reported('const x = 1;\nconst y = <div>\n', TSRX_ERRORS.UNCLOSED_TAG, '3:1');
+		await expect_reported('const x = 1;\nconst y = <div>\n', TSRX_ERRORS.UNCLOSED_TAG, '2:12');
 		await expect(format('const a = <div></span>;\n')).rejects.toThrow();
 	});
 
@@ -2306,7 +2306,9 @@ describe('parse errors', () => {
 				TS_ERRORS.TOKEN_EXPECTED,
 				{ line: 4, column: 1 },
 			],
-			['const y = <div>\n', TSRX_ERRORS.UNCLOSED_TAG, { line: 2, column: 1 }],
+			// Prettier's typescript parser: `JSX element 'div' has no corresponding
+			// closing tag. (1:12)`.
+			['const y = <div>\n', TSRX_ERRORS.UNCLOSED_TAG, { line: 1, column: 12 }],
 			// Prettier's typescript parser: `Property assignment expected. (1:13)`.
 			['const o = { @dec m() {} };', TS_ERRORS.UNEXPECTED_TOKEN, { line: 1, column: 13 }],
 			// `index` belongs to `@for`: the output used to drop it (#896).
