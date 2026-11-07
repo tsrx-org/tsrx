@@ -1,10 +1,11 @@
 import type { Program } from 'estree';
-import type { Linter } from 'eslint';
+import type { AST, Linter } from 'eslint';
 import {
 	analyzeTsrx as analyze_tsrx,
 	DIAGNOSTIC_CODES,
 	parseModule as parse_module,
 } from '@tsrx/core';
+import { Definition, Referencer, ScopeManager } from 'eslint-scope';
 
 interface ParseResult {
 	ast: Program;
@@ -29,19 +30,141 @@ const visitorKeys: Record<string, string[]> = {
 	JSXNamespacedName: ['namespace', 'name'],
 	JSXText: [],
 	JSXStyleElement: ['openingElement', 'children', 'closingElement'],
-	JSXIfExpression: ['test', 'consequent', 'alternate'],
-	JSXForExpression: ['init', 'test', 'update', 'left', 'right', 'body', 'index', 'key', 'empty'],
+	JSXIfExpression: ['statement'],
+	JSXForExpression: ['index', 'key', 'loop', 'empty'],
 	JSXSwitchExpression: ['discriminant', 'cases'],
-	JSXTryExpression: ['block', 'handler', 'finalizer', 'pending'],
+	JSXSwitchCase: ['test', 'consequent'],
+	JSXTryExpression: ['block', 'pending', 'statement'],
 	JSXCodeBlock: ['body', 'render'],
 	StyleSheet: [],
 	ForOfStatement: ['left', 'right', 'body'],
+	IfStatement: ['test', 'consequent', 'alternate'],
+	TryStatement: ['block', 'pending', 'handler', 'finalizer'],
 };
 
 /**
- * Keep this hook for small ESLint-only AST normalizations.
+ * eslint-scope's referencer, plus the `@for` parts: the loop's `index` and
+ * `key` belong to the loop's scope, like its variable, and the `@empty` branch
+ * runs outside it. TSRX gives every iteration its own index. A `@catch` can
+ * also take a `reset` function after the error.
  */
-function normalize_tsrx_ast_for_eslint(ast: any): void {
+class TSRXReferencer extends Referencer {
+	#tsrx_for_by_loop = new Map<any, any>();
+	#var_heads = new Set<any>();
+
+	JSXForExpression(node: any): void {
+		this.#tsrx_for_by_loop.set(node.loop, node);
+		// TSRX runs each iteration in a callback, so the loop has a scope of its
+		// own whatever its head declares. eslint-scope opens one only for a
+		// `let` or `const` head.
+		const head = node.loop.type === 'ForStatement' ? node.loop.init : node.loop.left;
+		if (head?.type !== 'VariableDeclaration' || head.kind === 'var') {
+			(this as any).scopeManager.__nestForScope(node.loop);
+		}
+		if (head?.kind === 'var') this.#var_heads.add(head);
+		this.visit(node.loop);
+		if (node.empty) this.visit(node.empty);
+	}
+
+	VariableDeclaration(node: any): void {
+		if (!this.#var_heads.has(node)) {
+			super.VariableDeclaration(node);
+			return;
+		}
+		// A `var` head declares the variable in the loop's scope, as `let` does.
+		node.declarations.forEach((declaration: any, index: number) => {
+			this.visitVariableDeclaration(this.currentScope(), 'Variable', node, index);
+			if (declaration.init) this.visit(declaration.init);
+		});
+	}
+
+	CatchClause(node: any): void {
+		if (!node.resetParam) {
+			super.CatchClause(node);
+			return;
+		}
+		// eslint-scope's `CatchClause`, with `reset` defined as the error is.
+		(this as any).scopeManager.__nestCatchScope(node);
+		for (const param of [node.param, node.resetParam]) {
+			this.visitPattern(param, { processRightHandNodes: true }, (pattern: any, info: any) => {
+				(this.currentScope() as any).__define(
+					pattern,
+					new (Definition as any)('CatchClause', pattern, node, null, null, null),
+				);
+				this.referencingDefaultValue(pattern, info.assignments, null, true);
+			});
+		}
+		this.visit(node.body);
+		this.close(node);
+	}
+
+	close(node: any): void {
+		const tsrx_for = this.#tsrx_for_by_loop.get(node);
+		if (tsrx_for?.index) {
+			(this.currentScope() as any).__define(
+				tsrx_for.index,
+				new (Definition as any)('Variable', tsrx_for.index, tsrx_for, tsrx_for, null, null),
+			);
+		}
+		if (tsrx_for?.key) this.visit(tsrx_for.key);
+		super.close(node);
+	}
+}
+
+/**
+ * Scope analysis as ESLint runs it, with `TSRXReferencer`. A `.tsrx` file is
+ * always a module.
+ */
+function analyze_scope(ast: any, options: Linter.ParserOptions | undefined): any {
+	const ecma_features = options?.ecmaFeatures ?? {};
+	const scope_options = {
+		ignoreEval: true,
+		nodejsScope: ecma_features.globalReturn,
+		impliedStrict: ecma_features.impliedStrict,
+		ecmaVersion: typeof options?.ecmaVersion === 'number' ? options.ecmaVersion : 6,
+		sourceType: 'module',
+		childVisitorKeys: visitorKeys,
+		// eslint-visitor-keys' `getKeys`, which ESLint passes
+		fallback: (node: any) =>
+			Object.keys(node).filter(
+				(key) =>
+					key !== 'parent' &&
+					key !== 'leadingComments' &&
+					key !== 'trailingComments' &&
+					key[0] !== '_',
+			),
+		jsx: ecma_features.jsx,
+	};
+	const scope_manager = new ScopeManager(scope_options as any);
+	new TSRXReferencer(scope_options as any, scope_manager).visit(ast);
+	return scope_manager;
+}
+
+const LOOP_FIELDS: Record<string, string[]> = {
+	ForStatement: ['init', 'test', 'update', 'body'],
+	ForInStatement: ['left', 'right', 'body'],
+	ForOfStatement: ['await', 'left', 'right', 'body'],
+};
+
+const STATEMENT_FIELDS: Record<string, { keyword: string; fields: string[] }> = {
+	JSXIfExpression: { keyword: 'if', fields: ['test', 'consequent', 'alternate'] },
+	JSXTryExpression: { keyword: 'try', fields: ['block', 'pending', 'handler'] },
+};
+
+const SIGNATURE_TYPES = new Set([
+	'TSFunctionType',
+	'TSConstructorType',
+	'TSCallSignatureDeclaration',
+	'TSConstructSignatureDeclaration',
+	'TSMethodSignature',
+]);
+
+/**
+ * Keep this hook for small ESLint-only AST normalizations. Returns the `JSXText`
+ * nodes, which each get a token of their own.
+ */
+function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
+	const texts: Span[] = [];
 	const seen = new Set<any>();
 	const visit = (node: any) => {
 		if (!node || typeof node !== 'object') return;
@@ -53,6 +176,96 @@ function normalize_tsrx_ast_for_eslint(ast: any): void {
 		// cycles break consumers that deep-clone or serialize the AST (RuleTester).
 		if (node.type === 'JSXStyleElement' && node.metadata?.styleApplies) {
 			delete node.metadata.styleApplies;
+		}
+
+		// ESLint's code path analysis handles every `SwitchCase` as a case of a
+		// `switch` statement and throws on one inside `@switch`. `@case` bodies
+		// never fall through, so they need no switch code paths.
+		if (node.type === 'JSXSwitchExpression') {
+			for (const switch_case of node.cases) switch_case.type = 'JSXSwitchCase';
+		}
+
+		// A comment in JSX text is a comment for ESLint, not a `{}` container:
+		// drop the placeholder node the parser keeps for it.
+		if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
+			node.children = node.children.filter(
+				(child: any) =>
+					child.type !== 'JSXExpressionContainer' ||
+					child.expression.type !== 'JSXEmptyExpression' ||
+					child.start !== child.expression.start,
+			);
+		}
+
+		// The loop of a `@for` is a real for statement in `loop`, so rules such as
+		// `semi` and `init-declarations` know its head. ESLint's code path analysis
+		// allows a for statement no fields of its own, so `index`, `key` and the
+		// `@empty` branch stay on `JSXForExpression`.
+		if (node.type === 'JSXForExpression') {
+			const loop: any = {
+				type: node.statementType,
+				start: code.indexOf('for', node.start),
+				end: node.body.end,
+			};
+			for (const key of LOOP_FIELDS[node.statementType]) {
+				loop[key] = node[key];
+				delete node[key];
+			}
+			node.loop = loop;
+		}
+
+		// An `@if` or `@try` likewise keeps its if or try statement in `statement`,
+		// so code path analysis gives each arm a path of its own, as it does the
+		// branches of an `if` and the blocks of a `try`. A `@pending` block stays
+		// in source order, after the `try` block. Code path analysis throws on a
+		// `try` without a `catch` or `finally`, so a `@try` with no `@catch` keeps
+		// its blocks. `@switch` keeps its cases: a `switch` would fall through
+		// from each case into the next.
+		if (node.type in STATEMENT_FIELDS && (node.type !== 'JSXTryExpression' || node.handler)) {
+			const { keyword, fields } = STATEMENT_FIELDS[node.type];
+			const statement: any = {
+				type: node.statementType,
+				start: code.indexOf(keyword, node.start),
+				end: node.end,
+			};
+			for (const key of fields) {
+				statement[key] = node[key];
+				delete node[key];
+			}
+			node.statement = statement;
+		}
+
+		// The parser accepts a plain `try` with only a `pending` block. It compiles
+		// to a `try` with neither a `catch` nor a `finally`, which isn't JavaScript,
+		// and code path analysis throws on it.
+		if (node.type === 'TryStatement' && !node.handler && !node.finalizer) {
+			throw to_eslint_parse_error({
+				message: 'Missing catch or finally clause',
+				loc: node.loc,
+				start: node.start,
+			});
+		}
+
+		// typescript-eslint names the parameters of a function type or signature
+		// `params`, and rules such as `max-params` read that name. It is not
+		// enumerable, so traversal still visits each parameter once.
+		if (SIGNATURE_TYPES.has(node.type) && node.parameters) {
+			Object.defineProperty(node, 'params', { value: node.parameters, configurable: true });
+		}
+
+		// Like espree, a template element spans its delimiters: `` `a${ ``, `` }b` ``.
+		if (node.type === 'TemplateElement') {
+			const end_offset = node.tail ? 1 : 2;
+			node.start -= 1;
+			node.end += end_offset;
+			node.range = [node.start, node.end];
+			node.loc = {
+				start: { line: node.loc.start.line, column: node.loc.start.column - 1 },
+				end: { line: node.loc.end.line, column: node.loc.end.column + end_offset },
+			};
+		}
+
+		if (node.type === 'JSXText' && node.end > node.start) {
+			texts.push({ type: 'JSXText', start: node.start, end: node.end });
 		}
 
 		for (const key of Object.keys(node)) {
@@ -67,13 +280,14 @@ function normalize_tsrx_ast_for_eslint(ast: any): void {
 	};
 
 	visit(ast);
+	return texts.sort((a, b) => a.start - b.start);
 }
 
 /**
  * Recursively walks the AST and ensures all nodes have range and loc properties
  * ESLint's scope analyzer requires these properties on ALL nodes
  */
-function ensure_node_properties(node: any, code: string): void {
+function ensure_node_properties(node: any, locate: Locate): void {
 	if (!node || typeof node !== 'object') {
 		return;
 	}
@@ -85,38 +299,7 @@ function ensure_node_properties(node: any, code: string): void {
 
 	// Ensure loc property exists
 	if (!node.loc && node.start !== undefined && node.end !== undefined) {
-		const lines = code.split('\n');
-		let current_pos = 0;
-		let start_line = 1;
-		let start_column = 0;
-		let end_line = 1;
-		let end_column = 0;
-
-		for (let i = 0; i < lines.length; i++) {
-			const line_length = lines[i].length + 1;
-			if (current_pos + line_length > node.start) {
-				start_line = i + 1;
-				start_column = node.start - current_pos;
-				break;
-			}
-			current_pos += line_length;
-		}
-
-		current_pos = 0;
-		for (let i = 0; i < lines.length; i++) {
-			const line_length = lines[i].length + 1;
-			if (current_pos + line_length > node.end) {
-				end_line = i + 1;
-				end_column = node.end - current_pos;
-				break;
-			}
-			current_pos += line_length;
-		}
-
-		node.loc = {
-			start: { line: start_line, column: start_column },
-			end: { line: end_line, column: end_column },
-		};
+		node.loc = locate(node.start, node.end);
 	}
 
 	for (const key in node) {
@@ -126,11 +309,249 @@ function ensure_node_properties(node: any, code: string): void {
 
 		const value = node[key];
 		if (Array.isArray(value)) {
-			value.forEach((child) => ensure_node_properties(child, code));
+			value.forEach((child) => ensure_node_properties(child, locate));
 		} else if (value && typeof value === 'object' && value.type) {
-			ensure_node_properties(value, code);
+			ensure_node_properties(value, locate);
 		}
 	}
+}
+
+/** The fields read from an acorn token recorded by the TSRX parser. */
+interface LexerToken {
+	type: { label: string; keyword?: string };
+	value?: any;
+	start: number;
+	end: number;
+}
+
+/** A comment as the TSRX parser collects it. */
+interface ParserComment {
+	type: 'Line' | 'Block';
+	start: number;
+	end: number;
+}
+
+interface ESLintToken extends AST.Token {
+	start: number;
+	end: number;
+	regex?: { pattern: string; flags: string };
+}
+
+interface ESLintComment {
+	type: 'Line' | 'Block';
+	value: string;
+	start: number;
+	end: number;
+	range: AST.Range;
+	loc: AST.SourceLocation;
+}
+
+interface Span {
+	type: AST.TokenType;
+	start: number;
+	end: number;
+	regex?: ESLintToken['regex'];
+}
+
+type Locate = (start: number, end: number) => AST.SourceLocation;
+
+/**
+ * Builds `loc` objects from offsets, with the line terminators acorn and ESLint
+ * count.
+ */
+function create_locator(code: string): Locate {
+	const line_starts = [0];
+	for (const match of code.matchAll(/\r\n?|[\n\u2028\u2029]/g)) {
+		line_starts.push(match.index + match[0].length);
+	}
+	const position = (offset: number) => {
+		let low = 0;
+		let high = line_starts.length - 1;
+		while (low < high) {
+			const middle = (low + high + 1) >> 1;
+			if (line_starts[middle] <= offset) low = middle;
+			else high = middle - 1;
+		}
+		return { line: low + 1, column: offset - line_starts[low] };
+	};
+	return (start, end) => ({ start: position(start), end: position(end) });
+}
+
+/**
+ * Converts the parser's comments to ESLint comments, in source order. The value
+ * is read from the source: the parser strips the indentation from the value of
+ * a multi-line block comment.
+ */
+function to_eslint_comments(
+	code: string,
+	comments: ParserComment[],
+	locate: Locate,
+): ESLintComment[] {
+	const result: ESLintComment[] = [];
+	for (const { type, start, end } of [...comments].sort((a, b) => a.start - b.start)) {
+		if (result.at(-1)?.start === start) continue;
+		const value_end = type === 'Block' && code.startsWith('*/', end - 2) ? end - 2 : end;
+		result.push({
+			type,
+			value: code.slice(start + 2, value_end),
+			start,
+			end,
+			range: [start, end],
+			loc: locate(start, end),
+		});
+	}
+	return result;
+}
+
+/**
+ * Converts the tokens the TSRX lexer reported into the token list ESLint
+ * expects: in source order, without overlaps, in espree's token types, and
+ * covering every character that is not whitespace or a comment.
+ */
+function to_eslint_tokens(
+	code: string,
+	lexer_tokens: LexerToken[],
+	texts: Span[],
+	comments: ESLintComment[],
+	locate: Locate,
+): ESLintToken[] {
+	// The lexer reports a token again when it re-reads it after looking ahead.
+	const lexed: LexerToken[] = [];
+	for (const token of [...lexer_tokens].sort((a, b) => a.start - b.start || a.end - b.end)) {
+		const last = lexed.at(-1);
+		if (last?.start === token.start && last.end === token.end) {
+			lexed[lexed.length - 1] = token;
+		} else if (!last || token.start >= last.end) {
+			lexed.push(token);
+		}
+	}
+
+	const spans: Span[] = [];
+	for (let i = 0; i < lexed.length; i++) {
+		const token = lexed[i];
+		const label = token.type.label;
+
+		if (label === '`' || (label === '}' && is_template_part(lexed[i + 1]))) {
+			// Like espree, one token per template chunk: `` `a${ ``, `` }b${ ``, `` }c` ``.
+			let last = i + 1;
+			while (is_template_part(lexed[last])) last++;
+			const closer = lexed[last]?.type.label;
+			if (closer !== '${' && closer !== '`') last--;
+			spans.push({ type: 'Template', start: token.start, end: lexed[last].end });
+			i = last;
+			continue;
+		}
+
+		if (code.startsWith('</', token.start) && token.end > token.start + 1) {
+			// The lexer skips the body of a raw `<style>` or `<script>` element and
+			// reports its closing tag as one token.
+			for (const match of code.slice(token.start, token.end).matchAll(/([</>])|[^\s</>]+/g)) {
+				const start = token.start + match.index;
+				spans.push({
+					type: match[1] ? 'Punctuator' : 'JSXIdentifier',
+					start,
+					end: start + match[0].length,
+				});
+			}
+			continue;
+		}
+
+		if (label === 'eof' || token.start === token.end) continue;
+		spans.push({
+			type: token_type(token, lexed[i - 1], lexed[i - 2]),
+			start: token.start,
+			end: token.end,
+			regex:
+				label === 'regexp' ? { pattern: token.value.pattern, flags: token.value.flags } : undefined,
+		});
+	}
+
+	// Each JSX text node is one token. The lexer reports no token for
+	// whitespace-only text, and reads text after a template directive's block
+	// as code (`Identifier " hello"`).
+	const with_texts = [...outside(spans, texts), ...texts].sort((a, b) => a.start - b.start);
+	// Text the lexer read as part of a comment is left to the gap filling below.
+	const kept = outside(with_texts, comments);
+
+	const tokens: ESLintToken[] = [];
+	const add = (span: Span) => {
+		const token: ESLintToken = {
+			type: span.type,
+			value: code.slice(span.start, span.end),
+			start: span.start,
+			end: span.end,
+			range: [span.start, span.end],
+			loc: locate(span.start, span.end),
+		};
+		if (span.regex) token.regex = span.regex;
+		tokens.push(token);
+	};
+
+	// The lexer reports no token for the `@` of a template directive or the
+	// body of a raw `<style>` or `<script>` element.
+	const fill = (start: number, end: number) => {
+		const at = end > start && code[end - 1] === '@';
+		if (at) end--;
+		if (/\S/.test(code.slice(start, end))) add({ type: 'JSXText', start, end });
+		if (at) add({ type: 'Punctuator', start: end, end: end + 1 });
+	};
+
+	const covered: Array<Span | ESLintComment> = [...kept, ...comments];
+	let position = 0;
+	for (const item of covered.sort((a, b) => a.start - b.start)) {
+		fill(position, item.start);
+		if (!('value' in item)) add(item);
+		position = item.end;
+	}
+	fill(position, code.length);
+
+	return tokens;
+}
+
+/** The spans that overlap none of the sorted, disjoint `ranges`. */
+function outside(spans: Span[], ranges: Array<{ start: number; end: number }>): Span[] {
+	let index = 0;
+	return spans.filter((span) => {
+		while (index < ranges.length && ranges[index].end <= span.start) index++;
+		return index === ranges.length || ranges[index].start >= span.end;
+	});
+}
+
+function is_template_part(token: LexerToken | undefined): boolean {
+	return token?.type.label === 'template' || token?.type.label === 'invalidTemplate';
+}
+
+/** The espree token type of an acorn token. */
+function token_type(
+	token: LexerToken,
+	previous: LexerToken | undefined,
+	before_previous: LexerToken | undefined,
+): AST.TokenType {
+	const { label, keyword } = token.type;
+	switch (label) {
+		case 'name':
+			return token.value === 'static' || token.value === 'yield' || token.value === 'let'
+				? 'Keyword'
+				: 'Identifier';
+		case 'privateId':
+			return 'PrivateIdentifier';
+		case 'jsxName':
+			return 'JSXIdentifier';
+		case 'jsxText':
+			return 'JSXText';
+		case 'num':
+			return 'Numeric';
+		case 'regexp':
+			return 'RegularExpression';
+		case 'string':
+			// A JSX attribute value, as in espree.
+			return previous?.type.label === '=' && before_previous?.type.label === 'jsxName'
+				? 'JSXText'
+				: 'String';
+	}
+	if (keyword === 'true' || keyword === 'false') return 'Boolean';
+	if (keyword === 'null') return 'Null';
+	return keyword ? 'Keyword' : 'Punctuator';
 }
 
 function is_fatal_parser_diagnostic(error: any): boolean {
@@ -170,8 +591,13 @@ export function parseForESLint(code: string, options?: Linter.ParserOptions): Pa
 			collect: true,
 			errors,
 			comments,
+			// Also records every token, as `tsrx_tokens`.
+			keywordTokens: true,
 		}) as any;
 		if (!ast) throw new Error('Parser returned null or undefined AST');
+		const lexer_tokens = ast.tsrx_tokens;
+		delete ast.tsrx_tokens;
+		delete ast.tsrx_keyword_tokens;
 		analyze_tsrx(ast, options?.filePath || 'ESLintParser.tsrx', {
 			collect: true,
 			errors,
@@ -184,10 +610,13 @@ export function parseForESLint(code: string, options?: Linter.ParserOptions): Pa
 		}
 
 		// Normalize for ESLint traversal (avoid duplicate node visits)
-		normalize_tsrx_ast_for_eslint(ast);
+		const texts = normalize_tsrx_ast_for_eslint(ast, code);
 
 		// Recursively ensure all nodes have range and loc properties
-		ensure_node_properties(ast, code);
+		const locate = create_locator(code);
+		ensure_node_properties(ast, locate);
+
+		const eslint_comments = to_eslint_comments(code, comments, locate);
 
 		// Create a properly structured AST object ensuring all required properties exist
 		const result: any = {
@@ -201,8 +630,8 @@ export function parseForESLint(code: string, options?: Linter.ParserOptions): Pa
 			range: ast.range || [0, code.length],
 			body: ast.body || [],
 			sourceType: ast.sourceType || 'module',
-			comments: ast.comments || [],
-			tokens: ast.tokens || [],
+			comments: eslint_comments,
+			tokens: to_eslint_tokens(code, lexer_tokens, texts, eslint_comments, locate),
 		};
 
 		return {
@@ -210,6 +639,7 @@ export function parseForESLint(code: string, options?: Linter.ParserOptions): Pa
 			services: {
 				tsrxDiagnostics: errors,
 			},
+			scopeManager: analyze_scope(result, options),
 			visitorKeys,
 		};
 	} catch (error: any) {

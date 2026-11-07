@@ -102,6 +102,38 @@ The parser will successfully parse this and allow ESLint rules (like those from
 - Invalid rendering control flow
 - And more
 
+## Known Limitations
+
+Some core ESLint rules miss part of what TSRX syntax does. The parser can't change
+these without misdescribing the source to other rules:
+
+- `no-unused-vars` reports an unused `@for` index, but its "Remove unused
+  variable" suggestion deletes only the name.
+  `@for (const item of items; index i)` becomes
+  `@for (const item of items; index )`, which doesn't parse. `--fix` never applies
+  suggestions, but editors offer them. Remove the whole `; index i` clause
+  instead.
+- `no-await-in-loop` doesn't report an `await` in a `@for` key, such as
+  `key await load(item)`, though the key runs once per item, as the body does. It
+  does report an `await` in the body.
+- Code path analysis runs the arms of a `@switch` one after another, not as
+  alternatives. After an arm that ends in `throw`, `no-unreachable` reports the
+  arms and code that follow it. Rules built on code paths treat every arm as
+  always running, so `react-hooks/rules-of-hooks` doesn't report a hook called in
+  a `@case` body. A `switch` statement would add a path from each case into the
+  next, and `no-fallthrough` would then report every `@case`. The arms of `@if`
+  and `@try` don't have this problem, so when an arm throws, an `@if`/`@else if`
+  chain gets the right code paths.
+- `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
+  `@else`, `@else if` or `@for` body that holds a single statement, such as
+  `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
+  doesn't parse. Use `all` or `multi-line`, which leave these bodies alone.
+- Code path analysis runs a `@pending` block after the `@try` body, though it
+  shows while the body suspends. After a body that can't complete, such as one
+  that throws, `no-unreachable` reports `@pending`. `no-useless-assignment` can
+  flag a value only `@pending` reads, when the body overwrites it or can't
+  complete.
+
 ## Related Packages
 
 - [@tsrx/eslint-plugin](https://www.npmjs.com/package/@tsrx/eslint-plugin) -
