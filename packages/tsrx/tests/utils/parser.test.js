@@ -2979,7 +2979,7 @@ export function App() @{ <div /> }`;
 
 	// A collecting or loose parse records each tag left open at the end of its
 	// template at the tag's name (a fragment's `<>`), so the editor shows each
-	// error on its own tag, and keeps `raisedAt` at the token that ends the
+	// error on its own tag, and keeps `raisedAt` one past the token that ends the
 	// template. A strict parse still throws the first one at that token (#1288).
 	it.each([
 		['export function C() @{\n\t<main><section>\n}\n', ['section', 'main'], '\n}'],
@@ -3002,9 +3002,7 @@ export function App() @{ <div /> }`;
 			expect(errors.map((error) => [error.code, source.slice(error.pos, error.end)])).toEqual(
 				tags.map((tag) => [TSRX_ERRORS.UNCLOSED_TAG.code, tag]),
 			);
-			expect(errors.map((error) => error.raisedAt)).toEqual(
-				tags.map(() => Math.min(end + 1, source.length)),
-			);
+			expect(errors.map((error) => error.raisedAt)).toEqual(tags.map(() => end + 1));
 		}
 		expect(() => parseModule(source, 'App.tsrx')).toThrow(
 			error_with(TSRX_ERRORS.UNCLOSED_TAG, line_column(source, end)),

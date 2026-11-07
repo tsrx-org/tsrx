@@ -333,6 +333,33 @@ export function B() {
 		expect(directives.some(([, , start, end]) => start <= wrong_at && wrong_at < end)).toBe(false);
 	});
 
+	it("never hides another component's errors when the first component is unclosed", () => {
+		const mapper = create_tsrx_content_mapper();
+		mapper.openProject({
+			configFileName: path.join(consumer_fixture_dir, 'tsconfig.json'),
+			projectHandle: 'p1',
+			compilerOptions: {},
+		});
+		const content = `export const A = () => <div>
+export function B() @{
+	const wrong: string = 1;
+	<span />
+}
+`;
+		const result = mapper.transform({
+			fileName: path.join(consumer_fixture_dir, 'Unclosed.tsrx'),
+			content,
+			projectHandle: 'p1',
+		});
+		const directives = result.diagnosticDirectives?.directives ?? [];
+		expect(directives.map(([start, length]) => content.slice(start, start + length))).toEqual([
+			'div',
+		]);
+		const wrong_at = result.text.indexOf('wrong: string');
+		expect(wrong_at).toBeGreaterThan(-1);
+		expect(directives.some(([, , start, end]) => start <= wrong_at && wrong_at < end)).toBe(false);
+	});
+
 	it('keeps the export stub across a project reopen while the file still fails', () => {
 		// TypeScript reopens a project (with the same or a new handle) when its
 		// identity or a watched file changes; the last good AST must survive that.

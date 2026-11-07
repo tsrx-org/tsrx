@@ -100,20 +100,17 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 /**
  * The position whose holder an error's directive covers. It's the error's own,
  * except for an unclosed tag, which is reported on the tag and found where its
- * template ends. The closing tag that recovery adds has no mapping, so
- * TypeScript's error on it could only show at the top of the file, and the
- * tag's own statement can end before it. So its directive holds where the parser
- * stopped, one before `raisedAt`, which usually spans the added tag. In a file
- * that ends at the tag, with no final newline, that place is the tag itself.
+ * template ends, one before `raisedAt`. The closing tag that recovery adds has
+ * no mapping, so TypeScript's error on it could only show at the top of the
+ * file, and the tag's own statement can end before it. At the end of the file
+ * nothing holds that place, so the directive covers the tag alone: there, an
+ * unclosed tag's declaration has stretched around the code that follows it,
+ * which the directive must not hide.
  * @param {CompileError} error
  * @returns {number}
  */
-function held_position(error) {
-	const { code, pos, end, raisedAt } = error;
-	return code === DIAGNOSTIC_CODES.UNCLOSED_TAG &&
-		typeof raisedAt === 'number' &&
-		typeof end === 'number' &&
-		raisedAt > end
+function held_position({ code, pos, raisedAt }) {
+	return code === DIAGNOSTIC_CODES.UNCLOSED_TAG && typeof raisedAt === 'number'
 		? raisedAt - 1
 		: /** @type {number} */ (pos);
 }

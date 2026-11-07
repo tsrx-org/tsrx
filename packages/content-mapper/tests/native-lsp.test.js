@@ -639,8 +639,6 @@ import def from './mixed';
 			[plain("const n: number = 'x';\n\treturn <div>{n};"), ['div']],
 			['export class A {\n\ty = <Missing>;\n}\n', ['Missing']],
 			['export const y = <div>\n', ['div']],
-			['export const y = <Missing>\n', ['Missing']],
-			['export const y = <div><Missing>\n', ['div', 'Missing']],
 			['export const y = <style>.a {}\n', ['<style>']],
 			['export const y = <script>const a = 1;\n', ['<script>']],
 			['<><div>;\n', ['<>', 'div']],
@@ -659,6 +657,57 @@ import def from './mixed';
 				source,
 			).toEqual(tags.map((tag) => ['TSRX', number, tag]));
 		}
+
+		client.change('Button.tsrx', files['Button.tsrx']);
+		expect(await client.diagnostics('Button.tsrx')).toEqual([]);
+	});
+
+	/** @param {string} source */
+	async function type_errors_in(source) {
+		client.change('Button.tsrx', source);
+		const diagnostics = await client.diagnostics('Button.tsrx');
+		return diagnostics
+			.filter((d) => d.code === 2322)
+			.map((d) => range_text(source, d.range))
+			.sort();
+	}
+
+	// A `@{ … }` after an unclosed tag at module level parses as a block inside
+	// the tag, so the tag's declaration stretches around that component. A
+	// directive on that declaration would hide all of its errors (#1288).
+	it('keeps the errors of the components after an unclosed tag', async () => {
+		const template = `export function B() @{\n\tconst wrong: string = 1;\n\t<span />\n}\n`;
+		const arrow = `export const C = () => @{\n\tconst also: string = 1;\n\t<b />\n};\n`;
+		for (const first of [
+			'export const A = () => <div>\n',
+			'export const A = () => <div>;\n',
+			'export const y = <div>\n',
+			'export const y = <Missing>\n',
+			'export const y = <a.b>\n',
+			'export const A = () => <>\n',
+		]) {
+			expect(await type_errors_in(first + template), first).toEqual(['wrong']);
+			expect(await type_errors_in(first + arrow), first).toEqual(['also']);
+			expect(await type_errors_in(first + template + arrow), first).toEqual(['also', 'wrong']);
+		}
+
+		client.change('Button.tsrx', files['Button.tsrx']);
+		expect(await client.diagnostics('Button.tsrx')).toEqual([]);
+	});
+
+	// An error's anchor is its nearest token plus the columns to the error. The
+	// code before a `<>` can be gone from the generated code, and a tag can be
+	// long, so either could carry the anchor, and a directive, into `B` (#1288).
+	it("keeps the next component's errors when an unclosed tag's anchor can't fit", async () => {
+		const next = `export function B() {\n\tconst wrong: string = 1;\n\treturn wrong;\n}\n`;
+		for (const gap of [38, 39, 40, 41, 42, 43, 44]) {
+			const comment = `/*${'x'.repeat(gap - 4)}*/`;
+			const source = `export function A({ x }: any) @{\n\t<div>{x}{${comment}}<>{x}\n}\n${next}`;
+			expect(await type_errors_in(source), source).toEqual(['wrong']);
+		}
+		const tag = `Missing${'x'.repeat(60)}`;
+		const source = `export function A() {\n\tconst f = () => { return <${tag}>; };\n\treturn f;\n}\n${next}`;
+		expect(await type_errors_in(source), source).toEqual(['wrong']);
 
 		client.change('Button.tsrx', files['Button.tsrx']);
 		expect(await client.diagnostics('Button.tsrx')).toEqual([]);

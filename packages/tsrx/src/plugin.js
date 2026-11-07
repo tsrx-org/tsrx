@@ -4091,8 +4091,8 @@ export function TSRXPlugin(config) {
 			 * throws it at `position`. Collecting records it, and so does a loose
 			 * parse (the editor's), which also goes on to recover the markup. It is
 			 * recorded at `range` when given, such as an unclosed tag's name, and its
-			 * `raisedAt` stays what it is at `position`, so the error still says how
-			 * far the parser read.
+			 * `raisedAt` stays one past `position`, even at the end of the input, so
+			 * the error still says where the parser stopped.
 			 * @param {number} position
 			 * @param {Diagnostic} message
 			 * @param {[number, number]} [range]
@@ -4105,7 +4105,7 @@ export function TSRXPlugin(config) {
 					const recorded = /** @type {import('../types/index').CompileError} */ (
 						this.#errors?.at(-1)
 					);
-					recorded.raisedAt = Math.min(position + 1, this.input.length);
+					recorded.raisedAt = position + 1;
 				} else {
 					this.#report_recoverable_error(position, message);
 				}
