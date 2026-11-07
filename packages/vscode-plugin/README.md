@@ -163,15 +163,15 @@ _Note: These steps will get simpler once TypeScript 7.1 is released
 ### Which TypeScript versions work
 
 This table shows what each TypeScript version does with `.tsrx` files. We tested
-it with the TypeScript 7 extension 1.0.2 and TypeScript `7.1.0-dev.20260930.4` and
-`7.1.0-beta`. To run the same tests, use
-`pnpm --filter @tsrx/vscode-plugin test:editor`.
+it with the TypeScript 7 extension 1.0.2 and TypeScript `7.1.0-dev.20260930.4`. To
+run the same tests, use `pnpm --filter @tsrx/vscode-plugin test:editor`. We
+checked `7.1.0-beta` by hand, and it behaves like the 7.1 nightly here.
 
 | TypeScript version                                             | Who runs it                                                                | `.tsrx` files                                                                       |
 | -------------------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | 5.9 or 6                                                       | VS Code's built-in TypeScript, with TypeScript 7 off                       | Work (classic backend)                                                              |
-| 7.1 nightly in the project's `node_modules/typescript`         | TypeScript 7 extension, once you choose **Use Workspace Version** (step 6) | Work (native backend)                                                               |
-| 7.1 nightly in the project, before you choose it               | TypeScript 7 extension, which then uses its built-in 7.0.2                 | Get no TypeScript features. A TSRX notice offers to fix this.                       |
+| 7.1 nightly or beta in the project's `node_modules/typescript` | TypeScript 7 extension, once you choose **Use Workspace Version** (step 6) | Work (native backend)                                                               |
+| 7.1 nightly or beta in the project, before you choose it       | TypeScript 7 extension, which then uses its built-in 7.0.2                 | Get no TypeScript features. A TSRX notice offers to fix this.                       |
 | 7.0, including the 7.0.2 built into the TypeScript 7 extension | TypeScript 7 extension                                                     | Get no TypeScript features, because TypeScript 7.0 does not support content mappers |
 
 ### How TypeScript features start
